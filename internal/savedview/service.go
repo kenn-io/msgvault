@@ -39,10 +39,11 @@ type Service interface {
 // Patch contains only fields supplied by the caller. An empty Description
 // string clears the existing description, matching the HTTP API.
 type Patch struct {
-	Name           *string
-	Description    *string
-	CanonicalState *store.SavedViewStateEnvelope
-	SchemaVersion  *int
+	IncludeAdd, IncludeRemove, ExcludeAdd, ExcludeRemove []string
+	Name                                                 *string
+	Description                                          *string
+	CanonicalState                                       *store.SavedViewStateEnvelope
+	SchemaVersion                                        *int
 }
 
 // ResultKind names which typed array a RunPage carries.

@@ -55,6 +55,13 @@ type SavedViewSort struct {
 }
 
 type SavedView struct {
+	ItemsJSON         []byte                 `json:"-"`
+	Items             *SavedViewItemList     `json:"items,omitempty"`
+	StaleItemCount    int                    `json:"stale_item_count"`
+	RedactedItemCount int                    `json:"redacted_item_count"`
+	IncludeCount      int                    `json:"include_count"`
+	ExcludeCount      int                    `json:"exclude_count"`
+	Applied           *SavedViewItemsApplied `json:"applied,omitempty"`
 	// IncompatibilityReason is supplied by the daemon, not persisted in the store.
 	IncompatibilityReason string         `json:"incompatibility_reason,omitempty"`
 	ID                    int64          `json:"id"`
@@ -68,6 +75,7 @@ type SavedView struct {
 }
 
 type SavedViewInput struct {
+	ItemChange     *SavedViewItemChange
 	Name           string
 	Description    *string
 	CanonicalState jsontext.Value
@@ -83,7 +91,7 @@ func (s *Store) CreateSavedView(ctx context.Context, input SavedViewInput) (*Sav
 		INSERT INTO saved_views (name, description, canonical_state, schema_version)
 		VALUES (?, ?, %s, ?)
 		RETURNING id, name, description, canonical_state, schema_version,
-		          revision, created_at, updated_at
+		          revision, created_at, updated_at, items_json
 	`, s.dialect.JSONBindExpr())
 	view, err := scanSavedView(s.db.QueryRowContext(ctx, query,
 		validated.Name, validated.Description, string(validated.CanonicalState), validated.SchemaVersion))
@@ -99,7 +107,7 @@ func (s *Store) CreateSavedView(ctx context.Context, input SavedViewInput) (*Sav
 func (s *Store) ListSavedViews(ctx context.Context) ([]SavedView, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, name, description, canonical_state, schema_version,
-		       revision, created_at, updated_at
+		       revision, created_at, updated_at, items_json
 		FROM saved_views
 		ORDER BY LOWER(name), id
 	`)
@@ -125,7 +133,7 @@ func (s *Store) ListSavedViews(ctx context.Context) ([]SavedView, error) {
 func (s *Store) GetSavedView(ctx context.Context, id int64) (*SavedView, error) {
 	view, err := scanSavedView(s.db.QueryRowContext(ctx, `
 		SELECT id, name, description, canonical_state, schema_version,
-		       revision, created_at, updated_at
+		       revision, created_at, updated_at, items_json
 		FROM saved_views
 		WHERE id = ?
 	`, id))
@@ -145,13 +153,16 @@ func (s *Store) UpdateSavedView(
 	if err != nil {
 		return nil, err
 	}
+	if input.ItemChange != nil {
+		return s.changeSavedViewItems(ctx, id, expectedRevision, *input.ItemChange, &validated)
+	}
 	query := fmt.Sprintf(`
 		UPDATE saved_views
 		SET name = ?, description = ?, canonical_state = %s, schema_version = ?,
 		    revision = revision + 1, updated_at = %s
 		WHERE id = ? AND revision = ?
 		RETURNING id, name, description, canonical_state, schema_version,
-		          revision, created_at, updated_at
+		          revision, created_at, updated_at, items_json
 	`, s.dialect.JSONBindExpr(), s.dialect.Now())
 	view, err := scanSavedView(s.db.QueryRowContext(ctx, query,
 		validated.Name, validated.Description, string(validated.CanonicalState), validated.SchemaVersion,
@@ -238,7 +249,7 @@ func scanSavedView(row scanner) (*SavedView, error) {
 	)
 	if err := row.Scan(
 		&view.ID, &view.Name, &description, &state, &view.SchemaVersion,
-		&view.Revision, &view.CreatedAt, &view.UpdatedAt,
+		&view.Revision, &view.CreatedAt, &view.UpdatedAt, &view.ItemsJSON,
 	); err != nil {
 		return nil, err
 	}

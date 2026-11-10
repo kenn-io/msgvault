@@ -79,6 +79,7 @@ for (const width of [1280, 390]) {
       }
       return route.fulfill({ json: { saved_views: saved } });
     });
+    await page.route("**/api/v1/saved-views/1", route => route.fulfill({ json: saved[0] }));
     await page.goto("/?workspace=everything");
     await page.getByRole("button", { name: "Filter", exact: true }).click();
     await page.getByRole("checkbox", { name: "In Inbox", exact: true }).click();
@@ -113,6 +114,7 @@ for (const width of [1280, 390]) {
         { field: "read_state", operator: "in", values: ["unread"] },
       ],
     });
+    await page.route("**/api/v1/saved-views/1", route => route.fulfill({ json: saved[0] }));
     await page.goto("/?workspace=everything");
     await selectWorkspace(page, "Inbox Unread");
     const chips = page.getByRole("region", {

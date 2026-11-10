@@ -632,6 +632,12 @@ export function parseExploreURLState(search: string): ExploreURLState {
 }
 
 export class ExploreState {
+  savedViewItems = $state<{ include: { entry_key: string }[]; exclude: { entry_key: string }[] }>({ include: [], exclude: [] });
+
+  setSavedViewItems(items: { include?: { entry_key: string }[]; exclude?: { entry_key: string }[] }): void {
+    this.savedViewItems = { include: items.include ?? [], exclude: items.exclude ?? [] };
+  }
+
   current = $state<ExploreURLState>(freshDefaults());
   restorationEpoch = $state(1);
   holdLeave?: (leave: () => void, stay?: () => void) => boolean;
@@ -931,6 +937,8 @@ export class ExploreState {
     return {
       ...(query ? { query, search_mode: this.current.searchMode } : {}),
       filters: this.current.filters,
+      ...(this.savedViewItems.include.length ? { include_keys: this.savedViewItems.include.map(item => item.entry_key) } : {}),
+      ...(this.savedViewItems.exclude.length ? { exclude_keys: this.savedViewItems.exclude.map(item => item.entry_key) } : {}),
       grouping: this.current.groupingChain,
       presentation: this.current.presentation,
       sort: this.current.sort,

@@ -399,7 +399,7 @@ import (
 // 3.42.0 adds iMessage participant and attachment-size limits to settings.
 // 3.43.0 adds receiver-reported sender authentication to single-message reads.
 // 3.44.0 adds provider mailbox filters and state on Explore and Saved View rows.
-const APISchemaVersion = "3.44.0"
+const APISchemaVersion = "3.45.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

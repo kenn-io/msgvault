@@ -16,15 +16,21 @@ import (
 )
 
 type savedViewDefinition struct {
-	IncompatibilityReason string    `json:"incompatibility_reason,omitempty"`
-	ID                    int64     `json:"id"`
-	Name                  string    `json:"name"`
-	Description           *string   `json:"description,omitzero"`
-	CanonicalState        any       `json:"canonical_state" jsonschema:"Stored definition, including incompatible values; check incompatibility_reason before execution"`
-	SchemaVersion         int       `json:"schema_version"`
-	Revision              int64     `json:"revision"`
-	CreatedAt             time.Time `json:"created_at"`
-	UpdatedAt             time.Time `json:"updated_at"`
+	Items                 *store.SavedViewItemList     `json:"items,omitempty"`
+	StaleItemCount        int                          `json:"stale_item_count"`
+	RedactedItemCount     int                          `json:"redacted_item_count"`
+	IncludeCount          int                          `json:"include_count"`
+	ExcludeCount          int                          `json:"exclude_count"`
+	Applied               *store.SavedViewItemsApplied `json:"applied,omitempty"`
+	IncompatibilityReason string                       `json:"incompatibility_reason,omitempty"`
+	ID                    int64                        `json:"id"`
+	Name                  string                       `json:"name"`
+	Description           *string                      `json:"description,omitzero"`
+	CanonicalState        any                          `json:"canonical_state" jsonschema:"Stored definition, including incompatible values; check incompatibility_reason before execution"`
+	SchemaVersion         int                          `json:"schema_version"`
+	Revision              int64                        `json:"revision"`
+	CreatedAt             time.Time                    `json:"created_at"`
+	UpdatedAt             time.Time                    `json:"updated_at"`
 }
 
 type listSavedViewsResponse struct {
@@ -107,10 +113,11 @@ func createSavedViewDefinition(_ *handlers) toolDefinition {
 func updateSavedViewDefinition(_ *handlers) toolDefinition {
 	return savedViewTool(writeDefinition(
 		ToolUpdateSavedView,
-		"Patch mutable fields on a persistent reusable msgvault Saved View. Supply the latest revision from list_saved_views or get_saved_view; an empty description clears it. Sending canonical_state without schema_version keeps the stored schema version, so schema 1 keeps pipes as literal text. Send schema_version 2 to adopt pipe OR. Returns the updated view.",
+		"Patch mutable fields on a persistent reusable msgvault Saved View. Supply the latest revision from list_saved_views or get_saved_view; an empty description clears it. Sending canonical_state without schema_version keeps the stored schema version, so schema 1 keeps pipes as literal text. Send schema_version 2 to adopt pipe OR. Returns the updated view. include_add/exclude_add pin or hide entries by entry_key from run rows; fixes one wrong row without changing the query.",
 		closedObject(map[string]*jsonschema.Schema{
-			"id":              safeIDSchema("Stable Saved View ID"),
-			"revision":        safeIDSchema("Latest Saved View revision for optimistic concurrency"),
+			"id":          safeIDSchema("Stable Saved View ID"),
+			"revision":    safeIDSchema("Latest Saved View revision for optimistic concurrency"),
+			"include_add": savedViewItemKeysSchema(), "include_remove": savedViewItemKeysSchema(), "exclude_add": savedViewItemKeysSchema(), "exclude_remove": savedViewItemKeysSchema(),
 			"name":            stringSchema("Replacement Saved View name"),
 			"description":     stringSchema("Replacement description; use an empty string to clear it"),
 			"canonical_state": savedViewStateInputSchema(),
@@ -249,7 +256,23 @@ func (h *handlers) updateSavedView(ctx context.Context, req toolRequest) (*toolR
 		value := int(version)
 		patch.SchemaVersion = &value
 	}
-	if patch.Name == nil && patch.Description == nil && patch.CanonicalState == nil && patch.SchemaVersion == nil {
+	for key, target := range map[string]*[]string{"include_add": &patch.IncludeAdd, "include_remove": &patch.IncludeRemove, "exclude_add": &patch.ExcludeAdd, "exclude_remove": &patch.ExcludeRemove} {
+		if value, present := args[key]; present {
+			raw, err := json.Marshal(value)
+			if err != nil {
+				return toolErrorResult("invalid_arguments: invalid " + key), nil
+			}
+			var keys []string
+			if err = json.Unmarshal(raw, &keys); err != nil || len(keys) > 500 {
+				return toolErrorResult("invalid_arguments: " + key + " must contain at most 500 entry keys"), nil
+			}
+			if keys == nil {
+				keys = []string{}
+			}
+			*target = keys
+		}
+	}
+	if patch.Name == nil && patch.Description == nil && patch.CanonicalState == nil && patch.SchemaVersion == nil && patch.IncludeAdd == nil && patch.IncludeRemove == nil && patch.ExcludeAdd == nil && patch.ExcludeRemove == nil {
 		return toolErrorResult("at least one mutable Saved View field is required"), nil
 	}
 	updated, err := h.savedViews.UpdateSavedView(ctx, id, revision, patch)
@@ -279,7 +302,8 @@ func (h *handlers) deleteSavedView(ctx context.Context, req toolRequest) (*toolR
 func savedViewDefinitionFromStore(view store.SavedView) savedViewDefinition {
 	return savedViewDefinition{
 		IncompatibilityReason: view.IncompatibilityReason,
-		ID:                    view.ID, Name: view.Name, Description: view.Description,
+		Items:                 view.Items, StaleItemCount: view.StaleItemCount, RedactedItemCount: view.RedactedItemCount, IncludeCount: view.IncludeCount, ExcludeCount: view.ExcludeCount, Applied: view.Applied,
+		ID: view.ID, Name: view.Name, Description: view.Description,
 		CanonicalState: view.CanonicalState, SchemaVersion: view.SchemaVersion, Revision: view.Revision,
 		CreatedAt: view.CreatedAt, UpdatedAt: view.UpdatedAt,
 	}
@@ -318,6 +342,8 @@ func translateSavedViewRunError(err error) *toolResult {
 	code := coded.APIErrorCode()
 	var advice string
 	switch code {
+	case "saved_view_items_rejected", "saved_view_items_limit", "invalid_entry_key":
+		advice = "No item changes applied; correct the entry keys or reduce the item count"
 	case "archive_revision_changed", "search_revision_changed",
 		"candidate_snapshot_expired", "candidate_snapshot_required":
 		advice = "the archive or search index changed; run the Saved View again without a cursor"
@@ -384,4 +410,11 @@ func savedViewStateInputSchema() *jsonschema.Schema {
 
 func arraySchema(items *jsonschema.Schema) *jsonschema.Schema {
 	return &jsonschema.Schema{Type: schemaTypeArray, Items: items}
+}
+
+func savedViewItemKeysSchema() *jsonschema.Schema {
+	max := 500
+	schema := arraySchema(stringSchema("Explore entry_key returned by run rows"))
+	schema.MaxItems = &max
+	return schema
 }

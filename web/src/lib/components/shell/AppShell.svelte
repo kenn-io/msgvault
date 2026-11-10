@@ -1,9 +1,12 @@
 <script lang="ts">
+  import { getSavedView, patchSavedView } from '../../api/generated/api/api';
+  import { canonicalSavedViewState } from '../../saved-views/canonical';
   import { downloadRawMessage } from '../../api/download';
   import { relationshipDestination, tasksSettingsDestination } from './navigation';
   import { preflightExploreSelection as generatedPreflightExploreSelection } from '../../api/generated/exploration/exploration';
   import {
     Button,
+    Chip,
     CommandPalette,
     FlashBanner,
     showFlash,
@@ -229,6 +232,9 @@
   }
   function commitWorkspace(workspace: ExploreWorkspace): void {
     beforeCommit();
+    ++openingView;
+    openedSavedView = undefined;
+    exploreState.setSavedViewItems({});
     exploreState.commitWorkspace(workspace);
   }
   function openDirectoryPerson(personID: number): void {
@@ -666,10 +672,44 @@
     if (exploreState.current.workspace !== 'everything' || !candidate || candidate.mode !== mode) return;
     pendingDeletionReview = candidate;
   }
-  async function openSavedView(state: Partial<ExploreURLState>): Promise<void> {
-    if (exploreState.holdNavigation(state, () => void openSavedView(state))) return;
+  let openedSavedView = $state<SavedView>();
+  let openingView = 0;
+
+  async function saveOpenedView(): Promise<void> {
+    if (!openedSavedView) return;
+    const view = openedSavedView;
+    try {
+      const { data } = await patchSavedView(
+        { id: view.id },
+        { canonical_state: canonicalSavedViewState(exploreState.current) },
+        { ...client, headers: { 'If-Match': `"saved-view-${view.id}-r${view.revision}"` } },
+      );
+      if (!data) throw new Error('Unable to save view; reload it and retry.');
+      if (openedSavedView?.id === view.id) openedSavedView = data;
+      announceOperation(`Saved view ${data.name}.`);
+      void shellData.refresh();
+    } catch (cause) {
+      announceOperation(cause instanceof Error ? cause.message : 'Unable to save view.');
+    }
+  }
+
+  async function openSavedView(view: SavedView): Promise<void> {
+    const state = viewState(view);
+    if (exploreState.holdNavigation(state, () => void openSavedView(view))) return;
+    const opening = ++openingView;
+    try {
+      const { data } = await getSavedView({ id: view.id }, client);
+      if (opening !== openingView) return;
+      if (!data) throw new Error('Unable to open this saved view.');
+      view = data;
+    } catch (cause) {
+      announceOperation(cause instanceof Error ? cause.message : 'Unable to open this saved view.');
+      return;
+    }
+    openedSavedView = view;
+    exploreState.setSavedViewItems(view.items ?? {});
     selection.clear();
-    commitNavigation(state);
+    commitNavigation(viewState(view));
     if (exploreState.current.workspace === 'settings') return;
     await tick();
     (focusableResultsGrid() ?? searchInput)?.focus();
@@ -1026,7 +1066,7 @@
   const shellCommands = $derived([
     { id: 'go:duplicates', label: 'Possible duplicates', section: 'Go to', run: () => commitNavigation({ workspace: 'relationships', peopleDuplicates: true, identityState: 'candidate' }) },
     ...[...NAVIGATION_ITEMS, SETTINGS_ITEM, ...(['deletions'] as const).map(id => ({ id, label: workspaceLabel(id) }))].map(({ id, label }) => ({ id: `go:${id}`, label, section: 'Go to', run: () => openWorkspaceTab(id) })),
-    ...shellData.views.filter(view => !viewIncompatibility(view)).map(view => ({ id: `view:${view.id}`, label: view.name, section: 'Saved views', run: () => void openSavedView(viewState(view)) })),
+    ...shellData.views.filter(view => !viewIncompatibility(view)).map(view => ({ id: `view:${view.id}`, label: view.name, section: 'Saved views', run: () => void openSavedView(view) })),
     { id: 'display', label: 'Display', section: 'Appearance', run: () => { displayOpen = true; } },
     ...(['theme', 'density'] as const).filter(kind => appearance.temporary[kind] !== undefined).map(kind => ({ id: `display:reset-${kind}`, label: `Use Settings ${kind}`, section: 'Appearance', run: () => appearance.clearTemporary(kind) }))
   ]);
@@ -1216,7 +1256,7 @@
       onRetryViews={() => void shellData.refresh()}
       onPastRuns={() => openOperations()}
       onOpenJob={openJob}
-      onOpenView={(view) => void openSavedView(viewState(view))}
+      onOpenView={(view) => void openSavedView(view)}
       onRenameView={(view, name) => shellData.renameView(view, name)}
       onDescribeView={(view, description) => shellData.describeView(view, description)}
       onDeleteView={view => void flashViewError(shellData.deleteView(view))}
@@ -1331,7 +1371,7 @@
       {:else if exploreState.current.workspace === 'files'}
         <main class="files-shell" aria-label="Files">
           <PageHeader title="Files">
-            {#snippet actions()}<Button surface="outline" label="Save view…" onclick={() => (saveViewOpen = true)} />{/snippet}
+            {#snippet actions()}{#if openedSavedView}<Chip size="sm" uppercase={false}>{exploreState.savedViewItems.include.length} pinned · {exploreState.savedViewItems.exclude.length} hidden</Chip><Button surface="outline" label="Save changes" onclick={() => void saveOpenedView()} />{/if}<Button surface="outline" label="Save view…" onclick={() => (saveViewOpen = true)} />{/snippet}
           </PageHeader>
           {#snippet filesToolbar(controls: Snippet | undefined)}
           <ContextBar
@@ -1502,6 +1542,7 @@
           {changeConversationAnchor}
           onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)}
           onSaveView={() => (saveViewOpen = true)}
+          onSaveViewChanges={openedSavedView ? () => void saveOpenedView() : undefined}
           onStatusChange={() => void shellData.jobs.refresh(true)}
         />
       {/if}
@@ -1535,7 +1576,7 @@
         onRetryViews={() => void shellData.refresh()}
         onPastRuns={() => { void closeDrawer().then(() => openOperations()); }}
         onOpenJob={(target) => { void closeDrawer().then(() => openJob(target)); }}
-        onOpenView={(view) => { void closeDrawer().then(() => openSavedView(viewState(view))); }}
+        onOpenView={(view) => { void closeDrawer().then(() => openSavedView(view)); }}
         onRenameView={(view, name) => shellData.renameView(view, name)}
         onDescribeView={(view, description) => shellData.describeView(view, description)}
         onDeleteView={view => { void closeDrawer().then(() => flashViewError(shellData.deleteView(view))); }}

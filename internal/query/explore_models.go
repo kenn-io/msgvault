@@ -9,7 +9,10 @@ import (
 
 // ExploreRequest is the canonical modality-neutral analytical request. The
 // API layer validates the finite grouping/sort catalog before constructing it.
+type EntryItems struct{ IncludeMessageIDs, IncludeConversationIDs, ExcludeMessageIDs, ExcludeConversationIDs []int64 }
+
 type ExploreRequest struct {
+	Items EntryItems `json:"-"`
 	// PersonInteractionsOnly excludes owner-absent events and meetings from person timelines.
 	PersonInteractionsOnly bool `json:"-"`
 	// SentOnly excludes unsent messages before grouping for contact activity timelines.

@@ -245,6 +245,15 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 	if err := s.bumpAccountIdentityRevisionContext(ctx, tx); err != nil {
 		return err
 	}
+	remap := ItemRemap{Messages: map[int64]int64{}, Conversations: conversations, Sources: map[int64]int64{from: into}}
+	for _, m := range plan.messages {
+		if m.survivor != 0 {
+			remap.Messages[m.id] = m.survivor
+		}
+	}
+	if err := s.remapSavedViewItemsTx(ctx, tx, remap); err != nil {
+		return err
+	}
 	return s.bumpDerivedDataRevision(tx)
 }
 

@@ -2802,6 +2802,38 @@ unsupported schema version, `404 saved_view_not_found`,
 
 ---
 
+A view also carries pinned and hidden entries, separate from `canonical_state`.
+`GET` and run responses include `items.include` and `items.exclude`, with each
+entry's `entry_key`, `source_id`, `message_id` or `conversation_id`, `kind`, and
+`added_by`. `include_count` and `exclude_count` count live, visible entries;
+`stale_item_count` counts missing or mismatched targets, and
+`redacted_item_count` counts entries omitted by source access restrictions.
+List responses expose the same counts.
+
+Use the existing PATCH endpoint with any combination of `include_add`,
+`include_remove`, `exclude_add`, and `exclude_remove` arrays of entry keys.
+A definition and item edit share one revision check and one transaction.
+Omitting the item arrays preserves the stored items byte for byte. Removes run
+before adds; adding to one mode replaces the opposite mode. Attribution is
+`owner` or `agent:<grant label>` from request authentication. Responses include
+`applied` with actual set changes: `include_added`, `include_removed`,
+`exclude_added`, and `exclude_removed`.
+
+Each operation accepts at most 500 keys. The resulting view allows 500 entries
+per mode and at most 128 KiB of stored item JSON. Exceeding either bound returns
+`400 saved_view_items_limit`. An unresolved or invalid key rejects the entire
+PATCH with `422 saved_view_items_rejected`; `rejected` lists `entry_key` and a
+reason (`not_found`, `invalid_entry_key`, or `use_conversation_key`). An entry
+outside the caller's source scope is reported as `not_found`.
+
+Pins bypass matching predicates; excludes then remove matching entries. Source
+access restrictions remain mandatory. Explore entry, group, and file requests
+also accept `include_keys` and `exclude_keys` (up to 500 each). At execution,
+unknown keys and entries outside source scope are omitted. Malformed keys return
+`400 invalid_entry_key` naming the array index. Saved runs load live item keys
+from the view; no separate items route is needed. See the
+[workflow guide](usage/saved-views.md) for Web, CLI, and MCP usage.
+
 ### Run a Saved View {#post-apiv1saved-viewsidrun}
 
 **Endpoint:** `POST /api/v1/saved-views/{id}/run`

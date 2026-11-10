@@ -5585,3 +5585,9 @@ msgvault policy reset SOURCE_ID CONVERSATION_ID
 `list` always prints JSON. Saved CLI overrides win over config. `reset` restores
 config or automatic selection. Effective tiers remain `full` in this release;
 `stub` and `skip` are rejected. No messages are removed.
+
+## Saved Views
+
+Use `msgvault views show|run|pin|unpin|exclude|unexclude` with a view ID or exact
+name. See [Saved Views](usage/saved-views.md) for arguments, pagination, item
+limits, and correction behavior.

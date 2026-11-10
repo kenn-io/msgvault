@@ -81,3 +81,16 @@ func TestIsChatEntryClassification(t *testing.T) {
 		})
 	}
 }
+
+func TestParseEntryKeyRoundTrips(t *testing.T) {
+	for _, facts := range []EntryKeyFacts{{SourceID: 3, MessageID: 42}, {SourceID: 1, SourceMessageID: "a:b:c"}, {SourceID: 2, ConversationID: 9, MessageType: "whatsapp", ConversationType: "group_chat"}} {
+		key := facts.EntryKey()
+		ref, err := ParseEntryKey(key)
+		require.NoError(t, err)
+		assert.Equal(t, facts.SourceID, ref.SourceID)
+	}
+	for _, key := range []string{"", "source:0:message:x", "source:-1:message:x", "source:1:message:", "source:1:conversation:0", "source:01:message:x", "source:1:unknown:x", "source:1:conversation:2:x"} {
+		_, err := ParseEntryKey(key)
+		assert.ErrorIs(t, err, ErrInvalidEntryKey)
+	}
+}

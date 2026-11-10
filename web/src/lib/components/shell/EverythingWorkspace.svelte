@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tasksSettingsDestination } from './navigation';
-  import { Button, PageHeader } from '@kenn-io/kit-ui';
+  import { Button, Chip, PageHeader } from '@kenn-io/kit-ui';
   import { onDestroy, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -86,6 +86,7 @@
     changeConversationAnchor: (anchorId: number) => void;
     onOpenMeeting?: (meeting: MeetingRef) => void;
     onSaveView: () => void;
+ onSaveViewChanges?: () => void;
     onStatusChange?: () => void;
   }
 
@@ -123,6 +124,7 @@
     changeConversationAnchor,
     onOpenMeeting = undefined,
     onSaveView,
+    onSaveViewChanges,
     onStatusChange = () => undefined,
   }: Props = $props();
 
@@ -630,7 +632,7 @@
 
 <svelte:element this={scope ? 'div' : 'main'} class="everything-workspace" aria-label={scope ? undefined : 'Messages'}>
   {#if !scope}<PageHeader title="Messages">
-    {#snippet actions()}<Button surface="outline" label="Save view…" onclick={onSaveView} />{/snippet}
+    {#snippet actions()}{#if onSaveViewChanges}<Chip size="sm" uppercase={false}>{exploreState.savedViewItems.include.length} pinned · {exploreState.savedViewItems.exclude.length} hidden</Chip><Button surface="outline" label="Save changes" onclick={onSaveViewChanges} />{/if}<Button surface="outline" label="Save view…" onclick={onSaveView} />{/snippet}
   </PageHeader>{/if}
 
   <ContextBar

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -357,4 +358,42 @@ func TestSavedViewReadToolsPreserveDaemonMetadata(t *testing.T) {
 			assertions.Equal(map[string]any{"text": "invoice"}, state["query"])
 		})
 	}
+}
+
+// A synthetic HTTP peer exercises the generated client/MCP wire contract;
+// storage and all-or-nothing rejection are covered by the API/store tests.
+func TestUpdateSavedViewItemArrays(t *testing.T) {
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var patch map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&patch))
+		assert.Equal(t, []any{"source:1:message:one"}, patch["include_add"])
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":7,"name":"Items","canonical_state":{},"schema_version":2,"revision":2,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","items":{"include":[{"entry_key":"source:1:message:one","kind":"message","message_id":1,"source_id":1,"added_by":"owner"}],"exclude":[]},"stale_item_count":0,"redacted_item_count":0,"include_count":1,"exclude_count":0,"applied":{"include_added":1,"include_removed":0,"exclude_added":0,"exclude_removed":0}}`))
+	}))
+	t.Cleanup(daemon.Close)
+	client, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, AllowInsecure: true, HTTPClient: daemon.Client(), Context: t.Context()})
+	require.NoError(t, err)
+	result := rawCallTool(t, ServeOptions{Engine: &querytest.MockEngine{}, SavedViews: client}, ToolUpdateSavedView, map[string]any{"id": 7, "revision": 1, "include_add": []any{"source:1:message:one"}})
+	require.NotEqual(t, true, result["isError"], "%#v", result)
+	definition := savedViewTestMap(t, result["structuredContent"])
+	assert.Equal(t, float64(1), definition["include_count"])
+	assert.Contains(t, definition, "items")
+	assert.Contains(t, definition, "applied")
+}
+
+func TestUpdateSavedViewItemsRejected(t *testing.T) {
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"error":"saved_view_items_rejected","message":"source:1:message:missing: not_found","rejected":[{"entry_key":"source:1:message:missing","reason":"not_found"}]}`))
+	}))
+	t.Cleanup(daemon.Close)
+	client, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, AllowInsecure: true, HTTPClient: daemon.Client(), Context: t.Context()})
+	require.NoError(t, err)
+	result := rawCallTool(t, ServeOptions{Engine: &querytest.MockEngine{}, SavedViews: client}, ToolUpdateSavedView, map[string]any{"id": 7, "revision": 1, "include_add": []any{"source:1:message:missing"}})
+	assert.Equal(t, true, result["isError"])
+	message := savedViewToolErrorText(t, result)
+	assert.True(t, strings.HasPrefix(message, "saved_view_items_rejected:"), message)
+	assert.Contains(t, message, "source:1:message:missing")
+	assert.Contains(t, message, "not_found")
 }

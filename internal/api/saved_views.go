@@ -21,6 +21,10 @@ import (
 const savedViewsPath = "/api/v1/saved-views"
 
 type SavedViewStore interface {
+	GetSavedViewItems(context.Context, int64) (store.SavedViewItems, error)
+	ChangeSavedViewItems(context.Context, int64, int64, store.SavedViewItemChange) (*store.SavedView, error)
+	ResolveEntryKeys(context.Context, []string) (map[string]store.ResolvedEntry, []store.EntryKeyRejection, error)
+	SavedViewItemsForView(context.Context, *store.SavedView) (store.SavedViewItemList, int, error)
 	CreateSavedView(ctx context.Context, input store.SavedViewInput) (*store.SavedView, error)
 	ListSavedViews(ctx context.Context) ([]store.SavedView, error)
 	GetSavedView(ctx context.Context, id int64) (*store.SavedView, error)
@@ -29,15 +33,21 @@ type SavedViewStore interface {
 }
 
 type SavedView struct {
-	IncompatibilityReason string         `json:"incompatibility_reason,omitempty" doc:"Definition validation error that prevents this Saved View from executing"`
-	ID                    int64          `json:"id"`
-	Name                  string         `json:"name"`
-	Description           *string        `json:"description,omitzero" nullable:"false"`
-	CanonicalState        jsontext.Value `json:"canonical_state" doc:"Stored definition, including incompatible values; check incompatibility_reason before execution"`
-	SchemaVersion         int            `json:"schema_version"`
-	Revision              int64          `json:"revision"`
-	CreatedAt             time.Time      `json:"created_at"`
-	UpdatedAt             time.Time      `json:"updated_at"`
+	Items                 *store.SavedViewItemList     `json:"items,omitempty"`
+	StaleItemCount        int                          `json:"stale_item_count"`
+	RedactedItemCount     int                          `json:"redacted_item_count"`
+	IncludeCount          int                          `json:"include_count"`
+	ExcludeCount          int                          `json:"exclude_count"`
+	Applied               *store.SavedViewItemsApplied `json:"applied,omitempty"`
+	IncompatibilityReason string                       `json:"incompatibility_reason,omitempty" doc:"Definition validation error that prevents this Saved View from executing"`
+	ID                    int64                        `json:"id"`
+	Name                  string                       `json:"name"`
+	Description           *string                      `json:"description,omitzero" nullable:"false"`
+	CanonicalState        jsontext.Value               `json:"canonical_state" doc:"Stored definition, including incompatible values; check incompatibility_reason before execution"`
+	SchemaVersion         int                          `json:"schema_version"`
+	Revision              int64                        `json:"revision"`
+	CreatedAt             time.Time                    `json:"created_at"`
+	UpdatedAt             time.Time                    `json:"updated_at"`
 }
 
 type SavedViewsResponse struct {
@@ -52,6 +62,10 @@ type CreateSavedViewRequest struct {
 }
 
 type PatchSavedViewRequest struct {
+	IncludeAdd     []string                      `json:"include_add,omitempty" maxItems:"500"`
+	IncludeRemove  []string                      `json:"include_remove,omitempty" maxItems:"500"`
+	ExcludeAdd     []string                      `json:"exclude_add,omitempty" maxItems:"500"`
+	ExcludeRemove  []string                      `json:"exclude_remove,omitempty" maxItems:"500"`
 	Name           *string                       `json:"name,omitzero" nullable:"false"`
 	Description    *string                       `json:"description,omitzero" nullable:"false"`
 	CanonicalState *store.SavedViewStateEnvelope `json:"canonical_state,omitzero" nullable:"false"`
@@ -85,7 +99,7 @@ func (s *Server) registerSavedViewRoutes(api huma.API) {
 	patch.Responses = jsonResponsesFor[SavedView](api)
 	addSavedViewETagHeader(patch.Responses[httpStatusKey(http.StatusOK)])
 	addErrorResponses(api, patch.Responses, http.StatusBadRequest, http.StatusConflict, http.StatusNotFound,
-		http.StatusPreconditionRequired, http.StatusServiceUnavailable)
+		http.StatusPreconditionRequired, http.StatusUnprocessableEntity, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, patch, s.handlePatchSavedView)
 
 	remove := rawAPIV1Operation("deleteSavedView", http.MethodDelete, "/saved-views/{id}", "Delete a shared analytical Saved View")
@@ -143,7 +157,15 @@ func (s *Server) handleListSavedViews(w http.ResponseWriter, r *http.Request) {
 	response := SavedViewsResponse{SavedViews: make([]SavedView, 0, len(views))}
 	for i := range views {
 		_, err := prepareSavedView(views[i])
-		response.SavedViews = append(response.SavedViews, savedViewResponse(&views[i], err))
+		responseView, itemErr := s.savedViewItemsResponse(r, &views[i])
+		if itemErr != nil {
+			s.writeSavedViewError(w, itemErr)
+			return
+		}
+		if err != nil {
+			responseView.IncompatibilityReason = err.Error()
+		}
+		response.SavedViews = append(response.SavedViews, responseView)
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, response)
@@ -196,7 +218,14 @@ func (s *Server) handleGetSavedView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, incompatibility := prepareSavedView(*view)
-	response := savedViewResponse(view, incompatibility)
+	response, itemErr := s.savedViewItemsResponse(r, view)
+	if itemErr != nil {
+		s.writeSavedViewError(w, itemErr)
+		return
+	}
+	if incompatibility != nil {
+		response.IncompatibilityReason = incompatibility.Error()
+	}
 	w.Header().Set(etagHeaderName, savedViewETag(*view))
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, response)
@@ -223,7 +252,7 @@ func (s *Server) handlePatchSavedView(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", "canonical_state must not be null")
 		return
 	}
-	if request.Name == nil && request.Description == nil && request.CanonicalState == nil && request.SchemaVersion == nil {
+	if request.Name == nil && request.Description == nil && request.CanonicalState == nil && request.SchemaVersion == nil && request.IncludeAdd == nil && request.IncludeRemove == nil && request.ExcludeAdd == nil && request.ExcludeRemove == nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "At least one Saved View field is required")
 		return
 	}
@@ -258,12 +287,24 @@ func (s *Server) handlePatchSavedView(w http.ResponseWriter, r *http.Request) {
 		s.writeSavedViewError(w, err)
 		return
 	}
+	change, ok := s.patchSavedViewItemChange(w, r, request)
+	if !ok {
+		return
+	}
+	input.ItemChange = change
 	updated, err := s.savedViewStore.UpdateSavedView(r.Context(), id, revision, input)
 	if err != nil {
 		s.writeSavedViewError(w, err)
 		return
 	}
-	response := savedViewResponse(updated, nil)
+	response, itemErr := s.savedViewItemsResponse(r, updated)
+	if itemErr != nil {
+		s.writeSavedViewError(w, itemErr)
+		return
+	}
+	if change != nil {
+		response.Applied = updated.Applied
+	}
 	w.Header().Set(etagHeaderName, savedViewETag(*updated))
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, response)
@@ -406,6 +447,10 @@ func (s *Server) writeSavedViewError(w http.ResponseWriter, err error) {
 		return
 	}
 	switch {
+	case errors.Is(err, store.ErrSavedViewItemsLimit):
+		writeError(w, 400, "saved_view_items_limit", err.Error())
+	case errors.Is(err, store.ErrSavedViewItemsInvalid):
+		writeError(w, 400, "invalid_saved_view", "items_json_invalid")
 	case errors.Is(err, store.ErrSavedViewNotFound):
 		writeError(w, http.StatusNotFound, "saved_view_not_found", "Saved View not found")
 	case errors.Is(err, store.ErrSavedViewNameConflict):

@@ -573,6 +573,13 @@ func (s *Store) MergeDuplicates(
 				return err
 			}
 		}
+		remap := ItemRemap{Messages: map[int64]int64{}}
+		for _, id := range duplicateIDs {
+			remap.Messages[id] = survivorID
+		}
+		if err := s.remapSavedViewItemsTx(ctx, tx, remap); err != nil {
+			return err
+		}
 		if result.RawMIMEBackfilled > 0 {
 			_, err := s.refreshAccountAttributionTx(ctx, tx, survivorID, deliveryInput{reloadMIME: true})
 			return err

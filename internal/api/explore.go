@@ -98,6 +98,8 @@ var exploreGroupDimensions = func() []ExploreGroupDimension {
 }()
 
 type ExploreHTTPRequest struct {
+	IncludeKeys         []string                `json:"include_keys,omitempty" maxItems:"500"`
+	ExcludeKeys         []string                `json:"exclude_keys,omitempty" maxItems:"500"`
 	Filters             []ExploreFilter         `json:"filters,omitempty"`
 	Query               string                  `json:"query,omitempty" doc:"Search query; full_text accepts standalone pipe-separated OR alternatives; other modes read pipes as text"`
 	SearchMode          string                  `json:"search_mode,omitempty" enum:"full_text,semantic,hybrid" doc:"Search mode; pipe OR is full_text only"`
@@ -131,6 +133,8 @@ type ExploreGroupSort struct {
 }
 
 type ExploreGroupsHTTPRequest struct {
+	IncludeKeys  []string                `json:"include_keys,omitempty" maxItems:"500"`
+	ExcludeKeys  []string                `json:"exclude_keys,omitempty" maxItems:"500"`
 	Timezone     string                  `json:"timezone,omitempty" doc:"IANA timezone for day grouping; defaults to UTC"`
 	SentOnly     bool                    `json:"sent_only,omitempty" doc:"Count sent messages only, excluding drafts and unsent items"`
 	Filters      []ExploreFilter         `json:"filters,omitempty"`
@@ -477,6 +481,11 @@ func (s *Server) handleExploreGroups(w http.ResponseWriter, r *http.Request) {
 		s.writeExploreFilterError(w, err, "invalid_filter")
 		return
 	}
+	items, itemErr := s.resolveExploreItems(r.Context(), request.IncludeKeys, request.ExcludeKeys)
+	if itemErr != nil {
+		s.writeExploreFilterError(w, itemErr, "invalid_entry_key")
+		return
+	}
 	searchDeletionScope := applySemanticDeletionScope(request.SearchMode, &ctx)
 	if request.Limit == 0 {
 		request.Limit = exploreDefaultLimit
@@ -517,7 +526,7 @@ func (s *Server) handleExploreGroups(w http.ResponseWriter, r *http.Request) {
 	}
 	groupingStarted := time.Now()
 	result, err := analyzer.ExploreGroups(r.Context(), query.ExploreGroupRequest{
-		Explore: query.ExploreRequest{Context: ctx, Search: searchSpec, SentOnly: request.SentOnly}, Dimension: string(dimension),
+		Explore: query.ExploreRequest{Context: ctx, Search: searchSpec, SentOnly: request.SentOnly, Items: items}, Dimension: string(dimension),
 		GroupKey: request.GroupKey, Timezone: request.Timezone, Sort: sortSpec,
 		Page: query.PageSpec{Limit: request.Limit, Offset: offset},
 	})
@@ -805,6 +814,11 @@ func (s *Server) prepareExploreRequest(w http.ResponseWriter, r *http.Request, s
 		s.writeExploreFilterError(w, err, "identity_filter_unavailable")
 		return explorePrepared{}, false
 	}
+	items, itemErr := s.resolveExploreItems(r.Context(), request.IncludeKeys, request.ExcludeKeys)
+	if itemErr != nil {
+		s.writeExploreFilterError(w, itemErr, "invalid_entry_key")
+		return explorePrepared{}, false
+	}
 	searchDeletionScope := applySemanticDeletionScope(request.SearchMode, &ctx)
 	requestHash := canonicalScopedExploreHash(request, scope)
 	offset := 0
@@ -820,7 +834,7 @@ func (s *Server) prepareExploreRequest(w http.ResponseWriter, r *http.Request, s
 		request: request, requestHash: requestHash, offset: offset,
 		searchDeletionScope: searchDeletionScope,
 		query: query.ExploreRequest{
-			Context: ctx, Presentation: query.PresentationTable,
+			Context: ctx, Items: items, Presentation: query.PresentationTable,
 			Sort: []query.SortSpec{{Field: "sent_at", Direction: apiSortDirectionDesc}},
 			Page: query.PageSpec{Limit: request.Limit, Offset: offset},
 		},
@@ -877,6 +891,11 @@ func (s *Server) resolveExploreIdentityContext(
 }
 
 func (s *Server) writeExploreFilterError(w http.ResponseWriter, err error, fallbackCode string) {
+	var apiErr *apiHTTPError
+	if errors.As(err, &apiErr) {
+		writeAPIHTTPError(w, apiErr)
+		return
+	}
 	if errors.Is(err, errInvalidExploreIdentityFilter) {
 		writeError(w, http.StatusBadRequest, "invalid_identity_filter", "identity filter is malformed, unconfirmed, or does not match the selected source")
 		return
@@ -1365,6 +1384,11 @@ func (s *Server) prepareResolvedExplorePredicate(
 	if err := s.resolveExploreIdentityContext(ctx, prepared.request.Filters, &prepared.query.Context); err != nil {
 		return explorePrepared{}, err
 	}
+	items, err := s.resolveExploreItems(ctx, request.IncludeKeys, request.ExcludeKeys)
+	if err != nil {
+		return explorePrepared{}, err
+	}
+	prepared.query.Items = items
 	return prepared, nil
 }
 

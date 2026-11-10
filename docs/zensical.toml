@@ -22,6 +22,7 @@ nav = [
     {"Web UI" = "web-ui.md"},
     {"Terminal UI" = "usage/tui.md"},
     {"Searching" = "usage/searching.md"},
+    {"Saved Views" = "usage/saved-views.md"},
     {"Semantic and Visual Search" = "usage/vector-search.md"},
     {"Document Attachment Indexing" = "usage/document-indexing.md"},
     {"Recommended Configuration" = "usage/recommended-configuration.md"},

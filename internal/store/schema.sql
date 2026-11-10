@@ -2533,12 +2533,13 @@ CREATE INDEX IF NOT EXISTS idx_collection_sources_source_id
     ON collection_sources(source_id);
 
 -- Daemon-owned analytical Saved Views. Canonical state contains only the
--- query/view definition; result rows and transient selection remain client
--- state and are never persisted here.
+-- query/view definition. items_json holds bounded owner- or agent-chosen
+-- pinned and excluded entries by internal id. Result rows remain client state.
 CREATE TABLE IF NOT EXISTS saved_views (
     id              INTEGER PRIMARY KEY,
     name            TEXT NOT NULL UNIQUE,
     description     TEXT,
+    items_json      TEXT,
     canonical_state JSON NOT NULL,
     schema_version  INTEGER NOT NULL,
     revision        INTEGER NOT NULL DEFAULT 1,

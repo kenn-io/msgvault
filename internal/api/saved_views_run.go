@@ -88,6 +88,17 @@ func (s *Server) handleRunSavedView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state, predicate := prepared.state, prepared.predicate
+	itemResponse, itemErr := s.savedViewItemsResponse(r, view)
+	if itemErr != nil {
+		s.writeSavedViewError(w, itemErr)
+		return
+	}
+	for _, item := range itemResponse.Items.Include {
+		predicate.IncludeKeys = append(predicate.IncludeKeys, item.EntryKey)
+	}
+	for _, item := range itemResponse.Items.Exclude {
+		predicate.ExcludeKeys = append(predicate.ExcludeKeys, item.EntryKey)
+	}
 	var page RunSavedViewResponse
 	switch {
 	case len(state.Grouping) > 0:
@@ -103,7 +114,7 @@ func (s *Server) handleRunSavedView(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	page.SavedView = savedViewResponse(view, nil)
+	page.SavedView = itemResponse
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, page)
 }
@@ -182,6 +193,7 @@ func (s *Server) runSavedViewGroups(
 ) (RunSavedViewResponse, bool) {
 	body := ExploreGroupsHTTPRequest{
 		Filters: predicate.Filters, Query: predicate.Query, SearchMode: predicate.SearchMode,
+		IncludeKeys: predicate.IncludeKeys, ExcludeKeys: predicate.ExcludeKeys,
 		Grouping:     []ExploreGroupDimension{ExploreGroupDimension(dimension)},
 		Presentation: explorecatalog.PresentationTable, Cursor: request.Cursor, Limit: request.Limit,
 	}

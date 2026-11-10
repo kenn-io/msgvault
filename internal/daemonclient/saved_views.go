@@ -78,6 +78,7 @@ func (c *Client) UpdateSavedView(
 ) (*store.SavedView, error) {
 	body := generated.PatchSavedViewRequest{
 		Name: patch.Name, Description: patch.Description,
+		IncludeAdd: patch.IncludeAdd, IncludeRemove: patch.IncludeRemove, ExcludeAdd: patch.ExcludeAdd, ExcludeRemove: patch.ExcludeRemove,
 	}
 	if patch.CanonicalState != nil {
 		state, err := savedViewStateFromEnvelope(*patch.CanonicalState)
@@ -193,20 +194,15 @@ func runPageFromGenerated(result generated.RunSavedViewResponse) (*savedview.Run
 }
 
 func savedViewFromGenerated(view generated.SavedView) (*store.SavedView, error) {
-	state, err := json.Marshal(view.CanonicalState, json.Deterministic(true))
+	data, err := json.Marshal(view)
 	if err != nil {
-		return nil, fmt.Errorf("encode Saved View %d canonical state: %w", view.ID, err)
+		return nil, fmt.Errorf("encode Saved View %d: %w", view.ID, err)
 	}
-	var reason string
-	if view.IncompatibilityReason != nil {
-		reason = *view.IncompatibilityReason
+	var result store.SavedView
+	if err = json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("decode Saved View %d: %w", view.ID, err)
 	}
-	return &store.SavedView{
-		IncompatibilityReason: reason,
-		ID:                    view.ID, Name: view.Name, Description: view.Description,
-		CanonicalState: state, SchemaVersion: int(view.SchemaVersion), Revision: view.Revision,
-		CreatedAt: view.CreatedAt, UpdatedAt: view.UpdatedAt,
-	}, nil
+	return &result, nil
 }
 
 func savedViewStateFromJSON(data []byte) (generated.SavedViewStateEnvelope, error) {

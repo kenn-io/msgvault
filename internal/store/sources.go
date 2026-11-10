@@ -246,7 +246,10 @@ func (s *Store) AcquireSourceRemovalLockContext(ctx context.Context, sourceID in
 // No-op timeout reset on SQLite.
 func (s *Store) RemoveSource(sourceID int64) error {
 	return s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
-		return s.removeSourceExec(ctx, tx, sourceID)
+		if err := s.removeSourceExec(ctx, tx, sourceID); err != nil {
+			return err
+		}
+		return s.pruneSavedViewItemsForSource(ctx, tx.Tx, sourceID)
 	})
 }
 
@@ -385,6 +388,9 @@ func (s *Store) RemoveSourceSerialized(
 		packedMappingsRemoved += removed
 	}
 
+	if err := s.pruneSavedViewItemsForSource(ctx, conn, sourceID); err != nil {
+		return hadActiveSync, 0, err
+	}
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
 		return hadActiveSync, 0, fmt.Errorf("commit: %w", err)
 	}

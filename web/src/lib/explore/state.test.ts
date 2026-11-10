@@ -1,3 +1,4 @@
+import { canonicalSavedViewState } from '../saved-views/canonical';
 import { describe, expect, it, vi } from 'vitest';
 import { waitFor } from '@testing-library/svelte';
 
@@ -1847,4 +1848,18 @@ it('round-trips provider Inbox Unread filters through the URL', () => {
   ];
   const url = serializeExploreURLState({ ...defaultExploreURLState, filters });
   expect(parseExploreURLState(url).filters).toEqual(filters);
+});
+
+describe('Saved View item population', () => {
+  it('passes live pinned and hidden keys while keeping canonical state separate', () => {
+    const state = new ExploreState(window);
+    state.setSavedViewItems({ include: [{ entry_key: 'source:1:message:a' }, { entry_key: 'source:1:message:b' }], exclude: [{ entry_key: 'source:1:message:c' }] });
+    expect(state.predicate().include_keys).toEqual(['source:1:message:a', 'source:1:message:b']);
+    expect(state.predicate().exclude_keys).toEqual(['source:1:message:c']);
+    state.commitNavigation({ query: 'new filter' });
+    expect(state.predicate().include_keys).toHaveLength(2);
+    expect(canonicalSavedViewState(state.current)).not.toHaveProperty('include_keys');
+    expect(canonicalSavedViewState(state.current)).not.toHaveProperty('include_add');
+    state.destroy();
+  });
 });

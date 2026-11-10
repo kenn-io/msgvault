@@ -2337,12 +2337,13 @@ CREATE INDEX IF NOT EXISTS idx_employments_organization_current_edge
 CREATE INDEX IF NOT EXISTS idx_employments_address ON employments(address_id) WHERE address_id IS NOT NULL;
 
 -- Daemon-owned analytical Saved Views. Canonical state contains only the
--- query/view definition; result rows and transient selection remain client
--- state and are never persisted here.
+-- query/view definition. items_json holds bounded owner- or agent-chosen
+-- pinned and excluded entries by internal id. Result rows remain client state.
 CREATE TABLE IF NOT EXISTS saved_views (
     id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name            TEXT NOT NULL UNIQUE,
     description     TEXT,
+    items_json      JSONB,
     canonical_state JSONB NOT NULL,
     schema_version  INTEGER NOT NULL,
     revision        BIGINT NOT NULL DEFAULT 1,

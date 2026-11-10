@@ -32,6 +32,7 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 
 - [Web UI](https://msgvault.io/docs/web-ui.md): the browser application
 - [Terminal UI](https://msgvault.io/docs/usage/tui.md)
+- [Saved Views](https://msgvault.io/docs/usage/saved-views.md): shared queries with pinned and hidden entries
 - [Searching](https://msgvault.io/docs/usage/searching.md): query syntax and modes
 - [Semantic and Visual Search](https://msgvault.io/docs/usage/vector-search.md): semantic and hybrid setup
 - [Document Attachment Indexing](https://msgvault.io/docs/usage/document-indexing.md): Docbank-backed extraction

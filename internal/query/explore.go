@@ -462,10 +462,11 @@ func buildExploreConditions(request ExploreRequest) (string, []any) {
 			conditions = append(conditions, "message_id IN ("+strings.Join(parts, ",")+")")
 		}
 	}
-	if len(conditions) == 0 {
-		return "true", args
+	base := "true"
+	if len(conditions) > 0 {
+		base = strings.Join(conditions, " AND ")
 	}
-	return strings.Join(conditions, " AND "), args
+	return applyExploreItems(base, args, request.Items)
 }
 
 func buildIdentityPredicateCondition(identity *IdentityPredicate, prefix string) (string, []any) {
@@ -1041,4 +1042,37 @@ func exploreLogicalEntryKeysCTE() string {
     FROM classified
     WHERE is_chat
     GROUP BY source_id, conversation_id`
+}
+
+func applyExploreItems(base string, args []any, items EntryItems) (string, []any) {
+	predicate := func(messages, conversations []int64) string {
+		parts := []string{}
+		for i, ids := range [][]int64{messages, conversations} {
+			if len(ids) == 0 {
+				continue
+			}
+			marks := make([]string, len(ids))
+			for j, id := range ids {
+				marks[j] = "?"
+				args = append(args, id)
+			}
+			column := "message_id"
+			if i == 1 {
+				column = "conversation_id"
+			}
+			part := column + " IN (" + strings.Join(marks, ",") + ")"
+			if i == 1 {
+				part = "(" + sqlIsChatPredicate("message_type", "conversation_type") + " AND " + part + ")"
+			}
+			parts = append(parts, part)
+		}
+		return strings.Join(parts, " OR ")
+	}
+	if include := predicate(items.IncludeMessageIDs, items.IncludeConversationIDs); include != "" {
+		base = "(" + base + " OR " + include + ")"
+	}
+	if exclude := predicate(items.ExcludeMessageIDs, items.ExcludeConversationIDs); exclude != "" {
+		base = "(" + base + ") AND NOT (" + exclude + ")"
+	}
+	return base, args
 }

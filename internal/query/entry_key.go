@@ -1,6 +1,7 @@
 package query
 
 import (
+	"go.kenn.io/msgvault/internal/entrykey"
 	"strconv"
 
 	"go.kenn.io/msgvault/internal/identityindex"
@@ -63,3 +64,16 @@ func sqlEntryKeyExpr(alias string) string {
 		"\n\t\tTHEN " + sqlConversationEntryKeyExpr(alias) +
 		"\n\t\tELSE " + sqlMessageEntryKeyExpr(alias) + " END"
 }
+
+// Parsing lives below query so Store can resolve keys without an import cycle.
+type EntryKeyKind = entrykey.Kind
+type EntryKeyRef = entrykey.Ref
+
+const (
+	EntryKeyMessage      = entrykey.Message
+	EntryKeyConversation = entrykey.Conversation
+)
+
+var ErrInvalidEntryKey = entrykey.ErrInvalid
+
+func ParseEntryKey(key string) (EntryKeyRef, error) { return entrykey.Parse(key) }
