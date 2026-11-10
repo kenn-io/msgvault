@@ -70,6 +70,9 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 		err := reader.rows(ctx, file, stats, func(row csvRow) error {
 			id := row.Columns["id"]
 			if file.kind == "chat" {
+				if strings.TrimSpace(row.Columns["channel_url"]) == "" {
+					return errors.New("chat row missing channel_url")
+				}
 				id = row.Columns["message_id"]
 			}
 			if strings.TrimSpace(id) == "" {
@@ -127,12 +130,8 @@ func importBatch(ctx context.Context, st *store.Store, sourceID int64, owner, ki
 			body = c["message"]
 			sender = displayHandle(c["username"])
 			date = c["created_at"]
-			if c["channel_url"] != "" {
-				conv = "chat:channel:" + c["channel_url"]
-				title = c["channel_name"]
-			} else {
-				conv = "chat:item:" + c["message_id"]
-			}
+			conv = "chat:channel:" + c["channel_url"]
+			title = c["channel_name"]
 		case "pm":
 			convType = "chat"
 			sender = displayHandle(c["from"])

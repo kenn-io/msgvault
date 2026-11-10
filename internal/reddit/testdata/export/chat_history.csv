@@ -2,5 +2,5 @@ message_id,created_at,updated_at,username,message,thread_parent_message_id,chann
 c2,2026-05-24 03:19:35 UTC,,Fictional_Peer,"lantern chat
 second line",c1,https://example.com/channel/fictional,,Invented channel,private
 c1,2026-05-24T03:18:00Z,,fictional_owner,lantern parent,,https://example.com/channel/fictional,,Invented channel,private
-c1,,,fictional_owner,duplicate must retain original,,,,,
-c3,unreadable,,[deleted],lantern unknown,,,,,
+c1,,,fictional_owner,duplicate must retain original,,https://example.com/channel/fictional,,,
+c3,unreadable,,[deleted],lantern unknown,,https://example.com/channel/fictional,,,

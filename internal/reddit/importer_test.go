@@ -106,7 +106,7 @@ func TestImportInterruptedRepeatAndOriginalRetention(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	root := t.TempDir()
-	require.NoError(os.WriteFile(filepath.Join(root, "chat_history.csv"), []byte("message_id,message,thread_parent_message_id\nchild,original,parent\nparent,parent body,\n"), 0600))
+	require.NoError(os.WriteFile(filepath.Join(root, "chat_history.csv"), []byte("message_id,message,thread_parent_message_id,channel_url\nchild,original,parent,channel\nparent,parent body,,channel\n"), 0600))
 	st := testutil.NewTestStore(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -136,7 +136,7 @@ func TestImportInterruptedRepeatAndOriginalRetention(t *testing.T) {
 	var parent string
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT p.source_message_id FROM messages m JOIN messages p ON p.id=m.reply_to_message_id WHERE m.source_message_id='chat:child'").Scan(&parent))
 	assert.Equal("chat:parent", parent)
-	require.NoError(os.WriteFile(filepath.Join(root, "chat_history.csv"), []byte("message_id,message\nchild,changed\n"), 0600))
+	require.NoError(os.WriteFile(filepath.Join(root, "chat_history.csv"), []byte("message_id,message,channel_url\nchild,changed,channel\n"), 0600))
 	summary, err = Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
 	require.NoError(err)
 	assert.Zero(summary.Added)
@@ -260,7 +260,7 @@ func TestImportCoverageCountsExistingRecords(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	root := t.TempDir()
-	chat := "message_id,message,username,created_at\none,https://example.com/content,[deleted],bad\none,https://example.com/duplicate,[removed],bad\n"
+	chat := "message_id,message,username,created_at,channel_url\none,https://example.com/content,[deleted],bad,channel\none,https://example.com/duplicate,[removed],bad,channel\n"
 	pm := "id,body,from,date\ntwo,https://example.com/content,[deleted],bad\n"
 	for name, data := range map[string]string{"chat_history.csv": chat, "messages.csv": pm, "messages_archive.csv": pm} {
 		require.NoError(os.WriteFile(filepath.Join(root, name), []byte(data), 0600))
@@ -295,7 +295,7 @@ func TestImportCommentMediaInBodyAndSearch(t *testing.T) {
 func TestImportPreservesHandleDisplayCase(t *testing.T) {
 	require := require.New(t)
 	root := t.TempDir()
-	require.NoError(os.WriteFile(filepath.Join(root, "chat_history.csv"), []byte("message_id,message,username\none,hello,u/Fictional_Peer\n"), 0600))
+	require.NoError(os.WriteFile(filepath.Join(root, "chat_history.csv"), []byte("message_id,message,username,channel_url\none,hello,u/Fictional_Peer,channel\n"), 0600))
 	st := testutil.NewTestStore(t)
 	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
 	require.NoError(err)
@@ -321,6 +321,31 @@ func TestImportChatGrouping(t *testing.T) {
 	assert.Equal(1, count)
 }
 
+func TestImportChatRequiresChannel(t *testing.T) {
+	for _, tc := range []struct {
+		name, csv string
+		wantAdded int
+	}{
+		{"missing column", "message_id,message\none,hello\n", 0},
+		{"empty channel", "message_id,message,channel_url\none,hello,channel\ntwo,reply,\nthree,later,channel\n", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			root := t.TempDir()
+			require.NoError(os.WriteFile(filepath.Join(root, "chat_history.csv"), []byte(tc.csv), 0600))
+			st := testutil.NewTestStore(t)
+			summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
+			require.ErrorContains(err, "channel_url")
+			assert.ErrorContains(err, "chat_history.csv")
+			assert.Equal(tc.wantAdded, summary.Added)
+			var n int
+			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&n))
+			assert.Equal(tc.wantAdded, n)
+		})
+	}
+}
+
 func TestImportFailureRetainsCompletedRows(t *testing.T) {
 	for _, tc := range []struct {
 		name, invalid, fixed              string
@@ -333,7 +358,7 @@ func TestImportFailureRetainsCompletedRows(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			root := t.TempDir()
-			for name, data := range map[string]string{"chat_history.csv": "message_id,message\none,lantern\n", "comments.csv": tc.invalid, "posts.csv": "id,title\nthree,later\n"} {
+			for name, data := range map[string]string{"chat_history.csv": "message_id,message,channel_url\none,lantern,channel\n", "comments.csv": tc.invalid, "posts.csv": "id,title\nthree,later\n"} {
 				require.NoError(os.WriteFile(filepath.Join(root, name), []byte(data), 0600))
 			}
 			st := testutil.NewTestStore(t)
