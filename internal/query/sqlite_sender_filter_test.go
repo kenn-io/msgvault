@@ -151,7 +151,7 @@ SELECT id,4,'from',? FROM messages WHERE sender_id=4`, fmt.Sprintf("alias-%d@exa
 			defer func() { require.NoError(st.Close()) }()
 			visits := countSenderMessageVisits(t, st.DB())
 			messages, err := query.NewSQLiteEngine(st.DB()).ListMessages(t.Context(), query.MessageFilter{
-				Sender:     "bounded@example.org",
+				Sender:     "alias-0@example.org",
 				Sorting:    query.MessageSorting{Field: query.MessageSortByDate, Direction: query.SortDesc},
 				Pagination: query.Pagination{Limit: 100},
 			})

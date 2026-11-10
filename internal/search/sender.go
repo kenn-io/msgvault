@@ -52,7 +52,7 @@ func SenderLookup(value string, lower func(string) string, messages, recipients,
 	recipientFallback := ""
 	directFallback := ""
 	matchingFallback := ""
-	if operator == "=" {
+	if !metadata {
 		guard := func(messageID string) string {
 			return ` AND NOT EXISTS (SELECT 1 FROM ` + recipients + ` mr_guard WHERE mr_guard.message_id = ` + messageID + ` AND mr_guard.recipient_type = 'from' AND COALESCE(mr_guard.email_address, '') <> '')`
 		}

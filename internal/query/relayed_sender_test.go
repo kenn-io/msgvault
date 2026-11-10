@@ -27,6 +27,14 @@ func TestDuckDBRelayedSenderEnvelope(t *testing.T) {
 	results, err = engine.SearchFast(t.Context(), search.Parse("from:alice@example.test"), MessageFilter{}, 10, 0)
 	require.NoError(t, err)
 	assert.Empty(t, results)
+	for _, name := range []string{"", "GitHub"} {
+		rows, err := engine.ListMessages(t.Context(), MessageFilter{Sender: "alice@example.test", SenderName: name})
+		require.NoError(t, err)
+		assert.Empty(t, rows)
+	}
+	results, err = engine.SearchFast(t.Context(), search.Parse("from:@example.test"), MessageFilter{}, 10, 0)
+	require.NoError(t, err)
+	assert.Empty(t, results)
 	rows, err := engine.ListMessages(t.Context(), MessageFilter{Sender: "notifications@github.com", Domain: "github.com"})
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
@@ -65,4 +73,30 @@ func TestDuckDBQuotedLocalPartSenderDomain(t *testing.T) {
 		require.NoError(t, engine.db.QueryRowContext(t.Context(), statement).Scan(&domain))
 		assert.Equal(t, "relay.example.test", domain)
 	}
+}
+
+func TestDuckDBRelayedEnvelopeMixedAndLegacy(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("reader@example.test")
+	author := b.AddParticipant("author@example.test", "example.test", "Author")
+	other := b.AddParticipant("other@example.test", "example.test", "Other")
+	mixed := b.AddMessage(MessageOpt{Subject: "Mixed", SenderID: &author})
+	b.AddRecipientWithEnvelope(mixed, author, "from", "Author", "relay@service.test")
+	b.AddRecipientWithEnvelope(mixed, other, "from", "Other", "")
+	legacy := b.AddMessage(MessageOpt{Subject: "Legacy", SenderID: &author})
+	b.AddRecipientWithEnvelope(legacy, author, "from", "Author", "")
+	dir, cleanup := b.Build()
+	t.Cleanup(cleanup)
+	engine, err := NewDuckDBEngine(t.Context(), dir, "", nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = engine.Close() })
+	for _, filter := range []MessageFilter{{Sender: "author@example.test"}, {Domain: "example.test"}} {
+		rows, err := engine.ListMessages(t.Context(), filter)
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		assert.Equal(t, "Legacy", rows[0].Subject)
+	}
+	rows, err := engine.ListMessages(t.Context(), MessageFilter{Sender: "other@example.test"})
+	require.NoError(t, err)
+	assert.Empty(t, rows)
 }

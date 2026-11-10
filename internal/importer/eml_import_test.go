@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/email"
 )
@@ -415,4 +416,18 @@ func writeTestEML(t *testing.T, path, subject string) {
 		Body("Imported from an EML tree.\n").
 		Bytes()
 	require.NoError(t, os.WriteFile(path, raw, 0o600))
+}
+
+func TestImportEMLDirCustomRelayedSender(t *testing.T) {
+	st, root := openTestStore(t)
+	raw := []byte("From: Alice <relay@example.test>\r\nTo: reader@example.test\r\nX-Author: alice\r\nSubject: Notice\r\n\r\nHello")
+	mailbox := filepath.Join(root, "Inbox.mailbox")
+	require.NoError(t, os.Mkdir(mailbox, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(mailbox, "message.eml"), raw, 0o600))
+	_, err := ImportEMLDir(t.Context(), st, root, EMLImportOptions{Identifier: "reader@example.test", RelayedSenders: []mime.RelayedSenderRule{{Address: "relay@example.test", Header: "X-Author", IdentifierType: "example"}}})
+	require.NoError(t, err)
+	var identifier, envelope string
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT pi.identifier_value, mr.email_address FROM messages m JOIN participant_identifiers pi ON pi.participant_id=m.sender_id AND pi.identifier_type='example' JOIN message_recipients mr ON mr.message_id=m.id AND mr.recipient_type='from'`).Scan(&identifier, &envelope))
+	assert.Equal(t, "alice", identifier)
+	assert.Equal(t, "relay@example.test", envelope)
 }

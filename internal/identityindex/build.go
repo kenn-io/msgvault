@@ -538,8 +538,7 @@ WITH messages AS (
 	FROM %s
 ), senders AS (
 	SELECT DISTINCT COALESCE(NULLIF(mr.envelope_address, ''), p.email_address) AS email_address,
-	       COALESCE(NULLIF(CASE WHEN mr.envelope_address LIKE '%%@%%'
-	           THEN lower(substr(mr.envelope_address, length(rtrim(mr.envelope_address, replace(mr.envelope_address, '@', ''))) + 1)) END, ''), p.domain) AS domain
+	       COALESCE(NULLIF(%s, ''), p.domain) AS domain
 	FROM %s mr
 	JOIN %s p ON p.id = try_cast(mr.participant_id AS BIGINT)
 	WHERE mr.recipient_type = 'from'
@@ -554,6 +553,7 @@ SELECT
 	(SELECT coalesce(sum(size_estimate), 0) FROM messages),
 	(SELECT coalesce(sum(try_cast(size AS BIGINT)), 0) FROM %s)`,
 		inputs.messages,
+		SenderEnvelopeDomainExpr("mr.envelope_address"),
 		inputs.recipients,
 		inputs.participants,
 		inputs.attachments,
@@ -610,4 +610,9 @@ func parquetDatasetGlob(root, dataset string) string {
 
 func quoteSQLString(value string) string {
 	return strings.ReplaceAll(value, "'", "''")
+}
+
+// SenderEnvelopeDomainExpr extracts the domain after the final at sign.
+func SenderEnvelopeDomainExpr(address string) string {
+	return "CASE WHEN " + address + " LIKE '%@%' THEN LOWER(SUBSTR(" + address + ", LENGTH(RTRIM(" + address + ", REPLACE(" + address + ", '@', ''))) + 1)) END"
 }

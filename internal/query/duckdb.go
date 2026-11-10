@@ -1534,34 +1534,23 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 	// match the SAME from-row (or the SAME direct sender), not two
 	// independent EXISTS that a multi-author message could satisfy via
 	// different rows.
-	if filter.Sender != "" && filter.SenderName != "" {
-		conditions = append(conditions, fmt.Sprintf(`(EXISTS (
-			SELECT 1 FROM mr
-			JOIN p ON p.id = mr.participant_id
-			WHERE mr.message_id = msg.id
-			  AND mr.recipient_type = 'from'
-			  AND (COALESCE(NULLIF(mr.envelope_address, ''), p.email_address) = ? OR p.phone_number = ?)
-			  AND %s = ?
-		) OR EXISTS (
-			SELECT 1 FROM p
-			WHERE p.id = msg.sender_id
-			  AND (p.email_address = ? OR p.phone_number = ?)
-			  AND %s = ?
-		))`, recipientNameExpr("mr", "p"), participantNameExpr("p")))
-		args = append(args, filter.Sender, filter.Sender, filter.SenderName, filter.Sender, filter.Sender, filter.SenderName)
-	} else if filter.Sender != "" {
-		conditions = append(conditions, `(EXISTS (
-			SELECT 1 FROM mr
-			JOIN p ON p.id = mr.participant_id
-			WHERE mr.message_id = msg.id
-			  AND mr.recipient_type = 'from'
-			  AND (COALESCE(NULLIF(mr.envelope_address, ''), p.email_address) = ? OR p.phone_number = ?)
-		) OR EXISTS (
-			SELECT 1 FROM p
-			WHERE p.id = msg.sender_id
-			  AND (p.email_address = ? OR p.phone_number = ?)
-		))`)
-		args = append(args, filter.Sender, filter.Sender, filter.Sender, filter.Sender)
+	if filter.Sender != "" {
+		guard := senderEnvelopeAbsent("mr", "envelope_address", "msg.id")
+		fromName, directName := "", ""
+		senderArgs := []any{filter.Sender, filter.Sender, filter.Sender}
+		directArgs := []any{filter.Sender, filter.Sender}
+		if filter.SenderName != "" {
+			fromName = " AND " + recipientNameExpr("mr", "p") + " = ?"
+			directName = " AND " + participantNameExpr("p") + " = ?"
+			senderArgs = append(senderArgs, filter.SenderName)
+			directArgs = append(directArgs, filter.SenderName)
+		}
+		conditions = append(conditions, `(EXISTS (SELECT 1 FROM mr JOIN p ON p.id = mr.participant_id
+            WHERE mr.message_id = msg.id AND mr.recipient_type = 'from'
+            AND (mr.envelope_address = ? OR ((p.email_address = ? OR p.phone_number = ?) AND `+guard+`))`+fromName+`)
+            OR (EXISTS (SELECT 1 FROM p WHERE p.id = msg.sender_id AND (p.email_address = ? OR p.phone_number = ?)`+directName+`) AND `+guard+`))`)
+		args = append(args, senderArgs...)
+		args = append(args, directArgs...)
 	} else if filter.MatchesEmpty(ViewSenders) {
 		// A message has an "empty sender" only if it has no from-recipient AND no direct sender_id.
 		conditions = append(conditions, `(NOT EXISTS (
@@ -1663,7 +1652,7 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 			JOIN p ON p.id = mr.participant_id
 			WHERE mr.message_id = msg.id
 			  AND mr.recipient_type = 'from'
-			  AND LOWER(COALESCE(NULLIF(`+senderEnvelopeDomainExpr("mr.envelope_address")+`, ''), p.domain)) = ?
+			  AND LOWER(`+senderDomainFallbackExpr("mr", "p", "mr", "envelope_address")+`) = ?
 		)`)
 		args = append(args, strings.ToLower(filter.Domain))
 	} else if filter.MatchesEmpty(ViewDomains) {
@@ -1672,7 +1661,7 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 			JOIN p ON p.id = mr.participant_id
 			WHERE mr.message_id = msg.id
 			  AND mr.recipient_type = 'from'
-			  AND COALESCE(NULLIF(`+senderEnvelopeDomainExpr("mr.envelope_address")+`, ''), p.domain, '') != ''
+			  AND `+senderDomainFallbackExpr("mr", "p", "mr", "envelope_address")+` != ''
 		)`)
 	}
 

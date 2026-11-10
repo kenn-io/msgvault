@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
@@ -133,13 +134,16 @@ func escapeSQLiteLike(s string) string {
 	return r.Replace(s)
 }
 
-// senderEnvelopeDomainExpr uses the final @, as MIME address parsing does.
 func senderEnvelopeDomainExpr(address string) string {
-	return "CASE WHEN " + address + " LIKE '%@%' THEN LOWER(SUBSTR(" + address + ", LENGTH(RTRIM(" + address + ", REPLACE(" + address + ", '@', ''))) + 1)) END"
+	return identityindex.SenderEnvelopeDomainExpr(address)
 }
 
 func senderDomainExpr(recipient, participant string) string {
-	return "COALESCE(NULLIF(" + senderEnvelopeDomainExpr(recipient+".email_address") + ", ''), " + participant + ".domain, '')"
+	return senderDomainFallbackExpr(recipient, participant, "message_recipients", "email_address")
+}
+
+func senderDomainFallbackExpr(recipient, participant, table, address string) string {
+	return "COALESCE(NULLIF(" + senderEnvelopeDomainExpr(recipient+"."+address) + ", ''), CASE WHEN " + senderEnvelopeAbsent(table, address, recipient+".message_id") + " THEN " + participant + ".domain END, '')"
 }
 
 // aggDimension describes the variable parts of an aggregate query for a given ViewType.
@@ -944,16 +948,21 @@ func (e *SQLiteEngine) executeAggregateQuery(ctx context.Context, query string, 
 // senderMessageBound counts distinct messages across both sender representations, including hidden ones.
 const senderMessageBound = 5000
 
+func senderEnvelopeAbsent(recipients, address, messageID string) string {
+	return `NOT EXISTS (SELECT 1 FROM ` + recipients + ` mr_guard WHERE mr_guard.message_id = ` + messageID + ` AND mr_guard.recipient_type = 'from' AND COALESCE(mr_guard.` + address + `, '') <> '')`
+}
+
 // senderMatchSQL owns the address and same-row name rules for both query paths.
 // A zero limit builds the EXISTS predicate; otherwise senderCandidateSQL applies it.
 func senderMatchSQL(filter MessageFilter, limit int) (string, []any) {
 	if filter.Sender == "" {
 		return "", nil
 	}
-	address := `(COALESCE(NULLIF(mr_filter_from.email_address, ''), p_filter_from.email_address) = ? OR p_filter_from.phone_number = ?)`
+	guard := senderEnvelopeAbsent("message_recipients", "email_address", "mr_filter_from.message_id")
+	address := `(mr_filter_from.email_address = ? OR ((p_filter_from.email_address = ? OR p_filter_from.phone_number = ?) AND ` + guard + `))`
 	directAddress := `(p_direct_sender.email_address = ? OR p_direct_sender.phone_number = ?)`
 	fromName, directName := "", ""
-	fromArgs := []any{filter.Sender, filter.Sender}
+	fromArgs := []any{filter.Sender, filter.Sender, filter.Sender}
 	directArgs := []any{filter.Sender, filter.Sender}
 	if filter.SenderName != "" {
 		fromName = " AND " + recipientNameExpr("mr_filter_from", "p_filter_from") + " = ?"
@@ -963,24 +972,28 @@ func senderMatchSQL(filter MessageFilter, limit int) (string, []any) {
 	}
 	if limit != 0 {
 		from := `SELECT mr_filter_from.message_id AS id FROM message_recipients mr_filter_from
-			JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
-			WHERE mr_filter_from.recipient_type = 'from' AND ` + address
-		if fromName != "" {
-			from += ` AND EXISTS (SELECT 1 FROM participants p_filter_from WHERE p_filter_from.id = mr_filter_from.participant_id` + fromName + `)`
+            JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
+            WHERE mr_filter_from.recipient_type = 'from' AND mr_filter_from.email_address = ?` + fromName + `
+            UNION ALL SELECT mr_filter_from.message_id AS id FROM message_recipients mr_filter_from
+            JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
+            WHERE mr_filter_from.recipient_type = 'from' AND (p_filter_from.email_address = ? OR p_filter_from.phone_number = ?)
+            AND ` + guard + fromName
+		fromArgs = []any{filter.Sender}
+		if filter.SenderName != "" {
+			fromArgs = append(fromArgs, filter.SenderName)
 		}
-		direct := `SELECT id FROM messages WHERE sender_id IN (
-			SELECT id FROM participants p_direct_sender WHERE ` + directAddress + directName + `)`
+		fromArgs = append(fromArgs, filter.Sender, filter.Sender)
+		if filter.SenderName != "" {
+			fromArgs = append(fromArgs, filter.SenderName)
+		}
+		direct := `SELECT m_direct.id FROM messages m_direct WHERE m_direct.sender_id IN (
+   SELECT id FROM participants p_direct_sender WHERE ` + directAddress + directName + `) AND ` + senderEnvelopeAbsent("message_recipients", "email_address", "m_direct.id")
 		return senderCandidateSQL(direct, from, directArgs, fromArgs, limit)
 	}
-	return `(EXISTS (
-		SELECT 1 FROM message_recipients mr_filter_from
-		JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
-		WHERE mr_filter_from.message_id = m.id AND mr_filter_from.recipient_type = 'from'
-			AND ` + address + fromName + `
-	) OR EXISTS (
-		SELECT 1 FROM participants p_direct_sender WHERE p_direct_sender.id = m.sender_id
-			AND ` + directAddress + directName + `
-	))`, append(fromArgs, directArgs...)
+	return `(EXISTS (SELECT 1 FROM message_recipients mr_filter_from
+  JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
+  WHERE mr_filter_from.message_id = m.id AND mr_filter_from.recipient_type = 'from' AND ` + address + fromName + `)
+  OR (EXISTS (SELECT 1 FROM participants p_direct_sender WHERE p_direct_sender.id = m.sender_id AND ` + directAddress + directName + `) AND ` + senderEnvelopeAbsent("message_recipients", "email_address", "m.id") + `))`, append(fromArgs, directArgs...)
 }
 
 // senderCandidateSQL lists every sender message ID for a negative limit. A positive limit instead
@@ -1625,38 +1638,10 @@ func (e *SQLiteEngine) GetDeletionTargetsByFilter(ctx context.Context, filter Me
 	// match the SAME from-row (or the SAME direct sender), not two
 	// independent EXISTS that a multi-author message could satisfy via
 	// different rows.
-	if filter.Sender != "" && filter.SenderName != "" {
-		conditions = append(conditions, fmt.Sprintf(`(
-			EXISTS (
-				SELECT 1 FROM message_recipients mr_from
-				JOIN participants p_from ON p_from.id = mr_from.participant_id
-				WHERE mr_from.message_id = m.id AND mr_from.recipient_type = 'from'
-				  AND (COALESCE(NULLIF(mr_from.email_address, ''), p_from.email_address) = ? OR p_from.phone_number = ?)
-				  AND %s = ?
-			)
-			OR EXISTS (
-				SELECT 1 FROM participants p_ds
-				WHERE p_ds.id = m.sender_id
-				  AND (p_ds.email_address = ? OR p_ds.phone_number = ?)
-				  AND %s = ?
-			)
-		)`, recipientNameExpr("mr_from", "p_from"), participantNameExpr("p_ds")))
-		args = append(args, filter.Sender, filter.Sender, filter.SenderName, filter.Sender, filter.Sender, filter.SenderName)
-	} else if filter.Sender != "" {
-		conditions = append(conditions, `(
-			EXISTS (
-				SELECT 1 FROM message_recipients mr_from
-				JOIN participants p_from ON p_from.id = mr_from.participant_id
-				WHERE mr_from.message_id = m.id AND mr_from.recipient_type = 'from'
-				  AND (COALESCE(NULLIF(mr_from.email_address, ''), p_from.email_address) = ? OR p_from.phone_number = ?)
-			)
-			OR EXISTS (
-				SELECT 1 FROM participants p_ds
-				WHERE p_ds.id = m.sender_id
-				  AND (p_ds.email_address = ? OR p_ds.phone_number = ?)
-			)
-		)`)
-		args = append(args, filter.Sender, filter.Sender, filter.Sender, filter.Sender)
+	if filter.Sender != "" {
+		senderPredicate, senderArgs := senderMatchSQL(filter, 0)
+		conditions = append(conditions, senderPredicate)
+		args = append(args, senderArgs...)
 	} else if filter.SenderName != "" {
 		conditions = append(conditions, fmt.Sprintf(`(
 			EXISTS (
