@@ -81,11 +81,11 @@ func (imp *Importer) earlierRollbackCopies(ctx context.Context, sourceID, convID
 			}
 			// Without a replacement relation, recovery claims the copy as a message.
 			if content := plain.Content.AsMessage(); content.RelatesTo.GetReplaceID() != "" {
-				_, original, err := imp.editTarget(ctx, sourceID, convID, content.RelatesTo.GetReplaceID())
+				messageID, original, err := imp.editTarget(ctx, sourceID, convID, content.RelatesTo.GetReplaceID())
 				if err != nil {
 					return nil, err
 				}
-				if !editAllowed(original, plain) {
+				if messageID != 0 && !editAllowed(original, plain) {
 					continue
 				}
 			}

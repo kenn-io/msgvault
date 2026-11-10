@@ -829,7 +829,7 @@ func TestImportRecoveryRejectsReplayedIndex(t *testing.T) {
 }
 
 func TestEditRollbackPrefersEarlierArchivedCiphertext(t *testing.T) {
-	for _, mode := range []string{"same", "alternate base64", "encrypted target", "stripped relation", "invalid earlier copy", "later copy", "already claimed"} {
+	for _, mode := range []string{"same", "alternate base64", "encrypted target", "missing target", "stripped relation", "invalid earlier copy", "later copy", "already claimed"} {
 		t.Run(mode, func(t *testing.T) {
 			req, check := require.New(t), assert.New(t)
 			f := newRecoveryFixture(t)
@@ -852,6 +852,9 @@ func TestEditRollbackPrefersEarlierArchivedCiphertext(t *testing.T) {
 			}
 			newest := f.edit(t, "$newest", target, "newest", 30)
 			f.timeline = []*event.Event{original, other, newest}
+			if mode == "missing target" {
+				f.timeline = []*event.Event{other, newest}
+			}
 			if mode == "already claimed" {
 				f.timeline = append(f.timeline, edit)
 			}
@@ -915,7 +918,9 @@ func TestEditRollbackPrefersEarlierArchivedCiphertext(t *testing.T) {
 				req.NoError(err)
 				check.Equal("other", f.body(t, "$other"))
 			}
-			check.Equal(wantOriginal, f.body(t, "$original"))
+			if mode != "missing target" {
+				check.Equal(wantOriginal, f.body(t, "$original"))
+			}
 		})
 	}
 }
