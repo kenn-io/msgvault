@@ -129,10 +129,9 @@ func metaFeedHandler(cfg *config.Config, st *store.Store, work scheduler.WorkTra
 		}
 		defer done()
 		err = meta.ApplyFeed(ctx, st, client, change.App, change.EntryID, change.Values)
-		if err == nil {
-			if refresher := daemonCacheRefresher; refresher != nil {
-				refresher.RequestAfter(30*time.Second, "meta-webhooks")
-			}
+		// A failed change may follow writes that committed, such as its post.
+		if refresher := daemonCacheRefresher; refresher != nil {
+			refresher.RequestAfter(30*time.Second, "meta-webhooks")
 		}
 		return metaWebhookError(err)
 	}

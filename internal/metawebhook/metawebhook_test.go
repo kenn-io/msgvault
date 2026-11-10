@@ -110,6 +110,8 @@ func TestWorkerAppliesInOrderRetriesAndDrops(t *testing.T) {
 				}
 			case `"invalid"`:
 				return fmt.Errorf("%w: not archivable", ErrUnrecoverable)
+			case `"down"`:
+				return errors.New("graph unavailable")
 			}
 			applied = append(applied, change.App+":"+change.EntryID+":"+value)
 			return nil
@@ -117,17 +119,20 @@ func TestWorkerAppliesInOrderRetriesAndDrops(t *testing.T) {
 		w := NewWorker(dir, map[Field]FieldHandler{{"page", "feed"}: feed})
 		require.NoError(h.store("9", []byte(`{"object":`)))
 		time.Sleep(time.Millisecond)
-		for _, value := range []string{`"busy"`, `"invalid"`, `"after"`} {
-			body := `{"object":"page","entry":[{"id":"100","changes":[{"field":"feed","value":` + value + `},{"field":"ratings","value":{}}]}]}`
+		for _, values := range []string{`"busy"`, `"invalid"},{"field":"feed","value":"same entry"`, `"down"`, `"after"`} {
+			body := `{"object":"page","entry":[{"id":"100","changes":[{"field":"feed","value":` + values + `},{"field":"ratings","value":{}}]}]}`
 			require.NoError(h.store("9", []byte(body)))
-			time.Sleep(time.Millisecond) // file names order deliveries by arrival time
 		}
 		ctx, cancel := context.WithCancel(t.Context())
 		done := make(chan error)
 		go func() { done <- w.Run(ctx) }()
-		time.Sleep(time.Hour) // lets the fake clock run through the retry waits
+		time.Sleep(30 * time.Minute) // lets the fake clock run through the retry waits
 		synctest.Wait()
-		assert.Equal([]string{`9:100:"busy"`, `9:100:"after"`}, applied, "a failing delivery blocks later ones until it succeeds")
+		assert.Equal([]string{`9:100:"busy"`, `9:100:"same entry"`}, applied,
+			"a failing delivery blocks later ones; an unrecoverable change skips only itself")
+		time.Sleep(time.Hour)
+		synctest.Wait()
+		assert.Equal([]string{`9:100:"busy"`, `9:100:"same entry"`, `9:100:"after"`}, applied, "a delivery that keeps failing is dropped after an hour")
 		assert.Equal(3, attempts)
 		assert.Empty(pendingFiles(t, dir), "applied and dropped deliveries are deleted")
 		cancel()

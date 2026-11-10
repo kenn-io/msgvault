@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"go.kenn.io/kit/atomicfile"
@@ -44,6 +45,11 @@ type Handler struct {
 	apps    map[string]App
 	pending string
 	wake    func()
+
+	// mu makes deliveries visible in the order of their names, so the
+	// worker never sees a newer delivery before an older one.
+	mu   sync.Mutex
+	last int64
 }
 
 // NewHandler stores deliveries in pending. wake, when set, is called after
@@ -121,6 +127,9 @@ func validSignature(secret, body []byte, header string) bool {
 // store writes the delivery under a name that sorts in arrival order and
 // carries the app ID. The delivery becomes visible only once complete.
 func (h *Handler) store(app string, body []byte) error {
-	name := fmt.Sprintf("%020d-%s-%s.json", time.Now().UnixNano(), app, rand.Text())
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.last = max(time.Now().UnixNano(), h.last+1)
+	name := fmt.Sprintf("%020d-%s-%s.json", h.last, app, rand.Text())
 	return atomicfile.WriteNew(filepath.Join(h.pending, name), body, atomicfile.WithPrivate())
 }

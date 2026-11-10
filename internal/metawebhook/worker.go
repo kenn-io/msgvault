@@ -9,15 +9,15 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/cenkalti/backoff/v7"
 )
 
-// Change is one entry of a delivery: entry.id names the Page or Instagram
-// account, and Values are that entry's change values for one field.
+// Change is one change of a delivery entry: entry.id names the Page or
+// Instagram account. The worker passes one change at a time, so Values holds
+// a single value.
 type Change struct {
 	App, EntryID string
 	Values       []jsontext.Value
@@ -26,9 +26,10 @@ type Change struct {
 // Field selects the changes a FieldHandler applies, such as {"page", "feed"}.
 type Field struct{ Object, Name string }
 
-// FieldHandler applies one entry's changes for its field. An error that wraps
-// ErrUnrecoverable is logged and the change skipped. Any other error retries
-// the whole delivery with backoff.
+// FieldHandler applies one change for its field. An error that wraps
+// ErrUnrecoverable is logged and the change skipped, and later changes still
+// apply. Any other error retries the whole delivery with backoff; changes it
+// already applied are applied again, which the archive's upserts allow.
 type FieldHandler func(ctx context.Context, change Change) error
 
 // ErrUnrecoverable marks a change that retrying cannot apply.
@@ -136,27 +137,19 @@ type envelope struct {
 	} `json:"entry"`
 }
 
-// apply applies every entry with a handler. Fields without a handler are
-// logged and skipped.
+// apply applies every change with a handler, in delivery order. Fields
+// without a handler are logged and skipped.
 func (w *Worker) apply(ctx context.Context, app string, envelope envelope) error {
 	for _, entry := range envelope.Entry {
-		var fields []string
-		changes := map[string][]jsontext.Value{}
 		for _, change := range entry.Changes {
-			if !slices.Contains(fields, change.Field) {
-				fields = append(fields, change.Field)
-			}
-			changes[change.Field] = append(changes[change.Field], change.Value)
-		}
-		for _, field := range fields {
-			handler, ok := w.handlers[Field{envelope.Object, field}]
+			handler, ok := w.handlers[Field{envelope.Object, change.Field}]
 			if !ok {
-				slog.Info("Meta webhook field not handled", "object", envelope.Object, "field", field, "entry", entry.ID)
+				slog.Info("Meta webhook field not handled", "object", envelope.Object, "field", change.Field, "entry", entry.ID)
 				continue
 			}
-			err := handler(ctx, Change{App: app, EntryID: entry.ID, Values: changes[field]})
+			err := handler(ctx, Change{App: app, EntryID: entry.ID, Values: []jsontext.Value{change.Value}})
 			if errors.Is(err, ErrUnrecoverable) {
-				slog.Warn("Meta webhook change skipped", "object", envelope.Object, "field", field, "entry", entry.ID, "error", err)
+				slog.Warn("Meta webhook change skipped", "object", envelope.Object, "field", change.Field, "entry", entry.ID, "error", err)
 			} else if err != nil {
 				return err
 			}
