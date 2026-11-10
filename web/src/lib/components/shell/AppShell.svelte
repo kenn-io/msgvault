@@ -1371,7 +1371,13 @@
       {:else if exploreState.current.workspace === 'files'}
         <main class="files-shell" aria-label="Files">
           <PageHeader title="Files">
-            {#snippet actions()}{#if openedSavedView}<Chip size="sm" uppercase={false}>{exploreState.savedViewItems.include.length} pinned · {exploreState.savedViewItems.exclude.length} hidden</Chip><Button surface="outline" label="Save changes" onclick={() => void saveOpenedView()} />{/if}<Button surface="outline" label="Save view…" onclick={() => (saveViewOpen = true)} />{/snippet}
+            {#snippet actions()}
+              {#if openedSavedView}
+                <Chip size="sm" uppercase={false}>{exploreState.savedViewItems.include.length} pinned · {exploreState.savedViewItems.exclude.length} hidden</Chip>
+                <Button surface="outline" label="Save changes" onclick={() => void saveOpenedView()} />
+              {/if}
+              <Button surface="outline" label="Save view…" onclick={() => (saveViewOpen = true)} />
+            {/snippet}
           </PageHeader>
           {#snippet filesToolbar(controls: Snippet | undefined)}
           <ContextBar

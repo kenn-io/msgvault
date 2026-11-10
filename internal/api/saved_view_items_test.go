@@ -111,3 +111,17 @@ func TestRunSavedViewItemsPopulationAndSourceScope(t *testing.T) {
 	assert.Equal(t, 1, page.SavedView.RedactedItemCount)
 	assert.Equal(t, 0, page.SavedView.IncludeCount)
 }
+
+func TestExploreItemsHTTPMalformedAndUnknownKeys(t *testing.T) {
+	srv, _ := newSavedViewRunTestServer(t)
+	malformed := postExploreJSON(t, srv, "/api/v1/explore", `{"include_keys":["wrong"]}`)
+	assert.Equal(t, http.StatusBadRequest, malformed.Code, malformed.Body.String())
+	assert.Contains(t, malformed.Body.String(), "invalid_entry_key")
+	assert.Contains(t, malformed.Body.String(), "include_keys[0]")
+	unknown := postExploreJSON(t, srv, "/api/v1/explore", `{"include_keys":["source:999999:message:missing"]}`)
+	require.Equal(t, http.StatusOK, unknown.Code, unknown.Body.String())
+	var page ExploreHTTPResponse
+	require.NoError(t, json.Unmarshal(unknown.Body.Bytes(), &page))
+	require.NotNil(t, page.TotalCount)
+	assert.Equal(t, int64(3), *page.TotalCount)
+}

@@ -103,6 +103,8 @@ describe('ExploreAPI routing', () => {
     const loaded = await api.groups(
       {
         filters: [{ dimension: 'source', values: ['2'] }],
+        include_keys: ['source:1:message:pinned'],
+        exclude_keys: ['source:2:message:hidden'],
         grouping: ['source', 'year'],
         presentation: 'table',
         sort: [{ field: 'occurred_at', direction: 'desc' }],
@@ -116,6 +118,8 @@ describe('ExploreAPI routing', () => {
     expect(new URL(requests[0]!.url).pathname).toBe('/api/v1/explore/groups');
     await expect(requests[0]!.json()).resolves.toEqual({
       filters: [{ dimension: 'source', values: ['2'] }],
+        include_keys: ['source:1:message:pinned'],
+        exclude_keys: ['source:2:message:hidden'],
       grouping: ['source'],
       presentation: 'table',
       limit: 500,

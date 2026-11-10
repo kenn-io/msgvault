@@ -177,6 +177,8 @@ export function createExploreAPI(client: APIClient, scope?: TimelineScope): Expl
       const body = {
         ...(predicate.cursor ? { cursor: predicate.cursor } : {}),
         ...(predicate.filters ? { filters: predicate.filters } : {}),
+        ...(predicate.include_keys ? { include_keys: predicate.include_keys } : {}),
+        ...(predicate.exclude_keys ? { exclude_keys: predicate.exclude_keys } : {}),
         ...(predicate.query ? { query: predicate.query, search_mode: predicate.search_mode } : {}),
         ...(predicate.group_key ? { group_key: predicate.group_key } : {}),
         ...('sent_only' in predicate ? { sent_only: Boolean(predicate.sent_only) } : {}),

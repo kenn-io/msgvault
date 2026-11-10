@@ -86,7 +86,7 @@
     changeConversationAnchor: (anchorId: number) => void;
     onOpenMeeting?: (meeting: MeetingRef) => void;
     onSaveView: () => void;
- onSaveViewChanges?: () => void;
+    onSaveViewChanges?: () => void;
     onStatusChange?: () => void;
   }
 
@@ -631,9 +631,17 @@
 </script>
 
 <svelte:element this={scope ? 'div' : 'main'} class="everything-workspace" aria-label={scope ? undefined : 'Messages'}>
-  {#if !scope}<PageHeader title="Messages">
-    {#snippet actions()}{#if onSaveViewChanges}<Chip size="sm" uppercase={false}>{exploreState.savedViewItems.include.length} pinned · {exploreState.savedViewItems.exclude.length} hidden</Chip><Button surface="outline" label="Save changes" onclick={onSaveViewChanges} />{/if}<Button surface="outline" label="Save view…" onclick={onSaveView} />{/snippet}
-  </PageHeader>{/if}
+  {#if !scope}
+    <PageHeader title="Messages">
+      {#snippet actions()}
+        {#if onSaveViewChanges}
+          <Chip size="sm" uppercase={false}>{exploreState.savedViewItems.include.length} pinned · {exploreState.savedViewItems.exclude.length} hidden</Chip>
+          <Button surface="outline" label="Save changes" onclick={onSaveViewChanges} />
+        {/if}
+        <Button surface="outline" label="Save view…" onclick={onSaveView} />
+      {/snippet}
+    </PageHeader>
+  {/if}
 
   <ContextBar
     messages

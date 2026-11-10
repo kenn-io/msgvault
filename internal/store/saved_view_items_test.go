@@ -218,35 +218,54 @@ func FuzzSavedViewItemsCodec(f *testing.F) {
 }
 
 func TestMergeSourcesSavedViewItemsFoldedCollisions(t *testing.T) {
-	f := storetest.New(t)
-	into, err := f.Store.GetOrCreateSource("gmail", "folded@example.com")
-	require.NoError(t, err)
-	intoConv, err := f.Store.EnsureConversation(into.ID, "default-thread", "Survivor")
-	require.NoError(t, err)
-	drop := f.CreateMessage("same-provider-id")
-	keep, err := f.Store.UpsertMessage(&store.Message{SourceID: into.ID, ConversationID: intoConv, SourceMessageID: "same-provider-id", MessageType: "email"})
-	require.NoError(t, err)
-	fromChat, err := f.Store.EnsureConversationWithType(f.Source.ID, "shared-chat", "group_chat", "Chat")
-	require.NoError(t, err)
-	intoChat, err := f.Store.EnsureConversationWithType(into.ID, "shared-chat", "group_chat", "Chat")
-	require.NoError(t, err)
-	view, err := f.Store.CreateSavedView(t.Context(), savedViewInput("Folded items"))
-	require.NoError(t, err)
-	_, err = f.Store.ChangeSavedViewItems(t.Context(), view.ID, 1, store.SavedViewItemChange{
-		IncludeAdd: []store.SavedViewItemRef{{MessageID: drop, SourceID: f.Source.ID}, {ConversationID: fromChat, SourceID: f.Source.ID}},
-		ExcludeAdd: []store.SavedViewItemRef{{MessageID: keep, SourceID: into.ID}, {ConversationID: intoChat, SourceID: into.ID}},
-	})
-	require.NoError(t, err)
-	_, err = f.Store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: f.Source.ID, IntoSourceID: into.ID})
-	require.NoError(t, err)
-	items, err := f.Store.GetSavedViewItems(t.Context(), view.ID)
-	require.NoError(t, err)
-	assert.Empty(t, items.Include)
-	require.Len(t, items.Exclude, 2)
-	assert.ElementsMatch(t, []store.SavedViewItemRef{{MessageID: keep, SourceID: into.ID}, {ConversationID: intoChat, SourceID: into.ID}}, []store.SavedViewItemRef{items.Exclude[0].SavedViewItemRef, items.Exclude[1].SavedViewItemRef})
-	got, err := f.Store.GetSavedView(t.Context(), view.ID)
-	require.NoError(t, err)
-	assert.Equal(t, int64(3), got.Revision)
+	for _, kind := range []string{"email", "conversation"} {
+		t.Run(kind, func(t *testing.T) {
+			f := storetest.New(t)
+			from := f.Source
+			sourceType := "gmail"
+			if kind == "conversation" {
+				sourceType = "beeper"
+				var err error
+				from, err = f.Store.GetOrCreateSource(sourceType, "chat-history@example.com")
+				require.NoError(t, err)
+			}
+			into, err := f.Store.GetOrCreateSource(sourceType, "folded@example.com")
+			require.NoError(t, err)
+			var historical, survivor store.SavedViewItemRef
+			if kind == "email" {
+				drop := emailMergeFixtureMessage(t, f.Store, from.ID, "historical", []string{"recipient@example.test"}, true)
+				keep := emailMergeFixtureMessage(t, f.Store, into.ID, "survivor", []string{"recipient@example.test"}, true)
+				historical = store.SavedViewItemRef{MessageID: drop, SourceID: from.ID}
+				survivor = store.SavedViewItemRef{MessageID: keep, SourceID: into.ID}
+			} else {
+				drop, err := f.Store.EnsureConversationWithType(from.ID, "!shared:example.test", "group_chat", "Chat")
+				require.NoError(t, err)
+				keep, err := f.Store.EnsureConversationWithType(into.ID, "!shared:example.test", "group_chat", "Chat")
+				require.NoError(t, err)
+				historical = store.SavedViewItemRef{ConversationID: drop, SourceID: from.ID}
+				survivor = store.SavedViewItemRef{ConversationID: keep, SourceID: into.ID}
+			}
+			view, err := f.Store.CreateSavedView(t.Context(), savedViewInput("Folded items"))
+			require.NoError(t, err)
+			_, err = f.Store.ChangeSavedViewItems(t.Context(), view.ID, 1, store.SavedViewItemChange{IncludeAdd: []store.SavedViewItemRef{historical}, ExcludeAdd: []store.SavedViewItemRef{survivor}})
+			require.NoError(t, err)
+			_, err = f.Store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+			require.NoError(t, err)
+			items, err := f.Store.GetSavedViewItems(t.Context(), view.ID)
+			require.NoError(t, err)
+			assert.Empty(t, items.Include)
+			require.Len(t, items.Exclude, 1)
+			assert.Equal(t, survivor, items.Exclude[0].SavedViewItemRef)
+			got, err := f.Store.GetSavedView(t.Context(), view.ID)
+			require.NoError(t, err)
+			assert.Equal(t, int64(3), got.Revision)
+			rendered, stale, err := f.Store.SavedViewItemsForView(t.Context(), got)
+			require.NoError(t, err)
+			assert.Zero(t, stale)
+			require.Len(t, rendered.Exclude, 1)
+			assert.True(t, strings.HasPrefix(rendered.Exclude[0].EntryKey, fmt.Sprintf("source:%d:", into.ID)))
+		})
+	}
 }
 
 func TestSavedViewItemsPruneSourcePreservesOtherSource(t *testing.T) {
@@ -286,4 +305,52 @@ func TestSavedViewItemsAppliedCountsReflectChanges(t *testing.T) {
 	view, err = f.Store.ChangeSavedViewItems(t.Context(), view.ID, view.Revision, store.SavedViewItemChange{ExcludeAdd: []store.SavedViewItemRef{ref}})
 	require.NoError(t, err)
 	assert.Equal(t, &store.SavedViewItemsApplied{IncludeRemoved: 1, ExcludeAdded: 1}, view.Applied)
+}
+
+func TestResolveEntryKeysConversationAndNumericFallback(t *testing.T) {
+	f := storetest.New(t)
+	id := f.CreateMessage("numeric-fallback")
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET source_message_id='' WHERE id=?`), id)
+	require.NoError(t, err)
+	numeric := fmt.Sprintf("source:%d:message:%d", f.Source.ID, id)
+	conversation := fmt.Sprintf("source:%d:conversation:%d", f.Source.ID, f.ConvID)
+	resolved, rejected, err := f.Store.ResolveEntryKeys(t.Context(), []string{numeric, conversation})
+	require.NoError(t, err)
+	assert.Empty(t, rejected)
+	assert.Equal(t, store.SavedViewItemRef{MessageID: id, SourceID: f.Source.ID}, resolved[numeric].Ref)
+	assert.Equal(t, store.SavedViewItemRef{ConversationID: f.ConvID, SourceID: f.Source.ID}, resolved[conversation].Ref)
+}
+
+func TestSavedViewItemsIgnoreChannelPurgeAndViewOnlyDelete(t *testing.T) {
+	f := storetest.New(t)
+	source, err := f.Store.GetOrCreateSource("slack", "synthetic-team:synthetic-user")
+	require.NoError(t, err)
+	conv, err := f.Store.EnsureConversationWithType(source.ID, "synthetic-channel", "group_chat", "Synthetic channel")
+	require.NoError(t, err)
+	message, err := f.Store.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "channel-message", MessageType: "slack"})
+	require.NoError(t, err)
+	view, err := f.Store.CreateSavedView(t.Context(), savedViewInput("Purge items"))
+	require.NoError(t, err)
+	_, err = f.Store.ChangeSavedViewItems(t.Context(), view.ID, 1, store.SavedViewItemChange{IncludeAdd: []store.SavedViewItemRef{{ConversationID: conv, SourceID: source.ID}}})
+	require.NoError(t, err)
+	require.NoError(t, f.Store.PurgeChannelContext(t.Context(), source.ID, "synthetic-channel"))
+	got, err := f.Store.GetSavedView(t.Context(), view.ID)
+	require.NoError(t, err)
+	items, stale, err := f.Store.SavedViewItemsForView(t.Context(), got)
+	require.NoError(t, err)
+	assert.Empty(t, items.Include)
+	assert.Equal(t, 1, stale)
+	_, err = f.Store.ChangeSavedViewItems(t.Context(), view.ID, 2, store.SavedViewItemChange{})
+	require.NoError(t, err)
+	retained := f.CreateMessage("view-only-delete")
+	_, err = f.Store.ChangeSavedViewItems(t.Context(), view.ID, 3, store.SavedViewItemChange{IncludeAdd: []store.SavedViewItemRef{{MessageID: retained, SourceID: f.Source.ID}}})
+	require.NoError(t, err)
+	require.NoError(t, f.Store.DeleteSavedView(t.Context(), view.ID, 4))
+	_, err = f.Store.GetSavedView(t.Context(), view.ID)
+	assert.ErrorIs(t, err, store.ErrSavedViewNotFound)
+	var remaining int
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM messages WHERE id=?`), retained).Scan(&remaining))
+	assert.Equal(t, 1, remaining)
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM messages WHERE id=?`), message).Scan(&remaining))
+	assert.Zero(t, remaining)
 }

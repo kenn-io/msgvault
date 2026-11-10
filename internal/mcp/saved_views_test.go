@@ -378,7 +378,7 @@ func TestUpdateSavedViewItemArrays(t *testing.T) {
 	definition := savedViewTestMap(t, result["structuredContent"])
 	assert.Equal(t, float64(1), definition["include_count"])
 	assert.Contains(t, definition, "items")
-	assert.Contains(t, definition, "applied")
+	assert.Equal(t, map[string]any{"include_added": float64(1), "include_removed": float64(0), "exclude_added": float64(0), "exclude_removed": float64(0)}, definition["applied"])
 }
 
 func TestUpdateSavedViewItemsRejected(t *testing.T) {
