@@ -20,9 +20,9 @@ func newImportXCmd() *cobra.Command {
 		Long: `Import supplied direct and group DMs from an extracted X account archive.
 
 Accepts direct-messages.js, direct-messages-group.js and numbered parts in
-an archive root or its data directory. Uses account.js for the numeric owner
-ID; pass --me <numeric-id> when account.js is absent. A conflicting override
-is rejected. Available local media is copied; URLs are never fetched.
+an archive root or its data directory. Uses account.js to identify the owner;
+conflicting --me overrides are rejected. Available local media is copied;
+URLs are never fetched.
 
 Re-running safely skips archived messages and retries missing media. Original
 message JSON is retained. Service events are skipped as messages.
