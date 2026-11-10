@@ -93,6 +93,7 @@ it('gates catalog search through failed reads and retries, then orders and filte
     await fireEvent.input(search, { target: { value: '' } });
     expect([...container.querySelectorAll('.fields .name')].map(row => row.firstChild?.textContent)).toEqual(['Work', 'Location', 'Favorite color']);
     expect(fields.getByText('Current and historical jobs').closest('li')?.textContent).toContain('Jobs · several values');
+    expect(fields.getByText('Where they live').closest('li')?.textContent).toContain('Text · one value');
     expect(fields.getByText('Garden preferences').closest('li')?.textContent).toContain('Profile field · Text · Sensitive');
     expect(fields.queryByRole('button', { name: 'Edit Location' })).toBeNull();
     await fireEvent.input(search, { target: { value: 'garden' } });
