@@ -1,4 +1,4 @@
-import { addressFixture, identityKeyFixture } from './merge-fixtures.test-support';
+import { addressFixture } from './merge-fixtures.test-support';
 import { emptyProfile } from './profile-fixtures.test-support';
 import { envelope, mergeResult, person, requestOf } from './entity-fixtures.test-support';
 import { afterEach, describe, expect, it, vi } from 'vitest';

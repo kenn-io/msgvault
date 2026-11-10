@@ -5,7 +5,7 @@ import rawPhoneAddresses from './beeper-raw-phone-identities.test-fixture.json';
 import mailboxAddresses from './mailbox-case-identities.test-fixture.json';
 import { describe, expect, it } from 'vitest';
 import type { ParticipantAddress, PersonMergeDetail, PersonMergeLabels } from '../api/generated/models';
-import { addressFixture, identityKeyFixture } from './merge-fixtures.test-support';
+import { addressFixture } from './merge-fixtures.test-support';
 import { addressText, mergeSummaryRow as summary, mergeAddresses as addressesFor, mergedInAddresses as mergedInFor, mergeSentence, workspaceLabels } from './merge-labels';
 
 const mergeScopes = (value: Parameters<typeof addressesFor>[0]) => workspaceLabels([...(value.labels?.addresses ?? []), ...(value.labels?.profiles ?? []).flatMap(profile => profile.contact_points ?? [])]);
@@ -73,12 +73,12 @@ it('distinguishes a known empty participant from unavailable addresses', () => {
 
 it('groups saved addresses by the keys supplied by the server', () => {
   const points = [
-    { address_kind: 'email', original_value: 'Reader@Example.org', identity_key: identityKeyFixture('email', 'reader@example.org') },
-    { address_kind: 'email', original_value: 'curated@example.org', identity_key: identityKeyFixture('email', 'curated@example.org') },
-    { address_kind: 'email', original_value: 'Curated@example.org', identity_key: identityKeyFixture('email', 'curated@example.org') },
-    { address_kind: 'language', original_value: 'en', identity_key: identityKeyFixture('language', 'en') },
+    { address_kind: 'email', original_value: 'Reader@Example.org', identity_key: 'reader-key' },
+    { address_kind: 'email', original_value: 'curated@example.org', identity_key: 'curated-key' },
+    { address_kind: 'email', original_value: 'Curated@example.org', identity_key: 'curated-key' },
+    { address_kind: 'language', original_value: 'en', identity_key: 'language-key' },
   ];
-  const value = { merge, participants: [absorbed(701)], labels: { ...labelsOf([addressFixture(701, 'email', 'reader@example.org')]), profiles: [{ id: 9, participant_ids: [701], contact_points: points }] } };
+  const value = { merge, participants: [absorbed(701)], labels: { ...labelsOf([addressFixture(701, 'email', 'reader@example.org', { identity_key: 'reader-key' })]), profiles: [{ id: 9, participant_ids: [701], contact_points: points }] } };
   expect(mergeAddresses(value, 'absorbed').map(addressText)).toEqual(['reader@example.org', 'curated@example.org']);
 });
 
@@ -104,7 +104,7 @@ it('numbers workspaces from the complete merge for current, saved, and merged-in
   expect(row.addresses.get(701)?.map(addressText)).toEqual(expected);
   expect(mergeAddresses(value, 'absorbed').map(addressText)).toEqual(expected);
   expect(mergedInAddresses([{ ...absorbed(701), merged_at: '2026-01-03T12:00:00Z', addresses }]).map(a => a.value)).toEqual(expected);
-  const point = { identity_key: identityKeyFixture('slack', 'T_TWO:U_SAVED', 'workspace', 'T_TWO'), address_kind: 'username', original_value: 'Neri Bloom', service_slug: 'slack', service_label: 'Slack', scope_kind: 'workspace', scope_value: 'T_TWO' };
+  const point = { identity_key: 'saved-slack-key', address_kind: 'username', original_value: 'Neri Bloom', service_slug: 'slack', service_label: 'Slack', scope_kind: 'workspace', scope_value: 'T_TWO' };
   const withSaved = { ...value, labels: { ...value.labels, profiles: [{ id: 9, participant_ids: [701], contact_points: [point] }] } };
   expect(mergeAddresses(withSaved, 'absorbed').map(addressText)).toContain('Neri Bloom · Slack · workspace 2');
 });
@@ -115,7 +115,7 @@ it('renders migrated opaque Beeper IDs by their readable name', () => {
 
 it('numbers accounts together for linked and saved addresses', () => {
   const linked = addressFixture(701, 'beeper', 'opaque', { display_value: 'reader', service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'account-b' });
-  const saved = { identity_key: identityKeyFixture('whatsapp', 'reader', 'account', 'account-a'), address_kind: 'username', original_value: 'reader', service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'account-a' };
+  const saved = { identity_key: 'saved-whatsapp-key', address_kind: 'username', original_value: 'reader', service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'account-a' };
   const labels = labelsOf([linked]);
   labels.profiles = [{ id: 9, participant_ids: [701], contact_points: [saved] }];
   const value = { merge, participants: [absorbed(701)], labels };

@@ -1,4 +1,4 @@
-import { addressFixture, identityKeyFixture } from '../../directory/merge-fixtures.test-support';
+import { addressFixture } from '../../directory/merge-fixtures.test-support';
 import { mergeResult, person } from '../../directory/entity-fixtures.test-support';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -218,8 +218,8 @@ describe('PersonMergeHistory', () => {
     value.labels.participant_ids = value.labels.participant_ids.filter(id => id === 702);
     value.labels.addresses = value.labels.addresses.filter(address => address.participant_id === 702);
     value.labels.profiles[1] = { ...value.labels.profiles[1], display_name: 'Curated Guest', contact_points: [
-      { identity_key: identityKeyFixture('email', 'curated@example.org'), address_kind: 'email', original_value: 'curated@example.org' },
-      { identity_key: identityKeyFixture('phone', '+12025550144'), address_kind: 'phone', original_value: '+12025550144' },
+      { identity_key: 'curated-key', address_kind: 'email', original_value: 'curated@example.org' },
+      { identity_key: 'phone-key', address_kind: 'phone', original_value: '+12025550144' },
     ] };
     renderHistory(value);
     await fireEvent.click(await screen.findByRole('button', { name: /^Open Curated Guest merged into Alex Example/ }));

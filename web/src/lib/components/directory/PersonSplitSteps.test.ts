@@ -1,4 +1,4 @@
-import { addressFixture, identityKeyFixture } from '../../directory/merge-fixtures.test-support';
+import { addressFixture } from '../../directory/merge-fixtures.test-support';
 import { emptyProfile } from '../../directory/profile-fixtures.test-support';
 import { envelope, mergeResult, person } from '../../directory/entity-fixtures.test-support';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
@@ -251,7 +251,7 @@ describe('PersonSplitSteps', () => {
   });
 
   it('splits a saved-only profile without calling it addressless', async () => {
-    const saved = { person_id: 19, identity_key: identityKeyFixture('email', 'saved@example.org'), address_kind: 'email', original_value: 'saved@example.org', normalized_value: 'saved@example.org', normalization: 'email', normalization_version: 1, envelope: envelope(190) };
+    const saved = { person_id: 19, identity_key: 'saved-key', address_kind: 'email', original_value: 'saved@example.org', normalized_value: 'saved@example.org', normalization: 'email', normalization_version: 1, envelope: envelope(190) };
     const response = { ...result(true), source_person: person(12, 5, [], 'Synthetic Source'), new_person: person(19, 1, [], 'Synthetic Restored') };
     const { controller } = await preparedController(async input => {
       const request = input as Request, path = new URL(request.url).pathname;
