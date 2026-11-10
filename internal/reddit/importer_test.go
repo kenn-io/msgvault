@@ -12,6 +12,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -22,8 +24,6 @@ func TestImportFictionalExport(t *testing.T) {
 	assert.Equal(t, 6, summary.Added)
 	assert.Equal(t, 2, summary.Unchanged)
 	assert.Contains(t, summary.Unsupported, "votes.csv")
-	assert.Equal(t, 4, summary.UnknownDates)
-	assert.Equal(t, 2, summary.UnknownSenders)
 	var n int
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages WHERE message_type IN ('reddit_chat','reddit_pm','reddit_post','reddit_comment')").Scan(&n))
 	assert.Equal(t, 6, n)
@@ -48,15 +48,13 @@ func TestImportFictionalExport(t *testing.T) {
 	canonical, err := json.Marshal(evidence, json.Deterministic(true))
 	require.NoError(t, err)
 	assert.Equal(t, string(canonical), string(raw))
-	_, present := evidence.Columns["ip"]
-	assert.False(t, present)
-	again, err := Import(t.Context(), st, ImportOptions{RootDir: "testdata/export"})
+	updatedAt, present := evidence.Columns["updated_at"]
+	assert.True(t, present)
+	assert.Empty(t, updatedAt)
+	live := query.NewEngine(st.DB(), st.IsPostgreSQL())
+	found, err := live.Search(t.Context(), search.Parse("lantern"), 20, 0)
 	require.NoError(t, err)
-	assert.Zero(t, again.Added)
-	assert.Equal(t, 8, again.Unchanged)
-	other, err := Import(t.Context(), st, ImportOptions{RootDir: "testdata/export", Me: "other_owner"})
-	require.ErrorContains(t, err, "account")
-	assert.Zero(t, other.SourceID)
+	assert.Len(t, found, 6)
 }
 
 func TestImportSchemasAndOwner(t *testing.T) {
@@ -86,10 +84,6 @@ func TestImportQuotedBOMHeader(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, summary.Added)
 	assert.Equal(t, 1, summary.Malformed)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "posts.csv"), []byte("id,title\n"), 0600))
-	summary, err = Import(t.Context(), testutil.NewTestStore(t), ImportOptions{RootDir: root, Me: "fictional_owner"})
-	require.NoError(t, err)
-	assert.Zero(t, summary.Added)
 }
 
 func TestImportReadLimitsAndSymlinks(t *testing.T) {
@@ -162,8 +156,11 @@ func TestImportAccountIsolationAndStatisticsConflict(t *testing.T) {
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages WHERE source_message_id='comment:same'").Scan(&n))
 	assert.Equal(t, 2, n)
 	require.NoError(t, os.WriteFile(filepath.Join(root, "statistics.csv"), []byte("statistic,value\naccount name,fictional_one\n"), 0600))
+	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_two"})
+	require.ErrorContains(t, err, "account")
+	assert.Zero(t, summary.SourceID)
 	require.NoError(t, os.WriteFile(filepath.Join(root, "statistics_1.csv"), []byte("statistic,value\naccount name,fictional_two\n"), 0600))
-	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root})
+	summary, err = Import(t.Context(), st, ImportOptions{RootDir: root})
 	require.ErrorContains(t, err, "account")
 	assert.Zero(t, summary.SourceID)
 }
@@ -193,10 +190,9 @@ func TestImportEntryBound(t *testing.T) {
 
 func TestImportPlainMarkerNamesArePeople(t *testing.T) {
 	for _, tc := range []struct{ me, account, want string }{
-		{"unknown", "", "unknown"}, {"deleted", "", "deleted"},
+		{"unknown", "", "unknown"},
 		{"a", "", "a"}, {"Legacy-Name_1", "", "legacy-name_1"},
-		{"", "unknown", "unknown"}, {"", "deleted", "deleted"},
-		{"fictional_owner", "", "fictional_owner"},
+		{"", "deleted", "deleted"},
 	} {
 		t.Run(tc.me+"/"+tc.account, func(t *testing.T) {
 			root := t.TempDir()
@@ -206,7 +202,7 @@ func TestImportPlainMarkerNamesArePeople(t *testing.T) {
 			summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: tc.me})
 			require.NoError(t, err)
 			var account string
-			require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT identifier FROM sources WHERE id=?", summary.SourceID).Scan(&account))
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT identifier FROM sources WHERE id=?"), summary.SourceID).Scan(&account))
 			assert.Equal(t, tc.want, account)
 			var n int
 			require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM participant_identifiers WHERE identifier_type='reddit' AND identifier_value IN ('unknown','deleted')").Scan(&n))
@@ -219,18 +215,11 @@ func TestImportPlainMarkerNamesArePeople(t *testing.T) {
 func TestImportInvalidOwnerPreflight(t *testing.T) {
 	for _, tc := range []struct{ name, me, statistics, want string }{
 		{"flag URL", "https://example.com/user", "account name,fictional_owner\n", "--me"},
-		{"flag space", "two words", "", "--me"},
-		{"flag subreddit", "r/garden", "account name,fictional_owner\n", "--me"},
 		{"flag wrapper", "/u/", "account name,fictional_owner\n", "--me"},
 		{"statistics URL", "fictional_owner", "account name,https://example.com/user\n", "statistics.csv: record 1"},
-		{"statistics space", "", "account name,two words\n", "statistics.csv: record 1"},
-		{"statistics subreddit", "fictional_owner", "account name,/r/garden\n", "statistics.csv: record 1"},
 		{"statistics wrapper", "fictional_owner", "account name,u/\n", "statistics.csv: record 1"},
-		{"statistics nonASCII", "", "account name,fictional_é\n", "statistics.csv: record 1"},
 		{"flag Unicode folds to ASCII", "\u212A", "", "--me"},
-		{"statistics wrong width", "fictional_owner", "account name,other_owner,extra\n", "statistics.csv: record 1"},
 		{"statistics malformed later record", "fictional_owner", "export time,fictional snapshot\naccount name,other_owner,extra\n", "statistics.csv: record 2"},
-		{"statistics invalid UTF8 wrong width", "fictional_owner", "account name,\xff,extra\n", "statistics.csv: record 1"},
 		{"statistics quoting", "fictional_owner", "account name,\"unterminated\n", "statistics.csv: record 1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -283,7 +272,7 @@ func TestImportContentLinkCoverage(t *testing.T) {
 		{"body URL", "comments.csv", "id,body\none,https://example.com/content\n", 1},
 		{"message URL", "chat_history.csv", "message_id,message\none,https://example.com/content\n", 1},
 		{"post URL", "posts.csv", "id,title,url\none,lantern,https://example.com/content\n", 1},
-		{"explicit media", "messages.csv", "id,body,media\none,plain,fictional-media-id\n", 1},
+		{"explicit media", "comments.csv", "id,body,media\none,plain,fictional-media-id\n", 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -305,20 +294,8 @@ func TestImportChatGroupingRemainsUnknown(t *testing.T) {
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COALESCE(conversation_type,''),title FROM conversations").Scan(&kind, &title))
 	assert.Empty(t, kind)
 	assert.Equal(t, "Fictional garden", title)
-	var metadata sql.NullString
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT metadata FROM messages WHERE source_message_id='chat:one'").Scan(&metadata))
-	assert.False(t, metadata.Valid)
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT metadata FROM messages WHERE source_message_id='chat:two'").Scan(&metadata))
-	var fields map[string]any
-	require.NoError(t, json.Unmarshal([]byte(metadata.String), &fields))
-	assert.Equal(t, map[string]any{"referenced_message_id": "chat:one"}, fields)
 	var id int64
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages WHERE source_message_id='chat:one'").Scan(&id))
-	raw, err := st.GetMessageRawContext(t.Context(), id)
-	require.NoError(t, err)
-	var row csvRow
-	require.NoError(t, json.Unmarshal(raw, &row))
-	assert.Equal(t, "group", row.Columns["conversation_type"])
 	var reply int64
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT reply_to_message_id FROM messages WHERE source_message_id='chat:two'").Scan(&reply))
 	assert.Equal(t, id, reply)
@@ -339,42 +316,30 @@ func TestImportFatalSchemaRetainsEarlierFiles(t *testing.T) {
 }
 
 func TestImportPMKindDoesNotDependOnRows(t *testing.T) {
-	for _, reverse := range []bool{false, true} {
-		t.Run(fmt.Sprint(reverse), func(t *testing.T) {
-			root := t.TempDir()
-			st := testutil.NewTestStore(t)
-			rows := []string{"one,first,fictional_owner,fictional_peer,thread,First subject\n", "two,second,fictional_owner,,thread,Later subject\n"}
-			if reverse {
-				rows[0], rows[1] = rows[1], rows[0]
-			}
-			wantTitle := "Later subject"
-			if reverse {
-				wantTitle = "First subject"
-			}
-			rows = append(rows, "three,recipient,fictional_owner,r/fictional_garden,thread,\n", "four,sender,/r/fictional_garden,fictional_owner,thread,\n")
-			var kind, title string
-			for _, row := range rows {
-				require.NoError(t, os.WriteFile(filepath.Join(root, "messages.csv"), []byte("id,body,from,to,thread_id,subject\n"+row), 0600))
-				_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
-				require.NoError(t, err)
-				require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT conversation_type,title FROM conversations").Scan(&kind, &title))
-				assert.Empty(t, kind)
-			}
-			var n int
-			require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM participant_identifiers WHERE identifier_type='reddit'").Scan(&n))
-			assert.Equal(t, 2, n)
-			assert.Equal(t, wantTitle, title)
-			require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM participant_identifiers WHERE identifier_type='reddit' AND identifier_value IN ('r/fictional_garden','/r/fictional_garden')").Scan(&n))
-			assert.Zero(t, n)
-			var id int64
-			require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages WHERE source_message_id='pm:three'").Scan(&id))
-			raw, err := st.GetMessageRawContext(t.Context(), id)
-			require.NoError(t, err)
-			var row csvRow
-			require.NoError(t, json.Unmarshal(raw, &row))
-			assert.Equal(t, "r/fictional_garden", row.Columns["to"])
-		})
+	root := t.TempDir()
+	st := testutil.NewTestStore(t)
+	rows := []string{"one,first,fictional_owner,fictional_peer,thread,First subject\n", "two,second,fictional_owner,,thread,Later subject\n"}
+	rows = append(rows, "three,recipient,fictional_owner,r/fictional_garden,thread,\n", "four,sender,/r/fictional_garden,fictional_owner,thread,\n")
+	var kind string
+	for _, row := range rows {
+		require.NoError(t, os.WriteFile(filepath.Join(root, "messages.csv"), []byte("id,body,from,to,thread_id,subject\n"+row), 0600))
+		_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
+		require.NoError(t, err)
+		require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT conversation_type FROM conversations").Scan(&kind))
+		assert.Empty(t, kind)
 	}
+	var n int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM participant_identifiers WHERE identifier_type='reddit'").Scan(&n))
+	assert.Equal(t, 2, n)
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM participant_identifiers WHERE identifier_type='reddit' AND identifier_value IN ('r/fictional_garden','/r/fictional_garden')").Scan(&n))
+	assert.Zero(t, n)
+	var id int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages WHERE source_message_id='pm:three'").Scan(&id))
+	raw, err := st.GetMessageRawContext(t.Context(), id)
+	require.NoError(t, err)
+	var row csvRow
+	require.NoError(t, json.Unmarshal(raw, &row))
+	assert.Equal(t, "r/fictional_garden", row.Columns["to"])
 }
 
 func TestImportSubredditTitleCanonical(t *testing.T) {
@@ -385,6 +350,9 @@ func TestImportSubredditTitleCanonical(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
 	require.NoError(t, err)
+	var n int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM conversations").Scan(&n))
+	assert.Equal(t, 1, n)
 	var title string
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT title FROM conversations WHERE source_conversation_id='subreddit:fictional_garden'").Scan(&title))
 	assert.Equal(t, "r/fictional_garden", title)

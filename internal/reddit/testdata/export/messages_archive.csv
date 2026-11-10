@@ -1,2 +1,2 @@
-id,body
-p1,overlap retains original
+id,permalink,thread_id,date,ip,from,to,subject,body
+p1,,,,,,,,overlap retains original
