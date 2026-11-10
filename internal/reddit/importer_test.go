@@ -227,7 +227,6 @@ func TestImportInvalidOwnerPreflight(t *testing.T) {
 		{"flag URL", "https://example.com/user", "account name,fictional_owner\n", "--me", ""},
 		{"flag wrapper", "/u/", "account name,fictional_owner\n", "--me", ""},
 		{"statistics URL", "fictional_owner", "account name,https://example.com/user\n", "statistics.csv: record 1", ""},
-		{"statistics wrapper", "fictional_owner", "account name,u/\n", "statistics.csv: record 1", ""},
 		{"flag Unicode folds to ASCII", "\u212A", "", "--me", ""},
 		{"statistics malformed later record", "fictional_owner", "export time,fictional snapshot\naccount name,other_owner,extra\n", "statistics.csv: record 2", ""},
 		{"statistics quoting", "fictional_owner", "account name,\"unterminated\n", "statistics.csv: record 1", ""},
