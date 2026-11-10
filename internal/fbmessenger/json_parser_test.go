@@ -191,10 +191,10 @@ func TestParseJSONThread_SkipsUnnumberedSibling(t *testing.T) {
 	// Facebook sometimes writes a human-named sibling; content doesn't
 	// matter because we skip it by name before attempting to parse it.
 	require.NoError(os.WriteFile(filepath.Join(threadPath, "message_final.json"), []byte(`not even valid json`), 0644))
+	require.NoError(os.WriteFile(filepath.Join(threadPath, "message_999999999999999999999999999999.json"), []byte(good), 0644))
 	th, err := ParseJSONThread(tmp, threadPath)
 	require.NoError(err, "unexpected error")
 	require.Len(th.Messages, 1)
 	assert.Equal("hi from A", th.Messages[0].Body)
-	require.Len(th.BadSiblings, 1)
-	assert.Equal("message_final.json", th.BadSiblings[0], "BadSiblings=%v", th.BadSiblings)
+	assert.ElementsMatch([]string{"message_final.json", "message_999999999999999999999999999999.json"}, th.BadSiblings)
 }

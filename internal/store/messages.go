@@ -6115,7 +6115,7 @@ func (s *Store) UpsertReaction(ctx context.Context, messageID, participantID int
 			return err
 		}
 		_, err := q.Exec(s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO reactions (message_id, participant_id, reaction_type, reaction_value, created_at)
-			VALUES (?, ?, ?, ?, ?)`), messageID, participantID, reactionType, reactionValue, sql.NullTime{Time: createdAt, Valid: !createdAt.IsZero()})
+			VALUES (?, ?, ?, ?, ?)`), messageID, participantID, reactionType, reactionValue, createdAt)
 		return err
 	}
 	if s.syncGeneration != nil {

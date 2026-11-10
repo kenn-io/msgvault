@@ -384,7 +384,7 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (summar
 		if instagram {
 			var parsed *Thread
 			var archived map[string]store.StoredMessage
-			parsed, archived, err = parseInstagramThread(ctx, st, source.ID, td, summary, keys, archivedGroups)
+			parsed, archived, err = parseInstagramThread(ctx, st, source.ID, td, summary, keys, archivedGroups, opts.SelfName)
 			if err == nil {
 				err = writeThreadToStore(ctx, st, source.ID, td, parsed, "", opts, labelIDs, meLocal, logger, summary, syncID, absRoot, threadIdx, &cp, archived)
 			}

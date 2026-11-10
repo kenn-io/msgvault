@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -80,8 +81,8 @@ func numberedJSONFiles(threadDir string) ([]string, []string, error) {
 		if !strings.HasPrefix(name, "message_") || !strings.HasSuffix(name, ".json") {
 			continue
 		}
-		m := reMessageFile.FindStringSubmatch(name)
-		if m == nil {
+		_, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(name, "message_"), ".json"))
+		if !reMessageFile.MatchString(name) || err != nil {
 			// Unrecognized sibling (e.g. message_final.json). Skip it and
 			// record the bad name so the importer can log + count it
 			// without aborting the entire thread.
@@ -252,7 +253,7 @@ func renderShareBody(m rawJSONMessage, content string) string {
 	var b strings.Builder
 	b.WriteString("[shared link] ")
 	if m.Share != nil {
-		b.WriteString(m.Share.Link)
+		b.WriteString(DecodeMojibake(m.Share.Link))
 		text := DecodeMojibake(m.Share.ShareText)
 		if text != "" {
 			b.WriteByte('\n')
@@ -428,19 +429,10 @@ func metaJSONMessage(m rawJSONMessage, idx int, absRoot string) Message {
 	return msg
 }
 
-// sortMessageFiles orders numbered shards without integer overflow.
 func sortMessageFiles(files []string) {
-	number := func(name string) string {
-		return strings.TrimLeft(strings.TrimSuffix(strings.TrimPrefix(filepath.Base(name), "message_"), ".json"), "0")
-	}
-	sort.SliceStable(files, func(i, j int) bool {
-		a, b := number(files[i]), number(files[j])
-		if len(a) != len(b) {
-			return len(a) < len(b)
-		}
-		if a != b {
-			return a < b
-		}
-		return files[i] < files[j]
+	sort.Slice(files, func(i, j int) bool {
+		a, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(files[i], "message_"), ".json"))
+		b, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(files[j], "message_"), ".json"))
+		return a < b
 	})
 }
