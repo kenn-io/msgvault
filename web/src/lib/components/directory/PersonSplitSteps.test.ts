@@ -77,17 +77,19 @@ function result(exactReversal: boolean) {
 }
 
 describe('PersonSplitSteps', () => {
-  it('prevents selection of unidentified addresses while allowing identified ones', async () => {
+  it('keeps an unknown address selectable when labels fail and preserves it on retry', async () => {
     const participants = [701, 702].map(participant_id => ({ merge_id: 41, participant_id, origin_side: 'absorbed' }));
     const { controller } = await preparedController(async input => new URL((input as Request).url).pathname.endsWith('/profile')
       ? Response.json(emptyProfile(person(12))) : Response.json(person(12, 4, [701, 702]), { headers: { ETag: '"person-12-r4"' } }),
     participants, () => ({ ...mergeDetail().labels, participant_ids: [701], addresses: [addressFixture(701, 'email', 'person701@example.org')] }));
     render(PersonSplitSteps, { controller, onOpenPerson: vi.fn() });
-    expect(screen.getByRole('checkbox', { name: 'Unknown address 2' })).toHaveProperty('disabled', true);
+    expect(screen.getByText("Some addresses couldn't be loaded.")).toBeDefined();
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Unknown address 2' }));
+    expect(controller.selectedParticipantIDs).toEqual([702]);
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(controller.selectedParticipantIDs).toEqual([702]));
+    expect(screen.getByRole('checkbox', { name: 'Unknown address 2' })).toHaveProperty('checked', true);
     expect(screen.getByRole('checkbox', { name: 'person701@example.org' })).toHaveProperty('disabled', false);
-    controller.setParticipantSelected(702, true);
-    expect(controller.selectedParticipantIDs).toEqual([]);
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'person701@example.org' }));
     expect(controller.confirmSplit()).toBe(true);
     controller.destroy();
   });
