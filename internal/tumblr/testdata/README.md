@@ -5,13 +5,15 @@ independently authored for msgvault. No third-party export, message text,
 identifier, avatar or CSS was copied. These authored fixtures are covered by
 the repository license.
 
-`observed-shape` uses the observed participant containers and labels, bare
-conversation status heading, message-info header grammar, TEXT paragraphs and
-POSTREF anchor shape. `overlap` repeats those fictional records in reverse
-order under a different filename. `synthetic-media` invents IMAGE records and
-standard HTML media, unsupported types, malformed headers, missing dates and
-conflicting date evidence. These are edge cases, not observed official media
-markup. The picture.txt file is fictional media bytes, not an actual image.
+`observed-shape` uses the observed participant containers and labels, conversation
+status followed by the `Participants:` heading, message-info header grammar,
+TEXT paragraphs and POSTREF anchors. Tests derive a reordered copy under a
+different filename to exercise overlap. This order is synthetic; observed
+exports are newest-first. `synthetic-media` invents IMAGE records and standard
+HTML media, unsupported types, malformed headers, missing dates and conflicting
+date evidence. These are edge cases, not observed official media markup. The
+missing-ID fallback is also synthetic, not observed export structure.
+The picture.txt file is fictional media bytes, not an actual image.
 
 ## Structural provenance
 
@@ -36,8 +38,7 @@ markup. The picture.txt file is fictional media bytes, not an actual image.
 Digests cover each authored file relative to this directory.
 
 ```text
-4bec837dd06d8028c0856f115c7768e2141936a59f158ab0a08bf047aed32c44  observed-shape/conversations/convo_700.html
-7ac707c06039799f131e16bf1a0d8be88d4c4c6bb142f34bbc92bd305fbfee51  overlap/conversations/renamed.html
-26fdb00d622527672191f10b6912f7b9830403bebf56645329c602f3a1435983  synthetic-media/conversations/convo_700.html
+6a7fb7063d3e9b37e4278540f7f79a50e48a65cca746c6ad89be13b73882a2bf  observed-shape/conversations/convo_700.html
+668fb851023e72af9b668e46d49a86190cca2e732d6dac4754cd1a0975e40377  synthetic-media/conversations/convo_700.html
 2aecb5f25ef82ad29edc5e67afc83e3b78ea9f6b4722e95ea510692fd5f4b87d  synthetic-media/media/picture.txt
 ```

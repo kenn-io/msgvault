@@ -33,7 +33,7 @@ func parseConversation(ctx context.Context, data []byte) (*Conversation, error) 
 				text := strings.TrimSpace(nodeText(n))
 				if id, ok := strings.CutPrefix(text, "Conversation ID:"); ok {
 					c.ID = strings.TrimSpace(id)
-				} else {
+				} else if c.Status == "" && text != "Participants:" {
 					c.Status = text
 				}
 			}
@@ -152,7 +152,11 @@ func parseMessage(n, info *html.Node) (Message, bool) {
 	}
 	if m.Epoch != "" {
 		epoch, e := strconv.ParseInt(m.Epoch, 10, 64)
-		m.DateConflict = e != nil || (m.SentAt.Valid && date.Unix() != epoch)
+		validEpoch := e == nil && epoch >= -62135596800 && epoch <= 253402300799
+		m.DateConflict = !validEpoch || (m.SentAt.Valid && date.Unix() != epoch)
+		if validEpoch && !m.SentAt.Valid {
+			m.SentAt.Time, m.SentAt.Valid = time.Unix(epoch, 0).UTC(), true
+		}
 	}
 	// Conflicting evidence has no unambiguous timestamp.
 	if m.DateConflict {
@@ -177,8 +181,6 @@ func parseMessage(n, info *html.Node) (Message, bool) {
 				href := attr(n, "href")
 				if m.Type == "POSTREF" {
 					m.Targets = append(m.Targets, href)
-				} else if href != "" && !strings.Contains(href, ":") && !strings.HasPrefix(href, "//") {
-					m.Media = append(m.Media, href)
 				}
 			}
 		}

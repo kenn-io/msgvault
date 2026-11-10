@@ -4,14 +4,14 @@ package tumblr
 import (
 	"database/sql"
 	"log/slog"
-	"time"
 )
 
 const SourceType = "tumblr"
 const MessageType = "tumblr"
 const maxHTMLBytes = 64 << 20
 const maxMediaBytes = 100 << 20
-const maxEntries = 100000
+const maxEntries = 1000000
+const maxMetadataBytes = 128 << 20
 
 type ImportOptions struct {
 	Blog           string
@@ -39,8 +39,6 @@ type ImportSummary struct {
 	MediaRemote          int
 	MediaInvalid         int
 	MediaOversized       int
-	FirstDate            time.Time
-	LastDate             time.Time
 }
 
 type Participant struct{ Name, ID, Status string }

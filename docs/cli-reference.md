@@ -2477,7 +2477,7 @@ msgvault import-tumblr --blog <blog-name> <folder-or-zip>
 | `--blog` | Required | Exporting blog name; creates a separately scoped source |
 | `--no-default-identity` | `false` | Skip automatic confirmation of the resolved exporting participant |
 
-Files must be on the daemon host. Replay preserves first-import evidence and fills missing media. Counts describe observed coverage, including unsupported records and media gaps. See [Tumblr imports](usage/text-messages.md#import-tumblr) for supported markup, synthetic media coverage, limits and overlap ambiguity.
+Files must be on the daemon host. Stable owner IDs reuse the source after blog renames. If every conversation belongs to another blog, import fails before creating a source. Replay preserves first-import evidence and fills missing media. Media counts distinguish newly stored slots from gap observations this run. See [Tumblr imports](usage/text-messages.md#import-tumblr) for supported markup, synthetic media coverage, limits and overlap ambiguity.
 
 ## import-messenger
 

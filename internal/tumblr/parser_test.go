@@ -25,6 +25,9 @@ func TestTumblrParserEvidence(t *testing.T) {
 	assert.Equal(int64(1704067201), c.Messages[1].SentAt.Time.Unix())
 	assert.Contains(c.Messages[1].HTML, "message-info")
 	assert.Empty(c.Messages[1].Media)
+	linked, err := parseConversation(t.Context(), []byte(strings.ReplaceAll(string(data), "<p>Hello", `<a href="../ordinary.html">ordinary link</a><p>Hello`)))
+	require.NoError(err)
+	assert.Empty(linked.Messages[1].Media)
 	c, err = parseConversation(t.Context(), []byte(strings.ReplaceAll(string(data), "<p>Hello", "<script>ignore me</script><style>ignore css</style><p>Hello")))
 	require.NoError(err)
 	assert.NotContains(c.Messages[1].Text, "ignore")
@@ -44,11 +47,11 @@ func TestTumblrParserSyntheticCases(t *testing.T) {
 	assert.False(c.Messages[1].SentAt.Valid)
 	assert.True(c.Messages[3].DateConflict)
 	assert.False(c.Messages[3].SentAt.Valid)
-	for _, date := range []string{"", "unknown", "2024-01-01 00:00:00 GMT", "2024-01-01 00:00:00 GMT (broken)"} {
+	for _, date := range []string{"", "2024-01-01 00:00:00 GMT", "2024-01-01 00:00:00 GMT (broken)", "unreadable (1704067200)"} {
 		html := `<h2>Conversation ID: 1</h2><div class="container"><span class="message-info">visitor TEXT @ ` + date + `</span><p>Example</p></div>`
 		c, err := parseConversation(t.Context(), []byte(html))
 		require.NoError(err)
 		require.Len(c.Messages, 1)
-		assert.Equal(date == "2024-01-01 00:00:00 GMT", c.Messages[0].SentAt.Valid)
+		assert.Equal(date == "2024-01-01 00:00:00 GMT" || date == "unreadable (1704067200)", c.Messages[0].SentAt.Valid)
 	}
 }

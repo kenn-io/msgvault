@@ -6,12 +6,11 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestMatrixMessagesAreClassifiedAsChat(t *testing.T) {
-	assert.True(t, IsChat("matrix", "group_chat"))
-	assert.True(t, IsChat("matrix", "direct_chat"))
-}
-
-func TestTumblrMessagesAreClassifiedAsChat(t *testing.T) {
-	assert.True(t, IsChat("tumblr", "direct_chat"))
-	assert.True(t, IsChat("tumblr", ""))
+func TestChatMessagesAreClassifiedAsChat(t *testing.T) {
+	for _, kind := range []string{"matrix", "tumblr"} {
+		t.Run(kind, func(t *testing.T) {
+			assert.True(t, IsChat(kind, "group_chat"))
+			assert.True(t, IsChat(kind, "direct_chat"))
+		})
+	}
 }

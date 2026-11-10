@@ -41,7 +41,6 @@ func TestTumblrCLIImportIdentityAndMaintenance(t *testing.T) {
 			require.NoError(err)
 			require.NoError(runImportTumblr(cmd, fixture, tumblrCLIOptions{Blog: "orchard-example", NoDefaultIdentity: noIdentity}))
 			assert.Contains(out.String(), "4 added, 0 present")
-			assert.Contains(out.String(), "Observed dated range:")
 			st, err := store.Open(cfg.DatabaseDSN())
 			require.NoError(err)
 			defer func() { require.NoError(st.Close()) }()

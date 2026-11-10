@@ -49,20 +49,17 @@ func Import(ctx context.Context, st *store.Store, input string, opts ImportOptio
 	}
 	defer func() { retErr = errors.Join(retErr, r.close()) }()
 	summary.FilesSkipped = r.skipped
-	source, err := st.GetOrCreateSourceContext(ctx, SourceType, opts.Blog)
-	if err != nil {
-		return summary, err
-	}
-	summary.SourceID = source.ID
-	syncID, err := st.StartSyncContext(ctx, source.ID, "import-tumblr")
-	if err != nil {
-		return summary, err
-	}
-	st = st.ScopedToSync(source.ID, syncID)
+	var sourceID, syncID int64
 	defer func() {
+		if syncID == 0 {
+			return
+		}
 		// Finalize committed observations even when the caller cancels the import.
 		cleanup := context.WithoutCancel(ctx)
-		retErr = errors.Join(retErr, st.RecomputeConversationStatsContext(cleanup, source.ID))
+		retErr = errors.Join(retErr, st.RecomputeConversationStatsContext(cleanup, sourceID), st.UpdateSyncCheckpointContext(cleanup, syncID, &store.Checkpoint{
+			MessagesProcessed: int64(summary.MessagesAdded + summary.MessagesPresent + summary.Unsupported + summary.Malformed),
+			MessagesAdded:     int64(summary.MessagesAdded),
+		}))
 		if retErr != nil {
 			retErr = errors.Join(retErr, st.FailSyncContext(cleanup, syncID, retErr.Error()))
 		} else {
@@ -82,8 +79,6 @@ func Import(ctx context.Context, st *store.Store, input string, opts ImportOptio
 		if err != nil {
 			return summary, fmt.Errorf("tumblr: %s: %w", name, err)
 		}
-		summary.Malformed += c.Malformed
-		summary.UnknownBlocks += c.UnknownBlocks
 		owner := ""
 		for _, p := range c.Participants {
 			if normalizeBlog(p.Name) == opts.Blog {
@@ -101,14 +96,34 @@ func Import(ctx context.Context, st *store.Store, input string, opts ImportOptio
 		if summary.OwnerKey != "" && summary.OwnerKey != owner {
 			return summary, errors.New("tumblr: inconsistent owner identity across conversations")
 		}
+		if sourceID == 0 {
+			source, err := st.GetOrCreateSourceContext(ctx, SourceType, owner)
+			if err != nil {
+				return summary, err
+			}
+			sourceID, summary.SourceID = source.ID, source.ID
+			if err := st.UpdateSourceDisplayNameContext(ctx, sourceID, opts.Blog); err != nil {
+				return summary, err
+			}
+			syncID, err = st.StartSyncContext(ctx, sourceID, "import-tumblr")
+			if err != nil {
+				return summary, err
+			}
+			st = st.ScopedToSync(sourceID, syncID)
+		}
+		summary.Malformed += c.Malformed
+		summary.UnknownBlocks += c.UnknownBlocks
 		summary.OwnerKey = owner
 		summary.Conversations++
-		if err := importConversation(ctx, st, r, source.ID, c, opts, summary); err != nil {
+		if err := importConversation(ctx, st, r, sourceID, c, opts, summary); err != nil {
 			return summary, err
 		}
 		if opts.Logger != nil {
 			opts.Logger.Info("tumblr: conversation imported", "conversation", c.ID)
 		}
+	}
+	if summary.Conversations == 0 && summary.ForeignConversations > 0 {
+		return summary, fmt.Errorf("tumblr: no conversations for selected blog %q; check the participant blog label", opts.Blog)
 	}
 	return summary, nil
 }
@@ -117,10 +132,14 @@ func importConversation(ctx context.Context, st *store.Store, r *exportReader, s
 	names := map[string]string{}
 	ids := map[string]int64{}
 	members := []store.ConversationParticipantRef{}
+	title := []string{}
 	for _, p := range c.Participants {
 		key := participantKey(opts.Blog, p)
 		if key == "" {
 			continue
+		}
+		if p.Name != "" {
+			title = append(title, p.Name)
 		}
 		id, err := st.EnsureParticipantByIdentifierContext(ctx, SourceType, key, p.Name)
 		if err != nil {
@@ -135,12 +154,6 @@ func importConversation(ctx context.Context, st *store.Store, r *exportReader, s
 		}
 		ids[key] = id
 		members = append(members, store.ConversationParticipantRef{ParticipantID: id, Role: "member"})
-	}
-	title := []string{}
-	for _, p := range c.Participants {
-		if p.Name != "" {
-			title = append(title, p.Name)
-		}
 	}
 	conversationType := "direct_chat"
 	if len(members) > 2 {
@@ -175,13 +188,6 @@ func importConversation(ctx context.Context, st *store.Store, r *exportReader, s
 		}
 		if !m.SentAt.Valid {
 			s.Undated++
-		} else {
-			if s.FirstDate.IsZero() || m.SentAt.Time.Before(s.FirstDate) {
-				s.FirstDate = m.SentAt.Time
-			}
-			if s.LastDate.IsZero() || m.SentAt.Time.After(s.LastDate) {
-				s.LastDate = m.SentAt.Time
-			}
 		}
 		if m.DateConflict {
 			s.ConflictingDates++
@@ -229,10 +235,14 @@ func importConversation(ctx context.Context, st *store.Store, r *exportReader, s
 		if len(writes) > 0 {
 			replacement = &writes
 		}
+		body := m.Text
+		if m.Type == "POSTREF" {
+			body = strings.TrimSpace(m.Text + "\n" + strings.Join(m.Targets, "\n"))
+		}
 		_, err = st.PersistMessageContext(ctx, &store.MessagePersistData{
-			Message:      &store.Message{SourceID: sourceID, SourceMessageID: keys[i], MessageType: MessageType, SentAt: m.SentAt, SenderID: sql.NullInt64{Int64: sender, Valid: sender != 0}, IsFromMe: sender != 0 && senderKey == s.OwnerKey, Snippet: sql.NullString{String: textutil.PrefixRunes(m.Text, 200), Valid: m.Text != ""}, SizeEstimate: int64(len(m.Text))},
+			Message:      &store.Message{SourceID: sourceID, SourceMessageID: keys[i], MessageType: MessageType, SentAt: m.SentAt, SenderID: sql.NullInt64{Int64: sender, Valid: sender != 0}, IsFromMe: sender != 0 && senderKey == s.OwnerKey, Snippet: sql.NullString{String: textutil.PrefixRunes(body, 200), Valid: body != ""}, SizeEstimate: int64(len(body))},
 			Conversation: &store.ConversationPersistData{SourceConversationID: c.ID, ConversationType: conversationType, Title: strings.Join(title, ", "), Participants: members, PreserveExistingParticipants: true},
-			BodyText:     sql.NullString{String: m.Text, Valid: m.Text != ""}, RawMIME: raw, RawFormat: "json", Recipients: recipients, MIMEAttachmentReplacement: replacement, FTS: &store.FTSDoc{Body: m.Text},
+			BodyText:     sql.NullString{String: body, Valid: body != ""}, RawMIME: raw, RawFormat: "json", Recipients: recipients, MIMEAttachmentReplacement: replacement, FTS: &store.FTSDoc{Body: body},
 		})
 		if err != nil {
 			return err

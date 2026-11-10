@@ -9,7 +9,7 @@ import (
 )
 
 func TestAssembleDocumentOrdersBoundedContextThenMedia(t *testing.T) {
-	for _, messageType := range []string{"slack", "matrix"} {
+	for _, messageType := range []string{"slack", "matrix", "tumblr"} {
 		t.Run(messageType, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
@@ -106,13 +106,4 @@ func revisionRequest() AssembleRequest {
 		Role:    store.AttachmentRoleStandalone, SourceSequence: 1,
 		Policy: ContextPolicy{MaxChars: 4000, InputVersion: "visual-input-v1", EligibilityVersion: "visual-eligibility-v1"},
 	}
-}
-
-func TestAssembleDocumentTumblrContext(t *testing.T) {
-	request := revisionRequest()
-	request.Context = MessageContext{Body: "Photo caption", MessageType: "tumblr"}
-	doc, _, err := AssembleDocument(request)
-	require.NoError(t, err)
-	require.Len(t, doc.Parts, 2)
-	assert.Equal(t, "Photo caption\n\nMessage type: chat message", doc.Parts[0].Text)
 }

@@ -20,14 +20,16 @@ func newImportTumblrCmd() *cobra.Command {
 		Use:   "import-tumblr --blog <blog-name> <folder-or-zip>",
 		Short: "Import a Tumblr conversation export",
 		Long: `Import one blog's HTML conversations and supplied local messaging media.
-Pass the blog name explicitly; each blog has its own source. Files must be on
-the daemon host. TEXT and POSTREF follow observed export structure; IMAGE and
-standard HTML media handling have synthetic coverage only. No links are fetched.
+Pass the blog name explicitly; stable owner IDs reuse the source after renames.
+Files must be on the daemon host. TEXT and POSTREF follow observed export
+structure; IMAGE and standard HTML media have synthetic coverage only.
+No links are fetched.
 
 Replay adds missing observations and fills missing media, preserving archived
 text and dates. Indistinguishable repeated messages have ambiguous overlap.
 Missing files do not establish deletion, retention or link expiry.
-Limits: 100,000 entries, 64 MiB per HTML file and 100 MiB per media file.`,
+Limits: 1,000,000 ZIP or visited entries; 128 MiB ZIP metadata or retained
+path bytes; 64 MiB per HTML file and 100 MiB per media file.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !isDaemonCLISubprocess() {
@@ -66,10 +68,7 @@ func runImportTumblr(cmd *cobra.Command, input string, opts tumblrCLIOptions) er
 	if len(s.UnsupportedTypes) > 0 {
 		_, _ = fmt.Fprintf(out, "Unsupported types: %v\n", s.UnsupportedTypes)
 	}
-	if !s.FirstDate.IsZero() {
-		_, _ = fmt.Fprintf(out, "Observed dated range: %s to %s\n", s.FirstDate.Format("2006-01-02T15:04:05Z"), s.LastDate.Format("2006-01-02T15:04:05Z"))
-	}
-	_, _ = fmt.Fprintf(out, "Media: %d stored, %d missing local, %d remote-only, %d invalid, %d oversized\n", s.MediaStored, s.MediaMissing, s.MediaRemote, s.MediaInvalid, s.MediaOversized)
+	_, _ = fmt.Fprintf(out, "Media this run: %d newly stored slots; observations: %d missing local, %d remote-only, %d invalid, %d oversized\n", s.MediaStored, s.MediaMissing, s.MediaRemote, s.MediaInvalid, s.MediaOversized)
 	if s.SourceID != 0 {
 		err = errors.Join(err, rebuildCacheAfterWrite(maintenanceCtx, state.cfg.DatabaseDSN(), state))
 	}
