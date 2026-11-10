@@ -39,7 +39,6 @@ func TestCalendarEventsClient(t *testing.T) {
 	assertions.Equal("Edited event", page.Occurrences[0].Subject)
 	assertions.Equal("cancelled", page.Occurrences[0].Status)
 	assertions.Equal([]calevent.Attendee{{Email: "guest@example.com", DisplayName: "Guest", Role: "optional", RSVP: "declined", IsCopySelf: true}}, page.Occurrences[0].Attendees)
-	requirements.NotNil(page.Coverage)
 	assertions.Equal(&store.CalendarCoverage{Notice: "Archive only", Sources: []store.CalendarSourceCoverage{{SourceID: 7, Name: "Work", Status: "stale", AsOf: &from}}}, page.Coverage)
 	assertions.Equal([]store.CalendarUnexpandable{{MessageID: 50, Reason: "unsupported recurrence"}}, page.Unexpandable)
 }
