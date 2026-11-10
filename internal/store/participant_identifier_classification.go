@@ -1,6 +1,8 @@
 package store
 
 import (
+	"net"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -47,6 +49,15 @@ func classifyParticipantIdentifier(
 		classification.ServiceSlug = "inline"
 		classification.ScopeKind = new("server")
 		classification.ScopeValue = new(server)
+	case kind == "github" || kind == "gitlab" || kind == "gitea":
+		instance, userID, found := strings.CutLast(value, ":user:")
+		id, err := strconv.ParseInt(userID, 10, 64)
+		if !found || err != nil || id <= 0 || strconv.FormatInt(id, 10) != userID || !isForgeInstance(instance) {
+			return participantIdentifierClassification{}, false
+		}
+		classification.ServiceSlug = kind
+		classification.ScopeKind = new("server")
+		classification.ScopeValue = new(instance)
 	case kind == "slack":
 		classification.ServiceSlug = "slack"
 		if separator := strings.Index(value, ":"); separator > 0 {
@@ -59,6 +70,25 @@ func classifyParticipantIdentifier(
 		return participantIdentifierClassification{}, false
 	}
 	return classification, true
+}
+
+// isForgeInstance reports whether instance names a forge server in the
+// canonical form forge.Instance documents: a lowercase host (an IPv6
+// address in brackets), an optional port and an optional path, without
+// scheme, credentials, query or trailing slash.
+func isForgeInstance(instance string) bool {
+	parsed, err := url.Parse("https://" + instance)
+	if err != nil || parsed.Hostname() == "" || parsed.User != nil ||
+		parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if port := parsed.Port(); port != "" {
+		host = net.JoinHostPort(host, port)
+	} else if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	return host+strings.TrimRight(parsed.EscapedPath(), "/") == instance
 }
 
 func participantIdentifierClassificationValues(

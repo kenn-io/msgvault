@@ -45,6 +45,7 @@ also a separate opt-in because downloading an image can activate email tracking.
 | Matrix | [Matrix sync](../usage/matrix.md) | Joined-room history on any homeserver, with encrypted messages recovered from the account's key backup |
 | WhatsApp, iMessage, iMazing CSV, Google Voice, Messenger, Telegram | [Text message imports](../usage/text-messages.md) | Supported backups or exports, with your identity supplied where required |
 | SMS Backup & Restore | [Android SMS and call logs](../usage/text-messages.md) | Local XML/ZIP or scheduled imports from a configured Drive folder |
+| GitHub | [Code forges](../usage/forges.md) | Issues, pull requests, reviews, and discussions you take part in, and releases you watch; chosen owners only |
 | Another source, such as feed items or tool notifications | [Messages from any source](../usage/message-import.md) | Provider-neutral ingestion keyed by source and external message ID |
 
 Some chat providers apply size and room-participant limits to media. A message can be archived

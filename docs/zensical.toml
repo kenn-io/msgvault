@@ -44,6 +44,7 @@ nav = [
     {"Instagram Comments" = "usage/instagram-comments.md"},
     {"Matrix" = "usage/matrix.md"},
     {"Slack" = "usage/slack.md"},
+    {"Code Forges" = "usage/forges.md"},
     {"Meeting Notes and Transcripts" = "usage/meetings.md"},
     {"Messages from Any Source" = "usage/message-import.md"},
   ]},

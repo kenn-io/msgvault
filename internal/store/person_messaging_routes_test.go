@@ -101,6 +101,7 @@ func TestMessagingRoutesExcludeNonMessagingHistoryBeforePagination(t *testing.T)
 				{"gcal", "calendar_event"},
 				{"gmail", "email_thread"},
 				{"gmail", "email"},
+				{"github", "thread"},
 			} {
 				source, err := f.Store.GetOrCreateSource(history.sourceType, "account-a")
 				requirements.NoError(err)
