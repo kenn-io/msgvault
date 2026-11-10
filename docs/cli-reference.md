@@ -3121,7 +3121,7 @@ msgvault export-token <email> [flags]
 
 ## diagnose-acquisition
 
-Inspect one Gmail source's known acquisition obligations without changing the
+Show one Gmail source's known downloads and file-saving work without changing the
 archive or contacting Gmail:
 
 ```bash
@@ -3137,20 +3137,31 @@ directories, or write logs. PostgreSQL requires database connectivity.
 | Flag | Description |
 |---|---|
 | `--source-id ID` | Required Gmail source ID |
-| `--state STATE` | Details for `active` (default), `resolved`, `historical`, or `indeterminate` |
+| `--state STATE` | `active`: pending work (default); `resolved`: confirmed resolution; `historical`: past errors and skipped work; `indeterminate`: uncertain status |
 | `--limit N` | Message details per page, 1–1000 (default: 50) |
 | `--after-id ID` | Continue the same state after `next_after_id` from the previous page |
 | `--timeout DURATION` | Database deadline (default: `30s`, maximum: `5m`) |
 | `--json` | One JSON object with `version: 1` |
 
-Aggregates cover the source's retained sync ledger in one read snapshot,
-independently of the detail page. Counts are messages per state, so a message
-with an older resolved obligation and new work can appear in both counts.
-Details contain at most one representative outcome per message in the selected
-state. JSON includes the incremental boundary run, last visible ledger item,
-pagination, configuration blockers, and coverage limits.
-Each detail identifies the obligation's representative error outcome, the latest
-recorded outcome for that message, and any later explicit resolution.
+Counts cover all saved sync records for this source, independently of the detail
+page. They count messages per state, so a message with an older resolved problem
+and new pending work can appear in both counts. Each page shows at most one
+detail per message in the selected state.
+
+Text output describes download failures, file-saving failures, and file-saving
+reminders in plain language. `latest` describes the most recent recorded status;
+`resolution recorded` means sync recorded a confirmation, without checking saved
+files. The run and item IDs identify the records for investigation. `synthetic`
+identifies a file-saving reminder; `error` says whether the message has a real
+error in the selected state. These flags can differ when a reminder and real
+errors were grouped together. Use the flags after `More details` to continue.
+
+JSON retains the technical phase, error kind, and state codes. It also includes
+the incremental boundary run, last visible ledger item, pagination, configuration
+blockers, and coverage limits. Each detail identifies the representative error
+outcome, the latest recorded outcome, and any later explicit resolution.
+
+The following rules describe JSON classification and sync retry selection.
 
 Active obligations use the same selection as acquisition replay: the latest
 fetch/ingest outcome per message since the latest completed incremental, ordered

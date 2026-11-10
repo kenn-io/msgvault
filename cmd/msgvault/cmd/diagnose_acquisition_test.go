@@ -90,10 +90,42 @@ func TestDiagnoseAcquisitionCommandReadOnly(t *testing.T) {
 	root.SetArgs([]string{"--home", dir, "diagnose-acquisition", "--source-id", strconv.FormatInt(source.ID, 10), "--state", "resolved"})
 	output.Reset()
 	require.NoError(executeRootContext(t.Context(), root))
-	assert.Contains(output.String(), "1 active obligations")
+	assert.Contains(output.String(), "Messages with pending work: 1")
+	assert.Contains(output.String(), "Details: resolved work\n")
 	assert.Contains(output.String(), "does not prove archive completeness")
 	assert.Equal(before, snapshot())
+	root = newRootCommand()
+	root.AddCommand(newDiagnoseAcquisitionCmd())
+	root.SetOut(&output)
+	root.SetErr(&output)
+	root.SetArgs([]string{"--home", dir, "diagnose-acquisition", "--source-id", strconv.FormatInt(source.ID, 10)})
+	output.Reset()
+	require.NoError(executeRootContext(t.Context(), root))
+	assert.Contains(output.String(), `"synthetic-id": file-saving reminder`)
+	assert.Contains(output.String(), "synthetic=true, error=false")
+	assert.Contains(output.String(), `latest="needs attention"`)
+	assert.Contains(output.String(), "remote image archiving disabled")
+	assert.NotContains(output.String(), "ingest/remote_image_error")
+	assert.NotContains(output.String(), "ingest/error")
+	assert.Equal(before, snapshot())
 	assert.Zero(requests.Load(), "the command must not contact the configured remote")
+}
+
+func TestDiagnoseAcquisitionCommandHelp(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	root := newRootCommand()
+	root.AddCommand(newDiagnoseAcquisitionCmd())
+	var output bytes.Buffer
+	root.SetOut(&output)
+	root.SetErr(&output)
+	root.SetArgs([]string{"diagnose-acquisition", "--help"})
+	require.NoError(executeRootContext(t.Context(), root))
+	assert.Contains(output.String(), "saved sync records")
+	assert.Contains(output.String(), "Finding no pending work does not prove archive completeness.")
+	assert.Contains(output.String(), "Continue with the --after-id value from the previous page")
+	assert.NotContains(output.String(), "ledger")
+	assert.NotContains(output.String(), "obligations")
+	assert.NotContains(output.String(), "outcome ID")
 }
 
 func TestDiagnoseAcquisitionCommandMissingArchive(t *testing.T) {

@@ -8,17 +8,47 @@ import (
 	"time"
 )
 
-const acquisitionContractsCoverage = "Recognized contracts: fetch/fetch_error, fetch/batch_fetch_error, ingest/ingest_error, " +
-	"ingest/attachment_error, ingest/remote_image_error, ingest/attachment_remote_image_error."
-
-const acquisitionReplayCoverage = "Active obligations use the acquisition replay selection since the latest completed incremental; " +
-	"resolved requires a later explicit resolution."
-
-const acquisitionErrorsCoverage = "Errors exclude the shipped synthetic file-saving marker. " +
-	"Details contain at most one outcome per message in the selected state."
-
-const acquisitionHistoricalCoverage = "Historical includes withdrawn skipped items retaining a recognized error contract and acquisition failures followed by a compatible skip. " +
-	"Withdrawal does not prove acquisition or identify its cause."
+// Keep each JSON coverage statement beside its human explanation so adding
+// technical coverage cannot silently expose it through the text renderer.
+// An empty human explanation means the statement is only useful in JSON.
+var acquisitionDiagnosticCoverage = [...]struct{ technical, human string }{
+	{
+		"Retained sync ledger for this source in one read-only snapshot; counts are messages per state and may overlap.",
+		"Only saved sync records for this source are examined, without changes. Counts are messages per state; a message can appear in more than one state.",
+	},
+	{
+		"Active obligations use the acquisition replay selection since the latest completed incremental; resolved requires a later explicit resolution.",
+		"Pending retries since the last completed incremental sync; resolution requires a later recorded confirmation.",
+	},
+	{
+		"Recognized contracts: fetch/fetch_error, fetch/batch_fetch_error, ingest/ingest_error, ingest/attachment_error, ingest/remote_image_error, ingest/attachment_remote_image_error.",
+		"",
+	},
+	{
+		"Errors exclude the shipped synthetic file-saving marker. Details contain at most one outcome per message in the selected state.",
+		"File-saving reminders are not errors. One detail per message in the selected state.",
+	},
+	{
+		"Historical includes withdrawn skipped items retaining a recognized error contract and acquisition failures followed by a compatible skip. Withdrawal does not prove acquisition or identify its cause.",
+		"Historical includes errors marked as skipped and failed downloads later skipped. Skipping does not prove a message was saved or explain why it was skipped.",
+	},
+	{
+		"Indeterminate includes failures hidden by the replay boundary without resolution and outcomes with no known acquisition contract.",
+		"Indeterminate includes unresolved failures excluded from retries and unrecognized outcomes.",
+	},
+	{
+		"Source blockers describe the normal replay path; provider availability and permanent impossibility are not tested. Resolution is a ledger acknowledgement, not a physical file integrity check.",
+		"Blockers concern normal sync; provider availability and permanent impossibility are not tested. Resolution does not verify saved files.",
+	},
+	{
+		"No physical RAW/blob integrity, MIME occurrence, FTS freshness, remote inventory, or historical omissions check. The absence of known active obligations does not prove archive completeness.",
+		"Saved messages and files, attachment completeness, search index updates, the current contents of Gmail, and gaps in older sync records are not checked. Finding no pending work does not prove archive completeness.",
+	},
+	{
+		"Concurrent sync can change later invocations. Repeat against a quiet archive for consistent traversal.",
+		"Syncing can change results between pages. For consistent results, repeat while no sync is running.",
+	},
+}
 
 // AcquisitionDiagnosticOptions bounds details after classification. Totals cover
 // the source's retained ledger in one read snapshot, independently of the page.
@@ -173,17 +203,9 @@ func (s *Store) DiagnoseAcquisitionContext(ctx context.Context, opts Acquisition
 	report := &AcquisitionDiagnostic{
 		Version: 1, SourceID: opts.SourceID, ObservedAt: time.Now().UTC(), State: opts.State,
 		Items: []AcquisitionDiagnosticItem{}, Blockers: []string{},
-		Coverage: []string{
-			"Retained sync ledger for this source in one read-only snapshot; counts are messages per state and may overlap.",
-			acquisitionReplayCoverage,
-			acquisitionContractsCoverage,
-			acquisitionErrorsCoverage,
-			acquisitionHistoricalCoverage,
-			"Indeterminate includes failures hidden by the replay boundary without resolution and outcomes with no known acquisition contract.",
-			"Source blockers describe the normal replay path; provider availability and permanent impossibility are not tested. Resolution is a ledger acknowledgement, not a physical file integrity check.",
-			"No physical RAW/blob integrity, MIME occurrence, FTS freshness, remote inventory, or historical omissions check. The absence of known active obligations does not prove archive completeness.",
-			"Concurrent sync can change later invocations. Repeat against a quiet archive for consistent traversal.",
-		},
+	}
+	for _, coverage := range acquisitionDiagnosticCoverage {
+		report.Coverage = append(report.Coverage, coverage.technical)
 	}
 	if source.HistoryOnly {
 		report.Blockers = append(report.Blockers, "source_history_only")
@@ -312,19 +334,19 @@ func (s *Store) fillAcquisitionResolutions(ctx context.Context, report *Acquisit
 // error text, which may contain addresses, URLs, paths, or provider responses.
 func (r AcquisitionDiagnostic) String() string {
 	var out strings.Builder
-	fmt.Fprintf(&out, "Gmail source %d:", r.SourceID)
+	fmt.Fprintf(&out, "Gmail source %d:\n", r.SourceID)
 	if r.Summary.ActiveObligations != 0 {
-		fmt.Fprintf(&out, " %d active obligations,", r.Summary.ActiveObligations)
+		fmt.Fprintf(&out, "Messages with pending work: %d\n", r.Summary.ActiveObligations)
 	}
-	fmt.Fprintf(&out, " %d resolved obligations\n%d active errors, %d historical errors, %d indeterminate messages\n",
+	fmt.Fprintf(&out, "Messages with resolved work: %d\nMessages with errors: %d current, %d past\nMessages with uncertain status: %d\n",
 		r.Summary.ResolvedObligations, r.Summary.ActiveErrors, r.Summary.HistoricalErrors, r.Summary.Indeterminate)
 	if r.Summary.ActiveObligations == 0 {
-		out.WriteString("No known active obligation in the examined scope.\n")
+		out.WriteString("No known pending downloads or file-saving work for this source.\n")
 	}
-	fmt.Fprintf(&out, "Details: %s\n", r.State)
+	fmt.Fprintf(&out, "Details: %s\n", acquisitionDiagnosticStateLabel(r.State))
 	for _, item := range r.Items {
-		fmt.Fprintf(&out, "  %q: %s/%s (run %d, item %d, synthetic=%t, error=%t)", item.SourceMessageID, item.Phase, item.ErrorKind, item.SyncRunID, item.OutcomeID, item.Synthetic, item.HasError)
-		fmt.Fprintf(&out, " latest=%s/%s (run %d, item %d)", item.LatestPhase, item.LatestStatus, item.LatestSyncRunID, item.LatestOutcomeID)
+		fmt.Fprintf(&out, "  %q: %s (run %d, item %d, synthetic=%t, error=%t)", item.SourceMessageID, acquisitionDiagnosticItemLabel(item), item.SyncRunID, item.OutcomeID, item.Synthetic, item.HasError)
+		fmt.Fprintf(&out, " latest=%q (run %d, item %d)", acquisitionDiagnosticLatestLabel(item.LatestStatus), item.LatestSyncRunID, item.LatestOutcomeID)
 		if len(item.BlockedBy) > 0 {
 			labels := make([]string, len(item.BlockedBy))
 			for i, blocker := range item.BlockedBy {
@@ -336,7 +358,7 @@ func (r AcquisitionDiagnostic) String() string {
 				case "remote_image_archiving_disabled":
 					labels[i] = "remote image archiving disabled"
 				default:
-					labels[i] = blocker
+					labels[i] = "unrecognized blocker (see --json)"
 				}
 			}
 			fmt.Fprintf(&out, " blocked by %s", strings.Join(labels, ", "))
@@ -347,17 +369,65 @@ func (r AcquisitionDiagnostic) String() string {
 		fmt.Fprintf(&out, "More details: --state %s --after-id %d\n", r.State, r.NextAfterID)
 	}
 	for _, limit := range r.Coverage {
-		switch limit {
-		case acquisitionContractsCoverage:
-			continue
-		case acquisitionReplayCoverage:
-			limit = "Pending retries since the last completed incremental sync; resolution requires a later recorded confirmation."
-		case acquisitionErrorsCoverage:
-			limit = "File-saving reminders are not errors. One detail per message in the selected state."
-		case acquisitionHistoricalCoverage:
-			limit = "Historical includes errors marked as skipped and failed downloads later skipped. Withdrawal does not prove acquisition or identify its cause."
+		label := "Unrecognized coverage information (see --json)."
+		for _, coverage := range acquisitionDiagnosticCoverage {
+			if coverage.technical == limit {
+				label = coverage.human
+				break
+			}
 		}
-		fmt.Fprintf(&out, "Coverage: %s\n", limit)
+		if label != "" {
+			fmt.Fprintf(&out, "Coverage: %s\n", label)
+		}
 	}
 	return out.String()
+}
+
+func acquisitionDiagnosticStateLabel(state string) string {
+	switch state {
+	case "active":
+		return "pending downloads and file saving"
+	case "resolved":
+		return "resolved work"
+	case "historical":
+		return "past errors and skipped work"
+	case "indeterminate":
+		return "uncertain status"
+	default:
+		return "unrecognized state (see --json)"
+	}
+}
+
+func acquisitionDiagnosticItemLabel(item AcquisitionDiagnosticItem) string {
+	switch item.Phase {
+	case "fetch":
+		if item.ErrorKind == "fetch_error" || item.ErrorKind == "batch_fetch_error" {
+			return "download failed"
+		}
+	case "ingest":
+		switch item.ErrorKind {
+		case "ingest_error":
+			return "message saving failed"
+		case "attachment_error", "remote_image_error", "attachment_remote_image_error":
+			if item.Synthetic {
+				return "file-saving reminder"
+			}
+			return "file saving failed"
+		}
+	}
+	return "unrecognized failure (see --json)"
+}
+
+func acquisitionDiagnosticLatestLabel(status string) string {
+	switch status {
+	case SyncRunItemStatusError:
+		// An error-status record can also be a file-saving reminder.
+		return "needs attention"
+	case SyncRunItemStatusResolved:
+		return "resolution recorded"
+	case SyncRunItemStatusSkipped:
+		return "skipped"
+	default:
+		return "unrecognized status (see --json)"
+	}
 }

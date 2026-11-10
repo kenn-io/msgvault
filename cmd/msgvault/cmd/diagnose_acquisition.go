@@ -21,10 +21,11 @@ func newDiagnoseAcquisitionCmd() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "diagnose-acquisition --source-id ID",
 		Short: "Show known Gmail download and file-saving status (read-only)",
-		Long: `Read the selected Gmail source's local ledger, without starting the daemon,
-syncing, repairing, or contacting Gmail. Uses the local database configuration,
+		Long: `Show download and file-saving status from the selected Gmail source's
+saved sync records, without starting the daemon, syncing, repairing, or contacting
+Gmail. Uses the local database configuration,
 including a configured PostgreSQL database; [remote].url is not used.
-The absence of known active obligations does not prove archive completeness.`,
+Finding no pending work does not prove archive completeness.`,
 		Args: cobra.NoArgs,
 		// The normal root startup creates directories and may write logs or
 		// telemetry. This command only loads configuration and opens read-only.
@@ -66,7 +67,7 @@ The absence of known active obligations does not prove archive completeness.`,
 	command.Flags().Int64Var(&opts.SourceID, "source-id", 0, "Gmail source ID (required)")
 	command.Flags().StringVar(&opts.State, "state", "active", "Detail state: active, resolved, historical, indeterminate")
 	command.Flags().IntVar(&opts.Limit, "limit", 50, "Maximum message details, 1 to 1000")
-	command.Flags().Int64Var(&opts.AfterID, "after-id", 0, "Continue the selected state's page after this outcome ID")
+	command.Flags().Int64Var(&opts.AfterID, "after-id", 0, "Continue with the --after-id value from the previous page")
 	command.Flags().DurationVar(&timeout, "timeout", 30*time.Second, "Database diagnostic deadline, at most 5m")
 	command.Flags().BoolVar(&jsonOut, "json", false, "Emit versioned JSON")
 	_ = command.MarkFlagRequired("source-id")

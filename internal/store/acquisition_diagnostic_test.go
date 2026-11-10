@@ -114,6 +114,9 @@ func TestAcquisitionDiagnosticClassificationAndPaging(t *testing.T) {
 		require.NoError(err)
 		assert.Len(report.Items, want)
 		if state == "resolved" {
+			assert.Contains(report.String(), "Details: resolved work\n")
+			assert.Contains(report.String(), `latest="resolution recorded"`)
+			assert.NotContains(report.String(), "fetch/resolved")
 			for _, item := range report.Items {
 				assert.Greater(item.ResolvedByID, item.OutcomeID)
 				assert.Equal("resolved", item.LatestStatus)
@@ -220,14 +223,14 @@ func TestAcquisitionDiagnosticEmptyAndValidation(t *testing.T) {
 	report, err := f.Store.DiagnoseAcquisitionContext(t.Context(), opts)
 	require.NoError(err)
 	assert.Empty(report.Items)
-	assert.Contains(report.String(), "No known active obligation in the examined scope")
+	assert.Contains(report.String(), "No known pending downloads or file-saving work for this source.")
 	assert.Contains(report.String(), "does not prove archive completeness")
-	assert.Contains(report.String(), "0 resolved obligations")
-	assert.NotContains(report.String(), "0 active obligations")
+	assert.Contains(report.String(), "Messages with resolved work: 0")
+	assert.NotContains(report.String(), "Messages with pending work: 0")
 	assert.NotContains(report.String(), "fetch/fetch_error")
-	assert.Contains(report.String(), "Details: active\n")
+	assert.Contains(report.String(), "Details: pending downloads and file saving\n")
 	assert.NotContains(report.String(), "Pages use outcome IDs")
-	assert.Contains(report.String(), "Concurrent sync can change later invocations. Repeat against a quiet archive for consistent traversal.")
+	assert.Contains(report.String(), "Syncing can change results between pages. For consistent results, repeat while no sync is running.")
 	encoded, err := json.Marshal(report)
 	require.NoError(err)
 	assert.Contains(string(encoded), "fetch/fetch_error", "JSON must retain the recognized replay contracts")
@@ -273,11 +276,30 @@ func TestAcquisitionDiagnosticHumanOutputPreservesJSON(t *testing.T) {
 	human := report.String()
 	assert.Contains(human, "Pending retries since the last completed incremental sync; resolution requires a later recorded confirmation.")
 	assert.Contains(human, "File-saving reminders are not errors. One detail per message in the selected state.")
-	assert.Contains(human, "Historical includes errors marked as skipped and failed downloads later skipped. Withdrawal does not prove acquisition or identify its cause.")
-	for _, technical := range []string{"acquisition replay selection", "synthetic file-saving marker", "withdrawn skipped items retaining a recognized error contract"} {
+	assert.Contains(human, "Historical includes errors marked as skipped and failed downloads later skipped. Skipping does not prove a message was saved or explain why it was skipped.")
+	assert.Contains(human, "Indeterminate includes unresolved failures excluded from retries and unrecognized outcomes.")
+	assert.Contains(human, "Blockers concern normal sync; provider availability and permanent impossibility are not tested. Resolution does not verify saved files.")
+	assert.Contains(human, "Only saved sync records for this source are examined, without changes. Counts are messages per state; a message can appear in more than one state.")
+	assert.Contains(human, "Saved messages and files, attachment completeness, search index updates, the current contents of Gmail, and gaps in older sync records are not checked.")
+	for _, technical := range []string{
+		"acquisition replay selection", "synthetic file-saving marker", "withdrawn skipped items retaining a recognized error contract",
+		"replay boundary", "acquisition contract", "normal replay path", "ledger acknowledgement",
+		"Retained sync ledger", "RAW/blob", "MIME occurrence", "FTS freshness", "consistent traversal",
+	} {
 		assert.NotContains(human, technical)
 		assert.Contains(string(before), technical)
 	}
+	assert.Equal([]string{
+		"Retained sync ledger for this source in one read-only snapshot; counts are messages per state and may overlap.",
+		"Active obligations use the acquisition replay selection since the latest completed incremental; resolved requires a later explicit resolution.",
+		"Recognized contracts: fetch/fetch_error, fetch/batch_fetch_error, ingest/ingest_error, ingest/attachment_error, ingest/remote_image_error, ingest/attachment_remote_image_error.",
+		"Errors exclude the shipped synthetic file-saving marker. Details contain at most one outcome per message in the selected state.",
+		"Historical includes withdrawn skipped items retaining a recognized error contract and acquisition failures followed by a compatible skip. Withdrawal does not prove acquisition or identify its cause.",
+		"Indeterminate includes failures hidden by the replay boundary without resolution and outcomes with no known acquisition contract.",
+		"Source blockers describe the normal replay path; provider availability and permanent impossibility are not tested. Resolution is a ledger acknowledgement, not a physical file integrity check.",
+		"No physical RAW/blob integrity, MIME occurrence, FTS freshness, remote inventory, or historical omissions check. The absence of known active obligations does not prove archive completeness.",
+		"Concurrent sync can change later invocations. Repeat against a quiet archive for consistent traversal.",
+	}, report.Coverage, "version 1 JSON coverage must remain unchanged")
 	for _, blocker := range []struct{ code, label string }{
 		{"source_history_only", "history-only source"},
 		{"source_merged", "merged source"},
@@ -290,6 +312,81 @@ func TestAcquisitionDiagnosticHumanOutputPreservesJSON(t *testing.T) {
 	after, err := json.Marshal(report, json.Deterministic(true))
 	require.NoError(err)
 	assert.Equal(before, after, "human rendering must preserve JSON codes and technical coverage")
+}
+
+func TestAcquisitionDiagnosticHumanDetails(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	f := storetest.New(t)
+	run := f.StartSync()
+	cases := []struct {
+		id, phase, kind, state, label string
+		synthetic                     bool
+	}{
+		{"download", "fetch", "fetch_error", "active", "download failed", false},
+		{"batch", "fetch", "batch_fetch_error", "active", "download failed", false},
+		{"message", "ingest", "ingest_error", "active", "message saving failed", false},
+		{"attachment", "ingest", "attachment_error", "active", "file saving failed", false},
+		{"image", "ingest", "remote_image_error", "active", "file saving failed", false},
+		{"combined", "ingest", "attachment_remote_image_error", "active", "file saving failed", false},
+		{"reminder", "ingest", "attachment_error", "active", "file-saving reminder", true},
+		{"unknown-kind", "fetch", "future_kind", "indeterminate", "unrecognized failure (see --json)", false},
+		{"unknown-phase", "future_phase", "attachment_error", "indeterminate", "unrecognized failure (see --json)", false},
+	}
+	for _, tc := range cases {
+		message := "hidden@example.com https://example.com/private"
+		if tc.synthetic {
+			message = store.SyncRunItemFilesPendingMessage
+		}
+		require.NoError(f.Store.RecordSyncRunItemContext(t.Context(), store.SyncRunItem{
+			SyncRunID: run, SourceMessageID: tc.id, Phase: tc.phase, ErrorKind: tc.kind,
+			Status: "error", ErrorMessage: message,
+		}))
+	}
+	// A reminder's text does not turn a message-saving error into synthetic work.
+	require.NoError(f.Store.RecordSyncRunItemContext(t.Context(), store.SyncRunItem{
+		SyncRunID: run, SourceMessageID: "message", Phase: "ingest", ErrorKind: "ingest_error",
+		Status: "error", ErrorMessage: store.SyncRunItemFilesPendingMessage,
+	}))
+	for _, state := range []string{"active", "indeterminate"} {
+		report, err := f.Store.DiagnoseAcquisitionContext(t.Context(), store.AcquisitionDiagnosticOptions{
+			SourceID: f.Source.ID, State: state, Limit: 1,
+		})
+		require.NoError(err)
+		assert.Contains(report.String(), fmt.Sprintf("More details: --state %s --after-id %d", state, report.NextAfterID))
+		report, err = f.Store.DiagnoseAcquisitionContext(t.Context(), store.AcquisitionDiagnosticOptions{
+			SourceID: f.Source.ID, State: state, Limit: 100,
+		})
+		require.NoError(err)
+		before, err := json.Marshal(report, json.Deterministic(true))
+		require.NoError(err)
+		human := report.String()
+		var expected int
+		for _, tc := range cases {
+			if tc.state != state {
+				continue
+			}
+			expected++
+			var item *store.AcquisitionDiagnosticItem
+			for i := range report.Items {
+				if report.Items[i].SourceMessageID == tc.id {
+					item = &report.Items[i]
+					break
+				}
+			}
+			require.NotNil(item, tc.id)
+			assert.Equal(tc.synthetic, item.Synthetic, tc.id)
+			assert.Equal(!tc.synthetic, item.HasError, tc.id)
+			assert.Contains(human, fmt.Sprintf("%q: %s (run %d, item %d, synthetic=%t, error=%t) latest=%q (run %d, item %d)",
+				tc.id, tc.label, run, item.OutcomeID, tc.synthetic, !tc.synthetic, "needs attention", run, item.LatestOutcomeID))
+		}
+		assert.Len(report.Items, expected)
+		for _, hidden := range []string{"fetch_error", "batch_fetch_error", "ingest_error", "attachment_error", "remote_image_error", "attachment_remote_image_error", "future_kind", "future_phase", "ingest/error", "fetch/error", "hidden@example.com", "https://example.com/private"} {
+			assert.NotContains(human, hidden)
+		}
+		after, err := json.Marshal(report, json.Deterministic(true))
+		require.NoError(err)
+		assert.Equal(before, after)
+	}
 }
 
 func TestAcquisitionDiagnosticReplayContracts(t *testing.T) {
@@ -472,6 +569,10 @@ func TestAcquisitionDiagnosticOperationTransitions(t *testing.T) {
 	report, err = f.Store.DiagnoseAcquisitionContext(t.Context(), opts)
 	require.NoError(err)
 	require.Len(report.Items, 2)
+	assert.Contains(report.String(), "Details: past errors and skipped work\n")
+	assert.Contains(report.String(), `latest="resolution recorded"`)
+	assert.Contains(report.String(), `latest="skipped"`)
+	assert.NotContains(report.String(), "ingest/skipped")
 	for _, item := range report.Items {
 		assert.Zero(item.ResolvedByID)
 	}
@@ -479,6 +580,9 @@ func TestAcquisitionDiagnosticOperationTransitions(t *testing.T) {
 	report, err = f.Store.DiagnoseAcquisitionContext(t.Context(), opts)
 	require.NoError(err)
 	require.Len(report.Items, 4)
+	assert.Contains(report.String(), "Details: uncertain status\n")
+	assert.Contains(report.String(), `latest="unrecognized status (see --json)"`)
+	assert.NotContains(report.String(), "future_status")
 	for _, item := range report.Items {
 		assert.Zero(item.ResolvedByID)
 		if item.SourceMessageID == "acquisition-files" {
