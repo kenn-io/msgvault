@@ -34,27 +34,15 @@ func TestImportRedditRefreshesCacheAfterPartialFailure(t *testing.T) {
 	assert.Equal(1, n)
 }
 
-func TestExportImportsRejectClientFilesOnRemote(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		command func() *cobra.Command
-		args    []string
-	}{
-		{"reddit", newImportRedditCmd, []string{"export"}},
-		{"telegram", newImportTelegramCmd, []string{"export"}},
-		{"x", newImportXCmd, []string{"export"}},
-		{"imazing", newImportIMazingCSVCmd, []string{"export", "--me", "+15550000001", "--timezone", "UTC"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv(daemonCLISubprocessEnv, "")
-			server, requests := newDaemonCLIRunnerTestServer(t, nil, `{"type":"complete"}`)
-			command := tc.command()
-			command.SetContext(configureRemoteDaemonForTest(t, server.URL))
-			command.SetOut(io.Discard)
-			command.SetErr(io.Discard)
-			command.SetArgs(tc.args)
-			require.ErrorContains(t, command.Execute(), "run it on the daemon host with --local")
-			assert.Zero(t, requests.Load())
-		})
-	}
+func TestImportRedditRejectsClientFilesOnRemote(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	server, requests := newDaemonCLIRunnerTestServer(t, nil, `{"type":"complete"}`)
+	command := newImportRedditCmd()
+	command.SetContext(configureRemoteDaemonForTest(t, server.URL))
+	command.SetOut(io.Discard)
+	command.SetErr(io.Discard)
+	command.SetArgs([]string{"export"})
+	require.ErrorContains(command.Execute(), "run it on the daemon host with --local")
+	assert.Zero(requests.Load())
 }

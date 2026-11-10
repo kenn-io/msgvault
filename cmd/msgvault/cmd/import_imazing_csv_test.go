@@ -26,6 +26,33 @@ func TestImportIMazingCSVRequiresMe(t *testing.T) {
 	assert.ErrorContains(t, err, "required flag")
 }
 
+// The export directory and --contacts file live on the caller's machine, so a
+// configured remote daemon cannot read them. The command must refuse before
+// proxying instead of sending client-side paths for the daemon host to fail on.
+func TestImportIMazingCSVRejectsConfiguredRemoteDaemon(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	server, requests := newDaemonCLIRunnerTestServer(t, nil, `{"type":"complete"}`)
+	testCtx := configureRemoteDaemonForTest(t, server.URL)
+	_ = testCtx
+	t.Setenv(daemonCLISubprocessEnv, "")
+
+	command := &cobra.Command{Use: "test"}
+	command.SetContext(testCtx)
+	command.AddCommand(newImportIMazingCSVCmd())
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetErr(&output)
+	command.SetArgs([]string{
+		"import-imazing-csv", t.TempDir(), "--me", "+15550000001", "--timezone", "UTC",
+	})
+
+	err := command.Execute()
+
+	require.ErrorContains(err, "run it on the daemon host with --local")
+	assert.Equal(0, int(requests.Load()), "runner endpoint calls")
+}
+
 func TestImportIMazingCSVReportsSummary(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

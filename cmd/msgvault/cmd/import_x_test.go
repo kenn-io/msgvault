@@ -57,3 +57,14 @@ func TestImportXRefreshesCacheAfterPartialFailure(t *testing.T) {
 	require.NoError(err)
 	assert.Len(hits, 1)
 }
+func TestImportXRejectsClientFilesOnRemote(t *testing.T) {
+	server, requests := newDaemonCLIRunnerTestServer(t, nil, `{"type":"complete"}`)
+	ctx := configureRemoteDaemonForTest(t, server.URL)
+	cmd := newImportXCmd()
+	cmd.SetContext(ctx)
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"export"})
+	require.ErrorContains(t, cmd.Execute(), "run it on the daemon host with --local")
+	assert.Zero(t, requests.Load())
+}
