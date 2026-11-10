@@ -21,7 +21,7 @@ func TestDiagnoseAcquisitionCommand(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		pending bool
-	}{{"empty", false}, {"legacy", true}, {"local", true}} {
+	}{{"empty", false}, {"legacy", true}, {"local", true}, {"logging", false}} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -61,6 +61,11 @@ func TestDiagnoseAcquisitionCommand(t *testing.T) {
 				require.NoError(st.FailSync(run, "interrupted"))
 			}
 			require.NoError(st.Close())
+			var archiveBefore []byte
+			if tc.name == "logging" {
+				archiveBefore, err = os.ReadFile(cfg.DatabaseDSN())
+				require.NoError(err)
+			}
 			configText := fmt.Sprintf("[data]\ndata_dir = %q\ndatabase_url = %q\n", dir, cfg.Data.DatabaseURL)
 			if tc.name == "local" {
 				configText += "[remote]\nurl = 'https://example.com'\n"
@@ -78,8 +83,21 @@ func TestDiagnoseAcquisitionCommand(t *testing.T) {
 			if tc.pending {
 				args = append(args, "--json")
 			}
+			logPath := filepath.Join(dir, "diagnostic.log")
+			if tc.name == "logging" {
+				t.Cleanup(func() { store.ConfigureSQLLogging(store.SQLLogOptions{}) })
+				args = append(args, "--log-sql", "--log-file", logPath)
+			}
 			root.SetArgs(args)
 			require.NoError(executeRootContext(t.Context(), root))
+			if tc.name == "logging" {
+				log, err := os.ReadFile(logPath)
+				require.NoError(err)
+				assert.Contains(string(log), `"msg":"sql"`)
+				archiveAfter, err := os.ReadFile(cfg.DatabaseDSN())
+				require.NoError(err)
+				assert.Equal(archiveBefore, archiveAfter)
+			}
 			if tc.pending {
 				assert.True(bytes.HasSuffix(output.Bytes(), []byte("\n")))
 				var items []map[string]string
@@ -96,6 +114,7 @@ func TestDiagnoseAcquisitionCommand(t *testing.T) {
 func TestDiagnoseAcquisitionErrors(t *testing.T) {
 	for _, tc := range []struct{ name, config, want string }{
 		{"invalid", "[data\n", "load config"},
+		{"invalid-level", "", "invalid log level"},
 		{"remote", "[remote]\nurl = 'https://example.com'\n", "use --local"},
 		{"newer-schema", "", "run setup with the matching release"},
 		{"merged-source", "", "merged into source"},
@@ -132,7 +151,11 @@ func TestDiagnoseAcquisitionErrors(t *testing.T) {
 			var output bytes.Buffer
 			root.SetOut(&output)
 			root.SetErr(&output)
-			root.SetArgs([]string{"--home", dir, "diagnose-acquisition", "--source-id", strconv.FormatInt(sourceID, 10)})
+			args := []string{"--home", dir, "diagnose-acquisition", "--source-id", strconv.FormatInt(sourceID, 10)}
+			if tc.name == "invalid-level" {
+				args = append(args, "--log-level", "invalid-level")
+			}
+			root.SetArgs(args)
 			require.ErrorContains(executeRootContext(t.Context(), root), want)
 			if tc.name == "invalid" {
 				assert.NotContains(output.String(), "Usage:")

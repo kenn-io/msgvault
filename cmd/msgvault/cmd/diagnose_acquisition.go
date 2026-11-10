@@ -7,7 +7,6 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"go.kenn.io/msgvault/internal/config"
 	msgsync "go.kenn.io/msgvault/internal/sync"
 )
 
@@ -27,20 +26,6 @@ func newDiagnoseAcquisitionCmd() *cobra.Command {
 		Short: "List pending Gmail acquisition failures",
 		Long:  "List pending Gmail acquisition failures in the local archive. Use --local when a remote is configured.",
 		Args:  cobra.NoArgs,
-		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-			inv := prepareInvocation(cmd)
-			cmd.SilenceUsage = true
-			if isAgentMode(inv) {
-				return errors.New("diagnose-acquisition is not available in agent-delegated mode")
-			}
-			var err error
-			inv.cfg, err = config.LoadClientWithOverrides(inv.options.cfgFile, inv.options.homeDir, config.RuntimeOverrides{})
-			if err != nil {
-				return fmt.Errorf("load config: %w", err)
-			}
-			cmd.SilenceUsage = false
-			return nil
-		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 			if IsRemoteMode(invocationFromContext(ctx)) {
