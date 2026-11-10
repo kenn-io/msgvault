@@ -3905,8 +3905,8 @@ func (s *Store) CountMessagesForSource(sourceID int64) (int64, error) {
 func (s *Store) CountMessagesForSourceContext(ctx context.Context, sourceID int64) (int64, error) {
 	var count int64
 	err := s.db.QueryRowContext(ctx, fmt.Sprintf(`
-		SELECT COUNT(*) FROM messages WHERE source_id = ? AND %s AND %s
-	`, LiveMessagesWhere("", true), SourceNativeMessagesWhere("messages", "sources")), sourceID).Scan(&count)
+		SELECT COUNT(*) FROM messages WHERE source_id = ? AND %s
+	`, LiveMessagesWhere("", true)), sourceID).Scan(&count)
 	return count, err
 }
 

@@ -301,6 +301,7 @@ func TestBuildUnsentTailKeepsSentAnchor(t *testing.T) {
 }
 
 func TestSparseNormalizedActivityExcludesEmailInviteEvents(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	root, db := writeRelationshipBaseFixture(t, true)
 	writeSyntheticRelationshipFanOut(t, db, root, syntheticRelationshipFanOutOptions{
 		firstMessageID: 1, messageCount: 3, memberCount: 2,
@@ -308,20 +309,20 @@ func TestSparseNormalizedActivityExcludesEmailInviteEvents(t *testing.T) {
 	})
 	replaceRelationshipParquet(t, db, root, "sources", `SELECT i::BIGINT AS id, 'owner@example.test' AS account_email,
   CASE i WHEN 1 THEN 'gmail' WHEN 2 THEN 'gcal' ELSE 'ics' END AS source_type FROM range(1, 4) t(i)`)
-	_, err := db.ExecContext(t.Context(), `CREATE TEMP TABLE invite_messages AS SELECT * REPLACE (id::BIGINT AS source_id) FROM read_parquet(?)`, parquetDatasetGlob(root, "messages"))
-	require.NoError(t, err)
+	_, err := db.ExecContext(t.Context(), `CREATE TEMP TABLE invite_messages AS SELECT * REPLACE (id::BIGINT AS source_id, (id = 1) AS archive_only) FROM read_parquet(?)`, parquetDatasetGlob(root, "messages"))
+	requirements.NoError(err)
 	replaceRelationshipParquet(t, db, root, "messages", "SELECT * FROM invite_messages")
 	path := func(dataset string) string { return parquetDatasetGlob(root, dataset) }
 	sql := buildSparseRelationshipActivitySQL(path, readParquetRelation([]string{path("messages")}, true), readParquetRelation([]string{path("message_recipients")}, false), 2026, "")
 	rows, err := db.QueryContext(t.Context(), "SELECT DISTINCT message_id FROM ("+sql+") ORDER BY message_id")
-	require.NoError(t, err)
-	defer rows.Close()
+	requirements.NoError(err)
+	defer func() { requirements.NoError(rows.Close()) }()
 	var got []int64
 	for rows.Next() {
 		var id int64
-		require.NoError(t, rows.Scan(&id))
+		requirements.NoError(rows.Scan(&id))
 		got = append(got, id)
 	}
-	require.NoError(t, rows.Err())
-	assert.Equal(t, []int64{2, 3}, got)
+	requirements.NoError(rows.Err())
+	assertions.Equal([]int64{2, 3}, got)
 }

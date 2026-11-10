@@ -145,7 +145,7 @@ func (s *Store) activityCandidateColumns() string {
 	COALESCE(c.conversation_type, ''), COALESCE(m.message_type, ''),
 	m.sent_at, m.received_at, m.internal_date, m.last_modified,
 	m.deleted_at, m.deleted_from_source_at, m.metadata,
-	COALESCE(m.source_is_from_me, FALSE), ` + s.activityUnsentSQL() + `, ` + calevent.EmailInviteSQL("m.message_type", "src.source_type") + `,
+	COALESCE(m.source_is_from_me, FALSE), ` + s.activityUnsentSQL() + `, ` + calevent.EmailInviteSQL("m.message_type", "src.source_type", "EXISTS (SELECT 1 FROM source_merge_archive_only_messages a WHERE a.message_id = m.id)") + `,
 	r.identity_revision, r.account_identity_revision,
 	r.timezone_active, r.timezone_target, r.timezone_generation,
 	r.direct_limit_active, r.direct_limit_target, r.direct_limit_generation`

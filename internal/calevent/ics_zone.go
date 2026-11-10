@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"math"
 	"regexp"
 	"slices"
 	"strings"
@@ -117,11 +118,12 @@ func customICSZones(cal *ical.Calendar) (map[string]string, error) {
 		if len(eras) == 0 {
 			return nil, fmt.Errorf("VTIMEZONE %q has no observances", id)
 		}
-		value := eras[0].rule
+		var value strings.Builder
+		value.WriteString(eras[0].rule)
 		for _, era := range eras[1:] {
-			value += ";" + era.start.UTC().Format("20060102T150405Z") + "@" + era.rule
+			value.WriteString(";" + era.start.UTC().Format("20060102T150405Z") + "@" + era.rule)
 		}
-		zones[id] = value
+		zones[id] = value.String()
 	}
 	return zones, nil
 }
@@ -149,7 +151,11 @@ const emptyTZifBlock = "TZif2" + "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x
 func footerZone(name string) (*time.Location, error) {
 	data := []byte(emptyTZifBlock)
 	data = append(data, data...)
-	return time.LoadLocationFromTZData(name, append(data, []byte("\n"+name+"\n")...))
+	loc, err := time.LoadLocationFromTZData(name, append(data, []byte("\n"+name+"\n")...))
+	if err != nil {
+		return nil, fmt.Errorf("load footer zone: %w", err)
+	}
+	return loc, nil
 }
 
 // LoadZone reloads named zones and the embedded rules retained from an ICS invite.
@@ -184,7 +190,8 @@ func historyZone(name string, parts []string) (*time.Location, error) {
 	var times []int64
 	var indexes []byte
 	var types []zoneType
-	add := func(at time.Time, loc *time.Location) error {
+	tooManyTypes := false
+	add := func(at time.Time, loc *time.Location) {
 		z := at.In(loc)
 		_, offset := z.Zone()
 		typ := zoneType{offset, z.IsDST()}
@@ -193,13 +200,16 @@ func historyZone(name string, parts []string) (*time.Location, error) {
 			types = append(types, typ)
 			idx = len(types) - 1
 		}
+		if idx > math.MaxUint8 {
+			tooManyTypes = true
+			return
+		}
 		if len(times) > 0 && times[len(times)-1] == at.Unix() {
 			indexes[len(indexes)-1] = byte(idx)
 		} else {
 			times = append(times, at.Unix())
 			indexes = append(indexes, byte(idx))
 		}
-		return nil
 	}
 	first := 0
 	for first+1 < len(eras) && !eras[first+1].start.After(eras[0].start) {
@@ -215,9 +225,7 @@ func historyZone(name string, parts []string) (*time.Location, error) {
 		if start.Before(eras[0].start) {
 			start = eras[0].start
 		}
-		if err = add(start, loc); err != nil {
-			return nil, err
-		}
+		add(start, loc)
 		if i == len(eras)-1 {
 			break
 		}
@@ -227,17 +235,21 @@ func historyZone(name string, parts []string) (*time.Location, error) {
 			if next.IsZero() || !next.Before(end) {
 				break
 			}
-			if err = add(next, loc); err != nil {
-				return nil, err
-			}
+			add(next, loc)
 			cursor = next
 		}
+	}
+	if tooManyTypes {
+		return nil, fmt.Errorf("too many time zone types: %d", len(types))
+	}
+	if uint64(len(times)) > math.MaxUint32 {
+		return nil, fmt.Errorf("too many time zone transitions: %d", len(times))
 	}
 	var out bytes.Buffer
 	header := func(n int) {
 		out.WriteString("TZif2")
 		out.Write(make([]byte, 15))
-		for _, v := range []uint32{0, 0, 0, uint32(n), uint32(len(types)), 8} {
+		for _, v := range []uint32{0, 0, 0, uint32(n), uint32(len(types)), 8} { //nolint:gosec // Counts are bounded above.
 			_ = binary.Write(&out, binary.BigEndian, v)
 		}
 	}
@@ -248,7 +260,7 @@ func historyZone(name string, parts []string) (*time.Location, error) {
 	}
 	out.Write(indexes)
 	for _, typ := range types {
-		_ = binary.Write(&out, binary.BigEndian, int32(typ.offset))
+		_ = binary.Write(&out, binary.BigEndian, int32(typ.offset)) //nolint:gosec // The validated rule has a two-digit hour offset.
 		if typ.dst {
 			out.WriteByte(1)
 			out.WriteByte(4)
@@ -259,5 +271,9 @@ func historyZone(name string, parts []string) (*time.Location, error) {
 	}
 	out.WriteString("STD\x00DST\x00")
 	out.WriteString("\n" + eras[len(eras)-1].rule + "\n")
-	return time.LoadLocationFromTZData(name, out.Bytes())
+	loc, err := time.LoadLocationFromTZData(name, out.Bytes())
+	if err != nil {
+		return nil, fmt.Errorf("load history zone: %w", err)
+	}
+	return loc, nil
 }

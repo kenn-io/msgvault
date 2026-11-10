@@ -155,13 +155,13 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 			if err := s.persistICSDetailsWith(ctx, tx, sourceID, sourceMessageID, id, item); err != nil {
 				return err
 			}
+		}
+		if apply || fill {
 			if exists {
 				if err := s.bumpDerivedDataRevisionContext(ctx, tx); err != nil {
 					return err
 				}
 			}
-		}
-		if apply || fill {
 			summary.Changed++
 		} else {
 			summary.Unchanged++

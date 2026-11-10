@@ -26,6 +26,21 @@ func icsSource(t *testing.T, st *Store) int64 {
 	return source.ID
 }
 
+func TestReview1263CancelInvalidatesCache(t *testing.T) {
+	requirements := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source := icsSource(t, st)
+	_, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T120000Z"))
+	requirements.NoError(err)
+	before, err := st.DerivedDataRevisionContext(t.Context())
+	requirements.NoError(err)
+	_, err = st.PersistICalendarContext(t.Context(), source, calendarDocument("CANCEL", "SEQUENCE:2\r\nSTATUS:CANCELLED"))
+	requirements.NoError(err)
+	after, err := st.DerivedDataRevisionContext(t.Context())
+	requirements.NoError(err)
+	requirements.Greater(after, before)
+}
+
 func TestICalendarPersistenceRevisionsAndRebuild(t *testing.T) {
 	for _, behavior := range []string{"duplicate persist", "older sequence", "newer stamp", "cancellation", "rebuild"} {
 		t.Run(behavior, func(t *testing.T) {
@@ -273,7 +288,6 @@ func TestICalendarCancellationArrivalOrder(t *testing.T) {
 		assertions.Equal("cancelled", row.Event.Status)
 		requirements.NotNil(row.Event.Start)
 		assertions.Equal("2027-03-02T14:00:00Z", row.Event.Start.Format(time.RFC3339))
-
 	})
 }
 
@@ -298,24 +312,25 @@ func TestICalendarRoomAttendeesAreNotParticipants(t *testing.T) {
 }
 
 func TestICalendarHistoricalZoneOccurrences(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	raw, err := os.ReadFile("../calevent/testdata/customized-history.ics")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	_, err = st.PersistICalendarContext(t.Context(), icsSource(t, st), raw)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	for _, tc := range []struct {
 		year int
 		want string
 	}{{2006, "2006-03-20T15:00:00Z"}, {2007, "2007-03-20T14:00:00Z"}, {2008, ""}, {2026, "2026-03-20T14:00:00Z"}} {
 		from := time.Date(tc.year, 3, 19, 0, 0, 0, 0, time.UTC)
 		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 3))
-		require.NoError(t, err)
-		assert.Empty(t, page.Unexpandable)
+		requirements.NoError(err)
+		assertions.Empty(page.Unexpandable)
 		if tc.want == "" {
-			assert.Empty(t, page.Occurrences)
+			assertions.Empty(page.Occurrences)
 			continue
 		}
-		require.Len(t, page.Occurrences, 1)
-		assert.Equal(t, tc.want, page.Occurrences[0].Start.UTC().Format(time.RFC3339))
+		requirements.Len(page.Occurrences, 1)
+		assertions.Equal(tc.want, page.Occurrences[0].Start.UTC().Format(time.RFC3339))
 	}
 }
