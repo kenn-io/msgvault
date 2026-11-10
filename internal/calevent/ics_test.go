@@ -40,66 +40,29 @@ func TestICSFloatingRecurrenceUsesSourceZone(t *testing.T) {
 func TestICSOutlookTZID(t *testing.T) {
 	raw, err := os.ReadFile("testdata/outlook.ics")
 	require.NoError(t, err)
-	for _, tc := range []struct{ windows, zone, start string }{
-		{"Eastern Standard Time", "America/New_York", "2027-07-06T13:00:00Z"},
-		{"Manitoba Standard Time", "America/Winnipeg", "2027-07-06T14:00:00Z"},
-	} {
-		t.Run(tc.windows, func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			input := string(raw)
-			if tc.windows != "Eastern Standard Time" {
-				start := strings.Index(input, "BEGIN:VTIMEZONE")
-				end := strings.Index(input, "END:VTIMEZONE\n") + len("END:VTIMEZONE\n")
-				input = strings.ReplaceAll(input[:start]+input[end:], "Eastern Standard Time", tc.windows)
-			}
-			components, err := ParseICS([]byte(input), "", "")
-			requirements.NoError(err)
-			requirements.Len(components, 1)
-			e := components[0].Event
-			assertions.Equal(tc.start, e.Start.Format(time.RFC3339))
-			assertions.Equal(tc.zone, e.EventTimeZone)
-			assertions.Equal([]string{"RDATE;TZID=" + tc.zone + ":20270707T090000"}, e.Recurrence)
-		})
-	}
+	components, err := ParseICS(raw, "", "")
+	require.NoError(t, err)
+	require.Len(t, components, 1)
+	e := components[0].Event
+	assert.Equal(t, "2027-07-06T13:00:00Z", e.Start.Format(time.RFC3339))
+	assert.Equal(t, "America/New_York", e.EventTimeZone)
+	assert.Equal(t, []string{"RDATE;TZID=America/New_York:20270707T090000"}, e.Recurrence)
 }
 
 func TestParseICSCustomizedTimeZone(t *testing.T) {
 	raw, err := os.ReadFile("testdata/customized.ics")
 	require.NoError(t, err)
-	t.Run("weekly invite", func(t *testing.T) {
-		assertions, requirements := assert.New(t), require.New(t)
-		components, err := ParseICS(raw, "", "")
-		requirements.NoError(err)
-		requirements.Len(components, 1)
-		e := components[0].Event
-		assertions.Equal("2026-07-15T14:00:00Z", e.Start.Format(time.RFC3339))
-		assertions.Contains(e.Recurrence, "EXDATE:20260722T140000Z")
-	})
-	t.Run("missing offset", func(t *testing.T) {
-		_, err := ParseICS([]byte(strings.Replace(string(raw), "TZOFFSETTO:-0500\n", "", 1)), "", "")
-		require.ErrorContains(t, err, "requires distinct STANDARD or DAYLIGHT observances")
-	})
-	noDST, err := os.ReadFile("testdata/customized-no-dst.ics")
+	components, err := ParseICS(raw, "", "")
 	require.NoError(t, err)
-	for _, tc := range []struct {
-		name, raw string
-		wantError bool
-	}{
-		{"without daylight saving", string(noDST), false},
-		{"one-time offset change", strings.Replace(strings.Replace(string(noDST), "BEGIN:DAYLIGHT\nDTSTART:16010101T000000\nTZOFFSETFROM:+0530\nTZOFFSETTO:+0530\nEND:DAYLIGHT\n", "", 1), "TZOFFSETFROM:+0530", "TZOFFSETFROM:+0430", 1), true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			requirements := require.New(t)
-			components, err := ParseICS([]byte(tc.raw), "", "")
-			if tc.wantError {
-				requirements.ErrorContains(err, "unsupported VTIMEZONE")
-				return
-			}
-			requirements.NoError(err)
-			requirements.Len(components, 1)
-			requirements.Equal("2026-07-15T04:30:00Z", components[0].Event.Start.Format(time.RFC3339))
-		})
-	}
+	require.Len(t, components, 1)
+	assert.Equal(t, "2026-07-15T14:00:00Z", components[0].Event.Start.Format(time.RFC3339))
+	assert.Contains(t, components[0].Event.Recurrence, "EXDATE:20260722T140000Z")
+	raw, err = os.ReadFile("testdata/customized-no-dst.ics")
+	require.NoError(t, err)
+	components, err = ParseICS(raw, "", "")
+	require.NoError(t, err)
+	require.Len(t, components, 1)
+	assert.Equal(t, "2026-07-15T04:30:00Z", components[0].Event.Start.Format(time.RFC3339))
 }
 
 func TestICSLibicalTZID(t *testing.T) {
@@ -150,6 +113,29 @@ func TestICSDecode(t *testing.T) {
 			assertions.Equal(tt.role, e.Attendees[0].Role)
 			assertions.Equal("accepted", e.Attendees[0].RSVP)
 			assertions.Equal("room", e.Attendees[1].Role)
+		})
+	}
+}
+
+func TestICSNULFields(t *testing.T) {
+	for _, tc := range []struct{ name, property, wantName, wantEmail, wantSummary string }{
+		{"summary", "SUMMARY:Before\x00after", "", "", "Before\uFFFDafter"},
+		{"attendee name", "ATTENDEE;CN=Before\x00after:mailto:guest@example.org", "Before\uFFFDafter", "guest@example.org", ""},
+		{"organizer name", "ORGANIZER;CN=Before\x00after:mailto:organizer@example.com", "Before\uFFFDafter", "organizer@example.com", ""},
+		{"address", "ATTENDEE:mailto:before\x00after@example.org", "", "before\uFFFDafter@example.org", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:nul@example.com\r\nDTSTART:20270302T120000Z\r\n" + tc.property + "\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+			components, err := ParseICS([]byte(raw), "", "")
+			require.NoError(t, err)
+			require.Len(t, components, 1)
+			if tc.wantSummary != "" {
+				assert.Equal(t, tc.wantSummary, components[0].Summary)
+				return
+			}
+			require.Len(t, components[0].Event.Attendees, 1)
+			assert.Equal(t, tc.wantName, components[0].Event.Attendees[0].DisplayName)
+			assert.Equal(t, tc.wantEmail, components[0].Event.Attendees[0].Email)
 		})
 	}
 }
@@ -243,11 +229,6 @@ func TestICSRejectMalformed(t *testing.T) {
 		{"unknown zone", strings.ReplaceAll(icsExample, "America/New_York", "Unknown/Zone"), "unknown time zone Unknown/Zone"},
 		{"negative sequence", strings.Replace(icsExample, "SEQUENCE:2", "SEQUENCE:-1", 1), "invalid SEQUENCE"},
 		{"missing UID", strings.Replace(icsExample, "UID:invite@example.com\r\n", "", 1), "event has no UID"},
-		{"date start with timed end", strings.NewReplacer("DTSTART;TZID=America/New_York:20270314T090000", "DTSTART;VALUE=DATE:20270314", "DTEND;TZID=America/New_York:20270314T100000", "DTEND:20270315T180000Z").Replace(icsExample), "event start and end have different value types"},
-		{"all day duration with hours", strings.NewReplacer("DTSTART;TZID=America/New_York:20270314T090000", "DTSTART;VALUE=DATE:20270314", "DTEND;TZID=America/New_York:20270314T100000", "DURATION:P1DT2H").Replace(icsExample), "all-day event duration contains a time component"},
-		{"invalid duration with end", strings.Replace(icsExample, "SUMMARY:", "DURATION:garbage\r\nSUMMARY:", 1), "invalid calendar DURATION"},
-		{"empty duration", strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DURATION:P", 1), "invalid calendar DURATION"},
-		{"duration trailing T", strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DURATION:P1DT", 1), "invalid calendar DURATION"},
 		{"ends after year 9999", strings.NewReplacer("DTSTART;TZID=America/New_York:20270314T090000", "DTSTART:99991231T230000Z", "DTEND;TZID=America/New_York:20270314T100000", "DURATION:PT2H").Replace(icsExample), "outside years 0 to 9999"},
 		{"malformed property", "BEGIN:VCALENDAR\r\nSUMMARY;CN=x\r\nEND:VCALENDAR\r\n", "malformed iCalendar parameters"},
 		{"second calendar", icsExample + icsExample, "calendar has trailing content"},

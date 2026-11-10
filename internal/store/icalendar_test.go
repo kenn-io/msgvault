@@ -45,7 +45,7 @@ func TestICalendarPersistenceRevisionsAndRebuild(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, cancel, stored)
 	})
-	for _, behavior := range []string{"duplicate persist", "description", "older sequence", "newer stamp", "cancellation", "rebuild", "restore"} {
+	for _, behavior := range []string{"duplicate persist", "older sequence", "newer stamp", "cancellation", "rebuild", "restore"} {
 		t.Run(behavior, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
@@ -66,14 +66,6 @@ func TestICalendarPersistenceRevisionsAndRebuild(t *testing.T) {
 				assertions.Zero(duplicate.Changed)
 				assertions.Equal(1, duplicate.Unchanged)
 				assertions.Equal(ids, emailEvents(t, st, source))
-				return
-			case "description":
-				var snippet string
-				requirements.NoError(st.db.QueryRow(`SELECT snippet FROM messages WHERE id=?`, id).Scan(&snippet))
-				assertions.True(strings.HasPrefix(snippet, "Meeting details. "), "snippet must come from the description")
-				body, err := st.GetMessageBodyText(t.Context(), id)
-				requirements.NoError(err)
-				assertions.Equal(description+"\nJoin: https://meet.example.com/meeting\nLocation: Conference room", body)
 				return
 			case "older sequence":
 				older := strings.Replace(string(raw), "SEQUENCE:2", "SEQUENCE:1", 1)

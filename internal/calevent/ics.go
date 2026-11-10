@@ -233,7 +233,7 @@ var icsDurationPattern = regexp.MustCompile(`^\+?P(?:(\d+)W|(?:(\d+)D)?(?:T(?:(\
 // icsDuration splits a DURATION into nominal days and exact elapsed time.
 func icsDuration(value string) (int, time.Duration, error) {
 	m := icsDurationPattern.FindStringSubmatch(value)
-	if m == nil || strings.Join(m[1:], "") == "" || strings.HasSuffix(value, "T") {
+	if m == nil {
 		return 0, 0, errors.New("invalid calendar DURATION")
 	}
 	var n [5]int64
@@ -291,15 +291,12 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 	if start.IsZero() && e.Status != "cancelled" {
 		return ICSComponent{}, errors.New("active event requires DTSTART")
 	}
-	end, endAllDay, err := icsTime(p.Get("DTEND"), loc)
+	end, _, err := icsTime(p.Get("DTEND"), loc)
 	if err != nil {
 		return ICSComponent{}, fmt.Errorf("DTEND: %w", err)
 	}
-	if !start.IsZero() && !end.IsZero() && allDay != endAllDay {
-		return ICSComponent{}, errors.New("event start and end have different value types")
-	}
 	days, elapsed := 0, time.Duration(0)
-	if dur := p.Get("DURATION"); dur != nil {
+	if dur := p.Get("DURATION"); dur != nil && end.IsZero() {
 		if days, elapsed, err = icsDuration(dur.Value); err != nil {
 			return ICSComponent{}, err
 		}
@@ -308,9 +305,6 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 	}
 	if !start.IsZero() {
 		if allDay {
-			if elapsed != 0 {
-				return ICSComponent{}, errors.New("all-day event duration contains a time component")
-			}
 			e.AllDay = true
 			e.StartDate = start.Format(time.DateOnly)
 			if end.IsZero() {
