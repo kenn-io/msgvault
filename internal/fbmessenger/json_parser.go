@@ -71,7 +71,11 @@ func numberedJSONFiles(threadDir string) ([]string, []string, error) {
 		return nil, nil, fmt.Errorf("fbmessenger: read thread dir: %w", err)
 	}
 
-	var files []string
+	type numbered struct {
+		name string
+		num  int
+	}
+	var files []numbered
 	var badSiblings []string
 	for _, e := range entries {
 		if e.IsDir() {
@@ -81,21 +85,32 @@ func numberedJSONFiles(threadDir string) ([]string, []string, error) {
 		if !strings.HasPrefix(name, "message_") || !strings.HasSuffix(name, ".json") {
 			continue
 		}
-		_, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(name, "message_"), ".json"))
-		if !reMessageFile.MatchString(name) || err != nil {
+		m := reMessageFile.FindStringSubmatch(name)
+		if m == nil {
 			// Unrecognized sibling (e.g. message_final.json). Skip it and
 			// record the bad name so the importer can log + count it
 			// without aborting the entire thread.
 			badSiblings = append(badSiblings, name)
 			continue
 		}
-		files = append(files, name)
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			// Regex guarantees \d+, so this is effectively unreachable;
+			// treat it the same as an unrecognized sibling.
+			badSiblings = append(badSiblings, name)
+			continue
+		}
+		files = append(files, numbered{name: name, num: n})
 	}
 	if len(files) == 0 {
 		return nil, nil, fmt.Errorf("fbmessenger: no message_*.json files in %s", threadDir)
 	}
-	sortMessageFiles(files)
-	return files, badSiblings, nil
+	sort.Slice(files, func(i, j int) bool { return files[i].num < files[j].num })
+	names := make([]string, len(files))
+	for i, f := range files {
+		names[i] = f.name
+	}
+	return names, badSiblings, nil
 }
 
 // ParseJSONThread parses every message_*.json file in a DYI thread
@@ -302,10 +317,7 @@ func resolveAttachments(absRoot string, m rawJSONMessage) []Attachment {
 			if it.URI == "" {
 				continue
 			}
-			abs := ""
-			if absRoot != "" {
-				abs = resolveAttachmentURI(absRoot, it.URI)
-			}
+			abs := resolveAttachmentURI(absRoot, it.URI)
 			out = append(out, Attachment{
 				URI:      it.URI,
 				AbsPath:  abs,
@@ -322,10 +334,7 @@ func resolveAttachments(absRoot string, m rawJSONMessage) []Attachment {
 	add("gif", m.Gifs)
 	add("file", m.Media)
 	if m.Sticker != nil && m.Sticker.URI != "" {
-		abs := ""
-		if absRoot != "" {
-			abs = resolveAttachmentURI(absRoot, m.Sticker.URI)
-		}
+		abs := resolveAttachmentURI(absRoot, m.Sticker.URI)
 		out = append(out, Attachment{
 			URI:      m.Sticker.URI,
 			AbsPath:  abs,
@@ -427,12 +436,4 @@ func metaJSONMessage(m rawJSONMessage, idx int, absRoot string) Message {
 		msg.Body = appendReactionSummary(msg.Body, msg.Reactions)
 	}
 	return msg
-}
-
-func sortMessageFiles(files []string) {
-	sort.Slice(files, func(i, j int) bool {
-		a, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(files[i], "message_"), ".json"))
-		b, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(files[j], "message_"), ".json"))
-		return a < b
-	})
 }

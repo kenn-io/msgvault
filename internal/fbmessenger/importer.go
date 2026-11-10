@@ -810,11 +810,71 @@ func writeThreadToStore(
 			_ = st.LinkMessageLabel(ctx, messageID, sectionLabelID)
 		}
 
-		for ai, att := range m.Attachments {
-			if err := writeMetaAttachment(ctx, st, absRoot, messageID, att, ai, opts, logger, summary); err != nil {
-				logger.Warn("fbmessenger: attachment", "err", err)
+		// Attachments.
+		for ai := range m.Attachments {
+			att := m.Attachments[ai]
+			summary.AttachmentsFound++
+			storagePath, contentHash, size := handleAttachment(ctx, att, opts.AttachmentsDir)
+			if storagePath != "" {
+				summary.AttachmentsStored++
+			}
+			syntheticHash := fbAttachmentHash(att, ai)
+			hash := contentHash
+			storedContent := storagePath != "" && contentHash != ""
+			existingContentHash := contentHash
+			if !storedContent && existingContentHash == "" {
+				existingContentHash = hashAttachmentSource(att)
+			}
+			if !storedContent && existingContentHash != "" {
+				stored, err := hasStoredAttachment(ctx, st, messageID, existingContentHash)
+				if err != nil {
+					logger.Warn("fbmessenger: check stored attachment", "err", err)
+				} else if stored {
+					if err := deleteLegacyHashlessAttachment(ctx, st, messageID); err != nil {
+						logger.Warn("fbmessenger: delete legacy hashless attachment", "err", err)
+					}
+					if err := deleteSyntheticPlaceholderAttachment(ctx, st, messageID, syntheticHash); err != nil {
+						logger.Warn("fbmessenger: delete synthetic attachment placeholder", "err", err)
+					}
+					continue
+				}
+			}
+			if !storedContent {
+				hash = syntheticHash
+			} else if err := deleteFailedStoredAttachment(ctx, st, messageID, contentHash); err != nil {
+				logger.Warn("fbmessenger: delete failed stored attachment", "err", err)
+			}
+			role := store.AttachmentRoleStandalone
+			roleSource := store.AttachmentRoleSourceImporterSemantics
+			if att.Kind == "sticker" {
+				role = store.AttachmentRoleSticker
+				roleSource = store.AttachmentRoleSourceProviderExplicit
+			}
+			if err := st.UpsertAttachmentRecord(ctx, messageID, store.AttachmentWrite{
+				Filename: att.Filename, MIMEType: att.MimeType, StoragePath: storagePath,
+				ContentHash: hash, Size: int64(size), SourceAttachmentID: att.URI,
+				MediaType: att.Kind, Role: role, RoleSource: roleSource,
+				SourcePartKey: syntheticHash,
+			}); err != nil {
+				logger.Warn("fbmessenger: upsert attachment", "err", err)
+				continue
+			}
+			if err := deleteLegacyHashlessAttachment(ctx, st, messageID); err != nil {
+				logger.Warn("fbmessenger: delete legacy hashless attachment", "err", err)
+			}
+			if storedContent {
+				if err := deleteSyntheticPlaceholderAttachment(ctx, st, messageID, syntheticHash); err != nil {
+					logger.Warn("fbmessenger: delete synthetic attachment placeholder", "err", err)
+				}
+			} else if contentHash != "" {
+				if err := deleteFailedStoredAttachment(ctx, st, messageID, contentHash); err != nil {
+					logger.Warn("fbmessenger: delete failed stored attachment", "err", err)
+				}
+			} else if err := deleteFailedStoredAttachmentByMetadata(ctx, st, messageID, att.Filename, att.MimeType); err != nil {
+				logger.Warn("fbmessenger: delete failed stored attachment", "err", err)
 			}
 		}
+
 		// Reactions: first-class rows and body-append already done.
 		for _, r := range m.Reactions {
 			actorAddr := Address(r.Actor)
@@ -1096,8 +1156,8 @@ func writeInstagramMessage(ctx context.Context, st *store.Store, root string, so
 		summary.MessagesSkipped++
 	}
 	// Ancillary writes are retried on every replay, including existing messages.
-	for index, att := range message.Attachments {
-		if err := writeMetaAttachment(ctx, st, root, messageID, att, index, opts, nil, summary); err != nil {
+	for _, att := range message.Attachments {
+		if err := writeInstagramMedia(ctx, st, root, messageID, att, opts, summary); err != nil {
 			return err
 		}
 	}
@@ -1167,74 +1227,6 @@ func writeInstagramMedia(ctx context.Context, st *store.Store, root string, mess
 	}
 	if err := st.UpsertAttachmentRecordWithStats(ctx, messageID, write, true); err != nil {
 		return err
-	}
-	return nil
-}
-
-func writeMetaAttachment(ctx context.Context, st *store.Store, root string, messageID int64, att Attachment, index int, opts ImportOptions, logger *slog.Logger, summary *ImportSummary) error {
-	if opts.Source == "instagram" {
-		return writeInstagramMedia(ctx, st, root, messageID, att, opts, summary)
-	}
-	ai := index
-	summary.AttachmentsFound++
-	storagePath, contentHash, size := handleAttachment(ctx, att, opts.AttachmentsDir)
-	if storagePath != "" {
-		summary.AttachmentsStored++
-	}
-	syntheticHash := fbAttachmentHash(att, ai)
-	hash := contentHash
-	storedContent := storagePath != "" && contentHash != ""
-	existingContentHash := contentHash
-	if !storedContent && existingContentHash == "" {
-		existingContentHash = hashAttachmentSource(att)
-	}
-	if !storedContent && existingContentHash != "" {
-		stored, err := hasStoredAttachment(ctx, st, messageID, existingContentHash)
-		if err != nil {
-			logger.Warn("fbmessenger: check stored attachment", "err", err)
-		} else if stored {
-			if err := deleteLegacyHashlessAttachment(ctx, st, messageID); err != nil {
-				logger.Warn("fbmessenger: delete legacy hashless attachment", "err", err)
-			}
-			if err := deleteSyntheticPlaceholderAttachment(ctx, st, messageID, syntheticHash); err != nil {
-				logger.Warn("fbmessenger: delete synthetic attachment placeholder", "err", err)
-			}
-			return nil
-		}
-	}
-	if !storedContent {
-		hash = syntheticHash
-	} else if err := deleteFailedStoredAttachment(ctx, st, messageID, contentHash); err != nil {
-		logger.Warn("fbmessenger: delete failed stored attachment", "err", err)
-	}
-	role := store.AttachmentRoleStandalone
-	roleSource := store.AttachmentRoleSourceImporterSemantics
-	if att.Kind == "sticker" {
-		role = store.AttachmentRoleSticker
-		roleSource = store.AttachmentRoleSourceProviderExplicit
-	}
-	if err := st.UpsertAttachmentRecord(ctx, messageID, store.AttachmentWrite{
-		Filename: att.Filename, MIMEType: att.MimeType, StoragePath: storagePath,
-		ContentHash: hash, Size: int64(size), SourceAttachmentID: att.URI,
-		MediaType: att.Kind, Role: role, RoleSource: roleSource,
-		SourcePartKey: syntheticHash,
-	}); err != nil {
-		logger.Warn("fbmessenger: upsert attachment", "err", err)
-		return nil
-	}
-	if err := deleteLegacyHashlessAttachment(ctx, st, messageID); err != nil {
-		logger.Warn("fbmessenger: delete legacy hashless attachment", "err", err)
-	}
-	if storedContent {
-		if err := deleteSyntheticPlaceholderAttachment(ctx, st, messageID, syntheticHash); err != nil {
-			logger.Warn("fbmessenger: delete synthetic attachment placeholder", "err", err)
-		}
-	} else if contentHash != "" {
-		if err := deleteFailedStoredAttachment(ctx, st, messageID, contentHash); err != nil {
-			logger.Warn("fbmessenger: delete failed stored attachment", "err", err)
-		}
-	} else if err := deleteFailedStoredAttachmentByMetadata(ctx, st, messageID, att.Filename, att.MimeType); err != nil {
-		logger.Warn("fbmessenger: delete failed stored attachment", "err", err)
 	}
 	return nil
 }
