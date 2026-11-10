@@ -155,11 +155,10 @@ describe('ProfileHistoryDialog', () => {
     expect(row.textContent).not.toMatch(/987654321|synthetic-archive/);
   });
 
-  it.each(['available', 'failed', 'refresh failed'] as const)('waits for history and rereads after a split: initially %s', async initial => {
+  it.each(['available', 'failed'] as const)('waits for history and ends a split on its receipt: initially %s', async initial => {
     const initialFailure = initial === 'failed';
     let reconciled = false;
     let historyReads = 0;
-    let splitWrites = 0;
     let initialResponse: Response | undefined;
     let releaseInitial!: (response: Response) => void;
     const pendingInitial = new Promise<Response>(resolve => { releaseInitial = resolve; });
@@ -178,7 +177,6 @@ describe('ProfileHistoryDialog', () => {
       };
       if (path.endsWith('/profile/history')) {
         historyReads += 1;
-        if (initial === 'refresh failed' && reconciled && historyReads === 2) return Response.json({ message: 'history unavailable' }, { status: 503 });
         if (initialFailure && historyReads === 1) return Response.json({ error: 'unavailable', message: 'history unavailable' }, { status: 503 });
         const response = Response.json({
           person: reconciled ? remaining : source,
@@ -196,7 +194,7 @@ describe('ProfileHistoryDialog', () => {
       if (path.endsWith('/merges')) return Response.json({ merges: [{ merge, labels, participant_count: 1, row_count: 0, pending_candidate_count: 0, split_count: 0, row_action_counts: {} }], limit: 100, offset: 0 });
       if (path === '/api/v1/person-merges/41') return Response.json({ merge, labels: { ...labels, participants: undefined }, participants: labels.participants, rows: [], splits: [], review_candidates: [] });
       if (path === '/api/v1/people/7') return Response.json(source, { headers: { ETag: '"person-7-r3"' } });
-      if (path === '/api/v1/people/7/split') { splitWrites++; return Response.json({ source_person: remaining, new_person: restored, split: { id: 55, merge_id: 41, source_person_id: 7, new_person_id: 9, new_person_uid: 'person-9', source_revision_before: 3, source_revision_after: 4, exact_reversal: true, actor: 'user', created_at: when }, exact_reversal: true, ambiguous_rows: [], unrestored_rows: [], uid_alias_disposition: 'restored', identity_revision: 2, cache_state: 'ready' }, { headers: { ETag: '"person-7-r4"', 'X-New-Person-ETag': '"person-9-r1"' } }); }
+      if (path === '/api/v1/people/7/split') return Response.json({ source_person: remaining, new_person: restored, split: { id: 55, merge_id: 41, source_person_id: 7, new_person_id: 9, new_person_uid: 'person-9', source_revision_before: 3, source_revision_after: 4, exact_reversal: true, actor: 'user', created_at: when }, exact_reversal: true, ambiguous_rows: [], unrestored_rows: [], uid_alias_disposition: 'restored', identity_revision: 2, cache_state: 'ready' }, { headers: { ETag: '"person-7-r4"', 'X-New-Person-ETag': '"person-9-r1"' } });
       throw new Error(`unexpected ${request.method} ${path}`);
     });
     const onSplitCommitted = vi.fn(async () => { reconciled = true; });
@@ -217,14 +215,8 @@ describe('ProfileHistoryDialog', () => {
       await fireEvent.click(await screen.findByRole('checkbox', { name: 'observed@example.com' }));
       await fireEvent.click(screen.getByRole('button', { name: 'Split into new person' }));
       await waitFor(() => expect(onSplitCommitted).toHaveBeenCalledWith({ sourcePersonID: 7, newPersonID: 9 }));
-      await waitFor(() => expect(historyReads).toBe(initialFailure ? 3 : 2));
-      if (initial === 'refresh failed') {
-        expect(await screen.findByText("Couldn't refresh the profiles.")).toBeDefined();
-        await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-        await waitFor(() => expect(historyReads).toBe(3));
-        await waitFor(() => expect(screen.queryByText("Couldn't refresh the profiles.")).toBeNull());
-        expect(splitWrites).toBe(1);
-      }
+      expect(await screen.findByRole('dialog', { name: 'Split complete' })).toBeDefined();
+      expect(historyReads).toBe(initialFailure ? 2 : 1);
       await waitFor(() => {
         for (const value of ['Moved alias', 'moved@example.com', 'observed@example.com']) expect(screen.queryByText(value, { exact: true })).toBeNull();
       });

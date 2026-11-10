@@ -33,14 +33,14 @@
   let error = $state<string | null>(null);
   onMount(() => void load());
   onMount(() => void controller?.reload(false));
-  async function load(): Promise<boolean> {
+  async function load(): Promise<void> {
     error = null;
     loading = true;
     try {
       const { data, error: responseError, response } = await generatedGetPersonProfileHistory({ id: personID }, client);
       if (data) {
         history = data;
-        return true;
+        return;
       }
       error = messageFor(responseError, response.status);
     } catch (cause: unknown) {
@@ -48,7 +48,6 @@
     } finally {
       loading = false;
     }
-    return false;
   }
   type HistoryRow = { id: number; value: string; context?: Item; envelope: ValueEnvelope; observedAt?: string };
   /**
@@ -134,7 +133,7 @@
 
 <PersonMergeHistory {client} {personID} {onClose} scopeSources={[...(history?.contact_points ?? []), ...(history?.observations ?? [])]} definitions={controller?.definitions}
   onOpenPerson={onOpenPerson ? (id) => { onClose(); onOpenPerson?.(id); } : undefined}
-  onSplitCommitted={async (context) => { await onSplitCommitted?.(context); if (!await load()) throw new Error('History refresh failed'); }}>
+  {onSplitCommitted}>
   {#snippet fields(openMerge, mergedIn, workspaces)}
     <div class="profile-history">
       {#if loading}<p role="status">Loading profile history…</p>
