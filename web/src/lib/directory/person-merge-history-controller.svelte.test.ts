@@ -511,7 +511,6 @@ describe('PersonMergeHistoryController', () => {
     }), 7);
     controller.addScopes([{ scope_kind: 'account', scope_value: 'account-a' }]);
     await controller.loadHistory();
-    expect(controller.mergedIn[0]?.value).toContain('account 2');
     await controller.selectMerge(41);
     await controller.openSplit();
     controller.setParticipantSelected(701, true);

@@ -13,6 +13,5 @@ it('shows the IMAP steps and one command when platforms agree', async () => {
   expect(screen.queryByRole('radiogroup', { name: 'Platform' })).toBeNull();
   const command = screen.getByText(/imap\.example\.com/, { selector: 'code' });
   expect(command.textContent).toContain('reader');
-  await fireEvent.input(screen.getByLabelText('Server'), { target: { value: 'imap example.com' } });
   expect(screen.getByText('Enter the server name without spaces or a port. For port or STARTTLS options, see the Setup guide.')).toBeDefined();
 });

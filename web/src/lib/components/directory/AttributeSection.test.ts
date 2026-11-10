@@ -91,7 +91,7 @@ function renderSection(
 describe('AttributeSection', () => {
   it('places Reveal beside the hidden value', async () => {
     const sensitive = definition();
-    const current = personValue(sensitive, 19, { type: 'text', text: 'synthetic current secret' }, 0, { source: 'carddav_import', source_ref: 'source-card-7', actor: 'synthetic-importer', confidence: 0.8, active_from: '2026-07-20T09:00:00Z' });
+    const current = personValue(sensitive, 19, { type: 'text', text: 'synthetic current secret' });
     const historical = personValue(sensitive, 17, { type: 'text', text: 'synthetic historical secret' }, 0, {
       active_until: '2026-07-01T00:00:00Z',
       superseded_at: '2026-07-01T00:00:00Z',

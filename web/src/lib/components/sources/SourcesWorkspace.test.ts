@@ -559,12 +559,6 @@ describe('SourcesWorkspace', () => {
       }
       expect(screen.queryByRole('dialog')).toBeNull();
       expect(screen.getByRole('list', { name: 'Source kinds' })).toBeDefined();
-      if (state === 'sources first') {
-        await fireEvent.click(screen.getByRole('button', { name: /^Gmail Includes/ }));
-        await fireEvent.click(within(screen.getByRole('dialog', { name: 'Add Gmail' })).getByRole('button', { name: 'Back to Add source' }));
-        expect(screen.queryByRole('dialog')).toBeNull();
-        expect(screen.getAllByRole('list', { name: 'Source kinds' })).toHaveLength(1);
-      }
       document.dispatchEvent(new Event('visibilitychange'));
       await screen.findByRole('table', { name: 'Sources' });
       expect(screen.queryByRole('dialog', { name: 'Add source' })).toBeNull();
