@@ -13,11 +13,11 @@ const MAX_PREVIEW_CELLS = 20_000;
 
 export async function parseDelimited(text: string, delimiter = '', maxRows = 200, inputTruncated = false): Promise<{ header: string[]; rows: string[][]; truncated: boolean; cellLimit: boolean; columnsTruncated: boolean; hasErrors: boolean }> {
   const { default: Papa } = await import('papaparse');
-  const linebreak = text.endsWith('\r') ? Papa.parse(text + '\n', { delimiter, preview: maxRows + 2, skipEmptyLines: true }).meta.linebreak : '';
-  const prefix = text.endsWith('\r') && linebreak === '\n' ? text.slice(0, -1) + '\n' : text.endsWith('\r') && linebreak === '\r\n' ? text + '\n' : text;
+  // Records may end in LF, CRLF or CR within one file: unify terminators outside quoted fields, whose content is kept.
+  const fieldStart = `(?<=^|[\r\n]|${(delimiter ? [delimiter] : [',', '\t', '|', ';', '\x1e', '\x1f']).map((d) => d.replace(/[\\^$.*+?()[\]{}|/-]/g, '\\$&')).join('|')})`, prefix = text.replace(new RegExp(`(${fieldStart}"(?:[^"]|"")*(?:"|$))|\r\n?`, 'g'), (_, quoted) => quoted ?? '\n');
   // Guess with blank lines ignored, then retain every parsed record.
-  const resolved = delimiter || Papa.parse(prefix, { preview: 1, skipEmptyLines: true }).meta.delimiter;
-  const result = Papa.parse<string[]>(prefix, { delimiter: resolved, preview: maxRows + 2 });
+  const resolved = delimiter || Papa.parse(prefix, { newline: '\n', preview: 1, skipEmptyLines: true }).meta.delimiter;
+  const result = Papa.parse<string[]>(prefix, { delimiter: resolved, newline: '\n', preview: maxRows + 2 });
   // A final record terminator produces one extra empty row.
   const last = result.data.at(-1);
   if (!result.meta.truncated && prefix.endsWith(result.meta.linebreak) && last?.length === 1 && last[0] === '') result.data.pop();

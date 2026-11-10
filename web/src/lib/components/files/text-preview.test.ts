@@ -48,6 +48,12 @@ describe('delimited previews', () => {
     expect(quoted.rows).toEqual([['A', 'B']]);
     expect((await parseDelimited('Name,Amount\nExample,42\r', ',')).rows).toEqual([['Example', '42']]);
   });
+  it('removes the final CRLF terminator after LF records', async () => {
+    expect((await parseDelimited('Name,Amount\nExample,42\r\n', ',')).rows).toEqual([['Example', '42']]);
+    expect((await parseDelimited('Name,Amount\nExample,42\r\nOther,73\n', ',')).rows).toEqual([['Example', '42'], ['Other', '73']]);
+    expect((await parseDelimited('Name,Note\nExample,"line\r\ninside"\nOther,done\n', ',')).rows).toEqual([['Example', 'line\r\ninside'], ['Other', 'done']]);
+    expect((await parseDelimited('name\x1enote\nalpha\x1e"one\r\ntwo"\n')).rows).toEqual([['alpha', 'one\r\ntwo']]);
+  });
   it('reports malformed quotes without blaming readable or truncated rows', async () => {
     expect((await parseDelimited('Name,Amount\nExample,"42\nOther,73', ',')).hasErrors).toBe(true);
     for (const text of ['Name\nOne\nTwo', 'Name,Amount\nExample,42,extra\nOther,73']) {
