@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -119,44 +118,6 @@ func TestSchemaVersionCandidateRightIndexUpgrade(t *testing.T) {
 	var count int
 	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_identity_match_candidates_right'`).Scan(&count))
 	assert.Equal(t, 1, count)
-}
-
-func TestSchemaVersionDocumentRangesUpgrade(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f := storetest.New(t)
-	profile, hash := seedDocumentPublicationAuthority(t, f)
-	input := documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
-		ExtractionID: "pre-range-upload", ProfileID: profile.ID, CanonicalBlobHash: hash,
-		ExtractionInputKey: "original", LeaseOwner: "worker", LeaseUntil: time.Now().UTC().Add(time.Minute), LocalBytes: 128, SourceSequence: 1,
-	})
-	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), input)
-	require.NoError(err)
-	require.NoError(f.Store.FailDocumentExtraction(t.Context(), store.DocumentExtractionFailure{
-		Claim: claim, ReasonCode: "provider_timeout", Terminal: true, RequestCount: 2, UploadCount: 1,
-	}))
-	_, err = f.Store.DB().ExecContext(t.Context(), "ALTER TABLE document_extractions DROP COLUMN upload_count")
-	require.NoError(err)
-	_, err = f.Store.DB().ExecContext(t.Context(), "DROP TABLE document_extraction_ranges")
-	require.NoError(err)
-	_, err = f.Store.DB().ExecContext(t.Context(), "UPDATE archive_metadata SET value='16' WHERE key='schema_version'")
-	require.NoError(err)
-	require.ErrorContains(f.Store.ValidateSchemaContext(t.Context()), "run setup")
-	version, err := f.Store.SchemaVersionContext(t.Context())
-	require.NoError(err)
-	assert.Equal(16, version)
-	var count int
-	require.Error(f.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
-	require.NoError(f.Store.InitSchemaContext(t.Context()))
-	require.NoError(f.Store.ValidateSchemaContext(t.Context()))
-	version, err = f.Store.SchemaVersionContext(t.Context())
-	require.NoError(err)
-	assert.Equal(store.SchemaVersion, version)
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
-	assert.Zero(count)
-	status, err := f.Store.GetDocumentIndexStatus(t.Context(), profile.ID)
-	require.NoError(err)
-	assert.Equal(int64(128), status.VerifiedUploadBytes)
 }
 
 func TestSchemaVersionDocbankUpgrade(t *testing.T) {
@@ -320,12 +281,12 @@ func TestSchemaVersionForgeServicesUpgrade(t *testing.T) {
 	s := testutil.NewTestStore(t)
 	ctx := t.Context()
 
-	// An archive set up by version 34 has no forge services.
+	// An archive set up by version 38 has no forge services.
 	_, err := s.DB().ExecContext(ctx, `DELETE FROM applied_migrations WHERE name = 'communication_services_forges_v1'`)
 	require.NoError(err)
 	_, err = s.DB().ExecContext(ctx, `DELETE FROM communication_services WHERE slug IN ('github', 'gitlab', 'gitea')`)
 	require.NoError(err)
-	_, err = s.DB().ExecContext(ctx, s.Rebind(`UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'`), "34")
+	_, err = s.DB().ExecContext(ctx, s.Rebind(`UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'`), "38")
 	require.NoError(err)
 	require.ErrorContains(s.ValidateSchemaContext(ctx), "run setup")
 
@@ -399,7 +360,11 @@ var (
 		32: "67195ce591cb53fde19ccf89d46f57a8d1cba7fcb96efd0b1d120dcde4c0dceb",
 		33: "7158a0bdc0768658194eacd650486e790f43ce0ab26f9aeffcd01843e3958ecb",
 		34: "46790542c505c944c29e50066f1875ac7cfe3ea42cccf0b0ec098ff23ca5d1eb",
-		35: "d9061b288f3784d8216891aaebcd2f840a3960b904e8726f4b28a5b20eb574fc",
+		35: "20e21e50260dd31c150213d13e0600661424e54885c9938e6895314dde23a2aa",
+		36: "ad076c4da9652ccf15eb7cb0a55cf57d6ec49f8c5db885db0bc44cac836c79ce",
+		37: "f6d6ae3d753476a4261d54df5d413994ec987dc34137fccf421f215bf0a11b7e",
+		38: "ac18227f57322ed8e822c5406000375e7e3aa2b47c73246ba36e9b0628c9bb66",
+		39: "2bd6868c894984d2a829e9d250cf72a539b77d98149e8e6ed09afd6b24e6f91e",
 	}
 	schemaContractPostgresDigests = []string{
 		1:  "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
@@ -431,7 +396,11 @@ var (
 		32: "d1947235dc5ffd4d0c8f611722e887faa3464bfaa8565e8713af1701e128b947",
 		33: "d1947235dc5ffd4d0c8f611722e887faa3464bfaa8565e8713af1701e128b947",
 		34: "7a1753c30acf49ee4b97ec23e42228cd94f70b0f3dca308bffd0f038d5461f59",
-		35: "d2e3ec05a4704eabcaf7767367bd9aa628b808e2b568a5cd3e53f56f25ea25bb",
+		35: "7a1753c30acf49ee4b97ec23e42228cd94f70b0f3dca308bffd0f038d5461f59",
+		36: "9bd56e75e273ac9afb7f9acdd76732b2494d011b57f88951951d9be1649824d1",
+		37: "7620e8c5b65db28a3b5bd6a0f709e53df28c5d7ee2fae42454e372508d9bc10e",
+		38: "5244b660c5b79ef46144ba5a9fa9470f84a15fe6b2cb1a3ffd11d2a39157ec32",
+		39: "1773f0d54dff9193f5491aa14c7b771bc6ff86fab93fcc12ccc129c761ce8ce7",
 	}
 )
 

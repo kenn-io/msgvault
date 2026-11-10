@@ -17,7 +17,7 @@ appear in full under Inherited Flags.
 |---|---|
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
 | Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
-| Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
+| Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [media search](#media-search), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [loops](#loops), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
 | Inspect staged room policy | [policy](#policy) |
@@ -26,7 +26,7 @@ appear in full under Inherited Flags.
 | Export | [export-messages](#export-messages), [export-eml](#export-eml), [export-attachments](#export-attachments), [create-subset](#create-subset) |
 | Review and remove mail | [stage-delete](#stage-delete), [delete-staged](#delete-staged), [deduplicate](#deduplicate), [gc](#gc) |
 | Back up and manage attachment storage | [backup](#backup), [pack-attachments](#pack-attachments), [purge-excluded-media](#purge-excluded-media) |
-| Repair older records | [repair-identity](#repair-identity), [repair-senders](#repair-senders), [repair-message](#repair-message), [repair-derived](#repair-derived), [repair-labels](#repair-labels), [repair-list-ids](#repair-list-ids), [repair-dates](#repair-dates) |
+| Repair older records | [repair-identity](#repair-identity), [repair-senders](#repair-senders), [repair-message](#repair-message), [repair-derived](#repair-derived), [repair-attachment-roles](#repair-attachment-roles), [repair-labels](#repair-labels), [repair-list-ids](#repair-list-ids), [repair-dates](#repair-dates) |
 | Operate or integrate | [setup](#setup), [credentials](#credentials), [daemon](#daemon), [serve](#serve), [activity](#activity), [mcp](#mcp), [query](#query), [openapi](#openapi), [agent-token](#agent-token) |
 
 ## loops
@@ -1616,6 +1616,30 @@ for independent surface progress, request costs, and expired-cursor recovery.
 
 ---
 
+## source instagram-comments add
+
+Register the professional account linked to the selected Page, using a
+configured `[[instagram_comments]]` profile (unreleased). No identifier selects
+all configured profiles. Tokens are read on the daemon host.
+
+```bash
+msgvault source instagram-comments add [identifier]
+```
+
+## source instagram-comments sync
+
+Archive returned media captions, comments, and replies from registered linked
+professional accounts (unreleased). A positive request budget includes Page
+and account verification. Partial writes remain searchable, and `--full`
+restarts cursors without deleting rows. No identifier selects all profiles.
+
+```bash
+msgvault source instagram-comments sync [identifier] [--max-requests 1000] [--full]
+```
+
+See [Instagram comments](usage/instagram-comments.md) for setup, identity,
+resuming, and coverage limits. These commands do not send replies.
+
 ## add-chatwoot
 
 Register permitted Chatwoot inboxes from configured `[[chatwoot]]` profiles.
@@ -1731,9 +1755,14 @@ msgvault sync-matrix --full
 | Flag | Default | Description |
 |---|---|---|
 | `--account` | all registered | Sync only this exact Matrix user ID |
-| `--full` | `false` | Ignore stored cursors and re-fetch complete joined-room history |
+| `--full` | `false` | Re-fetch complete joined-room history, rescan archived messages for media, and retry media downloads immediately |
+| `--no-media` | `false` | Record media metadata without downloading bytes this run |
 
 Room selection and scheduled sync are controlled by `[matrix]`. The account's key backup decrypts encrypted history and retries earlier placeholders after a backup change, with the retry rules described in the [Matrix guide](usage/matrix.md). The recovered count includes messages replaced with decrypted content, excluding edits and reactions.
+
+The first sync after upgrading discovers media in previously archived messages and saves a per-account completion marker. Later syncs skip this scan; `--full` repeats it.
+
+Later syncs fetch pending media and retry temporary failures such as 408, 425, 429, 5xx, timeouts and connection errors. Transient failures stay pending and retry on normal syncs after a growing backoff of 1, 2, 4, 8, 16, then 24 hours. Later failures keep the 24-hour backoff. Access denied, missing files, hash mismatches and decryption errors stay failed and retry on normal syncs after one week. `--full` bypasses both waits. The summary counts outstanding pending and failed media for the selected account and rooms. Each media item is attempted once per run.
 
 ---
 
@@ -2936,60 +2965,7 @@ msgvault media search "quarterly numbers" --person 7 --direction from_person --l
 
 The table shows message, conversation and attachment IDs, supplied or generated origin, plain excerpt, and recorded timing. An empty recording result proves no match only with complete coverage and `partial=false`. Its coverage line reports pending media, unavailable attribution, partial coverage and truncated results. JSON preserves the same fields and adds optional `filename`, `containing_title` and `occurred_at`. Recording search requires Docbank's source-selected search contract. Shared audio searches the currently selected transcript; different supplied captions can leave some messages unavailable even when no excerpt matches. A recording with more than 64 distinct current caption inputs is left out; its occurrences count in `unavailable_occurrences`, with `partial=true`. See [the API scope limits](api-server.md#media-transcript-search) for the version and source ceilings; narrow the person scope if it exceeds a ceiling. Use `msgvault show-message <message_id>` to read a result in context. See [browser recording search](web-ui.md#recording-matches) for transcript matches in Messages.
 
-Media search also prints a separate attachment table with message, conversation, attachment, filename, and excerpt, followed by truncation and search errors. It searches text Docbank has extracted from mirrored document files. A scope with more than 4096 document files returns an attachment error; set `--person` to narrow the scope. An empty list doesn't rule out words in files awaiting extraction. `--limit` caps each list separately; `--json` includes optional `attachments` and `recordings_error` fields. See [attachment search formats](usage/searching.md#search-mirrored-attachment-text) for the files included in the scope.
-
-## documents
-
-Manage document extraction and local full-text indexing. Mistral operations
-require a private authenticated capability manifest and exact recorded consent.
-Self-hosted Docling uses `consent-docling` and needs no
-manifest. Local search and removal operations do not contact the extractor.
-
-```bash
-msgvault documents probe-mistral --fixtures <private-dir> [--validate-only]
-msgvault documents consent-mistral --capabilities <manifest> [--yes]
-msgvault documents consent-docling [--yes]
-msgvault documents build [--capabilities <manifest>] [--limit N] [--full-rebuild] [--yes]
-msgvault documents resume [--capabilities <manifest>] [--limit N] [--yes]
-msgvault documents search <query> [flags]
-msgvault documents status [--capabilities <manifest>] [--json]
-msgvault documents retry [--capabilities <manifest>] --hash <sha256>
-msgvault documents retire <profile-id> [--yes]
-msgvault documents purge-derived --hash <sha256> [--yes]
-```
-
-`--capabilities` is required for Mistral build, resume, status, and retry.
-Docling uses the endpoint and policy selected in configuration. Its build and
-resume commands still require `--yes`, and provider policy changes require
-fresh consent.
-
-`probe-mistral --validate-only` checks the complete synthetic fixture set
-without credentials or network access. An authenticated probe writes the
-manifest to stdout. Run consent and build commands once without `--yes` to
-review their disclosure and preflight.
-
-`documents search` accepts `--source-id`, `--message-type`, `--attachment-id`,
-`--message-id`, `-n`/`--limit`, `--cursor`, and `--json`. Its cursor is opaque
-and bound to a stable index revision; restart pagination after a stale-cursor
-error.
-
-Build failures include available local causes alongside
-the document hash and reason code. `documents status` lists up to 20 current
-failed documents, including failed replacements in an active rebuild. JSON
-output adds `status.failures` and `status.failures_exhausted`. Each failure has
-`canonical_blob_hash`, `reason_code`, `detail`, and `state`; detail is a bounded
-single line and may be empty for historical failures. Use `documents retry` and
-then build again to obtain fresh diagnostics for an older failure.
-
-To include inline documents, set
-`[attachments.documents.scope].include_inline = true` and record exact consent
-again. The default is false. See the
-[scope configuration](configuration.md#attachmentsdocuments) for the contract.
-
-See [Document Attachment Indexing](/docs/usage/document-indexing/) for fixture
-generation, configuration, privacy boundaries, scheduling, and recovery.
-
----
+Unreleased builds also print a separate attachment table with message, conversation, attachment, filename, and excerpt, followed by truncation and search errors. It searches text Docbank has extracted from mirrored document files. More than 4096 such files are searched in batches of 4,096. Results from each batch are interleaved by their position within that batch, so order across batches is approximate. An empty list doesn't rule out words in files awaiting extraction. `--limit` caps each list separately; `--json` includes optional `attachments` and `recordings_error` fields. See [attachment search formats](usage/searching.md#search-mirrored-attachment-text) for the files included in the scope.
 
 ## tui
 
@@ -3357,7 +3333,7 @@ how Notes interact with search, MCP, and CardDAV.
 Person search accepts `--limit` from 1–100. File lookup defaults to the
 `metadata` lane and 100 results. Its main filters are `--direction`,
 `--filename`, `--mime-family`, `--after`, and `--before`.
-`--lane documents`, `visual`, or `all` requires `--query`; a `--cursor` belongs
+`--lane visual` or `all` requires `--query`; a `--cursor` belongs
 to one lane and cannot be used with `all`. See
 [person search](/docs/usage/people/#find-a-person-by-what-you-remember) and
 [person files](/docs/usage/people/#find-files-related-to-a-person) for index
@@ -3885,7 +3861,7 @@ profile unselected. Restart the daemon when the reported running profile differs
 | `--model` | prompt | Codex model ID available to the signed-in account |
 | `--reasoning-effort` | prompt | Supported effort for the chosen model |
 | `--retention-posture`, `--training-posture` | required | Explicit operator assertions |
-| `--source` | required | Repeatable: `conversation_text`, `meeting_text`, or `document_text` |
+| `--source` | required | Repeatable: `conversation_text` or `meeting_text` |
 | `--source-since` | required | Earliest disclosed date, `YYYY-MM-DD` |
 | `--source-until` | absent | Latest disclosed date, on or after `--source-since` |
 | `--allow-sensitive` | explicit decision required | `true` permits archive evidence; `false` permits only synthetic checks |
@@ -4799,8 +4775,7 @@ The wizard also stores remote URL/API key in `remote` config block so `export-to
 ### setup providers
 
 Configure optional search and people features from the available API keys. The
-command reads `VOYAGE_API_KEY`, `OPENAI_API_KEY`, and the document provider's
-configured key variable (default `MISTRAL_API_KEY`). For an unset text feature,
+command reads `VOYAGE_API_KEY` and `OPENAI_API_KEY`. For an unset text feature,
 it chooses Voyage contextual embeddings, then OpenAI embeddings, then an
 available Ollama `nomic-embed-text` model, then the shared local server. Hosted people inference
 requires an explicit `--provider` and `--model`; an OpenAI key alone does not
@@ -4812,7 +4787,7 @@ Setup prints a plan, asks once per hosted provider, writes `config.toml`, and
 prints the remaining commands. It onboards a new people-sweep provider through
 the same check and consent gates as `person provider`. Other feature-specific
 consents remain separate. Visual search needs a valid probe manifest before
-setup enables it; document extraction remains manual. See
+setup enables it. Docbank processes mirrored documents. See
 [Recommended Configuration](usage/recommended-configuration.md).
 
 Local people-sweep setup stays pending unless `--allow-sensitive` is supplied.
@@ -4827,10 +4802,7 @@ required by the configured database; setup prints rebuild guidance.
 
 Saved retention and training postures on disabled lanes are preserved unless
 their corresponding posture flags are explicitly supplied. Custom hosted text
-endpoints require explicit configuration of dependent lanes. Document semantic
-search requires both `documents vectors consent --yes` and
-`documents vectors consent --purpose queries --yes`; the latter authorizes
-query-text uploads. The status report tracks the two purposes separately.
+endpoints require explicit configuration of dependent lanes. Search mirrored document text with `media search`, `GET /api/v1/media/search`, MCP `search_media`, or the Web Everything panel. `media search --person <id> --direction from_person` scopes document search to a person. See the [Docbank configuration](https://msgvault.io/docs/configuration/#search-document-text-through-docbank-unreleased).
 
 `--local-embeddings` switches text search to the shared local server, even while Ollama is running. Setup asks once before downloading missing model and runtime files; `--yes` accepts that download. `--dry-run` leaves downloads and configuration untouched. A matching Nomic message recipe keeps its index; a different model requires `msgvault embeddings build --full-rebuild --yes`.
 
@@ -4844,7 +4816,7 @@ or set provider prices and monetary caps.
 msgvault setup providers --dry-run
 msgvault setup providers
 msgvault setup providers --allow-sensitive
-msgvault setup providers --yes --document-retention zdr --document-training opted-out
+msgvault setup providers --yes
 ```
 
 | Flag                   | Default             | Description                                                                                                                                                                                                       |
@@ -4856,8 +4828,6 @@ msgvault setup providers --yes --document-retention zdr --document-training opte
 | `--yes`                | `false`             | Accept every provider disclosure without prompting. Required to apply a plan with hosted-provider prompts when stdin is not a terminal or `--json` is used. It does not grant the separate sensitive-data opt-in. |
 | `--allow-sensitive`    | `false`             | Allow the people sweep to send sensitive archive excerpts and infer sensitive personal attributes                                                                                                                 |
 | `--dry-run`            | `false`             | Print the plan, the disclosures, and the current lane report without writing                                                                                                                                      |
-| `--document-retention` | `standard`          | Mistral retention posture to record: `standard` or `zdr`                                                                                                                                                          |
-| `--document-training`  | `default-opt-out`   | Mistral training posture to record: `default-opt-out` or `opted-out`                                                                                                                                              |
 | `--retention-posture`  | `provider-declared` | Retention assertion recorded for embedding and inference providers                                                                                                                                                |
 | `--training-posture`   | `provider-declared` | Training assertion recorded for embedding and inference providers                                                                                                                                                 |
 | `--json`               | `false`             | Output the plan, applied flag, follow-ups, and report as JSON                                                                                                                                                     |
@@ -4868,7 +4838,7 @@ configured remote daemon; run it on the daemon host or pass `--local`.
 ### setup status
 
 Report the setup state of each feature (text search, semantic people search,
-visual attachments, documents, document vectors, people sweep, activity
+visual attachments, people sweep, activity
 projection, media policy): state, provider, model, recorded consent, schedule,
 the reason a lane is off, and the command that turns it on. Reads `config.toml`,
 the environment, and the local archive's consent records; never contacts a
@@ -4896,9 +4866,9 @@ msgvault docbank attachments backfill
 ```
 
 `status` shows the mirror state and destination folder, delivered, sending and failed file counts, failure reasons, and all distinct eligible content hashes with no delivery record for this destination. Use
-`--json` for structured output. `backfill` restarts discovery and retries failed
-uploads. It requires attachment upload consent and a running attachment mirror
-job. Backfill resets discovery and requeues failed files with attempts reset in one transaction. The daemon drains the backlog at upload speed. The mirror includes files on dedup-hidden messages and excludes files whose attachment rows were removed. Upload names use `<first 12 hex of hash>-<sanitized basename>`. See [attachment mirror configuration](configuration.md#mirror-stored-attachments-to-docbank).
+`--json` for structured output. With `document_profile` set, a running mirror shows `Last error` when set, `Document profile`, `Text extracted`, `Processing`, `Waiting`, and `Without text (<code>): N` for each failure or refusal code. These are local job outcomes for the profile fingerprint last read by the worker.
+
+`backfill` restarts discovery and retries failed uploads. It requires attachment upload consent and a running attachment mirror job. Backfill resets discovery and requeues failed files with attempts reset in one transaction. Backfill requests processing again for files that failed for missing consent, stale authority, a missing PDF password, an unreadable password file, a quarantined job, or a malformed Docbank answer. Backfill clears only settled recoverable failures. A job that fails after backfill needs another backfill. Other outcomes wait for a profile change. The daemon drains the backlog at upload speed. The mirror includes files on dedup-hidden messages and excludes files whose attachment rows were removed. Upload names use `<first 12 hex of hash>-<sanitized basename>`. See [attachment mirror configuration](configuration.md#mirror-stored-attachments-to-docbank) for processing behavior.
 
 ## show-message
 
@@ -5378,6 +5348,27 @@ also retry recorded materialization failures locally; a successful full scan doe
 not inspect every previously archived attachment. `repair-message --audit` compares
 MIME occurrences but does not check file contents. The normal `repair-derived` and
 automatic `Heal` text passes do not reconstruct files.
+
+## repair-attachment-roles
+
+Classify email attachments archived before msgvault recorded attachment roles,
+from the raw MIME stored with each message. The command does not contact a
+provider.
+
+```bash
+msgvault repair-attachment-roles
+```
+
+Older email attachments have the role `unknown`, so a filter cannot tell an
+image embedded in the message body, such as a signature logo, from a file
+attached to the message. The repair records `inline` or `standalone` for each
+attachment that matches exactly one MIME part. Attachments without retained MIME,
+or with ambiguous evidence, keep the role `unknown`.
+
+The command writes immediately and prints the number of messages scanned and
+attachments updated. It saves progress after each batch: an interrupted run
+resumes where it stopped, and a run after a completed pass returns at once.
+New email gets its role at import, so one completed pass is enough.
 
 ## gc
 

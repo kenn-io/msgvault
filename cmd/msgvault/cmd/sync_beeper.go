@@ -202,8 +202,12 @@ func plural(n int64, one, many string) string {
 }
 
 func printBeeperSummary(out io.Writer, accountID string, sum *beeper.ImportSummary) {
-	_, _ = fmt.Fprintf(out, "  %s done in %s: %d chats, %d messages (%d added)",
+	_, _ = fmt.Fprintf(out, "  %s done in %s: %d chats, %d messages (%d added",
 		textutil.SanitizeTerminal(accountID), sum.Duration.Round(time.Second), sum.ChatsProcessed, sum.MessagesProcessed, sum.MessagesAdded)
+	if sum.MessagesUpdated > 0 {
+		_, _ = fmt.Fprintf(out, ", %d updated", sum.MessagesUpdated)
+	}
+	_, _ = fmt.Fprint(out, ")")
 	if sum.ReactionsRefreshed > 0 {
 		_, _ = fmt.Fprintf(out, ", %d reactions refreshed", sum.ReactionsRefreshed)
 	}

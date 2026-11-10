@@ -279,9 +279,8 @@ import (
 // mixed selections; clients can disclose that subset before confirmation.
 // 2.19.0 extends operation history with durable invocation lanes, date bounds,
 // filter-bound pagination, fixed error codes, supported actions, and related
-// status identifiers. It adds GET /api/v1/documents/status/current to resolve
-// status for the selected durable document profile. These Operations response
-// changes remain within the unreleased 2.x contract.
+// status identifiers. These Operations response changes remain within the
+// unreleased 2.x contract.
 // 2.20.0 adds the "last time we talked" person brief: the current version, the
 // version history, owner rejection, manual generation, and the brief enrollment
 // opt-in at /api/v1/people/{id}/brief*. A brief version reports its
@@ -405,7 +404,10 @@ import (
 // 3.48.0 adds owner-only local message search activation and progress.
 // 3.49.0 adds verification.read for revealing detected verification content in delegated reads.
 // 3.50.0 adds provider-neutral message import.
-const APISchemaVersion = "3.50.0"
+// 3.51.0 adds attachment processing outcomes and worker errors.
+// 4.0.0 removes local document commands, search, status, and operation lanes.
+// Docbank owns document processing.
+const APISchemaVersion = "4.0.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1410,9 +1412,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		setEnumNames(counter.Properties["unit"], []any{
 			"OperationPublicCounterUnitAttachments",
 			"OperationPublicCounterUnitBooks",
-			"OperationPublicCounterUnitChunks",
 			"OperationPublicCounterUnitContacts",
-			"OperationPublicCounterUnitDocuments",
 			"OperationPublicCounterUnitMessages",
 			"OperationPublicCounterUnitPeople",
 			"OperationPublicCounterUnitWrites",

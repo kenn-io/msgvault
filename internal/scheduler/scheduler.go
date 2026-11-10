@@ -445,10 +445,7 @@ func (s *Scheduler) RemoveAccount(email string) {
 
 // Indexing job names, shared by registration, status reporting, and the
 // operation gate's holder label.
-const (
-	embedJobName          = jobctx.ScheduledEmbeddingLabel
-	documentVectorJobName = "scheduled document indexing"
-)
+const embedJobName = jobctx.ScheduledEmbeddingLabel
 
 // indexingPassRuntime bounds each automatic indexing pass. A pass that saved
 // progress, or newly kept provider output for an unfinished unit, queues one
@@ -466,23 +463,6 @@ func (s *Scheduler) SetEmbedJob(job *EmbedJob, schedule string, runAfterSync boo
 		run = job.Run
 	}
 	return s.setIndexingJob(embedJobName, "embed", run, schedule, runAfterSync)
-}
-
-// SetDocumentVectorJob installs the bounded document-vector convergence job
-// on the same cron/post-sync policy used by message embeddings. The job
-// returns ErrReschedule when its bounded pass leaves committed work.
-func (s *Scheduler) SetDocumentVectorJob(job func(context.Context) error, schedule string, runAfterSync bool) error {
-	var run func(context.Context) error
-	if job != nil {
-		run = func(ctx context.Context) error {
-			err := job(ctx)
-			if failure := jobctx.ErrorAfterYield(ctx, err, ErrReschedule); failure != nil {
-				s.logger.Error("scheduled document vector reconciliation failed", "error", failure)
-			}
-			return err
-		}
-	}
-	return s.setIndexingJob(documentVectorJobName, "document vector", run, schedule, runAfterSync)
 }
 
 // setIndexingJob registers an indexing job as a preemptible background job
@@ -628,7 +608,7 @@ func (s *Scheduler) runSync(email string) {
 	if (err != nil && err != ErrDeferUntilNextTrigger) || yielded { //nolint:errorlint // Only a bare deferral is a clean no-work run.
 		return
 	}
-	for _, name := range []string{embedJobName, documentVectorJobName} {
+	for _, name := range []string{embedJobName} {
 		s.mu.RLock()
 		afterSync := s.genericAfterSync[name]
 		s.mu.RUnlock()

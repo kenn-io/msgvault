@@ -108,7 +108,7 @@ func TestSyncFailureRegisteredSourceTypes(t *testing.T) {
 	stub := newWireStub(t)
 	reporter := newReporterOrDisabled(Options{DataDir: t.TempDir(), ConfigEnabled: true}, testAPIKey, stub.server.URL, slog.Default())
 	defer func() { require.NoError(reporter.Close()) }()
-	for _, sourceType := range []string{"gmail", "imap", "teams", "discord", "beeper", "slack", "carddav", circleback.SourceType, gcal.SourceType, granola.SourceType, matrix.SourceType, msmail.SourceType, muesli.SourceType, notionmeetings.SourceType, omi.SourceType, plaud.SourceType, pocket.SourceType, synctechsms.SourceType, twenty.SourceType, twilio.SourceType, chatwoot.SourceType, "facebook_comments", "github", "gitlab", "gitea"} {
+	for _, sourceType := range []string{"gmail", "imap", "teams", "discord", "beeper", "slack", "carddav", circleback.SourceType, gcal.SourceType, granola.SourceType, matrix.SourceType, msmail.SourceType, muesli.SourceType, notionmeetings.SourceType, omi.SourceType, plaud.SourceType, pocket.SourceType, synctechsms.SourceType, twenty.SourceType, twilio.SourceType, chatwoot.SourceType, "facebook_comments", "instagram_comments", "github", "gitlab", "gitea"} {
 		properties, _ := reporter.SanitizeProperties(EventSyncFailed, map[string]any{"sync_source": sourceType})
 		assert.Equal(sourceType, properties["sync_source"], sourceType)
 	}

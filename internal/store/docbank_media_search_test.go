@@ -67,10 +67,9 @@ func TestDocumentSearchVersionsAndOccurrences(t *testing.T) {
 			}
 		}
 		scope := &personscope.Scope{ParticipantIDs: []int64{participant}, Directions: []personscope.Direction{personscope.FromPerson}}
-		ids, scopeExceeded, err := f.Store.DocumentSearchVersions(t.Context(), "attachments", scope)
+		ids, err := f.Store.DocumentSearchVersions(t.Context(), "attachments", scope)
 		require.NoError(err)
-		assert.False(scopeExceeded)
-		assert.ElementsMatch([]string{"00000000-0000-4000-8000-000000000003", "00000000-0000-4000-8000-000000000004", "00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000008", "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000009"}, ids)
+		assert.Equal([]string{"00000000-0000-4000-8000-000000000003", "00000000-0000-4000-8000-000000000004", "00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000008", "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000009"}, ids)
 		occurrences, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", scope, ids, 100)
 		require.NoError(err)
 		var mids []int64
@@ -121,7 +120,23 @@ func TestDocumentSearchVersionsAndOccurrences(t *testing.T) {
 	})
 }
 
-func TestDocumentSearchVersionsTextFormatsExcludeImagesFromScopeLimit(t *testing.T) {
+func TestDocumentSearchVersionsOrdersTimestampOffsets(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	for i, timestamp := range []string{"2026-01-01T00:30:00+02:00", "2025-12-31T23:30:00Z"} {
+		mid := f.CreateMessage(fmt.Sprintf("timestamp-offset-%d", i))
+		hash := fmt.Sprintf("%064x", i+1)
+		require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{ContentHash: hash, Filename: "report.pdf", StoragePath: hash[:2] + "/" + hash, State: "stored"}))
+		require.NoError(f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash, MIMEType: "application/pdf"}, store.DocbankAttachmentRef{NodeID: int64(i + 1), VersionID: fmt.Sprintf("00000000-0000-4000-8000-%012x", i+1)}, ""))
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sent_at=?,received_at=NULL,internal_date=NULL WHERE id=?`), timestamp, mid)
+		require.NoError(err)
+	}
+	ids, err := f.Store.DocumentSearchVersions(t.Context(), "attachments", nil)
+	require.NoError(err)
+	assert.Equal(t, []string{"00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000001"}, ids)
+}
+
+func TestDocumentSearchVersionsTextFormatsExcludeImages(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -151,12 +166,8 @@ func TestDocumentSearchVersionsTextFormatsExcludeImagesFromScopeLimit(t *testing
 		"00000000-0000-4000-8000-000000000009",
 		"00000000-0000-4000-8000-00000000000a",
 	}
-	for i := range 4100 {
-		formats = append(formats, storetest.DocumentAttachment{MIMEType: "image/png", VersionID: fmt.Sprintf("00000000-0000-4000-8000-%012x", i+100)})
-	}
 	f.SeedDocumentAttachments(mid, formats)
-	ids, exceeded, err := f.Store.DocumentSearchVersions(t.Context(), "attachments", nil)
+	ids, err := f.Store.DocumentSearchVersions(t.Context(), "attachments", nil)
 	require.NoError(err)
-	assert.False(exceeded)
-	assert.ElementsMatch(want, ids)
+	assert.Equal(want, ids)
 }

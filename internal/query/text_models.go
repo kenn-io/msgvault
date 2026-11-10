@@ -169,7 +169,7 @@ var KnownMessageTypes = []string{
 	"teams",
 	"discord",
 	"fbmessenger",
-	"facebook_comments",
+	"facebook_comments", "instagram_comments",
 	"synctech_sms_call",
 	"google_voice_text",
 	"google_voice_call",

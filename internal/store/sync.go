@@ -1745,22 +1745,31 @@ func (s *Store) GetLastSuccessfulSyncByType(ctx context.Context, sourceID int64,
 	return s.getLastSuccessfulSyncContext(ctx, sourceID, syncType, true)
 }
 
-func (s *Store) getLastSuccessfulSyncContext(ctx context.Context, sourceID int64, syncType string, filterByType bool) (*SyncRun, error) {
+// lastSuccessfulSyncQuery reads the newest completed run for a source.
+// idx_sync_runs_completed matches its filter and order, so the lookup stops at
+// the first row instead of sorting every completed run.
+func lastSuccessfulSyncQuery(filterByType bool) string {
 	whereType := ""
-	args := []any{sourceID}
 	if filterByType {
 		whereType = " AND sync_type = ?"
-		args = append(args, syncType)
 	}
-	row := s.db.QueryRowContext(ctx, `
+	return `
 		SELECT id, source_id, started_at, completed_at, status,
 		       messages_processed, messages_added, messages_updated, errors_count,
 		       error_message, cursor_before, cursor_after, request_fingerprint
 		FROM sync_runs
-		WHERE source_id = ? AND status = 'completed'`+whereType+`
+		WHERE source_id = ? AND status = 'completed'` + whereType + `
 		ORDER BY completed_at DESC, id DESC
 		LIMIT 1
-	`, args...)
+	`
+}
+
+func (s *Store) getLastSuccessfulSyncContext(ctx context.Context, sourceID int64, syncType string, filterByType bool) (*SyncRun, error) {
+	args := []any{sourceID}
+	if filterByType {
+		args = append(args, syncType)
+	}
+	row := s.db.QueryRowContext(ctx, lastSuccessfulSyncQuery(filterByType), args...)
 
 	run, err := scanSyncRun(row)
 	if errors.Is(err, sql.ErrNoRows) {
