@@ -69,7 +69,6 @@ func TestImportSchemas(t *testing.T) {
 		{"missing header", "posts.csv", "title,body\na,body\n", "essential"},
 		{"duplicate header", "posts.csv", "id,title,title\na,b,c\n", "header"},
 		{"empty header", "posts.csv", "id,title,\na,b,c\n", "header"},
-		{"zero byte", "posts.csv", "", "schema"},
 		{"no content", "votes.csv", "id\na\n", "recognized"},
 		{"invalid utf8", "posts.csv", "id,title\na,\xff\n", "UTF-8"},
 		{"invalid utf8 wrong width", "posts.csv", "id,title\na,\xff,extra\n", "UTF-8"},
@@ -80,6 +79,20 @@ func TestImportSchemas(t *testing.T) {
 			require.NoError(os.WriteFile(filepath.Join(root, tc.file), []byte(tc.data), 0600))
 			_, err := Import(t.Context(), testutil.NewTestStore(t), ImportOptions{RootDir: root, Me: "fictional_owner"})
 			require.ErrorContains(err, tc.want)
+		})
+	}
+}
+
+func TestImportEmptyFiles(t *testing.T) {
+	for _, empty := range []string{"statistics.csv", "comments.csv"} {
+		t.Run(empty, func(t *testing.T) {
+			require := require.New(t)
+			root := t.TempDir()
+			require.NoError(os.WriteFile(filepath.Join(root, empty), nil, 0600))
+			require.NoError(os.WriteFile(filepath.Join(root, "posts.csv"), []byte("id,title\none,lantern\n"), 0600))
+			summary, err := Import(t.Context(), testutil.NewTestStore(t), ImportOptions{RootDir: root, Me: "fictional_owner"})
+			require.NoError(err)
+			assert.Equal(t, 1, summary.Added)
 		})
 	}
 }
@@ -394,9 +407,9 @@ func TestImportPermalinks(t *testing.T) {
 	require := require.New(t)
 	root := t.TempDir()
 	for name, data := range map[string]string{
-		"messages.csv":   "id,body,permalink\npm,private text,https://example.com/message\n",
+		"messages.csv":   "id,body,permalink\npm,private text,/message/messages/abc\n",
 		"posts.csv":      "id,body,url,permalink\npost,post text,https://example.com/link,https://example.com/post\nsame,,https://example.com/same,https://example.com/same\nprefix,https://example.com/posts/1234,,https://example.com/posts/123\n",
-		"comments.csv":   "id,body,media,permalink\ncomment,comment text,https://example.com/media,https://example.com/comment\n",
+		"comments.csv":   "id,body,media,permalink\ncomment,comment text,https://example.com/media,/r/example/comments/abc/def\n",
 		"messages_1.csv": "id,subject\none,hello\n",
 		"posts_1.csv":    "id,url\nthree,https://example.com/post\n",
 		"comments_1.csv": "id,media\nfour,https://example.com/picture.png\n",
@@ -408,11 +421,11 @@ func TestImportPermalinks(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(8, summary.Added)
 	for id, want := range map[string]string{
-		"pm:pm":           "private text\nhttps://example.com/message",
+		"pm:pm":           "private text\nhttps://www.reddit.com/message/messages/abc",
 		"post:post":       "post text\nhttps://example.com/link\nhttps://example.com/post",
 		"post:same":       "https://example.com/same",
 		"post:prefix":     "https://example.com/posts/1234\nhttps://example.com/posts/123",
-		"comment:comment": "comment text\nhttps://example.com/media\nhttps://example.com/comment",
+		"comment:comment": "comment text\nhttps://example.com/media\nhttps://www.reddit.com/r/example/comments/abc/def",
 		"post:three":      "https://example.com/post",
 		"comment:four":    "https://example.com/picture.png",
 	} {
@@ -424,7 +437,7 @@ func TestImportPermalinks(t *testing.T) {
 	}
 	results, err := query.NewEngine(st.DB(), st.IsPostgreSQL()).Search(t.Context(), search.Parse("example"), 20, 0)
 	require.NoError(err)
-	assert.Len(results, 7)
+	assert.Len(results, 6)
 }
 
 func TestImportDateOrder(t *testing.T) {

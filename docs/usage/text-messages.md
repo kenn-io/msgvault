@@ -536,8 +536,8 @@ errors stop the run with the filename. A read or parse failure while streaming
 may leave completed rows. Essential columns
 are `message_id` and `message` for Chat and `id` for PMs, posts, and comments.
 Complete rows before the error are retained; later
-files are not read. Header-only CSVs are valid empty files; zero-byte files
-fail as missing headers. Fix or move the named file, then re-run. Statistics are
+files are not read. Empty and header-only CSVs are valid. Fix or move the
+named file, then re-run. Statistics are
 checked before archive writes; malformed statistics rows stop preflight with
 the filename and logical record number.
 
@@ -556,7 +556,8 @@ A Chat `channel_url` groups records without inferring a direct or group conversa
 `channel_name` supplies its title. Without an observed grouping key, a Chat row
 stays an isolated item. PM, post, and comment permalinks, post URLs, and comment
 media are appended to displayed/searchable bodies;
-raw evidence retains the original cells. Comment parent/link values remain raw,
+relative permalinks are expanded to Reddit URLs, and raw evidence retains the
+original cells. Comment parent/link values remain raw,
 without an invented cross-kind reply mapping.
 
 Browse dated posts and comments in the Web UI's Everything/Explore view,

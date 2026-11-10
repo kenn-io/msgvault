@@ -135,6 +135,9 @@ func (r *exportReader) rows(ctx context.Context, file csvFile, summary *FileSumm
 	}()
 	reader := csv.NewReader(textutil.WithoutUTF8BOM(&export.ContextReader{Context: ctx, Reader: f}))
 	headers, err := reader.Read()
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("unsupported schema: %w", err)
 	}
