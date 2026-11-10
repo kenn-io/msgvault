@@ -48,14 +48,15 @@ type Status struct {
 }
 
 type IntegrationConfig struct {
-	Enabled          bool
-	Endpoint         string
-	APIKey           string
-	DefaultProject   string
-	DescriptorPath   string
-	Timeout          time.Duration
-	MaxResponseBytes int64
-	HTTPClient       *http.Client
+	TrustPrivateNetwork bool
+	Enabled             bool
+	Endpoint            string
+	APIKey              string
+	DefaultProject      string
+	DescriptorPath      string
+	Timeout             time.Duration
+	MaxResponseBytes    int64
+	HTTPClient          *http.Client
 	// platformSecurityCheck is a package-local test seam. Production callers
 	// always use the platform check selected by Discover.
 	platformSecurityCheck func() error
