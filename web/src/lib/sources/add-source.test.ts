@@ -22,12 +22,17 @@ describe('addSourceCommand', () => {
     expect(addSourceCommand(imap, { host: 'imap.example.com:143', username: 'reader' }, 'posix')).toBeUndefined();
     expect(addSourceCommand(imap, { host: 'imap example.com', username: 'reader' }, 'posix')).toBeUndefined();
     expect(addSourceCommand(imap, { host: '[2001:db8::1]:143', username: 'reader' }, 'posix')).toBeUndefined();
+    expect(addSourceCommand(imap, { host: '[fe80::1%eth0]:143', username: 'reader' }, 'posix')).toBeUndefined();
+    expect(addSourceCommand(imap, { host: 'fe80::1%', username: 'reader' }, 'posix')).toBeUndefined();
     expect(addSourceCommand(imap, { host: 'imap.example.com:993:99999', username: 'reader' }, 'posix')).toBeUndefined();
   });
 
   it('accepts IPv6 server addresses and hyphen-leading IMAP usernames', () => {
     expect(addSourceCommand(imap, { host: '2001:db8::1', username: '-reader' }, 'posix')).toBe('msgvault add-imap --host 2001:db8::1 --username=-reader');
     expect(addSourceCommand(imap, { host: '[2001:db8::1]', username: '-reader' }, 'cmd')).toBe('msgvault add-imap --host "[2001:db8::1]" --username=-reader');
+    expect(addSourceCommand(imap, { host: 'fe80::1%eth0', username: 'reader' }, 'posix')).toBe("msgvault add-imap --host 'fe80::1%eth0' --username=reader");
+    expect(addSourceCommand(imap, { host: '[fe80::1%eth0]', username: 'reader' }, 'posix')).toBe("msgvault add-imap --host '[fe80::1%eth0]' --username=reader");
+    expect(addSourceCommand(imap, { host: 'fe80::1%eth0', username: 'reader' }, 'cmd')).toBe('msgvault add-imap --host "fe80::1"%"eth0" --username=reader');
   });
 
   it('quotes spaces and shell characters for each platform', () => {

@@ -219,7 +219,7 @@ export class DirectoryController {
   /** Re-read server-owned Directory projections after a committed split. */
   async reconcilePersonSplit(_context: PersonSplitCommittedContext): Promise<void> {
     await Promise.all([this.reloadFirstPage(), this.refreshSelectedPerson()]);
-    const failure = this.pageError ?? this.error;
+    const failure = this.pageError ?? this.error ?? this.profile?.attributesError ?? this.profile?.definitionsError ?? Object.values(this.detail?.errors ?? {})[0] ?? Object.entries(this.entity?.errors ?? {}).find(([resource]) => ['employments', 'relationships', 'relationshipTypes', 'network'].includes(resource))?.[1];
     if (failure) throw new Error(failure);
   }
   async promote(participantID: number): Promise<DirectoryPromotionResult> {

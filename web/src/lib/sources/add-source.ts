@@ -47,7 +47,7 @@ function arg(value: string, shell: 'posix' | 'cmd'): string {
 }
 
 function validImapServer(host: string): boolean {
-  return !/^-|\s/.test(host) && (!host.includes(':') || URL.canParse(`http://[${host.replace(/^\[(.*)\]$/, '$1')}]`));
+  return !/^-|\s/.test(host) && (!host.includes(':') || URL.canParse(`http://[${host.replace(/^\[(.*)\]$/, '$1').replace(/%[^\[\]]+$/, '')}]`));
 }
 
 export function addSourceCommand(kind: CommandSourceKind, values: Record<string, string>, shell: 'posix' | 'cmd'): string | undefined {
