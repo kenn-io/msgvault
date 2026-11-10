@@ -416,7 +416,7 @@ func TestImportEmlxLegacyArchiveKeepsStoredAttachment(t *testing.T) {
 	r.NoError(err)
 	hash := emlxRawDigest(raw)
 	r.NoError(IngestRawMessage(t.Context(), st, source.ID, opts.Identifier, opts.AttachmentsDir,
-		[]int64{label}, "emlx-"+hash, hash, seedRaw, time.Now(), slog.Default()))
+		[]int64{label}, "emlx-"+hash, hash, seedRaw, time.Now(), slog.Default(), nil))
 	r.NoError(os.RemoveAll(filepath.Join(root, "Messages")))
 	r.NoError(os.RemoveAll(filepath.Join(root, "Attachments")))
 
@@ -468,7 +468,7 @@ func TestImportEmlxLegacyOversizedCopyRecordsHash(t *testing.T) {
 	r.NoError(err)
 	hash := emlxRawDigest(raw)
 	r.NoError(IngestRawMessage(t.Context(), st, source.ID, opts.Identifier, opts.AttachmentsDir,
-		[]int64{label}, "emlx-"+hash, hash, seedRaw, time.Now(), slog.Default()))
+		[]int64{label}, "emlx-"+hash, hash, seedRaw, time.Now(), slog.Default(), nil))
 	r.NoError(os.RemoveAll(filepath.Join(root, "Messages")))
 	r.NoError(os.RemoveAll(filepath.Join(root, "Attachments")))
 

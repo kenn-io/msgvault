@@ -1,9 +1,12 @@
 package googlechat
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -412,4 +416,330 @@ func TestImportGoogleChatConversationKindRequiresRosterEvidence(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestImportGoogleChatFailedMessageDoesNotCountStoredAttachments(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	a, b := t.TempDir(), t.TempDir()
+	message := strings.Replace(fixtureMessages(t), `"export_name":"File-example.txt"`, `"export_name":"File-example.txt"},{"original_name":"second.txt","export_name":"File-second.txt"`, 1)
+	write(t, a, "Groups/DM a/messages.json", message)
+	write(t, a, "Groups/DM a/File-example.txt", "first")
+	write(t, a, "Groups/DM a/File-second.txt", "second")
+	write(t, b, "Groups/DM a/File-second.txt", "other")
+
+	summary, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{a, b}, AttachmentsDir: t.TempDir()})
+	require.ErrorContains(t, err, "ambiguous")
+	assert.Zero(t, summary.AttachmentsStored)
+	var count int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM attachments`).Scan(&count))
+	assert.Zero(t, count)
+}
+
+const fixtureDate = "Monday, January 18, 2021 at 1:27:33 PM UTC"
+
+func TestImportGoogleChatMetadataDoesNotEmbedWholeRoster(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	members := []string{`{"name":"Owner","email":"owner@example.com","user_type":"Human"}`}
+	for i := range 300 {
+		members = append(members, fmt.Sprintf(`{"name":"Member %d","email":"member%d@example.com","user_type":"Human"}`, i, i))
+	}
+	testutil.WriteFile(t, root, "Groups/Space s/group_info.json", []byte(`{"name":"Big","members":[`+strings.Join(members, ",")+`]}`))
+	var msgs []string
+	for i := range 50 {
+		msgs = append(msgs, fmt.Sprintf(`{"creator":{"name":"Owner","email":"owner@example.com","user_type":"Human"},"created_date":%q,"text":"t%d","topic_id":"t","message_id":"s/t/m%d"}`, fixtureDate, i, i))
+	}
+	testutil.WriteFile(t, root, "Groups/Space s/messages.json", []byte(`{"messages":[`+strings.Join(msgs, ",")+`]}`))
+	_, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{root}})
+	require.NoError(err)
+	var metadata string
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT metadata FROM messages WHERE source_message_id='s/t/m7'`).Scan(&metadata))
+	assert.NotContains(metadata, "member250@example.com", "per-message metadata must not copy the full roster")
+}
+
+func TestImportGoogleChatContainerEvidenceSurvivesSparseReplay(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	full, partial := t.TempDir(), t.TempDir()
+	write(t, full, "Groups/DM a/messages.json", fixtureMessages(t))
+	groupRaw := `{ "members":[{"email":"owner@example.com"},{"email":"peer@example.com"}], "unknown_group":{"retained":true}, "number":1e3 }`
+	write(t, full, "Groups/DM a/group_info.json", groupRaw)
+	profileRaw := `{ "user":{"email":"owner@example.com"}, "unknown_profile":{"retained":true} }`
+	write(t, full, "Users/User synthetic/user_info.json", profileRaw)
+	opts := ImportOptions{Me: "owner@example.com", Roots: []string{full}}
+	_, err := Import(t.Context(), st, opts)
+	require.NoError(err)
+	_, err = Import(t.Context(), st, opts)
+	require.NoError(err, "repeated full export retains one copy of each container snapshot")
+	write(t, partial, "Groups/DM a/messages.json", strings.Replace(fixtureMessages(t), "group/topic/message", "group/topic/new", 1))
+	opts.Roots = []string{partial}
+	_, err = Import(t.Context(), st, opts)
+	require.NoError(err)
+	var group, profile sql.NullString
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT metadata FROM conversations`).Scan(&group))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT sync_config FROM sources`).Scan(&profile))
+	var evidence struct {
+		Files []provenance `json:"group_files"`
+	}
+	require.NoError(json.Unmarshal([]byte(group.String), &evidence))
+	assert.ElementsMatch([]provenance{
+		{Path: "Groups/DM a/group_info.json", Data: groupRaw},
+		{Path: "Groups/DM a/messages.json"},
+	}, evidence.Files, "relative container provenance is retained once")
+	assert.JSONEq(`{"owner_profile_path":"Users/User synthetic/user_info.json"}`, profile.String)
+	assert.NotContains(profile.String, "unknown_profile", "owner profile JSON is validated without being retained")
+	assert.NotContains(group.String, full)
+	assert.NotContains(profile.String, full)
+	var metadata string
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT metadata FROM messages ORDER BY id LIMIT 1`).Scan(&metadata))
+	for _, key := range []string{"provider_record", "group_info.json", "messages.json"} {
+		assert.NotContains(metadata, key)
+	}
+}
+
+func TestImportGoogleChatRunAccounting(t *testing.T) {
+	for _, mode := range []string{"completed", "failed", "cancelled"} {
+		t.Run(mode, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			root := t.TempDir()
+			write(t, root, "Groups/DM a/messages.json", fixtureMessages(t))
+			if mode == "failed" {
+				write(t, root, "Groups/Space b/messages.json", `{"messages":[`)
+			}
+			if mode == "cancelled" {
+				write(t, root, "Groups/Space b/messages.json", strings.ReplaceAll(fixtureMessages(t), "group/topic/message", "group/topic/second"))
+			}
+			opts := ImportOptions{Me: "owner@example.com", Roots: []string{root}}
+			var summary *ImportSummary
+			var err error
+			if mode == "cancelled" {
+				summary, err = cancelAfterCommittedMessage(t, st, opts)
+			} else {
+				summary, err = Import(t.Context(), st, opts)
+			}
+			statusWant := "failed"
+			if mode == "completed" {
+				require.NoError(err)
+				statusWant = "completed"
+			} else {
+				require.Error(err)
+			}
+			require.EqualValues(1, summary.MessagesAdded)
+			var status string
+			var processed, added int64
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT status,messages_processed,messages_added FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status, &processed, &added))
+			assert.Equal(statusWant, status)
+			assert.EqualValues(1, processed)
+			assert.Equal(summary.MessagesAdded, added)
+			if mode == "cancelled" {
+				require.ErrorIs(err, context.Canceled)
+				replay, replayErr := Import(t.Context(), st, opts)
+				require.NoError(replayErr)
+				assert.EqualValues(2, replay.MessagesAdded+int64(replay.Duplicates))
+				assert.Positive(replay.Duplicates)
+			}
+			if mode == "completed" {
+				_, err = Import(t.Context(), st, opts)
+				require.NoError(err)
+				require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT messages_processed,messages_added FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&processed, &added))
+				assert.EqualValues(1, processed)
+				assert.Zero(added)
+			}
+		})
+	}
+}
+
+// A known email can exist without a name before Takeout supplies that name.
+// Use public Store setup and the real importer; no provider/user data is read.
+func TestImportGoogleChatFillsMissingParticipantName(t *testing.T) {
+	for _, tc := range []struct{ name, existing, want string }{
+		{"nameless", "", "Synthetic Sender"},
+		{"curated", "Kept Name", "Kept Name"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			pid, err := st.EnsureParticipantContext(t.Context(), "sender@example.com", tc.existing, "example.com")
+			require.NoError(err)
+			root := t.TempDir()
+			write(t, root, "Groups/DM synthetic/group_info.json", `{"members":[{"email":"sender@example.com"}]}`)
+			testutil.WriteFile(t, root, "Groups/DM synthetic/messages.json", []byte(`{"messages":[{"message_id":"synthetic/topic/message","creator":{"email":"sender@example.com","name":"Synthetic Sender","user_type":"Human"},"text":"synthetic body","created_date":"Monday, January 18, 2021 at 1:27:33 PM UTC"}]}`))
+			summary, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{root}})
+			require.NoError(err)
+			require.EqualValues(1, summary.MessagesAdded)
+			var name string
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COALESCE(display_name,'') FROM participants WHERE id = ?`), pid).Scan(&name))
+			assert.Equal(t, tc.want, name, "Takeout should fill a missing name and preserve an existing one")
+		})
+	}
+}
+
+func TestImportGoogleChatReplayIdentityFence(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	write(t, root, "Groups/DM a/messages.json", fixtureMessages(t))
+	opts := ImportOptions{Me: "owner@example.com", Roots: []string{root}}
+	_, err := Import(t.Context(), st, opts)
+	require.NoError(err)
+	var id int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&id))
+	before, err := st.GetMessageRawContext(t.Context(), id)
+	require.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE message_raw SET raw_format='future_google_chat'`)
+	require.NoError(err)
+	summary, err := Import(t.Context(), st, opts)
+	assert.Zero(summary.MessagesAdded)
+	require.ErrorContains(err, "stored raw format")
+	raw, err := st.GetMessageRawContext(t.Context(), id)
+	require.NoError(err)
+	assert.Equal(before, raw)
+}
+
+func TestImportGoogleChatRootAliasesKeepProfilesAndMedia(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	write(t, root, "Takeout/Google Chat/Groups/DM a/messages.json", fixtureMessages(t))
+	write(t, root, "Takeout/Google Chat/Groups/DM a/File-example.txt", "synthetic")
+	write(t, root, "Takeout/Google Chat/Users/User a/user_info.json", `{"user":{"email":"owner@example.com"}}`)
+	summary, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{filepath.Join(root, "Takeout/Google Chat/Groups"), root, filepath.Join(root, "Takeout/Google Chat")}, AttachmentsDir: t.TempDir()})
+	require.NoError(err)
+	assert.Equal(1, summary.AttachmentsStored)
+	var config string
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT sync_config FROM sources`).Scan(&config))
+	assert.Contains(config, "owner_profile_path")
+}
+
+func TestImportGoogleChatReportsUnknownRosterMembers(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	write(t, root, "Groups/DM a/messages.json", fixtureMessages(t))
+	write(t, root, "Groups/DM a/group_info.json", `{"members":[{"name":"Synthetic bot","user_type":"Bot"}]}`)
+	summary, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{root}})
+	require.NoError(err)
+	assert.Equal(1, summary.UnknownMembers)
+	assert.Zero(summary.UnknownSenders)
+	assert.Zero(summary.Unsupported)
+}
+
+func TestImportGoogleChatDoesNotInferRecipientsFromRoster(t *testing.T) {
+	for _, tc := range []struct {
+		name, creatorEmail string
+		fromCount          int
+		creatorInRoster    bool
+	}{
+		{"missing creator email", "", 0, false},
+		{"creator outside roster", "senderneedle@example.com", 1, false},
+		{"creator in roster", "senderneedle@example.com", 1, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			require.True(st.FTS5Available(), "regression requires real FTS")
+			root := t.TempDir()
+			data := strings.Replace(fixtureMessages(t), `"email":"owner@example.com",`, "", 1)
+			if tc.creatorEmail != "" {
+				data = strings.Replace(fixtureMessages(t), "owner@example.com", tc.creatorEmail, 1)
+			}
+			write(t, root, "Groups/DM synthetic/messages.json", data)
+			roster := `{"members":[{"email":"recipientneedle1@example.com"},{"email":"recipientneedle2@example.com"}]}`
+			if tc.creatorInRoster {
+				roster = strings.Replace(roster, "recipientneedle1@example.com", tc.creatorEmail, 1)
+			}
+			write(t, root, "Groups/DM synthetic/group_info.json", roster)
+			summary, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{root}, AttachmentsDir: t.TempDir()})
+			require.NoError(err)
+			require.EqualValues(1, summary.MessagesAdded)
+			var toCount, fromCount int
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM message_recipients WHERE recipient_type='to'`).Scan(&toCount))
+			assert.Zero(toCount, "membership alone cannot establish delivery recipients")
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM message_recipients WHERE recipient_type='from'`).Scan(&fromCount))
+			assert.Equal(tc.fromCount, fromCount)
+			rows, err := st.DB().QueryContext(t.Context(), `SELECT p.email_address FROM conversation_participants cp JOIN participants p ON p.id=cp.participant_id`)
+			require.NoError(err)
+			defer func() { _ = rows.Close() }()
+			var members []string
+			for rows.Next() {
+				var email string
+				require.NoError(rows.Scan(&email))
+				members = append(members, email)
+			}
+			require.NoError(rows.Err())
+			require.NoError(rows.Close())
+			wantMembers := []string{"recipientneedle1@example.com", "recipientneedle2@example.com"}
+			if tc.creatorInRoster {
+				wantMembers[0] = tc.creatorEmail
+			} else if tc.creatorEmail != "" {
+				wantMembers = append(wantMembers, tc.creatorEmail)
+			}
+			assert.ElementsMatch(wantMembers, members, "observed roster and sender membership remain")
+			for _, rebuilt := range []bool{false, true} {
+				if rebuilt {
+					n, err := st.RebuildFTSContext(t.Context(), nil)
+					require.NoError(err)
+					require.EqualValues(1, n)
+				}
+				for _, search := range []struct {
+					term string
+					want int
+				}{{"recipientneedle1", 0}, {"recipientneedle2", 0}, {"Bodyneedle", 1}, {"senderneedle", tc.fromCount}} {
+					_, count, err := st.SearchMessagesContext(t.Context(), search.term, 0, 10)
+					require.NoError(err)
+					assert.EqualValues(search.want, count, "term=%s rebuilt=%t", search.term, rebuilt)
+				}
+			}
+		})
+	}
+}
+
+type cancelOnCommittedMessage struct {
+	slog.Handler
+
+	cancel   context.CancelFunc
+	st       *store.Store
+	ctx      context.Context
+	canceled bool
+}
+
+func (*cancelOnCommittedMessage) Enabled(context.Context, slog.Level) bool { return true }
+func (h *cancelOnCommittedMessage) Handle(_ context.Context, r slog.Record) error {
+	if r.Message != "sql tx commit" || h.canceled {
+		return nil
+	}
+	var n int
+	if err := h.st.DB().QueryRowContext(h.ctx, `SELECT count(*) FROM messages`).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		h.canceled = true
+		h.cancel()
+	}
+	return nil
+}
+
+// Observe the existing synchronous post-commit log, then verify durable rows.
+// This needs no production hook, polling or timing threshold. Slow logging stays
+// disabled so it cannot replace the commit event on a loaded runner.
+func cancelAfterCommittedMessage(t *testing.T, st *store.Store, opts ImportOptions) (*ImportSummary, error) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	handler := &cancelOnCommittedMessage{Handler: slog.DiscardHandler, cancel: cancel, st: st, ctx: t.Context()}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(handler))
+	defer slog.SetDefault(previous)
+	store.ConfigureSQLLogging(store.SQLLogOptions{SlowMs: -1})
+	defer store.ConfigureSQLLogging(store.SQLLogOptions{})
+	return Import(ctx, st, opts)
 }

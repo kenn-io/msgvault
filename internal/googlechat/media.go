@@ -155,7 +155,6 @@ func mediaWrites(ctx context.Context, st *store.Store, reader *exportReader, gro
 			}
 		} else {
 			write.SkipReason = ""
-			summary.AttachmentsStored++
 		}
 		writes = append(writes, write)
 	}

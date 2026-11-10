@@ -19,7 +19,7 @@ var metadataFTSIndexes = []struct {
 }{
 	{"messages", "messages_metadata_fts", []string{"subject", "snippet"}},
 	{"participants", "participants_metadata_fts", []string{"email_address", "display_name", "phone_number"}},
-	{"message_recipients", "recipients_metadata_fts", []string{"display_name"}},
+	{"message_recipients", "recipients_metadata_fts", []string{"display_name", "email_address"}},
 }
 
 // ensureMetadataFTS publishes readiness only after a complete backfill and
@@ -36,7 +36,7 @@ func (s *Store) ensureMetadataFTS(ctx context.Context, available bool) error {
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		ready := available && version == "1"
+		ready := available && version == "2"
 		for _, idx := range metadataFTSIndexes {
 			for _, name := range []string{idx.index, idx.index + "_insert", idx.index + "_update", idx.index + "_delete"} {
 				var count int
@@ -105,7 +105,7 @@ func (s *Store) ensureMetadataFTS(ctx context.Context, available bool) error {
 				return err
 			}
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO archive_metadata(key,value) VALUES('metadata_fts_version','1')`)
+		_, err = tx.ExecContext(ctx, `INSERT INTO archive_metadata(key,value) VALUES('metadata_fts_version','2')`)
 		return err
 	})
 }

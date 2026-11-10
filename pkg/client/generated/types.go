@@ -7280,7 +7280,7 @@ type MediaAttachmentResult struct {
 	AttachmentID    int64      `json:"attachment_id"`
 	ContainingTitle string     `json:"containing_title" validate:"omitempty"`
 	ConversationID  int64      `json:"conversation_id"`
-	Excerpt         string     `json:"excerpt" validate:"required"`
+	Excerpt         string     `json:"excerpt" validate:"omitempty"`
 	Filename        string     `json:"filename" validate:"omitempty"`
 	MessageID       int64      `json:"message_id"`
 	OccurredAt      *time.Time `json:"occurred_at,omitempty"`
@@ -7291,19 +7291,38 @@ func (m MediaAttachmentResult) Validate() error {
 }
 
 type MediaAttachmentSearch struct {
-	ErrorData *ErrorResponse          `json:"error,omitempty"`
-	Results   []MediaAttachmentResult `json:"results" validate:"required"`
-	Truncated bool                    `json:"truncated"`
+	ActualMode    string                  `json:"actual_mode" validate:"required"`
+	Coverage      SearchCoverage          `json:"coverage"`
+	Degradations  []string                `json:"degradations" validate:"required"`
+	ErrorData     *ErrorResponse          `json:"error,omitempty"`
+	Partial       bool                    `json:"partial"`
+	RequestedMode string                  `json:"requested_mode" validate:"required"`
+	Results       []MediaAttachmentResult `json:"results" validate:"required"`
+	Truncated     bool                    `json:"truncated"`
 }
 
 func (m MediaAttachmentSearch) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.ActualMode, "required"); err != nil {
+		errors = errors.Append("ActualMode", err)
+	}
+	if v, ok := any(m.Coverage).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Coverage", err)
+		}
+	}
+	if err := typesValidator.Var(m.Degradations, "required"); err != nil {
+		errors = errors.Append("Degradations", err)
+	}
 	if m.ErrorData != nil {
 		if v, ok := any(m.ErrorData).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("ErrorData", err)
 			}
 		}
+	}
+	if err := typesValidator.Var(m.RequestedMode, "required"); err != nil {
+		errors = errors.Append("RequestedMode", err)
 	}
 	if err := typesValidator.Var(m.Results, "required"); err != nil {
 		errors = errors.Append("Results", err)

@@ -41,20 +41,16 @@ func mediaPath(value, messageID string, group bool) (string, bool) {
 }
 
 func mediaWrites(ctx context.Context, st *store.Store, root *os.Root, messageID int64, m *message, group bool, dest string, summary *ImportSummary) ([]store.AttachmentWrite, error) {
-	existing := map[string]store.AttachmentRef{}
+	existing := map[string]bool{}
 	if messageID != 0 {
-		refs, err := st.MessageMIMEAttachmentsContext(ctx, messageID)
+		missing, err := st.MissingMIMEAttachmentSlotsContext(ctx, messageID)
 		if err != nil {
 			return nil, err
 		}
-		hasMissing := false
-		for _, ref := range refs {
-			existing[ref.SourcePartKey] = ref
-			hasMissing = hasMissing || ref.ContentHash == ""
-		}
-		if !hasMissing {
+		if len(missing) == 0 {
 			return nil, nil
 		}
+		existing = missing
 		// Repair the occurrences in the retained first event, even if a later
 		// export reorders or omits its media array.
 		raw, err := st.GetMessageRawContext(ctx, messageID)
@@ -74,8 +70,7 @@ func mediaWrites(ctx context.Context, st *store.Store, root *os.Root, messageID 
 	for i, original := range m.Media {
 		key := "media:" + strconv.Itoa(i)
 		if messageID != 0 {
-			old, ok := existing[key]
-			if !ok || old.ContentHash != "" {
+			if !existing[key] {
 				continue
 			}
 		}

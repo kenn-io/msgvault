@@ -27,13 +27,15 @@ Supply all parts together. --me selects the exporting account; supplied owner
 profiles must agree. Accepted roots contain Takeout/Google Chat, Google Chat,
 or Groups, or are Groups themselves. ZIP/TGZ files must be extracted first.
 
-Replays add missing messages and repair missing media. Stored snapshots and
-bytes remain unchanged. Only exact export filenames are matched. Missing media,
-unsupported records, unknown dates and incomplete membership coverage are
-reported; Takeout does not guarantee lifetime history. Rosters establish membership,
-never delivery recipients. Conflicting message IDs are counted and skipped while
-later records continue. Structural or storage errors stop the run; earlier commits
-remain available for replay.
+Run the command again to add new messages and missing attachments. Messages and
+attachments already in the archive stay unchanged. Later edits and deletions in
+Google Chat do not change archived messages.
+Attachment filenames must match exactly. The summary reports missing attachments,
+unsupported records, unknown dates, and incomplete group membership. Takeout may
+not include your full history. Group members aren't treated as message recipients.
+Conflicting message IDs are counted and skipped; later messages are still imported.
+Invalid export structure or storage errors stop the import. Messages saved before
+the error remain in the archive; run the command again to continue.
 
 Examples:
   msgvault import-google-chat --me owner@example.com ./part-001 ./part-002

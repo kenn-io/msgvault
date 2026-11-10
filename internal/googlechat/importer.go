@@ -224,6 +224,7 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 				if err := st.UpsertAttachmentRecordWithStats(ctx, id, write, true); err != nil {
 					return false, err
 				}
+				summary.AttachmentsStored++
 			}
 			summary.Duplicates++
 			continue
@@ -270,6 +271,11 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 		})
 		if err != nil {
 			return false, fmt.Errorf("googlechat: persist message: %w", err)
+		}
+		for _, write := range writes {
+			if write.ContentHash != "" {
+				summary.AttachmentsStored++
+			}
 		}
 		existing[m.ID] = store.StoredMessage{ID: id, ConversationID: conversationID, Raw: record}
 		summary.MessagesAdded++
