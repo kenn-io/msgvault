@@ -64,6 +64,7 @@ commenter identity; equal digits do not establish account ownership.
 Only media returned by the verified account's media edge is discovered here.
 Missing media owners remain unknown; explicit foreign owners are refused.
 Ad-only discovery, media downloads, and public replies are separate work.
+To archive new comments as they arrive, set up [Meta webhooks](meta-webhooks.md).
 
 ## Archive media that tags the account
 

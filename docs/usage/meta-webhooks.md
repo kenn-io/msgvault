@@ -1,14 +1,16 @@
 ---
 last_edited: "2026-11-10"
 title: Meta Webhooks
-description: Archive Facebook Page comment changes as Meta reports them, between polling syncs.
+description: Archive Facebook Page and Instagram comment changes as Meta reports them, between polling syncs.
 ---
 
 Polling sync finds new comments only when it runs. With webhooks, Meta sends
 each Page comment change to the msgvault daemon as it happens: new and edited
 comments are archived, hidden comments are marked hidden, and removed comments
-and posts are marked deleted. Keep [Facebook Page comment sync](facebook-comments.md)
-for backfill; webhooks only report changes after you subscribe.
+and posts are marked deleted. New Instagram comments and live comments are
+archived the same way. Keep [Facebook Page comment sync](facebook-comments.md)
+and [Instagram comment sync](instagram-comments.md) for backfill; webhooks only
+report changes after you subscribe.
 
 ## Set up the receiver
 
@@ -44,6 +46,12 @@ for backfill; webhooks only report changes after you subscribe.
 Each Page must have an enabled [`[[facebook_comments]]` profile](../configuration.md#facebook-comments)
 for the same app and Page, registered with `msgvault source facebook-comments add`.
 
+For Instagram, subscribe the app's Instagram object to the `comments` and
+`live_comments` fields with the same callback URL. Each account must have an
+enabled [`[[instagram_comments]]` profile](../configuration.md#instagram-comments)
+for the same app and account, registered with
+`msgvault source instagram-comments add`.
+
 ## How deliveries are applied
 
 The daemon checks each delivery's `X-Hub-Signature-256` signature with the app
@@ -54,7 +62,10 @@ arrived and deleted once applied.
 
 A new or edited comment is read from Meta with the Page token rather than
 taken from the delivery, so a late or repeated delivery cannot bring back older
-text. A post or parent comment that is not archived yet is read too. When a delivery cannot be
+text. A post or parent comment that is not archived yet is read too. An
+Instagram comment is also read from Meta, and media that is not archived yet
+must be owned by the configured account; otherwise the change is logged and
+skipped. When a delivery cannot be
 applied, for example while a polling sync of the same Page is running, the
 daemon retries it with increasing waits and holds later deliveries until it
 succeeds. After an hour of failures it logs the delivery and drops it; the
@@ -64,7 +75,9 @@ without holding back the other changes in its delivery.
 
 ## Limits
 
-- Only comment changes from the Page `feed` field are applied. Reactions,
-  other feed changes and other fields are logged and ignored.
+- Only comment changes from the Page `feed` field and the Instagram
+  `comments` and `live_comments` fields are applied. Reactions, other feed
+  changes and other fields are logged and ignored.
+- Instagram does not send edits, hides or removals of comments.
 - A hide or unhide for a comment that is not archived yet is ignored.
 - Deliveries larger than 8 MiB are refused.

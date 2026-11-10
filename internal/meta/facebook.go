@@ -56,24 +56,25 @@ func (c *Client) safeCursor(cursor string) bool {
 
 // Post reads one Page post with the fields polling reads.
 func (c *Client) Post(ctx context.Context, id string) (Object, error) {
-	return c.node(ctx, id, "id,message,created_time,from")
+	return readNode(ctx, c, id, "id,message,created_time,from", func(o Object) string { return o.ID })
 }
 
 // Comment reads one comment and the parent Meta declares for it.
 func (c *Client) Comment(ctx context.Context, id string) (Object, error) {
-	return c.node(ctx, id, "id,message,created_time,from,parent")
+	return readNode(ctx, c, id, "id,message,created_time,from,parent", func(o Object) string { return o.ID })
 }
 
-func (c *Client) node(ctx context.Context, id, fields string) (Object, error) {
+// readNode reads one Graph node by ID and checks that Meta returned that node.
+func readNode[T any](ctx context.Context, c *Client, id, fields string, nodeID func(T) string) (T, error) {
+	var node T
 	if !safeObjectID(id) {
-		return Object{}, errors.New("invalid Graph object ID")
+		return node, errors.New("invalid Graph object ID")
 	}
-	var obj Object
-	if err := c.get(ctx, url.PathEscape(id), url.Values{"fields": {fields}}, &obj); err != nil {
-		return Object{}, err
+	if err := c.get(ctx, url.PathEscape(id), url.Values{"fields": {fields}}, &node); err != nil {
+		return node, err
 	}
-	if obj.ID != id {
-		return Object{}, errors.New("graph object identity mismatch")
+	if nodeID(node) != id {
+		return node, errors.New("graph object identity mismatch")
 	}
-	return obj, nil
+	return node, nil
 }

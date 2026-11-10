@@ -9,6 +9,9 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.
+- [Meta webhooks](usage/meta-webhooks.md) archive new Instagram comments and
+  live comments as they arrive. Subscribe the Instagram object to `comments`
+  and `live_comments`.
 - [Meta webhooks](usage/meta-webhooks.md) archive new, edited, hidden and
   removed Facebook Page comments as they happen. Configure `[meta_webhooks]`
   and subscribe the Page to the `feed` field; polling sync stays available for

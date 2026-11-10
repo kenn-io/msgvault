@@ -130,11 +130,15 @@ func (r *importRun) applyFeedChange(ctx context.Context, reader ObjectReader, ch
 	if err != nil {
 		return fmt.Errorf("read comment %q: %w", id, err)
 	}
+	ancestors := ancestorReader{
+		root:    func(ctx context.Context, id string) (Object, error) { return reader.Post(ctx, id) },
+		comment: func(ctx context.Context, id string) (Object, error) { return reader.Comment(ctx, id) },
+	}
 	parent := root
 	if obj.Parent != nil && obj.Parent.ID != "" {
 		parent = obj.Parent.ID
 	}
-	if err := r.archiveAncestors(ctx, reader, root, parent); err != nil {
+	if err := r.archiveAncestors(ctx, ancestors, root, parent); err != nil {
 		return err
 	}
 	return r.persist(ctx, obj, root, parent, "")
@@ -145,9 +149,15 @@ func (r *importRun) archived(ctx context.Context, id string) (bool, error) {
 	return rows[id] != 0, err
 }
 
-// archiveAncestors reads and archives the post and parent comments that are
+// ancestorReader reads the root post or media and parent comments of a
+// webhook comment.
+type ancestorReader struct {
+	root, comment func(ctx context.Context, id string) (Object, error)
+}
+
+// archiveAncestors reads and archives the root and parent comments that are
 // not archived yet, top down, so persist finds the conversation and parent.
-func (r *importRun) archiveAncestors(ctx context.Context, reader ObjectReader, root, parent string) error {
+func (r *importRun) archiveAncestors(ctx context.Context, reader ancestorReader, root, parent string) error {
 	var chain []Object
 	for id := parent; id != root; {
 		archived, err := r.archived(ctx, id)
@@ -160,11 +170,11 @@ func (r *importRun) archiveAncestors(ctx context.Context, reader ObjectReader, r
 		if len(chain) == maxAncestorReads {
 			return errors.New("comment ancestors exceed the read limit")
 		}
-		obj, err := reader.Comment(ctx, id)
+		obj, err := reader.comment(ctx, id)
 		if err != nil {
 			return fmt.Errorf("read parent comment %q: %w", id, err)
 		}
-		// Meta omits parent on a top-level comment; its parent is the post.
+		// Meta omits parent on a top-level comment; its parent is the root.
 		if obj.Parent == nil || obj.Parent.ID == "" {
 			obj.Parent = &Actor{ID: root}
 		}
@@ -176,9 +186,9 @@ func (r *importRun) archiveAncestors(ctx context.Context, reader ObjectReader, r
 		return err
 	}
 	if !archived {
-		post, err := reader.Post(ctx, root)
+		post, err := reader.root(ctx, root)
 		if err != nil {
-			return fmt.Errorf("read post %q: %w", root, err)
+			return fmt.Errorf("read %q: %w", root, err)
 		}
 		chain = append(chain, post)
 	}

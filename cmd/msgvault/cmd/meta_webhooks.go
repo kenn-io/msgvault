@@ -49,7 +49,9 @@ func startMetaWebhooks(ctx context.Context, cfg *config.Config, st *store.Store,
 	}
 	pending := filepath.Join(cfg.Data.DataDir, "meta-webhooks", "pending")
 	worker := metawebhook.NewWorker(pending, map[metawebhook.Field]metawebhook.FieldHandler{
-		{Object: "page", Name: "feed"}: metaFeedHandler(cfg, st, work),
+		{Object: "page", Name: "feed"}:               metaFeedHandler(cfg, st, work),
+		{Object: "instagram", Name: "comments"}:      instagramCommentsHandler(cfg, st, work),
+		{Object: "instagram", Name: "live_comments"}: instagramCommentsHandler(cfg, st, work),
 	})
 	handler, err := metawebhook.NewHandler(apps, pending, worker.Wake)
 	if err != nil {
@@ -123,18 +125,48 @@ func metaFeedHandler(cfg *config.Config, st *store.Store, work scheduler.WorkTra
 		if err != nil {
 			return fmt.Errorf("%w: %w", metawebhook.ErrUnrecoverable, err)
 		}
-		done, ok := work.BeginWorkContext(ctx)
-		if !ok {
-			return errors.New("daemon is stopping")
-		}
-		defer done()
-		err = meta.ApplyFeed(ctx, st, client, change.App, change.EntryID, change.Values)
-		// A failed change may follow writes that committed, such as its post.
-		if refresher := daemonCacheRefresher; refresher != nil {
-			refresher.RequestAfter(30*time.Second, "meta-webhooks")
-		}
-		return metaWebhookError(err)
+		return applyMetaWebhook(ctx, work, func() error {
+			return meta.ApplyFeed(ctx, st, client, change.App, change.EntryID, change.Values)
+		})
 	}
+}
+
+// instagramCommentsHandler applies Instagram comment and live comment changes
+// to the comment source of the enabled [[instagram_comments]] profile for the
+// app and account.
+func instagramCommentsHandler(cfg *config.Config, st *store.Store, work scheduler.WorkTracker) metawebhook.FieldHandler {
+	return func(ctx context.Context, change metawebhook.Change) error {
+		i := slices.IndexFunc(cfg.InstagramComments, func(p config.InstagramCommentsSource) bool {
+			return p.Enabled && p.AppID == change.App && p.InstagramAccountID == change.EntryID
+		})
+		if i < 0 {
+			return fmt.Errorf("%w: no enabled [[instagram_comments]] profile for app %s and account %s", metawebhook.ErrUnrecoverable, change.App, change.EntryID)
+		}
+		profile := cfg.InstagramComments[i]
+		client, err := configuredInstagramCommentsClient(profile)
+		if err != nil {
+			return fmt.Errorf("%w: %w", metawebhook.ErrUnrecoverable, err)
+		}
+		return applyMetaWebhook(ctx, work, func() error {
+			return meta.ApplyInstagramComments(ctx, st, client, profile.AppID, profile.PageID, profile.InstagramAccountID, change.Values)
+		})
+	}
+}
+
+// applyMetaWebhook runs apply as daemon work, asks for an analytics cache
+// refresh, and marks errors that retrying cannot fix.
+func applyMetaWebhook(ctx context.Context, work scheduler.WorkTracker, apply func() error) error {
+	done, ok := work.BeginWorkContext(ctx)
+	if !ok {
+		return errors.New("daemon is stopping")
+	}
+	defer done()
+	err := apply()
+	// A failed change may follow writes that committed, such as its post.
+	if refresher := daemonCacheRefresher; refresher != nil {
+		refresher.RequestAfter(30*time.Second, "meta-webhooks")
+	}
+	return metaWebhookError(err)
 }
 
 // graphRateLimitCodes are Meta error codes for throttling, which Graph can

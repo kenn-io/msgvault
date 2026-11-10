@@ -99,10 +99,21 @@ func (r *importRun) readPosts(ctx context.Context, edge PostEdge, after string) 
 	}
 	result := ObjectPage{After: page.After}
 	for i := range page.Data {
-		media := &page.Data[i]
-		result.Data = append(result.Data, Object{ID: media.ID, Message: media.Caption, CreatedTime: media.Timestamp, InstagramMedia: media})
+		result.Data = append(result.Data, instagramMediaObject(&page.Data[i]))
 	}
 	return result, nil
+}
+
+func instagramMediaObject(media *IGMedia) Object {
+	return Object{ID: media.ID, Message: media.Caption, CreatedTime: media.Timestamp, InstagramMedia: media}
+}
+
+func instagramCommentObject(comment *IGComment) Object {
+	object := Object{ID: comment.ID, Message: comment.Text, CreatedTime: comment.Timestamp, InstagramComment: comment}
+	if comment.ParentID != "" {
+		object.Parent = &Actor{ID: comment.ParentID}
+	}
+	return object
 }
 
 func (r *importRun) readComments(ctx context.Context, frame commentFrame) (ObjectPage, error) {
@@ -121,12 +132,7 @@ func (r *importRun) readComments(ctx context.Context, frame commentFrame) (Objec
 	}
 	result := ObjectPage{After: page.After}
 	for i := range page.Data {
-		comment := &page.Data[i]
-		object := Object{ID: comment.ID, Message: comment.Text, CreatedTime: comment.Timestamp, InstagramComment: comment}
-		if comment.ParentID != "" {
-			object.Parent = &Actor{ID: comment.ParentID}
-		}
-		result.Data = append(result.Data, object)
+		result.Data = append(result.Data, instagramCommentObject(&page.Data[i]))
 	}
 	return result, nil
 }
