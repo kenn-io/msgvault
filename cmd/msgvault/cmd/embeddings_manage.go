@@ -137,17 +137,17 @@ func countEmbeddingCoverage(
 // column) gets the column added before any management command reads
 // embed_gen via CoverageCounts. Mirrors the serve.go / runEmbed pattern.
 // Cheap and idempotent on an already-current schema; harmless on PG.
-func ensureMainSchema(state *invocation) error {
-	state = invocationState(context.Background(), state)
+func ensureMainSchema(ctx context.Context, state *invocation) error {
+	state = invocationState(ctx, state)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
 	}
-	s, err := store.Open(state.cfg.DatabaseDSN())
+	s, err := store.OpenContext(ctx, state.cfg.DatabaseDSN())
 	if err != nil {
 		return fmt.Errorf("open main db: %w", err)
 	}
 	defer func() { _ = s.Close() }()
-	if err := s.InitSchema(); err != nil {
+	if err := s.InitSchemaContext(ctx); err != nil {
 		return fmt.Errorf("init schema: %w", err)
 	}
 	return nil
@@ -280,13 +280,13 @@ func runEmbeddingsPrune(cmd *cobra.Command, _ []string) error {
 		return errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
-	release, err := acquireDirectSQLiteWriteLock(cfg, state)
+	release, err := acquireDirectSQLiteWriteLock(cmd.Context(), cfg, state)
 	if err != nil {
 		return err
 	}
 	defer release()
 
-	if err := ensureMainSchema(state); err != nil {
+	if err := ensureMainSchema(cmd.Context(), state); err != nil {
 		return err
 	}
 	backend, closeBackend, err := openEmbeddingsBackend(cmd.Context())
@@ -327,12 +327,12 @@ func runEmbeddingsRetire(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	release, err := acquireDirectSQLiteWriteLock(cfg, state)
+	release, err := acquireDirectSQLiteWriteLock(cmd.Context(), cfg, state)
 	if err != nil {
 		return err
 	}
 	defer release()
-	if err := ensureMainSchema(state); err != nil {
+	if err := ensureMainSchema(cmd.Context(), state); err != nil {
 		return err
 	}
 
@@ -421,12 +421,12 @@ func runEmbeddingsActivate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	release, err := acquireDirectSQLiteWriteLock(cfg, state)
+	release, err := acquireDirectSQLiteWriteLock(cmd.Context(), cfg, state)
 	if err != nil {
 		return err
 	}
 	defer release()
-	if err := ensureMainSchema(state); err != nil {
+	if err := ensureMainSchema(cmd.Context(), state); err != nil {
 		return err
 	}
 	if err := ensureEmbedScopeResolved(cmd.Context(), state); err != nil {
@@ -570,7 +570,7 @@ func planCLIEmbeddingsRetire(
 	gen vector.GenerationID,
 	forceActive bool,
 ) (api.CLIEmbeddingsPlanResponse, error) {
-	if err := ensureMainSchema(invocationFromContext(ctx)); err != nil {
+	if err := ensureMainSchema(ctx, invocationFromContext(ctx)); err != nil {
 		return api.CLIEmbeddingsPlanResponse{}, err
 	}
 	db, rebind, closeDB, err := openEmbeddingsMetadataDB(ctx)
@@ -603,13 +603,13 @@ func planCLIEmbeddingsActivate(
 	gen vector.GenerationID,
 	force bool,
 ) (api.CLIEmbeddingsPlanResponse, error) {
-	if err := ensureMainSchema(invocationFromContext(ctx)); err != nil {
+	if err := ensureMainSchema(ctx, invocationFromContext(ctx)); err != nil {
 		return api.CLIEmbeddingsPlanResponse{}, err
 	}
 	// This runs on daemon HTTP handler goroutines, so the account scope is
 	// resolved into a per-request config copy — mutating the shared global
 	// cfg here would race with concurrent plan requests.
-	vecCfg, err := openResolvedVectorConfig(invocationFromContext(ctx))
+	vecCfg, err := openResolvedVectorConfig(ctx, invocationFromContext(ctx))
 	if err != nil {
 		return api.CLIEmbeddingsPlanResponse{}, err
 	}
@@ -674,7 +674,7 @@ func configuredConvergenceState(ctx context.Context, vecCfg vector.Config, gen v
 	if inv == nil || inv.cfg == nil {
 		return scheduler.ConvergenceResult{}, errors.New("configuration is unavailable")
 	}
-	mainStore, err := store.Open(inv.cfg.DatabaseDSN())
+	mainStore, err := store.OpenContext(ctx, inv.cfg.DatabaseDSN())
 	if err != nil {
 		return scheduler.ConvergenceResult{}, fmt.Errorf("open main db for convergence: %w", err)
 	}
@@ -884,7 +884,7 @@ func openEmbeddingsBackendWithMode(ctx context.Context, readOnly bool) (vector.B
 	if readOnly {
 		mainStore, err = store.OpenReadOnlyContext(ctx, dsn)
 	} else {
-		mainStore, err = store.Open(dsn)
+		mainStore, err = store.OpenContext(ctx, dsn)
 	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("open main db for embeddings backend: %w", err)

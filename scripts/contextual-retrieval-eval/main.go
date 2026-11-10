@@ -98,7 +98,7 @@ func runArmEval(ctx context.Context, args []string) error {
 	if err := readJSONFile(*inputPath, &input); err != nil {
 		return err
 	}
-	mainStore, err := store.OpenForTest(*mainPath)
+	mainStore, err := store.OpenForTest(ctx, *mainPath)
 	if err != nil {
 		return err
 	}
@@ -187,7 +187,7 @@ func runEmbed(ctx context.Context, args []string) error {
 	if values.output == "" {
 		return errors.New("embed requires --output")
 	}
-	run, err := executeEvaluation(ctx, values.runConfig())
+	run, err := executeEvaluation(ctx, values.runConfig(ctx))
 	if err != nil {
 		if run.Report.SchemaVersion != 0 {
 			_ = writeJSON(values.output, run)
@@ -234,7 +234,7 @@ func runScore(ctx context.Context, args []string) error {
 			if baseWorkDir != "" {
 				values.workDir = directories[scale]
 			}
-			run, err := executeEvaluation(ctx, values.runConfig())
+			run, err := executeEvaluation(ctx, values.runConfig(ctx))
 			if err != nil {
 				return fmt.Errorf("scale %d: %w", scale, err)
 			}
@@ -246,7 +246,7 @@ func runScore(ctx context.Context, args []string) error {
 		}
 		return writeJSON(values.output, scaleSweepReport{SchemaVersion: 1, ScaleResults: results})
 	}
-	run, err := executeEvaluation(ctx, values.runConfig())
+	run, err := executeEvaluation(ctx, values.runConfig(ctx))
 	if err != nil {
 		if run.Report.SchemaVersion != 0 {
 			_ = writeJSON(values.output, run.Report)
@@ -403,11 +403,11 @@ func scaleRunDirectories(base, runID string, scales []int) map[int]string {
 	return result
 }
 
-func (f commonFlags) runConfig() runConfig {
+func (f commonFlags) runConfig(ctx context.Context) runConfig {
 	return runConfig{
 		ScenarioPath: f.scenarios, JudgmentPath: f.judgments, Distractors: f.distractors,
 		Bootstrap: f.bootstrap, APIKey: os.Getenv("VOYAGE_API_KEY"), Endpoint: f.endpoint,
-		WorkDir: f.workDir, RunID: time.Now().UTC().Format("20060102T150405Z"), Commit: repositoryCommit(), ExactOracle: f.exact,
+		WorkDir: f.workDir, RunID: time.Now().UTC().Format("20060102T150405Z"), Commit: repositoryCommit(ctx), ExactOracle: f.exact,
 	}
 }
 
@@ -731,8 +731,8 @@ func writeJSON(path string, value any) error {
 	return nil
 }
 
-func repositoryCommit() string {
-	output, err := exec.Command("git", "rev-parse", "HEAD").Output()
+func repositoryCommit(ctx context.Context) string {
+	output, err := exec.CommandContext(ctx, "git", "rev-parse", "HEAD").Output()
 	if err != nil {
 		return "unknown"
 	}

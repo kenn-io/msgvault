@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,11 +9,11 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestPersonKeepsManyCurrentAndHistoricalContactPointsWithoutJSONBundling(t *testing.T) {
+func TestPersonContactPointsCurrentAndHistoricalValues(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 
 	inputs := []store.PersonContactPointInput{
@@ -34,6 +33,8 @@ func TestPersonKeepsManyCurrentAndHistoricalContactPointsWithoutJSONBundling(t *
 		require.NoError(err)
 		created = append(created, *point)
 	}
+	assert.Equal(new("WhatsApp"), created[0].ServiceLabel)
+	assert.Nil(created[1].ServiceLabel)
 	assert.Equal("+12025550123", created[0].NormalizedValue)
 	assert.Equal("alice@example.com", created[1].NormalizedValue)
 	assert.Equal("alice", created[2].NormalizedValue)
@@ -50,7 +51,7 @@ func TestSameUsernameIsSafeAcrossServicesAndScopes(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 
 	for _, scope := range []string{"irc.example.net", "irc.example.org"} {
@@ -75,7 +76,7 @@ func TestContactPointScopeKindAndLanguageValidation(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 
 	_, err := st.AddPersonContactPointContext(ctx, personID, store.PersonContactPointInput{
@@ -102,7 +103,7 @@ func TestRetractedContactPointLeavesCurrentSetButStaysInHistory(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 	_, err := st.AddPersonContactPointContext(ctx, personID, store.PersonContactPointInput{
 		AddressKind: store.ContactAddressUsername, ServiceSlug: new("x"),

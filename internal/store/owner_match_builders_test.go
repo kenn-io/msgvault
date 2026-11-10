@@ -18,18 +18,18 @@ func TestOwnerMatchBuilders(t *testing.T) {
 		require.NoError(st.AddAccountIdentity(source, address, "manual"))
 	}
 	caseSender := fx.EnsureParticipant("Alice@Example.COM", "Alice", "example.com")
-	aliasOnly, err := st.EnsureParticipantByPhone("+15550111", "Alias", "whatsapp")
+	aliasOnly, err := st.EnsureParticipantByPhone(t.Context(), "+15550111", "Alias", "whatsapp")
 	require.NoError(err)
 	require.NoError(st.SetParticipantIdentifier(aliasOnly, "email", "ALIAS@Example.com"))
 	guarded := fx.EnsureParticipant("bob@example.com", "Bob", "example.com")
 	require.NoError(st.SetParticipantIdentifier(guarded, "email", "carol@example.com"))
-	phone, err := st.EnsureParticipantByPhone("+15550100", "Phone", "whatsapp")
+	phone, err := st.EnsureParticipantByPhone(t.Context(), "+15550100", "Phone", "whatsapp")
 	require.NoError(err)
 	matrix := fx.EnsureParticipant("dave@example.com", "Dave", "example.com")
 	require.NoError(st.SetParticipantIdentifier(matrix, "matrix", "@Alice:example.com"))
 
 	ids := func(query string, args ...any) []int64 {
-		rows, err := st.DB().Query(st.Rebind(query), args...)
+		rows, err := st.DB().QueryContext(t.Context(), st.Rebind(query), args...)
 		require.NoError(err)
 		defer func() { _ = rows.Close() }()
 		var got []int64
@@ -49,7 +49,7 @@ func TestOwnerMatchBuilders(t *testing.T) {
 	}
 	exists := func(identifierType, value string) bool {
 		var found bool
-		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT EXISTS (SELECT 1 FROM account_identities ai WHERE `+
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT EXISTS (SELECT 1 FROM account_identities ai WHERE `+
 			store.OwnerIdentifierMatch("?", "?", "ai.address", "")+`)`), identifierType, value, identifierType, value).Scan(&found))
 		return found
 	}

@@ -60,7 +60,7 @@ func newEmbeddingProjectionFixture(t *testing.T) *embeddingProjectionFixture {
 	source, err := st.GetOrCreateSource("gmail", "synthetic@example.com")
 	require.NoError(err)
 	cfg.Vector.Embed.Scope.SourceIDs = []int64{source.ID}
-	conversation, err := st.EnsureConversation(source.ID, "synthetic-thread", "Synthetic")
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "synthetic-thread", "Synthetic")
 	require.NoError(err)
 	id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "synthetic-message", MessageType: "email", Subject: sql.NullString{String: "Synthetic subject", Valid: true}})
 	require.NoError(err)
@@ -206,7 +206,7 @@ func TestEmbeddingCoverageCache(t *testing.T) {
 	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dir, "msgvault.db"))
 	source, err := st.GetOrCreateSource("gmail", "synthetic@example.com")
 	require.NoError(err)
-	conversation, err := st.EnsureConversation(source.ID, "synthetic-thread", "Synthetic")
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "synthetic-thread", "Synthetic")
 	require.NoError(err)
 	addMessage := func(sourceMessageID string) {
 		_, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: sourceMessageID, MessageType: "email"})

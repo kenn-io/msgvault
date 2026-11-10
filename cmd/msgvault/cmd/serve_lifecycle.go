@@ -32,6 +32,8 @@ const (
 	serveOperationDrainTimeout  = 30 * time.Minute
 	serveStopGraceTimeout       = serveAPIShutdownTimeout + serveSchedulerStopTimeout + serveOperationDrainTimeout + 5*time.Second
 	serveBackgroundChildEnv     = "MSGVAULT_BACKGROUND_DAEMON"
+	// servePersistentChildEnv is an internal detached-child flag.
+	servePersistentChildEnv = "MSGVAULT_PERSISTENT_DAEMON"
 )
 
 // serveStopQuietWindow is how long `daemon stop` waits silently before
@@ -149,7 +151,7 @@ func runServeStatus(cmd *cobra.Command, dataDir string) error {
 
 func runServeStatusWithAPIKey(cmd *cobra.Command, dataDir string, apiKey string) error {
 	out := cmd.OutOrStdout()
-	if rt := findDaemonRuntime(dataDir); rt != nil {
+	if rt := findDaemonRuntime(cmd.Context(), dataDir); rt != nil {
 		lines := serveStatusLines(rt)
 		if health := fetchDaemonHealthWithAPIKey(cmd.Context(), urlFromDaemonRuntime(rt), apiKey); health != nil {
 			lines = append(lines, vectorStatusLines(health.Vector)...)
@@ -187,8 +189,11 @@ func runServeStatusWithAPIKey(cmd *cobra.Command, dataDir string, apiKey string)
 func serveStatusLines(rt *DaemonRuntime) []string {
 	lines := []string{
 		"msgvault running at " + urlFromDaemonRuntime(rt),
-		fmt.Sprintf("  pid:     %d", rt.Record.PID),
 	}
+	if lifetime := daemonLifetimeLine(rt); lifetime != "" {
+		lines = append(lines, lifetime)
+	}
+	lines = append(lines, fmt.Sprintf("  pid:     %d", rt.Record.PID))
 	if rt.Record.Version != "" {
 		lines = append(lines, "  version: "+rt.Record.Version)
 	}
@@ -275,40 +280,71 @@ func operationStatusLines(op *api.OperationHealth) []string {
 }
 
 func daemonRunningLine(state string, rt *DaemonRuntime, pid int) string {
-	return fmt.Sprintf("msgvault %s at %s (pid %d)\n", state, urlFromDaemonRuntime(rt), pid)
+	line := fmt.Sprintf("msgvault %s at %s (pid %d)\n", state, urlFromDaemonRuntime(rt), pid)
+	if lifetime := daemonLifetimeLine(rt); lifetime != "" {
+		line += lifetime + "\n"
+	}
+	return line
+}
+
+func daemonLifetimeLine(rt *DaemonRuntime) string {
+	timeout, err := time.ParseDuration(rt.Record.Metadata[runtimeIdleTimeout])
+	if err != nil {
+		return ""
+	}
+	if rt.Record.Metadata[runtimePersistent] == runtimeBackgroundValue || rt.Record.Metadata[runtimeBackground] != runtimeBackgroundValue {
+		return "  Stays running until msgvault daemon stop"
+	}
+	if timeout > 0 {
+		return "  Exits after " + compactDuration(timeout) + " idle (started automatically)"
+	}
+	return "  Stays running (started automatically)"
+}
+
+func reportReusableDaemon(cmd *cobra.Command, rt *DaemonRuntime) {
+	reportedVersion := reportRetainedDaemonVersion(cmd.Context(), cmd.ErrOrStderr(), rt)
+	_, _ = fmt.Fprint(cmd.OutOrStdout(), daemonRunningLine("already running", rt, rt.Record.PID))
+	if !reportedVersion && rt.Record.Metadata[runtimePersistent] != runtimeBackgroundValue && rt.Record.Metadata[runtimeBackground] == runtimeBackgroundValue {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Run `%s` to keep it running until stopped.\n", daemonRestartCommand(cmd.Context()))
+	}
 }
 
 type backgroundDaemonStartPreparation struct {
-	Reusable *DaemonRuntime
+	Reusable   *DaemonRuntime
+	Persistent bool
 }
 
 type backgroundServeStartOptions struct {
+	Persistent       bool
 	ExecutablePath   string
 	CacheBuildIntent startupCacheBuildIntent
 	Invocation       *invocationOptions
 }
 
 func prepareBackgroundDaemonStart(
+	ctx context.Context,
 	c *config.Config,
 	restartPolicy string,
 	incompatibleGuidance string,
 	logger *slog.Logger,
 ) (backgroundDaemonStartPreparation, error) {
+	var prep backgroundDaemonStartPreparation
 	if _, err := resolveServeBind(c.Server.BindAddr); err != nil {
 		return backgroundDaemonStartPreparation{}, err
 	}
 	if err := c.ResolveServerKey(); err != nil {
 		return backgroundDaemonStartPreparation{}, err
 	}
-	if rt := findDaemonRuntime(c.Data.DataDir); rt != nil {
+	if rt := findDaemonRuntime(ctx, c.Data.DataDir); rt != nil {
 		if !shouldUpgradeDaemonRuntimeWithPolicy(rt, Version, restartPolicy) {
 			return backgroundDaemonStartPreparation{Reusable: rt}, nil
 		}
 		if err := stopDaemonRuntimeForUpgrade(*c, rt, logger); err != nil {
 			return backgroundDaemonStartPreparation{}, fmt.Errorf("stop older daemon before restart: %w", err)
 		}
+		prep.Persistent = rt.Record.Metadata[runtimePersistent] == runtimeBackgroundValue
 	}
-	rt, foundIncompatible, compatErr := findIncompatibleDaemonRuntime(c.Data.DataDir)
+	rt, foundIncompatible, compatErr := findIncompatibleDaemonRuntime(ctx, c.Data.DataDir)
 	if compatErr != nil && !foundIncompatible {
 		return backgroundDaemonStartPreparation{}, fmt.Errorf("inspect daemon runtimes: %w", compatErr)
 	}
@@ -319,13 +355,14 @@ func prepareBackgroundDaemonStart(
 		if err := stopDaemonRuntimeForUpgrade(*c, rt, logger); err != nil {
 			return backgroundDaemonStartPreparation{}, fmt.Errorf("stop older daemon before restart: %w", err)
 		}
+		prep.Persistent = prep.Persistent || rt.Record.Metadata[runtimePersistent] == runtimeBackgroundValue
 	}
 	ownershipHeld, err := daemonOwnerLockHeld(c.Data.DataDir)
 	if err != nil {
 		return backgroundDaemonStartPreparation{}, fmt.Errorf("inspect daemon ownership: %w", err)
 	}
 	if ownershipHeld {
-		legacy, foundLegacy, legacyCompatErr := findLegacyDaemonRuntimeForLifecycle(c.Data.DataDir)
+		legacy, foundLegacy, legacyCompatErr := findLegacyDaemonRuntimeForLifecycle(ctx, c.Data.DataDir)
 		if legacyCompatErr != nil && !foundLegacy {
 			return backgroundDaemonStartPreparation{}, fmt.Errorf("inspect legacy daemon runtime: %w", legacyCompatErr)
 		}
@@ -355,7 +392,7 @@ func prepareBackgroundDaemonStart(
 			path: daemonOwnerLockPath(c.Data.DataDir),
 		}
 	}
-	return backgroundDaemonStartPreparation{}, nil
+	return prep, nil
 }
 
 var errIncompatibleDaemon = errors.New("incompatible daemon is already running")
@@ -365,7 +402,7 @@ func incompatibleDaemonError(err error, guidance string) error {
 }
 
 func runServeStart(cmd *cobra.Command, c *config.Config) error {
-	return runServeStartWithOptions(cmd, c, backgroundServeStartOptions{})
+	return runServeStartWithOptions(cmd, c, backgroundServeStartOptions{Persistent: true})
 }
 
 func runServeStartWithOptions(cmd *cobra.Command, c *config.Config, opts backgroundServeStartOptions) error {
@@ -386,15 +423,16 @@ func runServeStartWithOptions(cmd *cobra.Command, c *config.Config, opts backgro
 	}
 	defer func() { _ = launchLock.Unlock() }()
 
-	prep, err := prepareBackgroundDaemonStart(c, c.Server.DaemonAutoRestart, "run `msgvault daemon stop` before starting this version", loggerFromContext(cmd.Context()))
+	prep, err := prepareBackgroundDaemonStart(cmd.Context(), c, c.Server.DaemonAutoRestart, "run `msgvault daemon stop` before starting this version", loggerFromContext(cmd.Context()))
 	if err != nil {
 		return err
 	}
 	if rt := prep.Reusable; rt != nil {
-		_, _ = fmt.Fprint(cmd.OutOrStdout(), daemonRunningLine("already running", rt, rt.Record.PID))
+		reportReusableDaemon(cmd, rt)
 		return nil
 	}
 
+	opts.Persistent = opts.Persistent || prep.Persistent
 	proc, err := startServeBackgroundProcessForRun(c, opts)
 	if err != nil {
 		return fmt.Errorf("start background daemon: %w", err)
@@ -849,7 +887,7 @@ func acquireBackgroundLaunchLock(dataDir string) (*flock.Flock, bool) {
 
 func reportBackgroundLaunchInProgress(cmd *cobra.Command, dataDir string) {
 	if rt := waitForBackgroundRuntime(cmd.Context(), dataDir, backgroundServeReadyTimeout); rt != nil {
-		_, _ = fmt.Fprint(cmd.OutOrStdout(), daemonRunningLine("already running", rt, rt.Record.PID))
+		reportReusableDaemon(cmd, rt)
 		return
 	}
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "msgvault daemon start is already in progress.")
@@ -927,7 +965,7 @@ func startServeBackgroundProcess(c *config.Config, opts backgroundServeStartOpti
 	}
 	child := newServeBackgroundCommandForRun(exe, serveBackgroundChildArgs(childOptions)...)
 	child.Env = withStartupCacheBuildIntent(
-		append(os.Environ(), "MSGVAULT_HOME="+c.HomeDir, serveBackgroundChildEnv+"=1"),
+		append(os.Environ(), "MSGVAULT_HOME="+c.HomeDir, serveBackgroundChildEnv+"=1", servePersistentChildEnv+"="+strconv.FormatBool(opts.Persistent)),
 		opts.CacheBuildIntent,
 	)
 	child.Stdin = devNull

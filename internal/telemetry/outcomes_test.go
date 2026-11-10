@@ -94,7 +94,7 @@ func exerciseOutcomes(t *testing.T, handler http.Handler, reporter *posthog.Repo
 			if strings.Contains(body, "sync_failed") {
 				want = http.StatusBadRequest
 			}
-			require.Equal(t, want, screenRequest(handler, body).Code)
+			require.Equal(t, want, screenRequest(t.Context(), handler, body).Code)
 		}
 	}
 	for range 2 {
@@ -103,12 +103,16 @@ func exerciseOutcomes(t *testing.T, handler http.Handler, reporter *posthog.Repo
 }
 
 func TestSyncFailureRegisteredSourceTypes(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	enableTelemetryEnv(t)
 	stub := newWireStub(t)
 	reporter := newReporterOrDisabled(Options{DataDir: t.TempDir(), ConfigEnabled: true}, testAPIKey, stub.server.URL, slog.Default())
-	defer func() { require.NoError(t, reporter.Close()) }()
-	for _, sourceType := range []string{"gmail", "imap", "teams", "discord", "beeper", "slack", "carddav", circleback.SourceType, gcal.SourceType, granola.SourceType, matrix.SourceType, msmail.SourceType, muesli.SourceType, notionmeetings.SourceType, omi.SourceType, plaud.SourceType, pocket.SourceType, synctechsms.SourceType, twenty.SourceType, twilio.SourceType, chatwoot.SourceType} {
+	defer func() { require.NoError(reporter.Close()) }()
+	for _, sourceType := range []string{"gmail", "imap", "teams", "discord", "beeper", "slack", "carddav", circleback.SourceType, gcal.SourceType, granola.SourceType, matrix.SourceType, msmail.SourceType, muesli.SourceType, notionmeetings.SourceType, omi.SourceType, plaud.SourceType, pocket.SourceType, synctechsms.SourceType, twenty.SourceType, twilio.SourceType, chatwoot.SourceType, "facebook_comments", "instagram_comments"} {
 		properties, _ := reporter.SanitizeProperties(EventSyncFailed, map[string]any{"sync_source": sourceType})
-		assert.Equal(t, sourceType, properties["sync_source"], sourceType)
+		assert.Equal(sourceType, properties["sync_source"], sourceType)
 	}
+	properties, err := reporter.SanitizeProperties(EventSyncFailed, map[string]any{"sync_source": "unregistered_synthetic_source"})
+	require.NoError(err)
+	assert.Equal("other", properties["sync_source"])
 }

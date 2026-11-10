@@ -60,7 +60,7 @@ Examples:
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
 			}
 
-			imp, s, accountIDs, dbPath, cleanup, err := openBeeperImporter(syncBeeperAccounts, state, false)
+			imp, s, accountIDs, dbPath, cleanup, err := openBeeperImporter(cmd.Context(), syncBeeperAccounts, state, false)
 			if err != nil {
 				return err
 			}
@@ -202,8 +202,12 @@ func plural(n int64, one, many string) string {
 }
 
 func printBeeperSummary(out io.Writer, accountID string, sum *beeper.ImportSummary) {
-	_, _ = fmt.Fprintf(out, "  %s done in %s: %d chats, %d messages (%d added)",
+	_, _ = fmt.Fprintf(out, "  %s done in %s: %d chats, %d messages (%d added",
 		textutil.SanitizeTerminal(accountID), sum.Duration.Round(time.Second), sum.ChatsProcessed, sum.MessagesProcessed, sum.MessagesAdded)
+	if sum.MessagesUpdated > 0 {
+		_, _ = fmt.Fprintf(out, ", %d updated", sum.MessagesUpdated)
+	}
+	_, _ = fmt.Fprint(out, ")")
 	if sum.ReactionsRefreshed > 0 {
 		_, _ = fmt.Fprintf(out, ", %d reactions refreshed", sum.ReactionsRefreshed)
 	}
@@ -262,12 +266,12 @@ func writeBeeperMediaSkipSummary(out io.Writer, sum *beeper.ImportSummary) {
 // resolveBeeperSyncAccounts returns the Beeper accountIDs to sync: the
 // explicit flag values, or every registered beeper source that passes the
 // config include/exclude filters.
-func resolveBeeperSyncAccounts(s *store.Store, flagAccounts []string, cfg *config.Config) ([]string, error) {
-	return resolveBeeperAccounts(s, flagAccounts, cfg, false)
+func resolveBeeperSyncAccounts(ctx context.Context, s *store.Store, flagAccounts []string, cfg *config.Config) ([]string, error) {
+	return resolveBeeperAccounts(ctx, s, flagAccounts, cfg, false)
 }
 
-func resolveBeeperAccounts(s *store.Store, flagAccounts []string, cfg *config.Config, allowHistoryOnly bool) ([]string, error) {
-	sources, err := s.ListSources(sourceTypeBeeper)
+func resolveBeeperAccounts(ctx context.Context, s *store.Store, flagAccounts []string, cfg *config.Config, allowHistoryOnly bool) ([]string, error) {
+	sources, err := s.ListSourcesContext(ctx, sourceTypeBeeper)
 	if err != nil {
 		return nil, fmt.Errorf("list beeper sources: %w", err)
 	}
@@ -333,7 +337,7 @@ func filterBeeperReanchorMarkedAccounts(
 ) ([]string, error) {
 	eligible := make([]string, 0, len(accountIDs))
 	for _, accountID := range accountIDs {
-		source, err := s.GetSourceByTypeAndIdentifier(sourceTypeBeeper, accountID)
+		source, err := s.GetSourceByTypeAndIdentifier(ctx, sourceTypeBeeper, accountID)
 		if err != nil {
 			return nil, fmt.Errorf("resolve beeper source %q for anchor marker: %w", accountID, err)
 		}
@@ -369,12 +373,12 @@ func beeperImportOptions(accountID string, cfg *config.Config) beeper.ImportOpti
 // openBeeperImporter performs the shared beeper-command prologue: open the
 // store, load the token, resolve the target accounts, and build the importer.
 // The returned cleanup closes the store.
-func openBeeperImporter(flagAccounts []string, state *invocation, allowHistoryOnly bool) (imp *beeper.Importer, s *store.Store, accountIDs []string, dbPath string, cleanup func(), err error) {
+func openBeeperImporter(ctx context.Context, flagAccounts []string, state *invocation, allowHistoryOnly bool) (imp *beeper.Importer, s *store.Store, accountIDs []string, dbPath string, cleanup func(), err error) {
 	if state == nil {
 		return nil, nil, nil, "", nil, errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
-	s, cleanup, err = openWritableStoreAndInitForIngestInvocation(state)
+	s, cleanup, err = openWritableStoreAndInitForIngestInvocation(ctx, state)
 	if err != nil {
 		return nil, nil, nil, "", nil, err
 	}
@@ -383,7 +387,7 @@ func openBeeperImporter(flagAccounts []string, state *invocation, allowHistoryOn
 		cleanup()
 		return nil, nil, nil, "", nil, err
 	}
-	accountIDs, err = resolveBeeperAccounts(s, flagAccounts, cfg, allowHistoryOnly)
+	accountIDs, err = resolveBeeperAccounts(ctx, s, flagAccounts, cfg, allowHistoryOnly)
 	if err != nil {
 		cleanup()
 		return nil, nil, nil, "", nil, err
@@ -422,7 +426,7 @@ func runConfiguredBeeperSync(ctx context.Context, s *store.Store) error {
 		return errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
-	accountIDs, err := resolveBeeperSyncAccounts(s, nil, cfg)
+	accountIDs, err := resolveBeeperSyncAccounts(ctx, s, nil, cfg)
 	if err != nil {
 		return err
 	}

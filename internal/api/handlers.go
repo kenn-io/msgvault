@@ -33,6 +33,7 @@ import (
 	"go.kenn.io/msgvault/internal/vector/chunkmatch"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/verification"
 	"golang.org/x/oauth2"
 )
 
@@ -394,18 +395,20 @@ type SearchResult struct {
 // PoolSaturated is always emitted so clients can read "pool not
 // saturated" as a positive signal rather than an absent field.
 type hybridSearchResponse struct {
-	Query            string                  `json:"query"`
-	Mode             string                  `json:"mode"`
-	Returned         int                     `json:"returned"`
-	PoolSaturated    bool                    `json:"pool_saturated"`
-	Accelerator      string                  `json:"accelerator,omitempty"`
-	HasMore          bool                    `json:"has_more"`
-	Generation       hybridGenerationSummary `json:"generation"`
-	TookMS           int64                   `json:"took_ms"`
-	Timings          hybridSearchTimings     `json:"timings"`
-	ScopeLabel       string                  `json:"scope_label,omitempty"`
-	ScopeSourceCount int                     `json:"scope_source_count,omitzero"`
-	Results          []hybridSearchItem      `json:"results"`
+	Query                 string                  `json:"query"`
+	Mode                  string                  `json:"mode"`
+	Returned              int                     `json:"returned"`
+	PoolSaturated         bool                    `json:"pool_saturated"`
+	Accelerator           string                  `json:"accelerator,omitempty"`
+	HasMore               bool                    `json:"has_more"`
+	RankingLimitReached   int                     `json:"ranking_limit_reached,omitzero"`
+	CandidateLimitReached int                     `json:"candidate_limit_reached,omitzero"`
+	Generation            hybridGenerationSummary `json:"generation"`
+	TookMS                int64                   `json:"took_ms"`
+	Timings               hybridSearchTimings     `json:"timings"`
+	ScopeLabel            string                  `json:"scope_label,omitempty"`
+	ScopeSourceCount      int                     `json:"scope_source_count,omitzero"`
+	Results               []hybridSearchItem      `json:"results"`
 }
 
 type hybridSearchTimings struct {
@@ -765,6 +768,9 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	for i, m := range messages {
 		summaries[i] = toMessageSummary(m)
 	}
+	if !s.maskMessageSummaries(w, r, summaries, nil) {
+		return
+	}
 	writeJSON(w, http.StatusOK, MessageListResponse{
 		Total:    total,
 		Page:     page,
@@ -799,6 +805,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusNotFound, "not_found", "Message not found")
 				return
 			}
+			s.maskMessageDetail(r, qMsg)
 			detail := messageDetailFromQuery(qMsg)
 			detail.SenderAuth = s.senderAuth(r.Context(), id, qMsg.SourceID, qMsg.MessageType, detail.FromEmail)
 			detail.BodyHTML = s.archivedRemoteImageHTML(r.Context(), id, detail.BodyHTML)
@@ -833,6 +840,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "Message not found")
 		return
 	}
+	s.maskStoreMessage(r, msg)
 	detail := MessageDetail{
 		RelatedMessageID:  msg.RelatedMessageID,
 		MessageSummary:    toMessageSummary(*msg),
@@ -902,7 +910,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var err error
-		scope, err = resolveCLIStatsScope(bindCLIStoreContext(r.Context(), cliStore), account, collection)
+		scope, err = resolveCLIStatsScope(r.Context(), bindCLIStoreContext(r.Context(), cliStore), account, collection)
 		if err != nil {
 			writeAPIHTTPError(w, s.cliScopeError(err))
 			return
@@ -1046,6 +1054,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		summaries[i] = toMessageSummary(m)
 	}
 
+	if !s.maskMessageSummaries(w, r, summaries, nil) {
+		return
+	}
 	writeJSON(w, http.StatusOK, SearchResult{
 		Warnings:   search.LiteralORWarnings(searchText),
 		IndexState: agentIndexState(r),
@@ -1143,9 +1154,7 @@ func (s *Server) handleHybridSearch(
 	}
 
 	fetchLimit := offset + pageSize + 1
-	if maxPage := vectorCfg.Search.MaxPageSizeHybridClamp(); maxPage > 0 && fetchLimit > maxPage {
-		fetchLimit = maxPage
-	}
+	maxPage := vectorCfg.Search.MaxPageSizeHybridClamp()
 	req := hybrid.SearchRequest{
 		Mode:         hybrid.Mode(mode),
 		FreeText:     freeText,
@@ -1181,7 +1190,18 @@ func (s *Server) handleHybridSearch(
 	hydrationStarted := time.Now()
 	pageStart := min(offset, len(hits))
 	pageEnd := min(pageStart+pageSize, len(hits))
+	rankingLimitReached := 0
+	candidateLimitReached := 0
+	if meta.CandidatePoolOmitted {
+		candidateLimitReached = vectorCfg.Search.KPerSignal
+	}
 	hasMore := pageEnd < len(hits)
+	if maxPage > 0 && pageEnd >= maxPage {
+		if hasMore || candidateLimitReached > 0 {
+			rankingLimitReached = maxPage
+		}
+		hasMore = false
+	}
 	pageHits := hits[pageStart:pageEnd]
 
 	// Bulk-hydrate to avoid the per-hit GetMessage N+1: a single
@@ -1251,14 +1271,16 @@ func (s *Server) handleHybridSearch(
 	hydrationDuration := time.Since(hydrationStarted)
 
 	writeJSON(w, http.StatusOK, hybridSearchResponse{
-		Query:            q,
-		Mode:             mode,
-		Returned:         len(items),
-		PoolSaturated:    meta.PoolSaturated,
-		Accelerator:      meta.Accelerator,
-		HasMore:          hasMore,
-		ScopeLabel:       scope.displayName(),
-		ScopeSourceCount: len(scope.sourceIDs()),
+		Query:                 q,
+		Mode:                  mode,
+		Returned:              len(items),
+		PoolSaturated:         meta.PoolSaturated,
+		Accelerator:           meta.Accelerator,
+		HasMore:               hasMore,
+		RankingLimitReached:   rankingLimitReached,
+		CandidateLimitReached: candidateLimitReached,
+		ScopeLabel:            scope.displayName(),
+		ScopeSourceCount:      len(scope.sourceIDs()),
 		Generation: hybridGenerationSummary{
 			ID:          int64(meta.Generation.ID),
 			Model:       meta.Generation.Model,
@@ -1458,7 +1480,7 @@ func (s *Server) similarSearchFilter(r *http.Request) (vector.Filter, *apiHTTPEr
 		if apiErr != nil {
 			return filter, apiErr
 		}
-		scope, err := resolveCLIStatsScope(cliStore, account, "")
+		scope, err := resolveCLIStatsScope(r.Context(), cliStore, account, "")
 		if err != nil {
 			return filter, s.cliScopeError(err)
 		}
@@ -1600,7 +1622,7 @@ func (s *Server) handleSourceStatus(w http.ResponseWriter, r *http.Request) {
 		if r.Context().Err() != nil {
 			return
 		}
-		status, err := s.sourceStatus(r.Context(), statusStore, source)
+		status, err := s.sourceStatus(r.Context(), statusStore, source, sources)
 		if err != nil {
 			if r.Context().Err() != nil {
 				return
@@ -1620,7 +1642,26 @@ func (s *Server) handleSourceStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, SourceStatusResponse{Sources: statuses})
 }
 
-func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore, source *store.Source) (SourceStatus, error) {
+// sourceScheduling restricts the singleton Messages job to its import target.
+func (s *Server) sourceScheduling(sourceType, identifier string, sources []*store.Source) sourceScheduleClassification {
+	scheduling := classifySourceScheduling(sourceType, identifier)
+	if sourceType != "apple_messages" {
+		return scheduling
+	}
+	var messagesSources []*store.Source
+	for _, source := range sources {
+		if source.SourceType == "apple_messages" {
+			messagesSources = append(messagesSources, source)
+		}
+	}
+	selected := store.SelectImessageSource(messagesSources)
+	if selected != nil && selected.Identifier == identifier || selected == nil && identifier == "local" {
+		return scheduling
+	}
+	return sourceScheduleClassification{kind: sourceScheduleNonSchedulable}
+}
+
+func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore, source *store.Source, sources []*store.Source) (SourceStatus, error) {
 	status := SourceStatus{
 		ID:         source.ID,
 		SourceType: source.SourceType,
@@ -1642,7 +1683,7 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 	if err := s.hydrateSyncRunStatus(ctx, statusStore, status.ActiveSync); err != nil {
 		return SourceStatus{}, err
 	}
-	scheduling := classifySourceScheduling(source.SourceType, source.Identifier)
+	scheduling := s.sourceScheduling(source.SourceType, source.Identifier, sources)
 	schedulerRunning := false
 	if s.scheduler != nil {
 		switch scheduling.kind {
@@ -1809,7 +1850,22 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 	security, _ := securityFromRequest(r)
 	manual := security.auth.Mode == AuthModeSession || security.auth.Mode == AuthModeLoopback && requestOriginMatches(r, security.scheme, security.host)
 
-	scheduling := classifySourceScheduling(sourceType, account)
+	var sources []*store.Source
+	if sourceType == "apple_messages" {
+		statusStore, ok := s.store.(SourceStatusStore)
+		if !ok {
+			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve source scheduling")
+			return
+		}
+		var err error
+		sources, err = statusStore.ListSourcesContext(r.Context(), sourceType)
+		if err != nil {
+			s.logger.Error("failed to select scheduled source", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve source scheduling")
+			return
+		}
+	}
+	scheduling := s.sourceScheduling(sourceType, account, sources)
 	switch scheduling.kind {
 	case sourceScheduleNonSchedulable:
 		writeError(w, http.StatusBadRequest, "source_not_schedulable", "Source type cannot be scheduled: "+sourceType)
@@ -2246,6 +2302,7 @@ type SearchFastResponse struct {
 	TotalCount       int64               `json:"total_count"`
 	Stats            *TotalStatsResponse `json:"stats,omitzero" nullable:"false"`
 	AppliedSourceIDs []int64             `json:"applied_source_ids,omitempty"`
+	Hints            []query.SearchHint  `json:"hints,omitempty"`
 }
 
 type TextConversationRow struct {
@@ -3100,6 +3157,9 @@ func (s *Server) handleFilteredMessages(w http.ResponseWriter, r *http.Request) 
 		summaries[i] = toMessageSummaryFromQuery(m)
 	}
 
+	if !s.maskMessageSummaries(w, r, summaries, nil) {
+		return
+	}
 	writeJSON(w, http.StatusOK, FilteredMessagesResponse{
 		IndexState:       agentIndexState(r),
 		Count:            len(summaries),
@@ -3533,6 +3593,14 @@ func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "Attachment not found")
 		return
 	}
+	withheld, ok := s.attachmentWithheld(w, r, []query.AttachmentInfo{*att})
+	if !ok {
+		return
+	}
+	if withheld {
+		att.Filename = verification.Masked
+		att.URL = ""
+	}
 
 	writeJSON(w, http.StatusOK, AttachmentInfo{
 		ID:          att.ID,
@@ -3579,13 +3647,12 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	att := &attachments[0]
-	releaseReadSnapshot(r)
 
 	var content io.ReadCloser
 	var contentLength int64
 	var err error
 	if s.blobStore != nil {
-		content, contentLength, err = s.blobStore.OpenStream(r.Context(), hash)
+		content, contentLength, err = s.blobStore.OpenStream(store.WithoutReadSnapshotContext(r.Context()), hash)
 	}
 	if s.blobStore == nil || errors.Is(err, os.ErrNotExist) {
 		content, contentLength, att, err = openLooseAttachmentCandidates(
@@ -3601,16 +3668,29 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to open attachment")
 		return
 	}
+	reader, withheld, apiErr := s.textAttachmentReader(w, r, content, attachments)
+	if reader == nil {
+		_ = content.Close()
+		if apiErr != nil {
+			writeAPIHTTPError(w, apiErr)
+		}
+		return
+	}
+	releaseReadSnapshot(r)
 	contentType := att.MimeType
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Disposition", contentDisposition(att.Filename))
+	filename := att.Filename
+	if withheld {
+		filename = verification.Masked
+	}
+	w.Header().Set("Content-Disposition", contentDisposition(filename))
 	w.Header().Set("Content-Length", strconv.FormatInt(contentLength, 10))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 
-	_, copyErr := io.Copy(w, content)
+	_, copyErr := io.Copy(w, reader)
 	if err := errors.Join(copyErr, content.Close()); err != nil {
 		// Status and headers are already committed, so only logging is possible.
 		s.logger.Error("failed to stream attachment", "error", err, "hash", hash)
@@ -3723,6 +3803,9 @@ func (s *Server) handleSearchByDomains(w http.ResponseWriter, r *http.Request) {
 		summaries[i] = toMessageSummaryFromQuery(m)
 	}
 
+	if !s.maskMessageSummaries(w, r, summaries, nil) {
+		return
+	}
 	writeJSON(w, http.StatusOK, FilteredMessagesResponse{
 		Count:    len(summaries),
 		HasMore:  result.HasMore,
@@ -3923,7 +4006,11 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 		summaries[i] = toMessageSummaryFromQuery(m)
 	}
 
+	if !s.maskMessageSummaries(w, r, summaries, nil) {
+		return
+	}
 	writeJSON(w, http.StatusOK, SearchFastResponse{
+		Hints:            result.Hints,
 		Warnings:         search.LiteralORWarnings(queryStr),
 		IndexState:       indexState,
 		Query:            queryStr,
@@ -4091,6 +4178,9 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 	var warnings []string
 	if scope != bodyScope {
 		warnings = search.LiteralORWarnings(queryStr)
+	}
+	if !s.maskMessageSummaries(w, r, summaries, bodyContexts) {
+		return
 	}
 	writeJSON(w, http.StatusOK, DeepSearchResponse{
 		Warnings:     warnings,

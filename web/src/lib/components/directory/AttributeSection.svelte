@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { historyProvenance } from './history-format';
+  import { valueProvenance } from './history-format';
+  import HistorySection, { type HistoryRow } from './HistorySection.svelte';
   import { Button } from '@kenn-io/kit-ui';
   import { untrack } from 'svelte';
-  import type { AttributeDefinition } from '../../api/generated/models';
+  import type { AttributeDefinition, PersonAttributeValue } from '../../api/generated/models';
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
   import { displayAttributeValue, joinDefinitions, isAttributeRevealed } from './attribute-value';
 
@@ -19,46 +20,24 @@
   function toggleReveal(definition: AttributeDefinition): void {
     revealed = { ...revealed, [definition.universal_id]: !revealed[definition.universal_id] };
   }
+  function rows(definition: AttributeDefinition, values: PersonAttributeValue[]): HistoryRow[] {
+    const shown = isRevealed(definition);
+    return values.map(value => ({ id: value.id, value: shown ? displayAttributeValue(definition, value.value) : 'Hidden', provenance: valueProvenance(value) }));
+  }
 </script>
 
-  {#each visibleFields as field (field.definition.universal_id)}
-    {@const shown = isRevealed(field.definition)}
-    <section class="history-field" aria-labelledby={`attribute-title-${field.definition.id}`}>
-      <header class="section-header">
-        <h3 id={`attribute-title-${field.definition.id}`}>{field.definition.label}</h3>
-        {#if field.definition.is_sensitive}
-          <Button size="sm" label={shown ? 'Hide' : 'Show'} ariaLabel={`${shown ? 'Hide' : 'Reveal'} ${field.definition.label} values`} onclick={() => toggleReveal(field.definition)} />
-        {/if}
-      </header>
-      {#if field.current.length > 0}
-        <ul class="history-rows">
-          {#each field.current as value (value.id)}
-            <li><span class={shown ? '' : 'concealed'}>{shown ? displayAttributeValue(field.definition, value.value) : 'Hidden'}</span><span class="meta">{historyProvenance(value)}</span></li>
-          {/each}
-        </ul>
-      {/if}
-      {#if field.history.length > 0}
-      <details>
-      <summary>{field.history.length} earlier {field.history.length === 1 ? 'value' : 'values'}</summary>
-      <ul class="history-rows">
-        {#each field.history as value (value.id)}
-          <li>
-            <span class={shown ? '' : 'concealed'}>{shown ? displayAttributeValue(field.definition, value.value) : 'Hidden'}</span>
-            <span class="meta">{historyProvenance(value)}</span>
-          </li>
-        {/each}
-      </ul>
-      </details>
-      {/if}
-    </section>
-  {/each}
+{#each visibleFields as field (field.definition.universal_id)}
+  {@const shown = isRevealed(field.definition)}
+  {@const first = (field.current[0] ?? field.history[0])?.id}
+  <!-- Reveal sits beside the field's first value; a hidden value reads "Hidden". -->
+  {#snippet reveal(row: HistoryRow)}
+    {#if field.definition.is_sensitive && row.id === first}<Button size="sm" class="text-action" label={shown ? 'Hide' : 'Reveal'} ariaLabel={`${shown ? 'Hide' : 'Reveal'} ${field.definition.label} values`} onclick={() => toggleReveal(field.definition)} />{/if}
+  {/snippet}
+  {#snippet concealed(row: HistoryRow)}<span class:concealed={!shown}>{row.value}</span>{/snippet}
+  <HistorySection title={field.definition.label} rows={rows(field.definition, field.current)} earlier={rows(field.definition, field.history)}
+    rowActions={field.definition.is_sensitive ? reveal : undefined} value={concealed} />
+{/each}
+
 <style>
-  .history-field { display: grid; gap: var(--space-2); }
-  .section-header { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; justify-content: space-between; }
-  h3, ul { margin: 0; }
-  summary { cursor: pointer; color: var(--text-secondary); font-size: var(--font-size-sm); }
-  .history-field summary { padding: var(--space-2) 0; }
-  .history-rows { display: grid; padding: 0; list-style: none; }
-  .history-rows li { display: flex; align-items: baseline; justify-content: space-between; gap: var(--field-gap); padding: var(--space-2) 0; border-bottom: 1px solid var(--border-muted); color: var(--text-secondary); }
-  .history-rows .meta, .concealed { color: var(--text-muted); font-size: var(--font-size-sm); }
+  .concealed { color: var(--text-muted); }
 </style>

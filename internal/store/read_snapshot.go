@@ -19,8 +19,21 @@ type SQLReader interface {
 type readSnapshotKey struct{}
 
 type readSnapshot struct {
-	db *sql.DB
-	tx *loggedTx
+	db       *sql.DB
+	tx       *loggedTx
+	writable bool
+}
+
+// withWritableSnapshot binds setup work to its owning transaction.
+func withWritableSnapshot(ctx context.Context, db *sql.DB, tx *loggedTx) context.Context {
+	return context.WithValue(ctx, readSnapshotKey{}, &readSnapshot{db: db, tx: tx, writable: true})
+}
+
+func writableSnapshot(ctx context.Context, db *sql.DB) *loggedTx {
+	if snapshot, ok := ctx.Value(readSnapshotKey{}).(*readSnapshot); ok && snapshot.db == db && snapshot.writable {
+		return snapshot.tx
+	}
+	return nil
 }
 
 // BeginReadSnapshotContext binds subsequent reads of this database to one snapshot.
@@ -54,6 +67,12 @@ func (s *Store) BeginReadSnapshotContext(ctx context.Context) (context.Context, 
 		})
 	}
 	return context.WithValue(ctx, readSnapshotKey{}, &readSnapshot{db: s.db.DB, tx: tx}), release, nil
+}
+
+// WithReadSnapshotContext binds a caller-owned read transaction to archive reads.
+// The caller remains responsible for rolling the transaction back.
+func WithReadSnapshotContext(ctx context.Context, db *sql.DB, tx *sql.Tx) context.Context {
+	return context.WithValue(ctx, readSnapshotKey{}, &readSnapshot{db: db, tx: &loggedTx{Tx: tx}})
 }
 
 // WithoutReadSnapshotContext preserves request lifetime and values for physical reads.

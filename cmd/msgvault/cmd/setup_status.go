@@ -58,8 +58,8 @@ func newSetupStatusCommand(deps setupStatusDeps) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "status",
 		Short: "Show which optional features are on and how to enable them",
-		Long: `Report every optional lane: text search, semantic people search, visual
-attachment search, document extraction and vectors, the people sweep, the
+		Long: `Report every optional lane: search by meaning, semantic people search, visual
+attachment search, the people sweep, the
 activity projection, and the chat media policy. For each lane the report
 names the provider and model, whether it is on, why it is off, whether its
 consent is recorded, and the exact command that turns it on.

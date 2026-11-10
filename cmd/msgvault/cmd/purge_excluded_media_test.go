@@ -58,7 +58,7 @@ func newPurgeMediaFixture(t *testing.T, provider string) purgeMediaFixture {
 			source.ID, "conversation-"+sourceMessageID, conversationType, sourceMessageID,
 		)
 		require.NoError(t, err)
-		_, err = st.DB().Exec(st.Rebind(`UPDATE conversations SET participant_count = ? WHERE id = ?`), participants, conversationID)
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE conversations SET participant_count = ? WHERE id = ?`), participants, conversationID)
 		require.NoError(t, err)
 		messageID, err := st.UpsertMessage(&store.Message{
 			SourceID: source.ID, ConversationID: conversationID,
@@ -96,7 +96,7 @@ func newPurgeMediaFixture(t *testing.T, provider string) purgeMediaFixture {
 
 	attachmentID := func(messageID int64) int64 {
 		var id int64
-		require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT id FROM attachments WHERE message_id = ?`), messageID).Scan(&id))
+		require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM attachments WHERE message_id = ?`), messageID).Scan(&id))
 		return id
 	}
 	return purgeMediaFixture{
@@ -117,7 +117,8 @@ func (f purgeMediaFixture) deps() purgeExcludedMediaDeps {
 func (f purgeMediaFixture) state(t *testing.T, attachmentID int64) attachmentpolicy.DownloadState {
 	t.Helper()
 	var state sql.NullString
-	require.NoError(t, f.store.DB().QueryRow(
+	require.NoError(t, f.store.DB().QueryRowContext(
+		t.Context(),
 		f.store.Rebind(`SELECT attachment_state FROM attachments WHERE id = ?`), attachmentID,
 	).Scan(&state))
 	return attachmentpolicy.DownloadState(state.String)
@@ -184,11 +185,49 @@ func TestMediaPolicyForSlackdumpUsesSlackWorkspaceConfig(t *testing.T) {
 	assert.Equal(int64(1)<<20, policy.MaxBytes)
 }
 
+func TestMediaPolicyForMatrixUsesAccountConfig(t *testing.T) {
+	current := &config.Config{Matrix: config.MatrixConfig{MaxMediaMB: 7, AccountsConfig: map[string]config.MediaAccountConfig{"@archive:example.org": {MaxMediaMB: 3}}}}
+
+	policy, ok := mediaPolicyForAttachment(current, store.AttachmentPolicyCandidate{SourceType: sourceTypeMatrix, SourceIdentifier: "@archive:example.org"})
+	require.True(t, ok)
+	assert.Equal(t, int64(3)<<20, policy.MaxBytes)
+}
+
+func TestPurgeExcludedMatrixMediaAfterAllToDirectScopeChange(t *testing.T) {
+	req, check := require.New(t), assert.New(t)
+	f := newPurgeMediaFixture(t, sourceTypeBeeper)
+	f.config.Matrix.MediaScope = string(attachmentpolicy.ScopeAll)
+	_, err := f.store.DB().ExecContext(t.Context(), `UPDATE sources SET source_type = 'matrix', identifier = '@archive:example.org'`)
+	req.NoError(err)
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE conversations SET conversation_type = 'group_chat' WHERE conversation_type = 'channel'`)
+	req.NoError(err)
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE attachments SET source_attachment_id = REPLACE(source_attachment_id, 'beeper:', 'matrix:')`)
+	req.NoError(err)
+	run := func() {
+		command := newPurgeExcludedMediaLocalCmd(f.deps())
+		command.SetOut(&bytes.Buffer{})
+		command.SetErr(&bytes.Buffer{})
+		command.SetArgs([]string{"--yes"})
+		req.NoError(command.Execute())
+	}
+	run()
+	check.Equal(attachmentpolicy.StateStored, f.state(t, f.excludedID))
+	check.Equal(attachmentpolicy.StateStored, f.state(t, f.retainedID))
+	f.config.Matrix.MediaScope = string(attachmentpolicy.ScopeDirect)
+	run()
+	check.Equal(attachmentpolicy.StateSkipped, f.state(t, f.excludedID))
+	check.Equal(attachmentpolicy.StateStored, f.state(t, f.retainedID))
+	check.FileExists(f.fullPath)
+	var reason string
+	req.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT attachment_skip_reason FROM attachments WHERE id = ?`), f.excludedID).Scan(&reason))
+	check.Equal(string(attachmentpolicy.SkipPolicyScope), reason)
+}
+
 func TestPurgeExcludedMediaPreservesBlobReferencedByThumbnail(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newPurgeMediaFixture(t, sourceTypeBeeper)
-	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+	require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`
 		UPDATE attachments
 		SET content_hash = NULL, storage_path = ?, thumbnail_hash = ?, thumbnail_path = ?
 		WHERE id = ?
@@ -340,7 +379,7 @@ func TestPurgeExcludedMediaRetainsUnresolvedRostersUnderParticipantLimit(t *test
 	require.NoError(err)
 	conversationID, err := st.EnsureConversationWithType(source.ID, "team/channel", "channel", "Releases")
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE conversations SET participant_count = ? WHERE id = ?`), 20, conversationID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE conversations SET participant_count = ? WHERE id = ?`), 20, conversationID)
 	require.NoError(err)
 	require.NoError(st.MarkConversationMemberCountUnknown(conversationID))
 	messageID, err := st.UpsertMessage(&store.Message{
@@ -350,7 +389,7 @@ func TestPurgeExcludedMediaRetainsUnresolvedRostersUnderParticipantLimit(t *test
 	require.NoError(err)
 	smallHash := strings.Repeat("ab", 32)
 	largeHash := strings.Repeat("cd", 32)
-	require.NoError(st.ReplaceMessageInlineAttachments(messageID, []store.AttachmentRef{
+	require.NoError(st.ReplaceMessageInlineAttachments(t.Context(), messageID, []store.AttachmentRef{
 		{
 			SourceAttachmentID: "teams:inline:small", StoragePath: smallHash[:2] + "/" + smallHash,
 			ContentHash: smallHash, Size: 100, State: attachmentpolicy.StateStored,
@@ -364,7 +403,7 @@ func TestPurgeExcludedMediaRetainsUnresolvedRostersUnderParticipantLimit(t *test
 	// participants, no membership record at all.
 	legacyID, err := st.EnsureConversationWithType(source.ID, "team/legacy", "channel", "Legacy")
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE conversations SET participant_count = ? WHERE id = ?`), 20, legacyID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE conversations SET participant_count = ? WHERE id = ?`), 20, legacyID)
 	require.NoError(err)
 	legacyMessageID, err := st.UpsertMessage(&store.Message{
 		SourceID: source.ID, ConversationID: legacyID,
@@ -372,7 +411,7 @@ func TestPurgeExcludedMediaRetainsUnresolvedRostersUnderParticipantLimit(t *test
 	})
 	require.NoError(err)
 	legacyHash := strings.Repeat("ef", 32)
-	require.NoError(st.ReplaceMessageInlineAttachments(legacyMessageID, []store.AttachmentRef{{
+	require.NoError(st.ReplaceMessageInlineAttachments(t.Context(), legacyMessageID, []store.AttachmentRef{{
 		SourceAttachmentID: "teams:inline:legacy", StoragePath: legacyHash[:2] + "/" + legacyHash,
 		ContentHash: legacyHash, Size: 100, State: attachmentpolicy.StateStored,
 	}}, false))
@@ -472,7 +511,7 @@ func TestPurgeExcludedMediaAppliesIMessageParticipantLimit(t *testing.T) {
 			dryRun := run("--dry-run")
 			run("--yes")
 			var state, reason sql.NullString
-			require.NoError(st.DB().QueryRow(st.Rebind(
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 				`SELECT attachment_state, attachment_skip_reason FROM attachments WHERE message_id = ?`), messageID,
 			).Scan(&state, &reason))
 			if tc.purged {
@@ -512,7 +551,7 @@ func TestChatwootPurgeResolvesAccountPolicyAndSharedMeetings(t *testing.T) {
 				command.SetArgs([]string{"--yes"})
 				require.NoError(command.Execute())
 			}
-			_, err := f.store.DB().Exec(f.store.Rebind(`UPDATE attachments SET attachment_state = ? WHERE id IN (?, ?)`), state, f.excludedID, f.retainedID)
+			_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE attachments SET attachment_state = ? WHERE id IN (?, ?)`), state, f.excludedID, f.retainedID)
 			require.NoError(err)
 			dryRun := newPurgeExcludedMediaLocalCmd(f.deps())
 			dryRun.SetOut(&bytes.Buffer{})

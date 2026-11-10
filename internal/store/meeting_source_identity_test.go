@@ -24,7 +24,7 @@ func TestBindMeetingSourceIdentity(t *testing.T) {
 	bound, err := st.GetSourceByID(src.ID)
 	requirements.NoError(err)
 	assertions.JSONEq(`{"account_email":"owner@example.com","account_user_id":"user-a"}`, bound.SyncConfig.String)
-	requirements.NoError(st.UpdateSourceSyncConfig(src.ID, `{"unrelated":true}`))
+	requirements.NoError(st.UpdateSourceSyncConfig(t.Context(), src.ID, `{"unrelated":true}`))
 	requirements.Error(st.BindMeetingSourceIdentity(src.ID, "pocket", "owner@example.com", "user-a"))
 	bound, err = st.GetSourceByID(src.ID)
 	requirements.NoError(err)

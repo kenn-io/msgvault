@@ -38,10 +38,6 @@ func (s *Store) replaceMessageProviderAttachmentsContext(ctx context.Context, me
 	)
 }
 
-func (s *Store) messageProviderAttachments(messageID int64, providerPrefix string) (map[string]AttachmentRef, error) {
-	return s.messageProviderAttachmentsContext(context.Background(), messageID, providerPrefix)
-}
-
 // messageProviderAttachmentsContext honors cancellation during messageProviderAttachments.
 func (s *Store) messageProviderAttachmentsContext(ctx context.Context, messageID int64, providerPrefix string) (map[string]AttachmentRef, error) {
 	refs, err := s.messageAttachmentsWhere(ctx, messageID, `source_attachment_id LIKE ?
@@ -106,12 +102,6 @@ func (s *Store) messageAttachmentsWhere(ctx context.Context, messageID int64, wh
 	return out, rows.Err()
 }
 
-func (s *Store) listRetryableAttachmentMessages(
-	sourceID int64, providerPrefix string, policy attachmentpolicy.Policy,
-) ([]PendingAttachmentMessage, error) {
-	return s.listRetryableAttachmentMessagesContext(context.Background(), sourceID, providerPrefix, policy)
-}
-
 // listRetryableAttachmentMessagesContext honors cancellation during listRetryableAttachmentMessages.
 func (s *Store) listRetryableAttachmentMessagesContext(ctx context.Context,
 	sourceID int64, providerPrefix string, policy attachmentpolicy.Policy,
@@ -126,9 +116,9 @@ func (s *Store) listRetryableAttachmentMessagesContext(ctx context.Context,
 		JOIN conversations c ON c.id = m.conversation_id
 		JOIN attachments a ON a.message_id = m.id
 		WHERE m.source_id = ?
- AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id = m.id)
+		  AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id = m.id)
 		  AND NOT EXISTS (SELECT 1 FROM source_merge_preserved_attachments spa WHERE spa.attachment_id = a.id)
- AND a.source_attachment_id LIKE ?
+		  AND a.source_attachment_id LIKE ?
 		ORDER BY m.id, a.id
 	`, sourceID, providerPrefix+"%")
 	if err != nil {
@@ -182,18 +172,18 @@ func (s *Store) ReplaceMessageInlineProviderAttachments(messageID int64, refs []
 }
 
 // MessageInlineProviderAttachments returns Inline-managed rows keyed by stable source ID.
-func (s *Store) MessageInlineProviderAttachments(messageID int64) (map[string]AttachmentRef, error) {
-	return s.messageProviderAttachments(messageID, "inline:")
+func (s *Store) MessageInlineProviderAttachments(ctx context.Context, messageID int64) (map[string]AttachmentRef, error) {
+	return s.messageProviderAttachmentsContext(ctx, messageID, "inline:")
 }
 
 // ListInlineProviderRetryableAttachmentMessages returns unfinished Inline media under the current policy.
-func (s *Store) ListInlineProviderRetryableAttachmentMessages(sourceID int64, policy attachmentpolicy.Policy) ([]PendingAttachmentMessage, error) {
-	return s.listRetryableAttachmentMessages(sourceID, "inline:", policy)
+func (s *Store) ListInlineProviderRetryableAttachmentMessages(ctx context.Context, sourceID int64, policy attachmentpolicy.Policy) ([]PendingAttachmentMessage, error) {
+	return s.listRetryableAttachmentMessagesContext(ctx, sourceID, "inline:", policy)
 }
 
 // ListBeeperRetryableAttachmentMessages returns only unfinished Beeper media.
-func (s *Store) ListBeeperRetryableAttachmentMessages(sourceID int64, policy attachmentpolicy.Policy) ([]BeeperPendingAttachmentMessage, error) {
-	return s.listRetryableAttachmentMessages(sourceID, "beeper:", policy)
+func (s *Store) ListBeeperRetryableAttachmentMessages(ctx context.Context, sourceID int64, policy attachmentpolicy.Policy) ([]BeeperPendingAttachmentMessage, error) {
+	return s.listRetryableAttachmentMessagesContext(ctx, sourceID, "beeper:", policy)
 }
 
 // BeeperRetryPolicyResult describes the local policy state found before a
@@ -318,8 +308,8 @@ func (s *Store) ListSlackRetryableAttachmentMessagesContext(ctx context.Context,
 }
 
 // ListDiscordRetryableAttachmentMessages returns only unfinished Discord media.
-func (s *Store) ListDiscordRetryableAttachmentMessages(sourceID int64, policy attachmentpolicy.Policy) ([]DiscordPendingAttachmentMessage, error) {
-	return s.listRetryableAttachmentMessages(sourceID, "discord:", policy)
+func (s *Store) ListDiscordRetryableAttachmentMessages(ctx context.Context, sourceID int64, policy attachmentpolicy.Policy) ([]DiscordPendingAttachmentMessage, error) {
+	return s.listRetryableAttachmentMessagesContext(ctx, sourceID, "discord:", policy)
 }
 
 // ConversationMembership is one archived conversation as media policy sees it.
@@ -392,13 +382,7 @@ type MessageConversationRef struct {
 // backfills use it to re-resolve provider membership that the original sync
 // could not read, so the archived participant count becomes authoritative
 // before policy is evaluated again.
-func (s *Store) MessageConversation(messageID int64) (MessageConversationRef, error) {
-	return s.MessageConversationContext(context.Background(), messageID)
-}
-
-// MessageConversationContext is MessageConversation with a context. A message
-// that does not exist returns an error wrapping sql.ErrNoRows.
-func (s *Store) MessageConversationContext(ctx context.Context, messageID int64) (MessageConversationRef, error) {
+func (s *Store) MessageConversation(ctx context.Context, messageID int64) (MessageConversationRef, error) {
 	var ref MessageConversationRef
 	err := s.db.QueryRowContext(ctx, `
 		SELECT c.id, COALESCE(c.source_conversation_id, ''), COALESCE(c.conversation_type, '')
@@ -421,6 +405,7 @@ const (
 	sourceTypeSlackdump     = "slackdump"
 	sourceTypeBeeper        = "beeper"
 	sourceTypeAppleMessages = "apple_messages"
+	sourceTypeMatrix        = "matrix"
 )
 
 // membershipRecord is the provider-maintained membership a conversation's
@@ -476,7 +461,7 @@ func attachmentPolicyParticipantCount(sourceType string, observed int, metadata 
 	switch strings.TrimSuffix(sourceType, ":") {
 	case sourceTypeDiscord:
 		return max(record.memberCount, observed)
-	case sourceTypeTeams, sourceTypeSlack, sourceTypeSlackdump, sourceTypeBeeper, "inline", sourceTypeAppleMessages:
+	case sourceTypeTeams, sourceTypeSlack, sourceTypeSlackdump, sourceTypeBeeper, "inline", sourceTypeAppleMessages, sourceTypeMatrix:
 		return record.memberCount
 	default:
 		return observed
@@ -773,8 +758,8 @@ func (s *Store) ListDiscordPendingAttachmentMessages(sourceID int64) ([]DiscordP
 // least one Discord-managed attachment. The one-query selection is used by a
 // full media refresh; callers that only want incomplete rows use
 // ListDiscordPendingAttachmentMessages.
-func (s *Store) ListDiscordAttachmentMessages(sourceID int64) ([]DiscordAttachmentMessage, error) {
-	rows, err := s.db.Query(`
+func (s *Store) ListDiscordAttachmentMessages(ctx context.Context, sourceID int64) ([]DiscordAttachmentMessage, error) {
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT m.id, c.id, m.source_message_id, c.source_conversation_id,
 		       c.conversation_type, COALESCE(c.participant_count, 0),
 		       COALESCE(CAST(c.metadata AS TEXT), '')

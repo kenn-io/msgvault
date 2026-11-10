@@ -368,7 +368,8 @@ func writeOperationGateBusy(w http.ResponseWriter, r *http.Request, gate Operati
 // and runs schema init/migrations.
 //
 // Backup freeze begin, meeting import, and historical import jobs coordinate
-// the gate in their handlers.
+// the gate in their handlers. Local search acquires it in its controller after
+// installing shared files.
 // Meeting import first reads and validates its bounded request body so a slow
 // authenticated upload cannot hold the gate. Backup freeze end bypasses the
 // gate so it can release the freeze held by begin. Routing these through the
@@ -394,7 +395,9 @@ var operationGateExemptPaths = map[string]bool{
 	agentTokensPath:                    true,
 	sessionLoginPath:                   true,
 	importJobsEndpointPath:             true,
+	localEmbeddingsEndpointPath:        true,
 	meetingImportEndpointPath:          true,
+	messageImportEndpointPath:          true,
 	muesliImportEndpointPath:           true,
 	muesliRecordingEndpointPath:        true,
 	"/api/v1/cli/add-calendar/plan":    true,
@@ -423,11 +426,12 @@ var operationGateExemptPaths = map[string]bool{
 // registerSearchCoverageRoute (the OpenAPI "Exploration" tag), so a new
 // analytical route forces a conscious classification decision here.
 //
-// The remote-image proxy and CardDAV account test are the non-Exploration
+// The remote-image proxy and CardDAV account test are non-Exploration
 // entries. Both perform SSRF-validated outbound reads without changing
 // archive or persistent configuration state, so they must stay available
-// while a long archive operation holds the gate. Kata evidence preparation
-// only reads message bodies and extracted document text. Message tag reads and
+// while a long archive operation holds the gate. Meeting actions, context,
+// and metrics are also non-Exploration read routes. Kata evidence preparation
+// only reads message bodies and Docbank renditions. Message tag reads and
 // previews bypass the gate here; their handler takes it for actual writes.
 const cardDAVAccountTestPath = "/api/v1/carddav/account/test"
 
@@ -463,6 +467,10 @@ var readOnlyPostRoutePatterns = []string{
 	"/api/v1/relationships",
 	"/api/v1/relationships/{id}/calendar",
 	"/api/v1/relationships/{id}/timeline",
+	// Meeting actions, context, and metrics read archived meeting rows in a read snapshot.
+	"/api/v1/meetings/actions",
+	"/api/v1/meetings/context",
+	"/api/v1/meetings/metrics",
 	"/api/v1/search/coverage",
 }
 
@@ -619,7 +627,6 @@ var cliRunReadOnlyCommands = map[string]bool{
 	"show-deletion":     true,
 	"embeddings list":   true,
 	"embeddings status": true,
-	"documents search":  true,
 	// Tier previews only read.
 	"person tiers preview": true,
 	"person tiers explain": true,
@@ -641,6 +648,19 @@ var cliRunSelfGatedCommands = map[string]bool{
 // ungated generic CLI subprocess.
 func IsCLIRunEmbeddingsOptimize(args []string) bool {
 	return len(args) > 0 && cliRunCommandWords(args) == "embeddings optimize"
+}
+
+// IsCLIRunEmbeddingsBuild identifies commands coordinated by the daemon.
+func IsCLIRunEmbeddingsBuild(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch cliRunCommandWords(args) {
+	case "embeddings build", "embeddings resume", "build-embeddings":
+		return true
+	default:
+		return false
+	}
 }
 
 func cliRunGateDecision(r *http.Request, auth requestAuthentication) (label string, skip bool, err error) {
@@ -668,7 +688,7 @@ func cliRunGateDecision(r *http.Request, auth requestAuthentication) (label stri
 			return "", true, nil
 		}
 		command := cliRunCommandWords(req.Args)
-		if cliRunReadOnlyCommands[command] || cliRunSelfGatedCommands[command] || IsCLIRunEmbeddingsOptimize(req.Args) {
+		if cliRunReadOnlyCommands[command] || cliRunSelfGatedCommands[command] || IsCLIRunEmbeddingsOptimize(req.Args) || IsCLIRunEmbeddingsBuild(req.Args) {
 			return "", true, nil
 		}
 		if command != "" {
@@ -688,7 +708,6 @@ var cliRunCommandGroups = map[string]bool{
 	"policy":     true,
 	"embeddings": true,
 	"backup":     true,
-	"documents":  true,
 }
 
 // cliRunCommandWords extracts the command path while consuming supported flags and their values.

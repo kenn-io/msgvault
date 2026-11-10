@@ -57,7 +57,7 @@ func TestExploreHTTPUsesCommittedDuckDBReadModel(t *testing.T) {
 func TestExploreResourceLimitExplainsRecovery(t *testing.T) {
 	t.Parallel()
 	_, analyticsDir := newExploreDuckDBFixtureWithDir(t)
-	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil, query.DuckDBOptions{
+	engine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil, query.DuckDBOptions{
 		MemoryLimit: "1MB",
 	})
 	require.NoError(t, err)
@@ -850,9 +850,9 @@ func newExploreIdentityAPIFixture(t *testing.T) exploreIdentityAPIFixture {
 	requirements.NoError(err)
 	requirements.Equal(int64(1), sourceA.ID)
 	requirements.Equal(int64(2), sourceB.ID)
-	conversationA, err := st.EnsureConversation(sourceA.ID, "thread-a", "Thread A")
+	conversationA, err := st.EnsureConversation(t.Context(), sourceA.ID, "thread-a", "Thread A")
 	requirements.NoError(err)
-	conversationB, err := st.EnsureConversation(sourceB.ID, "thread-b", "Thread B")
+	conversationB, err := st.EnsureConversation(t.Context(), sourceB.ID, "thread-b", "Thread B")
 	requirements.NoError(err)
 	aliceID, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
 	requirements.NoError(err)
@@ -886,6 +886,7 @@ func newExploreIdentityAPIFixture(t *testing.T) exploreIdentityAPIFixture {
 	}
 	for i := range 10 {
 		requirements.NoError(st.UpsertAttachment(
+			t.Context(),
 			3,
 			fmt.Sprintf("fixture-padding-%d.bin", i),
 			"application/octet-stream",
@@ -894,8 +895,8 @@ func newExploreIdentityAPIFixture(t *testing.T) exploreIdentityAPIFixture {
 			1,
 		))
 	}
-	requirements.NoError(st.UpsertAttachment(1, "older.txt", "text/plain", "", "", 10))
-	requirements.NoError(st.UpsertAttachment(2, "newest.pdf", "application/pdf", "", "", 20))
+	requirements.NoError(st.UpsertAttachment(t.Context(), 1, "older.txt", "text/plain", "", "", 10))
+	requirements.NoError(st.UpsertAttachment(t.Context(), 2, "newest.pdf", "application/pdf", "", "", 20))
 	requirements.NoError(st.ReplaceMessageRecipients(1, "from", []int64{bobID}, []string{"Bob"}))
 	requirements.NoError(st.ReplaceMessageRecipients(2, "from", []int64{aliceID}, []string{"Alice"}))
 	requirements.NoError(st.ReplaceMessageRecipients(2, "to", []int64{bobID}, []string{"Bob"}))
@@ -952,7 +953,7 @@ func exploreIdentityRequest(direction, queryText, searchMode string, limit int) 
 
 func postExploreJSON(t *testing.T, srv *Server, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, req)
@@ -1069,7 +1070,7 @@ func newExploreDuckDBFixtureWithClusters(
 		if strings.HasPrefix(table.dir, "messages/") {
 			projection += ", false AS archive_only"
 		}
-		_, err := db.Exec(fmt.Sprintf("COPY (SELECT %s FROM (VALUES %s) AS t(%s)%s) TO '%s' (FORMAT PARQUET)", projection, table.values, table.columns, where, path))
+		_, err := db.ExecContext(tb.Context(), fmt.Sprintf("COPY (SELECT %s FROM (VALUES %s) AS t(%s)%s) TO '%s' (FORMAT PARQUET)", projection, table.values, table.columns, where, path))
 		require.NoError(tb, err, "write %s", table.dir)
 	}
 	ensureIdentityCacheFixtureDatasets(tb, db, analyticsDir, options)
@@ -1083,7 +1084,7 @@ func newExploreDuckDBFixtureWithClusters(
 	require.NoError(tb, err)
 	require.NoError(tb, os.WriteFile(query.CacheStatePath(analyticsDir), state, 0o600))
 
-	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+	engine, err := query.NewDuckDBEngine(tb.Context(), analyticsDir, "", nil)
 	require.NoError(tb, err)
 	tb.Cleanup(func() { require.NoError(tb, engine.Close()) })
 	return engine, analyticsDir

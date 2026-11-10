@@ -1,6 +1,7 @@
 package beeper
 
 import (
+	"context"
 	"database/sql"
 	"net/http/httptest"
 	"os"
@@ -28,7 +29,7 @@ func TestStoredMediaNonAudioProbe(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
 			world := importVoiceChat(t)
 			data := []byte("%PDF-1.7\n" + strings.Repeat("x", 1024))
-			hash := addStoredMediaSource(t, world, "gmail", "test@example.com", "document", data,
+			hash := addStoredMediaSource(t.Context(), t, world, "gmail", "test@example.com", "document", data,
 				"report.pdf", "application/pdf", "", store.AttachmentRoleStandalone, "", nil, "part", "part")
 			path := filepath.Join(world.dir, hash[:2], hash)
 			switch mode {
@@ -61,7 +62,7 @@ func TestStoredMediaUnhintedAudioHeaderRecovery(t *testing.T) {
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t)
 	wav := syntheticWAV(800, 71)
-	hash := addStoredMediaSource(t, world, "gmail", "test@example.com", "unhinted-audio", wav,
+	hash := addStoredMediaSource(t.Context(), t, world, "gmail", "test@example.com", "unhinted-audio", wav,
 		"attachment.bin", "application/octet-stream", "", store.AttachmentRoleStandalone, "", nil, "part", "part")
 	path := filepath.Join(world.dir, hash[:2], hash)
 	corrupt := append([]byte(nil), wav...)
@@ -99,11 +100,11 @@ func TestStoredMediaUsesMessageTimestampWithoutRawRead(t *testing.T) {
 	testutil.SkipIfPostgres(t, "SQLite authorizer detects unnecessary MIME reads")
 	world := importVoiceChat(t)
 	for _, provider := range []string{"gmail", "imap", "mbox"} {
-		addStoredMediaSource(t, world, provider, "test@example.com", provider, syntheticWAV(800, 77),
+		addStoredMediaSource(t.Context(), t, world, provider, "test@example.com", provider, syntheticWAV(800, 77),
 			"voice.wav", "audio/wav", "", store.AttachmentRoleStandalone, "",
 			[]byte("Date: Tue, 10 Feb 2026 11:12:13 +0000\r\n\r\nmessage"), "part", "part")
 	}
-	_, err := world.st.DB().Exec(world.st.Rebind(`UPDATE messages SET sent_at = ?`),
+	_, err := world.st.DB().ExecContext(t.Context(), world.st.Rebind(`UPDATE messages SET sent_at = ?`),
 		time.Date(2026, 2, 10, 11, 12, 13, 0, time.UTC))
 	require.NoError(err)
 	world.st.DB().SetMaxOpenConns(1)
@@ -140,7 +141,7 @@ func TestBeeperMediaMissingPartStaysVisible(t *testing.T) {
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "missing-part", asset: "mxc://beeper.local/part",
 		mime: "audio/wav", fileName: "voice.wav", data: syntheticWAV(800, 78)})
-	_, err := world.st.DB().Exec(`UPDATE attachments SET source_part_key = NULL, source_attachment_id = NULL`)
+	_, err := world.st.DB().ExecContext(t.Context(), `UPDATE attachments SET source_part_key = NULL, source_attachment_id = NULL`)
 	require.NoError(err)
 	runPasses(t, NewMediaSubmitter(world.st, world.blobs, nil, "missing-part", world.dir), 1)
 	rows := occurrenceRows(t, world.st, "missing-part")
@@ -152,20 +153,21 @@ func TestBeeperMediaMissingPartStaysVisible(t *testing.T) {
 // addStoredMediaSource adds an importer-owned row around bytes already present
 // in the test CAS. It intentionally leaves raw evidence optional.
 func addStoredMediaSource(
+	ctx context.Context,
 	t *testing.T, world *mediaWorld, sourceType, identifier, messageID string,
 	data []byte, filename, mimeType, mediaType string, role store.AttachmentRole,
 	state attachmentpolicy.DownloadState, raw []byte, sourceAttachmentID, sourcePartKey string,
 ) string {
 	t.Helper()
-	source, err := world.st.GetOrCreateSource(sourceType, identifier)
+	source, err := world.st.GetOrCreateSourceContext(ctx, sourceType, identifier)
 	require.NoError(t, err)
-	conversation, err := world.st.EnsureConversation(source.ID, sourceType+"-thread", "Thread")
+	conversation, err := world.st.EnsureConversation(t.Context(), source.ID, sourceType+"-thread", "Thread")
 	require.NoError(t, err)
-	message, err := world.st.UpsertMessage(&store.Message{ConversationID: conversation, SourceID: source.ID,
+	message, err := world.st.UpsertMessageContext(ctx, &store.Message{ConversationID: conversation, SourceID: source.ID,
 		SourceMessageID: messageID, MessageType: sourceType, SizeEstimate: int64(len(data))})
 	require.NoError(t, err)
 	if raw != nil {
-		require.NoError(t, world.st.UpsertMessageRawWithFormat(message, raw, sourceType+"_raw"))
+		require.NoError(t, world.st.UpsertMessageRawWithFormatContext(ctx, message, raw, sourceType+"_raw"))
 	}
 	stored := &mime.Attachment{Filename: filename, ContentType: mimeType, Content: data}
 	storagePath, err := export.StoreAttachmentFileIncludingEmpty(world.dir, stored)
@@ -190,23 +192,23 @@ func TestStoredMediaProviderMatrix(t *testing.T) {
 			fileName: "supplied.wav", transcript: "provider words", data: wav},
 		voiceSpec{id: "beeper-asr", asset: "mxc://beeper.local/asr", mime: "audio/mp3",
 			fileName: "asr.mp3", data: mp3})
-	addStoredMediaSource(t, world, "whatsapp", "+15555550101", "3EB0-message-1", wav,
+	addStoredMediaSource(t.Context(), t, world, "whatsapp", "+15555550101", "3EB0-message-1", wav,
 		"voice.bin", "application/octet-stream", "", store.AttachmentRoleStandalone, "", nil, "", "whatsapp:media")
-	addStoredMediaSource(t, world, "facebook_messenger", "test.user@facebook.messenger", "message:fb-1", wav,
+	addStoredMediaSource(t.Context(), t, world, "facebook_messenger", "test.user@facebook.messenger", "message:fb-1", wav,
 		"voice.wav", "audio/wav", "", store.AttachmentRoleUnknown, "", []byte("not json"),
 		"attachments/audio-1.mp3", "fbmessenger:attachment:a602fedf39561086320b2483a3dfac563bc7453ea3e224bd5aea06e7c4d3f79e")
-	addStoredMediaSource(t, world, "synctech_sms", "+15555550102", "mms:1", wav,
+	addStoredMediaSource(t.Context(), t, world, "synctech_sms", "+15555550102", "mms:1", wav,
 		"voice.wav", "", "", store.AttachmentRoleStandalone, "", nil, "", "synctech:mms:1")
-	addStoredMediaSource(t, world, "slack", "T01:U01", "1712345678.000001", wav,
+	addStoredMediaSource(t.Context(), t, world, "slack", "T01:U01", "1712345678.000001", wav,
 		"voice.wav", "audio/wav", "", store.AttachmentRoleStandalone, attachmentpolicy.StateStored, nil,
 		"slack:F_FILE1", "slack:F_FILE1")
-	addStoredMediaSource(t, world, "discord", "200", "401", wav,
+	addStoredMediaSource(t.Context(), t, world, "discord", "200", "401", wav,
 		"voice.wav", "audio/wav", "", store.AttachmentRoleStandalone, attachmentpolicy.StateStored, nil,
 		"discord:401", "discord:401")
-	addStoredMediaSource(t, world, "google_voice", "+15555550103", "voicemail-1", mp3,
+	addStoredMediaSource(t.Context(), t, world, "google_voice", "+15555550103", "voicemail-1", mp3,
 		"voicemail.mp3", "application/octet-stream", "", store.AttachmentRoleStandalone, attachmentpolicy.StateStored, nil,
 		"gvoice:voicemail:audio", "gvoice:voicemail:audio")
-	addStoredMediaSource(t, world, "future_provider", "future-account", "future-message", wav,
+	addStoredMediaSource(t.Context(), t, world, "future_provider", "future-account", "future-message", wav,
 		"recording", "", "", store.AttachmentRoleStandalone, "", nil, "future:media:1", "future:media:1")
 
 	docbank := newFakeDocbank(t)
@@ -249,7 +251,7 @@ func TestBeeperMediaProcessesStoredAudioAfterSourceMerge(t *testing.T) {
 		fileName: "voice.wav", transcript: "merged provider words", data: wav,
 	})
 
-	from, err := world.st.GetSourceByTypeAndIdentifier("beeper", "signal")
+	from, err := world.st.GetSourceByTypeAndIdentifier(t.Context(), "beeper", "signal")
 	require.NoError(err)
 	into, err := world.st.GetOrCreateSource("beeper", "signal-main")
 	require.NoError(err)
@@ -259,7 +261,7 @@ func TestBeeperMediaProcessesStoredAudioAfterSourceMerge(t *testing.T) {
 	require.NoError(err)
 
 	var archivedMessageID string
-	require.NoError(world.st.DB().QueryRow(world.st.Rebind(`
+	require.NoError(world.st.DB().QueryRowContext(t.Context(), world.st.Rebind(`
 		SELECT source_message_id FROM messages WHERE source_id = ? AND message_type = 'beeper'
 	`), into.ID).Scan(&archivedMessageID))
 	assert.Contains(archivedMessageID, "msgvault-archive:")
@@ -292,7 +294,7 @@ func TestBeeperMediaPreservesOriginalMessageIDAcrossChainedSourceMerges(t *testi
 		fileName: "voice.wav", transcript: "chained provider words", data: wav,
 	})
 
-	from, err := world.st.GetSourceByTypeAndIdentifier("beeper", "signal")
+	from, err := world.st.GetSourceByTypeAndIdentifier(t.Context(), "beeper", "signal")
 	require.NoError(err)
 	middle, err := world.st.GetOrCreateSource("beeper", "signal-intermediate")
 	require.NoError(err)
@@ -337,7 +339,7 @@ func TestBeeperMediaProcessesMergedAudioAfterSubsetExport(t *testing.T) {
 		fileName: "voice.wav", transcript: "subset provider words", data: wav,
 	})
 
-	from, err := world.st.GetSourceByTypeAndIdentifier("beeper", "signal")
+	from, err := world.st.GetSourceByTypeAndIdentifier(t.Context(), "beeper", "signal")
 	require.NoError(err)
 	into, err := world.st.GetOrCreateSource("beeper", "signal-main")
 	require.NoError(err)
@@ -348,11 +350,11 @@ func TestBeeperMediaProcessesMergedAudioAfterSubsetExport(t *testing.T) {
 
 	var sequence int
 	var databaseName, sourcePath string
-	require.NoError(world.st.DB().QueryRow("PRAGMA database_list").Scan(&sequence, &databaseName, &sourcePath))
+	require.NoError(world.st.DB().QueryRowContext(t.Context(), "PRAGMA database_list").Scan(&sequence, &databaseName, &sourcePath))
 	assert.Equal("main", databaseName)
 	require.NotEmpty(sourcePath)
 	subsetDir := filepath.Join(t.TempDir(), "subset")
-	_, err = store.CopySubset(sourcePath, subsetDir, 1, false)
+	_, err = store.CopySubset(t.Context(), sourcePath, subsetDir, 1, false)
 	require.NoError(err)
 	subset, err := store.Open(filepath.Join(subsetDir, "msgvault.db"))
 	require.NoError(err)
@@ -395,7 +397,7 @@ func TestBeeperMediaJournalReconcilesSourceMergeOwnershipChange(t *testing.T) {
 	require.NoError(err)
 	assert.True(consumer.ReconciliationComplete)
 
-	from, err := world.st.GetSourceByTypeAndIdentifier("beeper", "signal")
+	from, err := world.st.GetSourceByTypeAndIdentifier(t.Context(), "beeper", "signal")
 	require.NoError(err)
 	into, err := world.st.GetOrCreateSource("beeper", "signal-main")
 	require.NoError(err)
@@ -416,11 +418,11 @@ func TestBeeperMediaJournalReconcilesSourceMergeOwnershipChange(t *testing.T) {
 	assert.Empty(changes, "the media worker must acknowledge the ownership event after reconciling it")
 
 	var currentMappings, staleMappings int
-	require.NoError(world.st.DB().QueryRow(world.st.Rebind(`
+	require.NoError(world.st.DB().QueryRowContext(t.Context(), world.st.Rebind(`
 		SELECT COUNT(*) FROM beeper_media_occurrences
 		WHERE destination_key = ? AND source_identifier = 'signal-main' AND retention_state = 'pending'
 	`), worker.destination).Scan(&currentMappings))
-	require.NoError(world.st.DB().QueryRow(world.st.Rebind(`
+	require.NoError(world.st.DB().QueryRowContext(t.Context(), world.st.Rebind(`
 		SELECT COUNT(*) FROM beeper_media_occurrences
 		WHERE destination_key = ? AND source_identifier = 'signal' AND retention_state = 'revoked'
 	`), worker.destination).Scan(&staleMappings))
@@ -434,7 +436,7 @@ func TestStoredMediaEmptySlackExportDoesNotBlockLaterAudio(t *testing.T) {
 	world := importVoiceChat(t)
 	source, err := world.st.GetOrCreateSource("slack", "T01:EMPTY")
 	require.NoError(err)
-	conversation, err := world.st.EnsureConversation(source.ID, "slack-thread", "Thread")
+	conversation, err := world.st.EnsureConversation(t.Context(), source.ID, "slack-thread", "Thread")
 	require.NoError(err)
 	message, err := world.st.UpsertMessage(&store.Message{
 		ConversationID: conversation, SourceID: source.ID, SourceMessageID: "empty-first", MessageType: "slack",
@@ -450,7 +452,7 @@ func TestStoredMediaEmptySlackExportDoesNotBlockLaterAudio(t *testing.T) {
 		MediaType: "audio", Role: store.AttachmentRoleStandalone,
 		RoleSource: store.AttachmentRoleSourceProviderExplicit, State: attachmentpolicy.StateStored,
 	}))
-	addStoredMediaSource(t, world, "slack", "T01:EMPTY", "valid-after-empty", syntheticWAV(800, 71),
+	addStoredMediaSource(t.Context(), t, world, "slack", "T01:EMPTY", "valid-after-empty", syntheticWAV(800, 71),
 		"voice.wav", "audio/wav", "audio", store.AttachmentRoleStandalone, attachmentpolicy.StateStored, nil,
 		"slack:valid", "slack:valid")
 	docbank := newFakeDocbank(t)
@@ -471,10 +473,10 @@ func TestStoredMediaEmailFallback(t *testing.T) {
 	assert := assert.New(t)
 	world := importVoiceChat(t)
 	wav := syntheticWAV(800, 70)
-	addStoredMediaSource(t, world, "gmail", "rod@example.com", "mail-audio-1", wav,
+	addStoredMediaSource(t.Context(), t, world, "gmail", "rod@example.com", "mail-audio-1", wav,
 		"meeting.wav", "application/octet-stream", "", store.AttachmentRoleStandalone, "", nil,
 		"mail:attachment:audio", "mime:1.2")
-	addStoredMediaSource(t, world, "gmail", "rod@example.com", "mail-document-1", []byte("%PDF-1.7\narchive"),
+	addStoredMediaSource(t.Context(), t, world, "gmail", "rod@example.com", "mail-document-1", []byte("%PDF-1.7\narchive"),
 		"report.pdf", "application/pdf", "", store.AttachmentRoleStandalone, "", nil,
 		"mail:attachment:document", "mime:1.3")
 	destination := "stored-email-fallback"
@@ -522,7 +524,7 @@ func TestStoredMediaRealWhatsAppImportWithoutRemoteRoute(t *testing.T) {
 	waDBPath := filepath.Join(t.TempDir(), "msgstore.db")
 	waDB, err := sql.Open("sqlite3", waDBPath)
 	require.NoError(err)
-	_, err = waDB.Exec(`
+	_, err = waDB.ExecContext(t.Context(), `
 		PRAGMA journal_mode=WAL;
 		CREATE TABLE jid (_id INTEGER PRIMARY KEY, user TEXT, server TEXT, raw_string TEXT);
 		CREATE TABLE chat (_id INTEGER PRIMARY KEY, jid_row_id INTEGER UNIQUE, hidden INTEGER,
@@ -562,7 +564,7 @@ func TestStoredMediaRealWhatsAppImportWithoutRemoteRoute(t *testing.T) {
 	assert.Equal("whatsapp", rows[0].SourceType)
 	assert.Equal("pending", rows[0].State)
 	var partKey string
-	require.NoError(world.st.DB().QueryRow(world.st.Rebind(`SELECT source_part_key FROM attachments
+	require.NoError(world.st.DB().QueryRowContext(t.Context(), world.st.Rebind(`SELECT source_part_key FROM attachments
 		WHERE content_hash = ?`), sha256Hex(wav)).Scan(&partKey))
 	assert.Equal("whatsapp:media", partKey)
 
@@ -588,7 +590,7 @@ func TestStoredMediaUnavailableCASTries(t *testing.T) {
 			assert := assert.New(t)
 			world := importVoiceChat(t)
 			wav := syntheticWAV(800, 71)
-			hash := addStoredMediaSource(t, world, "gmail", "rod@example.com", "mail-"+mode, wav,
+			hash := addStoredMediaSource(t.Context(), t, world, "gmail", "rod@example.com", "mail-"+mode, wav,
 				"voice.wav", "audio/wav", "", store.AttachmentRoleStandalone, "", nil,
 				"mail:attachment:"+mode, "mime:1.2")
 			path := filepath.Join(world.dir, hash[:2], hash)
@@ -663,7 +665,7 @@ func TestStoredMediaProfileReplay(t *testing.T) {
 	require.Len(rows, 1)
 	assert.NotEqual(rows[0].Ref, deliveries[0].Donor)
 	var profile string
-	require.NoError(world.st.DB().QueryRow(world.st.Rebind(`SELECT profile FROM beeper_media_deliveries WHERE destination_key = ?`),
+	require.NoError(world.st.DB().QueryRowContext(t.Context(), world.st.Rebind(`SELECT profile FROM beeper_media_deliveries WHERE destination_key = ?`),
 		"stored-profile-replay").Scan(&profile))
 	assert.Equal("configured-asr", profile)
 
@@ -672,7 +674,7 @@ func TestStoredMediaProfileReplay(t *testing.T) {
 	docbank.coverage = "transcribed"
 	firstRequests := len(docbank.processRequests)
 	docbank.mu.Unlock()
-	_, err := world.st.DB().Exec(`UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
+	_, err := world.st.DB().ExecContext(t.Context(), `UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
 	require.NoError(err)
 	runPasses(t, worker, 1)
 	deliveries = deliveryRows(t, world.st, "stored-profile-replay")
@@ -718,7 +720,7 @@ func TestStoredMediaProfileChangeStartedJob(t *testing.T) {
 	require.NoError(err)
 	newKey := processingKeyForDestination(t, world.st, destination, "new-asr")
 	assert.NotEqual(oldKey, newKey)
-	_, err = world.st.DB().Exec(world.st.Rebind(`UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'
+	_, err = world.st.DB().ExecContext(t.Context(), world.st.Rebind(`UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'
 		WHERE destination_key = ? AND processing_key = ?`), destination, oldKey)
 	require.NoError(err)
 	docbank.mu.Lock()
@@ -769,13 +771,13 @@ func TestStoredMediaNewerSourceVersionUsesOwnReceipt(t *testing.T) {
 		{column: "source_version_id", value: "wrong-source-version"},
 		{column: "content_version_id", value: "wrong-content-version"},
 	} {
-		_, err := world.st.DB().Exec(world.st.Rebind("UPDATE beeper_media_deliveries SET "+mismatch.column+" = ?, next_action_at = '2000-01-01 00:00:00.000' WHERE destination_key = ?"),
+		_, err := world.st.DB().ExecContext(t.Context(), world.st.Rebind("UPDATE beeper_media_deliveries SET "+mismatch.column+" = ?, next_action_at = '2000-01-01 00:00:00.000' WHERE destination_key = ?"),
 			mismatch.value, destination)
 		require.NoError(err)
 		_, ready, err := world.st.NextBeeperMediaOperation(t.Context(), destination, time.Now().UTC())
 		require.NoError(err)
 		assert.False(ready, mismatch.column)
-		_, err = world.st.DB().Exec(world.st.Rebind(`UPDATE beeper_media_deliveries
+		_, err = world.st.DB().ExecContext(t.Context(), world.st.Rebind(`UPDATE beeper_media_deliveries
 			SET source_id = ?, source_version_id = ?, content_version_id = ?, next_action_at = '2000-01-01 00:00:00.000'
 			WHERE destination_key = ?`), started[0].SourceID, started[0].SourceVersionID,
 			started[0].ContentVersionID, destination)
@@ -787,7 +789,7 @@ func TestStoredMediaNewerSourceVersionUsesOwnReceipt(t *testing.T) {
 	docbank.coverage = "transcribed"
 	processes := len(docbank.processOps)
 	docbank.mu.Unlock()
-	_, err := world.st.DB().Exec(world.st.Rebind(`UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'
+	_, err := world.st.DB().ExecContext(t.Context(), world.st.Rebind(`UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'
 		WHERE destination_key = ?`), destination)
 	require.NoError(err)
 	runPasses(t, worker, 1)
@@ -820,7 +822,7 @@ func TestStoredMediaOmittedReceiptVersions(t *testing.T) {
 	docbank.sourceOperationID = "other-operation"
 	docbank.coverage = "transcribed"
 	docbank.mu.Unlock()
-	_, err := world.st.DB().Exec(`UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
+	_, err := world.st.DB().ExecContext(t.Context(), `UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
 	require.NoError(err)
 	runPasses(t, worker, 1)
 	deliveries := deliveryRows(t, world.st, "optional-versions")
@@ -832,7 +834,7 @@ func TestStoredMediaOmittedReceiptVersions(t *testing.T) {
 func processingKeyForDestination(t *testing.T, st *store.Store, destination, profile string) string {
 	t.Helper()
 	var key string
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT processing_key FROM beeper_media_deliveries
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT processing_key FROM beeper_media_deliveries
 		WHERE destination_key = ? AND profile = ?`), destination, profile).Scan(&key))
 	return key
 }
@@ -850,7 +852,7 @@ func TestMediaRevisionMatchesWorker(t *testing.T) {
 			fileName: "supplied.wav", transcript: "provider words", data: wav},
 		voiceSpec{id: "beeper-plain", asset: "mxc://beeper.local/revision-plain", mime: "audio/wav",
 			fileName: "plain.wav", data: syntheticWAV(800, 24)})
-	addStoredMediaSource(t, world, "gmail", "test@example.com", "mail-audio", syntheticWAV(800, 25),
+	addStoredMediaSource(t.Context(), t, world, "gmail", "test@example.com", "mail-audio", syntheticWAV(800, 25),
 		"meeting.wav", "audio/wav", "", store.AttachmentRoleStandalone, "", nil,
 		"mail:attachment:1", "mime:1.2")
 	world.beeper.appendMsg("!audio:beeper.local", fakeMsg{
@@ -867,7 +869,7 @@ func TestMediaRevisionMatchesWorker(t *testing.T) {
 	defer server.Close()
 	runPasses(t, world.submitter(t, server, "destination-revision").WithASRProfile("revision-asr"), 3)
 
-	rows, err := world.st.DB().Query(world.st.Rebind(`SELECT source_type, attachment_id, revision
+	rows, err := world.st.DB().QueryContext(t.Context(), world.st.Rebind(`SELECT source_type, attachment_id, revision
 		FROM beeper_media_occurrences WHERE destination_key = ? ORDER BY source_message_id`),
 		"destination-revision")
 	requireParent.NoError(err)
@@ -908,11 +910,11 @@ func TestMediaRevisionMatchesWorker(t *testing.T) {
 			var err error
 			switch mutation {
 			case "missing raw":
-				_, err = world.st.DB().Exec(world.st.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), candidate.MessageID)
+				_, err = world.st.DB().ExecContext(t.Context(), world.st.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), candidate.MessageID)
 			case "invalid raw":
 				err = world.st.UpsertMessageRawWithFormat(candidate.MessageID, []byte("invalid"), "beeper_json")
 			case "corrupt raw":
-				_, err = world.st.DB().Exec(world.st.Rebind(`UPDATE message_raw SET raw_data = ?, compression = 'gzip' WHERE message_id = ?`), []byte{0}, candidate.MessageID)
+				_, err = world.st.DB().ExecContext(t.Context(), world.st.Rebind(`UPDATE message_raw SET raw_data = ?, compression = 'gzip' WHERE message_id = ?`), []byte{0}, candidate.MessageID)
 			case "missing attachment":
 				id = -1
 			}

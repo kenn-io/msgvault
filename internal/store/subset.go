@@ -73,9 +73,10 @@ type CopySubsetOptions struct {
 // Security: validates srcDBPath for control characters and canonicalizes
 // it before use in SQL. Callers must validate path containment.
 func CopySubset(
+	ctx context.Context,
 	srcDBPath, dstDir string, rowCount int, includeIdentity bool,
 ) (*CopyResult, error) {
-	return CopySubsetWithOptions(srcDBPath, dstDir, rowCount, CopySubsetOptions{
+	return CopySubsetWithOptions(ctx, srcDBPath, dstDir, rowCount, CopySubsetOptions{
 		IncludeIdentity: includeIdentity,
 	})
 }
@@ -106,6 +107,7 @@ func CopySubset(
 // into; asking for the bodies without the profiles is an error rather than a
 // silent no-op.
 func CopySubsetWithOptions(
+	ctx context.Context,
 	srcDBPath, dstDir string, rowCount int, options CopySubsetOptions,
 ) (*CopyResult, error) {
 	if rowCount <= 0 {
@@ -146,12 +148,12 @@ func CopySubsetWithOptions(
 	}
 
 	// Phase 1: create destination DB with schema
-	st, err := Open(dstDBPath)
+	st, err := OpenContext(ctx, dstDBPath)
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("create destination database: %w", err)
 	}
-	if err := st.InitSchema(); err != nil {
+	if err := st.InitSchemaContext(ctx); err != nil {
 		_ = st.Close()
 		cleanup()
 		return nil, fmt.Errorf("initialize schema: %w", err)
@@ -201,21 +203,21 @@ func CopySubsetWithOptions(
 	attachSQL := fmt.Sprintf(
 		"ATTACH DATABASE '%s' AS src", escapedSrcPath,
 	)
-	if _, err := db.Exec(attachSQL); err != nil {
+	if _, err := db.ExecContext(ctx, attachSQL); err != nil {
 		closeAndCleanup()
 		return nil, fmt.Errorf("attach source database: %w", err)
 	}
 
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		closeAndCleanup()
 		return nil, fmt.Errorf("begin transaction: %w", err)
 	}
 
-	result, err := copyData(tx, rowCount, options)
+	result, err := copyData(ctx, tx, rowCount, options)
 	if err != nil {
 		_ = tx.Rollback()
-		_, _ = db.Exec("DETACH DATABASE src")
+		_, _ = db.ExecContext(ctx, "DETACH DATABASE src")
 		closeAndCleanup()
 		return nil, err
 	}
@@ -223,13 +225,13 @@ func CopySubsetWithOptions(
 	// The empty destination's schema initialization already recorded these
 	// migrations. Rebuild derived meetings and hidden text flags from copied
 	// data, including old sources without them, through the upgrade below.
-	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name IN (?, ?)`, migrationMeetingProjectionV1, migrationMessagesHiddenTextBackfill); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM applied_migrations WHERE name IN (?, ?)`, migrationMeetingProjectionV1, migrationMessagesHiddenTextBackfill); err != nil {
 		_ = tx.Rollback()
 		closeAndCleanup()
 		return nil, fmt.Errorf("reset copied derived data migrations: %w", err)
 	}
 
-	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationCalendarEventProjectionV1); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM applied_migrations WHERE name = ?`, migrationCalendarEventProjectionV1); err != nil {
 		_ = tx.Rollback()
 		closeAndCleanup()
 		return nil, fmt.Errorf("reset copied calendar projection migration: %w", err)
@@ -237,36 +239,36 @@ func CopySubsetWithOptions(
 
 	// A source that predates matrix_encrypted_events copies placeholders the
 	// empty destination never registered.
-	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationMatrixEncryptedEventsV1); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM applied_migrations WHERE name = ?`, migrationMatrixEncryptedEventsV1); err != nil {
 		_ = tx.Rollback()
 		closeAndCleanup()
 		return nil, fmt.Errorf("reset copied Matrix placeholder migration: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		_, _ = db.Exec("DETACH DATABASE src")
+		_, _ = db.ExecContext(ctx, "DETACH DATABASE src")
 		closeAndCleanup()
 		return nil, fmt.Errorf("commit transaction: %w", err)
 	}
 
 	// Detach source before post-copy operations so PRAGMA
 	// foreign_key_check only scans the destination database.
-	if _, err := db.Exec("DETACH DATABASE src"); err != nil {
+	if _, err := db.ExecContext(ctx, "DETACH DATABASE src"); err != nil {
 		closeAndCleanup()
 		return nil, fmt.Errorf("detach source database: %w", err)
 	}
 
-	if err := verifyForeignKeys(db); err != nil {
+	if err := verifyForeignKeys(ctx, db); err != nil {
 		closeAndCleanup()
 		return nil, err
 	}
 
-	if err := updateConversationCounts(db); err != nil {
+	if err := updateConversationCounts(ctx, db); err != nil {
 		closeAndCleanup()
 		return nil, fmt.Errorf("update conversation counts: %w", err)
 	}
 
-	if ftsErr := populateFTS(db); ftsErr != nil {
+	if ftsErr := populateFTS(ctx, db); ftsErr != nil {
 		errMsg := ftsErr.Error()
 		ftsUnavailable :=
 			strings.HasSuffix(errMsg, "no such table: messages_fts") ||
@@ -284,19 +286,19 @@ func CopySubsetWithOptions(
 		cleanup()
 		return nil, fmt.Errorf("close copied subset database: %w", err)
 	}
-	normalized, err := Open(dstDBPath)
+	normalized, err := OpenContext(ctx, dstDBPath)
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("open copied subset for derived reconciliation: %w", err)
 	}
-	if err := normalized.InitSchema(); err != nil {
+	if err := normalized.InitSchemaContext(ctx); err != nil {
 		_ = normalized.Close()
 		cleanup()
 		return nil, fmt.Errorf("reconcile copied subset derived data: %w", err)
 	}
 	// The copy bypassed UpsertMessage, which queues chats for the member
 	// projection, and schema creation ledgered the rebuild while empty.
-	if err := normalized.rebuildChatMembersContext(context.Background()); err != nil {
+	if err := normalized.rebuildChatMembersContext(ctx); err != nil {
 		_ = normalized.Close()
 		cleanup()
 		return nil, fmt.Errorf("rebuild copied subset chat members: %w", err)
@@ -305,7 +307,7 @@ func CopySubsetWithOptions(
 	// people existed. Recheck the transferred projection for legacy source
 	// rows without state, preserving every copied positive revision.
 	if options.IncludeAttributes || options.IncludeProfiles {
-		if err := normalized.backfillCardDAVInferenceExportState(context.Background()); err != nil {
+		if err := normalized.backfillCardDAVInferenceExportState(ctx); err != nil {
 			_ = normalized.Close()
 			cleanup()
 			return nil, fmt.Errorf("initialize copied subset inference review: %w", err)
@@ -326,12 +328,12 @@ func CopySubsetWithOptions(
 
 // verifyForeignKeys runs PRAGMA foreign_key_check and returns an error
 // if any violations are found.
-func verifyForeignKeys(db *sql.DB) error {
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+func verifyForeignKeys(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
 		return fmt.Errorf("enable foreign keys: %w", err)
 	}
 
-	rows, err := db.Query("PRAGMA foreign_key_check")
+	rows, err := db.QueryContext(ctx, "PRAGMA foreign_key_check")
 	if err != nil {
 		return fmt.Errorf("foreign key check: %w", err)
 	}
@@ -362,10 +364,10 @@ func verifyForeignKeys(db *sql.DB) error {
 }
 
 // copyData executes INSERT INTO ... SELECT in dependency order.
-func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult, error) {
+func copyData(ctx context.Context, tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult, error) {
 	result := &CopyResult{}
 
-	if _, err := tx.Exec(fmt.Sprintf(`
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		CREATE TEMP TABLE selected_messages AS
 		SELECT id FROM src.messages
 		WHERE %s
@@ -373,7 +375,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 			DESC, id DESC LIMIT ?`, LiveMessagesWhere("", true)), rowCount); err != nil {
 		return nil, fmt.Errorf("select messages: %w", err)
 	}
-	if _, err := tx.Exec(`CREATE TEMP TABLE selected_message_sources AS
+	if _, err := tx.ExecContext(ctx, `CREATE TEMP TABLE selected_message_sources AS
 		SELECT DISTINCT source_id FROM src.messages
 		WHERE id IN (SELECT id FROM selected_messages)`); err != nil {
 		return nil, fmt.Errorf("select message sources: %w", err)
@@ -381,7 +383,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 
 	// Try copying with oauth_app column first; fall back to NULL
 	// for source databases created before this column existed.
-	res, err := tx.Exec(`
+	res, err := tx.ExecContext(ctx, `
 		INSERT INTO sources
 			(id, source_type, identifier, display_name, google_user_id,
 			 last_sync_at, sync_cursor, sync_config, oauth_app,
@@ -392,7 +394,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		FROM src.sources
 		WHERE id IN (SELECT source_id FROM selected_message_sources)`)
 	if err != nil && isSQLiteError(err, "no such column") {
-		res, err = tx.Exec(`
+		res, err = tx.ExecContext(ctx, `
 			INSERT INTO sources
 				(id, source_type, identifier, display_name, google_user_id,
 				 last_sync_at, sync_cursor, sync_config, oauth_app,
@@ -409,23 +411,23 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	if result.Sources, err = res.RowsAffected(); err != nil {
 		return nil, fmt.Errorf("sources rows affected: %w", err)
 	}
-	hasRouteFailures, err := sourceTableExists(tx, "source_messaging_route_failures")
+	hasRouteFailures, err := sourceTableExists(ctx, tx, "source_messaging_route_failures")
 	if err != nil {
 		return nil, fmt.Errorf("check source messaging route failure schema: %w", err)
 	}
 	if hasRouteFailures {
-		if _, err := copyByName(tx, "source_messaging_route_failures",
+		if _, err := copyByName(ctx, tx, "source_messaging_route_failures",
 			"source_id IN (SELECT source_id FROM selected_message_sources)"); err != nil {
 			return nil, fmt.Errorf("copy source messaging route failures: %w", err)
 		}
 	}
 	// Route lookup reports a Beeper source awaiting re-anchor from this marker.
-	hasArchiveMetadata, err := sourceTableExists(tx, "archive_metadata")
+	hasArchiveMetadata, err := sourceTableExists(ctx, tx, "archive_metadata")
 	if err != nil {
 		return nil, fmt.Errorf("check archive metadata schema: %w", err)
 	}
 	if hasArchiveMetadata {
-		if _, err := tx.Exec(`INSERT INTO archive_metadata (key, value)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO archive_metadata (key, value)
 			SELECT key, value FROM src.archive_metadata
 			WHERE key IN (SELECT ? || CAST(source_id AS TEXT) FROM selected_message_sources)
 			ON CONFLICT (key) DO UPDATE SET value = excluded.value`, beeperReanchorMarkerPrefix); err != nil {
@@ -433,13 +435,14 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		}
 	}
 
-	if err := tx.QueryRow(
+	if err := tx.QueryRowContext(
+		ctx,
 		"SELECT COUNT(*) FROM selected_messages",
 	).Scan(&result.Messages); err != nil {
 		return nil, fmt.Errorf("count selected messages: %w", err)
 	}
 
-	res, err = copyByName(tx, "conversations", `id IN (
+	res, err = copyByName(ctx, tx, "conversations", `id IN (
 			SELECT DISTINCT conversation_id FROM src.messages
 			WHERE id IN (SELECT id FROM selected_messages)
 		)`)
@@ -450,15 +453,15 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		return nil, fmt.Errorf("conversations rows affected: %w", err)
 	}
 
-	if exists, err := sourceTableExists(tx, "conversation_policy"); err != nil {
+	if exists, err := sourceTableExists(ctx, tx, "conversation_policy"); err != nil {
 		return nil, fmt.Errorf("check conversation policy schema: %w", err)
 	} else if exists {
-		if _, err := copyByName(tx, "conversation_policy", `conversation_id IN (SELECT id FROM conversations)`); err != nil {
+		if _, err := copyByName(ctx, tx, "conversation_policy", `conversation_id IN (SELECT id FROM conversations)`); err != nil {
 			return nil, fmt.Errorf("copy conversation policy: %w", err)
 		}
 	}
 
-	res, err = copyByName(tx, "participants", `id IN (
+	res, err = copyByName(ctx, tx, "participants", `id IN (
 			SELECT sender_id FROM src.messages
 			WHERE id IN (SELECT id FROM selected_messages)
 			UNION
@@ -496,11 +499,11 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 					WHERE value.value_record_type = 'person'
 					  AND ?`
 		args := []any{options.IncludeAttributes}
-		hasEmployments, err := sourceTableExists(tx, "employments")
+		hasEmployments, err := sourceTableExists(ctx, tx, "employments")
 		if err != nil {
 			return nil, fmt.Errorf("check employment schema: %w", err)
 		}
-		hasOrganizationValues, err := sourceTableExists(tx, "organization_attribute_values")
+		hasOrganizationValues, err := sourceTableExists(ctx, tx, "organization_attribute_values")
 		if err != nil {
 			return nil, fmt.Errorf("check organization attribute schema: %w", err)
 		}
@@ -519,7 +522,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 					  AND ?`
 			args = append(args, options.IncludeAttributes && options.IncludeProfiles)
 		}
-		res, err = copyByName(tx, "participants", `id IN (
+		res, err = copyByName(ctx, tx, "participants", `id IN (
 				WITH RECURSIVE symmetric_edge(a, b) AS (
 					SELECT participant_a, participant_b FROM src.participant_links
 					UNION ALL
@@ -556,7 +559,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		result.Participants += identityMates
 	}
 
-	if err := copyParticipantLinks(tx, options.IncludeProfiles); err != nil {
+	if err := copyParticipantLinks(ctx, tx, options.IncludeProfiles); err != nil {
 		return nil, fmt.Errorf("copy participant_links: %w", err)
 	}
 
@@ -565,7 +568,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	// original revision would misrepresent the curated profile. With
 	// includeIdentity, the closure above already pulled every bound
 	// participant in, so no touched person is skipped.
-	if _, err := tx.Exec(`
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO persons
 			(id, vcard_uid, display_name, revision, created_at, updated_at)
 		SELECT p.id, p.vcard_uid, p.display_name, p.revision, p.created_at, p.updated_at
@@ -583,7 +586,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		return nil, fmt.Errorf("copy persons: %w", err)
 	}
 
-	if _, err := tx.Exec(`
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO person_participants (person_id, participant_id)
 		SELECT person_id, participant_id
 		FROM src.person_participants
@@ -591,35 +594,36 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		  AND participant_id IN (SELECT id FROM participants)`); err != nil {
 		return nil, fmt.Errorf("copy person_participants: %w", err)
 	}
-	if err := reconcileSubsetCommunicationServices(tx, options.IncludeProfiles); err != nil {
+	if err := reconcileSubsetCommunicationServices(ctx, tx, options.IncludeProfiles); err != nil {
 		return nil, err
 	}
 
 	if options.IncludeProfiles {
-		extraSources, err := copyStructuredProfiles(tx)
+		extraSources, err := copyStructuredProfiles(ctx, tx)
 		if err != nil {
 			return nil, err
 		}
 		result.Sources += extraSources
-		if _, err := copyByName(tx, "person_tracking",
+		if _, err := copyByName(ctx, tx, "person_tracking",
 			`person_id IN (SELECT id FROM persons)`); err != nil {
 			return nil, fmt.Errorf("copy person tracking: %w", err)
 		}
 		if options.IncludeVCardResources {
-			if err := copyVCardResourceEnvelopes(tx); err != nil {
+			if err := copyVCardResourceEnvelopes(ctx, tx); err != nil {
 				return nil, err
 			}
 		}
-		if err := copySubsetRelationships(tx); err != nil {
+		if err := copySubsetRelationships(ctx, tx); err != nil {
 			return nil, err
 		}
-		if err := copyEmploymentData(tx, result); err != nil {
+		if err := copyEmploymentData(ctx, tx, result); err != nil {
 			return nil, err
 		}
 	}
 
 	if options.IncludeAttributes {
 		hasSensitive, err := sourceColumnExists(
+			ctx,
 			tx, "attribute_definitions", "is_sensitive")
 		if err != nil {
 			return nil, fmt.Errorf("inspect source attribute definitions: %w", err)
@@ -628,14 +632,14 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		if hasSensitive {
 			sensitiveExpression = "is_sensitive"
 		}
-		if _, err := tx.Exec(`CREATE TEMP TABLE provisional_attribute_definition_ids AS
+		if _, err := tx.ExecContext(ctx, `CREATE TEMP TABLE provisional_attribute_definition_ids AS
 			SELECT universal_id, id FROM attribute_definitions`); err != nil {
 			return nil, fmt.Errorf("remember provisional subset attribute definitions: %w", err)
 		}
 		// The destination is a brand-new archive and has no attribute values.
 		// Remove its provisional seeds so source slugs cross the archive boundary
 		// unchanged; post-copy InitSchema installs any missing seeds afterward.
-		if _, err := tx.Exec(`DELETE FROM attribute_definitions`); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM attribute_definitions`); err != nil {
 			return nil, fmt.Errorf("clear provisional subset attribute definitions: %w", err)
 		}
 		// Definitions remain portable by universal_id. When a shipped definition
@@ -643,7 +647,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		// merge snapshots and immutable results stay self-consistent. Custom or
 		// otherwise remapped definitions still receive destination-local IDs; a
 		// merge packet that embeds one is conservatively omitted below.
-		if _, err := tx.Exec(fmt.Sprintf(`
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO attribute_definitions (
 		    id, universal_id, object_type, slug, label, description,
 		    value_type, field_type, record_target, cardinality, display_order,
@@ -698,7 +702,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		// Preserve complete value history for copied people. Record references
 		// only survive when their target person crossed the selected identity
 		// boundary, preventing a subset from containing a dangling private ID.
-		if _, err := tx.Exec(`
+		if _, err := tx.ExecContext(ctx, `
 		INSERT INTO person_attribute_values (
 		    id, person_id, definition_id, ordinal,
 		    value_text, value_integer, value_real, value_boolean,
@@ -735,12 +739,12 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		// record-reference boundary. The organizations themselves only cross the
 		// subset boundary through employment references (IncludeProfiles), so
 		// without that opt-in this copy is vacuous.
-		hasOrganizationValues, err := sourceTableExists(tx, "organization_attribute_values")
+		hasOrganizationValues, err := sourceTableExists(ctx, tx, "organization_attribute_values")
 		if err != nil {
 			return nil, fmt.Errorf("check organization attribute schema: %w", err)
 		}
 		if hasOrganizationValues {
-			if _, err := tx.Exec(`
+			if _, err := tx.ExecContext(ctx, `
 			INSERT INTO organization_attribute_values (
 			    id, organization_id, definition_id, ordinal,
 			    value_text, value_integer, value_real, value_boolean,
@@ -775,11 +779,11 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		}
 	}
 	if options.IncludeAttributes || options.IncludeProfiles {
-		if err := copySubsetInferenceRevisions(tx); err != nil {
+		if err := copySubsetInferenceRevisions(ctx, tx); err != nil {
 			return nil, err
 		}
 	}
-	if err := copyPersonMergePackets(tx, options, result); err != nil {
+	if err := copyPersonMergePackets(ctx, tx, options, result); err != nil {
 		return nil, err
 	}
 	// Every table a native vCard mapping can own a row in — profile
@@ -787,17 +791,17 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	// copied or deliberately skipped by now, so this is the first point at
 	// which a mapping's owner being absent means the subset left it behind.
 	if options.IncludeProfiles && options.IncludeVCardResources {
-		if err := releaseVCardMappingsToMissingOwners(tx); err != nil {
+		if err := releaseVCardMappingsToMissingOwners(ctx, tx); err != nil {
 			return nil, err
 		}
 	}
 
-	if err := copyByNameWithCommunicationServiceMap(tx, "participant_identifiers",
+	if err := copyByNameWithCommunicationServiceMap(ctx, tx, "participant_identifiers",
 		`participant_id IN (SELECT id FROM participants)`); err != nil {
 		return nil, fmt.Errorf("copy participant_identifiers: %w", err)
 	}
 
-	if _, err := tx.Exec(`
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO conversation_participants
 		SELECT * FROM src.conversation_participants
 		WHERE conversation_id IN (SELECT id FROM conversations)
@@ -805,20 +809,21 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		return nil, fmt.Errorf("copy conversation_participants: %w", err)
 	}
 
-	if err := copyMessages(tx); err != nil {
+	if err := copyMessages(ctx, tx); err != nil {
 		return nil, err
 	}
 	// Merge-protection markers are portable owning-row state. Copy them from
 	// the selected messages directly so they remain useful even when a subset
 	// omits the detailed merge provenance that originally justified them.
 	hasArchiveOnlyMarkers, err := sourceTableExists(
+		ctx,
 		tx, "source_merge_archive_only_messages",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("inspect source archive-only markers: %w", err)
 	}
 	if hasArchiveOnlyMarkers {
-		if _, err := copyByName(tx, "source_merge_archive_only_messages",
+		if _, err := copyByName(ctx, tx, "source_merge_archive_only_messages",
 			`message_id IN (SELECT id FROM selected_messages)`); err != nil {
 			return nil, fmt.Errorf("copy source archive-only markers: %w", err)
 		}
@@ -864,7 +869,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	// non-NULL and in the single textual shape the lexical cursor can order —
 	// which a copy-time stamp and a copied source value both satisfy.
 	// TestCopySubset_BodyTriggersRestampWatermarks pins the behaviour.
-	if _, err := tx.Exec(fmt.Sprintf(
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(
 		`UPDATE messages SET content_changed_at = %s WHERE content_changed_at IS NULL`,
 		(&SQLiteDialect{}).ContentChangedNow())); err != nil {
 		return nil, fmt.Errorf("stamp missing content_changed_at watermarks: %w", err)
@@ -872,7 +877,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 
 	// Null out reply_to_message_id when the parent message wasn't
 	// selected, to avoid FK violations from dangling references.
-	if _, err := tx.Exec(`
+	if _, err := tx.ExecContext(ctx, `
 		UPDATE messages SET reply_to_message_id = NULL
 		WHERE reply_to_message_id IS NOT NULL
 		  AND reply_to_message_id NOT IN (
@@ -881,19 +886,29 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		return nil, fmt.Errorf("clear orphan reply refs: %w", err)
 	}
 
-	if _, err := tx.Exec(`
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO message_bodies SELECT * FROM src.message_bodies
 		WHERE message_id IN (SELECT id FROM selected_messages)`); err != nil {
 		return nil, fmt.Errorf("copy message_bodies: %w", err)
 	}
 
-	if _, err := tx.Exec(`
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO message_raw SELECT * FROM src.message_raw
 		WHERE message_id IN (SELECT id FROM selected_messages)`); err != nil {
 		return nil, fmt.Errorf("copy message_raw: %w", err)
 	}
 
-	if _, err := copyByName(tx, "message_recipients",
+	present, err := sourceTableExists(ctx, tx, "email_link_keys")
+	if err != nil {
+		return nil, fmt.Errorf("check email_link_keys: %w", err)
+	}
+	if present {
+		if _, err := copyByName(ctx, tx, "email_link_keys", `message_id IN (SELECT id FROM selected_messages)`); err != nil {
+			return nil, fmt.Errorf("copy email_link_keys: %w", err)
+		}
+	}
+
+	if _, err := copyByName(ctx, tx, "message_recipients",
 		`message_id IN (SELECT id FROM selected_messages)`); err != nil {
 		return nil, fmt.Errorf("copy message_recipients: %w", err)
 	}
@@ -901,28 +916,28 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	// Derived account attribution copies with its delivery evidence and the
 	// confirmed identities its derivation reads, so a copied row stays
 	// consistent with the rows its next refresh reads.
-	hasDeliveryAddresses, err := sourceTableExists(tx, "message_delivery_addresses")
+	hasDeliveryAddresses, err := sourceTableExists(ctx, tx, "message_delivery_addresses")
 	if err != nil {
 		return nil, err
 	}
 	if hasDeliveryAddresses {
-		if _, err := copyByName(tx, "message_delivery_addresses",
+		if _, err := copyByName(ctx, tx, "message_delivery_addresses",
 			`message_id IN (SELECT id FROM selected_messages)`); err != nil {
 			return nil, fmt.Errorf("copy message_delivery_addresses: %w", err)
 		}
 	}
-	if err := copySubsetAccountIdentities(tx, options.IncludeIdentity, hasDeliveryAddresses); err != nil {
+	if err := copySubsetAccountIdentities(ctx, tx, options.IncludeIdentity, hasDeliveryAddresses); err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec(`
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO reactions SELECT * FROM src.reactions
 		WHERE message_id IN (SELECT id FROM selected_messages)`); err != nil {
 		return nil, fmt.Errorf("copy reactions: %w", err)
 	}
-	if present, err := sourceTableExists(tx, "reaction_source_events"); err != nil {
+	if present, err := sourceTableExists(ctx, tx, "reaction_source_events"); err != nil {
 		return nil, fmt.Errorf("check reaction_source_events: %w", err)
 	} else if present {
-		if _, err := copyByName(tx, "reaction_source_events",
+		if _, err := copyByName(ctx, tx, "reaction_source_events",
 			`reaction_id IN (SELECT id FROM reactions)`); err != nil {
 			return nil, fmt.Errorf("copy reaction_source_events: %w", err)
 		}
@@ -933,27 +948,28 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		{"matrix_pending_edits", `target_message_id IN (SELECT id FROM selected_messages)`},
 		{"matrix_megolm_claims", `conversation_id IN (SELECT id FROM conversations)`},
 	} {
-		if present, err := sourceTableExists(tx, matrix.table); err != nil {
+		if present, err := sourceTableExists(ctx, tx, matrix.table); err != nil {
 			return nil, fmt.Errorf("check %s: %w", matrix.table, err)
 		} else if present {
-			if _, err := copyByName(tx, matrix.table, matrix.where); err != nil {
+			if _, err := copyByName(ctx, tx, matrix.table, matrix.where); err != nil {
 				return nil, fmt.Errorf("copy %s: %w", matrix.table, err)
 			}
 		}
 	}
 
-	if _, err := copyByName(tx, "attachments",
+	if _, err := copyByName(ctx, tx, "attachments",
 		`message_id IN (SELECT id FROM selected_messages)`); err != nil {
 		return nil, fmt.Errorf("copy attachments: %w", err)
 	}
 	hasPreservedAttachmentMarkers, err := sourceTableExists(
+		ctx,
 		tx, "source_merge_preserved_attachments",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("inspect source preserved-attachment markers: %w", err)
 	}
 	if hasPreservedAttachmentMarkers {
-		if _, err := copyByName(tx, "source_merge_preserved_attachments",
+		if _, err := copyByName(ctx, tx, "source_merge_preserved_attachments",
 			`attachment_id IN (
 				SELECT id FROM src.attachments
 				WHERE message_id IN (SELECT id FROM selected_messages)
@@ -961,11 +977,11 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 			return nil, fmt.Errorf("copy source preserved-attachment markers: %w", err)
 		}
 	}
-	if err := copySourceMergeLifecycle(tx); err != nil {
+	if err := copySourceMergeLifecycle(ctx, tx); err != nil {
 		return nil, err
 	}
 
-	res, err = copyByName(tx, "labels", `source_id IN (SELECT source_id FROM selected_message_sources)
+	res, err = copyByName(ctx, tx, "labels", `source_id IN (SELECT source_id FROM selected_message_sources)
 		   OR id IN (
 			SELECT label_id FROM src.message_labels
 			WHERE message_id IN (SELECT id FROM selected_messages)
@@ -976,55 +992,57 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	if result.Labels, err = res.RowsAffected(); err != nil {
 		return nil, fmt.Errorf("labels rows affected: %w", err)
 	}
-	if present, err := sourceTableExists(tx, "source_merge_preserved_labels"); err != nil {
+	if present, err := sourceTableExists(ctx, tx, "source_merge_preserved_labels"); err != nil {
 		return nil, fmt.Errorf("inspect archived label markers: %w", err)
 	} else if present {
-		if _, err := copyByName(tx, "source_merge_preserved_labels",
+		if _, err := copyByName(ctx, tx, "source_merge_preserved_labels",
 			`label_id IN (SELECT id FROM labels)`); err != nil {
 			return nil, fmt.Errorf("copy archived label markers: %w", err)
 		}
 	}
 
-	if _, err := tx.Exec(`
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO message_labels SELECT * FROM src.message_labels
 		WHERE message_id IN (SELECT id FROM selected_messages)
 		  AND label_id IN (SELECT id FROM labels)`); err != nil {
 		return nil, fmt.Errorf("copy message_labels: %w", err)
 	}
-	if present, err := sourceTableExists(tx, "imap_message_memberships"); err != nil {
+	if present, err := sourceTableExists(ctx, tx, "imap_message_memberships"); err != nil {
 		return nil, fmt.Errorf("inspect IMAP memberships: %w", err)
 	} else if present {
-		if _, err := copyByName(tx, "imap_message_memberships",
+		if _, err := copyByName(ctx, tx, "imap_message_memberships",
 			`message_id IN (SELECT id FROM selected_messages) AND source_id IN (SELECT id FROM sources)`); err != nil {
 			return nil, fmt.Errorf("copy IMAP memberships: %w", err)
 		}
 	}
 
-	preservedLabels, err := preserveSubsetDraftEvidence(tx)
+	preservedLabels, err := preserveSubsetDraftEvidence(ctx, tx)
 	if err != nil {
 		return nil, fmt.Errorf("preserve subset draft evidence: %w", err)
 	}
 	result.Labels += preservedLabels
-	if present, err := sourceTableExists(tx, "loop_decisions"); err != nil {
+	if present, err := sourceTableExists(ctx, tx, "loop_decisions"); err != nil {
 		return nil, err
 	} else if present {
-		if _, err := copyByName(tx, "loop_decisions", `message_id IN (SELECT id FROM selected_messages)`); err != nil {
+		if _, err := copyByName(ctx, tx, "loop_decisions", `message_id IN (SELECT id FROM selected_messages)`); err != nil {
 			return nil, fmt.Errorf("copy loop decisions: %w", err)
 		}
 	}
 
 	// A Matrix cursor can carry pending relation events from rooms outside
 	// the subset, so exports start Matrix sync over.
-	if _, err := tx.Exec(`UPDATE sources SET sync_cursor = NULL WHERE source_type = 'matrix'`); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE sources SET sync_cursor = NULL WHERE source_type = 'matrix'`); err != nil {
 		return nil, fmt.Errorf("clear Matrix subset cursors: %w", err)
 	}
 
-	if _, err := tx.Exec(
+	if _, err := tx.ExecContext(
+		ctx,
 		"DROP TABLE IF EXISTS selected_messages",
 	); err != nil {
 		return nil, fmt.Errorf("drop temp table: %w", err)
 	}
-	if _, err := tx.Exec(
+	if _, err := tx.ExecContext(
+		ctx,
 		"DROP TABLE IF EXISTS selected_message_sources",
 	); err != nil {
 		return nil, fmt.Errorf("drop source temp table: %w", err)
@@ -1040,22 +1058,23 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 // incomplete packet is less useful than no packet because it falsely promises
 // that the historical merge can still be reversed.
 func copyPersonMergePackets(
+	ctx context.Context,
 	tx *sql.Tx, options CopySubsetOptions, result *CopyResult,
 ) error {
-	hasMerges, err := sourceTableExists(tx, "person_merges")
+	hasMerges, err := sourceTableExists(ctx, tx, "person_merges")
 	if err != nil {
 		return fmt.Errorf("check person merge schema: %w", err)
 	}
 	if !hasMerges {
 		return nil
 	}
-	if _, err := tx.Exec(`CREATE TEMP TABLE selected_person_merges (
+	if _, err := tx.ExecContext(ctx, `CREATE TEMP TABLE selected_person_merges (
 		id INTEGER PRIMARY KEY
 	)`); err != nil {
 		return fmt.Errorf("create selected person merges: %w", err)
 	}
 	if options.IncludeProfiles && options.IncludeVCardResources {
-		if err := tx.QueryRow(`SELECT COUNT(*) FROM src.person_merges merge_record
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM src.person_merges merge_record
 			WHERE merge_record.current_person_id IN (SELECT id FROM persons)
 			   OR EXISTS (SELECT 1 FROM src.person_splits split_record
 				WHERE split_record.merge_id = merge_record.id
@@ -1070,7 +1089,7 @@ func copyPersonMergePackets(
 		}
 	}
 	if options.IncludeProfiles && options.IncludeAttributes && options.IncludeVCardResources {
-		if _, err := tx.Exec(`INSERT INTO selected_person_merges (id)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO selected_person_merges (id)
 			SELECT merge_record.id FROM src.person_merges merge_record
 			WHERE (
 				merge_record.current_person_id IN (SELECT id FROM persons)
@@ -1143,12 +1162,12 @@ func copyPersonMergePackets(
 		}
 	}
 	if options.IncludeProfiles && options.IncludeVCardResources {
-		if err := pruneIncompletePersonMergePacketsAndAliases(tx); err != nil {
+		if err := pruneIncompletePersonMergePacketsAndAliases(ctx, tx); err != nil {
 			return err
 		}
 	}
 	var selectedPackets int64
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM selected_person_merges`).Scan(&selectedPackets); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM selected_person_merges`).Scan(&selectedPackets); err != nil {
 		return fmt.Errorf("count copied person merge packets: %w", err)
 	}
 	result.OmittedPersonMergePackets = result.PersonMergePackets - selectedPackets
@@ -1158,7 +1177,7 @@ func copyPersonMergePackets(
 	// packet crosses the subset boundary, so replayed results never claim a
 	// revision ahead of the destination's cache authority. Keep the larger
 	// value if a future caller ever copies into a pre-populated destination.
-	if _, err := tx.Exec(`INSERT INTO archive_metadata (key, value)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO archive_metadata (key, value)
 		SELECT 'identity_revision', source_revision.value
 		FROM src.archive_metadata source_revision
 		WHERE source_revision.key = 'identity_revision'
@@ -1168,27 +1187,27 @@ func copyPersonMergePackets(
 			THEN excluded.value ELSE archive_metadata.value END`); err != nil {
 		return fmt.Errorf("preserve person merge identity revision: %w", err)
 	}
-	if _, err := copyByName(tx, "person_merges",
+	if _, err := copyByName(ctx, tx, "person_merges",
 		`id IN (SELECT id FROM selected_person_merges)`); err != nil {
 		return fmt.Errorf("copy person merges: %w", err)
 	}
-	if _, err := copyByName(tx, "person_splits",
+	if _, err := copyByName(ctx, tx, "person_splits",
 		`merge_id IN (SELECT id FROM selected_person_merges)`); err != nil {
 		return fmt.Errorf("copy person splits: %w", err)
 	}
-	if _, err := copyByName(tx, "person_merge_participants",
+	if _, err := copyByName(ctx, tx, "person_merge_participants",
 		`merge_id IN (SELECT id FROM selected_person_merges)`); err != nil {
 		return fmt.Errorf("copy person merge participants: %w", err)
 	}
-	if _, err := copyByName(tx, "person_merge_rows",
+	if _, err := copyByName(ctx, tx, "person_merge_rows",
 		`merge_id IN (SELECT id FROM selected_person_merges)`); err != nil {
 		return fmt.Errorf("copy person merge rows: %w", err)
 	}
-	if _, err := copyByName(tx, "person_merge_row_person_refs",
+	if _, err := copyByName(ctx, tx, "person_merge_row_person_refs",
 		`merge_id IN (SELECT id FROM selected_person_merges)`); err != nil {
 		return fmt.Errorf("copy person merge row person references: %w", err)
 	}
-	if _, err := tx.Exec(`INSERT INTO person_merge_review_candidates (
+	if _, err := tx.ExecContext(ctx, `INSERT INTO person_merge_review_candidates (
 		id, merge_id, survivor_person_id, definition_id,
 		survivor_value_id, absorbed_value_id, state, resolution_value_id,
 		reviewed_by, reviewed_at, created_at
@@ -1206,16 +1225,16 @@ func copyPersonMergePackets(
 		return fmt.Errorf("copy person merge review candidates: %w", err)
 	}
 	if selectedPackets > 0 {
-		if err := reservePersonMergePacketIDs(tx); err != nil {
+		if err := reservePersonMergePacketIDs(ctx, tx); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func reservePersonMergePacketIDs(tx *sql.Tx) error {
+func reservePersonMergePacketIDs(ctx context.Context, tx *sql.Tx) error {
 	autoincrementTables := map[string]struct{}{}
-	tableRows, err := tx.Query(`SELECT name FROM sqlite_master
+	tableRows, err := tx.QueryContext(ctx, `SELECT name FROM sqlite_master
 		WHERE type = 'table' AND instr(upper(sql), 'AUTOINCREMENT') > 0
 		ORDER BY name`)
 	if err != nil {
@@ -1238,7 +1257,7 @@ func reservePersonMergePacketIDs(tx *sql.Tx) error {
 
 	ceilings := map[string]int64{}
 	var historicalPersonID int64
-	if err := tx.QueryRow(`SELECT MAX(person_id) FROM (
+	if err := tx.QueryRowContext(ctx, `SELECT MAX(person_id) FROM (
 		SELECT survivor_person_id_at_merge AS person_id FROM person_merges
 		UNION ALL SELECT absorbed_person_id FROM person_merges
 		UNION ALL SELECT source_person_id FROM person_splits
@@ -1248,7 +1267,7 @@ func reservePersonMergePacketIDs(tx *sql.Tx) error {
 	}
 	ceilings["persons"] = historicalPersonID
 
-	snapshotRows, err := tx.Query(`SELECT snapshot_blob, snapshot_sha256
+	snapshotRows, err := tx.QueryContext(ctx, `SELECT snapshot_blob, snapshot_sha256
 		FROM person_merges ORDER BY id`)
 	if err != nil {
 		return fmt.Errorf("load copied person merge snapshots: %w", err)
@@ -1288,19 +1307,19 @@ func reservePersonMergePacketIDs(tx *sql.Tx) error {
 	}
 	sort.Strings(tables)
 	for _, table := range tables {
-		if err := advanceSubsetSQLiteSequence(tx, table, ceilings[table]); err != nil {
+		if err := advanceSubsetSQLiteSequence(ctx, tx, table, ceilings[table]); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func advanceSubsetSQLiteSequence(tx *sql.Tx, table string, ceiling int64) error {
-	if _, err := tx.Exec(`UPDATE sqlite_sequence SET seq = CASE
+func advanceSubsetSQLiteSequence(ctx context.Context, tx *sql.Tx, table string, ceiling int64) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE sqlite_sequence SET seq = CASE
 		WHEN seq < ? THEN ? ELSE seq END WHERE name = ?`, ceiling, ceiling, table); err != nil {
 		return fmt.Errorf("advance subset %s sequence: %w", table, err)
 	}
-	if _, err := tx.Exec(`INSERT INTO sqlite_sequence (name, seq)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO sqlite_sequence (name, seq)
 		SELECT ?, ? WHERE NOT EXISTS (
 			SELECT 1 FROM sqlite_sequence WHERE name = ?
 		)`, table, ceiling, table); err != nil {
@@ -1309,18 +1328,18 @@ func advanceSubsetSQLiteSequence(tx *sql.Tx, table string, ceiling int64) error 
 	return nil
 }
 
-func pruneIncompletePersonMergePacketsAndAliases(tx *sql.Tx) error {
+func pruneIncompletePersonMergePacketsAndAliases(ctx context.Context, tx *sql.Tx) error {
 	for {
 		var selectedBefore int64
-		if err := tx.QueryRow(`SELECT COUNT(*) FROM selected_person_merges`).Scan(
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM selected_person_merges`).Scan(
 			&selectedBefore,
 		); err != nil {
 			return fmt.Errorf("count selected person merge packets: %w", err)
 		}
-		if err := pruneIncompletePersonMergePackets(tx); err != nil {
+		if err := pruneIncompletePersonMergePackets(ctx, tx); err != nil {
 			return err
 		}
-		aliasResult, err := tx.Exec(`DELETE FROM person_uid_aliases
+		aliasResult, err := tx.ExecContext(ctx, `DELETE FROM person_uid_aliases
 			WHERE retired_uid IN (
 				SELECT omitted.absorbed_uid FROM src.person_merges omitted
 				WHERE omitted.id NOT IN (SELECT id FROM selected_person_merges)
@@ -1337,7 +1356,7 @@ func pruneIncompletePersonMergePacketsAndAliases(tx *sql.Tx) error {
 			return fmt.Errorf("count removed incomplete person merge aliases: %w", err)
 		}
 		var selectedAfter int64
-		if err := tx.QueryRow(`SELECT COUNT(*) FROM selected_person_merges`).Scan(
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM selected_person_merges`).Scan(
 			&selectedAfter,
 		); err != nil {
 			return fmt.Errorf("recount selected person merge packets: %w", err)
@@ -1348,8 +1367,8 @@ func pruneIncompletePersonMergePacketsAndAliases(tx *sql.Tx) error {
 	}
 }
 
-func pruneIncompletePersonMergePackets(tx *sql.Tx) error {
-	mergeRows, err := tx.Query(`SELECT id FROM selected_person_merges ORDER BY id`)
+func pruneIncompletePersonMergePackets(ctx context.Context, tx *sql.Tx) error {
+	mergeRows, err := tx.QueryContext(ctx, `SELECT id FROM selected_person_merges ORDER BY id`)
 	if err != nil {
 		return fmt.Errorf("load selected person merge packets: %w", err)
 	}
@@ -1372,23 +1391,23 @@ func pruneIncompletePersonMergePackets(tx *sql.Tx) error {
 	}
 
 	for _, mergeID := range mergeIDs {
-		complete, err := personMergePacketRowsComplete(tx, mergeID)
+		complete, err := personMergePacketRowsComplete(ctx, tx, mergeID)
 		if err != nil {
 			return err
 		}
 		if complete {
 			continue
 		}
-		if _, err := tx.Exec(`DELETE FROM selected_person_merges WHERE id = ?`, mergeID); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM selected_person_merges WHERE id = ?`, mergeID); err != nil {
 			return fmt.Errorf("omit incomplete person merge packet: %w", err)
 		}
 	}
 	return nil
 }
 
-func personMergePacketRowsComplete(tx *sql.Tx, mergeID int64) (bool, error) {
+func personMergePacketRowsComplete(ctx context.Context, tx *sql.Tx, mergeID int64) (bool, error) {
 	var omittedSplitOwner int
-	if err := tx.QueryRow(`SELECT EXISTS (
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
 		SELECT 1 FROM src.person_merge_participants lineage
 		JOIN src.person_splits split_record ON split_record.id = lineage.split_id
 		WHERE lineage.merge_id = ?
@@ -1401,7 +1420,7 @@ func personMergePacketRowsComplete(tx *sql.Tx, mergeID int64) (bool, error) {
 	}
 	var snapshotBlob []byte
 	var snapshotSHA256 string
-	if err := tx.QueryRow(`SELECT snapshot_blob, snapshot_sha256
+	if err := tx.QueryRowContext(ctx, `SELECT snapshot_blob, snapshot_sha256
 		FROM src.person_merges WHERE id = ?`, mergeID).Scan(
 		&snapshotBlob, &snapshotSHA256,
 	); err != nil {
@@ -1411,7 +1430,7 @@ func personMergePacketRowsComplete(tx *sql.Tx, mergeID int64) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("verify person merge packet %d snapshot: %w", mergeID, err)
 	}
-	rows, err := tx.Query(`SELECT table_name, current_row_id, current_row_key,
+	rows, err := tx.QueryContext(ctx, `SELECT table_name, current_row_id, current_row_key,
 		action, provenance_kind, split_id, snapshot_path
 		FROM src.person_merge_rows WHERE merge_id = ?
 		ORDER BY table_name, original_row_key`, mergeID)
@@ -1438,7 +1457,7 @@ func personMergePacketRowsComplete(tx *sql.Tx, mergeID int64) (bool, error) {
 	if err := rows.Close(); err != nil {
 		return false, fmt.Errorf("close person merge packet rows: %w", err)
 	}
-	complete, err := personMergeSnapshotRowsComplete(tx, snapshot, packetRows)
+	complete, err := personMergeSnapshotRowsComplete(ctx, tx, snapshot, packetRows)
 	if err != nil || !complete {
 		return complete, err
 	}
@@ -1451,7 +1470,7 @@ func personMergePacketRowsComplete(tx *sql.Tx, mergeID int64) (bool, error) {
 				return false, nil
 			}
 			var exists int
-			err := tx.QueryRow(`SELECT 1 FROM selected_person_merges WHERE id = ?`,
+			err := tx.QueryRowContext(ctx, `SELECT 1 FROM selected_person_merges WHERE id = ?`,
 				row.currentID.Int64).Scan(&exists)
 			if errors.Is(err, sql.ErrNoRows) {
 				return false, nil
@@ -1466,7 +1485,7 @@ func personMergePacketRowsComplete(tx *sql.Tx, mergeID int64) (bool, error) {
 				return false, nil
 			}
 			var exists int
-			err := tx.QueryRow(`SELECT 1 FROM src.person_merge_review_candidates candidate
+			err := tx.QueryRowContext(ctx, `SELECT 1 FROM src.person_merge_review_candidates candidate
 				WHERE candidate.id = ? AND candidate.merge_id IN (
 					SELECT id FROM selected_person_merges
 				)`, row.currentID.Int64).Scan(&exists)
@@ -1480,7 +1499,7 @@ func personMergePacketRowsComplete(tx *sql.Tx, mergeID int64) (bool, error) {
 		}
 		if row.table == personRelationshipReviewsTableName && row.currentID.Valid {
 			var dependenciesComplete int
-			err := tx.QueryRow(`SELECT 1 FROM src.person_relationship_reviews review
+			err := tx.QueryRowContext(ctx, `SELECT 1 FROM src.person_relationship_reviews review
 				WHERE review.id = ?
 				  AND (
 					review.matched_person_id IS NULL
@@ -1513,7 +1532,7 @@ func personMergePacketRowsComplete(tx *sql.Tx, mergeID int64) (bool, error) {
 			return false, err
 		}
 		var exists int
-		err = tx.QueryRow(`SELECT 1 FROM `+personSplitIdentifier(row.table)+
+		err = tx.QueryRowContext(ctx, `SELECT 1 FROM `+personSplitIdentifier(row.table)+
 			` WHERE `+where+` LIMIT 1`, args...).Scan(&exists)
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
@@ -1537,13 +1556,14 @@ type personMergePacketRow struct {
 // sufficient: unchanged survivor-side rows are deliberately pruned from the
 // journal, but remain in snapshot_blob with their full historical contents.
 func personMergeSnapshotRowsComplete(
+	ctx context.Context,
 	tx *sql.Tx, snapshot personMergeSnapshot, packetRows []personMergePacketRow,
 ) (bool, error) {
 	lineagePeople := make(map[int64]struct{}, len(snapshot.Persons))
 	for _, person := range snapshot.Persons {
 		lineagePeople[person.ID] = struct{}{}
 		for _, participantID := range person.ParticipantIDs {
-			present, err := subsetRowIDExists(tx, "participants", participantID)
+			present, err := subsetRowIDExists(ctx, tx, "participants", participantID)
 			if err != nil || !present {
 				return present, err
 			}
@@ -1560,11 +1580,11 @@ func personMergeSnapshotRowsComplete(
 			return false, nil
 		}
 		journal, hasJournal := journalByPath["rows/"+strconv.Itoa(index)]
-		present, err := personMergeSnapshotRowPresent(tx, row, journal, hasJournal)
+		present, err := personMergeSnapshotRowPresent(ctx, tx, row, journal, hasJournal)
 		if err != nil || !present {
 			return present, err
 		}
-		complete, err := personMergeSnapshotDependenciesComplete(tx, row, lineagePeople)
+		complete, err := personMergeSnapshotDependenciesComplete(ctx, tx, row, lineagePeople)
 		if err != nil || !complete {
 			return complete, err
 		}
@@ -1573,6 +1593,7 @@ func personMergeSnapshotRowsComplete(
 }
 
 func personMergeSnapshotRowPresent(
+	ctx context.Context,
 	tx *sql.Tx, row personMergeSnapshotRow, journal personMergePacketRow, hasJournal bool,
 ) (bool, error) {
 	if hasJournal && journal.action == "deleted_snapshot" {
@@ -1601,7 +1622,7 @@ func personMergeSnapshotRowPresent(
 				continue
 			}
 			var present int
-			err = tx.QueryRow(`SELECT 1 FROM selected_person_merges WHERE id = ?`, id).Scan(&present)
+			err = tx.QueryRowContext(ctx, `SELECT 1 FROM selected_person_merges WHERE id = ?`, id).Scan(&present)
 			if err == nil {
 				return true, nil
 			}
@@ -1617,7 +1638,7 @@ func personMergeSnapshotRowPresent(
 				continue
 			}
 			var present int
-			err = tx.QueryRow(`SELECT 1 FROM src.person_merge_review_candidates candidate
+			err = tx.QueryRowContext(ctx, `SELECT 1 FROM src.person_merge_review_candidates candidate
 				WHERE candidate.id = ?
 				  AND candidate.merge_id IN (SELECT id FROM selected_person_merges)`, id).Scan(&present)
 			if err == nil {
@@ -1636,7 +1657,7 @@ func personMergeSnapshotRowPresent(
 				return false, err
 			}
 			var present int
-			err = tx.QueryRow(`SELECT 1 FROM `+personSplitIdentifier(row.TableName)+
+			err = tx.QueryRowContext(ctx, `SELECT 1 FROM `+personSplitIdentifier(row.TableName)+
 				` WHERE `+where+` LIMIT 1`, args...).Scan(&present)
 			if err == nil {
 				return true, nil
@@ -1650,6 +1671,7 @@ func personMergeSnapshotRowPresent(
 }
 
 func personMergeSnapshotDependenciesComplete(
+	ctx context.Context,
 	tx *sql.Tx, row personMergeSnapshotRow, lineagePeople map[int64]struct{},
 ) (bool, error) {
 	spec, ok := personMergeTableRegistry[row.TableName]
@@ -1668,7 +1690,7 @@ func personMergeSnapshotDependenciesComplete(
 		if _, lineage := lineagePeople[personID]; lineage {
 			continue
 		}
-		included, err := subsetRowIDExists(tx, "persons", personID)
+		included, err := subsetRowIDExists(ctx, tx, "persons", personID)
 		if err != nil || !included {
 			return included, err
 		}
@@ -1692,7 +1714,7 @@ func personMergeSnapshotDependenciesComplete(
 		if !present {
 			continue
 		}
-		preserved, err := personMergeSnapshotCatalogIDPreserved(tx, catalog.table, sourceID)
+		preserved, err := personMergeSnapshotCatalogIDPreserved(ctx, tx, catalog.table, sourceID)
 		if err != nil || !preserved {
 			return preserved, err
 		}
@@ -1736,7 +1758,7 @@ func personMergeSnapshotDependenciesComplete(
 		if !present {
 			continue
 		}
-		included, err := subsetRowIDExists(tx, dependency.table, id)
+		included, err := subsetRowIDExists(ctx, tx, dependency.table, id)
 		if err != nil || !included {
 			return included, err
 		}
@@ -1762,7 +1784,7 @@ func personMergeSnapshotDependenciesComplete(
 					continue
 				}
 			}
-			included, err := subsetRowIDExists(tx, table, id)
+			included, err := subsetRowIDExists(ctx, tx, table, id)
 			if err != nil || !included {
 				return included, err
 			}
@@ -1774,7 +1796,7 @@ func personMergeSnapshotDependenciesComplete(
 		}
 		serviceID, present := personMergeSnapshotIntegerColumn(row, "service_id")
 		if present {
-			preserved, err := personMergeSnapshotServiceIDPreserved(tx, serviceID)
+			preserved, err := personMergeSnapshotServiceIDPreserved(ctx, tx, serviceID)
 			if err != nil || !preserved {
 				return preserved, err
 			}
@@ -1783,9 +1805,9 @@ func personMergeSnapshotDependenciesComplete(
 	return true, nil
 }
 
-func personMergeSnapshotServiceIDPreserved(tx *sql.Tx, sourceID int64) (bool, error) {
+func personMergeSnapshotServiceIDPreserved(ctx context.Context, tx *sql.Tx, sourceID int64) (bool, error) {
 	var destinationID int64
-	err := tx.QueryRow(`SELECT destination_id FROM selected_profile_service_map
+	err := tx.QueryRowContext(ctx, `SELECT destination_id FROM selected_profile_service_map
 		WHERE source_id = ?`, sourceID).Scan(&destinationID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
@@ -1800,11 +1822,12 @@ func personMergeSnapshotServiceIDPreserved(tx *sql.Tx, sourceID int64) (bool, er
 }
 
 func personMergeSnapshotCatalogIDPreserved(
+	ctx context.Context,
 	tx *sql.Tx, table string, sourceID int64,
 ) (bool, error) {
 	identifier := personSplitIdentifier(table)
 	var destinationID int64
-	err := tx.QueryRow(`SELECT destination.id
+	err := tx.QueryRowContext(ctx, `SELECT destination.id
 		FROM src.`+identifier+` source
 		JOIN `+identifier+` destination
 		  ON destination.universal_id = source.universal_id
@@ -1838,9 +1861,9 @@ func personMergeSnapshotSingleIntegerKey(encoded, name string) (int64, bool, err
 	return *key[0].Value.Integer, true, nil
 }
 
-func subsetRowIDExists(tx *sql.Tx, table string, id int64) (bool, error) {
+func subsetRowIDExists(ctx context.Context, tx *sql.Tx, table string, id int64) (bool, error) {
 	var present int
-	err := tx.QueryRow(`SELECT 1 FROM `+personSplitIdentifier(table)+` WHERE id = ? LIMIT 1`, id).Scan(&present)
+	err := tx.QueryRowContext(ctx, `SELECT 1 FROM `+personSplitIdentifier(table)+` WHERE id = ? LIMIT 1`, id).Scan(&present)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -1860,8 +1883,9 @@ type subsetServiceReference struct {
 // fresh schema declares it before created_at; a positional copy would swap
 // those values. Ownership is profile metadata, so omit it when profiles are
 // not requested even if the source has the column.
-func copyParticipantLinks(tx *sql.Tx, includeProfiles bool) error {
+func copyParticipantLinks(ctx context.Context, tx *sql.Tx, includeProfiles bool) error {
 	hasCandidateOwner, err := sourceColumnExists(
+		ctx,
 		tx, "participant_links", "identity_match_candidate_id",
 	)
 	if err != nil {
@@ -1871,7 +1895,7 @@ func copyParticipantLinks(tx *sql.Tx, includeProfiles bool) error {
 	if includeProfiles && hasCandidateOwner {
 		ownerExpression = "source_row.identity_match_candidate_id"
 	}
-	_, err = tx.Exec(fmt.Sprintf(`
+	_, err = tx.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO participant_links (
 			participant_a, participant_b, identity_match_candidate_id, created_at
 		)
@@ -1913,13 +1937,13 @@ const subsetSourceIdentityMatchCandidateWhere = `(
 // row that will cross the subset boundary. Service IDs are database-local, so
 // the destination resolves them through the immutable slug and records an
 // explicit source-to-destination map for the dependent row copies.
-func reconcileSubsetCommunicationServices(tx *sql.Tx, includeProfiles bool) error {
-	if _, err := tx.Exec(`CREATE TEMP TABLE selected_profile_services (
+func reconcileSubsetCommunicationServices(ctx context.Context, tx *sql.Tx, includeProfiles bool) error {
+	if _, err := tx.ExecContext(ctx, `CREATE TEMP TABLE selected_profile_services (
 		source_id INTEGER PRIMARY KEY
 	)`); err != nil {
 		return fmt.Errorf("create selected profile services: %w", err)
 	}
-	if _, err := tx.Exec(`CREATE TEMP TABLE selected_profile_service_map (
+	if _, err := tx.ExecContext(ctx, `CREATE TEMP TABLE selected_profile_service_map (
 		source_id INTEGER PRIMARY KEY,
 		destination_id INTEGER NOT NULL
 	)`); err != nil {
@@ -1944,7 +1968,7 @@ func reconcileSubsetCommunicationServices(tx *sql.Tx, includeProfiles bool) erro
 				where: subsetSourceIdentityMatchCandidateWhere,
 			},
 		)
-		hasEmployments, err := sourceTableExists(tx, "employments")
+		hasEmployments, err := sourceTableExists(ctx, tx, "employments")
 		if err != nil {
 			return fmt.Errorf("check employment schema: %w", err)
 		}
@@ -1959,27 +1983,27 @@ func reconcileSubsetCommunicationServices(tx *sql.Tx, includeProfiles bool) erro
 		}
 	}
 	for _, reference := range references {
-		hasServiceID, err := sourceColumnExists(tx, reference.table, "service_id")
+		hasServiceID, err := sourceColumnExists(ctx, tx, reference.table, "service_id")
 		if err != nil {
 			return fmt.Errorf("check %s service column: %w", reference.table, err)
 		}
 		if !hasServiceID {
 			continue
 		}
-		if _, err := tx.Exec(`INSERT OR IGNORE INTO selected_profile_services (source_id)
-			SELECT service_id FROM src.` + reference.table + `
-			WHERE ` + reference.where + ` AND service_id IS NOT NULL`); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO selected_profile_services (source_id)
+			SELECT service_id FROM src.`+reference.table+`
+			WHERE `+reference.where+` AND service_id IS NOT NULL`); err != nil {
 			return fmt.Errorf("select %s services: %w", reference.table, err)
 		}
 	}
 
-	hasServices, err := sourceTableExists(tx, "communication_services")
+	hasServices, err := sourceTableExists(ctx, tx, "communication_services")
 	if err != nil {
 		return fmt.Errorf("check communication service schema: %w", err)
 	}
 	if !hasServices {
 		var selected int
-		if err := tx.QueryRow(`SELECT COUNT(*) FROM selected_profile_services`).Scan(&selected); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM selected_profile_services`).Scan(&selected); err != nil {
 			return fmt.Errorf("count referenced communication services: %w", err)
 		}
 		if selected != 0 {
@@ -1988,7 +2012,7 @@ func reconcileSubsetCommunicationServices(tx *sql.Tx, includeProfiles bool) erro
 		return nil
 	}
 	var missing int
-	if err := tx.QueryRow(`SELECT COUNT(*)
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*)
 		FROM selected_profile_services selected
 		LEFT JOIN src.communication_services service ON service.id = selected.source_id
 		WHERE service.id IS NULL`).Scan(&missing); err != nil {
@@ -1998,7 +2022,7 @@ func reconcileSubsetCommunicationServices(tx *sql.Tx, includeProfiles bool) erro
 		return fmt.Errorf("copy communication services: %d referenced services are missing", missing)
 	}
 
-	if _, err := tx.Exec(`INSERT INTO communication_services (
+	if _, err := tx.ExecContext(ctx, `INSERT INTO communication_services (
 			slug, display_label, scope_policy, default_scope_kind,
 			normalization, normalization_version, uri_scheme,
 			profile_url_template, is_system, is_active, created_at, updated_at
@@ -2024,7 +2048,7 @@ func reconcileSubsetCommunicationServices(tx *sql.Tx, includeProfiles bool) erro
 			updated_at = excluded.updated_at`); err != nil {
 		return fmt.Errorf("copy communication services: %w", err)
 	}
-	if _, err := tx.Exec(`INSERT INTO selected_profile_service_map (source_id, destination_id)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO selected_profile_service_map (source_id, destination_id)
 		SELECT source.id, destination.id
 		FROM src.communication_services source
 		JOIN selected_profile_services selected ON selected.source_id = source.id
@@ -2032,12 +2056,12 @@ func reconcileSubsetCommunicationServices(tx *sql.Tx, includeProfiles bool) erro
 		return fmt.Errorf("map communication services: %w", err)
 	}
 
-	hasAliases, err := sourceTableExists(tx, "communication_service_aliases")
+	hasAliases, err := sourceTableExists(ctx, tx, "communication_service_aliases")
 	if err != nil {
 		return fmt.Errorf("check communication service alias schema: %w", err)
 	}
 	if hasAliases {
-		if _, err := tx.Exec(`INSERT INTO communication_service_aliases (alias, service_id)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO communication_service_aliases (alias, service_id)
 			SELECT alias.alias, service_map.destination_id
 			FROM src.communication_service_aliases alias
 			JOIN selected_profile_service_map service_map
@@ -2046,12 +2070,12 @@ func reconcileSubsetCommunicationServices(tx *sql.Tx, includeProfiles bool) erro
 			return fmt.Errorf("copy communication service aliases: %w", err)
 		}
 	}
-	hasDiscoveries, err := sourceTableExists(tx, "communication_service_discoveries")
+	hasDiscoveries, err := sourceTableExists(ctx, tx, "communication_service_discoveries")
 	if err != nil {
 		return fmt.Errorf("check communication service discovery schema: %w", err)
 	}
 	if hasDiscoveries {
-		if _, err := tx.Exec(`INSERT INTO communication_service_discoveries (
+		if _, err := tx.ExecContext(ctx, `INSERT INTO communication_service_discoveries (
 				service_id, provider, discovery_kind
 			)
 			SELECT service_map.destination_id, discovery.provider, discovery.discovery_kind
@@ -2074,8 +2098,8 @@ func reconcileSubsetCommunicationServices(tx *sql.Tx, includeProfiles bool) erro
 // tombstones. References that did not cross the boundary (a matched person or
 // accepted edge outside the subset) are cleared exactly as the live schema
 // clears them on deletion.
-func copySubsetRelationships(tx *sql.Tx) error {
-	hasRelationships, err := sourceTableExists(tx, "relationship_types")
+func copySubsetRelationships(ctx context.Context, tx *sql.Tx) error {
+	hasRelationships, err := sourceTableExists(ctx, tx, "relationship_types")
 	if err != nil {
 		return fmt.Errorf("check relationship schema: %w", err)
 	}
@@ -2086,14 +2110,14 @@ func copySubsetRelationships(tx *sql.Tx) error {
 	// referencing them, so clearing every vCard mapping first lets the
 	// mirrored source values land without transient unique collisions (the
 	// source may have moved a mapping between types).
-	if _, err := tx.Exec(`UPDATE relationship_types SET vcard_related_type = NULL`); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE relationship_types SET vcard_related_type = NULL`); err != nil {
 		return fmt.Errorf("clear destination relationship type mappings: %w", err)
 	}
 	// inverse_type_id is remapped inline because SQLite evaluates CHECK
 	// constraints on the candidate row before conflict resolution: the
 	// non-canonical 'child' candidate needs a non-NULL inverse even when it
 	// resolves to the DO UPDATE path.
-	if _, err := tx.Exec(`
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO relationship_types (
 		    universal_id, slug, forward_label, reverse_label,
 		    is_symmetric, is_canonical, inverse_type_id, vcard_related_type,
@@ -2137,7 +2161,7 @@ func copySubsetRelationships(tx *sql.Tx) error {
 	// inverse_type_id is a database-local key; relink it through universal_id
 	// once every type row exists. Destination-only seeds (absent from an older
 	// source) keep their own links.
-	if _, err := tx.Exec(`
+	if _, err := tx.ExecContext(ctx, `
 		UPDATE relationship_types
 		SET inverse_type_id = (
 		    SELECT destination_inverse.id
@@ -2157,16 +2181,18 @@ func copySubsetRelationships(tx *sql.Tx) error {
 	// source_resource_uid arrived after the relationship tables; a source
 	// that predates it has no column to read, and its rows carry no resource.
 	edgeResourceUID, err := sourceColumnExpression(
+		ctx,
 		tx, personRelationshipsTableName, "source_resource_uid", "edge")
 	if err != nil {
 		return err
 	}
 	reviewResourceUID, err := sourceColumnExpression(
+		ctx,
 		tx, "person_relationship_reviews", "source_resource_uid", "review")
 	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO person_relationships (
 		    id, source_person_id, target_person_id, relationship_type_id,
 		    start_year, start_month, start_day, end_year, end_month, end_day,
@@ -2180,7 +2206,7 @@ func copySubsetRelationships(tx *sql.Tx) error {
 		    edge.start_year, edge.start_month, edge.start_day,
 		    edge.end_year, edge.end_month, edge.end_day,
 		    edge.status, edge.notes, edge.source, edge.source_ref,
-		    ` + edgeResourceUID + `, edge.confidence,
+		    `+edgeResourceUID+`, edge.confidence,
 		    edge.vcard_property, edge.vcard_group, edge.vcard_prop_id,
 		    edge.vcard_pid, edge.vcard_altid,
 		    edge.created_by, edge.updated_by, edge.revision,
@@ -2194,7 +2220,7 @@ func copySubsetRelationships(tx *sql.Tx) error {
 		  AND edge.target_person_id IN (SELECT id FROM persons)`); err != nil {
 		return fmt.Errorf("copy person relationships: %w", err)
 	}
-	if _, err := tx.Exec(`
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO person_relationship_reviews (
 		    id, person_id, raw_related_value, raw_related_type, value_kind,
 		    matched_person_id, accepted_relationship_id, status, source,
@@ -2210,7 +2236,7 @@ func copySubsetRelationships(tx *sql.Tx) error {
 		    CASE WHEN review.accepted_relationship_id IN (SELECT id FROM person_relationships)
 		         THEN review.accepted_relationship_id END,
 		    review.status, review.source, review.source_ref,
-		    ` + reviewResourceUID + `,
+		    `+reviewResourceUID+`,
 		    review.vcard_property, review.vcard_group, review.vcard_prop_id,
 		    review.vcard_pid, review.vcard_altid,
 		    review.created_by, review.reviewed_by, review.reviewed_at,
@@ -2228,15 +2254,15 @@ func copySubsetRelationships(tx *sql.Tx) error {
 // same IncludeProfiles opt-in as structured person profiles. Employments
 // cannot reference merged organizations, so the copied organizations never
 // need a merge-redirect closure.
-func copyEmploymentData(tx *sql.Tx, result *CopyResult) error {
-	hasEmployments, err := sourceTableExists(tx, "employments")
+func copyEmploymentData(ctx context.Context, tx *sql.Tx, result *CopyResult) error {
+	hasEmployments, err := sourceTableExists(ctx, tx, "employments")
 	if err != nil {
 		return fmt.Errorf("check employment schema: %w", err)
 	}
 	if !hasEmployments {
 		return nil
 	}
-	organizationsCopied, err := copyByName(tx, "organizations", `id IN (
+	organizationsCopied, err := copyByName(ctx, tx, "organizations", `id IN (
 			SELECT DISTINCT organization_id FROM src.employments
 			WHERE person_id IN (SELECT id FROM persons)
 		)`)
@@ -2251,16 +2277,16 @@ func copyEmploymentData(tx *sql.Tx, result *CopyResult) error {
 		"organization_addresses", "organization_media",
 		"organization_categories",
 	} {
-		if _, err := copyByName(tx, table,
+		if _, err := copyByName(ctx, tx, table,
 			`organization_id IN (SELECT id FROM organizations)`); err != nil {
 			return fmt.Errorf("copy %s: %w", table, err)
 		}
 	}
-	if err := copyByNameWithCommunicationServiceMap(tx, "organization_contact_points",
+	if err := copyByNameWithCommunicationServiceMap(ctx, tx, "organization_contact_points",
 		`organization_id IN (SELECT id FROM organizations)`); err != nil {
 		return fmt.Errorf("copy organization_contact_points: %w", err)
 	}
-	employmentsCopied, err := copyByName(tx, "employments",
+	employmentsCopied, err := copyByName(ctx, tx, "employments",
 		`person_id IN (SELECT id FROM persons)`)
 	if err != nil {
 		return fmt.Errorf("copy employments: %w", err)
@@ -2274,15 +2300,15 @@ func copyEmploymentData(tx *sql.Tx, result *CopyResult) error {
 // copySubsetInferenceRevisions preserves review debt for transferred profiles.
 // Approval belongs to the source account and book, so it never crosses into
 // the new archive. Missing or zero legacy state is backfilled after copying.
-func copySubsetInferenceRevisions(tx *sql.Tx) error {
-	exists, err := sourceTableExists(tx, "person_carddav_inference_state")
+func copySubsetInferenceRevisions(ctx context.Context, tx *sql.Tx) error {
+	exists, err := sourceTableExists(ctx, tx, "person_carddav_inference_state")
 	if err != nil {
 		return fmt.Errorf("check source inference review state: %w", err)
 	}
 	if !exists {
 		return nil
 	}
-	if _, err := tx.Exec(`INSERT INTO person_carddav_inference_state (person_id, inference_revision)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO person_carddav_inference_state (person_id, inference_revision)
         SELECT person_id, inference_revision FROM src.person_carddav_inference_state
         WHERE person_id IN (SELECT id FROM persons) AND inference_revision > 0`); err != nil {
 		return fmt.Errorf("copy person inference review revisions: %w", err)
@@ -2290,8 +2316,8 @@ func copySubsetInferenceRevisions(tx *sql.Tx) error {
 	return nil
 }
 
-func copyStructuredProfiles(tx *sql.Tx) (int64, error) {
-	hasProfiles, err := sourceTableExists(tx, "person_names")
+func copyStructuredProfiles(ctx context.Context, tx *sql.Tx) (int64, error) {
+	hasProfiles, err := sourceTableExists(ctx, tx, "person_names")
 	if err != nil {
 		return 0, fmt.Errorf("check structured profile schema: %w", err)
 	}
@@ -2301,7 +2327,7 @@ func copyStructuredProfiles(tx *sql.Tx) (int64, error) {
 
 	// Observations keep their source foreign key, even when that source had no
 	// selected message. A complete copied profile must retain that provenance.
-	sourceResult, err := copyByName(tx, "sources", `id IN (
+	sourceResult, err := copyByName(ctx, tx, "sources", `id IN (
 			SELECT DISTINCT source_id FROM src.participant_contact_observations
 			WHERE participant_id IN (SELECT id FROM participants)
 			  AND source_id IS NOT NULL
@@ -2319,35 +2345,37 @@ func copyStructuredProfiles(tx *sql.Tx) (int64, error) {
 		"person_dates", "person_categories", "person_media",
 		"person_fact_pin_events",
 	} {
-		if _, err := copyByName(tx, table, `person_id IN (SELECT id FROM persons)`); err != nil {
+		if _, err := copyByName(ctx, tx, table, `person_id IN (SELECT id FROM persons)`); err != nil {
 			return 0, fmt.Errorf("copy %s: %w", table, err)
 		}
 	}
 	if err := copyByNameWithCommunicationServiceMap(
+		ctx,
 		tx, "person_contact_points", `person_id IN (SELECT id FROM persons)`,
 	); err != nil {
 		return 0, fmt.Errorf("copy person_contact_points: %w", err)
 	}
-	if err := copyByNameWithCommunicationServiceMap(tx, "participant_contact_observations",
+	if err := copyByNameWithCommunicationServiceMap(ctx, tx, "participant_contact_observations",
 		`participant_id IN (SELECT id FROM participants)`); err != nil {
 		return 0, fmt.Errorf("copy participant_contact_observations: %w", err)
 	}
-	hasCandidates, err := sourceTableExists(tx, identityMatchCandidatesTableName)
+	hasCandidates, err := sourceTableExists(ctx, tx, identityMatchCandidatesTableName)
 	if err != nil {
 		return 0, fmt.Errorf("check identity match candidate schema: %w", err)
 	}
 	if hasCandidates {
 		if err := copyByNameWithCommunicationServiceMap(
+			ctx,
 			tx, identityMatchCandidatesTableName, subsetSourceIdentityMatchCandidateWhere,
 		); err != nil {
 			return 0, fmt.Errorf("copy identity_match_candidates: %w", err)
 		}
-		hasEvidence, err := sourceTableExists(tx, identityMatchEvidenceTableName)
+		hasEvidence, err := sourceTableExists(ctx, tx, identityMatchEvidenceTableName)
 		if err != nil {
 			return 0, fmt.Errorf("check identity match evidence schema: %w", err)
 		}
 		if hasEvidence {
-			if _, err := copyByName(tx, identityMatchEvidenceTableName,
+			if _, err := copyByName(ctx, tx, identityMatchEvidenceTableName,
 				`candidate_id IN (SELECT id FROM identity_match_candidates)`); err != nil {
 				return 0, fmt.Errorf("copy identity_match_evidence: %w", err)
 			}
@@ -2368,7 +2396,7 @@ func copyStructuredProfiles(tx *sql.Tx) (int64, error) {
 			},
 		}
 		for _, support := range supportTables {
-			hasSupport, err := sourceTableExists(tx, support.table)
+			hasSupport, err := sourceTableExists(ctx, tx, support.table)
 			if err != nil {
 				return 0, fmt.Errorf("check %s schema: %w", support.table, err)
 			}
@@ -2382,6 +2410,7 @@ func copyStructuredProfiles(tx *sql.Tx) (int64, error) {
 			// subset's source set; conservative rows are retained only when
 			// their source is already present for another reason.
 			hasConservativeMarker, err := sourceColumnExists(
+				ctx,
 				tx, support.table, "is_conservative",
 			)
 			if err != nil {
@@ -2393,7 +2422,7 @@ func copyStructuredProfiles(tx *sql.Tx) (int64, error) {
 			ownerWhere := support.ownerKey + ` IN (SELECT id FROM ` + support.ownerTable + `)`
 			explicitSupportWhere := ownerWhere + `
 				AND is_conservative = FALSE`
-			sourceResult, err := copyByName(tx, "sources", `id IN (
+			sourceResult, err := copyByName(ctx, tx, "sources", `id IN (
 				SELECT source_id FROM src.`+support.table+`
 				WHERE `+explicitSupportWhere+`
 			) AND id NOT IN (SELECT id FROM sources)`)
@@ -2405,7 +2434,7 @@ func copyStructuredProfiles(tx *sql.Tx) (int64, error) {
 				return 0, fmt.Errorf("%s sources rows affected: %w", support.table, err)
 			}
 			extraSources += copiedSources
-			if _, err := copyByName(tx, support.table,
+			if _, err := copyByName(ctx, tx, support.table,
 				ownerWhere+`
 					 AND source_id IN (SELECT id FROM sources)`); err != nil {
 				return 0, fmt.Errorf("copy %s: %w", support.table, err)
@@ -2421,24 +2450,24 @@ func copyStructuredProfiles(tx *sql.Tx) (int64, error) {
 // this copy can enforce over its contents. The source-table checks retain
 // compatibility with archives created before the envelope and retired-UID
 // tables existed.
-func copyVCardResourceEnvelopes(tx *sql.Tx) error {
-	hasEnvelopes, err := sourceTableExists(tx, "vcard_resource_envelopes")
+func copyVCardResourceEnvelopes(ctx context.Context, tx *sql.Tx) error {
+	hasEnvelopes, err := sourceTableExists(ctx, tx, "vcard_resource_envelopes")
 	if err != nil {
 		return fmt.Errorf("check vCard resource envelope schema: %w", err)
 	}
 	if hasEnvelopes {
-		if _, err := copyByName(tx, "vcard_resource_envelopes",
+		if _, err := copyByName(ctx, tx, "vcard_resource_envelopes",
 			`person_id IN (SELECT id FROM persons)`); err != nil {
 			return fmt.Errorf("copy vCard resource envelopes: %w", err)
 		}
 	}
 
-	hasAliases, err := sourceTableExists(tx, "person_uid_aliases")
+	hasAliases, err := sourceTableExists(ctx, tx, "person_uid_aliases")
 	if err != nil {
 		return fmt.Errorf("check retired person UID alias schema: %w", err)
 	}
 	if hasAliases {
-		if _, err := copyByName(tx, "person_uid_aliases",
+		if _, err := copyByName(ctx, tx, "person_uid_aliases",
 			`surviving_person_id IN (SELECT id FROM persons)`); err != nil {
 			return fmt.Errorf("copy retired person UID aliases: %w", err)
 		}
@@ -2465,13 +2494,13 @@ var vcardMappingOwnerTables = map[string]struct{}{
 // metadata's claim of ownership goes, so a later projection sees an unmanaged
 // occurrence to keep rather than a stale owner whose occurrence it retires. It
 // must run only after every owner table has been copied.
-func releaseVCardMappingsToMissingOwners(tx *sql.Tx) error {
-	copied, err := listCopiedVCardEnvelopeMetadata(tx)
+func releaseVCardMappingsToMissingOwners(ctx context.Context, tx *sql.Tx) error {
+	copied, err := listCopiedVCardEnvelopeMetadata(ctx, tx)
 	if err != nil {
 		return err
 	}
 	for _, envelope := range copied {
-		if err := releaseEnvelopeMappingsToMissingOwners(tx, envelope.id, envelope.metadata); err != nil {
+		if err := releaseEnvelopeMappingsToMissingOwners(ctx, tx, envelope.id, envelope.metadata); err != nil {
 			return err
 		}
 	}
@@ -2485,8 +2514,8 @@ type copiedVCardEnvelope struct {
 
 // listCopiedVCardEnvelopeMetadata reads every copied envelope's metadata up
 // front, so the mapping release below can update rows without a cursor open.
-func listCopiedVCardEnvelopeMetadata(tx *sql.Tx) ([]copiedVCardEnvelope, error) {
-	rows, err := tx.Query(`SELECT id, resource_metadata FROM vcard_resource_envelopes ORDER BY id`)
+func listCopiedVCardEnvelopeMetadata(ctx context.Context, tx *sql.Tx) ([]copiedVCardEnvelope, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id, resource_metadata FROM vcard_resource_envelopes ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("list copied vCard resource envelopes: %w", err)
 	}
@@ -2505,14 +2534,14 @@ func listCopiedVCardEnvelopeMetadata(tx *sql.Tx) ([]copiedVCardEnvelope, error) 
 	return copied, nil
 }
 
-func releaseEnvelopeMappingsToMissingOwners(tx *sql.Tx, id int64, metadata string) error {
+func releaseEnvelopeMappingsToMissingOwners(ctx context.Context, tx *sql.Tx, id int64, metadata string) error {
 	envelope, err := vcard.UnmarshalResourceMetadata([]byte(metadata))
 	if err != nil {
 		return fmt.Errorf("decode copied vCard resource envelope %d: %w", id, err)
 	}
 	kept := make([]vcard.NativeMapping, 0, len(envelope.NativeMappings))
 	for _, mapping := range envelope.NativeMappings {
-		present, err := vcardMappingOwnerCopied(tx, mapping)
+		present, err := vcardMappingOwnerCopied(ctx, tx, mapping)
 		if err != nil {
 			return fmt.Errorf("check owner of vCard resource envelope %d mapping: %w", id, err)
 		}
@@ -2529,7 +2558,7 @@ func releaseEnvelopeMappingsToMissingOwners(tx *sql.Tx, id int64, metadata strin
 	if err != nil {
 		return fmt.Errorf("encode copied vCard resource envelope %d: %w", id, err)
 	}
-	if _, err := tx.Exec(`UPDATE vcard_resource_envelopes SET resource_metadata = ? WHERE id = ?`,
+	if _, err := tx.ExecContext(ctx, `UPDATE vcard_resource_envelopes SET resource_metadata = ? WHERE id = ?`,
 		string(updated), id); err != nil {
 		return fmt.Errorf("release vCard resource envelope %d mappings: %w", id, err)
 	}
@@ -2542,12 +2571,12 @@ func releaseEnvelopeMappingsToMissingOwners(tx *sql.Tx, id int64, metadata strin
 // check them. A relationship review whose accepted edge this copy filtered
 // out keeps its ledger row but will never reappear in a projection snapshot,
 // so its mapping counts as released too.
-func vcardMappingOwnerCopied(tx *sql.Tx, mapping vcard.NativeMapping) (bool, error) {
+func vcardMappingOwnerCopied(ctx context.Context, tx *sql.Tx, mapping vcard.NativeMapping) (bool, error) {
 	if _, known := vcardMappingOwnerTables[mapping.Table]; !known {
 		return true, nil
 	}
 	var one int
-	err := tx.QueryRow(`SELECT 1 FROM `+mapping.Table+` WHERE id = ?`, mapping.RowID).Scan(&one)
+	err := tx.QueryRowContext(ctx, `SELECT 1 FROM `+mapping.Table+` WHERE id = ?`, mapping.RowID).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -2558,7 +2587,7 @@ func vcardMappingOwnerCopied(tx *sql.Tx, mapping vcard.NativeMapping) (bool, err
 		return true, nil
 	}
 	var edgeCleared bool
-	err = tx.QueryRow(`
+	err = tx.QueryRowContext(ctx, `
 		SELECT copied.accepted_relationship_id IS NULL
 		   AND original.accepted_relationship_id IS NOT NULL
 		FROM person_relationship_reviews copied
@@ -2572,8 +2601,8 @@ func vcardMappingOwnerCopied(tx *sql.Tx, mapping vcard.NativeMapping) (bool, err
 
 // copyMessages copies the selected messages, naming the columns the source and
 // destination have in common, read from the two schemas at copy time.
-func copyMessages(tx *sql.Tx) error {
-	if _, err := copyByName(tx, "messages",
+func copyMessages(ctx context.Context, tx *sql.Tx) error {
+	if _, err := copyByName(ctx, tx, "messages",
 		`id IN (SELECT id FROM selected_messages)`); err != nil {
 		return fmt.Errorf("copy messages: %w", err)
 	}
@@ -2593,8 +2622,8 @@ func copyMessages(tx *sql.Tx) error {
 // source lacks is left out of the INSERT, so the destination's own DEFAULT,
 // where it has one, supplies it. Columns the source has and the destination
 // does not are dropped.
-func copyByName(tx *sql.Tx, table, where string, args ...any) (sql.Result, error) {
-	cols, err := commonColumns(tx, table)
+func copyByName(ctx context.Context, tx *sql.Tx, table, where string, args ...any) (sql.Result, error) {
+	cols, err := commonColumns(ctx, tx, table)
 	if err != nil {
 		return nil, err
 	}
@@ -2603,7 +2632,7 @@ func copyByName(tx *sql.Tx, table, where string, args ...any) (sql.Result, error
 			"source and destination share no %s columns", table)
 	}
 	list := strings.Join(cols, ", ")
-	res, err := tx.Exec(fmt.Sprintf(`
+	res, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO %s (%s) SELECT %s FROM src.%s
 		WHERE %s`, table, list, list, table, where), args...)
 	if err != nil {
@@ -2616,14 +2645,15 @@ func copyByName(tx *sql.Tx, table, where string, args ...any) (sql.Result, error
 // rows only when every foreign-key endpoint remains inside the subset. The
 // portable message and attachment markers are copied earlier by their owning
 // rows, so incomplete audit packets do not weaken merge protection.
-func copySourceMergeLifecycle(tx *sql.Tx) error {
-	hasSettings, err := sourceTableExists(tx, "source_settings")
+func copySourceMergeLifecycle(ctx context.Context, tx *sql.Tx) error {
+	hasSettings, err := sourceTableExists(ctx, tx, "source_settings")
 	if err != nil {
 		return fmt.Errorf("inspect source settings schema: %w", err)
 	}
 	if hasSettings {
 		where := `source_id IN (SELECT id FROM sources)`
 		hasMergeTarget, err := sourceColumnExists(
+			ctx,
 			tx, "source_settings", "merged_into_source_id",
 		)
 		if err != nil {
@@ -2634,7 +2664,7 @@ func copySourceMergeLifecycle(tx *sql.Tx) error {
 				SELECT id FROM sources
 			))`
 		}
-		if _, err := copyByName(tx, "source_settings", where); err != nil {
+		if _, err := copyByName(ctx, tx, "source_settings", where); err != nil {
 			return fmt.Errorf("copy source settings: %w", err)
 		}
 	}
@@ -2669,14 +2699,14 @@ func copySourceMergeLifecycle(tx *sql.Tx) error {
 				AND into_source_id IN (SELECT id FROM sources)`,
 		},
 	} {
-		exists, err := sourceTableExists(tx, record.table)
+		exists, err := sourceTableExists(ctx, tx, record.table)
 		if err != nil {
 			return fmt.Errorf("inspect %s schema: %w", record.table, err)
 		}
 		if !exists {
 			continue
 		}
-		if _, err := copyByName(tx, record.table, record.where); err != nil {
+		if _, err := copyByName(ctx, tx, record.table, record.where); err != nil {
 			return fmt.Errorf("copy %s: %w", record.table, err)
 		}
 	}
@@ -2684,9 +2714,10 @@ func copySourceMergeLifecycle(tx *sql.Tx) error {
 }
 
 func copyByNameWithCommunicationServiceMap(
+	ctx context.Context,
 	tx *sql.Tx, table, where string,
 ) error {
-	cols, err := commonColumns(tx, table)
+	cols, err := commonColumns(ctx, tx, table)
 	if err != nil {
 		return err
 	}
@@ -2708,10 +2739,10 @@ func copyByNameWithCommunicationServiceMap(
 		}
 	}
 	if !hasServiceColumn {
-		_, err := copyByName(tx, table, where)
+		_, err := copyByName(ctx, tx, table, where)
 		return err
 	}
-	_, err = tx.Exec(fmt.Sprintf(`
+	_, err = tx.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO %s (%s)
 		SELECT %s FROM src.%s source_row
 		LEFT JOIN selected_profile_service_map service_map
@@ -2723,9 +2754,9 @@ func copyByNameWithCommunicationServiceMap(
 	return err
 }
 
-func sourceTableExists(tx *sql.Tx, table string) (bool, error) {
+func sourceTableExists(ctx context.Context, tx *sql.Tx, table string) (bool, error) {
 	var count int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM src.sqlite_master
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM src.sqlite_master
 		WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil {
 		return false, err
 	}
@@ -2735,8 +2766,8 @@ func sourceTableExists(tx *sql.Tx, table string) (bool, error) {
 // sourceColumnExpression returns the qualified column reference when the
 // source table has the column and NULL when it does not, so an explicit
 // column list can read archives that predate the column.
-func sourceColumnExpression(tx *sql.Tx, table, column, alias string) (string, error) {
-	present, err := sourceColumnExists(tx, table, column)
+func sourceColumnExpression(ctx context.Context, tx *sql.Tx, table, column, alias string) (string, error) {
+	present, err := sourceColumnExists(ctx, tx, table, column)
 	if err != nil {
 		return "", fmt.Errorf("check %s.%s: %w", table, column, err)
 	}
@@ -2746,8 +2777,8 @@ func sourceColumnExpression(tx *sql.Tx, table, column, alias string) (string, er
 	return alias + "." + column, nil
 }
 
-func sourceColumnExists(tx *sql.Tx, table, column string) (bool, error) {
-	columns, err := schemaColumns(tx, "src", table)
+func sourceColumnExists(ctx context.Context, tx *sql.Tx, table, column string) (bool, error) {
+	columns, err := schemaColumns(ctx, tx, "src", table)
 	if err != nil {
 		return false, err
 	}
@@ -2769,12 +2800,12 @@ func sourceColumnExists(tx *sql.Tx, table, column string) (bool, error) {
 // A returned name is interpolated into the copy's SQL, so it goes through
 // quoteIdentifier — which quotes it and doubles any quote inside it. Names
 // outside the intersection are not interpolated and so are not rendered.
-func commonColumns(tx *sql.Tx, table string) ([]string, error) {
-	dst, err := schemaColumns(tx, "main", table)
+func commonColumns(ctx context.Context, tx *sql.Tx, table string) ([]string, error) {
+	dst, err := schemaColumns(ctx, tx, "main", table)
 	if err != nil {
 		return nil, err
 	}
-	src, err := schemaColumns(tx, "src", table)
+	src, err := schemaColumns(ctx, tx, "src", table)
 	if err != nil {
 		return nil, err
 	}
@@ -2816,8 +2847,9 @@ func foldIdentifier(name string) string {
 }
 
 // schemaColumns lists a table's column names in declaration order.
-func schemaColumns(tx *sql.Tx, schema, table string) ([]string, error) {
-	rows, err := tx.Query(
+func schemaColumns(ctx context.Context, tx *sql.Tx, schema, table string) ([]string, error) {
+	rows, err := tx.QueryContext(
+		ctx,
 		`SELECT name FROM pragma_table_info(?, ?) ORDER BY cid`, table, schema)
 	if err != nil {
 		return nil, fmt.Errorf("list %s.%s columns: %w", schema, table, err)
@@ -2840,8 +2872,8 @@ func schemaColumns(tx *sql.Tx, schema, table string) ([]string, error) {
 
 // updateConversationCounts updates the denormalized counts on
 // conversations to be consistent with the copied subset.
-func updateConversationCounts(db *sql.DB) error {
-	_, err := db.Exec(`
+func updateConversationCounts(ctx context.Context, db *sql.DB) error {
+	_, err := db.ExecContext(ctx, `
 		UPDATE conversations SET
 			message_count = (
 				SELECT COUNT(*) FROM messages
@@ -2860,8 +2892,8 @@ func updateConversationCounts(db *sql.DB) error {
 }
 
 // populateFTS rebuilds the FTS5 index from the copied data.
-func populateFTS(db *sql.DB) error {
-	_, err := db.Exec(`
+func populateFTS(ctx context.Context, db *sql.DB) error {
+	_, err := db.ExecContext(ctx, `
 		INSERT OR REPLACE INTO messages_fts(
 			rowid, message_id, subject, body,
 			from_addr, to_addr, cc_addr
@@ -2904,24 +2936,24 @@ func populateFTS(db *sql.DB) error {
 // delivery addresses, From/To/Cc addresses, and the source's own mailbox or
 // calendar. An alias that no included message of its source uses stays out
 // unless includeAll asks for every identity.
-func copySubsetAccountIdentities(tx *sql.Tx, includeAll, hasDeliveryAddresses bool) error {
-	present, err := sourceTableExists(tx, "account_identities")
+func copySubsetAccountIdentities(ctx context.Context, tx *sql.Tx, includeAll, hasDeliveryAddresses bool) error {
+	present, err := sourceTableExists(ctx, tx, "account_identities")
 	if err != nil || !present {
 		return err
 	}
 	where := `source_id IN (SELECT source_id FROM selected_message_sources)`
 	if !includeAll {
-		if err := selectSubsetIdentityKeys(tx, hasDeliveryAddresses); err != nil {
+		if err := selectSubsetIdentityKeys(ctx, tx, hasDeliveryAddresses); err != nil {
 			return err
 		}
 		where += ` AND EXISTS (SELECT 1 FROM selected_identity_keys k
 			WHERE k.source_id = account_identities.source_id AND k.address_key = account_identities.address_key)`
 	}
-	if _, err := copyByName(tx, "account_identities", where); err != nil {
+	if _, err := copyByName(ctx, tx, "account_identities", where); err != nil {
 		return fmt.Errorf("copy account_identities: %w", err)
 	}
 	for _, table := range []string{"selected_identity_keys", "selected_attribution_participants"} {
-		if _, err := tx.Exec(`DROP TABLE IF EXISTS ` + table); err != nil {
+		if _, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS `+table); err != nil {
 			return fmt.Errorf("drop %s: %w", table, err)
 		}
 	}
@@ -2930,8 +2962,8 @@ func copySubsetAccountIdentities(tx *sql.Tx, includeAll, hasDeliveryAddresses bo
 
 // selectSubsetIdentityKeys fills selected_identity_keys with each source and
 // address the attribution of an included message of that source can read.
-func selectSubsetIdentityKeys(tx *sql.Tx, hasDeliveryAddresses bool) error {
-	if _, err := tx.Exec(`CREATE TEMP TABLE selected_attribution_participants AS
+func selectSubsetIdentityKeys(ctx context.Context, tx *sql.Tx, hasDeliveryAddresses bool) error {
+	if _, err := tx.ExecContext(ctx, `CREATE TEMP TABLE selected_attribution_participants AS
 		SELECT m.source_id, mr.participant_id FROM src.message_recipients mr
 		JOIN src.messages m ON m.id = mr.message_id
 		WHERE mr.message_id IN (SELECT id FROM selected_messages)
@@ -2958,7 +2990,7 @@ func selectSubsetIdentityKeys(tx *sql.Tx, hasDeliveryAddresses bool) error {
 			WHERE id IN (SELECT id FROM selected_messages) AND account_address IS NOT NULL`},
 	}
 	for _, o := range optional {
-		present, err := sourceColumnExists(tx, o.table, o.column)
+		present, err := sourceColumnExists(ctx, tx, o.table, o.column)
 		if err != nil {
 			return err
 		}
@@ -2971,20 +3003,20 @@ func selectSubsetIdentityKeys(tx *sql.Tx, hasDeliveryAddresses bool) error {
 			JOIN src.messages m ON m.id = d.message_id
 			WHERE d.message_id IN (SELECT id FROM selected_messages)`)
 	}
-	if _, err := tx.Exec(`CREATE TEMP TABLE selected_identity_keys AS ` +
+	if _, err := tx.ExecContext(ctx, `CREATE TEMP TABLE selected_identity_keys AS `+
 		strings.Join(selectors, " UNION ALL ")); err != nil {
 		return fmt.Errorf("select subset identity addresses: %w", err)
 	}
-	keys, err := subsetSourceMailboxes(tx)
+	keys, err := subsetSourceMailboxes(ctx, tx)
 	if err != nil {
 		return err
 	}
-	pending, err := subsetPendingDeliveryAddresses(tx)
+	pending, err := subsetPendingDeliveryAddresses(ctx, tx)
 	if err != nil {
 		return err
 	}
 	for _, key := range append(keys, pending...) {
-		if _, err := tx.Exec(`INSERT INTO selected_identity_keys (source_id, address_key) VALUES (?, ?)`,
+		if _, err := tx.ExecContext(ctx, `INSERT INTO selected_identity_keys (source_id, address_key) VALUES (?, ?)`,
 			key.sourceID, key.address); err != nil {
 			return fmt.Errorf("select subset identity address: %w", err)
 		}
@@ -2999,8 +3031,8 @@ type subsetIdentityKey struct {
 
 // subsetSourceMailboxes returns each included source's own mailbox and
 // calendar mailbox, which attribution falls back to.
-func subsetSourceMailboxes(tx *sql.Tx) ([]subsetIdentityKey, error) {
-	rows, err := tx.Query(`SELECT id, source_type, COALESCE(identifier, ''), sync_config FROM src.sources
+func subsetSourceMailboxes(ctx context.Context, tx *sql.Tx) ([]subsetIdentityKey, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id, source_type, COALESCE(identifier, ''), sync_config FROM src.sources
 		WHERE id IN (SELECT source_id FROM selected_message_sources)`)
 	if err != nil {
 		return nil, fmt.Errorf("read subset sources: %w", err)
@@ -3028,12 +3060,12 @@ func subsetSourceMailboxes(tx *sql.Tx) ([]subsetIdentityKey, error) {
 // yet, so the subset would otherwise drop an alias only those headers name.
 // Reads use the same bounded prefix as derivation; undecodable payloads add
 // nothing, as they add no evidence there.
-func subsetPendingDeliveryAddresses(tx *sql.Tx) ([]subsetIdentityKey, error) {
-	present, err := sourceColumnExists(tx, "messages", "account_path")
+func subsetPendingDeliveryAddresses(ctx context.Context, tx *sql.Tx) ([]subsetIdentityKey, error) {
+	present, err := sourceColumnExists(ctx, tx, "messages", "account_path")
 	if err != nil || !present {
 		return nil, err
 	}
-	rows, err := tx.Query(`SELECT m.source_id, SUBSTR(r.raw_data, 1, ?), r.compression
+	rows, err := tx.QueryContext(ctx, `SELECT m.source_id, SUBSTR(r.raw_data, 1, ?), r.compression
 		FROM src.messages m JOIN src.message_raw r ON r.message_id = m.id
 		WHERE m.id IN (SELECT id FROM selected_messages)
 		  AND m.account_path IS NULL AND COALESCE(m.message_type, '') IN ('', 'email')
@@ -3060,17 +3092,17 @@ func subsetPendingDeliveryAddresses(tx *sql.Tx) ([]subsetIdentityKey, error) {
 
 // Managed draft records stay behind. Keep their authorship and any draft
 // evidence that copied labels and IMAP memberships do not already preserve.
-func preserveSubsetDraftEvidence(tx *sql.Tx) (int64, error) {
+func preserveSubsetDraftEvidence(ctx context.Context, tx *sql.Tx) (int64, error) {
 	drafts := `SELECT m.id FROM src.messages m JOIN src.sources s ON s.id = m.source_id
 		WHERE m.id IN (SELECT id FROM selected_messages)
 		  AND ` + draftEvidenceInSchemaSQL("src.", "m", "s")
-	if _, err := tx.Exec(`UPDATE messages SET draft_authored = TRUE
-		WHERE draft_authored = FALSE AND id IN (` + drafts + `)`); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE messages SET draft_authored = TRUE
+		WHERE draft_authored = FALSE AND id IN (`+drafts+`)`); err != nil {
 		return 0, err
 	}
 	missing := `SELECT m.id, m.source_id FROM messages m JOIN sources s ON s.id = m.source_id
 		WHERE m.id IN (` + drafts + `) AND NOT ` + draftEvidenceSQL("m", "s")
-	rows, err := tx.Query(`SELECT source_id FROM (` + missing + `) GROUP BY source_id`)
+	rows, err := tx.QueryContext(ctx, `SELECT source_id FROM (`+missing+`) GROUP BY source_id`)
 	if err != nil {
 		return 0, err
 	}
@@ -3090,7 +3122,7 @@ func preserveSubsetDraftEvidence(tx *sql.Tx) (int64, error) {
 		name := fmt.Sprintf("msgvault-archive:%d:draft", sourceID)
 		for {
 			var used bool
-			if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM labels WHERE source_id = ? AND name = ?)`, sourceID, name).Scan(&used); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM labels WHERE source_id = ? AND name = ?)`, sourceID, name).Scan(&used); err != nil {
 				return 0, err
 			}
 			if !used {
@@ -3099,14 +3131,14 @@ func preserveSubsetDraftEvidence(tx *sql.Tx) (int64, error) {
 			name += ":archive"
 		}
 		var labelID int64
-		if err := tx.QueryRow(`INSERT INTO labels(source_id, name, system_role)
+		if err := tx.QueryRowContext(ctx, `INSERT INTO labels(source_id, name, system_role)
 			VALUES (?, ?, 'drafts') RETURNING id`, sourceID, name).Scan(&labelID); err != nil {
 			return 0, err
 		}
-		if _, err := tx.Exec(`INSERT INTO source_merge_preserved_labels(label_id) VALUES (?)`, labelID); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO source_merge_preserved_labels(label_id) VALUES (?)`, labelID); err != nil {
 			return 0, err
 		}
-		if _, err := tx.Exec(`INSERT INTO message_labels(message_id, label_id)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO message_labels(message_id, label_id)
 			SELECT id, ? FROM (`+missing+`) WHERE source_id = ?`, labelID, sourceID); err != nil {
 			return 0, err
 		}

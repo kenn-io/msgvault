@@ -54,14 +54,50 @@ func TestRepairDerivedSourceRebuildsEmail(t *testing.T) {
 	var out bytes.Buffer
 	require.NoError(repairDerivedSource(t.Context(), &out, st, src))
 	assert.Empty(out.String())
-	conv, err := st.EnsureConversation(src.ID, "old", "")
+	conv, err := st.EnsureConversation(t.Context(), src.ID, "old", "")
 	require.NoError(err)
 	id, err := st.UpsertMessage(&store.Message{SourceID: src.ID, ConversationID: conv, SourceMessageID: "old", MessageType: "email"})
 	require.NoError(err)
 	require.NoError(st.UpsertMessageRaw(id, []byte("Content-Type: text/plain\r\n\r\nRebuilt archive")))
 	require.NoError(st.UpsertMessageBody(id, sql.NullString{String: "stale", Valid: true}, sql.NullString{}))
 	require.NoError(repairDerivedSource(t.Context(), &out, st, src))
-	body, err := st.GetMessageBodyText(id)
+	body, err := st.GetMessageBodyText(t.Context(), id)
 	require.NoError(err)
 	assert.Equal("Rebuilt archive", body)
+}
+
+func TestRepairDerivedSourceReportsEmptyRaw(t *testing.T) {
+	r, a := require.New(t), assert.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("gmail", "repair@example.net")
+	r.NoError(err)
+	conv, err := st.EnsureConversation(t.Context(), src.ID, "retained", "")
+	r.NoError(err)
+	id, err := st.UpsertMessage(&store.Message{SourceID: src.ID, ConversationID: conv, SourceMessageID: "retained", MessageType: "email"})
+	r.NoError(err)
+	r.NoError(st.UpsertMessageRaw(id, []byte{}))
+	r.NoError(st.UpsertMessageBody(id, sql.NullString{String: "retained body", Valid: true}, sql.NullString{}))
+	var out bytes.Buffer
+	r.NoError(repairDerivedSource(t.Context(), &out, st, src))
+	a.Contains(out.String(), "1 archived payloads could not be decoded — left unchanged")
+	a.Contains(out.String(), "0 bodies rewritten")
+	body, err := st.GetMessageBodyText(t.Context(), id)
+	r.NoError(err)
+	a.Equal("retained body", body)
+}
+
+// The store owns what repair derives; this checks the command runs it and says so.
+func TestRepairDerivedSourceReportsEmailLinkage(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("imap", "repair@example.test")
+	require.NoError(err)
+	conv, err := st.EnsureConversation(t.Context(), src.ID, "thread", "Repair")
+	require.NoError(err)
+	_, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: &store.Message{SourceID: src.ID, ConversationID: conv, SourceMessageID: "mail", MessageType: "email"}})
+	require.NoError(err)
+	var out bytes.Buffer
+	require.NoError(repairDerivedSource(t.Context(), &out, st, src))
+	assert.Contains(t, out.String(), "  imap/repair@example.test: Indexing 1 emails\n")
+	assert.Contains(t, out.String(), "imap/repair@example.test: indexed 1 emails (1 incomplete)\n")
 }

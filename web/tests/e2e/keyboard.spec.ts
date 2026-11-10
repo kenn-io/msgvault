@@ -1,6 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
 import { loadMixedArchive } from './fixtures/mixed-archive';
 import { exploreHistoryState } from '../explore-state';
+import { stubOperationStatus } from '../kit-ui';
+import { sourceStatus } from '../../src/lib/jobs/fixtures.test-support';
 
 async function tabTo(page: Page, accessibleName: string, limit = 120, key: 'Tab' | 'Shift+Tab' = 'Tab') {
   const seen = new Set<string>();
@@ -18,7 +20,9 @@ async function tabTo(page: Page, accessibleName: string, limit = 120, key: 'Tab'
   throw new Error(`Keyboard focus did not reach ${accessibleName}; saw ${[...seen].join(' | ')}`);
 }
 
-test('pointer-free archive journey preserves focus, announcements, and history', async ({ page }) => {
+test('pointer-free archive journey leaves an overflowing Display menu and preserves focus, announcements, and history', async ({ page }) => {
+  await stubOperationStatus(page);
+  await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [sourceStatus({ scheduled: false })] } }));
   const fixture = await loadMixedArchive();
   const firstServedRow = fixture.firstPage.rows[0]!;
   const terminalServedRow = fixture.firstPage.rows.at(-1)!;
@@ -90,6 +94,21 @@ test('pointer-free archive journey preserves focus, announcements, and history',
   await page.keyboard.press('Enter');
 
   await expect(page.getByRole('main', { name: 'Messages', exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 1280, height: 360 });
+  await tabTo(page, 'Display');
+  await page.keyboard.press('Enter');
+  const display = page.getByRole('menu', { name: 'Display', exact: true });
+  await expect.poll(() => display.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+  await expect(display).toHaveAttribute('tabindex', '0');
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('button', { name: 'Save view…' })).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(page.getByRole('button', { name: 'Display', exact: true })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(display).toHaveAttribute('tabindex', '0');
+  await page.keyboard.press('Shift+Tab');
+  await expect(page.getByRole('button', { name: 'Search', exact: true })).toBeFocused();
+  await page.setViewportSize({ width: 1280, height: 720 });
   await tabTo(page, 'People');
   await page.keyboard.press('Enter');
 

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Table } from '@kenn-io/kit-ui';
 
+  import EmptyLine from '../common/EmptyLine.svelte';
   import { formatMeetingDuration } from '../../meetings/format';
   import { groupRowName } from '../../explore/labels';
   import type { Metrics } from '../../api/generated/models';
@@ -30,7 +31,7 @@
       <dd aria-label="Average known duration">{formatMeetingDuration(metrics.totals.average_known_seconds)}</dd>
     </div>
   </dl>
-  <p class="note">Time includes provider duration, scheduled, and transcript span evidence where available. Unknown durations are excluded from the average.</p>
+  <EmptyLine message="Time includes provider duration, scheduled, and transcript span evidence where available. Unknown durations are excluded from the average." />
   {#if metrics.duration_by_basis.length > 0}
     <section class="evidence-section" aria-labelledby={`${headingID}-duration-evidence`}>
       <h4 id={`${headingID}-duration-evidence`}>Duration evidence</h4>

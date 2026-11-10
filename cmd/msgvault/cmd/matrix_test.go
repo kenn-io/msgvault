@@ -43,7 +43,7 @@ func TestMatrixSyncAccountsFailIndependently(t *testing.T) {
 		_, err := st.GetOrCreateSource(sourceTypeMatrix, account)
 		require.NoError(err)
 		// Missing credentials fail before any network request.
-		require.Error(runMatrixSync(ctx, st, cfg, "", false, nil, io.Discard))
+		require.Error(runMatrixSync(ctx, st, cfg, "", false, false, nil, nil, io.Discard))
 		assert.Equal(i+1, events)
 	}
 }
@@ -78,7 +78,7 @@ func TestRunConfiguredMatrixSyncRefreshesCacheAfterFailedAttempt(t *testing.T) {
 		return refreshErr
 	}
 
-	err := runConfiguredMatrixSync(ctx, st)
+	err := runConfiguredMatrixSync(ctx, st, nil)
 	require.ErrorContains(err, "no Matrix accounts registered")
 	require.ErrorIs(err, refreshErr)
 	assert.Equal(t, 1, calls)
@@ -105,7 +105,7 @@ func TestRunMatrixSyncSkipsRetiredSourcesForAllAccounts(t *testing.T) {
 	st, _ := retiredMatrixSyncFixture(t)
 	dataDir := t.TempDir()
 	cfg := &config.Config{HomeDir: dataDir, Data: config.DataConfig{DataDir: dataDir}}
-	active, err := st.GetSourceByTypeAndIdentifier(sourceTypeMatrix, "@active:example.org")
+	active, err := st.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeMatrix, "@active:example.org")
 	require.NoError(err)
 	var syncRequests int
 	mux := http.NewServeMux()
@@ -122,7 +122,7 @@ func TestRunMatrixSyncSkipsRetiredSourcesForAllAccounts(t *testing.T) {
 		Homeserver: server.URL, UserID: active.Identifier, DeviceID: "device", AccessToken: "token",
 	}))
 
-	err = runMatrixSync(t.Context(), st, cfg, "", false, nil, io.Discard)
+	err = runMatrixSync(t.Context(), st, cfg, "", false, false, nil, nil, io.Discard)
 	require.NoError(err)
 	assert.Equal(t, 1, syncRequests, "only the active source is synced")
 }
@@ -133,7 +133,7 @@ func TestRunMatrixSyncRejectsExplicitRetiredAccountBeforeCredentials(t *testing.
 	dataDir := t.TempDir()
 	cfg := &config.Config{HomeDir: dataDir, Data: config.DataConfig{DataDir: dataDir}}
 
-	err := runMatrixSync(t.Context(), st, cfg, retired.Identifier, false, nil, io.Discard)
+	err := runMatrixSync(t.Context(), st, cfg, retired.Identifier, false, false, nil, nil, io.Discard)
 	require.ErrorIs(err, store.ErrSourceRetired)
 }
 
@@ -160,7 +160,7 @@ func TestAddMatrixRenewsExistingAccountInPlace(t *testing.T) {
 	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	source, err := st.GetOrCreateSource(sourceTypeMatrix, "@archive:example.org")
 	require.NoError(err)
-	convID, err := st.EnsureConversation(source.ID, "!room:example.org", "Room")
+	convID, err := st.EnsureConversation(t.Context(), source.ID, "!room:example.org", "Room")
 	require.NoError(err)
 	_, err = st.UpsertMessage(&store.Message{ConversationID: convID, SourceID: source.ID, SourceMessageID: "$kept", MessageType: sourceTypeMatrix})
 	require.NoError(err)

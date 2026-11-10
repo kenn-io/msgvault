@@ -89,16 +89,16 @@ func TestGmailRecoveryCheckpointWrites(t *testing.T) {
 			case "catchup":
 				condition = `NEW.cursor_before LIKE '%"phase":"catchup"%'`
 			}
-			_, err := e.Store.DB().Exec(`CREATE TRIGGER recovery_checkpoint_fault BEFORE UPDATE OF cursor_before ON sync_runs WHEN ` + condition + ` BEGIN SELECT RAISE(ABORT,'synthetic checkpoint write failure'); END`)
+			_, err := e.Store.DB().ExecContext(t.Context(), `CREATE TRIGGER recovery_checkpoint_fault BEFORE UPDATE OF cursor_before ON sync_runs WHEN `+condition+` BEGIN SELECT RAISE(ABORT,'synthetic checkpoint write failure'); END`)
 			require.NoError(err)
 			for range 2 {
 				_, err = e.Syncer.Full(t.Context(), testEmail)
 				require.ErrorContains(err, "synthetic checkpoint write failure")
-				assert.Equal("1000", gmailCoverageSource(t, e).SyncCursor.String)
+				assert.Equal("1000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
 				assert.Empty(e.Mock.HistoryCalls, "no catch-up after a rejected phase write")
 				gmailCoverageReopen(t, e)
 			}
-			_, err = e.Store.DB().Exec("DROP TRIGGER recovery_checkpoint_fault")
+			_, err = e.Store.DB().ExecContext(t.Context(), "DROP TRIGGER recovery_checkpoint_fault")
 			require.NoError(err)
 			_, err = e.Syncer.Full(t.Context(), testEmail)
 			require.NoError(err)
@@ -127,11 +127,11 @@ func TestGmailRecoveryRejectsFilteredFullWhilePending(t *testing.T) {
 			}
 			_, err = New(e.Mock, e.Store, opts).Full(t.Context(), testEmail)
 			require.ErrorContains(err, "unfiltered, unlimited")
-			assert.Equal("1000", gmailCoverageSource(t, e).SyncCursor.String)
+			assert.Equal("1000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
 			e.Mock.HistoryError = nil
 			lists, snapshots := e.Mock.ListMessagesCalls, e.Mock.SnapshotListCalls
 			// The direct Incremental entry must honor the pending recovery too.
-			_, err = New(e.Mock, e.Store, nil).Incremental(t.Context(), gmailCoverageSource(t, e))
+			_, err = New(e.Mock, e.Store, nil).Incremental(t.Context(), gmailCoverageSource(t.Context(), t, e))
 			require.NoError(err)
 			assert.Equal(lists, e.Mock.ListMessagesCalls)
 			assert.Equal(snapshots, e.Mock.SnapshotListCalls)
@@ -142,8 +142,8 @@ func TestGmailRecoveryRejectsFilteredFullWhilePending(t *testing.T) {
 	}
 }
 
-func TestGmailRecoveryItemErrorsDoNotBlockCompletion(t *testing.T) {
-	for _, phase := range []string{"acquire", "fetch", "ingest", "delete", "label-add", "label-remove"} {
+func TestGmailRecoveryAcquisitionErrorsDoNotBlockCompletion(t *testing.T) {
+	for _, phase := range []string{"acquire", "fetch", "ingest"} {
 		t.Run(phase, func(t *testing.T) {
 			t.Parallel()
 			require := require.New(t)
@@ -156,37 +156,23 @@ func TestGmailRecoveryItemErrorsDoNotBlockCompletion(t *testing.T) {
 			case "fetch":
 				e.Mock.GetMessageError["history-only"] = errors.New("synthetic fetch failure")
 			case "ingest":
-				_, err := e.Store.DB().Exec(`CREATE TRIGGER item_fault BEFORE INSERT ON messages WHEN NEW.source_message_id='history-only' BEGIN SELECT RAISE(ABORT,'synthetic ingest failure'); END`)
-				require.NoError(err)
-			case "delete":
-				e.Mock.HistoryRecords = []gmail.HistoryRecord{historyDeleted("m0")}
-				_, err := e.Store.DB().Exec(`CREATE TRIGGER item_fault BEFORE UPDATE OF deleted_from_source_at ON messages WHEN OLD.source_message_id='m0' BEGIN SELECT RAISE(ABORT,'synthetic delete failure'); END`)
-				require.NoError(err)
-			case "label-add":
-				e.Mock.HistoryRecords = []gmail.HistoryRecord{historyLabelAdded("m0", "STARRED")}
-				_, err := e.Store.DB().Exec(`CREATE TRIGGER item_fault BEFORE INSERT ON message_labels BEGIN SELECT RAISE(ABORT,'synthetic label failure'); END`)
-				require.NoError(err)
-			case "label-remove":
-				e.Mock.HistoryRecords = []gmail.HistoryRecord{historyLabelRemoved("m0", "INBOX")}
-				_, err := e.Store.DB().Exec(`CREATE TRIGGER item_fault BEFORE DELETE ON message_labels BEGIN SELECT RAISE(ABORT,'synthetic label failure'); END`)
+				_, err := e.Store.DB().ExecContext(t.Context(), `CREATE TRIGGER item_fault BEFORE INSERT ON messages WHEN NEW.source_message_id='history-only' BEGIN SELECT RAISE(ABORT,'synthetic ingest failure'); END`)
 				require.NoError(err)
 			}
 			// A message that keeps failing must not hold the source in recovery.
 			summary, err := e.Syncer.Full(t.Context(), testEmail)
 			require.NoError(err)
-			assert.Equal("20000", gmailCoverageSource(t, e).SyncCursor.String)
+			assert.Equal("20000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
 			assertDeletedFromSource(t, e.Store, "gone", true)
-			if phase == "acquire" || phase == "fetch" || phase == "ingest" || phase == "delete" {
-				assert.Positive(summary.Errors)
-			}
-			_, err = e.Store.DB().Exec("DROP TRIGGER IF EXISTS item_fault")
+			assert.Positive(summary.Errors)
+			_, err = e.Store.DB().ExecContext(t.Context(), "DROP TRIGGER IF EXISTS item_fault")
 			require.NoError(err)
 			if phase != "fetch" {
 				return
 			}
 			// Catch-up fetch failures carry forward to the next incremental run.
 			e.Mock.GetMessageError = nil
-			_, err = e.Syncer.Incremental(t.Context(), gmailCoverageSource(t, e))
+			_, err = e.Syncer.Incremental(t.Context(), gmailCoverageSource(t.Context(), t, e))
 			require.NoError(err)
 			assertRawDataExists(t, e.Store, "history-only")
 		})
@@ -198,7 +184,7 @@ func TestGmailRecoveryCrashWorker(t *testing.T) {
 	if path == "" {
 		return
 	}
-	st, err := store.OpenForTest(path)
+	st, err := store.OpenForTest(t.Context(), path)
 	require.NoError(t, err)
 	mock := gmail.NewMockAPI()
 	mock.Profile = &gmail.Profile{EmailAddress: testEmail, HistoryID: 20000}
@@ -232,7 +218,7 @@ func TestGmailRecoveryNoResumeAndExpiredHandoff(t *testing.T) {
 			} else {
 				assert.Empty(e.Mock.HistoryCalls)
 			}
-			assert.Equal("20000", gmailCoverageSource(t, e).SyncCursor.String)
+			assert.Equal("20000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
 			assertDeletedFromSource(t, e.Store, "gone", true)
 		})
 	}
@@ -248,8 +234,8 @@ func TestGmailRecoveryRepeatedHandoffExpirationIsBounded(t *testing.T) {
 	_, err := New(api, e.Store, nil).Full(t.Context(), testEmail)
 	require.ErrorIs(err, ErrHistoryExpired)
 	assert.Equal([]uint64{15000, 22000}, e.Mock.HistoryCalls)
-	assert.Equal("1000", gmailCoverageSource(t, e).SyncCursor.String)
-	prior, err := e.Store.GetLatestCheckpointedSync(gmailCoverageSource(t, e).ID)
+	assert.Equal("1000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
+	prior, err := e.Store.GetLatestCheckpointedSync(gmailCoverageSource(t.Context(), t, e).ID)
 	require.NoError(err)
 	assert.Equal("22000", prior.CursorAfter.String)
 	gmailCoverageReopen(t, e)
@@ -273,20 +259,20 @@ func TestGmailRecoveryExpirationAndInitialPin(t *testing.T) {
 			source := e.CreateSourceWithHistory(t, "1000")
 			e.Mock.Profile.HistoryID = 15000
 			e.Mock.HistoryError = &gmail.NotFoundError{Path: "/history"}
-			_, err := e.Store.DB().Exec(`CREATE TRIGGER pin_fault BEFORE UPDATE OF cursor_after ON sync_runs WHEN NEW.cursor_after='15000' BEGIN SELECT RAISE(ABORT,'synthetic pin failure'); END`)
+			_, err := e.Store.DB().ExecContext(t.Context(), `CREATE TRIGGER pin_fault BEFORE UPDATE OF cursor_after ON sync_runs WHEN NEW.cursor_after='15000' BEGIN SELECT RAISE(ABORT,'synthetic pin failure'); END`)
 			require.NoError(err)
 			for range interruptions {
 				_, err = e.Syncer.IncrementalWithHistoryRecovery(t.Context(), source, nil)
 				require.ErrorContains(err, "synthetic pin failure")
-				assert.Equal("1000", gmailCoverageSource(t, e).SyncCursor.String)
+				assert.Equal("1000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
 				assert.Zero(e.Mock.ListMessagesCalls, "no enumeration before durable H")
 				gmailCoverageReopen(t, e)
 			}
-			_, err = e.Store.DB().Exec("DROP TRIGGER pin_fault")
+			_, err = e.Store.DB().ExecContext(t.Context(), "DROP TRIGGER pin_fault")
 			require.NoError(err)
 			_, err = e.Syncer.IncrementalWithHistoryRecovery(t.Context(), source, nil)
 			require.NoError(err)
-			assert.Equal("15000", gmailCoverageSource(t, e).SyncCursor.String)
+			assert.Equal("15000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
 			for _, h := range e.Mock.HistoryCalls {
 				assert.Equal(uint64(1000), h, "only expiration detection queries the old cursor; H is already current")
 			}
@@ -327,15 +313,15 @@ func TestGmailRecoveryCompletionAndPublicationRange(t *testing.T) {
 			if noop {
 				e.Mock.Profile.HistoryID = 15000
 			}
-			source := gmailCoverageSource(t, e)
+			source := gmailCoverageSource(t.Context(), t, e)
 			var participant int64
-			require.NoError(e.Store.DB().QueryRow("SELECT sender_id FROM messages WHERE source_id=? AND source_message_id='gone'", source.ID).Scan(&participant))
+			require.NoError(e.Store.DB().QueryRowContext(t.Context(), "SELECT sender_id FROM messages WHERE source_id=? AND source_message_id='gone'", source.ID).Scan(&participant))
 			person, _, err := e.Store.CreatePersonFromParticipant(participant)
 			require.NoError(err)
 			_, err = e.Store.SetPersonTrackingContext(t.Context(), person.ID, true)
 			require.NoError(err)
 			var lower int64
-			require.NoError(e.Store.DB().QueryRow("SELECT lower_sequence FROM person_sweep_sync_publications WHERE sync_run_id=(SELECT MAX(id) FROM sync_runs)").Scan(&lower))
+			require.NoError(e.Store.DB().QueryRowContext(t.Context(), "SELECT lower_sequence FROM person_sweep_sync_publications WHERE sync_run_id=(SELECT MAX(id) FROM sync_runs)").Scan(&lower))
 			progress := &recoveryProgress{}
 			syncer := New(e.Mock, e.Store, nil)
 			syncer.WithProgress(progress)
@@ -343,7 +329,7 @@ func TestGmailRecoveryCompletionAndPublicationRange(t *testing.T) {
 			syncer.WithSuccessfulSyncHook("synthetic", func(ctx context.Context, src *store.Source, changed bool) error {
 				hooks++
 				assert.True(changed)
-				assert.Equal(gmailCoverageSource(t, e).SyncCursor.String, strconv.FormatUint(e.Mock.Profile.HistoryID, 10))
+				assert.Equal(gmailCoverageSource(ctx, t, e).SyncCursor.String, strconv.FormatUint(e.Mock.Profile.HistoryID, 10))
 				return nil
 			})
 			summary, err := syncer.Full(t.Context(), testEmail)
@@ -352,14 +338,14 @@ func TestGmailRecoveryCompletionAndPublicationRange(t *testing.T) {
 			assert.Same(summary, progress.complete[0])
 			var status string
 			var inherited int64
-			require.NoError(e.Store.DB().QueryRow("SELECT status FROM sync_runs WHERE id=?", summary.SyncRunID).Scan(&status))
+			require.NoError(e.Store.DB().QueryRowContext(t.Context(), "SELECT status FROM sync_runs WHERE id=?", summary.SyncRunID).Scan(&status))
 			assert.Equal(store.SyncStatusCompleted, status, "summary points to the final committed run")
-			require.NoError(e.Store.DB().QueryRow("SELECT lower_sequence FROM person_sweep_sync_publications WHERE sync_run_id=? AND source_id=?", summary.SyncRunID, source.ID).Scan(&inherited))
+			require.NoError(e.Store.DB().QueryRowContext(t.Context(), "SELECT lower_sequence FROM person_sweep_sync_publications WHERE sync_run_id=? AND source_id=?", summary.SyncRunID, source.ID).Scan(&inherited))
 			assert.Equal(lower, inherited, "catch-up publishes the full recovery interval")
 			assert.Equal(1, hooks)
 			var latest, dirty int64
-			require.NoError(e.Store.DB().QueryRow("SELECT MAX(sequence) FROM person_sweep_changes WHERE person_id=? AND source_id=?", person.ID, source.ID).Scan(&latest))
-			require.NoError(e.Store.DB().QueryRow("SELECT dirty_through_sequence FROM person_sweep_work WHERE person_id=?", person.ID).Scan(&dirty))
+			require.NoError(e.Store.DB().QueryRowContext(t.Context(), "SELECT MAX(sequence) FROM person_sweep_changes WHERE person_id=? AND source_id=?", person.ID, source.ID).Scan(&latest))
+			require.NoError(e.Store.DB().QueryRowContext(t.Context(), "SELECT dirty_through_sequence FROM person_sweep_work WHERE person_id=?", person.ID).Scan(&dirty))
 			assert.GreaterOrEqual(dirty, latest, "full-phase changes are published without waiting for a gap detector")
 		})
 	}
@@ -376,14 +362,14 @@ func TestGmailRecoveryAbruptProcessExit(t *testing.T) {
 
 			e := recoveryStateEnv(t, true)
 			for range 2 {
-				cmd := exec.Command(executable, "-test.run=^TestGmailRecoveryCrashWorker$", "-test.timeout=60s")
+				cmd := exec.CommandContext(t.Context(), executable, "-test.run=^TestGmailRecoveryCrashWorker$", "-test.timeout=60s")
 				cmd.Env = []string{"MSGVAULT_TEST_RECOVERY_CRASH_DB=" + filepath.Join(e.TmpDir, "durable.db"), "MSGVAULT_TEST_RECOVERY_CRASH_PHASE=" + phase}
 				output, err := cmd.CombinedOutput()
 				var exit *exec.ExitError
 				require.ErrorAs(err, &exit, string(output))
 				require.Equal(42, exit.ExitCode(), string(output))
 				gmailCoverageReopen(t, e)
-				assert.Equal("1000", gmailCoverageSource(t, e).SyncCursor.String)
+				assert.Equal("1000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
 			}
 			api := &recoveryStateAPI{MockAPI: e.Mock}
 			e.Syncer = New(api, e.Store, nil)
@@ -403,16 +389,16 @@ func recoveryStateEnv(t *testing.T, legacy bool) *TestEnv {
 	t.Helper()
 	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	dir := t.TempDir()
-	st, err := store.OpenForTest(filepath.Join(dir, "durable.db"))
+	st, err := store.OpenForTest(t.Context(), filepath.Join(dir, "durable.db"))
 	require.NoError(t, err)
 	require.NoError(t, st.InitSchema())
 	mock := gmail.NewMockAPI()
 	mock.Profile = &gmail.Profile{EmailAddress: testEmail, HistoryID: 1000}
-	e := &TestEnv{Store: st, Mock: mock, Syncer: New(mock, st, nil), TmpDir: dir, Context: context.Background()}
+	e := &TestEnv{Store: st, Mock: mock, Syncer: New(mock, st, nil), TmpDir: dir, Context: t.Context()}
 	t.Cleanup(func() { require.NoError(t, e.Store.Close()) })
 	seedMessages(e, 9, 1000, "gone", "m0", "m1", "m2", "m3", "m4", "m5", "m6", "m7")
 	runFullSync(t, e)
-	source := gmailCoverageSource(t, e)
+	source := gmailCoverageSource(t.Context(), t, e)
 	delete(e.Mock.Messages, "gone")
 	e.Mock.MessagePages = nil
 	for i := range 8 {
@@ -426,7 +412,7 @@ func recoveryStateEnv(t *testing.T, legacy bool) *TestEnv {
 		// Releases before phase checkpoints saved a bare listing token.
 		id, err := e.Store.StartSync(source.ID, "full")
 		require.NoError(t, err)
-		_, err = e.Store.DB().Exec("UPDATE sync_runs SET request_fingerprint=? WHERE id=?", store.GmailHistoryRecoveryRequestFingerprint, id)
+		_, err = e.Store.DB().ExecContext(t.Context(), "UPDATE sync_runs SET request_fingerprint=? WHERE id=?", store.GmailHistoryRecoveryRequestFingerprint, id)
 		require.NoError(t, err)
 		require.NoError(t, e.Store.ScopedToSync(source.ID, id).PinSyncHandoffCursorContext(t.Context(), id, "15000"))
 		require.NoError(t, e.Store.UpdateSyncCheckpoint(id, &store.Checkpoint{PageToken: "page_1", MessagesProcessed: 1}))
@@ -492,7 +478,7 @@ func TestGmailRecoveryRepeatedInterruptions(t *testing.T) {
 							if phase == "publish" {
 								query = `CREATE TRIGGER recovery_fault BEFORE UPDATE OF sync_cursor ON sources BEGIN SELECT RAISE(ABORT, 'synthetic publication interruption'); END`
 							}
-							_, err := e.Store.DB().Exec(query)
+							_, err := e.Store.DB().ExecContext(t.Context(), query)
 							require.NoError(err)
 						}
 						// Alternate public entry points across SQL close/reopen cycles.
@@ -501,20 +487,20 @@ func TestGmailRecoveryRepeatedInterruptions(t *testing.T) {
 						if attempt%2 == 0 {
 							summary, err = e.Syncer.Full(t.Context(), testEmail)
 						} else {
-							summary, err = e.Syncer.IncrementalWithHistoryRecovery(t.Context(), gmailCoverageSource(t, e), nil)
+							summary, err = e.Syncer.IncrementalWithHistoryRecovery(t.Context(), gmailCoverageSource(t.Context(), t, e), nil)
 						}
-						_, dropErr := e.Store.DB().Exec("DROP TRIGGER IF EXISTS recovery_fault")
+						_, dropErr := e.Store.DB().ExecContext(t.Context(), "DROP TRIGGER IF EXISTS recovery_fault")
 						require.NoError(dropErr)
 						if attempt < interruptions {
 							require.Error(err)
-							assert.Equal("1000", gmailCoverageSource(t, e).SyncCursor.String)
+							assert.Equal("1000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
 							if phase == "reconcile" {
 								assertDeletedFromSource(t, e.Store, "gone", false)
 							}
 						} else {
 							require.NoError(err)
 							assert.Equal(uint64(20000), summary.FinalHistoryID)
-							assert.Equal("20000", gmailCoverageSource(t, e).SyncCursor.String)
+							assert.Equal("20000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
 							assertDeletedFromSource(t, e.Store, "gone", true)
 							assertRawDataExists(t, e.Store, "gone")
 							assertRawDataExists(t, e.Store, "history-only")

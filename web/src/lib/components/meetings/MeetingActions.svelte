@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Card, EmptyState } from '@kenn-io/kit-ui';
+  import { Disclosure, Button, Card, EmptyState } from '@kenn-io/kit-ui';
   import { onDestroy, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -79,7 +79,7 @@
           <MeetingActionRow {row} compact {onOpenMeeting} />
         {/each}
       </ul>
-      <details><summary>Evidence coverage</summary><p>{coverageSummary(displayedPage.coverage)}</p></details>
+      <Disclosure variant="plain">{#snippet summary()}Evidence coverage{/snippet}<p>{coverageSummary(displayedPage.coverage)}</p></Disclosure>
       {#if request && displayedPage.next_cursor && !controller.error}<Button label="Show more" disabled={controller.loading} onclick={() => void controller.loadMore()} />{/if}
     {/if}
   </section>
@@ -142,7 +142,7 @@
   .compact-actions { display: grid; gap: var(--space-3); padding: var(--pane-pad-y) var(--pane-pad-x); border-top: 1px solid var(--border-muted); }
   .compact-actions h3 { font-size: var(--font-size-sm); }
   .compact-actions ul { display: grid; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
-  .compact-actions details { font-size: var(--font-size-xs); color: var(--text-muted); }
+  .compact-actions :global(.kit-disclosure) { font-size: var(--font-size-xs); color: var(--text-muted); }
   .meeting-actions { min-width: 0; }
 
   h3,

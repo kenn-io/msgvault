@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../api/client';
 import type { FileMetadata, FileSearchRow } from './models';
 import { createExploreAPI } from './api';
+import { sourceGroup } from './fixtures.test-support';
 
 type RequiredNonNullableString<T, K extends keyof T> =
   {} extends Pick<T, K> ? false : null extends T[K] ? false : T[K] extends string ? true : false;
@@ -92,7 +93,7 @@ describe('ExploreAPI routing', () => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
       return Response.json({
-        rows: [{ key: '7', label: 'Example source', count: 12, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
+        rows: [sourceGroup],
         total_count: 1,
         cache_revision: 'cache-1',
         search_provenance: {}

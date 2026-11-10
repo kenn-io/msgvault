@@ -292,6 +292,41 @@ func TestSearchCmd_MessageTypeFlagForwardsToRemoteMode(t *testing.T) {
 	assert.Equal(t, "lunch", gotQuery, "remote query should keep search terms")
 }
 
+func TestSearchCmd_MessageTypeFlagAcceptsImportedTypes(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	defer resetSearchFlags()
+
+	var gotType string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotType = r.URL.Query().Get("message_type")
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(json.NewEncoder(w).Encode(map[string]any{"results": []map[string]any{}}), "write response")
+	}))
+	defer srv.Close()
+
+	run := func(messageType string) error {
+		resetSearchFlags()
+		cfg := &config.Config{}
+		cfg.Remote.URL = srv.URL
+		cfg.Remote.AllowInsecure = true
+		root := newTestRootCmd()
+		root.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+		root.AddCommand(searchCmd)
+		root.SetArgs([]string{"search", "--message-type", messageType, "release"})
+		return root.Execute()
+	}
+
+	require.NoError(run("feed_item"), "an imported type should be forwarded")
+	assert.Equal("feed_item", gotType, "message_type query")
+
+	gotType = ""
+	err := run("Feed-Item")
+	require.Error(err, "a malformed type should fail before the request")
+	assert.Contains(err.Error(), `invalid --message-type: "Feed-Item"`)
+	assert.Empty(gotType, "no request for a malformed type")
+}
+
 func TestSearchCmd_DeletionScopeForwardsToRemoteFTS(t *testing.T) {
 	cfg := testConfigValue()
 	useLocal := false
@@ -635,9 +670,9 @@ func TestSearchCmd_AccountFlagWithoutQuery(t *testing.T) {
 	require.NoError(err, "create source 1")
 	src2, err := s.GetOrCreateSource("gmail", "bob@example.com")
 	require.NoError(err, "create source 2")
-	conv1, err := s.EnsureConversation(src1.ID, "c1", "")
+	conv1, err := s.EnsureConversation(t.Context(), src1.ID, "c1", "")
 	require.NoError(err, "create conv 1")
-	conv2, err := s.EnsureConversation(src2.ID, "c2", "")
+	conv2, err := s.EnsureConversation(t.Context(), src2.ID, "c2", "")
 	require.NoError(err, "create conv 2")
 	_, err = s.UpsertMessage(&store.Message{
 		SourceID: src1.ID, ConversationID: conv1,
@@ -703,7 +738,7 @@ func TestSearchCmd_MessageTypeFlagScopesResults(t *testing.T) {
 	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	src, err := s.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err, "create source")
-	emailConv, err := s.EnsureConversation(src.ID, "email-thread", "")
+	emailConv, err := s.EnsureConversation(t.Context(), src.ID, "email-thread", "")
 	require.NoError(err, "create email conversation")
 	calendarConv, err := s.EnsureConversationWithType(src.ID, "calendar-thread", "calendar_event", "")
 	require.NoError(err, "create calendar conversation")
@@ -795,7 +830,7 @@ func TestSearchCmd_AccountFlagDoesNotLeakAcrossInvocations(t *testing.T) {
 	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	src, err := s.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err, "create source")
-	conv, err := s.EnsureConversation(src.ID, "c1", "")
+	conv, err := s.EnsureConversation(t.Context(), src.ID, "c1", "")
 	require.NoError(err, "create conv")
 	_, err = s.UpsertMessage(&store.Message{
 		SourceID: src.ID, ConversationID: conv,
@@ -896,9 +931,9 @@ func TestSearchCmd_CollectionFlagScopesResults(t *testing.T) {
 	require.NoError(err, "create source 1")
 	src2, err := s.GetOrCreateSource("gmail", "bob@example.com")
 	require.NoError(err, "create source 2")
-	conv1, err := s.EnsureConversation(src1.ID, "c1", "")
+	conv1, err := s.EnsureConversation(t.Context(), src1.ID, "c1", "")
 	require.NoError(err, "create conv 1")
-	conv2, err := s.EnsureConversation(src2.ID, "c2", "")
+	conv2, err := s.EnsureConversation(t.Context(), src2.ID, "c2", "")
 	require.NoError(err, "create conv 2")
 	_, err = s.UpsertMessage(&store.Message{
 		SourceID: src1.ID, ConversationID: conv1,

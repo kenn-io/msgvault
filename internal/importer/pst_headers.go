@@ -29,7 +29,7 @@ func pstMessageIngester(images *remoteimage.Fetcher) rawMessageIngestFunc {
 }
 
 func recordPstMessageHeaders(ctx context.Context, st *store.Store, sourceID int64, sourceMsgID string, raw []byte) error {
-	ids, err := st.MessageExistsBatch(sourceID, []string{sourceMsgID})
+	ids, err := st.MessageExistsBatchContext(ctx, sourceID, []string{sourceMsgID})
 	if err != nil {
 		return fmt.Errorf("find imported PST message: %w", err)
 	}

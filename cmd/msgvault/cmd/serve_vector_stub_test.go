@@ -10,6 +10,13 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 )
 
+func TestLocalEmbeddingsUnavailableWithoutVectorBackend(t *testing.T) {
+	cfg := config.NewDefaultConfig()
+	controller := &localEmbeddingsController{state: &invocation{cfg: cfg}}
+	_, err := controller.Inspect(t.Context())
+	require.ErrorContains(t, err, "sqlite-vec support is not compiled in")
+}
+
 // TestSetupVectorFeatures_EnabledWithoutTag verifies the untagged stub
 // returns a descriptive error when the user enables vector search in
 // config but builds the binary without -tags sqlite_vec. Runs only

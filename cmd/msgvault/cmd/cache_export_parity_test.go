@@ -36,7 +36,7 @@ func TestCacheExportParityFullVersusDerived(t *testing.T) {
 	person, _, err := st.CreatePersonFromParticipant(bob)
 	require.NoError(err)
 	require.NoError(st.Close())
-	_, err = buildCache(dbPath, derivedDir, true)
+	_, err = buildCache(t.Context(), dbPath, derivedDir, true)
 	require.NoError(err)
 
 	st, err = store.Open(dbPath)
@@ -46,23 +46,23 @@ func TestCacheExportParityFullVersusDerived(t *testing.T) {
 	require.NoError(err)
 	_, err = st.LinkParticipants(bob, carol)
 	require.NoError(err)
-	_, err = st.DB().Exec(`UPDATE participants SET display_name = NULL WHERE id = ?`, alice)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE participants SET display_name = NULL WHERE id = ?`, alice)
 	require.NoError(err)
 	_, err = st.EnsureParticipantByIdentifier("email", "alice@example.com", "Alice Updated")
 	require.NoError(err)
 	require.NoError(st.SetParticipantIdentifier(carol, "phone", "+15550142"))
-	_, err = st.DB().Exec(`INSERT INTO conversation_participants (conversation_id, participant_id) VALUES (?, ?)`,
+	_, err = st.DB().ExecContext(t.Context(), `INSERT INTO conversation_participants (conversation_id, participant_id) VALUES (?, ?)`,
 		conversations[1], carol)
 	require.NoError(err)
-	_, err = st.DB().Exec(`UPDATE conversations SET conversation_type = 'group_chat' WHERE id = ?`, conversations[1])
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE conversations SET conversation_type = 'group_chat' WHERE id = ?`, conversations[1])
 	require.NoError(err)
 	require.NoError(st.Close())
 
-	result, err := buildCacheDerivedOnly(dbPath, derivedDir)
+	result, err := buildCacheDerivedOnly(t.Context(), dbPath, derivedDir)
 	require.NoError(err)
 	require.True(result.IdentityOnly, "the mutations must take the derived refresh path")
 	require.False(result.Skipped)
-	_, err = buildCache(dbPath, fullDir, true)
+	_, err = buildCache(t.Context(), dbPath, fullDir, true)
 	require.NoError(err)
 
 	assertCacheExportParity(t, tmp, derivedDir, fullDir, []string{
@@ -99,7 +99,7 @@ func addCacheExportParityMessage(t *testing.T, st *store.Store, sourceID, sender
 	require.NoError(err)
 	require.NoError(st.ReplaceMessageRecipients(id, "from", []int64{sender}, []string{""}))
 	require.NoError(st.ReplaceMessageRecipients(id, "to", []int64{recipient}, []string{""}))
-	_, err = st.DB().Exec(`INSERT INTO conversation_participants (conversation_id, participant_id) VALUES (?, ?), (?, ?)`,
+	_, err = st.DB().ExecContext(t.Context(), `INSERT INTO conversation_participants (conversation_id, participant_id) VALUES (?, ?), (?, ?)`,
 		conv, sender, conv, recipient)
 	require.NoError(err)
 	return conv, id
@@ -108,11 +108,11 @@ func addCacheExportParityMessage(t *testing.T, st *store.Store, sourceID, sender
 func assertCacheExportParity(t *testing.T, tmp, actualDir, fullDir string, datasets []string) {
 	t.Helper()
 	assert, require := assert.New(t), require.New(t)
-	duckDB, err := duckdbutil.Open(context.Background(), duckdbutil.BuilderPolicy(filepath.Join(tmp, "parity-duckdb-tmp")))
+	duckDB, err := duckdbutil.Open(t.Context(), duckdbutil.BuilderPolicy(filepath.Join(tmp, "parity-duckdb-tmp")))
 	require.NoError(err)
 	defer func() { require.NoError(duckDB.Close()) }()
 	columnSchema := func(path string) []string {
-		rows, err := duckDB.Query(`SELECT * FROM read_parquet(?, hive_partitioning=true) LIMIT 0`, path)
+		rows, err := duckDB.QueryContext(t.Context(), `SELECT * FROM read_parquet(?, hive_partitioning=true) LIMIT 0`, path)
 		require.NoError(err, path)
 		defer func() { require.NoError(rows.Close()) }()
 		types, err := rows.ColumnTypes()
@@ -134,7 +134,7 @@ func assertCacheExportParity(t *testing.T, tmp, actualDir, fullDir string, datas
 			columns = "* EXCLUDE (temperature_effective_at, temperature_effective_date)"
 		}
 		var rows, missing, extra int
-		require.NoError(duckDB.QueryRow(fmt.Sprintf(`SELECT
+		require.NoError(duckDB.QueryRowContext(t.Context(), fmt.Sprintf(`SELECT
 			(SELECT count(*) FROM read_parquet(?, hive_partitioning=true)),
 			(SELECT count(*) FROM (SELECT %[1]s FROM read_parquet(?, hive_partitioning=true) EXCEPT ALL SELECT %[1]s FROM read_parquet(?, hive_partitioning=true))),
 			(SELECT count(*) FROM (SELECT %[1]s FROM read_parquet(?, hive_partitioning=true) EXCEPT ALL SELECT %[1]s FROM read_parquet(?, hive_partitioning=true)))`, columns),
@@ -156,7 +156,7 @@ func TestCacheExportParityCopyParquetRoundTrip(t *testing.T) {
 
 	var id int
 	var name string
-	require.NoError(db.QueryRow(`SELECT id, name FROM read_parquet(?)`, filepath.Join(dir, "data.parquet")).Scan(&id, &name))
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT id, name FROM read_parquet(?)`, filepath.Join(dir, "data.parquet")).Scan(&id, &name))
 	require.Equal(7, id)
 	require.Equal("seven", name)
 }
@@ -216,7 +216,7 @@ func TestStageParticipantClustersBatchesInsertsWithoutChangingRows(t *testing.T)
 			require.NoError(stageParticipantClusters(t.Context(), recorder, clusters))
 			assert.Equal(tt.batchRows, recorder.batchRows)
 
-			rows, err := recorder.Query(`SELECT participant_id, canonical_id FROM tmp_participant_clusters`)
+			rows, err := recorder.QueryContext(t.Context(), `SELECT participant_id, canonical_id FROM tmp_participant_clusters`)
 			require.NoError(err)
 			defer func() { require.NoError(rows.Close()) }()
 			got := make(map[int64]int64, len(clusters))

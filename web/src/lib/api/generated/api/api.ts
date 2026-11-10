@@ -118,9 +118,6 @@ import type {
   DiscoverRequest,
   DocbankAttachmentBackfillResponse,
   DocbankAttachmentStatus,
-  DocumentIndexStatusResponse,
-  DocumentSearchResponse,
-  DocumentVectorOperationsResponse,
   DomainSummary,
   EmbeddingStatus,
   Employment,
@@ -157,8 +154,6 @@ import type {
   GetConversationParams,
   GetConversationPathParameters,
   GetDeletionPathParameters,
-  GetDocumentIndexStatusParams,
-  GetDocumentVectorStatusParams,
   GetDomainPathParameters,
   GetEmbeddingStatusParams,
   GetEmploymentPathParameters,
@@ -236,6 +231,7 @@ import type {
   ListDeletionsResponse,
   ListDirectoryPeopleParams,
   ListIdentityMatchCandidatesParams,
+  ListLoopsParams,
   ListMessageRecordingsPathParameters,
   ListMessageTasksPathParameters,
   ListMessagesParams,
@@ -277,8 +273,13 @@ import type {
   ListTextConversationMessagesParams,
   ListTextConversationMessagesPathParameters,
   ListTextConversationsParams,
+  LocalEmbeddingsStatus,
+  LoopDecisionResponse,
+  LoopListResponse,
   MCPCapabilities,
   Manifest,
+  MarkLoopDoneParams,
+  MarkLoopDonePathParameters,
   MediaSearchResponse,
   MediaSearchStatusResponse,
   MeetingImportRequest,
@@ -288,6 +289,8 @@ import type {
   MergePersonRequest,
   MergePersonsPathParameters,
   MessageDetail,
+  MessageImportRequest,
+  MessageImportResponse,
   MessageListResponse,
   MessageRecordingsResponse,
   MessageTagChange,
@@ -399,6 +402,7 @@ import type {
   RelationshipType,
   RelationshipTypesResponse,
   RemoteImageRequest,
+  ReopenLoopPathParameters,
   ResolveCardDAVConflictPathParameters,
   ReviewAcceptIdentityMatchCandidatePathParameters,
   ReviewRejectIdentityMatchCandidatePathParameters,
@@ -414,7 +418,6 @@ import type {
   SchedulerStatusResponse,
   SearchCLIParams,
   SearchChatsParams,
-  SearchDocumentsParams,
   SearchFastResponse,
   SearchIntegrationTasksParams,
   SearchMediaParams,
@@ -435,6 +438,9 @@ import type {
   SettingsPatchRequest,
   SettingsResponse,
   SimilarSearchResponse,
+  SnoozeLoopParams,
+  SnoozeLoopPathParameters,
+  SnoozeLoopRequest,
   SourceIdentitiesResponse,
   SourceStatusResponse,
   SplitPersonMergePathParameters,
@@ -1578,55 +1584,6 @@ export const getDeletion = (
   );
 };
 /**
- * @summary Search extracted document attachments
- */
-export const searchDocuments = (
-  params: SearchDocumentsParams,
-  options?: SecondParameter<typeof orvalFetch<DocumentSearchResponse>>,
-) => {
-  return orvalFetch<DocumentSearchResponse>(
-    { url: `/api/v1/documents/search`, method: "GET", params },
-    options,
-  );
-};
-/**
- * @summary Get extracted document index status
- */
-export const getDocumentIndexStatus = (
-  params: GetDocumentIndexStatusParams,
-  options?: SecondParameter<typeof orvalFetch<DocumentIndexStatusResponse>>,
-) => {
-  return orvalFetch<DocumentIndexStatusResponse>(
-    { url: `/api/v1/documents/status`, method: "GET", params },
-    options,
-  );
-};
-/**
- * @summary Get extracted document index status for the selected durable profile
- */
-export const getCurrentDocumentIndexStatus = (
-  options?: SecondParameter<typeof orvalFetch<DocumentIndexStatusResponse>>,
-) => {
-  return orvalFetch<DocumentIndexStatusResponse>(
-    { url: `/api/v1/documents/status/current`, method: "GET" },
-    options,
-  );
-};
-/**
- * @summary Get document vector generation, consent, usage, and failure status
- */
-export const getDocumentVectorStatus = (
-  params?: GetDocumentVectorStatusParams,
-  options?: SecondParameter<
-    typeof orvalFetch<DocumentVectorOperationsResponse>
-  >,
-) => {
-  return orvalFetch<DocumentVectorOperationsResponse>(
-    { url: `/api/v1/documents/vectors/status`, method: "GET", params },
-    options,
-  );
-};
-/**
  * @summary Get one analytical domain
  */
 export const getDomain = (
@@ -1638,6 +1595,28 @@ export const getDomain = (
       url: `/api/v1/domains/${encodeURIComponent(String(domain))}`,
       method: "GET",
     },
+    options,
+  );
+};
+/**
+ * @summary Get local search setup
+ */
+export const getLocalEmbeddings = (
+  options?: SecondParameter<typeof orvalFetch<LocalEmbeddingsStatus>>,
+) => {
+  return orvalFetch<LocalEmbeddingsStatus>(
+    { url: `/api/v1/embeddings/local`, method: "GET" },
+    options,
+  );
+};
+/**
+ * @summary Turn on local search
+ */
+export const enableLocalEmbeddings = (
+  options?: SecondParameter<typeof orvalFetch<LocalEmbeddingsStatus>>,
+) => {
+  return orvalFetch<LocalEmbeddingsStatus>(
+    { url: `/api/v1/embeddings/local`, method: "POST" },
     options,
   );
 };
@@ -1988,6 +1967,23 @@ export const importMeeting = (
   );
 };
 /**
+ * @summary Import one message
+ */
+export const importMessage = (
+  messageImportRequest: MessageImportRequest,
+  options?: SecondParameter<typeof orvalFetch<MessageImportResponse>>,
+) => {
+  return orvalFetch<MessageImportResponse>(
+    {
+      url: `/api/v1/import/message`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: messageImportRequest,
+    },
+    options,
+  );
+};
+/**
  * @summary Import one recorder-local Muesli meeting
  */
 export const importMuesli = (
@@ -2210,6 +2206,70 @@ export const testTaskIntegration = (
   );
 };
 /**
+ * @summary List conversations waiting on a reply
+ */
+export const listLoops = (
+  params?: ListLoopsParams,
+  options?: SecondParameter<typeof orvalFetch<LoopListResponse>>,
+) => {
+  return orvalFetch<LoopListResponse>(
+    { url: `/api/v1/loops`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary Mark a loop done
+ */
+export const markLoopDone = (
+  { messageId }: MarkLoopDonePathParameters,
+  params?: MarkLoopDoneParams,
+  options?: SecondParameter<typeof orvalFetch<LoopDecisionResponse>>,
+) => {
+  return orvalFetch<LoopDecisionResponse>(
+    {
+      url: `/api/v1/loops/${encodeURIComponent(String(messageId))}/done`,
+      method: "POST",
+      params,
+    },
+    options,
+  );
+};
+/**
+ * @summary Clear a loop decision
+ */
+export const reopenLoop = (
+  { messageId }: ReopenLoopPathParameters,
+  options?: SecondParameter<typeof orvalFetch<LoopDecisionResponse>>,
+) => {
+  return orvalFetch<LoopDecisionResponse>(
+    {
+      url: `/api/v1/loops/${encodeURIComponent(String(messageId))}/reopen`,
+      method: "POST",
+    },
+    options,
+  );
+};
+/**
+ * @summary Hide a loop until a later time
+ */
+export const snoozeLoop = (
+  { messageId }: SnoozeLoopPathParameters,
+  snoozeLoopRequest: SnoozeLoopRequest,
+  params?: SnoozeLoopParams,
+  options?: SecondParameter<typeof orvalFetch<LoopDecisionResponse>>,
+) => {
+  return orvalFetch<LoopDecisionResponse>(
+    {
+      url: `/api/v1/loops/${encodeURIComponent(String(messageId))}/snooze`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: snoozeLoopRequest,
+      params,
+    },
+    options,
+  );
+};
+/**
  * @summary Describe supported MCP daemon operations
  */
 export const getMCPCapabilities = (
@@ -2221,7 +2281,7 @@ export const getMCPCapabilities = (
   );
 };
 /**
- * @summary Search recordings and attachments as visible messages
+ * @summary Search recording transcripts and mirrored attachment text as visible messages
  */
 export const searchMedia = (
   params: SearchMediaParams,

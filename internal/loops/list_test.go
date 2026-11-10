@@ -3,6 +3,8 @@ package loops_test
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"iter"
 	"strconv"
 	"testing"
 	"time"
@@ -52,6 +54,74 @@ func TestListReplyOwedAndAwaiting(t *testing.T) {
 	assert.Equal(owed, result.Loops[1].Anchor.ID)
 	assert.Equal(loops.ReplyOwed, result.Loops[1].Kind)
 	assert.Equal(store.ChannelEmail, result.Loops[1].Channel)
+}
+
+// endingContext ends with a chosen error when end is called, so a test can
+// stop a request between conversations without racing a timer.
+type endingContext struct {
+	context.Context
+
+	done chan struct{}
+	err  error
+}
+
+func (c *endingContext) Done() <-chan struct{} { return c.done }
+
+func (c *endingContext) Err() error {
+	select {
+	case <-c.done:
+		return c.err
+	default:
+		return nil
+	}
+}
+
+// endAfterFirstConversation hands List one conversation, then ends the request.
+type endAfterFirstConversation struct {
+	*store.Store
+
+	ctx *endingContext
+}
+
+func (s endAfterFirstConversation) LoopConversationsContext(ctx context.Context, q store.LoopQuery) iter.Seq2[store.LoopConversation, error] {
+	return func(yield func(store.LoopConversation, error) bool) {
+		for conv, err := range s.Store.LoopConversationsContext(ctx, q) {
+			if !yield(conv, err) || err != nil {
+				return
+			}
+			close(s.ctx.done)
+			yield(store.LoopConversation{}, s.ctx.Err())
+			return
+		}
+	}
+}
+
+func TestListReturnsCheckedConversationsWhenTheRequestDeadlinePasses(t *testing.T) {
+	f := storetest.New(t)
+	waiting := f.PersistEmail(storetest.EmailSpec{Thread: "waiting", From: me, To: []string{"sam@example.test"}, Subject: "Lunch Friday?", Body: "Are you free?", SentAt: ago(5 * day)})
+	f.PersistEmail(storetest.EmailSpec{Thread: "owed", From: alex, To: []string{me}, Subject: "Contract draft", Body: "Can you send the contract?", SentAt: ago(3 * day)})
+	for _, tt := range []struct {
+		name string
+		err  error
+	}{
+		{"deadline", context.DeadlineExceeded},
+		{"caller left", context.Canceled},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			ctx := &endingContext{Context: t.Context(), done: make(chan struct{}), err: tt.err}
+			result, err := loops.List(ctx, endAfterFirstConversation{Store: f.Store, ctx: ctx}, loops.Options{}, now)
+			if errors.Is(tt.err, context.Canceled) {
+				require.ErrorIs(err, context.Canceled)
+				return
+			}
+			require.NoError(err)
+			assert.True(result.CoverageIncomplete, "a deadline reports incomplete coverage")
+			require.Len(result.Loops, 1, "only the conversation checked in full is returned")
+			assert.Equal(waiting, result.Loops[0].Anchor.ID)
+		})
+	}
 }
 
 func TestListRecomputesEvidenceFromBeforeLoopTextRulesWereVersioned(t *testing.T) {
@@ -323,7 +393,7 @@ func TestListUsesFromAddressMatchingResolvedSender(t *testing.T) {
 	})
 	before := list(t, f, loops.Options{})
 	require.Len(before.Loops, 1)
-	questionRef, err := f.Store.MessageConversationContext(t.Context(), question)
+	questionRef, err := f.Store.MessageConversation(t.Context(), question)
 	require.NoError(err)
 	_, err = f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
 		Message: &store.Message{
@@ -450,7 +520,7 @@ func TestDoneAcceptsWhatListShows(t *testing.T) {
 			f := storetest.New(t)
 			anchor := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you send the contract?", SentAt: ago(tt.age)})
 			if tt.missing {
-				_, err := f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM messages WHERE id = ?`), anchor)
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`DELETE FROM messages WHERE id = ?`), anchor)
 				require.NoError(err)
 			}
 			listed, err := loops.List(t.Context(), f.Store, loops.Options{}, now.Add(tt.advance))
@@ -497,9 +567,9 @@ type countingStore struct {
 	bodies    int
 }
 
-func (c *countingStore) GetMessageBodyTextContext(ctx context.Context, messageID int64) (string, error) {
+func (c *countingStore) GetMessageBodyText(ctx context.Context, messageID int64) (string, error) {
 	c.bodies++
-	return c.Store.GetMessageBodyTextContext(ctx, messageID)
+	return c.Store.GetMessageBodyText(ctx, messageID)
 }
 
 func (c *countingStore) LoopOriginalEvidenceContext(

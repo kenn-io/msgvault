@@ -9,6 +9,8 @@ import (
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/granola"
 	"go.kenn.io/msgvault/internal/meetingimport"
+	"go.kenn.io/msgvault/internal/messageimport"
+	"go.kenn.io/msgvault/internal/meta"
 	"go.kenn.io/msgvault/internal/muesli"
 	"go.kenn.io/msgvault/internal/notionmeetings"
 	"go.kenn.io/msgvault/internal/omi"
@@ -58,6 +60,14 @@ const SlackJobName = sourceTypeSlack
 // InlineJobName drives every configured Inline account and its chat selection.
 const InlineJobName = sourceTypeInline
 
+// IMessageJobName drives the selected Apple Messages source.
+const IMessageJobName = "apple-messages"
+
+// WhatsAppAppleJobName identifies a native WhatsApp store by its owner phone.
+func WhatsAppAppleJobName(phone string) string {
+	return "whatsapp:" + phone
+}
+
 // CardDAVJobName is the scheduler identity for the default CardDAV connection.
 const CardDAVJobName = "carddav"
 
@@ -77,7 +87,7 @@ func classifySourceScheduling(sourceType, identifier string) sourceScheduleClass
 	switch sourceType {
 	case "", sourceTypeGmail, "imap", "msmail", "teams", "discord":
 		return sourceScheduleClassification{kind: sourceScheduleAccount}
-	case meetingimport.SourceType:
+	case meetingimport.SourceType, messageimport.SourceType:
 		return sourceScheduleClassification{kind: sourceScheduleNonSchedulable}
 	default:
 		jobName, ok := SchedulerJobNameForSource(sourceType, identifier)
@@ -102,6 +112,20 @@ func classifySourceScheduling(sourceType, identifier string) sourceScheduleClass
 // they are governed by the account scheduler, not a generic job.
 func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 	switch sourceType {
+	case "whatsapp":
+		return WhatsAppAppleJobName(identifier), true
+	case "apple_messages":
+		return IMessageJobName, true
+	case meta.InstagramSourceType:
+		if _, ok := meta.ParseInstagramSourceIdentifier(identifier); !ok {
+			return "", false
+		}
+		return meta.InstagramSourceType + ":" + identifier, true
+	case meta.SourceType:
+		if _, _, ok := meta.ParseSourceIdentifier(identifier); !ok {
+			return "", false
+		}
+		return meta.SourceType + ":" + identifier, true
 	case chatwoot.SourceType:
 		baseURL, accountID, _, ok := chatwoot.ParseSourceIdentifier(identifier)
 		if !ok {
@@ -166,9 +190,13 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 
 // isSourceSyncJobName reports whether a generic scheduler job syncs a source.
 func isSourceSyncJobName(name string) bool {
-	kind, _, _ := strings.Cut(name, ":")
+	kind, identifier, _ := strings.Cut(name, ":")
 	if kind == CardDAVJobName {
 		return true
+	}
+	if kind == meta.SourceType || kind == meta.InstagramSourceType {
+		canonical, ok := SchedulerJobNameForSource(kind, identifier)
+		return ok && canonical == name
 	}
 	_, ok := SchedulerJobNameForSource(strings.ReplaceAll(kind, "-", "_"), "source/calendar")
 	return ok

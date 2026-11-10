@@ -1,9 +1,10 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
-import { expectKitTheme, selectKitOption, selectWorkspace, setKitTheme, setTemporaryDensity } from '../kit-ui';
+import { expectKitTheme, selectKitOption, selectWorkspace, setKitTheme, setTemporaryDensity, stubOperationStatus } from '../kit-ui';
 import { assertCardDAVForbiddenMarkersAbsent, installCardDAV } from './fixtures/carddav';
 import { installDirectoryReviewArchive, installMixedArchive } from './fixtures/mixed-archive';
 import { installOperations } from './fixtures/operations';
+import { sourceStatus } from '../../src/lib/jobs/fixtures.test-support';
 
 async function openPersonFacts(page: Page): Promise<void> {
   await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 42 })));
@@ -33,8 +34,8 @@ for (const theme of ['light', 'dark'] as const) {
     await openHistory();
     await expect(page.getByRole('dialog', { name: 'Past runs' })).toBeVisible();
     await assertNoViolations(page, `Past runs ${theme}`);
-    await page.getByRole('button', { name: 'Open Document extraction run' }).click();
-    await expect(page.getByRole('region', { name: 'Operation run detail' })).toContainText('Operation archive input changed.');
+    await page.getByRole('button', { name: 'Open CardDAV sync run' }).click();
+    await expect(page.getByRole('region', { name: 'Operation run detail' })).toContainText('CardDAV sync failed.');
     await assertNoViolations(page, `Run detail ${theme}`);
     await page.setViewportSize({ width: 390, height: 844 });
     await assertNoViolations(page, `Narrow run detail ${theme}`);
@@ -45,13 +46,13 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(page.getByRole('dialog', { name: 'Past runs' }).getByRole('alert').filter({ hasText: 'Unable to load operation history.' })).toBeVisible();
     await assertNoViolations(page, `History failure ${theme}`);
     await page.keyboard.press('Escape');
-    fixture.setOperationConfigured('document_extraction', false);
+    fixture.setOperationConfigured('visual_embedding', false);
     await page.reload();
     await openHistory();
-    await page.getByRole('button', { name: 'Open Document extraction run' }).click();
-    await page.getByRole('button', { name: 'Open Document index status' }).click();
-    await expect(page.getByRole('link', { name: 'Document indexing setup' })).toBeVisible();
-    await assertNoViolations(page, `Document setup ${theme}`);
+    await page.getByRole('button', { name: 'Open Visual embedding run' }).click();
+    await page.getByRole('button', { name: 'Open Visual attachment status' }).click();
+    await expect(page.getByRole('button', { name: 'Open visual attachment settings' })).toBeVisible();
+    await assertNoViolations(page, `Visual setup ${theme}`);
   });
 }
 
@@ -356,31 +357,6 @@ for (const theme of ['light', 'dark'] as const) {
   });
 }
 
-test('Directory profile maintenance is accessible at desktop and narrow widths', async ({ page }) => {
-  await installMixedArchive(page);
-  for (const viewport of [
-    { label: 'desktop', width: 1280, height: 900 },
-    { label: 'narrow', width: 390, height: 844 }
-  ]) {
-    await page.setViewportSize({ width: viewport.width, height: viewport.height });
-    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
-      workspace: 'relationships', relationshipSaved: true, directoryPersonID: 42
-    }))}`);
-    await page.getByRole('button', { name: 'More actions', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Keep this profile updated', exact: true }).click();
-    const maintenance = page.getByRole('region', { name: 'Profile maintenance' });
-    await expect(maintenance.getByRole('switch', {
-      name: 'Track this person for profile maintenance'
-    })).toBeEnabled();
-    const reveal = maintenance.getByRole('button', { name: 'Show sensitive eligible fields' });
-    await reveal.focus();
-    await page.keyboard.press('Enter');
-    await expect(maintenance.getByText('Private note')).toBeVisible();
-    await expect(maintenance.getByText('Sensitive', { exact: true })).toBeVisible();
-    await assertNoViolations(page, `Directory profile maintenance ${viewport.label}`);
-  }
-});
-
 test('People duplicates, merge, split, and Fact gate have no axe violations', async ({ page }) => {
   test.slow();
   await installDirectoryReviewArchive(page);
@@ -406,15 +382,13 @@ test('People duplicates, merge, split, and Fact gate have no axe violations', as
   }))}`);
   await page.getByRole('button', { name: 'More actions', exact: true }).click();
   await page.getByRole('menuitem', { name: 'History', exact: true }).click();
-  const history = page.getByRole('list', { name: 'Person merge history' });
-  await expect(history).toBeVisible();
-  await history.getByRole('button', { name: 'Inspect merge 41' }).click();
-  await expect(page.getByRole('heading', { name: 'Merge 41 detail' })).toBeVisible();
+  const dialog = page.getByRole('dialog', { name: 'History' });
+  await dialog.getByRole('region', { name: 'Merges' }).getByRole('button', { name: /^Open .+ merged into .+ · / }).click();
+  const detail = page.getByRole('region', { name: 'Merge detail' });
+  await expect(detail).toBeVisible();
   await assertNoViolations(page, 'Directory merge history detail');
-  await page.getByRole('button', { name: 'Split merged profile' }).click();
-  const split = page.getByRole('dialog', { name: 'Split merged profile' });
-  await expect(split).toBeVisible();
-  const splitCancel = split.getByRole('button', { name: 'Cancel' });
+  await detail.getByRole('button', { name: 'Split…' }).click();
+  const splitCancel = page.getByRole('dialog').getByRole('button', { name: /^Back to .+ merged into / });
   await expect(splitCancel).toBeEnabled();
   await expect(splitCancel).toHaveCSS('opacity', '1');
   await assertNoViolations(page, 'Directory split modal');
@@ -504,7 +478,7 @@ test('CardDAV account, operations, conflicts, modal, and publication are accessi
       workspace: 'relationships', relationshipSaved: true, directoryPersonID: 42
     }))}`);
     await page.getByRole('button', { name: 'More actions', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Publish to address book', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Publish to address book…', exact: true }).click();
     const publication = page.getByRole('region', { name: 'CardDAV publication' });
     await expect(publication).toContainText('Not published');
     await expect(publication).toContainText('Desired publication: Unpublished');
@@ -518,6 +492,9 @@ test('CardDAV account, operations, conflicts, modal, and publication are accessi
 for (const theme of ['light', 'dark'] as const) {
   for (const density of ['compact', 'comfortable'] as const) {
     test(`${theme}/${density} login, loading, empty, error, and degraded states have no axe violations`, async ({ page }) => {
+      await stubOperationStatus(page);
+      let sources: ReturnType<typeof sourceStatus>[] = [];
+      await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources } }));
       let sessionRequired = true;
       let exploreMode: 'loading' | 'empty' | 'error' | 'degraded' = 'loading';
       await page.addInitScript(({ theme, density }) => {
@@ -566,8 +543,13 @@ for (const theme of ['light', 'dark'] as const) {
 
       exploreMode = 'empty';
       await page.reload();
+      await expect(page.getByText('No mail yet')).toBeVisible();
+      await assertNoViolations(page, `empty archive ${theme}/${density}`);
+
+      sources = [sourceStatus({ scheduled: false })];
+      await page.goto('/?workspace=everything');
       await expect(page.getByText('No items match this view')).toBeVisible();
-      await assertNoViolations(page, `empty ${theme}/${density}`);
+      await assertNoViolations(page, `empty view with a source ${theme}/${density}`);
 
       exploreMode = 'error';
       await page.reload();

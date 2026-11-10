@@ -82,7 +82,7 @@ func TestImportEmlxDir_SingleMailbox(t *testing.T) {
 	})
 
 	summary, err := ImportEmlxDir(
-		context.Background(), st, root, EmlxImportOptions{
+		t.Context(), st, root, EmlxImportOptions{
 			Identifier:         "alice@example.com",
 			NoResume:           true,
 			CheckpointInterval: 1,
@@ -93,18 +93,18 @@ func TestImportEmlxDir_SingleMailbox(t *testing.T) {
 	require.Equal(1, summary.MailboxesImported, "MailboxesImported")
 
 	var msgCount int
-	err = st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&msgCount)
+	err = st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&msgCount)
 	require.NoError(err, "count messages")
 	require.Equal(2, msgCount, "msgCount")
 
 	// Verify labels were created and assigned.
 	var labelCount int
-	err = st.DB().QueryRow(`SELECT COUNT(*) FROM labels WHERE name = 'Test'`).Scan(&labelCount)
+	err = st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM labels WHERE name = 'Test'`).Scan(&labelCount)
 	require.NoError(err, "count labels")
 	require.Equal(1, labelCount, "labelCount")
 
 	var msgLabelCount int
-	err = st.DB().QueryRow(`SELECT COUNT(*) FROM message_labels`).Scan(&msgLabelCount)
+	err = st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM message_labels`).Scan(&msgLabelCount)
 	require.NoError(err, "count message_labels")
 	require.Equal(2, msgLabelCount, "msgLabelCount")
 }
@@ -131,7 +131,7 @@ func TestImportEmlxDir_MultiMailboxLabels(t *testing.T) {
 		map[string][]byte{"1.emlx": raw})
 
 	summary, err := ImportEmlxDir(
-		context.Background(), st, root, EmlxImportOptions{
+		t.Context(), st, root, EmlxImportOptions{
 			Identifier:         "alice@example.com",
 			NoResume:           true,
 			CheckpointInterval: 1,
@@ -144,12 +144,12 @@ func TestImportEmlxDir_MultiMailboxLabels(t *testing.T) {
 
 	// But it should have labels from both mailboxes.
 	var msgCount int
-	err = st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&msgCount)
+	err = st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&msgCount)
 	require.NoError(err, "count messages")
 	require.Equal(1, msgCount, "msgCount")
 
 	var labelNames []string
-	rows, err := st.DB().Query(`
+	rows, err := st.DB().QueryContext(t.Context(), `
 		SELECT l.name FROM message_labels ml
 		JOIN labels l ON l.id = ml.label_id
 		JOIN messages m ON m.id = ml.message_id
@@ -175,7 +175,7 @@ func TestImportEmlxDir_EmptyMailbox(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(mboxDir, "Messages"), 0700), "mkdir")
 
 	summary, err := ImportEmlxDir(
-		context.Background(), st, root, EmlxImportOptions{
+		t.Context(), st, root, EmlxImportOptions{
 			Identifier: "test@example.com",
 			NoResume:   true,
 		},
@@ -207,7 +207,7 @@ func TestImportEmlxDir_InvalidEmlxSoftError(t *testing.T) {
 		"write bad emlx")
 
 	summary, err := ImportEmlxDir(
-		context.Background(), st, root, EmlxImportOptions{
+		t.Context(), st, root, EmlxImportOptions{
 			Identifier:         "alice@example.com",
 			NoResume:           true,
 			CheckpointInterval: 1,
@@ -245,7 +245,7 @@ func TestImportEmlxDir_ResumeFromCheckpoint(t *testing.T) {
 
 	// First import: run to completion.
 	_, err := ImportEmlxDir(
-		context.Background(), st, root, EmlxImportOptions{
+		t.Context(), st, root, EmlxImportOptions{
 			Identifier:         "alice@example.com",
 			NoResume:           true,
 			CheckpointInterval: 1,
@@ -255,7 +255,7 @@ func TestImportEmlxDir_ResumeFromCheckpoint(t *testing.T) {
 
 	// Second import: resume should skip already-imported messages.
 	summary2, err := ImportEmlxDir(
-		context.Background(), st, root, EmlxImportOptions{
+		t.Context(), st, root, EmlxImportOptions{
 			Identifier:         "alice@example.com",
 			NoResume:           false,
 			CheckpointInterval: 1,
@@ -267,7 +267,7 @@ func TestImportEmlxDir_ResumeFromCheckpoint(t *testing.T) {
 	require.Equal(int64(0), summary2.MessagesAdded, "MessagesAdded (resume)")
 
 	var msgCount int
-	err = st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&msgCount)
+	err = st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&msgCount)
 	require.NoError(err, "count messages")
 	require.Equal(2, msgCount, "msgCount")
 }
@@ -300,7 +300,7 @@ func TestImportEmlxDir_PartialEmlxImported(t *testing.T) {
 	mkEmlx(t, msgDir, "2.partial.emlx", raw2)
 
 	summary, err := ImportEmlxDir(
-		context.Background(), st, root, EmlxImportOptions{
+		t.Context(), st, root, EmlxImportOptions{
 			Identifier:         "alice@example.com",
 			NoResume:           true,
 			CheckpointInterval: 1,
@@ -311,7 +311,7 @@ func TestImportEmlxDir_PartialEmlxImported(t *testing.T) {
 	require.Equal(int64(1), summary.PartialFiles, "PartialFiles")
 
 	var subjects []string
-	rows, err := st.DB().Query(`SELECT subject FROM messages ORDER BY subject`)
+	rows, err := st.DB().QueryContext(t.Context(), `SELECT subject FROM messages ORDER BY subject`)
 	require.NoError(err, "query subjects")
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
@@ -330,7 +330,7 @@ func TestImportEmlxDir_NoMailboxes(t *testing.T) {
 	require.NoError(t, os.MkdirAll(root, 0700), "mkdir")
 
 	summary, err := ImportEmlxDir(
-		context.Background(), st, root, EmlxImportOptions{
+		t.Context(), st, root, EmlxImportOptions{
 			Identifier: "test@example.com",
 			NoResume:   true,
 		},
@@ -353,7 +353,7 @@ func TestImportEmlxDir_OversizedFileRejected(t *testing.T) {
 	mkMailboxDir(t, mboxDir, map[string][]byte{"1.emlx": raw})
 
 	summary, err := ImportEmlxDir(
-		context.Background(), st, root, EmlxImportOptions{
+		t.Context(), st, root, EmlxImportOptions{
 			Identifier:         "alice@example.com",
 			NoResume:           true,
 			CheckpointInterval: 1,
@@ -379,7 +379,7 @@ func TestImportEmlxDir_CancelledLeavesRunning(t *testing.T) {
 	mkMailboxDir(t, mboxDir, map[string][]byte{"1.emlx": raw})
 
 	// Cancel context before starting.
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	_, err := ImportEmlxDir(ctx, st, root, EmlxImportOptions{
@@ -392,7 +392,8 @@ func TestImportEmlxDir_CancelledLeavesRunning(t *testing.T) {
 	// Sync run should still be in "running" state (not completed),
 	// so resume can pick it up.
 	var status string
-	err = st.DB().QueryRow(
+	err = st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT status FROM sync_runs ORDER BY started_at DESC LIMIT 1`,
 	).Scan(&status)
 	require.NoError(t, err, "select sync")
@@ -422,7 +423,7 @@ func TestImportEmlxDir_SameMailboxDuplicateFiles(t *testing.T) {
 	})
 
 	summary, err := ImportEmlxDir(
-		context.Background(), st, root, EmlxImportOptions{
+		t.Context(), st, root, EmlxImportOptions{
 			Identifier:         "alice@example.com",
 			NoResume:           true,
 			CheckpointInterval: 1,
@@ -433,13 +434,13 @@ func TestImportEmlxDir_SameMailboxDuplicateFiles(t *testing.T) {
 	require.Equal(int64(1), summary.MessagesAdded, "MessagesAdded")
 
 	var msgCount int
-	err = st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&msgCount)
+	err = st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&msgCount)
 	require.NoError(err, "count messages")
 	require.Equal(1, msgCount, "msgCount")
 
 	// Only one label mapping (Inbox), not duplicated.
 	var mlCount int
-	err = st.DB().QueryRow(`SELECT COUNT(*) FROM message_labels`).Scan(&mlCount)
+	err = st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM message_labels`).Scan(&mlCount)
 	require.NoError(err, "count message_labels")
 	require.Equal(1, mlCount, "message_labels count")
 }
@@ -459,7 +460,7 @@ func TestImportEmlxDir_Idempotent(t *testing.T) {
 	mkMailboxDir(t, mboxDir, map[string][]byte{"1.emlx": raw})
 
 	_, err := ImportEmlxDir(
-		context.Background(), st, root, EmlxImportOptions{
+		t.Context(), st, root, EmlxImportOptions{
 			Identifier: "alice@example.com",
 			NoResume:   true,
 		},
@@ -467,7 +468,7 @@ func TestImportEmlxDir_Idempotent(t *testing.T) {
 	require.NoError(err, "ImportEmlxDir (first)")
 
 	summary, err := ImportEmlxDir(
-		context.Background(), st, root, EmlxImportOptions{
+		t.Context(), st, root, EmlxImportOptions{
 			Identifier: "alice@example.com",
 			NoResume:   true,
 		},
@@ -477,7 +478,7 @@ func TestImportEmlxDir_Idempotent(t *testing.T) {
 	require.Equal(int64(0), summary.MessagesAdded, "MessagesAdded")
 
 	var msgCount int
-	err = st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&msgCount)
+	err = st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&msgCount)
 	require.NoError(err, "count messages")
 	require.Equal(1, msgCount, "msgCount")
 }
@@ -515,7 +516,7 @@ func TestImportEmlxDir_MailboxPathMismatchRechecksDiscovery(t *testing.T) {
 	require.NoError(st.FailSync(syncID, "worker stopped"), "fail prior sync")
 
 	summary, err := ImportEmlxDir(
-		context.Background(), st, root, EmlxImportOptions{Identifier: "alice@example.com", CheckpointInterval: 1},
+		t.Context(), st, root, EmlxImportOptions{Identifier: "alice@example.com", CheckpointInterval: 1},
 	)
 	require.NoError(err)
 	assert.True(summary.WasResumed)
@@ -555,7 +556,7 @@ func TestImportEmlxDir_ObsoleteIndexRechecksDiscovery(t *testing.T) {
 	}), "save checkpoint")
 	require.NoError(st.FailSync(syncID, "worker stopped"), "fail prior sync")
 
-	summary, err := ImportEmlxDir(context.Background(), st, root, EmlxImportOptions{Identifier: "alice@example.com"})
+	summary, err := ImportEmlxDir(t.Context(), st, root, EmlxImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	assert.True(t, summary.WasResumed)
 	assert.Equal(t, int64(1), summary.MessagesAdded)
@@ -591,7 +592,7 @@ func TestImportEmlxDir_RootMismatchDoesNotResume(t *testing.T) {
 	// Receipts, not the interrupted root's position, decide what is complete,
 	// so another root imports without carrying that run's counters.
 	summary, err := ImportEmlxDir(
-		context.Background(), st, rootB, EmlxImportOptions{
+		t.Context(), st, rootB, EmlxImportOptions{
 			Identifier:         "alice@example.com",
 			CheckpointInterval: 1,
 		},
@@ -647,7 +648,7 @@ func TestImportEmlxDir_CheckpointBlockedOnIngestFailure(t *testing.T) {
 	}
 
 	summary, err := ImportEmlxDir(
-		context.Background(), st, root, EmlxImportOptions{
+		t.Context(), st, root, EmlxImportOptions{
 			Identifier:         "alice@example.com",
 			NoResume:           true,
 			CheckpointInterval: 1,
@@ -662,7 +663,8 @@ func TestImportEmlxDir_CheckpointBlockedOnIngestFailure(t *testing.T) {
 	// Verify the checkpoint cursor stayed at msg1 (did not advance
 	// past the failed msg2).
 	var cursor string
-	err = st.DB().QueryRow(
+	err = st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT cursor_before FROM sync_runs
 		 ORDER BY started_at DESC LIMIT 1`,
 	).Scan(&cursor)
@@ -675,7 +677,7 @@ func TestImportEmlxDir_CheckpointBlockedOnIngestFailure(t *testing.T) {
 
 	// Resume should retry msg2 and succeed (no injected failure this time).
 	summary2, err := ImportEmlxDir(
-		context.Background(), st, root, EmlxImportOptions{
+		t.Context(), st, root, EmlxImportOptions{
 			Identifier:         "alice@example.com",
 			NoResume:           false,
 			CheckpointInterval: 1,
@@ -686,7 +688,7 @@ func TestImportEmlxDir_CheckpointBlockedOnIngestFailure(t *testing.T) {
 	require.Equal(int64(1), summary2.MessagesAdded, "MessagesAdded (resume)")
 
 	var total int
-	err = st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&total)
+	err = st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&total)
 	require.NoError(err, "count messages")
 	require.Equal(3, total, "total messages")
 }
@@ -735,15 +737,15 @@ func TestImportEmlxDir_PartialAttachmentRestoredFromSiblingDir(t *testing.T) {
 		Identifier: "alice@example.com", AttachmentsDir: filepath.Join(tmp, "attachments"),
 		NoResume: true,
 	}
-	summary, err := ImportEmlxDir(context.Background(), st, root, opts)
+	summary, err := ImportEmlxDir(t.Context(), st, root, opts)
 	require.NoError(err)
 	require.Zero(summary.Errors)
 	require.Equal(int64(1), summary.MessagesAdded)
 	var originalID, conversationID int64
-	require.NoError(st.DB().QueryRow(`SELECT id, conversation_id FROM messages`).Scan(&originalID, &conversationID))
-	labelID, err := st.EnsureLabel(summary.SourceID, "Saved", "Saved", "user")
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id, conversation_id FROM messages`).Scan(&originalID, &conversationID))
+	labelID, err := st.EnsureLabel(t.Context(), summary.SourceID, "Saved", "Saved", "user")
 	require.NoError(err)
-	require.NoError(st.AddMessageLabels(originalID, []int64{labelID}))
+	require.NoError(st.AddMessageLabels(t.Context(), originalID, []int64{labelID}))
 
 	attDir := filepath.Join(mboxDir, "Attachments", "3", "2")
 	require.NoError(os.MkdirAll(attDir, 0700), "mkdir attachments")
@@ -769,7 +771,7 @@ func TestImportEmlxDir_PartialAttachmentRestoredFromSiblingDir(t *testing.T) {
 			// Losing one cache file must not remove already archived bytes.
 			require.NoError(os.Remove(filepath.Join(attDir, "invoice.pdf")))
 		}
-		summary, err = ImportEmlxDir(context.Background(), st, root, opts)
+		summary, err = ImportEmlxDir(t.Context(), st, root, opts)
 		require.NoError(err)
 		require.Zero(summary.Errors)
 		assert.Zero(summary.MessagesAdded)
@@ -778,13 +780,13 @@ func TestImportEmlxDir_PartialAttachmentRestoredFromSiblingDir(t *testing.T) {
 		assert.Equal(parsedCounts[run], summary.PartialFiles)
 		assert.Equal(restored, summary.AttachmentsRestored)
 		var count int
-		require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&count))
 		assert.Equal(1, count)
 		var sourceMsgID string
-		require.NoError(st.DB().QueryRow(`SELECT source_message_id FROM messages WHERE id = ?`, originalID).Scan(&sourceMsgID))
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT source_message_id FROM messages WHERE id = ?`, originalID).Scan(&sourceMsgID))
 		assert.Equal(fmt.Sprintf("emlx-%x", sha256.Sum256([]byte(raw))), sourceMsgID)
 		var currentConversationID int64
-		require.NoError(st.DB().QueryRow(`SELECT conversation_id FROM messages WHERE id = ?`, originalID).Scan(&currentConversationID))
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT conversation_id FROM messages WHERE id = ?`, originalID).Scan(&currentConversationID))
 		assert.Equal(conversationID, currentConversationID)
 		storedRaw, err := st.GetMessageRaw(originalID)
 		require.NoError(err)
@@ -795,13 +797,13 @@ func TestImportEmlxDir_PartialAttachmentRestoredFromSiblingDir(t *testing.T) {
 		if run > 0 {
 			assert.Equal(notes, parsed.Attachments[1].Content)
 		}
-		require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM message_labels WHERE message_id = ?`, originalID).Scan(&count))
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM message_labels WHERE message_id = ?`, originalID).Scan(&count))
 		assert.Equal(2, count, "restoration preserves existing labels")
 	}
 
 	var filename string
 	var size int64
-	err = st.DB().QueryRow(`SELECT filename, size FROM attachments WHERE filename = 'invoice.pdf'`).Scan(&filename, &size)
+	err = st.DB().QueryRowContext(t.Context(), `SELECT filename, size FROM attachments WHERE filename = 'invoice.pdf'`).Scan(&filename, &size)
 	require.NoError(err, "query attachment")
 	assert.Equal("invoice.pdf", filename)
 	assert.Equal(int64(len(pdf)), size)
@@ -826,7 +828,7 @@ func TestImportEmlxDir_WarnsOnAttachmentReadFailure(t *testing.T) {
 				t.Skip("requires a user subject to filesystem permissions")
 			}
 			var logs bytes.Buffer
-			summary, err := ImportEmlxDir(context.Background(), st, root, EmlxImportOptions{
+			summary, err := ImportEmlxDir(t.Context(), st, root, EmlxImportOptions{
 				Identifier: "a@example.com", Logger: slog.New(slog.NewTextHandler(&logs, nil)),
 			})
 			require.NoError(err)

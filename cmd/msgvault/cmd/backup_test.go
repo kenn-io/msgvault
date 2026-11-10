@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
@@ -158,13 +157,13 @@ func TestRunBackupRestorePackedDefaultAndExplicitLooseCleanup(t *testing.T) {
 
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	dataDir := t.TempDir()
 	dbPath := filepath.Join(dataDir, "msgvault.db")
 	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	source, err := st.GetOrCreateSource("gmail", "restore-cli@example.com")
 	require.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "restore-cli-thread", "Restore CLI")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "restore-cli-thread", "Restore CLI")
 	require.NoError(err)
 	messageID, err := st.UpsertMessage(&store.Message{
 		ConversationID: conversationID, SourceID: source.ID,
@@ -178,33 +177,8 @@ func TestRunBackupRestorePackedDefaultAndExplicitLooseCleanup(t *testing.T) {
 	loosePath := filepath.Join(attachmentsDir, hash[:2], hash)
 	require.NoError(os.MkdirAll(filepath.Dir(loosePath), 0o700))
 	require.NoError(os.WriteFile(loosePath, content, 0o600))
-	require.NoError(st.UpsertAttachment(messageID, "restore-cli.bin", "application/octet-stream",
+	require.NoError(st.UpsertAttachment(t.Context(), messageID, "restore-cli.bin", "application/octet-stream",
 		hash[:2]+"/"+hash, hash, len(content)))
-	profileFingerprint := strings.Repeat("d", 64)
-	profile := store.DocumentExtractionProfile{
-		ID: "profile-" + profileFingerprint, Fingerprint: profileFingerprint,
-		Provider: "synthetic", Endpoint: "https://documents.example.test/v1",
-		Region: localValue, Model: "extract-test", RetentionPosture: "standard",
-		TrainingPosture: "opted-out", AllowedMediaTypes: []string{"application/pdf"},
-		PolicyJSON: []byte(`{"policy":1}`),
-	}
-	_, err = st.EnsureDocumentExtractionProfile(t.Context(), profile)
-	require.NoError(err)
-	var vectorGenerationID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`
-		INSERT INTO document_vector_generations
-			(fingerprint, target_extraction_profile_id, embedding_profile, model, dimension, state)
-		VALUES (?, ?, 'vector.embeddings', 'embed-test', 3, 'active') RETURNING id`),
-		strings.Repeat("e", 64), profile.ID).Scan(&vectorGenerationID))
-	_, err = st.DB().Exec(st.Rebind(`
-		INSERT INTO document_vector_publications
-			(generation_id, extraction_id, extraction_profile_id, canonical_blob_hash,
-			 extraction_input_key, chunk_id, chunk_key, chunk_checksum, source_sequence,
-			 token, state, created_at, updated_at)
-		VALUES (?, 'extraction-restore', ?, ?, 'input-restore', 1, 'chunk-restore', ?, 1,
-		        'token-restore', 'ready', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`),
-		vectorGenerationID, profile.ID, strings.Repeat("f", 64), strings.Repeat("a", 64))
-	require.NoError(err)
 	layout, err := packstore.NewLayout(attachmentsDir, packstore.LayoutOptions{
 		Staging: packstore.StagingSameDirectory,
 	})
@@ -263,7 +237,6 @@ func TestRunBackupRestorePackedDefaultAndExplicitLooseCleanup(t *testing.T) {
 	assert.Contains(packedOutput.String(), "page and blob hashes verified; manifest stats match")
 	assert.NotContains(packedOutput.String(), "SQLite integrity_check")
 	assertRestoredCLIBlob(t, backupRestoreTarget, hash, content, true)
-	assertRestoredDocumentVectorsInvalidated(t, backupRestoreTarget)
 
 	backupRestoreTarget = filepath.Join(t.TempDir(), "loose-target")
 	require.NoError(os.MkdirAll(backupRestoreTarget, 0o700))
@@ -280,7 +253,6 @@ func TestRunBackupRestorePackedDefaultAndExplicitLooseCleanup(t *testing.T) {
 	assert.Contains(looseOutput.String(), "Pack metadata cleared")
 	assert.Contains(looseOutput.String(), "SQLite integrity_check ok")
 	assertRestoredCLIBlob(t, backupRestoreTarget, hash, content, false)
-	assertRestoredDocumentVectorsInvalidated(t, backupRestoreTarget)
 	assert.NoFileExists(staleVectorPath, "overwrite restore removes the excluded derived vector backend")
 }
 
@@ -289,7 +261,7 @@ func TestRunBackupRestoreIntoNonexistentConfiguredDataDir(t *testing.T) {
 
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	sourceDir := t.TempDir()
 	dbPath := filepath.Join(sourceDir, "msgvault.db")
 	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
@@ -352,7 +324,7 @@ func TestRunBackupRestoreRejectsDaemonClaimAfterPreflight(t *testing.T) {
 
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	sourceDir := t.TempDir()
 	dbPath := filepath.Join(sourceDir, "msgvault.db")
 	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
@@ -429,7 +401,7 @@ func TestDaemonRestoreTargetCoordinatorHoldsDaemonAndWriteLeasesThroughoutRestor
 
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	sourceDir := t.TempDir()
 	dbPath := filepath.Join(sourceDir, "msgvault.db")
 	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
@@ -571,7 +543,7 @@ func TestDaemonRestoreTargetCoordinatorCanonicalizesMissingSymlinkedParent(t *te
 	cfg := testConfigValue()
 
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	sourceDir := t.TempDir()
 	dbPath := filepath.Join(sourceDir, "msgvault.db")
 	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
@@ -640,7 +612,7 @@ func assertRestoredCLIBlob(t *testing.T, target, hash string, want []byte, packe
 	t.Helper()
 	require := require.New(t)
 	assert := assert.New(t)
-	restored, err := store.OpenForTest(filepath.Join(target, "msgvault.db"))
+	restored, err := store.OpenForTest(t.Context(), filepath.Join(target, "msgvault.db"))
 	require.NoError(err)
 	defer func() { require.NoError(restored.Close()) }()
 	records, err := restored.ListPackRecordsContext(t.Context())
@@ -658,7 +630,7 @@ func assertRestoredCLIBlob(t *testing.T, target, hash string, want []byte, packe
 	}
 	blobs, err := attachmentstore.New(store.NewPackCatalog(restored), filepath.Join(target, "attachments"))
 	require.NoError(err)
-	reader, size, err := blobs.Open(hash)
+	reader, size, err := blobs.Open(t.Context(), hash)
 	require.NoError(err)
 	got, err := io.ReadAll(reader)
 	require.NoError(err)
@@ -666,21 +638,6 @@ func assertRestoredCLIBlob(t *testing.T, target, hash string, want []byte, packe
 	require.NoError(blobs.Close())
 	assert.Equal(int64(len(want)), size)
 	assert.Equal(want, got)
-}
-
-func assertRestoredDocumentVectorsInvalidated(t *testing.T, target string) {
-	t.Helper()
-	require := require.New(t)
-	assert := assert.New(t)
-	restored, err := store.OpenForTest(filepath.Join(target, "msgvault.db"))
-	require.NoError(err)
-	defer func() { require.NoError(restored.Close()) }()
-	active, err := restored.GetActiveDocumentVectorGeneration(t.Context())
-	require.NoError(err)
-	assert.Nil(active)
-	var publications int64
-	require.NoError(restored.DB().QueryRow(`SELECT COUNT(*) FROM document_vector_publications`).Scan(&publications))
-	assert.Zero(publications)
 }
 
 func TestPrintBackupRestoreSummaryReportsPackedMixedAndLooseLayouts(t *testing.T) {
@@ -833,7 +790,7 @@ func TestRefuseRestoreIntoLiveDaemonHomeBlocksIncompatibleDaemon(t *testing.T) {
 	})
 	require.NoError(err, "write runtime record")
 
-	require.Nil(findDaemonRuntime(dataDir),
+	require.Nil(findDaemonRuntime(t.Context(), dataDir),
 		"precondition: the daemon must read as incompatible to this client")
 	require.NotNil(findAnyDaemonRuntime(dataDir),
 		"the incompatible daemon still responds and must be discoverable")

@@ -464,7 +464,7 @@ type IMAPDraftServerOptions struct {
 // capabilities so APPEND and UIDPLUS paths can be tested together.
 func StartIMAPMemServerForDrafts(t *testing.T, opts IMAPDraftServerOptions) (string, *imapmemserver.User) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	user := serveIMAPMemServerWithCaps(t, ln, opts.MessagesPerMailbox, nil, "", 0, opts.StatusErrorMailbox, nil, nil, opts.Caps, opts.ReceiptlessAppend, opts.AppendLimit, opts.StatusAppendLimit, opts.StatusAppendMailbox)
 	return ln.Addr().String(), user
@@ -542,7 +542,7 @@ func startIMAPMemServer(
 	missingUID *missingUIDConfig,
 ) (string, *imapmemserver.User) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	user := serveIMAPMemServer(
 		t, ln, messagesPerMailbox, specialUse, selectErrorMailbox,
@@ -665,4 +665,27 @@ func ExpungeIMAPMessage(t *testing.T, addr, mailbox string, uid imap.UID) {
 		Flags: []imap.Flag{imap.FlagDeleted},
 	}, nil).Close())
 	require.NoError(t, client.Expunge().Close())
+}
+
+// SetIMAPFlags replaces the flags of one UID on a server returned by
+// StartIMAPMemServer, the way a mail client marks a message read or answered.
+// UIDNEXT and the STATUS MESSAGES count stay put, so a cursor without CONDSTORE
+// sees no change.
+func SetIMAPFlags(t *testing.T, addr, mailbox string, uid imap.UID, flags ...imap.Flag) {
+	t.Helper()
+	client, err := imapclient.DialInsecure(addr, nil)
+	require.NoError(t, err)
+	defer func() { _ = client.Close() }()
+
+	require.NoError(t, client.Login(IMAPTestUsername, IMAPTestPassword).Wait())
+	_, err = client.Select(mailbox, nil).Wait()
+	require.NoError(t, err)
+
+	var uidSet imap.UIDSet
+	uidSet.AddNum(uid)
+	require.NoError(t, client.Store(uidSet, &imap.StoreFlags{
+		Op:     imap.StoreFlagsSet,
+		Silent: true,
+		Flags:  flags,
+	}, nil).Close())
 }

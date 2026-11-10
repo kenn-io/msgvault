@@ -51,27 +51,31 @@ func TestQuoteIdentifierRoundTripsThroughSQLite(t *testing.T) {
 	require.NoError(err, "open db")
 	defer func() { _ = db.Close() }()
 
-	_, err = db.Exec(`CREATE TABLE t (id INTEGER, ` + quoteIdentifier(hostile) + ` TEXT)`)
+	_, err = db.ExecContext(t.Context(), `CREATE TABLE t (id INTEGER, `+quoteIdentifier(hostile)+` TEXT)`)
 	require.NoError(err, "create a table whose column name carries a quote and a payload")
 
 	var n int
-	require.NoError(db.QueryRow(
+	require.NoError(db.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 't'`).Scan(&n),
 		"read sqlite_master")
 	require.Equal(1, n, "the payload in the column name must not have executed")
 
 	var got string
-	require.NoError(db.QueryRow(
+	require.NoError(db.QueryRowContext(
+		t.Context(),
 		`SELECT name FROM pragma_table_info('t') WHERE cid = 1`).Scan(&got),
 		"read the column name back")
 	assert.Equal(hostile, got,
 		"SQLite must read the escaped form back as the original name, undoubled")
 
-	_, err = db.Exec(
-		`INSERT INTO t (id, ` + quoteIdentifier(hostile) + `) VALUES (1, 'value')`)
+	_, err = db.ExecContext(
+		t.Context(),
+		`INSERT INTO t (id, `+quoteIdentifier(hostile)+`) VALUES (1, 'value')`)
 	require.NoError(err, "write through the escaped identifier")
 	var value string
-	require.NoError(db.QueryRow(
+	require.NoError(db.QueryRowContext(
+		t.Context(),
 		`SELECT `+quoteIdentifier(hostile)+` FROM t WHERE id = 1`).Scan(&value),
 		"read through the escaped identifier")
 	assert.Equal("value", value, "the escaped identifier must name the same column both ways")

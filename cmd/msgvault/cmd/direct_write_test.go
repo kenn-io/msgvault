@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -14,7 +16,35 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestOpenWritableStoreAndInitPostgreSQLWithOpenWriter(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	if !f.Store.IsPostgreSQL() {
+		t.Skip("requires PostgreSQL")
+	}
+	st := f.Store
+	cfg := lifecycleTestConfig(t.TempDir())
+	setMatrixTestDatabaseURL(t, st, cfg)
+	messageID := f.CreateMessage("held")
+
+	writer, err := st.DB().BeginTx(t.Context(), nil)
+	require.NoError(err)
+	defer func() { require.NoError(writer.Rollback()) }()
+	_, err = writer.ExecContext(t.Context(), `UPDATE messages SET snippet = snippet WHERE id = $1`, messageID)
+	require.NoError(err)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	opened, cleanup, err := openWritableStoreAndInitForInvocation(ctx, testInvocationWithConfig(cfg))
+	if cleanup != nil {
+		defer cleanup()
+	}
+	require.NoError(err, "a current archive opens while another session holds a message write")
+	require.NotNil(opened)
+}
 
 func TestAcquireDirectSQLiteWriteLockSkipsPostgreSQL(t *testing.T) {
 	dataDir := t.TempDir()
@@ -25,7 +55,7 @@ func TestAcquireDirectSQLiteWriteLockSkipsPostgreSQL(t *testing.T) {
 	require.NoError(t, err, "pre-acquire sqlite lock")
 	t.Cleanup(func() { _ = owner.Close() })
 
-	release, err := acquireDirectSQLiteWriteLock(cfg, &invocation{cfg: cfg, logger: testDiscardLogger()})
+	release, err := acquireDirectSQLiteWriteLock(t.Context(), cfg, &invocation{cfg: cfg, logger: testDiscardLogger()})
 	require.NoError(t, err, "postgres direct writer should not use sqlite flock")
 	require.NotNil(t, release, "release")
 	release()
@@ -38,7 +68,7 @@ func TestAcquireDirectSQLiteWriteLock_HoldsThenReleases(t *testing.T) {
 	dataDir := t.TempDir()
 	cfg := lifecycleTestConfig(dataDir)
 
-	release, err := acquireDirectSQLiteWriteLock(cfg, &invocation{cfg: cfg, logger: testDiscardLogger()})
+	release, err := acquireDirectSQLiteWriteLock(t.Context(), cfg, &invocation{cfg: cfg, logger: testDiscardLogger()})
 	require.NoError(
 		err, "acquire on a free archive")
 
@@ -70,6 +100,7 @@ func TestOpenWritableStoreAndInitOwnsArchiveUntilCleanup(t *testing.T) {
 	_ = testCtx
 
 	st, cleanup, err := openWritableStoreAndInitWithInvocation(
+		t.Context(),
 		invocationFromContext(testCtx),
 		runStartupMigrationsForIngest,
 	)
@@ -113,7 +144,7 @@ func TestAcquireDirectSQLiteWriteLock_ActionableErrorWhenOwned(t *testing.T) {
 
 	t.Cleanup(func() { _ = owner.Close() })
 
-	release, err := acquireDirectSQLiteWriteLock(cfg, &invocation{cfg: cfg, logger: testDiscardLogger()})
+	release, err := acquireDirectSQLiteWriteLock(t.Context(), cfg, &invocation{cfg: cfg, logger: testDiscardLogger()})
 	assert.Nil(release, "no release when blocked")
 	require.Error(err, "acquire on an owned archive")
 	assert.Contains(err.Error(), "owned", "names the ownership condition")
@@ -128,7 +159,7 @@ func TestDirectWriterOwnsArchive_TrueWhenHeldWithoutDaemon(t *testing.T) {
 	require.NoError(t, err, "acquire owner lock")
 	t.Cleanup(func() { _ = owner.Close() })
 
-	owned, err := directSQLiteWriterOwnsArchive(cfg)
+	owned, err := directSQLiteWriterOwnsArchive(t.Context(), cfg)
 	require.NoError(t, err, "inspect direct writer ownership")
 	assert.True(t, owned,
 		"lock held with no daemon record => a direct writer owns the archive")
@@ -141,7 +172,7 @@ func TestDirectWriterOwnsArchive_FalseWhenArchiveFree(t *testing.T) {
 	dataDir := t.TempDir()
 	cfg := lifecycleTestConfig(dataDir)
 
-	owned, err := directSQLiteWriterOwnsArchive(cfg)
+	owned, err := directSQLiteWriterOwnsArchive(t.Context(), cfg)
 	require.NoError(
 		err, "inspect direct writer ownership")
 
@@ -165,7 +196,7 @@ func TestDirectWriterOwnsArchive_FalseWhenDaemonRecordPresent(t *testing.T) {
 
 	// A live daemon advertises a runtime record; simulate one for this
 	// (alive) test process so liveDaemonRecords observes it.
-	_, _, err := writeDaemonRuntime(dataDir, "127.0.0.1", 0, "test", "")
+	_, _, err := writeDaemonRuntime(dataDir, "127.0.0.1", 0, "test", "", 0)
 	require.NoError(
 		err, "write daemon runtime record")
 
@@ -175,7 +206,7 @@ func TestDirectWriterOwnsArchive_FalseWhenDaemonRecordPresent(t *testing.T) {
 
 	t.Cleanup(func() { _ = owner.Close() })
 
-	owned, err := directSQLiteWriterOwnsArchive(cfg)
+	owned, err := directSQLiteWriterOwnsArchive(t.Context(), cfg)
 	require.NoError(
 		err, "inspect direct writer ownership")
 
@@ -191,7 +222,7 @@ func TestDaemonAutostartPreflight_BlocksWhenDirectWriterOwnsArchive(t *testing.T
 	require.NoError(t, err, "acquire owner lock")
 	t.Cleanup(func() { _ = owner.Close() })
 
-	err = daemonAutostartPreflight(cfg)
+	err = daemonAutostartPreflight(t.Context(), cfg)
 	require.Error(t, err, "preflight blocks autostart while a writer owns the archive")
 	assert.Contains(t, err.Error(), "write operation", "explains the contention")
 }
@@ -200,7 +231,7 @@ func TestDaemonAutostartPreflight_AllowsWhenArchiveFree(t *testing.T) {
 	dataDir := t.TempDir()
 	cfg := lifecycleTestConfig(dataDir)
 
-	require.NoError(t, daemonAutostartPreflight(cfg),
+	require.NoError(t, daemonAutostartPreflight(t.Context(), cfg),
 		"preflight permits autostart on a free archive")
 }
 
@@ -387,7 +418,7 @@ func TestBuildCacheDaemonChildBypassesArchiveOwnershipLock(t *testing.T) {
 	t.Cleanup(func() { _ = owner.Close() })
 
 	t.Setenv(buildCacheDaemonSubprocessEnv, strconv.Itoa(os.Getppid()))
-	release, err := acquireBuildCacheWriteLock(testCfg, &invocation{cfg: testCfg, logger: testDiscardLogger()})
+	release, err := acquireBuildCacheWriteLock(t.Context(), testCfg, &invocation{cfg: testCfg, logger: testDiscardLogger()})
 	require.NoError(t, err, "daemon-owned build-cache child should not reacquire the daemon lock")
 	release()
 }
@@ -401,7 +432,7 @@ func TestDaemonCLIChildBypassesArchiveOwnershipLock(t *testing.T) {
 	t.Cleanup(func() { _ = owner.Close() })
 
 	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
-	release, err := acquireDirectSQLiteWriteLock(testCfg, &invocation{cfg: testCfg, logger: testDiscardLogger()})
+	release, err := acquireDirectSQLiteWriteLock(t.Context(), testCfg, &invocation{cfg: testCfg, logger: testDiscardLogger()})
 	require.NoError(t, err, "daemon-owned CLI child should not reacquire the daemon lock")
 	release()
 }
@@ -493,7 +524,7 @@ func TestDaemonAutostartPreflight_AllowsLiveDaemonWithSkewedCreateTime(t *testin
 	require.NoError(err, "acquire owner lock")
 	t.Cleanup(func() { _ = owner.Close() })
 
-	require.NoError(daemonAutostartPreflight(cfg),
+	require.NoError(daemonAutostartPreflight(t.Context(), cfg),
 		"preflight must not mistake a live daemon for a direct writer")
 
 	path, err := daemonRuntimeStore(dataDir).Path(os.Getpid())
@@ -530,7 +561,7 @@ func TestDaemonAutostartPreflight_AllowsProvedDaemonWithMismatchedCreateTime(t *
 	require.NoError(err, "acquire write owner lock")
 	t.Cleanup(func() { require.NoError(writeOwner.Close(), "release write owner lock") })
 
-	require.NoError(daemonAutostartPreflight(cfg),
+	require.NoError(daemonAutostartPreflight(t.Context(), cfg),
 		"proved clock-stepped daemon must not be mistaken for a direct writer")
 	path, err := daemonRuntimeStore(dataDir).Path(os.Getpid())
 	require.NoError(err, "runtime record path")
@@ -552,7 +583,7 @@ func TestOpenReadOnlyStoreRejectsUnsupportedSchema(t *testing.T) {
 	cfg := testConfigValue()
 	cfg.Data.DataDir = t.TempDir()
 	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
-	_, err := st.DB().Exec(`UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'`, strconv.Itoa(store.SchemaVersion+1))
+	_, err := st.DB().ExecContext(t.Context(), `UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'`, strconv.Itoa(store.SchemaVersion+1))
 	require.NoError(err)
 	require.NoError(st.Close())
 

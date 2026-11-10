@@ -576,9 +576,13 @@ func buildNarrowFileEntriesCTE(name string) string {
 }
 
 func buildScalarAnalyticalEntriesCTE(name string, includeAttachmentSummary bool) string {
+	return buildScalarAnalyticalEntriesCTEWithSource(name, includeAttachmentSummary, "s.account_email", "m.archive_only")
+}
+
+func buildScalarAnalyticalEntriesCTEWithSource(name string, includeAttachmentSummary bool, sourceIdentifier, archiveOnly string) string {
 	attachmentColumns := `
-		0::BIGINT AS attachment_count,
-		0::BIGINT AS attachment_size`
+		CAST(0 AS BIGINT) AS attachment_count,
+		CAST(0 AS BIGINT) AS attachment_size`
 	attachmentJoin := ""
 	if includeAttachmentSummary {
 		attachmentColumns = `
@@ -596,7 +600,7 @@ func buildScalarAnalyticalEntriesCTE(name string, includeAttachmentSummary bool)
 		m.id AS message_id,
 		m.source_id,
 		COALESCE(s.source_type, '') AS source_type,
-		COALESCE(s.account_email, '') AS source_identifier,
+		COALESCE(` + sourceIdentifier + `, '') AS source_identifier,
 		m.source_message_id,
 		m.conversation_id,
 		COALESCE(c.source_conversation_id, '') AS source_conversation_id,
@@ -614,7 +618,7 @@ func buildScalarAnalyticalEntriesCTE(name string, includeAttachmentSummary bool)
 		m.is_from_me,
 		m.size_estimate,
 		m.deleted_at IS NOT NULL AS internally_deleted,
-		m.archive_only,
+		` + archiveOnly + ` AS archive_only,
 		m.deleted_from_source_at IS NOT NULL AS deleted_from_source,
 		COALESCE(m.has_attachments, false) AS has_attachments,` + attachmentColumns + `
 	FROM messages m
@@ -729,31 +733,7 @@ SELECT
     ) AS labels,
     m.deleted_from_source_at
 FROM messages m
-LEFT JOIN (
-    SELECT
-        mr.message_id,
-        FIRST(p.email_address) AS from_email,
-        FIRST(
-            COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')
-        ) AS from_name,
-        FIRST(p.domain) AS from_domain,
-        FIRST(COALESCE(p.phone_number, '')) AS from_phone
-    FROM message_recipients mr
-    JOIN participants p ON p.id = mr.participant_id
-    WHERE mr.recipient_type = 'from'
-    GROUP BY mr.message_id
-) ms ON ms.message_id = m.id
-LEFT JOIN (
-    SELECT
-        msg.id AS message_id,
-        COALESCE(p.email_address, '') AS from_email,
-        COALESCE(p.display_name, '') AS from_name,
-        COALESCE(p.domain, '') AS from_domain,
-        COALESCE(p.phone_number, '') AS from_phone
-    FROM messages msg
-    JOIN participants p ON p.id = msg.sender_id
-    WHERE msg.sender_id IS NOT NULL
-) ds ON ds.message_id = m.id AND ms.message_id IS NULL
+` + sqlMessageSenderJoins + `
 LEFT JOIN (
     SELECT
         ml.message_id,
@@ -848,3 +828,49 @@ LEFT JOIN message_recipients mr ON mr.message_id = m.id
 LEFT JOIN participants p ON p.id = mr.participant_id
 GROUP BY c.id, c.source_conversation_id, c.title, c.conversation_type
 `
+
+// sqlMessageSenderJoins resolves a message's From recipient before its direct
+// sender. Separate fragments let page queries bound each input before aggregation.
+const sqlMessageSenderJoins = sqlMessageSenderJoinsStart + sqlMessageSenderJoinsMiddle + sqlMessageSenderJoinsEnd
+
+const sqlMessageSenderJoinsStart = `LEFT JOIN (
+    SELECT
+        mr.message_id,
+        FIRST(p.email_address) AS from_email,
+        FIRST(
+            COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')
+        ) AS from_name,
+        FIRST(p.domain) AS from_domain,
+        FIRST(COALESCE(p.phone_number, '')) AS from_phone
+    FROM message_recipients mr
+    JOIN participants p ON p.id = mr.participant_id
+    WHERE mr.recipient_type = 'from'`
+
+const sqlMessageSenderJoinsMiddle = `
+    GROUP BY mr.message_id
+) ms ON ms.message_id = m.id
+LEFT JOIN (
+    SELECT
+        msg.id AS message_id,
+        COALESCE(p.email_address, '') AS from_email,
+        COALESCE(p.display_name, '') AS from_name,
+        COALESCE(p.domain, '') AS from_domain,
+        COALESCE(p.phone_number, '') AS from_phone
+    FROM messages msg
+    JOIN participants p ON p.id = msg.sender_id
+    WHERE msg.sender_id IS NOT NULL`
+
+const sqlMessageSenderJoinsEnd = `
+) ds ON ds.message_id = m.id AND ms.message_id IS NULL`
+
+// sqlPageSenderLabels reuses v_messages' sender relation with bounded inputs.
+// Only the page label falls back from an unnamed direct sender to its identifier.
+func sqlPageSenderLabels(messageIDs string) string {
+	return `SELECT m.id AS sender_message_id,
+		COALESCE(NULLIF(TRIM(COALESCE(ms.from_name, ds.from_name)), ''),
+			NULLIF(COALESCE(ms.from_phone, ds.from_phone), ''), ms.from_email, ds.from_email, '') AS sender_label
+	FROM messages m
+	` + sqlMessageSenderJoinsStart + " AND mr.message_id IN (" + messageIDs + ")" +
+		sqlMessageSenderJoinsMiddle + " AND msg.id IN (" + messageIDs + ")" + sqlMessageSenderJoinsEnd + `
+	WHERE m.id IN (` + messageIDs + `)`
+}

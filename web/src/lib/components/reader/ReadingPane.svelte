@@ -35,6 +35,7 @@
   import { parseRecordingSelection } from '../../archive/recording-selection';
   import { Button, EmptyState, IconButton } from '@kenn-io/kit-ui';
   import X from '@lucide/svelte/icons/x';
+  import ArrowLeft from '@lucide/svelte/icons/arrow-left';
   import { onDestroy, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -58,6 +59,7 @@
     unavailable = undefined,
     predicate,
     onClose = undefined,
+    back = false,
     onRetry = undefined,
     conversationAnchorId = undefined,
     conversationStart = undefined,
@@ -77,6 +79,7 @@
     unavailable?: ExploreCacheUnavailable;
     predicate: ExplorePredicate;
     onClose?: () => void;
+    back?: boolean;
     onRetry?: () => void;
     /** Overrides the entry's own anchor when the reader navigated within the
      * thread (URL-carried, so Back/Forward restore the same message). */
@@ -180,10 +183,18 @@
   });
 
   onDestroy(() => { requestGeneration += 1; requestController?.abort(); });
+  function markDismissButton(button: HTMLButtonElement) {
+    button.dataset.readerDismiss = '';
+  }
 </script>
 
-<aside class="reading-pane" aria-label={`Reading pane: ${title}`}>
+<aside class="reading-pane" class:reading-pane--back={back} aria-label={`Reading pane: ${title}`}>
   <header class="pane-header">
+    {#if back}
+      <IconButton {@attach markDismissButton} ariaLabel="Back to results" onclick={() => onClose?.()}>
+        <ArrowLeft size={16} />
+      </IconButton>
+    {/if}
     <div class="pane-heading">
       <strong class="pane-title">{title}</strong>
       {#if metaStrip}<span class="pane-meta" data-mono>{metaStrip}</span>{/if}
@@ -198,9 +209,11 @@
       {#if onOpenPerson && counterpartParticipantId !== undefined}
         <Button size="sm" surface="outline" label="Open person" onclick={() => { if (counterpartParticipantId !== undefined) onOpenPerson?.(counterpartParticipantId); }} />
       {/if}
-      <IconButton size="sm" ariaLabel="Close reading pane" onclick={() => onClose?.()}>
-        <X size={14} />
-      </IconButton>
+      {#if !back}
+        <IconButton {@attach markDismissButton} size="sm" ariaLabel="Close reading pane" onclick={() => onClose?.()}>
+          <X size={14} />
+        </IconButton>
+      {/if}
     </div>
   </header>
 
@@ -332,6 +345,20 @@
     flex: none;
     align-items: center;
     gap: var(--control-gap);
+  }
+
+  .reading-pane--back .pane-heading {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .reading-pane--back .pane-title {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .pane-body {

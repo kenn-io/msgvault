@@ -91,6 +91,7 @@ type FileGroupRequest struct {
 }
 
 type FileRow struct {
+	SenderLabel        string                `json:"sender_label,omitempty"`
 	ID                 int64                 `json:"id"`
 	Key                string                `json:"key"`
 	EntryKey           string                `json:"entry_key"`
@@ -209,7 +210,7 @@ func (e *DuckDBEngine) SearchFiles(ctx context.Context, request FileSearchReques
 			&row.ID, &row.Key, &row.EntryKey, &row.MessageID, &row.ConversationID,
 			&row.OccurredAt, &row.SourceID, &row.SourceType, &row.SourceIdentifier,
 			&row.ContainingTitle, &rawSnippet, &row.Filename, &row.MimeType, &row.MIMEFamily, &row.Size,
-			&participantIDsJSON, &participantLabelsJSON, &participantDomainsJSON,
+			&participantIDsJSON, &participantLabelsJSON, &participantDomainsJSON, &row.SenderLabel,
 		}
 		if request.Person != nil {
 			scanTargets = append(scanTargets, &personParticipantIDsJSON,
@@ -698,6 +699,10 @@ func fileSearchSQL(population, order string) string {
 	return population + `
 , counted AS (
 	SELECT *, COUNT(*) OVER () AS total_count FROM file_population
+), page AS MATERIALIZED (
+    SELECT * FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?
+), page_senders AS (
+    ` + sqlPageSenderLabels("SELECT message_id FROM page") + `
 )
 SELECT
 	attachment_id,
@@ -710,14 +715,21 @@ SELECT
 	CAST(COALESCE(to_json(file_participant_ids), '[]') AS VARCHAR),
 	CAST(COALESCE(to_json(list_sort(list_distinct(list_concat(participant_labels, conversation_participant_labels)))), '[]') AS VARCHAR),
 	CAST(COALESCE(to_json(file_participant_domains), '[]') AS VARCHAR),
+	COALESCE(sender_label, ''),
 	total_count
-FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
+FROM page
+LEFT JOIN page_senders senders ON senders.sender_message_id = page.message_id
+ORDER BY ` + order
 }
 
 func personFileSearchSQL(population, order string) string {
 	return population + `
 , counted AS (
 	SELECT *, COUNT(*) OVER () AS total_count FROM file_population
+), page AS MATERIALIZED (
+    SELECT * FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?
+), page_senders AS (
+    ` + sqlPageSenderLabels("SELECT message_id FROM page") + `
 )
 SELECT
 	attachment_id,
@@ -730,10 +742,13 @@ SELECT
 	CAST(COALESCE(to_json(file_participant_ids), '[]') AS VARCHAR),
 	CAST(COALESCE(to_json(list_sort(list_distinct(list_concat(participant_labels, conversation_participant_labels)))), '[]') AS VARCHAR),
 	CAST(COALESCE(to_json(file_participant_domains), '[]') AS VARCHAR),
+	COALESCE(sender_label, ''),
 	CAST(COALESCE(to_json(person_participant_ids), '[]') AS VARCHAR),
 	has_from, has_to, has_cc, has_bcc, has_group,
 	total_count
-FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
+FROM page
+LEFT JOIN page_senders senders ON senders.sender_message_id = page.message_id
+ORDER BY ` + order
 }
 
 // buildFileSearchFastSQL builds the two-phase file page query used unless
@@ -765,6 +780,8 @@ func buildFileSearchFastSQL(exploreConditions, fileConditions, order string) str
 		FROM (SELECT message_id FROM entry_core AS analytical_entries WHERE ` + exploreConditions + `) s
 		JOIN attachments a ON a.message_id = s.message_id
 	) WHERE ` + fileConditions + `
+), page_senders AS (
+    ` + sqlPageSenderLabels("SELECT message_id FROM page") + `
 ), page_ids AS (
 	SELECT DISTINCT message_id, conversation_id FROM page
 ), page_links AS (
@@ -786,9 +803,10 @@ func buildFileSearchFastSQL(exploreConditions, fileConditions, order string) str
 	JOIN participants pt ON pt.id = links.participant_id
 	GROUP BY links.message_id
 ), enriched AS (
-	SELECT page.*, f.file_participant_ids, f.file_participant_labels, f.file_participant_domains,
+	SELECT page.*, f.file_participant_ids, f.file_participant_labels, f.file_participant_domains, senders.sender_label,
 		(SELECT total_count FROM total) AS total_count
 	FROM page LEFT JOIN page_facts f ON f.message_id = page.message_id
+	LEFT JOIN page_senders senders ON senders.sender_message_id = page.message_id
 )
 SELECT
 	attachment_id,
@@ -801,6 +819,7 @@ SELECT
 	CAST(COALESCE(to_json(file_participant_ids), '[]') AS VARCHAR),
 	CAST(COALESCE(to_json(file_participant_labels), '[]') AS VARCHAR),
 	CAST(COALESCE(to_json(file_participant_domains), '[]') AS VARCHAR),
+	COALESCE(sender_label, ''),
 	total_count
 FROM enriched ORDER BY ` + order
 }
@@ -832,6 +851,8 @@ selected AS (
 	ORDER BY ` + order + ` LIMIT ? OFFSET ?
 ), total AS (
 	SELECT COUNT(*) AS total_count FROM filtered
+), page_senders AS (
+    ` + sqlPageSenderLabels("SELECT message_id FROM page") + `
 ), page_ids AS (
 	SELECT DISTINCT message_id, conversation_id FROM page
 ), page_links AS (
@@ -853,9 +874,10 @@ selected AS (
 	JOIN participants pt ON pt.id = links.participant_id
 	GROUP BY links.message_id
 ), enriched AS (
-	SELECT page.*, f.file_participant_ids, f.file_participant_labels, f.file_participant_domains,
+	SELECT page.*, f.file_participant_ids, f.file_participant_labels, f.file_participant_domains, senders.sender_label,
 		(SELECT total_count FROM total) AS total_count
 	FROM page LEFT JOIN page_facts f ON f.message_id = page.message_id
+	LEFT JOIN page_senders senders ON senders.sender_message_id = page.message_id
 )
 SELECT
 	attachment_id,
@@ -868,6 +890,7 @@ SELECT
 	CAST(COALESCE(to_json(file_participant_ids), '[]') AS VARCHAR),
 	CAST(COALESCE(to_json(file_participant_labels), '[]') AS VARCHAR),
 	CAST(COALESCE(to_json(file_participant_domains), '[]') AS VARCHAR),
+	COALESCE(sender_label, ''),
 	CAST(COALESCE(to_json(person_participant_ids), '[]') AS VARCHAR),
 	has_from, has_to, has_cc, has_bcc, has_group,
 	total_count

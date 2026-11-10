@@ -16,21 +16,21 @@ func TestDailyNoteRetryClassifier(t *testing.T) {
 	sqliteStore := &Store{dialect: &SQLiteDialect{}}
 	postgresStore := &Store{dialect: &PostgreSQLDialect{}}
 
-	assert.True(dailyNoteRetryable(context.Background(), sqliteStore,
+	assert.True(dailyNoteRetryable(t.Context(), sqliteStore,
 		sqlite3.Error{Code: sqlite3.ErrBusy}))
-	assert.False(dailyNoteRetryable(context.Background(), sqliteStore,
+	assert.False(dailyNoteRetryable(t.Context(), sqliteStore,
 		sqlite3.Error{Code: sqlite3.ErrConstraint}))
 	for _, code := range []string{"40P01", "40001"} {
 		err := fmt.Errorf("wrapped: %w", &pgconn.PgError{Code: code})
-		assert.True(dailyNoteRetryable(context.Background(), postgresStore, err), code)
+		assert.True(dailyNoteRetryable(t.Context(), postgresStore, err), code)
 	}
 	for _, code := range []string{"57014", "55P03", "23505"} {
-		assert.False(dailyNoteRetryable(context.Background(), postgresStore,
+		assert.False(dailyNoteRetryable(t.Context(), postgresStore,
 			&pgconn.PgError{Code: code}), code)
 	}
-	cancelled, cancel := context.WithCancel(context.Background())
+	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
 	assert.False(dailyNoteRetryable(cancelled, postgresStore,
 		&pgconn.PgError{Code: "40001"}))
-	assert.False(dailyNoteRetryable(context.Background(), postgresStore, errors.New("plain")))
+	assert.False(dailyNoteRetryable(t.Context(), postgresStore, errors.New("plain")))
 }

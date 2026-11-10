@@ -12,7 +12,7 @@ func TestCardDAVPublicationStateSourceUsesOneReadSnapshot(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	dbPath := filepath.Join(t.TempDir(), "publication-state.db")
-	reader, err := OpenForTest(dbPath)
+	reader, err := OpenForTest(t.Context(), dbPath)
 	require.NoError(err)
 	t.Cleanup(func() { _ = reader.Close() })
 	require.NoError(reader.InitSchema())
@@ -33,7 +33,7 @@ func TestCardDAVPublicationStateSourceUsesOneReadSnapshot(t *testing.T) {
 	require.NoError(err)
 	require.Len(books, 1)
 
-	writer, err := OpenForTest(dbPath)
+	writer, err := OpenForTest(t.Context(), dbPath)
 	require.NoError(err)
 	t.Cleanup(func() { _ = writer.Close() })
 	reader.cardDAVPublicationStateReadHook = func() {

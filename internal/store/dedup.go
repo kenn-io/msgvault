@@ -233,10 +233,10 @@ func (s *Store) findDuplicatesByRFC822IDQuery(sourceIDs []int64) (string, []any)
 	return query, args
 }
 
-func (s *Store) FindDuplicatesByRFC822ID(sourceIDs ...int64) ([]DuplicateGroupKey, error) {
+func (s *Store) FindDuplicatesByRFC822ID(ctx context.Context, sourceIDs ...int64) ([]DuplicateGroupKey, error) {
 	query, args := s.findDuplicatesByRFC822IDQuery(sourceIDs)
 
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("find duplicates by rfc822 id: %w", err)
 	}
@@ -493,6 +493,7 @@ func (s *Store) GetDuplicateGroupMessagesBatchContext(
 }
 
 func (s *Store) MergeDuplicates(
+	ctx context.Context,
 	survivorID int64, duplicateIDs []int64, batchID string,
 ) (*MergeResult, error) {
 	if len(duplicateIDs) == 0 {
@@ -510,7 +511,6 @@ func (s *Store) MergeDuplicates(
 			SET deleted_at = %s, delete_batch_id = ?
 			WHERE id = ?`, s.dialect.Now())
 
-	ctx := context.Background()
 	lock := attributionLock{}
 	for _, id := range append([]int64{survivorID}, duplicateIDs...) {
 		sourceID, err := s.messageSourceIDContext(ctx, id)
@@ -530,7 +530,7 @@ func (s *Store) MergeDuplicates(
 			return fmt.Errorf("duplicate merge into %d would hide historical content", survivorID)
 		}
 		for _, dupID := range duplicateIDs {
-			res, err := tx.Exec(unionLabelsSQL, survivorID, dupID)
+			res, err := tx.ExecContext(ctx, unionLabelsSQL, survivorID, dupID)
 			if err != nil {
 				return fmt.Errorf("union labels from %d: %w", dupID, err)
 			}
@@ -539,7 +539,8 @@ func (s *Store) MergeDuplicates(
 		}
 
 		var survivorHasRaw int
-		if err := tx.QueryRow(
+		if err := tx.QueryRowContext(
+			ctx,
 			`SELECT COUNT(*) FROM message_raw WHERE message_id = ?`,
 			survivorID,
 		).Scan(&survivorHasRaw); err != nil {
@@ -547,7 +548,7 @@ func (s *Store) MergeDuplicates(
 		}
 		if survivorHasRaw == 0 {
 			for _, dupID := range duplicateIDs {
-				res, err := tx.Exec(backfillRawSQL, survivorID, dupID)
+				res, err := tx.ExecContext(ctx, backfillRawSQL, survivorID, dupID)
 				if err != nil {
 					return fmt.Errorf("backfill raw MIME from %d: %w", dupID, err)
 				}
@@ -560,11 +561,11 @@ func (s *Store) MergeDuplicates(
 		}
 
 		for _, dupID := range duplicateIDs {
-			if _, err := tx.Exec(`UPDATE messages SET reply_to_message_id = ?
+			if _, err := tx.ExecContext(ctx, `UPDATE messages SET reply_to_message_id = ?
 				WHERE reply_to_message_id = ?`, survivorID, dupID); err != nil {
 				return fmt.Errorf("repoint replies from duplicate %d: %w", dupID, err)
 			}
-			if _, err := tx.Exec(softDeleteSQL, batchID, dupID); err != nil {
+			if _, err := tx.ExecContext(ctx, softDeleteSQL, batchID, dupID); err != nil {
 				return fmt.Errorf("soft-delete duplicate %d: %w", dupID, err)
 			}
 		}
@@ -574,6 +575,9 @@ func (s *Store) MergeDuplicates(
 			}
 		}
 		if result.RawMIMEBackfilled > 0 {
+			if _, err := s.refreshEmailLinkageTx(ctx, tx, survivorID, emailLinkageInput{}); err != nil {
+				return err
+			}
 			_, err := s.refreshAccountAttributionTx(ctx, tx, survivorID, deliveryInput{reloadMIME: true})
 			return err
 		}
@@ -583,6 +587,7 @@ func (s *Store) MergeDuplicates(
 }
 
 func (s *Store) GetAllRawMIMECandidates(
+	ctx context.Context,
 	sourceIDs ...int64,
 ) ([]ContentHashCandidate, error) {
 	query := `
@@ -635,7 +640,7 @@ func (s *Store) GetAllRawMIMECandidates(
 	}
 	query += " ORDER BY m.id"
 
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("get all raw MIME candidates: %w", err)
 	}
@@ -727,8 +732,8 @@ func (s *Store) StreamMessageRawContext(ctx context.Context, messageIDs []int64,
 // copied to survivors, raw MIME backfilled onto survivors) are not
 // reversed — those changes are additive enrichment that leaves
 // survivors strictly better off.
-func (s *Store) UndoDedup(batchID string) (int64, error) {
-	result, err := s.db.Exec(`
+func (s *Store) UndoDedup(ctx context.Context, batchID string) (int64, error) {
+	result, err := s.db.ExecContext(ctx, `
 		UPDATE messages
 		SET deleted_at = NULL, delete_batch_id = NULL
 		WHERE delete_batch_id = ?

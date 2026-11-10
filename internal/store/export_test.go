@@ -221,7 +221,7 @@ func (s *Store) SetIMAPLabelRepairPerMessageHookForTest(fn func(messageID int64)
 func ReconcileMessageLabelsTxContextForTest(
 	ctx context.Context, s *Store, messageID int64, labelIDs []int64, replace bool,
 ) error {
-	return s.withTx(func(tx *loggedTx) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		_, err := s.reconcileMessageLabelsTxContext(ctx, tx, messageID, labelIDs, replace)
 		return err
 	})
@@ -388,4 +388,10 @@ func SetPersonTierRowPage(n int) func() {
 	old := personTierRowPage
 	personTierRowPage = n
 	return func() { personTierRowPage = old }
+}
+
+// LastSuccessfulSyncQueryForTest is the newest-completed-run lookup each
+// incremental sync runs.
+func LastSuccessfulSyncQueryForTest(filterByType bool) string {
+	return lastSuccessfulSyncQuery(filterByType)
 }

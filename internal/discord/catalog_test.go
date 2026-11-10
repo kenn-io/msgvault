@@ -38,7 +38,7 @@ func TestDiscoverCatalogFindsAndFiltersIndependentContainers(t *testing.T) {
 		},
 	}
 	wantPrior := prior["301"]
-	result, err := DiscoverCatalog(context.Background(), client, "201", config.DiscordGuildConfig{
+	result, err := DiscoverCatalog(t.Context(), client, "201", config.DiscordGuildConfig{
 		Include: []string{"301", "402", "403"},
 		Exclude: []string{"302", "403"},
 	}, prior, false)
@@ -119,7 +119,7 @@ func TestDiscoverCatalogFullScanExhaustsArchivePages(t *testing.T) {
 	client, err := NewClient(server.URL, "test-token")
 	require.NoError(err)
 
-	result, err := DiscoverCatalog(context.Background(), client, "201", config.DiscordGuildConfig{}, map[string]ThreadCatalogState{
+	result, err := DiscoverCatalog(t.Context(), client, "201", config.DiscordGuildConfig{}, map[string]ThreadCatalogState{
 		"301": {PublicArchiveWatermark: "2026-07-18T00:00:00Z", PrivateArchiveWatermark: "2026-07-18T00:00:00Z"},
 	}, true)
 
@@ -268,7 +268,7 @@ func TestDiscoverCatalogArchiveDenialsAreNonfatalAndIndependent(t *testing.T) {
 		"302": {PublicArchiveWatermark: "2026-07-17T00:00:00Z", PrivateArchiveWatermark: "2026-07-16T00:00:00Z"},
 	}
 
-	result, err := DiscoverCatalog(context.Background(), client, "201", config.DiscordGuildConfig{}, prior, false)
+	result, err := DiscoverCatalog(t.Context(), client, "201", config.DiscordGuildConfig{}, prior, false)
 
 	require.NoError(err)
 	require.Len(result.Issues, 1)
@@ -312,7 +312,7 @@ func TestDiscoverCatalogRejectsActiveThreadsWithoutAuthoritativeParents(t *testi
 			client, err := NewClient(server.URL, "test-token")
 			require.NoError(err)
 
-			result, err := DiscoverCatalog(context.Background(), client, "201", config.DiscordGuildConfig{}, nil, false)
+			result, err := DiscoverCatalog(t.Context(), client, "201", config.DiscordGuildConfig{}, nil, false)
 
 			require.Error(err)
 			byID := catalogContainersByID(result.Containers)
@@ -351,7 +351,7 @@ func TestDiscoverCatalogRejectsArchivedThreadWithMismatchedEndpointParent(t *tes
 		"301": {PublicArchiveWatermark: "2026-07-17T00:00:00Z", PrivateArchiveWatermark: "2026-07-17T00:00:00Z"},
 	}
 
-	result, err := DiscoverCatalog(context.Background(), client, "201", config.DiscordGuildConfig{}, prior, false)
+	result, err := DiscoverCatalog(t.Context(), client, "201", config.DiscordGuildConfig{}, prior, false)
 
 	require.Error(err)
 	byID := catalogContainersByID(result.Containers)
@@ -427,7 +427,7 @@ func TestDiscoverCatalogFatalArchiveFailuresPreserveOnlyFailedWatermarks(t *test
 			t.Cleanup(server.Close)
 			client, err := NewClient(server.URL, "test-token")
 			require.NoError(err)
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			if tt.cancel {
 				time.AfterFunc(20*time.Millisecond, cancel) //nolint:kennlint // deadlinetest: the cancellation is the expected result; the handler blocks until it arrives
@@ -467,7 +467,7 @@ func TestDiscoverCatalogTopLevelAndActiveFailuresReturnPartialResult(t *testing.
 		client, err := NewClient(server.URL, "test-token")
 		require.NoError(err)
 
-		result, err := DiscoverCatalog(context.Background(), client, "201", config.DiscordGuildConfig{}, nil, false)
+		result, err := DiscoverCatalog(t.Context(), client, "201", config.DiscordGuildConfig{}, nil, false)
 
 		require.Error(err)
 		require.Len(result.Issues, 1)
@@ -489,7 +489,7 @@ func TestDiscoverCatalogTopLevelAndActiveFailuresReturnPartialResult(t *testing.
 		client, err := NewClient(server.URL, "test-token")
 		require.NoError(err)
 
-		result, err := DiscoverCatalog(context.Background(), client, "201", config.DiscordGuildConfig{}, nil, false)
+		result, err := DiscoverCatalog(t.Context(), client, "201", config.DiscordGuildConfig{}, nil, false)
 
 		require.Error(err)
 		assert.Contains(catalogContainersByID(result.Containers), "301")

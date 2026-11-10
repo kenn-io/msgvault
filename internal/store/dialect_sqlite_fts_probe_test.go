@@ -17,13 +17,13 @@ func newFTSProbeDB(tb testing.TB, columnsizeZero bool) *sql.DB {
 	db, err := sql.Open("sqlite3", filepath.Join(tb.TempDir(), "probe.db"))
 	req.NoError(err)
 	tb.Cleanup(func() { req.NoError(db.Close()) })
-	_, err = db.Exec("CREATE TABLE messages (id INTEGER PRIMARY KEY)")
+	_, err = db.ExecContext(tb.Context(), "CREATE TABLE messages (id INTEGER PRIMARY KEY)")
 	req.NoError(err)
 	options := ""
 	if columnsizeZero {
 		options = ", columnsize=0"
 	}
-	_, err = db.Exec("CREATE VIRTUAL TABLE messages_fts USING fts5(text" + options + ")")
+	_, err = db.ExecContext(tb.Context(), "CREATE VIRTUAL TABLE messages_fts USING fts5(text"+options+")")
 	if err != nil && strings.Contains(err.Error(), "no such module: fts5") {
 		tb.Skip("FTS5 not available")
 	}
@@ -42,33 +42,33 @@ func TestSQLiteFTSProbePresence(t *testing.T) {
 			req := require.New(t)
 			db := newFTSProbeDB(t, zero)
 			d := &SQLiteDialect{}
-			ctx := context.Background()
+			ctx := t.Context()
 			assert.False(d.FTSNeedsBackfill(db))
 			assert.False(d.FTSNeedsBackfillQuick(ctx, db))
-			_, err := db.Exec("INSERT INTO messages VALUES (1), (2), (3)")
+			_, err := db.ExecContext(t.Context(), "INSERT INTO messages VALUES (1), (2), (3)")
 			req.NoError(err)
 			assert.True(d.FTSNeedsBackfill(db))
 			assert.True(d.FTSNeedsBackfillQuick(ctx, db))
-			_, err = db.Exec("INSERT INTO messages_fts(rowid, text) VALUES (1, ''), (3, 'synthetic'), (4, 'extra')")
+			_, err = db.ExecContext(t.Context(), "INSERT INTO messages_fts(rowid, text) VALUES (1, ''), (3, 'synthetic'), (4, 'extra')")
 			req.NoError(err)
 			assert.True(d.FTSNeedsBackfill(db), "equal counts must not hide the interior hole")
 			assert.False(d.FTSNeedsBackfillQuick(ctx, db), "quick probe only checks the tail")
-			_, err = db.Exec("INSERT INTO messages_fts(rowid, text) VALUES (2, '')")
+			_, err = db.ExecContext(t.Context(), "INSERT INTO messages_fts(rowid, text) VALUES (2, '')")
 			req.NoError(err)
 			assert.False(d.FTSNeedsBackfill(db), "empty text still counts as indexed")
 			assert.False(d.FTSNeedsBackfillQuick(ctx, db))
-			_, err = db.Exec("DELETE FROM messages_fts WHERE rowid IN (3, 4)")
+			_, err = db.ExecContext(t.Context(), "DELETE FROM messages_fts WHERE rowid IN (3, 4)")
 			req.NoError(err)
 			assert.True(d.FTSNeedsBackfill(db))
 			assert.True(d.FTSNeedsBackfillQuick(ctx, db))
-			_, err = db.Exec("DELETE FROM messages WHERE id = 3")
+			_, err = db.ExecContext(t.Context(), "DELETE FROM messages WHERE id = 3")
 			req.NoError(err)
 			assert.False(d.FTSNeedsBackfill(db), "deleted messages need no index entry")
-			_, err = db.Exec("DELETE FROM messages_fts WHERE rowid = 1")
+			_, err = db.ExecContext(t.Context(), "DELETE FROM messages_fts WHERE rowid = 1")
 			req.NoError(err)
 			assert.True(d.FTSNeedsBackfill(db), "lowest ID hole must be found")
 			assert.False(d.FTSNeedsBackfillQuick(ctx, db))
-			_, err = db.Exec("INSERT INTO messages VALUES (4)")
+			_, err = db.ExecContext(t.Context(), "INSERT INTO messages VALUES (4)")
 			req.NoError(err)
 			assert.True(d.FTSNeedsBackfillQuick(ctx, db), "uncancelled probe must find the tail")
 			cancelled, cancel := context.WithCancel(ctx)
@@ -82,16 +82,16 @@ func TestSQLiteFTSProbeAvoidsStoredContent(t *testing.T) {
 	assert := assert.New(t)
 	req := require.New(t)
 	db := newFTSProbeDB(t, false)
-	_, err := db.Exec("INSERT INTO messages VALUES (1), (2), (3)")
+	_, err := db.ExecContext(t.Context(), "INSERT INTO messages VALUES (1), (2), (3)")
 	req.NoError(err)
-	_, err = db.Exec("INSERT INTO messages_fts(rowid, text) VALUES (1, 'synthetic')")
+	_, err = db.ExecContext(t.Context(), "INSERT INTO messages_fts(rowid, text) VALUES (1, 'synthetic')")
 	req.NoError(err)
 	// The row-ID metadata remains usable even if stored content cannot be read.
-	_, err = db.Exec("DROP TABLE messages_fts_content")
+	_, err = db.ExecContext(t.Context(), "DROP TABLE messages_fts_content")
 	req.NoError(err)
 	d := &SQLiteDialect{}
 	assert.True(d.FTSNeedsBackfill(db))
-	assert.True(d.FTSNeedsBackfillQuick(context.Background(), db))
+	assert.True(d.FTSNeedsBackfillQuick(t.Context(), db))
 }
 
 func TestSQLiteFTSProbeErrors(t *testing.T) {
@@ -100,15 +100,15 @@ func TestSQLiteFTSProbeErrors(t *testing.T) {
 			assert := assert.New(t)
 			req := require.New(t)
 			db := newFTSProbeDB(t, false)
-			_, err := db.Exec("INSERT INTO messages VALUES (1)")
+			_, err := db.ExecContext(t.Context(), "INSERT INTO messages VALUES (1)")
 			req.NoError(err)
-			_, err = db.Exec(damage)
+			_, err = db.ExecContext(t.Context(), damage)
 			req.NoError(err)
 			d := &SQLiteDialect{}
 			assert.False(d.FTSNeedsBackfill(db), "errors must not be treated as gaps")
 			_, err = d.FTSNeedsBackfillContext(t.Context(), db)
 			req.Error(err, "context probe exposes SQL errors")
-			assert.False(d.FTSNeedsBackfillQuick(context.Background(), db))
+			assert.False(d.FTSNeedsBackfillQuick(t.Context(), db))
 		})
 	}
 }
@@ -126,7 +126,7 @@ func TestSQLiteFTSProbeQueryPlan(t *testing.T) {
 			query := sqliteFTSNeedsBackfillDocsizeSQL
 			var args []any
 			if batch {
-				_, err := db.Exec(`ALTER TABLE messages ADD COLUMN subject TEXT;
+				_, err := db.ExecContext(t.Context(), `ALTER TABLE messages ADD COLUMN subject TEXT;
 					ALTER TABLE messages ADD COLUMN message_type TEXT;
 					ALTER TABLE messages ADD COLUMN sender_id INTEGER;
 					CREATE TABLE message_bodies (message_id INTEGER PRIMARY KEY, body_text TEXT);
@@ -139,7 +139,7 @@ func TestSQLiteFTSProbeQueryPlan(t *testing.T) {
 				req.NoError(err)
 				args = []any{1, 5001}
 			}
-			rows, err := db.Query("EXPLAIN QUERY PLAN "+query, args...)
+			rows, err := db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+query, args...)
 			req.NoError(err)
 			defer func() { req.NoError(rows.Close()) }()
 			var details []string
@@ -174,13 +174,13 @@ func FuzzSQLiteFTSProbePresence(f *testing.F) {
 		}
 		for offset, present := range indexed {
 			id := offset + 1
-			_, err := db.Exec("INSERT INTO messages VALUES (?)", id)
+			_, err := db.ExecContext(t.Context(), "INSERT INTO messages VALUES (?)", id)
 			req.NoError(err)
 			if present&1 == 0 {
 				wantGap = true
 				continue
 			}
-			_, err = db.Exec("INSERT INTO messages_fts(rowid, text) VALUES (?, '')", id)
+			_, err = db.ExecContext(t.Context(), "INSERT INTO messages_fts(rowid, text) VALUES (?, '')", id)
 			req.NoError(err)
 		}
 		assert.Equal(wantGap, (&SQLiteDialect{}).FTSNeedsBackfill(db))
@@ -190,13 +190,13 @@ func FuzzSQLiteFTSProbePresence(f *testing.F) {
 func BenchmarkSQLiteFTSProbe(b *testing.B) {
 	req := require.New(b)
 	db := newFTSProbeDB(b, false)
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(b.Context(), nil)
 	req.NoError(err)
 	text := strings.Repeat("synthetic ", 409) + "sample"
 	for id := 1; id <= 10000; id++ {
-		_, err = tx.Exec("INSERT INTO messages VALUES (?)", id)
+		_, err = tx.ExecContext(b.Context(), "INSERT INTO messages VALUES (?)", id)
 		req.NoError(err)
-		_, err = tx.Exec("INSERT INTO messages_fts(rowid, text) VALUES (?, ?)", id, text)
+		_, err = tx.ExecContext(b.Context(), "INSERT INTO messages_fts(rowid, text) VALUES (?, ?)", id, text)
 		req.NoError(err)
 	}
 	req.NoError(tx.Commit())
@@ -210,7 +210,7 @@ func BenchmarkSQLiteFTSProbe(b *testing.B) {
 		req := require.New(b)
 		for range b.N {
 			var gap bool
-			err := db.QueryRow(sqliteFTSNeedsBackfillVirtualSQL).Scan(&gap)
+			err := db.QueryRowContext(b.Context(), sqliteFTSNeedsBackfillVirtualSQL).Scan(&gap)
 			req.NoError(err)
 			req.False(gap)
 		}

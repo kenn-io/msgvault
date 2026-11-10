@@ -101,7 +101,7 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return usageErr(cmd, err)
 	}
-	s, cleanup, err := openWritableStoreAndInitForInvocation(state)
+	s, cleanup, err := openWritableStoreAndInitForInvocation(cmd.Context(), state)
 	if err != nil {
 		return err
 	}
@@ -437,6 +437,21 @@ func imapFolderStateOptions(
 	opts = append(opts, imaplib.WithSourceMessageAliasLoader(
 		func(mailbox string, uids []uint32) (map[string]string, error) {
 			return s.GetIMAPSourceMessageAliases(src.ID, mailbox, uids)
+		}), imaplib.WithStoredMembershipLoader(
+		func(ctx context.Context, mailbox string, uidValidity uint32, uids []uint32) (map[uint32]imaplib.StoredMembership, error) {
+			stored, err := s.GetIMAPStoredMemberships(ctx, src.ID, mailbox, uidValidity, uids)
+			if err != nil {
+				return nil, err
+			}
+			result := make(map[uint32]imaplib.StoredMembership, len(stored))
+			for uid, membership := range stored {
+				result[uid] = imaplib.StoredMembership{
+					MessageID:       membership.MessageID,
+					SourceMessageID: membership.SourceMessageID,
+					Flags:           membership.Flags,
+				}
+			}
+			return result, nil
 		}), imaplib.WithRelocationCandidateLoader(
 		func(ctx context.Context, lost []string) ([]imaplib.RelocationCandidate, error) {
 			candidates, err := s.GetIMAPRelocationCandidatesContext(ctx, src.ID, lost)
@@ -487,6 +502,9 @@ func applyIMAPMailboxDeltas(
 			if existing.CanonicalSourceMessageID == "" {
 				existing.CanonicalSourceMessageID = observation.CanonicalSourceMessageID
 			}
+			if existing.ArchivedMessageID == 0 {
+				existing.ArchivedMessageID = observation.ArchivedMessageID
+			}
 			if existing.RFC822MessageID == "" {
 				existing.RFC822MessageID = observation.RFC822MessageID
 			}
@@ -509,6 +527,7 @@ func applyIMAPMailboxDeltas(
 			RawSHA256:                observation.RawSHA256,
 			RawSize:                  observation.RawSize,
 			Flags:                    append([]string(nil), observation.Flags...),
+			ArchivedMessageID:        observation.ArchivedMessageID,
 		})
 	}
 	byMailbox := make(map[string][]store.IMAPMembershipObservation)
@@ -602,7 +621,7 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx conte
 
 	if src.SourceType == sourceTypeIMAP {
 		imapOpts = append(imapOpts,
-			imapSyncFolderFilter(s, src.Identifier, state, syncFolders, syncSkipFolders),
+			imapSyncFolderFilter(ctx, s, src.Identifier, state, syncFolders, syncSkipFolders),
 			imaplib.WithListProgress(progress.OnIMAPListProgress),
 		)
 	}
@@ -732,14 +751,14 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx conte
 
 // imapSyncFolderFilter uses saved exclusions unless command folder flags
 // replace the saved filter for this run.
-func imapSyncFolderFilter(s *store.Store, identifier string, state *invocation, folders, skipFolders []string) imaplib.Option {
+func imapSyncFolderFilter(ctx context.Context, s *store.Store, identifier string, state *invocation, folders, skipFolders []string) imaplib.Option {
 	folders = parseFolderFilter(folders)
 	skipFolders = parseFolderFilter(skipFolders)
 	cfg := state.cfg
 	if len(folders) == 0 && len(skipFolders) == 0 {
 		if len(cfg.Sync.IMAPSkipFolders) > 0 {
 			state.imapFolderAccounts.Do(func() {
-				sources, err := s.ListSources(sourceTypeIMAP)
+				sources, err := s.ListSourcesContext(ctx, sourceTypeIMAP)
 				if err != nil {
 					state.logger.Warn("could not check IMAP folder exclusion accounts", "error", err)
 					return

@@ -43,10 +43,10 @@ func TestMediaSearchStatus(t *testing.T) {
 			require := require.New(t)
 			f := newMediaSearchFixture(t)
 			server := f.server(false)
-			server.documentSearchRateLimiter.Close()
-			server.documentSearchRateLimiter = NewRateLimiter(1, 1)
-			t.Cleanup(server.documentSearchRateLimiter.Close)
-			require.True(server.documentSearchRateLimiter.Allow("127.0.0.1"))
+			server.mediaSearchRateLimiter.Close()
+			server.mediaSearchRateLimiter = NewRateLimiter(1, 1)
+			t.Cleanup(server.mediaSearchRateLimiter.Close)
+			require.True(server.mediaSearchRateLimiter.Allow("127.0.0.1"))
 			gate := &recordingOperationGate{allow: false}
 			server.operationGate = gate
 			switch state {
@@ -55,7 +55,7 @@ func TestMediaSearchStatus(t *testing.T) {
 			case "no client":
 				server.messageRecordings.Client = nil
 			}
-			request := httptest.NewRequest(http.MethodGet, "/api/v1/media/search/status", nil)
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/media/search/status", nil)
 			request.RemoteAddr = "127.0.0.1:1234"
 			request.Header.Set("X-Api-Key", recordingsTestAPIKey)
 			response := httptest.NewRecorder()
@@ -74,7 +74,7 @@ func TestMediaSearchStatus(t *testing.T) {
 				code, _, raw := searchMediaFor(t, server, "q=words")
 				assert.Equal(http.StatusServiceUnavailable, code, raw)
 				assert.Contains(raw, "media_search_unavailable")
-				assert.Contains(raw, "Configure the Docbank integration to search transcripts")
+				assert.Contains(raw, "Configure Docbank to search transcripts and attachment text")
 				assert.Empty(f.requests)
 			}
 		})
@@ -124,7 +124,11 @@ func newMediaSearchFixture(t *testing.T) *mediaSearchFixture {
 					w.WriteHeader(f.documentStatus)
 					return
 				}
-				_ = json.NewEncoder(w).Encode(f.documentReport)
+				report := *f.documentReport
+				report.Results = slices.DeleteFunc(slices.Clone(report.Results), func(hit docbankmedia.SearchHit) bool {
+					return !slices.Contains(request.Fence.ContentVersionIDs, hit.ContentVersionID)
+				})
+				_ = json.NewEncoder(w).Encode(report)
 				return
 			}
 			f.requests = append(f.requests, request)
@@ -154,7 +158,7 @@ func newMediaSearchFixture(t *testing.T) *mediaSearchFixture {
 func (f *mediaSearchFixture) match(t *testing.T, id string) recordingSeed {
 	t.Helper()
 	seed := f.retained(t, id)
-	_, err := f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE beeper_media_deliveries SET profile = 'asr' WHERE processing_key = ?`), "delivery-"+id)
+	_, err := f.f.Store.DB().ExecContext(t.Context(), f.f.Store.Rebind(`UPDATE beeper_media_deliveries SET profile = 'asr' WHERE processing_key = ?`), "delivery-"+id)
 	require.NoError(t, err)
 	f.report.Results = append(f.report.Results, docbankmedia.SearchHit{VaultUID: "vault", NodeID: 1, ContentVersionID: seed.contentVersionID,
 		Rank: len(f.report.Results) + 1, Excerpt: "quarterly numbers", Evidence: []docbankmedia.SearchEvidence{{Kind: "rendition_segment", BuildID: "build", SegmentID: "segment", MediaSources: []docbankmedia.SearchMediaSource{{SourceID: seed.sourceID, SourceVersionID: "version", ContentVersionID: seed.contentVersionID}}}},
@@ -167,7 +171,7 @@ func (f *mediaSearchFixture) match(t *testing.T, id string) recordingSeed {
 
 func searchMediaFor(t *testing.T, server *Server, query string) (int, MediaSearchResponse, string) {
 	t.Helper()
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/media/search?"+query, nil)
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/media/search?"+query, nil)
 	r.Header.Set("X-Api-Key", recordingsTestAPIKey)
 	w := httptest.NewRecorder()
 	server.Router().ServeHTTP(w, r)
@@ -190,7 +194,7 @@ func TestMediaSearchOccurrencesAndTiming(t *testing.T) {
 	f.audio(t, id, "second", "", "delivery-first", &store.BeeperMediaResult{VaultUID: "vault", DocbankSourceID: seed.sourceID, ContentVersionID: seed.contentVersionID})
 	f.report.Results[0].Evidence[0].TimeSpan = &docbankmedia.MediaTimeSpan{StartMS: 1200, EndMS: 2800}
 	sentAt := time.Date(2026, time.July, 18, 12, 0, 0, 0, time.UTC)
-	_, err := f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET subject = ?, sent_at = ? WHERE id = ?`), "Quarterly review", sentAt, seed.messageID)
+	_, err := f.f.Store.DB().ExecContext(t.Context(), f.f.Store.Rebind(`UPDATE messages SET subject = ?, sent_at = ? WHERE id = ?`), "Quarterly review", sentAt, seed.messageID)
 	require.NoError(err)
 	status, response, raw := searchMediaFor(t, f.server(true), "q=quarterly+numbers")
 	require.Equal(http.StatusOK, status, raw)
@@ -271,7 +275,7 @@ func TestMediaSearchParametersAndAuthorization(t *testing.T) {
 		assert.Empty(f.requests)
 	}
 	w := httptest.NewRecorder()
-	f.server(true).Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/media/search?q=words", nil))
+	f.server(true).Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/media/search?q=words", nil))
 	assert.Equal(http.StatusUnauthorized, w.Code)
 }
 
@@ -285,7 +289,7 @@ func cloneSearchOccurrences(t *testing.T, f *mediaSearchFixture, ref string, cou
 	require.NoError(err)
 	t.Cleanup(func() { _ = transaction.Rollback() })
 	for i := range count {
-		_, err := transaction.Exec(f.f.Store.Rebind(`INSERT INTO beeper_media_occurrences (
+		_, err := transaction.ExecContext(t.Context(), f.f.Store.Rebind(`INSERT INTO beeper_media_occurrences (
 			destination_key, occurrence_ref, revision, source_type, source_identifier, source_conversation_id,
 			source_message_id, source_attachment_id, source_part_key, source_sha256, byte_length,
 			occurrence_json, request_filename, request_mime_type, retention_state, vault_uid,
@@ -326,7 +330,7 @@ func TestMediaSearchParticipantScope(t *testing.T) {
 	_, err := f.f.Store.LinkParticipants(participant, alias)
 	require.NoError(err)
 	for messageID, sender := range map[int64]int64{selected.messageID: participant, aliased.messageID: alias} {
-		_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), sender, messageID)
+		_, err = f.f.Store.DB().ExecContext(t.Context(), f.f.Store.Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), sender, messageID)
 		require.NoError(err)
 	}
 	fullReport := f.report
@@ -365,9 +369,9 @@ func TestMediaSearchParticipantScope(t *testing.T) {
 	analytical.SetAnalyticsEngine(engine, AnalyticsModeDuckDB)
 	assert.ElementsMatch([]int64{selected.messageID, aliased.messageID}, search(analytical, byParticipant), "committed Explore clusters win over live links")
 
-	_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id = NULL WHERE id = ?`), selected.messageID)
+	_, err = f.f.Store.DB().ExecContext(t.Context(), f.f.Store.Rebind(`UPDATE messages SET sender_id = NULL WHERE id = ?`), selected.messageID)
 	require.NoError(err)
-	_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'mention')`), selected.messageID, participant)
+	_, err = f.f.Store.DB().ExecContext(t.Context(), f.f.Store.Rebind(`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'mention')`), selected.messageID, participant)
 	require.NoError(err)
 	assert.Equal([]int64{selected.messageID}, search(f.server(true), byParticipant), "a mention matches like Explore's Person filter")
 	assert.Empty(search(f.server(true), byParticipant+"&direction=from_person"), "a direction disables membership matching")
@@ -398,22 +402,22 @@ func TestMediaSearchPersonDirection(t *testing.T) {
 			participant := f.f.EnsureParticipant("speaker@example.com", "Speaker", "example.com")
 			person, _, err := f.f.Store.CreatePersonFromParticipant(participant)
 			require.NoError(err)
-			_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), participant, seed.messageID)
+			_, err = f.f.Store.DB().ExecContext(t.Context(), f.f.Store.Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), participant, seed.messageID)
 			require.NoError(err)
 			if scoped {
-				_, err := f.f.Store.DB().Exec(f.f.Store.Rebind(`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'to')`), other.messageID, participant)
+				_, err := f.f.Store.DB().ExecContext(t.Context(), f.f.Store.Rebind(`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'to')`), other.messageID, participant)
 				require.NoError(err)
 				change := func() {
 					var err error
 					switch strings.TrimPrefix(state, "late ") {
 					case "hidden":
-						_, err = f.f.Store.MergeDuplicates(seed.messageID, []int64{other.messageID}, "batch")
+						_, err = f.f.Store.MergeDuplicates(t.Context(), seed.messageID, []int64{other.messageID}, "batch")
 					case "bytes":
-						_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE attachments SET content_hash = ? WHERE id = ?`), strings.Repeat("c", 64), other.attachmentID)
+						_, err = f.f.Store.DB().ExecContext(t.Context(), f.f.Store.Rebind(`UPDATE attachments SET content_hash = ? WHERE id = ?`), strings.Repeat("c", 64), other.attachmentID)
 					case "wrong destination":
-						_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE beeper_media_occurrences SET destination_key = 'other-destination' WHERE attachment_id = ?`), other.attachmentID)
+						_, err = f.f.Store.DB().ExecContext(t.Context(), f.f.Store.Rebind(`UPDATE beeper_media_occurrences SET destination_key = 'other-destination' WHERE attachment_id = ?`), other.attachmentID)
 					case "no audio":
-						_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE attachments SET filename = 'note.txt', mime_type = 'text/plain', media_type = 'file' WHERE id = ?`), other.attachmentID)
+						_, err = f.f.Store.DB().ExecContext(t.Context(), f.f.Store.Rebind(`UPDATE attachments SET filename = 'note.txt', mime_type = 'text/plain', media_type = 'file' WHERE id = ?`), other.attachmentID)
 					}
 					require.NoError(err)
 				}
@@ -429,7 +433,7 @@ func TestMediaSearchPersonDirection(t *testing.T) {
 				}
 			}
 			if direction == "competing delivery" || direction == "delivery input" {
-				_, err := f.f.Store.DB().Exec(`UPDATE beeper_media_deliveries SET profile = 'supplied-transcript', supplied_input_id = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'`)
+				_, err := f.f.Store.DB().ExecContext(t.Context(), `UPDATE beeper_media_deliveries SET profile = 'supplied-transcript', supplied_input_id = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'`)
 				require.NoError(err)
 				f.report.MediaSelections[0].Origin = "supplied"
 				f.report.MediaSelections[0].SuppliedInputID = strings.Repeat("a", 64)
@@ -442,7 +446,7 @@ func TestMediaSearchPersonDirection(t *testing.T) {
 						f.report.Coverage.State = "incomplete"
 						f.report.Coverage.CompleteDocuments = 0
 					} else {
-						_, err := f.f.Store.DB().Exec(`UPDATE beeper_media_deliveries SET supplied_input_id = 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'`)
+						_, err := f.f.Store.DB().ExecContext(t.Context(), `UPDATE beeper_media_deliveries SET supplied_input_id = 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'`)
 						assert.NoError(err)
 					}
 				}
@@ -461,7 +465,7 @@ func TestMediaSearchPersonDirection(t *testing.T) {
 					if direction == "person deleted" {
 						err = f.f.Store.DeletePersonContext(t.Context(), person.ID, person.Revision)
 					} else {
-						_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id = NULL WHERE id = ?`), seed.messageID)
+						_, err = f.f.Store.DB().ExecContext(t.Context(), f.f.Store.Rebind(`UPDATE messages SET sender_id = NULL WHERE id = ?`), seed.messageID)
 					}
 					require.NoError(err)
 				}
@@ -531,7 +535,7 @@ func TestMediaSearchSelectedProfilesForSharedContent(t *testing.T) {
 	f.sameAudio["supplied"] = "generated"
 	messageID := f.message(t, "supplied")
 	supplied := f.audio(t, messageID, "supplied", "", "delivery-supplied", &store.BeeperMediaResult{VaultUID: "vault", DocbankSourceID: "other-source", ContentVersionID: generated.contentVersionID})
-	_, err := f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE beeper_media_deliveries SET phase = 'blocked' WHERE processing_key = ?`), "delivery-supplied")
+	_, err := f.f.Store.DB().ExecContext(t.Context(), f.f.Store.Rebind(`UPDATE beeper_media_deliveries SET phase = 'blocked' WHERE processing_key = ?`), "delivery-supplied")
 	require.NoError(err)
 	f.report.Results[0].Evidence[0].BuildID = "current-asr"
 	f.report.Results[0].Excerpt = "current generated quarterly numbers"
@@ -563,7 +567,7 @@ func TestMediaSearchRemoteErrors(t *testing.T) {
 				f.remoteStatus = 0
 				f.waitForCancel = true
 			}
-			r := httptest.NewRequest(http.MethodGet, "/api/v1/media/search?q=words", nil)
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/media/search?q=words", nil)
 			r.Header.Set("X-Api-Key", recordingsTestAPIKey)
 			if name == "timeout" {
 				ctx, cancel := context.WithTimeout(r.Context(), 300*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the remote blocks until cancellation
@@ -594,13 +598,13 @@ func TestMediaSearchBulkRevisionEligibility(t *testing.T) {
 			supplied := strings.HasPrefix(change, "supplied ")
 			mutation := strings.TrimPrefix(change, "supplied ")
 			if supplied {
-				_, err := f.f.Store.DB().Exec(`UPDATE beeper_media_deliveries SET profile = 'supplied-transcript'`)
+				_, err := f.f.Store.DB().ExecContext(t.Context(), `UPDATE beeper_media_deliveries SET profile = 'supplied-transcript'`)
 				require.NoError(err)
 				f.report.MediaSelections[0].Origin = "supplied"
 				f.report.MediaSelections[0].SuppliedInputID = seed.suppliedInputID
 			}
 			if !supplied && change == "provider text" {
-				_, err := f.f.Store.DB().Exec(`UPDATE beeper_media_deliveries SET profile = 'supplied-transcript', phase = 'pending-process', operation_state = 'queued'`)
+				_, err := f.f.Store.DB().ExecContext(t.Context(), `UPDATE beeper_media_deliveries SET profile = 'supplied-transcript', phase = 'pending-process', operation_state = 'queued'`)
 				require.NoError(err)
 			}
 			var err error
@@ -609,7 +613,7 @@ func TestMediaSearchBulkRevisionEligibility(t *testing.T) {
 				f.transcripts["matched"] = "new transcript"
 				f.writeRaw(t, seed.messageID, "matched")
 			case "missing raw":
-				_, err = f.f.Store.DB().Exec(`DELETE FROM message_raw`)
+				_, err = f.f.Store.DB().ExecContext(t.Context(), `DELETE FROM message_raw`)
 			}
 			require.NoError(err)
 			if mutation == "provider text" || mutation == "missing raw" {
@@ -653,13 +657,13 @@ func TestMediaSearchUnreadySelectionKeepsReadyMatches(t *testing.T) {
 			consent := !strings.HasSuffix(state, "opt out")
 			if strings.HasPrefix(state, "asr ") {
 				phase = strings.Fields(state)[1]
-				_, err := f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE beeper_media_deliveries SET profile = 'configured-asr', supplied_input_id = '' WHERE processing_key = ?`), "delivery-pending-selection")
+				_, err := f.f.Store.DB().ExecContext(t.Context(), f.f.Store.Rebind(`UPDATE beeper_media_deliveries SET profile = 'configured-asr', supplied_input_id = '' WHERE processing_key = ?`), "delivery-pending-selection")
 				require.NoError(err)
 			}
 			if state == "missing revision" || strings.HasPrefix(state, "generated ") || state == "hidden" {
 				phase = "pending-process"
 			}
-			_, err := f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE beeper_media_deliveries SET phase = ?, operation_state = 'queued' WHERE processing_key = ?`), phase, "delivery-pending-selection")
+			_, err := f.f.Store.DB().ExecContext(t.Context(), f.f.Store.Rebind(`UPDATE beeper_media_deliveries SET phase = ?, operation_state = 'queued' WHERE processing_key = ?`), phase, "delivery-pending-selection")
 			require.NoError(err)
 			f.report.Coverage = docbankmedia.SearchCoverage{State: "incomplete", ScopedDocuments: 2, CompleteDocuments: 1}
 			pending, unavailable := 1, 0
@@ -676,7 +680,7 @@ func TestMediaSearchUnreadySelectionKeepsReadyMatches(t *testing.T) {
 			}
 			if state == "hidden" {
 				f.duringSearch = func() {
-					_, err := f.f.Store.MergeDuplicates(ready.messageID, []int64{unready.messageID}, "batch")
+					_, err := f.f.Store.MergeDuplicates(t.Context(), ready.messageID, []int64{unready.messageID}, "batch")
 					require.NoError(err)
 				}
 				pending = 0
@@ -721,21 +725,21 @@ func TestMediaSearchLocalGapsUseDurableWork(t *testing.T) {
 				f.audio(t, id, "pending", "", "", nil)
 			case "skipped":
 				attachmentID, _ := f.storedAudio(t, id, "pending", "")
-				_, err := f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE attachments SET attachment_state = 'skipped', content_hash = NULL, storage_path = '' WHERE id = ?`), attachmentID)
+				_, err := f.f.Store.DB().ExecContext(t.Context(), f.f.Store.Rebind(`UPDATE attachments SET attachment_state = 'skipped', content_hash = NULL, storage_path = '' WHERE id = ?`), attachmentID)
 				require.NoError(err)
 			case "another destination":
 				seed := f.audio(t, id, "pending", "", "", &store.BeeperMediaResult{VaultUID: "vault"})
-				_, err := f.f.Store.DB().Exec(`UPDATE sources SET source_type = 'gmail'`)
+				_, err := f.f.Store.DB().ExecContext(t.Context(), `UPDATE sources SET source_type = 'gmail'`)
 				require.NoError(err)
-				_, err = f.f.Store.DB().Exec(`UPDATE beeper_media_occurrences SET source_type = 'gmail', destination_key = 'other-destination'`)
+				_, err = f.f.Store.DB().ExecContext(t.Context(), `UPDATE beeper_media_occurrences SET source_type = 'gmail', destination_key = 'other-destination'`)
 				require.NoError(err)
-				_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE attachments SET filename = 'header.bin', mime_type = 'application/octet-stream', media_type = '' WHERE id = ?`), seed.attachmentID)
+				_, err = f.f.Store.DB().ExecContext(t.Context(), f.f.Store.Rebind(`UPDATE attachments SET filename = 'header.bin', mime_type = 'application/octet-stream', media_type = '' WHERE id = ?`), seed.attachmentID)
 				require.NoError(err)
 			default:
 				attachmentID, _ := f.storedAudio(t, id, "pending", "")
-				_, err := f.f.Store.DB().Exec(`UPDATE sources SET source_type = 'gmail'`)
+				_, err := f.f.Store.DB().ExecContext(t.Context(), `UPDATE sources SET source_type = 'gmail'`)
 				require.NoError(err)
-				_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE attachments SET filename = 'note.ogg', mime_type = 'application/octet-stream', attachment_role = 'unknown' WHERE id = ?`), attachmentID)
+				_, err = f.f.Store.DB().ExecContext(t.Context(), f.f.Store.Rebind(`UPDATE attachments SET filename = 'note.ogg', mime_type = 'application/octet-stream', attachment_role = 'unknown' WHERE id = ?`), attachmentID)
 				require.NoError(err)
 			}
 			status, response, raw := searchMediaFor(t, f.server(true), "q=words")
@@ -799,9 +803,9 @@ func TestMediaSearchSharedSourceAllowedInputs(t *testing.T) {
 					if test.name == "hide selected" {
 						hidden = second.messageID
 					}
-					_, err = f.f.Store.MergeDuplicates(f.message(t, "survivor"), []int64{hidden}, "hidden")
+					_, err = f.f.Store.MergeDuplicates(t.Context(), f.message(t, "survivor"), []int64{hidden}, "hidden")
 				case "no-hit bytes":
-					_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE attachments SET content_hash = ? WHERE id = ?`), strings.Repeat("c", 64), second.attachmentID)
+					_, err = f.f.Store.DB().ExecContext(t.Context(), f.f.Store.Rebind(`UPDATE attachments SET content_hash = ? WHERE id = ?`), strings.Repeat("c", 64), second.attachmentID)
 				}
 				require.NoError(err)
 			}
@@ -847,7 +851,7 @@ func TestMediaSearchSuppliedInputLimit(t *testing.T) {
 				seed := f.audio(t, f.message(t, id), id, "", "delivery-"+id, &store.BeeperMediaResult{VaultUID: "vault", DocbankSourceID: first.sourceID, ContentVersionID: first.contentVersionID})
 				f.deliver(t, "delivery-"+id, "succeeded")
 				if test.pending && i == 64 {
-					_, err := f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE beeper_media_deliveries SET phase = 'pending-process', operation_state = 'queued' WHERE processing_key = ?`), "delivery-"+id)
+					_, err := f.f.Store.DB().ExecContext(t.Context(), f.f.Store.Rebind(`UPDATE beeper_media_deliveries SET phase = 'pending-process', operation_state = 'queued' WHERE processing_key = ?`), "delivery-"+id)
 					require.NoError(err)
 				}
 				inputs = append(inputs, seed.suppliedInputID)
@@ -970,28 +974,132 @@ func TestMediaSearchDocumentsOccurrenceLimit(t *testing.T) {
 	}
 }
 
-func TestMediaSearchDocumentsAttachmentScopeLimit(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := newMediaSearchFixture(t)
-	f.match(t, "audio")
-	server := f.server(false)
-	first, _ := f.document(t, server)
-	var documents []storetest.DocumentAttachment
-	for i := 2; i <= 4097; i++ {
-		documents = append(documents, storetest.DocumentAttachment{MIMEType: "application/pdf", VersionID: fmt.Sprintf("00000000-0000-4000-8000-%012x", i)})
+func TestMediaSearchDocumentsSearchesPastFenceLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name                 string
+		hiddenBetweenBatches bool
+		laterBatchFailure    bool
+	}{
+		{name: "all batches"},
+		{name: "later batch failure", laterBatchFailure: true},
+		{name: "hidden between batches", hiddenBetweenBatches: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newMediaSearchFixture(t)
+			f.match(t, "audio")
+			server := f.server(false)
+			first, second := f.document(t, server)
+			lastVersion := 4099
+			if tc.hiddenBetweenBatches {
+				lastVersion = 4098
+			}
+			var documents []storetest.DocumentAttachment
+			for i := 2; i <= lastVersion; i++ {
+				documents = append(documents, storetest.DocumentAttachment{MIMEType: "application/pdf", VersionID: fmt.Sprintf("00000000-0000-4000-8000-%012x", i)})
+			}
+			f.f.SeedDocumentAttachments(first, documents)
+			if !tc.laterBatchFailure && !tc.hiddenBetweenBatches {
+				// A recent version sorts differently by date and ID, exposing API reordering.
+				_, err := f.f.Store.DB().ExecContext(t.Context(), f.f.Store.Rebind(`UPDATE attachments SET message_id = ? WHERE LOWER(content_hash) = (SELECT content_hash FROM docbank_attachment_deliveries WHERE version_id = ?)`), second, "00000000-0000-4000-8000-000000001003")
+				require.NoError(err)
+				_, err = f.f.Store.DB().ExecContext(t.Context(), f.f.Store.Rebind(`UPDATE messages SET sent_at=?,received_at=NULL,internal_date=NULL WHERE id=?`), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), second)
+				require.NoError(err)
+			}
+			if tc.hiddenBetweenBatches {
+				survivor := f.message(t, "visible-document")
+				_, err := f.f.Store.DB().ExecContext(t.Context(), f.f.Store.Rebind(`UPDATE attachments SET message_id = ? WHERE LOWER(content_hash) = (SELECT content_hash FROM docbank_attachment_deliveries WHERE version_id = ?)`), survivor, "00000000-0000-4000-8000-000000001002")
+				require.NoError(err)
+				template := f.documentReport.Results[0]
+				f.documentReport.Results = nil
+				for _, version := range []int{1, 2, 4097, 4098} {
+					hit := template
+					hit.ContentVersionID = fmt.Sprintf("00000000-0000-4000-8000-%012x", version)
+					hit.Rank = 1
+					if version == 2 || version == 4098 {
+						hit.Rank = 2
+					}
+					hit.Excerpt = fmt.Sprintf("quartz %d", version)
+					f.documentReport.Results = append(f.documentReport.Results, hit)
+				}
+				f.duringDocumentSearch = func() {
+					if len(f.documentRequests) == 2 {
+						assert.NoError(f.f.Store.MarkMessagesDeletedBatch(t.Context(), f.f.Source.ID, []string{"first-document", "second-document"}))
+					}
+				}
+
+				status, response, raw := searchMediaFor(t, server, "q=quartz&limit=2")
+				require.Equal(http.StatusOK, status, raw)
+				require.Len(f.documentRequests, 2)
+				assert.Len(f.documentRequests[0].Fence.ContentVersionIDs, 4096)
+				assert.Equal([]string{"00000000-0000-4000-8000-000000001001", "00000000-0000-4000-8000-000000001002"}, f.documentRequests[1].Fence.ContentVersionIDs)
+				require.NotNil(response.Attachments)
+				require.Nil(response.Attachments.Error)
+				require.Len(response.Attachments.Results, 1)
+				assert.Equal(survivor, response.Attachments.Results[0].MessageID)
+				assert.Equal("quartz 4098", response.Attachments.Results[0].Excerpt)
+				assert.False(response.Attachments.Truncated)
+				return
+			}
+			if tc.laterBatchFailure {
+				f.duringDocumentSearch = func() {
+					if len(f.documentRequests) == 2 {
+						f.documentStatus = http.StatusServiceUnavailable
+					}
+				}
+			} else {
+				template := f.documentReport.Results[0]
+				f.documentReport.Results = []docbankmedia.SearchHit{
+					{ContentVersionID: "00000000-0000-4000-8000-000000000002", Rank: 1, Excerpt: "first batch, first hit"},
+					{ContentVersionID: "00000000-0000-4000-8000-000000000003", Rank: 2, Excerpt: "first batch, second hit"},
+					{ContentVersionID: "00000000-0000-4000-8000-000000001003", Rank: 3, Excerpt: "first batch, third hit"},
+					{ContentVersionID: "00000000-0000-4000-8000-000000001001", Rank: 1, Excerpt: "second batch, first hit"},
+					{ContentVersionID: "00000000-0000-4000-8000-000000001002", Rank: 2, Excerpt: "second batch, second hit"},
+					{ContentVersionID: "00000000-0000-4000-8000-000000001000", Rank: 3, Excerpt: "second batch, third hit"},
+				}
+				for i := range f.documentReport.Results {
+					f.documentReport.Results[i].VaultUID = template.VaultUID
+					f.documentReport.Results[i].NodeID = template.NodeID
+					f.documentReport.Results[i].Evidence = template.Evidence
+				}
+			}
+			status, response, raw := searchMediaFor(t, server, "q=quartz&limit=3")
+			require.Equal(http.StatusOK, status, raw)
+			require.NotNil(response.Attachments)
+			if tc.laterBatchFailure {
+				require.Len(f.documentRequests, 2)
+				assert.Contains(f.documentRequests[0].Fence.ContentVersionIDs, f.documentReport.Results[0].ContentVersionID)
+				assert.NotContains(f.documentRequests[1].Fence.ContentVersionIDs, f.documentReport.Results[0].ContentVersionID)
+				assert.Nil(response.Attachments.Error)
+				assert.NotEmpty(response.Results, "recording matches remain available")
+				assert.True(response.Attachments.Truncated, "the failed batch leaves attachment results incomplete")
+				var messageIDs []int64
+				for _, hit := range response.Attachments.Results {
+					messageIDs = append(messageIDs, hit.MessageID)
+					assert.Equal("quartz in the PDF", hit.Excerpt)
+				}
+				assert.ElementsMatch([]int64{first, second}, messageIDs, "retain both attachment occurrences from the successful first batch")
+				return
+			}
+			assert.Nil(response.Attachments.Error)
+			require.Len(response.Attachments.Results, 3)
+			assert.Equal("first batch, first hit", response.Attachments.Results[0].Excerpt)
+			assert.Equal("second batch, first hit", response.Attachments.Results[1].Excerpt)
+			assert.Equal("first batch, second hit", response.Attachments.Results[2].Excerpt)
+			assert.True(response.Attachments.Truncated)
+			require.Len(f.documentRequests, 2)
+			var versions []string
+			for _, request := range f.documentRequests {
+				assert.LessOrEqual(len(request.Fence.ContentVersionIDs), docbankmedia.MaxSearchVersions)
+				versions = append(versions, request.Fence.ContentVersionIDs...)
+			}
+			assert.Len(versions, 4099)
+			for i := 1; i <= 4099; i++ {
+				assert.Contains(versions, fmt.Sprintf("00000000-0000-4000-8000-%012x", i))
+			}
+		})
 	}
-	f.f.SeedDocumentAttachments(first, documents)
-	status, response, raw := searchMediaFor(t, server, "q=quartz")
-	require.Equal(http.StatusOK, status, raw)
-	require.NotNil(response.Attachments)
-	require.NotNil(response.Attachments.Error)
-	assert.Empty(response.Attachments.Results)
-	assert.Equal("media_search_scope_limit", response.Attachments.Error.Error)
-	assert.Contains(response.Attachments.Error.Message, "4096 mirrored files excluding images, audio, and video")
-	assert.Contains(response.Attachments.Error.Message, "--person")
-	assert.False(response.Attachments.Truncated)
-	assert.Empty(f.documentRequests)
 }
 
 func TestMediaSearchDocumentsAttachmentFailure(t *testing.T) {
@@ -1014,7 +1122,7 @@ func TestMediaSearchDocumentsAttachmentFailure(t *testing.T) {
 			f.document(t, server)
 			f.documentStatus = test.status
 			storeFailure := func() {
-				_, err := f.f.Store.DB().Exec(`ALTER TABLE docbank_attachment_deliveries RENAME TO unavailable_attachment_deliveries`)
+				_, err := f.f.Store.DB().ExecContext(t.Context(), `ALTER TABLE docbank_attachment_deliveries RENAME TO unavailable_attachment_deliveries`)
 				require.NoError(err)
 			}
 			switch test.name {
@@ -1086,7 +1194,7 @@ func TestMediaSearchDocumentsRecordingFailure(t *testing.T) {
 			if test.name == "late store failure" {
 				f.report.Truncated = true
 				f.duringSearch = func() {
-					_, err := f.f.Store.DB().Exec(`ALTER TABLE beeper_media_occurrences RENAME TO unavailable_media_occurrences`)
+					_, err := f.f.Store.DB().ExecContext(t.Context(), `ALTER TABLE beeper_media_occurrences RENAME TO unavailable_media_occurrences`)
 					assert.NoError(err)
 				}
 			}
@@ -1096,7 +1204,7 @@ func TestMediaSearchDocumentsRecordingFailure(t *testing.T) {
 				ctx, cancel = context.WithTimeout(ctx, 4*time.Second)
 				defer cancel()
 			}
-			request := httptest.NewRequest(http.MethodGet, "/api/v1/media/search?q=quartz", nil).WithContext(ctx)
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/media/search?q=quartz", nil).WithContext(ctx)
 			request.Header.Set("X-Api-Key", recordingsTestAPIKey)
 			recorder := httptest.NewRecorder()
 			server.Router().ServeHTTP(recorder, request)
@@ -1141,7 +1249,7 @@ func TestMediaSearchDocumentsUnlinkedDuringSearch(t *testing.T) {
 	alias := f.f.EnsureParticipant("alias@example.com", "Alias", "example.com")
 	_, err := f.f.Store.LinkParticipants(participant, alias)
 	require.NoError(err)
-	_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id IN (?,?)`), alias, first, second)
+	_, err = f.f.Store.DB().ExecContext(t.Context(), f.f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id IN (?,?)`), alias, first, second)
 	require.NoError(err)
 	query += "&participant_id=" + strconv.FormatInt(participant, 10)
 	f.duringDocumentSearch = func() {

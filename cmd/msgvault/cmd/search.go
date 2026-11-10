@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var (
@@ -54,7 +55,7 @@ stored snippet, available match_snippet, and attachment names/counts.
 Use show-thread <message-id> to read a conversation chronologically.
 
 Supported operators:
-  from:        Sender email address
+  from:        Sender name, address, or domain
   to:          Recipient email address
   cc:          CC recipient
   bcc:         BCC recipient
@@ -123,13 +124,14 @@ Examples:
 			))
 		}
 
-		// Validate --message-type against the known set, like --mode, so a
-		// typo (e.g. carrier_pigeon) fails fast instead of silently
-		// returning no results.
+		// A malformed --message-type (e.g. SMS or meeting-transcript) fails
+		// fast instead of silently returning no results. Any well-formed type
+		// is accepted: message imports choose their own types, such as
+		// feed_item, which no fixed list can know.
 		for _, mt := range searchMessageTypes {
-			if !query.IsKnownMessageType(mt) {
+			if !store.IsWellFormedMessageType(mt) {
 				return usageErr(cmd, fmt.Errorf(
-					"invalid --message-type: %q (want one of: %s)",
+					"invalid --message-type: %q (want lowercase letters, digits and underscores, e.g. %s)",
 					mt, strings.Join(query.KnownMessageTypes, ", "),
 				))
 			}
@@ -295,16 +297,21 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) (result error) {
 	if len(resp.Results) == 0 && resp.HybridAvailable {
 		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "No full-text matches. Try --mode hybrid for an intent search with your active embeddings.")
 	}
+	if resp.HasMore {
+		defer func() {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Hint: more messages match; use --offset %d for the next page\n", searchOffset+len(resp.Results))
+		}()
+	}
 	// JSON mode must stay machine-parseable even with zero results:
 	// emit an empty array, never prose.
 	if searchJSON {
-		return outputSearchResultsJSON(resp.Results)
+		result = outputSearchResultsJSON(resp.Results)
+	} else if len(resp.Results) == 0 {
+		_, result = fmt.Println("No messages found.")
+	} else {
+		result = outputSearchResultsTable(resp.Results)
 	}
-	if len(resp.Results) == 0 {
-		fmt.Println("No messages found.")
-		return nil
-	}
-	return outputSearchResultsTable(resp.Results)
+	return result
 }
 
 func outputSearchResultsTable(results []query.MessageSummary) error {
@@ -423,5 +430,5 @@ func init() {
 	searchCmd.Flags().StringVar(&searchDeletionScope, "deletion-scope", "active",
 		"Source deletion scope: active|deleted|any (FTS mode only)")
 	searchCmd.Flags().StringSliceVar(&searchMessageTypes, "message-type", nil,
-		"Limit results to message type(s), e.g. email, sms, calendar_event, meeting_transcript")
+		"Limit results to message type(s), e.g. email, sms, calendar_event, meeting_transcript, or an imported type")
 }

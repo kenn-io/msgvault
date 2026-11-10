@@ -21,11 +21,13 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/kit/embedlocal"
 	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/circleback"
+	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/discord"
@@ -36,6 +38,7 @@ import (
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/kataevidence"
 	"go.kenn.io/msgvault/internal/meetingimport"
+	"go.kenn.io/msgvault/internal/messageimport"
 	"go.kenn.io/msgvault/internal/msmail"
 	"go.kenn.io/msgvault/internal/muesli"
 	"go.kenn.io/msgvault/internal/notionmeetings"
@@ -50,6 +53,7 @@ import (
 	"go.kenn.io/msgvault/internal/pocket"
 	"go.kenn.io/msgvault/internal/provideridentity"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
@@ -59,6 +63,7 @@ import (
 	"go.kenn.io/msgvault/internal/teams"
 	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/twilio"
+	"go.kenn.io/msgvault/internal/vector/visual"
 	"golang.org/x/oauth2"
 )
 
@@ -210,6 +215,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if _, err := cfg.ResolveServerBindAddress(); err != nil {
 		return err
 	}
+	if runtime := findAnyDaemonRuntimeContext(cmd.Context(), cfg.Data.DataDir); runtime != nil {
+		return daemonOwnerLockHeldError{url: urlFromDaemonRuntime(runtime)}
+	}
 
 	// Missing provider credentials should not prevent the daemon from serving
 	// read-only HTTP requests against an import-only archive.
@@ -228,7 +236,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if bindAddr == "" {
 		bindAddr = defaultDaemonBindAddr
 	}
-	apiListener, err := listenServeAPI(bindAddr, cfg.Server.APIPort)
+	apiListener, err := listenServeAPI(cmd.Context(), bindAddr, cfg.Server.APIPort)
 	if err != nil {
 		return err
 	}
@@ -319,7 +327,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// remaining move is SIGKILL on a writing process. Cancelling here stops it
 	// at the next batch boundary, keeps every batch already committed, and
 	// leaves the migration unmarked so the next start resumes.
-	if err := s.InitSchemaContext(cmd.Context()); err != nil {
+	if err := s.InitSchemaUnlessCurrentContext(cmd.Context()); err != nil {
 		return fmt.Errorf("init schema: %w", err)
 	}
 	failedUnfinishedImports, err := s.FailUnfinishedSyncOperationsContext(cmd.Context())
@@ -442,7 +450,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	state.syncFailures = &telemetry.SyncFailures{Capture: telemetryReporter.Capture}
 	sched, mediaSched := newServeSchedulers(syncFunc, logger, idleTracker, operationGate, telemetryReporter.Capture)
 	sched.WithAccountPreemptionPolicy(func(identifier string) bool {
-		return scheduledSyncPreemptible(s, identifier, logger)
+		return scheduledSyncPreemptible(ctx, s, identifier, logger)
 	})
 	cardDAVController, err := api.NewCardDAVController(cfg, s, logger)
 	if err != nil {
@@ -492,6 +500,44 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	for _, source := range cfg.WhatsAppApple {
+		if source.Enabled && source.Schedule == "" {
+			logger.Warn("whatsapp apple source is enabled without a schedule", "source", source.Name)
+		}
+	}
+	for _, source := range cfg.ScheduledWhatsAppAppleSources() {
+		jobName, _ := api.SchedulerJobNameForSource("whatsapp", source.Phone)
+		if err := sched.AddJob(scheduler.Job{
+			Name:     jobName,
+			Schedule: source.Schedule,
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runScheduledSource(ctx, attachmentMaint, false, func(ctx context.Context) error {
+					return runScheduledWhatsAppApple(ctx, s, source)
+				})
+			}),
+		}); err != nil {
+			logger.Error("failed to schedule whatsapp apple source", "source", source.Name, "error", err)
+		}
+	}
+	if cfg.IMessage.Enabled {
+		if cfg.IMessage.Schedule == "" {
+			logger.Warn("imessage is enabled without a schedule")
+		} else {
+			jobName, _ := api.SchedulerJobNameForSource(sourceTypeAppleMessages, localValue)
+			if err := sched.AddJob(scheduler.Job{
+				Name:     jobName,
+				Schedule: cfg.IMessage.Schedule,
+				Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+					return runScheduledSource(ctx, attachmentMaint, true, func(ctx context.Context) error {
+						return runScheduledIMessage(ctx, s, cfg.IMessage)
+					})
+				}),
+			}); err != nil {
+				logger.Error("failed to schedule imessage", "error", err)
+			}
+		}
+	}
+
 	// Warn about enabled calendar sources with no schedule: they are never
 	// daemon-synced, so once a manual sync seeds the source row its freshness
 	// drifts stale and the freshness monitor eventually alarms RED.
@@ -533,11 +579,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	if err := registerSQLiteMaintenanceJob(sched, s); err != nil {
 		return fmt.Errorf("schedule SQLite maintenance: %w", err)
-	}
-	if err := configureDocumentReconcileJob(
-		ctx, sched, s, cfg.Attachments.Documents.Enabled,
-	); err != nil {
-		return fmt.Errorf("configure document reconciliation: %w", err)
 	}
 	if err := registerFilenameDiscoveryJob(sched, s); err != nil {
 		return fmt.Errorf("schedule filename discovery: %w", err)
@@ -593,9 +634,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		if err := sched.AddJob(scheduler.Job{
 			Name: api.MatrixJobName, Schedule: cfg.Matrix.Schedule, Preemptible: true,
 			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
-				return runScheduledSource(ctx, attachmentMaint, false, func(ctx context.Context) error {
-					return runConfiguredMatrixSync(ctx, s)
-				})
+				return runConfiguredMatrixSync(ctx, s, matrixMediaMutation(attachmentMaint))
 			}),
 		}); err != nil {
 			logger.Error("failed to schedule matrix sync", "error", err)
@@ -638,6 +677,32 @@ func runServe(cmd *cobra.Command, args []string) error {
 			}),
 		}); err != nil {
 			logger.Error("failed to schedule inline sync", "error", err)
+		}
+	}
+
+	for _, source := range cfg.FacebookComments {
+		if source.Enabled && source.Schedule == "" {
+			logger.Warn("Facebook comments profile is enabled but has no schedule", "profile", source.Identifier)
+		}
+	}
+	for _, source := range cfg.ScheduledFacebookCommentsSources() {
+		if err := registerScheduledFacebookCommentsJob(sched, source, attachmentMaint, invocationBoundJobRun(state, func(ctx context.Context) error {
+			return runConfiguredFacebookCommentsSync(ctx, s, source)
+		})); err != nil {
+			logger.Error("failed to schedule Facebook comments", "profile", source.Identifier, "error", err)
+		}
+	}
+
+	for _, source := range cfg.InstagramComments {
+		if source.Enabled && source.Schedule == "" {
+			logger.Warn("Instagram comments profile is enabled but has no schedule", "profile", source.Identifier)
+		}
+	}
+	for _, source := range cfg.ScheduledInstagramCommentsSources() {
+		if err := registerScheduledInstagramCommentsJob(sched, source, attachmentMaint, invocationBoundJobRun(state, func(ctx context.Context) error {
+			return runConfiguredInstagramCommentsSync(ctx, s, source)
+		})); err != nil {
+			logger.Error("failed to schedule Instagram comments", "profile", source.Identifier, "error", err)
 		}
 	}
 
@@ -900,7 +965,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	meetingImporter := meetingimport.NewImporter(s, meetingimport.Hooks{
 		AfterSourceSetup: func() error {
-			return runPostSourceCreateMigrationsForInvocation(s, state)
+			return runPostSourceCreateMigrationsForInvocation(ctx, s, state)
+		},
+		RefreshCache: refreshCacheAfterWrite,
+	}).WithLogger(logger)
+	messageImporter := messageimport.NewImporter(s, messageimport.Hooks{
+		AfterSourceSetup: func() error {
+			return runPostSourceCreateMigrationsForInvocation(ctx, s, state)
 		},
 		RefreshCache: refreshCacheAfterWrite,
 	}).WithLogger(logger)
@@ -909,6 +980,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	storeAdapter := &storeAPIAdapter{
 		store:                  s,
 		operationGate:          operationGate,
+		embeddingsScheduler:    sched,
 		config:                 cfg,
 		options:                state.options,
 		logger:                 logger,
@@ -918,6 +990,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		draftCacheRefresh:      refreshCacheAfterWrite,
 		attachmentMaintenance:  attachmentMaint,
 		meetingImporter:        meetingImporter,
+		messageImporter:        messageImporter,
 		analyticsDir:           cfg.AnalyticsDir(),
 		cacheJobs:              cacheJobs,
 		personEnrichmentConfig: cfg.People.Enrichment,
@@ -1050,6 +1123,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 			apiServer, sched, blobStore,
 		)
 		mcpInitDone = startServeMCP(ctx, cmd, apiServer, state)
+		apiServer.SetLocalEmbeddings(&localEmbeddingsController{
+			state: state, store: s, dbPath: dbPath, handle: vectorInit, server: apiServer, scheduler: sched,
+			gate: operationGate, runner: storeAdapter, openers: []visual.StreamOpener{blobStore},
+			inspect: embedlocal.Inspect, install: embedlocal.Install,
+		})
 		telemetryHeartbeatDone := make(chan struct{})
 		go func() {
 			defer close(telemetryHeartbeatDone)
@@ -1280,7 +1358,7 @@ func applyServerRuntimeConfig(options *api.ServerOptions, cfg *config.Config) {
 	options.VectorCfg = cfg.Vector
 }
 
-func listenServeAPI(bindAddr string, port int) (net.Listener, error) {
+func listenServeAPI(ctx context.Context, bindAddr string, port int) (net.Listener, error) {
 	resolved, err := resolveServeBind(bindAddr)
 	if err != nil {
 		return nil, err
@@ -1290,7 +1368,7 @@ func listenServeAPI(bindAddr string, port int) (net.Listener, error) {
 		bindAddr = defaultDaemonBindAddr
 	}
 	addr := net.JoinHostPort(bindAddr, strconv.Itoa(port))
-	ln, err := net.Listen("tcp", addr)
+	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
 	if err != nil {
 		if port != 0 {
 			return nil, fmt.Errorf(
@@ -1463,7 +1541,7 @@ func runDaemonSQLQueryWithJobs(
 		defer func() { _ = duckEngine.Close() }()
 		querier = duckEngine
 	} else if !ok {
-		duckEngine, err := openDaemonDuckDBEngine(c, s)
+		duckEngine, err := openDaemonDuckDBEngine(ctx, c, s)
 		if err != nil {
 			if errors.Is(err, query.ErrCacheUnavailable) {
 				return acceptUnavailableCacheQuery(c, jobs, options.fresh)
@@ -1539,6 +1617,16 @@ func openDaemonAnalyticsEngine(
 	s *store.Store,
 	intent startupCacheBuildIntent,
 ) (query.Engine, string, startupCacheBuildOutcome, error) {
+	return openDaemonAnalyticsEngineWithRebuild(ctx, c, s, intent, nil)
+}
+
+func openDaemonAnalyticsEngineWithRebuild(
+	ctx context.Context,
+	c *config.Config,
+	s *store.Store,
+	intent startupCacheBuildIntent,
+	onFullRebuild func(),
+) (query.Engine, string, startupCacheBuildOutcome, error) {
 	if c == nil || s == nil {
 		return nil, "", startupCacheBuildOutcomeNone,
 			errors.New("daemon analytics engine unavailable")
@@ -1595,11 +1683,8 @@ func openDaemonAnalyticsEngine(
 	shouldBuild := intent != startupCacheBuildIntentNone || automaticBuild
 	var automaticBuildErr error
 	if shouldBuild {
-		// Build the cache before serving rather than starting on live-SQL
-		// fallback: incremental rebuilds take seconds, and startup progress
-		// already streams to the CLI that auto-started the daemon. A failed
-		// build is fatal for engine="duckdb" (documented to never fall back)
-		// and falls back to live SQL for engine="auto".
+		// Incremental builds keep the brief cache wait. Full builds let auto
+		// mode serve live entries until the replacement cache opens.
 		fullBuild := staleness.FullRebuild
 		reason := staleness.Reason
 		if intent == startupCacheBuildIntentFull {
@@ -1610,6 +1695,10 @@ func openDaemonAnalyticsEngine(
 			"step", "build_analytics_cache",
 			"reason", reason,
 			"full_rebuild", fullBuild)
+
+		if fullBuild && engineMode == config.AnalyticsEngineAuto && onFullRebuild != nil {
+			onFullRebuild()
+		}
 
 		var buildErr error
 		if intent != startupCacheBuildIntentNone {
@@ -1672,7 +1761,7 @@ func openDaemonAnalyticsEngine(
 		if err := ctx.Err(); err != nil {
 			return nil, "", outcome, err
 		}
-		duckEngine, err := openDaemonDuckDBEngineForRun(c, s)
+		duckEngine, err := openDaemonDuckDBEngineForRun(ctx, c, s)
 		if err != nil {
 			if intent != startupCacheBuildIntentNone {
 				outcome = startupCacheBuildOutcomeFailed
@@ -1733,7 +1822,7 @@ func openDaemonAnalyticsEngine(
 
 var openDaemonDuckDBEngineForRun = openDaemonDuckDBEngine
 
-func openDaemonDuckDBEngine(c *config.Config, s *store.Store) (*query.DuckDBEngine, error) {
+func openDaemonDuckDBEngine(ctx context.Context, c *config.Config, s *store.Store) (*query.DuckDBEngine, error) {
 	if c == nil || s == nil {
 		return nil, errors.New("daemon DuckDB engine unavailable")
 	}
@@ -1741,7 +1830,7 @@ func openDaemonDuckDBEngine(c *config.Config, s *store.Store) (*query.DuckDBEngi
 	if err != nil {
 		return nil, err
 	}
-	return query.NewDuckDBEngine(c.AnalyticsDir(), c.DatabaseDSN(), s.DB(), options)
+	return query.NewDuckDBEngine(ctx, c.AnalyticsDir(), c.DatabaseDSN(), s.DB(), options)
 }
 
 func daemonDuckDBOptions(c *config.Config) (query.DuckDBOptions, error) {
@@ -1775,9 +1864,9 @@ func hasServeOAuthConfig(c *config.Config) bool {
 	return c.OAuth.HasAnyConfig() || c.Microsoft.ClientID != ""
 }
 
-func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slog.Logger) *api.IdleTracker {
-	if c == nil || os.Getenv(serveBackgroundChildEnv) != "1" {
-		return nil
+func effectiveDaemonIdleTimeout(c *config.Config, logger *slog.Logger) time.Duration {
+	if c == nil || os.Getenv(serveBackgroundChildEnv) != "1" || os.Getenv(servePersistentChildEnv) == runtimeBackgroundValue {
+		return 0
 	}
 	logger = repairLogger(logger)
 	timeout := c.Server.DaemonIdleTimeout
@@ -1792,11 +1881,16 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slo
 			timeout = parsed
 		}
 	}
+	return max(timeout, 0)
+}
+
+func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slog.Logger) *api.IdleTracker {
+	timeout := effectiveDaemonIdleTimeout(c, logger)
 	if timeout <= 0 {
 		return nil
 	}
 	return api.NewIdleTracker(timeout, func() {
-		logger.Info("background daemon idle timeout elapsed; shutting down", "timeout", timeout)
+		repairLogger(logger).Info("background daemon idle timeout elapsed; shutting down", "timeout", timeout)
 		stop()
 	})
 }
@@ -1807,6 +1901,8 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slo
 type storeAPIAdapter struct {
 	operationGate             api.OperationGate
 	embeddingsOptimizeMu      stdsync.Mutex
+	embeddingsBuildMu         stdsync.Mutex
+	embeddingsScheduler       *scheduler.Scheduler
 	store                     *store.Store
 	config                    *config.Config
 	options                   invocationOptions
@@ -1824,6 +1920,7 @@ type storeAPIAdapter struct {
 	draftCacheRefresh     func(context.Context, string) error
 	attachmentMaintenance *attachmentMaintenance
 	meetingImporter       *meetingimport.Importer
+	messageImporter       *messageimport.Importer
 	// analyticsDir is the daemon's Parquet analytics cache directory, used
 	// to read the revision committed by the derived-refresh child.
 	analyticsDir           string
@@ -1832,12 +1929,24 @@ type storeAPIAdapter struct {
 	lookupEnv              personenrichment.CredentialLookup
 }
 
+// publishedConfig applies a live vector activation without adopting other
+// saved edits that remain pending until their runtime is activated.
+func (a *storeAPIAdapter) publishedConfig(ctx context.Context) *config.Config {
+	vectorCfg, ok := api.PublishedVectorConfig(ctx)
+	if !ok || a.config == nil {
+		return a.config
+	}
+	cfg := *a.config
+	cfg.Vector = vectorCfg
+	return &cfg
+}
+
 func (a *storeAPIAdapter) invocationContext(ctx context.Context) context.Context {
 	if a == nil {
 		return ctx
 	}
 	state := newInvocation()
-	state.cfg = a.config
+	state.cfg = a.publishedConfig(ctx)
 	state.options = a.options
 	if a.logger != nil {
 		state.logger = a.logger
@@ -1885,6 +1994,7 @@ var _ api.MessageIdentityStore = (*storeAPIAdapter)(nil)
 var _ api.PersonFactStore = (*storeAPIAdapter)(nil)
 var _ api.PersonBriefStore = (*storeAPIAdapter)(nil)
 var _ api.MeetingImporter = (*storeAPIAdapter)(nil)
+var _ api.MessageImporter = (*storeAPIAdapter)(nil)
 var _ api.MuesliImporter = (*storeAPIAdapter)(nil)
 var _ api.SourceStatusStore = (*storeAPIAdapter)(nil)
 var _ api.CLIStore = (*storeAPIAdapter)(nil)
@@ -1924,9 +2034,6 @@ var _ api.ConversationWindowStore = (*storeAPIAdapter)(nil)
 var _ api.ChangedMessageLister = (*storeAPIAdapter)(nil)
 var _ api.ArchiveIdentifier = (*storeAPIAdapter)(nil)
 var _ operations.HistoryReader = (*storeAPIAdapter)(nil)
-var _ api.DocumentSearchStore = (*storeAPIAdapter)(nil)
-var _ api.DocumentStatusStore = (*storeAPIAdapter)(nil)
-var _ api.DocumentVectorStatusStore = (*storeAPIAdapter)(nil)
 var _ api.ActivityStore = (*storeAPIAdapter)(nil)
 var _ api.ParticipantIdentityContextStore = (*storeAPIAdapter)(nil)
 
@@ -2077,77 +2184,6 @@ func (a *storeAPIAdapter) LaneStatus(
 	return a.store.LaneStatus(ctx, kind)
 }
 
-func (a *storeAPIAdapter) SearchDocuments(
-	ctx context.Context,
-	request store.DocumentSearchRequest,
-) (store.DocumentSearchResponse, error) {
-	ctx = a.invocationContext(ctx)
-	if err := reconcileDocumentOccurrencesForSearch(ctx, a.store); err != nil {
-		return store.DocumentSearchResponse{}, err
-	}
-	return a.store.SearchDocuments(ctx, request)
-}
-
-func (a *storeAPIAdapter) ReconcileDocumentOccurrences(ctx context.Context) error {
-	ctx = a.invocationContext(ctx)
-	return reconcileDocumentOccurrencesForSearch(ctx, a.store)
-}
-
-func (a *storeAPIAdapter) GetDocumentIndexStatusForScope(
-	ctx context.Context,
-	profileID string,
-	extractionInputKey string,
-	allowedMediaTypes []string,
-	allowedMessageTypes []string,
-) (store.DocumentIndexStatus, error) {
-	return a.store.GetDocumentIndexStatusForScope(
-		ctx, profileID, extractionInputKey, allowedMediaTypes, allowedMessageTypes,
-	)
-}
-
-func (a *storeAPIAdapter) GetCurrentDocumentIndexStatusScope(
-	ctx context.Context,
-) (string, []string, error) {
-	return a.store.GetCurrentDocumentIndexStatusScope(ctx)
-}
-
-func (a *storeAPIAdapter) GetActiveDocumentExtractionRebuild(
-	ctx context.Context,
-	profileID string,
-	extractionInputKey string,
-) (store.DocumentExtractionRebuild, error) {
-	return a.store.GetActiveDocumentExtractionRebuild(ctx, profileID, extractionInputKey)
-}
-
-func (a *storeAPIAdapter) CountIncompleteDocumentExtractionRebuild(
-	ctx context.Context,
-	rebuild store.DocumentExtractionRebuild,
-	allowedMediaTypes []string,
-	allowedMessageTypes []string,
-) (int64, error) {
-	return a.store.CountIncompleteDocumentExtractionRebuild(
-		ctx, rebuild, allowedMediaTypes, allowedMessageTypes,
-	)
-}
-
-func (a *storeAPIAdapter) GetDocumentVectorTargetProfileID(ctx context.Context) (string, error) {
-	return a.store.GetDocumentVectorTargetProfileID(ctx)
-}
-
-func (a *storeAPIAdapter) GetDocumentVectorOperationsStatus(
-	ctx context.Context,
-	configured store.DocumentVectorGenerationSpec,
-	documentEgressFingerprint, queryEgressFingerprint string,
-	generationID int64,
-	afterToken string,
-	limit int,
-) (store.DocumentVectorOperationsStatus, error) {
-	return a.store.GetDocumentVectorOperationsStatus(
-		ctx, configured, documentEgressFingerprint, queryEgressFingerprint,
-		generationID, afterToken, limit,
-	)
-}
-
 func (a *storeAPIAdapter) GetStats() (*api.StoreStats, error) {
 	return a.store.GetStats()
 }
@@ -2160,6 +2196,16 @@ func (a *storeAPIAdapter) ImportMeeting(
 		return meetingimport.Result{}, meetingimport.ErrUnavailable
 	}
 	return a.meetingImporter.Import(ctx, req)
+}
+
+func (a *storeAPIAdapter) ImportMessage(
+	ctx context.Context,
+	req messageimport.Request,
+) (messageimport.Result, error) {
+	if a == nil || a.messageImporter == nil {
+		return messageimport.Result{}, messageimport.ErrUnavailable
+	}
+	return a.messageImporter.Import(ctx, req)
 }
 
 // ImportMuesliRecording uses the shared attachment writer; Docbank discovers it
@@ -2212,6 +2258,12 @@ func (a *storeAPIAdapter) ListMessagesContext(
 	return a.store.ListMessagesContext(ctx, offset, limit, sourceIDs)
 }
 
+var _ api.MessageBodyLoader = (*storeAPIAdapter)(nil)
+
+func (a *storeAPIAdapter) PopulateMessageBodiesContext(ctx context.Context, messages []store.APIMessage) error {
+	return a.store.PopulateMessageBodiesContext(ctx, messages)
+}
+
 func (a *storeAPIAdapter) GetMessageContext(ctx context.Context, id int64) (*api.APIMessage, error) {
 	return a.store.GetMessageContext(ctx, id)
 }
@@ -2238,7 +2290,7 @@ func (a *storeAPIAdapter) GetArchivedMessageRaw(ctx context.Context, id int64) (
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return a.store.GetMessageRaw(id)
+	return a.store.GetMessageRawContext(ctx, id)
 }
 
 func (a *storeAPIAdapter) GetStatsForScope(sourceIDs []int64) (*store.Stats, error) {
@@ -2362,7 +2414,8 @@ func (a *storeAPIAdapter) runCLISyncOperationWithRunner(
 		if err != nil {
 			status = "failed"
 		}
-		if finishErr := a.store.FinishSyncOperation(req.OperationID, status); finishErr != nil {
+		// A canceled run still records its terminal state.
+		if finishErr := a.store.FinishSyncOperation(context.WithoutCancel(ctx), req.OperationID, status); finishErr != nil {
 			return errors.Join(err, fmt.Errorf("finish sync operation: %w", finishErr))
 		}
 	}
@@ -2444,7 +2497,7 @@ func cliSyncSubprocessArgs(req api.CLISyncRequest) []string {
 		args = emitFolderArgs(args, "--folder", req.Folders)
 		args = emitFolderArgs(args, "--skip-folder", req.SkipFolders)
 		if req.Email != "" {
-			args = append(args, req.Email)
+			args = append(args, "--", req.Email)
 		}
 		return args
 	}
@@ -2461,7 +2514,7 @@ func cliSyncSubprocessArgs(req api.CLISyncRequest) []string {
 	args = emitFolderArgs(args, "--folder", req.Folders)
 	args = emitFolderArgs(args, "--skip-folder", req.SkipFolders)
 	if req.Email != "" {
-		args = append(args, req.Email)
+		args = append(args, "--", req.Email)
 	}
 	return args
 }
@@ -2593,6 +2646,9 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	emit func(api.CLIRunEvent) error,
 	run cliCommandSubprocessRunner,
 ) (runErr error) {
+	if api.IsCLIRunEmbeddingsBuild(req.Args) {
+		return a.runCLIEmbeddingsBuild(ctx, req, emit)
+	}
 	if api.IsCLIRunEmbeddingsOptimize(req.Args) {
 		return a.runCLIEmbeddingsOptimize(ctx, req, emit)
 	}
@@ -2626,7 +2682,7 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	runSubprocess := func(ctx context.Context) error {
 		args := req.Args
 		if req.GrantDecided {
-			args = append(append([]string(nil), args...), "--"+addAccountGrantDecidedFlag+"=true")
+			args = append([]string{args[0], "--" + addAccountGrantDecidedFlag + "=true"}, args[1:]...)
 		}
 		return run(ctx, args, req.Env, req.Cwd, emitSubprocess)
 	}
@@ -2678,6 +2734,16 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	)
 }
 
+// Lease each media write so downloads can proceed while packing runs.
+func matrixMediaMutation(maintenance *attachmentMaintenance) func(context.Context, func() error) error {
+	if maintenance == nil {
+		return nil
+	}
+	return func(ctx context.Context, write func() error) error {
+		return runScheduledSource(ctx, maintenance, true, func(context.Context) error { return write() })
+	}
+}
+
 func attachmentRemovalCommand(args []string) bool {
 	if len(args) == 0 {
 		return false
@@ -2710,19 +2776,8 @@ func attachmentRemovalCommand(args []string) bool {
 // need no further interpretation here, but they must not be mistaken for
 // command-specific arguments.
 func repackAttachmentsParentArgsAllowed(args []string) bool {
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "--") {
-			return false
-		}
-		name := strings.TrimPrefix(arg, "--")
-		if before, _, ok := strings.Cut(name, "="); ok {
-			name = before
-		}
-		if !loggingPassthroughFlags[name] {
-			return false
-		}
-	}
-	return true
+	flags := clirun.NewFlagSet()
+	return clirun.Parse(flags, args) == nil && flags.NArg() == 0
 }
 
 func (a *storeAPIAdapter) PlanCLIAddCalendar(
@@ -4214,7 +4269,10 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 	ctx = withInvocation(ctx, state)
 	logger.Info("starting scheduled sync", "identifier", identifier)
 
-	srcs, retiredMatch, srcErr := findScheduledSyncSources(s, identifier)
+	// The source lookup is a short local read. It ignores cancellation, as it
+	// did before, so a yielded run still reaches the importer, which reports
+	// the yield.
+	srcs, retiredMatch, srcErr := findScheduledSyncSources(context.WithoutCancel(ctx), s, identifier)
 	if srcErr != nil {
 		return fmt.Errorf("look up sources for %s: %w", identifier, srcErr)
 	}
@@ -4358,8 +4416,8 @@ func logScheduledDiscordIssues(identifier string, summary *discord.ImportSummary
 // registered row, which alone is eligible for the Gmail token-first fallback.
 //
 // Matches against both sources.identifier and sources.display_name.
-func findScheduledSyncSources(s *store.Store, identifier string) ([]*store.Source, bool, error) {
-	rows, err := s.GetSourcesByIdentifierOrDisplayName(identifier)
+func findScheduledSyncSources(ctx context.Context, s *store.Store, identifier string) ([]*store.Source, bool, error) {
+	rows, err := s.GetSourcesByIdentifierOrDisplayNameContext(ctx, identifier)
 	if err != nil {
 		return nil, false, err
 	}
@@ -4400,11 +4458,11 @@ func findScheduledSyncSources(s *store.Store, identifier string) ([]*store.Sourc
 }
 
 // scheduledSyncPreemptible disables scheduler-job preemption when an account
-// dispatch includes a full IMAP pass, whose offset-based paging cannot resume
+// dispatch includes archive repair or a full IMAP pass, whose paging cannot resume
 // after the syncer stops. An unavailable source lookup also takes the safe
 // path and lets the current pass finish.
-func scheduledSyncPreemptible(s *store.Store, identifier string, logger *slog.Logger) bool {
-	sources, _, err := findScheduledSyncSources(s, identifier)
+func scheduledSyncPreemptible(ctx context.Context, s *store.Store, identifier string, logger *slog.Logger) bool {
+	sources, _, err := findScheduledSyncSources(ctx, s, identifier)
 	if err != nil {
 		logger.Warn("could not determine scheduled sync preemption safety; allowing current pass to finish",
 			"identifier", identifier,
@@ -4414,6 +4472,20 @@ func scheduledSyncPreemptible(s *store.Store, identifier string, logger *slog.Lo
 	}
 	for _, source := range sources {
 		if source.SourceType == sourceTypeIMAP {
+			return false
+		}
+		switch source.SourceType {
+		case sourceTypeGmail, sourceTypeMSMail, sourceTypeDiscord:
+			// These scheduled sync paths execute re-derivation passes.
+		default:
+			continue
+		}
+		pending, err := rederive.Pending(context.Background(), s, source.SourceType, source.Identifier)
+		if err != nil {
+			logger.Warn("could not determine archive repair state; allowing current pass to finish", "source_id", source.ID, "error", err)
+			return false
+		}
+		if pending {
 			return false
 		}
 	}
@@ -4533,8 +4605,8 @@ func runScheduledGmailSync(ctx context.Context, email string, src *store.Source,
 	// — see comment in account_identity.go. serve is a daemon, so the
 	// confirmation message has no terminal; discard it. Helper logs any
 	// failure path through its own logger.Warn.
-	confirmDefaultIdentity(io.Discard, s, source.ID, accountEmail, accountEmail, "account-identifier", logger)
-	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
+	confirmDefaultIdentity(ctx, io.Discard, s, source.ID, accountEmail, accountEmail, "account-identifier", logger)
+	if err := runPostSourceCreateMigrationsForInvocation(ctx, s, state); err != nil {
 		return nil, fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
@@ -4577,7 +4649,7 @@ func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store
 	cfg := state.cfg
 	logger := state.logger
 	imapOpts := imapFolderStateOptions(s, src, false, cfg, logger)
-	imapOpts = append(imapOpts, imapSyncFolderFilter(s, src.Identifier, state, nil, nil))
+	imapOpts = append(imapOpts, imapSyncFolderFilter(ctx, s, src.Identifier, state, nil, nil))
 	apiClient, err := buildAPIClient(ctx, src, nil, nil, imapOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("build IMAP client: %w", err)
@@ -4604,8 +4676,8 @@ func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store
 	// row with NULL display_name skips the write rather than re-injecting
 	// the URL.
 	displayName := src.DisplayName.String
-	confirmDefaultIdentity(io.Discard, s, src.ID, displayName, displayName, "account-identifier", logger)
-	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
+	confirmDefaultIdentity(ctx, io.Discard, s, src.ID, displayName, displayName, "account-identifier", logger)
+	if err := runPostSourceCreateMigrationsForInvocation(ctx, s, state); err != nil {
 		return nil, fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
@@ -4644,8 +4716,8 @@ func runScheduledTeamsSync(ctx context.Context, src *store.Source, s *store.Stor
 	// "me" identity. Auto-default-identity must run BEFORE the legacy
 	// migration retry (see account_identity.go); serve is a daemon, so
 	// the confirmation message has no terminal and is discarded.
-	confirmDefaultIdentity(io.Discard, s, src.ID, email, email, "account-identifier", logger)
-	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
+	confirmDefaultIdentity(ctx, io.Discard, s, src.ID, email, email, "account-identifier", logger)
+	if err := runPostSourceCreateMigrationsForInvocation(ctx, s, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 

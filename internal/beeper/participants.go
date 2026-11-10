@@ -1,6 +1,7 @@
 package beeper
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"strings"
@@ -75,12 +76,12 @@ func (r *participantResolver) identifierForUser(userID string) string {
 	return beeperidentity.Fallback(r.accountID, userID)
 }
 
-func (r *participantResolver) resolveUser(u *User) (int64, error) {
+func (r *participantResolver) resolveUser(ctx context.Context, u *User) (int64, error) {
 	if u == nil || u.ID == "" {
 		return 0, nil
 	}
 	identifier := r.identifierForUser(u.ID)
-	if _, err := r.adoptLegacyIdentifier(u.ID, identifier); err != nil {
+	if _, err := r.adoptLegacyIdentifier(ctx, u.ID, identifier); err != nil {
 		return 0, err
 	}
 	hasPhone := strings.HasPrefix(u.PhoneNumber, "+")
@@ -89,7 +90,7 @@ func (r *participantResolver) resolveUser(u *User) (int64, error) {
 	}
 	switch {
 	case hasPhone:
-		pid, err := r.store.EnsureParticipantByPhone(u.PhoneNumber, u.FullName, participantIdentifierType)
+		pid, err := r.store.EnsureParticipantByPhone(ctx, u.PhoneNumber, u.FullName, participantIdentifierType)
 		if err != nil {
 			return 0, err
 		}
@@ -97,7 +98,7 @@ func (r *participantResolver) resolveUser(u *User) (int64, error) {
 		// same Beeper user, so fold the email participant's history into the
 		// phone one (which dedupes with SMS/WhatsApp archives).
 		if e, ok := r.rich[identifier]; ok && e.pid != pid {
-			if err := r.store.MergeParticipants(e.pid, pid); err != nil {
+			if err := r.store.MergeParticipantsContext(ctx, e.pid, pid); err != nil {
 				if !errors.Is(err, store.ErrPersonBindingConflict) {
 					return 0, err
 				}
@@ -105,12 +106,12 @@ func (r *participantResolver) resolveUser(u *User) (int64, error) {
 					"loser_participant_id", e.pid, "winner_participant_id", pid, "error", err)
 			}
 		}
-		return pid, r.recordRich(identifier, pid, true)
+		return pid, r.recordRich(ctx, identifier, pid, true)
 	case strings.Contains(u.Email, "@"):
 		// Never downgrade: if a prior run already resolved this Beeper user
 		// by phone, an email-only sighting must keep pointing at that
 		// participant instead of re-pointing the identifier to a weaker row.
-		prev, hasPhone, err := r.store.ParticipantByIdentifier(participantIdentifierType, identifier)
+		prev, hasPhone, err := r.store.ParticipantByIdentifierContext(ctx, participantIdentifierType, identifier)
 		if err != nil {
 			return 0, err
 		}
@@ -119,13 +120,13 @@ func (r *participantResolver) resolveUser(u *User) (int64, error) {
 			delete(r.fallback, identifier)
 			return prev, nil
 		}
-		pid, err := r.byEmail(u.Email, u.FullName)
+		pid, err := r.byEmail(ctx, u.Email, u.FullName)
 		if err != nil {
 			return 0, err
 		}
-		return pid, r.recordRich(identifier, pid, false)
+		return pid, r.recordRich(ctx, identifier, pid, false)
 	default:
-		return r.resolveID(u.ID, u.FullName)
+		return r.resolveID(ctx, u.ID, u.FullName)
 	}
 }
 
@@ -134,8 +135,8 @@ func (r *participantResolver) resolveUser(u *User) (int64, error) {
 // caches) resolve bare sender IDs to the same person. When a weak (bare-ID-only)
 // participant already owns the identifier, its history — messages, reactions,
 // membership — is merged into the rich participant rather than left split.
-func (r *participantResolver) recordRich(userID string, pid int64, byPhone bool) error {
-	prev, hasPhone, err := r.store.ParticipantByIdentifier(participantIdentifierType, userID)
+func (r *participantResolver) recordRich(ctx context.Context, userID string, pid int64, byPhone bool) error {
+	prev, hasPhone, err := r.store.ParticipantByIdentifierContext(ctx, participantIdentifierType, userID)
 	if err != nil {
 		return err
 	}
@@ -144,7 +145,7 @@ func (r *participantResolver) recordRich(userID string, pid int64, byPhone bool)
 	// its history into this resolution. A phone-bearing owner whose number
 	// differs is left un-merged (conservative: numbers can be recycled).
 	if prev != 0 && prev != pid && !hasPhone {
-		if err := r.store.MergeParticipants(prev, pid); err != nil {
+		if err := r.store.MergeParticipantsContext(ctx, prev, pid); err != nil {
 			if !errors.Is(err, store.ErrPersonBindingConflict) {
 				return err
 			}
@@ -152,7 +153,7 @@ func (r *participantResolver) recordRich(userID string, pid int64, byPhone bool)
 				"loser_participant_id", prev, "winner_participant_id", pid, "error", err)
 		}
 	}
-	if err := r.store.SetParticipantIdentifier(pid, participantIdentifierType, userID); err != nil {
+	if err := r.store.SetParticipantIdentifierContext(ctx, pid, participantIdentifierType, userID); err != nil {
 		return err
 	}
 	r.rich[userID] = richEntry{pid: pid, byPhone: byPhone}
@@ -163,7 +164,7 @@ func (r *participantResolver) recordRich(userID string, pid int64, byPhone bool)
 // resolveID resolves a bare Beeper user ID (message sender, mention, reactor)
 // with an optional display name. Cache misses fall through to rung 3 of the
 // ladder since no phone/email is available on bare IDs.
-func (r *participantResolver) resolveID(userID, displayName string) (int64, error) {
+func (r *participantResolver) resolveID(ctx context.Context, userID, displayName string) (int64, error) {
 	if userID == "" {
 		return 0, nil
 	}
@@ -174,13 +175,13 @@ func (r *participantResolver) resolveID(userID, displayName string) (int64, erro
 	if pid, ok := r.fallback[identifier]; ok {
 		return pid, nil
 	}
-	if pid, err := r.adoptLegacyIdentifier(userID, identifier); err != nil {
+	if pid, err := r.adoptLegacyIdentifier(ctx, userID, identifier); err != nil {
 		return 0, err
 	} else if pid != 0 {
 		r.fallback[identifier] = pid
 		return pid, nil
 	}
-	pid, err := r.store.EnsureParticipantByIdentifier(participantIdentifierType, identifier, displayName)
+	pid, err := r.store.EnsureParticipantByIdentifierContext(ctx, participantIdentifierType, identifier, displayName)
 	if err != nil {
 		return 0, err
 	}
@@ -192,21 +193,22 @@ func (r *participantResolver) resolveID(userID, displayName string) (int64, erro
 // place. Older archives persisted the raw payload ID. When an account-scoped
 // resolver first sees that user, keep the participant and its message history
 // and attach the new durable key before any fallback participant is created.
-func (r *participantResolver) adoptLegacyIdentifier(userID, identifier string) (int64, error) {
+func (r *participantResolver) adoptLegacyIdentifier(ctx context.Context, userID, identifier string) (int64, error) {
 	userID = strings.TrimSpace(userID)
 	if userID == "" || identifier == userID {
 		return 0, nil
 	}
 	return r.store.AdoptLegacyParticipantIdentifier(
+		ctx,
 		participantIdentifierType, userID, identifier, beeperidentity.Prefix+":",
 	)
 }
 
-func (r *participantResolver) byEmail(email, displayName string) (int64, error) {
+func (r *participantResolver) byEmail(ctx context.Context, email, displayName string) (int64, error) {
 	email = strings.ToLower(email)
 	domain := ""
 	if at := strings.LastIndex(email, "@"); at >= 0 {
 		domain = email[at+1:]
 	}
-	return r.store.EnsureParticipant(email, displayName, domain)
+	return r.store.EnsureParticipantContext(ctx, email, displayName, domain)
 }

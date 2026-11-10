@@ -133,7 +133,7 @@ func archivedMessage(t *testing.T, st *store.Store, sourceID, chatID, messageID 
 
 func storedState(t *testing.T, imp *Importer, sourceID int64, account string) *SyncState {
 	t.Helper()
-	state, err := imp.loadState(sourceID, account)
+	state, err := imp.loadState(t.Context(), sourceID, account)
 	require.NoError(t, err)
 	return state
 }
@@ -153,7 +153,7 @@ func TestImportCapturesHistoryRepliesAndFullRepairWithoutDeletingArchive(t *test
 	parent := archivedMessage(t, imp.store, summary.SourceID, 1, 1)
 	child := archivedMessage(t, imp.store, summary.SourceID, 1, 5)
 	var metadata string
-	requires.NoError(imp.store.DB().QueryRow(imp.store.Rebind(`SELECT metadata FROM messages WHERE id = ?`), child).Scan(&metadata))
+	requires.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(`SELECT metadata FROM messages WHERE id = ?`), child).Scan(&metadata))
 	assertions.NotContains(metadata, `"edited_at"`, "messages with no source edit date must omit it from archived metadata")
 	parentLink, err := imp.store.GetMessageReplyToMessageIDContext(t.Context(), child)
 	requires.NoError(err)
@@ -177,30 +177,30 @@ func TestImportCapturesHistoryRepliesAndFullRepairWithoutDeletingArchive(t *test
 	requires.NoError(err)
 	assertions.Equal(1, incremental.MessagesAdded)
 	id3 := archivedMessage(t, imp.store, summary.SourceID, 1, 3)
-	body, err := imp.store.GetMessageBodyText(id3)
+	body, err := imp.store.GetMessageBodyText(t.Context(), id3)
 	requires.NoError(err)
 	assertions.Equal("message 3", body)
 	// Removed source messages remain present when a full repair updates all
 	// surviving records. Archive-local labels must survive provider refresh.
-	labelID, err := imp.store.EnsureLabel(summary.SourceID, "archive-tag", "archive tag", "user")
+	labelID, err := imp.store.EnsureLabel(t.Context(), summary.SourceID, "archive-tag", "archive tag", "user")
 	requires.NoError(err)
-	requires.NoError(imp.store.AddMessageLabels(id3, []int64{labelID}))
+	requires.NoError(imp.store.AddMessageLabels(t.Context(), id3, []int64{labelID}))
 	client.messages[1] = client.messages[1][1:]
 	opts.Full = true
 	full, err := imp.Import(t.Context(), opts)
 	requires.NoError(err)
 	assertions.Equal(5, full.MessagesUpdated)
 	assertions.Zero(full.MessagesAdded)
-	body, err = imp.store.GetMessageBodyText(id3)
+	body, err = imp.store.GetMessageBodyText(t.Context(), id3)
 	requires.NoError(err)
 	assertions.Equal("edited surviving message", body)
-	requires.NoError(imp.store.DB().QueryRow(imp.store.Rebind(`SELECT metadata FROM messages WHERE id = ?`), id3).Scan(&metadata))
+	requires.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(`SELECT metadata FROM messages WHERE id = ?`), id3).Scan(&metadata))
 	var archivedMetadata messageMetadata
 	requires.NoError(json.Unmarshal([]byte(metadata), &archivedMetadata))
 	assertions.WithinDuration(editedAt, archivedMetadata.EditedAt, 0, "full repair must retain the actual source edit date")
 	archivedMessage(t, imp.store, summary.SourceID, 1, 1)
 	var labels int
-	requires.NoError(imp.store.DB().QueryRow(imp.store.Rebind(`SELECT COUNT(*) FROM message_labels WHERE message_id = ? AND label_id = ?`), id3, labelID).Scan(&labels))
+	requires.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(`SELECT COUNT(*) FROM message_labels WHERE message_id = ? AND label_id = ?`), id3, labelID).Scan(&labels))
 	assertions.Equal(1, labels)
 }
 
@@ -240,7 +240,7 @@ func TestLimitedHistoryAndInterruptedFullRepairConvergeAcrossRuns(t *testing.T) 
 	state := storedState(t, imp, sourceID, opts.Account.Identifier())
 	assertions.False(state.chat(1).RepairActive)
 	for id := int64(1); id <= 5; id++ {
-		body, readErr := imp.store.GetMessageBodyText(archivedMessage(t, imp.store, sourceID, 1, id))
+		body, readErr := imp.store.GetMessageBodyText(t.Context(), archivedMessage(t, imp.store, sourceID, 1, id))
 		requires.NoError(readErr)
 		assertions.Equal("repaired", body)
 	}
@@ -256,7 +256,7 @@ func TestImportCancellationPersistsOnlyDurableCursor(t *testing.T) {
 	requires := require.New(t)
 
 	imp, client, opts := importerFixture(t)
-	sourceBefore, err := imp.store.GetSourceByTypeAndIdentifier(SourceType, opts.Account.Identifier())
+	sourceBefore, err := imp.store.GetSourceByTypeAndIdentifier(t.Context(), SourceType, opts.Account.Identifier())
 	requires.NoError(err)
 	for id := int64(1); id <= 5; id++ {
 		client.messages[1] = append(client.messages[1], syntheticMessage(1, id, "history"))
@@ -286,7 +286,7 @@ func TestImportCancellationPersistsOnlyDurableCursor(t *testing.T) {
 	requires.NoError(readErr)
 	assertions.True(sourceAfter.LastSyncAt.Valid, "successful resume must publish source status")
 	var count int
-	requires.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='inline'`).Scan(&count))
+	requires.NoError(imp.store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='inline'`).Scan(&count))
 	assertions.Equal(5, count)
 }
 
@@ -301,7 +301,7 @@ func TestSQLiteBodyWriteFailureHoldsCursorAndRetriesSnapshot(t *testing.T) {
 	for id := int64(1); id <= 5; id++ {
 		client.messages[1] = append(client.messages[1], syntheticMessage(1, id, "history"))
 	}
-	_, err := imp.store.DB().Exec(`CREATE TRIGGER fail_inline_body BEFORE INSERT ON message_bodies WHEN NEW.message_id IN (SELECT id FROM messages WHERE source_message_id='chat:1:message:3') BEGIN SELECT RAISE(ABORT,'synthetic body failure'); END`)
+	_, err := imp.store.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_inline_body BEFORE INSERT ON message_bodies WHEN NEW.message_id IN (SELECT id FROM messages WHERE source_message_id='chat:1:message:3') BEGIN SELECT RAISE(ABORT,'synthetic body failure'); END`)
 	requires.NoError(err)
 	summary, err := imp.Import(t.Context(), opts)
 	requires.Error(err)
@@ -315,13 +315,13 @@ func TestSQLiteBodyWriteFailureHoldsCursorAndRetriesSnapshot(t *testing.T) {
 	rows, err := imp.store.MessageExistsBatch(summary.SourceID, []string{messageKey(1, 3)})
 	requires.NoError(err)
 	assertions.Empty(rows, "failed body transaction must not leave a message-only snapshot")
-	_, err = imp.store.DB().Exec(`DROP TRIGGER fail_inline_body`)
+	_, err = imp.store.DB().ExecContext(t.Context(), `DROP TRIGGER fail_inline_body`)
 	requires.NoError(err)
 	var databaseSequence int
 	var databaseName, databasePath string
-	requires.NoError(imp.store.DB().QueryRow(`PRAGMA database_list`).Scan(&databaseSequence, &databaseName, &databasePath))
+	requires.NoError(imp.store.DB().QueryRowContext(t.Context(), `PRAGMA database_list`).Scan(&databaseSequence, &databaseName, &databasePath))
 	requires.NoError(imp.store.Close())
-	reopened, err := store.OpenForTest(databasePath)
+	reopened, err := store.OpenForTest(t.Context(), databasePath)
 	requires.NoError(err)
 	t.Cleanup(func() { _ = reopened.Close() })
 	imp = NewImporter(reopened, client)
@@ -333,7 +333,7 @@ func TestSQLiteBodyWriteFailureHoldsCursorAndRetriesSnapshot(t *testing.T) {
 	requires.NoError(err)
 	assertions.NotEmpty(raw)
 	var indexed int
-	requires.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'history'`).Scan(&indexed))
+	requires.NoError(imp.store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'history'`).Scan(&indexed))
 	assertions.Equal(5, indexed)
 }
 
@@ -347,13 +347,13 @@ func TestAccountMismatchRejectsBeforeMessageWrites(t *testing.T) {
 	_, err := imp.Import(t.Context(), opts)
 	requires.ErrorContains(err, "different account")
 	var count int
-	requires.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='inline'`).Scan(&count))
+	requires.NoError(imp.store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='inline'`).Scan(&count))
 	assertions.Zero(count)
 
 	client.account = opts.Account
 	_, err = imp.Import(t.Context(), opts)
 	requires.NoError(err)
-	requires.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='inline'`).Scan(&count))
+	requires.NoError(imp.store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='inline'`).Scan(&count))
 	assertions.Equal(1, count, "the same history must be archived once account verification succeeds")
 }
 
@@ -365,7 +365,7 @@ func TestImportRequiresRegisteredSourceWithoutRecreatingAccount(t *testing.T) {
 	require.Error(t, err)
 	for _, table := range []string{"sources", "sync_runs", "conversations", "messages"} {
 		var count int
-		require.NoError(t, imp.store.DB().QueryRow("SELECT COUNT(*) FROM "+table).Scan(&count))
+		require.NoError(t, imp.store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM "+table).Scan(&count))
 		assert.Zero(t, count, table)
 	}
 }
@@ -454,7 +454,7 @@ func TestPausedRepairDoesNotBlockFullRepairOfNewSelection(t *testing.T) {
 	opts.Limit = 0
 	_, err = imp.Import(t.Context(), opts)
 	requires.NoError(err)
-	body, err := imp.store.GetMessageBodyText(archivedMessage(t, imp.store, first.SourceID, 2, 2))
+	body, err := imp.store.GetMessageBodyText(t.Context(), archivedMessage(t, imp.store, first.SourceID, 2, 2))
 	requires.NoError(err)
 	assertions.Equal("b2 repaired", body)
 	state := storedState(t, imp, first.SourceID, opts.Account.Identifier())
@@ -482,7 +482,7 @@ func TestFullRepairIncludesAddedScopeWithoutRestartingActiveChat(t *testing.T) {
 	summary, err := imp.Import(t.Context(), opts)
 	requires.NoError(err)
 	assertions.Equal(4, summary.MessagesUpdated, "resume A after its durable cursor and refresh newly selected B")
-	body, err := imp.store.GetMessageBodyText(archivedMessage(t, imp.store, first.SourceID, 2, 2))
+	body, err := imp.store.GetMessageBodyText(t.Context(), archivedMessage(t, imp.store, first.SourceID, 2, 2))
 	requires.NoError(err)
 	assertions.Equal("b2 repaired", body)
 	state := storedState(t, imp, first.SourceID, opts.Account.Identifier())
@@ -522,7 +522,7 @@ func TestAlternateProjectionPreservesRawAndPendingMediaEvidence(t *testing.T) {
 	assertions.Equal(RawMCPFormat, metadata.ProjectionFormat)
 	requires.Len(metadata.Media, 1)
 	assertions.Equal("photo:9", metadata.Media[0].ID)
-	refs, err := imp.store.MessageInlineProviderAttachments(id)
+	refs, err := imp.store.MessageInlineProviderAttachments(t.Context(), id)
 	requires.NoError(err)
 	assertions.Contains(refs, "inline:photo:9")
 }
@@ -544,13 +544,13 @@ func TestFullReactionRemovalAndUnavailableProjectionPreservesSnapshot(t *testing
 	_, err = imp.Import(t.Context(), opts)
 	requires.NoError(err)
 	var count int
-	requires.NoError(imp.store.DB().QueryRow(imp.store.Rebind(`SELECT COUNT(*) FROM reactions WHERE message_id = ?`), id).Scan(&count))
+	requires.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(`SELECT COUNT(*) FROM reactions WHERE message_id = ?`), id).Scan(&count))
 	assertions.Equal(1, count)
 	client.messages[1][0].RawFormat = RawCLIFormat
 	client.messages[1][0].Reactions = []Reaction{}
 	_, err = imp.Import(t.Context(), opts)
 	requires.NoError(err)
-	requires.NoError(imp.store.DB().QueryRow(imp.store.Rebind(`SELECT COUNT(*) FROM reactions WHERE message_id = ?`), id).Scan(&count))
+	requires.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(`SELECT COUNT(*) FROM reactions WHERE message_id = ?`), id).Scan(&count))
 	assertions.Zero(count)
 }
 
@@ -567,8 +567,8 @@ func TestImportUsesReactionTimestampAndKeepsMissingDateUnknown(t *testing.T) {
 	requires.NoError(err)
 	id := archivedMessage(t, imp.store, summary.SourceID, 1, 1)
 	var known, unknown sql.NullTime
-	requires.NoError(imp.store.DB().QueryRow(imp.store.Rebind(`SELECT created_at FROM reactions WHERE message_id = ? AND reaction_value = ?`), id, "known").Scan(&known))
-	requires.NoError(imp.store.DB().QueryRow(imp.store.Rebind(`SELECT created_at FROM reactions WHERE message_id = ? AND reaction_value = ?`), id, "unknown").Scan(&unknown))
+	requires.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(`SELECT created_at FROM reactions WHERE message_id = ? AND reaction_value = ?`), id, "known").Scan(&known))
+	requires.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(`SELECT created_at FROM reactions WHERE message_id = ? AND reaction_value = ?`), id, "unknown").Scan(&unknown))
 	requires.True(known.Valid)
 	assertions.WithinDuration(date, known.Time, 0)
 	assertions.False(unknown.Valid)
@@ -592,6 +592,10 @@ func TestLoadSyncStateRejectsForeignAccountAndMalformedCursor(t *testing.T) {
 	requires.Error(err)
 	_, err = LoadSyncState(`{"account":"api.inline.chat:user:99","chats":{"chat:1":null}}`, "api.inline.chat:user:99")
 	requires.Error(err)
+	for _, passDone := range []string{"[0]", "[1,1]"} {
+		_, err = LoadSyncState(`{"account":"api.inline.chat:user:99","pass_done":`+passDone+`,"chats":{}}`, "api.inline.chat:user:99")
+		requires.Error(err)
+	}
 }
 
 func TestLimitedImportsRotateChatsAcrossRestartsAndFullRepair(t *testing.T) {
@@ -637,7 +641,7 @@ func TestLimitedImportsRotateChatsAcrossRestartsAndFullRepair(t *testing.T) {
 	}
 	assertions.False(storedState(t, imp, sourceID, opts.Account.Identifier()).chat(2).RepairActive)
 	for id := int64(1); id <= 3; id++ {
-		body, err := imp.store.GetMessageBodyText(archivedMessage(t, imp.store, sourceID, 2, id))
+		body, err := imp.store.GetMessageBodyText(t.Context(), archivedMessage(t, imp.store, sourceID, 2, id))
 		requires.NoError(err)
 		assertions.Equal("refreshed", body)
 	}
@@ -694,6 +698,147 @@ func TestInterruptedImportPreservesRotationAndPausedSelection(t *testing.T) {
 	for _, request := range client.requests {
 		assertions.Equal(int64(1), request.ChatID)
 	}
+}
+
+func TestInterruptedPassesCompleteWhenEachRunFinishesOneChat(t *testing.T) {
+	assertions := assert.New(t)
+	requires := require.New(t)
+	imp, client, opts := importerFixture(t)
+	opts.ChatIDs = []int64{1, 2, 3}
+	for id := int64(1); id <= 3; id++ {
+		client.chats[id] = Conversation{ID: id, Type: "dm"}
+		client.messages[id] = []Message{syntheticMessage(id, 1, "only message")}
+	}
+	sourceID := int64(0)
+	completed := false
+	// Each run is cancelled as soon as it reaches a second chat, as a
+	// scheduler yield would cut short a pass longer than its hold time.
+	for range 3 {
+		ctx, cancel := context.WithCancel(t.Context())
+		visited := map[int64]bool{}
+		client.beforePage = func(_ context.Context, chatID, _ int64) error {
+			visited[chatID] = true
+			if len(visited) > 1 {
+				cancel()
+				return ctx.Err()
+			}
+			return nil
+		}
+		imp = NewImporter(imp.store, client)
+		sum, err := imp.Import(ctx, opts)
+		cancel()
+		sourceID = sum.SourceID
+		if err == nil {
+			completed = true
+			break
+		}
+		requires.ErrorIs(err, context.Canceled)
+	}
+	requires.True(completed, "chats finished by interrupted runs count toward the pass")
+	source, err := imp.store.GetSourceByID(sourceID)
+	requires.NoError(err)
+	assertions.True(source.LastSyncAt.Valid)
+	assertions.Empty(storedState(t, imp, sourceID, opts.Account.Identifier()).PassDone)
+
+	client.beforePage, client.requests = nil, nil
+	_, err = imp.Import(t.Context(), opts)
+	requires.NoError(err)
+	requested := map[int64]bool{}
+	for _, request := range client.requests {
+		requested[request.ChatID] = true
+	}
+	assertions.Equal(map[int64]bool{1: true, 2: true, 3: true}, requested, "a completed pass starts the next pass from every chat")
+}
+
+func TestFullRepairRevisitsChatsFinishedEarlierInThePass(t *testing.T) {
+	assertions := assert.New(t)
+	requires := require.New(t)
+	imp, client, opts := importerFixture(t)
+	opts.ChatIDs = []int64{1, 2}
+	client.chats[2] = Conversation{ID: 2, Type: "dm"}
+	client.messages[1] = []Message{syntheticMessage(1, 1, "original")}
+	client.messages[2] = []Message{syntheticMessage(2, 1, "original")}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	client.beforePage = func(_ context.Context, chatID, _ int64) error {
+		if chatID == 2 {
+			cancel()
+			return ctx.Err()
+		}
+		return nil
+	}
+	sum, err := imp.Import(ctx, opts)
+	requires.ErrorIs(err, context.Canceled)
+	requires.Equal([]int64{1}, storedState(t, imp, sum.SourceID, opts.Account.Identifier()).PassDone)
+
+	client.beforePage = nil
+	client.messages[1][0].Text = "refreshed"
+	opts.Full = true
+	_, err = imp.Import(t.Context(), opts)
+	requires.NoError(err)
+	body, err := imp.store.GetMessageBodyText(t.Context(), archivedMessage(t, imp.store, sum.SourceID, 1, 1))
+	requires.NoError(err)
+	assertions.Equal("refreshed", body)
+}
+
+func TestLimitedRunsIgnoreProgressOfAnInterruptedPass(t *testing.T) {
+	assertions := assert.New(t)
+	requires := require.New(t)
+	imp, client, opts := importerFixture(t)
+	opts.ChatIDs = []int64{1, 2}
+	client.chats[2] = Conversation{ID: 2, Type: "dm"}
+	client.messages[1] = []Message{syntheticMessage(1, 1, "original")}
+	for id := int64(1); id <= 6; id++ {
+		client.messages[2] = append(client.messages[2], syntheticMessage(2, id, "busy chat"))
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	client.beforePage = func(_ context.Context, chatID, _ int64) error {
+		if chatID == 2 {
+			cancel()
+			return ctx.Err()
+		}
+		return nil
+	}
+	sum, err := imp.Import(ctx, opts)
+	requires.ErrorIs(err, context.Canceled)
+	requires.Equal([]int64{1}, storedState(t, imp, sum.SourceID, opts.Account.Identifier()).PassDone)
+
+	client.beforePage = nil
+	client.messages[1] = append(client.messages[1], syntheticMessage(1, 2, "arrival"))
+	opts.Limit = 1
+	for range 2 {
+		_, err = imp.Import(t.Context(), opts)
+		requires.NoError(err)
+	}
+	archivedMessage(t, imp.store, sum.SourceID, 1, 2)
+	assertions.Equal([]int64{1}, storedState(t, imp, sum.SourceID, opts.Account.Identifier()).PassDone, "the interrupted unlimited pass resumes later")
+}
+
+func TestFailedChatDoesNotStarveChatsFinishedEarlier(t *testing.T) {
+	assertions := assert.New(t)
+	requires := require.New(t)
+	imp, client, opts := importerFixture(t)
+	opts.ChatIDs = []int64{1, 2}
+	client.chats[2] = Conversation{ID: 2, Type: "dm"}
+	client.messages[1] = []Message{syntheticMessage(1, 1, "original")}
+	client.messages[2] = []Message{syntheticMessage(2, 1, "unreachable")}
+	unavailable := errors.New("synthetic provider failure")
+	client.beforePage = func(_ context.Context, chatID, _ int64) error {
+		if chatID == 2 {
+			return unavailable
+		}
+		return nil
+	}
+	var sourceID int64
+	for run := range int64(2) {
+		client.messages[1] = append(client.messages[1], syntheticMessage(1, run+2, "arrival"))
+		sum, err := imp.Import(t.Context(), opts)
+		requires.ErrorIs(err, unavailable)
+		sourceID = sum.SourceID
+		archivedMessage(t, imp.store, sourceID, 1, run+2)
+	}
+	assertions.Empty(storedState(t, imp, sourceID, opts.Account.Identifier()).PassDone)
 }
 
 func TestLimitedImportFinishesHistoryDespiteOngoingArrivals(t *testing.T) {

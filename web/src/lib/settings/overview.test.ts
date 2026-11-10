@@ -16,17 +16,14 @@ describe('overviewRows', () => {
 
     expect(rows.map((candidate) => candidate.name)).toEqual([
       'Source sync',
-      'Message search',
+      'Search by meaning',
       'People search',
       'Visual search',
       'People lookups',
       'Facts and briefs',
       'Contacts',
-      'Document extraction',
-      'Document search',
     ]);
     expect(row(rows, 'message_embedding')).toMatchObject({ chip: { text: 'Off' }, action: { kind: 'settings' } });
-    expect(row(rows, 'document_extraction').action).toMatchObject({ kind: 'host' });
   });
 
   it.each([

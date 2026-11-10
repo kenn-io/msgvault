@@ -13,7 +13,7 @@ import (
 // Runtime-only consumers require an exact match and never run migrations.
 // TestSchemaVersionContract catches most missed bumps. API, cache and optional
 // vector backend versions are independent.
-const SchemaVersion = 31
+const SchemaVersion = 39
 
 // SchemaVersionContext reads the stored completion marker without migrating.
 // A missing marker identifies a legacy archive and returns zero.
@@ -54,6 +54,40 @@ func (s *Store) ValidateSchemaContext(ctx context.Context) error {
 	if version != SchemaVersion {
 		return fmt.Errorf("archive schema version %d does not match %d; run setup with the matching release", version, SchemaVersion)
 	}
+	return s.validateArchiveUIDContext(ctx)
+}
+
+// InitSchemaUnlessCurrentContext prepares an archive for writes. Current
+// PostgreSQL archives validate identity, repair account identity keys, and
+// reconcile system seeds and the default collection without schema DDL.
+// Concurrent index retries wait for the full initializer on upgrade,
+// msgvault migrate, or setup. Other archives run the full initializer.
+func (s *Store) InitSchemaUnlessCurrentContext(ctx context.Context) error {
+	if s.IsPostgreSQL() {
+		version, err := s.SchemaVersionContext(ctx)
+		if err != nil {
+			return err
+		}
+		if version == SchemaVersion {
+			if err := s.validateArchiveUIDContext(ctx); err != nil {
+				return err
+			}
+			if err := s.ensureAccountIdentityAddressKeys(ctx); err != nil {
+				return err
+			}
+			if err := s.EnsureSeededAttributeDefinitionsContext(ctx); err != nil {
+				return fmt.Errorf("ensure seeded attribute definitions: %w", err)
+			}
+			if err := s.EnsureSeededRelationshipTypesContext(ctx); err != nil {
+				return err
+			}
+			return s.EnsureDefaultCollectionContext(ctx)
+		}
+	}
+	return s.InitSchemaContext(ctx)
+}
+
+func (s *Store) validateArchiveUIDContext(ctx context.Context) error {
 	uid, err := s.ArchiveUIDContext(ctx)
 	if err != nil {
 		return err

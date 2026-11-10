@@ -9,6 +9,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/calevent"
+	"go.kenn.io/msgvault/internal/verification"
 )
 
 // ConversationWindow is a bounded, stable slice of full message details.
@@ -252,6 +255,7 @@ func (s *Store) GetConversationWindowContext(
 			COALESCE(m.message_type, ''),
 			%s,
 			COALESCE(p.id, 0),
+			EXISTS (SELECT 1 FROM participant_links l WHERE l.participant_a = p.id OR l.participant_b = p.id),
 			COALESCE(m.sent_at, m.received_at, m.internal_date),
 			COALESCE(m.snippet, ''),
 			m.has_attachments,
@@ -292,6 +296,7 @@ func (s *Store) GetConversationWindowContext(
 		var isFromMe sql.NullBool
 		var metadata sql.NullString
 		var bodySize int64
+		var hasIdentityLink bool
 		if err := rows.Scan(
 			&message.ID,
 			&message.SourceID,
@@ -305,6 +310,7 @@ func (s *Store) GetConversationWindowContext(
 			&message.FromName,
 			&message.FromPhone,
 			&message.FromParticipantID,
+			&hasIdentityLink,
 			&sentAt,
 			&message.Snippet,
 			&message.HasAttachments,
@@ -316,6 +322,9 @@ func (s *Store) GetConversationWindowContext(
 			&metadata,
 		); err != nil {
 			return nil, fmt.Errorf("scan conversation message: %w", err)
+		}
+		if !hasIdentityLink && calevent.IsRoomAttendee(message.FromEmail, false) {
+			message.FromParticipantID = 0
 		}
 		message.RelatedMessageID = RelatedMessageCandidate(message.ID, message.MessageType, metadata.String)
 		message.IsFromMe = isFromMe.Bool
@@ -344,7 +353,7 @@ func (s *Store) GetConversationWindowContext(
 		return nil, err
 	}
 	inlineIDs := applyConversationBodyBudget(window.Messages, bodySizes, anchorID)
-	if err := s.batchPopulateBodies(ctx, window.Messages, inlineIDs); err != nil {
+	if err := s.batchPopulateBodies(ctx, window.Messages, inlineIDs, 0); err != nil {
 		return nil, err
 	}
 	if err := s.batchPopulateContext(ctx, window.Messages, ids); err != nil {
@@ -393,7 +402,7 @@ func applyConversationBodyBudget(messages []APIMessage, bodySizes []int64, ancho
 // primary-key IN lookup on message_bodies — the only sanctioned access path
 // for that table — and assigns BodyText/BodyHTML/Body on the matching
 // messages.
-func (s *Store) batchPopulateBodies(ctx context.Context, messages []APIMessage, ids []int64) error {
+func (s *Store) batchPopulateBodies(ctx context.Context, messages []APIMessage, ids []int64, maxFieldBytes int) error {
 	if len(ids) == 0 {
 		return nil
 	}
@@ -421,6 +430,16 @@ func (s *Store) batchPopulateBodies(ctx context.Context, messages []APIMessage, 
 		var bodyText, bodyHTML string
 		if err := rows.Scan(&messageID, &bodyText, &bodyHTML); err != nil {
 			return fmt.Errorf("scan conversation body: %w", err)
+		}
+		// Clone oversized prefixes to release full bodies while preserving the
+		// field-size verdict. A zero limit keeps authorized reads unrestricted.
+		if maxFieldBytes > 0 {
+			if len(bodyText) > maxFieldBytes {
+				bodyText = strings.Clone(bodyText[:maxFieldBytes])
+			}
+			if len(bodyHTML) > maxFieldBytes {
+				bodyHTML = strings.Clone(bodyHTML[:maxFieldBytes])
+			}
 		}
 		index, ok := indexByID[messageID]
 		if !ok {
@@ -722,4 +741,39 @@ func (s *Store) ConversationTitlesBatchContext(ctx context.Context, sourceID int
 		return nil, fmt.Errorf("load conversation titles batch: %w", err)
 	}
 	return titles, nil
+}
+
+// PopulateMessageBodiesContext hydrates the complete classification context in
+// the caller's read snapshot, including metadata omitted by thread projections.
+func (s *Store) PopulateMessageBodiesContext(ctx context.Context, messages []APIMessage) error {
+	if len(messages) == 0 {
+		return nil
+	}
+	ids := make([]int64, len(messages))
+	for i := range messages {
+		ids[i] = messages[i].ID
+	}
+	metadata := make(map[int64]APIMessage, len(ids))
+	err := queryInChunksContext(ctx, s.db, ids, nil, `SELECT m.id, COALESCE(m.subject, ''), COALESCE(m.snippet, ''), COALESCE(c.title, '') FROM messages m LEFT JOIN conversations c ON c.id=m.conversation_id WHERE m.id IN (%s)`, func(rows *loggedRows) error {
+		var msg APIMessage
+		if err := rows.Scan(&msg.ID, &msg.Subject, &msg.Snippet, &msg.ConversationTitle); err != nil {
+			return err
+		}
+		metadata[msg.ID] = msg
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("load classification metadata: %w", err)
+	}
+	for i := range messages {
+		msg, ok := metadata[messages[i].ID]
+		if !ok {
+			return fmt.Errorf("classification message %d not found", messages[i].ID)
+		}
+		messages[i].Subject, messages[i].Snippet, messages[i].ConversationTitle = msg.Subject, msg.Snippet, msg.ConversationTitle
+	}
+	if err := s.batchPopulateAttachments(ctx, messages, ids); err != nil {
+		return err
+	}
+	return s.batchPopulateBodies(ctx, messages, ids, verification.MaxFieldBytes)
 }

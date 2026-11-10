@@ -116,7 +116,8 @@ func (c *e2eClient) Embed(_ context.Context, inputs []string) ([][]float32, erro
 func countMissingE2E(t *testing.T, db *sql.DB, gen int64) int {
 	t.Helper()
 	var n int
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM messages
 		  WHERE (embed_gen IS NULL OR embed_gen <> ?)
 		    AND deleted_at IS NULL AND deleted_from_source_at IS NULL`, gen).Scan(&n))
@@ -136,7 +137,7 @@ func TestEmbedJob_Backstop_RecoversSubWatermarkStraggler(t *testing.T) {
 	)
 	require := require.New(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
 	require.NoError(
@@ -148,7 +149,7 @@ func TestEmbedJob_Backstop_RecoversSubWatermarkStraggler(t *testing.T) {
 
 	t.Cleanup(func() { _ = mainDB.Close() })
 
-	_, err = mainDB.Exec(`
+	_, err = mainDB.ExecContext(t.Context(), `
 CREATE TABLE messages (
     id INTEGER PRIMARY KEY, subject TEXT,
     deleted_at DATETIME, deleted_from_source_at DATETIME, embed_gen INTEGER,
@@ -177,11 +178,11 @@ END;`)
 
 	const n = 4
 	for i := 1; i <= n; i++ {
-		_, err = mainDB.Exec(`INSERT INTO messages (id, subject) VALUES (?, ?)`, i, fmt.Sprintf("msg %d", i))
+		_, err = mainDB.ExecContext(t.Context(), `INSERT INTO messages (id, subject) VALUES (?, ?)`, i, fmt.Sprintf("msg %d", i))
 		require.NoError(
 			err, "insert message")
 
-		_, err = mainDB.Exec(`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`, i, fmt.Sprintf("body %d", i))
+		_, err = mainDB.ExecContext(t.Context(), `INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`, i, fmt.Sprintf("body %d", i))
 		require.NoError(
 			err, "insert body")
 	}

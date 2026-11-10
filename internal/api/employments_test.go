@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -294,7 +293,8 @@ func TestEmploymentHTTPGetPatchAndStrictBody(t *testing.T) {
 
 func mustAPIOrganization(t *testing.T, st *store.Store, name string) *store.Organization {
 	t.Helper()
-	organization, err := st.CreateOrganizationContext(context.Background(),
+	organization, err := st.CreateOrganizationContext(
+		t.Context(),
 		store.OrganizationInput{Name: name, Kind: store.OrganizationKindCompany})
 	require.NoError(t, err)
 	return organization

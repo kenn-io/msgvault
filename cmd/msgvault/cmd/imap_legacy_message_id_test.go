@@ -57,12 +57,12 @@ func TestIMAPLegacyMessageIDFullSyncPersistsMemberships(t *testing.T) {
 				assert.Equal(2, imapMembershipRowCount(t, st, source.ID))
 
 				var count int
-				require.NoError(st.DB().QueryRow(st.Rebind(
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 					`SELECT COUNT(*) FROM messages WHERE source_id = ?`), source.ID).Scan(&count))
 				assert.Equal(1, count)
 				var allMailID, inboxID int64
 				for mailbox, target := range map[string]*int64{"All Mail": &allMailID, "INBOX": &inboxID} {
-					require.NoError(st.DB().QueryRow(st.Rebind(
+					require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 						`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ? AND uid = 1`,
 					), source.ID, mailbox).Scan(target))
 				}

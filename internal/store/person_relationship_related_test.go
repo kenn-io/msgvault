@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"strings"
 	"sync"
 	"testing"
@@ -16,7 +15,7 @@ func TestResolvePersonByVCardUIDMatchesExactlyAndDoesNotCreate(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	aliceID, _ := mustTwoPersons(t, f)
 	alice, err := f.Store.GetPerson(aliceID)
 	require.NoError(err)
@@ -37,7 +36,7 @@ func TestResolveRelatedValueLinksExactUIDAndReturnsExactCanonicalDuplicate(t *te
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	aliceID, bobID := mustTwoPersons(t, f)
 	bob, err := f.Store.GetPerson(bobID)
 	require.NoError(err)
@@ -71,7 +70,7 @@ func TestResolveRelatedValueStagesUnresolvedAndSelfUID(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	aliceID, bobID := mustTwoPersons(t, f)
 	bob, err := f.Store.GetPerson(bobID)
 	require.NoError(err)
@@ -106,7 +105,7 @@ func TestRelationshipReviewDeduplicatesExactPropertyOccurrencesOnly(t *testing.T
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	aliceID, _ := mustTwoPersons(t, f)
 	sourceRef := "  resource-1.vcf  "
 	sourceResourceUID := "card-a"
@@ -177,7 +176,7 @@ func TestResolveRelatedValueAcceptsUrnUUIDCaseInsensitively(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	aliceID, bobID := mustTwoPersons(t, f)
 	bob, err := f.Store.GetPerson(bobID)
 	require.NoError(err)
@@ -204,7 +203,7 @@ func TestRelationshipReviewPreservesIdentityAndAcceptsAtomically(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	aliceID, bobID := mustTwoPersons(t, f)
 	identity := store.VCardIdentity{Property: "RELATED", Group: new("item1"), PropID: new("p3"), PID: []string{"1.1", "2.1"}, AltID: new("a2")}
 	staged, err := f.Store.ResolveRelatedValueContext(ctx, store.RelatedImport{PersonID: aliceID, RawValue: "Bob from the gym", RawType: "arch-nemesis", ValueKind: store.RelatedValueKindText, Source: store.ProvenanceCardDAVImport, VCardIdentity: identity, Actor: "system"})
@@ -227,7 +226,7 @@ func TestRelationshipReviewAcceptRollbackAndRejectDurability(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	aliceID, bobID := mustTwoPersons(t, f)
 	bob, err := f.Store.GetPerson(bobID)
 	require.NoError(err)
@@ -258,7 +257,7 @@ func TestRelationshipReviewConcurrentAcceptAndRejectHaveOneWinner(t *testing.T) 
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	aliceID, bobID := mustTwoPersons(t, f)
 	staged, err := f.Store.ResolveRelatedValueContext(ctx, store.RelatedImport{
 		PersonID: aliceID, RawValue: "Bob from the gym", RawType: "unknown",
@@ -318,7 +317,7 @@ func TestRelationshipReviewConcurrentAcceptAndRejectHaveOneWinner(t *testing.T) 
 func TestResolveRelatedValueRejectsUnsplitTypeListsAndInvalidValues(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	aliceID, _ := mustTwoPersons(t, f)
 	for _, in := range []store.RelatedImport{
 		{PersonID: aliceID, RawValue: "someone", RawType: "friend,co-worker", ValueKind: store.RelatedValueKindText, Source: store.ProvenanceVCardImport, Actor: "system"},
@@ -335,7 +334,7 @@ func TestRelationshipReviewRejectsOversizedActorsWithoutStateChanges(t *testing.
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	aliceID, _ := mustTwoPersons(t, f)
 	invalidActors := []string{strings.Repeat("x", 129), "  "}
 	for _, invalidActor := range invalidActors {
@@ -372,14 +371,14 @@ func TestRelationshipReviewDatabaseConstraintsAndColumns(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
 	aliceID, bobID := mustTwoPersons(t, f)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO person_relationship_reviews (person_id, raw_related_value, raw_related_type, value_kind, source) VALUES (?, 'open-vocab', 'friend', 'text', 'guess')`), aliceID)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO person_relationship_reviews (person_id, raw_related_value, raw_related_type, value_kind, source) VALUES (?, 'open-vocab', 'friend', 'text', 'guess')`), aliceID)
 	require.NoError(err, "the source vocabulary is validated in Go, not frozen into a schema CHECK")
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO person_relationship_reviews (person_id, raw_related_value, raw_related_type, value_kind, matched_person_id, source) VALUES (?, 'self', 'friend', 'text', ?, 'system')`), aliceID, aliceID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO person_relationship_reviews (person_id, raw_related_value, raw_related_type, value_kind, matched_person_id, source) VALUES (?, 'self', 'friend', 'text', ?, 'system')`), aliceID, aliceID)
 	require.Error(err, "self matches are structurally forbidden")
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO person_relationship_reviews (person_id, raw_related_value, raw_related_type, value_kind, matched_person_id, source) VALUES (?, 'valid', 'friend', 'text', ?, 'system')`), aliceID, bobID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO person_relationship_reviews (person_id, raw_related_value, raw_related_type, value_kind, matched_person_id, source) VALUES (?, 'valid', 'friend', 'text', ?, 'system')`), aliceID, bobID)
 	require.NoError(err)
 
-	rows, err := f.Store.DB().Query(`SELECT * FROM person_relationship_reviews WHERE 1 = 0`)
+	rows, err := f.Store.DB().QueryContext(t.Context(), `SELECT * FROM person_relationship_reviews WHERE 1 = 0`)
 	require.NoError(err)
 	defer func() { require.NoError(rows.Close()) }()
 	columns, err := rows.Columns()
@@ -392,7 +391,7 @@ func TestResolveRelatedValueOrientsAsymmetricTypeFromTheRelatedPerson(t *testing
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	aliceID, bobID := mustTwoPersons(t, f)
 	bob, err := f.Store.GetPerson(bobID)
 	require.NoError(err)
@@ -415,7 +414,7 @@ func TestAcceptRelationshipReviewOrientsEdgeFromTheRelatedPerson(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	aliceID, bobID := mustTwoPersons(t, f)
 
 	staged, err := f.Store.ResolveRelatedValueContext(ctx, store.RelatedImport{
@@ -438,7 +437,7 @@ func TestResolveRelatedValuePreservesRejectionWhenOccurrenceBecomesResolvable(t 
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	aliceID, bobID := mustTwoPersons(t, f)
 	bob, err := f.Store.GetPerson(bobID)
 	require.NoError(err)
@@ -474,7 +473,7 @@ func TestResolveRelatedValueAcceptsPendingReviewWhenOccurrenceBecomesResolvable(
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	aliceID, bobID := mustTwoPersons(t, f)
 	bob, err := f.Store.GetPerson(bobID)
 	require.NoError(err)
@@ -529,7 +528,7 @@ func TestResolveRelatedValueRecordsAutomaticAcceptanceAndKeepsDeletionDurable(t 
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	aliceID, bobID := mustTwoPersons(t, f)
 	bob, err := f.Store.GetPerson(bobID)
 	require.NoError(err)
@@ -571,7 +570,7 @@ func TestResolveRelatedValueSecondOccurrenceReusesActiveEdge(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	aliceID, bobID := mustTwoPersons(t, f)
 	bob, err := f.Store.GetPerson(bobID)
 	require.NoError(err)
@@ -611,7 +610,7 @@ func TestResolveRelatedValueConcurrentFirstImportsShareOneDecision(t *testing.T)
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	aliceID, bobID := mustTwoPersons(t, f)
 	bob, err := f.Store.GetPerson(bobID)
 	require.NoError(err)
@@ -657,7 +656,7 @@ func TestAcceptRelationshipReviewAttachesToExistingActiveEdge(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	aliceID, bobID := mustTwoPersons(t, f)
 
 	staged, err := f.Store.ResolveRelatedValueContext(ctx, store.RelatedImport{
@@ -698,7 +697,7 @@ func TestAcceptRelationshipReviewKeepsEdgeIdentityAndBindsReview(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	aliceID, bobID := mustTwoPersons(t, f)
 	group := "item1"
 	book := "address-book"

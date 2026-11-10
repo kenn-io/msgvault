@@ -48,10 +48,13 @@ func TestSyncRemoteImagesRequireOptIn(t *testing.T) {
 			}
 			raw := []byte("From: user@example.com\r\nTo: other@example.com\r\nSubject: Receipt\r\nContent-Type: text/html\r\n\r\n<img src=\"http://images.example/chart\">")
 			syncer := New(nil, st, &Options{AttachmentsDir: t.TempDir(), RemoteImages: fetcher})
+			runID, err := st.StartSync(src.ID, "full")
+			require.NoError(err)
+			syncer.setAcquisitionReplay(runID, nil)
 			_, err = syncer.ingestMessage(t.Context(), src.ID, &gmail.RawMessage{ID: "message", Raw: raw}, "thread", nil)
 			require.NoError(err)
 			var id int64
-			require.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&id))
+			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&id))
 			refs, err := st.MessageRemoteImages(id)
 			require.NoError(err)
 			if enabled {

@@ -15,7 +15,7 @@ export interface OverviewRow {
   name: string;
   chip: { tone: ChipTone; text: string };
   action?: OverviewAction;
-  relatedStatus?: 'getDocumentIndexStatus' | 'getDocumentVectorStatus' | 'getVisualAttachmentStatus';
+  relatedStatus?: 'getVisualAttachmentStatus';
 }
 
 const BUILD_VISUAL_CONSENT = 'Sends attachments to your search provider.';
@@ -75,7 +75,7 @@ export function overviewRows(
   const buildAvailable = Boolean(coverage?.actions.includes('build_index'));
   rows.push({
     id: 'message_embedding',
-    name: 'Message search',
+    name: 'Search by meaning',
     chip: chip('message_embedding', messageProgress, coverage?.status === 'unavailable' && buildAvailable ? { tone: 'muted', text: 'Unbuilt' } : coverage && COVERAGE_CHIPS[coverage.status]),
     action: buildAvailable
       ? { kind: 'start', id: 'messages', label: 'Build index' }
@@ -121,9 +121,6 @@ export function overviewRows(
         ? { kind: 'start', id: 'carddav_sync', label: 'Sync now' }
         : undefined,
   });
-
-  rows.push(configuredRow('document_extraction', 'Document extraction'));
-  rows.push(configuredRow('document_embedding', 'Document search'));
 
   rows.unshift({ id: 'source_sync', name: 'Source sync', chip: chip('source_sync'), action: { kind: 'sources' } });
   return rows.map(row => {

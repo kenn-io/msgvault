@@ -37,7 +37,6 @@ describe('GroupTable', () => {
     const first = screen.getByRole('row', { name: /Example source/ });
 
     expect((first as HTMLElement).style.height).toBe('');
-    expect(getComputedStyle(document.documentElement).getPropertyValue('--row-height').trim()).toBe('36px');
     grid.focus();
     await fireEvent.keyDown(grid, { key: 'j' });
     await fireEvent.keyDown(grid, { key: 'Enter' });
@@ -267,6 +266,23 @@ describe('GroupTable', () => {
     await fireEvent.keyDown(grid, { key: 'Enter' });
     await fireEvent.dblClick(screen.getAllByRole('row')[1]!);
     expect(onDrill).not.toHaveBeenCalled();
+  });
+
+  it('only drills rows allowed by the caller', async () => {
+    const onDrill = vi.fn();
+    const onInspect = vi.fn();
+    render(GroupTable, { rows, dimension: 'source', onDrill, onInspect, canDrill: (row: typeof rows[number]) => row.key !== '7' });
+    const grid = screen.getByRole('grid', { name: 'Messages grouped by source' });
+    const first = screen.getByRole('row', { name: /Example source/ });
+
+    expect(screen.queryByRole('button', { name: 'Show items in Example source' })).toBeNull();
+    await fireEvent.pointerDown(first);
+    await fireEvent.keyDown(grid, { key: 'Enter' });
+    await fireEvent.dblClick(first);
+    expect(onInspect).toHaveBeenCalledWith(rows[0]);
+    expect(onDrill).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Show items in Second source' }));
+    expect(onDrill).toHaveBeenCalledWith(rows[1]);
   });
 
   it('opens aggregate inspection from a focused pointer row without drilling', async () => {

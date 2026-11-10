@@ -43,7 +43,7 @@ func newAttrFixtureOn(t *testing.T, st *store.Store, sourceType, identifier stri
 	t.Helper()
 	source, err := st.GetOrCreateSource(sourceType, identifier)
 	require.NoError(t, err)
-	conv, err := st.EnsureConversation(source.ID, "thread-"+identifier, "Thread")
+	conv, err := st.EnsureConversation(t.Context(), source.ID, "thread-"+identifier, "Thread")
 	require.NoError(t, err)
 	return &attrFixture{t: t, st: st, source: source, conv: conv}
 }
@@ -64,6 +64,7 @@ type attrMail struct {
 	noEnvelope   bool
 	sourceMsgKey string
 	rawFormat    string
+	rfc822       string // messages.rfc822_message_id, as a sync stores it
 }
 
 func (f *attrFixture) participant(address string) int64 {
@@ -102,6 +103,9 @@ func (f *attrFixture) persist(m attrMail) int64 {
 	if m.senderID != 0 {
 		msg.SenderID = sql.NullInt64{Int64: m.senderID, Valid: true}
 	}
+	if m.rfc822 != "" {
+		msg.RFC822MessageID = sql.NullString{String: m.rfc822, Valid: true}
+	}
 	data := &store.MessagePersistData{Message: msg, LabelIDs: m.labels}
 	if m.raw != "" {
 		data.RawMIME = []byte(m.raw)
@@ -137,7 +141,7 @@ func searchIDs(t *testing.T, st *store.Store, query string) []int64 {
 func attribution(t *testing.T, st *store.Store, id int64) (sql.NullString, sql.NullString) {
 	t.Helper()
 	var address, path sql.NullString
-	require.NoError(t, st.DB().QueryRow(st.Rebind(
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT account_address, account_path FROM messages WHERE id = ?`), id).Scan(&address, &path))
 	return address, path
 }
@@ -145,7 +149,7 @@ func attribution(t *testing.T, st *store.Store, id int64) (sql.NullString, sql.N
 func clearAccountPath(t *testing.T, st *store.Store, ids ...int64) {
 	t.Helper()
 	for _, id := range ids {
-		_, err := st.DB().Exec(st.Rebind(
+		_, err := st.DB().ExecContext(t.Context(), st.Rebind(
 			`UPDATE messages SET account_address = NULL, account_path = NULL WHERE id = ?`), id)
 		require.NoError(t, err)
 	}
@@ -195,7 +199,7 @@ func TestAccountAttributionPersistTiers(t *testing.T) {
 	id := ids["ambiguous"]
 	countRecipients := func() int {
 		var n int
-		require.NoError(f.st.DB().QueryRow(f.st.Rebind(
+		require.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(
 			`SELECT COUNT(*) FROM message_recipients WHERE message_id = ?`), id).Scan(&n))
 		return n
 	}
@@ -274,7 +278,7 @@ func TestAccountAttributionSenderRepairDerivesSentCopy(t *testing.T) {
 	assert := assert.New(t)
 	f := newAttrFixture(t, "gmail", attrSink)
 	f.confirm(attrSink, "work@example.org")
-	sent, err := f.st.EnsureLabel(f.source.ID, "SENT", "SENT", "system")
+	sent, err := f.st.EnsureLabel(t.Context(), f.source.ID, "SENT", "SENT", "system")
 	require.NoError(err)
 	raw := "From: Work <work@example.org>\r\nTo: friend@example.com\r\n\r\nbody"
 	id := f.persist(attrMail{raw: raw, to: []string{"friend@example.com"}, labels: []int64{sent}})
@@ -311,7 +315,7 @@ func TestAccountAttributionIdentityAndSinkChanges(t *testing.T) {
 	plain := f.persist(attrMail{raw: "To: nobody@example.com\r\n\r\nbody", to: []string{"nobody@example.com"}})
 	f.confirm("old@example.net", "new@example.net")
 	assert.Contains(searchIDs(t, f.st, "received:old@example.net"), plain)
-	require.NoError(f.st.UpdateSourceIdentifier(f.source.ID, "new@example.net"))
+	require.NoError(f.st.UpdateSourceIdentifier(t.Context(), f.source.ID, "new@example.net"))
 	assert.Contains(searchIDs(t, f.st, "received:new@example.net"), plain)
 	assert.NotContains(searchIDs(t, f.st, "received:old@example.net"), plain)
 	assert.Contains(searchIDs(t, f.st, "received:new@example.net"), id, "a row without confirmed evidence follows the new mailbox")
@@ -358,9 +362,9 @@ func zlibBytes(t *testing.T, raw []byte) []byte {
 
 func writeRawMIME(t *testing.T, st *store.Store, id int64, data []byte) {
 	t.Helper()
-	_, err := st.DB().Exec(st.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), id)
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), id)
 	require.NoError(t, err)
-	_, err = st.DB().Exec(st.Rebind(
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
 		`INSERT INTO message_raw (message_id, raw_data, raw_format, compression) VALUES (?, ?, 'mime', 'zlib')`),
 		id, data)
 	require.NoError(t, err)
@@ -448,7 +452,7 @@ func TestAccountAttributionSentEvidenceDecidesDirection(t *testing.T) {
 	assert := assert.New(t)
 	f := newAttrFixture(t, "gmail", attrSink)
 	f.confirm(attrSink)
-	sent, err := f.st.EnsureLabel(f.source.ID, "SENT", "SENT", "system")
+	sent, err := f.st.EnsureLabel(t.Context(), f.source.ID, "SENT", "SENT", "system")
 	require.NoError(err)
 	sentCopy := f.persist(attrMail{
 		raw:  "From: stranger@example.com\r\nDelivered-To: " + attrSink + "\r\n\r\nbody",
@@ -459,12 +463,12 @@ func TestAccountAttributionSentEvidenceDecidesDirection(t *testing.T) {
 
 	inbound := f.persist(attrMail{raw: "Delivered-To: " + attrSink + "\r\n\r\nbody"})
 	assert.Contains(searchIDs(t, f.st, "received:"+attrSink), inbound)
-	require.NoError(f.st.AddMessageLabels(inbound, []int64{sent}))
+	require.NoError(f.st.AddMessageLabels(t.Context(), inbound, []int64{sent}))
 	assert.NotContains(searchIDs(t, f.st, "received:"+attrSink), inbound)
 
 	imap := newAttrFixtureOn(t, f.st, "imap", "imaps://"+strings.Replace(attrSink, "@", "%40", 1)+"@mail.example.net:993")
 	imap.confirm(attrSink)
-	_, err = f.st.EnsureLabelsBatch(imap.source.ID, map[string]store.LabelInfo{
+	_, err = f.st.EnsureLabelsBatch(t.Context(), imap.source.ID, map[string]store.LabelInfo{
 		"Sent": {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
 	})
 	require.NoError(err)
@@ -493,7 +497,7 @@ func TestAccountAttributionDraftsAreNotReceived(t *testing.T) {
 	assert := assert.New(t)
 	f := newAttrFixture(t, "gmail", attrSink)
 	f.confirm(attrSink, "alias@example.net")
-	draft, err := f.st.EnsureLabel(f.source.ID, "DRAFT", "DRAFT", "system")
+	draft, err := f.st.EnsureLabel(t.Context(), f.source.ID, "DRAFT", "DRAFT", "system")
 	require.NoError(err)
 
 	// A header-free draft to an outside address would otherwise fall back to
@@ -512,10 +516,10 @@ func TestAccountAttributionDraftsAreNotReceived(t *testing.T) {
 	assert.Equal([]int64{external, toAlias}, searchIDs(t, f.st, "account:"+attrSink), "drafts belong to their author")
 
 	// Sending moves the draft to SENT; it stays out of received:.
-	sent, err := f.st.EnsureLabel(f.source.ID, "SENT", "SENT", "system")
+	sent, err := f.st.EnsureLabel(t.Context(), f.source.ID, "SENT", "SENT", "system")
 	require.NoError(err)
-	require.NoError(f.st.AddMessageLabels(external, []int64{sent}))
-	require.NoError(f.st.RemoveMessageLabels(external, []int64{draft}))
+	require.NoError(f.st.AddMessageLabels(t.Context(), external, []int64{sent}))
+	require.NoError(f.st.RemoveMessageLabels(t.Context(), external, []int64{draft}))
 	address, path := attribution(t, f.st, external)
 	assert.Equal(attrSink, address.String)
 	assert.Equal("sent", path.String)
@@ -523,13 +527,13 @@ func TestAccountAttributionDraftsAreNotReceived(t *testing.T) {
 	// An IMAP mailbox that sync later learns is \Drafts re-derives its members.
 	imap := newAttrFixtureOn(t, f.st, "imap", "imaps://"+strings.Replace(attrSink, "@", "%40", 1)+"@mail.example.net:993")
 	imap.confirm(attrSink)
-	labels, err := f.st.EnsureLabelsBatch(imap.source.ID, map[string]store.LabelInfo{
+	labels, err := f.st.EnsureLabelsBatch(t.Context(), imap.source.ID, map[string]store.LabelInfo{
 		"Drafts": {Name: "Drafts", Type: "system"},
 	})
 	require.NoError(err)
 	id := imap.persist(attrMail{raw: "To: friend@example.com\r\n\r\nbody", to: []string{"friend@example.com"}, labels: []int64{labels["Drafts"]}})
 	assert.Contains(searchIDs(t, f.st, "received:"+attrSink), id)
-	_, err = f.st.EnsureLabelsBatch(imap.source.ID, map[string]store.LabelInfo{
+	_, err = f.st.EnsureLabelsBatch(t.Context(), imap.source.ID, map[string]store.LabelInfo{
 		"Drafts": {Name: "Drafts", Type: "system", SystemRole: store.LabelSystemRoleDrafts},
 	})
 	require.NoError(err)
@@ -555,18 +559,18 @@ func TestAccountAttributionLabelDefinitionChanges(t *testing.T) {
 	assert := assert.New(t)
 	f := newAttrFixture(t, "mbox", attrSink)
 	f.confirm(attrSink)
-	labels, err := f.st.EnsureLabelsBatch(f.source.ID, map[string]store.LabelInfo{
+	labels, err := f.st.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
 		"Outbox": {Name: "Outbox", Type: "system"},
 	})
 	require.NoError(err)
 	id := f.persist(attrMail{raw: "Delivered-To: " + attrSink + "\r\n\r\nbody", labels: []int64{labels["Outbox"]}})
 	assert.Contains(searchIDs(t, f.st, "received:"+attrSink), id)
-	_, err = f.st.EnsureLabelsBatch(f.source.ID, map[string]store.LabelInfo{
+	_, err = f.st.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
 		"Outbox": {Name: "Outbox", Type: "system", SystemRole: store.LabelSystemRoleSent},
 	})
 	require.NoError(err)
 	assert.NotContains(searchIDs(t, f.st, "received:"+attrSink), id, "setting the Sent role re-derives members")
-	_, err = f.st.EnsureLabelsBatch(f.source.ID, map[string]store.LabelInfo{
+	_, err = f.st.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
 		"Outbox": {Name: "Outbox", Type: "system"},
 	})
 	require.NoError(err)
@@ -575,25 +579,25 @@ func TestAccountAttributionLabelDefinitionChanges(t *testing.T) {
 	// A Gmail name upsert that turns a label into SENT.
 	g := newAttrFixtureOn(t, f.st, "gmail", "gmail-owner@example.net")
 	g.confirm("gmail-owner@example.net")
-	userLabel, err := f.st.EnsureLabel(g.source.ID, "Label_7", "Sent Mail", "user")
+	userLabel, err := f.st.EnsureLabel(t.Context(), g.source.ID, "Label_7", "Sent Mail", "user")
 	require.NoError(err)
 	gid := g.persist(attrMail{raw: "Delivered-To: gmail-owner@example.net\r\n\r\nbody", labels: []int64{userLabel}})
 	assert.Contains(searchIDs(t, f.st, "received:gmail-owner@example.net"), gid)
-	_, err = f.st.EnsureLabel(g.source.ID, "SENT", "Sent Mail", "system")
+	_, err = f.st.EnsureLabel(t.Context(), g.source.ID, "SENT", "Sent Mail", "system")
 	require.NoError(err)
 	assert.NotContains(searchIDs(t, f.st, "received:gmail-owner@example.net"), gid)
 
 	// mergeLabelByName folds a Sent label into a non-Sent one.
 	m := newAttrFixtureOn(t, f.st, "mbox", "merge@example.net")
 	m.confirm("merge@example.net")
-	merged, err := f.st.EnsureLabelsBatch(m.source.ID, map[string]store.LabelInfo{
+	merged, err := f.st.EnsureLabelsBatch(t.Context(), m.source.ID, map[string]store.LabelInfo{
 		"sent-folder": {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
 		"keep":        {Name: "Keep", Type: "user"},
 	})
 	require.NoError(err)
 	mid := m.persist(attrMail{raw: "Delivered-To: merge@example.net\r\n\r\nbody", labels: []int64{merged["sent-folder"]}})
 	assert.NotContains(searchIDs(t, f.st, "received:merge@example.net"), mid)
-	_, err = f.st.EnsureLabel(m.source.ID, "keep", "Sent", "user")
+	_, err = f.st.EnsureLabel(t.Context(), m.source.ID, "keep", "Sent", "user")
 	require.NoError(err)
 	assert.Contains(searchIDs(t, f.st, "received:merge@example.net"), mid, "the merged-away Sent label no longer marks its members")
 
@@ -606,7 +610,7 @@ func TestAccountAttributionLegacySenderFallback(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newAttrFixture(t, "gmail", attrSink)
-	sent, err := f.st.EnsureLabel(f.source.ID, "SENT", "SENT", "system")
+	sent, err := f.st.EnsureLabel(t.Context(), f.source.ID, "SENT", "SENT", "system")
 	require.NoError(err)
 	sender := f.participant("legacy@example.org")
 	id := f.persist(attrMail{senderID: sender, labels: []int64{sent}})
@@ -617,7 +621,7 @@ func TestAccountAttributionLegacySenderFallback(t *testing.T) {
 	survivor := f.participant("survivor@example.org")
 	require.NoError(f.st.MergeParticipants(sender, survivor))
 	assert.Empty(searchIDs(t, f.st, "account:legacy@example.org"), "the fallback follows the merge survivor")
-	require.NoError(f.st.RepairParticipantEmailAddresses([]store.ParticipantEmailRepair{
+	require.NoError(f.st.RepairParticipantEmailAddresses(t.Context(), []store.ParticipantEmailRepair{
 		{ParticipantID: survivor, EmailAddress: "legacy@example.org"},
 	}))
 	assert.Equal([]int64{id}, searchIDs(t, f.st, "account:legacy@example.org"))
@@ -627,7 +631,7 @@ func TestAccountAttributionNormalizesMatchedIdentities(t *testing.T) {
 	assert := assert.New(t)
 	f := newAttrFixture(t, "gmail", attrSink)
 	f.confirm("Work@Example.org")
-	sent, err := f.st.EnsureLabel(f.source.ID, "SENT", "SENT", "system")
+	sent, err := f.st.EnsureLabel(t.Context(), f.source.ID, "SENT", "SENT", "system")
 	require.NoError(t, err)
 	sentCopy := f.persist(attrMail{raw: "From: work@example.org\r\n\r\nbody", from: []string{"work@example.org"}, labels: []int64{sent}})
 	inbound := f.persist(attrMail{raw: "To: WORK@example.org\r\n\r\nbody", to: []string{"WORK@example.org"}})
@@ -641,7 +645,7 @@ func TestAccountAttributionCalendarMapping(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	event := func(cfg, key string, confirm ...string) int64 {
 		f := newAttrFixtureOn(t, st, "gcal", key)
-		require.NoError(st.UpdateSourceSyncConfig(f.source.ID, cfg))
+		require.NoError(st.UpdateSourceSyncConfig(t.Context(), f.source.ID, cfg))
 		f.confirm(confirm...)
 		id, err := st.UpsertMessage(&store.Message{
 			SourceID: f.source.ID, ConversationID: f.conv, SourceMessageID: "event-" + key, MessageType: "calendar_event",
@@ -666,7 +670,7 @@ func TestAccountAttributionCalendarConfigChangeRederives(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newAttrFixture(t, "gcal", "cal-config")
-	require.NoError(f.st.UpdateSourceSyncConfig(f.source.ID, `{"account_email":"owner@example.org","calendar_id":"primary"}`))
+	require.NoError(f.st.UpdateSourceSyncConfig(t.Context(), f.source.ID, `{"account_email":"owner@example.org","calendar_id":"primary"}`))
 	f.confirm("owner@example.org", "team@example.org")
 	id, err := f.st.UpsertMessage(&store.Message{
 		SourceID: f.source.ID, ConversationID: f.conv, SourceMessageID: "event-config", MessageType: "calendar_event",
@@ -674,7 +678,7 @@ func TestAccountAttributionCalendarConfigChangeRederives(t *testing.T) {
 	require.NoError(err)
 	assert.Equal([]int64{id}, searchIDs(t, f.st, "account:owner@example.org"))
 
-	require.NoError(f.st.UpdateSourceSyncConfig(f.source.ID, `{"account_email":"owner@example.org","calendar_id":"team@example.org"}`))
+	require.NoError(f.st.UpdateSourceSyncConfig(t.Context(), f.source.ID, `{"account_email":"owner@example.org","calendar_id":"team@example.org"}`))
 	assert.Empty(searchIDs(t, f.st, "account:owner@example.org"))
 	assert.Equal([]int64{id}, searchIDs(t, f.st, "account:team@example.org"))
 }
@@ -690,7 +694,7 @@ func TestAccountAttributionRawFormatReplacementClearsDeliveryEvidence(t *testing
 	require.NoError(f.st.UpsertMessageRawWithFormat(id, []byte(`{"x":1}`), "beeper_json"))
 	assert.Empty(searchIDs(t, f.st, "received:work@example.org"))
 	var rows int
-	require.NoError(f.st.DB().QueryRow(f.st.Rebind(
+	require.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(
 		`SELECT COUNT(*) FROM message_delivery_addresses WHERE message_id = ?`), id).Scan(&rows))
 	assert.Zero(rows)
 
@@ -719,7 +723,7 @@ func TestAccountAttributionMergeDuplicatesBackfillsDelivery(t *testing.T) {
 	survivor := f.persist(attrMail{})
 	duplicate := f.persist(attrMail{raw: "X-Delivered-To: work@example.org\r\n\r\nbody"})
 	assert.NotContains(searchIDs(t, f.st, "received:work@example.org"), survivor)
-	_, err := f.st.MergeDuplicates(survivor, []int64{duplicate}, "batch-1")
+	_, err := f.st.MergeDuplicates(t.Context(), survivor, []int64{duplicate}, "batch-1")
 	require.NoError(err)
 	assert.Contains(searchIDs(t, f.st, "received:work@example.org"), survivor)
 }
@@ -731,7 +735,7 @@ func TestAccountAttributionCopySubsetCarriesEvidence(t *testing.T) {
 	f := newAttrFixtureOn(t, src, "mbox", "archive-1")
 	id := f.persist(attrMail{raw: "X-Delivered-To: work@example.org\r\n\r\nbody"})
 	dstDir := t.TempDir()
-	_, err := store.CopySubset(store.DBPathForTest(src), dstDir, 10, true)
+	_, err := store.CopySubset(t.Context(), store.DBPathForTest(src), dstDir, 10, true)
 	require.NoError(err)
 	dst, err := store.Open(filepath.Join(dstDir, "msgvault.db"))
 	require.NoError(err)
@@ -823,7 +827,7 @@ func TestAccountAttributionDraftsAndRelocation(t *testing.T) {
 	isource, err := st.GetOrCreateSource("imap", "imap://alice@example.com:143")
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentity(isource.ID, "work@example.org", "manual"))
-	iconv, err := st.EnsureConversation(isource.ID, "draft-thread", "Draft")
+	iconv, err := st.EnsureConversation(t.Context(), isource.ID, "draft-thread", "Draft")
 	require.NoError(err)
 	ireceipt := store.IMAPDraftReceipt{SourceID: isource.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 5}
 	idraft, err := st.PersistIMAPDraftContext(t.Context(), ireceipt, nil, func([]int64) *store.MessagePersistData {
@@ -862,7 +866,7 @@ func TestAccountAttributionColumnIsIndexed(t *testing.T) {
 			query = `SELECT COUNT(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = ?`
 		}
 		var count int
-		require.NoError(st.DB().QueryRow(st.Rebind(query), name).Scan(&count))
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(query), name).Scan(&count))
 		assert.Equal(1, count, name)
 	}
 	if st.IsPostgreSQL() {
@@ -874,9 +878,9 @@ func TestAccountAttributionColumnIsIndexed(t *testing.T) {
 	for range 200 {
 		f.persist(attrMail{raw: "To: friend@example.com\r\n\r\nbody", to: []string{"friend@example.com"}})
 	}
-	_, err := st.DB().Exec(`ANALYZE`)
+	_, err := st.DB().ExecContext(t.Context(), `ANALYZE`)
 	require.NoError(err)
-	rows, err := st.DB().Query(`EXPLAIN QUERY PLAN `+store.AccountPendingQueryForTest, f.source.ID, 0, 500)
+	rows, err := st.DB().QueryContext(t.Context(), `EXPLAIN QUERY PLAN `+store.AccountPendingQueryForTest, f.source.ID, 0, 500)
 	require.NoError(err)
 	defer func() { _ = rows.Close() }()
 	var plan []string
@@ -910,7 +914,7 @@ func TestAccountAttributionDraftRecordMarksLegacyDraft(t *testing.T) {
 	source, err := st.GetOrCreateSource("imap", "imap://alice@example.com:143")
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentity(source.ID, "bob@example.com", "manual"))
-	conv, err := st.EnsureConversation(source.ID, "backfill", "Backfill")
+	conv, err := st.EnsureConversation(t.Context(), source.ID, "backfill", "Backfill")
 	require.NoError(err)
 	receipt := store.IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 1}
 	draft, err := st.PersistIMAPDraftContext(t.Context(), receipt, nil, func([]int64) *store.MessagePersistData {
@@ -931,7 +935,7 @@ func TestAccountAttributionDraftRecordMarksLegacyDraft(t *testing.T) {
 		`DELETE FROM message_labels WHERE message_id = ?`,
 		`UPDATE messages SET draft_authored = FALSE, account_address = NULL, account_path = NULL WHERE id = ?`,
 	} {
-		_, err = db.Exec(st.Rebind(stmt), draft.CurrentMessageID)
+		_, err = db.ExecContext(t.Context(), st.Rebind(stmt), draft.CurrentMessageID)
 		require.NoError(err)
 	}
 	_, err = st.RepairAccountAttributionContext(t.Context(), source.ID, nil)
@@ -939,7 +943,7 @@ func TestAccountAttributionDraftRecordMarksLegacyDraft(t *testing.T) {
 
 	var authored bool
 	var path sql.NullString
-	require.NoError(db.QueryRow(st.Rebind(`SELECT draft_authored, account_path FROM messages WHERE id = ?`),
+	require.NoError(db.QueryRowContext(t.Context(), st.Rebind(`SELECT draft_authored, account_path FROM messages WHERE id = ?`),
 		draft.CurrentMessageID).Scan(&authored, &path))
 	assert.True(authored, "the draft record is draft evidence")
 	assert.Equal("sent", path.String)
@@ -951,7 +955,7 @@ func TestDraftAuthorshipRecordedWithoutDirectionChange(t *testing.T) {
 	assert := assert.New(t)
 	f := newAttrFixture(t, "imap", "imaps://"+strings.Replace(attrSink, "@", "%40", 1)+"@mail.example.net:993")
 	f.confirm(attrSink, "friend@example.com")
-	_, err := f.st.EnsureLabelsBatch(f.source.ID, map[string]store.LabelInfo{
+	_, err := f.st.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
 		"Sent": {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
 	})
 	require.NoError(err)
@@ -985,14 +989,14 @@ func TestDraftAuthorshipRecordedWithoutDirectionChange(t *testing.T) {
 	// A Sent label that becomes a Drafts label records authorship too.
 	m := newAttrFixtureOn(t, f.st, "mbox", "relabel@example.net")
 	m.confirm("relabel@example.net", "friend@example.com")
-	labels, err := f.st.EnsureLabelsBatch(m.source.ID, map[string]store.LabelInfo{
+	labels, err := f.st.EnsureLabelsBatch(t.Context(), m.source.ID, map[string]store.LabelInfo{
 		"Out": {Name: "Out", Type: "system", SystemRole: store.LabelSystemRoleSent},
 	})
 	require.NoError(err)
 	mid := m.persist(attrMail{raw: "From: relabel@example.net\r\nTo: friend@example.com\r\n\r\nbody",
 		from: []string{"relabel@example.net"}, to: []string{"friend@example.com"}, labels: []int64{labels["Out"]}})
 	for _, role := range []string{store.LabelSystemRoleDrafts, ""} {
-		_, err = f.st.EnsureLabelsBatch(m.source.ID, map[string]store.LabelInfo{
+		_, err = f.st.EnsureLabelsBatch(t.Context(), m.source.ID, map[string]store.LabelInfo{
 			"Out": {Name: "Out", Type: "system", SystemRole: role},
 		})
 		require.NoError(err)
@@ -1024,7 +1028,7 @@ func TestAccountAttributionInboxCopyOfOwnPostWithSentFolder(t *testing.T) {
 	assert := assert.New(t)
 	f := newAttrFixture(t, "imap", "imaps://"+strings.Replace(attrSink, "@", "%40", 1)+"@mail.example.net:993")
 	f.confirm(attrSink, "alias@example.org")
-	labels, err := f.st.EnsureLabelsBatch(f.source.ID, map[string]store.LabelInfo{
+	labels, err := f.st.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
 		"Sent":  {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
 		"INBOX": {Name: "INBOX", Type: "system"},
 	})
@@ -1040,7 +1044,7 @@ func TestAccountAttributionFirstSentFolderReturnsSourceToPending(t *testing.T) {
 	assert := assert.New(t)
 	f := newAttrFixture(t, "imap", "imaps://"+strings.Replace(attrSink, "@", "%40", 1)+"@mail.example.net:993")
 	f.confirm(attrSink)
-	inbox, err := f.st.EnsureLabelsBatch(f.source.ID, map[string]store.LabelInfo{
+	inbox, err := f.st.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
 		"INBOX": {Name: "INBOX", Type: "system"},
 	})
 	require.NoError(err)
@@ -1049,7 +1053,7 @@ func TestAccountAttributionFirstSentFolderReturnsSourceToPending(t *testing.T) {
 	_, path := attribution(t, f.st, id)
 	require.Equal("sent", path.String, "without a Sent folder, the user's own mail counts as sent")
 
-	_, err = f.st.EnsureLabelsBatch(f.source.ID, map[string]store.LabelInfo{
+	_, err = f.st.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
 		"Sent": {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
 	})
 	require.NoError(err)

@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/store"
+	syncer "go.kenn.io/msgvault/internal/sync"
 )
 
 var (
@@ -21,6 +22,8 @@ var (
 )
 
 func newRepairDerivedCmd() *cobra.Command {
+	var attachmentMessage string
+	var sourceID int64
 	cmd := &cobra.Command{
 		Use:   "repair-derived",
 		Short: "Re-derive message text and metadata from stored payloads",
@@ -33,7 +36,7 @@ the verbatim payload stored alongside every message. Sources with retained MIME,
 including custom email labels, rebuild bodies, HTML, previews, and search.
 For every source it also derives account attribution (the
 address searched by account: and received:) for email and calendar rows still
-waiting for it.
+waiting for it. It also derives explicit email linkage from archived MIME.
 
 Syncing already heals an archive on its own — each source re-derives once, on its
 next sync, and every sync or import derives pending account attribution — so
@@ -43,6 +46,10 @@ against the local archive: no provider connection is needed, and messages the
 provider no longer holds are repaired too. Only derived columns are rewritten;
 raw payloads, downloaded media, and sync cursors are untouched, so it is
 idempotent.
+
+Empty attachments are omitted. Valid files and existing metadata are preserved.
+Corrupt files, conflicting metadata or unusable archived originals cause an error
+without changes.
 
 Examples:
   msgvault repair-derived
@@ -56,17 +63,34 @@ Examples:
 				return errors.New("configuration is unavailable")
 			}
 			cfg := state.cfg
+			if cmd.Flags().Changed("attachment-message") && strings.TrimSpace(attachmentMessage) == "" {
+				return usageErr(cmd, errors.New("--attachment-message requires a nonempty reference"))
+			}
+			if cmd.Flags().Changed("source-id") && (sourceID <= 0 || attachmentMessage == "") {
+				return errors.New("--source-id requires --attachment-message and a positive ID")
+			}
+			if attachmentMessage != "" && (len(repairDerivedSourceTypes) > 0 || len(repairDerivedIdentifiers) > 0) {
+				return errors.New("--attachment-message uses --source-id rather than source filters")
+			}
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
 			}
 
-			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 			if err != nil {
 				return err
 			}
 			defer cleanup()
 			ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Stopping...")
 			defer stop()
+			if attachmentMessage != "" {
+				service := syncer.New(nil, s, &syncer.Options{AttachmentsDir: cfg.AttachmentsDir()})
+				if err := service.RepairMessageAttachments(ctx, syncer.RepairRequest{Reference: attachmentMessage, SourceID: sourceID}); err != nil {
+					return fmt.Errorf("repair message attachments: %w", err)
+				}
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Attachments restored")
+				return rebuildCacheAfterWrite(ctx, cfg.DatabaseDSN(), state)
+			}
 
 			sources, err := repairDerivedTargets(s)
 			if err != nil {
@@ -82,23 +106,25 @@ Examples:
 				rerr := repairDerivedSource(ctx, cmd.OutOrStdout(), s, src)
 				if ctx.Err() != nil {
 					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nInterrupted — re-run repair-derived to finish (idempotent).")
-					return rebuildCacheAfterWrite(cfg.DatabaseDSN(), state)
+					return rebuildCacheAfterWrite(ctx, cfg.DatabaseDSN(), state)
 				}
 				if rerr != nil {
 					return errors.Join(
 						fmt.Errorf("repair failed for %s: %w", label, rerr),
-						rebuildCacheAfterWrite(cfg.DatabaseDSN(), state),
+						rebuildCacheAfterWrite(ctx, cfg.DatabaseDSN(), state),
 					)
 				}
 			}
 
-			return rebuildCacheAfterWrite(cfg.DatabaseDSN(), state)
+			return rebuildCacheAfterWrite(ctx, cfg.DatabaseDSN(), state)
 		},
 	}
 	cmd.Flags().StringArrayVar(&repairDerivedSourceTypes, "source-type", nil,
 		"source type to repair (repeatable; default: every source)")
 	cmd.Flags().StringArrayVar(&repairDerivedIdentifiers, "identifier", nil,
 		"source identifier to repair (repeatable; default: all matching sources)")
+	cmd.Flags().StringVar(&attachmentMessage, "attachment-message", "", "restore missing attachments from one saved Gmail message")
+	cmd.Flags().Int64Var(&sourceID, "source-id", 0, "scope --attachment-message to one positive source ID")
 	return cmd
 }
 
@@ -123,14 +149,18 @@ func repairDerivedSource(ctx context.Context, out io.Writer, s *store.Store, src
 	report := func(sum store.AccountAttributionRepairSummary) {
 		progress(fmt.Sprintf("account attribution: %d messages", sum.Scanned))
 	}
-	sum, err := s.RepairAccountAttributionContext(ctx, src.ID, report)
-	if err != nil {
-		return err
-	}
-	if sum.Scanned > 0 {
+	sum, attributionErr := s.RepairAccountAttributionContext(ctx, src.ID, report)
+	if attributionErr == nil && sum.Scanned > 0 {
 		_, _ = fmt.Fprint(out, formatAccountAttributionSummary(label, sum))
 	}
-	return nil
+	// Linkage does not read attribution, so one failing leaves the other to run.
+	linkage, linkageErr := s.RepairEmailLinkageContext(ctx, src.ID, func(sum store.EmailLinkageRepairSummary) {
+		progress(fmt.Sprintf("Indexing %d emails", sum.Scanned))
+	})
+	if linkageErr == nil && linkage.Scanned > 0 {
+		_, _ = fmt.Fprintf(out, "%s: indexed %d emails (%d incomplete)\n", label, linkage.Scanned, linkage.Incomplete)
+	}
+	return errors.Join(attributionErr, linkageErr)
 }
 
 func formatRepairDerivedSummary(label string, sum *rederive.Summary) string {

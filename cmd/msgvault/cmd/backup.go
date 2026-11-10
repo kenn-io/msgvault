@@ -283,7 +283,6 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 		PackedContent:      backupRestorePackedContentTarget(looseAttachments),
 		TargetCoordinator:  targetCoordinatorOption,
 		AuxiliaryTarget:    backupapp.NewDocumentAuxiliaryTarget(),
-		BeforePublication:  backupapp.InvalidateRestoredDocumentVectors,
 	})
 	if err != nil {
 		return fmt.Errorf("restoring snapshot: %w", err)
@@ -1019,7 +1018,7 @@ func newBackupFreezer(ctx context.Context, cfg *config.Config) (backup.FreezeCoo
 	if err := cfg.ResolveServerKey(); err != nil {
 		return nil, func() {}, err
 	}
-	rt := findDaemonRuntime(cfg.Data.DataDir)
+	rt := findDaemonRuntime(ctx, cfg.Data.DataDir)
 	if rt == nil {
 		return nil, func() {}, errors.New(
 			"backup create: no running msgvault daemon found; refusing to back up an unfrozen archive")

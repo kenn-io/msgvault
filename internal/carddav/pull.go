@@ -211,6 +211,9 @@ func cardDAVSyncRunFinish(result SyncResult, err error) store.CardDAVSyncRunFini
 }
 
 func cardDAVSyncPublicFailure(err error) (string, string) {
+	if errors.Is(err, ErrICloudReconnectRequired) {
+		return "upstream_failed", ErrICloudReconnectRequired.Error()
+	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return "cancelled", "CardDAV sync was cancelled."
 	}

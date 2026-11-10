@@ -181,8 +181,10 @@ func TestPerformUpdateWithDaemonLifecycleRestartsAfterPartialStopFailure(t *test
 }
 
 func TestStopLocalDaemonsForUpdateStopsLiveRuntimeRecords(t *testing.T) {
-	for _, background := range []string{"", "false", "true"} {
-		t.Run("background="+background, func(t *testing.T) {
+	for _, tc := range []struct{ background, persistent string }{{}, {background: "true", persistent: "false"}, {background: "true", persistent: "true"}, {background: "true"}} {
+		background := tc.background
+		t.Run("background="+background+"/persistent="+tc.persistent, func(t *testing.T) {
+			persistent := tc.persistent == "true"
 			require := require.New(t)
 			assert := assert.New(t)
 			dataDir := t.TempDir()
@@ -202,6 +204,9 @@ func TestStopLocalDaemonsForUpdateStopsLiveRuntimeRecords(t *testing.T) {
 					runtimeCreateTime:       matchingProcessCreateTime(t),
 				},
 			}
+			if tc.persistent != "" {
+				record.Metadata[runtimePersistent] = tc.persistent
+			}
 			if background != "" {
 				record.Metadata[runtimeBackground] = background
 			}
@@ -218,6 +223,7 @@ func TestStopLocalDaemonsForUpdateStopsLiveRuntimeRecords(t *testing.T) {
 
 			require.NoError(err, "stop local daemons")
 			assert.True(result.Stopped, "stopped")
+			assert.Equal(persistent, result.Persistent)
 			assert.Equal(background == "true", result.Background, "background")
 			assert.Equal(os.Getpid(), stoppedPID, "stopped pid")
 		})
@@ -225,6 +231,13 @@ func TestStopLocalDaemonsForUpdateStopsLiveRuntimeRecords(t *testing.T) {
 }
 
 func TestRestartDaemonAfterUpdateUsesInstalledExecutablePath(t *testing.T) {
+	for _, persistent := range []bool{false, true} {
+		t.Run(strconv.FormatBool(persistent), func(t *testing.T) { testRestartDaemonAfterUpdateLifetime(t, persistent) })
+	}
+}
+
+func testRestartDaemonAfterUpdateLifetime(t *testing.T, persistent bool) {
+	t.Helper()
 	require := require.New(t)
 	assert := assert.New(t)
 	cfg := lifecycleTestConfig(t.TempDir())
@@ -237,6 +250,7 @@ func TestRestartDaemonAfterUpdateUsesInstalledExecutablePath(t *testing.T) {
 		_ *config.Config,
 		opts backgroundServeStartOptions,
 	) (*backgroundServeProcess, error) {
+		assert.Equal(persistent, opts.Persistent)
 		gotExecutable = opts.ExecutablePath
 		return &backgroundServeProcess{
 			PID:     990,
@@ -250,7 +264,7 @@ func TestRestartDaemonAfterUpdateUsesInstalledExecutablePath(t *testing.T) {
 		_ <-chan error,
 		_ time.Duration,
 	) (*DaemonRuntime, bool, error) {
-		gotCtx = ctx
+		gotCtx = ctx //nolint:fatcontext // The test captures the lookup context to inspect it.
 		return &DaemonRuntime{
 			Record: daemon.RuntimeRecord{PID: 990},
 			Host:   net.IPv4(127, 0, 0, 1).String(),
@@ -258,7 +272,7 @@ func TestRestartDaemonAfterUpdateUsesInstalledExecutablePath(t *testing.T) {
 		}, true, nil
 	})
 
-	err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true, Background: true}, installedExe, testInvocationWithConfig(cfg), false, io.Discard)
+	err := restartDaemonAfterUpdate(cfg, updateDaemonStopResult{Stopped: true, Background: true, Persistent: persistent}, installedExe, testInvocationWithConfig(cfg), false, io.Discard)
 
 	require.NoError(err, "restart daemon")
 	assert.Equal(installedExe, gotExecutable, "restart executable")

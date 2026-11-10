@@ -29,11 +29,11 @@ func TestDirectoryPeopleAddressLookupBoundsInput(t *testing.T) {
 func TestDirectoryPeopleAddressLookupPropagatesContextAndSurfacesStreamCancellation(t *testing.T) {
 	require := require.New(t)
 	path := filepath.Join(t.TempDir(), "directory-address-cancel.db")
-	writer, err := OpenForTest(path)
+	writer, err := OpenForTest(t.Context(), path)
 	require.NoError(err)
 	t.Cleanup(func() { assert.NoError(t, writer.Close()) })
 	require.NoError(writer.InitSchema())
-	_, err = writer.DB().Exec(`INSERT INTO persons (vcard_uid, display_name) VALUES ('cancel-address-person', 'Cancel Example')`)
+	_, err = writer.DB().ExecContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name) VALUES ('cancel-address-person', 'Cancel Example')`)
 	require.NoError(err)
 	_, err = writer.AddPersonContactPointContext(t.Context(), 1, PersonContactPointInput{
 		AddressKind: ContactAddressUsername, OriginalValue: "cancel-handle",
@@ -69,12 +69,12 @@ func TestDecodeDirectoryPeopleCursorRejectsOversizedInputBeforeAllocation(t *tes
 // row, even when the durable directory has substantially more people.
 func TestSelectDirectoryPeopleTxBoundsLargeSyntheticDirectory(t *testing.T) {
 	require := require.New(t)
-	st, err := OpenForTest(filepath.Join(t.TempDir(), "directory.db"))
+	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "directory.db"))
 	require.NoError(err)
 	t.Cleanup(func() { assert.NoError(t, st.Close()) })
 	require.NoError(st.InitSchema())
 
-	ctx := context.Background()
+	ctx := t.Context()
 	for index := range 256 {
 		_, err := st.DB().ExecContext(ctx,
 			`INSERT INTO persons (vcard_uid, display_name) VALUES (?, ?)`,
@@ -104,29 +104,29 @@ func TestSelectDirectoryPeopleTxBoundsLargeSyntheticDirectory(t *testing.T) {
 func TestInitSchemaBackfillsDirectoryProjectionOnce(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	st, err := OpenForTest(filepath.Join(t.TempDir(), "directory-backfill.db"))
+	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "directory-backfill.db"))
 	require.NoError(err)
 	t.Cleanup(func() { assert.NoError(st.Close()) })
 	require.NoError(st.InitSchema())
-	_, err = st.DB().Exec(`INSERT INTO persons (vcard_uid, display_name) VALUES ('directory-backfill', 'Backfill Person')`)
+	_, err = st.DB().ExecContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name) VALUES ('directory-backfill', 'Backfill Person')`)
 	require.NoError(err)
 	dropDirectoryProjection(t, st)
 	require.NoError(st.InitSchema())
 
 	var orderKey string
-	require.NoError(st.DB().QueryRow(`SELECT order_key FROM directory_people WHERE person_id = 1`).Scan(&orderKey))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT order_key FROM directory_people WHERE person_id = 1`).Scan(&orderKey))
 	assert.Equal(directoryKey("backfill person"), orderKey)
 	var dirty int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM directory_projection_dirty`).Scan(&dirty))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM directory_projection_dirty`).Scan(&dirty))
 	assert.Zero(dirty)
 
-	_, err = st.DB().Exec(`UPDATE directory_people SET order_key = ? WHERE person_id = 1`, directoryKey("untouched"))
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE directory_people SET order_key = ? WHERE person_id = 1`, directoryKey("untouched"))
 	require.NoError(err)
 	require.NoError(st.InitSchema())
-	require.NoError(st.DB().QueryRow(`SELECT order_key FROM directory_people WHERE person_id = 1`).Scan(&orderKey))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT order_key FROM directory_people WHERE person_id = 1`).Scan(&orderKey))
 	assert.Equal(directoryKey("untouched"), orderKey, "a second InitSchema must not rebuild the projection")
 	var applied int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM applied_migrations WHERE name LIKE 'directory_projection%'`).Scan(&applied))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM applied_migrations WHERE name LIKE 'directory_projection%'`).Scan(&applied))
 	assert.Equal(1, applied)
 }
 
@@ -137,24 +137,24 @@ func dropDirectoryProjection(t *testing.T, st *Store) {
 	triggers := directoryTriggerNames(t, st)
 	require.NotEmpty(t, triggers)
 	for _, name := range triggers {
-		_, err := st.DB().Exec(`DROP TRIGGER ` + name)
+		_, err := st.DB().ExecContext(t.Context(), `DROP TRIGGER `+name)
 		require.NoError(t, err)
 	}
 	for _, table := range []string{
 		"directory_people", "directory_person_tokens", "directory_person_token_deletes",
 		"directory_person_filters", "directory_projection_dirty",
 	} {
-		_, err := st.DB().Exec(`DROP TABLE ` + table)
+		_, err := st.DB().ExecContext(t.Context(), `DROP TABLE `+table)
 		require.NoError(t, err)
 	}
-	_, err := st.DB().Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationDirectoryProjectionV1)
+	_, err := st.DB().ExecContext(t.Context(), `DELETE FROM applied_migrations WHERE name = ?`, migrationDirectoryProjectionV1)
 	require.NoError(t, err)
 	st.directoryProjectionReady = false
 }
 
 func directoryTriggerNames(t *testing.T, st *Store) []string {
 	t.Helper()
-	rows, err := st.DB().Query(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'directory_dirty_%'`)
+	rows, err := st.DB().QueryContext(t.Context(), `SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'directory_dirty_%'`)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rows.Close()) }()
 	names := make([]string, 0)
@@ -173,15 +173,15 @@ func TestOpenExistingDirectoryProjectionRefreshesDirtyRows(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	path := filepath.Join(t.TempDir(), "directory-reopen.db")
-	seed, err := OpenForTest(path)
+	seed, err := OpenForTest(t.Context(), path)
 	require.NoError(err)
 	require.NoError(seed.InitSchema())
 	require.NoError(seed.Close())
 
-	reopened, err := OpenForTest(path)
+	reopened, err := OpenForTest(t.Context(), path)
 	require.NoError(err)
 	t.Cleanup(func() { assert.NoError(reopened.Close()) })
-	_, err = reopened.DB().Exec(`INSERT INTO persons (vcard_uid, display_name) VALUES ('directory-reopen', 'Reopened Person')`)
+	_, err = reopened.DB().ExecContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name) VALUES ('directory-reopen', 'Reopened Person')`)
 	require.NoError(err)
 
 	page, err := reopened.DirectoryPeoplePageContext(t.Context(), DirectoryPeopleQuery{})
@@ -196,25 +196,25 @@ func TestOpenExistingDirectoryProjectionRefreshesDirtyRows(t *testing.T) {
 // queue must not turn a valid contact-state insertion into a duplicate error.
 func TestDirectoryDirtyContactStateTriggerIgnoresPreexistingDirtyRowDuringUpsertSQLite(t *testing.T) {
 	require := require.New(t)
-	st, err := OpenForTest(filepath.Join(t.TempDir(), "directory-contact-upsert.db"))
+	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "directory-contact-upsert.db"))
 	require.NoError(err)
 	t.Cleanup(func() { assert.NoError(t, st.Close()) })
 	require.NoError(st.InitSchema())
-	result, err := st.DB().Exec(`INSERT INTO persons (vcard_uid, display_name) VALUES ('directory-contact-upsert', 'Contact Person')`)
+	result, err := st.DB().ExecContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name) VALUES ('directory-contact-upsert', 'Contact Person')`)
 	require.NoError(err)
 	personID, err := result.LastInsertId()
 	require.NoError(err)
-	_, err = st.DB().Exec(`DELETE FROM directory_projection_dirty WHERE person_id = ?`, personID)
+	_, err = st.DB().ExecContext(t.Context(), `DELETE FROM directory_projection_dirty WHERE person_id = ?`, personID)
 	require.NoError(err)
-	_, err = st.DB().Exec(`INSERT INTO person_contact_state (person_id, interaction_count) VALUES (?, 1)`, personID)
+	_, err = st.DB().ExecContext(t.Context(), `INSERT INTO person_contact_state (person_id, interaction_count) VALUES (?, 1)`, personID)
 	require.NoError(err)
-	_, err = st.DB().Exec(`INSERT OR IGNORE INTO directory_projection_dirty(person_id) VALUES (?)`, personID)
+	_, err = st.DB().ExecContext(t.Context(), `INSERT OR IGNORE INTO directory_projection_dirty(person_id) VALUES (?)`, personID)
 	require.NoError(err)
 
 	err = applyDirectoryContactAddition(t.Context(), st, personID, 2)
 	require.NoError(err)
 	var interactionCount int64
-	require.NoError(st.DB().QueryRow(`SELECT interaction_count FROM person_contact_state WHERE person_id = ?`, personID).Scan(&interactionCount))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT interaction_count FROM person_contact_state WHERE person_id = ?`, personID).Scan(&interactionCount))
 	assert.Equal(t, int64(2), interactionCount)
 }
 
@@ -233,16 +233,16 @@ func applyDirectoryContactAddition(ctx context.Context, st *Store, personID, mes
 func TestDirectoryProjectionTokenLookupUsesIndex(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	st, err := OpenForTest(filepath.Join(t.TempDir(), "directory-plan.db"))
+	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "directory-plan.db"))
 	require.NoError(err)
 	t.Cleanup(func() { assert.NoError(st.Close()) })
 	require.NoError(st.InitSchema())
 	for index := range 128 {
-		_, err := st.DB().Exec(`INSERT INTO persons (vcard_uid, display_name) VALUES (?, ?)`, fmt.Sprintf("plan-%03d", index), fmt.Sprintf("Plan Person %03d", index))
+		_, err := st.DB().ExecContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name) VALUES (?, ?)`, fmt.Sprintf("plan-%03d", index), fmt.Sprintf("Plan Person %03d", index))
 		require.NoError(err)
 	}
-	require.NoError(st.refreshDirectoryProjectionsContext(context.Background()))
-	rows, err := st.DB().Query(`EXPLAIN QUERY PLAN SELECT person_id FROM directory_person_tokens WHERE token_key = ?`, directoryKey("plan"))
+	require.NoError(st.refreshDirectoryProjectionsContext(t.Context()))
+	rows, err := st.DB().QueryContext(t.Context(), `EXPLAIN QUERY PLAN SELECT person_id FROM directory_person_tokens WHERE token_key = ?`, directoryKey("plan"))
 	require.NoError(err)
 	defer func() { _ = rows.Close() }()
 	var details []string
@@ -254,7 +254,7 @@ func TestDirectoryProjectionTokenLookupUsesIndex(t *testing.T) {
 	}
 	require.NoError(rows.Err())
 	assert.Contains(strings.Join(details, "\n"), "idx_directory_person_tokens_lookup")
-	rows, err = st.DB().Query(`EXPLAIN QUERY PLAN SELECT person_id FROM directory_person_tokens WHERE token_key >= ? AND token_key < ?`, directoryKey("plan"), directoryPrefixEnd(directoryKey("plan")))
+	rows, err = st.DB().QueryContext(t.Context(), `EXPLAIN QUERY PLAN SELECT person_id FROM directory_person_tokens WHERE token_key >= ? AND token_key < ?`, directoryKey("plan"), directoryPrefixEnd(directoryKey("plan")))
 	require.NoError(err)
 	defer func() { _ = rows.Close() }()
 	details = nil
@@ -271,22 +271,22 @@ func TestDirectoryProjectionTokenLookupUsesIndex(t *testing.T) {
 func TestReadOnlyDirectoryRejectsDirtyProjectionUntilWriterRefreshes(t *testing.T) {
 	require := require.New(t)
 	path := filepath.Join(t.TempDir(), "directory-reader.db")
-	writer, err := OpenForTest(path)
+	writer, err := OpenForTest(t.Context(), path)
 	require.NoError(err)
 	t.Cleanup(func() { assert.NoError(t, writer.Close()) })
 	require.NoError(writer.InitSchema())
-	_, err = writer.DB().Exec(`INSERT INTO persons (vcard_uid, display_name) VALUES ('reader-person', 'Before Refresh')`)
+	_, err = writer.DB().ExecContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name) VALUES ('reader-person', 'Before Refresh')`)
 	require.NoError(err)
-	require.NoError(writer.RefreshDirectoryProjectionContext(context.Background()))
-	_, err = writer.DB().Exec(`UPDATE persons SET display_name = 'After Refresh' WHERE id = 1`)
+	require.NoError(writer.RefreshDirectoryProjectionContext(t.Context()))
+	_, err = writer.DB().ExecContext(t.Context(), `UPDATE persons SET display_name = 'After Refresh' WHERE id = 1`)
 	require.NoError(err)
 	reader, err := OpenReadOnly(path)
 	require.NoError(err)
 	t.Cleanup(func() { assert.NoError(t, reader.Close()) })
-	_, err = reader.DirectoryPeoplePageContext(context.Background(), DirectoryPeopleQuery{})
+	_, err = reader.DirectoryPeoplePageContext(t.Context(), DirectoryPeopleQuery{})
 	require.ErrorIs(err, ErrDirectoryProjectionStale)
-	require.NoError(writer.RefreshDirectoryProjectionContext(context.Background()))
-	page, err := reader.DirectoryPeoplePageContext(context.Background(), DirectoryPeopleQuery{Query: "after"})
+	require.NoError(writer.RefreshDirectoryProjectionContext(t.Context()))
+	page, err := reader.DirectoryPeoplePageContext(t.Context(), DirectoryPeopleQuery{Query: "after"})
 	require.NoError(err)
 	require.Len(page.People, 1)
 }
@@ -301,11 +301,11 @@ func TestDirectoryFreshnessDecisionSharesServingSnapshot(t *testing.T) {
 		t.Run(fmt.Sprintf("read_only_%t", readOnly), func(t *testing.T) {
 			require := require.New(t)
 			path := filepath.Join(t.TempDir(), "directory-snapshot.db")
-			writer, err := OpenForTest(path)
+			writer, err := OpenForTest(t.Context(), path)
 			require.NoError(err)
 			t.Cleanup(func() { assert.NoError(t, writer.Close()) })
 			require.NoError(writer.InitSchema())
-			_, err = writer.DB().Exec(`INSERT INTO persons (vcard_uid, display_name) VALUES ('snapshot-person', 'Before Refresh')`)
+			_, err = writer.DB().ExecContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name) VALUES ('snapshot-person', 'Before Refresh')`)
 			require.NoError(err)
 			require.NoError(writer.RefreshDirectoryProjectionContext(t.Context()))
 
@@ -324,7 +324,7 @@ func TestDirectoryFreshnessDecisionSharesServingSnapshot(t *testing.T) {
 				results <- result{page: page, err: err}
 			}()
 			waitDirectorySnapshotSignal(t, gate.paused, "Directory freshness check did not pause")
-			_, err = writer.DB().Exec(`UPDATE persons SET display_name = 'After Refresh' WHERE id = 1`)
+			_, err = writer.DB().ExecContext(t.Context(), `UPDATE persons SET display_name = 'After Refresh' WHERE id = 1`)
 			require.NoError(err)
 			gate.release()
 
@@ -349,14 +349,14 @@ func TestDirectoryFreshnessDecisionSharesServingSnapshot(t *testing.T) {
 func TestWritableDirectoryRefreshRetriesDirtySnapshotContention(t *testing.T) {
 	requirements := require.New(t)
 	path := filepath.Join(t.TempDir(), "directory-dirty-contention.db")
-	writer, err := OpenForTest(path)
+	writer, err := OpenForTest(t.Context(), path)
 	requirements.NoError(err)
 	t.Cleanup(func() { assert.NoError(t, writer.Close()) })
 	requirements.NoError(writer.InitSchema())
-	_, err = writer.DB().Exec(`INSERT INTO persons (vcard_uid, display_name) VALUES ('dirty-contention', 'Initial Name')`)
+	_, err = writer.DB().ExecContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name) VALUES ('dirty-contention', 'Initial Name')`)
 	requirements.NoError(err)
 	requirements.NoError(writer.RefreshDirectoryProjectionContext(t.Context()))
-	_, err = writer.DB().Exec(`UPDATE persons SET display_name = 'First Change' WHERE id = 1`)
+	_, err = writer.DB().ExecContext(t.Context(), `UPDATE persons SET display_name = 'First Change' WHERE id = 1`)
 	requirements.NoError(err)
 
 	gate := newDirectorySnapshotGate("SELECT EXISTS (SELECT 1 FROM directory_projection_dirty)")
@@ -374,7 +374,7 @@ func TestWritableDirectoryRefreshRetriesDirtySnapshotContention(t *testing.T) {
 		results <- result{page: page, err: err}
 	}()
 	waitDirectorySnapshotSignal(t, gate.paused, "Directory dirty check did not pause")
-	_, err = writer.DB().Exec(`UPDATE persons SET display_name = 'Second Change' WHERE id = 1`)
+	_, err = writer.DB().ExecContext(t.Context(), `UPDATE persons SET display_name = 'Second Change' WHERE id = 1`)
 	requirements.NoError(err)
 	gate.release()
 

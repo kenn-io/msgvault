@@ -1,7 +1,6 @@
 package query
 
 import (
-	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
@@ -508,7 +507,7 @@ func (m MessageFixture) sqlValues() []string {
 		fmt.Sprintf("%d::BIGINT", m.ConversationID),
 		sqlStr(m.Subject),
 		sqlStr(m.Snippet),
-		fmt.Sprintf("TIMESTAMP '%s'", m.SentAt.Format("2006-01-02 15:04:05")),
+		fmt.Sprintf("TIMESTAMP '%s'", m.SentAt.Format("2006-01-02 15:04:05.999999")),
 		fmt.Sprintf("%d::BIGINT", m.SizeEstimate),
 		strconv.FormatBool(m.HasAttachments),
 		strconv.FormatBool(m.HiddenTextPresent),
@@ -557,7 +556,7 @@ func (m MessageFixture) sqlValuesWithInternalDeletion() []string {
 		fmt.Sprintf("%d::BIGINT", m.ConversationID),
 		sqlStr(m.Subject),
 		sqlStr(m.Snippet),
-		fmt.Sprintf("TIMESTAMP '%s'", m.SentAt.Format("2006-01-02 15:04:05")),
+		fmt.Sprintf("TIMESTAMP '%s'", m.SentAt.Format("2006-01-02 15:04:05.999999")),
 		fmt.Sprintf("%d::BIGINT", m.SizeEstimate),
 		strconv.FormatBool(m.HasAttachments),
 		strconv.FormatBool(m.HiddenTextPresent),
@@ -822,7 +821,7 @@ func (b *TestDataBuilder) BuildEngine() *DuckDBEngine {
 	b.t.Helper()
 	analyticsDir, cleanup := b.Build()
 	b.t.Cleanup(cleanup)
-	engine, err := NewDuckDBEngine(analyticsDir, "", nil)
+	engine, err := NewDuckDBEngine(b.t.Context(), analyticsDir, "", nil)
 	require.NoError(b.t, err, "NewDuckDBEngine")
 	b.t.Cleanup(func() { _ = engine.Close() })
 	return engine
@@ -959,7 +958,7 @@ func (b *parquetBuilder) buildTemplate() (fstest.MapFS, identityindex.BuildResul
 	require.NoError(b.t, err, "open duckdb")
 	defer func() { _ = db.Close() }()
 	b.writeParquetFiles(db, tmpDir)
-	derived, err := identityindex.Build(context.Background(), db, identityindex.BuildOptions{
+	derived, err := identityindex.Build(b.t.Context(), db, identityindex.BuildOptions{
 		Mode:           identityindex.ModeFull,
 		StagedBaseRoot: tmpDir,
 		OutputRoot:     tmpDir,
@@ -1081,9 +1080,9 @@ func escapePath(p string) string {
 // writeTableParquet writes a single table's data to a Parquet file using DuckDB.
 func writeTableParquet(tb testing.TB, db *sql.DB, path, columns, values string, empty bool) {
 	tb.Helper()
-	_, err := db.Exec("CREATE TABLE fixture_values AS SELECT * FROM (VALUES " + values + ")")
+	_, err := db.ExecContext(tb.Context(), "CREATE TABLE fixture_values AS SELECT * FROM (VALUES "+values+")")
 	require.NoError(tb, err, "parse fixture values for %s", path)
-	valueRows, err := db.Query("SELECT * FROM fixture_values LIMIT 0")
+	valueRows, err := db.QueryContext(tb.Context(), "SELECT * FROM fixture_values LIMIT 0")
 	require.NoError(tb, err, "read fixture values for %s", path)
 	defer func() { _ = valueRows.Close() }()
 	valueColumns, err := valueRows.Columns()
@@ -1109,9 +1108,9 @@ func writeTableParquet(tb testing.TB, db *sql.DB, path, columns, values string, 
 			) TO '%s' (FORMAT PARQUET)
 		`, projection, columns, whereClause, path)
 
-	_, err = db.Exec(query)
+	_, err = db.ExecContext(tb.Context(), query)
 	require.NoError(tb, err, "create parquet %s", path)
-	_, err = db.Exec("DROP TABLE fixture_values")
+	_, err = db.ExecContext(tb.Context(), "DROP TABLE fixture_values")
 	require.NoError(tb, err, "drop fixture values for %s", path)
 }
 
@@ -1125,7 +1124,7 @@ func createEngineFromBuilder(tb testing.TB, pb *parquetBuilder) *DuckDBEngine {
 	tb.Helper()
 	analyticsDir, cleanup := pb.build()
 	tb.Cleanup(cleanup)
-	engine, err := NewDuckDBEngine(analyticsDir, "", nil)
+	engine, err := NewDuckDBEngine(tb.Context(), analyticsDir, "", nil)
 	require.NoError(tb, err, "NewDuckDBEngine")
 	tb.Cleanup(func() { _ = engine.Close() })
 	return engine

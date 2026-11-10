@@ -7,7 +7,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-// releaseReadSnapshot finishes logical authorization before resolving movable blob placement.
+// releaseReadSnapshot finishes logical authorization and clears the request's snapshot.
 func releaseReadSnapshot(r *http.Request) {
 	if boundary, ok := r.Context().Value(readResponseKey{}).(*readResponseWriter); ok && boundary.release != nil {
 		boundary.release()

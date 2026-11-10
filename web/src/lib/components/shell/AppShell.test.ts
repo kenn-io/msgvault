@@ -1,6 +1,6 @@
 import { directoryPerson, person, mergeResult } from '../../directory/entity-fixtures.test-support';
 import { emptyProfile } from '../../directory/profile-fixtures.test-support';
-import { documentStatus, lanes } from '../../../test/operations';
+import { lanes, visualStatus } from '../../../test/operations';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { appShortcuts } from '@kenn-io/kit-ui';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,6 +9,7 @@ import { createRawSnippet, getContext, mount, tick, unmount, type ComponentProps
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
+import { sourceGroup } from '../../explore/fixtures.test-support';
 import { ExploreState, serializeExploreURLState } from '../../explore/state.svelte';
 import { chooseSelectOption, openTypeahead } from '../../../test/kit-ui';
 import { startTelemetryReporting, stopTelemetryReporting } from '../../telemetry/actions';
@@ -49,11 +50,51 @@ const sourceRun = canonical.runs.find(run => run.kind === 'source_sync')!;
 const OPERATION_RUN = sourceRun.id;
 
 function operationAuthorityResponse(path: string): Response | undefined {
-  if (path.endsWith('/documents/status/current')) return Response.json(documentStatus);
+  if (path.endsWith('/multimodal/status')) return Response.json(visualStatus);
   return undefined;
 }
 
 describe('AppShell', () => {
+  it('opens sources from an archive with no sources', async () => {
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const state = new ExploreState(window);
+    const client = createAPIClient(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/carddav/connections')) return Response.json({ connections: [] });
+      if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
+      return Response.json(exploreResponse());
+    });
+    const rendered = render(AppShell, { client, state });
+    try {
+      await fireEvent.click(await screen.findByRole('button', { name: 'Add source…' }));
+      expect(state.current.workspace).toBe('sources');
+    } finally {
+      rendered.unmount();
+      state.destroy();
+    }
+  });
+
+  it('keeps source setup hidden when the archive has a source', async () => {
+    const start = vi.spyOn(ShellData.prototype, 'start');
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const state = new ExploreState(window);
+    const client = createAPIClient(async input => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path === '/api/v1/sources/status') return Response.json({ sources: [sourceStatus()] });
+      return Response.json(exploreResponse());
+    });
+    const rendered = render(AppShell, { client, state });
+    try {
+      await waitFor(() => expect((start.mock.contexts[0] as ShellData | undefined)?.jobs.loaded).toBe(true));
+      expect(screen.queryByText('No mail yet')).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Add source…' })).toBeNull();
+    } finally {
+      start.mockRestore();
+      rendered.unmount();
+      state.destroy();
+    }
+  });
+
   it('keeps confirmation focus through held Back and its restoring traversal', async () => {
     window.history.replaceState({ exploreIndex: 0 }, '', '/?workspace=files');
     window.history.pushState({ exploreIndex: 1 }, '', '/?workspace=settings');
@@ -143,6 +184,192 @@ describe('AppShell', () => {
     };
   }
 
+
+  it('searches the archive from People when a palette query matches no command', async () => {
+    window.history.replaceState(null, '', '/?workspace=relationships');
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
+    await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    const palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+    const input = within(palette).getByRole('combobox');
+    await fireEvent.input(input, { target: { value: 'zzzxxyy' } });
+    await fireEvent.keyDown(input, { key: 'Enter' });
+    expect(state.current.workspace).toBe('everything');
+    expect(state.current.query).toBe('zzzxxyy');
+    rendered.unmount(); state.destroy();
+  });
+
+  it.each([
+    { workspace: 'everything' as const, relationshipFacet: 'domains' as const, peopleDuplicates: false },
+    { workspace: 'relationships' as const, relationshipFacet: 'people' as const, peopleDuplicates: true },
+  ])('finds people using the palette query from $relationshipFacet with duplicates=$peopleDuplicates', async startingPoint => {
+    window.history.replaceState(null, '', '/?workspace=relationships');
+    const state = new ExploreState(window);
+    state.commitNavigation({ ...startingPoint, relationshipTarget: 'cluster:42', directoryPersonID: 42, relationshipFiles: true });
+    const rendered = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
+    await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    const palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+    await fireEvent.input(within(palette).getByRole('combobox'), { target: { value: 'Example' } });
+    await fireEvent.click(within(palette).getByRole('option', { name: 'Find person…' }));
+    expect(state.current.workspace).toBe('relationships');
+    expect(state.current.identityQuery).toBe('Example');
+    expect(state.current.relationshipFacet).toBe('people');
+    expect(state.current.peopleDuplicates).toBe(false);
+    expect(state.current.relationshipTarget).toBeNull();
+    expect(state.current.directoryPersonID).toBeNull();
+    expect(state.current.relationshipFiles).toBe(false);
+    rendered.unmount(); state.destroy();
+  });
+
+  it('retries the same failed archive search from the palette', async () => {
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const state = new ExploreState(window);
+    let searchRequests = 0;
+    const client = createAPIClient(async input => {
+      const url = new URL((input as Request).url);
+      if (url.pathname.endsWith('/explore') && (await (input as Request).json()).query === 'zzzxxyy') {
+        searchRequests += 1;
+        return searchRequests === 1
+          ? Response.json({ message: 'Search temporarily failed' }, { status: 500 })
+          : Response.json(exploreResponse({ rows: [entry(1)], total_count: 1 }));
+      }
+      return Response.json(exploreResponse());
+    });
+    const rendered = render(AppShell, { client, state });
+    try {
+      await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+      let palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+      await fireEvent.input(within(palette).getByRole('combobox'), { target: { value: 'zzzxxyy' } });
+      await fireEvent.click(within(palette).getByRole('option', { name: /Search archive/ }));
+      await screen.findByText('Search temporarily failed');
+      await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+      palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+      await fireEvent.input(within(palette).getByRole('combobox'), { target: { value: 'zzzxxyy' } });
+      await fireEvent.click(within(palette).getByRole('option', { name: /Search archive/ }));
+      await screen.findByText('Synthetic subject 1');
+      expect(searchRequests).toBe(2);
+    } finally { rendered.unmount(); state.destroy(); }
+  });
+
+  it('keeps a recent saved view across reloads while views load late and another command runs', async () => {
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const state = new ExploreState(window);
+    let delayViews = false;
+    let finishViews!: (response: Response) => void;
+    const pendingViews = new Promise<Response>(resolve => { finishViews = resolve; });
+    const client = createAPIClient(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/saved-views')) return delayViews ? pendingViews : Response.json({ saved_views: [view(3, 'Project notes')] });
+      return Response.json(exploreResponse());
+    });
+    let rendered = render(AppShell, { client, state });
+    try {
+      await screen.findByRole('button', { name: 'Project notes actions' });
+      await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+      let palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+      await fireEvent.click(within(palette).getByRole('option', { name: 'Project notes' }));
+      rendered.unmount();
+      delayViews = true;
+      rendered = render(AppShell, { client, state });
+      await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+      palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+      await fireEvent.click(within(palette).getByRole('option', { name: 'People' }));
+      finishViews(Response.json({ saved_views: [view(3, 'Project notes')] }));
+      await screen.findByRole('button', { name: 'Project notes actions' });
+      await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+      palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+      const options = within(palette).getAllByRole('option');
+      expect(options[0].textContent?.trim()).toBe('People');
+      expect(options[1].textContent?.trim()).toBe('Project notes');
+      expect(JSON.parse(localStorage.getItem('msgvault.palette.recent')!)).toEqual(['go:relationships', 'view:3']);
+    } finally {
+      finishViews(Response.json({ saved_views: [] }));
+      rendered.unmount(); state.destroy();
+    }
+  });
+
+  it('stores only the five most recently run command ids', async () => {
+    localStorage.setItem('msgvault.palette.recent', JSON.stringify(['go:everything', 'view:3', 'view:4', 'view:5', 'view:6']));
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
+    try {
+      await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+      let palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+      await fireEvent.click(within(palette).getByRole('option', { name: 'People' }));
+      expect(JSON.parse(localStorage.getItem('msgvault.palette.recent')!)).toEqual(['go:relationships', 'go:everything', 'view:3', 'view:4', 'view:5']);
+      await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+      palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+      await fireEvent.click(within(palette).getByRole('option', { name: 'Messages' }));
+      expect(JSON.parse(localStorage.getItem('msgvault.palette.recent')!)).toEqual(['go:everything', 'go:relationships', 'view:3', 'view:4', 'view:5']);
+    } finally { rendered.unmount(); state.destroy(); }
+  });
+
+  it('leaves applied grouping out of palette Recent and highlights the first runnable recent command', async () => {
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
+    try {
+      await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+      let palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+      await fireEvent.click(within(palette).getByRole('option', { name: 'Files' }));
+      await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+      palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+      await fireEvent.input(within(palette).getByRole('combobox'), { target: { value: 'source' } });
+      await fireEvent.click(within(palette).getByRole('option', { name: 'Group by… › Source' }));
+      expect(state.current.groupingChain).toEqual(['source']);
+      await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+      palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+      const first = within(palette).getAllByRole('option')[0];
+      expect(first.textContent?.trim()).toBe('Files');
+      expect(first.getAttribute('aria-selected')).toBe('true');
+      expect(first.getAttribute('aria-disabled')).not.toBe('true');
+      expect(within(palette).queryByRole('option', { name: 'Group by… › Source' })).toBeNull();
+      expect(palette.querySelector('.kit-command-palette__section')?.textContent?.trim()).toBe('Recent');
+    } finally { rendered.unmount(); state.destroy(); }
+  });
+
+  it('runs Group by Source with Enter after a full command search at the palette root', async () => {
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
+    try {
+      await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+      const palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+      const input = within(palette).getByRole('combobox');
+      await fireEvent.input(input, { target: { value: 'group by source' } });
+      expect(within(palette).getByRole('option', { name: 'Group by… › Source' }).getAttribute('aria-selected')).toBe('true');
+      await fireEvent.keyDown(input, { key: 'Enter' });
+      expect(state.current.groupingChain).toEqual(['source']);
+      expect(screen.queryByRole('dialog', { name: 'Messages commands' })).toBeNull();
+    } finally { rendered.unmount(); state.destroy(); }
+  });
+
+  it('carries the Help search into the command palette and filters its commands', async () => {
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
+    await fireEvent.click(screen.getByRole('button', { name: 'Help' }));
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search keyboard shortcuts' }), { target: { value: 'sources' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Search commands instead' }));
+    const palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+    expect((within(palette).getByRole('combobox') as HTMLInputElement).value).toBe('sources');
+    rendered.unmount(); state.destroy();
+  });
+
+  it('opens the command palette with Ctrl K while typing in Help', async () => {
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
+    await fireEvent.click(screen.getByRole('button', { name: 'Help' }));
+    const search = screen.getByRole('searchbox', { name: 'Search keyboard shortcuts' });
+    await fireEvent.input(search, { target: { value: 'shift' } });
+    await fireEvent.keyDown(search, { key: 'k', ctrlKey: true });
+    const palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+    expect((within(palette).getByRole('combobox') as HTMLInputElement).value).toBe('');
+    expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).toBeNull();
+    rendered.unmount(); state.destroy();
+  });
 
   it.each([
     { filtered: false, direct: false }, { filtered: true, direct: false }, { filtered: false, direct: true }
@@ -1228,7 +1455,7 @@ describe('AppShell', () => {
     });
 
     await fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
-    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Publish to address book' }));
+    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Publish to address book…' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Review CardDAV conflict 41' }));
     expect(state.current).toMatchObject({ workspace: 'settings', settingsCategory: 'carddav' });
     expect(settingsHandoffs.at(-1)?.request).toMatchObject({ conflictID: 41 });
@@ -1242,7 +1469,7 @@ describe('AppShell', () => {
     expect(await screen.findByRole('heading', { name: 'Synthetic Person' })).toBeDefined();
     expect(screen.getAllByRole('status', { name: 'Operation status' })).toHaveLength(1);
     await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
-    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Publish to address book' }));
+    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Publish to address book…' }));
     await waitFor(() => expect(restoredPublicationSignal).toBeDefined());
 
     await fireEvent.click(within(screen.getByRole('dialog', { name: 'Publish to address book' })).getByRole('button', { name: 'Close' }));
@@ -2017,7 +2244,7 @@ describe('AppShell', () => {
       requests.push(request);
       const path = new URL(request.url).pathname;
       if (path.endsWith('/groups')) return Response.json({
-        rows: [{ key: '7', label: 'Example source', count: 12, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
+        rows: [sourceGroup],
         total_count: 1, cache_revision: 'cache-1', search_provenance: {}
       });
       if (path.endsWith('/files/search')) return Response.json({
@@ -2059,7 +2286,7 @@ describe('AppShell', () => {
       if (path.endsWith('/groups')) {
         groupRequests.push(request);
         return Response.json({
-          rows: [{ key: '7', label: 'Example source', count: 12, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
+          rows: [sourceGroup],
           total_count: 1, cache_revision: 'cache-1', search_provenance: {}
         });
       }
@@ -2259,9 +2486,8 @@ describe('AppShell', () => {
     await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
     const palette = screen.getByRole('dialog', { name: 'Messages commands' });
     expect(palette).toBeDefined();
-    expect(within(palette).getByRole('option', { name: /Group by Labels \(not available yet\)/ })
-      .getAttribute('aria-disabled'))
-      .toBe('true');
+    await fireEvent.click(within(palette).getByRole('option', { name: /Group by…/ }));
+    expect(within(palette).getByRole('option', { name: 'People' }).getAttribute('aria-disabled')).toBe('true');
     const paletteInput = within(palette).getByRole('combobox');
     paletteInput.focus();
     await waitFor(() => expect(appShortcuts.activeScope()).toBe('everything-editable'));
@@ -2270,6 +2496,7 @@ describe('AppShell', () => {
     expect(screen.getByRole('dialog', { name: 'Messages commands' })).toBeDefined();
     expect((paletteInput as HTMLInputElement).value).toBe('');
     expect(appShortcuts.activeScope()).toBe('everything-editable');
+    await fireEvent.keyDown(paletteInput, { key: 'Escape' });
     await fireEvent.keyDown(paletteInput, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Messages commands' })).toBeNull());
     await waitFor(() => expect(appShortcuts.activeScope()).toBe('root'));
@@ -2507,15 +2734,6 @@ describe('AppShell', () => {
         isOpen: () => screen.queryByRole('dialog', { name: 'Filter' }) !== null,
       },
       {
-        layer: 'More selection actions',
-        open: async () => {
-          await fireEvent.keyDown(screen.getByRole('grid', { name: 'Messages results' }), { key: ' ' });
-          await clickFocused(await screen.findByRole('button', { name: 'More selection actions' }));
-          await waitFor(() => expect(document.activeElement?.getAttribute('role')).toBe('menuitem'));
-        },
-        isOpen: () => screen.queryByRole('menu', { name: 'More selection actions' }) !== null
-      },
-      {
         layer: 'Display',
         open: async () => {
           await clickFocused(screen.getByRole('button', { name: 'Display' }));
@@ -2691,10 +2909,10 @@ it.each([
   { kind: 'source_sync', authority: undefined, status: 'Needs attention',
     lane: undefined, sources: [sourceStatus({ display_name: 'Source sync', scheduler_last_error: 'Sync failed' })],
     action: { role: 'menuitem', name: /Source sync/ }, expected: { workspace: 'sources', operationHistory: false } },
-  { kind: 'document_extraction', authority: 'getDocumentIndexStatus', status: 'Running',
-    lane: jobLane('document_extraction', { active: { ...jobRun('document_extraction'), state: 'running', error: undefined, finished_at: undefined } }), sources: [],
-    action: { role: 'menuitem', name: /Document extraction/ },
-    expected: { workspace: 'everything', operationHistory: true, operationStatus: 'getDocumentIndexStatus' } },
+  { kind: 'visual_embedding', authority: 'getVisualAttachmentStatus', status: 'Running',
+    lane: jobLane('visual_embedding', { active: { ...jobRun('visual_embedding'), state: 'running', error: undefined, finished_at: undefined } }), sources: [],
+    action: { role: 'menuitem', name: /Visual embedding/ },
+    expected: { workspace: 'everything', operationHistory: true, operationStatus: 'getVisualAttachmentStatus' } },
   { kind: 'person_sweep', authority: undefined, status: 'Needs attention',
     lane: jobLane('person_sweep'), sources: [],
     action: { role: 'menuitem', name: /Person fact sweep/ },

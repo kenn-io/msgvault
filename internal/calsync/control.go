@@ -22,22 +22,22 @@ func (s *Syncer) PersistEvent(ctx context.Context, cal gcal.Calendar, event gcal
 	if err != nil {
 		return 0, err
 	}
-	if err := s.store.UpdateSourceSyncConfig(source.ID, s.sourceConfigJSON(cal)); err != nil {
+	if err := s.store.UpdateSourceSyncConfig(ctx, source.ID, s.sourceConfigJSON(cal)); err != nil {
 		return 0, fmt.Errorf("update calendar source metadata: %w", err)
 	}
-	if err := s.updateCalendarSourceOAuthApp(source.ID, cal.ID); err != nil {
+	if err := s.updateCalendarSourceOAuthApp(ctx, source.ID, cal.ID); err != nil {
 		return 0, err
 	}
 	var id int64
 	if event.IsCancelled() {
-		id, _, err = s.flagCancelled(source.ID, cal, event)
+		id, _, err = s.flagCancelled(ctx, source.ID, cal, event)
 	} else {
-		id, err = s.ingestEvent(source.ID, cal, event)
+		id, err = s.ingestEvent(ctx, source.ID, cal, event)
 	}
 	if err != nil {
 		return id, err
 	}
-	if err := s.store.RecomputeConversationStats(source.ID); err != nil {
+	if err := s.store.RecomputeConversationStatsContext(ctx, source.ID); err != nil {
 		return id, fmt.Errorf("refresh calendar conversation statistics: %w", err)
 	}
 	if !event.IsCancelled() {

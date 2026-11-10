@@ -49,7 +49,7 @@ duplicate messages receive every mailbox label where they appear.`,
 			cfg := state.cfg
 			logger := state.logger
 			if !isDaemonCLISubprocess() {
-				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args, nil)
+				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args)
 			}
 			if flags.identifier == "" {
 				return usageErr(cmd, errors.New("--identifier is required"))
@@ -57,7 +57,7 @@ duplicate messages receive every mailbox label where they appear.`,
 
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+			st, cleanup, err := openWritableStoreAndInitForIngestInvocation(ctx, state)
 			if err != nil {
 				return err
 			}
@@ -78,13 +78,14 @@ duplicate messages receive every mailbox label where they appear.`,
 				Logger:             logger,
 			})
 			if importErr != nil {
-				return errors.Join(importErr, rebuildCacheAfterWrite(dbPath, state))
+				return errors.Join(importErr, rebuildCacheAfterWrite(ctx, dbPath, state))
 			}
 
 			if err := runEMLPostImportMigrations(
+				ctx,
 				cmd.OutOrStdout(), st, summary, flags, state,
 			); err != nil {
-				return errors.Join(err, rebuildCacheAfterWrite(dbPath, state))
+				return errors.Join(err, rebuildCacheAfterWrite(ctx, dbPath, state))
 			}
 
 			out := cmd.OutOrStdout()
@@ -99,7 +100,7 @@ duplicate messages receive every mailbox label where they appear.`,
 			if resultErr == nil && summary.HardErrors {
 				resultErr = fmt.Errorf("import completed with %d errors", summary.Errors)
 			}
-			return errors.Join(resultErr, rebuildCacheAfterWrite(dbPath, state))
+			return errors.Join(resultErr, rebuildCacheAfterWrite(ctx, dbPath, state))
 		},
 	}
 
@@ -124,6 +125,7 @@ Example:
 }
 
 func runEMLPostImportMigrations(
+	ctx context.Context,
 	out io.Writer,
 	st *store.Store,
 	summary *importer.EMLImportSummary,
@@ -133,21 +135,25 @@ func runEMLPostImportMigrations(
 	if summary == nil || summary.SourceID == 0 {
 		return nil
 	}
-	state = invocationState(context.Background(), state)
+	state = invocationState(ctx, state)
 	if state == nil || state.logger == nil {
 		return errors.New("invocation state is required")
 	}
+	// The import committed. A stop request that lands now must not skip
+	// recording the owner or the migration that follows.
+	ctx = context.WithoutCancel(ctx)
 	// Establish the source identifier before retrying the legacy migration,
 	// including after a partial import. Otherwise migrated legacy identities
 	// can suppress the source's own identifier on the next resume.
 	if !flags.noDefaultIdentity && store.SourceTypeUsesEmailIdentity(flags.sourceType) {
 		confirmDefaultIdentity(
+			ctx,
 			out, st, summary.SourceID,
 			flags.identifier, flags.identifier, "account-identifier",
 			state.logger,
 		)
 	}
-	if err := runPostSourceCreateMigrationsForInvocation(st, state); err != nil {
+	if err := runPostSourceCreateMigrationsForInvocation(ctx, st, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 	return nil

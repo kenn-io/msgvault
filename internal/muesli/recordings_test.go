@@ -251,7 +251,7 @@ func TestScanRemoteRecordingNotResentAfterTranscriptEdit(t *testing.T) {
 	}
 	_, err := ScanRemote(t.Context(), opts, send)
 	require.NoError(err)
-	_, err = f.muesli.Exec(`UPDATE meetings SET raw_transcript = 'Edited synthetic transcript' WHERE id = ?`, meetingID)
+	_, err = f.muesli.ExecContext(t.Context(), `UPDATE meetings SET raw_transcript = 'Edited synthetic transcript' WHERE id = ?`, meetingID)
 	require.NoError(err)
 	_, err = ScanRemote(t.Context(), opts, send)
 	require.NoError(err)
@@ -284,7 +284,7 @@ func TestScanRemoteRecordingAcknowledgementUsesMeetingIdentity(t *testing.T) {
 	_, err := ScanRemote(t.Context(), opts, send)
 	require.NoError(err)
 
-	_, err = f.muesli.Exec(`DELETE FROM meetings WHERE id = ?`, meetingID)
+	_, err = f.muesli.ExecContext(t.Context(), `DELETE FROM meetings WHERE id = ?`, meetingID)
 	require.NoError(err)
 	insertRow(t, f.muesli, "meetings", completedMeeting(map[string]any{
 		"id": meetingID, "created_at": "2026-09-02 14:00:03", "saved_recording_path": path,
@@ -341,7 +341,7 @@ func TestScanRemoteRetriesRecordingAfterLostCreatedResponse(t *testing.T) {
 	restored := newImporterFixture(t)
 	registerRemoteFixture(t, restored)
 	activeImporter = restored.imp
-	_, err = f.muesli.Exec(`UPDATE meetings SET raw_transcript = 'Edited synthetic transcript' WHERE id = ?`, meetingID)
+	_, err = f.muesli.ExecContext(t.Context(), `UPDATE meetings SET raw_transcript = 'Edited synthetic transcript' WHERE id = ?`, meetingID)
 	require.NoError(err)
 	lostResponse := errors.New("synthetic lost creation response")
 	_, err = ScanRemote(t.Context(), opts, func(ctx context.Context, request RemoteRequest) (RemoteResult, error) {
@@ -408,7 +408,7 @@ func TestScanRemoteRestoresRecordingAfterArchiveBackupRollback(t *testing.T) {
 				require.Equal("created", seeded.Status)
 			}
 			if tt.editTranscript {
-				_, err := f.muesli.Exec(`UPDATE meetings SET raw_transcript = 'Edited synthetic transcript' WHERE id = ?`, meetingID)
+				_, err := f.muesli.ExecContext(t.Context(), `UPDATE meetings SET raw_transcript = 'Edited synthetic transcript' WHERE id = ?`, meetingID)
 				require.NoError(err)
 			}
 			if tt.deferRecording {

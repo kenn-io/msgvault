@@ -38,21 +38,21 @@ func TestConflictReviewRejectsStaleArtifactWithoutRefreshing(t *testing.T) {
 			case "body":
 				plan.Body = append(plan.Body, '\n')
 			case "person":
-				_, err = st.DB().Exec(st.Rebind(`UPDATE persons SET display_name='Changed' WHERE id=?`), *mapping.PersonID)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE persons SET display_name='Changed' WHERE id=?`), *mapping.PersonID)
 			case "inference":
 				_, err = st.AppendPersonNoteContext(t.Context(), store.PersonNoteAppendInput{PersonID: *mapping.PersonID, Text: "New inference", Source: store.ProvenanceExtraction})
 			case "generation":
-				_, err = st.DB().Exec(`UPDATE carddav_accounts SET connection_generation=connection_generation+1`)
+				_, err = st.DB().ExecContext(t.Context(), `UPDATE carddav_accounts SET connection_generation=connection_generation+1`)
 			case "book":
-				_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_address_books SET sync_revision=sync_revision+1 WHERE id=?`), book.ID)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_address_books SET sync_revision=sync_revision+1 WHERE id=?`), book.ID)
 			case "mapping":
-				_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_resources SET mapping_revision=mapping_revision+1 WHERE id=?`), mapping.ID)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_resources SET mapping_revision=mapping_revision+1 WHERE id=?`), mapping.ID)
 			case "etag":
-				_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_conflicts SET remote_etag='changed' WHERE id=?`), conflict.ID)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_conflicts SET remote_etag='changed' WHERE id=?`), conflict.ID)
 			case "conflict":
-				_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_conflicts SET review_revision=review_revision+1 WHERE id=?`), conflict.ID)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_conflicts SET review_revision=review_revision+1 WHERE id=?`), conflict.ID)
 			case "mutation":
-				_, err = st.DB().Exec(st.Rebind(`INSERT INTO carddav_publications(person_id,desired,address_book_id,href) VALUES (?,TRUE,?,?)`), *mapping.PersonID, book.ID, mapping.Href)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO carddav_publications(person_id,desired,address_book_id,href) VALUES (?,TRUE,?,?)`), *mapping.PersonID, book.ID, mapping.Href)
 			case "token":
 				plan.ApprovalToken = "invalid"
 			}
@@ -76,7 +76,7 @@ func TestPendingReviewRejectsStaleArtifactWithoutAuthorizing(t *testing.T) {
 			initial := reviewedCurrentPlan(t, st, personID)
 			_, err := st.PrepareCardDAVPublicationContext(t.Context(), initial.Publication)
 			require.NoError(err)
-			_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_publications SET approved_body_sha256=NULL,approved_inference_revision=NULL,approved_mutation_revision=NULL WHERE person_id=?`), personID)
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_publications SET approved_body_sha256=NULL,approved_inference_revision=NULL,approved_mutation_revision=NULL WHERE person_id=?`), personID)
 			require.NoError(err)
 			source, err := st.LoadCardDAVPublicationReviewSourceContext(t.Context(), personID)
 			require.NoError(err)
@@ -86,17 +86,17 @@ func TestPendingReviewRejectsStaleArtifactWithoutAuthorizing(t *testing.T) {
 			case "body":
 				plan.Body = append(plan.Body, '\n')
 			case "person":
-				_, err = st.DB().Exec(st.Rebind(`UPDATE persons SET display_name='Changed' WHERE id=?`), personID)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE persons SET display_name='Changed' WHERE id=?`), personID)
 			case "inference":
 				_, err = st.AppendPersonNoteContext(t.Context(), store.PersonNoteAppendInput{PersonID: personID, Text: "New inference", Source: store.ProvenanceExtraction})
 			case "generation":
-				_, err = st.DB().Exec(`UPDATE carddav_accounts SET connection_generation=connection_generation+1`)
+				_, err = st.DB().ExecContext(t.Context(), `UPDATE carddav_accounts SET connection_generation=connection_generation+1`)
 			case "book":
-				_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_address_books SET sync_revision=sync_revision+1 WHERE id=?`), book.ID)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_address_books SET sync_revision=sync_revision+1 WHERE id=?`), book.ID)
 			case "mutation":
-				_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_publications SET mutation_revision=mutation_revision+1 WHERE person_id=?`), personID)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_publications SET mutation_revision=mutation_revision+1 WHERE person_id=?`), personID)
 			case "href":
-				_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_publications SET href=href || '-changed' WHERE person_id=?`), personID)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_publications SET href=href || '-changed' WHERE person_id=?`), personID)
 			case "token":
 				plan.ApprovalToken = "invalid"
 			}
@@ -119,7 +119,7 @@ func TestConflictArtifactUpgradeAndReopen(t *testing.T) {
 	conflict, err := st.RecordCardDAVConflictContext(t.Context(), conflictCapture(mapping))
 	require.NoError(err)
 	for _, column := range []string{"review_revision", "local_inference_revision", "approved_local_body_sha256", "approved_local_inference_revision", "approved_conflict_revision", "local_envelope_metadata", "local_mutation_intent"} {
-		_, err = st.DB().Exec(`ALTER TABLE carddav_conflicts DROP COLUMN ` + column)
+		_, err = st.DB().ExecContext(t.Context(), `ALTER TABLE carddav_conflicts DROP COLUMN `+column)
 		require.NoError(err)
 	}
 	reopened, err := store.Open(store.DBPathForTest(st))
@@ -174,19 +174,19 @@ func TestConflictLocalPreparationChecksDurableApproval(t *testing.T) {
 			plan := store.CardDAVConflictLocalPlan{ConflictID: conflict.ID, ExpectedMappingRevision: conflict.MappingRevision, RemoteETag: conflict.RemoteETag, OutgoingSemanticHash: "local-hash"}
 			switch field {
 			case "body":
-				_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_conflicts SET local_body=? WHERE id=?`), append(conflict.LocalBody, '\n'), conflict.ID)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_conflicts SET local_body=? WHERE id=?`), append(conflict.LocalBody, '\n'), conflict.ID)
 			case "inference":
 				_, err = st.AppendPersonNoteContext(t.Context(), store.PersonNoteAppendInput{PersonID: source.Person.ID, Text: "Later inferred", Source: store.ProvenanceExtraction})
 			case "generation":
-				_, err = st.DB().Exec(`UPDATE carddav_accounts SET connection_generation=connection_generation+1`)
+				_, err = st.DB().ExecContext(t.Context(), `UPDATE carddav_accounts SET connection_generation=connection_generation+1`)
 			case "book":
-				_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_address_books SET sync_revision=sync_revision+1 WHERE id=?`), source.Book.ID)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_address_books SET sync_revision=sync_revision+1 WHERE id=?`), source.Book.ID)
 			case "mapping":
-				_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_resources SET mapping_revision=mapping_revision+1 WHERE id=?`), source.Resource.ID)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_resources SET mapping_revision=mapping_revision+1 WHERE id=?`), source.Resource.ID)
 			case "approval_revision":
-				_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_conflicts SET approved_conflict_revision=approved_conflict_revision+1 WHERE id=?`), conflict.ID)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_conflicts SET approved_conflict_revision=approved_conflict_revision+1 WHERE id=?`), conflict.ID)
 			case "approval_inference":
-				_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_conflicts SET approved_local_inference_revision=0 WHERE id=?`), conflict.ID)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_conflicts SET approved_local_inference_revision=0 WHERE id=?`), conflict.ID)
 			case "remote_etag":
 				plan.RemoteETag = `"later"`
 			}
@@ -223,7 +223,7 @@ func TestConflictIntentReopenAndRollbackPreserveExactOwnership(t *testing.T) {
 	st, conflict := approvedInferenceConflict(t)
 	source, err := st.LoadCardDAVConflictReviewSourceContext(t.Context(), conflict.ID)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`INSERT INTO carddav_publications(person_id,desired,address_book_id,href) VALUES (?,TRUE,?,?)`), source.Person.ID, source.Book.ID, source.Resource.Href)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO carddav_publications(person_id,desired,address_book_id,href) VALUES (?,TRUE,?,?)`), source.Person.ID, source.Book.ID, source.Resource.Href)
 	require.NoError(err)
 	pending, err := st.PrepareCardDAVConflictLocalContext(t.Context(), store.CardDAVConflictLocalPlan{ConflictID: conflict.ID, ExpectedMappingRevision: conflict.MappingRevision, RemoteETag: conflict.RemoteETag, OutgoingSemanticHash: "local-hash"})
 	require.NoError(err)

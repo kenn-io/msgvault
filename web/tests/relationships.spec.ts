@@ -347,6 +347,17 @@ for (const facet of ['person', 'domain'] as const) {
   });
 }
 
+test('person messages keep their kind icon on hover at phone width', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await prepare(page);
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipTarget: 'cluster:1' }))}`);
+  const row = page.getByRole('grid', { name: 'Messages results' }).getByRole('row').filter({ hasText: 'Subject line' });
+  const kind = row.locator('.cell--kind');
+  await expect(kind).toBeVisible();
+  await row.hover();
+  await expect(kind).toBeVisible();
+});
+
 for (const facet of ['person', 'domain'] as const) {
   for (const [width, height] of [[1280, 720], [420, 900]]) {
     test(`${facet} Messages stay filled while scrolling and paging at ${width}px`, async ({ page }) => {
@@ -401,8 +412,15 @@ for (const facet of ['person', 'domain'] as const) {
       await page.keyboard.press('Enter');
       const reader = page.getByRole('complementary', { name: 'Reading pane: Synthetic subject 1200' });
       await expect(reader.getByText('Synthetic preview 1200', { exact: true })).toBeVisible();
-      expect((await primary.boundingBox())!.height).toBeGreaterThanOrEqual(120);
-      expect((await secondary.boundingBox())!.height).toBeGreaterThanOrEqual(160);
+      if (width <= 640) {
+        await expect(grid).toBeHidden();
+        await reader.getByRole('button', { name: 'Back to results' }).click();
+        await expect(grid).toBeVisible();
+        await expect(page.locator(`#${activeID}`)).toBeInViewport();
+      } else {
+        expect((await primary.boundingBox())!.height).toBeGreaterThanOrEqual(120);
+        expect((await secondary.boundingBox())!.height).toBeGreaterThanOrEqual(160);
+      }
     });
   }
 }
@@ -630,6 +648,35 @@ test('typing in the top bar narrows People without pressing Search', async ({ pa
   expect(queries).toEqual(['bob']);
 });
 
+test.describe('touch People toolbar', () => {
+  test.use({ hasTouch: true, isMobile: true });
+  test('phone People toolbar fits touch while the Sort menu stays compact', async ({ page }) => {
+    await prepare(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
+    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipShowAll: true }))}`);
+    await expect(page.getByRole('grid', { name: 'People results' }).getByText('Alice Example')).toBeVisible();
+    const toolbar = page.locator('.people-list .toolbar');
+    await expect(toolbar.locator('.chips button')).toBeVisible();
+    for (const button of await toolbar.locator('button:visible').all()) {
+      expect((await button.boundingBox())!.height, await button.getAttribute('aria-label') ?? await button.innerText()).toBeGreaterThanOrEqual(44);
+    }
+    await page.getByRole('combobox', { name: 'Sort: Closest' }).click();
+    expect((await page.getByRole('option', { name: 'Most recent' }).boundingBox())!.height).toBeLessThan(44);
+    await page.keyboard.press('Escape');
+  });
+});
+
+test('narrow mouse People toolbar retains compact control sizes', async ({ page }) => {
+  await prepare(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(false);
+  await page.goto('/?workspace=relationships');
+  await expect(page.getByRole('grid', { name: 'People results' }).getByText('Alice Example')).toBeVisible();
+  expect((await page.getByRole('button', { name: 'Filter', exact: true }).boundingBox())!.height).toBeLessThan(44);
+  expect((await page.getByRole('combobox', { name: 'Sort: Closest', exact: true }).boundingBox())!.height).toBeLessThan(44);
+});
+
 for (const close of ['Escape', 'Back to People']) {
   test(`narrow People moves focus into the person page and restores the grid with ${close}`, async ({ page }) => {
     await prepare(page);
@@ -664,9 +711,10 @@ for (const close of ['Escape', 'Back to People']) {
     await page.keyboard.press('Enter');
     const reading = page.getByRole('complementary', { name: 'Reading pane: Team Chat' });
     if (close === 'Escape') {
-      await reading.getByRole('button', { name: 'Close reading pane', exact: true }).focus();
+      await reading.getByRole('button', { name: 'Back to results', exact: true }).focus();
       await page.keyboard.press('Enter');
       await expect(reading).toBeHidden();
+      await expect(messages).toBeFocused();
       await page.keyboard.press('Escape');
       await expect(list).toBeVisible();
       await expect(list).toBeFocused();

@@ -46,10 +46,8 @@ func captureWarnings(t *testing.T) *bytes.Buffer {
 // unsearchable. This test pins both: the loop-guard and the unsearchability.
 //
 // Approach: a test-only injection seam (store.SetBackfillFTSBatchErrHookForTest).
-// A post-cap tsvector overflow is not reliably reproducible — the 600000-char
-// LEFT cap keeps even a pathological many-distinct-token body comfortably under
-// PostgreSQL's 1MB tsvector limit — so the row-by-row fallback can only be
-// exercised deterministically through a seam that injects the batch error.
+// The seam injects the batch error for one chosen row, which a body built to
+// overflow cannot do deterministically inside a batch.
 //
 // PG-only: the fallback exists for the PostgreSQL tsvector-overflow case
 // (SQLite's FTS5 has no such limit, so a real backfill never errors there).
@@ -123,7 +121,8 @@ func TestPG_BackfillFTS_RowByRowFallbackSkipsBadRow(t *testing.T) {
 		badFTS          string
 		indexingVersion int
 	)
-	require.NoError(f.Store.DB().QueryRow(
+	require.NoError(f.Store.DB().QueryRowContext(
+		t.Context(),
 		"SELECT search_fts IS NULL, COALESCE(search_fts::text, ''), indexing_version FROM messages WHERE id = $1",
 		badID).Scan(&badIsNull, &badFTS, &indexingVersion),
 		"probe bad row")

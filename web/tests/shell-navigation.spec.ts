@@ -1,4 +1,5 @@
-import { documentStatus } from '../src/test/operations';
+import { visualStatus } from '../src/test/operations';
+import { view } from '../src/lib/components/shell/fixtures.test-support';
 import { stubOperationStatus } from './kit-ui';
 import { expect, test } from '@playwright/test';
 
@@ -12,6 +13,8 @@ function entry(index: number) {
     message_count: 1, match: {}
   };
 }
+
+const saved = view(3, 'Project notes');
 
 test.beforeEach(async ({ page }) => {
   await page.route('**/api/session', (route) => route.fulfill({
@@ -31,15 +34,59 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/api/v1/sources/status', (route) => route.fulfill({ json: { sources: [] } }));
 });
 
-test('narrow navigation menu keeps keyboard focus inside the dialog', async ({ page }) => {
-  await page.setViewportSize({ width: 420, height: 860 });
-  await page.goto('/?workspace=everything');
-  const opener = page.getByRole('button', { name: 'Open navigation' });
+test.describe('touch navigation', () => {
+  test.use({ hasTouch: true, isMobile: true });
+  test('touch drawer sizes controls and keeps focus through close', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
+    await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [saved, view(4, 'Second view'), view(5, 'Files view', 'files')] } }));
+    await page.goto('/?workspace=everything');
+    const opener = page.getByRole('button', { name: 'Open navigation' });
+    const search = await page.getByRole('searchbox', { name: 'Search messages' }).boundingBox();
+    const mode = await page.getByRole('combobox', { name: /Search mode/ }).boundingBox();
+    expect(search!.width).toBeGreaterThan(mode!.width);
+    expect(mode!.width).toBeLessThan(120);
 
-  await opener.click();
-  await expect(page.getByRole('button', { name: 'Messages' })).toBeFocused();
-  for (let index = 0; index < 20; index += 1) await page.keyboard.press('Tab');
-  await expect(page.getByRole('dialog', { name: 'Navigation' }).locator(':focus')).toHaveCount(1);
+    await opener.click();
+    await expect(page.getByRole('button', { name: 'Messages' })).toBeFocused();
+    for (let index = 0; index < 20; index += 1) await page.keyboard.press('Tab');
+    await expect(page.getByRole('dialog', { name: 'Navigation' }).locator(':focus')).toHaveCount(1);
+    const drawer = page.getByRole('dialog', { name: 'Navigation' });
+    await expect(drawer.getByRole('button', { name: 'Project notes', exact: true })).toBeVisible();
+    await expect(drawer.getByRole('button', { name: 'Project notes actions' })).toBeVisible();
+    for (const button of await drawer.locator('button:visible').all()) {
+      expect((await button.boundingBox())!.height, await button.getAttribute('aria-label') ?? await button.innerText()).toBeGreaterThanOrEqual(44);
+    }
+    await drawer.getByRole('button', { name: 'Close navigation' }).click();
+    await expect(drawer).toBeHidden();
+    await expect(opener).toBeFocused();
+
+    let attempts = 0;
+    await page.route('**/api/v1/saved-views', route => {
+      attempts += 1;
+      return attempts === 1
+        ? route.fulfill({ status: 500, json: { error: 'Unavailable' } })
+        : route.fulfill({ json: { saved_views: [saved] } });
+    });
+    await page.goto('/?workspace=everything');
+    await page.getByRole('button', { name: 'Open navigation' }).tap();
+    const retry = drawer.getByRole('button', { name: 'Retry' });
+    await expect(retry).toBeVisible();
+    for (const button of await drawer.locator('button:visible').all()) {
+      expect((await button.boundingBox())!.height, await button.getAttribute('aria-label') ?? await button.innerText()).toBeGreaterThanOrEqual(44);
+    }
+    await retry.tap();
+    await expect(drawer.getByRole('button', { name: 'Project notes', exact: true })).toBeVisible();
+  });
+});
+
+test('mouse navigation retains compact control sizes', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(false);
+  await page.goto('/?workspace=everything');
+  await page.getByRole('button', { name: 'Open navigation' }).click();
+  const drawer = page.getByRole('dialog', { name: 'Navigation' });
+  expect((await drawer.getByRole('button', { name: 'Close navigation' }).boundingBox())!.height).toBeLessThan(44);
 });
 
 test('grid shortcuts pressed outside the grid still move the active row', async ({ page }) => {
@@ -56,9 +103,6 @@ test('grid shortcuts pressed outside the grid still move the active row', async 
 });
 
 test('desktop saved-view deletion keeps keyboard focus through Undo', async ({ page }) => {
-  const saved = { id: 3, name: 'Project notes', revision: 1, schema_version: 2,
-    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
-    canonical_state: { filters: [], grouping: [], presentation: 'table', sort: [], columns: [] } };
   await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [saved] } }));
   await page.goto('/?workspace=everything');
   const row = page.getByRole('button', { name: 'Project notes', exact: true });
@@ -107,15 +151,15 @@ test('renaming a saved view restores keyboard focus after alphabetical reorderin
 
 test('Settings Overview Details closes back to Overview with a status title', async ({ page }) => {
   await page.route('**/api/v1/operations/status', route => route.fulfill({ json: { lanes: [{
-    kind: 'document_extraction', lane: 'documents', configured: true,
-    related_status: 'getDocumentIndexStatus', supported_actions: [], history_availability: 'available'
+    kind: 'visual_embedding', lane: 'visual_attachments', configured: true,
+    related_status: 'getVisualAttachmentStatus', supported_actions: [], history_availability: 'available'
   }] } }));
-  await page.route('**/api/v1/documents/status/current', route => route.fulfill({ json: documentStatus }));
+  await page.route('**/api/v1/multimodal/status', route => route.fulfill({ json: visualStatus }));
   await page.goto('/?workspace=settings');
-  const details = page.getByRole('button', { name: 'Details, Document extraction' });
+  const details = page.getByRole('button', { name: 'Details, Visual search' });
   await details.click();
   const dialog = page.getByRole('dialog');
-  await expect(dialog).toHaveAccessibleName('Document index status');
+  await expect(dialog).toHaveAccessibleName('Visual attachment status');
   await dialog.getByRole('button', { name: 'Back', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeHidden();
   await expect(details).toBeVisible();

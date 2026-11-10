@@ -23,7 +23,7 @@ func TestUpdateDisplayNameRejectsAmbiguousDisplayName(t *testing.T) {
 	require.NoError(f.Store.UpdateSourceDisplayName(first.ID, "Work"))
 	require.NoError(f.Store.UpdateSourceDisplayName(second.ID, "Work"))
 
-	_, err = accountops.UpdateDisplayName(f.Store, accountops.UpdateRequest{
+	_, err = accountops.UpdateDisplayName(t.Context(), f.Store, accountops.UpdateRequest{
 		Email: "Work", DisplayName: "Renamed",
 	})
 	require.Error(err)
@@ -41,7 +41,7 @@ func TestUpdateDisplayNameTargetsExactSourceID(t *testing.T) {
 	second, err := f.Store.GetOrCreateSource("imap", "shared@example.test")
 	require.NoError(err)
 
-	result, err := accountops.UpdateDisplayName(f.Store, accountops.UpdateRequest{
+	result, err := accountops.UpdateDisplayName(t.Context(), f.Store, accountops.UpdateRequest{
 		SourceID: first.ID, SourceIDSet: true, DisplayName: "Primary",
 	})
 	require.NoError(err)
@@ -63,7 +63,7 @@ func TestUpdateRequestJSONPreservesExplicitZeroSourceID(t *testing.T) {
 	require.NoError(json.Unmarshal([]byte(`{"source_id":0,"display_name":"Work"}`), &req))
 	assert.True(req.SourceIDSet)
 
-	_, err := accountops.UpdateDisplayName(storetest.New(t).Store, req)
+	_, err := accountops.UpdateDisplayName(t.Context(), storetest.New(t).Store, req)
 	require.Error(err)
 	assert.Equal(opserr.KindInvalid, opserr.KindOf(err))
 	assert.ErrorContains(err, "source ID must be positive")

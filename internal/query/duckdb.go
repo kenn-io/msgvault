@@ -192,8 +192,8 @@ func NewArchiveDuckDBEngine(ctx context.Context, analyticsDir string, opts ...Du
 // If sqlitePath is empty, only aggregate queries and GetTotalStats will work.
 // If sqliteDB is nil, Search will fall back to LIKE queries and body extraction
 // from raw MIME may be slower.
-func NewDuckDBEngine(analyticsDir string, sqlitePath string, sqliteDB *sql.DB, opts ...DuckDBOptions) (*DuckDBEngine, error) {
-	return newDuckDBEngine(context.Background(), analyticsDir, sqlitePath, sqliteDB, false, opts...)
+func NewDuckDBEngine(ctx context.Context, analyticsDir string, sqlitePath string, sqliteDB *sql.DB, opts ...DuckDBOptions) (*DuckDBEngine, error) {
+	return newDuckDBEngine(ctx, analyticsDir, sqlitePath, sqliteDB, false, opts...)
 }
 
 func newDuckDBEngine(ctx context.Context, analyticsDir string, sqlitePath string, sqliteDB *sql.DB, archiveOnly bool, opts ...DuckDBOptions) (*DuckDBEngine, error) {
@@ -1041,18 +1041,7 @@ func (e *DuckDBEngine) buildNonTextSearchConditions(q *search.Query, keyColumns 
 		conditions, args, "msg.conversation_id", q.ConversationIDs,
 	)
 
-	// from: filter - match sender email
-	for _, from := range q.FromAddrs {
-		fromPattern := "%" + escapeILIKE(from) + "%"
-		conditions = append(conditions, `EXISTS (
-			SELECT 1 FROM mr mr_from
-			JOIN p p_from ON p_from.id = mr_from.participant_id
-			WHERE mr_from.message_id = msg.id
-			  AND mr_from.recipient_type = 'from'
-			  AND p_from.email_address ILIKE ? ESCAPE '\'
-		)`)
-		args = append(args, fromPattern)
-	}
+	conditions, args = appendDuckDBSenderConditions(conditions, args, q.FromAddrs)
 
 	conditions, args = appendDuckDBRecipientSearchCondition(conditions, args, q.ToAddrs, "to")
 	conditions, args = appendDuckDBRecipientSearchCondition(conditions, args, q.CcAddrs, "cc")
@@ -2332,18 +2321,10 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 
 	conditions = append(conditions, searchMessageVisibilityWhere("m", q))
 
-	// From filter
-	if len(q.FromAddrs) > 0 {
-		joins = append(joins, `
-			JOIN sqlite_db.message_recipients mr_from ON mr_from.message_id = m.id AND mr_from.recipient_type = 'from'
-			JOIN sqlite_db.participants p_from ON p_from.id = mr_from.participant_id
-		`)
-		placeholders := make([]string, len(q.FromAddrs))
-		for i, addr := range q.FromAddrs {
-			placeholders[i] = "?"
-			args = append(args, addr)
-		}
-		conditions = append(conditions, fmt.Sprintf("LOWER(p_from.email_address) IN (%s)", strings.Join(placeholders, ",")))
+	for _, address := range q.FromAddrs {
+		condition, _, senderArgs := search.SenderLookup(address, func(column string) string { return "LOWER(" + column + ")" }, "sqlite_db.messages", "sqlite_db.message_recipients", "sqlite_db.participants", "m")
+		conditions = append(conditions, condition)
+		args = append(args, senderArgs...)
 	}
 
 	// To filter
@@ -3320,24 +3301,7 @@ func (e *DuckDBEngine) buildSearchCriteria(q *search.Query) ([]string, []any) {
 		}
 	}
 
-	// From filter - check email, phone, display name via message_recipients and direct sender_id
-	if len(q.FromAddrs) > 0 {
-		for _, addr := range q.FromAddrs {
-			pattern := "%" + escapeILIKE(addr) + "%"
-			conditions = append(conditions, `(EXISTS (
-				SELECT 1 FROM mr
-				JOIN p ON p.id = mr.participant_id
-				WHERE mr.message_id = msg.id
-				  AND mr.recipient_type = 'from'
-				  AND (p.email_address ILIKE ? ESCAPE '\' OR p.phone_number ILIKE ? ESCAPE '\' OR p.display_name ILIKE ? ESCAPE '\')
-			) OR EXISTS (
-				SELECT 1 FROM p
-				WHERE p.id = msg.sender_id
-				  AND (p.email_address ILIKE ? ESCAPE '\' OR p.phone_number ILIKE ? ESCAPE '\' OR p.display_name ILIKE ? ESCAPE '\')
-			))`)
-			args = append(args, pattern, pattern, pattern, pattern, pattern, pattern)
-		}
-	}
+	conditions, args = appendDuckDBSenderConditions(conditions, args, q.FromAddrs)
 
 	conditions, args = appendDuckDBRecipientSearchCondition(conditions, args, q.ToAddrs, "to")
 	conditions, args = appendDuckDBRecipientSearchCondition(conditions, args, q.CcAddrs, "cc")
@@ -3487,4 +3451,13 @@ func (e *DuckDBEngine) ListThread(ctx context.Context, q ThreadQuery) (*ThreadPa
 		return nil, errOriginalMessageNeedsSQLite
 	}
 	return e.sqliteEngine.ListThread(ctx, q)
+}
+
+func appendDuckDBSenderConditions(conditions []string, args []any, addresses []string) ([]string, []any) {
+	for _, address := range addresses {
+		condition, _, senderArgs := search.SenderLookup(address, func(column string) string { return "LOWER(" + column + ")" }, "msg", "mr", "p", "msg")
+		conditions = append(conditions, condition)
+		args = append(args, senderArgs...)
+	}
+	return conditions, args
 }

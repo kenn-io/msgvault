@@ -7,7 +7,6 @@
   import type { PDFRenderHandle } from './FileViewer.browser.svelte';
   import { isSupportedImageMIME, readBoundedStream, validatedImageBlob } from './preview-bytes';
   import { formatBytes } from '../../util/format';
-  import KataFileIssueAction from '../kata/KataFileIssueAction.svelte';
   interface Props {
     client: APIClient;
     file: FileViewerTarget;
@@ -273,7 +272,6 @@
         <span>{formatBytes(metadata?.size_bytes ?? file.size_bytes ?? 0)}</span>
       </div>
       <div class="actions">
-        {#if metadata}<KataFileIssueAction {client} attachmentID={metadata.id} messageID={metadata.message_id} filename={metadata.filename || 'File'} />{/if}
         <Button size="sm" label="Open message" disabled={!metadata && !file.entry_key} onclick={openItem} />
         <Button
           size="sm"

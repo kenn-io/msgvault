@@ -11,6 +11,7 @@ import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
 import { mediaReadinessKey } from '../../search/media-ready.svelte';
 import { groupRowName } from '../../explore/labels';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
+import { sourceGroup } from '../../explore/fixtures.test-support';
 import { ExploreState, parseExploreURLState } from '../../explore/state.svelte';
 import AppShell from './AppShell.svelte';
 
@@ -18,9 +19,10 @@ vi.mock('../../telemetry/screen-views', () => ({ startScreenViewReporting: () =>
 
 const telemetryEvents: Array<{ event: string; properties: { kind: string } }> = [];
 beforeEach(() => { telemetryEvents.length = 0; });
-const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (input, init) => {
+const createAPIClient = (fetchFn: typeof fetch, localFetch: typeof fetch = async () => Response.json({ host: 'archive.example.test', enabled: true, provider: 'builtin', download_bytes: 0, phase: 'idle', done_bytes: 0, total_bytes: 0 })) => createCaptureClient(async (input, init) => {
   const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
   if (path === '/api/v1/deletions') return Response.json({ manifests: [] });
+  if (path === '/api/v1/embeddings/local') return localFetch(input, init);
   if (path === '/api/v1/saved-views') return Response.json({ saved_views: [] });
   if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
   if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });
@@ -192,9 +194,12 @@ describe('EverythingWorkspace', () => {
 
   it('does not offer an invalid Files entry kind drill', async () => {
     window.history.replaceState(null, '', '/');
+    const fileBodies: Array<{ predicate?: { filters?: Array<{ dimension: string; values?: string[] }> } }> = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
-      if (new URL(request.url).pathname.endsWith('/files/groups')) return Response.json({ rows: [{ key: 'file', label: 'File', count: 2 }], total_count: 1 });
+      const path = new URL(request.url).pathname;
+      if (path.startsWith('/api/v1/files/') && request.method === 'POST') fileBodies.push(await request.clone().json());
+      if (path.endsWith('/files/groups')) return Response.json({ rows: [{ key: 'file', label: 'File', count: 2 }], total_count: 1 });
       return Response.json(exploreResponse());
     });
     const state = new ExploreState(window);
@@ -206,8 +211,11 @@ describe('EverythingWorkspace', () => {
       expect(within(grid).queryByRole('button', { name: 'Show items in File' })).toBeNull();
       await fireEvent.pointerDown(within(grid).getByText('File'));
       await fireEvent.keyDown(grid, { key: 'Enter' });
+      await fireEvent.dblClick(within(grid).getByText('File'));
       expect(state.current.groupingChain).toEqual(['kind']);
       expect(state.current.filters).toEqual([]);
+      expect(fileBodies.length).toBeGreaterThan(0);
+      expect(fileBodies.flatMap(body => body.predicate?.filters ?? [])).not.toContainEqual({ dimension: 'kind', values: ['file'] });
     } finally {
       view.unmount();
       state.destroy();
@@ -281,6 +289,9 @@ describe('EverythingWorkspace', () => {
     const pane = await screen.findByRole('complementary', { name: 'Reading pane: Meeting' });
     expect(within(pane).getByText('12 items')).toBeDefined();
     expect(state.current.selectedRow).toBe('group:kind:meeting');
+    await fireEvent.click(screen.getByRole('button', { name: 'Show items in Meeting' }));
+    expect(state.current.filters).toEqual([{ dimension: 'kind', values: ['meeting'] }]);
+    expect(state.current.groupingChain).toEqual([]);
     rendered.unmount();
     state.destroy();
   });
@@ -664,10 +675,8 @@ describe('EverythingWorkspace', () => {
     grid.focus();
     await fireEvent.keyDown(grid, { key: ' ' });
 
-    expect(await screen.findByText('Export unavailable: Selection contains items without exportable files.')).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'More selection actions' }));
-    expect(screen.getByText('Your sources don’t provide links to open these items.')).toBeDefined();
-    expect(screen.queryByRole('button', { name: 'Export selection' })).toBeNull();
+    const exportButton = await screen.findByRole('button', { name: 'Export selection' });
+    expect((exportButton as HTMLButtonElement).disabled).toBe(true);
     const body = await preflightRequests[0]!.clone().json();
     expect(body.selection).toMatchObject({
       mode: 'explicit', row_keys: ['message:1'], cache_revision: 'cache-1'
@@ -872,7 +881,7 @@ describe('EverythingWorkspace', () => {
       grid.focus();
       await fireEvent.keyDown(grid, { key: ' ' });
       expect(screen.getByRole('button', { name: 'Meeting context…' })).toBeTruthy();
-      await fireEvent.click(screen.getByRole('button', { name: 'Select all 2 matching items' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Select all 2 matching' }));
       await waitFor(() => expect(selectionStatus().textContent).toBe('All 2 matching items selected'));
       expect(screen.queryByRole('button', { name: 'Meeting context…' })).toBeNull();
     } finally {
@@ -929,7 +938,7 @@ describe('EverythingWorkspace', () => {
     await screen.findByText('Synthetic subject 8');
     grid.focus();
     await fireEvent.keyDown(grid, { key: 'A' });
-    await fireEvent.click(screen.getByRole('button', { name: 'Select all 5 matching items' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Select all 5 matching' }));
     await fireEvent.keyDown(grid, { key: ' ' });
     await fireEvent.click(screen.getByRole('button', { name: 'Meeting context…' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
@@ -1259,7 +1268,7 @@ describe('EverythingWorkspace', () => {
       requests.push(request);
       if (new URL(request.url).pathname.endsWith('/groups')) {
         return Response.json({
-          rows: [{ key: '7', label: 'Example source', count: 12, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
+          rows: [sourceGroup],
           total_count: 1,
           cache_revision: 'cache-1',
           search_provenance: {}
@@ -1604,6 +1613,68 @@ describe('EverythingWorkspace', () => {
     state.destroy();
   });
 
+
+  it.each([
+    ['participant', '42', 'Person Example'],
+    ['domain', 'example.test', 'example.test'],
+  ])('keeps the %s file rail during an unchanged status poll', async (dimension, key, label) => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const initialState = {
+      schemaVersion: 1, workspace: 'everything', query: '', searchMode: 'full_text',
+      filters: [], groupingChain: [], presentation: 'table', sort: [{ field: 'occurred_at', direction: 'desc' }],
+      columns: ['kind', 'people', 'title', 'excerpt', 'time', 'attachments'], columnWidths: {},
+      activeRow: null, selectedRow: `group:${dimension}:${key}`, inspectorPinned: true,
+      conversationAnchor: null, scrollAnchor: null,
+    };
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify(initialState))}`);
+    const fileRequests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      const meetingResponse = meetingFixtureResponse(path);
+      if (meetingResponse) return meetingResponse;
+      if (path.endsWith('/groups')) return Response.json({
+        rows: [{ key, label, count: 3, estimated_bytes: 512, latest_at: '2026-07-18T12:00:00Z' }],
+        total_count: 1, cache_revision: 'cache-1', search_provenance: {},
+      });
+      if (path.endsWith('/explore/files')) {
+        fileRequests.push(request);
+        return Response.json({
+          files: [{ key: 'file-1', filename: 'report.pdf', size: 128, occurred_at: '2026-07-18T12:00:00Z', title: 'Report', source_identifier: 'example.test' }],
+          total_count: 1, cache_revision: 'cache-1', search_provenance: {},
+        });
+      }
+      return Response.json(exploreResponse());
+    });
+    const baseClient = createAPIClient(fetchFn);
+    let statusRequests = 0;
+    const client = { fetch: (async (input, init) => {
+      const url = input instanceof Request ? input.url : new URL(String(input), window.location.href);
+      if (new URL(url).pathname === '/api/v1/sources/status') statusRequests += 1;
+      return baseClient.fetch(input, init);
+    }) satisfies typeof fetch };
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client, state });
+    try {
+      const pane = await screen.findByRole('complementary', { name: `Reading pane: ${label}` });
+      const rail = within(pane).getByRole('region', { name: 'Chronological files' });
+      expect(await within(rail).findByText('report.pdf')).toBeDefined();
+      expect(fileRequests).toHaveLength(1);
+      expect(statusRequests).toBeGreaterThan(0);
+      const beforePoll = statusRequests;
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      await tick();
+      expect(statusRequests).toBeGreaterThan(beforePoll);
+      expect(fileRequests).toHaveLength(1);
+      expect(within(rail).getByText('report.pdf')).toBeDefined();
+      expect(within(rail).queryByText('Loading file facts…')).toBeNull();
+    } finally {
+      rendered.unmount();
+      state.destroy();
+      vi.useRealTimers();
+    }
+  });
 
   it('rehydrates an exact aggregate selection after the grouped rows are absent', async () => {
     const initialState = {
@@ -2566,11 +2637,11 @@ describe('EverythingWorkspace', () => {
     await screen.findByText('Synthetic subject 2');
     grid.focus();
     await fireEvent.keyDown(grid, { key: 'A' });
-    expect(screen.getByRole('button', { name: 'Select all 2 matching items' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Select all 2 matching' })).toBeDefined();
 
     state.commitSearch('new predicate', 'full_text');
     await waitFor(() => expect(calls).toBe(2));
-    expect(screen.queryByRole('button', { name: 'Select all 2 matching items' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Select all 2 matching' })).toBeNull();
 
     resolveNext?.(Response.json(exploreResponse({
       rows: [entry(3)],
@@ -2739,7 +2810,7 @@ describe('EverythingWorkspace', () => {
       if (path.endsWith('/explore/groups')) {
         counts.groups += 1;
         return Response.json({
-          rows: [{ key: '7', label: 'Example source', count: 12, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
+          rows: [sourceGroup],
           total_count: 1, cache_revision: 'cache-1', search_provenance: {}
         });
       }
@@ -2834,3 +2905,35 @@ describe('EverythingWorkspace', () => {
 function selectionStatus(): HTMLElement {
   return screen.getByRole('status', { name: 'Selection status' });
 }
+
+it('checks local availability once and opens Settings from the full-text results hint', async () => {
+  window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', searchMode: 'full_text' }))}`);
+  const methods: string[] = [];
+  const fetchFn: typeof fetch = async input => {
+    const request = input as Request;
+    if (new URL(request.url).pathname === '/api/v1/embeddings/local') {
+      methods.push(request.method);
+      return Response.json({ host: 'archive.example.test', enabled: false, provider: '', phase: 'idle', download_bytes: 290000000, done_bytes: 0, total_bytes: 0 });
+    }
+    return Response.json(exploreResponse());
+  };
+  const client = createAPIClient(fetchFn, fetchFn);
+  const state = new ExploreState(window);
+  const view = render(AppShell, { client, state });
+  await waitFor(() => expect(methods).toEqual(['GET']));
+  expect(screen.queryByRole('button', { name: 'Turn on' })).toBeNull();
+  state.replaceSearchDraft('orchard', 'full_text');
+  await screen.findByRole('button', { name: 'Turn on' });
+  state.replaceSearchDraft('pear', 'full_text');
+  // The hint steps aside while the new query loads.
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Turn on' })).toBeNull());
+  await screen.findByRole('button', { name: 'Turn on' });
+  expect(methods).toEqual(['GET']);
+  await fireEvent.click(screen.getByRole('button', { name: 'Turn on' }));
+  await waitFor(() => expect(state.current.workspace).toBe('settings'));
+  expect(state.current.settingsCategory).toBe('overview');
+  expect(screen.queryByText(/Search by meaning is off/)).toBeNull();
+  expect(methods.filter(method => method !== 'GET')).toEqual([]);
+  view.unmount();
+  state.destroy();
+});

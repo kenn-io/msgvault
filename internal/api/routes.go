@@ -101,13 +101,26 @@ func configureHuma() {
 		// The API uses encoding/json/v2, which encodes nil slices as empty
 		// arrays. Keep Huma's schemas aligned with that wire contract.
 		huma.DefaultArrayNullable = false
-		huma.NewError = func(status int, message string, _ ...error) huma.StatusError {
-			if message == "" {
-				message = http.StatusText(status)
-			}
-			return newAPIHTTPError(status, errorCodeForStatus(status), message)
-		}
 	})
+}
+
+// transformHumaError gives Huma's own errors, such as request validation
+// failures and huma.ErrorXXX results, this API's {error,message} envelope.
+// It runs only for this API. Replacing huma.NewError instead would change the
+// error responses of every other Huma API in the same process.
+func transformHumaError(ctx huma.Context, _ string, value any) (any, error) {
+	model, ok := value.(*huma.ErrorModel)
+	if !ok {
+		return value, nil
+	}
+	message := model.Detail
+	if message == "" {
+		message = http.StatusText(model.Status)
+	}
+	// huma.ErrorModel negotiates application/problem+json; the envelope
+	// is plain JSON.
+	ctx.SetHeader("Content-Type", "application/json")
+	return newAPIHTTPError(model.Status, errorCodeForStatus(model.Status), message), nil
 }
 
 func errorCodeForStatus(status int) string {
@@ -171,6 +184,7 @@ func (s *Server) setupHumaAPI(mux humago.Mux) huma.API {
 	// success and error bodies on the single bare {error,message} envelope the
 	// raw handlers already use, instead of the $schema-wrapped variant.
 	config.CreateHooks = nil
+	config.Transformers = append(config.Transformers, transformHumaError)
 	config.Components.Schemas.RegisterTypeAlias(
 		reflect.TypeFor[query.MessageSummary](),
 		reflect.TypeFor[CLIQueryMessageSummary](),
@@ -189,7 +203,38 @@ func (s *Server) setupHumaAPI(mux humago.Mux) huma.API {
 		},
 	}
 
-	return humago.New(mux, config)
+	api := humago.New(mux, config)
+	documentAPIErrors(api)
+	return api
+}
+
+// documentAPIErrors makes the OpenAPI document describe the error envelope
+// transformHumaError writes. Huma documents each operation's errors with the
+// type huma.NewError returns, which this API no longer replaces, so the hook
+// swaps that schema for apiHTTPError and drops Huma's own error types from
+// the components.
+func documentAPIErrors(api huma.API) {
+	registry := api.OpenAPI().Components.Schemas
+	envelope := registry.Schema(reflect.TypeFor[apiHTTPError](), true, "")
+	humaModel := registry.Schema(reflect.TypeFor[huma.ErrorModel](), true, "").Ref
+	humaDetail := registry.Schema(reflect.TypeFor[huma.ErrorDetail](), true, "").Ref
+	dropHumaErrors := func() {
+		for _, ref := range []string{humaModel, humaDetail} {
+			delete(registry.Map(), strings.TrimPrefix(ref, "#/components/schemas/"))
+		}
+	}
+	dropHumaErrors()
+	api.OpenAPI().OnAddOperation = append(api.OpenAPI().OnAddOperation,
+		func(_ *huma.OpenAPI, op *huma.Operation) {
+			for _, response := range op.Responses {
+				if media := response.Content["application/problem+json"]; media != nil &&
+					media.Schema != nil && media.Schema.Ref == humaModel {
+					delete(response.Content, "application/problem+json")
+					response.Content["application/json"] = &huma.MediaType{Schema: envelope}
+				}
+			}
+			dropHumaErrors()
+		})
 }
 
 func (s *Server) setupAPIV1Group(api huma.API) huma.API {
@@ -307,14 +352,14 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 
 	registerAPIV1RawHumaJSONRoute[StatsResponse](apiV1, "getStats", http.MethodGet, "/stats", "Get archive statistics", s.handleStats)
 	s.registerImportJobRoutes(apiV1)
+	s.registerLocalEmbeddingsRoutes(apiV1)
 	s.registerSettingsRoutes(apiV1)
 	s.registerCardDAVRoutes(apiV1)
 	s.registerSavedViewRoutes(apiV1)
 	s.registerExploreRoutes(apiV1)
 	s.registerFilesRoutes(apiV1)
-	s.registerDocumentSearchRoute(apiV1)
 	registerAPIV1RawHumaJSONRouteWithErrors[MediaSearchStatusResponse](apiV1, "getMediaSearchStatus", http.MethodGet, "/media/search/status", "Get recording transcript search configuration status", s.handleMediaSearchStatus)
-	registerAPIV1RawHumaJSONRouteWithErrors[MediaSearchResponse](apiV1, "searchMedia", http.MethodGet, "/media/search", "Search recordings and attachments as visible messages", s.documentSearchGuard("media search", s.handleMediaSearch), http.StatusBadRequest, http.StatusForbidden, http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusServiceUnavailable)
+	registerAPIV1RawHumaJSONRouteWithErrors[MediaSearchResponse](apiV1, "searchMedia", http.MethodGet, "/media/search", "Search recording transcripts and mirrored attachment text as visible messages", s.mediaSearchGuard("media search", s.handleMediaSearch), http.StatusBadRequest, http.StatusForbidden, http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusServiceUnavailable)
 	s.registerTelemetryRoutes(apiV1)
 	s.registerPersonProfileRoutes(apiV1)
 	s.registerPersonIdentityRoutes(apiV1)
@@ -330,6 +375,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerOrganizationRoutes(apiV1)
 	s.registerEmploymentRoutes(apiV1)
 	s.registerActivityRoutes(apiV1)
+	s.registerLoopRoutes(apiV1)
 	s.registerPersonProfileValueRoutes(apiV1)
 	s.registerCommunicationServiceRoutes(apiV1)
 	s.registerAttributeDefinitionRoutes(apiV1)
@@ -441,6 +487,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		s.handleCLIAttachment,
 		http.StatusBadRequest,
 		http.StatusUnauthorized,
+		http.StatusForbidden,
 		http.StatusNotFound,
 		http.StatusRequestEntityTooLarge,
 		http.StatusInternalServerError,
@@ -459,6 +506,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRoute[MessageDetail](apiV1, "getMessage", http.MethodGet, "/messages/{id}", "Get one message", s.handleGetMessage)
 	registerAPIV1RawHumaJSONRoute[MessageRecordingsResponse](apiV1, "listMessageRecordings", http.MethodGet, "/messages/{id}/recordings", "List a message's recordings with transcript state", s.handleListMessageRecordings)
 	s.registerMeetingImportRoute(apiV1)
+	s.registerMessageImportRoute(apiV1)
 	s.registerMuesliImportRoute(apiV1)
 	s.registerMeetingRoutes(apiV1)
 	s.registerCalendarControlRoute(apiV1)
@@ -490,6 +538,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		s.handleGetAttachmentContent,
 		http.StatusBadRequest,
 		http.StatusUnauthorized,
+		http.StatusForbidden,
 		http.StatusNotFound,
 		http.StatusInternalServerError,
 		http.StatusServiceUnavailable,
@@ -847,38 +896,6 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryIntegerParam("participant_id", "Observed participant ID; selects its current Explore identity cluster; mutually exclusive with person_id"),
 			queryRefArrayParam("direction", "Person relation: from_person, to_person, or group"),
 			queryIntegerParam(limitParam, "Maximum occurrences to return, default 20, max 100"),
-		}
-	case "searchDocuments":
-		return []*huma.Param{
-			queryStringParam("q", "Extracted document content or filename query", true),
-			queryIntegerArrayParam("source_id", "Source IDs to include; repeat or comma-separate values"),
-			queryRefArrayParam("message_type", "Message types to include; repeat or comma-separate values"),
-			queryIntegerParam("attachment_id", "Exact attachment occurrence ID"),
-			queryIntegerParam("message_id", "Exact containing message ID"),
-			queryIntegerParam("person_id", "Durable person ID"),
-			queryIntegerParam("participant_id", "Observed participant ID; translated through its durable person when bound"),
-			queryRefArrayParam("direction", "Person relation; repeat or comma-separate from_person, to_person, or group"),
-			queryStringParam("after", "Only messages on or after an RFC3339 or YYYY-MM-DD date", false),
-			queryStringParam("before", "Only messages before an RFC3339 or YYYY-MM-DD date", false),
-			queryIntegerParam(limitParam, "Maximum results to return (default 20, max 100)"),
-			queryStringParam("cursor", "Opaque cursor from the previous document search page", false),
-			queryStringParam("mode", "Search mode: lexical (default and auto); semantic/hybrid send the query to the embedding provider", false),
-			queryIntegerParam("candidate_limit", "Maximum candidates (default/max: lexical 10000; semantic/hybrid 100/1000)"),
-		}
-	case "getDocumentIndexStatus":
-		mediaTypes := queryRefArrayParam("media_type", "Allowed document media types")
-		mediaTypes.Required = true
-		return []*huma.Param{
-			queryStringParam("profile_id", "Exact document extraction profile ID", true),
-			queryStringParam("input_key", "Exact extraction input key", true),
-			mediaTypes,
-			queryRefArrayParam("message_type", "Allowed message types"),
-		}
-	case "getDocumentVectorStatus":
-		return []*huma.Param{
-			queryIntegerParam("generation_id", "Generation whose bounded failures to inspect"),
-			queryStringParam("after_token", "Stable failure cursor token", false),
-			queryIntegerParam("limit", "Maximum failure diagnostics (default 20, max 1000)"),
 		}
 	case "getCLIMessage", "getCLIMessageRaw":
 		return []*huma.Param{queryStringParam("id", "Message numeric ID or source message ID", true)}

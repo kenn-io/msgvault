@@ -17,7 +17,9 @@
     ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeZone: 'UTC' }).format(new Date(bucket))
     : groupRowName('month', bucket, bucket).name;
   const stripLabel = $derived(first && last
-    ? `Activity by ${daily ? 'day' : 'month'}, ${monthName(first.bucket)} to ${monthName(last.bucket)}, busiest ${monthName(busiest.bucket)} with ${busiest.count.toLocaleString()} items`
+    ? series.length === 1
+      ? `Activity by ${daily ? 'day' : 'month'}: ${monthName(first.bucket)}, ${first.count.toLocaleString()} ${first.count === 1 ? 'item' : 'items'}`
+      : `Activity by ${daily ? 'day' : 'month'}, ${monthName(first.bucket)} to ${monthName(last.bucket)}, busiest ${monthName(busiest.bucket)} with ${busiest.count.toLocaleString()} items`
     : 'Activity');
 </script>
 
@@ -32,7 +34,9 @@
     <p>Activity isn't available right now.</p>
   {:else}
     {#if selection.overview?.first_at && selection.latestAt}
-      <p>{formatDate(selection.overview?.first_at)} – {formatDate(selection.latestAt)}</p>
+      {@const firstDate = formatDate(selection.overview.first_at)}
+      {@const lastDate = formatDate(selection.latestAt)}
+      <p>{firstDate}{firstDate === lastDate ? '' : ` – ${lastDate}`}</p>
     {/if}
     {#if series.length > 0 && first && last}
       <div class="activity">
@@ -42,7 +46,7 @@
             <rect x={index * 8} y={32 - height} width="6" {height} />
           {/each}
         </svg>
-        <div class="month-labels"><span>{monthName(first.bucket)}</span><span>{monthName(last.bucket)}</span></div>
+        <div class="month-labels"><span>{monthName(first.bucket)}</span>{#if series.length > 1}<span>{monthName(last.bucket)}</span>{/if}</div>
       </div>
     {/if}
     {#if selection.overview?.co_participants?.length}

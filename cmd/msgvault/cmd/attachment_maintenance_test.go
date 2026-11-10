@@ -85,6 +85,7 @@ func (f *attachmentMaintenanceFixture) addLoose(content []byte) string {
 	require.NoError(f.t, os.MkdirAll(filepath.Dir(full), 0o700), "create loose blob directory")
 	require.NoError(f.t, os.WriteFile(full, content, 0o600), "write loose blob")
 	require.NoError(f.t, f.store.UpsertAttachment(
+		f.t.Context(),
 		f.messageID,
 		fmt.Sprintf("attachment-%d.bin", f.sequence),
 		"application/octet-stream",
@@ -97,14 +98,14 @@ func (f *attachmentMaintenanceFixture) addLoose(content []byte) string {
 
 func (f *attachmentMaintenanceFixture) packedEntry(hash string) *store.PackIndexEntry {
 	f.t.Helper()
-	entry, err := f.store.GetAttachmentPackEntry(hash)
+	entry, err := f.store.GetAttachmentPackEntry(f.t.Context(), hash)
 	require.NoError(f.t, err, "GetAttachmentPackEntry(%s)", hash)
 	return entry
 }
 
 func (f *attachmentMaintenanceFixture) readBlob(hash string) []byte {
 	f.t.Helper()
-	r, _, err := f.blob.Open(hash)
+	r, _, err := f.blob.Open(f.t.Context(), hash)
 	require.NoError(f.t, err, "open blob %s", hash)
 	defer func() { require.NoError(f.t, r.Close(), "close blob reader") }()
 	data, err := io.ReadAll(r)
@@ -119,7 +120,7 @@ func (f *attachmentMaintenanceFixture) makeZeroLivePack(content []byte) string {
 	require.NoError(f.t, err, "pack zero-live fixture")
 	entry := f.packedEntry(hash)
 	require.NotNil(f.t, entry)
-	_, err = f.store.DB().Exec(f.store.Rebind(
+	_, err = f.store.DB().ExecContext(f.t.Context(), f.store.Rebind(
 		`DELETE FROM attachments WHERE content_hash = ? OR thumbnail_hash = ?`), hash, hash)
 	require.NoError(f.t, err, "logically delete packed fixture")
 	return entry.PackID
@@ -138,10 +139,10 @@ func (f *attachmentMaintenanceFixture) makeSparsePack(live []byte, createdAt tim
 	require.NoError(f.t, err, "pack sparse fixture")
 	entry := f.packedEntry(liveHash)
 	require.NotNil(f.t, entry)
-	_, err = f.store.DB().Exec(f.store.Rebind(
+	_, err = f.store.DB().ExecContext(f.t.Context(), f.store.Rebind(
 		`DELETE FROM attachments WHERE content_hash IN (?, ?)`), deadHash, deadSmallHash)
 	require.NoError(f.t, err, "delete sparse fixture entries")
-	_, err = f.store.DB().Exec(f.store.Rebind(
+	_, err = f.store.DB().ExecContext(f.t.Context(), f.store.Rebind(
 		`UPDATE attachment_packs SET created_at = ? WHERE pack_id = ?`),
 		createdAt.UTC().Format(time.RFC3339), entry.PackID)
 	require.NoError(f.t, err, "age sparse fixture pack")
@@ -157,7 +158,7 @@ func TestAutomaticAttachmentMaintenancePacksBoundedAndLogsCompleteStats(t *testi
 	hash := f.addLoose(content)
 	warnings := 0
 
-	err := f.maintenance.runAutomaticPack(context.Background(), func(string) error {
+	err := f.maintenance.runAutomaticPack(t.Context(), func(string) error {
 		warnings++
 		return nil
 	})
@@ -205,16 +206,16 @@ func TestLooseAttachmentModeSkipsAutomaticPackingAndRejectsPackCreation(t *testi
 	f.maintenance.packCreationEnabled = false
 	hash := f.addLoose([]byte("remain loose when attachment packing is disabled"))
 
-	err := f.maintenance.runAutomaticPack(context.Background(), nil)
+	err := f.maintenance.runAutomaticPack(t.Context(), nil)
 	require.NoError(err)
 	assert.Nil(f.packedEntry(hash))
 	assert.Contains(f.logs.String(), "automatic attachment packing disabled")
 
-	_, err = f.maintenance.pack(context.Background(), 0)
+	_, err = f.maintenance.pack(t.Context(), 0)
 	require.Error(err)
 	assert.Contains(err.Error(), "[data].loose_attachments")
 
-	_, err = f.maintenance.repack(context.Background(), 0)
+	_, err = f.maintenance.repack(t.Context(), 0)
 	require.Error(err)
 	assert.Contains(err.Error(), "[data].loose_attachments")
 }
@@ -223,7 +224,7 @@ func TestAutomaticAttachmentMaintenanceCancellationIsInformational(t *testing.T)
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newAttachmentMaintenanceFixture(t)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	warnings := 0
 
@@ -245,7 +246,7 @@ func TestAutomaticAttachmentMaintenanceFailureWarnsWithoutReplacingIngestSuccess
 	var warning string
 
 	err := runAfterSuccessfulAttachmentIngest(
-		context.Background(),
+		t.Context(),
 		maintenance,
 		func(context.Context) error { return nil },
 		func(message string) error {
@@ -275,7 +276,7 @@ func TestAutomaticAttachmentMaintenanceWarningFailurePreservesIngestSuccess(t *t
 	warningErr := errors.New("warning stream closed")
 
 	err := runAfterSuccessfulAttachmentIngest(
-		context.Background(),
+		t.Context(),
 		maintenance,
 		func(context.Context) error { return nil },
 		func(string) error { return warningErr },
@@ -286,13 +287,14 @@ func TestAutomaticAttachmentMaintenanceWarningFailurePreservesIngestSuccess(t *t
 	assert.Contains(logs.String(), warningErr.Error())
 }
 
-func (f *attachmentMaintenanceFixture) ingestLoose(content []byte) string {
+func (f *attachmentMaintenanceFixture) ingestLoose(ctx context.Context, content []byte) string {
 	f.t.Helper()
 	f.sequence++
 	rel, err := export.StoreAttachmentFile(f.dir, &mime.Attachment{Content: content})
 	require.NoError(f.t, err, "store ingested blob")
 	hash := path.Base(rel)
 	require.NoError(f.t, f.store.UpsertAttachment(
+		ctx,
 		f.messageID,
 		fmt.Sprintf("ingested-%d.bin", f.sequence),
 		"application/octet-stream",
@@ -308,12 +310,12 @@ func TestRunScheduledSourceSkipsPackWithoutNewBlobs(t *testing.T) {
 	f := newAttachmentMaintenanceFixture(t)
 	hash := f.addLoose([]byte("already loose before the sync"))
 
-	require.NoError(t, runScheduledSource(context.Background(), f.maintenance, true,
+	require.NoError(t, runScheduledSource(t.Context(), f.maintenance, true,
 		func(context.Context) error { return nil }))
 
 	assert.Nil(f.packedEntry(hash), "a run that wrote no blobs must not pack")
 	assert.NotContains(f.logs.String(), "automatic attachment maintenance")
-	require.NoError(t, f.maintenance.runPendingPack(context.Background()))
+	require.NoError(t, f.maintenance.runPendingPack(t.Context()))
 	assert.Nil(f.packedEntry(hash), "nothing was pending")
 }
 
@@ -335,20 +337,20 @@ func TestRunScheduledSourceDefersPackAfterNewBlobs(t *testing.T) {
 	f := newAttachmentMaintenanceFixture(t)
 	var hash string
 
-	require.NoError(t, runScheduledSource(context.Background(), f.maintenance, true,
+	require.NoError(t, runScheduledSource(t.Context(), f.maintenance, true,
 		func(context.Context) error {
-			hash = f.ingestLoose([]byte("new scheduled blob"))
+			hash = f.ingestLoose(t.Context(), []byte("new scheduled blob"))
 			return nil
 		}))
 	assert.Nil(f.packedEntry(hash), "scheduled sync must not pack inline")
 	assert.NotContains(f.logs.String(), "automatic attachment maintenance complete")
 
-	require.NoError(t, f.maintenance.runPendingPack(context.Background()))
+	require.NoError(t, f.maintenance.runPendingPack(t.Context()))
 	assert.NotNil(f.packedEntry(hash), "pending pack packs the new blob")
 	assert.Equal(1, strings.Count(f.logs.String(), "automatic attachment maintenance complete"))
 	assert.Contains(f.logs.String(), "duration=")
 
-	require.NoError(t, f.maintenance.runPendingPack(context.Background()))
+	require.NoError(t, f.maintenance.runPendingPack(t.Context()))
 	assert.Equal(1, strings.Count(f.logs.String(), "automatic attachment maintenance complete"),
 		"a second pending pass is a no-op")
 }
@@ -368,7 +370,7 @@ func TestPendingPackContinuesAfterByteBudget(t *testing.T) {
 			}
 			if daily {
 				f.maintenance.markPackPending()
-				require.ErrorIs(f.maintenance.daily(context.Background()), scheduler.ErrReschedule,
+				require.ErrorIs(f.maintenance.daily(t.Context()), scheduler.ErrReschedule,
 					"a bounded daily pass must request another pass for the remaining backlog")
 			}
 			sched := scheduler.New(nil).WithLogger(f.maintenance.logger)
@@ -413,39 +415,39 @@ func TestRunScheduledSourceMarksPendingOnFailedIngestWithBlobs(t *testing.T) {
 	ingestErr := errors.New("scheduled ingest failed")
 	var hash string
 
-	err := runScheduledSource(context.Background(), f.maintenance, true,
+	err := runScheduledSource(t.Context(), f.maintenance, true,
 		func(context.Context) error {
-			hash = f.ingestLoose([]byte("blob written before failure"))
+			hash = f.ingestLoose(t.Context(), []byte("blob written before failure"))
 			return ingestErr
 		})
 	require.ErrorIs(t, err, ingestErr)
-	require.NoError(t, f.maintenance.runPendingPack(context.Background()))
+	require.NoError(t, f.maintenance.runPendingPack(t.Context()))
 	assert.NotNil(f.packedEntry(hash), "blobs from a failed run are still packed later")
 }
 
 func TestRunScheduledSourceCalendarNeverPacks(t *testing.T) {
 	f := newAttachmentMaintenanceFixture(t)
 	var hash string
-	require.NoError(t, runScheduledSource(context.Background(), f.maintenance, false,
+	require.NoError(t, runScheduledSource(t.Context(), f.maintenance, false,
 		func(context.Context) error {
-			hash = f.ingestLoose([]byte("calendar-side blob"))
+			hash = f.ingestLoose(t.Context(), []byte("calendar-side blob"))
 			return nil
 		}))
-	require.NoError(t, f.maintenance.runPendingPack(context.Background()))
+	require.NoError(t, f.maintenance.runPendingPack(t.Context()))
 	assert.Nil(t, f.packedEntry(hash), "non-attachment sources do not request packing")
 }
 
 func TestDailyMaintenanceClearsPendingPack(t *testing.T) {
 	require := require.New(t)
 	f := newAttachmentMaintenanceFixture(t)
-	require.NoError(runScheduledSource(context.Background(), f.maintenance, true,
+	require.NoError(runScheduledSource(t.Context(), f.maintenance, true,
 		func(context.Context) error {
-			f.ingestLoose([]byte("blob packed by the daily job"))
+			f.ingestLoose(t.Context(), []byte("blob packed by the daily job"))
 			return nil
 		}))
-	require.NoError(f.maintenance.daily(context.Background()))
+	require.NoError(f.maintenance.daily(t.Context()))
 	before := strings.Count(f.logs.String(), "automatic attachment maintenance complete")
-	require.NoError(f.maintenance.runPendingPack(context.Background()))
+	require.NoError(f.maintenance.runPendingPack(t.Context()))
 	assert.Equal(t, before, strings.Count(f.logs.String(), "automatic attachment maintenance complete"),
 		"daily pack satisfied the pending request")
 }
@@ -463,7 +465,7 @@ func TestRegisterScheduledBeeperJobDefersPackToPackJob(t *testing.T) {
 
 	require.NoError(registerScheduledBeeperJob(sched, "*/30 * * * *", f.maintenance,
 		func(context.Context) error {
-			hash = f.ingestLoose([]byte("scheduled beeper payload"))
+			hash = f.ingestLoose(t.Context(), []byte("scheduled beeper payload"))
 			return nil
 		}))
 	require.NoError(registerAttachmentPackJob(sched, f.maintenance))
@@ -512,7 +514,7 @@ func TestAttachmentMaintenanceDailyPacksThenRepacks(t *testing.T) {
 	live := []byte("daily packing new loose bytes")
 	liveHash := f.addLoose(live)
 
-	require.NoError(f.maintenance.daily(context.Background()))
+	require.NoError(f.maintenance.daily(t.Context()))
 	require.NotNil(f.packedEntry(liveHash))
 	assert.Equal(live, f.readBlob(liveHash))
 	has, err := f.store.HasPackRecordContext(t.Context(), deadPackID)
@@ -532,7 +534,7 @@ func TestPostRemovalRepackFailureWarnsWithoutReplacingSuccess(t *testing.T) {
 	var warning string
 
 	err := runAfterSuccessfulAttachmentRemoval(
-		context.Background(), maintenance,
+		t.Context(), maintenance,
 		func(context.Context) error { return nil },
 		func(message string) error {
 			warning = message
@@ -577,7 +579,7 @@ func TestAutomaticRepackLogsCommittedSiblingProgressBeforeAggregateWarning(t *te
 	require.NoError(os.WriteFile(corruptPath, []byte("truncated corrupt pack"), 0o600), "corrupt oldest source")
 	var warning string
 
-	err := f.maintenance.runAutomaticRepack(context.Background(), func(message string) error {
+	err := f.maintenance.runAutomaticRepack(t.Context(), func(message string) error {
 		warning = message
 		return nil
 	})
@@ -634,6 +636,7 @@ func TestAttachmentProducingCommandExactAllowlist(t *testing.T) {
 		"sync-beeper",
 		"sync-chatwoot",
 		"sync-discord",
+		"sync-matrix",
 		"sync-slack",
 		"sync-synctech-sms",
 		"sync-teams",
@@ -663,13 +666,13 @@ func TestAttachmentProducingCommandExactAllowlist(t *testing.T) {
 func TestAttachmentIngestMutationLeaseWaitsForMaintenance(t *testing.T) {
 	require := require.New(t)
 	f := newAttachmentMaintenanceFixture(t)
-	maintenanceLease, err := f.maintenance.coordinator.AcquireMaintenance(context.Background())
+	maintenanceLease, err := f.maintenance.coordinator.AcquireMaintenance(t.Context())
 	require.NoError(err)
 	ingestStarted := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
 		done <- runAfterSuccessfulAttachmentIngest(
-			context.Background(), f.maintenance,
+			t.Context(), f.maintenance,
 			func(context.Context) error {
 				close(ingestStarted)
 				return nil

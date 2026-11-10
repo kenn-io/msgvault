@@ -32,10 +32,11 @@ import (
 type mirrorRig struct {
 	*docbanktest.UploadHandler
 
-	t      *testing.T
-	f      *storetest.Fixture
-	dir    string
-	worker *AttachmentMirror
+	processing *docbanktest.ProcessingHandler
+	t          *testing.T
+	f          *storetest.Fixture
+	dir        string
+	worker     *AttachmentMirror
 	// Faults: an HTTP status, or one of the fault constants for uploads.
 	folderStatus atomic.Int32
 	count        int
@@ -45,7 +46,7 @@ func newMirrorRig(t *testing.T) *mirrorRig {
 	t.Helper()
 	require := require.New(t)
 	assert := assert.New(t)
-	r := &mirrorRig{t: t, f: storetest.New(t), dir: t.TempDir(), UploadHandler: docbanktest.NewUploadHandler(t)}
+	r := &mirrorRig{processing: docbanktest.NewProcessingHandler(t), t: t, f: storetest.New(t), dir: t.TempDir(), UploadHandler: docbanktest.NewUploadHandler(t)}
 	blobs, err := attachmentstore.New(store.NewPackCatalog(r.f.Store), r.dir)
 	require.NoError(err)
 	t.Cleanup(func() { assert.NoError(blobs.Close()) })
@@ -58,6 +59,10 @@ func newMirrorRig(t *testing.T) *mirrorRig {
 }
 
 func (r *mirrorRig) serve(w http.ResponseWriter, req *http.Request) {
+	if strings.HasPrefix(req.URL.Path, "/api/v1/processing/") {
+		r.processing.ServeHTTP(w, req)
+		return
+	}
 	switch req.URL.Path {
 	case "/api/v1/path":
 		if code := int(r.folderStatus.Load()); code != 0 {
@@ -75,10 +80,10 @@ func (r *mirrorRig) serve(w http.ResponseWriter, req *http.Request) {
 }
 
 // add stores one attachment and returns its blob hash.
-func (r *mirrorRig) add(name, mimeType string, data []byte) string {
+func (r *mirrorRig) add(ctx context.Context, name, mimeType string, data []byte) string {
 	r.t.Helper()
 	r.count++
-	return addStoredMediaSource(r.t, &mediaWorld{st: r.f.Store, dir: r.dir}, "gmail", "test@example.com", fmt.Sprintf("message-%d", r.count), data,
+	return addStoredMediaSource(ctx, r.t, &mediaWorld{st: r.f.Store, dir: r.dir}, "gmail", "test@example.com", fmt.Sprintf("message-%d", r.count), data,
 		name, mimeType, "", store.AttachmentRoleStandalone, "stored", nil, "part", "part")
 }
 
@@ -102,7 +107,7 @@ func (r *mirrorRig) status() store.DocbankAttachmentSummary {
 
 func (r *mirrorRig) makeRetriesDue() {
 	r.t.Helper()
-	_, err := r.f.Store.DB().Exec(`UPDATE docbank_attachment_deliveries SET next_action_at=NULL WHERE state='sending'`)
+	_, err := r.f.Store.DB().ExecContext(r.t.Context(), `UPDATE docbank_attachment_deliveries SET next_action_at=NULL WHERE state='sending'`)
 	require.NoError(r.t, err)
 }
 
@@ -111,8 +116,8 @@ func TestAttachmentMirrorUploadsEachFileOnce(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	r := newMirrorRig(t)
-	r.add("report.pdf", "application/pdf", []byte("synthetic document"))
-	r.add("alias.pdf", "application/pdf", []byte("synthetic document"))
+	r.add(t.Context(), "report.pdf", "application/pdf", []byte("synthetic document"))
+	r.add(t.Context(), "alias.pdf", "application/pdf", []byte("synthetic document"))
 	require.NoError(r.runBatch(t.Context()))
 	require.NoError(r.runBatch(t.Context()))
 	assert.Equal(int32(1), r.Uploads.Load())
@@ -123,11 +128,11 @@ func TestAttachmentMirrorDeletedBetweenDiscoveryAndIntent(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	r := newMirrorRig(t)
-	r.add("deleted.pdf", "application/pdf", []byte("deleted document"))
+	r.add(t.Context(), "deleted.pdf", "application/pdf", []byte("deleted document"))
 	// Folder resolution separates discovery from saving the upload intent.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.URL.Path == "/api/v1/path" {
-			_, err := r.f.Store.DB().Exec(`DELETE FROM attachments`)
+			_, err := r.f.Store.DB().ExecContext(t.Context(), `DELETE FROM attachments`)
 			assert.NoError(err)
 		}
 		r.serve(w, req)
@@ -156,7 +161,7 @@ func TestAttachmentMirrorUploadNamesAndInvalidUTF8(t *testing.T) {
 		{"..", "application/pdf", "attachment", "application/pdf"},
 		{"broken.bin", "broken mime", "broken.bin", "application/octet-stream"},
 	} {
-		hash := r.add(tc.name, tc.mimeType, fmt.Appendf(nil, "document %d", i))
+		hash := r.add(t.Context(), tc.name, tc.mimeType, fmt.Appendf(nil, "document %d", i))
 		want[hash] = [2]string{hash[:12] + "-" + tc.wantName, tc.wantType}
 	}
 	require.NoError(r.runBatch(t.Context()))
@@ -166,7 +171,7 @@ func TestAttachmentMirrorUploadNamesAndInvalidUTF8(t *testing.T) {
 		assert.Equal(wantParts, got)
 	}
 	// Invalid UTF-8 cannot be stored in PostgreSQL text, so exercise the upload step directly.
-	hash := r.add("placeholder", "application/pdf", []byte("invalid name"))
+	hash := r.add(t.Context(), "placeholder", "application/pdf", []byte("invalid name"))
 	packed, err := attachmentstore.New(store.NewDocbankAttachmentPackResolver(r.f.Store), r.dir)
 	require.NoError(err)
 	t.Cleanup(func() { assert.NoError(packed.Close()) })
@@ -201,16 +206,16 @@ func TestAttachmentMirrorDestinationFaults(t *testing.T) {
 			r := newMirrorRig(t)
 			expectedFiles := int64(1)
 			if tc.uploadStatus == http.StatusConflict {
-				r.add("first.pdf", "application/pdf", []byte("preceding document"))
+				r.add(t.Context(), "first.pdf", "application/pdf", []byte("preceding document"))
 				expectedFiles++
 			}
 			data := []byte("synthetic document")
 			if tc.large {
 				data = make([]byte, 32<<20)
 			}
-			hash := r.add("report.pdf", "application/pdf", data)
+			hash := r.add(t.Context(), "report.pdf", "application/pdf", data)
 			if tc.large || tc.uploadStatus == http.StatusConflict {
-				r.add("later.pdf", "application/pdf", []byte("later document"))
+				r.add(t.Context(), "later.pdf", "application/pdf", []byte("later document"))
 				expectedFiles++
 			}
 			r.folderStatus.Store(int32(tc.folderStatus))
@@ -260,8 +265,8 @@ func TestAttachmentMirrorFileFailuresAndBackfill(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			r := newMirrorRig(t)
-			bad := r.add("bad.pdf", "application/pdf", []byte("first document"))
-			r.add("good.pdf", "application/pdf", []byte("second document"))
+			bad := r.add(t.Context(), "bad.pdf", "application/pdf", []byte("first document"))
+			r.add(t.Context(), "good.pdf", "application/pdf", []byte("second document"))
 			r.UploadFaults.Store(bad, fault)
 			require.NoError(r.runBatch(t.Context()))
 			assert.Equal(int64(1), r.status().Failed)
@@ -293,7 +298,7 @@ func TestAttachmentMirrorDestinationFaultStreak(t *testing.T) {
 			assert := assert.New(t)
 			r := newMirrorRig(t)
 			for i := range 4 {
-				hash := r.add("report.pdf", "application/pdf", fmt.Appendf(nil, "document %d", i))
+				hash := r.add(t.Context(), "report.pdf", "application/pdf", fmt.Appendf(nil, "document %d", i))
 				switch i {
 				case 0, 2:
 					r.UploadFaults.Store(hash, http.StatusServiceUnavailable)
@@ -314,15 +319,15 @@ func TestAttachmentMirrorSourceFaults(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
 		r := newMirrorRig(t)
-		missing := r.add("missing.pdf", "application/pdf", []byte("missing document"))
-		corrupt := r.add("corrupt.pdf", "application/pdf", []byte("corrupt document"))
-		alias := r.add("alias.pdf", "application/pdf", []byte("unreferenced alias file"))
-		_, err := r.f.Store.DB().Exec(r.f.Store.Rebind(`UPDATE attachments SET content_hash='',source_attachment_id=? WHERE content_hash=?`), "slack:alias", alias)
+		missing := r.add(t.Context(), "missing.pdf", "application/pdf", []byte("missing document"))
+		corrupt := r.add(t.Context(), "corrupt.pdf", "application/pdf", []byte("corrupt document"))
+		alias := r.add(t.Context(), "alias.pdf", "application/pdf", []byte("unreferenced alias file"))
+		_, err := r.f.Store.DB().ExecContext(t.Context(), r.f.Store.Rebind(`UPDATE attachments SET content_hash='',source_attachment_id=? WHERE content_hash=?`), "slack:alias", alias)
 		require.NoError(err)
-		invalid := r.add("invalid.pdf", "application/pdf", []byte("invalid hash document"))
-		_, err = r.f.Store.DB().Exec(r.f.Store.Rebind(`UPDATE attachments SET content_hash=? WHERE content_hash=?`), strings.Repeat("z", 64), invalid)
+		invalid := r.add(t.Context(), "invalid.pdf", "application/pdf", []byte("invalid hash document"))
+		_, err = r.f.Store.DB().ExecContext(t.Context(), r.f.Store.Rebind(`UPDATE attachments SET content_hash=? WHERE content_hash=?`), strings.Repeat("z", 64), invalid)
 		require.NoError(err)
-		r.add("valid.pdf", "application/pdf", []byte("valid document"))
+		r.add(t.Context(), "valid.pdf", "application/pdf", []byte("valid document"))
 		require.NoError(os.Remove(r.blobPath(missing)))
 		require.NoError(os.WriteFile(r.blobPath(corrupt), []byte("corrupt documenX"), 0600))
 		require.NoError(r.runBatch(t.Context()))
@@ -335,7 +340,7 @@ func TestAttachmentMirrorSourceFaults(t *testing.T) {
 		require.NoError(err)
 		assert.Empty(intents, "source failures wait for backfill")
 		require.NoError(os.WriteFile(r.blobPath(missing), []byte("missing document"), 0600))
-		_, err = r.f.Store.DB().Exec(r.f.Store.Rebind(`UPDATE attachments SET filename='restored.pdf' WHERE content_hash=?`), missing)
+		_, err = r.f.Store.DB().ExecContext(t.Context(), r.f.Store.Rebind(`UPDATE attachments SET filename='restored.pdf' WHERE content_hash=?`), missing)
 		require.NoError(err)
 		require.NoError(r.runBatch(t.Context()))
 		assert.Equal(int64(3), r.status().Delivered)
@@ -346,12 +351,12 @@ func TestAttachmentMirrorSourceFaults(t *testing.T) {
 		assert := assert.New(t)
 		r := newMirrorRig(t)
 		data := []byte("legacy document")
-		hash := r.add("legacy.pdf", "application/pdf", data)
+		hash := r.add(t.Context(), "legacy.pdf", "application/pdf", data)
 		storagePath := "synctech-sms/" + hash[:2] + "/" + hash
 		file := filepath.Join(r.dir, filepath.FromSlash(storagePath))
 		require.NoError(os.MkdirAll(filepath.Dir(file), 0700))
 		require.NoError(os.Rename(r.blobPath(hash), file))
-		_, err := r.f.Store.DB().Exec(r.f.Store.Rebind(`UPDATE attachments SET storage_path=? WHERE content_hash=?`), storagePath, hash)
+		_, err := r.f.Store.DB().ExecContext(t.Context(), r.f.Store.Rebind(`UPDATE attachments SET storage_path=? WHERE content_hash=?`), storagePath, hash)
 		require.NoError(err)
 		require.NoError(r.f.Store.UpsertAttachmentRecord(t.Context(), r.f.CreateMessage("missing legacy candidate"), store.AttachmentWrite{ContentHash: hash, StoragePath: "missing/" + hash, State: "stored"}))
 		require.NoError(os.WriteFile(r.blobPath(hash), []byte("legacy documenX"), 0600))
@@ -385,7 +390,7 @@ func TestAttachmentMirrorSourceFaults(t *testing.T) {
 			assert := assert.New(t)
 			r := newMirrorRig(t)
 			data := []byte("packed document")
-			hash := r.add("packed.pdf", "application/pdf", data)
+			hash := r.add(t.Context(), "packed.pdf", "application/pdf", data)
 			layout, err := packstore.NewLayout(r.dir, packstore.LayoutOptions{Staging: packstore.StagingSameDirectory})
 			require.NoError(err)
 			require.NoError(pack.MkdirAllSynced(layout.PacksDir()))
@@ -396,13 +401,13 @@ func TestAttachmentMirrorSourceFaults(t *testing.T) {
 			packID := writer.ID()
 			_, err = writer.Seal(layout.PackPath(packID))
 			require.NoError(err)
-			require.NoError(r.f.Store.RecordPackedBlobs(store.PackRecord{PackID: packID, EntryCount: 1, StoredBytes: int64(entry.StoredLen), CreatedAt: time.Now().UTC()}, []store.PackIndexEntry{{BlobHash: hash, PackID: packID, Offset: int64(entry.Offset), StoredLen: int64(entry.StoredLen), RawLen: int64(entry.RawLen), Flags: uint8(entry.Flags), CRC32C: entry.CRC32C}}))
+			require.NoError(r.f.Store.RecordPackedBlobs(t.Context(), store.PackRecord{PackID: packID, EntryCount: 1, StoredBytes: int64(entry.StoredLen), CreatedAt: time.Now().UTC()}, []store.PackIndexEntry{{BlobHash: hash, PackID: packID, Offset: int64(entry.Offset), StoredLen: int64(entry.StoredLen), RawLen: int64(entry.RawLen), Flags: uint8(entry.Flags), CRC32C: entry.CRC32C}}))
 			require.NoError(os.Remove(r.blobPath(hash)))
 			if healthyCopy {
 				storagePath := "legacy/" + hash
 				require.NoError(os.MkdirAll(filepath.Join(r.dir, "legacy"), 0700))
 				require.NoError(os.WriteFile(filepath.Join(r.dir, filepath.FromSlash(storagePath)), data, 0600))
-				_, err = r.f.Store.DB().Exec(r.f.Store.Rebind(`UPDATE attachments SET storage_path=? WHERE content_hash=?`), storagePath, hash)
+				_, err = r.f.Store.DB().ExecContext(t.Context(), r.f.Store.Rebind(`UPDATE attachments SET storage_path=? WHERE content_hash=?`), storagePath, hash)
 				require.NoError(err)
 			}
 			file, err := os.OpenFile(layout.PackPath(packID), os.O_RDWR, 0)
@@ -490,9 +495,9 @@ func TestAttachmentMirrorSourceIOErrors(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			r := newMirrorRig(t)
-			r.add("first.pdf", "application/pdf", []byte("first document"))
-			hash := r.add("report.pdf", "application/pdf", []byte("source I/O failure"))
-			r.add("third.pdf", "application/pdf", []byte("third document"))
+			r.add(t.Context(), "first.pdf", "application/pdf", []byte("first document"))
+			hash := r.add(t.Context(), "report.pdf", "application/pdf", []byte("source I/O failure"))
+			r.add(t.Context(), "third.pdf", "application/pdf", []byte("third document"))
 			blobs, ok := r.worker.blobs.(*attachmentstore.Store)
 			require.True(ok)
 			r.worker.blobs = faultAttachmentStore{Store: blobs, stage: tc.stage, err: tc.err, hash: hash}
@@ -520,7 +525,7 @@ func TestAttachmentMirrorLostResponse(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			r := newMirrorRig(t)
-			hash := r.add("report.pdf", "application/pdf", []byte("lost response"))
+			hash := r.add(t.Context(), "report.pdf", "application/pdf", []byte("lost response"))
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			if fault == docbanktest.FaultDrop {
@@ -547,7 +552,7 @@ func TestAttachmentMirrorLostResponse(t *testing.T) {
 			r.UploadFaults.Clear()
 			r.worker.WithOperationGate(nil)
 			r.makeRetriesDue()
-			_, err = r.f.Store.DB().Exec(r.f.Store.Rebind(`UPDATE attachments SET filename=?,mime_type=? WHERE content_hash=?`), "renamed.pdf", "text/plain", hash)
+			_, err = r.f.Store.DB().ExecContext(t.Context(), r.f.Store.Rebind(`UPDATE attachments SET filename=?,mime_type=? WHERE content_hash=?`), "renamed.pdf", "text/plain", hash)
 			require.NoError(err)
 			require.NoError(r.runBatch(t.Context()))
 			assert.Equal(int32(2), r.Uploads.Load())
@@ -561,7 +566,7 @@ func TestAttachmentMirrorLostResponse(t *testing.T) {
 			count := 0
 			r.Nodes.Range(func(_, _ any) bool { count++; return true })
 			assert.Equal(1, count)
-			assert.Equal("version", refs[hash][0].VersionID)
+			assert.Equal("version-8", refs[hash][0].VersionID)
 			uploaded, _ := r.Uploaded.Load(hash)
 			assert.Equal([2]string{hash[:12] + "-report.pdf", "application/pdf"}, uploaded)
 		})
@@ -579,7 +584,7 @@ func TestAttachmentMirrorOutageRecovery(t *testing.T) {
 				r.worker.uploadTimeout = 100 * time.Millisecond //nolint:kennlint // deadlinetest: the stalled upload must expire to exercise outage recovery
 			}
 			for i := range 3 {
-				hash := r.add("report.pdf", "application/pdf", fmt.Appendf(nil, "document %d", i))
+				hash := r.add(t.Context(), "report.pdf", "application/pdf", fmt.Appendf(nil, "document %d", i))
 				r.UploadFaults.Store(hash, fault)
 			}
 			require.Error(r.runBatch(t.Context()))
@@ -588,7 +593,7 @@ func TestAttachmentMirrorOutageRecovery(t *testing.T) {
 			assert.Equal(int64(3), r.status().Sending)
 			assert.Equal(map[string]int64{map[int]string{http.StatusServiceUnavailable: "server_error", docbanktest.FaultTimeout: "transport"}[fault]: 2}, r.status().Reasons)
 			var retries int
-			require.NoError(r.f.Store.DB().QueryRow(`SELECT SUM(attempts) FROM docbank_attachment_deliveries`).Scan(&retries))
+			require.NoError(r.f.Store.DB().QueryRowContext(t.Context(), `SELECT SUM(attempts) FROM docbank_attachment_deliveries`).Scan(&retries))
 			assert.Equal(2, retries)
 			for range 2 {
 				r.makeRetriesDue()
@@ -601,7 +606,7 @@ func TestAttachmentMirrorOutageRecovery(t *testing.T) {
 			for _, intent := range intents {
 				assert.Equal(2, intent.Attempts)
 			}
-			fresh := r.add("fresh.pdf", "application/pdf", []byte("fresh document"))
+			fresh := r.add(t.Context(), "fresh.pdf", "application/pdf", []byte("fresh document"))
 			require.Error(r.runBatch(t.Context()))
 			_, delivered := r.Uploaded.Load(fresh)
 			assert.True(delivered)
@@ -619,9 +624,9 @@ func TestAttachmentMirrorPersistentRetriesWait(t *testing.T) {
 	if r.f.Store.IsPostgreSQL() {
 		hashSQL = "lpad(to_hex(i),64,'0')"
 	}
-	_, err := r.f.Store.DB().Exec(r.f.Store.Rebind(`WITH RECURSIVE ids(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM ids WHERE i<500) INSERT INTO attachments(message_id,content_hash,storage_path,attachment_state) SELECT ?,`+hashSQL+`,SUBSTR(`+hashSQL+`,1,2)||'/'||`+hashSQL+`,'stored' FROM ids`), mid)
+	_, err := r.f.Store.DB().ExecContext(t.Context(), r.f.Store.Rebind(`WITH RECURSIVE ids(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM ids WHERE i<500) INSERT INTO attachments(message_id,content_hash,storage_path,attachment_state) SELECT ?,`+hashSQL+`,SUBSTR(`+hashSQL+`,1,2)||'/'||`+hashSQL+`,'stored' FROM ids`), mid)
 	require.NoError(err)
-	_, err = r.f.Store.DB().Exec(`INSERT INTO docbank_attachment_deliveries(destination_key,content_hash,upload_name,mime_type,state,endpoint,folder) SELECT 'dest',content_hash,'file.pdf','application/pdf','sending','','' FROM attachments`)
+	_, err = r.f.Store.DB().ExecContext(t.Context(), `INSERT INTO docbank_attachment_deliveries(destination_key,content_hash,upload_name,mime_type,state,endpoint,folder) SELECT 'dest',content_hash,'file.pdf','application/pdf','sending','','' FROM attachments`)
 	require.NoError(err)
 	blobs, ok := r.worker.blobs.(*attachmentstore.Store)
 	require.True(ok)
@@ -631,7 +636,7 @@ func TestAttachmentMirrorPersistentRetriesWait(t *testing.T) {
 	assert.Equal(int64(500), r.status().Reasons["transport"])
 	require.NoError(r.runBatch(t.Context()))
 	var attempts int
-	require.NoError(r.f.Store.DB().QueryRow(`SELECT SUM(attempts) FROM docbank_attachment_deliveries`).Scan(&attempts))
+	require.NoError(r.f.Store.DB().QueryRowContext(t.Context(), `SELECT SUM(attempts) FROM docbank_attachment_deliveries`).Scan(&attempts))
 	assert.Equal(500, attempts)
 	intents, err := r.f.Store.SendingDocbankAttachments(t.Context(), "dest")
 	require.NoError(err)
@@ -644,7 +649,7 @@ func TestAttachmentMirrorPackedAliasAfterDonorReplacement(t *testing.T) {
 	assert := assert.New(t)
 	r := newMirrorRig(t)
 	data := []byte("retained packed alias")
-	hash := r.add("donor.pdf", "application/pdf", data)
+	hash := r.add(t.Context(), "donor.pdf", "application/pdf", data)
 	mid := r.f.CreateMessage("alias")
 	require.NoError(r.f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{StoragePath: hash[:2] + "/" + hash, SourceAttachmentID: "slack:alias", Filename: "alias.pdf", MIMEType: "application/pdf", State: "stored"}))
 	layout, err := packstore.NewLayout(r.dir, packstore.LayoutOptions{Staging: packstore.StagingSameDirectory})
@@ -657,9 +662,9 @@ func TestAttachmentMirrorPackedAliasAfterDonorReplacement(t *testing.T) {
 	packID := writer.ID()
 	_, err = writer.Seal(layout.PackPath(packID))
 	require.NoError(err)
-	require.NoError(r.f.Store.RecordPackedBlobs(store.PackRecord{PackID: packID, EntryCount: 1, StoredBytes: int64(entry.StoredLen), CreatedAt: time.Now().UTC()}, []store.PackIndexEntry{{BlobHash: hash, PackID: packID, Offset: int64(entry.Offset), StoredLen: int64(entry.StoredLen), RawLen: int64(entry.RawLen), Flags: uint8(entry.Flags), CRC32C: entry.CRC32C}}))
+	require.NoError(r.f.Store.RecordPackedBlobs(t.Context(), store.PackRecord{PackID: packID, EntryCount: 1, StoredBytes: int64(entry.StoredLen), CreatedAt: time.Now().UTC()}, []store.PackIndexEntry{{BlobHash: hash, PackID: packID, Offset: int64(entry.Offset), StoredLen: int64(entry.StoredLen), RawLen: int64(entry.RawLen), Flags: uint8(entry.Flags), CRC32C: entry.CRC32C}}))
 	require.NoError(os.Remove(r.blobPath(hash)))
-	_, err = r.f.Store.DB().Exec(r.f.Store.Rebind(`UPDATE attachments SET content_hash=?,storage_path='' WHERE content_hash=?`), strings.Repeat("b", 64), hash)
+	_, err = r.f.Store.DB().ExecContext(t.Context(), r.f.Store.Rebind(`UPDATE attachments SET content_hash=?,storage_path='' WHERE content_hash=?`), strings.Repeat("b", 64), hash)
 	require.NoError(err)
 	_, _, err = r.worker.blobs.OpenStream(t.Context(), hash)
 	require.ErrorIs(err, os.ErrNotExist)
@@ -675,11 +680,11 @@ func TestAttachmentMirrorPassProgress(t *testing.T) {
 		must := require.New(t)
 		assert := assert.New(t)
 		r := newMirrorRig(t)
-		retry := r.add("retry.pdf", "application/pdf", []byte("saved retry"))
+		retry := r.add(t.Context(), "retry.pdf", "application/pdf", []byte("saved retry"))
 		_, err := r.f.Store.SaveDocbankAttachmentIntent(t.Context(), "dest", attachmentUploadMetadata(store.DocbankAttachmentDelivery{ContentHash: retry, Name: "retry.pdf", MIMEType: "application/pdf"}))
 		must.NoError(err)
-		fresh := r.add("fresh.pdf", "application/pdf", []byte("fresh file"))
-		later := r.add("later.pdf", "application/pdf", []byte("later file"))
+		fresh := r.add(t.Context(), "fresh.pdf", "application/pdf", []byte("fresh file"))
+		later := r.add(t.Context(), "later.pdf", "application/pdf", []byte("later file"))
 		transport := http.DefaultTransport
 		defer func() { http.DefaultTransport = transport }()
 		synctest.Test(t, func(t *testing.T) {
@@ -701,7 +706,7 @@ func TestAttachmentMirrorPassProgress(t *testing.T) {
 		scan, err := r.f.Store.LoadDocbankAttachmentScan(t.Context(), "dest")
 		must.NoError(err)
 		var laterID int64
-		must.NoError(r.f.Store.DB().QueryRow(r.f.Store.Rebind(`SELECT id FROM attachments WHERE content_hash=?`), later).Scan(&laterID))
+		must.NoError(r.f.Store.DB().QueryRowContext(t.Context(), r.f.Store.Rebind(`SELECT id FROM attachments WHERE content_hash=?`), later).Scan(&laterID))
 		assert.Equal(laterID, scan.AfterAttachmentID, "discovery finishes before a slow upload")
 		must.NoError(r.runBatch(t.Context()))
 		assert.Equal(int64(3), r.status().Delivered)
@@ -712,11 +717,11 @@ func TestAttachmentMirrorPassProgress(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
 		r := newMirrorRig(t)
-		late := r.add("late.pdf", "application/pdf", []byte("late document"))
-		_, err := r.f.Store.DB().Exec(`UPDATE attachments SET attachment_state='pending'`)
+		late := r.add(t.Context(), "late.pdf", "application/pdf", []byte("late document"))
+		_, err := r.f.Store.DB().ExecContext(t.Context(), `UPDATE attachments SET attachment_state='pending'`)
 		require.NoError(err)
 		var id int64
-		require.NoError(r.f.Store.DB().QueryRow(`SELECT id FROM attachments`).Scan(&id))
+		require.NoError(r.f.Store.DB().QueryRowContext(t.Context(), `SELECT id FROM attachments`).Scan(&id))
 		require.NoError(r.f.Store.UpsertAttachmentRecord(t.Context(), r.f.CreateMessage("later metadata"), store.AttachmentWrite{Filename: "metadata"}))
 		require.NoError(r.runBatch(t.Context()))
 		scan, err := r.f.Store.LoadDocbankAttachmentScan(t.Context(), "dest")
@@ -724,7 +729,7 @@ func TestAttachmentMirrorPassProgress(t *testing.T) {
 		require.Greater(scan.AfterAttachmentID, id)
 		assert.Zero(r.status().Remaining)
 		assert.True(scan.NextFullScanAt.After(time.Now().Add(23 * time.Hour)))
-		_, err = r.f.Store.DB().Exec(r.f.Store.Rebind(`UPDATE attachments SET attachment_state='stored' WHERE content_hash=?`), late)
+		_, err = r.f.Store.DB().ExecContext(t.Context(), r.f.Store.Rebind(`UPDATE attachments SET attachment_state='stored' WHERE content_hash=?`), late)
 		require.NoError(err)
 		assert.Equal(int64(1), r.status().Remaining)
 		assert.Zero(r.status().Sending)
@@ -732,7 +737,7 @@ func TestAttachmentMirrorPassProgress(t *testing.T) {
 		defer cancel()
 		r.worker.WithOperationGate(func(context.Context) (func(), bool) {
 			var queued int
-			require.NoError(r.f.Store.DB().QueryRow(`SELECT COUNT(*) FROM docbank_attachment_deliveries WHERE state='sending'`).Scan(&queued))
+			require.NoError(r.f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM docbank_attachment_deliveries WHERE state='sending'`).Scan(&queued))
 			if queued > 0 {
 				cancel()
 				return nil, false
@@ -769,16 +774,16 @@ func TestAttachmentMirrorPassProgress(t *testing.T) {
 			r := newMirrorRig(t)
 			var fresh string
 			if driver == "imports" {
-				fresh = r.add("late.pdf", "application/pdf", []byte("late document"))
-				_, err := r.f.Store.DB().Exec(`UPDATE attachments SET attachment_state='pending'`)
+				fresh = r.add(t.Context(), "late.pdf", "application/pdf", []byte("late document"))
+				_, err := r.f.Store.DB().ExecContext(t.Context(), `UPDATE attachments SET attachment_state='pending'`)
 				must.NoError(err)
 			}
 			must.NoError(r.runBatch(t.Context()))
 			if driver == "imports" {
-				_, err := r.f.Store.DB().Exec(r.f.Store.Rebind(`UPDATE attachments SET attachment_state='stored' WHERE content_hash=?`), fresh)
+				_, err := r.f.Store.DB().ExecContext(t.Context(), r.f.Store.Rebind(`UPDATE attachments SET attachment_state='stored' WHERE content_hash=?`), fresh)
 				must.NoError(err)
 			}
-			retry := r.add("retry.pdf", "application/pdf", []byte("saved retry"))
+			retry := r.add(t.Context(), "retry.pdf", "application/pdf", []byte("saved retry"))
 			_, err := r.f.Store.SaveDocbankAttachmentIntent(t.Context(), "dest", attachmentUploadMetadata(store.DocbankAttachmentDelivery{ContentHash: retry, Name: "retry.pdf", MIMEType: "application/pdf"}))
 			must.NoError(err)
 			scan, err := r.f.Store.LoadDocbankAttachmentScan(t.Context(), "dest")
@@ -789,7 +794,7 @@ func TestAttachmentMirrorPassProgress(t *testing.T) {
 			must.NoError(err)
 			must.True(swapped)
 			if driver == "deadline" {
-				fresh = r.add("fresh.pdf", "application/pdf", []byte("discovered file"))
+				fresh = r.add(t.Context(), "fresh.pdf", "application/pdf", []byte("discovered file"))
 			}
 			mid := r.f.CreateMessage("journal backlog")
 			for i := range 501 {
@@ -805,7 +810,7 @@ func TestAttachmentMirrorPassProgress(t *testing.T) {
 					if driver == "imports" {
 						imports++
 						synctest.Sleep(2 * time.Second)
-						r.add("incoming.pdf", "application/pdf", fmt.Appendf(nil, "incoming document %d", imports))
+						r.add(t.Context(), "incoming.pdf", "application/pdf", fmt.Appendf(nil, "incoming document %d", imports))
 					} else {
 						synctest.Sleep(10 * time.Millisecond)
 					}
@@ -839,8 +844,8 @@ func TestAttachmentMirrorReplayDeadline(t *testing.T) {
 	assert := assert.New(t)
 	r := newMirrorRig(t)
 	require.NoError(r.runBatch(t.Context()))
-	first := r.add("first.pdf", "application/pdf", []byte("first replay file"))
-	second := r.add("second.pdf", "application/pdf", []byte("second replay file"))
+	first := r.add(t.Context(), "first.pdf", "application/pdf", []byte("first replay file"))
+	second := r.add(t.Context(), "second.pdf", "application/pdf", []byte("second replay file"))
 	consumer := store.DocbankAttachmentConsumerKey("dest")
 	changes, err := r.f.Store.ListAttachmentChanges(t.Context(), consumer, 500)
 	require.NoError(err)
@@ -897,40 +902,40 @@ func TestAttachmentMirrorRestoredAfterDedup(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			r := newMirrorRig(t)
-			hash := r.add("restored.pdf", "application/pdf", []byte("restored document"))
+			hash := r.add(t.Context(), "restored.pdf", "application/pdf", []byte("restored document"))
 			if !tc.sourceDeleted {
 				_, err := r.f.Store.SaveDocbankAttachmentIntent(t.Context(), "dest", store.DocbankAttachmentDelivery{ContentHash: hash, Name: "restored.pdf", MIMEType: "application/pdf"})
 				require.NoError(err)
 			}
 			var hiddenID int64
-			require.NoError(r.f.Store.DB().QueryRow(`SELECT message_id FROM attachments`).Scan(&hiddenID))
+			require.NoError(r.f.Store.DB().QueryRowContext(t.Context(), `SELECT message_id FROM attachments`).Scan(&hiddenID))
 			if tc.sourceDeleted {
-				_, err := r.f.Store.DB().Exec(`UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP`)
+				_, err := r.f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP`)
 				require.NoError(err)
 			}
-			_, err := r.f.Store.MergeDuplicates(r.f.CreateMessage("survivor"), []int64{hiddenID}, "mirror-hidden")
+			_, err := r.f.Store.MergeDuplicates(t.Context(), r.f.CreateMessage("survivor"), []int64{hiddenID}, "mirror-hidden")
 			require.NoError(err)
 			switch tc.timing {
 			case "after discovery cursor":
 				require.NoError(r.runBatch(t.Context()))
 				assert.Equal(int32(1), r.Uploads.Load(), "dedup-hidden files upload before undo")
 				assert.Zero(r.status().Reasons["source_unavailable"])
-				restored, err := r.f.Store.UndoDedup("mirror-hidden")
+				restored, err := r.f.Store.UndoDedup(t.Context(), "mirror-hidden")
 				require.NoError(err)
 				assert.Equal(int64(1), restored)
 				require.NoError(r.runBatch(t.Context()))
 				assert.Equal(int32(1), r.Uploads.Load())
 				assert.Equal(int64(1), r.status().Delivered)
 			case "between final page and completion":
-				r.add("last.pdf", "application/pdf", []byte("last document"))
+				r.add(t.Context(), "last.pdf", "application/pdf", []byte("last document"))
 				var lastID int64
-				require.NoError(r.f.Store.DB().QueryRow(`SELECT MAX(id) FROM attachments`).Scan(&lastID))
+				require.NoError(r.f.Store.DB().QueryRowContext(t.Context(), `SELECT MAX(id) FROM attachments`).Scan(&lastID))
 				restored := false
 				r.worker.WithOperationGate(func(context.Context) (func(), bool) {
 					scan, err := r.f.Store.LoadDocbankAttachmentScan(t.Context(), "dest")
 					require.NoError(err)
 					if !restored && scan.AfterAttachmentID == lastID && scan.PassHighWater == lastID {
-						count, err := r.f.Store.UndoDedup("mirror-hidden")
+						count, err := r.f.Store.UndoDedup(t.Context(), "mirror-hidden")
 						require.NoError(err)
 						require.Equal(int64(1), count)
 						restored = true
@@ -966,7 +971,7 @@ func TestAttachmentMirrorMalformedAliasReplay(t *testing.T) {
 	mid := r.f.CreateMessage("malformed-alias")
 	require.NoError(r.f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{ContentHash: hash, Filename: "donor", SourcePartKey: "donor"}))
 	require.NoError(r.f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{StoragePath: "zz/" + hash, SourceAttachmentID: "slack:alias", SourcePartKey: "alias", State: "stored"}))
-	valid := r.add("valid.pdf", "application/pdf", []byte("valid document"))
+	valid := r.add(t.Context(), "valid.pdf", "application/pdf", []byte("valid document"))
 	require.NoError(r.runBatch(t.Context()))
 	_, delivered := r.Uploaded.Load(valid)
 	assert.True(delivered)
@@ -981,9 +986,9 @@ func TestAttachmentMirrorBackfillDuringPass(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	r := newMirrorRig(t)
-	r.add("first.pdf", "application/pdf", []byte("first document"))
+	r.add(t.Context(), "first.pdf", "application/pdf", []byte("first document"))
 	require.NoError(r.runBatch(t.Context()))
-	r.add("second.pdf", "application/pdf", []byte("second document"))
+	r.add(t.Context(), "second.pdf", "application/pdf", []byte("second document"))
 	reset := false
 	r.worker.WithOperationGate(func(context.Context) (func(), bool) {
 		if !reset && r.Uploads.Load() == 2 {
@@ -1002,4 +1007,508 @@ func TestAttachmentMirrorBackfillDuringPass(t *testing.T) {
 	require.NoError(err)
 	assert.Positive(scan.AfterAttachmentID)
 	assert.True(scan.NextFullScanAt.After(time.Now()))
+}
+
+func (r *mirrorRig) delivered(versions ...string) []string {
+	r.t.Helper()
+	var hashes []string
+	for _, version := range versions {
+		hash := r.add(r.t.Context(), version+".pdf", "application/pdf", []byte(version))
+		hashes = append(hashes, hash)
+		require.NoError(r.t, r.f.Store.RecordDocbankAttachment(r.t.Context(), "dest", store.DocbankAttachmentDelivery{ContentHash: hash, MIMEType: "application/pdf"}, store.DocbankAttachmentRef{NodeID: int64(1000 + r.count), VersionID: version}, ""))
+	}
+	r.worker.options.DocumentProfile = "documents"
+	return hashes
+}
+
+func (r *mirrorRig) processingDue() {
+	r.t.Helper()
+	_, err := r.f.Store.DB().ExecContext(r.t.Context(), `UPDATE docbank_attachment_processing SET next_action_at = '2000-01-01 00:00:00' WHERE next_action_at IS NOT NULL`)
+	require.NoError(r.t, err)
+}
+
+func (r *mirrorRig) processingCounts() store.DocbankAttachmentProcessingSummary {
+	r.t.Helper()
+	counts, err := r.f.Store.DocbankAttachmentProcessingCounts(r.t.Context(), "dest", r.worker.options.DocumentProfile)
+	require.NoError(r.t, err)
+	return counts
+}
+
+func TestAttachmentMirrorProcessesExistingDeliveries(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	r := newMirrorRig(t)
+	r.delivered("a")
+	require.NoError(r.runBatch(t.Context()))
+	var next time.Time
+	require.NoError(r.f.Store.DB().QueryRowContext(t.Context(), `SELECT next_action_at FROM docbank_attachment_processing`).Scan(&next))
+	assert.True(next.After(time.Now()))
+	assert.Equal([]string{"a"}, r.processing.Plans)
+	assert.Equal([]string{"a"}, r.processing.Jobs)
+	assert.Equal(int64(1), r.processingCounts().Requested)
+	require.NoError(r.runBatch(t.Context()))
+	r.processing.States[docbanktest.ProcessingJobID("a", r.processing.Fingerprint)] = [3]string{"completed", "rendition", ""}
+	r.processingDue()
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal(int64(1), r.processingCounts().Extracted)
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal([]string{"a"}, r.processing.Plans)
+	assert.Equal([]string{docbanktest.ProcessingJobID("a", r.processing.Fingerprint)}, r.processing.Polls)
+}
+
+func TestAttachmentMirrorProcessingMissingJobReplans(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	r := newMirrorRig(t)
+	r.delivered("a")
+	require.NoError(r.runBatch(t.Context()))
+	delete(r.processing.States, docbanktest.ProcessingJobID("a", r.processing.Fingerprint))
+	r.processingDue()
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal([]string{docbanktest.ProcessingJobID("a", r.processing.Fingerprint)}, r.processing.Polls)
+	assert.Equal([]string{"a", "a"}, r.processing.Plans)
+	assert.Equal([]string{"a", "a"}, r.processing.Jobs)
+	assert.Equal(int64(1), r.processingCounts().Requested)
+	assert.Empty(r.processingCounts().Outcomes)
+}
+
+func TestAttachmentMirrorProcessingInvalidPollRetriesJob(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	r := newMirrorRig(t)
+	r.delivered("a")
+	var polls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodGet && req.URL.Path == "/api/v1/processing/jobs/"+docbanktest.ProcessingJobID("a", r.processing.Fingerprint) && polls.Add(1) == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			_, err := io.WriteString(w, `{"job_id":"`+docbanktest.ProcessingJobID("a", r.processing.Fingerprint)+`","state":"completed"}`)
+			assert.NoError(err)
+			return
+		}
+		r.serve(w, req)
+	}))
+	t.Cleanup(srv.Close)
+	client, err := docbankmedia.NewClient(srv.URL, nil)
+	require.NoError(err)
+	r.worker.client = client
+
+	require.NoError(r.runBatch(t.Context()))
+	r.processingDue()
+	pollErr := r.runBatch(t.Context())
+	assert.Equal(int32(1), polls.Load())
+	require.ErrorIs(pollErr, docbankmedia.ErrInvalidReceipt)
+
+	var outcome, jobID string
+	require.NoError(r.f.Store.DB().QueryRowContext(t.Context(), `SELECT outcome, job_id FROM docbank_attachment_processing`).Scan(&outcome, &jobID))
+	assert.Equal("requested", outcome)
+	assert.Equal(docbanktest.ProcessingJobID("a", r.processing.Fingerprint), jobID)
+	r.processing.States[docbanktest.ProcessingJobID("a", r.processing.Fingerprint)] = [3]string{"completed", "rendition", ""}
+	r.processingDue()
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal(int32(2), polls.Load())
+	assert.Equal([]string{"a"}, r.processing.Jobs)
+	assert.Equal(int64(1), r.processingCounts().Extracted)
+}
+
+func TestAttachmentMirrorProcessingRefusalsWaitForProfileChange(t *testing.T) {
+	for _, stage := range []string{"plan", "start"} {
+		t.Run(stage, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			r := newMirrorRig(t)
+			hashes := r.delivered("a")
+			outcome := "not_found"
+			switch stage {
+			case "plan":
+				r.processing.Faults["a"] = http.StatusNotFound
+				r.processing.Reasons["a"] = outcome
+			case "start":
+				r.processing.JobFaults["a"] = http.StatusNotFound
+				r.processing.Reasons["a"] = outcome
+			}
+			require.NoError(r.runBatch(t.Context()))
+			assert.Equal(map[string]int64{outcome: 1}, r.processingCounts().Outcomes)
+			var savedJobID string
+			require.NoError(r.f.Store.DB().QueryRowContext(t.Context(), r.f.Store.Rebind(`SELECT job_id FROM docbank_attachment_processing WHERE content_hash = ?`), hashes[0]).Scan(&savedJobID))
+			assert.Empty(savedJobID)
+			plans, jobs := len(r.processing.Plans), len(r.processing.Jobs)
+			require.NoError(r.runBatch(t.Context()))
+			assert.Len(r.processing.Plans, plans, "a refusal waits for a profile change")
+			assert.Len(r.processing.Jobs, jobs, "a refusal waits for a profile change")
+			delete(r.processing.Faults, "a")
+			delete(r.processing.JobFaults, "a")
+			delete(r.processing.Reasons, "a")
+			r.processing.Fingerprint = "profile-two"
+			require.NoError(r.runBatch(t.Context()))
+			assert.Len(r.processing.Plans, plans+1)
+			assert.Len(r.processing.Jobs, jobs+1)
+			assert.Equal(int64(1), r.processingCounts().Requested)
+		})
+	}
+}
+
+func TestAttachmentMirrorProcessingUnknownState(t *testing.T) {
+	require := require.New(t)
+	r := newMirrorRig(t)
+	r.delivered("a")
+	require.NoError(r.runBatch(t.Context()))
+	r.processing.States[docbanktest.ProcessingJobID("a", r.processing.Fingerprint)] = [3]string{"awaiting_review", "rendition", ""}
+	r.processingDue()
+	// The scheduler publishes the batch error as last_error.
+	err := r.runBatch(t.Context())
+	require.ErrorContains(err, "awaiting_review")
+}
+
+func TestAttachmentMirrorProcessingIneligiblePlan(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	r := newMirrorRig(t)
+	r.delivered("a", "b")
+	r.processing.IneligibleReasons = map[string]string{"a": "unsupported_media_type"}
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal(map[string]int64{"unsupported_media_type": 1}, r.processingCounts().Outcomes)
+	assert.Equal(int64(1), r.processingCounts().Requested)
+	assert.ElementsMatch([]string{"a", "b"}, r.processing.Plans)
+	assert.Equal([]string{"b"}, r.processing.Jobs)
+	require.NoError(r.runBatch(t.Context()))
+	assert.ElementsMatch([]string{"a", "b"}, r.processing.Plans)
+}
+
+func TestAttachmentMirrorProcessingBlockedKeepsUploading(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	r := newMirrorRig(t)
+	for i := range 25 {
+		hash := fmt.Sprintf("file-%02d", i)
+		r.delivered(hash)
+		r.processing.JobFaults[hash] = http.StatusPreconditionRequired
+		r.processing.Reasons[hash] = "processing_consent_required"
+	}
+	r.add(t.Context(), "new.pdf", "application/pdf", []byte("new file"))
+	err := r.runBatch(t.Context())
+	require.ErrorContains(err, "document_profile \"documents\"")
+	assert.Contains(err.Error(), "processing_consent_required")
+	assert.Len(r.processing.Jobs, 1)
+	assert.Equal(int64(26), r.status().Delivered)
+	assert.Equal(int64(26), r.processingCounts().Waiting)
+	assert.Zero(r.processingCounts().Requested)
+	assert.Empty(r.processingCounts().Outcomes)
+	clear(r.processing.JobFaults)
+	clear(r.processing.Reasons)
+	require.NoError(r.runBatch(t.Context()))
+	assert.Len(r.processing.Plans, 27)
+	assert.Len(r.processing.Jobs, 27)
+	assert.Contains(r.processing.Plans, "version-8")
+	assert.Contains(r.processing.Jobs, "version-8")
+	assert.Equal(int64(26), r.processingCounts().Requested)
+	assert.Zero(r.processingCounts().Waiting)
+}
+
+func TestAttachmentMirrorProcessingInvalidProfile(t *testing.T) {
+	for _, name := range []string{"embedding-only", "unavailable"} {
+		t.Run(name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			r := newMirrorRig(t)
+			r.delivered("a")
+			switch name {
+			case "embedding-only":
+				r.processing.Rendition = false
+			case "unavailable":
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(http.StatusServiceUnavailable)
+				}))
+				defer server.Close()
+				client, err := docbankmedia.NewClient(server.URL, nil)
+				require.NoError(err)
+				r.worker.client = client
+			}
+			err := r.runBatch(t.Context())
+			require.ErrorContains(err, "document_profile")
+			assert.Equal(1, strings.Count(err.Error(), "document_profile"))
+			if name == "unavailable" {
+				assert.Contains(err.Error(), "server_error")
+			} else {
+				assert.Empty(r.processing.Plans)
+			}
+		})
+	}
+}
+
+func TestAttachmentMirrorProcessingDestinationFaults(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*testing.T, *mirrorRig)
+	}{
+		{name: "plan/two failures"},
+		{name: "poll", run: func(t *testing.T, r *mirrorRig) {
+			t.Helper()
+			require := require.New(t)
+			assert := assert.New(t)
+			r.delivered("c", "b", "a")
+			require.NoError(r.runBatch(t.Context()))
+			r.processingDue()
+			jobC := docbanktest.ProcessingJobID("c", r.processing.Fingerprint)
+			r.processing.PollFaults[jobC] = http.StatusServiceUnavailable
+			err := r.runBatch(t.Context())
+			require.Error(err)
+			assert.Equal([]string{jobC, docbanktest.ProcessingJobID("b", r.processing.Fingerprint), docbanktest.ProcessingJobID("a", r.processing.Fingerprint)}, r.processing.Polls)
+			assert.Equal(int64(3), r.processingCounts().Requested)
+			delete(r.processing.PollFaults, jobC)
+			r.processing.States[jobC] = [3]string{"completed", "rendition", ""}
+			r.processingDue()
+			require.NoError(r.runBatch(t.Context()))
+			counts := r.processingCounts()
+			assert.Equal(int64(2), counts.Requested)
+			assert.Equal(int64(1), counts.Extracted)
+		}},
+		{name: "plan changed", run: func(t *testing.T, r *mirrorRig) {
+			t.Helper()
+			require := require.New(t)
+			assert := assert.New(t)
+			r.delivered("c", "b", "a")
+			for _, version := range []string{"c", "b"} {
+				r.processing.JobFaults[version] = http.StatusConflict
+				r.processing.Reasons[version] = "processing_plan_changed"
+			}
+			require.NoError(r.runBatch(t.Context()))
+			assert.Equal([]string{"c", "b", "a"}, r.processing.Plans)
+			assert.Equal([]string{"c", "b", "a"}, r.processing.Jobs)
+			counts := r.processingCounts()
+			assert.Equal(int64(1), counts.Requested)
+			assert.Equal(int64(2), counts.Waiting)
+			for _, version := range []string{"c", "b"} {
+				delete(r.processing.JobFaults, version)
+				delete(r.processing.Reasons, version)
+			}
+			r.processingDue()
+			require.NoError(r.runBatch(t.Context()))
+			assert.Equal(int64(3), r.processingCounts().Requested)
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newMirrorRig(t)
+			if tc.run != nil {
+				tc.run(t, r)
+				return
+			}
+			require := require.New(t)
+			assert := assert.New(t)
+			hashes := r.delivered("c", "b", "a")
+			r.processing.Faults["c"] = http.StatusServiceUnavailable
+			r.processing.Faults["b"] = http.StatusServiceUnavailable
+			err := r.runBatch(t.Context())
+			require.Error(err)
+			assert.Equal([]string{"c", "b"}, r.processing.Plans)
+			assert.Empty(r.processing.Jobs)
+			due, err := r.f.Store.DocbankAttachmentsToProcess(t.Context(), "dest", r.processing.Fingerprint, 20)
+			require.NoError(err)
+			require.Len(due, 1)
+			assert.Equal(hashes[2], due[0].ContentHash)
+			delete(r.processing.Faults, "c")
+			delete(r.processing.Faults, "b")
+			r.processingDue()
+			require.NoError(r.runBatch(t.Context()))
+			assert.Equal(int64(3), r.processingCounts().Requested)
+		})
+	}
+}
+
+func TestAttachmentMirrorProcessingSlowRetrySavePreservesFailure(t *testing.T) {
+	r := newMirrorRig(t)
+	r.delivered("a")
+	transport := http.DefaultTransport
+	defer func() { http.DefaultTransport = transport }()
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		deadline := time.Now().Add(500 * time.Millisecond)
+		planFailed := false
+		http.DefaultTransport = handlerTransport(func(w http.ResponseWriter, req *http.Request) {
+			if req.URL.Path == "/api/v1/processing/plans" {
+				planFailed = true
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			r.serve(w, req)
+		})
+		r.worker.WithOperationGate(func(context.Context) (func(), bool) {
+			if planFailed {
+				require.True(time.Now().Before(deadline), "the destination fails before the deadline")
+				// Delay the retry save until after the pass deadline.
+				synctest.Sleep(time.Until(deadline) + 50*time.Millisecond)
+			}
+			return func() {}, true
+		})
+		more, err := r.worker.processDocuments(t.Context(), deadline)
+		httpErr, ok := errors.AsType[*docbankmedia.HTTPError](err)
+		require.True(ok, "the destination failure remains visible after the delayed save")
+		assert.Equal(http.StatusServiceUnavailable, httpErr.Status)
+		assert.True(more)
+		assert.False(time.Now().Before(deadline), "the retry save crosses the deadline")
+		assert.Equal(int64(1), r.processingCounts().Waiting)
+	})
+}
+
+func TestAttachmentMirrorProcessingRequestsUseRemainingDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		path          string
+		existing      bool
+		cancelled     bool
+		wantDelivered int64
+	}{
+		{name: "profile", path: "/api/v1/processing/profiles", wantDelivered: 1},
+		{name: "profile cancelled", path: "/api/v1/processing/profiles", existing: true, cancelled: true},
+		{name: "plan", path: "/api/v1/processing/plans", existing: true, wantDelivered: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newMirrorRig(t)
+			if tc.existing {
+				r.delivered("a")
+			} else {
+				r.worker.options.DocumentProfile = "documents"
+			}
+			r.add(t.Context(), "new.pdf", "application/pdf", []byte("new file"))
+			transport := http.DefaultTransport
+			defer func() { http.DefaultTransport = transport }()
+			synctest.Test(t, func(t *testing.T) {
+				require := require.New(t)
+				assert := assert.New(t)
+				ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+				defer cancel()
+				requestStarted := false
+				http.DefaultTransport = handlerTransport(func(w http.ResponseWriter, req *http.Request) {
+					if req.URL.Path == tc.path {
+						requestStarted = true
+						if tc.cancelled {
+							cancel()
+						}
+						<-req.Context().Done()
+						return
+					}
+					r.serve(w, req)
+				})
+				deadline := time.Now().Add(2 * time.Second)
+				if tc.cancelled {
+					more, err := r.worker.processDocuments(ctx, deadline)
+					require.ErrorIs(err, context.Canceled)
+					assert.False(more)
+					assert.True(requestStarted, "processing request did not start")
+					return
+				}
+				more, err := r.worker.runPass(ctx, deadline)
+				require.NoError(err)
+				assert.True(more)
+				assert.Equal(int32(1), r.Uploads.Load())
+				assert.Equal(tc.wantDelivered, r.status().Delivered)
+				assert.True(requestStarted, "processing request did not start")
+			})
+		})
+	}
+}
+
+func TestAttachmentMirrorProcessingJobStates(t *testing.T) {
+	for _, tc := range []struct {
+		state, phase, code, outcome string
+		report                      bool
+		delay                       time.Duration
+	}{
+		{"completed", "rendition", "", "extracted", false, 0},
+		{"partial", "rendition", "optional_failed", "extracted", false, 0},
+		{"failed", "embedding", "provider_timeout", "extracted", false, 0},
+		{"queued", "rendition", "", "requested", false, store.BeeperMediaPollDelay},
+		{"running", "rendition", "", "requested", false, store.BeeperMediaPollDelay},
+		{"retry_wait", "rendition", "provider_timeout", "requested", false, store.BeeperMediaPollDelay},
+		{"new_state", "rendition", "provider_code", "requested", true, store.BeeperMediaRetryDelay},
+		{"awaiting_review", "embedding", "", "requested", true, store.BeeperMediaRetryDelay},
+		{"operator_required", "failed", "operator_required", "operator_required", false, 0},
+		{"failed", "rendition", "provider_timeout", "provider_timeout", false, 0},
+		{"failed", "rendition", "", "failed", false, 0},
+		{"abandoned", "rendition", "", "abandoned", false, 0},
+	} {
+		t.Run(tc.state+"_"+tc.phase+"_"+tc.code, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			job := docbankmedia.JobStatus{State: tc.state, Phase: tc.phase, FailureCode: tc.code}
+			answer := processingJobAnswer(job)
+			assert.Equal(tc.outcome, answer.outcome)
+			assert.Equal(tc.delay, answer.delay)
+			if tc.report {
+				require.ErrorContains(answer.report, tc.state)
+			} else {
+				assert.NoError(answer.report)
+			}
+		})
+	}
+}
+
+func TestAttachmentMirrorProcessingLocalErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		err     error
+		outcome string
+		delay   time.Duration
+		retry   bool
+		blocked bool
+	}{
+		{"unavailable", &docbankmedia.HTTPError{Status: http.StatusServiceUnavailable, Code: "server_error"}, "", 5 * time.Minute, true, false},
+		{"plan_changed", &docbankmedia.HTTPError{Status: http.StatusConflict, Code: "conflict", Reason: "processing_plan_changed"}, "", 5 * time.Minute, true, false},
+		{"invalid_receipt", docbankmedia.ErrInvalidReceipt, "invalid_receipt", 0, false, false},
+		{"stale_version", &docbankmedia.HTTPError{Status: http.StatusConflict, Code: "conflict", Reason: "stale_version"}, "stale_version", 0, false, false},
+		{"credentials", &docbankmedia.HTTPError{Status: http.StatusUnauthorized, Code: "unauthorized"}, "", 0, false, true},
+		{"profile", &docbankmedia.HTTPError{Status: http.StatusConflict, Code: "conflict", Reason: "processing_profile_unavailable"}, "", 0, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			answer := processingAnswer(docbankmedia.JobStatus{}, tc.err)
+			assert.Equal(tc.outcome, answer.outcome)
+			assert.Equal(tc.delay, answer.delay)
+			assert.Equal(tc.retry, answer.retry)
+			assert.Equal(tc.blocked, answer.blocked)
+		})
+	}
+}
+
+func TestAttachmentMirrorBusyUploadGateStopsPass(t *testing.T) {
+	for _, withFailure := range []bool{false, true} {
+		t.Run(fmt.Sprintf("failure=%t", withFailure), func(t *testing.T) {
+			r := newMirrorRig(t)
+			r.delivered("a")
+			if withFailure {
+				r.processing.Faults["a"] = http.StatusServiceUnavailable
+			}
+			transport := http.DefaultTransport
+			defer func() { http.DefaultTransport = transport }()
+			synctest.Test(t, func(t *testing.T) {
+				profileRead, gateBusy := false, false
+				http.DefaultTransport = handlerTransport(func(w http.ResponseWriter, req *http.Request) {
+					if req.URL.Path == "/api/v1/processing/profiles" {
+						profileRead = true
+					}
+					r.serve(w, req)
+				})
+				r.worker.WithOperationGate(func(context.Context) (func(), bool) {
+					if gateBusy {
+						return nil, false
+					}
+					if profileRead && (!withFailure || len(r.processing.Plans) > 0) {
+						// Exhaust the processing budget before the upload gate is busy.
+						synctest.Sleep(31 * time.Second)
+						gateBusy = true
+					}
+					return func() {}, true
+				})
+				more, err := r.worker.runPass(t.Context(), time.Now().Add(time.Minute))
+				if withFailure {
+					require.ErrorContains(t, err, "server_error")
+					require.NotErrorIs(t, err, errBeeperMediaGateBusy)
+				} else {
+					require.NoError(t, err)
+				}
+				assert.False(t, more)
+			})
+		})
+	}
 }

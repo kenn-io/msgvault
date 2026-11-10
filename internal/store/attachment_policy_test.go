@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"math"
@@ -23,7 +22,7 @@ func TestInitSchemaAddsAttachmentOutcomeColumns(t *testing.T) {
 	st, err := store.Open(dbPath)
 	require.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		CREATE TABLE attachments (
 			id INTEGER PRIMARY KEY,
 			message_id INTEGER NOT NULL,
@@ -37,9 +36,9 @@ func TestInitSchemaAddsAttachmentOutcomeColumns(t *testing.T) {
 	require.NoError(st.InitSchema())
 
 	var state, reason sql.NullString
-	_, err = st.DB().Exec(`INSERT INTO attachments (message_id, storage_path) VALUES (1, 'legacy:pending')`)
+	_, err = st.DB().ExecContext(t.Context(), `INSERT INTO attachments (message_id, storage_path) VALUES (1, 'legacy:pending')`)
 	require.NoError(err)
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT attachment_state, attachment_skip_reason FROM attachments WHERE message_id = 1
 	`).Scan(&state, &reason))
 	assert.False(state.Valid)
@@ -55,7 +54,7 @@ func newPolicyMessage(t *testing.T, st *store.Store, sourceType, identifier, con
 	require.NoError(t, err)
 	conversationID, err := st.EnsureConversationWithType(source.ID, "conversation-"+sourceMessageID, conversationType, sourceMessageID)
 	require.NoError(t, err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE conversations SET participant_count = ? WHERE id = ?`), participants, conversationID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE conversations SET participant_count = ? WHERE id = ?`), participants, conversationID)
 	require.NoError(t, err)
 	require.NoError(t, st.SetConversationMemberCount(conversationID, participants))
 	return source.ID, insertStoreTestMessage(t, st, source.ID, conversationID, sourceMessageID)
@@ -64,7 +63,7 @@ func newPolicyMessage(t *testing.T, st *store.Store, sourceType, identifier, con
 func policyMessageConversationID(t *testing.T, st *store.Store, messageID int64) int64 {
 	t.Helper()
 	var conversationID int64
-	require.NoError(t, st.DB().QueryRow(st.Rebind(
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT conversation_id FROM messages WHERE id = ?`,
 	), messageID).Scan(&conversationID))
 	return conversationID
@@ -80,7 +79,7 @@ func TestAttachmentOutcomeRoundTrip(t *testing.T) {
 	}
 	require.NoError(t, st.ReplaceMessageBeeperAttachments(messageID, []store.AttachmentRef{want}))
 
-	refs, err := st.MessageBeeperAttachments(messageID)
+	refs, err := st.MessageBeeperAttachments(t.Context(), messageID)
 	require.NoError(t, err)
 	// The replacement path normalizes role provenance and keys the occurrence
 	// by its provider attachment ID; the typed outcome rides along unchanged.
@@ -115,7 +114,7 @@ func TestRetryableAttachmentMessagesReevaluateSkippedUnderCurrentPolicy(t *testi
 		}))
 	}
 
-	items, err := st.ListBeeperRetryableAttachmentMessages(sourceID, attachmentpolicy.Policy{
+	items, err := st.ListBeeperRetryableAttachmentMessages(t.Context(), sourceID, attachmentpolicy.Policy{
 		MaxParticipants: 3,
 	})
 	require.NoError(err)
@@ -124,7 +123,7 @@ func TestRetryableAttachmentMessagesReevaluateSkippedUnderCurrentPolicy(t *testi
 		{MessageID: failedID, ConversationID: policyMessageConversationID(t, st, failedID), SourceMessageID: "failed", ChatID: "conversation-failed", ConversationType: "group_chat", ParticipantCount: 4},
 	}, items)
 
-	items, err = st.ListBeeperRetryableAttachmentMessages(sourceID, attachmentpolicy.Policy{})
+	items, err = st.ListBeeperRetryableAttachmentMessages(t.Context(), sourceID, attachmentpolicy.Policy{})
 	require.NoError(err)
 	assert.Equal([]store.BeeperPendingAttachmentMessage{
 		{MessageID: pendingID, ConversationID: policyMessageConversationID(t, st, pendingID), SourceMessageID: "pending", ChatID: "conversation-pending", ConversationType: "group_chat", ParticipantCount: 4},
@@ -183,7 +182,7 @@ func TestExcludeAttachmentOccurrencesRemovesOnlySelectedBlobReference(t *testing
 		}}))
 	}
 
-	candidates, err := st.ListAttachmentPolicyCandidates(context.Background())
+	candidates, err := st.ListAttachmentPolicyCandidates(t.Context())
 	require.NoError(err)
 	require.Len(candidates, 2)
 	var excluded store.AttachmentPolicyCandidate
@@ -193,20 +192,25 @@ func TestExcludeAttachmentOccurrencesRemovesOnlySelectedBlobReference(t *testing
 		}
 	}
 	require.NotZero(excluded.AttachmentID)
-	require.NoError(st.ExcludeAttachmentOccurrences(context.Background(), []store.AttachmentExclusion{{
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET size_estimate = 4321 WHERE id = ?`), excludedMessageID)
+	require.NoError(err)
+	require.NoError(st.ExcludeAttachmentOccurrences(t.Context(), []store.AttachmentExclusion{{
 		AttachmentID: excluded.AttachmentID, Reason: attachmentpolicy.SkipPolicyScope,
 	}}))
 
 	var state, reason, contentHash, storagePath string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT attachment_state, attachment_skip_reason, COALESCE(content_hash, ''), storage_path
 		FROM attachments WHERE id = ?`), excluded.AttachmentID).Scan(&state, &reason, &contentHash, &storagePath))
 	assert.Equal(string(attachmentpolicy.StateSkipped), state)
 	assert.Equal(string(attachmentpolicy.SkipPolicyScope), reason)
 	assert.Empty(contentHash)
 	assert.Equal("excluded:beeper:excluded", storagePath)
+	var sizeEstimate int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT size_estimate FROM messages WHERE id = ?`), excludedMessageID).Scan(&sizeEstimate))
+	assert.Equal(int64(4321), sizeEstimate)
 
-	referenced, err := st.AttachmentBlobReferenced(context.Background(), hash, path)
+	referenced, err := st.AttachmentBlobReferenced(t.Context(), hash, path)
 	require.NoError(err)
 	assert.True(referenced)
 }
@@ -214,7 +218,7 @@ func TestExcludeAttachmentOccurrencesRemovesOnlySelectedBlobReference(t *testing
 func TestAttachmentBlobReferenced(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	_, messageID := newPolicyMessage(t, st, "beeper", "signal", "direct_chat", "blob-references", 2)
-	_, err := st.DB().Exec(st.Rebind(`
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO attachments (message_id, content_hash, thumbnail_hash, storage_path, thumbnail_path)
 		VALUES (?, 'content-hash', 'thumbnail-hash', 'content/path', 'thumbnail/path'),
 		       (?, '', '', '', '')
@@ -258,33 +262,33 @@ func TestAttachmentPolicyCandidatesIncludeLegacyAliasesSlackdumpAndTeamsInlineRo
 	inlineHash := strings.Repeat("cd", 32)
 
 	var aliasID int64
-	err := st.DB().QueryRow(st.Rebind(`
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		INSERT INTO attachments (message_id, storage_path, content_hash, source_attachment_id)
 		VALUES (?, ?, NULL, ?)
 		RETURNING id
 	`), slackMessageID, aliasHash[:2]+"/"+aliasHash, "slack:legacy-alias").Scan(&aliasID)
 	require.NoError(err)
 	var slackdumpID int64
-	err = st.DB().QueryRow(st.Rebind(`
+	err = st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		INSERT INTO attachments (message_id, storage_path, content_hash, source_attachment_id, attachment_state)
 		VALUES (?, ?, ?, ?, 'stored')
 		RETURNING id
 	`), slackdumpMessageID, slackdumpHash[:2]+"/"+slackdumpHash, slackdumpHash, "slack:F_EXPORT").Scan(&slackdumpID)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE conversations SET participant_count = 99
 		WHERE id = (SELECT conversation_id FROM messages WHERE id = ?)
 	`), slackdumpMessageID)
 	require.NoError(err)
 	var inlineID int64
-	err = st.DB().QueryRow(st.Rebind(`
+	err = st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		INSERT INTO attachments (message_id, storage_path, content_hash, filename, mime_type, source_attachment_id)
 		VALUES (?, ?, ?, NULL, NULL, NULL)
 		RETURNING id
 	`), teamsMessageID, inlineHash[:2]+"/"+inlineHash, inlineHash).Scan(&inlineID)
 	require.NoError(err)
 
-	candidates, err := st.ListAttachmentPolicyCandidates(context.Background())
+	candidates, err := st.ListAttachmentPolicyCandidates(t.Context())
 	require.NoError(err)
 	require.Len(candidates, 3)
 	byID := make(map[int64]store.AttachmentPolicyCandidate, len(candidates))
@@ -299,12 +303,12 @@ func TestAttachmentPolicyCandidatesIncludeLegacyAliasesSlackdumpAndTeamsInlineRo
 	assert.Equal(inlineHash, byID[inlineID].ContentHash)
 	assert.Equal(fmt.Sprintf("teams:inline:legacy:%d", inlineID), byID[inlineID].SourceAttachmentID)
 
-	require.NoError(st.ExcludeAttachmentOccurrences(context.Background(), []store.AttachmentExclusion{
+	require.NoError(st.ExcludeAttachmentOccurrences(t.Context(), []store.AttachmentExclusion{
 		{AttachmentID: aliasID, Reason: attachmentpolicy.SkipPolicyScope, SourceAttachmentID: byID[aliasID].SourceAttachmentID},
 		{AttachmentID: inlineID, Reason: attachmentpolicy.SkipPolicyScope, SourceAttachmentID: byID[inlineID].SourceAttachmentID},
 	}))
 	var sourceAttachmentID, state string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT source_attachment_id, attachment_state FROM attachments WHERE id = ?
 	`), inlineID).Scan(&sourceAttachmentID, &state))
 	assert.Equal(fmt.Sprintf("teams:inline:legacy:%d", inlineID), sourceAttachmentID)

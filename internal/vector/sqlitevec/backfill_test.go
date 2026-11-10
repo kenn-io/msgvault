@@ -22,7 +22,7 @@ import (
 func embedGenOf(t *testing.T, db *sql.DB, id int64) (val int64, isNull bool) {
 	t.Helper()
 	var v sql.NullInt64
-	require.NoError(t, db.QueryRow(`SELECT embed_gen FROM messages WHERE id = ?`, id).Scan(&v))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT embed_gen FROM messages WHERE id = ?`, id).Scan(&v))
 	return v.Int64, !v.Valid
 }
 
@@ -39,10 +39,10 @@ func seedEmbeddedMain(ctx context.Context, t *testing.T) (mainPath, vecPath stri
 	mainPath = filepath.Join(dir, "msgvault.db")
 	vecPath = filepath.Join(dir, "vectors.db")
 
-	s, err := store.Open(mainPath)
+	s, err := store.OpenContext(ctx, mainPath)
 	require.NoError(t, err, "store.Open (rw)")
-	require.NoError(t, s.InitSchema(), "InitSchema")
-	_, err = s.DB().Exec(`
+	require.NoError(t, s.InitSchemaContext(ctx), "InitSchema")
+	_, err = s.DB().ExecContext(ctx, `
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
 INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread');
 INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type)
@@ -62,9 +62,9 @@ VALUES (1, 1, 1, 'm1', 'email');
 
 	// Simulate the pre-upgrade state: embed_gen NULL, ledger cleared. A
 	// write-path Open would now stamp embed_gen=active and mark the ledger.
-	_, err = s.DB().Exec(`UPDATE messages SET embed_gen = NULL`)
+	_, err = s.DB().ExecContext(ctx, `UPDATE messages SET embed_gen = NULL`)
 	require.NoError(t, err, "reset embed_gen")
-	_, err = s.DB().Exec(`DELETE FROM applied_migrations WHERE name = ?`, embedGenBackfillMigration)
+	_, err = s.DB().ExecContext(ctx, `DELETE FROM applied_migrations WHERE name = ?`, embedGenBackfillMigration)
 	require.NoError(t, err, "clear ledger")
 	require.NoError(t, s.Close(), "close rw store")
 
@@ -89,7 +89,7 @@ func TestBackfillEmbedGen_StampAndMarkAtomic_RollbackOnMarkFailure(t *testing.T)
 	require.NoError(
 		RegisterExtension(), "RegisterExtension")
 
-	ctx := context.Background()
+	ctx := t.Context()
 	mainPath, vecPath := seedEmbeddedMain(ctx, t)
 
 	// Reopen the main DB read-write and install a fault that makes ONLY the
@@ -101,9 +101,9 @@ func TestBackfillEmbedGen_StampAndMarkAtomic_RollbackOnMarkFailure(t *testing.T)
 		err, "reopen main rw")
 
 	defer func() { _ = s.Close() }()
-	_, err = s.DB().Exec(`CREATE TRIGGER zz_fail_backfill_mark
+	_, err = s.DB().ExecContext(t.Context(), `CREATE TRIGGER zz_fail_backfill_mark
 		BEFORE INSERT ON applied_migrations
-		WHEN NEW.name = '` + embedGenBackfillMigration + `'
+		WHEN NEW.name = '`+embedGenBackfillMigration+`'
 		BEGIN SELECT RAISE(ABORT, 'injected backfill mark failure'); END;`)
 	require.NoError(
 		err, "install fault trigger")
@@ -130,7 +130,7 @@ func TestBackfillEmbedGen_StampAndMarkAtomic_RollbackOnMarkFailure(t *testing.T)
 	// Recovery: remove the fault and re-Open. The migration was never marked,
 	// so the one-time backfill re-runs cleanly and now completes — both the
 	// stamp and the mark land.
-	_, err = s.DB().Exec(`DROP TRIGGER zz_fail_backfill_mark`)
+	_, err = s.DB().ExecContext(t.Context(), `DROP TRIGGER zz_fail_backfill_mark`)
 	require.NoError(
 		err, "drop fault trigger")
 
@@ -159,7 +159,7 @@ func TestBackfillEmbedGen_StampAndMarkAtomic_BothPresentOnSuccess(t *testing.T) 
 	require.NoError(
 		RegisterExtension(), "RegisterExtension")
 
-	ctx := context.Background()
+	ctx := t.Context()
 	mainPath, vecPath := seedEmbeddedMain(ctx, t)
 
 	s, err := store.Open(mainPath)
@@ -202,7 +202,7 @@ func TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal(t *testing.T) {
 	require.NoError(
 		RegisterExtension(), "RegisterExtension")
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "msgvault.db")
@@ -220,7 +220,7 @@ func TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal(t *testing.T) {
 	require.NoError(
 		s.InitSchema(), "InitSchema")
 
-	_, err = s.DB().Exec(`
+	_, err = s.DB().ExecContext(t.Context(), `
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
 INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread');
 INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type)
@@ -268,11 +268,11 @@ VALUES (1, 1, 1, 'm1', 'email'), (2, 1, 1, 'm2', 'email');
 		rw.Close(), "close rw backend")
 
 	// Simulate the upgrade: embed_gen NULL everywhere, ledger cleared.
-	_, err = s.DB().Exec(`UPDATE messages SET embed_gen = NULL`)
+	_, err = s.DB().ExecContext(t.Context(), `UPDATE messages SET embed_gen = NULL`)
 	require.NoError(
 		err, "reset embed_gen")
 
-	_, err = s.DB().Exec(`DELETE FROM applied_migrations WHERE name = ?`, embedGenBackfillMigration)
+	_, err = s.DB().ExecContext(t.Context(), `DELETE FROM applied_migrations WHERE name = ?`, embedGenBackfillMigration)
 	require.NoError(
 		err, "clear ledger")
 
@@ -314,7 +314,7 @@ func TestOpen_DropsDeadPendingEmbeddings(t *testing.T) {
 	require.NoError(
 		RegisterExtension(), "RegisterExtension")
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "msgvault.db")

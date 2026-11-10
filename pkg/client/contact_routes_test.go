@@ -8,6 +8,17 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+func TestGeneratedParticipantAddressPermitsEmptyMetadata(t *testing.T) {
+	require := require.New(t)
+	identifier := generated.ParticipantAddress{
+		ParticipantID: 7,
+		Type:          "email",
+		Value:         "person@example.org",
+		IdentityKey:   `["email","","","person@example.org"]`,
+	}
+	require.NoError(identifier.Validate())
+}
+
 func TestGeneratedPersonMessagingRoutesAcceptsEmptyCanonicalAliasReason(t *testing.T) {
 	page := generated.PersonMessagingRoutesPage{
 		AliasReason: "",
@@ -71,6 +82,23 @@ func TestGeneratedContactCandidatesAcceptEmptySavedDisplayName(t *testing.T) {
 			MatchKinds:  []string{"bound_observed_name"},
 		}},
 		IdentityRevision: 3,
+	}
+
+	require.NoError(t, page.Validate())
+}
+
+func TestGeneratedLoopListAcceptsUnnamedCounterpartyAndEmptySummary(t *testing.T) {
+	asked := time.Date(2026, time.October, 20, 9, 0, 0, 0, time.UTC)
+	page := generated.LoopListResponse{
+		Items: []generated.LoopItem{{
+			AnchorMessageID:    4521,
+			QuestionMessageIds: []int64{4521},
+			OwedSinceAt:        asked,
+			LastActivityAt:     asked,
+			Kind:               generated.ReplyOwed,
+			Channel:            generated.Chat,
+			Counterparty:       generated.LoopCounterparty{ParticipantID: 7},
+		}},
 	}
 
 	require.NoError(t, page.Validate())

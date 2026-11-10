@@ -47,7 +47,7 @@ func TestScheduledOmiContinuesFullScanForOlderEdits(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if pause != nil {
 					var snippet string
-					err := st.DB().QueryRow(`SELECT snippet FROM messages WHERE source_id = ? AND source_message_id = 'recent'`, src.ID).Scan(&snippet)
+					err := st.DB().QueryRowContext(t.Context(), `SELECT snippet FROM messages WHERE source_id = ? AND source_message_id = 'recent'`, src.ID).Scan(&snippet)
 					if err == nil && strings.Contains(snippet, "Revised recent") {
 						pause(jobctx.ErrRunBudgetExceeded)
 						<-r.Context().Done()
@@ -90,11 +90,11 @@ func TestScheduledOmiContinuesFullScanForOlderEdits(t *testing.T) {
 				require.NoError(err)
 				defer func() { require.NoError(duck.Close()) }()
 				var snippet string
-				require.NoError(duck.QueryRow(`SELECT snippet FROM read_parquet(?, hive_partitioning=true) WHERE source_message_id = 'recent'`, filepath.Join(analyticsDir, "messages", "**", "*.parquet")).Scan(&snippet))
+				require.NoError(duck.QueryRowContext(t.Context(), `SELECT snippet FROM read_parquet(?, hive_partitioning=true) WHERE source_message_id = 'recent'`, filepath.Join(analyticsDir, "messages", "**", "*.parquet")).Scan(&snippet))
 				return snippet
 			}
 			if mode == "cache" {
-				_, err = buildCache(cfg.DatabaseDSN(), analyticsDir, false)
+				_, err = buildCache(t.Context(), cfg.DatabaseDSN(), analyticsDir, false)
 				require.NoError(err)
 				before, err = query.ReadCacheSyncState(analyticsDir)
 				require.NoError(err)
@@ -118,7 +118,7 @@ func TestScheduledOmiContinuesFullScanForOlderEdits(t *testing.T) {
 			switch mode {
 			case "cache":
 				var pausedUpdates int64
-				require.NoError(st.DB().QueryRow(`SELECT messages_updated FROM sync_runs WHERE status = 'paused'`).Scan(&pausedUpdates))
+				require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT messages_updated FROM sync_runs WHERE status = 'paused'`).Scan(&pausedUpdates))
 				assert.Equal(int64(1), pausedUpdates)
 				assert.Contains(cachedSnippet(), "Original recent")
 				sum, err = imp.Import(t.Context(), omi.ImportOptions{Identifier: "work", AccountEmail: "owner@example.com"})
@@ -130,15 +130,15 @@ func TestScheduledOmiContinuesFullScanForOlderEdits(t *testing.T) {
 				require.True(freshness.FullRebuild)
 				assert.True(freshness.HasUpdated)
 				assert.False(freshness.HasNew)
-				assert.False(freshness.HasDerivedDataDrift)
-				result, err := buildCache(cfg.DatabaseDSN(), analyticsDir, false)
+				assert.True(freshness.HasDerivedDataDrift)
+				result, err := buildCache(t.Context(), cfg.DatabaseDSN(), analyticsDir, false)
 				require.NoError(err)
 				assert.Equal(int64(2), result.ExportedCount)
 				assert.Contains(cachedSnippet(), "Revised recent")
 				after, err := query.ReadCacheSyncState(analyticsDir)
 				require.NoError(err)
 				var completedID int64
-				require.NoError(st.DB().QueryRow(`SELECT MAX(id) FROM sync_runs WHERE status = 'completed'`).Scan(&completedID))
+				require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT MAX(id) FROM sync_runs WHERE status = 'completed'`).Scan(&completedID))
 				assert.Equal(completedID, after.LastCompletedSyncRunID)
 				assert.Greater(after.LastCompletedSyncRunID, before.LastCompletedSyncRunID)
 				assert.Equal(int64(1), after.LastCacheUpdateCount)
@@ -181,7 +181,7 @@ func TestScheduledOmiContinuesFullScanForOlderEdits(t *testing.T) {
 			raw, err := st.GetMessageRaw(ids["older"])
 			require.NoError(err)
 			assert.Contains(string(raw), "Revised older")
-			body, err := st.GetMessageBodyText(ids["older"])
+			body, err := st.GetMessageBodyText(t.Context(), ids["older"])
 			require.NoError(err)
 			assert.Contains(body, "Revised speech")
 			latest, err := st.GetLastSuccessfulSync(src.ID)
@@ -230,7 +230,7 @@ func TestConfiguredOmiSyncAndCacheRefresh(t *testing.T) {
 			}
 			defer func() { rebuildOmiCacheAfterScheduledSync = original }()
 
-			err = runConfiguredOmiSync(context.Background(), st, t.TempDir(), config.OmiSource{Identifier: "work", AccountEmail: "owner@example.com", APIKey: "omi_dev_synthetic", BaseURL: server.URL})
+			err = runConfiguredOmiSync(t.Context(), st, t.TempDir(), config.OmiSource{Identifier: "work", AccountEmail: "owner@example.com", APIKey: "omi_dev_synthetic", BaseURL: server.URL})
 			if failing {
 				require.Error(err)
 			} else {
@@ -242,7 +242,7 @@ func TestConfiguredOmiSyncAndCacheRefresh(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
-	err := runConfiguredOmiSync(context.Background(), st, t.TempDir(), config.OmiSource{Identifier: "missing", AccountEmail: "owner@example.com", APIKey: "test"})
+	err := runConfiguredOmiSync(t.Context(), st, t.TempDir(), config.OmiSource{Identifier: "missing", AccountEmail: "owner@example.com", APIKey: "test"})
 	require.ErrorContains(err, "add-omi missing")
 	sources, err := st.ListSources(omi.SourceType)
 	require.NoError(err)
@@ -292,7 +292,7 @@ func TestManualOmiUsesInvocationConfiguration(t *testing.T) {
 		require.Len(sources, 1)
 		assert.Equal(identifier, sources[0].Identifier)
 		var count int
-		require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE source_id = ?`, sources[0].ID).Scan(&count))
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE source_id = ?`, sources[0].ID).Scan(&count))
 		assert.Equal(1, count)
 		require.NoError(st.Close())
 	}
@@ -338,8 +338,9 @@ func TestDaemonManualOmiQueuesCacheRefreshAfterRealImport(t *testing.T) {
 				queued <- mode
 				return nil
 			})
+			// Cleanup runs after t.Context() is canceled.
 			t.Cleanup(func() {
-				waitCtx, cancel := context.WithTimeout(context.Background(), serveLifecycleTestTimeout)
+				waitCtx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), serveLifecycleTestTimeout)
 				defer cancel()
 				require.True(jobs.waitContext(waitCtx))
 			})
@@ -382,7 +383,7 @@ func TestDaemonManualOmiQueuesCacheRefreshAfterRealImport(t *testing.T) {
 				assert.Equal(tc.wantMode, gotMode)
 			}
 			var count int
-			require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&count))
 			assert.Equal(1, count)
 		})
 	}
@@ -485,7 +486,7 @@ func TestScheduledOmiYieldsWhileWaitingWithCheckpoint(t *testing.T) {
 	_, err = sched.StartJob("omi:work", false)
 	require.NoError(err)
 	require.Eventually(func() bool {
-		checkpoint, err := st.GetLatestCheckpointedSyncByType(src.ID, omi.SourceType)
+		checkpoint, err := st.GetLatestCheckpointedSyncByType(t.Context(), src.ID, omi.SourceType)
 		return err == nil && checkpoint.MessagesAdded == 0
 	}, 10*time.Second, 10*time.Millisecond)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -493,7 +494,7 @@ func TestScheduledOmiYieldsWhileWaitingWithCheckpoint(t *testing.T) {
 	release, ok := gate.BeginRequestWorkContext(ctx, "synthetic request")
 	require.True(ok, "an archive request acquires coordination while Omi is waiting")
 	defer release()
-	checkpoint, err := st.GetLatestCheckpointedSyncByType(src.ID, omi.SourceType)
+	checkpoint, err := st.GetLatestCheckpointedSyncByType(t.Context(), src.ID, omi.SourceType)
 	require.NoError(err)
 	var saved struct {
 		Ahead []string `json:"ahead"`
@@ -502,7 +503,7 @@ func TestScheduledOmiYieldsWhileWaitingWithCheckpoint(t *testing.T) {
 	assert.Equal([]string{"synthetic-meeting"}, saved.Ahead)
 	assert.Equal(store.SyncStatusPaused, checkpoint.Status)
 	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), src.ID).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), src.ID).Scan(&count))
 	assert.Equal(0, count)
 }
 
@@ -551,7 +552,7 @@ func TestManualOmiContinuesAfterSourceCooldown(t *testing.T) {
 	st, err := store.Open(cfg.DatabaseDSN())
 	require.NoError(err)
 	defer func() { require.NoError(st.Close()) }()
-	source, err := st.GetSourceByTypeAndIdentifier(omi.SourceType, "ready")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), omi.SourceType, "ready")
 	require.NoError(err)
 	ids, err := st.MessageExistsBatch(source.ID, []string{"synthetic-meeting"})
 	require.NoError(err)
@@ -619,7 +620,7 @@ func TestManualOmiKeepsFinalizationErrors(t *testing.T) {
 			_, err := st.GetOrCreateSource(omi.SourceType, "work")
 			require.NoError(err)
 			if cause != "HTTP timeout" {
-				_, err = st.DB().Exec(`CREATE TRIGGER synthetic_finalize BEFORE UPDATE OF status ON sync_runs WHEN NEW.status IN ('failed', 'paused') BEGIN SELECT RAISE(ABORT, 'synthetic finalization failure'); END`)
+				_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER synthetic_finalize BEFORE UPDATE OF status ON sync_runs WHEN NEW.status IN ('failed', 'paused') BEGIN SELECT RAISE(ABORT, 'synthetic finalization failure'); END`)
 				require.NoError(err)
 			}
 			require.NoError(st.Close())
@@ -687,7 +688,7 @@ func TestScheduledOmiCooldownDefersWithoutFailure(t *testing.T) {
 	assert.Equal(2, requests)
 	state.syncFailures.Record(t.Context(), omi.SourceType, "work", errors.New("still failing"))
 	assert.Equal(1, events, "a paused import must preserve the existing outage")
-	latest, err := st.GetLatestCheckpointedSyncByType(src.ID, omi.SourceType)
+	latest, err := st.GetLatestCheckpointedSyncByType(t.Context(), src.ID, omi.SourceType)
 	require.NoError(err)
 	assert.Equal(store.SyncStatusPaused, latest.Status)
 	rebuildOmiCacheAfterScheduledSync = func(context.Context, string) error { return errors.New("synthetic cache finalization failure") }

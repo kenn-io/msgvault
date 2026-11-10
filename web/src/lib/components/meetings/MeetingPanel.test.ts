@@ -19,7 +19,7 @@ describe('MeetingPanel', () => {
     await controller.setScope(scope);
     const view = render(MeetingPanel, { client, scope, controller, compact: true, showHeading: false });
     await screen.findByText('4 meetings');
-    expect((screen.getByText('Meeting metrics', { selector: 'summary' }).closest('details') as HTMLDetailsElement).open).toBe(false);
+    expect((screen.getByText('Meeting metrics').closest('details') as HTMLDetailsElement).open).toBe(false);
     view.unmount();
     controller.destroy();
   });

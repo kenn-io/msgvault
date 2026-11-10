@@ -2,7 +2,6 @@ package query
 
 import (
 	"context"
-	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,7 +27,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	return &testEnv{
 		TestDB: tdb,
 		Engine: NewSQLiteEngine(tdb.DB),
-		Ctx:    context.Background(),
+		Ctx:    t.Context(),
 	}
 }
 
@@ -44,7 +43,8 @@ func (e *testEnv) MustListMessages(filter MessageFilter) []MessageSummary {
 // (message_recipients.display_name) for a message's 'from' row.
 func (e *testEnv) SetFromName(messageID int64, name string) {
 	e.T.Helper()
-	_, err := e.DB.Exec(
+	_, err := e.DB.ExecContext(
+		e.T.Context(),
 		`UPDATE message_recipients SET display_name = ? WHERE message_id = ? AND recipient_type = 'from'`,
 		name, messageID)
 	require.NoError(e.T, err, "SetFromName")
@@ -55,7 +55,8 @@ func (e *testEnv) SetFromName(messageID int64, name string) {
 // to the given participant.
 func (e *testEnv) SetRecipientName(messageID, participantID int64, name string) {
 	e.T.Helper()
-	_, err := e.DB.Exec(
+	_, err := e.DB.ExecContext(
+		e.T.Context(),
 		`UPDATE message_recipients SET display_name = ?
 		 WHERE message_id = ? AND participant_id = ? AND recipient_type IN ('to', 'cc', 'bcc')`,
 		name, messageID, participantID)
@@ -168,15 +169,6 @@ func assertAllResults(t *testing.T, results []MessageSummary, desc string, pred 
 	for _, r := range results {
 		assert.True(t, pred(r), "result id=%d did not satisfy %s", r.ID, desc)
 	}
-}
-
-// assertAnyResult verifies that at least one result satisfies the given predicate.
-func assertAnyResult(t *testing.T, results []MessageSummary, desc string, pred func(MessageSummary) bool) {
-	t.Helper()
-	if slices.ContainsFunc(results, pred) {
-		return
-	}
-	assert.Fail(t, "no result satisfied "+desc)
 }
 
 // newTestEnvWithEmptyBuckets creates a test DB with messages that have

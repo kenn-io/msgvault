@@ -11,16 +11,25 @@ import { sentenceCase } from '../explore/labels';
 // the identifier stands alone.
 const SOURCE_TYPES: Readonly<Record<string, string>> = {
   '': '', gmail: 'Gmail', imap: 'IMAP', msmail: 'Microsoft mail', teams: 'Teams',
-  discord: 'Discord', chatwoot: 'Chatwoot', meeting_import: 'Meeting import', synctech_sms: 'SMS backup',
+  discord: 'Discord', chatwoot: 'Chatwoot', meeting_import: 'Meeting import', message_import: 'Message import', synctech_sms: 'SMS backup',
   imazing_csv: 'iMazing CSV', circleback: 'Circleback', plaud: 'Plaud', pocket: 'Pocket', gcal: 'Google Calendar', muesli: 'Muesli',
   granola: 'Granola', notion_meetings: 'Notion meetings', twilio: 'Twilio', pst: 'PST import',
   'apple-mail': 'Apple Mail', mbox: 'Mbox import', beeper: 'Beeper', slack: 'Slack', inline: 'Inline', matrix: 'Matrix',
   eml: 'EML import', maildir: 'Maildir import', whatsapp: 'WhatsApp',
   apple_messages: 'Apple Messages', facebook_messenger: 'Facebook Messenger',
+  facebook_comments: 'Facebook Page comments',
+  instagram_comments: 'Instagram comments',
   'google-groups': 'Google Groups'
 };
 export function sourceTypeLabel(code: string): string {
   return Object.hasOwn(SOURCE_TYPES, code) ? SOURCE_TYPES[code]! : sentenceCase(code);
+}
+
+// API import sources receive data when a client posts it; they have nothing
+// to sync or schedule.
+const ON_DEMAND_SOURCE_TYPES: ReadonlySet<string> = new Set(['meeting_import', 'message_import']);
+export function isOnDemandSourceType(code: string): boolean {
+  return ON_DEMAND_SOURCE_TYPES.has(code);
 }
 
 type StateSource = Pick<SourceStatus, 'active_sync' | 'latest_sync'> & Partial<Pick<SourceStatus, 'scheduler_queued' | 'scheduler_started_at'>>;

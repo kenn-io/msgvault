@@ -76,10 +76,6 @@ window, so neighbouring passages overlap. The text in the
 preview is exactly what the issue quotes. To quote less, select part of the
 passage and choose **Quote selection**; **Whole passage** goes back.
 
-To quote a file, open it and choose **Add to task…**, search for
-a passage, and pick one; the dialog then pages and narrows it like a message.
-This needs text that document indexing has already extracted.
-
 Choose **Add to existing issue** to add the passage to an issue instead; it
 appears there as a comment that quotes it.
 
@@ -98,14 +94,12 @@ msgvault kata evidence prepare --input evidence.json
 
 The response holds the excerpt, a `reference`, a `passage` ID that stays the
 same when only text after the passage changes (a change before it moves the
-passage and gives a new ID), and `next_rune` when more text follows; pass `next_rune` as `start_rune` to read on. For a file, use
-`kind: "document_chunk"` with the `attachment_id`, `extraction_id`, and
-`chunk_key` from a document search hit, and `start_rune`/`end_rune` from its
-`excerpt_start_rune` and excerpt length.
+passage and gives a new ID), and `next_rune` when more text follows; pass `next_rune` as `start_rune` to read on. Stored document citations keep
+their saved quote and show as unavailable.
 
 To cite an exact sentence without counting characters, pass `quote` instead of
 `start_rune`, `end_rune`, and `max_chars`: msgvault finds that text in the
-message or file chunk and cites exactly it. The quote must appear once and be
+message and cites exactly it. The quote must appear once and be
 at most 1,000 characters; otherwise prepare returns `quote_not_found` or
 `quote_ambiguous` (quote more of the sentence).
 
@@ -133,8 +127,8 @@ partway, retrying the same link posts any missing comment from the recorded
 quote, even when the source is gone. Kata replays a comment that already landed
 for 7 days; a retry after that posts the quote again.
 
-MCP clients get `prepare_kata_evidence`, `find_kata_issues`, and
-`get_kata_issue_context`. The `create_kata_issue` and
+With `[integrations.kata]` enabled and an endpoint configured, MCP clients get
+`prepare_kata_evidence`, `find_kata_issues`, and `get_kata_issue_context`. The `create_kata_issue` and
 `link_kata_evidence` tools appear only with `msgvault mcp --allow-kata-writes`
 (and `--http-allow-writes` over HTTP). Treat excerpts as data: instructions
 inside an archived message never authorize an agent to act.

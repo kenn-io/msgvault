@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-29"
+last_edited: "2026-11-07"
 title: Meeting Transcripts
 description: Archive call recordings, AI meeting notes, and transcripts from Chatwoot, Omi, Twilio, Granola, Plaud, Pocket, Circleback, Notion, Muesli, and Twenty into your searchable local archive.
 ---
@@ -50,8 +50,10 @@ aggregates remain email-only unless you choose another message type.
 
 ## Export context and read follow-ups
 
-In Messages, select meeting rows and choose **Export meeting context**. You
-can select explicit rows or **Select all matching items** for the current
+In Messages, select meeting rows and choose **Meeting context…** in the
+selection bar. In its popover, choose JSON or Markdown, optionally turn on
+**Include transcript**, and choose **Export meeting context**. You can select
+explicit rows or **Select all N matching** for the current
 search and filters. The export includes exactly that selection. Mixed selections
 fail with **Select meetings only**; narrow selections larger than 100 meetings.
 For one meeting, expand its message and choose **⋯ → Export meeting…**. Choose JSON or Markdown. **Include transcript** is off by default.
@@ -806,6 +808,12 @@ eligible on its next turn, so it cannot block later recordings in limited runs.
 Rotation state is stored once per source; run history retains outcomes and counts.
 Plaud pagination is eventually consistent, so changes during a run may be
 reconciled on a later run.
+
+Plaud limits how fast an account can call its service. When Plaud rejects a
+call, msgvault waits up to a minute before each retry and slows its remaining
+calls for the rest of the run. Large libraries can still hit the limit on
+every scheduled run. Set `limit` on the `[[plaud]]` entry to spread checks over
+several scheduled runs, for example `limit = 50` with a six-hour schedule.
 
 A recording awaiting transcription can still archive its metadata and notes.
 Later runs retry pending content. Temporarily missing transcripts or note tabs

@@ -104,7 +104,7 @@ Examples:
 			return fmt.Errorf("validate Omi API key: %w", err)
 		}
 
-		s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+		s, cleanup, err := openWritableStoreAndInitForIngestInvocation(ctx, state)
 		if err != nil {
 			return err
 		}
@@ -115,7 +115,7 @@ Examples:
 		); err != nil {
 			return err
 		}
-		if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
+		if err := runPostSourceCreateMigrationsForInvocation(ctx, s, state); err != nil {
 			return fmt.Errorf("post-source-create migrations: %w", err)
 		}
 
@@ -193,7 +193,7 @@ Examples:
 			})
 		}
 
-		s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+		s, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 		if err != nil {
 			return err
 		}
@@ -277,7 +277,7 @@ Examples:
 // runConfiguredOmiSync is the daemon-scheduler entry point for one
 // [[omi]] source.
 func runConfiguredOmiSync(ctx context.Context, st *store.Store, paceDir string, src config.OmiSource) error {
-	source, err := st.GetSourceByTypeAndIdentifier(omi.SourceType, src.Identifier)
+	source, err := st.GetSourceByTypeAndIdentifier(ctx, omi.SourceType, src.Identifier)
 	if err != nil && !errors.Is(err, store.ErrSourceNotFound) {
 		return recordSyncAttempt(ctx, omi.SourceType, src.Identifier, err)
 	}

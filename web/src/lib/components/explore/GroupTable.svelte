@@ -2,8 +2,9 @@
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import { groupRowName } from '../../explore/labels';
   import { formatBytes, formatDate } from '../../util/format';
-  import { Button, IconButton, virtualSlice } from '@kenn-io/kit-ui';
+  import { Button, IconButton, MEDIA, virtualSlice } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
+  import { MediaQuery } from 'svelte/reactivity';
 
   import type {
     ExploreCacheUnavailable,
@@ -11,7 +12,7 @@
     ExploreGroupRow,
     ExploreScrollAnchor
   } from '../../explore/models';
-  import { rebaseVirtualScroll, RowGeometry, tableViewportHeight } from '../../theme/preferences.svelte';
+  import { rebaseVirtualScroll, RowGeometry, scrollPositionAnchor, tableViewportHeight } from '../../theme/preferences.svelte';
 
   let {
     sourceTypes = new Map(),
@@ -26,6 +27,7 @@
     pageError = '',
     unavailable = undefined,
     drillable = true,
+    canDrill = () => true,
     focusedKey = null,
     inspectedKey = null,
     scrollAnchor = null,
@@ -51,6 +53,7 @@
     pageError?: string;
     unavailable?: ExploreCacheUnavailable;
     drillable?: boolean;
+    canDrill?: (row: ExploreGroupRow) => boolean;
     focusedKey?: string | null;
     inspectedKey?: string | null;
     scrollAnchor?: ExploreScrollAnchor | null;
@@ -65,11 +68,13 @@
     onRetry?: () => void;
   } = $props();
 
-  const geometry = new RowGeometry();
+  const compact = new MediaQuery(MEDIA.compact);
+  const geometry = new RowGeometry('--table-short-row-height');
   const rowHeight = $derived(geometry.height);
   const OVERSCAN = 6;
   let width = $state(1000);
-  const narrow = $derived(Boolean(inspectedKey) || width < 640);
+  // The compact two-line row already fits size and latest beneath the name.
+  const narrow = $derived(!compact.current && (Boolean(inspectedKey) || width < 640));
   const timeGroup = $derived((dimension === 'month' || dimension === 'year') && rows.some((row) => row.total_items !== undefined));
   const columnCount = $derived((narrow ? 3 : 5) + (timeGroup ? 1 : 0));
   const template = $derived(narrow
@@ -114,9 +119,7 @@
     const element = gridElement;
     densityRebasing = true;
     const preservedKey = activeKey;
-    const rebased = activeIndex >= 0
-      ? activeIndex * nextHeight
-      : rebaseVirtualScroll(scrollTop, previousHeight, nextHeight);
+    const rebased = rebaseVirtualScroll(scrollTop, previousHeight, nextHeight, activeIndex, untrack(() => viewport));
     const expectedScrollHeight = rows.length * nextHeight;
     requestAnimationFrame(() => applyDensityRebase(
       element, nextHeight, expectedScrollHeight, rebased, preservedKey
@@ -143,7 +146,7 @@
     if (signature === restoredAnchor) return;
     const index = rows.findIndex((row) => stableKey(row) === scrollAnchor.key);
     if (index < 0) return;
-    gridElement.scrollTop = index * height + scrollAnchor.offset;
+    gridElement.scrollTop = index * height + Math.min(scrollAnchor.offset, height - 1);
     scrollTop = gridElement.scrollTop;
     suppressedScrollTop = gridElement.scrollTop;
     restoredAnchor = signature;
@@ -174,6 +177,10 @@
 
   function stableKey(row: ExploreGroupRow): string {
     return `group:${dimension}:${row.key}`;
+  }
+
+  function isDrillable(row: ExploreGroupRow): boolean {
+    return drillable && canDrill(row);
   }
 
   function anchorSignature(anchor: ExploreScrollAnchor): string {
@@ -208,7 +215,7 @@
   function measuredViewport(element: HTMLDivElement): number {
     return tableViewportHeight(
       element.clientHeight,
-      headerElement?.offsetHeight || 30,
+      headerElement?.offsetHeight ?? 30,
       window.innerHeight
     );
   }
@@ -232,6 +239,7 @@
     }
     element.scrollTop = rebased;
     scrollTop = element.scrollTop;
+    if (!restoring) persistAnchor(height);
     suppressedScrollTop = element.scrollTop;
     if (preservedKey && rows.some((row) => stableKey(row) === preservedKey)) {
       activeKey = preservedKey;
@@ -250,7 +258,7 @@
     else if (event.key === 'End') {
       if (hasMore) await onLoadThroughEnd?.();
       await move(rows.length - 1);
-    } else if (event.key === 'Enter' && activeIndex >= 0 && drillable) onDrill(rows[activeIndex]!);
+    } else if (event.key === 'Enter' && activeIndex >= 0 && isDrillable(rows[activeIndex]!)) onDrill(rows[activeIndex]!);
     else return;
     event.preventDefault();
   }
@@ -265,14 +273,20 @@
       suppressedScrollTop = undefined;
       if (isProgrammaticRestoration) return;
     }
-    const first = Math.min(rows.length - 1, Math.max(0, Math.floor(scrollTop / height)));
-    const row = rows[first];
+    const { index } = scrollPositionAnchor(scrollTop, height, rows.length);
+    const row = rows[index];
     if (row && !restoring) {
       activeKey = stableKey(row);
       onActiveKey?.(activeKey);
-      onScrollAnchor?.(activeKey, scrollTop - first * height);
+      persistAnchor(height);
     }
     if (!restoring && hasMore && !loadingMore && slice.end >= rows.length - OVERSCAN) void onLoadMore?.();
+  }
+
+  function persistAnchor(height: number): void {
+    const { index, offset } = scrollPositionAnchor(scrollTop, height, rows.length);
+    const row = rows[index];
+    if (row) onScrollAnchor?.(stableKey(row), offset);
   }
 </script>
 
@@ -284,20 +298,21 @@
     aria-label={`${workspaceLabel} grouped by ${dimension}`}
     aria-rowcount={accessibilityRowCount}
     aria-colcount={columnCount}
+    style:--group-columns={template}
     aria-busy={loading || loadingMore}
     aria-activedescendant={activeIndex >= 0 && rows[activeIndex] ? rowId(rows[activeIndex]!) : undefined}
     tabindex="0"
     onkeydown={handleKeydown}
     onscroll={handleScroll}
   >
-    <div class="group-header" bind:this={headerElement} role="row" style:grid-template-columns={template}>
-      <span role="columnheader">Group</span>
-      <span role="columnheader" class="numeric">Items</span>
+    <div class="group-header" bind:this={headerElement} role="row">
+      <span role="columnheader" class={[compact.current && 'kit-sr-only']}>Group</span>
+      <span role="columnheader" class={['numeric', compact.current && 'kit-sr-only']}>Items</span>
       {#if !narrow}
-        <span role="columnheader" class="numeric">Size</span>
-        <span role="columnheader">Latest</span>
+        <span role="columnheader" class={['numeric', compact.current && 'kit-sr-only']}>Size</span>
+        <span role="columnheader" class={[compact.current && 'kit-sr-only']}>Latest</span>
       {/if}
-      {#if timeGroup}<span role="columnheader">Share</span>{/if}
+      {#if timeGroup}<span role="columnheader" class={[compact.current && 'kit-sr-only']}>Share</span>{/if}
       <span role="columnheader" aria-label="Show items"></span>
     </div>
     <div class="group-body" role="rowgroup">
@@ -343,27 +358,26 @@
               aria-rowindex={index + 2}
               aria-current={inspectedKey === stableKey(row) ? 'true' : undefined}
               tabindex="-1"
-              style:grid-template-columns={template}
               onpointerdown={(event) => {
                 activeKey = stableKey(row);
                 onActiveKey?.(activeKey);
                 gridElement?.focus();
                 if (!(event.target as Element).closest('button')) onInspect?.(row);
               }}
-              ondblclick={() => { if (drillable) onDrill(row); }}
+              ondblclick={() => { if (isDrillable(row)) onDrill(row); }}
             >
               <div role="gridcell" class="group-name" title={display.title}>
                 {#if typeof display.icon === 'string'}<span class="group-icon" aria-hidden="true">{display.icon}</span>
                 {:else if display.icon}{@const Icon = display.icon}<Icon size={14} class="group-icon" aria-hidden="true" />{/if}
                 <strong>{display.name}</strong>
               </div>
-              <span role="gridcell" class="numeric" data-mono>{row.count.toLocaleString()}</span>
+              <span role="gridcell" class="numeric group-count" data-mono>{row.count.toLocaleString()}<span class="count-label">{' '}{row.count === 1 ? 'item' : 'items'}</span></span>
               {#if !narrow}
-                <span role="gridcell" class="numeric" data-mono>{formatBytes(row.estimated_bytes)}</span>
-                <div role="gridcell"><time datetime={row.latest_at} data-mono>{formatDate(row.latest_at)}</time></div>
+                <span role="gridcell" class="numeric group-size" data-mono>{formatBytes(row.estimated_bytes)}</span>
+                <div role="gridcell" class="group-latest"><time datetime={row.latest_at} data-mono>{formatDate(row.latest_at)}</time></div>
               {/if}
               {#if timeGroup}
-                <div role="gridcell">
+                <div role="gridcell" class="group-share">
                   {#if row.total_items}
                     {@const share = row.count / row.total_items * 100}
                     <div class="share-track" title={`${Number(share.toFixed(1))}% of ${row.total_items.toLocaleString()} items`}><div class="share-fill" style:width={`${share}%`}></div></div>
@@ -371,7 +385,7 @@
                 </div>
               {/if}
               <span role="gridcell" class="group-action">
-                {#if drillable}<IconButton size="sm" ariaLabel={`Show items in ${display.name}`} onclick={() => onDrill(row)}><ChevronRight size={14} /></IconButton>{/if}
+                {#if isDrillable(row)}<IconButton size="sm" ariaLabel={`Show items in ${display.name}`} onclick={() => onDrill(row)}><ChevronRight size={14} /></IconButton>{/if}
               </span>
             </div>
           {/each}
@@ -412,6 +426,7 @@
   .group-header,
   .group-row {
     display: grid;
+    grid-template-columns: var(--group-columns);
     align-items: center;
   }
 
@@ -472,7 +487,7 @@
   }
 
   .group-row {
-    height: var(--row-height);
+    height: var(--table-short-row-height);
     border-bottom: 1px solid var(--border-muted);
     color: var(--text-secondary);
     font-size: var(--font-size-sm);
@@ -556,5 +571,29 @@
     color: var(--text-secondary);
     font-size: var(--font-size-xs);
     text-align: right;
+  }
+  .count-label { display: none; }
+  @media (max-width: 640px) {
+    .group-spacer { min-width: 0; }
+    .group-header { min-height: 0; border: 0; box-shadow: none; }
+    .group-row {
+      grid-template-columns: auto auto auto minmax(0, 1fr) auto;
+      grid-template-areas: 'label label label label action' 'count size latest share action';
+      align-content: center;
+      gap: var(--space-1) 0;
+      padding: var(--pane-pad-y) var(--pane-pad-x);
+    }
+    .group-row > :global(*) { padding: 0; }
+    .group-row > .group-name { grid-area: label; }
+    .group-row strong { display: block; overflow: hidden; text-overflow: ellipsis; }
+    .group-row > .group-count { grid-area: count; }
+    .count-label { display: inline; }
+    .group-row > .group-size { grid-area: size; }
+    .group-row > .group-latest { grid-area: latest; }
+    .group-row > .group-size::before, .group-row > .group-latest::before { content: ' · '; white-space: pre; }
+    .group-row > .group-share { grid-area: share; padding-left: var(--space-2); }
+    .group-row > .group-action { grid-area: action; }
+    .group-row .numeric, .group-row time { color: var(--text-muted); font-size: var(--font-size-xs); text-align: left; }
+    .group-row :global(button) { min-height: var(--control-height); }
   }
 </style>

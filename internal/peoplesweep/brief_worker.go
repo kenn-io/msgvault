@@ -73,7 +73,7 @@ var (
 	// ErrPersonBriefNoSupportedLane reports that the consented provider
 	// profile's allowed_sources share no lane with the brief window. The window
 	// reads conversation_text only in this version, so a profile limited to
-	// document_text or meeting_text has nothing a brief could be built from.
+	// meeting_text has nothing a brief could be built from.
 	ErrPersonBriefNoSupportedLane = errors.New(
 		"person brief has no supported source lane in the provider profile")
 	// ErrPersonBriefBusy reports that the person's sweep work could not be
@@ -163,7 +163,7 @@ func (w *Worker) planPersonBrief(
 		return briefPlan{}, nil
 	}
 	// The window reads only the brief lanes. A profile whose allowed_sources
-	// miss all of them, such as document_text or meeting_text alone, would plan a brief that
+	// miss all of them, such as meeting_text alone, would plan a brief that
 	// BuildBriefWindow then refuses, so the attempt would record an internal
 	// failure for a condition that is plain configuration. Decide it here, for
 	// free, and let a scheduled run skip the step cleanly.

@@ -100,13 +100,13 @@ func runImportImessage(cmd *cobra.Command, args []string) error {
 		return runDaemonCLICommandHTTPFromCobra(cmd, args)
 	}
 
-	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 
-	chatDBPath, err := resolveChatDBPath()
+	chatDBPath, err := resolveChatDBPath(state.cfg.IMessage.DBPath)
 	if err != nil {
 		return err
 	}
@@ -119,13 +119,17 @@ func runImportImessage(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if importImessageMe != "" {
+	me := importImessageMe
+	if me == "" {
+		me = state.cfg.IMessage.Me
+	}
+	if me != "" {
 		clientOpts = append(
-			clientOpts, imessage.WithOwnerHandle(importImessageMe),
+			clientOpts, imessage.WithOwnerHandle(me),
 		)
 	}
 
-	client, err := imessage.NewClient(chatDBPath, clientOpts...)
+	client, err := imessage.NewClient(cmd.Context(), chatDBPath, clientOpts...)
 	if err != nil {
 		return fmt.Errorf("open iMessage database: %w", err)
 	}
@@ -135,7 +139,7 @@ func runImportImessage(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("get or create source: %w", err)
 	}
-	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
+	if err := runPostSourceCreateMigrationsForInvocation(cmd.Context(), s, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
@@ -162,16 +166,16 @@ func runImportImessage(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println()
 
-	summary, err := client.Import(ctx, s, src.ID)
+	summary, err := importImessageRecorded(ctx, s, client, src.ID)
 	if err != nil {
 		if ctx.Err() != nil {
 			fmt.Println("\nImport interrupted.")
 			printImessageSummary(summary, startTime)
-			return finishImessageImport(s, state, summary)
+			return finishImessageImport(ctx, s, state, summary)
 		}
 		if errors.Is(err, imessage.ErrAttachmentImport) {
 			printImessageSummary(summary, startTime)
-			finishErr := finishImessageImport(s, state, summary)
+			finishErr := finishImessageImport(ctx, s, state, summary)
 			importErr := fmt.Errorf("import failed: %w", err)
 			if finishErr != nil {
 				return errors.Join(importErr, fmt.Errorf("finish iMessage import: %w", finishErr))
@@ -182,29 +186,33 @@ func runImportImessage(cmd *cobra.Command, args []string) error {
 	}
 
 	printImessageSummary(summary, startTime)
-	return finishImessageImport(s, state, summary)
+	return finishImessageImport(ctx, s, state, summary)
 }
 
 // finishImessageImport runs the post-import name backfill, refreshes
 // generated chat titles, and rebuilds the analytics cache when those changes
 // affect existing rows inside the published message boundary.
-func finishImessageImport(s *store.Store, state *invocation, summary *imessage.ImportSummary) error {
+func finishImessageImport(ctx context.Context, s *store.Store, state *invocation, summary *imessage.ImportSummary) error {
+	// An interrupted import still committed rows; finish the name backfill,
+	// retitling, and cache refresh for them instead of failing on the
+	// cancelled context.
+	ctx = context.WithoutCancel(ctx)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
 	}
-	cfg := state.cfg
 	mutated := false
 
 	if importImessageContacts != "" {
-		if applyImessageContacts(s, importImessageContacts) {
+		if applyImessageContacts(ctx, s, importImessageContacts) {
 			mutated = true
 		}
 	}
 
-	if retitleImessageChats(s) {
+	if retitleImessageChats(ctx, s) {
 		mutated = true
 	}
 
+	cfg := state.cfg
 	dbPath := cfg.DatabaseDSN()
 	if !store.IsPostgresURL(dbPath) && (mutated || (summary != nil && summary.DatesCleared > 0)) {
 		// Title/display_name updates aren't visible to the message-id-keyed
@@ -212,6 +220,7 @@ func finishImessageImport(s *store.Store, state *invocation, summary *imessage.I
 		// A date clear also leaves the message ID unchanged, so it must re-export
 		// messages.parquet as well as the affected conversation datasets.
 		if _, err := buildCache(
+			ctx,
 			dbPath,
 			cfg.AnalyticsDir(),
 			true,
@@ -222,11 +231,11 @@ func finishImessageImport(s *store.Store, state *invocation, summary *imessage.I
 		return nil
 	}
 
-	return rebuildCacheAfterWrite(dbPath, state)
+	return rebuildCacheAfterWrite(ctx, dbPath, state)
 }
 
-func retitleImessageChats(s *store.Store) bool {
-	n, err := s.RetitleImessageChats()
+func retitleImessageChats(ctx context.Context, s *store.Store) bool {
+	n, err := s.RetitleImessageChats(ctx)
 	if err != nil {
 		fmt.Printf("\nWarning: could not refresh iMessage chat titles: %v\n", err)
 		return false
@@ -243,7 +252,7 @@ func retitleImessageChats(s *store.Store) bool {
 // that already exist (created during message import) and whose name is
 // currently empty — first-writer-wins from earlier sources is preserved.
 // Returns true if any participant was updated.
-func applyImessageContacts(s *store.Store, vcfPath string) bool {
+func applyImessageContacts(ctx context.Context, s *store.Store, vcfPath string) bool {
 	contacts, err := vcard.ParseFile(vcfPath)
 	if err != nil {
 		fmt.Printf("\nWarning: could not read contacts %s: %v\n", vcfPath, err)
@@ -261,7 +270,7 @@ func applyImessageContacts(s *store.Store, vcfPath string) bool {
 			// Use the iMessage-scoped variant so legacy participants
 			// whose display_name was poisoned with the raw phone string
 			// (older import-imessage runs) get cleared and replaced.
-			updated, err := s.UpdateImessageParticipantDisplayNameByPhone(phone, c.FullName)
+			updated, err := s.UpdateImessageParticipantDisplayNameByPhone(ctx, phone, c.FullName)
 			if err != nil {
 				if firstPhoneErr == nil {
 					firstPhoneErr = err
@@ -274,7 +283,7 @@ func applyImessageContacts(s *store.Store, vcfPath string) bool {
 			}
 		}
 		for _, email := range c.Emails {
-			updated, err := s.UpdateParticipantDisplayNameByEmail(email, c.FullName)
+			updated, err := s.UpdateParticipantDisplayNameByEmail(ctx, email, c.FullName)
 			if err != nil {
 				if firstEmailErr == nil {
 					firstEmailErr = err
@@ -307,22 +316,25 @@ func applyImessageContacts(s *store.Store, vcfPath string) bool {
 	return phoneMatches > 0 || emailMatches > 0
 }
 
-func resolveChatDBPath() (string, error) {
-	if importImessageDBPath != "" {
-		if _, err := os.Stat(importImessageDBPath); os.IsNotExist(err) {
+func resolveChatDBPath(configPath string) (string, error) {
+	path := importImessageDBPath
+	if path == "" {
+		path = configPath
+	}
+	if path != "" {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
 			return "", fmt.Errorf(
 				"iMessage database not found at %s",
-				importImessageDBPath,
+				path,
 			)
 		}
-		return importImessageDBPath, nil
+		return path, nil
 	}
 
-	home, err := os.UserHomeDir()
+	path, err := defaultChatDBPath()
 	if err != nil {
-		return "", fmt.Errorf("get home directory: %w", err)
+		return "", err
 	}
-	path := filepath.Join(home, "Library", "Messages", "chat.db")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return "", fmt.Errorf(
 			"iMessage database not found at %s\n\n"+
@@ -331,6 +343,72 @@ func resolveChatDBPath() (string, error) {
 		)
 	}
 	return path, nil
+}
+
+func defaultChatDBPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("get home directory: %w", err)
+	}
+	return filepath.Join(home, "Library", "Messages", "chat.db"), nil
+}
+
+// importImessageRecorded preserves partial progress even when an import fails.
+func importImessageRecorded(ctx context.Context, s *store.Store, client *imessage.Client, sourceID int64) (summary *imessage.ImportSummary, retErr error) {
+	syncID, err := s.StartSync(sourceID, "imessage_import")
+	if err != nil {
+		return nil, fmt.Errorf("start sync: %w", err)
+	}
+	scoped := s.ScopedToSync(sourceID, syncID)
+	record := func(sum imessage.ImportSummary) error {
+		return scoped.UpdateSyncCheckpoint(syncID, imessageCheckpoint(sum))
+	}
+	defer func() {
+		if summary != nil {
+			if err := record(*summary); err != nil {
+				retErr = errors.Join(retErr, fmt.Errorf("record sync progress: %w", err))
+			}
+		}
+		if retErr != nil && !attachmentImportOnly(retErr) {
+			if summary != nil {
+				retErr = errors.Join(retErr, scoped.FailSyncWithCheckpoint(syncID, retErr.Error(), imessageCheckpoint(*summary)))
+			} else {
+				retErr = errors.Join(retErr, scoped.FailSync(syncID, retErr.Error()))
+			}
+			return
+		}
+		if err := scoped.CompleteSyncAndPreserveSourceCursorContext(context.WithoutCancel(ctx), syncID, sourceID, ""); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("complete sync: %w", err))
+		}
+	}()
+	return client.ImportWithProgress(ctx, scoped, sourceID, func(sum imessage.ImportSummary) {
+		_ = record(sum)
+	})
+}
+
+// attachmentImportOnly excludes cancellation and archive failures joined with the warning.
+func attachmentImportOnly(err error) bool {
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, child := range joined.Unwrap() {
+			if !attachmentImportOnly(child) {
+				return false
+			}
+		}
+		return len(joined.Unwrap()) > 0
+	}
+	if wrapped := errors.Unwrap(err); wrapped != nil {
+		return attachmentImportOnly(wrapped)
+	}
+	return errors.Is(err, imessage.ErrAttachmentImport)
+}
+
+func imessageCheckpoint(sum imessage.ImportSummary) *store.Checkpoint {
+	return &store.Checkpoint{
+		MessagesProcessed: int64(sum.MessagesImported + sum.Skipped),
+		MessagesAdded:     int64(sum.MessagesAdded),
+		MessagesUpdated:   int64(sum.MessagesUpdated),
+		ErrorsCount:       int64(sum.Skipped + sum.AttachmentFailures),
+	}
 }
 
 func buildImessageOpts(logger *slog.Logger, attachmentsDir, messagesRoot string, noAttachments bool, policy attachmentpolicy.Policy) ([]imessage.ClientOption, error) {
@@ -398,7 +476,7 @@ func printImessageSummary(
 	fmt.Println()
 	fmt.Println("iMessage import complete!")
 	fmt.Printf("  Duration:         %s\n", elapsed.Round(time.Second))
-	fmt.Printf("  Messages:         %d imported\n", summary.MessagesImported)
+	fmt.Printf("  Messages:         %d imported, %d added, %d updated\n", summary.MessagesImported, summary.MessagesAdded, summary.MessagesUpdated)
 	fmt.Printf("  Conversations:    %d\n", summary.ConversationsImported)
 	fmt.Printf("  Participants:     %d resolved\n", summary.ParticipantsResolved)
 	if summary.Skipped > 0 {
@@ -412,6 +490,9 @@ func printImessageSummary(
 	}
 	if summary.AttachmentsSkipped > 0 {
 		fmt.Printf("  Attachments skipped: %d (media policy or path outside the Messages folder%s)\n", summary.AttachmentsSkipped, messagesRootHint())
+	}
+	if summary.BodiesUndecoded > 0 {
+		fmt.Printf("  Unreadable text:  %d messages\n", summary.BodiesUndecoded)
 	}
 	if summary.DatesCleared > 0 {
 		fmt.Printf("  Dates cleared:    %d\n", summary.DatesCleared)
@@ -440,19 +521,11 @@ func messagesRootHint() string {
 // (most recently created), which is more likely in active use.
 func resolveImessageSource(s *store.Store) (*store.Source, error) {
 	sources, err := s.ListSources(sourceTypeAppleMessages)
-	if err == nil && len(sources) > 0 {
-		var best *store.Source
-		for _, src := range sources {
-			if src.Identifier != localValue {
-				if best == nil || src.ID > best.ID {
-					best = src
-				}
-			}
-		}
-		if best != nil {
-			return best, nil
-		}
-		return sources[0], nil
+	if err != nil {
+		return nil, err
+	}
+	if src := store.SelectImessageSource(sources); src != nil {
+		return src, nil
 	}
 	return s.GetOrCreateSource(sourceTypeAppleMessages, localValue)
 }

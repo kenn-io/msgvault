@@ -45,7 +45,7 @@ func TestImporterSchedulerYieldResumesWithoutFailure(t *testing.T) {
 	_, err = newTestImporter(st, api).Import(t.Context(), opts)
 	require.NoError(err)
 	var count int
-	require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages").Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages").Scan(&count))
 	assert.Equal(1, count)
 }
 
@@ -237,7 +237,7 @@ func TestImporterContinuesWhenGuildNameConflictsWithAccountSelector(t *testing.T
 	require.NoError(err, "a selector collision must not prevent the guild archive from syncing")
 	assert.Equal(int64(1), summary.MessagesAdded)
 
-	source, err := st.GetSourceByTypeAndIdentifier(sourceTypeDiscord, "200")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeDiscord, "200")
 	require.NoError(err)
 	latest, err := st.GetLatestSync(source.ID)
 	require.NoError(err)
@@ -278,7 +278,7 @@ func TestImporterArchivesDiscordVoiceMetadata(t *testing.T) {
 		{messageID: "502", attachmentID: "attachment-two", waveform: "exact waveform", duration: 1250},
 	} {
 		var id int64
-		require.NoError(st.DB().QueryRow(st.Rebind(
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 			`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`,
 		), source.ID, want.messageID).Scan(&id))
 		metadata, err := st.GetMessageMetadata(id)
@@ -419,7 +419,7 @@ func TestImporterPinsBackfillPagesBackwardThenCollectsForwardPerContainer(t *tes
 	assert.Equal(int64(9), summary.MessagesAdded)
 	assert.Equal(int64(1), summary.MediaPending)
 
-	source, err := st.GetSourceByIdentifier("200")
+	source, err := st.GetSourceByIdentifier(t.Context(), "200")
 	require.NoError(err)
 	run, err := st.GetLastSuccessfulSync(source.ID)
 	require.NoError(err)
@@ -443,17 +443,17 @@ func TestImporterPinsBackfillPagesBackwardThenCollectsForwardPerContainer(t *tes
 	assert.Equal("107", queries[5].After)
 
 	var messageCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), source.ID).Scan(&messageCount))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), source.ID).Scan(&messageCount))
 	assert.Equal(9, messageCount)
 	var replyTo string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT parent.source_message_id
 		FROM messages child JOIN messages parent ON parent.id = child.reply_to_message_id
 		WHERE child.source_id = ? AND child.source_message_id = '105'`), source.ID).Scan(&replyTo))
 	assert.Equal("101", replyTo, "reply deferred until the older parent exists")
 
 	var webhookLabel string
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT p.display_name FROM participants p
 		JOIN participant_identifiers pi ON pi.participant_id = p.id
 		WHERE pi.identifier_type = 'discord_webhook_id' AND pi.identifier_value = 'webhook-1'
@@ -461,7 +461,7 @@ func TestImporterPinsBackfillPagesBackwardThenCollectsForwardPerContainer(t *tes
 	assert.Equal("Discord webhook webhook-1", webhookLabel)
 
 	var rawFormat, body, metadata string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT mr.raw_format, mb.body_text, m.metadata
 		FROM messages m JOIN message_raw mr ON mr.message_id = m.id
 		JOIN message_bodies mb ON mb.message_id = m.id
@@ -471,13 +471,13 @@ func TestImporterPinsBackfillPagesBackwardThenCollectsForwardPerContainer(t *tes
 	assert.Contains(metadata, `"referenced_message_id":"101"`)
 
 	var mentionCount, attachmentCount, conversationCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM message_recipients mr JOIN messages m ON m.id = mr.message_id
 		WHERE m.source_id = ? AND m.source_message_id = '105' AND mr.recipient_type = 'mention'`), source.ID).Scan(&mentionCount))
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM attachments a JOIN messages m ON m.id = a.message_id
 		WHERE m.source_id = ? AND m.source_message_id = '105'`), source.ID).Scan(&attachmentCount))
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT message_count FROM conversations WHERE source_id = ? AND source_conversation_id = '300'`), source.ID).Scan(&conversationCount))
 	assert.Equal(1, mentionCount)
 	assert.Equal(1, attachmentCount)
@@ -503,15 +503,15 @@ func TestImporterUsesContainerParticipantCountForMediaPolicy(t *testing.T) {
 	assert.Equal(int64(1), summary.MediaSkipped)
 	assert.Zero(summary.MediaPending)
 	var state, reason string
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT attachment_state, attachment_skip_reason FROM attachments
 	`).Scan(&state, &reason))
 	assert.Equal(string(attachmentpolicy.StateSkipped), state)
 	assert.Equal(string(attachmentpolicy.SkipParticipantThreshold), reason)
 
-	source, err := st.GetSourceByIdentifier("200")
+	source, err := st.GetSourceByIdentifier(t.Context(), "200")
 	require.NoError(err)
-	retryable, err := st.ListDiscordRetryableAttachmentMessages(source.ID, attachmentpolicy.Policy{MaxParticipants: 8})
+	retryable, err := st.ListDiscordRetryableAttachmentMessages(t.Context(), source.ID, attachmentpolicy.Policy{MaxParticipants: 8})
 	require.NoError(err)
 	assert.Empty(retryable, "the archived catalog count must keep the unchanged exclusion out of backfill")
 	messageID := messageIDBySource(t, st, source.ID, "101")
@@ -554,7 +554,7 @@ func TestImporterArchivesGuildParticipantFloorWithoutMedia(t *testing.T) {
 			assertions.EqualValues(1, summary.MessagesAdded, "membership lookup must not prevent text archiving")
 			assertions.Equal(1, api.guildCountRequests())
 			var messageID int64
-			requirements.NoError(st.DB().QueryRow(`SELECT id FROM messages LIMIT 1`).Scan(&messageID))
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages LIMIT 1`).Scan(&messageID))
 			membership, err := st.AttachmentConversationMembershipContext(t.Context(), messageID)
 			requirements.NoError(err)
 			assertions.Equal(!unknown, membership.RosterArchived)
@@ -595,7 +595,7 @@ func TestImporterUsesGuildMemberCountForOrdinaryChannelMediaPolicy(t *testing.T)
 	assert.Empty(summary.CatalogIssues)
 	assert.Equal(1, api.guildCountRequests(), "guild membership is fetched once per sync, not per container")
 	var state, reason string
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT attachment_state, attachment_skip_reason FROM attachments
 	`).Scan(&state, &reason))
 	assert.Equal(string(attachmentpolicy.StateSkipped), state)
@@ -619,7 +619,7 @@ func TestImporterAdmitsMediaWhenGuildMemberCountIsUnderTheLimit(t *testing.T) {
 	require.NoError(err)
 	assert.Zero(summary.MediaSkipped)
 	var state, reason string
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT attachment_state, attachment_skip_reason FROM attachments
 	`).Scan(&state, &reason))
 	// The download itself cannot succeed against a fixture URL; reaching it at
@@ -647,7 +647,7 @@ func TestImporterFailsClosedWhenGuildMemberCountIsUnreadable(t *testing.T) {
 	require.NoError(err, "unreadable membership restricts media, it does not fail the guild import")
 	assert.Equal(int64(1), summary.MediaSkipped)
 	var state, reason string
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT attachment_state, attachment_skip_reason FROM attachments
 	`).Scan(&state, &reason))
 	assert.Equal(string(attachmentpolicy.StateSkipped), state)
@@ -695,7 +695,7 @@ func TestImporterArchivesGuildParticipantFloorForOrdinaryChannels(t *testing.T) 
 	require.NoError(err)
 	assert.Equal(int64(1), summary.MediaSkipped)
 
-	source, err := st.GetSourceByIdentifier("200")
+	source, err := st.GetSourceByIdentifier(t.Context(), "200")
 	require.NoError(err)
 	metadata, err := st.ConversationMetadataBatch(source.ID, []string{"300"})
 	require.NoError(err)
@@ -703,7 +703,7 @@ func TestImporterArchivesGuildParticipantFloorForOrdinaryChannels(t *testing.T) 
 		`{"guild_id":"200","discord_channel_type":0,"member_count":12}`, metadata["300"].String,
 		"the membership sync evaluated must outlive the run that read it",
 	)
-	retryable, err := st.ListDiscordRetryableAttachmentMessages(source.ID, policy)
+	retryable, err := st.ListDiscordRetryableAttachmentMessages(t.Context(), source.ID, policy)
 	require.NoError(err)
 	assert.Empty(retryable, "backfill selection must not re-admit what the guild floor excluded")
 
@@ -735,7 +735,7 @@ func TestImporterArchivesGuildParticipantFloorWhenMediaIsAdmitted(t *testing.T) 
 	})
 	require.NoError(err)
 	assert.Zero(summary.MediaSkipped)
-	source, err := st.GetSourceByIdentifier("200")
+	source, err := st.GetSourceByIdentifier(t.Context(), "200")
 	require.NoError(err)
 	metadata, err := st.ConversationMetadataBatch(source.ID, []string{"300"})
 	require.NoError(err)
@@ -769,7 +769,7 @@ func TestImporterMarksMembershipUnknownWhenGuildMembershipIsUnreadable(t *testin
 	require.NoError(err)
 	require.Len(summary.CatalogIssues, 1)
 
-	source, err := st.GetSourceByIdentifier("200")
+	source, err := st.GetSourceByIdentifier(t.Context(), "200")
 	require.NoError(err)
 	metadata, err := st.ConversationMetadataBatch(source.ID, []string{"300"})
 	require.NoError(err)
@@ -967,7 +967,7 @@ func TestImporterReconcilesPreservedContainerFloorWhenGuildShrinks(t *testing.T)
 	assert.Equal(int64(1), summary.MediaSkipped, "only the thread's own count still exceeds the limit")
 	attachmentOutcome := func(sourceAttachmentID string) (string, string) {
 		var state, reason sql.NullString
-		require.NoError(st.DB().QueryRow(st.Rebind(`
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 			SELECT attachment_state, attachment_skip_reason FROM attachments WHERE source_attachment_id = ?
 		`), sourceAttachmentID).Scan(&state, &reason))
 		return state.String, reason.String
@@ -994,7 +994,7 @@ func TestImporterReconcilesPreservedContainerFloorWhenGuildShrinks(t *testing.T)
 			`"thread":{"archived":true},"member_count":20,"container_member_count":20}`, metadata.String,
 		"the container's own membership outlives a floor that no longer exceeds it",
 	)
-	retryable, err := st.ListDiscordRetryableAttachmentMessages(source.ID, policy)
+	retryable, err := st.ListDiscordRetryableAttachmentMessages(t.Context(), source.ID, policy)
 	require.NoError(err)
 	retryableIDs := make([]int64, 0, len(retryable))
 	for _, item := range retryable {
@@ -1024,7 +1024,7 @@ func TestImporterUsesObservedParticipantCountForMediaPolicy(t *testing.T) {
 	assert.Equal(int64(1), summary.MediaSkipped)
 	assert.Zero(summary.MediaPending)
 	var state, reason string
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT attachment_state, attachment_skip_reason FROM attachments
 	`).Scan(&state, &reason))
 	assert.Equal(string(attachmentpolicy.StateSkipped), state)
@@ -1199,7 +1199,7 @@ func TestImporterFailureCheckpointsDurablePagesAndResumeDoesNotReplayThem(t *tes
 
 	_, err := newTestImporter(st, api).Import(t.Context(), ImportOptions{GuildID: "200", AttachmentsDir: t.TempDir()})
 	require.Error(err)
-	source, err := st.GetSourceByIdentifier("200")
+	source, err := st.GetSourceByIdentifier(t.Context(), "200")
 	require.NoError(err)
 	failed, err := st.GetLatestCheckpointedSync(source.ID)
 	require.NoError(err)
@@ -1219,10 +1219,10 @@ func TestImporterFailureCheckpointsDurablePagesAndResumeDoesNotReplayThem(t *tes
 	}
 
 	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), source.ID).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), source.ID).Scan(&count))
 	assert.Equal(5, count, "replayed or resumed pages remain idempotent")
 	var replyTo string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT parent.source_message_id
 		FROM messages child JOIN messages parent ON parent.id = child.reply_to_message_id
 		WHERE child.source_id = ? AND child.source_message_id = '105'`), source.ID).Scan(&replyTo))
@@ -1257,22 +1257,22 @@ func TestImporterRepeatedIDsRefreshContentRawMetadataRecipientsAndAttachments(t 
 	require.NoError(err)
 	assert.Equal(int64(0), secondSummary.MessagesAdded)
 	assert.Equal(int64(1), secondSummary.MessagesUpdated)
-	source, err := st.GetSourceByIdentifier("200")
+	source, err := st.GetSourceByIdentifier(t.Context(), "200")
 	require.NoError(err)
 
 	var count, editedFlag, oldMention, newMention, oldAttachment, newAttachment int
 	var body, metadata string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*), MAX(CASE WHEN is_edited THEN 1 ELSE 0 END)
 		FROM messages WHERE source_id = ? AND source_message_id = '101'`), source.ID).Scan(&count, &editedFlag))
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT mb.body_text, m.metadata FROM messages m JOIN message_bodies mb ON mb.message_id = m.id
 		WHERE m.source_id = ? AND m.source_message_id = '101'`), source.ID).Scan(&body, &metadata))
 	for _, check := range []struct {
 		participant string
 		count       *int
 	}{{"old-mention", &oldMention}, {"new-mention", &newMention}} {
-		require.NoError(st.DB().QueryRow(st.Rebind(`
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 			SELECT COUNT(*) FROM message_recipients mr
 			JOIN messages m ON m.id = mr.message_id
 			JOIN participant_identifiers pi ON pi.participant_id = mr.participant_id
@@ -1283,7 +1283,7 @@ func TestImporterRepeatedIDsRefreshContentRawMetadataRecipientsAndAttachments(t 
 		attachment string
 		count      *int
 	}{{"discord:old-attachment", &oldAttachment}, {"discord:new-attachment", &newAttachment}} {
-		require.NoError(st.DB().QueryRow(st.Rebind(`
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 			SELECT COUNT(*) FROM attachments a JOIN messages m ON m.id = a.message_id
 			WHERE m.source_id = ? AND m.source_message_id = '101' AND a.source_attachment_id = ?`), source.ID, check.attachment).Scan(check.count))
 	}
@@ -1358,7 +1358,7 @@ func TestImporterRepeatedPayloadRefreshesMetadataAndCountsOnlyNewAttachments(t *
 func messageIDBySource(t *testing.T, st *store.Store, sourceID int64, sourceMessageID string) int64 {
 	t.Helper()
 	var messageID int64
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?
 	`), sourceID, sourceMessageID).Scan(&messageID))
 	return messageID
@@ -1399,7 +1399,7 @@ func TestImporterAfterUsesExactSnowflakeLowerBoundAndFullStartsFresh(t *testing.
 	require.NotEmpty(queries)
 	assert.Empty(queries[0].After, "full import ignores the completed high-water cursor")
 	var ids []string
-	rows, err := st.DB().Query(st.Rebind(`SELECT source_message_id FROM messages WHERE source_id = ? ORDER BY source_message_id`), source.ID)
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`SELECT source_message_id FROM messages WHERE source_id = ? ORDER BY source_message_id`), source.ID)
 	require.NoError(err)
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
@@ -1534,7 +1534,7 @@ func TestImporterStagesCompleteCatalogBeforePublishingArchiveWatermark(t *testin
 
 	_, err := newTestImporter(st, api).Import(t.Context(), ImportOptions{GuildID: "200"})
 	require.ErrorContains(err, "synthetic import failure after catalog discovery")
-	source, err := st.GetSourceByIdentifier("200")
+	source, err := st.GetSourceByIdentifier(t.Context(), "200")
 	require.NoError(err)
 	failed, err := st.GetLatestCheckpointedSync(source.ID)
 	require.NoError(err)
@@ -1668,7 +1668,7 @@ func TestImporterRetriesAbsentThreadAfterTransientProbeFailureAgesPastWindow(t *
 	require.NoError(err)
 	assert.NotEmpty(api.channelQueries("300"), "failed probes remain retryable outside the repair window")
 	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?
 	`), source.ID, newMessageID).Scan(&count))
 	assert.Equal(1, count)
@@ -1696,7 +1696,7 @@ func TestImporterRetriesFailedRepairWithOriginalIntervalAfterWindowAdvances(t *t
 	window := 7 * 24 * time.Hour
 	_, err := importer.Import(t.Context(), ImportOptions{GuildID: "200", EditRescanWindow: window})
 	require.NoError(err)
-	source, err := st.GetSourceByIdentifier("200")
+	source, err := st.GetSourceByIdentifier(t.Context(), "200")
 	require.NoError(err)
 
 	changed := importerTestMessage(changedID, "300", "after edit")
@@ -1726,7 +1726,7 @@ func TestImporterRetriesFailedRepairWithOriginalIntervalAfterWindowAdvances(t *t
 	_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200", EditRescanWindow: window})
 	require.NoError(err)
 	var body string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT mb.body_text FROM messages m
 		JOIN message_bodies mb ON mb.message_id = m.id
 		WHERE m.source_id = ? AND m.source_message_id = ?
@@ -1868,7 +1868,7 @@ func TestImporterEmptyContainerKeepsAForwardCursorForFutureMessages(t *testing.T
 
 	_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200"})
 	require.NoError(err)
-	source, err := st.GetSourceByIdentifier("200")
+	source, err := st.GetSourceByIdentifier(t.Context(), "200")
 	require.NoError(err)
 	first, err := st.GetLastSuccessfulSync(source.ID)
 	require.NoError(err)
@@ -1903,7 +1903,7 @@ func TestImporterEmptyContainerKeepsAForwardCursorForFutureMessages(t *testing.T
 		assert.NotEqual("0", after)
 	}
 	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), source.ID).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), source.ID).Scan(&count))
 	assert.Equal(1, count)
 }
 
@@ -1924,7 +1924,7 @@ func TestImporterDisappearingPinnedHeadStillBecomesForwardCursor(t *testing.T) {
 
 	_, err := importer.Import(t.Context(), ImportOptions{GuildID: "200"})
 	require.NoError(err)
-	source, err := st.GetSourceByIdentifier("200")
+	source, err := st.GetSourceByIdentifier(t.Context(), "200")
 	require.NoError(err)
 	run, err := st.GetLastSuccessfulSync(source.ID)
 	require.NoError(err)
@@ -1940,7 +1940,7 @@ func TestImporterDisappearingPinnedHeadStillBecomesForwardCursor(t *testing.T) {
 	require.NotEmpty(api.channelQueries("300"))
 	assert.Equal("500", api.channelQueries("300")[0].After)
 	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = '501'`,
 	), source.ID).Scan(&count))
 	assert.Equal(1, count)
@@ -1966,7 +1966,7 @@ func TestImporterIncrementalRepairUsesPinnedIntervalAndRefreshesMessages(t *test
 	importer.now = func() time.Time { return now }
 	_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200", EditRescanWindow: 7 * 24 * time.Hour})
 	require.NoError(err)
-	source, err := st.GetSourceByIdentifier("200")
+	source, err := st.GetSourceByIdentifier(t.Context(), "200")
 	require.NoError(err)
 	conversationID, err := st.EnsureConversationWithType(source.ID, "300", "channel", "general")
 	require.NoError(err)
@@ -1998,7 +1998,7 @@ func TestImporterIncrementalRepairUsesPinnedIntervalAndRefreshesMessages(t *test
 
 	var body, metadata string
 	var edited bool
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT mb.body_text, m.metadata, m.is_edited
 		FROM messages m JOIN message_bodies mb ON mb.message_id = m.id
 		WHERE m.source_id = ? AND m.source_message_id = ?`), source.ID, changedID).Scan(&body, &metadata, &edited))
@@ -2027,7 +2027,7 @@ func TestImporterRepairClearsTombstoneWhenMessageReappears(t *testing.T) {
 	importer.now = func() time.Time { return now }
 	_, err := importer.Import(t.Context(), ImportOptions{GuildID: "200", EditRescanWindow: 7 * 24 * time.Hour})
 	require.NoError(err)
-	source, err := st.GetSourceByIdentifier("200")
+	source, err := st.GetSourceByIdentifier(t.Context(), "200")
 	require.NoError(err)
 	require.NoError(st.MarkMessageDeleted(source.ID, messageID))
 
@@ -2066,7 +2066,7 @@ func TestImporterAccessFailuresRecordMarkersAndPreserveContainerProgress(t *test
 			importer.now = func() time.Time { return now }
 			_, err := importer.Import(t.Context(), ImportOptions{GuildID: "200", EditRescanWindow: 7 * 24 * time.Hour})
 			require.NoError(err)
-			source, err := st.GetSourceByIdentifier("200")
+			source, err := st.GetSourceByIdentifier(t.Context(), "200")
 			require.NoError(err)
 			before, err := st.GetLastSuccessfulSync(source.ID)
 			require.NoError(err)
@@ -2157,7 +2157,7 @@ func TestImporterFirstSeenDeniedContainerRemainsRetryableWhenCatalogDropsIt(t *t
 
 			_, err := importer.Import(t.Context(), ImportOptions{GuildID: "200"})
 			require.NoError(err)
-			source, err := st.GetSourceByIdentifier("200")
+			source, err := st.GetSourceByIdentifier(t.Context(), "200")
 			require.NoError(err)
 			run, err := st.GetLastSuccessfulSync(source.ID)
 			require.NoError(err)
@@ -2173,7 +2173,7 @@ func TestImporterFirstSeenDeniedContainerRemainsRetryableWhenCatalogDropsIt(t *t
 			require.NoError(err)
 			assert.NotEmpty(api.channelQueries("300"))
 			var count int
-			require.NoError(st.DB().QueryRow(st.Rebind(
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 				`SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = '501'`,
 			), source.ID).Scan(&count))
 			assert.Equal(1, count)
@@ -2200,7 +2200,7 @@ func TestImporterDenialRetainsSafeForwardPageCheckpoint(t *testing.T) {
 	}
 	_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200"})
 	require.NoError(err)
-	source, err := st.GetSourceByIdentifier("200")
+	source, err := st.GetSourceByIdentifier(t.Context(), "200")
 	require.NoError(err)
 	run, err := st.GetLastSuccessfulSync(source.ID)
 	require.NoError(err)
@@ -2221,7 +2221,7 @@ func TestImporterCodeZero404FailsWithoutMissingMarkerOrCursorChange(t *testing.T
 	importer.now = func() time.Time { return now }
 	_, err := importer.Import(t.Context(), ImportOptions{GuildID: "200"})
 	require.NoError(err)
-	source, err := st.GetSourceByIdentifier("200")
+	source, err := st.GetSourceByIdentifier(t.Context(), "200")
 	require.NoError(err)
 	before, err := st.GetLastSuccessfulSync(source.ID)
 	require.NoError(err)
@@ -2285,7 +2285,7 @@ func TestImporterIncompleteRepairNeverMarksDeletions(t *testing.T) {
 			importer.now = func() time.Time { return now }
 			_, err := importer.Import(t.Context(), ImportOptions{GuildID: "200", EditRescanWindow: 7 * 24 * time.Hour})
 			require.NoError(err)
-			source, err := st.GetSourceByIdentifier("200")
+			source, err := st.GetSourceByIdentifier(t.Context(), "200")
 			require.NoError(err)
 
 			api.messages["300"] = []Message{
@@ -2318,7 +2318,7 @@ func TestImporterIncompleteRepairNeverMarksDeletions(t *testing.T) {
 		importer.now = func() time.Time { return now }
 		_, err := importer.Import(t.Context(), ImportOptions{GuildID: "200"})
 		require.NoError(err)
-		source, err := st.GetSourceByIdentifier("200")
+		source, err := st.GetSourceByIdentifier(t.Context(), "200")
 		require.NoError(err)
 		api.messages["300"] = []Message{
 			importerTestMessage(ids[1], "300", ids[1]),
@@ -2363,7 +2363,7 @@ func TestImporterReconcilesSuccessfulContainerWhenAnotherContainerFails(t *testi
 	importer.now = func() time.Time { return now }
 	_, err := importer.Import(t.Context(), ImportOptions{GuildID: "200"})
 	require.NoError(err)
-	source, err := st.GetSourceByIdentifier("200")
+	source, err := st.GetSourceByIdentifier(t.Context(), "200")
 	require.NoError(err)
 	api.messages["300"] = []Message{importerTestMessage(keptInSuccessful, "300", "kept")}
 	api.messages["400"] = []Message{importerTestMessage(keptInFailed, "400", "kept")}
@@ -2397,7 +2397,7 @@ func TestImporterFullRepairRespectsAfterAndUnboundedEmptyRemote(t *testing.T) {
 		importer.now = func() time.Time { return now }
 		_, err := importer.Import(t.Context(), ImportOptions{GuildID: "200"})
 		require.NoError(err)
-		source, err := st.GetSourceByIdentifier("200")
+		source, err := st.GetSourceByIdentifier(t.Context(), "200")
 		require.NoError(err)
 		api.messages["300"] = []Message{importerTestMessage(survivorID, "300", "survivor")}
 		_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200", Full: true, After: now.Add(-7 * 24 * time.Hour)})
@@ -2421,7 +2421,7 @@ func TestImporterFullRepairRespectsAfterAndUnboundedEmptyRemote(t *testing.T) {
 		importer.now = func() time.Time { return now }
 		_, err := importer.Import(t.Context(), ImportOptions{GuildID: "200"})
 		require.NoError(err)
-		source, err := st.GetSourceByIdentifier("200")
+		source, err := st.GetSourceByIdentifier(t.Context(), "200")
 		require.NoError(err)
 		api.messages["300"] = []Message{importerTestMessage(remoteOlderID, "300", "older")}
 		_, err = importer.Import(t.Context(), ImportOptions{GuildID: "200", Full: true})
@@ -2441,7 +2441,7 @@ func TestImporterFullRepairRespectsAfterAndUnboundedEmptyRemote(t *testing.T) {
 		importer.now = func() time.Time { return now }
 		_, err := importer.Import(t.Context(), ImportOptions{GuildID: "200"})
 		require.NoError(err)
-		source, err := st.GetSourceByIdentifier("200")
+		source, err := st.GetSourceByIdentifier(t.Context(), "200")
 		require.NoError(err)
 		api.messages["300"] = nil
 		api.queries["300"] = nil
@@ -2460,7 +2460,7 @@ func assertMessageDeletionState(
 ) {
 	t.Helper()
 	var deletedAt sql.NullTime
-	err := st.DB().QueryRow(st.Rebind(`
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT deleted_from_source_at FROM messages
 		WHERE source_id = ? AND source_message_id = ?`), sourceID, sourceMessageID).Scan(&deletedAt)
 	require.NoError(t, err)

@@ -423,8 +423,12 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 	oauthAppExplicit := cmd.Flags().Changed("oauth-app")
 	var clientSecretsPath config.OAuthApp
 
+	// Local archive reads and writes ignore cancellation, as they did before;
+	// cancellation stops the OAuth exchange.
+	storeCtx := context.WithoutCancel(ctx)
+
 	// Initialize database (in case it's new)
-	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(storeCtx, state)
 	if err != nil {
 		return err
 	}
@@ -513,11 +517,11 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 		// stale named-app pointer.
 		if resolvedApp != "" {
 			newApp := sql.NullString{String: resolvedApp, Valid: true}
-			if saErr := s.UpdateSourceOAuthApp(source.ID, newApp); saErr != nil {
+			if saErr := s.UpdateSourceOAuthApp(storeCtx, source.ID, newApp); saErr != nil {
 				return fmt.Errorf("update oauth app binding: %w", saErr)
 			}
 		} else if bindingChanged {
-			if saErr := s.UpdateSourceOAuthApp(source.ID, sql.NullString{}); saErr != nil {
+			if saErr := s.UpdateSourceOAuthApp(storeCtx, source.ID, sql.NullString{}); saErr != nil {
 				return fmt.Errorf("clear oauth app binding: %w", saErr)
 			}
 		}
@@ -527,12 +531,13 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		if err := setDefaultIdentityOptOut(cmd, s, source, noDefaultIdentityAddAccount); err != nil {
+		if err := setDefaultIdentityOptOut(storeCtx, cmd, s, source, noDefaultIdentityAddAccount); err != nil {
 			return err
 		}
 
 		fmt.Printf("Account %s authorized via service account.\n", email)
-		fmt.Println("Next step: msgvault sync-full", email)
+		fmt.Println("Next step:")
+		oauth.PrintHeadlessCommand(os.Stdout, "msgvault", "sync-full", "--", email)
 		return nil
 	}
 
@@ -605,7 +610,7 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 		// Update oauth_app binding if it changed or was newly specified
 		if bindingChanged || (resolvedApp != "" && !source.OAuthApp.Valid) {
 			newApp := sql.NullString{String: resolvedApp, Valid: resolvedApp != ""}
-			if err := s.UpdateSourceOAuthApp(source.ID, newApp); err != nil {
+			if err := s.UpdateSourceOAuthApp(storeCtx, source.ID, newApp); err != nil {
 				return fmt.Errorf("update oauth app binding: %w", err)
 			}
 		}
@@ -620,13 +625,13 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 		// [identity] block contains the same address. Reverse order
 		// would leave the source without its own account identifier
 		// because confirmDefaultIdentity skips on any existing rows.
-		if err := setDefaultIdentityOptOut(cmd, s, source, noDefaultIdentityAddAccount); err != nil {
+		if err := setDefaultIdentityOptOut(storeCtx, cmd, s, source, noDefaultIdentityAddAccount); err != nil {
 			return err
 		}
 		if !noDefaultIdentityAddAccount {
-			confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID, email, email, "account-identifier", state.logger)
+			confirmDefaultIdentity(storeCtx, cmd.OutOrStdout(), s, source.ID, email, email, "account-identifier", state.logger)
 		}
-		if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
+		if err := runPostSourceCreateMigrationsForInvocation(storeCtx, s, state); err != nil {
 			return fmt.Errorf("post-source-create migrations: %w", err)
 		}
 		if bindingChanged {
@@ -634,7 +639,8 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 		} else {
 			fmt.Printf("Account %s is already authorized.\n", email)
 		}
-		fmt.Println("Next step: msgvault sync-full", email)
+		fmt.Println("Next step:")
+		oauth.PrintHeadlessCommand(os.Stdout, "msgvault", "sync-full", "--", email)
 		return nil
 	}
 
@@ -662,12 +668,12 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 	// Update oauth_app binding (set or clear)
 	if resolvedApp != "" {
 		newApp := sql.NullString{String: resolvedApp, Valid: true}
-		if err := s.UpdateSourceOAuthApp(source.ID, newApp); err != nil {
+		if err := s.UpdateSourceOAuthApp(storeCtx, source.ID, newApp); err != nil {
 			return fmt.Errorf("update oauth app binding: %w", err)
 		}
 	} else if bindingChanged {
 		// Clearing the binding (switching back to default)
-		if err := s.UpdateSourceOAuthApp(source.ID, sql.NullString{}); err != nil {
+		if err := s.UpdateSourceOAuthApp(storeCtx, source.ID, sql.NullString{}); err != nil {
 			return fmt.Errorf("clear oauth app binding: %w", err)
 		}
 	}
@@ -679,18 +685,19 @@ func runAddAccountLocal(cmd *cobra.Command, args []string) error {
 	}
 	// Auto-default-identity must run BEFORE the legacy migration
 	// retry — see comment on the token-reusable path above.
-	if err := setDefaultIdentityOptOut(cmd, s, source, noDefaultIdentityAddAccount); err != nil {
+	if err := setDefaultIdentityOptOut(storeCtx, cmd, s, source, noDefaultIdentityAddAccount); err != nil {
 		return err
 	}
 	if !noDefaultIdentityAddAccount {
-		confirmDefaultIdentity(cmd.OutOrStdout(), s, source.ID, email, email, "account-identifier", state.logger)
+		confirmDefaultIdentity(storeCtx, cmd.OutOrStdout(), s, source.ID, email, email, "account-identifier", state.logger)
 	}
-	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
+	if err := runPostSourceCreateMigrationsForInvocation(storeCtx, s, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
 	fmt.Printf("\nAccount %s authorized successfully!\n", email)
-	fmt.Println("You can now run: msgvault sync-full", email)
+	fmt.Println("You can now run:")
+	oauth.PrintHeadlessCommand(os.Stdout, "msgvault", "sync-full", "--", email)
 
 	return nil
 }

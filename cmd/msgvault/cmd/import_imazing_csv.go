@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -74,7 +75,7 @@ there.`,
 			if !isDaemonCLISubprocess() {
 				// The export directory and --contacts file are caller-local
 				// inputs; a configured remote daemon cannot read them.
-				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args, nil)
+				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args)
 			}
 			return runImportIMazingCSV(cmd, args[0], opts)
 		},
@@ -101,7 +102,7 @@ func runImportIMazingCSV(cmd *cobra.Command, exportDir string, opts imazingcsv.O
 		return fmt.Errorf("iMazing export path is not a directory: %s", exportDir)
 	}
 	dbPath := cfg.DatabaseDSN()
-	st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+	st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 	if err != nil {
 		return err
 	}
@@ -113,13 +114,15 @@ func runImportIMazingCSV(cmd *cobra.Command, exportDir string, opts imazingcsv.O
 		// analytics cache even though the import as a whole failed.
 		return errors.Join(
 			fmt.Errorf("import iMazing CSV: %w", err),
-			rebuildCacheAfterWrite(dbPath, state),
+			rebuildCacheAfterWrite(cmd.Context(), dbPath, state),
 		)
 	}
-	if err := runPostSourceCreateMigrationsForInvocation(st, state); err != nil {
+	// The import committed. A stop request that lands now must not skip the
+	// migration that follows.
+	if err := runPostSourceCreateMigrationsForInvocation(context.WithoutCancel(cmd.Context()), st, state); err != nil {
 		return errors.Join(
 			fmt.Errorf("post-source-create migrations: %w", err),
-			rebuildCacheAfterWrite(dbPath, state),
+			rebuildCacheAfterWrite(cmd.Context(), dbPath, state),
 		)
 	}
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Import complete")
@@ -136,7 +139,7 @@ func runImportIMazingCSV(cmd *cobra.Command, exportDir string, opts imazingcsv.O
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Contacts matched:    %d of %d\n",
 			summary.ContactsMatched, summary.ContactsTotal)
 	}
-	return rebuildCacheAfterWrite(dbPath, state)
+	return rebuildCacheAfterWrite(cmd.Context(), dbPath, state)
 }
 
 func init() {

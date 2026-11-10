@@ -17,8 +17,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/documentindex"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/tasklinks"
@@ -47,7 +48,7 @@ func TestStoreAPIAdapterResolvesTaskMessageIdentity(t *testing.T) {
 	})
 	path := fmt.Sprintf("/api/v1/messages/%d/tasks", id)
 	response := httptest.NewRecorder()
-	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+	srv.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
@@ -72,14 +73,14 @@ func testPersonRenameHTTPRefreshesCachedPeople(t *testing.T, binary string) {
 	require.NoError(err)
 	conv := insertExportMessagesConversation(t, st, source.ID, "conversation", "Test")
 	insertExportMessagesMessage(t, st, source.ID, conv, "message", time.Now().UTC(), "body")
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET sender_id = ? WHERE source_id = ?`), alice, source.ID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET sender_id = ? WHERE source_id = ?`), alice, source.ID)
 	require.NoError(err)
 	person, _, err := st.CreatePersonFromParticipant(alice)
 	require.NoError(err)
-	_, err = buildCache(dbPath, analyticsDir, true)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, true)
 	require.NoError(err)
 	messagesBefore := snapshotMessagesDatasetBytes(t, analyticsDir)
-	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+	engine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(engine.Close()) })
 
@@ -123,7 +124,7 @@ func testPersonRenameHTTPRefreshesCachedPeople(t *testing.T, binary string) {
 		{`{"display_name":"  Alice Curated  "}`, "Alice Curated"},
 		{`{"display_name":null}`, "Alice Observed"},
 	} {
-		request := httptest.NewRequest(http.MethodPatch,
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodPatch,
 			fmt.Sprintf("/api/v1/people/%d", person.ID), strings.NewReader(test.body))
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("If-Match", fmt.Sprintf(`"person-%d-r%d"`, person.ID, person.Revision))
@@ -186,14 +187,14 @@ func TestStoreAPIAdapterServesPersonMatchScoringRun(t *testing.T) {
 	require.NoError(err)
 	fingerprint, err := disclosure.Fingerprint()
 	require.NoError(err)
-	consentRequest := httptest.NewRequest(http.MethodPost, "/api/v1/identity/scoring/consent",
+	consentRequest := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/identity/scoring/consent",
 		strings.NewReader(fmt.Sprintf(`{"disclosure_fingerprint":%q}`, fingerprint)))
 	consentRequest.Header.Set("Content-Type", "application/json")
 	consentResponse := httptest.NewRecorder()
 	srv.Router().ServeHTTP(consentResponse, consentRequest)
 	require.Equal(http.StatusOK, consentResponse.Code, consentResponse.Body.String())
 
-	runRequest := httptest.NewRequest(http.MethodPost, "/api/v1/identity/scoring/run",
+	runRequest := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/identity/scoring/run",
 		strings.NewReader(`{"limit":1}`))
 	runRequest.Header.Set("Content-Type", "application/json")
 	runResponse := httptest.NewRecorder()
@@ -247,50 +248,6 @@ func TestStoreAPIAdapterExposesCuratedPeopleCompletion(t *testing.T) {
 	assert.Equal("Adapter Nickname", rows[0].Value)
 }
 
-func TestStoreAPIAdapterRecreatesConsentedDocumentSearchConsumer(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	fixture := storetest.New(t)
-	messageID := fixture.CreateMessage("document-search-adapter")
-	hash := strings.Repeat("a", 64)
-	require.NoError(fixture.Store.UpsertAttachmentRecord(t.Context(), messageID, store.AttachmentWrite{
-		Filename: "evidence.pdf", MIMEType: "application/pdf", Size: 128,
-		StoragePath: hash[:2] + "/" + hash, ContentHash: hash,
-		Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics,
-		SourcePartKey: "part:1",
-	}))
-	fingerprint := strings.Repeat("b", 64)
-	profile := store.DocumentExtractionProfile{
-		ID: "profile-" + fingerprint, Fingerprint: fingerprint,
-		Provider: "mistral", Endpoint: "https://api.mistral.ai/v1/ocr",
-		Region: "eu", Model: documentindex.ModelMistralOCR,
-		RetentionPosture:  string(documentindex.RetentionStandard),
-		TrainingPosture:   string(documentindex.TrainingOptedOut),
-		AllowedMediaTypes: []string{"application/pdf"},
-		PolicyJSON:        []byte(`{"normalization":1}`),
-	}
-	_, err := fixture.Store.EnsureDocumentExtractionProfile(t.Context(), profile)
-	require.NoError(err)
-	require.NoError(fixture.Store.RecordDocumentProviderConsent(t.Context(), store.DocumentProviderConsent{
-		ProfileID: profile.ID, ProfileFingerprint: profile.Fingerprint,
-		RetentionPosture: profile.RetentionPosture, TrainingPosture: profile.TrainingPosture,
-	}))
-
-	adapter := &storeAPIAdapter{store: fixture.Store}
-	_, err = adapter.SearchDocuments(t.Context(), store.DocumentSearchRequest{Query: "absent"})
-	require.NoError(err)
-	consumer, err := fixture.Store.GetAttachmentChangeConsumer(
-		t.Context(), documentindex.DocumentAttachmentConsumerKey,
-	)
-	require.NoError(err)
-	assert.True(consumer.ReconciliationComplete)
-	var occurrences int
-	require.NoError(fixture.Store.DB().QueryRow(
-		`SELECT COUNT(*) FROM document_occurrences`,
-	).Scan(&occurrences))
-	assert.Equal(1, occurrences)
-}
-
 func TestStoreAPIAdapterServesProfileAndCommunicationServiceRoutes(t *testing.T) {
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -316,7 +273,7 @@ func TestStoreAPIAdapterServesProfileAndCommunicationServiceRoutes(t *testing.T)
 		{"person network", fmt.Sprintf("/api/v1/people/%d/network", person.ID)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodGet, test.path, nil)
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, test.path, nil)
 			response := httptest.NewRecorder()
 
 			srv.Router().ServeHTTP(response, request)
@@ -339,7 +296,7 @@ func TestStoreAPIAdapterServesPersonTracking(t *testing.T) {
 		Config: &config.Config{}, Store: &storeAPIAdapter{store: st},
 		Logger: slog.New(slog.DiscardHandler),
 	})
-	request := httptest.NewRequest(http.MethodPut,
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPut,
 		fmt.Sprintf("/api/v1/people/%d/tracking", person.ID),
 		strings.NewReader(`{"tracked":true}`))
 	request.Header.Set("Content-Type", "application/json")
@@ -359,7 +316,7 @@ func TestStoreAPIAdapterServesPersonRelationshipRoutes(t *testing.T) {
 		Store:  &storeAPIAdapter{store: st},
 		Logger: slog.New(slog.DiscardHandler),
 	})
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/relationship-types", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/relationship-types", nil)
 	response := httptest.NewRecorder()
 
 	srv.Router().ServeHTTP(response, request)
@@ -391,7 +348,7 @@ func TestStoreAPIAdapterServesOrganizationAndEmploymentRoutes(t *testing.T) {
 		{"employments", fmt.Sprintf("/api/v1/people/%d/employments", person.ID)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodGet, test.path, nil)
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, test.path, nil)
 			response := httptest.NewRecorder()
 
 			srv.Router().ServeHTTP(response, request)
@@ -412,7 +369,7 @@ func TestServeFilenameDiscoveryWiring(t *testing.T) {
 	message := f.CreateMessage("suggestion-wire")
 	require.NoError(f.Store.ReplaceMessageRecipients(message, "to", []int64{member}, []string{"Member Example"}))
 	var attachment int64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`INSERT INTO attachments(message_id,filename,storage_path) VALUES(?,'report.pdf','') RETURNING id`), message).Scan(&attachment))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments(message_id,filename,storage_path) VALUES(?,'report.pdf','') RETURNING id`), message).Scan(&attachment))
 	for range 100 {
 		batch, err := f.Store.FilenameDiscoveryBatchContext(t.Context())
 		require.NoError(err)
@@ -424,7 +381,7 @@ func TestServeFilenameDiscoveryWiring(t *testing.T) {
 	srv := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: &storeAPIAdapter{store: f.Store}, Logger: slog.New(slog.DiscardHandler)})
 	for _, path := range []string{"/api/v1/files/suggest", fmt.Sprintf("/api/v1/people/%d/files/suggest", person.ID)} {
 		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"filename_query":"report.pdf"}`))
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(`{"filename_query":"report.pdf"}`))
 		r.Header.Set("Content-Type", "application/json")
 		srv.Router().ServeHTTP(w, r)
 		require.Equal(200, w.Code, w.Body.String())
@@ -439,4 +396,30 @@ func TestServeFilenameDiscoveryWiring(t *testing.T) {
 		require.True(ok)
 		assert.Equal(t, json.Number(strconv.FormatInt(attachment, 10)), row["id"])
 	}
+}
+
+func TestStoreAPIAdapterForwardsVerificationBodyLoader(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "code", "Account", "Your code is 482913")
+	requirements.NoError(err)
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
+	srv := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: st}, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: slog.New(slog.DiscardHandler)})
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { assertions.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	daemon := httptest.NewServer(srv.Router())
+	t.Cleanup(daemon.Close)
+	// Issue grants through the same HTTP boundary used by the CLI.
+	owner, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, APIKey: "owner", AllowInsecure: true, HTTPClient: daemon.Client()})
+	requirements.NoError(err)
+	t.Cleanup(func() { assertions.NoError(owner.Close()) })
+	issued, err := owner.IssueAgentToken(t.Context(), "masked", []string{"search.read"}, []int64{source.ID}, nil, time.Time{})
+	requirements.NoError(err)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/messages", nil)
+	request.Header.Set(apiprotocol.AgentTokenHeader, issued.Secret)
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, request)
+	assertions.Equal(http.StatusOK, response.Code, response.Body.String())
+	assertions.Contains(response.Body.String(), "[verification content masked]")
+	assertions.NotContains(response.Body.String(), "Account")
 }

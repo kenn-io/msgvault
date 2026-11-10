@@ -323,3 +323,54 @@ func TestDaemonOptimizeReportsInitialGateWait(t *testing.T) {
 		assert.True(t, held, "cancelling a queued optimize cannot release another holder")
 	})
 }
+
+func TestDaemonOptimizeOutputFailureCancelsGateReacquisition(t *testing.T) {
+	cfg, gen := newDaemonOptimizeFixture(t)
+	gate := api.NewSerialOperationGate()
+	adapter := &storeAPIAdapter{config: cfg, operationGate: gate}
+	disconnected := errors.New("stream disconnected")
+	progress, proceed := make(chan struct{}), make(chan struct{})
+	entered, release := make(chan struct{}), make(chan struct{})
+	defer close(release)
+	result := make(chan error, 1)
+	go func() {
+		result <- adapter.RunCLICommand(t.Context(), api.CLIRunRequest{Args: []string{"embeddings", "optimize", strconv.FormatInt(int64(gen), 10)}}, func(event api.CLIRunEvent) error {
+			if strings.HasPrefix(event.Data, "Preparing accelerator:") {
+				close(progress)
+				<-proceed
+				return disconnected
+			}
+			return nil
+		})
+	}()
+	select {
+	case <-progress:
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "preparation did not start")
+	}
+	go func() {
+		done, ok := gate.BeginRequestWorkContext(t.Context(), "import")
+		if !ok {
+			return
+		}
+		defer done()
+		close(entered)
+		select {
+		case <-release:
+		case <-t.Context().Done():
+		}
+	}()
+	require.Eventually(t, gate.HasRequestWaiters, 5*time.Second, time.Millisecond)
+	close(proceed)
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "queued work did not enter")
+	}
+	select {
+	case err := <-result:
+		require.ErrorIs(t, err, disconnected)
+	case <-time.After(time.Second):
+		require.FailNow(t, "optimize waited for unrelated work after stream failure")
+	}
+}

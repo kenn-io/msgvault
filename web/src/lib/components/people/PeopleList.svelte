@@ -158,7 +158,7 @@
 </script>
 
 <aside class="people-list" aria-label="People">
-  <div class="toolbar">
+  <div class="toolbar touch-controls">
     <div class="toolbar-row">
       <SegmentedControl
         ariaLabel="List"
@@ -255,7 +255,7 @@
             <div role="gridcell">
               <span class="avatar-slot">
                 <span class="avatar">
-                  <IdentityAvatar label={row.label} seed={row.key} shape={row.domain ? 'domain' : 'person'} size={28} />
+                  <IdentityAvatar label={row.label} seed={row.key} shape={row.domain ? 'domain' : 'person'} size={32} />
                 </span>
                 {#if !row.domain}
                   <SelectionCheckbox
@@ -274,7 +274,7 @@
                   {/if}
                   {#if row.lastAt}<span class="when" data-mono>{relativeDate(row.lastAt)}</span>{/if}
                 </div>
-                <span class="detail" data-mono>{row.detail}</span>
+                {#if row.detail}<span class="detail" data-mono>{row.detail}</span>{/if}
               </div>
             </div>
           </div>
@@ -285,7 +285,7 @@
   {/if}
 
   {#if selection.count > 0}
-    <div class="selection-bar"><span>{selection.count} selected</span>
+    <div class="selection-bar" data-toolbar><span>{selection.count} selected</span>
       <Button label="Select loaded" onclick={selectAllLoaded} /><Button label="Clear selection" onclick={() => selection.clear()} />
       <Button label="Merge" disabled={!canMerge} onclick={onMerge} />
       {#if canDelete}<Button label="Delete" tone="danger" onclick={onDelete} />{/if}
@@ -362,12 +362,15 @@
     box-shadow: inset 2px 0 0 transparent;
   }
 
+  /* A 52 row: the 32 avatar, 12, then the text block, both centered on the row, 16 from the pane's sides.
+   * A one-line row has no reserved second line, so its name centers on the avatar. */
   .row [role='gridcell'] {
     display: flex;
     min-height: 52px;
+    box-sizing: border-box;
     align-items: center;
-    gap: var(--control-gap);
-    padding: var(--pane-pad-y) var(--pane-pad-x);
+    gap: var(--space-box);
+    padding: 0 var(--space-pane);
   }
 
   .row:hover {
@@ -388,8 +391,8 @@
   .avatar-slot {
     position: relative;
     display: grid;
-    width: 28px;
-    height: 28px;
+    width: 32px;
+    height: 32px;
     flex: none;
     place-items: center;
   }
@@ -421,25 +424,26 @@
     transform: scale(1);
   }
 
+  /* Body over Meta, with no gap: the line heights carry the spacing. */
   .body {
     display: flex;
     min-width: 0;
     flex: 1;
     flex-direction: column;
-    gap: var(--space-1);
   }
 
   .line {
     display: flex;
     align-items: center;
-    gap: var(--control-gap);
+    gap: var(--space-group);
   }
 
   .name {
     min-width: 0;
     overflow: hidden;
     color: var(--text-primary);
-    font-size: var(--font-size-sm);
+    font-size: var(--type-body-size);
+    line-height: var(--type-body-line);
     font-weight: var(--font-weight-medium, 500);
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -455,14 +459,15 @@
     flex: none;
     margin-left: auto;
     color: var(--text-muted);
-    font-size: var(--font-size-xs);
+    font-size: var(--type-small-size);
+    line-height: var(--type-small-line);
   }
 
   .detail {
-    min-height: 1em;
     overflow: hidden;
     color: var(--text-muted);
-    font-size: var(--font-size-xs);
+    font-size: var(--type-meta-size);
+    line-height: var(--type-meta-line);
     text-overflow: ellipsis;
     white-space: nowrap;
   }

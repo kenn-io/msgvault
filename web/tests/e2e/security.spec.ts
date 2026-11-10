@@ -1,4 +1,6 @@
 import { expect, test } from '@playwright/test';
+import { stubOperationStatus } from '../kit-ui';
+import { sourceStatus } from '../../src/lib/jobs/fixtures.test-support';
 
 const secureRow = {
   key: 'source:1:message:secure', kind: 'message', message_type: 'email', conversation_type: 'email_thread',
@@ -95,6 +97,8 @@ test('sanitized archived HTML requires remote-image consent and rejects forged f
 });
 
 test('daemon API key stays host-managed and never crosses the browser settings write boundary', async ({ page }) => {
+  await stubOperationStatus(page);
+  await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [sourceStatus({ scheduled: false })] } }));
 	let settingsPatch: unknown;
 	const daemonKey = {
 		key: 'server.api_key', group: 'server', section: 'listener', label: 'API key',

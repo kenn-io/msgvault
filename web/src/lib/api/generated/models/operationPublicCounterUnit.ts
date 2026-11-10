@@ -8,9 +8,7 @@ export type OperationPublicCounterUnit =
 export const OperationPublicCounterUnit = {
   attachments: "attachments",
   books: "books",
-  chunks: "chunks",
   contacts: "contacts",
-  documents: "documents",
   messages: "messages",
   people: "people",
   writes: "writes",

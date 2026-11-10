@@ -234,7 +234,7 @@ type Dialect interface {
 	// turn an operator's SIGINT into a store that silently believes search is
 	// gone. Implementations must bind the probe to ctx and must not reach around
 	// it to a contextless handle.
-	FTSAvailable(ctx context.Context, db *sql.DB) (bool, error)
+	FTSAvailable(ctx context.Context, db SQLReader) (bool, error)
 
 	// FTSNeedsBackfill reports whether the FTS index needs to be populated.
 	FTSNeedsBackfill(db *sql.DB) bool
