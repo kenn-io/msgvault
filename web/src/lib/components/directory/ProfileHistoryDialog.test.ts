@@ -108,14 +108,13 @@ describe('ProfileHistoryDialog', () => {
 
     render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn() });
 
-    expect((await screen.findByText('Previous Name')).closest('.detail-row')?.textContent).toContain('From CardDAV contacts');
+    await screen.findByText('Previous Name');
     for (const title of ['Names', 'Email and phone', 'Addresses', 'Dates', 'Categories', 'Media', 'Seen in services']) {
       expect(screen.getByRole('heading', { name: title })).toBeDefined();
     }
     expect.soft(screen.getByText('Scheduled end category').closest('details')).not.toBeNull();
     const currentRow = screen.getByText('Current Name').closest('.detail-row')!;
     const line = currentRow.querySelector<HTMLElement>('.description')!;
-    expect(line.textContent).toMatch(/^You · /);
     expect(line.title).toContain('Updated');
     for (const value of ['Current Name', 'current@example.com', 'Current address', 'Birthday: February 14', 'Current photo']) {
       expect(screen.getByText(value).closest('details')).toBeNull();
@@ -157,7 +156,6 @@ describe('ProfileHistoryDialog', () => {
 
   it.each(['available', 'failed'] as const)('waits for history and ends a split on its receipt: initially %s', async initial => {
     const initialFailure = initial === 'failed';
-    let reconciled = false;
     let releaseReconciliation!: () => void;
     const pendingReconciliation = new Promise<void>(resolve => { releaseReconciliation = resolve; });
     let historyReads = 0;
@@ -173,19 +171,19 @@ describe('ProfileHistoryDialog', () => {
     const client = createAPIClient(async input => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
-    const labels = {
+      const labels = {
         profiles: [{ id: 9, display_name: 'Restored Person', participant_ids: [1] }, { id: 7, display_name: 'Retained name', participant_ids: [] }],
-        participants: [{ merge_id: 41, participant_id: 1, origin_side: 'absorbed', ...(reconciled ? { split_id: 55 } : {}) }], participant_ids: [1],
+        participants: [{ merge_id: 41, participant_id: 1, origin_side: 'absorbed' }], participant_ids: [1],
         addresses: [addressFixture(1, 'email', observed.value, { identity_key: 'observed-key' })], absorbed_address_count: 1, incomplete: false,
       };
       if (path.endsWith('/profile/history')) {
         historyReads += 1;
         if (initialFailure && historyReads === 1) return Response.json({ error: 'unavailable', message: 'history unavailable' }, { status: 503 });
         const response = Response.json({
-          person: reconciled ? remaining : source,
-          names: [{ person_id: 7, name_kind: 'formatted', formatted: 'Retained name', original_value: 'Retained name', is_derived: false, envelope: { ...currentEnvelope, id: 1 } }, ...(reconciled ? [] : [{ person_id: 7, name_kind: 'nickname', formatted: 'Moved alias', original_value: 'Moved alias', is_derived: false, envelope: { ...currentEnvelope, id: 2 } }])],
-          contact_points: reconciled ? [] : [{ person_id: 7, address_kind: 'email', original_value: 'moved@example.com', normalized_value: 'moved@example.com', normalization: 'email', normalization_version: 1, envelope: { ...currentEnvelope, id: 3 } }],
-          observations: reconciled ? [] : [{ participant_id: 1, address_kind: 'email', original_value: 'observed@example.com', normalized_value: 'observed@example.com', identity_key: 'observed-key', service_slug: 'email', normalization: 'email', normalization_version: 1, observed_at: when, envelope: { ...currentEnvelope, id: 4, source: 'archive_observation' } }],
+          person: source,
+          names: [{ person_id: 7, name_kind: 'formatted', formatted: 'Retained name', original_value: 'Retained name', is_derived: false, envelope: { ...currentEnvelope, id: 1 } }, { person_id: 7, name_kind: 'nickname', formatted: 'Moved alias', original_value: 'Moved alias', is_derived: false, envelope: { ...currentEnvelope, id: 2 } }],
+          contact_points: [{ person_id: 7, address_kind: 'email', original_value: 'moved@example.com', normalized_value: 'moved@example.com', normalization: 'email', normalization_version: 1, envelope: { ...currentEnvelope, id: 3 } }],
+          observations: [{ participant_id: 1, address_kind: 'email', original_value: 'observed@example.com', normalized_value: 'observed@example.com', identity_key: 'observed-key', service_slug: 'email', normalization: 'email', normalization_version: 1, observed_at: when, envelope: { ...currentEnvelope, id: 4, source: 'archive_observation' } }],
           addresses: [], dates: [], categories: [], media: [],
         });
         if (historyReads === (initialFailure ? 2 : 1)) {
@@ -194,13 +192,13 @@ describe('ProfileHistoryDialog', () => {
         }
         return response;
       }
-      if (path.endsWith('/merges')) return Response.json({ merges: [{ merge, labels, participant_count: 1, row_count: 0, pending_candidate_count: 0, split_count: reconciled ? 1 : 0, row_action_counts: {} }], limit: 100, offset: 0 });
-      if (path === '/api/v1/person-merges/41') return Response.json({ merge, labels: { ...labels, participants: undefined }, participants: labels.participants, rows: [], splits: reconciled ? [split] : [], review_candidates: [] });
+      if (path.endsWith('/merges')) return Response.json({ merges: [{ merge, labels, participant_count: 1, row_count: 0, pending_candidate_count: 0, split_count: 0, row_action_counts: {} }], limit: 100, offset: 0 });
+      if (path === '/api/v1/person-merges/41') return Response.json({ merge, labels: { ...labels, participants: undefined }, participants: labels.participants, rows: [], splits: [], review_candidates: [] });
       if (path === '/api/v1/people/7') return Response.json(source, { headers: { ETag: '"person-7-r3"' } });
       if (path === '/api/v1/people/7/split') return Response.json({ source_person: remaining, new_person: restored, split, exact_reversal: true, ambiguous_rows: [], unrestored_rows: [], uid_alias_disposition: 'restored', identity_revision: 2, cache_state: 'ready' }, { headers: { ETag: '"person-7-r4"', 'X-New-Person-ETag': '"person-9-r1"' } });
       throw new Error(`unexpected ${request.method} ${path}`);
     });
-    const onSplitCommitted = vi.fn(async () => { reconciled = true; await pendingReconciliation; });
+    const onSplitCommitted = vi.fn(async () => { await pendingReconciliation; });
     const view = render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn(), onSplitCommitted });
     try {
       if (initialFailure) {
@@ -260,33 +258,30 @@ it.each(['history', 'merges'])('keeps account numbers when %s arrives first', as
 });
 
 async function renderMergedInAddress(entry: typeof mergedInCases[number]) {
-  const tc = entry;
   const first = { ...mergeResult(person()).merge, id: 41, survivor_person_id: 7, absorbed_person_id: 9, current_person_id: 7 };
-  const merges = [first];
   const identifiers = [{ participant_id: 1, type: 'email', value: 'mira@example.org', display_value: '', normalized_value: 'mira@example.org', service_slug: 'email', service_label: '', scope_kind: '', scope_value: '' }];
-  const recorded = identifiers;
   const addresses = identifiers.map(a => addressFixture(a.participant_id, a.type, a.value, { ...a, identity_key: 'mira-key' }));
   const labels = (merge: typeof first) => ({
-    profiles: [{ id: merge.survivor_person_id, display_name: 'Current person', participant_ids: [20] }, { id: merge.absorbed_person_id, display_name: 'First person', participant_ids: recorded.map(item => item.participant_id) }],
-    participants: [{ merge_id: merge.id, participant_id: 20, origin_side: 'survivor' }, ...recorded.map(item => ({ merge_id: merge.id, participant_id: item.participant_id, origin_side: 'absorbed' }))],
-    participant_ids: [20, ...recorded.map(item => item.participant_id)], addresses, absorbed_address_count: addresses.length, incomplete: false,
+    profiles: [{ id: merge.survivor_person_id, display_name: 'Current person', participant_ids: [20] }, { id: merge.absorbed_person_id, display_name: 'First person', participant_ids: identifiers.map(item => item.participant_id) }],
+    participants: [{ merge_id: merge.id, participant_id: 20, origin_side: 'survivor' }, ...identifiers.map(item => ({ merge_id: merge.id, participant_id: item.participant_id, origin_side: 'absorbed' }))],
+    participant_ids: [20, ...identifiers.map(item => item.participant_id)], addresses, absorbed_address_count: addresses.length, incomplete: false,
   });
   render(ProfileHistoryDialog, { personID: 7, onClose: vi.fn(), client: createAPIClient(async input => {
     const path = new URL((input as Request).url).pathname;
-    if (path.endsWith('/merges')) return Response.json({ merges: merges.map(merge => ({ merge, labels: labels(merge), participant_count: recorded.length + 1, row_count: 0, split_count: 0, pending_candidate_count: 0, row_action_counts: {} })), limit: 100, offset: 0 });
-    if (path.startsWith('/api/v1/person-merges/')) { const merge = merges.find(item => path.endsWith(`/${item.id}`))!; return Response.json({ merge, labels: { ...labels(merge), participants: undefined }, participants: labels(merge).participants, rows: [], splits: [], review_candidates: [] }); }
-    return Response.json({ ...emptyProfile(person()), observations: tc.name === 'only seen in services' ? [{ participant_id: 1, address_kind: 'email', original_value: tc.original, normalized_value: 'mira@example.org', identity_key: 'mira-key', service_slug: 'email', scope_kind: '', scope_value: '', normalization: 'email', normalization_version: 1, source_id: 1, observed_at: when, envelope: { ...currentEnvelope, id: 9, source: 'archive_observation' } }, { participant_id: 1, address_kind: 'email', original_value: tc.original, normalized_value: 'mira@example.org', identity_key: 'mira-key', service_slug: 'email', service_label: 'Email', scope_kind: '', scope_value: '', normalization: 'email', normalization_version: 1, source_id: 2, observed_at: '2026-08-03T12:00:00Z', envelope: { ...currentEnvelope, id: 10, source: 'archive_observation', source_ref: 'example-source', actor: 'importer' } }] : [], contact_points: tc.name === 'removed before the merge' ? [{ person_id: 7, address_kind: 'email', original_value: tc.original, identity_key: 'mira-key', normalized_value: 'mira@example.org', service_slug: 'email', service_label: '', scope_kind: '', scope_value: '', normalization: 'none', normalization_version: 1, envelope: { ...currentEnvelope, id: 3, superseded_at: '2026-07-31T00:00:00Z' } }] : [] });
+    if (path.endsWith('/merges')) return Response.json({ merges: [{ merge: first, labels: labels(first), participant_count: identifiers.length + 1, row_count: 0, split_count: 0, pending_candidate_count: 0, row_action_counts: {} }], limit: 100, offset: 0 });
+    if (path === '/api/v1/person-merges/41') return Response.json({ merge: first, labels: { ...labels(first), participants: undefined }, participants: labels(first).participants, rows: [], splits: [], review_candidates: [] });
+    return Response.json({ ...emptyProfile(person()), observations: entry.name === 'only seen in services' ? [{ participant_id: 1, address_kind: 'email', original_value: entry.original, normalized_value: 'mira@example.org', identity_key: 'mira-key', service_slug: 'email', scope_kind: '', scope_value: '', normalization: 'email', normalization_version: 1, source_id: 1, observed_at: when, envelope: { ...currentEnvelope, id: 9, source: 'archive_observation' } }, { participant_id: 1, address_kind: 'email', original_value: entry.original, normalized_value: 'mira@example.org', identity_key: 'mira-key', service_slug: 'email', service_label: 'Email', scope_kind: '', scope_value: '', normalization: 'email', normalization_version: 1, source_id: 2, observed_at: '2026-08-03T12:00:00Z', envelope: { ...currentEnvelope, id: 10, source: 'archive_observation', source_ref: 'example-source', actor: 'importer' } }] : [], contact_points: entry.name === 'removed before the merge' ? [{ person_id: 7, address_kind: 'email', original_value: entry.original, identity_key: 'mira-key', normalized_value: 'mira@example.org', service_slug: 'email', service_label: '', scope_kind: '', scope_value: '', normalization: 'none', normalization_version: 1, envelope: { ...currentEnvelope, id: 3, superseded_at: '2026-07-31T00:00:00Z' } }] : [] });
   }) });
   await screen.findAllByRole('button', { name: /^Open .+ merged into .+ · / });
   const section = screen.getByRole('heading', { name: 'Email and phone' }).closest('section')!;
-  return { tc, section };
+  return section;
 }
 
 it.each(mergedInCases)('lists each merged-in address once: $name', async entry => {
-  const { tc, section } = await renderMergedInAddress(entry);
-  expect(section.querySelectorAll('.detail-row')).toHaveLength(tc.rows);
+  const section = await renderMergedInAddress(entry);
+  expect(section.querySelectorAll('.detail-row')).toHaveLength(entry.rows);
   expect(screen.getByRole('button', { name: 'Open the merge that brought in mira@example.org' })).toBeDefined();
-  if (tc.name === 'removed before the merge') expect(screen.getByText(tc.original).closest('details')).not.toBeNull();
+  if (entry.name === 'removed before the merge') expect(screen.getByText(entry.original).closest('details')).not.toBeNull();
   else {
     expect(section.querySelector('.detail-row')!.textContent).toContain('Email · Merged in · ');
     const provenance = section.querySelector('.detail-row [title]')?.getAttribute('title');

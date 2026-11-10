@@ -9,7 +9,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestPersonContactPointsKeepServiceMetadataAndHistory(t *testing.T) {
+func TestPersonContactPointsCurrentAndHistoricalValues(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store

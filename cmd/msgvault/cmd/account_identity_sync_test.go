@@ -253,10 +253,11 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 		name       string
 		newCommand func() *cobra.Command
 		args       []string
+		output     string
 	}{
-		{"o365", newAddO365LocalCmd, nil},
-		{"graph", newAddO365LocalCmd, []string{"--graph"}},
-		{"teams", newAddTeamsLocalCmd, nil},
+		{"o365", newAddO365LocalCmd, nil, "msgvault sync-full -- user@example.com"},
+		{"graph", newAddO365LocalCmd, []string{"--graph"}, "msgvault sync -- user@example.com"},
+		{"teams", newAddTeamsLocalCmd, nil, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -279,11 +280,8 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 				err := cmd.ExecuteContext(ctx)
 				output := stop()
 				require.NoError(err)
-				switch tc.name {
-				case "o365":
-					assert.Contains(output, "msgvault sync-full -- user@example.com")
-				case "graph":
-					assert.Contains(output, "msgvault sync -- user@example.com")
+				if tc.output != "" {
+					assert.Contains(output, tc.output)
 				}
 				st, err := store.Open(cfg.DatabaseDSN())
 				require.NoError(err)

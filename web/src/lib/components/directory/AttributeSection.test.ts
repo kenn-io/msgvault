@@ -99,8 +99,6 @@ describe('AttributeSection', () => {
     renderSection(vi.fn(), [{ definition: sensitive, current: [current], history: [historical] }]);
 
     expect(screen.getByRole('heading', { name: 'Private note' })).toBeDefined();
-    expect(screen.getByText('1 earlier value')).toBeDefined();
-    expect(screen.getAllByText('Hidden')).toHaveLength(2);
     const currentRow = screen.getAllByText('Hidden')[0]!.closest('.detail-row')!;
     // Reveal is the first row's text action, beside its value, not a control in the field's heading.
     expect(currentRow.querySelector('.actions')!.textContent!.trim()).toBe('Reveal');

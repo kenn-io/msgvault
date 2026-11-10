@@ -141,28 +141,32 @@ function deferred<T = Response>() {
 const posts = (requests: Request[]) => requests.filter(request => request.method === 'POST');
 
 describe('PersonMergeHistory', () => {
-  it.each(['name loading', 'submit pending'])('shows split controls during %s', async phase => {
+  it('keeps address choices selectable while a name loads', async () => {
     const pending = deferred();
-    renderHistory(detail(), { respond: (path, request) => {
-      if (phase === 'name loading' && path === '/api/v1/people/19') return pending.promise;
-      if (request.method === 'POST') return pending.promise;
-      if (phase !== 'name loading' && path === '/api/v1/people/12') return Response.json(person(12, 4, [701], 'Synthetic Source'), { headers: { ETag: '"person-12-r4"' } });
-      return undefined;
-    } });
+    renderHistory(detail(), { respond: path => path === '/api/v1/people/19' ? pending.promise : undefined });
     try {
       await fireEvent.click(await screen.findByRole('button', { name: /^Open .+ merged into .+ · / }));
       await fireEvent.click(await screen.findByRole('button', { name: 'Split…' }));
       const choice = await screen.findByRole('checkbox', { name: 'address701@example.org, +12025550101' });
       await fireEvent.click(choice);
-      if (phase === 'name loading') {
-        expect(choice).toHaveProperty('checked', true);
-        expect(screen.getByRole('button', { name: 'Split into new person' })).toHaveProperty('disabled', false);
-      } else {
-        await fireEvent.click(screen.getByRole('button', { name: 'Split into new person' }));
-        await waitFor(() => expect(screen.getByRole('button', { name: 'Split into new person' }).getAttribute('aria-busy')).toBe('true'));
-      }
+      expect(choice).toHaveProperty('checked', true);
+      expect(screen.getByRole('button', { name: 'Split into new person' })).toHaveProperty('disabled', false);
     } finally {
-      pending.resolve(phase === 'name loading' ? Response.json(person(19, 4, [703], 'Alex Restored')) : Response.json({}, { status: 503 }));
+      pending.resolve(Response.json(person(19, 4, [703], 'Alex Restored')));
+    }
+  });
+
+  it('shows the split submission as busy', async () => {
+    const pending = deferred();
+    renderHistory(detail(), { respond: (path, request) => request.method === 'POST' ? pending.promise : path === '/api/v1/people/12' ? Response.json(person(12, 4, [701], 'Synthetic Source'), { headers: { ETag: '"person-12-r4"' } }) : undefined });
+    try {
+      await fireEvent.click(await screen.findByRole('button', { name: /^Open .+ merged into .+ · / }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Split…' }));
+      await fireEvent.click(await screen.findByRole('checkbox', { name: 'address701@example.org, +12025550101' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Split into new person' }));
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Split into new person' }).getAttribute('aria-busy')).toBe('true'));
+    } finally {
+      pending.resolve(Response.json({}, { status: 503 }));
     }
   });
 
@@ -213,7 +217,7 @@ describe('PersonMergeHistory', () => {
     expect(await screen.findByText(`${count} addresses moved in`, { exact: false })).toBeDefined();
   });
 
-  it('omits the card name from address details while retaining other names', async () => {
+  it('passes the card name to address details', async () => {
     const value = detail();
     value.labels.profiles = [{ id: 7, display_name: 'Survivor', participant_ids: [702] }, { id: 9, display_name: 'Garden member', participant_ids: [701, 703] }];
     value.labels.addresses = [
@@ -225,7 +229,6 @@ describe('PersonMergeHistory', () => {
     const card = await screen.findByRole('region', { name: 'Garden member' });
     const rows = within(card).getAllByRole('listitem');
     expect(rows[0].textContent).toBe('WhatsApp@garden-member · account 1');
-    expect(rows[1].textContent).toBe('WhatsAppOther member · @other · account 1');
   });
 
   it('keeps each merge’s recorded survivor even after that profile was merged away', async () => {

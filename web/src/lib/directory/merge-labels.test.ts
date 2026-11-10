@@ -83,17 +83,16 @@ it.each([
   { type: 'beeper', display: '@garden-member', name: '', expected: 'WhatsApp · @garden-member' },
   { type: 'handle', key: '@garden-member', display: '', name: '', expected: 'Custom chat · @garden-member' },
   { type: 'beeper', display: '@garden-member', name: 'Garden member', scope: true, expected: 'WhatsApp · Garden member · @garden-member · account 1' },
-].map(row => ({ key: 'beeper:8:whatsapp:9:@user:x.y', scope: false, ...row })))('preserves readable $type identity evidence with display "$display"', ({ type, key, display, name, scope, expected }) => {
-  const identifiers = [{ participant_id: 701, type, value: key, display_value: display, service_slug: type === 'beeper' ? 'whatsapp' : 'custom-chat', service_label: type === 'beeper' ? 'WhatsApp' : 'Custom chat', scope_kind: scope ? 'account' : '', scope_value: scope ? 'garden-account' : '' }];
-  const participant = { merge_id: 41, participant_id: 701, origin_side: 'absorbed' };
-  const listed = mergeAddresses({ participants: [participant], labels: labelsOf(identifiers.map(a => addressFixture(a.participant_id, a.type, a.value, { ...a, participant_display_name: name }))) }, 'absorbed', workspaceLabels(identifiers))[0];
+  { type: 'beeper', display: '@garden-member', name: 'Garden member', cardName: 'Garden member', scope: true, expected: 'WhatsApp · @garden-member · account 1' },
+  { type: 'beeper', display: '@other', name: 'Other member', cardName: 'Garden member', scope: true, expected: 'WhatsApp · Other member · @other · account 1' },
+  { type: 'beeper', display: '', name: 'Garden member', expected: 'WhatsApp · Garden member · account 1', fixture: migratedAddresses },
+].map(row => ({ key: 'beeper:8:whatsapp:9:@user:x.y', scope: false, ...row })))('preserves readable $type identity evidence with display "$display"', ({ type, key, display, name, scope, expected, ...row }) => {
+  const identifiers = ('fixture' in row && row.fixture) || [{ participant_id: 701, type, value: key, display_value: display, service_slug: type === 'beeper' ? 'whatsapp' : 'custom-chat', service_label: type === 'beeper' ? 'WhatsApp' : 'Custom chat', scope_kind: scope ? 'account' : '', scope_value: scope ? 'garden-account' : '' }];
+  const participant = absorbed(identifiers[0].participant_id);
+  const listed = mergeAddresses({ participants: [participant], labels: labelsOf(identifiers.map(a => addressFixture(a.participant_id, a.type, a.value, { ...a, participant_display_name: name }))) }, 'absorbed', workspaceLabels(identifiers), 'cardName' in row ? String(row.cardName) : '')[0];
   expect(addressText({ title: listed.value, detail: listed.detail })).toBe(expected);
 });
 
-
-it('renders migrated opaque Beeper IDs by their readable name', () => {
-  expect(mergeSummaryRow({ merge, labels: labelsOf(migratedAddresses) }, workspaceLabels(migratedAddresses)).addresses.get(2)?.map(addressText)).toEqual(['WhatsApp · Garden member · account 1']);
-});
 
 it.each([
   { kind: 'workspace', values: ['T_TWO', 'T_ONE'], expected: ['workspace 1', 'workspace 2'] },

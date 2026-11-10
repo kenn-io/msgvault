@@ -459,9 +459,7 @@ func TestPersonMerge_LabelReadStates(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
 			f := newPersonMergeInspectionFixture(t, "identity-read-failure")
-			if tc.prepare != nil {
-				tc.prepare(t, &f)
-			}
+			tc.prepare(t, &f)
 			detail, err := f.store.GetPersonMergeContext(t.Context(), f.merge.Merge.ID)
 			require.NoError(err)
 			listed, err := f.store.ListPersonMergesContext(t.Context(), f.merge.Person.ID)
