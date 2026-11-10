@@ -98,12 +98,7 @@ export class PersonMergeHistoryController {
   }
   addScopes(identities: Omit<AddressIdentity, 'identity_key'>[]): void {
     const next = workspaceLabels(identities, this.scopes);
-    if (next.size === this.scopes.size) return;
-    this.scopes = next;
-    this.historyRows = new Map(this.history.map(item => [item.merge.id, mergeSummaryRow(item, next)]));
-    if (this.detail && this.labels?.for === this.detail) {
-      this.labels = { ...mergeSummaryRow(this.detail, next), for: this.detail, names: this.labels.names, incomplete: this.labels.incomplete };
-    }
+    if (next.size > this.scopes.size) this.scopes = next;
   }
   get hasPreviousHistoryPage(): boolean {
     return this.historyOffset > 0;
