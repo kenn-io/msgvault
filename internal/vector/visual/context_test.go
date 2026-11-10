@@ -79,7 +79,7 @@ func TestAssembleDocumentUsesMediaOnlyWhenContextNormalizesEmpty(t *testing.T) {
 	assert.Same(t, request.Media, doc.Parts[0].Media)
 }
 
-func TestAssembleDocumentTelegramContext(t *testing.T) {
+func TestAssembleDocumentChatContext(t *testing.T) {
 	for _, kind := range []string{"telegram", "instagram"} {
 		t.Run(kind, func(t *testing.T) {
 			request := revisionRequest()

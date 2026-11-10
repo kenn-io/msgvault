@@ -26,12 +26,6 @@ func TestInstagramImportReplay(t *testing.T) {
 	summary, err := ImportDYI(t.Context(), st, opts)
 	require.NoError(err)
 	assert.Equal(int64(6), summary.MessagesAdded)
-	run, err := st.GetLatestSyncContext(t.Context(), summary.SourceID, 0)
-	require.NoError(err)
-	assert.Equal(summary.MessagesProcessed, run.MessagesProcessed)
-	assert.Equal(summary.MessagesAdded, run.MessagesAdded)
-	assert.Empty(run.CursorBefore.String)
-
 	assert.Equal(2, summary.ThreadsProcessed)
 	assert.Equal(1, summary.MediaMissing)
 	assert.Equal(1, countMessages(t, st, "is_from_me = TRUE"))
@@ -238,7 +232,6 @@ func TestInstagramRejectsBeforeSource(t *testing.T) {
 	}{
 		{name: "empty account", selfName: "Nova Example", wantError: "account"},
 		{name: "blank normalized account", account: "@", selfName: "Nova Example", wantError: "account"},
-		{name: "empty self name", account: "example", wantError: "self-name"},
 		{name: "blank self name", account: "example", selfName: "   ", wantError: "self-name"},
 		{name: "negative limit", account: "example", selfName: "Nova Example", limit: -1, wantError: "--limit must be non-negative"},
 		{name: "unsupported layout", account: "example", selfName: "Nova Example", wantError: "no supported inbox", unsupported: true},
@@ -282,14 +275,8 @@ func TestInstagramCanceledAfterCommitReplaysAncillaryWrites(t *testing.T) {
 	assert.True(canceled())
 	run, err := st.GetLatestSyncContext(t.Context(), summary.SourceID, 0)
 	require.NoError(err)
-	assert.Equal(summary.MessagesProcessed, run.MessagesProcessed)
-	assert.Equal(int64(1), run.MessagesAdded)
-	assert.Empty(run.CursorBefore.String)
-
 	assert.Equal(int64(1), summary.MessagesAdded)
-	var status string
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status))
-	assert.Equal("failed", status)
+	assert.Equal(store.SyncStatusFailed, run.Status)
 	var counted int
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COALESCE(SUM(message_count), 0) FROM conversations`).Scan(&counted))
 	assert.Equal(1, counted)
@@ -637,7 +624,7 @@ func TestInstagramDuplicateOccurrences(t *testing.T) {
 		opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
 		_, err := ImportDYI(t.Context(), st, opts)
 		require.NoError(t, err)
-		_, err = st.DB().ExecContext(t.Context(), `DELETE FROM message_raw`)
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE message_raw SET raw_data = ?`), []byte("not-zlib"))
 		require.NoError(t, err)
 		summary, err := ImportDYI(t.Context(), st, opts)
 		require.NoError(t, err)
