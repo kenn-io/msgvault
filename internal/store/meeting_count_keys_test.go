@@ -38,6 +38,20 @@ func TestMeetingCountKeysSingleSplitAfterCalendarCancellationOrDeletion(t *testi
 	}
 }
 
+func TestMeetingCountKeysSparseAllDayCancellation(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	data, master := calendarFixture(t, st, "master", `{"id":"series","iCalUID":"weekly@example.org","start":{"date":"2027-03-07"},"end":{"date":"2027-03-08"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`)
+	require.NoError(t, st.UpdateSourceSyncConfig(data.Message.SourceID, `{"calendar_id":"calendar@example.com","time_zone":"Asia/Tokyo"}`))
+	_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
+	require.NoError(t, st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: master, Key: "20270314"}))
+	calendarFixture(t, st, "cancelled", `{"id":"series_20270314","recurringEventId":"series","status":"cancelled","originalStartTime":{"date":"2027-03-14"}}`)
+	require.NoError(t, st.UpdateSourceSyncConfig(data.Message.SourceID, `{"calendar_id":"calendar@example.com","time_zone":"Asia/Tokyo"}`))
+	keys, err := st.MeetingCountKeysContext(t.Context())
+	require.NoError(t, err)
+	require.Len(t, keys[note], 1)
+	assert.Equal(t, "2027-03-14", keys[note][0].Date)
+}
+
 func TestMeetingCountKeysOneTranscriptTwoOccurrences(t *testing.T) {
 	type note struct{ format, raw string }
 	type step struct {

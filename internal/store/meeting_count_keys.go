@@ -100,7 +100,7 @@ func (s *Store) meetingCountOccurrences(ctx context.Context, r reboundReader, me
 		value := MeetingCountOccurrence{Key: o.Identity.countKey(), Start: o.Start}
 		if o.Row.Event.AllDay {
 			value.Date = o.Row.Event.StartDate
-			if o.Identity.OccurrenceKey != "" && o.Row.Event.Kind != meetingExceptionKind {
+			if o.Identity.OccurrenceKey != "" && (o.Row.Event.Kind != meetingExceptionKind || value.Date == "") {
 				if _, identity, ok := calrecur.ParseInstanceID("event_" + o.Identity.OccurrenceKey); ok && identity.AllDay {
 					value.Date = identity.Date
 				}
