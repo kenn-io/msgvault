@@ -198,26 +198,41 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 	return sum, phaseErr
 }
 
-// dropDeletedFrames removes saved reply traversal under comments deleted
-// through msgvault since the checkpoint was saved. Meta has no replies left
-// to read there, so asking would fail on every run. The run holds the source
-// lock, so no comment is deleted while it traverses.
+// dropDeletedFrames removes saved traversal of comments deleted through
+// msgvault since the checkpoint was saved: frames reading their replies and
+// saved copies still waiting to be archived. Meta has no replies left to read
+// there, so asking would fail on every run. The run holds the source lock, so
+// no comment is deleted while it traverses.
 func (r *importRun) dropDeletedFrames(ctx context.Context) error {
+	deleted := func(id string) (bool, error) {
+		return r.imp.store.MessageDeletedFromSourceContext(ctx, r.source.ID, id)
+	}
 	for _, p := range r.state.Phases {
-		for i, f := range p.Stack {
-			if f.Parent == f.Root {
-				continue
+		for i := range p.Stack {
+			f := &p.Stack[i]
+			if f.Parent != f.Root {
+				gone, err := deleted(f.Parent)
+				if err != nil {
+					return err
+				}
+				if gone {
+					// Each frame's comment was already taken from the frame
+					// below, so cutting here loses only its own subtree.
+					p.Stack = p.Stack[:i]
+					break
+				}
 			}
-			deleted, err := r.imp.store.MessageDeletedFromSourceContext(ctx, r.source.ID, f.Parent)
-			if err != nil {
-				return err
+			pending := f.Pending[:0]
+			for _, child := range f.Pending {
+				gone, err := deleted(child.ID)
+				if err != nil {
+					return err
+				}
+				if !gone {
+					pending = append(pending, child)
+				}
 			}
-			if deleted {
-				// Each frame's comment was already taken from the frame below,
-				// so cutting here loses only the deleted comment's subtree.
-				p.Stack = p.Stack[:i]
-				break
-			}
+			f.Pending = pending
 		}
 	}
 	return nil

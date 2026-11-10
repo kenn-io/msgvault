@@ -199,3 +199,28 @@ func TestImportResumesPastRepliesOfDeletedComment(t *testing.T) {
 	assert.False(sum.Partial)
 	assert.NotContains(f.paths[before:], "/v26.0/100_202/comments")
 }
+
+func TestImportResumesPastDeletedPendingComment(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, f, imp, src := setupImport(t)
+	f.comments["100_200"] = []Object{*comment("100_201", "100_200", "First comment"), *comment("100_203", "100_200", "Second comment")}
+	_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err)
+	// A full rescan pauses on the reply page of 100_201, with 100_203 saved
+	// for later on the same comment page.
+	sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{Full: true, MaxRequests: 3})
+	require.NoError(err)
+	require.True(sum.Partial)
+	target, err := ResolveCommentTarget(t.Context(), st, message(t, st, src.ID, "100_203").ID)
+	require.NoError(err)
+	client, _ := writeFixture(t, http.StatusOK, `{"success":true}`)
+	require.NoError(ModerateComment(t.Context(), st, client, target, ActionDelete))
+
+	f.denied["100_203/comments"] = true
+	before := len(f.paths)
+	sum, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err, "a saved copy of a deleted comment is not traversed")
+	assert.False(sum.Partial)
+	assert.Contains(f.paths[before:], "/v26.0/100_201/comments", "sibling work continues")
+	assert.NotContains(f.paths[before:], "/v26.0/100_203/comments")
+}
