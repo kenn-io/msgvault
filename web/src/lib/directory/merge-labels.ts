@@ -110,11 +110,11 @@ function participantAddress(address: ParticipantAddress, workspaces: Map<string,
 
 /** Exact scope keys stay in identities; numbers name them within the complete merge input. */
 export function workspaceLabels(addresses: Omit<AddressIdentity, 'identity_key'>[], known = new Map<string, string>()): Map<string, string> {
-  const labels = new Map(known);
+  const labels = new Map<string, string>();
   const scopes = addresses.filter(address => address.scope_value).map(address => JSON.stringify([address.scope_kind || 'scope', address.scope_value]));
-  for (const scope of [...new Set(scopes)].sort()) {
+  for (const scope of [...new Set([...known.keys(), ...scopes])].sort()) {
     const [kind] = JSON.parse(scope) as [string, string];
-    if (!labels.has(scope)) labels.set(scope, `${kind} ${[...labels.keys()].filter(key => (JSON.parse(key) as string[])[0] === kind).length + 1}`);
+    labels.set(scope, `${kind} ${[...labels.keys()].filter(key => (JSON.parse(key) as string[])[0] === kind).length + 1}`);
   }
   return labels;
 }
