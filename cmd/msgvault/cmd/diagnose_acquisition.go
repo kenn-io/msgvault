@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
+	msgsync "go.kenn.io/msgvault/internal/sync"
 )
 
 type acquisitionFailure struct {
@@ -68,7 +69,7 @@ func newDiagnoseAcquisitionCmd() *cobra.Command {
 			}
 			active := make([]acquisitionFailure, 0, len(items))
 			for _, item := range items {
-				if item.IsAcquisitionReplayCandidate() {
+				if msgsync.IsAcquisitionReplayCandidate(item) {
 					active = append(active, acquisitionFailure{item.SourceMessageID, item.Phase, item.ErrorKind})
 				}
 			}
