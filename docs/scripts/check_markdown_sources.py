@@ -68,6 +68,7 @@ PUBLIC_MARKDOWN = {
     "usage/recommended-configuration.md",
     "usage/remote-images.md",
     "usage/searching.md",
+    "usage/saved-views.md",
     "usage/slack.md",
     "usage/teams.md",
     "usage/text-messages.md",

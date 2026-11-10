@@ -1,3 +1,9 @@
+---
+last_edited: "2026-11-10"
+title: Saved Views
+description: Keep shared Saved Views accurate with pinned and hidden entries.
+---
+
 # Keep a Saved View accurate
 
 Saved Views let the Web UI, CLI, and agents use the same query and filters.
