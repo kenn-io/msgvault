@@ -219,11 +219,11 @@ describe('RelationshipsTab', () => {
   it.each([
     ['incoming', {}, 'Synthetic Subject · Is mentored by · Synthetic Peer'],
     ['outgoing', {}, 'Synthetic Subject · Mentors · Synthetic Peer'],
-    ['outgoing', { type_slug: 'friend', forward_label: 'friend', reverse_label: 'friend', is_symmetric: true }, 'Synthetic Subject is a friend of Synthetic Peer'],
+    ['outgoing', { relationship_type_id: 32, type_slug: 'friend', forward_label: 'friend', reverse_label: 'friend', is_symmetric: true }, 'Synthetic Subject is a friend of Synthetic Peer'],
   ] as const)('names the existing %s connection %o as %s', async (direction, type, line) => {
     const existing = relationship(41, 1, { ...type, source_person_id: direction === 'incoming' ? 141 : 7, target_person_id: direction === 'incoming' ? 7 : 141, start_date: { year: 2022 }, notes: 'Met at the seed exchange.' });
     const { client, controller } = controllerWith(async () => Response.json(existing, { headers: { ETag: '"person-relationship-41-r1"' } }));
-    controller.relationshipTypes = [relationshipType()];
+    controller.relationshipTypes = [relationshipType(), relationshipType({ id: 32, slug: 'friend', forward_label: 'friend', reverse_label: 'friend', is_symmetric: true })];
     controller.relationships = [view(41, direction, direction === 'incoming' ? 'is mentored by' : 'mentors', 'Synthetic Peer', { relationship: existing })];
     render(RelationshipsTab, { client, controller, personID: 7, personName: 'Synthetic Subject' });
     await rowAction('Edit…');
