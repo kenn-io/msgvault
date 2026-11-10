@@ -42,7 +42,7 @@ func TestCalendarAndMeetingReadsKeepSQLTrace(t *testing.T) {
 			_, err := st.MeetingRecordContext(ctx, MeetingLinkRef{Kind: "msg", MessageID: note})
 			return err
 		}},
-		{"decision", "FROM meeting_link_decisions", func(t *testing.T) error {
+		{"decision lookup during link", "FROM meeting_link_decisions", func(t *testing.T) error {
 			t.Helper()
 			return st.LinkMeetingContext(ctx, note, OccurrenceRef{MessageID: event})
 		}},
