@@ -140,6 +140,11 @@ func (s *Store) ExecuteGCContext(
 			return fmt.Errorf("list conversations affected by archive GC: %w", err)
 		}
 
+		if err := s.retireSavedViewItems(ctx, tx.Tx, `SELECT source_id, id, 0 FROM messages
+			WHERE deleted_from_source_at IS NOT NULL AND NOT (`+managedDraftRetainedMessageSQL+`)`); err != nil {
+			return fmt.Errorf("retire source-deleted saved view items: %w", err)
+		}
+
 		if s.fts5Available {
 			if _, err := q.Exec(`
 				DELETE FROM messages_fts

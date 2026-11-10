@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -331,8 +332,12 @@ func TestSavedViewItemsIgnoreStaleTargets(t *testing.T) {
 			rendered, stale, err := f.Store.SavedViewItemsForView(t.Context(), got)
 			require.NoError(t, err)
 			assert.Empty(t, rendered.Include)
-			assert.Equal(t, 1, stale)
-			_, err = f.Store.ChangeSavedViewItems(t.Context(), view.ID, 2, store.SavedViewItemChange{})
+			wantStale := 1
+			if kind == "purged conversation" {
+				wantStale = 0 // Physical purge retired the reference atomically.
+			}
+			assert.Equal(t, wantStale, stale)
+			_, err = f.Store.ChangeSavedViewItems(t.Context(), view.ID, got.Revision, store.SavedViewItemChange{})
 			require.NoError(t, err)
 			got, err = f.Store.GetSavedView(t.Context(), view.ID)
 			require.NoError(t, err)
@@ -382,6 +387,12 @@ func TestMergeSourcesSavedViewItemsDoNotResurrectReusedConversation(t *testing.T
 	_, err = f.Store.ChangeSavedViewItems(t.Context(), view.ID, 1, store.SavedViewItemChange{IncludeAdd: []store.SavedViewItemRef{{ConversationID: old, SourceID: from.ID}}})
 	require.NoError(t, err)
 	require.NoError(t, f.Store.PurgeChannelContext(t.Context(), from.ID, "channel"))
+	// Simulate a stale ref persisted by an older version that did not retire
+	// purge targets. Remap must still verify provenance independently.
+	raw, err := json.Marshal(store.SavedViewItems{Version: 1, Include: []store.SavedViewItemEntry{{SavedViewItemRef: store.SavedViewItemRef{ConversationID: old, SourceID: from.ID}, AddedBy: "owner"}}})
+	require.NoError(t, err)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE saved_views SET items_json=? WHERE id=?`), string(raw), view.ID)
+	require.NoError(t, err)
 	into, err := f.Store.GetOrCreateSource("discord", "replacement-guild")
 	require.NoError(t, err)
 	override := ""
@@ -481,5 +492,84 @@ func TestSavedViewItemsReclassifiedTargetsBecomeStale(t *testing.T) {
 			require.NoError(t, err)
 			assert.Empty(t, view.ItemsJSON, "a valid patch prunes stale kind membership")
 		})
+	}
+}
+
+func TestSavedViewItemsRetireBeforeAutomaticSQLiteIDReuse(t *testing.T) {
+	testutil.SkipIfPostgres(t, "automatic INTEGER PRIMARY KEY reuse and archive GC are SQLite behavior")
+	for _, path := range []string{"gc", "purge"} {
+		for _, mode := range []string{"include", "exclude"} {
+			t.Run(path+"/"+mode, func(t *testing.T) {
+				f := storetest.New(t)
+				st := f.Store
+				source := f.Source
+				if path == "purge" {
+					var err error
+					source, err = st.GetOrCreateSource("discord", "reuse-guild")
+					require.NoError(t, err)
+				}
+				keptConv, err := st.EnsureConversation(source.ID, "kept", "Kept")
+				require.NoError(t, err)
+				kept, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: keptConv, SourceMessageID: "kept", MessageType: "email"})
+				require.NoError(t, err)
+				conv := keptConv
+				kind := "email"
+				if path == "purge" {
+					conv, err = st.EnsureConversationWithType(source.ID, "removed-channel", "group_chat", "Removed")
+					require.NoError(t, err)
+					kind = "discord"
+				}
+				target, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "removed", MessageType: kind})
+				require.NoError(t, err)
+				ref := store.SavedViewItemRef{SourceID: source.ID, MessageID: target}
+				if path == "purge" {
+					ref = store.SavedViewItemRef{SourceID: source.ID, ConversationID: conv}
+				}
+				keptRef := store.SavedViewItemRef{SourceID: source.ID, MessageID: kept}
+				refs := []store.SavedViewItemRef{ref, keptRef}
+				change := store.SavedViewItemChange{IncludeAdd: refs, AddedBy: "owner"}
+				if mode == "exclude" {
+					change = store.SavedViewItemChange{ExcludeAdd: refs, AddedBy: "owner"}
+				}
+				view, err := st.CreateSavedView(t.Context(), savedViewInput("Retirement"))
+				require.NoError(t, err)
+				_, err = st.ChangeSavedViewItems(t.Context(), view.ID, view.Revision, change)
+				require.NoError(t, err)
+				if path == "gc" {
+					require.NoError(t, st.MarkMessageDeletedBySourceMessageID(source.ID, true, "removed"))
+					plan, err := st.PlanGCContext(t.Context())
+					require.NoError(t, err)
+					require.Equal(t, int64(1), plan.SourceDeleted)
+					deleted, err := st.ExecuteGCContext(t.Context(), plan)
+					require.NoError(t, err)
+					assert.Equal(t, int64(1), deleted)
+				} else {
+					require.NoError(t, st.PurgeChannelContext(t.Context(), source.ID, "removed-channel"))
+					replacement, err := st.EnsureConversationWithType(source.ID, "replacement-channel", "group_chat", "Replacement")
+					require.NoError(t, err)
+					require.Equal(t, conv, replacement, "SQLite automatically reuses the highest deleted conversation ID")
+					conv = replacement
+				}
+				replacement, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "replacement", MessageType: kind})
+				require.NoError(t, err)
+				require.Equal(t, target, replacement, "SQLite automatically reuses the highest deleted message ID")
+				got, err := st.GetSavedView(t.Context(), view.ID)
+				require.NoError(t, err)
+				assert.Equal(t, int64(3), got.Revision)
+				items, stale, err := st.SavedViewItemsForView(t.Context(), got)
+				require.NoError(t, err)
+				assert.Zero(t, stale)
+				entries := items.Include
+				if mode == "exclude" {
+					entries = items.Exclude
+					assert.Empty(t, items.Include)
+				} else {
+					assert.Empty(t, items.Exclude)
+				}
+				require.Len(t, entries, 1)
+				assert.Equal(t, kept, entries[0].MessageID)
+				assert.Equal(t, source.ID, entries[0].SourceID)
+			})
+		}
 	}
 }

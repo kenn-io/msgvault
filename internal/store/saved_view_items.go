@@ -511,6 +511,44 @@ func (s *Store) pruneSavedViewItemsForSource(ctx context.Context, q itemSQL, sou
 	})
 }
 
+// retireSavedViewItems removes the exact provenance-qualified targets about to be
+// physically deleted. targetQuery returns source_id, message_id, conversation_id
+// (one target ID must be zero) from the same transaction's deletion population.
+func (s *Store) retireSavedViewItems(ctx context.Context, q itemSQL, targetQuery string, args ...any) error {
+	rows, err := q.QueryContext(ctx, s.dialect.Rebind(targetQuery), args...)
+	if err != nil {
+		return fmt.Errorf("select deleted saved view targets: %w", err)
+	}
+	targets := map[SavedViewItemRef]bool{}
+	for rows.Next() {
+		var ref SavedViewItemRef
+		if err := rows.Scan(&ref.SourceID, &ref.MessageID, &ref.ConversationID); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		targets[ref] = true
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil || len(targets) == 0 {
+		return err
+	}
+	return s.rewriteSavedViewItems(ctx, q, func(items SavedViewItems) SavedViewItems {
+		filter := func(entries []SavedViewItemEntry) []SavedViewItemEntry {
+			out := make([]SavedViewItemEntry, 0, len(entries))
+			for _, entry := range entries {
+				if !targets[entry.SavedViewItemRef] {
+					out = append(out, entry)
+				}
+			}
+			return out
+		}
+		items.Include = filter(items.Include)
+		items.Exclude = filter(items.Exclude)
+		return items
+	})
+}
+
 func savedViewItemCounts(before, after SavedViewItems) SavedViewItemsApplied {
 	counts := SavedViewItemsApplied{}
 	for mode, pair := range [][2][]SavedViewItemEntry{{before.Include, after.Include}, {before.Exclude, after.Exclude}} {

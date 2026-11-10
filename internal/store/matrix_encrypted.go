@@ -369,6 +369,9 @@ func (s *Store) DeleteMatrixPlaceholder(ctx context.Context, sourceID, messageID
 		if !owned {
 			return nil
 		}
+		if err := s.retireSavedViewItems(ctx, tx.Tx, `SELECT source_id, id, 0 FROM messages WHERE id = ? AND source_id = ?`, messageID, sourceID); err != nil {
+			return fmt.Errorf("retire deleted Matrix placeholder saved view items: %w", err)
+		}
 		if s.fts5Available {
 			if err := s.dialect.InvalidateFTSForMessage(q, messageID); err != nil {
 				return err

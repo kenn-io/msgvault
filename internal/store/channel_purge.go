@@ -115,6 +115,13 @@ func (s *Store) purgeChannelExec(ctx context.Context, q purgeQuerier, purge chan
 	if err != nil {
 		return err
 	}
+	if err := s.retireSavedViewItems(ctx, q,
+		"SELECT source_id, id, 0 FROM messages WHERE conversation_id IN ("+purge.targets()+") UNION ALL "+
+			"SELECT source_id, 0, id FROM conversations WHERE id IN ("+purge.targets()+")",
+		append(slices.Clone(purge.args), purge.args...)...); err != nil {
+		return fmt.Errorf("retire purged channel saved view items: %w", err)
+	}
+
 	if !s.IsPostgreSQL() && s.fts5Available {
 		// FTS rows use the message ID as their rowid; message_id itself is
 		// unindexed, so filtering on it would scan the whole index.
