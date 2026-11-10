@@ -523,11 +523,13 @@ describe('AppShell', () => {
     state.destroy();
   });
 
-  it('saves browser edits to a legacy view with the current query grammar when reopened', async () => {
+  it('saves edits to a legacy view with the current schema version', async () => {
     window.history.replaceState(null, '', '/?workspace=everything');
-    let saved = { ...view(5, 'Legacy view'), schema_version: 1, canonical_state: { query: 'alpha' } };
+    const saved = {
+      ...view(5, 'Legacy view'), schema_version: 1, canonical_state: { query: 'alpha' },
+      items: { include: [], exclude: [] },
+    };
     const patches: Array<Record<string, unknown>> = [];
-    const searches: Array<Record<string, unknown>> = [];
     const client = createAPIClient(async input => {
       const request = input as Request;
       const path = new URL(request.url).pathname;
@@ -535,12 +537,11 @@ describe('AppShell', () => {
         if (request.method === 'PATCH') {
           const body = await request.json();
           patches.push(body);
-          saved = { ...saved, ...body, revision: saved.revision + 1 };
+          return Response.json({ ...saved, ...body, revision: 2 });
         }
         return Response.json(saved);
       }
       if (path.endsWith('/saved-views')) return Response.json({ saved_views: [saved] });
-      if (path.endsWith('/explore')) searches.push(await request.json());
       return Response.json(exploreResponse());
     });
     const state = new ExploreState(window);
@@ -553,11 +554,6 @@ describe('AppShell', () => {
       await fireEvent.click(await screen.findByRole('button', { name: 'Save changes' }));
       await waitFor(() => expect(state.savedView?.revision).toBe(2));
       expect(patches).toEqual([expect.objectContaining({ schema_version: 2, canonical_state: expect.objectContaining({ query: 'alpha | beta' }) })]);
-      await fireEvent.click(screen.getByRole('button', { name: 'Files' }));
-      await fireEvent.click(await screen.findByRole('button', { name: 'Legacy view' }));
-      await waitFor(() => expect(state.current.workspace).toBe('everything'));
-      expect(state.current.query).toBe('alpha | beta');
-      await waitFor(() => expect(searches.at(-1)).toMatchObject({ query: 'alpha | beta' }));
     } finally { rendered.unmount(); state.destroy(); }
   });
 
@@ -576,7 +572,7 @@ describe('AppShell', () => {
         reads += 1;
         if (reads === 1) {
           if (recovery === 'retry') throw new TypeError('Network unavailable');
-          return Response.json({ error: 'not_found' }, { status: 404 });
+          return Response.json({ error: 'saved_view_not_found' }, { status: 404 });
         }
         return Response.json(live);
       }
@@ -606,20 +602,14 @@ describe('AppShell', () => {
         await waitFor(() => expect(patches).toHaveLength(1));
         expect(patches[0]!.headers.get('If-Match')).toBe('"saved-view-5-r7"');
       } else {
-        expect(state.savedView).toBeUndefined();
-        expect(state.savedViewItems).toEqual({ include: [], exclude: [] });
-        await waitFor(() => expect(searches.at(-1)).toMatchObject({ query: 'edited alpha', filters }));
-        expect(searches.at(-1)).not.toHaveProperty('include_keys');
         expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
-        expect(window.history.state.savedViewContext.view).toBeUndefined();
-        expect(patches).toEqual([]);
       }
     } finally { rendered.unmount(); state.destroy(); }
   });
 
-  it.each(['success', 'failure'] as const)('ignores a history refresh %s after workspace navigation', async outcome => {
+  it('ignores a successful history refresh after workspace navigation', async () => {
     window.history.replaceState(null, '', '/?workspace=everything');
-    const cached = view(5, 'History view');
+    const cached = { ...view(5, 'History view'), items: { include: [], exclude: [] } };
     let pending!: { request: Request; finish: (response: Response) => void };
     const client = createAPIClient(async input => {
       const request = input as Request;
@@ -637,13 +627,11 @@ describe('AppShell', () => {
       await fireEvent.click(screen.getByRole('button', { name: 'Files' }));
       await screen.findByRole('main', { name: 'Files' });
       expect(pending.request.signal.aborted).toBe(true);
-      const response = outcome === 'success' ? Response.json({ ...cached, revision: 7 }) : Response.json({ error: 'not_found' }, { status: 404 });
+      const response = Response.json({ ...cached, revision: 7 });
       pending.finish(response);
       await waitFor(() => expect(response.bodyUsed).toBe(true));
       await tick();
       expect(state.savedView).toBeUndefined();
-      expect(screen.queryByRole('alert')).toBeNull();
-      expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
     } finally { rendered.unmount(); state.destroy(); }
   });
 

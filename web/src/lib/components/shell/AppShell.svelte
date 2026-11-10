@@ -698,7 +698,7 @@
   });
 
   async function saveOpenedView(): Promise<void> {
-    if (!openedSavedView || exploreState.savedViewNeedsRefresh) return;
+    if (!openedSavedView) return;
     const view = openedSavedView;
     try {
       const { data } = await patchSavedView(

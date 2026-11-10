@@ -49,6 +49,12 @@ describe('Explore URL state', () => {
       await waitFor(() => expect(state.savedView?.id).toBe(1));
       expect(state.current.query).toBe('refined alpha');
       expect(state.savedViewItems.include.map(item => item.entry_key)).toEqual(['source:2:message:a']);
+      state.updateSavedView(undefined);
+      expect(state.savedView).toBeUndefined();
+      expect(state.savedViewNeedsRefresh).toBe(false);
+      expect(state.predicate()).not.toHaveProperty('include_keys');
+      expect(state.current.query).toBe('refined alpha');
+      expect(window.history.state.savedViewContext.view).toBeUndefined();
     } finally { state.destroy(); }
   });
 

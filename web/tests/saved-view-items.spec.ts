@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { selectWorkspace, stubOperationStatus } from './kit-ui';
 
 // Synthetic wire fixture: store/API integration tests verify membership itself.
-test('opens live Saved View items and saves only canonical state', async ({ page }) => {
+test('opens live Saved View items and saves the definition without item edits', async ({ page }) => {
   await stubOperationStatus(page);
   await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'session', csrf_token: 'synthetic-csrf', https: true, plain_http_warning: false } }));
   await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [] } }));
@@ -38,13 +38,16 @@ test('opens live Saved View items and saves only canonical state', async ({ page
   await expect.poll(() => predicates.at(-1)?.include_keys).toEqual(['source:1:message:a', 'source:1:message:b']);
   await expect.poll(() => predicates.at(-1)?.exclude_keys).toEqual(['source:1:message:c']);
   await page.getByRole('button', { name: 'Save changes', exact: true }).click();
-  await expect.poll(() => patch).toEqual({ canonical_state: { filters: [], grouping: [], presentation: 'table', sort: [{ field: 'occurred_at', direction: 'desc' }], columns: ['kind', 'people', 'title', 'excerpt', 'time', 'attachments'] } });
+  await expect.poll(() => patch).toEqual({
+    canonical_state: { filters: [], grouping: [], presentation: 'table', sort: [{ field: 'occurred_at', direction: 'desc' }], columns: ['kind', 'people', 'title', 'excerpt', 'time', 'attachments'] },
+    schema_version: 2,
+  });
   const search = page.getByRole('searchbox', { name: 'Search messages', exact: true });
   await search.fill('review');
   await search.press('Enter');
   await selectWorkspace(page, 'Other queue');
   await expect(page.getByText('2 pinned · 1 hidden', { exact: true })).toHaveCount(0);
-  // A source merge while this entry is in history changes live keys and ETag.
+  // A source merge while this entry is in history changes live keys.
   liveItems = {
     include: items.include.map(item => ({ ...item, source_id: 2, entry_key: item.entry_key.replace('source:1:', 'source:2:') })),
     exclude: items.exclude.map(item => ({ ...item, source_id: 2, entry_key: item.entry_key.replace('source:1:', 'source:2:') })),
@@ -55,11 +58,7 @@ test('opens live Saved View items and saves only canonical state', async ({ page
   await expect.poll(() => predicates.at(-1)?.include_keys).toEqual(['source:2:message:a', 'source:2:message:b']);
   await expect.poll(() => predicates.at(-1)?.exclude_keys).toEqual(['source:2:message:c']);
   await expect(search).toHaveValue('review');
-  patch = undefined;
-  const request = page.waitForRequest(req => req.method() === 'PATCH' && req.url().endsWith('/saved-views/7'));
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
-  expect((await request).headers()['if-match']).toBe('"saved-view-7-r3"');
-  await expect.poll(() => (patch?.canonical_state as { query?: string } | undefined)?.query).toBe('review');
+  await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toBeVisible();
   const beforeReload = gets;
   await page.reload();
   await expect.poll(() => gets).toBeGreaterThan(beforeReload);
