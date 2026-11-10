@@ -2154,9 +2154,11 @@ raw iCalendar data, and only marks it cancelled.
 
 ### Invitations in email
 
-On unreleased `main`, archiving email extracts decoded `text/calendar` MIME
+On unreleased `main`, archiving email extracts decoded `text/calendar` and `application/ics` MIME
 parts into event messages in the same source. Attached forwarded emails and iTIP messages with the ADD,
 REPLY, REFRESH, COUNTER, or DECLINECOUNTER method are ignored.
+
+The first organizer seen for an iCalendar UID owns it; later invites with that UID from another organizer, including for single occurrences, are ignored with a warning.
 
 An invitation, its updates, and its cancellation share one event. Every
 contributing email keeps its full MIME and attachments, and the event survives

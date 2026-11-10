@@ -15,10 +15,11 @@ const rawFormatMIME = "mime"
 
 // Match the MIME type without allocating a lowercase copy of the email.
 func hasCalendarToken(raw []byte) bool {
-	const token = "text/calendar"
-	for i := 0; i+len(token) <= len(raw); i++ {
-		if (raw[i] == 't' || raw[i] == 'T') && bytes.EqualFold(raw[i:i+len(token)], []byte(token)) {
-			return true
+	for _, token := range []string{"text/calendar", "application/ics"} {
+		for i := 0; i+len(token) <= len(raw); i++ {
+			if (raw[i] == token[0] || raw[i] == token[0]-'a'+'A') && bytes.EqualFold(raw[i:i+len(token)], []byte(token)) {
+				return true
+			}
 		}
 	}
 	return false
