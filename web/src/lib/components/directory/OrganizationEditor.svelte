@@ -163,7 +163,7 @@
 
   // What a person auditing a saved value may need; the row itself shows the value and its provenance.
   const detailLabels: [string, string][] = [
-    ['name_kind', 'Kind'], ['address_kind', 'Kind'], ['identifier_kind', 'Kind'], ['media_kind', 'Kind'], ['content_hash', 'Content hash'],
+    ['name_kind', 'Kind'], ['address_kind', 'Kind'], ['identifier_kind', 'Kind'], ['media_kind', 'Kind'],
     ['service_slug', 'Service'], ['scope_kind', 'Scope'], ['scope_value', 'Scope value'], ['uri', 'Link'],
     ['post_office_box', 'PO box'], ['extended_address', 'Extended address'], ['street_address', 'Street'],
     ['locality', 'City'], ['region', 'Region'], ['postal_code', 'Postal code'], ['country_name', 'Country'],

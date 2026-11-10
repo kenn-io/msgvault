@@ -7,7 +7,6 @@
   import { onDestroy, onMount, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import { formatPartialDate as partialDate } from '../../directory/dates';
-  import { formatShortDate } from '../../util/format';
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import type {
     CreatePersonRelationshipRequest,
@@ -90,9 +89,7 @@
       (person): TypeaheadOption => ({
         name: String(person.id),
         label: person.display_name?.trim() || 'Unnamed person',
-        // Where they work, or for two people of one name, when each was last in touch.
-        meta: person.organizations.length > 0 ? person.organizations.join(', ') :
-          person.last_contact_at && people.some(other => other.id !== person.id && other.display_name === person.display_name) ? `Last contact ${formatShortDate(person.last_contact_at)}` : '',
+        meta: person.organizations.join(', '),
       }),
     ),
   );

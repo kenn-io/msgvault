@@ -75,18 +75,6 @@ describe('RelationshipsTab', () => {
     expect(screen.getByText('No type matches “missing”')).toBeDefined();
   });
 
-  it('distinguishes saved people who share a name without organizations', async () => {
-    const { client, controller } = controllerWith(async () => Response.json({ people: [
-      directoryPerson(8, { display_name: 'Synthetic Peer', last_contact_at: '2024-07-01T12:00:00' }), directoryPerson(9, { display_name: 'Synthetic Peer', last_contact_at: '2023-02-03T12:00:00' }),
-    ] }));
-    render(RelationshipsTab, { client, controller, personID: 7 });
-    await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
-    const search = await openTypeahead('Person');
-    expect(search.placeholder).toBe('Person');
-    expect(await screen.findByRole('option', { name: 'Synthetic Peer Last contact Jul 1, 2024' })).toBeDefined();
-    expect(screen.getByRole('option', { name: 'Synthetic Peer Last contact Feb 3, 2023' })).toBeDefined();
-  });
-
   it.each([
     ['uri', 'urn:uuid:11111111-2222-3333-4444-555555555555', 'Unknown contact', 'vcard_import', 'urn:uuid:11111111-2222-3333-4444-555555555555 · Friend · from a contact file · Jul 31'],
     ['text', 'Alex', 'Alex', 'carddav_import', 'Text · Friend · from CardDAV contacts · Jul 31'],

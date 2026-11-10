@@ -59,10 +59,10 @@ describe('OrganizationEditor', () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it.each(['retired organization', 'comma alias'] as const)('renames an organization with an untouched %s', async fixture => {
+  it('renames a retired organization with an untouched comma alias', async () => {
     const profile = organizationProfile(2);
     Object.assign(profile.organization, { retired_at: '2026-08-02T00:00:00Z' });
-    if (fixture === 'comma alias') profile.names[0].name = 'Example, Inc.';
+    profile.names[0].name = 'Example, Inc.';
     const onDone = vi.fn();
     const writes: Request[] = [];
     const { controller } = controllerWith(async input => {
@@ -72,8 +72,7 @@ describe('OrganizationEditor', () => {
       return Response.json({ ...organization(21, 3, 'Renamed'), retired_at: '2026-08-02T00:00:00Z' });
     });
     render(OrganizationEditor, { controller, organization: organization(), onDone });
-    if (fixture === 'comma alias') await screen.findByDisplayValue('Example, Inc.');
-    else await screen.findByRole('textbox', { name: 'Organization name' });
+    await screen.findByDisplayValue('Example, Inc.');
     await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Renamed' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
     await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
