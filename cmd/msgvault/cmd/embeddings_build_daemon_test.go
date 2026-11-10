@@ -273,6 +273,7 @@ func TestManagedEmbeddingsRejectsReplacedScopedSourceAfterYield(t *testing.T) {
 	cfg.Vector.Embeddings.Model = "test-model"
 	cfg.Vector.Embeddings.Dimension = 4
 	cfg.Vector.Embeddings.BatchSize = 1
+	cfg.Vector.Embeddings.APIKeyEnv = "TEST_EMBEDDING_KEY"
 	started, release := make(chan struct{}), make(chan struct{})
 	signals := make(chan (<-chan struct{}), 1)
 	transport := http.DefaultTransport
@@ -318,7 +319,7 @@ func TestManagedEmbeddingsRejectsReplacedScopedSourceAfterYield(t *testing.T) {
 	adapter := &storeAPIAdapter{config: cfg, store: st, operationGate: gate, embeddingsScheduler: sched}
 	result := make(chan error, 1)
 	go func() {
-		result <- adapter.RunCLICommand(t.Context(), api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes", "--account", "original@example.test"}}, nil)
+		result <- adapter.RunCLICommand(t.Context(), api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes", "--account", "original@example.test"}, Env: map[string]string{"TEST_EMBEDDING_KEY": "synthetic-key"}}, nil)
 	}()
 	select {
 	case <-started:
@@ -374,6 +375,7 @@ func TestManagedEmbeddingsStreamsWorkerWarnings(t *testing.T) {
 	cfg.Vector.DBPath = filepath.Join(dir, "vectors.db")
 	cfg.Vector.Embeddings.Model = "test-model"
 	cfg.Vector.Embeddings.Dimension = 4
+	cfg.Vector.Embeddings.APIKeyEnv = "TEST_EMBEDDING_KEY"
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "synthetic provider failure", http.StatusBadRequest)
 	}))
@@ -387,7 +389,7 @@ func TestManagedEmbeddingsStreamsWorkerWarnings(t *testing.T) {
 	require.NoError(t, err)
 	adapter := &storeAPIAdapter{config: cfg, store: st, operationGate: api.NewSerialOperationGate()}
 	var stderr strings.Builder
-	err = adapter.RunCLICommand(t.Context(), api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes"}}, func(event api.CLIRunEvent) error {
+	err = adapter.RunCLICommand(t.Context(), api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes"}, Env: map[string]string{"TEST_EMBEDDING_KEY": "synthetic-key"}}, func(event api.CLIRunEvent) error {
 		if event.Type == cliStreamStderr {
 			stderr.WriteString(event.Data)
 		}
