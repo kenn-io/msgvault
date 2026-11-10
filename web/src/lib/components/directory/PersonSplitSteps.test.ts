@@ -149,12 +149,28 @@ describe('PersonSplitSteps', () => {
     controller.destroy();
   });
 
+  const checkExact = () => {
+    const sentence = screen.getByText(/fully reversed/);
+    expect(sentence.compareDocumentPosition(screen.getByLabelText('Split result people')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(sentence.textContent).toMatch(/edits and deletions made since .* kept/);
+    expect(sentence.textContent).not.toMatch(/Synthetic Source|Synthetic Restored|put back/);
+    expect(screen.queryByText('Partly restored')).toBeNull();
+  };
   it.each([
-    { name: 'partial', exact: false, subset: false, addressName: false },
-    { name: 'exact', exact: true, subset: false, addressName: false },
-    { name: 'subset', exact: false, subset: true, addressName: false },
-    { name: 'address fallback', exact: true, subset: false, addressName: true },
-  ])('names both people and places the restore result beside them: $name', async ({ exact, subset, addressName }) => {
+    { name: 'partial', exact: false, subset: false, addressName: false, receipt: 'New person · alex@example.org, +12025550101, neri@example.org', check: () => {
+      expect(screen.getAllByRole('listitem').map(item => item.textContent)).toEqual(['Partly restored', "1 record couldn't be restored", 'Links to the merged-in profile now open the new person']);
+      expect(screen.getByText('Partly restored').closest('details')).toBeNull();
+      expect(screen.queryByText(/fully reversed/)).toBeNull();
+      expect(screen.getByLabelText('Split result people').compareDocumentPosition(screen.getByRole('list')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    } },
+    { name: 'exact', exact: true, subset: false, addressName: false, receipt: 'New person · alex@example.org, +12025550101, neri@example.org', check: checkExact },
+    { name: 'subset', exact: false, subset: true, addressName: false, receipt: 'New person · alex@example.org, +12025550101, neri@example.org', check: () => {
+      expect(screen.queryByText('Partly restored')).toBeNull();
+      expect(screen.queryByText(/fully reversed/)).toBeNull();
+      expect(screen.getByText('Links to the merged-in profile still open Synthetic Source')).toBeDefined();
+    } },
+    { name: 'address fallback', exact: true, subset: false, addressName: true, receipt: 'New person', check: checkExact },
+  ])('names both people and places the restore result beside them: $name', async ({ exact, subset, addressName, receipt, check }) => {
     const label = addressName ? 'alex@example.org' : 'alex@example.org, +12025550101, neri@example.org';
     const restoredName = addressName ? label : 'Synthetic Restored';
     const response = { ...result(exact), source_person: person(12, 5, subset ? [702, 999] : [999], 'Synthetic Source'),
@@ -191,32 +207,9 @@ describe('PersonSplitSteps', () => {
     expect(await screen.findByRole('button', { name: `Open ${restoredName}` })).toBeDefined();
     expect(screen.getByRole('button', { name: 'Open Synthetic Source' }).closest('.detail-row')?.textContent).toContain('later@example.org');
     expect(document.body.textContent?.toLowerCase()).not.toContain('undo');
-    if (exact) {
-      // An exact split keeps later edits on their records, wherever those now are, and leaves deleted records deleted,
-      // so the one explanation above the people names neither profile as their owner.
-      const sentence = screen.getByText(/fully reversed/);
-      expect(sentence.compareDocumentPosition(screen.getByLabelText('Split result people')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-      expect(sentence.textContent).toMatch(/edits and deletions made since .* kept/);
-      expect(sentence.textContent).not.toMatch(/Synthetic Source|Synthetic Restored|put back/);
-      expect(screen.queryByText('Partly restored')).toBeNull();
-    } else if (subset) {
-      expect(screen.queryByText('Partly restored')).toBeNull();
-      expect(screen.queryByText(/fully reversed/)).toBeNull();
-      expect(screen.getByText('Links to the merged-in profile still open Synthetic Source')).toBeDefined();
-    } else {
-      // The partial-restore lines are shown under the two people, not folded away.
-      const details = screen.getAllByRole('listitem').map(item => item.textContent);
-      expect(details).toEqual(['Partly restored', "1 record couldn't be restored", 'Links to the merged-in profile now open the new person']);
-      expect(screen.getByText('Partly restored').closest('details')).toBeNull();
-      expect(screen.queryByText(/fully reversed/)).toBeNull();
-      expect(screen.getByLabelText('Split result people').compareDocumentPosition(screen.getByRole('list')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    }
-    if (addressName) {
-      const row = screen.getByRole('button', { name: `Open ${restoredName}` }).closest('.detail-row') as HTMLElement;
-      expect(within(row).getByText('New person')).toBeDefined();
-    } else {
-      expect(screen.getByText(`New person · ${label}`)).toBeDefined();
-    }
+    check();
+    const row = screen.getByRole('button', { name: `Open ${restoredName}` }).closest('.detail-row') as HTMLElement;
+    expect(within(row).getByText(receipt)).toBeDefined();
     expect(document.body.textContent).not.toMatch(/concealed-key|uid_alias/i);
     await fireEvent.click(screen.getByRole('button', { name: 'Open Synthetic Source' }));
     await fireEvent.click(screen.getByRole('button', { name: `Open ${restoredName}` }));

@@ -85,9 +85,7 @@ func TestAddServiceAccountDefaultIdentityScheduledSync(t *testing.T) {
 		err := cmd.ExecuteContext(ctx)
 		output := stop()
 		require.NoError(err)
-		if flag == "--no-default-identity" {
-			assert.Contains(output, "msgvault sync-full -- user@example.com")
-		}
+		assert.Contains(output, "msgvault sync-full -- user@example.com")
 		st, err := store.Open(cfg.DatabaseDSN())
 		require.NoError(err)
 		t.Cleanup(func() { _ = st.Close() })
@@ -216,9 +214,7 @@ func TestAddIMAPDefaultIdentityScheduledSync(t *testing.T) {
 		err := cmd.ExecuteContext(ctx)
 		output := stop()
 		require.NoError(err)
-		if flag == "--no-default-identity" {
-			assert.Contains(output, "msgvault sync-full -- imap://"+testutil.IMAPTestUsername+"@"+net.JoinHostPort(host, port))
-		}
+		assert.Contains(output, "msgvault sync-full -- imap://"+testutil.IMAPTestUsername+"@"+net.JoinHostPort(host, port))
 		st, err := store.Open(cfg.DatabaseDSN())
 		require.NoError(err)
 		t.Cleanup(func() { _ = st.Close() })
@@ -283,13 +279,11 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 				err := cmd.ExecuteContext(ctx)
 				output := stop()
 				require.NoError(err)
-				if flag == "--no-default-identity" {
-					switch tc.name {
-					case "o365":
-						assert.Contains(output, "msgvault sync-full -- user@example.com")
-					case "graph":
-						assert.Contains(output, "msgvault sync -- user@example.com")
-					}
+				switch tc.name {
+				case "o365":
+					assert.Contains(output, "msgvault sync-full -- user@example.com")
+				case "graph":
+					assert.Contains(output, "msgvault sync -- user@example.com")
 				}
 				st, err := store.Open(cfg.DatabaseDSN())
 				require.NoError(err)

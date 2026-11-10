@@ -141,15 +141,11 @@ function deferred<T = Response>() {
 const posts = (requests: Request[]) => requests.filter(request => request.method === 'POST');
 
 describe('PersonMergeHistory', () => {
-  it.each(['name loading', 'submit pending', 'reconciling'])('shows split controls during %s', async phase => {
+  it.each(['name loading', 'submit pending'])('shows split controls during %s', async phase => {
     const pending = deferred();
-    const reconciliation = deferred<void>();
-    const result = { exact_reversal: true, cache_state: 'ready', identity_revision: 8,
-      source_person: person(12, 5, [], 'Synthetic Source'), new_person: person(19, 1, [701], 'Synthetic Restored'),
-      split: { ...detail().splits![0], id: 56, exact_reversal: true }, ambiguous_rows: [], unrestored_rows: [], uid_alias_disposition: 'restored' };
-    renderHistory(detail(), { onSplitCommitted: () => reconciliation.promise, respond: (path, request) => {
+    renderHistory(detail(), { respond: (path, request) => {
       if (phase === 'name loading' && path === '/api/v1/people/19') return pending.promise;
-      if (request.method === 'POST') return phase === 'submit pending' ? pending.promise : Response.json(result, { headers: { ETag: '"person-12-r5"', 'X-New-Person-ETag': '"person-19-r1"' } });
+      if (request.method === 'POST') return pending.promise;
       if (phase !== 'name loading' && path === '/api/v1/people/12') return Response.json(person(12, 4, [701], 'Synthetic Source'), { headers: { ETag: '"person-12-r4"' } });
       return undefined;
     } });
@@ -163,16 +159,10 @@ describe('PersonMergeHistory', () => {
         expect(screen.getByRole('button', { name: 'Split into new person' })).toHaveProperty('disabled', false);
       } else {
         await fireEvent.click(screen.getByRole('button', { name: 'Split into new person' }));
-        if (phase === 'submit pending') {
-          await waitFor(() => expect(screen.getByRole('button', { name: 'Split into new person' }).getAttribute('aria-busy')).toBe('true'));
-        } else {
-          await screen.findByRole('dialog', { name: 'Split complete' });
-          expect(screen.getByRole('button', { name: 'Done' })).toHaveProperty('disabled', false);
-        }
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Split into new person' }).getAttribute('aria-busy')).toBe('true'));
       }
     } finally {
       pending.resolve(phase === 'name loading' ? Response.json(person(19, 4, [703], 'Alex Restored')) : Response.json({}, { status: 503 }));
-      reconciliation.resolve();
     }
   });
 

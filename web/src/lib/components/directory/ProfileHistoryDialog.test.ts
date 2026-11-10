@@ -158,6 +158,8 @@ describe('ProfileHistoryDialog', () => {
   it.each(['available', 'failed'] as const)('waits for history and ends a split on its receipt: initially %s', async initial => {
     const initialFailure = initial === 'failed';
     let reconciled = false;
+    let releaseReconciliation!: () => void;
+    const pendingReconciliation = new Promise<void>(resolve => { releaseReconciliation = resolve; });
     let historyReads = 0;
     let initialResponse: Response | undefined;
     let releaseInitial!: (response: Response) => void;
@@ -166,6 +168,7 @@ describe('ProfileHistoryDialog', () => {
     const remaining = { ...source, revision: 4, participant_ids: [2] };
     const restored = { ...source, id: 9, revision: 1, display_name: 'Restored Person', participant_ids: [1], vcard_uid: 'person-9' };
     const merge = { id: 41, survivor_person_id: 7, absorbed_person_id: 9, current_person_id: 7, survivor_vcard_uid: 'person-7', absorbed_vcard_uid: 'person-9', survivor_revision_before: 2, absorbed_revision_before: 1, survivor_revision_after: 3, actor: 'user', snapshot_version: 1, snapshot_sha256: 'synthetic-digest', created_at: when };
+    const split = { id: 55, merge_id: 41, source_person_id: 7, new_person_id: 9, new_person_uid: 'person-9', source_revision_before: 3, source_revision_after: 4, exact_reversal: true, actor: 'user', created_at: when };
     const observed = { participant_id: 1, type: 'email', value: 'observed@example.com', normalized_value: 'observed@example.com', display_value: '', service_slug: 'email', service_label: 'Email', scope_kind: '', scope_value: '' };
     const client = createAPIClient(async input => {
       const request = input instanceof Request ? input : new Request(input);
@@ -191,13 +194,13 @@ describe('ProfileHistoryDialog', () => {
         }
         return response;
       }
-      if (path.endsWith('/merges')) return Response.json({ merges: [{ merge, labels, participant_count: 1, row_count: 0, pending_candidate_count: 0, split_count: 0, row_action_counts: {} }], limit: 100, offset: 0 });
-      if (path === '/api/v1/person-merges/41') return Response.json({ merge, labels: { ...labels, participants: undefined }, participants: labels.participants, rows: [], splits: [], review_candidates: [] });
+      if (path.endsWith('/merges')) return Response.json({ merges: [{ merge, labels, participant_count: 1, row_count: 0, pending_candidate_count: 0, split_count: reconciled ? 1 : 0, row_action_counts: {} }], limit: 100, offset: 0 });
+      if (path === '/api/v1/person-merges/41') return Response.json({ merge, labels: { ...labels, participants: undefined }, participants: labels.participants, rows: [], splits: reconciled ? [split] : [], review_candidates: [] });
       if (path === '/api/v1/people/7') return Response.json(source, { headers: { ETag: '"person-7-r3"' } });
-      if (path === '/api/v1/people/7/split') return Response.json({ source_person: remaining, new_person: restored, split: { id: 55, merge_id: 41, source_person_id: 7, new_person_id: 9, new_person_uid: 'person-9', source_revision_before: 3, source_revision_after: 4, exact_reversal: true, actor: 'user', created_at: when }, exact_reversal: true, ambiguous_rows: [], unrestored_rows: [], uid_alias_disposition: 'restored', identity_revision: 2, cache_state: 'ready' }, { headers: { ETag: '"person-7-r4"', 'X-New-Person-ETag': '"person-9-r1"' } });
+      if (path === '/api/v1/people/7/split') return Response.json({ source_person: remaining, new_person: restored, split, exact_reversal: true, ambiguous_rows: [], unrestored_rows: [], uid_alias_disposition: 'restored', identity_revision: 2, cache_state: 'ready' }, { headers: { ETag: '"person-7-r4"', 'X-New-Person-ETag': '"person-9-r1"' } });
       throw new Error(`unexpected ${request.method} ${path}`);
     });
-    const onSplitCommitted = vi.fn(async () => { reconciled = true; });
+    const onSplitCommitted = vi.fn(async () => { reconciled = true; await pendingReconciliation; });
     const view = render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn(), onSplitCommitted });
     try {
       if (initialFailure) {
@@ -216,7 +219,8 @@ describe('ProfileHistoryDialog', () => {
       await fireEvent.click(screen.getByRole('button', { name: 'Split into new person' }));
       await waitFor(() => expect(onSplitCommitted).toHaveBeenCalledWith({ sourcePersonID: 7, newPersonID: 9 }));
       expect(await screen.findByRole('dialog', { name: 'Split complete' })).toBeDefined();
-    } finally { releaseInitial(initialResponse ?? Response.json({})); view.unmount(); }
+      expect(screen.getByRole('button', { name: 'Done' })).toHaveProperty('disabled', false);
+    } finally { releaseReconciliation(); releaseInitial(initialResponse ?? Response.json({})); view.unmount(); }
   });
 });
 
