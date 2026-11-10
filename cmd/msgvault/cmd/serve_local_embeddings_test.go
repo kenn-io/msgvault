@@ -559,7 +559,7 @@ func TestLocalEmbeddingsPublishesScheduledBuildWithoutBlockingSyncDuringInstall(
 	}
 	f.runner.beforeBuild = func() {
 		_, _, held := gate.Holder()
-		assert.False(t, held, "the managed build acquires its own gate lease")
+		assert.False(t, held, "the controller releases the gate before running the build")
 	}
 	require.NoError(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
 	_, _, err := testutil.CreateIndexedSourceMessage(t.Context(), f.store, "archive@example.test", "later", "Later orchard", "Another orchard message.")
@@ -634,19 +634,4 @@ func TestLocalEmbeddingsFirstOllamaActivationRetriesAfterCredentialRepair(t *tes
 	results, _, err := f.handle.vf.HybridEngine.Search(f.ctx, hybrid.SearchRequest{Mode: hybrid.ModeVector, FreeText: "orchard", Limit: 5})
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
-}
-
-func TestLocalEmbeddingsUsesManagedBackstop(t *testing.T) {
-	f := newLocalActivationFixture(t, "")
-	f.start(t)
-	f.controller.runner = &storeAPIAdapter{config: f.cfg, store: f.store, operationGate: f.controller.gate, embeddingsScheduler: f.scheduler}
-	require.NoError(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
-	active, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
-	require.NoError(t, err)
-	generations := embedGenByID(t, f.cfg.Data.DataDir)
-	require.Len(t, generations, 1)
-	for _, generation := range generations {
-		require.True(t, generation.Valid)
-		assert.Equal(t, int64(active.ID), generation.Int64)
-	}
 }

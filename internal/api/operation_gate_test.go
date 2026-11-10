@@ -366,7 +366,7 @@ func waitForParkedContext(t *testing.T, parked <-chan struct{}, work string) {
 	}
 }
 
-func TestServerEmbeddingsOptimizeLeavesOperationGateToRunner(t *testing.T) {
+func TestServerEmbeddingsCommandsLeaveOperationGateToRunner(t *testing.T) {
 	t.Parallel()
 	for _, args := range [][]string{
 		{"embeddings", "--config", "status", "build"},
