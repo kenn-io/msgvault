@@ -8,7 +8,6 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"path"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -77,7 +76,10 @@ func parseInstagramThread(ctx context.Context, st *store.Store, sourceID int64, 
 	}
 
 	parsed.Messages = nil
-	for _, p := range instagramKept(pending) {
+	for _, p := range pending {
+		if p.skip {
+			continue
+		}
 		message := p.message
 		message.sourceID, message.rawData = p.id, p.raw
 		message.jsonShard, message.jsonFilename = p.shard, p.filename
@@ -227,11 +229,6 @@ func addInstagramSurplus(items []*instagramPending, n int) {
 	for _, p := range items[:n] {
 		*p = base
 	}
-}
-
-// instagramKept drops the copies the import chose to skip.
-func instagramKept(pending []*instagramPending) []*instagramPending {
-	return slices.DeleteFunc(slices.Clone(pending), func(p *instagramPending) bool { return p.skip })
 }
 
 // matchRenamedInstagram keeps the ID of a message whose sender was renamed,

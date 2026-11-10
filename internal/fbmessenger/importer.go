@@ -124,9 +124,6 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (summar
 	}
 
 	instagram := opts.Source == "instagram"
-	if opts.Source != "" && opts.Source != "messenger" && !instagram {
-		return summary, fmt.Errorf("fbmessenger: unknown source %q", opts.Source)
-	}
 	if instagram {
 		if opts.Limit < 0 {
 			return summary, errors.New("--limit must be non-negative")
@@ -166,10 +163,7 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (summar
 	if instagram {
 		var skipped int
 		threads, skipped, err = Discover(filepath.Join(absRoot, "your_instagram_activity"))
-		if errors.Is(err, os.ErrNotExist) {
-			return summary, errors.New("instagram: no supported inbox message_<N>.json shards; HTML, ZIP and other layouts are unsupported")
-		}
-		if err != nil {
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return summary, err
 		}
 		summary.FilesSkipped += int64(skipped)
@@ -179,7 +173,6 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (summar
 				summary.FilesSkipped++
 				continue
 			}
-
 			filtered = append(filtered, td)
 		}
 		threads = filtered
@@ -903,14 +896,16 @@ func writeThreadToStore(
 		// Attachments.
 		for ai := range m.Attachments {
 			att := m.Attachments[ai]
+			summary.AttachmentsFound++
+			role := store.AttachmentRoleStandalone
+			roleSource := store.AttachmentRoleSourceImporterSemantics
+			if att.Kind == "sticker" {
+				role = store.AttachmentRoleSticker
+				roleSource = store.AttachmentRoleSourceProviderExplicit
+			}
 			if instagram {
-				summary.AttachmentsFound++
 				slot := "instagram:media:" + instagramHash(att.Kind+":"+path.Clean(att.URI))
-				write := store.AttachmentWrite{Filename: path.Base(att.URI), MIMEType: att.MimeType, SourcePartKey: slot, SourceAttachmentID: slot, MediaType: att.Kind, Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics}
-				if att.Kind == "sticker" {
-					write.Role = store.AttachmentRoleSticker
-					write.RoleSource = store.AttachmentRoleSourceProviderExplicit
-				}
+				write := store.AttachmentWrite{Filename: path.Base(att.URI), MIMEType: att.MimeType, SourcePartKey: slot, SourceAttachmentID: slot, MediaType: att.Kind, Role: role, RoleSource: roleSource}
 				filename := resolveAttachmentURI(absRoot, att.URI)
 				if filename == "" {
 					summary.MediaRejected++
@@ -947,7 +942,6 @@ func writeThreadToStore(
 				}
 				continue
 			}
-			summary.AttachmentsFound++
 			storagePath, contentHash, size := handleAttachment(ctx, att, opts.AttachmentsDir)
 			if storagePath != "" {
 				summary.AttachmentsStored++
@@ -977,12 +971,6 @@ func writeThreadToStore(
 				hash = syntheticHash
 			} else if err := deleteFailedStoredAttachment(ctx, st, messageID, contentHash); err != nil {
 				logger.Warn("fbmessenger: delete failed stored attachment", "err", err)
-			}
-			role := store.AttachmentRoleStandalone
-			roleSource := store.AttachmentRoleSourceImporterSemantics
-			if att.Kind == "sticker" {
-				role = store.AttachmentRoleSticker
-				roleSource = store.AttachmentRoleSourceProviderExplicit
 			}
 			if err := st.UpsertAttachmentRecord(ctx, messageID, store.AttachmentWrite{
 				Filename: att.Filename, MIMEType: att.MimeType, StoragePath: storagePath,
