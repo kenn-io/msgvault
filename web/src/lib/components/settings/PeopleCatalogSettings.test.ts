@@ -100,7 +100,7 @@ it('orders loaded fields and shows their metadata', async () => {
     expect([...container.querySelectorAll('.fields .name')].map(row => row.firstChild?.textContent)).toEqual(['Work', 'Location', 'Favorite color']);
     expect(fields.getByText(/Current and historical employment/).closest('li')?.textContent).toContain('Jobs · several values');
     expect(fields.getByText('Where they live').closest('li')?.textContent).toContain('Text · one value');
-    expect(fields.getByText('Garden preferences').closest('li')?.textContent).toContain('Profile field · Text · several values · Sensitive');
+    expect(fields.getByText('Garden preferences').closest('li')?.textContent).toContain('Text · several values · Sensitive');
     expect(fields.queryByRole('button', { name: 'Edit Location' })).toBeNull();
   } finally { unmount(); }
 });
@@ -113,7 +113,6 @@ it.each([
   { query: 'several values', expected: ['Current and historical employment', 'Garden preferences'] },
   { query: 'sensitive', expected: ['Garden preferences'] },
   { query: 'one value', expected: ['Where they live'] },
-  { query: 'profile field', expected: ['Where they live', 'Garden preferences'] },
   { query: 'text', expected: ['Where they live', 'Garden preferences'] },
   { query: 'inactive', expected: ['Where they live'] },
   { query: 'plant', expected: [] }

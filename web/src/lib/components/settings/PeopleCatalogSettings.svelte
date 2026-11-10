@@ -20,7 +20,7 @@
   let targetsLoading = $state(false);
   let loading = $state(true);
   const catalogAbort = new AbortController();
-  const fieldMetadata = (field: AttributeDefinition) => ['Profile field', valueTypeOptions.find(option => option.value === field.value_type)?.label ?? 'Other', field.cardinality === 'multi' ? 'several values' : 'one value', field.is_sensitive ? 'Sensitive' : '', field.is_active ? '' : 'Inactive'].filter(Boolean).join(' · ');
+  const fieldMetadata = (field: AttributeDefinition) => [valueTypeOptions.find(option => option.value === field.value_type)?.label ?? 'Other', field.cardinality === 'multi' ? 'several values' : 'one value', field.is_sensitive ? 'Sensitive' : '', field.is_active ? '' : 'Inactive'].filter(Boolean).join(' · ');
   const workMetadata = (target: TargetDescriptor) => ['Jobs', target.cardinality === 'multi' ? 'several values' : '', target.sensitive ? 'Sensitive' : ''].filter(Boolean).join(' · ');
   const matching = (...parts: string[]) => parts.join(' ').toLowerCase().includes(query.trim().toLowerCase());
   const visibleFields = $derived([...fields.definitions].sort((a, b) => a.display_order - b.display_order || a.label.localeCompare(b.label)).filter(field => matching(field.label, field.description ?? '', fieldMetadata(field))));
