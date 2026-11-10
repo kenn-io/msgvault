@@ -11528,26 +11528,26 @@ func (p PersonEnrichmentProviderUpdate) Validate() error {
 }
 
 type PersonFactClaim struct {
-	ClaimKey           string           `json:"claim_key" validate:"required"`
-	Confidence         ConfidenceInputs `json:"confidence"`
-	CreatedAt          time.Time        `json:"created_at" validate:"required"`
-	EvidenceIds        []int64          `json:"evidence_ids" validate:"required"`
-	GenerationID       int64            `json:"generation_id"`
-	ID                 int64            `json:"id"`
-	Kind               string           `json:"kind" validate:"required"`
-	LatestSupportedAt  *time.Time       `json:"latest_supported_at,omitempty"`
-	NormalizedValue    *string          `json:"normalized_value,omitzero"`
-	Origin             string           `json:"origin" validate:"required"`
-	ProgramFingerprint string           `json:"program_fingerprint" validate:"required"`
-	ProgramID          string           `json:"program_id" validate:"required"`
-	ProgramVersion     string           `json:"program_version" validate:"required"`
-	Relation           string           `json:"relation" validate:"required"`
-	Status             string           `json:"status" validate:"required"`
-	SubmittedValue     string           `json:"submitted_value" validate:"required"`
-	Target             TargetRef        `json:"target"`
-	ValidFrom          *time.Time       `json:"valid_from,omitempty"`
-	ValidUntil         *time.Time       `json:"valid_until,omitempty"`
-	ValueFingerprint   *string          `json:"value_fingerprint,omitzero"`
+	ClaimKey           string                `json:"claim_key" validate:"required"`
+	Confidence         ConfidenceInputs      `json:"confidence"`
+	CreatedAt          time.Time             `json:"created_at" validate:"required"`
+	EvidenceIds        []int64               `json:"evidence_ids" validate:"required"`
+	GenerationID       int64                 `json:"generation_id"`
+	ID                 int64                 `json:"id"`
+	Kind               PersonFactClaimKind   `json:"kind" validate:"required"`
+	LatestSupportedAt  *time.Time            `json:"latest_supported_at,omitempty"`
+	NormalizedValue    *string               `json:"normalized_value,omitzero"`
+	Origin             string                `json:"origin" validate:"required"`
+	ProgramFingerprint string                `json:"program_fingerprint" validate:"required"`
+	ProgramID          string                `json:"program_id" validate:"required"`
+	ProgramVersion     string                `json:"program_version" validate:"required"`
+	Relation           string                `json:"relation" validate:"required"`
+	Status             PersonFactClaimStatus `json:"status" validate:"required"`
+	SubmittedValue     string                `json:"submitted_value" validate:"required"`
+	Target             TargetRef             `json:"target"`
+	ValidFrom          *time.Time            `json:"valid_from,omitempty"`
+	ValidUntil         *time.Time            `json:"valid_until,omitempty"`
+	ValueFingerprint   *string               `json:"value_fingerprint,omitzero"`
 }
 
 func (p PersonFactClaim) Validate() error {
@@ -11566,8 +11566,10 @@ func (p PersonFactClaim) Validate() error {
 	if err := typesValidator.Var(p.EvidenceIds, "required"); err != nil {
 		errors = errors.Append("EvidenceIds", err)
 	}
-	if err := typesValidator.Var(p.Kind, "required"); err != nil {
-		errors = errors.Append("Kind", err)
+	if v, ok := any(p.Kind).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Kind", err)
+		}
 	}
 	if err := typesValidator.Var(p.Origin, "required"); err != nil {
 		errors = errors.Append("Origin", err)
@@ -11584,8 +11586,10 @@ func (p PersonFactClaim) Validate() error {
 	if err := typesValidator.Var(p.Relation, "required"); err != nil {
 		errors = errors.Append("Relation", err)
 	}
-	if err := typesValidator.Var(p.Status, "required"); err != nil {
-		errors = errors.Append("Status", err)
+	if v, ok := any(p.Status).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Status", err)
+		}
 	}
 	if err := typesValidator.Var(p.SubmittedValue, "required"); err != nil {
 		errors = errors.Append("SubmittedValue", err)

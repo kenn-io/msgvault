@@ -3349,14 +3349,15 @@ grant consent to a provider or enroll a person in briefs.
 | `person facts pin <person-id> <kind> <key>` | Protect a field's current or empty value |
 | `person facts unpin <person-id> <kind> <key>` | Allow automatic resolution for the field again |
 
-On unreleased main, claim reads include `kind` (`fact`, `event`, `preference`,
-or `commitment`) and `status` (`fresh`, `stale`, or `expired`). Kind comes from
-the claim's saved identity. The shipped primary channel, “ask me about,”
-interest, and favorites categories are preferences even if renamed; custom attributes remain facts. Other claims with
-`valid_until` are events. Commitment and preference identity take precedence.
+On unreleased main, claim reads include `kind` (`fact`, `event`, `preference`)
+and `status` (`fresh`, `stale`, or `expired`). Kind comes from the claim's saved
+identity. The shipped primary channel, “ask me about,” interest, and favorites
+categories are preferences even if renamed; custom attributes remain facts.
+Other claims with `valid_until` are events, except employment claims, which
+remain facts. Preference identity takes precedence.
 
 Freshness uses the newest currently supported evidence: facts stay fresh for
-365 days, events for 7 days, and preferences and commitments for 90 days. A claim
+365 days, events for 7 days, and preferences for 90 days. A claim
 without supported evidence is stale. A claim expires exactly at `valid_until`,
 regardless of evidence freshness. `latest_supported_at` reports the evidence
 time when available. These read fields do not change inference packets.

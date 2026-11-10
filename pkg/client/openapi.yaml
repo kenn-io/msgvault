@@ -11559,6 +11559,10 @@ components:
           format: int64
           type: integer
         kind:
+          enum:
+            - fact
+            - event
+            - preference
           type: string
         latest_supported_at:
           format: date-time
@@ -11578,6 +11582,10 @@ components:
         relation:
           type: string
         status:
+          enum:
+            - fresh
+            - stale
+            - expired
           type: string
         submitted_value:
           type: string

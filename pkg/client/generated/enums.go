@@ -2272,6 +2272,42 @@ func (p PersonEnrichmentProviderUpdateKind) Validate() error {
 	}
 }
 
+type PersonFactClaimKind string
+
+const (
+	Event      PersonFactClaimKind = "event"
+	Fact       PersonFactClaimKind = "fact"
+	Preference PersonFactClaimKind = "preference"
+)
+
+// Validate checks if the PersonFactClaimKind value is valid
+func (p PersonFactClaimKind) Validate() error {
+	switch p {
+	case Event, Fact, Preference:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonFactClaimKind value, got: %v", p))
+	}
+}
+
+type PersonFactClaimStatus string
+
+const (
+	Expired                    PersonFactClaimStatus = "expired"
+	Fresh                      PersonFactClaimStatus = "fresh"
+	PersonFactClaimStatusStale PersonFactClaimStatus = "stale"
+)
+
+// Validate checks if the PersonFactClaimStatus value is valid
+func (p PersonFactClaimStatus) Validate() error {
+	switch p {
+	case Expired, Fresh, PersonFactClaimStatusStale:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonFactClaimStatus value, got: %v", p))
+	}
+}
+
 type PersonFileProvenanceDirections string
 
 const (

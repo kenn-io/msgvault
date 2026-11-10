@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/personfacts"
 )
 
 var errSeededAttributeDefinitionCreateConflict = errors.New(
@@ -16,9 +18,9 @@ var errSeededAttributeDefinitionCreateConflict = errors.New(
 const maxSeededAttributeDefinitionAttempts = 5
 
 const (
-	AttributeUniversalIDPrimaryChannel        = "59e9a7d3-4904-4d0e-97d1-d0680e1e9e55"
+	AttributeUniversalIDPrimaryChannel        = personfacts.AttributeUniversalIDPrimaryChannel
 	AttributeUniversalIDContactFrequency      = "34b52841-dcf5-40c6-a24e-628b049e85b2"
-	AttributeUniversalIDAskMeAbout            = "93c658a1-2346-4a6e-98c2-abfa29209334"
+	AttributeUniversalIDAskMeAbout            = personfacts.AttributeUniversalIDAskMeAbout
 	AttributeUniversalIDLastContacted         = "6e843902-1685-4e23-a107-819220c7dd8d"
 	AttributeUniversalIDNotes                 = "b72b3cf7-509f-4286-a0f0-bb039c85ff40"
 	AttributeUniversalIDLocation              = "2068efb0-9808-498b-ac3a-8e0a87d4513a"
@@ -28,10 +30,10 @@ const (
 	AttributeUniversalIDPolitics              = "f897f0b4-45fa-469a-97d5-c7d98517a50e"
 	AttributeUniversalIDPersonality           = "64142a35-ab0f-43cc-9828-87aaa362c693"
 	AttributeUniversalIDFamilyPets            = "e0775bae-cf07-4d06-9cc2-cb09a5358d82"
-	AttributeUniversalIDInterestsFunNow       = "e8c815d5-3568-429b-a93b-00220b0a1b43"
-	AttributeUniversalIDInterestsFunGrowingUp = "7ffd6a23-74cc-4e05-ad6b-7d765d883a94"
-	AttributeUniversalIDFavoritesFood         = "12612daa-90b0-461b-b928-79d4a2bc07ba"
-	AttributeUniversalIDFavoritesPlace        = "be2bccc1-c395-4bb4-8f68-02e745ea7b22"
+	AttributeUniversalIDInterestsFunNow       = personfacts.AttributeUniversalIDInterestsFunNow
+	AttributeUniversalIDInterestsFunGrowingUp = personfacts.AttributeUniversalIDInterestsFunGrowingUp
+	AttributeUniversalIDFavoritesFood         = personfacts.AttributeUniversalIDFavoritesFood
+	AttributeUniversalIDFavoritesPlace        = personfacts.AttributeUniversalIDFavoritesPlace
 	AttributeUniversalIDHowWeMet              = "ab373615-6ee4-43e7-9f60-8c1d4dbf46c6"
 )
 
