@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DATE_HINT, dateNote, intervalDateError, isCalendarDate, isTextProfileDate, profileDateError, readablePartialDate } from './dates';
 
 describe('isCalendarDate', () => {
@@ -46,17 +46,19 @@ describe('date readings', () => {
     expect(readablePartialDate({ year: 2024, month: 3 })).toBe('Mar 2024');
     expect(readablePartialDate('2024-03-05')).toBe('Mar 5, 2024');
     expect(readablePartialDate('20240305')).toBe('Mar 5, 2024');
-    const today = new Date(2026, 10, 6);
-    expect(readablePartialDate('2026-03-05', today)).toBe('Mar 5');
-    expect(readablePartialDate('2026-03', today)).toBe('Mar 2026');
-    expect(dateNote('2026-11-06', false, today)).toBe('Today, Nov 6');
-    expect(dateNote('20261105', false, today)).toBe('Nov 5');
-    expect(dateNote('2025-11-06', false, today)).toBe('Nov 6, 2025');
-    expect(dateNote('2026-02-30', false, today)).toBe('');
-    expect(dateNote('2024-03', true, today)).toBe(DATE_HINT);
-    expect(dateNote('2024-03', false, today)).toBe('Mar 2024');
-    expect(dateNote('2024', false, today)).toBe('');
-    expect(dateNote('2024', true, today)).toBe(DATE_HINT);
-    expect(dateNote('invalid', false, today)).toBe('');
+    vi.setSystemTime(new Date(2026, 10, 6, 12));
+    try {
+      expect(readablePartialDate('2026-03-05')).toBe('Mar 5');
+      expect(readablePartialDate('2026-03')).toBe('Mar 2026');
+      expect(dateNote('2026-11-06', false)).toBe('Today, Nov 6');
+      expect(dateNote('20261105', false)).toBe('Nov 5');
+      expect(dateNote('2025-11-06', false)).toBe('Nov 6, 2025');
+      expect(dateNote('2026-02-30', false)).toBe('');
+      expect(dateNote('2024-03', true)).toBe(DATE_HINT);
+      expect(dateNote('2024-03', false)).toBe('Mar 2024');
+      expect(dateNote('2024', false)).toBe('');
+      expect(dateNote('2024', true)).toBe(DATE_HINT);
+      expect(dateNote('invalid', false)).toBe('');
+    } finally { vi.useRealTimers(); }
   });
 });

@@ -90,7 +90,7 @@ type PartialDateParts = { year?: number; month?: number; day?: number };
  * A stored partial date, or a typed one ("2024-03"), as a person reads it: "2024", "Mar 2024", "Mar 5, 2024", and a
  * day this year without its year, "Nov 5".
  */
-export function readablePartialDate(value: string | PartialDateParts | null | undefined, today: Date = new Date()): string {
+export function readablePartialDate(value: string | PartialDateParts | null | undefined): string {
   if (!value) return '';
   let date: PartialDateParts | undefined = typeof value === 'string' ? undefined : value;
   if (typeof value === 'string') {
@@ -102,7 +102,7 @@ export function readablePartialDate(value: string | PartialDateParts | null | un
   const month = date.month ? MONTHS[date.month - 1] : '';
   if (!month) return String(date.year);
   if (!date.day) return `${month} ${date.year}`;
-  return formatShortDate(`${formatPartialDate(date)}T00:00:00`, today);
+  return formatShortDate(`${formatPartialDate(date)}T00:00:00`);
 }
 
 /**
@@ -110,10 +110,10 @@ export function readablePartialDate(value: string | PartialDateParts | null | un
  * or focused, then the date in words once it holds one ("Mar 2024", "Today,
  * Nov 6"). Empty for an invalid value, whose error takes the place.
  */
-export function dateNote(value: string, focused: boolean, today: Date = new Date()): string {
+export function dateNote(value: string, focused: boolean): string {
   if (intervalDateError(value)) return '';
   const trimmed = canonicalDate(value);
   if (focused || !trimmed) return DATE_HINT;
-  const reading = readablePartialDate(trimmed, today);
-  return trimmed === localDateStr(today) ? `Today, ${reading}` : reading === value.trim() ? '' : reading;
+  const reading = readablePartialDate(trimmed);
+  return trimmed === localDateStr(new Date()) ? `Today, ${reading}` : reading === value.trim() ? '' : reading;
 }

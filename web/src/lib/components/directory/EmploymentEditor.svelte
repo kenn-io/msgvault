@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Checkbox, FormField, SelectDropdown } from '@kenn-io/kit-ui';
-  import { onDestroy, onMount, untrack } from 'svelte';
+  import { onMount, untrack } from 'svelte';
 
   import { formatPartialDate as partialDate } from '../../directory/dates';
   import { organizationKindOptions as kindOptions } from '../../directory/labels';
@@ -62,11 +62,6 @@
   onMount(() => {
     void prepare();
   });
-  // A Check again still pending when the dialog closes must not close the next one.
-  let closed = false;
-  onDestroy(() => { closed = true; });
-  // The person's jobs before the last create, so Check again can tell whether it saved.
-  let jobsBefore = new Set<number>();
 
   async function prepare(): Promise<void> {
     if (!initialEmployment) {
@@ -134,16 +129,14 @@
         creatingOrganization = false;
       }
       if (initialEmployment) return controller.updateEmployment(initialEmployment.id, fresh => body(fresh), current ?? opened);
-      jobsBefore = new Set(controller.employments.map(job => job.id));
       return controller.createEmployment({ ...body(), source: 'user' });
     });
     if (ok) onDone();
   }
 
-  // The list now shows whether the job was saved; when it wasn't, the form stays to send again.
+  // The list then shows whether the job was saved, and the form stays.
   async function refreshAfterUnknown(): Promise<void> {
     await controller.refreshEmployments();
-    if (!closed && !controller.createBlocked.employments && controller.employments.some(job => !jobsBefore.has(job.id))) onDone();
   }
 
   // The picker then lists the organization if the create saved it.

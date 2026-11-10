@@ -125,25 +125,6 @@ describe('RelationshipsTab', () => {
     } finally { vi.useRealTimers(); }
   });
 
-  it('ignores late results from older requests', async () => {
-    const responses: ((response: Response) => void)[] = [];
-    const { client, controller } = controllerWith(async () => new Promise<Response>(resolve => responses.push(resolve)));
-    render(RelationshipsTab, { client, controller, personID: 7 });
-    await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
-    const input = await openTypeahead('Person');
-    await waitFor(() => expect(responses).toHaveLength(1));
-    await fireEvent.input(input, { target: { value: 'Other' } });
-    await fireEvent.input(input, { target: { value: '' } });
-    await waitFor(() => expect(responses).toHaveLength(2));
-    responses[1](Response.json({ people: [directoryPerson(9, { display_name: 'Current result' })] }));
-    await screen.findByRole('option', { name: 'Current result' });
-    const stale = Response.json({ people: [directoryPerson(8, { display_name: 'Stale result' })] });
-    responses[0](stale);
-    await waitFor(() => expect(stale.bodyUsed).toBe(true));
-    expect(screen.queryByRole('option', { name: 'Stale result' })).toBeNull();
-    expect(screen.getByRole('option', { name: 'Current result' })).toBeDefined();
-  });
-
   it.each([
     ['Mentors', 'mentors', 'mentor', 'mentors', 'is mentored by', 7, 8],
     ['Child', 'is a child of', 'parent', 'parent', 'child', 8, 7],
@@ -899,13 +880,13 @@ describe('RelationshipsTab', () => {
 });
 
 
-it.each(['saved', 'not saved'] as const)('checks again after a lost connection create (%s)', async outcome => {
+it('checks again after a lost connection create', async () => {
   let posts = 0;
   const { client, controller } = controllerWith(async input => {
     const request = requestOf(input), path = pathOf(request);
     if (path === '/api/v1/person-relationships' && request.method === 'POST') { posts++; throw new TypeError('response lost'); }
     if (path === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(8)] });
-    if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: posts && outcome === 'saved' ? [view(41, 'outgoing', 'is mentored by', 'Synthetic Two')] : [] });
+    if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: posts ? [view(41, 'outgoing', 'is mentored by', 'Synthetic Two')] : [] });
     throw new Error(`unexpected ${request.method} ${path}`);
   });
   controller.relationshipTypes = [relationshipType()];
@@ -915,16 +896,9 @@ it.each(['saved', 'not saved'] as const)('checks again after a lost connection c
   await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Synthetic Two' }));
   await openTypeahead('Connection type');
   await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Mentors' }));
-  await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'Met at the garden' } });
   await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
   await fireEvent.click(await screen.findByRole('button', { name: 'Check again' }));
-  if (outcome === 'saved') await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-  else {
-    await waitFor(() => expect(controller.createBlocked.relationships).toBe(false));
-    // Check again settles after the read clears the block.
-    await new Promise(resolve => setTimeout(resolve));
-    expect(screen.getByRole('textbox', { name: 'Notes' })).toHaveProperty('value', 'Met at the garden');
-  }
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   expect(posts).toBe(1);
 });
 

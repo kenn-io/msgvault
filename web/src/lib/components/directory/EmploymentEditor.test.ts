@@ -253,40 +253,25 @@ it.each(['none', 'same name'] as const)('reconciles an inline organization creat
     await screen.findByText('At Exact Employment Org', { selector: 'p.context' });
   });
 
-it.each(['saved', 'not saved', 'closed'] as const)('checks again after a lost job create (%s)', async outcome => {
+it('checks again after a lost job create and keeps the draft', async () => {
   let posts = 0;
-  let finishRead: (() => void) | undefined;
   const { controller } = controllerWith(async input => {
     const request = requestOf(input), path = pathOf(request);
     if (path === '/api/v1/organizations') return Response.json({ organizations: [organization(21, 1, 'Lumen Grove')], total: 1 });
     if (path === '/api/v1/employments') { posts++; throw new TypeError('response lost'); }
-    if (path === '/api/v1/people/7/employments') {
-      if (outcome === 'closed' && posts) await new Promise<void>(resolve => { finishRead = resolve; });
-      return collection(posts && outcome !== 'not saved' ? [employment(11, 1)] : []);
-    }
+    if (path === '/api/v1/people/7/employments') return collection([]);
     throw new Error(`Unexpected ${request.method} ${path}`);
   });
   const onDone = vi.fn();
-  const rendered = render(EmploymentEditor, { controller, personID: 7, onDone });
+  render(EmploymentEditor, { controller, personID: 7, onDone });
   await openTypeahead('Organization');
   await fireEvent.mouseDown(await screen.findByRole('option', { name: /Lumen Grove/ }));
   await fireEvent.input(screen.getByRole('textbox', { name: 'Job title' }), { target: { value: 'Draft role' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Add job' }));
   await fireEvent.click(await screen.findByRole('button', { name: 'Check again' }));
-  if (outcome === 'closed') {
-    await waitFor(() => expect(finishRead).toBeDefined());
-    rendered.unmount();
-    finishRead!();
-  }
-  await waitFor(() => expect(controller.createBlocked.employments).toBe(false));
-  // Check again settles after the read clears the block.
-  await new Promise(resolve => setTimeout(resolve));
-  if (outcome === 'saved') await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
-  else expect(onDone).not.toHaveBeenCalled();
-  if (outcome === 'not saved') {
-    expect(screen.getByRole('textbox', { name: 'Job title' })).toHaveProperty('value', 'Draft role');
-    expect(screen.getByRole('button', { name: 'Add job' })).toHaveProperty('disabled', false);
-  }
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Add job' })).toHaveProperty('disabled', false));
+  expect(screen.getByRole('textbox', { name: 'Job title' })).toHaveProperty('value', 'Draft role');
+  expect(onDone).not.toHaveBeenCalled();
   expect(posts).toBe(1);
 });
 

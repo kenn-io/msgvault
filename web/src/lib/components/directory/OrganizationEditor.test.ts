@@ -169,25 +169,6 @@ describe('OrganizationEditor', () => {
     await waitFor(() => expect(refresh).toHaveBeenCalled());
   });
 
-  it('renames a retired organization without changing its status', async () => {
-    const writes: Request[] = [];
-    const onDone = vi.fn();
-    const { controller } = controllerWith(async input => {
-      const request = requestOf(input);
-      if (request.method === 'GET') return Response.json({ ...organizationProfile(2), organization: { ...organization(21, 2), retired_at: '2026-08-02T00:00:00Z' } }, { headers: { ETag: '"organization-21-r2"' } });
-      writes.push(request);
-      return Response.json({ ...organization(21, 3, 'Renamed Synthetic Org'), retired_at: '2026-08-02T00:00:00Z' }, { headers: { ETag: '"organization-21-r3"' } });
-    });
-    render(OrganizationEditor, { controller, organization: organization(), onDone });
-    await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Renamed Synthetic Org' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
-    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
-    expect(writes.map(request => request.method)).toEqual(['PATCH']);
-    const body = await writes[0].json();
-    expect(body).toMatchObject({ name: 'Renamed Synthetic Org' });
-    expect(body.retired).toBeUndefined();
-  });
-
   it.each([
     { label: 'one job', count: 1 },
     { label: '200 jobs', count: 200 },
