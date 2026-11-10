@@ -126,6 +126,7 @@ Import local exports:
   import-synctech-sms Import SMS Backup & Restore exports
   import-telegram     Import a Telegram export
   import-whatsapp     Import WhatsApp messages from an Android or Apple database
+  import-x            Import X direct-message archives
 
 Drafts, calendar, and Kata (write to providers):
   calendar      Read archived events and control live calendars
