@@ -3351,8 +3351,8 @@ grant consent to a provider or enroll a person in briefs.
 
 On unreleased main, claim reads include `kind` (`fact`, `event`, `preference`,
 or `commitment`) and `status` (`fresh`, `stale`, or `expired`). Kind comes from
-the claim's saved identity. The shipped interest and favorites categories are
-preferences even if renamed; custom attributes remain facts. Other claims with
+the claim's saved identity. The shipped primary channel, “ask me about,”
+interest, and favorites categories are preferences even if renamed; custom attributes remain facts. Other claims with
 `valid_until` are events. Commitment and preference identity take precedence.
 
 Freshness uses the newest currently supported evidence: facts stay fresh for
