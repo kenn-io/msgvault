@@ -2464,6 +2464,28 @@ Re-imports add new messages and fill missing media. Archived text and edit flags
 
 ---
 
+## import-google-chat
+
+Import explicitly supplied, extracted Google Chat Takeout parts. **Unreleased
+on main.** Tested variants use English, UTC-suffixed dates from redacted public
+2024 samples; see the coverage limits below.
+
+```bash
+msgvault import-google-chat --me owner@example.com <part-dir>...
+```
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--me` | Required | Exporting account email; normalized as the source identifier |
+| `--no-default-identity` | `false` | Skip default identity assignment |
+
+Replay adds missing messages and repairs missing media without changing stored
+snapshots. Partial counts print even if the import stops. See
+[Google Chat Takeout imports](usage/text-messages.md#import-google-chat) for
+layouts, finite limits, exact media matching and export coverage restrictions.
+
+---
+
 ## import-messenger
 
 Import Facebook Messenger conversations from a Download Your Information export.
@@ -5698,23 +5720,3 @@ msgvault policy reset SOURCE_ID CONVERSATION_ID
 `list` always prints JSON. Saved CLI overrides win over config. `reset` restores
 config or automatic selection. Effective tiers remain `full` in this release;
 `stub` and `skip` are rejected. No messages are removed.
-
-## import-google-chat
-
-Import explicitly supplied, extracted Google Chat Takeout parts. **Unreleased
-on main.** Tested variants use English, UTC-suffixed dates from redacted public
-2024 samples; see the coverage limits below.
-
-```bash
-msgvault import-google-chat --me owner@example.com <part-dir>...
-```
-
-| Flag | Default | Description |
-| --- | --- | --- |
-| `--me` | Required | Exporting account email; normalized as the source identifier |
-| `--no-default-identity` | `false` | Skip default identity assignment |
-
-Replay adds missing messages and repairs missing media without changing stored
-snapshots. Partial counts print even if the import stops. See
-[Google Chat Takeout imports](usage/text-messages.md#import-google-chat) for
-layouts, finite limits, exact media matching and export coverage restrictions.

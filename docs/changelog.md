@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-08"
+last_edited: "2026-11-10"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -8,6 +8,9 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Import supplied [Google Chat Takeout parts](usage/text-messages.md#import-google-chat)
+  for message search and available media. Repeat imports add missing messages and
+  repair missing media while preserving archived snapshots.
 - `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.
 - [Instagram comment sync](usage/instagram-comments.md) archives linked professional
   account media comments and replies for search and existing person linking.
