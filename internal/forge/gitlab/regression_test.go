@@ -293,6 +293,7 @@ func TestArchivedThreadCheckFindsAnOpeningPostEditedDuringAPausedFetch(t *testin
 }
 
 func checkFindsAnOpeningPostEditedDuringAPausedFetch(t *testing.T, behind time.Duration) {
+	t.Helper()
 	st := testutil.NewTestStore(t)
 	f := newFakeGitLab(t)
 	f.behind = behind
