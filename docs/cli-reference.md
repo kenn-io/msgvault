@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-08"
+last_edited: "2026-11-10"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -16,7 +16,7 @@ appear in full under Inherited Flags.
 | Task | Commands and guides |
 |---|---|
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
-| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
+| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-discord-package](#import-discord-package), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [media search](#media-search), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [loops](#loops), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
@@ -2444,6 +2444,25 @@ The directory must be the "Voice" folder from a Google Takeout export, containin
 See [Google Voice imports](usage/text-messages.md#import-gvoice) for voicemail audio behavior and usage examples.
 
 ---
+
+## import-discord-package
+
+Available on `main` (not yet released). Import an extracted official Discord
+sent-message data package on the daemon host:
+
+```bash
+msgvault import-discord-package <package-dir>
+```
+
+| Flag | Description |
+|------|-------------|
+| `--no-default-identity` | Skip assigning the exporting account to the default identity |
+
+Supports JSON and legacy CSV transcripts. Stores attachment URLs as links,
+without downloading files. Re-imports update the last imported snapshot and
+can safely repeat an interrupted run. Coverage is sent-only, including for
+DMs. See [Discord packages](usage/discord.md#import-a-personal-data-package)
+for source identity, timestamps, and coverage limits.
 
 ## import-telegram
 

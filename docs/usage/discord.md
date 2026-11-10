@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-03
+last_edited: "2026-11-10"
 title: Discord
 description: Archive Discord guild channels, threads, and attachments through a read-only bot.
 ---
@@ -11,6 +11,44 @@ conversation. Messages use `message_type = discord`.
 
 Discord sync is read-only. It never sends or edits messages, reacts, changes
 membership, or moderates a guild.
+
+## Import a personal data package
+
+Available on `main` (not yet in a release): import an extracted official
+[Discord data package](https://support.discord.com/hc/en-us/articles/360004957991-Your-Discord-Data-Package):
+
+```bash
+msgvault import-discord-package /path/to/extracted-package
+```
+
+The package must include `account/user.json` and `messages/` (capitalized
+`Account` and `Messages` are also accepted). Current JSON transcripts and
+legacy CSV transcripts are supported. Run the command on the daemon host;
+a remote client cannot upload its local package. ZIP input is not supported.
+
+A package contains only the exporting account's **sent messages**, including
+sent messages in DMs. It is not bilateral conversation history or complete
+guild history. Importing requires no Discord credentials or network access.
+The account ID creates a separate `discord_package` source; bot guild sources
+remain separate, even when they contain the same message.
+
+The importer keeps native message and channel IDs, original text and timestamp
+strings, channel metadata, and sent-only provenance. An explicit timestamp
+offset determines the instant. When the timestamp has no offset, the message's
+snowflake ID supplies its exact UTC instant; without either, sent time stays
+unknown. Receipt times, incoming messages, edit chronology, and missing
+membership information stay unknown.
+
+Attachment URLs are stored as links. The importer does not download media or
+claim those links are archived files. Its report counts attachment links,
+missing local media, processed/added/updated/skipped records, and skip reasons,
+including when an import fails partway through.
+
+Re-importing updates each message to the last explicitly imported snapshot,
+including its attachment links. It creates no duplicate within the same
+account source and does not infer deletions from absent messages. After an
+interruption, run the same command again. Use `--no-default-identity` to skip
+assigning this account to your default identity.
 
 ## Scope and prerequisites
 

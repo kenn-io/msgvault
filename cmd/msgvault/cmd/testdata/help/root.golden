@@ -112,19 +112,20 @@ Add and sync sources:
   verify                 Verify archive integrity against Gmail
 
 Import local exports:
-  import-eml          Import a tree of RFC 5322 .eml files
-  import-emlx         Import Apple Mail .emlx files into msgvault
-  import-gvoice       Import Google Voice history from Takeout export
-  import-imazing-csv  Import Messages CSV exports created by iMazing
-  import-imessage     Import iMessages from local database
-  import-maildir      Import a Maildir or Maildir++ archive
-  import-mbox         Import an MBOX export into msgvault
-  import-messenger    Import Facebook Messenger from a Meta data export
-  import-pst          Import a PST (Outlook) archive into msgvault
-  import-slackdump    Import a Slackdump export
-  import-synctech-sms Import SMS Backup & Restore exports
-  import-telegram     Import a Telegram export
-  import-whatsapp     Import WhatsApp messages from an Android or Apple database
+  import-discord-package Import a Discord sent-message package
+  import-eml             Import a tree of RFC 5322 .eml files
+  import-emlx            Import Apple Mail .emlx files into msgvault
+  import-gvoice          Import Google Voice history from Takeout export
+  import-imazing-csv     Import Messages CSV exports created by iMazing
+  import-imessage        Import iMessages from local database
+  import-maildir         Import a Maildir or Maildir++ archive
+  import-mbox            Import an MBOX export into msgvault
+  import-messenger       Import Facebook Messenger from a Meta data export
+  import-pst             Import a PST (Outlook) archive into msgvault
+  import-slackdump       Import a Slackdump export
+  import-synctech-sms    Import SMS Backup & Restore exports
+  import-telegram        Import a Telegram export
+  import-whatsapp        Import WhatsApp messages from an Android or Apple database
 
 Drafts, calendar, and Kata (write to providers):
   calendar      Read archived events and control live calendars
