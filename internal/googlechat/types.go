@@ -60,7 +60,6 @@ type userInfo struct {
 }
 
 type provenance struct {
-	Root string `json:"root"`
 	Path string `json:"path"`
 	Data string `json:"data,omitempty"`
 }

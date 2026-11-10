@@ -72,14 +72,15 @@ func (r *exportReader) openMedia(ctx context.Context, group, name string) (file 
 }
 
 func mediaWrites(ctx context.Context, st *store.Store, reader *exportReader, group string, messageID int64, m *message, opts ImportOptions, summary *ImportSummary) ([]store.AttachmentWrite, error) {
-	existing := map[string]store.AttachmentRef{}
+	if len(m.Files) == 0 {
+		return nil, nil
+	}
+	var missing map[string]bool
 	if messageID != 0 {
-		refs, err := st.MessageMIMEAttachmentsContext(ctx, messageID)
+		var err error
+		missing, err = st.MissingMIMEAttachmentSlotsContext(ctx, messageID)
 		if err != nil {
 			return nil, err
-		}
-		for _, ref := range refs {
-			existing[ref.SourcePartKey] = ref
 		}
 	}
 	var writes []store.AttachmentWrite
@@ -88,11 +89,8 @@ func mediaWrites(ctx context.Context, st *store.Store, reader *exportReader, gro
 			return nil, err
 		}
 		key := "file:" + strconv.Itoa(index)
-		if messageID != 0 {
-			previous, ok := existing[key]
-			if !ok || previous.ContentHash != "" {
-				continue
-			}
+		if messageID != 0 && !missing[key] {
+			continue
 		}
 		metadata, err := json.Marshal(att)
 		if err != nil {

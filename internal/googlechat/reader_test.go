@@ -24,7 +24,7 @@ func TestGoogleChatJSONBoundsAndContainment(t *testing.T) {
 				require.NoError(f.Close())
 			} else {
 				outside := filepath.Join(t.TempDir(), "messages.json")
-				require.NoError(os.WriteFile(outside, []byte(one), 0600))
+				require.NoError(os.WriteFile(outside, []byte(fixtureMessages(t)), 0600))
 				require.NoError(os.Symlink(outside, name))
 			}
 			root, err := os.OpenRoot(path)
@@ -52,8 +52,8 @@ func TestGoogleChatRootLimit(t *testing.T) {
 func TestGoogleChatReaderValidation(t *testing.T) {
 	for _, tc := range []struct{ name, path, data, want string }{
 		{"owner conflict", "Users/User a/user_info.json", `{"user":{"email":"other@example.com"}}`, "disagrees"},
-		{"no layout", "unrelated.json", one, "layout"},
-		{"unknown group", "Groups/DM_synthetic/messages.json", one, "unsupported group"},
+		{"no layout", "unrelated.json", fixtureMessages(t), "layout"},
+		{"unknown group", "Groups/DM_synthetic/messages.json", fixtureMessages(t), "unsupported group"},
 		{"archive", "takeout.zip", "", "extract"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -69,14 +69,14 @@ func TestGoogleChatReaderValidation(t *testing.T) {
 	}
 	t.Run("good and unrecognized", func(t *testing.T) {
 		a, b := t.TempDir(), t.TempDir()
-		write(t, a, "Groups/DM a/messages.json", one)
-		write(t, b, "unrelated.json", one)
+		write(t, a, "Groups/DM a/messages.json", fixtureMessages(t))
+		write(t, b, "unrelated.json", fixtureMessages(t))
 		_, err := openExport(t.Context(), []string{a, b}, "owner@example.com")
 		require.ErrorContains(t, err, "layout")
 	})
 	t.Run("conflicting snapshots", func(t *testing.T) {
 		a, b := t.TempDir(), t.TempDir()
-		write(t, a, "Groups/DM a/messages.json", one)
+		write(t, a, "Groups/DM a/messages.json", fixtureMessages(t))
 		write(t, b, "Groups/DM a/messages.json", `{"messages":[]}`)
 		reader, err := openExport(t.Context(), []string{a, b}, "owner@example.com")
 		require.NoError(t, err)
@@ -116,11 +116,11 @@ func TestGoogleChatMissingProfilePartKeepsOwnershipUnknown(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
-	write(t, root, "Groups/DM a/messages.json", one)
+	write(t, root, "Groups/DM a/messages.json", fixtureMessages(t))
 	require.NoError(os.MkdirAll(filepath.Join(root, "Users/User synthetic"), 0700))
 	_, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{root}})
 	require.NoError(err)
 	var config sql.NullString
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT sync_config FROM sources`).Scan(&config))
-	assert.NotContains(t, config.String, "owner_profiles")
+	assert.NotContains(t, config.String, "owner_profile_path")
 }

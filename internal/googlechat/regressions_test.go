@@ -25,27 +25,21 @@ func TestImportGoogleChatSenderSearchSurvivesRebuild(t *testing.T) {
 	summary, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{root}})
 	require.NoError(err)
 	require.EqualValues(1, summary.MessagesAdded)
-	_, bodyBefore, err := st.SearchMessagesContext(t.Context(), "bodyneedle", 0, 10)
-	require.NoError(err)
-	assert.EqualValues(1, bodyBefore)
-	_, before, err := st.SearchMessagesContext(t.Context(), "senderneedle", 0, 10)
-	require.NoError(err)
-	assert.EqualValues(1, before, "fresh imported messages must be discoverable by sender")
-	_, recipientBefore, err := st.SearchMessagesContext(t.Context(), "recipientneedle", 0, 10)
-	require.NoError(err)
-	assert.EqualValues(1, recipientBefore)
-	n, err := st.RebuildFTSContext(t.Context(), nil)
-	require.NoError(err)
-	require.EqualValues(1, n)
-	_, bodyAfter, err := st.SearchMessagesContext(t.Context(), "bodyneedle", 0, 10)
-	require.NoError(err)
-	assert.Equal(bodyBefore, bodyAfter)
-	_, after, err := st.SearchMessagesContext(t.Context(), "senderneedle", 0, 10)
-	require.NoError(err)
-	assert.Equal(before, after, "rebuild must preserve search results")
-	_, recipientAfter, err := st.SearchMessagesContext(t.Context(), "recipientneedle", 0, 10)
-	require.NoError(err)
-	assert.Equal(recipientBefore, recipientAfter)
+	for _, rebuild := range []bool{false, true} {
+		if rebuild {
+			n, err := st.RebuildFTSContext(t.Context(), nil)
+			require.NoError(err)
+			require.EqualValues(1, n)
+		}
+		for _, search := range []struct {
+			term string
+			want int
+		}{{"bodyneedle", 1}, {"senderneedle", 1}, {"recipientneedle", 0}} {
+			_, count, err := st.SearchMessagesContext(t.Context(), search.term, 0, 10)
+			require.NoError(err)
+			assert.EqualValues(search.want, count, "term=%s rebuild=%t", search.term, rebuild)
+		}
+	}
 }
 
 func TestImportGoogleChatMetadataDoesNotEmbedWholeRoster(t *testing.T) {
@@ -80,7 +74,7 @@ func TestImportGoogleChatContainerEvidenceSurvivesSparseReplay(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	full, partial := t.TempDir(), t.TempDir()
-	write(t, full, "Groups/DM a/messages.json", one)
+	write(t, full, "Groups/DM a/messages.json", fixtureMessages(t))
 	groupRaw := `{ "members":[{"email":"owner@example.com"},{"email":"peer@example.com"}], "unknown_group":{"retained":true}, "number":1e3 }`
 	write(t, full, "Groups/DM a/group_info.json", groupRaw)
 	profileRaw := `{ "user":{"email":"owner@example.com"}, "unknown_profile":{"retained":true} }`
@@ -90,32 +84,30 @@ func TestImportGoogleChatContainerEvidenceSurvivesSparseReplay(t *testing.T) {
 	require.NoError(err)
 	_, err = Import(t.Context(), st, opts)
 	require.NoError(err, "repeated full export retains one copy of each container snapshot")
-	write(t, partial, "Groups/DM a/messages.json", strings.Replace(one, "group/topic/message", "group/topic/new", 1))
+	write(t, partial, "Groups/DM a/messages.json", strings.Replace(fixtureMessages(t), "group/topic/message", "group/topic/new", 1))
 	opts.Roots = []string{partial}
 	_, err = Import(t.Context(), st, opts)
 	require.NoError(err)
 	var group, profile sql.NullString
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT metadata FROM conversations`).Scan(&group))
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT sync_config FROM sources`).Scan(&profile))
-	for _, tc := range []struct{ metadata, container, unknown, raw string }{
-		{group.String, "group_files", "unknown_group", groupRaw},
-		{profile.String, "owner_profiles", "unknown_profile", profileRaw},
-	} {
-		var container map[string][]provenance
-		require.NoError(json.Unmarshal([]byte(tc.metadata), &container))
-		require.Len(container[tc.container], 1)
-		assert.Equal(tc.raw, container[tc.container][0].Data, "container source bytes survive database normalization")
-		var data map[string]any
-		require.NoError(json.Unmarshal([]byte(container[tc.container][0].Data), &data))
-		assert.Equal(map[string]any{"retained": true}, data[tc.unknown])
+	var evidence struct {
+		Files []provenance `json:"group_files"`
 	}
+	require.NoError(json.Unmarshal([]byte(group.String), &evidence))
+	assert.ElementsMatch([]provenance{
+		{Path: "Groups/DM a/group_info.json", Data: groupRaw},
+		{Path: "Groups/DM a/messages.json"},
+	}, evidence.Files, "relative container provenance is retained once")
+	assert.JSONEq(`{"owner_profile_path":"Users/User synthetic/user_info.json"}`, profile.String)
+	assert.NotContains(profile.String, "unknown_profile", "owner profile JSON is validated without being retained")
+	assert.NotContains(group.String, full)
+	assert.NotContains(profile.String, full)
 	var metadata string
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT metadata FROM messages ORDER BY id LIMIT 1`).Scan(&metadata))
-	assert.NotContains(metadata, "unknown_group")
-	assert.NotContains(metadata, "unknown_profile")
-	assert.NotContains(metadata, "provider_record")
-	assert.Contains(metadata, "group_info.json")
-	assert.Contains(metadata, "user_info.json")
+	for _, key := range []string{"unknown_group", "unknown_profile", "provider_record", "group_info.json", "user_info.json", "messages.json"} {
+		assert.NotContains(metadata, key)
+	}
 }
 
 func TestImportGoogleChatRunAccounting(t *testing.T) {
@@ -125,12 +117,12 @@ func TestImportGoogleChatRunAccounting(t *testing.T) {
 			require := require.New(t)
 			st := testutil.NewTestStore(t)
 			root := t.TempDir()
-			write(t, root, "Groups/DM a/messages.json", one)
+			write(t, root, "Groups/DM a/messages.json", fixtureMessages(t))
 			if mode == "failed" {
 				write(t, root, "Groups/Space b/messages.json", `{"messages":[`)
 			}
 			if mode == "cancelled" {
-				write(t, root, "Groups/Space b/messages.json", strings.ReplaceAll(one, "group/topic/message", "group/topic/second"))
+				write(t, root, "Groups/Space b/messages.json", strings.ReplaceAll(fixtureMessages(t), "group/topic/message", "group/topic/second"))
 			}
 			opts := ImportOptions{Me: "owner@example.com", Roots: []string{root}}
 			var summary *ImportSummary

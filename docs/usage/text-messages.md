@@ -535,7 +535,12 @@ command on the daemon host; a remote client cannot upload local exports.
 The importer keeps provider message IDs, folder conversation IDs, topic IDs,
 original date strings and full message records, including unknown fields. English
 UTC dates become timestamps; other dates remain unknown and are counted. It does
-not infer reply links from topic IDs or identify people by display name.
+not infer reply links from topic IDs or identify people by display name. Roster
+members remain conversation members; they never become message recipients, even
+in two-person DMs. Sender and body search remain available. Relative input-file
+paths and group metadata are kept once on each conversation. Owner profiles are
+validated while reading; only one relative profile path is retained on the source,
+without profile JSON or host directory paths.
 
 All supplied parts are indexed before importing. Limits are 128 roots, 100,000
 indexed entries, 64 MiB per JSON file, and 250 MiB per attachment. Media matches
@@ -548,9 +553,13 @@ its referenced `export_name` within the conversation directory and replay to
 repair the missing media slot.
 
 Output reports supplied conversations and messages, additions, duplicates,
-unsupported records, unknown senders, unparsed dates, unsupported roster members, stored/missing media and
-memberships with no supplied messages. These counts describe only supplied
-files. Re-run all parts after an interruption or missing-media extraction: replay
+unsupported records, unknown senders, unparsed dates, unsupported roster members,
+stored/missing media and memberships with no supplied messages. These counts describe only supplied
+files. Conflicting individual message IDs are counted as unsupported and skipped;
+the first committed snapshot stays unchanged and later records continue. Invalid
+containers, ambiguous files, resource limits, storage failures and unsupported
+stored raw formats stop the run. Earlier committed messages remain available.
+Re-run all parts after an interruption or missing-media extraction: replay
 adds missing messages and fills missing media slots. Previously stored text,
 metadata and bytes stay as first imported. Membership is additive. Absence from
 a later export never deletes archived history. `--no-default-identity` skips

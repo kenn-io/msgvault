@@ -24,6 +24,7 @@ const maxRoots = 128
 type part struct {
 	root         *os.Root
 	path, groups string
+	prefix       string
 }
 type groupPart struct {
 	part *part
@@ -32,7 +33,7 @@ type groupPart struct {
 type exportReader struct {
 	parts       []*part
 	groups      map[string][]groupPart
-	users       []provenance
+	profilePath string
 	memberships map[string]bool
 	entries     int
 }
@@ -97,6 +98,7 @@ func openExport(ctx context.Context, roots []string, owner string) (reader *expo
 						}
 						p.root = nested
 						p.path = filepath.Join(absolute, prefix)
+						p.prefix = prefix
 					}
 					found = true
 					break
@@ -150,7 +152,9 @@ func openExport(ctx context.Context, roots []string, owner string) (reader *expo
 					return errors.New("googlechat: supplied owner profile disagrees with --me")
 				}
 			}
-			reader.users = append(reader.users, provenance{Root: p.path, Path: path, Data: string(raw)})
+			if reader.profilePath == "" {
+				reader.profilePath = filepath.Join(p.prefix, path)
+			}
 			for _, membership := range info.Memberships {
 				if membership.State == "MEMBER_JOINED" {
 					reader.memberships[membership.Group] = true
@@ -252,7 +256,7 @@ func (r *exportReader) groupFiles(ctx context.Context, id, name string) (jsontex
 			return nil, nil, fmt.Errorf("googlechat: conflicting %s for %s", name, id)
 		}
 		first = raw
-		entry := provenance{Root: candidate.part.path, Path: filepath.Join(candidate.dir, name)}
+		entry := provenance{Path: filepath.Join(candidate.part.prefix, candidate.dir, name)}
 		if name == "group_info.json" {
 			entry.Data = string(raw)
 		}

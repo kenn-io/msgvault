@@ -31,7 +31,10 @@ or Groups, or are Groups themselves. ZIP/TGZ files must be extracted first.
 Replays add missing messages and repair missing media. Stored snapshots and
 bytes remain unchanged. Only exact export filenames are matched. Missing media,
 unsupported records, unknown dates and incomplete membership coverage are
-reported; Takeout does not guarantee lifetime history.
+reported; Takeout does not guarantee lifetime history. Rosters establish membership,
+never delivery recipients. Conflicting message IDs are counted and skipped while
+later records continue. Structural or storage errors stop the run; earlier commits
+remain available for replay.
 
 Examples:
   msgvault import-google-chat --me owner@example.com ./part-001 ./part-002

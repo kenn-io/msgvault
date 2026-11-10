@@ -21,7 +21,12 @@ func write(t *testing.T, root, name, content string) {
 	testutil.WriteFile(t, root, name, []byte(content))
 }
 
-const one = `{"messages":[{"creator":{"name":"Example Owner","email":"owner@example.com","user_type":"Human"},"created_date":"Monday, January 18, 2021 at 1:27:33\u202fPM UTC","text":"Bodyneedle synthetic","topic_id":"topic-a","message_id":"group/topic/message","future":{"keep":true},"attached_files":[{"original_name":"example.txt","export_name":"File-example.txt"}]}]}`
+func fixtureMessages(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile("testdata/takeout/Takeout/Google Chat/Groups/DM synthetic-dm/messages.json")
+	require.NoError(t, err)
+	return strings.TrimSpace(string(data))
+}
 
 func TestImportGoogleChatCounts(t *testing.T) {
 	assert := assert.New(t)
@@ -63,15 +68,18 @@ func TestImportGoogleChatRawMetadata(t *testing.T) {
 	require.NoError(json.Unmarshal([]byte(metadata), &meta))
 	assert.Equal("topic-a", meta["topic_id"])
 	assert.Equal("DM synthetic-dm", meta["group_id"])
-	assert.Contains(metadata, "messages.json")
+	assert.NotContains(metadata, "messages.json", "container provenance is not duplicated per message")
+	var conversationMetadata string
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT metadata FROM conversations WHERE source_conversation_id='DM synthetic-dm'`).Scan(&conversationMetadata))
 	var fileMeta struct {
-		Files []provenance `json:"message_files"`
+		Files []provenance `json:"group_files"`
 	}
-	require.NoError(json.Unmarshal([]byte(metadata), &fileMeta))
+	require.NoError(json.Unmarshal([]byte(conversationMetadata), &fileMeta))
 	require.NotEmpty(fileMeta.Files)
 	for _, file := range fileMeta.Files {
-		_, err := os.Stat(filepath.Join(file.Root, file.Path))
-		require.NoError(err, "stored file provenance resolves to supplied input")
+		assert.False(filepath.IsAbs(file.Path))
+		_, err := os.Stat(filepath.Join(opts.Roots[0], file.Path))
+		require.NoError(err, "relative provenance resolves under the supplied input")
 	}
 	raw, err := st.GetMessageRawContext(t.Context(), id)
 	require.NoError(err)
@@ -90,7 +98,7 @@ func TestImportGoogleChatReplayKeepsSnapshot(t *testing.T) {
 	require.NoError(err)
 	// A partial later export cannot clear text, raw bytes or stored media.
 	root := t.TempDir()
-	write(t, root, "Groups/DM synthetic-dm/messages.json", strings.Replace(one, "Bodyneedle synthetic", "replacement", 1))
+	write(t, root, "Groups/DM synthetic-dm/messages.json", strings.Replace(fixtureMessages(t), "Bodyneedle synthetic", "replacement", 1))
 	opts.Roots = []string{root}
 	summary, err := Import(t.Context(), st, opts)
 	require.NoError(err)
@@ -125,7 +133,7 @@ func TestImportGoogleChatMultipartRepairAndOrder(t *testing.T) {
 			require := require.New(t)
 			st := testutil.NewTestStore(t)
 			a, b := t.TempDir(), t.TempDir()
-			write(t, a, "Google Chat/Groups/DM test/messages.json", one)
+			write(t, a, "Google Chat/Groups/DM test/messages.json", fixtureMessages(t))
 			opts := ImportOptions{Me: "owner@example.com", Roots: []string{a}, AttachmentsDir: t.TempDir()}
 			summary, err := Import(t.Context(), st, opts)
 			require.NoError(err)
@@ -156,7 +164,7 @@ func TestImportGoogleChatInterruptedReplay(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
-	first := strings.TrimSuffix(strings.TrimPrefix(one, `{"messages":[`), `]}`)
+	first := strings.TrimSuffix(strings.TrimPrefix(fixtureMessages(t), `{"messages":[`), `]}`)
 	write(t, root, "Groups/DM a/messages.json", `{"messages":[`+first+`,`+strings.ReplaceAll(first, "group/topic/message", "group/topic/second")+`]}`)
 	opts := ImportOptions{Me: "owner@example.com", Roots: []string{root}}
 	summary, err := cancelAfterCommittedMessage(t, st, opts)
@@ -170,8 +178,8 @@ func TestImportGoogleChatInterruptedReplay(t *testing.T) {
 
 func TestImportGoogleChatValidation(t *testing.T) {
 	for _, tc := range []struct{ name, me, data, want string }{
-		{"missing owner", "", one, "--me"}, {"display address", "Example <owner@example.com>", one, "--me"},
-		{"malformed", "owner@example.com", `{"messages":[`, "JSON"}, {"trailing", "owner@example.com", one + ` {}`, "JSON"},
+		{"missing owner", "", fixtureMessages(t), "--me"}, {"display address", "Example <owner@example.com>", fixtureMessages(t), "--me"},
+		{"malformed", "owner@example.com", `{"messages":[`, "JSON"}, {"trailing", "owner@example.com", fixtureMessages(t) + ` {}`, "JSON"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -191,7 +199,7 @@ func TestImportGoogleChatMediaSafety(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			a, b := t.TempDir(), t.TempDir()
 			require.NoError(os.MkdirAll(filepath.Join(b, "Groups"), 0700))
-			write(t, a, "Groups/DM a/messages.json", strings.ReplaceAll(one, "File-example.txt", tc.ref))
+			write(t, a, "Groups/DM a/messages.json", strings.ReplaceAll(fixtureMessages(t), "File-example.txt", tc.ref))
 			dir := filepath.Join(a, "Groups/DM a")
 			switch tc.name {
 			case "nonregular":
@@ -231,7 +239,7 @@ func TestImportGoogleChatMediaSafety(t *testing.T) {
 
 func TestImportGoogleChatStorageFailure(t *testing.T) {
 	root := t.TempDir()
-	write(t, root, "Groups/DM a/messages.json", one)
+	write(t, root, "Groups/DM a/messages.json", fixtureMessages(t))
 	write(t, root, "Groups/DM a/File-example.txt", "bytes")
 	blocked := filepath.Join(t.TempDir(), "file")
 	require.NoError(t, os.WriteFile(blocked, []byte("blocked"), 0600))
@@ -245,7 +253,7 @@ func TestImportGoogleChatMembershipIsAdditiveOnDuplicateReplay(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
-	write(t, root, "Groups/Space a/messages.json", one)
+	write(t, root, "Groups/Space a/messages.json", fixtureMessages(t))
 	write(t, root, "Groups/Space a/group_info.json", `{"members":[{"email":"peer@example.net","name":"Example Peer"}]}`)
 	opts := ImportOptions{Me: "owner@example.com", Roots: []string{root}}
 	_, err := Import(t.Context(), st, opts)
@@ -260,13 +268,30 @@ func TestImportGoogleChatMembershipIsAdditiveOnDuplicateReplay(t *testing.T) {
 }
 
 func TestImportGoogleChatConflictingDuplicateRecord(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
-	first := strings.TrimSuffix(strings.TrimPrefix(one, `{"messages":[`), `]}`)
-	write(t, root, "Groups/DM a/messages.json", `{"messages":[`+first+`,`+strings.Replace(first, "Bodyneedle", "changed", 1)+`]}`)
-	summary, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{root}})
-	require.ErrorContains(t, err, "conflicting message ID")
-	assert.EqualValues(t, 1, summary.MessagesAdded)
+	first := strings.TrimSuffix(strings.TrimPrefix(fixtureMessages(t), `{"messages":[`), `]}`)
+	later := strings.ReplaceAll(first, "group/topic/message", "group/topic/later")
+	write(t, root, "Groups/DM a/messages.json", `{"messages":[`+first+`,`+strings.Replace(first, "Bodyneedle", "changed", 1)+`,`+later+`]}`)
+	opts := ImportOptions{Me: "owner@example.com", Roots: []string{root}}
+	for _, replay := range []bool{false, true} {
+		summary, err := Import(t.Context(), st, opts)
+		require.NoError(err)
+		assert.Equal(1, summary.Unsupported)
+		if replay {
+			assert.Zero(summary.MessagesAdded)
+			assert.Equal(2, summary.Duplicates)
+		} else {
+			assert.EqualValues(2, summary.MessagesAdded)
+		}
+	}
+	var id int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='group/topic/message'`).Scan(&id))
+	raw, err := st.GetMessageRawContext(t.Context(), id)
+	require.NoError(err)
+	assert.Equal(first, string(raw))
 }
 
 func TestImportGoogleChatReplayKeepsOriginalMediaSlots(t *testing.T) {
@@ -274,7 +299,7 @@ func TestImportGoogleChatReplayKeepsOriginalMediaSlots(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
-	original := strings.Replace(one, `"export_name":"File-example.txt"`, `"export_name":"File-example.txt"},{"original_name":"second.txt","export_name":"File-second.txt"`, 1)
+	original := strings.Replace(fixtureMessages(t), `"export_name":"File-example.txt"`, `"export_name":"File-example.txt"},{"original_name":"second.txt","export_name":"File-second.txt"`, 1)
 	write(t, root, "Groups/DM a/messages.json", original)
 	write(t, root, "Groups/DM a/File-example.txt", "first bytes")
 	opts := ImportOptions{Me: "owner@example.com", Roots: []string{root}, AttachmentsDir: t.TempDir()}
@@ -365,7 +390,7 @@ func TestImportGoogleChatConversationKindRequiresRosterEvidence(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			root := t.TempDir()
-			write(t, root, "Groups/"+tc.group+"/messages.json", one)
+			write(t, root, "Groups/"+tc.group+"/messages.json", fixtureMessages(t))
 			if tc.roster != "" {
 				write(t, root, "Groups/"+tc.group+"/group_info.json", tc.roster)
 			}
@@ -377,7 +402,7 @@ func TestImportGoogleChatConversationKindRequiresRosterEvidence(t *testing.T) {
 			assert.Equal(tc.want, kind)
 			if tc.name == "two person DM" {
 				require.NoError(os.Remove(filepath.Join(root, "Groups", tc.group, "group_info.json")))
-				write(t, root, "Groups/"+tc.group+"/messages.json", strings.ReplaceAll(one, "group/topic/message", "group/topic/new"))
+				write(t, root, "Groups/"+tc.group+"/messages.json", strings.ReplaceAll(fixtureMessages(t), "group/topic/message", "group/topic/new"))
 				_, err = Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{root}})
 				require.NoError(err)
 				require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT conversation_type FROM conversations`).Scan(&kind))

@@ -14,7 +14,7 @@ const SOURCE_TYPES: Readonly<Record<string, string>> = {
   apple_messages: 'Apple Messages', facebook_messenger: 'Facebook Messenger',
   facebook_comments: 'Facebook Page comments',
   instagram_comments: 'Instagram comments',
-  'google-groups': 'Google Groups'
+  'google-groups': 'Google Groups', google_chat: 'Google Chat'
 };
 export function sourceTypeLabel(code: string): string {
   return Object.hasOwn(SOURCE_TYPES, code) ? SOURCE_TYPES[code]! : sentenceCase(code);

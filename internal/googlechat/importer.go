@@ -52,12 +52,23 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 			retErr = st.CompleteSyncContext(cleanup, syncID, "")
 		}
 	}()
-	if len(reader.users) > 0 {
-		config, err := mergeContainerEvidence(source.SyncConfig, "owner_profiles", reader.users)
+	if reader.profilePath != "" {
+		config := map[string]jsontext.Value{}
+		if source.SyncConfig.Valid {
+			if err := json.Unmarshal([]byte(source.SyncConfig.String), &config); err != nil {
+				return summary, err
+			}
+		}
+		delete(config, "owner_profiles")
+		config["owner_profile_path"], err = json.Marshal(reader.profilePath)
 		if err != nil {
 			return summary, err
 		}
-		if err := st.UpdateSourceSyncConfig(ctx, source.ID, config.String); err != nil {
+		raw, err := json.Marshal(config)
+		if err != nil {
+			return summary, err
+		}
+		if err := st.UpdateSourceSyncConfig(ctx, source.ID, string(raw)); err != nil {
 			return summary, err
 		}
 	}
@@ -122,12 +133,12 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 	if err != nil {
 		return false, err
 	}
-	if len(groupPaths) > 0 {
+	if len(groupPaths)+len(paths) > 0 {
 		prior, err := st.GetConversationMetadataContext(ctx, conversationID)
 		if err != nil {
 			return false, err
 		}
-		metadata, err := mergeContainerEvidence(prior, "group_files", groupPaths)
+		metadata, err := mergeContainerEvidence(prior, "group_files", append(groupPaths, paths...))
 		if err != nil {
 			return false, err
 		}
@@ -136,8 +147,6 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 		}
 	}
 	summary.Conversations++
-	var members []store.ConversationParticipantRef
-	memberEmails := map[int64]string{}
 	for _, member := range info.Members {
 		id, err := resolve(member)
 		if err != nil {
@@ -150,8 +159,6 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 		if err := st.EnsureConversationParticipantContext(ctx, conversationID, id, "member"); err != nil {
 			return false, err
 		}
-		memberEmails[id], _ = NormalizeOwner(member.Email)
-		members = append(members, store.ConversationParticipantRef{ParticipantID: id, Role: "member"})
 	}
 	if raw == nil {
 		return false, nil
@@ -189,14 +196,16 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 			continue
 		}
 		if previous, ok := seen[m.ID]; ok && !bytes.Equal(previous, record) {
-			return false, fmt.Errorf("googlechat: conflicting message ID %q", m.ID)
+			summary.Unsupported++
+			continue
 		}
 		seen[m.ID] = record
 		stored := existing[m.ID]
 		id := stored.ID
 		if id != 0 {
 			if stored.ConversationID != conversationID {
-				return false, fmt.Errorf("googlechat: conflicting message ID %q in another conversation", m.ID)
+				summary.Unsupported++
+				continue
 			}
 			if len(stored.Raw) == 0 {
 				return false, fmt.Errorf("googlechat: unsupported or unreadable stored raw format for %q", m.ID)
@@ -238,29 +247,11 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 			refs = append(refs, store.ConversationParticipantRef{ParticipantID: sender, Role: "member"})
 			recipients = append(recipients, store.RecipientSet{Type: "from", ParticipantIDs: []int64{sender}, DisplayNames: []string{m.Creator.Name}})
 		}
-		// Only a verified two-person DM has an unambiguous peer. Current group
-		// membership does not establish historical message delivery.
-		var to []int64
-		var toEmails []string
-		if kind == "direct_chat" {
-			for _, member := range members {
-				if member.ParticipantID != sender {
-					to = append(to, member.ParticipantID)
-					toEmails = append(toEmails, memberEmails[member.ParticipantID])
-				}
-			}
-		}
-		if len(to) > 0 {
-			recipients = append(recipients, store.RecipientSet{Type: "to", ParticipantIDs: to})
-		}
 		metadata, err := json.Marshal(struct {
-			Group    string       `json:"group_id"`
-			Topic    string       `json:"topic_id"`
-			Created  string       `json:"created_date"`
-			Files    []provenance `json:"message_files"`
-			Groups   []provenance `json:"group_files"`
-			Profiles []provenance `json:"owner_profiles"`
-		}{group, m.Topic, m.Created, paths, provenancePaths(groupPaths), provenancePaths(reader.users)})
+			Group   string `json:"group_id"`
+			Topic   string `json:"topic_id"`
+			Created string `json:"created_date"`
+		}{group, m.Topic, m.Created})
 		if err != nil {
 			return false, err
 		}
@@ -276,7 +267,7 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 		id, err = st.PersistMessageContext(ctx, &store.MessagePersistData{
 			Message:      &store.Message{SourceID: sourceID, SourceMessageID: m.ID, MessageType: store.MessageTypeGoogleChat, SentAt: sql.NullTime{Time: sent, Valid: !sent.IsZero()}, SenderID: sql.NullInt64{Int64: sender, Valid: sender != 0}, IsFromMe: sender != 0 && email == owner, Snippet: sql.NullString{String: snippet, Valid: snippet != ""}, SizeEstimate: int64(len(record))},
 			Conversation: &store.ConversationPersistData{SourceConversationID: group, ConversationType: kind, Title: info.Name, Participants: refs, PreserveExistingType: preserveKind, PreserveExistingParticipants: true},
-			RawMIME:      record, RawFormat: "google_chat_json", BodyText: sql.NullString{String: m.Text, Valid: m.Text != ""}, Metadata: &sql.NullString{String: string(metadata), Valid: true}, Recipients: recipients, MIMEAttachmentReplacement: replacement, FTS: &store.FTSDoc{Body: m.Text, FromAddr: email, ToAddrs: strings.Join(toEmails, " ")},
+			RawMIME:      record, RawFormat: "google_chat_json", BodyText: sql.NullString{String: m.Text, Valid: m.Text != ""}, Metadata: &sql.NullString{String: string(metadata), Valid: true}, Recipients: recipients, MIMEAttachmentReplacement: replacement, FTS: &store.FTSDoc{Body: m.Text, FromAddr: email},
 		})
 		if err != nil {
 			return false, fmt.Errorf("googlechat: persist message: %w", err)
@@ -305,7 +296,7 @@ func mergeContainerEvidence(prior sql.NullString, key string, incoming []provena
 	for _, file := range incoming {
 		found := false
 		for _, previous := range files {
-			if previous.Root == file.Root && previous.Path == file.Path && previous.Data == file.Data {
+			if previous.Path == file.Path && previous.Data == file.Data {
 				found = true
 				break
 			}
@@ -321,12 +312,4 @@ func mergeContainerEvidence(prior sql.NullString, key string, incoming []provena
 	metadata[key] = raw
 	raw, err = json.Marshal(metadata)
 	return sql.NullString{String: string(raw), Valid: err == nil}, err
-}
-
-func provenancePaths(files []provenance) []provenance {
-	paths := make([]provenance, len(files))
-	for i, file := range files {
-		paths[i] = provenance{Root: file.Root, Path: file.Path}
-	}
-	return paths
 }
