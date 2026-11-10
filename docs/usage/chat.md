@@ -482,7 +482,7 @@ place. `last_talked` includes the last contact time and channel; its `brief` is
 }
 ```
 
-On SQLite, an empty first page for an incomplete `from:` name or address can include `hints`, for example `{"code":"sender_name_requires_address","message":"…","retry_with":{"query":"from:alex@example.com"}}`. Retry with that query and keep the other tool arguments, including `account`, `limit`, and `offset`. The legacy `search_messages` metadata mode returns the same hints.
+`from:` accepts a sender name, address, or domain. See [sender matching](https://msgvault.io/docs/usage/searching/#domain-search) for the matching rules.
 
 Use `offset` and `limit` to request subsequent pages. `search_metadata`,
 `search_message_bodies`, `semantic_search_messages`, and `list_messages` default to `limit = 20` and

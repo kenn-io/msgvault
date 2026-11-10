@@ -39,6 +39,9 @@ func manualSyncCLICommand(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
+	if args[0] == "source" {
+		return len(args) >= 3 && args[1] == "facebook-comments" && args[2] == "sync"
+	}
 	switch args[0] {
 	case "sync-slack", "sync-teams", "sync-beeper", "sync-chatwoot", "sync-discord", "sync-matrix", "sync-inline", "backfill-inline-media", "sync-circleback", "sync-plaud",
 		"sync-pocket", "sync-notion-meetings", "sync-twenty", "sync-muesli", "sync-granola", "sync-omi", "sync-calendar", "sync-synctech-sms", "sync-twilio",

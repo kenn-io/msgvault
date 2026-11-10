@@ -11,20 +11,10 @@ import (
 	"go.kenn.io/msgvault/internal/vector"
 )
 
-// BuildFilter translates a parsed Gmail-syntax query into a
-// vector.Filter by resolving address/label tokens to IDs against the
-// main DB. Matches the semantics of the existing SQLite search path
-// (internal/store/api.go): address operators use substring LIKE
-// against participants.email_address; labels are matched by exact
-// name; subject terms, size bounds, attachment and date filters pass
-// through unchanged.
-//
-// Repeated same-field operators (e.g. `from:alice from:bob`,
-// `to:alice to:bob`, `label:promo label:billing`) preserve per-token
-// AND semantics at the message level: each token resolves to a group
-// of participant/label IDs, and the backend emits one EXISTS clause
-// per group, AND'd together. A single message with two `from`
-// recipients (one alice, one bob) satisfies both tokens.
+// BuildFilter translates a parsed Gmail-syntax query into a vector.Filter.
+// Sender terms remain message-level predicates so From-header names can differ
+// between messages from the same participant. Recipient and label tokens resolve
+// to ID groups; repeated recipient tokens remain independent requirements.
 //
 // Caller is responsible for any additional filter fields that do not
 // derive from the query string (e.g. a SourceID coming from an HTTP
@@ -40,6 +30,7 @@ func BuildFilter(ctx context.Context, db *sql.DB, rebind func(string) string, q 
 	if q == nil {
 		return f, nil
 	}
+	f.SenderTerms = append([]string(nil), q.FromAddrs...)
 	f.AccountScopes = append(search.AccountScopesFromQuery(q), search.CloneAccountScopes(q.AccountScopes)...)
 	if rebind == nil {
 		rebind = identityRebind
@@ -49,7 +40,6 @@ func BuildFilter(ctx context.Context, db *sql.DB, rebind func(string) string, q 
 		addrs []string
 		dst   *[][]int64
 	}{
-		{q.FromAddrs, &f.SenderGroups},
 		{q.ToAddrs, &f.ToGroups},
 		{q.CcAddrs, &f.CcGroups},
 		{q.BccAddrs, &f.BccGroups},
@@ -122,9 +112,8 @@ func BuildFilter(ctx context.Context, db *sql.DB, rebind func(string) string, q 
 
 // ApplyMessageFilter intersects an exact structured TUI filter with the
 // Gmail-syntax filter already built from the user's search query. Address,
-// domain, and label drill values are resolved with equality semantics; this
-// deliberately differs from user-authored from:/label: operators, which keep
-// their documented substring behavior.
+// domain, and label drill values resolve with equality semantics.
+// User-authored from:/label: operators keep their documented matching rules.
 func ApplyMessageFilter(
 	ctx context.Context,
 	db *sql.DB,

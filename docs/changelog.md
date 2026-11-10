@@ -8,6 +8,12 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.
+- [Facebook Page comment sync](usage/facebook-comments.md) archives comments and
+  nested replies on organic, visitor, and ad posts returned for a selected Page.
+  Search the archive and link commenters through existing people tools. This
+  does not send messages or include Instagram or ad-creative discovery.
+
 - A source build replaces a local daemon from its release or an earlier one, and prints the restart command when another source build of that release is running.
 
 - Messages can show live archive rows while auto mode rebuilds its analytical cache after an upgrade, and keeps them available if the rebuild fails.
@@ -21,14 +27,14 @@ All notable changes to msgvault, grouped by release.
   message keeps the type its sender chose, such as `feed_item`, for search
   and export filters, and a retry updates it instead of adding a copy. See
   [Messages from any source](usage/message-import.md). It needs HTTP API
-  schema 3.49.0.
+  schema 3.50.0.
 - `msgvault search --message-type` accepts any type of lowercase letters,
   digits, and underscores, so it can filter imported types.
 - Plaud syncs wait longer and slow down when Plaud reports too many requests,
   so fewer recordings fail in a run. A new `limit` setting on `[[plaud]]` caps
   how many recordings each scheduled run checks. See [Plaud sources](configuration.md#plaud-sources).
 - CLI search and sender, domain, and label lists now report when more results match, with a hint to fetch more. Full-text and list JSON stay arrays; semantic JSON includes one actionable `hints` entry at a time. Semantic hints name the server's page cap and any measured hybrid candidate cap that must increase before raising `--limit`. Raise the named settings and restart the daemon first. Complete combined candidate sets stay quiet.
-- Empty sender searches suggest matching addresses and a query you can retry, including incomplete addresses such as `from:alex@exam`. CLI hints stay on stderr, and MCP metadata results carry structured retry hints. Counts keep your search filters and account scope.
+- `from:` now finds messages by sender name, address, or phone number across CLI, MCP, and web search, replacing address retry hints. Full addresses match exactly, and domains match by suffix. Repeated `from:` values must all match, including in CLI searches that previously matched any value.
 
 - See who is waiting on a reply from you, and whose reply you are waiting on,
   with [open loops](usage/open-loops.md). `msgvault loops list` shows them, and

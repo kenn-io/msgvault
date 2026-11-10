@@ -28,6 +28,7 @@ const (
 )
 
 var topLevelCommandGroups = map[string]string{
+	"source":                 helpGroupSources,
 	"activity":               helpGroupIndex,
 	"add-account":            helpGroupSources,
 	"add-beeper":             helpGroupSources,

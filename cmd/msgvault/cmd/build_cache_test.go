@@ -1569,6 +1569,7 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 				);
 				CREATE TABLE sync_runs (
 					id INTEGER PRIMARY KEY,
+					sync_type TEXT NOT NULL DEFAULT '',
 					source_id INTEGER,
 					started_at DATETIME,
 					completed_at DATETIME,
@@ -1686,6 +1687,7 @@ func TestBuildCache_PublishesSnapshotWhenZeroCounterRunInterruptedDuringExport(t
 			_, err = db.ExecContext(t.Context(), `
 				CREATE TABLE sync_runs (
 					id INTEGER PRIMARY KEY,
+					sync_type TEXT NOT NULL DEFAULT '',
 					source_id INTEGER,
 					started_at DATETIME,
 					completed_at DATETIME,
@@ -1746,6 +1748,7 @@ func TestCacheNeedsBuild_DetectsOlderRunFailingAfterNewerFailure(t *testing.T) {
 	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE sync_runs (
 			id INTEGER PRIMARY KEY,
+			sync_type TEXT NOT NULL DEFAULT '',
 			source_id INTEGER,
 			started_at DATETIME,
 			completed_at DATETIME,
@@ -1796,6 +1799,7 @@ func TestBuildCache_PublishesSnapshotWhenOlderRunFailsDuringExport(t *testing.T)
 	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE sync_runs (
 			id INTEGER PRIMARY KEY,
+			sync_type TEXT NOT NULL DEFAULT '',
 			source_id INTEGER,
 			started_at DATETIME,
 			completed_at DATETIME,
@@ -1860,6 +1864,7 @@ func TestCacheNeedsBuild_AddOnlySyncUsesIncrementalBuild(t *testing.T) {
 	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE sync_runs (
 			id INTEGER PRIMARY KEY,
+			sync_type TEXT NOT NULL DEFAULT '',
 			source_id INTEGER,
 			started_at DATETIME,
 			completed_at DATETIME,
@@ -4223,6 +4228,7 @@ func TestCacheNeedsBuild_LabelOnlySyncRequiresFullRebuild(t *testing.T) {
 	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE sync_runs (
 			id INTEGER PRIMARY KEY,
+			sync_type TEXT NOT NULL DEFAULT '',
 			source_id INTEGER,
 			started_at DATETIME,
 			completed_at DATETIME,
@@ -4270,6 +4276,7 @@ func TestCacheNeedsBuild_CalendarUpdateRebuildsModalityNeutralCache(t *testing.T
 		INSERT INTO sources (id, source_type, identifier) VALUES (2, 'gcal', 'user@example.com/primary');
 		CREATE TABLE sync_runs (
 			id INTEGER PRIMARY KEY,
+			sync_type TEXT NOT NULL DEFAULT '',
 			source_id INTEGER,
 			started_at DATETIME,
 			completed_at DATETIME,
@@ -4338,6 +4345,7 @@ func TestCacheNeedsBuild_UpdatedSyncCompletionOrderAndFailure(t *testing.T) {
 			_, err = db.ExecContext(t.Context(), `
 				CREATE TABLE sync_runs (
 					id INTEGER PRIMARY KEY,
+					sync_type TEXT NOT NULL DEFAULT '',
 					source_id INTEGER,
 					started_at DATETIME,
 					completed_at DATETIME,
@@ -4386,6 +4394,7 @@ func TestCacheNeedsBuild_UpdateCounterDecreaseRequiresRebuild(t *testing.T) {
 	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE sync_runs (
 			id INTEGER PRIMARY KEY,
+			sync_type TEXT NOT NULL DEFAULT '',
 			source_id INTEGER,
 			started_at DATETIME,
 			completed_at DATETIME,
@@ -4438,6 +4447,7 @@ func TestCacheNeedsBuild_IgnoresAlreadyProcessedUpdatedSyncRun(t *testing.T) {
 	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE sync_runs (
 			id INTEGER PRIMARY KEY,
+			sync_type TEXT NOT NULL DEFAULT '',
 			source_id INTEGER,
 			started_at DATETIME,
 			completed_at DATETIME,
@@ -4581,6 +4591,7 @@ func TestBuildCache_RecordsLastCompletedSyncRunID(t *testing.T) {
 	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE sync_runs (
 			id INTEGER PRIMARY KEY,
+			sync_type TEXT NOT NULL DEFAULT '',
 			source_id INTEGER,
 			started_at DATETIME,
 			completed_at DATETIME,
