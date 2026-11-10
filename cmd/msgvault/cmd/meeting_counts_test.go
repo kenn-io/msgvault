@@ -297,6 +297,36 @@ func TestMeetingCountBuildWithManyCalendarCopies(t *testing.T) {
 	assert.Equal(t, int64(1), count())
 }
 
+func TestMeetingCountsKeepSourceEvidenceWithSavedLink(t *testing.T) {
+	f := newMeetingCountArchive(t, time.Date(2027, 3, 7, 10, 0, 0, 0, time.UTC))
+	raw := `{"id":"series","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-07T10:00:00Z"},"end":{"dateTime":"2027-03-07T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=6"]}`
+	event := f.persist(t, "calendar", "series", "gcal_json", raw)
+	note := f.persist(t, "first", "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-21T10:00:00Z"}}`)
+	first := store.OccurrenceRef{MessageID: event, Key: "20270307T100000Z"}
+	second := store.OccurrenceRef{MessageID: event, Key: "20270321T100000Z"}
+	require.NoError(t, f.st.LinkMeetingContext(t.Context(), note, first))
+	require.NoError(t, f.st.UpsertMessageRawWithFormat(event, []byte(strings.Replace(raw, "COUNT=6", "COUNT=1", 1)), "gcal_json"))
+	_, err := buildCache(f.path, f.cache, true)
+	require.NoError(t, err)
+	count := func() int64 {
+		engine, err := query.NewDuckDBEngine(f.cache, f.path, f.st.DB())
+		require.NoError(t, err)
+		defer func() { require.NoError(t, engine.Close()) }()
+		person, err := engine.GetPerson(t.Context(), f.person, query.Context{}, nil)
+		require.NoError(t, err)
+		require.NotNil(t, person)
+		return person.MeetingCount
+	}
+	assert.Equal(t, int64(2), count())
+	require.NoError(t, f.st.UpsertMessageRawWithFormat(event, []byte(raw), "gcal_json"))
+	require.NoError(t, f.st.LinkMeetingContext(t.Context(), note, second))
+	require.NoError(t, f.st.UpsertMessageRawWithFormat(event, []byte(strings.Replace(raw, "COUNT=6", "COUNT=1", 1)), "gcal_json"))
+	require.NoError(t, f.st.UnlinkMeetingContext(t.Context(), note, second))
+	_, err = buildCache(f.path, f.cache, false)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), count())
+}
+
 func TestMeetingCountsRefreshAfterEvidenceChange(t *testing.T) {
 	f := newMeetingCountArchive(t, time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC))
 	raw := `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"first@example.org","startsAt":"2027-03-14T10:00:00Z"},"summary":"one"}`
