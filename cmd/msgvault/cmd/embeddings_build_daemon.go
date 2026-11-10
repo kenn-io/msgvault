@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/config"
 )
 
 func (a *storeAPIAdapter) runCLIEmbeddingsBuild(ctx context.Context, req api.CLIRunRequest, emit func(api.CLIRunEvent) error) error {
@@ -24,6 +25,25 @@ func (a *storeAPIAdapter) runCLIEmbeddingsBuild(ctx context.Context, req api.CLI
 					return err
 				}
 				defer closeLogs()
+				state := invocationFromCommand(cmd)
+				if state != nil && state.cfg != nil {
+					snapshot, err := config.ReadConfigFile(state.cfg.ConfigFilePath())
+					if err != nil {
+						return fmt.Errorf("read embedding configuration: %w", err)
+					}
+					if snapshot.Exists {
+						saved, err := state.cfg.ReloadConfigFile(snapshot)
+						if err != nil {
+							return fmt.Errorf("load embedding configuration: %w", err)
+						}
+						running := *state.cfg
+						saved.Vector.DBPath = running.Vector.DBPath
+						saved.Vector.Backend = running.Vector.Backend
+						saved.Vector.SkipExtensionCreate = running.Vector.SkipExtensionCreate
+						running.Vector = saved.Vector
+						state.cfg = &running
+					}
+				}
 				if err := validateEmbeddingBuildConfig(invocationFromCommand(cmd)); err != nil {
 					return err
 				}

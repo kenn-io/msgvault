@@ -49,7 +49,7 @@ needing embedding for it and activates it when complete. Otherwise it
 embeds any messages still needing embedding for the active generation.
 Pass --backstop for a full-scan pass that ignores the per-generation
 watermark, catching any straggler messages the incremental scan skipped.
-Scheduled syncs can run between committed embedding batches.
+Scheduled syncs can run during indexing.
 Configure daemon-wide SQL logging with [log] sql_trace or sql_slow_ms.`,
 	RunE: runEmbeddingsResume,
 }
@@ -92,7 +92,7 @@ atomically activates it.
 
 Requires [vector] to be enabled and [vector.embeddings] to configure an
 OpenAI-compatible endpoint or local_only = true for the shared local server.
-Scheduled syncs can run between committed embedding batches.
+Scheduled syncs can run during indexing.
 Configure daemon-wide SQL logging with [log] sql_trace or sql_slow_ms.`,
 		RunE: runEmbeddingsBuild,
 	}

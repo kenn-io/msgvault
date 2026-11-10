@@ -50,7 +50,7 @@ func runEmbedWithOptions(cmd *cobra.Command, opts managedEmbedOptions) error {
 		defer release()
 	}
 
-	s, err := store.Open(cfg.DatabaseDSN())
+	s, err := store.OpenContext(ctx, cfg.DatabaseDSN())
 	if err != nil {
 		return fmt.Errorf("open main db: %w", err)
 	}
@@ -61,7 +61,7 @@ func runEmbedWithOptions(cmd *cobra.Command, opts managedEmbedOptions) error {
 	// column, InitSchema's LegacyColumnMigrations adds it; without this
 	// the backfill UPDATE and CoverageCounts below fail with "no such
 	// column: embed_gen". serve.go does the same before setupVectorFeatures.
-	if err := s.InitSchema(); err != nil {
+	if err := s.InitSchemaContext(ctx); err != nil {
 		return fmt.Errorf("init schema: %w", err)
 	}
 

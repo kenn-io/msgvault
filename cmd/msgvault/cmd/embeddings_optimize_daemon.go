@@ -40,7 +40,7 @@ func (a *storeAPIAdapter) runCLIEmbeddingsOptimize(ctx context.Context, req api.
 				if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "Waiting for archive operation gate..."); err != nil {
 					return fmt.Errorf("report operation gate wait: %w", err)
 				}
-				lease, err := acquireOptimizeGate(ctx, a.operationGate)
+				lease, err := acquireOptimizeGate(cmd.Context(), a.operationGate)
 				if err != nil {
 					return err
 				}

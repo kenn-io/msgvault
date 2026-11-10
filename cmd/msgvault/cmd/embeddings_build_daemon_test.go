@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
@@ -396,4 +397,71 @@ func TestManagedEmbeddingsStreamsWorkerWarnings(t *testing.T) {
 		return nil
 	})
 	assert.Contains(t, stderr.String(), "embed batch failed", "build error: %v", err)
+}
+
+func TestManagedEmbeddingsBuildUsesSavedRecipeAndRunningArchive(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir, cfg.Data.DataDir = dir, dir
+	cfg.Vector.Enabled = true
+	cfg.Vector.DBPath = filepath.Join(dir, "vectors.db")
+	cfg.Vector.Embeddings.Model = "running-model"
+	cfg.Vector.Embeddings.Dimension = 4
+	cfg.Vector.Embeddings.APIKeyEnv = "TEST_EMBEDDING_KEY"
+	var model string
+	var inputs []string
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model string   `json:"model"`
+			Input []string `json:"input"`
+		}
+		if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
+			return
+		}
+		model = body.Model
+		inputs = body.Input
+		assert.NoError(t, writeFakeEmbeddingResponse(w, len(body.Input), 4))
+	}))
+	t.Cleanup(provider.Close)
+	cfg.Vector.Embeddings.Endpoint = provider.URL
+	saved := *cfg
+	saved.Vector.Embeddings.Model = "saved-model"
+	stripQuotes := false
+	saved.Vector.Preprocess.StripQuotes = &stripQuotes
+	saved.Vector.DBPath = filepath.Join(dir, "other-vectors.db")
+	require.NoError(t, saved.Save())
+	st, err := store.OpenForTest(t.Context(), cfg.DatabaseDSN())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(t, st.InitSchema())
+	_, _, err = testutil.CreateIndexedSourceMessage(t.Context(), st, "archive@example.test", "first", "First", "First message\n> quoted text")
+	require.NoError(t, err)
+	adapter := &storeAPIAdapter{config: cfg, store: st, operationGate: api.NewSerialOperationGate()}
+	err = adapter.RunCLICommand(t.Context(), api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes"}, Env: map[string]string{"TEST_EMBEDDING_KEY": "synthetic-key"}}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "saved-model", model)
+	require.Len(t, inputs, 1)
+	assert.Contains(t, inputs[0], "quoted text")
+	backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{Path: cfg.Vector.DBPath, MainPath: cfg.DatabaseDSN(), MainDB: st.DB(), Dimension: 4})
+	require.NoError(t, err)
+	defer func() { _ = backend.Close() }()
+	active, err := backend.ActiveGeneration(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, "saved-model", active.Model)
+	_, err = os.Stat(saved.Vector.DBPath)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestManagedEmbedCancelledBeforeStoreOpen(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir, cfg.Data.DataDir = dir, dir
+	ctx, cancel := context.WithCancel(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+	cancel()
+	cmd := &cobra.Command{}
+	cmd.SetContext(ctx)
+	err := runEmbedWithOptions(cmd, managedEmbedOptions{yield: func() error { return nil }})
+	require.ErrorIs(t, err, context.Canceled)
+	_, err = os.Stat(cfg.DatabaseDSN())
+	assert.ErrorIs(t, err, os.ErrNotExist)
 }
