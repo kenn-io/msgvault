@@ -28,6 +28,8 @@ const (
 )
 
 var topLevelCommandGroups = map[string]string{
+	"archive":                 helpGroupWrite,
+	"unarchive":               helpGroupWrite,
 	"cli":                     helpGroupOperations,
 	"source":                  helpGroupSources,
 	"address":                 helpGroupPeople,

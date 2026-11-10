@@ -3,9 +3,7 @@ package cmd
 import (
 	"context"
 	"errors"
-	"net/mail"
 	"slices"
-	"strings"
 
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
@@ -17,9 +15,6 @@ var _ api.MessageArchiveStore = (*storeAPIAdapter)(nil)
 
 // ArchiveMessage reuses tag source ownership, readback, and guarded persistence.
 func (a *storeAPIAdapter) ArchiveMessage(ctx context.Context, id int64, change emailtags.ArchiveChange, grant *agentgrant.Grant, acquireWrite func(context.Context) (func(), error)) (*emailtags.ArchiveResult, error) {
-	if change.Archived == nil {
-		return nil, emailtags.Failure("invalid_request", "archived must be true or false", nil, nil)
-	}
 	authorize := func(ctx context.Context) error {
 		source, err := a.store.GetMessageSourceContext(ctx, id)
 		if err != nil {
@@ -49,8 +44,8 @@ func (a *storeAPIAdapter) ArchiveMessage(ctx context.Context, id int64, change e
 					return emailtags.Failure("permission_denied", "Message has no recorded From envelope", nil, nil)
 				}
 				for _, sender := range senders {
-					address, parseErr := mail.ParseAddress(strings.TrimSpace(sender.EnvelopeAddress))
-					if parseErr != nil || address == nil || !strings.Contains(address.Address, "@") || !slices.Contains(allowed, store.NormalizeIdentifierForCompare(address.Address)) {
+					_, key, parseErr := parseStoredMailbox(sender.EnvelopeAddress)
+					if parseErr != nil || !slices.Contains(allowed, key) {
 						return emailtags.Failure("permission_denied", "Grant does not allow archiving this From envelope", nil, nil)
 					}
 				}
@@ -61,13 +56,7 @@ func (a *storeAPIAdapter) ArchiveMessage(ctx context.Context, id int64, change e
 		}
 		return nil
 	}
-	input := &emailtags.MessageTagChange{DryRun: change.DryRun}
-	if *change.Archived {
-		input.Remove = []string{"INBOX"}
-	} else {
-		input.Add = []string{"INBOX"}
-	}
-	result, err := a.messageTags(ctx, id, input, "", acquireWrite, authorize)
+	result, err := a.messageTags(ctx, id, nil, "", acquireWrite, &change, authorize)
 	if result == nil {
 		return nil, err
 	}

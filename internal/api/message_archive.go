@@ -64,6 +64,15 @@ func (s *Server) handleMessageArchive(w http.ResponseWriter, r *http.Request) {
 			writeOperationGateBusy(w, r, s.operationGate)
 			return
 		}
+		// Archive authority covers the INBOX toggle, not unrelated label state.
+		// The backend already checks this message's source against the grant.
+		if auth.Grant != nil && !auth.Grant.HasPermission(agentgrant.PermissionMessageRead) {
+			if failure, ok := errors.AsType[*emailtags.MessageTagError](err); ok {
+				redacted := *failure
+				redacted.Result = nil
+				err = &redacted
+			}
+		}
 		s.writeEmailTagError(w, err)
 		return
 	}

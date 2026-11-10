@@ -44,8 +44,5 @@ func (c *Client) ArchiveMessage(ctx context.Context, id int64, change emailtags.
 }
 
 func archiveResponseError(change emailtags.ArchiveChange, cause error) error {
-	if !change.DryRun {
-		return emailtags.Failure("remote_unknown", "archive update outcome is unknown; read current tags or retry the desired state", nil, cause)
-	}
-	return cause
+	return messageWriteResponseError(!change.DryRun, "archive update outcome is unknown; read current tags or retry the desired state", cause)
 }

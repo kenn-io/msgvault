@@ -48,8 +48,12 @@ func (c *Client) MessageTags(ctx context.Context, id int64, change *emailtags.Me
 }
 
 func messageTagResponseError(change *emailtags.MessageTagChange, cause error) error {
-	if change != nil && !change.DryRun {
-		return emailtags.Failure("remote_unknown", "tag update outcome is unknown; read current tags before retrying", nil, cause)
+	return messageWriteResponseError(change != nil && !change.DryRun, "tag update outcome is unknown; read current tags before retrying", cause)
+}
+
+func messageWriteResponseError(write bool, message string, cause error) error {
+	if write {
+		return emailtags.Failure("remote_unknown", message, nil, cause)
 	}
 	return cause
 }
