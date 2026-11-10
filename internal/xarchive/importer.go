@@ -41,7 +41,6 @@ type provenance struct {
 	Filename     string         `json:"source_file"`
 	Conversation string         `json:"conversation_id"`
 	Owner        string         `json:"owner_id"`
-	Account      jsontext.Value `json:"account,omitempty"`
 	Membership   jsontext.Value `json:"observed_membership_event,omitempty"`
 }
 
@@ -103,6 +102,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 	if _, err := resolve(owner); err != nil {
 		return summary, err
 	}
+	var convID int64
 	retErr = a.events(ctx, func(rec record) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -111,11 +111,12 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 		if rec.Group {
 			kind = "group_chat"
 		}
-		convID, err := st.EnsureConversationWithTypeContext(ctx, source.ID, rec.Peer, kind, "")
-		if err != nil {
-			return err
-		}
 		if rec.Raw == nil {
+			var err error
+			convID, err = st.EnsureConversationWithTypeContext(ctx, source.ID, rec.Peer, kind, "")
+			if err != nil {
+				return err
+			}
 			if rec.Group {
 				summary.GroupConversations++
 			} else {
@@ -128,7 +129,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 			summary.InvalidRecords++
 			return nil
 		}
-		prov := provenance{Filename: rec.Filename, Conversation: rec.Peer, Owner: owner, Account: a.account}
+		prov := provenance{Filename: rec.Filename, Conversation: rec.Peer, Owner: owner}
 		if e.Join != nil && rec.Group {
 			for _, id := range e.Join.Participants {
 				if !validID(id) {

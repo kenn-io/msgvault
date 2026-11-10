@@ -12,9 +12,6 @@ import {
 } from './labels';
 
 describe('explore labels', () => {
-  it('presents imported X DMs as chat items', () => {
-    expect(entryKindPresentation('', 'x_dm').label).toBe('Conversation item');
-  });
   it('names filter dimensions as chips and falls back to sentence case', () => {
     expect(filterDimensionLabel('source')).toBe('Source');
     expect(filterDimensionLabel('participant')).toBe('Person');
@@ -94,6 +91,7 @@ describe('entryKindPresentation', () => {
     ['fbmessenger', 'Conversation'],
     ['matrix', 'Conversation'],
     ['telegram', 'Conversation'],
+    ['x_dm', 'Conversation'],
     ['chat', 'Conversation'],
     ['meeting_transcript', 'Meeting'],
     ['meeting_note', 'Meeting'],

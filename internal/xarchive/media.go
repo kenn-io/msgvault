@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -18,9 +17,9 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-// mediaPath maps evidenced /dm/<id>/<token>/<filename> URLs to their exported
-// <id>-<filename> files. Local paths must stay inside the matching media folder.
-func mediaPath(value string, group bool) (string, bool) {
+// mediaPath follows the archive viewer: message ID plus the URL filename.
+// Local paths must stay inside the matching media folder.
+func mediaPath(value, messageID string, group bool) (string, bool) {
 	dir := "direct_messages_media"
 	if group {
 		dir = "direct_messages_group_media"
@@ -29,23 +28,14 @@ func mediaPath(value string, group bool) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	if u.IsAbs() {
-		if u.Scheme != "https" && u.Scheme != "http" {
-			return "", false
-		}
-		parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
-		if len(parts) != 4 || parts[0] != "dm" || !validID(parts[1]) || parts[2] == "" || parts[3] == "" || parts[3] == "." || parts[3] == ".." || strings.ContainsAny(parts[3], `\`) {
-			return "", false
-		}
-		return dir + "/" + parts[1] + "-" + parts[3], true
-	}
-	if u.Host != "" || u.RawQuery != "" || u.Fragment != "" || !filepath.IsLocal(value) || strings.ContainsAny(value, `\`) {
+	if !u.IsAbs() || (u.Scheme != "https" && u.Scheme != "http") {
 		return "", false
 	}
-	if path.Clean(value) != value || path.Dir(value) != dir {
+	filename := u.Path[strings.LastIndex(u.Path, "/")+1:]
+	if filename == "" || filename == "." || filename == ".." || strings.ContainsAny(filename, `\`) {
 		return "", false
 	}
-	return value, true
+	return dir + "/" + messageID + "-" + filename, true
 }
 
 func mediaWrites(ctx context.Context, st *store.Store, root *os.Root, messageID int64, m *message, group bool, dest string, summary *ImportSummary) ([]store.AttachmentWrite, error) {
@@ -71,7 +61,7 @@ func mediaWrites(ctx context.Context, st *store.Store, root *os.Root, messageID 
 				continue
 			}
 		}
-		relative, ok := mediaPath(original, group)
+		relative, ok := mediaPath(original, m.ID, group)
 		meta, err := json.Marshal(map[string]string{"original_url": original, "source_file": relative})
 		if err != nil {
 			return nil, err
@@ -90,20 +80,15 @@ func mediaWrites(ctx context.Context, st *store.Store, root *os.Root, messageID 
 			if err == nil && info.Mode().IsRegular() && info.Size() <= attachmentpolicy.DefaultChatMaxBytes {
 				f, openErr := root.Open(relative)
 				if openErr == nil {
-					actual, statErr := f.Stat()
-					if statErr == nil && actual.Mode().IsRegular() && actual.Size() <= attachmentpolicy.DefaultChatMaxBytes {
-						write.StoragePath, write.ContentHash, write.Size, err = export.StoreAttachmentStream(ctx, dest, f, attachmentpolicy.DefaultChatMaxBytes)
-						closeErr := f.Close()
-						if errors.Is(err, export.ErrAttachmentTooLarge) {
-							err = nil
-						} else if err != nil {
-							return nil, fmt.Errorf("xarchive: store media: %w", err)
-						}
-						if closeErr != nil {
-							return nil, closeErr
-						}
-					} else {
-						_ = f.Close()
+					write.StoragePath, write.ContentHash, write.Size, err = export.StoreAttachmentStream(ctx, dest, f, attachmentpolicy.DefaultChatMaxBytes)
+					closeErr := f.Close()
+					if errors.Is(err, export.ErrAttachmentTooLarge) {
+						err = nil
+					} else if err != nil {
+						return nil, fmt.Errorf("xarchive: store media: %w", err)
+					}
+					if closeErr != nil {
+						return nil, closeErr
 					}
 				}
 			}

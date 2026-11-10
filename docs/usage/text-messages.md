@@ -546,10 +546,11 @@ Service and membership events are skipped as messages and counted in the summary
 Invalid records and unknown events are counted separately.
 
 Local media comes from `direct_messages_media` or
-`direct_messages_group_media`. A `/dm/<id>/<token>/<filename>` URL maps to
-`<id>-<filename>` in the corresponding directory. URLs are never fetched.
-Paths must remain inside that directory and the supplied root. Nonregular,
-missing, unsafe or oversized files remain missing attachments. The existing
+`direct_messages_group_media`. The archive viewer names each file
+`<messageCreate.id>-<URL filename>` in the corresponding directory, including
+video URLs. Video naming has synthetic test coverage against the viewer code;
+no real video record is included in the fixtures. URLs are never fetched.
+Nonregular, missing, unsafe or oversized files remain missing attachments. The existing
 250 MiB chat attachment limit applies. Each JSON event is limited to 1 MiB;
 whole conversations are streamed without a conversation-size limit.
 

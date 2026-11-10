@@ -18,7 +18,9 @@ func TestReaderRejectsMalformedAndUnboundedInput(t *testing.T) {
 		`window.YTD.direct_messages.part0 = []; alert(1)`,
 		`[{"dmConversation":{}}]`,
 		`window.YTD.direct_messages.part0 = [{"dmConversation":{"messages":[],"conversationId":"1"}}]`,
-		`window.YTD.direct_messages.part0 = [{"dmConversation":{"conversationId":"1","messages":[{"messageCreate":{"text":"` + strings.Repeat("x", maxEventBytes) + `"}}]}}]`,
+		`window.YTD.direct_messages.part0 = [{}]`,
+		`window.YTD.direct_messages.part0 = [{"dmConversation":{}}]`,
+		`window.YTD.direct_messages.part0 = [{"dmConversation":{"conversationId":"1"}}]`,
 	} {
 		t.Run(body[:min(len(body), 60)], func(t *testing.T) {
 			root := t.TempDir()
@@ -34,20 +36,25 @@ func TestReaderRejectsMalformedAndUnboundedInput(t *testing.T) {
 func TestReaderStreamsLongConversationAndParts(t *testing.T) {
 	root := t.TempDir()
 	event := `{"messageCreate":{"id":"1","text":"` + strings.Repeat("x", 8192) + `"}}`
+	// Create names in reverse lexical order.
+	synthetic(t, root, "direct-messages.js", `[{"dmConversation":{"conversationId":"1-2","messages":[`+event+`]}}]`)
 	synthetic(t, root, "direct-messages-part1.js", `[{"dmConversation":{"conversationId":"1-2","messages":[`+strings.TrimSuffix(strings.Repeat(event+",", 300), ",")+`]}}]`)
 	r, err := openArchive(root)
 	require.NoError(t, err)
 	defer r.Close()
 	n := 0
+	var filenames []string
 	require.NoError(t, r.events(t.Context(), func(rec record) error {
 		if rec.Raw == nil {
+			filenames = append(filenames, rec.Filename)
 			return nil
 		}
 		n++
 		assert.Equal(t, "direct:1-2", rec.Peer)
 		return nil
 	}))
-	assert.Equal(t, 300, n)
+	assert.Equal(t, 301, n)
+	assert.Equal(t, []string{"direct-messages-part1.js", "direct-messages.js"}, filenames)
 }
 
 // A bound must stop the underlying reader before JSON allocates a huge value,

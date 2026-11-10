@@ -15,9 +15,11 @@ Synthetic owner `100001` occurs in both excerpts. Media arrays in the excerpts a
 
 ## Media reference evidence
 
-`media-reference.js` is a further one-message excerpt from the same direct-message source. Every personal value was replaced. The `mediaUrls` value retains the producer's URL path shape with synthetic ID, token, and filename segments. Aggregate inspection found 12 media URLs in the source and 12 matching supplied filenames using the producer's `URL segment 4 + '-' + URL segment 6` rule under `data/direct_messages_media/`. No image or other media bytes were downloaded. A companion file for this fixture must contain synthetic bytes and be labeled accordingly. The redacted URL resolves to `100002-asset.png`.
+`media-reference.js` is a further one-message excerpt from the same direct-message source. Every personal value was replaced. The `mediaUrls` value retains the producer's URL path shape with synthetic ID, token, and filename segments. Aggregate inspection found 12 media URLs in the source and 12 matching supplied filenames using `messageCreate.id + '-' + URL basename` under `data/direct_messages_media/`. No image or other media bytes were downloaded. A companion file for this fixture must contain synthetic bytes and be labeled accordingly. The redacted URL resolves to `100002-asset.png`.
 
-Account metadata, numbered parts, containment cases and companion media bytes in tests are synthetic. The media-reference excerpt uses an independently redacted ID namespace; tests import it separately.
+The same export’s [viewer asset](https://github.com/larsbrinkhoff/twitter-data/blob/bedf1fa56839650efa7cc704303a21bfb18bc833/assets/js/ondemand.App.ab1ee9b858dd3ab2e479.js) constructs local filenames from `messageCreate.id`, a hyphen and the final URL segment, and recognizes `https://video.twimg.com/` as video. The URL’s intermediate path segments do not determine the local filename. Tests with mismatched message/URL IDs and video URLs are synthetic checks of this viewer contract; no real video record or bytes were acquired.
+
+Account metadata, offset timestamps, numbered parts, containment cases and companion media bytes in tests are synthetic. The media-reference excerpt uses an independently redacted ID namespace; tests import it separately.
 
 ## Documentation and parser references
 

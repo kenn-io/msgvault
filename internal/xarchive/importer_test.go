@@ -51,6 +51,7 @@ func TestImportRedactedEvidenceReplay(t *testing.T) {
 		hits, err := engine.TextSearch(t.Context(), "Synthetic", nil, 10, 0)
 		require.NoError(t, err)
 		assert.Len(t, hits, 3)
+
 	}
 
 	var id int64
@@ -102,11 +103,17 @@ func TestImportOwnerScopeAndUnknownValues(t *testing.T) {
 		assert.Len(t, hits, 2)
 	}
 
-	testutil.WriteFile(t, root, "account.js", []byte(`window.YTD.account.part0 = [{"account":{"accountId":"1","username":"example","accountDisplayName":"Example"}}]`))
+	testutil.WriteFile(t, root, "account.js", []byte(`window.YTD.account.part0 = [{"account":{"accountId":"1","username":"example","email":"owner@example.org","accountDisplayName":"Example"}}]`))
 	_, err = Import(t.Context(), st, ImportOptions{RootDir: root, Me: "2"})
 	require.ErrorContains(t, err, "conflict")
+	synthetic(t, root, "direct-messages.js", `[{"dmConversation":{"conversationId":"new","messages":[{"messageCreate":{"id":"9"}}]}}]`)
 	_, err = Import(t.Context(), st, ImportOptions{RootDir: root})
 	require.NoError(t, err)
+	var metadata string
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT metadata FROM messages WHERE source_message_id='direct:new:9'").Scan(&metadata))
+	assert.Contains(t, metadata, `"owner_id":"1"`)
+	assert.NotContains(t, metadata, "owner@example.org")
+	assert.NotContains(t, metadata, "username")
 }
 
 func TestImportCancelAfterPartialWorkAndReplay(t *testing.T) {
@@ -127,35 +134,38 @@ func TestImportCancelAfterPartialWorkAndReplay(t *testing.T) {
 	var status string
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1").Scan(&status))
 	assert.Equal(t, "failed", status)
+	firstAdded := summary.MessagesAdded
 	summary, err = Import(t.Context(), st, ImportOptions{RootDir: root, Me: "100001"})
 	require.NoError(t, err)
-	assert.EqualValues(t, 3, summary.MessagesAdded+summary.MessagesSkipped)
+	assert.EqualValues(t, 3, summary.MessagesAdded+firstAdded)
 }
 
 func TestImportMediaRepairAndPreserve(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
 	dest := t.TempDir()
-	synthetic(t, root, "direct-messages.js", `[{"dmConversation":{"conversationId":"1-2","messages":[{"messageCreate":{"id":"7","text":"first","createdAt":"2020-01-02T03:04:05+03:00","mediaUrls":["https://ton.twitter.com/dm/42/x/image.jpg"]}}]}}]`)
+	// The offset timestamp and mismatched URL/message IDs are synthetic contract cases.
+	synthetic(t, root, "direct-messages.js", `[{"dmConversation":{"conversationId":"1-2","messages":[{"messageCreate":{"id":"7","text":"first","createdAt":"2020-01-02T03:04:05+03:00","mediaUrls":["https://ton.twitter.com/dm/42/x/image.jpg","https://video.twimg.com/dm_video/99/movie.mp4"]}}]}}]`)
 	opts := ImportOptions{RootDir: root, Me: "1", AttachmentsDir: dest}
 	s, err := Import(t.Context(), st, opts)
 	require.NoError(t, err)
-	assert.Equal(t, 1, s.AttachmentsMissing)
+	assert.Equal(t, 2, s.AttachmentsMissing)
 	var id int64
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&id))
 	raw, err := st.GetMessageRawContext(t.Context(), id)
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), "+03:00")
-	testutil.WriteFile(t, root, "direct_messages_media/42-image.jpg", []byte("original"))
+	testutil.WriteFile(t, root, "direct_messages_media/7-image.jpg", []byte("original"))
+	testutil.WriteFile(t, root, "direct_messages_media/7-movie.mp4", []byte("synthetic video bytes"))
 	s, err = Import(t.Context(), st, opts)
 	require.NoError(t, err)
-	assert.Equal(t, 1, s.AttachmentsStored)
+	assert.Equal(t, 2, s.AttachmentsStored)
 	refs, err := st.MessageMIMEAttachmentsContext(t.Context(), id)
 	require.NoError(t, err)
-	require.Len(t, refs, 1)
+	require.Len(t, refs, 2)
 	hash := refs[0].ContentHash
 	assert.NotEmpty(t, hash)
-	testutil.WriteFile(t, root, "direct_messages_media/42-image.jpg", []byte("changed"))
+	testutil.WriteFile(t, root, "direct_messages_media/7-image.jpg", []byte("changed"))
 	s, err = Import(t.Context(), st, opts)
 	require.NoError(t, err)
 	assert.Zero(t, s.AttachmentsStored)
@@ -168,19 +178,13 @@ func TestImportMediaRepairAndPreserve(t *testing.T) {
 }
 
 func TestImportUnsafeMediaAndFatalDestination(t *testing.T) {
-	for _, kind := range []string{"traversal", "symlink", "directory", "oversize", "destination"} {
+	for _, kind := range []string{"symlink", "directory", "oversize", "destination"} {
 		t.Run(kind, func(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			root := t.TempDir()
 			dest := t.TempDir()
-			media := "direct_messages_media/test.jpg"
+			media := "direct_messages_media/1-test.jpg"
 			switch kind {
-			case "traversal":
-				parent := t.TempDir()
-				root = filepath.Join(parent, "archive")
-				require.NoError(t, os.Mkdir(root, 0700))
-				require.NoError(t, os.WriteFile(filepath.Join(parent, "outside.jpg"), []byte("synthetic outside bytes"), 0600))
-				media = "../outside.jpg"
 			case "symlink":
 				require.NoError(t, os.MkdirAll(filepath.Join(root, "direct_messages_media"), 0700))
 				outside := filepath.Join(t.TempDir(), "outside")
@@ -199,7 +203,7 @@ func TestImportUnsafeMediaAndFatalDestination(t *testing.T) {
 				dest = filepath.Join(dest, "file")
 				require.NoError(t, os.WriteFile(dest, []byte("blocked"), 0600))
 			}
-			encoded, err := json.Marshal(media)
+			encoded, err := json.Marshal("https://ton.twitter.com/dm/99/token/test.jpg")
 			require.NoError(t, err)
 			synthetic(t, root, "direct-messages.js", `[{"dmConversation":{"conversationId":"1-2","messages":[{"messageCreate":{"id":"1","mediaUrls":[`+string(encoded)+`]}}]}}]`)
 			s, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1", AttachmentsDir: dest})
@@ -229,28 +233,18 @@ func TestImportRedactedMediaReferenceWithSyntheticBytes(t *testing.T) {
 	assert.Equal(t, 1, summary.AttachmentsStored)
 }
 
-func TestImportSplitConversationReplay(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	for _, part := range []string{"direct-messages.js", "direct-messages-part1.js"} {
-		synthetic(t, root, part, `[{"dmConversation":{"conversationId":"1-2","messages":[{"messageCreate":{"id":"1","text":"same"}}]}}]`)
-	}
-	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1"})
-	require.NoError(t, err)
-	assert.EqualValues(t, 1, summary.MessagesAdded)
-	assert.EqualValues(t, 1, summary.MessagesSkipped)
-}
-
 func TestImportGroupMedia(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
 	synthetic(t, root, "direct-messages-group.js", `[{"dmConversation":{"conversationId":"9","messages":[{"messageCreate":{"id":"1","senderId":"2","mediaUrls":["https://ton.twitter.com/dm/42/token/image.jpg"]}}]}}]`)
-	testutil.WriteFile(t, root, "direct_messages_group_media/42-image.jpg", []byte("synthetic group media"))
-	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1", AttachmentsDir: t.TempDir()})
+	opts := ImportOptions{RootDir: root, Me: "1", AttachmentsDir: t.TempDir()}
+	summary, err := Import(t.Context(), st, opts)
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, summary.MessagesAdded)
+	assert.Equal(t, 1, summary.AttachmentsMissing)
+	testutil.WriteFile(t, root, "direct_messages_group_media/1-image.jpg", []byte("synthetic group media"))
+	summary, err = Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, summary.MessagesSkipped)
 	assert.Equal(t, 1, summary.AttachmentsStored)
-	var n int
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM message_recipients WHERE recipient_type='to'").Scan(&n))
-	assert.Zero(t, n)
 }

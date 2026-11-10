@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"regexp"
 	"strings"
@@ -28,7 +29,6 @@ var numericID = regexp.MustCompile(`^[0-9]+$`)
 
 type archive struct {
 	root        *os.Root
-	account     []byte
 	owner, name string
 }
 type record struct {
@@ -67,9 +67,6 @@ func (a *archive) readAccount(ctx context.Context) error {
 		return errors.New("xarchive: account.js must be a regular file")
 	}
 	f, err := a.root.Open("account.js")
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
 	if err != nil {
 		return err
 	}
@@ -99,63 +96,46 @@ func (a *archive) readAccount(ctx context.Context) error {
 	if len(rows) != 1 || !validID(rows[0].Account.ID) {
 		return errors.New("xarchive: account.js must identify one numeric account")
 	}
-	a.owner, a.name, a.account = rows[0].Account.ID, rows[0].Account.Name, b
+	a.owner, a.name = rows[0].Account.ID, rows[0].Account.Name
 	return nil
 }
 func validID(s string) bool { return numericID.MatchString(s) && strings.TrimLeft(s, "0") != "" }
 
 func (a *archive) events(ctx context.Context, visit func(record) error) error {
-	dir, err := a.root.Open(".")
+	entries, err := fs.ReadDir(a.root.FS(), ".")
 	if err != nil {
 		return err
 	}
-	defer dir.Close()
 	found := false
-	for {
-		entries, e := dir.ReadDir(64)
-		if e != nil && !errors.Is(e, io.EOF) {
-			return e
+	for _, entry := range entries {
+		name := entry.Name()
+		if !archiveFile.MatchString(name) {
+			continue
 		}
-		for _, entry := range entries {
-			name := entry.Name()
-			if !archiveFile.MatchString(name) {
-				continue
-			}
-			found = true
-			info, err := a.root.Stat(name)
-			if err != nil {
-				return err
-			}
-			if !info.Mode().IsRegular() {
-				return errors.New("xarchive: archive input must be a regular file")
-			}
-			f, err := a.root.Open(name)
-			if err != nil {
-				return err
-			}
-			info, err = f.Stat()
-			if err == nil && !info.Mode().IsRegular() {
-				err = errors.New("xarchive: archive input must be a regular file")
-			}
-			if err == nil {
-				group := strings.HasPrefix(name, "direct-messages-group")
-				expected := "direct_messages"
-				if group {
-					expected += "_group"
-				}
-				var input io.Reader
-				input, err = unwrap(&export.ContextReader{Context: ctx, Reader: f}, expected)
-				if err == nil {
-					err = readEvents(ctx, input, name, group, visit)
-				}
-			}
-			err = errors.Join(err, f.Close())
-			if err != nil {
-				return fmt.Errorf("xarchive: %s: %w", name, err)
-			}
+		found = true
+		info, err := a.root.Stat(name)
+		if err != nil {
+			return err
 		}
-		if errors.Is(e, io.EOF) {
-			break
+		if !info.Mode().IsRegular() {
+			return errors.New("xarchive: archive input must be a regular file")
+		}
+		f, err := a.root.Open(name)
+		if err != nil {
+			return err
+		}
+		group := strings.HasPrefix(name, "direct-messages-group")
+		expected := "direct_messages"
+		if group {
+			expected += "_group"
+		}
+		input, err := unwrap(&export.ContextReader{Context: ctx, Reader: f}, expected)
+		if err == nil {
+			err = readEvents(ctx, input, name, group, visit)
+		}
+		err = errors.Join(err, f.Close())
+		if err != nil {
+			return fmt.Errorf("xarchive: %s: %w", name, err)
 		}
 	}
 	if !found {
@@ -246,13 +226,16 @@ func readEvents(ctx context.Context, input io.Reader, filename string, group boo
 		return err
 	}
 	for s.peek() != ']' {
+		conversationSeen := false
 		if err := s.object(func(key string) error {
 			if key != "dmConversation" {
 				_, err := s.value()
 				return err
 			}
+			conversationSeen = true
 			peer := ""
-			return s.object(func(key string) error {
+			messagesSeen := false
+			err := s.object(func(key string) error {
 				switch key {
 				case "conversationId":
 					t, err := s.token()
@@ -268,6 +251,7 @@ func readEvents(ctx context.Context, input io.Reader, filename string, group boo
 					}
 					return nil
 				case "messages":
+					messagesSeen = true
 					if peer == "" {
 						return errors.New("xarchive: conversationId must precede messages")
 					}
@@ -295,8 +279,15 @@ func readEvents(ctx context.Context, input io.Reader, filename string, group boo
 					return err
 				}
 			})
+			if err == nil && (peer == "" || !messagesSeen) {
+				err = errors.New("xarchive: dmConversation requires conversationId and messages")
+			}
+			return err
 		}); err != nil {
 			return err
+		}
+		if !conversationSeen {
+			return errors.New("xarchive: record requires dmConversation")
 		}
 	}
 	if err := s.want(']'); err != nil {
