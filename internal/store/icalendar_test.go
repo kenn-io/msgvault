@@ -26,21 +26,6 @@ func icsSource(t *testing.T, st *Store) int64 {
 	return source.ID
 }
 
-func TestReview1263CancelInvalidatesCache(t *testing.T) {
-	requirements := require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	source := icsSource(t, st)
-	_, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T120000Z"))
-	requirements.NoError(err)
-	before, err := st.DerivedDataRevisionContext(t.Context())
-	requirements.NoError(err)
-	_, err = st.PersistICalendarContext(t.Context(), source, calendarDocument("CANCEL", "SEQUENCE:2\r\nSTATUS:CANCELLED"))
-	requirements.NoError(err)
-	after, err := st.DerivedDataRevisionContext(t.Context())
-	requirements.NoError(err)
-	requirements.Greater(after, before)
-}
-
 func TestICalendarPersistenceRevisionsAndRebuild(t *testing.T) {
 	for _, behavior := range []string{"duplicate persist", "older sequence", "newer stamp", "cancellation", "rebuild"} {
 		t.Run(behavior, func(t *testing.T) {
@@ -91,10 +76,15 @@ func TestICalendarPersistenceRevisionsAndRebuild(t *testing.T) {
 			requirements.NoError(err)
 			accepted := calendarRows(t, st, id)[0]
 			cancel := calendarDocument("CANCEL", "STATUS:CANCELLED\r\nSEQUENCE:2\r\nDTSTAMP:20270301T130000Z")
+			before, err = st.DerivedDataRevisionContext(t.Context())
+			requirements.NoError(err)
 			_, err = st.PersistICalendarContext(t.Context(), source, cancel)
 			requirements.NoError(err)
 			switch behavior {
 			case "cancellation":
+				after, err := st.DerivedDataRevisionContext(t.Context())
+				requirements.NoError(err)
+				assertions.Greater(after, before)
 				row := calendarRows(t, st, id)[0]
 				requirements.NotEmpty(accepted.Event.Attendees)
 				assertions.Equal(accepted.Event.Attendees, row.Event.Attendees)
