@@ -25,6 +25,8 @@ type objectMetadata struct {
 	Organic            bool   `json:"organic,omitempty"`
 	Visitor            bool   `json:"visitor,omitempty"`
 	Ad                 bool   `json:"ad,omitempty"`
+	// Hidden is set by a webhook hide or unhide; polling keeps it.
+	Hidden *bool `json:"hidden,omitempty"`
 }
 
 func (m objectMetadata) matches(app, page, account, root string) bool {

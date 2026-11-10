@@ -626,6 +626,7 @@ type Config struct {
 	GCal               []GCalSource              `toml:"gcal"`
 	Beeper             BeeperConfig              `toml:"beeper"`
 	Chatwoot           []ChatwootSource          `toml:"chatwoot"`
+	MetaWebhooks       MetaWebhooksConfig        `toml:"meta_webhooks"`
 	FacebookComments   []FacebookCommentsSource  `toml:"facebook_comments"`
 	InstagramComments  []InstagramCommentsSource `toml:"instagram_comments"`
 	Matrix             MatrixConfig              `toml:"matrix"`
@@ -1174,6 +1175,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		slog.Warn("[attachments.documents] was removed; delete it and set [integrations.docbank] document_profile, see the Docbank section of docs/configuration.md; for Mistral run docbank processing probe --profile <name> --seeds <dir> (Docbank v0.17.0 or later)")
 	}
 	for _, key := range metadata.Undecoded() {
+		if len(key) > 0 && key[0] == "meta_webhooks" {
+			return nil, fmt.Errorf("unknown Meta webhooks config key %q", key.String())
+		}
 		if len(key) > 0 && key[0] == "instagram_comments" {
 			return nil, fmt.Errorf("unknown Instagram comments config key %q", key.String())
 		}
@@ -1337,6 +1341,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.applySynctechSMSDefaults()
 	cfg.applyGCalDefaults()
 	if err := cfg.validateChatwootSources(); err != nil {
+		return nil, err
+	}
+	if err := cfg.validateMetaWebhooks(); err != nil {
 		return nil, err
 	}
 	if err := cfg.validateFacebookCommentsSources(); err != nil {

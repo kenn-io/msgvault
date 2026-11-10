@@ -53,3 +53,27 @@ func (c *Client) objects(ctx context.Context, path, after string, q url.Values) 
 func (c *Client) safeCursor(cursor string) bool {
 	return len(cursor) <= 4096 && strings.IndexFunc(cursor, func(r rune) bool { return r < 32 || r == 127 }) < 0 && !strings.Contains(cursor, c.token)
 }
+
+// Post reads one Page post with the fields polling reads.
+func (c *Client) Post(ctx context.Context, id string) (Object, error) {
+	return c.node(ctx, id, "id,message,created_time,from")
+}
+
+// Comment reads one comment and the parent Meta declares for it.
+func (c *Client) Comment(ctx context.Context, id string) (Object, error) {
+	return c.node(ctx, id, "id,message,created_time,from,parent")
+}
+
+func (c *Client) node(ctx context.Context, id, fields string) (Object, error) {
+	if !safeObjectID(id) {
+		return Object{}, errors.New("invalid Graph object ID")
+	}
+	var obj Object
+	if err := c.get(ctx, url.PathEscape(id), url.Values{"fields": {fields}}, &obj); err != nil {
+		return Object{}, err
+	}
+	if obj.ID != id {
+		return Object{}, errors.New("graph object identity mismatch")
+	}
+	return obj, nil
+}

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-03"
+last_edited: "2026-11-10"
 title: Facebook Page Comments
 description: Archive comments on a selected Facebook Page and link commenters to existing people.
 ---
@@ -62,14 +62,16 @@ rotation gives accessible surfaces turns during persistent denial elsewhere.
 Completed surfaces rescan after real provider failures so later runs can find
 new comments on old organic posts. Missing or inaccessible objects never
 delete archived data. A budget pause keeps unfinished work for
-the next run. Provider errors retain partial writes and report a failure.
+the next run, which first reads each unfinished page again, one request per
+page, so it never archives an older copy over a newer webhook change. Provider
+errors retain partial writes and report a failure.
 
 The default budget is **1,000 API reads per Page per run**, including identity
 validation and nested reply reads. `--max-requests` must be positive. A budget
 of 1 permits identity validation only; collection needs at least 2. After a
 complete scan, each surface uses fresh cursors to find new comments on old posts.
 Large histories can therefore require many runs and repeated reads. This is
-bounded polling, not a webhook service or a guarantee of immediate capture.
+bounded polling. For changes as they happen, add [Meta webhooks](meta-webhooks.md).
 
 If a saved cursor expires or the checkpoint is incompatible or invalid,
 restart that selected source explicitly. Checkpoints from the earlier private
@@ -100,7 +102,8 @@ to a person you already maintain. No separate customer database is created.
 
 This integration archives returned text and identity/context metadata. It does
 not download post/comment media, manage Facebook personal-profile comments,
-or promise complete coverage of every ad variant. Use [Instagram comments](instagram-comments.md)
+or promise complete coverage of every ad variant. To archive comment changes
+between syncs, set up [Meta webhooks](meta-webhooks.md). Use [Instagram comments](instagram-comments.md)
 for linked professional accounts. Ad-creative discovery and public replies
 remain separate work. Threads uses its own authorization and source; a Page
 token does not authorize Threads.

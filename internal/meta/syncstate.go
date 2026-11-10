@@ -20,12 +20,15 @@ type syncState struct {
 }
 
 type phaseState struct {
-	After     string         `json:"after,omitempty"`
-	Exhausted bool           `json:"exhausted,omitempty"`
-	Done      bool           `json:"done,omitempty"`
-	Rescan    bool           `json:"rescan,omitempty"`
-	Posts     []Object       `json:"posts,omitempty"`
-	Stack     []commentFrame `json:"stack,omitempty"`
+	// PostsAfter is the cursor that read Posts, so a later run can read the
+	// same page again. After is the cursor for the page after it.
+	PostsAfter string         `json:"posts_after,omitempty"`
+	After      string         `json:"after,omitempty"`
+	Exhausted  bool           `json:"exhausted,omitempty"`
+	Done       bool           `json:"done,omitempty"`
+	Rescan     bool           `json:"rescan,omitempty"`
+	Posts      []Object       `json:"posts,omitempty"`
+	Stack      []commentFrame `json:"stack,omitempty"`
 }
 
 type commentFrame struct {
@@ -72,7 +75,7 @@ func loadState(ctx context.Context, st *store.Store, src *store.Source, full boo
 	if full {
 		return freshSourceState(src), nil
 	}
-	blob, err := savedCheckpoint(ctx, st, src.ID)
+	blob, err := savedCheckpoint(ctx, st, src)
 	if err != nil {
 		return nil, err
 	}
@@ -100,12 +103,14 @@ func loadState(ctx context.Context, st *store.Store, src *store.Source, full boo
 	return &state, nil
 }
 
-// savedCheckpoint returns the newer of the source's last completed cursor and
-// a later interrupted or paused checkpoint. Empty means start from the top.
-func savedCheckpoint(ctx context.Context, st *store.Store, sourceID int64) (string, error) {
+// savedCheckpoint returns the newer of the source's last completed polling
+// cursor and a later interrupted or paused polling checkpoint. Lookups are
+// scoped to the polling sync type, which is the source type, so webhook runs
+// never hide or replace polling progress. Empty means start from the top.
+func savedCheckpoint(ctx context.Context, st *store.Store, src *store.Source) (string, error) {
 	var blob string
 	var priorID int64
-	prior, err := st.GetLastSuccessfulSyncContext(ctx, sourceID)
+	prior, err := st.GetLastSuccessfulSyncByType(ctx, src.ID, src.SourceType)
 	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 		return "", err
 	}
@@ -113,7 +118,7 @@ func savedCheckpoint(ctx context.Context, st *store.Store, sourceID int64) (stri
 		blob = prior.CursorAfter.String
 		priorID = prior.ID
 	}
-	checkpoint, err := st.GetLatestCheckpointedSyncContext(ctx, sourceID)
+	checkpoint, err := st.GetLatestCheckpointedSyncByType(ctx, src.ID, src.SourceType)
 	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 		return "", err
 	}

@@ -1671,6 +1671,16 @@ keys, and invalid schedules are rejected. The source identifier is
 `app:<app_id>:page:<page_id>`; scheduled jobs use
 `facebook_comments:<source-identifier>`, independently of email account dispatch.
 
+### `[meta_webhooks]` {#meta-webhooks}
+
+Start a listener for signed Meta webhook deliveries (unreleased). See
+[Meta webhooks](usage/meta-webhooks.md) for setup. `listen_addr` is a
+`host:port` address; leave it empty to keep the receiver off. Each
+`[[meta_webhooks.apps]]` entry needs a decimal `app_id` and the names of the
+daemon environment variables that hold the app secret (`app_secret_env`) and
+the verify token (`verify_token_env`). App IDs must be unique, and a
+`listen_addr` needs at least one app. Unknown keys are rejected.
+
 ### `[[instagram_comments]]` {#instagram-comments}
 
 Select a professional Instagram account linked to an explicitly selected Page

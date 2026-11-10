@@ -77,7 +77,7 @@ func (imp *MentionImporter) ImportTags(ctx context.Context, app, page, account s
 	defer func() { retErr = errors.Join(retErr, execution.Release()) }()
 	var cursor tagCursor
 	if !opts.Full {
-		blob, err := savedCheckpoint(ctx, imp.store, source.ID)
+		blob, err := savedCheckpoint(ctx, imp.store, source)
 		if err != nil {
 			return nil, err
 		}
