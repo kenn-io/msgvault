@@ -21,6 +21,14 @@ var (
 	embeddingsActivateYes       bool
 )
 
+type managedEmbedOptions struct {
+	fullRebuild, yes, backstop bool
+	accounts, collections      []string
+	lookupEnv                  func(string) (string, bool)
+	passContext                func(context.Context) (context.Context, func())
+	yield                      func() error
+}
+
 const (
 	embeddingsCommandName        = "embeddings"
 	embeddingsOptimizeWorkerName = "__optimize-worker"

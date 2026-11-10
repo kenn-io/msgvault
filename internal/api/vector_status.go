@@ -426,9 +426,9 @@ func (s *Server) vectorHealthPublic() *VectorHealth {
 
 type publishedVectorConfigKey struct{}
 
-// withPublishedVectorConfig carries the running text vector recipe into store
+// WithPublishedVectorConfig carries the running text vector recipe into store
 // calls, which otherwise see the daemon's startup configuration.
-func (s *Server) withPublishedVectorConfig(ctx context.Context) context.Context {
+func (s *Server) WithPublishedVectorConfig(ctx context.Context) context.Context {
 	_, backend, cfg := s.vectorComponents()
 	if backend == nil {
 		return ctx

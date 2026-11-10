@@ -636,3 +636,33 @@ func TestLocalEmbeddingsFirstOllamaActivationRetriesAfterCredentialRepair(t *tes
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
 }
+
+func TestLocalEmbeddingsReleasesGateBeforeBackstop(t *testing.T) {
+	f := newLocalActivationFixture(t, "")
+	f.start(t)
+	f.runner.beforeBuild = func() {
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		release, ok := f.controller.gate.BeginWorkContext(ctx)
+		require.True(t, ok, "scheduled work can enter before the backstop starts")
+		release()
+	}
+	require.NoError(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
+	require.NotEmpty(t, f.runner.calls)
+	assert.Contains(t, f.runner.calls[len(f.runner.calls)-1], "--backstop")
+}
+
+func TestLocalEmbeddingsUsesManagedBackstop(t *testing.T) {
+	f := newLocalActivationFixture(t, "")
+	f.start(t)
+	f.controller.runner = &storeAPIAdapter{config: f.cfg, store: f.store, operationGate: f.controller.gate, embeddingsScheduler: f.scheduler}
+	require.NoError(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
+	active, err := f.handle.vf.Backend.ActiveGeneration(f.ctx)
+	require.NoError(t, err)
+	generations := embedGenByID(t, f.cfg.Data.DataDir)
+	require.Len(t, generations, 1)
+	for _, generation := range generations {
+		require.True(t, generation.Valid)
+		assert.Equal(t, int64(active.ID), generation.Int64)
+	}
+}
