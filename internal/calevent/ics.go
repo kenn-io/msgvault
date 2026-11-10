@@ -235,7 +235,7 @@ func icsTime(p *ical.Prop, loc *time.Location) (time.Time, bool, error) {
 	return v, false, err
 }
 
-var icsDurationPattern = regexp.MustCompile(`^\+?P(?:(\d+)W|(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?)$`)
+var icsDurationPattern = regexp.MustCompile(`(?i)^\+?P(?:(\d+)W|(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?)$`)
 
 // icsDuration splits a DURATION into nominal days and exact elapsed time.
 func icsDuration(value string) (int, time.Duration, error) {
