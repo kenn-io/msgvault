@@ -121,19 +121,29 @@ describe('PersonRecordActions', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
     const item = await screen.findByRole('menuitemcheckbox', { name: /Keep this profile updated/ });
     await waitFor(() => expect(item.textContent).toContain("Couldn't check"));
-    expect(item.textContent).not.toContain('Set up…');
+    expect(screen.getByRole('menuitem', { name: 'Set up people lookups…' })).toBeDefined();
     await fireEvent.click(item);
-    await waitFor(() => expect(item.textContent).not.toContain("Couldn't check"));
-    await waitFor(() => expect(item.getAttribute('aria-checked')).toBe(String(initiallyTracked)));
     if (initiallyTracked) {
-      expect(item.textContent).not.toContain('Set up…');
+      await waitFor(() => expect(item.getAttribute('aria-checked')).toBe('true'));
+      expect(screen.getByRole('menuitem', { name: 'Set up people lookups…' })).toBeDefined();
       await fireEvent.click(item);
-      await waitFor(() => expect(item.getAttribute('aria-checked')).toBe('false'));
-      expect(writes).toHaveLength(1);
+      await waitFor(() => expect(writes).toHaveLength(1));
       expect(setUp).not.toHaveBeenCalled();
     }
-    await waitFor(() => expect(item.textContent).toContain('Set up…'));
-    await fireEvent.click(item);
+    const setupRow = await screen.findByRole('menuitem', { name: /Keep this profile updated/ });
+    expect(setupRow.textContent).toContain('Set up…');
+    expect(screen.queryByRole('menuitemcheckbox')).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Set up people lookups…' })).toBeNull();
+    await fireEvent.click(setupRow);
+    expect(setUp).toHaveBeenCalledOnce();
+  });
+
+  it('opens setup for an enrolled person while lookups are off', async () => {
+    const setUp = vi.fn();
+    renderActions(async () => Response.json({ person_id: 7, tracked: true, tracked_at: when }), undefined, setUp);
+    await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    await waitFor(() => expect(screen.getByRole('menuitemcheckbox', { name: /Keep this profile updated/ }).getAttribute('aria-checked')).toBe('true'));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Set up people lookups…' }));
     expect(setUp).toHaveBeenCalledOnce();
   });
 

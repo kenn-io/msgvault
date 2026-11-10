@@ -139,9 +139,26 @@ test('Directory profile updates offer Set up… while people lookups are off', a
   await installMixedArchive(page);
   await page.goto(directoryURL(42));
   await page.getByRole('button', { name: 'More actions' }).click();
-  const item = page.getByRole('menuitemcheckbox', { name: /Keep this profile updated/ });
-  await item.click();
+  await expect(page.getByRole('menuitemcheckbox')).toHaveCount(0);
+  await page.getByRole('menuitem', { name: /Keep this profile updated/ }).click();
   await expect(page).toHaveURL(/settingsCategory%22%3A%22enrichment/);
+});
+
+test('Directory lets an enrolled person stop updates while people lookups are off', async ({ page }) => {
+  await installMixedArchive(page);
+  let tracked = true;
+  await page.route('**/api/v1/people/42/tracking', route => {
+    if (route.request().method() === 'PUT') tracked = (route.request().postDataJSON() as { tracked: boolean }).tracked;
+    return route.fulfill({ json: { person_id: 42, tracked, tracked_at: tracked ? '2026-08-01T00:00:00Z' : null } });
+  });
+  await page.goto(directoryURL(42));
+  await page.getByRole('button', { name: 'More actions' }).click();
+  const item = page.getByRole('menuitemcheckbox', { name: /Keep this profile updated/ });
+  await expect(item).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByRole('menuitem', { name: 'Set up people lookups…' })).toBeVisible();
+  await item.click();
+  await expect(page.getByRole('menuitem', { name: /Keep this profile updated/ })).toContainText('Set up…');
+  await expect(page.getByRole('menuitem', { name: 'Set up people lookups…' })).toHaveCount(0);
 });
 
 test('Directory retains rows after an invalid cursor and reloads page one', async ({ page }) => {

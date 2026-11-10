@@ -13,13 +13,11 @@
     /** What failed, as "Couldn't save"; the item then reads "… · Retry" and selecting it retries. */
     error?: string;
     onretry?: () => void;
-    /** The feature needs setup first: the item reads "Set up…" and opens it. */
-    onsetup?: () => void;
     onchange: (checked: boolean) => void;
   }
 
-  let { label, checked, status = '', busy = false, loading = false, error = '', onretry, onsetup, onchange }: Props = $props();
-  const secondary = $derived(onsetup ? 'Set up…' : busy ? (checked ? 'Turning off…' : 'Turning on…') : error ? `${error} · Retry` : status);
+  let { label, checked, status = '', busy = false, loading = false, error = '', onretry, onchange }: Props = $props();
+  const secondary = $derived(busy ? (checked ? 'Turning off…' : 'Turning on…') : error ? `${error} · Retry` : status);
   // MenuItem owns keyboard navigation; the switch is its visual state. The attachment reruns as `checked` changes.
   function semantics(node: HTMLElement): void {
     const item = node.closest('button');
@@ -28,13 +26,12 @@
   }
 </script>
 
-<MenuItem closeOnSelect={false} disabled={busy || (loading && !onsetup)} textValue={label} onselect={() => {
-  if (onsetup) onsetup();
-  else if (error && onretry) onretry();
+<MenuItem closeOnSelect={false} disabled={busy || loading} textValue={label} onselect={() => {
+  if (error && onretry) onretry();
   else onchange(!checked);
 }}>
   <span class="copy menu-switch-copy" {@attach semantics}><span>{label}</span>{#if secondary}<small>{secondary}</small>{/if}</span>
-  {#snippet trailing()}{#if !onsetup}<span class="switch" inert aria-hidden="true"><Toggle {checked} ariaLabel={label} disabled={busy || loading || !!error} /></span>{/if}{/snippet}
+  {#snippet trailing()}<span class="switch" inert aria-hidden="true"><Toggle {checked} ariaLabel={label} disabled={busy || loading || !!error} /></span>{/snippet}
 </MenuItem>
 
 <style>
