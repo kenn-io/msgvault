@@ -86,7 +86,6 @@ func TestExploreItemsSourceScopeAndMalformedKeys(t *testing.T) {
 	require.NoError(t, json.Unmarshal(unknown.Body.Bytes(), &page))
 	require.NotNil(t, page.TotalCount)
 	assert.Equal(t, int64(3), *page.TotalCount)
-
 }
 
 func TestRunSavedViewItemsPopulationAndSourceScope(t *testing.T) {
@@ -172,28 +171,26 @@ func TestSavedViewItemsCorruptionListAndRead(t *testing.T) {
 	srv, st := newSavedViewRunTestServer(t)
 	healthy := createRunTestView(t, st, "Healthy", `{}`)
 	corrupt := createRunTestView(t, st, "Corrupt", `{}`)
-	for _, raw := range []string{`{"version":2}`} {
-		_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE saved_views SET items_json=? WHERE id=?`), raw, corrupt.ID)
-		require.NoError(t, err)
-		headers := http.Header{"Authorization": []string{"Bearer " + testSessionAPIKey}}
-		response := performSavedViewRequest(t, srv, http.MethodGet, savedViewsPath, nil, headers)
-		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-		var list SavedViewsResponse
-		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &list))
-		require.Len(t, list.SavedViews, 2)
-		for _, view := range list.SavedViews {
-			if view.ID == healthy.ID {
-				assert.Empty(t, view.IncompatibilityReason)
-			} else {
-				assert.Equal(t, "items_json_invalid", view.IncompatibilityReason)
-			}
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE saved_views SET items_json=? WHERE id=?`), `{"version":2}`, corrupt.ID)
+	require.NoError(t, err)
+	headers := http.Header{"Authorization": []string{"Bearer " + testSessionAPIKey}}
+	response := performSavedViewRequest(t, srv, http.MethodGet, savedViewsPath, nil, headers)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var list SavedViewsResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &list))
+	require.Len(t, list.SavedViews, 2)
+	for _, view := range list.SavedViews {
+		if view.ID == healthy.ID {
+			assert.Empty(t, view.IncompatibilityReason)
+		} else {
+			assert.Equal(t, "items_json_invalid", view.IncompatibilityReason)
 		}
-		get := performSavedViewRequest(t, srv, http.MethodGet, fmt.Sprintf("%s/%d", savedViewsPath, corrupt.ID), nil, headers)
-		assert.Equal(t, http.StatusBadRequest, get.Code)
-		assert.Contains(t, get.Body.String(), `"error":"invalid_saved_view"`)
-		assert.Contains(t, get.Body.String(), "items_json_invalid")
-		run, _ := runSavedView(t, srv, corrupt.ID, `{}`)
-		assert.Equal(t, http.StatusBadRequest, run.Code)
-		assert.Contains(t, run.Body.String(), "items_json_invalid")
 	}
+	get := performSavedViewRequest(t, srv, http.MethodGet, fmt.Sprintf("%s/%d", savedViewsPath, corrupt.ID), nil, headers)
+	assert.Equal(t, http.StatusBadRequest, get.Code)
+	assert.Contains(t, get.Body.String(), `"error":"invalid_saved_view"`)
+	assert.Contains(t, get.Body.String(), "items_json_invalid")
+	run, _ := runSavedView(t, srv, corrupt.ID, `{}`)
+	assert.Equal(t, http.StatusBadRequest, run.Code)
+	assert.Contains(t, run.Body.String(), "items_json_invalid")
 }
