@@ -1,9 +1,8 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen } from '@testing-library/svelte';
 import { createRawSnippet } from 'svelte';
-import { afterEach, expect, it, vi } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import DetailRow from './DetailRow.svelte';
 
-afterEach(cleanup);
 it('names its menu for the row, disables unavailable actions, and calls the selected action', async () => {
   const edit = vi.fn(), remove = vi.fn(), primary = vi.fn();
   render(DetailRow, {

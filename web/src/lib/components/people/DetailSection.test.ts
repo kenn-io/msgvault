@@ -1,9 +1,8 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen } from '@testing-library/svelte';
 import { createRawSnippet } from 'svelte';
-import { afterEach, expect, it, vi } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import DetailSection from './DetailSection.svelte';
 
-afterEach(cleanup);
 it('keeps Add in the header, history folded, and the subgroup after the rows', async () => {
   const onadd = vi.fn();
   const view = render(DetailSection, {

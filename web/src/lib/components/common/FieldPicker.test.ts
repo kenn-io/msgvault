@@ -1,9 +1,8 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen } from '@testing-library/svelte';
 import { createRawSnippet } from 'svelte';
-import { afterEach, expect, it, vi } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import FieldPicker from './FieldPicker.svelte';
 
-afterEach(cleanup);
 const options = [{ name: 'garden', label: 'Example Garden' }];
 
 it('offers creation last and shows the created fields with a way back', async () => {
