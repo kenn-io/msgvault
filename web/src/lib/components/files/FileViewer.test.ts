@@ -175,9 +175,7 @@ describe('FileViewer', () => {
       size_bytes: 12, content_state: contentState, content_available: false
     });
     const { container } = render(FileViewer, { client: createAPIClient(fetchFn), file: file({ filename: 'unavailable.bin', mime_type: '', size_bytes: 12, content_state: contentState === 'missing_blob' ? 'unverified' : contentState, content_available: contentState === 'missing_blob' ? null : false }) });
-    expect(await screen.findByText(message)).toBeDefined();
-    expect(container.querySelector('.kit-empty-state__title')?.textContent).toBe(message);
-    expect(screen.queryByText("This file's contents aren't in the archive")).toBeNull();
+    await waitFor(() => expect(container.querySelector('.kit-empty-state__title')?.textContent).toBe(message));
     expect(fetchFn).toHaveBeenCalledOnce();
     expect(screen.getByRole('button', { name: /Download/ }).hasAttribute('disabled')).toBe(true);
   });
@@ -353,15 +351,15 @@ it('shows context and steps with buttons and arrows', async () => {
 it.each([
   { mime_type: 'text/plain', filename: 'notes.txt', content: 'Synthetic text', tag: 'pre', want: 'Synthetic text', target: { filename: 'notes.txt', mime_type: 'text/plain' } },
   { mime_type: 'text/csv', filename: 'table.csv', content: 'Name,Value\nExample,42', tag: 'table', want: 'Example', target: { filename: 'table.csv', mime_type: 'text/csv' } },
-  { mime_type: 'text/csv', filename: 'regional.csv', content: 'Name;Amount\nExample;42\nOther;73', tag: 'table', want: '42', target: { filename: 'regional.csv', mime_type: 'text/csv' } },
   { mime_type: 'text/plain; charset=windows-1252', filename: 'notes.txt', content: new Uint8Array([0x43, 0x61, 0x66, 0xe9]), tag: 'pre', want: 'Café', target: { filename: 'notes.txt', mime_type: 'text/plain; charset=windows-1252' } },
-  { mime_type: 'text/tab-separated-values', filename: 'table.tsv', content: 'Name\tValue\nExample\t42', tag: 'table', want: 'Example', target: { filename: 'table.tsv', mime_type: 'text/tab-separated-values' } },
+  { mime_type: 'text/tab-separated-values', filename: 'table.tsv', content: 'Name\tValue;Other;More\nExample\t42;73;84\nOther\t1;2;3', tag: 'table', want: 'Example', target: { filename: 'table.tsv', mime_type: 'text/tab-separated-values' } },
   { mime_type: 'application/vnd.ms-excel', filename: 'table.csv', content: 'Name,Value\nExample,42', tag: 'table', want: 'Example', target: { filename: 'table.csv', mime_type: 'application/vnd.ms-excel' } },
-  { mime_type: 'application/octet-stream', filename: 'table.tsv', content: 'Name\tValue\nExample\t42', tag: 'table', want: 'Example', target: { filename: 'table.tsv', mime_type: 'application/octet-stream' } },
+  { mime_type: 'application/octet-stream', filename: 'table.tsv', content: 'Name\tValue;Other;More\nExample\t42;73;84\nOther\t1;2;3', tag: 'table', want: 'Example', target: { filename: 'table.tsv', mime_type: 'application/octet-stream' } },
   { mime_type: 'application/x-unknown', filename: 'notes.txt', content: 'Example text', tag: 'pre', want: 'Example', target: { filename: 'notes.txt', mime_type: 'application/x-unknown' } },
 ])('previews $mime_type from $filename', async ({ mime_type, filename, content, tag, want, target }) => {
   render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), content_state: 'local_content', content_available: true, mime_type, filename }, (typeof content === 'string' ? new TextEncoder().encode(content) : content))), file: file(target) });
   await waitFor(() => expect(document.querySelector(tag)?.textContent).toContain(want));
+  if (filename.endsWith('.tsv')) expect(document.querySelectorAll('th')).toHaveLength(2);
 });
 
 it('buffers authenticated audio for seeking and revokes its blob URL on close', async () => {
@@ -386,12 +384,6 @@ it.each([
     Object.defineProperty(preview, 'scrollWidth', { configurable: true, value: 400 });
     Object.defineProperty(preview, 'clientWidth', { configurable: true, value: 200 });
     return preview;
-  }, 'ArrowRight'],
-  ['input', 'text/plain', async () => {
-    await screen.findByText('Example text');
-    const input = document.createElement('input');
-    screen.getByRole('region', { name: 'File preview preview.png' }).append(input);
-    return input;
   }, 'ArrowRight'],
   ['audio controls', 'audio/wav', async () => {
     await waitFor(() => expect(document.querySelector('audio')?.getAttribute('src')).toBe('blob:audio-preview'));

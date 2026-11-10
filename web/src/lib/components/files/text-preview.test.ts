@@ -18,7 +18,7 @@ it('omits only an unfinished character when a prefix cuts UTF-8', () => {
 });
 
 describe('delimited previews', () => {
-  it('keeps quoted empty values and blank lines but not a trailing terminator', async () => {
+  it('preserves empty and quoted values across record terminators', async () => {
     for (const text of ['value\nfirst\n""\nthird', 'value\nfirst\n""\nthird\n', 'value\r\nfirst\r\n""\r\nthird\r\n', 'value\rfirst\r""\rthird\r']) {
       expect((await parseDelimited(text, ',')).rows).toEqual([['first'], [''], ['third']]);
     }
@@ -26,7 +26,10 @@ describe('delimited previews', () => {
     expect((await parseDelimited('value\nfirst\n""\n', ',', 200, true)).rows).toEqual([['first'], ['']]);
     expect((await parseDelimited('value\nfirst\n""', ',', 200, true)).rows).toEqual([['first']]);
     expect((await parseDelimited('value\nfirst\n\nthird\n', ',')).rows).toEqual([['first'], [''], ['third']]);
-    expect((await parseDelimited('h\n1\n', ',', 1)).truncated).toBe(false);
+    expect((await parseDelimited('Name,Amount\nExample,42\r', ',')).rows).toEqual([['Example', '42']]);
+    expect((await parseDelimited('Name,Amount\nExample,42\r\n', ',')).rows).toEqual([['Example', '42']]);
+    expect((await parseDelimited('Name,Amount\nExample,42\r\nOther,73\n', ',')).rows).toEqual([['Example', '42'], ['Other', '73']]);
+    expect((await parseDelimited('Name,Note\nExample,"line\r\ninside"\nOther,done\n', ',')).rows).toEqual([['Example', 'line\r\ninside'], ['Other', 'done']]);
   });
   it('still guesses delimiters when the text ends with a terminator', async () => {
     expect((await parseDelimited('a;b\n1;2\n')).rows).toEqual([['1', '2']]);
@@ -35,6 +38,7 @@ describe('delimited previews', () => {
   it('reports whether data rows were omitted', async () => {
     expect(await parseDelimited('Name\nOne\nTwo\nThree', ',', 2)).toEqual({ header: ['Name'], rows: [['One'], ['Two']], truncated: true, cellLimit: false, columnsTruncated: false, hasErrors: false });
     expect((await parseDelimited('Name\nOne\nTwo', ',', 2)).truncated).toBe(false);
+    expect((await parseDelimited('h\n1\n', ',', 1)).truncated).toBe(false);
   });
   it('keeps complete records at byte boundaries and drops unfinished records', async () => {
     for (const text of ['Name,Note,Amount\nComplete,Ready,99\nPartial,Long note,12', 'Name,Note,Amount\nComplete,Ready,99\nPartial,"Long\nnote\n']) {
@@ -46,11 +50,7 @@ describe('delimited previews', () => {
     expect(quoted.header).toEqual(['Name\ncontinued', 'Note']);
     expect(quoted.rows).toEqual([['A', 'B']]);
   });
-  it('removes the final CRLF terminator after LF records', async () => {
-    expect((await parseDelimited('Name,Amount\nExample,42\r', ',')).rows).toEqual([['Example', '42']]);
-    expect((await parseDelimited('Name,Amount\nExample,42\r\n', ',')).rows).toEqual([['Example', '42']]);
-    expect((await parseDelimited('Name,Amount\nExample,42\r\nOther,73\n', ',')).rows).toEqual([['Example', '42'], ['Other', '73']]);
-    expect((await parseDelimited('Name,Note\nExample,"line\r\ninside"\nOther,done\n', ',')).rows).toEqual([['Example', 'line\r\ninside'], ['Other', 'done']]);
+  it('recognizes quotes at the actual delimiter', async () => {
     expect((await parseDelimited('name\x1enote\nalpha\x1e"one\r\ntwo"\n')).rows).toEqual([['alpha', 'one\r\ntwo']]);
     expect((await parseDelimited('name,note\r\nA,semi;"word\r\nB,ok\r\n')).rows).toEqual([['A', 'semi;"word'], ['B', 'ok']]);
   });

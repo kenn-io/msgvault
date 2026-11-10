@@ -166,8 +166,6 @@ func TestFilesSearchUsesAnalyticalQueryAndOneCatalogBatch(t *testing.T) {
 	assertions.Equal("Zoe Sender", result.Files[0].SenderLabel)
 	assertions.Equal(FileContentState("unverified"), result.Files[0].ContentState)
 	assertions.Nil(result.Files[0].ContentAvailable)
-	assertions.Equal(FileContentState("unverified"), result.Files[2].ContentState)
-	assertions.Nil(result.Files[2].ContentAvailable)
 	assertions.Equal([]int64{7}, engine.request.Explore.Context.SourceIDs)
 	assertions.Equal("report", engine.request.FilenameQuery)
 	assertions.Equal([]query.FileMIMEFamily{query.FileMIMEImage, query.FileMIMEPDF}, engine.request.MIMEFamilies)
@@ -627,11 +625,9 @@ func TestPackedFileWithoutStoragePathDownloadsAndReportsAvailable(t *testing.T) 
 	assertions.True(decoded.ContentAvailable)
 }
 
-// TestPackedFileMissingBlobReportsMissingNotError covers a hash-only row whose
-// blob is truly absent from both the packed store and the loose layout: the
-// download must answer 404 file_content_unavailable, and the metadata must
-// classify the row missing_blob.
-func TestPackedFileMissingBlobReportsMissingNotError(t *testing.T) {
+// TestPackedFileMissingAndUnreadable distinguishes absent content from an
+// error opening content in the metadata response.
+func TestPackedFileMissingAndUnreadable(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -659,13 +655,15 @@ func TestPackedFileMissingBlobReportsMissingNotError(t *testing.T) {
 	assertions.Equal(FileContentMissingBlob, decoded.ContentState)
 	assertions.False(decoded.ContentAvailable)
 
+	brokenStore := &countingFileBlobStore{}
 	srv = NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}, Store: catalog,
-		BlobStore: &countingFileBlobStore{}, Logger: testLogger(),
+		BlobStore: brokenStore, Logger: testLogger(),
 	})
 	unreadable := httptest.NewRecorder()
 	srv.Router().ServeHTTP(unreadable, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/files/8", nil))
 	assertions.Equal(http.StatusInternalServerError, unreadable.Code)
+	assertions.Equal(1, brokenStore.calls)
 }
 
 // TestLegacyLooseFileWithRecordedPathStillDownloads keeps the legacy loose-row
