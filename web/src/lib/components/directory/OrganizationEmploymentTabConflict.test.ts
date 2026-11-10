@@ -56,6 +56,34 @@ it('asks again when a job changes after the delete conflict is shown', async () 
   expect(await screen.findByText('Title 3')).toBeDefined();
 });
 
+it('shows a moved job before retrying Make primary', async () => {
+  let revision = 1;
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    const path = pathOf(request);
+    if (path === '/api/v1/employments/11' && request.method === 'GET') {
+      const readRevision = revision;
+      if (revision === 1) revision = 2;
+      return Response.json(employment(11, readRevision, { person_id: readRevision === 3 ? 8 : 7, title: `Title ${readRevision}` }), { headers: { ETag: `"employment-11-r${readRevision}"` } });
+    }
+    if (path === '/api/v1/employments/11/primary' && request.method === 'POST') {
+      return request.headers.get('If-Match') === `"employment-11-r${revision}"`
+        ? Response.json(employment(11, revision, { person_id: 8, is_primary: true }))
+        : Response.json({ error: 'employment_revision_conflict', message: 'Changed' }, { status: 409 });
+    }
+    if (path === '/api/v1/people/7/employments') return Response.json({ employments: [] });
+    throw new Error(`Unexpected ${request.method} ${path}`);
+  });
+  controller.employments = [employment(11, 1, { is_primary: false })];
+  render(OrganizationEmploymentTab, { controller, personID: 7 });
+  await fireEvent.click(within(screen.getByRole('region', { name: 'Work' })).getByRole('button', { name: /^Actions for/ }));
+  await fireEvent.click(await screen.findByRole('menuitem', { name: 'Make primary' }));
+  await screen.findByText('Title 2');
+  revision = 3;
+  await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  expect(await screen.findByText('Someone else')).toBeDefined();
+});
+
 it('retries a delete whose conflict refresh failed with the version it sent', async () => {
   let reads = 0;
   const tags: (string | null)[] = [];

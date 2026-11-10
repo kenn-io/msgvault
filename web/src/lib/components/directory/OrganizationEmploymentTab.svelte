@@ -59,7 +59,7 @@
   async function makePrimary(employment: Employment): Promise<void> {
     if (acting) return;
     primaryTarget = employment;
-    await primary.run(() => controller.makeEmploymentPrimary(employment.id));
+    await primary.run(current => controller.makeEmploymentPrimary(employment.id, current));
   }
 
   async function removeEmployment(): Promise<void> {
