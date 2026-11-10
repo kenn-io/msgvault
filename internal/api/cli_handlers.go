@@ -2710,11 +2710,16 @@ func (s *Server) handleCLIAccounts(w http.ResponseWriter, r *http.Request) {
 	allowPending := r.Header.Get(apiprotocol.AllowPendingCountsHeader) == "true"
 	var grouped map[int64]store.SourceMessageCounts
 	var response cliAccountsResponse
-	if counter, ok := s.store.(sourceMessageCounter); ok && !s.sourceScopedRead(r) {
-		grouped, response.AsOf, response.Stale, err = s.accountCountSnapshots.get(
-			r.Context(), s.importContext, "", s.statsSnapshotWait, counter.CountMessagesBySourceContext,
-		)
-		response.CountsPending = allowPending && errors.Is(err, errSnapshotWaitTimeout)
+	if counter, ok := s.store.(sourceMessageCounter); ok {
+		if s.sourceScopedRead(r) {
+			// Scoped readers count from their authorization snapshot, not the shared cache.
+			grouped, err = counter.CountMessagesBySourceContext(r.Context())
+		} else {
+			grouped, response.AsOf, response.Stale, err = s.accountCountSnapshots.get(
+				r.Context(), s.importContext, "", s.statsSnapshotWait, counter.CountMessagesBySourceContext,
+			)
+			response.CountsPending = allowPending && errors.Is(err, errSnapshotWaitTimeout)
+		}
 		if err != nil && !response.CountsPending {
 			if s.writeIfContextError(w, err) {
 				return

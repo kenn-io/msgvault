@@ -122,7 +122,6 @@ func TestICSDecode(t *testing.T) {
 			assertions.Equal(tt.role, e.Attendees[0].Role)
 		})
 	}
-
 }
 
 func TestICSNULFields(t *testing.T) {
