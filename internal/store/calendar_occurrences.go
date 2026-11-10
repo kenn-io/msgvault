@@ -119,7 +119,11 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 		if row.Event.Status == "cancelled" {
 			o.Cancelled = true
 		}
-		originalStart, err := calendarOriginalStart(o.Original, row.Event)
+		original := o.Original
+		if original == (calrecur.Identity{}) && effective.Event.Original != nil {
+			original = *effective.Event.Original
+		}
+		originalStart, err := calendarOriginalStart(original, row.Event)
 		if err != nil {
 			return err
 		}
