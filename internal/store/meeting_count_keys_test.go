@@ -200,3 +200,32 @@ func TestMeetingCountKeysRejectsBroadEvidence(t *testing.T) {
 	_, err := st.MeetingCountKeysContext(t.Context())
 	require.ErrorIs(t, err, ErrQueryTooBroad)
 }
+
+func TestMeetingCountKeysGoogleCalendarCollisions(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		uids []string
+		want []string
+	}{
+		{name: "one calendar", uids: []string{"first@example.org"}, want: []string{"uid:first@example.org/"}},
+		{name: "same occurrence", uids: []string{"first@example.org", "first@example.org"}, want: []string{"uid:first@example.org/"}},
+		{name: "different occurrences", uids: []string{"first@example.org", "second@example.org"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newRFC822IDBackfillBackendStore(t)
+			for i, uid := range tc.uids {
+				calendarFixture(t, st, fmt.Sprintf("event-%d", i), singleLinkRaw("event", uid), fmt.Sprintf("calendar-%d@example.com", i))
+			}
+			var notes []int64
+			for i := range 2 {
+				_, note := projectionFixture(t, st, fmt.Sprintf("note-%d", i), "granola_json", `{"calendar_event":{"calendar_event_id":"event","scheduled_start_time":"2027-03-14T10:00:00Z"}}`)
+				notes = append(notes, note)
+			}
+			keys, err := st.MeetingCountKeysContext(t.Context())
+			require.NoError(t, err)
+			for _, note := range notes {
+				assert.Equal(t, tc.want, keys[note])
+			}
+		})
+	}
+}

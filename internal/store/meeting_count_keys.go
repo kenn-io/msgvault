@@ -128,6 +128,18 @@ func (s *Store) unmatchedMeetingCountKey(ctx context.Context, r reboundReader, k
 			base, original = key.Value, calrecur.Identity{Instant: *key.ScheduledAt}
 		}
 		instance = original
+		rows, err := meetingEventRows(ctx, r, `e.kind = 'single' AND e.provider_event_id IN (?, ?)`, []any{key.Value, base}, budget)
+		if err != nil {
+			return "", err
+		}
+		if len(rows) > 1 {
+			identity := occurrenceFromRow(rows[0], "").Identity
+			for _, row := range rows[1:] {
+				if occurrenceFromRow(row, "").Identity != identity {
+					return "", nil
+				}
+			}
+		}
 		fallback = fmt.Sprintf("gcal:%q/%s", base, instance.Key())
 		predicate, args = `e.provider_event_id = ?`, []any{base}
 	case "ical_uid":
