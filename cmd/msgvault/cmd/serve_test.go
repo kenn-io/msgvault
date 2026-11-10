@@ -301,33 +301,58 @@ func TestRunServeStartsReadOnlyWithoutOAuthConfig(t *testing.T) {
 	}
 }
 
-func TestRunServeRejectsInvalidPollingTarget(t *testing.T) {
+func TestRunServeKeepsCronForInvalidPollingTarget(t *testing.T) {
 	for _, tc := range []struct {
 		name, sourceType, identifier, want string
 		filtered, allowList                bool
+		interval                           time.Duration
 	}{
-		{"unsupported", sourceTypeMSMail, "user@example.test", "no active", false, false},
-		{"filtered", sourceTypeIMAP, "imaps://user@example.test", "folder filter", true, false},
-		{"saved folders", sourceTypeIMAP, "imaps://user@example.test", "folder filter", false, true},
+		{"unsupported", sourceTypeMSMail, "user@example.test", "no active", false, false, 15 * time.Second},
+		{"filtered", sourceTypeIMAP, "imaps://user@example.test", "folder filter", true, false, 15 * time.Second},
+		{"saved folders", sourceTypeIMAP, "imaps://user@example.test", "folder filter", false, true, 15 * time.Second},
+		{"invalid interval", sourceTypeGmail, "user@example.test", "poll_interval", false, false, 14 * time.Second},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			checks := assert.New(t)
+			requirements := require.New(t)
 			cfg := lifecycleTestConfig(t.TempDir())
 			cfg.Server.APIPort = freeTCPPort(t)
 			cfg.Analytics.Engine = config.AnalyticsEngineSQL
-			cfg.Accounts = []config.AccountSchedule{{Email: tc.identifier, Enabled: true, Schedule: "0 * * * *", PollInterval: 15 * time.Second}}
+			cfg.Accounts = []config.AccountSchedule{{Email: tc.identifier, Enabled: true, Schedule: "0 * * * *", PollInterval: tc.interval}, {Email: "other@example.test", Enabled: true, Schedule: "0 * * * *"}}
 			if tc.filtered {
 				cfg.Sync.IMAPSkipFolders = map[string][]string{tc.identifier: {"Archive"}}
 			}
 			st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 			source, err := st.GetOrCreateSource(tc.sourceType, tc.identifier)
-			require.NoError(t, err)
+			requirements.NoError(err)
 			if tc.allowList {
-				require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), source.ID, `{"folders":["INBOX"]}`))
+				requirements.NoError(st.UpdateSourceSyncConfig(t.Context(), source.ID, `{"folders":["INBOX"]}`))
 			}
-			require.NoError(t, st.Close())
+			requirements.NoError(st.Close())
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
 			cmd := &cobra.Command{Use: serveCmd.Use}
-			cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
-			assert.ErrorContains(t, runServe(cmd, nil), tc.want)
+			cmd.SetContext(testInvocationContext(ctx, cfg, invocationOptions{}))
+			errCh := make(chan error, 1)
+			go func() { errCh <- runServe(cmd, nil) }()
+			waitForServeHealth(t, cfg.Server.APIPort, errCh)
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/api/v1/scheduler/status", cfg.Server.APIPort), nil)
+			requirements.NoError(err)
+			resp, err := http.DefaultClient.Do(req)
+			requirements.NoError(err)
+			defer func() { _ = resp.Body.Close() }()
+			requirements.Equal(http.StatusOK, resp.StatusCode)
+			var status api.SchedulerStatusResponse
+			requirements.NoError(json.NewDecoder(resp.Body).Decode(&status))
+			requirements.Len(status.Accounts, 2)
+			for _, account := range status.Accounts {
+				checks.Equal("0 * * * *", account.Schedule)
+				if account.Email == tc.identifier {
+					checks.Contains(account.LastError, tc.want)
+				}
+			}
+			cancel()
+			requirements.NoError(<-errCh)
 		})
 	}
 }

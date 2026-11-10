@@ -24,7 +24,7 @@ func ValidatePollingAccounts(accounts []AccountSchedule) error {
 		}
 		seen[key] = true
 		if err := cronexpr.Validate(account.Schedule); err != nil {
-			return fmt.Errorf("account %q: %w", account.Email, err)
+			return fmt.Errorf("account %q schedule: %w", account.Email, err)
 		}
 	}
 	return nil

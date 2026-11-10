@@ -15,22 +15,36 @@ import (
 	"go.kenn.io/msgvault/internal/sync"
 )
 
-func validatePollingTargets(ctx context.Context, cfg *config.Config, s *store.Store, state *invocation) error {
+func validatePollingTargets(ctx context.Context, cfg *config.Config, s *store.Store, state *invocation) map[int]error {
+	errs := make(map[int]error)
 	seen := make(map[int64]bool)
-	for _, account := range cfg.Accounts {
+	names := make(map[string]bool)
+	for i, account := range cfg.Accounts {
 		if !account.Enabled || account.PollInterval == 0 {
 			continue
 		}
+		if err := config.ValidatePollingAccounts([]config.AccountSchedule{account}); err != nil {
+			errs[i] = err
+			continue
+		}
+		key := strings.ToLower(account.Email)
+		if names[key] {
+			errs[i] = fmt.Errorf("duplicate polling account %q", account.Email)
+			continue
+		}
+		names[key] = true
 		source, err := pollingSource(ctx, account.Email, s, state)
 		if err != nil {
-			return fmt.Errorf("polling account %q: %w", account.Email, err)
+			errs[i] = fmt.Errorf("polling account %q: %w", account.Email, err)
+			continue
 		}
 		if seen[source.ID] {
-			return fmt.Errorf("polling account %q: source already has a polling account", account.Email)
+			errs[i] = fmt.Errorf("polling account %q: source already has a polling account", account.Email)
+			continue
 		}
 		seen[source.ID] = true
 	}
-	return nil
+	return errs
 }
 
 func pollingSource(ctx context.Context, identifier string, s *store.Store, state *invocation) (*store.Source, error) {

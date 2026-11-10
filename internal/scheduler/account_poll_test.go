@@ -16,6 +16,8 @@ import (
 
 func TestCronRegistrationPreservesPolling(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		checks := assert.New(t)
+		requirements := require.New(t)
 		var calls atomic.Int32
 		s := New(func(context.Context, string) error { return nil }).WithAccountPoll(func(context.Context, string) error { calls.Add(1); return nil })
 		cfg := &config.Config{Accounts: []config.AccountSchedule{
@@ -23,20 +25,21 @@ func TestCronRegistrationPreservesPolling(t *testing.T) {
 			{Email: "a@example.test", Enabled: true, Schedule: "0 * * * *"},
 		}}
 		_, errs := s.AddAccountsFromConfig(cfg)
-		require.Empty(t, errs)
+		requirements.Empty(errs)
 		s.Start()
 		synctest.Wait()
-		assert.EqualValues(t, 1, calls.Load())
-		assert.Equal(t, 15*time.Second, s.Status()[0].NextRun.Sub(time.Now()))
+		checks.EqualValues(1, calls.Load())
+		checks.Equal(15*time.Second, time.Until(s.Status()[0].NextRun))
 		time.Sleep(15 * time.Second)
 		synctest.Wait()
-		assert.EqualValues(t, 2, calls.Load())
+		checks.EqualValues(2, calls.Load())
 		<-s.Stop().Done()
 	})
 }
 
 func TestPollingAllowsLongAcquisition(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		requirements := require.New(t)
 		completed := make(chan struct{}, 1)
 		s := New(func(context.Context, string) error { return nil }).
 			WithAccountPoll(func(ctx context.Context, _ string) error {
@@ -49,7 +52,7 @@ func TestPollingAllowsLongAcquisition(t *testing.T) {
 				}
 			})
 		_, errs := s.AddAccountsFromConfig(&config.Config{Accounts: []config.AccountSchedule{{Email: "gmail@example.test", Enabled: true, Schedule: "0 * * * *", PollInterval: 120 * time.Second}}})
-		require.Empty(t, errs)
+		requirements.Empty(errs)
 		s.Start()
 		time.Sleep(6 * time.Minute)
 		synctest.Wait()
@@ -64,6 +67,8 @@ func TestPollingAllowsLongAcquisition(t *testing.T) {
 
 func TestIncompletePollingPreservesCompletion(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		checks := assert.New(t)
+		requirements := require.New(t)
 		var calls atomic.Int32
 		s := New(func(context.Context, string) error { return nil }).WithAccountPoll(func(context.Context, string) error {
 			if calls.Add(1) == 2 {
@@ -72,70 +77,77 @@ func TestIncompletePollingPreservesCompletion(t *testing.T) {
 			return nil
 		})
 		_, errs := s.AddAccountsFromConfig(&config.Config{Accounts: []config.AccountSchedule{{Email: "a@example.com", Enabled: true, Schedule: "0 * * * *", PollInterval: 15 * time.Second}}})
-		require.Empty(t, errs)
+		requirements.Empty(errs)
 		s.Start()
 		synctest.Wait()
 		first := s.Status()[0].LastCompleted
 		time.Sleep(15 * time.Second)
 		synctest.Wait()
 		status := s.Status()[0]
-		assert.Equal(t, first, status.LastCompleted)
-		assert.True(t, status.LastAttempted.After(first))
-		assert.Empty(t, status.LastError)
+		checks.Equal(first, status.LastCompleted)
+		checks.True(status.LastAttempted.After(first))
+		checks.Empty(status.LastError)
 		s.RemoveAccount("a@example.com")
 		time.Sleep(15 * time.Second)
 		synctest.Wait()
-		assert.EqualValues(t, 2, calls.Load())
+		checks.EqualValues(2, calls.Load())
 		<-s.Stop().Done()
 	})
 }
 
 func TestCronPromotesQueuedPoll(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		checks := assert.New(t)
+		requirements := require.New(t)
 		gate := newSerialWorkTracker()
 		release, ok := gate.BeginWorkContext(t.Context())
-		require.True(t, ok)
+		requirements.True(ok)
 		var cronCalls, pollCalls int
 		s := New(func(context.Context, string) error { cronCalls++; return nil }).WithAccountPoll(func(context.Context, string) error { pollCalls++; return nil }).WithWorkTracker(gate)
-		require.NoError(t, s.AddAccount("a@example.com", "0 * * * *"))
+		requirements.NoError(s.AddAccount("a@example.com", "0 * * * *"))
 		go s.onAccountTrigger("a@example.com", true)
 		synctest.Wait()
-		assert.False(t, s.hasQueuedRuns())
+		checks.False(s.hasQueuedRuns())
 		s.onAccountTick("a@example.com")
-		assert.True(t, s.hasQueuedRuns())
+		checks.True(s.hasQueuedRuns())
 		release()
 		synctest.Wait()
-		assert.Equal(t, 1, cronCalls)
-		assert.Zero(t, pollCalls)
-		assert.False(t, s.hasQueuedRuns())
+		checks.Equal(1, cronCalls)
+		checks.Zero(pollCalls)
+		checks.False(s.hasQueuedRuns())
 		<-s.Stop().Done()
 	})
 }
 
 func TestAccountCompletionDistinguishesPartialAndFailures(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		checks := assert.New(t)
+		requirements := require.New(t)
 		var result error
 		s := New(func(context.Context, string) error { return result })
-		require.NoError(t, s.AddAccount("a@example.com", "0 * * * *"))
+		requirements.NoError(s.AddAccount("a@example.com", "0 * * * *"))
 		s.onAccountTick("a@example.com")
 		first := s.Status()[0].LastCompleted
 		time.Sleep(time.Second)
 		result = ErrAcquisitionIncomplete
 		s.onAccountTick("a@example.com")
 		status := s.Status()[0]
-		assert.Equal(t, first, status.LastCompleted)
-		assert.True(t, status.LastRun.After(first))
-		assert.Empty(t, status.LastError)
+		checks.Equal(first, status.LastCompleted)
+		checks.True(status.LastRun.After(first))
+		checks.Empty(status.LastError)
 		result = errors.Join(ErrAcquisitionIncomplete, errors.New("provider failed"))
 		s.onAccountTick("a@example.com")
-		assert.Contains(t, s.Status()[0].LastError, "provider failed")
+		checks.Contains(s.Status()[0].LastError, "provider failed")
 		time.Sleep(time.Second)
 		result = ErrDeferUntilNextTrigger
 		s.onAccountTick("a@example.com")
-		assert.Equal(t, first, s.Status()[0].LastCompleted)
+		checks.Equal(first, s.Status()[0].LastCompleted)
 		result = nil
 		s.onAccountTick("a@example.com")
-		assert.True(t, s.Status()[0].LastCompleted.After(first))
+		checks.True(s.Status()[0].LastCompleted.After(first))
+		s.SetPollingError("a@example.com", 15*time.Second, errors.New("polling unavailable"))
+		s.onAccountTick("a@example.com")
+		checks.Contains(s.Status()[0].LastError, "polling unavailable")
 		<-s.Stop().Done()
 	})
 }

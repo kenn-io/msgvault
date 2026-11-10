@@ -147,6 +147,7 @@ type Scheduler struct {
 	startedAt     map[string]time.Time    // email -> current run began executing
 	pollJobs      map[string]cron.EntryID
 	pollIntervals map[string]time.Duration
+	pollErrors    map[string]error
 	pollPending   map[string]bool
 	queuedPoll    map[string]bool
 	pollPromoted  map[string]bool
@@ -215,6 +216,7 @@ func New(syncFunc SyncFunc) *Scheduler {
 		startedAt:          make(map[string]time.Time),
 		pollJobs:           make(map[string]cron.EntryID),
 		pollIntervals:      make(map[string]time.Duration),
+		pollErrors:         make(map[string]error),
 		pollPending:        make(map[string]bool),
 		queuedPoll:         make(map[string]bool),
 		pollPromoted:       make(map[string]bool),
@@ -244,6 +246,14 @@ func New(syncFunc SyncFunc) *Scheduler {
 func (s *Scheduler) WithAccountPoll(fn SyncFunc) *Scheduler {
 	s.pollFunc = fn
 	return s
+}
+
+// SetPollingError reports an unavailable polling schedule alongside its cron job.
+func (s *Scheduler) SetPollingError(email string, interval time.Duration, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pollIntervals[email] = interval
+	s.pollErrors[email] = err
 }
 
 // WithLogger sets the logger for the scheduler.
@@ -377,8 +387,16 @@ func (s *Scheduler) AddAccountsFromConfig(cfg *config.Config) (int, []error) {
 				email := acc.Email
 				if old, ok := s.pollJobs[email]; ok {
 					s.cron.Remove(old)
+					delete(s.pollJobs, email)
+					delete(s.pollIntervals, email)
 				}
-				s.pollJobs[email] = s.cron.Schedule(cron.Every(acc.PollInterval), cron.FuncJob(func() { s.onAccountTrigger(email, true) }))
+				id, err := s.cron.ScheduleJob(cron.Every(acc.PollInterval), cron.FuncJob(func() { s.onAccountTrigger(email, true) }))
+				if err != nil {
+					s.mu.Unlock()
+					errors = append(errors, fmt.Errorf("%s: schedule polling: %w", email, err))
+					continue
+				}
+				s.pollJobs[email] = id
 				s.pollIntervals[email] = acc.PollInterval
 				s.mu.Unlock()
 			}
@@ -489,6 +507,7 @@ func (s *Scheduler) RemoveJob(name string) {
 func (s *Scheduler) RemoveAccount(email string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	delete(s.pollErrors, email)
 	delete(s.manual, email)
 
 	if entryID, exists := s.jobs[email]; exists {
@@ -1217,6 +1236,9 @@ func (s *Scheduler) Status() []AccountStatus {
 		}
 		if err := s.lastErr[email]; err != nil {
 			status.LastError = err.Error()
+		}
+		if err := s.pollErrors[email]; err != nil {
+			status.LastError = errors.Join(err, s.lastErr[email]).Error()
 		}
 		statuses = append(statuses, status)
 	}

@@ -584,17 +584,22 @@ func saveIMAPFolderStates(
 	summary *gmail.SyncSummary,
 	limit int,
 ) error {
+	_, err := saveIMAPFolderStatesWithCoverage(ctx, s, src, apiClient, summary, limit)
+	return err
+}
+
+func saveIMAPFolderStatesWithCoverage(ctx context.Context, s *store.Store, src *store.Source, apiClient gmail.API, summary *gmail.SyncSummary, limit int) (bool, error) {
 	imapClient, ok := apiClient.(*imaplib.Client)
 	if !ok || !imapSyncCanPublish(ctx, imapClient, summary, limit) {
-		return nil
+		return false, nil
 	}
 	deltas := imapClient.ObservedMailboxDeltas()
 	if err := applyIMAPMailboxDeltas(
 		ctx, s, src, summary.SyncRunID, deltas, imapClient.ObservedMemberships(),
 	); err != nil {
-		return fmt.Errorf("apply IMAP mailbox deltas: %w", err)
+		return false, fmt.Errorf("apply IMAP mailbox deltas: %w", err)
 	}
-	return nil
+	return true, nil
 }
 
 func imapSyncCanPublish(ctx context.Context, client *imaplib.Client, summary *gmail.SyncSummary, limit int) bool {

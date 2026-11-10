@@ -46,7 +46,7 @@ func IsQuotaDeferred(err error) bool {
 	if err == nil {
 		return false
 	}
-	if err == ErrQuotaDeferred {
+	if err == ErrQuotaDeferred { //nolint:errorlint // Inspect every leaf of joined errors separately.
 		return true
 	}
 	if joined, ok := err.(interface{ Unwrap() []error }); ok {

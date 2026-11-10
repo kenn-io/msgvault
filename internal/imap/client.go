@@ -132,6 +132,7 @@ type Client struct {
 	sourceMessageAliases        map[string]string    // mailbox UID source ID → durable canonical source ID
 	activeSourceAliases         map[string]string    // aliases validated by this session's QRESYNC SELECTs
 	labelMapComplete            bool                 // latest listing collected every mailbox membership
+	selectedFoldersComplete     bool                 // latest listing enumerated every selected mailbox
 	since                       time.Time            // IMAP SINCE date filter (zero = no filter)
 	before                      time.Time            // IMAP BEFORE date filter (zero = no filter)
 
@@ -217,6 +218,13 @@ func (c *Client) LabelsSnapshotFiltered() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.labelsSnapshotFilteredLocked()
+}
+
+// SelectedFoldersComplete reports whether the last listing covered its selected folders.
+func (c *Client) SelectedFoldersComplete() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.selectedFoldersComplete
 }
 
 func (c *Client) labelsSnapshotFilteredLocked() bool {
@@ -1221,6 +1229,7 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 	// enumeration finish. Any recoverable mailbox failure makes labels from
 	// this listing additive rather than authoritative.
 	c.labelMapComplete = false
+	c.selectedFoldersComplete = false
 	c.seenRFC822IDs = nil
 	c.seenTrustedRFC822IDs = nil
 	c.relocationTargets = nil
@@ -1594,6 +1603,7 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 	}
 
 	c.activeSourceAliases = activeSourceAliases
+	c.selectedFoldersComplete = enumerationComplete
 	c.labelMapComplete = labelMapComplete && enumerationComplete
 	return c.finalizeMessageListLocked(ctx, allMailboxes, messages)
 }

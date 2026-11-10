@@ -74,7 +74,7 @@ func (inv *invocation) gmailLimiter(identifier string) *gmail.RateLimiter {
 		key = normalized
 	}
 	limiter, _ := limiters.LoadOrStore(key, gmail.NewRateLimiter(float64(inv.cfg.Sync.RateLimitQPS)))
-	return limiter.(*gmail.RateLimiter)
+	return limiter.(*gmail.RateLimiter) //nolint:forcetypeassert // This map only stores Gmail rate limiters.
 }
 
 type invocationContextKey struct{}

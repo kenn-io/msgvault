@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json/v2"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -117,6 +118,8 @@ func TestRapidEmailGmailProfileMismatchDoesNotMutateArchive(t *testing.T) {
 }
 
 func TestGmailPollAcquisitionAndQuota(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
 	cfg := testGmailServiceAccountConfig(t)
 	var profiles, histories atomic.Int32
 	var changed, healthy, expired, quota, labelsQuota atomic.Bool
@@ -172,13 +175,13 @@ func TestGmailPollAcquisitionAndQuota(t *testing.T) {
 			}
 			_, _ = fmt.Fprintf(w, `{"id":"lost","threadId":"thread-lost","labelIds":["INBOX"],"historyId":"101","internalDate":"1704110400000","raw":%q}`, raw)
 		default:
-			assert.Fail(t, "unexpected provider operation", "%s", r.URL.Path)
+			checks.Fail("unexpected provider operation", "%s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
 	defer server.Close()
 	loopback, err := url.Parse(server.URL)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	transport := http.DefaultTransport
 	http.DefaultTransport = testTransport(func(r *http.Request) (*http.Response, error) {
 		clone := r.Clone(r.Context())
@@ -188,31 +191,31 @@ func TestGmailPollAcquisitionAndQuota(t *testing.T) {
 	t.Cleanup(func() { http.DefaultTransport = transport })
 	st := storetest.New(t)
 	src, err := st.Store.GetOrCreateSource("gmail", "sample@example.test")
-	require.NoError(t, err)
-	require.NoError(t, st.Store.UpdateSourceSyncCursor(src.ID, "100"))
+	requirements.NoError(err)
+	requirements.NoError(st.Store.UpdateSourceSyncCursor(src.ID, "100"))
 	originalRebuild := rebuildCacheAfterScheduledSourceRun
 	rebuildCacheAfterScheduledSourceRun = func(context.Context, string) error { return nil }
 	t.Cleanup(func() { rebuildCacheAfterScheduledSourceRun = originalRebuild })
 	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	var failures int
 	invocationFromContext(ctx).syncFailures = &telemetry.SyncFailures{Capture: func(string, map[string]any) error { failures++; return nil }}
-	require.NoError(t, runEmailPoll(ctx, src.Identifier, st.Store, nil, invocationFromContext(ctx)))
-	assert.EqualValues(t, 1, profiles.Load())
+	requirements.NoError(runEmailPoll(ctx, src.Identifier, st.Store, nil, invocationFromContext(ctx)))
+	checks.EqualValues(1, profiles.Load())
 	changed.Store(true)
-	assert.ErrorIs(t, runEmailPoll(ctx, src.Identifier, st.Store, nil, invocationFromContext(ctx)), scheduler.ErrAcquisitionIncomplete)
+	requirements.ErrorIs(runEmailPoll(ctx, src.Identifier, st.Store, nil, invocationFromContext(ctx)), scheduler.ErrAcquisitionIncomplete)
 	debt, err := st.Store.ListUnresolvedSyncItemErrors(ctx, src.ID)
-	require.NoError(t, err)
-	require.Len(t, debt, 1)
-	assert.Zero(t, failures)
+	requirements.NoError(err)
+	requirements.Len(debt, 1)
+	checks.Zero(failures)
 	broken, err := st.Store.GetOrCreateSource(sourceTypeIMAP, "imaps://broken@example.test")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	_, err = st.Store.DB().ExecContext(t.Context(), st.Store.Rebind(`UPDATE sources SET display_name = ? WHERE id = ?`), src.Identifier, broken.ID)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	mixedErr := runScheduledSync(ctx, src.Identifier, st.Store, nil, invocationFromContext(ctx))
-	assert.ErrorContains(t, mixedErr, "has no config")
-	assert.NotErrorIs(t, mixedErr, scheduler.ErrAcquisitionIncomplete)
-	assert.Equal(t, 1, failures)
-	require.NoError(t, st.Store.RemoveSource(broken.ID))
+	requirements.ErrorContains(mixedErr, "has no config")
+	requirements.NotErrorIs(mixedErr, scheduler.ErrAcquisitionIncomplete)
+	checks.Equal(1, failures)
+	requirements.NoError(st.Store.RemoveSource(broken.ID))
 	failures = 0
 	results := make(chan error, 2)
 	sched := scheduler.New(func(runCtx context.Context, identifier string) error {
@@ -221,36 +224,36 @@ func TestGmailPollAcquisitionAndQuota(t *testing.T) {
 		return err
 	})
 	t.Cleanup(func() { <-sched.Stop().Done() })
-	require.NoError(t, sched.AddAccount(src.Identifier, "0 * * * *"))
-	require.NoError(t, sched.TriggerSync(src.Identifier, true))
-	require.ErrorIs(t, <-results, scheduler.ErrAcquisitionIncomplete)
-	require.Eventually(t, func() bool { return !sched.Status()[0].Running && !sched.Status()[0].Queued }, time.Second, time.Millisecond)
-	assert.True(t, sched.Status()[0].LastCompleted.IsZero())
-	assert.False(t, sched.Status()[0].LastAttempted.IsZero())
-	assert.Empty(t, sched.Status()[0].LastError)
-	assert.Zero(t, failures)
+	requirements.NoError(sched.AddAccount(src.Identifier, "0 * * * *"))
+	requirements.NoError(sched.TriggerSync(src.Identifier, true))
+	requirements.ErrorIs(<-results, scheduler.ErrAcquisitionIncomplete)
+	requirements.Eventually(func() bool { return !sched.Status()[0].Running && !sched.Status()[0].Queued }, time.Second, time.Millisecond)
+	checks.True(sched.Status()[0].LastCompleted.IsZero())
+	checks.False(sched.Status()[0].LastAttempted.IsZero())
+	checks.Empty(sched.Status()[0].LastError)
+	checks.Zero(failures)
 	healthy.Store(true)
-	rebuildCacheAfterScheduledSourceRun = func(context.Context, string) error { return fmt.Errorf("queue unavailable") }
-	require.NoError(t, runEmailPoll(ctx, src.Identifier, st.Store, nil, invocationFromContext(ctx)))
+	rebuildCacheAfterScheduledSourceRun = func(context.Context, string) error { return errors.New("queue unavailable") }
+	requirements.NoError(runEmailPoll(ctx, src.Identifier, st.Store, nil, invocationFromContext(ctx)))
 	rebuildCacheAfterScheduledSourceRun = func(context.Context, string) error { return nil }
-	require.NoError(t, sched.TriggerSync(src.Identifier, true))
-	require.NoError(t, <-results)
-	require.Eventually(t, func() bool { return !sched.Status()[0].Running && !sched.Status()[0].Queued }, time.Second, time.Millisecond)
-	assert.False(t, sched.Status()[0].LastCompleted.IsZero())
+	requirements.NoError(sched.TriggerSync(src.Identifier, true))
+	requirements.NoError(<-results)
+	requirements.Eventually(func() bool { return !sched.Status()[0].Running && !sched.Status()[0].Queued }, time.Second, time.Millisecond)
+	checks.False(sched.Status()[0].LastCompleted.IsZero())
 	debt, err = st.Store.ListUnresolvedSyncItemErrors(ctx, src.ID)
-	require.NoError(t, err)
-	assert.Empty(t, debt)
-	assert.EqualValues(t, 6, profiles.Load())
-	assert.EqualValues(t, 1, histories.Load())
-	require.NoError(t, st.Store.UpdateSourceSyncCursor(src.ID, ""))
-	assert.ErrorContains(t, runEmailPoll(ctx, src.Identifier, st.Store, nil, invocationFromContext(ctx)), "no history ID")
-	require.NoError(t, st.Store.UpdateSourceSyncCursor(src.ID, "100"))
+	requirements.NoError(err)
+	checks.Empty(debt)
+	checks.EqualValues(6, profiles.Load())
+	checks.EqualValues(1, histories.Load())
+	requirements.NoError(st.Store.UpdateSourceSyncCursor(src.ID, ""))
+	requirements.ErrorContains(runEmailPoll(ctx, src.Identifier, st.Store, nil, invocationFromContext(ctx)), "no history ID")
+	requirements.NoError(st.Store.UpdateSourceSyncCursor(src.ID, "100"))
 	expired.Store(true)
-	require.NoError(t, runEmailPoll(ctx, src.Identifier, st.Store, nil, invocationFromContext(ctx)))
+	requirements.NoError(runEmailPoll(ctx, src.Identifier, st.Store, nil, invocationFromContext(ctx)))
 	current, err := st.Store.GetSourceByID(src.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "102", current.SyncCursor.String)
-	assert.EqualValues(t, 10, profiles.Load())
+	requirements.NoError(err)
+	checks.Equal("102", current.SyncCursor.String)
+	checks.EqualValues(10, profiles.Load())
 	quota.Store(true)
 	otherRan := make(chan struct{}, 1)
 	gate := api.NewSerialOperationGate()
@@ -262,28 +265,28 @@ func TestGmailPollAcquisitionAndQuota(t *testing.T) {
 	}).WithWorkTracker(labelWorkTracker(gate, "test"))
 	t.Cleanup(func() { <-pollScheduler.Stop().Done() })
 	n, scheduleErrors := pollScheduler.AddAccountsFromConfig(&config.Config{Accounts: []config.AccountSchedule{{Email: src.Identifier, Enabled: true, Schedule: "0 * * * *", PollInterval: 15 * time.Second}}})
-	require.Empty(t, scheduleErrors)
-	require.Equal(t, 1, n)
-	require.NoError(t, pollScheduler.AddAccount("other@example.test", "0 * * * *"))
+	requirements.Empty(scheduleErrors)
+	requirements.Equal(1, n)
+	requirements.NoError(pollScheduler.AddAccount("other@example.test", "0 * * * *"))
 	pollScheduler.Start()
 	select {
 	case <-quotaSeen:
 	case <-time.After(3 * time.Second):
-		require.FailNow(t, "poll did not reach Gmail")
+		requirements.FailNow("poll did not reach Gmail")
 	}
-	require.NoError(t, pollScheduler.TriggerSync("other@example.test", false))
+	requirements.NoError(pollScheduler.TriggerSync("other@example.test", false))
 	select {
 	case <-otherRan:
 	case <-time.After(3 * time.Second):
-		require.FailNow(t, "another account did not acquire the gate during quota pause")
+		requirements.FailNow("another account did not acquire the gate during quota pause")
 	}
-	require.NoError(t, st.Store.UpdateSourceSyncCursor(src.ID, "100"))
+	requirements.NoError(st.Store.UpdateSourceSyncCursor(src.ID, "100"))
 	expired.Store(false)
 	labelsQuota.Store(true)
 	freshCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-	assert.ErrorIs(t, runEmailPoll(freshCtx, src.Identifier, st.Store, nil, invocationFromContext(freshCtx)), scheduler.ErrAcquisitionIncomplete)
+	requirements.ErrorIs(runEmailPoll(freshCtx, src.Identifier, st.Store, nil, invocationFromContext(freshCtx)), scheduler.ErrAcquisitionIncomplete)
 	run, err := st.Store.GetLatestSync(src.ID)
-	require.NoError(t, err)
-	assert.Equal(t, store.SyncStatusPaused, run.Status)
-	assert.Empty(t, run.ErrorMessage.String)
+	requirements.NoError(err)
+	checks.Equal(store.SyncStatusPaused, run.Status)
+	checks.Empty(run.ErrorMessage.String)
 }
