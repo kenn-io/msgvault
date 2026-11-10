@@ -21,14 +21,15 @@ import (
 
 // ICSMetadata records the accepted revision independently of the retained raw.
 type ICSMetadata struct {
-	Status   string    `json:"status,omitempty"`
-	AllDay   bool      `json:"all_day"`
-	Sequence int64     `json:"sequence"`
-	Start    string    `json:"start,omitempty"`
-	End      string    `json:"end,omitempty"`
-	TimeZone string    `json:"time_zone,omitempty"`
-	ICalUID  string    `json:"ical_uid,omitempty"`
-	Stamp    time.Time `json:"ics_stamp"`
+	Status    string    `json:"status,omitempty"`
+	AllDay    bool      `json:"all_day"`
+	Sequence  int64     `json:"sequence"`
+	Start     string    `json:"start,omitempty"`
+	End       string    `json:"end,omitempty"`
+	TimeZone  string    `json:"time_zone,omitempty"`
+	ICalUID   string    `json:"ical_uid,omitempty"`
+	Stamp     time.Time `json:"ics_stamp"`
+	Organizer string    `json:"organizer,omitempty"`
 }
 
 type ICSComponent struct {
@@ -341,6 +342,9 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 	}
 	recurrenceID := ""
 	if rid := p.Get("RECURRENCE-ID"); rid != nil {
+		if rid.Params.Get("RANGE") != "" {
+			return ICSComponent{}, errors.New("RECURRENCE-ID: RANGE is unsupported")
+		}
 		original, date, err := icsTime(rid, loc)
 		if err != nil {
 			return ICSComponent{}, fmt.Errorf("RECURRENCE-ID: %w", err)
