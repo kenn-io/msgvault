@@ -37,7 +37,7 @@ Other dialects are not promised.
 
 Recognized English notices retain their entire payload without an asserted author.
 Other colon payloads keep their exact prefix as an unverified scoped label.
-Supported headers inside message text start new records. A continuation line that begins with a date (for example `2026-06-14` or `13 Jun 2026,`) fails; edit that line to import it. Other unfamiliar headers stay in the preceding message.
+Supported headers inside message text start new records. A continuation line with a date, numeric clock, and header separator fails; edit that line to import it. Dated prose stays in the body, and unfamiliar headers outside this check may merge into the preceding message.
 The unit tests cover time interpretation, invalid input, bounded parsing,
 repeated and overlapping windows and media containment.
 

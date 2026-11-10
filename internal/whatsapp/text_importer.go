@@ -61,6 +61,15 @@ func LoadText(ctx context.Context, path string, opts TextOptions) (*TextInput, e
 	if opts.MediaDir != "" && opts.AttachmentsDir == "" {
 		return nil, errors.New("attachment storage directory is required with media")
 	}
+	if opts.MediaDir != "" {
+		root, err := os.OpenRoot(opts.MediaDir)
+		if err != nil {
+			return nil, fmt.Errorf("open media directory: %w", err)
+		}
+		if err := root.Close(); err != nil {
+			return nil, fmt.Errorf("open media directory: %w", err)
+		}
+	}
 	info, err := os.Stat(path) // #nosec G703 -- The local CLI caller selects the TXT file to import.
 	if err != nil {
 		return nil, fmt.Errorf("open TXT: %w", err)

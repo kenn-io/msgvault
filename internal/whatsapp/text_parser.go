@@ -21,8 +21,8 @@ import (
 // and either Android's dash or iOS's brackets. Never guess date order.
 var textHeader = regexp.MustCompile(`^(\[?)([0-9]{1,4}[/.-][0-9]{1,2}[/.-][0-9]{1,4}), ([0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?(?:[ \x{00a0}\x{202f}]+(?:[AaPp][Mm]|[AaPp]\. ?[Mm]\.))?)(\] | - )(.*)$`)
 
-// A continuation that begins with a date may be an unfamiliar header.
-var textDateStart = regexp.MustCompile(`^[\s\p{Z}]*\[?[\s\p{Z}]*(?:\p{Nd}{1,4}[/.-]\p{Nd}{1,2}[/.-]\p{Nd}{1,4}|\p{Nd}{1,2}\.? \p{L}+\.? \p{Nd}{2,4}|\p{L}+\.? \p{Nd}{1,2},? \p{Nd}{4})`)
+// A date, clock, and separator may mark an unfamiliar header.
+var textDateStart = regexp.MustCompile(`^[\s\p{Z}]*\[?[\s\p{Z}]*(?:\p{Nd}{1,4}[/.-]\p{Nd}{1,2}[/.-]\p{Nd}{1,4}|\p{Nd}{1,2}\.? \p{L}+\.? \p{Nd}{2,4}|\p{L}+\.? \p{Nd}{1,2},? \p{Nd}{4})[,،]?[\s\p{Z}]+\p{Nd}{1,2}[:.]\p{Nd}{2}(?:[:.]\p{Nd}{2})?(?:[\s\p{Z}]+(?:[AaPp][Mm]|[AaPp]\. ?[Mm]\.))?(?:[\s\p{Z}]+[-\p{Pd}][\s\p{Z}]+|\][\s\p{Z}]*|:[\s\p{Z}]+)`)
 var textNotice = regexp.MustCompile(`^(?:Messages and calls are end-to-end encrypted$|Messages to this chat and calls are now secured with end-to-end encryption$|.+ changed (?:the group (?:description|name|icon)|the subject)(?:$| )|.+ created group "|You created (?:group|this group)(?:$| ))`)
 
 func textLocation(order, zone string) (*time.Location, error) {

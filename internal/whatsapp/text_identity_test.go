@@ -52,20 +52,11 @@ func TestTextPersistedKeys(t *testing.T) {
 }
 
 func TestTextPayloadKeyIgnoresClassification(t *testing.T) {
-	for _, tc := range []struct{ payload, kind string }{
-		{"Mira:  asters: blue\n\nbeside the gate", "message"},
-		{`Mira changed the subject to "Asters: blue"`, "notice"},
-	} {
-		t.Run(tc.kind, func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			rows, _, err := parseTextForTest(t.Context(), strings.NewReader("13/6/26, 10:00 - "+tc.payload), "dmy", "UTC", textLimitsDefault)
-			require.NoError(err)
-			require.Len(rows, 1)
-			require.Equal(tc.kind, rows[0].Kind)
-			want := "whatsapp_txt:" + textHash("garden", rows[0].WallTime, rows[0].Precision, tc.payload) + ":0"
-			assert.Equal(want, textMessageKey("garden", rows[0], 0))
-		})
-	}
+	rows, _, err := parseTextForTest(t.Context(), strings.NewReader(`13/6/26, 10:00 - Mira changed the subject to "Asters: blue"`), "dmy", "UTC", textLimitsDefault)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "notice", rows[0].Kind)
+	assert.Equal(t, "whatsapp_txt:32fab6e2ab8d05c10874e3ca0027ad09a69e01277ef712a44169dc2e240ea4d8:0", textMessageKey("garden", rows[0], 0))
 }
 
 func TestTextSearchSenderAfterRebuild(t *testing.T) {

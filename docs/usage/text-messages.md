@@ -92,7 +92,7 @@ or a.m./p.m. Normal, no-break and narrow no-break spaces before AM/PM are
 supported. UTF-8 BOM, CRLF and leading directional marks are accepted.
 Multiline bodies and blank lines are retained. A line that looks like a full
 supported header starts another record even if it was originally message text.
-A continuation line that begins with a date (for example `2026-06-14` or `13 Jun 2026,`) fails; edit that line to import it. Other unfamiliar headers stay in the preceding message.
+A continuation line with a date, numeric clock, and header separator fails; edit that line to import it. Dated prose stays in the body, and unfamiliar headers outside this check may merge into the preceding message.
 Ordinary text such as `Meet at 10:01`, `£3.50`, or `Plan A - the cheap one`
 stays in the body. Invalid UTF-8, a preamble, or input
 over 128 MiB, 250,000 records or 1 MiB per record also fail before archive writes.

@@ -79,14 +79,12 @@ func TestTextParserRejects(t *testing.T) {
 		limits                        textLimits
 	}{
 		{"senderless-no-comma", "13/6/26, 10:00 - Mira: yes\n13/6/26 10:01 - Messages are encrypted", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
-		{"date-prose", "13/6/26, 10:00 - Mira: yes\n2026-06-14 deadline", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
-		{"named-month-noon", "13/6/26, 10:00 - Mira: yes\n13 Jun 2026, noon - Ivo: two", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
 		{"day-month", "13/6/26, 10:00 - Mira: yes\n13 Jun 2026, 10:01 - Ivo: no", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
-		{"unicode-spacing", "13/6/26, 10:00 - Mira: yes\n١٣/٦/٢٦، noon\u00a0–\u00a0Ivo: two", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
+		{"unicode-digits", "13/6/26, 10:00 - Mira: yes\n١٣/٦/٢٦، ١٠:٠١\u00a0–\u00a0Ivo: two", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
+		{"dot-clock", "13/6/26, 10:00 - Mira: yes\n13/6/26 10.01 - Ivo: two", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
 		{"preamble", "notes\n13/6/26, 10:00 - Mira: ok", "dmy", "UTC", "line 1: unsupported or malformed TXT header", textLimitsDefault},
 		{"invalid-date", "31/2/26, 10:00 - Mira: no", "dmy", "UTC", "day out of range", textLimitsDefault},
 		{"bad-clock", "13/6/26, 27:00 - Mira: no", "dmy", "UTC", "hour out of range", textLimitsDefault},
-		{"malformed-no-comma", "13/6/26, 10:00 - Mira: yes\n13/6/26 noon - Ivo: no", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
 		{"utf8-continuation", "13/6/26, 10:00 - Mira: asters\n\xff", "dmy", "UTC", "line 2: TXT is not valid UTF-8", textLimitsDefault},
 		{"empty", "", "dmy", "UTC", "TXT contains no records", textLimitsDefault},
 		{"count-limit", "13/6/26, 10:00 - Mira: one\n13/6/26, 10:01 - Mira: two", "dmy", "UTC", "TXT exceeds 1 records", textLimits{Bytes: 100, Records: 1, RecordBytes: 100}},
@@ -124,14 +122,16 @@ func TestTextParserOriginalByteDigest(t *testing.T) {
 	}
 }
 
-func TestTextParserNumericContinuation(t *testing.T) {
-	for _, line := range []string{"Plan A - the cheap one", "[link] see this", "wait — what", "[unfinished", "[13 Jun noon]Ivo: two", "1/2 cup", "Meet at 10:01", "The price is £3.50", "١٠:٠١"} {
+func TestTextParserContinuation(t *testing.T) {
+	for _, line := range []string{"2026-06-14 deadline", "2026-06-14 deadline - water", "13/6/26 10:01 deadline", "13 Jun 2026, noon - Ivo: two", "13/6/26 noon - Ivo: no", "١٣/٦/٢٦، noon\u00a0–\u00a0Ivo: two", "Plan A - the cheap one", "[link] see this", "[13 Jun noon]Ivo: two", "1/2 cup", "Meet at 10:01", "The price is £3.50", "١٠:٠١"} {
 		t.Run(line, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			rows, _, err := parseTextForTest(t.Context(), strings.NewReader("13/6/26, 10:00 - Mira: shopping\n"+line), "dmy", "UTC", textLimitsDefault)
 			require.NoError(err)
 			require.Len(rows, 1)
 			assert.Equal("shopping\n"+line, rows[0].Body)
+			assert.Equal("13/6/26, 10:00 - Mira: shopping\n"+line, rows[0].Raw)
+			assert.Equal(1, rows[0].StartLine)
 			assert.Equal(2, rows[0].EndLine)
 		})
 	}
