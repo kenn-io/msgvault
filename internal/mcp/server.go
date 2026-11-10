@@ -176,6 +176,7 @@ type ServeOptions struct {
 	// when the embedder has no durable Saved View store; the Saved View tools
 	// are then omitted from the catalog.
 	SavedViews savedview.Service
+	CalEvents  CalendarEventsBackend
 	// Meetings exposes daemon-backed archived meeting context, action, and
 	// metric reads. Leave it nil when the daemon predates those routes.
 	Meetings MeetingBackend
@@ -411,6 +412,7 @@ func newMCPServerWithPolicy(
 		savedViews:           opts.SavedViews,
 		meetings:             opts.Meetings,
 		calendar:             opts.Calendar,
+		calEvents:            opts.CalEvents,
 		personAgendaBackend:  opts.PersonAgendaBackend,
 		personTierBackend:    opts.PersonTierBackend,
 		kata:                 opts.Kata,
@@ -641,6 +643,8 @@ func agentReadToolPermission(name string) (agentgrant.Permission, bool) {
 		return agentgrant.PermissionAttachmentRead, true
 	case ToolGetStats:
 		return agentgrant.PermissionStatsRead, true
+	case ToolListCalendarEvents:
+		return agentgrant.PermissionCalendarEventRead, true
 	}
 	return "", false
 }

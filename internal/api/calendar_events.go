@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/verification"
 )
 
 type CalendarEventStore interface {
@@ -42,7 +45,16 @@ func (s *Server) handleCalendarEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 503, "calendar_unavailable", "Archived calendar events are unavailable")
 		return
 	}
-	page, err := backend.ListCalendarOccurrencesContext(r.Context(), from, to)
+	ctx := r.Context()
+	if s.requestAuthentication(r).Grant != nil {
+		ids := agentReadSourceIDs(r)
+		if sourcescope.Restricted(ctx) {
+			allowed := sourcescope.IDs(ctx)
+			ids = slices.DeleteFunc(slices.Clone(ids), func(id int64) bool { return !slices.Contains(allowed, id) })
+		}
+		ctx = sourcescope.WithSourceIDs(ctx, ids)
+	}
+	page, err := backend.ListCalendarOccurrencesContext(ctx, from, to)
 	if err != nil {
 		if errors.Is(err, store.ErrQueryTooBroad) {
 			writeError(w, 400, "query_too_broad", err.Error())
@@ -53,6 +65,23 @@ func (s *Server) handleCalendarEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		writeError(w, 500, "calendar_failed", err.Error())
 		return
+	}
+	ids := make([]int64, 0, len(page.Occurrences)*2)
+	for _, row := range page.Occurrences {
+		ids = append(ids, row.MessageID)
+		if row.SeriesMessageID != 0 {
+			ids = append(ids, row.SeriesMessageID)
+		}
+	}
+	withheld, ok := s.verificationWithheld(w, r, ids)
+	if !ok {
+		return
+	}
+	for i := range page.Occurrences {
+		row := &page.Occurrences[i]
+		if withheld[row.MessageID] || withheld[row.SeriesMessageID] {
+			row.Subject = verification.Masked
+		}
 	}
 	writeJSON(w, 200, page)
 }

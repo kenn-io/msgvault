@@ -317,3 +317,30 @@ func TestMCPArchiveLocalChatDrafts(t *testing.T) {
 		})
 	}
 }
+
+func TestMCPArchivedCalendarVersionGate(t *testing.T) {
+	for _, tc := range []struct {
+		version   string
+		available bool
+	}{{"4.1.0", false}, {"4.2.0", true}} {
+		t.Run(tc.version, func(t *testing.T) {
+			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/v1/health":
+					_, _ = io.WriteString(w, `{"status":"ok","api_schema_version":"`+tc.version+`"}`)
+				case "/api/v1/sources/status":
+					_, _ = io.WriteString(w, `{"sources":[{"source_type":"gcal"}]}`)
+				default:
+					http.NotFound(w, r)
+				}
+			})
+			listed := archiveMCPCatalog(t, daemonMCPServeOptions(t.Context(), client, nil))
+			names := make([]string, 0, len(listed.Tools))
+			for _, tool := range listed.Tools {
+				names = append(names, tool.Name)
+			}
+			assert.Equal(t, tc.available, slices.Contains(names, "list_calendar_events"))
+		})
+	}
+}
