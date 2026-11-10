@@ -73,18 +73,20 @@ func TestImportGroupmeRequiresOwner(t *testing.T) {
 // A cancellation after a real commit still runs identity migrations and refreshes
 // the Parquet cache from the partial archive, using an uncancelled context.
 func TestImportGroupmePartialImportRefreshesIdentityAndCache(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	cfg := lifecycleTestConfig(t.TempDir())
 	testCtx := withStoreResolverConfig(t, cfg)
 	root := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(root, "message.json"), []byte(`[{"id":"first","group_id":"fictional-group","sender_id":"fictional-owner","created_at":1704067200,"text":"first"},{"id":"second","group_id":"fictional-group","sender_id":"fictional-peer","created_at":1704067201,"text":"second"}]`), 0600))
+	require.NoError(os.WriteFile(filepath.Join(root, "message.json"), []byte(`[{"id":"first","group_id":"fictional-group","sender_id":"fictional-owner","created_at":1704067200,"text":"first"},{"id":"second","group_id":"fictional-group","sender_id":"fictional-peer","created_at":1704067201,"text":"second"}]`), 0600))
 	probe, err := store.Open(cfg.DatabaseDSN())
-	require.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, probe.Close()) })
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(probe.Close()) })
 	ctx, cancel := context.WithCancel(testCtx)
 	defer cancel()
 	canceled := testutil.CancelAfterCommit(t, cancel, func() bool {
 		var n int
-		require.NoError(t, probe.DB().QueryRowContext(context.WithoutCancel(t.Context()), "SELECT count(*) FROM messages").Scan(&n))
+		require.NoError(probe.DB().QueryRowContext(context.WithoutCancel(t.Context()), "SELECT count(*) FROM messages").Scan(&n))
 		return n > 0
 	})
 	command := &cobra.Command{Use: "import-groupme"}
@@ -92,20 +94,20 @@ func TestImportGroupmePartialImportRefreshesIdentityAndCache(t *testing.T) {
 	var output bytes.Buffer
 	command.SetOut(&output)
 	command.SetErr(io.Discard)
-	require.ErrorIs(t, runImportGroupme(command, root, groupmeCLIOptions{Me: "fictional-owner"}), context.Canceled)
-	require.True(t, canceled())
-	assert.Contains(t, output.String(), "Partial import")
+	require.ErrorIs(runImportGroupme(command, root, groupmeCLIOptions{Me: "fictional-owner"}), context.Canceled)
+	require.True(canceled())
+	assert.Contains(output.String(), "Partial import")
 	var sourceID int64
-	require.NoError(t, probe.DB().QueryRowContext(t.Context(), "SELECT id FROM sources WHERE source_type='groupme'").Scan(&sourceID))
+	require.NoError(probe.DB().QueryRowContext(t.Context(), "SELECT id FROM sources WHERE source_type='groupme'").Scan(&sourceID))
 	identities, err := probe.ListAccountIdentitiesContext(t.Context(), sourceID)
-	require.NoError(t, err)
-	assert.NotEmpty(t, identities)
+	require.NoError(err)
+	assert.NotEmpty(identities)
 	db, err := sql.Open("duckdb", "")
-	require.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, db.Close()) })
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(db.Close()) })
 	var n int
-	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM read_parquet(?, hive_partitioning=true)`, filepath.Join(cfg.AnalyticsDir(), "messages", "**", "*.parquet")).Scan(&n))
-	assert.Equal(t, 1, n)
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FROM read_parquet(?, hive_partitioning=true)`, filepath.Join(cfg.AnalyticsDir(), "messages", "**", "*.parquet")).Scan(&n))
+	assert.Equal(1, n)
 }
 
 func TestImportGroupmeInvalidInputHasNoPartialSummary(t *testing.T) {
