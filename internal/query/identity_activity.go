@@ -81,21 +81,16 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	ctx context.Context,
 	request ExploreRequest,
 	identityCandidateSQL string,
-	occurrenceDates bool,
 ) (string, []any, error) {
 	after, before := request.Context.After, request.Context.Before
-	if occurrenceDates {
-		request.Context.After, request.Context.Before = nil, nil
-	}
+	request.Context.After, request.Context.Before = nil, nil
 	var err error
 	request, err = e.narrowIdentityFactCandidates(ctx, request)
 	if err != nil {
 		return "", nil, err
 	}
 	conditions, args := buildExploreConditions(request)
-	if occurrenceDates {
-		conditions += " AND (message_type = 'meeting_transcript' OR (" + dateWindowSQL("occurred_at", Context{After: after, Before: before}) + "))"
-	}
+	conditions += " AND (message_type = 'meeting_transcript' OR (" + dateWindowSQL("occurred_at", Context{After: after, Before: before}) + "))"
 	conditions, err = e.sentIdentityConditions(conditions)
 	if err != nil {
 		return "", nil, err
@@ -485,7 +480,6 @@ func (e *DuckDBEngine) searchPeople(
 			ctx,
 			request.Explore,
 			candidates,
-			true,
 		)
 		if logicalErr != nil {
 			return nil, logicalErr
