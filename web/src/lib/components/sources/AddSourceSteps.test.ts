@@ -15,25 +15,11 @@ it('shows the IMAP steps and one command when platforms agree', async () => {
   expect(command.textContent).toContain('reader');
 });
 
-it('reports an invalid IMAP server port', async () => {
+it('asks for a server name when the Server holds a port', async () => {
   render(AddSourceSteps, { kind: ADD_SOURCE_KINDS.find(kind => kind.id === 'imap') as CommandSourceKind });
-  const server = screen.getByLabelText('Server');
   await fireEvent.input(screen.getByLabelText('Username'), { target: { value: 'reader' } });
-  await fireEvent.input(server, { target: { value: 'imap.example.com:70000' } });
-  expect(screen.getByText('Enter a valid server and a port from 1 to 65535.')).toBeDefined();
-  await fireEvent.input(server, { target: { value: 'imap.example.com:993:99999' } });
-  expect(screen.getByText('Enter a valid server and a port from 1 to 65535.')).toBeDefined();
-  expect(screen.queryByText(/msgvault add-imap/, { selector: 'code' })).toBeNull();
-});
-
-it('adds STARTTLS to the IMAP command when selected', async () => {
-  render(AddSourceSteps, { kind: ADD_SOURCE_KINDS.find(kind => kind.id === 'imap') as CommandSourceKind });
   await fireEvent.input(screen.getByLabelText('Server'), { target: { value: 'imap.example.com:143' } });
-  await fireEvent.input(screen.getByLabelText('Username'), { target: { value: 'reader' } });
-  const command = screen.getByText(/msgvault add-imap/, { selector: 'code' });
-  expect(command.textContent).not.toContain('--starttls');
-  await fireEvent.click(screen.getByRole('checkbox', { name: 'Use STARTTLS' }));
-  expect(command.textContent).toContain('--starttls');
-  await fireEvent.click(screen.getByRole('checkbox', { name: 'Use STARTTLS' }));
-  expect(command.textContent).not.toContain('--starttls');
+  expect(screen.getByText('Enter a server name, such as imap.example.com.')).toBeDefined();
+  expect(screen.queryByText(/msgvault add-imap/, { selector: 'code' })).toBeNull();
+  expect(screen.queryByRole('checkbox')).toBeNull();
 });

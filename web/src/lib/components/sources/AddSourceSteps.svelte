@@ -1,15 +1,14 @@
 <script lang="ts">
-  import { Checkbox, SegmentedControl, TextInput } from '@kenn-io/kit-ui';
-  import { addSourceCommand, imapServer, type CommandSourceKind } from '../../sources/add-source';
+  import { SegmentedControl, TextInput } from '@kenn-io/kit-ui';
+  import { addSourceCommand, type CommandSourceKind } from '../../sources/add-source';
   import CommandLine from './CommandLine.svelte';
 
   let { kind }: { kind: CommandSourceKind } = $props();
   let values = $state<Record<string, string>>({});
-  let starttls = $state(false);
   // The visitor's own system first; the switch shows only when the two quote the command differently.
   let shell = $state<'posix' | 'cmd'>(typeof navigator !== 'undefined' && /Win/i.test(navigator.platform) ? 'cmd' : 'posix');
-  const posix = $derived(addSourceCommand(kind, values, 'posix', starttls));
-  const cmd = $derived(addSourceCommand(kind, values, 'cmd', starttls));
+  const posix = $derived(addSourceCommand(kind, values, 'posix'));
+  const cmd = $derived(addSourceCommand(kind, values, 'cmd'));
 </script>
 
 <div class="steps">
@@ -17,8 +16,7 @@
     <label>{field.label}<TextInput block bind:value={() => values[field.id] ?? '', value => (values[field.id] = value)} placeholder={field.placeholder} autofocus={index === 0} /></label>
   {/each}
   {#if kind.id === 'imap'}
-    {#if values.host?.trim() && !imapServer(values.host)}<p>Enter a valid server and a port from 1 to 65535.</p>{/if}
-    <Checkbox label="Use STARTTLS" bind:checked={starttls} />
+    {#if /^-|[:\s]/.test(values.host?.trim() ?? '')}<p>Enter a server name, such as imap.example.com.</p>{/if}
     <p>The command asks for your password.</p>
   {/if}
   {#if posix && cmd}
