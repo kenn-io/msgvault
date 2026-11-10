@@ -17,12 +17,14 @@ import (
 
 type adFixture struct {
 	mediaStatus                        int
+	mediaBody                          string
 	creativeReads, adReads, ownedReads atomic.Int32
 }
 
 // newAdFixture serves one organic media item (300) and an ad account whose
 // creatives use: ad-only owned media 900 (twice), the organic media 300,
-// foreign media 901, unreadable media 902, and no Instagram media at all.
+// foreign media 901, unreadable media 902, media with no owner (903) or an
+// empty owner (904), and no Instagram media at all.
 func newAdFixture(t *testing.T) (*adFixture, *Client, *Client) {
 	t.Helper()
 	f := &adFixture{}
@@ -47,11 +49,12 @@ func newAdFixture(t *testing.T) (*adFixture, *Client, *Client) {
 				_, _ = fmt.Fprint(w, `{"data":[{"id":"600","effective_instagram_media_id":"900"},{"id":"601","effective_instagram_media_id":"900"},{"id":"602","effective_instagram_media_id":"300"}],"paging":{"cursors":{"after":"next"},"next":"https://example.test/unused"}}`)
 				return
 			}
-			_, _ = fmt.Fprint(w, `{"data":[{"id":"603","effective_instagram_media_id":"901"},{"id":"604","effective_instagram_media_id":"902"},{"id":"605"}]}`)
+			_, _ = fmt.Fprint(w, `{"data":[{"id":"603","effective_instagram_media_id":"901"},{"id":"604","effective_instagram_media_id":"902"},{"id":"605"},{"id":"606","effective_instagram_media_id":"903"},{"id":"607","effective_instagram_media_id":"904"}]}`)
 		case "/v26.0/900":
 			f.adReads.Add(1)
 			if f.mediaStatus != 0 {
-				http.Error(w, "synthetic failure", f.mediaStatus)
+				w.WriteHeader(f.mediaStatus)
+				_, _ = fmt.Fprint(w, f.mediaBody)
 				return
 			}
 			_, _ = fmt.Fprint(w, `{"id":"900","caption":"Ad-only media","timestamp":"2000-01-02T03:04:05+0000","owner":{"id":"200"}}`)
@@ -60,7 +63,12 @@ func newAdFixture(t *testing.T) (*adFixture, *Client, *Client) {
 		case "/v26.0/901":
 			_, _ = fmt.Fprint(w, `{"id":"901","caption":"Another account's media","owner":{"id":"201"}}`)
 		case "/v26.0/902":
-			http.Error(w, "synthetic denial", http.StatusBadRequest)
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = fmt.Fprint(w, `{"error":{"message":"synthetic denial","code":10}}`)
+		case "/v26.0/903":
+			_, _ = fmt.Fprint(w, `{"id":"903","caption":"Media without an owner"}`)
+		case "/v26.0/904":
+			_, _ = fmt.Fprint(w, `{"id":"904","caption":"Media with an empty owner","owner":{"id":""}}`)
 		case "/v26.0/900/comments":
 			f.ownedReads.Add(1)
 			_, _ = fmt.Fprint(w, `{"data":[{"id":"1000","text":"adorchardcomment"}]}`)
@@ -96,9 +104,9 @@ func TestInstagramAdMediaArchivesOnlyOwnedMedia(t *testing.T) {
 	assert.Equal(int32(1), f.adReads.Load(), "a media ID repeated on one creative page is read once")
 	assert.Equal(int32(1), f.ownedReads.Load())
 
-	stored, err := st.StoredMessagesContext(t.Context(), src.ID, "instagram-comment-json", []string{"300", "400", "900", "901", "902", "1000"})
+	stored, err := st.StoredMessagesContext(t.Context(), src.ID, "instagram-comment-json", []string{"300", "400", "900", "901", "902", "903", "904", "1000"})
 	require.NoError(err)
-	assert.ElementsMatch([]string{"300", "400", "900", "1000"}, slices.Collect(maps.Keys(stored)), "foreign and unreadable ad media are skipped")
+	assert.ElementsMatch([]string{"300", "400", "900", "1000"}, slices.Collect(maps.Keys(stored)), "foreign, ownerless and unreadable ad media are skipped")
 	adMedia, adComment := message(t, st, src.ID, "900"), message(t, st, src.ID, "1000")
 	assert.Equal(adMedia.ID, adComment.ReplyToMessageID.Int64)
 	assert.Equal(adMedia.ConversationID, adComment.ConversationID)
@@ -117,27 +125,39 @@ func TestInstagramAdMediaArchivesOnlyOwnedMedia(t *testing.T) {
 	assert.JSONEq("true", string(shared["ad"]), "media found both ways keeps both flags on one row")
 }
 
-func TestInstagramAdMediaServerErrorFailsSync(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st := testutil.NewSQLiteTestStore(t)
-	f, page, ads := newAdFixture(t)
-	f.mediaStatus = http.StatusServiceUnavailable
-	imp := NewImporter(st, page)
-	src, err := imp.RegisterInstagram(t.Context(), "9", "100", "200")
-	require.NoError(err)
-	sum, err := imp.ImportInstagramAds(t.Context(), "9", "100", "200", "700", ads, ImportOptions{})
-	require.Error(err, "a retryable media failure is not skipped")
-	assert.True(sum.Partial)
-	exists, err := st.MessageExistsBatch(src.ID, []string{"900"})
-	require.NoError(err)
-	assert.Empty(exists)
+func TestInstagramAdMediaRetryableFailureFailsSync(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"server error", http.StatusServiceUnavailable, ""},
+		{"rate limit as HTTP 400", http.StatusBadRequest, `{"error":{"code":4}}`},
+		{"expired token", http.StatusBadRequest, `{"error":{"code":190}}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st := testutil.NewSQLiteTestStore(t)
+			f, page, ads := newAdFixture(t)
+			f.mediaStatus, f.mediaBody = tt.status, tt.body
+			imp := NewImporter(st, page)
+			src, err := imp.RegisterInstagram(t.Context(), "9", "100", "200")
+			require.NoError(err)
+			sum, err := imp.ImportInstagramAds(t.Context(), "9", "100", "200", "700", ads, ImportOptions{})
+			require.Error(err, "a retryable media failure is not skipped")
+			assert.True(sum.Partial)
+			exists, err := st.MessageExistsBatch(src.ID, []string{"900"})
+			require.NoError(err)
+			assert.Empty(exists)
 
-	f.mediaStatus = 0
-	_, err = imp.ImportInstagramAds(t.Context(), "9", "100", "200", "700", ads, ImportOptions{})
-	require.NoError(err)
-	exists, err = st.MessageExistsBatch(src.ID, []string{"900", "1000"})
-	require.NoError(err)
-	assert.Len(exists, 2, "the next run retries the failed media")
+			f.mediaStatus = 0
+			_, err = imp.ImportInstagramAds(t.Context(), "9", "100", "200", "700", ads, ImportOptions{})
+			require.NoError(err)
+			exists, err = st.MessageExistsBatch(src.ID, []string{"900", "1000"})
+			require.NoError(err)
+			assert.Len(exists, 2, "the next run retries the failed media")
+		})
+	}
 }
 
 func TestInstagramAdAccountChangeRestartsCycle(t *testing.T) {

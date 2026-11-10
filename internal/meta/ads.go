@@ -104,10 +104,11 @@ func (r *importRun) adMedia(ctx context.Context, id string) (Object, bool, error
 		media, err = r.imp.igAPI.InstagramMediaByID(ctx, id)
 		return ObjectPage{}, err
 	})
-	// Graph refuses media the Page token cannot read with a 4xx. Retrying
-	// cannot fix that, and failing here would stop every later creative.
-	if apiErr, ok := errors.AsType[*APIError](err); ok && apiErr.Status < 500 && apiErr.Status != http.StatusTooManyRequests {
-		slog.WarnContext(ctx, "skipping Instagram ad media the Page token cannot read", "media_id", id, "status", apiErr.Status)
+	// Retrying cannot make media readable once Graph says it is missing or the
+	// Page token lacks access, and failing would stop every later creative.
+	// Graph also reports rate limits as HTTP 400, so other errors still fail.
+	if apiErr, ok := errors.AsType[*APIError](err); ok && mediaUnreadable(apiErr) {
+		slog.WarnContext(ctx, "skipping Instagram ad media the Page token cannot read", "media_id", id, "status", apiErr.Status, "code", apiErr.Code)
 		return Object{}, false, nil
 	}
 	if err != nil {
@@ -118,4 +119,17 @@ func (r *importRun) adMedia(ctx context.Context, id string) (Object, bool, error
 		return Object{}, false, nil
 	}
 	return Object{ID: media.ID, Message: media.Caption, CreatedTime: media.Timestamp, InstagramMedia: &media}, true, nil
+}
+
+// mediaUnreadable reports Graph's "object missing" (100) and permission
+// (10, 200-299) codes, or a bare 403/404 with no code.
+func mediaUnreadable(e *APIError) bool {
+	switch {
+	case e.Code == 100 || e.Code == 10 || (e.Code >= 200 && e.Code <= 299):
+		return true
+	case e.Code == 0:
+		return e.Status == http.StatusForbidden || e.Status == http.StatusNotFound
+	default:
+		return false
+	}
 }
