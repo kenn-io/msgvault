@@ -142,3 +142,31 @@ it('refreshes Work when accepting a job ended elsewhere', async () => {
   expect(refresh).toHaveBeenCalledOnce();
 });
 
+it('uses the selected job version after a different job conflicts', async () => {
+  let reads = 0;
+  let secondTag: string | null = null;
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    const path = pathOf(request);
+    if (path === '/api/v1/employments/11' && request.method === 'GET') {
+      reads++;
+      return Response.json(employment(11, reads, { title: 'First job' }), { headers: { ETag: `"employment-11-r${reads}"` } });
+    }
+    if (path === '/api/v1/employments/11/primary') return Response.json({ error: 'employment_revision_conflict', message: 'Changed' }, { status: 409 });
+    if (path === '/api/v1/employments/12' && request.method === 'GET') return Response.json(employment(12, 1, { title: 'Second job' }), { headers: { ETag: '"employment-12-r1"' } });
+    if (path === '/api/v1/employments/12/primary') {
+      secondTag = request.headers.get('If-Match');
+      return Response.json(employment(12, 1, { is_primary: true }));
+    }
+    if (path === '/api/v1/people/7/employments') return Response.json({ employments: [] });
+    throw new Error(`Unexpected ${request.method} ${path}`);
+  });
+  controller.employments = [employment(11, 1, { title: 'First job', is_primary: false }), employment(12, 1, { title: 'Second job', is_primary: false })];
+  render(OrganizationEmploymentTab, { controller, personID: 7 });
+  await fireEvent.click(screen.getByRole('button', { name: /Actions for First job/ }));
+  await fireEvent.click(await screen.findByRole('menuitem', { name: 'Make primary' }));
+  await screen.findByRole('button', { name: 'Retry' });
+  await fireEvent.click(screen.getByRole('button', { name: /Actions for Second job/ }));
+  await fireEvent.click(await screen.findByRole('menuitem', { name: 'Make primary' }));
+  await waitFor(() => expect(secondTag).toBe('"employment-12-r1"'));
+});

@@ -58,7 +58,7 @@
 
   async function makePrimary(employment: Employment): Promise<void> {
     if (acting) return;
-    primaryTarget = employment;
+    if (primaryTarget?.id !== employment.id) primary.reset(); primaryTarget = employment;
     await primary.run(current => controller.makeEmploymentPrimary(employment.id, current));
   }
 
