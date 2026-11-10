@@ -139,7 +139,7 @@ func TestPersonFactsHistoryCommandsUseExactGeneratedPathsQueriesAndTables(t *tes
 			}]}`))
 		case "/api/v1/people/7/fact-claims":
 			_, _ = w.Write([]byte(`{"claims":[{
-				"id":8,"generation_id":6,"claim_key":"claim-key",
+				"id":8,"generation_id":6,"claim_key":"claim-key","kind":"fact","status":"fresh",
 				"program_id":"fixture-program","program_version":"v1",
 				"program_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 				"target":{"kind":"attribute","key":"target-key","revision":"` + personFactTestRevision + `"},
@@ -150,7 +150,7 @@ func TestPersonFactsHistoryCommandsUseExactGeneratedPathsQueriesAndTables(t *tes
 		case "/api/v1/people/7/fact-decisions":
 			_, _ = w.Write([]byte(`{"decisions":[{
 				"id":7,"resolution_id":5,"decision_key":"decision-key",
-				"claim_key":"claim-key","action":"applied","reason":"applied-projection",
+				"claim_key":"claim-key","kind":"fact","status":"fresh","action":"applied","reason":"applied-projection",
 				"score":{"source_class":1,"directness":2,"authority":3,"confidence":4,
 					"freshness":5,"corroboration":6,"total":21},
 				"projection":{"kind":"person_attribute_value","row_id":11},
@@ -197,7 +197,7 @@ func TestPersonFactsHistoryCommandsUseExactGeneratedPathsQueriesAndTables(t *tes
 	jsonOutput, err := runPersonFactsCommand(testCtx, t, "claims", "7", "--json")
 	requirements.NoError(err)
 	assertions.JSONEq(`[{
-		"id":8,"generation_id":6,"claim_key":"claim-key",
+		"id":8,"generation_id":6,"claim_key":"claim-key","kind":"fact","status":"fresh",
 		"program_id":"fixture-program","program_version":"v1",
 		"program_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"target":{"kind":"attribute","key":"target-key","revision":"`+personFactTestRevision+`"},
@@ -244,6 +244,7 @@ func TestPersonFactsClaimsTableRetainsMalformedPersistedTargets(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Contains(output, "candidate:legacy:key:legacy-revision")
 	assertions.Contains(output, "legacy-claim")
+	assertions.Regexp(`candidate:legacy:key:legacy-revision\s+-\s+-\s+support`, output)
 	assertions.Contains(output, "valid-claim")
 }
 

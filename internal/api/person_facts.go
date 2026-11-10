@@ -75,8 +75,8 @@ type PersonFactEvidence struct {
 }
 
 type PersonFactClaim struct {
-	Kind               personfacts.FactKind         `json:"kind"`
-	Status             personfacts.FreshnessStatus  `json:"status"`
+	Kind               personfacts.FactKind         `json:"kind" enum:"fact,event,preference"`
+	Status             personfacts.FreshnessStatus  `json:"status" enum:"fresh,stale,expired"`
 	LatestSupportedAt  *time.Time                   `json:"latest_supported_at,omitzero" nullable:"true"`
 	ID                 int64                        `json:"id"`
 	GenerationID       int64                        `json:"generation_id"`
