@@ -189,10 +189,18 @@ func TestICSRetainsEachEventWithItsTimeZones(t *testing.T) {
 	}
 }
 
+const rdateZoneCalendar = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n" +
+	"BEGIN:VTIMEZONE\r\nTZID:Custom/Eastern\r\n" +
+	"BEGIN:DAYLIGHT\r\nDTSTART:20270314T020000\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0400\r\nRDATE:20280312T020000,20290311T020000\r\nEND:DAYLIGHT\r\n" +
+	"BEGIN:STANDARD\r\nDTSTART:20271107T020000\r\nTZOFFSETFROM:-0400\r\nTZOFFSETTO:-0500\r\nRDATE:20281105T020000,20291104T020000\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\n" +
+	"BEGIN:VEVENT\r\nUID:rdate@example.test\r\nDTSTART;TZID=Custom/Eastern:20280715T120000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+
 func TestICSRecurrenceAndBounds(t *testing.T) {
 	for _, tt := range []struct{ name, props, kind, end, original string }{
 		{"all day default", "DTSTART;VALUE=DATE:20270314", "single", "2027-03-15T04:00:00Z", ""},
 		{"civil duration", "DTSTART;TZID=America/New_York:20270313T090000\r\nDURATION:P1D", "single", "2027-03-14T13:00:00Z", ""},
+		{"lowercase civil duration", "DTSTART;TZID=America/New_York:20270313T090000\r\nDURATION:p1d", "single", "2027-03-14T13:00:00Z", ""},
+		{"lowercase elapsed duration", "DTSTART:20270313T090000Z\r\nDURATION:pt1h", "single", "2027-03-13T10:00:00Z", ""},
 		{"elapsed duration", "DTSTART;TZID=America/New_York:20270313T090000\r\nDURATION:PT24H\r\nRRULE:FREQ=DAILY;COUNT=2", "series", "2027-03-14T14:00:00Z", ""},
 		{"sparse exception cancel", "RECURRENCE-ID;VALUE=DATE:20270314\r\nSTATUS:CANCELLED", "exception", "", "20270314"},
 	} {
@@ -208,6 +216,9 @@ func TestICSRecurrenceAndBounds(t *testing.T) {
 			if tt.end != "" {
 				requirements.NotNil(e.End)
 				assertions.Equal(tt.end, e.End.Format(time.RFC3339))
+			}
+			if tt.name == "lowercase civil duration" {
+				assertions.Equal(23*time.Hour, e.End.Sub(*e.Start))
 			}
 			if tt.original != "" {
 				requirements.NotNil(e.Original)
@@ -228,6 +239,9 @@ func TestICSRecurrenceAndBounds(t *testing.T) {
 
 func TestICSRejectMalformed(t *testing.T) {
 	for _, tc := range []struct{ name, raw, want string }{
+		{"zone period RDATE", strings.Replace(rdateZoneCalendar, "RDATE:20280312T020000,20290311T020000", "RDATE;VALUE=PERIOD:20280312T020000/20280312T030000", 1), "unsupported VTIMEZONE"},
+		{"zone EXDATE", strings.Replace(rdateZoneCalendar, "RDATE:20280312T020000,20290311T020000", "EXDATE:20280312T020000", 1), "unsupported VTIMEZONE"},
+		{"zone mixed rule and date", strings.Replace(rdateZoneCalendar, "RDATE:20281105T020000,20291104T020000", "RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU", 1), "unsupported VTIMEZONE"},
 		{"unknown method", strings.Replace(icsExample, "METHOD:REQUEST", "METHOD:X-UNKNOWN", 1), `unsupported calendar method "X-UNKNOWN"`},
 		{"unknown zone", strings.ReplaceAll(icsExample, "America/New_York", "Unknown/Zone"), "unknown time zone Unknown/Zone"},
 		{"negative sequence", strings.Replace(icsExample, "SEQUENCE:2", "SEQUENCE:-1", 1), "invalid SEQUENCE"},
@@ -296,6 +310,24 @@ func TestParseICSCustomizedHistory(t *testing.T) {
 		requirements.NoError(err)
 		requirements.Len(components, 1)
 		assertions.Equal("2026-07-15T04:30:00Z", components[0].Event.Start.Format(time.RFC3339))
+	})
+
+	t.Run("rdate", func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
+		components, err := ParseICS([]byte(rdateZoneCalendar), "", "")
+		requirements.NoError(err)
+		requirements.Len(components, 1)
+		assertions.Equal("2028-07-15T16:00:00Z", components[0].Event.Start.Format(time.RFC3339))
+		loc, err := LoadZone(components[0].Event.EventTimeZone)
+		requirements.NoError(err)
+		for _, tc := range []struct {
+			year  int
+			month time.Month
+			want  int
+		}{{2028, time.July, -4 * 3600}, {2028, time.December, -5 * 3600}, {2029, time.July, -4 * 3600}, {2029, time.December, -5 * 3600}} {
+			_, offset := time.Date(tc.year, tc.month, 15, 12, 0, 0, 0, loc).Zone()
+			assertions.Equal(tc.want, offset)
+		}
 	})
 
 	t.Run("one shot", func(t *testing.T) {

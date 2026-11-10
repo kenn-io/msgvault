@@ -38,8 +38,14 @@ func customICSZones(cal *ical.Calendar) (map[string]string, error) {
 			continue
 		}
 		var obs []zoneObservance
+		var hasRule, hasRDate bool
 		for _, part := range zone.Children {
 			offset, from, start, rule := part.Props.Get("TZOFFSETTO"), part.Props.Get("TZOFFSETFROM"), part.Props.Get("DTSTART"), part.Props.Get("RRULE")
+			rdates := part.Props.Values("RDATE")
+			hasRule, hasRDate = hasRule || rule != nil, hasRDate || len(rdates) > 0
+			if part.Props.Get("EXDATE") != nil || hasRule && hasRDate {
+				return nil, fmt.Errorf("unsupported VTIMEZONE %q observance", id)
+			}
 			if (part.Name != "STANDARD" && part.Name != "DAYLIGHT") || offset == nil || from == nil || start == nil {
 				return nil, fmt.Errorf("unsupported VTIMEZONE %q observance", id)
 			}
@@ -64,6 +70,15 @@ func customICSZones(cal *ical.Calendar) (map[string]string, error) {
 				o.rule = fmt.Sprintf("M%d.%d.%d/%s", r.Bymonth[0], (r.Byweekday[0].N()+6)%6, (r.Byweekday[0].Day()+1)%7, wall.Format("15:04:05"))
 			}
 			obs = append(obs, o)
+			for _, prop := range rdates {
+				for value := range strings.SplitSeq(prop.Value, ",") {
+					wall, err := time.Parse("20060102T150405", value)
+					if err != nil {
+						return nil, fmt.Errorf("unsupported VTIMEZONE %q offset or start", id)
+					}
+					obs = append(obs, zoneObservance{kind: o.kind, offset: o.offset, wall: wall, start: wall.Add(-time.Duration(seconds) * time.Second)})
+				}
+			}
 		}
 		slices.SortFunc(obs, func(a, b zoneObservance) int { return a.wall.Compare(b.wall) })
 		for i, o := range obs {
