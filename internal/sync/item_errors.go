@@ -147,6 +147,12 @@ func (s *Syncer) pendingAcquisitionReplayIDs(ctx context.Context, sourceID int64
 	return ids, nil
 }
 
+// HasPendingAcquisition reports whether a source still has messages to retry.
+func (s *Syncer) HasPendingAcquisition(ctx context.Context, sourceID int64) (bool, error) {
+	ids, err := s.pendingAcquisitionReplayIDs(ctx, sourceID)
+	return len(ids) != 0, err
+}
+
 // initAcquisitionReplay snapshots earlier failures for this run.
 func (s *Syncer) initAcquisitionReplay(ctx context.Context, sourceID, syncID int64) error {
 	ids, err := s.pendingAcquisitionReplayIDs(ctx, sourceID)

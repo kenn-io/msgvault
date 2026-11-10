@@ -122,7 +122,7 @@ func (s *Syncer) incrementalWithRecovery(
 	}
 
 	// Get profile for current history ID
-	profile, err := s.client.GetProfile(ctx)
+	profile, err := s.readGmailProfile(ctx)
 	if err != nil {
 		_ = s.store.FailSync(syncID, err.Error())
 		return nil, fmt.Errorf("get profile: %w", err)

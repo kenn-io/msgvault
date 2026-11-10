@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/imap"
+	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	msgsync "go.kenn.io/msgvault/internal/sync"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -1757,4 +1758,56 @@ func TestIMAPQresyncEndToEndSelectCursorValidationFallsBackBeforeDeltaFetch(t *t
 			assertions.Equal(uint64(2), states[0].HighestModSeq)
 		})
 	}
+}
+
+func TestIMAPPollQresyncAppendAndFlags(t *testing.T) {
+	baseline := scriptedRFC7162Snapshot{
+		Capabilities: scriptedRFC7162Capabilities(),
+		Mailboxes:    []scriptedRFC7162Mailbox{scriptedRFC7162Inbox(77, 2, 1, newScriptedRFC7162Message(1, "existing@example.test"))},
+	}
+	addr, server := startScriptedRFC7162Server(t, baseline)
+	host, portText, err := net.SplitHostPort(addr)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portText)
+	require.NoError(t, err)
+	ic := &imap.Config{Host: host, Port: port, Username: testutil.IMAPTestUsername}
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = t.TempDir()
+	cfg.Data.DataDir = cfg.HomeDir
+	require.NoError(t, imap.SaveCredentials(cfg.TokensDir(), ic.Identifier(), testutil.IMAPTestPassword))
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(sourceTypeIMAP, ic.Identifier())
+	require.NoError(t, err)
+	blob, err := ic.ToJSON()
+	require.NoError(t, err)
+	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), source.ID, blob))
+	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	originalRebuild := rebuildCacheAfterScheduledSourceRun
+	rebuildCacheAfterScheduledSourceRun = func(context.Context, string) error { return nil }
+	t.Cleanup(func() { rebuildCacheAfterScheduledSourceRun = originalRebuild })
+	require.NoError(t, runEmailPoll(ctx, ic.Identifier(), st, nil, invocationFromContext(ctx)))
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET is_read = ? WHERE source_id = ? AND source_message_id = ?`), false, source.ID, "INBOX|1")
+	require.NoError(t, err)
+	changed := scriptedRFC7162Inbox(77, 3, 2, newScriptedRFC7162Message(1, "existing@example.test", imapapi.FlagSeen), newScriptedRFC7162Message(2, "appended@example.test"))
+	changed.ChangedUIDs = []imapapi.UID{1, 2}
+	server.setSnapshot(scriptedRFC7162Snapshot{Capabilities: scriptedRFC7162Capabilities(), Mailboxes: []scriptedRFC7162Mailbox{changed}})
+	require.NoError(t, runEmailPoll(ctx, ic.Identifier(), st, nil, invocationFromContext(ctx)))
+	assert.Equal(t, []string{"INBOX|1|[\"\\\\Seen\"]", "INBOX|2|[]"}, queryScriptedRFC7162Memberships(t, st, source.ID))
+	_, _, read := queryScriptedRFC7162MessageState(t, st, source.ID, "existing@example.test")
+	assert.False(t, read)
+	assert.Contains(t, server.commandsFor(2), "CHANGEDSINCE 1 VANISHED")
+	assert.NotContains(t, server.commandsFor(2), "UID SEARCH")
+	fallback := scriptedRFC7162Inbox(77, 4, 0, newScriptedRFC7162Message(1, "existing@example.test", imapapi.FlagSeen), newScriptedRFC7162Message(2, "appended@example.test"), newScriptedRFC7162Message(3, "fallback@example.test"))
+	server.setSnapshot(scriptedRFC7162Snapshot{Capabilities: "IMAP4rev1", Mailboxes: []scriptedRFC7162Mailbox{fallback}})
+	require.NoError(t, runEmailPoll(ctx, ic.Identifier(), st, nil, invocationFromContext(ctx)))
+	assert.Contains(t, server.commandsFor(3), "UID SEARCH")
+	before := queryScriptedRFC7162Memberships(t, st, source.ID)
+	require.Len(t, before, 3)
+	missing := newScriptedRFC7162Message(4, "missing@example.test")
+	missing.MissingRaw = true
+	fallback.Messages = append(fallback.Messages, missing)
+	fallback.UIDNext = 5
+	server.setSnapshot(scriptedRFC7162Snapshot{Capabilities: "IMAP4rev1", Mailboxes: []scriptedRFC7162Mailbox{fallback}})
+	assert.ErrorIs(t, runEmailPoll(ctx, ic.Identifier(), st, nil, invocationFromContext(ctx)), scheduler.ErrAcquisitionIncomplete)
+	assert.Equal(t, before, queryScriptedRFC7162Memberships(t, st, source.ID))
 }

@@ -449,6 +449,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Create and configure scheduler
 	state.syncFailures = &telemetry.SyncFailures{Capture: telemetryReporter.Capture}
 	sched, mediaSched := newServeSchedulers(syncFunc, logger, idleTracker, operationGate, telemetryReporter.Capture)
+	sched.WithAccountPoll(func(ctx context.Context, identifier string) error {
+		ctx = withInvocation(ctx, state)
+		return runScheduledSource(ctx, attachmentMaint, true, func(ctx context.Context) error {
+			return runEmailPoll(ctx, identifier, s, getOAuthMgr, state)
+		})
+	})
 	sched.WithAccountPreemptionPolicy(func(identifier string) bool {
 		return scheduledSyncPreemptible(ctx, s, identifier, logger)
 	})
@@ -464,7 +470,25 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Add all scheduled accounts
-	count, errs := sched.AddAccountsFromConfig(cfg)
+	schedulingConfig := *cfg
+	schedulingConfig.Accounts = append([]config.AccountSchedule(nil), cfg.Accounts...)
+	pollSources := make(map[int64]bool)
+	for i := range schedulingConfig.Accounts {
+		account := &schedulingConfig.Accounts[i]
+		if account.Enabled && account.PollInterval != 0 {
+			source, err := pollingSource(ctx, account.Email, s, state)
+			if err == nil && pollSources[source.ID] {
+				err = errors.New("source already has a polling account")
+			}
+			if err != nil {
+				logger.Error("failed to schedule account polling", "account", account.Email, "error", err)
+				account.PollInterval = 0
+			} else {
+				pollSources[source.ID] = true
+			}
+		}
+	}
+	count, errs := sched.AddAccountsFromConfig(&schedulingConfig)
 	if len(errs) > 0 {
 		for _, err := range errs {
 			logger.Error("failed to schedule account", "error", err)
@@ -4577,6 +4601,10 @@ func newDaemonGmailClient(
 // open a browser for OAuth — the error path tells the user how to
 // re-authorize from a terminal.
 func runScheduledGmailSync(ctx context.Context, email string, src *store.Source, s *store.Store, getOAuthMgr func(ctx context.Context, _ string) (*oauth.Manager, error), state *invocation) (*gmail.SyncSummary, error) {
+	return runScheduledGmailSyncWithProfile(ctx, email, src, s, getOAuthMgr, state, false)
+}
+
+func runScheduledGmailSyncWithProfile(ctx context.Context, email string, src *store.Source, s *store.Store, getOAuthMgr func(ctx context.Context, _ string) (*oauth.Manager, error), state *invocation, verify bool) (*gmail.SyncSummary, error) {
 	if state == nil {
 		state = invocationFromContext(ctx)
 	}
@@ -4596,6 +4624,16 @@ func runScheduledGmailSync(ctx context.Context, email string, src *store.Source,
 	opts.AttachmentsDir = cfg.AttachmentsDir()
 
 	syncer := newMessageSyncer(client, s, opts, state).WithLogger(logger)
+	if verify {
+		profile, err := client.GetProfile(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("get Gmail profile: %w", err)
+		}
+		if _, err := provideridentity.GmailProfileEvidence(src, profile.EmailAddress); err != nil {
+			return nil, err
+		}
+		syncer.WithInitialGmailProfile(profile)
+	}
 
 	source, err := s.GetOrCreateSource(sourceTypeGmail, accountEmail)
 	if err != nil {
@@ -4640,11 +4678,16 @@ func scheduledGmailAccountIdentifier(selector string, src *store.Source) string 
 // on because IMAP page tokens are numeric offsets that don't survive
 // across processes (see syncfull.go).
 func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store, state *invocation) (*gmail.SyncSummary, error) {
+	summary, _, err := runScheduledIMAPSyncWithCoverage(ctx, src, s, state)
+	return summary, err
+}
+
+func runScheduledIMAPSyncWithCoverage(ctx context.Context, src *store.Source, s *store.Store, state *invocation) (*gmail.SyncSummary, bool, error) {
 	if state == nil {
 		state = invocationFromContext(ctx)
 	}
 	if state == nil || state.cfg == nil || state.logger == nil {
-		return nil, errors.New("configuration is unavailable")
+		return nil, false, errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
 	logger := state.logger
@@ -4652,7 +4695,7 @@ func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store
 	imapOpts = append(imapOpts, imapSyncFolderFilter(ctx, s, src.Identifier, state, nil, nil))
 	apiClient, err := buildAPIClient(ctx, src, nil, nil, imapOpts...)
 	if err != nil {
-		return nil, fmt.Errorf("build IMAP client: %w", err)
+		return nil, false, fmt.Errorf("build IMAP client: %w", err)
 	}
 	defer func() { _ = apiClient.Close() }()
 
@@ -4678,13 +4721,17 @@ func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store
 	displayName := src.DisplayName.String
 	confirmDefaultIdentity(ctx, io.Discard, s, src.ID, displayName, displayName, "account-identifier", logger)
 	if err := runPostSourceCreateMigrationsForInvocation(ctx, s, state); err != nil {
-		return nil, fmt.Errorf("post-source-create migrations: %w", err)
+		return nil, false, fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
+	complete := false
 	summary, err := syncer.FullWithFinalizer(
 		ctx,
 		src,
 		func(summary *gmail.SyncSummary) error {
+			if client, ok := apiClient.(*imaplib.Client); ok {
+				complete = imapSyncCanPublish(ctx, client, summary, 0)
+			}
 			if err := saveIMAPFolderStates(ctx, s, src, apiClient, summary, 0); err != nil {
 				return fmt.Errorf("save IMAP incremental state: %w", err)
 			}
@@ -4692,9 +4739,9 @@ func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("IMAP sync failed: %w", err)
+		return nil, false, fmt.Errorf("IMAP sync failed: %w", err)
 	}
-	return summary, nil
+	return summary, complete, nil
 }
 
 // runScheduledTeamsSync runs a Teams sync for the daemon.

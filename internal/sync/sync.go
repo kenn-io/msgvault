@@ -89,13 +89,14 @@ func DefaultOptions() *Options {
 
 // Syncer performs Gmail synchronization.
 type Syncer struct {
-	client             gmail.API
-	store              *store.Store
-	logger             *slog.Logger
-	progress           gmail.SyncProgress
-	opts               *Options
-	successfulHookName string
-	successfulHook     SuccessfulSyncHook
+	client              gmail.API
+	store               *store.Store
+	logger              *slog.Logger
+	progress            gmail.SyncProgress
+	opts                *Options
+	initialGmailProfile *gmailProfileHolder
+	successfulHookName  string
+	successfulHook      SuccessfulSyncHook
 
 	acquisitionSyncID        int64
 	pendingAcquisitions      map[string]struct{}
@@ -108,6 +109,23 @@ type Syncer struct {
 
 	// Recovery must refresh existing memberships before advancing its page.
 	requireLabelRefresh bool
+}
+
+type gmailProfileHolder struct{ profile *gmail.Profile }
+
+// WithInitialGmailProfile hands a verified profile to the first sync phase.
+func (s *Syncer) WithInitialGmailProfile(profile *gmail.Profile) *Syncer {
+	s.initialGmailProfile = &gmailProfileHolder{profile: profile}
+	return s
+}
+
+func (s *Syncer) readGmailProfile(ctx context.Context) (*gmail.Profile, error) {
+	if s.initialGmailProfile != nil && s.initialGmailProfile.profile != nil {
+		profile := s.initialGmailProfile.profile
+		s.initialGmailProfile.profile = nil
+		return profile, nil
+	}
+	return s.client.GetProfile(ctx)
 }
 
 // SuccessfulSyncHook runs after the durable sync run is marked complete.
@@ -1432,7 +1450,7 @@ func (s *Syncer) full(
 	}
 
 	// Get profile to verify connection and get historyId
-	profile, err := s.client.GetProfile(ctx)
+	profile, err := s.readGmailProfile(ctx)
 	if err != nil {
 		s.failStoppedSync(state.syncID, err)
 		return nil, fmt.Errorf("get profile: %w", err)

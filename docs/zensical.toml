@@ -31,6 +31,7 @@ nav = [
   {"Sync and Import" = [
     {"OAuth Setup" = "guides/oauth-setup.md"},
     {"IMAP Mail" = "usage/imap.md"},
+    {"Email Freshness" = "usage/email-freshness.md"},
     {"Local Email" = "usage/importing.md"},
     {"Remote Email Images" = "usage/remote-images.md"},
     {"Text Messages" = "usage/text-messages.md"},

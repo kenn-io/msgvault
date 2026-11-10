@@ -79,7 +79,10 @@ type AccountStatus struct {
 	// executing or yielded; it queues when the current run finishes.
 	Pending bool `json:"pending,omitempty"`
 	// StartedAt is when the current run began executing (after the gate).
-	StartedAt time.Time `json:"started_at,omitzero"`
+	StartedAt     time.Time `json:"started_at,omitzero"`
+	PollInterval  string    `json:"poll_interval,omitempty"`
+	LastAttempted time.Time `json:"last_attempted,omitzero"`
+	LastCompleted time.Time `json:"last_completed,omitzero"`
 }
 
 type Job struct {
@@ -126,20 +129,27 @@ type Scheduler struct {
 	onCompletion            func()
 	cron                    *cron.Cron
 	syncFunc                SyncFunc
+	pollFunc                SyncFunc
 	logger                  *slog.Logger
 	work                    WorkTracker
 	accountPreemptionPolicy func(string) bool
 
-	mu        sync.RWMutex
-	jobs      map[string]cron.EntryID // email -> cron entry ID
-	schedules map[string]string       // email -> cron expression
-	running   map[string]bool         // email -> currently syncing
-	lastRun   map[string]time.Time    // email -> last successful run
-	lastErr   map[string]error        // email -> last error
-	queuedAt  map[string]time.Time    // email -> when a run began waiting for the gate
-	pending   map[string]bool         // email -> follow-up requested by a tick or yield
-	manual    map[string]bool         // accepted manual run
-	startedAt map[string]time.Time    // email -> current run began executing
+	mu            sync.RWMutex
+	jobs          map[string]cron.EntryID // email -> cron entry ID
+	schedules     map[string]string       // email -> cron expression
+	running       map[string]bool         // email -> currently syncing
+	lastRun       map[string]time.Time    // email -> last successful run
+	lastErr       map[string]error        // email -> last error
+	queuedAt      map[string]time.Time    // email -> when a run began waiting for the gate
+	pending       map[string]bool         // email -> follow-up requested by a tick or yield
+	manual        map[string]bool         // accepted manual run
+	startedAt     map[string]time.Time    // email -> current run began executing
+	pollJobs      map[string]cron.EntryID
+	pollIntervals map[string]time.Duration
+	pollPending   map[string]bool
+	queuedPoll    map[string]bool
+	pollPromoted  map[string]bool
+	lastAttempted map[string]time.Time
 
 	genericJobs        map[string]cron.EntryID
 	genericSchedules   map[string]string
@@ -201,6 +211,12 @@ func New(syncFunc SyncFunc) *Scheduler {
 		queuedAt:           make(map[string]time.Time),
 		pending:            make(map[string]bool),
 		startedAt:          make(map[string]time.Time),
+		pollJobs:           make(map[string]cron.EntryID),
+		pollIntervals:      make(map[string]time.Duration),
+		pollPending:        make(map[string]bool),
+		queuedPoll:         make(map[string]bool),
+		pollPromoted:       make(map[string]bool),
+		lastAttempted:      make(map[string]time.Time),
 		manual:             make(map[string]bool),
 		genericJobs:        make(map[string]cron.EntryID),
 		genericSchedules:   make(map[string]string),
@@ -221,6 +237,11 @@ func New(syncFunc SyncFunc) *Scheduler {
 		ctx:                ctx,
 		cancel:             cancel,
 	}
+}
+
+func (s *Scheduler) WithAccountPoll(fn SyncFunc) *Scheduler {
+	s.pollFunc = fn
+	return s
 }
 
 // WithLogger sets the logger for the scheduler.
@@ -258,6 +279,11 @@ func (s *Scheduler) AddAccount(email, cronExpr string) error {
 		delete(s.jobs, email)
 		delete(s.schedules, email)
 	}
+	if entryID, exists := s.pollJobs[email]; exists {
+		s.cron.Remove(entryID)
+		delete(s.pollJobs, email)
+		delete(s.pollIntervals, email)
+	}
 
 	// Validate and add the cron job
 	entryID, err := s.cron.AddFunc(cronExpr, func() {
@@ -281,21 +307,39 @@ func (s *Scheduler) AddAccount(email, cronExpr string) error {
 // the previous run still waiting for the gate is redundant; one that finds it
 // executing is remembered as a single follow-up run instead of being lost.
 func (s *Scheduler) onAccountTick(email string) {
+	s.onAccountTrigger(email, false)
+}
+
+func (s *Scheduler) onAccountTrigger(email string, poll bool) {
 	s.mu.Lock()
 	if s.stopped {
 		s.mu.Unlock()
 		return
 	}
+	if _, scheduled := s.jobs[email]; !scheduled {
+		s.mu.Unlock()
+		return
+	}
 	if s.running[email] {
-		s.coalesceTickLocked("email", email, s.queuedAt, s.pending)
+		if _, queued := s.queuedAt[email]; queued && !poll && s.queuedPoll[email] {
+			s.queuedPoll[email] = false
+			s.pollPromoted[email] = true
+			s.queuedRuns++
+		}
+		if s.coalesceTickLocked("email", email, s.queuedAt, s.pending) {
+			s.pollPending[email] = poll
+		} else if !poll && s.pending[email] {
+			s.pollPending[email] = false
+		}
 		s.mu.Unlock()
 		return
 	}
 	s.running[email] = true
 	s.queuedAt[email] = time.Now()
+	s.queuedPoll[email] = poll
 	s.wg.Add(1)
 	s.mu.Unlock()
-	s.runSync(email)
+	s.runAccountSync(email, poll)
 }
 
 // coalesceTickLocked records a tick that arrived while its job was active.
@@ -320,11 +364,25 @@ func (s *Scheduler) coalesceTickLocked(kind, name string, queuedAt map[string]ti
 func (s *Scheduler) AddAccountsFromConfig(cfg *config.Config) (int, []error) {
 	var errors []error
 	scheduled := 0
+	if err := config.ValidatePollingAccounts(cfg.Accounts); err != nil {
+		return 0, []error{err}
+	}
 
 	for _, acc := range cfg.ScheduledAccounts() {
+		if acc.PollInterval != 0 && s.pollFunc == nil {
+			errors = append(errors, fmt.Errorf("%s: polling callback is unavailable", acc.Email))
+			continue
+		}
 		if err := s.AddAccount(acc.Email, acc.Schedule); err != nil {
 			errors = append(errors, fmt.Errorf("%s: %w", acc.Email, err))
 		} else {
+			if acc.PollInterval > 0 {
+				s.mu.Lock()
+				email := acc.Email
+				s.pollJobs[email] = s.cron.Schedule(cron.Every(acc.PollInterval), cron.FuncJob(func() { s.onAccountTrigger(email, true) }))
+				s.pollIntervals[email] = acc.PollInterval
+				s.mu.Unlock()
+			}
 			scheduled++
 		}
 	}
@@ -441,6 +499,12 @@ func (s *Scheduler) RemoveAccount(email string) {
 		s.logger.Info("removed schedule", "email", email)
 	}
 	delete(s.pending, email)
+	delete(s.pollPending, email)
+	if entryID, exists := s.pollJobs[email]; exists {
+		s.cron.Remove(entryID)
+		delete(s.pollJobs, email)
+		delete(s.pollIntervals, email)
+	}
 }
 
 // Indexing job names, shared by registration, status reporting, and the
@@ -492,11 +556,22 @@ func (s *Scheduler) setIndexingJob(name, label string, run func(context.Context)
 // Start begins executing scheduled jobs.
 func (s *Scheduler) Start() {
 	s.mu.Lock()
+	if s.started && !s.stopped {
+		s.mu.Unlock()
+		return
+	}
 	s.started = true
 	s.stopped = false
+	polls := make([]string, 0, len(s.pollJobs))
+	for email := range s.pollJobs {
+		polls = append(polls, email)
+	}
 	s.mu.Unlock()
 
 	s.cron.Start()
+	for _, email := range polls {
+		go s.onAccountTrigger(email, true)
+	}
 	s.logger.Info("scheduler started", "jobs", len(s.jobs))
 }
 
@@ -539,14 +614,25 @@ func (s *Scheduler) Stop() context.Context {
 // runSync executes sync for an account (called by cron or TriggerSync).
 // The caller must have already called wg.Add(1) and set running[email] = true.
 func (s *Scheduler) runSync(email string) {
+	s.runAccountSync(email, false)
+}
+
+func (s *Scheduler) runAccountSync(email string, poll bool) {
 	defer s.wg.Done()
 	defer s.finishAccountRun(email)
 
-	done, ok := s.beginWork("scheduled sync of "+email, true)
+	done, ok := s.beginWork("scheduled sync of "+email, !poll)
 	s.mu.Lock()
+	if s.pollPromoted[email] {
+		s.queuedRuns--
+		delete(s.pollPromoted, email)
+		poll = false
+	}
+	delete(s.queuedPoll, email)
 	delete(s.queuedAt, email)
 	if ok {
 		s.startedAt[email] = time.Now()
+		s.lastAttempted[email] = time.Now()
 	}
 	s.mu.Unlock()
 	if !ok {
@@ -563,9 +649,24 @@ func (s *Scheduler) runSync(email string) {
 	preemptionPolicy := s.accountPreemptionPolicy
 	s.mu.RUnlock()
 	preemptible := preemptionPolicy == nil || preemptionPolicy(email)
-	runCtx, endRun := s.jobContext("sync "+email, preemptible, false, 0)
-	err := s.syncFunc(runCtx, email)
+	var budget time.Duration
+	if poll {
+		budget = 5 * time.Minute
+	}
+	runCtx, endRun := s.jobContext("sync "+email, preemptible, false, budget)
+	fn := s.syncFunc
+	if poll && s.pollFunc != nil {
+		fn = s.pollFunc
+	}
+	err := fn(runCtx, email)
 	endRun()
+	if errors.Is(context.Cause(runCtx), jobctx.ErrRunBudgetExceeded) {
+		if callbackErr := jobctx.ErrorAfterYield(runCtx, err); callbackErr != nil {
+			err = callbackErr
+		} else {
+			err = ErrAcquisitionIncomplete
+		}
+	}
 	yielded := yieldedToWaiter(runCtx) || jobctx.PreemptionRequested(runCtx)
 
 	s.mu.Lock()
@@ -582,11 +683,16 @@ func (s *Scheduler) runSync(email string) {
 			logScheduledSyncError(s.logger, email, time.Since(start), callbackErr)
 		}
 		if _, scheduled := s.jobs[email]; scheduled {
+			if !s.pending[email] {
+				s.pollPending[email] = poll
+			}
 			s.pending[email] = true
 		}
 		s.logger.Info("scheduled sync yielded to a waiting operation; queued follow-up",
 			"email", email,
 			"duration", time.Since(start))
+	} else if errors.Is(err, ErrAcquisitionIncomplete) {
+		delete(s.lastErr, email)
 	} else if err != nil && err != ErrDeferUntilNextTrigger { //nolint:errorlint // Only a bare deferral is a clean no-work run.
 		s.lastErr[email] = err
 		logScheduledSyncError(s.logger, email, time.Since(start), err)
@@ -605,7 +711,7 @@ func (s *Scheduler) runSync(email string) {
 	// Release the gate before post-sync jobs queue for it, so a sync that is
 	// already waiting runs before the indexing this sync requests.
 	release()
-	if (err != nil && err != ErrDeferUntilNextTrigger) || yielded { //nolint:errorlint // Only a bare deferral is a clean no-work run.
+	if (err != nil && err != ErrDeferUntilNextTrigger && !errors.Is(err, ErrAcquisitionIncomplete)) || yielded { //nolint:errorlint // Only a bare deferral is a clean no-work run.
 		return
 	}
 	for _, name := range []string{embedJobName} {
@@ -647,9 +753,12 @@ func (s *Scheduler) finishAccountRun(email string) {
 	delete(s.startedAt, email)
 	if s.pending[email] && !s.stopped {
 		delete(s.pending, email)
+		poll := s.pollPending[email]
+		delete(s.pollPending, email)
 		s.queuedAt[email] = time.Now()
+		s.queuedPoll[email] = poll
 		s.wg.Add(1)
-		go s.runSync(email)
+		go s.runAccountSync(email, poll)
 		return
 	}
 	delete(s.pending, email)
@@ -1098,15 +1207,25 @@ func (s *Scheduler) Status() []AccountStatus {
 	for email, entryID := range s.jobs {
 		queuedAt, queued := s.queuedAt[email]
 		status := AccountStatus{
-			Email:     email,
-			Running:   !s.startedAt[email].IsZero(),
-			LastRun:   s.lastRun[email],
-			NextRun:   s.nextRun(entryID),
-			Schedule:  s.schedules[email],
-			Queued:    queued,
-			QueuedAt:  queuedAt,
-			Pending:   s.pending[email],
-			StartedAt: s.startedAt[email],
+			Email:         email,
+			Running:       !s.startedAt[email].IsZero(),
+			LastRun:       s.lastRun[email],
+			NextRun:       s.nextRun(entryID),
+			Schedule:      s.schedules[email],
+			Queued:        queued,
+			QueuedAt:      queuedAt,
+			Pending:       s.pending[email],
+			StartedAt:     s.startedAt[email],
+			LastAttempted: s.lastAttempted[email],
+			LastCompleted: s.lastRun[email],
+		}
+		if interval := s.pollIntervals[email]; interval != 0 {
+			status.PollInterval = interval.String()
+		}
+		if pollID, ok := s.pollJobs[email]; ok {
+			if next := s.nextRun(pollID); status.NextRun.IsZero() || next.Before(status.NextRun) {
+				status.NextRun = next
+			}
 		}
 		if err := s.lastErr[email]; err != nil {
 			status.LastError = err.Error()
