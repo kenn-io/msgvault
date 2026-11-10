@@ -789,18 +789,24 @@ func TestSyncFetchesNoThreadArchivedAtTheUpdateFound(t *testing.T) {
 	assert.Equal(2, full.Archived, "a full sync fetches every thread it finds")
 }
 
-func TestAFullSyncThatPausesStillFetchesEveryThreadWhenItResumes(t *testing.T) {
+func TestAFullSyncThatPausesResumesItsDiscoveryAsAFullOne(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	source := newForgeSource(t, st)
 	f := newFakeForge()
-	f.pages = [][]ThreadRef{{ref("i1", "acme", "2026-11-07T10:00:00Z")}, {ref("i2", "acme", "2026-11-06T10:00:00Z")}}
+	unchanged := ref("i2", "acme", "2026-11-06T10:00:00Z")
+	f.pages = [][]ThreadRef{{ref("i1", "acme", "2026-11-07T10:00:00Z")}, {unchanged}}
 	f.threads["i1"] = [][]Post{{post("p1", "issue", ann, "One", "Body.", "2026-11-01T10:00:00Z")}}
 	f.threads["i2"] = [][]Post{{post("p2", "issue", ann, "Two", "Body.", "2026-11-01T10:00:00Z")}}
 	_, err := NewSyncer(st, f, nil).Sync(t.Context(), source.ID, Options{})
 	require.NoError(err)
 
+	// A full sync pauses after discovery's first page. Its second page shows
+	// i2 at the update it is archived at, with a reason it now has.
+	mentioned := unchanged
+	mentioned.Reason = "mention"
+	f.pages[1] = []ThreadRef{mentioned}
 	ctx, preempt := jobctx.WithPreemption(t.Context())
 	f.afterPage = func(i int) {
 		if i == 0 {
@@ -809,12 +815,15 @@ func TestAFullSyncThatPausesStillFetchesEveryThreadWhenItResumes(t *testing.T) {
 	}
 	paused, err := NewSyncer(st, f, nil).Sync(ctx, source.ID, Options{Full: true})
 	require.NoError(err)
-	assert.True(paused.Paused)
+	require.True(paused.Paused)
 
 	f.afterPage = nil
-	resumed, err := NewSyncer(st, f, nil).Sync(t.Context(), source.ID, Options{})
+	_, err = NewSyncer(st, f, nil).Sync(t.Context(), source.ID, Options{})
 	require.NoError(err)
-	assert.Equal(2, resumed.Archived, "the full sync's discovery finishes as a full one")
+	archived, err := (&knownThreads{store: st, sourceID: source.ID}).all(t.Context())
+	require.NoError(err)
+	assert.Equal("mention", archived["i2"].Ref.Reason,
+		"the resumed discovery is a full one, so it queues what it finds even at the archived update")
 	assert.False(resumeState(t, st, source.ID).Full)
 }
 
