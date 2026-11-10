@@ -9,7 +9,7 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).
-- MCP assistants can list archived calendar occurrences from sources granted `calendar.event.read`.
+- MCP assistants and agent API clients can list archived calendar occurrences from sources granted `calendar.event.read`.
 - `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.
 - [Instagram comment sync](usage/instagram-comments.md) archives linked professional
   account media comments and replies for search and existing person linking.
