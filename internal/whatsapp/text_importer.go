@@ -33,19 +33,19 @@ func validateTextOptions(opts TextOptions) (*time.Location, error) {
 
 type textAssumptions struct {
 	Timezone            string `json:"timezone_assumption"`
+	DateOrder           string `json:"date_order_assumption"`
 	ChatType            string `json:"chat_type"`
 	AmbiguousTimePolicy string `json:"ambiguous_time_policy"`
 }
 
 func textAssumptionsFor(opts TextOptions) textAssumptions {
-	return textAssumptions{opts.Timezone, opts.ChatType, "earlier"}
+	return textAssumptions{opts.Timezone, opts.DateOrder, opts.ChatType, "earlier"}
 }
 
 type textProvenance struct {
 	textRecord
 	textAssumptions
 
-	DateOrder  string `json:"date_order_assumption"`
 	FileSHA256 string `json:"file_sha256"`
 	ChatID     string `json:"chat_id"`
 	Direction  string `json:"direction"`
@@ -168,7 +168,7 @@ func (imp *Importer) ImportText(ctx context.Context, input *TextInput) (summary 
 				if sender.Valid {
 					members = []store.ConversationParticipantRef{{ParticipantID: sender.Int64, Role: "member"}}
 				}
-				raw, err := json.Marshal(textProvenance{row, textAssumptionsFor(opts), opts.DateOrder, digest, opts.ChatID, "unknown", occurrences[i]})
+				raw, err := json.Marshal(textProvenance{row, textAssumptionsFor(opts), digest, opts.ChatID, "unknown", occurrences[i]})
 				if err != nil {
 					return summary, err
 				}
@@ -225,7 +225,7 @@ func prepareTextChat(ctx context.Context, st *store.Store, sourceID int64, opts 
 			return 0, fmt.Errorf("upgrade msgvault to import this chat: %w", err)
 		}
 		if got != want {
-			return 0, errors.New("TXT chat parsing assumptions conflict; reuse the original timezone and chat type")
+			return 0, errors.New("TXT chat parsing assumptions conflict; reuse the original timezone, date order and chat type, or use a different --chat-id")
 		}
 	}
 	raw, err := json.Marshal(want)

@@ -2348,7 +2348,7 @@ The `--phone` flag is required and must be in E.164 format (e.g., `+447700900000
 | `--chat-id` | Text | Stable caller-chosen key for this chat |
 | `--chat-type` | Text | `direct` or `group` |
 | `--chat-title` | No | Text only: display title |
-| `--date-order` | Text | `dmy`, `mdy` or `ymd`; no guessing |
+| `--date-order` | Text | `dmy`, `mdy` or `ymd`; no guessing; fixed per `--chat-id` |
 | `--timezone` | Text | Concrete IANA zone or UTC; caller assumption |
 | `--phone` | Yes | Your phone number in E.164 format (must start with `+`) |
 | `--contacts` | No | Path to contacts `.vcf` file for name resolution |
