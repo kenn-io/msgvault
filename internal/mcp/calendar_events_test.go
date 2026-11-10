@@ -25,21 +25,22 @@ func TestCalendarEventsTool(t *testing.T) {
 		available  bool
 	}{{"calendar.event.read", true}, {"message.read", false}, {"calendar.read", false}} {
 		t.Run(tc.permission, func(t *testing.T) {
+			assertions := assert.New(t)
 			backend := &calendarEventsTestBackend{}
 			opts := ServeOptions{Engine: &querytest.MockEngine{}, CalEvents: backend, DelegatedOnly: true, GrantPermissions: []string{tc.permission}}
 			tools := map[string]bool{}
 			for _, d := range operationCatalog(opts, nil) {
 				tools[d.name] = true
 			}
-			assert.Equal(t, tc.available, tools[ToolListCalendarEvents])
+			assertions.Equal(tc.available, tools[ToolListCalendarEvents])
 			if !tc.available {
 				return
 			}
 			result := rawCallTool(t, opts, ToolListCalendarEvents, map[string]any{"from": "2027-03-01T00:00:00Z", "to": "2027-03-02T00:00:00Z"})
 			require.NotEqual(t, true, result["isError"], fmt.Sprint(result["content"]))
-			assert.Contains(t, fmt.Sprint(result), "Planning")
-			assert.Equal(t, time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC), backend.from)
-			assert.Equal(t, time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC), backend.to)
+			assertions.Contains(fmt.Sprint(result), "Planning")
+			assertions.Equal(time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC), backend.from)
+			assertions.Equal(time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC), backend.to)
 		})
 	}
 }
