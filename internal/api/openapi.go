@@ -408,7 +408,7 @@ import (
 // 4.0.0 removes local document commands, search, status, and operation lanes.
 // Docbank owns document processing.
 // 4.1.0 adds recorded names, saved contacts, and reconciled addresses to merge-list and detail responses,
-// and registered service labels to current contact points.
+// registered service labels to current contact points, and identity keys to observations.
 const APISchemaVersion = "4.1.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
