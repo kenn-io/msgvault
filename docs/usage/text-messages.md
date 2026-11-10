@@ -542,12 +542,12 @@ checked before archive writes; malformed statistics rows stop preflight with
 the filename and logical record number.
 
 Re-run the directory after interruption. Existing keys keep their archived
-originals, including their original text when a later export contains edits;
+originals, including their original text and dates when a later export changes them;
 new keys are added, and absence never deletes messages. Chat and
 legacy PMs stay separate (`reddit_chat` and `reddit_pm`); posts and comments
 are searchable as `reddit_post` and `reddit_comment` outside chat analytics.
-Unknown dates and senders stay unknown. Original column values, filenames,
-and record numbers are archived.
+Unknown dates and senders stay unknown. Original column values, including IP
+addresses, filenames, and record numbers are archived.
 
 Legacy PMs and Chat use the generic chat kind without inferring a direct or group conversation.
 Newly archived PM subjects or Chat channel names update their conversation title

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	_ "time/tzdata"
 
 	"github.com/stretchr/testify/assert"
@@ -405,7 +406,7 @@ func TestImportPermalinks(t *testing.T) {
 	root := t.TempDir()
 	for name, data := range map[string]string{
 		"messages.csv":   "id,body,permalink\npm,private text,https://example.com/message\n",
-		"posts.csv":      "id,body,url,permalink\npost,post text,https://example.com/link,https://example.com/post\nsame,,https://example.com/same,https://example.com/same\n",
+		"posts.csv":      "id,body,url,permalink\npost,post text,https://example.com/link,https://example.com/post\nsame,,https://example.com/same,https://example.com/same\nprefix,https://example.com/posts/1234,,https://example.com/posts/123\n",
 		"comments.csv":   "id,body,media,permalink\ncomment,comment text,https://example.com/media,https://example.com/comment\n",
 		"messages_1.csv": "id,subject\none,hello\n",
 		"posts_1.csv":    "id,url\nthree,https://example.com/post\n",
@@ -416,11 +417,12 @@ func TestImportPermalinks(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
 	require.NoError(err)
-	assert.Equal(7, summary.Added)
+	assert.Equal(8, summary.Added)
 	for id, want := range map[string]string{
 		"pm:pm":           "private text\nhttps://example.com/message",
 		"post:post":       "post text\nhttps://example.com/link\nhttps://example.com/post",
 		"post:same":       "https://example.com/same",
+		"post:prefix":     "https://example.com/posts/1234\nhttps://example.com/posts/123",
 		"comment:comment": "comment text\nhttps://example.com/media\nhttps://example.com/comment",
 		"post:three":      "https://example.com/post",
 		"comment:four":    "https://example.com/picture.png",
@@ -433,5 +435,29 @@ func TestImportPermalinks(t *testing.T) {
 	}
 	results, err := query.NewEngine(st.DB(), st.IsPostgreSQL()).Search(t.Context(), search.Parse("example"), 20, 0)
 	require.NoError(err)
-	assert.Len(results, 6)
+	assert.Len(results, 7)
+}
+
+func TestImportDateOrder(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	root := t.TempDir()
+	require.NoError(os.WriteFile(filepath.Join(root, "posts.csv"), []byte("id,title,date\noffset,early,2026-05-24T04:19:35+01:00\nutc,later,2026-05-24T03:50:00Z\n"), 0600))
+	st := testutil.NewTestStore(t)
+	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
+	require.NoError(err)
+	rows, err := st.DB().QueryContext(t.Context(), "SELECT source_message_id FROM messages ORDER BY sent_at")
+	require.NoError(err)
+	defer func() { _ = rows.Close() }()
+	var ids []string
+	for rows.Next() {
+		var id string
+		require.NoError(rows.Scan(&id))
+		ids = append(ids, id)
+	}
+	require.NoError(rows.Err())
+	assert.Equal([]string{"post:offset", "post:utc"}, ids)
+	var count int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT count(*) FROM messages WHERE sent_at < ?"), time.Date(2026, 5, 24, 3, 30, 0, 0, time.UTC)).Scan(&count))
+	assert.Equal(1, count)
 }

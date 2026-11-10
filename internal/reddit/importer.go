@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -162,7 +163,7 @@ func importBatch(ctx context.Context, st *store.Store, sourceID int64, owner, ki
 				body += c["media"]
 			}
 		}
-		if link := c["permalink"]; kind != "chat" && link != "" && !strings.Contains(body, link) {
+		if link := c["permalink"]; kind != "chat" && link != "" && !slices.Contains(strings.Fields(body), link) {
 			if body != "" {
 				body += "\n"
 			}
@@ -176,6 +177,7 @@ func importBatch(ctx context.Context, st *store.Store, sourceID int64, owner, ki
 			sent = time.Time{}
 			stats.UnknownDates++
 		}
+		sent = sent.UTC()
 		if sender == "" {
 			stats.UnknownSenders++
 		}
