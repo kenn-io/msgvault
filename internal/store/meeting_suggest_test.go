@@ -190,82 +190,75 @@ func TestMeetingLinksSuggestionsAllDayAcrossUTCDates(t *testing.T) {
 }
 
 func TestMeetingLinksAllDayExceptionMasterStates(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		run  func(*testing.T)
-	}{
-		{"normal", func(t *testing.T) {
-			t.Helper()
-			assert, require := assert.New(t), require.New(t)
+	for _, state := range []string{"normal", "over budget", "unsupported", "cancelled"} {
+		t.Run(state, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
-			_, master := calendarFixture(t, st, "master", `{"id":"weekly","iCalUID":"weekly@example.org","start":{"date":"2027-03-07","timeZone":"America/New_York"},"end":{"date":"2027-03-08"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`)
-			_, edit := calendarFixture(t, st, "edit", `{"id":"edited","iCalUID":"weekly@example.org","recurringEventId":"weekly","originalStartTime":{"date":"2027-03-14"},"start":{"date":"2027-03-14"},"end":{"date":"2027-03-15"}}`)
+			raw := `{"id":"weekly","iCalUID":"weekly@example.org","start":{"date":"2027-03-07","timeZone":"America/New_York"},"end":{"date":"2027-03-08"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`
+			original, key := `{"date":"2027-03-14"}`, "20270314"
+			if state == "over budget" {
+				raw = `{"id":"weekly","iCalUID":"weekly@example.org","start":{"date":"1800-01-01","timeZone":"America/New_York"},"end":{"date":"1800-01-02"},"recurrence":["RRULE:FREQ=DAILY"]}`
+			} else if state == "cancelled" {
+				raw = `{"id":"weekly","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-07T10:00:00Z"},"end":{"dateTime":"2027-03-07T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`
+				original, key = `{"dateTime":"2027-03-14T10:00:00Z"}`, "20270314T100000Z"
+			}
+			_, master := calendarFixture(t, st, "master", raw)
+			_, edit := calendarFixture(t, st, "edit", fmt.Sprintf(`{"id":"edited","iCalUID":"weekly@example.org","recurringEventId":"weekly","originalStartTime":%s,"start":{"date":"2027-03-14"},"end":{"date":"2027-03-15"}}`, original))
 			_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"startsAt":"2027-03-14T12:00:00Z"}}`)
+			ref := OccurrenceRef{MessageID: master, Key: key}
+			changed := raw
+			if state == "unsupported" {
+				changed = strings.Replace(raw, "RRULE:FREQ=WEEKLY;COUNT=3", "RRULE:FREQ=HOURLY", 1)
+			} else if state == "cancelled" {
+				changed = `{"id":"weekly","status":"cancelled"}`
+			}
+			require.NoError(st.UpsertMessageRawWithFormat(master, []byte(changed), "gcal_json"))
 			from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
 			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
 			require.NoError(err)
 			require.Len(page.Occurrences, 1)
 			listed := page.Occurrences[0]
-			assert.Equal("2027-03-14T00:00:00Z", listed.Start.UTC().Format(time.RFC3339))
-			assert.Equal("2027-03-15T00:00:00Z", listed.End.UTC().Format(time.RFC3339))
-			for _, ref := range []OccurrenceRef{{MessageID: master, Key: "20270314"}, {MessageID: edit}} {
-				suggestions, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "evt", OccurrenceRef: ref}, 10)
+			assert.Equal(formatMeetingOccurrence(ref), listed.Ref)
+			assert.Equal(from, listed.Start)
+			assert.Equal(from.AddDate(0, 0, 1), listed.End)
+			if state == "cancelled" {
+				assert.Equal("cancelled", listed.Status)
+			}
+			if state == "unsupported" {
+				assert.Equal([]CalendarUnexpandable{{MessageID: master, Reason: "unsupported recurrence"}}, page.Unexpandable)
+			} else if state == "over budget" {
+				assert.Equal([]CalendarUnexpandable{{MessageID: master, Reason: calrecur.ErrBudgetExceeded.Error()}}, page.Unexpandable)
+			}
+			for _, target := range []MeetingLinkRef{{Kind: "evt", OccurrenceRef: ref}, {Kind: "msg", MessageID: note}} {
+				suggestions, err := st.SuggestMeetingLinksContext(t.Context(), target, 10)
 				require.NoError(err)
-				if assert.Len(suggestions.Suggestions, 1) {
-					assert.Equal(note, suggestions.Suggestions[0].MemberMessageID)
+				if state == "cancelled" {
+					assert.Empty(suggestions.Suggestions)
+				} else if assert.Len(suggestions.Suggestions, 1) {
 					assert.Equal(listed.Ref, suggestions.Suggestions[0].Ref)
+					assert.Equal(note, suggestions.Suggestions[0].MemberMessageID)
 					assert.Equal(30, suggestions.Suggestions[0].OverlapMinutes)
 				}
 			}
-			suggestions, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 10)
+			require.NoError(st.UpsertMessageRawWithFormat(master, []byte(raw), "gcal_json"))
+			require.NoError(st.LinkMeetingContext(t.Context(), note, ref))
+			require.NoError(st.UpsertMessageRawWithFormat(master, []byte(changed), "gcal_json"))
+			links, err := meetingLinksForTest(t, st, note)
 			require.NoError(err)
-			if assert.Len(suggestions.Suggestions, 1) {
-				assert.Equal(listed.Ref, suggestions.Suggestions[0].Ref)
-				assert.Equal(30, suggestions.Suggestions[0].OverlapMinutes)
-			}
-			for _, ref := range []OccurrenceRef{{MessageID: master, Key: "20270314"}, {MessageID: edit}} {
-				require.NoError(st.LinkMeetingContext(t.Context(), note, ref))
+			require.Len(links, 1)
+			assert.Equal(listed.Ref, links[0].Ref)
+			assert.True(listed.Start.Equal(links[0].Start))
+			assert.True(listed.End.Equal(links[0].End))
+			for _, target := range []OccurrenceRef{ref, {MessageID: edit}} {
+				require.NoError(st.LinkMeetingContext(t.Context(), note, target))
 				links, err := meetingLinksForTest(t, st, note)
 				require.NoError(err)
 				require.Len(links, 1)
-				assert.True(listed.Start.Equal(links[0].Start), "resolved start must match the calendar listing")
-				assert.True(listed.End.Equal(links[0].End), "resolved end must match the calendar listing")
+				assert.Equal(listed.Ref, links[0].Ref)
+				assert.True(listed.Start.Equal(links[0].Start))
+				assert.True(listed.End.Equal(links[0].End))
+				require.NoError(st.UnlinkMeetingContext(t.Context(), note, target))
 			}
-		}},
-		{"over budget", func(t *testing.T) {
-			t.Helper()
-			requirements, assertions := require.New(t), assert.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			_, master := calendarFixture(t, st, "master", `{"id":"daily","iCalUID":"daily@example.org","start":{"date":"1800-01-01","timeZone":"America/New_York"},"end":{"date":"1800-01-02"},"recurrence":["RRULE:FREQ=DAILY"]}`)
-			_, edit := calendarFixture(t, st, "edit", `{"id":"edited","iCalUID":"daily@example.org","recurringEventId":"daily","originalStartTime":{"date":"2027-03-14"},"start":{"date":"2027-03-14"},"end":{"date":"2027-03-15"}}`)
-			_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"startsAt":"2027-03-14T12:00:00Z"}}`)
-			from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-			requirements.NoError(err)
-			requirements.Len(page.Occurrences, 1)
-			listed := page.Occurrences[0]
-			assertions.Equal([]CalendarUnexpandable{{MessageID: master, Reason: calrecur.ErrBudgetExceeded.Error()}}, page.Unexpandable)
-			assertions.Equal("2027-03-14T00:00:00Z", listed.Start.UTC().Format(time.RFC3339))
-			assertions.Equal("2027-03-15T00:00:00Z", listed.End.UTC().Format(time.RFC3339))
-			for _, target := range []MeetingLinkRef{{Kind: "evt", MessageID: master, Key: "20270314"}, {Kind: "msg", MessageID: note}} {
-				suggestions, err := st.SuggestMeetingLinksContext(t.Context(), target, 10)
-				requirements.NoError(err)
-				if assertions.Len(suggestions.Suggestions, 1) {
-					assertions.Equal(listed.Ref, suggestions.Suggestions[0].Ref)
-					assertions.Equal(note, suggestions.Suggestions[0].MemberMessageID)
-					assertions.Equal(30, suggestions.Suggestions[0].OverlapMinutes)
-				}
-			}
-			for _, ref := range []OccurrenceRef{{MessageID: master, Key: "20270314"}, {MessageID: edit}} {
-				requirements.NoError(st.LinkMeetingContext(t.Context(), note, ref))
-				links, err := meetingLinksForTest(t, st, note)
-				requirements.NoError(err)
-				requirements.Len(links, 1)
-				assertions.True(listed.Start.Equal(links[0].Start))
-				assertions.True(listed.End.Equal(links[0].End))
-			}
-		}},
-	} {
-		t.Run(tc.name, tc.run)
+		})
 	}
 }
