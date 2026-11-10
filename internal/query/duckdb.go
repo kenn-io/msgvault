@@ -852,14 +852,6 @@ func (e *DuckDBEngine) parquetCTEs() string {
 	}
 	srcCTE += fmt.Sprintf(" FROM read_parquet('%s')", e.parquetPath("sources"))
 
-	recipientExtras := ""
-	if !e.hasCol("message_recipients", "email_address") {
-		recipientExtras += ", NULL::VARCHAR AS email_address"
-	}
-	if !e.hasCol("message_recipients", "envelope_address") {
-		recipientExtras += ", NULL::VARCHAR AS envelope_address"
-	}
-
 	return fmt.Sprintf(`
 		msg AS (
 			%s
@@ -870,7 +862,7 @@ func (e *DuckDBEngine) parquetCTEs() string {
 				CAST(participant_id AS BIGINT) AS participant_id,
 				CAST(recipient_type AS VARCHAR) AS recipient_type,
 				CAST(display_name AS VARCHAR) AS display_name
-			)%s FROM read_parquet('%s')
+			) FROM read_parquet('%s')
 		),
 		p AS (
 			%s
@@ -906,7 +898,7 @@ func (e *DuckDBEngine) parquetCTEs() string {
 				CAST(participant_id AS BIGINT) AS participant_id
 			FROM read_parquet('%s')
 		)
-		`, msgCTE, recipientExtras,
+		`, msgCTE,
 		e.parquetPath("message_recipients"),
 		pCTE,
 		e.parquetPath("labels"),
@@ -1653,7 +1645,7 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 			JOIN p ON p.id = mr.participant_id
 			WHERE mr.message_id = msg.id
 			  AND mr.recipient_type = 'from'
-			  AND LOWER(`+duckDBSenderDomainExpr("mr", "p")+`) = ?
+			  AND LOWER(`+senderDisplayDomainExpr("mr", "p")+`) = ?
 		)`)
 		args = append(args, strings.ToLower(filter.Domain))
 	} else if filter.MatchesEmpty(ViewDomains) {
@@ -1662,7 +1654,7 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 			JOIN p ON p.id = mr.participant_id
 			WHERE mr.message_id = msg.id
 			  AND mr.recipient_type = 'from'
-			  AND `+duckDBSenderDomainExpr("mr", "p")+` != ''
+			  AND `+senderDisplayDomainExpr("mr", "p")+` != ''
 		)`)
 	}
 
@@ -3434,12 +3426,6 @@ func (e *DuckDBEngine) ReadOriginalMessage(ctx context.Context, ref MessageRef, 
 	return e.sqliteEngine.ReadOriginalMessage(ctx, ref, maxBytes)
 }
 
-func duckDBSenderDomainExpr(recipient, participant string) string {
-	guard := relayedEnvelopeAbsent("mr", "envelope_address", recipient+".message_id")
-	address := recipient + ".envelope_address"
-	return "COALESCE(CASE WHEN " + recipient + ".is_relayed THEN NULLIF(" + identityindex.SenderEnvelopeDomainExpr(address) + ", '') END, CASE WHEN " + guard + " THEN " + participant + ".domain END, '')"
-}
-
 // ResolveMessageID reads from SQLite because the Parquet cache can lag recent syncs.
 func (e *DuckDBEngine) ResolveMessageID(ctx context.Context, ref string) (int64, string, error) {
 	if e.sqliteEngine == nil {
@@ -3458,7 +3444,7 @@ func (e *DuckDBEngine) ListThread(ctx context.Context, q ThreadQuery) (*ThreadPa
 
 func appendDuckDBSenderConditions(conditions []string, args []any, addresses []string) ([]string, []any) {
 	for _, address := range addresses {
-		condition, _, senderArgs := search.SenderLookupCached(address, func(column string) string { return "LOWER(" + column + ")" }, "msg", "mr", "p", "msg")
+		condition, _, senderArgs := search.SenderLookup(address, func(column string) string { return "LOWER(" + column + ")" }, "msg", "mr", "p", "msg")
 		conditions = append(conditions, condition)
 		args = append(args, senderArgs...)
 	}

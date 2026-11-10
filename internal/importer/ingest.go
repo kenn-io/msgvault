@@ -200,12 +200,11 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 	}
 
 	build := func(_ []int64) *store.MessagePersistData {
-		from := buildRecipientSet("from", parsed.From, participantMap)
 		return &store.MessagePersistData{
 			Message: rec, BodyText: sql.NullString{String: bodyText, Valid: bodyText != ""},
 			BodyHTML: sql.NullString{String: bodyHTML, Valid: bodyHTML != ""}, RawMIME: raw,
 			Recipients: []store.RecipientSet{
-				from,
+				buildRecipientSet("from", parsed.From, participantMap),
 				buildRecipientSet("to", parsed.To, participantMap),
 				buildRecipientSet("cc", parsed.Cc, participantMap),
 				buildRecipientSet("bcc", parsed.Bcc, participantMap),
@@ -214,7 +213,7 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 	}
 	var messageID int64
 	if relayType != "" {
-		participants, relayBuild := store.RelayedSenderBuilder(parsed.From[0], relayType, relayValue, nil, build)
+		participants, relayBuild := store.RelayedSenderBuilder(parsed.From, relayType, relayValue, nil, build)
 		messageID, err = st.PersistRelayedEmailContext(ctx, sourceID, participants, relayBuild)
 	} else {
 		messageID, err = st.PersistMessageContext(ctx, build(nil))

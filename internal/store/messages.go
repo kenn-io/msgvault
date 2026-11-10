@@ -2180,10 +2180,11 @@ func (s *Store) PersistMessageContext(ctx context.Context, data *MessagePersistD
 }
 
 // RelayedSenderBuilder resolves a relay author in the message transaction.
-func RelayedSenderBuilder(from mime.Address, relayType, relayValue string, participants []ParticipantPersistData, build func([]int64) *MessagePersistData) ([]ParticipantPersistData, func([]int64) *MessagePersistData) {
+func RelayedSenderBuilder(addresses []mime.Address, relayType, relayValue string, participants []ParticipantPersistData, build func([]int64) *MessagePersistData) ([]ParticipantPersistData, func([]int64) *MessagePersistData) {
 	if relayType == "" {
 		return participants, build
 	}
+	from := addresses[0]
 	index := len(participants)
 	participants = append(participants, ParticipantPersistData{IdentifierType: relayType, IdentifierValue: relayValue, DisplayName: mime.RelayedSenderName(from, relayValue)})
 	return participants, func(ids []int64) *MessagePersistData {

@@ -83,6 +83,11 @@ func TestApplyMessageFilterPreservesExactTUIScope(t *testing.T) {
 	require.Len(filter.RecipientAnyGroups, 1)
 	assert.Equal([]int64{2}, filter.RecipientAnyGroups[0])
 	assert.Equal("example.com", filter.SenderDomain)
+	_, err = db.ExecContext(t.Context(), `UPDATE participants SET phone_number = '+12025550199' WHERE id = 1`)
+	require.NoError(err)
+	var phone vector.Filter
+	require.NoError(ApplyMessageFilter(t.Context(), db, nil, &phone, query.MessageFilter{Sender: "+12025550199"}))
+	assert.Equal([][]int64{{1}}, phone.SenderExactGroups)
 	require.Len(filter.LabelGroups, 1)
 	assert.Equal([]int64{2}, filter.LabelGroups[0], "label equality is case-insensitive")
 	assert.Equal([]string{"email"}, filter.MessageTypes)

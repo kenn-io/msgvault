@@ -36,7 +36,7 @@ func TestFullSyncRelayedSenders(t *testing.T) {
 	assertions.Equal(map[string]string{"one": "alice|Alice", "two": "bob|bob"}, got)
 }
 
-func TestRelayedSenderCustomRuleAndLinkedContact(t *testing.T) {
+func TestRelayedSenderCustomRule(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	env := newTestEnv(t)
@@ -50,10 +50,4 @@ func TestRelayedSenderCustomRuleAndLinkedContact(t *testing.T) {
 	var login string
 	requirements.NoError(env.Store.DB().QueryRowContext(t.Context(), `SELECT m.sender_id, pi.identifier_value FROM messages m JOIN participant_identifiers pi ON pi.participant_id = m.sender_id WHERE pi.identifier_type = 'example'`).Scan(&author, &login))
 	assertions.Equal("author", login)
-	var displayName string
-	requirements.NoError(env.Store.DB().QueryRowContext(t.Context(), `SELECT display_name FROM participants WHERE id=?`, author).Scan(&displayName))
-	assertions.Equal("Alice Author", displayName)
-	var relayNames int
-	requirements.NoError(env.Store.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM participants WHERE email_address='relay@example.test' AND display_name='Alice Author'`).Scan(&relayNames))
-	assertions.Zero(relayNames)
 }

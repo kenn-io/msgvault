@@ -577,10 +577,10 @@ func buildNarrowFileEntriesCTE(name string) string {
 }
 
 func buildScalarAnalyticalEntriesCTE(name string, includeAttachmentSummary bool) string {
-	return buildScalarAnalyticalEntriesCTEWithSource(name, includeAttachmentSummary, "s.account_email", "m.archive_only", "CASE WHEN mr.is_relayed THEN mr.email_address END", identityindex.SenderEnvelopeDomainExpr("CASE WHEN mr.is_relayed THEN mr.email_address END"))
+	return buildScalarAnalyticalEntriesCTEWithSource(name, includeAttachmentSummary, "s.account_email", "m.archive_only")
 }
 
-func buildScalarAnalyticalEntriesCTEWithSource(name string, includeAttachmentSummary bool, sourceIdentifier, archiveOnly, envelopeAddress, envelopeDomain string) string {
+func buildScalarAnalyticalEntriesCTEWithSource(name string, includeAttachmentSummary bool, sourceIdentifier, archiveOnly string) string {
 	attachmentColumns := `
 		CAST(0 AS BIGINT) AS attachment_count,
 		CAST(0 AS BIGINT) AS attachment_size`
@@ -610,9 +610,9 @@ func buildScalarAnalyticalEntriesCTEWithSource(name string, includeAttachmentSum
 		COALESCE(m.message_type, '') AS message_type,
 		m.list_id,
 		m.sender_id,
-		COALESCE((SELECT NULLIF(` + envelopeAddress + `, '') FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'from' LIMIT 1), NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), '') AS sender_identifier,
+		COALESCE((SELECT NULLIF(CASE WHEN mr.is_relayed THEN mr.email_address END, '') FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'from' LIMIT 1), NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), '') AS sender_identifier,
 		COALESCE(NULLIF(sender.display_name, ''), NULLIF(sender.phone_number, ''), sender.email_address, '') AS sender_display,
-		COALESCE((SELECT NULLIF(` + envelopeDomain + `, '') FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'from' LIMIT 1), sender.domain, '') AS sender_domain,
+		COALESCE((SELECT NULLIF(` + identityindex.SenderEnvelopeDomainExpr("CASE WHEN mr.is_relayed THEN mr.email_address END") + `, '') FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'from' LIMIT 1), sender.domain, '') AS sender_domain,
 		m.sent_at AS occurred_at,
 		COALESCE(m.subject, '') AS subject,
 		COALESCE(m.snippet, '') AS snippet,

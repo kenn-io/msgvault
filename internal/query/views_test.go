@@ -347,20 +347,6 @@ func TestRegisterViews_RecipientAddressColumns(t *testing.T) {
 			"row without a recorded address resolves to the participant's address")
 	})
 
-	t.Run("legacy cache without the columns", func(t *testing.T) {
-		builder := NewTestDataBuilder(t)
-		builder.legacyRecipientSchema = true
-		srcID := builder.AddSource("owner@example.com")
-		alice := builder.AddParticipant("alice@example.com", "example.com", "Alice")
-		bob := builder.AddParticipant("bob@example.com", "example.com", "Bob")
-		msgID := builder.AddMessage(MessageOpt{Subject: "Hello", SourceID: srcID})
-		builder.AddFrom(msgID, alice, "Alice")
-		builder.AddTo(msgID, bob, "Bob")
-
-		populated, absent := scan(t, builder)
-		assert.Equal(t, addresses{}, populated, "legacy cache carries neither column")
-		assert.Equal(t, addresses{}, absent)
-	})
 }
 
 func TestVMessagesKeepUnnamedDirectSenderNamesEmpty(t *testing.T) {

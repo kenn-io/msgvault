@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/importer"
 	"go.kenn.io/msgvault/internal/query"
-	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -24,7 +23,7 @@ func TestBuildCacheRelayedAuthors(t *testing.T) {
 	src, err := st.GetOrCreateSource("gmail", "reader@example.test")
 	requirements.NoError(err)
 	for _, author := range []struct{ name, login string }{{"Alice", "alice"}, {"Build Bot", "build[bot]"}} {
-		raw := []byte("From: " + author.name + " <notifications@github.com>\r\nTo: reader@example.test\r\nX-GitHub-Sender: " + author.login + "\r\nAuthentication-Results: mx.example.test; dmarc=pass header.from=github.com\r\nDate: Mon, 01 Jan 2024 12:00:00 +0000\r\nSubject: Notice\r\n\r\nHello")
+		raw := []byte("From: " + author.name + " <notifications@github.com>\r\nTo: reader@example.test\r\nX-GitHub-Sender: " + author.login + "\r\nDate: Mon, 01 Jan 2024 12:00:00 +0000\r\nSubject: Notice\r\n\r\nHello")
 		requirements.NoError(importer.IngestRawMessage(t.Context(), st, src.ID, src.Identifier, "", nil, author.login, author.login, raw, time.Time{}, slog.Default()))
 	}
 	author, err := st.EnsureParticipantByIdentifier("github", "alice", "Alice")
@@ -56,34 +55,4 @@ func TestBuildCacheRelayedAuthors(t *testing.T) {
 		ids[people.Rows[0].CanonicalID()] = true
 	}
 	assertions.Len(ids, 2)
-	filter := query.MessageFilter{Sender: "notifications@github.com", Domain: "github.com"}
-	messages, err := engine.ListMessages(t.Context(), filter)
-	requirements.NoError(err)
-	assertions.Len(messages, 2)
-	for _, message := range messages {
-		assertions.Equal("notifications@github.com", message.FromEmail)
-	}
-	for term, want := range map[string]int{"notifications@github.com": 2, "alice@example.test": 1} {
-		results, err := engine.SearchFast(t.Context(), search.Parse("from:"+term), query.MessageFilter{}, 10, 0)
-		requirements.NoError(err)
-		assertions.Len(results, want, term)
-		rows, err := engine.ListMessages(t.Context(), query.MessageFilter{Sender: term})
-		requirements.NoError(err)
-		assertions.Len(rows, want, term)
-	}
-
-	for term, want := range map[string]int{"@example.test": 1, "@github.com": 2} {
-		results, err := engine.SearchFast(t.Context(), search.Parse("from:"+term), query.MessageFilter{}, 10, 0)
-		requirements.NoError(err)
-		assertions.Len(results, want, term)
-		rows, err := engine.ListMessages(t.Context(), query.MessageFilter{Domain: term[1:]})
-		requirements.NoError(err)
-		assertions.Len(rows, want, term)
-	}
-	ordinary, err := engine.GetDeletionTargetsByFilter(t.Context(), query.MessageFilter{Sender: "alice@example.test"})
-	requirements.NoError(err)
-	assertions.Len(ordinary, 1)
-	targets, err := engine.GetDeletionTargetsByFilter(t.Context(), filter)
-	requirements.NoError(err)
-	assertions.Len(targets, 2)
 }

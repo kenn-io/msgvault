@@ -1281,13 +1281,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.Server.ApplyDefaults()
 	cfg.Discord.ApplyDefaults()
-	relayAddresses := make(map[string]bool, len(cfg.RelayedSenders))
 	for i, rule := range cfg.RelayedSenders {
-		address := strings.ToLower(rule.Address)
-		if relayAddresses[address] {
-			return nil, fmt.Errorf("relayed_senders[%d]: duplicate address", i)
-		}
-		relayAddresses[address] = true
 		if !mime.ValidateRelayedSenderRule(rule) {
 			return nil, fmt.Errorf("relayed_senders[%d]: invalid address, header, or identifier type", i)
 		}

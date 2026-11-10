@@ -2020,7 +2020,7 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 	var err error
 	if data.relayType != "" {
 		participants, participantIndex := preparedMessageParticipants(data)
-		participants, build := preparedRelayBuilder(data, participants, func(ids []int64) *store.MessagePersistData {
+		participants, build := store.RelayedSenderBuilder(data.from, data.relayType, data.relayValue, participants, func(ids []int64) *store.MessagePersistData {
 			persist := buildPreparedSnapshot(data, participantIndex, ids, nil)
 			persist.Conversation = nil
 			persist.MIMEAttachmentReplacement = nil

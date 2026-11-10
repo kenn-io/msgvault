@@ -859,39 +859,6 @@ func TestExploreIdentityFilterMatchesEnvelopeWithoutParticipantEvidence(t *testi
 		"only the alias's own envelope rows match; no participant fallback exists to widen the result")
 }
 
-// TestExploreIdentityFilterLegacyCacheWithoutEnvelopeColumnFallsBack proves a
-// committed cache written before the envelope column existed keeps serving
-// identity filters with the participant semantics instead of erroring.
-func TestExploreIdentityFilterLegacyCacheWithoutEnvelopeColumnFallsBack(t *testing.T) {
-	t.Parallel()
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	b := NewTestDataBuilder(t)
-	b.SetLegacyRecipientSchema()
-	source := b.AddSource("archive@example.com")
-	identityID := b.AddParticipant("identity@example.com", "example.com", "Identity")
-	otherID := b.AddParticipant("other@example.net", "example.net", "Other")
-	base := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
-
-	sent := b.AddMessage(MessageOpt{SourceID: source, Subject: "legacy cache sent", SentAt: base})
-	b.AddFrom(sent, identityID, "Identity")
-	unrelated := b.AddMessage(MessageOpt{SourceID: source, Subject: "unrelated", SentAt: base.Add(-time.Hour)})
-	b.AddFrom(unrelated, otherID, "Other")
-
-	result, err := b.BuildEngine().Explore(t.Context(), ExploreRequest{
-		Context: Context{Identity: &IdentityPredicate{
-			SourceID:        source,
-			ParticipantIDs:  []int64{identityID},
-			EmailIdentifier: "identity@example.com",
-			Direction:       IdentityDirectionSender,
-		}},
-		Page: PageSpec{Limit: 10},
-	})
-	requirements.NoError(err, "a pre-v17 cache without the envelope column must not error")
-	requirements.Len(result.Rows, 1)
-	assertions.Equal("legacy cache sent", result.Rows[0].Title)
-}
-
 func TestExploreIdentityPredicateScopesCountsGroupsSelectionAndSearchCandidates(t *testing.T) {
 	t.Parallel()
 	requirements := require.New(t)

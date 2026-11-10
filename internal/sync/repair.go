@@ -114,7 +114,7 @@ func (s *Syncer) RepairMessage(ctx context.Context, request RepairRequest) (_ *R
 		return nil, err
 	}
 	guard := target.MessageIdentityGuard
-	participants, build := preparedRelayBuilder(prepared, participants, func(participantIDs []int64) *store.MessagePersistData {
+	participants, build := store.RelayedSenderBuilder(prepared.from, prepared.relayType, prepared.relayValue, participants, func(participantIDs []int64) *store.MessagePersistData {
 		persist := buildPreparedSnapshot(prepared, participantIndex, participantIDs, attachmentWrites)
 		persist.LabelRefs = labelRefs
 		return persist

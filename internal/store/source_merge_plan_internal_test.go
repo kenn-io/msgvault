@@ -98,3 +98,33 @@ func TestSourceMergePlanFingerprintsOnlyRowsWithDestinationCandidates(t *testing
 	assert.NotEmpty(plan.messages[0].fingerprint, "the source message with a destination identity candidate is fingerprinted")
 	assert.Empty(plan.messages[1].fingerprint, "a complete source payload without any destination candidate is not fingerprinted")
 }
+
+func TestCopyMergedMessageEvidenceRelayedSender(t *testing.T) {
+	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "merge.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(t, st.InitSchema())
+	source, err := st.GetOrCreateSource("gmail", "reader@example.test")
+	require.NoError(t, err)
+	author, err := st.EnsureParticipantByIdentifier("github", "alice", "Alice")
+	require.NoError(t, err)
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "thread", "")
+	require.NoError(t, err)
+	from, err := st.UpsertMessage(&Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "from", MessageType: "email"})
+	require.NoError(t, err)
+	into, err := st.UpsertMessage(&Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "into", MessageType: "email"})
+	require.NoError(t, err)
+	_, err = st.DB().ExecContext(t.Context(), `INSERT INTO message_recipients(message_id, participant_id, recipient_type, email_address, is_relayed) VALUES (?, ?, 'from', 'notifications@github.com', TRUE)`, from, author)
+	require.NoError(t, err)
+	tx, err := st.DB().BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	require.NoError(t, copyMergedMessageEvidence(t.Context(), &loggedTx{Tx: tx, rebind: st.Rebind}, from, into, source.ID))
+	require.NoError(t, tx.Commit())
+	var participant int64
+	var address string
+	var relayed bool
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT participant_id, email_address, is_relayed FROM message_recipients WHERE message_id = ? AND recipient_type = 'from'`, into).Scan(&participant, &address, &relayed))
+	assert.Equal(t, author, participant)
+	assert.Equal(t, "notifications@github.com", address)
+	assert.True(t, relayed)
+}

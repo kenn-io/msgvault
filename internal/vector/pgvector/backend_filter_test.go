@@ -9,7 +9,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -63,14 +62,13 @@ func TestVectorRelayedSenderDrilldowns(t *testing.T) {
  UPDATE messages SET sender_id=1001 WHERE id=3;`)
 	require.NoError(t, err)
 	for _, tc := range []struct {
-		filter query.MessageFilter
+		filter vector.Filter
 		want   []int64
 	}{
-		{query.MessageFilter{Sender: "notifications@github.com"}, []int64{1}},
-		{query.MessageFilter{Domain: "github.com"}, []int64{1, 2}},
+		{vector.Filter{SenderTerms: []string{"notifications@github.com"}}, []int64{1}},
+		{vector.Filter{SenderDomain: "github.com"}, []int64{1, 2}},
 	} {
-		var filter vector.Filter
-		require.NoError(t, hybrid.ApplyMessageFilter(f.ctx, f.db, (&store.PostgreSQLDialect{}).Rebind, &filter, tc.filter))
+		filter := tc.filter
 		hits, err := f.b.Search(f.ctx, f.gen, unitVec(4, 0), 10, filter)
 		require.NoError(t, err)
 		var ids []int64

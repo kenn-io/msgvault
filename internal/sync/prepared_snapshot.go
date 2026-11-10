@@ -28,23 +28,16 @@ func preparedMessageParticipants(data *messageData) ([]store.ParticipantPersistD
 		emails = append(emails, email)
 	}
 	sort.Strings(emails)
-	participants := make([]store.ParticipantPersistData, 0, len(emails)+1)
+	participants := make([]store.ParticipantPersistData, len(emails))
 	index := make(map[string]int, len(emails))
 	for i, email := range emails {
 		address := byEmail[email]
-		participants = append(participants, store.ParticipantPersistData{
+		participants[i] = store.ParticipantPersistData{
 			EmailAddress: email, DisplayName: address.Name, Domain: address.Domain,
-		})
+		}
 		index[email] = i
 	}
 	return participants, index
-}
-
-func preparedRelayBuilder(data *messageData, participants []store.ParticipantPersistData, build func([]int64) *store.MessagePersistData) ([]store.ParticipantPersistData, func([]int64) *store.MessagePersistData) {
-	if data.relayType == "" {
-		return participants, build
-	}
-	return store.RelayedSenderBuilder(data.from[0], data.relayType, data.relayValue, participants, build)
 }
 
 func buildPreparedSnapshot(
@@ -64,8 +57,6 @@ func buildPreparedSnapshot(
 		}
 	}
 
-	from := buildRecipientSet("from", prepared.from, participantMap)
-
 	return &store.MessagePersistData{
 		Message:  &message,
 		Metadata: prepared.metadata,
@@ -82,7 +73,7 @@ func buildPreparedSnapshot(
 		},
 		RawMIME: prepared.rawMIME,
 		Recipients: []store.RecipientSet{
-			from,
+			buildRecipientSet("from", prepared.from, participantMap),
 			buildRecipientSet("to", prepared.to, participantMap),
 			buildRecipientSet("cc", prepared.cc, participantMap),
 			buildRecipientSet("bcc", prepared.bcc, participantMap),

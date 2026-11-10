@@ -80,18 +80,16 @@ func TestRelayedSenderAfterParticipantMerge(t *testing.T) {
 		rows, err := engine.ListMessages(t.Context(), filter)
 		requirements.NoError(err)
 		assertions.Len(rows, want, address)
-		targets, err := engine.GetDeletionTargetsByFilter(t.Context(), filter)
-		requirements.NoError(err)
-		assertions.Len(targets, want, address)
 	}
-	for address, want := range map[string]int64{"author@example.test": 1, "notifications@github.com": 1} {
-		_, count, err := st.SearchMessagesQueryContext(t.Context(), search.Parse("from:"+address), 0, 10)
+	for _, domain := range []string{"example.test", "github.com"} {
+		rows, err := engine.ListMessages(t.Context(), query.MessageFilter{Domain: domain})
 		requirements.NoError(err)
-		assertions.Equal(want, count, address)
+		assertions.Len(rows, 1, domain)
 	}
-	for domain, want := range map[string]int64{"example.test": 1, "github.com": 1} {
-		_, count, err := st.SearchMessagesQueryContext(t.Context(), search.Parse("from:@"+domain), 0, 10)
-		requirements.NoError(err)
-		assertions.Equal(want, count, domain)
-	}
+	targets, err := engine.GetDeletionTargetsByFilter(t.Context(), query.MessageFilter{Sender: "notifications@github.com"})
+	requirements.NoError(err)
+	assertions.Len(targets, 1)
+	_, count, err := st.SearchMessagesQueryContext(t.Context(), search.Parse("from:notifications@github.com"), 0, 10)
+	requirements.NoError(err)
+	assertions.Equal(int64(1), count)
 }

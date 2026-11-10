@@ -112,7 +112,7 @@ func (s *Syncer) persistPreparedIMAPRelocation(
 	participants, participantIndex := preparedMessageParticipants(prepared)
 	labelIDs := labelIDsFor(prepared.gmailLabelIDs, labelMap)
 
-	participants, build := preparedRelayBuilder(prepared, participants, func(participantIDs []int64) *store.MessagePersistData {
+	participants, build := store.RelayedSenderBuilder(prepared.from, prepared.relayType, prepared.relayValue, participants, func(participantIDs []int64) *store.MessagePersistData {
 		persist := buildPreparedSnapshot(
 			prepared, participantIndex, participantIDs, attachmentWrites)
 		// The store guard compares original identity evidence with the

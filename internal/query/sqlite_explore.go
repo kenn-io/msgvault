@@ -142,7 +142,7 @@ func (e *LiveExploreEngine) Explore(ctx context.Context, request ExploreRequest)
 		},
 	})
 	conditions = "NOT internally_deleted AND occurred_at IS NOT NULL AND (" + conditions + ")"
-	core := "WITH " + buildScalarAnalyticalEntriesCTEWithSource("entry_core", false, "s.identifier", "NOT ("+archiveOnlyDeletionTargetGuard+")", "CASE WHEN mr.is_relayed THEN mr.email_address END", identityindex.SenderEnvelopeDomainExpr("CASE WHEN mr.is_relayed THEN mr.email_address END"))
+	core := "WITH " + buildScalarAnalyticalEntriesCTEWithSource("entry_core", false, "s.identifier", "NOT ("+archiveOnlyDeletionTargetGuard+")")
 	chat := sqlIsChatPredicate("message_type", "conversation_type")
 	response := &ExploreResponse{Rows: make([]EntryRow, 0), CacheRevision: snapshot.revision, SearchProvenance: provenance}
 	countSQL := core + ` SELECT COUNT(*) FILTER (WHERE NOT (` + chat + `)) +

@@ -105,33 +105,6 @@ func TestMergeSourcesEmailFingerprintRequiresMatchingCompleteRecipients(t *testi
 	}
 }
 
-func TestMergeSourcesRetainsRelayedSender(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	from, err := st.GetOrCreateSource("gmail", "history@example.test")
-	require.NoError(err)
-	into, err := st.GetOrCreateSource("gmail", "live@example.test")
-	require.NoError(err)
-	message := emailMergeFixtureMessage(t, st, from.ID, "relay-message", []string{"recipient@example.test"}, true)
-	author, err := st.EnsureParticipantByIdentifier("github", "author", "Author")
-	require.NoError(err)
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), author, message)
-	require.NoError(err)
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO message_recipients (message_id, participant_id, recipient_type, email_address, is_relayed) VALUES (?, ?, 'from', ?, TRUE)`), message, author, "notifications@github.com")
-	require.NoError(err)
-	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
-	require.NoError(err)
-	var sourceID, participantID int64
-	var address string
-	var relayed bool
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT m.source_id, mr.participant_id, mr.email_address, mr.is_relayed FROM messages m JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from' WHERE m.id = ?`), message).Scan(&sourceID, &participantID, &address, &relayed))
-	assert.Equal(into.ID, sourceID)
-	assert.Equal(author, participantID)
-	assert.Equal("notifications@github.com", address)
-	assert.True(relayed)
-}
-
 func TestMergeSourcesRFC822MatchKeepsHistoryVisibleWhenSurvivorLacksContent(t *testing.T) {
 	tests := []struct {
 		name                  string
