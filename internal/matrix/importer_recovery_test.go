@@ -829,7 +829,7 @@ func TestImportRecoveryRejectsReplayedIndex(t *testing.T) {
 }
 
 func TestEditRollbackPrefersEarlierArchivedCiphertext(t *testing.T) {
-	for _, mode := range []string{"same", "alternate base64", "equal timestamp", "encrypted target", "stripped relation"} {
+	for _, mode := range []string{"same", "alternate base64", "equal timestamp", "encrypted target", "stripped relation", "invalid earlier copy", "later copy", "already claimed"} {
 		t.Run(mode, func(t *testing.T) {
 			req, check := require.New(t), assert.New(t)
 			f := newRecoveryFixture(t)
@@ -842,42 +842,65 @@ func TestEditRollbackPrefersEarlierArchivedCiphertext(t *testing.T) {
 				req.NoError(err)
 				f.backup.data.SessionKey = string(exported)
 			}
-			f.timeline = []*event.Event{original, f.message(t, "$other", "other", 11), f.edit(t, "$newest", "$other", "newest", 30)}
+			other := f.message(t, "$other", "other", 11)
+			index := f.backup.out.MessageIndex()
+			edit := f.edit(t, "$edit", "$original", "edited", 20)
+			eligible := mode == "invalid earlier copy" || mode == "later copy" || mode == "already claimed"
+			target := "$other"
+			if eligible {
+				target = "$original"
+			}
+			newest := f.edit(t, "$newest", target, "newest", 30)
+			f.timeline = []*event.Event{original, other, newest}
+			if mode == "already claimed" {
+				f.timeline = append(f.timeline, edit)
+			}
 			_, err := f.run(t, true, false)
 			req.NoError(err)
 
-			olderIndex := f.backup.out.MessageIndex()
-			older := f.edit(t, "$older", "$original", "older", 20)
-			raw, err := json.Marshal(older)
+			raw, err := json.Marshal(edit)
 			req.NoError(err)
-			replayed := matrixTestEvent(t, string(raw))
-			replayed.ID, replayed.Timestamp = "$replayed", 25
-			req.True(parseContent(replayed))
-			replayed.Content.AsEncrypted().RelatesTo.EventID = "$other"
-			wantOriginal := "older"
-			if mode == "stripped relation" {
-				older.Content.AsEncrypted().RelatesTo = nil
-				wantOriginal = "original"
+			copied := matrixTestEvent(t, string(raw))
+			copied.ID, copied.Timestamp = "$replayed", 25
+			req.True(parseContent(copied))
+			pending, candidate := edit, copied
+			wantOriginal, wantOwner := "edited", "$edit"
+			if eligible {
+				pending, candidate = copied, edit
+				copied.ID = "$copy"
+				copied.Timestamp = 15
+				if mode == "invalid earlier copy" {
+					copied.Sender = "@other:example.org"
+				}
+				if mode == "later copy" {
+					copied.Timestamp = 40
+				}
+			} else {
+				copied.Content.AsEncrypted().RelatesTo.EventID = "$other"
+				if mode == "stripped relation" {
+					edit.Content.AsEncrypted().RelatesTo = nil
+					wantOriginal = "original"
+				}
+				if mode == "equal timestamp" {
+					copied.Timestamp = edit.Timestamp
+				}
+				if mode == "alternate base64" {
+					ciphertext := copied.Content.AsEncrypted().MegolmCiphertext
+					decoded, err := base64.RawStdEncoding.DecodeString(string(ciphertext))
+					req.NoError(err)
+					alphabet := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+					ciphertext[len(ciphertext)-1] = alphabet[strings.IndexByte(alphabet, ciphertext[len(ciphertext)-1])^1]
+					alternate, err := base64.RawStdEncoding.DecodeString(string(ciphertext))
+					req.NoError(err)
+					req.Equal(decoded, alternate)
+				}
 			}
-			f.timeline = []*event.Event{older}
+			f.timeline = []*event.Event{pending}
 			_, err = f.run(t, false, false)
 			req.NoError(err)
-			check.Equal(encryptedPlaceholder, f.body(t, "$older"))
-			if mode == "equal timestamp" {
-				replayed.Timestamp = older.Timestamp
-			}
-			if mode == "alternate base64" {
-				ciphertext := replayed.Content.AsEncrypted().MegolmCiphertext
-				decoded, err := base64.RawStdEncoding.DecodeString(string(ciphertext))
-				req.NoError(err)
-				alphabet := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-				ciphertext[len(ciphertext)-1] = alphabet[strings.IndexByte(alphabet, ciphertext[len(ciphertext)-1])^1]
-				alternate, err := base64.RawStdEncoding.DecodeString(string(ciphertext))
-				req.NoError(err)
-				req.Equal(decoded, alternate)
-			}
-			// Serve the copy on a second /relations page.
-			f.edits = []*event.Event{replayed}
+			check.Equal(encryptedPlaceholder, f.body(t, pending.ID.String()))
+
+			f.edits = []*event.Event{candidate}
 			pages := make(chan string, 3)
 			handler := f.server.Config.Handler
 			f.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -903,58 +926,19 @@ func TestEditRollbackPrefersEarlierArchivedCiphertext(t *testing.T) {
 			check.Equal("second", <-pages)
 			check.Equal("other", f.body(t, "$other"))
 			var owner string
-			req.NoError(f.store.DB().QueryRowContext(t.Context(), `SELECT event_id FROM matrix_megolm_claims WHERE session_id = ? AND message_index = ?`, f.backup.out.ID().String(), olderIndex).Scan(&owner))
-			check.Equal("$older", owner)
+			req.NoError(f.store.DB().QueryRowContext(t.Context(), `SELECT event_id FROM matrix_megolm_claims WHERE session_id = ? AND message_index = ?`, f.backup.out.ID().String(), index).Scan(&owner))
+			check.Equal(wantOwner, owner)
 			if mode == "stripped relation" {
-				check.Equal("* older", f.body(t, "$older"))
+				check.Equal("* edited", f.body(t, "$edit"))
 			}
 			if mode == "encrypted target" {
-				check.Equal([]string{"$older"}, f.pendingEdits(t, "$original"))
+				check.Equal([]string{"$edit"}, f.pendingEdits(t, "$original"))
 				f.quiet, f.backup.data.SessionKey, f.backup.etag = true, initialKey, "2"
 				_, err = f.run(t, true, true)
 				req.NoError(err)
 				check.Equal("other", f.body(t, "$other"))
 			}
 			check.Equal(wantOriginal, f.body(t, "$original"))
-		})
-	}
-}
-
-func TestEditRollbackKeepsEligibleEdit(t *testing.T) {
-	for _, mode := range []string{"invalid earlier copy", "later copy", "already claimed"} {
-		t.Run(mode, func(t *testing.T) {
-			req, check := require.New(t), assert.New(t)
-			f := newRecoveryFixture(t)
-			original := f.message(t, "$original", "original", 10)
-			index := f.backup.out.MessageIndex()
-			edit := f.edit(t, "$edit", "$original", "edited", 20)
-			newest := f.edit(t, "$newest", "$original", "newest", 30)
-			f.timeline = []*event.Event{original, newest}
-			if mode == "already claimed" {
-				f.timeline = append(f.timeline, edit)
-			}
-			_, err := f.run(t, true, false)
-			req.NoError(err)
-			copied := *edit
-			copied.ID, copied.Timestamp = "$copy", 15
-			if mode == "invalid earlier copy" {
-				copied.Sender = "@other:example.org"
-			}
-			if mode == "later copy" {
-				copied.Timestamp = 40
-			}
-			f.timeline = []*event.Event{&copied}
-			_, err = f.run(t, false, false)
-			req.NoError(err)
-			check.Equal(encryptedPlaceholder, f.body(t, "$copy"))
-			f.edits = []*event.Event{edit}
-			f.timeline = []*event.Event{{ID: "$redaction", Type: event.EventRedaction, Redacts: "$newest", Content: event.Content{Raw: map[string]any{}}}}
-			_, err = f.run(t, true, false)
-			req.NoError(err)
-			check.Equal("edited", f.body(t, "$original"))
-			var owner string
-			req.NoError(f.store.DB().QueryRowContext(t.Context(), `SELECT event_id FROM matrix_megolm_claims WHERE session_id = ? AND message_index = ?`, f.backup.out.ID().String(), index).Scan(&owner))
-			check.Equal("$edit", owner)
 		})
 	}
 }

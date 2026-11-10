@@ -85,7 +85,7 @@ func (imp *Importer) earlierRollbackCopies(ctx context.Context, sourceID, convID
 				if err != nil {
 					return nil, err
 				}
-				if content.NewContent == nil || !editAllowed(original, plain) {
+				if !editAllowed(original, plain) {
 					continue
 				}
 			}
