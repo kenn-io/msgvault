@@ -9,6 +9,11 @@ import PersonDetails from './PersonDetails.svelte';
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import { meetingActions, meetingAction } from '../../meetings/fixtures.test-support';
 
+it('shows one alert for an attributes failure', async () => {
+  await renderDetails([], { attributesFailure: true });
+  expect(screen.getAllByRole('alert')).toHaveLength(1);
+});
+
 async function renderDetails(participantIDs: number[], options: { meetingRequests?: Request[]; attributesFailure?: boolean; personFailure?: boolean; personDeleted?: boolean; detailsFailure?: boolean; pins?: 'save' | 'clear'; taskChange?: 'merge' | 'split'; loops?: boolean } = {}) {
   const when = '2026-08-01T00:00:00Z';
   const person = { id: 7, revision: 1, display_name: 'Example Person', participant_ids: participantIDs, vcard_uid: 'example-7', created_at: when, updated_at: when };
@@ -114,11 +119,6 @@ it.each(['save', 'clear'] as const)('refreshes open fact pins after an attribute
   }
   expect(await screen.findByText('attribute · Pinned')).toBeDefined();
   expect(screen.getByRole('radio', { name: 'Pins' }).getAttribute('aria-checked')).toBe('true');
-});
-
-it('shows one alert when attribute values fail to load', async () => {
-  await renderDetails([], { attributesFailure: true });
-  expect(screen.getAllByRole('alert')).toHaveLength(1);
 });
 
 it('shows one alert when the person was deleted', async () => {

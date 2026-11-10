@@ -199,7 +199,6 @@ for (const width of [1440, 390]) {
 }
 
 test('a Settings organization holder opens the durable person', async ({ page }, testInfo) => {
-  await page.setViewportSize({ width: 1440, height: 900 });
   await page.route('**/api/v1/organizations/21/employments*', route => route.fulfill({ json: { employments: [employment] } }));
   await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'settings', settingsCategory: 'people_catalog' })));
   await page.getByRole('button', { name: 'Edit Example Org' }).click();

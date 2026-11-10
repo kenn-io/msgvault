@@ -63,7 +63,7 @@ it('keeps a conflicted structured editor available when Cancel is clicked during
   } finally { releaseReload(Response.json({ message: 'Profile unavailable' }, { status: 503 })); view.unmount(); controller.destroy(); }
 });
 
-it('groups labels and identifies scoped row actions', async () => {
+it('identifies row actions and confirmations by value and service scope', async () => {
   const initial = profile();
   initial.contact_points = [
     ...['first@example.com', 'second@example.com'].map((value, index) => ({ person_id: 7, identity_key: `email-${index}`, address_kind: 'email', original_value: value, normalized_value: value, normalization: 'email', normalization_version: 1, envelope: { ...envelope, id: 20 + index, ordinal: index } })),
@@ -168,7 +168,7 @@ it('gates media actions on available data', () => {
   } finally { view.unmount(); controller.destroy(); }
 });
 
-it('displays every structured address component before the original value', () => {
+it('displays every structured address component before its original street value', () => {
   const initial = profile();
   initial.addresses = [{ person_id: 7, address_kind: 'postal', original_value: '1 Example Street', street_address: '1 Example Street', post_office_box: 'PO Box 7', extended_address: 'Suite 2', extended_components: 'Building C', locality: 'Example City', region: 'CA', postal_code: '90001', country_name: 'United States', envelope }];
   const { view, controller } = harness(initial);
