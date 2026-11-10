@@ -51,7 +51,7 @@ func authorizeDraftPolicy(provider string, policy []config.GmailDraftSource, sou
 	return draftReplyError("draft_disabled", fmt.Errorf("source %d has no enabled [[%s.drafts]] grant", sourceID, provider))
 }
 
-func gmailDraftScopeGate(ctx context.Context, cfg *config.Config, source *store.Source, accepted []string) error {
+func gmailDraftScopeGate(ctx context.Context, cfg *config.Config, source *store.Source, required ...[]string) error {
 	if source == nil {
 		return draftReplyError("invalid_source", errors.New("missing Gmail source"))
 	}
@@ -69,13 +69,15 @@ func gmailDraftScopeGate(ctx context.Context, cfg *config.Config, source *store.
 	if len(info.Scopes) == 0 {
 		return nil
 	}
-	if oauth.GrantCoversAnyScope(info.Scopes, accepted) {
-		return nil
+	for _, accepted := range required {
+		if !oauth.GrantCoversAnyScope(info.Scopes, accepted) {
+			return draftReplyError("insufficient_scope", fmt.Errorf(
+				"saved Gmail grant for %s does not cover this operation; re-authorize with add-account %s --force",
+				source.Identifier, source.Identifier,
+			))
+		}
 	}
-	return draftReplyError("insufficient_scope", fmt.Errorf(
-		"saved Gmail grant for %s does not cover this operation; re-authorize with add-account %s --force",
-		source.Identifier, source.Identifier,
-	))
+	return nil
 }
 
 func defaultGmailDraftClientFactory(ctx context.Context, source *store.Source) (gmail.DraftAPI, error) {
@@ -127,12 +129,6 @@ func (a *storeAPIAdapter) runGmailReplyDraft(
 	logger := a.logger
 	if logger == nil {
 		logger = loggerFromContext(ctx)
-	}
-	if err := gmailDraftScopeGate(ctx, a.config, target.source, oauth.ScopesGmailDraftWrite); err != nil {
-		return err
-	}
-	if err := gmailDraftScopeGate(ctx, a.config, target.source, oauth.ScopesGmailSendAsList); err != nil {
-		return err
 	}
 	execution, err := a.store.AcquireSyncExecutionContext(ctx, target.source.ID)
 	if err != nil {
@@ -906,6 +902,11 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 		currentRaw, readErr := a.store.GetMessageRawContext(ctx, draft.CurrentMessageID)
 		if readErr != nil {
 			return draftReplyError("draft_read_failed", readErr)
+		}
+		if grant != nil {
+			if _, err := a.authorizeDelegatedDraftContent(ctx, intent, grant, source.ID, currentRaw); err != nil {
+				return err
+			}
 		}
 		replacement, buildErr := imaplib.BuildDraftReplacement(currentRaw, intent.Body, time.Now(), "")
 		in := draftlint.Input{Kind: "edit", Channel: "email", Body: intent.Body}

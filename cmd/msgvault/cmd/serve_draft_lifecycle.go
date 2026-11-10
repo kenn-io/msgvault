@@ -513,6 +513,11 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 		if readErr != nil {
 			return draftReplyError("draft_read_failed", readErr)
 		}
+		if req.Grant != nil {
+			if _, err := a.authorizeDelegatedDraftContent(ctx, intent, req.Grant, source.ID, currentRaw); err != nil {
+				return err
+			}
+		}
 		replacement, buildErr := imaplib.BuildIMAPDraftReplacement(currentRaw, intent.Body, time.Now(), "")
 		if buildErr != nil {
 			return draftReplyError("invalid_draft", buildErr)

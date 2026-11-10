@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/msgvault/internal/draftlint"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/sourceops"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -489,6 +490,11 @@ func (a *storeAPIAdapter) runCLIReplyDraft(
 	}, time.Now(), "")
 	if err != nil {
 		return draftReplyError("invalid_reply_metadata", err)
+	}
+	if target.source.SourceType == "gmail" {
+		if err := gmailDraftScopeGate(ctx, a.config, target.source, oauth.ScopesGmailDraftWrite, oauth.ScopesGmailSendAsList); err != nil {
+			return err
+		}
 	}
 	lint, done, err := a.gateDraftLint(ctx, emailDraftLintInput("reply", intent.Body, reply), target.source.ID, req.Grant, intent.draftLintOptions, intent.JSON, emit)
 	if done || err != nil {

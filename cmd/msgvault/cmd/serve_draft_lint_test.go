@@ -210,6 +210,42 @@ func TestValidateOnlyWritesNothing(t *testing.T) {
 		assertDraftRows(t, f.store, 0)
 	})
 }
+func TestGmailDraftReplyValidateOnlyChecksScopes(t *testing.T) {
+	for _, tc := range []struct {
+		name, scope string
+		allowed     bool
+	}{
+		{"draft write denied", oauth.ScopeGmailReadonly, false},
+		{"send-as list denied", oauth.ScopeGmailCompose, false},
+		{"both allowed", oauth.ScopeGmailModify, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newGmailDraftTestFixture(t)
+			_, state := setupCommandOAuth(t)
+			putCommandToken(t, state, f.source.Identifier, []string{tc.scope})
+			state.cfg.OAuth.Tokens.ReadCommand = testutil.SecretCommand(t, "read-once")
+			f.adapter.config = state.cfg
+			var events []api.CLIRunEvent
+			err := f.adapter.runCLIReplyDraft(withInvocation(t.Context(), state), api.CLIRunRequest{Args: []string{
+				"draft-reply", strconv.FormatInt(f.parentID, 10), "--body", "Thanks", "--validate-only", "--json",
+			}}, func(event api.CLIRunEvent) error {
+				events = append(events, event)
+				return nil
+			})
+			if tc.allowed {
+				require.NoError(t, err)
+				assert.Equal(t, "validated", lintObject(t, events)["status"])
+			} else {
+				require.EqualError(t, err, "insufficient_scope")
+				assert.Empty(t, events)
+			}
+			assert.Zero(t, f.client.listCalls)
+			assert.Zero(t, f.client.createCalls)
+			assertDraftRows(t, f.store, 0)
+		})
+	}
+}
+
 func TestValidateOnlyReplyAllMatchesCreate(t *testing.T) {
 	f := newDraftReplyFixture(t)
 	raw, err := f.store.GetMessageRawContext(t.Context(), f.parentID)
