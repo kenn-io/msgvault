@@ -161,7 +161,7 @@ func activityProjectionRun(
 		clean := jobctx.ErrorAfterYield(ctx, runErr, activitypkg.ErrWorkRemaining) == nil
 		continuing := errors.Is(runErr, activitypkg.ErrWorkRemaining) || yielded()
 		if moved && clean && continuing && !(budgetExpired() && !jobctx.HasProgress(ctx)) {
-			log.Info("activity projection pass complete; remaining work waits for next trigger after identity change",
+			log.Info("activity projection pass complete; continuation deferred after identity change",
 				"processed", result.Processed, "batches", result.Batches)
 			return scheduler.ErrDeferUntilNextTrigger
 		}

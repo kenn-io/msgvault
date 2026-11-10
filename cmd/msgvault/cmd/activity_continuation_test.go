@@ -3,8 +3,6 @@ package cmd
 import (
 	"context"
 	"errors"
-	"fmt"
-	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -12,59 +10,17 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	activitypkg "go.kenn.io/msgvault/internal/activity"
-	"go.kenn.io/msgvault/internal/api"
-	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func TestScheduledProjectionDefersChangedIdentityChain(t *testing.T) {
-	f := storetest.New(t)
-	for i := range 23 {
-		f.NewMessage().WithSourceMessageID(fmt.Sprintf("changed-chain-%d", i)).
-			WithSentAt(time.Date(2026, 10, 1, 12, i, 0, 0, time.UTC)).Create(t, f.Store)
-	}
+	f := newScheduledProjectionFixture(t)
 	synctest.Test(t, func(t *testing.T) {
-		gate := &projectionAdmissionTracker{SerialOperationGate: api.NewSerialOperationGate(), acquired: make(chan struct{}), release: make(chan struct{})}
-		syncDone := make(chan error, 1)
-		sched := scheduler.New(func(ctx context.Context, _ string) error {
-			err := f.Store.AddAccountIdentityContext(ctx, f.Source.ID, "chain-owner@example.com", "manual")
-			syncDone <- err
-			return err
-		}).WithWorkTracker(gate).WithLogger(testDiscardLogger())
-		var releaseOnce sync.Once
-		release := func() { releaseOnce.Do(func() { close(gate.release) }) }
-		t.Cleanup(func() { release(); <-sched.Stop().Done() })
-		require.NoError(t, sched.AddAccount("chain-owner@example.com", "0 0 1 1 *"))
-		require.NoError(t, registerActivityProjectionJob(sched, f.Store, config.ActivityConfig{
-			Timezone: "UTC", BatchSize: 1, MaxDirectCounterparts: 25, Schedule: "0 0 1 1 *",
-		}, testDiscardLogger()))
-		_, err := sched.StartJob(activityProjectionJob, false)
-		require.NoError(t, err)
-		select {
-		case <-gate.acquired:
-		case <-time.After(10 * time.Second):
-			require.FailNow(t, "projection did not acquire gate")
-		}
-		require.NoError(t, sched.TriggerSync("chain-owner@example.com", false))
-		synctest.Wait()
-		require.True(t, sched.Status()[0].Queued)
-		release()
-		select {
-		case err := <-syncDone:
-			require.NoError(t, err)
-		case <-time.After(10 * time.Second):
-			require.FailNow(t, "identity sync did not run")
-		}
-		waitIdle := func() {
-			require.Eventually(t, func() bool {
-				s := sched.JobStatus()[0]
-				return !s.Running && !s.Queued && !s.Pending && !s.LastRun.IsZero()
-			}, 10*time.Second, 10*time.Millisecond)
-			assert.Empty(t, sched.JobStatus()[0].LastError)
-		}
+		sched, waitIdle := startScheduledProjectionWithQueuedSync(t, f, func(ctx context.Context) error {
+			return f.Store.AddAccountIdentityContext(ctx, f.Source.ID, "chain-owner@example.com", "manual")
+		})
 		waitIdle()
 		var count int
 		require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM activity_events`).Scan(&count))
