@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/beeperidentity"
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 )
@@ -19,6 +20,23 @@ const chatMembersRefreshBatch = 200
 var ErrChatMembersStale = errors.New("chat membership projection has pending changes")
 
 var chatConversationTypesSQL = "('" + strings.Join(identityindex.ChatConversationTypes, "', '") + "')"
+
+// chatOwnerSQL is the shared owner identity set for discovery and admission.
+// Provider-native ownership uses the source-owner partial index; scoped Beeper
+// identifiers use the same encoding as the importer, including incoming-only chats.
+func (s *Store) chatOwnerSQL(participantExpr, sourceExpr string) string {
+	return `(` + senderOwnerFallback(participantExpr, sourceExpr) + `)
+ OR EXISTS (
+  SELECT 1 FROM account_identities ai
+  JOIN sources source ON source.id=ai.source_id AND source.source_type='beeper'
+  JOIN participant_identifiers pi ON pi.participant_id=` + participantExpr + ` AND pi.identifier_type='beeper'
+  WHERE ai.source_id=` + sourceExpr + `
+  AND pi.identifier_value=` + beeperidentity.FallbackSQL(s.dialect.DriverName(), "source.identifier", "ai.address") + `
+ ) OR EXISTS (
+  SELECT 1 FROM messages owner WHERE owner.sender_id=` + participantExpr + ` AND owner.source_id=` + sourceExpr + `
+  AND owner.source_is_from_me=TRUE
+ )`
+}
 
 // installChatMembers creates the chat membership projection. chat_members
 // holds every live sender and non-mention recipient of each chat, with the

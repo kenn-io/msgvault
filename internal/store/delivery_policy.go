@@ -35,9 +35,9 @@ var (
 type DeliveryPolicyQuery struct {
 	PersonUID            string `json:"person_uid"`
 	Endpoint             string `json:"endpoint,omitempty"`
-	RouteKind            string `json:"route_kind,omitempty"`
-	SourceID             int64  `json:"source_id,omitempty"`
-	SourceConversationID string `json:"source_conversation_id,omitempty"`
+	RouteKind            string `json:"-"`
+	SourceID             int64  `json:"-"`
+	SourceConversationID string `json:"-"`
 }
 
 // DeliveryPolicyState holds the stored and effective delivery policies for a person or email address.
@@ -149,6 +149,15 @@ func (s *Store) GetDeliveryPolicyContext(ctx context.Context, q DeliveryPolicyQu
 	}
 	var state *DeliveryPolicyState
 	err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		if q.RouteKind == "chat" {
+			recipients, err := s.chatRouteRecipientsTx(ctx, tx, q.SourceID, q.SourceConversationID)
+			if err != nil {
+				return err
+			}
+			if !slices.ContainsFunc(recipients, func(recipient DeliveryPolicyQuery) bool { return recipient.PersonUID == q.PersonUID }) {
+				return ErrDeliveryPolicyInvalid
+			}
+		}
 		var err error
 		state, _, err = s.deliveryStateTx(ctx, tx, q, false, false, nil)
 		return err
@@ -210,17 +219,6 @@ func (s *Store) deliveryStateTx(ctx context.Context, tx *loggedTx, q DeliveryPol
 		state.EffectivePolicy, state.InheritanceSource = stored, "person_default"
 	}
 	if q.RouteKind == "chat" {
-		var member bool
-		err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM conversation_participants cp
-   JOIN conversations c ON c.id=cp.conversation_id
-   JOIN person_participants pp ON pp.participant_id=cp.participant_id
-   WHERE pp.person_id=? AND c.source_id=? AND c.source_conversation_id=? AND c.conversation_type IN `+chatConversationTypesSQL+` AND cp.left_at IS NULL)`, state.PersonID, q.SourceID, q.SourceConversationID).Scan(&member)
-		if err != nil {
-			return nil, "", err
-		}
-		if !member {
-			return nil, "", ErrDeliveryPolicyInvalid
-		}
 		if state.EffectivePolicy == DeliverySendAllowed {
 			current, err := deliveryPersonApprovalCurrentTx(ctx, tx, state)
 			if err != nil {

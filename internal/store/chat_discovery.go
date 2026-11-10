@@ -10,7 +10,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"go.kenn.io/msgvault/internal/beeperidentity"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
@@ -214,19 +213,7 @@ func (s *Store) SearchChatsMetadataContext(ctx context.Context, q ChatDiscoveryQ
 	), members AS MATERIALIZED (
 		SELECT b.conversation_id, b.participant_id, e.source_id FROM raw_members b
 		JOIN eligible e ON e.id = b.conversation_id
-		WHERE NOT (` + senderOwnerFallback("b.participant_id", "e.source_id") + `)
-		AND NOT EXISTS (
-			SELECT 1 FROM account_identities ai
-			JOIN sources source ON source.id = ai.source_id AND source.source_type = 'beeper'
-			JOIN participant_identifiers pi ON pi.participant_id = b.participant_id AND pi.identifier_type = 'beeper'
-			WHERE ai.source_id = e.source_id
-			AND pi.identifier_value = ` + beeperidentity.FallbackSQL(s.dialect.DriverName(), "source.identifier", "ai.address") + `
-		)
-		AND NOT EXISTS (
-			SELECT 1 FROM messages owner
-			WHERE owner.sender_id = b.participant_id AND owner.source_id = e.source_id
-			AND owner.source_is_from_me = TRUE
-		)
+		WHERE NOT (` + s.chatOwnerSQL("b.participant_id", "e.source_id") + `)
 	), names AS (
 		SELECT id AS conversation_id, title AS value FROM eligible
 		UNION ALL

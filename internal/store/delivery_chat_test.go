@@ -133,6 +133,28 @@ func TestChatRouteAdmission(t *testing.T) {
 	})
 }
 
+func TestChatDeliveryPolicyReadRequiresCurrentMember(t *testing.T) {
+	f := deliveryChatFixture(t)
+	peer := f.EnsureParticipant("peer@example.test", "Peer", "example.test")
+	person, _, err := f.Store.CreatePersonFromParticipant(peer)
+	require.NoError(t, err)
+	require.NoError(t, f.Store.EnsureConversationParticipantContext(t.Context(), f.ConvID, peer, "member"))
+	setDelivery(t, f.Store, person.VCardUID, "", store.DeliverySendAllowed)
+	q := store.DeliveryPolicyQuery{PersonUID: person.VCardUID, RouteKind: "chat", SourceID: f.Source.ID, SourceConversationID: "chat-thread"}
+	state, err := f.Store.GetDeliveryPolicyContext(t.Context(), q)
+	require.NoError(t, err)
+	assert.Equal(t, store.DeliverySendAllowed, state.EffectivePolicy)
+	other, err := f.Store.GetOrCreateSource("beeper", "other-account")
+	require.NoError(t, err)
+	wrongSource := q
+	wrongSource.SourceID = other.ID
+	_, err = f.Store.GetDeliveryPolicyContext(t.Context(), wrongSource)
+	require.ErrorIs(t, err, store.ErrDeliveryPolicyInvalid)
+	require.NoError(t, f.Store.ReplaceConversationParticipants(f.ConvID, nil))
+	_, err = f.Store.GetDeliveryPolicyContext(t.Context(), q)
+	require.ErrorIs(t, err, store.ErrDeliveryPolicyInvalid)
+}
+
 func deliveryChatFixture(t *testing.T) *storetest.Fixture {
 	t.Helper()
 	f := storetest.New(t)

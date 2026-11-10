@@ -24,9 +24,7 @@ func (s *Store) chatRouteRecipientsTx(ctx context.Context, tx *loggedTx, sourceI
  LEFT JOIN person_participants pp ON pp.participant_id=cp.participant_id
  LEFT JOIN persons p ON p.id=pp.person_id
  WHERE c.source_id=? AND c.source_conversation_id=? AND c.conversation_type IN `+chatConversationTypesSQL+` AND cp.left_at IS NULL
- AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.source_id=c.source_id
-  AND m.sender_id=cp.participant_id AND m.identity_is_from_me=TRUE)
- AND NOT (`+senderOwnerFallback("cp.participant_id", "c.source_id")+`)
+ AND NOT (`+s.chatOwnerSQL("cp.participant_id", "c.source_id")+`)
  ORDER BY cp.participant_id`, sourceID, sourceConversationID)
 	if err != nil {
 		return nil, err
