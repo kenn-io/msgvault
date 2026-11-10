@@ -16,7 +16,7 @@ func TestArchiveMessageDeltaPreviewAndRetry(t *testing.T) {
 	writes := 0
 	c := newDraftTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/labels") {
-			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"labels": []map[string]string{{"id": "Label_keep", "name": "Keep", "type": "user"}}}))
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"labels": []map[string]string{{"id": "INBOX", "name": "INBOX", "type": "system"}, {"id": "Label_keep", "name": "Keep", "type": "user"}}}))
 			return
 		}
 		if strings.HasSuffix(r.URL.Path, "/modify") {
@@ -24,7 +24,10 @@ func TestArchiveMessageDeltaPreviewAndRetry(t *testing.T) {
 				Add    []string `json:"addLabelIds"`
 				Remove []string `json:"removeLabelIds"`
 			}
-			require.NoError(t, json.NewDecoder(r.Body).Decode(&delta))
+			if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&delta)) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
 			if slices.Contains(tags, "INBOX") {
 				assert.Equal(t, []string{"INBOX"}, delta.Remove)
 				assert.Empty(t, delta.Add)
@@ -38,7 +41,7 @@ func TestArchiveMessageDeltaPreviewAndRetry(t *testing.T) {
 		} else {
 			assert.Equal(t, "/gmail/v1/users/me/messages/message-1", r.URL.Path)
 		}
-		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"id": "message-1", "labelIds": tags}))
+		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"id": "message-1", "labelIds": tags}))
 	}))
 	preview, err := c.ArchiveMessage(t.Context(), "message-1", true, true)
 	require.NoError(t, err)

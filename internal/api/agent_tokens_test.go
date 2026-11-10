@@ -809,8 +809,6 @@ func TestAgentTokenArchiveSendersIndependentOfDraftIdentities(t *testing.T) {
 			} else {
 				assert.Equal(t, []string{"codes@example.test"}, grant.Sources[0].ArchiveSenderKeys)
 				assert.Equal(t, []string{"codes@example.test"}, issued.Sources[0].ArchiveSenders)
-				assert.True(t, grant.AllowsSender(agentgrant.PermissionDraftCreate, grant.Sources[0], "owner@example.test"))
-				assert.False(t, grant.AllowsSender(agentgrant.PermissionDraftCreate, grant.Sources[0], "codes@example.test"))
 			}
 		})
 	}

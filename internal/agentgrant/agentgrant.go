@@ -79,13 +79,18 @@ func (g Grant) Allows(p Permission, src SourceRef) bool {
 	return g.HasPermission(p) && g.MatchesSource(src)
 }
 
-func (g Grant) MatchesSource(src SourceRef) bool {
-	for _, s := range g.Sources {
-		if s.Type == src.Type && s.Identifier == src.Identifier {
-			return true
+func (g Grant) matchingSource(src SourceRef) (SourceRef, bool) {
+	for _, source := range g.Sources {
+		if source.Type == src.Type && source.Identifier == src.Identifier {
+			return source, true
 		}
 	}
-	return false
+	return SourceRef{}, false
+}
+
+func (g Grant) MatchesSource(src SourceRef) bool {
+	_, ok := g.matchingSource(src)
+	return ok
 }
 
 // AllowsSender reports whether the grant permits one canonical sender on a
@@ -94,12 +99,8 @@ func (g Grant) AllowsSender(p Permission, src SourceRef, senderKey string) bool 
 	if senderKey == "" || !g.HasPermission(p) {
 		return false
 	}
-	for _, source := range g.Sources {
-		if source.Type == src.Type && source.Identifier == src.Identifier && slices.Contains(source.SenderKeys, senderKey) {
-			return true
-		}
-	}
-	return false
+	source, ok := g.matchingSource(src)
+	return ok && slices.Contains(source.SenderKeys, senderKey)
 }
 
 // AllowsArchiveSender checks archive authority independently of outgoing senders.
@@ -108,12 +109,8 @@ func (g Grant) AllowsArchiveSender(src SourceRef, senderKey string) bool {
 	if !g.HasPermission(PermissionMessageArchive) {
 		return false
 	}
-	for _, source := range g.Sources {
-		if source.Type == src.Type && source.Identifier == src.Identifier {
-			return len(source.ArchiveSenderKeys) == 0 || (senderKey != "" && slices.Contains(source.ArchiveSenderKeys, senderKey))
-		}
-	}
-	return false
+	source, ok := g.matchingSource(src)
+	return ok && (len(source.ArchiveSenderKeys) == 0 || (senderKey != "" && slices.Contains(source.ArchiveSenderKeys, senderKey)))
 }
 
 func cloneGrant(g Grant) Grant {

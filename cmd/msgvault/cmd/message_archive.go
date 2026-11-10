@@ -73,7 +73,7 @@ func newMessageArchiveCommand(archived bool, backend messageArchiveBackend) *cob
 	}
 	cmd.Flags().Int64Var(&id, "message", 0, "Archived message ID")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview without writing")
-	cmd.Flags().BoolVar(&asJSON, "json", false, "Output result as JSON")
+	cmd.Flags().BoolVar(&asJSON, flagJSON, false, "Output result as JSON")
 	return cmd
 }
 

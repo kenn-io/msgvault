@@ -20,15 +20,18 @@ func (a *storeAPIAdapter) MessageTags(ctx context.Context, id int64, change *ema
 	return a.messageTags(ctx, id, change, mailbox, acquireWrite, nil, nil)
 }
 
-func (a *storeAPIAdapter) messageTags(ctx context.Context, id int64, change *emailtags.MessageTagChange, mailbox string, acquireWrite func(context.Context) (func(), error), archive *emailtags.ArchiveChange, authorizeArchive func(context.Context) error) (*emailtags.MessageTagResult, error) {
+func (a *storeAPIAdapter) messageTags(ctx context.Context, id int64, change *emailtags.MessageTagChange, mailbox string, acquireWrite func(context.Context) (func(), error), archive *emailtags.ArchiveChange, authorizeArchive func(context.Context, store.EmailTagTarget) error) (*emailtags.MessageTagResult, error) {
 	ctx = a.invocationContext(ctx)
 	resolve := func() (store.EmailTagTarget, error) {
-		if authorizeArchive != nil {
-			if err := authorizeArchive(ctx); err != nil {
-				return store.EmailTagTarget{}, err
+		target, err := a.store.EmailTagTargetContext(ctx, id, mailbox)
+		if authorizeArchive != nil && target.SourceID != 0 {
+			// Authorize the captured provider identity, even for previews. Preserve
+			// archive denial precedence before returning provider eligibility errors.
+			if authErr := authorizeArchive(ctx, target); authErr != nil {
+				return store.EmailTagTarget{}, authErr
 			}
 		}
-		return a.store.EmailTagTargetContext(ctx, id, mailbox)
+		return target, err
 	}
 	target, err := resolve()
 	if err != nil {

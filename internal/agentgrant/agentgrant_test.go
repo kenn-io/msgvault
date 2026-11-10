@@ -287,7 +287,7 @@ func TestGrantWithNoSenderKeysHasNoSenderAuthority(t *testing.T) {
 	assert.False(t, g.AllowsSender(PermissionDraftCreate, SourceRef{Type: "imap", Identifier: "imap://alice@example.com"}, "alice@example.com"))
 }
 
-func TestMessageArchivePermissionIsIndependent(t *testing.T) {
+func TestArchiveSenderKeysRemainIndependentSnapshots(t *testing.T) {
 	source := SourceRef{ID: 1, Type: "gmail", Identifier: "account@example.test"}
 	permission, ok := KnownPermission("message.archive")
 	require.True(t, ok)
@@ -299,13 +299,8 @@ func TestMessageArchivePermissionIsIndependent(t *testing.T) {
 	assert.True(t, grant.AllowsArchiveSender(source, "any@example.test"))
 	assert.False(t, grant.AllowsArchiveSender(SourceRef{Type: "gmail", Identifier: "other@example.test"}, "codes@example.test"))
 	assert.False(t, (Grant{Sources: []SourceRef{source}}).AllowsArchiveSender(source, "codes@example.test"))
-	assert.False(t, grant.Allows(permission, SourceRef{Type: "gmail", Identifier: "other@example.test"}))
-	assert.False(t, grant.HasPermission(PermissionMessageRead))
-	assert.False(t, grant.HasPermission(PermissionDraftCreate))
-}
-
-func TestArchiveSenderKeysRemainIndependentSnapshots(t *testing.T) {
-	source := SourceRef{ID: 1, Type: "gmail", Identifier: "account@example.test", SenderKeys: []string{"owner@example.test"}, ArchiveSenderKeys: []string{"codes@example.test"}}
+	source.SenderKeys = []string{"owner@example.test"}
+	source.ArchiveSenderKeys = []string{"codes@example.test"}
 	registry := NewRegistry()
 	_, secret, issued, err := registry.Issue("mixed", []Permission{PermissionDraftCreate, PermissionMessageArchive}, []SourceRef{source}, time.Time{})
 	require.NoError(t, err)

@@ -632,8 +632,8 @@ func bearerAuthHandler(apiKey string, next http.Handler) http.Handler {
 	})
 }
 
-// agentReadToolPermission names the grant permission the daemon requires for a read tool.
-func agentReadToolPermission(name string) (agentgrant.Permission, bool) {
+// agentToolPermission names the grant permission the daemon requires for a tool.
+func agentToolPermission(name string) (agentgrant.Permission, bool) {
 	switch name {
 	case ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains:
 		return agentgrant.PermissionSearchRead, true
@@ -643,14 +643,8 @@ func agentReadToolPermission(name string) (agentgrant.Permission, bool) {
 		return agentgrant.PermissionAttachmentRead, true
 	case ToolGetStats:
 		return agentgrant.PermissionStatsRead, true
-	}
-	return "", false
-}
-
-// agentToolPermission includes the scoped archive write in delegated discovery.
-func agentToolPermission(name string) (agentgrant.Permission, bool) {
-	if name == ToolArchiveMessage {
+	case ToolArchiveMessage:
 		return agentgrant.PermissionMessageArchive, true
 	}
-	return agentReadToolPermission(name)
+	return "", false
 }

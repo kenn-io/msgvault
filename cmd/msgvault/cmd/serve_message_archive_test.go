@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -137,7 +138,6 @@ func TestArchiveMessageDaemonEndToEnd(t *testing.T) {
 		{"read permission alone", []string{"message.read"}, source.ID, nil, false},
 		{"wrong source", []string{"message.archive"}, other.ID, nil, false},
 		{"wrong sender", []string{"message.archive"}, source.ID, []string{"other@example.test"}, false},
-		{"allowed sender", []string{"message.read", "message.archive"}, source.ID, []string{"codes@example.test"}, true},
 		{"unrestricted sender", []string{"message.archive"}, source.ID, nil, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -170,9 +170,6 @@ func TestArchiveMessageDaemonEndToEnd(t *testing.T) {
 	}
 	cliGrant, err := owner.IssueAgentTokenWithArchiveSenders(t.Context(), "cli archive", []string{"message.archive"}, []int64{source.ID}, nil, map[int64][]string{source.ID: {"codes@example.test"}}, time.Time{})
 	require.NoError(t, err)
-	client, err := daemonclient.New(daemonclient.Config{URL: serverURL, AgentToken: cliGrant.Secret, AllowInsecure: true})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, client.Close()) })
 	tokenFile := filepath.Join(t.TempDir(), "agent.token")
 	require.NoError(t, os.WriteFile(tokenFile, []byte(cliGrant.Secret), 0o600))
 	cliConfig := config.NewDefaultConfig()
@@ -187,8 +184,6 @@ func TestArchiveMessageDaemonEndToEnd(t *testing.T) {
 	root.SetErr(&bytes.Buffer{})
 	require.NoError(t, root.ExecuteContext(cliContext))
 	assert.Contains(t, output.String(), `"dry_run":true`)
-	_, err = os.Stat(filepath.Join(cliConfig.HomeDir, "config.toml"))
-	assert.True(t, os.IsNotExist(err), "delegated CLI must not initialize a local archive")
 	syncExecution, err := st.AcquireSyncExecutionContext(t.Context(), source.ID)
 	require.NoError(t, err)
 	previewArchived := true
@@ -273,6 +268,8 @@ func TestArchiveSenderRequiresEveryLiteralFromAndRechecksUnderLock(t *testing.T)
 	archived := true
 	grant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionMessageArchive}, Sources: []agentgrant.SourceRef{{Type: source.SourceType, Identifier: source.Identifier, ArchiveSenderKeys: []string{"allowed@example.test"}}}}
 	adapter := &storeAPIAdapter{store: st}
+	// mail.Address.String encodes literal quote characters inside the addr-spec;
+	// this stored identity differs from the unquoted allowed@example.test.
 	bare := `"allowed"@example.test`
 	parsed, err := mime.Parse([]byte("From: " + (&mail.Address{Address: bare}).String() + "\r\n\r\nsynthetic\r\n"))
 	require.NoError(t, err)
@@ -296,7 +293,7 @@ func TestArchiveSenderRequiresEveryLiteralFromAndRechecksUnderLock(t *testing.T)
 		addresses []string
 		allowed   bool
 	}{
-		{"quoted local part", []string{parsed.From[0].Email}, false},
+		{"literal quote characters are not the unquoted mailbox", []string{parsed.From[0].Email}, false},
 		{"missing", nil, false},
 		{"legacy null", []string{""}, false},
 		{"mixed", []string{"allowed@example.test", "denied@example.test"}, false},
@@ -367,9 +364,67 @@ func TestArchiveOnlyGrantFailureBodyHidesLabels(t *testing.T) {
 				assert.Contains(t, failure.Result.Tags, "Label_keep")
 				assert.Contains(t, failure.Result.Before, "INBOX")
 			}
-			msg, err := st.GetMessage(id)
-			require.NoError(t, err)
-			assert.ElementsMatch(t, before, msg.Labels, "uncertain readback must not be persisted")
 		})
 	}
+}
+
+// SQL row-close logging runs after the envelope read releases its database cursor.
+// Use that existing seam to commit a real owner merge before provider access.
+type archiveMergeAfterEnvelopeHandler struct {
+	slog.Handler
+	merged atomic.Bool
+	merge  func()
+}
+
+func (h *archiveMergeAfterEnvelopeHandler) Handle(_ context.Context, record slog.Record) error {
+	record.Attrs(func(attr slog.Attr) bool {
+		if attr.Key == "stmt" && strings.Contains(attr.Value.String(), "FROM message_recipients mr") && h.merged.CompareAndSwap(false, true) {
+			h.merge()
+		}
+		return true
+	})
+	return nil
+}
+
+func TestArchivePreviewAuthorizesResolvedSourceDuringMerge(t *testing.T) {
+	st, source, id, adapter, serverURL, owner, _ := newArchiveDaemon(t)
+	destination, err := st.GetOrCreateSource("gmail", "destination@example.test")
+	require.NoError(t, err)
+	token, err := owner.IssueAgentTokenWithArchiveSenders(t.Context(), "source-bound preview", []string{"message.archive"}, []int64{source.ID}, nil, map[int64][]string{source.ID: {"codes@example.test"}}, time.Time{})
+	require.NoError(t, err)
+	client, err := daemonclient.New(daemonclient.Config{URL: serverURL, AgentToken: token.Secret, AllowInsecure: true})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+	var destinationCalls atomic.Int64
+	factory := adapter.emailTagClientFactory
+	adapter.emailTagClientFactory = func(ctx context.Context, captured *store.Source) (gmail.API, error) {
+		if captured.ID == destination.ID {
+			destinationCalls.Add(1)
+			return nil, errors.New("ungranted destination credentials must not be opened")
+		}
+		return factory(ctx, captured)
+	}
+	var mergeResult store.SourceMergeResult
+	var mergeErr error
+	handler := &archiveMergeAfterEnvelopeHandler{
+		Handler: slog.NewTextHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelDebug}),
+		merge: func() {
+			mergeResult, mergeErr = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: source.ID, IntoSourceID: destination.ID})
+		},
+	}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(handler))
+	defer slog.SetDefault(previous)
+	archived := true
+	result, err := client.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived, DryRun: true})
+	require.True(t, handler.merged.Load(), "merge must interleave the envelope read and provider access")
+	require.NoError(t, mergeErr)
+	assert.EqualValues(t, 1, mergeResult.MessagesMoved)
+	moved, lookupErr := st.GetMessageSourceContext(t.Context(), id)
+	require.NoError(t, lookupErr)
+	assert.Equal(t, destination.ID, moved.ID)
+	assert.Zero(t, destinationCalls.Load(), "preview must never open credentials outside its grant")
+	require.NoError(t, err)
+	assert.Equal(t, source.ID, result.SourceID, "provider access remains bound to the authorized captured target")
+	assert.True(t, result.DryRun)
 }

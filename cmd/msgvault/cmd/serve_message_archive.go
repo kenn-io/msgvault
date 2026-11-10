@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"slices"
 
 	"go.kenn.io/msgvault/internal/agentgrant"
@@ -15,12 +14,9 @@ var _ api.MessageArchiveStore = (*storeAPIAdapter)(nil)
 
 // ArchiveMessage reuses tag source ownership, readback, and guarded persistence.
 func (a *storeAPIAdapter) ArchiveMessage(ctx context.Context, id int64, change emailtags.ArchiveChange, grant *agentgrant.Grant, acquireWrite func(context.Context) (func(), error)) (*emailtags.ArchiveResult, error) {
-	authorize := func(ctx context.Context) error {
-		source, err := a.store.GetMessageSourceContext(ctx, id)
+	authorize := func(ctx context.Context, target store.EmailTagTarget) error {
+		source, err := a.store.GetSourceByIDContext(ctx, target.SourceID)
 		if err != nil {
-			if errors.Is(err, store.ErrMessageNotFound) {
-				return emailtags.Failure("message_not_found", "Message not found", nil, err)
-			}
 			return err
 		}
 		if grant != nil {
