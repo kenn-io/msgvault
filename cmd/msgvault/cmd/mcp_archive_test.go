@@ -112,7 +112,7 @@ func TestMCPArchiveFamilies(t *testing.T) {
 				assert.Contains(names, "list_saved_views")
 				assert.Contains(names, "get_person_merge_context")
 				for _, name := range names {
-					assert.False(strings.HasPrefix(name, "calendar_") || strings.HasPrefix(name, "draft_") || strings.Contains(name, "_kata_") || strings.Contains(name, "carddav") || (strings.Contains(name, "meeting") && name != "get_meeting_record" && name != "suggest_meeting_links" && name != "link_meeting" && name != "unlink_meeting" && name != "reset_meeting_link") || strings.Contains(name, "slack") || name == "find_chat" || name == "get_person_agenda", "%s", name)
+					assert.False(strings.HasPrefix(name, "calendar_") || name == "list_calendar_events" || strings.HasPrefix(name, "draft_") || strings.Contains(name, "_kata_") || strings.Contains(name, "carddav") || (strings.Contains(name, "meeting") && name != "get_meeting_record" && name != "suggest_meeting_links" && name != "link_meeting" && name != "unlink_meeting" && name != "reset_meeting_link") || strings.Contains(name, "slack") || name == "find_chat" || name == "get_person_agenda", "%s", name)
 				}
 			}
 		})
@@ -387,7 +387,7 @@ func TestMCPArchivedCalendarVersionGate(t *testing.T) {
 	for _, tc := range []struct {
 		version   string
 		available bool
-	}{{"4.1.0", false}, {"4.2.0", true}} {
+	}{{"3.34.0", false}, {"4.1.0", true}, {"4.2.0", true}} {
 		t.Run(tc.version, func(t *testing.T) {
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
