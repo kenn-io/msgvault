@@ -382,7 +382,7 @@
         <p role="status">Loading file…</p>
       {:else if metadata}
         {#if metadata.content_state !== 'local_content'}
-          <EmptyState title="This file's contents aren't in the archive" description={unavailableDescription(metadata)}>
+          <EmptyState title={unavailableDescription(metadata)}>
             {#snippet icon()}<FileX size={48} />{/snippet}
           </EmptyState>
         {:else if error || previewKind(metadata) === 'none'}

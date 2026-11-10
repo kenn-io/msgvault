@@ -174,8 +174,10 @@ describe('FileViewer', () => {
       id: 7, message_id: 11, conversation_id: 21, filename: 'unavailable.bin', mime_type: '',
       size_bytes: 12, content_state: contentState, content_available: false
     });
-    render(FileViewer, { client: createAPIClient(fetchFn), file: file({ filename: 'unavailable.bin', mime_type: '', size_bytes: 12, content_state: contentState === 'missing_blob' ? 'unverified' : contentState, content_available: contentState === 'missing_blob' ? null : false }) });
+    const { container } = render(FileViewer, { client: createAPIClient(fetchFn), file: file({ filename: 'unavailable.bin', mime_type: '', size_bytes: 12, content_state: contentState === 'missing_blob' ? 'unverified' : contentState, content_available: contentState === 'missing_blob' ? null : false }) });
     expect(await screen.findByText(message)).toBeDefined();
+    expect(container.querySelector('.kit-empty-state__title')?.textContent).toBe(message);
+    expect(screen.queryByText("This file's contents aren't in the archive")).toBeNull();
     expect(fetchFn).toHaveBeenCalledOnce();
     expect(screen.getByRole('button', { name: /Download/ }).hasAttribute('disabled')).toBe(true);
   });

@@ -718,8 +718,9 @@
     if (!current || viewerIndex < 0) return;
     const target = viewerIndex + delta;
     if (target < 0 || target >= totalCount) return;
-    await moveAcrossLoadedBoundary(target);
+    if (target >= rows.length) { await loadMore(); await tick(); }
     if (viewerFile !== current || !rows[target]) return;
+    move(target);
     if (nextCursor && !pageError && target >= rows.length - OVERSCAN) void loadMore();
     const gallery = viewerReturnFocus?.closest('.media-gallery');
     const returnFocus = gallery?.querySelector<HTMLElement>(`[data-file-id="${rows[target].id}"]`) ?? viewerReturnFocus;
@@ -764,7 +765,7 @@
     return Math.max(1, Math.floor(visibleHeight / height));
   }
   async function moveAcrossLoadedBoundary(index: number): Promise<void> {
-    if (index < rows.length || !nextCursor) {
+    if (index < rows.length || !nextCursor || loadingMore) {
       move(index);
       return;
     }
