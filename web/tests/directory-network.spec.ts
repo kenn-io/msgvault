@@ -1,13 +1,12 @@
 import { expect, test } from '@playwright/test';
 
-import type { NetworkEdge } from '../src/lib/api/generated/models';
 import { installMixedArchive } from './e2e/fixtures/mixed-archive';
 
 function directoryURL(personID: number): string {
   return `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'directory', directoryPersonID: personID }))}`;
 }
 
-test('Directory network shows curated connections, omits message-only contacts, and navigates durable entities', async ({ page }) => {
+test('Directory Network keeps desktop and phone section geometry and opens organizations and people', async ({ page }) => {
   await installMixedArchive(page);
   await page.route('**/api/v1/organizations/21', (route) => route.fulfill({
     headers: { ETag: '"organization-21-r2"' },
@@ -16,116 +15,48 @@ test('Directory network shows curated connections, omits message-only contacts, 
       names: [], contact_points: [], addresses: [], categories: [], identifiers: [], media: []
     }
   }));
-  await page.route(/\/api\/v1\/people\/43(\/|\?|$)/, (route) => {
-    const path = new URL(route.request().url()).pathname;
-    if (path === '/api/v1/people/43') return route.fulfill({ json: {
-      id: 43, revision: 1, display_name: 'Curated Peer', participant_ids: [], vcard_uid: 'urn:uuid:curated-peer',
-      created_at: '2026-01-03T12:00:00Z', updated_at: '2026-01-03T12:00:00Z'
-    } });
-    if (path.endsWith('/profile')) return route.fulfill({ json: {
-      person: { id: 43, revision: 1, display_name: 'Curated Peer', participant_ids: [], vcard_uid: 'urn:uuid:curated-peer', created_at: '2026-01-03T12:00:00Z', updated_at: '2026-01-03T12:00:00Z' },
-      names: [], contact_points: [], addresses: [], dates: [], categories: [], media: []
-    } });
-    if (path.endsWith('/attributes')) return route.fulfill({ json: { person_id: 43, attributes: [] } });
-    if (path.endsWith('/contact-state')) return route.fulfill({ json: { person_id: 43, cadence_status: 'unknown', computed_at: '2026-01-03T12:00:00Z', interaction_count: 0, stale: false } });
-    if (path.endsWith('/employments')) return route.fulfill({ json: { employments: [] } });
-    if (path.endsWith('/relationships')) return route.fulfill({ json: { relationships: [] } });
-    if (path.endsWith('/days')) return route.fulfill({ json: { person_id: 43, days: [], total_count: 0 } });
-    if (path.endsWith('/files/search')) return route.fulfill({ json: { files: [], total_count: 0, cache_revision: 'synthetic', search_provenance: {} } });
-    if (path.endsWith('/network')) return route.fulfill({ json: {
-      root_person_id: 43, depth: 1, truncated: false,
-      nodes: [{ id: 'person:43', kind: 'person', entity_id: 43, label: 'Curated Peer', hop: 0 }], edges: []
-    } });
-    return route.fallback();
-  });
 
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(directoryURL(42));
   await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
   await page.getByRole('radio', { name: 'Details', exact: true }).click();
 
-  const list = page.getByRole('list', { name: 'Network connections' });
-  await page.getByRole('radio', { name: '2 steps', exact: true }).click();
-  await expect(list).not.toContainText('Message-only Contact');
+  const network = page.getByRole('region', { name: 'Network', exact: true });
+  await expect(network.locator('.summary')).not.toHaveText(/Loading/);
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect.poll(() => page.evaluate(() => {
+      const pane = document.querySelector('section.person-page [data-scroll-pane]')!;
+      return { overflow: pane.scrollWidth - pane.clientWidth, fits: pane.getBoundingClientRect().right <= window.innerWidth };
+    }), { message: 'the resized pane fits before Network is measured' }).toEqual({ overflow: 0, fits: true });
+    const geometry = await network.evaluate(section => {
+      const header = section.querySelector('header')!.getBoundingClientRect();
+      return {
+        header: header.height,
+        control: section.querySelector('[role="radiogroup"]')!.getBoundingClientRect().height,
+        summaryGap: section.querySelector('.summary')!.getBoundingClientRect().top - header.bottom
+      };
+    });
+    expect(geometry.header, 'a 28 section header').toBe(28);
+    expect(geometry.control, 'its depth control is 28').toBe(28);
+    expect(geometry.summaryGap, 'the summary sits 8 below the header').toBe(8);
+  }
 
-  const network = page.getByRole('region', { name: 'Directory network', exact: true });
+  await page.getByRole('radio', { name: '2 steps', exact: true }).click();
+  const further = network.getByRole('region', { name: 'Network at 2 steps' });
+  await expect(further).toHaveAttribute('aria-busy', 'false');
+  await expect(further.locator('.detail-row').last()).toHaveCSS('box-shadow', 'none');
   await network.getByRole('button', { name: 'Shared Organization' }).click();
   const organizationEditor = page.getByRole('dialog', { name: 'Shared Organization', exact: true });
   await expect(organizationEditor).toBeVisible();
   await expect(organizationEditor.getByRole('textbox', { name: 'Organization name' })).toHaveValue('Shared Organization');
   await organizationEditor.getByRole('button', { name: 'Close', exact: true }).click();
-
-  await network.getByRole('button', { name: 'Curated Peer' }).click();
-  await expect(page).toHaveURL(/directoryPersonID%22%3A43/);
-  await expect(page.getByRole('heading', { name: 'Curated Peer' })).toBeVisible();
+  await network.getByRole('radio', { name: 'Direct', exact: true }).click();
+  await expect(network.locator('.summary')).toHaveText('Curated Peer');
+  const direct = network.getByRole('button', { name: 'Curated Peer', exact: true });
+  const peer = { id: 43, revision: 1, display_name: 'Curated Peer', participant_ids: [], vcard_uid: 'urn:uuid:curated-peer', created_at: '2026-01-03T12:00:00Z', updated_at: '2026-01-03T12:00:00Z' };
+  await page.route('**/api/v1/people/43', route => route.fulfill({ json: peer }));
+  await page.route('**/api/v1/people/43/profile', route => route.fulfill({ json: { person: peer, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] } }));
+  await direct.click();
+  await expect(page.getByRole('heading', { name: 'Curated Peer', exact: true })).toBeVisible();
 });
-
-for (const scenario of ['shared organization', 'nested same-column relations', 'non-adjacent same-column relation', 'long employment title']) {
-  test(`Directory network draws connections and keeps names reachable: ${scenario}`, async ({ page }) => {
-    await installMixedArchive(page);
-    const nested = scenario === 'nested same-column relations';
-    const spanning = scenario === 'non-adjacent same-column relation';
-    const count = nested ? 4 : scenario === 'long employment title' ? 1 : 3;
-    const nodes = [
-      { id: 'person:42', kind: 'person', entity_id: 42, label: scenario === 'long employment title' ? 'Archive Person With A Very Long Full Name Here' : 'Archive Person', hop: 0 },
-      ...Array.from({ length: count }, (_, index) => ({ id: `person:${43 + index}`, kind: 'person', entity_id: 43 + index, label: scenario === 'long employment title' ? 'Curated Peer With A Very Long Full Name Here' : `Curated Peer ${index + 1}`, hop: 1 })),
-      ...nested || spanning ? [] : [{ id: 'organization:21', kind: 'organization', entity_id: 21, label: 'Shared Organization', hop: 2 }]
-    ];
-    const edges: NetworkEdge[] = Array.from({ length: count }, (_, index) => ({
-      id: `root:${index}`, kind: 'relationship', source_node_id: 'person:42', target_node_id: `person:${43 + index}`, label: 'knows'
-    }));
-    if (nested) {
-      edges.push(
-        { id: 'outer', kind: 'relationship', source_node_id: 'person:46', target_node_id: 'person:43', label: 'mentors' },
-        { id: 'inner', kind: 'relationship', source_node_id: 'person:44', target_node_id: 'person:45', label: 'knows' }
-      );
-    } else if (spanning) {
-      edges.push({ id: 'spanning', kind: 'relationship', source_node_id: 'person:43', target_node_id: 'person:45', label: 'works with' });
-    } else {
-      for (let index = 0; index < count; index++) edges.push({
-        id: `employment:${index}`, kind: 'employment', source_node_id: `person:${43 + index}`, target_node_id: 'organization:21',
-        label: scenario === 'long employment title' ? 'Senior principal engineer of distributed computing systems' : 'Engineer'
-      });
-    }
-    await page.route('**/api/v1/people/42/network*', (route) => {
-      const depth = Number(new URL(route.request().url()).searchParams.get('depth'));
-      const visible = nodes.filter((node) => node.hop <= depth);
-      const hops = new Map(visible.map((node) => [node.id, node.hop]));
-      return route.fulfill({ json: { root_person_id: 42, depth, truncated: false, nodes: visible, edges: edges.filter((edge) => hops.has(edge.source_node_id) && hops.has(edge.target_node_id) && Math.min(hops.get(edge.source_node_id)!, hops.get(edge.target_node_id)!) < depth) } });
-    });
-    await page.goto(directoryURL(42));
-    await page.getByRole('radio', { name: 'Details', exact: true }).click();
-    await page.getByRole('radio', { name: '2 steps', exact: true }).click();
-    const network = page.getByRole('region', { name: 'Directory network', exact: true });
-    await expect(network.getByRole('region', { name: 'Network graph' })).toHaveAttribute('aria-busy', 'false');
-    await page.evaluate(() => document.fonts.ready);
-    const names = network.getByRole('button');
-    for (const name of await names.all()) {
-      await name.scrollIntoViewIfNeeded();
-      expect(await name.evaluate((button) => {
-        const box = button.getBoundingClientRect();
-        return document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2) === button;
-      })).toBe(true);
-    }
-    if (scenario === 'long employment title' || spanning) {
-      const chips = spanning ? network.locator('.edge-label').filter({ hasText: 'works with' }) : network.locator('.edge-label');
-      if (spanning) {
-        await expect(chips).toHaveCount(1);
-        expect(await chips.evaluate((chip) => chip.scrollWidth <= chip.clientWidth)).toBe(true);
-      }
-      for (const chip of await chips.all()) {
-        await chip.scrollIntoViewIfNeeded();
-        for (const fraction of [0.1, 0.5, 0.9]) expect(await chip.evaluate((element, fraction) => {
-          const box = element.getBoundingClientRect();
-          return document.elementFromPoint(box.x + box.width * fraction, box.y + box.height / 2) === element;
-        }, fraction)).toBe(true);
-      }
-    }
-    if (nested) {
-      const rails = await network.locator('svg path').evaluateAll((paths) => paths
-        .filter((path) => path.getAttribute('d')!.includes(' V '))
-        .map((path) => (path as SVGPathElement).getPointAtLength((path as SVGPathElement).getTotalLength() / 2).x));
-      expect(Math.abs(rails[0]! - rails[1]!)).toBeGreaterThan(0);
-    }
-  });
-}

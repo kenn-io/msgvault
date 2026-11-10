@@ -113,12 +113,12 @@
     margin-left: auto;
   }
 
-  .actions :global(.kit-menu__trigger) { width: var(--control-h); min-height: var(--control-h); padding: 0; }
+  .actions :global(.kit-menu__trigger) { width: var(--control-h); height: var(--control-h); min-height: var(--control-h); padding: 0; }
 
-  /* On a phone the value takes the full width and the actions wrap under it; a row's own actions stay on its first line. */
+  /* Keep labeled values beside their labels on phones; rows without labels let actions wrap below. */
   @media (max-width: 640px) {
-    .detail-row:not(.own-actions):has(.actions) { flex-wrap: wrap; }
-    .detail-row:not(.own-actions):has(.actions) .value { flex-basis: 100%; }
+    .detail-row:not(.own-actions):not(:has(> .label)):has(.actions) { flex-wrap: wrap; }
+    .detail-row:not(.own-actions):not(:has(> .label)):has(.actions) .value { flex-basis: 100%; }
     .actions { flex-wrap: wrap; max-width: 100%; }
   }
 </style>

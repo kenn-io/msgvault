@@ -3,22 +3,19 @@ import { createRawSnippet } from 'svelte';
 import { expect, it, vi } from 'vitest';
 import DetailSection from './DetailSection.svelte';
 
-it('keeps Add in the header, history folded, and the subgroup after the rows', async () => {
+it('runs Add from the header, folds history between current and imported rows, and lets a custom control replace Add', async () => {
   const onadd = vi.fn();
-  const view = render(DetailSection, {
-    title: 'Connections', addLabel: 'Add connection…', onadd,
-    children: createRawSnippet(() => ({ render: () => '<p>Current connection</p>' })),
-    historyLabel: '2 past connections', history: createRawSnippet(() => ({ render: () => '<p>Past connections</p>' })),
-    subgroupTitle: 'From address books', subgroup: createRawSnippet(() => ({ render: () => '<p>Suggested (2)</p>' })),
-  });
-  const add = screen.getByRole('button', { name: 'Add connection…' });
+  const view = render(DetailSection, { title: 'Work', addLabel: 'Add work', onadd, children: createRawSnippet(() => ({ render: () => '<p>Current job</p>' })), subgroupTitle: 'From address books', subgroup: createRawSnippet(() => ({ render: () => '<p>Imported job</p>' })), historyLabel: 'Show 2 past jobs', history: createRawSnippet(() => ({ render: () => '<p>Past jobs</p>' })) });
+  const add = screen.getByRole('button', { name: 'Add work' });
   expect(add.closest('header')).not.toBeNull();
   await fireEvent.click(add);
   expect(onadd).toHaveBeenCalledOnce();
-  const fold = screen.getByText('2 past connections').closest('details')!;
-  expect(fold.open).toBe(false);
-  await fireEvent.click(screen.getByText('2 past connections'));
-  expect(fold.open).toBe(true);
-  expect(screen.getByRole('heading', { name: 'From address books' })).toBeDefined();
-  expect(view.container.textContent).toMatch(/Current connection.*2 past connections.*Past connections.*From address books.*Suggested/s);
+  expect(view.container.querySelector('details')!.open).toBe(false);
+  await fireEvent.click(screen.getByText('Show 2 past jobs'));
+  expect(view.container.querySelector('details')!.open).toBe(true);
+  expect(Array.from(view.container.querySelector('.section-body')!.children, child => child.textContent?.replace(/\s+/g, ' ').trim())).toEqual(['Current job', 'Show 2 past jobs Past jobs', 'From address booksImported job']);
+  await view.rerender({ title: 'Network', addLabel: 'Add work', onadd: vi.fn(), control: createRawSnippet(() => ({ render: () => '<button type="button">2 steps</button>' })) });
+  const header = screen.getByRole('heading', { name: 'Network' }).parentElement!;
+  expect(header.querySelector('button')?.textContent).toBe('2 steps');
+  expect(screen.queryByRole('button', { name: 'Add work' })).toBeNull();
 });

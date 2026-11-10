@@ -292,17 +292,6 @@ for (const theme of ['light', 'dark'] as const) {
   });
 }
 
-test('Directory network graph has no axe violations', async ({ page }) => {
-  await installMixedArchive(page);
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true, directoryPersonID: 42 }))}`);
-  await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
-  await expect(page.getByRole('radio', { name: 'Messages', exact: true })).toBeVisible();
-  await page.getByRole('radio', { name: 'Details', exact: true }).click();
-  const graph = page.getByRole('region', { name: 'Network graph' });
-  await expect(graph).toBeVisible();
-  await assertNoViolations(page, 'Directory network');
-});
-
 const PERSON_SECTIONS = ['Messages', 'Files', 'Details'];
 
 for (const theme of ['light', 'dark'] as const) {
@@ -331,6 +320,13 @@ for (const theme of ['light', 'dark'] as const) {
       await tab.click();
       await expect(tab).toBeChecked();
       await assertNoViolations(page, `Person ${section} ${theme}`);
+    }
+    for (const depth of [2, 3]) {
+      await detail.getByRole('radio', { name: `${depth} steps` }).click();
+      const network = detail.getByRole('region', { name: `Network at ${depth} steps` });
+      await expect(network).toHaveAttribute('aria-busy', 'false');
+      await expect(network.getByRole('button', { name: 'Shared Organization' })).toBeVisible();
+      await assertNoViolations(page, `Person Details ${depth} steps ${theme}`);
     }
   });
 

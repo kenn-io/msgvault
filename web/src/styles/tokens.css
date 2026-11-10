@@ -67,6 +67,7 @@
   --space-box: var(--space-5);
   --space-pane: var(--space-6);
   --space-section: var(--space-7);
+  --space-end: var(--space-8);
 
   /* Type roles, each one size with one line height. Weight beyond these is
    * Visual's: titles and headings 600, buttons 500, form labels 600. */
@@ -88,6 +89,7 @@
   /* One list item for menus, pickers, and choice lists. */
   --list-item-h: 32px;
   --list-item-h-2: 54px;
+  --person-list-item-h: 52px;
   --list-item-pad-x: var(--space-box);
 
   /* A row: 36 for one line, 54 for two (Body, then Meta). Inside a box the
@@ -515,6 +517,21 @@ body :is(.kit-typeahead__empty.kit-typeahead__empty, .kit-typeahead__status.kit-
 :root:root :is(.kit-typeahead__search, .kit-typeahead__header) {
   padding: 0 0 var(--space-tight);
   margin-bottom: var(--space-tight);
+}
+
+/* Every vertical scroll pane in scope reserves the 8px bar on one edge, so
+ * its content never shifts when the bar appears, and pads its right side by
+ * the bar's width less than its left, so the inset reads the same on both
+ * sides. Long words and URLs wrap, so nothing is wider than its pane. It
+ * scrolls on its own layer from the start: scrolled in place, the edge
+ * pixels of text at its inset stayed behind as stray marks. */
+:where([data-scroll-pane]) {
+  overflow-y: auto;
+  will-change: scroll-position;
+  scrollbar-gutter: stable;
+  padding-left: var(--space-pane);
+  padding-right: calc(var(--space-pane) - var(--scrollbar-gutter-size));
+  overflow-wrap: anywhere;
 }
 
 /* Kit gives each chip size its own side padding (6px, 6px, and 8px), and

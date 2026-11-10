@@ -119,6 +119,7 @@ export type DirectoryProfileOperationResult =
 export type DirectoryProfileOperationBlocked = Extract<DirectoryProfileOperationResult, { ok: false }>;
 
 export interface DirectoryReadBundle {
+  personNotFound?: boolean;
   person?: GeneratedPerson;
   structuredProfile?: GeneratedStructuredPersonProfile;
   attributes?: GeneratedPersonAttributesResponse;
