@@ -34,6 +34,49 @@ func TestExploreGroupsAggregatesCompleteLogicalPopulation(t *testing.T) {
 	assertions.NotEmpty(result.CacheRevision)
 }
 
+func TestPersonGroupLabelAvoidsParticipantPageProduct(t *testing.T) {
+	t.Parallel()
+	for _, files := range []bool{false, true} {
+		name := "messages"
+		if files {
+			name = "files"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			b := NewTestDataBuilder(t)
+			source := b.AddSourceWithType("owner@example.test", "gmail")
+			owner := b.AddParticipant("owner@example.test", "example.test", "Owner")
+			b.AddOwnerParticipant(source, owner)
+			for i := range 40 {
+				person := b.AddParticipant("person"+strconv.Itoa(i)+"@example.test", "example.test", "Person "+strconv.Itoa(i))
+				curated := "Curated person " + strconv.Itoa(i)
+				addPersonOverride(b, person, int64(i+1), &curated)
+				message := b.AddMessage(MessageOpt{SourceID: source, IsFromMe: true})
+				b.AddFrom(message, owner, "Owner")
+				b.AddTo(message, person, "")
+				b.AddAttachmentWithMIME(int64(1000+i), message, 10, "file.pdf", "application/pdf")
+			}
+			engine := b.BuildEngine()
+			var groups int
+			profile, err := profileQuery(t, engine, func() error {
+				if files {
+					result, err := engine.GroupFiles(t.Context(), FileGroupRequest{Dimension: "participant"})
+					groups = len(result.Rows)
+					return err
+				}
+				result, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{
+					Dimension: "participant", Page: PageSpec{Limit: 500},
+				})
+				groups = len(result.Rows)
+				return err
+			})
+			require.NoError(t, err)
+			require.Equal(t, 41, groups)
+			assert.LessOrEqual(t, profile.maxCardinality(), 4*41, "label lookup must avoid pairing every participant with every page group")
+		})
+	}
+}
+
 func TestExploreAttachmentByteEstimates(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
@@ -44,6 +87,7 @@ func TestExploreAttachmentByteEstimates(t *testing.T) {
 		{"slack includes attachments", "slack", "slack", 12, 12},
 		{"teams includes attachments", "teams", "teams", 12, 12},
 		{"inline includes attachments", "inline", "inline", 12, 12},
+		{"matrix includes attachments", "matrix", "matrix", 12, 12},
 		{"known attachments bound incomplete estimates", "teams", "teams", 0, 7},
 		{"body-only chat adds attachments", "imessage", "imessage", 5, 12},
 		{"email accounting is unchanged", "gmail", "email", 100, 107},

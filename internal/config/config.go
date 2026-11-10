@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -24,7 +25,6 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/cronexpr"
-	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/identityops"
@@ -41,6 +41,8 @@ import (
 	"go.kenn.io/msgvault/internal/twenty"
 	"go.kenn.io/msgvault/internal/vector"
 )
+
+var warnedRemovedDocuments atomic.Bool
 
 const (
 	AnalyticsEngineAuto   = "auto"
@@ -135,6 +137,7 @@ type DocbankIntegrationConfig struct {
 	APIKey                  string   `toml:"api_key"`
 	APIKeyFile              string   `toml:"api_key_file"`
 	AllSourcesUploadConsent bool     `toml:"all_sources_upload_consent"`
+	DocumentProfile         string   `toml:"document_profile"`
 	ASRProfile              string   `toml:"asr_profile"`
 	ReferenceConsent        bool     `toml:"reference_consent"`
 	ReferenceOrigins        []string `toml:"reference_origins"`
@@ -260,7 +263,7 @@ type ServerConfig struct {
 	CORSCredentials         bool          `toml:"cors_credentials"`    // Allow credentials in CORS
 	CORSMaxAge              int           `toml:"cors_max_age"`        // Preflight cache duration in seconds
 	TrustedProxies          []string      `toml:"trusted_proxies"`     // Reverse proxy IP/CIDR allowlist for forwarded scheme and host
-	DaemonIdleTimeout       time.Duration `toml:"daemon_idle_timeout"` // Background daemon idle timeout (0 disables)
+	DaemonIdleTimeout       time.Duration `toml:"daemon_idle_timeout"` // Automatically started daemon idle timeout (0 disables)
 	DaemonAutoRestart       string        `toml:"daemon_auto_restart"` // never, newer, or always
 	DaemonAutoStart         *bool         `toml:"daemon_auto_start"`   // Let CLI commands start a local daemon when none is running; unset means true
 
@@ -508,10 +511,10 @@ const (
 	DefaultDiscordEditRescanWindow time.Duration = 7 * 24 * time.Hour
 
 	// DefaultMediaMaxParticipants is the participant cap applied to Beeper,
-	// Inline, Slack, Discord, Teams, and iMessage media collection when a
+	// Inline, Slack, Discord, Teams, iMessage, and Matrix media collection when a
 	// config file omits media_max_participants. Media from rooms above this
 	// size is skipped with a typed participant_threshold marker; direct chats
-	// and small groups keep theirs. NewDefaultConfig pre-fills the six provider
+	// and small groups keep theirs. NewDefaultConfig pre-fills the seven provider
 	// fields so a file that omits the key inherits the cap, while an explicit
 	// media_max_participants = 0 still means "no cap" because TOML decoding
 	// overwrites the pre-filled value with the operator's zero.
@@ -593,53 +596,54 @@ func (c SenderAuthConfig) Pins() map[int64][]string {
 }
 
 type Config struct {
-	SenderAuth         SenderAuthConfig                `toml:"sender_auth"`
-	ConversationPolicy ConversationPolicyConfig        `toml:"conversation_policy"`
-	Data               DataConfig                      `toml:"data"`
-	Log                LogConfig                       `toml:"log"`
-	OAuth              OAuthConfig                     `toml:"oauth"`
-	Microsoft          MicrosoftConfig                 `toml:"microsoft"`
-	Sync               SyncConfig                      `toml:"sync"`
-	Chat               ChatConfig                      `toml:"chat"`
-	Server             ServerConfig                    `toml:"server"`
-	Analytics          AnalyticsConfig                 `toml:"analytics"`
-	Web                WebConfig                       `toml:"web"`
-	Integrations       IntegrationsConfig              `toml:"integrations"`
-	Remote             RemoteConfig                    `toml:"remote"`
-	Vector             vector.Config                   `toml:"vector"`
-	Identity           IdentityConfig                  `toml:"identity"`
-	Fastmail           []FastmailSource                `toml:"fastmail"`
-	CardDAV            CardDAVConfig                   `toml:"carddav"`
-	CardDAVConnections map[string]CardDAVConfig        `toml:"carddav_connections,omitempty"`
-	Accounts           []AccountSchedule               `toml:"accounts"`
-	WhatsAppApple      []WhatsAppAppleSource           `toml:"whatsapp_apple"`
-	SynctechSMS        SynctechSMSConfig               `toml:"synctech_sms"`
-	GCal               []GCalSource                    `toml:"gcal"`
-	Beeper             BeeperConfig                    `toml:"beeper"`
-	Chatwoot           []ChatwootSource                `toml:"chatwoot"`
-	Matrix             MatrixConfig                    `toml:"matrix"`
-	Slack              SlackConfig                     `toml:"slack"`
-	Inline             InlineConfig                    `toml:"inline"`
-	Omi                []OmiSource                     `toml:"omi"`
-	Granola            []GranolaSource                 `toml:"granola"`
-	Plaud              []PlaudSource                   `toml:"plaud"`
-	Circleback         []CirclebackSource              `toml:"circleback"`
-	Pocket             []PocketSource                  `toml:"pocket"`
-	NotionMeetings     []NotionMeetingsSource          `toml:"notion_meetings"`
-	Twilio             []TwilioSource                  `toml:"twilio"`
-	Muesli             []MuesliSource                  `toml:"muesli"`
-	Twenty             []TwentySource                  `toml:"twenty"`
-	Backup             BackupConfig                    `toml:"backup"`
-	Discord            DiscordConfig                   `toml:"discord"`
-	Attachments        documentindex.AttachmentsConfig `toml:"attachments"`
-	Activity           ActivityConfig                  `toml:"activity"`
-	People             PeopleConfig                    `toml:"people"`
-	Teams              TeamsConfig                     `toml:"teams"`
-	IMessage           IMessageConfig                  `toml:"imessage"`
-	Deletion           DeletionConfig                  `toml:"deletion"`
-	IMAP               IMAPConfig                      `toml:"imap"`
-	Gmail              GmailConfig                     `toml:"gmail"`
-	Telemetry          TelemetryConfig                 `toml:"telemetry"`
+	SenderAuth         SenderAuthConfig          `toml:"sender_auth"`
+	ConversationPolicy ConversationPolicyConfig  `toml:"conversation_policy"`
+	Data               DataConfig                `toml:"data"`
+	Log                LogConfig                 `toml:"log"`
+	OAuth              OAuthConfig               `toml:"oauth"`
+	Microsoft          MicrosoftConfig           `toml:"microsoft"`
+	Sync               SyncConfig                `toml:"sync"`
+	Chat               ChatConfig                `toml:"chat"`
+	Server             ServerConfig              `toml:"server"`
+	Analytics          AnalyticsConfig           `toml:"analytics"`
+	Web                WebConfig                 `toml:"web"`
+	Integrations       IntegrationsConfig        `toml:"integrations"`
+	Remote             RemoteConfig              `toml:"remote"`
+	Vector             vector.Config             `toml:"vector"`
+	Identity           IdentityConfig            `toml:"identity"`
+	Fastmail           []FastmailSource          `toml:"fastmail"`
+	CardDAV            CardDAVConfig             `toml:"carddav"`
+	CardDAVConnections map[string]CardDAVConfig  `toml:"carddav_connections,omitempty"`
+	Accounts           []AccountSchedule         `toml:"accounts"`
+	WhatsAppApple      []WhatsAppAppleSource     `toml:"whatsapp_apple"`
+	SynctechSMS        SynctechSMSConfig         `toml:"synctech_sms"`
+	GCal               []GCalSource              `toml:"gcal"`
+	Beeper             BeeperConfig              `toml:"beeper"`
+	Chatwoot           []ChatwootSource          `toml:"chatwoot"`
+	FacebookComments   []FacebookCommentsSource  `toml:"facebook_comments"`
+	InstagramComments  []InstagramCommentsSource `toml:"instagram_comments"`
+	Matrix             MatrixConfig              `toml:"matrix"`
+	Slack              SlackConfig               `toml:"slack"`
+	Inline             InlineConfig              `toml:"inline"`
+	Omi                []OmiSource               `toml:"omi"`
+	Granola            []GranolaSource           `toml:"granola"`
+	Plaud              []PlaudSource             `toml:"plaud"`
+	Circleback         []CirclebackSource        `toml:"circleback"`
+	Pocket             []PocketSource            `toml:"pocket"`
+	NotionMeetings     []NotionMeetingsSource    `toml:"notion_meetings"`
+	Twilio             []TwilioSource            `toml:"twilio"`
+	Muesli             []MuesliSource            `toml:"muesli"`
+	Twenty             []TwentySource            `toml:"twenty"`
+	Backup             BackupConfig              `toml:"backup"`
+	Discord            DiscordConfig             `toml:"discord"`
+	Activity           ActivityConfig            `toml:"activity"`
+	People             PeopleConfig              `toml:"people"`
+	Teams              TeamsConfig               `toml:"teams"`
+	IMessage           IMessageConfig            `toml:"imessage"`
+	Deletion           DeletionConfig            `toml:"deletion"`
+	IMAP               IMAPConfig                `toml:"imap"`
+	Gmail              GmailConfig               `toml:"gmail"`
+	Telemetry          TelemetryConfig           `toml:"telemetry"`
 
 	// Computed paths (not from config file)
 	HomeDir            string `toml:"-"`
@@ -983,13 +987,13 @@ func NewDefaultConfig() *Config {
 		GCal:               []GCalSource{},
 		// Group-room media is capped by default; see DefaultMediaMaxParticipants.
 		Beeper:   BeeperConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Matrix:   MatrixConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		Slack:    SlackConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		Inline:   InlineConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		Discord:  DiscordConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		Teams:    TeamsConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		IMessage: IMessageConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 	}
-	cfg.Attachments.Documents = documentindex.DefaultDocumentsConfig()
 	cfg.Vector.ApplyDefaults()
 	cfg.resolveCredentialPaths()
 	cfg.Server.ApplyDefaults()
@@ -1160,7 +1164,16 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		cfg.deferDaemonError(errors.New("people.identity_scoring.batch_size must be between 1 and 100"))
 	}
 	cfg.People.Sweep.ApplyDefaults()
+	if metadata.IsDefined("attachments", "documents") && !warnedRemovedDocuments.Swap(true) {
+		slog.Warn("[attachments.documents] was removed; delete it and set [integrations.docbank] document_profile, see the Docbank section of docs/configuration.md; for Mistral run docbank processing probe --profile <name> --seeds <dir> (Docbank v0.17.0 or later)")
+	}
 	for _, key := range metadata.Undecoded() {
+		if len(key) > 0 && key[0] == "instagram_comments" {
+			return nil, fmt.Errorf("unknown Instagram comments config key %q", key.String())
+		}
+		if len(key) > 0 && key[0] == "facebook_comments" {
+			return nil, fmt.Errorf("unknown Facebook comments config key %q", key.String())
+		}
 		if len(key) > 0 && key[0] == "chatwoot" {
 			return nil, fmt.Errorf("unknown Chatwoot config key %q", key.String())
 		}
@@ -1253,16 +1266,6 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		return nil, err
 	}
 	cfg.Vector.ApplyDefaults()
-	cfg.Attachments.Documents.ApplyConfiguredProviderDefaults(func(field string) bool {
-		return metadata.IsDefined("attachments", "documents", field)
-	})
-	cfg.Attachments.Documents.ApplyDefaults()
-	if err := cfg.Attachments.Documents.Validate(); err != nil {
-		return nil, err
-	}
-	if cfg.Attachments.Documents.Index.Embeddings.Enabled && !cfg.Vector.Enabled {
-		return nil, errors.New("attachments.documents.index.embeddings.enabled: requires [vector] enabled = true")
-	}
 	if cfg.Vector.AnyLaneEnabled() {
 		if err := cfg.Vector.Validate(); err != nil {
 			return nil, fmt.Errorf("vector config: %w", err)
@@ -1300,6 +1303,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.deferDaemonError(cfg.Integrations.Tasks.Validate("tasks"))
 	cfg.Integrations.Kata.ApplyDefaults()
 	cfg.deferDaemonError(cfg.Integrations.Kata.Validate("kata"))
+	cfg.Integrations.Docbank.DocumentProfile = strings.TrimSpace(cfg.Integrations.Docbank.DocumentProfile)
 	cfg.deferDaemonError(cfg.Integrations.Docbank.validate())
 	cfg.Activity.ApplyDefaults()
 	if err := cfg.Activity.Validate(); err != nil {
@@ -1327,6 +1331,12 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.applySynctechSMSDefaults()
 	cfg.applyGCalDefaults()
 	if err := cfg.validateChatwootSources(); err != nil {
+		return nil, err
+	}
+	if err := cfg.validateFacebookCommentsSources(); err != nil {
+		return nil, err
+	}
+	if err := cfg.validateInstagramCommentsSources(); err != nil {
 		return nil, err
 	}
 	cfg.applyMeetingSourceDefaults()
@@ -1801,12 +1811,17 @@ type BeeperConfig struct {
 }
 
 // MatrixConfig configures native Matrix archive sources ([matrix] table).
-// Credentials live under the data directory, never here.
+// Credentials and encryption keys live under the data directory, never here.
 type MatrixConfig struct {
-	Enabled      bool     `toml:"enabled"`
-	Schedule     string   `toml:"schedule"`
-	Rooms        []string `toml:"rooms"`
-	ExcludeRooms []string `toml:"exclude_rooms"`
+	Enabled              bool                          `toml:"enabled"`
+	Schedule             string                        `toml:"schedule"`
+	Rooms                []string                      `toml:"rooms"`
+	ExcludeRooms         []string                      `toml:"exclude_rooms"`
+	Media                *bool                         `toml:"media"`
+	MaxMediaMB           int                           `toml:"max_media_mb"`
+	MediaScope           string                        `toml:"media_scope"`
+	MediaMaxParticipants int                           `toml:"media_max_participants"`
+	AccountsConfig       map[string]MediaAccountConfig `toml:"accounts_config"`
 }
 
 // SlackConfig configures Slack workspace archive sources ([slack] table).
@@ -1914,6 +1929,13 @@ func (b BeeperConfig) MediaPolicy(accountID string) attachmentpolicy.Policy {
 		b.MaxMediaMB, DefaultChatMaxMediaBytes, account, ok)
 }
 
+// MediaPolicy resolves Matrix provider settings and a user-account override.
+func (m MatrixConfig) MediaPolicy(userID string) attachmentpolicy.Policy {
+	account, ok := m.AccountsConfig[userID]
+	return resolveMediaPolicy(m.Media, m.MediaScope, m.MediaMaxParticipants,
+		m.MaxMediaMB, DefaultChatMaxMediaBytes, account, ok)
+}
+
 // MediaPolicy resolves Slack provider settings and a workspace override.
 func (s SlackConfig) MediaPolicy(teamID string) attachmentpolicy.Policy {
 	account, ok := s.AccountsConfig[teamID]
@@ -1993,6 +2015,8 @@ func (c *Config) validateMediaPolicies() error {
 	}{
 		{name: "beeper", policy: c.Beeper.MediaPolicy(""), providerMaxMB: c.Beeper.MaxMediaMB,
 			accountMaxMedia: mediaAccountMaximums(c.Beeper.AccountsConfig)},
+		{name: "matrix", policy: c.Matrix.MediaPolicy(""), providerMaxMB: c.Matrix.MaxMediaMB,
+			accountMaxMedia: mediaAccountMaximums(c.Matrix.AccountsConfig)},
 		{name: "slack", policy: c.Slack.MediaPolicy(""), providerMaxMB: c.Slack.MaxMediaMB,
 			accountMaxMedia: mediaAccountMaximums(c.Slack.AccountsConfig)},
 		{name: "inline", policy: c.Inline.MediaPolicy(""), providerMaxMB: c.Inline.MaxMediaMB,

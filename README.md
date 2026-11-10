@@ -107,10 +107,10 @@ For Gmail, first create an OAuth credential with the
 msgvault init-db
 msgvault add-account you@gmail.com
 msgvault sync-full you@gmail.com --limit 100
-msgvault daemon start
+msgvault daemon restart
 ```
 
-Open the URL printed by `msgvault daemon start` in your browser. For foreground
+Open the URL printed by `msgvault daemon restart` in your browser. For foreground
 operation, see the [setup guide](docs/setup.md#open-the-web-ui). The release binary
 includes the browser application; it needs no separate Node or Bun installation
 at runtime. Use `msgvault tui` for the terminal interface.
@@ -125,8 +125,8 @@ first sync, and running on your own server.
 | I want to… | Read |
 |---|---|
 | Understand the product | [Product overview](https://msgvault.io/) and [archive lifecycle](https://msgvault.io/guide/) |
-| Upgrade an existing archive | [Changelog and upgrade notes](docs/changelog.md#0210) |
-| Find messages by words or meaning, read threads, and locate attachments | [Searching](docs/usage/searching.md) and [document indexing](docs/usage/document-indexing.md) |
+| Upgrade an existing archive | [Changelog and upgrade notes](https://github.com/kenn-io/msgvault/releases/latest) |
+| Find messages by words or meaning, read threads, and locate attachments | [Searching](docs/usage/searching.md) and [Docbank document search](https://msgvault.io/docs/configuration/#search-document-text-through-docbank-unreleased) |
 | Maintain contacts and relationships | [People and profiles](docs/usage/people.md) |
 | Import local text-message history | [Text message imports](docs/usage/text-messages.md) |
 | Configure optional AI features | [Recommended configuration](docs/usage/recommended-configuration.md) |

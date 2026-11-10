@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-08"
+last_edited: "2026-11-07"
 title: Importing Local Email
 description: Bring local email archives into msgvault, or backfill older Gmail and IMAP messages.
 ---
@@ -19,6 +19,7 @@ labels where the format provides them.
 | Apple Mail directory or backup | [`import-emlx`](#import-emlx) |
 | Older messages still in Gmail or IMAP | [Historical import jobs](#historical-import-jobs) |
 | Chat database or export | [Text messages](/docs/usage/text-messages/) or [Slackdump](/docs/usage/slack/#import-a-slackdump-export) |
+| Messages from a source without a connector, such as feed items | [Messages from any source](/docs/usage/message-import/) |
 
 Choose an identifier that names the owner of the export, usually an email
 address. Imports and live syncs remain separate sources even when they use the

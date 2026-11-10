@@ -24,6 +24,8 @@ powershell -ExecutionPolicy ByPass -c "irm https://msgvault.io/install.ps1 | iex
 
 The installer detects your OS and architecture, downloads the latest release from [GitHub Releases](https://github.com/kenn-io/msgvault/releases), verifies the SHA-256 checksum, and installs the binary.
 
+The Unix installer adds msgvault to your Bash, Zsh, or Fish profile; `MSGVAULT_NO_MODIFY_PATH=1` skips the profile edit.
+
 Windows releases include native AMD64 and ARM64 packages. On Windows ARM64,
 the PowerShell installer selects the native package when the release provides
 one and falls back to the AMD64 package under emulation for older releases.
@@ -391,13 +393,12 @@ TUI](/docs/usage/tui/) for more.
 
 ## Optional: Turn On Search and People Lanes
 
-Semantic search, visual and document attachment search, and the people sweep
+Semantic search, visual attachment search, and the people sweep
 are opt-in. Put your API keys in the environment so setup can propose search
 features. Hosted people inference also needs an explicit provider and model:
 
 ```bash
 export VOYAGE_API_KEY="..."     # text, people, and visual search
-export MISTRAL_API_KEY="..."    # document attachments
 export OPENAI_API_KEY="..."     # text search without a Voyage key
 msgvault setup providers        # review provider disclosures and write opt-in config
 msgvault setup status           # what is on, what is off, and why
@@ -405,7 +406,7 @@ msgvault setup status           # what is on, what is off, and why
 
 Message embeddings are authorized by enabling their configuration and have no
 separate stored consent record. Semantic people search, visual processing,
-document extraction and vectors, and people sweeps have separate consent gates;
+and people sweeps have separate consent gates;
 `setup status` names any command still required. The people sweep additionally
 requires an explicit hosted provider choice, for example:
 
@@ -421,6 +422,9 @@ remains unavailable until an approved build ships.
 
 See [Recommended Configuration](/docs/usage/recommended-configuration/) for the
 values it writes and the probe steps the hosted lanes still need.
+
+Document text search uses Docbank processing and its consent settings. See
+[Docbank configuration](https://msgvault.io/docs/configuration/#search-document-text-through-docbank-unreleased) for the profile and setup steps.
 
 ## Optional: Sync Google Calendar
 
@@ -438,10 +442,10 @@ full workflow, scheduled sync, and headless-server setup.
 
 ## Open the Web UI
 
-Start the daemon, or find the one already running:
+Restart the daemon to keep the Web UI available until stopped:
 
 ```bash
-msgvault daemon start
+msgvault daemon restart
 ```
 
 Open the URL it prints in your browser. The daemon builds a missing or stale

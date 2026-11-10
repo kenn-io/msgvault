@@ -1,7 +1,7 @@
 ---
 title: Agent quickstart
 description: Connect an agent to msgvault and work safely with an archive.
-last_edited: "2026-11-07"
+last_edited: "2026-11-10"
 ---
 
 Use msgvault's MCP server to find and read conversations, analyze archive
@@ -50,6 +50,7 @@ Choose the connection the owner has authorized:
   grant's permissions and source scope on every call. Scoped archive reads
   require daemon API schema 3.9.0 or newer. The owner can set an expiry and
   select permissions and sources when [issuing a grant](../cli-reference.md#agent-token-issue).
+  Withholding detected verification content from delegated reads requires daemon API schema 3.49.0 or newer. The `verification.read` modifier allows that content and grants no reads alone. See [detection rules and limits](../api-server.md#verification-content).
 
 Use the client's MCP `tools/list` capability to discover the tools and input
 schemas available in this session. Availability depends on the daemon version,
@@ -75,6 +76,13 @@ ambiguity, then pass the selected `person_uid` to
 `get_person_messaging_routes`. Routes and suggestions have different evidence
 and status; an archived route does not prove current reachability or authorize
 sending. These contact tools require daemon API schema 3.20.0 or newer.
+
+To see who is waiting on a reply, and whose reply the owner awaits, use
+`list_open_loops`, optionally with a `person_id`. Each item names the message
+that started the wait. Marking a loop done or snoozing it changes the archive,
+so it needs `--allow-loop-writes` and the owner's approval for each call; see
+[Open loops](../usage/chat.md#open-loops). Owner clients only; on unreleased
+`main`, requires daemon API schema 3.44.0 or newer.
 
 Use `list_thread` with exactly one of `id`, `source_message_id`, or `thread_id`
 to list messages oldest first, paging with `offset` and `limit`. Use
@@ -215,6 +223,9 @@ backend checks for action permissions, source scope, and sender identity;
 | `score_identity_matches` | identity_scoring | `--allow-identity-scoring` | owner-only |
 | `create_kata_issue` | kata_write | `--allow-kata-writes` | owner-only |
 | `link_kata_evidence` | kata_write | `--allow-kata-writes` | owner-only |
+| `close_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
+| `reopen_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
+| `snooze_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
 | `merge_person` | person_merge | `--allow-person-merges` | owner-only |
 | `promote_person` | profile_write | `--allow-profile-writes` | owner-only |
 | `set_person_display_name` | profile_write | `--allow-profile-writes` | owner-only |
@@ -260,6 +271,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `list_identity_matches` | read | — | owner-only |
 | `list_meeting_action_items` | read | — | owner-only |
 | `list_messages` | read | — | search.read |
+| `list_open_loops` | read | — | owner-only |
 | `list_saved_views` | read | — | owner-only |
 | `list_source_status` | read | — | owner-only |
 | `list_thread` | read | — | message.read |
@@ -269,7 +281,6 @@ backend checks for action permissions, source scope, and sender identity;
 | `query_sql` | read | — | owner-only |
 | `run_saved_view` | read | — | owner-only |
 | `search_by_domains` | read | — | search.read |
-| `search_document_attachments` | read | — | owner-only |
 | `search_in_message` | read | — | message.read |
 | `search_media` | read | — | owner-only |
 | `search_message_bodies` | read | — | search.read |

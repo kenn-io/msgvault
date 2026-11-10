@@ -9,6 +9,7 @@ env:
   GOTRACEBACK: all
   # Compile without absolute source paths, like the Makefile does.
   GOFLAGS: -trimpath
+  PG_MOVED_PKGS: ./internal/matrix ./internal/beeper ./internal/rederive ./internal/chatwoot
 
 on:
   workflow_call:
@@ -20,7 +21,7 @@ on:
 jobs:
   changes:
     if: ${{ github.event_name == 'pull_request' }}
-    runs-on: ubuntu-26.04
+    runs-on: namespace-profile-linux-1cpu
     timeout-minutes: 5
     permissions:
       pull-requests: read
@@ -66,7 +67,7 @@ jobs:
     container:
       image: ubuntu:26.04
     steps:
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       - name: Install build tools
         env:
@@ -165,9 +166,10 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: linux-checks
+          trim: "true"
           extra-path: .git/golangci-lint-cache
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       - name: Install SQLite development headers
         run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
@@ -198,14 +200,14 @@ jobs:
           cmp -s .custom-gcl.yml "$cache/.custom-gcl.yml" || rm -rf "$cache"
           mkdir -p "$cache"
           cp .custom-gcl.yml "$cache/.custom-gcl.yml"
-          make lint-ci
+          make lint-ci-golangci
 
       - name: Vulnerability check
         run: make vulncheck
 
       - name: Log cache sizes
         if: github.event_name != 'pull_request'
-        run: du -sh "$(go env GOCACHE)" "$(go env GOMODCACHE)" "$(git rev-parse --git-path golangci-lint-cache)"
+        run: du -sh "$(git rev-parse --git-path golangci-lint-cache)"
 
       - name: Save Go caches
         uses: $/.github/actions/go-cache-save
@@ -227,8 +229,9 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: linux-test
+          trim: "true"
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       - name: Install SQLite development headers
         run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
@@ -313,6 +316,7 @@ jobs:
             package: ./internal/api
             job_timeout: 13
             test_timeout: 5m
+            followups: true
     runs-on: ubuntu-26.04
     timeout-minutes: ${{ matrix.job_timeout }}
     steps:
@@ -328,13 +332,17 @@ jobs:
         with:
           group: linux-test
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       - name: Install test dependencies
         run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
 
       - name: Test package in isolated shards
         run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" "${{ matrix.test_timeout }}" "sharded-${{ matrix.name }}"
+
+      - name: Check testify helpers
+        if: ${{ !cancelled() && matrix.followups }}
+        run: make testify-helper-check
 
       - name: Upload test events
         if: failure() || github.run_attempt > 1
@@ -361,6 +369,7 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: macos
+          trim: "true"
 
       - name: Test
         run: make test TEST_TIMEOUT=39m
@@ -415,7 +424,7 @@ jobs:
         with:
           bun-version-file: web/package.json
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       - name: Install frontend dependencies
         run: DOWNLOAD_RETRY='kit-retry 3 5' make web-install
@@ -527,7 +536,7 @@ jobs:
         with:
           bun-version-file: web/package.json
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       - name: Install frontend dependencies
         run: DOWNLOAD_RETRY='kit-retry 3 5' make web-install
@@ -624,8 +633,9 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: windows
+          trim: "true"
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       # sqlite-vec's CGo bindings #include <sqlite3.h>, which isn't on
       # the default include path. Install it from MSYS2 and point
@@ -654,7 +664,7 @@ jobs:
 
       - name: Test
         shell: pwsh
-        env:
+        env: &windows-test-env
           CGO_ENABLED: "1"
           CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
@@ -662,12 +672,30 @@ jobs:
           $separatePackages = @(
             "go.kenn.io/msgvault/cmd/msgvault/cmd"
             "go.kenn.io/msgvault/internal/api"
+            "go.kenn.io/msgvault/internal/backupapp"
+            "go.kenn.io/msgvault/internal/beeper"
+            "go.kenn.io/msgvault/internal/carddav"
+            "go.kenn.io/msgvault/internal/chatwoot"
+            "go.kenn.io/msgvault/internal/circleback"
+            "go.kenn.io/msgvault/internal/deletion"
+            "go.kenn.io/msgvault/internal/discord"
+            "go.kenn.io/msgvault/internal/imazingcsv"
             "go.kenn.io/msgvault/internal/importer"
+            "go.kenn.io/msgvault/internal/matrix"
+            "go.kenn.io/msgvault/internal/mcp"
+            "go.kenn.io/msgvault/internal/muesli"
+            "go.kenn.io/msgvault/internal/omi"
+            "go.kenn.io/msgvault/internal/peoplesweep"
+            "go.kenn.io/msgvault/internal/query"
+            "go.kenn.io/msgvault/internal/rederive"
+            "go.kenn.io/msgvault/internal/slack"
             "go.kenn.io/msgvault/internal/store"
             "go.kenn.io/msgvault/internal/sync"
+            "go.kenn.io/msgvault/internal/teams"
             "go.kenn.io/msgvault/internal/vector/embed"
             "go.kenn.io/msgvault/internal/vector/sqlitevec"
             "go.kenn.io/msgvault/scripts"
+            "go.kenn.io/msgvault/scripts/contextual-retrieval-eval"
           )
           $packages = go list -tags "fts5 sqlite_vec" ./... |
             Where-Object { $_ -notin $separatePackages }
@@ -722,7 +750,7 @@ jobs:
         with:
           group: windows
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       - name: Install SQLite development headers
         shell: bash
@@ -771,7 +799,7 @@ jobs:
         with:
           group: windows
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       - name: Install SQLite development headers
         shell: bash
@@ -818,8 +846,8 @@ jobs:
         include:
           # A 4-core runner is already saturated by one package's shards, so the
           # two slowest packages each split across 3 runners.
-          - { name: cli-1, package: ./cmd/msgvault/cmd, part: 1, parts: 3, timeout: 36m, job_timeout: 45 }
-          - { name: cli-2, package: ./cmd/msgvault/cmd, part: 2, parts: 3, timeout: 36m, job_timeout: 45 }
+          - { name: cli-1, package: ./cmd/msgvault/cmd, part: 1, parts: 3, timeout: 36m, job_timeout: 64, extra_packages: ./internal/peoplesweep ./internal/mcp ./internal/matrix ./internal/discord ./internal/omi ./internal/teams ./internal/imazingcsv ./internal/backupapp ./internal/muesli ./internal/rederive ./internal/circleback ./internal/carddav }
+          - { name: cli-2, package: ./cmd/msgvault/cmd, part: 2, parts: 3, timeout: 36m, job_timeout: 64, extra_packages: ./internal/deletion ./internal/beeper ./scripts/contextual-retrieval-eval ./internal/chatwoot ./internal/slack }
           - { name: cli-3, package: ./cmd/msgvault/cmd, part: 3, parts: 3, timeout: 36m, job_timeout: 64 }
           - { name: store-1, package: ./internal/store, part: 1, parts: 3, timeout: 30m, job_timeout: 38 }
           - { name: store-2, package: ./internal/store, part: 2, parts: 3, timeout: 30m, job_timeout: 38 }
@@ -830,8 +858,9 @@ jobs:
             package2: ./internal/vector/embed
             timeout: 40m
           - name: vector-sqlite
-            job_timeout: 30
+            job_timeout: 47
             package: ./internal/vector/sqlitevec
+            extra_packages: ./internal/query
             timeout: 9m
     runs-on: windows-2025
     timeout-minutes: ${{ matrix.job_timeout }}
@@ -850,7 +879,7 @@ jobs:
         with:
           group: windows
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       - name: Install SQLite development headers
         shell: bash
@@ -877,8 +906,16 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
+      - name: Test additional packages
+        if: matrix.extra_packages && !cancelled()
+        shell: pwsh
+        env: *windows-test-env
+        run: |
+          go tool gotestsum --format pkgname-and-test-fails --format-icons text --jsonfile gotestsum/windows-additional.json --rerun-fails=2 --rerun-fails-report gotestsum/windows-additional-reruns.txt `
+            --packages "${{ matrix.extra_packages }}" -- -timeout 20m -tags "fts5 sqlite_vec"
+
       - name: Upload test events
-        if: failure() || github.run_attempt > 1
+        if: failure() || github.run_attempt > 1 || matrix.extra_packages
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-windows-sharded-${{ matrix.name }}-attempt-${{ github.run_attempt }}
@@ -905,7 +942,7 @@ jobs:
         with:
           group: windows
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       - name: Install SQLite development headers
         shell: bash
@@ -971,7 +1008,7 @@ jobs:
         with:
           group: linux-test
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       - name: Install test dependencies
         run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
@@ -1059,8 +1096,9 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: linux-postgres
+          trim: "true"
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       - name: Install SQLite development headers
         run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
@@ -1075,10 +1113,10 @@ jobs:
       #
       # Heavy DuckDB packages can exceed go test's 10m per-package default
       # on a contended runner. Leave time for stack output inside the job cap.
-      # The three largest packages run in test-postgres-sharded below, each
-      # against its own server; this covers the rest.
+      # test-postgres-sharded runs the large packages and the additional
+      # package group against separate servers; this covers the rest.
       - name: Test (PostgreSQL)
-        run: make test-pg-shipped-unsharded TEST_TIMEOUT=24m
+        run: make test-pg-shipped-unsharded TEST_TIMEOUT=24m EXCLUDE_PKGS="${{ (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') && env.PG_MOVED_PKGS || '' }}"
 
       - name: Check for test reruns
         if: always()
@@ -1093,7 +1131,7 @@ jobs:
           done
 
       - name: Upload test events
-        if: failure() || github.run_attempt > 1 || steps.check-reruns.outputs.reruns == 'true'
+        if: failure() || github.event_name == 'workflow_dispatch' || github.run_attempt > 1 || steps.check-reruns.outputs.reruns == 'true'
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-pg-shipped-unsharded-attempt-${{ github.run_attempt }}
@@ -1105,8 +1143,8 @@ jobs:
         uses: $/.github/actions/go-cache-save
 
   # test-postgres for SHARDED_TEST_PKGS: the same shard script as test-sharded,
-  # one package per job, each with its own PostgreSQL service so four shards'
-  # connections never compete with the rest of the suite.
+  # each with its own PostgreSQL service so four shards' connections never
+  # compete with the rest of the suite. One job runs additional packages.
   test-postgres-sharded:
     needs: changes
     if: *go-changed
@@ -1128,6 +1166,10 @@ jobs:
             test_timeout: 8m
             package: ./internal/api
             followups: true
+          - name: pg_extra
+            extra_packages: true
+            job_timeout: 36
+            test_timeout: 24m
     runs-on: ubuntu-26.04
     timeout-minutes: ${{ matrix.job_timeout }}
     services:
@@ -1163,14 +1205,19 @@ jobs:
         with:
           group: linux-postgres
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.2
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       - name: Install test dependencies
         run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
 
+      - name: Stabilize tracked file times
+        if: ${{ matrix.extra_packages && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
+        run: go run ./scripts/stable-mtimes
+
       # Shipped build (no pgvector tag) against a stock postgres:16 image, as
       # in test-postgres above.
       - name: Test package in isolated shards (PostgreSQL)
+        if: ${{ !matrix.extra_packages }}
         id: postgres-shards
         run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" "${{ matrix.test_timeout }}" "postgres-sharded-${{ matrix.name }}"
 
@@ -1180,6 +1227,27 @@ jobs:
         with:
           name: gotestsum-postgres-sharded-${{ matrix.name }}-attempt-${{ github.run_attempt }}
           path: gotestsum/postgres-sharded-${{ matrix.name }}.json
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Test additional PostgreSQL packages
+        if: ${{ matrix.extra_packages && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
+        run: make test-pg-packages PKGS="$PG_MOVED_PKGS" TEST_TIMEOUT=${{ matrix.test_timeout }}
+
+      - name: Check for additional test reruns
+        if: always() && matrix.extra_packages
+        id: check-pg-packages-reruns
+        run: |
+          if [ -s gotestsum/pg-packages-reruns.txt ]; then
+            echo "reruns=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload additional test events
+        if: ${{ matrix.extra_packages && (failure() || github.event_name == 'workflow_dispatch' || github.run_attempt > 1 || steps.check-pg-packages-reruns.outputs.reruns == 'true') }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-pg-packages-attempt-${{ github.run_attempt }}
+          path: gotestsum/pg-packages.json
           retention-days: 14
           if-no-files-found: ignore
 

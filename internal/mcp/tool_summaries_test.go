@@ -33,6 +33,10 @@ func TestToolSummariesCoverRegistries(t *testing.T) {
 	}
 	for _, definition := range fixedOperationalDefinitions() {
 		assertions.Contains(byName, definition.definition.name)
+		if definition.writes {
+			assertions.NotEqual("read", byName[definition.definition.name].Security, definition.definition.name)
+			assertions.NotEmpty(byName[definition.definition.name].Flag, definition.definition.name)
+		}
 	}
 	for _, summary := range summaries {
 		if permission, ok := agentReadToolPermission(summary.Name); ok {

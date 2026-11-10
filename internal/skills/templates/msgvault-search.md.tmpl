@@ -22,7 +22,8 @@ whole query is optional.
 
 | Operator | Meaning | Value format |
 |---|---|---|
-| `from:` `to:` `cc:` `bcc:` | address filter | full email, or bare domain (`from:example.com`) |
+| `from:` | sender filter | exact email, domain suffix, or name, address, or phone substring |
+| `to:` `cc:` `bcc:` | address filter | full email, or bare domain (`to:example.com`) |
 | `\|` | full-text OR between complete searches; up to 8 alternatives | `alpha beta \| gamma` |
 | `subject:` | subject substring | text |
 | `label:` (alias `l:`) | Gmail label | label name |

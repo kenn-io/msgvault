@@ -265,10 +265,14 @@ type ImportSummary struct {
 	SourceID          int64
 	ChatsProcessed    int64
 	MessagesProcessed int64
-	// MessagesAdded counts messages persisted (upserted) this run, including
-	// re-persisted messages on --full and reconcile passes — not strictly
-	// new rows.
-	MessagesAdded      int64
+	// MessagesAdded counts messages archived for the first time this run.
+	MessagesAdded int64
+	// MessagesUpdated counts already-archived messages rewritten this run:
+	// changes the reconcile pass found, reaction refreshes, and --full re-walks.
+	MessagesUpdated int64
+	// MessagesUnchanged counts messages the reconcile pass skipped because they
+	// match their archived copy.
+	MessagesUnchanged  int64
 	ReactionsRefreshed int64
 	// ChatsReopened counts completed chats whose backfill was resumed because
 	// Beeper had since added older history behind them (see tailScanInterval).

@@ -17,8 +17,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/documentindex"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/tasklinks"
@@ -247,51 +248,6 @@ func TestStoreAPIAdapterExposesCuratedPeopleCompletion(t *testing.T) {
 	assert.Equal("Adapter Nickname", rows[0].Value)
 }
 
-func TestStoreAPIAdapterRecreatesConsentedDocumentSearchConsumer(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	fixture := storetest.New(t)
-	messageID := fixture.CreateMessage("document-search-adapter")
-	hash := strings.Repeat("a", 64)
-	require.NoError(fixture.Store.UpsertAttachmentRecord(t.Context(), messageID, store.AttachmentWrite{
-		Filename: "evidence.pdf", MIMEType: "application/pdf", Size: 128,
-		StoragePath: hash[:2] + "/" + hash, ContentHash: hash,
-		Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics,
-		SourcePartKey: "part:1",
-	}))
-	fingerprint := strings.Repeat("b", 64)
-	profile := store.DocumentExtractionProfile{
-		ID: "profile-" + fingerprint, Fingerprint: fingerprint,
-		Provider: "mistral", Endpoint: "https://api.mistral.ai/v1/ocr",
-		Region: "eu", Model: documentindex.ModelMistralOCR,
-		RetentionPosture:  string(documentindex.RetentionStandard),
-		TrainingPosture:   string(documentindex.TrainingOptedOut),
-		AllowedMediaTypes: []string{"application/pdf"},
-		PolicyJSON:        []byte(`{"normalization":1}`),
-	}
-	_, err := fixture.Store.EnsureDocumentExtractionProfile(t.Context(), profile)
-	require.NoError(err)
-	require.NoError(fixture.Store.RecordDocumentProviderConsent(t.Context(), store.DocumentProviderConsent{
-		ProfileID: profile.ID, ProfileFingerprint: profile.Fingerprint,
-		RetentionPosture: profile.RetentionPosture, TrainingPosture: profile.TrainingPosture,
-	}))
-
-	adapter := &storeAPIAdapter{store: fixture.Store}
-	_, err = adapter.SearchDocuments(t.Context(), store.DocumentSearchRequest{Query: "absent"})
-	require.NoError(err)
-	consumer, err := fixture.Store.GetAttachmentChangeConsumer(
-		t.Context(), documentindex.DocumentAttachmentConsumerKey,
-	)
-	require.NoError(err)
-	assert.True(consumer.ReconciliationComplete)
-	var occurrences int
-	require.NoError(fixture.Store.DB().QueryRowContext(
-		t.Context(),
-		`SELECT COUNT(*) FROM document_occurrences`,
-	).Scan(&occurrences))
-	assert.Equal(1, occurrences)
-}
-
 func TestStoreAPIAdapterServesProfileAndCommunicationServiceRoutes(t *testing.T) {
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -440,4 +396,30 @@ func TestServeFilenameDiscoveryWiring(t *testing.T) {
 		require.True(ok)
 		assert.Equal(t, json.Number(strconv.FormatInt(attachment, 10)), row["id"])
 	}
+}
+
+func TestStoreAPIAdapterForwardsVerificationBodyLoader(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "code", "Account", "Your code is 482913")
+	requirements.NoError(err)
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
+	srv := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: st}, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: slog.New(slog.DiscardHandler)})
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { assertions.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	daemon := httptest.NewServer(srv.Router())
+	t.Cleanup(daemon.Close)
+	// Issue grants through the same HTTP boundary used by the CLI.
+	owner, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, APIKey: "owner", AllowInsecure: true, HTTPClient: daemon.Client()})
+	requirements.NoError(err)
+	t.Cleanup(func() { assertions.NoError(owner.Close()) })
+	issued, err := owner.IssueAgentToken(t.Context(), "masked", []string{"search.read"}, []int64{source.ID}, nil, time.Time{})
+	requirements.NoError(err)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/messages", nil)
+	request.Header.Set(apiprotocol.AgentTokenHeader, issued.Secret)
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, request)
+	assertions.Equal(http.StatusOK, response.Code, response.Body.String())
+	assertions.Contains(response.Body.String(), "[verification content masked]")
+	assertions.NotContains(response.Body.String(), "Account")
 }

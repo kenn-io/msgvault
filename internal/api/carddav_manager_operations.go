@@ -24,6 +24,8 @@ func (m *cardDAVManagerOperations) ListBooks(ctx context.Context) ([]store.CardD
 }
 
 func (m *cardDAVManagerOperations) SetBookRoles(ctx context.Context, id int64, roles carddav.BookRoles) error {
+	m.controller.saveLock().Lock()
+	defer m.controller.saveLock().Unlock()
 	return m.controller.store.SetCardDAVBookRolesContext(ctx, id, store.CardDAVBookRoles{
 		IsWriteTarget: roles.WriteTarget, IsSubscribed: roles.Subscribed, IsLookupSource: roles.LookupSource})
 }

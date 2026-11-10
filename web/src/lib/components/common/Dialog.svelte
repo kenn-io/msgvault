@@ -11,10 +11,15 @@
     title: string;
     onclose: () => void;
     children: Snippet;
-    /** The primary action, bottom-right. Without it the dialog has no footer. */
+    /** The primary action, bottom-right, with Cancel before it. Without it the dialog has no footer. */
     primaryLabel?: string;
     onprimary?: () => void;
     primaryDisabled?: boolean;
+    /** Cancel closes through `onclose`. A dialog with nothing left to cancel turns it off. */
+    cancellable?: boolean;
+    cancelLabel?: string;
+    /** Set while a write is pending, when closing would do nothing. */
+    cancelDisabled?: boolean;
   }
 
   let {
@@ -24,11 +29,15 @@
     primaryLabel = undefined,
     onprimary = undefined,
     primaryDisabled = false,
+    cancellable = true,
+    cancelLabel = 'Cancel',
+    cancelDisabled = false,
   }: Props = $props();
 </script>
 
 {#snippet footer()}
   {#if primaryLabel}
+    {#if cancellable}<Button label={cancelLabel} disabled={cancelDisabled} onclick={onclose} />{/if}
     <Button
       surface="solid"
       tone="info"

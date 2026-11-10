@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-04"
+last_edited: "2026-11-08"
 title: Web UI
 description: Browse messages and files, maintain people, and monitor archive work from your browser.
 ---
@@ -180,25 +180,7 @@ sends the query text to the configured Docbank service.
   starts; use **Refresh** for current matches. Transient failures offer
   **Retry**. A query or Person filter change retries a refused search.
 
-### Attachment matches
-
-With [attachment mirroring](configuration.md#mirror-stored-attachments-to-docbank)
-enabled, the same search adds **Attachments**: text Docbank extracted from
-mirrored PDFs and documents.
-
-- **What it shows:** the message title and date, filename, and extracted
-  excerpt. Select a row to open the message that holds the file.
-- **Queries:** plain words, like recording search. Use `msgvault media search`
-  for queries with punctuation.
-- **Empty results:** an empty block without an error means no match in the
-  extracted text. Files still awaiting extraction may contain the words.
-- **Scope limit:** more than 4,096 mirrored files, not counting images, audio,
-  and video, returns `media_search_scope_limit`. Add a Person filter, or choose
-  a person with fewer attachments.
-- **Failures:** other errors show the API message, with **Retry** for
-  transient failures. "More may match" marks other result limits. Recording
-  failures appear beside attachment results, and both lists follow the same
-  Person filter.
+The same request adds an **Attachments** block when attachment mirroring is enabled. Rows show the message title and date, filename, and extracted excerpt, and open the containing message. Browser attachment search takes plain words, like recording search. Use `msgvault media search` for attachment queries containing punctuation. An empty block without an error reports no matches in extracted text from mirrored attachments. More than 4096 mirrored files excluding images, audio, and video are searched in batches of 4,096. Results from each batch are interleaved by their position within that batch, so order across batches is approximate. Attachment failures show the API error message, with Retry for transient failures. "More may match" marks result limits. Recording failures appear beside attachment results. Both lists follow the same Person filter.
 
 ## Read messages
 
@@ -240,9 +222,7 @@ for selection limits, source coverage, unknown duration, and action filters.
 
 ## Cache states
 
-The web tables share one analytical cache across message types. When it is missing,
-building, stale, or unavailable, the UI names that state and offers the
-available recovery steps. Run `msgvault build-cache` for an explicit rebuild, or leave `analytics.auto_build_cache =
+The web tables share one analytical cache across message types. In auto mode, Messages serves live archive rows during a full rebuild, with a notice naming operations that still need the cache. If no usable cache is produced, those rows stay available with recovery steps. Other cache-dependent views show the cache state and recovery steps. A live pagination cursor expires when the archive changes or the replacement cache publishes; reload the view to continue. Setting `analytics.auto_build_cache = false` skips automatic startup rebuilds and their live Messages path. Run `msgvault build-cache --full-rebuild` to rebuild explicitly, then restart a daemon that was already running. Leave `analytics.auto_build_cache =
 true` for daemon startup to build a stale cache. With `analytics.engine =
 "duckdb"`, startup fails if no usable cache can be produced.
 
@@ -406,9 +386,9 @@ The footer status dot opens queued and running jobs and unresolved failures. It 
 
 Choose **Past runs…** in the status menu to browse history. Filter by Kind, including all runs in a lane, State, or dates, and choose **Show more** for the next page. **Refresh** reloads the current history. Run links preserve filters and selection when shared or restored with Back. If history changes during paging, **Restart** reloads the first page. Unavailable history is labeled by kind.
 
-Select a run for its timestamps, counters, error, related status, and advertised actions. **All runs** returns to the list. Related status opens Sources, Contacts settings, or live document and visual index counts. **Start CardDAV sync**, **Build visual index**, and **Resume visual index** appear only when the daemon advertises them. Sources keeps **Sync now** and opens filtered history through **Sync history**. Contacts settings opens filtered history through **View CardDAV operations**.
+Select a run for its timestamps, counters, error, related status, and advertised actions. **All runs** returns to the list. Related status opens Sources, Contacts settings, or live visual index counts. **Start CardDAV sync**, **Build visual index**, and **Resume visual index** appear only when the daemon advertises them. Sources keeps **Sync now** and opens filtered history through **Sync history**. Contacts settings opens filtered history through **View CardDAV operations**.
 
-Settings Overview shows current feature status. **Details** opens live counts for configured Document extraction, Document search, and Visual search, including features with no past run. Document extraction and document search are configured on the daemon host; see [Document indexing setup](/docs/usage/document-indexing/#configure-the-policy). Document extraction still requires the explicit CLI upload workflow in [Document Indexing](/docs/usage/document-indexing/).
+Settings Overview shows current feature status. **Details** opens live counts for configured Visual search, including features with no past run.
 
 Old Operations links with a run, status, or history filter open Past runs over Settings Overview; links without them open Settings Overview. Old Saved views links open Messages.
 

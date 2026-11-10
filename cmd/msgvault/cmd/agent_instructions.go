@@ -10,7 +10,7 @@ import (
 
 var agentInstructionsCmd = &cobra.Command{
 	Use:   "agent-instructions",
-	Short: "Print or explicitly write MCP-only agent instructions",
+	Short: "Manage MCP instructions",
 	Long: `Print a small MCP-only instruction block without loading configuration or an archive.
 
 Use --write PATH to add or update only msgvault's managed block in a local

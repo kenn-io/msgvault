@@ -1,4 +1,4 @@
-import { documentStatus } from '../src/test/operations';
+import { visualStatus } from '../src/test/operations';
 import { view } from '../src/lib/components/shell/fixtures.test-support';
 import { stubOperationStatus } from './kit-ui';
 import { expect, test } from '@playwright/test';
@@ -151,15 +151,15 @@ test('renaming a saved view restores keyboard focus after alphabetical reorderin
 
 test('Settings Overview Details closes back to Overview with a status title', async ({ page }) => {
   await page.route('**/api/v1/operations/status', route => route.fulfill({ json: { lanes: [{
-    kind: 'document_extraction', lane: 'documents', configured: true,
-    related_status: 'getDocumentIndexStatus', supported_actions: [], history_availability: 'available'
+    kind: 'visual_embedding', lane: 'visual_attachments', configured: true,
+    related_status: 'getVisualAttachmentStatus', supported_actions: [], history_availability: 'available'
   }] } }));
-  await page.route('**/api/v1/documents/status/current', route => route.fulfill({ json: documentStatus }));
+  await page.route('**/api/v1/multimodal/status', route => route.fulfill({ json: visualStatus }));
   await page.goto('/?workspace=settings');
-  const details = page.getByRole('button', { name: 'Details, Document extraction' });
+  const details = page.getByRole('button', { name: 'Details, Visual search' });
   await details.click();
   const dialog = page.getByRole('dialog');
-  await expect(dialog).toHaveAccessibleName('Document index status');
+  await expect(dialog).toHaveAccessibleName('Visual attachment status');
   await dialog.getByRole('button', { name: 'Back', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeHidden();
   await expect(details).toBeVisible();
