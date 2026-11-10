@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-04"
+last_edited: "2026-11-10"
 title: Text Messages
 description: Import chats and texts from common exports, and browse synchronized Teams and Discord conversations in msgvault.
 ---
@@ -19,6 +19,7 @@ open a conversation to read its messages. In the [TUI](/docs/usage/tui/), press
 | [iMessage](#import-imessage) | macOS `chat.db` |
 | [iMazing Messages](#import-imazing-csv) | CSV export root or `csv/` directory |
 | [Google Voice](#import-gvoice) | Google Takeout Voice directory |
+| [Signal readable export](#import-signal-export) | Native version-1 directory, stable account label required |
 | [Telegram](#import-telegram) | Telegram Desktop Machine-readable JSON export |
 | [X DMs](#import-x) | Extracted X account archive |
 | [Facebook Messenger](#import-messenger) | Download Your Information export |
@@ -561,3 +562,67 @@ The summary reports direct/group conversation entries, added and duplicate
 messages, skipped events, invalid records and media outcomes. Conversation
 entries can repeat across numbered parts. Use `--no-default-identity` to skip
 recording the source account as a default identity.
+
+## import-signal-export
+
+Import a native Signal readable directory containing `metadata.json` with
+numeric version `1`, `main.jsonl`, and optional `files/` media:
+
+```bash
+msgvault import-signal-export /path/to/signal-export --account personal
+```
+
+Use the same `--account` label for every export of one account, even if you
+move or rename the directory. Choose different labels for different accounts.
+The label scopes identities; it does not assert an owner phone or address.
+Only the native Self record confirms an owner identifier.
+
+The adapter imports incoming and outgoing standard text and local attachments
+in direct chats, groups and notes to self. Contacts need an ACI; groups need a
+master key, which is hashed for identity and never stored as a group key.
+Phone-only, PNI-only and name-only recipients are skipped. Unknown names and
+phones remain unknown. Group membership records reflect observed senders and
+the owner, rather than projecting the current group roster into history.
+
+Re-running replays the file: it adds missing history and repairs media slots
+that lack bytes. Existing text, raw input, metadata and timestamps keep the
+first archived snapshot. Changed existing text is reported. Records absent
+from later exports and deletion tombstones never delete archive rows. After
+failure or interruption, rerun with the same account label; committed messages
+survive. Counts are printed even after partial failure.
+
+Message identity uses the stable conversation, author and original sent
+milliseconds. For edits, the oldest retained revision supplies the original
+time; the current text is imported on the first visit. Signal's top-level
+edited timestamp is retained in raw input. If a later export drops the oldest
+revision, identity stability cannot be guaranteed.
+
+Media is read only from `files/<first-two-hash-digits>/<plaintext-hash>` with
+an optional extension. The adapter checks the plaintext SHA-256, uses contained
+regular files, and never fetches URLs or decrypts files. Display filenames do
+not select paths. Equal bytes in separate attachment slots stay separate
+occurrences. Available long-text files supply searchable text; missing or
+invalid long text leaves inline text and an incomplete-text count.
+
+Limits are 16 MiB per JSONL record, 64 KiB for metadata, 100,000 combined
+recipient/chat lookup entries, 64 MiB of retained lookup strings, 256 MiB per
+media file and 16 MiB per long-text file. Malformed input, unsupported versions,
+conflicting definitions or exceeded limits stop the import with line/context;
+previously committed messages remain. Missing, unsafe, oversized, ambiguous or
+hash-mismatched media is counted and can be retried. Archive storage failures
+stop the import.
+
+Coverage is reported by reason. Unsupported items include updates/calls,
+contacts, stickers, stories, polls, payments, view-once items and deletion
+tombstones. Unknown direction or missing stable identity/time causes a skip.
+Quotes, reactions, formatting, link previews and revision history are not
+rendered; supported text and exact raw ChatItem JSON are retained. Empty and
+unknown frames are counted separately. Signal omits disappearing messages
+from readable exports and strips view-once media, so these files do not
+promise complete history.
+
+The tested format is the researched Desktop native-v1 layout, using
+[independently authored fictional fixtures and pinned format sources](https://github.com/kenn-io/msgvault/blob/main/internal/signalexport/testdata/README.md).
+Released-app exports and cross-platform runtime compatibility have not been
+verified. See [the CLI reference](../cli-reference.md#import-signal-export)
+for command syntax.

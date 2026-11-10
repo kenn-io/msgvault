@@ -2531,6 +2531,20 @@ transcripts are supported; JSON transcripts are experimental. Attachment URLs
 are stored as links. Re-running is safe and resumes an interrupted import. See
 [Discord packages](usage/discord.md#import-a-personal-data-package) for
 requirements and limits.
+## import-signal-export
+
+Import standard messages and available media from a native Signal readable
+directory:
+
+```bash
+msgvault import-signal-export <export-dir> --account <stable-label>
+```
+
+`--account` is required. Reuse it for later exports of the same account.
+Re-imports add history and repair missing media while preserving first archived
+snapshots. Coverage and omission counts are printed even after partial failure;
+rerun after an interruption. See [Signal readable exports](usage/text-messages.md#import-signal-export)
+for layout, limits, identity, edit behavior and coverage boundaries.
 
 ## import-telegram
 
