@@ -142,6 +142,20 @@ func validBeeperDraftBody(body string) error {
 	return nil
 }
 
+func (a *storeAPIAdapter) checkLiveBeeperDraft(ctx context.Context, grant *agentgrant.Grant, sourceID int64, chatID string, jsonOutput bool, emit func(api.CLIRunEvent) error) error {
+	if existing, err := a.store.LiveBeeperDraftContext(ctx, sourceID, chatID); err == nil {
+		if grant != nil {
+			// Reading draft text needs draft.edit; creators get the ID.
+			existing.Text, existing.Pending = nil, nil
+		}
+		_ = emitBeeperDraft(emit, cliStreamStderr, draftLifecycleIntent{JSON: jsonOutput}, "draft_exists", existing)
+		return draftReplyError("draft_exists", store.ErrBeeperDraftExists)
+	} else if !errors.Is(err, store.ErrBeeperDraftNotFound) {
+		return draftReplyError("draft_read_failed", err)
+	}
+	return nil
+}
+
 // runBeeperDraftCreate writes a new draft into an empty Beeper chat composer.
 // --to names the chat.
 func (a *storeAPIAdapter) runBeeperDraftCreate(ctx context.Context, grant *agentgrant.Grant, intent draftComposeIntent, source *store.Source, emit func(api.CLIRunEvent) error) error {
@@ -158,15 +172,8 @@ func (a *storeAPIAdapter) runBeeperDraftCreate(ctx context.Context, grant *agent
 		return err
 	}
 	chatID := strings.TrimSpace(intent.To[0])
-	if existing, err := a.store.LiveBeeperDraftContext(ctx, source.ID, chatID); err == nil {
-		if grant != nil {
-			// Reading draft text needs draft.edit; creators get the ID.
-			existing.Text, existing.Pending = nil, nil
-		}
-		_ = emitBeeperDraft(emit, cliStreamStderr, draftLifecycleIntent{JSON: intent.JSON}, "draft_exists", existing)
-		return draftReplyError("draft_exists", store.ErrBeeperDraftExists)
-	} else if !errors.Is(err, store.ErrBeeperDraftNotFound) {
-		return draftReplyError("draft_read_failed", err)
+	if err := a.checkLiveBeeperDraft(ctx, grant, source.ID, chatID, intent.JSON, emit); err != nil {
+		return err
 	}
 	lint, done, err := a.gateDraftLint(ctx, draftlint.Input{Kind: "compose", Channel: "chat", Body: intent.Body}, source.ID, grant, intent.draftLintOptions, intent.JSON, emit)
 	if done || err != nil {
@@ -182,15 +189,8 @@ func (a *storeAPIAdapter) runBeeperDraftCreate(ctx context.Context, grant *agent
 	}
 	defer func() { _ = execution.Release() }()
 	// Recheck after acquiring the source lock to preserve the create backstop.
-	if existing, err := a.store.LiveBeeperDraftContext(ctx, source.ID, chatID); err == nil {
-		if grant != nil {
-			// Reading draft text needs draft.edit; creators get the ID.
-			existing.Text, existing.Pending = nil, nil
-		}
-		_ = emitBeeperDraft(emit, cliStreamStderr, draftLifecycleIntent{JSON: intent.JSON}, "draft_exists", existing)
-		return draftReplyError("draft_exists", store.ErrBeeperDraftExists)
-	} else if !errors.Is(err, store.ErrBeeperDraftNotFound) {
-		return draftReplyError("draft_read_failed", err)
+	if err := a.checkLiveBeeperDraft(ctx, grant, source.ID, chatID, intent.JSON, emit); err != nil {
+		return err
 	}
 	state, err := readBeeperDraft(ctx, client, source, chatID)
 	if err != nil {

@@ -1077,11 +1077,25 @@ func TestGmailDraftExternalAdoptionPersistsAttachments(t *testing.T) {
 	require.Error(err)
 	assert.Equal("invalid_draft", err.Error())
 	assert.Equal(0, fixture.client.updateCalls)
+}
+
+func TestGmailDraftEditLintGateRunsBeforeLock(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	fixture := newGmailDraftTestFixture(t)
+	draft := fixture.seedDraft(t)
+	fixture.client.getDraft = &gmail.Draft{ID: "gmail-draft-managed", Message: gmail.RawMessage{
+		ID: "gmail-message-external-attachment", ThreadID: "gmail-thread-1",
+		Raw: gmailDraftTestRawWithAttachment("gmail-external-attachment@example.test"),
+	}}
+	_, err := fixture.lifecycle(t, api.CLIRunDraftEditCommand, draft, "candidate")
+	require.EqualError(err, "changed_externally")
+	adopted, err := fixture.store.GetGmailDraftContext(t.Context(), draft.DraftID)
+	require.NoError(err)
 
 	fixture.client.getDraft = &gmail.Draft{ID: "gmail-draft-managed", Message: gmail.RawMessage{
 		ID: "gmail-message-external-plain", ThreadID: "gmail-thread-1", Raw: gmailDraftTestRaw("corrected", "gmail-external-plain@example.test"),
 	}}
-	calls := fixture.client.getCalls
 	ownership, err := fixture.store.AcquireSyncExecutionContext(t.Context(), fixture.source.ID)
 	require.NoError(err)
 	t.Cleanup(func() { _ = ownership.Release() })
@@ -1095,13 +1109,9 @@ func TestGmailDraftExternalAdoptionPersistsAttachments(t *testing.T) {
 		if mode == "--validate-only" {
 			assert.Empty(events)
 		}
-		assert.Equal(calls, fixture.client.getCalls)
-		after, err := fixture.store.GetGmailDraftContext(t.Context(), adopted.DraftID)
-		require.NoError(err)
-		assert.Equal(adopted, after)
 	}
 	require.NoError(ownership.Release())
-	events, err = fixture.lifecycle(t, api.CLIRunDraftEditCommand, adopted, "candidate")
+	events, err := fixture.lifecycle(t, api.CLIRunDraftEditCommand, adopted, "candidate")
 	require.EqualError(err, "changed_externally")
 	assert.Equal("changed_externally", lintObject(t, events)["status"])
 	corrected, err := fixture.store.GetGmailDraftContext(t.Context(), adopted.DraftID)

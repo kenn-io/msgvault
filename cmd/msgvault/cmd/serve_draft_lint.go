@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/mail"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/agentgrant"
@@ -49,6 +50,8 @@ type draftNameResolver struct {
 }
 
 func (r draftNameResolver) CuratedNames(ctx context.Context, addresses []string) ([]draftlint.Name, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
 	var names []draftlint.Name
 	var err error
 	readable, status := r.adapter.draftReadableSources(ctx, r.sourceID, r.grant)

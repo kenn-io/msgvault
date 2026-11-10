@@ -80,27 +80,52 @@ func TestDraftReplyStrictRefuses(t *testing.T) {
 			got := lintObject(t, events)
 			assert.Equal(t, "refused", got["status"])
 			assert.Equal(t, cliStreamStderr, events[0].Type)
+			if provider == "imap" {
+				events, err = lintRun(t, a, nil, "draft-reply", strconv.FormatInt(id, 10), "--from", from, "--body", "Hi FIRST_NAME", "--strict")
+				require.EqualError(t, err, "draft_lint_failed")
+				require.NotEmpty(t, events)
+				assert.Contains(t, events[0].Data, "Refused.")
+				assert.Contains(t, events[0].Data, "error: The text contains a template placeholder.")
+				assert.Contains(t, events[0].Data, "Greeting check skipped.")
+				for _, code := range []string{"draft_lint_failed", "unresolved_placeholder", "greeting_name_mismatch"} {
+					assert.NotContains(t, events[0].Data, code)
+				}
+				assert.NotContains(t, events[0].Data, `{"`)
+			}
 			assert.Zero(t, providerCreates())
 			assertDraftRows(t, st, 0)
 		})
 	}
 }
 func TestDraftReplyPlaceholderWarning(t *testing.T) {
-	f := newDraftReplyFixture(t)
-	events, err := f.run(t, f.grantedAdapter(), "--body", "Hi FIRST_NAME", "--json")
-	require.NoError(t, err)
-	got := lintObject(t, events)
-	warnings := got["warnings"].([]any)
-	assert.Equal(t, "unresolved_placeholder", warnings[0].(map[string]any)["code"])
-	found := false
-	for _, w := range warnings {
-		if w.(map[string]any)["code"] == "recipient_provenance" {
-			found = true
-			assert.Equal(t, "warn", w.(map[string]any)["severity"])
-			assert.Equal(t, "to", w.(map[string]any)["field"])
-		}
+	for _, allow := range []bool{false, true} {
+		t.Run(fmt.Sprintf("allow=%t", allow), func(t *testing.T) {
+			f := newDraftReplyFixture(t)
+			args := []string{"--body", "Hi FIRST_NAME", "--json"}
+			if allow {
+				args = append(args, "--strict", "--allow-placeholders")
+			}
+			events, err := f.run(t, f.grantedAdapter(), args...)
+			require.NoError(t, err)
+			got := lintObject(t, events)
+			warnings := got["warnings"].([]any)
+			assert.Equal(t, "unresolved_placeholder", warnings[0].(map[string]any)["code"])
+			severity := "error"
+			if allow {
+				severity = "warn"
+			}
+			assert.Equal(t, severity, warnings[0].(map[string]any)["severity"])
+			found := false
+			for _, w := range warnings {
+				if w.(map[string]any)["code"] == "recipient_provenance" {
+					found = true
+					assert.Equal(t, "warn", w.(map[string]any)["severity"])
+					assert.Equal(t, "to", w.(map[string]any)["field"])
+				}
+			}
+			assert.True(t, found)
+		})
 	}
-	assert.True(t, found)
 }
 
 func TestDraftReplyDelegatedSkipsNamesWithoutRead(t *testing.T) {
@@ -167,16 +192,20 @@ func TestValidateOnlyWritesNothing(t *testing.T) {
 		id, err := st.EnsureConversationWithType(source.ID, "C1", "channel", "General")
 		require.NoError(t, err)
 		a := &storeAPIAdapter{store: st}
-		events, err := lintRun(t, a, nil, "draft-compose", "--conversation", strconv.FormatInt(id, 10), "--body", "ok", "--validate-only", "--json")
+		events, err := lintRun(t, a, nil, "draft-compose", "--conversation", strconv.FormatInt(id, 10), "--body", "Hi Sam,", "--validate-only", "--json")
 		require.NoError(t, err)
-		assert.Nil(t, lintObject(t, events)["recipients"])
+		got := lintObject(t, events)
+		assert.Nil(t, got["recipients"])
+		assert.Equal(t, []any{"greeting_name_mismatch"}, got["lint_skipped"])
 		assertDraftRows(t, st, 0)
 	})
 	t.Run("beeper", func(t *testing.T) {
 		f := newBeeperDraftFixture(t)
-		events, err := lintRun(t, f.adapter, nil, "draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", beeperDraftTestChat, "--body", "ok", "--validate-only", "--json")
+		events, err := lintRun(t, f.adapter, nil, "draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", beeperDraftTestChat, "--body", "Hi Sam,", "--validate-only", "--json")
 		require.NoError(t, err)
-		assert.Nil(t, lintObject(t, events)["recipients"])
+		got := lintObject(t, events)
+		assert.Nil(t, got["recipients"])
+		assert.Equal(t, []any{"greeting_name_mismatch"}, got["lint_skipped"])
 		requests, patches := f.beeper.counts()
 		assert.Zero(t, requests)
 		assert.Zero(t, patches)
@@ -238,14 +267,12 @@ func TestDraftLintParsers(t *testing.T) {
 		}, []string{"draft-edit", "draft", "--revision", "1", "--body", "ok"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.name != "reply" {
-				opts, err := tc.parse(append(append([]string{}, tc.args...), "--strict"))
-				require.NoError(t, err)
-				assert.Equal(t, draftLintOptions{Strict: true}, opts)
-				return
-			}
 			for _, flag := range []string{"strict", "allow-placeholders", "validate-only"} {
-				for _, value := range []string{"", "=true", "=false", "=invalid", "duplicate"} {
+				values := []string{""}
+				if tc.name == "reply" {
+					values = []string{"", "=true", "=false", "=invalid", "duplicate"}
+				}
+				for _, value := range values {
 					flags := []string{"--" + flag + value}
 					if value == "duplicate" {
 						flags = []string{"--" + flag + "=false", "--" + flag}
@@ -385,25 +412,6 @@ func TestDraftForwardValidateAndStrict(t *testing.T) {
 	assert.Zero(t, calls)
 }
 
-func TestDraftLintAllowPlaceholdersAndHumanRefusal(t *testing.T) {
-	f := newDraftReplyFixture(t)
-	a := f.grantedAdapter()
-	events, err := f.run(t, a, "--body", "Hi FIRST_NAME", "--strict")
-	require.EqualError(t, err, "draft_lint_failed")
-	require.NotEmpty(t, events)
-	assert.Contains(t, events[0].Data, "Refused.")
-	assert.Contains(t, events[0].Data, "error: The text contains a template placeholder.")
-	assert.Contains(t, events[0].Data, "Greeting check skipped.")
-	for _, code := range []string{"draft_lint_failed", "unresolved_placeholder", "greeting_name_mismatch"} {
-		assert.NotContains(t, events[0].Data, code)
-	}
-	assert.NotContains(t, events[0].Data, `{"`)
-	events, err = f.run(t, a, "--body", "Hi FIRST_NAME", "--strict", "--allow-placeholders", "--json")
-	require.NoError(t, err)
-	got := lintObject(t, events)
-	warnings := got["warnings"].([]any)
-	assert.Equal(t, "warn", warnings[0].(map[string]any)["severity"])
-}
 func TestDraftChatAndBeeperReportLint(t *testing.T) {
 	t.Run("chat", func(t *testing.T) {
 		st := testutil.NewTestStore(t)

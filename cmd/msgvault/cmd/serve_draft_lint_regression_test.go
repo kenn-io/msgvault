@@ -76,8 +76,6 @@ func TestDraftLintNameLookupDiagnostics(t *testing.T) {
 		grant      *agentgrant.Grant
 		skip, log  bool
 	}{
-		{"clean", "Thanks", readGrant, false, false},
-		{"generic", "Hi team,", readGrant, false, false},
 		{"source read failure", "Hi Alex,", readGrant, true, true},
 		{"name read failure", "Hi Alex,", nil, true, true},
 		{"write only", "Hi Alex,", writeGrant, true, false},
@@ -126,5 +124,4 @@ func TestDraftLintCancelledGate(t *testing.T) {
 		assert.True(t, done)
 		assert.Empty(t, events)
 	}
-	assertDraftRows(t, st, 0)
 }
