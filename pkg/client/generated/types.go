@@ -10246,10 +10246,10 @@ type PatchRelationshipTypeRequest struct {
 type PatchSavedViewRequest struct {
 	CanonicalState *SavedViewStateEnvelope `json:"canonical_state,omitempty"`
 	Description    *string                 `json:"description,omitzero"`
-	ExcludeAdd     []string                `json:"exclude_add,omitempty"`
-	ExcludeRemove  []string                `json:"exclude_remove,omitempty"`
-	IncludeAdd     []string                `json:"include_add,omitempty"`
-	IncludeRemove  []string                `json:"include_remove,omitempty"`
+	ExcludeAdd     []string                `json:"exclude_add,omitzero"`
+	ExcludeRemove  []string                `json:"exclude_remove,omitzero"`
+	IncludeAdd     []string                `json:"include_add,omitzero"`
+	IncludeRemove  []string                `json:"include_remove,omitzero"`
 	Name           *string                 `json:"name,omitzero"`
 	SchemaVersion  *int64                  `json:"schema_version,omitempty"`
 }
