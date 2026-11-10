@@ -520,13 +520,17 @@ msgvault import-groupme ./groupme-export --me example-owner
 ```
 
 Supply your GroupMe account's user ID as `--me`. It is an opaque ID, not a phone
-number. It scopes the source and identifies your outgoing messages; msgvault does
-not infer the account owner. `conversation.json` metadata is optional.
+number. In `message.json`, find a message you know you sent and use its
+`sender_id` (corroborated by `user_id`), or find your own member `user_id` in
+`conversation.json`. Reuse the same ID for every later import into this source;
+a different ID creates a separate source. Surrounding option whitespace is
+trimmed. Selected incoming-only or empty conversations may omit your ID, and
+metadata is optional. msgvault never infers ownership from an ID's occurrence.
 
 The importer preserves message IDs, raw JSON, original epoch timestamps and
 observed participants. Epoch timestamps are shown in UTC; the original timezone
 is unknown. Missing senders and dates remain unknown. Conversation IDs distinguish
-groups and DMs. Folder names provide a scoped fallback when no conversation ID is
+groups and DMs. Exported conversation folder names provide a source-scoped fallback when no conversation ID is
 present. Renaming a folder preserves message identity when records have a stable
 conversation ID. Conflicting conversation IDs within one file are rejected.
 
@@ -537,6 +541,8 @@ be repeated from the start. Missing messages in a later export never imply delet
 Only the observed image/video URL-to-`gallery` filename mappings are supported.
 The importer reads contained local files with a 250 MiB per-file cap; it never
 fetches URLs or guesses which unrelated gallery file belongs to a message.
+Present files over the cap are reported as oversized, separately from missing
+files; both empty slots remain retryable after local replacement.
 Uploaded-file attachments and other unsupported attachment forms are counted;
 their ordinary message text is retained. Missing media remains retryable.
 System records are counted separately and skipped. Call-event interpretation is
@@ -544,7 +550,7 @@ outside this adapter's scope.
 
 The summary reports selected conversations processed, oldest/newest known dates,
 UTC-year and observed message/system counts, added/existing/unsupported records,
-and stored/missing/unsupported media. Failed runs label their summary as partial.
+stored/missing/oversized media and unsupported attachment forms. Failed runs label their summary as partial.
 Coverage describes the supplied files, not lifetime account history.
 [GroupMe retention](https://support.microsoft.com/en-us/groupme/how-long-are-files-and-data-available-in-groupme)
 lists five-year availability for photos, videos and files. Its message wording

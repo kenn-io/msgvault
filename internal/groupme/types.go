@@ -37,7 +37,13 @@ type member struct {
 }
 
 type conversation struct {
-	Chat struct {
+	ID             string `json:"id"`
+	GroupID        string `json:"group_id"`
+	ConversationID string `json:"conversation_id"`
+	Chat           struct {
+		LastMessage struct {
+			ChatID string `json:"chat_id"`
+		} `json:"last_message"`
 		OtherUser struct {
 			Name string `json:"name"`
 		} `json:"other_user"`

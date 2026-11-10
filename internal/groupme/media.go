@@ -53,16 +53,7 @@ func galleryName(id string, a Attachment) (string, bool) {
 }
 
 func mediaWrites(ctx context.Context, st *store.Store, root *os.Root, folder string, messageID int64, m *Message, opts ImportOptions, summary *ImportSummary) ([]store.AttachmentWrite, error) {
-	existing := map[string]store.AttachmentRef{}
-	if messageID != 0 {
-		refs, err := st.MessageMIMEAttachmentsContext(ctx, messageID)
-		if err != nil {
-			return nil, err
-		}
-		for _, ref := range refs {
-			existing[ref.SourcePartKey] = ref
-		}
-	}
+	var existing map[string]store.AttachmentRef
 	var writes []store.AttachmentWrite
 	for _, a := range m.Attachments {
 		if a.Type == "reply" {
@@ -74,6 +65,16 @@ func mediaWrites(ctx context.Context, st *store.Store, root *os.Root, folder str
 			continue
 		}
 		key := a.Type + ":" + name
+		if messageID != 0 && existing == nil {
+			refs, err := st.MessageMIMEAttachmentsContext(ctx, messageID)
+			if err != nil {
+				return nil, err
+			}
+			existing = map[string]store.AttachmentRef{}
+			for _, ref := range refs {
+				existing[ref.SourcePartKey] = ref
+			}
+		}
 		if prior, ok := existing[key]; messageID != 0 && (!ok || prior.ContentHash != "") {
 			continue
 		}
@@ -85,6 +86,7 @@ func mediaWrites(ctx context.Context, st *store.Store, root *os.Root, folder str
 		if write.MIMEType == "" {
 			write.MIMEType = "application/octet-stream"
 		}
+		oversized := false
 		if opts.AttachmentsDir != "" {
 			file, err := root.Open(filepath.Join(folder, "gallery", name))
 			if err == nil {
@@ -93,10 +95,12 @@ func mediaWrites(ctx context.Context, st *store.Store, root *os.Root, folder str
 					_ = file.Close()
 					return nil, statErr
 				}
-				if !info.Mode().IsRegular() || info.Size() > attachmentpolicy.DefaultChatMaxBytes {
+				oversized = info.Size() > attachmentpolicy.DefaultChatMaxBytes
+				if !info.Mode().IsRegular() || oversized {
 					_ = file.Close()
 				} else {
 					write.StoragePath, write.ContentHash, write.Size, err = export.StoreAttachmentStream(ctx, opts.AttachmentsDir, file, attachmentpolicy.DefaultChatMaxBytes)
+					oversized = errors.Is(err, export.ErrAttachmentTooLarge)
 					err = errors.Join(err, file.Close())
 					if err != nil && !errors.Is(err, export.ErrAttachmentTooLarge) {
 						return nil, fmt.Errorf("groupme: store media: %w", err)
@@ -106,10 +110,14 @@ func mediaWrites(ctx context.Context, st *store.Store, root *os.Root, folder str
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
-			// Missing, inaccessible, escaped and over-limit local files keep empty slots.
+			// Missing, inaccessible, escaped and oversized files keep retryable empty slots.
 		}
 		if write.ContentHash == "" {
-			summary.AttachmentsMissing++
+			if oversized {
+				summary.AttachmentsOversized++
+			} else {
+				summary.AttachmentsMissing++
+			}
 			if messageID != 0 {
 				continue
 			}

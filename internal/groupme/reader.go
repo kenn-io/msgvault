@@ -2,7 +2,6 @@ package groupme
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -70,17 +69,18 @@ func messages(ctx context.Context, root *os.Root, folder string, visit func(*Mes
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		r.limit = dec.InputOffset() + maxRecordBytes
 		raw, err := dec.ReadValue()
 		if err != nil {
 			return fmt.Errorf("groupme: read message: %w", err)
 		}
 		var m Message
-		if raw.Kind() != '{' {
-			return errors.New("groupme: message must be an object")
-		}
-		if err := json.Unmarshal(raw, &m); err != nil {
-			return fmt.Errorf("groupme: decode message: %w", err)
+		if raw.Kind() != '{' || json.Unmarshal(raw, &m) != nil {
+			// ReadValue already validated JSON syntax. An incompatible record
+			// is unsupported, not a reason to lose the remaining messages.
+			if err := visit(nil, raw); err != nil {
+				return err
+			}
+			continue
 		}
 		m.decodeAttachments()
 		if err := visit(&m, raw); err != nil {
@@ -159,22 +159,42 @@ func discover(ctx context.Context, root *os.Root, absolute string, visit func(ch
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		err = messages(ctx, root, folder, func(m *Message, _ jsontext.Value) error {
-			key, kind := m.peer()
+		reconcile := func(key, kind string) error {
 			if key == "" {
 				return nil
 			}
 			if c.key != "" && c.key != key {
-				return errors.New("groupme: conflicting conversation IDs in message.json")
+				return errors.New("groupme: conflicting conversation IDs in metadata/message.json")
 			}
 			c.key, c.kind = key, kind
 			return nil
+		}
+		for _, identity := range []struct{ prefix, id, kind string }{
+			{"group:", c.metadata.ID, "group_chat"}, {"group:", c.metadata.GroupID, "group_chat"},
+			{"dm:", c.metadata.ConversationID, "direct_chat"}, {"dm:", c.metadata.Chat.LastMessage.ChatID, "direct_chat"},
+		} {
+			if identity.id != "" {
+				if err := reconcile(identity.prefix+identity.id, identity.kind); err != nil {
+					return err
+				}
+			}
+		}
+		err = messages(ctx, root, folder, func(m *Message, _ jsontext.Value) error {
+			if m == nil {
+				return nil
+			}
+			key, kind := m.peer()
+			return reconcile(key, kind)
 		})
 		if err != nil {
 			return fmt.Errorf("groupme: conversation %q: %w", folder, err)
 		}
 		if c.key == "" {
-			c.key = fmt.Sprintf("folder:%x", sha256.Sum256([]byte(filepath.Join(absolute, folder))))
+			name := folder
+			if folder == "." {
+				name = filepath.Base(absolute)
+			}
+			c.key = "folder:" + name
 		}
 		if err := visit(c); err != nil {
 			return err

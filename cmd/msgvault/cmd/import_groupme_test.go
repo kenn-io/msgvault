@@ -107,3 +107,18 @@ func TestImportGroupmePartialImportRefreshesIdentityAndCache(t *testing.T) {
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM read_parquet(?, hive_partitioning=true)`, filepath.Join(cfg.AnalyticsDir(), "messages", "**", "*.parquet")).Scan(&n))
 	assert.Equal(t, 1, n)
 }
+
+func TestImportGroupmeInvalidInputHasNoPartialSummary(t *testing.T) {
+	cfg := lifecycleTestConfig(t.TempDir())
+	ctx := withStoreResolverConfig(t, cfg)
+	for _, path := range []string{filepath.Join(t.TempDir(), "missing"), t.TempDir()} {
+		command := &cobra.Command{Use: "import-groupme"}
+		command.SetContext(ctx)
+		var out bytes.Buffer
+		command.SetOut(&out)
+		command.SetErr(io.Discard)
+		require.Error(t, runImportGroupme(command, path, groupmeCLIOptions{Me: "owner"}))
+		assert.NotContains(t, out.String(), "Partial import")
+		assert.NotContains(t, out.String(), "Known dates")
+	}
+}

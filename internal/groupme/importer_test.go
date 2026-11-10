@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -281,7 +282,8 @@ func TestImportMediaCapKeepsRetryableSlot(t *testing.T) {
 	opts := ImportOptions{RootDir: root, Me: "owner", AttachmentsDir: t.TempDir()}
 	summary, err := Import(t.Context(), st, opts)
 	require.NoError(t, err)
-	assert.Equal(t, 2, summary.AttachmentsMissing)
+	assert.Equal(t, 1, summary.AttachmentsMissing)
+	assert.Equal(t, 1, summary.AttachmentsOversized)
 	assert.Zero(t, summary.AttachmentsStored)
 	require.NoError(t, os.WriteFile(path, []byte("small fictional bytes"), 0600))
 	summary, err = Import(t.Context(), st, opts)
@@ -309,4 +311,107 @@ func TestImportMalformedLaterConversationKeepsEarlierMessages(t *testing.T) {
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, summary.MessagesAdded)
 	assert.EqualValues(t, 1, summary.MessagesSkipped)
+}
+
+func TestImportMetadataIdentityAndFolderScope(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	group := filepath.Join(root, "original")
+	require.NoError(t, os.Mkdir(group, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(group, "message.json"), []byte(`[]`), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(group, "conversation.json"), []byte(`{"id":"opaque-group","members":[{"user_id":"metadata-only","name":"Example Member"}]}`), 0600))
+	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "owner"})
+	require.NoError(t, err)
+	renamed := filepath.Join(root, "renamed")
+	require.NoError(t, os.Rename(group, renamed))
+	_, err = Import(t.Context(), st, ImportOptions{RootDir: renamed, Me: "owner"})
+	require.NoError(t, err)
+	var n int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM conversations").Scan(&n))
+	assert.Equal(t, 1, n)
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM conversation_participants").Scan(&n))
+	assert.Equal(t, 1, n)
+	require.NoError(t, os.WriteFile(filepath.Join(renamed, "message.json"), []byte(`[{"id":"one","group_id":"different","text":"must not merge"}]`), 0600))
+	_, err = Import(t.Context(), st, ImportOptions{RootDir: root, Me: "owner"})
+	require.ErrorContains(t, err, "conflicting conversation IDs")
+	// A metadata-free conversation keeps the same fallback across parent/single
+	// selections and extraction roots, using its exported folder name.
+	for range 2 {
+		moved := filepath.Join(t.TempDir(), "exported-folder")
+		require.NoError(t, os.Mkdir(moved, 0700))
+		require.NoError(t, os.WriteFile(filepath.Join(moved, "message.json"), []byte(`[{"id":"fallback","text":"folder message"}]`), 0600))
+		summary, err := Import(t.Context(), st, ImportOptions{RootDir: filepath.Dir(moved), Me: "owner"})
+		require.NoError(t, err)
+		assert.LessOrEqual(t, summary.MessagesAdded, int64(1))
+		summary, err = Import(t.Context(), st, ImportOptions{RootDir: moved, Me: "owner"})
+		require.NoError(t, err)
+		assert.Zero(t, summary.MessagesAdded)
+	}
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&n))
+	assert.Equal(t, 1, n)
+}
+
+func TestImportSkipsScalarDriftAndCountsOnce(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "message.json"), []byte(`[
+ {"id":"before","group_id":"opaque","created_at":1704067200,"sender_id":"owner","text":"first"},
+ {"id":42,"group_id":"opaque","text":"unsupported ID"},
+ {"id":"bad-time","created_at":"yesterday"},
+ {"id":"after","group_id":"opaque","created_at":1704067201,"text":"last"} ]`), 0600))
+	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "  owner  "})
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, summary.MessagesAdded)
+	assert.EqualValues(t, 2, summary.UnsupportedEntriesSkipped)
+	assert.Equal(t, map[int]int64{2024: 2}, summary.Years)
+	assert.Equal(t, map[string]int64{"message": 2}, summary.Types)
+	var n int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages WHERE is_from_me=true").Scan(&n))
+	assert.Equal(t, 1, n)
+	summary, err = Import(t.Context(), st, ImportOptions{RootDir: root, Me: "owner"})
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, summary.MessagesSkipped)
+}
+
+func TestImportBoundedBatchesPreserveRawAndDuplicates(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	var records []string
+	for i := range maxMessageBatch + 1 {
+		records = append(records, fmt.Sprintf(`{"id":"message-%d","group_id":"batch","text":"body-%d"}`, i, i))
+		if i == 0 {
+			records = append(records, `{"id":"message-0","group_id":"batch","text":"must not overwrite"}`)
+		}
+	}
+	records = append(records, records[0])
+	require.NoError(t, os.WriteFile(filepath.Join(root, "message.json"), []byte("["+strings.Join(records, ",")+"]"), 0600))
+	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "owner"})
+	require.NoError(t, err)
+	assert.EqualValues(t, maxMessageBatch+1, summary.MessagesAdded)
+	assert.EqualValues(t, 2, summary.MessagesSkipped)
+	keys := []string{messageKey("group:batch", "message-0"), messageKey("group:batch", fmt.Sprintf("message-%d", maxMessageBatch))}
+	ids, err := st.MessageExistsBatchContext(t.Context(), summary.SourceID, keys)
+	require.NoError(t, err)
+	for _, key := range keys {
+		raw, err := st.GetMessageRawContext(t.Context(), ids[key])
+		require.NoError(t, err)
+		var m Message
+		require.NoError(t, json.Unmarshal(raw, &m))
+		assert.Equal(t, key, messageKey("group:batch", m.ID))
+		if m.ID == "message-0" {
+			assert.Equal(t, "body-0", m.Text)
+		}
+	}
+	// A few large records cross the byte cap well before the count cap.
+	large := strings.Repeat("fictional ", maxMessageBatchBytes/20)
+	records = nil
+	for i := range 3 {
+		encoded, err := json.Marshal(Message{ID: fmt.Sprintf("large-%d", i), GroupID: "batch", Text: large})
+		require.NoError(t, err)
+		records = append(records, string(encoded))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "message.json"), []byte("["+strings.Join(records, ",")+"]"), 0600))
+	summary, err = Import(t.Context(), st, ImportOptions{RootDir: root, Me: "owner"})
+	require.NoError(t, err)
+	assert.EqualValues(t, 3, summary.MessagesAdded)
 }

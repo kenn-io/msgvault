@@ -5710,7 +5710,7 @@ msgvault import-groupme <export-dir> --me <account-id>
 
 | Flag | Default | Description |
 | --- | --- | --- |
-| `--me` | Required | Opaque exporting account user ID; not a phone number |
+| `--me` | Required | Your own message `sender_id` (corroborated `user_id`) or member `user_id`; trimmed and reused across imports, not a phone number |
 | `--no-default-identity` | `false` | Skip default archive identity selection |
 
 Select a directory containing `message.json`, or its immediate parent. Re-imports

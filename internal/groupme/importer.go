@@ -1,6 +1,7 @@
 package groupme
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json/jsontext"
@@ -25,14 +26,14 @@ type ImportOptions struct {
 }
 
 type ImportSummary struct {
-	SourceID                                                                          int64
-	Duration                                                                          time.Duration
-	ChatsProcessed                                                                    int
-	MessagesAdded, MessagesSkipped, UnsupportedEntriesSkipped, ServiceMessagesSkipped int64
-	AttachmentsStored, AttachmentsMissing, AttachmentsUnsupported                     int
-	Oldest, Newest                                                                    time.Time
-	Years                                                                             map[int]int64
-	Types                                                                             map[string]int64
+	SourceID                                                                            int64
+	Duration                                                                            time.Duration
+	ChatsProcessed                                                                      int
+	MessagesAdded, MessagesSkipped, UnsupportedEntriesSkipped, ServiceMessagesSkipped   int64
+	AttachmentsOversized, AttachmentsStored, AttachmentsMissing, AttachmentsUnsupported int
+	Oldest, Newest                                                                      time.Time
+	Years                                                                               map[int]int64
+	Types                                                                               map[string]int64
 }
 
 func messageKey(peer, id string) string {
@@ -46,7 +47,8 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 	started := time.Now()
 	summary = &ImportSummary{Years: map[int]int64{}, Types: map[string]int64{}}
 	defer func() { summary.Duration = time.Since(started) }()
-	if strings.TrimSpace(opts.Me) == "" {
+	opts.Me = strings.TrimSpace(opts.Me)
+	if opts.Me == "" {
 		return summary, errors.New("groupme: --me <account-id> is required")
 	}
 	absolute, err := filepath.Abs(opts.RootDir)
@@ -58,20 +60,14 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 		return summary, err
 	}
 	defer func() { retErr = errors.Join(retErr, root.Close()) }()
-	source, err := st.GetOrCreateSourceContext(ctx, SourceType, opts.Me)
-	if err != nil {
-		return summary, err
-	}
-	summary.SourceID = source.ID
-	syncID, err := st.StartSyncContext(ctx, source.ID, "import-groupme")
-	if err != nil {
-		return summary, err
-	}
-	st = st.ScopedToSync(source.ID, syncID)
+	var sourceID, syncID int64
 	defer func() {
 		// Finalize partial archive statistics and the run even after interruption.
+		if syncID == 0 {
+			return
+		}
 		cleanup := context.WithoutCancel(ctx)
-		retErr = errors.Join(retErr, st.ResolveDeferredMessageRepliesContext(cleanup, source.ID, MessageType, 500), st.RecomputeConversationStatsContext(cleanup, source.ID))
+		retErr = errors.Join(retErr, st.ResolveDeferredMessageRepliesContext(cleanup, sourceID, MessageType, 500), st.RecomputeConversationStatsContext(cleanup, sourceID))
 		if retErr != nil {
 			retErr = errors.Join(retErr, st.FailSyncContext(cleanup, syncID, retErr.Error()))
 		} else {
@@ -79,7 +75,20 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 		}
 	}()
 	err = discover(ctx, root, absolute, func(c chat) error {
-		if err := importChat(ctx, st, root, absolute, source.ID, c, opts, summary); err != nil {
+		if sourceID == 0 {
+			source, err := st.GetOrCreateSourceContext(ctx, SourceType, opts.Me)
+			if err != nil {
+				return err
+			}
+			sourceID = source.ID
+			summary.SourceID = sourceID
+			syncID, err = st.StartSyncContext(ctx, sourceID, "import-groupme")
+			if err != nil {
+				return err
+			}
+			st = st.ScopedToSync(sourceID, syncID)
+		}
+		if err := importChat(ctx, st, root, absolute, sourceID, c, opts, summary); err != nil {
 			return err
 		}
 		summary.ChatsProcessed++
@@ -112,20 +121,120 @@ func importChat(ctx context.Context, st *store.Store, root *os.Root, absolute st
 		// are opaque and deliberately use a separate identifier namespace.
 		return st.EnsureParticipantByIdentifierContext(ctx, "groupme_user", id, name)
 	}
-	var members []store.ConversationParticipantRef
 	for _, m := range c.metadata.Members {
 		pid, err := resolve(m.UserID, "")
 		if err != nil {
 			return err
 		}
 		if pid != 0 {
-			members = append(members, store.ConversationParticipantRef{ParticipantID: pid, Role: "member"})
 			if err := st.EnsureConversationParticipantContext(ctx, conversationID, pid, "member"); err != nil {
 				return err
 			}
 		}
 	}
-	return messages(ctx, root, c.folder, func(m *Message, raw jsontext.Value) error {
+
+	persistBatch := func(batch []messageRecord) error {
+		keys := make([]string, len(batch))
+		for i, record := range batch {
+			keys[i] = messageKey(c.key, record.message.ID)
+		}
+		existing, err := st.MessageExistsBatchContext(ctx, sourceID, keys)
+		if err != nil {
+			return err
+		}
+		for i, record := range batch {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			m, raw, key := &record.message, record.raw, keys[i]
+			id := existing[key]
+			if err := func() error {
+				writes, err := mediaWrites(ctx, st, root, c.folder, id, m, opts, summary)
+				if err != nil {
+					return err
+				}
+				if id != 0 {
+					for _, write := range writes {
+						if err := st.UpsertAttachmentRecordWithStats(ctx, id, write, true); err != nil {
+							return err
+						}
+					}
+					summary.MessagesSkipped++
+					return nil
+				}
+				senderID := m.SenderID
+				sender, err := resolve(senderID, m.Name)
+				if err != nil {
+					return err
+				}
+				var participants []store.ConversationParticipantRef
+				recipients := []store.RecipientSet{}
+				if sender != 0 {
+					participants = append(participants, store.ConversationParticipantRef{ParticipantID: sender, Role: "member"})
+					recipients = append(recipients, store.RecipientSet{Type: "from", ParticipantIDs: []int64{sender}, DisplayNames: []string{m.Name}})
+				}
+				metadata := struct {
+					ExportRoot          string `json:"export_root"`
+					Folder              string `json:"export_folder"`
+					Timestamp           *int64 `json:"created_at"`
+					Timezone            string `json:"original_timezone"`
+					ReferencedMessageID string `json:"referenced_message_id,omitempty"`
+				}{ExportRoot: absolute, Folder: c.folder, Timestamp: m.CreatedAt, Timezone: "unknown"}
+				for _, a := range m.Attachments {
+					if a.Type == "reply" && a.ReplyID != "" {
+						metadata.ReferencedMessageID = messageKey(c.key, a.ReplyID)
+					}
+				}
+				encoded, err := json.Marshal(metadata)
+				if err != nil {
+					return err
+				}
+				sent := sql.NullTime{}
+				if m.CreatedAt != nil {
+					sent = sql.NullTime{Time: time.Unix(*m.CreatedAt, 0).UTC(), Valid: true}
+				}
+				var replacement *[]store.AttachmentWrite
+				if len(writes) > 0 {
+					replacement = &writes
+				}
+				snippet := textutil.PrefixRunes(strings.TrimSpace(m.Text), 200)
+				id, err = st.PersistMessageContext(ctx, &store.MessagePersistData{
+					Message:      &store.Message{SourceID: sourceID, SourceMessageID: key, MessageType: MessageType, SentAt: sent, SenderID: sql.NullInt64{Int64: sender, Valid: sender != 0}, IsFromMe: senderID != "" && senderID == opts.Me, Snippet: sql.NullString{String: snippet, Valid: snippet != ""}, SizeEstimate: int64(len(raw))},
+					Conversation: &store.ConversationPersistData{SourceConversationID: c.key, ConversationType: c.kind, Title: c.metadata.Name, Participants: participants, PreserveExistingParticipants: true},
+					Metadata:     &sql.NullString{String: string(encoded), Valid: true}, BodyText: sql.NullString{String: m.Text, Valid: m.Text != ""}, RawMIME: raw, RawFormat: "groupme_json", Recipients: recipients, MIMEAttachmentReplacement: replacement, FTS: &store.FTSDoc{Body: m.Text},
+				})
+				if err != nil {
+					return fmt.Errorf("groupme: persist message: %w", err)
+				}
+				existing[key] = id
+				summary.MessagesAdded++
+				if opts.Logger != nil {
+					opts.Logger.Debug("groupme: message imported", "source_id", sourceID, "conversation", c.key, "message_id", m.ID, "archive_id", id)
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	var batch []messageRecord
+	batchBytes := 0
+	flush := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		err := persistBatch(batch)
+		batch = nil
+		batchBytes = 0
+		return err
+	}
+	err = messages(ctx, root, c.folder, func(m *Message, raw jsontext.Value) error {
+		if m == nil {
+			summary.UnsupportedEntriesSkipped++
+			return nil
+		}
+
 		kind := m.SenderType
 		if kind == "" {
 			kind = "message"
@@ -152,73 +261,27 @@ func importChat(ctx context.Context, st *store.Store, root *os.Root, absolute st
 			summary.UnsupportedEntriesSkipped++
 			return nil
 		}
-		key := messageKey(c.key, m.ID)
-		existing, err := st.MessageExistsBatchContext(ctx, sourceID, []string{key})
-		if err != nil {
-			return err
-		}
-		id := existing[key]
-		writes, err := mediaWrites(ctx, st, root, c.folder, id, m, opts, summary)
-		if err != nil {
-			return err
-		}
-		if id != 0 {
-			for _, write := range writes {
-				if err := st.UpsertAttachmentRecordWithStats(ctx, id, write, true); err != nil {
-					return err
-				}
-			}
-			summary.MessagesSkipped++
-			return nil
-		}
-		senderID := m.SenderID
-		sender, err := resolve(senderID, m.Name)
-		if err != nil {
-			return err
-		}
-		participants := append([]store.ConversationParticipantRef(nil), members...)
-		recipients := []store.RecipientSet{}
-		if sender != 0 {
-			participants = append(participants, store.ConversationParticipantRef{ParticipantID: sender, Role: "member"})
-			recipients = append(recipients, store.RecipientSet{Type: "from", ParticipantIDs: []int64{sender}, DisplayNames: []string{m.Name}})
-		}
-		metadata := struct {
-			ExportRoot          string `json:"export_root"`
-			Folder              string `json:"export_folder"`
-			Timestamp           *int64 `json:"created_at"`
-			Timezone            string `json:"original_timezone"`
-			ReferencedMessageID string `json:"referenced_message_id,omitempty"`
-		}{ExportRoot: absolute, Folder: c.folder, Timestamp: m.CreatedAt, Timezone: "unknown"}
-		for _, a := range m.Attachments {
-			if a.Type == "reply" && a.ReplyID != "" {
-				metadata.ReferencedMessageID = messageKey(c.key, a.ReplyID)
+		if len(batch) == maxMessageBatch || batchBytes+len(raw) > maxMessageBatchBytes {
+			if err := flush(); err != nil {
+				return err
 			}
 		}
-		encoded, err := json.Marshal(metadata)
-		if err != nil {
-			return err
-		}
-		sent := sql.NullTime{}
-		if m.CreatedAt != nil {
-			sent = sql.NullTime{Time: time.Unix(*m.CreatedAt, 0).UTC(), Valid: true}
-		}
-		var replacement *[]store.AttachmentWrite
-		if len(writes) > 0 {
-			replacement = &writes
-		}
-		snippet := textutil.PrefixRunes(strings.TrimSpace(m.Text), 200)
-		_, err = st.PersistMessageContext(ctx, &store.MessagePersistData{
-			Message:      &store.Message{SourceID: sourceID, SourceMessageID: key, MessageType: MessageType, SentAt: sent, SenderID: sql.NullInt64{Int64: sender, Valid: sender != 0}, IsFromMe: senderID != "" && senderID == opts.Me, Snippet: sql.NullString{String: snippet, Valid: snippet != ""}, SizeEstimate: int64(len(raw))},
-			Conversation: &store.ConversationPersistData{SourceConversationID: c.key, ConversationType: c.kind, Title: c.metadata.Name, Participants: participants, PreserveExistingParticipants: true},
-			Metadata:     &sql.NullString{String: string(encoded), Valid: true}, BodyText: sql.NullString{String: m.Text, Valid: m.Text != ""}, RawMIME: raw, RawFormat: "groupme_json", Recipients: recipients, MIMEAttachmentReplacement: replacement, FTS: &store.FTSDoc{Body: m.Text},
-		})
-		if err != nil {
-			return fmt.Errorf("groupme: persist message: %w", err)
-		}
-		summary.MessagesAdded++
-		if opts.Logger != nil {
-			opts.Logger.Debug("groupme: message imported")
-		}
+		batch = append(batch, messageRecord{message: *m, raw: bytes.Clone(raw)})
+		batchBytes += len(raw)
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	return flush()
+}
+
+// Limit both query parameters and retained provider bytes. Large individual
+// records remain bounded by the reader and are imported alone.
+const maxMessageBatch = 500
+const maxMessageBatchBytes = 8 << 20
+
+type messageRecord struct {
+	message Message
+	raw     jsontext.Value
 }

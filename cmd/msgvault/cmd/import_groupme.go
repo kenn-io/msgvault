@@ -24,6 +24,10 @@ func newImportGroupmeCmd() *cobra.Command {
 		Long: `Import selected GroupMe conversations and direct messages from an extracted
 JSON export. Select a conversation directory containing message.json, or its
 parent directory. --me is your opaque GroupMe account ID, not a phone number.
+Find it in a message you know you sent: sender_id, corroborated by user_id;
+or use your own member user_id in conversation.json. Reuse exactly that ID for
+later imports. Selected incoming-only or empty conversations may omit your ID;
+msgvault does not infer ownership from which IDs occur.
 
 Messages, raw JSON, observed participants and supported local image/video media
 are copied into the archive. URLs are never fetched. System records and unsupported
@@ -37,7 +41,8 @@ Example:
 `,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if strings.TrimSpace(opts.Me) == "" {
+			opts.Me = strings.TrimSpace(opts.Me)
+			if opts.Me == "" {
 				return errors.New("--me <account-id> is required")
 			}
 			if !isDaemonCLISubprocess() {
@@ -71,13 +76,16 @@ func runImportGroupme(cmd *cobra.Command, exportDir string, opts groupmeCLIOptio
 	if summary.SourceID != 0 {
 		err = errors.Join(err, rebuildCacheAfterWrite(finalize, state.cfg.DatabaseDSN(), state))
 	}
+	if err != nil && summary.SourceID == 0 {
+		return err
+	}
 	out := cmd.OutOrStdout()
 	if err != nil {
 		_, _ = fmt.Fprintln(out, "Partial import. Re-run to continue safely.")
 	} else {
 		_, _ = fmt.Fprintln(out, "Import complete.")
 	}
-	_, _ = fmt.Fprintf(out, "  Duration: %s\n  Conversations: %d\n  Messages: %d added, %d existing, %d unsupported, %d system skipped\n  Media: %d stored, %d missing, %d unsupported\n", summary.Duration.Round(time.Millisecond), summary.ChatsProcessed, summary.MessagesAdded, summary.MessagesSkipped, summary.UnsupportedEntriesSkipped, summary.ServiceMessagesSkipped, summary.AttachmentsStored, summary.AttachmentsMissing, summary.AttachmentsUnsupported)
+	_, _ = fmt.Fprintf(out, "  Duration: %s\n  Conversations: %d\n  Messages: %d added, %d existing, %d unsupported, %d system skipped\n  Media: %d stored, %d missing, %d oversized\n  Unsupported attachment forms: %d\n", summary.Duration.Round(time.Millisecond), summary.ChatsProcessed, summary.MessagesAdded, summary.MessagesSkipped, summary.UnsupportedEntriesSkipped, summary.ServiceMessagesSkipped, summary.AttachmentsStored, summary.AttachmentsMissing, summary.AttachmentsOversized, summary.AttachmentsUnsupported)
 	if !summary.Oldest.IsZero() {
 		_, _ = fmt.Fprintf(out, "  Known dates (UTC): %s to %s\n", summary.Oldest.Format(time.RFC3339), summary.Newest.Format(time.RFC3339))
 	} else {
