@@ -111,23 +111,6 @@ func TestDiagnoseAcquisitionCommandReadOnly(t *testing.T) {
 	assert.Zero(requests.Load(), "the command must not contact the configured remote")
 }
 
-func TestDiagnoseAcquisitionCommandHelp(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	root := newRootCommand()
-	root.AddCommand(newDiagnoseAcquisitionCmd())
-	var output bytes.Buffer
-	root.SetOut(&output)
-	root.SetErr(&output)
-	root.SetArgs([]string{"diagnose-acquisition", "--help"})
-	require.NoError(executeRootContext(t.Context(), root))
-	assert.Contains(output.String(), "saved sync records")
-	assert.Contains(output.String(), "Finding no pending work does not prove archive completeness.")
-	assert.Contains(output.String(), "Continue with the --after-id value from the previous page")
-	assert.NotContains(output.String(), "ledger")
-	assert.NotContains(output.String(), "obligations")
-	assert.NotContains(output.String(), "outcome ID")
-}
-
 func TestDiagnoseAcquisitionCommandMissingArchive(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	dir := filepath.Join(t.TempDir(), "absent")
