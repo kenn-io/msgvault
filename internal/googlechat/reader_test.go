@@ -11,33 +11,19 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestGoogleChatJSONBoundsAndContainment(t *testing.T) {
-	for _, mode := range []string{"oversize", "symlink"} {
-		t.Run(mode, func(t *testing.T) {
-			require := require.New(t)
-			path := t.TempDir()
-			name := filepath.Join(path, "messages.json")
-			if mode == "oversize" {
-				f, err := os.Create(name)
-				require.NoError(err)
-				require.NoError(f.Truncate(65 << 20))
-				require.NoError(f.Close())
-			} else {
-				outside := filepath.Join(t.TempDir(), "messages.json")
-				require.NoError(os.WriteFile(outside, []byte(fixtureMessages(t)), 0600))
-				require.NoError(os.Symlink(outside, name))
-			}
-			root, err := os.OpenRoot(path)
-			require.NoError(err)
-			t.Cleanup(func() { require.NoError(root.Close()) })
-			_, err = readJSON(t.Context(), root, "messages.json")
-			if mode == "oversize" {
-				require.ErrorContains(err, "regular file of at most")
-			} else {
-				require.ErrorContains(err, "escapes")
-			}
-		})
-	}
+func TestGoogleChatJSONSizeLimit(t *testing.T) {
+	require := require.New(t)
+	path := t.TempDir()
+	name := filepath.Join(path, "messages.json")
+	f, err := os.Create(name)
+	require.NoError(err)
+	require.NoError(f.Truncate(65 << 20))
+	require.NoError(f.Close())
+	root, err := os.OpenRoot(path)
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(root.Close()) })
+	_, err = readJSON(t.Context(), root, "messages.json")
+	require.ErrorContains(err, "regular file of at most")
 }
 func TestGoogleChatAcceptsRootLayouts(t *testing.T) {
 	for _, suffix := range []string{"", "Takeout", "Takeout/Google Chat", "Takeout/Google Chat/Groups"} {

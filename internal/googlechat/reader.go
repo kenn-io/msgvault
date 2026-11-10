@@ -148,7 +148,7 @@ func openExport(ctx context.Context, roots []string, owner string) (reader *expo
 				}
 			}
 			if reader.profilePath == "" {
-				reader.profilePath = filepath.Join(p.prefix, path)
+				reader.profilePath = filepath.ToSlash(filepath.Join(p.prefix, path))
 			}
 			for _, membership := range info.Memberships {
 				if membership.State == "MEMBER_JOINED" {
@@ -251,7 +251,7 @@ func (r *exportReader) groupFiles(ctx context.Context, id, name string) (jsontex
 			return nil, nil, fmt.Errorf("googlechat: conflicting %s for %s", name, id)
 		}
 		first = raw
-		entry := provenance{Path: filepath.Join(candidate.part.prefix, candidate.dir, name)}
+		entry := provenance{Path: filepath.ToSlash(filepath.Join(candidate.part.prefix, candidate.dir, name))}
 		if name == "group_info.json" {
 			entry.Data = string(raw)
 		}
