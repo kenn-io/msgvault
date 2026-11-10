@@ -59,7 +59,6 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 				return summary, err
 			}
 		}
-		delete(config, "owner_profiles")
 		config["owner_profile_path"], err = json.Marshal(reader.profilePath)
 		if err != nil {
 			return summary, err

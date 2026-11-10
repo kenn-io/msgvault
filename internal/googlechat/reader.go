@@ -50,7 +50,6 @@ func openExport(ctx context.Context, roots []string, owner string) (reader *expo
 	if len(roots) == 0 || len(roots) > maxRoots {
 		return reader, fmt.Errorf("googlechat: supply 1 to %d extracted part directories", maxRoots)
 	}
-	seen := map[string]bool{}
 	seenGroups := map[string]bool{}
 	for _, name := range roots {
 		if err := ctx.Err(); err != nil {
@@ -60,10 +59,6 @@ func openExport(ctx context.Context, roots []string, owner string) (reader *expo
 		if err != nil {
 			return reader, err
 		}
-		if seen[absolute] {
-			continue
-		}
-		seen[absolute] = true
 		info, err := os.Stat(absolute)
 		if err != nil {
 			return reader, err

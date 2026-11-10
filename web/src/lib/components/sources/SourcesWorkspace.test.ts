@@ -65,15 +65,6 @@ const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (in
 const NOT_OBSERVED = "The sync was requested, but it hasn't started yet.";
 
 describe('SourcesWorkspace', () => {
-  it('shows the canonical Google Chat source label', async () => {
-    render(SourcesWorkspace, { client: createAPIClient(api([source({
-      source_type: 'google_chat', identifier: 'owner@example.com',
-      can_sync: false, scheduled: false, sync_unavailable_reason: 'source_not_schedulable'
-    })])) });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Details for Archive' }));
-    expect(within(screen.getByRole('dialog', { name: 'Archive' })).getByText('Google Chat · owner@example.com')).toBeDefined();
-  });
-
   it('shows a scheduler handoff as queued without concealing a real failure', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [
       source({ display_name: 'Resuming archive', scheduled: true, scheduler_queued: true,

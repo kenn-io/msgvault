@@ -115,8 +115,6 @@ func mediaWrites(ctx context.Context, st *store.Store, reader *exportReader, gro
 					return nil, statErr
 				}
 				switch {
-				case !info.Mode().IsRegular():
-					summary.AttachmentsUnsupported++
 				case info.Size() > attachmentpolicy.DefaultChatMaxBytes:
 					summary.AttachmentsOversized++
 					write.SkipReason = attachmentpolicy.SkipSizeCap

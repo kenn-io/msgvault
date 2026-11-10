@@ -27,9 +27,8 @@ type ImportSummary struct {
 }
 
 type person struct {
-	Name     string `json:"name"`
-	Email    string `json:"email"`
-	UserType string `json:"user_type"`
+	Name  string `json:"name"`
+	Email string `json:"email"`
 }
 
 type message struct {
