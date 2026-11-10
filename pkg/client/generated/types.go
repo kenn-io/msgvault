@@ -5297,18 +5297,20 @@ func (f FileGroupsHTTPResponse) Validate() error {
 }
 
 type FileMetadataResponse struct {
-	ContentAvailable bool                             `json:"content_available"`
-	ContentHash      *string                          `json:"content_hash,omitzero"`
-	ContentState     FileMetadataResponseContentState `json:"content_state" validate:"required"`
-	ConversationID   int64                            `json:"conversation_id"`
-	Docbank          []DocbankAttachmentRef           `json:"docbank,omitempty"`
-	EntryKey         string                           `json:"entry_key" validate:"required"`
-	Filename         *string                          `json:"filename" validate:"required"`
-	ID               int64                            `json:"id"`
-	MessageID        int64                            `json:"message_id"`
-	MimeType         *string                          `json:"mime_type" validate:"required"`
-	SizeBytes        int64                            `json:"size_bytes"`
-	URL              *string                          `json:"url,omitzero"`
+	ContentAvailable bool    `json:"content_available"`
+	ContentHash      *string `json:"content_hash,omitzero"`
+
+	// ContentState File details check whether content can be opened; read or integrity errors can still occur.
+	ContentState   FileMetadataResponseContentState `json:"content_state" validate:"required"`
+	ConversationID int64                            `json:"conversation_id"`
+	Docbank        []DocbankAttachmentRef           `json:"docbank,omitempty"`
+	EntryKey       string                           `json:"entry_key" validate:"required"`
+	Filename       *string                          `json:"filename" validate:"required"`
+	ID             int64                            `json:"id"`
+	MessageID      int64                            `json:"message_id"`
+	MimeType       *string                          `json:"mime_type" validate:"required"`
+	SizeBytes      int64                            `json:"size_bytes"`
+	URL            *string                          `json:"url,omitzero"`
 }
 
 func (f FileMetadataResponse) Validate() error {
@@ -5416,8 +5418,12 @@ func (f FileSearchHTTPResponse) Validate() error {
 }
 
 type FileSearchRow struct {
-	ContainingTitle    string                    `json:"containing_title" validate:"required"`
-	ContentAvailable   bool                      `json:"content_available"`
+	ContainingTitle string `json:"containing_title" validate:"required"`
+
+	// ContentAvailable Null means availability has not been checked.
+	ContentAvailable *bool `json:"content_available" validate:"omitempty"`
+
+	// ContentState List availability is based on metadata; file details check whether storage can be opened.
 	ContentState       FileSearchRowContentState `json:"content_state" validate:"required"`
 	ConversationID     int64                     `json:"conversation_id"`
 	EntryKey           string                    `json:"entry_key" validate:"required"`
@@ -5443,6 +5449,11 @@ func (f FileSearchRow) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(f.ContainingTitle, "required"); err != nil {
 		errors = errors.Append("ContainingTitle", err)
+	}
+	if v, ok := any(f.ContentAvailable).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ContentAvailable", err)
+		}
 	}
 	if v, ok := any(f.ContentState).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
@@ -5572,22 +5583,30 @@ func (f FileSuggestionHTTPResponse) Validate() error {
 }
 
 type FileSuggestionRow struct {
-	ContentAvailable bool                           `json:"content_available"`
-	ContentState     FileSuggestionRowContentState  `json:"content_state" validate:"required"`
-	ConversationID   int64                          `json:"conversation_id"`
-	Filename         string                         `json:"filename" validate:"required"`
-	FilenameMatch    FileSuggestionRowFilenameMatch `json:"filename_match" validate:"required"`
-	ID               int64                          `json:"id"`
-	MessageID        int64                          `json:"message_id"`
-	MimeFamily       FileSuggestionRowMimeFamily    `json:"mime_family" validate:"required"`
-	MimeType         *string                        `json:"mime_type" validate:"required"`
-	OccurredAt       *time.Time                     `json:"occurred_at" validate:"omitempty"`
-	SizeBytes        int64                          `json:"size_bytes"`
-	SourceID         int64                          `json:"source_id"`
+	// ContentAvailable Null means availability has not been checked.
+	ContentAvailable *bool `json:"content_available" validate:"omitempty"`
+
+	// ContentState Suggestion availability is based on metadata; file details check whether storage can be opened.
+	ContentState   FileSuggestionRowContentState  `json:"content_state" validate:"required"`
+	ConversationID int64                          `json:"conversation_id"`
+	Filename       string                         `json:"filename" validate:"required"`
+	FilenameMatch  FileSuggestionRowFilenameMatch `json:"filename_match" validate:"required"`
+	ID             int64                          `json:"id"`
+	MessageID      int64                          `json:"message_id"`
+	MimeFamily     FileSuggestionRowMimeFamily    `json:"mime_family" validate:"required"`
+	MimeType       *string                        `json:"mime_type" validate:"required"`
+	OccurredAt     *time.Time                     `json:"occurred_at" validate:"omitempty"`
+	SizeBytes      int64                          `json:"size_bytes"`
+	SourceID       int64                          `json:"source_id"`
 }
 
 func (f FileSuggestionRow) Validate() error {
 	var errors runtime.ValidationErrors
+	if v, ok := any(f.ContentAvailable).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ContentAvailable", err)
+		}
+	}
 	if v, ok := any(f.ContentState).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("ContentState", err)
@@ -12076,8 +12095,12 @@ func (p PersonFileSearchHTTPResponse) Validate() error {
 }
 
 type PersonFileSearchRow struct {
-	ContainingTitle    string                          `json:"containing_title" validate:"required"`
-	ContentAvailable   bool                            `json:"content_available"`
+	ContainingTitle string `json:"containing_title" validate:"required"`
+
+	// ContentAvailable Null means availability has not been checked.
+	ContentAvailable *bool `json:"content_available" validate:"omitempty"`
+
+	// ContentState List availability is based on metadata; file details check whether storage can be opened.
 	ContentState       PersonFileSearchRowContentState `json:"content_state" validate:"required"`
 	ConversationID     int64                           `json:"conversation_id"`
 	EntryKey           string                          `json:"entry_key" validate:"required"`
@@ -12104,6 +12127,11 @@ func (p PersonFileSearchRow) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(p.ContainingTitle, "required"); err != nil {
 		errors = errors.Append("ContainingTitle", err)
+	}
+	if v, ok := any(p.ContentAvailable).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ContentAvailable", err)
+		}
 	}
 	if v, ok := any(p.ContentState).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
@@ -12237,7 +12265,10 @@ func (p PersonFileSuggestionHTTPResponse) Validate() error {
 }
 
 type PersonFileSuggestionRow struct {
-	ContentAvailable bool                                 `json:"content_available"`
+	// ContentAvailable Null means availability has not been checked.
+	ContentAvailable *bool `json:"content_available" validate:"omitempty"`
+
+	// ContentState Suggestion availability is based on metadata; file details check whether storage can be opened.
 	ContentState     PersonFileSuggestionRowContentState  `json:"content_state" validate:"required"`
 	ConversationID   int64                                `json:"conversation_id"`
 	Filename         string                               `json:"filename" validate:"required"`
@@ -12254,6 +12285,11 @@ type PersonFileSuggestionRow struct {
 
 func (p PersonFileSuggestionRow) Validate() error {
 	var errors runtime.ValidationErrors
+	if v, ok := any(p.ContentAvailable).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ContentAvailable", err)
+		}
+	}
 	if v, ok := any(p.ContentState).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("ContentState", err)
