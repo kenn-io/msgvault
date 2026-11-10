@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -165,6 +166,98 @@ func TestManagedEmbeddingsCommandsDispatch(t *testing.T) {
 				})
 			require.ErrorContains(t, err, "vector search not enabled")
 			assert.False(t, childCalled)
+		})
+	}
+}
+
+func TestManagedEmbeddingsReportsGateWait(t *testing.T) {
+	gate := api.NewSerialOperationGate()
+	release, ok := gate.BeginWorkContext(t.Context())
+	require.True(t, ok)
+	defer release()
+	cfg := config.NewDefaultConfig()
+	cfg.Vector.Enabled = true
+	cfg.Vector.Embeddings.Endpoint = "https://example.com/v1"
+	cfg.Vector.Embeddings.Model = "test-model"
+	adapter := &storeAPIAdapter{config: cfg, operationGate: gate}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	events := make(chan api.CLIRunEvent, 1)
+	result := make(chan error, 1)
+	go func() {
+		result <- adapter.RunCLICommand(ctx, api.CLIRunRequest{Args: []string{"embeddings", "build", "--yes"}}, func(event api.CLIRunEvent) error {
+			select {
+			case events <- event:
+			default:
+			}
+			return nil
+		})
+	}()
+	select {
+	case event := <-events:
+		assert.Equal(t, cliStreamStderr, event.Type)
+		assert.Contains(t, event.Data, "Waiting for archive operation gate")
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "gate wait message was not emitted")
+	}
+	cancel()
+	require.ErrorIs(t, <-result, context.Canceled)
+}
+
+func TestManagedEmbeddingsBuildWithoutConfirmationAborts(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir, cfg.Data.DataDir = dir, dir
+	cfg.Vector.Enabled = true
+	cfg.Vector.DBPath = filepath.Join(dir, "vectors.db")
+	cfg.Vector.Embeddings.Endpoint = "https://example.com/v1"
+	cfg.Vector.Embeddings.Model = "test-model"
+	cfg.Vector.Embeddings.Dimension = 4
+	st, err := store.OpenForTest(t.Context(), cfg.DatabaseDSN())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(t, st.InitSchema())
+	input, writer, err := os.Pipe()
+	require.NoError(t, err)
+	oldStdin := os.Stdin
+	os.Stdin = input
+	defer func() { os.Stdin = oldStdin; _ = writer.Close(); _ = input.Close() }()
+	adapter := &storeAPIAdapter{config: cfg, store: st, operationGate: api.NewSerialOperationGate()}
+	result := make(chan error, 1)
+	go func() {
+		result <- adapter.RunCLICommand(t.Context(), api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild"}}, nil)
+	}()
+	select {
+	case err := <-result:
+		require.ErrorContains(t, err, "aborted")
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "build waited on daemon stdin")
+	}
+}
+
+func TestManagedEmbeddingsSQLLoggingFlags(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"build trace", []string{"embeddings", "build", "--log-sql"}, "[log]"},
+		{"resume slow equals", []string{"embeddings", "resume", "--log-sql-slow-ms=25"}, "[log]"},
+		{"build slow separate", []string{"embeddings", "build", "--log-sql-slow-ms", "25"}, "[log]"},
+		{"deprecated trace", []string{"build-embeddings", "--log-sql"}, "[log]"},
+		{"optimize trace", []string{"embeddings", "optimize", "--log-sql"}, "[log]"},
+		{"false and zero", []string{"embeddings", "build", "--log-sql=false", "--log-sql-slow-ms=0"}, "shutting down"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gate := api.NewSerialOperationGate()
+			gate.StartDrain()
+			cfg := config.NewDefaultConfig()
+			cfg.Vector.Enabled = true
+			cfg.Vector.Embeddings.Model = "test-model"
+			cfg.Vector.Embeddings.Endpoint = "https://example.com/v1"
+			adapter := &storeAPIAdapter{config: cfg, operationGate: gate}
+			err := adapter.RunCLICommand(t.Context(), api.CLIRunRequest{Args: tc.args}, nil)
+			require.ErrorContains(t, err, tc.want)
 		})
 	}
 }

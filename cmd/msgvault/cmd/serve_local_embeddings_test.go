@@ -558,9 +558,8 @@ func TestLocalEmbeddingsPublishesScheduledBuildWithoutBlockingSyncDuringInstall(
 		return install(ctx, opts)
 	}
 	f.runner.beforeBuild = func() {
-		label, _, held := gate.Holder()
-		assert.True(t, held)
-		assert.Equal(t, "msgvault embeddings build", label)
+		_, _, held := gate.Holder()
+		assert.False(t, held, "the managed build acquires its own gate lease")
 	}
 	require.NoError(t, f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {}))
 	_, _, err := testutil.CreateIndexedSourceMessage(t.Context(), f.store, "archive@example.test", "later", "Later orchard", "Another orchard message.")

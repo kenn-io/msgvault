@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -23,15 +24,11 @@ func (a *storeAPIAdapter) runCLIEmbeddingsBuild(ctx context.Context, req api.CLI
 					return err
 				}
 				defer closeLogs()
-				state := invocationFromCommand(cmd)
-				if state == nil || state.cfg == nil {
-					return errors.New("configuration is unavailable")
+				if err := validateEmbeddingBuildConfig(invocationFromCommand(cmd)); err != nil {
+					return err
 				}
-				if !state.cfg.Vector.Enabled {
-					return errors.New("vector search not enabled; add [vector] enabled=true to config.toml first")
-				}
-				if (!state.cfg.Vector.Embeddings.LocalOnly && state.cfg.Vector.Embeddings.Endpoint == "") || state.cfg.Vector.Embeddings.Model == "" {
-					return errors.New("[vector.embeddings] endpoint and model are required")
+				if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "Waiting for archive operation gate..."); err != nil {
+					return fmt.Errorf("report operation gate wait: %w", err)
 				}
 				lease, err := acquireLabeledEmbeddingsGate(cmd.Context(), a.operationGate, "msgvault embeddings build")
 				if err != nil {
@@ -53,12 +50,10 @@ func (a *storeAPIAdapter) runCLIEmbeddingsBuild(ctx context.Context, req api.CLI
 				return runEmbedWithOptions(cmd, opts)
 			}}
 			if rebuild {
-				cmd.Flags().BoolVar(&opts.fullRebuild, "full-rebuild", false, "Create a new generation and rebuild from scratch")
-				cmd.Flags().BoolVar(&opts.yes, "yes", false, "Skip confirmation prompts")
+				registerEmbeddingBuildFlags(cmd, &opts.fullRebuild, &opts.yes, &opts.backstop, &opts.accounts, &opts.collections)
+			} else {
+				registerEmbeddingBuildFlags(cmd, nil, nil, &opts.backstop, &opts.accounts, &opts.collections)
 			}
-			cmd.Flags().BoolVar(&opts.backstop, "backstop", false, "Run a full-scan pass")
-			cmd.Flags().StringArrayVar(&opts.accounts, "account", nil, "Limit embedding to this account")
-			cmd.Flags().StringArrayVar(&opts.collections, "collection", nil, "Limit embedding to this collection")
 			return cmd
 		}
 		group := &cobra.Command{Use: "embeddings"}

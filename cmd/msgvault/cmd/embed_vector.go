@@ -186,10 +186,7 @@ func runEmbedWithOptions(cmd *cobra.Command, opts managedEmbedOptions) error {
 	if lookup == nil {
 		lookup = os.LookupEnv
 	}
-	var embeddingAPIKey string
-	if !cfg.Vector.Embeddings.LocalOnly {
-		embeddingAPIKey, _, err = credentialSnapshot.Resolve(providercredentials.VectorEmbeddingsID, cfg.Vector.Embeddings.Endpoint, cfg.Vector.Embeddings.APIKeyEnv, lookup)
-	}
+	embeddingAPIKey, err := resolveTextEmbeddingCredentialWithLookup(credentialSnapshot, cfg.Vector, lookup)
 	if err != nil {
 		return fmt.Errorf("resolve text embedding credential: %w", err)
 	}

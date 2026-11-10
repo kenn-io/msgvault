@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/logging"
 )
 
@@ -99,9 +101,23 @@ func runManagedEmbeddingsCLI(ctx context.Context, req api.CLIRunRequest, emit fu
 	// This tree is private to the request: never reuse the global Cobra tree
 	// or its root initialization, which changes process-wide logging state.
 	root := &cobra.Command{Use: "msgvault", SilenceErrors: true, SilenceUsage: true}
-	root.PersistentFlags().BoolP("verbose", "v", false, "Verbose output")
-	root.PersistentFlags().String("log-level", "", "Log level")
+	clirun.AddLoggingFlags(root.PersistentFlags())
+	root.PersistentPreRunE = func(_ *cobra.Command, _ []string) error {
+		trace, err := root.PersistentFlags().GetBool("log-sql")
+		if err != nil {
+			return err
+		}
+		slow, err := root.PersistentFlags().GetInt64("log-sql-slow-ms")
+		if err != nil {
+			return err
+		}
+		if trace || slow > 0 {
+			return errors.New("SQL flags are unavailable for managed embeddings; configure [log] sql_trace or sql_slow_ms on the daemon")
+		}
+		return nil
+	}
 	configure(root)
+	root.SetIn(strings.NewReader(""))
 	root.SetOut(writer(cliStreamStdout))
 	root.SetErr(writer(cliStreamStderr))
 	root.SetArgs(req.Args)

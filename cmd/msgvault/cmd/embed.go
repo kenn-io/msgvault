@@ -48,7 +48,9 @@ If a matching generation is building, this embeds any messages still
 needing embedding for it and activates it when complete. Otherwise it
 embeds any messages still needing embedding for the active generation.
 Pass --backstop for a full-scan pass that ignores the per-generation
-watermark, catching any straggler messages the incremental scan skipped.`,
+watermark, catching any straggler messages the incremental scan skipped.
+Scheduled syncs can run between committed embedding batches.
+Configure daemon-wide SQL logging with [log] sql_trace or sql_slow_ms.`,
 	RunE: runEmbeddingsResume,
 }
 var embeddingsListCmd = &cobra.Command{
@@ -89,18 +91,26 @@ generation, embeds the entire corpus, and (on a clean completion)
 atomically activates it.
 
 Requires [vector] to be enabled and [vector.embeddings] to configure an
-OpenAI-compatible endpoint or local_only = true for the shared local server.`,
+OpenAI-compatible endpoint or local_only = true for the shared local server.
+Scheduled syncs can run between committed embedding batches.
+Configure daemon-wide SQL logging with [log] sql_trace or sql_slow_ms.`,
 		RunE: runEmbeddingsBuild,
 	}
-	cmd.Flags().BoolVar(&embedFullRebuild, "full-rebuild", false, "Create a new generation and rebuild from scratch")
-	cmd.Flags().BoolVar(&embedYes, "yes", false, "Skip confirmation prompts")
-	cmd.Flags().BoolVar(&embedBackstop, "backstop", false,
-		"Full-scan pass that ignores the per-generation watermark, catching any straggler messages the incremental scan skipped (idempotent)")
-	cmd.Flags().StringArrayVar(&embedAccounts, "account", nil,
-		"Limit embedding to this account (repeatable); overrides [vector.embed.scope] accounts for this run")
-	cmd.Flags().StringArrayVar(&embedCollections, "collection", nil,
-		"Limit embedding to this collection's accounts (repeatable); overrides [vector.embed.scope] accounts for this run")
+	registerEmbeddingBuildFlags(cmd, &embedFullRebuild, &embedYes, &embedBackstop, &embedAccounts, &embedCollections)
 	return cmd
+}
+
+func registerEmbeddingBuildFlags(cmd *cobra.Command, fullRebuild, yes, backstop *bool, accounts, collections *[]string) {
+	if fullRebuild != nil {
+		cmd.Flags().BoolVar(fullRebuild, "full-rebuild", false, "Create a new generation and rebuild from scratch")
+		cmd.Flags().BoolVar(yes, "yes", false, "Skip confirmation prompts")
+	}
+	cmd.Flags().BoolVar(backstop, "backstop", false,
+		"Full-scan pass that ignores the per-generation watermark, catching any straggler messages the incremental scan skipped (idempotent)")
+	cmd.Flags().StringArrayVar(accounts, "account", nil,
+		"Limit embedding to this account (repeatable); overrides [vector.embed.scope] accounts for this run")
+	cmd.Flags().StringArrayVar(collections, "collection", nil,
+		"Limit embedding to this collection's accounts (repeatable); overrides [vector.embed.scope] accounts for this run")
 }
 
 func runEmbeddingsBuild(cmd *cobra.Command, args []string) error {
@@ -111,7 +121,13 @@ func runEmbeddingsBuild(cmd *cobra.Command, args []string) error {
 }
 
 func runEmbeddingsBuildLocal(cmd *cobra.Command) error {
-	state := invocationFromCommand(cmd)
+	if err := validateEmbeddingBuildConfig(invocationFromCommand(cmd)); err != nil {
+		return err
+	}
+	return runEmbed(cmd)
+}
+
+func validateEmbeddingBuildConfig(state *invocation) error {
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
 	}
@@ -122,7 +138,7 @@ func runEmbeddingsBuildLocal(cmd *cobra.Command) error {
 	if (!cfg.Vector.Embeddings.LocalOnly && cfg.Vector.Embeddings.Endpoint == "") || cfg.Vector.Embeddings.Model == "" {
 		return errors.New("[vector.embeddings] endpoint and model are required")
 	}
-	return runEmbed(cmd)
+	return nil
 }
 
 func runEmbeddingsBuildHTTP(cmd *cobra.Command, args []string) error {
@@ -179,12 +195,7 @@ func runEmbeddingsListCommand(cmd *cobra.Command, args []string) error {
 
 func init() {
 	embedCmd.Deprecated = "use 'msgvault embeddings build' instead"
-	embeddingsResumeCmd.Flags().BoolVar(&embedBackstop, "backstop", false,
-		"Full-scan pass that ignores the per-generation watermark, catching any straggler messages the incremental scan skipped (idempotent)")
-	embeddingsResumeCmd.Flags().StringArrayVar(&embedAccounts, "account", nil,
-		"Limit embedding to this account (repeatable); overrides [vector.embed.scope] accounts for this run")
-	embeddingsResumeCmd.Flags().StringArrayVar(&embedCollections, "collection", nil,
-		"Limit embedding to this collection's accounts (repeatable); overrides [vector.embed.scope] accounts for this run")
+	registerEmbeddingBuildFlags(embeddingsResumeCmd, nil, nil, &embedBackstop, &embedAccounts, &embedCollections)
 	embeddingsRetireCmd.Flags().BoolVar(&embeddingsRetireYes, "yes", false, "Skip confirmation prompt")
 	embeddingsRetireCmd.Flags().BoolVar(&embeddingsRetireForceActive, "force-active", false, "Allow retiring the active generation")
 	embeddingsActivateCmd.Flags().BoolVar(&embeddingsActivateYes, "yes", false, "Skip confirmation prompt")
