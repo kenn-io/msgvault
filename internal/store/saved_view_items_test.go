@@ -457,6 +457,74 @@ func TestMigrateSourceMessageIDRemapsSavedViewItems(t *testing.T) {
 	assert.Equal(t, "owner", items.Include[0].AddedBy)
 }
 
+func TestChangeSavedViewItemsDropsTargetsDeletedAfterResolution(t *testing.T) {
+	for _, path := range []string{"gc", "purge"} {
+		for _, mode := range []string{"include", "exclude"} {
+			t.Run(path+"/"+mode, func(t *testing.T) {
+				if path == "gc" {
+					testutil.SkipIfPostgres(t, "archive GC is SQLite-only")
+				}
+				f := storetest.New(t)
+				st := f.Store
+				kept := store.SavedViewItemRef{SourceID: f.Source.ID, MessageID: f.CreateMessage("kept")}
+				key := fmt.Sprintf("source:%d:message:removed", f.Source.ID)
+				if path == "gc" {
+					f.CreateMessage("removed")
+				} else {
+					source, err := st.GetOrCreateSource("discord", "resolution-race-guild")
+					require.NoError(t, err)
+					conv, err := st.EnsureConversationWithType(source.ID, "removed-channel", "group_chat", "Removed")
+					require.NoError(t, err)
+					_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "removed", MessageType: "discord"})
+					require.NoError(t, err)
+					key = fmt.Sprintf("source:%d:conversation:%d", source.ID, conv)
+				}
+				empty, err := st.CreateSavedView(t.Context(), savedViewInput("Empty during deletion"))
+				require.NoError(t, err)
+				assert.Empty(t, empty.ItemsJSON)
+				populated, err := st.CreateSavedView(t.Context(), savedViewInput("Unrelated membership"))
+				require.NoError(t, err)
+				populated, err = st.ChangeSavedViewItems(t.Context(), populated.ID, populated.Revision, store.SavedViewItemChange{IncludeAdd: []store.SavedViewItemRef{kept}, AddedBy: "owner"})
+				require.NoError(t, err)
+				resolved, rejected, err := st.ResolveEntryKeys(t.Context(), []string{key})
+				require.NoError(t, err)
+				require.Empty(t, rejected)
+				require.Contains(t, resolved, key)
+				ref := resolved[key].Ref
+				// Reproduce the gap between API key resolution and the item transaction.
+				if path == "gc" {
+					require.NoError(t, st.MarkMessageDeletedBySourceMessageID(f.Source.ID, true, "removed"))
+					plan, err := st.PlanGCContext(t.Context())
+					require.NoError(t, err)
+					require.Equal(t, int64(1), plan.SourceDeleted)
+					deleted, err := st.ExecuteGCContext(t.Context(), plan)
+					require.NoError(t, err)
+					require.Equal(t, int64(1), deleted)
+				} else {
+					require.NoError(t, st.PurgeChannelContext(t.Context(), ref.SourceID, "removed-channel"))
+				}
+				change := store.SavedViewItemChange{IncludeAdd: []store.SavedViewItemRef{ref}, AddedBy: "owner"}
+				if mode == "exclude" {
+					change = store.SavedViewItemChange{ExcludeAdd: []store.SavedViewItemRef{ref}, AddedBy: "owner"}
+				}
+				for _, view := range []*store.SavedView{empty, populated} {
+					updated, err := st.ChangeSavedViewItems(t.Context(), view.ID, view.Revision, change)
+					require.NoError(t, err, "deletion does not change the revision of an unaffected view")
+					assert.Equal(t, &store.SavedViewItemsApplied{}, updated.Applied)
+					got, err := st.GetSavedView(t.Context(), view.ID)
+					require.NoError(t, err)
+					assert.Equal(t, string(view.ItemsJSON), string(got.ItemsJSON))
+					if view.ID == empty.ID {
+						var raw *string
+						require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT items_json FROM saved_views WHERE id=?`), view.ID).Scan(&raw))
+						assert.Nil(t, raw, "a dead addition leaves NULL membership")
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestSavedViewItemsRetireBeforeAutomaticSQLiteIDReuse(t *testing.T) {
 	testutil.SkipIfPostgres(t, "automatic INTEGER PRIMARY KEY reuse and archive GC are SQLite behavior")
 	for _, path := range []string{"gc", "purge"} {

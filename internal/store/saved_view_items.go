@@ -166,12 +166,18 @@ func (s *Store) changeSavedViewItems(ctx context.Context, viewID, revision int64
 	if err != nil {
 		return nil, err
 	}
-	facts, err := s.liveItemFacts(ctx, tx.Tx, items)
+	candidates := SavedViewItems{Include: append([]SavedViewItemEntry{}, items.Include...), Exclude: items.Exclude}
+	for _, refs := range [][]SavedViewItemRef{change.IncludeAdd, change.ExcludeAdd} {
+		for _, ref := range refs {
+			candidates.Include = append(candidates.Include, SavedViewItemEntry{SavedViewItemRef: ref})
+		}
+	}
+	facts, err := s.liveItemFacts(ctx, tx.Tx, candidates)
 	if err != nil {
 		return nil, err
 	}
 	items, _ = liveItemsFromFacts(items, facts)
-	changed := applySavedViewItemChange(items, change)
+	changed, _ := liveItemsFromFacts(applySavedViewItemChange(items, change), facts)
 	applied := savedViewItemCounts(items, changed)
 	value, err := encodeSavedViewItems(changed)
 	if err != nil {
