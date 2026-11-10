@@ -535,7 +535,6 @@ duplicate headers or missing essential columns), invalid UTF-8, read/quoting
 errors stop the run with the filename. A read or parse failure while streaming
 may leave completed rows. Essential columns
 are `message_id` and `message` for Chat and `id` for PMs, posts, and comments.
-Each Chat row also needs a nonempty `channel_url`.
 Complete rows before the error are retained; later
 files are not read. Header-only CSVs are valid empty files; zero-byte files
 fail as missing headers. Fix or move the named file, then re-run. Statistics are
@@ -554,7 +553,8 @@ Legacy PMs and Chat use the generic chat kind without inferring a direct or grou
 Newly archived PM subjects or Chat channel names update their conversation title
 when nonempty. Subreddit titles use canonical `r/<normalized subreddit>` spelling.
 A Chat `channel_url` groups records without inferring a direct or group conversation;
-`channel_name` supplies its title. Post URLs and comment media are appended to displayed/searchable bodies;
+`channel_name` supplies its title. Without an observed grouping key, a Chat row
+stays an isolated item. Post URLs and comment media are appended to displayed/searchable bodies;
 raw evidence retains the original cells. Comment parent/link values remain raw,
 without an invented cross-kind reply mapping.
 

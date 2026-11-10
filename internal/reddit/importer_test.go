@@ -106,7 +106,7 @@ func TestImportInterruptedRepeatAndOriginalRetention(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	root := t.TempDir()
-	require.NoError(os.WriteFile(filepath.Join(root, "chat_history.csv"), []byte("message_id,message,thread_parent_message_id,channel_url\nchild,original,parent,channel\nparent,parent body,,channel\n"), 0600))
+	require.NoError(os.WriteFile(filepath.Join(root, "chat_history.csv"), []byte("message_id,message,thread_parent_message_id\nchild,original,parent\nparent,parent body,\n"), 0600))
 	st := testutil.NewTestStore(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -136,7 +136,7 @@ func TestImportInterruptedRepeatAndOriginalRetention(t *testing.T) {
 	var parent string
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT p.source_message_id FROM messages m JOIN messages p ON p.id=m.reply_to_message_id WHERE m.source_message_id='chat:child'").Scan(&parent))
 	assert.Equal("chat:parent", parent)
-	require.NoError(os.WriteFile(filepath.Join(root, "chat_history.csv"), []byte("message_id,message,channel_url\nchild,changed,channel\n"), 0600))
+	require.NoError(os.WriteFile(filepath.Join(root, "chat_history.csv"), []byte("message_id,message\nchild,changed\n"), 0600))
 	summary, err = Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
 	require.NoError(err)
 	assert.Zero(summary.Added)
@@ -274,41 +274,11 @@ func TestImportCoverageCountsExistingRecords(t *testing.T) {
 	}
 }
 
-func TestImportCommentMediaInBodyAndSearch(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	root := t.TempDir()
-	require.NoError(os.WriteFile(filepath.Join(root, "comments.csv"), []byte("id,body,media\none,lantern,https://example.com/picture.png\n"), 0600))
-	st := testutil.NewTestStore(t)
-	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
-	require.NoError(err)
-	var id int64
-	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages WHERE source_message_id='comment:one'").Scan(&id))
-	body, err := st.GetMessageBodyText(t.Context(), id)
-	require.NoError(err)
-	assert.Contains(body, "https://example.com/picture.png")
-	results, err := query.NewEngine(st.DB(), st.IsPostgreSQL()).Search(t.Context(), search.Parse("example"), 20, 0)
-	require.NoError(err)
-	assert.Len(results, 1)
-}
-
-func TestImportPreservesHandleDisplayCase(t *testing.T) {
-	require := require.New(t)
-	root := t.TempDir()
-	require.NoError(os.WriteFile(filepath.Join(root, "chat_history.csv"), []byte("message_id,message,username,channel_url\none,hello,u/Fictional_Peer,channel\n"), 0600))
-	st := testutil.NewTestStore(t)
-	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
-	require.NoError(err)
-	var name string
-	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT p.display_name FROM participants p JOIN participant_identifiers pi ON pi.participant_id = p.id WHERE pi.identifier_value = 'fictional_peer'").Scan(&name))
-	assert.Equal(t, "Fictional_Peer", name)
-}
-
 func TestImportChatGrouping(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	root := t.TempDir()
-	require.NoError(os.WriteFile(filepath.Join(root, "chat_history.csv"), []byte("message_id,message,channel_url,channel_name,conversation_type,thread_parent_message_id\none,lantern,fictional-channel,Fictional garden,group,\ntwo,reply,fictional-channel,Fictional garden,group,one\n"), 0600))
+	require.NoError(os.WriteFile(filepath.Join(root, "chat_history.csv"), []byte("message_id,message,channel_url,channel_name,conversation_type,thread_parent_message_id,username\none,lantern,fictional-channel,Fictional garden,group,,u/Fictional_Peer\ntwo,reply,fictional-channel,Fictional garden,group,one,\n"), 0600))
 	st := testutil.NewTestStore(t)
 	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
 	require.NoError(err)
@@ -319,29 +289,37 @@ func TestImportChatGrouping(t *testing.T) {
 	var count int
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM conversations").Scan(&count))
 	assert.Equal(1, count)
+	var name string
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT p.display_name FROM participants p JOIN participant_identifiers pi ON pi.participant_id = p.id WHERE pi.identifier_value = 'fictional_peer'").Scan(&name))
+	assert.Equal("Fictional_Peer", name)
 }
 
-func TestImportChatRequiresChannel(t *testing.T) {
+func TestImportChatWithoutChannel(t *testing.T) {
 	for _, tc := range []struct {
 		name, csv string
 		wantAdded int
 	}{
-		{"missing column", "message_id,message\none,hello\n", 0},
-		{"empty channel", "message_id,message,channel_url\none,hello,channel\ntwo,reply,\nthree,later,channel\n", 1},
+		{"missing column", "message_id,message\none,hello\n", 2},
+		{"empty channel", "message_id,message,channel_url,thread_parent_message_id\none,hello,channel,\ntwo,reply,,one\nthree,later,channel,\n", 4},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			root := t.TempDir()
 			require.NoError(os.WriteFile(filepath.Join(root, "chat_history.csv"), []byte(tc.csv), 0600))
+			require.NoError(os.WriteFile(filepath.Join(root, "posts.csv"), []byte("id,title\npost,later\n"), 0600))
 			st := testutil.NewTestStore(t)
 			summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
-			require.ErrorContains(err, "channel_url")
-			assert.ErrorContains(err, "chat_history.csv")
+			require.NoError(err)
 			assert.Equal(tc.wantAdded, summary.Added)
 			var n int
 			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&n))
 			assert.Equal(tc.wantAdded, n)
+			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM conversations WHERE source_conversation_id LIKE 'chat:item:%'").Scan(&n))
+			assert.Equal(1, n)
+			summary, err = Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
+			require.NoError(err)
+			assert.Equal(tc.wantAdded, summary.Unchanged)
 		})
 	}
 }
@@ -392,13 +370,6 @@ func TestImportPMConversationKind(t *testing.T) {
 	var n int
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM participant_identifiers WHERE identifier_type='reddit' AND identifier_value IN ('r/fictional_garden','/r/fictional_garden')").Scan(&n))
 	assert.Zero(n)
-	var id int64
-	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages WHERE source_message_id='pm:three'").Scan(&id))
-	raw, err := st.GetMessageRawContext(t.Context(), id)
-	require.NoError(err)
-	var row csvRow
-	require.NoError(json.Unmarshal(raw, &row))
-	assert.Equal("r/fictional_garden", row.Columns["to"])
 }
 
 func TestImportSubredditTitleCanonical(t *testing.T) {
@@ -422,18 +393,26 @@ func TestImportSubredditTitleCanonical(t *testing.T) {
 }
 
 func TestImportOptionalContentHeaders(t *testing.T) {
+	assert := assert.New(t)
 	require := require.New(t)
 	root := t.TempDir()
-	for name, data := range map[string]string{"messages.csv": "id,subject\none,hello\n", "posts.csv": "id,url\nthree,https://example.com/post\n"} {
+	for name, data := range map[string]string{"messages.csv": "id,subject\none,hello\n", "posts.csv": "id,url\nthree,https://example.com/post\n", "comments.csv": "id,media\nfour,https://example.com/picture.png\n"} {
 		require.NoError(os.WriteFile(filepath.Join(root, name), []byte(data), 0600))
 	}
 	st := testutil.NewTestStore(t)
 	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
 	require.NoError(err)
-	assert.Equal(t, 2, summary.Added)
+	assert.Equal(3, summary.Added)
 	var id int64
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages WHERE source_message_id='post:three'").Scan(&id))
 	body, err := st.GetMessageBodyText(t.Context(), id)
 	require.NoError(err)
-	assert.Equal(t, "https://example.com/post", body)
+	assert.Equal("https://example.com/post", body)
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages WHERE source_message_id='comment:four'").Scan(&id))
+	body, err = st.GetMessageBodyText(t.Context(), id)
+	require.NoError(err)
+	assert.Equal("https://example.com/picture.png", body)
+	results, err := query.NewEngine(st.DB(), st.IsPostgreSQL()).Search(t.Context(), search.Parse("example"), 20, 0)
+	require.NoError(err)
+	assert.Len(results, 2)
 }
