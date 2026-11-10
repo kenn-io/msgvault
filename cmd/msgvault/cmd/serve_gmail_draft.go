@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/draftlint"
 	"go.kenn.io/msgvault/internal/gmail"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	msgmime "go.kenn.io/msgvault/internal/mime"
@@ -218,6 +219,8 @@ func (a *storeAPIAdapter) runGmailReplyDraft(
 	if intent.JSON {
 		result.draftRecipientAdvisory = a.draftRecipientAdvisory(ctx, result.MessageID, result.SourceID, target.grant)
 	}
+	appendDraftLint(&result.draftRecipientAdvisory, target.lint)
+	setDraftProvenanceFields(&result.draftRecipientAdvisory, emailDraftLintInput("", "", reply))
 	outputErr := emitGmailDraftReplyOutput(emit, cliStreamStdout, intent.JSON, result)
 	finish(true)
 	if outputErr != nil {
@@ -263,7 +266,7 @@ func emitGmailDraftReplyOutput(
 			"created Gmail draft message %d (%s), operation %s, draft %s revision %d\n",
 			output.MessageID, textutil.SanitizeTerminal(output.GmailMessageID),
 			textutil.SanitizeTerminal(output.OperationRef), textutil.SanitizeTerminal(output.DraftID), output.Revision,
-		)})
+		) + draftLintText(draftlint.Result{Warnings: output.Warnings, Skipped: output.LintSkipped})})
 	}
 	if output.RFC822MessageID != "" {
 		if err := emit(api.CLIRunEvent{Type: stream, Data: fmt.Sprintf(
@@ -459,6 +462,7 @@ type gmailDraftLifecycleObservation struct {
 }
 
 type gmailDraftLifecycleOutput struct {
+	draftRecipientAdvisory
 	Status                           string                          `json:"status"`
 	Provider                         string                          `json:"provider"`
 	DraftID                          string                          `json:"draft_id"`
@@ -572,6 +576,7 @@ func emitGmailDraftLifecycleOutput(
 	if emit == nil {
 		return nil
 	}
+	appendDraftLint(&output.draftRecipientAdvisory, intent.lint)
 	if intent.MetadataOnly {
 		output.Content = ""
 		output.RawMIME = ""
@@ -638,7 +643,7 @@ func emitGmailDraftLifecycleOutput(
 	if output.Status == gmailDraftStatusPending || output.Status == "accepted_local_failed" {
 		fmt.Fprintf(&data, "retry draft-%s with --revision %d to reconcile with Gmail\n", output.PendingOperation, output.Revision)
 	}
-	return emit(api.CLIRunEvent{Type: stream, Data: data.String()})
+	return emit(api.CLIRunEvent{Type: stream, Data: data.String() + draftLintText(intent.lint)})
 }
 
 func formatGmailDraftLifecycleReceipt(receipt gmailDraftLifecycleReceipt) string {
@@ -890,6 +895,24 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 	source, err := a.loadManagedGmailDraftSource(ctx, draft)
 	if err != nil {
 		return err
+	}
+	if intent.Operation == api.CLIRunDraftEditCommand {
+		if draft.Pending != nil && intent.ValidateOnly {
+			return draftReplyError("pending_operation", store.ErrGmailDraftPending)
+		}
+		currentRaw, readErr := a.store.GetMessageRawContext(ctx, draft.CurrentMessageID)
+		if readErr != nil {
+			return draftReplyError("draft_read_failed", readErr)
+		}
+		replacement, buildErr := imaplib.BuildDraftReplacement(currentRaw, intent.Body, time.Now(), "")
+		if buildErr != nil {
+			return draftReplyError("invalid_draft", buildErr)
+		}
+		lint, done, lintErr := a.gateDraftLint(ctx, emailDraftLintInput("edit", intent.Body, replacement), source.ID, grant, intent.draftLintOptions, intent.JSON, emit)
+		if done || lintErr != nil {
+			return lintErr
+		}
+		intent.lint = lint
 	}
 	logger := a.logger
 	if logger == nil {

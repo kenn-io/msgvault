@@ -339,3 +339,40 @@ func TestDraftToolResultShapes(t *testing.T) {
 		assert.NotContains(err.Error(), "private transport detail")
 	})
 }
+
+func TestDraftToolLintFlagsPassed(t *testing.T) {
+	for _, command := range []string{"draft-reply", "draft-compose", "draft-forward", "draft-edit"} {
+		t.Run(command, func(t *testing.T) {
+			args := map[string]any{"body": "ok", "strict": true, "allow_placeholders": true, "validate_only": true}
+			if command == "draft-reply" || command == "draft-forward" {
+				args["message_id"] = 7
+			}
+			if command == "draft-edit" {
+				args["draft_id"] = "d1"
+				args["revision"] = 1
+			}
+			runner := &draftTestRunner{result: DraftCommandResult{Stdout: `{"status":"validated","valid":true}`}}
+			session := draftConfirmationSession(t, runner, command)
+			result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: strings.ReplaceAll(command, "-", "_"), Arguments: args})
+			require.NoError(t, err)
+			require.False(t, result.IsError)
+			assert.Equal(t, []string{"true"}, runner.request.Flags["strict"])
+			assert.Equal(t, []string{"true"}, runner.request.Flags["allow-placeholders"])
+			assert.Equal(t, []string{"true"}, runner.request.Flags["validate-only"])
+		})
+	}
+}
+func TestDraftToolValidateOnlyCatalog(t *testing.T) {
+	opts := ServeOptions{Drafts: &draftTestRunner{}, DraftCommands: []string{"draft-reply", "draft-compose", "draft-forward", "draft-edit"}}
+	tools := toolsByName(t, rawListTools(t, opts, true))
+	assert.NotContains(t, tools, "validate_draft")
+	for _, name := range []string{ToolDraftReply, ToolDraftCompose, ToolDraftForward, ToolDraftEdit} {
+		schema := tools[name]["inputSchema"].(map[string]any)
+		properties := schema["properties"].(map[string]any)
+		for _, flag := range []string{"strict", "allow_placeholders", "validate_only"} {
+			assert.Contains(t, properties, flag)
+		}
+		assert.NotContains(t, properties, "idempotency_key")
+		assert.Contains(t, tools[name]["description"], "With validate_only, writes nothing.")
+	}
+}

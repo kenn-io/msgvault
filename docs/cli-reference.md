@@ -462,6 +462,21 @@ stores the Gmail draft and its `DRAFT` label after a confirmed response.
 
 ---
 
+All four draft write commands (`draft-reply`, `draft-compose`, `draft-forward`,
+and `draft-edit`) accept these options on unreleased `main`:
+
+| Option | Behavior |
+|---|---|
+| `--strict` | Refuse before writing when lint reports an error. |
+| `--allow-placeholders` | Report unresolved placeholders as warnings. |
+| `--validate-only` | Return the computed recipients and lint without provider or store writes. |
+
+Validation returns `status: "validated"` and a `valid` boolean; an invalid
+draft still exits successfully. `--strict` has no additional effect during
+validation. `--validate-only` cannot be combined with `--idempotency-key`.
+See [draft lint and validation](usage/chat.md#draft-lint-and-validation) for
+warning codes, receipt fields, and permission rules.
+
 ## draft-compose
 
 Create a new plain-text IMAP draft on one selected live source. Provide at least

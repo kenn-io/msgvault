@@ -25,6 +25,7 @@ func newDraftComposeCommand() *cobra.Command {
 	command.Flags().String("body", "", "draft body")
 	command.Flags().Int64("conversation", 0, "chat conversation for a local draft")
 	command.Flags().Int64("reply-to", 0, "archived chat message the local draft replies to")
+	addDraftLintFlags(command)
 	command.Flags().Bool("json", false, "emit one JSON result")
 	return command
 }

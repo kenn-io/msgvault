@@ -13,6 +13,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/draftlint"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	msgmime "go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
@@ -20,6 +21,8 @@ import (
 )
 
 type draftLifecycleIntent struct {
+	draftLintOptions
+	lint         draftlint.Result
 	Operation    string
 	DraftID      string
 	Revision     int64
@@ -53,6 +56,7 @@ type draftLifecycleObservation struct {
 }
 
 type draftLifecycleOutput struct {
+	draftRecipientAdvisory
 	Status               string                     `json:"status"`
 	DraftID              string                     `json:"draft_id"`
 	Revision             int64                      `json:"revision"`
@@ -76,7 +80,14 @@ func parseDraftLifecycleArgs(args []string) (draftLifecycleIntent, error) {
 	if !api.IsCLIRunDraftLifecycle(args) {
 		return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("expected a draft lifecycle command"))
 	}
-	intent := draftLifecycleIntent{Operation: args[0]}
+	args, options, lintErr := parseDraftLintFlags(args)
+	if lintErr != nil {
+		return draftLifecycleIntent{}, lintErr
+	}
+	if args[0] != api.CLIRunDraftEditCommand && options != (draftLintOptions{}) {
+		return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("lint flags require draft-edit"))
+	}
+	intent := draftLifecycleIntent{Operation: args[0], draftLintOptions: options}
 	var positional string
 	var revisionSet, bodySet, jsonSet bool
 	rest := args[1:]
@@ -267,6 +278,7 @@ func emitDraftLifecycleOutput(
 	intent draftLifecycleIntent,
 	output draftLifecycleOutput,
 ) error {
+	appendDraftLint(&output.draftRecipientAdvisory, intent.lint)
 	if emit == nil {
 		return nil
 	}
@@ -341,7 +353,7 @@ func emitDraftLifecycleOutput(
 		fmt.Fprintf(&data, "old draft ID remains blocked at revision %d\n", output.Revision)
 		fmt.Fprintln(&data, "manual action: reconcile the provider receipt and local state before retrying")
 	}
-	return emit(api.CLIRunEvent{Type: stream, Data: data.String()})
+	return emit(api.CLIRunEvent{Type: stream, Data: data.String() + draftLintText(intent.lint)})
 }
 
 func formatDraftLifecycleReceipt(receipt draftLifecycleReceipt) string {
@@ -491,6 +503,24 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 	source, err := a.loadManagedDraftSource(ctx, draft)
 	if err != nil {
 		return err
+	}
+	if intent.Operation == api.CLIRunDraftEditCommand {
+		if draft.Pending != nil && intent.ValidateOnly {
+			return draftReplyError("pending_operation", store.ErrIMAPDraftPending)
+		}
+		currentRaw, readErr := a.store.GetMessageRawContext(ctx, draft.CurrentMessageID)
+		if readErr != nil {
+			return draftReplyError("draft_read_failed", readErr)
+		}
+		replacement, buildErr := imaplib.BuildIMAPDraftReplacement(currentRaw, intent.Body, time.Now(), "")
+		if buildErr != nil {
+			return draftReplyError("invalid_draft", buildErr)
+		}
+		lint, done, lintErr := a.gateDraftLint(ctx, emailDraftLintInput("edit", intent.Body, replacement), source.ID, req.Grant, intent.draftLintOptions, intent.JSON, emit)
+		if done || lintErr != nil {
+			return lintErr
+		}
+		intent.lint = lint
 	}
 	execution, err := a.store.AcquireSyncExecutionContext(ctx, source.ID)
 	if err != nil {

@@ -14,6 +14,7 @@ import (
 )
 
 type draftComposeIntent struct {
+	draftLintOptions
 	From        string
 	Account     string
 	SourceID    int64
@@ -37,7 +38,12 @@ func parseDraftComposeArgs(args []string) (draftComposeIntent, error) {
 	if !api.IsCLIRunDraftCompose(args) {
 		return invalidDraftComposeArgs("expected %s as the first argument", api.CLIRunDraftComposeCommand)
 	}
+	args, options, lintErr := parseDraftLintFlags(args)
+	if lintErr != nil {
+		return draftComposeIntent{}, lintErr
+	}
 	var intent draftComposeIntent
+	intent.draftLintOptions = options
 	var fromSet, accountSet, sourceIDSet, subjectSet, bodySet, jsonSet bool
 	rest := args[1:]
 	for len(rest) > 0 {
@@ -185,5 +191,10 @@ func (a *storeAPIAdapter) runCLIComposeDraft(
 	if err != nil {
 		return draftReplyError("invalid_compose_metadata", err)
 	}
+	lint, done, err := a.gateDraftLint(ctx, emailDraftLintInput("compose", intent.Body, draft), target.source.ID, req.Grant, intent.draftLintOptions, intent.JSON, emit)
+	if done || err != nil {
+		return err
+	}
+	target.lint = lint
 	return a.createDraft(ctx, target, draft, intent.JSON, emit)
 }

@@ -25,6 +25,7 @@ func newDraftReplyCommand() *cobra.Command {
 	command.Flags().Bool("all", false, "reply to the parent sender and visible recipients")
 	command.Flags().String("account", "", "destination source account or display name")
 	command.Flags().Int64("source-id", 0, "exact destination source ID")
+	addDraftLintFlags(command)
 	command.Flags().Bool("json", false, "emit one JSON result")
 	return command
 }
