@@ -1589,7 +1589,7 @@ msgvault meta-webhooks subscribe [identifier] [--fields feed] [--check] [--json]
 
 | Flag | Default | Description |
 |---|---|---|
-| `--fields` | `feed` | Comma-separated Page fields; Messenger fields require explicit selection |
+| `--fields` | `feed` | Comma-separated Page fields; `feed` and `mention` supported; Messenger fields require explicit selection |
 | `--check` | `false` | Read only; exit 1 when the app or a requested field is missing |
 | `--json` | `false` | Print structured subscription results |
 

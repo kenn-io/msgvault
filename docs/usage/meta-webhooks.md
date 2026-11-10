@@ -1,18 +1,20 @@
 ---
-last_edited: 2026-11-03
+last_edited: 2026-11-10
 title: Meta Webhooks
 description: Receive signed Facebook Page events, inspect delivery health, and replay retained deliveries.
 ---
 
-Receive Facebook Page comment changes without waiting for the next polling
-scan. This feature is unreleased. The daemon verifies each delivery and saves
-its original bytes before acknowledging it. A worker then archives Page
-`feed` comments through the same persistence path as polling.
+Receive Facebook Page comment changes and new Page mentions without waiting
+for the next polling scan. This feature is unreleased. The daemon verifies each
+delivery and saves its original bytes before acknowledging it. A worker then
+archives Page `feed` comments and new `mention` posts/comments through the
+same persistence path as polling. Mentions become searchable in the existing
+Facebook archive.
 
-Comments keep their conversation, parent, and participant links. Edits update
-the body; hide and unhide update metadata; removal leaves a tombstone and
-preserves the archived row. Older webhook events cannot undo newer webhook
-body or state changes. Equal timestamps apply in arrival order. Automatic
+Comments keep their conversation, parent, and participant links. For `feed`
+events, edits update the body; hide and unhide update metadata; removal leaves
+a tombstone and preserves the archived row. Older webhook events cannot undo
+newer webhook body or state changes. Equal timestamps apply in arrival order. Automatic
 retries keep their original order; explicit replay gets a new order. Older
 adds can fill missing author and creation time without replacing a newer body.
 Polling remains the backfill and reconciliation path, with its own checkpoints.
@@ -48,8 +50,8 @@ Polling remains the backfill and reconciliation path, with its own checkpoints.
    token, and select the app-level webhook fields. Install the Page fields:
 
    ```bash
-   msgvault meta-webhooks subscribe example-page --fields feed
-   msgvault meta-webhooks subscribe example-page --fields feed --check
+   msgvault meta-webhooks subscribe example-page --fields feed,mention
+   msgvault meta-webhooks subscribe example-page --fields feed,mention --check
    msgvault meta-webhooks status
    ```
 
@@ -71,10 +73,28 @@ App mode, access levels, Page tasks, and grants still determine live delivery
 and ancestor reads. Configuration alone does not grant access. Instagram
 fields are selected in the dashboard; this command manages Page fields only.
 
+## Capture new Page mentions
+
+The `mention` subscription captures newly delivered post and comment mentions
+of the selected Page in threads its token can read, including other Pages'
+posts. It does not discover historical mentions. Supported post items (`post`, `status`, `photo`,
+`video`, `share`, and `link`) and comments are archived on `add` only. Other
+mention lifecycle verbs are ignored: removing a mention does not establish
+that its host post or comment was deleted.
+
+When text is absent, null, or empty, the worker reads the target once for text.
+Newer mentions update archived text, including text read from the node; older
+deliveries cannot replace it.
+
+Mentions in another Page's thread require that thread to be readable by the Page
+token. An unreadable required target or ancestor remains retryable; retained
+deliveries can be replayed after access is fixed.
+
 ## Hold other event types
 
-Only Page `feed` comments are applied in this release. Messenger messages,
-Instagram comments and messages, and mentions are **held for a future release**.
+Page `feed` comments and supported new `mention` posts/comments are applied.
+Messenger messages and Instagram comments, messages, and mentions are **held
+for a future release**.
 The whole delivery is retained when it includes an unhandled item, even if its
 comments were applied. Replay can therefore apply those comments again without
 duplicating archive rows. An equal-time replay can temporarily replace a body
@@ -88,6 +108,9 @@ routing or take control of conversations. Existing fields remain subscribed
 even when a later command requests only `feed`.
 
 ## Inspect and replay deliveries
+
+After upgrading a receiver that held Page mentions as unhandled, preview and
+replay those retained deliveries with the commands below.
 
 ```bash
 msgvault meta-webhooks status --json

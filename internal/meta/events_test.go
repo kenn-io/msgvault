@@ -39,10 +39,13 @@ func fixtureEventImporter(t *testing.T) *EventImporter {
 
 func applyFeed(t *testing.T, imp *EventImporter, ev ...FeedEvent) []EventOutcome {
 	t.Helper()
-	require := require.New(t)
-	out, err := imp.ApplyFeedEvents(t.Context(), "9", "100", ev, EventOptions{})
-	require.NoError(err)
-	require.Len(out, len(ev))
+	return applyEvents(t, imp, EventOptions{}, ev...)
+}
+func applyEvents(t *testing.T, imp *EventImporter, opts EventOptions, ev ...FeedEvent) []EventOutcome {
+	t.Helper()
+	out, err := imp.ApplyFeedEvents(t.Context(), "9", "100", ev, opts)
+	require.NoError(t, err)
+	require.Len(t, out, len(ev))
 	return out
 }
 func feedMetadata(t *testing.T, st *store.Store, src int64) objectMetadata {
@@ -595,4 +598,17 @@ func TestPollingSubsetIgnoresForeignWebhookReadOrder(t *testing.T) {
 			assert.Equal("Edited after subset", body)
 		})
 	}
+}
+
+func TestApplyFeedTopLevelAncestorWithoutParent(t *testing.T) {
+	st, f, imp, src := eventImporter(t)
+	ancestor := *comment("100_210", "100_200", "Top-level ancestor")
+	ancestor.Parent = nil
+	f.comments["100_200"] = []Object{ancestor}
+	ev := feedEvent("add", 10)
+	ev.ParentID = "100_210"
+	out := applyFeed(t, imp, ev)[0]
+	require.Equal(t, "applied", out.Class, "%s", out.ErrorClass)
+	assert.Equal(t, message(t, st, src.ID, "100_210").ID, message(t, st, src.ID, "100_201").ReplyToMessageID.Int64)
+	assert.Equal(t, message(t, st, src.ID, "100_200").ID, message(t, st, src.ID, "100_210").ReplyToMessageID.Int64)
 }

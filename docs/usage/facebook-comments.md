@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-11-03
+last_edited: 2026-11-10
 title: Facebook Page Comments
 description: Archive comments on a selected Facebook Page and link commenters to existing people.
 ---
@@ -69,8 +69,9 @@ validation and nested reply reads. `--max-requests` must be positive. A budget
 of 1 permits identity validation only; collection needs at least 2. After a
 complete scan, each surface uses fresh cursors to find new comments on old posts.
 Large histories can therefore require many runs and repeated reads. Enable
-[Meta webhooks](meta-webhooks.md) for incoming comment changes; keep polling
-for backfill and reconciliation. Neither path guarantees complete capture.
+[Meta webhooks](meta-webhooks.md) for incoming comment changes and new Page
+mentions in posts and comments; keep polling for backfill and reconciliation
+of the selected Page's returned posts. Neither path guarantees complete capture.
 
 If a saved cursor expires or the checkpoint is incompatible or invalid,
 restart that selected source explicitly. Checkpoints from the earlier private

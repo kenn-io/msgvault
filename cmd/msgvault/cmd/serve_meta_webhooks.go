@@ -210,10 +210,16 @@ func (r *metaWebhookRuntime) Shutdown(ctx context.Context) error {
 }
 
 func registerMetaWebhookHandlers(reg *metawebhook.Registry, cfg *config.Config, st *store.Store) {
-	reg.Register("page", "feed", feedHandler(cfg, st, func(token string) (meta.ObjectReader, error) { return meta.NewClient(token) }))
+	reader := func(token string) (meta.ObjectReader, error) { return meta.NewClient(token) }
+	reg.Register("page", "feed", feedHandler(cfg, st, reader))
+	reg.Register("page", "mention", pageEventHandler(cfg, st, reader, meta.EventOptions{Mention: true}))
 }
 
 func feedHandler(cfg *config.Config, st *store.Store, newReader func(string) (meta.ObjectReader, error)) metawebhook.ItemHandler {
+	return pageEventHandler(cfg, st, newReader, meta.EventOptions{})
+}
+
+func pageEventHandler(cfg *config.Config, st *store.Store, newReader func(string) (meta.ObjectReader, error), opts meta.EventOptions) metawebhook.ItemHandler {
 	return func(ctx context.Context, app string, items []metawebhook.Item) []metawebhook.ItemOutcome {
 		out := make([]metawebhook.ItemOutcome, len(items))
 		groups := map[string][]int{}
@@ -262,7 +268,7 @@ func feedHandler(cfg *config.Config, st *store.Store, newReader func(string) (me
 				ev.Time, ev.ReceiptOrder = items[i].Time, items[i].ReceiptOrder
 				events, valid = append(events, ev), append(valid, i)
 			}
-			results, _ := meta.NewEventImporter(st, reader).ApplyFeedEvents(ctx, app, page, events, meta.EventOptions{})
+			results, _ := meta.NewEventImporter(st, reader).ApplyFeedEvents(ctx, app, page, events, opts)
 			for j, i := range valid {
 				out[i] = metawebhook.ItemOutcome{Class: metawebhook.Retry, ErrorClass: "archive_unavailable", CountAttempt: true}
 				if j < len(results) {

@@ -12,8 +12,8 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-// FeedEvent carries provider evidence from one Page feed change. Time comes
-// from entry.time and orders updates; it never supplies the message sent time.
+// FeedEvent carries provider evidence from one Page feed or mention change.
+// Time comes from entry.time and orders updates; it never supplies sent time.
 type FeedEvent struct {
 	ReceiptOrder uint64 `json:"-"`
 	Time         int64  `json:"-"`
@@ -53,7 +53,11 @@ func (e *FeedEvent) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-type EventOptions struct{ MaxRequests int }
+type EventOptions struct {
+	MaxRequests int
+	// Mention accepts new post/comment mentions and resolves sparse evidence.
+	Mention bool
+}
 type EventOutcome struct {
 	Class, ErrorClass string
 	CountAttempt      bool
@@ -115,7 +119,7 @@ func (e *EventImporter) ApplyFeedEvents(ctx context.Context, app, page string, e
 	}
 	imp := &Importer{store: e.store}
 	run := &importRun{imp: imp, app: app, page: page, source: src, sum: &ImportSummary{}}
-	batch := &feedBatch{run: run, reader: e.api, remaining: maximum}
+	batch := &feedBatch{run: run, reader: e.api, remaining: maximum, mention: opts.Mention}
 	batch.start = func() error {
 		if run.syncID != 0 {
 			return nil
@@ -153,6 +157,7 @@ func (r *importRun) finishWebhook(ctx context.Context, cause error) error {
 }
 
 type feedBatch struct {
+	mention   bool
 	run       *importRun
 	reader    ObjectReader
 	remaining int
@@ -179,13 +184,16 @@ func (b *feedBatch) apply(ctx context.Context, ev FeedEvent) EventOutcome {
 	body := ev.Verb == "add" || ev.Verb == "edited" || ev.Verb == "edit"
 	post := ev.Item == "status" || ev.Item == "post" || ev.Item == "photo" || ev.Item == "video" || ev.Item == "share" || ev.Item == "link"
 	postRemoval := post && (ev.Verb == "remove" || ev.Verb == "delete")
-	if (ev.Item != "comment" && !postRemoval) || (!state && !body) {
+	if b.mention {
+		state, body = false, ev.Verb == "add"
+	}
+	if (ev.Item != "comment" && !postRemoval && !(b.mention && post)) || (!state && !body) {
 		return EventOutcome{Class: "ignored"}
 	}
 	id, parent := ev.CommentID, ev.ParentID
 	if post {
 		id, parent = ev.PostID, ""
-	} else if parent == "" {
+	} else if parent == "" && !b.mention {
 		parent = ev.PostID
 	}
 	if !safeObjectID(id) || !safeObjectID(ev.PostID) || (parent != "" && !safeObjectID(parent)) || id == parent || (!post && id == ev.PostID) {
@@ -194,6 +202,9 @@ func (b *feedBatch) apply(ctx context.Context, ev FeedEvent) EventOutcome {
 	row, metadata, exists, err := b.stored(ctx, id)
 	if err != nil {
 		return feedRetry(err)
+	}
+	if b.mention && !post && parent == "" && exists {
+		parent = metadata.ParentID
 	}
 	if exists && (!metadata.matches(b.run.app, b.run.page, "", ev.PostID) || metadata.ParentID != parent || metadata.Version != objectMetadataVersion) {
 		return EventOutcome{Class: "invalid", ErrorClass: "conflicting_parent"}
@@ -204,7 +215,28 @@ func (b *feedBatch) apply(ctx context.Context, ev FeedEvent) EventOutcome {
 	if state && olderEvent(metadata.StateTime, metadata.StateOrder, ev) {
 		return EventOutcome{Class: "ignored"}
 	}
-	if post && !exists {
+	if b.mention && (ev.Message == "" || (!post && parent == "")) {
+		target, err := b.read(ctx, id, post)
+		if err != nil {
+			return feedRetry(err)
+		}
+		if ev.Message == "" {
+			ev.Message = target.Message
+		}
+		if !post && parent == "" {
+			parent = ev.PostID
+			if target.Parent != nil {
+				parent = target.Parent.ID
+			}
+		}
+		if ev.From == nil {
+			ev.From = target.From
+		}
+		if ev.CreatedTime == "" {
+			ev.CreatedTime = target.CreatedTime
+		}
+	}
+	if post && !exists && !b.mention {
 		return EventOutcome{Class: "ignored"}
 	}
 	b.run.bodyTime, b.run.stateTime = 0, 0
@@ -214,8 +246,11 @@ func (b *feedBatch) apply(ctx context.Context, ev FeedEvent) EventOutcome {
 	} else {
 		b.run.stateTime, b.run.stateOrder = ev.Time, ev.ReceiptOrder
 	}
-	if !post && (!exists || body) {
-		ancestors, err := b.ancestors(ctx, ev.PostID, parent)
+	if (!post || b.mention) && (!exists || body) {
+		var ancestors []Object
+		if !post {
+			ancestors, err = b.ancestors(ctx, ev.PostID, parent)
+		}
 		if err != nil {
 			var api *APIError
 			if state && errors.As(err, &api) && api.NotFound() {
@@ -317,20 +352,10 @@ func (b *feedBatch) fillMissingEvidence(ctx context.Context, ev FeedEvent, row s
 // top-down. Archived ancestors are still validated by persist's provenance checks.
 func (b *feedBatch) ancestors(ctx context.Context, root, parent string) ([]Object, error) {
 	objects := []Object{}
-	read := func(id string, post bool) (Object, error) {
-		if b.remaining == 0 {
-			return Object{}, errRequestBudget
-		}
-		b.remaining--
-		if post {
-			return b.reader.Post(ctx, id)
-		}
-		return b.reader.Comment(ctx, id)
-	}
 	if _, _, exists, err := b.stored(ctx, root); err != nil {
 		return nil, err
 	} else if !exists {
-		obj, err := read(root, true)
+		obj, err := b.read(ctx, root, true)
 		if err != nil {
 			return nil, err
 		}
@@ -351,9 +376,12 @@ func (b *feedBatch) ancestors(ctx context.Context, root, parent string) ([]Objec
 		} else if exists {
 			break
 		}
-		obj, err := read(parent, false)
+		obj, err := b.read(ctx, parent, false)
 		if err != nil {
 			return nil, err
+		}
+		if obj.Parent == nil {
+			obj.Parent = &Actor{ID: root}
 		}
 		if obj.ID != parent || obj.Parent == nil || !safeObjectID(obj.Parent.ID) {
 			return nil, errors.New("invalid ancestor evidence")
@@ -365,6 +393,18 @@ func (b *feedBatch) ancestors(ctx context.Context, root, parent string) ([]Objec
 		objects = append(objects, object)
 	}
 	return objects, nil
+}
+
+// Target and ancestor reads share one batch request budget.
+func (b *feedBatch) read(ctx context.Context, id string, post bool) (Object, error) {
+	if b.remaining == 0 {
+		return Object{}, errRequestBudget
+	}
+	b.remaining--
+	if post {
+		return b.reader.Post(ctx, id)
+	}
+	return b.reader.Comment(ctx, id)
 }
 
 func feedRetry(err error) EventOutcome {

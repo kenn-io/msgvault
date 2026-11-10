@@ -210,7 +210,7 @@ func newSubscribeMetaWebhooksCmd() *cobra.Command {
 		}
 		return err
 	}}
-	cmd.Flags().StringSliceVar(&fields, "fields", []string{"feed"}, "Page fields to subscribe (comma-separated; Messenger fields require explicit selection)")
+	cmd.Flags().StringSliceVar(&fields, "fields", []string{"feed"}, "Page fields to subscribe (comma-separated; feed and mention supported; Messenger fields require explicit selection)")
 	cmd.Flags().BoolVar(&check, "check", false, "check installed fields without changing subscriptions")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")
 	return cmd

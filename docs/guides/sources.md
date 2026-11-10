@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-11-03
+last_edited: 2026-11-10
 title: Choose a Source
 description: Find the right sync or import path for mail, chat, meetings, calendars, and contacts.
 ---
@@ -39,7 +39,7 @@ also a separate opt-in because downloading an image can activate email tracking.
 | Discord | [Discord sync](../usage/discord.md) | Bot-accessible guild channels, threads, and forums; personal DMs are outside this integration |
 | Chatwoot | [Chatwoot sync](chatwoot.md) | Shared inboxes, contact and employee messages, media, and linked call meetings; available on `main` |
 | Facebook Page comments | [Page comment sync](../usage/facebook-comments.md) | Selected Page token and app/Page IDs; returned organic, visitor, and ad-post comment conversations; unreleased |
-| Meta webhooks | [Signed receiver and replay](../usage/meta-webhooks.md) | Incoming Page feed comments; other fields held for a future release; unreleased |
+| Meta webhooks | [Signed receiver and replay](../usage/meta-webhooks.md) | Incoming Page feed comments and new post/comment mentions; other fields held for a future release; unreleased |
 | Instagram comments | [Professional account sync](../usage/instagram-comments.md) | Selected Page token and linked professional account; returned media comments and replies; unreleased |
 | Beeper Desktop | [Beeper sync](../usage/beeper.md) | History and media exposed by the running local Beeper API |
 | Inline | [Inline sync](../usage/inline.md) | All accessible chats, including hidden, archived, and child threads; optional exact chat filter; requires a complete catalog from the connected backend |
