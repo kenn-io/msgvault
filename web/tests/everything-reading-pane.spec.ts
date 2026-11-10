@@ -557,9 +557,10 @@ test('keeps group actions at the grid edge in wide and inspected views', async (
   await page.route('**/api/v1/explore/groups', route => {
     const body = route.request().postDataJSON();
     const label = body.grouping[0] === 'source' ? 'Example source' : 'Person Example';
+    const overview = { first_at: '2024-05-03T12:00:00Z', activity: [{ bucket: '2024-05', count: 1 }, { bucket: '2024-06', count: 2 }], co_participants: [] };
     return route.fulfill({ json: {
-      rows: [{ key: '7', label, count: 3, estimated_bytes: 512, latest_at: '2024-05-31T12:00:00Z' }],
-      ...(body.group_key ? { overview: { first_at: '2024-05-03T12:00:00Z', activity: [{ bucket: '2024-05', count: 3 }], co_participants: [] } } : {}),
+      rows: [{ key: '7', label, count: 3, estimated_bytes: 512, latest_at: '2024-06-30T12:00:00Z' }],
+      ...(body.group_key ? { overview } : {}),
       total_count: 1, cache_revision: 'cache-groups', search_provenance: {}
     } });
   });
@@ -589,6 +590,18 @@ test('keeps group actions at the grid edge in wide and inspected views', async (
   const personGrid = (await people.boundingBox())!;
   const personCell = (await personAction.locator('..').boundingBox())!;
   expect.soft(personGrid.x + personGrid.width - personCell.x - personCell.width, 'inspected Person action inset').toBeLessThanOrEqual(2);
+  const personSpacing = await people.getByRole('row', { name: /Person Example/ }).evaluate(row => {
+    const count = row.querySelector('.group-count')!;
+    const countRange = document.createRange();
+    countRange.selectNodeContents(count);
+    return countRange.getBoundingClientRect().left - row.getBoundingClientRect().left;
+  });
+  expect.soft(personSpacing, 'inspected Person count stays beside the capped name column').toBeLessThanOrEqual(560);
+  const personActivityGap = await page.getByRole('img', { name: /Activity by month/ }).evaluate(svg => {
+    const lastBar = svg.querySelector('rect:last-child')!;
+    return svg.getBoundingClientRect().right - lastBar.getBoundingClientRect().right;
+  });
+  expect.soft(personActivityGap, 'last activity bar aligns with its endpoint').toBeLessThanOrEqual(1);
   await page.getByRole('button', { name: 'Display', exact: true }).click();
   await page.getByRole('menuitemradio', { name: 'Right', exact: true }).click();
   await page.keyboard.press('Escape');

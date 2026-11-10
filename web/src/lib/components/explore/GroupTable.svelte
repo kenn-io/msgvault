@@ -76,7 +76,7 @@
   const timeGroup = $derived((dimension === 'month' || dimension === 'year') && rows.some((row) => row.total_items !== undefined));
   const columnCount = $derived((narrow ? 3 : 5) + (timeGroup ? 1 : 0));
   const template = $derived(narrow
-    ? `minmax(0,1fr) 80px ${timeGroup ? '96px ' : ''}40px`
+    ? `minmax(0,480px) 80px ${timeGroup ? '96px ' : ''}minmax(0,1fr) 40px`
     : 'minmax(200px,480px) 88px 96px 128px minmax(96px,1fr) 40px');
   let gridElement = $state<HTMLDivElement>();
   let headerElement = $state<HTMLDivElement>();

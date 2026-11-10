@@ -34,7 +34,7 @@
   {/if}
   {#if series.length > 0 && first && last}
     <div class="activity">
-      <svg role="img" aria-label={stripLabel} viewBox={`0 0 ${series.length * 8} 32`} preserveAspectRatio="none">
+      <svg role="img" aria-label={stripLabel} viewBox={`0 0 ${series.length * 8 - 2} 32`} preserveAspectRatio="none">
         {#each series as month, index (month.bucket)}
           {@const height = busiest.count ? month.count / busiest.count * 32 : 0}
           <rect x={index * 8} y={32 - height} width="6" {height} />
