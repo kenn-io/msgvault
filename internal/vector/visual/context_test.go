@@ -107,3 +107,12 @@ func revisionRequest() AssembleRequest {
 		Policy: ContextPolicy{MaxChars: 4000, InputVersion: "visual-input-v1", EligibilityVersion: "visual-eligibility-v1"},
 	}
 }
+
+func TestAssembleDocumentTumblrContext(t *testing.T) {
+	request := revisionRequest()
+	request.Context = MessageContext{Body: "Photo caption", MessageType: "tumblr"}
+	doc, _, err := AssembleDocument(request)
+	require.NoError(t, err)
+	require.Len(t, doc.Parts, 2)
+	assert.Equal(t, "Photo caption\n\nMessage type: chat message", doc.Parts[0].Text)
+}

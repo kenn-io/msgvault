@@ -179,5 +179,5 @@ var KnownMessageTypes = []string{
 	"slack",
 	"inline",
 	"matrix",
-	"telegram",
+	"telegram", "tumblr",
 }

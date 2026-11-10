@@ -16,7 +16,7 @@ appear in full under Inherited Flags.
 | Task | Commands and guides |
 |---|---|
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
-| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
+| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-tumblr](#import-tumblr), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [media search](#media-search), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [loops](#loops), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
@@ -2463,6 +2463,21 @@ msgvault import-telegram <export-dir>
 Re-imports add new messages and fill missing media. Archived text and edit flags stay unchanged. See [Telegram imports](usage/text-messages.md#import-telegram) for export and resume behavior.
 
 ---
+
+## import-tumblr
+
+Import one blog's HTML conversation folder or ZIP, including supplied local messaging media.
+
+```bash
+msgvault import-tumblr --blog <blog-name> <folder-or-zip>
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--blog` | Required | Exporting blog name; creates a separately scoped source |
+| `--no-default-identity` | `false` | Skip automatic confirmation of the resolved exporting participant |
+
+Files must be on the daemon host. Replay preserves first-import evidence and fills missing media. Counts describe observed coverage, including unsupported records and media gaps. See [Tumblr imports](usage/text-messages.md#import-tumblr) for supported markup, synthetic media coverage, limits and overlap ambiguity.
 
 ## import-messenger
 

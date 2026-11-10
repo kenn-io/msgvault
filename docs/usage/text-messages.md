@@ -20,6 +20,7 @@ open a conversation to read its messages. In the [TUI](/docs/usage/tui/), press
 | [iMazing Messages](#import-imazing-csv) | CSV export root or `csv/` directory |
 | [Google Voice](#import-gvoice) | Google Takeout Voice directory |
 | [Telegram](#import-telegram) | Telegram Desktop Machine-readable JSON export |
+| [Tumblr](#import-tumblr) | Per-blog HTML conversation folder or ZIP |
 | [Facebook Messenger](#import-messenger) | Download Your Information export |
 | [SMS Backup & Restore](#import-synctech-sms) | XML backup |
 | [Slackdump](/docs/usage/slack/#import-a-slackdump-export) | Export directory or ZIP |
@@ -505,3 +506,24 @@ A later or overlapping export adds new messages and fills media slots that still
 Every exported chat becomes a conversation, even one with no messages. Each import replaces the conversation title with the export's chat name when that name is non-empty.
 
 An interrupted import resumes after the last completed chat when `result.json` in the same directory has the same size and modification time. Use `--no-resume` to scan every chat again, or `--limit N` to cap the messages added in one run.
+
+## import-tumblr
+
+Export each blog separately using Tumblr's [blog export](https://help.tumblr.com/knowledge-base/export-your-blog/). Import the ZIP or its extracted folder, naming the exporting blog:
+
+```bash
+msgvault import-tumblr --blog orchard-example /path/to/blog.zip
+msgvault import-tumblr --blog orchard-example /path/to/extracted-blog
+```
+
+The folder must contain `conversations/`, either at its root or inside one wrapper folder. The files must be on the daemon host; run there with `--local` when your configured daemon is remote. Each blog becomes a separate `tumblr` source. Conversations that do not name that blog as a participant are reported as foreign scope and skipped.
+
+The importer reads current HTML participant labels, TEXT bodies and POSTREF links. These structures were studied in public exports; fixtures contain independently authored fictional content. IMAGE records and standard HTML image, audio, video and local-file references have **synthetic coverage only**. Legacy XML is not supported. Avatars and post links are not attachments. No links are fetched.
+
+Participant IDs, status, original headers, date evidence, message HTML and export-relative filenames are retained in raw JSON evidence. Unknown senders and missing, unparseable or conflicting dates remain unknown. The summary reports files, conversations, added and present messages, malformed and unsupported records, undated messages, valid date range, unknown blocks, and media outcomes. The reported range covers observed dated messages; it does not establish lifetime completeness.
+
+Replay adds missing observations and fills media slots that lack bytes. Existing text, dates, evidence and stored media stay as first imported. Identity uses conversation, sender, date evidence, type, text and post targets, plus an occurrence number for identical records. It excludes filenames and media URLs. Identical repeated records are preserved, but indistinguishable records in overlapping exports cannot be matched with certainty. Changed text is a separate observation, not a proven edit. An interrupted import can be rerun; absence never deletes archived history.
+
+Media references resolve relative to the conversation file. Contained sibling paths such as `../media/photo.jpg` are accepted. Traversal outside the export, absolute paths, symlinks, nonregular files and unsafe or duplicate ZIP entries are rejected. Discovery is limited to 100,000 entries. HTML files over 64 MiB are skipped and counted; each media file is limited to 100 MiB. Media results distinguish stored bytes, missing local files, remote-only references, invalid paths and oversized files. Missing received-media binaries do not establish message retention or URL expiry. Storage errors fail the import, with coverage reported for work already completed.
+
+The resolved exporting participant becomes the default identity unless you pass `--no-default-identity` or the source already has an identity preference.

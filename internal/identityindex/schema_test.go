@@ -10,3 +10,8 @@ func TestMatrixMessagesAreClassifiedAsChat(t *testing.T) {
 	assert.True(t, IsChat("matrix", "group_chat"))
 	assert.True(t, IsChat("matrix", "direct_chat"))
 }
+
+func TestTumblrMessagesAreClassifiedAsChat(t *testing.T) {
+	assert.True(t, IsChat("tumblr", "direct_chat"))
+	assert.True(t, IsChat("tumblr", ""))
+}
