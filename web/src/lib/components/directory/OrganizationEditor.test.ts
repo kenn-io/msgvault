@@ -1,9 +1,194 @@
+import '../../../test/english-locale.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
-import { requestOf, pathOf, organization, organizationProfile, envelope, richOrganizationProfile, controllerWith } from '../../directory/entity-fixtures.test-support';
+import { valueProvenance } from './history-format';
+import { requestOf, pathOf, organization, employment, organizationProfile, envelope, richOrganizationProfile, controllerWith } from '../../directory/entity-fixtures.test-support';
 import OrganizationEditor from './OrganizationEditor.svelte';
 
 describe('OrganizationEditor', () => {
+  it.each([
+    { first: 'organization', external: '', repeat: '', second: 'clean', tags: ['"organization-21-r1"', '"organization-21-r2"'] },
+    { first: 'profile', external: '', repeat: '', second: 'clean', tags: ['"organization-21-r1"', '"organization-21-r2"'] },
+    { first: 'organization', external: '', repeat: 'edit elsewhere', second: 'conflict', tags: ['"organization-21-r1"', '"organization-21-r2"'] },
+    { first: 'organization', external: 'alias', repeat: 'finish both', second: 'External alias', tags: ['"organization-21-r1"', '"organization-21-r2"', '"organization-21-r1"', '"organization-21-r3"', '"organization-21-r4"'] },
+    { first: 'profile', external: 'name', repeat: '', second: 'External name', tags: ['"organization-21-r1"', '"organization-21-r2"', '"organization-21-r1"'] },
+    { first: 'organization', external: 'alias', repeat: 'organization', second: 'External alias', tags: ['"organization-21-r1"', '"organization-21-r2"', '"organization-21-r3"', '"organization-21-r1"'] },
+    { first: 'profile', external: 'name', repeat: 'profile', second: 'External name', tags: ['"organization-21-r1"', '"organization-21-r2"', '"organization-21-r3"', '"organization-21-r1"'] },
+  ] as const)('keeps both drafts across $first save and $repeat', async scenario => {
+    let revision = 1, reads = 0;
+    let profile = organizationProfile();
+    const writes: Request[] = [];
+    const onDone = vi.fn();
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (request.method === 'GET') { reads++; return Response.json(profile, { headers: { ETag: `"organization-21-r${revision}"` } }); }
+      writes.push(request);
+      if (request.headers.get('If-Match') !== `"organization-21-r${revision}"`) return Response.json({ error: 'organization_revision_conflict', message: 'Changed elsewhere' }, { status: 409 });
+      const body = await request.clone().json();
+      revision++;
+      if (request.method === 'PATCH') profile = { ...profile, organization: organization(21, revision, body.name) };
+      else profile = { ...profile, organization: { ...profile.organization, revision }, names: body.names.map((item: { name: string }) => ({ ...profile.names[0], name: item.name })) };
+      return Response.json(request.method === 'PATCH' ? profile.organization : profile, { headers: { ETag: `"organization-21-r${revision}"` } });
+    });
+    render(OrganizationEditor, { controller, organization: organization(), onDone });
+    await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Draft alias' } });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
+    const external = {
+      '': () => undefined,
+      alias: () => { revision = 2; profile = { ...profile, organization: { ...profile.organization, revision }, names: [{ ...profile.names[0], name: 'External alias' }] }; },
+      name: () => { revision = 2; profile = { ...profile, organization: organization(21, revision, 'External name') }; },
+    };
+    external[scenario.external]();
+    const buttons = { organization: 'Save organization', profile: 'Save aliases and categories' };
+    const firstButton = buttons[scenario.first];
+    const secondButton = { organization: buttons.profile, profile: buttons.organization }[scenario.first];
+    const idle = async () => waitFor(() => expect(document.querySelector('.editor')?.getAttribute('aria-busy')).toBe('false'));
+    await fireEvent.click(screen.getByRole('button', { name: firstButton }));
+    if (scenario.external) await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
+    await idle();
+    expect(screen.getByRole('textbox', { name: 'Organization aliases' })).toHaveProperty('value', 'Draft alias');
+    expect(screen.getByRole('textbox', { name: 'Organization name' })).toHaveProperty('value', 'Draft name');
+    const repeats = {
+      '': async () => undefined,
+      'edit elsewhere': async () => { revision++; },
+      'finish both': async () => { await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Revised name' } }); },
+      organization: async () => { await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Revised name' } }); await fireEvent.click(screen.getByRole('button', { name: firstButton })); await idle(); },
+      profile: async () => { await fireEvent.input(screen.getByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Revised alias' } }); await fireEvent.click(screen.getByRole('button', { name: firstButton })); await idle(); },
+    };
+    await repeats[scenario.repeat]();
+    await fireEvent.click(screen.getByRole('button', { name: secondButton }));
+    const results = {
+      clean: async () => {
+        await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+        expect(reads).toBe(1);
+        expect(await writes.find(request => request.method === 'PATCH')!.clone().json()).toMatchObject({ name: 'Draft name' });
+        expect((await writes.find(request => request.method === 'PUT')!.clone().json()).names).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'Draft alias' })]));
+      },
+      conflict: async () => { expect(await screen.findByText('This organization changed since you opened it.')).toBeDefined(); expect(onDone).not.toHaveBeenCalled(); },
+      'External alias': async () => { await results.conflict(); expect(screen.getByRole('region', { name: 'Saved organization' }).textContent).toContain('External alias'); },
+      'External name': async () => { await results.conflict(); expect(screen.getByRole('region', { name: 'Saved organization' }).textContent).toContain('External name'); },
+    };
+    await results[scenario.second]();
+    const finish = {
+      '': async () => undefined,
+      'edit elsewhere': async () => undefined,
+      organization: async () => undefined,
+      profile: async () => undefined,
+      'finish both': async () => { await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' })); await idle(); await fireEvent.click(screen.getByRole('button', { name: 'Save organization' })); await waitFor(() => expect(onDone).toHaveBeenCalledOnce()); },
+    };
+    await finish[scenario.repeat]();
+    expect(writes.map(request => request.headers.get('If-Match'))).toEqual(scenario.tags);
+  });
+
+  it('can close while the organization is still loading', async () => {
+    const { controller } = controllerWith(() => new Promise<Response>(() => undefined));
+    const onClose = vi.fn();
+    render(OrganizationEditor, { controller, organization: organization(), onClose });
+    await screen.findByText('Loading organization…');
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('renames a retired organization with an untouched comma alias', async () => {
+    const profile = organizationProfile(2);
+    Object.assign(profile.organization, { retired_at: '2026-08-02T00:00:00Z' });
+    profile.names[0].name = 'Example, Inc.';
+    const onDone = vi.fn();
+    const writes: Request[] = [];
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (request.method === 'GET') return Response.json(profile, { headers: { ETag: '"organization-21-r2"' } });
+      writes.push(request);
+      return Response.json({ ...organization(21, 3, 'Renamed'), retired_at: '2026-08-02T00:00:00Z' });
+    });
+    render(OrganizationEditor, { controller, organization: organization(), onDone });
+    await screen.findByDisplayValue('Example, Inc.');
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Renamed' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+    expect(writes.map(request => request.method)).toEqual(['PATCH']);
+    const body = await writes[0].json();
+    expect(body).toMatchObject({ name: 'Renamed' });
+    expect(body.retired).toBeUndefined();
+  });
+
+  it.each([false, true])('preserves an untouched comma alias when saving categories, conflict=%s', async conflict => {
+    const opening = richOrganizationProfile(1);
+    opening.names[1] = { ...opening.names[1], name: 'Example, Inc.', envelope: { ...opening.names[1].envelope, source: 'vcard_import', ordinal: 7 } };
+    const newer = { ...opening, organization: organization(21, 2), names: [...opening.names, { ...opening.names[1], name: 'Newer alias', envelope: envelope(70) }] };
+    const writes: Request[] = [];
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (request.method === 'GET') return Response.json(writes.length ? newer : opening, { headers: { ETag: writes.length ? '"organization-21-r2"' : '"organization-21-r1"' } });
+      writes.push(request);
+      if (conflict && writes.length === 1) return Response.json({ error: 'organization_revision_conflict', message: 'Changed elsewhere' }, { status: 409 });
+      return Response.json(conflict ? newer : opening, { headers: { ETag: '"organization-21-r3"' } });
+    });
+    render(OrganizationEditor, { controller, organization: organization() });
+    await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization categories' }), { target: { value: 'Research, Design' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
+    if (conflict) await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
+    await waitFor(() => expect(writes).toHaveLength(conflict ? 2 : 1));
+    const request = writes.at(-1)!;
+    if (conflict) expect(request.headers.get('If-Match')).toBe('"organization-21-r2"');
+    const body = await request.json();
+    expect(body.names).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'Example, Inc.', source: 'vcard_import', ordinal: 7 })]));
+    expect(body.names.map((item: { name: string }) => item.name)).toEqual(['Synthetic Legal Ltd', 'Example, Inc.']);
+  });
+
+  it('shows the structured profile read-only under the fields, grouped by what each value is', async () => {
+    const profile = richOrganizationProfile(1);
+    profile.contact_points.push({ ...profile.contact_points[0], address_kind: 'impp', original_value: 'mira@example.test', envelope: envelope(49) });
+    profile.contact_points.push({ ...profile.contact_points[0], address_kind: 'phone', original_value: '+1 555 0100', envelope: envelope(47) });
+    profile.contact_points.push({ ...profile.contact_points[0], original_value: 'second@example.test', envelope: envelope(48, { source: 'vcard_import', updated_at: '2026-08-01T15:00:00Z' }) as typeof profile.contact_points[0]['envelope'] });
+    profile.contact_points.push({ ...profile.contact_points[0], original_value: 'third@example.test' });
+    const { controller } = controllerWith(async () => Response.json(profile, { headers: { ETag: '"organization-21-r1"' } }));
+    render(OrganizationEditor, { controller, organization: organization() });
+    const email = await screen.findByRole('region', { name: 'Email' });
+    expect(within(email).getByText('concurrent@example.test')).toBeDefined();
+    expect(await screen.findByRole('region', { name: 'Messaging' })).toBeDefined();
+    expect(screen.getByText('mira@example.test')).toBeDefined();
+    expect(within(email).queryByRole('textbox')).toBeNull();
+    const shared = valueProvenance(profile.addresses[0].envelope);
+    expect(screen.getAllByText(shared.text)).toHaveLength(1);
+    expect(screen.getByText(shared.text).closest('.profile-heading p')?.textContent).toBe(`Contact details · ${shared.text}`);
+    const row = (text: string) => screen.getByText(text).closest('.detail-row') as HTMLElement;
+    expect(row('concurrent@example.test').querySelector('.description')).toBeNull();
+    expect(row('Suite 5, 12 Example Road').querySelector('.description')).toBeNull();
+    expect(row('+1 555 0100').querySelector('.description')?.textContent).toBe(valueProvenance(envelope(47)).text);
+    const first = valueProvenance(profile.contact_points[0].envelope);
+    expect(screen.getByText(first.text, { selector: '.profile-heading .provenance' }).getAttribute('title')).toBe(first.title);
+    const second = row('second@example.test');
+    expect(second.querySelector('.description')?.getAttribute('title')).toBe(valueProvenance(profile.contact_points[3].envelope).title);
+    // One Details on the Contact details heading holds every row's facts, with the vCard properties last.
+    expect(within(email).queryByRole('button', { name: 'Details' })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Details' }));
+    const address = screen.getByRole('region', { name: 'Address Suite 5, 12 Example Road' });
+    expect(within(address).getByText('City').nextElementSibling?.textContent).toBe('Exampleton');
+    // The value shows once, its facts under its row; Email's heading already names its kind, an address's kind adds to it.
+    expect(screen.getAllByText('concurrent@example.test')).toHaveLength(1);
+    expect(within(address).getByText('Kind').nextElementSibling?.textContent).toBe('Work');
+    expect(within(screen.getByRole('region', { name: 'Email concurrent@example.test' })).queryByText('Kind')).toBeNull();
+    await fireEvent.click(screen.getByText('Raw values'));
+    expect(screen.getAllByText('vCard property').map(term => term.nextElementSibling?.textContent)).toContain('ADR');
+  });
+
+  it('retries loading an organization from its inline error action', async () => {
+    let reads = 0;
+    const { controller } = controllerWith(async () => ++reads === 1
+      ? Response.json({ message: 'Organization load unavailable' }, { status: 400 })
+      : Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } }));
+    render(OrganizationEditor, { controller, organization: organization() });
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    expect(screen.queryByRole('button', { name: 'Save organization' })).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'Organization name' })).toBeNull();
+    await fireEvent.click(retry);
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Organization aliases' })).toHaveProperty('value', 'Synthetic Works'));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Synthetic Org 2' } });
+    expect(screen.getByRole('button', { name: 'Save organization' })).toHaveProperty('disabled', false);
+    expect(reads).toBe(2);
+  });
+
   it('retains the organization draft and routes blocked creation refresh to its controller', async () => {
     const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
@@ -17,145 +202,60 @@ describe('OrganizationEditor', () => {
     render(OrganizationEditor, { controller });
 
     const name = screen.getByRole('textbox', { name: 'Organization name' }) as HTMLInputElement;
+    // A new organization gets aliases and categories once it exists.
+    expect(screen.queryByRole('button', { name: 'Add alias…' })).toBeNull();
     await fireEvent.input(name, { target: { value: 'Unknown Result Org' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add organization' }));
 
     await screen.findByRole('alert');
     expect(name.value).toBe('Unknown Result Org');
-    expect(screen.getByRole('button', { name: 'Create organization' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: 'Add organization' })).toHaveProperty('disabled', true);
     const refresh = vi.spyOn(controller, 'refreshOrganizations');
-    await fireEvent.click(screen.getByRole('button', { name: 'Refresh organizations' }));
-    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    await fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
   });
 
-  it.each(['create', 'rename', 'delete'])('%s an unused organization', async operation => {
+  it.each([
+    { label: 'one job', count: 1 },
+    { label: '200 jobs', count: 200 },
+    { label: '200 jobs held by three people', count: 200, people: 3 },
+    { label: 'an unnamed holder', count: 1, personID: 8, displayName: null },
+    { label: 'two jobs held by one person', count: 2, personID: 8, displayName: 'Synthetic Person', titles: ['Engineer', 'Advisor'] },
+  ])('blocks deletion for $label and links holders', async scenario => {
+    const { count } = scenario;
     const requests: Request[] = [];
-    let organizations = [organization()];
     const { controller } = controllerWith(async input => {
-      const request = requestOf(input); requests.push(request.clone());
+      const request = requestOf(input); requests.push(request);
       const path = pathOf(request);
-      if (path === '/api/v1/organizations' && request.method === 'GET') return Response.json({ organizations, total: organizations.length, limit: 50, offset: 0 });
-      if (path === '/api/v1/organizations' && request.method === 'POST') {
-        const created = organization(22, 1, 'New Synthetic Org'); organizations.push(created);
-        return Response.json(created, { status: 201, headers: { ETag: '"organization-22-r1"' } });
-      }
-      if (path === '/api/v1/organizations/21' && request.method === 'GET') return Response.json({ ...organizationProfile(2), organization: { ...organizations[0], revision: 2, retired_at: '2026-08-02T00:00:00Z' } }, { headers: { ETag: '"organization-21-r2"' } });
-      if (path === '/api/v1/organizations/21' && request.method === 'PATCH') {
-        organizations = [organization(21, 3, 'Renamed Synthetic Org')];
-        return Response.json({ ...organizations[0], retired_at: '2026-08-02T00:00:00Z' }, { headers: { ETag: '"organization-21-r3"' } });
-      }
-      if (path === '/api/v1/organizations/21' && request.method === 'DELETE') { organizations = []; return new Response(null, { status: 204 }); }
-      throw new Error(`unexpected ${request.method} ${path}`);
+      if (path.endsWith('/employments')) return Response.json({ employments: scenario.titles
+        ? scenario.titles.map((title, index) => employment(index + 11, 1, { person_id: scenario.personID, title, is_current: false }))
+        : Array.from({ length: count }, (_, i) => employment(i + 1, 1, { person_id: scenario.personID ?? (scenario.people ? i % scenario.people + 1 : Math.max(1, i)), is_current: false })) });
+      if (path.startsWith('/api/v1/people/')) return Response.json(scenario.displayName === null ? {} : { display_name: scenario.displayName ?? `Example Person ${path.split('/').at(-1)}` });
+      return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
     });
-    controller.organizations = [...organizations];
-    const onDone = vi.fn();
-    const view = render(OrganizationEditor, { controller, ...(operation === 'create' ? {} : { organization: organization() }), onDone });
-    try {
-      if (operation === 'delete') {
-        await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization' }));
-        await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete organization' }));
-      } else {
-        const name = await screen.findByRole('textbox', { name: 'Organization name' });
-        await fireEvent.input(name, { target: { value: operation === 'create' ? 'New Synthetic Org' : 'Renamed Synthetic Org' } });
-        await fireEvent.click(screen.getByRole('button', { name: operation === 'create' ? 'Create organization' : 'Save organization' }));
-      }
-      await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
-      const write = requests.find(request => request.method === (operation === 'create' ? 'POST' : operation === 'rename' ? 'PATCH' : 'DELETE'))!;
-      expect(write).toBeDefined();
-      if (operation === 'create') await expect(write.json()).resolves.toMatchObject({ name: 'New Synthetic Org' });
-      if (operation === 'rename') {
-        const body = await write.json();
-        expect(body).toMatchObject({ name: 'Renamed Synthetic Org' });
-        expect(body.retired).toBeUndefined();
-      }
-    } finally { view.unmount(); controller.destroy(); }
-  });
-
-  it.each([false, true])('preserves profile draft changes and concurrent organization data (conflict=%s)', async conflict => {
-    const requests: Request[] = [];
-    let reads = 0; let puts = 0;
-    const baseline = {
-      ...organizationProfile(2),
-      names: [{ organization_id: 21, name_kind: 'alias', name: 'Baseline Alias', name_normalized: 'baseline alias', envelope: envelope(50) }],
-      categories: [{ organization_id: 21, category: 'Baseline Category', category_normalized: 'baseline category', envelope: envelope(51) }]
-    };
-    const rich = richOrganizationProfile(3);
-    const fresh = {
-      ...rich,
-      organization: { ...rich.organization, name: 'Concurrent Org Name', primary_domain: 'concurrent.example', description: 'Concurrent organization description' },
-      media: [...baseline.media, ...rich.media],
-      names: [
-        ...rich.names.filter((item) => item.name_kind !== 'alias'),
-        baseline.names[0],
-        { organization_id: 21, name_kind: 'alias', name: 'Synthetic Works', name_normalized: 'synthetic works', envelope: envelope(52, { source: 'vcard_import', source_ref: 'concurrent-alias', source_resource_uid: 'resource-concurrent-alias', vcard: { property: 'NICKNAME' } }) }
-      ],
-      categories: [baseline.categories[0], ...rich.categories]
-    };
-    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      requests.push(request);
-      const path = pathOf(request);
-      if (path === '/api/v1/organizations/21' && request.method === 'GET') {
-        reads += 1;
-        const profile = reads === 1 ? baseline : fresh;
-        return new Response(JSON.stringify(profile), { headers: { ETag: `"organization-21-r${reads + 1}"` } });
-      }
-      if (path === '/api/v1/organizations/21/profile' && request.method === 'PUT') {
-        if (++puts === 1 && conflict) return Response.json({ error: 'organization_revision_conflict', message: 'profile changed elsewhere' }, { status: 409 });
-        return new Response(JSON.stringify(fresh), { headers: { ETag: '"organization-21-r4"' } });
-      }
-      throw new Error(`unexpected ${request.method} ${path}`);
-    }));
-    controller.organizations = [organization()];
-    render(OrganizationEditor, { controller, organization: organization() });
-    const aliases = await screen.findByRole('textbox', { name: 'Organization aliases' });
-    await fireEvent.input(aliases, { target: { value: 'User Draft Alias' } });
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization categories' }), { target: { value: 'User Draft Category' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save organization profile' }));
-    await waitFor(() => expect(requests.some((request) => request.method === 'PUT')).toBe(true));
-
-    if (conflict) {
-      const alert = await screen.findByRole('alert');
-      expect(alert.textContent).toContain('Concurrent Org Name');
-      expect(alert.textContent).toContain('concurrent.example');
-      expect(alert.textContent).toContain('Concurrent organization description');
-      expect(alert.textContent).toContain('Research');
-      expect(alert.textContent).toContain('concurrent@example.test');
-      expect(alert.textContent).toContain('Suite 5, 12 Example Road');
-      expect(alert.textContent).toContain('REG-42');
-      expect(alert.textContent).toContain('Concurrent logo');
-      expect(aliases).toHaveProperty('value', 'User Draft Alias');
-
-      await fireEvent.click(screen.getByRole('button', { name: 'Save organization profile' }));
-      await waitFor(() => expect(puts).toBe(2));
+    const onOpenPerson = vi.fn(), onClose = vi.fn();
+    render(OrganizationEditor, { controller, organization: organization(), onOpenPerson, onClose });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
+    // One sentence carries the count and the action, followed by the people holding the jobs.
+    const first = await screen.findByText(count === 1 ? "Delete its job first. Ending it isn't enough." : count === 200 ? "Delete its 200 or more jobs first. Ending them isn't enough." : "Delete its 2 jobs first. Ending them isn't enough.");
+    expect(screen.getByRole('button', { name: /^Back to / })).toBeDefined();
+    const holderName = scenario.displayName === null ? 'Unnamed person' : scenario.displayName ?? 'Example Person 1';
+    const holders = screen.getAllByRole('button', { name: holderName });
+    expect(first.compareDocumentPosition(holders[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    if (count === 200) expect(screen.getByText(scenario.people ? 'and maybe others' : 'and at least 196 more')).toBeDefined();
+    if (scenario.titles) {
+      expect(holders).toHaveLength(1);
+      expect(holders[0].closest('.detail-row')?.textContent).toContain('Engineer · Advisor');
     }
-    const body = await requests.filter(request => request.method === 'PUT').at(-1)!.json();
-    expect(body.names).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'Synthetic Legal Ltd', name_kind: 'legal', source_ref: 'card-42', vcard_property: 'FN', vcard_group: 'item2', vcard_prop_id: 'prop-9', vcard_pid: ['1.1', '2.1'], vcard_altid: 'alt-4' }),
-      expect.objectContaining({ name: 'Synthetic Works', name_kind: 'alias', source_ref: 'concurrent-alias', source_resource_uid: 'resource-concurrent-alias', vcard_property: 'NICKNAME' }),
-      expect.objectContaining({ name: 'User Draft Alias', name_kind: 'alias', source: 'user' })
-    ]));
-    expect(body.names).not.toEqual(expect.arrayContaining([expect.objectContaining({ name: 'Baseline Alias' })]));
-    expect(body.categories).toEqual(expect.arrayContaining([
-      expect.objectContaining({ category: 'Research', source_ref: 'card-42', source_resource_uid: 'resource-card-42', active_from: '2025-02-03T04:05:06Z' }),
-      expect.objectContaining({ category: 'User Draft Category', source: 'user' })
-    ]));
-    expect(body.categories).not.toEqual(expect.arrayContaining([expect.objectContaining({ category: 'Baseline Category' })]));
-    expect(body.contact_points).toEqual([expect.objectContaining({
-      contact_kind: 'email', original_value: 'concurrent@example.test', service_slug: 'email', scope_kind: 'department', scope_value: 'research',
-      uri: 'mailto:concurrent@example.test', ordinal: 7, pref: 2, type_label: 'work', type_tokens: ['WORK', 'INTERNET'],
-      source: 'vcard_import', source_ref: 'card-42', confidence: 0.87, active_from: '2025-02-03T04:05:06Z',
-      vcard_property: 'EMAIL', vcard_group: 'item2', vcard_prop_id: 'prop-9', vcard_pid: ['1.1', '2.1'], vcard_altid: 'alt-4'
-    })]);
-    expect(body.addresses).toEqual([expect.objectContaining({
-      address_kind: 'work', original_value: 'Suite 5, 12 Example Road', post_office_box: 'PO 12', extended_address: 'Suite 5',
-      street_address: '12 Example Road', locality: 'Exampleton', region: 'EX', postal_code: '12345', country_name: 'Exampleland',
-      extended_components: 'Lab 3', free_text: 'Rear entrance', place_uri: 'geo:1,2', geo_uri: 'geo:1,2', label: 'HQ', timezone: 'Etc/UTC', country_code: 'EX',
-      source_ref: 'card-42', vcard_property: 'ADR'
-    })]);
-    expect(body.identifiers).toEqual([expect.objectContaining({ identifier_kind: 'registry', identifier_value: 'REG-42', source_ref: 'card-42', vcard_property: 'X-REGISTRY' })]);
-    expect(body.media).toEqual(expect.arrayContaining([expect.objectContaining({ content_hash: 'sha256:synthetic' }), expect.objectContaining({ media_kind: 'logo', media_type: 'image/png', uri: 'https://example.test/logo.png', original_value: 'Concurrent logo', content_hash: 'sha256:concurrent', source_ref: 'card-42', vcard_property: 'LOGO' })]));
-    for (const media of body.media) expect(media.data).toBeUndefined();
+    if (scenario.displayName === null) expect(holders[0].hasAttribute('data-link')).toBe(true);
+    await fireEvent.click(holders[0]);
+    expect(onClose).toHaveBeenCalled();
+    expect(onOpenPerson).toHaveBeenCalledWith(scenario.personID ?? 1);
+    if (count === 1 && scenario.personID === undefined) {
+      const query = new URL(requests.find(request => pathOf(request).endsWith('/employments'))!.url).searchParams;
+      expect(query.get('limit')).toBe('200');
+      expect(query.has('current_only')).toBe(false);
+    }
   });
 
   it('keeps an editor open during submission', async () => {
@@ -170,12 +270,168 @@ describe('OrganizationEditor', () => {
     const onClose = vi.fn();
     const view = render(OrganizationEditor, { controller, onDone, onClose });
     await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Pending Org' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Close organization editor' }));
-    expect(screen.getByRole('dialog', { name: 'Create organization' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Add organization' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.getByRole('dialog', { name: 'Add organization' })).toBeDefined();
     expect(onClose).not.toHaveBeenCalled();
     resolveCreate(new Response(JSON.stringify(organization(22, 1, 'Pending Org')), { status: 201, headers: { ETag: '"organization-22-r1"' } }));
     await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
     view.unmount();
   });
+});
+
+it('deletes the displayed organization version and retries only after showing the newer one', async () => {
+  let revision = 1;
+  const tags: (string | null)[] = [];
+  const onDone = vi.fn();
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (pathOf(request).endsWith('/employments')) return Response.json({ employments: [] });
+    if (request.method === 'DELETE') {
+      tags.push(request.headers.get('If-Match'));
+      return request.headers.get('If-Match') === `"organization-21-r${revision}"` ? new Response(null, { status: 204 }) : Response.json({ error: 'organization_revision_conflict', message: 'Changed elsewhere' }, { status: 409 });
+    }
+    return Response.json(organizationProfile(revision, revision === 1 ? 'Synthetic Org' : 'New saved name'), { headers: { ETag: `"organization-21-r${revision}"` } });
+  });
+  render(OrganizationEditor, { controller, organization: organization(), onDone });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
+  revision = 2;
+  await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+  expect(await screen.findByText('New saved name')).toBeDefined();
+  expect(tags).toEqual(['"organization-21-r1"']);
+  await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+  expect(tags).toEqual(['"organization-21-r1"', '"organization-21-r2"']);
+});
+
+it('retries a failed delete request', async () => {
+  let deletes = 0;
+  let reads = 0;
+  const onDone = vi.fn();
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (pathOf(request).endsWith('/employments')) return Response.json({ employments: [] });
+    if (request.method === 'DELETE') {
+      deletes++;
+      return deletes === 1 ? Response.json({ message: 'Temporarily unavailable' }, { status: 503 }) : new Response(null, { status: 204 });
+    }
+    reads++;
+    return Response.json(organizationProfile(reads, reads < 2 ? 'Synthetic Org' : 'New saved name'), { headers: { ETag: `"organization-21-r${reads}"` } });
+  });
+  render(OrganizationEditor, { controller, organization: organization(), onDone });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+  await screen.findByText("Couldn't delete this organization.");
+  expect(screen.getByRole('button', { name: 'Delete' })).toBeDefined();
+  await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+  expect(deletes).toBe(2);
+});
+
+it('shows the new holder when a job appears after the deletion check', async () => {
+  let checks = 0;
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input), path = pathOf(request);
+    if (path === '/api/v1/organizations/21/employments') return Response.json({ employments: ++checks === 1 ? [] : [employment(11, 1, { person_id: 7 })] });
+    if (path === '/api/v1/people/7') return Response.json({ display_name: 'Synthetic Person' });
+    if (path === '/api/v1/organizations/21' && request.method === 'DELETE') return Response.json({ error: 'organization_has_employments', message: 'Organization still has employment records' }, { status: 409 });
+    if (path === '/api/v1/organizations/21') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+    throw new Error(`unexpected ${request.method} ${path}`);
+  });
+  render(OrganizationEditor, { controller, organization: organization(), onOpenPerson: vi.fn() });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+  expect(await screen.findByRole('button', { name: 'Synthetic Person' })).toBeDefined();
+  expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+});
+
+it('shows a failed holder profile read as a failed check and retries it', async () => {
+  let reads = 0;
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (pathOf(request).endsWith('/employments')) return Response.json({ employments: [employment(11, 1, { person_id: 7, is_current: false })] });
+    if (pathOf(request) === '/api/v1/people/7') return ++reads === 1
+      ? Response.json({ message: 'Profile unavailable' }, { status: 503 })
+      : Response.json({ display_name: 'Synthetic Person' });
+    return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+  });
+  render(OrganizationEditor, { controller, organization: organization() });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
+  await screen.findByText("Couldn't check jobs.");
+  expect(screen.queryByText('Unnamed person')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+  await fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+  expect(await screen.findByText('Synthetic Person')).toBeDefined();
+});
+
+it.each(['organization save', 'aliases save'] as const)('shows the latest notice after a failed %s', async firstFailure => {
+  const methods: string[] = [];
+  const onDone = vi.fn();
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (request.method === 'GET') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+    methods.push(request.method);
+    if (firstFailure === 'organization save') {
+      return request.method === 'PATCH'
+        ? Response.json({ error: 'organization_revision_conflict', message: 'Changed elsewhere' }, { status: 409 })
+        : Response.json({ message: 'Disk full' }, { status: 500 });
+    }
+    return request.method === 'PUT'
+      ? Response.json({ message: 'Profile unavailable' }, { status: 503 })
+      : Response.json({ message: 'primary domain "bad domain" is not a valid domain' }, { status: 400 });
+  });
+  render(OrganizationEditor, { controller, organization: organization(), onDone });
+  const aliases = await screen.findByRole('textbox', { name: 'Organization aliases' });
+  const domain = screen.getByRole('textbox', { name: 'Organization domain' });
+  if (firstFailure === 'organization save') {
+    await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
+    await fireEvent.input(aliases, { target: { value: 'Synthetic Works, Draft alias' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+    await screen.findByText('This organization changed since you opened it.');
+    await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
+    await screen.findByText("Couldn't save the aliases and categories.");
+    expect(screen.queryByText('This organization changed since you opened it.')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Save organization' })).toBeDefined();
+  } else {
+    await fireEvent.input(aliases, { target: { value: 'Draft alias' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
+    await screen.findByText("Couldn't save the aliases and categories.");
+    await fireEvent.input(domain, { target: { value: 'bad domain' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+    await screen.findByText("Couldn't save this organization.");
+    expect(screen.queryByText("Couldn't save the aliases and categories.")).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(methods).toEqual(['PUT', 'PATCH', 'PATCH']));
+  }
+});
+
+it.each(['retirement', 'media', 'facts', 'names', 'categories'])('shows saved %s in an organization conflict', async section => {
+  let reads = 0;
+  const saved = richOrganizationProfile(2);
+  saved.names[0].envelope.vcard = { ...saved.names[0].envelope.vcard, altid: 'legal-name-variant' } as typeof saved.names[0]['envelope']['vcard'];
+  saved.categories[0].envelope.vcard = { ...saved.categories[0].envelope.vcard, altid: 'category-variant' } as typeof saved.categories[0]['envelope']['vcard'];
+  if (section === 'retirement') Object.assign(saved.organization, { retired_at: '2025-01-06T00:00:00Z' });
+  if (section === 'media') Object.assign(saved.media[0], { original_value: 'https://example.org/logo.png', uri: 'https://example.org/logo.png' });
+  const { controller } = controllerWith(async input => {
+    if (requestOf(input).method === 'PATCH') return Response.json({ error: 'organization_revision_conflict', message: 'Changed elsewhere' }, { status: 409 });
+    return Response.json(++reads === 1 ? organizationProfile() : saved, { headers: { ETag: `"organization-21-r${reads}"` } });
+  });
+  render(OrganizationEditor, { controller, organization: organization() });
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+  const alert = (await screen.findByText('This organization changed since you opened it.')).closest('.inline-notice') as HTMLElement;
+  if (section === 'retirement') expect(within(alert).getByText('Status', { selector: 'dt' }).nextElementSibling?.textContent).toContain('Jan 6, 2025');
+  if (section === 'media') expect(within(alert).getByRole('region', { name: 'Media' }).textContent!.split('https://example.org/logo.png')).toHaveLength(2);
+  if (section === 'facts') {
+    expect(within(alert).queryByRole('button', { name: 'Details' })).toBeNull();
+    expect(within(alert).getByText('concurrent@example.test')).toBeDefined();
+  }
+  if (section === 'names' || section === 'categories') {
+    // A saved value shows once, in its group, with its own details.
+    expect(within(alert).getAllByText(section === 'names' ? 'Synthetic Legal Ltd' : 'Research')).toHaveLength(1);
+    const value = within(alert).getByRole('region', { name: section === 'names' ? 'Name Synthetic Legal Ltd' : 'Category Research' });
+    expect(within(value).getByText('Source reference').nextElementSibling?.textContent).toBe('card-42');
+    expect(within(alert).getByText(section === 'names' ? 'legal-name-variant' : 'category-variant')).toBeDefined();
+  }
 });

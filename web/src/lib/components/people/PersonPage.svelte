@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { Button, EmptyState, SegmentedControl } from '@kenn-io/kit-ui';
+  import EmptyLine from '../common/EmptyLine.svelte';
   import type { APIClient } from '../../api/client';
   import type { DirectoryController } from '../../directory/controller.svelte';
   import PersonDetails from './PersonDetails.svelte';
@@ -18,6 +19,7 @@
   import { RELATIONSHIP_READER_HISTORY_KEY, relationshipReaderHistory } from '../../relationships/reader-history';
   import FilesWorkspace from '../files/FilesWorkspace.svelte';
   import PersonHeader from './PersonHeader.svelte';
+  import InlineNotice from '../common/InlineNotice.svelte';
   import PersonMessages from './PersonMessages.svelte';
   import DomainCalendar from './DomainCalendar.svelte';
 
@@ -111,18 +113,18 @@
     onOpenItem={onOpenFileItem} onOpenConversation={onOpenFileConversation} /></div>
 {/snippet}
 
-<section class="person-page" role="group" aria-label="Person page">
+<section class="person-page" class:details-open={details} role="group" aria-label="Person page">
   {#if staleLink}<div class="summary-error" role="alert">Identity saved; the cache refresh failed.<Button label="Retry" onclick={() => void retryLink()} /></div>{/if}
   {#if durablePersonID !== null || (detail && !controller.detailMissing)}
     <PersonHeader {name} {email} domain={Boolean(domain)} {onBack} onOpenDetails={() => details = true}>
       {#snippet actions()}
         {#if !domain}<Button label="Merge with…" onclick={() => mergeOpen = true} />{/if}
         {#if profileID !== null && savedProfile}{#key savedProfile}<PersonRecordActions {client} controller={savedProfile} personID={profileID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} onDeleted={onRecordDeleted} {onSplitCommitted} {onOpenCardDAVConflict} {onOpenCardDAVSettings} onSetUpTracking={sweepConfigured === false ? () => onOpenSettings?.('enrichment') : undefined} />{/key}
-        {:else if person && profileID === null}<Button label={saving ? 'Saving…' : 'Save'} disabled={saving} onclick={() => void savePerson()} />{/if}
+        {:else if person && profileID === null}<Button label={saving ? 'Saving…' : 'Save'} disabled={saving} onclick={() => void savePerson()} />
+        {:else if directory.detailLoading && durablePersonID !== null && !details}<span class="header-status" role="status">Loading details…</span>{/if}
       {/snippet}
     </PersonHeader>
   {/if}
-  {#if directory.detailLoading && durablePersonID !== null && !details}<p role="status">Loading details…</p>{/if}
   {#if controller.timelineLoading && !detail && durablePersonID === null}
     <p role="status">Loading…</p>{#if onBack}<Button label="Back to People" onclick={onBack} />{/if}
   {:else if controller.detailMissing && durablePersonID === null}
@@ -133,7 +135,7 @@
     {#if onBack}<Button label="Back to People" onclick={onBack} />{/if}
     {#if controller.timelineError && target}<Button label="Retry" onclick={() => target && controller.openTarget(target, predicate)} />{/if}
   {:else}
-    {#if directory.promotionError}<p role="alert">{directory.promotionError}<Button label="Retry Save" onclick={() => void savePerson()} /></p>{/if}
+    {#if directory.promotionError}<InlineNotice message="Couldn't save this person." details={directory.promotionError} actionLabel="Retry" onaction={() => void savePerson()} />{/if}
     {#if controller.timelineError}
       <div class="summary-error" role="alert"><span>{controller.timelineError}</span><Button label="Retry" onclick={() => target && controller.openTarget(target, predicate)} /></div>
     {/if}
@@ -166,14 +168,16 @@
       {/key}
     {/if}
   {/if}
-  <div class="details" hidden={!details}>
+  <div class="details" hidden={!details} data-scroll-pane>
     {#if profileID !== null && details}
       {#key profileID}<PersonDetails {onOpenMeeting} {sweepConfigured} {client} {directory} personID={profileID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} {onOpenSettings} />{/key}
     {/if}
     {#if detail && !controller.detailMissing}
-      <PersonAddresses {detail} {onAnnounce} onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b).then(refreshSaved)} />
+      {#if profileID === null || !directory.detailLoading}
+        <PersonAddresses {detail} {onAnnounce} listedInDetails={savedProfile?.structuredProfile?.contact_points ?? []} onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b).then(refreshSaved)} />
+      {/if}
       {#if controller.headerState === 'no-mail'}
-        <p>No sent or received messages with this contact yet.</p>
+        <EmptyLine message={`No messages with ${savedProfile?.person?.display_name ?? person?.display_label ?? 'this person'} yet`} />
       {:else if 'domain' in detail}
         <p>{detail.activity_count.toLocaleString()} items{#if detail.activity_count > 0 && detail.first_at && detail.last_at} · {formatContactDate(detail.first_at)} – {formatContactDate(detail.last_at)}{/if} · {(detail as DomainSummary).person_count.toLocaleString()} people</p>
       {/if}
@@ -183,11 +187,24 @@
 </section>
 
 <style>
+  .header-status { color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
   .person-page { display: flex; min-width: 0; min-height: 0; width: 100%; height: 100%; flex-direction: column; overflow: auto; }
+  /* Desktop Details scrolls below its header and tabs; phones scroll the whole person page. */
+  .person-page.details-open { overflow: hidden; }
   .calendar { width: 100%; max-width: 960px; margin-inline: auto; padding: var(--pane-pad-y) var(--page-gutter); box-sizing: border-box; }
-  .tabs { padding: var(--space-3) var(--page-gutter); border-bottom: 1px solid var(--border-muted); }
+  /* Messages | Files | Details: a 28 segmented control 8 below the header, at the pane's 16 inset. */
+  .tabs { flex: none; padding: var(--space-group) var(--space-pane); border-bottom: 1px solid var(--border-muted); }
   .files { display: flex; min-height: 0; flex: 1; padding: var(--pane-pad-y) var(--page-gutter) var(--page-gutter); }
-  .details:not([hidden]) { display: flex; flex-direction: column; gap: var(--space-7); padding: var(--pane-pad-y) var(--page-gutter) var(--space-8); }
-  .details > :global(*) { max-width: 720px; }
-  .summary-error { display: flex; align-items: center; gap: var(--space-3); padding: var(--pane-pad-y) var(--page-gutter); }
+  /* The Details pane reserves the 8px bar (data-scroll-pane pads its right side 8 less than its left), so rows
+   * keep a 16 inset on both sides and never shift when the bar appears. 16 above, 24 between sections, and
+   * 32 after the last one. It fills its column up to 880. */
+  .details:not([hidden]) { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: var(--space-section); padding-block: var(--space-pane) var(--space-end); }
+  .details > :global(*) { width: 100%; max-width: 880px; box-sizing: border-box; }
+  .details > :global(p) { margin: 0; color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
+  .summary-error { display: flex; align-items: center; gap: var(--space-group); padding: var(--space-group) var(--space-pane); }
+  @media (max-width: 640px) {
+    .person-page.details-open { overflow: auto; }
+    .tabs { padding-inline: var(--page-gutter); }
+    .details:not([hidden]) { flex: none; overflow: visible; scrollbar-gutter: auto; will-change: auto; padding-inline: var(--page-gutter); }
+  }
 </style>

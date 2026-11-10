@@ -5,6 +5,7 @@
     AttributeChoice as GeneratedAttributeChoice,
     CreateAttributeDefinitionRequest as GeneratedCreateAttributeDefinitionRequest,
   } from '../../api/generated/models';
+  import { valueTypeOptions } from '../../directory/field-options';
   import { trimAttributeText } from '../../directory/attribute-text';
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 
@@ -29,16 +30,6 @@
 
   const hasChoices = $derived(choices.split(/\r?\n/).some((line) => trimAttributeText(line) !== ''));
 
-  const valueTypeOptions = [
-    { value: 'text', label: 'Text' },
-    { value: 'integer', label: 'Integer' },
-    { value: 'real', label: 'Number' },
-    { value: 'boolean', label: 'Boolean' },
-    { value: 'date', label: 'Date' },
-    { value: 'timestamp', label: 'Timestamp' },
-    { value: 'json', label: 'JSON' },
-    { value: 'record_reference', label: 'Person reference' },
-  ];
   const cardinalityOptions = [
     { value: 'single', label: 'Single value' },
     { value: 'multi', label: 'Multiple values' },
