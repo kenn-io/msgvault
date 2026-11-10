@@ -386,18 +386,17 @@ var listStreams = []listStream{
 
 // listCursor is how far one list came. A list is read in order of update,
 // each request asking for what was updated at or after Through, so a
-// thread updated during a scan moves ahead and is read later. A run of more
-// than a page of threads updated at the same instant is read by page
-// number, since these lists have no keyset paging; a thread in that run
-// updated mid-scan shifts the run by one, and the thread shifted onto a page
-// already read is missed until something lists it again.
+// thread updated during a scan moves ahead and is read later. These lists
+// have no keyset paging, so a run of more than a page of threads updated at
+// the same instant is read by their creation time, which never changes,
+// rather than by page number, which a thread leaving the run would shift.
 type listCursor struct {
 	Through time.Time `json:"through,omitzero"`
 	// Seen are the threads updated at Through already read.
 	Seen []string `json:"seen,omitempty"`
-	// NextPage is the next page at Through during a scan. A newer
-	// Through starts again at page 1; zero means no scan is in progress.
-	NextPage int `json:"next_page,omitzero"`
+	// CreatedFrom is set while the threads updated at Through are read by
+	// creation time: those created before it are read.
+	CreatedFrom time.Time `json:"created_from,omitzero"`
 }
 
 // advance records a thread read in update order.
@@ -456,54 +455,134 @@ func updatedAfter(at time.Time) string {
 // scanList reads one list, all states and archived projects included, in
 // order of update from the list's position.
 func (f *Forge) scanList(ctx context.Context, state *cursor, list listStream, owners forge.OwnerFilter, page pageFunc) error {
-	cur := state.Lists[list.key()]
 	for {
-		number := max(cur.NextPage, 1)
-		query := url.Values{
-			"scope": {list.scope}, "state": {"all"}, "order_by": {"updated_at"}, "sort": {"asc"},
-			"per_page": {strconv.Itoa(perPage)}, "page": {strconv.Itoa(number)},
-		}
-		if list.resource == resourceIssues {
-			query.Set("non_archived", "false")
-		}
-		if !cur.Through.IsZero() {
-			query.Set("updated_after", updatedAfter(cur.Through))
-		}
-		var batch []listItem
-		if _, err := f.client.get(ctx, "/"+list.resource, query, &batch); err != nil {
-			return fmt.Errorf("list GitLab %s: %w", strings.ReplaceAll(list.key(), "_", " "), err)
+		cur := state.Lists[list.key()]
+		if !cur.CreatedFrom.IsZero() {
+			if err := f.readInstant(ctx, state, list, owners, page); err != nil {
+				return err
+			}
+			continue
 		}
 		through := cur.Through
-		var refs []forge.ThreadRef
-		for _, item := range batch {
-			ref, ok := f.listRef(list.resource, item)
-			if !ok || cur.seen(item.UpdatedAt, ref.Key) {
-				continue
-			}
-			cur.advance(item.UpdatedAt, ref.Key)
-			if owners.Allows(ref.Owner) {
-				refs = append(refs, ref)
-			}
+		batch, err := f.listPage(ctx, list, through, nil)
+		if err != nil {
+			return err
 		}
-		// Ask again from the new position; a page that all shares one
-		// update time is passed by page number instead. Save that next
-		// request before reporting, since the callback can stop the scan.
-		switch {
-		case len(batch) < perPage:
-			cur.NextPage = 0
-		case cur.Through.After(through):
-			cur.NextPage = 1
-		default:
-			cur.NextPage = number + 1
+		refs := f.readListItems(list, batch, &cur, owners, nil)
+		full := len(batch) == perPage
+		// Decide the next request before reporting, since the callback can
+		// stop the scan.
+		if full && !cur.Through.After(through) {
+			if last := batch[len(batch)-1].UpdatedAt; last.Equal(through) {
+				// The whole page was updated at through: read that instant
+				// by creation time.
+				cur.CreatedFrom = firstCreated
+			} else {
+				// No thread of the page could be read: move on to its last
+				// instant, whose threads may continue on the next page.
+				cur.Through, cur.Seen = last, nil
+			}
 		}
 		state.Lists[list.key()] = cur
 		if err := page(refs, state.encode()); err != nil {
 			return err
 		}
-		if cur.NextPage == 0 {
+		if !full {
 			return nil
 		}
 	}
+}
+
+// firstCreated is the earliest creation time a list request names.
+var firstCreated = time.Unix(0, 0).UTC()
+
+// createdRange bounds a list request by creation time, both ends included.
+type createdRange struct{ from, to time.Time }
+
+// listPage requests the first page of a list from through on, oldest update
+// first, within created when it is set.
+func (f *Forge) listPage(ctx context.Context, list listStream, through time.Time, created *createdRange) ([]listItem, error) {
+	query := url.Values{
+		"scope": {list.scope}, "state": {"all"}, "order_by": {"updated_at"}, "sort": {"asc"},
+		"per_page": {strconv.Itoa(perPage)},
+	}
+	if list.resource == resourceIssues {
+		query.Set("non_archived", "false")
+	}
+	if !through.IsZero() {
+		query.Set("updated_after", updatedAfter(through))
+	}
+	if created != nil {
+		query.Set("created_after", updatedAfter(created.from))
+		query.Set("created_before", updatedAfter(created.to))
+	}
+	var batch []listItem
+	if _, err := f.client.get(ctx, "/"+list.resource, query, &batch); err != nil {
+		return nil, fmt.Errorf("list GitLab %s: %w", strings.ReplaceAll(list.key(), "_", " "), err)
+	}
+	return batch, nil
+}
+
+// readListItems records the items of a page not read before and returns
+// the threads the owner filter allows. With only set, it reads only the
+// items updated at that instant.
+func (f *Forge) readListItems(list listStream, batch []listItem, cur *listCursor, owners forge.OwnerFilter, only *time.Time) []forge.ThreadRef {
+	var refs []forge.ThreadRef
+	for _, item := range batch {
+		if only != nil && !item.UpdatedAt.Equal(*only) {
+			continue
+		}
+		ref, ok := f.listRef(list.resource, item)
+		if !ok || cur.seen(item.UpdatedAt, ref.Key) {
+			continue
+		}
+		cur.advance(item.UpdatedAt, ref.Key)
+		if owners.Allows(ref.Owner) {
+			refs = append(refs, ref)
+		}
+	}
+	return refs
+}
+
+// readInstant reads the threads of a list updated at its Through, more than
+// a page of them, from its CreatedFrom on, by halving their creation time
+// until each range fits in a page, oldest range first. Neighbouring ranges
+// share their boundary, since GitLab keeps finer times than a request
+// names; a thread read twice is seen. Each range read is saved, and the
+// last one moves the list past the instant: GitLab keeps update times to
+// the millisecond.
+func (f *Forge) readInstant(ctx context.Context, state *cursor, list listStream, owners forge.OwnerFilter, page pageFunc) error {
+	at := state.Lists[list.key()].Through
+	end := at.Add(time.Millisecond) // a thread is created no later than it is updated
+	var bisect func(created createdRange) error
+	bisect = func(created createdRange) error {
+		batch, err := f.listPage(ctx, list, at, &created)
+		if err != nil {
+			return err
+		}
+		// Oldest update first, so a page that ends past the instant holds
+		// all of the range's threads updated at it.
+		if len(batch) == perPage && batch[len(batch)-1].UpdatedAt.Equal(at) {
+			if created.to.Sub(created.from) < 2*time.Millisecond {
+				return fmt.Errorf("more than %d GitLab %s were created and updated in the same millisecond, at %s; discovery can't read past them",
+					perPage, strings.ReplaceAll(list.resource, "_", " "), updatedAfter(at))
+			}
+			middle := created.from.Add(created.to.Sub(created.from) / 2).Truncate(time.Millisecond)
+			if err := bisect(createdRange{from: created.from, to: middle}); err != nil {
+				return err
+			}
+			return bisect(createdRange{from: middle, to: created.to})
+		}
+		cur := state.Lists[list.key()]
+		refs := f.readListItems(list, batch, &cur, owners, &at)
+		cur.CreatedFrom = created.to
+		if !created.to.Before(end) {
+			cur = listCursor{Through: end}
+		}
+		state.Lists[list.key()] = cur
+		return page(refs, state.encode())
+	}
+	return bisect(createdRange{from: state.Lists[list.key()].CreatedFrom, to: end})
 }
 
 // knownCursor is how far the check of archived threads came. A check asks

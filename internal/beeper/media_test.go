@@ -1294,6 +1294,150 @@ func TestImportBoundsRepeatedAssetAttemptsAcrossIncrementalAndReconcile(t *testi
 	assert.Len(assetRequests(f), 3, "the incremental and reconcile passes share one retry budget")
 }
 
+func TestImportReconcileRetriesPendingMediaOnUnchangedMessage(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	ch := mediaChat()
+	ch.Msgs[0].Timestamp = time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	ch.LastActivity = ch.Msgs[0].Timestamp
+	f.addChat(ch)
+	f.setAssetError("mxc://beeper.local/photo1", http.StatusInternalServerError, `{"message":"temporary failure"}`)
+	imp, _, done := newTestImporter(t, f)
+	defer done()
+
+	opts := mediaImportOptions(t)
+	first, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.EqualValues(1, first.AttachmentsPending)
+
+	// The message itself is unchanged, but its media still needs a download.
+	f.setAsset("mxc://beeper.local/photo1", []byte("PNGDATA-xyz"))
+	retried, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.EqualValues(1, retried.AttachmentsDownloaded)
+	assert.EqualValues(1, retried.MessagesUpdated)
+
+	// Once the media is stored, the unchanged message is left alone.
+	f.resetRequests()
+	settled, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.Zero(settled.MessagesUpdated)
+	assert.EqualValues(1, settled.MessagesUnchanged)
+	assert.Empty(assetRequests(f))
+}
+
+func TestImportNoMediaEditClearsRemovedAttachments(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	ch := mediaChat()
+	ch.Msgs[0].Timestamp = time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	ch.LastActivity = ch.Msgs[0].Timestamp
+	f.addChat(ch)
+	f.setAsset("mxc://beeper.local/photo1", []byte("PNGDATA-xyz"))
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	opts := mediaImportOptions(t)
+	first, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	require.EqualValues(1, first.AttachmentsDownloaded)
+
+	// The sender edits the photo away; a --no-media run sees the edit.
+	msg := &f.chat("!media:beeper.local").Msgs[0]
+	msg.Type = ""
+	msg.Text = "photo removed"
+	msg.Attachments = nil
+	noMedia := opts
+	noMedia.NoMedia = true
+	_, err = imp.Import(t.Context(), noMedia)
+	require.NoError(err)
+
+	var rows int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT COUNT(*) FROM attachments a
+		JOIN messages m ON m.id = a.message_id
+		WHERE m.source_message_id = ?`), "p0").Scan(&rows))
+	assert.Zero(rows, "the removed attachment must not outlive the edit")
+}
+
+func TestImportReconcileRetriesFailedAttachmentCleanup(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	ch := mediaChat()
+	ch.Msgs[0].Timestamp = time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	ch.LastActivity = ch.Msgs[0].Timestamp
+	f.addChat(ch)
+	f.setAsset("mxc://beeper.local/photo1", []byte("PNGDATA-xyz"))
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	opts := mediaImportOptions(t)
+	_, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+
+	// The photo is edited away, but clearing its row fails.
+	msg := &f.chat("!media:beeper.local").Msgs[0]
+	msg.Type = ""
+	msg.Text = "photo removed"
+	msg.Attachments = nil
+	release := failWrites(t, st, "attachments", "DELETE")
+	failed, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.Positive(failed.Errors)
+	release()
+
+	// The message is unchanged since then, so only its unfinished cleanup
+	// brings the re-check back to it.
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	var rows int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT COUNT(*) FROM attachments a
+		JOIN messages m ON m.id = a.message_id
+		WHERE m.source_message_id = ?`), "p0").Scan(&rows))
+	assert.Zero(rows)
+}
+
+func TestImportReconcileDownloadsMediaAfterSizeCapRises(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	ch := mediaChat()
+	ch.Msgs[0].Timestamp = time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	ch.LastActivity = ch.Msgs[0].Timestamp
+	f.addChat(ch)
+	f.setAsset("mxc://beeper.local/photo1", []byte("PNGDATA-xyz"))
+	imp, _, done := newTestImporter(t, f)
+	defer done()
+
+	opts := mediaImportOptions(t)
+	capped := opts
+	capped.MaxMediaBytes = 5
+	first, err := imp.Import(t.Context(), capped)
+	require.NoError(err)
+	require.EqualValues(1, first.AttachmentsSkipped)
+
+	// The message is unchanged, but the raised cap now allows its media.
+	raised, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	assert.EqualValues(1, raised.AttachmentsDownloaded)
+
+	settled, err := imp.Import(t.Context(), capped)
+	require.NoError(err)
+	assert.EqualValues(1, settled.MessagesUnchanged, "stored media stays settled under any cap")
+}
+
 func TestBackfillMediaDefinitiveLossKeepsUnavailableRow(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)

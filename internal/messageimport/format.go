@@ -46,22 +46,6 @@ type Snapshot struct {
 	SenderIdentifierType string
 }
 
-// canonicalMessage is the stored raw evidence: the normalized request
-// message. An unchanged retry produces identical bytes.
-type canonicalMessage struct {
-	ExternalID   string                    `json:"external_id"`
-	MessageType  string                    `json:"message_type"`
-	Conversation MessageImportConversation `json:"conversation"`
-	Sender       MessageImportSender       `json:"sender"`
-	Title        string                    `json:"title,omitempty"`
-	URL          string                    `json:"url,omitempty"`
-	SentAt       string                    `json:"sent_at"`
-	BodyMarkdown string                    `json:"body_markdown,omitempty"`
-	BodyHTML     string                    `json:"body_html,omitempty"`
-	BodyText     string                    `json:"body_text,omitempty"`
-	Metadata     map[string]any            `json:"metadata,omitempty"`
-}
-
 type messageMetadata struct {
 	Platform               string         `json:"platform"`
 	SourceIdentifier       string         `json:"source_identifier"`
@@ -71,8 +55,10 @@ type messageMetadata struct {
 	ProviderMetadata       map[string]any `json:"provider_metadata,omitempty"`
 }
 
+// BuildSnapshot stores the normalized message as raw evidence, so an
+// unchanged retry produces identical bytes.
 func BuildSnapshot(req NormalizedRequest) (Snapshot, error) {
-	snapshot, err := buildMessageSnapshot(SourceType, req.Source.Identifier, req.Message)
+	snapshot, err := buildMessageSnapshot(SourceType, req.Source.Identifier, req)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -81,10 +67,11 @@ func BuildSnapshot(req NormalizedRequest) (Snapshot, error) {
 	return snapshot, nil
 }
 
-// buildMessageSnapshot builds the stored form of one message for a source of
-// type platform.
-func buildMessageSnapshot(platform, sourceIdentifier string, message NormalizedMessage) (Snapshot, error) {
-	raw, err := json.Marshal(buildCanonicalMessage(message), json.Deterministic(true))
+// buildMessageSnapshot builds the stored form of one normalized message for a
+// source of type platform.
+func buildMessageSnapshot(platform, sourceIdentifier string, req NormalizedRequest) (Snapshot, error) {
+	message := req.Message
+	raw, err := json.Marshal(message, json.Deterministic(true))
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("marshal canonical message: %w", err)
 	}
@@ -100,7 +87,7 @@ func buildMessageSnapshot(platform, sourceIdentifier string, message NormalizedM
 		return Snapshot{}, fmt.Errorf("marshal message metadata: %w", err)
 	}
 
-	bodyText, bodyHTML := renderBodies(message)
+	bodyText, bodyHTML := renderBodies(req.Body, req.BodyFormat, message.URL)
 	return Snapshot{
 		SourceType:           platform,
 		SourceIdentifier:     sourceIdentifier,
@@ -109,7 +96,7 @@ func buildMessageSnapshot(platform, sourceIdentifier string, message NormalizedM
 		ConversationTitle:    message.Conversation.Title,
 		MessageType:          message.MessageType,
 		Title:                message.Title,
-		SentAt:               message.SentAt.UTC(),
+		SentAt:               req.SentAt,
 		BodyText:             bodyText,
 		BodyHTML:             bodyHTML,
 		Snippet:              textutil.PrefixRunes(bodyText, 200),
@@ -124,47 +111,24 @@ func buildMessageSnapshot(platform, sourceIdentifier string, message NormalizedM
 // renderBodies returns the stored plain-text body and, for HTML messages,
 // the HTML body. Markdown is stored as text. The message URL ends both, so
 // readers can open the original and search can find it.
-func renderBodies(message NormalizedMessage) (string, string) {
-	text, htmlBody := message.Body, ""
-	if message.BodyFormat == BodyFormatHTML {
-		text, htmlBody = mime.StripHTML(message.Body), message.Body
+func renderBodies(body string, format BodyFormat, messageURL string) (string, string) {
+	text, htmlBody := body, ""
+	if format == BodyFormatHTML {
+		text, htmlBody = mime.StripHTML(body), body
 	}
-	if message.URL == "" {
+	if messageURL == "" {
 		return text, htmlBody
 	}
 	if text == "" {
-		text = message.URL
+		text = messageURL
 	} else {
-		text += "\n\n" + message.URL
+		text += "\n\n" + messageURL
 	}
 	if htmlBody != "" {
-		escaped := html.EscapeString(message.URL)
+		escaped := html.EscapeString(messageURL)
 		htmlBody += "\n<p><a href=\"" + escaped + "\">" + escaped + "</a></p>"
 	}
 	return text, htmlBody
-}
-
-func buildCanonicalMessage(message NormalizedMessage) canonicalMessage {
-	out := canonicalMessage{
-		ExternalID:   message.ExternalID,
-		MessageType:  message.MessageType,
-		Conversation: message.Conversation,
-		Sender:       message.Sender,
-		Title:        message.Title,
-		URL:          message.URL,
-		SentAt:       message.SentAt.UTC().Format(time.RFC3339Nano),
-		Metadata:     message.Metadata,
-	}
-	switch message.BodyFormat {
-	case BodyFormatMarkdown:
-		out.BodyMarkdown = message.Body
-	case BodyFormatHTML:
-		out.BodyHTML = message.Body
-	case BodyFormatText:
-		out.BodyText = message.Body
-	case BodyFormatNone:
-	}
-	return out
 }
 
 // senderIdentifier is the participant identifier value of a sender without

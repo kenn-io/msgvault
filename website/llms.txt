@@ -34,7 +34,7 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 - [Terminal UI](https://msgvault.io/docs/usage/tui.md)
 - [Searching](https://msgvault.io/docs/usage/searching.md): query syntax and modes
 - [Semantic and Visual Search](https://msgvault.io/docs/usage/vector-search.md): semantic and hybrid setup
-- [Document Attachment Indexing](https://msgvault.io/docs/usage/document-indexing.md): Docbank-backed extraction
+- [Docbank document search](https://msgvault.io/docs/configuration/#search-document-text-through-docbank-unreleased): Docbank-backed extraction
 - [Recommended Configuration](https://msgvault.io/docs/usage/recommended-configuration.md)
 - [Analytics and Stats](https://msgvault.io/docs/usage/analytics.md)
 - [SQL Queries](https://msgvault.io/docs/usage/querying.md)
@@ -53,6 +53,8 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 - [Beeper](https://msgvault.io/docs/usage/beeper.md)
 - [Inline](https://msgvault.io/docs/usage/inline.md): all accessible chats through OAuth MCP or the authenticated Inline CLI, with optional chat filters and a complete-catalog prerequisite
 - [Chatwoot](https://msgvault.io/docs/guides/chatwoot.md): shared inboxes, employee attribution, media, and calls
+- [Facebook Page comments](https://msgvault.io/docs/usage/facebook-comments.md): `source facebook-comments add` and `source facebook-comments sync`, coverage, and cursor recovery (unreleased)
+- [Instagram comments](https://msgvault.io/docs/usage/instagram-comments.md): `source instagram-comments add` and `source instagram-comments sync`, linked professional account comments and resumable media conversations (unreleased)
 - [Matrix](https://msgvault.io/docs/usage/matrix.md)
 - [Slack](https://msgvault.io/docs/usage/slack.md)
 - [Code Forges](https://msgvault.io/docs/usage/forges.md): GitHub, GitLab, Gitea, and Forgejo issues, pull and merge requests, reviews, discussions, and watched GitHub releases, with owner filters

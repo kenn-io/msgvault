@@ -1314,7 +1314,11 @@ func TestOpenAPIBinaryRoutesDocumentJSONErrors(t *testing.T) {
 		},
 		"/api/v1/cli/attachment": {
 			operationID: "getCLIAttachment",
-			statuses:    []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound, http.StatusInternalServerError, http.StatusServiceUnavailable},
+			statuses:    []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusInternalServerError, http.StatusServiceUnavailable},
+		},
+		"/api/v1/attachments/{hash}/content": {
+			operationID: "getAttachmentContent",
+			statuses:    []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusInternalServerError, http.StatusServiceUnavailable},
 		},
 		"/api/v1/messages/{id}/inline": {
 			operationID: "getMessageInlinePart",
@@ -1546,9 +1550,7 @@ func TestOpenAPIClientOperationCounterUnitNamesCannotCollideWithExistingExports(
 	assertions.Equal([]any{
 		"OperationPublicCounterUnitAttachments",
 		"OperationPublicCounterUnitBooks",
-		"OperationPublicCounterUnitChunks",
 		"OperationPublicCounterUnitContacts",
-		"OperationPublicCounterUnitDocuments",
 		"OperationPublicCounterUnitMessages",
 		"OperationPublicCounterUnitPeople",
 		"OperationPublicCounterUnitWrites",
@@ -1973,7 +1975,7 @@ func TestOpenAPIOperationEnumsAndNonNullCollections(t *testing.T) {
 			"state":   operationStateValues(),
 			"trigger": {"manual", "scheduled"},
 			"related_status": {
-				"listSourceStatus", "getDocumentIndexStatus", "getDocumentVectorStatus",
+				"listSourceStatus",
 				"getVisualAttachmentStatus", "getCardDAVStatus",
 			},
 			"supported_actions": {"carddav_sync", "visual_build", "visual_resume"},
@@ -1987,7 +1989,7 @@ func TestOpenAPIOperationEnumsAndNonNullCollections(t *testing.T) {
 			"lane":                 operationLaneValues(),
 			"history_availability": {"available", "unavailable"},
 			"related_status": {
-				"listSourceStatus", "getDocumentIndexStatus", "getDocumentVectorStatus",
+				"listSourceStatus",
 				"getVisualAttachmentStatus", "getCardDAVStatus",
 			},
 			"supported_actions": {"carddav_sync", "visual_build", "visual_resume"},

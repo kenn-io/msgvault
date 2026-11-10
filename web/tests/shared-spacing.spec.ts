@@ -1,6 +1,6 @@
 import { stubOperationStatus } from './kit-ui';
 import { expect, test, type Page } from '@playwright/test';
-import { selectWorkspace } from './kit-ui';
+import { expectKitTheme, selectWorkspace } from './kit-ui';
 
 import { candidate, directoryPerson, person } from '../src/lib/directory/entity-fixtures.test-support';
 import { emptyProfile } from '../src/lib/directory/profile-fixtures.test-support';
@@ -398,6 +398,7 @@ test('chips keep pill corners and removable chips keep visible insets', async ({
     expect.soft(shape.radius).toBeGreaterThanOrEqual(shape.height / 2);
   }
   await page.emulateMedia({ colorScheme: 'dark' });
+  await expectKitTheme(page, 'dark');
   const borderColor = await page.evaluate(() => {
     const reference = document.createElement('span');
     reference.style.color = 'var(--border-muted)';

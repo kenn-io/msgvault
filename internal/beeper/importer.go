@@ -1,8 +1,10 @@
 package beeper
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -73,6 +75,7 @@ type chatScope struct {
 	sourceID           int64
 	syncID             int64
 	opts               ImportOptions
+	state              *SyncState
 	cs                 *ChatState
 	membershipComplete bool
 	budgetUsed         int
@@ -851,7 +854,7 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 	}
 	cc := &chatScope{
 		chatID: ch.ID, convID: convID, sourceID: sourceID, syncID: syncID,
-		opts: opts, cs: cs, membershipComplete: membershipComplete,
+		opts: opts, state: state, cs: cs, membershipComplete: membershipComplete,
 		tailScan: tailScan,
 	}
 	cc.opts.MediaConversation = attachmentpolicy.Conversation{
@@ -1349,11 +1352,10 @@ func (imp *Importer) backfillChat(ctx context.Context, cc *chatScope, state *Syn
 		// the oldest messages under a synthetic decrementing cursor, still with
 		// hasMore=true. Skip items this walk already persisted and treat a page
 		// with nothing new as end-of-history.
-		pageIDs := make([]string, 0, len(page.Items))
+		pageIDs := pageMessageIDs(page.Items)
 		newItems := 0
 		for i := range page.Items {
 			m := &page.Items[i]
-			pageIDs = append(pageIDs, m.ID)
 			if recent.contains(m.ID) {
 				continue
 			}
@@ -1477,11 +1479,14 @@ func (imp *Importer) incrementalChat(ctx context.Context, cc *chatScope, sum *Im
 }
 
 // reconcileChat re-walks the head of the chat (newest-ward pages) re-upserting
-// messages newer than cutoff. This catches in-place edits, deletions, and
-// reaction changes on recent messages, which the forward-only incremental
-// cursor cannot observe. Changes older than the window are only repaired by
-// --full runs (documented limitation).
+// messages newer than cutoff that changed since they were archived. This
+// catches in-place edits, deletions, and reaction changes on recent messages,
+// which the forward-only incremental cursor cannot observe. Messages that
+// match their archived copy are skipped, so a frequent schedule does not
+// rewrite the whole window on every run. Changes older than the window are
+// only repaired by --full runs (documented limitation).
 func (imp *Importer) reconcileChat(ctx context.Context, cc *chatScope, cutoff time.Time, sum *ImportSummary) error {
+	cc.cs.pruneUnfinished(cutoff)
 	cursor, direction := "", ""
 	for range maxReconcilePages {
 		if err := ctx.Err(); err != nil {
@@ -1501,6 +1506,10 @@ func (imp *Importer) reconcileChat(ctx context.Context, cc *chatScope, cutoff ti
 			}
 			return imp.recordChatFetchError(ctx, cc, sum, err)
 		}
+		archived, err := imp.store.StoredMessagesContext(ctx, cc.sourceID, rawArchiveFormat, pageMessageIDs(page.Items))
+		if err != nil {
+			return fmt.Errorf("look up archived Beeper messages: %w", err)
+		}
 		reachedCutoff := false
 		processed := 0
 		for i := range page.Items {
@@ -1509,8 +1518,25 @@ func (imp *Importer) reconcileChat(ctx context.Context, cc *chatScope, cutoff ti
 				reachedCutoff = true
 				continue
 			}
-			// Targets in this window are re-persisted anyway, refreshing
-			// their embedded reactions[], so REACTION events need no refetch.
+			if prior, ok := archived[m.ID]; ok {
+				unchanged, err := imp.matchesArchive(ctx, cc, m, prior)
+				if err != nil {
+					return err
+				}
+				if unchanged {
+					// A reply archived before its parent links to nothing.
+					// Retry the link until the parent arrives; the chat's
+					// buffered pairs flush after the walk.
+					if m.LinkedMessageID != "" && !prior.ReplyToMessageID.Valid {
+						cc.cs.PendingReplies = append(cc.cs.PendingReplies, [2]string{m.ID, m.LinkedMessageID})
+					}
+					sum.MessagesUnchanged++
+					continue
+				}
+			}
+			// Targets in this window are re-persisted when they change,
+			// refreshing their embedded reactions[], so REACTION events need
+			// no refetch.
 			if err := imp.processMessage(ctx, cc, m, false, sum); err != nil {
 				if errors.Is(err, errRetryPage) && sum.Stopped {
 					return nil
@@ -1569,6 +1595,72 @@ func (imp *Importer) processMessage(ctx context.Context, cc *chatScope, m *Messa
 	return err
 }
 
+// matchesArchive reports whether m is unchanged since it was archived, so a
+// re-walk can skip rewriting it. The archived Beeper JSON carries every field
+// the API sends, including edits, deletion flags, and embedded reactions, and
+// persistMessage writes it last, so a match also means the earlier writes for
+// that message finished, unless a write failed and left it unfinished. A
+// message with media that still needs a download,
+// or that the current media policy no longer excludes, is treated as changed,
+// so the re-walk keeps retrying the fetch.
+func (imp *Importer) matchesArchive(ctx context.Context, cc *chatScope, m *Message, prior store.StoredMessage) (bool, error) {
+	if _, unfinished := cc.cs.Unfinished[m.ID]; unfinished || !persistsMessageRow(m) || !sameJSON(prior.Raw, m.Raw) {
+		return false, nil
+	}
+	if len(m.Attachments) == 0 || cc.opts.NoMedia || cc.opts.AttachmentsDir == "" {
+		return true, nil
+	}
+	policy := effectiveMediaPolicy(cc.opts)
+	existing, err := imp.store.MessageBeeperAttachments(ctx, prior.ID)
+	if err != nil {
+		return false, fmt.Errorf("load archived Beeper attachments: %w", err)
+	}
+	for i := range m.Attachments {
+		ref := assetRef(&m.Attachments[i])
+		if ref == "" {
+			continue
+		}
+		stored, ok := existing[beeperAttachmentID(ref)]
+		if !ok {
+			return false, nil
+		}
+		switch {
+		case stored.ContentHash != "",
+			stored.State == attachmentpolicy.StateUnavailable,
+			stored.State == attachmentpolicy.StateSkipped &&
+				policy.Evaluate(cc.opts.MediaConversation, int64(stored.Size)) != "":
+		default:
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// sameJSON reports whether two JSON values are equal, ignoring member order
+// and insignificant whitespace.
+func sameJSON(a, b jsontext.Value) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	if bytes.Equal(a, b) {
+		return true
+	}
+	ca, cb := slices.Clone(a), slices.Clone(b)
+	if ca.Canonicalize() != nil || cb.Canonicalize() != nil {
+		return false
+	}
+	return bytes.Equal(ca, cb)
+}
+
+// pageMessageIDs returns the Beeper message IDs on one page.
+func pageMessageIDs(items []Message) []string {
+	ids := make([]string, len(items))
+	for i := range items {
+		ids[i] = items[i].ID
+	}
+	return ids
+}
+
 // persistsMessageRow reports whether processMessage archives a message row.
 // Reactions update their target, deletions tombstone an existing row, and
 // hidden events are intentionally omitted.
@@ -1623,8 +1715,18 @@ func (imp *Importer) refreshReactionTarget(ctx context.Context, cc *chatScope, m
 // persistMessage writes a single message via the granular store path.
 // Store-level failures are fatal (they indicate DB problems, not item churn);
 // per-item auxiliary failures (FTS, recipients, reactions) are counted and
-// recorded but do not abort the run.
-func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Message, sum *ImportSummary) error {
+// recorded but do not abort the run. A rewrite of an archived message counts
+// as updated rather than added.
+func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Message, sum *ImportSummary) (err error) {
+	archived, err := imp.store.MessageExistsBatchContext(ctx, cc.sourceID, []string{m.ID})
+	if err != nil {
+		return fmt.Errorf("look up archived Beeper message: %w", err)
+	}
+	_, existed := archived[m.ID]
+	// A failed per-item write below marks the message unfinished, so the
+	// reconcile pass rewrites it even though its archived JSON matches.
+	// Failed downloads are excluded: their typed markers already drive retries.
+	errorsBefore := sum.Errors
 	msg, text := mapMessage(m, cc.convID, cc.sourceID)
 	senderPID, err := imp.res.resolveID(ctx, m.SenderID, m.SenderName)
 	if err != nil {
@@ -1642,24 +1744,19 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 	if err != nil {
 		return err
 	}
+	// The stored rows may now show a newer version than the archived JSON,
+	// which a later revert at the source would match. Any failure from here
+	// on marks the message unfinished so the reconcile pass still rewrites it.
+	marked := false
+	defer func() {
+		if err != nil && !marked {
+			// Cleanup must finish after cancellation.
+			err = errors.Join(err, imp.recordUnfinished(context.WithoutCancel(ctx), cc, m, sum))
+		}
+	}()
 	bodyHTML := MessageHTML(m)
 	if err := imp.store.UpsertMessageBodyContext(ctx, messageID, sql.NullString{String: text, Valid: text != ""}, sql.NullString{String: bodyHTML, Valid: bodyHTML != ""}); err != nil {
 		return err
-	}
-	// Archive the exact original message JSON. m.Raw is captured verbatim at
-	// decode time (Message.UnmarshalJSON) so it preserves every API field
-	// including ones we do not model; fall back to re-marshalling only if a
-	// message was constructed without going through a decode.
-	raw := []byte(m.Raw)
-	if len(raw) == 0 {
-		marshaled, merr := json.Marshal(m, json.Deterministic(true))
-		if merr != nil {
-			return fmt.Errorf("marshal beeper message raw archive: %w", merr)
-		}
-		raw = marshaled
-	}
-	if err := imp.store.UpsertMessageRawWithFormatContext(ctx, messageID, raw, "beeper_json"); err != nil {
-		return fmt.Errorf("archive beeper message raw: %w", err)
 	}
 	if err := imp.store.UpsertFTSContext(ctx, messageID, "", text, m.SenderName, "", ""); err != nil {
 		sum.Errors++
@@ -1670,20 +1767,50 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 		}
 	}
 
-	if len(m.Attachments) > 0 || (!cc.opts.NoMedia && cc.opts.AttachmentsDir != "") {
-		requestCtx, cancel := cc.opts.requestContext(ctx)
-		imp.persistAttachments(requestCtx, cc.syncID, messageID, cc.chatID, m, cc.opts, sum)
-		cancel()
-		if cc.opts.budgetExpired() {
-			sum.Stopped = true
-		}
+	// Runs even without media downloads, so an edit that removed every
+	// attachment clears the stale rows.
+	attachmentErrorsBefore := sum.Errors
+	requestCtx, cancel := cc.opts.requestContext(ctx)
+	attachmentsStored := imp.persistAttachments(requestCtx, cc.syncID, messageID, cc.chatID, m, cc.opts, sum)
+	cancel()
+	if cc.opts.budgetExpired() {
+		sum.Stopped = true
 	}
+	attachmentErrors := sum.Errors - attachmentErrorsBefore
 
 	if err := imp.persistMentions(ctx, messageID, m, sum); err != nil {
 		return err
 	}
 	if err := imp.persistReactions(ctx, messageID, m, sum); err != nil {
 		return err
+	}
+	// Archive the exact original message JSON. m.Raw is captured verbatim at
+	// decode time (Message.UnmarshalJSON) so it preserves every API field
+	// including ones we do not model; fall back to re-marshalling only if a
+	// message was constructed without going through a decode. It is written
+	// last because reconcileChat skips a message whose archived JSON matches:
+	// a run interrupted before this point must leave the message to be redone.
+	raw := []byte(m.Raw)
+	if len(raw) == 0 {
+		marshaled, merr := json.Marshal(m, json.Deterministic(true))
+		if merr != nil {
+			return fmt.Errorf("marshal beeper message raw archive: %w", merr)
+		}
+		raw = marshaled
+	}
+	unfinished := !attachmentsStored || sum.Errors-errorsBefore > attachmentErrors
+	if unfinished {
+		marked = true
+		// Cleanup must finish after cancellation.
+		if err := imp.recordUnfinished(context.WithoutCancel(ctx), cc, m, sum); err != nil {
+			return err
+		}
+	}
+	if err := imp.store.UpsertMessageRawWithFormatContext(ctx, messageID, raw, rawArchiveFormat); err != nil {
+		return fmt.Errorf("archive beeper message raw: %w", err)
+	}
+	if !unfinished {
+		delete(cc.cs.Unfinished, m.ID)
 	}
 
 	// Pages arrive newest-first, so a reply can precede its parent even
@@ -1693,7 +1820,23 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 		cc.cs.PendingReplies = append(cc.cs.PendingReplies, [2]string{m.ID, m.LinkedMessageID})
 	}
 
-	sum.MessagesAdded++
+	if existed {
+		sum.MessagesUpdated++
+	} else {
+		sum.MessagesAdded++
+	}
+	return nil
+}
+
+// recordUnfinished marks m unfinished and checkpoints the state at once. The
+// checkpoint must land before the message's JSON is archived: otherwise an
+// interrupted run could leave current JSON with no record that the message
+// still needs work, and the reconcile pass would skip it.
+func (imp *Importer) recordUnfinished(ctx context.Context, cc *chatScope, m *Message, sum *ImportSummary) error {
+	cc.cs.markUnfinished(m.ID, m.Timestamp)
+	if err := imp.checkpointNowContext(ctx, cc.syncID, cc.state, sum); err != nil {
+		return fmt.Errorf("checkpoint unfinished Beeper message: %w", err)
+	}
 	return nil
 }
 
@@ -1795,6 +1938,7 @@ func (imp *Importer) checkpointNowContext(ctx context.Context, syncID int64, sta
 		PageToken:         blob,
 		MessagesProcessed: sum.MessagesProcessed,
 		MessagesAdded:     sum.MessagesAdded,
+		MessagesUpdated:   sum.MessagesUpdated,
 		ErrorsCount:       sum.Errors + sum.RosterRepairErrors,
 	})
 	if err == nil {

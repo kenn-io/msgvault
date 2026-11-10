@@ -41,6 +41,8 @@ const (
 	runtimeShutdownToken            = "shutdown_token"
 	runtimeStartupPhase             = "startup_phase"
 	runtimeBackground               = "background"
+	runtimePersistent               = "persistent"
+	runtimeIdleTimeout              = "idle_timeout"
 	runtimeBackgroundValue          = "true"
 	minimumDaemonAPISchemaVersion   = "3.0.0"
 	runtimeStartupCacheBuildOutcome = "startup_cache_build_outcome"
@@ -81,7 +83,7 @@ func daemonRuntimeStore(dataDir string) daemon.RuntimeStore {
 	return daemon.RuntimeStore{Dir: dataDir}
 }
 
-func writeDaemonRuntime(dataDir string, host string, port int, version string, apiKey string) (daemon.RuntimeRecord, string, error) {
+func writeDaemonRuntime(dataDir string, host string, port int, version string, apiKey string, idleTimeout time.Duration) (daemon.RuntimeRecord, string, error) {
 	shutdownToken, err := newDaemonShutdownToken()
 	if err != nil {
 		return daemon.RuntimeRecord{}, "", fmt.Errorf("create shutdown token: %w", err)
@@ -92,6 +94,7 @@ func writeDaemonRuntime(dataDir string, host string, port int, version string, a
 	}
 	rec := daemon.NewRuntimeRecord(daemonService, version, ep)
 	rec.Metadata = map[string]string{
+		runtimeIdleTimeout:      idleTimeout.String(),
 		runtimeHost:             host,
 		runtimePort:             strconv.Itoa(port),
 		runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
@@ -105,6 +108,7 @@ func writeDaemonRuntime(dataDir string, host string, port int, version string, a
 	}
 	if os.Getenv(serveBackgroundChildEnv) == "1" {
 		rec.Metadata[runtimeBackground] = runtimeBackgroundValue
+		rec.Metadata[runtimePersistent] = strconv.FormatBool(os.Getenv(servePersistentChildEnv) == runtimeBackgroundValue)
 	}
 	if _, err := daemonRuntimeStore(dataDir).Write(rec); err != nil {
 		return daemon.RuntimeRecord{}, "", fmt.Errorf("write daemon runtime record: %w", err)
@@ -671,21 +675,31 @@ func shouldReportRetainedDaemonVersion(rt *DaemonRuntime, currentVersion string)
 		!update.IsNewer(cli, daemon) && !update.IsNewer(daemon, cli)
 }
 
-func reportRetainedDaemonVersion(ctx context.Context, w io.Writer, rt *DaemonRuntime) {
+func reportRetainedDaemonVersion(ctx context.Context, w io.Writer, rt *DaemonRuntime) bool {
 	if shouldReportRetainedDaemonVersion(rt, Version) {
-		options := optionsFromContext(ctx)
-		args := invocationGlobalArgs(invocationOptions{cfgFile: options.cfgFile, homeDir: options.homeDir})
-		executable, err := daemonCLIExecutableResolver()
-		if err != nil {
-			executable = os.Args[0]
+		consequence := "use this version"
+		if rt.Record.Metadata[runtimePersistent] != runtimeBackgroundValue && rt.Record.Metadata[runtimeBackground] == runtimeBackgroundValue {
+			consequence += " and keep it running until stopped"
 		}
-		commands, _ := agenthook.BuildCommand(executable, append(args, "daemon", "restart")...)
-		restart := commands.POSIX
-		if runtime.GOOS == "windows" {
-			restart = commands.PowerShell
-		}
-		_, _ = fmt.Fprintf(w, "msgvault: daemon %s is running; this CLI is %s. Run %s to use this version.\n", rt.Record.Version, Version, restart)
+		_, _ = fmt.Fprintf(w, "msgvault: daemon %s is running; this CLI is %s. Run %s to %s.\n", rt.Record.Version, Version, daemonRestartCommand(ctx), consequence)
+		return true
 	}
+	return false
+}
+
+func daemonRestartCommand(ctx context.Context) string {
+	options := optionsFromContext(ctx)
+	args := invocationGlobalArgs(invocationOptions{cfgFile: options.cfgFile, homeDir: options.homeDir})
+	executable, err := daemonCLIExecutableResolver()
+	if err != nil {
+		executable = os.Args[0]
+	}
+	commands, _ := agenthook.BuildCommand(executable, append(args, "daemon", "restart")...)
+	restart := commands.POSIX
+	if runtime.GOOS == "windows" {
+		restart = commands.PowerShell
+	}
+	return restart
 }
 
 func shouldUpgradeIncompatibleDaemonRuntimeWithPolicy(rt *DaemonRuntime, currentVersion string, policy string) bool {

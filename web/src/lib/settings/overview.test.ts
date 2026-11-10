@@ -22,11 +22,8 @@ describe('overviewRows', () => {
       'People lookups',
       'Facts and briefs',
       'Contacts',
-      'Document extraction',
-      'Document search',
     ]);
     expect(row(rows, 'message_embedding')).toMatchObject({ chip: { text: 'Off' }, action: { kind: 'settings' } });
-    expect(row(rows, 'document_extraction').action).toMatchObject({ kind: 'host' });
   });
 
   it.each([

@@ -488,9 +488,22 @@ func (f *fakeGitLab) serveList(w http.ResponseWriter, r *http.Request, keep func
 		after, err = time.Parse(time.RFC3339Nano, raw)
 		assert.NoError(f.t, err)
 	}
+	createdIn := func(thread *fakeThread) bool {
+		created := f.stamp(thread.object["created_at"])
+		for param, outside := range map[string]func(time.Time) bool{"created_after": created.Before, "created_before": created.After} {
+			if raw := r.URL.Query().Get(param); raw != "" {
+				bound, err := time.Parse(time.RFC3339Nano, raw)
+				assert.NoError(f.t, err)
+				if outside(bound) {
+					return false
+				}
+			}
+		}
+		return true
+	}
 	var items []map[string]any
 	for _, thread := range f.threads {
-		if keep(thread) && !f.stamp(thread.object["updated_at"]).Before(after) {
+		if keep(thread) && !f.stamp(thread.object["updated_at"]).Before(after) && createdIn(thread) {
 			items = append(items, thread.object)
 		}
 	}

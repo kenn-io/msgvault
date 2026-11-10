@@ -292,7 +292,7 @@ func (c *client) checkScopes(ctx context.Context) error {
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("%w: %s (a sync needs read_api and read_user, or api)", ErrMissingScope, strings.Join(missing, " and "))
+		return fmt.Errorf("%w: %s (or use api)", ErrMissingScope, strings.Join(missing, " and "))
 	}
 	return nil
 }

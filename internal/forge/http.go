@@ -44,11 +44,17 @@ func redirectOnHost(req *http.Request, via []*http.Request) error {
 	if len(via) >= maxRedirects {
 		return fmt.Errorf("stopped after %d redirects", maxRedirects)
 	}
-	from, to := via[0].URL, req.URL
-	if !strings.EqualFold(to.Host, from.Host) || to.Scheme != from.Scheme && (from.Scheme != "http" || to.Scheme != "https") {
-		return fmt.Errorf("the forge redirected outside its instance: %s", to.Redacted())
+	if !onInstance(via[0].URL, req.URL) {
+		return fmt.Errorf("the forge redirected outside its instance: %s", req.URL.Redacted())
 	}
 	return nil
+}
+
+// onInstance reports whether target is on the instance of base: the same
+// host, by the same scheme or by https where base names http.
+func onInstance(base, target *url.URL) bool {
+	return strings.EqualFold(target.Host, base.Host) &&
+		(target.Scheme == base.Scheme || base.Scheme == "http" && target.Scheme == "https")
 }
 
 // API sends one forge's API requests with an account's token. It sends the
@@ -73,12 +79,13 @@ type API struct {
 }
 
 // URL resolves path against the API's base. An absolute URL, such as a
-// pagination link the forge returned, must be on the API's own origin.
+// pagination link the forge returned, must be on the API's own instance;
+// an instance that redirected http to https returns https links.
 func (a *API) URL(path string, query url.Values) (string, error) {
 	var target *url.URL
 	if strings.HasPrefix(path, "https://") || strings.HasPrefix(path, "http://") {
 		parsed, err := url.Parse(path)
-		if err != nil || parsed.Scheme != a.Base.Scheme || !strings.EqualFold(parsed.Host, a.Base.Host) {
+		if err != nil || !onInstance(a.Base, parsed) {
 			return "", fmt.Errorf("the forge returned a URL outside its API: %s", path)
 		}
 		target = parsed

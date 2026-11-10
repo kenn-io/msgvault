@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/imessage"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -155,6 +156,95 @@ func TestRunScheduledWhatsAppApple(t *testing.T) {
 	check.Equal(int64(0), second.MessagesAdded)
 	check.Equal(int64(1), second.MessagesUpdated)
 	check.Greater(second.ID, run.ID)
+}
+
+// An archived Apple source whose database cannot be opened must show the
+// failure, not the previous run's success, and must not force a full cache
+// rebuild on every scheduled attempt.
+func TestScheduledAppleImportFailingToOpenRecordsFailedRun(t *testing.T) {
+	missing := func(t *testing.T) string {
+		t.Helper()
+		return filepath.Join(t.TempDir(), "missing.sqlite")
+	}
+	for _, tc := range []struct {
+		name       string
+		sourceType string
+		run        func(ctx context.Context, st *store.Store, path string) error
+		fixture    func(t *testing.T) string
+	}{
+		{
+			name: "imessage", sourceType: sourceTypeAppleMessages,
+			run: func(ctx context.Context, st *store.Store, path string) error {
+				return runScheduledIMessage(ctx, st, config.IMessageConfig{DBPath: path})
+			},
+			fixture: func(t *testing.T) string {
+				t.Helper()
+				path, chat := testutil.NewIMessageChatDB(t)
+				_, err := chat.ExecContext(t.Context(), `CREATE TABLE attachment (filename TEXT);
+ CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER);
+ INSERT INTO message (date, text) VALUES (725760000, 'hello')`)
+				require.NoError(t, err)
+				return path
+			},
+		},
+		{
+			name: "whatsapp", sourceType: "whatsapp",
+			run: func(ctx context.Context, st *store.Store, path string) error {
+				return runScheduledWhatsAppApple(ctx, st, config.WhatsAppAppleSource{Phone: "+15550000000", Path: path})
+			},
+			fixture: func(t *testing.T) string {
+				t.Helper()
+				return createWhatsAppIdentityFixture(t, false, false)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			cfg := config.NewDefaultConfig()
+			cfg.Data.DataDir = t.TempDir()
+			cfg.Analytics.AutoBuildCache = false
+			st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+			ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+			path := tc.fixture(t)
+			require.NoError(tc.run(ctx, st, path))
+			_, err := buildCache(t.Context(), cfg.DatabaseDSN(), cfg.AnalyticsDir(), true)
+			require.NoError(err)
+
+			runErr := tc.run(ctx, st, missing(t))
+			require.Error(runErr)
+
+			sources, err := st.ListSourcesContext(t.Context(), tc.sourceType)
+			require.NoError(err)
+			require.Len(sources, 1)
+			run, err := st.GetLatestSyncContext(t.Context(), sources[0].ID, 0)
+			require.NoError(err)
+			assert.Equal(store.SyncStatusFailed, run.Status)
+			require.True(run.ErrorMessage.Valid)
+			assert.Equal(runErr.Error(), run.ErrorMessage.String)
+			assert.False(cacheNeedsBuild(cfg.DatabaseDSN(), cfg.AnalyticsDir()).NeedsBuild,
+				"an attempt that wrote nothing must not force a cache rebuild")
+
+			require.NoError(tc.run(ctx, st, path))
+			run, err = st.GetLatestSyncContext(t.Context(), sources[0].ID, 0)
+			require.NoError(err)
+			assert.Equal(store.SyncStatusCompleted, run.Status)
+		})
+	}
+
+	t.Run("never imported", func(t *testing.T) {
+		require := require.New(t)
+		cfg := config.NewDefaultConfig()
+		cfg.Data.DataDir = t.TempDir()
+		cfg.Analytics.AutoBuildCache = false
+		st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+		ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+		require.Error(runScheduledIMessage(ctx, st, config.IMessageConfig{DBPath: missing(t)}))
+		require.Error(runScheduledWhatsAppApple(ctx, st, config.WhatsAppAppleSource{Phone: "+15550000000", Path: missing(t)}))
+		var runs int
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sync_runs`).Scan(&runs))
+		assert.Zero(t, runs)
+	})
 }
 
 func TestImportImessageRecordedPreservesCountersAfterCheckpointFailure(t *testing.T) {

@@ -3,15 +3,12 @@
 package messageimport
 
 import (
-	"errors"
-	"fmt"
-	"net/mail"
 	"net/url"
 	"strings"
 	"time"
 	"unicode"
-	"unicode/utf8"
 
+	"go.kenn.io/msgvault/internal/apiimport"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -19,7 +16,7 @@ const (
 	SourceType       = "message_import"
 	ConversationType = "channel"
 	RawFormat        = "message_json"
-	MaxRequestBytes  = int64(16 << 20)
+	MaxRequestBytes  = apiimport.MaxRequestBytes
 
 	// SenderIdentifierType is the participant identifier type of a sender
 	// that has no email or phone. See senderIdentifier for its values.
@@ -36,9 +33,9 @@ const (
 )
 
 var (
-	ErrMalformedRequest = errors.New("malformed message import request")
-	ErrRequestTooLarge  = errors.New("message import request too large")
-	ErrValidation       = errors.New("message import validation failed")
+	ErrMalformedRequest = apiimport.ErrMalformedRequest
+	ErrRequestTooLarge  = apiimport.ErrRequestTooLarge
+	ErrValidation       = apiimport.ErrValidation
 )
 
 type MessageImportRequest struct {
@@ -100,22 +97,15 @@ const (
 	BodyFormatText     BodyFormat = "text"
 )
 
+// NormalizedRequest is a validated request. Message holds the trimmed,
+// canonical fields and is stored as the message's raw evidence; SentAt and
+// Body are parsed from it.
 type NormalizedRequest struct {
-	Source  MessageImportSource
-	Message NormalizedMessage
-}
-
-type NormalizedMessage struct {
-	ExternalID   string
-	MessageType  string
-	Conversation MessageImportConversation
-	Sender       MessageImportSender
-	Title        string
-	URL          string
-	SentAt       time.Time
-	Body         string
-	BodyFormat   BodyFormat
-	Metadata     map[string]any
+	Source     MessageImportSource
+	Message    ImportedMessage
+	SentAt     time.Time
+	Body       string
+	BodyFormat BodyFormat
 }
 
 func (r Request) Normalize() (NormalizedRequest, error) {
@@ -123,25 +113,26 @@ func (r Request) Normalize() (NormalizedRequest, error) {
 	if err != nil {
 		return NormalizedRequest{}, err
 	}
-	message, err := normalizeMessage(r.Message)
+	out, err := normalizeMessage(r.Message)
 	if err != nil {
 		return NormalizedRequest{}, err
 	}
-	return NormalizedRequest{Source: source, Message: message}, nil
+	out.Source = source
+	return out, nil
 }
 
 func normalizeSource(source MessageImportSource) (MessageImportSource, error) {
 	source.Identifier = strings.TrimSpace(source.Identifier)
-	if err := validateBoundedRequired("source.identifier", source.Identifier, maxSourceIdentifierChars); err != nil {
+	if err := apiimport.ValidateBoundedRequired("source.identifier", source.Identifier, maxSourceIdentifierChars); err != nil {
 		return MessageImportSource{}, err
 	}
 
 	source.DisplayName = strings.TrimSpace(source.DisplayName)
-	if err := validateBoundedOptional("source.display_name", source.DisplayName, maxSourceDisplayNameChars); err != nil {
+	if err := apiimport.ValidateBoundedOptional("source.display_name", source.DisplayName, maxSourceDisplayNameChars); err != nil {
 		return MessageImportSource{}, err
 	}
 
-	accountEmail, err := normalizeEmail("source.account_email", source.AccountEmail)
+	accountEmail, err := apiimport.NormalizeEmail("source.account_email", source.AccountEmail)
 	if err != nil {
 		return MessageImportSource{}, err
 	}
@@ -149,57 +140,58 @@ func normalizeSource(source MessageImportSource) (MessageImportSource, error) {
 	return source, nil
 }
 
-func normalizeMessage(message ImportedMessage) (NormalizedMessage, error) {
-	out := NormalizedMessage{Metadata: message.Metadata}
-	if err := validateMetadataText("message.metadata", message.Metadata); err != nil {
-		return NormalizedMessage{}, err
+func normalizeMessage(message ImportedMessage) (NormalizedRequest, error) {
+	var out NormalizedRequest
+	if err := apiimport.ValidateMetadataText("message.metadata", message.Metadata); err != nil {
+		return out, err
 	}
+	normalized := ImportedMessage{Metadata: message.Metadata}
 
-	out.ExternalID = strings.TrimSpace(message.ExternalID)
-	if err := validateBoundedRequired("message.external_id", out.ExternalID, maxExternalIDChars); err != nil {
-		return NormalizedMessage{}, err
+	normalized.ExternalID = strings.TrimSpace(message.ExternalID)
+	if err := apiimport.ValidateBoundedRequired("message.external_id", normalized.ExternalID, maxExternalIDChars); err != nil {
+		return out, err
 	}
 
 	messageType, err := normalizeMessageType(message.MessageType)
 	if err != nil {
-		return NormalizedMessage{}, err
+		return out, err
 	}
-	out.MessageType = messageType
+	normalized.MessageType = messageType
 
-	out.Conversation.ExternalID = strings.TrimSpace(message.Conversation.ExternalID)
-	if err := validateBoundedRequired("message.conversation.external_id", out.Conversation.ExternalID, maxExternalIDChars); err != nil {
-		return NormalizedMessage{}, err
+	normalized.Conversation.ExternalID = strings.TrimSpace(message.Conversation.ExternalID)
+	if err := apiimport.ValidateBoundedRequired("message.conversation.external_id", normalized.Conversation.ExternalID, maxExternalIDChars); err != nil {
+		return out, err
 	}
-	out.Conversation.Title = strings.TrimSpace(message.Conversation.Title)
-	if err := validateBoundedOptional("message.conversation.title", out.Conversation.Title, maxTitleChars); err != nil {
-		return NormalizedMessage{}, err
+	normalized.Conversation.Title = strings.TrimSpace(message.Conversation.Title)
+	if err := apiimport.ValidateBoundedOptional("message.conversation.title", normalized.Conversation.Title, maxTitleChars); err != nil {
+		return out, err
 	}
 
-	sender, err := normalizeSender(message.Sender)
-	if err != nil {
-		return NormalizedMessage{}, err
+	if normalized.Sender, err = normalizeSender(message.Sender); err != nil {
+		return out, err
 	}
-	out.Sender = sender
 
-	out.Title = strings.TrimSpace(message.Title)
-	if err := validateBoundedOptional("message.title", out.Title, maxTitleChars); err != nil {
-		return NormalizedMessage{}, err
+	normalized.Title = strings.TrimSpace(message.Title)
+	if err := apiimport.ValidateBoundedOptional("message.title", normalized.Title, maxTitleChars); err != nil {
+		return out, err
 	}
-	if out.URL, err = normalizeURL("message.url", message.URL); err != nil {
-		return NormalizedMessage{}, err
+	if normalized.URL, err = normalizeURL("message.url", message.URL); err != nil {
+		return out, err
 	}
-	if out.SentAt, err = parseTimestamp("message.sent_at", message.SentAt); err != nil {
-		return NormalizedMessage{}, err
+	if out.SentAt, err = apiimport.ParseTimestamp("message.sent_at", message.SentAt); err != nil {
+		return out, err
 	}
+	normalized.SentAt = out.SentAt.Format(time.RFC3339Nano)
 
 	bodies := []struct {
 		field  string
 		value  string
 		format BodyFormat
+		stored *string
 	}{
-		{"message.body_markdown", message.BodyMarkdown, BodyFormatMarkdown},
-		{"message.body_html", message.BodyHTML, BodyFormatHTML},
-		{"message.body_text", message.BodyText, BodyFormatText},
+		{"message.body_markdown", message.BodyMarkdown, BodyFormatMarkdown, &normalized.BodyMarkdown},
+		{"message.body_html", message.BodyHTML, BodyFormatHTML, &normalized.BodyHTML},
+		{"message.body_text", message.BodyText, BodyFormatText, &normalized.BodyText},
 	}
 	for _, body := range bodies {
 		value := strings.TrimSpace(body.value)
@@ -207,17 +199,19 @@ func normalizeMessage(message ImportedMessage) (NormalizedMessage, error) {
 			continue
 		}
 		if out.BodyFormat != BodyFormatNone {
-			return NormalizedMessage{}, validationError("message.body_markdown, message.body_html and message.body_text are mutually exclusive")
+			return out, apiimport.ValidationError("message.body_markdown, message.body_html and message.body_text are mutually exclusive")
 		}
-		if err := validateText(body.field, value); err != nil {
-			return NormalizedMessage{}, err
+		if err := apiimport.ValidateText(body.field, value); err != nil {
+			return out, err
 		}
+		*body.stored = value
 		out.Body = value
 		out.BodyFormat = body.format
 	}
-	if out.Title == "" && out.BodyFormat == BodyFormatNone {
-		return NormalizedMessage{}, validationError("message requires a title or a body")
+	if normalized.Title == "" && out.BodyFormat == BodyFormatNone {
+		return out, apiimport.ValidationError("message requires a title or a body")
 	}
+	out.Message = normalized
 	return out, nil
 }
 
@@ -225,11 +219,11 @@ func normalizeMessage(message ImportedMessage) (NormalizedMessage, error) {
 // types use, so they work as search and export filters.
 func normalizeMessageType(value string) (string, error) {
 	value = strings.TrimSpace(value)
-	if err := validateBoundedRequired("message.message_type", value, maxMessageTypeChars); err != nil {
+	if err := apiimport.ValidateBoundedRequired("message.message_type", value, maxMessageTypeChars); err != nil {
 		return "", err
 	}
 	if !store.IsWellFormedMessageType(value) {
-		return "", validationError("message.message_type must be lowercase letters, digits and underscores, starting with a letter")
+		return "", apiimport.ValidationError("message.message_type must be lowercase letters, digits and underscores, starting with a letter")
 	}
 	return value, nil
 }
@@ -239,31 +233,31 @@ func normalizeSender(sender MessageImportSender) (MessageImportSender, error) {
 		Name: strings.TrimSpace(sender.Name),
 		ID:   strings.TrimSpace(sender.ID),
 	}
-	if err := validateBoundedOptional("message.sender.name", out.Name, maxSenderNameChars); err != nil {
+	if err := apiimport.ValidateBoundedOptional("message.sender.name", out.Name, maxSenderNameChars); err != nil {
 		return MessageImportSender{}, err
 	}
-	if err := validateBoundedOptional("message.sender.id", out.ID, maxSenderIDChars); err != nil {
+	if err := apiimport.ValidateBoundedOptional("message.sender.id", out.ID, maxSenderIDChars); err != nil {
 		return MessageImportSender{}, err
 	}
 	if strings.IndexFunc(out.ID, unicode.IsControl) >= 0 {
-		return MessageImportSender{}, validationError("message.sender.id must not contain control characters")
+		return MessageImportSender{}, apiimport.ValidationError("message.sender.id must not contain control characters")
 	}
 	var err error
 	if out.URL, err = normalizeURL("message.sender.url", sender.URL); err != nil {
 		return MessageImportSender{}, err
 	}
 	if strings.TrimSpace(sender.Email) != "" {
-		if out.Email, err = normalizeEmail("message.sender.email", sender.Email); err != nil {
+		if out.Email, err = apiimport.NormalizeEmail("message.sender.email", sender.Email); err != nil {
 			return MessageImportSender{}, err
 		}
 	}
 	if strings.TrimSpace(sender.Phone) != "" {
-		if out.Phone, err = normalizePhone("message.sender.phone", sender.Phone); err != nil {
+		if out.Phone, err = apiimport.NormalizePhone("message.sender.phone", sender.Phone); err != nil {
 			return MessageImportSender{}, err
 		}
 	}
 	if out == (MessageImportSender{}) {
-		return MessageImportSender{}, validationError("message.sender requires a name, url, email, phone or id")
+		return MessageImportSender{}, apiimport.ValidationError("message.sender requires a name, url, email, phone or id")
 	}
 	return out, nil
 }
@@ -274,135 +268,15 @@ func normalizeURL(field, value string) (string, error) {
 	if value == "" {
 		return "", nil
 	}
-	if err := validateBoundedOptional(field, value, maxURLChars); err != nil {
+	if err := apiimport.ValidateBoundedOptional(field, value, maxURLChars); err != nil {
 		return "", err
 	}
 	if strings.IndexFunc(value, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
-		return "", validationError("%s must not contain whitespace or control characters", field)
+		return "", apiimport.ValidationError("%s must not contain whitespace or control characters", field)
 	}
 	parsed, err := url.Parse(value)
 	if err != nil || parsed.Scheme == "" || (parsed.Host == "" && parsed.Opaque == "") {
-		return "", validationError("%s must be an absolute URL", field)
+		return "", apiimport.ValidationError("%s must be an absolute URL", field)
 	}
 	return value, nil
-}
-
-// normalizePhone accepts international numbers only (a leading + or 00) and
-// returns E.164. National numbers are rejected rather than guessed: a wrong
-// country code could attach a message to someone else. Errors name the field,
-// never the number.
-func normalizePhone(field, value string) (string, error) {
-	// "+44 (0)20 …" marks a trunk zero that is dialed only nationally.
-	value = strings.ReplaceAll(strings.TrimSpace(value), "(0)", "")
-	var digits strings.Builder
-	for i, r := range value {
-		switch {
-		case r >= '0' && r <= '9':
-			digits.WriteRune(r)
-		case r == '+' && i == 0:
-		case r == ' ' || r == '-' || r == '.' || r == '(' || r == ')':
-		default:
-			return "", validationError("%s must contain only digits and phone formatting", field)
-		}
-	}
-	number := digits.String()
-	switch {
-	case strings.HasPrefix(value, "+"):
-	case strings.HasPrefix(number, "00"):
-		number = number[2:]
-	default:
-		return "", validationError("%s must be an international number starting with + or 00", field)
-	}
-	if strings.HasPrefix(number, "0") {
-		return "", validationError("%s must start with a country code", field)
-	}
-	if len(number) < 7 || len(number) > 15 {
-		return "", validationError("%s must have 7 to 15 digits", field)
-	}
-	return "+" + number, nil
-}
-
-func normalizeEmail(field, value string) (string, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "", validationError("%s is required", field)
-	}
-	if err := validateText(field, value); err != nil {
-		return "", err
-	}
-	parsed, err := mail.ParseAddress(value)
-	if err != nil || parsed.Name != "" || !strings.EqualFold(parsed.Address, value) {
-		return "", validationError("%s must be one email address without a display name", field)
-	}
-	return strings.ToLower(parsed.Address), nil
-}
-
-func parseTimestamp(field, value string) (time.Time, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return time.Time{}, validationError("%s is required", field)
-	}
-	parsed, err := time.Parse(time.RFC3339Nano, value)
-	if err != nil {
-		return time.Time{}, validationError("%s must be an RFC3339 timestamp with an explicit offset", field)
-	}
-	return parsed.UTC(), nil
-}
-
-// validateText rejects text the archive can't store on every backend:
-// invalid UTF-8, or a NUL character, which PostgreSQL text and JSONB refuse.
-func validateText(field, value string) error {
-	if !utf8.ValidString(value) {
-		return validationError("%s must be valid UTF-8", field)
-	}
-	if strings.ContainsRune(value, 0) {
-		return validationError("%s must not contain NUL characters", field)
-	}
-	return nil
-}
-
-// validateMetadataText applies validateText to every key and string value
-// in metadata, which is stored as JSON.
-func validateMetadataText(field string, value any) error {
-	switch value := value.(type) {
-	case map[string]any:
-		for key, nested := range value {
-			if err := validateText(field, key); err != nil {
-				return err
-			}
-			if err := validateMetadataText(field, nested); err != nil {
-				return err
-			}
-		}
-	case []any:
-		for _, nested := range value {
-			if err := validateMetadataText(field, nested); err != nil {
-				return err
-			}
-		}
-	case string:
-		return validateText(field, value)
-	}
-	return nil
-}
-
-func validateBoundedRequired(field, value string, maxChars int) error {
-	if value == "" {
-		return validationError("%s is required", field)
-	}
-	return validateBoundedOptional(field, value, maxChars)
-}
-
-func validateBoundedOptional(field, value string, maxChars int) error {
-	if err := validateText(field, value); err != nil {
-		return err
-	}
-	if utf8.RuneCountInString(value) > maxChars {
-		return validationError("%s must be at most %d characters", field, maxChars)
-	}
-	return nil
-}
-
-func validationError(format string, args ...any) error {
-	return fmt.Errorf("%w: %s", ErrValidation, fmt.Sprintf(format, args...))
 }
