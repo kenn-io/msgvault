@@ -8,7 +8,7 @@ import (
 
 // SenderDomainCondition matches the recorded domain on an explicit From row.
 func SenderDomainCondition(placeholder string) string {
-	return `EXISTS (SELECT 1 FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'from' AND ` + identityindex.SenderDomainExpr("mr", "p") + ` = ` + placeholder + `)`
+	return `EXISTS (SELECT 1 FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'from' AND LOWER(` + identityindex.SenderDomainExpr("mr", "p") + `) = LOWER(` + placeholder + `))`
 }
 
 // escapeLike makes SQL LIKE wildcards literal with ESCAPE '\'.

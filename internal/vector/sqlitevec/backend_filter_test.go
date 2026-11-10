@@ -97,7 +97,7 @@ func TestVectorRelayedSenderDrilldowns(t *testing.T) {
 	_, err := b.mainDB.ExecContext(ctx, `CREATE TABLE participants(id INTEGER PRIMARY KEY,email_address TEXT,phone_number TEXT,display_name TEXT,domain TEXT);
  ALTER TABLE message_recipients ADD COLUMN display_name TEXT;
  ALTER TABLE message_recipients ADD COLUMN email_address TEXT;
- INSERT INTO participants VALUES(10,NULL,NULL,'Alice',NULL),(11,'other@github.com',NULL,'Other','github.com');
+ INSERT INTO participants VALUES(10,NULL,NULL,'Alice',NULL),(11,'other@github.com',NULL,'Other','GiTHub.com');
  INSERT INTO message_recipients(message_id,participant_id,recipient_type,email_address,is_relayed) VALUES(1,10,'from','notifications@github.com',TRUE),(2,11,'from','old@old.test',FALSE);
  UPDATE messages SET sender_id=11 WHERE id=3;`)
 	require.NoError(t, err)
@@ -110,6 +110,7 @@ func TestVectorRelayedSenderDrilldowns(t *testing.T) {
 		{vector.Filter{SenderTerms: []string{"@old.test"}}, nil},
 		{vector.Filter{SenderTerms: []string{"old"}}, nil},
 		{vector.Filter{SenderDomain: "github.com"}, []int64{1, 2}},
+		{vector.Filter{SenderDomain: "GitHub.com"}, []int64{1, 2}},
 	} {
 		filter := tc.filter
 		hits, err := b.Search(ctx, gen, unitVec(768, 0), 10, filter)

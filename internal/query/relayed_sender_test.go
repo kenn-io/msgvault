@@ -89,7 +89,7 @@ func TestRelayedSenderViews(t *testing.T) {
 				}
 				assertions.ElementsMatch(want, keys)
 			}
-			for address, want := range map[string]int{"author@example.test": 1, "notifications@github.com": 2, "old@old.test": 0} {
+			for address, want := range map[string]int{"author@example.test": 1, "notifications@github.com": 2, "Notifications@GitHub.com": 2, "old@old.test": 0} {
 				rows, err := engine.ListMessages(t.Context(), MessageFilter{Sender: address})
 				requirements.NoError(err)
 				assertions.Len(rows, want, address)

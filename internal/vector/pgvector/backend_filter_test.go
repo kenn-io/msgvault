@@ -403,6 +403,23 @@ func TestVectorSenderTermsBeforeRanking(t *testing.T) {
 	assert.ElementsMatch([]int64{1}, ids)
 }
 
+func TestVectorRelayedSenderDomain(t *testing.T) {
+	b, ctx, db := newBackendForTest(t)
+	gen := seedAndEmbed(t, b, db, map[int64][]float32{1: unitVec(4, 0), 2: unitVec(4, 0)})
+	_, err := db.ExecContext(ctx, `CREATE TABLE participants(id BIGINT PRIMARY KEY,email_address TEXT,domain TEXT);
+ ALTER TABLE message_recipients ADD COLUMN email_address TEXT;
+ INSERT INTO participants VALUES(10,NULL,NULL),(11,'other@github.com','GiTHub.com');
+ INSERT INTO message_recipients(message_id,participant_id,recipient_type,email_address,is_relayed) VALUES(1,10,'from','notifications@github.com',TRUE),(2,11,'from',NULL,FALSE)`)
+	require.NoError(t, err)
+	hits, err := b.Search(ctx, gen, unitVec(4, 0), 10, vector.Filter{SenderDomain: "GitHub.com"})
+	require.NoError(t, err)
+	var ids []int64
+	for _, hit := range hits {
+		ids = append(ids, hit.MessageID)
+	}
+	assert.ElementsMatch(t, []int64{1, 2}, ids)
+}
+
 func TestExactSenderExcludesRelayedEmail(t *testing.T) {
 	b, ctx, db := newBackendForTest(t)
 	gen := seedAndEmbed(t, b, db, map[int64][]float32{1: unitVec(4, 0), 2: unitVec(4, 0)})
