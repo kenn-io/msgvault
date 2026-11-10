@@ -2012,6 +2012,7 @@ func (e *SQLiteEngine) SearchByDomains(ctx context.Context, domains []string, af
 	}
 
 	// Fetch one row past the page to learn whether another page follows.
+	conditions, args = e.appendIncomingScope(ctx, conditions, args)
 	messages, err := e.executeSearchQuery(ctx, conditions, args, "", limit+1, offset)
 	if err != nil {
 		return DomainSearchResult{}, err
@@ -2221,6 +2222,7 @@ func (e *SQLiteEngine) Search(ctx context.Context, q *search.Query, limit, offse
 	if page, ok, err := e.searchNewestFirst(ctx, q, conditions, args, ftsJoin, limit, offset); ok || err != nil {
 		return page, err
 	}
+	conditions, args = e.appendIncomingScope(ctx, conditions, args)
 	return e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
 }
 
@@ -2255,6 +2257,7 @@ func (e *SQLiteEngine) searchNewestFirst(ctx context.Context, q *search.Query, c
 		store.SQLiteFTSRowIDCondition(conditions[1]),
 	}
 	args = append([]any{window - 1}, args...)
+	conditions, args = e.appendIncomingScope(ctx, conditions, args)
 	page, err := e.executeSearchQuery(ctx, conditions, args, "INDEXED BY idx_messages_sent_at", limit, offset)
 	return page, len(page) == limit, err
 }
@@ -2423,6 +2426,7 @@ func (e *SQLiteEngine) SearchDeep(
 	ctx context.Context, searchQuery *search.Query, filter MessageFilter, limit, offset int,
 ) ([]MessageSummary, error) {
 	conditions, args, ftsJoin := e.buildFilteredDeepSearchQueryParts(ctx, searchQuery, filter)
+	conditions, args = e.appendIncomingScope(ctx, conditions, args)
 	return e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
 }
 
@@ -2432,6 +2436,7 @@ func (e *SQLiteEngine) SearchDeepWithStats(
 	ctx context.Context, searchQuery *search.Query, filter MessageFilter, limit, offset int,
 ) (*SearchFastResult, error) {
 	conditions, args, ftsJoin := e.buildFilteredDeepSearchQueryParts(ctx, searchQuery, filter)
+	conditions, args = e.appendIncomingScope(ctx, conditions, args)
 	var (
 		results  []MessageSummary
 		count    int64
@@ -2475,7 +2480,6 @@ func (e *SQLiteEngine) SearchFast(ctx context.Context, q *search.Query, filter M
 // executeSearchQuery returns paginated MessageSummary results from conditions
 // and joins or an index hint that follow messages m. Shared by Search and SearchFast.
 func (e *SQLiteEngine) executeSearchQuery(ctx context.Context, conditions []string, args []any, pageSource string, limit, offset int) ([]MessageSummary, error) {
-	conditions, args = e.appendIncomingScope(ctx, conditions, args)
 	if limit == 0 {
 		limit = 100
 	}
@@ -2757,7 +2761,6 @@ func (e *SQLiteEngine) SearchFastCount(ctx context.Context, q *search.Query, fil
 }
 
 func (e *SQLiteEngine) executeSearchCount(ctx context.Context, conditions []string, args []any, ftsJoin string) (int64, error) {
-	conditions, args = e.appendIncomingScope(ctx, conditions, args)
 	whereClause := strings.Join(conditions, " AND ")
 	if whereClause == "" {
 		whereClause = "1=1"

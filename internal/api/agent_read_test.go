@@ -22,6 +22,8 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	msgexport "go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
@@ -970,6 +972,79 @@ func TestAgentIncomingSenderScopesReads(t *testing.T) {
 			require.Equal(t, tc.status, w.Code, w.Body.String())
 			assert.Contains(t, w.Body.String(), tc.contains)
 			assert.NotContains(t, w.Body.String(), tc.excludes)
+		})
+	}
+	ctx := sourcescope.WithIncomingSenders(t.Context(), map[int64][]string{src.ID: {"codes@example.test"}})
+	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
+	term := &search.Query{TextTerms: []string{"code"}}
+	deep, err := engine.SearchDeepWithStats(ctx, term, query.MessageFilter{}, 50, 0)
+	requirementsForTest.NoError(err)
+	requirementsForTest.Len(deep.Messages, 1)
+	requirementsForTest.Equal(allowed, deep.Messages[0].ID)
+	requirementsForTest.Equal(int64(1), deep.TotalCount)
+	requirementsForTest.NotNil(deep.Stats)
+	requirementsForTest.Equal(int64(1), deep.Stats.MessageCount)
+	fast, err := engine.SearchFastWithStats(ctx, term, "code", query.MessageFilter{}, query.ViewSenders, 50, 0)
+	requirementsForTest.NoError(err)
+	requirementsForTest.Len(fast.Messages, 1)
+	requirementsForTest.Equal(allowed, fast.Messages[0].ID)
+	requirementsForTest.Equal(int64(1), fast.TotalCount)
+	requirementsForTest.NotNil(fast.Stats)
+	requirementsForTest.Equal(int64(1), fast.Stats.MessageCount)
+}
+
+func TestIncomingSenderScopedCountsUseMessageIDs(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		firstIDMatches bool
+	}{
+		{"recipient IDs differ", false},
+		{"one recipient ID matches", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			st := testutil.NewTestStore(t)
+			var source *store.Source
+			for index, message := range []struct {
+				provider, sender string
+				deleted          bool
+			}{
+				{"allowed-live", "codes@example.test", false},
+				{"denied-live", "other@example.test", false},
+				{"allowed-deleted", "codes@example.test", true},
+				{"denied-deleted", "other@example.test", true},
+			} {
+				var id int64
+				var err error
+				source, id, err = testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", message.provider, message.provider, "")
+				requirements.NoError(err)
+				participant, err := st.EnsureParticipant(message.sender, "", "example.test")
+				requirements.NoError(err)
+				if index != 0 || !tc.firstIDMatches {
+					requirements.NoError(st.ReplaceMessageRecipients(id, "to", []int64{participant}, nil))
+				}
+				requirements.NoError(st.ReplaceMessageRecipients(id, "from", []int64{participant}, nil))
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = ? WHERE message_id = ? AND recipient_type = 'from'"), message.sender, id)
+				requirements.NoError(err)
+				if message.deleted {
+					_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?"), id)
+					requirements.NoError(err)
+				}
+			}
+			ctx := sourcescope.WithIncomingSenders(t.Context(), map[int64][]string{source.ID: {"codes@example.test"}})
+			stats, err := st.GetStatsForScopeContext(ctx, []int64{source.ID})
+			requirements.NoError(err)
+			requirements.Equal(int64(1), stats.MessageCount)
+			requirements.Equal(int64(1), stats.SourceDeletedCount)
+			active, err := st.CountActiveMessagesContext(ctx, source.ID)
+			requirements.NoError(err)
+			requirements.Equal(int64(1), active)
+			deleted, err := st.CountSourceDeletedMessagesContext(ctx, source.ID)
+			requirements.NoError(err)
+			requirements.Equal(int64(1), deleted)
+			perSource, err := st.CountMessagesForSourceContext(ctx, source.ID)
+			requirements.NoError(err)
+			requirements.Equal(int64(1), perSource)
 		})
 	}
 }
