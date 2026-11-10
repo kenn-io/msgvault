@@ -2127,6 +2127,9 @@ func (e *DuckDBEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 		if err := e.fetchParticipantsForMessages(ctx, results); err != nil {
 			return nil, fmt.Errorf("fetch participants: %w", err)
 		}
+		if err := e.fetchLabelsForMessages(ctx, results); err != nil {
+			return nil, fmt.Errorf("fetch labels: %w", err)
+		}
 	}
 
 	return results, nil
