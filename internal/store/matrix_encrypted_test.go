@@ -30,37 +30,39 @@ func TestMatrixPendingEventsBySession(t *testing.T) {
 	}
 
 	t.Run("filter", func(t *testing.T) {
+		req := require.New(t)
 		type sessionLookup interface {
-			MatrixPendingEventsBySession(context.Context, int64, string, int64, int) ([]store.MatrixEncryptedEvent, error)
+			MatrixPendingEventsBySession(ctx context.Context, conversationID int64, sessionID string, afterID int64, limit int) ([]store.MatrixEncryptedEvent, error)
 		}
 		lookup, ok := any(s).(sessionLookup)
-		require.True(t, ok, "store must support a session-filtered pending lookup")
+		req.True(ok, "store must support a session-filtered pending lookup")
 		events, err := lookup.MatrixPendingEventsBySession(t.Context(), convID, "session-a", 0, 10)
-		require.NoError(t, err)
-		require.Equal(t, []store.MatrixEncryptedEvent{{MessageID: ids[0], Ciphertext: []byte("$a")}, {MessageID: ids[2], Ciphertext: []byte("$c")}}, events)
+		req.NoError(err)
+		req.Equal([]store.MatrixEncryptedEvent{{MessageID: ids[0], Ciphertext: []byte("$a")}, {MessageID: ids[2], Ciphertext: []byte("$c")}}, events)
 		events, err = lookup.MatrixPendingEventsBySession(t.Context(), convID, "session-b", 0, 10)
-		require.NoError(t, err)
-		require.Equal(t, []store.MatrixEncryptedEvent{{MessageID: ids[1], Ciphertext: []byte("$b")}}, events)
+		req.NoError(err)
+		req.Equal([]store.MatrixEncryptedEvent{{MessageID: ids[1], Ciphertext: []byte("$b")}}, events)
 		events, err = lookup.MatrixPendingEventsBySession(t.Context(), convID, "session-a", ids[0], 10)
-		require.NoError(t, err)
-		require.Equal(t, []store.MatrixEncryptedEvent{{MessageID: ids[2], Ciphertext: []byte("$c")}}, events)
+		req.NoError(err)
+		req.Equal([]store.MatrixEncryptedEvent{{MessageID: ids[2], Ciphertext: []byte("$c")}}, events)
 	})
 
 	t.Run("index", func(t *testing.T) {
+		req := require.New(t)
 		if s.IsPostgreSQL() {
 			t.Skip("EXPLAIN QUERY PLAN is SQLite-only")
 		}
 		rows, err := s.DB().QueryContext(t.Context(), `EXPLAIN QUERY PLAN SELECT message_id, ciphertext FROM matrix_encrypted_events WHERE conversation_id = ? AND session_id = ? AND NOT recovered AND message_id > ? ORDER BY message_id LIMIT ?`, convID, "session-a", 0, 10)
-		require.NoError(t, err)
+		req.NoError(err)
 		defer func() { _ = rows.Close() }()
 		var plan []string
 		for rows.Next() {
 			var id, parent, unused int
 			var detail string
-			require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+			req.NoError(rows.Scan(&id, &parent, &unused, &detail))
 			plan = append(plan, detail)
 		}
-		require.NoError(t, rows.Err())
+		req.NoError(rows.Err())
 		assert.Contains(t, strings.Join(plan, "\n"), "session_id=?")
 	})
 }
