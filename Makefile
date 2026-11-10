@@ -232,7 +232,7 @@ test-install:
 .PHONY: test-cli-e2e
 test-cli-e2e:
 	@if [ -z "$(MSGVAULT_E2E_BINARY)" ]; then $(MAKE) build; fi
-	MSGVAULT_E2E_BINARY="$(if $(MSGVAULT_E2E_BINARY),$(MSGVAULT_E2E_BINARY),$(CURDIR)/msgvault$(GOEXE))" $(call gotestsum,cli-e2e,./cmd/msgvault/cmd,-timeout $(TEST_TIMEOUT) -tags "$(BUILD_TAGS)" -run '^TestSearchDiscoverabilityBuiltCLI$$' -count=1)
+	MSGVAULT_E2E_BINARY="$(if $(MSGVAULT_E2E_BINARY),$(MSGVAULT_E2E_BINARY),$(CURDIR)/msgvault$(GOEXE))" $(call gotestsum,cli-e2e,./cmd/msgvault/cmd,-timeout $(TEST_TIMEOUT) -tags "$(BUILD_TAGS)" -run '^Test(SearchDiscoverability|Instagram)BuiltCLI$$' -count=1)
 
 .PHONY: test-standard $(SQLITE_SHARD_TARGETS)
 test-standard:

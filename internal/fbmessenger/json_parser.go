@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -35,8 +34,9 @@ type rawJSONSticker struct {
 }
 
 type rawJSONShare struct {
-	Link      string `json:"link"`
-	ShareText string `json:"share_text"`
+	Link                 string `json:"link"`
+	ShareText            string `json:"share_text"`
+	OriginalContentOwner string `json:"original_content_owner"`
 }
 
 type rawJSONReaction struct {
@@ -53,6 +53,7 @@ type rawJSONMessage struct {
 	Videos       []rawJSONPhoto    `json:"videos"`
 	Audio        []rawJSONPhoto    `json:"audio_files"`
 	Files        []rawJSONPhoto    `json:"files"`
+	Media        []rawJSONPhoto    `json:"media"`
 	Gifs         []rawJSONPhoto    `json:"gifs"`
 	Sticker      *rawJSONSticker   `json:"sticker"`
 	Share        *rawJSONShare     `json:"share"`
@@ -63,20 +64,13 @@ type rawJSONMessage struct {
 
 var reMessageFile = regexp.MustCompile(`^message_(\d+)\.json$`)
 
-// ParseJSONThread parses every message_*.json file in a DYI thread
-// directory and returns a populated Thread. rootDir is the DYI export
-// root; threadDir is the thread path returned by Discover.
-func ParseJSONThread(rootDir, threadDir string) (*Thread, error) {
+func numberedJSONFiles(threadDir string) ([]string, []string, error) {
 	entries, err := os.ReadDir(threadDir)
 	if err != nil {
-		return nil, fmt.Errorf("fbmessenger: read thread dir: %w", err)
+		return nil, nil, fmt.Errorf("fbmessenger: read thread dir: %w", err)
 	}
 
-	type numbered struct {
-		name string
-		num  int
-	}
-	var files []numbered
+	var files []string
 	var badSiblings []string
 	for _, e := range entries {
 		if e.IsDir() {
@@ -94,19 +88,23 @@ func ParseJSONThread(rootDir, threadDir string) (*Thread, error) {
 			badSiblings = append(badSiblings, name)
 			continue
 		}
-		n, err := strconv.Atoi(m[1])
-		if err != nil {
-			// Regex guarantees \d+, so this is effectively unreachable;
-			// treat it the same as an unrecognized sibling.
-			badSiblings = append(badSiblings, name)
-			continue
-		}
-		files = append(files, numbered{name: name, num: n})
+		files = append(files, name)
 	}
 	if len(files) == 0 {
-		return nil, fmt.Errorf("fbmessenger: no message_*.json files in %s", threadDir)
+		return nil, nil, fmt.Errorf("fbmessenger: no message_*.json files in %s", threadDir)
 	}
-	sort.Slice(files, func(i, j int) bool { return files[i].num < files[j].num })
+	sortMessageFiles(files)
+	return files, badSiblings, nil
+}
+
+// ParseJSONThread parses every message_*.json file in a DYI thread
+// directory and returns a populated Thread. rootDir is the DYI export
+// root; threadDir is the thread path returned by Discover.
+func ParseJSONThread(rootDir, threadDir string) (*Thread, error) {
+	files, badSiblings, err := numberedJSONFiles(threadDir)
+	if err != nil {
+		return nil, err
+	}
 
 	// Decode every file. The DYI format emits each file as a complete
 	// object with `participants` and `messages`. We take participants
@@ -120,14 +118,14 @@ func ParseJSONThread(rootDir, threadDir string) (*Thread, error) {
 	var participants []Participant
 
 	for i, f := range files {
-		full := filepath.Join(threadDir, f.name)
+		full := filepath.Join(threadDir, f)
 		data, err := os.ReadFile(full)
 		if err != nil {
-			return nil, fmt.Errorf("fbmessenger: read %s: %w", f.name, err)
+			return nil, fmt.Errorf("fbmessenger: read %s: %w", f, err)
 		}
 		var decoded rawJSONExport
 		if err := json.Unmarshal(data, &decoded); err != nil {
-			return nil, fmt.Errorf("%w: %s: %w", ErrCorruptJSON, f.name, err)
+			return nil, fmt.Errorf("%w: %s: %w", ErrCorruptJSON, f, err)
 		}
 		if i == 0 {
 			title = DecodeMojibake(decoded.Title)
@@ -173,7 +171,7 @@ func ParseJSONThread(rootDir, threadDir string) (*Thread, error) {
 		if i > 0 {
 			rawBuf.WriteByte(',')
 		}
-		data, err := os.ReadFile(filepath.Join(threadDir, f.name))
+		data, err := os.ReadFile(filepath.Join(threadDir, f))
 		if err != nil {
 			return nil, err
 		}
@@ -189,25 +187,7 @@ func ParseJSONThread(rootDir, threadDir string) (*Thread, error) {
 	}
 	thread.Messages = make([]Message, 0, len(rawConcat))
 	for idx, m := range rawConcat {
-		msg := Message{
-			Index:      idx,
-			SenderName: DecodeMojibake(m.SenderName),
-			Type:       m.Type,
-		}
-		if m.TimestampMs > 0 {
-			msg.SentAt = time.UnixMilli(m.TimestampMs).UTC()
-		}
-		msg.Body = renderJSONBody(m)
-		msg.Attachments = resolveAttachments(absRoot, m)
-		for _, r := range m.Reactions {
-			msg.Reactions = append(msg.Reactions, Reaction{
-				Actor:    DecodeMojibake(r.Actor),
-				Reaction: DecodeMojibake(r.Reaction),
-			})
-		}
-		if len(msg.Reactions) > 0 {
-			msg.Body = appendReactionSummary(msg.Body, msg.Reactions)
-		}
+		msg := metaJSONMessage(m, idx, absRoot)
 		thread.Messages = append(thread.Messages, msg)
 	}
 	return &thread, nil
@@ -246,7 +226,7 @@ func renderJSONBody(m rawJSONMessage) string {
 	if len(m.Gifs) > 0 {
 		return "[gif]"
 	}
-	if len(m.Files) > 0 {
+	if len(m.Files) > 0 || len(m.Media) > 0 {
 		return "[file]"
 	}
 	return ""
@@ -321,7 +301,10 @@ func resolveAttachments(absRoot string, m rawJSONMessage) []Attachment {
 			if it.URI == "" {
 				continue
 			}
-			abs := resolveAttachmentURI(absRoot, it.URI)
+			abs := ""
+			if absRoot != "" {
+				abs = resolveAttachmentURI(absRoot, it.URI)
+			}
 			out = append(out, Attachment{
 				URI:      it.URI,
 				AbsPath:  abs,
@@ -336,8 +319,12 @@ func resolveAttachments(absRoot string, m rawJSONMessage) []Attachment {
 	add("audio", m.Audio)
 	add("file", m.Files)
 	add("gif", m.Gifs)
+	add("file", m.Media)
 	if m.Sticker != nil && m.Sticker.URI != "" {
-		abs := resolveAttachmentURI(absRoot, m.Sticker.URI)
+		abs := ""
+		if absRoot != "" {
+			abs = resolveAttachmentURI(absRoot, m.Sticker.URI)
+		}
 		out = append(out, Attachment{
 			URI:      m.Sticker.URI,
 			AbsPath:  abs,
@@ -405,10 +392,55 @@ func guessMime(uri string) string {
 		return "audio/mpeg"
 	case ".wav":
 		return "audio/wav"
+	case ".ogg":
+		return "audio/ogg"
+	case ".m4a":
+		return "audio/mp4"
 	case ".pdf":
 		return "application/pdf"
 	case ".webp":
 		return "image/webp"
 	}
 	return ""
+}
+
+// metaJSONMessage converts the record fields common to Meta JSON exports.
+func metaJSONMessage(m rawJSONMessage, idx int, absRoot string) Message {
+	msg := Message{
+		Index:      idx,
+		SenderName: DecodeMojibake(m.SenderName),
+		Type:       m.Type,
+	}
+	if m.TimestampMs > 0 {
+		msg.SentAt = time.UnixMilli(m.TimestampMs).UTC()
+	}
+	msg.Body = renderJSONBody(m)
+	msg.Attachments = resolveAttachments(absRoot, m)
+	for _, r := range m.Reactions {
+		msg.Reactions = append(msg.Reactions, Reaction{
+			Actor:    DecodeMojibake(r.Actor),
+			Reaction: DecodeMojibake(r.Reaction),
+		})
+	}
+	if len(msg.Reactions) > 0 {
+		msg.Body = appendReactionSummary(msg.Body, msg.Reactions)
+	}
+	return msg
+}
+
+// sortMessageFiles orders numbered shards without integer overflow.
+func sortMessageFiles(files []string) {
+	number := func(name string) string {
+		return strings.TrimLeft(strings.TrimSuffix(strings.TrimPrefix(filepath.Base(name), "message_"), ".json"), "0")
+	}
+	sort.SliceStable(files, func(i, j int) bool {
+		a, b := number(files[i]), number(files[j])
+		if len(a) != len(b) {
+			return len(a) < len(b)
+		}
+		if a != b {
+			return a < b
+		}
+		return files[i] < files[j]
+	})
 }

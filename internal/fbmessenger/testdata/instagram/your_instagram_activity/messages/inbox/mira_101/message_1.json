@@ -1,0 +1,39 @@
+{
+  "participants": [
+    {
+      "name": "Nova Example"
+    },
+    {
+      "name": "Mira Example"
+    }
+  ],
+  "title": "Mira Example",
+  "thread_path": "inbox/mira_101",
+  "messages": [
+    {
+      "sender_name": "Nova Example",
+      "timestamp_ms": 1730500000123,
+      "content": "The telescope is ready."
+    },
+    {
+      "sender_name": "Mira Example",
+      "timestamp_ms": 1730500001124,
+      "content": "caf\u00c3\u00a9 under the stars",
+      "reactions": [
+        {
+          "actor": "Nova Example",
+          "reaction": "\u2728"
+        }
+      ]
+    },
+    {
+      "sender_name": "Mira Example",
+      "timestamp_ms": 1730500002125,
+      "photos": [
+        {
+          "uri": "your_instagram_activity/messages/inbox/mira_101/photos/chart.png"
+        }
+      ]
+    }
+  ]
+}

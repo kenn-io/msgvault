@@ -2465,6 +2465,30 @@ Re-imports add new messages and fill missing media. Archived text and edit flags
 
 ---
 
+## import-instagram
+
+Import retained personal Instagram inbox JSON and available media from an
+extracted account download.
+
+```bash
+msgvault import-instagram --account <handle> --self-name "<export display name>" <export-dir>
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--account` | (required) | Account handle; lowercased with a leading `@` removed |
+| `--self-name` | (required) | Exact decoded export display name used to mark sent messages; does not confirm identity |
+| `--limit` | `0` | Maximum new messages per run; zero imports all; negatives rejected |
+
+Runs replay from the beginning with stable fingerprint occurrence IDs and
+retry missing media. Only numbered JSON inbox shards in the observed account
+layout are supported. HTML, ZIP and other layouts are rejected. See
+[Instagram imports](usage/text-messages.md#import-instagram) for coverage,
+identity limits. Run local file imports on the daemon host.
+Multipart ZIP containers are not assembled by this importer.
+
+---
+
 ## import-messenger
 
 Import Facebook Messenger conversations from a Download Your Information export.

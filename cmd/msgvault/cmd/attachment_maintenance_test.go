@@ -628,6 +628,7 @@ func TestAttachmentProducingCommandExactAllowlist(t *testing.T) {
 		"import-imessage",
 		importMboxCommand,
 		"import-messenger",
+		"import-instagram",
 		"import-pst",
 		"import-slackdump",
 		"import-synctech-sms",

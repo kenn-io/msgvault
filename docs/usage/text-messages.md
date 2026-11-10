@@ -21,6 +21,7 @@ open a conversation to read its messages. In the [TUI](/docs/usage/tui/), press
 | [Google Voice](#import-gvoice) | Google Takeout Voice directory |
 | [Telegram](#import-telegram) | Telegram Desktop Machine-readable JSON export |
 | [X DMs](#import-x) | Extracted X account archive (unreleased on `main`) |
+| [Instagram](#import-instagram) | Extracted account inbox JSON download |
 | [Facebook Messenger](#import-messenger) | Download Your Information export |
 | [SMS Backup & Restore](#import-synctech-sms) | XML backup |
 | [Slackdump](/docs/usage/slack/#import-a-slackdump-export) | Export directory or ZIP |
@@ -347,6 +348,42 @@ msgvault import-gvoice ~/Downloads/Takeout/Voice \
 2. Deselect all products, then select only **Google Voice**
 3. Export and download the archive
 4. Extract the zip. The `Voice` folder inside the `Takeout` directory is what you pass to the command.
+
+## import-instagram
+
+Import retained Instagram chats and available media from an extracted account
+JSON download. This personal account import is separate from
+[professional account comment sync](instagram-comments.md).
+
+```bash
+msgvault import-instagram --account orbit.example --self-name "Nova Example" ./export
+```
+
+Only `your_instagram_activity/messages/inbox/<thread>/message_<N>.json` is
+supported. HTML, ZIP files and other message sections/layouts are unsupported.
+Multipart ZIP containers are not assembled by this importer.
+The summary reports sent records, skipped records/files, missing or rejected media,
+and bounded input diagnostics naming unsupported sections such as message requests.
+If no sender matches `--self-name`, re-run with the exact exported display name
+to repair direction. Deleted, unsent, encrypted and unexported history cannot
+be recovered. No official versioned message schema or exhaustive real-account
+sent/received coverage has been verified.
+
+`--account` and `--self-name` are required. Handles are lowercased and a leading
+`@` is removed,
+so refreshed downloads for the same account share one source. `--self-name`
+marks sent messages only on an exact decoded display-name match. It does not
+confirm a contact identity or authenticate a handle. Within one account,
+identical display names merge, including
+across direct and group chats; distinct names remain distinct.
+
+Each run starts from the beginning. Messages use content fingerprints and occurrence counts within a thread. Reordered copies keep their IDs when their records and reactions match, and a single changed copy keeps its ID when it is the only unmatched copy. When several changed copies cannot be distinguished, the import retains the originals and adds the changed copies. Missing media and interrupted ancillary writes retry on replay. Later exports never delete archived messages or stored media. Edited content, changed sender display names, or renamed thread keys cannot be reconciled without native message IDs.
+Original records and shard provenance are retained, with the title and members stored once per shard; timestamps preserve integer
+milliseconds, and missing sender evidence remains unknown. Records with missing
+or unsupported timestamps are skipped. Reaction times remain unknown.
+
+`--limit N` caps new messages per run (`0` imports all; negatives are rejected).
+Successive runs with the same limit progress through the export.
 
 ## import-messenger
 

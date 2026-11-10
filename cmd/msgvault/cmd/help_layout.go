@@ -103,6 +103,7 @@ var topLevelCommandGroups = map[string]string{
 	"import-imessage":         helpGroupImport,
 	"import-maildir":          helpGroupImport,
 	"import-mbox":             helpGroupImport,
+	"import-instagram":        helpGroupImport,
 	"import-messenger":        helpGroupImport,
 	"import-pst":              helpGroupImport,
 	"import-slackdump":        helpGroupImport,

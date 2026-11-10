@@ -25,6 +25,7 @@ var ErrNotE2EEThread = errors.New("fbmessenger: not an e2ee thread")
 
 // Thread is the parsed form of one DYI thread directory, ready for import.
 type Thread struct {
+	instagramKey string
 	// DirName is the directory name (e.g. "testuser_ABC123XYZ"). This
 	// is used verbatim as source_conversation_id.
 	DirName string
@@ -82,6 +83,11 @@ type Reaction struct {
 
 // Message is one message in a parsed DYI thread.
 type Message struct {
+	sourceID          string
+	rawData           []byte
+	instagramShard    *instagramShard
+	instagramFilename string
+	instagramHeader   bool
 	// Index is a monotonic per-thread index (0-based) used to construct
 	// a stable source_message_id.
 	Index int
