@@ -93,16 +93,17 @@ test('People Details scrolls independently at desktop width', async ({ page }) =
   const pane = page.getByRole('group', { name: 'Person page' });
   await expect(pane.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
   await pane.getByRole('radio', { name: 'Details', exact: true }).click();
-  const metrics = await pane.evaluate((el) => ({
+  const scrollPane = pane.locator('[data-scroll-pane]');
+  const metrics = await scrollPane.evaluate((el) => ({
     scroll: el.scrollHeight,
     client: el.clientHeight,
     overflow: getComputedStyle(el).overflowY
   }));
   expect(metrics.scroll).toBeGreaterThan(metrics.client);
   expect(metrics.overflow).toBe('auto');
-  await pane.evaluate((el) => el.scrollTo(0, el.scrollHeight));
-  expect(await pane.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
-  await expect(pane.getByRole('heading', { name: 'Last time we talked' })).toBeInViewport();
+  await scrollPane.evaluate((el) => el.scrollTo(0, el.scrollHeight));
+  expect(await scrollPane.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  await expect(pane.getByRole('heading', { name: 'Meetings', exact: true })).toBeInViewport();
 });
 
 test('Directory opens an accessible narrow People page and returns to its list', async ({ page }) => {

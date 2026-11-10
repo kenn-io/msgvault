@@ -126,7 +126,7 @@
   small, .muted { color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
   label { display: grid; gap: var(--label-gap); }
   [role="alert"] { color: var(--text-danger); }
-  @media (max-width: 600px) {
+  @media (max-width: 640px) {
     .list { display: block; }
     .list li { grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: minmax(var(--control-h), auto) auto auto; row-gap: var(--space-1); padding-block: var(--pane-pad-x); }
     .name { display: contents; }
