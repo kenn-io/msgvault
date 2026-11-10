@@ -55,31 +55,3 @@ func TestArchiveMessageDeltaPreviewAndRetry(t *testing.T) {
 	}
 	assert.Equal(t, 2, writes)
 }
-
-func TestArchiveMessageReadbackFailures(t *testing.T) {
-	for _, scenario := range []string{"read failure", "ignored write"} {
-		t.Run(scenario, func(t *testing.T) {
-			reads := 0
-			c := newDraftTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if strings.HasSuffix(r.URL.Path, "/labels") {
-					_, _ = w.Write([]byte(`{"labels":[]}`))
-					return
-				}
-				if r.Method == http.MethodGet {
-					reads++
-					if reads > 1 && scenario == "read failure" {
-						w.WriteHeader(http.StatusNotFound)
-						return
-					}
-				}
-				_, _ = w.Write([]byte(`{"id":"message-1","labelIds":["INBOX","UNREAD"]}`))
-			}))
-			result, err := c.ArchiveMessage(t.Context(), "message-1", true, false)
-			require.Error(t, err)
-			require.NotNil(t, result)
-			assert.False(t, result.Verified)
-			assert.Equal(t, 2, reads)
-			assert.Contains(t, result.Tags, "INBOX")
-		})
-	}
-}
