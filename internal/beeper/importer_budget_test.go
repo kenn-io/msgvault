@@ -854,6 +854,7 @@ func TestImportCleanupDeadline(t *testing.T) {
 }
 
 func TestImportLateStopRecordsCheckpointAndCompletion(t *testing.T) {
+	testutil.SkipIfPostgres(t, "fake-clock timing requires local SQLite operations")
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		assert, require := assert.New(t), require.New(t)
