@@ -190,6 +190,10 @@ func TestMergeSourcesSavedViewItemsFoldedCollisions(t *testing.T) {
 				require.NoError(t, err)
 				keep, err := f.Store.EnsureConversationWithType(into.ID, "!shared:example.test", "group_chat", "Chat")
 				require.NoError(t, err)
+				for source, conversation := range map[int64]int64{from.ID: drop, into.ID: keep} {
+					_, err = f.Store.UpsertMessage(&store.Message{SourceID: source, ConversationID: conversation, SourceMessageID: "chat-message", MessageType: "beeper"})
+					require.NoError(t, err)
+				}
 				historical = store.SavedViewItemRef{ConversationID: drop, SourceID: from.ID}
 				survivor = store.SavedViewItemRef{ConversationID: keep, SourceID: into.ID}
 			}
@@ -340,9 +344,13 @@ func TestSavedViewItemsIgnoreStaleTargets(t *testing.T) {
 func TestSavedViewItemsTargetJSONShape(t *testing.T) {
 	f := storetest.New(t)
 	id := f.CreateMessage("shape")
+	chat, err := f.Store.EnsureConversationWithType(f.Source.ID, "shape-chat", "chat", "Chat")
+	require.NoError(t, err)
+	_, err = f.Store.UpsertMessage(&store.Message{SourceID: f.Source.ID, ConversationID: chat, SourceMessageID: "shape-chat", MessageType: "google_chat"})
+	require.NoError(t, err)
 	view, err := f.Store.CreateSavedView(t.Context(), savedViewInput("Target shape"))
 	require.NoError(t, err)
-	view, err = f.Store.ChangeSavedViewItems(t.Context(), view.ID, 1, store.SavedViewItemChange{IncludeAdd: []store.SavedViewItemRef{{MessageID: id, SourceID: f.Source.ID}, {ConversationID: f.ConvID, SourceID: f.Source.ID}}})
+	view, err = f.Store.ChangeSavedViewItems(t.Context(), view.ID, 1, store.SavedViewItemChange{IncludeAdd: []store.SavedViewItemRef{{MessageID: id, SourceID: f.Source.ID}, {ConversationID: chat, SourceID: f.Source.ID}}})
 	require.NoError(t, err)
 	rendered, _, err := f.Store.SavedViewItemsForView(t.Context(), view)
 	require.NoError(t, err)
@@ -428,6 +436,50 @@ func TestMigrateSourceMessageIDRemapsSavedViewItems(t *testing.T) {
 			require.Len(t, entries, 1)
 			assert.Equal(t, survivor, entries[0].SavedViewItemRef)
 			assert.Equal(t, "owner", entries[0].AddedBy)
+		})
+	}
+}
+
+func TestSavedViewItemsReclassifiedTargetsBecomeStale(t *testing.T) {
+	for _, conversation := range []bool{false, true} {
+		t.Run(fmt.Sprint(conversation), func(t *testing.T) {
+			f := storetest.New(t)
+			message := &store.Message{SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: "reclassified", MessageType: "email"}
+			if conversation {
+				message.MessageType = "google_chat"
+			}
+			id, err := f.Store.UpsertMessage(message)
+			require.NoError(t, err)
+			ref := store.SavedViewItemRef{MessageID: id, SourceID: f.Source.ID}
+			if conversation {
+				ref.MessageID = 0
+				ref.ConversationID = f.ConvID
+			}
+			view, err := f.Store.CreateSavedView(t.Context(), savedViewInput("Reclassified"))
+			require.NoError(t, err)
+			view, err = f.Store.ChangeSavedViewItems(t.Context(), view.ID, 1, store.SavedViewItemChange{IncludeAdd: []store.SavedViewItemRef{ref}})
+			require.NoError(t, err)
+			before, stale, err := f.Store.SavedViewItemsForView(t.Context(), view)
+			require.NoError(t, err)
+			require.Len(t, before.Include, 1)
+			assert.Zero(t, stale)
+			message.MessageType = "google_chat"
+			if conversation {
+				message.MessageType = "email"
+			}
+			_, err = f.Store.UpsertMessage(message)
+			require.NoError(t, err)
+			resolved, rejected, err := f.Store.ResolveEntryKeys(t.Context(), []string{before.Include[0].EntryKey})
+			require.NoError(t, err)
+			assert.Empty(t, resolved)
+			require.Len(t, rejected, 1)
+			after, stale, err := f.Store.SavedViewItemsForView(t.Context(), view)
+			require.NoError(t, err)
+			assert.Empty(t, after.Include)
+			assert.Equal(t, 1, stale)
+			view, err = f.Store.ChangeSavedViewItems(t.Context(), view.ID, view.Revision, store.SavedViewItemChange{})
+			require.NoError(t, err)
+			assert.Empty(t, view.ItemsJSON, "a valid patch prunes stale kind membership")
 		})
 	}
 }

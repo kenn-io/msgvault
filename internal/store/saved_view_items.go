@@ -327,9 +327,9 @@ func (s *Store) liveItemFacts(ctx context.Context, q itemSQL, items SavedViewIte
 				args[i] = id
 			}
 			marks := strings.TrimSuffix(strings.Repeat("?,", len(batch)), ",")
-			statement := `SELECT m.id,m.source_id,COALESCE(NULLIF(m.source_message_id,''),CAST(m.id AS TEXT)) FROM messages m WHERE m.id IN (` + marks + `)`
+			statement := `SELECT m.id,m.source_id,COALESCE(NULLIF(m.source_message_id,''),CAST(m.id AS TEXT)) FROM messages m LEFT JOIN conversations c ON c.id=m.conversation_id WHERE m.id IN (` + marks + `) AND NOT (` + identityindex.IsChatSQL("COALESCE(m.message_type,'')", "COALESCE(c.conversation_type,'')") + `)`
 			if conversation {
-				statement = `SELECT id,source_id,CAST(id AS TEXT) FROM conversations WHERE id IN (` + marks + `)`
+				statement = `SELECT c.id,c.source_id,CAST(c.id AS TEXT) FROM conversations c WHERE c.id IN (` + marks + `) AND EXISTS (SELECT 1 FROM messages cm WHERE cm.conversation_id=c.id AND cm.source_id=c.source_id AND (` + identityindex.IsChatSQL("COALESCE(cm.message_type,'')", "COALESCE(c.conversation_type,'')") + `))`
 			}
 			rows, err := q.QueryContext(ctx, s.dialect.Rebind(statement), args...)
 			if err != nil {
