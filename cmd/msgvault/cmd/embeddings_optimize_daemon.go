@@ -112,7 +112,7 @@ func runManagedEmbeddingsCLI(ctx context.Context, req api.CLIRunRequest, emit fu
 			return fmt.Errorf("read --log-sql-slow-ms: %w", err)
 		}
 		if trace || slow > 0 {
-			return errors.New("SQL flags are unavailable for managed embeddings; configure [log] sql_trace or sql_slow_ms on the daemon")
+			return errors.New("configure daemon SQL logging with [log] sql_trace or sql_slow_ms instead of CLI flags")
 		}
 		return nil
 	}

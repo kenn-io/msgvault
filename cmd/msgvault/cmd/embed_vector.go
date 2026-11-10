@@ -73,6 +73,16 @@ func runEmbedWithOptions(cmd *cobra.Command, opts managedEmbedOptions) error {
 	if err := resolveEmbedScopeSourceIDsFor(ctx, s, state, opts.accounts, opts.collections); err != nil {
 		return err
 	}
+	var scopedSources []*store.Source
+	if opts.yield != nil {
+		for _, id := range cfg.Vector.Embed.Scope.SourceIDs {
+			source, err := s.GetSourceByIDContext(ctx, id)
+			if err != nil {
+				return fmt.Errorf("read embedding scope source: %w", err)
+			}
+			scopedSources = append(scopedSources, source)
+		}
+	}
 
 	cfg.Vector, err = resolveLocalVectorConfig(ctx, cfg.Vector)
 	if err != nil {
@@ -198,6 +208,7 @@ func runEmbedWithOptions(cmd *cobra.Command, opts managedEmbedOptions) error {
 		Progress:     newProgressPrinter(errOut, totalPending, cfg.Vector.Embeddings.ETAWindow),
 		PersonGate:   personGate,
 		APIKey:       embeddingAPIKey,
+		Log:          state.logger,
 	})
 	if err != nil {
 		return fmt.Errorf("configure embedding runtime: %w", err)
@@ -227,6 +238,18 @@ func runEmbedWithOptions(cmd *cobra.Command, opts managedEmbedOptions) error {
 		}
 		if err := opts.yield(); err != nil {
 			return err
+		}
+		for _, original := range scopedSources {
+			current, err := s.GetSourceByIDContext(ctx, original.ID)
+			if errors.Is(err, store.ErrSourceNotFound) {
+				return fmt.Errorf("embedding scope changed while the build was paused: account %q was removed", original.Identifier)
+			}
+			if err != nil {
+				return fmt.Errorf("check embedding scope after pause: %w", err)
+			}
+			if current.SourceType != original.SourceType || current.Identifier != original.Identifier {
+				return fmt.Errorf("embedding scope changed while the build was paused: account %q was replaced", original.Identifier)
+			}
 		}
 		yielded = true
 		// A sync may have changed a message below the forward watermark.
