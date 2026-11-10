@@ -1839,9 +1839,7 @@ func TestIMAPPollQresyncAppendAndFlags(t *testing.T) {
 			err := runEmailPoll(runCtx, identifier, st, nil, invocationFromContext(ctx))
 			pollResults <- err
 			return err
-		}).WithAccountPollBudget(func(runCtx context.Context, identifier string) time.Duration {
-		return emailPollBudget(runCtx, identifier, st, invocationFromContext(ctx))
-	})
+		})
 	_, errs := pollScheduler.AddAccountsFromConfig(&config.Config{Accounts: []config.AccountSchedule{{Email: ic.Identifier(), Enabled: true, Schedule: "0 * * * *", PollInterval: 120 * time.Second}}})
 	require.Empty(t, errs)
 	pollScheduler.Start()

@@ -3264,7 +3264,7 @@ func TestRunScheduledSyncUsesSharedDiscordImporterAndRebuildsOnce(t *testing.T) 
 		wantErr    error
 	}{
 		{"import failure", importErr, nil, importErr},
-		{"cache failure", nil, cacheErr, nil},
+		{"cache failure", nil, cacheErr, cacheErr},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)

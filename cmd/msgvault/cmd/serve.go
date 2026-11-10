@@ -458,9 +458,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 			return runEmailPoll(ctx, identifier, s, getOAuthMgr, state)
 		})
 	})
-	sched.WithAccountPollBudget(func(ctx context.Context, identifier string) time.Duration {
-		return emailPollBudget(ctx, identifier, s, state)
-	})
 	sched.WithAccountPreemptionPolicy(func(identifier string) bool {
 		return scheduledSyncPreemptible(ctx, s, identifier, logger)
 	})
@@ -4326,9 +4323,7 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 				"duration", time.Since(startTime),
 			)
 		}
-		if queueErr := rebuildCacheAfterScheduledSourceRun(context.WithoutCancel(ctx), identifier); queueErr != nil {
-			logger.Warn("queue analytics refresh", "identifier", identifier, "error", queueErr)
-		}
+		syncErr = errors.Join(syncErr, rebuildCacheAfterScheduledSourceRun(context.WithoutCancel(ctx), identifier))
 		if syncErr != nil {
 			return syncErr
 		}
@@ -4405,9 +4400,7 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 	}
 
 	// Rebuild cache once after all sources, regardless of per-source errors.
-	if err := rebuildCacheAfterScheduledSourceRun(context.WithoutCancel(ctx), identifier); err != nil {
-		logger.Warn("queue analytics refresh", "identifier", identifier, "error", err)
-	}
+	errs = append(errs, rebuildCacheAfterScheduledSourceRun(context.WithoutCancel(ctx), identifier))
 	if err := errors.Join(errs...); err != nil {
 		return err
 	}

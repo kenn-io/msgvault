@@ -133,7 +133,6 @@ type Scheduler struct {
 	logger                  *slog.Logger
 	work                    WorkTracker
 	accountPreemptionPolicy func(string) bool
-	accountPollBudget       func(context.Context, string) time.Duration
 
 	mu            sync.RWMutex
 	jobs          map[string]cron.EntryID // email -> cron entry ID
@@ -244,12 +243,6 @@ func New(syncFunc SyncFunc) *Scheduler {
 
 func (s *Scheduler) WithAccountPoll(fn SyncFunc) *Scheduler {
 	s.pollFunc = fn
-	return s
-}
-
-// WithAccountPollBudget selects a runtime budget after the work gate is acquired.
-func (s *Scheduler) WithAccountPollBudget(fn func(context.Context, string) time.Duration) *Scheduler {
-	s.accountPollBudget = fn
 	return s
 }
 
@@ -655,27 +648,13 @@ func (s *Scheduler) runAccountSync(email string, poll bool) {
 	preemptionPolicy := s.accountPreemptionPolicy
 	s.mu.RUnlock()
 	preemptible := preemptionPolicy == nil || preemptionPolicy(email)
-	var budget time.Duration
-	if poll {
-		budget = 5 * time.Minute
-		if s.accountPollBudget != nil {
-			budget = s.accountPollBudget(s.ctx, email)
-		}
-	}
-	runCtx, endRun := s.jobContext("sync "+email, preemptible, false, budget)
+	runCtx, endRun := s.jobContext("sync "+email, preemptible, false, 0)
 	fn := s.syncFunc
 	if poll && s.pollFunc != nil {
 		fn = s.pollFunc
 	}
 	err := fn(runCtx, email)
 	endRun()
-	if errors.Is(context.Cause(runCtx), jobctx.ErrRunBudgetExceeded) {
-		if callbackErr := jobctx.ErrorAfterYield(runCtx, err); callbackErr != nil {
-			err = callbackErr
-		} else {
-			err = ErrAcquisitionIncomplete
-		}
-	}
 	yielded := yieldedToWaiter(runCtx) || jobctx.PreemptionRequested(runCtx)
 
 	s.mu.Lock()

@@ -59,7 +59,7 @@ func TestCronRegistrationPreservesPolling(t *testing.T) {
 	})
 }
 
-func TestPollingWithoutBudgetCanFinishLongPass(t *testing.T) {
+func TestPollingCanFinishLongGmailRecovery(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		completed := make(chan struct{}, 1)
 		s := New(func(context.Context, string) error { return nil }).
@@ -71,8 +71,8 @@ func TestPollingWithoutBudgetCanFinishLongPass(t *testing.T) {
 				case <-ctx.Done():
 					return ctx.Err()
 				}
-			}).WithAccountPollBudget(func(context.Context, string) time.Duration { return 0 })
-		_, errs := s.AddAccountsFromConfig(&config.Config{Accounts: []config.AccountSchedule{{Email: "imap@example.test", Enabled: true, Schedule: "0 * * * *", PollInterval: 120 * time.Second}}})
+			})
+		_, errs := s.AddAccountsFromConfig(&config.Config{Accounts: []config.AccountSchedule{{Email: "gmail@example.test", Enabled: true, Schedule: "0 * * * *", PollInterval: 120 * time.Second}}})
 		require.Empty(t, errs)
 		s.Start()
 		time.Sleep(6 * time.Minute)

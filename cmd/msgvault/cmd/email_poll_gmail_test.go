@@ -23,7 +23,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
@@ -120,9 +119,8 @@ func TestRapidEmailGmailProfileMismatchDoesNotMutateArchive(t *testing.T) {
 func TestGmailPollUsesOneVerifiedProfile(t *testing.T) {
 	cfg := testGmailServiceAccountConfig(t)
 	var profiles, histories atomic.Int32
-	var changed, healthy, expired, quota, labelsQuota, labelsWait atomic.Bool
+	var changed, healthy, expired, quota, labelsQuota atomic.Bool
 	quotaSeen := make(chan struct{}, 1)
-	labelsStarted := make(chan struct{}, 1)
 	raw := base64.RawURLEncoding.EncodeToString([]byte("From: sender@example.test\r\nTo: sample@example.test\r\nSubject: fixture\r\nMessage-ID: <lost@example.test>\r\n\r\nbody\r\n"))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -138,7 +136,7 @@ func TestGmailPollUsesOneVerifiedProfile(t *testing.T) {
 				return
 			}
 			count := profiles.Add(1)
-			if expired.Load() && count >= 9 {
+			if expired.Load() && count >= 10 {
 				_, _ = w.Write([]byte(`{"emailAddress":"sample@example.test","historyId":"102"}`))
 			} else if changed.Load() {
 				_, _ = w.Write([]byte(`{"emailAddress":"sample@example.test","historyId":"101"}`))
@@ -146,11 +144,6 @@ func TestGmailPollUsesOneVerifiedProfile(t *testing.T) {
 				_, _ = w.Write([]byte(`{"emailAddress":"sample@example.test","historyId":"100"}`))
 			}
 		case "/gmail/v1/users/me/labels":
-			if labelsWait.CompareAndSwap(true, false) {
-				labelsStarted <- struct{}{}
-				<-r.Context().Done()
-				return
-			}
 			if labelsQuota.CompareAndSwap(true, false) {
 				w.Header().Set("Retry-After", "600")
 				w.WriteHeader(http.StatusTooManyRequests)
@@ -238,6 +231,8 @@ func TestGmailPollUsesOneVerifiedProfile(t *testing.T) {
 	assert.Zero(t, failures)
 	healthy.Store(true)
 	rebuildCacheAfterScheduledSourceRun = func(context.Context, string) error { return fmt.Errorf("queue unavailable") }
+	require.NoError(t, runEmailPoll(ctx, src.Identifier, st.Store, nil, invocationFromContext(ctx)))
+	rebuildCacheAfterScheduledSourceRun = func(context.Context, string) error { return nil }
 	require.NoError(t, sched.TriggerSync(src.Identifier, true))
 	require.NoError(t, <-results)
 	require.Eventually(t, func() bool { return !sched.Status()[0].Running && !sched.Status()[0].Queued }, time.Second, time.Millisecond)
@@ -245,7 +240,7 @@ func TestGmailPollUsesOneVerifiedProfile(t *testing.T) {
 	debt, err = st.Store.ListUnresolvedSyncItemErrors(ctx, src.ID)
 	require.NoError(t, err)
 	assert.Empty(t, debt)
-	assert.EqualValues(t, 5, profiles.Load())
+	assert.EqualValues(t, 6, profiles.Load())
 	assert.EqualValues(t, 1, histories.Load())
 	require.NoError(t, st.Store.UpdateSourceSyncCursor(src.ID, ""))
 	assert.ErrorContains(t, runEmailPoll(ctx, src.Identifier, st.Store, nil, invocationFromContext(ctx)), "no history ID")
@@ -255,7 +250,7 @@ func TestGmailPollUsesOneVerifiedProfile(t *testing.T) {
 	current, err := st.Store.GetSourceByID(src.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "102", current.SyncCursor.String)
-	assert.EqualValues(t, 9, profiles.Load())
+	assert.EqualValues(t, 10, profiles.Load())
 	quota.Store(true)
 	otherRan := make(chan struct{}, 1)
 	gate := api.NewSerialOperationGate()
@@ -291,26 +286,4 @@ func TestGmailPollUsesOneVerifiedProfile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, store.SyncStatusPaused, run.Status)
 	assert.Empty(t, run.ErrorMessage.String)
-	budgetCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-	var budgetFailures atomic.Int32
-	invocationFromContext(budgetCtx).syncFailures = &telemetry.SyncFailures{Capture: func(string, map[string]any) error { budgetFailures.Add(1); return nil }}
-	budgetCtx, cancelBudget := context.WithCancelCause(budgetCtx)
-	defer cancelBudget(nil)
-	labelsWait.Store(true)
-	result := make(chan error, 1)
-	go func() {
-		result <- runEmailPoll(budgetCtx, src.Identifier, st.Store, nil, invocationFromContext(budgetCtx))
-	}()
-	select {
-	case <-labelsStarted:
-	case <-time.After(3 * time.Second):
-		t.Fatal("poll did not reach labels")
-	}
-	cancelBudget(jobctx.ErrRunBudgetExceeded)
-	assert.ErrorIs(t, <-result, scheduler.ErrAcquisitionIncomplete)
-	run, err = st.Store.GetLatestSync(src.ID)
-	require.NoError(t, err)
-	assert.Equal(t, store.SyncStatusPaused, run.Status)
-	assert.Empty(t, run.ErrorMessage.String)
-	assert.Zero(t, budgetFailures.Load())
 }
