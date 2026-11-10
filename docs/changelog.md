@@ -9,6 +9,10 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.
+- [Instagram mentions sync](usage/instagram-comments.md#archive-media-that-tags-the-account)
+  archives media in which other accounts tag a linked professional account, in a
+  separate opt-in source. Set `mentions = true` on the profile, then run
+  `msgvault source instagram-mentions add` and `sync`.
 - [Instagram comment sync](usage/instagram-comments.md) archives linked professional
   account media comments and replies for search and existing person linking.
   Sending and ad-only discovery are not included.

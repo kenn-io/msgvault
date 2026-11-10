@@ -139,7 +139,9 @@ type graphPage[T any] struct {
 
 // readObjectPage shares bounded paging while callers choose explicit wire types.
 // The ID projection applies the same producer validation to every platform.
-func readObjectPage[T any](ctx context.Context, c *Client, path, after string, q url.Values, id func(T) string) (graphPage[T], error) {
+// Some edges, such as Instagram tags, can omit paging.next before the last
+// page; with untilEmpty the after cursor is followed until a page is empty.
+func readObjectPage[T any](ctx context.Context, c *Client, path, after string, q url.Values, id func(T) string, untilEmpty bool) (graphPage[T], error) {
 	if !c.safeCursor(after) {
 		return graphPage[T]{}, errors.New("invalid Graph cursor")
 	}
@@ -162,7 +164,7 @@ func readObjectPage[T any](ctx context.Context, c *Client, path, after string, q
 		return graphPage[T]{}, errors.New("graph response missing or oversized data page")
 	}
 	next := ""
-	if wire.Paging.Next != "" {
+	if wire.Paging.Next != "" || (untilEmpty && len(wire.Data) > 0 && wire.Paging.Cursors.After != "") {
 		next = wire.Paging.Cursors.After
 		if next == "" || next == after || !c.safeCursor(next) {
 			return graphPage[T]{}, errors.New("invalid Graph pagination progress")

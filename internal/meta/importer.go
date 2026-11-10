@@ -58,40 +58,73 @@ func (imp *Importer) Register(ctx context.Context, app, page string) (*store.Sou
 	if err != nil {
 		return nil, err
 	}
+	anchor, provenance := ActorIdentifier(app, page, page), "facebook_page_token"
 	if imp.instagram != "" {
 		account, err := imp.igAPI.LinkedInstagramAccount(ctx, page, imp.instagram)
 		if err != nil {
 			return nil, err
 		}
 		identity.Name = account.Username
+		anchor, provenance = instagramActorIdentifier(app, page, imp.instagram, "ig_user", imp.instagram), "instagram_page_token"
 	}
-	source, err := imp.store.GetOrCreateSourceContext(ctx, imp.sourceType(), imp.sourceIdentifier(app, page))
+	return registerSource(ctx, imp.store, imp.sourceType(), imp.sourceIdentifier(app, page), anchor, provenance, identity.Name)
+}
+
+// registerSource records a verified account as a source and names it.
+func registerSource(ctx context.Context, st *store.Store, sourceType, identifier, anchor, provenance, name string) (*store.Source, error) {
+	source, err := st.GetOrCreateSourceContext(ctx, sourceType, identifier)
 	if err != nil {
 		return nil, err
 	}
-	execution, err := imp.store.AcquireSyncExecutionContext(ctx, source.ID)
+	source, execution, err := acquireSource(ctx, st, source.SourceType, source.Identifier)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = execution.Release() }()
-	current, err := imp.store.GetSourceByIDContext(ctx, source.ID)
+	if err = st.AddAccountIdentityContext(ctx, source.ID, anchor, provenance); err != nil {
+		return nil, err
+	}
+	if err = st.UpdateSourceDisplayNameContext(ctx, source.ID, name); err != nil {
+		return nil, err
+	}
+	return st.GetSourceByIDContext(ctx, source.ID)
+}
+
+// acquireSource takes the source's execution lock and refuses a retired
+// source. The caller releases the returned execution.
+func acquireSource(ctx context.Context, st *store.Store, sourceType, identifier string) (*store.Source, *store.SyncExecution, error) {
+	source, err := st.GetSourceByTypeAndIdentifier(ctx, sourceType, identifier)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if current.HistoryOnly || current.MergedIntoSourceID != 0 {
-		return nil, store.ErrSourceRetired
+	execution, err := st.AcquireSyncExecutionContext(ctx, source.ID)
+	if err != nil {
+		return nil, nil, err
 	}
-	anchor, provenance := ActorIdentifier(app, page, page), "facebook_page_token"
-	if imp.instagram != "" {
-		anchor, provenance = instagramActorIdentifier(app, page, imp.instagram, "ig_user", imp.instagram), "instagram_page_token"
+	source, err = st.GetSourceByIDContext(ctx, source.ID)
+	if err == nil && (source.HistoryOnly || source.MergedIntoSourceID != 0) {
+		err = store.ErrSourceRetired
 	}
-	if err = imp.store.AddAccountIdentityContext(ctx, source.ID, anchor, provenance); err != nil {
-		return nil, err
+	if err != nil {
+		return nil, nil, errors.Join(err, execution.Release())
 	}
-	if err = imp.store.UpdateSourceDisplayNameContext(ctx, source.ID, identity.Name); err != nil {
-		return nil, err
+	return source, execution, nil
+}
+
+// finishSync records how a polling run ended. Only a complete run advances the
+// source cursor; a failed or paused run keeps its checkpoint for the next run.
+func finishSync(ctx context.Context, st *store.Store, sourceID, syncID int64, cp *store.Checkpoint, partial bool, runErr error) error {
+	switch {
+	case runErr != nil:
+		if jobctx.ErrorAfterYield(ctx, runErr) != nil {
+			cp.ErrorsCount = 1
+		}
+		return errors.Join(runErr, st.InterruptSyncWithCheckpoint(ctx, syncID, runErr, cp))
+	case partial:
+		return st.PauseSyncWithCheckpoint(ctx, syncID, cp)
+	default:
+		return st.ScopedToSync(sourceID, syncID).CompleteSyncAndUpdateSourceCursorContext(ctx, syncID, sourceID, cp.PageToken)
 	}
-	return imp.store.GetSourceByIDContext(ctx, source.ID)
 }
 
 type importRun struct {
@@ -108,22 +141,11 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 	if !ValidAccountID(app) || !ValidAccountID(page) || opts.MaxRequests < 0 {
 		return nil, errors.New("invalid Facebook import options")
 	}
-	source, err := imp.store.GetSourceByTypeAndIdentifier(ctx, imp.sourceType(), imp.sourceIdentifier(app, page))
-	if err != nil {
-		return nil, err
-	}
-	execution, err := imp.store.AcquireSyncExecutionContext(ctx, source.ID)
+	source, execution, err := acquireSource(ctx, imp.store, imp.sourceType(), imp.sourceIdentifier(app, page))
 	if err != nil {
 		return nil, err
 	}
 	defer func() { retErr = errors.Join(retErr, execution.Release()) }()
-	source, err = imp.store.GetSourceByIDContext(ctx, source.ID)
-	if err != nil {
-		return nil, err
-	}
-	if source.HistoryOnly || source.MergedIntoSourceID != 0 {
-		return nil, store.ErrSourceRetired
-	}
 	state, err := loadState(ctx, imp.store, source, opts.Full)
 	if err != nil {
 		return nil, err
@@ -147,16 +169,7 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 			retErr = errors.Join(retErr, err)
 			return
 		}
-		if retErr != nil {
-			if jobctx.ErrorAfterYield(ctx, retErr) != nil {
-				checkpoint.ErrorsCount = 1
-			}
-			retErr = errors.Join(retErr, imp.store.InterruptSyncWithCheckpoint(ctx, syncID, retErr, checkpoint))
-		} else if sum.Partial {
-			retErr = imp.store.PauseSyncWithCheckpoint(ctx, syncID, checkpoint)
-		} else {
-			retErr = scoped.store.CompleteSyncAndUpdateSourceCursorContext(ctx, syncID, source.ID, checkpoint.PageToken)
-		}
+		retErr = finishSync(ctx, imp.store, source.ID, syncID, checkpoint, sum.Partial, retErr)
 	}()
 	// Publish the inherited state before any new request, so a crash cannot
 	// conceal a newer failed/paused checkpoint behind this run.

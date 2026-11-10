@@ -66,6 +66,7 @@ type IGMedia struct {
 	Caption   string  `json:"caption"`
 	Timestamp string  `json:"timestamp"`
 	Permalink string  `json:"permalink"`
+	Username  string  `json:"username,omitempty"`
 	Owner     *IGUser `json:"owner,omitempty"`
 }
 

@@ -134,38 +134,6 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 	if err != nil {
 		return err
 	}
-	recipients := []store.RecipientSet{}
-	participants := []store.ConversationParticipantRef{}
-	if exists && prior.SenderID.Valid && (sender == 0 || sender == prior.SenderID.Int64 && fromName == "") {
-		sender = prior.SenderID.Int64
-		self = prior.SourceIsFromMe.Valid && prior.SourceIsFromMe.Bool
-		// Preserve stronger prior evidence when the current Graph projection omits
-		// its author or author name. An absent field is not a provider retraction.
-		previous, err := r.imp.store.GetMessagesSummariesByIDsContext(ctx, []int64{prior.ID})
-		if err != nil {
-			return err
-		}
-		if len(previous) > 0 {
-			fromName = previous[0].FromName
-		}
-	}
-	if sender != 0 {
-		recipients = append(recipients, store.RecipientSet{Type: "from", ParticipantIDs: []int64{sender}, DisplayNames: []string{fromName}})
-		participants = append(participants, store.ConversationParticipantRef{ParticipantID: sender, Role: "member"})
-	}
-	var sent sql.NullTime
-	if obj.CreatedTime != "" {
-		parsed, err := time.Parse("2006-01-02T15:04:05-0700", obj.CreatedTime)
-		if err != nil {
-			parsed, err = time.Parse(time.RFC3339, obj.CreatedTime)
-		}
-		if err != nil {
-			return errors.New("invalid comment creation time")
-		}
-		sent = sql.NullTime{Time: parsed, Valid: true}
-	} else if exists {
-		sent = prior.SentAt
-	}
 	metadata, err := json.Marshal(meta)
 	if err != nil {
 		return err
@@ -190,53 +158,119 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 			}
 		}
 	}
-	msg := &store.Message{SourceID: r.source.ID, SourceMessageID: obj.ID, MessageType: r.imp.sourceType(),
+	row := archivedObject{
+		sourceID: r.source.ID, messageType: r.imp.sourceType(), format: r.objectFormat(),
+		obj: obj, conversation: root, title: title, reply: reply,
+		sender: sender, fromName: fromName, self: self, metadata: metadata, raw: raw,
+	}
+	var priorRow *store.StoredMessage
+	if exists {
+		priorRow = &prior
+	}
+	return archiveObject(ctx, r.imp.store, r.sum, row, priorRow, previousMetadata)
+}
+
+// archivedObject is one post, media or comment row. The comment and mention
+// importers differ in identity and metadata, then share this write.
+type archivedObject struct {
+	sourceID            int64
+	messageType, format string
+	obj                 Object
+	conversation, title string
+	subject             string
+	reply               sql.NullInt64
+	sender              int64
+	fromName            string
+	self                bool
+	metadata, raw       []byte
+}
+
+// archiveObject writes o unless the archived row already holds the same
+// content, and counts the result. prior is the row stored for o.obj.ID, if any.
+func archiveObject(ctx context.Context, st *store.Store, sum *ImportSummary, o archivedObject, prior *store.StoredMessage, priorMetadata sql.NullString) error {
+	sender, fromName, self := o.sender, o.fromName, o.self
+	recipients := []store.RecipientSet{}
+	participants := []store.ConversationParticipantRef{}
+	if prior != nil && prior.SenderID.Valid && (sender == 0 || sender == prior.SenderID.Int64 && fromName == "") {
+		sender = prior.SenderID.Int64
+		self = prior.SourceIsFromMe.Valid && prior.SourceIsFromMe.Bool
+		// Preserve stronger prior evidence when the current Graph projection omits
+		// its author or author name. An absent field is not a provider retraction.
+		previous, err := st.GetMessagesSummariesByIDsContext(ctx, []int64{prior.ID})
+		if err != nil {
+			return err
+		}
+		if len(previous) > 0 {
+			fromName = previous[0].FromName
+		}
+	}
+	if sender != 0 {
+		recipients = append(recipients, store.RecipientSet{Type: "from", ParticipantIDs: []int64{sender}, DisplayNames: []string{fromName}})
+		participants = append(participants, store.ConversationParticipantRef{ParticipantID: sender, Role: "member"})
+	}
+	var sent sql.NullTime
+	if o.obj.CreatedTime != "" {
+		parsed, err := time.Parse("2006-01-02T15:04:05-0700", o.obj.CreatedTime)
+		if err != nil {
+			parsed, err = time.Parse(time.RFC3339, o.obj.CreatedTime)
+		}
+		if err != nil {
+			return errors.New("invalid comment creation time")
+		}
+		sent = sql.NullTime{Time: parsed, Valid: true}
+	} else if prior != nil {
+		sent = prior.SentAt
+	}
+	text := o.obj.Message
+	msg := &store.Message{SourceID: o.sourceID, SourceMessageID: o.obj.ID, MessageType: o.messageType,
 		SentAt: sent, SenderID: sql.NullInt64{Int64: sender, Valid: sender != 0}, IsFromMe: self,
-		ReplyToMessageID: reply, Snippet: sql.NullString{String: obj.Message, Valid: true}, SizeEstimate: int64(len(obj.Message)),
+		Subject: sql.NullString{String: o.subject, Valid: o.subject != ""}, ReplyToMessageID: o.reply,
+		Snippet: sql.NullString{String: text, Valid: true}, SizeEstimate: int64(len(text)),
 	}
 	data := &store.MessagePersistData{
-		Message: msg, Conversation: &store.ConversationPersistData{SourceConversationID: root, ConversationType: "public_comments", Title: title, Participants: participants, PreserveExistingParticipants: true},
-		Metadata: &sql.NullString{String: string(metadata), Valid: true}, BodyText: sql.NullString{String: obj.Message, Valid: true},
-		RawMIME: raw, RawFormat: r.objectFormat(), Recipients: recipients, PreserveLabels: true,
-		FTS: &store.FTSDoc{Body: obj.Message, FromAddr: fromName},
+		Message: msg, Conversation: &store.ConversationPersistData{SourceConversationID: o.conversation, ConversationType: "public_comments", Title: o.title, Participants: participants, PreserveExistingParticipants: true},
+		Metadata: &sql.NullString{String: string(o.metadata), Valid: true}, BodyText: sql.NullString{String: text, Valid: true},
+		RawMIME: o.raw, RawFormat: o.format, Recipients: recipients, PreserveLabels: true,
+		FTS: &store.FTSDoc{Subject: o.subject, Body: text, FromAddr: fromName},
 	}
 	unchanged := false
-	if exists {
-		unchanged, err = r.messageUnchanged(ctx, prior, previousMetadata, data)
+	if prior != nil {
+		var err error
+		unchanged, err = messageUnchanged(ctx, st, *prior, priorMetadata, data)
 		if err != nil {
 			return err
 		}
 	}
 	if unchanged {
-		conversationID, err := r.imp.store.EnsureConversationWithTypeContext(ctx, r.source.ID, root, data.Conversation.ConversationType, title)
+		conversationID, err := st.EnsureConversationWithTypeContext(ctx, o.sourceID, o.conversation, data.Conversation.ConversationType, o.title)
 		if err != nil {
 			return err
 		}
 		unchanged = conversationID == prior.ConversationID
 		if unchanged {
 			for _, member := range participants {
-				if err := r.imp.store.EnsureConversationParticipantContext(ctx, conversationID, member.ParticipantID, member.Role); err != nil {
+				if err := st.EnsureConversationParticipantContext(ctx, conversationID, member.ParticipantID, member.Role); err != nil {
 					return err
 				}
 			}
 		}
 	}
 	if !unchanged {
-		if _, err := r.imp.store.PersistMessageContext(ctx, data); err != nil {
+		if _, err := st.PersistMessageContext(ctx, data); err != nil {
 			return err
 		}
 	}
-	r.sum.MessagesProcessed++
+	sum.MessagesProcessed++
 	switch {
-	case !exists:
-		r.sum.MessagesAdded++
+	case prior == nil:
+		sum.MessagesAdded++
 	case !unchanged:
-		r.sum.MessagesUpdated++
+		sum.MessagesUpdated++
 	}
 	return nil
 }
 
-func (r *importRun) messageUnchanged(ctx context.Context, prior store.StoredMessage, metadata sql.NullString, data *store.MessagePersistData) (bool, error) {
+func messageUnchanged(ctx context.Context, st *store.Store, prior store.StoredMessage, metadata sql.NullString, data *store.MessagePersistData) (bool, error) {
 	msg := data.Message
 	if prior.SenderID != msg.SenderID || !prior.SourceIsFromMe.Valid || prior.SourceIsFromMe.Bool != msg.IsFromMe ||
 		prior.MessageType != msg.MessageType || prior.Subject != msg.Subject || prior.Snippet != msg.Snippet ||
@@ -246,9 +280,9 @@ func (r *importRun) messageUnchanged(ctx context.Context, prior store.StoredMess
 		!meetingarchive.JSONEvidenceEqual([]byte(metadata.String), []byte(data.Metadata.String)) {
 		return false, nil
 	}
-	contentMatches, err := r.imp.store.MessageContentMatchesContext(ctx, prior.ID, data.BodyText, *data.FTS)
+	contentMatches, err := st.MessageContentMatchesContext(ctx, prior.ID, data.BodyText, *data.FTS)
 	if err != nil || !contentMatches {
 		return false, err
 	}
-	return r.imp.store.MessageRecipientsMatchContext(ctx, prior.ID, data.Recipients)
+	return st.MessageRecipientsMatchContext(ctx, prior.ID, data.Recipients)
 }

@@ -44,7 +44,7 @@ func (c *Client) Comments(ctx context.Context, object, after string) (ObjectPage
 }
 
 func (c *Client) objects(ctx context.Context, path, after string, q url.Values) (ObjectPage, error) {
-	page, err := readObjectPage(ctx, c, path, after, q, func(object Object) string { return object.ID })
+	page, err := readObjectPage(ctx, c, path, after, q, func(object Object) string { return object.ID }, false)
 	return ObjectPage(page), err
 }
 

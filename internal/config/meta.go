@@ -82,6 +82,7 @@ type InstagramCommentsSource struct {
 	TokenEnv           string `toml:"token_env"`
 	Enabled            bool   `toml:"enabled"`
 	Schedule           string `toml:"schedule"`
+	Mentions           bool   `toml:"mentions"` // also archive tagged media as an instagram_mentions source
 }
 
 func (c *Config) GetInstagramCommentsSource(identifier string) *InstagramCommentsSource {

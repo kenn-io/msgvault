@@ -1641,6 +1641,27 @@ msgvault source instagram-comments sync [identifier] [--max-requests 1000] [--fu
 See [Instagram comments](usage/instagram-comments.md) for setup, identity,
 resuming, and coverage limits. These commands do not send replies.
 
+## source instagram-mentions add
+
+Register the mentions source for `[[instagram_comments]]` profiles that set
+`mentions = true` (unreleased). No identifier selects every such profile.
+
+```bash
+msgvault source instagram-mentions add [identifier]
+```
+
+## source instagram-mentions sync
+
+Archive media in which other accounts tag the linked account (unreleased). An
+unfinished run resumes next time; `--full` restarts from the newest tagged
+media without deleting rows.
+
+```bash
+msgvault source instagram-mentions sync [identifier] [--max-requests 1000] [--full]
+```
+
+See [Archive media that tags the account](usage/instagram-comments.md#archive-media-that-tags-the-account).
+
 ## add-chatwoot
 
 Register permitted Chatwoot inboxes from configured `[[chatwoot]]` profiles.

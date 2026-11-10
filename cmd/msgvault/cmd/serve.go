@@ -704,6 +704,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 		})); err != nil {
 			logger.Error("failed to schedule Instagram comments", "profile", source.Identifier, "error", err)
 		}
+		if !source.Mentions {
+			continue
+		}
+		if err := registerScheduledInstagramMentionsJob(sched, source, attachmentMaint, invocationBoundJobRun(state, func(ctx context.Context) error {
+			return runConfiguredInstagramMentionsSync(ctx, s, source)
+		})); err != nil {
+			logger.Error("failed to schedule Instagram mentions", "profile", source.Identifier, "error", err)
+		}
 	}
 
 	for _, source := range cfg.Chatwoot {

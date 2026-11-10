@@ -72,22 +72,9 @@ func loadState(ctx context.Context, st *store.Store, src *store.Source, full boo
 	if full {
 		return freshSourceState(src), nil
 	}
-	var blob string
-	var priorID int64
-	prior, err := st.GetLastSuccessfulSyncContext(ctx, src.ID)
-	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
+	blob, err := savedCheckpoint(ctx, st, src.ID)
+	if err != nil {
 		return nil, err
-	}
-	if prior != nil {
-		blob = prior.CursorAfter.String
-		priorID = prior.ID
-	}
-	checkpoint, err := st.GetLatestCheckpointedSyncContext(ctx, src.ID)
-	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
-		return nil, err
-	}
-	if checkpoint != nil && checkpoint.ID > priorID {
-		blob = checkpoint.CursorBefore.String
 	}
 	if blob == "" {
 		return freshSourceState(src), nil
@@ -111,6 +98,29 @@ func loadState(ctx context.Context, st *store.Store, src *store.Source, full boo
 		}
 	}
 	return &state, nil
+}
+
+// savedCheckpoint returns the newer of the source's last completed cursor and
+// a later interrupted or paused checkpoint. Empty means start from the top.
+func savedCheckpoint(ctx context.Context, st *store.Store, sourceID int64) (string, error) {
+	var blob string
+	var priorID int64
+	prior, err := st.GetLastSuccessfulSyncContext(ctx, sourceID)
+	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
+		return "", err
+	}
+	if prior != nil {
+		blob = prior.CursorAfter.String
+		priorID = prior.ID
+	}
+	checkpoint, err := st.GetLatestCheckpointedSyncContext(ctx, sourceID)
+	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
+		return "", err
+	}
+	if checkpoint != nil && checkpoint.ID > priorID {
+		blob = checkpoint.CursorBefore.String
+	}
+	return blob, nil
 }
 
 func (st *syncState) valid(source string) bool {

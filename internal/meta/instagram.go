@@ -156,7 +156,7 @@ func (c *Client) InstagramMedia(ctx context.Context, accountID, after string) (I
 	}
 	page, err := readObjectPage(ctx, c, accountID+"/media", after, url.Values{
 		"fields": {"id,caption,timestamp,permalink,owner{id}"}, "limit": {"100"},
-	}, func(media IGMedia) string { return media.ID })
+	}, func(media IGMedia) string { return media.ID }, false)
 	return IGMediaPage(page), err
 }
 
@@ -166,7 +166,7 @@ func (c *Client) InstagramComments(ctx context.Context, mediaID, after string) (
 	}
 	page, err := readObjectPage(ctx, c, url.PathEscape(mediaID)+"/comments", after, url.Values{
 		"fields": {instagramCommentFields}, "limit": {"100"},
-	}, func(comment IGComment) string { return comment.ID })
+	}, func(comment IGComment) string { return comment.ID }, false)
 	return IGCommentPage(page), err
 }
 
@@ -176,6 +176,6 @@ func (c *Client) InstagramReplies(ctx context.Context, commentID, after string) 
 	}
 	page, err := readObjectPage(ctx, c, url.PathEscape(commentID)+"/replies", after, url.Values{
 		"fields": {instagramCommentFields}, "limit": {"100"},
-	}, func(comment IGComment) string { return comment.ID })
+	}, func(comment IGComment) string { return comment.ID }, false)
 	return IGCommentPage(page), err
 }
