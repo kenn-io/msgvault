@@ -32,6 +32,8 @@ func TestPostgreSQLSanitizeFTSQuery_NoMetacharacters(t *testing.T) {
 // TestPostgreSQLSanitizeFTSQuery_AllowlistOnly accepts only generated operators.
 func TestPostgreSQLSanitizeFTSQuery_AllowlistOnly(t *testing.T) {
 	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
 	d := PostgreSQLQueryDialect{}
 	shape := regexp.MustCompile(`^(?:[\pL\pN]+:\*|\((?:[\pL\pN]+ <-> )+[\pL\pN]+:\*\))?$`)
 	candidateShape := regexp.MustCompile(`^[\pL\pN]+(?::\*)?(?: & [\pL\pN]+(?::\*)?)*$`)
@@ -46,12 +48,12 @@ func TestPostgreSQLSanitizeFTSQuery_AllowlistOnly(t *testing.T) {
 			Candidate string   `json:"candidate"`
 			Patterns  []string `json:"patterns"`
 		}
-		require.NoError(t, json.Unmarshal([]byte(arg), &payload))
-		assert.Regexp(t, shape, payload.Phrase, "input %q", in)
-		assert.Regexp(t, candidateShape, payload.Candidate, "input %q", in)
-		require.NotEmpty(t, payload.Patterns)
+		require.NoError(json.Unmarshal([]byte(arg), &payload))
+		assert.Regexp(shape, payload.Phrase, "input %q", in)
+		assert.Regexp(candidateShape, payload.Candidate, "input %q", in)
+		require.NotEmpty(payload.Patterns)
 		for _, pattern := range payload.Patterns {
-			assert.Regexp(t, patternShape, pattern, "input %q", in)
+			assert.Regexp(patternShape, pattern, "input %q", in)
 		}
 	}
 }

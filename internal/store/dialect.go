@@ -440,7 +440,8 @@ type Dialect interface {
 	// arguments and drop terms that contain no usable tokens:
 	//   SQLite:     `"term"*` per term, space-joined (FTS5 reads space as
 	//               implicit AND).
-	//   PostgreSQL: `term:*` per term, joined by " & " (to_tsquery).
+	//   PostgreSQL: JSON containing phrase and candidate tsqueries plus
+	//               patterns for fields whose positions have saturated.
 	// Shapes match the query package's equivalent helpers so API search
 	// and engine deep-search return the same hits for the same input.
 	// Returns "" when every term reduces to nothing usable — the caller
