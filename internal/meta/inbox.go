@@ -170,6 +170,14 @@ func (b Inbox) persistMessage(ctx context.Context, st *store.Store, sourceID int
 	case customer.ID:
 		sender, fromName = customerID, customer.label()
 	}
+	if sender != 0 && fromName == "" {
+		// Webhook events carry IDs only; search by the name polling stored.
+		names, err := st.ParticipantDisplayNamesContext(ctx, []int64{sender})
+		if err != nil {
+			return err
+		}
+		fromName = names[sender]
+	}
 	metadata, err := json.Marshal(inboxMetadata{AppID: b.App, PageID: b.Page, InstagramAccountID: b.Account, CustomerID: customer.ID})
 	if err != nil {
 		return err

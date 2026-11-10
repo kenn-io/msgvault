@@ -25,7 +25,10 @@ type messagingEvent struct {
 
 // ApplyInboxMessages archives new messages, and the inbox owner's own sent
 // messages (echoes), from messaging webhook events into the inbox's chats.
-// Reactions, edits, deletions, reads and other messaging events are ignored.
+// A message already archived is left as it is: a delayed or repeated event
+// carries its first text, and polling keeps the current text. Messages
+// without text, reactions, edits, deletions, reads and other messaging
+// events are ignored.
 func ApplyInboxMessages(ctx context.Context, st *store.Store, b Inbox, values []jsontext.Value) error {
 	type item struct {
 		customer InboxParticipant
@@ -37,7 +40,7 @@ func ApplyInboxMessages(ctx context.Context, st *store.Store, b Inbox, values []
 		if err := json.Unmarshal(value, &event); err != nil {
 			return fmt.Errorf("%w: %w", ErrInvalidChange, err)
 		}
-		if event.Message == nil || event.Message.IsDeleted {
+		if event.Message == nil || event.Message.IsDeleted || event.Message.Text == "" {
 			continue
 		}
 		customer := event.Sender
@@ -48,7 +51,7 @@ func ApplyInboxMessages(ctx context.Context, st *store.Store, b Inbox, values []
 			return fmt.Errorf("%w: invalid message identity", ErrInvalidChange)
 		}
 		items = append(items, item{customer, InboxMessage{
-			ID: event.Message.Mid, CreatedTime: time.UnixMilli(event.Timestamp).UTC().Format(time.RFC3339),
+			ID: event.Message.Mid, CreatedTime: time.UnixMilli(event.Timestamp).UTC().Format(time.RFC3339Nano),
 			From: InboxParticipant{ID: event.Sender.ID}, Message: event.Message.Text,
 		}})
 	}
@@ -57,6 +60,13 @@ func ApplyInboxMessages(ctx context.Context, st *store.Store, b Inbox, values []
 	}
 	return applyWebhook(ctx, st, b.SourceType(), b.Identifier(), func(st *store.Store, source *store.Source, sum *ImportSummary) error {
 		for _, it := range items {
+			archived, err := st.MessageExistsBatchContext(ctx, source.ID, []string{it.message.ID})
+			if err != nil {
+				return err
+			}
+			if archived[it.message.ID] != 0 {
+				continue
+			}
 			if err := b.persistMessage(ctx, st, source.ID, sum, InboxParticipant{ID: b.Owner()}, it.customer, it.message); err != nil {
 				return fmt.Errorf("message %q: %w", it.message.ID, err)
 			}

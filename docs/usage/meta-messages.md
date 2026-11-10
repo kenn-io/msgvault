@@ -77,5 +77,5 @@ conversations.
 - Message text only: attachments, stickers and reactions are not archived.
 - A later sync updates the text of a message that is still among the 20 most
   recent, so an edit replaces the archived text. Earlier versions and
-  deletions are not kept.
+  deletions are not kept, and webhooks ignore edit and deletion events.
 - No sending or replying.

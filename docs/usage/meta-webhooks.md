@@ -65,8 +65,16 @@ the Instagram object to `messages`. Echoes are the messages the Page or
 account sends. Each inbox needs an enabled
 [`[[facebook_messages]]` or `[[instagram_messages]]` profile](meta-messages.md),
 registered with `source facebook-messages add` or `source instagram-messages add`.
+Add the two Page fields to the Page subscription too, for example
+`subscribed_fields=feed,mention,messages,message_echoes` in the `curl` call
+above.
+
 A message lands in the same chat that inbox sync uses; a chat that first
-appears through a webhook gets the customer's name on the next sync.
+appears through a webhook gets the customer's name on the next sync. A
+webhook only adds messages that are not archived yet, so a late event never
+replaces text that a sync updated. Messages without text are skipped. A
+dropped inbox delivery is lost if the message has already left the 20 most
+recent messages that sync can read.
 
 ## How deliveries are applied
 
