@@ -64,6 +64,7 @@ All notable changes to msgvault, grouped by release.
 - Instagram comment sync can also archive comments on the account's ads that
   its media list leaves out. Set `ad_account_id` and `ad_token_env` on the
   profile; see [Include ad media](usage/instagram-comments.md#include-ad-media).
+- Person fact claims show their kind and whether supporting evidence is fresh, stale, or expired. The CLI and HTTP API expose the same metadata.
 
 - An interrupted `sync-full` prints a command to run again with the same account, filters, configuration, and logging flags. It exits with status 130; on Windows, run the command in PowerShell 7.3 or later.
 

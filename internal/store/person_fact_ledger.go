@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/personfacts"
@@ -547,7 +548,10 @@ func (s *Store) ListPersonFactClaimsContext(
 	claims := make([]personfacts.Claim, 0)
 	err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		claims, err = s.listPersonFactClaimsTx(ctx, tx, personID, filter, "", nil, limit, offset)
-		return err
+		if err != nil {
+			return err
+		}
+		return hydratePersonFactFreshnessTx(ctx, tx, claims, time.Now())
 	})
 	if err != nil {
 		return nil, err
@@ -1355,5 +1359,52 @@ func (value *personFactTimestamp) Scan(source any) error {
 		return errors.New("person fact timestamp is null or invalid")
 	}
 	value.Time = scanned.Time.UTC()
+	return nil
+}
+
+// hydratePersonFactFreshnessTx groups supported evidence only for the bounded
+// claim page. Status precedence matches hydratePersonFactEvidenceStatusTx.
+func hydratePersonFactFreshnessTx(ctx context.Context, tx *loggedTx, claims []personfacts.Claim, now time.Time) error {
+	if len(claims) == 0 {
+		return nil
+	}
+	args := make([]any, len(claims))
+	for i := range claims {
+		args[i] = claims[i].ID
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(args)), ",")
+	rows, err := tx.QueryContext(ctx, `SELECT ce.claim_id, MAX(e.event_time)
+ FROM person_fact_claim_evidence ce
+ JOIN person_fact_evidence e ON e.id = ce.evidence_id
+ WHERE ce.claim_id IN (`+placeholders+`) AND COALESCE((
+  SELECT status.supported FROM person_fact_evidence_status_events status
+  JOIN person_fact_generations generation ON generation.id = status.generation_id
+  WHERE status.person_id = e.person_id AND status.evidence_key = e.evidence_key
+   AND status.source_version = e.source_version
+  ORDER BY generation.resolved_at DESC, status.id DESC LIMIT 1
+ ), TRUE) = TRUE GROUP BY ce.claim_id`, args...)
+	if err != nil {
+		return fmt.Errorf("load claim freshness: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	latest := make(map[int64]time.Time, len(claims))
+	for rows.Next() {
+		var id int64
+		var timestamp personFactTimestamp
+		if err := rows.Scan(&id, &timestamp); err != nil {
+			return fmt.Errorf("scan claim freshness: %w", err)
+		}
+		latest[id] = timestamp.Time
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate claim freshness: %w", err)
+	}
+	for i := range claims {
+		var timestamp *time.Time
+		if value, ok := latest[claims[i].ID]; ok {
+			timestamp = &value
+		}
+		claims[i].Freshness = personfacts.DescribeFreshness(claims[i].Target, claims[i].ValidUntil, timestamp, now)
+	}
 	return nil
 }
