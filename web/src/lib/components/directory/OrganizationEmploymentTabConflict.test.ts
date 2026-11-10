@@ -3,7 +3,7 @@ import { expect, it, vi } from 'vitest';
 import { controllerWith, employment, organizationProfile, requestOf, pathOf } from '../../directory/entity-fixtures.test-support';
 import OrganizationEmploymentTab from './OrganizationEmploymentTab.svelte';
 
-it('shows an ended job conflict outside folded past jobs without retry', async () => {
+it('shows an ended job conflict outside folded past jobs', async () => {
   let reads = 0;
   const ended = employment(11, 2, { is_primary: false, is_current: false, end_date: { year: 2026, month: 7 } });
   const { controller } = controllerWith(async input => {
@@ -19,7 +19,6 @@ it('shows an ended job conflict outside folded past jobs without retry', async (
   await fireEvent.click(await screen.findByRole('menuitem', { name: 'Make primary' }));
   await screen.findByText('1 past job');
   expect((await screen.findByRole('region', { name: 'Saved job' })).closest('details.fold')).toBeNull();
-  expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
 });
 
 it('uses the saved job employer in the deletion title', async () => {

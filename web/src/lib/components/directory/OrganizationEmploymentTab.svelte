@@ -108,7 +108,7 @@
 {#snippet primaryFeedback()}
   {#if primary.failed}
     {#if primary.conflict}
-      <ConflictNotice noun="job" saved={primary.conflict.data} record={employmentFacts(primary.conflict.data, controller, personID)} message={employmentConflictDetails(primary.conflict.data, primary.details)} actionLabel={primary.conflict.data.person_id === personID && primary.conflict.data.is_current ? 'Retry' : undefined} onaction={() => { if (primaryTarget) void makePrimary(primaryTarget); }} />
+      <ConflictNotice noun="job" saved={primary.conflict.data} record={employmentFacts(primary.conflict.data, controller, personID)} message={employmentConflictDetails(primary.conflict.data, primary.details)} actionLabel={primary.conflict.data.person_id === personID ? 'Retry' : undefined} onaction={() => { if (primaryTarget) void makePrimary(primaryTarget); }} />
     {:else}<InlineNotice message="Couldn't make this job primary." details={primary.details} actionLabel="Retry" onaction={() => { if (primaryTarget) void makePrimary(primaryTarget); }} />{/if}
   {/if}
 {/snippet}

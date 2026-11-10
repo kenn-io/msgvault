@@ -58,11 +58,10 @@
     relationshipEditor = view;
   }
 
-  // "Text · Friend · from a contact file · Nov 1": whether the value is text or a reference (a contact's reference shows
-  // itself), the imported type, then who imported it and when. The review date sits in the tooltip.
+  // The value kind, imported type, and source appear before the import date; the review date sits in the tooltip.
   function importedLine(row: (typeof imports.rows)[number]): ProvenanceLine {
     const line = provenance(row.source, row.updated_at ?? row.reviewed_at ?? '', undefined, { times: [['Reviewed', row.reviewed_at ?? undefined]] });
-    const kind = row.raw_related_value.startsWith('urn:uuid:') ? row.raw_related_value : row.value_kind === 'uri' ? 'Reference' : 'Text';
+    const kind = row.raw_related_value.startsWith('urn:uuid:') ? 'Contact' : row.value_kind === 'uri' ? 'Reference' : 'Text';
     const lead = [kind, sentenceCase(row.raw_related_type)].filter(Boolean).join(' · ');
     return { text: lead ? `${lead} · ${line.text.charAt(0).toLowerCase()}${line.text.slice(1)}` : line.text, title: line.title };
   }
@@ -156,7 +155,7 @@
   </Dialog>
 {/if}
 {#if deletingType}
-  <Dialog title={`Delete ${deletingType.slug} connection type?`} width="small" primaryLabel="Delete" primaryTone="danger" onclose={closeDelete} onprimary={() => void removeRelationshipType()} busy={acting}>
+  <Dialog title={`Delete ${typeLabel(deletingType)} connection type?`} width="small" primaryLabel="Delete" primaryTone="danger" onclose={closeDelete} onprimary={() => void removeRelationshipType()} busy={acting}>
     <p class="confirm">This permanently removes the connection type.</p>
     {#snippet notice()}
       {#if typeRemoval.conflict}<ConflictNotice noun="connection type" saved={typeRemoval.conflict.data} record={{ 'Forward label': typeRemoval.conflict.data.forward_label, 'Reverse label': typeRemoval.conflict.data.reverse_label }} message={typeRemoval.details} actionLabel="Retry" onaction={() => void removeRelationshipType()} />

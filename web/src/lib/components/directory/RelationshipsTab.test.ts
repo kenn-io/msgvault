@@ -17,16 +17,16 @@ function controllerWith(fetchFn: typeof fetch, personID = 7, options: { onDirect
 }
 
 function view(id: number, direction: 'incoming' | 'outgoing', label: string, name: string, overrides: Record<string, unknown> = {}) {
+  const counterpartID = (overrides.counterpart_person_id as number | undefined) ?? id + 100;
+  const edge = (overrides.relationship as ReturnType<typeof relationship> | undefined) ?? relationship(id, 1);
   return {
-    counterpart_person_id: id + 100,
+    counterpart_person_id: counterpartID,
     counterpart_display_name: name,
     counterpart_label: label,
     counterpart_vcard_uid: `person-${id + 100}`,
     direction,
-    relationship: relationship(id, 1, direction === 'incoming'
-      ? { source_person_id: id + 100, target_person_id: 7 }
-      : { source_person_id: 7, target_person_id: id + 100 }),
-    ...overrides
+    ...overrides,
+    relationship: { ...edge, source_person_id: direction === 'incoming' ? counterpartID : 7, target_person_id: direction === 'incoming' ? 7 : counterpartID }
   };
 }
 
@@ -82,7 +82,7 @@ describe('RelationshipsTab', () => {
   });
 
   it.each([
-    ['uri', 'urn:uuid:11111111-2222-3333-4444-555555555555', 'Unknown contact', 'vcard_import', 'urn:uuid:11111111-2222-3333-4444-555555555555 · Friend · from a contact file · Jul 31'],
+    ['uri', 'urn:uuid:11111111-2222-3333-4444-555555555555', 'Unknown contact', 'vcard_import', 'Contact · Friend · from a contact file · Jul 31'],
     ['text', 'Alex', 'Alex', 'carddav_import', 'Text · Friend · from CardDAV contacts · Jul 31'],
   ])('describes an imported %s value', async (valueKind, value, title, source, description) => {
     vi.setSystemTime(new Date(2026, 10, 6, 12));
@@ -212,7 +212,7 @@ describe('RelationshipsTab', () => {
     ['outgoing', {}, 'Synthetic Subject · Mentors · Synthetic Peer'],
     ['outgoing', { type_slug: 'friend', forward_label: 'friend', reverse_label: 'friend', is_symmetric: true }, 'Synthetic Subject is a friend of Synthetic Peer'],
   ] as const)('names the existing %s connection %o as %s', async (direction, type, line) => {
-    const existing = relationship(41, 1, { ...type, start_date: { year: 2022 }, notes: 'Met at the seed exchange.' });
+    const existing = relationship(41, 1, { ...type, source_person_id: direction === 'incoming' ? 141 : 7, target_person_id: direction === 'incoming' ? 7 : 141, start_date: { year: 2022 }, notes: 'Met at the seed exchange.' });
     const { client, controller } = controllerWith(async () => Response.json(existing, { headers: { ETag: '"person-relationship-41-r1"' } }));
     controller.relationshipTypes = [relationshipType()];
     controller.relationships = [view(41, direction, direction === 'incoming' ? 'is mentored by' : 'mentors', 'Synthetic Peer', { relationship: existing })];
@@ -459,9 +459,9 @@ describe('RelationshipsTab', () => {
       const request = requestOf(input);
       if (request.method === 'PATCH') {
         bodies.push(await request.json());
-        return request.headers.get('If-Match') === '"relationship-41-r1"'
-          ? Response.json({ message: 'Changed elsewhere' }, { status: 412 })
-          : Response.json(ended);
+        if (bodies.length === 1) return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+        if (bodies.length === 2) throw new TypeError('Network unavailable');
+        return Response.json(ended);
       }
       if (pathOf(request) === '/api/v1/person-relationships/41') {
         const data = ++reads === 1 ? opening : ended;
@@ -484,36 +484,14 @@ describe('RelationshipsTab', () => {
     expect(screen.getByRole('button', { name: 'Keep yours' })).toHaveProperty('disabled', true);
     await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2026-07' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit connection' })).toBeNull());
-    expect(bodies).toEqual([{ notes: 'Keep this note' }, { end_date: '2026-07', notes: 'Keep this note' }]);
-  });
-
-  it('keeps the end date required after a failed conflict retry', async () => {
-    const opening = relationship(41, 1);
-    const ended = relationship(41, 2, { status: 'ended', end_date: { year: 2026, month: 7 } });
-    let reads = 0, patches = 0;
-    const { client, controller } = controllerWith(async input => {
-      const request = requestOf(input), path = pathOf(request);
-      if (request.method === 'PATCH') {
-        if (++patches === 1) return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
-        throw new TypeError('Network unavailable');
-      }
-      if (path === '/api/v1/person-relationships/41') return Response.json(++reads === 1 ? opening : ended, { headers: { ETag: `"relationship-41-r${reads}"` } });
-      if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [view(41, 'outgoing', 'is mentored by', 'Synthetic Learner', { relationship: ended })] });
-      throw new Error(`unexpected ${request.method} ${path}`);
-    });
-    controller.relationships = [view(41, 'outgoing', 'is mentored by', 'Synthetic Learner', { relationship: opening })];
-    render(RelationshipsTab, { client, controller, personID: 7 });
-    await rowAction('Edit…');
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'Draft' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await screen.findByRole('button', { name: 'Keep yours' });
-    await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2026-07' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
     await screen.findByText("Couldn't save this connection.");
     await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '' } });
     expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true);
     expect(screen.getByText('To reopen it, add a new connection.')).toBeDefined();
+    await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2026-07' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit connection' })).toBeNull());
+    expect(bodies).toEqual([{ notes: 'Keep this note' }, { end_date: '2026-07', notes: 'Keep this note' }, { end_date: '2026-07', notes: 'Keep this note' }]);
   });
 
   it('deletes an incoming connection using its underlying edge', async () => {
@@ -909,6 +887,7 @@ it.each(['connection', 'type'])('shows the saved %s after a delete conflict', as
   render(RelationshipsTab, { client, controller, personID: 7, catalogOnly: kind === 'type' });
   if (kind === 'connection') await rowAction('Delete…');
   else await fireEvent.click(screen.getByRole('button', { name: 'Delete mentor relationship type' }));
+  if (kind === 'type') expect(screen.getByRole('dialog', { name: 'Delete mentors / is mentored by connection type?' })).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
   expect(await screen.findByText(kind === 'connection' ? 'New saved note' : 'New saved label')).toBeDefined();
   if (kind === 'connection') await waitFor(() => expect(controller.relationships[0].relationship.notes).toBe('New saved note'));
