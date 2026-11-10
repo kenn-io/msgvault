@@ -78,8 +78,8 @@ TXT records use a separate namespace from database imports, so importing both
 can retain two representations of the same history. Names are scoped labels
 within this account and chat. They are never inferred phone numbers or “me”
 identities, and message direction stays unknown. Senderless notices have no
-author. Notice-shaped payloads with colons are kept whole when attribution is
-uncertain.
+author. Only English notices are recognized; other notices with colons keep
+their prefix as a scoped label.
 
 Supported headers are `date, time - payload` (Android style) and
 `[date, time] payload` (iOS style). Dates are numeric, with a consistent `/`,
@@ -97,8 +97,9 @@ over 128 MiB, 250,000 records or 1 MiB per record fail before archive writes.
 caller assumptions, not original exported timezone evidence. Raw timestamps,
 precision, line spans and the input file digest remain in provenance. During
 a repeated autumn hour, msgvault chooses the earlier instant; nonexistent
-spring-forward times fail with line context. Changing timezone, date order or
-chat type for an existing chat fails rather than silently reinterpreting it.
+spring-forward times fail with line context. Changing timezone or chat type
+for an existing chat fails rather than silently reinterpreting it. Date order
+is supplied per export and retained in each new message’s provenance.
 
 Repeat or overlapping exports add new evidence and retain absent records and
 labels. Message keys include wall time, precision, sender label, kind and exact
@@ -112,14 +113,22 @@ repeated; there is no seek checkpoint or deletion inference.
 Only whole-line `<attached: NAME>` and `NAME (file attached)` markers resolve
 files; captions and markers remain in the body. Files must be regular, remain
 inside that root and fit within 100 MiB. Missing media can be supplied on a later
-run without duplicating messages or removing existing attachments. `<Media
-omitted>` is counted separately. No files are searched for outside the root.
+run of that same TXT without duplicating messages or removing existing
+attachments. A new export with different markers, captions or timestamp
+precision is distinct evidence; there is no safe correspondence to the older
+record. In particular, Android minute-precision and iOS second-precision
+exports do not share message keys. `<Media omitted>` and the exact iPhone
+U+200E-prefixed `image omitted` marker count omitted media. No files are searched
+for outside the root.
 
 The summary counts input records, notices, newly added and already archived
 messages, and additional identical occurrences whose correspondence is
 ambiguous. Media counts distinguish stored references, missing files, omitted
 media, unsafe/unsupported references and oversized files. Stored references
-include attachments successfully verified on repeat imports.
+include attachments successfully verified on repeat imports. If an import
+fails after committing messages, it still prints partial coverage for those
+records and returns an error; media counts cover references processed before
+the failure.
 
 TXT is lossy: exports may omit older history or media and do not provide stable
 message IDs, verified authorship, original timezone offsets, reactions or reply

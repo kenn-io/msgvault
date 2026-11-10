@@ -31,11 +31,16 @@ func runWhatsAppTextImport(cmd *cobra.Command, path string, opts whatsapp.TextOp
 		migrationErr = runPostSourceCreateMigrationsForInvocation(post, st, state)
 	}
 	cacheErr := rebuildCacheAfterWrite(post, state.cfg.DatabaseDSN(), state)
-	if err := errors.Join(importErr, migrationErr, cacheErr); err != nil {
-		return fmt.Errorf("import WhatsApp TXT: %w", err)
+	resultErr := errors.Join(importErr, migrationErr, cacheErr)
+	status := "complete"
+	if resultErr != nil {
+		status = "incomplete"
 	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Import complete: %d records, %d notices, %d added, %d unchanged\n", summary.Records, summary.Notices, summary.Added, summary.Unchanged)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Import %s: %d records, %d notices, %d added, %d unchanged\n", status, summary.Records, summary.Notices, summary.Added, summary.Unchanged)
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Identical-record ambiguity: %d additional occurrences\n", summary.DuplicateAmbiguity)
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Media: %d stored, %d missing, %d omitted, %d unsafe/unsupported, %d oversized\n", summary.MediaStored, summary.MediaMissing, summary.MediaOmitted, summary.MediaSkipped, summary.MediaOversized)
+	if resultErr != nil {
+		return fmt.Errorf("import WhatsApp TXT: %w", resultErr)
+	}
 	return nil
 }

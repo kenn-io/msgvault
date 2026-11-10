@@ -19,7 +19,7 @@ var textAttached = regexp.MustCompile(`^<\s*attached:\s*(.+?)\s*>$`)
 func importTextMedia(ctx context.Context, st *store.Store, root *os.Root, messageID int64, body string, opts TextOptions, summary *TextSummary) error {
 	for line := range strings.SplitSeq(body, "\n") {
 		marker := strings.TrimSpace(strings.TrimLeft(line, "\u200e\u200f"))
-		if strings.EqualFold(marker, "<Media omitted>") {
+		if strings.EqualFold(marker, "<Media omitted>") || strings.HasSuffix(strings.TrimSpace(line), "\u200eimage omitted") {
 			summary.MediaOmitted++
 			continue
 		}
@@ -59,10 +59,7 @@ func importTextMedia(ctx context.Context, st *store.Store, root *os.Root, messag
 			summary.MediaSkipped++
 			continue
 		}
-		limit := opts.MaxMediaFileSize
-		if limit <= 0 || limit > 100<<20 {
-			limit = 100 << 20
-		}
+		const limit = 100 << 20
 		if info.Size() > limit {
 			summary.MediaOversized++
 			continue

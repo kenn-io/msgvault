@@ -355,7 +355,6 @@ var importCmd = &cobra.Command{
 
 func init() {
 	// import-whatsapp (canonical)
-
 	rootCmd.AddCommand(importWhatsappCmd)
 
 	// Deprecated "import --type whatsapp" alias

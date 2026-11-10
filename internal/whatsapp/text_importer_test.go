@@ -89,7 +89,7 @@ func TestTextImportScopesAndAssumptions(t *testing.T) {
 	p := textFile(t, "3/6/26, 10:00 - Mira: same\n")
 	_, err := imp.ImportText(t.Context(), p, opts)
 	require.NoError(t, err)
-	for _, change := range []func(*TextOptions){func(o *TextOptions) { o.Timezone = "Europe/Berlin" }, func(o *TextOptions) { o.DateOrder = "mdy" }, func(o *TextOptions) { o.ChatType = "direct" }} {
+	for _, change := range []func(*TextOptions){func(o *TextOptions) { o.Timezone = "Europe/Berlin" }, func(o *TextOptions) { o.ChatType = "direct" }} {
 		changed := opts
 		change(&changed)
 		_, err = imp.ImportText(t.Context(), p, changed)
@@ -168,8 +168,10 @@ func TestTextImportMediaContainment(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 4, s.MediaSkipped)
 	assert.Zero(t, textCount(t, st, "attachments"))
-	require.NoError(t, os.WriteFile(filepath.Join(opts.MediaDir, "large.txt"), []byte("123456"), 0600))
-	opts.MaxMediaFileSize = 5
+	large, err := os.Create(filepath.Join(opts.MediaDir, "large.txt"))
+	require.NoError(t, err)
+	require.NoError(t, large.Truncate((100<<20)+1))
+	require.NoError(t, large.Close())
 	s, err = imp.ImportText(t.Context(), textFile(t, "13/6/26, 10:04 - Mira: large.txt (file attached)"), opts)
 	require.NoError(t, err)
 	assert.Equal(t, 1, s.MediaOversized)

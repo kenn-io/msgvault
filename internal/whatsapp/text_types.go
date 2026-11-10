@@ -7,7 +7,6 @@ type TextOptions struct {
 	Phone, ChatID, ChatType, ChatTitle string
 	DateOrder, Timezone                string
 	MediaDir, AttachmentsDir           string
-	MaxMediaFileSize                   int64
 }
 
 // TextSummary counts evidence in this file, not the chat's lifetime history.

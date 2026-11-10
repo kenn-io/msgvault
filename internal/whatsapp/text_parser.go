@@ -20,8 +20,11 @@ import (
 // The supported subset is intentional: numeric dates, comma, colon clocks,
 // and either Android's dash or iOS's brackets. Never guess date order.
 var textHeader = regexp.MustCompile(`^(\[?)([0-9]{1,4}[/.-][0-9]{1,2}[/.-][0-9]{1,4}), ([0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?(?:[ \x{00a0}\x{202f}]+(?:[AaPp][Mm]|[AaPp]\. ?[Mm]\.))?)(\] | - )(.*)$`)
-var textDateStart = regexp.MustCompile(`^\[?[0-9]{1,4}[/.-][0-9]`)
-var textNotice = regexp.MustCompile(`(?i)^(?:You |Messages and calls |Messages to this chat |.+ (?:changed|created|added|removed|left|joined)(?: |$))`)
+
+// A malformed header still needs its date and payload delimiters. Numeric
+// prose alone is continuation text.
+var textDateStart = regexp.MustCompile(`^(?:[0-9]{1,4}[/.-][0-9]{1,2}[/.-][0-9]{1,4}, [^\r\n]* - |\[[0-9]{1,4}[/.-][0-9]{1,2}[/.-][0-9]{1,4},? [^\r\n]*\] )`)
+var textNotice = regexp.MustCompile(`^(?:Messages and calls are end-to-end encrypted$|Messages to this chat and calls are now secured with end-to-end encryption$|.+ changed the group (?:description|name|icon)(?:$| )|You created (?:group|this group)(?:$| ))`)
 
 func textLocation(order, zone string) (*time.Location, error) {
 	if order != "dmy" && order != "mdy" && order != "ymd" {
@@ -62,6 +65,13 @@ func parseText(ctx context.Context, reader io.Reader, order, zone string, limits
 	scanner := bufio.NewScanner(bytes.NewReader(bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))))
 	scanner.Buffer(make([]byte, 4096), limits.RecordBytes+1)
 	var rows []textRecord
+	var body, rawRecord strings.Builder
+	flush := func() {
+		if len(rows) > 0 {
+			rows[len(rows)-1].Body = body.String()
+			rows[len(rows)-1].Raw = rawRecord.String()
+		}
+	}
 	line := 0
 	for scanner.Scan() {
 		line++
@@ -76,11 +86,13 @@ func parseText(ctx context.Context, reader io.Reader, order, zone string, limits
 				return nil, "", fmt.Errorf("line %d: unsupported or malformed TXT header", line)
 			}
 			row := &rows[len(rows)-1]
-			if len(row.Raw)+1+len(raw) > limits.RecordBytes {
+			if rawRecord.Len()+1+len(raw) > limits.RecordBytes {
 				return nil, "", fmt.Errorf("line %d: record exceeds %d bytes", line, limits.RecordBytes)
 			}
-			row.Body += "\n" + raw
-			row.Raw += "\n" + raw
+			body.WriteByte('\n')
+			body.WriteString(raw)
+			rawRecord.WriteByte('\n')
+			rawRecord.WriteString(raw)
 			row.EndLine = line
 			continue
 		}
@@ -107,6 +119,11 @@ func parseText(ctx context.Context, reader io.Reader, order, zone string, limits
 			row.Body = body
 			row.Kind = "message"
 		}
+		flush()
+		body.Reset()
+		rawRecord.Reset()
+		body.WriteString(row.Body)
+		rawRecord.WriteString(row.Raw)
 		rows = append(rows, row)
 	}
 	if err := scanner.Err(); err != nil {
@@ -115,6 +132,7 @@ func parseText(ctx context.Context, reader io.Reader, order, zone string, limits
 	if len(rows) == 0 {
 		return nil, "", errors.New("TXT contains no records")
 	}
+	flush()
 	return rows, digest, nil
 }
 
@@ -172,8 +190,5 @@ func textWallTime(date, clock, order string) (string, string, error) {
 		}
 	}
 	wall := fmt.Sprintf("%04d-%02d-%02d %02d:%02d:%02d", y, m, d, h, minute, second)
-	if _, err := time.Parse("2006-01-02 15:04:05", wall); err != nil {
-		return "", "", fmt.Errorf("invalid timestamp: %w", err)
-	}
 	return wall, precision, nil
 }

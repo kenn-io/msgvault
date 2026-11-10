@@ -79,6 +79,12 @@ func normalizeChat(value string) string {
 	return strings.ToLower(strings.Join(strings.Fields(value), " "))
 }
 
+// StableHash returns SHA-256 hex over decimal byte-length-framed UTF-8 fields.
+// Import adapters share this encoding to keep persisted identifiers stable.
+func StableHash(parts ...string) string {
+	return stableHash(parts...)
+}
+
 func stableHash(parts ...string) string {
 	hash := sha256.New()
 	for _, part := range parts {

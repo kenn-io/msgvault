@@ -33,19 +33,19 @@ func ValidateTextOptions(opts TextOptions) error {
 
 type textAssumptions struct {
 	Timezone            string `json:"timezone_assumption"`
-	DateOrder           string `json:"date_order_assumption"`
 	ChatType            string `json:"chat_type"`
 	AmbiguousTimePolicy string `json:"ambiguous_time_policy"`
 }
 
 func textAssumptionsFor(opts TextOptions) textAssumptions {
-	return textAssumptions{opts.Timezone, opts.DateOrder, opts.ChatType, "earlier"}
+	return textAssumptions{opts.Timezone, opts.ChatType, "earlier"}
 }
 
 type textProvenance struct {
 	textRecord
 	textAssumptions
 
+	DateOrder  string `json:"date_order_assumption"`
 	FileSHA256 string `json:"file_sha256"`
 	ChatID     string `json:"chat_id"`
 	Direction  string `json:"direction"`
@@ -108,7 +108,7 @@ func (imp *Importer) ImportText(ctx context.Context, path string, opts TextOptio
 			retErr = imp.store.CompleteSyncContext(ctx, syncID, "")
 		}
 		if retErr != nil {
-			retErr = errors.Join(retErr, imp.store.FailSyncContext(post, syncID, retErr.Error()))
+			retErr = errors.Join(retErr, imp.store.FailSyncWithCheckpointContext(post, syncID, retErr.Error(), &store.Checkpoint{MessagesProcessed: int64(summary.Records), MessagesAdded: int64(summary.Added)}))
 		}
 	}()
 	convID, err := prepareTextChat(ctx, st, source.ID, opts)
@@ -123,9 +123,6 @@ func (imp *Importer) ImportText(ctx context.Context, path string, opts TextOptio
 		occurrences[i] = counts[base]
 		ids[i] = textMessageKey(opts.ChatID, row, counts[base])
 		counts[base]++
-		if counts[base] > 1 {
-			summary.DuplicateAmbiguity++
-		}
 	}
 	participants := make(map[string]int64)
 	for start := 0; start < len(rows); start += 500 {
@@ -136,10 +133,6 @@ func (imp *Importer) ImportText(ctx context.Context, path string, opts TextOptio
 		}
 		for i := start; i < end; i++ {
 			row := rows[i]
-			summary.Records++
-			if row.Kind == "notice" {
-				summary.Notices++
-			}
 			messageID := existing[ids[i]].ID
 			if messageID == 0 {
 				var sender sql.NullInt64
@@ -158,7 +151,7 @@ func (imp *Importer) ImportText(ctx context.Context, path string, opts TextOptio
 				if sender.Valid {
 					members = []store.ConversationParticipantRef{{ParticipantID: sender.Int64, Role: "member"}}
 				}
-				raw, err := json.Marshal(textProvenance{row, textAssumptionsFor(opts), digest, opts.ChatID, "unknown", occurrences[i]})
+				raw, err := json.Marshal(textProvenance{row, textAssumptionsFor(opts), opts.DateOrder, digest, opts.ChatID, "unknown", occurrences[i]})
 				if err != nil {
 					return summary, err
 				}
@@ -175,6 +168,13 @@ func (imp *Importer) ImportText(ctx context.Context, path string, opts TextOptio
 				summary.Added++
 			} else {
 				summary.Unchanged++
+			}
+			summary.Records++
+			if row.Kind == "notice" {
+				summary.Notices++
+			}
+			if occurrences[i] > 0 {
+				summary.DuplicateAmbiguity++
 			}
 			if err := importTextMedia(ctx, st, root, messageID, row.Body, opts, &summary); err != nil {
 				return summary, fmt.Errorf("line %d: import media: %w", row.StartLine, err)
@@ -205,11 +205,11 @@ func prepareTextChat(ctx context.Context, st *store.Store, sourceID int64, opts 
 	want := textAssumptionsFor(opts)
 	if raw, ok := metadata["whatsapp_txt"]; ok {
 		var got textAssumptions
-		if err := json.Unmarshal(raw, &got); err != nil {
-			return 0, err
+		if err := json.Unmarshal(raw, &got, json.RejectUnknownMembers(true)); err != nil {
+			return 0, fmt.Errorf("read TXT chat assumptions; upgrade msgvault to import newer assumptions: %w", err)
 		}
 		if got != want {
-			return 0, errors.New("TXT chat parsing assumptions conflict; reuse the original timezone, date order and chat type")
+			return 0, errors.New("TXT chat parsing assumptions conflict; reuse the original timezone and chat type")
 		}
 	}
 	raw, err := json.Marshal(want)
