@@ -22,19 +22,24 @@ func TestRecordSyncRunItemGenerationFence(t *testing.T) {
 	stale := f.Store.ScopedToSync(f.Source.ID, first)
 	require.NoError(f.Store.FailSync(first, "worker stopped"))
 	current := f.StartSync()
+	live := f.Store.ScopedToSync(f.Source.ID, current)
 	resolution := store.SyncRunItem{SyncRunID: first, SourceMessageID: failure.SourceMessageID,
 		Phase: "fetch", Status: "resolved", ErrorKind: "acquired"}
 	require.ErrorIs(stale.RecordSyncRunItemContext(t.Context(), resolution), store.ErrSyncRunSuperseded)
-	resolution.SyncRunID = current
-	require.ErrorIs(stale.RecordSyncRunItemContext(t.Context(), resolution), store.ErrSyncRunSuperseded,
-		"a scoped worker cannot write to a different run")
-	items, err := f.Store.ListSyncRunItems(first, "", 10)
+	// Keep this scope live so stale-generation fencing cannot mask a missing
+	// check that the item's run matches the scoped worker's run.
+	require.ErrorIs(live.RecordSyncRunItemContext(t.Context(), resolution), store.ErrSyncRunSuperseded,
+		"a live scoped worker cannot write to a different run")
+	items, err := f.Store.ListSyncRunItemsContext(t.Context(), first, "", 10)
 	require.NoError(err)
 	require.Len(items, 1)
 	assert.Equal("error", items[0].Status)
-	live := f.Store.ScopedToSync(f.Source.ID, current)
+	items, err = f.Store.ListSyncRunItemsContext(t.Context(), current, "", 10)
+	require.NoError(err)
+	assert.Empty(items, "rejected writes must not insert an acknowledgement in either run")
+	resolution.SyncRunID = current
 	require.NoError(live.RecordSyncRunItemContext(t.Context(), resolution))
-	items, err = f.Store.ListSyncRunItems(current, "", 10)
+	items, err = f.Store.ListSyncRunItemsContext(t.Context(), current, "", 10)
 	require.NoError(err)
 	require.Len(items, 1)
 	assert.Equal("resolved", items[0].Status)
