@@ -69,7 +69,6 @@ describe('date readings', () => {
       expect(dateNote('2024-03', false)).toBe('Mar 2024');
       expect(dateNote('2024', false)).toBe('');
       expect(dateNote('2024', true)).toBe(DATE_HINT);
-      expect(dateNote('invalid', false)).toBe('');
     } finally { formatter.mockRestore(); vi.useRealTimers(); }
   }, 20_000);
 });

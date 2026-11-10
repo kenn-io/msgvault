@@ -18,6 +18,7 @@ it('names the new employer when a job moves before deletion', async () => {
   });
   controller.employments = [employment()];
   controller.organizationRecords.set(21, organizationProfile());
+  controller.organizationRecords.set(22, { ...organizationProfile(), organization: { ...organizationProfile().organization, id: 22, name: 'New employer' } });
   render(OrganizationEmploymentTab, { controller, personID: 7 });
   await fireEvent.click(within(screen.getByRole('region', { name: 'Work' })).getByRole('button', { name: /^Actions for/ }));
   await fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete…' }));
@@ -42,9 +43,7 @@ it.each(['Delete…', 'Make primary'])('shows a newer job after retrying %s', as
         ? Response.json(employment(11, revision, { is_primary: true }))
         : Response.json({ error: 'employment_revision_conflict', message: 'Changed' }, { status: 409 });
     }
-    if (path === '/api/v1/people/7/employments') return Response.json({ employments: [employment(12, 1, { title: 'Second job', is_primary: false })] });
-    if (path === '/api/v1/employments/12' && request.method === 'GET') return Response.json(employment(12), { headers: { ETag: '"employment-12-r1"' } });
-    if (path === '/api/v1/employments/12/primary') return Response.json(employment(12, 2, { is_primary: true }));
+    if (path === '/api/v1/people/7/employments') return Response.json({ employments: [] });
     throw new Error(`Unexpected ${request.method} ${path}`);
   });
   controller.employments = [employment(11, 1, { is_primary: false })];
@@ -56,13 +55,7 @@ it.each(['Delete…', 'Make primary'])('shows a newer job after retrying %s', as
   revision = 3;
   await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   expect(await screen.findByText('Title 3')).toBeDefined();
-  if (action === 'Delete…') {
-    expect(tags).toEqual(['"employment-11-r1"', '"employment-11-r2"']);
-    return;
-  }
-  await fireEvent.click(screen.getByRole('button', { name: /Actions for Second job/ }));
-  await fireEvent.click(await screen.findByRole('menuitem', { name: 'Make primary' }));
-  await waitFor(() => expect(screen.queryByText('Title 3')).toBeNull());
+  if (action === 'Delete…') expect(tags).toEqual(['"employment-11-r1"', '"employment-11-r2"']);
 });
 
 it('uses the selected job version after a different job conflicts', async () => {

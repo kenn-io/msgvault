@@ -89,7 +89,7 @@ describe('RelationshipsTab', () => {
     try {
     const client = createAPIClient(async () => Response.json({ reviews: [{
       id: 1, person_id: 7, raw_related_value: value, raw_related_type: 'friend', value_kind: valueKind, status: 'pending',
-      source, created_at: '2026-07-31T12:00:00', updated_at: '2026-07-31T12:00:00',
+      source, created_at: '2026-07-31T12:00:00Z', updated_at: '2026-07-31T12:00:00Z',
     }] }));
     render(RelationshipsTab, { client, controller: new DirectoryEntityController(client, 7), personID: 7 });
     const row = (await screen.findByText(title)).closest('.detail-row') as HTMLElement;

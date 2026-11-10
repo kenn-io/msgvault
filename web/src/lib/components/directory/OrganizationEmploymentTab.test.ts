@@ -129,7 +129,7 @@ describe('OrganizationEmploymentTab', () => {
     await waitFor(() => expect(body).toHaveProperty('person_id', 7));
   });
 
-  it('folds past jobs and keeps row actions beside linked employers', async () => {
+  it('shows work dates and linked employers', async () => {
     const { controller } = controllerWith(vi.fn<typeof fetch>());
     controller.organizations = [organization()];
     controller.employments = [employment(11, 1, { title: 'Engineer', department: 'Platform', start_date: { year: 2024, month: 3 }, is_current: true }), employment(12, 1, { is_current: false, title: 'Historical role' })];

@@ -275,13 +275,13 @@ describe('DirectoryEntityController', () => {
     expect(controller.employments).toEqual([employment(11, 3)]);
   });
 
-  it('refreshes a cached employer when a conflict moves a job there', async () => {
+  it.each(['update', 'delete'] as const)('refreshes a cached employer when a conflict moves a job there on %s', async action => {
     const client = createAPIClient(vi.fn<typeof fetch>(async input => {
       const request = requestOf(input);
       const path = pathOf(request);
       if (path === '/api/v1/employments/11' && request.method === 'GET')
         return Response.json(employment(11, 2, { organization_id: 22 }), { headers: { ETag: '"employment-11-r2"' } });
-      if (path === '/api/v1/employments/11' && request.method === 'PATCH')
+      if (path === '/api/v1/employments/11' && (request.method === 'PATCH' || request.method === 'DELETE'))
         return Response.json({ error: 'revision_conflict', message: 'changed elsewhere' }, { status: 412 });
       if (path === '/api/v1/organizations/22')
         return Response.json({ ...organizationProfile(), organization: organization(22, 2, 'Current Employer') }, { headers: { ETag: '"organization-22-r2"' } });
@@ -291,7 +291,9 @@ describe('DirectoryEntityController', () => {
     controller.employments = [employment(11, 1, { organization_id: 21 })];
     controller.organizationRecords.set(22, { ...organizationProfile(), organization: organization(22, 1, 'Old Employer') });
 
-    const result = await controller.updateEmployment(11, () => ({ person_id: 7, organization_id: 21, source: 'user' }));
+    const result = action === 'update'
+      ? await controller.updateEmployment(11, () => ({ person_id: 7, organization_id: 21, source: 'user' }))
+      : await controller.deleteEmployment(11);
 
     expect(result).toMatchObject({ ok: false, kind: 'conflict', current: { data: employment(11, 2, { organization_id: 22 }) } });
     expect(controller.organizationName(22)).toBe('Current Employer');
