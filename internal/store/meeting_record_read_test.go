@@ -26,14 +26,32 @@ func TestMeetingRecordReportsUnsupportedSeries(t *testing.T) {
 		data, err := json.Marshal(record)
 		require.NoError(err)
 		assert.Contains(string(data), fmt.Sprintf(`"unexpandable":[{"message_id":%d,"reason":"unsupported recurrence"}]`, series))
-		require.Len(record.Links, 1)
-		assert.Equal(fmt.Sprintf("evt:%d", copy), record.Links[0].Ref)
-		assert.Equal([]int64{note}, record.MessageIDs)
+		if ref.Kind == "msg" {
+			require.Len(record.Links, 1)
+			assert.Equal(fmt.Sprintf("evt:%d", copy), record.Links[0].Ref)
+			assert.Equal([]int64{note}, record.MessageIDs)
+		} else {
+			assert.Empty(record.Links)
+			assert.Empty(record.MessageIDs)
+		}
 	}
 	_, supported := calendarFixture(t, st, "supported-series", `{"id":"supported","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
 	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", OccurrenceRef: OccurrenceRef{MessageID: supported, Identity: occurrenceIdentity(t, "20270314T100000Z")}})
 	require.NoError(err)
 	assert.Empty(record.Unexpandable)
+}
+
+func TestMeetingRecordUnsupportedSeriesDoesNotProveOccurrence(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, series := calendarFixture(t, st, "unsupported-series", `{"id":"unsupported","iCalUID":"uid@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=YEARLY;BYWEEKNO=20"]}`)
+	_, note := projectionFixture(t, st, "unproven-note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-21T10:00:00Z"}}`)
+	calendarFixture(t, st, "unproven-copy", `{"id":"copy","iCalUID":"uid@example.org","start":{"dateTime":"2027-03-21T10:00:00Z"},"end":{"dateTime":"2027-03-21T11:00:00Z"}}`)
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", OccurrenceRef: OccurrenceRef{MessageID: series, Identity: occurrenceIdentity(t, "20270321T100000Z")}})
+	require.NoError(err)
+	assert.Equal([]CalendarUnexpandable{{MessageID: series, Reason: "unsupported recurrence"}}, record.Unexpandable)
+	assert.NotContains(record.MessageIDs, note)
+	assert.Empty(record.Links)
 }
 
 func TestMeetingRecordReadsNotesBeforeCalendarImport(t *testing.T) {
