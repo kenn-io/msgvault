@@ -28,57 +28,47 @@ function renderMutationCatalog(conflict = false) {
   return { ...render(PeopleCatalogSettings, { client }), writes };
 }
 
-it('recovers a catalog edit from a revision conflict', async () => {
-  const { writes, unmount } = renderMutationCatalog(true);
+it.each(['edit', 'conflict recovery', 'delete'])('retains catalog %s', async operation => {
+  const { writes, unmount } = renderMutationCatalog(operation === 'conflict recovery');
   try {
     await fireEvent.click(await screen.findByRole('button', { name: 'Edit Favorite color' }));
-    await screen.findByRole('textbox', { name: 'Name' });
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'Active' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-    await screen.findByText('Field changed elsewhere');
-    expect(writes[0]!.headers.get('If-Match')).toBe('"attribute-definition-41-r1"');
-    await expect(writes[0]!.clone().json()).resolves.toMatchObject({ is_active: true });
-    await fireEvent.click(screen.getByRole('button', { name: 'Reload field' }));
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('value', 'Concurrent color'));
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'Active' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-    await screen.findByRole('button', { name: 'Edit Concurrent color' });
-    expect(writes[1]!.headers.get('If-Match')).toBe('"attribute-definition-41-r3"');
-    await expect(writes[1]!.clone().json()).resolves.toMatchObject({ is_active: true });
+    if (operation === 'conflict recovery') {
+      await screen.findByRole('textbox', { name: 'Name' });
+      await fireEvent.click(screen.getByRole('checkbox', { name: 'Active' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      await screen.findByText('Field changed elsewhere');
+      expect(writes[0]!.headers.get('If-Match')).toBe('"attribute-definition-41-r1"');
+      await expect(writes[0]!.clone().json()).resolves.toMatchObject({ is_active: true });
+      await fireEvent.click(screen.getByRole('button', { name: 'Reload field' }));
+      await waitFor(() => expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('value', 'Concurrent color'));
+      await fireEvent.click(screen.getByRole('checkbox', { name: 'Active' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      await screen.findByRole('button', { name: 'Edit Concurrent color' });
+      expect(writes[1]!.headers.get('If-Match')).toBe('"attribute-definition-41-r3"');
+      await expect(writes[1]!.clone().json()).resolves.toMatchObject({ is_active: true });
+    } else if (operation === 'edit') {
+      await fireEvent.input(await screen.findByRole('textbox', { name: 'Name' }), { target: { value: 'Preferred color' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      expect(await screen.findByRole('button', { name: 'Edit Preferred color' })).toBeDefined();
+      expect(writes[0]!.headers.get('If-Match')).toBe('"attribute-definition-41-r1"');
+      await expect(writes[0]!.clone().json()).resolves.toMatchObject({ label: 'Preferred color' });
+    } else {
+      await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete field' }));
+      expect(await screen.findByText('No fields yet')).toBeDefined();
+      expect(writes[0]!.headers.get('If-Match')).toBe('"attribute-definition-41-r1"');
+    }
   } finally { unmount(); }
 });
 
-it('edits a catalog field', async () => {
-  const { writes, unmount } = renderMutationCatalog();
-  try {
-    await fireEvent.click(await screen.findByRole('button', { name: 'Edit Favorite color' }));
-    await fireEvent.input(await screen.findByRole('textbox', { name: 'Name' }), { target: { value: 'Preferred color' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-    expect(await screen.findByRole('button', { name: 'Edit Preferred color' })).toBeDefined();
-    expect(writes[0]!.headers.get('If-Match')).toBe('"attribute-definition-41-r1"');
-    await expect(writes[0]!.clone().json()).resolves.toMatchObject({ label: 'Preferred color' });
-  } finally { unmount(); }
-});
-
-it('deletes a catalog field', async () => {
-  const { writes, unmount } = renderMutationCatalog();
-  try {
-    await fireEvent.click(await screen.findByRole('button', { name: 'Edit Favorite color' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete field' }));
-    expect(await screen.findByText('No fields yet')).toBeDefined();
-    expect(writes[0]!.headers.get('If-Match')).toBe('"attribute-definition-41-r1"');
-  } finally { unmount(); }
-});
-
-it('gates catalog search while fields and Work details load or retry', async () => {
+it('gates catalog search through failed reads and retries, then orders and filters loaded fields', async () => {
   let releaseInitial!: (response: Response) => void;
   const pendingInitial = new Promise<Response>(resolve => { releaseInitial = resolve; });
   let releaseTargets!: (response: Response) => void;
   const pendingTargets = new Promise<Response>(resolve => { releaseTargets = resolve; });
   let initialRead = true;
   let targetsRead = 0;
-  const { fields, targets, unmount } = renderCatalog({
+  const { container, fields, targets, unmount } = renderCatalog({
     definitions: () => { if (initialRead) { initialRead = false; return pendingInitial; } },
     targets: () => ++targetsRead === 1 ? Response.json({ message: 'Targets unavailable' }, { status: 503 }) : pendingTargets,
   });
@@ -100,19 +90,11 @@ it('gates catalog search while fields and Work details load or retry', async () 
     expect(fields.queryByText('No fields match')).toBeNull();
     releaseTargets(Response.json({ targets }));
     expect(await fields.findByText('Current and historical jobs')).toBeDefined();
-  } finally { unmount(); }
-});
-
-it('shows catalog field order and labels with search by name and description', async () => {
-  const { container, fields, unmount } = renderCatalog();
-  try {
-    await fields.findByText('Current and historical jobs');
-    await fields.findByText('Garden preferences');
+    await fireEvent.input(search, { target: { value: '' } });
     expect([...container.querySelectorAll('.fields .name')].map(row => row.firstChild?.textContent)).toEqual(['Work', 'Location', 'Favorite color']);
     expect(fields.getByText('Current and historical jobs').closest('li')?.textContent).toContain('Jobs · several values');
     expect(fields.getByText('Garden preferences').closest('li')?.textContent).toContain('Profile field · Text · Sensitive');
     expect(fields.queryByRole('button', { name: 'Edit Location' })).toBeNull();
-    const search = screen.getByRole('searchbox', { name: 'Search fields' });
     await fireEvent.input(search, { target: { value: 'garden' } });
     expect(fields.getByText('Garden preferences')).toBeDefined();
     expect(fields.queryByText('Where they live')).toBeNull();

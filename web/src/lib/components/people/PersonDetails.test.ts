@@ -138,9 +138,17 @@ it.each(['save', 'clear'] as const)('refreshes open fact pins after an attribute
 });
 
 
-it('shows one alert when attribute values fail to load', async () => {
-  await renderDetails([], { attributesFailure: true });
+it.each([
+  { name: 'attribute values fail to load', options: { attributesFailure: true } },
+  { name: 'the person was deleted', options: { personDeleted: true } },
+])('shows one alert when $name', async ({ options }) => {
+  await renderDetails([], options);
   expect(screen.getAllByRole('alert')).toHaveLength(1);
+  if (options.personDeleted) {
+    const notice = within(screen.getByRole('alert'));
+    expect(notice.getByText("This person isn't in your archive anymore.")).toBeDefined();
+    expect(notice.queryByRole('button', { name: 'Retry' })).toBeNull();
+  }
 });
 
 it('shows profile failure details and recovers through Retry', async () => {
@@ -154,12 +162,4 @@ it('shows profile failure details and recovers through Retry', async () => {
   options.detailsFailure = false; options.personFailure = false;
   await fireEvent.click(notice.getByRole('button', { name: 'Retry' }));
   await waitFor(() => expect(screen.queryByText("Couldn't load these details.")).toBeNull());
-});
-
-it('explains that a deleted person is gone without offering Retry', async () => {
-  await renderDetails([], { personDeleted: true });
-  expect(screen.getAllByRole('alert')).toHaveLength(1);
-  const notice = within(screen.getByRole('alert'));
-  expect(notice.getByText("This person isn't in your archive anymore.")).toBeDefined();
-  expect(notice.queryByRole('button', { name: 'Retry' })).toBeNull();
 });

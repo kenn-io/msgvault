@@ -198,7 +198,7 @@ async function renderAddressPage(profileResponse: Response | Promise<Response>, 
   return { view, controller, directory, opening };
 }
 
-it('gates and forwards loaded listed addresses, showing them only on Details', async () => {
+it.each(['loaded', 'failed'])('gates linked addresses until the profile read settles, forwards values, and limits them to Details (%s)', async outcome => {
   const contactPoints = [{ person_id: 7, address_kind: 'email', original_value: 'alice@example.com', normalized_value: 'alice@example.com', normalization: 'email', normalization_version: 1, envelope: { id: 1, ordinal: 0, sensitive: false, source: 'user', created_at: when, updated_at: when, vcard: {} } }];
   let releaseProfile!: (response: Response) => void;
   const pendingProfile = new Promise<Response>(resolve => { releaseProfile = resolve; });
@@ -206,8 +206,9 @@ it('gates and forwards loaded listed addresses, showing them only on Details', a
   try {
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
     expect(screen.queryByRole('heading', { name: 'Linked addresses' })).toBeNull();
-    await act(async () => { releaseProfile(Response.json({ ...emptyProfile(addressPerson), contact_points: contactPoints }, { headers: { ETag: '"person-7-r1"' } })); await opening; });
-    expect(vi.mocked(PersonAddresses).mock.calls.at(-1)![1].listedInDetails).toEqual(contactPoints);
+    await act(async () => { releaseProfile(outcome === 'loaded' ? Response.json({ ...emptyProfile(addressPerson), contact_points: contactPoints }, { headers: { ETag: '"person-7-r1"' } }) : Response.json({ message: 'Profile unavailable' }, { status: 503 })); await opening; });
+    if (outcome === 'loaded') expect(vi.mocked(PersonAddresses).mock.calls.at(-1)![1].listedInDetails).toEqual(contactPoints);
+    else expect(screen.getByLabelText('Identity alice@example.com')).toBeDefined();
     expect(screen.getByRole('heading', { name: 'Linked addresses' }).closest('.details')).toHaveProperty('hidden', false);
     await fireEvent.click(screen.getByRole('radio', { name: 'Files' }));
     await view.rerender({ filesOpen: true });
@@ -215,14 +216,6 @@ it('gates and forwards loaded listed addresses, showing them only on Details', a
     await fireEvent.click(screen.getByRole('radio', { name: 'Messages' }));
     await view.rerender({ filesOpen: false });
     expect(screen.getByRole('heading', { name: 'Linked addresses', hidden: true }).closest('.details')).toHaveProperty('hidden', true);
-  } finally { view.unmount(); controller.destroy(); directory.destroy(); }
-});
-
-it('keeps linked addresses visible after a failed profile read', async () => {
-  const { view, controller, directory } = await renderAddressPage(Response.json({ message: 'Profile unavailable' }, { status: 503 }));
-  try {
-    await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-    expect(screen.getByLabelText('Identity alice@example.com')).toBeDefined();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); }
 });
 
