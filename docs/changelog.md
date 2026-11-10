@@ -8,6 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Person fact claims show their kind and whether supporting evidence is fresh, stale, or expired. The CLI and HTTP API expose the same metadata.
 - Owner MCP sessions can list staged deletion batches and inspect their lifecycle receipts without enabling writes.
 
 ## 0.24.0
