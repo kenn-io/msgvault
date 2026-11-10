@@ -2236,6 +2236,50 @@ func TestCooperativeJobKeepsRequestContextLiveAndResumes(t *testing.T) {
 	})
 }
 
+func TestCooperativeJobDeferralAfterYieldEndsTheChain(t *testing.T) {
+	for _, joined := range []bool{false, true} {
+		t.Run(strconv.FormatBool(joined), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				tracker := &yieldingWorkTracker{}
+				boundary := make(chan struct{})
+				runs := 0
+				s := New(nil).WithWorkTracker(tracker).WithLogger(slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
+				defer func() { <-s.Stop().Done() }()
+				require.NoError(s.AddJob(Job{Name: "pass", Preemptible: true, CooperativePreemption: true, Schedule: "0 0 1 1 *", Run: func(ctx context.Context) error {
+					runs++
+					<-boundary
+					require.True(jobctx.PreemptionRequested(ctx))
+					tracker.yield.Store(false)
+					if joined {
+						return errors.Join(ErrDeferUntilNextTrigger, errors.New("synthetic account failure"))
+					}
+					return ErrDeferUntilNextTrigger
+				}}))
+				_, err := s.StartJob("pass", false)
+				require.NoError(err)
+				synctest.Wait()
+				tracker.yield.Store(true)
+				time.Sleep(2 * yieldPollInterval)
+				close(boundary)
+				synctest.Wait()
+				assert.Equal(1, runs, "a deferral after a yield request queues no follow-up")
+				status := s.JobStatus()[0]
+				assert.False(status.Pending)
+				assert.False(status.Running)
+				if joined {
+					assert.Equal("synthetic account failure", status.LastError)
+					assert.True(status.LastRun.IsZero())
+				} else {
+					assert.Empty(status.LastError)
+					assert.False(status.LastRun.IsZero())
+				}
+			})
+		})
+	}
+}
+
 func TestGenericJobYieldContextFinishesCleanly(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		require := require.New(t)

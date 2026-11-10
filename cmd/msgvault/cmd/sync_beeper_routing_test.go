@@ -227,7 +227,8 @@ func TestScheduledBeeperAttemptsRotatesAfterStop(t *testing.T) {
 			second = append(second, id)
 			return false, nil
 		}, noRebuild))
-	assert.Equal([]string{"c", "a", "b"}, second, "the next run reaches accounts after the stopped account")
+	assert.Equal([]string{"c", "b"}, second,
+		"the next run reaches accounts after the stopped account and skips those the pass finished")
 
 	var third []string
 	require.NoError(t, runScheduledBeeperAttempts(t.Context(), accounts, rotation, nil,

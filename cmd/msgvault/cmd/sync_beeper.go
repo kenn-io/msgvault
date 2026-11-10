@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/jobctx"
+	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
 )
@@ -468,15 +469,19 @@ func runConfiguredBeeperSync(ctx context.Context, s *store.Store) error {
 // for bounded checkpoint and terminal sync writes after imports stop.
 const scheduledBeeperBudget = 3 * time.Minute
 
-// scheduledBeeperRotation remembers where the last budget-limited scheduled
-// run stopped, so accounts late in store order are not starved.
+// scheduledBeeperRotation remembers where the last scheduled run stopped and
+// which accounts the current pass has finished, so accounts late in store order
+// are not starved and follow-ups resume the pass instead of restarting it.
 var scheduledBeeperRotation = &beeperAccountRotation{}
 
 // beeperAccountRotation orders scheduled Beeper accounts starting from the
-// account after the previous run's last attempt.
+// account after the previous run's last attempt. It also holds the accounts
+// the current pass has finished. Like the rotation, this progress lives only
+// in the daemon; a restart begins a new pass.
 type beeperAccountRotation struct {
-	mu   sync.Mutex
-	next string
+	mu       sync.Mutex
+	next     string
+	passDone map[string]bool
 }
 
 func (r *beeperAccountRotation) order(accountIDs []string) []string {
@@ -496,12 +501,55 @@ func (r *beeperAccountRotation) resumeAt(accountID string) {
 	r.mu.Unlock()
 }
 
+// remaining returns the accounts in rotation order that the current pass has
+// not finished. When none remain, it starts a new pass over every account.
+func (r *beeperAccountRotation) remaining(accountIDs []string) []string {
+	ordered := r.order(accountIDs)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	left := slices.DeleteFunc(slices.Clone(ordered), func(id string) bool { return r.passDone[id] })
+	if len(left) == 0 {
+		r.passDone = nil
+		return ordered
+	}
+	return left
+}
+
+func (r *beeperAccountRotation) finish(accountID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.passDone == nil {
+		r.passDone = make(map[string]bool)
+	}
+	r.passDone[accountID] = true
+}
+
+// completePass reports whether every account has finished the current pass,
+// and if so clears the progress so the next run starts a new pass.
+func (r *beeperAccountRotation) completePass(accountIDs []string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, id := range accountIDs {
+		if !r.passDone[id] {
+			return false
+		}
+	}
+	r.passDone = nil
+	return true
+}
+
 // runScheduledBeeperAttempts keeps per-account failures isolated while
 // rebuilding analytics after any import attempt, since even a failed or
 // canceled attempt may have committed messages from healthy chats. An
 // attempt that reports it stopped early, or a spent budget (shouldStop)
 // before the next account, ends the job; the rotation starts the next run
 // with the next account.
+//
+// An account that returns without stopping, including with an ordinary
+// failure, is finished for the current pass; later runs visit only the
+// accounts left. A run asked to yield normally gets a follow-up from the
+// scheduler. Once a yielded run finishes the pass, it defers until the next
+// trigger, so queued work cannot chain follow-ups indefinitely.
 func runScheduledBeeperAttempts(
 	ctx context.Context,
 	accountIDs []string,
@@ -513,7 +561,7 @@ func runScheduledBeeperAttempts(
 	var errs []error
 	attempted := 0
 	resumeAt := ""
-	ordered := rotation.order(accountIDs)
+	ordered := rotation.remaining(accountIDs)
 	for idx, accountID := range ordered {
 		if ctx.Err() != nil {
 			// Cancelled between accounts (a yield or shutdown): start here next.
@@ -538,6 +586,7 @@ func runScheduledBeeperAttempts(
 			resumeAt = ordered[(idx+1)%len(ordered)]
 			break
 		}
+		rotation.finish(accountID)
 	}
 	rotation.resumeAt(resumeAt)
 	if attempted > 0 {
@@ -547,6 +596,10 @@ func runScheduledBeeperAttempts(
 	}
 	if ctx.Err() != nil {
 		errs = append(errs, ctx.Err())
+		return errors.Join(errs...)
+	}
+	if rotation.completePass(accountIDs) && jobctx.PreemptionRequested(ctx) {
+		return errors.Join(append([]error{scheduler.ErrDeferUntilNextTrigger}, errs...)...)
 	}
 	return errors.Join(errs...)
 }

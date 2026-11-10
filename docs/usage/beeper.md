@@ -395,6 +395,11 @@ A scheduled run keeps other sources on their cadence:
   completes the run, and the next run continues from the saved cursors.
 - **Account rotation.** After stopping within an account, the next run starts
   with the following account. Each account retains its own progress.
+- **Passes.** A pass visits every account once. When a run stops for waiting
+  work, a follow-up runs after that work and visits only the accounts the pass
+  has not finished. Once the pass is finished, the next pass waits for the next
+  scheduled time. The daemon keeps pass progress in memory, so a restart starts
+  a new pass.
 - **New messages first.** Chats with only new messages sync before chats
   still backfilling history. Completed chats are skipped until the current
   discovery cycle finishes, so later chats also get a turn.

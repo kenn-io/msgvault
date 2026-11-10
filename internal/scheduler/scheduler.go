@@ -56,7 +56,8 @@ func (e *RescheduleError) Error() string { return e.Err.Error() }
 
 func (e *RescheduleError) Unwrap() []error { return []error{ErrReschedule, e.Err} }
 
-// ErrDeferUntilNextTrigger finishes this attempt without requesting a continuation.
+// ErrDeferUntilNextTrigger finishes this attempt without requesting a continuation,
+// even when the run was asked to yield. Failures joined with it are recorded.
 // An already accepted trigger still runs its pending follow-up.
 var ErrDeferUntilNextTrigger = errors.New("scheduled job deferred until next trigger")
 
@@ -899,6 +900,18 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 			"max_runtime", maxRuntime,
 			"follow_up_pending", s.genericPending[name],
 			"error", err)
+		return err
+	}
+	if errors.Is(err, ErrDeferUntilNextTrigger) {
+		// A deferral ends the chain even after a yield request; the failures
+		// joined with it stay visible.
+		err = jobctx.ErrorAfterYield(runCtx, err, ErrDeferUntilNextTrigger)
+		if err == nil {
+			s.genericLastRun[name] = time.Now()
+			delete(s.genericLastErr, name)
+			return nil
+		}
+		s.genericLastErr[name] = err
 		return err
 	}
 	yielded := budgetExpired || yieldedToWaiter(runCtx) || jobctx.PreemptionRequested(runCtx)
