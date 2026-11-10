@@ -2352,7 +2352,7 @@ The `--phone` flag is required and must be in E.164 format (e.g., `+447700900000
 | `--timezone` | Text | Concrete IANA zone or UTC; caller assumption |
 | `--phone` | Yes | Your phone number in E.164 format (must start with `+`) |
 | `--contacts` | No | Path to contacts `.vcf` file for name resolution |
-| `--media-dir` | No | Android Media folder or explicitly supplied TXT media root |
+| `--media-dir` | No | Android Media directory or unpacked TXT export media directory; Apple database imports are text-only |
 | `--limit` | No | Limit number of messages (for testing) |
 | `--after` | No | Apple only: import messages on or after this date (`YYYY-MM-DD`, local time) |
 | `--before` | No | Apple only: import messages before this date (`YYYY-MM-DD`, local time) |
@@ -2364,8 +2364,7 @@ Android `msgstore.db` imports fail with an error when `--after` or `--before` is
 
 `text` requires all flags marked Text and rejects database-only flags
 `--contacts`, `--limit`, `--display-name`, `--full`, `--after` and `--before`.
-Text-specific flags require `--format text`. Some lines with clock-shaped text
-fail even when they were message text. See [per-chat TXT exports](/docs/usage/text-messages/#per-chat-txt-exports)
+Text-specific flags require `--format text`. Some lines shaped like record headers fail even when they were message text. See [per-chat TXT exports](/docs/usage/text-messages/#per-chat-txt-exports)
 for supported grammar, bounds, timestamp assumptions, media and repeat-import limits.
 
 See [Text Messages](/docs/usage/text-messages/) for usage examples.

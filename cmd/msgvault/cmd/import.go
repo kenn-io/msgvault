@@ -87,7 +87,7 @@ imports the rest. Android msgstore.db imports reject both flags.`,
 	command.Flags().StringVar(&textOpts.DateOrder, "date-order", "", "dmy, mdy or ymd (text only)")
 	command.Flags().StringVar(&textOpts.Timezone, "timezone", "", "concrete IANA timezone assumption (text only)")
 	command.Flags().StringVar(&importPhone, "phone", "", "your phone number in E.164 format (required)")
-	command.Flags().StringVar(&importMediaDir, "media-dir", "", "path to decrypted Media folder (optional)")
+	command.Flags().StringVar(&importMediaDir, "media-dir", "", "Android Media directory or unpacked TXT export media directory (optional)")
 	command.Flags().StringVar(&importContacts, "contacts", "", "path to contacts .vcf file for name resolution (optional)")
 	command.Flags().IntVar(&importLimit, "limit", 0, "limit number of messages (for testing)")
 	command.Flags().StringVar(&importDisplayName, "display-name", "", "display name for the phone owner")

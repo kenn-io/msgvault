@@ -42,7 +42,7 @@ The `--phone` flag is required and must be in E.164 format (for example, `+44770
 |---|---|---|
 | `--phone` | Yes | Your phone number in E.164 format (must start with `+`) |
 | `--contacts` | No | Path to contacts `.vcf` file for name resolution |
-| `--media-dir` | No | Android Media folder for attachments; Apple import is text-only |
+| `--media-dir` | No | Android Media folder or unpacked TXT export media directory; Apple import is text-only |
 | `--limit` | No | Limit number of messages (for testing) |
 | `--display-name` | No | Display name for the phone owner |
 | `--no-default-identity` | No | Do not auto-confirm the phone number as this source's "me" identity |
@@ -92,13 +92,13 @@ or a.m./p.m. Normal, no-break and narrow no-break spaces before AM/PM are
 supported. UTF-8 BOM, CRLF and leading directional marks are accepted.
 Multiline bodies and blank lines are retained. A line that looks like a full
 supported header starts another record even if it was originally message text.
-Any other line containing decimal digits separated by `:` or `.` fails. Lines
-starting with a numeric date followed by `, ` and later ` - `, or by a space and later ` - sender:` also fail,
-as do lines starting with `[` and a numeric date followed by a space and later
-`] `. This rejects message text such as `Meet at 10:01` or `£3.50` too.
-Unsupported headers without these patterns can be retained as continuation text. Invalid UTF-8,
-a preamble, or input over 128 MiB, 250,000 records or 1 MiB per record also
-fail before archive writes.
+Other lines fail if they begin with a bracketed prefix followed by text, a
+comma-bearing prefix followed by a spaced dash and text, or a prefix followed
+by a spaced dash and a `sender:` label. Unicode spaces and dashes count for
+these checks. This also rejects message text such as `[todo] buy seeds` and
+`Reminder, noon - Ivo: bring seeds`. Unfamiliar headers outside these patterns
+can be retained as continuation text. Invalid UTF-8, a preamble, or input over
+128 MiB, 250,000 records or 1 MiB per record also fail before archive writes.
 
 `--timezone` must name a concrete IANA zone or UTC. It and `--date-order` are
 caller assumptions, not original exported timezone evidence. Raw timestamps,

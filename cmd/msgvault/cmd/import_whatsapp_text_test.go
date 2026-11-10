@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/whatsapp"
 )
 
 func TestWhatsAppTextRejectsRemoteDaemon(t *testing.T) {
@@ -39,7 +40,7 @@ func TestWhatsAppTextCommand(t *testing.T) {
 		importPhone, importMediaDir, importContacts = oldPhone, oldMediaDir, oldContacts
 		importLimit, importDisplayName, noDefaultIdentityImportWhatsApp = oldLimit, oldDisplayName, oldNoDefaultIdentity
 	})
-	for _, name := range []string{"complete", "incomplete"} {
+	for _, name := range []string{"complete", "incomplete", "multiline"} {
 		t.Run(name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			markDaemonCLISubprocessForTest(t)
@@ -49,6 +50,9 @@ func TestWhatsAppTextCommand(t *testing.T) {
 			cfg.Data.DataDir = home
 			payload := "13/6/26, 10:00 - Mira: asters\n13/6/26, 10:00 - Mira: asters\n"
 			args := []string{"--format", "text", "--phone", "+12025550123", "--chat-id", "garden", "--chat-type", "group", "--timezone", "UTC", "--date-order", "dmy", "--no-default-identity"}
+			if name == "multiline" {
+				payload = "13/6/26, 10:00 - Mira: asters\nMeet at 10:01\nThe price is £3.50\n"
+			}
 			if name == "incomplete" {
 				st, err := store.Open(cfg.DatabaseDSN())
 				require.NoError(err)
@@ -76,6 +80,14 @@ func TestWhatsAppTextCommand(t *testing.T) {
 				assert.Contains(out.String(), "Import incomplete: 1 records")
 				assert.Contains(out.String(), "1 added, 0 unchanged")
 				assert.Contains(out.String(), "Media: 0 stored")
+			} else if name == "multiline" {
+				require.NoError(err)
+				st, err := store.Open(cfg.DatabaseDSN())
+				require.NoError(err)
+				defer func() { assert.NoError(st.Close()) }()
+				var body string
+				require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT body_text FROM message_bodies").Scan(&body))
+				assert.Equal("asters\nMeet at 10:01\nThe price is £3.50", body)
 			} else {
 				require.NoError(err)
 				assert.Contains(out.String(), "2 records")
@@ -103,12 +115,19 @@ func TestWhatsAppTextCommandPreflightArchive(t *testing.T) {
 					st, err := store.Open(cfg.DatabaseDSN())
 					require.NoError(err)
 					require.NoError(st.InitSchemaContext(t.Context()))
-					_, err = st.GetOrCreateSource("whatsapp", "+12025550123")
-					require.NoError(err)
+					opts := whatsapp.TextOptions{Phone: "+12025550123", ChatID: "garden", ChatType: "group", DateOrder: "dmy", Timezone: "UTC"}
+					seed := filepath.Join(t.TempDir(), "seed.txt")
+					for _, content := range []string{"13/6/26, 10:00 - Mira: one\n", "13/6/26, 10:00 - Mira: one\n13/6/26, 10:01 - Ivo: two\n"} {
+						require.NoError(os.WriteFile(seed, []byte(content), 0600))
+						input, err := whatsapp.LoadText(t.Context(), seed, opts)
+						require.NoError(err)
+						_, err = whatsapp.NewImporter(st, nil).ImportText(t.Context(), input)
+						require.NoError(err)
+					}
 					require.NoError(st.Close())
 				}
 				path := filepath.Join(t.TempDir(), "chat.txt")
-				require.NoError(os.WriteFile(path, []byte("13/6/26, 10:00 - Mira: one\n13 Jun 2026, 10:01 - Mira: two\n"), 0600))
+				require.NoError(os.WriteFile(path, []byte("13/6/26, 10:00 - Mira: one\n13 Jun 2026, noon - Ivo: two\n"), 0600))
 				command := &cobra.Command{Use: "test"}
 				command.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 				command.AddCommand(newImportWhatsAppCmd())
@@ -127,11 +146,20 @@ func TestWhatsAppTextCommandPreflightArchive(t *testing.T) {
 				st, err := store.Open(cfg.DatabaseDSN())
 				require.NoError(err)
 				defer func() { assert.NoError(st.Close()) }()
-				var sources, messages int
-				require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM sources").Scan(&sources))
-				require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages").Scan(&messages))
-				assert.Equal(1, sources)
-				assert.Zero(messages)
+				var sources, conversations, messages, bodies, syncs int
+				require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT (SELECT COUNT(*) FROM sources), (SELECT COUNT(*) FROM conversations), (SELECT COUNT(*) FROM messages), (SELECT COUNT(*) FROM message_bodies), (SELECT COUNT(*) FROM sync_runs)").Scan(&sources, &conversations, &messages, &bodies, &syncs))
+				assert.Equal([]int{1, 1, 2, 2, 2}, []int{sources, conversations, messages, bodies, syncs})
+				rows, err := st.DB().QueryContext(t.Context(), "SELECT body_text FROM message_bodies ORDER BY message_id")
+				require.NoError(err)
+				defer func() { assert.NoError(rows.Close()) }()
+				var texts []string
+				for rows.Next() {
+					var body string
+					require.NoError(rows.Scan(&body))
+					texts = append(texts, body)
+				}
+				require.NoError(rows.Err())
+				assert.Equal([]string{"one", "two"}, texts)
 			})
 		}
 	}

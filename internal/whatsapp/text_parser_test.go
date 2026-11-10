@@ -78,10 +78,12 @@ func TestTextParserRejects(t *testing.T) {
 		name, text, order, zone, want string
 		limits                        textLimits
 	}{
+		{"named-month-noon", "13/6/26, 10:00 - Mira: yes\n13 Jun 2026, noon - Ivo: two", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
 		{"day-month", "13/6/26, 10:00 - Mira: yes\n13 Jun 2026, 10:01 - Ivo: no", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
-		{"clock-prose", "13/6/26, 10:00 - Mira: yes\nMeet at 10:01", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
-		{"decimal-prose", "13/6/26, 10:00 - Mira: yes\nThe price is £3.50", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
-		{"unicode-clock", "13/6/26, 10:00 - Mira: yes\n١٠:٠١", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
+		{"bracketed-no-space", "13/6/26, 10:00 - Mira: yes\n[13 Jun noon]Ivo: two", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
+		{"bracketed", "13/6/26, 10:00 - Mira: yes\n[todo] buy seeds", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
+		{"notice", "13/6/26, 10:00 - Mira: yes\n13 Jun 2026, noon - Messages are encrypted", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
+		{"unicode-spacing", "13/6/26, 10:00 - Mira: yes\n١٣/٦/٢٦، noon\u00a0–\u00a0Ivo: two", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
 		{"preamble", "notes\n13/6/26, 10:00 - Mira: ok", "dmy", "UTC", "line 1: unsupported or malformed TXT header", textLimitsDefault},
 		{"invalid-date", "31/2/26, 10:00 - Mira: no", "dmy", "UTC", "day out of range", textLimitsDefault},
 		{"bad-clock", "13/6/26, 27:00 - Mira: no", "dmy", "UTC", "hour out of range", textLimitsDefault},
@@ -126,7 +128,7 @@ func TestTextParserOriginalByteDigest(t *testing.T) {
 }
 
 func TestTextParserNumericContinuation(t *testing.T) {
-	for _, line := range []string{"1/2 cup", "2026-06-14 deadline", "2026-06-14 deadline - water"} {
+	for _, line := range []string{"1/2 cup", "2026-06-14 deadline", "2026-06-14 deadline - water", "Meet at 10:01", "The price is £3.50", "١٠:٠١"} {
 		t.Run(line, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			rows, _, err := parseTextForTest(t.Context(), strings.NewReader("13/6/26, 10:00 - Mira: shopping\n"+line), "dmy", "UTC", textLimitsDefault)

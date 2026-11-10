@@ -64,6 +64,9 @@ func TestTextImportRepeatOverlap(t *testing.T) {
 	assert.Equal(1, s.Added)
 	assert.Equal(4, textCount(t, st, "messages"))
 	assert.Equal(2, textCount(t, st, "participants"))
+	_, err = importTextForTest(t.Context(), imp, textFile(t, "13/6/26, 10:00 - Mira: asters\n13 Jun 2026, noon - Ivo: two\n"), opts)
+	require.ErrorContains(err, "line 2: unsupported or malformed TXT header")
+	assert.Equal(4, textCount(t, st, "messages"))
 }
 
 func TestTextImportRefreshesOnlyTouchedChat(t *testing.T) {
