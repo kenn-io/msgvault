@@ -14,6 +14,7 @@ func TestApplyPageMentionsArchivesMentioningPostsAndComments(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := testutil.NewSQLiteTestStore(t)
 	var reads []string
+	postText := "another post"
 	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 		reads = append(reads, r.URL.Path)
 		switch r.URL.Path {
@@ -22,7 +23,7 @@ func TestApplyPageMentionsArchivesMentioningPostsAndComments(t *testing.T) {
 		case "/v26.0/500_600":
 			_, _ = fmt.Fprint(w, `{"id":"500_600","message":"visiting Example Page","from":{"id":"500","name":"Example Visitor"}}`)
 		case "/v26.0/500_700":
-			_, _ = fmt.Fprint(w, `{"id":"500_700","message":"another post","from":{"id":"500","name":"Example Visitor"}}`)
+			_, _ = fmt.Fprintf(w, `{"id":"500_700","message":%q,"from":{"id":"500","name":"Example Visitor"}}`, postText)
 		case "/v26.0/500_701":
 			_, _ = fmt.Fprint(w, `{"id":"500_701","message":"ask Example Page","created_time":"2026-10-01T12:00:00+0000","from":{"id":"501","name":"Example Friend"}}`)
 		default:
@@ -46,4 +47,14 @@ func TestApplyPageMentionsArchivesMentioningPostsAndComments(t *testing.T) {
 	body, err := st.GetMessageBodyText(t.Context(), message(t, st, src.ID, "500_600").ID)
 	require.NoError(err)
 	assert.Equal("visiting Example Page", body)
+
+	// A post archived as a comment's context is read again when it is
+	// itself mentioned, so its current text is kept.
+	postText = "edited to mention Example Page"
+	reads = nil
+	require.NoError(ApplyPageMentions(t.Context(), st, c, "9", "100", feedValues(`{"item":"post","verb":"add","post_id":"500_700"}`)))
+	assert.Equal([]string{"/v26.0/500_700"}, reads)
+	body, err = st.GetMessageBodyText(t.Context(), post.ID)
+	require.NoError(err)
+	assert.Equal("edited to mention Example Page", body)
 }

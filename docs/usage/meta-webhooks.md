@@ -76,8 +76,9 @@ skipped. When a delivery cannot be
 applied, for example while a polling sync of the same Page is running, the
 daemon retries it with increasing waits and holds later deliveries until it
 succeeds. After an hour of failures it logs the delivery and drops it; the
-next polling sync still archives the comment text. No sync can find caption
-or comment mentions, so a dropped mention delivery is lost. A change that can never be
+next polling sync still archives the comment text. No sync can find Instagram
+caption or comment mentions or posts by others that mention a Page, so a
+dropped mention delivery is lost. A change that can never be
 applied, such as a comment deleted before it was read, is logged and skipped
 without holding back the other changes in its delivery.
 

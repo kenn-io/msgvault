@@ -36,7 +36,14 @@ func ApplyPageMentions(ctx context.Context, st *store.Store, reader ObjectReader
 		run := &importRun{imp: &Importer{store: st}, app: app, page: page, source: source, sum: sum}
 		for _, change := range changes {
 			if change.Item != "comment" {
-				if err := run.archiveAncestors(ctx, ancestors, change.PostID, change.PostID); err != nil {
+				// Read the post even when it is archived, for example as the
+				// post of an earlier mentioning comment: it may have been
+				// edited to mention the Page, and no sync reads it again.
+				post, err := reader.Post(ctx, change.PostID)
+				if err != nil {
+					return fmt.Errorf("read post %q: %w", change.PostID, err)
+				}
+				if err := run.persist(ctx, post, change.PostID, "", ""); err != nil {
 					return err
 				}
 				continue
