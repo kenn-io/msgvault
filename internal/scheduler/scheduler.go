@@ -147,7 +147,7 @@ type Scheduler struct {
 	startedAt     map[string]time.Time    // email -> current run began executing
 	pollJobs      map[string]cron.EntryID
 	pollIntervals map[string]time.Duration
-	pollErrors    map[string]error
+	lastPollErr   map[string]error
 	pollPending   map[string]bool
 	queuedPoll    map[string]bool
 	pollPromoted  map[string]bool
@@ -216,7 +216,7 @@ func New(syncFunc SyncFunc) *Scheduler {
 		startedAt:          make(map[string]time.Time),
 		pollJobs:           make(map[string]cron.EntryID),
 		pollIntervals:      make(map[string]time.Duration),
-		pollErrors:         make(map[string]error),
+		lastPollErr:        make(map[string]error),
 		pollPending:        make(map[string]bool),
 		queuedPoll:         make(map[string]bool),
 		pollPromoted:       make(map[string]bool),
@@ -246,14 +246,6 @@ func New(syncFunc SyncFunc) *Scheduler {
 func (s *Scheduler) WithAccountPoll(fn SyncFunc) *Scheduler {
 	s.pollFunc = fn
 	return s
-}
-
-// SetPollingError reports an unavailable polling schedule alongside its cron job.
-func (s *Scheduler) SetPollingError(email string, interval time.Duration, err error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.pollIntervals[email] = interval
-	s.pollErrors[email] = err
 }
 
 // WithLogger sets the logger for the scheduler.
@@ -507,7 +499,7 @@ func (s *Scheduler) RemoveJob(name string) {
 func (s *Scheduler) RemoveAccount(email string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.pollErrors, email)
+	delete(s.lastPollErr, email)
 	delete(s.manual, email)
 
 	if entryID, exists := s.jobs[email]; exists {
@@ -673,6 +665,10 @@ func (s *Scheduler) runAccountSync(email string, poll bool) {
 	yielded := yieldedToWaiter(runCtx) || jobctx.PreemptionRequested(runCtx)
 
 	s.mu.Lock()
+	lastErrors := s.lastErr
+	if poll {
+		lastErrors = s.lastPollErr
+	}
 	var completion func()
 	if !yielded || jobctx.ErrorAfterYield(runCtx, err) != nil {
 		if err == nil && !yielded && !s.stopped && s.ctx.Err() == nil && s.manual[email] {
@@ -682,7 +678,7 @@ func (s *Scheduler) runAccountSync(email string, poll bool) {
 	}
 	if yielded {
 		if callbackErr := jobctx.ErrorAfterYield(runCtx, err); callbackErr != nil {
-			s.lastErr[email] = callbackErr
+			lastErrors[email] = callbackErr
 			logScheduledSyncError(s.logger, email, time.Since(start), callbackErr)
 		}
 		if _, scheduled := s.jobs[email]; scheduled {
@@ -696,16 +692,16 @@ func (s *Scheduler) runAccountSync(email string, poll bool) {
 			"duration", time.Since(start))
 	} else if err == ErrAcquisitionIncomplete { //nolint:errorlint // Joined failures must remain visible.
 		s.lastRun[email] = time.Now()
-		delete(s.lastErr, email)
+		delete(lastErrors, email)
 	} else if err != nil && err != ErrDeferUntilNextTrigger { //nolint:errorlint // Only a bare deferral is a clean no-work run.
-		s.lastErr[email] = err
+		lastErrors[email] = err
 		logScheduledSyncError(s.logger, email, time.Since(start), err)
 	} else {
 		s.lastRun[email] = time.Now()
 		if err == nil {
 			s.lastCompleted[email] = s.lastRun[email]
 		}
-		s.lastErr[email] = nil
+		lastErrors[email] = nil
 		s.logger.Info("scheduled sync completed",
 			"email", email,
 			"duration", time.Since(start))
@@ -1234,11 +1230,8 @@ func (s *Scheduler) Status() []AccountStatus {
 				status.NextRun = next
 			}
 		}
-		if err := s.lastErr[email]; err != nil {
+		if err := errors.Join(s.lastErr[email], s.lastPollErr[email]); err != nil {
 			status.LastError = err.Error()
-		}
-		if err := s.pollErrors[email]; err != nil {
-			status.LastError = errors.Join(err, s.lastErr[email]).Error()
 		}
 		statuses = append(statuses, status)
 	}

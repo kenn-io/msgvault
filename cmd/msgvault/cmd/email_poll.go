@@ -15,8 +15,13 @@ import (
 	"go.kenn.io/msgvault/internal/sync"
 )
 
-func validatePollingTargets(ctx context.Context, cfg *config.Config, s *store.Store, state *invocation) map[int]error {
-	errs := make(map[int]error)
+type pollingTarget struct {
+	source *store.Source
+	err    error
+}
+
+func validatePollingTargets(ctx context.Context, cfg *config.Config, s *store.Store, state *invocation) map[int]pollingTarget {
+	targets := make(map[int]pollingTarget)
 	seen := make(map[int64]bool)
 	names := make(map[string]bool)
 	for i, account := range cfg.Accounts {
@@ -24,27 +29,28 @@ func validatePollingTargets(ctx context.Context, cfg *config.Config, s *store.St
 			continue
 		}
 		if err := config.ValidatePollingAccounts([]config.AccountSchedule{account}); err != nil {
-			errs[i] = err
+			targets[i] = pollingTarget{err: err}
 			continue
 		}
 		key := strings.ToLower(account.Email)
 		if names[key] {
-			errs[i] = fmt.Errorf("duplicate polling account %q", account.Email)
+			targets[i] = pollingTarget{err: fmt.Errorf("duplicate polling account %q", account.Email)}
 			continue
 		}
 		names[key] = true
 		source, err := pollingSource(ctx, account.Email, s, state)
 		if err != nil {
-			errs[i] = fmt.Errorf("polling account %q: %w", account.Email, err)
+			targets[i] = pollingTarget{err: fmt.Errorf("polling account %q: %w", account.Email, err)}
 			continue
 		}
 		if seen[source.ID] {
-			errs[i] = fmt.Errorf("polling account %q: source already has a polling account", account.Email)
+			targets[i] = pollingTarget{err: fmt.Errorf("polling account %q: source already has a polling account", account.Email)}
 			continue
 		}
+		targets[i] = pollingTarget{source: source}
 		seen[source.ID] = true
 	}
-	return errs
+	return targets
 }
 
 func pollingSource(ctx context.Context, identifier string, s *store.Store, state *invocation) (*store.Source, error) {
@@ -59,7 +65,7 @@ func pollingSource(ctx context.Context, identifier string, s *store.Store, state
 		}
 		if strings.EqualFold(row.Identifier, identifier) {
 			exact = append(exact, row)
-		} else if row.DisplayName.Valid && strings.EqualFold(row.DisplayName.String, identifier) {
+		} else {
 			named = append(named, row)
 		}
 	}
@@ -92,13 +98,24 @@ func pollingSource(ctx context.Context, identifier string, s *store.Store, state
 }
 
 func runEmailPoll(ctx context.Context, identifier string, s *store.Store, getOAuthMgr func(context.Context, string) (*oauth.Manager, error), state *invocation) error {
-	src, err := pollingSource(ctx, identifier, s, state)
+	var src *store.Source
+	var err error
+	for i, account := range state.cfg.Accounts {
+		if account.Enabled && account.PollInterval != 0 && strings.EqualFold(account.Email, identifier) {
+			target := validatePollingTargets(ctx, state.cfg, s, state)[i]
+			src, err = target.source, target.err
+			break
+		}
+	}
+	if src == nil && err == nil {
+		src, err = pollingSource(ctx, identifier, s, state)
+	}
 	if err != nil {
 		return err
 	}
 	var incomplete bool
 	if src.SourceType == sourceTypeGmail {
-		summary, syncErr := runScheduledGmailSyncWithProfile(ctx, identifier, src, s, getOAuthMgr, state, true)
+		summary, syncErr := runScheduledGmailSyncWithProfile(ctx, src.Identifier, src, s, getOAuthMgr, state, true)
 		err = syncErr
 		if err == nil {
 			incomplete, err = gmailAcquisitionIncomplete(ctx, s, src, summary)

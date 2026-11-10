@@ -145,9 +145,27 @@ func TestAccountCompletionDistinguishesPartialAndFailures(t *testing.T) {
 		result = nil
 		s.onAccountTick("a@example.com")
 		checks.True(s.Status()[0].LastCompleted.After(first))
-		s.SetPollingError("a@example.com", 15*time.Second, errors.New("polling unavailable"))
+		<-s.Stop().Done()
+	})
+}
+
+func TestPollingErrorPreservesCronError(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		requirements := require.New(t)
+		checks := assert.New(t)
+		pollErr := errors.New("source unavailable")
+		s := New(func(context.Context, string) error { return errors.New("cron failed") }).WithAccountPoll(func(context.Context, string) error { return pollErr })
+		requirements.NoError(s.AddAccount("a@example.com", "0 * * * *"))
 		s.onAccountTick("a@example.com")
-		checks.Contains(s.Status()[0].LastError, "polling unavailable")
+		s.onAccountTrigger("a@example.com", true)
+		synctest.Wait()
+		checks.Contains(s.Status()[0].LastError, "cron failed")
+		checks.Contains(s.Status()[0].LastError, "source unavailable")
+		pollErr = nil
+		s.onAccountTrigger("a@example.com", true)
+		synctest.Wait()
+		checks.Contains(s.Status()[0].LastError, "cron failed")
+		checks.NotContains(s.Status()[0].LastError, "source unavailable")
 		<-s.Stop().Done()
 	})
 }

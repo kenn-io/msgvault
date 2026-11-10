@@ -330,7 +330,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err := s.InitSchemaUnlessCurrentContext(cmd.Context()); err != nil {
 		return fmt.Errorf("init schema: %w", err)
 	}
-	pollErrors := validatePollingTargets(cmd.Context(), cfg, s, state)
 	failedUnfinishedImports, err := s.FailUnfinishedSyncOperationsContext(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("recover unfinished historical imports: %w", err)
@@ -472,20 +471,17 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Add all scheduled accounts
 	count := 0
-	for i, account := range cfg.Accounts {
+	for _, account := range cfg.Accounts {
 		if !account.Enabled {
 			continue
 		}
 		one := *cfg
-		pollErr := pollErrors[i]
-		if pollErr != nil {
-			logger.Error("polling unavailable", "account", account.Email, "error", pollErr)
-			account.PollInterval = 0
-		}
 		one.Accounts = []config.AccountSchedule{account}
 		registered, errs := sched.AddAccountsFromConfig(&one)
 		if len(errs) != 0 && account.PollInterval != 0 {
-			pollErr = errors.Join(errs...)
+			for _, err := range errs {
+				logger.Error("polling unavailable", "account", account.Email, "error", err)
+			}
 			account.PollInterval = 0
 			one.Accounts[0] = account
 			registered, errs = sched.AddAccountsFromConfig(&one)
@@ -494,9 +490,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 			logger.Error("failed to schedule account", "error", err)
 		}
 		count += registered
-		if pollErr != nil && registered != 0 {
-			sched.SetPollingError(account.Email, cfg.Accounts[i].PollInterval, fmt.Errorf("polling unavailable: %w", pollErr))
-		}
 	}
 	if count == 0 {
 		logger.Warn("no accounts scheduled - upload tokens via API and add accounts to config.toml")
@@ -4764,14 +4757,11 @@ func runScheduledIMAPSyncWithCoverage(ctx context.Context, src *store.Source, s 
 		ctx,
 		src,
 		func(summary *gmail.SyncSummary) error {
-			published, err := saveIMAPFolderStatesWithCoverage(ctx, s, src, apiClient, summary, 0)
+			acquired, err := saveIMAPFolderStatesWithCoverage(ctx, s, src, apiClient, summary, 0)
 			if err != nil {
 				return fmt.Errorf("save IMAP incremental state: %w", err)
 			}
-			complete = published
-			if client, ok := apiClient.(*imaplib.Client); ok && client.LabelsSnapshotFiltered() {
-				complete = client.SelectedFoldersComplete() && imapSyncCanCommit(ctx, summary, 0)
-			}
+			complete = acquired
 			return nil
 		},
 	)

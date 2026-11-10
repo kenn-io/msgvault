@@ -348,7 +348,11 @@ func TestRunServeKeepsCronForInvalidPollingTarget(t *testing.T) {
 			for _, account := range status.Accounts {
 				checks.Equal("0 * * * *", account.Schedule)
 				if account.Email == tc.identifier {
-					checks.Contains(account.LastError, tc.want)
+					if tc.interval >= 15*time.Second {
+						checks.Equal(tc.interval.String(), account.PollInterval)
+					} else {
+						checks.Empty(account.PollInterval)
+					}
 				}
 			}
 			cancel()

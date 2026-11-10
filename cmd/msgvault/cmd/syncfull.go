@@ -590,7 +590,13 @@ func saveIMAPFolderStates(
 
 func saveIMAPFolderStatesWithCoverage(ctx context.Context, s *store.Store, src *store.Source, apiClient gmail.API, summary *gmail.SyncSummary, limit int) (bool, error) {
 	imapClient, ok := apiClient.(*imaplib.Client)
-	if !ok || !imapSyncCanPublish(ctx, imapClient, summary, limit) {
+	if !ok || !imapSyncCanCommit(ctx, summary, limit) {
+		return false, nil
+	}
+	if imapClient.LabelsSnapshotFiltered() {
+		return imapClient.SelectedFoldersComplete(), nil
+	}
+	if !imapClient.LabelsSnapshotComplete() || imapClient.ObservedMailboxDeltas() == nil {
 		return false, nil
 	}
 	deltas := imapClient.ObservedMailboxDeltas()
@@ -600,11 +606,6 @@ func saveIMAPFolderStatesWithCoverage(ctx context.Context, s *store.Store, src *
 		return false, fmt.Errorf("apply IMAP mailbox deltas: %w", err)
 	}
 	return true, nil
-}
-
-func imapSyncCanPublish(ctx context.Context, client *imaplib.Client, summary *gmail.SyncSummary, limit int) bool {
-	return imapSyncCanCommit(ctx, summary, limit) && !client.LabelsSnapshotFiltered() &&
-		client.LabelsSnapshotComplete() && client.ObservedMailboxDeltas() != nil
 }
 
 func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx context.Context, _ string) (*oauth.Manager, error), src *store.Source, state *invocation) error {

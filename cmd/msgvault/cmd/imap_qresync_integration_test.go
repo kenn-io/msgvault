@@ -1147,7 +1147,7 @@ func TestIMAPQresyncEndToEndReplaysAfterFailedApplication(t *testing.T) {
 	known, err := st.GetIMAPKnownUIDs(source.ID)
 	requirements.NoError(err)
 	assertions.Equal(map[string][]uint32{"INBOX": {1}}, known)
-	assertions.Contains(server.commandsFor(3), "CHANGEDSINCE 1 VANISHED")
+	assertions.Contains(server.commandsFor(4), "CHANGEDSINCE 1 VANISHED")
 }
 
 func TestIMAPQresyncEndToEndFailedMoveApplyPreservesBaselineLabels(t *testing.T) {
@@ -1315,7 +1315,7 @@ func TestIMAPQresyncEndToEndConservativeFallbacks(t *testing.T) {
 			assertions.Equal(uint64(3), states[0].HighestModSeq)
 			assertions.Contains(server.commandsFor(2), "CHANGEDSINCE 1 VANISHED")
 			assertions.NotContains(server.commandsFor(2), "UID SEARCH")
-			assertions.Contains(server.commandsFor(3), "UID SEARCH")
+			assertions.Contains(server.commandsFor(5), "UID SEARCH")
 			assertions.GreaterOrEqual(server.connectionCount(), 3)
 		})
 	}
@@ -1749,7 +1749,7 @@ func TestIMAPQresyncEndToEndSelectCursorValidationFallsBackBeforeDeltaFetch(t *t
 
 			assertions.NotContains(server.commandsFor(2), "CHANGEDSINCE",
 				"invalid SELECT state must be rejected before delta FETCH")
-			assertions.Contains(server.commandsFor(3), "UID SEARCH",
+			assertions.Contains(server.commandsFor(5), "UID SEARCH",
 				"invalid SELECT state must force fresh full enumeration")
 			states, err := st.GetIMAPFolderStates(source.ID)
 			requirements.NoError(err)
@@ -1793,7 +1793,28 @@ func TestIMAPPollQresyncAppendAndFlags(t *testing.T) {
 	requirements.NoError(err)
 	requirements.NoError(st.UpdateSourceSyncConfig(t.Context(), source.ID, filtered))
 	requirements.ErrorContains(runEmailPoll(ctx, ic.Identifier(), st, nil, invocationFromContext(ctx)), "folder filter")
-	requirements.NoError(runScheduledSync(ctx, ic.Identifier(), st, nil, invocationFromContext(ctx)))
+	filteredResults := make(chan error, 1)
+	filteredScheduler := scheduler.New(func(runCtx context.Context, identifier string) error {
+		err := runScheduledSync(runCtx, identifier, st, nil, invocationFromContext(ctx))
+		filteredResults <- err
+		return err
+	})
+	t.Cleanup(func() { <-filteredScheduler.Stop().Done() })
+	requirements.NoError(filteredScheduler.AddAccount(ic.Identifier(), "0 * * * *"))
+	requirements.NoError(filteredScheduler.TriggerSync(ic.Identifier(), false))
+	requirements.NoError(<-filteredResults)
+	requirements.Eventually(func() bool { return !filteredScheduler.Status()[0].Running && !filteredScheduler.Status()[0].Queued }, time.Second, time.Millisecond)
+	completed := filteredScheduler.Status()[0].LastCompleted
+	checks.False(completed.IsZero())
+	missingFiltered := newScriptedRFC7162Message(2, "filtered-missing@example.test")
+	missingFiltered.MissingRaw = true
+	filteredInbox := scriptedRFC7162Inbox(77, 3, 2, newScriptedRFC7162Message(1, "existing@example.test"), missingFiltered)
+	server.setSnapshot(scriptedRFC7162Snapshot{Capabilities: scriptedRFC7162Capabilities(), Mailboxes: []scriptedRFC7162Mailbox{filteredInbox}})
+	requirements.NoError(filteredScheduler.TriggerSync(ic.Identifier(), false))
+	requirements.ErrorIs(<-filteredResults, scheduler.ErrAcquisitionIncomplete)
+	requirements.Eventually(func() bool { return !filteredScheduler.Status()[0].Running && !filteredScheduler.Status()[0].Queued }, time.Second, time.Millisecond)
+	checks.Equal(completed, filteredScheduler.Status()[0].LastCompleted)
+	server.setSnapshot(baseline)
 	filteredStates, err := st.GetIMAPFolderStates(source.ID)
 	requirements.NoError(err)
 	checks.Empty(filteredStates)
@@ -1808,12 +1829,12 @@ func TestIMAPPollQresyncAppendAndFlags(t *testing.T) {
 	checks.Equal([]string{"INBOX|1|[\"\\\\Seen\"]", "INBOX|2|[]"}, queryScriptedRFC7162Memberships(t, st, source.ID))
 	_, _, read := queryScriptedRFC7162MessageState(t, st, source.ID, "existing@example.test")
 	checks.False(read)
-	checks.Contains(server.commandsFor(3), "CHANGEDSINCE 1 VANISHED")
-	checks.NotContains(server.commandsFor(3), "UID SEARCH")
+	checks.Contains(server.commandsFor(4), "CHANGEDSINCE 1 VANISHED")
+	checks.NotContains(server.commandsFor(4), "UID SEARCH")
 	fallback := scriptedRFC7162Inbox(77, 4, 0, newScriptedRFC7162Message(1, "existing@example.test", imapapi.FlagSeen), newScriptedRFC7162Message(2, "appended@example.test"), newScriptedRFC7162Message(3, "fallback@example.test"))
 	server.setSnapshot(scriptedRFC7162Snapshot{Capabilities: "IMAP4rev1", Mailboxes: []scriptedRFC7162Mailbox{fallback}})
 	requirements.NoError(runEmailPoll(ctx, ic.Identifier(), st, nil, invocationFromContext(ctx)))
-	checks.Contains(server.commandsFor(4), "UID SEARCH")
+	checks.Contains(server.commandsFor(5), "UID SEARCH")
 	before := queryScriptedRFC7162Memberships(t, st, source.ID)
 	requirements.Len(before, 3)
 	missing := newScriptedRFC7162Message(4, "missing@example.test")

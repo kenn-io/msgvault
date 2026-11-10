@@ -199,7 +199,11 @@ func TestGmailPollAcquisitionAndQuota(t *testing.T) {
 	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	var failures int
 	invocationFromContext(ctx).syncFailures = &telemetry.SyncFailures{Capture: func(string, map[string]any) error { failures++; return nil }}
-	requirements.NoError(runEmailPoll(ctx, src.Identifier, st.Store, nil, invocationFromContext(ctx)))
+	alias := "archive@example.test"
+	_, err = st.Store.UpdateSourceSettingsContext(ctx, src.ID, store.SourceSettingsUpdate{Alias: &alias})
+	requirements.NoError(err)
+	cfg.Accounts = []config.AccountSchedule{{Email: alias, Enabled: true, Schedule: "0 * * * *", PollInterval: 15 * time.Second}}
+	requirements.NoError(runEmailPoll(ctx, alias, st.Store, nil, invocationFromContext(ctx)))
 	checks.EqualValues(1, profiles.Load())
 	changed.Store(true)
 	requirements.ErrorIs(runEmailPoll(ctx, src.Identifier, st.Store, nil, invocationFromContext(ctx)), scheduler.ErrAcquisitionIncomplete)
