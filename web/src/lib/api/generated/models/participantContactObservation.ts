@@ -6,6 +6,7 @@ import type { ValueEnvelope } from "./valueEnvelope";
 export interface ParticipantContactObservation {
   address_kind: string;
   envelope: ValueEnvelope;
+  identity_key: string;
   normalization: string;
   normalization_version: number;
   normalized_value: string;

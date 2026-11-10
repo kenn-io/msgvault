@@ -167,10 +167,13 @@ func (s *Store) withSyncMessageWriteContext(
 	messageID int64,
 	write func(querier) error,
 ) error {
-	if s.syncGeneration == nil {
+	if s.syncGeneration == nil && s.dialect.DriverName() != postgresDriverName {
 		return write(boundQuerier{ctx: ctx, q: s.db})
 	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	// Unscoped attachment updates can invalidate visual publications, whose
+	// foreign-key checks still need messages. Drain them before maintenance
+	// locks those parents, just as scoped sync writes drain on sync_runs.
+	return s.withSourceMaintenanceGateContext(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
 			return err
@@ -1315,6 +1318,8 @@ func (s *Store) validateCurrentSyncGeneration(
 // their generation fence. ROW EXCLUSIVE lets syncs proceed together but makes
 // BeginExclusive wait before it holds any of their table locks. Attribution
 // transactions instead gate maintenance on the identity row before their fence.
+// Cascade-child writers use the same gate through
+// withSourceMaintenanceGateContext, before child writes and parent FK checks.
 func (s *Store) lockSyncMaintenanceGate(ctx context.Context, q contextStatementQuerier) error {
 	if !s.IsPostgreSQL() {
 		return nil

@@ -233,8 +233,9 @@ Type, source, containing message, and person-file direction are hidden at this w
 
 Files is the single file view. It is a searchable table of attachment date,
 filename, type, size, person or domain, source, Message, and content
-availability. Archived images and PDFs open in application-controlled viewers.
-Metadata-only, missing, unsupported, and previewable content remain distinct.
+availability. Archived images, PDFs, text, CSV/TSV, and audio open in the file viewer.
+Use Previous/Next or the ←/→ keys to move through the current results.
+The list marks file contents as not checked when the archive records a hash. Opening a file checks whether its storage can be opened; reading its bytes can still fail. The viewer distinguishes missing files, open errors, metadata-only files, unsupported files, and previewable content.
 From a file, navigate to its containing item and then its email or chat
 conversation.
 
@@ -287,7 +288,7 @@ meeting notes, plus the files associated with that person. Message filters conti
 
 People lists **People** or **Domains**. The one-way sender filter applies to Closest; saved profiles offer Name and Most recent. Use the global **Search people** field, **Filter**, and sort to narrow the list. **Saved** and profile filters show saved profiles, including people with no archived messages. Select **Merge** after checking multiple observed people to link their identities. Select saved profiles to delete them in bulk.
 
-A selected person or domain opens with **Messages**, **Files**, and **Details**. Messages uses the same table and reader as the Messages workspace. A person’s events and meetings appear when an account owner attended; email and chat keep their participant scope. Details holds contact fields, custom attributes, Work, Connections, Network, Tasks, Facts, and Briefs. Choose **Save** in the header to save an observed person. The name and avatar also open Details. Choose **Merge with…** beside the person’s menu to find another saved profile or observed person.
+A selected person or domain opens with **Messages**, **Files**, and **Details**. Messages uses the same table and reader as the Messages workspace. A person’s events and meetings appear when an account owner attended; email and chat keep their participant scope. Details holds contact fields, custom attributes, Work, Connections, Network, Open loops, Tasks, Facts, Last time we talked, Meetings, and Linked addresses. The header and tabs stay visible while Details scrolls. Choose **Save** in the header to save an observed person. The name and avatar also open Details. Choose **Merge with…** beside the person’s menu to find another saved profile or observed person.
 For a saved profile, Files includes all bound identities; Messages and the calendar open its first observed identity cluster. Profiles without archived activity open Details.
 
 The Activity calendar opens on the latest active year, with the first month of contact beside its title. Select a day to narrow Messages and its conversation reader. Details keeps that day selected; select it again or choose **Clear date** to restore the shared date filters. Editing a message filter also clears the day without copying its bounds to Files. People and domains use your browser's local time zone. Domain days count individual sent messages, including chats that span several days. Calendars summarize the whole person or domain; message filters narrow the table and Files. Switching people, years, or to Files clears the day selection. Messages groups chats by conversation; a selected day limits the opened conversation to that day.
@@ -304,17 +305,17 @@ fields, **Last contacted after** and **Last contacted before**. Each active
 filter also appears as a chip; select its remove button to drop it. The order
 menu sorts by Name, Most recently contacted, or Least recently contacted.
 
-Selecting a saved profile opens **Messages** and the calendar when the person has archived activity, or **Details** otherwise. Each field value has its own row. Use **Add phone**, **Add email**, **Add address**, **Add birthday**, or **More fields**. Edit a row in place; removing a value asks for confirmation and keeps the row until the save succeeds. **More actions** in the person header holds Rename, Keep this profile updated, Publish to address book, History, and Delete. History includes replaced fields, service observations, attribute history, and merge history. Sensitive attributes stay concealed until revealed.
+Selecting a saved profile opens **Messages** and the calendar when the person has archived activity, or **Details** otherwise. Each field value has its own row. Click a row to edit it. The add line follows the values with **Add phone**, **Add email**, **Add address**, **Add birthday**, and **More fields**. Filled phone, email, and address kinds move into More fields. After a birthday is filled, use **Date** in More fields to open the date editor. Removing a value asks for confirmation and keeps the row until the save succeeds. **More actions** in the person header holds **Rename…**, **Keep this profile updated**, **Publish to address book…**, **History**, and **Delete…**. Keep this profile updated is a switch inside the menu; the line under it reads when it was turned on, and a save started there finishes after the menu closes. When People lookups aren't set up, the item reads **Set up…** and opens them. History lists merges first, then names, email and phone, and each field, with earlier values folded under each group. Sensitive attributes stay concealed until revealed.
 
-Below the fields, Work and Connections keep employment and typed relationships editable. Network offers **Direct**, **2 steps**, or **3 steps**, with every connection drawn and its label at the line's middle. Relationship labels use the type's forward or reverse wording to read left to right across columns or top to bottom within a column. If the type is unavailable, **←** and **↑** mark relationships in the opposite direction. Ended connections follow Connections’ **Show ended** setting. Select a name to open the person or organization. Connections come from curated relationships and employment, including shared organizations. The graph shows at most 250 people and organizations and 500 connections. A hidden list describes each connection for screen readers. Network stays hidden for someone with no connections at Direct, unless its first load failed.
+Below the fields, Work and Connections keep employment and typed relationships editable. Use each row’s **⋯** menu to edit, end, or delete a job, make it primary, or edit or delete a connection. **Add job** can create an employer in its Organization picker. When the person has current jobs and none is primary, **Add job** offers **Primary job**, off by default. To replace an existing primary, use that job’s **⋯** menu. In the Organization dialog, **Delete organization** lists the people who hold jobs there. Delete those jobs first, including ended jobs. Imported connections appear under **From address books**. A conflicting save shows the saved record beside the form, with **Keep yours**, which saves the form, and **Use saved**. Ended jobs and connections appear in past-job and past-connection folds. Network offers **Direct**, **2 steps**, or **3 steps**. Direct names the people and organizations reached in one line. The other depths list names with their relationship and the path through another person or organization. Links at the same step say **with**. Select a name to open the person or organization. Network shows current jobs and connections, up to 250 people and organizations, and stays hidden for someone with no direct connections unless its load failed.
 
-Tasks keeps linked tasks and custom lists. Facts opens the fact ledger. **Last time we talked** holds brief enrollment, generation, rejection, sentence sources, and earlier versions. Generation requires a consented provider and uses its budget; see [person briefs](/docs/usage/people-briefs/).
+Tasks keeps linked tasks and custom lists. Facts opens the fact ledger. **Add task** in its header opens a title and list form with **Add task** and **Cancel**. An empty list reads **No tasks yet**; **Set up…** opens settings when Tasks is off. Meetings reads **No meetings yet** once both meeting metrics and follow-ups load empty. **Last time we talked** holds brief enrollment, generation, rejection, sentence sources, and earlier versions. Generation requires a consented provider and uses its budget; see [person briefs](/docs/usage/people-briefs/).
 
-Manage organizations, connection types, and custom field definitions under **Settings → People**. Catalog edits save immediately.
+Manage organizations, connection types, and field definitions under **Settings → People**. Catalog edits save immediately.
 
 Choose **Filter → Possible duplicates** to compare names, addresses, activity, and evidence. The People badge counts waiting pairs, showing **500+** at 500. **Merge** and **Keep separate** offer Undo before recording the decision; **History** lists earlier decisions. Two saved profiles require a survivor choice, followed by confirmation of the refreshed pair. **Evidence and notes** keeps the reviewed details and decision note beside the pair.
 
-Facts lives in the person's Details. Choose **Show** to inspect evidence, claims, decisions, and pins. Imported address-book connections appear beneath Connections with their status and source, including unmatched values. Addresses lists joined identities with **Unlink**. To separate saved profiles after a merge, open **More actions → History**, inspect the merge, and choose **Split merged profile**. Merge history and reversal follow the boundaries documented in [People](/docs/usage/people/).
+Facts lives in the person's Details. Choose **Show** to inspect evidence, claims, decisions, and pins. Imported address-book connections appear beneath Connections with their status and source, including unmatched values. Linked addresses lists archive identities, including addresses a merge brought in, with **Unlink** for linked profiles. It leaves out this profile's own emails and phones already shown in the profile fields; linked profiles keep their **Unlink** controls. To separate saved profiles after a merge, open **More actions → History** and choose the merge, such as "Neri Bloom merged into Mira Vale": its two profiles show side by side with their addresses. **Split…** opens the next step in the same dialog, where you check the addresses that move to a new person; **Split into new person** ends with **Split complete** and the two people that now exist. Merge history and reversal follow the boundaries documented in [People](/docs/usage/people/).
 
 Domains provides the same activity-and-files analysis for an exact domain
 fact. A domain is not treated as an inferred organization identity. Selecting
@@ -371,7 +372,14 @@ failed or timed-out requests; after that it stops automatic refresh, shows
 sync was requested, but it hasn't started yet. Refresh to check again." rather
 than claiming success. Conflicting runs and unavailable capabilities retain
 their explicit errors or reasons. Full resync, pause/resume, schedule editing,
-and source add/remove are not available in Sources.
+and source removal are not available in Sources.
+
+**Add source…**, or **Add your first source** on an empty Sources page, lists
+Gmail, Microsoft 365 or Outlook.com, IMAP mailbox, and Contacts. Contacts opens Settings ›
+Contacts. The others ask for an address, or an IMAP server and username, and
+then show the command to run, quoted for macOS or Linux or for Windows when the
+two differ. **Copy** reads "Copied" for two seconds. Run the command, then press
+**Done** to reload Sources.
 
 Viewing Sources does not repair runs left marked as running after a crash.
 They remain active until the daemon restarts or another sync for that source
@@ -387,6 +395,8 @@ The footer status dot opens queued and running jobs and unresolved failures. It 
 Choose **Past runs…** in the status menu to browse history. Filter by Kind, including all runs in a lane, State, or dates, and choose **Show more** for the next page. **Refresh** reloads the current history. Run links preserve filters and selection when shared or restored with Back. If history changes during paging, **Restart** reloads the first page. Unavailable history is labeled by kind.
 
 Select a run for its timestamps, counters, error, related status, and advertised actions. **All runs** returns to the list. Related status opens Sources, Contacts settings, or live visual index counts. **Start CardDAV sync**, **Build visual index**, and **Resume visual index** appear only when the daemon advertises them. Sources keeps **Sync now** and opens filtered history through **Sync history**. Contacts settings opens filtered history through **View CardDAV operations**.
+
+Settings › People › Fields lists system and custom field definitions, plus Work, with descriptions, kind, value type, cardinality, sensitivity, and active state. **Search fields** filters the displayed names, descriptions, and metadata. Custom fields offer **Edit**.
 
 Settings Overview shows current feature status. **Details** opens live counts for configured Visual search, including features with no past run.
 
@@ -441,8 +451,9 @@ background work changes. **Build index** appears when offered by the daemon and
 asks for confirmation before a full rebuild. Its categories are Overview,
 Server, Search & AI, People lookups, People, Tasks, Contacts, Sources, and Advanced.
 Sources includes source and attachment settings. Advanced includes archive
-settings and Appearance. People lookups includes named enrichment providers and
-People sweep profiles.
+settings and Appearance. People lookups includes named enrichment providers,
+People sweep profiles, and **Fields kept updated**, the fields Keep this profile
+updated may change; sensitive fields stay folded until you open them.
 
 The daemon supplies allowed values and validation. Settings supplies category and selected field labels, groups settings into the category rail and keeps tuning and host-managed values behind disclosures. The selected category is part of the page link, so reload and Back keep it. Old category links open their replacement category; unknown categories open Overview.
 
@@ -475,6 +486,9 @@ The Save changes bar covers ordinary settings, and its edits survive category
 changes. Some controls save through their own buttons instead: provider
 credentials, person-enrichment providers, contact accounts, and People sweep.
 The bar stays visible on Contacts while ordinary settings have unsaved changes.
+Leaving Settings or reloading the page asks first when the bar or one of those
+forms has unsaved edits. Switching categories keeps the bar's edits but drops
+unsaved edits in those forms.
 After a save that needs a restart, Settings shows “Saved. Restart msgvault to
 apply these changes.”
 

@@ -532,6 +532,8 @@ const (
 		"Response: data, total, returned, offset, has_more."
 )
 
+const searchMirroredFilesDoc = "For mirrored file content use search_media when available."
+
 func searchMetadataDefinition(_ *handlers) toolDefinition {
 	searchIntro := "Search message metadata using a subset of Gmail query syntax (not full Gmail compatibility). " +
 		searchMetadataOperatorDoc + " " + searchMetadataFreeTextDoc + " "
@@ -540,7 +542,7 @@ func searchMetadataDefinition(_ *handlers) toolDefinition {
 	return readDefinition(
 		ToolSearchMetadata,
 		searchIntro+searchMetadataPaginationDoc+
-			"For body keywords use search_message_bodies; for vector/hybrid search use semantic_search_messages.",
+			"For body keywords use search_message_bodies; for vector/hybrid search use semantic_search_messages. "+searchMirroredFilesDoc,
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgQuery:   stringSchema(queryDesc),
 			toolArgAccount: accountProperty(),
@@ -553,7 +555,7 @@ func searchMetadataDefinition(_ *handlers) toolDefinition {
 }
 
 func searchMessagesDefinition(_ *handlers, vectorAvailable bool) toolDefinition {
-	description := "Deprecated compatibility tool; use search_metadata when mode is omitted and semantic_search_messages for mode=vector or mode=hybrid. " +
+	description := "Deprecated compatibility tool; use search_metadata when mode is omitted and semantic_search_messages for mode=vector or mode=hybrid. " + searchMirroredFilesDoc + " " +
 		searchMetadataOperatorDoc + " " + searchMetadataFreeTextDoc + " " + searchMetadataPaginationDoc
 	properties := map[string]*jsonschema.Schema{
 		toolArgQuery: stringSchema(
@@ -578,7 +580,7 @@ func searchMessagesDefinition(_ *handlers, vectorAvailable bool) toolDefinition 
 }
 
 func searchMessageBodiesDefinition(_ *handlers) toolDefinition {
-	searchIntro := "Keyword full-text search over message bodies. " +
+	searchIntro := "Keyword full-text search over message bodies. " + searchMirroredFilesDoc + " " +
 		"Returns messages whose body text contains the query terms, newest-first, " +
 		"each with matches — up to 5 excerpt snippets centered on matched terms. " +
 		hiddenTextFlagDoc +
@@ -617,7 +619,7 @@ func semanticSearchMessagesDefinition(_ *handlers, vectorAvailable bool) toolDef
 	if !vectorAvailable {
 		return readDefinition(
 			ToolSemanticSearchMessages,
-			"Semantic (embedding) search over message bodies is unavailable: vector search is not configured on this server.",
+			"Semantic (embedding) search over message bodies is unavailable: vector search is not configured on this server. "+searchMirroredFilesDoc,
 			closedObject(map[string]*jsonschema.Schema{
 				toolArgQuery: stringSchema("Free-text query to embed (requires at least one free-text term)"),
 			}, toolArgQuery),
@@ -643,7 +645,7 @@ func semanticSearchMessagesDefinition(_ *handlers, vectorAvailable bool) toolDef
 		searchIntro+
 			"mode=vector for pure semantic search or mode=hybrid to fuse BM25 and vector ranking via RRF. "+
 			"Paginate with offset/limit (default limit 20, max 50). Response: data, returned, offset, has_more, mode, pool_saturated, generation. "+
-			"total is not available; use has_more to page.",
+			"total is not available; use has_more to page. "+searchMirroredFilesDoc,
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgQuery:    stringSchema(queryDesc),
 			toolArgAccount:  accountProperty(),

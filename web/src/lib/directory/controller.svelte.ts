@@ -15,7 +15,7 @@ import type {
   DirectoryReadSection,
   DirectoryURLState,
 } from './models';
-import { DirectoryProfileController } from './profile-controller.svelte';
+import { DirectoryProfileController, PERSON_NOT_FOUND_MESSAGE } from './profile-controller.svelte';
 import { DirectoryEntityController } from './entity-controller.svelte';
 import type { PersonSplitCommittedContext } from './person-merge-history-controller.svelte';
 const PAGE_LIMIT = 50;
@@ -219,7 +219,7 @@ export class DirectoryController {
   /** Re-read server-owned Directory projections after a committed split. */
   async reconcilePersonSplit(_context: PersonSplitCommittedContext): Promise<void> {
     await Promise.all([this.reloadFirstPage(), this.refreshSelectedPerson()]);
-    const failure = this.pageError ?? this.error;
+    const failure = this.pageError ?? this.error ?? this.profile?.attributesError ?? this.profile?.definitionsError ?? Object.values(this.detail?.errors ?? {})[0] ?? Object.entries(this.entity?.errors ?? {}).find(([resource]) => resource !== 'organizations')?.[1];
     if (failure) throw new Error(failure);
   }
   async promote(participantID: number): Promise<DirectoryPromotionResult> {
@@ -364,7 +364,7 @@ export class DirectoryController {
         this.entity?.destroy();
         this.entity = null;
         this.selectedPersonID = shouldCommit ? null : personID;
-        this.detail = shouldCommit ? null : { etags: {}, errors: { person: 'Person not found.' } };
+        this.detail = shouldCommit ? null : { personNotFound: true, etags: {}, errors: { person: PERSON_NOT_FOUND_MESSAGE } };
         if (shouldCommit) this.commit({ directoryPersonID: null }, 'push');
         return;
       }

@@ -273,7 +273,11 @@ func runRepairMessageLocal(
 	if attachmentsDir == "" && state != nil && state.cfg != nil {
 		attachmentsDir = state.cfg.AttachmentsDir()
 	}
-	service := syncer.New(client, st, &syncer.Options{AttachmentsDir: attachmentsDir})
+	options := &syncer.Options{AttachmentsDir: attachmentsDir}
+	if state != nil && state.cfg != nil {
+		options.RelayedSenders = state.cfg.RelayedSenders
+	}
+	service := syncer.New(client, st, options)
 	if logger != nil {
 		service = service.WithLogger(logger)
 	}

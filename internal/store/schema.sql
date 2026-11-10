@@ -1495,7 +1495,8 @@ CREATE TABLE IF NOT EXISTS message_recipients (
     -- identity discovery reads it so merges cannot rewrite evidence.
     -- NULL on rows from writers without envelope addresses (non-email
     -- importers, legacy rows).
-    email_address TEXT
+    email_address TEXT,
+    is_relayed BOOLEAN NOT NULL DEFAULT FALSE
 
     -- Uniqueness spans the normalized envelope address so one participant
     -- can carry several alias snapshots on the same message (two aliases of
@@ -1554,6 +1555,8 @@ CREATE TABLE IF NOT EXISTS matrix_encrypted_events (
 );
 CREATE INDEX IF NOT EXISTS idx_matrix_encrypted_events_pending
     ON matrix_encrypted_events(conversation_id, message_id) WHERE NOT recovered;
+CREATE INDEX IF NOT EXISTS idx_matrix_encrypted_events_pending_session
+    ON matrix_encrypted_events(conversation_id, session_id, message_id) WHERE NOT recovered;
 
 -- The first event to use each Megolm message index in a room. Later events
 -- with the same index are replays and stay encrypted.

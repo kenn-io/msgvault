@@ -19,7 +19,7 @@ func (e *SQLiteEngine) hasMetadataFTS(ctx context.Context) bool {
 		return false
 	}
 	var version string
-	if err := e.queryRowContext(ctx, `SELECT value FROM archive_metadata WHERE key='metadata_fts_version'`).Scan(&version); err != nil || version != "1" {
+	if err := e.queryRowContext(ctx, `SELECT value FROM archive_metadata WHERE key='metadata_fts_version'`).Scan(&version); err != nil || version != "2" {
 		return false
 	}
 	e.metadataFTSMu.Lock()
