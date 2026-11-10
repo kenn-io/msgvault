@@ -363,6 +363,7 @@ type Generation struct {
 }
 
 type Claim struct {
+	Freshness      Freshness `json:"-"`
 	ID             int64
 	PersonID       int64
 	GenerationID   int64

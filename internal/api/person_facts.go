@@ -75,6 +75,9 @@ type PersonFactEvidence struct {
 }
 
 type PersonFactClaim struct {
+	Kind               personfacts.FactKind         `json:"kind"`
+	Status             personfacts.FreshnessStatus  `json:"status"`
+	LatestSupportedAt  *time.Time                   `json:"latest_supported_at,omitzero" nullable:"true"`
 	ID                 int64                        `json:"id"`
 	GenerationID       int64                        `json:"generation_id"`
 	ClaimKey           string                       `json:"claim_key"`
@@ -591,6 +594,7 @@ func personFactEvidenceDTO(evidence personfacts.Evidence) PersonFactEvidence {
 
 func personFactClaimDTO(claim personfacts.Claim) PersonFactClaim {
 	result := PersonFactClaim{
+		Kind: claim.Freshness.Kind, Status: claim.Freshness.Status, LatestSupportedAt: claim.Freshness.LatestSupportedAt,
 		ID: claim.ID, GenerationID: claim.GenerationID, ClaimKey: claim.ClaimKey,
 		ProgramID: claim.Generation.ProgramID, ProgramVersion: claim.Generation.ProgramVersion,
 		ProgramFingerprint: claim.Generation.ProgramFingerprint, Target: claim.Target,

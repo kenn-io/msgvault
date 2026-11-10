@@ -11558,6 +11558,12 @@ components:
         id:
           format: int64
           type: integer
+        kind:
+          type: string
+        latest_supported_at:
+          format: date-time
+          nullable: true
+          type: string
         normalized_value:
           nullable: true
           type: string
@@ -11570,6 +11576,8 @@ components:
         program_version:
           type: string
         relation:
+          type: string
+        status:
           type: string
         submitted_value:
           type: string
@@ -11587,6 +11595,8 @@ components:
           nullable: true
           type: string
       required:
+        - kind
+        - status
         - id
         - generation_id
         - claim_key
@@ -16795,7 +16805,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 4.1.0
+  version: 4.2.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
