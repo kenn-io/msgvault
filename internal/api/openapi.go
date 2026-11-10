@@ -410,7 +410,7 @@ import (
 // 4.1.0 adds recorded names, saved contacts, and reconciled addresses to merge-list and detail responses,
 // registered service labels to current contact points, and identity keys to observations.
 // 4.2.0 adds attachment retrieval modes, coverage, and degradations to media search.
-// 4.3.0 exposes archived calendar lists to scoped agent grants.
+// 4.3.0 exposes archived calendar lists and coverage to scoped agent grants.
 const APISchemaVersion = "4.3.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
@@ -1314,6 +1314,10 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			schema.Extensions = map[string]any{}
 		}
 		schema.Extensions["x-enum-names"] = enumNames
+	}
+	if coverage := schemas["CalendarSourceCoverage"]; coverage != nil {
+		nullableSchemaProperty(coverage, "as_of")
+		setEnumNames(coverage.Properties["status"], qualifiedEnumNames("CalendarSourceCoverageStatus", []string{store.CalendarSourceCoverageStatusComplete, store.CalendarSourceCoverageStatusStale, store.CalendarSourceCoverageStatusSyncFailed, store.CalendarSourceCoverageStatusNoBaseline}))
 	}
 	for _, name := range []string{"FileSuggestionRow", "PersonFileSuggestionRow"} {
 		schema := schemas[name]

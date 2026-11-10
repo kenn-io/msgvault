@@ -5815,3 +5815,38 @@ func TestSubsetKeepsMergedMatrixRoomsOutOfSync(t *testing.T) {
 	require.NoError(err)
 	assert.Zero(pending, "the merged room's placeholder is not retried")
 }
+
+func TestCopySubsetCalendarCoverage(t *testing.T) {
+	sourcePath := createTestSourceDB(t, t.TempDir(), 1)
+	source, err := Open(sourcePath)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, source.Close()) })
+	_, err = source.DB().ExecContext(t.Context(), `UPDATE sources SET source_type='gcal' WHERE id=1`)
+	require.NoError(t, err)
+	full, err := source.StartSyncContext(t.Context(), 1, "full")
+	require.NoError(t, err)
+	require.NoError(t, source.CompleteSyncAndUpdateSourceCursorContext(t.Context(), full, 1, "token"))
+	dir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(t.Context(), sourcePath, dir, 1, false)
+	require.NoError(t, err)
+	dest, err := Open(filepath.Join(dir, "msgvault.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, dest.Close()) })
+	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
+	check := func(want string) {
+		t.Helper()
+		page, err := dest.ListCalendarOccurrencesContext(t.Context(), from, from.Add(time.Hour))
+		require.NoError(t, err)
+		require.Len(t, page.Coverage.Sources, 1)
+		assert.Equal(t, want, page.Coverage.Sources[0].Status)
+	}
+	check("no_baseline")
+	incremental, err := dest.StartSyncContext(t.Context(), 1, "incremental")
+	require.NoError(t, err)
+	require.NoError(t, dest.CompleteSyncAndUpdateSourceCursorContext(t.Context(), incremental, 1, "next"))
+	check("no_baseline")
+	full, err = dest.StartSyncContext(t.Context(), 1, "full")
+	require.NoError(t, err)
+	require.NoError(t, dest.CompleteSyncAndUpdateSourceCursorContext(t.Context(), full, 1, "full"))
+	check("complete")
+}

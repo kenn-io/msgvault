@@ -33,7 +33,7 @@ type calendarEventsTestStore struct {
 func (s *calendarEventsTestStore) ListCalendarOccurrencesContext(ctx context.Context, from, to time.Time) (store.CalendarOccurrencePage, error) {
 	s.calls++
 	s.sourceIDs = sourcescope.IDs(ctx)
-	return store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 42, Subject: s.subject, Start: from, End: to}}, Unexpandable: []store.CalendarUnexpandable{}}, s.err
+	return store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 42, Subject: s.subject, Start: from, End: to}}, Unexpandable: []store.CalendarUnexpandable{}, Coverage: &store.CalendarCoverage{Notice: "Archive only", Sources: []store.CalendarSourceCoverage{{SourceID: 1, Name: "Work", Status: "no_baseline"}}}}, s.err
 }
 
 func (s *calendarEventsTestStore) ListSourcesContext(context.Context, string) ([]*store.Source, error) {
@@ -83,6 +83,9 @@ func TestCalendarEventsRoute(t *testing.T) {
 			require.Equal(t, tc.status, w.Code, w.Body.String())
 			if tc.want != "" {
 				assert.Contains(t, w.Body.String(), tc.want)
+			}
+			if tc.name == "owner" {
+				assert.Contains(t, w.Body.String(), `"status":"no_baseline"`)
 			}
 			if tc.status == 401 || tc.status == 403 {
 				assert.Equal(t, before, backend.calls)

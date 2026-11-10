@@ -45,6 +45,7 @@ func TestCalendarEventsCommand(t *testing.T) {
 		err                        error
 	}{
 		{name: "table", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, SeriesMessageID: 377, Subject: "Standup", Status: "confirmed", Start: start, End: start.Add(time.Hour)}, {MessageID: 412, Subject: "Offsite", Status: "confirmed", AllDay: true, StartDate: "2027-03-03", EndDate: "2027-03-04"}}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 500, Reason: "unsupported recurrence"}}}, want: "Standup", wantWarning: "1 event could not be expanded: message 500 (unsupported recurrence)"},
+		{name: "incomplete", page: store.CalendarOccurrencePage{Coverage: &store.CalendarCoverage{Notice: "Archive only", Sources: []store.CalendarSourceCoverage{{Name: "Work\x1b[31m", Status: "no_baseline"}}}}, want: "No archived", wantWarning: "Work: not fully synced"},
 		{name: "empty", want: "No archived calendar events from 2027-03-01 to 2027-04-01."},
 		{name: "json", args: []string{"--json"}, page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, SeriesMessageID: 377, Subject: "Standup", Start: start, End: start.Add(time.Hour)}}, Unexpandable: []store.CalendarUnexpandable{}}, want: `"message_id":378`},
 		{name: "deleted", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, Subject: "Removed event", Status: "confirmed", DeletedFromSource: true, Start: start, End: start.Add(time.Hour)}}}, want: "deleted"},

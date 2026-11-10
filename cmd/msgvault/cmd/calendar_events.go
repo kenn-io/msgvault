@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 const calendarEventsMinAPISchemaVersion = "3.35.0"
@@ -120,6 +121,11 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 				return fmt.Errorf("write calendar events: %w", err)
 			}
 		}
+		if page.Coverage != nil && !page.Coverage.Complete {
+			if err := printCalendarCoverageWarning(cmd, page.Coverage); err != nil {
+				return err
+			}
+		}
 		if len(page.Unexpandable) > 0 {
 			noun := "events"
 			if len(page.Unexpandable) == 1 {
@@ -173,4 +179,26 @@ func calendarOccurrenceStatus(o store.CalendarOccurrence) string {
 		return calendarEventDeletedStatus
 	}
 	return o.Status
+}
+
+func printCalendarCoverageWarning(cmd *cobra.Command, coverage *store.CalendarCoverage) error {
+	if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "Coverage: %s\n", textutil.SanitizeTerminal(coverage.Notice)); err != nil {
+		return fmt.Errorf("write calendar coverage: %w", err)
+	}
+	for _, source := range coverage.Sources {
+		if source.Status == store.CalendarSourceCoverageStatusComplete {
+			continue
+		}
+		status := source.Status
+		if status == store.CalendarSourceCoverageStatusNoBaseline {
+			status = "not fully synced"
+		}
+		if source.AsOf != nil {
+			status += " (as of " + source.AsOf.Format(time.RFC3339) + ")"
+		}
+		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "%s: %s\n", textutil.SanitizeTerminal(source.Name), textutil.SanitizeTerminal(status)); err != nil {
+			return fmt.Errorf("write calendar coverage source: %w", err)
+		}
+	}
+	return nil
 }

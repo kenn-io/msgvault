@@ -25,7 +25,7 @@ func TestCalendarEventsClient(t *testing.T) {
 		assertions.Equal("2027-03-01T17:00:00Z", r.URL.Query().Get("from"))
 		assertions.Equal("synthetic-owner-key", r.Header.Get("X-Api-Key"))
 		w.Header().Set("Content-Type", "application/json")
-		assertions.NoError(json.MarshalWrite(w, store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 42, SeriesMessageID: 40, Subject: "Edited event", Status: "cancelled", Attendees: []calevent.Attendee{{Email: "guest@example.com", DisplayName: "Guest", Role: "optional", RSVP: "declined", IsCopySelf: true}}, Start: from, End: from.Add(time.Hour)}}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 50, Reason: "unsupported recurrence"}}}))
+		assertions.NoError(json.MarshalWrite(w, store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 42, SeriesMessageID: 40, Subject: "Edited event", Status: "cancelled", Attendees: []calevent.Attendee{{Email: "guest@example.com", DisplayName: "Guest", Role: "optional", RSVP: "declined", IsCopySelf: true}}, Start: from, End: from.Add(time.Hour)}}, Coverage: &store.CalendarCoverage{Notice: "Archive only", Sources: []store.CalendarSourceCoverage{{SourceID: 7, Name: "Work", Status: "stale", AsOf: &from}}}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 50, Reason: "unsupported recurrence"}}}))
 	}))
 	t.Cleanup(server.Close)
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "synthetic-owner-key", AllowInsecure: true, HTTPClient: server.Client()})
@@ -39,5 +39,23 @@ func TestCalendarEventsClient(t *testing.T) {
 	assertions.Equal("Edited event", page.Occurrences[0].Subject)
 	assertions.Equal("cancelled", page.Occurrences[0].Status)
 	assertions.Equal([]calevent.Attendee{{Email: "guest@example.com", DisplayName: "Guest", Role: "optional", RSVP: "declined", IsCopySelf: true}}, page.Occurrences[0].Attendees)
+	requirements.NotNil(page.Coverage)
+	assertions.Equal(&store.CalendarCoverage{Notice: "Archive only", Sources: []store.CalendarSourceCoverage{{SourceID: 7, Name: "Work", Status: "stale", AsOf: &from}}}, page.Coverage)
 	assertions.Equal([]store.CalendarUnexpandable{{MessageID: 50, Reason: "unsupported recurrence"}}, page.Unexpandable)
+}
+
+func TestCalendarEventsClientOldResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`{"occurrences":[],"unexpandable":[]}`))
+		assert.NoError(t, err)
+	}))
+	t.Cleanup(server.Close)
+	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, HTTPClient: server.Client()})
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, client.Close()) })
+	now := time.Now()
+	page, err := client.ListCalendarOccurrencesContext(t.Context(), now, now.Add(time.Hour))
+	require.NoError(t, err)
+	assert.Nil(t, page.Coverage)
 }
