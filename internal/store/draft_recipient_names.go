@@ -12,8 +12,8 @@ import (
 
 // CuratedNamesForAddressesContext resolves only curated person names. A nil
 // source scope is unrestricted; an empty non-nil scope admits no identities.
-func (s *Store) CuratedNamesForAddressesContext(ctx context.Context, addresses []string, sourceIDs []int64) (map[string][]draftlint.Name, error) {
-	result := make(map[string][]draftlint.Name)
+func (s *Store) CuratedNamesForAddressesContext(ctx context.Context, addresses []string, sourceIDs []int64) ([]draftlint.Name, error) {
+	var result []draftlint.Name
 	if sourceIDs != nil && len(sourceIDs) == 0 {
 		return result, nil
 	}
@@ -22,7 +22,6 @@ func (s *Store) CuratedNamesForAddressesContext(ctx context.Context, addresses [
 		if err != nil {
 			continue
 		}
-		key := NormalizeIdentifierForCompare(parsed.Address)
 		participantID, err := s.EmailParticipantContext(ctx, parsed.Address)
 		if err != nil {
 			return nil, err
@@ -62,10 +61,11 @@ func (s *Store) CuratedNamesForAddressesContext(ctx context.Context, addresses [
 		if person == nil {
 			continue
 		}
-		result[key], err = s.curatedDraftNamesContext(ctx, person.ID)
+		names, err := s.curatedDraftNamesContext(ctx, person.ID)
 		if err != nil {
 			return nil, err
 		}
+		result = append(result, names...)
 	}
 	return result, nil
 }
@@ -78,7 +78,7 @@ func (s *Store) curatedDraftNamesContext(ctx context.Context, personID int64) ([
 	var result []draftlint.Name
 	for _, name := range names {
 		var values []draftlint.Name
-		if name.GivenName != nil {
+		if name.NameKind == PersonNameStructured && name.GivenName != nil {
 			values = append(values, draftlint.Name{Text: *name.GivenName, Given: true})
 		}
 		if name.Formatted != nil {

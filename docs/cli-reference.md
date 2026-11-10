@@ -393,6 +393,7 @@ destination, or reply within its original Gmail account. The daemon requires
 the matching operator grant. Without `--from`, the reply uses the confirmed
 identity the parent was addressed to, or the source's only eligible identity.
 See [IMAP drafts](/docs/usage/imap/#drafts) for the full sender rules.
+See [draft lint and validation](#draft-lint-and-validation) for shared write options.
 
 ```bash
 msgvault draft-reply <message-id> --body <text>
@@ -462,6 +463,8 @@ stores the Gmail draft and its `DRAFT` label after a confirmed response.
 
 ---
 
+## Draft lint and validation
+
 All four draft write commands (`draft-reply`, `draft-compose`, `draft-forward`,
 and `draft-edit`) accept these options on unreleased `main`:
 
@@ -481,7 +484,8 @@ warning codes, receipt fields, and permission rules.
 
 Create a new plain-text IMAP draft on one selected live source. Provide at least
 one `--to`, `--cc`, or `--bcc` value. The flags are repeatable and keep their
-envelope roles.
+envelope roles. See [draft lint and validation](#draft-lint-and-validation)
+for shared write options.
 
 ```bash
 msgvault draft-compose --account you@example.com \
@@ -561,6 +565,7 @@ attachment files. Choose exactly one destination with `--account` or
 `--source-id`, and provide at least one explicit `--to`, `--cc`, or `--bcc`.
 The parent message's Bcc recipients are never copied.
 This command requires owner access; agent tokens cannot invoke it.
+See [draft lint and validation](#draft-lint-and-validation) for shared write options.
 
 ```bash
 msgvault draft-forward <message-id> --account you@example.com \
@@ -624,6 +629,8 @@ msgvault draft-recover <draft-id> --revision <n> [--json]
 ```
 
 The creation result supplies the opaque `draft_id` and initial revision.
+`draft-edit` also accepts the shared [draft lint and validation](#draft-lint-and-validation)
+options.
 
 - `--revision` is required for edit, delete, and recover; use the current
   positive revision.

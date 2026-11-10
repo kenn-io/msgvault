@@ -182,7 +182,12 @@ func (a *storeAPIAdapter) runBeeperDraftCreate(ctx context.Context, grant *agent
 	}
 	defer func() { _ = execution.Release() }()
 	// Recheck after acquiring the source lock to preserve the create backstop.
-	if _, err := a.store.LiveBeeperDraftContext(ctx, source.ID, chatID); err == nil {
+	if existing, err := a.store.LiveBeeperDraftContext(ctx, source.ID, chatID); err == nil {
+		if grant != nil {
+			// Reading draft text needs draft.edit; creators get the ID.
+			existing.Text, existing.Pending = nil, nil
+		}
+		_ = emitBeeperDraft(emit, cliStreamStderr, draftLifecycleIntent{JSON: intent.JSON}, "draft_exists", existing)
 		return draftReplyError("draft_exists", store.ErrBeeperDraftExists)
 	} else if !errors.Is(err, store.ErrBeeperDraftNotFound) {
 		return draftReplyError("draft_read_failed", err)

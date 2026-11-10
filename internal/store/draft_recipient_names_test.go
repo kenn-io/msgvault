@@ -41,10 +41,17 @@ func TestCuratedNamesForAddresses(t *testing.T) {
 			switch scenario {
 			case "curated names and source scope":
 				id := seed("alex@example.com", "Alex", "Al", "Jordan Rivera")
+				person, err := f.Store.PersonForParticipantsContext(t.Context(), []int64{id})
+				require.NoError(t, err)
+				require.NotNil(t, person)
+				for _, kind := range []store.PersonNameKind{store.PersonNamePhonetic, store.PersonNameSort} {
+					given := "Ineligible"
+					_, err := f.Store.AddPersonNameContext(t.Context(), person.ID, store.PersonNameInput{NameKind: kind, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}, GivenName: &given})
+					require.NoError(t, err)
+				}
 				got, err := f.Store.CuratedNamesForAddressesContext(t.Context(), []string{"ALEX@example.com", "pat@example.com"}, nil)
 				require.NoError(t, err)
-				assert.ElementsMatch(t, []draftlint.Name{{Text: "Alex", Given: true}, {Text: "Al"}, {Text: "Jordan"}}, got["alex@example.com"])
-				assert.NotContains(t, got, "pat@example.com")
+				assert.ElementsMatch(t, []draftlint.Name{{Text: "Alex", Given: true}, {Text: "Al"}, {Text: "Jordan"}}, got)
 				for _, scope := range [][]int64{{}, {f.Source.ID + 100}} {
 					got, err = f.Store.CuratedNamesForAddressesContext(t.Context(), []string{"alex@example.com"}, scope)
 					require.NoError(t, err)
@@ -53,7 +60,7 @@ func TestCuratedNamesForAddresses(t *testing.T) {
 				history(id, "history")
 				got, err = f.Store.CuratedNamesForAddressesContext(t.Context(), []string{"alex@example.com"}, []int64{f.Source.ID})
 				require.NoError(t, err)
-				assert.ElementsMatch(t, []draftlint.Name{{Text: "Alex", Given: true}, {Text: "Al"}, {Text: "Jordan"}}, got["alex@example.com"])
+				assert.ElementsMatch(t, []draftlint.Name{{Text: "Alex", Given: true}, {Text: "Al"}, {Text: "Jordan"}}, got)
 			case "ambiguous alias":
 				alex := seed("alex@example.com", "Alex", "", "")
 				pat := seed("pat@example.com", "Pat", "", "")
@@ -81,7 +88,7 @@ func TestCuratedNamesForAddresses(t *testing.T) {
 				seed("alex smith@example.com", "Alex", "", "")
 				got, err := f.Store.CuratedNamesForAddressesContext(t.Context(), []string{`"alex smith"@example.com`}, nil)
 				require.NoError(t, err)
-				assert.Equal(t, []draftlint.Name{{Text: "Alex", Given: true}}, got["alex smith@example.com"])
+				assert.Equal(t, []draftlint.Name{{Text: "Alex", Given: true}}, got)
 			}
 		})
 	}

@@ -7,13 +7,15 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"golang.org/x/text/unicode/norm"
+
 	"go.kenn.io/msgvault/internal/msgsegment"
 	"go.kenn.io/msgvault/internal/sensitive"
 )
 
 var placeholder = regexp.MustCompile(`\{\{[\pL_][\pL\pN_]*\}\}|\{[\pL_][\pL\pN_]*\}|\[(?:TODO|TBD|NAME|(?i:insert)[^\]\r\n]*)\]|<[A-Z][A-Z_]*>|\b(?:FIRST_NAME|LAST_NAME|COMPANY_NAME|XXX)\b|\bTODO:`)
 var attachment = regexp.MustCompile(`(?i)\b(?:attached|attaching|enclosed|see attachment|find attached|PFA)\b`)
-var greeting = regexp.MustCompile(`(?i)^(?:hi|hey|hello|dear|hiya|morning|good morning|good afternoon|yo)[ \t]+([\pL][\pL\pM'-]*)`)
+var greeting = regexp.MustCompile(`(?i)^(?:hi|hey|hello|dear|hiya|morning|good morning|good afternoon|yo)[ \t]+([\pL][\pL\pM'’-]*)`)
 
 var genericGreeting = regexp.MustCompile(`(?i)^(?:all|everyone|everybody|team|there|folks)$`)
 
@@ -59,18 +61,16 @@ func maskFences(body string) string {
 }
 func textWarning(code, severity, field, message, original string, start, end int) Warning {
 	w := Warning{Code: code, Severity: severity, Field: field, Message: message}
-	if start >= 0 {
-		w.Span = &Span{utf8.RuneCountInString(original[:start]), utf8.RuneCountInString(original[:end])}
-		lineStart := strings.LastIndexByte(original[:start], '\n') + 1
-		lineEnd := len(original)
-		if i := strings.IndexByte(original[end:], '\n'); i >= 0 {
-			lineEnd = end + i
-		}
-		line := []rune(original[lineStart:lineEnd])
-		offset := utf8.RuneCountInString(original[lineStart:start])
-		windowStart := max(0, offset-20)
-		w.Excerpt = string(line[windowStart:min(windowStart+80, len(line))])
+	w.Span = &Span{utf8.RuneCountInString(original[:start]), utf8.RuneCountInString(original[:end])}
+	lineStart := strings.LastIndexByte(original[:start], '\n') + 1
+	lineEnd := len(original)
+	if i := strings.IndexByte(original[end:], '\n'); i >= 0 {
+		lineEnd = end + i
 	}
+	line := []rune(original[lineStart:lineEnd])
+	offset := utf8.RuneCountInString(original[lineStart:start])
+	windowStart := max(0, offset-20)
+	w.Excerpt = string(line[windowStart:min(windowStart+80, len(line))])
 	return w
 }
 func Check(ctx context.Context, in Input, names NameResolver) Result {
@@ -146,7 +146,7 @@ func checkGreeting(ctx context.Context, in Input, names NameResolver, own string
 			return
 		}
 		start += leading
-		candidate := strings.ToLower(line[leading+loc[2] : leading+loc[3]])
+		candidate := strings.ToLower(norm.NFC.String(line[leading+loc[2] : leading+loc[3]]))
 		if genericGreeting.MatchString(candidate) {
 			return
 		}
@@ -161,7 +161,7 @@ func checkGreeting(ctx context.Context, in Input, names NameResolver, own string
 			return
 		}
 		for _, name := range resolved {
-			value := strings.ToLower(name.Text)
+			value := strings.ToLower(norm.NFC.String(name.Text))
 			if candidate == value || name.Given && utf8.RuneCountInString(candidate) >= 2 && strings.HasPrefix(value, candidate) {
 				return
 			}

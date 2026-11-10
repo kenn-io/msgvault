@@ -93,6 +93,11 @@ func TestGreetingNameMismatch(t *testing.T) {
 		{"Hi Buddy,", nameResolver{{Text: "Buddy"}}, false, false},
 		{"Hi A,", nameResolver{{Text: "Alex", Given: true}}, true, false},
 		{"Hi Ål,", nameResolver{{Text: "Åland", Given: true}}, false, false},
+		{"Hi O’Brien,", nameResolver{{Text: "O’Brien", Given: true}}, false, false},
+		{"Hi Jose\u0301,", nameResolver{{Text: "JOSÉ", Given: true}}, false, false},
+		{"Hi JOSÉ,", nameResolver{{Text: "Jose\u0301", Given: true}}, false, false},
+		{"Hi O’Brian,", nameResolver{{Text: "O’Brien", Given: true}}, true, false},
+		{"Hi Jose\u0301,", nameResolver{{Text: "Alex", Given: true}}, true, false},
 		{"Hi Sam,", nameResolver{}, false, true},
 	} {
 		t.Run(tc.body, func(t *testing.T) {

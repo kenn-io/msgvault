@@ -43,27 +43,34 @@ func setDraftLintFlag(options *draftLintOptions, seen map[string]bool, name, val
 }
 
 type draftNameResolver struct {
-	store     *store.Store
-	sourceIDs []int64
+	adapter  *storeAPIAdapter
+	sourceID int64
+	grant    *agentgrant.Grant
 }
 
 func (r draftNameResolver) CuratedNames(ctx context.Context, addresses []string) ([]draftlint.Name, error) {
-	resolved, err := r.store.CuratedNamesForAddressesContext(ctx, addresses, r.sourceIDs)
-	if err != nil {
-		return nil, err
-	}
 	var names []draftlint.Name
-	for _, values := range resolved {
-		names = append(names, values...)
+	var err error
+	readable, status := r.adapter.draftReadableSources(ctx, r.sourceID, r.grant)
+	switch status {
+	case "checked":
+		names, err = r.adapter.store.CuratedNamesForAddressesContext(ctx, addresses, readable)
+	case "unavailable":
+		err = errors.New("draft recipient source lookup failed")
 	}
-	return names, nil
+	if err != nil {
+		logger := r.adapter.logger
+		if logger == nil {
+			logger = loggerFromContext(ctx)
+		}
+		logger.Warn("draft greeting name lookup failed", "error_class", "archive_read_failed")
+	}
+	return names, err
 }
 func (a *storeAPIAdapter) lintDraft(ctx context.Context, in draftlint.Input, sourceID int64, grant *agentgrant.Grant) draftlint.Result {
 	var resolver draftlint.NameResolver
 	if in.Channel == "email" {
-		if readable, status := a.draftReadableSources(ctx, sourceID, grant); status == "checked" {
-			resolver = draftNameResolver{store: a.store, sourceIDs: readable}
-		}
+		resolver = draftNameResolver{adapter: a, sourceID: sourceID, grant: grant}
 	}
 	return draftlint.Check(ctx, in, resolver)
 }
