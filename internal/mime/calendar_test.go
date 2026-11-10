@@ -25,3 +25,13 @@ func TestCalendarMIMEParts(t *testing.T) {
 	requirements.Len(msg.CalendarParts, 1)
 	assertions.Equal(calendar, string(msg.CalendarParts[0].Content))
 }
+
+func TestCalendarICSAttachment(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	const calendar = "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n"
+	raw := "Content-Type: application/ics\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString([]byte(calendar))
+	msg, err := Parse([]byte(raw))
+	requirements.NoError(err)
+	requirements.Len(msg.CalendarParts, 1)
+	assertions.Equal(calendar, string(msg.CalendarParts[0].Content))
+}

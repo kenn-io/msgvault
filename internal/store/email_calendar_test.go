@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -371,4 +372,99 @@ func TestEmailCalendarSubsetAfterSourceMerge(t *testing.T) {
 	requirements.NoError(subset.db.QueryRow(`SELECT subject, metadata ->> 'start' FROM messages WHERE id=?`, ids[0]).Scan(&subject, &start))
 	assertions.Equal("Accepted", subject)
 	assertions.Equal("2027-03-02T13:00:00Z", start)
+}
+
+func TestEmailCalendarFamilyOrganizer(t *testing.T) {
+	for _, merged := range []bool{false, true} {
+		t.Run(fmt.Sprintf("merged=%t", merged), func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			master := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=2\r\nORGANIZER:mailto:organizer@example.com")
+			_, source := persistInviteEmail(t, st, "master", inviteEmail(master))
+			if merged {
+				into, err := st.GetOrCreateSource("mbox", "destination@example.com")
+				requirements.NoError(err)
+				_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: source, IntoSourceID: into.ID})
+				requirements.NoError(err)
+				source = into.ID
+			}
+			cancel := calendarDocument("CANCEL", "RECURRENCE-ID:20270303T120000Z\r\nORGANIZER:mailto:other@example.com")
+			persistInviteEmailForSource(t, st, source, "foreign-cancel", inviteEmail(cancel))
+			parsed, err := mime.Parse(inviteEmail(cancel))
+			requirements.NoError(err)
+			var summary ICalendarImportSummary
+			err = st.withAttributionTxContext(t.Context(), attributionLock{Sources: []int64{source}}, func(tx *loggedTx) error {
+				var persistErr error
+				summary, persistErr = st.persistEmailCalendarPartsWith(t.Context(), tx, 0, source, parsed)
+				return persistErr
+			})
+			requirements.NoError(err)
+			assertions.Equal(1, summary.Unchanged)
+			move := calendarDocument("REQUEST", "RECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T150000Z\r\nORGANIZER:mailto:other@example.com")
+			persistInviteEmailForSource(t, st, source, "foreign-move", inviteEmail(move))
+			assertions.Len(emailEvents(t, st, source), 1)
+			from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 3))
+			requirements.NoError(err)
+			requirements.Len(page.Occurrences, 2)
+			assertions.Equal("confirmed", page.Occurrences[1].Status)
+			cancel = calendarDocument("CANCEL", "RECURRENCE-ID:20270303T120000Z\r\nORGANIZER:mailto:organizer@example.com")
+			persistInviteEmailForSource(t, st, source, "own-cancel", inviteEmail(cancel))
+			page, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 3))
+			requirements.NoError(err)
+			requirements.Len(page.Occurrences, 2)
+			assertions.Equal("cancelled", page.Occurrences[1].Status)
+		})
+	}
+}
+
+func TestEmailCalendarICSAttachments(t *testing.T) {
+	for _, both := range []bool{false, true} {
+		t.Run(fmt.Sprintf("both=%t", both), func(t *testing.T) {
+			requirements := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			calendar := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nSUMMARY:Invite")
+			raw := "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=x\r\n\r\n"
+			if both {
+				raw += "--x\r\nContent-Type: text/calendar\r\n\r\n" + string(calendar) + "\r\n"
+			}
+			raw += "--x\r\nContent-Type: application/ics\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString(calendar) + "\r\n--x--\r\n"
+			_, source := persistInviteEmail(t, st, "attachment", []byte(raw))
+			requirements.Len(emailEvents(t, st, source), 1)
+		})
+	}
+}
+
+func TestEmailCalendarFamilyOrganizerExceptionFirst(t *testing.T) {
+	assertions := assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	exception := calendarDocument("CANCEL", "RECURRENCE-ID:20270303T120000Z\r\nORGANIZER:mailto:organizer@example.com")
+	_, source := persistInviteEmail(t, st, "exception-first", inviteEmail(exception))
+	master := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nORGANIZER:mailto:other@example.com")
+	persistInviteEmailForSource(t, st, source, "foreign-master", inviteEmail(master))
+	assertions.Len(emailEvents(t, st, source), 1)
+	master = calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nORGANIZER:mailto:organizer@example.com")
+	persistInviteEmailForSource(t, st, source, "own-master", inviteEmail(master))
+	assertions.Len(emailEvents(t, st, source), 2)
+}
+
+func TestEmailCalendarDuplicatePartsSummary(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source, err := st.GetOrCreateSource("mbox", "owner@example.com")
+	requirements.NoError(err)
+	calendar := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nSUMMARY:Invite")
+	raw := "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\nContent-Type: text/calendar\r\n\r\n" + string(calendar) + "\r\n--x\r\nContent-Type: application/ics\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString(calendar) + "\r\n--x--\r\n"
+	parsed, err := mime.Parse([]byte(raw))
+	requirements.NoError(err)
+	var summary ICalendarImportSummary
+	err = st.withAttributionTxContext(t.Context(), attributionLock{Sources: []int64{source.ID}}, func(tx *loggedTx) error {
+		var persistErr error
+		summary, persistErr = st.persistEmailCalendarPartsWith(t.Context(), tx, 0, source.ID, parsed)
+		return persistErr
+	})
+	requirements.NoError(err)
+	assertions.Equal(1, summary.Changed)
+	assertions.Equal(1, summary.Unchanged)
+	assertions.Len(emailEvents(t, st, source.ID), 1)
 }

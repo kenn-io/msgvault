@@ -111,8 +111,24 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 				return fmt.Errorf("decode retained ICS metadata: %w", err)
 			}
 		}
-		// An email from another organizer doesn't revise the event.
-		foreign := exists && item.fromEmail && old.Organizer != "" && item.component.OrganizerEmail != old.Organizer
+		// New instances follow the organizer of the first event in the family.
+		organizer := old.Organizer
+		if item.fromEmail && !exists {
+			family := calevent.ICSMessageID(item.component.UID, "")
+			var familyMetadata sql.NullString
+			err := q.QueryRow(`SELECT m.id,m.metadata FROM messages m JOIN conversations c ON c.id=m.conversation_id JOIN message_raw r ON r.message_id=m.id WHERE m.source_id=? AND c.source_conversation_id=COALESCE((SELECT c2.source_conversation_id FROM source_merge_archive_only_messages a JOIN messages m2 ON m2.id=a.message_id JOIN conversations c2 ON c2.id=m2.conversation_id WHERE a.original_source_message_id=? AND m2.source_id=? ORDER BY m2.id LIMIT 1), ?) AND r.raw_format=? ORDER BY m.id LIMIT 1`, sourceID, family, sourceID, family, rawFormatICS).Scan(&id, &familyMetadata)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("read ICS family organizer: %w", err)
+			}
+			if err == nil {
+				var familyMeta calevent.ICSMetadata
+				if err := json.Unmarshal([]byte(familyMetadata.String), &familyMeta); err != nil {
+					return fmt.Errorf("decode ICS family metadata: %w", err)
+				}
+				organizer = familyMeta.Organizer
+			}
+		}
+		foreign := item.fromEmail && organizer != "" && item.component.OrganizerEmail != organizer
 		if foreign {
 			slog.Warn("calendar invite ignored: organizer differs", "event_message_id", id, "organizer", item.component.OrganizerEmail)
 		}
