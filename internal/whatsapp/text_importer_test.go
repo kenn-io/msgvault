@@ -131,6 +131,8 @@ func TestTextImportPreflight(t *testing.T) {
 		change     func(*TextOptions)
 	}{
 		{"parse", "13/6/26, 10:00 - Mira: valid\n31/2/26, 10:01 - Mira: bad", func(*TextOptions) {}},
+		{"missing space", "13/6/26, 10:00 - Mira: valid\n13/6/26,10:01 - Ivo: bad", func(*TextOptions) {}},
+		{"dot clock", "13/6/26, 10:00 - Mira: valid\n13/6/26 10.01 - Ivo: bad", func(*TextOptions) {}},
 		{"missing comma", "13/6/26, 10:00 - Mira: valid\n13/6/26 10:01 - Ivo: bad", func(*TextOptions) {}},
 		{"spacing", "13/6/26, 10:00 - Mira: valid\n13/6/26,  10:01 - Ivo: bad", func(*TextOptions) {}},
 		{"chat", "13/6/26, 10:00 - Mira: hi", func(o *TextOptions) { o.ChatID = "" }},
