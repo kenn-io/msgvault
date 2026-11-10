@@ -107,13 +107,14 @@ func TestFakeVaultAgentDemoRejectsScaleFlags(t *testing.T) {
 	}
 }
 func TestFakeVaultAgentDemoRejectsBadAsOf(t *testing.T) {
-	for _, s := range []string{"yesterday", ""} {
+	for _, s := range []string{"yesterday", "", "0001-01-01T00:00:00Z", "1989-12-31T23:59:59Z", "1990-02-01T00:00:00Z", time.Now().AddDate(1, 0, 0).UTC().Format(time.RFC3339)} {
 		t.Run(s, func(t *testing.T) {
 			dir := t.TempDir()
 			cmd := newFakeVaultCommand()
-			cmd.SetArgs([]string{"--scenario", "agent-demo", "--output", dir, "--as-of", s})
+			output := filepath.Join(dir, "output")
+			cmd.SetArgs([]string{"--scenario", "agent-demo", "--output", output, "--as-of", s})
 			require.ErrorContains(t, cmd.ExecuteContext(t.Context()), "--as-of")
-			assert.NoFileExists(t, filepath.Join(dir, "msgvault.db"))
+			assert.NoDirExists(t, output)
 		})
 	}
 }

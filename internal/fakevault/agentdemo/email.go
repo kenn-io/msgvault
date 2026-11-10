@@ -10,6 +10,12 @@ import (
 	syncer "go.kenn.io/msgvault/internal/sync"
 )
 
+const (
+	backgroundEmailThreads   = 60
+	backgroundEmailFirstDays = 40
+	newestEmailDays          = 1
+)
+
 func email(ctx context.Context, b *builder) error {
 	api := gmail.NewMockAPI()
 	api.UseRawThreadID = true
@@ -45,7 +51,7 @@ func email(ctx context.Context, b *builder) error {
 		messages[len(messages)-1].at = messages[len(messages)-1].at.Add(time.Hour)
 		messages[len(messages)-1].reply = inbound
 	}
-	add("sam_trip_unsent_draft", "sam_trip_email", owner, "Sam Rivera <sam.rivera@example.org>", "Hi Sam,\nThe packing notes are ready.\nBest, Morgan", 1, "DRAFT")
+	add("sam_trip_unsent_draft", "sam_trip_email", owner, "Sam Rivera <sam.rivera@example.org>", "Hi Sam,\nThe packing notes are ready.\nBest, Morgan", newestEmailDays, "DRAFT")
 	add("riley_intro_question", "riley_intro", "Riley Stone <riley@newco.example>", owner, "Can you describe the archive format?", 5, "INBOX")
 	add("pat_quote_outbound", "pat_quote", owner, "Pat Vendor <pat@vendor.example>", "The requirements are recorded in the project notes.", 8, "SENT")
 	add("pat_quote_reply", "pat_quote", "Pat Vendor <pat@vendor.example>", owner, "The quote is attached to the project notes.\n\nOn Mon, 1 Jun 2026 at 10:00, Morgan wrote:\n> The requirements are recorded.", 7, "INBOX")
@@ -69,7 +75,7 @@ func email(ctx context.Context, b *builder) error {
 	add("deleted_at_source", "background_deleted", "Archive Updates <archive-updates@example.net>", owner, "The earlier project record is archived.", 20, "INBOX")
 	add("canary", "canary", "Canary Q. Person <canary-addr-7f3a@canary.example>", owner, "The synthetic privacy marker is CANARY-BODY-7f3a.", 12, "INBOX")
 	messages[len(messages)-1].subject = "CANARY-SUBJ-7f3a"
-	for i := range 60 {
+	for i := range backgroundEmailThreads {
 		thread := fmt.Sprintf("background_%02d", i+1)
 		for j := range 3 {
 			h := fmt.Sprintf("%s_%d", thread, j+1)
@@ -79,7 +85,7 @@ func email(ctx context.Context, b *builder) error {
 				from, to = to, from
 				label = "INBOX"
 			}
-			add(h, thread, from, to, filler(b.opts.Seed, 100+i*3+j), 40+i, label)
+			add(h, thread, from, to, filler(b.opts.Seed, 100+i*3+j), backgroundEmailFirstDays+i, label)
 			messages[len(messages)-1].at = messages[len(messages)-1].at.Add(time.Duration(j) * time.Hour)
 		}
 	}

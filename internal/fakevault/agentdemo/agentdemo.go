@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/fakevault"
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -31,6 +32,10 @@ func GenerateDir(ctx context.Context, opts Options) (m *Manifest, err error) {
 	}
 	if opts.Dir == "" {
 		return nil, errors.New("agent-demo: output directory is required")
+	}
+	opts.AsOf, err = validateAsOf(opts.AsOf)
+	if err != nil {
+		return nil, err
 	}
 	path := filepath.Join(opts.Dir, "msgvault.db")
 	if err = fakevault.CheckNewTarget(path); err != nil {
@@ -61,10 +66,11 @@ func GenerateDir(ctx context.Context, opts Options) (m *Manifest, err error) {
 	return m, nil
 }
 func Generate(ctx context.Context, st *store.Store, attachmentsDir string, opts Options) (*Manifest, error) {
-	if opts.AsOf.IsZero() {
-		opts.AsOf = DefaultAsOf
+	asOf, err := validateAsOf(opts.AsOf)
+	if err != nil {
+		return nil, err
 	}
-	opts.AsOf = opts.AsOf.UTC()
+	opts.AsOf = asOf
 	if err := os.MkdirAll(attachmentsDir, 0700); err != nil {
 		return nil, err
 	}
@@ -84,4 +90,20 @@ func Generate(ctx context.Context, st *store.Store, attachmentsDir string, opts 
 		return nil, fmt.Errorf("agent-demo finalize: %w", err)
 	}
 	return b.m, nil
+}
+
+// validateAsOf keeps every generated email inside the production date resolver's
+// range, so the importer retains the send times required by the manifest.
+func validateAsOf(asOf time.Time) (time.Time, error) {
+	if asOf.IsZero() {
+		asOf = DefaultAsOf
+	}
+	asOf = asOf.UTC()
+	lower, upper := mime.PlausibleDateBounds(time.Now())
+	oldest := asOf.Add(-time.Duration(backgroundEmailFirstDays+backgroundEmailThreads-1) * 24 * time.Hour)
+	newest := asOf.Add(-newestEmailDays * 24 * time.Hour)
+	if oldest.Before(lower) || newest.After(upper) {
+		return time.Time{}, fmt.Errorf("agent-demo: --as-of must place all email dates between %s and %s", lower.Format(time.RFC3339), upper.Format(time.RFC3339))
+	}
+	return asOf, nil
 }

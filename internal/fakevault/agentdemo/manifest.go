@@ -1,7 +1,8 @@
 package agentdemo
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -79,7 +80,7 @@ type Manifest struct {
 }
 
 func (m *Manifest) Write(dir string) error {
-	data, err := json.MarshalIndent(m, "", "  ")
+	data, err := json.Marshal(m, jsontext.WithIndent("  "), json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	if err != nil {
 		return fmt.Errorf("encode manifest: %w", err)
 	}

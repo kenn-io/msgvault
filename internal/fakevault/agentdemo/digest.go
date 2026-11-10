@@ -6,7 +6,8 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -161,7 +162,7 @@ func (c *canonicalizer) key(name string, table *digestTable, row digestRow) (str
 		var keys []string
 		for _, identifier := range identifiers.rows {
 			if fmt.Sprint(identifier["participant_id"]) == fmt.Sprint(row["id"]) {
-				data, err := json.Marshal([]any{identifier["identifier_type"], identifier["identifier_value"]})
+				data, err := json.Marshal([]any{identifier["identifier_type"], identifier["identifier_value"]}, json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 				if err != nil {
 					return "", err
 				}
@@ -170,7 +171,7 @@ func (c *canonicalizer) key(name string, table *digestTable, row digestRow) (str
 		}
 		if len(keys) > 0 {
 			slices.Sort(keys)
-			data, err := json.Marshal(keys)
+			data, err := json.Marshal(keys, json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 			return name + ":" + string(data), err
 		}
 	}
@@ -198,7 +199,7 @@ func (c *canonicalizer) key(name string, table *digestTable, row digestRow) (str
 			}
 		}
 		slices.Sort(keys)
-		data, err := json.Marshal([]any{row["display_name"], keys})
+		data, err := json.Marshal([]any{row["display_name"], keys}, json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 		return name + ":" + string(data), err
 	}
 	columns, ok := naturalColumns[name]
@@ -213,7 +214,7 @@ func (c *canonicalizer) key(name string, table *digestTable, row digestRow) (str
 		}
 		values = append(values, v)
 	}
-	data, err := json.Marshal(values)
+	data, err := json.Marshal(values, json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	return name + ":" + string(data), err
 }
 
@@ -258,7 +259,7 @@ func Digest(ctx context.Context, db *sql.DB) (string, error) {
 					canonical["participant_a"], canonical["participant_b"] = b, a
 				}
 			}
-			data, err := json.Marshal(canonical)
+			data, err := json.Marshal(canonical, json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 			if err != nil {
 				return "", err
 			}

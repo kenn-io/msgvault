@@ -52,7 +52,7 @@ relationship benchmark generator. Participant edges count the union of one
 sender edge per message and all generated recipient rows.
 
 Use --scenario agent-demo for a small named synthetic archive for feature tests
-and safe exploration. --as-of accepts an RFC 3339 time or now.
+and safe exploration.
 
 The generated data is synthetic and worthless; the tool exists to measure
 how msgvault (backup, search, sync machinery) behaves at scale.`,
@@ -174,6 +174,9 @@ func runAgentDemo(cmd *cobra.Command, opts fakeVaultCommandOptions) error {
 		asOf, err = time.Parse(time.RFC3339, opts.asOf)
 		if err != nil {
 			return usageErr(cmd, fmt.Errorf("--as-of: expected RFC 3339 or now: %w", err))
+		}
+		if asOf.IsZero() {
+			return usageErr(cmd, errors.New("--as-of must not be the zero time"))
 		}
 	}
 	cfg := config.NewDefaultConfig()
