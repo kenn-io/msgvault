@@ -10,3 +10,10 @@ func TestMatrixMessagesAreClassifiedAsChat(t *testing.T) {
 	assert.True(t, IsChat("matrix", "group_chat"))
 	assert.True(t, IsChat("matrix", "direct_chat"))
 }
+
+func TestRedditPublicHistoryStaysOutsideChat(t *testing.T) {
+	assert.True(t, IsChat("reddit_chat", "channel"))
+	assert.True(t, IsChat("reddit_pm", "direct_chat"))
+	assert.False(t, IsChat("reddit_post", "channel"))
+	assert.False(t, IsChat("reddit_comment", "channel"))
+}

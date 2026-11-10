@@ -8,6 +8,8 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- [Import Reddit account-data exports](usage/text-messages.md#import-reddit) to search Chat, legacy PMs, and your own posts/comments. Repeated imports retain originals and add missing records; media links are preserved without downloading files.
+
 - `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.
 - [Instagram comment sync](usage/instagram-comments.md) archives linked professional
   account media comments and replies for search and existing person linking.

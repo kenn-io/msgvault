@@ -180,4 +180,5 @@ var KnownMessageTypes = []string{
 	"inline",
 	"matrix",
 	"telegram",
+	"reddit_chat", "reddit_pm", "reddit_post", "reddit_comment",
 }

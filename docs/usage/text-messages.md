@@ -19,6 +19,7 @@ open a conversation to read its messages. In the [TUI](/docs/usage/tui/), press
 | [iMessage](#import-imessage) | macOS `chat.db` |
 | [iMazing Messages](#import-imazing-csv) | CSV export root or `csv/` directory |
 | [Google Voice](#import-gvoice) | Google Takeout Voice directory |
+| [Reddit](#import-reddit) | Extracted account-data CSV export (unreleased) |
 | [Telegram](#import-telegram) | Telegram Desktop Machine-readable JSON export |
 | [Facebook Messenger](#import-messenger) | Download Your Information export |
 | [SMS Backup & Restore](#import-synctech-sms) | XML backup |
@@ -505,3 +506,40 @@ A later or overlapping export adds new messages and fills media slots that still
 Every exported chat becomes a conversation, even one with no messages. Each import replaces the conversation title with the export's chat name when that name is non-empty.
 
 An interrupted import resumes after the last completed chat when `result.json` in the same directory has the same size and modification time. Use `--no-resume` to scan every chat again, or `--limit N` to cap the messages added in one run.
+
+## import-reddit
+
+Unreleased: import an extracted Reddit account-data export, then search Chat,
+legacy private messages, and your own posts and comments:
+
+```bash
+msgvault import-reddit /path/to/reddit-export
+msgvault import-reddit --me fictional_owner /path/to/reddit-export
+msgvault search lantern --message-type reddit_pm
+```
+
+The owner comes from `statistics.csv` (`account name`). Use `--me` if that is
+absent; conflicting accounts are refused before archive writes. Handles are
+case insensitive and accept `u/` or `/u/` prefixes. `--no-default-identity`
+skips default identity creation.
+
+The importer reads top-level regular `chat_history.csv`, `messages.csv`,
+`messages_archive.csv`, `posts.csv`, and `comments.csv`, including `_N.csv`
+numbered splits. Extract ZIPs first. Reads are limited to 10,000 directory
+entries and 256 MiB per CSV. Unsupported files and skipped rows appear in the
+summary. CSV quoting/read errors stop the run and retain completed records.
+
+Re-run the directory after interruption. Existing keys keep their archived
+originals; new keys are added, and absence never deletes messages. Chat and
+legacy PMs stay separate (`reddit_chat` and `reddit_pm`); posts and comments
+are searchable as `reddit_post` and `reddit_comment` outside chat analytics.
+Unknown dates and senders stay unknown. Original column values, filenames,
+record numbers and supplied account/export-time evidence are archived.
+
+Links are preserved; no media is downloaded. Link/media-bearing rows are
+counted as not downloaded, without assuming every link is a missing attachment.
+Coverage depends on what Reddit supplied: no complete lifetime-history or
+removed-chat recovery guarantee. The separate legacy-PM archive UI's 1,000-PM
+cap does not establish an account-export limit. Format support follows the
+[fixture provenance](https://github.com/kenn-io/msgvault/tree/main/internal/reddit/testdata/export),
+including a June 2026 layout report, rather than a real user export fixture.

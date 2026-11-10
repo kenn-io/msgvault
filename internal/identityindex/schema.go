@@ -27,7 +27,7 @@ const (
 var (
 	TextMessageTypes = []string{
 		"google_chat", "whatsapp", "imessage", "sms", "mms", "rcs",
-		"google_voice_text", "teams", "discord", "beeper", "slack", "inline", "fbmessenger", "matrix", "chatwoot", "telegram", "facebook_comments", "instagram_comments",
+		"google_voice_text", "teams", "discord", "beeper", "slack", "inline", "fbmessenger", "matrix", "chatwoot", "telegram", "reddit_chat", "reddit_pm", "facebook_comments", "instagram_comments",
 	}
 	ChatFallbackMessageTypes = []string{"", "chat", "text"}
 	ChatConversationTypes    = []string{"direct_chat", "group_chat", "channel", "chat"}
