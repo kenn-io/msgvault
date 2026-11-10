@@ -1330,9 +1330,9 @@ func getViewDef(view ViewType, granularity TimeGranularity, tablePrefix string) 
 	switch view {
 	case ViewSenders:
 		return aggViewDef{
-			keyExpr:    "COALESCE(CASE WHEN " + mrAlias + ".is_relayed THEN NULLIF(" + mrAlias + ".email_address, '') END, " + pAlias + ".email_address)",
+			keyExpr:    identityindex.SenderAddressExpr(mrAlias, pAlias),
 			joinClause: fmt.Sprintf("JOIN mr %s ON %s.message_id = msg.id AND %s.recipient_type = 'from'\n\t\t\t\tJOIN p %s ON %s.id = %s.participant_id", mrAlias, mrAlias, mrAlias, pAlias, pAlias, mrAlias),
-			nullGuard:  "COALESCE(CASE WHEN " + mrAlias + ".is_relayed THEN NULLIF(" + mrAlias + ".email_address, '') END, " + pAlias + ".email_address) IS NOT NULL",
+			nullGuard:  identityindex.SenderAddressExpr(mrAlias, pAlias) + " IS NOT NULL",
 		}, nil
 	case ViewSenderNames:
 		nameExpr := recipientNameExpr(mrAlias, pAlias)
@@ -1359,9 +1359,9 @@ func getViewDef(view ViewType, granularity TimeGranularity, tablePrefix string) 
 		}, nil
 	case ViewDomains:
 		return aggViewDef{
-			keyExpr:    senderDisplayDomainExpr(mrAlias, pAlias),
+			keyExpr:    identityindex.SenderDomainExpr(mrAlias, pAlias),
 			joinClause: fmt.Sprintf("JOIN mr %s ON %s.message_id = msg.id AND %s.recipient_type = 'from'\n\t\t\t\tJOIN p %s ON %s.id = %s.participant_id", mrAlias, mrAlias, mrAlias, pAlias, pAlias, mrAlias),
-			nullGuard:  senderDisplayDomainExpr(mrAlias, pAlias) + " != ''",
+			nullGuard:  identityindex.SenderDomainExpr(mrAlias, pAlias) + " != ''",
 		}, nil
 	case ViewLabels:
 		return aggViewDef{
@@ -1527,7 +1527,7 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 	// independent EXISTS that a multi-author message could satisfy via
 	// different rows.
 	if filter.Sender != "" {
-		guard := relayedEnvelopeAbsent("mr", "envelope_address", "msg.id")
+		guard := identityindex.RelayAbsentExpr("msg.id", "mr")
 		fromName, directName := "", ""
 		senderArgs := []any{filter.Sender, filter.Sender, filter.Sender}
 		directArgs := []any{filter.Sender, filter.Sender}
@@ -1539,8 +1539,8 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 		}
 		conditions = append(conditions, `(EXISTS (SELECT 1 FROM mr JOIN p ON p.id = mr.participant_id
             WHERE mr.message_id = msg.id AND mr.recipient_type = 'from'
-            AND ((mr.is_relayed AND mr.email_address = ?) OR (p.email_address = ? AND `+guard+`) OR p.phone_number = ?)`+fromName+`)
-            OR EXISTS (SELECT 1 FROM p WHERE p.id = msg.sender_id AND ((p.email_address = ? AND `+guard+`) OR p.phone_number = ?)`+directName+`))`)
+            AND ((mr.is_relayed AND mr.email_address = ?) OR (NOT mr.is_relayed AND (p.email_address = ? OR p.phone_number = ?)))`+fromName+`)
+            OR EXISTS (SELECT 1 FROM p WHERE p.id = msg.sender_id AND (p.email_address = ? OR p.phone_number = ?) AND `+guard+``+directName+`))`)
 		args = append(args, senderArgs...)
 		args = append(args, directArgs...)
 	} else if filter.MatchesEmpty(ViewSenders) {
@@ -1644,7 +1644,7 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 			JOIN p ON p.id = mr.participant_id
 			WHERE mr.message_id = msg.id
 			  AND mr.recipient_type = 'from'
-			  AND LOWER(`+senderDisplayDomainExpr("mr", "p")+`) = ?
+			  AND LOWER(`+identityindex.SenderDomainExpr("mr", "p")+`) = ?
 		)`)
 		args = append(args, strings.ToLower(filter.Domain))
 	} else if filter.MatchesEmpty(ViewDomains) {
@@ -1653,7 +1653,7 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 			JOIN p ON p.id = mr.participant_id
 			WHERE mr.message_id = msg.id
 			  AND mr.recipient_type = 'from'
-			  AND `+senderDisplayDomainExpr("mr", "p")+` != ''
+			  AND `+identityindex.SenderDomainExpr("mr", "p")+` != ''
 		)`)
 	}
 
@@ -2016,7 +2016,7 @@ func (e *DuckDBEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 		),
 		msg_sender AS (
 			SELECT mr.message_id,
-				   FIRST(COALESCE(CASE WHEN mr.is_relayed THEN NULLIF(mr.envelope_address, '') END, p.email_address)) as from_email,
+				   FIRST(`+identityindex.SenderAddressExpr("mr", "p")+`) as from_email,
 				   FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')) as from_name,
 				   FIRST(COALESCE(p.phone_number, '')) as from_phone
 			FROM mr
@@ -2433,7 +2433,7 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 			COALESCE(conv.source_conversation_id, ''),
 			COALESCE(m.subject, ''),
 			COALESCE(m.snippet, ''),
-			COALESCE(CASE WHEN mr_sender.is_relayed THEN NULLIF(mr_sender.email_address, '') END, p_sender.email_address, ''),
+			COALESCE(`+identityindex.SenderAddressExpr("mr_sender", "p_sender")+`, ''),
 			COALESCE(p_sender.display_name, ''),
 			m.sent_at,
 			COALESCE(m.size_estimate, 0),
@@ -2739,7 +2739,7 @@ func (e *DuckDBEngine) SearchFast(ctx context.Context, q *search.Query, filter M
 		),
 		msg_sender AS (
 			SELECT mr.message_id,
-				   FIRST(COALESCE(CASE WHEN mr.is_relayed THEN NULLIF(mr.envelope_address, '') END, p.email_address)) as from_email,
+				   FIRST(`+identityindex.SenderAddressExpr("mr", "p")+`) as from_email,
 				   FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')) as from_name,
 				   FIRST(COALESCE(p.phone_number, '')) as from_phone
 			FROM mr
@@ -2859,7 +2859,7 @@ func (e *DuckDBEngine) SearchFastCount(ctx context.Context, q *search.Query, fil
 		WITH %s,
 		msg_sender AS (
 			SELECT mr.message_id,
-				   FIRST(COALESCE(CASE WHEN mr.is_relayed THEN NULLIF(mr.envelope_address, '') END, p.email_address)) as from_email,
+				   FIRST(`+identityindex.SenderAddressExpr("mr", "p")+`) as from_email,
 				   FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')) as from_name,
 				   FIRST(COALESCE(p.phone_number, '')) as from_phone
 			FROM mr
@@ -3162,7 +3162,7 @@ func (e *DuckDBEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 		WITH %s,
 		msg_sender AS (
 			SELECT mr.message_id,
-				   FIRST(COALESCE(CASE WHEN mr.is_relayed THEN NULLIF(mr.envelope_address, '') END, p.email_address)) as from_email,
+				   FIRST(`+identityindex.SenderAddressExpr("mr", "p")+`) as from_email,
 				   FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')) as from_name,
 				   FIRST(COALESCE(p.phone_number, '')) as from_phone
 			FROM mr

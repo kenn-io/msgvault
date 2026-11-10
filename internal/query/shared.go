@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/sourcescope"
@@ -321,7 +322,7 @@ func fetchMessageLabelsDetail(ctx context.Context, db store.SQLReader, rebind re
 func fetchParticipantsShared(ctx context.Context, db store.SQLReader, rebind rebindFunc, tablePrefix string, msg *MessageDetail) error {
 	rows, err := db.QueryContext(ctx, rebind(fmt.Sprintf(`
 		SELECT mr.recipient_type,
-		       COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), ''),
+		       COALESCE(NULLIF(`+identityindex.SenderAddressExpr("mr", "p")+`, ''), NULLIF(p.phone_number, ''), ''),
 		       %s
 		FROM %smessage_recipients mr
 		JOIN %sparticipants p ON p.id = mr.participant_id

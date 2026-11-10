@@ -286,9 +286,9 @@ func createBaseViews(ctx context.Context, db *sql.DB, analyticsDir string, optCo
 					"CAST(participant_id AS BIGINT) AS participant_id",
 					"CAST(recipient_type AS VARCHAR) AS recipient_type",
 					"CAST(display_name AS VARCHAR) AS display_name",
-					"CAST(is_relayed AS BOOLEAN) AS is_relayed",
 				},
 				optionalCols: []optionalCol{
+					{name: "is_relayed", replaceExpr: "CAST(is_relayed AS BOOLEAN) AS is_relayed", defaultExpr: "false AS is_relayed"},
 					{
 						// Resolved recipient address (cache schema v26): the
 						// header address when one was recorded, otherwise the
@@ -610,9 +610,9 @@ func buildScalarAnalyticalEntriesCTEWithSource(name string, includeAttachmentSum
 		COALESCE(m.message_type, '') AS message_type,
 		m.list_id,
 		m.sender_id,
-		COALESCE((SELECT NULLIF(CASE WHEN mr.is_relayed THEN mr.email_address END, '') FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'from' LIMIT 1), NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), '') AS sender_identifier,
+		COALESCE(` + identityindex.RelayAddressSubquery("m.id", "message_recipients") + `, NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), '') AS sender_identifier,
 		COALESCE(NULLIF(sender.display_name, ''), NULLIF(sender.phone_number, ''), sender.email_address, '') AS sender_display,
-		COALESCE((SELECT NULLIF(` + identityindex.SenderEnvelopeDomainExpr("CASE WHEN mr.is_relayed THEN mr.email_address END") + `, '') FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'from' LIMIT 1), sender.domain, '') AS sender_domain,
+		COALESCE(NULLIF(` + identityindex.SenderEnvelopeDomainExpr(identityindex.RelayAddressSubquery("m.id", "message_recipients")) + `, ''), sender.domain, '') AS sender_domain,
 		m.sent_at AS occurred_at,
 		COALESCE(m.subject, '') AS subject,
 		COALESCE(m.snippet, '') AS snippet,
@@ -673,9 +673,9 @@ SELECT
     COALESCE(m.message_type, '') AS message_type,
     m.list_id,
     m.sender_id,
-    COALESCE((SELECT CASE WHEN mr.is_relayed THEN NULLIF(mr.email_address, '') END FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'from' LIMIT 1), NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), '') AS sender_identifier,
+    COALESCE(` + identityindex.RelayAddressSubquery("m.id", "message_recipients") + `, NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), '') AS sender_identifier,
     COALESCE(NULLIF(sender.display_name, ''), NULLIF(sender.phone_number, ''), sender.email_address, '') AS sender_display,
-    COALESCE((SELECT NULLIF(` + identityindex.SenderEnvelopeDomainExpr("CASE WHEN mr.is_relayed THEN mr.email_address END") + `, '') FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'from' LIMIT 1), sender.domain, '') AS sender_domain,
+    COALESCE(NULLIF(` + identityindex.SenderEnvelopeDomainExpr(identityindex.RelayAddressSubquery("m.id", "message_recipients")) + `, ''), sender.domain, '') AS sender_domain,
     m.sent_at AS occurred_at,
     COALESCE(m.subject, '') AS subject,
     COALESCE(m.snippet, '') AS snippet,
@@ -749,13 +749,13 @@ LEFT JOIN (
 var sqlVSenders = `
 CREATE OR REPLACE VIEW v_senders AS
 SELECT
-    COALESCE(CASE WHEN mr.is_relayed THEN NULLIF(mr.email_address, '') END, p.email_address) AS from_email,
+    ` + identityindex.SenderAddressExpr("mr", "p") + ` AS from_email,
     COALESCE(
         NULLIF(TRIM(FIRST(mr.display_name)), ''),
         NULLIF(TRIM(FIRST(p.display_name)), ''),
         FIRST(p.email_address)
     ) AS from_name,
-    COALESCE(NULLIF(` + identityindex.SenderEnvelopeDomainExpr("CASE WHEN mr.is_relayed THEN mr.email_address END") + `, ''), p.domain) AS from_domain,
+    ` + identityindex.SenderDomainExpr("mr", "p") + ` AS from_domain,
     COUNT(*) AS message_count,
     SUM(m.size_estimate) AS total_size,
     COALESCE(SUM(att.attachment_size), 0) AS attachment_size,
@@ -774,22 +774,22 @@ LEFT JOIN (
     GROUP BY message_id
 ) att ON att.message_id = m.id
 WHERE mr.recipient_type = 'from'
-GROUP BY COALESCE(CASE WHEN mr.is_relayed THEN NULLIF(mr.email_address, '') END, p.email_address), COALESCE(NULLIF(` + identityindex.SenderEnvelopeDomainExpr("CASE WHEN mr.is_relayed THEN mr.email_address END") + `, ''), p.domain)
+GROUP BY ` + identityindex.SenderAddressExpr("mr", "p") + `, ` + identityindex.SenderDomainExpr("mr", "p") + `
 `
 
 // sqlVDomains: per-domain aggregates.
 var sqlVDomains = `
 CREATE OR REPLACE VIEW v_domains AS
 SELECT
-    COALESCE(NULLIF(` + identityindex.SenderEnvelopeDomainExpr("CASE WHEN mr.is_relayed THEN mr.email_address END") + `, ''), p.domain) AS domain,
+    ` + identityindex.SenderDomainExpr("mr", "p") + ` AS domain,
     COUNT(*) AS message_count,
     SUM(m.size_estimate) AS total_size,
-    COUNT(DISTINCT COALESCE(CASE WHEN mr.is_relayed THEN NULLIF(mr.email_address, '') END, p.email_address)) AS sender_count
+    COUNT(DISTINCT ` + identityindex.SenderAddressExpr("mr", "p") + `) AS sender_count
 FROM message_recipients mr
 JOIN participants p ON p.id = mr.participant_id
 JOIN messages m ON m.id = mr.message_id
 WHERE mr.recipient_type = 'from'
-GROUP BY COALESCE(NULLIF(` + identityindex.SenderEnvelopeDomainExpr("CASE WHEN mr.is_relayed THEN mr.email_address END") + `, ''), p.domain)
+GROUP BY ` + identityindex.SenderDomainExpr("mr", "p") + `
 `
 
 // sqlVLabels: label name with message count and total size.
@@ -837,11 +837,11 @@ var sqlMessageSenderJoins = sqlMessageSenderJoinsStart + sqlMessageSenderJoinsMi
 var sqlMessageSenderJoinsStart = `LEFT JOIN (
     SELECT
         mr.message_id,
-        FIRST(COALESCE(CASE WHEN mr.is_relayed THEN NULLIF(mr.email_address, '') END, p.email_address)) AS from_email,
+        FIRST(` + identityindex.SenderAddressExpr("mr", "p") + `) AS from_email,
         FIRST(
             COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')
         ) AS from_name,
-        FIRST(COALESCE(NULLIF(` + identityindex.SenderEnvelopeDomainExpr("CASE WHEN mr.is_relayed THEN mr.email_address END") + `, ''), p.domain)) AS from_domain,
+        FIRST(` + identityindex.SenderDomainExpr("mr", "p") + `) AS from_domain,
         FIRST(COALESCE(p.phone_number, '')) AS from_phone
     FROM message_recipients mr
     JOIN participants p ON p.id = mr.participant_id

@@ -138,7 +138,7 @@ func TestImportEMLDirResumesAfterInterruptedFileBoundary(t *testing.T) {
 			err := IngestRawMessage(
 				ctx, st, sourceID, identifier, attachmentsDir,
 				labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log,
-			)
+				nil)
 			if err == nil && ingestCalls == 1 {
 				cancel()
 			}
@@ -298,7 +298,7 @@ func TestImportEMLDirResumeRescansFilesBeforeCheckpoint(t *testing.T) {
 			err := IngestRawMessage(
 				ctx, st, sourceID, identifier, attachmentsDir,
 				labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log,
-			)
+				nil)
 			if err == nil {
 				cancel()
 			}

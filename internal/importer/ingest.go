@@ -34,13 +34,8 @@ func IngestRawMessage(
 	sourceID int64, identifier, attachmentsDir string,
 	labelIDs []int64, sourceMsgID, rawHash string,
 	raw []byte, fallbackDate time.Time,
-	log *slog.Logger,
+	log *slog.Logger, rules []mime.RelayedSenderRule,
 ) error {
-	return ingestRawMessage(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, nil, "", nil)
-}
-
-// IngestRawMessageWithRules applies configured relay rules to imported mail.
-func IngestRawMessageWithRules(ctx context.Context, st *store.Store, sourceID int64, identifier, attachmentsDir string, labelIDs []int64, sourceMsgID, rawHash string, raw []byte, fallbackDate time.Time, log *slog.Logger, rules []mime.RelayedSenderRule) error {
 	return ingestRawMessage(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, nil, "", rules)
 }
 
@@ -107,9 +102,7 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 			len(parsed.Cc)+len(parsed.Bcc),
 	)
 	relayType, relayValue := mime.RelayedSender(raw, parsed.From, mime.RelayedSenderRules(rules))
-	if relayType == "" {
-		allAddresses = append(allAddresses, parsed.From...)
-	}
+	allAddresses = append(allAddresses, parsed.From...)
 	allAddresses = append(allAddresses, parsed.To...)
 	allAddresses = append(allAddresses, parsed.Cc...)
 	allAddresses = append(allAddresses, parsed.Bcc...)
@@ -199,25 +192,16 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 		AttachmentCount: attachmentCount,
 	}
 
-	build := func(_ []int64) *store.MessagePersistData {
-		return &store.MessagePersistData{
-			Message: rec, BodyText: sql.NullString{String: bodyText, Valid: bodyText != ""},
-			BodyHTML: sql.NullString{String: bodyHTML, Valid: bodyHTML != ""}, RawMIME: raw,
-			Recipients: []store.RecipientSet{
-				buildRecipientSet("from", parsed.From, participantMap),
-				buildRecipientSet("to", parsed.To, participantMap),
-				buildRecipientSet("cc", parsed.Cc, participantMap),
-				buildRecipientSet("bcc", parsed.Bcc, participantMap),
-			}, LabelIDs: labelIDs,
-		}
-	}
-	var messageID int64
-	if relayType != "" {
-		participants, relayBuild := store.RelayedSenderBuilder(parsed.From, relayType, relayValue, nil, build)
-		messageID, err = st.PersistRelayedEmailContext(ctx, sourceID, participants, relayBuild)
-	} else {
-		messageID, err = st.PersistMessageContext(ctx, build(nil))
-	}
+	messageID, err := st.PersistEmailMessageContext(ctx, &store.MessagePersistData{
+		Message: rec, BodyText: sql.NullString{String: bodyText, Valid: bodyText != ""},
+		BodyHTML: sql.NullString{String: bodyHTML, Valid: bodyHTML != ""}, RawMIME: raw,
+		Recipients: []store.RecipientSet{
+			buildRecipientSet("from", parsed.From, participantMap),
+			buildRecipientSet("to", parsed.To, participantMap),
+			buildRecipientSet("cc", parsed.Cc, participantMap),
+			buildRecipientSet("bcc", parsed.Bcc, participantMap),
+		}, LabelIDs: labelIDs,
+	}, parsed.From, relayType, relayValue)
 	if err != nil {
 		return err
 	}

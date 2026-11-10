@@ -2158,12 +2158,17 @@ func (s *Store) PersistMessage(data *MessagePersistData) (int64, error) {
 // statement in the transaction observes ctx, and cancellation rolls the full
 // message snapshot back.
 func (s *Store) PersistMessageContext(ctx context.Context, data *MessagePersistData) (int64, error) {
+	return s.PersistEmailMessageContext(ctx, data, nil, "", "")
+}
+
+// PersistEmailMessageContext persists a message and resolves a relay author in the same transaction.
+func (s *Store) PersistEmailMessageContext(ctx context.Context, data *MessagePersistData, from []mime.Address, relayType, relayValue string) (int64, error) {
 	if data == nil || data.Message == nil {
 		return 0, errors.New("persist message requires a message")
 	}
+	participants, build := RelayedSenderBuilder(from, relayType, relayValue, nil, func([]int64) *MessagePersistData { return data })
 	return s.persistMessageWithParticipantsTransaction(
-		ctx, attributionLockForMessage(data.Message.SourceID, data.Message.MessageType),
-		nil, nil, func([]int64) *MessagePersistData { return data }, nil,
+		ctx, attributionLockForMessage(data.Message.SourceID, data.Message.MessageType), nil, participants, build, nil,
 		func(ctx context.Context, tx *loggedTx, data *MessagePersistData, id int64) error {
 			q := boundQuerier{ctx: ctx, q: tx}
 			if data.MIMEAttachmentReplacement != nil {
@@ -2198,11 +2203,6 @@ func RelayedSenderBuilder(addresses []mime.Address, relayType, relayValue string
 		}
 		return data
 	}
-}
-
-// PersistRelayedEmailContext resolves participants and persists an email together.
-func (s *Store) PersistRelayedEmailContext(ctx context.Context, sourceID int64, participants []ParticipantPersistData, build func([]int64) *MessagePersistData) (int64, error) {
-	return s.persistMessageWithParticipantsTransaction(ctx, attributionLock{Sources: []int64{sourceID}}, nil, participants, build, nil, nil)
 }
 
 func (s *Store) persistAttachmentSnapshotWith(q querier, messageID int64, replacement *[]AttachmentWrite) error {

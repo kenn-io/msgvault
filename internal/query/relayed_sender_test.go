@@ -1,74 +1,101 @@
 package query
 
 import (
+	"database/sql"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 )
 
-func TestDuckDBRelayedSenderViews(t *testing.T) {
-	requirements := require.New(t)
-	b := NewTestDataBuilder(t)
-	b.AddSource("reader@example.test")
-	author := b.AddParticipant("author@example.test", "example.test", "Author")
-	ordinary := b.AddMessage(MessageOpt{Subject: "Ordinary", SenderID: &author})
-	b.AddRecipientWithEnvelope(ordinary, author, "from", "Author", "old@old.test")
-	relay := b.AddMessage(MessageOpt{Subject: "Relay", SenderID: &author})
-	b.AddRecipientWithEnvelope(relay, author, "from", "Author", "notifications@github.com")
-	b.recipients[len(b.recipients)-1].IsRelayed = true
-	engine := b.BuildEngine()
-	t.Cleanup(func() { _ = engine.Close() })
-	for _, statement := range []string{
-		`SELECT from_email, from_domain FROM v_messages`,
-		`SELECT from_email, from_domain FROM v_senders`,
-		`SELECT sender_identifier, sender_domain FROM analytical_entries`,
-	} {
-		func() {
-			rows, err := engine.db.QueryContext(t.Context(), statement)
-			requirements.NoError(err)
-			defer func() { _ = rows.Close() }()
-			var got []string
-			for rows.Next() {
-				var address, domain string
-				requirements.NoError(rows.Scan(&address, &domain))
-				got = append(got, address+"|"+domain)
+func TestRelayedSenderViews(t *testing.T) {
+	for _, backend := range []string{"sqlite", "duckdb"} {
+		t.Run(backend, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			var engine Engine
+			var relayID int64
+			if backend == "sqlite" {
+				st, err := store.OpenForTest(t.Context(), filepath.Join(t.TempDir(), "archive.db"))
+				requirements.NoError(err)
+				t.Cleanup(func() { _ = st.Close() })
+				requirements.NoError(st.InitSchema())
+				source, err := st.GetOrCreateSource("gmail", "reader@example.test")
+				requirements.NoError(err)
+				conversation, err := st.EnsureConversation(t.Context(), source.ID, "thread", "")
+				requirements.NoError(err)
+				alias, err := st.EnsureParticipant("old@old.test", "Author", "old.test")
+				requirements.NoError(err)
+				author, err := st.EnsureParticipantByIdentifier("github", "author", "Author")
+				requirements.NoError(err)
+				contact, err := st.EnsureParticipant("author@example.test", "Author", "example.test")
+				requirements.NoError(err)
+				for _, row := range []struct {
+					id, address string
+					participant int64
+					relayed     bool
+				}{{"ordinary", "old@old.test", alias, false}, {"relay", "notifications@github.com", author, true}} {
+					relayID, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{
+						Message:    &store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: row.id, MessageType: "email", SenderID: sql.NullInt64{Int64: row.participant, Valid: true}, SentAt: sql.NullTime{Time: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}},
+						Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{row.participant}, EmailAddresses: []string{row.address}, IsRelayed: row.relayed}},
+					})
+					requirements.NoError(err)
+				}
+				requirements.NoError(st.MergeParticipants(alias, contact))
+				requirements.NoError(st.MergeParticipants(author, contact))
+				_, err = st.DB().ExecContext(t.Context(), `UPDATE participants SET phone_number=? WHERE id=?`, "+12025550199", contact)
+				requirements.NoError(err)
+				engine = NewEngine(st.DB(), false)
+				detail, err := engine.GetMessage(t.Context(), relayID)
+				requirements.NoError(err)
+				requirements.Len(detail.From, 1)
+				assertions.Equal("notifications@github.com", detail.From[0].Email)
+			} else {
+				b := NewTestDataBuilder(t)
+				b.AddSource("reader@example.test")
+				author := b.AddParticipant("author@example.test", "example.test", "Author")
+				ordinary := b.AddMessage(MessageOpt{Subject: "Ordinary", SenderID: &author})
+				b.AddRecipientWithEnvelope(ordinary, author, "from", "Author", "old@old.test")
+				relayID = b.AddMessage(MessageOpt{Subject: "Relay", SenderID: &author})
+				b.AddRecipientWithEnvelope(relayID, author, "from", "Author", "notifications@github.com")
+				b.recipients[len(b.recipients)-1].IsRelayed = true
+				engine = b.BuildEngine()
 			}
-			requirements.NoError(rows.Err())
-			requirements.NoError(rows.Close())
-			assert.ElementsMatch(t, []string{"author@example.test|example.test", "notifications@github.com|github.com"}, got, statement)
-		}()
+			t.Cleanup(func() { _ = engine.Close() })
+			for view, want := range map[ViewType][]string{ViewSenders: {"notifications@github.com", "author@example.test"}, ViewDomains: {"github.com", "example.test"}} {
+				rows, err := engine.Aggregate(t.Context(), view, DefaultAggregateOptions())
+				requirements.NoError(err)
+				var keys []string
+				for _, row := range rows {
+					keys = append(keys, row.Key)
+				}
+				assertions.ElementsMatch(want, keys)
+			}
+			for address, want := range map[string]int{"author@example.test": 1, "notifications@github.com": 1, "old@old.test": 0} {
+				rows, err := engine.ListMessages(t.Context(), MessageFilter{Sender: address})
+				requirements.NoError(err)
+				assertions.Len(rows, want, address)
+				targets, err := engine.GetDeletionTargetsByFilter(t.Context(), MessageFilter{Sender: address})
+				requirements.NoError(err)
+				assertions.Len(targets, want, address)
+			}
+			for term, want := range map[string]int{"from:notifications@github.com": 1, "from:author@example.test": 1, "from:old@old.test": 0, "from:@old.test": 0, "from:old": 0, "notifications@github.com": 1} {
+				rows, err := engine.SearchFast(t.Context(), search.Parse(term), MessageFilter{}, 10, 0)
+				requirements.NoError(err)
+				assertions.Len(rows, want, term)
+			}
+			rows, err := engine.ListMessages(t.Context(), MessageFilter{Sender: "notifications@github.com", Domain: "github.com"})
+			requirements.NoError(err)
+			assertions.Len(rows, 1)
+			if backend == "sqlite" {
+				rows, err = engine.ListMessages(t.Context(), MessageFilter{Sender: "+12025550199"})
+				requirements.NoError(err)
+				assertions.Len(rows, 1)
+			}
+		})
 	}
-	domains, err := engine.SearchDomains(t.Context(), DomainSearchRequest{Page: PageSpec{Limit: 25}})
-	requirements.NoError(err)
-	var names []string
-	for _, row := range domains.Rows {
-		names = append(names, row.Domain)
-	}
-	assert.Contains(t, names, "github.com")
-	filter := MessageFilter{Sender: "notifications@github.com", Domain: "github.com"}
-	messages, err := engine.ListMessages(t.Context(), filter)
-	requirements.NoError(err)
-	assert.Len(t, messages, 1)
-	for term, want := range map[string]int{"notifications@github.com": 1, "author@example.test": 1, "@github.com": 1, "@example.test": 1, "old@old.test": 0, "@old.test": 0, "old": 0} {
-		results, err := engine.SearchFast(t.Context(), search.Parse("from:"+term), MessageFilter{}, 10, 0)
-		requirements.NoError(err)
-		assert.Len(t, results, want, term)
-	}
-	for domain := range map[string]bool{"github.com": true, "example.test": true} {
-		rows, err := engine.ListMessages(t.Context(), MessageFilter{Domain: domain})
-		requirements.NoError(err)
-		assert.Len(t, rows, 1, domain)
-	}
-	targets, err := engine.GetDeletionTargetsByFilter(t.Context(), filter)
-	requirements.NoError(err)
-	assert.Len(t, targets, 1)
-	old := MessageFilter{Sender: "old@old.test"}
-	messages, err = engine.ListMessages(t.Context(), old)
-	requirements.NoError(err)
-	assert.Empty(t, messages)
-	targets, err = engine.GetDeletionTargetsByFilter(t.Context(), old)
-	requirements.NoError(err)
-	assert.Empty(t, targets)
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/calevent"
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/senderauth"
 	"go.kenn.io/msgvault/internal/sourcescope"
@@ -23,16 +24,16 @@ import (
 // bare name. The store-backed API used to read only p.email_address,
 // which dropped phone-only and identifier-only participants (synctech
 // SMS/MMS, etc.). Standard SQL (CASE + ||) — works on SQLite and PG.
-const participantDisplaySQL = `COALESCE(
+var participantDisplaySQL = `COALESCE(
 		CASE
 			WHEN COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), '')) <> ''
-			  AND COALESCE(CASE WHEN mr.is_relayed THEN NULLIF(mr.email_address, '') END, NULLIF(p.email_address, ''), NULLIF(p.phone_number, '')) <> ''
+			  AND COALESCE(NULLIF(` + identityindex.SenderAddressExpr("mr", "p") + `, ''), NULLIF(p.phone_number, '')) <> ''
 			THEN COALESCE(NULLIF(TRIM(mr.display_name), ''), TRIM(p.display_name))
 				|| ' <'
-				|| COALESCE(CASE WHEN mr.is_relayed THEN NULLIF(mr.email_address, '') END, NULLIF(p.email_address, ''), p.phone_number)
+				|| COALESCE(NULLIF(` + identityindex.SenderAddressExpr("mr", "p") + `, ''), p.phone_number)
 				|| '>'
 			ELSE COALESCE(
-				CASE WHEN mr.is_relayed THEN NULLIF(mr.email_address, '') END, NULLIF(p.email_address, ''),
+				NULLIF(` + identityindex.SenderAddressExpr("mr", "p") + `, ''),
 				NULLIF(p.phone_number, ''),
 				NULLIF(TRIM(mr.display_name), ''),
 				NULLIF(TRIM(p.display_name), ''),
@@ -42,10 +43,12 @@ const participantDisplaySQL = `COALESCE(
 		''
 	)`
 
-const participantSenderEmailSQL = `COALESCE(CASE WHEN mr.is_relayed THEN NULLIF(mr.email_address, '') END, NULLIF(p.email_address, ''), '')`
+var participantSenderEmailSQL = `COALESCE(NULLIF(` + identityindex.SenderAddressExpr("mr", "p") + `, ''), '')`
+
 const participantSenderNameSQL = `COALESCE(NULLIF(TRIM(COALESCE(NULLIF(mr.display_name, ''), p.display_name)), ''), '')`
 const participantSenderPhoneSQL = `COALESCE(NULLIF(p.phone_number, ''), '')`
-const participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
+
+var participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
 			` + participantSenderEmailSQL + ` as from_email,
 			` + participantSenderNameSQL + ` as from_name,
 			` + participantSenderPhoneSQL + ` as from_phone`

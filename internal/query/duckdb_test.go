@@ -3552,11 +3552,11 @@ func TestDuckDBEngine_AggregateByRecipientName_EmptyStringFallback(t *testing.T)
 			(2::BIGINT, 'empty@test.com', 'test.com', '', ''),
 			(3::BIGINT, 'spaces@test.com', 'test.com', '   ', '')
 		`).
-		addTable("message_recipients", "message_recipients", "message_recipients.parquet", messageRecipientsColsWithEnvelope, `
-			(1::BIGINT, 1::BIGINT, 'from', 'Sender', NULL::VARCHAR, NULL::VARCHAR, false),
-			(1::BIGINT, 2::BIGINT, 'to', '', NULL::VARCHAR, NULL::VARCHAR, false),
-			(2::BIGINT, 1::BIGINT, 'from', 'Sender', NULL::VARCHAR, NULL::VARCHAR, false),
-			(2::BIGINT, 3::BIGINT, 'cc', '   ', NULL::VARCHAR, NULL::VARCHAR, false)
+		addTable("message_recipients", "message_recipients", "message_recipients.parquet", messageRecipientsCols, `
+			(1::BIGINT, 1::BIGINT, 'from', 'Sender'),
+			(1::BIGINT, 2::BIGINT, 'to', ''),
+			(2::BIGINT, 1::BIGINT, 'from', 'Sender'),
+			(2::BIGINT, 3::BIGINT, 'cc', '   ')
 		`).
 		addEmptyTable("labels", "labels", "labels.parquet", labelsCols, `(1::BIGINT, 'x')`).
 		addEmptyTable("message_labels", "message_labels", "message_labels.parquet", messageLabelsCols, `(1::BIGINT, 1::BIGINT)`).
@@ -3600,9 +3600,9 @@ func TestDuckDBEngine_ListMessages_MatchEmptyRecipientName(t *testing.T) {
 			(1::BIGINT, 'alice@test.com', 'test.com', 'Alice', ''),
 			(2::BIGINT, 'bob@test.com', 'test.com', 'Bob', '')
 		`).
-		addTable("message_recipients", "message_recipients", "message_recipients.parquet", messageRecipientsColsWithEnvelope, `
-			(1::BIGINT, 1::BIGINT, 'from', 'Alice', NULL::VARCHAR, NULL::VARCHAR, false),
-			(1::BIGINT, 2::BIGINT, 'to', 'Bob', NULL::VARCHAR, NULL::VARCHAR, false)
+		addTable("message_recipients", "message_recipients", "message_recipients.parquet", messageRecipientsCols, `
+			(1::BIGINT, 1::BIGINT, 'from', 'Alice'),
+			(1::BIGINT, 2::BIGINT, 'to', 'Bob')
 		`).
 		addEmptyTable("labels", "labels", "labels.parquet", labelsCols, `(1::BIGINT, 'x')`).
 		addEmptyTable("message_labels", "message_labels", "message_labels.parquet", messageLabelsCols, `(1::BIGINT, 1::BIGINT)`).
@@ -4349,9 +4349,9 @@ func TestDuckDBEngine_VARCHARParquetColumns(t *testing.T) {
 		addTable("participants", "participants", "participants.parquet", participantsCols, `
 			(1::BIGINT, 'alice@test.com', 'test.com', 'Alice', '')
 		`).
-		addTable("message_recipients", "message_recipients", "message_recipients.parquet", messageRecipientsColsWithEnvelope, `
-			(1::BIGINT, 1::BIGINT, 'from', 'Alice', NULL::VARCHAR, NULL::VARCHAR, false),
-			(2::BIGINT, 1::BIGINT, 'from', 'Alice', NULL::VARCHAR, NULL::VARCHAR, false)
+		addTable("message_recipients", "message_recipients", "message_recipients.parquet", messageRecipientsCols, `
+			(1::BIGINT, 1::BIGINT, 'from', 'Alice'),
+			(2::BIGINT, 1::BIGINT, 'from', 'Alice')
 		`).
 		addEmptyTable("labels", "labels", "labels.parquet", labelsCols, `(1::BIGINT, 'x')`).
 		addEmptyTable("message_labels", "message_labels", "message_labels.parquet", messageLabelsCols, `(1::BIGINT, 1::BIGINT)`).
@@ -4706,9 +4706,9 @@ func TestDuckDBEngine_StaleParquetSchema(t *testing.T) {
 		addTable("participants", "participants", "participants.parquet", participantsCols, `
 			(1::BIGINT, 'alice@test.com', 'test.com', 'Alice', '')
 		`).
-		addTable("message_recipients", "message_recipients", "message_recipients.parquet", messageRecipientsColsWithEnvelope, `
-			(1::BIGINT, 1::BIGINT, 'from', 'Alice', NULL::VARCHAR, NULL::VARCHAR, false),
-			(2::BIGINT, 1::BIGINT, 'from', 'Alice', NULL::VARCHAR, NULL::VARCHAR, false)
+		addTable("message_recipients", "message_recipients", "message_recipients.parquet", messageRecipientsCols, `
+			(1::BIGINT, 1::BIGINT, 'from', 'Alice'),
+			(2::BIGINT, 1::BIGINT, 'from', 'Alice')
 		`).
 		addEmptyTable("labels", "labels", "labels.parquet", labelsCols, `(1::BIGINT, 'x')`).
 		addEmptyTable("message_labels", "message_labels", "message_labels.parquet", messageLabelsCols, `(1::BIGINT, 1::BIGINT)`).

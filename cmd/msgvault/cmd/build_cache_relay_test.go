@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"database/sql"
 	"log/slog"
 	"path/filepath"
 	"testing"
@@ -24,12 +25,12 @@ func TestBuildCacheRelayedAuthors(t *testing.T) {
 	requirements.NoError(err)
 	for _, author := range []struct{ name, login string }{{"Alice", "alice"}, {"Build Bot", "build[bot]"}} {
 		raw := []byte("From: " + author.name + " <notifications@github.com>\r\nTo: reader@example.test\r\nX-GitHub-Sender: " + author.login + "\r\nDate: Mon, 01 Jan 2024 12:00:00 +0000\r\nSubject: Notice\r\n\r\nHello")
-		requirements.NoError(importer.IngestRawMessage(t.Context(), st, src.ID, src.Identifier, "", nil, author.login, author.login, raw, time.Time{}, slog.Default()))
+		requirements.NoError(importer.IngestRawMessage(t.Context(), st, src.ID, src.Identifier, "", nil, author.login, author.login, raw, time.Time{}, slog.Default(), nil))
 	}
 	author, err := st.EnsureParticipantByIdentifier("github", "alice", "Alice")
 	requirements.NoError(err)
 	raw := []byte("From: Alice <old@old.test>\r\nTo: reader@example.test\r\nDate: Mon, 01 Jan 2024 12:00:00 +0000\r\nSubject: Ordinary\r\n\r\nHello")
-	requirements.NoError(importer.IngestRawMessage(t.Context(), st, src.ID, src.Identifier, "", nil, "ordinary", "ordinary", raw, time.Time{}, slog.Default()))
+	requirements.NoError(importer.IngestRawMessage(t.Context(), st, src.ID, src.Identifier, "", nil, "ordinary", "ordinary", raw, time.Time{}, slog.Default(), nil))
 	alias, err := st.EnsureParticipant("old@old.test", "Alice", "old.test")
 	requirements.NoError(err)
 	contact, err := st.EnsureParticipant("alice@example.test", "Alice", "example.test")
@@ -55,4 +56,24 @@ func TestBuildCacheRelayedAuthors(t *testing.T) {
 		ids[people.Rows[0].CanonicalID()] = true
 	}
 	assertions.Len(ids, 2)
+}
+
+func TestRefreshRelatedCacheStatsRelayedSender(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	db, err := sql.Open("duckdb", "")
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = db.Close() })
+	_, err = db.ExecContext(t.Context(), `CREATE SCHEMA sqlite_db;
+		CREATE TABLE sqlite_db.messages(id BIGINT, sent_at TIMESTAMP, deleted_at TIMESTAMP);
+		CREATE TABLE sqlite_db.participants(id BIGINT, email_address VARCHAR, domain VARCHAR);
+		CREATE TABLE sqlite_db.message_recipients(message_id BIGINT, participant_id BIGINT, recipient_type VARCHAR, email_address VARCHAR, is_relayed BOOLEAN);
+		INSERT INTO sqlite_db.messages VALUES (1, '2024-01-01', NULL), (2, '2024-01-01', NULL);
+		INSERT INTO sqlite_db.participants VALUES (1, 'author@example.test', 'example.test'), (2, 'other@example.test', 'example.test');
+		INSERT INTO sqlite_db.message_recipients VALUES (1, 1, 'from', 'relay@relay.test', true), (2, 2, 'from', 'old@old.test', false)`)
+	requirements.NoError(err)
+	state := query.CacheSyncState{LastMessageID: 2}
+	requirements.NoError(refreshRelatedCacheStats(t.Context(), db, &state, relatedChangeKinds{recipients: true}))
+	assertions.Equal(int64(2), state.Stats.UniqueSenders)
+	assertions.Equal(int64(2), state.Stats.UniqueDomains)
 }

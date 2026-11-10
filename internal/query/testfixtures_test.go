@@ -186,6 +186,9 @@ type TestDataBuilder struct {
 	unsentMessages           string
 
 	emptyAttachments bool // if true, write empty attachments file
+	// legacyRecipientSchema writes message_recipients without the
+	// email_address and envelope_address columns, modeling a pre-v17 cache.
+	legacyRecipientSchema bool
 }
 
 // NewTestDataBuilder creates a new typed test data builder.
@@ -452,6 +455,12 @@ func (b *TestDataBuilder) SetEmptyAttachments() {
 	b.emptyAttachments = true
 }
 
+// SetLegacyRecipientSchema writes message_recipients without the
+// email_address envelope column, modeling a pre-v17 cache.
+func (b *TestDataBuilder) SetLegacyRecipientSchema() {
+	b.legacyRecipientSchema = true
+}
+
 // ---------------------------------------------------------------------------
 // SQL generation
 // ---------------------------------------------------------------------------
@@ -591,6 +600,12 @@ func (b *TestDataBuilder) participantIdentifiersSQL() string {
 }
 
 func (b *TestDataBuilder) recipientsSQL() string {
+	if b.legacyRecipientSchema {
+		return joinRows(b.recipients, func(r RecipientFixture) string {
+			return fmt.Sprintf("(%d::BIGINT, %d::BIGINT, %s, %s)",
+				r.MessageID, r.ParticipantID, sqlStr(r.Type), sqlStr(r.DisplayName))
+		})
+	}
 	return joinRows(b.recipients, func(r RecipientFixture) string {
 		// Mirror the exporter: envelope_address is the recorded header
 		// address or NULL, and email_address resolves to the envelope when
@@ -709,6 +724,7 @@ func (b *TestDataBuilder) Build() (string, func()) {
 
 	pb := newParquetBuilder(b.t)
 	pb.unsentMessages = b.unsentMessages
+	pb.legacyRecipientSchema = b.legacyRecipientSchema
 	b.addMessageTables(pb)
 	b.addAuxiliaryTables(pb)
 	b.addAttachmentsTable(pb)
@@ -747,6 +763,23 @@ func (b *TestDataBuilder) addMessageTables(pb *parquetBuilder) {
 	}
 }
 
+// recipientCols returns the message_recipients column list for this
+// builder's schema mode.
+func (b *TestDataBuilder) recipientCols() string {
+	if b.legacyRecipientSchema {
+		return messageRecipientsCols
+	}
+	return messageRecipientsColsWithEnvelope
+}
+
+// recipientDummyRow returns the schema-only dummy row matching recipientCols.
+func (b *TestDataBuilder) recipientDummyRow() string {
+	if b.legacyRecipientSchema {
+		return "(0::BIGINT, 0::BIGINT, '', '')"
+	}
+	return "(0::BIGINT, 0::BIGINT, '', '', '', '', false)"
+}
+
 // addAuxiliaryTables adds sources, participants, recipients, labels, message_labels, and conversations.
 func (b *TestDataBuilder) addAuxiliaryTables(pb *parquetBuilder) {
 	auxTables := []struct {
@@ -757,7 +790,7 @@ func (b *TestDataBuilder) addAuxiliaryTables(pb *parquetBuilder) {
 		{datasetPersonDisplayNames, datasetPersonDisplayNames, "person_display_names.parquet", "participant_id, person_id, display_name", "(0::BIGINT, 0::BIGINT, NULL::VARCHAR)", strings.Join(b.personDisplayNames, ","), len(b.personDisplayNames) == 0},
 		{"participants", "participants", "participants.parquet", participantsCols, "(0::BIGINT, '', '', '', '')", b.participantsSQL(), len(b.participants) == 0},
 		{"participant_identifiers", "participant_identifiers", "participant_identifiers.parquet", participantIdentifiersCols, "(0::BIGINT, '', '', '', false)", b.participantIdentifiersSQL(), len(b.participantIdentifiers) == 0},
-		{"message_recipients", "message_recipients", "message_recipients.parquet", messageRecipientsColsWithEnvelope, "(0::BIGINT, 0::BIGINT, '', '', '', '', false)", b.recipientsSQL(), len(b.recipients) == 0},
+		{"message_recipients", "message_recipients", "message_recipients.parquet", b.recipientCols(), b.recipientDummyRow(), b.recipientsSQL(), len(b.recipients) == 0},
 		{"labels", "labels", "labels.parquet", labelsCols, "(0::BIGINT, '')", b.labelsSQL(), len(b.labels) == 0},
 		{"message_labels", "message_labels", "message_labels.parquet", messageLabelsCols, "(0::BIGINT, 0::BIGINT)", b.messageLabelsSQL(), len(b.msgLabels) == 0},
 		{"conversations", "conversations", "conversations.parquet", conversationsCols, "(0::BIGINT, '', '', 'email')", b.conversationsSQL(), len(b.conversations) == 0},
@@ -812,9 +845,10 @@ type parquetTable struct {
 
 // parquetBuilder creates a temp directory with Parquet test data files.
 type parquetBuilder struct {
-	t              testing.TB
-	tables         []parquetTable
-	unsentMessages string
+	t                     testing.TB
+	tables                []parquetTable
+	unsentMessages        string
+	legacyRecipientSchema bool
 }
 
 // Like dbtest.schemaTemplates and testutil.sqliteTemplate, retain templates in
@@ -839,7 +873,7 @@ func (b *parquetBuilder) contentKey() [sha256.Size]byte {
 			_, _ = fmt.Fprintf(h, "%d:%s", len(field), field)
 		}
 	}
-	_, _ = fmt.Fprintf(h, "%d:%s", len(b.unsentMessages), b.unsentMessages)
+	_, _ = fmt.Fprintf(h, "%d:%s:%t", len(b.unsentMessages), b.unsentMessages, b.legacyRecipientSchema)
 	return [sha256.Size]byte(h.Sum(nil))
 }
 
@@ -927,6 +961,17 @@ func (b *parquetBuilder) buildTemplate() (fstest.MapFS, identityindex.BuildResul
 	require.NoError(b.t, err, "open duckdb")
 	defer func() { _ = db.Close() }()
 	b.writeParquetFiles(db, tmpDir)
+	var legacyRecipients []byte
+	var recipientPath string
+	if b.legacyRecipientSchema {
+		recipientPath = filepath.Join(tmpDir, "message_recipients", "message_recipients.parquet")
+		legacyRecipients, err = os.ReadFile(recipientPath)
+		require.NoError(b.t, err)
+		currentPath := recipientPath + ".current"
+		_, err = db.ExecContext(b.t.Context(), "COPY (SELECT *, NULL::VARCHAR AS email_address, NULL::VARCHAR AS envelope_address, false AS is_relayed FROM read_parquet('"+escapePath(recipientPath)+"')) TO '"+escapePath(currentPath)+"' (FORMAT PARQUET)")
+		require.NoError(b.t, err)
+		require.NoError(b.t, os.Rename(currentPath, recipientPath))
+	}
 	derived, err := identityindex.Build(b.t.Context(), db, identityindex.BuildOptions{
 		Mode:           identityindex.ModeFull,
 		StagedBaseRoot: tmpDir,
@@ -934,6 +979,9 @@ func (b *parquetBuilder) buildTemplate() (fstest.MapFS, identityindex.BuildResul
 		UnsentMessages: b.unsentMessages,
 	})
 	require.NoError(b.t, err, "derive identity fixture datasets")
+	if b.legacyRecipientSchema {
+		require.NoError(b.t, os.WriteFile(recipientPath, legacyRecipients, 0o600))
+	}
 	files := fstest.MapFS{}
 	err = fs.WalkDir(os.DirFS(tmpDir), ".", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {

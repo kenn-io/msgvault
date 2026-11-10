@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -35,7 +36,7 @@ func inspectRelatedChangeKinds(ctx context.Context, snapshot *cacheSourceSnapsho
 
 func refreshRelatedCacheStats(ctx context.Context, db sqlRunner, state *query.CacheSyncState, kinds relatedChangeKinds) error {
 	if kinds.recipients {
-		statement := `SELECT count(DISTINCT p.email_address), count(DISTINCT p.domain)
+		statement := `SELECT count(DISTINCT ` + identityindex.SenderAddressExpr("mr", "p") + `), count(DISTINCT ` + identityindex.SenderDomainExpr("mr", "p") + `)
 			FROM sqlite_db.message_recipients mr
 			JOIN sqlite_db.messages m ON m.id = mr.message_id
 			JOIN sqlite_db.participants p ON p.id = mr.participant_id

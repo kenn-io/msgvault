@@ -8,7 +8,7 @@ import (
 
 // SenderDomainCondition matches the recorded domain on an explicit From row.
 func SenderDomainCondition(placeholder string) string {
-	return `EXISTS (SELECT 1 FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'from' AND COALESCE(CASE WHEN mr.is_relayed THEN ` + identityindex.SenderEnvelopeDomainExpr("mr.email_address") + ` END, p.domain) = ` + placeholder + `)`
+	return `EXISTS (SELECT 1 FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'from' AND ` + identityindex.SenderDomainExpr("mr", "p") + ` = ` + placeholder + `)`
 }
 
 // escapeLike makes SQL LIKE wildcards literal with ESCAPE '\'.
@@ -59,30 +59,19 @@ func SenderLookup(value string, lower func(string) string, messages, recipients,
 	if operator == "=" {
 		envelope = "LOWER(" + address + ") = ?"
 	}
-	recipientFallback := ""
-	directFallback := ""
-	matchingFallback := ""
-	if !metadata {
-		guard := func(messageID string) string {
-			return ` AND NOT EXISTS (SELECT 1 FROM ` + recipients + ` mr_guard WHERE mr_guard.message_id = ` + messageID + ` AND mr_guard.recipient_type = 'from' AND mr_guard.is_relayed AND COALESCE(mr_guard.email_address, '') <> '')`
-		}
-		recipientFallback = guard("mr2.message_id")
-		directFallback = guard(alias + ".id")
-		matchingFallback = guard("ms.id")
-	}
 	from := `EXISTS (SELECT 1 FROM ` + recipients + ` mr2 WHERE mr2.message_id = ` + alias + `.id AND mr2.recipient_type = 'from' AND mr2.is_relayed AND ` + envelope + `) OR EXISTS (SELECT 1 FROM ` + recipients + ` mr2 JOIN ` + participants + ` p2 ON p2.id = mr2.participant_id
-  WHERE mr2.message_id = ` + alias + `.id AND mr2.recipient_type = 'from' AND ` + participant + recipientFallback + `)`
+  WHERE mr2.message_id = ` + alias + `.id AND mr2.recipient_type = 'from' AND ` + participant + ` AND NOT mr2.is_relayed)`
 	args = append([]any{pattern}, args...)
 	matching = `SELECT mr2.message_id FROM ` + recipients + ` mr2 WHERE mr2.recipient_type = 'from' AND mr2.is_relayed AND ` + envelope + ` UNION SELECT mr2.message_id FROM ` + recipients + ` mr2 WHERE mr2.recipient_type = 'from'
-  AND mr2.participant_id IN (SELECT p2.id FROM ` + participants + ` p2 WHERE ` + participant + `)` + recipientFallback
+  AND mr2.participant_id IN (SELECT p2.id FROM ` + participants + ` p2 WHERE ` + participant + `) AND NOT mr2.is_relayed`
 	if metadata {
 		header := lower("COALESCE(mr2.display_name, '')") + ` LIKE ? ESCAPE '\'`
 		from += ` OR EXISTS (SELECT 1 FROM ` + recipients + ` mr2 WHERE mr2.message_id = ` + alias + `.id AND mr2.recipient_type = 'from' AND ` + header + `)`
 		matching += ` UNION SELECT mr2.message_id FROM ` + recipients + ` mr2 WHERE mr2.recipient_type = 'from' AND ` + header
 		args = append(args, pattern)
 	}
-	condition = `(` + from + ` OR EXISTS (SELECT 1 FROM ` + participants + ` p2 WHERE p2.id = ` + alias + `.sender_id AND ` + participant + `)` + directFallback + `)`
-	matching += ` UNION SELECT ms.id FROM ` + messages + ` ms WHERE ms.sender_id IN (SELECT p2.id FROM ` + participants + ` p2 WHERE ` + participant + `)` + matchingFallback
+	condition = `(` + from + ` OR EXISTS (SELECT 1 FROM ` + participants + ` p2 WHERE p2.id = ` + alias + `.sender_id AND ` + participant + `)` + ` AND ` + identityindex.RelayAbsentExpr(alias+".id", recipients) + `)`
+	matching += ` UNION SELECT ms.id FROM ` + messages + ` ms WHERE ms.sender_id IN (SELECT p2.id FROM ` + participants + ` p2 WHERE ` + participant + `)` + ` AND ` + identityindex.RelayAbsentExpr("ms.id", recipients)
 	args = append(args, participantArgs...)
 	return condition, matching, args
 }

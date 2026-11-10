@@ -644,7 +644,7 @@ func (s *syncer) download(ctx context.Context, folderID string, msgs []DeltaMess
 				continue
 			}
 		}
-		if err := importer.IngestRawMessageWithRules(ctx, s.st, s.sourceID, s.opts.Email, s.opts.AttachmentsDir,
+		if err := importer.IngestRawMessage(ctx, s.st, s.sourceID, s.opts.Email, s.opts.AttachmentsDir,
 			labelIDs, r.msg.ID, hex.EncodeToString(sum[:]), r.raw, r.msg.ReceivedDateTime, s.log, s.opts.RelayedSenders); err != nil {
 			storeErr = fmt.Errorf("store message %s: %w", r.msg.ID, err)
 			s.sum.Errors++
