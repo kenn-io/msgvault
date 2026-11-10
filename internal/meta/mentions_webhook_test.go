@@ -47,6 +47,11 @@ func TestApplyMentionsArchivesCaptionAndCommentMentions(t *testing.T) {
 	}
 	require.NoError(rows.Err())
 	assert.Equal(map[string]string{"800": "caption_mention", "810": "comment_mention", "901": "comment_mention"}, kinds)
+	// A repeated delivery updates the same rows in place.
+	require.NoError(ApplyMentions(t.Context(), st, c, "9", "100", "200", feedValues(`{"media_id":"810","comment_id":"901"}`)))
+	var count int
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages WHERE source_id=?`, src.ID).Scan(&count))
+	assert.Equal(3, count)
 	root, comment := message(t, st, src.ID, "810"), message(t, st, src.ID, "901")
 	assert.Equal(root.ID, comment.ReplyToMessageID.Int64)
 	assert.Equal(root.ConversationID, comment.ConversationID)

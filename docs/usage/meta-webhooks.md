@@ -52,7 +52,9 @@ For Instagram, subscribe the app's Instagram object to the `comments` and
 on a profile that sets `mentions = true`. Each account must have an
 enabled [`[[instagram_comments]]` profile](../configuration.md#instagram-comments)
 for the same app and account, registered with
-`msgvault source instagram-comments add`.
+`msgvault source instagram-comments add`. Mentions also need
+`msgvault source instagram-mentions add`, which registers the separate
+mentions source.
 
 ## How deliveries are applied
 
@@ -71,7 +73,8 @@ skipped. When a delivery cannot be
 applied, for example while a polling sync of the same Page is running, the
 daemon retries it with increasing waits and holds later deliveries until it
 succeeds. After an hour of failures it logs the delivery and drops it; the
-next polling sync still archives the comment text. A change that can never be
+next polling sync still archives the comment text. No sync can find caption
+or comment mentions, so a dropped mention delivery is lost. A change that can never be
 applied, such as a comment deleted before it was read, is logged and skipped
 without holding back the other changes in its delivery.
 

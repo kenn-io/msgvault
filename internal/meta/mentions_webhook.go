@@ -132,22 +132,22 @@ func (r *mentionRun) own(media IGMedia) bool {
 // its media, archiving the media first when it is not archived yet.
 func (r *mentionRun) persistComment(ctx context.Context, comment MentionedComment) error {
 	media := *comment.Media
-	existing, err := r.store.StoredMessagesContext(ctx, r.sourceID, mentionRawFormat, []string{media.ID})
+	existing, err := r.store.MessageExistsBatchContext(ctx, r.sourceID, []string{media.ID})
 	if err != nil {
 		return err
 	}
-	if _, ok := existing[media.ID]; !ok {
+	if existing[media.ID] == 0 {
 		if err := r.persistMedia(ctx, media, mentionComment); err != nil {
 			return err
 		}
-		if existing, err = r.store.StoredMessagesContext(ctx, r.sourceID, mentionRawFormat, []string{media.ID}); err != nil {
+		if existing, err = r.store.MessageExistsBatchContext(ctx, r.sourceID, []string{media.ID}); err != nil {
 			return err
 		}
 	}
 	comment.Media = nil
 	obj := archivedObject{
 		obj:          Object{ID: comment.ID, Message: comment.Text, CreatedTime: comment.Timestamp},
-		conversation: media.ID, reply: sql.NullInt64{Int64: existing[media.ID].ID, Valid: true},
+		conversation: media.ID, reply: sql.NullInt64{Int64: existing[media.ID], Valid: true},
 	}
 	return r.write(ctx, obj, mentionMetadata{MediaID: media.ID, CommentID: comment.ID, Kind: mentionComment}, comment)
 }
