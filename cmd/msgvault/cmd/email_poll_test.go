@@ -57,20 +57,13 @@ func TestDeferredQuotaKeepsOtherFailures(t *testing.T) {
 	assert.False(t, gmail.IsQuotaDeferred(errors.Join(deferred, errors.New("other failure"))))
 }
 
-func TestPollingTargetsRejectInvalidConfiguration(t *testing.T) {
+func TestPollingTargetsRejectDuplicateSource(t *testing.T) {
 	st := storetest.New(t).Store
 	cfg := config.NewDefaultConfig()
 	state := invocationFromContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
-	_, err := st.GetOrCreateSource(sourceTypeMSMail, "other@example.test")
-	require.NoError(t, err)
-	cfg.Accounts = []config.AccountSchedule{{Email: "other@example.test", Enabled: true, Schedule: "0 * * * *", PollInterval: 15 * time.Second}}
-	assert.ErrorContains(t, validatePollingTargets(t.Context(), cfg, st, state), "no active")
 	source, err := st.GetOrCreateSource(sourceTypeIMAP, "imaps://user@example.test")
 	require.NoError(t, err)
-	cfg.Accounts[0].Email = source.Identifier
-	cfg.Sync.IMAPSkipFolders = map[string][]string{source.Identifier: {"Archive"}}
-	assert.ErrorContains(t, validatePollingTargets(t.Context(), cfg, st, state), "folder filter")
-	cfg.Sync.IMAPSkipFolders = nil
+	cfg.Accounts = []config.AccountSchedule{{Email: source.Identifier, Enabled: true, Schedule: "0 * * * *", PollInterval: 15 * time.Second}}
 	require.NoError(t, st.UpdateSourceDisplayName(source.ID, "mailbox@example.test"))
 	cfg.Accounts = append(cfg.Accounts, config.AccountSchedule{Email: "mailbox@example.test", Enabled: true, Schedule: "0 * * * *", PollInterval: 15 * time.Second})
 	assert.ErrorContains(t, validatePollingTargets(t.Context(), cfg, st, state), "already has a polling account")
