@@ -34,9 +34,10 @@ public site has three levels; keep their responsibilities distinct.
   HTML and `/docs/assets/static/` or `/docs/assets/generated/` for docs media.
 
 For a command that has not shipped, put `Not in the latest release yet` before
-its README block, or `# Not in the latest release yet` before its installer
-output. The installer comment covers output until the next blank source line.
-Remove the note after a release supports the command. See the
+its README block. For installer output, print a warning alongside the command
+and put `# Not in the latest release yet` before the output in the source. The
+comment covers output until the next blank source line. Remove the note and
+warning after a release supports the command. See the
 [release-commands guide](https://github.com/kenn-io/actions/tree/main/release-commands#mark-unreleased-commands)
 for details.
 
