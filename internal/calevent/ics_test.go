@@ -27,7 +27,7 @@ func TestICSFloatingRecurrenceUsesSourceZone(t *testing.T) {
 			assertions.Equal(tc.original, components[0].Event.Original.Instant.Format(time.RFC3339))
 		})
 	}
-	t.Run("period", func(t *testing.T) {
+	t.Run("period recurrence", func(t *testing.T) {
 		assertions, requirements := assert.New(t), require.New(t)
 		const period = "RDATE;VALUE=PERIOD:20270315T090000Z/20270315T100000Z"
 		raw := strings.Replace(icsExample, "SUMMARY:", period+"\r\nSUMMARY:", 1)
@@ -97,28 +97,32 @@ func TestICSDecode(t *testing.T) {
 		requirements.NotEmpty(components[0].Event.Attendees)
 		assertions.Equal("André Example", components[0].Event.Attendees[0].DisplayName)
 	})
+	assertions, requirements := assert.New(t), require.New(t)
+	e, ok, err := Decode("ics", []byte(icsExample), []byte(`{}`), "")
+	requirements.NoError(err)
+	requirements.True(ok)
+	requirements.NotNil(e.Start)
+	assertions.Equal("2027-03-14T13:00:00Z", e.Start.Format(time.RFC3339))
+	requirements.Len(e.Attendees, 3)
+	assertions.Equal("organizer", e.Attendees[2].Role)
+	assertions.Equal("organizer@example.com", e.Attendees[2].Email)
+	assertions.Equal("room@example.com", e.Attendees[1].Email)
+	assertions.Equal("accepted", e.Attendees[0].RSVP)
+	assertions.Equal("room", e.Attendees[1].Role)
 	for _, tt := range []struct{ name, raw, role string }{
 		{"optional", icsExample, "optional"},
 		{"chair", strings.Replace(icsExample, "ROLE=OPT-PARTICIPANT", "ROLE=CHAIR", 1), "required"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			assertions := assert.New(t)
-			requirements := require.New(t)
-
+			assertions, requirements := assert.New(t), require.New(t)
 			e, ok, err := Decode("ics", []byte(tt.raw), []byte(`{}`), "")
 			requirements.NoError(err)
 			requirements.True(ok)
-			requirements.NotNil(e.Start)
-			assertions.Equal("2027-03-14T13:00:00Z", e.Start.Format(time.RFC3339))
-			requirements.Len(e.Attendees, 3)
-			assertions.Equal("organizer", e.Attendees[2].Role)
-			assertions.Equal("organizer@example.com", e.Attendees[2].Email)
-			assertions.Equal("room@example.com", e.Attendees[1].Email)
+			requirements.NotEmpty(e.Attendees)
 			assertions.Equal(tt.role, e.Attendees[0].Role)
-			assertions.Equal("accepted", e.Attendees[0].RSVP)
-			assertions.Equal("room", e.Attendees[1].Role)
 		})
 	}
+
 }
 
 func TestICSNULFields(t *testing.T) {
