@@ -61,7 +61,7 @@ func TestRepairAutomationFlagsRefreshRetryAndOutputFailure(t *testing.T) {
 			var out bytes.Buffer
 			cmd.SetOut(&out)
 			if outputFailure {
-				cmd.SetOut(automationFailingWriter{})
+				cmd.SetOut(failingSearchWriter{})
 			}
 			err = runRepairAutomationFlagsLocal(cmd, true, 1)
 			require.ErrorIs(err, sentinel)
@@ -81,7 +81,3 @@ func TestRepairAutomationFlagsRefreshRetryAndOutputFailure(t *testing.T) {
 		})
 	}
 }
-
-type automationFailingWriter struct{}
-
-func (automationFailingWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }

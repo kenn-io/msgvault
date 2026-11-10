@@ -568,9 +568,9 @@ type countingStore struct {
 	automationReads int
 }
 
-func (c *countingStore) MessageAutomationContext(ctx context.Context, id int64) (uint32, bool, error) {
+func (c *countingStore) LoopFileAutomationContext(ctx context.Context, id int64) (uint32, bool, error) {
 	c.automationReads++
-	return c.Store.MessageAutomationContext(ctx, id)
+	return c.Store.LoopFileAutomationContext(ctx, id)
 }
 
 func (c *countingStore) GetMessageBodyText(ctx context.Context, messageID int64) (string, error) {

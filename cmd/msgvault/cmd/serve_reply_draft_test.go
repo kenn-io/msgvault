@@ -675,6 +675,10 @@ func TestDelegatedDraftReplyCreatesDraft(t *testing.T) {
 		SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?
 	`), fixture.source.ID, "Drafts|1").Scan(&localID))
 	assertions.NotZero(localID)
+	flags, current, err := fixture.store.MessageAutomationContext(t.Context(), localID)
+	requirements.NoError(err)
+	assertions.True(current)
+	assertions.Zero(flags)
 }
 
 func TestRunCLIReplyDraftPublishesRemoteAndLocalRows(t *testing.T) {

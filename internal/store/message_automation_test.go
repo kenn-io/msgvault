@@ -112,7 +112,7 @@ func TestCopySubsetCopiesAutomationColumns(t *testing.T) {
 
 func TestRepairAutomationFlagsDryRunApply(t *testing.T) {
 	t.Run("original changes after parsing", func(t *testing.T) {
-		for _, change := range []string{"raw", "missing", "format", "encryption", "compression"} {
+		for _, change := range []string{"raw", "missing", "format", "encryption", "compression", "current"} {
 			t.Run(change, func(t *testing.T) {
 				assert := assert.New(t)
 				require := require.New(t)
@@ -127,6 +127,9 @@ func TestRepairAutomationFlagsDryRunApply(t *testing.T) {
 					args = []any{[]byte("From: person@example.test\r\n\r\nchanged"), ids[0]}
 				}
 				switch change {
+				case "current":
+					statement = `UPDATE messages SET automation_flags = 0, automation_rule_version = ? WHERE id = ?`
+					args = []any{store.AutomationRuleVersion, ids[0]}
 				case "missing":
 					statement = `DELETE FROM message_raw WHERE message_id = ?`
 				case "format":
@@ -157,8 +160,14 @@ func TestRepairAutomationFlagsDryRunApply(t *testing.T) {
 				require.NoError(mutationErr)
 				require.GreaterOrEqual(reads, 3, "the mutation occurs after the first original was parsed")
 				assert.Equal(int64(1), sum.Written)
-				assert.Equal(int64(1), sum.Remaining)
-				assertAutomation(t, f.Store, ids[0], 0, false)
+				assert.Equal(int64(1), sum.Bulk)
+				assert.Equal(int64(1), sum.Automated)
+				remaining := int64(1)
+				if change == "current" {
+					remaining = 0
+				}
+				assert.Equal(remaining, sum.Remaining)
+				assertAutomation(t, f.Store, ids[0], 0, change == "current")
 				assertAutomation(t, f.Store, ids[1], 4, true)
 			})
 		}
@@ -342,10 +351,10 @@ func TestAutomationSchemaMigratesMain39(t *testing.T) {
 	f := storetest.New(t)
 	id := f.CreateMessage("legacy")
 	if f.Store.IsPostgreSQL() {
-		_, err := f.Store.DB().ExecContext(t.Context(), `DROP TRIGGER trg_messages_automation_raw ON message_raw`)
+		_, err := f.Store.DB().ExecContext(t.Context(), `DROP TRIGGER trg_messages_automation_raw ON message_raw; DROP TRIGGER trg_loop_evidence_attachments ON attachments; DROP FUNCTION invalidate_loop_evidence_attachments()`)
 		require.NoError(err)
 	} else {
-		_, err := f.Store.DB().ExecContext(t.Context(), `DROP TRIGGER trg_messages_automation_raw_update; DROP TRIGGER trg_messages_automation_raw_delete`)
+		_, err := f.Store.DB().ExecContext(t.Context(), `DROP TRIGGER trg_messages_automation_raw_update; DROP TRIGGER trg_messages_automation_raw_delete; DROP TRIGGER trg_loop_evidence_attachments_update; DROP TRIGGER trg_loop_evidence_attachments_delete`)
 		require.NoError(err)
 	}
 	for _, query := range []string{`DROP INDEX idx_messages_automation_flags`, `ALTER TABLE messages DROP COLUMN automation_flags`, `ALTER TABLE messages DROP COLUMN automation_rule_version`, `UPDATE archive_metadata SET value = '39' WHERE key = 'schema_version'`} {

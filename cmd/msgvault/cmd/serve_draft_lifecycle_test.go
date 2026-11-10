@@ -63,6 +63,12 @@ func TestDraftLifecycleEndToEnd(t *testing.T) {
 	editEvent, err := run(api.CLIRunDraftEditCommand, created.DraftID, "--revision", "1", "--body", "edited body", "--json")
 	requirements.NoError(err)
 	requirements.Contains(editEvent, "\"revision\":2")
+	draft, err := fixture.store.GetIMAPDraftContext(t.Context(), created.DraftID)
+	requirements.NoError(err)
+	flags, current, err := fixture.store.MessageAutomationContext(t.Context(), draft.CurrentMessageID)
+	requirements.NoError(err)
+	assert.True(t, current)
+	assert.Zero(t, flags)
 
 	deleteEvent, err := run(api.CLIRunDraftDeleteCommand, created.DraftID, "--revision", "2", "--json")
 	requirements.NoError(err)

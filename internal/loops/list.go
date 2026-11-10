@@ -58,7 +58,7 @@ var ErrEvidenceIncomplete = &EvidenceIncompleteError{}
 // Store is what List, Done, and Snooze read and write; *store.Store
 // implements it.
 type Store interface {
-	MessageAutomationContext(ctx context.Context, id int64) (uint32, bool, error)
+	LoopFileAutomationContext(ctx context.Context, id int64) (uint32, bool, error)
 	LoopConversationsContext(ctx context.Context, q store.LoopQuery) iter.Seq2[store.LoopConversation, error]
 	LoopMarksContext(ctx context.Context) (map[int64]store.LoopMark, error)
 	GetMessageBodyText(ctx context.Context, messageID int64) (string, error)
@@ -101,7 +101,8 @@ func (r *storeReader) original(id int64) (mime.AutomationSignals, bool, bool, er
 	if !r.attachments[id] {
 		return r.st.LoopOriginalEvidenceContext(r.ctx, id)
 	}
-	flags, current, err := r.st.MessageAutomationContext(r.ctx, id)
+	// This read follows reservation; later file changes discard its token.
+	flags, current, err := r.st.LoopFileAutomationContext(r.ctx, id)
 	if err != nil {
 		return mime.AutomationSignals{}, false, false, err
 	}

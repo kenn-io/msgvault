@@ -388,7 +388,7 @@ func gmailDraftMessagePersistDataWithAttachments(
 			},
 			BodyText: sql.NullString{String: parsed.BodyText, Valid: true},
 			BodyHTML: sql.NullString{String: parsed.BodyHTML, Valid: parsed.BodyHTML != ""},
-			RawMIME:  raw, RawFormat: "mime",
+			RawMIME:  raw, RawFormat: "mime", Automation: parsed.AutomationFlags(),
 			Recipients: []store.RecipientSet{
 				{Type: "from", ParticipantIDs: fromIDs, EmailAddresses: fromAddresses},
 				{Type: "to", ParticipantIDs: toIDs, EmailAddresses: toAddresses},

@@ -293,6 +293,10 @@ func TestGmailDraftCreateAndSendAsUseLocalBehavior(t *testing.T) {
 	draft, err := fixture.store.GetGmailDraftContext(t.Context(), created.DraftID)
 	require.NoError(err)
 	assert.Equal(created.GmailMessageID, draft.CurrentReceipt.GmailMessageID)
+	flags, current, err := fixture.store.MessageAutomationContext(t.Context(), draft.CurrentMessageID)
+	require.NoError(err)
+	assert.True(current)
+	assert.Zero(flags)
 
 	var labelCount int
 	require.NoError(fixture.store.DB().QueryRowContext(t.Context(), fixture.store.Rebind(`

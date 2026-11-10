@@ -106,12 +106,6 @@ func (s *Store) RepairAutomationFlags(ctx context.Context, opts AutomationRepair
 				batch.Unreadable++
 				continue
 			}
-			if *flags&BulkMask != 0 {
-				batch.Bulk++
-			}
-			if *flags != 0 {
-				batch.Automated++
-			}
 			prepared = append(prepared, preparedAutomation{id, fp, *flags})
 		}
 
@@ -146,6 +140,14 @@ func (s *Store) RepairAutomationFlags(ctx context.Context, opts AutomationRepair
 						return countErr
 					}
 					batch.Written += n
+					if n > 0 {
+						if item.flags&BulkMask != 0 {
+							batch.Bulk += n
+						}
+						if item.flags != 0 {
+							batch.Automated += n
+						}
+					}
 				}
 
 				if batch.Written > 0 {
@@ -155,6 +157,14 @@ func (s *Store) RepairAutomationFlags(ctx context.Context, opts AutomationRepair
 			})
 		} else {
 			batch.Written = int64(len(prepared))
+			for _, item := range prepared {
+				if item.flags&BulkMask != 0 {
+					batch.Bulk++
+				}
+				if item.flags != 0 {
+					batch.Automated++
+				}
+			}
 		}
 		if err != nil {
 			return summary, fmt.Errorf("repair automation batch: %w", err)

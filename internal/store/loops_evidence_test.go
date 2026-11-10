@@ -15,8 +15,14 @@ func TestLoopMessageEvidenceInvalidation(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	id := f.PersistEmail(storetest.EmailSpec{From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you send the report?", SentAt: time.Now().Add(-48 * time.Hour)})
+	id := f.PersistEmail(storetest.EmailSpec{From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you send the report?", FileName: "report.pdf", SentAt: time.Now().Add(-48 * time.Hour)})
 	ctx := t.Context()
+	require.NoError(f.Store.PutMessageAutomationContext(ctx, id, 0))
+	flags, current, err := f.Store.LoopFileAutomationContext(ctx, id)
+	require.NoError(err)
+	assert.True(current)
+	assert.Zero(flags)
+	otherID := f.CreateMessage("attachment-move-destination")
 	expected := store.LoopMessageEvidence{Asks: true}
 	save := func() string {
 		t.Helper()
@@ -33,19 +39,31 @@ func TestLoopMessageEvidenceInvalidation(t *testing.T) {
 	for _, mutation := range []struct {
 		statement string
 		args      []any
+		keeps     bool
 	}{
-		{`UPDATE message_bodies SET body_text = 'Thanks!' WHERE message_id = ?`, []any{id}},
-		{`DELETE FROM message_bodies WHERE message_id = ?`, []any{id}},
-		{`INSERT INTO message_bodies(message_id,body_text) VALUES (?, 'Can you send it?')`, []any{id}},
-		{`DELETE FROM message_raw WHERE message_id = ?`, []any{id}},
-		{`INSERT INTO message_raw(message_id,raw_data,raw_format,compression) VALUES (?, ?, 'mime', 'none')`, []any{id, []byte("Content-Type: text/plain\r\n\r\nCan you send it?")}},
-		{`UPDATE message_raw SET raw_data = ? WHERE message_id = ?`, []any{[]byte("Auto-Submitted: auto-replied\r\n\r\nCan you send it?"), id}},
+		{`UPDATE message_bodies SET body_text = 'Thanks!' WHERE message_id = ?`, []any{id}, false},
+		{`DELETE FROM message_bodies WHERE message_id = ?`, []any{id}, false},
+		{`INSERT INTO message_bodies(message_id,body_text) VALUES (?, 'Can you send it?')`, []any{id}, false},
+		{`DELETE FROM message_raw WHERE message_id = ?`, []any{id}, false},
+		{`INSERT INTO message_raw(message_id,raw_data,raw_format,compression) VALUES (?, ?, 'mime', 'none')`, []any{id, []byte("Content-Type: text/plain\r\n\r\nCan you send it?")}, false},
+		{`UPDATE message_raw SET raw_data = ? WHERE message_id = ?`, []any{[]byte("Auto-Submitted: auto-replied\r\n\r\nCan you send it?"), id}, false},
+		{`UPDATE attachments SET filename = 'renamed.pdf' WHERE message_id = ?`, []any{id}, true},
+		{`UPDATE attachments SET attachment_role = 'standalone' WHERE message_id = ?`, []any{id}, true},
+		{`UPDATE attachments SET attachment_role = 'inline' WHERE message_id = ?`, []any{id}, false},
+		{`UPDATE attachments SET attachment_role = 'standalone' WHERE message_id = ?`, []any{id}, true},
+		{`UPDATE attachments SET message_id = ? WHERE message_id = ?`, []any{otherID, id}, false},
+		{`UPDATE attachments SET message_id = ? WHERE message_id = ?`, []any{id, otherID}, true},
+		{`DELETE FROM attachments WHERE message_id = ?`, []any{id}, false},
 	} {
 		staleToken := save()
 		_, err := f.Store.DB().ExecContext(ctx, f.Store.Rebind(mutation.statement), mutation.args...)
 		require.NoError(err)
 		_, currentToken, hit, err := f.Store.LoopMessageEvidenceContext(ctx, id, 1)
 		require.NoError(err)
+		if mutation.keeps {
+			assert.True(hit, mutation.statement)
+			continue
+		}
 		assert.False(hit, mutation.statement)
 		fresh := store.LoopMessageEvidence{Acknowledgement: true}
 		require.NoError(f.Store.SaveLoopMessageEvidenceContext(ctx, id, 1, currentToken, fresh))
@@ -55,6 +73,10 @@ func TestLoopMessageEvidenceInvalidation(t *testing.T) {
 		require.True(hit)
 		assert.Equal(fresh, got, "a completed read from before invalidation cannot overwrite fresh evidence")
 	}
+	require.NoError(f.Store.PutMessageAutomationContext(ctx, id, 0))
+	_, current, err = f.Store.LoopFileAutomationContext(ctx, id)
+	require.NoError(err)
+	assert.False(current, "flags cannot stand in for the original once the file is gone")
 	save()
 	_, newerToken, hit, err := f.Store.LoopMessageEvidenceContext(ctx, id, 2)
 	require.NoError(err)
