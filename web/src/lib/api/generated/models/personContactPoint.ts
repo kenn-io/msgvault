@@ -6,6 +6,7 @@ import type { ValueEnvelope } from "./valueEnvelope";
 export interface PersonContactPoint {
   address_kind: string;
   envelope: ValueEnvelope;
+  identity_key: string;
   normalization: string;
   normalization_version: number;
   normalized_value: string;
@@ -13,6 +14,7 @@ export interface PersonContactPoint {
   person_id: number;
   scope_kind?: string;
   scope_value?: string;
+  service_label?: string;
   service_slug?: string;
   uri?: string;
   [key: string]: unknown;

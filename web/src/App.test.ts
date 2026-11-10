@@ -573,7 +573,7 @@ describe('application foundation', () => {
     const rendered = render(App, { session });
     await session.bootstrap();
     await fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Publish to address book' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Publish to address book…' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Review CardDAV conflict 41' }));
     const detailHeading = await screen.findByRole('heading', { name: 'Conflict comparison' });
     expect(screen.queryByRole('dialog', { name: 'Publish to address book' })).toBeNull();
@@ -584,7 +584,7 @@ describe('application foundation', () => {
     window.history.back();
     await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
     await fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Publish to address book' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Publish to address book…' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Review CardDAV conflict 41' }));
     const repeatedStatus = screen.getByRole('status', { name: 'Operation status' });
     await waitFor(() => expect(repeatedStatus.firstElementChild).not.toBe(firstAnnouncement));
