@@ -141,7 +141,14 @@
 
   async function remove(): Promise<void> {
     if (!initialOrganization || submitting || deleteBlocked) return;
-    if (await removal.run(current => controller.deleteOrganization(initialOrganization.id, current))) onDone();
+    if (await removal.run(current => deleteChecked(initialOrganization.id, current))) onDone();
+  }
+
+  // A job added since the check makes the delete a plain 409, so the check runs again and lists who holds it.
+  async function deleteChecked(id: number, current: Prepared<OrganizationProfile> | undefined): ReturnType<DirectoryEntityController['deleteOrganization']> {
+    const result = await controller.deleteOrganization(id, current);
+    if (!result.ok && result.kind === 'error' && result.status === 409) void checkDeletion();
+    return result;
   }
 
   async function refreshAfterUnknown(): Promise<void> {
@@ -372,7 +379,7 @@
       {/if}
       {#if !deleteBlocked}<p>This permanently removes the organization.</p>{/if}
     </div>
-    {#snippet notice()}{#if removal.conflict}{@render conflictNotice(removal, () => void remove(), 'Retry')}{:else if removal.failed}<InlineNotice message="Couldn't delete this organization." details={removal.details} actionLabel="Retry" onaction={() => void remove()} />{/if}{/snippet}
+    {#snippet notice()}{#if deleteBlocked}{:else if removal.conflict}{@render conflictNotice(removal, () => void remove(), 'Retry')}{:else if removal.failed}<InlineNotice message="Couldn't delete this organization." details={removal.details} actionLabel="Retry" onaction={() => void remove()} />{/if}{/snippet}
   </Dialog>
 {:else}
 <Dialog title={currentProfile?.organization.name ?? initialOrganization?.name ?? (initialOrganization ? 'this organization' : 'Add organization')} onclose={requestClose} footerStart={loadFailed ? undefined : deleteStart} primaryLabel={loadFailed ? undefined : attempt.conflict ? 'Keep yours' : initialOrganization ? 'Save organization' : 'Add organization'} primaryDisabled={saveDisabled} busy={submitting} onprimary={() => void saveOrganization()}
