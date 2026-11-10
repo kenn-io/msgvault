@@ -56,7 +56,7 @@ func newDiagnoseAcquisitionCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if source.SourceType != "" && source.SourceType != "gmail" {
+			if source.SourceType != "" && source.SourceType != sourceTypeGmail {
 				return errors.New("acquisition diagnostic requires a Gmail source")
 			}
 			if source.MergedIntoSourceID != 0 {
@@ -76,12 +76,14 @@ func newDiagnoseAcquisitionCmd() *cobra.Command {
 				return json.MarshalWrite(cmd.OutOrStdout(), active)
 			}
 			if len(active) == 0 {
-				_, err := fmt.Fprintln(cmd.OutOrStdout(), "No pending acquisition failures.")
-				return err
+				if _, err := fmt.Fprintln(cmd.OutOrStdout(), "No pending acquisition failures."); err != nil {
+					return fmt.Errorf("write acquisition diagnostic: %w", err)
+				}
+				return nil
 			}
 			for _, item := range active {
 				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", item.SourceMessageID, item.Phase, item.ErrorKind); err != nil {
-					return err
+					return fmt.Errorf("write acquisition diagnostic: %w", err)
 				}
 			}
 			return nil

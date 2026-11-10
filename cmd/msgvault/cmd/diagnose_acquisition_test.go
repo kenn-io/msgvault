@@ -23,6 +23,8 @@ func TestDiagnoseAcquisitionCommand(t *testing.T) {
 		pending bool
 	}{{"json", true}, {"empty", false}, {"legacy", true}, {"local", true}} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			dir := t.TempDir()
 			cfg := config.NewDefaultConfig()
 			cfg.HomeDir, cfg.Data.DataDir = dir, dir
@@ -30,9 +32,9 @@ func TestDiagnoseAcquisitionCommand(t *testing.T) {
 			if dbURL := os.Getenv("MSGVAULT_TEST_DB"); store.IsPostgresURL(dbURL) && tc.pending {
 				st = testutil.NewTestStore(t)
 				var database, schema string
-				require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT current_database(), current_schema()").Scan(&database, &schema))
+				require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT current_database(), current_schema()").Scan(&database, &schema))
 				parsed, err := url.Parse(dbURL)
-				require.NoError(t, err)
+				require.NoError(err)
 				parsed.Path = "/" + database
 				query := parsed.Query()
 				query.Set("search_path", schema)
@@ -46,24 +48,24 @@ func TestDiagnoseAcquisitionCommand(t *testing.T) {
 				sourceType = ""
 			}
 			source, err := st.GetOrCreateSource(sourceType, "source@example.com")
-			require.NoError(t, err)
+			require.NoError(err)
 			if tc.pending {
 				run, err := st.StartSync(source.ID, "full")
-				require.NoError(t, err)
+				require.NoError(err)
 				for _, item := range []store.SyncRunItem{
 					{SyncRunID: run, SourceMessageID: "pending", Phase: "fetch", Status: "error", ErrorKind: "fetch_error"},
 					{SyncRunID: run, SourceMessageID: "(unknown)", Phase: "fetch", Status: "error", ErrorKind: "batch_fetch_error"},
 				} {
-					require.NoError(t, st.RecordSyncRunItem(item))
+					require.NoError(st.RecordSyncRunItem(item))
 				}
-				require.NoError(t, st.FailSync(run, "interrupted"))
+				require.NoError(st.FailSync(run, "interrupted"))
 			}
-			require.NoError(t, st.Close())
+			require.NoError(st.Close())
 			configText := fmt.Sprintf("[data]\ndata_dir = %q\ndatabase_url = %q\n", dir, cfg.Data.DatabaseURL)
 			if tc.name == "local" {
 				configText += "[remote]\nurl = 'https://example.com'\n"
 			}
-			require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(configText), 0o600))
+			require.NoError(os.WriteFile(filepath.Join(dir, "config.toml"), []byte(configText), 0o600))
 			root := newRootCommand()
 			root.AddCommand(newDiagnoseAcquisitionCmd())
 			var output bytes.Buffer
@@ -77,14 +79,14 @@ func TestDiagnoseAcquisitionCommand(t *testing.T) {
 				args = append(args, "--json")
 			}
 			root.SetArgs(args)
-			require.NoError(t, executeRootContext(t.Context(), root))
+			require.NoError(executeRootContext(t.Context(), root))
 			if tc.pending {
 				var items []map[string]string
-				require.NoError(t, json.Unmarshal(output.Bytes(), &items))
-				require.Len(t, items, 1)
-				assert.Equal(t, map[string]string{"source_message_id": "pending", "phase": "fetch", "error_kind": "fetch_error"}, items[0])
+				require.NoError(json.Unmarshal(output.Bytes(), &items))
+				require.Len(items, 1)
+				assert.Equal(map[string]string{"source_message_id": "pending", "phase": "fetch", "error_kind": "fetch_error"}, items[0])
 			} else {
-				assert.Equal(t, "No pending acquisition failures.\n", output.String())
+				assert.Equal("No pending acquisition failures.\n", output.String())
 			}
 		})
 	}
@@ -98,6 +100,8 @@ func TestDiagnoseAcquisitionErrors(t *testing.T) {
 		{"merged-source", "", "merged into source"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			dir := t.TempDir()
 			cfg := config.NewDefaultConfig()
 			cfg.HomeDir, cfg.Data.DataDir = dir, dir
@@ -107,30 +111,30 @@ func TestDiagnoseAcquisitionErrors(t *testing.T) {
 			if tc.name == "newer-schema" || tc.name == "merged-source" {
 				st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 				source, err := st.GetOrCreateSource("gmail", "source@example.com")
-				require.NoError(t, err)
+				require.NoError(err)
 				sourceID = source.ID
 				if tc.name == "newer-schema" {
 					_, err = st.DB().ExecContext(t.Context(), "UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'", strconv.Itoa(store.SchemaVersion+1))
 				} else {
 					into, createErr := st.GetOrCreateSource("gmail", "into@example.com")
-					require.NoError(t, createErr)
+					require.NoError(createErr)
 					_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: source.ID, IntoSourceID: into.ID})
 					want = fmt.Sprintf("merged into source %d", into.ID)
 				}
-				require.NoError(t, err)
-				require.NoError(t, st.Close())
+				require.NoError(err)
+				require.NoError(st.Close())
 				configText = fmt.Sprintf("[data]\ndata_dir = %q\n", dir)
 			}
-			require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(configText), 0o600))
+			require.NoError(os.WriteFile(filepath.Join(dir, "config.toml"), []byte(configText), 0o600))
 			root := newRootCommand()
 			root.AddCommand(newDiagnoseAcquisitionCmd())
 			var output bytes.Buffer
 			root.SetOut(&output)
 			root.SetErr(&output)
 			root.SetArgs([]string{"--home", dir, "diagnose-acquisition", "--source-id", strconv.FormatInt(sourceID, 10)})
-			require.ErrorContains(t, executeRootContext(t.Context(), root), want)
+			require.ErrorContains(executeRootContext(t.Context(), root), want)
 			if tc.name == "invalid" {
-				assert.NotContains(t, output.String(), "Usage:")
+				assert.NotContains(output.String(), "Usage:")
 			}
 		})
 	}
