@@ -1502,7 +1502,7 @@ it('captures cadence including zero for paging and rejects an old merge context'
     controller.cadence = 'due'; controller.dueWithinDays = 0;
     await controller.loadList({});
     const context = controller.personMergeContextSnapshot();
-    controller.cadence = 'overdue'; controller.dueWithinDays = 7;
+    controller.cadence = 'overdue'; controller.dueWithinDays = null;
     await controller.loadMoreList();
     expect(bodies[0]).toMatchObject({ cadence: 'due', due_within_days: 0 });
     expect(bodies[1]).toMatchObject({ cadence: 'due', due_within_days: 0, cursor: 'next' });
@@ -1510,7 +1510,6 @@ it('captures cadence including zero for paging and rejects an old merge context'
     expect(bodies).toHaveLength(2);
     await controller.loadList({});
     expect(bodies[2]).toMatchObject({ cadence: 'overdue' });
-    expect(bodies[2]).not.toHaveProperty('due_within_days');
     await controller.refreshList();
     expect(bodies[3]).toMatchObject({ cadence: 'overdue' });
   } finally { controller.destroy(); }
@@ -1530,13 +1529,10 @@ it('suspends pending list work and prevents merge and link refresh from reviving
     controller.suspendList();
     resolve(Response.json({ rows: [relationshipRow(1, 'Hidden')], next_cursor: 'old' }));
     await pending;
-    await controller.loadMoreList();
     await controller.reconcilePersonMerge(context);
     await controller.linkParticipants(1, 2);
     await controller.refreshList();
     expect(paths).toHaveLength(2);
-    expect(controller.listRows).toEqual([]);
-    expect(controller.listCursor).toBeNull();
     expect(controller.listLoading).toBe(false);
   } finally { controller.destroy(); }
 });

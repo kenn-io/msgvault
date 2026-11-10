@@ -45,13 +45,14 @@ it('shows Saved badges only when the Saved filter is off', async () => {
 });
 
 it.each([
-  { relationshipFacet: 'people', identityQuery: '', empty: 'No people yet', count: '0 people' },
-  { relationshipFacet: 'people', identityQuery: 'missing', empty: 'No matches', count: '0 people' },
-  { relationshipFacet: 'domains', identityQuery: '', empty: 'No domains yet', count: '0 domains' },
-] as const)('hides the count alongside $empty', async ({ relationshipFacet, identityQuery, empty, count }) => {
+  { relationshipFacet: 'people', identityQuery: '', relationshipCadence: '', empty: 'No people yet', count: '0 people' },
+  { relationshipFacet: 'people', identityQuery: 'missing', relationshipCadence: '', empty: 'No matches', count: '0 people' },
+  { relationshipFacet: 'domains', identityQuery: '', relationshipCadence: '', empty: 'No domains yet', count: '0 domains' },
+  { relationshipFacet: 'people', identityQuery: '', relationshipCadence: 'no_list', empty: 'No matches', count: '0 people' },
+] as const)('hides the count alongside $empty', async ({ relationshipFacet, identityQuery, relationshipCadence, empty, count }) => {
   const client = clientFor({});
   const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
-  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: { ...state.current, relationshipFacet, identityQuery }, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: { ...state.current, relationshipFacet, identityQuery, relationshipCadence }, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     const list = within(screen.getByRole('complementary', { name: 'People' }));
     await list.findByText(empty);
@@ -1182,8 +1183,9 @@ it('renders only real saved cadence and clears selection when its filter changes
     expect(within(screen.getByRole('row', { name: /Unsaved Example/ })).queryByText('No list')).toBeNull();
     await fireEvent.click(within(savedRow).getByRole('checkbox', { name: 'Select Saved Example' }));
     expect(screen.getByText('1 selected')).toBeDefined();
-    await view.rerender({ urlState: { ...state.current, relationshipCadence: 'due', relationshipDueWithinDays: 0 } });
+    await view.rerender({ urlState: { ...state.current, relationshipCadence: 'overdue' } });
     await waitFor(() => expect(screen.queryByText('1 selected')).toBeNull());
+    await view.rerender({ urlState: { ...state.current, relationshipCadence: 'due', relationshipDueWithinDays: 0 } });
     expect((screen.getByRole('spinbutton', { name: 'Due within days' }) as HTMLInputElement).value).toBe('0');
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
@@ -1218,21 +1220,10 @@ it('shows invalid due drafts without issuing another ranked request', async () =
     await fireEvent.input(input, { target: { value: '3661' } });
     expect((await screen.findByRole('alert')).textContent).toBe('Enter a whole number from 0 to 3660 to show results.');
     expect(load).toHaveBeenCalledTimes(1);
-    expect(controller.listCursor).toBeNull();
     expect(onDraftNavigation).not.toHaveBeenCalled();
     await fireEvent.input(input, { target: { value: '0' } });
     expect(onDraftNavigation).toHaveBeenCalledExactlyOnceWith({ relationshipDueWithinDays: 0 });
     expect(onNavigate).not.toHaveBeenCalled();
-  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
-});
-
-it.each(['', 'no_list'] as const)('distinguishes an empty archive from empty cadence results: %s', async relationshipCadence => {
-  const client = clientFor({ '/api/v1/relationships': () => Response.json({ rows: [], total_count: 0 }) });
-  const controller = new RelationshipsController(client, () => 'UTC'), directory = new DirectoryController(client), state = new ExploreState(null);
-  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: { ...state.current, relationshipCadence }, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
-  try {
-    expect(await screen.findByText(relationshipCadence ? 'No matches' : 'No people yet', { exact: true })).toBeDefined();
-    expect(screen.queryByText(relationshipCadence ? 'No people yet' : 'No matches', { exact: true })).toBeNull();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 

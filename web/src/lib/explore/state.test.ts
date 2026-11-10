@@ -1844,11 +1844,16 @@ it.each([0, 7, 3660])('round trips the due horizon %s', horizon => {
   const state = { ...defaultExploreURLState, workspace: 'relationships' as const, relationshipCadence: 'due' as const, relationshipDueWithinDays: horizon };
   expect(parseExploreURLState(serializeExploreURLState(state))).toMatchObject({ relationshipCadence: 'due', relationshipDueWithinDays: horizon });
 });
-it.each([-1, 3661, 1.5, '7'])('rejects invalid horizon %s', horizon => {
-  expect(parseExploreURLState(`?workspace=relationships&explore=${encodeURIComponent(JSON.stringify({ relationshipCadence: 'due', relationshipDueWithinDays: horizon }))}`)).toMatchObject({ relationshipCadence: 'due', relationshipDueWithinDays: null });
-});
-it('normalizes unsupported cadence and drops horizons outside due', () => {
-  for (const [cadence, expected] of [['overdue', 'overdue'], ['no_list', 'no_list'], ['unknown', 'unknown'], ['invalid', ''], [['due'], '']] as const) {
-    expect(parseExploreURLState(`?workspace=relationships&explore=${encodeURIComponent(JSON.stringify({ relationshipCadence: cadence, relationshipDueWithinDays: 7 }))}`)).toMatchObject({ relationshipCadence: expected, relationshipDueWithinDays: null });
-  }
+it.each([
+  { cadence: 'due', horizon: -1, expected: 'due' },
+  { cadence: 'due', horizon: 3661, expected: 'due' },
+  { cadence: 'due', horizon: 1.5, expected: 'due' },
+  { cadence: 'due', horizon: '7', expected: 'due' },
+  { cadence: 'overdue', horizon: 7, expected: 'overdue' },
+  { cadence: 'no_list', horizon: 7, expected: 'no_list' },
+  { cadence: 'unknown', horizon: 7, expected: 'unknown' },
+  { cadence: 'invalid', horizon: 7, expected: '' },
+  { cadence: ['due'], horizon: 7, expected: '' },
+])('normalizes cadence $cadence and horizon $horizon', ({ cadence, horizon, expected }) => {
+  expect(parseExploreURLState(`?workspace=relationships&explore=${encodeURIComponent(JSON.stringify({ relationshipCadence: cadence, relationshipDueWithinDays: horizon }))}`)).toMatchObject({ relationshipCadence: expected, relationshipDueWithinDays: null });
 });
