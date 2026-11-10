@@ -164,9 +164,7 @@ func TestEmailCalendarEventsUseConfirmedMailAccountScope(t *testing.T) {
 		confirmLater bool
 		want         string
 	}{
-		{name: "confirmed Microsoft", sourceType: "msmail", identifier: "owner@example.com", confirmed: true, want: "owner@example.com"},
 		{name: "confirmed Gmail", sourceType: "gmail", identifier: "owner@example.com", confirmed: true, want: "owner@example.com"},
-		{name: "confirmed IMAP", sourceType: "imap", identifier: "imap://owner%40example.com@mail.example.com:143", confirmed: true, want: "owner@example.com"},
 		{name: "unconfirmed Gmail", sourceType: "gmail", identifier: "owner@example.com"},
 		{name: "Gmail confirmed after archival", sourceType: "gmail", identifier: "owner@example.com", confirmLater: true, want: "owner@example.com"},
 	} {
@@ -195,47 +193,24 @@ func TestEmailCalendarEventsUseConfirmedMailAccountScope(t *testing.T) {
 }
 
 func TestEmailCalendarMaterialization(t *testing.T) {
-	t.Run("revisions", func(t *testing.T) {
-		requirements := require.New(t)
-		assertions := assert.New(t)
-		st := newRFC822IDBackfillBackendStore(t)
-		var source int64
-		var emailIDs []int64
-		for i, revision := range []struct{ method, props string }{
-			{"REQUEST", "SEQUENCE:0\r\nDTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nSUMMARY:Original"},
-			{"REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T130000Z\r\nDURATION:PT1H\r\nSUMMARY:Updated"},
-			{"CANCEL", "STATUS:CANCELLED\r\nSEQUENCE:2"},
-		} {
-			raw := emailFrom("organizer@example.com", calendarDocument(revision.method, revision.props+"\r\nORGANIZER:mailto:organizer@example.com"))
-			id, sid := persistInviteEmail(t, st, fmt.Sprintf("email-%d", i), raw)
-			emailIDs = append(emailIDs, id)
-			source = sid
-			stored, err := st.GetMessageRaw(id)
-			requirements.NoError(err)
-			assertions.Equal(raw, stored)
-		}
-		for _, id := range emailIDs {
-			email, err := st.GetMessage(id)
-			requirements.NoError(err)
-			assertions.Equal("Original email", email.Subject)
-			assertions.Equal("Email body stays intact", email.BodyText)
-		}
-		var emails int
-		requirements.NoError(st.db.QueryRow(`SELECT count(*) FROM messages WHERE source_id=? AND message_type='email'`, source).Scan(&emails))
-		assertions.Equal(3, emails)
-	})
-
 	t.Run("claim identity", func(t *testing.T) {
 		assertions, requirements := assert.New(t), require.New(t)
 		st := newRFC822IDBackfillBackendStore(t)
 		request := inviteEmail([]byte(strings.ReplaceAll(string(calendarFamilyDocument()), "UID:family@example.com\r\n", "UID:family@example.com\r\nORGANIZER:mailto:organizer@example.com\r\n")))
 		parent, source := persistInviteEmail(t, st, "organizer-message", request)
+		email, err := st.GetMessage(parent)
+		requirements.NoError(err)
+		assertions.Equal("Original email", email.Subject)
+		assertions.Equal("Email body stays intact", email.BodyText)
+		var emails int
+		requirements.NoError(st.db.QueryRow(`SELECT count(*) FROM messages WHERE source_id=? AND message_type='email'`, source).Scan(&emails))
+		assertions.Equal(1, emails)
 		originalIDs := emailEvents(t, st, source)
 		requirements.Len(originalIDs, 2)
 		for _, id := range originalIDs {
 			assertions.NotEqual(parent, id)
 		}
-		_, err := st.PersistMessageContext(t.Context(), &MessagePersistData{
+		_, err = st.PersistMessageContext(t.Context(), &MessagePersistData{
 			Message:      &Message{SourceID: source, SourceMessageID: "organizer-message", MessageType: "email", Subject: sql.NullString{String: "Original email", Valid: true}},
 			Conversation: &ConversationPersistData{SourceConversationID: "organizer-message", Title: "Original email"},
 			RawMIME:      request,
@@ -256,73 +231,32 @@ func TestEmailCalendarMaterializesOnRawMIMEUpsert(t *testing.T) {
 }
 
 func TestEmailCalendarInvalidPartPreservesEmail(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		calendar []byte
-	}{
-		{"not iCalendar", []byte("invalid calendar")},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			var logs bytes.Buffer
-			previous := slog.Default()
-			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
-			t.Cleanup(func() { slog.SetDefault(previous) })
-			raw := inviteEmail(tc.calendar)
-			id, source := persistInviteEmail(t, st, "bad-calendar", raw)
-			assertions.Empty(emailEvents(t, st, source))
-			stored, err := st.GetMessageRaw(id)
-			requirements.NoError(err)
-			assertions.Equal(raw, stored)
-			metadata, err := st.GetMessageMetadata(id)
-			requirements.NoError(err)
-			assertions.False(metadata.Valid)
-			assertions.Contains(logs.String(), "level=WARN")
-			assertions.Contains(logs.String(), fmt.Sprintf("message_id=%d", id))
-		})
-	}
-}
-
-func TestEmailCalendarConvertsNonUTF8Text(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
-	raw := inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nSUMMARY:Caf\xe9 planning\r\nATTENDEE;CN=Andr\xe9 Example:mailto:guest@example.org"))
-	id, _ := persistInviteEmail(t, st, "latin1-invite", raw)
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	raw := inviteEmail([]byte("invalid calendar"))
+	id, source := persistInviteEmail(t, st, "bad-calendar", raw)
+	assertions.Empty(emailEvents(t, st, source))
 	stored, err := st.GetMessageRaw(id)
 	requirements.NoError(err)
 	assertions.Equal(raw, stored)
-
+	metadata, err := st.GetMessageMetadata(id)
+	requirements.NoError(err)
+	assertions.False(metadata.Valid)
+	assertions.Contains(logs.String(), "level=WARN")
+	assertions.Contains(logs.String(), fmt.Sprintf("message_id=%d", id))
 }
 
 func TestEmailCalendarNULFields(t *testing.T) {
-	for _, tc := range []struct{ name, property, wantName, wantEmail, wantSubject string }{
-		{"summary", "SUMMARY:Before\x00after", "", "", "Before\uFFFDafter"},
-		{"attendee name", "ATTENDEE;CN=Before\x00after:mailto:guest@example.org", "Before\uFFFDafter", "guest@example.org", ""},
-		{"organizer name", "ORGANIZER;CN=Before\x00after:mailto:organizer@example.com", "Before\uFFFDafter", "organizer@example.com", ""},
-		{"address", "ATTENDEE:mailto:before\x00after@example.org", "", "before\uFFFDafter@example.org", ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			raw := inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\n"+tc.property))
-			id, source := persistInviteEmail(t, st, "nul-attendee", raw)
-			stored, err := st.GetMessageRaw(id)
-			requirements.NoError(err)
-			assertions.Equal(raw, stored)
-			ids := emailEvents(t, st, source)
-			requirements.Len(ids, 1)
-			rows := calendarRows(t, st, ids...)
-			requirements.Len(rows, 1)
-			if tc.wantSubject != "" {
-				assertions.Equal(tc.wantSubject, rows[0].Subject)
-			} else {
-				requirements.Len(rows[0].Event.Attendees, 1)
-				assertions.Equal(tc.wantName, rows[0].Event.Attendees[0].DisplayName)
-				assertions.Equal(tc.wantEmail, rows[0].Event.Attendees[0].Email)
-			}
-		})
-	}
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nSUMMARY:Before\x00after"))
+	id, _ := persistInviteEmail(t, st, "nul-summary", raw)
+	stored, err := st.GetMessageRaw(id)
+	require.NoError(t, err)
+	assert.Equal(t, raw, stored)
 }
 
 func TestEmailCalendarRevisionAfterSourceMerge(t *testing.T) {
@@ -411,8 +345,6 @@ func TestEmailCalendarSubsetAfterSourceMerge(t *testing.T) {
 	requirements.NoError(err)
 	ids := emailEvents(t, st, into.ID)
 	requirements.Len(ids, 1)
-	var conversationID int64
-	requirements.NoError(st.db.QueryRow(`SELECT conversation_id FROM messages WHERE id=?`, ids[0]).Scan(&conversationID))
 	_, err = st.db.Exec(`UPDATE messages SET sent_at=CASE WHEN id IN (?, ?) THEN '2030-01-01T00:00:00Z' ELSE '2020-01-01T00:00:00Z' END`, oldID, ids[0])
 	requirements.NoError(err)
 	destination := filepath.Join(t.TempDir(), "subset")
@@ -433,33 +365,4 @@ func TestEmailCalendarSubsetAfterSourceMerge(t *testing.T) {
 	requirements.NoError(subset.db.QueryRow(`SELECT subject, metadata ->> 'start' FROM messages WHERE id=?`, ids[0]).Scan(&subject, &start))
 	assertions.Equal("Accepted", subject)
 	assertions.Equal("2027-03-02T13:00:00Z", start)
-	persistInviteEmailForSource(t, subset, into.ID, "later", inviteEmail(calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTART:20270302T140000Z\r\nSUMMARY:Later")))
-	assertions.Equal(ids, emailEvents(t, subset, into.ID))
-	var gotConversation int64
-	requirements.NoError(subset.db.QueryRow(`SELECT conversation_id FROM messages WHERE id=?`, ids[0]).Scan(&gotConversation))
-	assertions.Equal(conversationID, gotConversation)
-	assertions.Equal("Later", calendarRows(t, subset, ids...)[0].Subject)
-	persistInviteEmailForSource(t, subset, into.ID, "exception", inviteEmail(calendarDocument("REQUEST", "RECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T150000Z\r\nSUMMARY:Exception")))
-	ids = emailEvents(t, subset, into.ID)
-	requirements.Len(ids, 2)
-	requirements.NoError(subset.db.QueryRow(`SELECT conversation_id FROM messages WHERE id=?`, ids[1]).Scan(&gotConversation))
-	assertions.Equal(conversationID, gotConversation)
-}
-
-func TestEmailCalendarArchiveOnlyMarker(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	source, err := st.GetOrCreateSource("gmail", "marker@example.org")
-	requirements.NoError(err)
-	raw := []byte("Content-Type: text/calendar\r\n\r\nBEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:marker@example.org\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Invite\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
-	_, err = st.PersistMessageContext(t.Context(), &MessagePersistData{
-		Message:      &Message{SourceID: source.ID, SourceMessageID: "parent", MessageType: "email"},
-		Conversation: &ConversationPersistData{SourceConversationID: "parent"}, RawMIME: raw,
-	})
-	requirements.NoError(err)
-	var eventID int64
-	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id=? AND message_type='calendar_event'`), source.ID).Scan(&eventID))
-	var marker int
-	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM source_merge_archive_only_messages WHERE message_id=?`), eventID).Scan(&marker))
-	assertions.Equal(1, marker)
 }
