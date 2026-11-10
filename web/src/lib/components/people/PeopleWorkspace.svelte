@@ -251,7 +251,6 @@
   {#if cadenceBlocked}
     <div class="cadence-explanation">
       <p role="status">Keep-in-touch filters require People sorted by Closest, without search, Saved, or profile filters.</p>
-      <Button size="sm" surface="outline" label="Clear cadence" onclick={clearCadence} />
     </div>
   {/if}
 {/snippet}

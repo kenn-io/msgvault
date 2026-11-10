@@ -1203,7 +1203,8 @@ it.each([
     expect(load).not.toHaveBeenCalled(); expect(directoryLoad).not.toHaveBeenCalled();
     expect(screen.queryByRole('grid', { name: 'People results' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Remove Keep in touch: Overdue' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Clear cadence' }));
+    expect(screen.queryByRole('button', { name: 'Clear cadence' })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove Keep in touch: Overdue' }));
     expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ relationshipCadence: '', relationshipDueWithinDays: null });
     await view.rerender({ urlState: { ...state.current, ...patch } });
     await waitFor(() => expect(load.mock.calls.length + directoryLoad.mock.calls.length).toBe(1));
