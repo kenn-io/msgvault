@@ -28,8 +28,6 @@ func TestCheck(t *testing.T) {
 		{name: "control", body: "a\x07b", code: CodeControlCharacters, severity: "error", field: "body"},
 		{name: "subject", body: "hello", channel: "email", kind: "compose", to: []string{"a@example.com"}, code: CodeEmptySubject, severity: "warn"},
 		{name: "bcc only", body: "hello", channel: "email", bcc: []string{"a@example.com"}, code: CodeEmptyTo, severity: "warn"},
-		{name: "sms", body: strings.Repeat("a", 481), channel: "sms", code: CodeSMSLength, severity: "warn"},
-		{name: "three sms", body: strings.Repeat("a", 459), channel: "sms"},
 		{name: "large", body: "hello", channel: "email", to: []string{"a@example.com"}, size: 500*1024 + 1, code: CodeOversize, severity: "warn"},
 		{name: "chat attachment", body: "see attached", channel: "chat"},
 		{name: "forward empty", channel: "email", kind: "forward", to: []string{"a@example.com"}},
@@ -80,7 +78,7 @@ func TestCheckCleanReturnsNil(t *testing.T) {
 
 type nameResolver map[string][]string
 
-func (n nameResolver) CuratedNames(context.Context, []string) (map[string][]string, error) {
+func (n nameResolver) CuratedNames(context.Context, []string, []int64) (map[string][]string, error) {
 	return n, nil
 }
 func TestGreetingNameMismatch(t *testing.T) {
@@ -114,12 +112,27 @@ func TestCheckSensitiveContentMasked(t *testing.T) {
 	assert.NotContains(t, r.Warnings[0].Excerpt, "abcdef123456")
 	assert.Contains(t, r.Warnings[0].Message, "in quoted text")
 }
-func TestCheckSMSUnits(t *testing.T) {
-	for _, tc := range []struct {
-		body string
-		warn bool
-	}{{strings.Repeat("^", 230), true}, {strings.Repeat("Ж", 201), false}, {strings.Repeat("😂", 101), true}} {
-		r := Check(t.Context(), Input{Body: tc.body, Channel: "sms"}, nil)
-		assert.Equal(t, tc.warn, len(r.Warnings) > 0)
+
+func TestR1CallerAuthoredSubject(t *testing.T) {
+	for _, kind := range []string{"compose", "reply", "forward", "edit"} {
+		t.Run(kind, func(t *testing.T) {
+			got := Check(t.Context(), Input{Kind: kind, Channel: "email", Subject: "TODO: x\a password: abcdef123456", Body: "Thanks", To: []string{"alex@example.com"}}, nil)
+			if kind == "compose" {
+				assert.True(t, got.Blocking())
+				assert.NotEmpty(t, got.Warnings)
+			} else {
+				assert.Empty(t, got.Warnings)
+			}
+		})
 	}
+}
+func TestR1ExcerptContainsLateFinding(t *testing.T) {
+	body := strings.Repeat("界", 100) + " {{name}} trailing"
+	got := Check(t.Context(), Input{Body: body}, nil)
+	require.Len(t, got.Warnings, 1)
+	warning := got.Warnings[0]
+	assert.Contains(t, warning.Excerpt, "{{name}}")
+	assert.LessOrEqual(t, len([]rune(warning.Excerpt)), 80)
+	require.NotNil(t, warning.Span)
+	assert.Equal(t, "{{name}}", string([]rune(body)[warning.Span.Start:warning.Span.End]))
 }

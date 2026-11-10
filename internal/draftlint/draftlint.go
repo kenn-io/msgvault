@@ -20,12 +20,14 @@ type Warning struct {
 }
 type Input struct {
 	Kind, Channel, Subject, Body string
+	SourceConversationID         string
+	ParticipantIDs               []int64
 	To, Cc, Bcc                  []string
 	AttachmentCount, BuiltSize   int
 	AllowPlaceholders            bool
 }
 type NameResolver interface {
-	CuratedNames(context.Context, []string) (map[string][]string, error)
+	CuratedNames(context.Context, []string, []int64) (map[string][]string, error)
 }
 type Result struct {
 	Warnings []Warning
@@ -52,7 +54,6 @@ const (
 	CodeGreetingNameMismatch       = "greeting_name_mismatch"
 	CodeEmptySubject               = "empty_subject"
 	CodeEmptyTo                    = "empty_to"
-	CodeSMSLength                  = "sms_length"
 	CodeOversize                   = "oversize"
 	CodeSensitiveContent           = "sensitive_content"
 	CodeRecipientProvenance        = "recipient_provenance"

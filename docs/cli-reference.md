@@ -473,7 +473,7 @@ and `draft-edit`) accept these options on unreleased `main`:
 
 Validation returns `status: "validated"` and a `valid` boolean; an invalid
 draft still exits successfully. `--strict` has no additional effect during
-validation. `--validate-only` cannot be combined with `--idempotency-key`.
+validation.
 See [draft lint and validation](usage/chat.md#draft-lint-and-validation) for
 warning codes, receipt fields, and permission rules.
 

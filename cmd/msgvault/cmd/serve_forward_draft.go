@@ -58,7 +58,7 @@ func parseDraftForwardArgs(args []string) (draftForwardIntent, error) {
 		default:
 			composeArgs = append(composeArgs, args[i])
 			switch name {
-			case draftFromFlag, "account", "source-id", "body", "to", "cc", "bcc", "log-level", "log-sql-slow-ms", "idempotency-key":
+			case draftFromFlag, "account", "source-id", "body", "to", "cc", "bcc", "log-level", "log-sql-slow-ms":
 				if !hasValue && i+1 < len(args) {
 					i++
 					composeArgs = append(composeArgs, args[i])
@@ -138,17 +138,17 @@ func (a *storeAPIAdapter) runCLIForwardDraft(
 		if err != nil {
 			return draftReplyError("invalid_forward_metadata", err)
 		}
-		lint, done, err := a.gateDraftLint(ctx, emailDraftLintInput("forward", intent.Body, draft), target.source.ID, nil, intent.draftLintOptions, intent.JSON, emit)
-		if done || err != nil {
-			return err
-		}
-		target.lint = lint
 		writes, err := prepareIMAPDraftAttachmentWrites(ctx, draft.Parsed, refs)
 		if err != nil {
 			return a.emitDraftForwardPreflight(emit, intent.JSON, []draftForwardProblem{{
 				Reason: "unrepresentable_attachment", Detail: err.Error(),
 			}})
 		}
+		lint, done, err := a.gateDraftLint(ctx, emailDraftLintInput("forward", intent.Body, draft), target.source.ID, nil, intent.draftLintOptions, intent.JSON, emit)
+		if done || err != nil {
+			return err
+		}
+		target.lint = lint
 		target.forward = true
 		target.attachmentWrites = &writes
 		return a.createDraft(ctx, target, draft, intent.JSON, emit)

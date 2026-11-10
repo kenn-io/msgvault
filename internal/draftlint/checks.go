@@ -60,7 +60,9 @@ func textWarning(code, severity, field, message, original string, start, end int
 			lineEnd = end + i
 		}
 		line := []rune(original[lineStart:lineEnd])
-		w.Excerpt = string(line[:min(80, len(line))])
+		offset := utf8.RuneCountInString(original[lineStart:start])
+		windowStart := max(0, offset-20)
+		w.Excerpt = string(line[windowStart:min(windowStart+80, len(line))])
 	}
 	return w
 }
@@ -84,6 +86,9 @@ func Check(ctx context.Context, in Input, names NameResolver) Result {
 		add(code, "error", "body", "The draft has no authored body text.")
 	}
 	for _, field := range []struct{ name, text, scan string }{{"subject", in.Subject, in.Subject}, {"body", in.Body, maskFences(own)}} {
+		if field.name == "subject" && in.Kind != "compose" {
+			continue
+		}
 		severity := "error"
 		if in.AllowPlaceholders {
 			severity = "warn"
@@ -134,9 +139,6 @@ func Check(ctx context.Context, in Input, names NameResolver) Result {
 			add(CodeOversize, "warn", "body", "The built email exceeds 500 KB.")
 		}
 	}
-	if in.Channel == "sms" && smsSegments(in.Body) > 3 {
-		add(CodeSMSLength, "warn", "body", "The body exceeds three SMS segments.")
-	}
 	checkGreeting(ctx, in, names, own, &r)
 	return r
 }
@@ -157,7 +159,7 @@ func checkGreeting(ctx context.Context, in Input, names NameResolver, own string
 		if names == nil {
 			return
 		}
-		resolved, err := names.CuratedNames(ctx, addresses)
+		resolved, err := names.CuratedNames(ctx, addresses, in.ParticipantIDs)
 		if err != nil {
 			r.Skipped = append(r.Skipped, CodeGreetingNameMismatch)
 			return

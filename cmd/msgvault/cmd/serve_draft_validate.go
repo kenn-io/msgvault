@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json/v2"
 	"fmt"
+	"strings"
 
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/draftlint"
@@ -34,7 +35,7 @@ func emitValidatedDraft(emit func(api.CLIRunEvent) error, result draftlint.Resul
 	output := validatedDraftOutput(result, recipients)
 	data := fmt.Sprintf("validated: valid=%t\n", output.Valid)
 	if recipients != nil {
-		data += fmt.Sprintf("to: %s\ncc: %s\nbcc: %s\n", textutil.SanitizeTerminal(fmt.Sprint(in.To)), textutil.SanitizeTerminal(fmt.Sprint(in.Cc)), textutil.SanitizeTerminal(fmt.Sprint(in.Bcc)))
+		data += fmt.Sprintf("to: %s\ncc: %s\nbcc: %s\n", textutil.SanitizeTerminal(strings.Join(in.To, ", ")), textutil.SanitizeTerminal(strings.Join(in.Cc, ", ")), textutil.SanitizeTerminal(strings.Join(in.Bcc, ", ")))
 	}
 	data += draftLintText(result)
 	if asJSON {

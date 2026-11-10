@@ -188,13 +188,12 @@ func TestValidateOnlyReplyAllMatchesCreate(t *testing.T) {
 	assert.Equal(t, to, recipients["to"])
 }
 func TestValidateOnlyWithIdempotencyKeyRejected(t *testing.T) {
-	for _, args := range [][]string{{"draft-reply", "1", "--body", "ok"}, {"draft-compose", "--source-id", "1", "--to", "a@example.com", "--body", "ok"}, {"draft-forward", "1", "--source-id", "1", "--to", "a@example.com"}, {"draft-edit", "draft", "--revision", "1", "--body", "ok"}} {
-		for _, flags := range [][]string{{"--validate-only", "--idempotency-key", "key"}, {"--idempotency-key=key", "--validate-only"}} {
-			_, err := lintRun(t, &storeAPIAdapter{}, nil, append(append([]string{}, args...), flags...)...)
-			require.EqualError(t, err, "validate_only_with_idempotency_key")
-		}
-	}
+	f := newDraftReplyFixture(t)
+	_, err := f.run(t, f.grantedAdapter(), "--body", "Thanks", "--validate-only", "--idempotency-key", "key")
+	require.EqualError(t, err, "invalid_args")
+	assertDraftRows(t, f.store, 0)
 }
+
 func TestChatDraftStrictRefuses(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	s, err := st.GetOrCreateSource("slack", "synthetic")
@@ -222,7 +221,7 @@ func TestValidateOnlyDelegatedNeedsDraftCreate(t *testing.T) {
 }
 func TestDraftLintParsers(t *testing.T) {
 	for _, flag := range []string{"strict", "allow-placeholders", "validate-only"} {
-		for _, bad := range [][]string{{"--" + flag, "--" + flag}, {"--" + flag + "=false"}} {
+		for _, bad := range [][]string{{"--" + flag, "--" + flag}, {"--" + flag + "=invalid"}} {
 			_, err := parseDraftReplyArgs(append([]string{"draft-reply", "1", "--body", "ok"}, bad...))
 			require.Error(t, err)
 			_, err = parseDraftComposeArgs(append([]string{"draft-compose", "--source-id", "1", "--to", "a@example.com"}, bad...))

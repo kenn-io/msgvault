@@ -25,28 +25,11 @@ func (a *storeAPIAdapter) draftRecipientAdvisory(
 	unavailable := draftRecipientAdvisory{RecipientProvenanceStatus: "unavailable"}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	var readable []int64
-	if grant != nil {
-		unchecked := draftRecipientAdvisory{RecipientProvenanceStatus: "unchecked"}
-		if !grant.HasPermission(agentgrant.PermissionMessageRead) && !grant.HasPermission(agentgrant.PermissionSearchRead) {
-			return unchecked
-		}
-		sources, err := a.store.ListSourcesContext(ctx, "")
-		if err != nil {
-			return unavailable
-		}
-		readable = make([]int64, 0)
-		currentReadable := false
-		for _, source := range sources {
-			if grant.MatchesSource(draftSourceRef(source)) {
-				readable = append(readable, source.ID)
-				currentReadable = currentReadable || source.ID == sourceID
-			}
-		}
-		if !currentReadable {
-			return unchecked
-		}
+	readable, status := a.draftReadableSources(ctx, sourceID, grant)
+	if status != "checked" {
+		return draftRecipientAdvisory{RecipientProvenanceStatus: status}
 	}
+
 	recipients, err := a.store.DraftRecipientProvenanceContext(ctx, messageID, readable)
 	if err != nil {
 		// Provider success has already been persisted. Never turn failure of
@@ -67,4 +50,31 @@ func (a *storeAPIAdapter) draftRecipientAdvisory(
 		})
 	}
 	return result
+}
+
+// draftReadableSources keeps lint and post-write provenance on the same grant
+// policy. A nil scope means owner access; unchecked never permits a lookup.
+func (a *storeAPIAdapter) draftReadableSources(ctx context.Context, sourceID int64, grant *agentgrant.Grant) ([]int64, string) {
+	if grant == nil {
+		return nil, "checked"
+	}
+	if !grant.HasPermission(agentgrant.PermissionMessageRead) && !grant.HasPermission(agentgrant.PermissionSearchRead) {
+		return nil, "unchecked"
+	}
+	sources, err := a.store.ListSourcesContext(ctx, "")
+	if err != nil {
+		return nil, "unavailable"
+	}
+	readable := make([]int64, 0)
+	current := false
+	for _, source := range sources {
+		if grant.MatchesSource(draftSourceRef(source)) {
+			readable = append(readable, source.ID)
+			current = current || source.ID == sourceID
+		}
+	}
+	if !current {
+		return nil, "unchecked"
+	}
+	return readable, "checked"
 }

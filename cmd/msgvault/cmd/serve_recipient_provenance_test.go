@@ -20,7 +20,7 @@ import (
 func composeProvenanceDraft(t *testing.T, f draftReplyFixture, grant *agentgrant.Grant, recipients ...string) draftReplyOutput {
 	t.Helper()
 	requirements := require.New(t)
-	args := []string{"draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--from", testutil.IMAPTestUsername, "--body", "draft body", "--json"}
+	args := []string{"draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--from", testutil.IMAPTestUsername, "--body", "draft body", "--subject", "Synthetic draft", "--json"}
 	for _, address := range recipients {
 		args = append(args, "--to", address)
 	}

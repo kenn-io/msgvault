@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"net/mail"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -29,29 +30,22 @@ func parseDraftLintFlags(args []string) ([]string, draftLintOptions, error) {
 	var options draftLintOptions
 	filtered := []string{args[0]}
 	seen := map[string]bool{}
-	key := false
 	for i := 1; i < len(args); i++ {
 		nameValue, ok := strings.CutPrefix(args[i], "--")
 		name, value, hasValue := strings.Cut(nameValue, "=")
 		if ok && (name == "strict" || name == "allow-placeholders" || name == "validate-only") {
-			if seen[name] || hasValue && value != "true" {
-				return nil, options, draftReplyError("invalid_args", fmt.Errorf("--%s accepts one flag without a value", name))
+			if seen[name] || hasValue && value != "true" && value != "false" {
+				return nil, options, draftReplyError("invalid_args", fmt.Errorf("--%s accepts one boolean value", name))
 			}
 			seen[name] = true
+			enabled := !hasValue || value == "true"
 			switch name {
 			case "strict":
-				options.Strict = true
+				options.Strict = enabled
 			case "allow-placeholders":
-				options.AllowPlaceholders = true
+				options.AllowPlaceholders = enabled
 			case "validate-only":
-				options.ValidateOnly = true
-			}
-			continue
-		}
-		if ok && name == "idempotency-key" {
-			key = true
-			if !hasValue && i+1 < len(args) && !strings.HasPrefix(args[i+1], "--") {
-				i++
+				options.ValidateOnly = enabled
 			}
 			continue
 		}
@@ -67,12 +61,6 @@ func parseDraftLintFlags(args []string) ([]string, draftLintOptions, error) {
 			}
 		}
 	}
-	if key {
-		if options.ValidateOnly {
-			return nil, options, draftReplyError("validate_only_with_idempotency_key", errors.New("validation cannot use an idempotency key"))
-		}
-		return nil, options, draftReplyError("invalid_args", errors.New("unknown flag --idempotency-key"))
-	}
 	return filtered, options, nil
 }
 
@@ -81,44 +69,54 @@ type draftNameResolver struct {
 	sourceIDs []int64
 }
 
-func (r draftNameResolver) CuratedNames(ctx context.Context, addresses []string) (map[string][]string, error) {
+func (r draftNameResolver) CuratedNames(ctx context.Context, addresses []string, participantIDs []int64) (map[string][]string, error) {
+	if len(participantIDs) > 0 {
+		return r.store.CuratedNamesForParticipantsContext(ctx, participantIDs)
+	}
 	return r.store.CuratedNamesForAddressesContext(ctx, addresses, r.sourceIDs)
 }
 func (a *storeAPIAdapter) lintDraft(ctx context.Context, in draftlint.Input, sourceID int64, grant *agentgrant.Grant) draftlint.Result {
 	var resolver draftlint.NameResolver
-	if grant == nil {
-		resolver = draftNameResolver{store: a.store}
-	} else if grant.HasPermission(agentgrant.PermissionMessageRead) || grant.HasPermission(agentgrant.PermissionSearchRead) {
-		sources, err := a.store.ListSourcesContext(ctx, "")
-		if err == nil {
-			readable := make([]int64, 0)
-			current := false
-			for _, source := range sources {
-				if grant.MatchesSource(draftSourceRef(source)) {
-					readable = append(readable, source.ID)
-					current = current || source.ID == sourceID
-				}
-			}
-			if current {
-				resolver = draftNameResolver{store: a.store, sourceIDs: readable}
+	readable, status := a.draftReadableSources(ctx, sourceID, grant)
+	if status == "checked" {
+		resolver = draftNameResolver{store: a.store, sourceIDs: readable}
+		if in.Channel == "chat" {
+			var err error
+			in.ParticipantIDs, err = a.store.DraftConversationParticipantIDsContext(ctx, sourceID, in.SourceConversationID)
+			if err != nil || len(in.ParticipantIDs) == 0 {
+				resolver = nil
 			}
 		}
 	}
+
 	return draftlint.Check(ctx, in, resolver)
 }
 func emailDraftLintInput(kind, body string, draft imaplib.ReplyDraft) draftlint.Input {
 	in := draftlint.Input{Kind: kind, Channel: "email", Subject: draft.Parsed.Subject, Body: body, BuiltSize: len(draft.Raw), AttachmentCount: len(draft.Parsed.Attachments)}
 	for _, address := range draft.Parsed.To {
-		in.To = append(in.To, address.Email)
+		in.To = append(in.To, draftMailbox(address.Email))
 	}
 	for _, address := range draft.Parsed.Cc {
-		in.Cc = append(in.Cc, address.Email)
+		in.Cc = append(in.Cc, draftMailbox(address.Email))
 	}
 	for _, address := range draft.Parsed.Bcc {
-		in.Bcc = append(in.Bcc, address.Email)
+		in.Bcc = append(in.Bcc, draftMailbox(address.Email))
 	}
 	return in
 }
+
+// MIME parsing decodes quoted local parts. Restore mailbox syntax for lint and
+// envelope output while retaining bare addresses for ordinary mailboxes.
+func draftMailbox(address string) string {
+	return strings.TrimSuffix(strings.TrimPrefix((&mail.Address{Address: address}).String(), "<"), ">")
+}
+func draftMailboxKey(address string) string {
+	if parsed, err := mail.ParseAddress(address); err == nil {
+		address = parsed.Address
+	}
+	return store.NormalizeIdentifierForCompare(address)
+}
+
 func emitDraftLintRefusal(emit func(api.CLIRunEvent) error, result draftlint.Result, asJSON bool) error {
 	var data string
 	if asJSON {
@@ -179,7 +177,7 @@ func setDraftProvenanceFields(advisory *draftRecipientAdvisory, in draftlint.Inp
 			addresses []string
 		}{{"to", in.To}, {"cc", in.Cc}, {"bcc", in.Bcc}} {
 			for _, address := range field.addresses {
-				if store.NormalizeIdentifierForCompare(address) == store.NormalizeIdentifierForCompare(w.Address) {
+				if draftMailboxKey(address) == draftMailboxKey(w.Address) {
 					w.Field = field.name
 					break
 				}
