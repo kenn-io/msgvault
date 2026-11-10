@@ -189,7 +189,7 @@ func TestPackagePartialFailureReplay(t *testing.T) {
 
 func TestPackageUnsafeAndOversizedInput(t *testing.T) {
 	for _, tt := range []struct{ kind, want string }{
-		{"symlink", "path escapes from parent"}, {"large metadata", "metadata exceeds"}, {"large record", "record 1 exceeds 1048576 bytes"}, {"large CSV record", "record 1 exceeds 1048576 bytes"}, {"combined CSV header", "CSV header"},
+		{"symlink", "path escapes from parent"}, {"large metadata", "metadata exceeds"}, {"large record", "record 1 exceeds 1048576 bytes"}, {"large CSV record", "record 1 exceeds 1048576 bytes"}, {"large CSV blank lines", "record 1 exceeds 1048576 bytes"}, {"combined CSV header", "CSV header"},
 	} {
 		t.Run(tt.kind, func(t *testing.T) {
 			require := require.New(t)
@@ -205,6 +205,9 @@ func TestPackageUnsafeAndOversizedInput(t *testing.T) {
 			case "combined CSV header":
 				require.NoError(os.Remove(filepath.Join(root, "Messages/c200000000000000001/messages.json")))
 				testutil.WriteFile(t, root, "Messages/c200000000000000001/messages.csv", []byte("\"ID,Timestamp,Contents,Attachments\"\n1\n"))
+			case "large CSV blank lines":
+				require.NoError(os.Remove(filepath.Join(root, "Messages/c200000000000000001/messages.json")))
+				testutil.WriteFile(t, root, "Messages/c200000000000000001/messages.csv", []byte("ID,Timestamp,Contents,Attachments\n"+strings.Repeat("\n", 2<<20)+"1,,after blank lines,\n"))
 			case "large CSV record":
 				require.NoError(os.Remove(filepath.Join(root, "Messages/c200000000000000001/messages.json")))
 				testutil.WriteFile(t, root, "Messages/c200000000000000001/messages.csv", []byte("ID,Timestamp,Contents,Attachments\n1,,\""+strings.Repeat("x", 2<<20)+"\",\n"))

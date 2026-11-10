@@ -255,12 +255,12 @@ func readPackageCSV(ctx context.Context, f *os.File, input *io.LimitedReader, na
 		input.N = packageRecordLimit + 1
 		start := reader.InputOffset()
 		fields, err := reader.Read()
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
 		if err != nil {
 			if input.N == 0 {
 				return packageRecordLimitError(name, ordinal)
+			}
+			if errors.Is(err, io.EOF) {
+				return nil
 			}
 			return fmt.Errorf("discord package %s row %d: %w", name, ordinal, err)
 		}
