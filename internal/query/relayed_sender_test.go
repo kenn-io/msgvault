@@ -40,3 +40,21 @@ func TestDuckDBSenderViewsAfterParticipantMerge(t *testing.T) {
 		}()
 	}
 }
+
+func TestRelayedSenderDomainActivity(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("reader@example.test")
+	author := b.AddParticipant("author@example.test", "example.test", "Author")
+	id := b.AddMessage(MessageOpt{Subject: "Relay", SenderID: &author})
+	b.AddRecipientWithEnvelope(id, author, "from", "Author", "notifications@github.com")
+	b.recipients[len(b.recipients)-1].IsRelayed = true
+	engine := b.BuildEngine()
+	t.Cleanup(func() { _ = engine.Close() })
+	result, err := engine.SearchDomains(t.Context(), DomainSearchRequest{Page: PageSpec{Limit: 25}})
+	require.NoError(t, err)
+	var domains []string
+	for _, row := range result.Rows {
+		domains = append(domains, row.Domain)
+	}
+	assert.Contains(t, domains, "github.com")
+}

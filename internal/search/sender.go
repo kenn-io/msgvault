@@ -1,6 +1,15 @@
 package search
 
-import "strings"
+import (
+	"strings"
+
+	"go.kenn.io/msgvault/internal/identityindex"
+)
+
+// SenderDomainCondition matches the recorded domain on an explicit From row.
+func SenderDomainCondition(placeholder string) string {
+	return `EXISTS (SELECT 1 FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'from' AND COALESCE(CASE WHEN mr.is_relayed THEN ` + identityindex.SenderEnvelopeDomainExpr("mr.email_address") + ` END, p.domain) = ` + placeholder + `)`
+}
 
 // escapeLike makes SQL LIKE wildcards literal with ESCAPE '\'.
 func escapeLike(value string) string {

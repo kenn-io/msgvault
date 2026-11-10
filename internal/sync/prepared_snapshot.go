@@ -37,12 +37,14 @@ func preparedMessageParticipants(data *messageData) ([]store.ParticipantPersistD
 		})
 		index[email] = i
 	}
-	if data.relayType != "" {
-		index["\x00relay"] = len(participants)
-		name := mime.RelayedSenderName(data.from[0], data.relayValue)
-		participants = append(participants, store.ParticipantPersistData{IdentifierType: data.relayType, IdentifierValue: data.relayValue, DisplayName: name})
-	}
 	return participants, index
+}
+
+func preparedRelayBuilder(data *messageData, participants []store.ParticipantPersistData, build func([]int64) *store.MessagePersistData) ([]store.ParticipantPersistData, func([]int64) *store.MessagePersistData) {
+	if data.relayType == "" {
+		return participants, build
+	}
+	return store.RelayedSenderBuilder(data.from[0], data.relayType, data.relayValue, participants, build)
 }
 
 func buildPreparedSnapshot(
@@ -62,16 +64,7 @@ func buildPreparedSnapshot(
 		}
 	}
 
-	fromMap := participantMap
-	if relayID, ok := participantMap["\x00relay"]; ok {
-		message.SenderID = sql.NullInt64{Int64: relayID, Valid: true}
-		fromMap = make(map[string]int64, len(prepared.from))
-		for _, address := range prepared.from {
-			fromMap[address.Email] = relayID
-		}
-	}
-	from := buildRecipientSet("from", prepared.from, fromMap)
-	from.IsRelayed = prepared.relayType != ""
+	from := buildRecipientSet("from", prepared.from, participantMap)
 
 	return &store.MessagePersistData{
 		Message:  &message,

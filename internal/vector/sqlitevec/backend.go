@@ -1519,6 +1519,10 @@ func (b *Backend) filteredMessageIDsLimit(ctx context.Context, f vector.Filter, 
 		clauses = append(clauses, predicate)
 		args = append(args, senderArgs...)
 	}
+	if f.SenderDomain != "" {
+		clauses = append(clauses, search.SenderDomainCondition("?"))
+		args = append(args, f.SenderDomain)
+	}
 	for _, group := range f.SenderGroups {
 		if len(group) == 0 {
 			continue

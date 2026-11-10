@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -49,6 +50,42 @@ func TestVectorFilterMessageIDsBeforeRanking(t *testing.T) {
 		Filter: vector.Filter{MessageIDs: tooMany},
 	})
 	require.ErrorIs(t, err, vector.ErrFilterTooLarge)
+}
+
+func TestVectorRelayedSenderDrilldowns(t *testing.T) {
+	f := seedThree(t)
+	_, err := f.db.ExecContext(f.ctx, `CREATE TABLE participants(id BIGINT PRIMARY KEY,email_address TEXT,phone_number TEXT,display_name TEXT,domain TEXT);
+ ALTER TABLE message_recipients ADD COLUMN display_name TEXT;
+ ALTER TABLE message_recipients ADD COLUMN email_address TEXT;
+ ALTER TABLE message_recipients ADD COLUMN is_relayed BOOLEAN NOT NULL DEFAULT FALSE;
+ INSERT INTO participants VALUES(1000,NULL,NULL,'Alice',NULL),(1001,'other@github.com',NULL,'Other','github.com');
+ INSERT INTO message_recipients(message_id,participant_id,recipient_type,email_address,is_relayed) VALUES(1,1000,'from','notifications@github.com',TRUE),(2,1001,'from','other@github.com',FALSE);
+ UPDATE messages SET sender_id=1001 WHERE id=3;`)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		filter query.MessageFilter
+		want   []int64
+	}{
+		{query.MessageFilter{Sender: "notifications@github.com"}, []int64{1}},
+		{query.MessageFilter{Domain: "github.com"}, []int64{1, 2}},
+	} {
+		var filter vector.Filter
+		require.NoError(t, hybrid.ApplyMessageFilter(f.ctx, f.db, (&store.PostgreSQLDialect{}).Rebind, &filter, tc.filter))
+		hits, err := f.b.Search(f.ctx, f.gen, unitVec(4, 0), 10, filter)
+		require.NoError(t, err)
+		var ids []int64
+		for _, hit := range hits {
+			ids = append(ids, hit.MessageID)
+		}
+		assert.ElementsMatch(t, tc.want, ids)
+		fused, _, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{QueryVec: unitVec(4, 0), Generation: f.gen, KPerSignal: 10, Limit: 10, RRFK: 60, Filter: filter})
+		require.NoError(t, err)
+		ids = nil
+		for _, hit := range fused {
+			ids = append(ids, hit.MessageID)
+		}
+		assert.ElementsMatch(t, tc.want, ids)
+	}
 }
 
 // TestVectorFilterListIDsBeforeRanking catches semantic and fused candidate
@@ -382,6 +419,7 @@ func TestVectorSenderTermsBeforeRanking(t *testing.T) {
 	f := seedThree(t)
 	_, err := f.db.ExecContext(f.ctx, `CREATE TABLE participants(id BIGINT PRIMARY KEY,email_address TEXT,phone_number TEXT,display_name TEXT);
  ALTER TABLE message_recipients ADD COLUMN display_name TEXT;
+ ALTER TABLE message_recipients ADD COLUMN email_address TEXT;
  INSERT INTO participants(id,email_address,phone_number,display_name) VALUES(1000,'alex@example.com',NULL,'Élodie Kim');
  INSERT INTO message_recipients(message_id,participant_id,recipient_type,display_name) VALUES(1,1000,'from','Álvaro Header'),(2,1000,'from','Other');`)
 	require.NoError(err)

@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/emailattribution"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/peoplesweep"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // querier is satisfied by both *sql.DB and *sql.Tx, allowing
@@ -2178,8 +2179,28 @@ func (s *Store) PersistMessageContext(ctx context.Context, data *MessagePersistD
 	)
 }
 
-// PersistEmailMessageWithParticipantsContext resolves sender identities with the message.
-func (s *Store) PersistEmailMessageWithParticipantsContext(ctx context.Context, sourceID int64, participants []ParticipantPersistData, build func([]int64) *MessagePersistData) (int64, error) {
+// RelayedSenderBuilder resolves a relay author in the message transaction.
+func RelayedSenderBuilder(from mime.Address, relayType, relayValue string, participants []ParticipantPersistData, build func([]int64) *MessagePersistData) ([]ParticipantPersistData, func([]int64) *MessagePersistData) {
+	if relayType == "" {
+		return participants, build
+	}
+	index := len(participants)
+	participants = append(participants, ParticipantPersistData{IdentifierType: relayType, IdentifierValue: relayValue, DisplayName: mime.RelayedSenderName(from, relayValue)})
+	return participants, func(ids []int64) *MessagePersistData {
+		data := build(ids[:index])
+		data.Message.SenderID = sql.NullInt64{Int64: ids[index], Valid: true}
+		for i := range data.Recipients {
+			if data.Recipients[i].Type == "from" {
+				data.Recipients[i] = RecipientSet{Type: "from", ParticipantIDs: []int64{ids[index]}, DisplayNames: []string{textutil.EnsureUTF8(from.Name)}, EmailAddresses: []string{from.Email}, IsRelayed: true}
+				break
+			}
+		}
+		return data
+	}
+}
+
+// PersistRelayedEmailContext resolves participants and persists an email together.
+func (s *Store) PersistRelayedEmailContext(ctx context.Context, sourceID int64, participants []ParticipantPersistData, build func([]int64) *MessagePersistData) (int64, error) {
 	return s.persistMessageWithParticipantsTransaction(ctx, attributionLock{Sources: []int64{sourceID}}, nil, participants, build, nil, nil)
 }
 

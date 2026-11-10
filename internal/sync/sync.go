@@ -2020,7 +2020,7 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 	var err error
 	if data.relayType != "" {
 		participants, participantIndex := preparedMessageParticipants(data)
-		messageID, err = s.store.PersistEmailMessageWithParticipantsContext(ctx, data.message.SourceID, participants, func(ids []int64) *store.MessagePersistData {
+		participants, build := preparedRelayBuilder(data, participants, func(ids []int64) *store.MessagePersistData {
 			persist := buildPreparedSnapshot(data, participantIndex, ids, nil)
 			persist.Conversation = nil
 			persist.MIMEAttachmentReplacement = nil
@@ -2028,6 +2028,7 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 			persist.SyncRunItem = resolution
 			return persist
 		})
+		messageID, err = s.store.PersistRelayedEmailContext(ctx, data.message.SourceID, participants, build)
 	} else {
 		recipients := []store.RecipientSet{
 			buildRecipientSet("from", data.from, data.participantMap),

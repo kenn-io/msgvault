@@ -420,6 +420,10 @@ func (b *Backend) fusedSearchExact(ctx context.Context, req vector.FusedRequest,
 		senderSQL.WriteString(" AND " + predicate)
 	}
 	filterWhere += senderSQL.String()
+	if req.Filter.SenderDomain != "" {
+		filterWhere += " AND " + search.SenderDomainCondition(":sender_domain")
+		senderArgs = append(senderArgs, sql.Named("sender_domain", req.Filter.SenderDomain))
+	}
 	var accountArgs []any
 	if clauses := search.AccountScopeConditionsBound(req.Filter.AccountScopes, "m", func(v any) string {
 		name := fmt.Sprintf("account_scope_%d", len(accountArgs))

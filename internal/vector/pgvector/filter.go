@@ -69,6 +69,9 @@ func buildPGFilterClauses(f vector.Filter, bind func(any) string) []string {
 		}
 		clauses = append(clauses, predicate)
 	}
+	if f.SenderDomain != "" {
+		clauses = append(clauses, search.SenderDomainCondition(bind(f.SenderDomain)))
+	}
 	for _, group := range f.SenderGroups {
 		if len(group) == 0 {
 			continue

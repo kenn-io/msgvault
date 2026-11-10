@@ -2764,6 +2764,8 @@ Receivers that omit the authserv-id, such as Exchange Online and Outlook.com hea
 
 GitHub notification email is attributed to the author named in its `X-GitHub-Sender` header. The original From address remains available for searches and authentication checks.
 
+The header names a person but does not authenticate them, and handles can change.
+
 Add rules for other relay addresses in `config.toml`. A rule for an existing address replaces its built-in rule.
 
 ```toml

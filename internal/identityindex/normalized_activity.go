@@ -68,9 +68,13 @@ WITH message_facts AS (
 	SELECT m.message_id, m.sender_id, true,
 	       coalesce(m.sender_id = m.owner_participant_id, false), true
 	FROM message_facts m WHERE m.sender_id IS NOT NULL
+), relay_domains AS (
+	SELECT message_id, %s AS relay_domain FROM %s mr
+	WHERE mr.recipient_type = 'from' AND mr.is_relayed
 ), direct_canon AS (
-	SELECT e.*, c.canonical_id, c.participant_domain
+	SELECT e.*, c.canonical_id, CASE WHEN e.is_author THEN coalesce(r.relay_domain, c.participant_domain) ELSE c.participant_domain END AS participant_domain
 	FROM direct_edges e LEFT JOIN canon c USING (participant_id)
+	LEFT JOIN relay_domains r USING (message_id)
 ), direct_agg AS (
 	SELECT message_id, canonical_id, participant_domain,
 	       bool_or(is_sender) AS is_sender,
@@ -104,7 +108,8 @@ FROM message_facts m`, EntryKindSQL("m.message_type"),
 		messages, quoteSQLString(path("sources")),
 		quoteSQLString(path("conversations")), unsentMessages, occurredYear,
 		CanonicalParticipantsSQL(fmt.Sprintf("read_parquet('%s')", quoteSQLString(path("participants"))), fmt.Sprintf("read_parquet('%s')", quoteSQLString(path("participant_clusters")))),
-		OwnerCanonicalsSQL(fmt.Sprintf("read_parquet('%s')", quoteSQLString(path("owner_participants"))), "canon"), recipients)
+		OwnerCanonicalsSQL(fmt.Sprintf("read_parquet('%s')", quoteSQLString(path("owner_participants"))), "canon"), recipients,
+		SenderEnvelopeDomainExpr("mr.email_address"), recipients)
 }
 
 // ExpandedActivityRelation restores the logical edge relation on demand from

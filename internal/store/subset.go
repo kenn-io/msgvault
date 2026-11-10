@@ -2904,7 +2904,7 @@ func populateFTS(ctx context.Context, db *sql.DB) error {
 				CASE WHEN m.message_type != 'email' AND m.message_type IS NOT NULL AND m.message_type != ''
 				     THEN (SELECT COALESCE(p.phone_number, p.email_address) FROM participants p WHERE p.id = m.sender_id)
 				END,
-				(SELECT GROUP_CONCAT(p.email_address, ' ')
+				(SELECT GROUP_CONCAT(COALESCE(CASE WHEN mr.is_relayed THEN mr.email_address END, p.email_address), ' ')
 				 FROM message_recipients mr
 				 JOIN participants p ON p.id = mr.participant_id
 				 WHERE mr.message_id = m.id

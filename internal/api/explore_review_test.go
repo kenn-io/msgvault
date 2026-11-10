@@ -1810,7 +1810,7 @@ func newExploreSemanticChatDuckDBFixture(t *testing.T) *query.DuckDBEngine {
 			where = " WHERE false"
 		}
 		path := filepath.ToSlash(filepath.Join(dir, table.file))
-		projection := "*"
+		projection := identityFixtureProjection(table.dir)
 		if strings.HasPrefix(table.dir, "messages/") {
 			projection += ", false AS archive_only"
 		}

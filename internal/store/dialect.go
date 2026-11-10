@@ -35,7 +35,11 @@ type ftsEnvelopeExpressions struct {
 // The enclosing query must alias messages as m.
 func storedFTSEnvelopeSQL(aggregate string) ftsEnvelopeExpressions {
 	recipients := func(kind string) string {
-		return fmt.Sprintf("COALESCE((SELECT %s(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = '%s'), '')", aggregate, kind)
+		address := "p.email_address"
+		if kind == "from" {
+			address = "COALESCE(CASE WHEN mr.is_relayed THEN mr.email_address END, p.email_address)"
+		}
+		return fmt.Sprintf("COALESCE((SELECT %s(%s, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = '%s'), '')", aggregate, address, kind)
 	}
 	return ftsEnvelopeExpressions{
 		subject: "COALESCE(m.subject, '')",

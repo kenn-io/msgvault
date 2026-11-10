@@ -112,22 +112,23 @@ func (s *Syncer) persistPreparedIMAPRelocation(
 	participants, participantIndex := preparedMessageParticipants(prepared)
 	labelIDs := labelIDsFor(prepared.gmailLabelIDs, labelMap)
 
+	participants, build := preparedRelayBuilder(prepared, participants, func(participantIDs []int64) *store.MessagePersistData {
+		persist := buildPreparedSnapshot(
+			prepared, participantIndex, participantIDs, attachmentWrites)
+		// The store guard compares original identity evidence with the
+		// historical row, then omits an unusable ID from the new projection.
+		persist.Message.RFC822MessageID = sql.NullString{
+			String: prepared.originalMessageID, Valid: prepared.originalMessageID != "",
+		}
+		persist.LabelIDs = labelIDs
+		persist.PreserveLabels = preserveLabels
+		return persist
+	})
 	messageID, err := s.store.PersistIMAPRelocationWithParticipantsContext(
 		ctx,
 		expected,
 		participants,
-		func(participantIDs []int64) *store.MessagePersistData {
-			persist := buildPreparedSnapshot(
-				prepared, participantIndex, participantIDs, attachmentWrites)
-			// The store guard compares original identity evidence with the
-			// historical row, then omits an unusable ID from the new projection.
-			persist.Message.RFC822MessageID = sql.NullString{
-				String: prepared.originalMessageID, Valid: prepared.originalMessageID != "",
-			}
-			persist.LabelIDs = labelIDs
-			persist.PreserveLabels = preserveLabels
-			return persist
-		},
+		build,
 		replaceLabels,
 	)
 	if err != nil {
