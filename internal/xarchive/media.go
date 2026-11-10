@@ -28,10 +28,12 @@ func mediaPath(value, messageID string, group bool) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	if !u.IsAbs() || (u.Scheme != "https" && u.Scheme != "http") {
+	if u.Host == "" || u.Path == "" || (u.Scheme != "https" && u.Scheme != "http") {
 		return "", false
 	}
-	filename := u.Path[strings.LastIndex(u.Path, "/")+1:]
+	rawPath, _, _ := strings.Cut(value, "?")
+	rawPath, _, _ = strings.Cut(rawPath, "#")
+	filename := rawPath[strings.LastIndex(rawPath, "/")+1:]
 	if filename == "" || filename == "." || filename == ".." || strings.ContainsAny(filename, `\`) {
 		return "", false
 	}
@@ -39,18 +41,34 @@ func mediaPath(value, messageID string, group bool) (string, bool) {
 }
 
 func mediaWrites(ctx context.Context, st *store.Store, root *os.Root, messageID int64, m *message, group bool, dest string, summary *ImportSummary) ([]store.AttachmentWrite, error) {
-	if len(m.Media) == 0 {
-		return nil, nil
-	}
 	existing := map[string]store.AttachmentRef{}
 	if messageID != 0 {
 		refs, err := st.MessageMIMEAttachmentsContext(ctx, messageID)
 		if err != nil {
 			return nil, err
 		}
+		hasMissing := false
 		for _, ref := range refs {
 			existing[ref.SourcePartKey] = ref
+			hasMissing = hasMissing || ref.ContentHash == ""
 		}
+		if !hasMissing {
+			return nil, nil
+		}
+		// Repair the occurrences in the retained first event, even if a later
+		// export reorders or omits its media array.
+		raw, err := st.GetMessageRawContext(ctx, messageID)
+		if err != nil {
+			return nil, err
+		}
+		var first event
+		if err := json.Unmarshal(raw, &first); err != nil {
+			return nil, fmt.Errorf("xarchive: decode original media event: %w", err)
+		}
+		if first.Message == nil {
+			return nil, errors.New("xarchive: original media event has no messageCreate")
+		}
+		m = first.Message
 	}
 	writes := []store.AttachmentWrite{}
 	for i, original := range m.Media {

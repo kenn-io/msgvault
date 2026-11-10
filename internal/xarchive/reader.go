@@ -24,7 +24,7 @@ const maxEventBytes = 1 << 20
 
 var errEventLimit = errors.New("xarchive: JSON event exceeds 1 MiB limit")
 var archiveFile = regexp.MustCompile(`^direct-messages(-group)?(-part[0-9]+)?\.js$`)
-var wrapper = regexp.MustCompile(`^window\.YTD\.(account|direct_messages|direct_messages_group)\.part[0-9]+\s*=$`)
+var wrapper = regexp.MustCompile(`^window\.YTD\.([a-z_]+)\.part[0-9]+\s*=$`)
 var numericID = regexp.MustCompile(`^[0-9]+$`)
 
 type archive struct {

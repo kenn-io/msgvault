@@ -144,34 +144,66 @@ func TestImportMediaRepairAndPreserve(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
 	dest := t.TempDir()
-	// The offset timestamp and mismatched URL/message IDs are synthetic contract cases.
-	synthetic(t, root, "direct-messages.js", `[{"dmConversation":{"conversationId":"1-2","messages":[{"messageCreate":{"id":"7","text":"first","createdAt":"2020-01-02T03:04:05+03:00","mediaUrls":["https://ton.twitter.com/dm/42/x/image.jpg","https://video.twimg.com/dm_video/99/movie.mp4"]}}]}}]`)
+	// Offset time, URL/message-ID mismatches, escaped filenames and changed
+	// media lists are synthetic contract cases.
+	first := `[{"dmConversation":{"conversationId":"1-2","messages":[{"messageCreate":{"id":"7","text":"first","createdAt":"2020-01-02T03:04:05+03:00","mediaUrls":["https://ton.twitter.com/dm/42/x/image.jpg","https://video.twimg.com/dm_video/99/movie.mp4","https://ton.twitter.com/dm/42/x/asset%20image.png"]}}]}}]`
+	synthetic(t, root, "direct-messages.js", first)
 	opts := ImportOptions{RootDir: root, Me: "1", AttachmentsDir: dest}
 	s, err := Import(t.Context(), st, opts)
 	require.NoError(t, err)
-	assert.Equal(t, 2, s.AttachmentsMissing)
+	assert.Equal(t, 3, s.AttachmentsMissing)
 	var id int64
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&id))
 	raw, err := st.GetMessageRawContext(t.Context(), id)
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), "+03:00")
-	testutil.WriteFile(t, root, "direct_messages_media/7-image.jpg", []byte("original"))
 	testutil.WriteFile(t, root, "direct_messages_media/7-movie.mp4", []byte("synthetic video bytes"))
+	// A later export cannot redefine the occurrences in the retained first event.
+	synthetic(t, root, "direct-messages.js", `[{"dmConversation":{"conversationId":"1-2","messages":[{"messageCreate":{"id":"7","text":"later","mediaUrls":["https://video.twimg.com/dm_video/99/movie.mp4","https://ton.twitter.com/dm/42/x/image.jpg"]}}]}}]`)
+	s, err = Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	assert.Equal(t, 1, s.AttachmentsStored)
+	refs, err := st.MessageMIMEAttachmentsContext(t.Context(), id)
+	require.NoError(t, err)
+	require.Len(t, refs, 3)
+	hashes := make(map[string]string, len(refs))
+	for _, ref := range refs {
+		hashes[ref.SourcePartKey] = ref.ContentHash
+	}
+	require.Contains(t, hashes, "media:0")
+	assert.Empty(t, hashes["media:0"], "the missing image must not receive the video bytes")
+	assert.NotEmpty(t, hashes["media:1"])
+	testutil.WriteFile(t, root, "direct_messages_media/7-image.jpg", []byte("original"))
+	// Escaped filenames follow the producer's literal URL-segment contract.
+	testutil.WriteFile(t, root, "direct_messages_media/7-asset%20image.png", []byte("synthetic escaped filename bytes"))
+	synthetic(t, root, "direct-messages.js", `[{"dmConversation":{"conversationId":"1-2","messages":[{"messageCreate":{"id":"7","mediaUrls":[]}}]}}]`)
 	s, err = Import(t.Context(), st, opts)
 	require.NoError(t, err)
 	assert.Equal(t, 2, s.AttachmentsStored)
-	refs, err := st.MessageMIMEAttachmentsContext(t.Context(), id)
+	refs, err = st.MessageMIMEAttachmentsContext(t.Context(), id)
 	require.NoError(t, err)
-	require.Len(t, refs, 2)
-	hash := refs[0].ContentHash
-	assert.NotEmpty(t, hash)
+	require.Len(t, refs, 3)
+	var hash string
+	for _, ref := range refs {
+		assert.NotEmpty(t, ref.ContentHash)
+		if ref.SourcePartKey == "media:0" {
+			hash = ref.ContentHash
+		}
+	}
+	require.NotEmpty(t, hash)
 	testutil.WriteFile(t, root, "direct_messages_media/7-image.jpg", []byte("changed"))
 	s, err = Import(t.Context(), st, opts)
 	require.NoError(t, err)
 	assert.Zero(t, s.AttachmentsStored)
 	refs, err = st.MessageMIMEAttachmentsContext(t.Context(), id)
 	require.NoError(t, err)
-	assert.Equal(t, hash, refs[0].ContentHash)
+	var replayHash string
+	for _, ref := range refs {
+		if ref.SourcePartKey == "media:0" {
+			replayHash = ref.ContentHash
+		}
+	}
+	assert.Equal(t, hash, replayHash)
 	raw2, err := st.GetMessageRawContext(t.Context(), id)
 	require.NoError(t, err)
 	assert.Equal(t, raw, raw2)

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"database/sql"
 	"io"
 	"os"
@@ -20,6 +21,15 @@ func TestImportXRefreshesCacheAfterPartialFailure(t *testing.T) {
 	root := t.TempDir()
 	body := `window.YTD.direct_messages.part0 = [{"dmConversation":{"conversationId":"1-2","messages":[{"messageCreate":{"id":"1","senderId":"1","createdAt":"2020-01-02T03:04:05.000Z","text":"committed"}}, invalid]}}]`
 	require.NoError(t, os.WriteFile(filepath.Join(root, "direct-messages.js"), []byte(body), 0600))
+	var output bytes.Buffer
+	invalid := newImportXCmd()
+	invalid.SetContext(testCtx)
+	invalid.SetOut(&output)
+	invalid.SetErr(io.Discard)
+	invalid.SetArgs([]string{root})
+	require.ErrorContains(t, invalid.Execute(), "--me")
+	assert.NotContains(t, output.String(), "X DM import:")
+	assert.NotContains(t, output.String(), "Re-run to safely retry")
 	cmd := newImportXCmd()
 	cmd.SetContext(testCtx)
 	cmd.SetOut(io.Discard)

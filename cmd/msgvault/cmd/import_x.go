@@ -64,7 +64,9 @@ func runImportX(cmd *cobra.Command, root string, opts xCLIOptions) error {
 	if summary.SourceID != 0 {
 		cacheErr = rebuildCacheAfterWrite(ctx, state.cfg.DatabaseDSN(), state)
 	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "X DM import: %d direct and %d group conversation entries\n  Messages: %d added, %d duplicates\n  Skipped: %d events, %d invalid records\n  Media: %d stored, %d missing, unsafe or oversized\nRe-run to safely retry unfinished work and missing media.\n", summary.DirectConversations, summary.GroupConversations, summary.MessagesAdded, summary.MessagesSkipped, summary.EventsSkipped, summary.InvalidRecords, summary.AttachmentsStored, summary.AttachmentsMissing)
+	if summary.SourceID != 0 {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "X DM import: %d direct and %d group conversation entries\n  Messages: %d added, %d duplicates\n  Skipped: %d events, %d invalid records\n  Media: %d stored, %d missing, unsafe or oversized\nRe-run to safely retry unfinished work and missing media.\n", summary.DirectConversations, summary.GroupConversations, summary.MessagesAdded, summary.MessagesSkipped, summary.EventsSkipped, summary.InvalidRecords, summary.AttachmentsStored, summary.AttachmentsMissing)
+	}
 	return errors.Join(importErr, migrationErr, cacheErr)
 }
 func init() { rootCmd.AddCommand(newImportXCmd()) }

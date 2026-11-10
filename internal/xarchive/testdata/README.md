@@ -19,7 +19,7 @@ Synthetic owner `100001` occurs in both excerpts. Media arrays in the excerpts a
 
 The same export’s [viewer asset](https://github.com/larsbrinkhoff/twitter-data/blob/bedf1fa56839650efa7cc704303a21bfb18bc833/assets/js/ondemand.App.ab1ee9b858dd3ab2e479.js) constructs local filenames from `messageCreate.id`, a hyphen and the final URL segment, and recognizes `https://video.twimg.com/` as video. The URL’s intermediate path segments do not determine the local filename. Tests with mismatched message/URL IDs and video URLs are synthetic checks of this viewer contract; no real video record or bytes were acquired.
 
-Account metadata, offset timestamps, numbered parts, containment cases and companion media bytes in tests are synthetic. The media-reference excerpt uses an independently redacted ID namespace; tests import it separately.
+Account metadata, offset timestamps, numbered parts, escaped filenames, changed media lists, containment cases and companion media bytes in tests are synthetic. The media-reference excerpt uses an independently redacted ID namespace; tests import it separately.
 
 ## Documentation and parser references
 
