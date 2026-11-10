@@ -27,12 +27,14 @@ func (s *Store) chatRouteRecipientsTx(ctx context.Context, tx *loggedTx, sourceI
 	}
 
 	r := MessagingRoute{SourceID: sourceID, ProviderChatID: sourceConversationID}
-	var raw string
-	var oversized bool
+	var raw, sourceFailure string
+	var oversized, reanchorRequired bool
 	err := tx.QueryRowContext(ctx, `SELECT c.id,src.identifier,c.conversation_type,
- `+s.boundedRouteMetadataSQL()+`
+ `+s.boundedRouteMetadataSQL()+`, COALESCE(srf.failure,''),
+ EXISTS(SELECT 1 FROM archive_metadata am WHERE am.key='`+beeperReanchorMarkerPrefix+`' || CAST(src.id AS TEXT))
  FROM conversations c JOIN sources src ON src.id=c.source_id
- WHERE c.source_id=? AND c.source_conversation_id=? AND c.conversation_type IN `+chatConversationTypesSQL, sourceID, sourceConversationID).Scan(&r.ConversationID, &r.AccountID, &r.ConversationType, &raw, &oversized)
+ LEFT JOIN source_messaging_route_failures srf ON srf.source_id=src.id
+ WHERE c.source_id=? AND c.source_conversation_id=? AND c.conversation_type IN `+chatConversationTypesSQL, sourceID, sourceConversationID).Scan(&r.ConversationID, &r.AccountID, &r.ConversationType, &raw, &oversized, &sourceFailure, &reanchorRequired)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrDeliveryPolicyInvalid
 	}
@@ -50,7 +52,7 @@ func (s *Store) chatRouteRecipientsTx(ctx context.Context, tx *loggedTx, sourceI
 	}
 	checkRouteBindings(&r, e)
 	checkRouteRosterProof(&r, e, roster)
-	if len(r.Reasons) > 0 || e.Merged || e.MergedIntoChatID != "" || e.Failure != "" {
+	if len(r.Reasons) > 0 || e.Merged || e.MergedIntoChatID != "" || e.Failure != "" || sourceFailure != "" || reanchorRequired {
 		return nil, fmt.Errorf("chat route proof invalid: %w", ErrDeliveryPolicyInvalid)
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT cp.participant_id, COALESCE(p.vcard_uid, '')

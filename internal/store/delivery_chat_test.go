@@ -219,3 +219,43 @@ func TestChatRouteAdmissionInvalidProof(t *testing.T) {
 		})
 	}
 }
+
+func TestChatRouteAdmissionSourceProofRevocation(t *testing.T) {
+	for _, signal := range []string{"account failure", "reanchor required"} {
+		t.Run(signal, func(t *testing.T) {
+			f := deliveryChatFixture(t)
+			peer := f.EnsureParticipant("peer@example.test", "Peer", "example.test")
+			p, _, err := f.Store.CreatePersonFromParticipant(peer)
+			require.NoError(t, err)
+			require.NoError(t, f.Store.EnsureConversationParticipantContext(t.Context(), f.ConvID, peer, "member"))
+			writeDeliveryChatEvidence(t, f)
+			setDelivery(t, f.Store, p.VCardUID, "", store.DeliverySendAllowed)
+			for _, revoked := range []bool{false, true, false} {
+				if signal == "account failure" {
+					failure := ""
+					if revoked {
+						failure = "account_binding_mismatch"
+					}
+					require.NoError(t, f.Store.SetSourceMessagingRouteFailureContext(t.Context(), f.Source.ID, failure))
+				} else if revoked {
+					require.NoError(t, f.Store.SetArchiveMarker(t.Context(), store.BeeperReanchorMarkerKey(f.Source.ID), "synthetic anchor mismatch"))
+				} else {
+					_, err := f.Store.UpdateSourceSettingsContext(t.Context(), f.Source.ID, store.SourceSettingsUpdate{AcceptReanchor: true})
+					require.NoError(t, err)
+				}
+				calls := 0
+				err := f.Store.WithDeliveryAdmissionContext(t.Context(), []store.DeliveryPolicyQuery{{RouteKind: "chat", SourceID: f.Source.ID, SourceConversationID: "chat-thread"}}, func(context.Context) error { calls++; return nil })
+				if revoked {
+					var denied *store.DeliveryAdmissionError
+					require.ErrorAs(t, err, &denied)
+					assert.Equal(t, "draft_required", denied.Code)
+					assert.Equal(t, "unresolved_recipient", denied.Reason)
+					assert.Zero(t, calls)
+				} else {
+					require.NoError(t, err)
+					assert.Equal(t, 1, calls)
+				}
+			}
+		})
+	}
+}
