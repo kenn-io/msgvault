@@ -19,7 +19,7 @@ func listCalendarEventsDefinition() toolDefinition {
 		"from": meetingTimestampSchema("Inclusive RFC3339 window start"),
 		"to":   meetingTimestampSchema("Exclusive RFC3339 window end"),
 	}
-	d := readDefinition(ToolListCalendarEvents, untrustedCalendarContent+" List archived calendar occurrences. Requires calendar.event.read on their sources.", closedObject(properties, "from", "to"), outputSchemaFor[store.CalendarOccurrencePage](), (*handlers).listCalendarEvents)
+	d := readDefinition(ToolListCalendarEvents, untrustedCalendarContent+" List archived calendar occurrences.", closedObject(properties, "from", "to"), outputSchemaFor[store.CalendarOccurrencePage](), (*handlers).listCalendarEvents)
 	d.availability = func(c catalogCapabilities) bool { return c.calEvents }
 	return d
 }
