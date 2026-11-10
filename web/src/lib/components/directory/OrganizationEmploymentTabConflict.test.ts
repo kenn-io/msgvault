@@ -4,6 +4,29 @@ import { controllerWith, employment, organizationProfile, requestOf, pathOf } fr
 import OrganizationEmploymentTab from './OrganizationEmploymentTab.svelte';
 import { DirectoryEntityController } from '../../directory/entity-controller.svelte';
 
+it('names the new employer when a job moves before deletion', async () => {
+  let reads = 0;
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    const path = pathOf(request);
+    if (path === '/api/v1/employments/11' && request.method === 'GET') {
+      reads++;
+      return Response.json(employment(11, reads, { organization_id: reads === 1 ? 21 : 22 }), { headers: { ETag: `"employment-11-r${reads}"` } });
+    }
+    if (path === '/api/v1/employments/11' && request.method === 'DELETE') return Response.json({ error: 'employment_revision_conflict', message: 'Changed' }, { status: 409 });
+    if (path === '/api/v1/organizations/22') return Response.json({ ...organizationProfile(), organization: { ...organizationProfile().organization, id: 22, name: 'New employer' } }, { headers: { ETag: '"organization-22-r1"' } });
+    throw new Error(`Unexpected ${request.method} ${path}`);
+  });
+  controller.employments = [employment()];
+  controller.organizationRecords.set(21, organizationProfile());
+  render(OrganizationEmploymentTab, { controller, personID: 7 });
+  await fireEvent.click(within(screen.getByRole('region', { name: 'Work' })).getByRole('button', { name: /^Actions for/ }));
+  await fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete…' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  const dialog = await screen.findByRole('dialog', { name: /at New employer\?/ });
+  expect(within(dialog).getByText('New employer')).toBeDefined();
+});
+
 it('asks again when a job changes after the delete conflict is shown', async () => {
   let revision = 1;
   const { controller } = controllerWith(async input => {

@@ -120,7 +120,7 @@
     onDone={() => { employmentEditor = undefined; }} onClose={() => { employmentEditor = undefined; }} />
 {/if}
 {#if deletingEmployment}
-  <Dialog title={`Delete ${employmentLabel(deletingEmployment)} at ${controller.organizationName(deletingEmployment.organization_id)}?`} width="small" primaryLabel="Delete" primaryTone="danger" onclose={closeDelete} onprimary={() => void removeEmployment()} busy={acting}>
+  <Dialog title={`Delete ${employmentLabel(removal.conflict?.data ?? deletingEmployment)} at ${controller.organizationName((removal.conflict?.data ?? deletingEmployment).organization_id)}?`} width="small" primaryLabel="Delete" primaryTone="danger" onclose={closeDelete} onprimary={() => void removeEmployment()} busy={acting}>
     <p>This permanently removes the job. {#if deletingEmployment.is_current}<button data-link type="button" disabled={acting} onclick={() => { endingEmployment = deletingEmployment; closeDelete(); }}>End it instead…</button>{/if}</p>
     {#snippet notice()}
       {#if removal.conflict}<ConflictNotice noun="job" saved={removal.conflict.data} record={employmentFacts(removal.conflict.data, controller, personID)} message={employmentConflictDetails(removal.conflict.data, removal.details)} actionLabel="Retry" onaction={() => void removeEmployment()} />

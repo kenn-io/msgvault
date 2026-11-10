@@ -9,7 +9,7 @@ it('formats job conflict facts', () => {
   expect(facts).not.toHaveProperty('Person');
   expect(employmentFacts({ ...job, person_id: 8 }, { organizationName: () => 'Synthetic Org' }, 7).Person).toBe('Someone else');
 
-  const confident = employmentFacts({ ...job, source: 'carddav_import', confidence: 0.8 }, { organizationName: () => 'Synthetic Org' }, 7);
+  const confident = employmentFacts({ ...job, source: 'extraction', confidence: 0.8 }, { organizationName: () => 'Synthetic Org' }, 7);
   expect(confident.Confidence).toBe('80%');
   expect(confident.Department).toBe('Research');
   expect(confident.Location).toBe('North office');

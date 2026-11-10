@@ -201,8 +201,10 @@ export class DirectoryEntityController {
   }
   async refreshRelationships(): Promise<void> {
     // The create block clears once Network has loaded too, so a dialog that closes on this refresh never re-enables first.
-    const [loaded] = await Promise.all([this.loadRelationships(false), this.refreshNetwork()]);
-    if (loaded) this.createBlocked.relationships = false;
+    const relationships = this.loadRelationships(false);
+    const generation = this.relationshipGeneration;
+    const [loaded] = await Promise.all([relationships, this.refreshNetwork()]);
+    if (loaded && !this.disposed && generation === this.relationshipGeneration) this.createBlocked.relationships = false;
   }
   private async loadRelationships(clearCreateBlock: boolean): Promise<boolean> {
     const { abort, generation } = this.beginCollection('relationships');
@@ -498,6 +500,7 @@ export class DirectoryEntityController {
       },
       prepared,
     );
+    await this.prepareConflictEmployer(result, prepared?.data ?? this.employments.find(item => item.id === id));
     return this.afterDirectoryMutation(result, true);
   }
   async createRelationship(

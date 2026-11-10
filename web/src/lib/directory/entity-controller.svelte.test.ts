@@ -338,6 +338,32 @@ describe('DirectoryEntityController', () => {
     controller.destroy();
   });
 
+  it('keeps a newer lost connection create blocked when an older Network refresh finishes', async () => {
+    const networkRead = deferredResponse();
+    let networkReads = 0;
+    let posts = 0;
+    const client = createAPIClient(async input => {
+      const request = requestOf(input);
+      if (pathOf(request) === '/api/v1/person-relationships' && request.method === 'POST') {
+        posts++;
+        throw new TypeError('response lost');
+      }
+      if (pathOf(request) === '/api/v1/people/7/network' && ++networkReads > 1) return networkRead.promise;
+      return defaultResponse(request);
+    });
+    const controller = new DirectoryEntityController(client, 7);
+    await controller.loadNetwork();
+    const refresh = controller.refreshRelationships();
+    await vi.waitFor(() => expect(controller.relationships).toHaveLength(1));
+    const body = { source_person_id: 7, target_person_id: 8, relationship_type_slug: 'knows' };
+    await expect(controller.createRelationship(body)).resolves.toMatchObject({ ok: false, kind: 'unknown' });
+    networkRead.resolve(Response.json(network(7, 1)));
+    await refresh;
+    await expect(controller.createRelationship(body)).resolves.toMatchObject({ ok: false, kind: 'blocked' });
+    expect(posts).toBe(1);
+    controller.destroy();
+  });
+
   it('keeps an unknown create blocked when a refresh that began before it resolves later', async () => {
     const staleRefresh = deferredResponse();
     let collectionReads = 0;
