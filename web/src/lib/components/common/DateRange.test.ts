@@ -19,6 +19,29 @@ it('renders a date error under its field', async () => {
   expect(end.closest('.field')!.textContent).toContain('End date must be on or after start date.');
 });
 
+it.each([
+  ['Start date', false], ['End date', false], ['End date', true],
+] as const)('shows the format instructions once when %s is invalid, Current shown=%s', async (label, showCurrent) => {
+  render(DateRange, { showCurrent });
+  const invalid = screen.getByRole('textbox', { name: label });
+  const other = screen.getByRole('textbox', { name: label === 'Start date' ? 'End date' : 'Start date' });
+  await fireEvent.input(invalid, { target: { value: 'abc' } });
+  expect(screen.getByText('Use 2024, 2024-03, or 2024-03-15.')).toBeDefined();
+  expect(screen.queryByText('2024, 2024-03, or 2024-03-15')).toBeNull();
+  await fireEvent.input(other, { target: { value: '2024' } });
+  await fireEvent.focusIn(other);
+  expect(screen.queryByText('2024, 2024-03, or 2024-03-15')).toBeNull();
+  await fireEvent.focusOut(other);
+  expect(screen.queryByText('2024, 2024-03, or 2024-03-15')).toBeNull();
+});
+
+it('keeps the format hint alongside a different date error', async () => {
+  render(DateRange, { showCurrent: false });
+  await fireEvent.input(screen.getByRole('textbox', { name: 'Start date' }), { target: { value: '2024-13' } });
+  expect(screen.getByText('This date does not exist. Check the month and day.')).toBeDefined();
+  expect(screen.getByText('2024, 2024-03, or 2024-03-15')).toBeDefined();
+});
+
 it('shows one shared hint with Current shown', async () => {
   const hints = () => screen.queryAllByText('2024, 2024-03, or 2024-03-15');
   render(DateRange, { start: '', end: '', current: true, showCurrent: true });

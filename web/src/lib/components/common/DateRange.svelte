@@ -1,7 +1,7 @@
 <script lang="ts">
   import DateField from './DateField.svelte';
   import { Checkbox } from '@kenn-io/kit-ui';
-  import { DATE_HINT, dateNote } from '../../directory/dates';
+  import { DATE_ERROR, DATE_HINT, dateNote } from '../../directory/dates';
   let { start = $bindable(''), end = $bindable(''), current = $bindable(false),
     showCurrent = true, disabled = false, invalid = $bindable(false) }: {
     start?: string; end?: string; current?: boolean; showCurrent?: boolean; disabled?: boolean; invalid?: boolean;
@@ -13,8 +13,9 @@
   // Two empty fields share one hint: it sits under the one being typed, or under Start.
   // With Current, an empty End date says nothing until it's typed in, and Current sits under its held line.
   let focused = $state<'start' | 'end'>();
-  const startNote = $derived(focused === 'end' && !start.trim() ? '' : dateNote(start, focused === 'start'));
-  const endNote = $derived(!endOpen || endError ? '' : !end.trim() && focused !== 'end' && (showCurrent || startNote === DATE_HINT) ? '' : dateNote(end, focused === 'end'));
+  const unlessShown = (note: string, other: string | null) => other === DATE_ERROR && note === DATE_HINT ? '' : note;
+  const startNote = $derived(unlessShown(focused === 'end' && !start.trim() ? '' : dateNote(start, focused === 'start'), endError));
+  const endNote = $derived(unlessShown(!endOpen || endError ? '' : !end.trim() && focused !== 'end' && (showCurrent || startNote === DATE_HINT) ? '' : dateNote(end, focused === 'end'), startError));
   $effect(() => { invalid = !!(startError || endError); });
 </script>
 
