@@ -222,7 +222,8 @@ func (r *importRun) dropDeletedFrames(ctx context.Context) error {
 					break
 				}
 			}
-			pending := f.Pending[:0]
+			// A new slice keeps the saved list intact if a lookup fails.
+			pending := make([]Object, 0, len(f.Pending))
 			for _, child := range f.Pending {
 				gone, err := deleted(child.ID)
 				if err != nil {
