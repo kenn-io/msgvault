@@ -475,7 +475,6 @@ func TestPersonMerge_LabelReadStates(t *testing.T) {
 			assert.Equal(tc.empty, len(listed[0].Labels.Addresses) == 0)
 		})
 	}
-
 }
 
 func TestPersonMerge_CandidateDecisionAcceptedAndIdempotent(t *testing.T) {
@@ -2763,6 +2762,7 @@ func TestPersonMergeHistoryKeepsSavedContacts(t *testing.T) {
 		want    []store.PersonMergeRecordedContactPoint
 	}{
 		{"curated and superseded", func(t *testing.T, st *store.Store, guestID int64) func() {
+			t.Helper()
 			old, err := st.AddPersonContactPointContext(t.Context(), guestID, store.PersonContactPointInput{AddressKind: store.ContactAddressEmail, OriginalValue: "retired@example.org", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
 			require.NoError(t, err)
 			require.NoError(t, st.SupersedePersonContactPointContext(t.Context(), guestID, old.Envelope.ID, nil))
@@ -2775,6 +2775,7 @@ func TestPersonMergeHistoryKeepsSavedContacts(t *testing.T) {
 			{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550144", NormalizedValue: "+12025550144", IdentityKey: "[\"phone\",\"\",\"\",\"+12025550144\"]"},
 		}},
 		{"service scope and inactive catalog", func(t *testing.T, st *store.Store, _ int64) func() {
+			t.Helper()
 			service, _, err := st.EnsureCommunicationServiceContext(t.Context(), store.CommunicationServiceInput{Slug: "scoped-phone", DisplayLabel: "Scoped phone", ScopePolicy: store.ScopePolicyRequired, DefaultScopeKind: new("workspace"), Normalization: store.NormalizationPhoneE164, NormalizationVersion: 1})
 			require.NoError(t, err)
 			return func() {
