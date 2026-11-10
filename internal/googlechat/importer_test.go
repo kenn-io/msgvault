@@ -51,14 +51,6 @@ func TestImportGoogleChatCounts(t *testing.T) {
 	assert.Equal(3, senders)
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM conversations WHERE message_count>0`).Scan(&conversations))
 	assert.Equal(2, conversations)
-}
-func TestImportGoogleChatMetadata(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	opts := ImportOptions{Me: "owner@example.com", Roots: []string{"testdata/takeout"}, AttachmentsDir: t.TempDir()}
-	_, err := Import(t.Context(), st, opts)
-	require.NoError(err)
 	var fromMe bool
 	var sent sql.NullTime
 	var metadata string
@@ -212,23 +204,6 @@ func TestImportGoogleChatMediaSafety(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestImportGoogleChatStorageFailure(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	root := t.TempDir()
-	write(t, root, "Groups/DM a/messages.json", fixtureMessages(t))
-	write(t, root, "Groups/DM a/File-example.txt", "bytes")
-	blocked := filepath.Join(t.TempDir(), "file")
-	require.NoError(os.WriteFile(blocked, []byte("blocked"), 0600))
-	st := testutil.NewTestStore(t)
-	summary, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{root}, AttachmentsDir: blocked})
-	require.ErrorContains(err, "store media")
-	assert.Zero(summary.MessagesAdded)
-	var count int
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages`).Scan(&count))
-	assert.Zero(count)
 }
 
 func TestImportGoogleChatMembershipIsAdditiveOnDuplicateReplay(t *testing.T) {
@@ -727,22 +702,35 @@ func TestImportGoogleChatAuthorsEstablishGroupFileScope(t *testing.T) {
 	assert.Len(rows, 1)
 }
 
-func TestImportGoogleChatFailedMessageDoesNotCountMissingMedia(t *testing.T) {
-	for _, tc := range []struct{ name, first string }{
-		{"missing", "missing.txt"},
-		{"unsupported", "../outside.txt"},
-		{"oversized", "large.txt"},
-		{"stored", "first.txt"},
+func TestImportGoogleChatFailedMessageDoesNotCountMedia(t *testing.T) {
+	for _, tc := range []struct{ name, first, errorText string }{
+		{"missing", "missing.txt", "ambiguous"},
+		{"unsupported", "../outside.txt", "ambiguous"},
+		{"oversized", "large.txt", "ambiguous"},
+		{"stored", "first.txt", "ambiguous"},
+		{"storage failure", "", "store media"},
+		{"save failure", "", "synthetic save failure"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			st := testutil.NewTestStore(t)
-			a, b := t.TempDir(), t.TempDir()
-			message := strings.Replace(fixtureMessages(t), `"export_name":"File-example.txt"`, `"export_name":"`+tc.first+`"},{"original_name":"second.txt","export_name":"second.txt"`, 1)
+			var st *store.Store
+			if tc.name == "save failure" {
+				st = testutil.NewSQLiteTestStore(t)
+			} else {
+				st = testutil.NewTestStore(t)
+			}
+			a := t.TempDir()
+			opts := ImportOptions{Me: "owner@example.com", Roots: []string{a}, AttachmentsDir: t.TempDir()}
+			message := fixtureMessages(t)
+			if tc.first != "" {
+				b := t.TempDir()
+				opts.Roots = append(opts.Roots, b)
+				message = strings.Replace(message, `"export_name":"File-example.txt"`, `"export_name":"`+tc.first+`"},{"original_name":"second.txt","export_name":"second.txt"`, 1)
+				write(t, a, "Groups/DM a/second.txt", "first")
+				write(t, b, "Groups/DM a/second.txt", "second")
+			}
 			write(t, a, "Groups/DM a/messages.json", message)
-			write(t, a, "Groups/DM a/second.txt", "first")
-			write(t, b, "Groups/DM a/second.txt", "second")
 			if tc.name == "oversized" {
 				f, err := os.Create(filepath.Join(a, "Groups/DM a/large.txt"))
 				require.NoError(err)
@@ -752,8 +740,18 @@ func TestImportGoogleChatFailedMessageDoesNotCountMissingMedia(t *testing.T) {
 			if tc.name == "stored" {
 				write(t, a, "Groups/DM a/first.txt", "first")
 			}
-			summary, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{a, b}, AttachmentsDir: t.TempDir()})
-			require.ErrorContains(err, "ambiguous")
+			if tc.name == "storage failure" {
+				write(t, a, "Groups/DM a/File-example.txt", "bytes")
+				opts.AttachmentsDir = filepath.Join(t.TempDir(), "file")
+				require.NoError(os.WriteFile(opts.AttachmentsDir, []byte("blocked"), 0600))
+			}
+			if tc.name == "save failure" {
+				_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER reject_message BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'synthetic save failure'); END`)
+				require.NoError(err)
+			}
+			summary, err := Import(t.Context(), st, opts)
+			require.ErrorContains(err, tc.errorText)
+			assert.Zero(summary.MessagesAdded)
 			assert.Zero(summary.AttachmentsMissing)
 			assert.Zero(summary.AttachmentsUnsupported)
 			assert.Zero(summary.AttachmentsOversized)
@@ -765,17 +763,4 @@ func TestImportGoogleChatFailedMessageDoesNotCountMissingMedia(t *testing.T) {
 			assert.Zero(count)
 		})
 	}
-}
-
-func TestImportGoogleChatSaveFailureDoesNotCountMissingMedia(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := testutil.NewSQLiteTestStore(t)
-	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER reject_message BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'synthetic save failure'); END`)
-	require.NoError(err)
-	root := t.TempDir()
-	write(t, root, "Groups/DM a/messages.json", fixtureMessages(t))
-	summary, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{root}, AttachmentsDir: t.TempDir()})
-	require.ErrorContains(err, "synthetic save failure")
-	assert.Zero(summary.AttachmentsMissing)
 }
