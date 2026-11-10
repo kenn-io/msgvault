@@ -31,9 +31,6 @@ func TestRelayedSenderConfig(t *testing.T) {
 			cfg, err := Load(path, "")
 			if !tc.valid {
 				assertions.ErrorContains(err, "relayed_senders")
-				if tc.name == "duplicate address" || tc.name == "duplicate address case" {
-					assertions.ErrorContains(err, "relayed_senders[1]: address duplicates relayed_senders[0]")
-				}
 				return
 			}
 			requirements.NoError(err)

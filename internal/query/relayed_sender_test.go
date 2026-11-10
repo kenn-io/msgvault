@@ -80,7 +80,7 @@ func TestRelayedSenderViews(t *testing.T) {
 				assertions.Equal("notifications@github.com", name)
 			}
 			t.Cleanup(func() { _ = engine.Close() })
-			for view, want := range map[ViewType][]string{ViewSenders: {"notifications@github.com", "author@example.test"}, ViewDomains: {"github.com", "example.test"}} {
+			for view, want := range map[ViewType][]string{ViewSenders: {"notifications@github.com", "author@example.test"}, ViewDomains: {"github.com", "example.test"}, ViewSenderNames: {"Author", "notifications@github.com"}} {
 				rows, err := engine.Aggregate(t.Context(), view, DefaultAggregateOptions())
 				requirements.NoError(err)
 				var keys []string
@@ -105,21 +105,14 @@ func TestRelayedSenderViews(t *testing.T) {
 			rows, err := engine.ListMessages(t.Context(), MessageFilter{Sender: "notifications@github.com", Domain: "github.com"})
 			requirements.NoError(err)
 			assertions.Len(rows, 2)
-			nameRows, err := engine.Aggregate(t.Context(), ViewSenderNames, DefaultAggregateOptions())
-			requirements.NoError(err)
-			var names []string
-			for _, row := range nameRows {
-				names = append(names, row.Key)
-			}
-			assertions.Contains(names, "notifications@github.com")
 			messages, err := engine.ListMessages(t.Context(), MessageFilter{SenderName: "notifications@github.com"})
 			requirements.NoError(err)
 			if assertions.Len(messages, 1) {
 				assertions.Equal("notifications@github.com", messages[0].FromName)
 			}
-			nameRows, err = engine.Aggregate(t.Context(), ViewSenderNames, AggregateOptions{SearchQuery: "notifications@github.com"})
+			nameRows, err := engine.Aggregate(t.Context(), ViewSenderNames, AggregateOptions{SearchQuery: "notifications@github.com"})
 			requirements.NoError(err)
-			names = nil
+			var names []string
 			for _, row := range nameRows {
 				names = append(names, row.Key)
 			}
