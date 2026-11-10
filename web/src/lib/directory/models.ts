@@ -89,7 +89,7 @@ export type DirectoryEntityMutationResult<T, C = never> =
   | { ok: false; kind: 'conflict'; status: 409 | 412; message: string; current?: C; attempted?: C }
   | { ok: false; kind: 'unknown'; message: string }
   | { ok: false; kind: 'blocked'; message: string }
-  // attempted: the version a failed delete sent, so its retry collides with any edit made since.
+  // attempted: the version a failed write or delete sent, so its retry collides with any edit made since.
   | { ok: false; kind: 'error'; status: number; message: string; attempted?: C };
 
 export type DirectoryProfileDraft =

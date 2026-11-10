@@ -954,6 +954,36 @@ it('keeps the attempted job version after a refused promotion until the newer ve
   } finally { controller.destroy(); }
 });
 
+it('retries a failed promotion with the version it sent, so a later edit shows as a conflict', async () => {
+  let revision = 1;
+  const promotedWith: (string | null)[] = [];
+  const client = createAPIClient(async input => {
+    const request = requestOf(input), path = pathOf(request);
+    if (path === '/api/v1/employments/11/primary') {
+      promotedWith.push(request.headers.get('If-Match'));
+      if (promotedWith.length === 1) {
+        revision = 2;
+        return Response.json({ message: 'Unavailable' }, { status: 500 });
+      }
+      return request.headers.get('If-Match') === '"r2"' ? Response.json(employment(11, 3)) : Response.json({ error: 'employment_revision_conflict' }, { status: 409 });
+    }
+    if (path === '/api/v1/employments/11') return Response.json(employment(11, revision), { headers: { ETag: `"r${revision}"` } });
+    return defaultResponse(request);
+  });
+  const controller = new DirectoryEntityController(client, 7);
+  const attempt = new WriteAttempt<Prepared<Employment>>();
+  const promote = () => attempt.run(current => controller.makeEmploymentPrimary(11, current));
+  try {
+    expect(await promote()).toBe(false);
+    expect(attempt.conflict).toBeUndefined();
+    expect(await promote()).toBe(false);
+    expect(promotedWith).toEqual(['"r1"', '"r1"']);
+    expect(attempt.conflict?.etag).toBe('"r2"');
+    expect(await promote()).toBe(true);
+    expect(promotedWith).toEqual(['"r1"', '"r1"', '"r2"']);
+  } finally { controller.destroy(); }
+});
+
 it('keeps the attempted version after a refused delete until the newer version is shown', async () => {
   let reads = 0;
   const deletedWith: (string | null)[] = [];
