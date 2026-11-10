@@ -94,7 +94,7 @@ it('gates catalog search through failed reads and retries, then orders and filte
     expect([...container.querySelectorAll('.fields .name')].map(row => row.firstChild?.textContent)).toEqual(['Work', 'Location', 'Favorite color']);
     expect(fields.getByText('Current and historical jobs').closest('li')?.textContent).toContain('Jobs · several values');
     expect(fields.getByText('Where they live').closest('li')?.textContent).toContain('Text · one value');
-    expect(fields.getByText('Garden preferences').closest('li')?.textContent).toContain('Profile field · Text · Sensitive');
+    expect(fields.getByText('Garden preferences').closest('li')?.textContent).toContain('Profile field · Text · several values · Sensitive');
     expect(fields.queryByRole('button', { name: 'Edit Location' })).toBeNull();
     await fireEvent.input(search, { target: { value: 'garden' } });
     expect(fields.getByText('Garden preferences')).toBeDefined();
@@ -113,7 +113,7 @@ it('gates catalog search through failed reads and retries, then orders and filte
 
 function renderCatalog(reads: { definitions?: () => Response | Promise<Response> | undefined; targets?: () => Response | Promise<Response> } = {}) {
   const definitions: Record<string, unknown>[] = [
-    { id: 41, universal_id: '00000000-0000-4000-8000-000000000041', object_type: 'person', slug: 'favorite_color', label: 'Favorite color', description: 'Garden preferences', value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 2, ownership: 'user', ui_creatable: true, ui_editable: true, api_mutable: true, is_active: true, is_sensitive: true, revision: 1, is_deletable: true },
+    { id: 41, universal_id: '00000000-0000-4000-8000-000000000041', object_type: 'person', slug: 'favorite_color', label: 'Favorite color', description: 'Garden preferences', value_type: 'text', field_type: 'text', cardinality: 'multi', display_order: 2, ownership: 'user', ui_creatable: true, ui_editable: true, api_mutable: true, is_active: true, is_sensitive: true, revision: 1, is_deletable: true },
     { id: 42, universal_id: '00000000-0000-4000-8000-000000000042', object_type: 'person', slug: 'location', label: 'Location', description: 'Where they live', value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 1, ownership: 'system', ui_creatable: true, ui_editable: true, api_mutable: true, is_active: true, is_sensitive: false, revision: 1, is_deletable: false }
   ];
   const targets = [{ kind: 'employment', key: 'system:employment', description: 'Current and historical jobs', cardinality: 'multi', sensitive: false }];

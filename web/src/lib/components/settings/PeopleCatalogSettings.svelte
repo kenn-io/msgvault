@@ -86,7 +86,7 @@
     <ul class="list">
       {#if visibleWork}<li><span class="name">Work<small>{visibleWork.description}</small></span><small>Jobs{visibleWork.cardinality === 'multi' ? ' · several values' : ''}{visibleWork.sensitive ? ' · Sensitive' : ''}</small></li>{/if}
       {#each visibleFields as field (field.id)}
-        <li><span class="name">{field.label}<small>{field.description ?? ''}</small></span><small>{['Profile field', valueTypeOptions.find(option => option.value === field.value_type)?.label ?? 'Other', field.cardinality === 'multi' ? 'several values' : '', field.is_sensitive ? 'Sensitive' : '', field.is_active ? '' : 'Inactive'].filter(Boolean).join(' · ')}</small>{#if field.ownership !== 'system'}<Button label="Edit" ariaLabel={`Edit ${field.label}`} size="sm" surface="soft" disabled={pending} onclick={() => void edit(field)} />{/if}</li>
+        <li><span class="name">{field.label}<small>{field.description ?? ''}</small></span><small>{['Profile field', valueTypeOptions.find(option => option.value === field.value_type)?.label ?? 'Other', field.cardinality === 'multi' ? 'several values' : 'one value', field.is_sensitive ? 'Sensitive' : '', field.is_active ? '' : 'Inactive'].filter(Boolean).join(' · ')}</small>{#if field.ownership !== 'system'}<Button label="Edit" ariaLabel={`Edit ${field.label}`} size="sm" surface="soft" disabled={pending} onclick={() => void edit(field)} />{/if}</li>
       {/each}
     </ul>
   {:else if loading || targetsLoading}<p class="muted" role="status">Loading fields…</p>

@@ -110,7 +110,6 @@ it('blocks attribute additions after a failed read and routes Retry to the profi
   const controller = new DirectoryProfileController(client, 7, { person, structuredProfile: profile(), attributes: { person_id: 7, attributes: [] }, definitions: { definitions: [definition] }, etags: { person: '"person-7-r1"', structuredProfile: '"profile-7-r1"' }, errors: {} });
   await controller.reload();
   const view = render(PersonFields, { controller });
-
   try {
     const reload = vi.spyOn(controller, 'reload');
     const alert = screen.getByRole('alert');
@@ -235,7 +234,7 @@ it.each([
 
 it('orders available additions after values, moves populated kinds to More fields, and refreshes Add birthday', async () => {
   const initial = profile();
-  initial.contact_points = [{ person_id: 7, identity_key: identityKeyFixture('email', 'first@example.com'), address_kind: 'email', original_value: 'first@example.com', normalized_value: 'first@example.com', normalization: 'email', normalization_version: 1, envelope }];
+  initial.contact_points = [{ person_id: 7, identity_key: 'first-email-key', address_kind: 'email', original_value: 'first@example.com', normalized_value: 'first@example.com', normalization: 'email', normalization_version: 1, envelope }];
   const refreshed = { ...initial, dates: [{ person_id: 7, date_kind: 'birthday', date: { year: 1990, month: 5, day: 6 }, original_value: '1990-05-06', envelope: { ...envelope, id: 30, ordinal: 0 } }] };
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
