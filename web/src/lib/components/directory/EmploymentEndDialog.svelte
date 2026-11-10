@@ -25,7 +25,7 @@
   const context = $derived([`${shown.title || shown.role || 'Job'} at ${employerName}`, since ? `since ${since}` : ''].filter(Boolean).join(' · '));
   function close(): void { if (!attempt.busy) { attempt.reset(); onClose(); } }
   async function submit(): Promise<void> {
-    if (attempt.busy || !opened || !endDate.trim() || dateError || moved) return;
+    if (attempt.busy || !opened || !endDate.trim() || dateError) return;
     if (await attempt.run(current => controller.endEmployment(employment.id, { end_date: endDate.trim() }, current ?? opened))) close();
   }
 </script>

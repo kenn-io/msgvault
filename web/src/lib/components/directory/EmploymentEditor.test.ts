@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { expect, it, vi } from 'vitest';
 import { controllerWith, organization, organizationProfile, employment, collection, pathOf, requestOf } from '../../directory/entity-fixtures.test-support';
 import EmploymentEditor from './EmploymentEditor.svelte';
+import EmploymentEndDialog from './EmploymentEndDialog.svelte';
 import { chooseSelectOption, openTypeahead } from '../../../test/kit-ui';
 import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
 
@@ -358,20 +359,24 @@ it.each(['Keep yours', 'Use saved'] as const)('shows the saved job and resolves 
     expect(postedBody.source_ref).toBeUndefined();
   });
 
-it('offers no Keep yours when the saved job belongs to another person', async () => {
+it.each(['edit', 'end'] as const)('offers no Keep yours for a moved job in %s', async action => {
   let reads = 0;
   const { controller } = controllerWith(async input => {
     const request = requestOf(input), path = pathOf(request);
     if (path === '/api/v1/employments/11' && request.method === 'GET') return Response.json(employment(11, ++reads, { person_id: reads === 1 ? 7 : 8 }), { headers: { ETag: `"employment-11-r${reads}"` } });
-    if (path === '/api/v1/employments/11' && request.method === 'PATCH') return Response.json({ message: 'Changed' }, { status: 412 });
+    if ((path === '/api/v1/employments/11' && request.method === 'PATCH') || path === '/api/v1/employments/11/end') return Response.json({ message: 'Changed' }, { status: 412 });
     if (path === '/api/v1/people/7/employments') return Response.json({ employments: [] });
     if (path === '/api/v1/organizations/21') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
     throw new Error(`unexpected ${request.method} ${path}`);
   });
-  render(EmploymentEditor, { controller, personID: 7, employment: employment() });
-  await fireEvent.input(await screen.findByRole('textbox', { name: 'Job title' }), { target: { value: 'Draft' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-  expect(await screen.findByText('Someone else')).toBeDefined();
+  if (action === 'edit') {
+    render(EmploymentEditor, { controller, personID: 7, employment: employment() });
+    await fireEvent.input(await screen.findByRole('textbox', { name: 'Job title' }), { target: { value: 'Draft' } });
+  } else render(EmploymentEndDialog, { controller, employment: employment(), onClose: vi.fn() });
+  const submit = screen.getByRole('button', { name: action === 'edit' ? 'Save' : 'End' });
+  await waitFor(() => expect(submit).toHaveProperty('disabled', false));
+  await fireEvent.click(submit);
+  await screen.findByRole('region', { name: 'Saved job' });
   expect(screen.queryByRole('button', { name: 'Keep yours' })).toBeNull();
   expect(screen.getByRole('button', { name: 'Close' })).toBeDefined();
 });

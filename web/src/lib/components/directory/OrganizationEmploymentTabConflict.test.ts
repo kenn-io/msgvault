@@ -3,7 +3,7 @@ import { expect, it, vi } from 'vitest';
 import { controllerWith, employment, organizationProfile, requestOf, pathOf } from '../../directory/entity-fixtures.test-support';
 import OrganizationEmploymentTab from './OrganizationEmploymentTab.svelte';
 
-it('names the new employer when a job moves before deletion', async () => {
+it('uses the saved job employer in the deletion title', async () => {
   let reads = 0;
   const { controller } = controllerWith(async input => {
     const request = requestOf(input);
@@ -13,7 +13,6 @@ it('names the new employer when a job moves before deletion', async () => {
       return Response.json(employment(11, reads, { organization_id: reads === 1 ? 21 : 22 }), { headers: { ETag: `"employment-11-r${reads}"` } });
     }
     if (path === '/api/v1/employments/11' && request.method === 'DELETE') return Response.json({ error: 'employment_revision_conflict', message: 'Changed' }, { status: 409 });
-    if (path === '/api/v1/organizations/22') return Response.json({ ...organizationProfile(), organization: { ...organizationProfile().organization, id: 22, name: 'New employer' } }, { headers: { ETag: '"organization-22-r1"' } });
     throw new Error(`Unexpected ${request.method} ${path}`);
   });
   controller.employments = [employment()];
