@@ -327,6 +327,8 @@ func TestDuckDBListConversationsParticipantMembership(t *testing.T) {
 }
 
 func TestDuckDBUnnamedXParticipantsAcrossViews(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	b := NewTestDataBuilder(t)
 	source := b.AddSourceWithType("1", "x_archive")
 	participant := b.AddParticipant("", "", "")
@@ -337,41 +339,41 @@ func TestDuckDBUnnamedXParticipantsAcrossViews(t *testing.T) {
 	b.AddConversationParticipant(701, participant)
 	engine := b.BuildEngine()
 	messages, err := engine.ListConversationMessages(t.Context(), 701, TextFilter{})
-	require.NoError(t, err)
-	require.Len(t, messages, 2)
+	require.NoError(err)
+	require.Len(messages, 2)
 	for _, message := range messages {
-		assert.Equal(t, "2", message.FromName)
+		assert.Equal("2", message.FromName)
 	}
 	groups, err := engine.TextAggregate(t.Context(), TextViewContactNames, TextAggregateOptions{})
-	require.NoError(t, err)
-	require.Len(t, groups, 1)
-	assert.Equal(t, "2", groups[0].Key)
+	require.NoError(err)
+	require.Len(groups, 1)
+	assert.Equal("2", groups[0].Key)
 	conversations, err := engine.ListConversations(t.Context(), TextFilter{ContactName: groups[0].Key})
-	require.NoError(t, err)
-	require.Len(t, conversations, 1)
-	assert.EqualValues(t, 701, conversations[0].ConversationID)
+	require.NoError(err)
+	require.Len(conversations, 1)
+	assert.EqualValues(701, conversations[0].ConversationID)
 	listed, err := engine.ListMessages(t.Context(), MessageFilter{})
-	require.NoError(t, err)
-	require.Len(t, listed, 2)
+	require.NoError(err)
+	require.Len(listed, 2)
 	for _, message := range listed {
-		assert.Equal(t, "2", message.FromName)
+		assert.Equal("2", message.FromName)
 	}
 	q := search.Parse("")
 	hits, err := engine.SearchFast(t.Context(), q, MessageFilter{}, 10, 0)
-	require.NoError(t, err)
-	require.Len(t, hits, 2)
+	require.NoError(err)
+	require.Len(hits, 2)
 	for _, hit := range hits {
-		assert.Equal(t, "2", hit.FromName)
+		assert.Equal("2", hit.FromName)
 	}
 	cached, err := engine.SearchFastWithStats(t.Context(), q, "", MessageFilter{}, ViewNoStats, 10, 0)
-	require.NoError(t, err)
-	require.Len(t, cached.Messages, 2)
+	require.NoError(err)
+	require.Len(cached.Messages, 2)
 	for _, hit := range cached.Messages {
-		assert.Equal(t, "2", hit.FromName)
+		assert.Equal("2", hit.FromName)
 	}
 	fast, legacy := runExploreBothPaths(t, engine, ExploreRequest{})
 	for _, result := range []*ExploreResponse{fast, legacy} {
-		require.Len(t, result.Rows, 1)
-		assert.Contains(t, result.Rows[0].ParticipantLabels, "2")
+		require.Len(result.Rows, 1)
+		assert.Contains(result.Rows[0].ParticipantLabels, "2")
 	}
 }

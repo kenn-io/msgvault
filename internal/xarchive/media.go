@@ -100,9 +100,7 @@ func mediaWrites(ctx context.Context, st *store.Store, root *os.Root, messageID 
 				if openErr == nil {
 					write.StoragePath, write.ContentHash, write.Size, err = export.StoreAttachmentStream(ctx, dest, f, attachmentpolicy.DefaultChatMaxBytes)
 					closeErr := f.Close()
-					if errors.Is(err, export.ErrAttachmentTooLarge) {
-						err = nil
-					} else if err != nil {
+					if err != nil && !errors.Is(err, export.ErrAttachmentTooLarge) {
 						return nil, fmt.Errorf("xarchive: store media: %w", err)
 					}
 					if closeErr != nil {

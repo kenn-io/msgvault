@@ -125,7 +125,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 			return nil
 		}
 		var e event
-		if err := json.Unmarshal(rec.Raw, &e); err != nil {
+		if json.Unmarshal(rec.Raw, &e) != nil {
 			summary.InvalidRecords++
 			return nil
 		}

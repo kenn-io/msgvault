@@ -28,6 +28,7 @@ func TestBoundedDuckDBMessageDetails(t *testing.T) {
  CREATE TABLE sqlite_db.message_bodies (message_id BIGINT, body_text VARCHAR, body_html VARCHAR);
  CREATE TABLE sqlite_db.message_raw (message_id BIGINT, raw_data BLOB, compression VARCHAR);
  CREATE TABLE sqlite_db.participants (id BIGINT, email_address VARCHAR, phone_number VARCHAR, display_name VARCHAR);
+ CREATE TABLE sqlite_db.participant_identifiers (participant_id BIGINT, identifier_type VARCHAR, identifier_value VARCHAR);
  CREATE TABLE sqlite_db.message_recipients (message_id BIGINT, participant_id BIGINT, recipient_type VARCHAR, display_name VARCHAR);
  CREATE TABLE sqlite_db.labels (id BIGINT, name VARCHAR);
  CREATE TABLE sqlite_db.message_labels (message_id BIGINT, label_id BIGINT);

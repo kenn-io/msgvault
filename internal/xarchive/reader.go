@@ -70,7 +70,7 @@ func (a *archive) readAccount(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	input, err := unwrap(&export.ContextReader{Context: ctx, Reader: f}, "account")
 	if err != nil {
 		return err
@@ -104,7 +104,7 @@ func validID(s string) bool { return numericID.MatchString(s) && strings.TrimLef
 func (a *archive) events(ctx context.Context, visit func(record) error) error {
 	entries, err := fs.ReadDir(a.root.FS(), ".")
 	if err != nil {
-		return err
+		return fmt.Errorf("xarchive: list archive files: %w", err)
 	}
 	found := false
 	for _, entry := range entries {
@@ -150,7 +150,7 @@ func unwrap(input io.Reader, expected string) (io.Reader, error) {
 	for range 256 {
 		c, err := r.ReadByte()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("xarchive: read JavaScript wrapper: %w", err)
 		}
 		b.WriteByte(c)
 		if c == '=' {
@@ -169,6 +169,7 @@ func unwrap(input io.Reader, expected string) (io.Reader, error) {
 // from granting a subsequent value a larger allocation budget.
 type boundedInput struct {
 	io.Reader
+
 	read, ceiling int64
 }
 
