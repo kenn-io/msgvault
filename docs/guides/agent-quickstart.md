@@ -53,8 +53,8 @@ review access instead of attempting to bypass it. A grant without `stats.read`
 cannot use `get_stats` as a universal connection check.
 
 Call `msgvault.skills {}` to list the server's bundled guides and
-`msgvault.skills {"name":"workflow"}` to read this quickstart. The other guides
-reuse the CLI skills with MCP mappings. This read-only tool serves shipped
+`msgvault.skills {"name":"workflow"}` to read this quickstart. The catalog includes
+every bundled CLI skill with MCP guidance. This read-only tool serves shipped
 guidance in every session; it does not read archive data or grant access to
 other tools.
 

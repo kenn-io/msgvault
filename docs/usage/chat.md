@@ -933,8 +933,8 @@ Code and Codex skill directories with:
 msgvault skills install
 ```
 
-MCP clients can call `msgvault.skills {}` to discover these same bundled
-guides, with MCP mappings, and `msgvault.skills {"name":"workflow"}` to read
-the MCP quickstart. Guide Markdown is text; structured content contains
-metadata. See [Agent Skills](/docs/guides/agent-skills/) for the fixed catalog,
+MCP clients can call `msgvault.skills {}` to discover `workflow` plus every
+bundled skill, and `msgvault.skills {"name":"workflow"}` to read the MCP
+quickstart. Guide Markdown is text; structured content contains metadata.
+See [Agent Skills](/docs/guides/agent-skills/) for the catalog rule, MCP guidance,
 access rules, installation targets and update behavior.

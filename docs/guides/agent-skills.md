@@ -47,17 +47,19 @@ after upgrading msgvault refreshes them; files you have hand-edited
 
 MCP clients can read the bundled guides without installing skill files. Call
 `msgvault.skills {}` to list names, titles and summaries, then
-`msgvault.skills {"name":"workflow"}` for the MCP quickstart. The other names
-are `msgvault-search`, `msgvault-attachments` and `msgvault-analytics`.
+`msgvault.skills {"name":"workflow"}` for the MCP quickstart. The catalog contains
+`workflow` followed by every CLI skill bundled with that binary. Skills
+installed on disk do not affect it.
 
 Named calls return Markdown as text and the guide's metadata in structured
-content. The three CLI skills include MCP command mappings and explain
-differences in search syntax, paging, scope and attachment exports. Use the
-connected server's tool list for actual availability and parameters.
+content. Every CLI skill includes shared MCP guidance about tool syntax,
+scope and authorization. The search, attachment and analytics skills also
+include command mappings and explain differences in search syntax, paging
+and attachment exports. Use the connected server's tool list for actual
+availability and parameters.
 
 The guide tool is read-only and present in owner and delegated sessions,
 including sessions without archive-read permissions. Existing authentication
-and archive grants still apply. It serves only these shipped guides, rejects
-unknown or invalid names and extra arguments, and never reads paths or
-executes a skill. Skill content remains validated against the CLI command
-tree in CI.
+and archive grants still apply. It serves only bundled guides, rejects unknown
+or invalid names and extra arguments, and never reads paths or executes a
+skill. Skill content remains validated against the CLI command tree in CI.

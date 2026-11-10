@@ -19,6 +19,14 @@ var bundledSkills = sync.OnceValue(func() *mcpskills.Catalog {
 	if err != nil {
 		panic(fmt.Errorf("render bundled MCP skills: %w", err))
 	}
+	catalog, err := buildSkillsCatalog(rendered)
+	if err != nil {
+		panic(fmt.Errorf("validate bundled MCP skills: %w", err))
+	}
+	return catalog
+})
+
+func buildSkillsCatalog(rendered []skills.Skill) (*mcpskills.Catalog, error) {
 	guides := []mcpskills.Guide{
 		{
 			Name: "workflow", Title: "msgvault MCP workflow", Summary: "Connect, discover tools, read conversations and respect access and confirmation rules.",
@@ -28,7 +36,7 @@ var bundledSkills = sync.OnceValue(func() *mcpskills.Catalog {
 	for _, skill := range rendered {
 		guide := mcpskills.Guide{
 			Name: skill.Name, Title: skill.Name, Summary: "Read the bundled " + skill.Name + " CLI guide.",
-			Markdown: skill.Content,
+			Markdown: "# " + skill.Name + "\n\n" + skillMCPBasics + "## Bundled CLI guide\n\n" + skill.Content,
 		}
 		switch skill.Name {
 		case "msgvault-search":
@@ -46,12 +54,8 @@ var bundledSkills = sync.OnceValue(func() *mcpskills.Catalog {
 		}
 		guides = append(guides, guide)
 	}
-	catalog, err := mcpskills.New(mcpskills.Config{ToolName: ToolSkills, Guides: guides})
-	if err != nil {
-		panic(fmt.Errorf("validate bundled MCP skills: %w", err))
-	}
-	return catalog
-})
+	return mcpskills.New(mcpskills.Config{ToolName: ToolSkills, Guides: guides})
+}
 
 const skillMCPBasics = `## MCP differences
 
