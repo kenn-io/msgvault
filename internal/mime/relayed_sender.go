@@ -46,7 +46,7 @@ func ValidateRelayedSenderRule(rule RelayedSenderRule) bool {
 	if err != nil || !strings.EqualFold(addr.Address, rule.Address) || addr.Name != "" || !validHeaderName([]byte(rule.Header)) {
 		return false
 	}
-	return rule.IdentifierType != "email" && rule.IdentifierType != "phone" && rule.IdentifierType != "" && strings.TrimSpace(rule.IdentifierType) == rule.IdentifierType && strings.IndexFunc(rule.IdentifierType, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) < 0
+	return !strings.EqualFold(rule.IdentifierType, "email") && !strings.EqualFold(rule.IdentifierType, "phone") && rule.IdentifierType != "" && strings.TrimSpace(rule.IdentifierType) == rule.IdentifierType && strings.IndexFunc(rule.IdentifierType, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) < 0
 }
 
 // RelayedSenderRules lists custom rules first so they replace a built-in rule for the same address.
