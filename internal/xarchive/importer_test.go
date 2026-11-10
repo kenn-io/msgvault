@@ -105,6 +105,14 @@ func TestImportUnnamedParticipantsRemainVisible(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, hits, 1)
 		assert.Equal(t, "2", hits[0].FromName)
+		groups, err := engine.TextAggregate(t.Context(), query.TextViewContactNames, query.TextAggregateOptions{})
+		require.NoError(t, err)
+		require.Len(t, groups, 1)
+		assert.Equal(t, "2", groups[0].Key)
+		conversations, err := engine.ListConversations(t.Context(), query.TextFilter{ContactName: groups[0].Key})
+		require.NoError(t, err)
+		require.Len(t, conversations, 1)
+		assert.Equal(t, convID, conversations[0].ConversationID)
 	}
 }
 

@@ -336,4 +336,12 @@ func TestDuckDBTextTimelineShowsUnnamedXSender(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, messages, 1)
 	assert.Equal(t, "2", messages[0].FromName)
+	groups, err := engine.TextAggregate(t.Context(), TextViewContactNames, TextAggregateOptions{})
+	require.NoError(t, err)
+	require.Len(t, groups, 1)
+	assert.Equal(t, "2", groups[0].Key)
+	conversations, err := engine.ListConversations(t.Context(), TextFilter{ContactName: groups[0].Key})
+	require.NoError(t, err)
+	require.Len(t, conversations, 1)
+	assert.EqualValues(t, 701, conversations[0].ConversationID)
 }

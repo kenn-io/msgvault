@@ -528,11 +528,7 @@ func buildSQLiteTextFilterConditions(d Dialect, filter TextFilter) (string, []an
 				(SELECT mr_fb.participant_id FROM message_recipients mr_fb
 				 WHERE mr_fb.message_id = m.id AND mr_fb.recipient_type = 'from'
 				 LIMIT 1))
-			  AND COALESCE(
-				NULLIF(TRIM(p_cn.display_name), ''),
-				NULLIF(p_cn.phone_number, ''),
-				p_cn.email_address
-			  ) = ?
+			  AND `+participantNameExpr("p_cn")+` = ?
 		)`)
 		args = append(args, filter.ContactName)
 	}

@@ -121,11 +121,7 @@ func (e *DuckDBEngine) buildTextFilterConditions(
 				(SELECT mr_fb.participant_id FROM mr mr_fb
 				 WHERE mr_fb.message_id = msg.id AND mr_fb.recipient_type = 'from'
 				 LIMIT 1))
-			  AND COALESCE(
-				NULLIF(TRIM(p_filter.display_name), ''),
-				NULLIF(p_filter.phone_number, ''),
-				p_filter.email_address
-			  ) = ?
+			  AND `+participantNameExpr("p_filter")+` = ?
 		)`)
 		args = append(args, filter.ContactName)
 	}

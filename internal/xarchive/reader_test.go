@@ -38,7 +38,7 @@ func TestReaderStreamsLongConversationAndParts(t *testing.T) {
 	event := `{"messageCreate":{"id":"1","text":"` + strings.Repeat("x", 8192) + `"}}`
 	// Create names in reverse lexical order.
 	synthetic(t, root, "direct-messages.js", `[{"dmConversation":{"conversationId":"1-2","messages":[`+event+`]}}]`)
-	synthetic(t, root, "direct-messages-part1.js", `[{"dmConversation":{"conversationId":"1-2","messages":[`+strings.TrimSuffix(strings.Repeat(event+",", 300), ",")+`]}}]`)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "direct-messages-part1.js"), []byte(`window.YTD.direct_messages.part1 = [{"dmConversation":{"conversationId":"1-2","messages":[`+strings.TrimSuffix(strings.Repeat(event+",", 300), ",")+`]}}]`), 0600))
 	r, err := openArchive(root)
 	require.NoError(t, err)
 	defer r.Close()
