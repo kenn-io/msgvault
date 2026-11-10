@@ -207,8 +207,13 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 		opts.MeetingRecords = true
 		opts.MeetingSuggestions = daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingSuggestionsMinAPISchemaVersion)
 	}
+	if daemonclient.APISchemaVersionAtLeast(schemaVersion, messageArchiveMinAPISchemaVersion) {
+		opts.MessageArchive = st
+	}
 	return opts, nil
 }
+
+const messageArchiveMinAPISchemaVersion = daemonclient.MessageArchiveMinAPISchemaVersion
 
 // messageTagsMinAPISchemaVersion adds native email tag reads and edits.
 const messageTagsMinAPISchemaVersion = "3.15.0"
@@ -354,6 +359,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personCardDAVMinAPISchemaVersion) {
 		opts.PersonCardDAV = st
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, messageArchiveMinAPISchemaVersion) {
+		opts.MessageArchive = st
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, messageTagsMinAPISchemaVersion) {
 		opts.MessageTags = st

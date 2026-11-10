@@ -251,6 +251,7 @@ func (a Address) Validate() error {
 }
 
 type AgentTokenIssueRequest struct {
+	ArchiveSenders   map[string][]string `json:"archive_senders,omitempty"`
 	ExpiresAt        *time.Time          `json:"expires_at,omitempty"`
 	Label            string              `json:"label" validate:"required"`
 	Permissions      []string            `json:"permissions" validate:"required"`
@@ -332,10 +333,11 @@ func (a AgentTokenListResponse) Validate() error {
 }
 
 type AgentTokenSourceView struct {
-	ID         int64    `json:"id"`
-	Identifier string   `json:"identifier" validate:"required"`
-	SenderKeys []string `json:"sender_keys" validate:"required"`
-	Type       string   `json:"type" validate:"required"`
+	ArchiveSenders []string `json:"archive_senders" validate:"required"`
+	ID             int64    `json:"id"`
+	Identifier     string   `json:"identifier" validate:"required"`
+	SenderKeys     []string `json:"sender_keys" validate:"required"`
+	Type           string   `json:"type" validate:"required"`
 }
 
 func (a AgentTokenSourceView) Validate() error {
@@ -481,6 +483,20 @@ func (a AppendPersonNoteRequest) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type ArchiveChange struct {
+	Archived bool  `json:"archived"`
+	DryRun   *bool `json:"dry_run,omitempty"`
+}
+
+type ArchiveResult struct {
+	Archived  bool  `json:"archived"`
+	Changed   bool  `json:"changed"`
+	DryRun    bool  `json:"dry_run"`
+	MessageID int64 `json:"message_id"`
+	SourceID  int64 `json:"source_id"`
+	Verified  bool  `json:"verified"`
 }
 
 type AttachmentInfo struct {

@@ -180,3 +180,37 @@ func TestIssueAgentTokenExpiryRefusesOldDaemon(t *testing.T) {
 	assert.Contains(err.Error(), "requires daemon API schema 3.9.0")
 	assert.Zero(posts)
 }
+
+func TestIssueArchiveSenderRestrictionsRefusesOldDaemon(t *testing.T) {
+	for _, version := range []string{"4.0.0", "4.1.0"} {
+		t.Run(version, func(t *testing.T) {
+			posts := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/api/v1/health" {
+					require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": version}))
+					return
+				}
+				posts++
+				var body map[string]any
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+				assert.Equal(t, map[string]any{"1": []any{"codes@example.test"}}, body["archive_senders"])
+				assert.NotContains(t, body, "sender_selections")
+				w.WriteHeader(http.StatusCreated)
+				require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"id": "fixture", "secret": "fixture-secret"}))
+			}))
+			t.Cleanup(server.Close)
+			client, err := New(Config{URL: server.URL, APIKey: "fixture-owner", AllowInsecure: true})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, client.Close()) })
+			_, err = client.IssueAgentTokenWithArchiveSenders(t.Context(), "archive", []string{"message.archive"}, []int64{1}, nil, map[int64][]string{1: {"codes@example.test"}}, time.Time{})
+			if version == "4.0.0" {
+				require.ErrorContains(t, err, "archive sender restrictions require")
+				assert.Zero(t, posts)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, 1, posts)
+			}
+		})
+	}
+}

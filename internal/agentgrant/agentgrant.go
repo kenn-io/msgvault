@@ -18,6 +18,7 @@ const (
 	PermissionVerificationRead  Permission = "verification.read"
 	PermissionSearchRead        Permission = "search.read"
 	PermissionMessageRead       Permission = "message.read"
+	PermissionMessageArchive    Permission = "message.archive"
 	PermissionAttachmentRead    Permission = "attachment.read"
 	PermissionStatsRead         Permission = "stats.read"
 	PermissionDraftCreate       Permission = "draft.create"
@@ -30,6 +31,7 @@ const (
 )
 
 var knownPermissions = map[string]Permission{
+	string(PermissionMessageArchive):    PermissionMessageArchive,
 	string(PermissionVerificationRead):  PermissionVerificationRead,
 	string(PermissionSearchRead):        PermissionSearchRead,
 	string(PermissionMessageRead):       PermissionMessageRead,
@@ -55,6 +57,8 @@ type SourceRef struct {
 	Type       string
 	Identifier string
 	SenderKeys []string
+	// ArchiveSenderKeys limits incoming From envelopes; empty permits all senders.
+	ArchiveSenderKeys []string
 }
 
 type Grant struct {
@@ -109,10 +113,11 @@ func cloneGrant(g Grant) Grant {
 	}
 	for i, source := range g.Sources {
 		clone.Sources[i] = SourceRef{
-			ID:         source.ID,
-			Type:       source.Type,
-			Identifier: source.Identifier,
-			SenderKeys: append([]string(nil), source.SenderKeys...),
+			ID:                source.ID,
+			Type:              source.Type,
+			Identifier:        source.Identifier,
+			SenderKeys:        append([]string(nil), source.SenderKeys...),
+			ArchiveSenderKeys: append([]string(nil), source.ArchiveSenderKeys...),
 		}
 	}
 	return clone

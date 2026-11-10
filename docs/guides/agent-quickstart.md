@@ -316,6 +316,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `suggest_meeting_links` | read | — | message.read |
 | `sync_source` | source_write | `--allow-source-writes` | owner-only |
 | `update_slack_sync_policy` | source_write | `--allow-source-writes` | owner-only |
+| `archive_message` | write | — | message.archive |
 | `create_saved_view` | write | — | owner-only |
 | `delete_saved_view` | write | — | owner-only |
 | `draft_compose` | write | — | backend-dependent |

@@ -150,6 +150,8 @@ type DecideMeetingLinkBody = MeetingDecisionRequest
 
 type GetMeetingMetricsBody = MeetingMetricsRequest
 
+type ArchiveMessageBody = ArchiveChange
+
 type UpdateMessageTagsBody = MessageTagChange
 
 type CreateOrLinkMessageTaskBody = TaskLinkMutationRequest
