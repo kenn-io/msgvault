@@ -17,10 +17,10 @@ import (
 var _ api.MessageTagStore = (*storeAPIAdapter)(nil)
 
 func (a *storeAPIAdapter) MessageTags(ctx context.Context, id int64, change *emailtags.MessageTagChange, mailbox string, acquireWrite func(context.Context) (func(), error)) (*emailtags.MessageTagResult, error) {
-	return a.messageTags(ctx, id, change, mailbox, acquireWrite, nil)
+	return a.messageTags(ctx, id, change, mailbox, acquireWrite, nil, nil)
 }
 
-func (a *storeAPIAdapter) messageTags(ctx context.Context, id int64, change *emailtags.MessageTagChange, mailbox string, acquireWrite func(context.Context) (func(), error), authorizeArchive func(context.Context) error) (*emailtags.MessageTagResult, error) {
+func (a *storeAPIAdapter) messageTags(ctx context.Context, id int64, change *emailtags.MessageTagChange, mailbox string, acquireWrite func(context.Context) (func(), error), archive *emailtags.ArchiveChange, authorizeArchive func(context.Context) error) (*emailtags.MessageTagResult, error) {
 	ctx = a.invocationContext(ctx)
 	resolve := func() (store.EmailTagTarget, error) {
 		if authorizeArchive != nil {
@@ -40,21 +40,22 @@ func (a *storeAPIAdapter) messageTags(ctx context.Context, id int64, change *ema
 			return nil, err
 		}
 		change = &normalized
-		if !change.DryRun && acquireWrite != nil {
-			release, err := acquireWrite(ctx)
-			if err != nil {
-				return nil, err
-			}
-			defer release()
+	}
+	write := (change != nil && !change.DryRun) || (archive != nil && !archive.DryRun)
+	if write && acquireWrite != nil {
+		release, err := acquireWrite(ctx)
+		if err != nil {
+			return nil, err
 		}
+		defer release()
 	}
 	source, err := a.store.GetSourceByIDContext(ctx, target.SourceID)
 	if err != nil {
 		return nil, emailtags.Failure("local_failed", "Cannot resolve tag source", nil, err)
 	}
-	if change == nil || change.DryRun {
+	if !write {
 		// Reads and previews change nothing, so they run alongside sync.
-		result, err := a.providerMessageTags(ctx, source, target, change, authorizeArchive != nil)
+		result, err := a.providerMessageTags(ctx, source, target, change, archive)
 		if result != nil {
 			result.MessageID, result.SourceID = id, target.SourceID
 		}
@@ -81,7 +82,7 @@ func (a *storeAPIAdapter) messageTags(ctx context.Context, id int64, change *ema
 	if locked != target {
 		return nil, emailtags.Failure("stale_identity", "Message identity changed; sync and retry", nil, nil)
 	}
-	result, err := a.providerMessageTags(ctx, source, target, change, authorizeArchive != nil)
+	result, err := a.providerMessageTags(ctx, source, target, change, archive)
 	if result != nil {
 		result.MessageID, result.SourceID = id, target.SourceID
 	}
@@ -99,9 +100,9 @@ func (a *storeAPIAdapter) messageTags(ctx context.Context, id int64, change *ema
 	return result, nil
 }
 
-func (a *storeAPIAdapter) providerMessageTags(ctx context.Context, source *store.Source, target store.EmailTagTarget, change *emailtags.MessageTagChange, archive bool) (*emailtags.MessageTagResult, error) {
+func (a *storeAPIAdapter) providerMessageTags(ctx context.Context, source *store.Source, target store.EmailTagTarget, change *emailtags.MessageTagChange, archive *emailtags.ArchiveChange) (*emailtags.MessageTagResult, error) {
+	write := (change != nil && !change.DryRun) || (archive != nil && !archive.DryRun)
 	if target.Provider == sourceTypeMSMail {
-		write := change != nil && !change.DryRun
 		state := invocationFromContext(ctx)
 		if write {
 			granted, err := newGraphMailWriteManager(state).HasScopes(source.Identifier)
@@ -130,7 +131,7 @@ func (a *storeAPIAdapter) providerMessageTags(ctx context.Context, source *store
 		return client.MessageTags(ctx, target.SourceMessageID, change)
 	}
 	scopes := []string{oauth.ScopeGmailModify, oauth.ScopeGmailFull}
-	if target.Provider == "gmail" && change != nil && !change.DryRun {
+	if target.Provider == "gmail" && write {
 		if err := gmailDraftScopeGate(ctx, a.config, source, scopes); err != nil {
 			return nil, emailtags.Failure("insufficient_scope", "Gmail tag editing requires gmail.modify; reauthorize the account with add-account --force", nil, err)
 		}
@@ -139,7 +140,7 @@ func (a *storeAPIAdapter) providerMessageTags(ctx context.Context, source *store
 	if factory == nil {
 		factory = func(ctx context.Context, source *store.Source) (gmail.API, error) {
 			requestedScopes := oauth.ScopesGmailReadonly
-			if change != nil && !change.DryRun {
+			if write {
 				requestedScopes = []string{oauth.ScopeGmailModify}
 			}
 			state := invocationFromContext(ctx)
@@ -169,12 +170,12 @@ func (a *storeAPIAdapter) providerMessageTags(ctx context.Context, source *store
 		}
 		return imapClient.MessageKeywords(ctx, imaplib.DraftReceipt{Mailbox: target.Mailbox, UIDValidity: target.UIDValidity, UID: target.UID}, change)
 	}
-	if archive {
+	if archive != nil {
 		archiveClient, ok := client.(gmail.MessageArchiveClient)
 		if !ok {
 			return nil, emailtags.Failure("archive_unsupported", "Source does not support Gmail archiving", nil, nil)
 		}
-		return archiveClient.ArchiveMessage(ctx, target.SourceMessageID, len(change.Remove) > 0, change.DryRun)
+		return archiveClient.ArchiveMessage(ctx, target.SourceMessageID, *archive.Archived, archive.DryRun)
 	}
 	tagClient, ok := client.(gmail.MessageTagClient)
 	if !ok {

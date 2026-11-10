@@ -438,12 +438,15 @@ sources, and restrictions without `message.archive` are rejected. These lists
 do not affect outgoing `sender_selections` or account-scoped read permissions.
 Every recorded literal From address must be allowed. Missing From envelopes,
 including legacy NULL envelopes, fail closed for sender-restricted grants.
+This literal From filter does not authenticate the sender.
 
 Gmail writes require `gmail.modify` or `mail.google.com`. Missing consent returns
 403 `insufficient_scope`; reauthorize with `msgvault add-account <account> --force`.
 Readback failures return `remote_unknown`, mismatches return
 `verification_failed`, and failed local reconciliation returns
-`remote_accepted_local_failed`, with the last observed label result when available.
+`remote_accepted_local_failed`, with the last observed label result when available
+to owners or grants with `message.read`. Archive-only grants receive the error code
+without label state.
 
 ### Native email tags
 

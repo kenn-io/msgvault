@@ -2,10 +2,8 @@ package mcp
 
 import (
 	"context"
-	"errors"
 
 	"github.com/google/jsonschema-go/jsonschema"
-	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/emailtags"
 )
 
@@ -41,14 +39,7 @@ func (h *handlers) archiveMessage(ctx context.Context, req toolRequest) (*toolRe
 	dryRun, _ := args["dry_run"].(bool)
 	value, err := h.messageArchive.ArchiveMessage(ctx, id, emailtags.ArchiveChange{Archived: &archived, DryRun: dryRun})
 	if err != nil {
-		if failure, ok := errors.AsType[*emailtags.MessageTagError](err); ok {
-			result, encodeErr := jsonResult(failure)
-			if result != nil {
-				result.isError = true
-			}
-			return result, encodeErr
-		}
-		return toolErrorResult(daemonclient.SafeMCPError(err).Error()), nil
+		return messageTagErrorResult(err)
 	}
 	return jsonResult(value)
 }
