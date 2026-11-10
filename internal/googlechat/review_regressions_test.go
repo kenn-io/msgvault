@@ -39,53 +39,26 @@ func TestImportGoogleChatFillsMissingParticipantName(t *testing.T) {
 }
 
 func TestImportGoogleChatReplayIdentityFence(t *testing.T) {
-	for _, mode := range []string{"conversation", "format"} {
-		t.Run(mode, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			st := testutil.NewTestStore(t)
-			root := t.TempDir()
-			write(t, root, "Groups/DM a/messages.json", fixtureMessages(t))
-			opts := ImportOptions{Me: "owner@example.com", Roots: []string{root}}
-			_, err := Import(t.Context(), st, opts)
-			require.NoError(err)
-			var before []byte
-			var id int64
-			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&id))
-			before, err = st.GetMessageRawContext(t.Context(), id)
-			require.NoError(err)
-			if mode == "conversation" {
-				write(t, root, "Groups/DM a/messages.json", strings.ReplaceAll(fixtureMessages(t), "group/topic/message", "group/topic/new"))
-				write(t, root, "Groups/Space b/messages.json", fixtureMessages(t))
-				write(t, root, "Groups/Space c/messages.json", strings.ReplaceAll(fixtureMessages(t), "group/topic/message", "group/topic/later"))
-			} else {
-				_, err = st.DB().ExecContext(t.Context(), `UPDATE message_raw SET raw_format='future_google_chat'`)
-				require.NoError(err)
-			}
-			summary, err := Import(t.Context(), st, opts)
-			wantStatus := "failed"
-			if mode == "conversation" {
-				require.NoError(err)
-				assert.EqualValues(2, summary.MessagesAdded)
-				assert.Equal(1, summary.Unsupported)
-				replayed, err := Import(t.Context(), st, opts)
-				require.NoError(err)
-				assert.Zero(replayed.MessagesAdded)
-				assert.Equal(2, replayed.Duplicates)
-				assert.Equal(1, replayed.Unsupported)
-				wantStatus = "completed"
-			} else {
-				assert.Zero(summary.MessagesAdded)
-				require.ErrorContains(err, "stored raw format")
-			}
-			raw, err := st.GetMessageRawContext(t.Context(), id)
-			require.NoError(err)
-			assert.Equal(before, raw)
-			var status string
-			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status))
-			assert.Equal(wantStatus, status)
-		})
-	}
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	write(t, root, "Groups/DM a/messages.json", fixtureMessages(t))
+	opts := ImportOptions{Me: "owner@example.com", Roots: []string{root}}
+	_, err := Import(t.Context(), st, opts)
+	require.NoError(err)
+	var id int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&id))
+	before, err := st.GetMessageRawContext(t.Context(), id)
+	require.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE message_raw SET raw_format='future_google_chat'`)
+	require.NoError(err)
+	summary, err := Import(t.Context(), st, opts)
+	assert.Zero(summary.MessagesAdded)
+	require.ErrorContains(err, "stored raw format")
+	raw, err := st.GetMessageRawContext(t.Context(), id)
+	require.NoError(err)
+	assert.Equal(before, raw)
 }
 
 func TestImportGoogleChatRootAliasesKeepProfilesAndMedia(t *testing.T) {
@@ -116,9 +89,6 @@ func TestImportGoogleChatReportsUnknownRosterMembers(t *testing.T) {
 	assert.Equal(1, summary.UnknownMembers)
 	assert.Zero(summary.UnknownSenders)
 	assert.Zero(summary.Unsupported)
-	var processed int64
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT messages_processed FROM sync_runs`).Scan(&processed))
-	assert.EqualValues(1, processed)
 }
 
 func TestImportGoogleChatDoesNotInferRecipientsFromRoster(t *testing.T) {

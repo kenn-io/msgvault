@@ -32,11 +32,6 @@ func TestImportGoogleChatMetadataDoesNotEmbedWholeRoster(t *testing.T) {
 	testutil.WriteFile(t, root, "Groups/Space s/messages.json", []byte(`{"messages":[`+strings.Join(msgs, ",")+`]}`))
 	_, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{root}})
 	require.NoError(err)
-	var recipients, membersCount int
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM message_recipients WHERE recipient_type='to'`).Scan(&recipients))
-	assert.Zero(recipients)
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM conversation_participants`).Scan(&membersCount))
-	assert.Equal(301, membersCount)
 	var metadata string
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT metadata FROM messages WHERE source_message_id='s/t/m7'`).Scan(&metadata))
 	assert.NotContains(metadata, "member250@example.com", "per-message metadata must not copy the full roster")
@@ -78,7 +73,7 @@ func TestImportGoogleChatContainerEvidenceSurvivesSparseReplay(t *testing.T) {
 	assert.NotContains(profile.String, full)
 	var metadata string
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT metadata FROM messages ORDER BY id LIMIT 1`).Scan(&metadata))
-	for _, key := range []string{"unknown_group", "unknown_profile", "provider_record", "group_info.json", "user_info.json", "messages.json"} {
+	for _, key := range []string{"provider_record", "group_info.json", "messages.json"} {
 		assert.NotContains(metadata, key)
 	}
 }

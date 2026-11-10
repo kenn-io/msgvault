@@ -216,6 +216,7 @@ func TestImportGoogleChatMediaSafety(t *testing.T) {
 				assert.Equal(1, summary.AttachmentsUnsupported)
 			}
 			if tc.name == "oversized" {
+				assert.Equal(1, summary.AttachmentsOversized)
 				var reason, state string
 				require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT attachment_skip_reason,attachment_state FROM attachments`).Scan(&reason, &state))
 				assert.Equal("size_cap", reason)
@@ -256,30 +257,43 @@ func TestImportGoogleChatMembershipIsAdditiveOnDuplicateReplay(t *testing.T) {
 }
 
 func TestImportGoogleChatConflictingDuplicateRecord(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	first := strings.TrimSuffix(strings.TrimPrefix(fixtureMessages(t), `{"messages":[`), `]}`)
-	later := strings.ReplaceAll(first, "group/topic/message", "group/topic/later")
-	write(t, root, "Groups/DM a/messages.json", `{"messages":[`+first+`,`+strings.Replace(first, "Bodyneedle", "changed", 1)+`,`+later+`]}`)
-	opts := ImportOptions{Me: "owner@example.com", Roots: []string{root}}
-	for _, replay := range []bool{false, true} {
-		summary, err := Import(t.Context(), st, opts)
-		require.NoError(err)
-		assert.Equal(1, summary.Unsupported)
-		if replay {
-			assert.Zero(summary.MessagesAdded)
-			assert.Equal(2, summary.Duplicates)
-		} else {
-			assert.EqualValues(2, summary.MessagesAdded)
-		}
+	for _, mode := range []string{"same conversation", "cross conversation"} {
+		t.Run(mode, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			root := t.TempDir()
+			first := strings.TrimSuffix(strings.TrimPrefix(fixtureMessages(t), `{"messages":[`), `]}`)
+			later := strings.ReplaceAll(first, "group/topic/message", "group/topic/later")
+			opts := ImportOptions{Me: "owner@example.com", Roots: []string{root}}
+			if mode == "same conversation" {
+				write(t, root, "Groups/DM a/messages.json", `{"messages":[`+first+`,`+strings.Replace(first, "Bodyneedle", "changed", 1)+`,`+later+`]}`)
+			} else {
+				write(t, root, "Groups/DM a/messages.json", fixtureMessages(t))
+				_, err := Import(t.Context(), st, opts)
+				require.NoError(err)
+				write(t, root, "Groups/DM a/messages.json", strings.ReplaceAll(fixtureMessages(t), "group/topic/message", "group/topic/new"))
+				write(t, root, "Groups/Space b/messages.json", fixtureMessages(t))
+				write(t, root, "Groups/Space c/messages.json", `{"messages":[`+later+`]}`)
+			}
+			for _, replay := range []bool{false, true} {
+				summary, err := Import(t.Context(), st, opts)
+				require.NoError(err)
+				assert.Equal(1, summary.Unsupported)
+				if replay {
+					assert.Zero(summary.MessagesAdded)
+					assert.Equal(2, summary.Duplicates)
+				} else {
+					assert.EqualValues(2, summary.MessagesAdded)
+				}
+			}
+			var id int64
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='group/topic/message'`).Scan(&id))
+			raw, err := st.GetMessageRawContext(t.Context(), id)
+			require.NoError(err)
+			assert.Equal(first, string(raw))
+		})
 	}
-	var id int64
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='group/topic/message'`).Scan(&id))
-	raw, err := st.GetMessageRawContext(t.Context(), id)
-	require.NoError(err)
-	assert.Equal(first, string(raw))
 }
 
 func TestImportGoogleChatReplayKeepsOriginalMediaSlots(t *testing.T) {

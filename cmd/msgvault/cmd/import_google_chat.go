@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -73,8 +72,7 @@ func runImportGoogleChat(cmd *cobra.Command, roots []string, opts googleChatCLIO
 	_, _ = fmt.Fprintf(out, "Google Chat supplied input (coverage is not completeness):\n  Conversations: %d\n  Messages: %d supplied, %d added, %d duplicates, %d unsupported\n  Unknown senders: %d; unparsed dates: %d; unsupported roster members: %d\n  Attachments: %d stored, %d missing (%d unsupported, %d oversized)\n  Memberships without supplied messages: %d\n  Duration: %s\n", summary.Conversations, summary.MessagesSupplied, summary.MessagesAdded, summary.Duplicates, summary.Unsupported, summary.UnknownSenders, summary.DatesUnparsed, summary.UnknownMembers, summary.AttachmentsStored, summary.AttachmentsMissing, summary.AttachmentsUnsupported, summary.AttachmentsOversized, summary.MembershipWithoutMessages, summary.Duration.Round(time.Millisecond))
 	err = errors.Join(err, runExportPostImportMigrations(ctx, out, st, summary.SourceID, opts.NoDefaultIdentity, state))
 	if summary.SourceID != 0 {
-		// Refresh derived files for messages committed before an interruption.
-		err = errors.Join(err, rebuildCacheAfterWrite(context.WithoutCancel(ctx), state.cfg.DatabaseDSN(), state))
+		err = errors.Join(err, rebuildCacheAfterWrite(ctx, state.cfg.DatabaseDSN(), state))
 	}
 	if err != nil {
 		return fmt.Errorf("google chat import stopped; re-run all supplied parts: %w", err)
