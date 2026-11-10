@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -289,4 +290,19 @@ func TestRederiveRefreshesAutomationFlags(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, current)
 	assert.Equal(t, uint32(4), flags)
+}
+
+func TestRederiveAutomationIncompleteSuccessfulParseRemainsUnknown(t *testing.T) {
+	st, src, id := archiveEmailSource(t, "gmail", "keep text")
+	raw := []byte("From: alex@example.test\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: text/plain\r\n\r\nCan you send it?\r\n--b\r\nContent-Type: application/pdf\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: attachment; filename=report.pdf\r\n\r\nAAAAA\r\n--b--\r\n")
+	parsed, err := mime.Parse(raw)
+	require.NoError(t, err)
+	require.True(t, parsed.Incomplete)
+	require.NoError(t, st.UpsertMessageRaw(id, raw))
+	sum, err := Run(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), sum.MessagesScanned)
+	_, current, err := st.MessageAutomationContext(t.Context(), id)
+	require.NoError(t, err)
+	assert.False(t, current)
 }

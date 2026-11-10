@@ -1507,14 +1507,18 @@ func (imp *Importer) persistPage(
 		if senderID != 0 {
 			mapped.Message.SenderID = sql.NullInt64{Int64: senderID, Valid: true}
 		}
-		automation := uint32(0)
-		if authorObservation(message).Automated {
-			automation = store.FlagBotSender
+		var automation *uint32
+		if message.Author.Bot || message.Author.System || authorObservation(message).Automated {
+			flags := uint32(store.FlagBotSender)
+			automation = &flags
+		} else if message.Author.ID != "" {
+			flags := uint32(0)
+			automation = &flags
 		}
 		metadata := sql.NullString{String: string(mapped.Metadata), Valid: len(mapped.Metadata) != 0}
 		messageID, err := imp.store.PersistMessageContext(ctx, &store.MessagePersistData{
 			Message:        &mapped.Message,
-			Automation:     &automation,
+			Automation:     automation,
 			Metadata:       &metadata,
 			BodyText:       sql.NullString{String: mapped.BodyText, Valid: mapped.BodyText != ""},
 			RawMIME:        mapped.Raw,

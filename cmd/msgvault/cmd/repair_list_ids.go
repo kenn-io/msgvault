@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -36,17 +37,7 @@ func runRepairListIDsLocal(cmd *cobra.Command, apply bool) error {
 		return errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
-	var (
-		st      *store.Store
-		cleanup func()
-		err     error
-	)
-	if apply {
-		st, cleanup, err = openWritableStoreAndInitForInvocation(cmd.Context(), state)
-	} else {
-		st, err = store.OpenReadOnly(cfg.DatabaseDSN())
-		cleanup = func() { _ = st.Close() }
-	}
+	st, cleanup, err := openRepairStoreForInvocation(cmd.Context(), state, apply)
 	if err != nil {
 		return fmt.Errorf("open archive for List-Id repair: %w", err)
 	}
@@ -82,4 +73,16 @@ func runRepairListIDsLocal(cmd *cobra.Command, apply bool) error {
 
 func init() {
 	rootCmd.AddCommand(newRepairListIDsCmd())
+}
+
+// openRepairStoreForInvocation shares dry-run and apply archive access policy.
+func openRepairStoreForInvocation(ctx context.Context, state *invocation, apply bool) (*store.Store, func(), error) {
+	if apply {
+		return openWritableStoreAndInitForInvocation(ctx, state)
+	}
+	st, err := store.OpenReadOnlyContext(ctx, state.cfg.DatabaseDSN())
+	if err != nil {
+		return nil, nil, err
+	}
+	return st, func() { _ = st.Close() }, nil
 }

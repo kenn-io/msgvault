@@ -55,17 +55,19 @@ function operationAuthorityResponse(path: string): Response | undefined {
 }
 
 describe('AppShell', () => {
-  it('opens source setup from an archive with no sources', async () => {
+  it('opens sources from an archive with no sources', async () => {
     window.history.replaceState(null, '', '/?workspace=everything');
     const state = new ExploreState(window);
-    const client = createAPIClient(async () => Response.json(exploreResponse()));
+    const client = createAPIClient(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/carddav/connections')) return Response.json({ connections: [] });
+      if (path.endsWith('/sources/status')) return Response.json({ sources: [] });
+      return Response.json(exploreResponse());
+    });
     const rendered = render(AppShell, { client, state });
     try {
-      await fireEvent.click(await screen.findByRole('button', { name: 'Add source' }));
-      expect(await screen.findByRole('dialog', { name: 'Add source' })).toBeDefined();
+      await fireEvent.click(await screen.findByRole('button', { name: 'Add source…' }));
       expect(state.current.workspace).toBe('sources');
-      await fireEvent.keyDown(document, { key: 'Escape' });
-      await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Sources' })));
     } finally {
       rendered.unmount();
       state.destroy();
@@ -85,7 +87,7 @@ describe('AppShell', () => {
     try {
       await waitFor(() => expect((start.mock.contexts[0] as ShellData | undefined)?.jobs.loaded).toBe(true));
       expect(screen.queryByText('No mail yet')).toBeNull();
-      expect(screen.queryByRole('button', { name: 'Add source' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Add source…' })).toBeNull();
     } finally {
       start.mockRestore();
       rendered.unmount();
@@ -1453,7 +1455,7 @@ describe('AppShell', () => {
     });
 
     await fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
-    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Publish to address book' }));
+    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Publish to address book…' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Review CardDAV conflict 41' }));
     expect(state.current).toMatchObject({ workspace: 'settings', settingsCategory: 'carddav' });
     expect(settingsHandoffs.at(-1)?.request).toMatchObject({ conflictID: 41 });
@@ -1467,7 +1469,7 @@ describe('AppShell', () => {
     expect(await screen.findByRole('heading', { name: 'Synthetic Person' })).toBeDefined();
     expect(screen.getAllByRole('status', { name: 'Operation status' })).toHaveLength(1);
     await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
-    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Publish to address book' }));
+    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Publish to address book…' }));
     await waitFor(() => expect(restoredPublicationSignal).toBeDefined());
 
     await fireEvent.click(within(screen.getByRole('dialog', { name: 'Publish to address book' })).getByRole('button', { name: 'Close' }));

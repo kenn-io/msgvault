@@ -153,3 +153,12 @@ func TestAutomationSignalsFlags(t *testing.T) {
 	}
 	assert.Equal(t, uint32(14), BulkMask)
 }
+
+func TestAutomationFlagEncoding(t *testing.T) {
+	for _, tc := range []struct{ flag, want uint32 }{
+		{FlagAutoSubmitted, 1}, {FlagPrecedenceBulk, 2}, {FlagListID, 4}, {FlagListUnsubscribe, 8},
+		{FlagCalendarPart, 16}, {FlagReplyToNoReply, 32}, {FlagSenderNoReply, 64}, {FlagBotSender, 128},
+	} {
+		assert.Equal(t, tc.want, tc.flag)
+	}
+}

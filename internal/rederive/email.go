@@ -260,13 +260,16 @@ func (w *emailWalk) repairRow(ctx context.Context, item *store.ArchivedRawMessag
 		sum.Errors++
 		return true, nil
 	}
-	automationChanged, err := w.s.UpdateArchivedEmailAutomationContext(ctx, item, parsed.AutomationFlags())
-	if err != nil {
-		if ctx.Err() != nil {
-			return false, ctx.Err()
+	var automationChanged bool
+	if !parsed.Incomplete {
+		automationChanged, err = w.s.UpdateArchivedEmailAutomationContext(ctx, item, parsed.AutomationFlags())
+		if err != nil {
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
+			sum.Errors++
+			return true, nil
 		}
-		sum.Errors++
-		return true, nil
 	}
 	sum.unchanged = sum.unchanged && !changed && !automationChanged
 	if changed && item.BodyText != body {

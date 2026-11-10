@@ -210,7 +210,7 @@ func TestRepairAutomationFlagsSkipsCurrentAndChatAndRepairsStale(t *testing.T) {
 	}
 }
 
-func TestAutomationSchemaMigratesLegacyColumns(t *testing.T) {
+func TestAutomationSchemaMigratesMain39(t *testing.T) {
 	f := storetest.New(t)
 	id := f.CreateMessage("legacy")
 	if f.Store.IsPostgreSQL() {
@@ -220,11 +220,23 @@ func TestAutomationSchemaMigratesLegacyColumns(t *testing.T) {
 		_, err := f.Store.DB().ExecContext(t.Context(), `DROP TRIGGER trg_messages_automation_raw_update; DROP TRIGGER trg_messages_automation_raw_delete`)
 		require.NoError(t, err)
 	}
-	for _, query := range []string{`DROP INDEX idx_messages_automation_flags`, `ALTER TABLE messages DROP COLUMN automation_flags`, `ALTER TABLE messages DROP COLUMN automation_rule_version`, `UPDATE archive_metadata SET value = '38' WHERE key = 'schema_version'`} {
+	for _, query := range []string{`DROP INDEX idx_messages_automation_flags`, `ALTER TABLE messages DROP COLUMN automation_flags`, `ALTER TABLE messages DROP COLUMN automation_rule_version`, `UPDATE archive_metadata SET value = '39' WHERE key = 'schema_version'`} {
 		_, err := f.Store.DB().ExecContext(t.Context(), query)
 		require.NoError(t, err)
 	}
-	require.NoError(t, f.Store.InitSchemaContext(t.Context()))
+	versionBefore, err := f.Store.SchemaVersionContext(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, 39, versionBefore)
+	require.ErrorContains(t, f.Store.ValidateSchemaContext(t.Context()), "run setup")
+	require.NoError(t, f.Store.InitSchemaUnlessCurrentContext(t.Context()))
+	require.NoError(t, f.Store.ValidateSchemaContext(t.Context()))
+	var matrixIndex int
+	indexQuery := `SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_matrix_encrypted_events_pending_session'`
+	if f.Store.IsPostgreSQL() {
+		indexQuery = `SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_matrix_encrypted_events_pending_session'`
+	}
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), indexQuery).Scan(&matrixIndex))
+	assert.Equal(t, 1, matrixIndex)
 	assertAutomation(t, f.Store, id, 0, false)
 	require.NoError(t, f.Store.PutMessageAutomationContext(t.Context(), id, 4))
 	assertAutomation(t, f.Store, id, 4, true)

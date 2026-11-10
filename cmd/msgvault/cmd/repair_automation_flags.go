@@ -38,17 +38,7 @@ func runRepairAutomationFlagsLocal(cmd *cobra.Command, apply bool, batchSize int
 		return errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
-	var (
-		st      *store.Store
-		cleanup func()
-		err     error
-	)
-	if apply {
-		st, cleanup, err = openWritableStoreAndInitForInvocation(cmd.Context(), state)
-	} else {
-		st, err = store.OpenReadOnly(cfg.DatabaseDSN())
-		cleanup = func() { _ = st.Close() }
-	}
+	st, cleanup, err := openRepairStoreForInvocation(cmd.Context(), state, apply)
 	if err != nil {
 		return fmt.Errorf("open archive for automation flags repair: %w", err)
 	}

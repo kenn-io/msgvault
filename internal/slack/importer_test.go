@@ -3737,3 +3737,25 @@ func TestSlackAutomationBotAndHuman(t *testing.T) {
 	assert.Positive(t, bots)
 	assert.Positive(t, humans)
 }
+
+func TestSlackAutomationUnknownAuthors(t *testing.T) {
+	f := testWorkspace(t)
+	f.users = append(f.users, map[string]any{"id": "USLACKBOT", "is_bot": false, "name": "slackbot"})
+	f.convs[0].Msgs = append(f.convs[0].Msgs,
+		fakeMsg{TS: ts(44), User: "UUNKNOWN", Text: "unknown user"},
+		fakeMsg{TS: ts(45), Text: "absent author"},
+		fakeMsg{TS: ts(46), BotID: "BUNKNOWN", Text: "explicit bot"},
+		fakeMsg{TS: ts(47), User: "USLACKBOT", Text: "system notice"})
+	imp, opts := testImporter(t, f)
+	_, err := imp.Import(t.Context(), opts)
+	require.NoError(t, err)
+	var unknown int
+	require.NoError(t, imp.store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE automation_flags IS NULL AND automation_rule_version IS NULL`).Scan(&unknown))
+	assert.Equal(t, 2, unknown)
+	for _, stamp := range []string{ts(46), ts(47)} {
+		var flags, version sql.NullInt64
+		require.NoError(t, imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(`SELECT automation_flags, automation_rule_version FROM messages WHERE source_message_id = ?`), sourceMessageID(f.convs[0].ID, stamp)).Scan(&flags, &version))
+		assert.Equal(t, sql.NullInt64{Int64: int64(store.FlagBotSender), Valid: true}, flags)
+		assert.Equal(t, sql.NullInt64{Int64: store.AutomationRuleVersion, Valid: true}, version)
+	}
+}

@@ -2490,3 +2490,39 @@ func TestDiscordAutomationBotAndHuman(t *testing.T) {
 		})
 	}
 }
+
+func TestDiscordAutomationAuthorEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name                 string
+		author               User
+		webhook, application string
+		flags                uint32
+		known                bool
+	}{
+		{name: "unknown"},
+		{name: "human", author: User{ID: "400"}, known: true},
+		{name: "bot", author: User{ID: "400", Bot: true}, flags: store.FlagBotSender, known: true},
+		{name: "system without identity", author: User{System: true}, flags: store.FlagBotSender, known: true},
+		{name: "bot without identity", author: User{Bot: true}, flags: store.FlagBotSender, known: true},
+		{name: "webhook", webhook: "500", flags: store.FlagBotSender, known: true},
+		{name: "application", application: "600", flags: store.FlagBotSender, known: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := testutil.NewSQLiteTestStore(t)
+			api := newImporterFakeAPI(importerTestChannel("300", "general"))
+			message := importerTestMessage("101", "300", "hello")
+			message.Author = tc.author
+			message.WebhookID = tc.webhook
+			message.ApplicationID = tc.application
+			api.messages["300"] = []Message{message}
+			_, err := newTestImporter(st, api).Import(t.Context(), ImportOptions{GuildID: "200", AttachmentsDir: t.TempDir()})
+			require.NoError(t, err)
+			var id int64
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&id))
+			flags, current, err := st.MessageAutomationContext(t.Context(), id)
+			require.NoError(t, err)
+			assert.Equal(t, tc.known, current)
+			assert.Equal(t, tc.flags, flags)
+		})
+	}
+}

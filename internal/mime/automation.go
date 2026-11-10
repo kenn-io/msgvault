@@ -71,10 +71,26 @@ func hasCalendarPart(root *enmime.Part) bool {
 // Flags packs parser evidence and the sender's explicit no-reply marker.
 func (s AutomationSignals) Flags(fromAddress string) uint32 {
 	var flags uint32
-	for i, present := range []bool{s.AutoSubmitted, s.PrecedenceBulk, s.ListID, s.ListUnsubscribe, s.CalendarPart, s.ReplyToNoReply, IsNoReplyAddress(fromAddress)} {
-		if present {
-			flags |= 1 << i
-		}
+	if s.AutoSubmitted {
+		flags |= FlagAutoSubmitted
+	}
+	if s.PrecedenceBulk {
+		flags |= FlagPrecedenceBulk
+	}
+	if s.ListID {
+		flags |= FlagListID
+	}
+	if s.ListUnsubscribe {
+		flags |= FlagListUnsubscribe
+	}
+	if s.CalendarPart {
+		flags |= FlagCalendarPart
+	}
+	if s.ReplyToNoReply {
+		flags |= FlagReplyToNoReply
+	}
+	if IsNoReplyAddress(fromAddress) {
+		flags |= FlagSenderNoReply
 	}
 	return flags
 }

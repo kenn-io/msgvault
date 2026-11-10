@@ -3,6 +3,7 @@ package matrix
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
@@ -823,6 +824,131 @@ func TestImportRecoveryRejectsReplayedIndex(t *testing.T) {
 			req.NoError(err)
 			check.Equal("other", f.body(t, "$other"))
 			check.Equal("older", f.body(t, "$original"))
+		})
+	}
+}
+
+func TestEditRollbackPrefersEarlierArchivedCiphertext(t *testing.T) {
+	for _, mode := range []string{"same", "relations pages", "alternate base64", "encrypted target", "missing target", "stripped relation", "invalid earlier copy", "later copy", "already claimed"} {
+		t.Run(mode, func(t *testing.T) {
+			req, check := require.New(t), assert.New(t)
+			f := newRecoveryFixture(t)
+			original := f.message(t, "$original", "original", 10)
+			initialKey := f.backup.data.SessionKey
+			if mode == "encrypted target" {
+				in, err := olm.NewInboundGroupSession([]byte(f.backup.out.Key()))
+				req.NoError(err)
+				exported, err := in.Export(1)
+				req.NoError(err)
+				f.backup.data.SessionKey = string(exported)
+			}
+			other := f.message(t, "$other", "other", 11)
+			index := f.backup.out.MessageIndex()
+			edit := f.edit(t, "$edit", "$original", "edited", 20)
+			eligible := mode == "invalid earlier copy" || mode == "later copy" || mode == "already claimed"
+			target := "$other"
+			if eligible {
+				target = "$original"
+			}
+			newest := f.edit(t, "$newest", target, "newest", 30)
+			f.timeline = []*event.Event{original, other, newest}
+			if mode == "missing target" {
+				f.timeline = []*event.Event{other, newest}
+			}
+			if mode == "already claimed" {
+				f.timeline = append(f.timeline, edit)
+			}
+			_, err := f.run(t, true, false)
+			req.NoError(err)
+
+			raw, err := json.Marshal(edit)
+			req.NoError(err)
+			copied := matrixTestEvent(t, string(raw))
+			copied.ID, copied.Timestamp = "$replayed", 25
+			req.True(parseContent(copied))
+			pending, candidate := edit, copied
+			wantOriginal, wantOwner := "edited", "$edit"
+			if eligible {
+				pending, candidate = copied, edit
+				copied.ID = "$copy"
+				copied.Timestamp = 15
+				if mode == "invalid earlier copy" {
+					copied.Sender = "@other:example.org"
+				}
+				if mode == "later copy" {
+					copied.Timestamp = 40
+				}
+			} else {
+				copied.Content.AsEncrypted().RelatesTo.EventID = "$other"
+				if mode == "stripped relation" {
+					edit.Content.AsEncrypted().RelatesTo = nil
+					wantOriginal = "original"
+				}
+				if mode == "alternate base64" {
+					ciphertext := copied.Content.AsEncrypted().MegolmCiphertext
+					decoded, err := base64.RawStdEncoding.DecodeString(string(ciphertext))
+					req.NoError(err)
+					alphabet := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+					ciphertext[len(ciphertext)-1] = alphabet[strings.IndexByte(alphabet, ciphertext[len(ciphertext)-1])^1]
+					alternate, err := base64.RawStdEncoding.DecodeString(string(ciphertext))
+					req.NoError(err)
+					req.Equal(decoded, alternate)
+				}
+			}
+			f.timeline = []*event.Event{pending}
+			_, err = f.run(t, false, false)
+			req.NoError(err)
+			check.Equal(encryptedPlaceholder, f.body(t, pending.ID.String()))
+
+			f.edits = []*event.Event{candidate}
+			pages := make(chan string, 3)
+			if mode == "relations pages" {
+				first := f.edit(t, "$first", "$other", "first", 15)
+				handler := f.server.Config.Handler
+				f.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if strings.HasSuffix(r.URL.Path, "/m.replace") {
+						from := r.URL.Query().Get("from")
+						select {
+						case pages <- from:
+						default:
+							http.Error(w, "too many relations pages", http.StatusBadRequest)
+							return
+						}
+						if from == "" {
+							writeMatrixJSON(t, w, map[string]any{"chunk": []*event.Event{first}, "next_batch": "second"})
+							return
+						}
+					}
+					handler.ServeHTTP(w, r)
+				})
+			}
+			f.timeline = []*event.Event{{ID: "$redaction", Type: event.EventRedaction, Redacts: "$newest", Content: event.Content{Raw: map[string]any{}}}}
+			_, err = f.run(t, true, false)
+			req.NoError(err)
+			if mode == "relations pages" {
+				req.Len(pages, 2)
+				check.Empty(<-pages)
+				check.Equal("second", <-pages)
+				check.Equal("first", f.body(t, "$other"))
+			} else {
+				check.Equal("other", f.body(t, "$other"))
+			}
+			var owner string
+			req.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT event_id FROM matrix_megolm_claims WHERE session_id = ? AND message_index = ?`), f.backup.out.ID().String(), index).Scan(&owner))
+			check.Equal(wantOwner, owner)
+			if mode == "stripped relation" {
+				check.Equal("* edited", f.body(t, "$edit"))
+			}
+			if mode == "encrypted target" {
+				check.Equal([]string{"$edit"}, f.pendingEdits(t, "$original"))
+				f.quiet, f.backup.data.SessionKey, f.backup.etag = true, initialKey, "2"
+				_, err = f.run(t, true, true)
+				req.NoError(err)
+				check.Equal("other", f.body(t, "$other"))
+			}
+			if mode != "missing target" {
+				check.Equal(wantOriginal, f.body(t, "$original"))
+			}
 		})
 	}
 }
