@@ -352,7 +352,10 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	if err != nil {
 		return nil, err
 	}
+	window := request.Explore.Context
+	request.Explore.Context.After, request.Explore.Context.Before = nil, nil
 	conditions, args := buildExploreConditions(request.Explore)
+	conditions += " AND (message_type = 'meeting_transcript' OR (" + dateWindowSQL("occurred_at", window) + "))"
 	conditions, err = e.sentIdentityConditions(conditions)
 	if err != nil {
 		return nil, err
@@ -470,17 +473,18 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	peopleRollup := quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetPeople))
 	queryText := buildExploreLogicalSQLNoLists(conditions) + entriesCTE + `
 ), keyed_person_entries AS (
-	SELECT * FROM (` + e.withMeetingKeysSQL("person_entries", "anchor_message_id") + `)
+	SELECT * FROM (` + e.withMeetingKeysSQL("person_entries", "anchor_message_id", window) + `)
+	WHERE in_date_window OR len(meeting_keys) > 0
 ), person_population AS (
 	SELECT p.id AS person_id, COALESCE(p.display_name, '') AS display_name,
 		COALESCE(p.email_address, '') AS email_address, COALESCE(p.phone_number, '') AS phone_number,
 		` + bestNameExpr + ` AS best_display_name,
 		` + overrideExpr + ` AS person_display_name,
 		` + sqlPersonIdentifierFallbackExpr("p") + ` AS fallback_label,
-		COUNT(pe.person_id)::BIGINT AS activity_count,
+		COUNT(pe.person_id) FILTER (WHERE pe.in_date_window)::BIGINT AS activity_count,
 		len(list_distinct(flatten(list(pe.meeting_keys))))::BIGINT AS meeting_count,
-		COALESCE(SUM(pe.attachment_count), 0)::BIGINT AS file_count,
-		MIN(pe.occurred_at) AS first_at, MAX(pe.occurred_at) AS last_at
+		COALESCE(SUM(pe.attachment_count) FILTER (WHERE pe.in_date_window), 0)::BIGINT AS file_count,
+		MIN(pe.occurred_at) FILTER (WHERE pe.in_date_window) AS first_at, MAX(pe.occurred_at) FILTER (WHERE pe.in_date_window) AS last_at
 	` + populationFrom + `
 	GROUP BY p.id, p.display_name, p.email_address, p.phone_number
 ), filtered_people AS (
@@ -506,7 +510,7 @@ SELECT person_id, display_label, display_name,
 		WHERE rp.canonical_id = ` + relationshipPersonExpr + `), 0),
 	COALESCE(CAST((SELECT to_json(list(struct_pack(source_type := source_type, count := source_count)
 		ORDER BY source_type)) FROM (SELECT source_type, COUNT(*)::BIGINT AS source_count
-		FROM person_entries pe WHERE pe.person_id = counted.person_id GROUP BY source_type)) AS VARCHAR), '[]'),
+		FROM keyed_person_entries pe WHERE pe.person_id = counted.person_id AND pe.in_date_window GROUP BY source_type)) AS VARCHAR), '[]'),
 	first_at, last_at, total_count
 FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 	rows, err := e.db.QueryContext(ctx, queryText, args...)

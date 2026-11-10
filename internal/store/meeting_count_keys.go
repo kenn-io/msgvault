@@ -41,7 +41,7 @@ func (s *Store) meetingCountKeysContext(ctx context.Context, readBudget int) (ma
 		return nil, err
 	}
 	defer release()
-	r := s.meetingReader()
+	r := s.meetingReader().withMeetingCache()
 	r.countOnly = true
 
 	rows, err := r.QueryContext(ctx, `SELECT m.id FROM messages m
@@ -86,7 +86,6 @@ func (s *Store) meetingCountKeysContext(ctx context.Context, readBudget int) (ma
 
 // meetingCountOccurrences combines saved choices and independently proved source evidence.
 func (s *Store) meetingCountOccurrences(ctx context.Context, r reboundReader, memberID int64, budget *int) ([]MeetingCountOccurrence, error) {
-	r = r.withMeetingCache()
 	matches, stale, splits, source, err := s.meetingMemberOccurrences(ctx, r, memberID, budget)
 	if err != nil {
 		return nil, err
@@ -101,8 +100,12 @@ func (s *Store) meetingCountOccurrences(ctx context.Context, r reboundReader, me
 		if o.Row.Event.AllDay {
 			value.Date = o.Row.Event.StartDate
 			if o.Identity.OccurrenceKey != "" && (o.Row.Event.Kind != meetingExceptionKind || value.Date == "") {
-				if _, identity, ok := calrecur.ParseInstanceID("event_" + o.Identity.OccurrenceKey); ok && identity.AllDay {
-					value.Date = identity.Date
+				if _, identity, ok := calrecur.ParseInstanceID("event_" + o.Identity.OccurrenceKey); ok {
+					if identity.AllDay {
+						value.Date = identity.Date
+					} else if o.Row.Event.Kind != meetingExceptionKind {
+						value.Date = ""
+					}
 				}
 			}
 		}
@@ -118,9 +121,11 @@ func (s *Store) meetingCountOccurrences(ctx context.Context, r reboundReader, me
 //nolint:nilnil // Missing archived evidence is a valid result.
 func sourceMeetingCountOccurrence(key meetingLinkKey, rows []CalendarEventRow) (*linkOccurrence, error) {
 	var instance calrecur.Identity
+	var parsed bool
 	switch key.Kind {
 	case "google_event_id":
 		_, original, ok := calrecur.ParseInstanceID(key.Value)
+		parsed = ok
 		if !ok {
 			if key.Value == "" || key.ScheduledAt == nil {
 				return nil, nil
@@ -142,12 +147,12 @@ func sourceMeetingCountOccurrence(key meetingLinkKey, rows []CalendarEventRow) (
 			continue
 		}
 		original := instance
-		if row.Event.AllDay && !original.AllDay {
-			zone, err := calendarEventZone(row.Event)
+		if !parsed {
+			var err error
+			original, err = meetingIdentityAt(row, original.Instant)
 			if err != nil {
 				return nil, err
 			}
-			original = calrecur.Identity{AllDay: true, Date: original.Instant.In(zone).Format(time.DateOnly)}
 		}
 		o := occurrenceFromRow(row, original.Key())
 		if !original.AllDay {

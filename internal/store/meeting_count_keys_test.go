@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -64,6 +65,23 @@ func TestMeetingCountKeysAllDaySourceCopies(t *testing.T) {
 		require.Len(t, keys[note], 1)
 		assert.Equal(t, "uid:weekly@example.org/20270314", keys[note][0].Key)
 		assert.Equal(t, "2027-03-14", keys[note][0].Date)
+	}
+}
+
+func TestMeetingCountKeysSeriesTypeChange(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "series", linkSeriesRaw)
+	_, saved := projectionFixture(t, st, "saved", "plaud_json", `{}`)
+	require.NoError(t, st.LinkMeetingContext(t.Context(), saved, OccurrenceRef{MessageID: master, Key: "20270314T100000Z"}))
+	_, source := projectionFixture(t, st, "source", "granola_json", `{"calendar_event":{"calendar_event_id":"series_20270314T100000Z","scheduled_start_time":"2027-03-14T10:00:00Z"}}`)
+	require.NoError(t, st.UpsertMessageRawWithFormat(master, []byte(`{"id":"series","iCalUID":"weekly@example.org","start":{"date":"2027-03-07"},"end":{"date":"2027-03-08"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`), "gcal_json"))
+	keys, err := st.MeetingCountKeysContext(t.Context())
+	require.NoError(t, err)
+	for _, note := range []int64{saved, source} {
+		require.Len(t, keys[note], 1)
+		assert.Equal(t, "uid:weekly@example.org/20270314T100000Z", keys[note][0].Key)
+		assert.Empty(t, keys[note][0].Date)
+		assert.Equal(t, "2027-03-14T10:00:00Z", keys[note][0].Start.UTC().Format(time.RFC3339))
 	}
 }
 

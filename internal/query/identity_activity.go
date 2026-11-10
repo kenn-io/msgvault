@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/v2"
 	"fmt"
 	"strings"
@@ -92,19 +93,8 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 		return "", nil, err
 	}
 	conditions, args := buildExploreConditions(request)
-	if occurrenceDates && (after != nil || before != nil) {
-		// Keep meeting transcripts until their occurrences are expanded; filter
-		// other messages before chat grouping as usual.
-		var bounds []string
-		if after != nil {
-			bounds = append(bounds, "occurred_at >= CAST(? AS TIMESTAMP)")
-			args = append(args, after.UTC())
-		}
-		if before != nil {
-			bounds = append(bounds, "occurred_at < CAST(? AS TIMESTAMP)")
-			args = append(args, before.UTC())
-		}
-		conditions += " AND (message_type = 'meeting_transcript' OR (" + strings.Join(bounds, " AND ") + "))"
+	if occurrenceDates {
+		conditions += " AND (message_type = 'meeting_transcript' OR (" + dateWindowSQL("occurred_at", Context{After: after, Before: before}) + "))"
 	}
 	conditions, err = e.sentIdentityConditions(conditions)
 	if err != nil {
@@ -495,12 +485,12 @@ func (e *DuckDBEngine) searchPeople(
 			ctx,
 			request.Explore,
 			candidates,
-			false,
+			true,
 		)
 		if logicalErr != nil {
 			return nil, logicalErr
 		}
-		queryText = e.filteredPeopleSQL(logicalSQL, order)
+		queryText = e.filteredPeopleSQL(logicalSQL, order, request.Explore.Context)
 		args = append(args, logicalArgs...)
 		args = append(args, candidateArgs...)
 	}
@@ -522,6 +512,7 @@ func (e *DuckDBEngine) searchPeople(
 	}
 	for rows.Next() {
 		var row PersonSummary
+		var firstAt, lastAt sql.NullTime
 		var identifiersJSON, sourceCountsJSON string
 		if err := rows.Scan(
 			&row.ID,
@@ -536,12 +527,13 @@ func (e *DuckDBEngine) searchPeople(
 			&row.PeakRelationshipTemperature,
 			&row.PeakRelationshipYear,
 			&sourceCountsJSON,
-			&row.FirstAt,
-			&row.LastAt,
+			&firstAt,
+			&lastAt,
 			&response.TotalCount,
 		); err != nil {
 			return nil, fmt.Errorf("scan indexed person: %w", err)
 		}
+		row.FirstAt, row.LastAt = firstAt.Time, lastAt.Time
 		if err := json.Unmarshal([]byte(identifiersJSON), &row.Identifiers); err != nil {
 			return nil, fmt.Errorf("decode indexed person identifiers: %w", err)
 		}
@@ -603,7 +595,7 @@ func (e *DuckDBEngine) unfilteredPeopleSQL(
 }
 
 func (e *DuckDBEngine) filteredPeopleSQL(
-	logicalSQL, order string,
+	logicalSQL, order string, window Context,
 ) string {
 	// person_stats is the ONLY reference to the per-(entry, person) rows,
 	// and it reads person_flags rather than logical_people: a second
@@ -618,12 +610,13 @@ func (e *DuckDBEngine) filteredPeopleSQL(
 	return logicalSQL + `,
 person_stats AS (
 	SELECT p.canonical_id, p.source_type,
-	       count(*)::BIGINT AS source_count,
+	       count(*) FILTER (WHERE p.in_date_window)::BIGINT AS source_count,
 	       list_distinct(flatten(list(p.meeting_keys))) AS meeting_keys,
-	       coalesce(sum(p.attachment_count), 0)::BIGINT AS file_count,
-	       min(p.occurred_at)::TIMESTAMP AS first_at,
-	       max(p.occurred_at)::TIMESTAMP AS last_at
-	FROM (` + e.withMeetingKeysSQL("person_flags", "entry_num") + `) p
+	       coalesce(sum(p.attachment_count) FILTER (WHERE p.in_date_window), 0)::BIGINT AS file_count,
+	       min(p.occurred_at) FILTER (WHERE p.in_date_window)::TIMESTAMP AS first_at,
+	       max(p.occurred_at) FILTER (WHERE p.in_date_window)::TIMESTAMP AS last_at
+	FROM (` + e.withMeetingKeysSQL("person_flags", "entry_num", window) + `) p
+	WHERE p.in_date_window OR len(p.meeting_keys) > 0
 	GROUP BY p.canonical_id, p.source_type
 ), person_totals AS (
 	SELECT canonical_id,
@@ -637,7 +630,7 @@ person_stats AS (
 ), person_sources AS (
 	SELECT canonical_id,
 	       list(struct_pack(source_type := source_type, count := source_count)
-	            ORDER BY source_type) AS source_counts
+	            ORDER BY source_type) FILTER (WHERE source_count > 0) AS source_counts
 	FROM person_stats
 	GROUP BY canonical_id
 ), population AS (
@@ -947,8 +940,35 @@ func quoteIdentitySQLPath(value string) string {
 	return strings.ReplaceAll(value, "'", "''")
 }
 
-func (e *DuckDBEngine) withMeetingKeysSQL(relation, messageID string) string {
-	return `SELECT p.*, ` + identityindex.MeetingKeysSQL("mk", "p.message_type", "p."+messageID) + ` AS meeting_keys
+func dateWindowSQL(field string, window Context) string {
+	var conditions []string
+	if window.After != nil {
+		conditions = append(conditions, field+" >= TIMESTAMP '"+duckDBDateParam(*window.After)+"'")
+	}
+	if window.Before != nil {
+		conditions = append(conditions, field+" < TIMESTAMP '"+duckDBDateParam(*window.Before)+"'")
+	}
+	if len(conditions) == 0 {
+		return "true"
+	}
+	return strings.Join(conditions, " AND ")
+}
+
+func (e *DuckDBEngine) withMeetingKeysSQL(relation, messageID string, window Context) string {
+	date := dateWindowSQL("p.occurred_at", window)
+	if window.After == nil && window.Before == nil {
+		return `SELECT p.*, true AS in_date_window, ` + identityindex.MeetingKeysSQL("mk", "p.message_type", "p."+messageID) + ` AS meeting_keys
     FROM ` + relation + ` p
     LEFT JOIN ` + identityindex.GroupedMeetingKeysSQL(e.parquetPath(datasetMeetingKeys)) + ` mk ON mk.message_id = p.` + messageID
+	}
+	keyDate := dateWindowSQL("coalesce(k.day::TIMESTAMP, k.at, p.occurred_at)", window)
+	return `SELECT p.*, (` + date + `) AS in_date_window,
+ CASE WHEN p.message_type = 'meeting_transcript' THEN
+   CASE WHEN mk.keys IS NULL THEN CASE WHEN ` + date + ` THEN ['msg:' || CAST(p.` + messageID + ` AS VARCHAR)] ELSE []::VARCHAR[] END
+   ELSE list_transform(list_filter(mk.keys, lambda k: ` + keyDate + `), lambda k: k.key) END
+ ELSE []::VARCHAR[] END AS meeting_keys
+ FROM ` + relation + ` p LEFT JOIN (
+ SELECT message_id, list(struct_pack(key := meeting_key, at := occurrence_at, day := occurrence_date)) AS keys
+ FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(datasetMeetingKeys)) + `') GROUP BY message_id
+ ) mk ON mk.message_id = p.` + messageID
 }

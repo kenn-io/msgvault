@@ -50,7 +50,7 @@ func TestMeetingCountsAcrossFilters(t *testing.T) {
 	}
 }
 
-func TestRelationshipMeetingOccurrenceDateFilters(t *testing.T) {
+func TestMeetingOccurrenceDateFilters(t *testing.T) {
 	b := NewTestDataBuilder(t)
 	source := b.AddSourceWithType("owner@example.org", "granola")
 	owner := b.AddParticipant("owner@example.org", "example.org", "Owner")
@@ -77,6 +77,32 @@ func TestRelationshipMeetingOccurrenceDateFilters(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, result.Rows, 1)
 			assert.Equal(t, int64(1), result.Rows[0].Signals.MeetingCount)
+		})
+	}
+	for _, day := range []int{7, 14} {
+		t.Run("people "+fmt.Sprint(day), func(t *testing.T) {
+			after := time.Date(2026, 3, day, 0, 0, 0, 0, time.UTC)
+			before := after.AddDate(0, 0, 1)
+			context := Context{SourceIDs: []int64{source}, ParticipantIDs: []int64{person}, After: &after, Before: &before}
+			result, err := engine.SearchPeople(t.Context(), PersonSearchRequest{Query: "person@example.org", Explore: ExploreRequest{Context: context}})
+			require.NoError(t, err)
+			require.Len(t, result.Rows, 1)
+			assert.Equal(t, int64(1), result.Rows[0].MeetingCount)
+			wantActivity := int64(0)
+			if day == 7 {
+				wantActivity = 1
+			}
+			assert.Equal(t, wantActivity, result.Rows[0].ActivityCount)
+			detail, err := engine.GetPerson(t.Context(), person, context, nil)
+			require.NoError(t, err)
+			require.NotNil(t, detail)
+			assert.Equal(t, int64(1), detail.MeetingCount)
+			assert.Equal(t, wantActivity, detail.ActivityCount)
+			summary, err := engine.GetPersonSummary(t.Context(), person, ExploreRequest{Context: context}, nil)
+			require.NoError(t, err)
+			require.Len(t, summary.Rows, 1)
+			assert.Equal(t, int64(1), summary.Rows[0].MeetingCount)
+			assert.Equal(t, wantActivity, summary.Rows[0].ActivityCount)
 		})
 	}
 }

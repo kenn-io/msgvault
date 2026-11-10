@@ -136,8 +136,10 @@ func queryCalendarEventRows(ctx context.Context, r reboundReader, predicate stri
 	if closeErr != nil {
 		return nil, fmt.Errorf("close calendar events: %w", closeErr)
 	}
-	if err := loadCalendarAttendees(ctx, r, out); err != nil {
-		return nil, err
+	if !r.countOnly {
+		if err := loadCalendarAttendees(ctx, r, out); err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
 }

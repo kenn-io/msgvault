@@ -107,7 +107,11 @@ func expandMeetingSeries(ctx context.Context, r reboundReader, master CalendarEv
 		if cached, ok := r.expansions[key]; ok {
 			return slices.Clone(cached.value), cached.err
 		}
-		defer func() { r.expansions[key] = meetingReadResult[[]linkOccurrence]{slices.Clone(out), err} }()
+		defer func() {
+			if !errors.Is(err, ErrQueryTooBroad) {
+				r.expansions[key] = meetingReadResult[[]linkOccurrence]{slices.Clone(out), err}
+			}
+		}()
 	}
 	predicate, args := calendarExceptionWindow(r.dialect, from, to)
 	predicate += ` AND m.source_id = ? AND e.series_provider_id = ?`
@@ -155,7 +159,11 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 		if cached, ok := r.occurrences[ref]; ok {
 			return cached.value, cached.err
 		}
-		defer func(ref OccurrenceRef) { r.occurrences[ref] = meetingReadResult[linkOccurrence]{out, err} }(ref)
+		defer func(ref OccurrenceRef) {
+			if !errors.Is(err, ErrQueryTooBroad) {
+				r.occurrences[ref] = meetingReadResult[linkOccurrence]{out, err}
+			}
+		}(ref)
 	}
 	rows, err := meetingEventRowsByID(ctx, r, ref.MessageID, budget)
 	if err != nil {
@@ -389,13 +397,9 @@ candidatesLoop:
 			if err != nil && !errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
 				return nil, nil, err
 			}
-			original := calrecur.Identity{Instant: *key.ScheduledAt}
-			if row.Event.AllDay {
-				zone, err := calendarEventZone(row.Event)
-				if err != nil {
-					return nil, nil, err
-				}
-				original = calrecur.Identity{AllDay: true, Date: key.ScheduledAt.In(zone).Format(time.DateOnly)}
+			original, err := meetingIdentityAt(row, *key.ScheduledAt)
+			if err != nil {
+				return nil, nil, err
 			}
 			o, err := resolveMeetingOccurrence(ctx, r, OccurrenceRef{MessageID: row.MessageID, Key: original.Key()}, budget)
 			if err == nil {
@@ -449,6 +453,17 @@ candidatesLoop:
 		return nil, nil, nil
 	}
 	return out, source, nil
+}
+
+func meetingIdentityAt(row CalendarEventRow, at time.Time) (calrecur.Identity, error) {
+	if row.Event.AllDay {
+		zone, err := calendarEventZone(row.Event)
+		if err != nil {
+			return calrecur.Identity{}, err
+		}
+		return calrecur.Identity{AllDay: true, Date: at.In(zone).Format(time.DateOnly)}, nil
+	}
+	return calrecur.Identity{Instant: at}, nil
 }
 
 func hasOtherICalUID(rows []CalendarEventRow, uid string) bool {
