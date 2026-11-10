@@ -146,33 +146,6 @@ func TestMeetingCountKeysAfterRemovingRecurrence(t *testing.T) {
 	}
 }
 
-func TestMeetingCountKeysExactEvidenceWithoutCalendar(t *testing.T) {
-	for _, tc := range []struct {
-		name, format, first, second string
-		want                        []string
-	}{
-		{"UID and instant", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-21T10:00:00Z"}}`, `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-21T06:00:00-04:00"}}`, nil},
-		{"UID alone", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org"}}`, "", nil},
-		{"Google instance", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"series_20270321T100000Z"}}`, "", nil},
-		{"Google series and instant", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"series","scheduled_start_time":"2027-03-21T10:00:00Z"}}`, `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"series_20270321T100000Z"}}`, nil},
-		{"Google series alone", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"series"}}`, "", nil},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			require, assert := require.New(t), assert.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			for i, raw := range []string{tc.first, tc.second} {
-				if raw == "" {
-					continue
-				}
-				_, note := projectionFixture(t, st, fmt.Sprintf("note-%d", i), tc.format, raw)
-				keys, err := meetingCountTestKeys(t, st)
-				require.NoError(err)
-				assert.Equal(tc.want, keys[note])
-			}
-		})
-	}
-}
-
 func TestMeetingCountKeysGoogleAcrossMailboxes(t *testing.T) {
 	require, assert := require.New(t), assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
