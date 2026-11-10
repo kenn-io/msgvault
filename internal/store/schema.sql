@@ -1497,7 +1497,8 @@ CREATE TABLE IF NOT EXISTS message_recipients (
     -- identity discovery reads it so merges cannot rewrite evidence.
     -- NULL on rows from writers without envelope addresses (non-email
     -- importers, legacy rows).
-    email_address TEXT
+    email_address TEXT,
+    is_relayed BOOLEAN NOT NULL DEFAULT FALSE
 
     -- Uniqueness spans the normalized envelope address so one participant
     -- can carry several alias snapshots on the same message (two aliases of

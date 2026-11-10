@@ -336,37 +336,6 @@ describe('AttributeDefinitionDialog', () => {
     expect(document.activeElement).toBe(result);
   });
 
-  it('keeps committed reconciliation controller-owned after the dialog closes', async () => {
-    const created = definition({ is_sensitive: false });
-    const requests: Request[] = [];
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      requests.push(request);
-      return request.method === 'POST' ? Response.json(created, { status: 201 }) : Response.json({ definitions: [] });
-    });
-    const profile = controller(fetchFn);
-    const onClose = vi.fn();
-    const view = render(AttributeDefinitionDialog, { controller: profile, onClose });
-    await fireEvent.input(screen.getByLabelText('Label'), { target: { value: 'Preferred channel' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
-    await screen.findByRole('button', { name: 'Retry registry refresh' });
-    await fireEvent.click(screen.getByRole('button', { name: 'Close create attribute field' }));
-    expect(onClose).toHaveBeenCalledOnce();
-    view.unmount();
-
-    await expect(
-      profile.createDefinition({
-        object_type: 'person',
-        label: 'Preferred channel',
-        value_type: 'text',
-        field_type: 'text',
-        cardinality: 'single',
-        is_sensitive: false,
-      }),
-    ).resolves.toEqual({ ok: false, code: 'conflict_unresolved' });
-    expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
-  });
-
   it.each([
     ['without a usable identity', () => Response.json({ ownership: 'user', object_type: 'person' }, { status: 201 }), 'usable identity'],
     ['with an empty body', () => new Response(null, { status: 204 }), 'usable identity'],

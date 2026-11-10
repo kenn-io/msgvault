@@ -42,6 +42,7 @@ const (
 
 // Options configures sync behavior.
 type Options struct {
+	RelayedSenders []mime.RelayedSenderRule
 	// SourceType is the type of source being synced ("gmail" or "imap").
 	// Defaults to "gmail" if empty.
 	SourceType string
@@ -1750,6 +1751,8 @@ func (s *Syncer) syncLabels(ctx context.Context, sourceID int64) (map[string]int
 // messageData holds all parsed data for a message before persistence.
 type messageData struct {
 	automation        *uint32
+	relayType         string
+	relayValue        string
 	originalMessageID string // Parsed identity evidence, before omission from new projections.
 	metadata          *sql.NullString
 	message           *store.Message
@@ -1773,7 +1776,9 @@ type messageData struct {
 // ordinary ingest after pure MIME preparation and deduplication have finished.
 func (s *Syncer) resolvePreparedMessage(ctx context.Context, data *messageData) (*messageData, error) {
 	allAddresses := make([]mime.Address, 0, len(data.from)+len(data.to)+len(data.cc)+len(data.bcc))
-	allAddresses = append(allAddresses, data.from...)
+	if data.relayType == "" {
+		allAddresses = append(allAddresses, data.from...)
+	}
 	allAddresses = append(allAddresses, data.to...)
 	allAddresses = append(allAddresses, data.cc...)
 	allAddresses = append(allAddresses, data.bcc...)
@@ -1781,8 +1786,15 @@ func (s *Syncer) resolvePreparedMessage(ctx context.Context, data *messageData) 
 	if err != nil {
 		return nil, fmt.Errorf("ensure participants: %w", err)
 	}
+	if data.relayType != "" {
+		id, err := s.store.EnsureParticipantByIdentifierContext(ctx, data.relayType, data.relayValue, strings.TrimSpace(data.from[0].Name))
+		if err != nil {
+			return nil, fmt.Errorf("ensure relay author: %w", err)
+		}
+		data.message.SenderID = sql.NullInt64{Int64: id, Valid: true}
+	}
 
-	if len(data.from) > 0 && data.from[0].Email != "" {
+	if data.relayType == "" && len(data.from) > 0 && data.from[0].Email != "" {
 		if id, ok := participantMap[data.from[0].Email]; ok {
 			data.message.SenderID = sql.NullInt64{Int64: id, Valid: true}
 		}
@@ -1954,7 +1966,12 @@ func (s *Syncer) prepareMessage(
 		metadata = &sql.NullString{String: string(encoded), Valid: true}
 	}
 
+	var relayType, relayValue string
+	if messageType == store.MessageTypeEmail {
+		relayType, relayValue = mime.RelayedSender(raw.Raw, parsed.From, mime.RelayedSenderRules(s.opts.RelayedSenders))
+	}
 	return &messageData{
+		relayType: relayType, relayValue: relayValue,
 		originalMessageID: originalMessageID,
 		metadata:          metadata,
 		message:           msg,
@@ -2009,6 +2026,9 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 	for _, r := range recipients {
 		rs := buildRecipientSet(r.typ, r.addrs, data.participantMap)
 		recipientSets = append(recipientSets, rs)
+	}
+	if data.relayType != "" {
+		recipientSets[0] = store.RelayedFromRecipient(data.from[0], data.message.SenderID.Int64)
 	}
 
 	// Retain the original even if later file publication fails. A pending

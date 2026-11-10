@@ -359,25 +359,25 @@ func TestRepairAutomationFlagsSkipsCurrentAndChatAndRepairsStale(t *testing.T) {
 	assertAutomation(t, f.Store, chat, 0, false)
 }
 
-func TestAutomationSchemaMigratesMain39(t *testing.T) {
+func TestAutomationSchemaMigratesMain40(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
 	id := f.CreateMessage("legacy")
 	if f.Store.IsPostgreSQL() {
-		_, err := f.Store.DB().ExecContext(t.Context(), `DROP TRIGGER trg_messages_automation_raw ON message_raw; DROP TRIGGER trg_loop_evidence_attachments ON attachments; DROP FUNCTION invalidate_loop_evidence_attachments()`)
+		_, err := f.Store.DB().ExecContext(t.Context(), `DROP TRIGGER trg_messages_automation_raw ON message_raw; DROP FUNCTION invalidate_messages_automation_raw(); DROP TRIGGER trg_loop_evidence_attachments ON attachments; DROP FUNCTION invalidate_loop_evidence_attachments()`)
 		require.NoError(err)
 	} else {
 		_, err := f.Store.DB().ExecContext(t.Context(), `DROP TRIGGER trg_messages_automation_raw_update; DROP TRIGGER trg_messages_automation_raw_delete; DROP TRIGGER trg_loop_evidence_attachments_update; DROP TRIGGER trg_loop_evidence_attachments_delete`)
 		require.NoError(err)
 	}
-	for _, query := range []string{`DROP INDEX idx_messages_automation_flags`, `ALTER TABLE messages DROP COLUMN automation_flags`, `ALTER TABLE messages DROP COLUMN automation_rule_version`, `UPDATE archive_metadata SET value = '39' WHERE key = 'schema_version'`} {
+	for _, query := range []string{`DROP INDEX idx_messages_automation_flags`, `ALTER TABLE messages DROP COLUMN automation_flags`, `ALTER TABLE messages DROP COLUMN automation_rule_version`, `UPDATE archive_metadata SET value = '40' WHERE key = 'schema_version'`} {
 		_, err := f.Store.DB().ExecContext(t.Context(), query)
 		require.NoError(err)
 	}
 	versionBefore, err := f.Store.SchemaVersionContext(t.Context())
 	require.NoError(err)
-	assert.Equal(39, versionBefore)
+	assert.Equal(40, versionBefore)
 	require.ErrorContains(f.Store.ValidateSchemaContext(t.Context()), "run setup")
 	require.NoError(f.Store.InitSchemaUnlessCurrentContext(t.Context()))
 	require.NoError(f.Store.ValidateSchemaContext(t.Context()))

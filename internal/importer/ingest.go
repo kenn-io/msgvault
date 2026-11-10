@@ -34,16 +34,16 @@ func IngestRawMessage(
 	sourceID int64, identifier, attachmentsDir string,
 	labelIDs []int64, sourceMsgID, rawHash string,
 	raw []byte, fallbackDate time.Time,
-	log *slog.Logger,
+	log *slog.Logger, rules []mime.RelayedSenderRule,
 ) error {
-	return ingestRawMessage(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, nil, "")
+	return ingestRawMessage(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, nil, "", rules)
 }
 
 type rawMessageIngestFunc func(context.Context, *store.Store, int64, string, string, []int64, string, string, []byte, time.Time, *slog.Logger) error
 
-func rawMessageIngester(images *remoteimage.Fetcher) rawMessageIngestFunc {
+func rawMessageIngester(images *remoteimage.Fetcher, rules []mime.RelayedSenderRule) rawMessageIngestFunc {
 	return func(ctx context.Context, st *store.Store, sourceID int64, identifier, attachmentsDir string, labelIDs []int64, sourceMsgID, rawHash string, raw []byte, fallbackDate time.Time, log *slog.Logger) error {
-		return ingestRawMessage(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, images, "")
+		return ingestRawMessage(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, images, "", rules)
 	}
 }
 
@@ -52,10 +52,10 @@ func ingestRawMessage(
 	sourceID int64, identifier, attachmentsDir string,
 	labelIDs []int64, sourceMsgID, rawHash string,
 	raw []byte, fallbackDate time.Time,
-	log *slog.Logger, images *remoteimage.Fetcher, threadID string,
+	log *slog.Logger, images *remoteimage.Fetcher, threadID string, rules []mime.RelayedSenderRule,
 ) error {
 	return ingestRawMessageWithCompletion(ctx, st, sourceID, identifier, attachmentsDir, labelIDs,
-		sourceMsgID, rawHash, raw, fallbackDate, log, images, threadID, false)
+		sourceMsgID, rawHash, raw, fallbackDate, log, images, threadID, false, rules)
 }
 
 // ingestRawMessageWithCompletion reports, when strict, attachment storage and
@@ -66,7 +66,7 @@ func ingestRawMessage(
 func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 	sourceID int64, identifier, attachmentsDir string, labelIDs []int64,
 	sourceMsgID, rawHash string, raw []byte, fallbackDate time.Time,
-	log *slog.Logger, images *remoteimage.Fetcher, threadID string, strict bool,
+	log *slog.Logger, images *remoteimage.Fetcher, threadID string, strict bool, rules []mime.RelayedSenderRule,
 ) error {
 	parsed, parseErr := mime.ParseWithRecovery(raw, "(MIME parse error)")
 	// Capture raw automation evidence before omitting damaged stored identities.
@@ -103,7 +103,10 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 		len(parsed.From)+len(parsed.To)+
 			len(parsed.Cc)+len(parsed.Bcc),
 	)
-	allAddresses = append(allAddresses, parsed.From...)
+	relayType, relayValue := mime.RelayedSender(raw, parsed.From, mime.RelayedSenderRules(rules))
+	if relayType == "" {
+		allAddresses = append(allAddresses, parsed.From...)
+	}
 	allAddresses = append(allAddresses, parsed.To...)
 	allAddresses = append(allAddresses, parsed.Cc...)
 	allAddresses = append(allAddresses, parsed.Bcc...)
@@ -113,7 +116,15 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 	}
 
 	var senderID sql.NullInt64
-	if len(parsed.From) > 0 && parsed.From[0].Email != "" {
+	if relayType != "" {
+		id, err := st.EnsureParticipantByIdentifierContext(ctx, relayType, relayValue, strings.TrimSpace(parsed.From[0].Name))
+		if err != nil {
+			return fmt.Errorf("ensure relay author: %w", err)
+		}
+		senderID = sql.NullInt64{Int64: id, Valid: true}
+	}
+
+	if relayType == "" && len(parsed.From) > 0 && parsed.From[0].Email != "" {
 		if id, ok := participantMap[parsed.From[0].Email]; ok {
 			senderID = sql.NullInt64{Int64: id, Valid: true}
 		}
@@ -199,6 +210,9 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 		buildRecipientSet("to", parsed.To, participantMap),
 		buildRecipientSet("cc", parsed.Cc, participantMap),
 		buildRecipientSet("bcc", parsed.Bcc, participantMap),
+	}
+	if relayType != "" {
+		recipientSets[0] = store.RelayedFromRecipient(parsed.From[0], senderID.Int64)
 	}
 
 	// Persist atomically

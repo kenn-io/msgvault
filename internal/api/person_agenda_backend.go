@@ -27,7 +27,7 @@ func connectKata(ctx context.Context, cfg config.TaskIntegrationConfig) (*taskcl
 	if !cfg.Enabled {
 		return nil, taskclient.ErrUnreachable
 	}
-	return taskclient.ConnectKata(ctx, taskclient.IntegrationConfig{Enabled: true, Endpoint: cfg.Endpoint, APIKey: cfg.APIKey, DefaultProject: cfg.DefaultProject})
+	return taskclient.ConnectKata(ctx, taskclient.IntegrationConfig{Enabled: true, Endpoint: cfg.Endpoint, APIKey: cfg.APIKey, DefaultProject: cfg.DefaultProject, TrustPrivateNetwork: cfg.TrustPrivateNetwork})
 }
 
 func (b *personAgendaBackend) service(ctx context.Context) (personagenda.Service, error) {

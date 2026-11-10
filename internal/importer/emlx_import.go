@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/emlx"
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/remoteimage"
 	"go.kenn.io/msgvault/internal/store"
@@ -38,7 +39,8 @@ type EmlxImportOptions struct {
 	// Empty means no disk storage.
 	AttachmentsDir string
 	// RemoteImages is nil unless remote image archiving was explicitly enabled.
-	RemoteImages *remoteimage.Fetcher
+	RemoteImages   *remoteimage.Fetcher
+	RelayedSenders []mime.RelayedSenderRule
 
 	// MaxMessageBytes limits the maximum .emlx file size to read.
 	// Defaults to 128 MiB.

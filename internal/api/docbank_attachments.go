@@ -26,10 +26,11 @@ type DocbankAttachmentBackfillResponse struct {
 const DocbankAttachmentMirrorJob = "docbank-attachment-mirror"
 
 type DocbankAttachmentReader struct {
-	Client      *docbankmedia.Client
-	Store       *store.Store
-	Destination string
-	Folder      string
+	Client        *docbankmedia.Client
+	Store         *store.Store
+	Destination   string
+	Folder        string
+	SearchProfile string
 }
 
 func (s *Server) registerDocbankAttachmentRoutes(api huma.API) {
