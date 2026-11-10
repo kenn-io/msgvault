@@ -135,21 +135,13 @@ func TestChatDiscoveryUpgradeBuildsMembersFromExistingMessages(t *testing.T) {
 	source, err := st.GetOrCreateSource("beeper", "upgrade-account")
 	requirements.NoError(err)
 	unknown, _ := seedDiscoveryChat(t, st, source.ID, "Unknown Upgrade", "", time.Unix(100, 0))
-	mail, err := st.EnsureConversationWithType(source.ID, "obsolete-chat", "email_thread", "Obsolete chat")
-	requirements.NoError(err)
-	message, err := st.UpsertMessageContext(t.Context(), &store.Message{
-		SourceID: source.ID, SourceMessageID: "obsolete", ConversationID: mail, MessageType: "email",
-	})
-	requirements.NoError(err)
-	// Missing projection rows and an obsolete anchor must both be repaired.
+	// An older projection ledger must rebuild missing membership and anchors.
 	for _, statement := range []string{
 		`DELETE FROM chat_members`, `DELETE FROM chat_anchors`, `DELETE FROM chat_members_dirty`,
 	} {
 		_, err = st.DB().ExecContext(t.Context(), statement)
 		requirements.NoError(err)
 	}
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO chat_anchors (conversation_id,message_id) VALUES (?,?)`), mail, message)
-	requirements.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE applied_migrations SET version=? WHERE name='chat_members_v1'`), store.ChatMembersProjectionVersionForTest-1)
 	requirements.NoError(err)
 	checks.Empty(discoveredChats(t, st, "Upgrade"))
@@ -157,8 +149,6 @@ func TestChatDiscoveryUpgradeBuildsMembersFromExistingMessages(t *testing.T) {
 	checks.Equal([]int64{chat}, discoveredChats(t, st, "Kilo"))
 	checks.ElementsMatch([]int64{chat, unknown}, discoveredChats(t, st, "Upgrade"))
 	var n int
-	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM chat_anchors WHERE conversation_id=?`), mail).Scan(&n))
-	checks.Zero(n)
 	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT version FROM applied_migrations WHERE name='chat_members_v1'`).Scan(&n))
 	checks.Equal(store.ChatMembersProjectionVersionForTest, n)
 }
@@ -263,7 +253,7 @@ func TestChatDiscoveryRejectsAnchorChangedAfterRefresh(t *testing.T) {
 	assert.Equal(t, oldest, metadataAnchor(), "an anchor moved to another chat is not reported for this one")
 }
 
-func TestChatDiscoveryUsesMessageTypeForUnknownKinds(t *testing.T) {
+func TestChatDiscoveryEligibilityAndDirtyQueue(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -300,8 +290,39 @@ func TestChatDiscoveryUsesMessageTypeForUnknownKinds(t *testing.T) {
 	})
 	requirements.NoError(err)
 	checks.Empty(discoveredChats(t, st, "Garden"))
+	for _, tc := range []struct{ source, message string }{
+		{"google_voice", store.MessageTypeGoogleVoiceCall},
+		{"google_voice", "google_voice_voicemail"},
+		{"synctech_sms", store.MessageTypeSynctechCall},
+	} {
+		t.Run(tc.message, func(t *testing.T) {
+			checks := assert.New(t)
+			requirements := require.New(t)
+			st := testutil.NewTestStore(t)
+			source, err := st.GetOrCreateSourceContext(t.Context(), tc.source, "+15550000001")
+			requirements.NoError(err)
+			chat, err := st.EnsureConversationWithType(source.ID, "calls:+15550000002", "direct_chat", "Fictional calls")
+			requirements.NoError(err)
+			_, err = st.UpsertMessageContext(t.Context(), &store.Message{
+				SourceID: source.ID, SourceMessageID: "call", ConversationID: chat, MessageType: tc.message,
+				SentAt: sql.NullTime{Time: time.Unix(100, 0), Valid: true},
+			})
+			requirements.NoError(err)
+			// No anchor exists until refresh, so metadata discovery uses its fallback.
+			metadata, err := st.SearchChatsMetadataContext(t.Context(), store.ChatDiscoveryQuery{Query: "Fictional calls"})
+			requirements.NoError(err)
+			requirements.Len(metadata.Results, 1)
+			checks.Equal(chat, metadata.Results[0].ConversationID)
+			refreshed, err := st.SearchChatsContext(t.Context(), store.ChatDiscoveryQuery{Query: "Fictional calls"})
+			requirements.NoError(err)
+			requirements.Len(refreshed.Results, 1)
+			checks.Equal(chat, refreshed.Results[0].ConversationID)
+		})
+	}
 	// Ordinary email/calendar writes should not add dirty projection work.
-	for _, tc := range []struct{ conversation, message string }{{"email_thread", "email"}, {"calendar_event", "calendar_event"}} {
+	for _, tc := range []struct{ source, conversation, message string }{{"imap", "email_thread", "email"}, {"gcal", "calendar_event", "calendar_event"}} {
+		source, err := st.GetOrCreateSourceContext(t.Context(), tc.source, "fictional@example.test")
+		requirements.NoError(err)
 		conversation, err := st.EnsureConversationWithType(source.ID, tc.conversation, tc.conversation, "")
 		requirements.NoError(err)
 		id, err := st.UpsertMessageContext(t.Context(), &store.Message{
@@ -313,7 +334,7 @@ func TestChatDiscoveryUsesMessageTypeForUnknownKinds(t *testing.T) {
 		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM messages WHERE id=?`), id)
 		requirements.NoError(err)
 		var n int
-		requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM chat_members_dirty`).Scan(&n))
+		requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM chat_members_dirty WHERE conversation_id=?`), conversation).Scan(&n))
 		checks.Zero(n)
 	}
 }

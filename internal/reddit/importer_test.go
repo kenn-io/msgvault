@@ -348,7 +348,7 @@ func TestImportFatalSchemaRetainsEarlierFiles(t *testing.T) {
 	assert.Equal(1, n)
 }
 
-func TestImportPMKindDoesNotDependOnRows(t *testing.T) {
+func TestImportPMConversationKindStaysUnknown(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	root := t.TempDir()

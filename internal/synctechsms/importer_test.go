@@ -13,7 +13,6 @@ import (
 )
 
 func TestImporterImportsSMSMMSCallsAndIsIdempotent(t *testing.T) {
-	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
 	dir := t.TempDir()
@@ -51,9 +50,6 @@ func TestImporterImportsSMSMMSCallsAndIsIdempotent(t *testing.T) {
 	// SMS and MMS with the same other party share one conversation; calls
 	// stay on a separate thread.
 	assertConversationCount(t, f.Store, 2)
-	chats, err := f.Store.SearchChatsContext(t.Context(), store.ChatDiscoveryQuery{Query: "Alice"})
-	require.NoError(err)
-	assert.Len(chats.Results, 2, "text and call-only conversations are both discoverable")
 	// The MMS parent message must record attachment metadata so the UI
 	// shows an attachment badge and attachment-only filters match.
 	assertMMSHasAttachmentMetadata(t, f.Store, 1)

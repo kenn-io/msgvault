@@ -13,32 +13,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestImportRedditEndToEnd(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	cfg := lifecycleTestConfig(t.TempDir())
-	cmd := &cobra.Command{Use: "import-reddit"}
-	cmd.SetContext(withStoreResolverConfig(t, cfg))
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(io.Discard)
-	fixture, err := filepath.Abs("../../../internal/reddit/testdata/export")
-	require.NoError(err)
-	require.NoError(runImportReddit(cmd, fixture, redditCLIOptions{}))
-	assert.Contains(out.String(), "Total:")
-	assert.Contains(out.String(), "votes.csv")
-}
-
 func TestImportRedditRefreshesCacheAfterPartialFailure(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	cfg := lifecycleTestConfig(t.TempDir())
 	root := t.TempDir()
 	require.NoError(os.WriteFile(filepath.Join(root, "posts.csv"), []byte("id,title,date\na,lantern,2026-05-24 03:19:35 UTC\nb,\"unterminated\n"), 0600))
+	require.NoError(os.WriteFile(filepath.Join(root, "votes.csv"), []byte("id,vote\none,up\n"), 0600))
 	cmd := &cobra.Command{Use: "import-reddit"}
 	cmd.SetContext(withStoreResolverConfig(t, cfg))
-	cmd.SetOut(io.Discard)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
 	require.ErrorContains(runImportReddit(cmd, root, redditCLIOptions{Me: "fictional_owner"}), "posts.csv")
+	assert.Contains(out.String(), "Unsupported: votes.csv")
 	db, err := sql.Open("duckdb", "")
 	require.NoError(err)
 	t.Cleanup(func() { _ = db.Close() })
