@@ -2,6 +2,7 @@ package query
 
 import (
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -80,7 +81,7 @@ func TestMeetingOccurrenceDateFilters(t *testing.T) {
 		})
 	}
 	for _, day := range []int{7, 14} {
-		t.Run("people "+fmt.Sprint(day), func(t *testing.T) {
+		t.Run("people "+strconv.Itoa(day), func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			after := time.Date(2026, 3, day, 0, 0, 0, 0, time.UTC)
 			before := after.AddDate(0, 0, 1)
@@ -175,7 +176,7 @@ func TestRelationshipMeetingCounts(t *testing.T) {
 					assertions.Equal(tc.calendarCounts[date], count)
 				}
 				for date, count := range tc.calendarCounts {
-					if date[:4] == fmt.Sprint(year) {
+					if date[:4] == strconv.Itoa(year) {
 						assertions.Equal(count, meetings[date])
 					}
 				}

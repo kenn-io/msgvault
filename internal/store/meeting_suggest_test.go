@@ -196,9 +196,10 @@ func TestMeetingLinksAllDayExceptionMasterStates(t *testing.T) {
 			st := newRFC822IDBackfillBackendStore(t)
 			raw := `{"id":"weekly","iCalUID":"weekly@example.org","start":{"date":"2027-03-07","timeZone":"America/New_York"},"end":{"date":"2027-03-08"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`
 			original, key := `{"date":"2027-03-14"}`, "20270314"
-			if state == "over budget" {
+			switch state {
+			case "over budget":
 				raw = `{"id":"weekly","iCalUID":"weekly@example.org","start":{"date":"1800-01-01","timeZone":"America/New_York"},"end":{"date":"1800-01-02"},"recurrence":["RRULE:FREQ=DAILY"]}`
-			} else if state == "cancelled" {
+			case "cancelled":
 				raw = `{"id":"weekly","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-07T10:00:00Z"},"end":{"dateTime":"2027-03-07T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`
 				original, key = `{"dateTime":"2027-03-14T10:00:00Z"}`, "20270314T100000Z"
 			}
@@ -207,9 +208,10 @@ func TestMeetingLinksAllDayExceptionMasterStates(t *testing.T) {
 			_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"startsAt":"2027-03-14T12:00:00Z"}}`)
 			ref := OccurrenceRef{MessageID: master, Key: key}
 			changed := raw
-			if state == "unsupported" {
+			switch state {
+			case "unsupported":
 				changed = strings.Replace(raw, "RRULE:FREQ=WEEKLY;COUNT=3", "RRULE:FREQ=HOURLY", 1)
-			} else if state == "cancelled" {
+			case "cancelled":
 				changed = `{"id":"weekly","status":"cancelled"}`
 			}
 			require.NoError(st.UpsertMessageRawWithFormat(master, []byte(changed), "gcal_json"))
@@ -224,9 +226,10 @@ func TestMeetingLinksAllDayExceptionMasterStates(t *testing.T) {
 			if state == "cancelled" {
 				assert.Equal("cancelled", listed.Status)
 			}
-			if state == "unsupported" {
+			switch state {
+			case "unsupported":
 				assert.Equal([]CalendarUnexpandable{{MessageID: master, Reason: "unsupported recurrence"}}, page.Unexpandable)
-			} else if state == "over budget" {
+			case "over budget":
 				assert.Equal([]CalendarUnexpandable{{MessageID: master, Reason: calrecur.ErrBudgetExceeded.Error()}}, page.Unexpandable)
 			}
 			for _, target := range []MeetingLinkRef{{Kind: "evt", OccurrenceRef: ref}, {Kind: "msg", MessageID: note}} {

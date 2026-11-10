@@ -216,7 +216,6 @@ func TestMeetingCountKeysGoogleAcrossMailboxes(t *testing.T) {
 		require.NoError(err)
 		assert.Equal([]string{"uid:weekly@example.org/20270321T100000Z"}, keys[note])
 	}
-
 }
 
 func TestMeetingCountKeysBudgetExhaustionKeepsOtherMessages(t *testing.T) {

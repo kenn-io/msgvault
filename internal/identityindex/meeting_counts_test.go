@@ -64,7 +64,8 @@ func TestMeetingCounts(t *testing.T) {
 				requirements.NoError(db.QueryRow(`SELECT (SELECT item.meeting_count FROM unnest(source_rollups) r(item) WHERE item.source_id=1),
  (SELECT item.meeting_count FROM unnest(source_rollups) r(item) WHERE item.source_id=2)
  FROM read_parquet(?) WHERE canonical_id=2`, relationshipParquetGlob(root, DatasetPeople)).Scan(&first, &second))
-				assertions.Equal(tc.sourceCounts, []int64{first, second})
+				actual := []int64{first, second}
+				assertions.Equal(tc.sourceCounts, actual)
 			}
 		})
 	}
@@ -124,7 +125,6 @@ func TestMeetingKeyChangesControlTemperatureReuse(t *testing.T) {
 			}
 			if tc.later {
 				keysSQL = `SELECT *, TIMESTAMP '2027-01-02' AS occurrence_at, NULL::DATE AS occurrence_date FROM (VALUES ` + tc.keys + `) t(message_id,meeting_key)`
-
 			}
 			if tc.moved {
 				keysSQL = `SELECT *, TIMESTAMP '2026-01-02 10:00:00' AS occurrence_at, NULL::DATE AS occurrence_date FROM (VALUES ` + tc.keys + `) t(message_id,meeting_key)`

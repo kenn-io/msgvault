@@ -3194,7 +3194,6 @@ func TestCSVFallbackPath(t *testing.T) {
 		require.NoError(duckDB.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM sqlite_db."%s"`, tbl)).Scan(&count), "count %s", tbl)
 		assert.Equal(expected, count, "sqlite_db.%s row count", tbl)
 	}
-
 }
 
 // BenchmarkBuildCache benchmarks the export performance.

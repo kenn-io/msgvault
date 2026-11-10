@@ -17,6 +17,7 @@ import (
 )
 
 const calendarEventProjectionVersion = 2
+const calendarSingleKind = "single"
 
 // Decode failures have no provider status. Keep a marker while retaining the
 // single kind so unknown bounds remain candidates for the occurrence reader.
@@ -128,7 +129,7 @@ func decodeCalendarProjection(stored []byte, compression sql.NullString, metadat
 		event, ok, err = calevent.Decode(gcalmodel.RawFormat, raw, metadata, zone)
 	}
 	if err != nil {
-		return calevent.Event{Kind: "single", Status: calendarEventDecodeFailureStatus}, true
+		return calevent.Event{Kind: calendarSingleKind, Status: calendarEventDecodeFailureStatus}, true
 	}
 	return event, ok
 }

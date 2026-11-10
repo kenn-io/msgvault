@@ -119,7 +119,6 @@ func TestMeetingCountsLinkedCopies(t *testing.T) {
 	_, err = buildCache(path, cache, true)
 	requirements.NoError(err)
 	readKeys(first)
-
 }
 
 func TestMeetingCountCalendarRefresh(t *testing.T) {

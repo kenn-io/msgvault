@@ -72,7 +72,7 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 func (s *Store) meetingNoteRecord(ctx context.Context, r reboundReader, memberID int64, budget *int) (MeetingRecord, error) {
 	record := MeetingRecord{Links: []MeetingLink{}, MessageIDs: []int64{}}
 	record.MessageIDs = append(record.MessageIDs, memberID)
-	occurrences, _, _, _, err := s.meetingMemberOccurrences(ctx, r, memberID, budget)
+	occurrences, _, _, _, err := s.meetingMemberOccurrences(ctx, r, memberID, budget) //nolint:dogsled // The record needs only current occurrences.
 	if err != nil {
 		return record, err
 	}

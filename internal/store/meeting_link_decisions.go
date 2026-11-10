@@ -99,7 +99,7 @@ func storedOccurrenceKey(row CalendarEventRow, key string) string {
 	if row.Event.Kind == meetingSeriesKind && key == "" {
 		return first
 	}
-	if row.Event.Kind == "single" && key != "" && key == first {
+	if row.Event.Kind == calendarSingleKind && key != "" && key == first {
 		return ""
 	}
 	return key

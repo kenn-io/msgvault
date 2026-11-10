@@ -57,7 +57,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 	byID := make(map[int64]CalendarEventRow, len(rows))
 	for _, row := range rows {
 		byID[row.MessageID] = row
-		if row.Event.Kind == "series" || row.Event.Kind == "single" {
+		if row.Event.Kind == "series" || row.Event.Kind == calendarSingleKind {
 			masters[seriesKey{row.SourceID, row.Event.ProviderEventID}] = true
 		}
 		if row.Event.Kind == meetingExceptionKind {
