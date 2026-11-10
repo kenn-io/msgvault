@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestImportICSCommandImportsFile(t *testing.T) {
@@ -29,4 +30,9 @@ func TestImportICSCommandImportsFile(t *testing.T) {
 	cmd.SetArgs([]string{path, "--identifier", "example-export"})
 	requirements.NoError(cmd.Execute())
 	assertions.Equal("Events: 1 updated, 0 unchanged\n", out.String())
+	st, err := store.Open(cfg.DatabaseDSN())
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(st.Close()) })
+	_, err = st.GetSourceByTypeAndIdentifier(t.Context(), "ics", "example-export")
+	requirements.NoError(err)
 }
