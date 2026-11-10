@@ -172,6 +172,13 @@ func TestImportMediaRepairOccurrencesAndLongText(t *testing.T) {
 			summary, err = Import(t.Context(), st, opts)
 			require.NoError(t, err)
 			assert.Equal(t, want, summary.AttachmentsStored)
+			assert.Zero(t, summary.AttachmentsMissing)
+			assert.Zero(t, summary.Omitted["incomplete_long_text"])
+			changed := int64(0)
+			if long {
+				changed = 1 // Full text differs from the first retained inline body.
+			}
+			assert.Equal(t, changed, summary.MessagesChanged)
 			var id int64
 			require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&id))
 			refs, err := st.MessageMIMEAttachmentsContext(t.Context(), id)
@@ -182,8 +189,13 @@ func TestImportMediaRepairOccurrencesAndLongText(t *testing.T) {
 				assert.Equal(t, "display.txt", ref.Filename)
 			}
 			require.NoError(t, os.Remove(path))
-			_, err = Import(t.Context(), st, opts)
+			summary, err = Import(t.Context(), st, opts)
 			require.NoError(t, err)
+			assert.EqualValues(t, 1, summary.MessagesExisting)
+			assert.Equal(t, changed, summary.MessagesChanged)
+			assert.Zero(t, summary.AttachmentsStored)
+			assert.Zero(t, summary.AttachmentsMissing)
+			assert.Zero(t, summary.Omitted["incomplete_long_text"])
 			refs, err = st.MessageMIMEAttachmentsContext(t.Context(), id)
 			require.NoError(t, err)
 			for _, ref := range refs {
@@ -240,8 +252,23 @@ func TestImportUnsafeMedia(t *testing.T) {
 				require.NoError(t, file.Truncate(256<<20+1))
 				require.NoError(t, file.Close())
 			}
-			summary, err := Import(t.Context(), st, options(t, root))
+			opts := options(t, root)
+			summary, err := Import(t.Context(), st, opts)
 			require.NoError(t, err)
+			if kind == "wrong-hash" {
+				assert.Equal(t, int64(2), summary.MediaMissing["hash_mismatch"])
+				var id int64
+				require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&id))
+				refs, err := st.MessageMIMEAttachmentsContext(t.Context(), id)
+				require.NoError(t, err)
+				require.Len(t, refs, 2)
+				for _, ref := range refs {
+					assert.Empty(t, ref.ContentHash)
+				}
+				wrong := sha256.Sum256([]byte("wrong"))
+				hash := hex.EncodeToString(wrong[:])
+				assert.NoFileExists(t, filepath.Join(opts.AttachmentsDir, hash[:2], hash))
+			}
 			if kind == "extensionless" {
 				assert.Equal(t, 2, summary.AttachmentsStored)
 			} else {
@@ -351,7 +378,7 @@ func TestImportCancellationRetainsCommittedSnapshot(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	opts := options(t, root)
-	opts.Logger = slog.New(slog.NewTextHandler(cancelWriter{cancel}, nil))
+	opts.Logger = slog.New(slog.NewTextHandler(cancelWriter{cancel}, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	s, err := Import(ctx, st, opts)
 	require.ErrorIs(t, err, context.Canceled)
 	assert.EqualValues(t, 1, s.MessagesAdded)
@@ -459,6 +486,17 @@ func TestMediaLongTextLimitAndChangedLocalKey(t *testing.T) {
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, s.Omitted["incomplete_long_text"])
 	assert.EqualValues(t, 1, s.MediaMissing["oversized"])
+	require.NoError(t, os.WriteFile(file, []byte("wrong"), 0600))
+	st3 := testutil.NewTestStore(t)
+	s, err = Import(t.Context(), st3, opts)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), s.MediaMissing["hash_mismatch"])
+	assert.Equal(t, int64(1), s.Omitted["incomplete_long_text"])
+	var id int64
+	require.NoError(t, st3.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&id))
+	body, err := st3.GetMessageBodyText(t.Context(), id)
+	require.NoError(t, err)
+	assert.Equal(t, "inline", body)
 }
 
 func TestReaderSemanticDuplicateDefinitions(t *testing.T) {
@@ -467,4 +505,130 @@ func TestReaderSemanticDuplicateDefinitions(t *testing.T) {
 	s, err := Import(t.Context(), st, options(t, root))
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, s.MessagesAdded)
+}
+
+func TestImportRepairUsesFirstMediaPointers(t *testing.T) {
+	for _, long := range []bool{false, true} {
+		t.Run(fmt.Sprint(long), func(t *testing.T) {
+			frame := func(data []byte) string {
+				standard := fmt.Sprintf(`{"text":{"body":"inline"},"attachments":[{"pointer":%s}]}`, pointer(data))
+				if long {
+					standard = fmt.Sprintf(`{"text":{"body":"inline"},"longText":%s}`, pointer(data))
+				}
+				return fmt.Sprintf(`{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":%s}}`, standard)
+			}
+			st := testutil.NewTestStore(t)
+			a, b := []byte("original fictional media"), []byte("replacement fictional media")
+			root := fixture(t, frame(a))
+			opts := options(t, root)
+			_, err := Import(t.Context(), st, opts)
+			require.NoError(t, err)
+			var id int64
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&id))
+			raw, err := st.GetMessageRawContext(t.Context(), id)
+			require.NoError(t, err)
+			putMedia(t, root, b)
+			writeFrames(t, root, frame(b))
+			summary, err := Import(t.Context(), st, opts)
+			require.NoError(t, err)
+			assert.Equal(t, int64(1), summary.MediaMissing["missing"])
+			refs, err := st.MessageMIMEAttachmentsContext(t.Context(), id)
+			require.NoError(t, err)
+			require.Len(t, refs, 1)
+			assert.Empty(t, refs[0].ContentHash)
+			wrong := sha256.Sum256(b)
+			hash := hex.EncodeToString(wrong[:])
+			assert.NoFileExists(t, filepath.Join(opts.AttachmentsDir, hash[:2], hash))
+			retained, err := st.GetMessageRawContext(t.Context(), id)
+			require.NoError(t, err)
+			assert.Equal(t, raw, retained)
+			body, err := st.GetMessageBodyText(t.Context(), id)
+			require.NoError(t, err)
+			assert.Equal(t, "inline", body)
+			putMedia(t, root, a)
+			summary, err = Import(t.Context(), st, opts)
+			require.NoError(t, err)
+			assert.Equal(t, 1, summary.AttachmentsStored)
+			refs, err = st.MessageMIMEAttachmentsContext(t.Context(), id)
+			require.NoError(t, err)
+			original := sha256.Sum256(a)
+			assert.Equal(t, hex.EncodeToString(original[:]), refs[0].ContentHash)
+		})
+	}
+}
+
+func TestImportRepairKeepsArchivedAttachmentOrder(t *testing.T) {
+	a, b := []byte("fictional first"), []byte("fictional second")
+	frame := func(a, b []byte) string {
+		return fmt.Sprintf(`{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"attachments":[{"pointer":%s},{"pointer":%s}]}}}`, pointer(a), pointer(b))
+	}
+	st := testutil.NewTestStore(t)
+	root := fixture(t, frame(a, b))
+	opts := options(t, root)
+	_, err := Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	putMedia(t, root, a)
+	putMedia(t, root, b)
+	writeFrames(t, root, frame(b, a))
+	summary, err := Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	assert.Equal(t, 2, summary.AttachmentsStored)
+	var id int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&id))
+	refs, err := st.MessageMIMEAttachmentsContext(t.Context(), id)
+	require.NoError(t, err)
+	require.Len(t, refs, 2)
+	for _, ref := range refs {
+		data := a
+		if ref.SourcePartKey == "attachment:1" {
+			data = b
+		}
+		hash := sha256.Sum256(data)
+		assert.Equal(t, hex.EncodeToString(hash[:]), ref.ContentHash, ref.SourcePartKey)
+	}
+}
+
+func TestMediaPrefixCacheBoundedLookup(t *testing.T) {
+	for _, cap := range []int{2, 3} {
+		t.Run(fmt.Sprint(cap), func(t *testing.T) {
+			a, b := []byte("fictional cached media 0"), []byte("fictional cached media 1")
+			root := fixture(t)
+			pathA, pathB := putMedia(t, root, a), putMedia(t, root, b)
+			require.Equal(t, filepath.Dir(pathA), filepath.Dir(pathB))
+			warm := []byte("fictional warm cache")
+			warmPath := putMedia(t, root, warm)
+			require.NotEqual(t, filepath.Dir(pathA), filepath.Dir(warmPath))
+			r, err := openReader(t.Context(), root)
+			require.NoError(t, err)
+			defer r.Close()
+			r.maxMedia = cap
+			warmHash := sha256.Sum256(warm)
+			_, reason, err := r.mediaName(t.Context(), hex.EncodeToString(warmHash[:]))
+			require.NoError(t, err)
+			require.Empty(t, reason)
+			var message standardMessage
+			require.NoError(t, json.Unmarshal([]byte(fmt.Sprintf(`{"attachments":[{"pointer":%s},{"pointer":%s}]}`, pointer(a), pointer(b))), &message))
+			summary := &ImportSummary{MediaMissing: map[string]int64{}, Omitted: map[string]int64{}}
+			_, writes, _, err := mediaWrites(t.Context(), testutil.NewTestStore(t), r, 0, &message, options(t, root), summary)
+			require.NoError(t, err)
+			require.Len(t, writes, 2)
+			assert.Equal(t, 2, summary.AttachmentsStored)
+			for i, data := range [][]byte{a, b} {
+				hash := sha256.Sum256(data)
+				assert.Equal(t, hex.EncodeToString(hash[:]), writes[i].ContentHash)
+			}
+			assert.LessOrEqual(t, r.mediaNames, cap)
+			hashA := sha256.Sum256(a)
+			hash := hex.EncodeToString(hashA[:])
+			_, cached := r.media[hash[:2]]
+			assert.Equal(t, cap == 3, cached)
+			if cap == 2 {
+				require.NoError(t, os.WriteFile(strings.TrimSuffix(pathA, ".txt")+".bin", a, 0600))
+				_, reason, err := r.mediaName(t.Context(), hash)
+				require.NoError(t, err)
+				assert.Equal(t, "ambiguous", reason)
+				assert.NotContains(t, r.media, hash[:2])
+			}
+		})
+	}
 }

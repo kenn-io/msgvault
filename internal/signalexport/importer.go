@@ -213,7 +213,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 		}
 		s.MessagesAdded++
 		if opts.Logger != nil {
-			opts.Logger.Info("Signal message imported", "line", line)
+			opts.Logger.Debug("Signal message imported", "line", line)
 		}
 		return nil
 	})

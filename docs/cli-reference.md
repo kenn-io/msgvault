@@ -2546,6 +2546,8 @@ snapshots. Coverage and omission counts are printed even after partial failure;
 rerun after an interruption. See [Signal readable exports](usage/text-messages.md#import-signal-export)
 for layout, limits, identity, edit behavior and coverage boundaries.
 
+---
+
 ## import-telegram
 
 Import a Telegram Desktop Machine-readable JSON export, including available media.

@@ -5,112 +5,65 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
+	"go.kenn.io/msgvault/internal/contentverify"
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/store"
 )
 
 const maxMedia int64 = 256 << 20
 
-// verifiedMedia opens contained regular files and verifies their plaintext hash.
-// Long text is retained in bounded memory for the body and archive write.
-func verifiedMedia(ctx context.Context, root *os.Root, p *filePointer, limit int64, long bool) (*os.File, []byte, string, error) {
+// verifiedMedia opens contained regular files; long text is bounded and
+// verified in memory. Ordinary media is verified while streaming to storage.
+func verifiedMedia(ctx context.Context, r *reader, p *filePointer, limit int64, long bool) (io.ReadCloser, []byte, string, error) {
 	if p == nil || len(p.Locator.Hash) != 32 {
 		return nil, nil, "invalid_hash", nil
 	}
 	hash := hex.EncodeToString(p.Locator.Hash)
-	dir := "files/" + hash[:2]
-	d, err := root.Open(dir)
-	if err != nil {
-		return nil, nil, "missing_or_unsafe", nil
+	name, reason, err := r.mediaName(ctx, hash)
+	if err != nil || reason != "" {
+		return nil, nil, reason, err
 	}
-	defer d.Close()
-	match := ""
-	for {
-		entries, err := d.ReadDir(128)
-		for _, e := range entries {
-			name := e.Name()
-			if name != hash && !strings.HasPrefix(name, hash+".") {
-				continue
-			}
-			if match != "" {
-				return nil, nil, "ambiguous", nil
-			}
-			match = name
-		}
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return nil, nil, "unreadable_directory", nil
-		}
-		if err := ctx.Err(); err != nil {
-			return nil, nil, "", err
-		}
-	}
-	if match == "" {
-		return nil, nil, "missing", nil
-	}
-	rel := dir + "/" + match
-	info, err := root.Lstat(rel)
+	rel := "files/" + hash[:2] + "/" + name
+	info, err := r.root.Lstat(rel)
 	if err != nil || !info.Mode().IsRegular() {
 		return nil, nil, "unsafe_or_nonregular", nil
 	}
 	if info.Size() > limit {
 		return nil, nil, "oversized", nil
 	}
-	f, err := root.Open(rel)
+	f, err := r.root.Open(rel)
 	if err != nil {
 		return nil, nil, "missing_or_unsafe", nil
 	}
-
-	keep := false
-	defer func() {
-		if !keep {
+	if !long {
+		src, err := contentverify.NewReadCloser(f, hash)
+		if err != nil {
 			_ = f.Close()
+			return nil, nil, "invalid_hash", nil
 		}
-	}()
-	info, err = f.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		return nil, nil, "changed_file", nil
+		return src, nil, "", nil
 	}
-	h := sha256.New()
-	var data []byte
-	var n int64
-	input := io.LimitReader(&export.ContextReader{Context: ctx, Reader: f}, limit+1)
-	if long {
-		data, err = io.ReadAll(input)
-		n = int64(len(data))
-		_, _ = h.Write(data)
-	} else {
-		n, err = io.Copy(h, input)
-	}
+	data, err := io.ReadAll(io.LimitReader(&export.ContextReader{Context: ctx, Reader: f}, limit+1))
+	err = errors.Join(err, f.Close())
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, nil, "", ctx.Err()
-		}
-		return nil, nil, "unreadable", nil
+		return nil, nil, "", fmt.Errorf("read Signal media %s: %w", rel, err)
 	}
-	if n > limit {
+	if int64(len(data)) > limit {
 		return nil, nil, "oversized", nil
 	}
-	if hex.EncodeToString(h.Sum(nil)) != hash {
+	if err := contentverify.VerifyBytes(data, hash); err != nil {
 		return nil, nil, "hash_mismatch", nil
 	}
-	if !long {
-		if _, err = f.Seek(0, io.SeekStart); err != nil {
-			return nil, nil, "unreadable", nil
-		}
-	}
-	keep = true
-	return f, data, "", nil
+	return io.NopCloser(bytes.NewReader(data)), data, "", nil
 }
+
 func mediaWrites(ctx context.Context, st *store.Store, r *reader, messageID int64, m *standardMessage, opts ImportOptions, s *ImportSummary) (string, []store.AttachmentWrite, bool, error) {
 	body := ""
 	knownChanged := false
@@ -118,6 +71,7 @@ func mediaWrites(ctx context.Context, st *store.Store, r *reader, messageID int6
 		body = m.Text.Body
 	}
 	existing := map[string]store.AttachmentRef{}
+	needRaw := false
 	if messageID != 0 {
 		refs, err := st.MessageMIMEAttachmentsContext(ctx, messageID)
 		if err != nil {
@@ -125,6 +79,7 @@ func mediaWrites(ctx context.Context, st *store.Store, r *reader, messageID int6
 		}
 		for _, ref := range refs {
 			existing[ref.SourcePartKey] = ref
+			needRaw = needRaw || ref.ContentHash == ""
 		}
 	}
 	type slot struct {
@@ -138,6 +93,26 @@ func mediaWrites(ctx context.Context, st *store.Store, r *reader, messageID int6
 	}
 	if m.LongText != nil {
 		slots = append(slots, slot{key: "long_text", p: m.LongText, long: true})
+	}
+
+	archived := map[string]*filePointer{}
+	if needRaw {
+		raw, err := st.GetMessageRawContext(ctx, messageID)
+		if err != nil {
+			return "", nil, false, fmt.Errorf("read archived Signal media pointers: %w", err)
+		}
+		var old chatItem
+		if err := json.Unmarshal(raw, &old); err != nil {
+			return "", nil, false, fmt.Errorf("decode archived Signal media pointers: %w", err)
+		}
+		if old.Standard != nil {
+			for i, a := range old.Standard.Attachments {
+				archived[fmt.Sprintf("attachment:%d", i)] = a.Pointer
+			}
+			if old.Standard.LongText != nil {
+				archived["long_text"] = old.Standard.LongText
+			}
+		}
 	}
 	var writes []store.AttachmentWrite
 	for _, slot := range slots {
@@ -162,44 +137,48 @@ func mediaWrites(ctx context.Context, st *store.Store, r *reader, messageID int6
 		if slot.long {
 			limit = maxRecord
 		}
-		f, data, reason, err := verifiedMedia(ctx, r.root, slot.p, limit, slot.long)
+		p := slot.p
+		repair := messageID != 0 && found && prev.ContentHash == ""
+		if repair {
+			p = archived[slot.key]
+		}
+		src, data, reason, err := verifiedMedia(ctx, r, p, limit, slot.long)
 		if err != nil {
 			return "", nil, false, err
 		}
 		write := store.AttachmentWrite{SourcePartKey: slot.key, Filename: "attachment", MIMEType: "application/octet-stream", Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics}
-		if slot.p != nil {
-			if name := filepath.Base(slot.p.FileName); name != "" && name != "." {
+		if p != nil {
+			if name := filepath.Base(p.FileName); name != "" && name != "." {
 				write.Filename = name
 			}
-			if slot.p.ContentType != "" {
-				write.MIMEType = slot.p.ContentType
+			if p.ContentType != "" {
+				write.MIMEType = p.ContentType
 			}
 		}
-		if f != nil {
-			var input io.Reader = &export.ContextReader{Context: ctx, Reader: f}
-			if slot.long {
+		if src != nil {
+			if slot.long && (!repair || (slot.p != nil && bytes.Equal(p.Locator.Hash, slot.p.Locator.Hash))) {
 				body = string(data)
-				input = bytes.NewReader(data)
 			}
 			if messageID != 0 && (!found || prev.ContentHash != "") {
-				_ = f.Close()
+				_ = src.Close()
 				continue
 			}
-			if opts.AttachmentsDir != "" {
-				write.StoragePath, write.ContentHash, write.Size, err = export.StoreAttachmentStream(ctx, opts.AttachmentsDir, input, limit)
-				if errors.Is(err, export.ErrAttachmentTooLarge) {
-					reason = "changed_file"
-					err = nil
-				}
-				if err == nil && reason == "" && write.ContentHash != hex.EncodeToString(slot.p.Locator.Hash) {
-					reason = "changed_file"
-				}
-			} else {
+			if opts.AttachmentsDir == "" {
 				reason = "storage_disabled"
-			}
-			_ = f.Close()
-			if err != nil {
-				return "", nil, false, fmt.Errorf("store Signal media: %w", err)
+				_ = src.Close()
+			} else {
+				write.StoragePath, write.ContentHash, write.Size, err = export.StoreAttachmentStream(ctx, opts.AttachmentsDir, src, limit)
+				err = errors.Join(err, src.Close())
+				switch {
+				case ctx.Err() != nil:
+					return "", nil, false, ctx.Err()
+				case errors.Is(err, contentverify.ErrMismatch):
+					reason = "hash_mismatch"
+				case errors.Is(err, export.ErrAttachmentTooLarge):
+					reason = "changed_file"
+				case err != nil:
+					return "", nil, false, fmt.Errorf("read or store Signal media %s: %w", hex.EncodeToString(p.Locator.Hash), err)
+				}
 			}
 			if reason != "" {
 				write.StoragePath, write.ContentHash, write.Size = "", "", 0

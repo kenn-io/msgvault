@@ -572,6 +572,19 @@ numeric version `1`, `main.jsonl`, and optional `files/` media:
 msgvault import-signal-export /path/to/signal-export --account personal
 ```
 
+Choose a readable chat-history export in Signal, then copy its complete
+export directory to the machine running the msgvault daemon. Keep media in its
+original `files/` layout. Point msgvault at the directory containing
+`metadata.json` and `main.jsonl`.
+
+Platform evidence is separate from msgvault runtime compatibility:
+
+| Platform | Export guidance and evidence | Verification boundary |
+|---|---|---|
+| Desktop | The researched [v8.34.0 source](https://github.com/signalapp/Signal-Desktop/blob/9173731aaaccec8444066aec0e0c78725d7e457b/package.json) exposes **Settings → Chats → Export chat history**. Choose **Export** and include media if wanted; the [pinned UI source](https://github.com/signalapp/Signal-Desktop/blob/9173731aaaccec8444066aec0e0c78725d7e457b/ts/components/Preferences.dom.tsx) and [English labels](https://github.com/signalapp/Signal-Desktop/blob/9173731aaaccec8444066aec0e0c78725d7e457b/_locales/en/messages.json) establish this path. | This is the format researched for this adapter. No export captured from that released app has been tested. |
+| Android | An [official maintainer describes Settings → Chats → Export chat history](https://github.com/signalapp/Signal-Android/issues/14754#issuecomment-4992437447). The [v8.34.2 exporter source](https://github.com/signalapp/Signal-Android/blob/515db93fb48206d63406cbfb48c5816f6af1d9e2/app/src/main/java/org/thoughtcrime/securesms/backup/v2/local/LocalArchiver.kt) contains a readable JSONL export with plaintext-hash media naming. | Android-produced directories have not been tested in msgvault. Encrypted on-device backups are a different input. |
+| iOS | The researched [8.36 source version](https://github.com/signalapp/Signal-iOS/blob/012f2f29307dd084476c641968e382f25cb76737/Signal/Signal-Info.plist) includes [PlaintextTakeoutManager](https://github.com/signalapp/Signal-iOS/blob/012f2f29307dd084476c641968e382f25cb76737/SignalServiceKit/Backups/PlaintextTakeout/PlaintextTakeoutManager.swift), which writes `metadata.json`, `main.jsonl` and optional `files/`. | A released-app export entry point and an iOS-produced directory have not been verified. No iOS menu path or runtime support is claimed. |
+
 Use the same `--account` label for every export of one account, even if you
 move or rename the directory. Choose different labels for different accounts.
 The label scopes identities; it does not assert an owner phone or address.
@@ -586,7 +599,10 @@ the owner, rather than projecting the current group roster into history.
 
 Re-running replays the file: it adds missing history and repairs media slots
 that lack bytes. Existing text, raw input, metadata and timestamps keep the
-first archived snapshot. Changed existing text is reported. Records absent
+first archived snapshot. Changed-existing counts compare the incoming text
+with that first retained body, so the same difference is reported on later
+imports too. This includes full long text recovered after an initial import
+retained only inline text. Records absent
 from later exports and deletion tombstones never delete archive rows. After
 failure or interruption, rerun with the same account label; committed messages
 survive. Counts are printed even after partial failure.

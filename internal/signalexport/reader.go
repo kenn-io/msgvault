@@ -9,17 +9,22 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"go.kenn.io/msgvault/internal/export"
 )
 
 const maxRecord = 16 << 20
 const maxMetadata = 64 << 10
+const maxMediaIndex = 1 << 18
+const ambiguousMedia = "\x00"
 
 type peer struct {
 	key, name, kind string
 }
 type reader struct {
+	media                  map[string]map[string]string
+	mediaNames, maxMedia   int
 	omitted                map[string]int64
 	root                   *os.Root
 	file                   *os.File
@@ -42,7 +47,7 @@ func openReader(ctx context.Context, path string) (r *reader, retErr error) {
 	if err != nil {
 		return nil, fmt.Errorf("signal export directory: %w", err)
 	}
-	r = &reader{omitted: map[string]int64{}, root: root, peers: map[decimal]peer{}, chats: map[decimal]decimal{}, maxEntries: 100000, maxStrings: 64 << 20}
+	r = &reader{media: map[string]map[string]string{}, omitted: map[string]int64{}, root: root, peers: map[decimal]peer{}, chats: map[decimal]decimal{}, maxEntries: 100000, maxStrings: 64 << 20, maxMedia: maxMediaIndex}
 	resource := r
 	defer func() {
 		if retErr != nil {
@@ -245,4 +250,77 @@ func (r *reader) frame(b []byte, visit func(*chatItem, []byte, int) error) error
 		}
 	}
 	return nil
+}
+
+// mediaName caches bounded prefix indexes; overflow falls back to this same
+// streaming lookup without retaining the in-flight map.
+func (r *reader) mediaName(ctx context.Context, hash string) (string, string, error) {
+	prefix := hash[:2]
+	result := func(suffix string, found bool) (string, string, error) {
+		if !found {
+			return "", "missing", nil
+		}
+		if suffix == ambiguousMedia {
+			return "", "ambiguous", nil
+		}
+		return hash + suffix, "", nil
+	}
+	if m, ok := r.media[prefix]; ok {
+		suffix, found := m[hash]
+		return result(suffix, found)
+	}
+	d, err := r.root.Open("files/" + prefix)
+	if errors.Is(err, os.ErrNotExist) {
+		r.media[prefix] = map[string]string{}
+		return "", "missing", nil
+	}
+	if err != nil {
+		return "", "missing_or_unsafe", nil
+	}
+	defer d.Close()
+	m := map[string]string{}
+	match := ""
+	found := false
+	for {
+		entries, err := d.ReadDir(128)
+		for _, entry := range entries {
+			name := entry.Name()
+			if name == hash || strings.HasPrefix(name, hash+".") {
+				if found {
+					match = ambiguousMedia
+				} else {
+					match = name[64:]
+				}
+				found = true
+			}
+			if m == nil || len(name) < 64 || (len(name) > 64 && name[64] != '.') {
+				continue
+			}
+			stem := name[:64]
+			if stem[:2] != prefix || strings.Trim(stem, "0123456789abcdef") != "" {
+				continue
+			}
+			if _, found := m[stem]; found {
+				m[stem] = ambiguousMedia
+			} else if r.mediaNames+len(m) >= r.maxMedia {
+				m = nil
+			} else {
+				m[stem] = name[64:]
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			return "", "", err
+		}
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return "", "unreadable_directory", nil
+		}
+	}
+	if m != nil {
+		r.media[prefix] = m
+		r.mediaNames += len(m)
+	}
+	return result(match, found)
 }

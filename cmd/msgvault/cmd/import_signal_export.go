@@ -14,7 +14,8 @@ import (
 func newImportSignalExportCmd() *cobra.Command {
 	var account string
 	cmd := &cobra.Command{
-		Use: "import-signal-export <export-dir>", Short: "Import a native Signal readable export",
+		Use:   "import-signal-export <export-dir>",
+		Short: "Import a native Signal readable export",
 		Long: `Import standard messages and available local media from a native Signal
 readable directory (metadata.json version 1, main.jsonl, optional files/).
 
@@ -41,6 +42,7 @@ Example:
 	cmd.Flags().StringVar(&account, "account", "", "stable account label (required; reuse for later exports)")
 	return cmd
 }
+
 func runImportSignalExport(cmd *cobra.Command, root, account string) error {
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
@@ -53,11 +55,23 @@ func runImportSignalExport(cmd *cobra.Command, root, account string) error {
 	defer cleanup()
 	ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Re-run to continue through deduplication.")
 	defer stop()
-	summary, err := signalexport.Import(ctx, st, signalexport.ImportOptions{RootDir: root, Account: account, AttachmentsDir: state.cfg.AttachmentsDir(), Logger: state.logger})
+	summary, err := signalexport.Import(ctx, st, signalexport.ImportOptions{
+		RootDir:        root,
+		Account:        account,
+		AttachmentsDir: state.cfg.AttachmentsDir(),
+		Logger:         state.logger,
+	})
 	// The source label is a scope, not evidence of a contact address. Only the
 	// importer's actual Self frame can confirm an owner identifier.
 	err = errors.Join(err, runExportPostImportMigrations(ctx, cmd.OutOrStdout(), st, summary.SourceID, true, state))
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Messages: %d added, %d existing, %d changed existing (first snapshot retained)\nMedia: %d stored, %d missing\nFrames: %d empty, %d unknown\n", summary.MessagesAdded, summary.MessagesExisting, summary.MessagesChanged, summary.AttachmentsStored, summary.AttachmentsMissing, summary.EmptyFrames, summary.UnknownFrames)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+		"Messages: %d added, %d existing, %d changed existing (first snapshot retained)\n"+
+			"Media: %d stored, %d missing\n"+
+			"Frames: %d empty, %d unknown\n",
+		summary.MessagesAdded, summary.MessagesExisting, summary.MessagesChanged,
+		summary.AttachmentsStored, summary.AttachmentsMissing,
+		summary.EmptyFrames, summary.UnknownFrames,
+	)
 	for _, group := range []struct {
 		name   string
 		counts map[string]int64
@@ -84,4 +98,7 @@ func runImportSignalExport(cmd *cobra.Command, root, account string) error {
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Import complete. Coverage is limited to supported records; omissions are shown above.")
 	return nil
 }
-func init() { rootCmd.AddCommand(newImportSignalExportCmd()) }
+
+func init() {
+	rootCmd.AddCommand(newImportSignalExportCmd())
+}
