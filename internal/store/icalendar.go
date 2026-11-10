@@ -143,6 +143,9 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 		if apply && exists && e.Status == SyncStatusCancelled {
 			// Like a provider cancellation, keep the accepted details.
 			old.Sequence, old.Stamp, old.Status = item.meta.Sequence, item.meta.Stamp, SyncStatusCancelled
+			if item.fromEmail && old.Organizer == "" {
+				old.Organizer = item.meta.Organizer
+			}
 			if err := s.setICSMetadataWith(ctx, tx, id, old); err != nil {
 				return err
 			}
