@@ -2107,8 +2107,7 @@ func TestLoadEmbeddingTransportDefaults(t *testing.T) {
 			require.NoError(t, os.WriteFile(path, []byte("[vector.embeddings]\n"+tc.settings+"\n"), 0o600))
 			cfg, err := Load(path, "")
 			require.NoError(t, err)
-			assert.Equal(t, tc.batch, cfg.Vector.Embeddings.BatchSize)
-			assert.Equal(t, tc.timeout, cfg.Vector.Embeddings.Timeout)
+			assert.Equal(t, []any{tc.batch, tc.timeout}, []any{cfg.Vector.Embeddings.BatchSize, cfg.Vector.Embeddings.Timeout})
 		})
 	}
 }
