@@ -486,7 +486,6 @@ func TestHeadlessCommandsPreserveNativeArguments(t *testing.T) {
 			assert.Equal(t, []string{"sync-full", "--", "imap://reader$tag@host.example:143"}, headlessNativeArgs(t, shell, fixture, lines[i]))
 		})
 	}
-
 }
 
 const sharedLoadBudget = 15 * time.Second

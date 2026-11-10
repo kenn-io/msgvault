@@ -2946,5 +2946,4 @@ func TestPersonMergeCountsNewAddresses(t *testing.T) {
 		require.NoError(err)
 		assert.Equal(4, scoped.Labels.AbsorbedAddressCount)
 	})
-
 }
