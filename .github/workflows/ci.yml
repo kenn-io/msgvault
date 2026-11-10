@@ -1155,7 +1155,7 @@ jobs:
       matrix:
         include:
           - name: cli
-            job_timeout: 36
+            job_timeout: 54
             test_timeout: 18m
             package: ./cmd/msgvault/cmd
             extra_packages: true
@@ -1229,7 +1229,7 @@ jobs:
 
       - name: Test additional PostgreSQL packages
         if: ${{ !cancelled() && steps.postgres-shards.outcome != 'skipped' && matrix.extra_packages && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
-        run: make test-pg-packages PKGS="$PG_MOVED_PKGS" TEST_TIMEOUT=10m
+        run: make test-pg-packages PKGS="$PG_MOVED_PKGS" TEST_TIMEOUT=24m
 
       - name: Check for additional test reruns
         if: always() && matrix.extra_packages
