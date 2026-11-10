@@ -217,7 +217,7 @@ func newPersonFactsCommand() *cobra.Command {
 			_, _ = fmt.Fprintln(writer, "ID\tGENERATION\tTARGET\tKIND\tSTATUS\tRELATION\tORIGIN\tCLAIM KEY\tCREATED")
 			for _, item := range response.JSON200.Claims {
 				_, _ = fmt.Fprintf(writer, "%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-					item.ID, item.GenerationID, personFactCLIStoredTarget(item.Target), item.Kind, item.Status, item.Relation,
+					item.ID, item.GenerationID, personFactCLIStoredTarget(item.Target), personFactCLIMetadata(string(item.Kind)), personFactCLIMetadata(string(item.Status)), item.Relation,
 					item.Origin, item.ClaimKey, item.CreatedAt.Format(time.RFC3339))
 			}
 			return writer.Flush()
@@ -497,4 +497,12 @@ func writePersonFactCLIRawJSON(cmd *cobra.Command, body []byte) error {
 		return err
 	}
 	return nil
+}
+
+// Older compatible daemons omit derived claim metadata.
+func personFactCLIMetadata(value string) string {
+	if value == "" {
+		return "-"
+	}
+	return value
 }
