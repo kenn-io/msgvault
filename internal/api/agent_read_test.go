@@ -364,6 +364,45 @@ func TestAgentReadSourceFilterPrecedence(t *testing.T) {
 	}
 }
 
+func TestAgentCollectionMembershipAndSenderCounts(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	src, allowed, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "allowed", "allowed", "")
+	requirements.NoError(err)
+	_, denied, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "denied", "denied", "")
+	requirements.NoError(err)
+	other, err := st.GetOrCreateSource("test", "outside@example.test")
+	requirements.NoError(err)
+	for _, entry := range []struct {
+		id      int64
+		address string
+	}{{allowed, "allowed@example.test"}, {denied, "denied@example.test"}} {
+		participant, err := st.EnsureParticipant(entry.address, "", "example.test")
+		requirements.NoError(err)
+		requirements.NoError(st.ReplaceMessageRecipients(entry.id, "from", []int64{participant}, nil))
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = ? WHERE message_id = ? AND recipient_type = 'from'"), entry.address, entry.id)
+		requirements.NoError(err)
+	}
+	_, err = st.CreateCollection("allowed", "visible", []int64{src.ID})
+	requirements.NoError(err)
+	_, err = st.CreateCollection("mixed", "private description", []int64{src.ID, other.ID})
+	requirements.NoError(err)
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	defer srv.agentGrants.Close()
+	_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier, IncomingSenderKeys: []string{"allowed@example.test"}}}, time.Time{})
+	requirements.NoError(err)
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/collections", nil)
+	r.Header.Set(apiprotocol.AgentTokenHeader, secret)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, r)
+	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+	var response cliCollectionsResponse
+	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+	requirements.Len(response.Collections, 1, w.Body.String())
+	requirements.Equal("allowed", response.Collections[0].Name)
+	requirements.Equal(int64(1), response.Collections[0].MessageCount)
+}
+
 func TestAgentCollections(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -940,8 +979,16 @@ func TestAgentIncomingSenderScopesReads(t *testing.T) {
 	var deniedAttachment int64
 	requirementsForTest.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT id FROM attachments WHERE message_id = ?"), denied).Scan(&deniedAttachment))
 	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner-key", AgentAccess: true}}
+	requirementsForTest.NoError(os.MkdirAll(cfg.AttachmentsDir(), 0o700))
+	requirementsForTest.NoError(os.WriteFile(filepath.Join(cfg.AttachmentsDir(), "private.bin"), []byte("synthetic attachment"), 0o600))
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	defer srv.agentGrants.Close()
+	ownerRequest := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/attachments/"+strings.Repeat("b", 64)+"/content", nil)
+	ownerRequest.Header.Set("X-Api-Key", "owner-key")
+	ownerResponse := httptest.NewRecorder()
+	srv.Router().ServeHTTP(ownerResponse, ownerRequest)
+	requirementsForTest.Equal(http.StatusOK, ownerResponse.Code, ownerResponse.Body.String())
+	requirementsForTest.Equal("synthetic attachment", ownerResponse.Body.String())
 	body := fmt.Sprintf(`{"label":"reader","permissions":["search.read","message.read","stats.read","attachment.read","verification.read"],"source_ids":[%d],"incoming_senders":{"%d":["codes@example.test"]}}`, src.ID, src.ID)
 	issue := httptest.NewRequestWithContext(t.Context(), http.MethodPost, agentTokensPath, strings.NewReader(body))
 	issue.Header.Set("X-Api-Key", "owner-key")

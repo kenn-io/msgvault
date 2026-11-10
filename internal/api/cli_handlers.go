@@ -36,6 +36,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/senderauth"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -2850,9 +2851,11 @@ func (s *Server) handleCLICollections(w http.ResponseWriter, r *http.Request) {
 		writeAPIHTTPError(w, apiErr)
 		return
 	}
+	// Check complete membership before exposing a collection. Keep the sender
+	// scope in place for its message counts and use the same read snapshot.
+	membershipStore := bindCLIStoreContext(sourcescope.WithoutSourceIDs(r.Context()), cliStore)
 	cliStore = bindCLIStoreContext(r.Context(), cliStore)
-
-	collections, err := cliStore.ListCollections()
+	collections, err := membershipStore.ListCollections()
 	if err != nil {
 		s.logger.Error("failed to list CLI collections", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to list collections")

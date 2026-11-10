@@ -83,6 +83,12 @@ func WithSourceIDs(ctx context.Context, ids []int64) context.Context {
 	return context.WithValue(ctx, contextKey{}, owned)
 }
 
+// WithoutSourceIDs allows trusted code to inspect complete membership while
+// retaining the request's other restrictions and read snapshot.
+func WithoutSourceIDs(ctx context.Context) context.Context {
+	return context.WithValue(ctx, contextKey{}, nil)
+}
+
 // IDs returns an owned copy; nil means no authorization scope was installed.
 func IDs(ctx context.Context) []int64 {
 	ids, _ := ctx.Value(contextKey{}).([]int64)
