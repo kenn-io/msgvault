@@ -173,7 +173,7 @@ func (s *Store) DiagnoseAcquisitionContext(ctx context.Context, opts Acquisition
 			"Indeterminate includes failures hidden by the replay boundary without resolution and outcomes with no known acquisition contract.",
 			"Source blockers describe the normal replay path; provider availability and permanent impossibility are not tested. Resolution is a ledger acknowledgement, not a physical file integrity check.",
 			"No physical RAW/blob integrity, MIME occurrence, FTS freshness, remote inventory, or historical omissions check. The absence of known active obligations does not prove archive completeness.",
-			"Pages use outcome IDs after classification; concurrent sync can change later invocations. Repeat against a quiet archive for consistent traversal.",
+			"Concurrent sync can change later invocations. Repeat against a quiet archive for consistent traversal.",
 		},
 	}
 	if source.HistoryOnly {
@@ -312,7 +312,7 @@ func (r AcquisitionDiagnostic) String() string {
 	if r.Summary.ActiveObligations == 0 {
 		out.WriteString("No known active obligation in the examined scope.\n")
 	}
-	fmt.Fprintf(&out, "Details: %s; incremental boundary run %d; ledger through item %d\n", r.State, r.IncrementalBoundaryID, r.LedgerThroughID)
+	fmt.Fprintf(&out, "Details: %s\n", r.State)
 	for _, item := range r.Items {
 		fmt.Fprintf(&out, "  %q: %s/%s (run %d, item %d, synthetic=%t, error=%t)", item.SourceMessageID, item.Phase, item.ErrorKind, item.SyncRunID, item.OutcomeID, item.Synthetic, item.HasError)
 		fmt.Fprintf(&out, " latest=%s/%s (run %d, item %d)", item.LatestPhase, item.LatestStatus, item.LatestSyncRunID, item.LatestOutcomeID)

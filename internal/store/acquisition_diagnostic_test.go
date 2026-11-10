@@ -225,9 +225,14 @@ func TestAcquisitionDiagnosticEmptyAndValidation(t *testing.T) {
 	assert.Contains(report.String(), "0 resolved obligations")
 	assert.NotContains(report.String(), "0 active obligations")
 	assert.NotContains(report.String(), "fetch/fetch_error")
+	assert.Contains(report.String(), "Details: active\n")
+	assert.NotContains(report.String(), "Pages use outcome IDs")
+	assert.Contains(report.String(), "Concurrent sync can change later invocations. Repeat against a quiet archive for consistent traversal.")
 	encoded, err := json.Marshal(report)
 	require.NoError(err)
 	assert.Contains(string(encoded), "fetch/fetch_error", "JSON must retain the recognized replay contracts")
+	assert.Contains(string(encoded), `"incremental_boundary_id":0`)
+	assert.Contains(string(encoded), `"ledger_through_id":0`)
 	for _, invalid := range []store.AcquisitionDiagnosticOptions{
 		{Limit: 10}, {SourceID: f.Source.ID, Limit: 0}, {SourceID: f.Source.ID, Limit: 1001},
 		{SourceID: f.Source.ID, Limit: 10, AfterID: -1}, {SourceID: f.Source.ID, Limit: 10, State: "complete"},
@@ -350,7 +355,8 @@ func TestAcquisitionDiagnosticCancellationDuringReadPG(t *testing.T) {
 	}()
 	waitForLockWait(t, f.Store, "sync_run_items", "diagnostic must reach the blocked ledger read")
 	cancel()
-	require.NoError(blocker.Rollback())
+	// Cancellation must finish while the ledger remains locked; releasing it
+	// first would let a later context check mask an uncancellable query.
 	select {
 	case got := <-done:
 		require.ErrorIs(got.err, context.Canceled)
@@ -359,6 +365,7 @@ func TestAcquisitionDiagnosticCancellationDuringReadPG(t *testing.T) {
 		stacktest.Dump(t)
 		require.FailNow("cancelled diagnostic did not return")
 	}
+	require.NoError(blocker.Rollback())
 }
 
 func TestAcquisitionDiagnosticOperationTransitions(t *testing.T) {
