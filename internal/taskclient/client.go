@@ -473,14 +473,14 @@ func readBounded(reader io.Reader, maximum int64) ([]byte, error) {
 
 // ValidateEndpoint checks that an endpoint has one of the shapes the runtime
 // client accepts: https://host, loopback http (http://localhost or a loopback
-// IP), or unix:///absolute/socket/path with no host. An explicit true option
-// also permits HTTP on a trusted private network. URLs carrying userinfo, a
+// IP), or unix:///absolute/socket/path with no host. trustPrivateNetwork also
+// permits HTTP on a trusted private network. URLs carrying userinfo, a
 // query string, or a fragment are rejected for every scheme. Runtime-only
 // requirements (API keys, socket existence and ownership) are checked by New,
 // not here, so configuration validation can share this without touching the
 // filesystem or credentials.
-func ValidateEndpoint(endpoint string, trustPrivateNetwork ...bool) error {
-	_, err := parseEndpoint(endpoint, trustPrivateNetwork...)
+func ValidateEndpoint(endpoint string, trustPrivateNetwork bool) error {
+	_, err := parseEndpoint(endpoint, trustPrivateNetwork)
 	return err
 }
 
@@ -492,7 +492,7 @@ type parsedEndpoint struct {
 	socketPath string
 }
 
-func parseEndpoint(endpoint string, trustPrivateNetwork ...bool) (parsedEndpoint, error) {
+func parseEndpoint(endpoint string, trustPrivateNetwork bool) (parsedEndpoint, error) {
 	if endpoint == "" {
 		return parsedEndpoint{}, fmt.Errorf("%w: endpoint is empty", ErrInsecureEndpoint)
 	}
@@ -519,15 +519,14 @@ func parseEndpoint(endpoint string, trustPrivateNetwork ...bool) (parsedEndpoint
 		if u.Host != "" && isLoopbackHost(u.Hostname()) {
 			return parsedEndpoint{url: u, kind: EndpointLoopbackHTTP}, nil
 		}
-		trust := len(trustPrivateNetwork) > 0 && trustPrivateNetwork[0]
-		if !trust {
+		if !trustPrivateNetwork {
 			return parsedEndpoint{}, fmt.Errorf(
 				"%w: remote plaintext HTTP is not allowed; use https:// or a loopback host like http://localhost",
 				ErrInsecureEndpoint)
 		}
 		// Keep the existing URL; kit supplies only the destination trust policy.
 		origin := &url.URL{Scheme: "http", Host: u.Host}
-		if _, err := embedconfig.CanonicalEndpoint(origin.String(), trust); err != nil {
+		if _, err := embedconfig.CanonicalEndpoint(origin.String(), true); err != nil {
 			return parsedEndpoint{}, fmt.Errorf("%w: HTTP requires loopback or trust_private_network = true for a trusted private network", ErrInsecureEndpoint)
 		}
 		kind := EndpointPrivateHTTP

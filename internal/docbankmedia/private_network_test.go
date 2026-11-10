@@ -111,7 +111,7 @@ func TestPrivateNetworkStrictZonedLoopbackRegression(t *testing.T) {
 	checkPrivateNetworkEndpoint(t, "http://[::1%25eth0]", true, true)
 	_, err := NewClient("http://[::1%25eth0]", nil)
 	requirements.Error(err)
-	requirements.Error(taskclient.ValidateEndpoint("http://[::1%25eth0]"))
+	requirements.Error(taskclient.ValidateEndpoint("http://[::1%25eth0]", false))
 	client, err := taskclient.New(taskclient.ClientOptions{Endpoint: "http://[::1%25eth0]", APIKey: "synthetic-key", TrustPrivateNetwork: true})
 	requirements.NoError(err)
 	assert.Equal(t, taskclient.EndpointLoopbackHTTP, client.EndpointKind())
@@ -143,7 +143,7 @@ func TestPrivateNetworkEndpointRegressions(t *testing.T) {
 	_, err := NewClient("http://docbank?", nil, WithTrustPrivateNetwork(true))
 	require.Error(t, err)
 	// Preserve taskclient's existing acceptance of an empty query marker.
-	require.NoError(t, taskclient.ValidateEndpoint("http://localhost?"))
+	require.NoError(t, taskclient.ValidateEndpoint("http://localhost?", false))
 	for _, endpoint := range []string{"https://EXAMPLE.test:443/base/../path/", "http://localhost:80/base/../path/"} {
 		checkPrivateNetworkEndpoint(t, endpoint, false, true)
 		checkPrivateNetworkEndpoint(t, endpoint, true, true)

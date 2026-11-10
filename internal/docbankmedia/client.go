@@ -282,9 +282,13 @@ func NewClient(baseURL string, lookupKey func() (string, error), options ...Clie
 	case "http":
 		if !isLoopbackHost(parsed.Hostname()) {
 			// Reuse kit's address policy without changing the existing request URL.
+			errPlaintext := errors.New("docbank HTTP URL requires loopback or trust_private_network = true for a trusted private network")
+			if !opts.trustPrivateNetwork {
+				return nil, errPlaintext
+			}
 			origin := &url.URL{Scheme: "http", Host: parsed.Host}
-			if _, err := embedconfig.CanonicalEndpoint(origin.String(), opts.trustPrivateNetwork); !opts.trustPrivateNetwork || err != nil {
-				return nil, errors.New("docbank HTTP URL requires loopback or trust_private_network = true for a trusted private network")
+			if _, err := embedconfig.CanonicalEndpoint(origin.String(), true); err != nil {
+				return nil, errPlaintext
 			}
 		}
 	default:
