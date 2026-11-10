@@ -6994,7 +6994,8 @@ func (s *Store) writeDerivedEmailTextPendingRevision(ctx context.Context, tx *lo
 func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query string, fromID, toID int64) (int64, error) {
 	env := storedFTSEnvelopeSQL("STRING_AGG")
 	lockSQL := `SELECT m.id FROM messages m WHERE m.id IN (` + query + `) ORDER BY m.id LIMIT 64 FOR UPDATE OF m`
-	selectSQL := `SELECT m.id, LEFT(` + env.subject + `, 600000), LEFT(COALESCE(b.body_text, ''), 600000), LEFT(` + env.fromAddr + `, 600000), LEFT(` + env.toAddrs + `, 600000), LEFT(` + env.ccAddrs + `, 600000) FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id WHERE m.id = ANY(?::bigint[]) ORDER BY m.id`
+	charCap := strconv.Itoa(maxFTSBodyChars)
+	selectSQL := `SELECT m.id, LEFT(` + env.subject + `, ` + charCap + `), LEFT(COALESCE(b.body_text, ''), ` + charCap + `), LEFT(` + env.fromAddr + `, ` + charCap + `), LEFT(` + env.toAddrs + `, ` + charCap + `), LEFT(` + env.ccAddrs + `, ` + charCap + `) FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id WHERE m.id = ANY(?::bigint[]) ORDER BY m.id`
 	vector, _ := pgFTSVector(FTSDoc{})
 	replace := strings.NewReplacer("$2", "u.subject", "$3", "u.body", "$4", "u.sender", "$5", "u.to_addrs", "$6", "u.cc_addrs")
 	vector = replace.Replace(vector)

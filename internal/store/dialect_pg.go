@@ -442,7 +442,8 @@ func (d *PostgreSQLDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
 // PostgreSQL caps positions at 16383 and stores at most 255 per lexeme.
 // Inspect the completed vector so concatenated fields share the same limit.
 func pgFTSOverflowFields(vector string) string {
-	return `CASE WHEN ` + vector + `::text ~ '(^|[ ,:])16383(A|B|C|D)?([, ]|$)' OR ` + vector + `::text ~ ':[0-9]+[A-D]?(,[0-9]+[A-D]?){254}([, ]|$)' THEN ARRAY[LEFT($2, 600000), LEFT($4, 600000), LEFT($5, 600000), LEFT($6, 600000), LEFT($3, 600000)] ELSE NULL END`
+	charCap := strconv.Itoa(maxFTSBodyChars)
+	return `CASE WHEN ` + vector + `::text ~ '(^|[ ,:])16383(A|B|C|D)?([, ]|$)' OR ` + vector + `::text ~ ':[0-9]+[A-D]?(,[0-9]+[A-D]?){254}([, ]|$)' THEN ARRAY[LEFT($2, ` + charCap + `), LEFT($4, ` + charCap + `), LEFT($5, ` + charCap + `), LEFT($6, ` + charCap + `), LEFT($3, ` + charCap + `)] ELSE NULL END`
 }
 
 // pgFTSVector returns the bounded tsvector expression for doc and its
@@ -743,6 +744,9 @@ func (d *PostgreSQLDialect) EnsureFTSIndex(q querier) error {
 		fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON messages (id) WHERE search_fts IS NULL OR indexing_version IS DISTINCT FROM %d", staleIndexName, CurrentFTSIndexingVersion),
 	); err != nil {
 		return fmt.Errorf("create %s: %w", staleIndexName, err)
+	}
+	if _, err := q.Exec("DROP INDEX IF EXISTS idx_messages_search_fts_stale_v2"); err != nil {
+		return fmt.Errorf("drop obsolete FTS stale index: %w", err)
 	}
 	return nil
 }

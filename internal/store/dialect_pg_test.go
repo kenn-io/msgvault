@@ -154,7 +154,7 @@ func TestPostgreSQLDialect_EnsureFTSIndexUsesVersionedStalePredicate(t *testing.
 	d := &PostgreSQLDialect{}
 	q := &recordingFTSQuerier{}
 	require.NoError(d.EnsureFTSIndex(q), "EnsureFTSIndex")
-	require.Len(q.all, 2, "GIN and stale-row indexes")
+	require.Len(q.all, 3, "GIN and stale-row indexes, then obsolete index removal")
 	assert.Contains(q.all[1], fmt.Sprintf("idx_messages_search_fts_stale_v%d", CurrentFTSIndexingVersion))
 	assert.Contains(q.all[1], fmt.Sprintf("search_fts IS NULL OR indexing_version IS DISTINCT FROM %d", CurrentFTSIndexingVersion))
 }
