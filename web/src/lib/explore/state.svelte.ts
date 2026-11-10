@@ -643,7 +643,7 @@ export class ExploreState {
     this.navigate(patch, 'push', view);
   }
 
-  updateSavedView(view: SavedView): void {
+  updateSavedView(view: SavedView | undefined): void {
     this.savedView = view;
     this.savedViewNeedsRefresh = false;
     if (!this.detached) this.browser.history.replaceState({ ...this.browser.history.state, ...this.savedViewHistoryState() }, '', this.browser.location.href);

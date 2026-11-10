@@ -523,6 +523,130 @@ describe('AppShell', () => {
     state.destroy();
   });
 
+  it('saves browser edits to a legacy view with the current query grammar when reopened', async () => {
+    window.history.replaceState(null, '', '/?workspace=everything');
+    let saved = { ...view(5, 'Legacy view'), schema_version: 1, canonical_state: { query: 'alpha' } };
+    const patches: Array<Record<string, unknown>> = [];
+    const searches: Array<Record<string, unknown>> = [];
+    const client = createAPIClient(async input => {
+      const request = input as Request;
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/saved-views/5')) {
+        if (request.method === 'PATCH') {
+          const body = await request.json();
+          patches.push(body);
+          saved = { ...saved, ...body, revision: saved.revision + 1 };
+        }
+        return Response.json(saved);
+      }
+      if (path.endsWith('/saved-views')) return Response.json({ saved_views: [saved] });
+      if (path.endsWith('/explore')) searches.push(await request.json());
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client, state });
+    try {
+      await fireEvent.click(await screen.findByRole('button', { name: 'Legacy view' }));
+      await waitFor(() => expect(state.current.query).toBe('alpha'));
+      await fireEvent.input(screen.getByRole('searchbox', { name: 'Search messages' }), { target: { value: 'alpha | beta' } });
+      await fireEvent.submit(screen.getByRole('search', { name: 'Search Messages' }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Save changes' }));
+      await waitFor(() => expect(state.savedView?.revision).toBe(2));
+      expect(patches).toEqual([expect.objectContaining({ schema_version: 2, canonical_state: expect.objectContaining({ query: 'alpha | beta' }) })]);
+      await fireEvent.click(screen.getByRole('button', { name: 'Files' }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Legacy view' }));
+      await waitFor(() => expect(state.current.workspace).toBe('everything'));
+      expect(state.current.query).toBe('alpha | beta');
+      await waitFor(() => expect(searches.at(-1)).toMatchObject({ query: 'alpha | beta' }));
+    } finally { rendered.unmount(); state.destroy(); }
+  });
+
+  it.each(['retry', 'detach'] as const)('recovers a failed history refresh with %s while preserving edits', async recovery => {
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const cached = { ...view(5, 'History view'), items: { include: [{ entry_key: 'source:1:message:old', source_id: 1, message_id: 1, kind: 'message' as const, added_by: 'owner' }], exclude: [] } };
+    const live = { ...cached, revision: 7, items: { include: [{ ...cached.items.include[0]!, entry_key: 'source:1:message:live', message_id: 2 }], exclude: [] } };
+    let reads = 0;
+    const patches: Request[] = [];
+    const searches: Array<Record<string, unknown>> = [];
+    const client = createAPIClient(async input => {
+      const request = input as Request;
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/saved-views/5')) {
+        if (request.method === 'PATCH') { patches.push(request); return Response.json({ ...live, revision: 8 }); }
+        reads += 1;
+        if (reads === 1) {
+          if (recovery === 'retry') throw new TypeError('Network unavailable');
+          return Response.json({ error: 'not_found' }, { status: 404 });
+        }
+        return Response.json(live);
+      }
+      if (path.endsWith('/saved-views')) return Response.json({ saved_views: [] });
+      if (path.endsWith('/explore')) searches.push(await request.json());
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const filters = [{ dimension: 'source' as const, values: ['1'] }];
+    state.commitSavedView(cached, { query: 'edited alpha', filters });
+    state.commitWorkspace('files');
+    window.history.back();
+    await waitFor(() => expect(state.savedViewNeedsRefresh).toBe(true));
+    const rendered = render(AppShell, { client, state });
+    try {
+      const error = await screen.findByRole('alert');
+      expect(error.textContent).toContain(recovery === 'retry' ? 'Network unavailable' : 'This saved view no longer exists.');
+      expect(reads).toBe(1);
+      expect(searches).toEqual([]);
+      expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
+      await fireEvent.click(within(error).getByRole('button', { name: recovery === 'retry' ? 'Retry' : 'Continue without saved view' }));
+      await screen.findByRole('main', { name: 'Messages' });
+      expect(state.current).toMatchObject({ query: 'edited alpha', filters });
+      if (recovery === 'retry') {
+        await waitFor(() => expect(searches.at(-1)).toMatchObject({ query: 'edited alpha', filters, include_keys: ['source:1:message:live'] }));
+        await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+        await waitFor(() => expect(patches).toHaveLength(1));
+        expect(patches[0]!.headers.get('If-Match')).toBe('"saved-view-5-r7"');
+      } else {
+        expect(state.savedView).toBeUndefined();
+        expect(state.savedViewItems).toEqual({ include: [], exclude: [] });
+        await waitFor(() => expect(searches.at(-1)).toMatchObject({ query: 'edited alpha', filters }));
+        expect(searches.at(-1)).not.toHaveProperty('include_keys');
+        expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
+        expect(window.history.state.savedViewContext.view).toBeUndefined();
+        expect(patches).toEqual([]);
+      }
+    } finally { rendered.unmount(); state.destroy(); }
+  });
+
+  it.each(['success', 'failure'] as const)('ignores a history refresh %s after workspace navigation', async outcome => {
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const cached = view(5, 'History view');
+    let pending!: { request: Request; finish: (response: Response) => void };
+    const client = createAPIClient(async input => {
+      const request = input as Request;
+      if (new URL(request.url).pathname.endsWith('/saved-views/5')) return new Promise<Response>(finish => { pending = { request, finish }; });
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    state.commitSavedView(cached, { query: 'edited alpha' });
+    state.commitWorkspace('files');
+    window.history.back();
+    await waitFor(() => expect(state.savedViewNeedsRefresh).toBe(true));
+    const rendered = render(AppShell, { client, state, enabled: false });
+    try {
+      await waitFor(() => expect(pending).toBeDefined());
+      await fireEvent.click(screen.getByRole('button', { name: 'Files' }));
+      await screen.findByRole('main', { name: 'Files' });
+      expect(pending.request.signal.aborted).toBe(true);
+      const response = outcome === 'success' ? Response.json({ ...cached, revision: 7 }) : Response.json({ error: 'not_found' }, { status: 404 });
+      pending.finish(response);
+      await waitFor(() => expect(response.bodyUsed).toBe(true));
+      await tick();
+      expect(state.savedView).toBeUndefined();
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    } finally { rendered.unmount(); state.destroy(); }
+  });
+
   function savedFilesViewFetch(fileSearches: Request[]) {
     return vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);

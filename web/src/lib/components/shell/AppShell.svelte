@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getSavedView, patchSavedView } from '../../api/generated/api/api';
-  import { canonicalSavedViewState } from '../../saved-views/canonical';
+  import { CURRENT_SCHEMA_VERSION, canonicalSavedViewState } from '../../saved-views/canonical';
   import { downloadRawMessage } from '../../api/download';
   import { relationshipDestination, tasksSettingsDestination } from './navigation';
   import { preflightExploreSelection as generatedPreflightExploreSelection } from '../../api/generated/exploration/exploration';
@@ -672,33 +672,38 @@
   }
   const openedSavedView = $derived(exploreState.savedView);
   let openingView = 0;
+  let savedViewRefreshError = $state('');
+  let savedViewRefreshAttempt = $state(0);
 
   $effect(() => {
+    void savedViewRefreshAttempt;
     const restoration = exploreState.restorationEpoch;
     const view = exploreState.savedView;
+    savedViewRefreshError = '';
     if (!exploreState.savedViewNeedsRefresh || !view) return;
     const opening = ++openingView;
     const controller = new AbortController();
     void getSavedView({ id: view.id }, { ...client, signal: controller.signal })
-      .then(({ data }) => {
+      .then(({ data, response }) => {
         if (controller.signal.aborted || opening !== openingView || restoration !== exploreState.restorationEpoch) return;
-        if (!data) throw new Error('Unable to reload this saved view.');
+        if (!data) throw new Error(response.status === 404 ? 'This saved view no longer exists.' : 'Unable to reload this saved view.');
         // History owns the edited query; only live metadata and membership refresh.
         exploreState.updateSavedView(data);
       })
       .catch((cause) => {
-        if (!controller.signal.aborted) announceOperation(cause instanceof Error ? cause.message : 'Unable to reload this saved view.');
+        if (controller.signal.aborted || opening !== openingView || restoration !== exploreState.restorationEpoch) return;
+        savedViewRefreshError = cause instanceof Error ? cause.message : 'Unable to reload this saved view.';
       });
     return () => controller.abort();
   });
 
   async function saveOpenedView(): Promise<void> {
-    if (!openedSavedView) return;
+    if (!openedSavedView || exploreState.savedViewNeedsRefresh) return;
     const view = openedSavedView;
     try {
       const { data } = await patchSavedView(
         { id: view.id },
-        { canonical_state: canonicalSavedViewState(exploreState.current) },
+        { canonical_state: canonicalSavedViewState(exploreState.current), schema_version: CURRENT_SCHEMA_VERSION },
         { ...client, headers: { 'If-Match': `"saved-view-${view.id}-r${view.revision}"` } },
       );
       if (!data) throw new Error('Unable to save view; reload it and retry.');
@@ -1322,7 +1327,15 @@
     </header>
     <div class="app-main">
       {#if exploreState.savedViewNeedsRefresh}
-        <p role="status">Loading saved view…</p>
+        {#if savedViewRefreshError}
+          <div role="alert">
+            <p>{savedViewRefreshError}</p>
+            <Button label="Retry" onclick={() => savedViewRefreshAttempt += 1} />
+            <Button surface="outline" label="Continue without saved view" onclick={() => exploreState.updateSavedView(undefined)} />
+          </div>
+        {:else}
+          <p role="status">Loading saved view…</p>
+        {/if}
       {:else if exploreState.current.workspace === 'settings'}
         {#if settings}{@render settings(
           cardDAVSettingsRequest,
