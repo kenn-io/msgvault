@@ -898,9 +898,35 @@ func TestEditRollbackPreservesEarlierStrippedCopy(t *testing.T) {
 	req.NoError(err)
 	check.Equal(encryptedPlaceholder, f.body(t, "$earlier"))
 	f.edits = []*event.Event{replayed}
+	pages := make(chan string, 2)
+	handler := f.server.Config.Handler
+	f.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/relations/$other/m.replace") {
+			handler.ServeHTTP(w, r)
+			return
+		}
+		from := r.URL.Query().Get("from")
+		select {
+		case pages <- from:
+		default:
+			http.Error(w, "too many relations pages", http.StatusBadRequest)
+			return
+		}
+		switch from {
+		case "":
+			writeMatrixJSON(t, w, map[string]any{"chunk": []*event.Event{}, "next_batch": "second"})
+		case "second":
+			writeMatrixJSON(t, w, map[string]any{"chunk": f.edits})
+		default:
+			http.Error(w, "unexpected relations page", http.StatusBadRequest)
+		}
+	})
 	f.timeline = []*event.Event{{ID: "$redaction", Type: event.EventRedaction, Redacts: "$newest", Content: event.Content{Raw: map[string]any{}}}}
 	_, err = f.run(t, true, false)
 	req.NoError(err)
+	req.Len(pages, 2)
+	check.Equal("", <-pages)
+	check.Equal("second", <-pages)
 	check.Equal("other", f.body(t, "$other"))
 	check.Equal("* older", f.body(t, "$earlier"))
 	var owner string
