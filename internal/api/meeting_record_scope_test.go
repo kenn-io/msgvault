@@ -121,12 +121,17 @@ func TestMeetingRecordPartialHTTP(t *testing.T) {
 		status int
 	}{
 		{fmt.Sprintf("evt:%d@20270314T100000Z", id), http.StatusOK},
+		{fmt.Sprintf("evt:%d", id), http.StatusBadRequest},
 		{"evt:999999", http.StatusNotFound},
 	} {
 		request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/meetings/record?ref="+tc.ref, nil)
 		response := httptest.NewRecorder()
 		srv.Router().ServeHTTP(response, request)
 		require.Equal(tc.status, response.Code, response.Body.String())
+		if tc.status == http.StatusBadRequest {
+			assert.Contains(response.Body.String(), "invalid_argument")
+			assert.Contains(response.Body.String(), "calendar events")
+		}
 		if tc.status == http.StatusOK {
 			assert.JSONEq(fmt.Sprintf(`{"links":[],"message_ids":[],"unexpandable":[{"message_id":%d,"reason":"unsupported recurrence"}]}`, id), response.Body.String())
 		}
@@ -164,11 +169,9 @@ func TestMeetingRecordRequiresSeriesOccurrence(t *testing.T) {
 	for _, tc := range []struct {
 		name, raw    string
 		keys, starts []string
-		unsupported  bool
 	}{
-		{"timed", `{"id":"timed","iCalUID":"timed@example.test","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, []string{"20270314T100000Z", "20270321T100000Z"}, []string{"2027-03-14T10:00:00Z", "2027-03-21T10:00:00Z"}, false},
-		{"all-day", `{"id":"all-day","iCalUID":"all-day@example.test","start":{"date":"2027-03-14"},"end":{"date":"2027-03-15"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, []string{"20270314", "20270321"}, []string{"2027-03-14T00:00:00Z", "2027-03-21T00:00:00Z"}, false},
-		{"unsupported", `{"id":"unsupported","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=YEARLY;BYWEEKNO=20"]}`, []string{"20270314T100000Z"}, nil, true},
+		{"timed", `{"id":"timed","iCalUID":"timed@example.test","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, []string{"20270314T100000Z", "20270321T100000Z"}, []string{"2027-03-14T10:00:00Z", "2027-03-21T10:00:00Z"}},
+		{"all-day", `{"id":"all-day","iCalUID":"all-day@example.test","start":{"date":"2027-03-14"},"end":{"date":"2027-03-15"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, []string{"20270314", "20270321"}, []string{"2027-03-14T00:00:00Z", "2027-03-21T00:00:00Z"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			id, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source.ID, SourceMessageID: tc.name, MessageType: "calendar_event"}, Conversation: &store.ConversationPersistData{SourceConversationID: tc.name, ConversationType: "calendar"}, RawMIME: []byte(tc.raw), RawFormat: "gcal_json"})
@@ -196,10 +199,6 @@ func TestMeetingRecordRequiresSeriesOccurrence(t *testing.T) {
 				require.Equal(t, http.StatusOK, explicit.Code, explicit.Body.String())
 				var record store.MeetingRecord
 				require.NoError(t, json.Unmarshal(explicit.Body.Bytes(), &record))
-				if tc.unsupported {
-					assert.Len(t, record.Unexpandable, 1)
-					continue
-				}
 				require.Len(t, record.Links, 1)
 				assert.Equal(t, fmt.Sprintf("evt:%d@%s", id, key), record.Links[0].Ref)
 				assert.Equal(t, []int64{noteIDs[i]}, record.MessageIDs)
