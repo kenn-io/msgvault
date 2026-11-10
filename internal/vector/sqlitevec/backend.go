@@ -16,6 +16,7 @@ import (
 	"time"
 
 	sqlite3 "github.com/mattn/go-sqlite3"
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/store"
@@ -1519,6 +1520,10 @@ func (b *Backend) filteredMessageIDsLimit(ctx context.Context, f vector.Filter, 
 		clauses = append(clauses, predicate)
 		args = append(args, senderArgs...)
 	}
+	if f.SenderDomain != "" {
+		clauses = append(clauses, search.SenderDomainCondition("?"))
+		args = append(args, f.SenderDomain)
+	}
 	for _, group := range f.SenderGroups {
 		if len(group) == 0 {
 			continue
@@ -1542,12 +1547,13 @@ func (b *Backend) filteredMessageIDsLimit(ctx context.Context, f vector.Filter, 
 		direct := inClause("m.sender_id", group)
 		from := inClause("mr.participant_id", group)
 		clauses = append(clauses, fmt.Sprintf(
-			`(%s OR EXISTS (
+			`((%s AND %s) OR EXISTS (
 				SELECT 1 FROM message_recipients mr
 				 WHERE mr.message_id = m.id
 				   AND mr.recipient_type = 'from'
+				   AND NOT mr.is_relayed
 				   AND %s
-			))`, direct, from))
+			))`, direct, identityindex.RelayAbsentExpr("m.id", "message_recipients"), from))
 		for _, id := range group {
 			args = append(args, id)
 		}
