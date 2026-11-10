@@ -104,8 +104,8 @@ function participantAddress(address: ParticipantAddress, workspaces: Map<string,
   const chip = identityChipText({ ...address, is_primary: false, provenance: '', scope_kind: '', scope_value: '' }, undefined, []);
   const detail = ['email', 'phone'].includes(address.type) ? '' : [...new Set([
     chip.subtitle,
-    ...(['handle', 'matrix', 'apple_id', 'imessage', 'whatsapp', 'sms', 'synctech_sms', 'google_voice'].includes(address.type)
-      ? [chip.detail, scopeText(address, workspaces)] : [address.display_value, scopeText(address, workspaces)]),
+    ['handle', 'matrix', 'apple_id', 'imessage', 'whatsapp', 'sms', 'synctech_sms', 'google_voice'].includes(address.type) ? chip.detail : address.display_value,
+    scopeText(address, workspaces),
   ].filter(Boolean))].join(' · ');
   return { ...address, title: chip.title, detail };
 }
