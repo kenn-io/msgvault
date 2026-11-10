@@ -6,6 +6,12 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+const (
+	emailKind        = "email"
+	slackSource      = "slack"
+	ownerPhoneHandle = "owner_phone"
+)
+
 type builder struct {
 	st                *store.Store
 	attachmentsDir    string
@@ -18,7 +24,7 @@ type chapter struct {
 	run  func(context.Context, *builder) error
 }
 
-var chapters = []chapter{{"cast", cast}, {"email", email}, {"chats", chats}, {"voice", voice}}
+var chapters = []chapter{{"cast", cast}, {emailKind, email}, {"chats", chats}, {"voice", voice}}
 
 func newBuilder(st *store.Store, dir string, opts Options) *builder {
 	return &builder{st: st, attachmentsDir: dir, opts: opts, m: &Manifest{
@@ -44,5 +50,4 @@ func newBuilder(st *store.Store, dir string, opts Options) *builder {
 }
 func (b *builder) source(h string) int64      { return b.m.Sources[h].ID }
 func (b *builder) participant(h string) int64 { return b.m.Participants[h].ID }
-func (b *builder) person(h string) int64      { return b.m.Persons[h].ID }
 func (b *builder) message(h string) int64     { return b.m.Messages[h] }

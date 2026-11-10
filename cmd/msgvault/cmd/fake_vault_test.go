@@ -48,17 +48,19 @@ func TestFakeVaultCommandPassesScaleFlagsToGenerator(t *testing.T) {
 }
 
 func TestFakeVaultAgentDemoWritesManifest(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	dir := t.TempDir()
 	command := newFakeVaultCommand()
 	var out bytes.Buffer
 	command.SetOut(&out)
 	command.SetArgs([]string{"--scenario", "agent-demo", "--output", dir, "--quiet"})
-	require.NoError(t, command.ExecuteContext(t.Context()))
-	assert.Contains(t, out.String(), "Agent demo archive:")
-	assert.Contains(t, out.String(), "Manifest:")
-	assert.Contains(t, out.String(), "unsaved participants: 11")
+	require.NoError(command.ExecuteContext(t.Context()))
+	assert.Contains(out.String(), "Agent demo archive:")
+	assert.Contains(out.String(), "Manifest:")
+	assert.Contains(out.String(), "unsaved participants: 11")
 	_, err := agentdemo.Load(dir)
-	require.NoError(t, err)
+	require.NoError(err)
 }
 func TestFakeVaultAgentDemoRejectsScaleFlags(t *testing.T) {
 	for _, args := range [][]string{{"--messages", "10"}, {"--participants", "3"}, {"--participant-edges", "9"}, {"--group-chat-members", "3"}, {"--attachment-bytes", "1MB"}, {"--append"}} {
@@ -100,17 +102,19 @@ func TestFakeVaultAgentDemoRefusesLiveDataDir(t *testing.T) {
 }
 
 func TestFakeVaultAgentDemoAsOfNow(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	before := time.Now().UTC().Truncate(time.Hour)
 	dir := t.TempDir()
 	cmd := newFakeVaultCommand()
 	cmd.SetOut(io.Discard)
 	cmd.SetArgs([]string{"--scenario", "agent-demo", "--output", dir, "--as-of", "now", "--quiet"})
-	require.NoError(t, cmd.ExecuteContext(t.Context()))
+	require.NoError(cmd.ExecuteContext(t.Context()))
 	m, err := agentdemo.Load(dir)
-	require.NoError(t, err)
+	require.NoError(err)
 	after := time.Now().UTC().Truncate(time.Hour)
-	assert.True(t, m.AsOf.Equal(before) || m.AsOf.Equal(after))
-	assert.Equal(t, m.AsOf.Truncate(time.Hour), m.AsOf)
+	assert.True(m.AsOf.Equal(before) || m.AsOf.Equal(after))
+	assert.Equal(m.AsOf.Truncate(time.Hour), m.AsOf)
 }
 func TestFakeVaultAgentDemoRefusesSymlinkedLiveDataDir(t *testing.T) {
 	live := t.TempDir()
@@ -126,13 +130,14 @@ func TestFakeVaultAgentDemoRefusesSymlinkedLiveDataDir(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(live, "msgvault.db"))
 }
 func TestFakeVaultAgentDemoRefusesExistingDatabase(t *testing.T) {
+	require := require.New(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "msgvault.db")
-	require.NoError(t, os.WriteFile(path, []byte("keep me"), 0600))
+	require.NoError(os.WriteFile(path, []byte("keep me"), 0600))
 	cmd := newFakeVaultCommand()
 	cmd.SetArgs([]string{"--scenario", "agent-demo", "--output", dir})
-	require.ErrorContains(t, cmd.ExecuteContext(t.Context()), "refusing to write a demo archive into an existing archive directory")
+	require.ErrorContains(cmd.ExecuteContext(t.Context()), "refusing to write a demo archive into an existing archive directory")
 	data, err := os.ReadFile(path)
-	require.NoError(t, err)
+	require.NoError(err)
 	assert.Equal(t, "keep me", string(data))
 }

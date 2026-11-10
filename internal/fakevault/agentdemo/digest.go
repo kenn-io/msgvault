@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -72,8 +73,7 @@ func (c *canonicalizer) load(name string) (*digestTable, error) {
 	}
 	columns, err := rows.Columns()
 	if err != nil {
-		rows.Close()
-		return nil, err
+		return nil, errors.Join(err, rows.Close())
 	}
 	table := &digestTable{columns: columns, byID: map[string]digestRow{}, foreign: map[string]string{}}
 	for rows.Next() {
@@ -83,8 +83,7 @@ func (c *canonicalizer) load(name string) (*digestTable, error) {
 			ptrs[i] = &values[i]
 		}
 		if err = rows.Scan(ptrs...); err != nil {
-			rows.Close()
-			return nil, err
+			return nil, errors.Join(err, rows.Close())
 		}
 		row := digestRow{}
 		for i, col := range columns {
@@ -115,12 +114,12 @@ func (c *canonicalizer) load(name string) (*digestTable, error) {
 		var id, seq int
 		var target, from, to, onUpdate, onDelete, match string
 		if err = rows.Scan(&id, &seq, &target, &from, &to, &onUpdate, &onDelete, &match); err != nil {
-			rows.Close()
-			return nil, err
+			return nil, errors.Join(err, rows.Close())
 		}
-		if to == "id" {
+		switch to {
+		case "id":
 			table.foreign[from] = target
-		} else if to == "message_id" {
+		case "message_id":
 			table.foreign[from] = "messages"
 		}
 	}
@@ -136,10 +135,8 @@ func (c *canonicalizer) load(name string) (*digestTable, error) {
 	return table, nil
 }
 func (c *canonicalizer) value(table *digestTable, col string, v any) (any, error) {
-	if v == nil {
-		return nil, nil
-	}
-	if target, ok := table.foreign[col]; ok {
+	// SQL NULL is a valid canonical value, including in foreign-key columns.
+	if target, ok := table.foreign[col]; ok && v != nil {
 		t, err := c.load(target)
 		if err != nil {
 			return nil, err
@@ -191,7 +188,7 @@ func (c *canonicalizer) key(name string, table *digestTable, row digestRow) (str
 			if fmt.Sprint(binding["person_id"]) == fmt.Sprint(row["id"]) {
 				participant, ok := participants.byID[fmt.Sprint(binding["participant_id"])]
 				if !ok {
-					return "", fmt.Errorf("missing person participant")
+					return "", errors.New("missing person participant")
 				}
 				key, err := c.key("participants", participants, participant)
 				if err != nil {
@@ -240,7 +237,7 @@ func Digest(ctx context.Context, db *sql.DB) (string, error) {
 				if name == "message_raw" && col == "raw_data" && row["compression"] == "zlib" {
 					data, ok := value.([]byte)
 					if !ok {
-						return "", fmt.Errorf("digest: raw_data is not bytes")
+						return "", errors.New("digest: raw_data is not bytes")
 					}
 					decoded, err := store.DecodeMessageRaw(data, "zlib")
 					if err != nil {
@@ -276,7 +273,9 @@ func Digest(ctx context.Context, db *sql.DB) (string, error) {
 		}
 		slices.Sort(lines)
 		for _, line := range lines {
-			fmt.Fprintf(hash, "%s\t%s\n", name, line)
+			if _, err := fmt.Fprintf(hash, "%s\t%s\n", name, line); err != nil {
+				return "", fmt.Errorf("write digest: %w", err)
+			}
 		}
 	}
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil

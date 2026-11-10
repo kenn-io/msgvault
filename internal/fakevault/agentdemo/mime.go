@@ -34,25 +34,25 @@ func rawMIME(m emailMessage) ([]byte, error) {
 	}
 	writer := multipart.NewWriter(&out)
 	if err := writer.SetBoundary("agent-demo-contract-v2"); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("set MIME boundary: %w", err)
 	}
 	fmt.Fprintf(&out, "Content-Type: multipart/mixed; boundary=%q\r\n\r\n", writer.Boundary())
 	part, err := writer.CreatePart(textproto.MIMEHeader{"Content-Type": {"text/plain; charset=utf-8"}})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create MIME text part: %w", err)
 	}
 	if _, err = part.Write([]byte(m.body)); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("write MIME text part: %w", err)
 	}
 	part, err = writer.CreatePart(textproto.MIMEHeader{"Content-Type": {"application/pdf"}, "Content-Disposition": {"attachment; filename=\"contract-v2.pdf\""}, "Content-Transfer-Encoding": {"base64"}})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create MIME attachment part: %w", err)
 	}
 	if _, err = part.Write([]byte(base64.StdEncoding.EncodeToString(contractV2Bytes()))); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("write MIME attachment part: %w", err)
 	}
 	if err = writer.Close(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("close MIME multipart: %w", err)
 	}
 	return out.Bytes(), nil
 }

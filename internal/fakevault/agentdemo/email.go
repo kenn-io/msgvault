@@ -69,9 +69,9 @@ func email(ctx context.Context, b *builder) error {
 	add("deleted_at_source", "background_deleted", "Archive Updates <archive-updates@example.net>", owner, "The earlier project record is archived.", 20, "INBOX")
 	add("canary", "canary", "Canary Q. Person <canary-addr-7f3a@canary.example>", owner, "The synthetic privacy marker is CANARY-BODY-7f3a.", 12, "INBOX")
 	messages[len(messages)-1].subject = "CANARY-SUBJ-7f3a"
-	for i := 0; i < 60; i++ {
+	for i := range 60 {
 		thread := fmt.Sprintf("background_%02d", i+1)
-		for j := 0; j < 3; j++ {
+		for j := range 3 {
 			h := fmt.Sprintf("%s_%d", thread, j+1)
 			from, to := owner, "Archive Updates <archive-updates@example.net>"
 			label := "SENT"

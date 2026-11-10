@@ -11,24 +11,26 @@ import (
 )
 
 func TestArchiveCopiesArePrivate(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	a, ma := Archive(t)
 	b, mb := Archive(t)
-	assert.NotEqual(t, a, b)
-	assert.Equal(t, ma, mb)
+	assert.NotEqual(a, b)
+	assert.Equal(ma, mb)
 	sa, err := store.OpenForTest(t.Context(), filepath.Join(a, "msgvault.db"))
-	require.NoError(t, err)
-	defer sa.Close()
+	require.NoError(err)
+	defer func() { require.NoError(sa.Close()) }()
 	sb, err := store.OpenForTest(t.Context(), filepath.Join(b, "msgvault.db"))
-	require.NoError(t, err)
-	defer sb.Close()
+	require.NoError(err)
+	defer func() { require.NoError(sb.Close()) }()
 	_, err = sa.DB().ExecContext(t.Context(), "UPDATE messages SET subject='private copy' WHERE id=?", ma.Messages["canary"])
-	require.NoError(t, err)
+	require.NoError(err)
 	var subject string
-	require.NoError(t, sb.DB().QueryRowContext(t.Context(), "SELECT subject FROM messages WHERE id=?", mb.Messages["canary"]).Scan(&subject))
-	assert.NotEqual(t, "private copy", subject)
+	require.NoError(sb.DB().QueryRowContext(t.Context(), "SELECT subject FROM messages WHERE id=?", mb.Messages["canary"]).Scan(&subject))
+	assert.NotEqual("private copy", subject)
 	ma.Messages["canary"] = 0
 	_, mc := Archive(t)
-	assert.NotZero(t, mc.Messages["canary"])
+	assert.NotZero(mc.Messages["canary"])
 }
 func TestStoreOpensAtSchemaVersion(t *testing.T) {
 	st, m := Store(t)

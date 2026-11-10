@@ -12,37 +12,31 @@ import (
 )
 
 func TestGenerateDirWritesManifestHeader(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	dir := t.TempDir()
 	m, err := agentdemo.GenerateDir(t.Context(), agentdemo.Options{Dir: dir, Seed: 1})
-	require.NoError(t, err)
+	require.NoError(err)
 	loaded, err := agentdemo.Load(dir)
-	require.NoError(t, err)
-	assert.Equal(t, m, loaded)
-	assert.Equal(t, "agent-demo", m.Scenario)
-	assert.Equal(t, 1, m.ScenarioVersion)
-	assert.Equal(t, agentdemo.DefaultAsOf, m.AsOf)
-	assert.Equal(t, uint64(1), m.Seed)
-	assert.FileExists(t, filepath.Join(dir, "msgvault.db"))
+	require.NoError(err)
+	assert.Equal(m, loaded)
+	assert.Equal("agent-demo", m.Scenario)
+	assert.Equal(1, m.ScenarioVersion)
+	assert.Equal(agentdemo.DefaultAsOf, m.AsOf)
+	assert.Equal(uint64(1), m.Seed)
+	assert.FileExists(filepath.Join(dir, "msgvault.db"))
 }
 
 func TestGenerateDirRefusesExistingDatabase(t *testing.T) {
+	require := require.New(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "msgvault.db")
-	require.NoError(t, os.WriteFile(path, []byte("keep me"), 0600))
+	require.NoError(os.WriteFile(path, []byte("keep me"), 0600))
 	_, err := agentdemo.GenerateDir(t.Context(), agentdemo.Options{Dir: dir})
-	require.ErrorContains(t, err, "already exists")
+	require.ErrorContains(err, "already exists")
 	data, err := os.ReadFile(path)
-	require.NoError(t, err)
+	require.NoError(err)
 	assert.Equal(t, "keep me", string(data))
-}
-
-func TestManifestRoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	m := &agentdemo.Manifest{Scenario: agentdemo.Scenario, ScenarioVersion: agentdemo.ScenarioVersion, Seed: 7, AsOf: agentdemo.DefaultAsOf}
-	require.NoError(t, m.Write(dir))
-	got, err := agentdemo.Load(dir)
-	require.NoError(t, err)
-	assert.Equal(t, m, got)
 }
 
 func TestGenerateDirRefusesDanglingDatabaseSymlink(t *testing.T) {

@@ -7,34 +7,34 @@ import (
 )
 
 var castSources = []struct{ handle, typ, identifier, family string }{
-	{"gmail", "gmail", "morgan@example.com", "email"},
+	{"gmail", "gmail", "morgan@example.com", emailKind},
 	{"whatsapp", "whatsapp", "+15550100100", "chat"},
 	{"signal", "beeper", "signal", "chat"},
 	{"imessage", "apple_messages", "local", "chat"},
-	{"slack", "slack", "demo-workspace", "chat"},
+	{slackSource, slackSource, "demo-workspace", "chat"},
 	{"discord", "discord", "demo-guild", "chat"},
 	{"meetings", "meeting_import", "demo-notes", "meetings"},
 }
 var castParticipants = []struct{ handle, name, typ, value string }{
-	{"owner", "Morgan Lee", "email", "morgan@example.com"},
-	{"owner_phone", "Morgan Lee", "phone", "+15550100100"},
-	{"owner_slack", "Morgan Lee", "slack", "U0OWNER"},
-	{"sam", "Sam Rivera", "email", "sam.rivera@example.org"},
+	{"owner", "Morgan Lee", emailKind, "morgan@example.com"},
+	{ownerPhoneHandle, "Morgan Lee", "phone", "+15550100100"},
+	{"owner_slack", "Morgan Lee", slackSource, "U0OWNER"},
+	{"sam", "Sam Rivera", emailKind, "sam.rivera@example.org"},
 	{"sam_phone", "Sam Rivera", "phone", "+15550100101"},
-	{"priya", "Priya Shah", "email", "priya@corp.example"},
-	{"priya_slack", "Priya Shah", "slack", "U0PRIYA"},
-	{"jordan", "Jordan Kim", "email", "jordan@client.example"},
-	{"taylor", "Taylor Brooks", "email", "taylor@partner.example"},
+	{"priya", "Priya Shah", emailKind, "priya@corp.example"},
+	{"priya_slack", "Priya Shah", slackSource, "U0PRIYA"},
+	{"jordan", "Jordan Kim", emailKind, "jordan@client.example"},
+	{"taylor", "Taylor Brooks", emailKind, "taylor@partner.example"},
 	{"casey", "Casey Nguyen", "phone", "+15550100105"},
-	{"riley", "Riley Stone", "email", "riley@newco.example"},
-	{"pat", "Pat Vendor", "email", "pat@vendor.example"},
-	{"background", "Archive Updates", "email", "archive-updates@example.net"},
-	{"support_vendor", "Vendor Support", "email", "support@vendor.example"},
-	{"noreply", "Service Notifications", "email", "no-reply@service.example"},
-	{"newsletter", "Weekly Digest", "email", "digest@news.example"},
-	{"slackbot", "Deploy Bot", "slack", "B0DEPLOY"},
+	{"riley", "Riley Stone", emailKind, "riley@newco.example"},
+	{"pat", "Pat Vendor", emailKind, "pat@vendor.example"},
+	{"background", "Archive Updates", emailKind, "archive-updates@example.net"},
+	{"support_vendor", "Vendor Support", emailKind, "support@vendor.example"},
+	{"noreply", "Service Notifications", emailKind, "no-reply@service.example"},
+	{"newsletter", "Weekly Digest", emailKind, "digest@news.example"},
+	{"slackbot", "Deploy Bot", slackSource, "B0DEPLOY"},
 	{"shortcode", "72345", "sms", "72345"},
-	{"canary", "Canary Q. Person", "email", "canary-addr-7f3a@canary.example"},
+	{"canary", "Canary Q. Person", emailKind, "canary-addr-7f3a@canary.example"},
 	{"filler_one", "Jamie Example", "phone", "+15550100106"},
 	{"filler_two", "Robin Example", "phone", "+15550100107"},
 }
@@ -61,7 +61,7 @@ func cast(ctx context.Context, b *builder) error {
 		var id int64
 		var err error
 		switch p.typ {
-		case "email":
+		case emailKind:
 			_, domain, _ := strings.Cut(p.value, "@")
 			id, err = b.st.EnsureParticipantContext(ctx, p.value, p.name, domain)
 		case "phone":
@@ -97,7 +97,7 @@ func cast(ctx context.Context, b *builder) error {
 		if s.family == "chat" {
 			address = b.m.Owner.Phone
 		}
-		if s.handle == "slack" {
+		if s.handle == slackSource {
 			address = "U0OWNER"
 		}
 		if err := b.st.AddAccountIdentityContext(ctx, b.source(s.handle), address, "profile"); err != nil {

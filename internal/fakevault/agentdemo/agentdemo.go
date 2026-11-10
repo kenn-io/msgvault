@@ -3,6 +3,7 @@ package agentdemo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,7 +30,7 @@ func GenerateDir(ctx context.Context, opts Options) (m *Manifest, err error) {
 		return nil, err
 	}
 	if opts.Dir == "" {
-		return nil, fmt.Errorf("agent-demo: output directory is required")
+		return nil, errors.New("agent-demo: output directory is required")
 	}
 	path := filepath.Join(opts.Dir, "msgvault.db")
 	if err = fakevault.CheckNewTarget(path); err != nil {

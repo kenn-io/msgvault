@@ -3,6 +3,7 @@ package agentdemo
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -17,14 +18,14 @@ type chatScope struct {
 }
 
 var chatScopes = []chatScope{
-	{"weekend_crew", "whatsapp", "group_chat", "whatsapp", "Weekend crew", "owner_phone", []string{"owner_phone", "sam_phone", "casey", "filler_one", "filler_two"}, 30, 8},
-	{"sam_signal_dm", "signal", "direct_chat", "beeper", "Sam Rivera", "owner_phone", []string{"owner_phone", "sam_phone"}, 20, 7},
-	{"sam_imessage_dm", "imessage", "direct_chat", "imessage", "Sam Rivera", "owner_phone", []string{"owner_phone", "sam_phone"}, 6, 2},
-	{"casey_sms", "imessage", "direct_chat", "sms", "Casey Nguyen", "owner_phone", []string{"owner_phone", "casey"}, 1, 0},
-	{"priya_slack_dm", "slack", "direct_chat", "slack", "Priya Shah", "owner_slack", []string{"owner_slack", "priya_slack"}, 1, 0},
-	{"slack_general", "slack", "channel", "slack", "general", "owner_slack", []string{"owner_slack", "priya_slack", "slackbot"}, 85, 0},
-	{"shortcode_sms", "imessage", "direct_chat", "sms", "72345", "owner_phone", []string{"owner_phone", "shortcode"}, 3, 0},
-	{"dinner_group", "imessage", "group_chat", "imessage", "Dinner plans", "owner_phone", []string{"owner_phone", "sam_phone", "casey"}, 6, 2},
+	{"weekend_crew", "whatsapp", "group_chat", "whatsapp", "Weekend crew", ownerPhoneHandle, []string{ownerPhoneHandle, "sam_phone", "casey", "filler_one", "filler_two"}, 30, 8},
+	{"sam_signal_dm", "signal", "direct_chat", "beeper", "Sam Rivera", ownerPhoneHandle, []string{ownerPhoneHandle, "sam_phone"}, 20, 7},
+	{"sam_imessage_dm", "imessage", "direct_chat", "imessage", "Sam Rivera", ownerPhoneHandle, []string{ownerPhoneHandle, "sam_phone"}, 6, 2},
+	{"casey_sms", "imessage", "direct_chat", "sms", "Casey Nguyen", ownerPhoneHandle, []string{ownerPhoneHandle, "casey"}, 1, 0},
+	{"priya_slack_dm", slackSource, "direct_chat", slackSource, "Priya Shah", "owner_slack", []string{"owner_slack", "priya_slack"}, 1, 0},
+	{"slack_general", slackSource, "channel", slackSource, "general", "owner_slack", []string{"owner_slack", "priya_slack", "slackbot"}, 85, 0},
+	{"shortcode_sms", "imessage", "direct_chat", "sms", "72345", ownerPhoneHandle, []string{ownerPhoneHandle, "shortcode"}, 3, 0},
+	{"dinner_group", "imessage", "group_chat", "imessage", "Dinner plans", ownerPhoneHandle, []string{ownerPhoneHandle, "sam_phone", "casey"}, 6, 2},
 }
 
 func (b *builder) persistChat(ctx context.Context, c chatScope, h, sender, body string, at time.Time) error {
@@ -60,7 +61,7 @@ func (b *builder) persistChat(ctx context.Context, c chatScope, h, sender, body 
 }
 func chats(ctx context.Context, b *builder) error {
 	automated := b.automatedMessages
-	for _, source := range []string{"whatsapp", "signal", "imessage", "slack"} {
+	for _, source := range []string{"whatsapp", "signal", "imessage", slackSource} {
 		run, err := b.st.StartSyncContext(ctx, b.source(source), "full")
 		if err != nil {
 			return err
@@ -69,7 +70,7 @@ func chats(ctx context.Context, b *builder) error {
 			if c.source != source {
 				continue
 			}
-			for i := 0; i < c.total-c.own; i++ {
+			for i := range c.total - c.own {
 				h := fmt.Sprintf("%s_in_%d", c.handle, i+1)
 				sender := c.members[1]
 				body := filler(b.opts.Seed, 1000+i)
@@ -146,11 +147,19 @@ func chats(ctx context.Context, b *builder) error {
 	a := b.m.Attachments["contract_v2"]
 	a.MessageHandles = append(a.MessageHandles, "priya_contract_share")
 	b.m.Attachments["contract_v2"] = a
-	b.m.Expect["awaiting_owner_reply"] = append(b.m.Expect["awaiting_owner_reply"].([]string), "sam_signal_question")
-	b.m.Expect["awaiting_their_reply"] = append(b.m.Expect["awaiting_their_reply"].([]string), "casey_sms_question")
+	ownerReply, ok := b.m.Expect["awaiting_owner_reply"].([]string)
+	if !ok {
+		return errors.New("missing email owner-reply expectations")
+	}
+	theirReply, ok := b.m.Expect["awaiting_their_reply"].([]string)
+	if !ok {
+		return errors.New("missing email awaiting-reply expectations")
+	}
+	b.m.Expect["awaiting_owner_reply"] = append(ownerReply, "sam_signal_question")
+	b.m.Expect["awaiting_their_reply"] = append(theirReply, "casey_sms_question")
 	b.m.Expect["automated_messages"] = automated
 	b.m.Expect["group_chat_questions_never_loops"] = []string{"weekend_crew_question"}
 	b.m.Expect["interrupted_sources"] = []string{"signal"}
-	b.m.Expect["persons_spanning_channels"] = map[string]any{"sam": []string{"email", "whatsapp", "signal", "imessage"}}
+	b.m.Expect["persons_spanning_channels"] = map[string]any{"sam": []string{emailKind, "whatsapp", "signal", "imessage"}}
 	return nil
 }

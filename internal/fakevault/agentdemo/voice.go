@@ -8,7 +8,7 @@ import (
 
 func voice(ctx context.Context, b *builder) error {
 	for _, c := range chatScopes {
-		for i := 0; i < c.own; i++ {
+		for i := range c.own {
 			prefix := c.handle
 			switch c.handle {
 			case "sam_signal_dm":
@@ -39,7 +39,7 @@ func voice(ctx context.Context, b *builder) error {
 		"sam_signal_dm":   map[string]any{"own_messages": 7, "scope_used": "conversation"},
 		"sam_imessage_dm": map[string]any{"own_messages": 2, "scope_used": "person", "first": []string{"sam_imessage_own_1", "sam_imessage_own_2"}},
 		"sam_trip_email":  map[string]any{"own_messages": 6, "scope_used": "conversation", "must_include": []string{"sam_trip_sent_from_draft"}, "must_exclude": []string{"sam_trip_unsent_draft"}, "quoted_text_excluded": true},
-		"person_sam":      map[string]any{"chat": []string{"sam_signal_dm", "sam_imessage_dm"}, "email": []string{"sam_trip_email"}, "never": []string{"weekend_crew", "dinner_group"}},
+		"person_sam":      map[string]any{"chat": []string{"sam_signal_dm", "sam_imessage_dm"}, emailKind: []string{"sam_trip_email"}, "never": []string{"weekend_crew", "dinner_group"}},
 	}
 	return nil
 }
