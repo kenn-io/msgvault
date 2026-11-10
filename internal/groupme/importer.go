@@ -69,6 +69,10 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 		}
 		cleanup := context.WithoutCancel(ctx)
 		retErr = errors.Join(retErr, st.ResolveDeferredMessageRepliesContext(cleanup, sourceID, MessageType, 500), st.RecomputeConversationStatsContext(cleanup, sourceID))
+		retErr = errors.Join(retErr, st.UpdateSyncCheckpointContext(cleanup, syncID, &store.Checkpoint{
+			MessagesProcessed: summary.MessagesAdded + summary.MessagesSkipped,
+			MessagesAdded:     summary.MessagesAdded,
+		}))
 		if retErr != nil {
 			retErr = errors.Join(retErr, st.FailSyncContext(cleanup, syncID, retErr.Error()))
 		} else {

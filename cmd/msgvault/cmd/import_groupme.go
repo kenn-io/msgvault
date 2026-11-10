@@ -32,8 +32,8 @@ msgvault does not infer ownership from which IDs occur.
 Messages, raw JSON, observed participants and supported local image/video media
 are copied into the archive. URLs are never fetched. System records and unsupported
 media are counted separately. Missing sender and timestamp values remain unknown.
-Re-running preserves first-imported evidence, adds missing messages and fills
-missing media slots. Interrupted imports can safely be repeated from the start.
+Re-running keeps existing messages and adds missing messages and media.
+Interrupted imports can safely restart.
 Export coverage depends on the conversations selected and GroupMe retention.
 
 Example:
