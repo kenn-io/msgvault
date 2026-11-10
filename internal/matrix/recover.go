@@ -2,7 +2,6 @@ package matrix
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"errors"
@@ -37,8 +36,8 @@ type decryptedEvent struct {
 }
 
 type rollbackCiphertext struct {
-	session id.SessionID
-	digest  [sha256.Size]byte
+	session    id.SessionID
+	ciphertext string
 }
 
 func rollbackCiphertextKey(evt *event.Event) (rollbackCiphertext, bool) {
@@ -50,7 +49,7 @@ func rollbackCiphertextKey(evt *event.Event) (rollbackCiphertext, bool) {
 	if err != nil {
 		return rollbackCiphertext{}, false
 	}
-	return rollbackCiphertext{content.SessionID, sha256.Sum256(raw)}, true
+	return rollbackCiphertext{content.SessionID, string(raw)}, true
 }
 
 func (imp *Importer) earlierRollbackCopies(ctx context.Context, sourceID, convID int64, roomID id.RoomID, candidates map[rollbackCiphertext]*event.Event) (map[rollbackCiphertext]*event.Event, error) {
@@ -63,9 +62,6 @@ func (imp *Importer) earlierRollbackCopies(ctx context.Context, sourceID, convID
 		}
 		after = page[len(page)-1].MessageID
 		for _, item := range page {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
 			evt, err := decodeArchivedEvent(item.Ciphertext)
 			if err != nil {
 				continue

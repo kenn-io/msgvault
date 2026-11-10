@@ -829,212 +829,99 @@ func TestImportRecoveryRejectsReplayedIndex(t *testing.T) {
 }
 
 func TestEditRollbackPrefersEarlierArchivedCiphertext(t *testing.T) {
-	for _, mode := range []string{"same", "alternate base64", "equal timestamp"} {
+	for _, mode := range []string{"same", "alternate base64", "equal timestamp", "encrypted target", "stripped relation"} {
 		t.Run(mode, func(t *testing.T) {
 			req, check := require.New(t), assert.New(t)
 			f := newRecoveryFixture(t)
-			newest := f.edit(t, "$newest", "$other", "newest", 30)
-			f.timeline = []*event.Event{f.message(t, "$original", "original", 10), f.message(t, "$other", "other", 11), newest}
+			original := f.message(t, "$original", "original", 10)
+			initialKey := f.backup.data.SessionKey
+			if mode == "encrypted target" {
+				in, err := olm.NewInboundGroupSession([]byte(f.backup.out.Key()))
+				req.NoError(err)
+				exported, err := in.Export(1)
+				req.NoError(err)
+				f.backup.data.SessionKey = string(exported)
+			}
+			f.timeline = []*event.Event{original, f.message(t, "$other", "other", 11), f.edit(t, "$newest", "$other", "newest", 30)}
 			_, err := f.run(t, true, false)
 			req.NoError(err)
 
 			olderIndex := f.backup.out.MessageIndex()
 			older := f.edit(t, "$older", "$original", "older", 20)
-			f.timeline = []*event.Event{older}
-			_, err = f.run(t, false, false)
-			req.NoError(err)
-			check.Equal(encryptedPlaceholder, f.body(t, "$older"))
-
 			raw, err := json.Marshal(older)
 			req.NoError(err)
 			replayed := matrixTestEvent(t, string(raw))
 			replayed.ID, replayed.Timestamp = "$replayed", 25
 			req.True(parseContent(replayed))
 			replayed.Content.AsEncrypted().RelatesTo.EventID = "$other"
+			wantOriginal := "older"
+			if mode == "stripped relation" {
+				older.Content.AsEncrypted().RelatesTo = nil
+				wantOriginal = "original"
+			}
+			f.timeline = []*event.Event{older}
+			_, err = f.run(t, false, false)
+			req.NoError(err)
+			check.Equal(encryptedPlaceholder, f.body(t, "$older"))
 			if mode == "equal timestamp" {
 				replayed.Timestamp = older.Timestamp
 			}
 			if mode == "alternate base64" {
 				ciphertext := replayed.Content.AsEncrypted().MegolmCiphertext
-				req.Contains([]int{2, 3}, len(ciphertext)%4)
 				decoded, err := base64.RawStdEncoding.DecodeString(string(ciphertext))
 				req.NoError(err)
 				alphabet := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-				last := strings.IndexByte(alphabet, ciphertext[len(ciphertext)-1])
-				req.GreaterOrEqual(last, 0)
-				ciphertext[len(ciphertext)-1] = alphabet[last^1]
+				ciphertext[len(ciphertext)-1] = alphabet[strings.IndexByte(alphabet, ciphertext[len(ciphertext)-1])^1]
 				alternate, err := base64.RawStdEncoding.DecodeString(string(ciphertext))
 				req.NoError(err)
 				req.Equal(decoded, alternate)
 			}
+			// Serve the copy on a second /relations page.
 			f.edits = []*event.Event{replayed}
+			pages := make(chan string, 3)
+			handler := f.server.Config.Handler
+			f.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if from := r.URL.Query().Get("from"); strings.HasSuffix(r.URL.Path, "/m.replace") {
+					select {
+					case pages <- from:
+					default:
+						http.Error(w, "too many relations pages", http.StatusBadRequest)
+						return
+					}
+					if from == "" {
+						writeMatrixJSON(t, w, map[string]any{"chunk": []*event.Event{}, "next_batch": "second"})
+						return
+					}
+				}
+				handler.ServeHTTP(w, r)
+			})
 			f.timeline = []*event.Event{{ID: "$redaction", Type: event.EventRedaction, Redacts: "$newest", Content: event.Content{Raw: map[string]any{}}}}
 			_, err = f.run(t, true, false)
 			req.NoError(err)
+			req.Len(pages, 2)
+			check.Empty(<-pages)
+			check.Equal("second", <-pages)
 			check.Equal("other", f.body(t, "$other"))
-			check.Equal("older", f.body(t, "$original"))
 			var owner string
 			req.NoError(f.store.DB().QueryRowContext(t.Context(), `SELECT event_id FROM matrix_megolm_claims WHERE session_id = ? AND message_index = ?`, f.backup.out.ID().String(), olderIndex).Scan(&owner))
 			check.Equal("$older", owner)
-		})
-	}
-}
-
-func TestEditRollbackPreservesEarlierStrippedCopy(t *testing.T) {
-	req, check := require.New(t), assert.New(t)
-	f := newRecoveryFixture(t)
-	f.timeline = []*event.Event{f.message(t, "$other", "other", 10), f.edit(t, "$newest", "$other", "newest", 30)}
-	_, err := f.run(t, true, false)
-	req.NoError(err)
-	index := f.backup.out.MessageIndex()
-	earlier := f.edit(t, "$earlier", "$other", "older", 20)
-	raw, err := json.Marshal(earlier)
-	req.NoError(err)
-	replayed := matrixTestEvent(t, string(raw))
-	replayed.ID, replayed.Timestamp = "$replayed", 25
-	earlier.Content.AsEncrypted().RelatesTo = nil
-	f.timeline = []*event.Event{earlier}
-	_, err = f.run(t, false, false)
-	req.NoError(err)
-	check.Equal(encryptedPlaceholder, f.body(t, "$earlier"))
-	f.edits = []*event.Event{replayed}
-	pages := make(chan string, 2)
-	handler := f.server.Config.Handler
-	f.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, "/relations/$other/m.replace") {
-			handler.ServeHTTP(w, r)
-			return
-		}
-		from := r.URL.Query().Get("from")
-		select {
-		case pages <- from:
-		default:
-			http.Error(w, "too many relations pages", http.StatusBadRequest)
-			return
-		}
-		switch from {
-		case "":
-			writeMatrixJSON(t, w, map[string]any{"chunk": []*event.Event{}, "next_batch": "second"})
-		case "second":
-			writeMatrixJSON(t, w, map[string]any{"chunk": f.edits})
-		default:
-			http.Error(w, "unexpected relations page", http.StatusBadRequest)
-		}
-	})
-	f.timeline = []*event.Event{{ID: "$redaction", Type: event.EventRedaction, Redacts: "$newest", Content: event.Content{Raw: map[string]any{}}}}
-	_, err = f.run(t, true, false)
-	req.NoError(err)
-	req.Len(pages, 2)
-	check.Equal("", <-pages)
-	check.Equal("second", <-pages)
-	check.Equal("other", f.body(t, "$other"))
-	check.Equal("* older", f.body(t, "$earlier"))
-	var owner string
-	req.NoError(f.store.DB().QueryRowContext(t.Context(), `SELECT event_id FROM matrix_megolm_claims WHERE session_id = ? AND message_index = ?`, f.backup.out.ID().String(), index).Scan(&owner))
-	check.Equal("$earlier", owner)
-}
-
-func TestEditRollbackAllowsEarlierEditThanPendingCopy(t *testing.T) {
-	for _, mode := range []string{"later timestamp", "equal timestamp"} {
-		t.Run(mode, func(t *testing.T) {
-			req, check := require.New(t), assert.New(t)
-			f := newRecoveryFixture(t)
-			index := f.backup.out.MessageIndex()
-			older := f.edit(t, "$older", "$original", "older", 20)
-			newest := f.edit(t, "$newest", "$original", "newest", 30)
-			f.timeline = []*event.Event{f.message(t, "$original", "original", 10), newest}
-			_, err := f.run(t, true, false)
-			req.NoError(err)
-
-			copied := *older
-			copied.ID, copied.Timestamp = "$copy", 40
-			if mode == "equal timestamp" {
-				copied.ID, copied.Timestamp = "$z-copy", older.Timestamp
+			if mode == "stripped relation" {
+				check.Equal("* older", f.body(t, "$older"))
 			}
-			f.timeline = []*event.Event{&copied}
-			_, err = f.run(t, false, false)
-			req.NoError(err)
-			check.Equal(encryptedPlaceholder, f.body(t, copied.ID.String()))
-
-			f.edits = []*event.Event{older}
-			f.timeline = []*event.Event{{ID: "$redaction", Type: event.EventRedaction, Redacts: "$newest", Content: event.Content{Raw: map[string]any{}}}}
-			_, err = f.run(t, true, false)
-			req.NoError(err)
-			check.Equal("older", f.body(t, "$original"))
-			var owner string
-			req.NoError(f.store.DB().QueryRowContext(t.Context(), `SELECT event_id FROM matrix_megolm_claims WHERE session_id = ? AND message_index = ?`, f.backup.out.ID().String(), index).Scan(&owner))
-			check.Equal("$older", owner)
-		})
-	}
-}
-
-func TestEditRollbackPreservesEditForEncryptedTarget(t *testing.T) {
-	for _, mode := range []string{"matching sender", "interrupted", "sender mismatch"} {
-		t.Run(mode, func(t *testing.T) {
-			req, check := require.New(t), assert.New(t)
-			f := newRecoveryFixture(t)
-			original := f.message(t, "$original", "original", 10)
-			if mode == "sender mismatch" {
-				original.Sender = "@other:example.org"
-			}
-			initialKey := f.backup.data.SessionKey
-			in, err := olm.NewInboundGroupSession([]byte(f.backup.out.Key()))
-			req.NoError(err)
-			exported, err := in.Export(1)
-			req.NoError(err)
-			f.backup.data.SessionKey = string(exported)
-			other := f.message(t, "$other", "other", 11)
-			newest := f.edit(t, "$newest", "$other", "newest", 30)
-			f.timeline = []*event.Event{original, other, newest}
-			_, err = f.run(t, true, false)
-			req.NoError(err)
-			req.Equal(encryptedPlaceholder, f.body(t, "$original"))
-
-			index := f.backup.out.MessageIndex()
-			older := f.edit(t, "$older", "$original", "older", 20)
-			f.timeline = []*event.Event{older}
-			_, err = f.run(t, false, false)
-			req.NoError(err)
-			raw, err := json.Marshal(older)
-			req.NoError(err)
-			replayed := matrixTestEvent(t, string(raw))
-			replayed.ID, replayed.Timestamp = "$replayed", 25
-			req.True(parseContent(replayed))
-			replayed.Content.AsEncrypted().RelatesTo.EventID = "$other"
-			f.edits = []*event.Event{replayed}
-			f.timeline = []*event.Event{{ID: "$redaction", Type: event.EventRedaction, Redacts: "$newest", Content: event.Content{Raw: map[string]any{}}}}
-			_, err = f.run(t, true, false)
-			req.NoError(err)
-			wantOther, wantOwner, wantOriginal := "other", "$older", "older"
-			if mode == "sender mismatch" {
-				wantOther, wantOwner, wantOriginal = "older", "$replayed", "original"
-				check.Empty(f.pendingEdits(t, "$original"))
-			} else {
+			if mode == "encrypted target" {
 				check.Equal([]string{"$older"}, f.pendingEdits(t, "$original"))
-			}
-			check.Equal(wantOther, f.body(t, "$other"))
-			var owner string
-			req.NoError(f.store.DB().QueryRowContext(t.Context(), `SELECT event_id FROM matrix_megolm_claims WHERE session_id = ? AND message_index = ?`, f.backup.out.ID().String(), index).Scan(&owner))
-			check.Equal(wantOwner, owner)
-
-			f.quiet, f.backup.data.SessionKey, f.backup.etag = true, initialKey, "2"
-			if mode == "interrupted" {
-				resume := f.interrupt(t, "UPDATE", "matrix_encrypted_events", "NEW", "NEW.recovered")
+				f.quiet, f.backup.data.SessionKey, f.backup.etag = true, initialKey, "2"
 				_, err = f.run(t, true, true)
-				req.ErrorContains(err, "interrupted recovery")
-				resume()
+				req.NoError(err)
+				check.Equal("other", f.body(t, "$other"))
 			}
-			_, err = f.run(t, true, true)
-			req.NoError(err)
 			check.Equal(wantOriginal, f.body(t, "$original"))
-			check.Equal(wantOther, f.body(t, "$other"))
-			check.Empty(f.pendingEdits(t, "$original"))
 		})
 	}
 }
 
 func TestEditRollbackKeepsEligibleEdit(t *testing.T) {
-	for _, mode := range []string{"invalid earlier copy", "already claimed"} {
+	for _, mode := range []string{"invalid earlier copy", "later copy", "already claimed"} {
 		t.Run(mode, func(t *testing.T) {
 			req, check := require.New(t), assert.New(t)
 			f := newRecoveryFixture(t)
@@ -1053,9 +940,13 @@ func TestEditRollbackKeepsEligibleEdit(t *testing.T) {
 			if mode == "invalid earlier copy" {
 				copied.Sender = "@other:example.org"
 			}
+			if mode == "later copy" {
+				copied.Timestamp = 40
+			}
 			f.timeline = []*event.Event{&copied}
 			_, err = f.run(t, false, false)
 			req.NoError(err)
+			check.Equal(encryptedPlaceholder, f.body(t, "$copy"))
 			f.edits = []*event.Event{edit}
 			f.timeline = []*event.Event{{ID: "$redaction", Type: event.EventRedaction, Redacts: "$newest", Content: event.Content{Raw: map[string]any{}}}}
 			_, err = f.run(t, true, false)

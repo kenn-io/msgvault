@@ -1108,11 +1108,10 @@ func (imp *Importer) restoreAfterEditRedaction(ctx context.Context, sourceID int
 			return fmt.Errorf("list Matrix edits of %s: %w", original.ID, err)
 		}
 		type candidate struct {
-			event          *event.Event
-			content        *event.MessageEventContent
-			claim          *megolmIndex
-			conversationID int64
-			ciphertext     rollbackCiphertext
+			event      *event.Event
+			content    *event.MessageEventContent
+			claim      *megolmIndex
+			ciphertext rollbackCiphertext
 		}
 		var prepared []candidate
 		candidates := make(map[rollbackCiphertext]*event.Event)
@@ -1159,7 +1158,7 @@ func (imp *Importer) restoreAfterEditRedaction(ctx context.Context, sourceID int
 					}
 				}
 			}
-			prepared = append(prepared, candidate{edit, content, claim, conversationID, ciphertext})
+			prepared = append(prepared, candidate{edit, content, claim, ciphertext})
 		}
 		owners, err := imp.earlierRollbackCopies(ctx, sourceID, conversationID, roomID, candidates)
 		if err != nil {
@@ -1169,15 +1168,9 @@ func (imp *Importer) restoreAfterEditRedaction(ctx context.Context, sourceID int
 			edit, content := item.event, item.content
 			if item.claim != nil {
 				if first := owners[item.ciphertext]; first != nil && compareRelations(first, edit) < 0 {
-					holder, err := imp.store.MatrixMegolmClaim(ctx, item.conversationID, item.claim.session.String(), item.claim.index)
-					if err != nil {
-						return err
-					}
-					if holder == "" {
-						continue
-					}
+					continue
 				}
-				allowed, err := imp.claim(ctx, item.conversationID, *item.claim, edit.ID)
+				allowed, err := imp.claim(ctx, conversationID, *item.claim, edit.ID)
 				if err != nil {
 					return err
 				}
