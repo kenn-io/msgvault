@@ -46,13 +46,8 @@ function arg(value: string, shell: 'posix' | 'cmd'): string {
   return /^[A-Za-z0-9@._+:/-]+$/.test(value) ? value : shellQuote(value, shell);
 }
 
-function validImapServer(host: string): boolean {
-  return !/^-|\s/.test(host) && (!host.includes(':') || URL.canParse(`http://[${host.replace(/^\[(.*)\]$/, '$1').replace(/%[^\[\]]+$/, '')}]`));
-}
-
 export function addSourceCommand(kind: CommandSourceKind, values: Record<string, string>, shell: 'posix' | 'cmd'): string | undefined {
-  const value = (id: string) => (id === 'username' ? values[id] : values[id]?.trim());
+  const value = (id: string) => values[id]?.trim();
   if (kind.fields.some(field => !value(field.id))) return undefined;
-  if (kind.id === 'imap' && !validImapServer(value('host')!)) return undefined;
   return kind.template.replace(/\{(\w+)\}/g, (_, id: string) => arg(value(id)!, shell));
 }
