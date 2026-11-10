@@ -99,68 +99,70 @@ func TestWhatsAppTextCommand(t *testing.T) {
 }
 
 func TestWhatsAppTextCommandPreflightArchive(t *testing.T) {
-	for _, subprocess := range []bool{false, true} {
-		for _, existing := range []bool{false, true} {
-			t.Run(fmt.Sprintf("subprocess=%t/existing=%t", subprocess, existing), func(t *testing.T) {
-				assert, require := assert.New(t), require.New(t)
-				if subprocess {
-					markDaemonCLISubprocessForTest(t)
-				} else {
-					t.Setenv(daemonCLISubprocessEnv, "")
-				}
-				cfg := config.NewDefaultConfig()
-				cfg.HomeDir = t.TempDir()
-				cfg.Data.DataDir = cfg.HomeDir
-				if existing {
+	for _, boundary := range []string{"13 Jun 2026, noon - Ivo: two", "13/6/26 10:01 - Messages are encrypted"} {
+		for _, subprocess := range []bool{false, true} {
+			for _, existing := range []bool{false, true} {
+				t.Run(fmt.Sprintf("boundary=%s/subprocess=%t/existing=%t", boundary, subprocess, existing), func(t *testing.T) {
+					assert, require := assert.New(t), require.New(t)
+					if subprocess {
+						markDaemonCLISubprocessForTest(t)
+					} else {
+						t.Setenv(daemonCLISubprocessEnv, "")
+					}
+					cfg := config.NewDefaultConfig()
+					cfg.HomeDir = t.TempDir()
+					cfg.Data.DataDir = cfg.HomeDir
+					if existing {
+						st, err := store.Open(cfg.DatabaseDSN())
+						require.NoError(err)
+						require.NoError(st.InitSchemaContext(t.Context()))
+						opts := whatsapp.TextOptions{Phone: "+12025550123", ChatID: "garden", ChatType: "group", DateOrder: "dmy", Timezone: "UTC"}
+						seed := filepath.Join(t.TempDir(), "seed.txt")
+						for _, content := range []string{"13/6/26, 10:00 - Mira: one\n", "13/6/26, 10:00 - Mira: one\n13/6/26, 10:01 - Ivo: two\n"} {
+							require.NoError(os.WriteFile(seed, []byte(content), 0600))
+							input, err := whatsapp.LoadText(t.Context(), seed, opts)
+							require.NoError(err)
+							_, err = whatsapp.NewImporter(st, nil).ImportText(t.Context(), input)
+							require.NoError(err)
+						}
+						require.NoError(st.Close())
+					}
+					path := filepath.Join(t.TempDir(), "chat.txt")
+					require.NoError(os.WriteFile(path, []byte("13/6/26, 10:00 - Mira: one\n"+boundary+"\n"), 0600))
+					command := &cobra.Command{Use: "test"}
+					command.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+					command.AddCommand(newImportWhatsAppCmd())
+					var out bytes.Buffer
+					command.SetOut(&out)
+					command.SetErr(&out)
+					command.SetArgs([]string{"import-whatsapp", path, "--format", "text", "--phone", "+12025550123", "--chat-id", "garden", "--chat-type", "group", "--timezone", "UTC", "--date-order", "dmy"})
+					require.ErrorContains(command.Execute(), "line 2: unsupported or malformed TXT header")
+					assert.NotContains(out.String(), "Import complete:")
+					assert.NotContains(out.String(), "Import incomplete:")
+					if !existing {
+						_, err := os.Stat(cfg.DatabaseDSN())
+						assert.True(os.IsNotExist(err))
+						return
+					}
 					st, err := store.Open(cfg.DatabaseDSN())
 					require.NoError(err)
-					require.NoError(st.InitSchemaContext(t.Context()))
-					opts := whatsapp.TextOptions{Phone: "+12025550123", ChatID: "garden", ChatType: "group", DateOrder: "dmy", Timezone: "UTC"}
-					seed := filepath.Join(t.TempDir(), "seed.txt")
-					for _, content := range []string{"13/6/26, 10:00 - Mira: one\n", "13/6/26, 10:00 - Mira: one\n13/6/26, 10:01 - Ivo: two\n"} {
-						require.NoError(os.WriteFile(seed, []byte(content), 0600))
-						input, err := whatsapp.LoadText(t.Context(), seed, opts)
-						require.NoError(err)
-						_, err = whatsapp.NewImporter(st, nil).ImportText(t.Context(), input)
-						require.NoError(err)
+					defer func() { assert.NoError(st.Close()) }()
+					var sources, conversations, messages, bodies, syncs int
+					require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT (SELECT COUNT(*) FROM sources), (SELECT COUNT(*) FROM conversations), (SELECT COUNT(*) FROM messages), (SELECT COUNT(*) FROM message_bodies), (SELECT COUNT(*) FROM sync_runs)").Scan(&sources, &conversations, &messages, &bodies, &syncs))
+					assert.Equal([]int{1, 1, 2, 2, 2}, []int{sources, conversations, messages, bodies, syncs})
+					rows, err := st.DB().QueryContext(t.Context(), "SELECT body_text FROM message_bodies ORDER BY message_id")
+					require.NoError(err)
+					defer func() { assert.NoError(rows.Close()) }()
+					var texts []string
+					for rows.Next() {
+						var body string
+						require.NoError(rows.Scan(&body))
+						texts = append(texts, body)
 					}
-					require.NoError(st.Close())
-				}
-				path := filepath.Join(t.TempDir(), "chat.txt")
-				require.NoError(os.WriteFile(path, []byte("13/6/26, 10:00 - Mira: one\n13 Jun 2026, noon - Ivo: two\n"), 0600))
-				command := &cobra.Command{Use: "test"}
-				command.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
-				command.AddCommand(newImportWhatsAppCmd())
-				var out bytes.Buffer
-				command.SetOut(&out)
-				command.SetErr(&out)
-				command.SetArgs([]string{"import-whatsapp", path, "--format", "text", "--phone", "+12025550123", "--chat-id", "garden", "--chat-type", "group", "--timezone", "UTC", "--date-order", "dmy"})
-				require.ErrorContains(command.Execute(), "line 2: unsupported or malformed TXT header")
-				assert.NotContains(out.String(), "Import complete:")
-				assert.NotContains(out.String(), "Import incomplete:")
-				if !existing {
-					_, err := os.Stat(cfg.DatabaseDSN())
-					assert.True(os.IsNotExist(err))
-					return
-				}
-				st, err := store.Open(cfg.DatabaseDSN())
-				require.NoError(err)
-				defer func() { assert.NoError(st.Close()) }()
-				var sources, conversations, messages, bodies, syncs int
-				require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT (SELECT COUNT(*) FROM sources), (SELECT COUNT(*) FROM conversations), (SELECT COUNT(*) FROM messages), (SELECT COUNT(*) FROM message_bodies), (SELECT COUNT(*) FROM sync_runs)").Scan(&sources, &conversations, &messages, &bodies, &syncs))
-				assert.Equal([]int{1, 1, 2, 2, 2}, []int{sources, conversations, messages, bodies, syncs})
-				rows, err := st.DB().QueryContext(t.Context(), "SELECT body_text FROM message_bodies ORDER BY message_id")
-				require.NoError(err)
-				defer func() { assert.NoError(rows.Close()) }()
-				var texts []string
-				for rows.Next() {
-					var body string
-					require.NoError(rows.Scan(&body))
-					texts = append(texts, body)
-				}
-				require.NoError(rows.Err())
-				assert.Equal([]string{"one", "two"}, texts)
-			})
+					require.NoError(rows.Err())
+					assert.Equal([]string{"one", "two"}, texts)
+				})
+			}
 		}
 	}
 }

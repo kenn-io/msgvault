@@ -92,13 +92,12 @@ or a.m./p.m. Normal, no-break and narrow no-break spaces before AM/PM are
 supported. UTF-8 BOM, CRLF and leading directional marks are accepted.
 Multiline bodies and blank lines are retained. A line that looks like a full
 supported header starts another record even if it was originally message text.
-Other lines fail if they begin with a bracketed prefix followed by text, a
-comma-bearing prefix followed by a spaced dash and text, or a prefix followed
-by a spaced dash and a `sender:` label. Unicode spaces and dashes count for
-these checks. This also rejects message text such as `[todo] buy seeds` and
-`Reminder, noon - Ivo: bring seeds`. Unfamiliar headers outside these patterns
-can be retained as continuation text. Invalid UTF-8, a preamble, or input over
-128 MiB, 250,000 records or 1 MiB per record also fail before archive writes.
+Other lines fail if they begin with `[` or contain a spaced dash between
+nonempty text. Unicode spaces and dash punctuation count. This rejects message
+text such as `[todo] buy seeds` or `Well - see you then`. Ordinary text such
+as `Meet at 10:01` or `£3.50` stays in the body. An unfamiliar header without
+either shape can remain continuation text. Invalid UTF-8, a preamble, or input
+over 128 MiB, 250,000 records or 1 MiB per record also fail before archive writes.
 
 `--timezone` must name a concrete IANA zone or UTC. It and `--date-order` are
 caller assumptions, not original exported timezone evidence. Raw timestamps,

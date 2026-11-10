@@ -22,7 +22,7 @@ import (
 var textHeader = regexp.MustCompile(`^(\[?)([0-9]{1,4}[/.-][0-9]{1,2}[/.-][0-9]{1,4}), ([0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?(?:[ \x{00a0}\x{202f}]+(?:[AaPp][Mm]|[AaPp]\. ?[Mm]\.))?)(\] | - )(.*)$`)
 
 // Record-shaped continuation lines cannot be distinguished from unfamiliar headers.
-var textDateStart = regexp.MustCompile(`^(?:\[[^\]\r\n]+\][\s\p{Z}]*\S|[^,\r\n]+,[^\r\n]*[\s\p{Z}]+[-\p{Pd}][\s\p{Z}]+\S|[^\r\n]+[\s\p{Z}]+[-\p{Pd}][\s\p{Z}]+[^:\r\n]+:)`)
+var textDateStart = regexp.MustCompile(`^(?:\[|[^\r\n]*\S[\s\p{Z}]+[-\p{Pd}][\s\p{Z}]+\S)`)
 var textNotice = regexp.MustCompile(`^(?:Messages and calls are end-to-end encrypted$|Messages to this chat and calls are now secured with end-to-end encryption$|.+ changed (?:the group (?:description|name|icon)|the subject)(?:$| )|.+ created group "|You created (?:group|this group)(?:$| ))`)
 
 func textLocation(order, zone string) (*time.Location, error) {

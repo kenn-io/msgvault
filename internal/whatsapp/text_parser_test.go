@@ -78,6 +78,11 @@ func TestTextParserRejects(t *testing.T) {
 		name, text, order, zone, want string
 		limits                        textLimits
 	}{
+		{"senderless-no-comma", "13/6/26, 10:00 - Mira: yes\n13/6/26 10:01 - Messages are encrypted", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
+		{"date-prose-dash", "13/6/26, 10:00 - Mira: yes\n2026-06-14 deadline - water", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
+		{"indented-dash", "13/6/26, 10:00 - Mira: yes\n  Well - see you then", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
+		{"ordinary-dash", "13/6/26, 10:00 - Mira: yes\nWell - see you then", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
+		{"opening-bracket", "13/6/26, 10:00 - Mira: yes\n[unfinished", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
 		{"named-month-noon", "13/6/26, 10:00 - Mira: yes\n13 Jun 2026, noon - Ivo: two", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
 		{"day-month", "13/6/26, 10:00 - Mira: yes\n13 Jun 2026, 10:01 - Ivo: no", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
 		{"bracketed-no-space", "13/6/26, 10:00 - Mira: yes\n[13 Jun noon]Ivo: two", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
@@ -128,7 +133,7 @@ func TestTextParserOriginalByteDigest(t *testing.T) {
 }
 
 func TestTextParserNumericContinuation(t *testing.T) {
-	for _, line := range []string{"1/2 cup", "2026-06-14 deadline", "2026-06-14 deadline - water", "Meet at 10:01", "The price is £3.50", "١٠:٠١"} {
+	for _, line := range []string{"1/2 cup", "2026-06-14 deadline", "Meet at 10:01", "The price is £3.50", "١٠:٠١"} {
 		t.Run(line, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			rows, _, err := parseTextForTest(t.Context(), strings.NewReader("13/6/26, 10:00 - Mira: shopping\n"+line), "dmy", "UTC", textLimitsDefault)
