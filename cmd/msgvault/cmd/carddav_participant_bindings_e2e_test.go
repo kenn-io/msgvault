@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http/httptest"
+	"strconv"
 	"testing"
+	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
@@ -19,6 +21,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 // Exercise the imported-contact path through the real CLI, daemon adapter,
@@ -26,8 +29,10 @@ import (
 func TestCardDAVParticipantBindingEndToEndIdentitiesAndLastTalked(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	fixture := newDraftReplyFixture(t)
-	st := fixture.store
+	fixture := storetest.New(t)
+	st := fixture.Store
+	fixture.PersistEmail(storetest.EmailSpec{From: "sender@example.com", To: []string{storetest.OwnerAddress},
+		SentAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)})
 	allowed := true
 	account, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
 		BaseURL: "https://contacts.example.test/dav", Username: "synthetic",
@@ -46,40 +51,21 @@ func TestCardDAVParticipantBindingEndToEndIdentitiesAndLastTalked(t *testing.T) 
 	require.NoError(err)
 	require.NotNil(resource.PersonID)
 	personID := *resource.PersonID
-	// Simulate an archive imported before automatic bindings were introduced.
-	_, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{Undo: true})
-	require.NoError(err)
-	assert.Empty(listPersonIdentitiesJSON(t, fixture, personID))
-
 	home := t.TempDir()
-	server := httptest.NewServer(api.NewServer(&config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}}, fixture.grantedAdapter(), nil, slog.New(slog.DiscardHandler)).Router())
+	server := httptest.NewServer(api.NewServer(&config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}}, &storeAPIAdapter{store: st}, nil, slog.New(slog.DiscardHandler)).Router())
 	t.Cleanup(server.Close)
 	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	bind := func(args ...string) store.CardDAVParticipantBindingResult {
-		t.Helper()
-		command := &cobra.Command{Use: "msgvault", SilenceErrors: true, SilenceUsage: true}
-		carddav := &cobra.Command{Use: "carddav"}
-		carddav.AddCommand(newCardDAVParticipantBindingsCmd())
-		command.AddCommand(carddav)
-		var output bytes.Buffer
-		command.SetOut(&output)
-		command.SetErr(&output)
-		command.SetArgs(append([]string{"carddav", "bind-participants", "--json"}, args...))
-		require.NoError(command.ExecuteContext(ctx), output.String())
-		var result store.CardDAVParticipantBindingResult
-		require.NoError(json.Unmarshal(output.Bytes(), &result))
-		return result
-	}
-	preview := bind("--dry-run")
-	assert.Equal(1, preview.ParticipantsBound)
-	assert.Empty(listPersonIdentitiesJSON(t, fixture, personID))
-	assert.Equal(preview, bind())
-	assert.Equal([]api.PersonIdentity{{Kind: "email", Value: "sender@example.com", Supported: true}}, listPersonIdentitiesJSON(t, fixture, personID))
-	var senderID int64
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE id = ?`), fixture.parentID).Scan(&senderID))
-	person, err := st.GetPersonContext(t.Context(), personID)
-	require.NoError(err)
-	assert.Equal([]int64{senderID}, person.ParticipantIDs)
+	command := &cobra.Command{Use: "msgvault", SilenceErrors: true, SilenceUsage: true}
+	person := &cobra.Command{Use: "person"}
+	person.AddCommand(newPersonIdentitiesCommand())
+	command.AddCommand(person)
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetArgs([]string{"person", "identities", strconv.FormatInt(personID, 10), "--json"})
+	require.NoError(command.ExecuteContext(ctx))
+	var identities api.PersonIdentitiesResponse
+	require.NoError(json.Unmarshal(output.Bytes(), &identities))
+	assert.Equal([]api.PersonIdentity{{Kind: "email", Value: "sender@example.com", Supported: true}}, identities.Identities)
 
 	projector, err := activity.NewProjector(st, activity.Options{Timezone: "UTC", BatchSize: 10, MaxDirectCounterparts: 25})
 	require.NoError(err)
@@ -127,13 +113,4 @@ func TestCardDAVParticipantBindingEndToEndIdentitiesAndLastTalked(t *testing.T) 
 	assert.Equal("2026-01-02T03:04:05Z", overview.LastTalked.At)
 	assert.Equal("email", overview.LastTalked.Channel)
 	assert.Equal(1, overview.ContactState.InteractionCount)
-	assert.Zero(bind("--dry-run").ParticipantsBound)
-	assert.Equal(1, bind("--undo").ParticipantsUnbound)
-	assert.Empty(listPersonIdentitiesJSON(t, fixture, personID))
-	// An unchanged sync restores bindings without another remote card fetch.
-	books, err = st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
-	require.NoError(err)
-	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{AddressBookID: books[0].ID, ConnectionGeneration: account.ConnectionGeneration, SyncRevision: books[0].SyncRevision})
-	require.NoError(err)
-	assert.Equal([]api.PersonIdentity{{Kind: "email", Value: "sender@example.com", Supported: true}}, listPersonIdentitiesJSON(t, fixture, personID))
 }

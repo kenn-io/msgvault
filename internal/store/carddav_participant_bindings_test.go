@@ -554,6 +554,28 @@ func TestCardDAVParticipantBindingActiveMergeAllowsIndependentMembership(t *test
 	assert.Zero(noop.Conflicts)
 	assert.Zero(noop.ParticipantsBound)
 
+	// Model a retained link whose alias has not received person membership yet.
+	// LinkParticipants would confirm and bind it immediately, bypassing this guard.
+	alias, err := st.EnsureParticipant("journal-alias@example.test", "Journal Alias", "example.test")
+	require.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO participant_links (participant_a, participant_b) VALUES (?, ?)`), a, alias)
+	require.NoError(err)
+	preview, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{DryRun: true})
+	require.NoError(err)
+	require.Len(preview.ConflictDetails, 1)
+	assert.Equal("active_merge", preview.ConflictDetails[0].Reason)
+	assert.Equal([]int64{merged.Person.ID}, preview.ConflictDetails[0].PersonIDs)
+	assert.Equal(1, preview.Conflicts)
+	assert.Zero(preview.ParticipantsBound)
+	result, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
+	require.NoError(err)
+	assert.Equal(preview, result)
+	unbound, err = st.PersonForParticipantsContext(t.Context(), []int64{alias})
+	require.NoError(err)
+	assert.Nil(unbound)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM participant_links WHERE participant_a = ? AND participant_b = ?`), a, alias)
+	require.NoError(err)
+
 	split, err := st.SplitPersonMergeContext(t.Context(), store.PersonSplitRequest{
 		SourcePersonID: merged.Person.ID, MergeID: merged.Merge.ID, ParticipantIDs: []int64{b},
 		ExpectedSourceRevision: current.Revision, IdempotencyKey: "carddav-active-merge-split", Actor: "test",
@@ -988,8 +1010,9 @@ func TestCardDAVParticipantBindingExcludesConfirmedOwnComponents(t *testing.T) {
 				card.Emails = nil
 				card.Phones = []string{identity}
 			} else if kind == "linked_alias" {
-				alias, err := st.EnsureParticipant("alias@example.test", "Alias Example", "example.test")
+				alias, err := st.EnsureParticipantByIdentifier("email", "alias@example.test", "")
 				require.NoError(err)
+				// Only the identifier table carries this confirmed address.
 				_, err = st.LinkParticipants(participant, alias)
 				require.NoError(err)
 				identity = "alias@example.test"
@@ -1024,6 +1047,7 @@ func TestCardDAVParticipantBindingExcludesConfirmedOwnComponents(t *testing.T) {
 			result, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
 			require.NoError(err)
 			assert.Zero(result.ParticipantsUnbound, "explicit own-identity memberships stay manual")
+			assert.Zero(result.Conflicts)
 			assert.False(bindingOwned(t, st, participant))
 		})
 	}
