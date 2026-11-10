@@ -64,7 +64,7 @@ func newDiagnoseAcquisitionCmd() *cobra.Command {
 				return nil
 			}
 			for _, item := range active {
-				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", item.SourceMessageID, item.Phase, item.ErrorKind); err != nil {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", item.SourceMessageID, msgsync.AcquisitionFailureDescription(item.ErrorKind)); err != nil {
 					return fmt.Errorf("write acquisition diagnostic: %w", err)
 				}
 			}

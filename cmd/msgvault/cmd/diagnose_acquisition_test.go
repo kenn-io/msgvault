@@ -21,7 +21,7 @@ func TestDiagnoseAcquisitionCommand(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		pending bool
-	}{{"empty", false}, {"legacy", true}, {"local", true}, {"logging", false}} {
+	}{{"empty", false}, {"legacy", true}, {"local", true}, {"logging", false}, {"text", true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -58,6 +58,17 @@ func TestDiagnoseAcquisitionCommand(t *testing.T) {
 				} {
 					require.NoError(st.RecordSyncRunItem(item))
 				}
+				if tc.name == "text" {
+					for _, item := range []store.SyncRunItem{
+						{SyncRunID: run, SourceMessageID: "batch", Phase: "fetch", Status: "error", ErrorKind: "batch_fetch_error"},
+						{SyncRunID: run, SourceMessageID: "ingest", Phase: "ingest", Status: "error", ErrorKind: "ingest_error"},
+						{SyncRunID: run, SourceMessageID: "attachment", Phase: "ingest", Status: "error", ErrorKind: "attachment_error"},
+						{SyncRunID: run, SourceMessageID: "image", Phase: "ingest", Status: "error", ErrorKind: "remote_image_error"},
+						{SyncRunID: run, SourceMessageID: "both", Phase: "ingest", Status: "error", ErrorKind: "attachment_remote_image_error"},
+					} {
+						require.NoError(st.RecordSyncRunItem(item))
+					}
+				}
 				require.NoError(st.FailSync(run, "interrupted"))
 			}
 			require.NoError(st.Close())
@@ -80,7 +91,7 @@ func TestDiagnoseAcquisitionCommand(t *testing.T) {
 			if tc.name == "local" {
 				args = append(args, "--local")
 			}
-			if tc.pending {
+			if tc.pending && tc.name != "text" {
 				args = append(args, "--json")
 			}
 			logPath := filepath.Join(dir, "diagnostic.log")
@@ -98,7 +109,9 @@ func TestDiagnoseAcquisitionCommand(t *testing.T) {
 				require.NoError(err)
 				assert.Equal(archiveBefore, archiveAfter)
 			}
-			if tc.pending {
+			if tc.name == "text" {
+				assert.Equal("pending\tmessage download failed\nbatch\tmessage download failed\ningest\tmessage processing failed\nattachment\tattachment saving failed\nimage\tremote image saving failed\nboth\tattachment and remote image saving failed\n", output.String())
+			} else if tc.pending {
 				assert.True(bytes.HasSuffix(output.Bytes(), []byte("\n")))
 				var items []map[string]string
 				require.NoError(json.Unmarshal(output.Bytes(), &items))
