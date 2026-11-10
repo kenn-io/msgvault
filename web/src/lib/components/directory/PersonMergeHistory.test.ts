@@ -1,3 +1,4 @@
+import { addressFixture } from '../../directory/merge-fixtures.test-support';
 import { mergeResult, person } from '../../directory/entity-fixtures.test-support';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -14,12 +15,13 @@ afterEach(() => {
 });
 
 function detail(currentPersonID: number | null = 12): MergeDetail {
-  return {
-    merge: { ...mergeResult(person(7)).merge, current_person_id: currentPersonID ?? undefined },
+  const value = {
+    merge: { ...mergeResult(person(7)).merge, actor: 'user', current_person_id: currentPersonID ?? undefined },
     participants: [
       { merge_id: 41, participant_id: 701, origin_side: 'absorbed' },
-      { merge_id: 41, participant_id: 702, origin_side: 'survivor', split_id: 55 },
-    ],
+      { merge_id: 41, participant_id: 702, origin_side: 'survivor' },
+      { merge_id: 41, participant_id: 703, origin_side: 'absorbed', split_id: 55 },
+    ] as MergeDetail['participants'],
     rows: [
       {
         merge_id: 41,
@@ -42,11 +44,12 @@ function detail(currentPersonID: number | null = 12): MergeDetail {
         source_revision_before: 4,
         source_revision_after: 5,
         exact_reversal: false,
-        actor: 'web',
+        actor: 'user',
         created_at: '2026-08-04T00:00:00Z',
       },
     ],
     review_candidates: [
+      { id: 60, merge_id: 41, person_id: 12, definition_id: 4, survivor_value_id: 84, absorbed_value_id: 85, state: 'pending', created_at: '2026-08-03T00:00:00Z' },
       {
         id: 61,
         merge_id: 41,
@@ -55,19 +58,29 @@ function detail(currentPersonID: number | null = 12): MergeDetail {
         survivor_value_id: 81,
         absorbed_value_id: 82,
         resolution_value_id: 83,
-        state: 'resolved',
+        state: 'accepted',
         reviewed_at: '2026-08-05T00:00:00Z',
-        reviewed_by: 'reviewer',
+        reviewed_by: 'user',
         created_at: '2026-08-03T00:00:00Z',
       },
     ],
   };
+  const { participants: _, ...labels } = summary(value as MergeDetail).labels;
+  return { ...value, labels };
 }
 
 function summary(mergeDetail: MergeDetail) {
   return {
     merge: mergeDetail.merge,
-    participant_count: 2,
+    labels: {
+      profiles: [{ id: 7, display_name: 'Alex Example', participant_ids: [702] }, { id: 9, display_name: 'Alex Example · work', participant_ids: [701, 703] }],
+      participants: mergeDetail.participants, participant_ids: mergeDetail.participants.map(({ participant_id }) => participant_id), absorbed_address_count: 3, incomplete: false,
+      addresses: [701, 702, 703].flatMap(participant_id => [
+        { participant_id, type: 'email', value: `address${participant_id}@example.org` },
+        ...(participant_id === 701 ? [{ participant_id, type: 'phone', value: '+12025550101' }] : []),
+      ]).map(identifier => addressFixture(identifier.participant_id, identifier.type, identifier.value, identifier)),
+    },
+    participant_count: mergeDetail.participants.length,
     pending_candidate_count: 0,
     row_action_counts: { restored: 1 },
     row_count: 1,
@@ -75,112 +88,316 @@ function summary(mergeDetail: MergeDetail) {
   };
 }
 
-function renderHistory(currentPersonID: number | null = 12) {
-  const mergeDetail = detail(currentPersonID);
+function addressIdentifiers(): MergeDetail['labels']['addresses'] {
+  return [
+    { participant_id: 701, type: 'email', value: 'alex@example.org' },
+    { participant_id: 701, type: 'phone', value: '+12025550101', ...{ display_value: '+1 202 555 0101' } },
+    { participant_id: 702, type: 'email', value: 'other@example.org' },
+    { participant_id: 703, type: 'email', value: 'split@example.org' },
+  ].map(identifier => addressFixture(identifier.participant_id, identifier.type, identifier.value, identifier));
+}
+
+function renderHistory(value: number | null | MergeDetail = 12, options: {
+  unnamedSurvivor?: boolean; fail?: boolean; addresses?: MergeDetail['labels']['addresses'];
+  list?: MergeDetail[]; respond?: (path: string, request: Request) => Response | Promise<Response> | undefined;
+  onSplitCommitted?: () => Promise<void>;
+} = {}) {
+  const mergeDetail = typeof value === 'object' && value !== null ? value : detail(value);
+  if (options.addresses) mergeDetail.labels.addresses = options.addresses;
   const requests: Request[] = [];
-  const fetchFn = vi.fn<typeof fetch>(async (input) => {
+  const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     requests.push(request);
     const path = new URL(request.url).pathname;
-    if (path === '/api/v1/people/7/merges') {
-      return Response.json({ merges: [summary(mergeDetail)], limit: 100, offset: 0 });
+    const custom = options.respond?.(path, request);
+    if (custom) return custom;
+    const labels = { ...mergeDetail.labels, participants: mergeDetail.participants };
+    if (options.unnamedSurvivor) labels.profiles = labels.profiles.map(profile => profile.id === 7 ? { ...profile, display_name: undefined } : profile);
+    if (options.fail) { labels.addresses = []; labels.participant_ids = []; labels.incomplete = true; }
+    // The list reads its own labels; `fail` breaks only the selected merge's.
+    const listed = options.fail ? { ...labels, participant_ids: mergeDetail.labels.participant_ids, addresses: mergeDetail.labels.addresses, incomplete: false } : labels;
+    if (path === '/api/v1/people/7/merges') return Response.json({ merges: (options.list ?? [mergeDetail]).map(item => ({ ...summary(item), labels: item === mergeDetail ? listed : { ...item.labels, participants: item.participants } })), limit: 100, offset: 0 });
+    if (path.endsWith('/snapshot')) return Response.json({ version: 1, sha256: 'synthetic-digest', snapshot: { explicitly_revealed: 'synthetic content', persons: labels.profiles } });
+    if (path.startsWith('/api/v1/people/')) {
+      const id = Number(path.split('/').at(-1));
+      return Response.json(person(id, 4, [701], id === 19 ? 'Alex Restored' : 'Alex Example'), { headers: { ETag: `"person-${id}-r4"` } });
     }
-    if (path === '/api/v1/person-merges/41/snapshot') {
-      return Response.json({
-        version: 1,
-        sha256: 'synthetic-digest',
-        snapshot: { explicitly_revealed: 'synthetic content' },
-      });
-    }
-    return Response.json(mergeDetail);
+    const item = (options.list ?? [mergeDetail]).find(item => path === `/api/v1/person-merges/${item.merge.id}`);
+    if (item) return Response.json({ ...item, labels: { ...(item === mergeDetail ? labels : item.labels), participants: undefined } });
+    throw new Error(`Unexpected request: ${path}`);
   });
-  render(PersonMergeHistory, { client: createAPIClient(fetchFn), personID: 7 });
-  return { requests };
+  const onOpenPerson = vi.fn();
+  const onClose = vi.fn();
+  render(PersonMergeHistory, { client, personID: 7, definitions: [{ id: 3, label: 'Role' }], onOpenPerson, onClose, onSplitCommitted: options.onSplitCommitted });
+  return { requests, options, onOpenPerson, onClose };
 }
 
+function deferred<T = Response>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(next => { resolve = next; });
+  return { promise, resolve };
+}
+
+const posts = (requests: Request[]) => requests.filter(request => request.method === 'POST');
+
 describe('PersonMergeHistory', () => {
-  it('renders semantic safe history/detail tables without eagerly fetching or exposing provenance internals', async () => {
-    const { requests } = renderHistory();
-
-    const history = await screen.findByRole('list', { name: 'Person merge history' });
-    expect(within(history).getByText(/Person 9 merged into person 7/)).toBeDefined();
-    expect(within(history).getByText(/2 addresses · split 1×/)).toBeDefined();
-    expect(screen.getByRole('heading', { name: 'Merges' })).toBeDefined();
-    expect(screen.queryByLabelText('Merge history pagination')).toBeNull();
-    await fireEvent.click(within(history).getByRole('button', { name: 'Inspect merge 41' }));
-
-    const participants = await screen.findByRole('table', { name: 'Merge participants' });
-    expect(within(participants).getByText('absorbed')).toBeDefined();
-    expect(within(participants).getByText('Not split')).toBeDefined();
-    const rows = screen.getByRole('table', { name: 'Merge row dispositions' });
-    for (const heading of ['Table', 'Action', 'Origin', 'Provenance', 'Participant', 'Disposition']) {
-      expect(within(rows).getByRole('columnheader', { name: heading })).toBeDefined();
+  it('keeps address choices selectable while a name loads', async () => {
+    const pending = deferred();
+    renderHistory(detail(), { respond: path => path === '/api/v1/people/19' ? pending.promise : undefined });
+    try {
+      await fireEvent.click(await screen.findByRole('button', { name: /^Open .+ merged into .+ · / }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Split…' }));
+      const choice = await screen.findByRole('checkbox', { name: 'address701@example.org, +12025550101' });
+      await fireEvent.click(choice);
+      expect(choice).toHaveProperty('checked', true);
+      expect(screen.getByRole('button', { name: 'Split into new person' })).toHaveProperty('disabled', false);
+    } finally {
+      pending.resolve(Response.json(person(19, 4, [703], 'Alex Restored')));
     }
-    expect(screen.getByRole('table', { name: 'Prior splits' })).toBeDefined();
-    expect(screen.getByRole('table', { name: 'Merge review candidates' })).toBeDefined();
-    for (const name of ['Merge participants', 'Merge row dispositions', 'Prior splits', 'Merge review candidates']) {
-      expect(screen.getByRole('region', { name: `${name} table` }).tabIndex).toBe(0);
+  });
+
+  it('shows the split submission as busy', async () => {
+    const pending = deferred();
+    renderHistory(detail(), { respond: (path, request) => request.method === 'POST' ? pending.promise : path === '/api/v1/people/12' ? Response.json(person(12, 4, [701], 'Synthetic Source'), { headers: { ETag: '"person-12-r4"' } }) : undefined });
+    try {
+      await fireEvent.click(await screen.findByRole('button', { name: /^Open .+ merged into .+ · / }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Split…' }));
+      await fireEvent.click(await screen.findByRole('checkbox', { name: 'address701@example.org, +12025550101' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Split into new person' }));
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Split into new person' }).getAttribute('aria-busy')).toBe('true'));
+    } finally {
+      pending.resolve(Response.json({}, { status: 503 }));
     }
+  });
+
+  it('renders saved email and phone on the History card', async () => {
+    const value = detail();
+    value.participants = value.participants.filter(participant => participant.origin_side === 'survivor');
+    value.labels.participant_ids = value.labels.participant_ids.filter(id => id === 702);
+    value.labels.addresses = value.labels.addresses.filter(address => address.participant_id === 702);
+    value.labels.profiles[1] = { ...value.labels.profiles[1], participant_ids: [], display_name: 'Curated Guest', contact_points: [
+      { identity_key: 'curated-key', address_kind: 'email', original_value: 'curated@example.org' },
+      { identity_key: 'phone-key', address_kind: 'phone', original_value: '+12025550144' },
+    ] };
+    renderHistory(value);
+    await fireEvent.click(await screen.findByRole('button', { name: /^Open Curated Guest merged into Alex Example/ }));
+    const card = await screen.findByRole('region', { name: 'Curated Guest' });
+    expect(card.textContent).toContain('curated@example.org');
+    expect(card.textContent).toContain('+12025550144');
+  });
+
+  it('waits for detail before showing its Split action', async () => {
+    let release!: (response: Response) => void;
+    const pending = new Promise<Response>(resolve => { release = resolve; });
+    const merge = detail();
+    renderHistory(merge, { respond: path => path === '/api/v1/person-merges/41' ? pending : undefined });
+    try {
+      await fireEvent.click(await screen.findByRole('button', { name: /^Open .+ merged into .+/ }));
+      expect(screen.queryByRole('button', { name: 'Split…' })).toBeNull();
+      expect(screen.getByText('Loading merge…', { selector: 'p' })).toBeDefined();
+      expect(screen.queryByRole('button', { name: 'another profile' })).toBeNull();
+      expect(screen.queryByRole('heading', { name: 'Splits' })).toBeNull();
+    } finally {
+      release(Response.json({ ...merge, labels: { ...merge.labels, participants: undefined } }));
+    }
+  });
+
+  it.each([0, 2])('shows a loaded moved-in count of %i', async count => {
+    let resolve!: (response: Response) => void;
+    const pending = new Promise<Response>(done => { resolve = done; });
+    renderHistory(12, { respond: path => path.endsWith('/merges') ? pending : undefined });
+    if (count === 2) {
+      expect(await screen.findByText('Loading merges…')).toBeDefined();
+      expect(screen.queryByText('Merged-in profile merged into this profile')).toBeNull();
+    }
+    const item = summary(detail());
+    item.labels.absorbed_address_count = count;
+    if (count === 0) item.labels.addresses = addressIdentifiers().filter(identifier => identifier.participant_id === 702);
+    resolve(Response.json({ merges: [item], limit: 100, offset: 0 }));
+    expect(await screen.findByText(`${count} addresses moved in`, { exact: false })).toBeDefined();
+  });
+
+  it('passes the card name to address details', async () => {
+    const value = detail();
+    value.labels.profiles = [{ id: 7, display_name: 'Survivor', participant_ids: [702] }, { id: 9, display_name: 'Garden member', participant_ids: [701, 703] }];
+    value.labels.addresses = [
+      addressFixture(701, 'beeper', 'opaque-one', { display_value: '@garden-member', participant_display_name: 'Garden member', service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'garden' }),
+      addressFixture(703, 'beeper', 'opaque-two', { display_value: '@other', participant_display_name: 'Other member', service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'garden' }),
+    ];
+    renderHistory(value);
+    await fireEvent.click(await screen.findByRole('button', { name: /^Open Garden member merged into Survivor/ }));
+    const card = await screen.findByRole('region', { name: 'Garden member' });
+    const rows = within(card).getAllByRole('listitem');
+    expect(rows[0].textContent).not.toContain('Garden member');
+  });
+
+  it('keeps each merge’s recorded survivor even after that profile was merged away', async () => {
+    const merges = [detail(), detail()];
+    merges[1].merge.id = 42;
+    merges[1].participants = merges[1].participants.map(participant => ({ ...participant, merge_id: 42 }));
+    merges[1].labels.participants = merges[1].participants;
+    for (const merge of merges) merge.labels.profiles = [{ id: 9, display_name: 'Neri Bloom', participant_ids: [701] }, { id: 7, display_name: merge.merge.id === 41 ? 'Mira Vale' : 'Mira Vale renamed', participant_ids: [702] }];
+    renderHistory(merges[0], { list: merges });
+    expect(await screen.findByText('Neri Bloom merged into Mira Vale')).toBeDefined();
+    expect(await screen.findByText('Neri Bloom merged into Mira Vale renamed')).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: /^Open Neri Bloom merged into Mira Vale · / }));
+    const cards = within(await screen.findByRole('group', { name: 'Merged profiles' })).getAllByRole('region');
+    expect(within(cards[1]).getByRole('heading').textContent).toBe('Mira Vale');
+  });
+
+  it.each([[false, false], [true, false], [true, true]])('summarizes a whole-profile split: exact=%s same day=%s', async (exact, sameDay) => {
+    const value = detail();
+    for (const participant of value.participants) if (participant.origin_side === 'absorbed') participant.split_id = 55;
+    value.splits![0].exact_reversal = exact;
+    if (sameDay) value.splits![0].created_at = value.merge.created_at;
+    renderHistory(value);
+    await fireEvent.click(await screen.findByRole('button', { name: /^Open .+ merged into .+ · / }));
+    const line = await screen.findByText((_, element) => element?.tagName === 'P' && (element.textContent ?? '').includes('split back to Alex Restored'));
+    expect(line.textContent).toMatch(sameDay ? /split back to Alex Restored · nothing left to split/ : exact ? /split back to Alex Restored on Aug [34] · nothing left to split/ : /split back to Alex Restored on Aug [34] · partly restored · nothing left to split/);
+    expect(screen.queryByRole('button', { name: 'Split…' })).toBeNull();
+  });
+
+  it.each([false, true])('names the addresses each split took beside its destination in the summary, deleted=%s', async deleted => {
+    const value = detail();
+    value.labels.profiles = [{ id: 7, display_name: 'Survivor', participant_ids: [702] }, { id: 9, display_name: 'Merged Guest', participant_ids: [701, 703, 704] }];
+    value.participants = [
+      { merge_id: 41, participant_id: 701, origin_side: 'absorbed', split_id: 55 },
+      { merge_id: 41, participant_id: 703, origin_side: 'absorbed', split_id: 56 },
+      { merge_id: 41, participant_id: 704, origin_side: 'absorbed' },
+      { merge_id: 41, participant_id: 702, origin_side: 'survivor' },
+    ] as MergeDetail['participants'];
+    value.labels.addresses = [
+      { participant_id: 701, type: 'email', value: 'first@example.org', display_value: '', service_slug: 'email', service_label: '', scope_kind: '', scope_value: '' },
+      { participant_id: 703, type: 'handle', value: '@alex', display_value: '', service_slug: 'slack', service_label: 'Slack', scope_kind: 'workspace', scope_value: 'garden' },
+      { participant_id: 704, type: 'email', value: 'pending@example.org', display_value: '', service_slug: 'email', service_label: '', scope_kind: '', scope_value: '' },
+    ].map(a => addressFixture(a.participant_id, a.type, a.value, a));
+    value.labels.participant_ids = [701, 702, 703, 704];
+    value.splits = [value.splits![0], { ...value.splits![0], id: 56, new_person_id: 29, new_person_uid: 'synthetic-29' }];
+    renderHistory(value, { respond: path => {
+      if (path === '/api/v1/people/19') return Response.json(person(19, 1, [701], 'First Restored'));
+      if (path === '/api/v1/people/29') return deleted ? Response.json({}, { status: 404 }) : Response.json(person(29, 1, [703], 'Second Restored'));
+      return undefined;
+    } });
+    await fireEvent.click(await screen.findByRole('button', { name: /^Open Merged Guest merged into Survivor/ }));
+    const line = await screen.findByText((_, element) => element?.tagName === 'P' && (element.textContent ?? '').startsWith('Merged by you'));
+    await waitFor(() => expect(line.textContent).toContain('First Restored (first@example.org)'));
+    expect(line.textContent).not.toContain('partly restored');
+    expect.soft(line.textContent).toContain(`split back to ${deleted ? 'another profile' : 'Second Restored'} (Slack · @alex`);
+    expect.soft(line.textContent).not.toContain('pending@example.org');
+    expect.soft(screen.getByRole('region', { name: 'Merged Guest' }).textContent).not.toMatch(/Restored|another profile|split back/i);
+  });
+
+  it.each([
+    { destination: 'unnamed', layout: 'card' },
+    { destination: 'unnamed', layout: 'row' },
+    { destination: 'literal fallback name', layout: 'card' },
+    { destination: 'literal fallback name', layout: 'row' },
+  ] as const)('opens only an existing $destination split destination in the $layout layout', async ({ destination, layout }) => {
+    const value = detail();
+    if (layout === 'row') {
+      // The split took only a participant with no address on the cards.
+      value.labels.addresses = value.labels.addresses.filter(identifier => identifier.participant_id !== 703);
+    }
+    const { onOpenPerson, requests } = renderHistory(value, { respond: path => path === '/api/v1/people/19'
+      ? Response.json(person(19, 1, [703], destination === 'literal fallback name' ? 'another profile' : ''))
+      : undefined });
+    await fireEvent.click(await screen.findByRole('button', { name: /^Open .+ merged into .+ · / }));
+    if (layout === 'row') {
+      await screen.findByRole('heading', { name: 'Splits' });
+      expect(screen.getByText(/^You · Aug [34]$/)).toBeDefined();
+    } else await screen.findByText((_, element) => element?.tagName === 'P' && (element.textContent ?? '').includes('split back to another profile'));
+    expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/people/19')).toHaveLength(1);
+    const name = layout === 'row' ? destination === 'literal fallback name' ? 'Open another profile' : 'Open restored profile' : 'another profile';
+    await fireEvent.click(await screen.findByRole('button', { name }));
+    expect(onOpenPerson).toHaveBeenCalledWith(19);
+  });
+
+  it.each([false, true])('groups addresses, splits, and review decisions, only decided=%s', async decided => {
+    const value = detail();
+    if (decided) value.review_candidates = value.review_candidates!.filter(candidate => candidate.state !== 'pending');
+    renderHistory(value);
+    await fireEvent.click(await screen.findByRole('button', { name: /^Open .+ merged into .+ · / }));
+    await screen.findByRole('heading', { name: 'address701@example.org merged into Alex Example' });
+    expect(screen.getByRole('button', { name: 'Back to History' })).toBeDefined();
+    expect(await screen.findByRole('heading', { name: decided ? 'Review decisions' : 'Needs review' })).toBeDefined();
+    expect(screen.queryByRole('heading', { name: decided ? 'Needs review' : 'Review decisions' })).toBeNull();
+    expect(screen.getByText(/^Merged by you · Aug [23]$/, { selector: 'span' })).toBeDefined();
+    // Two cards: the merged-in profile, then the one it merged into.
+    const [, survivor] = within(await screen.findByRole('group', { name: 'Merged profiles' })).getAllByRole('region');
+    expect(within(survivor).getByText('address702@example.org')).toBeDefined();
+    // The split shows once, on the merge line: to whom, when, and how; the cards carry no tag for it.
+    expect(within(survivor).queryByRole('button')).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Splits' })).toBeNull();
+    if (!decided) {
+      expect(screen.getByText('Field')).toBeDefined();
+      await fireEvent.click(screen.getByText('1 earlier decision'));
+    }
+    expect(screen.getByText('Role')).toBeDefined();
+    expect(screen.getByText(/^Accepted by you · Aug [45]$/)).toBeDefined();
+    expect(screen.queryByRole('table')).toBeNull();
     expect(document.body.textContent).not.toContain('opaque-row-key-must-not-appear');
     expect(document.body.textContent).not.toContain('private/snapshot/path-must-not-appear');
-    expect(requests.map((request) => new URL(request.url).pathname)).not.toContain('/api/v1/person-merges/41/snapshot');
   });
 
-  it('reveals the verified opaque snapshot only after the explicit action', async () => {
-    const { requests } = renderHistory();
-    await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
+  it('labels an unnamed surviving profile on its card', async () => {
+    renderHistory(12, { unnamedSurvivor: true });
+    await fireEvent.click(await screen.findByRole('button', { name: /^Open .+ merged into .+ · / }));
+    expect(await screen.findByRole('heading', { name: 'This profile' })).toBeDefined();
+  });
+
+  it('keeps recorded names while addresses fail, and retries them', async () => {
+    const { options } = renderHistory(12, { fail: true });
+    await fireEvent.click(await screen.findByRole('button', { name: /^Open .+ merged into .+ · / }));
+    const cards = within(await screen.findByRole('group', { name: 'Merged profiles' }));
+    expect(cards.getByRole('heading', { name: 'Alex Example' })).toBeDefined();
+    expect(cards.queryByText('address703@example.org')).toBeNull();
+    expect(screen.getByText("Some names and addresses couldn't be loaded.")).toBeDefined();
+    options.fail = false;
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByText(/couldn't be loaded/)).toBeNull());
+    expect(within(await screen.findByRole('group', { name: 'Merged profiles' })).getByText('address703@example.org')).toBeDefined();
+  });
+
+  it('reveals the profile at merge time only after the explicit action', async () => {
+    renderHistory();
+    await fireEvent.click(await screen.findByRole('button', { name: /^Open .+ merged into .+ · / }));
 
     expect(screen.queryByText(/explicitly_revealed/)).toBeNull();
-    await fireEvent.click(await screen.findByRole('button', { name: 'View verified snapshot' }));
+    await screen.findByRole('group', { name: 'Merged profiles' });
+    await fireEvent.click(await screen.findByText('Profile at merge time'));
 
-    const region = await screen.findByRole('region', { name: 'Verified merge snapshot content' });
-    expect(region.textContent).toContain('explicitly_revealed');
-    expect(screen.getByText(/SHA-256 synthetic-digest/)).toBeDefined();
-    expect(requests.filter((request) => new URL(request.url).pathname.endsWith('/snapshot'))).toHaveLength(1);
+    expect((await screen.findByRole('region', { name: 'Raw values at merge time' })).textContent).toContain('explicitly_revealed');
+    expect(screen.queryByRole('heading', { name: 'Raw values' })).toBeNull();
+    expect(screen.getByText(/^Captured Aug [23], \d{1,2}:\d{2}\s?[AP]M$/)).toBeDefined();
+    expect(screen.getByText('SHA-256 syntheti…').title).toBe('SHA-256 synthetic-digest');
   });
 
-  it('does not offer split when detail has no current person', async () => {
-    renderHistory(null);
-    await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
-
-    await screen.findByRole('table', { name: 'Merge participants' });
-    expect(screen.queryByRole('button', { name: 'Split merged profile' })).toBeNull();
-    expect(screen.getByText(/No current source profile is recorded/)).toBeDefined();
+  it('explains when the profile it merged into is gone', async () => {
+    renderHistory(detail(null), { addresses: addressIdentifiers() });
+    await fireEvent.click(await screen.findByRole('button', { name: /^Open .+ merged into .+ · / }));
+    expect(await screen.findByText(/the profile it merged into is gone$/)).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Split…' })).toBeNull();
   });
 
-  it('retains a connected focus target when an idle split dialog closes', async () => {
+  it('returns from Split to the merge in the same dialog', async () => {
     const mergeDetail = detail();
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      const path = new URL(request.url).pathname;
-      if (path.endsWith('/merges')) return Response.json({ merges: [summary(mergeDetail)], limit: 100, offset: 0 });
-      if (path === '/api/v1/people/12') {
-        return Response.json(
-          {
-            id: 12,
-            revision: 4,
-            display_name: 'Synthetic Source',
-            participant_ids: [701],
-            created_at: '2026-08-01T00:00:00Z',
-            updated_at: '2026-08-02T00:00:00Z',
-            vcard_uid: 'synthetic-12',
-          },
-          { headers: { ETag: '"person-12-r4"' } },
-        );
-      }
-      return Response.json(mergeDetail);
-    });
-    render(PersonMergeHistory, { client: createAPIClient(fetchFn), personID: 7 });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
-    const trigger = await screen.findByRole('button', { name: 'Split merged profile' });
+    renderHistory(mergeDetail, { respond: path => path === '/api/v1/people/12'
+      ? Response.json(person(12, 4, [701], 'Synthetic Source'), { headers: { ETag: '"person-12-r4"' } }) : undefined });
+    await fireEvent.click(await screen.findByRole('button', { name: /^Open .+ merged into .+ · / }));
+    const trigger = await screen.findByRole('button', { name: 'Split…' });
     await fireEvent.click(trigger);
-    await screen.findByRole('dialog', { name: 'Split merged profile' });
-    const cancel = screen.getByRole('button', { name: 'Cancel' });
-    await waitFor(() => expect(cancel).toHaveProperty('disabled', false));
+    await screen.findByRole('dialog', { name: 'Split Synthetic Source' });
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+    const back = screen.getByRole('button', { name: /^Back to .+ merged into / });
+    await waitFor(() => expect(back).toHaveProperty('disabled', false));
+    // Back returns to the merge and × closes History, so the footer holds only the split itself.
+    const footer = document.querySelector<HTMLElement>('.kit-modal-footer');
+    expect(within(footer!).getAllByRole('button').map(button => button.textContent?.trim())).toEqual(['Split into new person']);
+    expect(screen.getByRole('button', { name: 'Close' })).toBeDefined();
 
-    await fireEvent.click(cancel);
+    await fireEvent.click(back);
 
-    await waitFor(() => expect(document.activeElement).toBe(trigger));
-    expect(trigger.isConnected).toBe(true);
+    expect(await screen.findByRole('button', { name: 'Split…' })).toBeDefined();
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
   });
 });

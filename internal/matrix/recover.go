@@ -3,6 +3,7 @@ package matrix
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"slices"
@@ -32,6 +33,81 @@ type decryptedEvent struct {
 	store.MatrixEncryptedEvent
 
 	plain *event.Event
+}
+
+type rollbackCiphertext struct {
+	session    id.SessionID
+	ciphertext string
+}
+
+func rollbackCiphertextKey(evt *event.Event) (rollbackCiphertext, bool) {
+	if evt.Type != event.EventEncrypted || !parseContent(evt) {
+		return rollbackCiphertext{}, false
+	}
+	content := evt.Content.AsEncrypted()
+	raw, err := base64.RawStdEncoding.DecodeString(string(content.MegolmCiphertext))
+	if err != nil {
+		return rollbackCiphertext{}, false
+	}
+	return rollbackCiphertext{content.SessionID, string(raw)}, true
+}
+
+func (imp *Importer) earlierRollbackCopies(ctx context.Context, sourceID, convID int64, roomID id.RoomID, candidates map[rollbackCiphertext]*event.Event) (map[rollbackCiphertext]*event.Event, error) {
+	owners := make(map[rollbackCiphertext]*event.Event)
+	scanned := make(map[id.SessionID]bool)
+	for key := range candidates {
+		var after int64
+		for !scanned[key.session] {
+			page, err := imp.store.MatrixPendingEventsBySession(ctx, convID, key.session.String(), after, recoveryPageSize)
+			if err != nil {
+				return nil, err
+			}
+			scanned[key.session] = len(page) < recoveryPageSize
+			for _, item := range page {
+				after = item.MessageID
+				if err := imp.earlierRollbackCopy(ctx, sourceID, convID, roomID, item, candidates, owners); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	return owners, nil
+}
+
+// earlierRollbackCopy records item in owners when it holds a candidate's
+// ciphertext, was archived before it, and would be kept as that edit.
+func (imp *Importer) earlierRollbackCopy(ctx context.Context, sourceID, convID int64, roomID id.RoomID, item store.MatrixEncryptedEvent, candidates, owners map[rollbackCiphertext]*event.Event) error {
+	evt, err := decodeArchivedEvent(item.Ciphertext)
+	if err != nil {
+		return nil //nolint:nilerr // Malformed archived events are handled by normal recovery.
+	}
+	key, ok := rollbackCiphertextKey(evt)
+	candidate := candidates[key]
+	if !ok || candidate == nil || compareRelations(evt, candidate) >= 0 {
+		return nil
+	}
+	evt.RoomID = roomID
+	plain, _, err := imp.runtime.decryptWithIndex(ctx, evt)
+	if err != nil {
+		return err
+	}
+	if (plain.Type != event.EventMessage && plain.Type != event.EventSticker) || !parseContent(plain) {
+		return nil
+	}
+	// Without a replacement relation, recovery claims the copy as a message.
+	if content := plain.Content.AsMessage(); content.RelatesTo.GetReplaceID() != "" {
+		messageID, original, err := imp.editTarget(ctx, sourceID, convID, content.RelatesTo.GetReplaceID())
+		if err != nil {
+			return err
+		}
+		if messageID != 0 && !editAllowed(original, plain) {
+			return nil
+		}
+	}
+	if first := owners[key]; first == nil || compareRelations(plain, first) < 0 {
+		owners[key] = &event.Event{ID: plain.ID, Timestamp: plain.Timestamp}
+	}
+	return nil
 }
 
 // recoverPlaceholders decrypts archived placeholders with keys from the
