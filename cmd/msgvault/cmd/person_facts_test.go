@@ -150,7 +150,7 @@ func TestPersonFactsHistoryCommandsUseExactGeneratedPathsQueriesAndTables(t *tes
 		case "/api/v1/people/7/fact-decisions":
 			_, _ = w.Write([]byte(`{"decisions":[{
 				"id":7,"resolution_id":5,"decision_key":"decision-key",
-				"claim_key":"claim-key","kind":"fact","status":"fresh","action":"applied","reason":"applied-projection",
+				"claim_key":"claim-key","action":"applied","reason":"applied-projection",
 				"score":{"source_class":1,"directness":2,"authority":3,"confidence":4,
 					"freshness":5,"corroboration":6,"total":21},
 				"projection":{"kind":"person_attribute_value","row_id":11},
