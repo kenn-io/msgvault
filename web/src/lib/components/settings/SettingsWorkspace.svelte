@@ -179,7 +179,8 @@
   let pendingLeave = $state<{ leave: () => void; stay?: () => void }>();
   const registerLeave = getContext<((hold?: (leave: () => void, stay?: () => void) => boolean, cancel?: () => void) => void) | undefined>('msgvault:hold-settings-leave');
   registerLeave?.(
-    (leave, stay) => unsaved && !saving && (pendingLeave = { leave, stay }, true),
+    // A pending save carries the bar's drafts, but never a self-saving form's edits.
+    (leave, stay) => ((dirtyCount > 0 && !saving) || unsavedForms.any) && (pendingLeave = { leave, stay }, true),
     () => { pendingLeave = undefined; }
   );
   onDestroy(() => registerLeave?.(undefined));

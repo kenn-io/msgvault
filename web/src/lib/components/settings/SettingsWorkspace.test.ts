@@ -316,6 +316,7 @@ it.each([
 
 it('keeps a People provider check through an unrelated settings save', async () => {
   let revision = '"s1"';
+  let checked = false;
   const doc = settingsDoc();
   const { client, operationsController, onStatusChange, seen } = fixture(doc, request => {
     const path = new URL(request.url).pathname;
@@ -324,9 +325,12 @@ it('keeps a People provider check through an unrelated settings save', async () 
       return Response.json(doc, { headers: { ETag: revision } });
     }
     if (path.includes('/settings/people-inference')) {
-      if (path.endsWith('/check')) return Response.json({ ok: true, fingerprint: 'fingerprint-primary' });
+      if (path.endsWith('/check')) {
+        checked = true;
+        return Response.json({ ok: true, fingerprint: 'fingerprint-primary' });
+      }
       return Response.json({
-        profiles: [{ ...inferenceProfile, consent_active: path.endsWith('/consent') }],
+        profiles: [{ ...inferenceProfile, checked, consent_active: path.endsWith('/consent') }],
         configured_enabled: false, running_enabled: false, pending_restart: false,
       }, { headers: { ETag: revision } });
     }
@@ -343,6 +347,55 @@ it('keeps a People provider check through an unrelated settings save', async () 
   await fireEvent.click(screen.getByRole('button', { name: 'Grant consent' }));
   await waitFor(() => expect(seen.find(request => request.path.endsWith('/consent'))?.ifMatch).toBe('"s2"'));
   expect(seen.filter(request => request.path.endsWith('/check'))).toHaveLength(1);
+});
+
+it('drops a People provider check after another tab replaces its key', async () => {
+  let checked = false;
+  const doc = settingsDoc();
+  const { client, operationsController, onStatusChange, seen } = fixture(doc, request => {
+    const path = new URL(request.url).pathname;
+    if (path.includes('/settings/people-inference')) {
+      if (path.endsWith('/check')) {
+        checked = true;
+        return Response.json({ ok: true, fingerprint: 'fingerprint-primary' });
+      }
+      return Response.json({
+        profiles: [{ ...inferenceProfile, checked }],
+        configured_enabled: false, running_enabled: false, pending_restart: false,
+      }, { headers: { ETag: '"s1"' } });
+    }
+  });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'enrichment' });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Check provider' }));
+  await fireEvent.click(await screen.findByLabelText('I confirm this exact disclosure'));
+  // Replacing the key elsewhere revokes the check; the policy fingerprint stays the same.
+  checked = false;
+  await fireEvent.click(screen.getByRole('button', { name: 'Reload people sweep settings' }));
+  await waitFor(() => expect(screen.queryByLabelText('I confirm this exact disclosure')).toBeNull());
+  expect(screen.queryByRole('button', { name: 'Grant consent' })).toBeNull();
+  expect(seen.some(request => request.path.endsWith('/consent'))).toBe(false);
+});
+
+it('warns before a reload drops an API key typed into its dialog', async () => {
+  const { client, operationsController, onStatusChange, seen } = fixture();
+  let hold: ((leave: () => void) => boolean) | undefined;
+  render(SettingsWorkspace, {
+    props: { client, operationsController, onStatusChange, category: 'tasks' },
+    context: new Map([['msgvault:hold-settings-leave', (next: typeof hold) => { hold = next; }]])
+  });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Add API key' }));
+  await fireEvent.input(screen.getByLabelText('New API key'), { target: { value: 'synthetic-key' } });
+  expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
+  const reload = new Event('beforeunload', { cancelable: true });
+  window.dispatchEvent(reload);
+  expect(reload.defaultPrevented).toBe(true);
+  const leave = vi.fn();
+  expect(hold?.(leave)).toBe(true);
+  await fireEvent.click(await screen.findByRole('button', { name: 'Discard and leave' }));
+  expect(leave).toHaveBeenCalledOnce();
+  expect(screen.queryByLabelText('New API key')).toBeNull();
+  expect(hold?.(vi.fn())).toBe(false);
+  expect(seen.filter(request => request.method !== 'GET')).toEqual([]);
 });
 
 it('keeps a failed Overview action error on Overview', async () => {
@@ -516,6 +569,30 @@ it('locks fields and newly mounted category controls without holding leave while
   }
 });
 
+it('holds leave for a self-saving form while an ordinary save waits', async () => {
+  let finish!: (response: Response) => void;
+  const pending = new Promise<Response>(resolve => { finish = resolve; });
+  const provider = { ...providerDefaults, name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://provider.example.test', credential_id: 'people.enrichment/primary', credential: { configured: false, source: 'none' } };
+  const doc = settingsDoc({ person_enrichment_providers: [provider] });
+  const { client, operationsController, onStatusChange, seen } = fixture(doc, request => request.method === 'PATCH' ? pending : undefined);
+  let hold: ((leave: () => void) => boolean) | undefined;
+  render(SettingsWorkspace, {
+    props: { client, operationsController, onStatusChange, category: 'enrichment' },
+    context: new Map([['msgvault:hold-settings-leave', (next: typeof hold) => { hold = next; }]])
+  });
+  await fireEvent.input(await screen.findByLabelText('primary endpoint'), { target: { value: 'https://changed.example.test' } });
+  await fireEvent.click(screen.getByRole('switch', { name: 'Look people up' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  try {
+    await waitFor(() => expect(seen.some(request => request.method === 'PATCH')).toBe(true));
+    const leave = vi.fn();
+    expect(hold?.(leave)).toBe(true);
+    expect(leave).not.toHaveBeenCalled();
+  } finally {
+    finish(Response.json(doc, { headers: { ETag: '"s2"' } }));
+  }
+});
+
 it('keeps credential and provider saves immediate while workspace drafts remain pending', async () => {
   const provider = { ...providerDefaults, name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://provider.example.test', credential_id: 'people.enrichment/primary', credential: { configured: false, source: 'none' } };
   const { client, operationsController, onStatusChange, seen } = fixture(settingsDoc({ person_enrichment_providers: [provider] }));
@@ -651,6 +728,7 @@ it.each([
   let revision = '"s1"';
   let consented = false;
   let selected = false;
+  const checkedFingerprints = new Set<string>();
   const provider = { ...providerDefaults, name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://provider.example.test', credential_id: 'people.enrichment/primary', credential: { configured: false, source: 'none' } };
   const doc = settingsDoc({ person_enrichment_providers: [provider] });
   const { client, operationsController, onStatusChange, seen } = fixture(doc, async request => {
@@ -673,11 +751,14 @@ it.each([
       if (request.method !== 'GET' && request.headers.get('If-Match') !== revision) return Response.json({ message: 'Config changed' }, { status: 412 });
       // The daemon's fingerprint covers the model, so the changed profile needs a new check.
       const fingerprint = revision === '"s1"' ? 'fingerprint-primary' : 'fingerprint-two';
-      if (path.endsWith('/check')) return Response.json({ ok: true, fingerprint });
+      if (path.endsWith('/check')) {
+        checkedFingerprints.add(fingerprint);
+        return Response.json({ ok: true, fingerprint });
+      }
       if (path.endsWith('/consent')) consented = true;
       if (path.endsWith('/select')) selected = true;
       return Response.json({
-        profiles: [{ ...inferenceProfile, model: revision === '"s1"' ? 'model-one' : 'model-two', fingerprint, consent_active: consented }],
+        profiles: [{ ...inferenceProfile, model: revision === '"s1"' ? 'model-one' : 'model-two', fingerprint, checked: checkedFingerprints.has(fingerprint), consent_active: consented }],
         configured_enabled: selected, running_enabled: false, pending_restart: selected,
       }, { headers: { ETag: revision } });
     }
