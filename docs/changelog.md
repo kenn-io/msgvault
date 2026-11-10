@@ -31,6 +31,9 @@ All notable changes to msgvault, grouped by release.
   schema 3.50.0.
 - `msgvault search --message-type` accepts any type of lowercase letters,
   digits, and underscores, so it can filter imported types.
+- The CLI can suggest partial addresses with Google Places and fetch address
+  details for a selected candidate. See [address lookup](cli-reference.md#address)
+  for the key, session token, and optional location hints.
 - Plaud syncs wait longer and slow down when Plaud reports too many requests,
   so fewer recordings fail in a run. A new `limit` setting on `[[plaud]]` caps
   how many recordings each scheduled run checks. See [Plaud sources](configuration.md#plaud-sources).
