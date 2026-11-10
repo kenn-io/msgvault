@@ -6,33 +6,62 @@ import (
 	"fmt"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/sync"
 )
 
+func validatePollingTargets(ctx context.Context, cfg *config.Config, s *store.Store, state *invocation) error {
+	if err := config.ValidatePollingAccounts(cfg.Accounts); err != nil {
+		return err
+	}
+	seen := make(map[int64]bool)
+	for _, account := range cfg.Accounts {
+		if !account.Enabled || account.PollInterval == 0 {
+			continue
+		}
+		source, err := pollingSource(ctx, account.Email, s, state)
+		if err != nil {
+			return fmt.Errorf("polling account %q: %w", account.Email, err)
+		}
+		if seen[source.ID] {
+			return fmt.Errorf("polling account %q: source already has a polling account", account.Email)
+		}
+		seen[source.ID] = true
+	}
+	return nil
+}
+
 func pollingSource(ctx context.Context, identifier string, s *store.Store, state *invocation) (*store.Source, error) {
 	rows, err := s.GetSourcesByIdentifierOrDisplayNameContext(ctx, identifier)
 	if err != nil {
 		return nil, fmt.Errorf("look up polling source: %w", err)
 	}
-	var source *store.Source
+	var exact, named []*store.Source
 	for _, row := range rows {
-		if !strings.EqualFold(row.Identifier, identifier) && (!row.DisplayName.Valid || !strings.EqualFold(row.DisplayName.String, identifier)) {
-			continue
-		}
 		if row.MergedIntoSourceID != 0 || (row.SourceType != sourceTypeGmail && row.SourceType != sourceTypeIMAP) {
 			continue
 		}
-		if source != nil {
-			return nil, fmt.Errorf("polling account %q matches multiple sources", identifier)
+		if strings.EqualFold(row.Identifier, identifier) {
+			exact = append(exact, row)
+		} else if row.DisplayName.Valid && strings.EqualFold(row.DisplayName.String, identifier) {
+			named = append(named, row)
 		}
-		source = row
 	}
-	if source == nil {
+	candidates := exact
+	if len(candidates) == 0 {
+		candidates = named
+	}
+	if len(candidates) == 0 {
 		return nil, fmt.Errorf("polling account %q matches no active Gmail or IMAP source", identifier)
 	}
+	if len(candidates) > 1 {
+		return nil, fmt.Errorf("polling account %q matches multiple sources", identifier)
+	}
+	source := candidates[0]
 	if source.SourceType == sourceTypeIMAP && len(parseFolderFilter(state.cfg.Sync.IMAPSkipFolders[source.Identifier])) != 0 {
 		return nil, fmt.Errorf("polling account %q has an IMAP folder filter", identifier)
 	}
@@ -46,23 +75,10 @@ func runEmailPoll(ctx context.Context, identifier string, s *store.Store, getOAu
 	}
 	var incomplete bool
 	if src.SourceType == sourceTypeGmail {
-		var summaryErr error
 		summary, syncErr := runScheduledGmailSyncWithProfile(ctx, identifier, src, s, getOAuthMgr, state, true)
 		err = syncErr
 		if err == nil {
-			incomplete = summary.Errors > 0
-			var debt bool
-			debt, summaryErr = sync.New(nil, s, nil).HasPendingAcquisition(ctx, src.ID)
-			incomplete = incomplete || debt
-			if summaryErr == nil {
-				_, summaryErr = s.GetLatestCheckpointedSyncContext(ctx, src.ID)
-				if errors.Is(summaryErr, store.ErrSyncRunNotFound) {
-					summaryErr = nil
-				} else if summaryErr == nil {
-					incomplete = true
-				}
-			}
-			err = summaryErr
+			incomplete, err = gmailAcquisitionIncomplete(ctx, s, src, summary)
 		}
 	} else {
 		_, complete, syncErr := runScheduledIMAPSyncWithCoverage(ctx, src, s, state)
@@ -71,6 +87,10 @@ func runEmailPoll(ctx context.Context, identifier string, s *store.Store, getOAu
 	}
 	if scheduledSyncYielded(ctx) {
 		return scheduledSyncYieldResult(ctx, err)
+	}
+	if gmail.IsQuotaDeferred(err) {
+		incomplete = true
+		err = nil
 	}
 	state.syncFailures.Record(ctx, src.SourceType, src.Identifier, err)
 	// Preserve the refresh request after provider work has written data.
@@ -84,4 +104,17 @@ func runEmailPoll(ctx context.Context, identifier string, s *store.Store, getOAu
 		return scheduler.ErrAcquisitionIncomplete
 	}
 	return nil
+}
+
+func gmailAcquisitionIncomplete(ctx context.Context, s *store.Store, src *store.Source, summary *gmail.SyncSummary) (bool, error) {
+	debt, err := sync.New(nil, s, nil).HasPendingAcquisition(ctx, src.ID)
+	if err != nil {
+		return false, err
+	}
+	_, err = s.GetLatestCheckpointedSyncContext(ctx, src.ID)
+	checkpoint := err == nil
+	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
+		return false, err
+	}
+	return summary.Errors > 0 || debt || checkpoint, nil
 }

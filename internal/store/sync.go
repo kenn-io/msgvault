@@ -1460,6 +1460,12 @@ func (s *Store) PauseSyncWithCheckpoint(ctx context.Context, syncID int64, cp *C
 	return s.finishSyncWithCheckpoint(ctx, syncID, SyncStatusPaused, "", cp)
 }
 
+// PauseSync preserves the last saved checkpoint when a provider defers work.
+func (s *Store) PauseSync(syncID int64) error {
+	_, err := s.db.Exec(fmt.Sprintf(`UPDATE sync_runs SET status = ?, completed_at = %s, error_message = '' WHERE id = ?`, s.dialect.Now()), SyncStatusPaused, syncID)
+	return s.finalizeSyncExecution(syncID, err)
+}
+
 func (s *Store) finishSyncWithCheckpoint(ctx context.Context, syncID int64, status, errMsg string, cp *Checkpoint) error {
 	if cp == nil {
 		return s.FailSyncContext(ctx, syncID, errMsg)

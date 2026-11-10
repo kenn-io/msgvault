@@ -17,17 +17,21 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/scheduler"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestRapidEmailGmailProfileMismatchDoesNotMutateArchive(t *testing.T) {
+func testGmailServiceAccountConfig(t *testing.T) *config.Config {
+	t.Helper()
 	dir := t.TempDir()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
@@ -39,18 +43,15 @@ func TestRapidEmailGmailProfileMismatchDoesNotMutateArchive(t *testing.T) {
 		"token_uri":   "https://token.example.test/oauth2",
 	})
 	require.NoError(t, err)
-	keyPath := filepath.Join(dir, "service-account.json")
-	require.NoError(t, os.WriteFile(keyPath, keyJSON, 0o600))
-	path := filepath.Join(dir, "config.toml")
-	require.NoError(t, os.WriteFile(path, []byte(`[[accounts]]
-email = "sample@example.test"
-schedule = "0 * * * *"
-enabled = true
-poll_interval = "30s"
-`), 0o600))
-	cfg, err := config.Load(path, dir)
-	require.NoError(t, err)
-	cfg.OAuth.ServiceAccountKey = keyPath
+	path := filepath.Join(dir, "service-account.json")
+	require.NoError(t, os.WriteFile(path, keyJSON, 0600))
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir, cfg.Data.DataDir, cfg.OAuth.ServiceAccountKey = dir, dir, path
+	return cfg
+}
+
+func TestRapidEmailGmailProfileMismatchDoesNotMutateArchive(t *testing.T) {
+	cfg := testGmailServiceAccountConfig(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -116,25 +117,10 @@ poll_interval = "30s"
 }
 
 func TestGmailPollUsesOneVerifiedProfile(t *testing.T) {
-	dir := t.TempDir()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-	der, err := x509.MarshalPKCS8PrivateKey(key)
-	require.NoError(t, err)
-	keyJSON, err := json.Marshal(map[string]string{
-		"type": "service_account", "client_email": "service@example.test",
-		"private_key": string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})),
-		"token_uri":   "https://token.example.test/oauth2",
-	})
-	require.NoError(t, err)
-	keyPath := filepath.Join(dir, "service-account.json")
-	require.NoError(t, os.WriteFile(keyPath, keyJSON, 0600))
-	cfg := config.NewDefaultConfig()
-	cfg.HomeDir = dir
-	cfg.Data.DataDir = dir
-	cfg.OAuth.ServiceAccountKey = keyPath
+	cfg := testGmailServiceAccountConfig(t)
 	var profiles, histories atomic.Int32
-	var changed, healthy, expired atomic.Bool
+	var changed, healthy, expired, quota, labelsQuota atomic.Bool
+	quotaSeen := make(chan struct{}, 1)
 	raw := base64.RawURLEncoding.EncodeToString([]byte("From: sender@example.test\r\nTo: sample@example.test\r\nSubject: fixture\r\nMessage-ID: <lost@example.test>\r\n\r\nbody\r\n"))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -142,8 +128,15 @@ func TestGmailPollUsesOneVerifiedProfile(t *testing.T) {
 		case "/oauth2":
 			_, _ = w.Write([]byte(`{"access_token":"synthetic-token","token_type":"Bearer","expires_in":3600}`))
 		case "/gmail/v1/users/me/profile":
+			if quota.CompareAndSwap(true, false) {
+				w.Header().Set("Retry-After", "600")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(`{"error":{"errors":[{"reason":"rateLimitExceeded"}]}}`))
+				quotaSeen <- struct{}{}
+				return
+			}
 			count := profiles.Add(1)
-			if expired.Load() && count >= 7 {
+			if expired.Load() && count >= 9 {
 				_, _ = w.Write([]byte(`{"emailAddress":"sample@example.test","historyId":"102"}`))
 			} else if changed.Load() {
 				_, _ = w.Write([]byte(`{"emailAddress":"sample@example.test","historyId":"101"}`))
@@ -151,6 +144,12 @@ func TestGmailPollUsesOneVerifiedProfile(t *testing.T) {
 				_, _ = w.Write([]byte(`{"emailAddress":"sample@example.test","historyId":"100"}`))
 			}
 		case "/gmail/v1/users/me/labels":
+			if labelsQuota.CompareAndSwap(true, false) {
+				w.Header().Set("Retry-After", "600")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(`{"error":{"errors":[{"reason":"rateLimitExceeded"}]}}`))
+				return
+			}
 			_, _ = w.Write([]byte(`{"labels":[{"id":"INBOX","name":"INBOX","type":"system"}]}`))
 		case "/gmail/v1/users/me/history":
 			histories.Add(1)
@@ -205,12 +204,41 @@ func TestGmailPollUsesOneVerifiedProfile(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, debt, 1)
 	assert.Zero(t, failures)
+	broken, err := st.Store.GetOrCreateSource(sourceTypeIMAP, "imaps://broken@example.test")
+	require.NoError(t, err)
+	_, err = st.Store.DB().ExecContext(t.Context(), st.Store.Rebind(`UPDATE sources SET display_name = ? WHERE id = ?`), src.Identifier, broken.ID)
+	require.NoError(t, err)
+	mixedErr := runScheduledSync(ctx, src.Identifier, st.Store, nil, invocationFromContext(ctx))
+	assert.ErrorContains(t, mixedErr, "has no config")
+	assert.NotErrorIs(t, mixedErr, scheduler.ErrAcquisitionIncomplete)
+	assert.Equal(t, 1, failures)
+	require.NoError(t, st.Store.RemoveSource(broken.ID))
+	failures = 0
+	results := make(chan error, 2)
+	sched := scheduler.New(func(runCtx context.Context, identifier string) error {
+		err := runScheduledSync(runCtx, identifier, st.Store, nil, invocationFromContext(ctx))
+		results <- err
+		return err
+	})
+	t.Cleanup(func() { <-sched.Stop().Done() })
+	require.NoError(t, sched.AddAccount(src.Identifier, "0 * * * *"))
+	require.NoError(t, sched.TriggerSync(src.Identifier, true))
+	require.ErrorIs(t, <-results, scheduler.ErrAcquisitionIncomplete)
+	require.Eventually(t, func() bool { return !sched.Status()[0].Running && !sched.Status()[0].Queued }, time.Second, time.Millisecond)
+	assert.True(t, sched.Status()[0].LastCompleted.IsZero())
+	assert.False(t, sched.Status()[0].LastAttempted.IsZero())
+	assert.Empty(t, sched.Status()[0].LastError)
+	assert.Zero(t, failures)
 	healthy.Store(true)
-	require.NoError(t, runEmailPoll(ctx, src.Identifier, st.Store, nil, invocationFromContext(ctx)))
+	rebuildCacheAfterScheduledSourceRun = func(context.Context, string) error { return fmt.Errorf("queue unavailable") }
+	require.NoError(t, sched.TriggerSync(src.Identifier, true))
+	require.NoError(t, <-results)
+	require.Eventually(t, func() bool { return !sched.Status()[0].Running && !sched.Status()[0].Queued }, time.Second, time.Millisecond)
+	assert.False(t, sched.Status()[0].LastCompleted.IsZero())
 	debt, err = st.Store.ListUnresolvedSyncItemErrors(ctx, src.ID)
 	require.NoError(t, err)
 	assert.Empty(t, debt)
-	assert.EqualValues(t, 3, profiles.Load())
+	assert.EqualValues(t, 5, profiles.Load())
 	assert.EqualValues(t, 1, histories.Load())
 	require.NoError(t, st.Store.UpdateSourceSyncCursor(src.ID, ""))
 	assert.ErrorContains(t, runEmailPoll(ctx, src.Identifier, st.Store, nil, invocationFromContext(ctx)), "no history ID")
@@ -220,5 +248,40 @@ func TestGmailPollUsesOneVerifiedProfile(t *testing.T) {
 	current, err := st.Store.GetSourceByID(src.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "102", current.SyncCursor.String)
-	assert.EqualValues(t, 7, profiles.Load())
+	assert.EqualValues(t, 9, profiles.Load())
+	quota.Store(true)
+	otherRan := make(chan struct{}, 1)
+	gate := api.NewSerialOperationGate()
+	pollScheduler := scheduler.New(func(context.Context, string) error {
+		otherRan <- struct{}{}
+		return nil
+	}).WithAccountPoll(func(runCtx context.Context, identifier string) error {
+		return runEmailPoll(runCtx, identifier, st.Store, nil, invocationFromContext(ctx))
+	}).WithWorkTracker(labelWorkTracker(gate, "test"))
+	t.Cleanup(func() { <-pollScheduler.Stop().Done() })
+	n, scheduleErrors := pollScheduler.AddAccountsFromConfig(&config.Config{Accounts: []config.AccountSchedule{{Email: src.Identifier, Enabled: true, Schedule: "0 * * * *", PollInterval: 15 * time.Second}}})
+	require.Empty(t, scheduleErrors)
+	require.Equal(t, 1, n)
+	require.NoError(t, pollScheduler.AddAccount("other@example.test", "0 * * * *"))
+	pollScheduler.Start()
+	select {
+	case <-quotaSeen:
+	case <-time.After(3 * time.Second):
+		require.FailNow(t, "poll did not reach Gmail")
+	}
+	require.NoError(t, pollScheduler.TriggerSync("other@example.test", false))
+	select {
+	case <-otherRan:
+	case <-time.After(3 * time.Second):
+		require.FailNow(t, "another account did not acquire the gate during quota pause")
+	}
+	require.NoError(t, st.Store.UpdateSourceSyncCursor(src.ID, "100"))
+	expired.Store(false)
+	labelsQuota.Store(true)
+	freshCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	assert.ErrorIs(t, runEmailPoll(freshCtx, src.Identifier, st.Store, nil, invocationFromContext(freshCtx)), scheduler.ErrAcquisitionIncomplete)
+	run, err := st.Store.GetLatestSync(src.ID)
+	require.NoError(t, err)
+	assert.Equal(t, store.SyncStatusPaused, run.Status)
+	assert.Empty(t, run.ErrorMessage.String)
 }

@@ -38,6 +38,32 @@ const (
 
 var errWriteOutcomeUnknown = errors.New("gmail write outcome is unknown")
 
+// ErrQuotaDeferred asks a polling pass to release its work slot during a provider pause.
+var ErrQuotaDeferred = errors.New("gmail quota pause deferred")
+
+// IsQuotaDeferred reports whether every cause is a quota deferral.
+func IsQuotaDeferred(err error) bool {
+	if err == nil {
+		return false
+	}
+	if err == ErrQuotaDeferred {
+		return true
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		children := joined.Unwrap()
+		if len(children) == 0 {
+			return false
+		}
+		for _, child := range children {
+			if !IsQuotaDeferred(child) {
+				return false
+			}
+		}
+		return true
+	}
+	return IsQuotaDeferred(errors.Unwrap(err))
+}
+
 // Client implements the Gmail API interface.
 type Client struct {
 	httpClient  *http.Client
@@ -45,10 +71,16 @@ type Client struct {
 	logger      *slog.Logger
 	userID      string // "me" for authenticated user
 	concurrency int    // Max parallel requests for batch operations
+	deferQuota  bool
 }
 
 // ClientOption configures a Client.
 type ClientOption func(*Client)
+
+// WithDeferredQuota lets a polling pass return while a quota pause is active.
+func WithDeferredQuota() ClientOption {
+	return func(c *Client) { c.deferQuota = true }
+}
 
 // WithLogger sets the logger for the client.
 func WithLogger(logger *slog.Logger) ClientOption {
@@ -126,7 +158,7 @@ func (c *Client) request(ctx context.Context, op Operation, method, path string,
 	for quotaRetries := 0; ; quotaRetries++ {
 		// Quota pauses can exceed the request timeout. Wait under the caller's
 		// context, then start a fresh HTTP/retry budget after tokens are available.
-		if err := c.rateLimiter.Acquire(ctx, op); err != nil {
+		if err := c.rateLimiter.acquire(ctx, op, c.deferQuota); err != nil {
 			return nil, fmt.Errorf("rate limit: %w", retryBudgetError(err, quotaRetries, lastErr))
 		}
 		data, err := c.requestWithRetryBudget(ctx, op, method, path, bodyBytes, lastErr)
@@ -138,6 +170,9 @@ func (c *Client) request(ctx context.Context, op Operation, method, path string,
 		}
 		if ctx.Err() != nil {
 			return nil, retryBudgetError(ctx.Err(), quotaRetries+1, err)
+		}
+		if c.deferQuota {
+			return nil, ErrQuotaDeferred
 		}
 		if quotaRetries >= maxQuotaRetries {
 			return nil, fmt.Errorf("quota retries exhausted after %d retries: %w", quotaRetries, err)
@@ -177,7 +212,7 @@ func (c *Client) requestWithRetryBudget(ctx context.Context, op Operation, metho
 				return nil, retryBudgetError(ctx.Err(), attempt, lastErr)
 			case <-time.After(backoff):
 			}
-			if err := c.rateLimiter.Acquire(ctx, op); err != nil {
+			if err := c.rateLimiter.acquire(ctx, op, c.deferQuota); err != nil {
 				return nil, retryBudgetError(err, attempt, lastErr)
 			}
 		}

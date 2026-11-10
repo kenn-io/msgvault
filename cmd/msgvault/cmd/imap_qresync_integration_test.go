@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	imapapi "github.com/emersion/go-imap/v2"
 	"github.com/stretchr/testify/assert"
@@ -1810,4 +1811,23 @@ func TestIMAPPollQresyncAppendAndFlags(t *testing.T) {
 	server.setSnapshot(scriptedRFC7162Snapshot{Capabilities: "IMAP4rev1", Mailboxes: []scriptedRFC7162Mailbox{fallback}})
 	assert.ErrorIs(t, runEmailPoll(ctx, ic.Identifier(), st, nil, invocationFromContext(ctx)), scheduler.ErrAcquisitionIncomplete)
 	assert.Equal(t, before, queryScriptedRFC7162Memberships(t, st, source.ID))
+	results := make(chan error, 2)
+	sched := scheduler.New(func(runCtx context.Context, identifier string) error {
+		err := runScheduledSync(runCtx, identifier, st, nil, invocationFromContext(ctx))
+		results <- err
+		return err
+	})
+	t.Cleanup(func() { <-sched.Stop().Done() })
+	require.NoError(t, sched.AddAccount(ic.Identifier(), "0 * * * *"))
+	require.NoError(t, sched.TriggerSync(ic.Identifier(), true))
+	require.ErrorIs(t, <-results, scheduler.ErrAcquisitionIncomplete)
+	require.Eventually(t, func() bool { return !sched.Status()[0].Running && !sched.Status()[0].Queued }, time.Second, time.Millisecond)
+	assert.True(t, sched.Status()[0].LastCompleted.IsZero())
+	assert.Empty(t, sched.Status()[0].LastError)
+	fallback.Messages[len(fallback.Messages)-1].MissingRaw = false
+	server.setSnapshot(scriptedRFC7162Snapshot{Capabilities: "IMAP4rev1", Mailboxes: []scriptedRFC7162Mailbox{fallback}})
+	require.NoError(t, sched.TriggerSync(ic.Identifier(), false))
+	require.NoError(t, <-results)
+	require.Eventually(t, func() bool { return !sched.Status()[0].Running && !sched.Status()[0].Queued }, time.Second, time.Millisecond)
+	assert.False(t, sched.Status()[0].LastCompleted.IsZero())
 }

@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -84,6 +85,34 @@ func TestCronPromotesQueuedPoll(t *testing.T) {
 		assert.Equal(t, 1, cronCalls)
 		assert.Zero(t, pollCalls)
 		assert.False(t, s.hasQueuedRuns())
+		<-s.Stop().Done()
+	})
+}
+
+func TestAccountCompletionDistinguishesPartialAndFailures(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var result error
+		s := New(func(context.Context, string) error { return result })
+		require.NoError(t, s.AddAccount("a@example.com", "0 * * * *"))
+		s.onAccountTick("a@example.com")
+		first := s.Status()[0].LastCompleted
+		time.Sleep(time.Second)
+		result = ErrAcquisitionIncomplete
+		s.onAccountTick("a@example.com")
+		status := s.Status()[0]
+		assert.Equal(t, first, status.LastCompleted)
+		assert.True(t, status.LastRun.After(first))
+		assert.Empty(t, status.LastError)
+		result = errors.Join(ErrAcquisitionIncomplete, errors.New("provider failed"))
+		s.onAccountTick("a@example.com")
+		assert.Contains(t, s.Status()[0].LastError, "provider failed")
+		time.Sleep(time.Second)
+		result = ErrDeferUntilNextTrigger
+		s.onAccountTick("a@example.com")
+		assert.Equal(t, first, s.Status()[0].LastCompleted)
+		result = nil
+		s.onAccountTick("a@example.com")
+		assert.True(t, s.Status()[0].LastCompleted.After(first))
 		<-s.Stop().Done()
 	})
 }

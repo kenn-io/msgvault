@@ -301,6 +301,33 @@ func TestRunServeStartsReadOnlyWithoutOAuthConfig(t *testing.T) {
 	}
 }
 
+func TestRunServeRejectsInvalidPollingTarget(t *testing.T) {
+	for _, tc := range []struct {
+		name, sourceType, identifier, want string
+		filtered                           bool
+	}{
+		{"unsupported", sourceTypeMSMail, "user@example.test", "no active", false},
+		{"filtered", sourceTypeIMAP, "imaps://user@example.test", "folder filter", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := lifecycleTestConfig(t.TempDir())
+			cfg.Server.APIPort = freeTCPPort(t)
+			cfg.Analytics.Engine = config.AnalyticsEngineSQL
+			cfg.Accounts = []config.AccountSchedule{{Email: tc.identifier, Enabled: true, Schedule: "0 * * * *", PollInterval: 15 * time.Second}}
+			if tc.filtered {
+				cfg.Sync.IMAPSkipFolders = map[string][]string{tc.identifier: {"Archive"}}
+			}
+			st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+			_, err := st.GetOrCreateSource(tc.sourceType, tc.identifier)
+			require.NoError(t, err)
+			require.NoError(t, st.Close())
+			cmd := &cobra.Command{Use: serveCmd.Use}
+			cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+			assert.ErrorContains(t, runServe(cmd, nil), tc.want)
+		})
+	}
+}
+
 func TestRunServeFailsPendingImportFromPreviousDaemon(t *testing.T) {
 	cfg := testConfigValue()
 
@@ -3237,7 +3264,7 @@ func TestRunScheduledSyncUsesSharedDiscordImporterAndRebuildsOnce(t *testing.T) 
 		wantErr    error
 	}{
 		{"import failure", importErr, nil, importErr},
-		{"cache failure", nil, cacheErr, cacheErr},
+		{"cache failure", nil, cacheErr, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -3281,7 +3308,11 @@ func TestRunScheduledSyncUsesSharedDiscordImporterAndRebuildsOnce(t *testing.T) 
 				require.FailNow("Discord scheduled sync must not resolve Gmail OAuth")
 				return nil, errors.New("unreachable Gmail OAuth resolution")
 			}, state)
-			require.ErrorIs(err, tc.wantErr)
+			if tc.wantErr == nil {
+				require.NoError(err)
+			} else {
+				require.ErrorIs(err, tc.wantErr)
+			}
 			assert.Equal([]int64{source.ID}, imported)
 			assert.Equal(1, rebuilds)
 			if tc.importErr == nil {

@@ -46,4 +46,6 @@ func TestPollingAccountValidation(t *testing.T) {
 	assert.Error(t, ValidatePollingAccounts([]AccountSchedule{account, duplicate}))
 	account.Schedule = "@hourly"
 	assert.Error(t, ValidatePollingAccounts([]AccountSchedule{account}))
+	account.Schedule = ", * * * *"
+	assert.Error(t, ValidatePollingAccounts([]AccountSchedule{account}))
 }

@@ -124,7 +124,7 @@ func (s *Syncer) incrementalWithRecovery(
 	// Get profile for current history ID
 	profile, err := s.readGmailProfile(ctx)
 	if err != nil {
-		_ = s.store.FailSync(syncID, err.Error())
+		s.failStoppedSync(syncID, err)
 		return nil, fmt.Errorf("get profile: %w", err)
 	}
 
@@ -163,7 +163,7 @@ func (s *Syncer) incrementalWithRecovery(
 	// Sync labels first (new labels may have been created)
 	labelMap, err := s.syncLabels(ctx, source.ID)
 	if err != nil {
-		_ = s.store.FailSync(syncID, err.Error())
+		s.failStoppedSync(syncID, err)
 		return nil, fmt.Errorf("sync labels: %w", err)
 	}
 
@@ -209,7 +209,7 @@ func (s *Syncer) incrementalWithRecovery(
 					// Callers fall back to a full sync on ErrHistoryExpired.
 					return nil, ErrHistoryExpired
 				}
-				_ = s.store.FailSync(syncID, err.Error())
+				s.failStoppedSync(syncID, err)
 				return nil, fmt.Errorf("list history: %w", err)
 			}
 

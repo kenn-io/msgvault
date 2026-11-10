@@ -23,13 +23,8 @@ func ValidatePollingAccounts(accounts []AccountSchedule) error {
 			return fmt.Errorf("duplicate polling account %q", account.Email)
 		}
 		seen[key] = true
-		for field := range strings.FieldsSeq(account.Schedule) {
-			if strings.Trim(field, ",") == "" {
-				return fmt.Errorf("account %q: invalid cron expression", account.Email)
-			}
-		}
-		if _, err := cronexpr.Parser.Parse(account.Schedule); err != nil {
-			return fmt.Errorf("account %q: invalid cron expression: %w", account.Email, err)
+		if err := cronexpr.Validate(account.Schedule); err != nil {
+			return fmt.Errorf("account %q: %w", account.Email, err)
 		}
 	}
 	return nil

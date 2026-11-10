@@ -10,6 +10,6 @@ enabled = true
 poll_interval = "30s"
 ```
 
-The account identifier or display name must match one active Gmail or IMAP source. Use the exact identifier shown by `msgvault list-accounts` if a name is ambiguous. IMAP polling covers all folders and requires an account without saved folder exclusions.
+An exact account identifier selects that source before display names are considered. Otherwise, the display name must match one active Gmail or IMAP source. Use the identifier shown by `msgvault list-accounts` if a name is ambiguous. IMAP polling covers all folders and requires an account without saved folder exclusions. The daemon reports an error at startup if a polling target is invalid.
 
-The daemon starts a catch-up when it starts. Polls wait behind other work, and provider limits can delay acquisition. Search and analytics updates run in the background after acquisition, so new messages may take longer to appear there. An incomplete pass keeps its saved progress and retries on a later trigger.
+The daemon starts a catch-up when it starts. Polls wait behind other work, and provider limits can delay acquisition. Gmail quota pauses survive interrupted passes until the daemon stops. Search and analytics updates run in the background after acquisition, so new messages may take longer to appear there. Status shows the last attempt and the last completed acquisition. An incomplete pass keeps its saved progress and retries on a later trigger.

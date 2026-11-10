@@ -330,6 +330,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err := s.InitSchemaUnlessCurrentContext(cmd.Context()); err != nil {
 		return fmt.Errorf("init schema: %w", err)
 	}
+	if err := validatePollingTargets(cmd.Context(), cfg, s, state); err != nil {
+		return fmt.Errorf("configure polling: %w", err)
+	}
 	failedUnfinishedImports, err := s.FailUnfinishedSyncOperationsContext(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("recover unfinished historical imports: %w", err)
@@ -470,29 +473,18 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Add all scheduled accounts
-	schedulingConfig := *cfg
-	schedulingConfig.Accounts = append([]config.AccountSchedule(nil), cfg.Accounts...)
-	pollSources := make(map[int64]bool)
-	for i := range schedulingConfig.Accounts {
-		account := &schedulingConfig.Accounts[i]
-		if account.Enabled && account.PollInterval != 0 {
-			source, err := pollingSource(ctx, account.Email, s, state)
-			if err == nil && pollSources[source.ID] {
-				err = errors.New("source already has a polling account")
-			}
-			if err != nil {
-				logger.Error("failed to schedule account polling", "account", account.Email, "error", err)
-				account.PollInterval = 0
-			} else {
-				pollSources[source.ID] = true
-			}
+	count := 0
+	for _, account := range cfg.ScheduledAccounts() {
+		one := *cfg
+		one.Accounts = []config.AccountSchedule{account}
+		registered, errs := sched.AddAccountsFromConfig(&one)
+		if len(errs) != 0 && account.PollInterval != 0 {
+			return fmt.Errorf("configure polling: %w", errors.Join(errs...))
 		}
-	}
-	count, errs := sched.AddAccountsFromConfig(&schedulingConfig)
-	if len(errs) > 0 {
 		for _, err := range errs {
 			logger.Error("failed to schedule account", "error", err)
 		}
+		count += registered
 	}
 	if count == 0 {
 		logger.Warn("no accounts scheduled - upload tokens via API and add accounts to config.toml")
@@ -4311,6 +4303,14 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 		}
 		startTime := time.Now()
 		summary, syncErr := runScheduledGmailSync(ctx, identifier, nil, s, getOAuthMgr, state)
+		incomplete := false
+		if syncErr == nil {
+			var src *store.Source
+			src, syncErr = s.GetSourceByTypeAndIdentifier(ctx, sourceTypeGmail, identifier)
+			if syncErr == nil {
+				incomplete, syncErr = gmailAcquisitionIncomplete(ctx, s, src, summary)
+			}
+		}
 		if scheduledSyncYielded(ctx) {
 			return scheduledSyncYieldResult(ctx, syncErr)
 		}
@@ -4323,10 +4323,20 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 				"duration", time.Since(startTime),
 			)
 		}
-		return errors.Join(syncErr, rebuildCacheAfterScheduledSourceRun(context.WithoutCancel(ctx), identifier))
+		if queueErr := rebuildCacheAfterScheduledSourceRun(context.WithoutCancel(ctx), identifier); queueErr != nil {
+			logger.Warn("queue analytics refresh", "identifier", identifier, "error", queueErr)
+		}
+		if syncErr != nil {
+			return syncErr
+		}
+		if incomplete {
+			return scheduler.ErrAcquisitionIncomplete
+		}
+		return nil
 	}
 
 	var errs []error
+	incomplete := false
 	for _, src := range srcs {
 		startTime := time.Now()
 		sourceType := src.SourceType
@@ -4335,14 +4345,20 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 		}
 
 		var (
-			summary *gmail.SyncSummary
-			err     error
+			summary  *gmail.SyncSummary
+			err      error
+			complete = true
 		)
 		switch sourceType {
 		case sourceTypeGmail:
 			summary, err = runScheduledGmailSync(ctx, identifier, src, s, getOAuthMgr, state)
+			if err == nil {
+				var partial bool
+				partial, err = gmailAcquisitionIncomplete(ctx, s, src, summary)
+				complete = !partial
+			}
 		case sourceTypeIMAP:
-			summary, err = runScheduledIMAPSync(ctx, src, s, state)
+			summary, complete, err = runScheduledIMAPSyncWithCoverage(ctx, src, s, state)
 		case sourceTypeTeams:
 			err = runScheduledTeamsSync(ctx, src, s, state)
 		case sourceTypeMSMail:
@@ -4367,6 +4383,7 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 			errs = append(errs, fmt.Errorf("%s (%s): %w", identifier, sourceType, err))
 			continue
 		}
+		incomplete = incomplete || !complete
 
 		if summary != nil {
 			logger.Info("sync completed",
@@ -4386,10 +4403,15 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 
 	// Rebuild cache once after all sources, regardless of per-source errors.
 	if err := rebuildCacheAfterScheduledSourceRun(context.WithoutCancel(ctx), identifier); err != nil {
-		errs = append(errs, err)
+		logger.Warn("queue analytics refresh", "identifier", identifier, "error", err)
 	}
-
-	return errors.Join(errs...)
+	if err := errors.Join(errs...); err != nil {
+		return err
+	}
+	if incomplete {
+		return scheduler.ErrAcquisitionIncomplete
+	}
+	return nil
 }
 
 func scheduledSyncYielded(ctx context.Context) bool {
@@ -4521,7 +4543,7 @@ func scheduledSyncPreemptible(ctx context.Context, s *store.Store, identifier st
 func newDaemonGmailClient(
 	ctx context.Context, email string, src *store.Source,
 	getOAuthMgr func(ctx context.Context, _ string) (*oauth.Manager, error), state *invocation,
-	scopes []string,
+	scopes []string, options ...gmail.ClientOption,
 ) (client gmail.API, serviceAccount bool, err error) {
 	if state == nil {
 		state = invocationFromContext(ctx)
@@ -4588,11 +4610,12 @@ func newDaemonGmailClient(
 		}
 	}
 
-	rateLimiter := gmail.NewRateLimiter(float64(cfg.Sync.RateLimitQPS))
-	return gmail.NewClient(tokenSource,
+	rateLimiter := state.gmailLimiter(email)
+	options = append([]gmail.ClientOption{
 		gmail.WithLogger(logger),
 		gmail.WithRateLimiter(rateLimiter),
-	), saKeyPath != "", nil
+	}, options...)
+	return gmail.NewClient(tokenSource, options...), saKeyPath != "", nil
 }
 
 // runScheduledGmailSync runs an incremental Gmail sync for the daemon.
@@ -4614,7 +4637,11 @@ func runScheduledGmailSyncWithProfile(ctx context.Context, email string, src *st
 	cfg := state.cfg
 	logger := state.logger
 	accountEmail := scheduledGmailAccountIdentifier(email, src)
-	client, _, err := newDaemonGmailClient(ctx, accountEmail, src, getOAuthMgr, state, oauth.Scopes)
+	var clientOptions []gmail.ClientOption
+	if verify {
+		clientOptions = append(clientOptions, gmail.WithDeferredQuota())
+	}
+	client, _, err := newDaemonGmailClient(ctx, accountEmail, src, getOAuthMgr, state, oauth.Scopes, clientOptions...)
 	if err != nil {
 		return nil, err
 	}

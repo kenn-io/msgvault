@@ -139,6 +139,7 @@ type Scheduler struct {
 	schedules     map[string]string       // email -> cron expression
 	running       map[string]bool         // email -> currently syncing
 	lastRun       map[string]time.Time    // email -> last successful run
+	lastCompleted map[string]time.Time    // email -> last complete acquisition
 	lastErr       map[string]error        // email -> last error
 	queuedAt      map[string]time.Time    // email -> when a run began waiting for the gate
 	pending       map[string]bool         // email -> follow-up requested by a tick or yield
@@ -207,6 +208,7 @@ func New(syncFunc SyncFunc) *Scheduler {
 		schedules:          make(map[string]string),
 		running:            make(map[string]bool),
 		lastRun:            make(map[string]time.Time),
+		lastCompleted:      make(map[string]time.Time),
 		lastErr:            make(map[string]error),
 		queuedAt:           make(map[string]time.Time),
 		pending:            make(map[string]bool),
@@ -691,13 +693,17 @@ func (s *Scheduler) runAccountSync(email string, poll bool) {
 		s.logger.Info("scheduled sync yielded to a waiting operation; queued follow-up",
 			"email", email,
 			"duration", time.Since(start))
-	} else if errors.Is(err, ErrAcquisitionIncomplete) {
+	} else if err == ErrAcquisitionIncomplete { //nolint:errorlint // Joined failures must remain visible.
+		s.lastRun[email] = time.Now()
 		delete(s.lastErr, email)
 	} else if err != nil && err != ErrDeferUntilNextTrigger { //nolint:errorlint // Only a bare deferral is a clean no-work run.
 		s.lastErr[email] = err
 		logScheduledSyncError(s.logger, email, time.Since(start), err)
 	} else {
 		s.lastRun[email] = time.Now()
+		if err == nil {
+			s.lastCompleted[email] = s.lastRun[email]
+		}
 		s.lastErr[email] = nil
 		s.logger.Info("scheduled sync completed",
 			"email", email,
@@ -711,7 +717,7 @@ func (s *Scheduler) runAccountSync(email string, poll bool) {
 	// Release the gate before post-sync jobs queue for it, so a sync that is
 	// already waiting runs before the indexing this sync requests.
 	release()
-	if (err != nil && err != ErrDeferUntilNextTrigger && !errors.Is(err, ErrAcquisitionIncomplete)) || yielded { //nolint:errorlint // Only a bare deferral is a clean no-work run.
+	if (err != nil && err != ErrDeferUntilNextTrigger && err != ErrAcquisitionIncomplete) || yielded { //nolint:errorlint // Joined failures must remain visible.
 		return
 	}
 	for _, name := range []string{embedJobName} {
@@ -1217,7 +1223,7 @@ func (s *Scheduler) Status() []AccountStatus {
 			Pending:       s.pending[email],
 			StartedAt:     s.startedAt[email],
 			LastAttempted: s.lastAttempted[email],
-			LastCompleted: s.lastRun[email],
+			LastCompleted: s.lastCompleted[email],
 		}
 		if interval := s.pollIntervals[email]; interval != 0 {
 			status.PollInterval = interval.String()
@@ -1281,13 +1287,5 @@ func NormalizeCronExpr(expr string) string {
 // preceded by a "CRON_TZ=<zone>" or "TZ=<zone>" prefix. It also rejects a
 // field made only of commas, which the parser stores but never matches.
 func ValidateCronExpr(expr string) error {
-	for field := range strings.FieldsSeq(expr) {
-		if strings.Trim(field, ",") == "" {
-			return fmt.Errorf("invalid cron expression: field %q lists no values", field)
-		}
-	}
-	if _, err := cronexpr.Parser.Parse(expr); err != nil {
-		return fmt.Errorf("invalid cron expression: %w", err)
-	}
-	return nil
+	return cronexpr.Validate(expr)
 }

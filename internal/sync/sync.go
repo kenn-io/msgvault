@@ -519,6 +519,10 @@ func (s *Syncer) fullSyncRequestFingerprint() string {
 // Checkpoints on failed runs remain resumable. If the terminal write fails,
 // the run can remain running; callers must still return without completing it.
 func (s *Syncer) failStoppedSync(syncID int64, err error) {
+	if gmail.IsQuotaDeferred(err) {
+		_ = s.store.PauseSync(syncID)
+		return
+	}
 	_ = s.store.FailSync(syncID, err.Error())
 }
 

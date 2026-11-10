@@ -4,13 +4,16 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/logging"
+	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/telemetry"
 )
 
@@ -54,6 +57,24 @@ type invocation struct {
 
 	syncFailures       *telemetry.SyncFailures
 	imapFolderAccounts *sync.Once
+	gmailLimiters      *sync.Map
+}
+
+var gmailLimiterInit sync.Mutex
+
+func (inv *invocation) gmailLimiter(identifier string) *gmail.RateLimiter {
+	gmailLimiterInit.Lock()
+	if inv.gmailLimiters == nil {
+		inv.gmailLimiters = &sync.Map{}
+	}
+	limiters := inv.gmailLimiters
+	gmailLimiterInit.Unlock()
+	key := strings.ToLower(strings.TrimSpace(identifier))
+	if normalized := oauth.NormalizeGmailAddress(key); normalized != "" {
+		key = normalized
+	}
+	limiter, _ := limiters.LoadOrStore(key, gmail.NewRateLimiter(float64(inv.cfg.Sync.RateLimitQPS)))
+	return limiter.(*gmail.RateLimiter)
 }
 
 type invocationContextKey struct{}
@@ -63,6 +84,7 @@ func newInvocation() *invocation {
 		logger:             slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})),
 		sends:              &posthog.SendGroup{},
 		imapFolderAccounts: new(sync.Once),
+		gmailLimiters:      &sync.Map{},
 	}
 }
 
