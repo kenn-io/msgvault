@@ -412,7 +412,7 @@ func resolveAttachments(absRoot string, m rawJSONMessage) []Attachment {
 // file. Empty string if the path escapes the root or nothing matches.
 func resolveAttachmentURI(absRoot, uri string) string {
 	cleaned := filepath.Clean(uri)
-	if filepath.IsAbs(cleaned) {
+	if path.IsAbs(uri) || filepath.IsAbs(cleaned) {
 		return ""
 	}
 	// Reject early if the cleaned path tries to escape.

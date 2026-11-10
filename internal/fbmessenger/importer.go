@@ -190,19 +190,24 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (summar
 		return summary, fmt.Errorf("fbmessenger: source: %w", err)
 	}
 	summary.SourceID = source.ID
-	var archivedGroups map[string][]string
+	var archivedGroups, archivedThreads map[string][]string
 	if instagram {
 		metadata, err := st.SourceMessageMetadata(ctx, source.ID)
 		if err != nil {
 			return summary, err
 		}
 		archivedGroups = make(map[string][]string)
+		archivedThreads = make(map[string][]string)
 		for id := range metadata {
 			if strings.HasPrefix(id, "ig:v") && !strings.HasPrefix(id, "ig:v1:") {
-				return summary, fmt.Errorf("instagram: unsupported fingerprint version in %q", id)
+				return summary, errors.New("instagram: this archive uses an unsupported import format")
 			}
 			if i := strings.LastIndexByte(id, ':'); i >= 0 {
 				archivedGroups[id[:i+1]] = append(archivedGroups[id[:i+1]], id)
+			}
+			parts := strings.Split(id, ":")
+			if len(parts) == 5 && parts[0] == "ig" && parts[1] == "v1" {
+				archivedThreads[parts[2]] = append(archivedThreads[parts[2]], id)
 			}
 		}
 	}
@@ -309,7 +314,6 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (summar
 			syncErr = err
 			return summary, fmt.Errorf("fbmessenger: discover: %w", err)
 		}
-
 	}
 
 	// Guard against a checkpoint that points past the current list
@@ -371,7 +375,7 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (summar
 		if instagram {
 			var parsed *Thread
 			var archived map[string]store.StoredMessage
-			parsed, archived, err = parseInstagramThread(ctx, st, source.ID, td, summary, keys, archivedGroups, opts.SelfName)
+			parsed, archived, err = parseInstagramThread(ctx, st, source.ID, td, summary, keys, archivedGroups, archivedThreads, opts.SelfName)
 			if err == nil {
 				err = writeThreadToStore(ctx, st, source.ID, td, parsed, "", opts, labelIDs, meLocal, logger, summary, syncID, absRoot, threadIdx, &cp, archived)
 			}
@@ -573,7 +577,6 @@ func writeThreadToStore(
 	var nameToEmail map[string]string
 	var err error
 	if !instagram {
-
 		// Ensure conversation. Use section-qualified name so threads with
 		// the same basename in different sections (e.g. inbox vs archived)
 		// don't collide.
@@ -612,7 +615,6 @@ func writeThreadToStore(
 		// Determine label IDs for this thread.
 		parentLabelID = labelIDs["Messenger"]
 		sectionLabelID = labelIDs[sectionLabelName(td.Section)]
-
 	}
 	rawFormat := "fbmessenger_" + thread.Format
 
@@ -910,10 +912,10 @@ func writeThreadToStore(
 				if filename == "" {
 					summary.MediaRejected++
 					summary.Incomplete = true
-				} else if _, err := os.Stat(filename); errors.Is(err, os.ErrNotExist) {
+				} else if info, err := os.Stat(filename); errors.Is(err, os.ErrNotExist) {
 					summary.MediaMissing++
 					summary.Incomplete = true
-				} else if err != nil {
+				} else if err != nil || !info.Mode().IsRegular() {
 					summary.MediaRejected++
 					summary.Incomplete = true
 				} else if opts.AttachmentsDir != "" {
