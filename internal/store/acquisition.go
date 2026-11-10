@@ -27,7 +27,7 @@ func (item SyncRunItem) IsAcquisitionReplayCandidate() bool {
 }
 
 // latestAcquisitionOutcomeIDsSQL is the replay boundary, shared by diagnostics
-// and attachment summaries. Arguments are source ID twice, then (optionally)
+// and attachment summaries. Arguments are source ID twice, incremental type, then (optionally)
 // source message ID. Restrict before grouping for per-message callers.
 func latestAcquisitionOutcomeIDsSQL(oneMessage bool) string {
 	filter := ""
@@ -37,9 +37,7 @@ func latestAcquisitionOutcomeIDsSQL(oneMessage bool) string {
 	return `SELECT MAX(i.id) FROM sync_run_items i
 		JOIN sync_runs r ON r.id = i.sync_run_id
 		WHERE r.source_id = ? AND r.id >= COALESCE((
-			SELECT id FROM sync_runs WHERE source_id = ?
-			AND sync_type = 'incremental' AND status = 'completed'
-			ORDER BY completed_at DESC, id DESC LIMIT 1
+			SELECT id ` + lastSuccessfulSyncFilter(true) + `
 		), 0) AND i.phase IN ('fetch', 'ingest')` + filter + `
 		GROUP BY i.source_message_id`
 }

@@ -7,7 +7,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/store"
 )
 
 type acquisitionFailure struct {
@@ -24,36 +23,44 @@ func newDiagnoseAcquisitionCmd() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "diagnose-acquisition --source-id ID",
 		Short: "List pending Gmail acquisition failures",
+		Long:  "List pending Gmail acquisition failures in the local archive. A configured remote URL is not supported.",
 		Args:  cobra.NoArgs,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			inv := prepareInvocation(cmd)
+			cmd.SilenceUsage = true
 			if isAgentMode(inv) {
 				return errors.New("diagnose-acquisition is not available in agent-delegated mode")
 			}
 			var err error
 			inv.cfg, err = config.LoadClientWithOverrides(inv.options.cfgFile, inv.options.homeDir, config.RuntimeOverrides{})
-			return err
+			if err != nil {
+				return fmt.Errorf("load config: %w", err)
+			}
+			cmd.SilenceUsage = false
+			return nil
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if sourceID <= 0 {
 				return usageErr(cmd, errors.New("source ID must be positive"))
 			}
 			ctx := cmd.Context()
-			cfg := invocationFromContext(ctx).cfg
-			st, err := store.OpenReadOnlyContext(ctx, cfg.DatabaseDSN())
-			if err != nil {
-				return fmt.Errorf("open archive: %w", err)
+			if invocationFromContext(ctx).cfg.Remote.URL != "" {
+				return errors.New("diagnose-acquisition requires a local archive; remote.url is configured")
 			}
-			defer func() { _ = st.Close() }()
-			if err := st.ValidateSchemaContext(ctx); err != nil {
+			st, cleanup, err := openReadOnlyStoreForInvocation(ctx, invocationFromContext(ctx))
+			if err != nil {
 				return err
 			}
+			defer cleanup()
 			source, err := st.GetSourceByIDContext(ctx, sourceID)
 			if err != nil {
 				return err
 			}
 			if source.SourceType != "gmail" {
 				return errors.New("acquisition diagnostic requires a Gmail source")
+			}
+			if source.MergedIntoSourceID != 0 {
+				return fmt.Errorf("source %d was merged into source %d and cannot sync", sourceID, source.MergedIntoSourceID)
 			}
 			items, err := st.ListUnresolvedSyncItemErrors(ctx, sourceID)
 			if err != nil {
@@ -67,6 +74,10 @@ func newDiagnoseAcquisitionCmd() *cobra.Command {
 			}
 			if jsonOut {
 				return json.MarshalWrite(cmd.OutOrStdout(), active)
+			}
+			if len(active) == 0 {
+				_, err := fmt.Fprintln(cmd.OutOrStdout(), "No pending acquisition failures.")
+				return err
 			}
 			for _, item := range active {
 				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", item.SourceMessageID, item.Phase, item.ErrorKind); err != nil {

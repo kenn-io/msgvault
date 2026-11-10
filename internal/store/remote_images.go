@@ -74,8 +74,8 @@ func (s *Store) RecomputeRemoteImageAttachmentStatsContext(ctx context.Context, 
 		var pending bool
 		if err := q.QueryRow(`SELECT EXISTS (
 			SELECT 1 FROM sync_run_items WHERE id IN (`+latestAcquisitionOutcomeIDsSQL(true)+`)
-			AND status = 'error' AND error_kind IN ('attachment_error', 'attachment_remote_image_error')
-		)`, sourceID, sourceID, sourceMessageID).Scan(&pending); err != nil {
+			AND status = 'error' AND error_kind IN ('`+SyncItemKindAttachmentError+`', '`+SyncItemKindAttachmentAndRemoteImageError+`')
+		)`, sourceID, sourceID, "incremental", sourceMessageID).Scan(&pending); err != nil {
 			return err
 		}
 		if pending {
