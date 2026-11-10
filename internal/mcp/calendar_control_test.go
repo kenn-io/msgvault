@@ -516,16 +516,11 @@ func TestCalendarToolsDelegatedBridgeExcludesArchiveAccess(t *testing.T) {
 	names := make([]string, 0, len(listed.Tools))
 	for _, tool := range listed.Tools {
 		names = append(names, tool.Name)
-		want, ok := wantHints[tool.Name]
-		if !assertions.True(ok, "unexpected tool %s", tool.Name) {
-			continue
-		}
+		want := wantHints[tool.Name]
 		requirements.NotNil(tool.Annotations, tool.Name)
-		requirements.NotNil(tool.Annotations.OpenWorldHint, tool.Name)
-		requirements.NotNil(tool.Annotations.DestructiveHint, tool.Name)
-		assertions.True(*tool.Annotations.OpenWorldHint, tool.Name)
+		assertions.Equal(new(true), tool.Annotations.OpenWorldHint, tool.Name)
 		assertions.Equal(want.readOnly, tool.Annotations.ReadOnlyHint, tool.Name)
-		assertions.Equal(want.destructive, *tool.Annotations.DestructiveHint, tool.Name)
+		assertions.Equal(new(want.destructive), tool.Annotations.DestructiveHint, tool.Name)
 	}
 	assertions.ElementsMatch(wantNames, names)
 }
