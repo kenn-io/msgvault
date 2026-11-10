@@ -742,6 +742,38 @@ engine returns `503` without falling back to the privileged engine.
 
 ---
 
+### Person creation conflicts {#person-creation-conflicts}
+
+With `if_exists: "return"`, `POST /api/v1/people/create` returns HTTP 409
+when contacts identify multiple targets or a single unbound participant cluster.
+The response has `error`, `message`, and `details` fields:
+
+| `error` | `details` fields |
+| --- | --- |
+| `person_ambiguous` | `candidates`: array of `{person_id, participant_id, name}`; `match_basis`: array of matching evidence. Each candidate identifies a saved person or an unbound cluster; its other ID is null. |
+| `person_matches_participant` | `participant_id`: the unbound cluster's representative ID; `match_basis`: array of matching evidence; `next`: explicit promotion guidance. |
+
+Each `match_basis` entry contains `kind` (`email` or `phone`), normalized
+`value`, `matched` (`contact_point`, `participant`, `identifier`, or
+`observation`), and nullable `person_id` and `participant_id` fields.
+
+`details.next.cli` is an argv array, and `details.next.mcp` identifies a tool
+and its arguments. For example, promotion guidance for participant 9 is:
+
+```json
+{
+  "cli": ["msgvault", "person", "promote", "9", "--json"],
+  "mcp": {
+    "tool": "promote_person",
+    "arguments": {"participant_id": 9}
+  }
+}
+```
+
+Resolve ambiguity or promote the participant explicitly before retrying.
+Omitting `if_exists` or using `"error"` retains the original
+`person_contact_exists` conflict without `details`.
+
 ### Curated person network {#get-apiv1peopleidnetwork}
 
 **Endpoint:** `GET /api/v1/people/{id}/network`

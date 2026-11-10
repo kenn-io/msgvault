@@ -94,18 +94,22 @@ Older daemons reject the unknown `if_exists` field; upgrade the daemon before
 using return mode.
 
 When all matching contacts identify one saved person, the command returns that
-person without changing its name, contacts, or other details. The JSON `ensure`
-field reports `status: matched_existing`; `unapplied_contacts` lists supplied
-contacts that did not match and were not added. A new person reports
-`status: created`. With `--publish`, only a newly created person is published.
+person without changing its saved profile. Supplied `name`, `org`, `title`,
+`note`, and `address` are ignored on a match. The JSON `ensure` field reports
+`status: matched_existing`; `unapplied_contacts` lists only supplied contacts
+that did not match and were not added, not other ignored fields. A new person
+reports `status: created`. With `--publish`, only a newly created person is
+published.
 Current curated contacts take precedence over unbound observations of that
 same value. A match bound to another saved person or an unbound cluster on an
 uncurated contact still counts toward ambiguity.
 
 An unbound participant cluster returns `person_matches_participant` with a
-promotion command in `details.next`. Multiple saved people or separate clusters
-return `person_ambiguous` with `details.candidates`; resolve them explicitly.
-Both conflicts exit with an error, and `--json` prints the error envelope.
+CLI argv array and an MCP tool-and-arguments call in `details.next`. Multiple
+saved people or separate clusters return `person_ambiguous` with `details.candidates`; resolve them explicitly.
+Both conflicts exit with an error, and `--json` prints the error envelope. See
+[person creation conflict details](../api-server.md#person-creation-conflicts)
+for both response shapes.
 
 Without `--publish`, creation stays in your archive. Add `--publish` to send
 the new person to your configured [CardDAV write target](people-carddav.md#sync-and-publish-selected-people).
