@@ -8,6 +8,7 @@ import type { Provenance } from "./provenance";
 
 export interface PersonFileSuggestionRow {
   content_available: boolean;
+  /** Suggestion availability is based on metadata; file details check stored bytes. */
   content_state: PersonFileSuggestionRowContentState;
   conversation_id: number;
   filename: string;

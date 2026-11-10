@@ -33,6 +33,7 @@ const (
 	FileContentURLOnly      FileContentState = "url_only"
 	FileContentMissingBlob  FileContentState = "missing_blob"
 	FileContentLocal        FileContentState = "local_content"
+	FileContentUnverified   FileContentState = "unverified"
 )
 
 type FileSearchSort struct {
@@ -84,7 +85,7 @@ type FileSearchRow struct {
 	ParticipantIDs     []int64              `json:"participant_ids,omitempty"`
 	ParticipantLabels  []string             `json:"participant_labels,omitempty"`
 	ParticipantDomains []string             `json:"participant_domains,omitempty"`
-	ContentState       FileContentState     `json:"content_state" enum:"metadata_only,url_only,missing_blob,local_content"`
+	ContentState       FileContentState     `json:"content_state" enum:"metadata_only,url_only,missing_blob,local_content,unverified" doc:"List availability is based on metadata; file details check stored bytes."`
 	ContentAvailable   bool                 `json:"content_available"`
 	SearchExplain      *FileSearchExplain   `json:"search_explain,omitzero" nullable:"false"`
 }
@@ -149,7 +150,7 @@ type FileMetadataResponse struct {
 	Size             int64                        `json:"size_bytes"`
 	ContentHash      string                       `json:"content_hash,omitempty"`
 	URL              string                       `json:"url,omitempty"`
-	ContentState     FileContentState             `json:"content_state" enum:"metadata_only,url_only,missing_blob,local_content"`
+	ContentState     FileContentState             `json:"content_state" enum:"metadata_only,url_only,missing_blob,local_content" doc:"File details check stored bytes; unreadable content returns an error."`
 	ContentAvailable bool                         `json:"content_available"`
 }
 
@@ -860,7 +861,7 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state, available := fileContentState(*file)
-	if available {
+	if state == FileContentUnverified {
 		content, _, err := s.openFileContent(r.Context(), *file)
 		if errors.Is(err, os.ErrNotExist) {
 			state, available = FileContentMissingBlob, false
@@ -869,6 +870,7 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 			return
 		} else {
 			_ = content.Close()
+			state, available = FileContentLocal, true
 		}
 	}
 	writeJSON(w, http.StatusOK, FileMetadataResponse{
@@ -965,5 +967,5 @@ func fileContentState(file store.FileMetadata) (FileContentState, bool) {
 	if file.ContentHash == "" {
 		return FileContentMetadataOnly, false
 	}
-	return FileContentLocal, true
+	return FileContentUnverified, false
 }

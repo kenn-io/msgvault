@@ -54,7 +54,7 @@ type FileSuggestionRow struct {
 	MIMEFamily       string           `json:"mime_family" enum:"image,pdf,audio,video,text,document,archive,other"`
 	FilenameMatch    string           `json:"filename_match" enum:"exact,prefix,typo"`
 	Size             int64            `json:"size_bytes"`
-	ContentState     FileContentState `json:"content_state" enum:"metadata_only,url_only,missing_blob,local_content"`
+	ContentState     FileContentState `json:"content_state" enum:"metadata_only,url_only,missing_blob,local_content,unverified" doc:"Suggestion availability is based on metadata; file details check stored bytes."`
 	ContentAvailable bool             `json:"content_available"`
 }
 

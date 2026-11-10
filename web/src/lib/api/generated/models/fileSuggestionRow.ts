@@ -7,6 +7,7 @@ import type { FileSuggestionRowMimeFamily } from "./fileSuggestionRowMimeFamily"
 
 export interface FileSuggestionRow {
   content_available: boolean;
+  /** Suggestion availability is based on metadata; file details check stored bytes. */
   content_state: FileSuggestionRowContentState;
   conversation_id: number;
   filename: string;

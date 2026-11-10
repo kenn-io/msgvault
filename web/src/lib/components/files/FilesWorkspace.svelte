@@ -24,6 +24,7 @@
   }
   function availability(row: FileSearchRow): string {
     if (row.content_state === 'local_content') return 'Local content';
+    if (row.content_state === 'unverified') return 'Not checked';
     if (row.content_state === 'missing_blob') return 'File missing';
     if (row.content_state === 'url_only') return 'URL only';
     return 'Metadata only';

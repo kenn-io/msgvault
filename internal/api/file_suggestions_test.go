@@ -5,12 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -18,7 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
-	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -332,117 +329,29 @@ func TestFileSuggestionsHTTPContentStates(t *testing.T) {
 	require.Equal(200, w.Code, w.Body.String())
 	rows := suggestionRows(t, suggestionBody(t, w))
 	require.Len(rows, 4)
-	states := []string{"local_content", "local_content", "url_only", "metadata_only"} // Newest first.
+	states := []string{"unverified", "unverified", "url_only", "metadata_only"} // Newest first.
 	for i, row := range rows {
 		assert.Equal(states[i], row["content_state"])
-		assert.Equal(i < 2, row["content_available"])
+		assert.Equal(false, row["content_available"])
 		assert.NotContains(row, "url")
 		assert.NotContains(row, "storage_path")
 		assert.NotContains(row, "content_hash")
 	}
 }
 
-type pausedFileSuggestionBlobStore struct {
-	inner  AttachmentBlobStore
-	opened chan struct{}
-	resume <-chan struct{}
-}
-
-func (s pausedFileSuggestionBlobStore) OpenStream(ctx context.Context, hash string) (io.ReadCloser, int64, error) {
-	content, size, err := s.inner.OpenStream(ctx, hash)
-	if err != nil {
-		return nil, 0, err
-	}
-	s.opened <- struct{}{}
-	select {
-	case <-s.resume:
-		return content, size, nil
-	case <-ctx.Done():
-		_ = content.Close()
-		return nil, 0, ctx.Err()
-	}
-}
-
-func TestFileSuggestionsHTTPReleasesSnapshotBeforeBlobResolution(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-
+func TestFileSuggestionsHTTPDoesNotResolveBlobs(t *testing.T) {
 	_, f, ids := suggestionFixture(t, []string{"report.pdf"}, true)
-	cfg := config.NewDefaultConfig()
-	cfg.Data.DataDir = t.TempDir()
-	content := []byte("packed attachment bytes")
-	entry := buildTestPack(t, cfg.AttachmentsDir(), content)
-	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
-		`UPDATE attachments SET content_hash=?,size=? WHERE id=?`), entry.BlobHash, len(content), ids[0])
-	require.NoError(err)
-	require.NoError(f.Store.RecordPackedBlobs(t.Context(), store.PackRecord{
-		PackID: entry.PackID, EntryCount: 1, StoredBytes: entry.StoredLen, CreatedAt: time.Now(),
-	}, []store.PackIndexEntry{entry}))
-	blobs, err := attachmentstore.New(store.NewPackCatalog(f.Store), cfg.AttachmentsDir())
-	require.NoError(err)
-	t.Cleanup(func() { assert.NoError(blobs.Close()) })
-	opened := make(chan struct{}, 1)
-	resume := make(chan struct{})
-	var resumeOnce sync.Once
-	resumeResolver := func() { resumeOnce.Do(func() { close(resume) }) }
-	srv := NewServerWithOptions(ServerOptions{
-		Config: cfg, Store: f.Store, Logger: testLogger(),
-		BlobStore: pausedFileSuggestionBlobStore{inner: blobs, opened: opened, resume: resume},
-	})
-	f.Store.DB().SetMaxOpenConns(1)
-
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/files/suggest", strings.NewReader(`{"filename_query":"report.pdf"}`)).WithContext(ctx)
-	r.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	handlerDone := make(chan struct{})
-	defer func() {
-		resumeResolver()
-		select {
-		case <-handlerDone:
-		case <-ctx.Done():
-		}
-	}()
-	go func() {
-		srv.Router().ServeHTTP(w, r)
-		close(handlerDone)
-	}()
-	select {
-	case <-opened:
-	case <-ctx.Done():
-		require.FailNow("blob resolver did not reach the physical read")
-	}
-
-	queryCtx, cancelQuery := context.WithTimeout(t.Context(), 2*time.Second)
-	defer cancelQuery()
-	queryDone := make(chan error, 1)
-	go func() {
-		var value int
-		err := f.Store.DB().QueryRowContext(store.WithoutReadSnapshotContext(queryCtx), "SELECT 1").Scan(&value)
-		if err == nil && value != 1 {
-			err = fmt.Errorf("unexpected query value %d", value)
-		}
-		queryDone <- err
-	}()
-	select {
-	case err := <-queryDone:
-		require.NoError(err)
-	case <-queryCtx.Done():
-		require.FailNow("database query stayed blocked while blob resolution was paused")
-	}
-	resumeResolver()
-	select {
-	case <-handlerDone:
-	case <-ctx.Done():
-		require.FailNow("file suggestion handler did not finish after blob resolution resumed")
-	}
-
-	require.Equal(http.StatusOK, w.Code, w.Body.String())
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET content_hash=? WHERE id=?`), strings.Repeat("a", 64), ids[0])
+	require.NoError(t, err)
+	blobs := &countingFileBlobStore{}
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}, Store: f.Store, Logger: testLogger(), BlobStore: blobs})
+	w := suggestionPost(t, srv, "/api/v1/files/suggest", `{"filename_query":"report.pdf"}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	rows := suggestionRows(t, suggestionBody(t, w))
-	require.Len(rows, 1)
-	assert.Equal("local_content", rows[0]["content_state"])
-	assert.Equal(true, rows[0]["content_available"])
+	require.Len(t, rows, 1)
+	assert.Equal(t, "unverified", rows[0]["content_state"])
+	assert.Equal(t, false, rows[0]["content_available"])
+	assert.Zero(t, blobs.calls)
 }
 
 func TestFileSuggestionsHTTPInputBounds(t *testing.T) {

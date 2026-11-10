@@ -66,7 +66,7 @@ The response contains `suggestions`, `candidate_limit_reached`, and
 `mime_type` (possibly empty), `mime_family`, `filename_match`
 (`exact`, `prefix`, `typo`), `size_bytes`, `content_state`, and
 `content_available`. Content states are `metadata_only`, `url_only`,
-`missing_blob`, and `local_content`. Rows contain no storage paths, download
+`unverified`. These states come from metadata; `unverified` means the archive records a hash but has not checked the bytes. File details check the bytes and can also return `missing_blob` or an error when storage cannot be read. Rows contain no storage paths, download
 URLs or content hashes. Person rows also contain `person_provenance` with the
 matching participant IDs, roles and directions.
 

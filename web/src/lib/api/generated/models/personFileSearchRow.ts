@@ -8,6 +8,7 @@ import type { PersonFileSearchRowContentState } from "./personFileSearchRowConte
 export interface PersonFileSearchRow {
   containing_title: string;
   content_available: boolean;
+  /** List availability is based on metadata; file details check stored bytes. */
   content_state: PersonFileSearchRowContentState;
   conversation_id: number;
   entry_key: string;

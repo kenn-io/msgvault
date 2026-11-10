@@ -235,7 +235,7 @@ Files is the single file view. It is a searchable table of attachment date,
 filename, type, size, person or domain, source, Message, and content
 availability. Archived images, PDFs, text, CSV/TSV, and audio open in the file viewer.
 Use Previous/Next or the ←/→ keys to move through the current results.
-Metadata-only, missing, unsupported, and previewable content remain distinct.
+The list marks file contents as not checked when the archive records a hash. Open a file to check its bytes; the viewer distinguishes missing, unreadable, metadata-only, unsupported, and previewable content.
 From a file, navigate to its containing item and then its email or chat
 conversation.
 

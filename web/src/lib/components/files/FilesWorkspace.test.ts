@@ -1472,3 +1472,11 @@ it('returns focus to the last file viewed in the media gallery', async () => {
   await fireEvent.click(screen.getByRole('button', { name: 'Close file viewer' }));
   await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Open second.png' })));
 });
+
+it('labels a file whose bytes have not been checked', async () => {
+  const listing = response();
+  listing.files[0] = { ...listing.files[0]!, content_state: 'unverified', content_available: false };
+  render(FilesWorkspace, { client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json(listing))), predicate: { filters: [], presentation: 'table' }, sort: { field: 'occurred_at', direction: 'desc' } });
+  expect(await screen.findByText('Not checked')).toBeDefined();
+  expect(screen.queryByText('Local content')).toBeNull();
+});

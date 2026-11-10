@@ -257,6 +257,14 @@ describe('FileViewer', () => {
     expect(screen.queryByText('Loading file…')).toBeNull();
   });
 
+  it('shows a storage error rather than a missing-file notice', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ error: 'internal_error', message: 'Failed to open file content' }, { status: 500 }));
+    render(FileViewer, { client: createAPIClient(fetchFn), file: file() });
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Failed to open file content');
+    expect(screen.queryByText("This file's contents aren't in the archive")).toBeNull();
+  });
+
   it('ignores a stale metadata failure after the viewed file changes', async () => {
     let rejectStale: ((cause: Error) => void) | undefined;
     const fetchFn = vi.fn<typeof fetch>((input) => {
@@ -357,6 +365,14 @@ it('bounds large CSV previews to 200 rows', async () => {
   await screen.findByText('Showing the first 200 rows.');
   expect(screen.getAllByRole('row')).toHaveLength(201);
   expect(screen.queryByText('Row 200')).toBeNull();
+});
+
+it('shows both row and byte limits for a large CSV', async () => {
+  const prefix = 'Name,Value\n' + Array.from({ length: 205 }, (_, i) => `Row ${i},${i}\n`).join('');
+  const content = new TextEncoder().encode(prefix + 'x'.repeat(2 * 1024 * 1024));
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), filename: 'large.csv', mime_type: 'text/csv', size_bytes: content.length }, content)), file: file() });
+  expect(await screen.findByText('Preview stops at the 2 MiB size limit.')).toBeDefined();
+  expect(screen.getByText('Showing the first 200 rows.')).toBeDefined();
 });
 
 it('buffers authenticated audio for seeking and revokes its blob URL on close', async () => {

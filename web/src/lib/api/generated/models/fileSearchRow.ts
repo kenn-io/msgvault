@@ -7,6 +7,7 @@ import type { FileSearchRowContentState } from "./fileSearchRowContentState";
 export interface FileSearchRow {
   containing_title: string;
   content_available: boolean;
+  /** List availability is based on metadata; file details check stored bytes. */
   content_state: FileSearchRowContentState;
   conversation_id: number;
   entry_key: string;

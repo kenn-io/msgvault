@@ -164,11 +164,11 @@ func TestFilesSearchUsesAnalyticalQueryAndOneCatalogBatch(t *testing.T) {
 	assertions.Equal(1, catalog.batchCalls)
 	assertions.Zero(blobs.calls)
 	assertions.Equal("Zoe Sender", result.Files[0].SenderLabel)
-	assertions.Equal(FileContentLocal, result.Files[0].ContentState)
-	assertions.True(result.Files[0].ContentAvailable)
+	assertions.Equal(FileContentState("unverified"), result.Files[0].ContentState)
+	assertions.False(result.Files[0].ContentAvailable)
 	assertions.Equal(FileContentURLOnly, result.Files[1].ContentState)
 	assertions.False(result.Files[1].ContentAvailable)
-	assertions.Equal(FileContentLocal, result.Files[2].ContentState)
+	assertions.Equal(FileContentState("unverified"), result.Files[2].ContentState)
 	assertions.Equal(FileContentMetadataOnly, result.Files[3].ContentState)
 	assertions.Equal([]int64{7}, engine.request.Explore.Context.SourceIDs)
 	assertions.Equal("report", engine.request.FilenameQuery)
@@ -645,8 +645,8 @@ func TestPackedFileWithoutStoragePathDownloadsAndReportsAvailable(t *testing.T) 
 	var searched FileSearchHTTPResponse
 	requirements.NoError(json.NewDecoder(listing.Body).Decode(&searched))
 	requirements.Len(searched.Files, 1)
-	assertions.Equal(FileContentLocal, searched.Files[0].ContentState)
-	assertions.True(searched.Files[0].ContentAvailable)
+	assertions.Equal(FileContentUnverified, searched.Files[0].ContentState)
+	assertions.False(searched.Files[0].ContentAvailable)
 }
 
 // TestPackedFileMissingBlobReportsMissingNotError covers a hash-only row whose
@@ -948,17 +948,17 @@ func TestFileEndpointsReturnNotFoundForDedupHiddenMessageAttachments(t *testing.
 	hiddenID := f.CreateMessage("dedup-file-drop")
 	requirements.NoError(f.Store.UpsertAttachment(
 		t.Context(),
-		survivorID, "shared.pdf", "application/pdf", "aa/shared", "sharedhash", 2048,
+		survivorID, "shared.pdf", "application/pdf", "aa/shared", strings.Repeat("ab", 32), 2048,
 	))
 	requirements.NoError(f.Store.UpsertAttachment(
 		t.Context(),
-		hiddenID, "shared.pdf", "application/pdf", "aa/shared", "sharedhash", 2048,
+		hiddenID, "shared.pdf", "application/pdf", "aa/shared", strings.Repeat("ab", 32), 2048,
 	))
 	survivorFileID := apiSingleAttachmentID(t, f, survivorID)
 	hiddenFileID := apiSingleAttachmentID(t, f, hiddenID)
 	_, err := f.Store.MergeDuplicates(t.Context(), survivorID, []int64{hiddenID}, "dedup-file-batch")
 	requirements.NoError(err)
-	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, f.Store, nil, testLogger())
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}, Store: f.Store, BlobStore: fixedFileBlobStore{content: []byte("shared content")}, Logger: testLogger()})
 
 	metadata := httptest.NewRecorder()
 	srv.Router().ServeHTTP(metadata, httptest.NewRequestWithContext(
@@ -982,7 +982,7 @@ func TestFileEndpointsReturnNotFoundForDedupHiddenMessageAttachments(t *testing.
 	var decoded FileMetadataResponse
 	requirements.NoError(json.NewDecoder(live.Body).Decode(&decoded))
 	assertions.Equal(survivorID, decoded.MessageID)
-	assertions.Equal("sharedhash", decoded.ContentHash)
+	assertions.Equal(strings.Repeat("ab", 32), decoded.ContentHash)
 }
 
 func apiSingleAttachmentID(t *testing.T, f *storetest.Fixture, messageID int64) int64 {

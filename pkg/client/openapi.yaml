@@ -5486,6 +5486,7 @@ components:
         content_hash:
           type: string
         content_state:
+          description: File details check stored bytes; unreadable content returns an error.
           enum:
             - metadata_only
             - url_only
@@ -5601,11 +5602,13 @@ components:
         content_available:
           type: boolean
         content_state:
+          description: List availability is based on metadata; file details check stored bytes.
           enum:
             - metadata_only
             - url_only
             - missing_blob
             - local_content
+            - unverified
           type: string
         conversation_id:
           format: int64
@@ -5760,17 +5763,20 @@ components:
         content_available:
           type: boolean
         content_state:
+          description: Suggestion availability is based on metadata; file details check stored bytes.
           enum:
             - metadata_only
             - url_only
             - missing_blob
             - local_content
+            - unverified
           type: string
           x-enum-names:
             - FileSuggestionRowContentStateMetadataOnly
             - FileSuggestionRowContentStateUrlOnly
             - FileSuggestionRowContentStateMissingBlob
             - FileSuggestionRowContentStateLocalContent
+            - FileSuggestionRowContentStateUnverified
         conversation_id:
           format: int64
           type: integer
@@ -11984,11 +11990,13 @@ components:
         content_available:
           type: boolean
         content_state:
+          description: List availability is based on metadata; file details check stored bytes.
           enum:
             - metadata_only
             - url_only
             - missing_blob
             - local_content
+            - unverified
           type: string
         conversation_id:
           format: int64
@@ -12147,17 +12155,20 @@ components:
         content_available:
           type: boolean
         content_state:
+          description: Suggestion availability is based on metadata; file details check stored bytes.
           enum:
             - metadata_only
             - url_only
             - missing_blob
             - local_content
+            - unverified
           type: string
           x-enum-names:
             - PersonFileSuggestionRowContentStateMetadataOnly
             - PersonFileSuggestionRowContentStateUrlOnly
             - PersonFileSuggestionRowContentStateMissingBlob
             - PersonFileSuggestionRowContentStateLocalContent
+            - PersonFileSuggestionRowContentStateUnverified
         conversation_id:
           format: int64
           type: integer

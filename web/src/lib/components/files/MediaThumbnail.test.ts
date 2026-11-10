@@ -47,7 +47,7 @@ describe('MediaThumbnail', () => {
       pngBytes().buffer as ArrayBuffer,
       { headers: { 'Content-Type': 'image/png' } }
     ));
-    const view = render(MediaThumbnail, { client: createAPIClient(fetchFn), file: media() });
+    const view = render(MediaThumbnail, { client: createAPIClient(fetchFn), file: media({ content_state: 'unverified', content_available: false }) });
 
     expect((await screen.findByRole('img', { name: 'Thumbnail photo.png' })).getAttribute('src'))
       .toBe('blob:person-thumbnail');
