@@ -29,7 +29,7 @@ func assertPersonMergeIdentityFixture(t *testing.T, detail *store.PersonMergeDet
 func beeperPhoneMergePeople(t *testing.T, st *store.Store) (*store.Person, *store.Person) {
 	t.Helper()
 	require := require.New(t)
-	// Match Beeper's email resolution followed by its stronger phone resolution.
+	// Model an unscoped legacy archive with a phone identifier stored in its original form.
 	email, err := st.EnsureParticipant("Reader@Example.org", "Reader", "example.org")
 	require.NoError(err)
 	phone, err := st.EnsureParticipantByPhone(t.Context(), "+1 (202) 555-0123", "Reader", "beeper")
@@ -44,6 +44,7 @@ func beeperPhoneMergePeople(t *testing.T, st *store.Store) (*store.Person, *stor
 func mailboxCaseMergePeople(t *testing.T, st *store.Store) (*store.Person, *store.Person) {
 	t.Helper()
 	require := require.New(t)
+	// Model an unscoped legacy archive whose Beeper identifier is a raw mailbox.
 	var participants []int64
 	for _, value := range []string{"Reader@Example.org", "reader@example.org"} {
 		participant, err := st.EnsureParticipant(value, "Reader", "example.org")

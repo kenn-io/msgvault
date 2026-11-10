@@ -213,6 +213,7 @@ describe('ProfileHistoryDialog', () => {
       await fireEvent.click(await screen.findByRole('button', { name: 'Split…' }));
       await fireEvent.click(await screen.findByRole('checkbox', { name: 'observed@example.com' }));
       await fireEvent.click(screen.getByRole('button', { name: 'Split into new person' }));
+      await waitFor(() => expect(onSplitCommitted).toHaveBeenCalledWith({ sourcePersonID: 7, newPersonID: 9 }));
       await waitFor(() => expect(historyReads).toBe(initialFailure ? 3 : 2));
       await waitFor(() => {
         for (const value of ['Moved alias', 'moved@example.com', 'observed@example.com']) expect(screen.queryByText(value, { exact: true })).toBeNull();

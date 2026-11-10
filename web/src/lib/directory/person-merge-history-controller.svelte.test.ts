@@ -167,13 +167,13 @@ describe('PersonMergeHistoryController', () => {
     controller.destroy();
   });
 
-  it.each([100, 101])('shows Next only when more than 100 merges exist: %i', async count => {
+  it.each([{ count: 100, second: 0 }, { count: 101, second: 1 }, { count: 101, second: 0 }])('paginates $count merges with $second on the next page', async ({ count, second }) => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       requests.push(request);
       const offset = Number(new URL(request.url).searchParams.get('offset'));
-      const merges = Array.from({ length: offset === 0 ? count : 1 }, (_, index) => {
+      const merges = Array.from({ length: offset === 0 ? count : second }, (_, index) => {
         const id = offset + index + 1, item = summary(id);
         item.merge.current_person_id = 7;
         item.labels.participants = [{ merge_id: id, participant_id: id, origin_side: 'absorbed' }];
@@ -194,7 +194,7 @@ describe('PersonMergeHistoryController', () => {
     if (count === 101) {
       await controller.nextHistoryPage();
       expect(new URL(requests[1]!.url).searchParams.toString()).toBe('limit=101&offset=100');
-      expect(controller.history).toHaveLength(1);
+      expect(controller.history).toHaveLength(second);
       expect(controller.hasPreviousHistoryPage).toBe(true);
       expect(controller.hasNextHistoryPage).toBe(false);
     }
@@ -333,6 +333,7 @@ describe('PersonMergeHistoryController', () => {
     { kind: 'transport', status: 0, error: '' },
     { kind: 'exception', status: 0, error: '' },
     { kind: 'application', status: 409, error: 'person_split_idempotency_conflict' },
+    { kind: 'application', status: 412, error: 'person_merge_revision_conflict' },
   ])('handles request IDs after $kind $status', async ({ kind, status, error }) => {
     const requests: Request[] = [];
     let postAttempts = 0;
@@ -455,7 +456,7 @@ describe('PersonMergeHistoryController', () => {
       const path = new URL(request.url).pathname;
       if (path === '/api/v1/person-merges/41') return Response.json(detail());
       if (request.method === 'GET') return Response.json(person(12, 4, [701, 702], 'Synthetic Person 12'), { headers: { ETag: '"person-12-r4"' } });
-      return Response.json(splitResult(false), { headers: { ETag: '"person-12-r5"', 'X-New-Person-ETag': '"person-19-r1"' } });
+      return Response.json(splitResult(false), { headers: { ETag: 'bad', 'X-New-Person-ETag': 'also-bad' } });
     });
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7, reconcile);
     await controller.selectMerge(41);
@@ -469,7 +470,7 @@ describe('PersonMergeHistoryController', () => {
     expect(reconcile).toHaveBeenCalledOnce();
     expect(reconcile).toHaveBeenCalledWith({ sourcePersonID: 12, newPersonID: 19 });
     expect(controller.committedResult?.result.exact_reversal).toBe(false);
-    expect(controller.committedResult?.receiptETags).toEqual({ source: '"person-12-r5"', created: '"person-19-r1"' });
+    expect(controller.committedResult?.receiptETags).toEqual({ source: null, created: null });
     expect(controller.reconciliationError).toBe('The split is done. Open either profile to load it fresh.');
     expect(controller.canOfferSplit).toBe(false);
     reconcile.mockResolvedValueOnce(undefined);

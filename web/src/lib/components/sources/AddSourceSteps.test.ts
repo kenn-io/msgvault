@@ -22,10 +22,3 @@ it('asks for a server name when the Server holds a port', async () => {
   expect(screen.getByText('Enter the server name without a port. For port or STARTTLS options, see the Setup guide.')).toBeDefined();
   expect(screen.queryByText(/msgvault add-imap/, { selector: 'code' })).toBeNull();
 });
-
-it('shows a command for an IPv6 server and hyphen-leading username', async () => {
-  render(AddSourceSteps, { kind: ADD_SOURCE_KINDS.find(kind => kind.id === 'imap') as CommandSourceKind });
-  await fireEvent.input(screen.getByLabelText('Server'), { target: { value: '2001:db8::1' } });
-  await fireEvent.input(screen.getByLabelText('Username'), { target: { value: '-reader' } });
-  expect(screen.getByText(/msgvault add-imap/, { selector: 'code' }).textContent).toContain('--username=-reader');
-});

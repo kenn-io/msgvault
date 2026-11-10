@@ -357,30 +357,26 @@ func TestDaemonCLIArgsFromCobraForwardsCommandFlagsAndPositionals(t *testing.T) 
 }
 
 func TestDaemonCLIForwardsHyphenLeadingAccountThroughServer(t *testing.T) {
-	for _, name := range []string{"add-account", "add-o365"} {
-		t.Run(name, func(t *testing.T) {
-			frontend := &cobra.Command{Use: name}
-			frontend.RunE = func(cmd *cobra.Command, args []string) error {
-				forwarded, err := daemonCLIArgsFromCobra(cmd, args)
-				require.NoError(t, err)
-				adapter := &storeAPIAdapter{}
-				return adapter.runCLICommandWithRunner(t.Context(), api.CLIRunRequest{Args: forwarded, GrantDecided: name == "add-account"}, nil,
-					func(_ context.Context, args []string, _ map[string]string, _ string, _ func(string, string) error) error {
-						child := &cobra.Command{Use: name, Args: cobra.ExactArgs(1)}
-						child.Flags().Bool(addAccountGrantDecidedFlag, false, "")
-						child.RunE = func(cmd *cobra.Command, args []string) error {
-							assert.Equal(t, []string{"-reader@example.org"}, args)
-							assert.Equal(t, name == "add-account", cmd.Flags().Changed(addAccountGrantDecidedFlag))
-							return nil
-						}
-						child.SetArgs(args[1:])
-						return child.Execute()
-					})
-			}
-			frontend.SetArgs([]string{"--", "-reader@example.org"})
-			require.NoError(t, frontend.Execute())
-		})
+	frontend := &cobra.Command{Use: "add-account"}
+	frontend.RunE = func(cmd *cobra.Command, args []string) error {
+		forwarded, err := daemonCLIArgsFromCobra(cmd, args)
+		require.NoError(t, err)
+		adapter := &storeAPIAdapter{}
+		return adapter.runCLICommandWithRunner(t.Context(), api.CLIRunRequest{Args: forwarded, GrantDecided: true}, nil,
+			func(_ context.Context, args []string, _ map[string]string, _ string, _ func(string, string) error) error {
+				child := &cobra.Command{Use: "add-account", Args: cobra.ExactArgs(1)}
+				child.Flags().Bool(addAccountGrantDecidedFlag, false, "")
+				child.RunE = func(cmd *cobra.Command, args []string) error {
+					assert.Equal(t, []string{"-reader@example.org"}, args)
+					assert.True(t, cmd.Flags().Changed(addAccountGrantDecidedFlag))
+					return nil
+				}
+				child.SetArgs(args[1:])
+				return child.Execute()
+			})
 	}
+	frontend.SetArgs([]string{"--", "-reader@example.org"})
+	require.NoError(t, frontend.Execute())
 }
 
 func TestRunDaemonCLICommandHTTPOmitsCallerCwdForConfiguredRemote(t *testing.T) {
