@@ -55,6 +55,9 @@ func TestCommentModerateOptInAndConfirmation(t *testing.T) {
 	assert.False(hidden(), "a profile without actions never changes the comment")
 
 	cfg.FacebookComments[0].Actions = []string{"hide"}
+	_, err = run(id, "--unhide=false")
+	require.ErrorContains(err, "choose one of")
+	assert.False(hidden(), "a false action flag does not fall back to hide")
 	output, err := run(id, "--hide", "--dry-run")
 	require.NoError(err)
 	assert.Equal("Would hide Facebook comment 100_201 by Example Customer (message "+id+"): Example comment\n", output)
@@ -78,4 +81,11 @@ func TestCommentModerateOptInAndConfirmation(t *testing.T) {
 	require.NoError(err)
 	_, err = meta.ResolveCommentTarget(t.Context(), st, ids["100_201"])
 	require.ErrorIs(err, store.ErrMessageNotFound)
+}
+
+func TestCommentWritesRefreshAnalyticsCache(t *testing.T) {
+	assert := assert.New(t)
+	assert.True(commentWriteCLICommand([]string{"comment", "moderate", "--delete", "--yes", "42"}))
+	assert.False(commentWriteCLICommand([]string{"comment", "moderate", "--delete", "--dry-run", "42"}))
+	assert.False(manualSyncCLICommand([]string{"comment", "moderate", "--delete", "--yes", "42"}), "a comment change is not reported as a finished sync")
 }

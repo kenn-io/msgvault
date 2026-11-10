@@ -34,12 +34,19 @@ func newCommentModerateCmd() *cobra.Command {
 			if err != nil || id <= 0 {
 				return opserr.Invalid(errors.New("message ID must be a positive archive message ID"))
 			}
-			action := meta.ActionHide
-			switch {
-			case unhide:
-				action = meta.ActionUnhide
-			case remove:
-				action = meta.ActionDelete
+			var action meta.CommentAction
+			selected := 0
+			for _, choice := range []struct {
+				set    bool
+				action meta.CommentAction
+			}{{hide, meta.ActionHide}, {unhide, meta.ActionUnhide}, {remove, meta.ActionDelete}} {
+				if choice.set {
+					action = choice.action
+					selected++
+				}
+			}
+			if selected != 1 {
+				return opserr.Invalid(errors.New("choose one of --hide, --unhide or --delete"))
 			}
 			if action == meta.ActionDelete && !dryRun && !yes {
 				return opserr.Invalid(errors.New("delete removes the comment from Meta; preview with --dry-run, then repeat with --yes"))
@@ -98,8 +105,6 @@ func newCommentModerateCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&remove, "delete", false, "delete the comment from Meta; the archive keeps it, marked deleted")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show the comment without calling Meta")
 	cmd.Flags().BoolVar(&yes, "yes", false, "confirm --delete")
-	cmd.MarkFlagsOneRequired("hide", "unhide", "delete")
-	cmd.MarkFlagsMutuallyExclusive("hide", "unhide", "delete")
 	return cmd
 }
 
