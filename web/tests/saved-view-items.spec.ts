@@ -7,9 +7,9 @@ test('opens live Saved View items and saves only canonical state', async ({ page
   await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'session', csrf_token: 'synthetic-csrf', https: true, plain_http_warning: false } }));
   await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [] } }));
   await page.route('**/api/v1/cli/accounts', route => route.fulfill({ json: { accounts: [] } }));
-  const view = { id: 7, name: 'Review queue', canonical_state: {}, schema_version: 2, revision: 1, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' };
+  const view = { id: 7, name: 'Review queue', canonical_state: {}, schema_version: 2, revision: 1, include_count: 2, exclude_count: 1, stale_item_count: 0, redacted_item_count: 0, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' };
   const items = { include: ['a', 'b'].map((id, i) => ({ entry_key: `source:1:message:${id}`, message_id: i + 1, source_id: 1, added_by: 'owner', kind: 'message' })), exclude: [{ entry_key: 'source:1:message:c', message_id: 3, source_id: 1, added_by: 'owner', kind: 'message' }] };
-  await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [view, { ...view, id: 8, name: 'Other queue' }] } }));
+  await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [view, { ...view, id: 8, name: 'Other queue', include_count: 0, exclude_count: 0 }] } }));
   let patch: Record<string, unknown> | undefined;
   let revision = 1;
   let gets = 0;
@@ -68,5 +68,4 @@ test('opens live Saved View items and saves only canonical state', async ({ page
 
   await expect(page.getByText('Review release notes', { exact: true })).toBeVisible();
   await expect(page.getByText('Confirm documentation update', { exact: true })).toBeVisible();
-  await page.screenshot({ path: 'test-results/saved-view-items.png', fullPage: true });
 });

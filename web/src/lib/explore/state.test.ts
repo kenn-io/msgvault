@@ -24,23 +24,30 @@ describe('Explore URL state', () => {
     const view = (id: number, key: string) => ({ id, name: `View ${id}`, revision: id, schema_version: 2,
       canonical_state: {}, created_at: '', updated_at: '', include_count: 1, exclude_count: 0, stale_item_count: 0, redacted_item_count: 0, items: { include: [{ entry_key: key, source_id: Number(key.split(':')[1]), message_id: id, added_by: 'owner', kind: 'message' as const }], exclude: [] } });
     try {
-      state.commitSavedView(view(1, 'source:1:message:a'), { query: 'alpha' });
+      const initial = view(1, 'source:1:message:a');
+      const first = { ...initial, exclude_count: 1, items: { ...initial.items,
+        exclude: [{ ...initial.items.include[0], message_id: 3, entry_key: 'source:1:message:c' }] } };
+      state.commitSavedView(first, { query: 'alpha' });
+      expect(state.predicate().include_keys).toEqual(['source:1:message:a']);
+      expect(state.predicate().exclude_keys).toEqual(['source:1:message:c']);
+      state.commitNavigation({ query: 'refined alpha' });
+      expect(state.predicate().include_keys).toEqual(['source:1:message:a']);
       state.commitSavedView(view(2, 'source:1:message:b'), { query: 'beta' });
       window.history.back();
-      await waitFor(() => expect(state.current.query).toBe('alpha'));
+      await waitFor(() => expect(state.current.query).toBe('refined alpha'));
       expect(state.savedView?.id).toBe(1);
       expect(state.savedView?.revision).toBe(1);
       expect(state.savedViewNeedsRefresh).toBe(true);
       state.updateSavedView({ ...view(1, 'source:2:message:a'), revision: 3 });
       expect(state.savedViewNeedsRefresh).toBe(false);
-      expect(state.current.query).toBe('alpha');
+      expect(state.current.query).toBe('refined alpha');
       expect(state.savedViewItems.include.map(item => item.entry_key)).toEqual(['source:2:message:a']);
       state.commitWorkspace('files');
       expect(state.savedView).toBeUndefined();
       expect(state.savedViewItems.include).toEqual([]);
       window.history.back();
       await waitFor(() => expect(state.savedView?.id).toBe(1));
-      expect(state.current.query).toBe('alpha');
+      expect(state.current.query).toBe('refined alpha');
       expect(state.savedViewItems.include.map(item => item.entry_key)).toEqual(['source:2:message:a']);
     } finally { state.destroy(); }
   });
@@ -1874,18 +1881,4 @@ it('round-trips provider Inbox Unread filters through the URL', () => {
   ];
   const url = serializeExploreURLState({ ...defaultExploreURLState, filters });
   expect(parseExploreURLState(url).filters).toEqual(filters);
-});
-
-describe('Saved View item population', () => {
-  it('passes live pinned and hidden keys while keeping canonical state separate', () => {
-    const state = new ExploreState(window);
-    const item = (id: number, key: string) => ({ message_id: id, source_id: 1, entry_key: key, kind: 'message' as const, added_by: 'owner' });
-    state.commitSavedView({ id: 1, name: 'Pinned', canonical_state: {}, schema_version: 2, revision: 1, created_at: '', updated_at: '', include_count: 2, exclude_count: 1, stale_item_count: 0, redacted_item_count: 0,
-      items: { include: [item(1, 'source:1:message:a'), item(2, 'source:1:message:b')], exclude: [item(3, 'source:1:message:c')] } }, {});
-    expect(state.predicate().include_keys).toEqual(['source:1:message:a', 'source:1:message:b']);
-    expect(state.predicate().exclude_keys).toEqual(['source:1:message:c']);
-    state.commitNavigation({ query: 'new filter' });
-    expect(state.predicate().include_keys).toHaveLength(2);
-    state.destroy();
-  });
 });

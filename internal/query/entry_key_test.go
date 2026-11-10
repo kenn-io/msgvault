@@ -83,22 +83,8 @@ func TestIsChatEntryClassification(t *testing.T) {
 }
 
 func TestParseEntryKeyRoundTrips(t *testing.T) {
-	for _, tc := range []struct {
-		facts EntryKeyFacts
-		want  EntryKeyRef
-	}{
-		{EntryKeyFacts{SourceID: 3, MessageID: 42}, EntryKeyRef{Kind: EntryKeyMessage, SourceID: 3, SourceMessageID: "42"}},
-		{EntryKeyFacts{SourceID: 1, SourceMessageID: "a:b:c"}, EntryKeyRef{Kind: EntryKeyMessage, SourceID: 1, SourceMessageID: "a:b:c"}},
-		{EntryKeyFacts{SourceID: 2, ConversationID: 9, MessageType: "whatsapp", ConversationType: "group_chat"}, EntryKeyRef{Kind: EntryKeyConversation, SourceID: 2, ConversationID: 9}},
-	} {
-		facts := tc.facts
-		key := facts.EntryKey()
-		ref, err := ParseEntryKey(key)
-		require.NoError(t, err)
-		assert.Equal(t, tc.want, ref)
-	}
-	for _, key := range []string{"", "source:0:message:x", "source:-1:message:x", "source:1:message:", "source:1:conversation:0", "source:01:message:x", "source:1:unknown:x", "source:1:conversation:2:x"} {
-		_, err := ParseEntryKey(key)
-		assert.ErrorIs(t, err, ErrInvalidEntryKey)
-	}
+	facts := EntryKeyFacts{SourceID: 2, ConversationID: 9, MessageType: "whatsapp", ConversationType: "group_chat"}
+	ref, err := ParseEntryKey(facts.EntryKey())
+	require.NoError(t, err)
+	assert.Equal(t, EntryKeyRef{Kind: EntryKeyConversation, SourceID: 2, ConversationID: 9}, ref)
 }

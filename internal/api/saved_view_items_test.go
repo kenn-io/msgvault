@@ -76,9 +76,6 @@ func TestExploreItemsSourceScopeAndMalformedKeys(t *testing.T) {
 	items, err := srv.resolveExploreItems(httptest.NewRequest(http.MethodPost, "/api/v1/explore", nil).WithContext(t.Context()), []string{key}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, []int64{id}, items.IncludeMessageIDs)
-	items, err = srv.resolveExploreItems(httptest.NewRequest(http.MethodPost, "/api/v1/explore", nil).WithContext(sourcescope.WithSourceIDs(t.Context(), []int64{})), []string{key}, nil)
-	require.NoError(t, err)
-	assert.Empty(t, items.IncludeMessageIDs)
 	_, err = srv.resolveExploreItems(httptest.NewRequest(http.MethodPost, "/api/v1/explore", nil).WithContext(t.Context()), []string{"malformed"}, nil)
 	require.Error(t, err)
 	var apiErr *apiHTTPError

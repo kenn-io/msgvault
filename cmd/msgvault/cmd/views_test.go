@@ -98,6 +98,7 @@ func TestViewsPinExcludeRoundTripAndRetry(t *testing.T) {
 
 // The daemon wire fixture isolates the CLI's text rendering contract.
 func TestViewsRunMarksPinnedFiles(t *testing.T) {
+	var entries atomic.Bool
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -106,6 +107,10 @@ func TestViewsRunMarksPinnedFiles(t *testing.T) {
 		case "/api/v1/saved-views/7":
 			_, _ = fmt.Fprint(w, `{"id":7,"name":"Files","canonical_state":{"presentation":"files"},"schema_version":2,"revision":1}`)
 		case "/api/v1/saved-views/7/run":
+			if entries.Load() {
+				_, _ = fmt.Fprint(w, `{"saved_view":{"id":7,"name":"Entries","canonical_state":{},"schema_version":2,"revision":1,"items":{"include":[{"entry_key":"source:1:message:pinned","message_id":1,"source_id":1,"kind":"message","added_by":"owner"}],"exclude":[]}},"result_kind":"entries","rows":[{"key":"source:1:message:pinned","kind":"email","title":"Pinned","occurred_at":"2026-01-01T00:00:00Z"},{"key":"source:1:message:ordinary","kind":"email","title":"Ordinary","occurred_at":"2026-01-01T00:00:00Z"}]}`)
+				return
+			}
 			_, _ = fmt.Fprint(w, `{"saved_view":{"id":7,"name":"Files","canonical_state":{"presentation":"files"},"schema_version":2,"revision":1,"items":{"include":[{"entry_key":"source:1:message:pinned","message_id":1,"source_id":1,"kind":"message","added_by":"owner"}],"exclude":[]}},"result_kind":"files","files":[{"filename":"pinned.pdf","entry_key":"source:1:message:pinned"},{"filename":"ordinary.pdf","entry_key":"source:1:message:ordinary"}]}`)
 		default:
 			http.NotFound(w, r)
@@ -115,12 +120,20 @@ func TestViewsRunMarksPinnedFiles(t *testing.T) {
 	client, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, APIKey: "synthetic-key", AllowInsecure: true, HTTPClient: daemon.Client()})
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, client.Close()) }()
-	command := newViewsCommand(func(context.Context) (viewsClient, func(), error) { return client, func() {}, nil })
-	var out bytes.Buffer
-	command.SetOut(&out)
-	command.SetErr(&out)
-	command.SetArgs([]string{"run", "7"})
-	require.NoError(t, command.Execute())
-	assert.Contains(t, out.String(), "+ pinned.pdf  source:1:message:pinned")
-	assert.Contains(t, out.String(), "  ordinary.pdf  source:1:message:ordinary")
+	for _, entryRows := range []bool{false, true} {
+		entries.Store(entryRows)
+		command := newViewsCommand(func(context.Context) (viewsClient, func(), error) { return client, func() {}, nil })
+		var out bytes.Buffer
+		command.SetOut(&out)
+		command.SetErr(&out)
+		command.SetArgs([]string{"run", "7"})
+		require.NoError(t, command.Execute())
+		if entryRows {
+			assert.Contains(t, out.String(), "+ email  2026-01-01T00:00:00Z  Pinned  source:1:message:pinned")
+			assert.Contains(t, out.String(), "  email  2026-01-01T00:00:00Z  Ordinary  source:1:message:ordinary")
+		} else {
+			assert.Contains(t, out.String(), "+ pinned.pdf  source:1:message:pinned")
+			assert.Contains(t, out.String(), "  ordinary.pdf  source:1:message:ordinary")
+		}
+	}
 }

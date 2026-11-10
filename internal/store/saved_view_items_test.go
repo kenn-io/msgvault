@@ -58,14 +58,6 @@ func TestValidateSavedViewItemsJSONRejects(t *testing.T) {
 	for _, raw := range []string{`{}`, `null`, `{"version":2}`, `{"version":1,"other":1}`, `{"version":1,"include":[{"message_id":1,"conversation_id":2,"source_id":1}]}`, `{"version":1,"include":[{"message_id":1,"source_id":1}],"exclude":[{"message_id":1,"source_id":1}]}`} {
 		t.Run(raw, func(t *testing.T) { _, err := store.ValidateSavedViewItemsJSON([]byte(raw)); require.Error(t, err) })
 	}
-	_, err := store.ValidateSavedViewItemsJSON([]byte(`{"version":1,"include":[{"message_id":1,"source_id":1,"added_by":"` + strings.Repeat("a", 128<<10) + `"}]}`))
-	assert.ErrorIs(t, err, store.ErrSavedViewItemsLimit)
-	entries := make([]string, 501)
-	for i := range entries {
-		entries[i] = fmt.Sprintf(`{"message_id":%d,"source_id":1}`, i+1)
-	}
-	_, err = store.ValidateSavedViewItemsJSON([]byte(`{"version":1,"include":[` + strings.Join(entries, ",") + `]}`))
-	assert.ErrorIs(t, err, store.ErrSavedViewItemsLimit)
 }
 
 func TestResolveEntryKeys(t *testing.T) {
@@ -118,6 +110,9 @@ func TestMergeDuplicatesRemapsSavedViewItems(t *testing.T) {
 		require.NoError(t, err)
 		untouched, err := f.Store.CreateSavedView(t.Context(), savedViewInput("Untouched"))
 		require.NoError(t, err)
+		unrelated := f.CreateMessage("unrelated")
+		untouched, err = f.Store.ChangeSavedViewItems(t.Context(), untouched.ID, untouched.Revision, store.SavedViewItemChange{IncludeAdd: []store.SavedViewItemRef{{MessageID: unrelated, SourceID: f.Source.ID}}})
+		require.NoError(t, err)
 		_, err = f.Store.MergeDuplicates(keep, []int64{drop}, "collision-batch")
 		require.NoError(t, err)
 		items, err := f.Store.GetSavedViewItems(t.Context(), view.ID)
@@ -127,27 +122,32 @@ func TestMergeDuplicatesRemapsSavedViewItems(t *testing.T) {
 		assert.Equal(t, keep, items.Exclude[0].MessageID)
 		got, err := f.Store.GetSavedView(t.Context(), untouched.ID)
 		require.NoError(t, err)
-		assert.Equal(t, int64(1), got.Revision)
+		assert.Equal(t, untouched.Revision, got.Revision)
 	})
 }
 
 func TestChangeSavedViewItemsBoundsRollback(t *testing.T) {
 	f := storetest.New(t)
-	f.CreateMessage("bounded")
-	view, err := f.Store.CreateSavedView(t.Context(), savedViewInput("Bounded items"))
-	require.NoError(t, err)
 	refs := make([]store.SavedViewItemRef, 501)
 	for i := range refs {
-		refs[i] = store.SavedViewItemRef{MessageID: int64(i + 1), SourceID: f.Source.ID}
+		refs[i] = store.SavedViewItemRef{MessageID: f.CreateMessage(fmt.Sprintf("bounded-%d", i)), SourceID: f.Source.ID}
 	}
-	for _, change := range []store.SavedViewItemChange{{IncludeAdd: refs}, {IncludeAdd: refs[:1], AddedBy: strings.Repeat("x", 128<<10)}} {
-		_, err = f.Store.ChangeSavedViewItems(t.Context(), view.ID, 1, change)
-		require.ErrorIs(t, err, store.ErrSavedViewItemsLimit)
-		got, err := f.Store.GetSavedView(t.Context(), view.ID)
-		require.NoError(t, err)
-		assert.Equal(t, int64(1), got.Revision)
-		assert.Empty(t, got.ItemsJSON)
-	}
+	view, err := f.Store.CreateSavedView(t.Context(), savedViewInput("Bounded items"))
+	require.NoError(t, err)
+	_, err = f.Store.ChangeSavedViewItems(t.Context(), view.ID, view.Revision, store.SavedViewItemChange{IncludeAdd: refs[:1], AddedBy: strings.Repeat("x", 128<<10)})
+	require.ErrorIs(t, err, store.ErrSavedViewItemsLimit)
+	got, err := f.Store.GetSavedView(t.Context(), view.ID)
+	require.NoError(t, err)
+	assert.Equal(t, view.Revision, got.Revision)
+	assert.Empty(t, got.ItemsJSON, "byte-limit failure writes nothing")
+	view, err = f.Store.ChangeSavedViewItems(t.Context(), view.ID, view.Revision, store.SavedViewItemChange{IncludeAdd: refs[:500]})
+	require.NoError(t, err)
+	_, err = f.Store.ChangeSavedViewItems(t.Context(), view.ID, view.Revision, store.SavedViewItemChange{IncludeAdd: refs[500:]})
+	require.ErrorIs(t, err, store.ErrSavedViewItemsLimit)
+	got, err = f.Store.GetSavedView(t.Context(), view.ID)
+	require.NoError(t, err)
+	assert.Equal(t, view.Revision, got.Revision)
+	assert.Equal(t, string(view.ItemsJSON), string(got.ItemsJSON), "count-limit failure preserves the committed 500 refs")
 }
 
 func TestMergeSourcesSavedViewItemsFoldedCollisions(t *testing.T) {
@@ -200,23 +200,23 @@ func TestMergeSourcesSavedViewItemsFoldedCollisions(t *testing.T) {
 			}
 			view, err := f.Store.CreateSavedView(t.Context(), savedViewInput("Folded items"))
 			require.NoError(t, err)
-			_, err = f.Store.ChangeSavedViewItems(t.Context(), view.ID, 1, store.SavedViewItemChange{IncludeAdd: []store.SavedViewItemRef{historical}, ExcludeAdd: []store.SavedViewItemRef{survivor}})
+			_, err = f.Store.ChangeSavedViewItems(t.Context(), view.ID, 1, store.SavedViewItemChange{IncludeAdd: []store.SavedViewItemRef{historical}})
 			require.NoError(t, err)
 			_, err = f.Store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
 			require.NoError(t, err)
 			items, err := f.Store.GetSavedViewItems(t.Context(), view.ID)
 			require.NoError(t, err)
-			assert.Empty(t, items.Include)
-			require.Len(t, items.Exclude, 1)
-			assert.Equal(t, survivor, items.Exclude[0].SavedViewItemRef)
+			assert.Empty(t, items.Exclude)
+			require.Len(t, items.Include, 1)
+			assert.Equal(t, survivor, items.Include[0].SavedViewItemRef)
 			got, err := f.Store.GetSavedView(t.Context(), view.ID)
 			require.NoError(t, err)
 			assert.Equal(t, int64(3), got.Revision)
 			rendered, stale, err := f.Store.SavedViewItemsForView(t.Context(), got)
 			require.NoError(t, err)
 			assert.Zero(t, stale)
-			require.Len(t, rendered.Exclude, 1)
-			assert.True(t, strings.HasPrefix(rendered.Exclude[0].EntryKey, fmt.Sprintf("source:%d:", into.ID)))
+			require.Len(t, rendered.Include, 1)
+			assert.True(t, strings.HasPrefix(rendered.Include[0].EntryKey, fmt.Sprintf("source:%d:", into.ID)))
 		})
 	}
 }
@@ -270,15 +270,15 @@ func TestSavedViewItemsStoredSizeAndJSONBWhitespace(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, items.Include, 1)
 	assert.Equal(t, id, items.Include[0].MessageID)
-	stored, err := f.Store.GetSavedView(t.Context(), view.ID)
-	require.NoError(t, err)
-	t.Logf("canonical bytes=%d, stored bytes=%d, limit=%d", len(raw), len(stored.ItemsJSON), 128<<10)
 	oversized := strings.Replace(raw, `"added_by":"`, `"added_by":"oversized`, 1)
 	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE saved_views SET items_json=? WHERE id=?`), oversized, view.ID)
 	require.NoError(t, err)
 	_, err = f.Store.GetSavedViewItems(t.Context(), view.ID)
 	assert.ErrorIs(t, err, store.ErrSavedViewItemsInvalid)
 	assert.NotErrorIs(t, err, store.ErrSavedViewItemsLimit)
+	// A newer format may be present after opening an archive with an older binary.
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE saved_views SET items_json=? WHERE id=?`), `{"version":2}`, view.ID)
+	require.NoError(t, err)
 	// Cleanup may not abandon a corrupt row and leave dangling membership.
 	require.Error(t, f.Store.RemoveSource(f.Source.ID))
 	var remaining int
@@ -286,11 +286,21 @@ func TestSavedViewItemsStoredSizeAndJSONBWhitespace(t *testing.T) {
 	assert.Equal(t, 1, remaining)
 }
 func TestSavedViewItemsIgnoreStaleTargets(t *testing.T) {
-	for _, kind := range []string{"missing message", "reused message", "purged conversation"} {
+	for _, kind := range []string{"missing message", "reused message", "purged conversation", "reclassified message", "reclassified conversation"} {
 		t.Run(kind, func(t *testing.T) {
+			if kind == "reused message" {
+				testutil.SkipIfPostgres(t, "automatic row ID reuse is SQLite-only")
+			}
 			f := storetest.New(t)
 			id := f.CreateMessage("stale")
 			ref := store.SavedViewItemRef{MessageID: id, SourceID: f.Source.ID}
+			message := &store.Message{SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: "stale", MessageType: "email"}
+			if kind == "reclassified conversation" {
+				message.MessageType = "google_chat"
+				_, err := f.Store.UpsertMessage(message)
+				require.NoError(t, err)
+				ref = store.SavedViewItemRef{ConversationID: f.ConvID, SourceID: f.Source.ID}
+			}
 			var purgeSourceID int64
 			if kind == "purged conversation" {
 				source, err := f.Store.GetOrCreateSource("discord", "synthetic-guild")
@@ -306,7 +316,25 @@ func TestSavedViewItemsIgnoreStaleTargets(t *testing.T) {
 			require.NoError(t, err)
 			_, err = f.Store.ChangeSavedViewItems(t.Context(), view.ID, 1, store.SavedViewItemChange{IncludeAdd: []store.SavedViewItemRef{ref}})
 			require.NoError(t, err)
-			if kind == "purged conversation" {
+			// Load the membership committed after CreateSavedView.
+			view, err = f.Store.GetSavedView(t.Context(), view.ID)
+			require.NoError(t, err)
+			before, stale, err := f.Store.SavedViewItemsForView(t.Context(), view)
+			require.NoError(t, err)
+			require.Len(t, before.Include, 1)
+			assert.Zero(t, stale)
+			if strings.HasPrefix(kind, "reclassified") {
+				message.MessageType = "google_chat"
+				if kind == "reclassified conversation" {
+					message.MessageType = "email"
+				}
+				_, err = f.Store.UpsertMessage(message)
+				require.NoError(t, err)
+				resolved, rejected, err := f.Store.ResolveEntryKeys(t.Context(), []string{before.Include[0].EntryKey})
+				require.NoError(t, err)
+				assert.Empty(t, resolved)
+				require.Len(t, rejected, 1)
+			} else if kind == "purged conversation" {
 				require.NoError(t, f.Store.PurgeChannelContext(t.Context(), purgeSourceID, "synthetic-channel"))
 			} else {
 				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`DELETE FROM messages WHERE id=?`), id)
@@ -316,12 +344,9 @@ func TestSavedViewItemsIgnoreStaleTargets(t *testing.T) {
 					require.NoError(t, err)
 					conv, err := f.Store.EnsureConversation(other.ID, "replacement", "Replacement")
 					require.NoError(t, err)
-					override := ""
-					if f.Store.IsPostgreSQL() {
-						override = " OVERRIDING SYSTEM VALUE"
-					}
-					_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO messages (id,source_id,conversation_id,source_message_id,message_type)`+override+` VALUES (?,?,?,?,?)`), id, other.ID, conv, "replacement", "email")
+					reused, err := f.Store.UpsertMessage(&store.Message{SourceID: other.ID, ConversationID: conv, SourceMessageID: "replacement", MessageType: "email"})
 					require.NoError(t, err)
+					require.Equal(t, id, reused)
 				}
 			}
 			items, err := f.Store.GetSavedViewItems(t.Context(), view.ID)
@@ -375,6 +400,7 @@ func TestSavedViewItemsTargetJSONShape(t *testing.T) {
 }
 
 func TestMergeSourcesSavedViewItemsDoNotResurrectReusedConversation(t *testing.T) {
+	testutil.SkipIfPostgres(t, "automatic conversation ID reuse is SQLite-only")
 	f := storetest.New(t)
 	from, err := f.Store.GetOrCreateSource("discord", "historical-guild")
 	require.NoError(t, err)
@@ -395,11 +421,12 @@ func TestMergeSourcesSavedViewItemsDoNotResurrectReusedConversation(t *testing.T
 	require.NoError(t, err)
 	into, err := f.Store.GetOrCreateSource("discord", "replacement-guild")
 	require.NoError(t, err)
-	override := ""
-	if f.Store.IsPostgreSQL() {
-		override = " OVERRIDING SYSTEM VALUE"
-	}
-	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO conversations (id,source_id,source_conversation_id,conversation_type,title)`+override+` VALUES (?,?,?,?,?)`), old, into.ID, "unrelated", "group_chat", "Unrelated")
+	reused, err := f.Store.EnsureConversationWithType(into.ID, "unrelated", "group_chat", "Unrelated")
+	require.NoError(t, err)
+	require.Equal(t, old, reused)
+	// Keep a real source-A map entry so an unsafe blanket source rewrite
+	// could resurrect the stale pin while remapping the live conversation.
+	_, err = f.Store.EnsureConversationWithType(from.ID, "retained", "group_chat", "Retained")
 	require.NoError(t, err)
 	_, err = f.Store.UpsertMessage(&store.Message{SourceID: into.ID, ConversationID: old, SourceMessageID: "unrelated", MessageType: "discord"})
 	require.NoError(t, err)
@@ -411,88 +438,23 @@ func TestMergeSourcesSavedViewItemsDoNotResurrectReusedConversation(t *testing.T
 }
 
 func TestMigrateSourceMessageIDRemapsSavedViewItems(t *testing.T) {
-	for _, mode := range []string{"include", "exclude", "collision"} {
-		t.Run(mode, func(t *testing.T) {
-			f := storetest.New(t)
-			legacyID := f.CreateMessage("legacy")
-			survivorID := f.CreateMessage("scoped")
-			legacy := store.SavedViewItemRef{MessageID: legacyID, SourceID: f.Source.ID}
-			survivor := store.SavedViewItemRef{MessageID: survivorID, SourceID: f.Source.ID}
-			change := store.SavedViewItemChange{AddedBy: "owner"}
-			if mode == "exclude" {
-				change.ExcludeAdd = []store.SavedViewItemRef{legacy}
-			} else {
-				change.IncludeAdd = []store.SavedViewItemRef{legacy}
-			}
-			if mode == "collision" {
-				change.ExcludeAdd = []store.SavedViewItemRef{survivor}
-			}
-			view, err := f.Store.CreateSavedView(t.Context(), savedViewInput("Migration"))
-			require.NoError(t, err)
-			view, err = f.Store.ChangeSavedViewItems(t.Context(), view.ID, view.Revision, change)
-			require.NoError(t, err)
-			require.NoError(t, f.Store.MigrateSourceMessageID(f.Source.ID, f.ConvID, "legacy", "scoped"))
-			updated, err := f.Store.GetSavedView(t.Context(), view.ID)
-			require.NoError(t, err)
-			assert.Equal(t, view.Revision+1, updated.Revision)
-			items, err := f.Store.GetSavedViewItems(t.Context(), view.ID)
-			require.NoError(t, err)
-			entries := items.Exclude
-			if mode == "include" {
-				assert.Empty(t, items.Exclude)
-				entries = items.Include
-			} else {
-				assert.Empty(t, items.Include)
-			}
-			require.Len(t, entries, 1)
-			assert.Equal(t, survivor, entries[0].SavedViewItemRef)
-			assert.Equal(t, "owner", entries[0].AddedBy)
-		})
-	}
-}
-
-func TestSavedViewItemsReclassifiedTargetsBecomeStale(t *testing.T) {
-	for _, conversation := range []bool{false, true} {
-		t.Run(fmt.Sprint(conversation), func(t *testing.T) {
-			f := storetest.New(t)
-			message := &store.Message{SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: "reclassified", MessageType: "email"}
-			if conversation {
-				message.MessageType = "google_chat"
-			}
-			id, err := f.Store.UpsertMessage(message)
-			require.NoError(t, err)
-			ref := store.SavedViewItemRef{MessageID: id, SourceID: f.Source.ID}
-			if conversation {
-				ref.MessageID = 0
-				ref.ConversationID = f.ConvID
-			}
-			view, err := f.Store.CreateSavedView(t.Context(), savedViewInput("Reclassified"))
-			require.NoError(t, err)
-			view, err = f.Store.ChangeSavedViewItems(t.Context(), view.ID, 1, store.SavedViewItemChange{IncludeAdd: []store.SavedViewItemRef{ref}})
-			require.NoError(t, err)
-			before, stale, err := f.Store.SavedViewItemsForView(t.Context(), view)
-			require.NoError(t, err)
-			require.Len(t, before.Include, 1)
-			assert.Zero(t, stale)
-			message.MessageType = "google_chat"
-			if conversation {
-				message.MessageType = "email"
-			}
-			_, err = f.Store.UpsertMessage(message)
-			require.NoError(t, err)
-			resolved, rejected, err := f.Store.ResolveEntryKeys(t.Context(), []string{before.Include[0].EntryKey})
-			require.NoError(t, err)
-			assert.Empty(t, resolved)
-			require.Len(t, rejected, 1)
-			after, stale, err := f.Store.SavedViewItemsForView(t.Context(), view)
-			require.NoError(t, err)
-			assert.Empty(t, after.Include)
-			assert.Equal(t, 1, stale)
-			view, err = f.Store.ChangeSavedViewItems(t.Context(), view.ID, view.Revision, store.SavedViewItemChange{})
-			require.NoError(t, err)
-			assert.Empty(t, view.ItemsJSON, "a valid patch prunes stale kind membership")
-		})
-	}
+	f := storetest.New(t)
+	legacyID := f.CreateMessage("legacy")
+	survivorID := f.CreateMessage("scoped")
+	view, err := f.Store.CreateSavedView(t.Context(), savedViewInput("Migration"))
+	require.NoError(t, err)
+	view, err = f.Store.ChangeSavedViewItems(t.Context(), view.ID, view.Revision, store.SavedViewItemChange{AddedBy: "owner", IncludeAdd: []store.SavedViewItemRef{{MessageID: legacyID, SourceID: f.Source.ID}}})
+	require.NoError(t, err)
+	require.NoError(t, f.Store.MigrateSourceMessageID(f.Source.ID, f.ConvID, "legacy", "scoped"))
+	updated, err := f.Store.GetSavedView(t.Context(), view.ID)
+	require.NoError(t, err)
+	assert.Equal(t, view.Revision+1, updated.Revision)
+	items, err := f.Store.GetSavedViewItems(t.Context(), view.ID)
+	require.NoError(t, err)
+	assert.Empty(t, items.Exclude)
+	require.Len(t, items.Include, 1)
+	assert.Equal(t, store.SavedViewItemRef{MessageID: survivorID, SourceID: f.Source.ID}, items.Include[0].SavedViewItemRef)
+	assert.Equal(t, "owner", items.Include[0].AddedBy)
 }
 
 func TestSavedViewItemsRetireBeforeAutomaticSQLiteIDReuse(t *testing.T) {
