@@ -1,6 +1,7 @@
 package calevent
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -246,5 +247,51 @@ func TestICSRejectMalformed(t *testing.T) {
 			_, _, err := Decode("ics", []byte(tc.raw), []byte(`{}`), "")
 			require.ErrorContains(t, err, tc.want)
 		})
+	}
+}
+
+func TestParseICSCustomizedHistory(t *testing.T) {
+	raw, err := os.ReadFile("testdata/customized-history.ics")
+	require.NoError(t, err)
+	for _, until := range []bool{false, true} {
+		data := string(raw)
+		if until {
+			data = strings.Replace(data, "BYDAY=-1SU;BYMONTH=10", "BYDAY=-1SU;BYMONTH=10;UNTIL=20061029T060000Z", 1)
+			data = strings.Replace(data, "BYDAY=1SU;BYMONTH=4", "BYDAY=1SU;BYMONTH=4;UNTIL=20060402T070000Z", 1)
+		}
+		for _, tc := range []struct{ date, want string }{{"20060320", "2006-03-20T15:00:00Z"}, {"20061101", "2006-11-01T15:00:00Z"}, {"20260320", "2026-03-20T14:00:00Z"}} {
+			t.Run(tc.date+fmt.Sprint(until), func(t *testing.T) {
+				components, err := ParseICS([]byte(strings.Replace(data, "20060320T100000", tc.date+"T100000", 1)), "", "")
+				require.NoError(t, err)
+				require.Len(t, components, 1)
+				assert.Equal(t, tc.want, components[0].Event.Start.Format(time.RFC3339))
+				assert.Contains(t, components[0].Event.Recurrence, "EXDATE:20080320T140000Z")
+				loc, err := LoadZone(components[0].Event.EventTimeZone)
+				require.NoError(t, err)
+				date, err := time.Parse("20060102", tc.date)
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, time.Date(date.Year(), date.Month(), date.Day(), 10, 0, 0, 0, loc).UTC().Format(time.RFC3339))
+			})
+		}
+	}
+	_, err = LoadZone("STD+05:00;bad")
+	require.Error(t, err)
+}
+
+func TestParseICSOneShotZoneChange(t *testing.T) {
+	raw, err := os.ReadFile("testdata/customized-history.ics")
+	require.NoError(t, err)
+	change := "BEGIN:STANDARD\nDTSTART:20300101T020000\nTZOFFSETFROM:-0500\nTZOFFSETTO:-0600\nEND:STANDARD\n"
+	data := strings.Replace(string(raw), "END:VTIMEZONE", change+"END:VTIMEZONE", 1)
+	components, err := ParseICS([]byte(data), "", "")
+	require.NoError(t, err)
+	loc, err := LoadZone(components[0].Event.EventTimeZone)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		year int
+		want int
+	}{{2006, -5 * 3600}, {2026, -4 * 3600}, {2031, -6 * 3600}} {
+		_, got := time.Date(tc.year, 3, 20, 10, 0, 0, 0, loc).Zone()
+		assert.Equal(t, tc.want, got)
 	}
 }

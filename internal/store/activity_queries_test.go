@@ -1292,3 +1292,63 @@ func seedProjectedMeetingActivity(
 	require.NoError(t, err)
 	return messageID
 }
+
+func TestActivityCandidatesExcludeEmailInvites(t *testing.T) {
+	f, personID := activityProjectionFixture(t)
+	var participantID int64
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT participant_id FROM person_participants WHERE person_id = ?`), personID).Scan(&participantID))
+	ids := make(map[string]int64)
+	for _, typ := range []string{"gmail", "gcal", "ics"} {
+		source, err := f.Store.GetOrCreateSource(typ, typ+"@example.test")
+		require.NoError(t, err)
+		conversation, err := f.Store.EnsureConversationWithType(source.ID, typ+"-thread", "meeting", "Meeting")
+		require.NoError(t, err)
+		msg := storetest.NewMessage(source.ID, conversation).WithSourceMessageID(typ + "-event").WithSentAt(time.Date(2026, 3, 20, 14, 0, 0, 0, time.UTC)).Build()
+		msg.MessageType = "calendar_event"
+		ids[typ], err = f.Store.UpsertMessage(msg)
+		require.NoError(t, err)
+		require.NoError(t, f.Store.ReplaceMessageRecipients(ids[typ], "to", []int64{participantID}, []string{"Activity Contact"}))
+	}
+	candidates, err := f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 100)
+	require.NoError(t, err)
+	eligible := map[int64]bool{}
+	for _, c := range candidates {
+		eligible[c.MessageID] = c.Eligible
+	}
+	assert.False(t, eligible[ids["gmail"]])
+	assert.True(t, eligible[ids["gcal"]])
+	assert.True(t, eligible[ids["ics"]])
+	projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 100, MaxDirectCounterparts: 25})
+	require.NoError(t, err)
+	_, err = projector.RunOnce(t.Context())
+	require.NoError(t, err)
+	for _, typ := range []string{"gmail", "gcal", "ics"} {
+		var count int
+		require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT count(*) FROM activity_event_persons WHERE message_id = ? AND person_id = ?`), ids[typ], personID).Scan(&count))
+		if typ == "gmail" {
+			assert.Zero(t, count)
+		} else {
+			assert.Equal(t, 1, count)
+		}
+	}
+	from, err := f.Store.GetOrCreateSource("gmail", "gmail@example.test")
+	require.NoError(t, err)
+	into, err := f.Store.GetOrCreateSource("gmail", "other@example.test")
+	require.NoError(t, err)
+	_, err = f.Store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	require.NoError(t, err)
+	candidates, err = f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 100)
+	require.NoError(t, err)
+	for _, c := range candidates {
+		if c.MessageID == ids["gmail"] {
+			assert.False(t, c.Eligible)
+			_, err = projector.RunOnce(t.Context())
+			require.NoError(t, err)
+			var count int
+			require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT count(*) FROM activity_events WHERE message_id = ?`), ids["gmail"]).Scan(&count))
+			assert.Zero(t, count)
+			return
+		}
+	}
+	t.Fatal("merged invite was not queued")
+}

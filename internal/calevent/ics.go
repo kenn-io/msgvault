@@ -19,6 +19,11 @@ import (
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
+// EmailInviteSQL identifies email-derived events; source merges preserve source types.
+func EmailInviteSQL(messageType, sourceType string) string {
+	return fmt.Sprintf("(%s = 'calendar_event' AND COALESCE(%s, '') NOT IN ('gcal', 'ics'))", messageType, sourceType)
+}
+
 // ICSMetadata records the accepted revision independently of the retained raw.
 type ICSMetadata struct {
 	Status    string    `json:"status,omitempty"`
@@ -367,7 +372,7 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 		for _, prop := range p.Values(name) {
 			var line strings.Builder
 			line.WriteString(name)
-			custom := customZonePattern.MatchString(prop.Params.Get("TZID"))
+			custom := isCustomZone(prop.Params.Get("TZID"))
 			for _, param := range []string{"VALUE", "TZID"} {
 				if v := prop.Params.Get(param); v != "" && (param != "TZID" || !custom) {
 					line.WriteString(";" + param + "=" + v)
