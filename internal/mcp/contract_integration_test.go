@@ -440,6 +440,7 @@ func task5AssertJSONParity(t *testing.T, toolName string, result *sdkmcp.CallToo
 	require.True(t, ok, "first content type: %T", result.Content[0])
 	require.NotEmpty(t, text.Text)
 	if toolName == ToolSkills {
+		assert.Contains(t, text.Text, "workflow:")
 		catalog := task5StructuredAs[struct {
 			Skills []struct{ Name, Title, Summary string } `json:"skills"`
 		}](t, result)
