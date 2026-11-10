@@ -133,6 +133,7 @@ type Scheduler struct {
 	logger                  *slog.Logger
 	work                    WorkTracker
 	accountPreemptionPolicy func(string) bool
+	accountPollBudget       func(context.Context, string) time.Duration
 
 	mu            sync.RWMutex
 	jobs          map[string]cron.EntryID // email -> cron entry ID
@@ -246,6 +247,12 @@ func (s *Scheduler) WithAccountPoll(fn SyncFunc) *Scheduler {
 	return s
 }
 
+// WithAccountPollBudget selects a runtime budget after the work gate is acquired.
+func (s *Scheduler) WithAccountPollBudget(fn func(context.Context, string) time.Duration) *Scheduler {
+	s.accountPollBudget = fn
+	return s
+}
+
 // WithLogger sets the logger for the scheduler.
 func (s *Scheduler) WithLogger(logger *slog.Logger) *Scheduler {
 	s.logger = logger
@@ -281,12 +288,6 @@ func (s *Scheduler) AddAccount(email, cronExpr string) error {
 		delete(s.jobs, email)
 		delete(s.schedules, email)
 	}
-	if entryID, exists := s.pollJobs[email]; exists {
-		s.cron.Remove(entryID)
-		delete(s.pollJobs, email)
-		delete(s.pollIntervals, email)
-	}
-
 	// Validate and add the cron job
 	entryID, err := s.cron.AddFunc(cronExpr, func() {
 		s.onAccountTick(email)
@@ -381,6 +382,9 @@ func (s *Scheduler) AddAccountsFromConfig(cfg *config.Config) (int, []error) {
 			if acc.PollInterval > 0 {
 				s.mu.Lock()
 				email := acc.Email
+				if old, ok := s.pollJobs[email]; ok {
+					s.cron.Remove(old)
+				}
 				s.pollJobs[email] = s.cron.Schedule(cron.Every(acc.PollInterval), cron.FuncJob(func() { s.onAccountTrigger(email, true) }))
 				s.pollIntervals[email] = acc.PollInterval
 				s.mu.Unlock()
@@ -654,6 +658,9 @@ func (s *Scheduler) runAccountSync(email string, poll bool) {
 	var budget time.Duration
 	if poll {
 		budget = 5 * time.Minute
+		if s.accountPollBudget != nil {
+			budget = s.accountPollBudget(s.ctx, email)
+		}
 	}
 	runCtx, endRun := s.jobContext("sync "+email, preemptible, false, budget)
 	fn := s.syncFunc

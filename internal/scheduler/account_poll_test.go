@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -34,6 +35,53 @@ func TestPollingAccountStartsAndRepeats(t *testing.T) {
 		time.Sleep(15 * time.Second)
 		synctest.Wait()
 		assert.Equal(t, 2, calls)
+		<-s.Stop().Done()
+	})
+}
+
+func TestCronRegistrationPreservesPolling(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var calls atomic.Int32
+		s := New(func(context.Context, string) error { return nil }).WithAccountPoll(func(context.Context, string) error { calls.Add(1); return nil })
+		cfg := &config.Config{Accounts: []config.AccountSchedule{
+			{Email: "a@example.test", Enabled: true, Schedule: "0 * * * *", PollInterval: 15 * time.Second},
+			{Email: "a@example.test", Enabled: true, Schedule: "0 * * * *"},
+		}}
+		_, errs := s.AddAccountsFromConfig(cfg)
+		require.Empty(t, errs)
+		s.Start()
+		synctest.Wait()
+		assert.EqualValues(t, 1, calls.Load())
+		time.Sleep(15 * time.Second)
+		synctest.Wait()
+		assert.EqualValues(t, 2, calls.Load())
+		<-s.Stop().Done()
+	})
+}
+
+func TestPollingWithoutBudgetCanFinishLongPass(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		completed := make(chan struct{}, 1)
+		s := New(func(context.Context, string) error { return nil }).
+			WithAccountPoll(func(ctx context.Context, _ string) error {
+				select {
+				case <-time.After(6 * time.Minute):
+					completed <- struct{}{}
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}).WithAccountPollBudget(func(context.Context, string) time.Duration { return 0 })
+		_, errs := s.AddAccountsFromConfig(&config.Config{Accounts: []config.AccountSchedule{{Email: "imap@example.test", Enabled: true, Schedule: "0 * * * *", PollInterval: 120 * time.Second}}})
+		require.Empty(t, errs)
+		s.Start()
+		time.Sleep(6 * time.Minute)
+		synctest.Wait()
+		select {
+		case <-completed:
+		default:
+			t.Error("long poll did not complete")
+		}
 		<-s.Stop().Done()
 	})
 }

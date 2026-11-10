@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/identityops"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/remoteimage"
@@ -329,7 +330,7 @@ func (s *Syncer) completeSyncWithoutHook(
 	}
 	if err != nil {
 		if !errors.Is(err, store.ErrSyncRunSuperseded) {
-			s.failStoppedSync(syncID, err)
+			s.failStoppedSync(ctx, syncID, err)
 		}
 		return fmt.Errorf("publish completed sync: %w", err)
 	}
@@ -515,11 +516,11 @@ func (s *Syncer) fullSyncRequestFingerprint() string {
 	return fmt.Sprintf("%s:%x", version, sha256.Sum256([]byte(request)))
 }
 
-// failStoppedSync attempts to mark a stopped worker's run failed.
-// Checkpoints on failed runs remain resumable. If the terminal write fails,
-// the run can remain running; callers must still return without completing it.
-func (s *Syncer) failStoppedSync(syncID int64, err error) {
-	if gmail.IsQuotaDeferred(err) {
+// failStoppedSync records a stopped worker's run, retaining its checkpoint.
+// Quota deferrals and budget expiry pause the run when no other error remains.
+// If the terminal write fails, the run can remain running.
+func (s *Syncer) failStoppedSync(ctx context.Context, syncID int64, err error) {
+	if gmail.IsQuotaDeferred(err) || (errors.Is(context.Cause(ctx), jobctx.ErrRunBudgetExceeded) && jobctx.ErrorAfterYield(ctx, err) == nil) {
 		_ = s.store.PauseSync(syncID)
 		return
 	}
@@ -1426,7 +1427,7 @@ func (s *Syncer) full(
 
 	if s.opts.SourceType != sourceTypeIMAP {
 		if err := s.initAcquisitionReplay(ctx, source.ID, state.syncID); err != nil {
-			s.failStoppedSync(state.syncID, err)
+			s.failStoppedSync(ctx, state.syncID, err)
 			return nil, fmt.Errorf("find pending acquisition replays: %w", err)
 		}
 	}
@@ -1448,7 +1449,7 @@ func (s *Syncer) full(
 
 	if reconcilePresence && state.handoffCursor != "" {
 		if err := s.saveFullCheckpoint(ctx, state); err != nil {
-			s.failStoppedSync(state.syncID, err)
+			s.failStoppedSync(ctx, state.syncID, err)
 			return nil, fmt.Errorf("inherit Gmail recovery checkpoint: %w", err)
 		}
 	}
@@ -1456,11 +1457,11 @@ func (s *Syncer) full(
 	// Get profile to verify connection and get historyId
 	profile, err := s.readGmailProfile(ctx)
 	if err != nil {
-		s.failStoppedSync(state.syncID, err)
+		s.failStoppedSync(ctx, state.syncID, err)
 		return nil, fmt.Errorf("get profile: %w", err)
 	}
 	if err := s.refreshProfileIdentity(ctx, source, profile); err != nil {
-		s.failStoppedSync(state.syncID, err)
+		s.failStoppedSync(ctx, state.syncID, err)
 		return nil, err
 	}
 	handoffHistoryID := profile.HistoryID
@@ -1470,14 +1471,14 @@ func (s *Syncer) full(
 			state.handoffCursor = strconv.FormatUint(profile.HistoryID, 10)
 			if reconcilePresence {
 				if err := s.saveFullCheckpoint(ctx, state); err != nil {
-					s.failStoppedSync(state.syncID, err)
+					s.failStoppedSync(ctx, state.syncID, err)
 					return nil, fmt.Errorf("pin Gmail history recovery cursor: %w", err)
 				}
 			}
 		} else {
 			handoffHistoryID, err = strconv.ParseUint(state.handoffCursor, 10, 64)
 			if err != nil {
-				s.failStoppedSync(state.syncID, err)
+				s.failStoppedSync(ctx, state.syncID, err)
 				return nil, fmt.Errorf("parse Gmail full-sync history cursor %q: %w", state.handoffCursor, err)
 			}
 		}
@@ -1488,7 +1489,7 @@ func (s *Syncer) full(
 	// Sync labels
 	labelMap, err := s.syncLabels(ctx, source.ID)
 	if err != nil {
-		s.failStoppedSync(state.syncID, err)
+		s.failStoppedSync(ctx, state.syncID, err)
 		return nil, fmt.Errorf("sync labels: %w", err)
 	}
 
@@ -1501,20 +1502,20 @@ func (s *Syncer) full(
 	if s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail {
 		replayed, err := s.replayLocalMaterialization(ctx, state.syncID, source.ID, state.checkpoint)
 		if err != nil {
-			s.failStoppedSync(state.syncID, err)
+			s.failStoppedSync(ctx, state.syncID, err)
 			return nil, err
 		}
 		if len(replayed) > 0 {
 			discoveryHealth.observe(s.runPageIdentityDiscovery(ctx, source.ID, replayed))
 			if err := ctx.Err(); err != nil {
-				s.failStoppedSync(state.syncID, err)
+				s.failStoppedSync(ctx, state.syncID, err)
 				return nil, err
 			}
 			// An empty Gmail listing saves no page checkpoint, so record
 			// replay failures in the stored run before enumeration.
 			if err := s.saveFullCheckpoint(ctx, state); err != nil {
 				if reconcilePresence {
-					s.failStoppedSync(state.syncID, err)
+					s.failStoppedSync(ctx, state.syncID, err)
 					return nil, fmt.Errorf("save local replay checkpoint: %w", err)
 				}
 				s.logger.Warn("failed to save checkpoint", "error", err)
@@ -1528,7 +1529,7 @@ func (s *Syncer) full(
 		// List messages
 		listResp, err := s.client.ListMessages(ctx, s.opts.Query, pageToken)
 		if err != nil {
-			s.failStoppedSync(state.syncID, err)
+			s.failStoppedSync(ctx, state.syncID, err)
 			return nil, fmt.Errorf("list messages: %w", err)
 		}
 
@@ -1559,14 +1560,14 @@ func (s *Syncer) full(
 			if checkpointErr := s.saveFullCheckpoint(ctx, state); checkpointErr != nil {
 				s.logger.Warn("failed to save checkpoint before failing sync", "error", checkpointErr)
 			}
-			s.failStoppedSync(state.syncID, err)
+			s.failStoppedSync(ctx, state.syncID, err)
 			return nil, err
 		}
 
 		discoveryHealth.observe(s.runPageIdentityDiscovery(ctx, source.ID, result.sourceMessageIDs))
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			err := fmt.Errorf("sync canceled during identity discovery: %w", ctxErr)
-			s.failStoppedSync(state.syncID, err)
+			s.failStoppedSync(ctx, state.syncID, err)
 			return nil, err
 		}
 		if ack, ok := s.client.(messageAcknowledger); ok && len(result.acknowledged) > 0 {
@@ -1604,7 +1605,7 @@ func (s *Syncer) full(
 		}
 		if err := s.saveFullCheckpoint(ctx, state); err != nil {
 			if reconcilePresence {
-				s.failStoppedSync(state.syncID, err)
+				s.failStoppedSync(ctx, state.syncID, err)
 				return nil, fmt.Errorf("save Gmail recovery page: %w", err)
 			}
 			s.logger.Warn("failed to save checkpoint", "error", err)
@@ -1625,19 +1626,19 @@ func (s *Syncer) full(
 		state.recoveryPhase = recoveryReconcile
 		state.checkpoint.PageToken = ""
 		if err := s.saveFullCheckpoint(ctx, state); err != nil {
-			s.failStoppedSync(state.syncID, err)
+			s.failStoppedSync(ctx, state.syncID, err)
 			return nil, fmt.Errorf("checkpoint Gmail reconciliation phase: %w", err)
 		}
 	}
 	if reconcilePresence && state.recoveryPhase == recoveryReconcile {
 		present, err := s.listCompleteMessageSnapshot(ctx)
 		if err != nil {
-			s.failStoppedSync(state.syncID, err)
+			s.failStoppedSync(ctx, state.syncID, err)
 			return nil, err
 		}
 		reconciled, err := s.store.ReconcileSourceMessageSnapshot(ctx, source.ID, present)
 		if err != nil {
-			s.failStoppedSync(state.syncID, err)
+			s.failStoppedSync(ctx, state.syncID, err)
 			return nil, fmt.Errorf("reconcile Gmail message snapshot: %w", err)
 		}
 		if reconciled > 0 {
@@ -1651,7 +1652,7 @@ func (s *Syncer) full(
 			Errors:    state.checkpoint.ErrorsCount,
 		}
 		if err := s.saveFullCheckpoint(ctx, state); err != nil {
-			s.failStoppedSync(state.syncID, err)
+			s.failStoppedSync(ctx, state.syncID, err)
 			return nil, fmt.Errorf("checkpoint Gmail catch-up phase: %w", err)
 		}
 	}
@@ -1669,7 +1670,7 @@ func (s *Syncer) full(
 	if state.wasResumed && !reconcilePresence && isUnrestrictedGmailFull {
 		current, err := s.store.GetSourceByIDContext(ctx, source.ID)
 		if err != nil {
-			s.failStoppedSync(state.syncID, err)
+			s.failStoppedSync(ctx, state.syncID, err)
 			return nil, fmt.Errorf("read saved sync progress: %w", err)
 		}
 		if currentHistoryID, err := strconv.ParseUint(current.SyncCursor.String, 10, 64); err == nil && currentHistoryID > completionHistoryID {

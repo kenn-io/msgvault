@@ -1830,4 +1830,26 @@ func TestIMAPPollQresyncAppendAndFlags(t *testing.T) {
 	require.NoError(t, <-results)
 	require.Eventually(t, func() bool { return !sched.Status()[0].Running && !sched.Status()[0].Queued }, time.Second, time.Millisecond)
 	assert.False(t, sched.Status()[0].LastCompleted.IsZero())
+	pollResults := make(chan error, 1)
+	pollScheduler := scheduler.New(func(context.Context, string) error { return nil }).
+		WithAccountPoll(func(runCtx context.Context, identifier string) error {
+			_, hasDeadline := runCtx.Deadline()
+			assert.False(t, hasDeadline)
+			runCtx = withInvocation(runCtx, invocationFromContext(ctx))
+			err := runEmailPoll(runCtx, identifier, st, nil, invocationFromContext(ctx))
+			pollResults <- err
+			return err
+		}).WithAccountPollBudget(func(runCtx context.Context, identifier string) time.Duration {
+		return emailPollBudget(runCtx, identifier, st, invocationFromContext(ctx))
+	})
+	_, errs := pollScheduler.AddAccountsFromConfig(&config.Config{Accounts: []config.AccountSchedule{{Email: ic.Identifier(), Enabled: true, Schedule: "0 * * * *", PollInterval: 120 * time.Second}}})
+	require.Empty(t, errs)
+	pollScheduler.Start()
+	t.Cleanup(func() { <-pollScheduler.Stop().Done() })
+	select {
+	case err := <-pollResults:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("IMAP poll did not complete")
+	}
 }

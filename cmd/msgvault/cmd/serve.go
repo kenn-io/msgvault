@@ -458,6 +458,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 			return runEmailPoll(ctx, identifier, s, getOAuthMgr, state)
 		})
 	})
+	sched.WithAccountPollBudget(func(ctx context.Context, identifier string) time.Duration {
+		return emailPollBudget(ctx, identifier, s, state)
+	})
 	sched.WithAccountPreemptionPolicy(func(identifier string) bool {
 		return scheduledSyncPreemptible(ctx, s, identifier, logger)
 	})

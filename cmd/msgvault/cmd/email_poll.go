@@ -5,14 +5,24 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/sync"
 )
+
+func emailPollBudget(ctx context.Context, identifier string, s *store.Store, state *invocation) time.Duration {
+	src, err := pollingSource(ctx, identifier, s, state)
+	if err == nil && src.SourceType == sourceTypeIMAP {
+		return 0
+	}
+	return 5 * time.Minute
+}
 
 func validatePollingTargets(ctx context.Context, cfg *config.Config, s *store.Store, state *invocation) error {
 	if err := config.ValidatePollingAccounts(cfg.Accounts); err != nil {
@@ -91,6 +101,10 @@ func runEmailPoll(ctx context.Context, identifier string, s *store.Store, getOAu
 	if gmail.IsQuotaDeferred(err) {
 		incomplete = true
 		err = nil
+	}
+	if errors.Is(context.Cause(ctx), jobctx.ErrRunBudgetExceeded) {
+		err = jobctx.ErrorAfterYield(ctx, err)
+		incomplete = err == nil
 	}
 	state.syncFailures.Record(ctx, src.SourceType, src.Identifier, err)
 	// Preserve the refresh request after provider work has written data.

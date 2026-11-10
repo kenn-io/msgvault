@@ -22,6 +22,7 @@ func TestPollingSourceSelection(t *testing.T) {
 	selected, err := pollingSource(t.Context(), "user@example.test", st, state)
 	require.NoError(t, err)
 	assert.Equal(t, imapSource.ID, selected.ID)
+	assert.Zero(t, emailPollBudget(t.Context(), imapSource.Identifier, st, state))
 	state.cfg.Sync.IMAPSkipFolders = map[string][]string{imapSource.Identifier: {"Archive"}}
 	_, err = pollingSource(t.Context(), "user@example.test", st, state)
 	assert.ErrorContains(t, err, "folder filter")
@@ -31,6 +32,7 @@ func TestPollingSourceSelection(t *testing.T) {
 	selected, err = pollingSource(t.Context(), "user@example.test", st, state)
 	require.NoError(t, err)
 	assert.Equal(t, gmailSource.ID, selected.ID)
+	assert.Equal(t, 5*time.Minute, emailPollBudget(t.Context(), gmailSource.Identifier, st, state))
 	second, err := st.GetOrCreateSource(sourceTypeIMAP, "imaps://second@example.test")
 	require.NoError(t, err)
 	require.NoError(t, st.UpdateSourceDisplayName(second.ID, "shared@example.test"))

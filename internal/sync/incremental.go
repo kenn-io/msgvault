@@ -116,7 +116,7 @@ func (s *Syncer) incrementalWithRecovery(
 		}
 		checkpoint = state.durableCheckpoint()
 		if err := s.store.UpdateSyncCheckpointContext(ctx, syncID, checkpoint); err != nil {
-			s.failStoppedSync(syncID, err)
+			s.failStoppedSync(ctx, syncID, err)
 			return nil, fmt.Errorf("inherit Gmail catch-up checkpoint: %w", err)
 		}
 	}
@@ -124,7 +124,7 @@ func (s *Syncer) incrementalWithRecovery(
 	// Get profile for current history ID
 	profile, err := s.readGmailProfile(ctx)
 	if err != nil {
-		s.failStoppedSync(syncID, err)
+		s.failStoppedSync(ctx, syncID, err)
 		return nil, fmt.Errorf("get profile: %w", err)
 	}
 
@@ -163,7 +163,7 @@ func (s *Syncer) incrementalWithRecovery(
 	// Sync labels first (new labels may have been created)
 	labelMap, err := s.syncLabels(ctx, source.ID)
 	if err != nil {
-		s.failStoppedSync(syncID, err)
+		s.failStoppedSync(ctx, syncID, err)
 		return nil, fmt.Errorf("sync labels: %w", err)
 	}
 
@@ -179,14 +179,14 @@ func (s *Syncer) incrementalWithRecovery(
 			if checkpointErr := s.store.UpdateSyncCheckpoint(syncID, checkpoint); checkpointErr != nil {
 				s.logger.Warn("failed to save checkpoint before failing sync", "error", checkpointErr)
 			}
-			s.failStoppedSync(syncID, err)
+			s.failStoppedSync(ctx, syncID, err)
 			return nil, err
 		}
 		if len(replayedIDs) > 0 {
 			discoveryHealth.observe(s.runPageIdentityDiscovery(ctx, source.ID, replayedIDs))
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				err := fmt.Errorf("sync canceled during replay identity discovery: %w", ctxErr)
-				s.failStoppedSync(syncID, err)
+				s.failStoppedSync(ctx, syncID, err)
 				return nil, err
 			}
 		}
@@ -209,7 +209,7 @@ func (s *Syncer) incrementalWithRecovery(
 					// Callers fall back to a full sync on ErrHistoryExpired.
 					return nil, ErrHistoryExpired
 				}
-				s.failStoppedSync(syncID, err)
+				s.failStoppedSync(ctx, syncID, err)
 				return nil, fmt.Errorf("list history: %w", err)
 			}
 
@@ -256,7 +256,7 @@ func (s *Syncer) incrementalWithRecovery(
 			}
 			for _, record := range historyResp.History {
 				if err := s.processLabelChanges(ctx, syncID, source.ID, record, labelMap, existingMap, newMsgThreads, updatedExisting, identityDiscoverySet, checkpoint, summary); err != nil {
-					s.failStoppedSync(syncID, err)
+					s.failStoppedSync(ctx, syncID, err)
 					return nil, err
 				}
 			}
@@ -278,7 +278,7 @@ func (s *Syncer) incrementalWithRecovery(
 					s.logger.Warn("failed to batch fetch messages", "error", fetchErr)
 					for _, id := range newMsgIDs {
 						if err := s.recordAcquisitionFailure(syncID, id, syncItemPhaseFetch, syncItemKindBatchFetchError, fetchErr); err != nil {
-							s.failStoppedSync(syncID, err)
+							s.failStoppedSync(ctx, syncID, err)
 							return nil, err
 						}
 					}
@@ -295,7 +295,7 @@ func (s *Syncer) incrementalWithRecovery(
 							errMsg := syncItemErrorMessage(fetch.Err, errRawBatchMissing.Error())
 							s.logger.Warn("failed to fetch message", "id", newMsgIDs[i], "error", errMsg)
 							if err := s.recordAcquisitionFailure(syncID, newMsgIDs[i], syncItemPhaseFetch, syncItemKindFetchError, fetch.Err); err != nil {
-								s.failStoppedSync(syncID, err)
+								s.failStoppedSync(ctx, syncID, err)
 								return nil, err
 							}
 							checkpoint.ErrorsCount++
@@ -307,7 +307,7 @@ func (s *Syncer) incrementalWithRecovery(
 						); err != nil {
 							s.logger.Warn("failed to ingest added message", "id", newMsgIDs[i], "error", err)
 							if recErr := s.recordAcquisitionFailure(syncID, newMsgIDs[i], syncItemPhaseIngest, syncItemKindIngestError, err); recErr != nil {
-								s.failStoppedSync(syncID, recErr)
+								s.failStoppedSync(ctx, syncID, recErr)
 								return nil, recErr
 							}
 							checkpoint.ErrorsCount++
@@ -334,7 +334,7 @@ func (s *Syncer) incrementalWithRecovery(
 						s.recordSyncItem(syncID, id, syncItemPhaseDelete, store.SyncRunItemStatusError, syncItemKindDeleteError, err)
 					}
 					checkpoint.ErrorsCount += int64(len(deletedIDs))
-					s.failStoppedSync(syncID, err)
+					s.failStoppedSync(ctx, syncID, err)
 					return nil, fmt.Errorf("save deleted-message state: %w", err)
 				}
 			}
@@ -347,7 +347,7 @@ func (s *Syncer) incrementalWithRecovery(
 			discoveryHealth.observe(s.runPageIdentityDiscovery(ctx, source.ID, identityDiscoveryIDs))
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				err := fmt.Errorf("sync canceled during identity discovery: %w", ctxErr)
-				s.failStoppedSync(syncID, err)
+				s.failStoppedSync(ctx, syncID, err)
 				return nil, err
 			}
 
@@ -363,7 +363,7 @@ func (s *Syncer) incrementalWithRecovery(
 			// page token: retries replay from H (see recoveryCheckpoint).
 			if err := s.store.UpdateSyncCheckpoint(syncID, checkpoint); err != nil {
 				if recovery {
-					s.failStoppedSync(syncID, err)
+					s.failStoppedSync(ctx, syncID, err)
 					return nil, fmt.Errorf("save Gmail catch-up checkpoint: %w", err)
 				}
 				s.logger.Warn("failed to save checkpoint", "error", err)
