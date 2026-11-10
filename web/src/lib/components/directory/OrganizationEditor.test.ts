@@ -111,6 +111,30 @@ describe('OrganizationEditor', () => {
     expect(body.retired).toBeUndefined();
   });
 
+  it.each([false, true])('preserves an untouched comma alias when saving categories, conflict=%s', async conflict => {
+    const opening = richOrganizationProfile(1);
+    opening.names[1] = { ...opening.names[1], name: 'Example, Inc.', envelope: { ...opening.names[1].envelope, source: 'vcard_import', ordinal: 7 } };
+    const newer = { ...opening, organization: organization(21, 2), names: [...opening.names, { ...opening.names[1], name: 'Newer alias', envelope: envelope(70) }] };
+    const writes: Request[] = [];
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (request.method === 'GET') return Response.json(writes.length ? newer : opening, { headers: { ETag: writes.length ? '"organization-21-r2"' : '"organization-21-r1"' } });
+      writes.push(request);
+      if (conflict && writes.length === 1) return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+      return Response.json(conflict ? newer : opening, { headers: { ETag: '"organization-21-r3"' } });
+    });
+    render(OrganizationEditor, { controller, organization: organization() });
+    await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization categories' }), { target: { value: 'Research, Design' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
+    if (conflict) await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
+    await waitFor(() => expect(writes).toHaveLength(conflict ? 2 : 1));
+    const request = writes.at(-1)!;
+    if (conflict) expect(request.headers.get('If-Match')).toBe('"organization-21-r2"');
+    const body = await request.json();
+    expect(body.names).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'Example, Inc.', source: 'vcard_import', ordinal: 7 })]));
+    expect(body.names.map((item: { name: string }) => item.name)).toEqual(['Synthetic Legal Ltd', 'Example, Inc.']);
+  });
+
   it('shows the structured profile read-only under the fields, grouped by what each value is', async () => {
     const profile = richOrganizationProfile(1);
     profile.contact_points.push({ ...profile.contact_points[0], address_kind: 'impp', original_value: 'mira@example.test', envelope: envelope(49) });

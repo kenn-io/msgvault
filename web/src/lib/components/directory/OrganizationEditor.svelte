@@ -135,7 +135,7 @@
   // Aliases and categories as the form shows them, over the rest of the version sent.
   function listsBody(profile: OrganizationProfile): OrganizationProfileBody {
     const saved = (profile.names ?? []).filter((item) => item.name_kind === 'alias').map((item) => item.name);
-    return profileBody(profile, valueDelta(saved, values(aliases)), valueDelta((profile.categories ?? []).map((item) => item.category), values(categories)));
+    return profileBody(profile, valueDelta(saved, aliases === baselineAliases.join(', ') ? baselineAliases : values(aliases)), valueDelta((profile.categories ?? []).map((item) => item.category), categories === baselineCategories.join(', ') ? baselineCategories : values(categories)));
   }
 
   async function checkDeletion(): Promise<void> {
