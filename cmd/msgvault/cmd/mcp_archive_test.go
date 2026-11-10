@@ -314,10 +314,7 @@ func TestMCPMeetingRecordCalendarOnly(t *testing.T) {
 	missing, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_meeting_record", Arguments: map[string]any{"ref": fmt.Sprintf("evt:%d", unsupported)}})
 	must.NoError(err)
 	must.True(missing.IsError, "%v", missing.Content)
-	must.Len(missing.Content, 1)
-	text, ok := missing.Content[0].(*sdkmcp.TextContent)
-	must.True(ok)
-	assert.Contains(text.Text, "copy the full occurrence reference from calendar events")
+	assert.Contains(mcpDraftResultText(t, missing), "copy the full occurrence reference from calendar events")
 	t.Run("delegated", func(t *testing.T) {
 		require := require.New(t)
 		session := mcpDraftTestSession(mcpDraftAgentContext(t, server, source.ID, []string{"message.read"}), t)
