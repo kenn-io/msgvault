@@ -134,22 +134,37 @@ type envelope struct {
 			Field string         `json:"field"`
 			Value jsontext.Value `json:"value"`
 		} `json:"changes"`
+		// Messaging holds Messenger and Instagram messaging events, which
+		// FieldHandlers see as the "messages" field.
+		Messaging []jsontext.Value `json:"messaging"`
 	} `json:"entry"`
 }
 
-// apply applies every change with a handler, in delivery order. Fields
-// without a handler are logged and skipped.
+// apply applies every change with a handler, in delivery order, followed by
+// each entry's messaging events as the "messages" field. Fields without a
+// handler are logged and skipped.
 func (w *Worker) apply(ctx context.Context, app string, envelope envelope) error {
+	type item struct {
+		field string
+		value jsontext.Value
+	}
 	for _, entry := range envelope.Entry {
+		var items []item
 		for _, change := range entry.Changes {
-			handler, ok := w.handlers[Field{envelope.Object, change.Field}]
+			items = append(items, item{change.Field, change.Value})
+		}
+		for _, event := range entry.Messaging {
+			items = append(items, item{"messages", event})
+		}
+		for _, it := range items {
+			handler, ok := w.handlers[Field{envelope.Object, it.field}]
 			if !ok {
-				slog.Info("Meta webhook field not handled", "object", envelope.Object, "field", change.Field, "entry", entry.ID)
+				slog.Info("Meta webhook field not handled", "object", envelope.Object, "field", it.field, "entry", entry.ID)
 				continue
 			}
-			err := handler(ctx, Change{App: app, EntryID: entry.ID, Values: []jsontext.Value{change.Value}})
+			err := handler(ctx, Change{App: app, EntryID: entry.ID, Values: []jsontext.Value{it.value}})
 			if errors.Is(err, ErrUnrecoverable) {
-				slog.Warn("Meta webhook change skipped", "object", envelope.Object, "field", change.Field, "entry", entry.ID, "error", err)
+				slog.Warn("Meta webhook change skipped", "object", envelope.Object, "field", it.field, "entry", entry.ID, "error", err)
 			} else if err != nil {
 				return err
 			}

@@ -116,7 +116,13 @@ func TestWorkerAppliesInOrderRetriesAndDrops(t *testing.T) {
 			applied = append(applied, change.App+":"+change.EntryID+":"+value)
 			return nil
 		}
-		w := NewWorker(dir, map[Field]FieldHandler{{"page", "feed"}: feed})
+		var messages []string
+		w := NewWorker(dir, map[Field]FieldHandler{{"page", "feed"}: feed, {"instagram", "messages"}: func(_ context.Context, change Change) error {
+			messages = append(messages, change.EntryID+":"+string(change.Values[0]))
+			return nil
+		}})
+		require.NoError(h.store("9", []byte(`{"object":"instagram","entry":[{"id":"200","messaging":[{"message":{"mid":"m_1"}}]}]}`)))
+		time.Sleep(time.Millisecond)
 		require.NoError(h.store("9", []byte(`{"object":`)))
 		time.Sleep(time.Millisecond)
 		for _, values := range []string{`"busy"`, `"invalid"},{"field":"feed","value":"same entry"`, `"down"`, `"after"`} {
@@ -134,6 +140,7 @@ func TestWorkerAppliesInOrderRetriesAndDrops(t *testing.T) {
 		synctest.Wait()
 		assert.Equal([]string{`9:100:"busy"`, `9:100:"same entry"`, `9:100:"after"`}, applied, "a delivery that keeps failing is dropped after an hour")
 		assert.Equal(3, attempts)
+		assert.Equal([]string{`200:{"message":{"mid":"m_1"}}`}, messages, "messaging events reach the messages handler")
 		assert.Empty(pendingFiles(t, dir), "applied and dropped deliveries are deleted")
 		cancel()
 		require.ErrorIs(<-done, context.Canceled)

@@ -55,6 +55,8 @@ func startMetaWebhooks(ctx context.Context, cfg *config.Config, st *store.Store,
 		{Object: "instagram", Name: "comments"}:      instagramCommentsHandler(cfg, st, work),
 		{Object: "instagram", Name: "live_comments"}: instagramCommentsHandler(cfg, st, work),
 		{Object: "instagram", Name: "mentions"}:      instagramMentionsHandler(cfg, st, work),
+		{Object: "page", Name: "messages"}:           inboxMessagesHandler(cfg, st, work, facebookInbox),
+		{Object: "instagram", Name: "messages"}:      inboxMessagesHandler(cfg, st, work, instagramInbox),
 	})
 	handler, err := metawebhook.NewHandler(apps, pending, worker.Wake)
 	if err != nil {
@@ -176,6 +178,23 @@ func instagramMentionsHandler(cfg *config.Config, st *store.Store, work schedule
 		}
 		return applyMetaWebhook(ctx, work, func() error {
 			return meta.ApplyMentions(ctx, st, client, profile.AppID, profile.PageID, profile.InstagramAccountID, change.Values)
+		})
+	}
+}
+
+// inboxMessagesHandler applies messaging events to the inbox of the enabled
+// profile in provider's section whose Page or Instagram account received them.
+func inboxMessagesHandler(cfg *config.Config, st *store.Store, work scheduler.WorkTracker, provider inboxProvider) metawebhook.FieldHandler {
+	return func(ctx context.Context, change metawebhook.Change) error {
+		profiles := provider.profiles(cfg)
+		i := slices.IndexFunc(profiles, func(p inboxProfile) bool {
+			return p.enabled && p.inbox.App == change.App && p.inbox.Owner() == change.EntryID
+		})
+		if i < 0 {
+			return fmt.Errorf("%w: no enabled [[%s]] profile for app %s and inbox %s", metawebhook.ErrUnrecoverable, provider.section, change.App, change.EntryID)
+		}
+		return applyMetaWebhook(ctx, work, func() error {
+			return meta.ApplyInboxMessages(ctx, st, profiles[i].inbox, change.Values)
 		})
 	}
 }

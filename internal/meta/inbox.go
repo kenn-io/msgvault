@@ -40,8 +40,8 @@ func (b Inbox) Identifier() string {
 	return SourceIdentifier(b.App, b.Page)
 }
 
-// owner is the Page or Instagram account ID that the inbox belongs to.
-func (b Inbox) owner() string {
+// Owner is the Page or Instagram account ID that the inbox belongs to.
+func (b Inbox) Owner() string {
 	if b.instagram() {
 		return b.Account
 	}
@@ -58,7 +58,7 @@ func (b Inbox) platform() string {
 // actorIdentifier scopes an inbox participant by app and inbox owner. Page-
 // and Instagram-scoped IDs are not comparable with comment author IDs.
 func (b Inbox) actorIdentifier(actor string) string {
-	return b.SourceType() + ":" + beeperidentity.EncodePart(b.App) + ":" + beeperidentity.EncodePart(b.owner()) + ":" + beeperidentity.EncodePart(actor)
+	return b.SourceType() + ":" + beeperidentity.EncodePart(b.App) + ":" + beeperidentity.EncodePart(b.Owner()) + ":" + beeperidentity.EncodePart(actor)
 }
 
 // InboxParticipant is a Graph conversation participant or message sender.
@@ -137,7 +137,7 @@ type inboxMetadata struct {
 // scoped ID is the conversation key because webhooks name the customer but
 // not Meta's conversation ID.
 func (b Inbox) persistMessage(ctx context.Context, st *store.Store, sourceID int64, sum *ImportSummary, owner, customer InboxParticipant, msg InboxMessage) error {
-	if owner.ID != b.owner() || !safeObjectID(customer.ID) || customer.ID == owner.ID || !safeObjectID(msg.ID) {
+	if owner.ID != b.Owner() || !safeObjectID(customer.ID) || customer.ID == owner.ID || !safeObjectID(msg.ID) {
 		return errors.New("invalid inbox message identity")
 	}
 	existing, err := st.StoredMessagesContext(ctx, sourceID, inboxRawFormat, []string{msg.ID})
@@ -235,7 +235,7 @@ func (imp *InboxImporter) Register(ctx context.Context, b Inbox) (*store.Source,
 		}
 		name, provenance = account.Username, "instagram_page_token"
 	}
-	return registerSource(ctx, imp.store, b.SourceType(), b.Identifier(), b.actorIdentifier(b.owner()), provenance, name)
+	return registerSource(ctx, imp.store, b.SourceType(), b.Identifier(), b.actorIdentifier(b.Owner()), provenance, name)
 }
 
 // Import archives inbox conversations one page of up to 25 at a time, each
@@ -249,7 +249,7 @@ func (imp *InboxImporter) Import(ctx context.Context, b Inbox, opts ImportOption
 		for _, conversation := range page.Data {
 			var owner, customer InboxParticipant
 			for _, p := range conversation.Participants {
-				if p.ID == b.owner() {
+				if p.ID == b.Owner() {
 					owner = p
 				} else if customer.ID == "" {
 					customer = p
@@ -260,7 +260,7 @@ func (imp *InboxImporter) Import(ctx context.Context, b Inbox, opts ImportOption
 			// not include the configured one; refuse them instead of
 			// archiving another account's messages in this source.
 			if owner.ID == "" {
-				return "", fmt.Errorf("conversation %q does not include inbox owner %s; check which account the Page is linked to", conversation.ID, b.owner())
+				return "", fmt.Errorf("conversation %q does not include inbox owner %s; check which account the Page is linked to", conversation.ID, b.Owner())
 			}
 			for _, msg := range conversation.Messages {
 				if err := b.persistMessage(ctx, st, source.ID, sum, owner, customer, msg); err != nil {

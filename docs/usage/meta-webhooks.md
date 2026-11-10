@@ -1,7 +1,7 @@
 ---
 last_edited: "2026-11-10"
 title: Meta Webhooks
-description: Archive Facebook Page and Instagram comment changes as Meta reports them, between polling syncs.
+description: Archive Facebook Page and Instagram comments, mentions and inbox messages as Meta reports them, between polling syncs.
 ---
 
 Polling sync finds new comments only when it runs. With webhooks, Meta sends
@@ -57,6 +57,17 @@ for the same app and account, registered with
 `msgvault source instagram-mentions add`, which registers the separate
 mentions source.
 
+## Inbox messages
+
+To archive new Messenger and Instagram direct messages as they arrive,
+subscribe the Page object to the `messages` and `message_echoes` fields, and
+the Instagram object to `messages`. Echoes are the messages the Page or
+account sends. Each inbox needs an enabled
+[`[[facebook_messages]]` or `[[instagram_messages]]` profile](meta-messages.md),
+registered with `source facebook-messages add` or `source instagram-messages add`.
+A message lands in the same chat that inbox sync uses; a chat that first
+appears through a webhook gets the customer's name on the next sync.
+
 ## How deliveries are applied
 
 The daemon checks each delivery's `X-Hub-Signature-256` signature with the app
@@ -85,8 +96,9 @@ without holding back the other changes in its delivery.
 ## Limits
 
 - msgvault applies comment changes from the Page `feed` field, new mentions
-  from the Page `mention` field, and the Instagram `comments`, `live_comments`
-  and `mentions` fields. Reactions, other feed changes and other fields are
+  from the Page `mention` field, the Instagram `comments`, `live_comments`
+  and `mentions` fields, and new inbox messages and echoes. Reactions, message
+  edits and deletions, read receipts, other feed changes and other fields are
   logged and ignored.
 - Instagram does not send edits, hides or removals of comments.
 - A hide or unhide for a comment that is not archived yet is ignored.

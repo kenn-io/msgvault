@@ -64,7 +64,9 @@ they never merge with commenters or with people in other sources; use the
 [people tools](people.md) to link them.
 
 Meta returns only the **20 most recent messages** of each conversation, so a
-sync cannot reach older history. Each sync reads every conversation again and
+sync cannot reach older history. To keep every new message, set up
+[Meta webhooks](meta-webhooks.md#inbox-messages): each message, including
+the ones the Page or account sends, is then archived as it arrives. Each sync reads every conversation again and
 updates messages already archived in place. Each request reads up to 25
 conversations, and `--max-requests` limits a run; an unfinished run resumes
 from its saved position, and `--full` starts again from the most recent
