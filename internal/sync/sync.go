@@ -1776,7 +1776,9 @@ type messageData struct {
 func (s *Syncer) resolvePreparedMessage(ctx context.Context, data *messageData) (*messageData, error) {
 	var err error
 	addresses := make([]mime.Address, 0, len(data.from)+len(data.to)+len(data.cc)+len(data.bcc))
-	addresses = append(addresses, data.from...)
+	if data.relayType == "" {
+		addresses = append(addresses, data.from...)
+	}
 	addresses = append(addresses, data.to...)
 	addresses = append(addresses, data.cc...)
 	addresses = append(addresses, data.bcc...)

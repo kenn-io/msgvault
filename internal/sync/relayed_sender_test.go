@@ -34,5 +34,27 @@ func TestFullSyncRelayedSenders(t *testing.T) {
 	}
 	requirements.NoError(rows.Err())
 	requirements.NoError(rows.Close())
-	assertions.Equal(map[string]string{"one": "alice|Alice", "two": "bob|bob"}, got)
+	assertions.Equal(map[string]string{"one": "alice|Alice", "two": "bob|"}, got)
+}
+
+func TestRelayedSenderNamesAfterSync(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	env := newTestEnv(t)
+	env.CreateSource(t)
+	for index, message := range []struct{ id, from, header string }{
+		{"unnamed", "notifications@github.com", "X-GitHub-Sender: bob\r\n"},
+		{"named", "Bob Author <notifications@github.com>", "X-GitHub-Sender: bob\r\n"},
+		{"first", "Alice Author <notifications@github.com>", "X-GitHub-Sender: alice\r\n"},
+		{"fallback", "Relay Service <notifications@github.com>", ""},
+	} {
+		seedMessages(env, int64(index+1), uint64(1001+index), message.id)
+		env.Mock.Messages[message.id].Raw = []byte("From: " + message.from + "\r\nTo: test@example.com\r\n" + message.header + "Subject: Notice\r\n\r\nHello")
+		runFullSync(t, env)
+	}
+	for id, want := range map[string]string{"unnamed": "Bob Author", "named": "Bob Author", "first": "Alice Author", "fallback": "Relay Service"} {
+		var name string
+		requirements.NoError(env.Store.DB().QueryRowContext(t.Context(), `SELECT p.display_name FROM messages m JOIN participants p ON p.id=m.sender_id WHERE m.source_message_id=?`, id).Scan(&name))
+		assertions.Equal(want, name, id)
+	}
 }

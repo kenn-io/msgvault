@@ -2191,7 +2191,7 @@ func RelayedSenderBuilder(addresses []mime.Address, relayType, relayValue string
 	}
 	from := addresses[0]
 	index := len(participants)
-	participants = append(participants, ParticipantPersistData{IdentifierType: relayType, IdentifierValue: relayValue, DisplayName: mime.RelayedSenderName(from, relayValue)})
+	participants = append(participants, ParticipantPersistData{IdentifierType: relayType, IdentifierValue: relayValue, DisplayName: strings.TrimSpace(from.Name)})
 	return participants, func(ids []int64) *MessagePersistData {
 		data := build(ids[:index])
 		data.Message.SenderID = sql.NullInt64{Int64: ids[index], Valid: true}

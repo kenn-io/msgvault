@@ -102,7 +102,9 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 			len(parsed.Cc)+len(parsed.Bcc),
 	)
 	relayType, relayValue := mime.RelayedSender(raw, parsed.From, mime.RelayedSenderRules(rules))
-	allAddresses = append(allAddresses, parsed.From...)
+	if relayType == "" {
+		allAddresses = append(allAddresses, parsed.From...)
+	}
 	allAddresses = append(allAddresses, parsed.To...)
 	allAddresses = append(allAddresses, parsed.Cc...)
 	allAddresses = append(allAddresses, parsed.Bcc...)

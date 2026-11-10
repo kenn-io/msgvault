@@ -435,3 +435,25 @@ func TestImportEMLDirCustomRelayedSender(t *testing.T) {
 	assertions.Equal("relay@example.test", envelope)
 	assertions.True(relayed)
 }
+
+func TestRelayedSenderNamesAfterImport(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st, _ := openTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "reader@example.test")
+	requirements.NoError(err)
+	for _, message := range []struct{ id, from, header string }{
+		{"unnamed", "notifications@github.com", "X-GitHub-Sender: bob\r\n"},
+		{"named", "Bob Author <notifications@github.com>", "X-GitHub-Sender: bob\r\n"},
+		{"first", "Alice Author <notifications@github.com>", "X-GitHub-Sender: alice\r\n"},
+		{"fallback", "Relay Service <notifications@github.com>", ""},
+	} {
+		raw := []byte("From: " + message.from + "\r\nTo: reader@example.test\r\n" + message.header + "Subject: Notice\r\n\r\nHello")
+		requirements.NoError(IngestRawMessage(t.Context(), st, source.ID, source.Identifier, "", nil, message.id, message.id, raw, time.Time{}, slog.Default(), nil))
+	}
+	for id, want := range map[string]string{"unnamed": "Bob Author", "named": "Bob Author", "first": "Alice Author", "fallback": "Relay Service"} {
+		var name string
+		requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT p.display_name FROM messages m JOIN participants p ON p.id=m.sender_id WHERE m.source_message_id=?`, id).Scan(&name))
+		assertions.Equal(want, name, id)
+	}
+}

@@ -53,11 +53,3 @@ func ValidateRelayedSenderRule(rule RelayedSenderRule) bool {
 func RelayedSenderRules(custom []RelayedSenderRule) []RelayedSenderRule {
 	return append(slices.Clone(custom), RelayedSenderRule{Address: "notifications@github.com", Header: "X-GitHub-Sender", IdentifierType: "github"})
 }
-
-// RelayedSenderName chooses the observed author name or their handle.
-func RelayedSenderName(from Address, value string) string {
-	if name := strings.TrimSpace(from.Name); name != "" {
-		return name
-	}
-	return value
-}

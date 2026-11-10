@@ -63,9 +63,10 @@ func TestRelayedSenderViews(t *testing.T) {
 				relayID = b.AddMessage(MessageOpt{Subject: "Relay", SenderID: &author})
 				b.AddRecipientWithEnvelope(relayID, author, "from", "Author", "notifications@github.com")
 				b.recipients[len(b.recipients)-1].IsRelayed = true
-				engine = b.BuildEngine()
+				duck := b.BuildEngine()
+				engine = duck
 				var name string
-				err := engine.(*DuckDBEngine).db.QueryRowContext(t.Context(), `SELECT from_name FROM v_senders WHERE from_email = 'notifications@github.com'`).Scan(&name)
+				err := duck.db.QueryRowContext(t.Context(), `SELECT from_name FROM v_senders WHERE from_email = 'notifications@github.com'`).Scan(&name)
 				requirements.NoError(err)
 				assertions.Equal("notifications@github.com", name)
 			}
