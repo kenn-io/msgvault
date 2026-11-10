@@ -55,7 +55,7 @@ func newInstagramImportFixture(t *testing.T) (*instagramImportFixture, *Client) 
 			for _, reply := range f.replies {
 				items = append(items, reply)
 			}
-		case "/v26.0/401/replies", "/v26.0/402/replies", "/v26.0/500/replies", "/v26.0/501/replies", "/v26.0/502/replies":
+		case "/v26.0/401/replies", "/v26.0/402/replies", "/v26.0/500/replies", "/v26.0/501/replies", "/v26.0/502/replies", "/v26.0/600/replies":
 		default:
 			assert.Fail(t, "unexpected Instagram fixture request", r.URL.Path)
 			http.Error(w, "unexpected fixture route", http.StatusNotFound)

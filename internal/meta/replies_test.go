@@ -134,6 +134,39 @@ func TestReplyToCommentOutcomes(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 2, posts(f))
 	})
+	t.Run("refusal in an HTTP 200 body can be sent again", func(t *testing.T) {
+		st, target, f, client := setup(t)
+		f.posted = `{"error":{"code":368,"message":"synthetic"}}`
+		_, err := ReplyToComment(t.Context(), st, client, target, "Thanks")
+		require.ErrorAs(t, err, new(*APIError))
+		require.NotErrorIs(t, err, ErrReplyUnknown)
+		f.posted = posted
+		_, err = ReplyToComment(t.Context(), st, client, target, "Thanks")
+		require.NoError(t, err)
+		assert.Equal(t, 2, posts(f))
+	})
+	t.Run("top-level target is the parent when Meta omits it", func(t *testing.T) {
+		st, target, f, client := setup(t)
+		f.read = `{"id":"100_202","message":"Thanks","from":{"id":"100","name":"Example Page"}}`
+		_, err := ReplyToComment(t.Context(), st, client, target, "Thanks")
+		require.NoError(t, err)
+		assert.Equal(t, target.MessageID, message(t, st, target.SourceID, "100_202").ReplyToMessageID.Int64)
+	})
+	t.Run("posted reply that cannot be recorded says so", func(t *testing.T) {
+		st, target, f, client := setup(t)
+		_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER block_reply_finish BEFORE UPDATE ON meta_comment_replies
+			BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END`)
+		require.NoError(t, err)
+		replyID, err := ReplyToComment(t.Context(), st, client, target, "Thanks")
+		require.ErrorContains(t, err, "reply 100_202 was posted")
+		require.ErrorContains(t, err, "check the comment on Facebook before sending it again")
+		assert.Equal(t, "100_202", replyID)
+		_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER block_reply_finish`)
+		require.NoError(t, err)
+		_, err = ReplyToComment(t.Context(), st, client, target, "Thanks")
+		require.ErrorIs(t, err, ErrReplyUnknown, "the unrecorded reply still blocks a resend")
+		assert.Equal(t, 1, posts(f))
+	})
 	t.Run("posted reply that cannot be read back still counts as sent", func(t *testing.T) {
 		st, target, f, client := setup(t)
 		f.getStatus = http.StatusInternalServerError
@@ -164,4 +197,55 @@ func TestReplyArchiveMatchesLaterSync(t *testing.T) {
 	require.NoError(err, "sync accepts the reply msgvault archived")
 	assert.Zero(sum.MessagesAdded)
 	assert.True(message(t, st, src.ID, "100_202").IsFromMe)
+}
+
+func TestReplyToNestedFacebookCommentWaitsForSync(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, f, imp, src := setupImport(t)
+	f.comments["100_200"] = []Object{*comment("100_201", "100_200", "Example comment")}
+	f.comments["100_201"] = []Object{*comment("100_203", "100_201", "Nested comment")}
+	_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err)
+	target, err := ResolveCommentTarget(t.Context(), st, message(t, st, src.ID, "100_203").ID)
+	require.NoError(err)
+	_, client := newReplyFixture(t, `{"id":"100_204"}`, `{"id":"100_204","message":"Thanks","from":{"id":"100","name":"Example Page"}}`)
+
+	replyID, err := ReplyToComment(t.Context(), st, client, target, "Thanks")
+	require.ErrorIs(err, ErrReplyNotArchived)
+	assert.Equal("100_204", replyID)
+	ids, err := st.MessageExistsBatch(src.ID, []string{"100_204"})
+	require.NoError(err)
+	assert.Zero(ids["100_204"], "a reply without a known parent is left for sync")
+	_, err = ReplyToComment(t.Context(), st, client, target, "Thanks")
+	require.ErrorIs(err, ErrReplySent, "the reply still counts as sent")
+
+	f.comments["100_201"] = append(f.comments["100_201"], Object{ID: "100_204", Message: "Thanks", CreatedTime: "2026-10-02T12:00:00+0000", From: &Actor{ID: "100", Name: "Example Page"}, Parent: &Actor{ID: "100_201"}})
+	_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err)
+	assert.Equal(message(t, st, src.ID, "100_201").ID, message(t, st, src.ID, "100_204").ReplyToMessageID.Int64)
+}
+
+func TestInstagramReplyStaysFromMe(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	f, c := newInstagramImportFixture(t)
+	imp := NewImporter(st, c)
+	src, err := imp.RegisterInstagram(t.Context(), "9", "100", "200")
+	require.NoError(err)
+	_, err = imp.ImportInstagram(t.Context(), "9", "100", "200", ImportOptions{})
+	require.NoError(err)
+	target, err := ResolveCommentTarget(t.Context(), st, message(t, st, src.ID, "400").ID)
+	require.NoError(err)
+	replies, client := newReplyFixture(t, `{"id":"600"}`, "")
+	replies.getStatus = http.StatusInternalServerError
+
+	_, err = ReplyToComment(t.Context(), st, client, target, "Thanks")
+	require.ErrorIs(err, ErrReplyNotArchived)
+	f.replies = append(f.replies, IGComment{ID: "600", Text: "Thanks", Timestamp: "2026-10-02T12:00:00+0000", ParentID: "400", From: &IGCommentFromUser{ID: "700", Username: "example_business"}})
+	for range 2 {
+		_, err = imp.ImportInstagram(t.Context(), "9", "100", "200", ImportOptions{})
+		require.NoError(err)
+		assert.True(message(t, st, src.ID, "600").IsFromMe, "the reply msgvault posted stays the owner's")
+	}
+	assert.False(message(t, st, src.ID, "500").IsFromMe, "other comments keep unproven ownership")
 }

@@ -15,6 +15,9 @@ var (
 	ErrReplySent = errors.New("this reply was already posted to the comment")
 	// ErrReplyUnknown means an earlier send of this exact reply may have been posted.
 	ErrReplyUnknown = errors.New("an earlier send of this reply has an unknown outcome")
+	// ErrReplyNotArchived means the reply was posted, but only a later sync
+	// can archive it.
+	ErrReplyNotArchived = errors.New("the reply was posted but is not archived yet; the next sync archives it")
 )
 
 // ReplyToComment posts body as a public reply to target and archives the
@@ -60,19 +63,26 @@ func ReplyToComment(ctx context.Context, st *store.Store, client *Client, target
 		return "", fmt.Errorf("%w: %w", ErrReplyUnknown, err)
 	}
 	if err := st.FinishMetaCommentReplyContext(local, record, store.MetaCommentReplySent, posted.ID); err != nil {
-		return posted.ID, err
+		// The open record still blocks a resend, which is what the owner needs.
+		return posted.ID, fmt.Errorf("reply %s was posted, but msgvault could not record it; check the comment on %s before sending it again: %w",
+			posted.ID, platform.name, err)
 	}
 	// Archive the reply as sync will see it. Meta decides its parent, which
 	// may not be the target, for example for a Facebook reply to a reply.
 	reply, err := client.readComment(local, target.SourceType, posted.ID)
-	if err == nil && reply.ID != posted.ID {
+	switch {
+	case err != nil:
+	case reply.ID != posted.ID:
 		err = errors.New("meta returned a different comment")
-	}
-	if err == nil {
+	case reply.Parent == nil && target.SourceType == SourceType && target.metadata.ParentID != target.metadata.PostID:
+		// Only Meta knows where a reply to a nested comment went. Guessing
+		// would make every later sync of that thread fail.
+		err = errors.New("meta did not say which comment the reply belongs to")
+	default:
 		err = archiveReply(local, st, source, target, reply)
 	}
 	if err != nil {
-		return posted.ID, fmt.Errorf("reply %s was posted but not archived; the next sync archives it: %w", posted.ID, err)
+		return posted.ID, fmt.Errorf("%w: %w", ErrReplyNotArchived, err)
 	}
 	return posted.ID, nil
 }

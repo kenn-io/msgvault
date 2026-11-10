@@ -105,7 +105,10 @@ func newCommentReplyCmd() *cobra.Command {
 					return "", err
 				}
 				replyID, err := meta.ReplyToComment(cmd.Context(), c.st, client, c.target, body)
+				done := fmt.Sprintf("Replied to %s; reply %s", c.description, textutil.SanitizeTerminal(replyID))
 				switch {
+				case errors.Is(err, meta.ErrReplyNotArchived):
+					return done + "\nNot archived yet: " + textutil.SanitizeTerminal(err.Error()), nil
 				case errors.Is(err, meta.ErrReplySent):
 					return "", &sourceCommandError{err: err, code: 6, hint: "change the text to post another reply"}
 				case errors.Is(err, meta.ErrReplyUnknown):
@@ -113,7 +116,7 @@ func newCommentReplyCmd() *cobra.Command {
 				case err != nil:
 					return "", metaSourceStateError(err, c.profile.command)
 				}
-				return fmt.Sprintf("Replied to %s; reply %s", c.description, textutil.SanitizeTerminal(replyID)), nil
+				return done, nil
 			})
 		},
 	}

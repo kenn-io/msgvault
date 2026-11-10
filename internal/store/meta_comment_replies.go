@@ -47,6 +47,19 @@ func (s *Store) StartMetaCommentReplyContext(ctx context.Context, sourceID int64
 	return id, nil
 }
 
+// SentMetaCommentReplyContext reports whether msgvault posted the comment
+// with Meta's ID replyID.
+func (s *Store) SentMetaCommentReplyContext(ctx context.Context, sourceID int64, replyID string) (bool, error) {
+	var sent bool
+	err := s.db.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM meta_comment_replies
+			WHERE source_id = ? AND reply_id = ? AND state = 'sent')`, sourceID, replyID).Scan(&sent)
+	if err != nil {
+		return false, fmt.Errorf("read sent comment reply: %w", err)
+	}
+	return sent, nil
+}
+
 // FinishMetaCommentReplyContext records the outcome of a reply that is still
 // sending. replyID is Meta's ID for a sent reply.
 func (s *Store) FinishMetaCommentReplyContext(ctx context.Context, id int64, state, replyID string) error {

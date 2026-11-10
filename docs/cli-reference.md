@@ -1679,8 +1679,10 @@ msgvault comment reply <message-id> --body <text> [--dry-run | --clear-unknown]
 | `--dry-run` | `false` | Show the comment and reply without calling Meta |
 | `--clear-unknown` | `false` | After checking the comment on Meta, allow a reply whose outcome is unknown to be sent again; sends nothing |
 
-A failed reply exits with code 6 when the same text was already posted, or when
-an earlier send of it has an unknown outcome. See
+The command exits with code 1 when the same text was already posted, or when
+an earlier send of it has an unknown outcome. If Meta accepts the reply but
+msgvault cannot archive it yet, the command still succeeds and says so; the
+next sync archives the reply. See
 [Reply to comments](usage/facebook-comments.md#reply-to-comments).
 
 ## add-chatwoot

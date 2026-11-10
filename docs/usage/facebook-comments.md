@@ -146,7 +146,10 @@ See [`comment moderate`](../cli-reference.md#comment-moderate) for all flags.
 
 You can post a public reply to an archived comment as the Page, or as the
 Instagram account for [Instagram comments](instagram-comments.md). The reply
-appears in the archive under the comment straight away.
+usually appears in the archive straight away, marked as sent by you. When
+msgvault cannot read the new reply back from Meta, or Meta does not say which
+comment a reply to a reply belongs to, the command says so and the next sync
+archives the reply.
 
 1. Add `"reply"` to the profile's `actions`.
 2. Preview the reply, then send it:

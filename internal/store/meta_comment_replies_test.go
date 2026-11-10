@@ -36,6 +36,12 @@ func TestMetaCommentReplyRecords(t *testing.T) {
 	require.ErrorIs(err, sql.ErrNoRows, "only the same text is matched")
 
 	require.NoError(st.FinishMetaCommentReplyContext(t.Context(), sending, store.MetaCommentReplySent, "100_202"))
+	sent, err := st.SentMetaCommentReplyContext(t.Context(), source.ID, "100_202")
+	require.NoError(err)
+	assert.True(sent)
+	sent, err = st.SentMetaCommentReplyContext(t.Context(), source.ID, "100_299")
+	require.NoError(err)
+	assert.False(sent)
 	require.NoError(st.FinishMetaCommentReplyContext(t.Context(), sending, store.MetaCommentReplyFailed, ""))
 	got, err = latest()
 	require.NoError(err)
