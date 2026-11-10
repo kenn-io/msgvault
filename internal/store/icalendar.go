@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -64,7 +65,7 @@ func (s *Store) prepareICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 	}
 	out := make([]preparedICS, 0, len(components))
 	for _, c := range components {
-		out = append(out, preparedICS{component: c, fromEmail: fromEmail, meta: calevent.ICSMetadata{Sequence: c.Sequence, Stamp: c.Stamp, Status: c.Event.Status, AllDay: c.Event.AllDay}})
+		out = append(out, preparedICS{component: c, fromEmail: fromEmail, meta: calevent.ICSMetadata{Sequence: c.Sequence, Stamp: c.Stamp, Status: c.Event.Status, AllDay: c.Event.AllDay, Organizer: c.OrganizerEmail}})
 	}
 	return out, nil
 }
@@ -110,14 +111,24 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 				return fmt.Errorf("decode retained ICS metadata: %w", err)
 			}
 		}
-		apply := !exists || icsRevisionNewer(item.component, old)
+		// An email from another organizer doesn't revise the event.
+		foreign := exists && item.fromEmail && old.Organizer != "" && item.component.OrganizerEmail != old.Organizer
+		if foreign {
+			slog.Warn("calendar invite ignored: organizer differs", "event_message_id", id, "organizer", item.component.OrganizerEmail)
+		}
+		apply := !foreign && (!exists || icsRevisionNewer(item.component, old))
+		// A cancellation stored without times takes an older invitation's details.
+		fill := !foreign && !apply && exists && old.Status == SyncStatusCancelled && old.Start == "" && e.Status != SyncStatusCancelled
+		if fill {
+			item.meta.Sequence, item.meta.Stamp, item.meta.Status = old.Sequence, old.Stamp, SyncStatusCancelled
+		}
 		if apply && exists && e.Status == SyncStatusCancelled {
 			// Like a provider cancellation, keep the accepted details.
 			old.Sequence, old.Stamp, old.Status = item.meta.Sequence, item.meta.Stamp, SyncStatusCancelled
 			if err := s.setICSMetadataWith(ctx, tx, id, old); err != nil {
 				return err
 			}
-		} else if apply {
+		} else if apply || fill {
 			if err := s.persistICSDetailsWith(ctx, tx, sourceID, sourceMessageID, id, item); err != nil {
 				return err
 			}
@@ -127,7 +138,7 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 				}
 			}
 		}
-		if apply {
+		if apply || fill {
 			summary.Changed++
 		} else {
 			summary.Unchanged++

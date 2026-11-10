@@ -294,7 +294,14 @@ func inheritCalendarCancellation(ctx context.Context, r *loggedDB, row, master C
 		if row.Event.Start != nil {
 			return row, nil
 		}
-		return inheritSparseCalendarCancellation(row, master, nil), nil
+		supplied := map[string]any{}
+		if row.Subject != "" {
+			supplied["summary"] = true
+		}
+		if slices.ContainsFunc(row.Event.Attendees, func(a calevent.Attendee) bool { return a.Role != "organizer" }) {
+			supplied["attendees"] = true
+		}
+		return inheritSparseCalendarCancellation(row, master, supplied), nil
 	}
 	raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
 	if err != nil {

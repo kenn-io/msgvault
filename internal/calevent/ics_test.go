@@ -28,41 +28,44 @@ func TestICSFloatingRecurrenceUsesSourceZone(t *testing.T) {
 		})
 	}
 	t.Run("period", func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
 		const period = "RDATE;VALUE=PERIOD:20270315T090000Z/20270315T100000Z"
 		raw := strings.Replace(icsExample, "SUMMARY:", period+"\r\nSUMMARY:", 1)
 		components, err := ParseICS([]byte(raw), "", "")
-		require.NoError(t, err)
-		require.Len(t, components, 1)
-		assert.Equal(t, []string{period}, components[0].Event.Recurrence)
+		requirements.NoError(err)
+		requirements.Len(components, 1)
+		assertions.Equal([]string{period}, components[0].Event.Recurrence)
 	})
 }
 
 func TestICSOutlookTZID(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	raw, err := os.ReadFile("testdata/outlook.ics")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	components, err := ParseICS(raw, "", "")
-	require.NoError(t, err)
-	require.Len(t, components, 1)
+	requirements.NoError(err)
+	requirements.Len(components, 1)
 	e := components[0].Event
-	assert.Equal(t, "2027-07-06T13:00:00Z", e.Start.Format(time.RFC3339))
-	assert.Equal(t, "America/New_York", e.EventTimeZone)
-	assert.Equal(t, []string{"RDATE;TZID=America/New_York:20270707T090000"}, e.Recurrence)
+	assertions.Equal("2027-07-06T13:00:00Z", e.Start.Format(time.RFC3339))
+	assertions.Equal("America/New_York", e.EventTimeZone)
+	assertions.Equal([]string{"RDATE;TZID=America/New_York:20270707T090000"}, e.Recurrence)
 }
 
 func TestParseICSCustomizedTimeZone(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	raw, err := os.ReadFile("testdata/customized.ics")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	components, err := ParseICS(raw, "", "")
-	require.NoError(t, err)
-	require.Len(t, components, 1)
-	assert.Equal(t, "2026-07-15T14:00:00Z", components[0].Event.Start.Format(time.RFC3339))
-	assert.Contains(t, components[0].Event.Recurrence, "EXDATE:20260722T140000Z")
+	requirements.NoError(err)
+	requirements.Len(components, 1)
+	assertions.Equal("2026-07-15T14:00:00Z", components[0].Event.Start.Format(time.RFC3339))
+	assertions.Contains(components[0].Event.Recurrence, "EXDATE:20260722T140000Z")
 	raw, err = os.ReadFile("testdata/customized-no-dst.ics")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	components, err = ParseICS(raw, "", "")
-	require.NoError(t, err)
-	require.Len(t, components, 1)
-	assert.Equal(t, "2026-07-15T04:30:00Z", components[0].Event.Start.Format(time.RFC3339))
+	requirements.NoError(err)
+	requirements.Len(components, 1)
+	assertions.Equal("2026-07-15T04:30:00Z", components[0].Event.Start.Format(time.RFC3339))
 }
 
 func TestICSLibicalTZID(t *testing.T) {
@@ -84,14 +87,15 @@ const icsExample = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nM
 
 func TestICSDecode(t *testing.T) {
 	t.Run("non UTF-8 text", func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
 		raw := strings.Replace(icsExample, "SUMMARY:Example\\, meeting", "SUMMARY:Caf\xe9 planning", 1)
 		raw = strings.Replace(raw, "CN=Guest", "CN=Andr\xe9 Example", 1)
 		components, err := ParseICS([]byte(raw), "", "")
-		require.NoError(t, err)
-		require.Len(t, components, 1)
-		assert.Equal(t, "Café planning", components[0].Summary)
-		require.NotEmpty(t, components[0].Event.Attendees)
-		assert.Equal(t, "André Example", components[0].Event.Attendees[0].DisplayName)
+		requirements.NoError(err)
+		requirements.Len(components, 1)
+		assertions.Equal("Café planning", components[0].Summary)
+		requirements.NotEmpty(components[0].Event.Attendees)
+		assertions.Equal("André Example", components[0].Event.Attendees[0].DisplayName)
 	})
 	for _, tt := range []struct{ name, raw, role string }{
 		{"optional", icsExample, "optional"},
@@ -125,17 +129,18 @@ func TestICSNULFields(t *testing.T) {
 		{"address", "ATTENDEE:mailto:before\x00after@example.org", "", "before\uFFFDafter@example.org", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
 			raw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:nul@example.com\r\nDTSTART:20270302T120000Z\r\n" + tc.property + "\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
 			components, err := ParseICS([]byte(raw), "", "")
-			require.NoError(t, err)
-			require.Len(t, components, 1)
+			requirements.NoError(err)
+			requirements.Len(components, 1)
 			if tc.wantSummary != "" {
-				assert.Equal(t, tc.wantSummary, components[0].Summary)
+				assertions.Equal(tc.wantSummary, components[0].Summary)
 				return
 			}
-			require.Len(t, components[0].Event.Attendees, 1)
-			assert.Equal(t, tc.wantName, components[0].Event.Attendees[0].DisplayName)
-			assert.Equal(t, tc.wantEmail, components[0].Event.Attendees[0].Email)
+			requirements.Len(components[0].Event.Attendees, 1)
+			assertions.Equal(tc.wantName, components[0].Event.Attendees[0].DisplayName)
+			assertions.Equal(tc.wantEmail, components[0].Event.Attendees[0].Email)
 		})
 	}
 }
@@ -232,6 +237,7 @@ func TestICSRejectMalformed(t *testing.T) {
 		{"ends after year 9999", strings.NewReplacer("DTSTART;TZID=America/New_York:20270314T090000", "DTSTART:99991231T230000Z", "DTEND;TZID=America/New_York:20270314T100000", "DURATION:PT2H").Replace(icsExample), "outside years 0 to 9999"},
 		{"malformed property", "BEGIN:VCALENDAR\r\nSUMMARY;CN=x\r\nEND:VCALENDAR\r\n", "malformed iCalendar parameters"},
 		{"second calendar", icsExample + icsExample, "calendar has trailing content"},
+		{"ranged recurrence", strings.Replace(icsExample, "SUMMARY:", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270314T140000Z\r\nSUMMARY:", 1), "RECURRENCE-ID: RANGE is unsupported"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, err := Decode("ics", []byte(tc.raw), []byte(`{}`), "")
