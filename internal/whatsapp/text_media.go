@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/export"
@@ -91,11 +92,21 @@ func importTextMedia(ctx context.Context, st *store.Store, root *os.Root, messag
 		if mimeType == "" {
 			mimeType = "application/octet-stream"
 		}
-		if err := st.UpsertAttachmentRecordWithStats(ctx, messageID, store.AttachmentWrite{
-			Filename: path.Base(ref), MIMEType: mimeType, StoragePath: storage, ContentHash: hash, Size: size,
+		want := store.AttachmentRef{
+			Filename: path.Base(ref), MimeType: mimeType, StoragePath: storage, ContentHash: hash, Size: int(size),
 			Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics, SourcePartKey: "whatsapp_txt:" + textHash(ref),
-		}, true); err != nil {
+		}
+		existing, err := st.MessageMIMEAttachmentsContext(ctx, messageID)
+		if err != nil {
 			return err
+		}
+		if !slices.Contains(existing, want) {
+			if err := st.UpsertAttachmentRecordWithStats(ctx, messageID, store.AttachmentWrite{
+				Filename: want.Filename, MIMEType: want.MimeType, StoragePath: want.StoragePath, ContentHash: want.ContentHash, Size: size,
+				Role: want.Role, RoleSource: want.RoleSource, SourcePartKey: want.SourcePartKey,
+			}, true); err != nil {
+				return err
+			}
 		}
 		summary.MediaStored++
 	}

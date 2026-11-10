@@ -1092,12 +1092,9 @@ func TestImporterRejectsTimezoneChangeAndRecordsFailedSync(t *testing.T) {
 // importer must reject it before creating a source or starting a sync, while
 // concrete IANA zones and the stable UTC alias stay accepted.
 func TestImporterRejectsHostDependentLocalTimezone(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	assert.NoError(validateTimezone("UTC"))
-	assert.NoError(validateTimezone("Europe/Berlin"))
-	require.ErrorContains(validateTimezone("Local"), "host-dependent Local")
+	assert.NoError(t, ValidateTimezone("UTC"))
+	assert.NoError(t, ValidateTimezone("Europe/Berlin"))
+	require.ErrorContains(t, ValidateTimezone("Local"), "host-dependent Local")
 
 	st := testutil.NewTestStore(t)
 	exportDir := newTestExport(t, [][]string{
@@ -1106,16 +1103,16 @@ func TestImporterRejectsHostDependentLocalTimezone(t *testing.T) {
 
 	_, err := NewImporter(st, Options{Owner: "+15550000001", Timezone: "Local"}).
 		ImportPath(t.Context(), exportDir)
-	require.ErrorContains(err, "host-dependent Local")
+	require.ErrorContains(t, err, "host-dependent Local")
 
 	var sources, syncs, messages int
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM sources WHERE source_type = ?`), SourceType).Scan(&sources))
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sync_runs`).Scan(&syncs))
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messages))
-	assert.Zero(sources, "a rejected timezone must not create a source")
-	assert.Zero(syncs, "a rejected timezone must not start a sync")
-	assert.Zero(messages, "a rejected timezone must not persist messages")
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sync_runs`).Scan(&syncs))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messages))
+	assert.Zero(t, sources, "a rejected timezone must not create a source")
+	assert.Zero(t, syncs, "a rejected timezone must not start a sync")
+	assert.Zero(t, messages, "a rejected timezone must not persist messages")
 }
 
 func TestImporterRejectsIncomingRowWithoutSenderEvidence(t *testing.T) {

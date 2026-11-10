@@ -1,6 +1,7 @@
 package whatsapp
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -18,6 +19,19 @@ func TestTextPersistedKeys(t *testing.T) {
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT source_message_id FROM messages").Scan(&message))
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT identifier_value FROM participant_identifiers WHERE identifier_type = 'whatsapp_txt'").Scan(&sender))
 	assert.Equal(t, "whatsapp_txt:32c97f9e3c01ae63b595143bfee66978336626bbd70e0771d2f0d17082d5fcee", chat)
-	assert.Equal(t, "whatsapp_txt:a66be5de53a84c868bbbb94b4f846627491f849c1e2cbd96109d3f973d9abcb3:0", message)
+	assert.Equal(t, "whatsapp_txt:c1d5a41dfc788949ed4e97d80a573a539d90e2a93fcc9251a6a3d14725f734fb:0", message)
 	assert.Equal(t, "f306fa6dc96fb4ed9e48408d7039d37d5d15dec20d5c8f6e324c3cfd818f8e28", sender)
+}
+
+func TestTextPayloadKeyIgnoresClassification(t *testing.T) {
+	payload := "Mira:  asters: blue\n\nbeside the gate"
+	rows, _, err := parseText(t.Context(), strings.NewReader("13/6/26, 10:00 - "+payload), "dmy", "UTC", textLimitsDefault)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "message", rows[0].Kind)
+	notice := rows[0]
+	notice.Kind = "notice"
+	notice.Sender = ""
+	notice.Body = payload
+	assert.Equal(t, textMessageKey("garden", rows[0], 0), textMessageKey("garden", notice, 0))
 }

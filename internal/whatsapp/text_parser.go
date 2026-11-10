@@ -2,9 +2,9 @@ package whatsapp
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -24,21 +24,18 @@ var textHeader = regexp.MustCompile(`^(\[?)([0-9]{1,4}[/.-][0-9]{1,2}[/.-][0-9]{
 // A malformed header still needs its date and payload delimiters. Numeric
 // prose alone is continuation text.
 var textDateStart = regexp.MustCompile(`^(?:[0-9]{1,4}[/.-][0-9]{1,2}[/.-][0-9]{1,4}, [^\r\n]* - |\[[0-9]{1,4}[/.-][0-9]{1,2}[/.-][0-9]{1,4},? [^\r\n]*\] )`)
-var textNotice = regexp.MustCompile(`^(?:Messages and calls are end-to-end encrypted$|Messages to this chat and calls are now secured with end-to-end encryption$|.+ changed the group (?:description|name|icon)(?:$| )|You created (?:group|this group)(?:$| ))`)
+var textNotice = regexp.MustCompile(`^(?:Messages and calls are end-to-end encrypted$|Messages to this chat and calls are now secured with end-to-end encryption$|.+ changed (?:the group (?:description|name|icon)|the subject)(?:$| )|.+ created group "|You created (?:group|this group)(?:$| ))`)
 
 func textLocation(order, zone string) (*time.Location, error) {
 	if order != "dmy" && order != "mdy" && order != "ymd" {
 		return nil, errors.New("--date-order must be dmy, mdy or ymd")
 	}
-	if zone == "" {
-		return nil, errors.New("--timezone is required")
+	if err := imazingcsv.ValidateTimezone(zone); err != nil {
+		return nil, err
 	}
 	loc, err := time.LoadLocation(zone)
 	if err != nil {
-		return nil, fmt.Errorf("load timezone: %w", err)
-	}
-	if loc == time.Local {
-		return nil, errors.New("--timezone must be concrete, not Local")
+		return nil, fmt.Errorf("load timezone %q: %w", zone, err)
 	}
 	return loc, nil
 }
@@ -51,19 +48,11 @@ func parseText(ctx context.Context, reader io.Reader, order, zone string, limits
 	if err := ctx.Err(); err != nil {
 		return nil, "", err
 	}
-	data, err := io.ReadAll(io.LimitReader(reader, limits.Bytes+1))
-	if err != nil {
-		return nil, "", fmt.Errorf("read TXT: %w", err)
-	}
-	if int64(len(data)) > limits.Bytes {
-		return nil, "", fmt.Errorf("TXT exceeds %d byte limit", limits.Bytes)
-	}
-	if !utf8.Valid(data) {
-		return nil, "", errors.New("TXT is not valid UTF-8")
-	}
-	digest := fmt.Sprintf("%x", sha256.Sum256(data))
-	scanner := bufio.NewScanner(bytes.NewReader(bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))))
-	scanner.Buffer(make([]byte, 4096), limits.RecordBytes+1)
+	limited := &io.LimitedReader{R: reader, N: limits.Bytes + 1}
+	hash := sha256.New()
+	scanner := bufio.NewScanner(io.TeeReader(limited, hash))
+	// Allow the first-line BOM and CRLF outside the retained record byte limit.
+	scanner.Buffer(make([]byte, 4096), limits.RecordBytes+5)
 	var rows []textRecord
 	var body, rawRecord strings.Builder
 	flush := func() {
@@ -78,7 +67,16 @@ func parseText(ctx context.Context, reader io.Reader, order, zone string, limits
 		if err := ctx.Err(); err != nil {
 			return nil, "", err
 		}
+		if limited.N == 0 {
+			return nil, "", fmt.Errorf("TXT exceeds %d byte limit", limits.Bytes)
+		}
 		raw := scanner.Text()
+		if !utf8.ValidString(raw) {
+			return nil, "", fmt.Errorf("line %d: TXT is not valid UTF-8", line)
+		}
+		if line == 1 {
+			raw = strings.TrimPrefix(raw, "\ufeff")
+		}
 		header := strings.TrimLeft(raw, "\u200e\u200f\u202a\u202b\u202c")
 		match := textHeader.FindStringSubmatch(header)
 		if match == nil {
@@ -126,6 +124,9 @@ func parseText(ctx context.Context, reader io.Reader, order, zone string, limits
 		rawRecord.WriteString(row.Raw)
 		rows = append(rows, row)
 	}
+	if limited.N == 0 {
+		return nil, "", fmt.Errorf("TXT exceeds %d byte limit", limits.Bytes)
+	}
 	if err := scanner.Err(); err != nil {
 		return nil, "", fmt.Errorf("line %d: read record (limit %d bytes): %w", line+1, limits.RecordBytes, err)
 	}
@@ -133,7 +134,7 @@ func parseText(ctx context.Context, reader io.Reader, order, zone string, limits
 		return nil, "", errors.New("TXT contains no records")
 	}
 	flush()
-	return rows, digest, nil
+	return rows, hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func textWallTime(date, clock, order string) (string, string, error) {

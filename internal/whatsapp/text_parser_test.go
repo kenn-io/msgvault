@@ -1,6 +1,8 @@
 package whatsapp
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -33,14 +35,17 @@ func TestTextParserHeaders(t *testing.T) {
 }
 
 func TestTextParserNotices(t *testing.T) {
-	rows, _, err := parseText(t.Context(), strings.NewReader("13/06/2026, 10:00 - You changed the group description: garden\n13/06/2026, 10:01 - Messages and calls are end-to-end encrypted: notice\n13/06/2026, 10:02 - Mira: time: noon\n13/06/2026, 10:03 - Pat changed the group name: Garden\n"), "dmy", "UTC", textLimitsDefault)
+	rows, _, err := parseText(t.Context(), strings.NewReader("13/06/2026, 10:00 - You changed the group description: garden\n13/06/2026, 10:01 - Messages and calls are end-to-end encrypted: notice\n13/06/2026, 10:02 - Mira: time: noon\n13/06/2026, 10:03 - Pat changed the group name: Garden\n13/06/2026, 10:04 - Mira changed the subject from \"Seed: plan\" to \"Garden\"\n13/06/2026, 10:05 - Mira changed the subject to \"Asters: blue\"\n13/06/2026, 10:06 - Mira created group \"Garden: seeds\"\n"), "dmy", "UTC", textLimitsDefault)
 	require.NoError(t, err)
-	require.Len(t, rows, 4)
-	for _, i := range []int{0, 1, 3} {
+	require.Len(t, rows, 7)
+	for _, i := range []int{0, 1, 3, 4, 5, 6} {
 		assert.Empty(t, rows[i].Sender)
 		assert.Equal(t, "notice", rows[i].Kind)
 	}
 	assert.Equal(t, "time: noon", rows[2].Body)
+	assert.Equal(t, `Mira changed the subject from "Seed: plan" to "Garden"`, rows[4].Body)
+	assert.Equal(t, `Mira changed the subject to "Asters: blue"`, rows[5].Body)
+	assert.Equal(t, `Mira created group "Garden: seeds"`, rows[6].Body)
 }
 
 func TestTextParserRejects(t *testing.T) {
@@ -53,6 +58,7 @@ func TestTextParserRejects(t *testing.T) {
 		{"bad-clock", "13/6/26, 27:00 - Mira: no", "dmy", "UTC", textLimitsDefault},
 		{"malformed-header", "13/6/26, noon - Mira: no", "dmy", "UTC", textLimitsDefault},
 		{"unsupported-header", "[13/6/26 10:00] Mira: no", "dmy", "UTC", textLimitsDefault},
+		{"utf8-continuation", "13/6/26, 10:00 - Mira: asters\n\xff", "dmy", "UTC", textLimitsDefault},
 		{"utf8", "13/6/26, 10:00 - Mira: \xff", "dmy", "UTC", textLimitsDefault},
 		{"empty", "", "dmy", "UTC", textLimitsDefault},
 		{"order", "13/6/26, 10:00 - Mira: no", "", "UTC", textLimitsDefault},
@@ -83,4 +89,22 @@ func TestTextParserNoticeWordsInMessage(t *testing.T) {
 	assert.Equal(t, "Mira", rows[0].Sender)
 	assert.Equal(t, "I changed the plan: asters", rows[0].Body)
 	assert.Equal(t, "Ivo", rows[1].Sender)
+}
+
+func TestTextParserOriginalByteDigest(t *testing.T) {
+	for _, input := range []string{"13/6/26, 10:00 - Mira: asters\nseedlings", "\ufeff13/6/26, 10:00 - Mira: asters\r\nseedlings\r\n"} {
+		t.Run(fmt.Sprintf("bytes-%d", len(input)), func(t *testing.T) {
+			limits := textLimitsDefault
+			limits.Bytes = int64(len(input))
+			rows, digest, err := parseText(t.Context(), strings.NewReader(input), "dmy", "UTC", limits)
+			require.NoError(t, err)
+			require.Len(t, rows, 1)
+			assert.Equal(t, fmt.Sprintf("%x", sha256.Sum256([]byte(input))), digest)
+			assert.Equal(t, "asters\nseedlings", rows[0].Body)
+			assert.Equal(t, "13/6/26, 10:00 - Mira: asters\nseedlings", rows[0].Raw)
+			limits.Bytes--
+			_, _, err = parseText(t.Context(), strings.NewReader(input), "dmy", "UTC", limits)
+			require.ErrorContains(t, err, "byte limit")
+		})
+	}
 }

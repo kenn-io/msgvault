@@ -3,6 +3,7 @@ package whatsapp
 import (
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,12 +52,21 @@ func TestTextImportRepeatOverlap(t *testing.T) {
 	var sender sql.NullInt64
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT sender_id FROM messages WHERE snippet LIKE 'You changed%'").Scan(&sender))
 	assert.False(t, sender.Valid)
-	var rawFormat, metadata string
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT raw_format FROM message_raw LIMIT 1").Scan(&rawFormat))
+	var messageID int64
+	var metadata sql.NullString
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id,metadata FROM messages WHERE snippet = 'asters'").Scan(&messageID, &metadata))
+	assert.False(t, metadata.Valid, "full provenance belongs only in message_raw")
+	var rawFormat string
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT raw_format FROM message_raw WHERE message_id = ?", messageID).Scan(&rawFormat))
 	assert.Equal(t, "whatsapp_txt", rawFormat)
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT metadata FROM messages LIMIT 1").Scan(&metadata))
-	assert.Contains(t, metadata, `"direction":"unknown"`)
-	assert.Contains(t, metadata, `"ambiguous_time_policy":"earlier"`)
+	raw, err := st.GetMessageRawContext(t.Context(), messageID)
+	require.NoError(t, err)
+	var provenance textProvenance
+	require.NoError(t, json.Unmarshal(raw, &provenance))
+	assert.Equal(t, "unknown", provenance.Direction)
+	assert.Equal(t, "earlier", provenance.AmbiguousTimePolicy)
+	assert.Equal(t, "asters", provenance.Body)
+	assert.Equal(t, "13/6/26, 10:00 - Mira: asters", provenance.Raw)
 	if st.FTS5Available() {
 		var n int
 		require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'asters'").Scan(&n))
@@ -144,6 +154,22 @@ func TestTextImportMediaCompletion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, s.MediaStored)
 	assert.Equal(t, 2, s.Unchanged)
+	assert.Equal(t, 1, textCount(t, st, "attachments"))
+	before, err := st.DerivedDataRevisionContext(t.Context())
+	require.NoError(t, err)
+	s, err = imp.ImportText(t.Context(), p, opts)
+	require.NoError(t, err)
+	assert.Equal(t, 1, s.MediaStored, "repeat verification still counts the reference")
+	after, err := st.DerivedDataRevisionContext(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "an unchanged attachment must not invalidate the archive cache")
+	require.NoError(t, os.WriteFile(filepath.Join(opts.MediaDir, "flower.txt"), []byte("fictional updated flower"), 0600))
+	s, err = imp.ImportText(t.Context(), p, opts)
+	require.NoError(t, err)
+	assert.Equal(t, 1, s.MediaStored)
+	changed, err := st.DerivedDataRevisionContext(t.Context())
+	require.NoError(t, err)
+	assert.Greater(t, changed, after, "changed bytes still invalidate atomically")
 	assert.Equal(t, 1, textCount(t, st, "attachments"))
 	opts.MediaDir = ""
 	_, err = imp.ImportText(t.Context(), p, opts)

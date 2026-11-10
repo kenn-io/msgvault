@@ -155,11 +155,10 @@ func (imp *Importer) ImportText(ctx context.Context, path string, opts TextOptio
 				if err != nil {
 					return summary, err
 				}
-				metadata := sql.NullString{String: string(raw), Valid: true}
 				messageID, err = st.PersistMessageContext(ctx, &store.MessagePersistData{
 					Message:      &store.Message{SourceID: source.ID, ConversationID: convID, SourceMessageID: ids[i], MessageType: "whatsapp", SentAt: sql.NullTime{Time: row.SentAt, Valid: true}, SenderID: sender, Snippet: sql.NullString{String: row.Body, Valid: true}, SizeEstimate: int64(len(row.Body)), PreserveAttachmentStats: true},
 					Conversation: &store.ConversationPersistData{SourceConversationID: textChatKey(opts.ChatID), ConversationType: map[bool]string{true: "group_chat", false: "direct_chat"}[opts.ChatType == "group"], Title: opts.ChatTitle, Participants: members, PreserveExistingParticipants: true},
-					Metadata:     &metadata, BodyText: sql.NullString{String: row.Body, Valid: true}, RawMIME: raw, RawFormat: "whatsapp_txt", PreserveLabels: true,
+					BodyText:     sql.NullString{String: row.Body, Valid: true}, RawMIME: raw, RawFormat: "whatsapp_txt", PreserveLabels: true,
 					FTS: &store.FTSDoc{Body: row.Body, FromAddr: row.Sender},
 				})
 				if err != nil {

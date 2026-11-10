@@ -64,10 +64,12 @@ func TestTextAssumptionsLocaleChange(t *testing.T) {
 	assert.Equal(t, map[string]any{"kept": true}, outer["unrelated"])
 	assert.NotContains(t, outer["whatsapp_txt"], "date_order_assumption")
 	for _, tc := range []struct{ body, order string }{{"asters", "dmy"}, {"seedlings", "mdy"}} {
-		var provenance string
-		require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT metadata FROM messages WHERE snippet = ?", tc.body).Scan(&provenance))
+		var messageID int64
+		require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages WHERE snippet = ?", tc.body).Scan(&messageID))
+		provenance, err := st.GetMessageRawContext(t.Context(), messageID)
+		require.NoError(t, err)
 		var got map[string]any
-		require.NoError(t, json.Unmarshal([]byte(provenance), &got))
+		require.NoError(t, json.Unmarshal(provenance, &got))
 		assert.Equal(t, tc.order, got["date_order_assumption"])
 	}
 }

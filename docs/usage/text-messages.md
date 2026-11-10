@@ -77,9 +77,10 @@ chat. Choose `--chat-type direct` or `group`; `--chat-title` is display only.
 TXT records use a separate namespace from database imports, so importing both
 can retain two representations of the same history. Names are scoped labels
 within this account and chat. They are never inferred phone numbers or “me”
-identities, and message direction stays unknown. Senderless notices have no
-author. Only English notices are recognized; other notices with colons keep
-their prefix as a scoped label.
+identities. Source provenance records direction as unknown. Current people
+inboxes and relationship scores can count your own TXT messages as received.
+Senderless notices have no author. Only English notices are recognized; other notices
+with colons keep their prefix as a scoped label.
 
 Supported headers are `date, time - payload` (Android style) and
 `[date, time] payload` (iOS style). Dates are numeric, with a consistent `/`,
@@ -99,11 +100,12 @@ precision, line spans and the input file digest remain in provenance. During
 a repeated autumn hour, msgvault chooses the earlier instant; nonexistent
 spring-forward times fail with line context. Changing timezone or chat type
 for an existing chat fails rather than silently reinterpreting it. Date order
-is supplied per export and retained in each new message’s provenance.
+is supplied per export and retained in provenance; a wrong order adds rows
+at swapped dates or fails.
 
 Repeat or overlapping exports add new evidence and retain absent records and
-labels. Message keys include wall time, precision, sender label, kind and exact
-body, plus an occurrence number for identical records. File name and location
+labels. Message keys include normalized wall time, precision and the exact payload
+after the timestamp header, plus an occurrence number for identical records. File name and location
 do not affect keys. Identical same-time records retain the maximum observed
 multiplicity; a partial window cannot reveal which identical occurrence it
 contains. Edited text becomes separate evidence. Interrupted imports can be
