@@ -272,6 +272,9 @@ const openedEventExample = `{
 type fakeGitLab struct {
 	t      *testing.T
 	server *httptest.Server
+	// behind, when set, is how far GitLab's clock is behind this machine's;
+	// responses then carry GitLab's Date.
+	behind time.Duration
 
 	mu sync.Mutex
 	me map[string]any
@@ -385,6 +388,9 @@ func (f *fakeGitLab) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	f.requests = append(f.requests, r.Method+" "+path+"?"+query.Encode())
 	f.served[path]++
+	if f.behind != 0 {
+		w.Header().Set("Date", time.Now().Add(-f.behind).UTC().Format(http.TimeFormat))
+	}
 	w.Header().Set("Ratelimit-Limit", "2000")
 	w.Header().Set("Ratelimit-Remaining", "1999")
 	w.Header().Set("Ratelimit-Reset", strconv.FormatInt(time.Now().Add(time.Minute).Unix(), 10))
