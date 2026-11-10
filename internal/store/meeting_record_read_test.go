@@ -186,12 +186,13 @@ func TestMeetingRecordCalendarStateAndMissing(t *testing.T) {
 	assert.ErrorIs(err, sql.ErrNoRows)
 }
 
+// Granola documents this occurrence ID in https://docs.granola.ai/api-reference/get-note.
 func TestMeetingRecordScopedGoogleIDs(t *testing.T) {
 	require := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
-	_, own := calendarFixture(t, st, "own", `{"id":"same","iCalUID":"own@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`, "owner@example.com")
-	_, shared := calendarFixture(t, st, "shared", `{"id":"same","iCalUID":"shared@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`, "shared@example.com")
-	_, note := projectionFixture(t, st, "note", "granola_json", `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"same","scheduled_start_time":"2027-03-14T10:00:00Z"}}`)
+	_, own := calendarFixture(t, st, "own", `{"id":"2su99n6iiik37iiknmb5t4fkfh_20260127T153000Z","iCalUID":"own@example.org","start":{"dateTime":"2026-01-27T15:30:00Z"},"end":{"dateTime":"2026-01-27T16:30:00Z"}}`, "owner@example.com")
+	_, shared := calendarFixture(t, st, "shared", `{"id":"2su99n6iiik37iiknmb5t4fkfh_20260127T153000Z","iCalUID":"shared@example.org","start":{"dateTime":"2026-01-27T15:30:00Z"},"end":{"dateTime":"2026-01-27T16:30:00Z"}}`, "shared@example.com")
+	_, note := projectionFixture(t, st, "note", "granola_json", `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"2su99n6iiik37iiknmb5t4fkfh_20260127T153000Z","scheduled_start_time":"2026-01-27T15:30:00Z"}}`)
 	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
 	require.NoError(err)
 	require.Len(record.Links, 1)
