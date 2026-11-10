@@ -38,7 +38,7 @@ func TestICloudPartitionOrigins(t *testing.T) {
 		"https://p42-contacts.icloud.com:/", "https://p42-contacts.icloud.com:0443/",
 		"https://p42-contacts.icloud.com./", "https://p42-contacts.icloud.com.example.net/",
 		"https://example.net/p42-contacts.icloud.com", "https://p42-contacts.icloud.com@other.example/",
-		"https://user:secret@p42-contacts.icloud.com/", "https://p42-contacts.icloud.com/#fragment", // gitleaks:allow -- synthetic credential URI test cases
+		"https://user:secret@p42-contacts.icloud.com/", "https://p42-contacts.icloud.com/#fragment",
 		"https://p42-contacts.icloud.com/?query", "https://p42-contacts.icloud.com/?",
 		"https://p4-contacts.icloud.com/", "https://p-contacts.icloud.com/",
 		"https://p٤٢-contacts.icloud.com/", "https://contacts.icloud.com/", "//p42-contacts.icloud.com/",
@@ -197,7 +197,7 @@ func newICloudTLSFixture(t *testing.T, handler http.Handler) *Client {
 	origin, err := url.Parse(ICloudDiscoveryURL)
 	require.NoError(t, err)
 	client, err := NewClient(ClientOptions{
-		CredentialOrigin: origin, Username: "synthetic@example.net", Password: "synthetic-app-password", Resolver: resolver, // gitleaks:allow -- synthetic credential fixture
+		CredentialOrigin: origin, Username: "synthetic@example.net", Password: "synthetic-app-password", Resolver: resolver,
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 			assert.Equal(t, "203.0.113.9:443", address)
 			return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
@@ -342,7 +342,7 @@ func TestDiscoveryErrorNamesOnlyRefusedOrigin(t *testing.T) {
 	client := newFixtureClient(t, "https://contacts.example", "", "")
 	base, err := url.Parse("https://contacts.example/principal/")
 	require.NoError(err)
-	_, err = resolveDiscoveryHref(t.Context(), client, base, "https://sentinel-user:sentinel-pass@p42-contacts.icloud.com:443/sentinel-path/?sentinel-query#sentinel-fragment") // gitleaks:allow -- synthetic credential URI test input
+	_, err = resolveDiscoveryHref(t.Context(), client, base, "https://sentinel-user:sentinel-pass@p42-contacts.icloud.com:443/sentinel-path/?sentinel-query#sentinel-fragment")
 	require.ErrorIs(err, ErrUnsafeHref)
 	assert.NotContains(err.Error(), "sentinel")
 	_, err = resolveDiscoveryHref(t.Context(), client, base, "https://p42-contacts.icloud.com:443/sentinel-path/?sentinel-query")

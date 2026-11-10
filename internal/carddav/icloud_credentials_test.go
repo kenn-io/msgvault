@@ -17,14 +17,14 @@ func TestICloudCredentialMarkerRequiresPartitionPasswordBinding(t *testing.T) {
 		func(c *Credential) { c.Password = "" },
 		func(c *Credential) { c.BaseURL = "https://p42-contacts.icloud.com/private/" },
 	} {
-		credential := Credential{ICloud: true, Password: "synthetic-app-password", BaseURL: "https://p42-contacts.icloud.com", Username: "synthetic@example.net", ConnectionGeneration: 1} // gitleaks:allow -- synthetic credential fixture
+		credential := Credential{ICloud: true, Password: "synthetic-app-password", BaseURL: "https://p42-contacts.icloud.com", Username: "synthetic@example.net", ConnectionGeneration: 1}
 		change(&credential)
 		err := SaveCredential(t.TempDir(), credential)
 		require.Error(err)
 		assert.NotContains(err.Error(), "synthetic")
 	}
 	dir := t.TempDir()
-	credential := Credential{ICloud: true, Password: "synthetic-app-password", BaseURL: "https://p42-contacts.icloud.com", Username: "synthetic@example.net", ConnectionGeneration: 1} // gitleaks:allow -- synthetic credential fixture
+	credential := Credential{ICloud: true, Password: "synthetic-app-password", BaseURL: "https://p42-contacts.icloud.com", Username: "synthetic@example.net", ConnectionGeneration: 1}
 	require.NoError(SaveCredential(dir, credential))
 	loaded, err := LoadCredential(dir)
 	require.NoError(err)

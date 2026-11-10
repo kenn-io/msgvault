@@ -15,7 +15,7 @@ func TestIs(t *testing.T) {
 	}
 	cases := []testCase{
 		// Short base64 segments require normalization; no segment qualifies on its own.
-		{"encoded base64 reset token", Content{Text: "Reset your password: https://example.test/reset?token=Q7r%2BNy9%2FDe2%2BWv5%2FAp8%2BKs3%2FJm6%3D"}, true}, // gitleaks:allow -- synthetic token text used by detection test
+		{"encoded base64 reset token", Content{Text: "Reset your password: https://example.test/reset?token=Q7r%2BNy9%2FDe2%2BWv5%2FAp8%2BKs3%2FJm6%3D"}, true},
 		{"encoded base64 reset code", Content{Text: "Reset your password: https://example.test/reset?code=Q7r%2BNy9%2FDe2%2BWv5%2FAp8%2BKs3%2FJm6%3D"}, true},
 		{"encoded next path", Content{Text: "Sign in: https://example.test/reset?next=%2Faccount%2Fsettings%2Fnotifications2"}, false},
 		{"alphabetic magic link", Content{Text: "Sign in: https://example.test/api/auth/magic-link/verify?token=AbCdEfGhIjKlMnOpQrStUvWxYzAbCdEf&callbackURL=%2Fdashboard"}, true},
@@ -183,7 +183,7 @@ func TestIs(t *testing.T) {
 		{"Japanese code prose", Content{Text: "認証コードについて"}, false},
 		{"UUID", Content{Text: "Reset your password https://example.test/r/12345678-1234-4321-1234-123456789abc"}, true},
 		{"Firebase", Content{Text: "https://example.test/reset?oobCode=Qm9_xK3-abc1234567890"}, true},
-		{"encoded base64 token", Content{Text: "Reset your password: https://example.test/reset?email=a%40example.test&token=CfDJ8Ab%2Fcd3EfGh%2BIjK4lMnOpQr5StUvWx%2Fyz6Ab%3D%3D"}, true}, // gitleaks:allow -- synthetic token text used by detection test
+		{"encoded base64 token", Content{Text: "Reset your password: https://example.test/reset?email=a%40example.test&token=CfDJ8Ab%2Fcd3EfGh%2BIjK4lMnOpQr5StUvWx%2Fyz6Ab%3D%3D"}, true},
 		{"encoded base64 code key", Content{Text: "https://example.test/Account/ResetPassword?userId=42&code=CfDJ8Ab%2Fcd3EfGh%2BIjK4lMnOpQr5StUvWx%2Fyz6Ab%3D%3D"}, true},
 		{"Supabase", Content{Text: "https://example.test/login?token=0123456789abcdef0123456789abcdef0123456789abcdef01234567"}, true},
 		{"Supabase invite hash", Content{HTML: "<a href=\"https://example.test/auth/v1/verify?token_hash=pkce_0123456789abcdef0123456789abcdef&type=invite\">Accept invitation</a>"}, true},

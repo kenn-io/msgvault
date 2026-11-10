@@ -43,7 +43,7 @@ func TestICloudHealthyProbeRechecksRotatedCredentialBeforeSync(t *testing.T) {
 	f.discoverHook = func(string) {
 		credential, loadErr := carddav.LoadCredential(f.controller.cfg.TokensDir())
 		require.NoError(t, loadErr)
-		credential.Password = "rotated-synthetic-password" // gitleaks:allow -- synthetic credential fixture
+		credential.Password = "rotated-synthetic-password"
 		require.NoError(t, carddav.SaveCredential(f.controller.cfg.TokensDir(), credential))
 	}
 	_, err = f.controller.Current().Sync(t.Context(), carddav.SyncOptions{})

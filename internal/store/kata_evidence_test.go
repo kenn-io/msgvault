@@ -63,7 +63,7 @@ func TestKataCitationSourceMatchesLegacyDocumentCitation(t *testing.T) {
 	uid, err := f.Store.ArchiveUIDContext(t.Context())
 	requirements.NoError(err)
 	// A saved issue cites the file key produced before the document index was retired.
-	citation := kataevidence.Reference{Version: 1, Kind: "document_chunk", ArchiveUID: uid, MessageID: 4101, SourceType: f.Source.SourceType, SourceIdentifier: f.Source.Identifier, SourceMessageID: "historical-document", AttachmentID: 4201, OccurrenceKey: "dococc_99373c3722401a27c9e5a6ce6a90774c733c01f1684fcbbb8b759bc989e320f4"} // gitleaks:allow -- synthetic archive fixture occurrence key
+	citation := kataevidence.Reference{Version: 1, Kind: "document_chunk", ArchiveUID: uid, MessageID: 4101, SourceType: f.Source.SourceType, SourceIdentifier: f.Source.Identifier, SourceMessageID: "historical-document", AttachmentID: 4201, OccurrenceKey: "dococc_99373c3722401a27c9e5a6ce6a90774c733c01f1684fcbbb8b759bc989e320f4"}
 	other := f.CreateMessage("other-message")
 	for _, tc := range []struct {
 		name    string

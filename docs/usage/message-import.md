@@ -15,9 +15,8 @@ Configure an API key, start `msgvault serve`, then send one message per request
 to `POST /api/v1/import/message`:
 
 ```bash
-# Set MSGVAULT_API_TOKEN to the token authorized for this request.
 curl http://localhost:8080/api/v1/import/message \
-  -H "Authorization: Bearer ${MSGVAULT_API_TOKEN}" \
+  -H "Authorization: Bearer your-secret-key" \
   -H "Content-Type: application/json" \
   --data '{
     "source": {

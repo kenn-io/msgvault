@@ -2560,9 +2560,8 @@ returns `201` / `created`; retries and replacements return `200` / `updated`
 for the same archived message. An unchanged retry writes nothing.
 
 ```bash
-# Set MSGVAULT_API_TOKEN to the token authorized for this request.
 curl http://localhost:8080/api/v1/import/message \
-  -H "Authorization: Bearer ${MSGVAULT_API_TOKEN}" \
+  -H "Authorization: Bearer your-secret-key" \
   -H "Content-Type: application/json" \
   --data '{
     "source": {

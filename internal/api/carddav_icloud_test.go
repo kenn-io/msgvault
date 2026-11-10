@@ -90,7 +90,7 @@ func newICloudAccountFixture(t *testing.T, connection ...string) *iCloudAccountF
 }
 
 func iCloudAccountRequest() CardDAVAccountRequest {
-	return CardDAVAccountRequest{BaseURL: carddav.ICloudDiscoveryURL, Username: "synthetic@example.net", Password: "synthetic-app-password", Enabled: new(true)} // gitleaks:allow -- synthetic credential fixture
+	return CardDAVAccountRequest{BaseURL: carddav.ICloudDiscoveryURL, Username: "synthetic@example.net", Password: "synthetic-app-password", Enabled: new(true)}
 }
 
 func TestICloudAccountSaveBindsResolvedPartition(t *testing.T) {
