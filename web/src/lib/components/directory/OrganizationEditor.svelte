@@ -42,8 +42,11 @@
   const aliasesShown = $derived(addingAliases || baselineAliases.length > 0);
   const categoriesShown = $derived(addingCategories || baselineCategories.length > 0);
   let contactDetailsOpen = $state(false);
-  // The version the dialog opened; each save sends it as If-Match, so a newer edit collides.
+  // The latest data known to the dialog and its version.
   let opened = $state<Prepared<OrganizationProfile>>();
+  // A pending draft keeps its revision when the other section resolves a conflict.
+  let heldOrganizationEtag = $state<string>();
+  let heldProfileEtag = $state<string>();
   const currentProfile = $derived(opened?.data);
   const load = new WriteAttempt<Prepared<OrganizationProfile>>();
   const attempt = new WriteAttempt<Prepared<OrganizationProfile>>();
@@ -92,13 +95,14 @@
 
   async function saveOrganization(): Promise<void> {
     if (saveDisabled || submitting) return;
+    const resolved = !!attempt.prepared && attempt.prepared.etag !== (heldOrganizationEtag ?? opened?.etag);
     // The notice and Retry follow the latest save.
     profileAttempt.reset();
     let entity: Organization | undefined;
     let saved: Prepared<OrganizationProfile> | undefined;
     const ok = await attempt.run(async current => {
       const body = { name: name.trim(), kind: kind as 'company', primary_domain: primaryDomain.trim() || null, description: description.trim() || null };
-      const sent = current ?? opened;
+      const sent = current ?? (opened && { ...opened, etag: heldOrganizationEtag ?? opened.etag });
       const result = initialOrganization
         ? await controller.updateOrganization(initialOrganization.id, body, sent)
         : await controller.createOrganization(body);
@@ -107,22 +111,24 @@
       return result;
     });
     if (!ok) return;
-    // Edits waiting in the other section save next, against the version this save made, so only someone else's edit collides.
-    if (saved && profileDirty) { opened = saved; showOrganization(saved.data.organization); }
+    heldOrganizationEtag = undefined;
+    if (saved && profileDirty) { if (resolved) heldProfileEtag ??= opened?.etag; opened = saved; showOrganization(saved.data.organization); }
     else onDone(entity);
   }
 
   async function saveProfile(): Promise<void> {
     if (!initialOrganization || !currentProfile || submitting) return;
+    const resolved = !!profileAttempt.prepared && profileAttempt.prepared.etag !== (heldProfileEtag ?? opened?.etag);
     attempt.reset();
     let saved: Prepared<OrganizationProfile> | undefined;
     const ok = await profileAttempt.run(async current => {
-      const result = await controller.putOrganizationProfile(initialOrganization.id, listsBody, current ?? opened);
+      const result = await controller.putOrganizationProfile(initialOrganization.id, listsBody, current ?? (opened && { ...opened, etag: heldProfileEtag ?? opened.etag }));
       if (result.ok && result.entity && result.etag) saved = { data: result.entity, etag: result.etag };
       return result;
     });
     if (!ok) return;
-    if (saved && organizationDirty) { opened = saved; showLists(saved.data); }
+    heldProfileEtag = undefined;
+    if (saved && organizationDirty) { if (resolved) heldOrganizationEtag ??= opened?.etag; opened = saved; showLists(saved.data); }
     else onDone();
   }
 
