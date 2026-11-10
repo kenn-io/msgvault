@@ -3,10 +3,12 @@ package whatsapp
 import (
 	"database/sql"
 	"encoding/json/v2"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -51,6 +53,26 @@ func TestTextPersistedKeys(t *testing.T) {
 	var noticeKey string
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT source_message_id FROM messages WHERE snippet LIKE 'You changed%'").Scan(&noticeKey))
 	assert.Equal("whatsapp_txt:a8215365edcf9c7c6082220e6eb0f47f497d2dc4b14c0e9accbaee33b5e2d8bb:0", noticeKey)
+}
+
+func TestTextSubsetSenderSearch(t *testing.T) {
+	require := require.New(t)
+	srcPath := filepath.Join(t.TempDir(), "source.db")
+	st := testutil.NewSQLiteTestStoreAt(t, srcPath)
+	_, err := importTextForTest(t.Context(), NewImporter(st, nil), textFile(t, "13/6/26, 10:00 - Mira: asters\n"), textOptions())
+	require.NoError(err)
+	var count int
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'from_addr:Mira'").Scan(&count))
+	require.Equal(1, count)
+	require.NoError(st.Close())
+	dest := t.TempDir()
+	_, err = store.CopySubsetWithOptions(t.Context(), srcPath, dest, 10, store.CopySubsetOptions{})
+	require.NoError(err)
+	subset, err := store.Open(filepath.Join(dest, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { _ = subset.Close() })
+	require.NoError(subset.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'from_addr:Mira'").Scan(&count))
+	require.Equal(1, count)
 }
 
 func TestTextSearchSenderAfterRebuild(t *testing.T) {
