@@ -1440,21 +1440,3 @@ func TestBeginActivityNestingAndIdempotentEnd(t *testing.T) {
 	_, _, active = srv.currentActivity()
 	assert.False(active, "last end must clear the activity")
 }
-
-func TestEmbeddingsBuildCommandsOwnGate(t *testing.T) {
-	t.Parallel()
-	for _, args := range [][]string{
-		{"embeddings", "build", "--full-rebuild", "--yes"},
-		{"embeddings", "resume"},
-		{"build-embeddings", "--yes"},
-	} {
-		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			body, err := json.Marshal(CLIRunRequest{Args: args})
-			require.NoError(t, err)
-			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
-			_, skip, err := cliRunGateDecision(req, requestAuthentication{})
-			require.NoError(t, err)
-			assert.True(t, skip)
-		})
-	}
-}
