@@ -114,7 +114,6 @@ export async function renderPDF(
       const width = Math.floor(viewport.width);
       const height = Math.floor(viewport.height);
       const pagePixels = width * height;
-      if (pagePixels > MAX_CANVAS_PIXELS) throw new Error(`PDF page ${pageNumber} exceeds the preview canvas limit.`);
       totalCanvasPixels += pagePixels;
       if (totalCanvasPixels > MAX_TOTAL_CANVAS_PIXELS) {
         throw new Error('PDF exceeds the aggregate preview canvas limit.');
