@@ -5,6 +5,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
+import { formatDateTime } from '../../util/format';
 import ProfileHistoryDialog from './ProfileHistoryDialog.svelte';
 import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 import type { AttributeDefinition } from '../../api/generated/models';
@@ -287,8 +288,8 @@ it.each(mergedInCases)('lists each merged-in address once: $name', async entry =
   else {
     expect(section.querySelector('.detail-row')!.textContent).toContain('Email · Merged in · ');
     const provenance = section.querySelector('.detail-row [title]')?.getAttribute('title');
-    expect(provenance).toContain('Jul 31');
-    expect(provenance).toContain('Aug 3');
+    expect(provenance).toContain(`Seen ${formatDateTime(when)}`);
+    expect(provenance).toContain(`Seen ${formatDateTime('2026-08-03T12:00:00Z')}`);
     expect(provenance).toContain('Reference: example-source');
     expect(provenance).toContain('Actor: msgvault');
     expect(screen.queryByRole('heading', { name: 'Seen in services' })).toBeNull();
