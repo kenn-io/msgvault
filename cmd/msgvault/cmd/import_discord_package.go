@@ -18,8 +18,8 @@ func newImportDiscordPackageCmd() *cobra.Command {
 
 Supports JSON or legacy CSV transcripts.
 Sent messages only, including DMs.
-Attachment URLs remain links. No media is downloaded. Re-importing replaces
-messages with the last imported snapshot and safely repeats interrupted runs.
+Attachment URLs remain links. No media is downloaded.
+Re-importing updates existing messages and completes interrupted imports.
 Run on the daemon host with a local extracted directory; ZIP input is unsupported.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
