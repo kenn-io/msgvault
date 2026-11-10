@@ -214,6 +214,7 @@ const rdateZoneCalendar = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n" +
 func TestICSRecurrenceAndBounds(t *testing.T) {
 	for _, tt := range []struct{ name, props, kind, end, original string }{
 		{"all day default", "DTSTART;VALUE=DATE:20270314", "single", "2027-03-15T04:00:00Z", ""},
+		{"all day duration", "DTSTART;VALUE=DATE:20270314\r\nDURATION:P2D", "single", "2027-03-16T04:00:00Z", ""},
 		{"civil duration", "DTSTART;TZID=America/New_York:20270313T090000\r\nDURATION:P1D", "single", "2027-03-14T13:00:00Z", ""},
 		{"lowercase civil duration", "DTSTART;TZID=America/New_York:20270313T090000\r\nDURATION:p1d", "single", "2027-03-14T13:00:00Z", ""},
 		{"lowercase elapsed duration", "DTSTART:20270313T090000Z\r\nDURATION:pt1h", "single", "2027-03-13T10:00:00Z", ""},
@@ -263,6 +264,10 @@ func TestICSRejectMalformed(t *testing.T) {
 		{"negative sequence", strings.Replace(icsExample, "SEQUENCE:2", "SEQUENCE:-1", 1), "invalid SEQUENCE"},
 		{"missing UID", strings.Replace(icsExample, "UID:invite@example.com\r\n", "", 1), "event has no UID"},
 		{"ends after year 9999", strings.NewReplacer("DTSTART;TZID=America/New_York:20270314T090000", "DTSTART:99991231T230000Z", "DTEND;TZID=America/New_York:20270314T100000", "DURATION:PT2H").Replace(icsExample), "outside years 0 to 9999"},
+		{"empty DURATION", strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DURATION:P", 1), "invalid calendar DURATION"},
+		{"empty time DURATION", strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DURATION:PT", 1), "invalid calendar DURATION"},
+		{"trailing T DURATION", strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DURATION:P1DT", 1), "invalid calendar DURATION"},
+		{"all-day DURATION with time", strings.NewReplacer("DTSTART;TZID=America/New_York:20270314T090000", "DTSTART;VALUE=DATE:20270314", "DTEND;TZID=America/New_York:20270314T100000", "DURATION:P1DT12H").Replace(icsExample), "all-day DURATION must be whole days"},
 		{"elapsed DURATION overflow", strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DURATION:PT18446744074S", 1), "calendar DURATION exceeds limit"},
 		{"week DURATION overflow", strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DURATION:P1317624576693539403W", 1), "calendar DURATION exceeds limit"},
 		{"hour DURATION overflow", strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DURATION:PT5124096H", 1), "calendar DURATION exceeds limit"},
