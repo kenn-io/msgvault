@@ -485,6 +485,7 @@ func attachmentProducingCommand(args []string) bool {
 		"import-pst",
 		"import-slackdump",
 		"import-telegram",
+		"import-groupme",
 		"import-synctech-sms",
 		"import-whatsapp",
 		"sync-beeper",

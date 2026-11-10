@@ -1,0 +1,8 @@
+[
+ {"id":"fictional-one","group_id":"fictional-garden","sender_id":"fictional-owner","user_id":"fictional-owner","name":"Example Owner","created_at":1704067200,"text":"Seedneedle plans for spring","system":false,"favorited_by":[],"reactions":[],"attachments":[{"type":"image","url":"https://images.example.invalid/800x600.png.fictional-image"}]},
+ {"id":"fictional-two","group_id":"fictional-garden","sender_id":"fictional-peer","user_id":"fictional-peer","name":"Example Peer","created_at":1735689600,"text":"Example video caption","system":false,"attachments":[{"type":"video","url":"https://videos.example.invalid/clips/fictional-video.720p.mp4"},{"type":"reply","reply_id":"fictional-one"}]},
+ {"id":"fictional-system","group_id":"fictional-garden","created_at":1735689601,"text":"Fictional membership change","system":true},
+ {"group_id":"fictional-garden","created_at":1735689602,"text":"A fictional unsupported entry"},
+ {"id":"fictional-service","group_id":"fictional-garden","sender_type":"system","system":false,"text":"Fictional service entry"},
+ {"id":"fictional-three","group_id":"fictional-garden","text":"Unknown sender and date","attachments":[{"type":"file","url":"https://files.example.invalid/fictional.txt"}]}
+]

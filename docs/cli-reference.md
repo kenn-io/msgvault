@@ -16,7 +16,7 @@ appear in full under Inherited Flags.
 | Task | Commands and guides |
 |---|---|
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
-| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
+| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-groupme](#import-groupme), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [media search](#media-search), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [loops](#loops), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
@@ -5698,3 +5698,22 @@ msgvault policy reset SOURCE_ID CONVERSATION_ID
 `list` always prints JSON. Saved CLI overrides win over config. `reset` restores
 config or automatic selection. Effective tiers remain `full` in this release;
 `stub` and `skip` are rejected. No messages are removed.
+
+## import-groupme
+
+Import selected GroupMe JSON conversation and DM exports, including supported
+available local image/video media.
+
+```bash
+msgvault import-groupme <export-dir> --me <account-id>
+```
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--me` | Required | Opaque exporting account user ID; not a phone number |
+| `--no-default-identity` | `false` | Skip default archive identity selection |
+
+Select a directory containing `message.json`, or its immediate parent. Re-imports
+preserve first-imported evidence and fill missing media. Interrupted imports can
+safely repeat from the start. See [GroupMe imports](usage/text-messages.md#import-groupme)
+for export selection, reported coverage and format/retention limits.

@@ -91,6 +91,7 @@ describe('entryKindPresentation', () => {
     ['fbmessenger', 'Conversation'],
     ['matrix', 'Conversation'],
     ['telegram', 'Conversation'],
+    ['groupme', 'Conversation'],
     ['chat', 'Conversation'],
     ['meeting_transcript', 'Meeting'],
     ['meeting_note', 'Meeting'],

@@ -19,6 +19,7 @@ open a conversation to read its messages. In the [TUI](/docs/usage/tui/), press
 | [iMessage](#import-imessage) | macOS `chat.db` |
 | [iMazing Messages](#import-imazing-csv) | CSV export root or `csv/` directory |
 | [Google Voice](#import-gvoice) | Google Takeout Voice directory |
+| [GroupMe](#import-groupme) | Extracted GroupMe JSON export |
 | [Telegram](#import-telegram) | Telegram Desktop Machine-readable JSON export |
 | [Facebook Messenger](#import-messenger) | Download Your Information export |
 | [SMS Backup & Restore](#import-synctech-sms) | XML backup |
@@ -505,3 +506,48 @@ A later or overlapping export adds new messages and fills media slots that still
 Every exported chat becomes a conversation, even one with no messages. Each import replaces the conversation title with the export's chat name when that name is non-empty.
 
 An interrupted import resumes after the last completed chat when `result.json` in the same directory has the same size and modification time. Use `--no-resume` to scan every chat again, or `--limit N` to cap the messages added in one run.
+
+## import-groupme
+
+Export your selected conversations and direct messages using
+[GroupMe's web export](https://support.microsoft.com/en-us/groupme/how-do-i-export-my-groupme-data),
+then extract the download locally. GroupMe allows one active export at a time.
+Import a conversation directory containing `message.json`, or a parent directory
+whose immediate conversation directories contain that file:
+
+```bash
+msgvault import-groupme ./groupme-export --me example-owner
+```
+
+Supply your GroupMe account's user ID as `--me`. It is an opaque ID, not a phone
+number. It scopes the source and identifies your outgoing messages; msgvault does
+not infer the account owner. `conversation.json` metadata is optional.
+
+The importer preserves message IDs, raw JSON, original epoch timestamps and
+observed participants. Epoch timestamps are shown in UTC; the original timezone
+is unknown. Missing senders and dates remain unknown. Conversation IDs distinguish
+groups and DMs. Folder names provide a scoped fallback when no conversation ID is
+present. Renaming a folder preserves message identity when records have a stable
+conversation ID. Conflicting conversation IDs within one file are rejected.
+
+Repeat an import to add missing messages and fill media slots that still lack
+bytes. First-imported text, senders and dates stay unchanged. Interrupted runs can
+be repeated from the start. Missing messages in a later export never imply deletion.
+
+Only the observed image/video URL-to-`gallery` filename mappings are supported.
+The importer reads contained local files with a 250 MiB per-file cap; it never
+fetches URLs or guesses which unrelated gallery file belongs to a message.
+Uploaded-file attachments and other unsupported attachment forms are counted;
+their ordinary message text is retained. Missing media remains retryable.
+System records are counted separately and skipped. Call-event interpretation is
+outside this adapter's scope.
+
+The summary reports selected conversations processed, oldest/newest known dates,
+UTC-year and observed message/system counts, added/existing/unsupported records,
+and stored/missing/unsupported media. Failed runs label their summary as partial.
+Coverage describes the supplied files, not lifetime account history.
+[GroupMe retention](https://support.microsoft.com/en-us/groupme/how-long-are-files-and-data-available-in-groupme)
+lists five-year availability for photos, videos and files. Its message wording
+refers to April 2017 and deletion; it does not establish an exact lifetime cutoff.
+There is no verified current versioned official export schema. The adapter covers
+the observed message arrays and optional metadata, not every possible export form.
