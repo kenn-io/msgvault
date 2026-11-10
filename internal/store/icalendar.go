@@ -133,8 +133,15 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 			slog.Warn("calendar invite ignored: organizer differs", "event_message_id", id, "organizer", item.component.OrganizerEmail)
 		}
 		apply := !foreign && (!exists || icsRevisionNewer(item.component, old))
-		// A cancellation stored without times takes an older invitation's details.
-		fill := !foreign && !apply && exists && old.Status == SyncStatusCancelled && old.Start == "" && e.Status != SyncStatusCancelled
+		// Keep the newest available details beneath the winning cancellation.
+		fill := false
+		if !foreign && !apply && exists && old.Status == SyncStatusCancelled && e.Status != SyncStatusCancelled {
+			var err error
+			fill, err = icsDetailsNewer(q, id, item.component)
+			if err != nil {
+				return err
+			}
+		}
 		if fill {
 			item.meta.Sequence, item.meta.Stamp, item.meta.Status = old.Sequence, old.Stamp, SyncStatusCancelled
 		}
@@ -161,6 +168,27 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 		}
 	}
 	return nil
+}
+
+func icsDetailsNewer(q boundQuerier, id int64, incoming calevent.ICSComponent) (bool, error) {
+	var stored []byte
+	var compression sql.NullString
+	if err := q.QueryRow(`SELECT raw_data,compression FROM message_raw WHERE message_id=?`, id).Scan(&stored, &compression); err != nil {
+		return false, fmt.Errorf("read retained ICS details: %w", err)
+	}
+	raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
+	if err != nil {
+		return false, fmt.Errorf("decode retained ICS details: %w", err)
+	}
+	components, err := calevent.ParseICS(raw, "CANCEL", "")
+	if err != nil {
+		return false, fmt.Errorf("parse retained ICS details: %w", err)
+	}
+	if len(components) != 1 {
+		return false, errors.New("retained ICS requires one event")
+	}
+	retained := components[0]
+	return retained.Event.Start == nil || icsRevisionNewer(incoming, calevent.ICSMetadata{Sequence: retained.Sequence, Stamp: retained.Stamp, Status: SyncStatusCancelled}), nil
 }
 
 func (s *Store) setICSMetadataWith(ctx context.Context, tx *loggedTx, id int64, meta calevent.ICSMetadata) error {
