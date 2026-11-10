@@ -32,23 +32,24 @@ func TestClaimFreshness(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
 			freshTime := now.Add(-time.Duration(tt.days) * 24 * time.Hour).Add(time.Nanosecond)
 			metadata := DescribeFreshness(tt.target, tt.until, &freshTime, now)
-			assert.Equal(t, tt.kind, metadata.Kind)
-			assert.Equal(t, StatusFresh, metadata.Status)
+			assert.Equal(tt.kind, metadata.Kind)
+			assert.Equal(StatusFresh, metadata.Status)
 			boundary := freshTime.Add(-time.Nanosecond)
-			assert.Equal(t, StatusStale, DescribeFreshness(tt.target, tt.until, &boundary, now).Status)
-			assert.Equal(t, StatusStale, DescribeFreshness(tt.target, tt.until, nil, now).Status)
-			assert.Equal(t, StatusExpired, DescribeFreshness(tt.target, &now, &freshTime, now).Status)
+			assert.Equal(StatusStale, DescribeFreshness(tt.target, tt.until, &boundary, now).Status)
+			assert.Equal(StatusStale, DescribeFreshness(tt.target, tt.until, nil, now).Status)
+			assert.Equal(StatusExpired, DescribeFreshness(tt.target, &now, &freshTime, now).Status)
 		})
 	}
 }
 
-func TestClaimReadMetadataDoesNotChangePacketJSON(t *testing.T) {
+func TestClaimFreshnessExcludedFromJSON(t *testing.T) {
 	claim := Claim{ID: 1}
 	before, err := json.Marshal(claim)
 	require.NoError(t, err)
-	claim.Freshness = DescribeFreshness(claim.Target, nil, nil, time.Now())
+	claim.Freshness = Freshness{Kind: KindPreference, Status: StatusFresh}
 	after, err := json.Marshal(claim)
 	require.NoError(t, err)
 	assert.Equal(t, string(before), string(after))

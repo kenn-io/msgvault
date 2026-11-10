@@ -3,9 +3,16 @@
  */
 import type { ErrorResponse } from "./errorResponse";
 import type { MediaAttachmentResult } from "./mediaAttachmentResult";
+import type { SearchCoverage } from "./searchCoverage";
 
 export interface MediaAttachmentSearch {
+  actual_mode: string;
+  /** Coverage of delivered mirrored versions, excluding files awaiting upload */
+  coverage: SearchCoverage;
+  degradations: string[];
   error?: ErrorResponse;
+  partial: boolean;
+  requested_mode: string;
   results: MediaAttachmentResult[];
   truncated: boolean;
   [key: string]: unknown;

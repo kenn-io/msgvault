@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/sourcescope"
@@ -135,9 +136,13 @@ func directSenderNameExpr(alias, prefix string) string {
 // Works for both SQLite (nullable phone_number) and DuckDB-over-Parquet
 // (phone_number coerced to empty string at export); NULLIF squashes both forms.
 func participantNameExpr(alias string) string {
+	return participantNameExprInSchema(alias, "")
+}
+
+func participantNameExprInSchema(alias, prefix string) string {
 	return fmt.Sprintf(
 		"COALESCE(NULLIF(TRIM(%s.display_name), ''), NULLIF(%s.phone_number, ''), NULLIF(%s.email_address, ''), %s)",
-		alias, alias, alias, xUserIDExpr(alias, ""),
+		alias, alias, alias, xUserIDExpr(alias, prefix),
 	)
 }
 
@@ -155,8 +160,8 @@ func recipientNameExpr(mrAlias, pAlias string) string {
 
 func recipientNameExprInSchema(mrAlias, pAlias, prefix string) string {
 	return fmt.Sprintf(
-		"COALESCE(NULLIF(TRIM(%s.display_name), ''), NULLIF(TRIM(%s.display_name), ''), NULLIF(%s.phone_number, ''), NULLIF(%s.email_address, ''), %s, '')",
-		mrAlias, pAlias, pAlias, pAlias, xUserIDExpr(pAlias, prefix),
+		"COALESCE(NULLIF(TRIM(%s.display_name), ''), NULLIF(TRIM(%s.display_name), ''), NULLIF(%s.phone_number, ''), NULLIF(%s, ''), %s, '')",
+		mrAlias, pAlias, pAlias, identityindex.SenderAddressExpr(mrAlias, pAlias), xUserIDExpr(pAlias, prefix),
 	)
 }
 
@@ -335,7 +340,7 @@ func fetchMessageLabelsDetail(ctx context.Context, db store.SQLReader, rebind re
 func fetchParticipantsShared(ctx context.Context, db store.SQLReader, rebind rebindFunc, tablePrefix string, msg *MessageDetail) error {
 	rows, err := db.QueryContext(ctx, rebind(fmt.Sprintf(`
 		SELECT mr.recipient_type,
-		       COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), ''),
+		       COALESCE(NULLIF(`+identityindex.SenderAddressExpr("mr", "p")+`, ''), NULLIF(p.phone_number, ''), ''),
 		       %s
 		FROM %smessage_recipients mr
 		JOIN %sparticipants p ON p.id = mr.participant_id
@@ -356,7 +361,7 @@ func fetchParticipantsShared(ctx context.Context, db store.SQLReader, rebind reb
 		  )
 	`,
 		recipientNameExprInSchema("mr", "p", tablePrefix), tablePrefix, tablePrefix,
-		recipientNameExprInSchema("p", "p", tablePrefix), tablePrefix, tablePrefix, tablePrefix,
+		participantNameExprInSchema("p", tablePrefix), tablePrefix, tablePrefix, tablePrefix,
 	)), msg.ID, msg.ID)
 	if err != nil {
 		return err

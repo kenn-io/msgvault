@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/emailattribution"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/peoplesweep"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // querier is satisfied by both *sql.DB and *sql.Tx, allowing
@@ -54,6 +55,8 @@ type contextQuerier interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
+const recipientTypeFrom = "from"
+
 // RecipientSet groups participant IDs, display names, and envelope
 // addresses for one recipient type (from, to, cc, bcc). EmailAddresses
 // carries the address as it appeared in the message envelope; unlike the
@@ -64,12 +67,15 @@ type RecipientSet struct {
 	ParticipantIDs []int64
 	DisplayNames   []string
 	EmailAddresses []string
+	IsRelayed      bool
 }
 
 // ParticipantPersistData describes one email participant to resolve inside a
 // message persistence transaction.
 type ParticipantPersistData struct {
-	EmailAddress string
+	IdentifierType  string
+	IdentifierValue string
+	EmailAddress    string
 	// PhoneNumber is an E.164 phone that identifies the participant when
 	// EmailAddress is empty. It is backed by a participant_identifiers row of
 	// type PhoneIdentifierType so owner attribution can match it.
@@ -2175,6 +2181,11 @@ func (s *Store) PersistMessageContext(ctx context.Context, data *MessagePersistD
 	)
 }
 
+// RelayedFromRecipient preserves the transport sender for an attributed author.
+func RelayedFromRecipient(from mime.Address, id int64) RecipientSet {
+	return RecipientSet{Type: recipientTypeFrom, ParticipantIDs: []int64{id}, DisplayNames: []string{textutil.EnsureUTF8(from.Name)}, EmailAddresses: []string{from.Email}, IsRelayed: true}
+}
+
 func (s *Store) persistAttachmentSnapshotWith(q querier, messageID int64, replacement *[]AttachmentWrite) error {
 	if err := s.replaceMIMEAttachmentsWith(q, messageID, replacement); err != nil {
 		return fmt.Errorf("persist attachments: %w", err)
@@ -2302,7 +2313,7 @@ func (s *Store) persistMessageWithParticipantsTransaction(
 	afterPersist messagePersistAfter,
 ) (int64, error) {
 	for _, participant := range participants {
-		if participant.EmailAddress == "" && participant.PhoneNumber != "" {
+		if participant.IdentifierType != "" || (participant.EmailAddress == "" && participant.PhoneNumber != "") {
 			lock = attributionLock{Exclusive: true}
 			break
 		}
@@ -2341,8 +2352,8 @@ func (s *Store) persistMessageWithParticipantsTx(
 	}
 	hasPhoneParticipant := false
 	for idx, participant := range participants {
-		if participant.EmailAddress == "" && participant.PhoneNumber == "" {
-			return 0, fmt.Errorf("ensure participant %d: an email address or phone number is required", idx)
+		if participant.EmailAddress == "" && participant.PhoneNumber == "" && (participant.IdentifierType == "" || strings.TrimSpace(participant.IdentifierValue) == "") {
+			return 0, fmt.Errorf("ensure participant %d: an identity is required", idx)
 		}
 		if participant.EmailAddress == "" {
 			hasPhoneParticipant = true
@@ -2378,7 +2389,9 @@ func (s *Store) persistMessageWithParticipantsTx(
 		}
 		var participantID int64
 		var err error
-		if participant.EmailAddress == "" {
+		if participant.IdentifierType != "" {
+			participantID, err = s.ensureParticipantByIdentifierTx(ctx, tx, participant.IdentifierType, participant.IdentifierValue, participant.DisplayName)
+		} else if participant.EmailAddress == "" {
 			participantID, err = s.ensureParticipantByPhoneTx(
 				ctx, tx, participant.PhoneNumber, participant.DisplayName, PhoneIdentifierType,
 			)
@@ -2768,7 +2781,7 @@ func (s *Store) ReplaceMessageRecipientsContext(ctx context.Context, messageID i
 		}); err != nil {
 			return err
 		}
-		if recipientType == "from" {
+		if recipientType == recipientTypeFrom {
 			// 'from' rows are attribution input: the message upsert's CTE could not
 			// see the envelope rows this call just replaced, and importers on this
 			// granular path never reach persistMessageWith's final recompute.
@@ -2815,15 +2828,15 @@ func replaceMessageRecipientsTx(tx querier, messageID int64, rs RecipientSet) er
 
 	return insertInChunks(tx, chunkInsert{
 		totalRows:    len(recipients),
-		valuesPerRow: 5,
-		prefix:       "INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name, email_address) VALUES ",
+		valuesPerRow: 6,
+		prefix:       "INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name, email_address, is_relayed) VALUES ",
 	}, func(start, end int) ([]string, []any) {
 		values := make([]string, end-start)
-		args := make([]any, 0, (end-start)*5)
+		args := make([]any, 0, (end-start)*6)
 		for i := start; i < end; i++ {
-			values[i-start] = "(?, ?, ?, ?, ?)"
+			values[i-start] = "(?, ?, ?, ?, ?, ?)"
 			row := recipients[i]
-			args = append(args, messageID, row.participantID, rs.Type, row.displayName, nullIfEmpty(row.email))
+			args = append(args, messageID, row.participantID, rs.Type, row.displayName, nullIfEmpty(row.email), row.isRelayed)
 		}
 		return values, args
 	})
@@ -2833,6 +2846,7 @@ type messageRecipientRow struct {
 	participantID int64
 	displayName   string
 	email         string
+	isRelayed     bool
 }
 
 func normalizedMessageRecipients(rs RecipientSet) []messageRecipientRow {
@@ -2863,7 +2877,7 @@ func normalizedMessageRecipients(rs RecipientSet) []messageRecipientRow {
 		if i < len(rs.DisplayNames) {
 			name = rs.DisplayNames[i]
 		}
-		rows = append(rows, messageRecipientRow{pid, name, email})
+		rows = append(rows, messageRecipientRow{pid, name, email, rs.IsRelayed})
 	}
 
 	return rows
@@ -2875,7 +2889,7 @@ func (s *Store) MessageRecipientsMatchContext(ctx context.Context, messageID int
 	for _, set := range sets {
 		want[set.Type] = normalizedMessageRecipients(set)
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT recipient_type, participant_id, COALESCE(display_name, ''), COALESCE(email_address, '') FROM message_recipients WHERE message_id = ? ORDER BY id`, messageID)
+	rows, err := s.db.QueryContext(ctx, `SELECT recipient_type, participant_id, COALESCE(display_name, ''), COALESCE(email_address, ''), is_relayed FROM message_recipients WHERE message_id = ? ORDER BY id`, messageID)
 	if err != nil {
 		return false, err
 	}
@@ -2884,7 +2898,7 @@ func (s *Store) MessageRecipientsMatchContext(ctx context.Context, messageID int
 	for rows.Next() {
 		var role string
 		var row messageRecipientRow
-		if err := rows.Scan(&role, &row.participantID, &row.displayName, &row.email); err != nil {
+		if err := rows.Scan(&role, &row.participantID, &row.displayName, &row.email, &row.isRelayed); err != nil {
 			return false, err
 		}
 		if _, supplied := want[role]; supplied {
@@ -5433,80 +5447,86 @@ func (s *Store) EnsureParticipantByIdentifierContext(ctx context.Context, identi
 
 	var participantID int64
 	err := s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
-		err := tx.QueryRowContext(ctx, `
-			SELECT participant_id FROM participant_identifiers
-			WHERE identifier_type = ? AND identifier_value = ?
-		`, identifierType, identifierValue).Scan(&participantID)
-		if err == nil {
-			if displayName != "" {
-				result, err := tx.ExecContext(ctx, `
-					UPDATE participants SET display_name = ?
-					WHERE id = ? AND (display_name IS NULL OR display_name = '')
-				`, displayName, participantID)
-				if err != nil {
-					return fmt.Errorf("backfill participant display name: %w", err)
-				}
-				changed, err := s.bumpParticipantDisplayNameRevisionIfChangedContext(ctx, tx, result)
-				if err != nil {
-					return err
-				}
-				if changed {
-					return s.invalidateParticipantPersonEnrichmentTx(
-						ctx, tx, participantID)
-				}
-			}
-			return nil
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("lookup participant identifier: %w", err)
-		}
-
-		now := s.dialect.Now()
-		if err := tx.QueryRowContext(ctx, fmt.Sprintf(`
-			INSERT INTO participants (display_name, created_at, updated_at)
-			VALUES (?, %s, %s)
-			RETURNING id
-		`, now, now), displayName).Scan(&participantID); err != nil {
-			return fmt.Errorf("insert participant: %w", err)
-		}
-		if err := s.bumpParticipantDisplayNameRevisionContext(ctx, tx); err != nil {
-			return err
-		}
-		classificationColumns, err := s.participantIdentifierClassificationColumnsTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if !classificationColumns {
-			_, err = tx.ExecContext(ctx, `
-				INSERT INTO participant_identifiers (
-					participant_id, identifier_type, identifier_value, display_value, is_primary
-				) VALUES (?, ?, ?, ?, TRUE)
-			`, participantID, identifierType, identifierValue, identifierValue)
-			if err != nil {
-				return fmt.Errorf("insert participant identifier: %w", err)
-			}
-		} else {
-			serviceSlug, scopeKind, scopeValue := participantIdentifierClassificationValues(
-				identifierType, identifierValue,
-			)
-			_, err = tx.ExecContext(ctx, `
-				INSERT INTO participant_identifiers (
-					participant_id, identifier_type, identifier_value, display_value,
-					is_primary, service_id, scope_kind, scope_value
-				) VALUES (?, ?, ?, ?, TRUE,
-					(SELECT id FROM communication_services WHERE slug = ?), ?, ?)
-			`, participantID, identifierType, identifierValue, identifierValue,
-				serviceSlug, scopeKind, scopeValue)
-			if err != nil {
-				return fmt.Errorf("insert participant identifier: %w", err)
-			}
-		}
-		return s.bumpParticipantIdentifierRevision(ctx, tx)
+		var err error
+		participantID, err = s.ensureParticipantByIdentifierTx(ctx, tx, identifierType, identifierValue, displayName)
+		return err
 	})
 	if err != nil {
 		return 0, err
 	}
 	return participantID, nil
+}
+
+func (s *Store) ensureParticipantByIdentifierTx(ctx context.Context, tx *loggedTx, identifierType, identifierValue, displayName string) (participantID int64, err error) {
+	err = tx.QueryRowContext(ctx, `
+		SELECT participant_id FROM participant_identifiers
+		WHERE identifier_type = ? AND identifier_value = ?
+	`, identifierType, identifierValue).Scan(&participantID)
+	if err == nil {
+		if displayName != "" {
+			result, err := tx.ExecContext(ctx, `
+				UPDATE participants SET display_name = ?
+				WHERE id = ? AND (display_name IS NULL OR display_name = '')
+			`, displayName, participantID)
+			if err != nil {
+				return participantID, fmt.Errorf("backfill participant display name: %w", err)
+			}
+			changed, err := s.bumpParticipantDisplayNameRevisionIfChangedContext(ctx, tx, result)
+			if err != nil {
+				return participantID, err
+			}
+			if changed {
+				return participantID, s.invalidateParticipantPersonEnrichmentTx(
+					ctx, tx, participantID)
+			}
+		}
+		return participantID, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return participantID, fmt.Errorf("lookup participant identifier: %w", err)
+	}
+
+	now := s.dialect.Now()
+	if err := tx.QueryRowContext(ctx, fmt.Sprintf(`
+		INSERT INTO participants (display_name, created_at, updated_at)
+		VALUES (?, %s, %s)
+		RETURNING id
+	`, now, now), displayName).Scan(&participantID); err != nil {
+		return participantID, fmt.Errorf("insert participant: %w", err)
+	}
+	if err := s.bumpParticipantDisplayNameRevisionContext(ctx, tx); err != nil {
+		return participantID, err
+	}
+	classificationColumns, err := s.participantIdentifierClassificationColumnsTx(ctx, tx)
+	if err != nil {
+		return participantID, err
+	}
+	if !classificationColumns {
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO participant_identifiers (
+				participant_id, identifier_type, identifier_value, display_value, is_primary
+			) VALUES (?, ?, ?, ?, TRUE)
+		`, participantID, identifierType, identifierValue, identifierValue)
+		if err != nil {
+			return participantID, fmt.Errorf("insert participant identifier: %w", err)
+		}
+	} else {
+		serviceSlug, scopeKind, scopeValue := participantIdentifierClassificationValues(
+			identifierType, identifierValue,
+		)
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO participant_identifiers (
+				participant_id, identifier_type, identifier_value, display_value,
+				is_primary, service_id, scope_kind, scope_value
+			) VALUES (?, ?, ?, ?, TRUE,
+				(SELECT id FROM communication_services WHERE slug = ?), ?, ?)
+		`, participantID, identifierType, identifierValue, identifierValue,
+			serviceSlug, scopeKind, scopeValue)
+		if err != nil {
+			return participantID, fmt.Errorf("insert participant identifier: %w", err)
+		}
+	}
+	return participantID, s.bumpParticipantIdentifierRevision(ctx, tx)
 }
 
 // UpdateParticipantDisplayNameByPhone updates the display_name for an existing

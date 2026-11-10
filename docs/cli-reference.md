@@ -20,6 +20,7 @@ appear in full under Inherited Flags.
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [media search](#media-search), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [loops](#loops), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
+| Find a partial address | [address](#address) |
 | Inspect staged room policy | [policy](#policy) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account), [merge-account](#merge-account) |
 | Read meeting evidence | [meetings](#meetings), [meeting workflow](usage/meetings.md) |
@@ -2912,11 +2913,11 @@ msgvault media search "quarterly numbers"
 msgvault media search "quarterly numbers" --person 7 --direction from_person --limit 20 --json
 ```
 
-`--mode lexical` is the default. Semantic and hybrid are unavailable. `--limit` accepts 1 to 100 message occurrences. `--direction` accepts `from_person`, `to_person` or `group` and requires `--person`.
+`--mode lexical` is the default. On newer `main` builds, `--mode semantic` and `--mode hybrid` retrieve mirrored attachment content through Docbank; recordings return `recordings_error=media_search_mode_unavailable`. v0.23.0 supports lexical mode only. `--limit` accepts 1 to 100 message occurrences. `--direction` accepts `from_person`, `to_person` or `group` and requires `--person`.
 
 The table shows message, conversation and attachment IDs, supplied or generated origin, plain excerpt, and recorded timing. An empty recording result proves no match only with complete coverage and `partial=false`. Its coverage line reports pending media, unavailable attribution, partial coverage and truncated results. JSON preserves the same fields and adds optional `filename`, `containing_title` and `occurred_at`. Recording search requires Docbank's source-selected search contract. Shared audio searches the currently selected transcript; different supplied captions can leave some messages unavailable even when no excerpt matches. A recording with more than 64 distinct current caption inputs is left out; its occurrences count in `unavailable_occurrences`, with `partial=true`. See [the API scope limits](api-server.md#media-transcript-search) for the version and source ceilings; narrow the person scope if it exceeds a ceiling. Use `msgvault show-message <message_id>` to read a result in context. See [browser recording search](web-ui.md#recording-matches) for transcript matches in Messages.
 
-Unreleased builds also print a separate attachment table with message, conversation, attachment, filename, and excerpt, followed by truncation and search errors. It searches text Docbank has extracted from mirrored document files. More than 4096 such files are searched in batches of 4,096. Results from each batch are interleaved by their position within that batch, so order across batches is approximate. An empty list doesn't rule out words in files awaiting extraction. `--limit` caps each list separately; `--json` includes optional `attachments` and `recordings_error` fields. See [attachment search formats](usage/searching.md#search-mirrored-attachment-text) for the files included in the scope.
+Unreleased builds also print a separate attachment table with message, conversation, attachment, filename, and excerpt, followed by actual attachment mode, coverage, partial status, degradations, truncation and search errors. It searches text Docbank has extracted from mirrored document files. More than 4096 such files are searched in batches of 4,096. Results from each batch are interleaved by their position within that batch, so order across batches is approximate. An empty list doesn't rule out words in files awaiting extraction. `--limit` caps each list separately; `--json` includes optional `attachments` and `recordings_error` fields. Semantic/hybrid retrieval uses the configured `attachment_search_profile`. See [attachment search formats](usage/searching.md#search-mirrored-attachment-text) for the files included in the scope.
 
 ## tui
 
@@ -3289,6 +3290,9 @@ to one lane and cannot be used with `all`. See
 [person search](/docs/usage/people/#find-a-person-by-what-you-remember) and
 [person files](/docs/usage/people/#find-files-related-to-a-person) for index
 requirements, supported filters, and pagination.
+
+File results show `unverified` when a content hash is recorded but storage
+has not been checked.
 
 #### Typo-tolerant filenames
 
@@ -5747,3 +5751,25 @@ msgvault import-x <archive-dir>
 Re-imports skip stored messages and retry missing media. See [X DM imports](usage/text-messages.md#import-x)
 for supported layouts, evidence, limits and replay behavior. The source files must
 be on the daemon host; run with `--local` there when using a remote daemon.
+
+## address
+
+Use `msgvault address autocomplete "12 Example"` to request Google Places
+suggestions for a partial address. The command returns JSON with a session
+token, candidates, and attribution. Set `MSGVAULT_GOOGLE_PLACES_API_KEY` in the
+command's environment. This explicit command sends the entered text and any
+location hints to Google; it does not read or change the archive.
+
+Use `--session-token` to reuse the returned token while refining the same
+query. Optional `--language`, `--region`, `--limit` (1–5), and the combination
+`--lat`, `--lng`, `--radius` (metres) refine results. Choose a candidate before
+running `msgvault address select <place-id> --session-token <token>`. The select
+command returns address-only Place Details as JSON and ends the session. Start
+a new session for a new selection. Suggestions and selected details are not
+address validation or an archive write. Display Google Maps attribution with
+suggestions and follow Google's Places display and attribution policies.
+
+Google bills Places separately from the free GoPlaces software. Autocomplete
+and Details requests have separate free monthly usage caps; incomplete or
+abandoned sessions are charged per request. Check current [Google pricing](https://developers.google.com/maps/billing-and-pricing/pricing)
+and [session pricing](https://developers.google.com/maps/documentation/places/web-service/session-pricing).

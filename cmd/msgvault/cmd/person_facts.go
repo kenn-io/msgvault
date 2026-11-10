@@ -211,7 +211,18 @@ func newPersonFactsCommand() *cobra.Command {
 				return errors.New("person fact claims response was empty")
 			}
 			if options.jsonOutput {
-				return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), response.JSON200.Claims, json.Deterministic(true))
+				// Older compatible daemons omit the derived fields. Keep them
+				// absent in CLI JSON rather than emitting empty enum values.
+				type claimOutput struct {
+					generated.PersonFactClaim `json:",inline"`
+					Kind                      string `json:"kind,omitzero"`
+					Status                    string `json:"status,omitzero"`
+				}
+				rows := make([]claimOutput, len(response.JSON200.Claims))
+				for i, item := range response.JSON200.Claims {
+					rows[i] = claimOutput{PersonFactClaim: item, Kind: string(item.Kind), Status: string(item.Status)}
+				}
+				return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), rows, json.Deterministic(true))
 			}
 			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 			_, _ = fmt.Fprintln(writer, "ID\tGENERATION\tTARGET\tKIND\tSTATUS\tRELATION\tORIGIN\tCLAIM KEY\tCREATED")
