@@ -475,7 +475,7 @@ func TestSearchMessageBodies_PostgreSQLSaturatedPhrase(t *testing.T) {
 	}
 	body := strings.Repeat("alice ", 300) + "alice@example.com appears here"
 	id := createSearchScopeMessage(t, f, "saturated-body", "ordinary", "ordinary", body, 0, 0)
-	combiningBody := "cafe\u0301teria marker"
+	combiningBody := "cafe\u0301teria marker foo.bar"
 	combiningID := createSearchScopeMessage(t, f, "combining-body", "ordinary", "ordinary", combiningBody, 0, 0)
 	_, err := f.Store.BackfillFTS(nil)
 	require.NoError(err)
@@ -493,7 +493,15 @@ func TestSearchMessageBodies_PostgreSQLSaturatedPhrase(t *testing.T) {
 	require.Len(result.Messages, 1)
 	assert.Equal(combiningID, result.Messages[0].ID)
 	require.NotEmpty(result.Messages[0].BodyContextSnippets)
-	assert.Contains(result.Messages[0].BodyContextSnippets[0], combiningBody)
+	assert.Contains(result.Messages[0].BodyContextSnippets[0], "cafe\u0301teria marker")
+	for _, term := range []string{"cafe\u0301teria", "cafe\u0301", "foo.bar"} {
+		result, err = searcher.SearchMessageBodies(t.Context(), search.Parse(term), 10, 0)
+		require.NoError(err, term)
+		require.Len(result.Messages, 1, term)
+		assert.Equal(combiningID, result.Messages[0].ID, term)
+		require.NotEmpty(result.Messages[0].BodyContextSnippets, term)
+		assert.Contains(result.Messages[0].BodyContextSnippets[0], term, term)
+	}
 }
 
 func TestSearchMessageBodies_IgnoresUnsearchableContextGroups(t *testing.T) {
