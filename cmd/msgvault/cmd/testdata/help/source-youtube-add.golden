@@ -1,0 +1,9 @@
+Register an explicitly configured owned YouTube channel
+
+Usage:
+  msgvault source youtube add [identifier] [flags]
+
+Flags:
+  -h, --help   help for add
+
+Global Flags: --agent-allow-insecure, --agent-token-file, --agent-url, --config, --home, --local, --log-file, --log-level, --log-sql, --log-sql-slow-ms, --no-log-file, -v/--verbose (see 'msgvault --help')

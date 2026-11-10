@@ -1,0 +1,15 @@
+Archive YouTube comments
+
+Usage:
+  msgvault source youtube [command]
+
+Available Commands:
+  add         Register an explicitly configured owned YouTube channel
+  sync        Poll registered YouTube videos, comments and replies
+
+Flags:
+  -h, --help   help for youtube
+
+Global Flags: --agent-allow-insecure, --agent-token-file, --agent-url, --config, --home, --local, --log-file, --log-level, --log-sql, --log-sql-slow-ms, --no-log-file, -v/--verbose (see 'msgvault --help')
+
+Use "msgvault source youtube [command] --help" for more information about a command.

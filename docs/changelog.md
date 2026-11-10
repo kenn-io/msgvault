@@ -47,6 +47,9 @@ All notable changes to msgvault, grouped by release.
   `done`, `snooze`, and `reopen` clear them; the HTTP API has matching routes.
   A large archive is checked over several requests, up to 1,000 new messages
   each. Needs HTTP API schema 3.44.0.
+- [YouTube comments](usage/youtube.md) archive one configured owned channel's
+  videos, moderated comments and replies with resumable scheduled polling.
+  Later cycles append comments on older videos.
 - Keep Apple WhatsApp and iMessage archives current with daemon schedules,
   run history, and **Sync now** on Sources. See [configuration](https://msgvault.io/docs/configuration/#apple-whatsapp-sources).
 - Resumed Gmail full syncs preserve their starting History point so the next

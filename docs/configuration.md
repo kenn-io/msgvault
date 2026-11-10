@@ -4,6 +4,15 @@ title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
 
+## YouTube
+
+Each `[[youtube]]` profile requires `identifier`, immutable `channel_id`, and
+environment variable names `token_env`, `client_id_env`, `client_secret_env`.
+`enabled = true` with a nonempty cron `schedule` enables daemon polling.
+Duplicate profile identifiers or channel IDs fail validation; unknown keys
+and credential values in place of variable names are rejected. See
+[YouTube setup and progress](usage/youtube.md) for a complete example.
+
 ## Config File
 
 Default location:
