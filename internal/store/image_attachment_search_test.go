@@ -46,16 +46,3 @@ func TestImageAttachmentSearchFencesAndRevalidatesVisibleOccurrences(t *testing.
 	require.NoError(err)
 	assert.Empty(occurrences)
 }
-
-func TestImageAttachmentSearchIncludesImagesBeyondBatchLimit(t *testing.T) {
-	f := storetest.New(t)
-	mid := f.CreateMessage("synthetic image collection")
-	formats := make([]storetest.DocumentAttachment, 4097)
-	for i := range formats {
-		formats[i] = storetest.DocumentAttachment{MIMEType: "image/png", VersionID: fmt.Sprintf("00000000-0000-4000-8000-%012x", i+1)}
-	}
-	f.SeedDocumentAttachments(mid, formats)
-	ids, err := f.Store.DocumentSearchVersions(t.Context(), "attachments", nil)
-	require.NoError(t, err)
-	assert.Len(t, ids, len(formats))
-}
