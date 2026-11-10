@@ -554,8 +554,9 @@ func (p *Projector) reconcileRevisions(
 			}
 			return err
 		}
-		token := fmt.Sprintf("%d/%d", target.IdentityRevision, target.AccountIdentityRevision)
-		afterID, err := p.store.ActivityProjectionCursorContext(ctx, "revisions", token)
+		// Keep committed progress across identity changes. Row revision stamps,
+		// the final scan from zero, and the revision CAS establish freshness.
+		afterID, err := p.store.ActivityProjectionCursorContext(ctx, "revisions", "")
 		if err != nil {
 			return err
 		}
@@ -579,7 +580,7 @@ func (p *Projector) reconcileRevisions(
 				return err
 			}
 			afterID = candidates[len(candidates)-1].MessageID
-			if err := p.store.SetActivityProjectionCursorContext(ctx, "revisions", token, afterID); err != nil {
+			if err := p.store.SetActivityProjectionCursorContext(ctx, "revisions", "", afterID); err != nil {
 				return err
 			}
 		}
@@ -600,7 +601,7 @@ func (p *Projector) reconcileRevisions(
 			return err
 		}
 		if len(remaining) != 0 {
-			if err := p.store.SetActivityProjectionCursorContext(ctx, "revisions", token, 0); err != nil {
+			if err := p.store.SetActivityProjectionCursorContext(ctx, "revisions", "", 0); err != nil {
 				return err
 			}
 			continue

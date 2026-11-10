@@ -2375,9 +2375,10 @@ error and waits for the next scheduled or manual trigger, avoiding repeated
 retries of the same batch.
 
 Identity reconciliation and timezone or `max_direct_counterparts` changes save
-their progress in the archive. A new identity revision restarts identity
-reconciliation; completed batches remain committed. Manual builds are not
-limited to ten batches or two minutes.
+their progress in the archive. Identity reconciliation keeps its saved position
+across identity changes and rechecks earlier stale messages before completing.
+Completed batches remain committed. Manual builds are not limited to ten
+batches or two minutes.
 
 | Key | Default | Description |
 |---|---|---|
