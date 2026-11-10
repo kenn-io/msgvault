@@ -114,7 +114,7 @@ func TestPackageJSONFixture(t *testing.T) {
 	}
 	var title string
 	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT title FROM conversations WHERE source_conversation_id='725000000000000052'`).Scan(&title))
-	checks.Equal("sketchbook", title)
+	checks.Equal("sketchbook in Paper Observatory", title)
 	var ownerName string
 	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT p.display_name FROM participants p JOIN participant_identifiers pi ON pi.participant_id=p.id WHERE pi.identifier_type='discord_user_id' AND pi.identifier_value='725000000000000041'`).Scan(&ownerName))
 	checks.Equal("paper_lantern", ownerName)
@@ -172,6 +172,10 @@ func TestPackageLegacyCSV(t *testing.T) {
 	require.NoError(err)
 	assert.EqualValues(5, summary.MessagesAdded)
 	assert.EqualValues(1, summary.AttachmentLinks)
+	// Without an index.json label, the channel's own name is the title.
+	var title string
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT title FROM conversations`).Scan(&title))
+	assert.Equal("paper-trails", title)
 }
 
 func TestPackagePartialFailureReplay(t *testing.T) {

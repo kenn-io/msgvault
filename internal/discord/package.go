@@ -87,8 +87,10 @@ func ImportPackage(ctx context.Context, st *store.Store, directory string) (summ
 			return summary, err
 		}
 		kind, title := packageConversation(metadata)
-		if title == "" {
-			title = reader.titles[channelID]
+		// One package spans every guild, so prefer Discord's own label, which
+		// names the guild ("general in Example Server"), over the bare name.
+		if label := reader.titles[channelID]; label != "" {
+			title = label
 		}
 		conversationID, err := st.EnsureConversationWithTypeContext(ctx, source.ID, channelID, kind, title)
 		if err != nil {
