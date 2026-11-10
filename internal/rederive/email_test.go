@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -300,4 +301,19 @@ func TestEmailRederivationExtractsMissingInvites(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Len(page.Occurrences, 1)
 	assertions.Positive(derivedDataRevision(t, st), "calendar extraction must publish the write even though email text is unchanged")
+}
+
+func TestEmailRederivationExtractsOctetStreamInvite(t *testing.T) {
+	requirements := require.New(t)
+	st, src, id := archiveEmailSource(t, "gmail", "Invitation")
+	calendar := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:backfill@example.org\r\nDTSTART:20270302T120000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	raw := []byte("MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"=?UTF-8?B?UsOpdW5pb24uaWNz?=\"\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString([]byte(calendar)) + "\r\n--x--\r\n")
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE message_raw SET raw_data=?, compression=NULL WHERE message_id=?`), raw, id)
+	requirements.NoError(err)
+	_, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	requirements.NoError(err)
+	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
 }

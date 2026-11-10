@@ -439,6 +439,24 @@ func TestEmailCalendarFamilyOrganizer(t *testing.T) {
 	})
 }
 
+func TestEmailCalendarOctetStreamICSAttachments(t *testing.T) {
+	for _, tc := range []struct{ name, header string }{
+		{"plain", `Content-Type: application/octet-stream; name=invite.ics`},
+		{"rfc2231", "Content-Type: application/octet-stream\r\nContent-Disposition: attachment; filename*=UTF-8''R%C3%A9union.ics"},
+		{"percent encoded", "Content-Type: application/octet-stream\r\nContent-Disposition: attachment; filename*=UTF-8''R%C3%A9union%2Eics"},
+		{"encoded word", "Content-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"=?UTF-8?B?UsOpdW5pb24uaWNz?=\""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			calendar := calendarDocument("REQUEST", "DTSTART:20270302T120000Z")
+			raw := "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\n" + tc.header + "\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString(calendar) + "\r\n--x--\r\n"
+			_, source := persistInviteEmail(t, st, "octet-invite", []byte(raw))
+			requirements.Len(emailEvents(t, st, source), 1)
+		})
+	}
+}
+
 func TestEmailCalendarICSAttachments(t *testing.T) {
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

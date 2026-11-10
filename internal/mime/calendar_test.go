@@ -14,16 +14,24 @@ func TestCalendarMIMEParts(t *testing.T) {
 
 	const calendar = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:example@example.com\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
 	// A boundary makes enmime expand the attached message/rfc822 into child parts.
-	raw := "From: host@example.com\r\nSubject: Example invite\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=m\r\n\r\n--m\r\nContent-Type: multipart/alternative; boundary=a\r\n\r\n--a\r\nContent-Type: text/plain\r\n\r\nExample body\r\n--a\r\nContent-Type: text/calendar; method=CANCEL\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString([]byte(calendar)) + "\r\n--a--\r\n--m\r\nContent-Type: application/octet-stream; name=ignored.ics\r\n\r\n" + calendar + "\r\n--m\r\nContent-Type: message/rfc822; boundary=f\r\n\r\n--f\r\nContent-Type: text/calendar\r\n\r\n" + calendar + "\r\n--f--\r\n--m--\r\n"
+	raw := "From: host@example.com\r\nSubject: Example invite\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=m\r\n\r\n--m\r\nContent-Type: multipart/alternative; boundary=a\r\n\r\n--a\r\nContent-Type: text/plain\r\n\r\nExample body\r\n--a\r\nContent-Type: text/calendar; method=CANCEL\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString([]byte(calendar)) + "\r\n--a--\r\n--m\r\nContent-Type: application/octet-stream; name=invite.ics\r\n\r\n" + calendar + "\r\n--m\r\nContent-Type: message/rfc822; boundary=f\r\n\r\n--f\r\nContent-Type: text/calendar\r\n\r\n" + calendar + "\r\n--f--\r\n--m--\r\n"
 	msg, err := Parse([]byte(raw))
 	requirements.NoError(err)
-	requirements.Len(msg.CalendarParts, 1)
+	requirements.Len(msg.CalendarParts, 2)
 	assertions.Equal(calendar, string(msg.CalendarParts[0].Content))
 	assertions.Equal("CANCEL", msg.CalendarParts[0].Method)
+	assertions.Equal(calendar, string(msg.CalendarParts[1].Content))
+	assertions.Empty(msg.CalendarParts[1].Method)
 	msg, err = Parse([]byte("Content-Type: text/calendar\r\n\r\n" + calendar))
 	requirements.NoError(err)
 	requirements.Len(msg.CalendarParts, 1)
 	assertions.Equal(calendar, string(msg.CalendarParts[0].Content))
+
+	t.Run("non-calendar attachment", func(t *testing.T) {
+		msg, err := Parse([]byte("Content-Type: application/octet-stream; name=notes.txt\r\n\r\nnotes"))
+		require.NoError(t, err)
+		assert.Empty(t, msg.CalendarParts)
+	})
 
 	t.Run("application ics", func(t *testing.T) {
 		assertions, requirements := assert.New(t), require.New(t)
@@ -33,6 +41,5 @@ func TestCalendarMIMEParts(t *testing.T) {
 		requirements.NoError(err)
 		requirements.Len(msg.CalendarParts, 1)
 		assertions.Equal(calendar, string(msg.CalendarParts[0].Content))
-
 	})
 }
