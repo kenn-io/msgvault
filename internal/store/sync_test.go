@@ -1358,7 +1358,7 @@ func TestStore_ListUnresolvedSyncItemErrors(t *testing.T) {
 		{SourceMessageID: "gone", Phase: "fetch", Status: store.SyncRunItemStatusSkipped, ErrorKind: "gmail_not_found"},
 		{SourceMessageID: "reopened", Phase: "fetch", Status: store.SyncRunItemStatusResolved, ErrorKind: "acquired"},
 		{SourceMessageID: "reopened", Phase: "fetch", Status: store.SyncRunItemStatusError, ErrorKind: "fetch_error"},
-		{SourceMessageID: "retry", Phase: "delete", Status: store.SyncRunItemStatusSkipped, ErrorKind: "delete_error"},
+		{SourceMessageID: "retry", Phase: "delete", Status: store.SyncRunItemStatusError, ErrorKind: "delete_error"},
 	} {
 		item.SyncRunID = nextRun
 		require.NoError(f.Store.RecordSyncRunItem(item))

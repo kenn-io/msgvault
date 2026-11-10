@@ -74,6 +74,7 @@ var topLevelCommandGroups = map[string]string{
 	"deduplicate":             helpGroupDelete,
 	"delete-deduped":          helpGroupDelete,
 	"delete-staged":           helpGroupDelete,
+	"diagnose-acquisition":    helpGroupSources,
 	"docbank":                 helpGroupOperations,
 	"draft-compose":           helpGroupWrite,
 	"draft-delete":            helpGroupWrite,
@@ -183,7 +184,6 @@ var topLevelCommandGroups = map[string]string{
 	"unpack-attachments":      helpGroupMaintenance,
 	"update":                  helpGroupOperations,
 	"update-account":          helpGroupSources,
-	"diagnose-acquisition":    helpGroupSources,
 	"verify":                  helpGroupSources,
 	"version":                 helpGroupOperations,
 }
