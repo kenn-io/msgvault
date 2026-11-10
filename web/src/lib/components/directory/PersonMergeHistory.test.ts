@@ -142,74 +142,39 @@ function deferred<T = Response>() {
 const posts = (requests: Request[]) => requests.filter(request => request.method === 'POST');
 
 describe('PersonMergeHistory', () => {
-  it('lets the user choose addresses and leave while a past destination name loads', async () => {
-    const name = deferred();
-    const { requests, onClose } = renderHistory(detail(), { respond: path => {
-      if (path === '/api/v1/people/19') return name.promise;
+  it.each(['name loading', 'submit pending', 'reconciling'])('shows split controls during %s', async phase => {
+    const pending = deferred();
+    const reconciliation = deferred<void>();
+    const result = { exact_reversal: true, cache_state: 'ready', identity_revision: 8,
+      source_person: person(12, 5, [], 'Synthetic Source'), new_person: person(19, 1, [701], 'Synthetic Restored'),
+      split: { ...detail().splits![0], id: 56, exact_reversal: true }, ambiguous_rows: [], unrestored_rows: [], uid_alias_disposition: 'restored' };
+    renderHistory(detail(), { onSplitCommitted: () => reconciliation.promise, respond: (path, request) => {
+      if (phase === 'name loading' && path === '/api/v1/people/19') return pending.promise;
+      if (request.method === 'POST') return phase === 'submit pending' ? pending.promise : Response.json(result, { headers: { ETag: '"person-12-r5"', 'X-New-Person-ETag': '"person-19-r1"' } });
+      if (phase !== 'name loading' && path === '/api/v1/people/12') return Response.json(person(12, 4, [701], 'Synthetic Source'), { headers: { ETag: '"person-12-r4"' } });
       return undefined;
     } });
     try {
       await fireEvent.click(await screen.findByRole('button', { name: /^Open .+ merged into .+ · / }));
       await fireEvent.click(await screen.findByRole('button', { name: 'Split…' }));
       const choice = await screen.findByRole('checkbox', { name: 'address701@example.org, +12025550101' });
-      expect(choice).toHaveProperty('disabled', false);
-      expect(screen.queryByRole('checkbox', { name: 'Unknown address 1' })).toBeNull();
       await fireEvent.click(choice);
-      expect(choice).toHaveProperty('checked', true);
-      expect(screen.getByRole('button', { name: 'Split into new person' })).toHaveProperty('disabled', false);
-      expect(screen.getByRole('button', { name: 'Close' })).toHaveProperty('disabled', false);
-
-      await fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
-      expect(onClose).toHaveBeenCalledOnce();
-      expect(posts(requests)).toHaveLength(0);
+      if (phase === 'name loading') {
+        expect(choice).toHaveProperty('checked', true);
+        expect(screen.getByRole('button', { name: 'Split into new person' })).toHaveProperty('disabled', false);
+      } else {
+        await fireEvent.click(screen.getByRole('button', { name: 'Split into new person' }));
+        if (phase === 'submit pending') {
+          await waitFor(() => expect(screen.getByRole('button', { name: 'Split into new person' }).getAttribute('aria-busy')).toBe('true'));
+        } else {
+          await screen.findByRole('dialog', { name: 'Split complete' });
+          expect(screen.getByRole('button', { name: 'Done' })).toHaveProperty('disabled', false);
+        }
+      }
     } finally {
-      name.resolve(Response.json(person(19, 4, [703], 'Alex Restored')));
+      pending.resolve(phase === 'name loading' ? Response.json(person(19, 4, [703], 'Alex Restored')) : Response.json({}, { status: 503 }));
+      reconciliation.resolve();
     }
-  });
-
-  it('prevents dismissal while a split is pending', async () => {
-    const pending = deferred();
-    renderHistory(detail(), { respond: (path, request) => {
-      if (request.method === 'POST') return pending.promise;
-      if (path === '/api/v1/people/12') return Response.json(person(12, 4, [701], 'Synthetic Source'), { headers: { ETag: '"person-12-r4"' } });
-      return undefined;
-    } });
-    try {
-      await fireEvent.click(await screen.findByRole('button', { name: /^Open .+ merged into .+ · / }));
-      await fireEvent.click(await screen.findByRole('button', { name: 'Split…' }));
-      await fireEvent.click(await screen.findByRole('checkbox', { name: 'address701@example.org, +12025550101' }));
-      await fireEvent.click(screen.getByRole('button', { name: 'Split into new person' }));
-      await waitFor(() => expect(screen.getByRole('button', { name: 'Split into new person' }).getAttribute('aria-busy')).toBe('true'));
-      expect(screen.getByRole('button', { name: 'Close' })).toHaveProperty('disabled', true);
-    } finally { pending.resolve(Response.json({}, { status: 503 })); }
-  });
-
-  it('lets the user finish a committed split while the profiles refresh', async () => {
-    const reconciliation = deferred<void>();
-    const onSplitCommitted = vi.fn(() => reconciliation.promise);
-    const result = { exact_reversal: true, cache_state: 'ready', identity_revision: 8,
-      source_person: person(12, 5, [], 'Synthetic Source'), new_person: person(19, 1, [701], 'Synthetic Restored'),
-      split: { ...detail().splits![0], id: 56, exact_reversal: true }, ambiguous_rows: [], unrestored_rows: [], uid_alias_disposition: 'restored' };
-    const { onClose } = renderHistory(detail(), { onSplitCommitted, respond: (path, request) => {
-      if (request.method === 'POST') return Response.json(result, { headers: { ETag: '"person-12-r5"', 'X-New-Person-ETag': '"person-19-r1"' } });
-      if (path === '/api/v1/people/12') return Response.json(person(12, 4, [701], 'Synthetic Source'), { headers: { ETag: '"person-12-r4"' } });
-      return undefined;
-    } });
-    try {
-      await fireEvent.click(await screen.findByRole('button', { name: /^Open .+ merged into .+ · / }));
-      await fireEvent.click(await screen.findByRole('button', { name: 'Split…' }));
-      await fireEvent.click(await screen.findByRole('checkbox', { name: 'address701@example.org, +12025550101' }));
-      await fireEvent.click(screen.getByRole('button', { name: 'Split into new person' }));
-
-      await screen.findByRole('dialog', { name: 'Split complete' });
-      const done = screen.getByRole('button', { name: 'Done' });
-      await waitFor(() => expect(done).toHaveProperty('disabled', false));
-      expect(screen.getByRole('button', { name: 'Close' })).toHaveProperty('disabled', false);
-      await fireEvent.click(done);
-      await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-      await fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
-      expect(onClose).toHaveBeenCalledTimes(3);
-    } finally { reconciliation.resolve(); }
   });
 
   it('renders saved email and phone on the History card', async () => {

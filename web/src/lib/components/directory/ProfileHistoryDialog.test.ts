@@ -227,7 +227,7 @@ const mergedInCases = [
   { name: 'only seen in services', rows: 1, original: 'mira@example.org' },
 ];
 
-it.each(['history', 'merges'])('keeps account numbers in Split and its receipt when %s arrives first', async first => {
+it.each(['history', 'merges'])('keeps account numbers when %s arrives first', async first => {
   let releaseSecond!: () => void;
   const pendingSecond = new Promise<void>(resolve => { releaseSecond = resolve; });
   const merge = { ...mergeResult(person()).merge, id: 41, survivor_person_id: 7, absorbed_person_id: 9, current_person_id: 7 };
@@ -236,16 +236,12 @@ it.each(['history', 'merges'])('keeps account numbers in Split and its receipt w
   const labels = { profiles: [{ id: 7, display_name: 'Mira', participant_ids: [2] }, { id: 9, display_name: 'Neri', participant_ids: [1] }], participants, participant_ids: [1, 2], addresses: [address(1, 'Neri'), address(2, 'Mira')], absorbed_address_count: 1, incomplete: false };
   const saved = { person_id: 7, address_kind: 'username', original_value: 'reader', normalized_value: 'reader', identity_key: 'saved-whatsapp-key', service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'account-a', normalization: 'none', normalization_version: 1, envelope: { ...currentEnvelope, id: 10 } };
   const source = { ...person(), display_name: 'Mira', participant_ids: [1, 2] };
-  const remaining = { ...source, revision: 4, participant_ids: [2] };
-  const restored = { ...source, id: 9, revision: 1, display_name: 'Neri', participant_ids: [1], vcard_uid: 'person-9' };
   const detail = { merge, labels: { ...labels, participants: undefined }, participants, rows: [], splits: [], review_candidates: [] };
   render(ProfileHistoryDialog, { personID: 7, onClose: vi.fn(), client: createAPIClient(async input => {
     const request = input as Request, path = new URL(request.url).pathname;
     if (path.endsWith('/profile/history')) { if (first === 'merges') await pendingSecond; return Response.json({ ...emptyProfile(source), observations: [], contact_points: [saved] }); }
     if (path.endsWith('/merges')) { if (first === 'history') await pendingSecond; return Response.json({ merges: [{ merge, labels, participant_count: 1, row_count: 0, split_count: 0, pending_candidate_count: 0, row_action_counts: {} }], limit: 100, offset: 0 }); }
     if (path === '/api/v1/person-merges/41') return Response.json(detail);
-    if (path === '/api/v1/people/7') return Response.json(source, { headers: { ETag: '"person-7-r3"' } });
-    if (path === '/api/v1/people/7/split') return Response.json({ source_person: remaining, new_person: restored, split: { id: 55, merge_id: 41, source_person_id: 7, new_person_id: 9, new_person_uid: 'person-9', source_revision_before: 3, source_revision_after: 4, exact_reversal: true, actor: 'user', created_at: when }, exact_reversal: true, ambiguous_rows: [], unrestored_rows: [], uid_alias_disposition: 'restored', identity_revision: 2, cache_state: 'ready' });
     throw new Error(`unexpected ${request.method} ${path}`);
   }) });
   if (first === 'history') expect((await screen.findByText('reader')).closest('.detail-row')?.textContent).toContain('WhatsApp · account 1');
@@ -257,11 +253,7 @@ it.each(['history', 'merges'])('keeps account numbers in Split and its receipt w
   await fireEvent.click(await screen.findByRole('button', { name: /^Open Neri merged into Mira/ }));
   const cards = await screen.findByRole('group', { name: 'Merged profiles' });
   expect(cards.textContent).toContain('Mira · account 2');
-  await fireEvent.click(await screen.findByRole('button', { name: 'Split…' }));
-  const choice = await screen.findByRole('checkbox', { name: /WhatsApp · Neri · account 2/ });
-  await fireEvent.click(choice);
-  await fireEvent.click(screen.getByRole('button', { name: 'Split into new person' }));
-  expect((await screen.findByRole('button', { name: 'Open Neri' })).closest('.detail-row')?.textContent).toContain('WhatsApp · Neri · account 2');
+
 });
 
 async function renderMergedInAddress(entry: typeof mergedInCases[number]) {

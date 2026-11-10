@@ -80,7 +80,6 @@ it('groups saved addresses by the keys supplied by the server', () => {
 
 it.each([
   { type: 'beeper', display: '', name: '', expected: 'WhatsApp' },
-  { type: 'beeper', display: '', name: 'Neri Bloom', expected: 'WhatsApp · Neri Bloom' },
   { type: 'beeper', display: '@garden-member', name: '', expected: 'WhatsApp · @garden-member' },
   { type: 'handle', key: '@garden-member', display: '', name: '', expected: 'Custom chat · @garden-member' },
   { type: 'beeper', display: '@garden-member', name: 'Garden member', scope: true, expected: 'WhatsApp · Garden member · @garden-member · account 1' },

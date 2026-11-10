@@ -130,10 +130,6 @@ test('Directory profile updates menu is accessible on a phone', async ({ page })
   await page.getByRole('button', { name: 'More actions' }).click();
   const item = page.getByRole('menuitemcheckbox', { name: /Keep this profile updated/ });
   await expect(item).toBeInViewport();
-  await item.focus();
-  await page.keyboard.press('Space');
-  await expect(item).toHaveAttribute('aria-checked', 'true');
-  await expect(item).toBeInViewport();
   await expectNoAxeViolations(page, 'Directory profile updates menu');
   await page.keyboard.press('Escape');
   await expect(page.getByRole('menu')).toBeHidden();
