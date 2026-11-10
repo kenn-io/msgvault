@@ -10,8 +10,12 @@ import type { ExploreSort } from "./exploreSort";
 export interface ExploreHTTPRequest {
   candidate_snapshot_id?: string;
   cursor?: string;
+  /** @maxItems 500 */
+  exclude_keys?: string[];
   filters?: ExploreFilter[];
   grouping?: ExploreGroupDimension[];
+  /** @maxItems 500 */
+  include_keys?: string[];
   /**
    * @minimum 0
    * @maximum 500

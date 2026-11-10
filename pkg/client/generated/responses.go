@@ -3523,6 +3523,8 @@ type PatchSavedViewErrorResponseJSON = ErrorResponse
 
 type PatchSavedViewErrorResponseJSON409 = ErrorResponse
 
+type PatchSavedViewErrorResponseJSON422 = ErrorResponse
+
 type PatchSavedViewErrorResponseJSON428 = ErrorResponse
 
 type PatchSavedViewErrorResponseJSON503 = ErrorResponse
@@ -7221,6 +7223,7 @@ type PatchSavedViewResp struct {
 	JSON400      *PatchSavedViewErrorResponse
 	JSON404      *PatchSavedViewErrorResponseJSON
 	JSON409      *PatchSavedViewErrorResponseJSON409
+	JSON422      *PatchSavedViewErrorResponseJSON422
 	JSON428      *PatchSavedViewErrorResponseJSON428
 	JSON503      *PatchSavedViewErrorResponseJSON503
 	JSONDefault  *PatchSavedViewErrorResponseJSONDefault

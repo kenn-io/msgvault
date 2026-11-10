@@ -6,6 +6,14 @@ import type { SavedViewStateEnvelope } from "./savedViewStateEnvelope";
 export interface PatchSavedViewRequest {
   canonical_state?: SavedViewStateEnvelope;
   description?: string;
+  /** @maxItems 500 */
+  exclude_add?: string[];
+  /** @maxItems 500 */
+  exclude_remove?: string[];
+  /** @maxItems 500 */
+  include_add?: string[];
+  /** @maxItems 500 */
+  include_remove?: string[];
   name?: string;
   schema_version?: number;
 }

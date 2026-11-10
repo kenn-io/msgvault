@@ -9,6 +9,8 @@ import type { ExploreGroupSort } from "./exploreGroupSort";
 
 export interface ExploreGroupsHTTPRequest {
   cursor?: string;
+  /** @maxItems 500 */
+  exclude_keys?: string[];
   filters?: ExploreFilter[];
   group_key?: string;
   /**
@@ -17,6 +19,8 @@ export interface ExploreGroupsHTTPRequest {
    * @maxItems 1
    */
   grouping: ExploreGroupDimension[];
+  /** @maxItems 500 */
+  include_keys?: string[];
   /**
    * @minimum 0
    * @maximum 500

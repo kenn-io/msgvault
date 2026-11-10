@@ -5617,6 +5617,11 @@ components:
       properties:
         cursor:
           type: string
+        exclude_keys:
+          items:
+            type: string
+          maxItems: 500
+          type: array
         filters:
           items:
             $ref: "#/components/schemas/ExploreFilter"
@@ -5632,6 +5637,11 @@ components:
           type: array
           x-oapi-codegen-extra-tags:
             validate: required,min=1,max=1
+        include_keys:
+          items:
+            type: string
+          maxItems: 500
+          type: array
         limit:
           format: int64
           maximum: 500
@@ -5707,6 +5717,11 @@ components:
           type: string
         cursor:
           type: string
+        exclude_keys:
+          items:
+            type: string
+          maxItems: 500
+          type: array
         filters:
           items:
             $ref: "#/components/schemas/ExploreFilter"
@@ -5714,6 +5729,11 @@ components:
         grouping:
           items:
             $ref: "#/components/schemas/ExploreGroupDimension"
+          type: array
+        include_keys:
+          items:
+            type: string
+          maxItems: 500
           type: array
         limit:
           format: int64
@@ -10512,6 +10532,26 @@ components:
           $ref: "#/components/schemas/SavedViewStateEnvelope"
         description:
           type: string
+        exclude_add:
+          items:
+            type: string
+          maxItems: 500
+          type: array
+        exclude_remove:
+          items:
+            type: string
+          maxItems: 500
+          type: array
+        include_add:
+          items:
+            type: string
+          maxItems: 500
+          type: array
+        include_remove:
+          items:
+            type: string
+          maxItems: 500
+          type: array
         name:
           type: string
         schema_version:
@@ -14505,6 +14545,8 @@ components:
       type: object
     SavedView:
       properties:
+        applied:
+          $ref: "#/components/schemas/SavedViewItemsApplied"
         canonical_state:
           description: Stored definition, including incompatible values; check incompatibility_reason before execution
           x-go-type: jsontext.Value
@@ -14515,24 +14557,42 @@ components:
           type: string
         description:
           type: string
+        exclude_count:
+          format: int64
+          type: integer
         id:
+          format: int64
+          type: integer
+        include_count:
           format: int64
           type: integer
         incompatibility_reason:
           description: Definition validation error that prevents this Saved View from executing
           type: string
+        items:
+          $ref: "#/components/schemas/SavedViewItemList"
         name:
           type: string
+        redacted_item_count:
+          format: int64
+          type: integer
         revision:
           format: int64
           type: integer
         schema_version:
           format: int64
           type: integer
+        stale_item_count:
+          format: int64
+          type: integer
         updated_at:
           format: date-time
           type: string
       required:
+        - stale_item_count
+        - redacted_item_count
+        - include_count
+        - exclude_count
         - id
         - name
         - canonical_state
@@ -14595,6 +14655,63 @@ components:
         - field
         - operator
         - values
+      type: object
+    SavedViewItem:
+      properties:
+        added_by:
+          type: string
+        conversation_id:
+          format: int64
+          type: integer
+        entry_key:
+          type: string
+        kind:
+          type: string
+        message_id:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+      required:
+        - entry_key
+        - kind
+        - added_by
+        - source_id
+      type: object
+    SavedViewItemList:
+      properties:
+        exclude:
+          items:
+            $ref: "#/components/schemas/SavedViewItem"
+          type: array
+        include:
+          items:
+            $ref: "#/components/schemas/SavedViewItem"
+          type: array
+      required:
+        - include
+        - exclude
+      type: object
+    SavedViewItemsApplied:
+      properties:
+        exclude_added:
+          format: int64
+          type: integer
+        exclude_removed:
+          format: int64
+          type: integer
+        include_added:
+          format: int64
+          type: integer
+        include_removed:
+          format: int64
+          type: integer
+      required:
+        - include_added
+        - include_removed
+        - exclude_added
+        - exclude_removed
       type: object
     SavedViewSort:
       additionalProperties: false
@@ -16900,7 +17017,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.44.0
+  version: 3.45.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -31343,6 +31460,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
         "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
           content:
             application/json:
               schema:

@@ -5162,12 +5162,14 @@ func (e ExploreGroupSort) Validate() error {
 }
 
 type ExploreGroupsHTTPRequest struct {
-	Cursor   *string         `json:"cursor,omitzero"`
-	Filters  []ExploreFilter `json:"filters,omitempty"`
-	GroupKey *string         `json:"group_key,omitzero"`
+	Cursor      *string         `json:"cursor,omitzero"`
+	ExcludeKeys []string        `json:"exclude_keys,omitempty"`
+	Filters     []ExploreFilter `json:"filters,omitempty"`
+	GroupKey    *string         `json:"group_key,omitzero"`
 
 	// Grouping Day counts individual messages; other dimensions count entries, with chats collapsed into conversations
 	Grouping     []ExploreGroupDimension               `json:"grouping" validate:"required,min=1,max=1"`
+	IncludeKeys  []string                              `json:"include_keys,omitempty"`
 	Limit        *int64                                `json:"limit,omitempty" validate:"omitempty,gte=0,lte=500"`
 	Presentation *ExploreGroupsHTTPRequestPresentation `json:"presentation,omitempty"`
 
@@ -5189,6 +5191,9 @@ func (e ExploreGroupsHTTPRequest) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(e.Grouping, "required,min=1,max=1"); err != nil {
 		errors = errors.Append("Grouping", err)
+	}
+	if len(e.ExcludeKeys) > 500 {
+		errors = errors.Add("ExcludeKeys", fmt.Sprintf("must have at most 500 items, got %d", len(e.ExcludeKeys)))
 	}
 	for i, item := range e.Filters {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -5212,6 +5217,9 @@ func (e ExploreGroupsHTTPRequest) Validate() error {
 				errors = errors.Append(fmt.Sprintf("Grouping[%d]", i), err)
 			}
 		}
+	}
+	if len(e.IncludeKeys) > 500 {
+		errors = errors.Add("IncludeKeys", fmt.Sprintf("must have at most 500 items, got %d", len(e.IncludeKeys)))
 	}
 	if e.Limit != nil {
 		if err := typesValidator.Var(e.Limit, "omitempty,gte=0,lte=500"); err != nil {
@@ -5288,8 +5296,10 @@ func (e ExploreGroupsHTTPResponse) Validate() error {
 type ExploreHTTPRequest struct {
 	CandidateSnapshotID *string                         `json:"candidate_snapshot_id,omitzero"`
 	Cursor              *string                         `json:"cursor,omitzero"`
+	ExcludeKeys         []string                        `json:"exclude_keys,omitempty"`
 	Filters             []ExploreFilter                 `json:"filters,omitempty"`
 	Grouping            []ExploreGroupDimension         `json:"grouping,omitempty"`
+	IncludeKeys         []string                        `json:"include_keys,omitempty"`
 	Limit               *int64                          `json:"limit,omitempty" validate:"omitempty,gte=0,lte=500"`
 	Presentation        *ExploreHTTPRequestPresentation `json:"presentation,omitempty"`
 
@@ -5303,6 +5313,9 @@ type ExploreHTTPRequest struct {
 
 func (e ExploreHTTPRequest) Validate() error {
 	var errors runtime.ValidationErrors
+	if len(e.ExcludeKeys) > 500 {
+		errors = errors.Add("ExcludeKeys", fmt.Sprintf("must have at most 500 items, got %d", len(e.ExcludeKeys)))
+	}
 	for i, item := range e.Filters {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -5316,6 +5329,9 @@ func (e ExploreHTTPRequest) Validate() error {
 				errors = errors.Append(fmt.Sprintf("Grouping[%d]", i), err)
 			}
 		}
+	}
+	if len(e.IncludeKeys) > 500 {
+		errors = errors.Add("IncludeKeys", fmt.Sprintf("must have at most 500 items, got %d", len(e.IncludeKeys)))
 	}
 	if e.Limit != nil {
 		if err := typesValidator.Var(e.Limit, "omitempty,gte=0,lte=500"); err != nil {
@@ -10221,6 +10237,10 @@ type PatchRelationshipTypeRequest struct {
 type PatchSavedViewRequest struct {
 	CanonicalState *SavedViewStateEnvelope `json:"canonical_state,omitempty"`
 	Description    *string                 `json:"description,omitzero"`
+	ExcludeAdd     []string                `json:"exclude_add,omitempty"`
+	ExcludeRemove  []string                `json:"exclude_remove,omitempty"`
+	IncludeAdd     []string                `json:"include_add,omitempty"`
+	IncludeRemove  []string                `json:"include_remove,omitempty"`
 	Name           *string                 `json:"name,omitzero"`
 	SchemaVersion  *int64                  `json:"schema_version,omitempty"`
 }
@@ -10233,6 +10253,18 @@ func (p PatchSavedViewRequest) Validate() error {
 				errors = errors.Append("CanonicalState", err)
 			}
 		}
+	}
+	if len(p.ExcludeAdd) > 500 {
+		errors = errors.Add("ExcludeAdd", fmt.Sprintf("must have at most 500 items, got %d", len(p.ExcludeAdd)))
+	}
+	if len(p.ExcludeRemove) > 500 {
+		errors = errors.Add("ExcludeRemove", fmt.Sprintf("must have at most 500 items, got %d", len(p.ExcludeRemove)))
+	}
+	if len(p.IncludeAdd) > 500 {
+		errors = errors.Add("IncludeAdd", fmt.Sprintf("must have at most 500 items, got %d", len(p.IncludeAdd)))
+	}
+	if len(p.IncludeRemove) > 500 {
+		errors = errors.Add("IncludeRemove", fmt.Sprintf("must have at most 500 items, got %d", len(p.IncludeRemove)))
 	}
 	if len(errors) == 0 {
 		return nil
@@ -14538,22 +14570,36 @@ func (r RunSavedViewResponse) Validate() error {
 }
 
 type SavedView struct {
+	Applied *SavedViewItemsApplied `json:"applied,omitempty"`
+
 	// CanonicalState Stored definition, including incompatible values; check incompatibility_reason before execution
 	CanonicalState jsontext.Value `json:"canonical_state"`
 	CreatedAt      time.Time      `json:"created_at" validate:"required"`
 	Description    *string        `json:"description,omitzero"`
+	ExcludeCount   int64          `json:"exclude_count"`
 	ID             int64          `json:"id"`
+	IncludeCount   int64          `json:"include_count"`
 
 	// IncompatibilityReason Definition validation error that prevents this Saved View from executing
-	IncompatibilityReason *string   `json:"incompatibility_reason,omitzero"`
-	Name                  string    `json:"name" validate:"required"`
-	Revision              int64     `json:"revision"`
-	SchemaVersion         int64     `json:"schema_version"`
-	UpdatedAt             time.Time `json:"updated_at" validate:"required"`
+	IncompatibilityReason *string            `json:"incompatibility_reason,omitzero"`
+	Items                 *SavedViewItemList `json:"items,omitempty"`
+	Name                  string             `json:"name" validate:"required"`
+	RedactedItemCount     int64              `json:"redacted_item_count"`
+	Revision              int64              `json:"revision"`
+	SchemaVersion         int64              `json:"schema_version"`
+	StaleItemCount        int64              `json:"stale_item_count"`
+	UpdatedAt             time.Time          `json:"updated_at" validate:"required"`
 }
 
 func (s SavedView) Validate() error {
 	var errors runtime.ValidationErrors
+	if s.Applied != nil {
+		if v, ok := any(s.Applied).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Applied", err)
+			}
+		}
+	}
 	if v, ok := any(s.CanonicalState).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("CanonicalState", err)
@@ -14561,6 +14607,13 @@ func (s SavedView) Validate() error {
 	}
 	if err := typesValidator.Var(s.CreatedAt, "required"); err != nil {
 		errors = errors.Append("CreatedAt", err)
+	}
+	if s.Items != nil {
+		if v, ok := any(s.Items).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Items", err)
+			}
+		}
 	}
 	if err := typesValidator.Var(s.Name, "required"); err != nil {
 		errors = errors.Append("Name", err)
@@ -14601,6 +14654,59 @@ func (s SavedViewFilter) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type SavedViewItem struct {
+	AddedBy        string `json:"added_by" validate:"required"`
+	ConversationID *int64 `json:"conversation_id,omitempty"`
+	EntryKey       string `json:"entry_key" validate:"required"`
+	Kind           string `json:"kind" validate:"required"`
+	MessageID      *int64 `json:"message_id,omitempty"`
+	SourceID       int64  `json:"source_id"`
+}
+
+func (s SavedViewItem) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
+type SavedViewItemList struct {
+	Exclude []SavedViewItem `json:"exclude" validate:"required"`
+	Include []SavedViewItem `json:"include" validate:"required"`
+}
+
+func (s SavedViewItemList) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.Exclude, "required"); err != nil {
+		errors = errors.Append("Exclude", err)
+	}
+	for i, item := range s.Exclude {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Exclude[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(s.Include, "required"); err != nil {
+		errors = errors.Append("Include", err)
+	}
+	for i, item := range s.Include {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Include[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type SavedViewItemsApplied struct {
+	ExcludeAdded   int64 `json:"exclude_added"`
+	ExcludeRemoved int64 `json:"exclude_removed"`
+	IncludeAdded   int64 `json:"include_added"`
+	IncludeRemoved int64 `json:"include_removed"`
 }
 
 type SavedViewSort struct {
