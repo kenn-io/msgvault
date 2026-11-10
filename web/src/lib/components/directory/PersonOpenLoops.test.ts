@@ -56,6 +56,7 @@ describe("PersonOpenLoops", () => {
     expect(screen.getByText("Waiting on you")).toBeDefined();
     expect(screen.getByText("Waiting on them")).toBeDefined();
     expect(screen.getAllByText("2d")).toHaveLength(2);
+    expect(screen.getByText("2 open")).toBeDefined();
     expect(screen.queryByText(/could not be read/)).toBeNull();
     const request = fetcher.mock.calls[0]?.[0];
     const url = new URL(
@@ -67,13 +68,13 @@ describe("PersonOpenLoops", () => {
     expect(url.searchParams.get("limit")).toBe("5");
   });
 
-  it.each([
-    { items: [loop(1), loop(2)], truncated: false, expected: "2 open" },
-    { items: [loop(1), loop(2), loop(3), loop(4), loop(5)], truncated: true, expected: "5+ open" },
-  ])("shows the open count with a plus only when truncated: $expected", async ({ items, truncated, expected }) => {
-    const { client } = clientFor(items, truncated);
+  it("shows a plus when more loops are open than the card lists", async () => {
+    const { client } = clientFor(
+      [loop(1), loop(2), loop(3), loop(4), loop(5)],
+      true,
+    );
     render(PersonOpenLoops, { client, personID: 7 });
-    expect(await screen.findByText(expected)).toBeDefined();
+    expect(await screen.findByText("5+ open")).toBeDefined();
   });
 
   it("says how many messages could not be read, with or without loops", async () => {
