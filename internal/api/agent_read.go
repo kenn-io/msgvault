@@ -130,7 +130,12 @@ func (s agentReadScope) sourceCount() int {
 
 func installAgentReadScope(r *http.Request, allowed []int64, incoming map[int64][]string, scope agentReadScope) {
 	ctx := sourcescope.WithSourceIDs(r.Context(), allowed)
-	ctx = sourcescope.WithIncomingSenders(ctx, incoming)
+	for _, keys := range incoming {
+		if len(keys) > 0 {
+			ctx = sourcescope.WithIncomingSenders(ctx, incoming)
+			break
+		}
+	}
 	*r = *r.WithContext(context.WithValue(ctx, agentReadScopeKey{}, scope))
 }
 
