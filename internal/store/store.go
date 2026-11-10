@@ -1298,6 +1298,7 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 		{"idx_message_recipients_normalized_email", messageRecipientsNormalizedEmailIndexDefinition},
 		{"idx_source_merge_messages_original_message", "ON source_merge_messages(original_message_id)"},
 		{"idx_source_merge_conversations_original_conversation", "ON source_merge_conversations(original_conversation_id)"},
+		{"idx_source_merge_archive_only_original", "ON source_merge_archive_only_messages(original_source_message_id)"},
 	}
 	for _, index := range concurrentIndexes {
 		if dropErr := dropInvalidIndexConcurrently(ctx, conn, index.name); dropErr != nil {

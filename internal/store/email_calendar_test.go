@@ -6,12 +6,14 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/mime"
 )
 
 func TestEmailCalendarGmailAuditExcludesDerivedEvents(t *testing.T) {
@@ -468,6 +470,72 @@ func TestEmailCalendarRevisionAfterSourceMerge(t *testing.T) {
 			assertions.Equal(status, page.Occurrences[0].Status)
 		})
 	}
+}
+
+func TestEmailCalendarSubsetAfterSourceMerge(t *testing.T) {
+	t.Setenv("MSGVAULT_TEST_DB", "")
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	oldID, from := persistInviteEmail(t, st, "original", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nSUMMARY:Original")))
+	persistInviteEmailForSource(t, st, from, "revision", inviteEmail(calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T130000Z\r\nSUMMARY:Accepted")))
+	into, err := st.GetOrCreateSource("mbox", "destination@example.com")
+	requirements.NoError(err)
+	_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: from, IntoSourceID: into.ID})
+	requirements.NoError(err)
+	ids := emailEvents(t, st, into.ID)
+	requirements.Len(ids, 1)
+	var conversationID int64
+	requirements.NoError(st.db.QueryRow(`SELECT conversation_id FROM messages WHERE id=?`, ids[0]).Scan(&conversationID))
+	_, err = st.db.Exec(`UPDATE messages SET sent_at=CASE WHEN id IN (?, ?) THEN '2030-01-01T00:00:00Z' ELSE '2020-01-01T00:00:00Z' END`, oldID, ids[0])
+	requirements.NoError(err)
+	destination := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(t.Context(), st.dbPath, destination, 2, false)
+	requirements.NoError(err)
+	subset, err := Open(filepath.Join(destination, "msgvault.db"))
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = subset.Close() })
+	item, err := subset.ScanArchivedEmailContext(t.Context(), into.ID, oldID-1, oldID)
+	requirements.NoError(err)
+	requirements.NotNil(item)
+	parsed, err := mime.Parse(item.RawData)
+	requirements.NoError(err)
+	_, err = subset.RefreshArchivedEmailCalendarContext(t.Context(), into.ID, item, parsed)
+	requirements.NoError(err)
+	assertions.Equal(ids, emailEvents(t, subset, into.ID))
+	var subject, start string
+	requirements.NoError(subset.db.QueryRow(`SELECT subject, metadata ->> 'start' FROM messages WHERE id=?`, ids[0]).Scan(&subject, &start))
+	assertions.Equal("Accepted", subject)
+	assertions.Equal("2027-03-02T13:00:00Z", start)
+	persistInviteEmailForSource(t, subset, into.ID, "later", inviteEmail(calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTART:20270302T140000Z\r\nSUMMARY:Later")))
+	assertions.Equal(ids, emailEvents(t, subset, into.ID))
+	var gotConversation int64
+	requirements.NoError(subset.db.QueryRow(`SELECT conversation_id FROM messages WHERE id=?`, ids[0]).Scan(&gotConversation))
+	assertions.Equal(conversationID, gotConversation)
+	assertions.Equal("Later", calendarRows(t, subset, ids...)[0].Subject)
+	persistInviteEmailForSource(t, subset, into.ID, "exception", inviteEmail(calendarDocument("REQUEST", "RECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T150000Z\r\nSUMMARY:Exception")))
+	ids = emailEvents(t, subset, into.ID)
+	requirements.Len(ids, 2)
+	requirements.NoError(subset.db.QueryRow(`SELECT conversation_id FROM messages WHERE id=?`, ids[1]).Scan(&gotConversation))
+	assertions.Equal(conversationID, gotConversation)
+}
+
+func TestEmailCalendarMergedMasterlessExceptionKeepsConversation(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, from := persistInviteEmail(t, st, "exception", inviteEmail(calendarDocument("REQUEST", "RECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T130000Z\r\nSUMMARY:Exception")))
+	into, err := st.GetOrCreateSource("mbox", "destination@example.com")
+	requirements.NoError(err)
+	_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: from, IntoSourceID: into.ID})
+	requirements.NoError(err)
+	ids := emailEvents(t, st, into.ID)
+	requirements.Len(ids, 1)
+	var conversationID int64
+	requirements.NoError(st.db.QueryRow(`SELECT conversation_id FROM messages WHERE id=?`, ids[0]).Scan(&conversationID))
+	persistInviteEmailForSource(t, st, into.ID, "update", inviteEmail(calendarDocument("REQUEST", "SEQUENCE:1\r\nRECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nSUMMARY:Moved")))
+	assertions.Equal(ids, emailEvents(t, st, into.ID))
+	var gotConversation int64
+	requirements.NoError(st.db.QueryRow(`SELECT conversation_id FROM messages WHERE id=?`, ids[0]).Scan(&gotConversation))
+	assertions.Equal(conversationID, gotConversation)
 }
 
 func TestEmailCalendarArchiveOnlyMarker(t *testing.T) {
