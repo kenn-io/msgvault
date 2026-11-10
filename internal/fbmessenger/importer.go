@@ -637,7 +637,7 @@ func writeThreadToStore(
 			if stored.ID == 0 && opts.Limit > 0 && summary.MessagesAdded >= int64(opts.Limit) {
 				return errLimitReached
 			}
-			if err := writeInstagramMessage(ctx, st, absRoot, sourceID, thread.instagramKey, m.sourceID, stored, m.instagramFilename, m.instagramShard, m.rawData, m, opts, summary, m.instagramHeader); err != nil {
+			if err := writeInstagramMessage(ctx, st, absRoot, sourceID, thread.instagramKey, m.sourceID, stored, m.instagramFilename, m.instagramShard, m.rawData, m, opts, summary); err != nil {
 				return err
 			}
 			continue
@@ -1015,17 +1015,10 @@ func fbAttachmentHash(att Attachment, idx int) string {
 	return fbSyntheticAttachmentKeyPrefix + hex.EncodeToString(sum[:])
 }
 
-func writeInstagramMessage(ctx context.Context, st *store.Store, root string, sourceID int64, key, id string, stored store.StoredMessage, filename string, shard *instagramShard, raw jsontext.Value, message Message, opts ImportOptions, summary *ImportSummary, headerPending bool) error {
+func writeInstagramMessage(ctx context.Context, st *store.Store, root string, sourceID int64, key, id string, stored store.StoredMessage, filename string, shard *instagramShard, raw jsontext.Value, message Message, opts ImportOptions, summary *ImportSummary) error {
 	fromMe := message.SenderName == opts.SelfName
 	if fromMe {
 		summary.FromMeCount++
-	}
-	var header any
-	if headerPending {
-		header = struct {
-			Title        string               `json:"title"`
-			Participants []rawJSONParticipant `json:"participants"`
-		}{shard.Title, shard.Participants}
 	}
 	relative, err := filepath.Rel(root, filename)
 	if err != nil {
@@ -1034,9 +1027,12 @@ func writeInstagramMessage(ctx context.Context, st *store.Store, root string, so
 	rawData, err := json.Marshal(struct {
 		Shard      string         `json:"shard"`
 		ThreadPath string         `json:"thread_path"`
-		Header     any            `json:"header,omitempty"`
+		Header     any            `json:"header"`
 		Record     jsontext.Value `json:"record"`
-	}{filepath.ToSlash(relative), shard.ThreadPath, header, raw}, jsontext.PreserveRawStrings(true))
+	}{filepath.ToSlash(relative), shard.ThreadPath, struct {
+		Title        string               `json:"title"`
+		Participants []rawJSONParticipant `json:"participants"`
+	}{shard.Title, shard.Participants}, raw}, jsontext.PreserveRawStrings(true))
 	if err != nil {
 		return err
 	}

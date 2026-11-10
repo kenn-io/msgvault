@@ -87,7 +87,6 @@ type Message struct {
 	rawData           []byte
 	instagramShard    *instagramShard
 	instagramFilename string
-	instagramHeader   bool
 	// Index is a monotonic per-thread index (0-based) used to construct
 	// a stable source_message_id.
 	Index int

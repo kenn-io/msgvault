@@ -337,6 +337,12 @@ func TestInstagramGenericMediaAndThreadUpdates(t *testing.T) {
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT title,conversation_type FROM conversations`).Scan(&title, &kind))
 	assert.Equal("Changed fictional title", title)
 	assert.Equal("group_chat", kind)
+	_, total, err := st.SearchMessagesQueryContext(t.Context(), &search.Query{TextTerms: []string{"Changed"}}, 0, 10)
+	require.NoError(err)
+	assert.Equal(int64(2), total)
+	var recipients int
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(DISTINCT mr.message_id) FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE p.display_name = 'Lumen Example'`).Scan(&recipients))
+	assert.Equal(2, recipients)
 }
 func TestInstagramReorderedDuplicateReactionsStayWithOccurrence(t *testing.T) {
 	st := testutil.NewTestStore(t)

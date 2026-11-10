@@ -30,12 +30,11 @@ type instagramShard struct {
 }
 
 type instagramPending struct {
-	id, filename  string
-	shard         *instagramShard
-	raw           jsontext.Value
-	record        rawJSONMessage
-	message       Message
-	headerPending bool
+	id, filename string
+	shard        *instagramShard
+	raw          jsontext.Value
+	record       rawJSONMessage
+	message      Message
 }
 
 type instagramOccurrence struct{ content, reactions string }
@@ -95,7 +94,6 @@ func parseInstagramThread(ctx context.Context, st *store.Store, sourceID int64, 
 			return nil, nil, errors.New("conflicting thread_path across directories")
 		}
 		keys[key] = threadDir
-		headerPending := true
 		for _, raw := range shard.Messages {
 			if err := ctx.Err(); err != nil {
 				return nil, nil, err
@@ -132,8 +130,7 @@ func parseInstagramThread(ctx context.Context, st *store.Store, sourceID int64, 
 				summary.Incomplete = true
 				continue
 			}
-			pending = append(pending, &instagramPending{filename: filename, shard: shard, raw: raw, record: record, message: message, headerPending: headerPending})
-			headerPending = false
+			pending = append(pending, &instagramPending{filename: filename, shard: shard, raw: raw, record: record, message: message})
 		}
 	}
 	groups := map[string][]*instagramPending{}
@@ -215,7 +212,6 @@ func parseInstagramThread(ctx context.Context, st *store.Store, sourceID int64, 
 		message := p.message
 		message.sourceID, message.rawData = p.id, p.raw
 		message.instagramShard, message.instagramFilename = p.shard, p.filename
-		message.instagramHeader = p.headerPending
 		parsed.Messages = append(parsed.Messages, message)
 	}
 	return parsed, archived, nil
