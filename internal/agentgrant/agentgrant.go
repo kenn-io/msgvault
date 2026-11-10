@@ -79,7 +79,8 @@ func (g Grant) Allows(p Permission, src SourceRef) bool {
 	return g.HasPermission(p) && g.MatchesSource(src)
 }
 
-func (g Grant) matchingSource(src SourceRef) (SourceRef, bool) {
+// Source finds the grant entry for a source by its type and identifier.
+func (g Grant) Source(src SourceRef) (SourceRef, bool) {
 	for _, source := range g.Sources {
 		if source.Type == src.Type && source.Identifier == src.Identifier {
 			return source, true
@@ -89,7 +90,7 @@ func (g Grant) matchingSource(src SourceRef) (SourceRef, bool) {
 }
 
 func (g Grant) MatchesSource(src SourceRef) bool {
-	_, ok := g.matchingSource(src)
+	_, ok := g.Source(src)
 	return ok
 }
 
@@ -99,7 +100,7 @@ func (g Grant) AllowsSender(p Permission, src SourceRef, senderKey string) bool 
 	if senderKey == "" || !g.HasPermission(p) {
 		return false
 	}
-	source, ok := g.matchingSource(src)
+	source, ok := g.Source(src)
 	return ok && slices.Contains(source.SenderKeys, senderKey)
 }
 

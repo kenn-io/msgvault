@@ -353,14 +353,8 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 			return draftReplyTarget{}, "", nil, err
 		}
 		if grant != nil {
-			var senders []string
-			for _, source := range grant.Sources {
-				if source.Type == parentSource.SourceType && source.Identifier == parentSource.Identifier {
-					senders = source.IncomingSenderKeys
-					break
-				}
-			}
-			ctx = sourcescope.WithIncomingSenders(ctx, map[int64][]string{parentSource.ID: senders})
+			source, _ := grant.Source(draftSourceRef(parentSource))
+			ctx = sourcescope.WithIncomingSenders(ctx, map[int64][]string{parentSource.ID: source.IncomingSenderKeys})
 			allowed, err := a.store.IncomingMessageAllowed(ctx, *parentID)
 			if err != nil || !allowed {
 				return draftReplyTarget{}, "", nil, draftReplyNotPermitted(errors.New("parent source is not available"))
