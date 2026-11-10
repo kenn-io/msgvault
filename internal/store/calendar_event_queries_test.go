@@ -102,7 +102,7 @@ func TestCalendarEventRowsHardSeriesCap(t *testing.T) {
 	requirements.NoError(err)
 }
 
-func TestCalendarEventRowsBudgetRejectsBeforeDecoding(t *testing.T) {
+func TestCalendarEventRowsSourceScope(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	first, firstID := calendarFixture(t, st, "one", calendarRaw)
 	_, secondID := calendarFixture(t, st, "two", calendarRaw)
@@ -112,14 +112,20 @@ func TestCalendarEventRowsBudgetRejectsBeforeDecoding(t *testing.T) {
 	require.NoError(t, err)
 	ctx, release, err := st.BeginReadSnapshotContext(sourcescope.WithSourceIDs(t.Context(), []int64{first.Message.SourceID}))
 	require.NoError(t, err)
+	defer release()
 	rows, err := queryCalendarEventRowsWithinBudget(ctx, st.db, "1 = 1", nil, 1)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	assert.Equal(t, firstID, rows[0].MessageID)
-	release()
-	_, err = st.db.Exec(`UPDATE calendar_events SET recurrence_json = 'invalid'`)
+}
+
+func TestCalendarEventRowsBudgetRejectsBeforeDecoding(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	calendarFixture(t, st, "one", calendarRaw)
+	calendarFixture(t, st, "two", calendarRaw)
+	_, err := st.db.Exec(`UPDATE calendar_events SET recurrence_json = 'invalid'`)
 	require.NoError(t, err)
-	ctx, release, err = st.BeginReadSnapshotContext(t.Context())
+	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
 	require.NoError(t, err)
 	defer release()
 	_, err = queryCalendarEventRowsWithinBudget(ctx, st.db, "1 = 1", nil, 1)

@@ -119,8 +119,8 @@ The daemon requires an enabled source, explicit `write_calendars`, event-write
 OAuth consent, and a live `owner` or `writer` accessRole. Guest changes also need
 `invite_calendars`. Delegated grants match the exact `gcal` source identifier
 `account-email/calendar-id`: `calendar.read` for availability,
-`calendar.event.read` for provider-derived event details in delegated plans and
-write receipts, `calendar.write` for changes, and additional `calendar.invite`
+`calendar.event.read` for archived event listing and provider-derived event details in
+delegated plans and write receipts, `calendar.write` for changes, and additional `calendar.invite`
 for guest changes. The authenticated account is never substituted for a requested
 non-primary calendar. Availability with `calendar_ids` authorizes each listed
 calendar and ignores `calendar_id`.

@@ -149,8 +149,6 @@ func (s *Server) authorizeAgentRead(r *http.Request, operation string, grant *ag
 	}
 	*r = *r.WithContext(context.WithValue(r.Context(), agentReadScopeKey{}, agentReadScope{ids: allowed}))
 	switch operation {
-	case "listCalendarEvents":
-		return nil
 	case "getCLIMessageThread":
 		if account != "" && !accountGranted {
 			return agentReadDenied(permission)

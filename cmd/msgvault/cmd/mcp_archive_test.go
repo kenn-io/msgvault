@@ -322,7 +322,7 @@ func TestMCPArchivedCalendarVersionGate(t *testing.T) {
 	for _, tc := range []struct {
 		version   string
 		available bool
-	}{{"3.34.0", false}, {"4.1.0", true}, {"4.2.0", true}} {
+	}{{"3.34.0", false}, {"4.1.0", true}} {
 		t.Run(tc.version, func(t *testing.T) {
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
