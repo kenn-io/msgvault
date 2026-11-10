@@ -35,9 +35,7 @@ public site has three levels; keep their responsibilities distinct.
 
 For a command that has not shipped, put `Not in the latest release yet` before
 its README block. For installer output, print a warning alongside the command
-and put `# Not in the latest release yet` before the output in the source. The
-comment covers output until the next blank source line. Remove the note and
-warning after a release supports the command. See the
+and put `# Not in the latest release yet` before the output in the source. See the
 [release-commands guide](https://github.com/kenn-io/actions/tree/main/release-commands#mark-unreleased-commands)
 for details.
 
