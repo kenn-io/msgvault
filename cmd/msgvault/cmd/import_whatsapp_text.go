@@ -21,15 +21,15 @@ func runWhatsAppTextImport(cmd *cobra.Command, path string, opts whatsapp.TextOp
 	defer cleanup()
 	opts.AttachmentsDir = state.cfg.AttachmentsDir()
 	summary, importErr := whatsapp.NewImporter(st, nil).ImportText(cmd.Context(), path, opts)
+	if summary.SourceID == 0 {
+		return fmt.Errorf("import WhatsApp TXT: %w", importErr)
+	}
 	// Committed rows and their source must remain visible after cancellation.
 	post := context.WithoutCancel(cmd.Context())
-	var migrationErr error
-	if summary.SourceID != 0 {
-		if !noDefaultIdentityImportWhatsApp {
-			confirmDefaultIdentity(post, cmd.OutOrStdout(), st, summary.SourceID, opts.Phone, opts.Phone, "phone-e164", state.logger)
-		}
-		migrationErr = runPostSourceCreateMigrationsForInvocation(post, st, state)
+	if !noDefaultIdentityImportWhatsApp {
+		confirmDefaultIdentity(post, cmd.OutOrStdout(), st, summary.SourceID, opts.Phone, opts.Phone, "phone-e164", state.logger)
 	}
+	migrationErr := runPostSourceCreateMigrationsForInvocation(post, st, state)
 	cacheErr := rebuildCacheAfterWrite(post, state.cfg.DatabaseDSN(), state)
 	resultErr := errors.Join(importErr, migrationErr, cacheErr)
 	status := "complete"

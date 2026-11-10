@@ -421,7 +421,7 @@ func assignMessageIDs(
 }
 
 func duplicateOccurrenceID(base string, occurrence int) string {
-	return "imazing_csv:" + stableHash(base, strconv.Itoa(occurrence))
+	return "imazing_csv:" + StableHash(base, strconv.Itoa(occurrence))
 }
 
 // rowEvidenceFingerprint carries the exported fields that messages within one

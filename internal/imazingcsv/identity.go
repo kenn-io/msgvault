@@ -82,10 +82,6 @@ func normalizeChat(value string) string {
 // StableHash returns SHA-256 hex over decimal byte-length-framed UTF-8 fields.
 // Import adapters share this encoding to keep persisted identifiers stable.
 func StableHash(parts ...string) string {
-	return stableHash(parts...)
-}
-
-func stableHash(parts ...string) string {
 	hash := sha256.New()
 	for _, part := range parts {
 		_, _ = fmt.Fprintf(hash, "%d:", len(part))
@@ -95,7 +91,7 @@ func stableHash(parts ...string) string {
 }
 
 func conversationKey(chatSession string) string {
-	return "imazing_csv:" + stableHash(normalizeChat(chatSession))
+	return "imazing_csv:" + StableHash(normalizeChat(chatSession))
 }
 
 // messageBaseID hashes only the fields that identify one occurrence of a
@@ -105,7 +101,7 @@ func conversationKey(chatSession string) string {
 // every edited or reformatted row as a brand-new message; they instead act
 // as occurrence evidence during duplicate reconciliation.
 func messageBaseID(row Row, chatKey string, sender participantIdentity) string {
-	return stableHash(
+	return StableHash(
 		chatKey,
 		row.SentAt.UTC().Format(time.RFC3339Nano),
 		string(row.Direction),

@@ -270,7 +270,7 @@ func attachmentWrite(row Row, reference string) (store.AttachmentWrite, error) {
 		Metadata:      string(metadata),
 		Role:          store.AttachmentRoleStandalone,
 		RoleSource:    store.AttachmentRoleSourceImporterSemantics,
-		SourcePartKey: SourceType + ":attachment:" + stableHash(reference),
+		SourcePartKey: SourceType + ":attachment:" + StableHash(reference),
 		State:         attachmentpolicy.StateFailed,
 		SkipReason:    attachmentpolicy.SkipFetchFailure,
 	}, nil

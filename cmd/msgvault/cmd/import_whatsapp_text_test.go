@@ -38,11 +38,7 @@ func TestWhatsAppTextCommand(t *testing.T) {
 		importPhone, importMediaDir, importContacts = oldPhone, oldMediaDir, oldContacts
 		importLimit, importDisplayName, noDefaultIdentityImportWhatsApp = oldLimit, oldDisplayName, oldNoDefaultIdentity
 	})
-	for _, incomplete := range []bool{false, true} {
-		name := "complete"
-		if incomplete {
-			name = "incomplete"
-		}
+	for _, name := range []string{"complete", "incomplete", "preflight-error"} {
 		t.Run(name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			markDaemonCLISubprocessForTest(t)
@@ -52,7 +48,7 @@ func TestWhatsAppTextCommand(t *testing.T) {
 			cfg.Data.DataDir = home
 			payload := "13/6/26, 10:00 - Mira: asters\n"
 			args := []string{"--format", "text", "--phone", "+12025550123", "--chat-id", "garden", "--chat-type", "group", "--timezone", "UTC", "--date-order", "dmy", "--no-default-identity"}
-			if incomplete {
+			if name == "incomplete" {
 				st, err := store.Open(cfg.DatabaseDSN())
 				require.NoError(err)
 				t.Cleanup(func() { assert.NoError(st.Close()) })
@@ -64,6 +60,9 @@ func TestWhatsAppTextCommand(t *testing.T) {
 				require.NoError(os.WriteFile(filepath.Join(media, "note.txt"), []byte("fictional seed list"), 0600))
 				args = append(args, "--media-dir", media)
 			}
+			if name == "preflight-error" {
+				payload = "fictional preamble\n"
+			}
 			path := filepath.Join(t.TempDir(), "chat.txt")
 			require.NoError(os.WriteFile(path, []byte(payload), 0600))
 			command := &cobra.Command{Use: "test"}
@@ -74,7 +73,11 @@ func TestWhatsAppTextCommand(t *testing.T) {
 			command.SetErr(&out)
 			command.SetArgs(append([]string{"import-whatsapp", path}, args...))
 			err := command.Execute()
-			if incomplete {
+			if name == "preflight-error" {
+				require.ErrorContains(err, "import WhatsApp TXT: line 1: unsupported or malformed TXT header")
+				assert.NotContains(out.String(), "Import ")
+				assert.NotContains(out.String(), "Media:")
+			} else if name == "incomplete" {
 				require.ErrorContains(err, "fictional attachment failure")
 				assert.Contains(out.String(), "Import incomplete: 1 records")
 				assert.Contains(out.String(), "1 added, 0 unchanged")
