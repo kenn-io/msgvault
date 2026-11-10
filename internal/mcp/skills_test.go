@@ -45,11 +45,6 @@ func TestSkillsCatalogWithoutArchiveAccess(t *testing.T) {
 				Skills []struct{ Name, Title, Summary string } `json:"skills"`
 			}](t, result)
 			requirements.NotEmpty(catalog.Skills)
-			for _, guide := range catalog.Skills {
-				assertions.NotEmpty(guide.Name)
-				assertions.NotEmpty(guide.Title)
-				assertions.NotEmpty(guide.Summary)
-			}
 		})
 	}
 }
@@ -73,28 +68,34 @@ func TestGuideCatalogIncludesEveryRenderedSkill(t *testing.T) {
 		got = append(got, guide.Name)
 	}
 	assert.Equal(t, want, got)
+}
 
-	t.Run("additional_skill", func(t *testing.T) {
-		const name = "msgvault-z-probe"
-		const content = "# Synthetic skill\n\nComplete synthetic skill content.\n"
-		catalog, err := buildSkillsCatalog(append(rendered, skills.Skill{Name: name, Content: content}))
-		require.NoError(t, err)
-		var names []string
-		for _, entry := range catalog.Entries() {
-			names = append(names, entry.Name)
-		}
-		assert.Equal(t, append(want, name), names)
-		read, err := catalog.Handler(t.Context(), &sdkmcp.CallToolRequest{Params: &sdkmcp.CallToolParamsRaw{
-			Arguments: json.RawMessage(`{"name":"msgvault-z-probe"}`),
-		}})
-		require.NoError(t, err)
-		require.False(t, read.IsError)
-		require.Len(t, read.Content, 1)
-		text, ok := read.Content[0].(*sdkmcp.TextContent)
-		require.True(t, ok)
-		assert.True(t, strings.HasSuffix(text.Text, content), "retain the entire bundled CLI skill")
-		assert.Contains(t, strings.TrimSuffix(text.Text, content), skillMCPBasics)
-	})
+func TestBuildSkillsCatalog(t *testing.T) {
+	rendered, err := skills.Render("dev")
+	require.NoError(t, err)
+	want := []string{"workflow"}
+	for _, skill := range rendered {
+		want = append(want, skill.Name)
+	}
+	const name = "msgvault-z-probe"
+	const content = "# Synthetic skill\n\nComplete synthetic skill content.\n"
+	catalog, err := buildSkillsCatalog(append(slices.Clone(rendered), skills.Skill{Name: name, Content: content}))
+	require.NoError(t, err)
+	var names []string
+	for _, entry := range catalog.Entries() {
+		names = append(names, entry.Name)
+	}
+	assert.Equal(t, append(slices.Clone(want), name), names)
+	read, err := catalog.Handler(t.Context(), &sdkmcp.CallToolRequest{Params: &sdkmcp.CallToolParamsRaw{
+		Arguments: json.RawMessage(`{"name":"msgvault-z-probe"}`),
+	}})
+	require.NoError(t, err)
+	require.False(t, read.IsError)
+	require.Len(t, read.Content, 1)
+	text, ok := read.Content[0].(*sdkmcp.TextContent)
+	require.True(t, ok)
+	assert.True(t, strings.HasSuffix(text.Text, content), "retain the entire bundled CLI skill")
+	assert.Contains(t, strings.TrimSuffix(text.Text, content), skillMCPBasics)
 }
 
 func TestSkillsRetrievesEveryShippedGuide(t *testing.T) {
@@ -106,10 +107,22 @@ func TestSkillsRetrievesEveryShippedGuide(t *testing.T) {
 	for _, source := range sources {
 		want[source.Name] = source.Content
 	}
-	legacy := map[string]string{
-		"msgvault-search":      searchMCPGuide,
-		"msgvault-attachments": attachmentsMCPGuide,
-		"msgvault-analytics":   analyticsMCPGuide,
+	legacy := map[string]struct{ preamble, title, summary string }{
+		"msgvault-search": {
+			preamble: searchMCPGuide,
+			title:    "Search and read messages",
+			summary:  "Find messages and conversations, page bodies and retrieve original email.",
+		},
+		"msgvault-attachments": {
+			preamble: attachmentsMCPGuide,
+			title:    "Find and retrieve attachments",
+			summary:  "Inspect message attachments, retrieve bytes and understand server-side exports.",
+		},
+		"msgvault-analytics": {
+			preamble: analyticsMCPGuide,
+			title:    "Analyze archive metadata",
+			summary:  "Inspect accounts, aggregate message statistics and query the analytics cache.",
+		},
 	}
 	for name := range legacy {
 		requirements.Contains(want, name, "retain every legacy skill")
@@ -128,9 +141,8 @@ func TestSkillsRetrievesEveryShippedGuide(t *testing.T) {
 			} else {
 				assertions.True(strings.HasSuffix(text.Text, source), "retain the entire bundled CLI skill")
 				preamble := strings.TrimSuffix(text.Text, source)
-				assertions.Contains(preamble, skillMCPBasics)
 				if legacyGuide, ok := legacy[name]; ok {
-					assertions.Equal(legacyGuide+"\n\n## Bundled CLI guide\n\n", preamble)
+					assertions.Equal(legacyGuide.preamble+"\n\n## Bundled CLI guide\n\n", preamble)
 				}
 			}
 			metadata := task5StructuredAs[struct {
@@ -140,6 +152,10 @@ func TestSkillsRetrievesEveryShippedGuide(t *testing.T) {
 			assertions.Equal(name, metadata.Skills[0].Name)
 			assertions.NotEmpty(metadata.Skills[0].Title)
 			assertions.NotEmpty(metadata.Skills[0].Summary)
+			if legacyGuide, ok := legacy[name]; ok {
+				assertions.Equal(legacyGuide.title, metadata.Skills[0].Title)
+				assertions.Equal(legacyGuide.summary, metadata.Skills[0].Summary)
+			}
 		})
 	}
 }

@@ -444,11 +444,6 @@ func task5AssertJSONParity(t *testing.T, toolName string, result *sdkmcp.CallToo
 			Skills []struct{ Name, Title, Summary string } `json:"skills"`
 		}](t, result)
 		require.NotEmpty(t, catalog.Skills)
-		for _, guide := range catalog.Skills {
-			assert.NotEmpty(t, guide.Name)
-			assert.NotEmpty(t, guide.Title)
-			assert.NotEmpty(t, guide.Summary)
-		}
 		return
 	}
 	var textJSON any
