@@ -287,7 +287,7 @@ func TestGrantWithNoSenderKeysHasNoSenderAuthority(t *testing.T) {
 	assert.False(t, g.AllowsSender(PermissionDraftCreate, SourceRef{Type: "imap", Identifier: "imap://alice@example.com"}, "alice@example.com"))
 }
 
-func TestArchiveSenderKeysRemainIndependentSnapshots(t *testing.T) {
+func TestArchiveSenderAuthorityRemainsIndependent(t *testing.T) {
 	source := SourceRef{ID: 1, Type: "gmail", Identifier: "account@example.test"}
 	permission, ok := KnownPermission("message.archive")
 	require.True(t, ok)
@@ -301,6 +301,18 @@ func TestArchiveSenderKeysRemainIndependentSnapshots(t *testing.T) {
 	assert.False(t, (Grant{Sources: []SourceRef{source}}).AllowsArchiveSender(source, "codes@example.test"))
 	source.SenderKeys = []string{"owner@example.test"}
 	source.ArchiveSenderKeys = []string{"codes@example.test"}
+	grant.Sources = []SourceRef{source}
+	grant.Permissions = append(grant.Permissions, PermissionDraftCreate)
+	assert.True(t, grant.AllowsSender(PermissionDraftCreate, source, "owner@example.test"))
+	assert.True(t, grant.AllowsArchiveSender(source, "codes@example.test"))
+	assert.False(t, grant.AllowsArchiveSender(source, ""))
+	assert.False(t, grant.AllowsArchiveSender(source, "owner@example.test"))
+	assert.False(t, grant.AllowsSender(PermissionDraftCreate, source, "codes@example.test"))
+}
+
+func TestArchiveSenderKeysRemainIndependentSnapshots(t *testing.T) {
+	source := SourceRef{ID: 1, Type: "gmail", Identifier: "account@example.test", SenderKeys: []string{"owner@example.test"}}
+	source.ArchiveSenderKeys = []string{"codes@example.test"}
 	registry := NewRegistry()
 	_, secret, issued, err := registry.Issue("mixed", []Permission{PermissionDraftCreate, PermissionMessageArchive}, []SourceRef{source}, time.Time{})
 	require.NoError(t, err)
@@ -309,11 +321,6 @@ func TestArchiveSenderKeysRemainIndependentSnapshots(t *testing.T) {
 	loaded, ok := registry.Lookup(secret)
 	require.True(t, ok)
 	assert.Equal(t, []string{"codes@example.test"}, loaded.Sources[0].ArchiveSenderKeys)
-	assert.True(t, loaded.AllowsSender(PermissionDraftCreate, source, "owner@example.test"))
-	assert.True(t, loaded.AllowsArchiveSender(source, "codes@example.test"))
-	assert.False(t, loaded.AllowsArchiveSender(source, ""))
-	assert.False(t, loaded.AllowsArchiveSender(source, "owner@example.test"))
-	assert.False(t, loaded.AllowsSender(PermissionDraftCreate, source, "codes@example.test"))
 	loaded.Sources[0].ArchiveSenderKeys[0] = "lookup@example.test"
 	listed := registry.List()
 	assert.Equal(t, []string{"codes@example.test"}, listed[0].Sources[0].ArchiveSenderKeys)

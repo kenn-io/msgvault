@@ -22,7 +22,10 @@ func (b *cliArchiveBackend) SupportsAPISchemaVersion(context.Context, string) (b
 }
 func (b *cliArchiveBackend) ArchiveMessage(_ context.Context, id int64, change emailtags.ArchiveChange) (*emailtags.ArchiveResult, error) {
 	b.id, b.change = id, change
-	return &emailtags.ArchiveResult{MessageID: id, Archived: *change.Archived, Changed: true, DryRun: change.DryRun}, b.failure
+	if b.failure != nil {
+		return nil, b.failure
+	}
+	return &emailtags.ArchiveResult{MessageID: id, Archived: *change.Archived, Changed: true, DryRun: change.DryRun}, nil
 }
 func TestArchiveMessageCommands(t *testing.T) {
 	for _, archived := range []bool{true, false} {

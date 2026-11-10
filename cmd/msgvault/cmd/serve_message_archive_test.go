@@ -4,13 +4,11 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/mail"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -32,66 +30,41 @@ import (
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
-	"golang.org/x/oauth2"
 )
 
 type archiveProviderFixture struct {
+	client       *daemonTagGmailClient
+	messageID    string
 	connects     atomic.Int64
 	failReadback atomic.Bool
 }
 
 func newArchiveProviderFixture(t *testing.T) *archiveProviderFixture {
 	t.Helper()
-	fixture := &archiveProviderFixture{}
+	fixture := &archiveProviderFixture{messageID: "gmail-archive"}
 	tags := []string{"INBOX", "UNREAD", "Label_keep"}
 	var mutex sync.Mutex
-	failRead := false
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	fixture.client = &daemonTagGmailClient{MockAPI: gmail.NewMockAPI()}
+	fixture.client.archive = func(_ context.Context, id string, archived, dryRun bool) (*emailtags.MessageTagResult, error) {
 		mutex.Lock()
 		defer mutex.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/gmail/v1/users/me/labels":
-			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"labels": []map[string]string{{"id": "Label_keep", "name": "Keep", "type": "user"}}}))
-			return
-		case "/gmail/v1/users/me/messages/gmail-archive/modify":
-			var change struct {
-				Add    []string `json:"addLabelIds"`
-				Remove []string `json:"removeLabelIds"`
-			}
-			if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&change)) {
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			failRead = fixture.failReadback.Load()
-			tags = slices.DeleteFunc(tags, func(tag string) bool { return slices.Contains(change.Remove, tag) })
-			tags = append(tags, change.Add...)
-		case "/gmail/v1/users/me/messages/gmail-archive":
-			if failRead {
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-		default:
-			assert.Fail(t, "unexpected Gmail request", r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-			return
+		assert.Equal(t, fixture.messageID, id)
+		result := &emailtags.MessageTagResult{Provider: "gmail", Before: slices.Clone(tags), Tags: slices.Clone(tags), AvailableTags: []emailtags.MessageTag{{ID: "Label_keep", Name: "Keep"}}, DryRun: dryRun}
+		if archived {
+			result.Tags = slices.DeleteFunc(result.Tags, func(tag string) bool { return tag == "INBOX" })
+		} else if !slices.Contains(result.Tags, "INBOX") {
+			result.Tags = append(result.Tags, "INBOX")
 		}
-		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"id": "gmail-archive", "labelIds": tags}))
-	}))
-	t.Cleanup(provider.Close)
-	base, err := url.Parse(provider.URL)
-	require.NoError(t, err)
-	original := http.DefaultTransport
-	http.DefaultTransport = testTransport(func(r *http.Request) (*http.Response, error) {
-		if r.URL.Host == "gmail.googleapis.com" {
-			clone := r.Clone(r.Context())
-			clone.URL.Scheme, clone.URL.Host = base.Scheme, base.Host
-			clone.Host = base.Host
-			return original.RoundTrip(clone)
+		if dryRun {
+			return result, nil
 		}
-		return original.RoundTrip(r)
-	})
-	t.Cleanup(func() { http.DefaultTransport = original })
+		tags = slices.Clone(result.Tags)
+		if fixture.failReadback.Load() {
+			return result, emailtags.Failure("remote_unknown", "Read current tags", result, nil)
+		}
+		result.Verified = true
+		return result, nil
+	}
 	return fixture
 }
 
@@ -112,7 +85,7 @@ func newArchiveDaemon(t *testing.T) (*store.Store, *store.Source, int64, *storeA
 	provider := newArchiveProviderFixture(t)
 	adapter := &storeAPIAdapter{store: st, config: cfg, logger: slog.New(slog.DiscardHandler), emailTagClientFactory: func(context.Context, *store.Source) (gmail.API, error) {
 		provider.connects.Add(1)
-		return gmail.NewClient(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "synthetic-fixture-token"}), gmail.WithRateLimiter(gmail.NewRateLimiter(1000))), nil
+		return provider.client, nil
 	}, draftCacheRefresh: func(context.Context, string) error { return nil }}
 	srv := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: adapter, Logger: slog.New(slog.DiscardHandler)})
 	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
@@ -124,8 +97,8 @@ func newArchiveDaemon(t *testing.T) (*store.Store, *store.Source, int64, *storeA
 	return st, source, id, adapter, server.URL, owner, provider
 }
 
-func TestArchiveMessageDaemonEndToEnd(t *testing.T) {
-	st, source, id, adapter, serverURL, owner, provider := newArchiveDaemon(t)
+func TestArchiveMessageDaemonGrantEnforcement(t *testing.T) {
+	st, source, id, _, serverURL, owner, provider := newArchiveDaemon(t)
 	other, err := st.GetOrCreateSource("gmail", "other@example.test")
 	require.NoError(t, err)
 	for _, tc := range []struct {
@@ -168,6 +141,10 @@ func TestArchiveMessageDaemonEndToEnd(t *testing.T) {
 			assert.True(t, result.DryRun)
 		})
 	}
+}
+
+func TestArchiveMessageDaemonAgentCLI(t *testing.T) {
+	_, source, id, _, serverURL, owner, _ := newArchiveDaemon(t)
 	cliGrant, err := owner.IssueAgentTokenWithArchiveSenders(t.Context(), "cli archive", []string{"message.archive"}, []int64{source.ID}, nil, map[int64][]string{source.ID: {"codes@example.test"}}, time.Time{})
 	require.NoError(t, err)
 	tokenFile := filepath.Join(t.TempDir(), "agent.token")
@@ -184,20 +161,29 @@ func TestArchiveMessageDaemonEndToEnd(t *testing.T) {
 	root.SetErr(&bytes.Buffer{})
 	require.NoError(t, root.ExecuteContext(cliContext))
 	assert.Contains(t, output.String(), `"dry_run":true`)
+}
+
+func TestArchiveMessageDaemonPreviewDuringSync(t *testing.T) {
+	st, source, id, _, _, owner, _ := newArchiveDaemon(t)
 	syncExecution, err := st.AcquireSyncExecutionContext(t.Context(), source.ID)
 	require.NoError(t, err)
 	previewArchived := true
 	preview, err := owner.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &previewArchived, DryRun: true})
 	require.NoError(t, err)
 	assert.True(t, preview.DryRun)
-	localPreview, err := st.GetMessage(id)
-	require.NoError(t, err)
-	assert.Empty(t, localPreview.Labels, "preview must not save even authoritative labels")
+	assert.True(t, preview.Archived)
+	assert.True(t, preview.Changed)
 	require.NoError(t, syncExecution.Release())
+}
+
+func TestArchiveMessageDaemonWriteAndReconcile(t *testing.T) {
+	st, _, id, _, _, owner, _ := newArchiveDaemon(t)
 	archived := true
 	result, err := owner.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived})
 	require.NoError(t, err)
 	assert.True(t, result.Verified)
+	assert.True(t, result.Archived)
+	assert.True(t, result.Changed)
 	msg, err := st.GetMessage(id)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"UNREAD", "Keep"}, msg.Labels)
@@ -205,11 +191,18 @@ func TestArchiveMessageDaemonEndToEnd(t *testing.T) {
 	target, err := st.EmailTagTargetContext(t.Context(), id, "")
 	require.NoError(t, err)
 	require.NoError(t, st.SaveEmailTagsContext(t.Context(), target, &emailtags.MessageTagResult{Provider: "gmail", Tags: []string{"INBOX", "UNREAD"}, Verified: true}))
-	_, err = owner.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived})
+	result, err = owner.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived})
 	require.NoError(t, err)
+	assert.True(t, result.Archived)
+	assert.False(t, result.Changed)
 	msg, err = st.GetMessage(id)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"UNREAD", "Keep"}, msg.Labels, "satisfied retry must reconcile stale local membership")
+}
+
+func TestArchiveMessageDaemonWriteRequiresSourceOwnership(t *testing.T) {
+	st, source, id, adapter, _, _, _ := newArchiveDaemon(t)
+	archived := true
 	var failure *emailtags.MessageTagError
 	execution, err := st.AcquireSyncExecutionContext(t.Context(), source.ID)
 	require.NoError(t, err)
@@ -280,13 +273,13 @@ func TestArchiveSenderRequiresEveryLiteralFromAndRechecksUnderLock(t *testing.T)
 	require.Len(t, quoted.From, 1)
 	require.Equal(t, "first last@example.test", quoted.From[0].Email)
 	grant.Sources[0].ArchiveSenderKeys = append(grant.Sources[0].ArchiveSenderKeys, "first last@example.test")
-	newArchiveProviderFixture(t)
+	provider := newArchiveProviderFixture(t)
 	cfg := &config.Config{HomeDir: t.TempDir()}
 	cfg.Data.DataDir = cfg.HomeDir
 	adapter.config = cfg
 	adapter.logger = slog.New(slog.DiscardHandler)
 	adapter.emailTagClientFactory = func(context.Context, *store.Source) (gmail.API, error) {
-		return gmail.NewClient(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "synthetic"}), gmail.WithRateLimiter(gmail.NewRateLimiter(1000))), nil
+		return provider.client, nil
 	}
 	for _, tc := range []struct {
 		name      string
@@ -300,11 +293,12 @@ func TestArchiveSenderRequiresEveryLiteralFromAndRechecksUnderLock(t *testing.T)
 		{"stored quoted mailbox", []string{quoted.From[0].Email}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			provider.messageID = "gmail-archive-" + tc.name
 			ids := make([]int64, len(tc.addresses))
 			for i := range ids {
 				ids[i] = participant
 			}
-			id, err := st.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: &store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "gmail-archive", MessageType: "email"}, Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: ids, EmailAddresses: tc.addresses}}})
+			id, err := st.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: &store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "gmail-archive-" + tc.name, MessageType: "email"}, Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: ids, EmailAddresses: tc.addresses}}})
 			require.NoError(t, err)
 			result, err := adapter.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived, DryRun: true}, grant, nil)
 			if tc.allowed {

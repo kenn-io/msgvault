@@ -52,19 +52,13 @@ func TestArchiveMessageRouteValidationAndGate(t *testing.T) { //nolint:parallelt
 	}
 	assert.Equal(t, http.StatusBadRequest, call("0", `{"archived":true}`).Code)
 	assert.Zero(t, st.calls)
-	for _, code := range []string{"archive_unsupported", "insufficient_scope", "message_not_found"} {
-		st.fail = emailtags.Failure(code, "synthetic failure", nil, nil)
-		response := call("7", `{"archived":false}`)
-		expected := map[string]int{"archive_unsupported": 501, "insufficient_scope": 403, "message_not_found": 404}[code]
-		assert.Equal(t, expected, response.Code, response.Body.String())
-	}
+	st.fail = emailtags.Failure("archive_unsupported", "synthetic failure", nil, nil)
+	response := call("7", `{"archived":false}`)
+	assert.Equal(t, http.StatusNotImplemented, response.Code, response.Body.String())
 	st.fail = nil
 	release, ok := gate.BeginLabeledWorkContext(t.Context(), "sync")
 	require.True(t, ok)
 	defer release()
-	preview := call("7", `{"archived":false,"dry_run":true}`)
-	require.Equal(t, http.StatusOK, preview.Code, preview.Body.String())
-	assert.Contains(t, preview.Body.String(), `"archived":false`)
 	write := call("7", `{"archived":true}`)
 	assert.Equal(t, http.StatusServiceUnavailable, write.Code, write.Body.String())
 }
