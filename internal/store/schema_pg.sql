@@ -1455,6 +1455,8 @@ CREATE TABLE IF NOT EXISTS matrix_encrypted_events (
 );
 CREATE INDEX IF NOT EXISTS idx_matrix_encrypted_events_pending
     ON matrix_encrypted_events(conversation_id, message_id) WHERE NOT recovered;
+CREATE INDEX IF NOT EXISTS idx_matrix_encrypted_events_pending_session
+    ON matrix_encrypted_events(conversation_id, session_id, message_id) WHERE NOT recovered;
 
 -- The first event to use each Megolm message index in a room. Later events
 -- with the same index are replays and stay encrypted.

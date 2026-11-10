@@ -185,8 +185,19 @@ func (s *Store) CountMatrixPending(ctx context.Context, sourceID int64, include,
 func (s *Store) MatrixDueEncryptedEvents(ctx context.Context, conversationID, afterID int64, due MatrixRecoveryDue, limit int) ([]MatrixEncryptedEvent, error) {
 	dueWhere, dueArgs := due.where()
 	args := append(append([]any{conversationID, afterID}, dueArgs...), limit)
-	rows, err := s.db.QueryContext(ctx, `SELECT e.message_id, e.ciphertext FROM matrix_encrypted_events e
+	return s.matrixEncryptedEvents(ctx, `SELECT e.message_id, e.ciphertext FROM matrix_encrypted_events e
 		WHERE e.conversation_id = ? AND NOT e.recovered AND e.message_id > ?`+dueWhere+` ORDER BY e.message_id LIMIT ?`, args...)
+}
+
+// MatrixPendingEventsBySession returns the next page of pending events in a
+// room encrypted with sessionID, after afterID.
+func (s *Store) MatrixPendingEventsBySession(ctx context.Context, conversationID int64, sessionID string, afterID int64, limit int) ([]MatrixEncryptedEvent, error) {
+	return s.matrixEncryptedEvents(ctx, `SELECT message_id, ciphertext FROM matrix_encrypted_events
+		WHERE conversation_id = ? AND session_id = ? AND NOT recovered AND message_id > ? ORDER BY message_id LIMIT ?`, conversationID, sessionID, afterID, limit)
+}
+
+func (s *Store) matrixEncryptedEvents(ctx context.Context, query string, args ...any) ([]MatrixEncryptedEvent, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -40,6 +40,10 @@
   --field-gap: var(--space-4);
   /* One label | value column everywhere (L3): 160 fits Score Details' longest label ("No other source agrees"). */
   --detail-label-width: 160px;
+  /* Dialog widths: a confirmation, a form or step, and a record with two columns. */
+  --dialog-width-small: 400px;
+  --dialog-width-medium: 560px;
+  --dialog-width-large: 960px;
   --control-gap: var(--space-4);
   --control-pad-x: var(--space-5);
   --chip-pad-x: var(--space-4);
@@ -55,12 +59,14 @@
   /* The Layout scale. These are the only spacing values between things:
    * 4 label → field, field → hint, icon → its label;
    * 8 between controls in a group, section header → first row;
-   * 12 inside a boxed thing, pair column gap, between text links;
-   * 16 dialog and pane padding, field → next field, around a notice. */
+   * 12 inside a boxed thing, between text links;
+   * 16 dialog and pane padding, field → next field, around a notice;
+   * 24 between sections, between groups in a dialog. */
   --space-tight: var(--space-2);
   --space-group: var(--space-4);
   --space-box: var(--space-5);
   --space-pane: var(--space-6);
+  --space-section: var(--space-7);
 
   /* Type roles, each one size with one line height. Weight beyond these is
    * Visual's: titles and headings 600, buttons 500, form labels 600. */
@@ -81,7 +87,13 @@
 
   /* One list item for menus, pickers, and choice lists. */
   --list-item-h: 32px;
+  --list-item-h-2: 54px;
   --list-item-pad-x: var(--space-box);
+
+  /* A row: 36 for one line, 54 for two (Body, then Meta). Inside a box the
+   * row takes the box's 12 inset; a boxed parent sets --row-pad-x. */
+  --row-pad-y: var(--space-group);
+  --row-pad-x: 0px;
 
   /* The kit's one 8px bar (public/scrollbar.css). A pane that reserves it
    * pads its right side by this much less than its left. */
@@ -248,6 +260,39 @@ body :is(.kit-button.kit-button, .kit-menu__trigger.kit-menu__trigger) {
 
 :where(a, [data-link]) {
   color: var(--link-ink);
+}
+
+/* A row text action (Reveal, Details, Hide) reads as a link, not a button,
+ * with Meta text centered in a 28px target. */
+:root:root .kit-button.text-action {
+  min-height: var(--control-h);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--link-ink);
+}
+
+body .kit-button.text-action {
+  font-size: var(--type-meta-size);
+  line-height: var(--type-meta-line);
+}
+
+/* A fold (a plain Disclosure with class "fold"): a 28 row of Meta text at
+ * its group's left edge, the chevron 4 before it, and its content starting at
+ * that same edge with no gap of its own. */
+body .kit-disclosure.kit-disclosure--plain.fold > .kit-disclosure__summary {
+  gap: var(--space-tight);
+  min-height: var(--control-h);
+  padding: 0;
+  color: var(--text-secondary);
+  font-size: var(--type-meta-size);
+  font-weight: 400;
+  line-height: var(--type-meta-line);
+}
+
+body .kit-disclosure.kit-disclosure--plain.fold > .kit-disclosure__content {
+  padding: 0;
 }
 
 /* Kit darkens expanded info buttons against black. On the dark app surface,

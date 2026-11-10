@@ -1001,6 +1001,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	storeAdapter := &storeAPIAdapter{
 		store:                  s,
 		operationGate:          operationGate,
+		embeddingsScheduler:    sched,
 		config:                 cfg,
 		options:                state.options,
 		logger:                 logger,
@@ -1921,6 +1922,8 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slo
 type storeAPIAdapter struct {
 	operationGate             api.OperationGate
 	embeddingsOptimizeMu      stdsync.Mutex
+	embeddingsBuildMu         stdsync.Mutex
+	embeddingsScheduler       *scheduler.Scheduler
 	store                     *store.Store
 	config                    *config.Config
 	options                   invocationOptions
@@ -2515,7 +2518,7 @@ func cliSyncSubprocessArgs(req api.CLISyncRequest) []string {
 		args = emitFolderArgs(args, "--folder", req.Folders)
 		args = emitFolderArgs(args, "--skip-folder", req.SkipFolders)
 		if req.Email != "" {
-			args = append(args, req.Email)
+			args = append(args, "--", req.Email)
 		}
 		return args
 	}
@@ -2532,7 +2535,7 @@ func cliSyncSubprocessArgs(req api.CLISyncRequest) []string {
 	args = emitFolderArgs(args, "--folder", req.Folders)
 	args = emitFolderArgs(args, "--skip-folder", req.SkipFolders)
 	if req.Email != "" {
-		args = append(args, req.Email)
+		args = append(args, "--", req.Email)
 	}
 	return args
 }
@@ -2664,6 +2667,9 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	emit func(api.CLIRunEvent) error,
 	run cliCommandSubprocessRunner,
 ) (runErr error) {
+	if api.IsCLIRunEmbeddingsBuild(req.Args) {
+		return a.runCLIEmbeddingsBuild(ctx, req, emit)
+	}
 	if api.IsCLIRunEmbeddingsOptimize(req.Args) {
 		return a.runCLIEmbeddingsOptimize(ctx, req, emit)
 	}
@@ -2697,7 +2703,7 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	runSubprocess := func(ctx context.Context) error {
 		args := req.Args
 		if req.GrantDecided {
-			args = append(append([]string(nil), args...), "--"+addAccountGrantDecidedFlag+"=true")
+			args = append([]string{args[0], "--" + addAccountGrantDecidedFlag + "=true"}, args[1:]...)
 		}
 		return run(ctx, args, req.Env, req.Cwd, emitSubprocess)
 	}
