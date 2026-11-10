@@ -50,3 +50,19 @@ func TestPostgresFTSPunctuationBackfill(t *testing.T) {
 	}
 	searchFor("example@both", []int64{})
 }
+
+func TestPostgresFTSPhraseDoesNotCrossFields(t *testing.T) {
+	f := storetest.New(t)
+	if !f.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL weighted search vector")
+	}
+	crossField := f.NewMessage().WithSourceMessageID("cross-field").Create(t, f.Store)
+	complete := f.NewMessage().WithSourceMessageID("complete-address").Create(t, f.Store)
+	require.NoError(t, f.Store.UpsertFTS(crossField, "alice", "", "example.com", "", ""))
+	require.NoError(t, f.Store.UpsertFTS(complete, "", "alice@example.com", "", "", ""))
+
+	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alice@example.com"}}, 10)
+	require.NoError(t, err)
+	require.Contains(t, ids, complete)
+	require.NotContains(t, ids, crossField)
+}
