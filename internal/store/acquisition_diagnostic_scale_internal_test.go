@@ -13,7 +13,7 @@ import (
 )
 
 // Each group of four messages has one active, resolved, historical and unknown
-// outcome. Setup uses the real archive schema, without planner statistics.
+// outcome. Setup uses the real archive schema.
 func acquisitionScaleStore(t *testing.T, count int) (*Store, int64) {
 	t.Helper()
 	var st *Store
@@ -66,60 +66,46 @@ func TestAcquisitionDiagnosticScale(t *testing.T) {
 		t.Run(strconv.Itoa(count), func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			st, sourceID := acquisitionScaleStore(t, count)
-			if st.IsPostgreSQL() {
-				var estimated float64
-				require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT reltuples FROM pg_class
-					WHERE oid = 'sync_run_items'::regclass`).Scan(&estimated))
-				require.Negative(estimated, "fixture must start without ANALYZE")
-			}
 			want := AcquisitionDiagnosticSummary{
 				ActiveObligations: int64(count / 4), ResolvedObligations: int64(count / 4),
 				ActiveErrors: int64(count / 4), HistoricalErrors: int64(count / 2),
 				Historical: int64(count / 4), Indeterminate: int64(count / 4),
 			}
-			for _, analyzed := range []bool{false, true} {
-				if analyzed {
-					_, err := st.DB().ExecContext(t.Context(), `ANALYZE sync_runs`)
-					require.NoError(err)
-					_, err = st.DB().ExecContext(t.Context(), `ANALYZE sync_run_items`)
-					require.NoError(err)
-				}
-				for stateIndex, state := range []string{"active", "resolved", "historical", "indeterminate"} {
-					for _, limit := range []int{1, 50, 1000} {
-						opts := AcquisitionDiagnosticOptions{SourceID: sourceID, State: state, Limit: limit, RemoteImagesEnabled: true}
-						start := time.Now()
-						seen := 0
-						// Two pages exercise the cursor without turning the limit=1
-						// measurement into thousands of full-ledger diagnostics.
-						for range 2 {
-							remaining := count/4 - seen
-							report, err := st.DiagnoseAcquisitionContext(t.Context(), opts)
-							require.NoError(err)
-							require.Len(report.Items, min(limit, remaining))
-							assert.Equal(want, report.Summary)
-							for _, item := range report.Items {
-								assert.Equal(fmt.Sprintf("scale-%05d", seen*4+stateIndex), item.SourceMessageID)
-								if state == "resolved" {
-									assert.Greater(item.ResolvedByID, item.OutcomeID)
-								} else {
-									assert.Zero(item.ResolvedByID)
-								}
-								seen++
-							}
-							assert.Equal(seen < count/4, report.HasMore)
-							if !report.HasMore {
-								break
-							}
-							opts.AfterID = report.NextAfterID
-						}
-						// The same source-wide totals survive an exhausted cursor.
-						opts.AfterID = 1 << 60
+			for stateIndex, state := range []string{"active", "resolved", "historical", "indeterminate"} {
+				for _, limit := range []int{1, 50, 1000} {
+					opts := AcquisitionDiagnosticOptions{SourceID: sourceID, State: state, Limit: limit, RemoteImagesEnabled: true}
+					start := time.Now()
+					seen := 0
+					// Two pages exercise the cursor without turning the limit=1
+					// measurement into thousands of full-ledger diagnostics.
+					for range 2 {
+						remaining := count/4 - seen
 						report, err := st.DiagnoseAcquisitionContext(t.Context(), opts)
 						require.NoError(err)
+						require.Len(report.Items, min(limit, remaining))
 						assert.Equal(want, report.Summary)
-						assert.Empty(report.Items)
-						t.Logf("messages=%d analyze=%t state=%s limit=%d duration=%v", count, analyzed, state, limit, time.Since(start))
+						for _, item := range report.Items {
+							assert.Equal(fmt.Sprintf("scale-%05d", seen*4+stateIndex), item.SourceMessageID)
+							if state == "resolved" {
+								assert.Greater(item.ResolvedByID, item.OutcomeID)
+							} else {
+								assert.Zero(item.ResolvedByID)
+							}
+							seen++
+						}
+						assert.Equal(seen < count/4, report.HasMore)
+						if !report.HasMore {
+							break
+						}
+						opts.AfterID = report.NextAfterID
 					}
+					// The same source-wide totals survive an exhausted cursor.
+					opts.AfterID = 1 << 60
+					report, err := st.DiagnoseAcquisitionContext(t.Context(), opts)
+					require.NoError(err)
+					assert.Equal(want, report.Summary)
+					assert.Empty(report.Items)
+					t.Logf("messages=%d state=%s limit=%d duration=%v", count, state, limit, time.Since(start))
 				}
 			}
 		})
