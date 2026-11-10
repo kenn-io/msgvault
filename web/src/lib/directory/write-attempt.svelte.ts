@@ -41,11 +41,9 @@ export class WriteAttempt<C = never> {
       const result = await send(current);
       if (result.ok) { this.prepared = undefined; return true; }
       this.failed = true;
-      // A conflict whose refresh failed keeps the version sent, so Retry collides again and shows what changed.
       if (result.kind === 'conflict') {
         this.hadConflict = true;
         if (result.current) this.conflict = this.prepared = result.current;
-        else if (result.sent) this.prepared = result.sent;
       }
       this.details = result.kind === 'unknown' || result.kind === 'blocked' ? '' : result.message;
       return false;

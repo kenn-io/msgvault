@@ -200,11 +200,7 @@ export class DirectoryEntityController {
     return response;
   }
   async refreshRelationships(): Promise<void> {
-    // The create block clears once Network has loaded too, so a dialog that closes on this refresh never re-enables first.
-    const relationships = this.loadRelationships(false);
-    const generation = this.relationshipGeneration;
-    const [loaded] = await Promise.all([relationships, this.refreshNetwork()]);
-    if (loaded && !this.disposed && generation === this.relationshipGeneration) this.createBlocked.relationships = false;
+    await Promise.all([this.loadRelationships(true), this.refreshNetwork()]);
   }
   private async loadRelationships(clearCreateBlock: boolean): Promise<boolean> {
     const { abort, generation } = this.beginCollection('relationships');
@@ -817,8 +813,7 @@ export class DirectoryEntityController {
           kind: 'conflict',
           status,
           message: failureMessage(response.error, status),
-          // Without the newer version, Retry sends the one already sent, so it collides again instead of deleting unseen changes.
-          ...(current === undefined ? { sent: snapshot } : { current }),
+          current,
         };
       }
       return { ok: false, kind: 'error', status, message: failureMessage(response.error, status) };

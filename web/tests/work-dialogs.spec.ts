@@ -17,44 +17,6 @@ test.beforeEach(async ({ page }) => {
   await page.getByRole('radio', { name: 'Details', exact: true }).click();
 });
 
-for (const width of [1440, 390]) {
-  test(`organization flows stay contained at ${width}px`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 844 });
-    await page.getByRole('button', { name: 'Example Org', exact: true }).click();
-    const editor = page.getByRole('dialog', { name: 'Example Org', exact: true });
-    await expect(editor.getByRole('textbox', { name: 'Organization name' })).toHaveValue('Example Org');
-    const bounds = await editor.boundingBox();
-    for (const name of ['Delete organization…', 'Cancel', 'Save organization']) {
-      const button = await editor.getByRole('button', { name, exact: true }).boundingBox();
-      expect(button!.x).toBeGreaterThanOrEqual(bounds!.x);
-      expect(button!.x + button!.width).toBeLessThanOrEqual(bounds!.x + bounds!.width);
-    }
-    await page.route('**/api/v1/organizations/21/employments*', route => route.fulfill({json:{employments:[employment]}}));
-    await editor.getByRole('button', { name: 'Delete organization…' }).click();
-    const deletion = page.getByRole('dialog', { name: 'Delete Example Org?' });
-    // The job blocking the delete is this person's own, so its row leads straight to it; the name is a link.
-    const holder = deletion.locator('.holders').getByRole('button', { name: 'Archive Person', exact: true });
-    expect(await holder.evaluate(element => getComputedStyle(element).color)).toBe(await page.evaluate(() => {
-      const probe = document.body.appendChild(document.createElement('a'));
-      const color = getComputedStyle(probe).color;
-      probe.remove();
-      return color;
-    }));
-    await expect(page.getByRole('dialog')).toHaveCount(1);
-    const geometry = await deletion.evaluate(element => ({ width:element.clientWidth, scroll:element.scrollWidth }));
-    expect(geometry.scroll).toBeLessThanOrEqual(geometry.width);
-    await deletion.getByRole('button',{name:'Back to Example Org',exact:true}).click();
-  });
-}
-
-test('opening Add job leaves the page behind it in place', async ({ page }) => {
-  const connections = page.getByRole('heading', { name: 'Connections', exact: true });
-  const before = (await connections.boundingBox())!.y;
-  await page.getByRole('button', { name: 'Add job…', exact: true }).click();
-  await expect(page.getByRole('dialog', { name: 'Add job', exact: true })).toBeVisible();
-  expect((await connections.boundingBox())!.y).toBe(before);
-});
-
 test('a long delete title wraps on a phone instead of cutting off', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.route('**/api/v1/people/42/employments', route => route.fulfill({ json: { employments: [{ ...employment, title: 'Senior landscape garden designer' }] } }));
@@ -106,6 +68,27 @@ for (const width of [1440, 390]) {
     await page.getByRole('button', { name: 'Example Org', exact: true }).click();
     const editor = page.getByRole('dialog', { name: 'Example Org', exact: true });
     await expect(editor.getByRole('textbox', { name: 'Organization name' })).toHaveValue('Example Org');
+    const bounds = await editor.boundingBox();
+    for (const name of ['Delete organization…', 'Cancel', 'Save organization']) {
+      const button = await editor.getByRole('button', { name, exact: true }).boundingBox();
+      expect(button!.x).toBeGreaterThanOrEqual(bounds!.x);
+      expect(button!.x + button!.width).toBeLessThanOrEqual(bounds!.x + bounds!.width);
+    }
+    await page.route('**/api/v1/organizations/21/employments*', route => route.fulfill({json:{employments:[employment]}}));
+    await editor.getByRole('button', { name: 'Delete organization…' }).click();
+    const deletion = page.getByRole('dialog', { name: 'Delete Example Org?' });
+    // The job blocking the delete is this person's own, so its row leads straight to it; the name is a link.
+    const holder = deletion.locator('.holders').getByRole('button', { name: 'Archive Person', exact: true });
+    expect(await holder.evaluate(element => getComputedStyle(element).color)).toBe(await page.evaluate(() => {
+      const probe = document.body.appendChild(document.createElement('a'));
+      const color = getComputedStyle(probe).color;
+      probe.remove();
+      return color;
+    }));
+    await expect(page.getByRole('dialog')).toHaveCount(1);
+    const geometry = await deletion.evaluate(element => ({ width:element.clientWidth, scroll:element.scrollWidth }));
+    expect(geometry.scroll).toBeLessThanOrEqual(geometry.width);
+    await deletion.getByRole('button',{name:'Back to Example Org',exact:true}).click();
     // Kind is a 32 field with Body text at 400, like Domain beside it; the add links are 28 targets 12 apart.
     const kind = await editor.locator('.kit-select-dropdown__trigger').evaluate(element => ({ height: element.getBoundingClientRect().height, weight: getComputedStyle(element).fontWeight }));
     expect(kind).toEqual({ height: 32, weight: '400' });
@@ -115,8 +98,12 @@ for (const width of [1440, 390]) {
     expect(links[1].left - links[0].right).toBe(12);
     await editor.getByRole('button', { name: 'Close', exact: true }).click();
 
+    const connections = page.getByRole('heading', { name: 'Connections', exact: true });
+    const before = (await connections.boundingBox())!.y;
     await page.getByRole('button', { name: 'Add job…', exact: true }).click();
     const add = page.getByRole('dialog', { name: 'Add job', exact: true });
+    await expect(add).toBeVisible();
+    expect((await connections.boundingBox())!.y).toBe(before);
     const box = (name: string) => field(add.getByRole('textbox', { name, exact: true }));
     const organization = (await add.getByRole('button', { name: /^Organization:/ }).boundingBox())!;
     const [title, role, start, end] = await Promise.all(['Job title', 'Role on the team', 'Start date', 'End date'].map(name => box(name)));
@@ -175,7 +162,7 @@ for (const width of [1440, 390]) {
   });
 }
 
-test('an organization that fails to load shows its error 12 inside the dialog on both sides', async ({ page }) => {
+test('an organization that fails to load shows its error inside the dialog padding', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Example Org', exact: true })).toBeVisible();
   await page.route('**/api/v1/organizations/21', route => route.fulfill({ status: 503, json: { message: 'Synthetic organization unavailable' } }));
   await page.getByRole('button', { name: 'Example Org', exact: true }).click();

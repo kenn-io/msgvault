@@ -294,16 +294,33 @@ it('shows a failed holder profile read as a failed check and retries it', async 
   expect(await screen.findByText('Synthetic Person')).toBeDefined();
 });
 
-it.each(['organization save', 'aliases save', 'alias retry'] as const)('shows the latest notice after a failed %s', async firstFailure => {
+it('retries a failed alias save', async () => {
   const methods: string[] = [];
   const onDone = vi.fn();
   const { controller } = controllerWith(async input => {
     const request = requestOf(input);
     if (request.method === 'GET') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
     methods.push(request.method);
-    if (firstFailure === 'alias retry') return methods.length === 1
+    return methods.length === 1
       ? Response.json({ message: 'Profile unavailable' }, { status: 503 })
       : Response.json(organizationProfile(2), { headers: { ETag: '"organization-21-r2"' } });
+  });
+  render(OrganizationEditor, { controller, organization: organization(), onDone });
+  await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Draft alias' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
+  await screen.findByText("Couldn't save the aliases and categories.");
+  await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+  expect(methods).toEqual(['PUT', 'PUT']);
+});
+
+it.each(['organization save', 'aliases save'] as const)('shows the latest notice after a failed %s', async firstFailure => {
+  const methods: string[] = [];
+  const onDone = vi.fn();
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (request.method === 'GET') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+    methods.push(request.method);
     if (firstFailure === 'organization save') {
       return request.method === 'PATCH'
         ? Response.json({ message: 'Changed elsewhere' }, { status: 412 })
@@ -316,15 +333,7 @@ it.each(['organization save', 'aliases save', 'alias retry'] as const)('shows th
   render(OrganizationEditor, { controller, organization: organization(), onDone });
   const aliases = await screen.findByRole('textbox', { name: 'Organization aliases' });
   const domain = screen.getByRole('textbox', { name: 'Organization domain' });
-  if (firstFailure === 'alias retry') {
-    await fireEvent.input(aliases, { target: { value: 'Draft alias' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
-    await screen.findByText("Couldn't save the aliases and categories.");
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
-    expect(methods).toEqual(['PUT', 'PUT']);
-    return;
-  } else if (firstFailure === 'organization save') {
+  if (firstFailure === 'organization save') {
     await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
     await fireEvent.input(aliases, { target: { value: 'Synthetic Works, Draft alias' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));

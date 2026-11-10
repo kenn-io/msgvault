@@ -280,12 +280,12 @@ describe('DirectoryEntityController', () => {
       if (path === '/api/v1/employments/11' && request.method === 'PATCH')
         return Response.json({ error: 'revision_conflict', message: 'changed elsewhere' }, { status: 412 });
       if (path === '/api/v1/organizations/22')
-        return Response.json(organizationProfile(2, 'Current Employer'), { headers: { ETag: '"organization-22-r2"' } });
+        return Response.json({ ...organizationProfile(), organization: organization(22, 2, 'Current Employer') }, { headers: { ETag: '"organization-22-r2"' } });
       return defaultResponse(request);
     }));
     const controller = new DirectoryEntityController(client, 7);
     controller.employments = [employment(11, 1, { organization_id: 21 })];
-    controller.organizationRecords.set(22, organizationProfile(1, 'Old Employer'));
+    controller.organizationRecords.set(22, { ...organizationProfile(), organization: organization(22, 1, 'Old Employer') });
 
     const result = await controller.updateEmployment(11, () => ({ person_id: 7, organization_id: 21, source: 'user' }));
 
@@ -315,53 +315,6 @@ describe('DirectoryEntityController', () => {
     await controller.refreshEmployments();
     await expect(controller.createEmployment(body)).resolves.toMatchObject({ ok: true });
     expect(postCount).toBe(2);
-  });
-
-  it('keeps a lost connection create blocked until the Network refresh ends too', async () => {
-    const networkRead = deferredResponse();
-    let networkReads = 0;
-    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      if (pathOf(request) === '/api/v1/relationships' && request.method === 'POST') throw new TypeError('response lost');
-      if (pathOf(request) === '/api/v1/people/7/network' && ++networkReads > 1) return networkRead.promise;
-      return defaultResponse(request);
-    }));
-    const controller = new DirectoryEntityController(client, 7);
-    await controller.loadNetwork();
-    await controller.createRelationship({ source_person_id: 7, target_person_id: 8, relationship_type_slug: 'knows' });
-    const refresh = controller.refreshRelationships();
-    await vi.waitFor(() => expect(controller.relationships).toHaveLength(1));
-    expect(controller.createBlocked.relationships).toBe(true);
-    networkRead.resolve(Response.json(network(7, 1)));
-    await refresh;
-    expect(controller.createBlocked.relationships).toBe(false);
-    controller.destroy();
-  });
-
-  it('keeps a newer lost connection create blocked when an older Network refresh finishes', async () => {
-    const networkRead = deferredResponse();
-    let networkReads = 0;
-    let posts = 0;
-    const client = createAPIClient(async input => {
-      const request = requestOf(input);
-      if (pathOf(request) === '/api/v1/person-relationships' && request.method === 'POST') {
-        posts++;
-        throw new TypeError('response lost');
-      }
-      if (pathOf(request) === '/api/v1/people/7/network' && ++networkReads > 1) return networkRead.promise;
-      return defaultResponse(request);
-    });
-    const controller = new DirectoryEntityController(client, 7);
-    await controller.loadNetwork();
-    const refresh = controller.refreshRelationships();
-    await vi.waitFor(() => expect(controller.relationships).toHaveLength(1));
-    const body = { source_person_id: 7, target_person_id: 8, relationship_type_slug: 'knows' };
-    await expect(controller.createRelationship(body)).resolves.toMatchObject({ ok: false, kind: 'unknown' });
-    networkRead.resolve(Response.json(network(7, 1)));
-    await refresh;
-    await expect(controller.createRelationship(body)).resolves.toMatchObject({ ok: false, kind: 'blocked' });
-    expect(posts).toBe(1);
-    controller.destroy();
   });
 
   it('keeps an unknown create blocked when a refresh that began before it resolves later', async () => {

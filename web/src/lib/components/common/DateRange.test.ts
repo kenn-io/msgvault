@@ -19,39 +19,32 @@ it('renders a date error under its field', async () => {
   expect(end.closest('.field')!.textContent).toContain('End date must be on or after start date.');
 });
 
-it('shows one shared date hint under the field being edited when Current is on', async () => {
-  const hint = () => screen.queryByText('2024, 2024-03, or 2024-03-15');
-  render(DateRange, { start: '', current: true });
-  expect(hint()).not.toBeNull();
-  const start = screen.getByRole('textbox', { name: 'Start date' });
-  await fireEvent.input(start, { target: { value: '2024-03' } });
-  await fireEvent.focusIn(start);
-  expect(hint()).not.toBeNull();
-  await fireEvent.focusOut(start);
-  expect(hint()).toBeNull();
-  await fireEvent.click(screen.getByRole('checkbox', { name: 'Current' }));
-  // An empty End date shows the forms once it's being typed.
-  expect(hint()).toBeNull();
-  const end = screen.getByRole('textbox', { name: 'End date' });
-  await fireEvent.focusIn(end);
-  expect(hint()).not.toBeNull();
-  await fireEvent.input(end, { target: { value: '2024-13' } });
-  expect(hint()).toBeNull();
-});
-
-it('shows one shared date hint when Current is hidden', async () => {
-  render(DateRange, { start: '', end: '', showCurrent: false });
+it.each([true, false])('shows one shared date hint under the field being edited with Current shown: %s', async showCurrent => {
   const hints = () => screen.queryAllByText('2024, 2024-03, or 2024-03-15');
-  // Two empty fields share one hint, under the field being typed.
+  render(DateRange, { start: '', end: '', current: showCurrent, showCurrent });
   expect(hints()).toHaveLength(1);
-  const secondStart = screen.getByRole('textbox', { name: 'Start date' });
-  const secondEnd = screen.getByRole('textbox', { name: 'End date' });
-  await fireEvent.focusIn(secondEnd);
-  expect(hints()).toHaveLength(1);
-  expect(secondEnd.closest('.field')!.textContent).toContain('2024, 2024-03, or 2024-03-15');
-  await fireEvent.focusOut(secondEnd);
-  await fireEvent.input(secondStart, { target: { value: '2024-03' } });
-  expect(secondEnd.closest('.field')!.textContent).toContain('2024, 2024-03, or 2024-03-15');
-  await fireEvent.input(secondEnd, { target: { value: '2025' } });
-  expect(hints()).toHaveLength(0);
+  const start = screen.getByRole('textbox', { name: 'Start date' });
+  const end = screen.getByRole('textbox', { name: 'End date' });
+  if (showCurrent) {
+    await fireEvent.input(start, { target: { value: '2024-03' } });
+    await fireEvent.focusIn(start);
+    expect(hints()).toHaveLength(1);
+    await fireEvent.focusOut(start);
+    expect(hints()).toHaveLength(0);
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Current' }));
+    expect(hints()).toHaveLength(0);
+    await fireEvent.focusIn(end);
+    expect(hints()).toHaveLength(1);
+    await fireEvent.input(end, { target: { value: '2024-13' } });
+    expect(hints()).toHaveLength(0);
+  } else {
+    await fireEvent.focusIn(end);
+    expect(hints()).toHaveLength(1);
+    expect(end.closest('.field')!.textContent).toContain('2024, 2024-03, or 2024-03-15');
+    await fireEvent.focusOut(end);
+    await fireEvent.input(start, { target: { value: '2024-03' } });
+    expect(end.closest('.field')!.textContent).toContain('2024, 2024-03, or 2024-03-15');
+    await fireEvent.input(end, { target: { value: '2025' } });
+    expect(hints()).toHaveLength(0);
+  }
 });

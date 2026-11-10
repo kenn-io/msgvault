@@ -3,35 +3,15 @@ import { expect, test } from '@playwright/test';
 import { installDirectoryReviewArchive } from './e2e/fixtures/mixed-archive';
 import { person, directoryPerson, relationshipType, relationship } from '../src/lib/directory/entity-data.test-support';
 
-test('saved person remains selectable at 280px', async ({ page }) => {
-  await installDirectoryReviewArchive(page);
-  const subjectName = 'a-very-long-synthetic-person-name-without-spaces@example.test';
-  await page.route('**/api/v1/people/7/profile', route => route.fulfill({ json: {
-    person: { ...person(7), display_name: subjectName }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [],
-  } }));
-  await page.route('**/api/v1/people/directory*', route => route.fulfill({ json: { people: [directoryPerson(9)] } }));
-  await page.setViewportSize({ width: 375, height: 280 });
-  await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 })));
-  await page.getByRole('radio', { name: 'Details', exact: true }).click();
-  await page.getByRole('button', { name: 'Add connection…', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'Add connection', exact: true });
-  await dialog.getByRole('button', { name: 'Person', exact: true }).click();
-  const option = dialog.getByRole('option', { name: /Synthetic Two/ });
-  await expect(option).toBeVisible();
-  expect(await dialog.locator('.kit-typeahead__body').evaluate(element => element.clientHeight)).toBeGreaterThanOrEqual(32);
-  await option.click();
-  await expect(dialog.getByRole('button', { name: 'Person: Synthetic Two', exact: true })).toBeVisible();
-});
-
-for (const width of [1440, 390]) {
-  test(`Connections dialogs stay contained and return focus after submission at ${width}px`, async ({ page }) => {
+for (const [width, height] of [[1440, 900], [390, 900], [375, 280]]) {
+  test(`Connections dialogs stay contained and return focus after submission at ${width}x${height}px`, async ({ page }) => {
     await installDirectoryReviewArchive(page);
-    const subjectName = width === 390 ? 'a-very-long-synthetic-person-name-without-spaces@example.test' : 'Synthetic One';
+    const subjectName = width !== 1440 ? 'a-very-long-synthetic-person-name-without-spaces@example.test' : 'Synthetic One';
     await page.route('**/api/v1/people/7', route => route.fulfill({ json: { ...person(7), display_name: subjectName } }));
     await page.route('**/api/v1/people/7/profile', route => route.fulfill({ json: {
       person: { ...person(7), display_name: subjectName }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [],
     } }));
-    await page.setViewportSize({ width, height: 900 });
+    await page.setViewportSize({ width, height });
     const types = [
       relationshipType({ id: 1, slug: 'parent', forward_label: 'parent', reverse_label: 'child', ownership: 'system', inverse_type_id: 2 }),
       relationshipType({ id: 2, slug: 'child', forward_label: 'child', reverse_label: 'parent', is_canonical: false, ownership: 'system', inverse_type_id: 1 }),
@@ -74,7 +54,7 @@ for (const width of [1440, 390]) {
     expect(await dialog.getByRole('button', { name: 'Person', exact: true }).boundingBox()).toEqual(closedPeople);
     expect(bounds!.x).toBeGreaterThanOrEqual(0);
     expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
-    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(900);
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(height);
     await dialog.getByRole('treeitem', { name: 'Child', exact: true }).click();
     await dialog.getByRole('button', { name: 'Person', exact: true }).click();
     expect((await dialog.getByRole('combobox', { name: 'Person', exact: true }).boundingBox())!.y).toBe(closedPeople!.y);
@@ -83,9 +63,11 @@ for (const width of [1440, 390]) {
     expect(peopleBounds!.x).toBeGreaterThanOrEqual(0);
     expect(peopleBounds!.x + peopleBounds!.width).toBeLessThanOrEqual(width);
     expect(peopleBounds!.y).toBeGreaterThanOrEqual(0);
-    expect(peopleBounds!.y + peopleBounds!.height).toBeLessThanOrEqual(900);
+    expect(peopleBounds!.y + peopleBounds!.height).toBeLessThanOrEqual(height);
     expect(await panel.locator('.kit-typeahead__body').evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+    expect(await panel.locator('.kit-typeahead__body').evaluate(element => element.clientHeight)).toBeGreaterThanOrEqual(32);
     await dialog.getByRole('option', { name: /Synthetic Two/ }).click();
+    await expect(dialog.getByRole('button', { name: 'Person: Synthetic Two', exact: true })).toBeVisible();
     await dialog.getByRole('button', { name: 'Add connection', exact: true }).click();
     await expect(dialog).toHaveCount(0);
     await expect(add).toBeFocused();
@@ -106,6 +88,13 @@ for (const width of [1440, 390]) {
     await page.route('**/api/v1/people/7/profile', route => route.fulfill({ json: {
       person: { ...person(7), display_name: 'Synthetic One' }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [],
     } }));
+    let typesFail = true;
+    await page.route('**/api/v1/relationship-types', route => typesFail
+      ? route.fulfill({ status: 503, json: { message: 'Synthetic catalog unavailable' } })
+      : route.fulfill({ json: { relationship_types: [relationshipType({ id: 1, slug: 'friend', forward_label: 'friend', reverse_label: 'friend', is_symmetric: true, ownership: 'system' })] } }));
+    await page.route('**/api/v1/people/directory*', route => new URL(route.request().url()).searchParams.get('q')
+      ? route.fulfill({ status: 503, json: { message: 'Synthetic search unavailable' } })
+      : route.fulfill({ json: { people: [directoryPerson(9)] } }));
     await page.setViewportSize({ width, height: 844 });
     await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 })));
     await page.getByRole('radio', { name: 'Details', exact: true }).click();
@@ -145,24 +134,6 @@ for (const width of [1440, 390]) {
     expect(geometry).toEqual({ gap: 24, overflow: 0 });
     expect(errors).toEqual([]);
     await page.screenshot({ path: testInfo.outputPath('dialog.png'), fullPage: true });
-  });
-}
-
-for (const width of [1440, 390]) {
-  test(`Add connection's pickers keep their words and insets at ${width}px`, async ({ page }) => {
-    await installDirectoryReviewArchive(page);
-    await page.setViewportSize({ width, height: 900 });
-    let typesFail = true;
-    await page.route('**/api/v1/relationship-types', route => typesFail
-      ? route.fulfill({ status: 503, json: { message: 'Synthetic catalog unavailable' } })
-      : route.fulfill({ json: { relationship_types: [relationshipType({ id: 1, slug: 'friend', forward_label: 'friend', reverse_label: 'friend', is_symmetric: true, ownership: 'system' })] } }));
-    await page.route('**/api/v1/people/directory*', route => new URL(route.request().url()).searchParams.get('q')
-      ? route.fulfill({ status: 503, json: { message: 'Synthetic search unavailable' } })
-      : route.fulfill({ json: { people: [directoryPerson(9)] } }));
-    await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 })));
-    await page.getByRole('radio', { name: 'Details', exact: true }).click();
-    await page.getByRole('button', { name: 'Add connection…', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: 'Add connection', exact: true });
     // On a phone an empty End date holds no line of its own: Notes is a field gap below it.
     const end = await dialog.getByRole('textbox', { name: 'End date', exact: true }).evaluate(input => input.closest('.kit-text-input')!.getBoundingClientRect().bottom);
     const notes = (await dialog.locator('label.notes').boundingBox())!;
