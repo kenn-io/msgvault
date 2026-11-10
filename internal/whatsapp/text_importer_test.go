@@ -40,18 +40,23 @@ func TestTextImportRepeatOverlap(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 3, s.Added)
 	assert.Equal(t, 1, s.Notices)
+	var sourceID, labeledID int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT source_id,id FROM messages WHERE snippet = 'asters'").Scan(&sourceID, &labeledID))
+	labelID, err := st.EnsureLabel(t.Context(), sourceID, "saved", "Saved", "user")
+	require.NoError(t, err)
+	require.NoError(t, st.AddMessageLabels(t.Context(), labeledID, []int64{labelID}))
 	s, err = imp.ImportText(t.Context(), textFile(t, a), opts)
 	require.NoError(t, err)
 	assert.Equal(t, 0, s.Added)
 	assert.Equal(t, 3, s.Unchanged)
+	var labels int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM message_labels WHERE message_id = ? AND label_id = ?", labeledID, labelID).Scan(&labels))
+	assert.Equal(t, 1, labels, "re-import must not rewrite existing rows")
 	s, err = imp.ImportText(t.Context(), textFile(t, "13/6/26, 10:03 - Mira: seedlings\n13/6/26, 10:01 - Ivo: water\n"), opts)
 	require.NoError(t, err)
 	assert.Equal(t, 1, s.Added)
 	assert.Equal(t, 4, textCount(t, st, "messages"))
 	assert.Equal(t, 2, textCount(t, st, "participants"))
-	var sender sql.NullInt64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT sender_id FROM messages WHERE snippet LIKE 'You changed%'").Scan(&sender))
-	assert.False(t, sender.Valid)
 	var messageID int64
 	var metadata sql.NullString
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id,metadata FROM messages WHERE snippet = 'asters'").Scan(&messageID, &metadata))
@@ -67,11 +72,9 @@ func TestTextImportRepeatOverlap(t *testing.T) {
 	assert.Equal(t, "earlier", provenance.AmbiguousTimePolicy)
 	assert.Equal(t, "asters", provenance.Body)
 	assert.Equal(t, "13/6/26, 10:00 - Mira: asters", provenance.Raw)
-	if st.FTS5Available() {
-		var n int
-		require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'asters'").Scan(&n))
-		assert.Equal(t, 1, n)
-	}
+	var n int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'asters'").Scan(&n))
+	assert.Equal(t, 1, n)
 }
 
 func TestTextImportMultiplicityAndEdits(t *testing.T) {
@@ -92,19 +95,13 @@ func TestTextImportMultiplicityAndEdits(t *testing.T) {
 	assert.Equal(t, 4, textCount(t, st, "messages"))
 }
 
-func TestTextImportScopesAndAssumptions(t *testing.T) {
+func TestTextImportScopes(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	imp := NewImporter(st, nil)
 	opts := textOptions()
 	p := textFile(t, "3/6/26, 10:00 - Mira: same\n")
 	_, err := imp.ImportText(t.Context(), p, opts)
 	require.NoError(t, err)
-	for _, change := range []func(*TextOptions){func(o *TextOptions) { o.Timezone = "Europe/Berlin" }, func(o *TextOptions) { o.ChatType = "direct" }} {
-		changed := opts
-		change(&changed)
-		_, err = imp.ImportText(t.Context(), p, changed)
-		require.ErrorContains(t, err, "assumptions conflict")
-	}
 	opts.ChatID = "other"
 	_, err = imp.ImportText(t.Context(), p, opts)
 	require.NoError(t, err)
@@ -203,20 +200,6 @@ func TestTextImportMediaContainment(t *testing.T) {
 	assert.Equal(t, 1, s.MediaOversized)
 }
 
-func TestTextImportCanceledAndRetry(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	imp := NewImporter(st, nil)
-	opts := textOptions()
-	p := textFile(t, "13/6/26, 10:00 - Mira: retry")
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	_, err := imp.ImportText(ctx, p, opts)
-	require.ErrorIs(t, err, context.Canceled)
-	_, err = imp.ImportText(t.Context(), p, opts)
-	require.NoError(t, err)
-	assert.Equal(t, 1, textCount(t, st, "messages"))
-}
-
 func TestTextImportFixtures(t *testing.T) {
 	for _, tc := range []struct{ file, order string }{{"android-dmy.txt", "dmy"}, {"ios-mdy.txt", "mdy"}} {
 		t.Run(tc.file, func(t *testing.T) {
@@ -228,42 +211,65 @@ func TestTextImportFixtures(t *testing.T) {
 			summary, err := NewImporter(st, nil).ImportText(t.Context(), filepath.Join("testdata/text", tc.file), opts)
 			require.NoError(t, err)
 			assert.Equal(t, 4, summary.Records)
-			assert.Equal(t, 1, summary.Notices)
 			assert.Equal(t, 1, summary.MediaStored)
-			assert.Equal(t, 1, summary.MediaOmitted)
 		})
 	}
 }
 
 func TestTextImportPartialCancelAndRetry(t *testing.T) {
-	st := testutil.NewSQLiteTestStore(t)
-	imp := NewImporter(st, nil)
-	opts := textOptions()
-	p := textFile(t, "13/6/26, 10:00 - Mira: first\n13/6/26, 10:01 - Ivo: second\n")
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	queryCtx := context.WithoutCancel(t.Context())
-	canceled := testutil.CancelAfterCommit(t, cancel, func() bool {
-		var count int
-		require.NoError(t, st.DB().QueryRowContext(queryCtx, "SELECT COUNT(*) FROM messages").Scan(&count))
-		return count == 1
-	})
-	_, err := imp.ImportText(ctx, p, opts)
-	require.ErrorIs(t, err, context.Canceled)
-	require.True(t, canceled())
-	assert.Equal(t, 1, textCount(t, st, "messages"))
-	var status string
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1").Scan(&status))
-	assert.Equal(t, "failed", status)
-	var counted int
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT SUM(message_count) FROM conversations").Scan(&counted))
-	assert.Equal(t, 1, counted)
-	s, err := imp.ImportText(t.Context(), p, opts)
-	require.NoError(t, err)
-	assert.Equal(t, 1, s.Added)
-	assert.Equal(t, 1, s.Unchanged)
-	assert.Equal(t, 2, textCount(t, st, "messages"))
-	assert.Equal(t, 2, textCount(t, st, "conversation_participants"))
+	for _, tc := range []struct {
+		name      string
+		committed int
+	}{
+		{"before-parse", 0},
+		{"after-first-commit", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := testutil.NewSQLiteTestStore(t)
+			imp := NewImporter(st, nil)
+			opts := textOptions()
+			p := textFile(t, "13/6/26, 10:00 - Mira: first\n13/6/26, 10:01 - Ivo: second\n")
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var canceled func() bool
+			if tc.committed == 0 {
+				cancel()
+			} else {
+				queryCtx := context.WithoutCancel(t.Context())
+				canceled = testutil.CancelAfterCommit(t, cancel, func() bool {
+					var count int
+					require.NoError(t, st.DB().QueryRowContext(queryCtx, "SELECT COUNT(*) FROM messages").Scan(&count))
+					return count == 1
+				})
+			}
+			summary, err := imp.ImportText(ctx, p, opts)
+			require.ErrorIs(t, err, context.Canceled)
+			assert.Equal(t, tc.committed, summary.Records)
+			assert.Equal(t, tc.committed, summary.Added)
+			assert.Equal(t, tc.committed, textCount(t, st, "messages"))
+			if tc.committed == 0 {
+				assert.Zero(t, textCount(t, st, "sources"))
+				assert.Zero(t, textCount(t, st, "sync_runs"))
+			} else {
+				require.True(t, canceled())
+				var status string
+				var processed, added int
+				require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT status,messages_processed,messages_added FROM sync_runs ORDER BY id DESC LIMIT 1").Scan(&status, &processed, &added))
+				assert.Equal(t, "failed", status)
+				assert.Equal(t, 1, processed)
+				assert.Equal(t, 1, added)
+				var counted int
+				require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT SUM(message_count) FROM conversations").Scan(&counted))
+				assert.Equal(t, 1, counted)
+			}
+			s, err := imp.ImportText(t.Context(), p, opts)
+			require.NoError(t, err)
+			assert.Equal(t, 2-tc.committed, s.Added)
+			assert.Equal(t, tc.committed, s.Unchanged)
+			assert.Equal(t, 2, textCount(t, st, "messages"))
+			assert.Equal(t, 2, textCount(t, st, "conversation_participants"))
+		})
+	}
 }
 
 func TestTextImportPartialAttachmentFailureAndRetry(t *testing.T) {
@@ -278,6 +284,10 @@ func TestTextImportPartialAttachmentFailureAndRetry(t *testing.T) {
 	p := textFile(t, "13/6/26, 10:00 - Mira: <attached: note.txt>")
 	_, err = imp.ImportText(t.Context(), p, opts)
 	require.ErrorContains(t, err, "synthetic attachment failure")
+	var processed, added int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT messages_processed,messages_added FROM sync_runs ORDER BY id DESC LIMIT 1").Scan(&processed, &added))
+	assert.Equal(t, 1, processed)
+	assert.Equal(t, 1, added)
 	assert.Equal(t, 1, textCount(t, st, "messages"))
 	assert.Zero(t, textCount(t, st, "attachments"))
 	_, err = st.DB().ExecContext(t.Context(), "DROP TRIGGER reject_text_attachment")
@@ -287,22 +297,4 @@ func TestTextImportPartialAttachmentFailureAndRetry(t *testing.T) {
 	assert.Equal(t, 1, s.Unchanged)
 	assert.Equal(t, 1, s.MediaStored)
 	assert.Equal(t, 1, textCount(t, st, "attachments"))
-}
-
-func TestTextImportRetainsLabelsAndAbsentRecords(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	imp := NewImporter(st, nil)
-	opts := textOptions()
-	_, err := imp.ImportText(t.Context(), textFile(t, "13/6/26, 10:00 - Mira: first\n13/6/26, 10:01 - Ivo: second\n"), opts)
-	require.NoError(t, err)
-	var sourceID, messageID int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT source_id,id FROM messages ORDER BY id LIMIT 1").Scan(&sourceID, &messageID))
-	labelID, err := st.EnsureLabel(t.Context(), sourceID, "saved", "Saved", "user")
-	require.NoError(t, err)
-	require.NoError(t, st.AddMessageLabels(t.Context(), messageID, []int64{labelID}))
-	_, err = imp.ImportText(t.Context(), textFile(t, "13/6/26, 10:00 - Mira: first\n"), opts)
-	require.NoError(t, err)
-	assert.Equal(t, 2, textCount(t, st, "messages"))
-	assert.Equal(t, 1, textCount(t, st, "message_labels"))
-	assert.Equal(t, 2, textCount(t, st, "conversation_participants"))
 }

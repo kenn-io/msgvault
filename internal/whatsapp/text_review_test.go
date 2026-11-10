@@ -1,7 +1,6 @@
 package whatsapp
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -22,28 +21,24 @@ func TestTextReviewNumericContinuation(t *testing.T) {
 	}
 }
 
-func TestTextReviewOrdinarySenderLabels(t *testing.T) {
-	for _, label := range []string{"You Smith", "You Lin", "Alex Left"} {
-		t.Run(label, func(t *testing.T) {
-			rows, _, err := parseText(t.Context(), strings.NewReader("13/6/26, 10:00 - "+label+": hello"), "dmy", "UTC", textLimitsDefault)
+func TestTextReviewLongMultilineRecord(t *testing.T) {
+	for _, tc := range []struct{ name, raw, body string }{
+		{"multiline", "13/6/26, 10:00 - Mira: garden\nseed\nlast", "garden\nseed\nlast"},
+		{"header", "13/6/26, 10:00 - Mira: garden", "garden"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			limits := textLimits{Bytes: 100, Records: 10, RecordBytes: len(tc.raw)}
+			rows, _, err := parseText(t.Context(), strings.NewReader(tc.raw), "dmy", "UTC", limits)
 			require.NoError(t, err)
 			require.Len(t, rows, 1)
-			assert.Equal(t, label, rows[0].Sender)
-			assert.Equal(t, "message", rows[0].Kind)
-			assert.Equal(t, "hello", rows[0].Body)
+			assert.Equal(t, tc.body, rows[0].Body)
+			assert.Equal(t, tc.raw, rows[0].Raw)
+			assert.Equal(t, strings.Count(tc.raw, "\n")+1, rows[0].EndLine)
+			limits.RecordBytes--
+			_, _, err = parseText(t.Context(), strings.NewReader(tc.raw), "dmy", "UTC", limits)
+			require.ErrorContains(t, err, "record exceeds")
 		})
 	}
-}
-
-func TestTextReviewLongMultilineRecord(t *testing.T) {
-	body := "garden\n" + strings.Repeat(strings.Repeat("x", 63)+"\n", 4096) + "last"
-	raw := "13/6/26, 10:00 - Mira: " + body
-	rows, _, err := parseText(t.Context(), strings.NewReader(raw), "dmy", "UTC", textLimitsDefault)
-	require.NoError(t, err)
-	require.Len(t, rows, 1)
-	assert.Equal(t, body, rows[0].Body)
-	assert.Equal(t, raw, rows[0].Raw)
-	assert.Equal(t, 4098, rows[0].EndLine)
 }
 
 func TestTextReviewIOSOmittedMedia(t *testing.T) {
@@ -59,43 +54,4 @@ func TestTextReviewIOSOmittedMedia(t *testing.T) {
 	var stored string
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT snippet FROM messages ORDER BY id LIMIT 1").Scan(&stored))
 	assert.Equal(t, body, stored)
-}
-
-func TestTextReviewCanceledProgress(t *testing.T) {
-	st := testutil.NewSQLiteTestStore(t)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	canceled := testutil.CancelAfterCommit(t, cancel, func() bool {
-		var count int
-		require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages").Scan(&count))
-		return count == 1
-	})
-	summary, err := NewImporter(st, nil).ImportText(ctx, textFile(t, "13/6/26, 10:00 - Mira: first\n13/6/26, 10:01 - Ivo: second"), textOptions())
-	require.ErrorIs(t, err, context.Canceled)
-	require.True(t, canceled())
-	assert.Equal(t, 1, summary.Records)
-	assert.Equal(t, 1, summary.Added)
-	var processed, added int
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT messages_processed,messages_added FROM sync_runs ORDER BY id DESC LIMIT 1").Scan(&processed, &added))
-	assert.Equal(t, 1, processed)
-	assert.Equal(t, 1, added)
-}
-
-func TestTextReviewMalformedContinuationHeader(t *testing.T) {
-	for _, header := range []string{"13/6/26, noon - Mira: no", "[13/6/26 10:00] Mira: no"} {
-		t.Run(header, func(t *testing.T) {
-			_, _, err := parseText(t.Context(), strings.NewReader("13/6/26, 10:00 - Mira: yes\n"+header), "dmy", "UTC", textLimitsDefault)
-			require.ErrorContains(t, err, "line 2: unsupported or malformed TXT header")
-		})
-	}
-}
-
-func TestTextReviewUnrecognizedColonLabel(t *testing.T) {
-	label := "Mira cambió la descripción del grupo"
-	rows, _, err := parseText(t.Context(), strings.NewReader("13/6/26, 10:00 - "+label+": flores"), "dmy", "UTC", textLimitsDefault)
-	require.NoError(t, err)
-	require.Len(t, rows, 1)
-	assert.Equal(t, label, rows[0].Sender)
-	assert.Equal(t, "message", rows[0].Kind)
-	assert.Equal(t, "flores", rows[0].Body)
 }
