@@ -860,6 +860,34 @@ func TestAPIFollowsRedirectsOnlyOnItsInstance(t *testing.T) {
 	assert.Empty(local, "nothing reaches the other host")
 }
 
+func TestAPIAcceptsTheLinksOfItsInstanceOnly(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	for _, tc := range []struct {
+		base, link string
+		accepted   bool
+	}{
+		{"https://forge.example.test/api/v4", "https://forge.example.test/api/v4/issues?page=2", true},
+		{"https://forge.example.test/api/v4", "https://FORGE.example.test/api/v4/issues?page=2", true},
+		// An http instance that redirects to https returns https links.
+		{"http://forge.example.test/api/v4", "https://forge.example.test/api/v4/issues?page=2", true},
+		{"https://forge.example.test/api/v4", "http://forge.example.test/api/v4/issues?page=2", false},
+		{"https://forge.example.test/api/v4", "https://other.example.test/api/v4/issues?page=2", false},
+		{"http://forge.example.test/api/v4", "https://forge.example.test:8443/api/v4/issues?page=2", false},
+	} {
+		base, err := url.Parse(tc.base)
+		require.NoError(err)
+		api := &API{Base: base}
+		got, err := api.URL(tc.link, nil)
+		if tc.accepted {
+			assert.NoError(err, tc.base+" "+tc.link)
+			assert.Equal(tc.link, got)
+		} else {
+			assert.ErrorContains(err, "outside its API", tc.base+" "+tc.link)
+		}
+	}
+}
+
 func TestAThreadFetchedAcrossSyncsIsKnownFromWhenItsFirstPageWasRead(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
