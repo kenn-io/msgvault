@@ -153,8 +153,6 @@ func (s *Server) authorizeAgentRead(r *http.Request, operation string, grant *ag
 	switch operation {
 	case "getMeetingRecord", "suggestMeetingLinks":
 		*r = *r.WithContext(sourcescope.WithSourceIDs(r.Context(), allowed))
-	case "listCalendarEvents":
-		return nil
 	case "getCLIMessageThread":
 		if account != "" && !accountGranted {
 			return agentReadDenied(permission)

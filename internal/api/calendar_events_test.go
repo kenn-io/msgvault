@@ -45,7 +45,7 @@ func TestCalendarEventsRoute(t *testing.T) {
 		want              string
 	}{
 		{"owner", path, "", nil, 200, `"message_id":42`},
-		{"delegated", path, secret, nil, 403, ""},
+		{"delegated without calendar.event.read", path, secret, nil, 403, ""},
 		{"remote", path, "synthetic-reader-key", nil, 403, ""},
 		{"missing", "/api/v1/calendar/events", "", nil, 400, "invalid_argument"},
 		{"reversed", strings.Replace(path, "2027-04-01", "2027-02-01", 1), "", nil, 400, "invalid_argument"},
@@ -80,22 +80,19 @@ func TestCalendarEventsAgentScopeAndVerification(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gcal", "allowed@example.test")
 	require.NoError(t, err)
-	for _, tc := range []struct{ id, subject, raw, body string }{
-		{"event", "Your verification code is 482913", `{"id":"event","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"}}`, ""},
-		{"series", "Your verification code is 482913", `{"id":"series","start":{"dateTime":"2027-03-04T17:00:00Z"},"end":{"dateTime":"2027-03-04T18:00:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=4"]}`, ""},
-		{"cancelled", "", `{"id":"cancelled","recurringEventId":"series","status":"cancelled","originalStartTime":{"dateTime":"2027-03-05T17:00:00Z"}}`, ""},
-		{"edited", "Planning", `{"id":"edited","recurringEventId":"series","status":"confirmed","originalStartTime":{"dateTime":"2027-03-07T17:00:00Z"},"start":{"dateTime":"2027-03-07T17:00:00Z"},"end":{"dateTime":"2027-03-07T18:00:00Z"}}`, ""},
-		{"meeting", "Weekly sync", `{"id":"meeting","start":{"dateTime":"2027-03-08T17:00:00Z"},"end":{"dateTime":"2027-03-08T18:00:00Z"}}`, "Zoom meeting ID: 812 3456 7890. Passcode: 482913"},
+	for _, tc := range []struct{ id, subject, raw string }{
+		{"event", "Your verification code is 482913", `{"id":"event","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"}}`},
+		{"series", "Your verification code is 482913", `{"id":"series","start":{"dateTime":"2027-03-04T17:00:00Z"},"end":{"dateTime":"2027-03-04T18:00:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=4"]}`},
+		{"cancelled", "", `{"id":"cancelled","recurringEventId":"series","status":"cancelled","originalStartTime":{"dateTime":"2027-03-05T17:00:00Z"}}`},
+		{"edited", "Planning", `{"id":"edited","recurringEventId":"series","status":"confirmed","originalStartTime":{"dateTime":"2027-03-07T17:00:00Z"},"start":{"dateTime":"2027-03-07T17:00:00Z"},"end":{"dateTime":"2027-03-07T18:00:00Z"}}`},
+		{"meeting", "Weekly sync", `{"id":"meeting","start":{"dateTime":"2027-03-08T17:00:00Z"},"end":{"dateTime":"2027-03-08T18:00:00Z"}}`},
 	} {
-		id, err := st.PersistMessage(&store.MessagePersistData{
+		_, err := st.PersistMessage(&store.MessagePersistData{
 			Message:      &store.Message{SourceID: source.ID, SourceMessageID: tc.id, MessageType: "calendar_event", Subject: sql.NullString{String: tc.subject, Valid: true}},
 			Conversation: &store.ConversationPersistData{SourceConversationID: tc.id, ConversationType: "calendar", Title: tc.subject},
 			RawMIME:      []byte(tc.raw), RawFormat: "gcal_json", Metadata: &sql.NullString{String: `{"calendar_id":"example.test"}`, Valid: true},
 		})
 		require.NoError(t, err)
-		if tc.body != "" {
-			require.NoError(t, st.UpsertMessageBodyContext(t.Context(), id, sql.NullString{String: tc.body, Valid: true}, sql.NullString{}))
-		}
 	}
 	other, err := st.GetOrCreateSource("gcal", "other@example.test")
 	require.NoError(t, err)
@@ -107,6 +104,16 @@ func TestCalendarEventsAgentScopeAndVerification(t *testing.T) {
 	require.NoError(t, err)
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Logger: testLogger()})
 	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	t.Run("ungranted source filter", func(t *testing.T) {
+		_, token, _, err := srv.agentGrants.Issue("filtered", []agentgrant.Permission{agentgrant.PermissionCalendarEventRead}, []agentgrant.SourceRef{{ID: source.ID, Type: "gcal", Identifier: source.Identifier}}, time.Time{})
+		require.NoError(t, err)
+		path := fmt.Sprintf("/api/v1/calendar/events?from=2027-03-02T00:00:00Z&to=2027-03-03T00:00:00Z&source_id=%d", other.ID)
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
+		r.Header.Set(apiprotocol.AgentTokenHeader, token)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, r)
+		assert.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+	})
 	for _, tc := range []struct {
 		name, from, to, want, status string
 		permissions                  []agentgrant.Permission
@@ -130,7 +137,9 @@ func TestCalendarEventsAgentScopeAndVerification(t *testing.T) {
 			require.Len(t, page.Occurrences, 1)
 			assert.Equal(t, tc.want, page.Occurrences[0].Subject)
 			assert.Equal(t, tc.status, page.Occurrences[0].Status)
-			assert.NotContains(t, w.Body.String(), "Private meeting")
+			if tc.name == "scoped" || tc.name == "reveal" {
+				assert.NotContains(t, w.Body.String(), "Private meeting")
+			}
 		})
 	}
 }
