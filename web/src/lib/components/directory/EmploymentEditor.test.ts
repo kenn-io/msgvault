@@ -188,6 +188,23 @@ it('allows closing while the job loads', async () => {
     }
   });
 
+it('identifies an invalid inline organization rather than the job', async () => {
+  const requests: Request[] = [];
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input), path = pathOf(request);
+    requests.push(request);
+    if (path === '/api/v1/organizations' && request.method === 'POST') return Response.json({ message: 'Invalid domain' }, { status: 400 });
+    if (path === '/api/v1/organizations') return Response.json({ organizations: [], total: 0 });
+    throw new Error(`Unexpected ${request.method} ${path}`);
+  });
+  await openInlineEmployer(controller, 'Example company');
+  await fireEvent.input(screen.getByRole('textbox', { name: 'Domain' }), { target: { value: 'bad domain' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Add job' }));
+  expect(await screen.findByText("Couldn't save this organization.")).toBeDefined();
+  expect(requests.some(request => pathOf(request) === '/api/v1/employments' && request.method === 'POST')).toBe(false);
+  expect(screen.getByRole('textbox', { name: 'Domain' })).toHaveProperty('value', 'bad domain');
+});
+
 it.each(['none', 'same name'] as const)('reconciles an inline organization create after its response is lost (%s)', async match => {
     let posts = 0;
     let jobBody: Record<string, unknown> | undefined;
