@@ -331,7 +331,7 @@ describe('PersonMergeHistory', () => {
     const line = await screen.findByText((_, element) => element?.tagName === 'P' && (element.textContent ?? '').startsWith('Merged by you'));
     await waitFor(() => expect(line.textContent).toContain('First Restored (first@example.org)'));
     expect(line.textContent).not.toContain('partly restored');
-    expect.soft(line.textContent).toMatch(new RegExp(`split back to ${deleted ? 'another profile' : 'Second Restored'} \\(Slack · @alex · workspace: garden\\)`));
+    expect.soft(line.textContent).toMatch(new RegExp(`split back to ${deleted ? 'another profile' : 'Second Restored'} \\(Slack · @alex · workspace 1\\)`));
     expect.soft(line.textContent).not.toContain('pending@example.org');
     expect.soft(screen.getByRole('region', { name: 'Merged Guest' }).textContent).not.toMatch(/Restored|another profile|split back/i);
   });

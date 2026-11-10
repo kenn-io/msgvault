@@ -88,7 +88,8 @@ describe('ProfileHistoryDialog', () => {
           service_slug: 'slack', service_label: 'Slack', scope_kind: 'workspace', scope_value: scope,
           envelope: { id: 20 + index, ordinal: index, source: 'user', created_at: when, updated_at: when, superseded_at: '2026-08-02T00:00:00Z', vcard: {} }
         })), { person_id: 7, address_kind: 'email', original_value: 'current@example.com', normalized_value: 'current@example.com', normalization: 'email', normalization_version: 1, envelope: { ...currentEnvelope, id: 30 } },
-        { person_id: 7, address_kind: 'username', original_value: 'Desk 4455', normalized_value: 'Desk 4455', normalization: 'none', normalization_version: 1, service_slug: 'pager', service_label: 'Team hotline', envelope: { ...currentEnvelope, id: 35 } }],
+        { person_id: 7, address_kind: 'username', original_value: 'Desk 4455', normalized_value: 'Desk 4455', normalization: 'none', normalization_version: 1, service_slug: 'pager', service_label: 'Team hotline', envelope: { ...currentEnvelope, id: 35 } },
+        ...['beeper-a', 'beeper-b'].map((scope, index) => ({ person_id: 7, address_kind: 'username', original_value: `reader${index}`, identity_key: identityKeyFixture('whatsapp', `reader${index}`, 'account', scope), normalized_value: `reader${index}`, normalization: 'none', normalization_version: 1, service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: scope, envelope: { ...currentEnvelope, id: 40 + index } }))],
         addresses: [{ person_id: 7, address_kind: 'postal', original_value: 'Current address', envelope: { ...currentEnvelope, id: 31 } }],
         dates: [{ person_id: 7, date_kind: 'birthday', date: { month: 2, day: 14 }, date_text: 'February 14', original_value: '--02-14', envelope: { ...currentEnvelope, id: 32 } }],
         categories: [{ person_id: 7, normalized_value: 'scheduled end category', original_value: 'Scheduled end category', envelope: { ...currentEnvelope, id: 33, active_until: '2999-01-01T00:00:00Z' } }, {
@@ -129,7 +130,9 @@ describe('ProfileHistoryDialog', () => {
     expect(screen.getByText(/^Slack · workspace 1 · You · /)).toBeDefined();
     expect(screen.getByText(/^Slack · workspace 2 · You · /)).toBeDefined();
     expect(screen.getByText('observer').closest('.detail-row')?.textContent).toContain('Slack · workspace 2');
-    expect(document.body.textContent).not.toMatch(/T_ALPHA|T_BETA/);
+    expect(screen.getByText('reader0').closest('.detail-row')?.textContent).toContain('WhatsApp · account 1');
+    expect(screen.getByText('reader1').closest('.detail-row')?.textContent).toContain('WhatsApp · account 2');
+    expect(document.body.textContent).not.toMatch(/T_ALPHA|T_BETA|beeper-a|beeper-b/);
     // A registered service reads by its catalog name, not its slug.
     expect(screen.getByText('Desk 4455').closest('.detail-row')?.textContent).toMatch(/Team hotline · You · /);
     expect(document.body.textContent).not.toMatch(/Service:|Scope:|Observed:/);

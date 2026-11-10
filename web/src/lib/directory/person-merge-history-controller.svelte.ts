@@ -56,6 +56,7 @@ export class PersonMergeHistoryController {
   personID = $state(0);
   history = $state<MergeSummary[]>([]);
   historyOffset = $state(0);
+  private historyHasNext = $state(false);
   historyLoading = $state(false);
   historyError = $state<string | null>(null);
   pendingHistoryOffset = $state<number | null>(null);
@@ -114,7 +115,7 @@ export class PersonMergeHistoryController {
     return this.historyOffset > 0;
   }
   get hasNextHistoryPage(): boolean {
-    return this.history.length === PERSON_MERGE_HISTORY_LIMIT;
+    return this.historyHasNext;
   }
   /** What each merge on this page brought into the profile and it still holds: the newest merge per address. */
   get mergedIn(): MergedInAddress[] {
@@ -159,6 +160,7 @@ export class PersonMergeHistoryController {
     this.history = [];
     this.historyRows = new Map();
     this.historyOffset = 0;
+    this.historyHasNext = false;
     this.historyError = null;
     this.historyLoading = false;
     this.pendingHistoryOffset = null;
@@ -178,7 +180,7 @@ export class PersonMergeHistoryController {
     try {
       const response = await generatedListPersonMerges(
         { id: this.personID },
-        { limit: PERSON_MERGE_HISTORY_LIMIT, offset },
+        { limit: PERSON_MERGE_HISTORY_LIMIT + 1, offset },
         {
           ...this.client,
           signal: request.signal,
@@ -186,7 +188,9 @@ export class PersonMergeHistoryController {
       );
       if (!this.ownsHistory(request, generation, context)) return;
       if (response.data) {
-        this.history = response.data.merges ?? [];
+        const merges = response.data.merges ?? [];
+        this.historyHasNext = merges.length > PERSON_MERGE_HISTORY_LIMIT;
+        this.history = merges.slice(0, PERSON_MERGE_HISTORY_LIMIT);
         this.historyOffset = response.data.offset;
         this.pendingHistoryOffset = null;
         this.historyRows = new Map(this.history.map(item => [item.merge.id, mergeSummaryRow(item)]));

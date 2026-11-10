@@ -18,19 +18,9 @@ describe('addSourceCommand', () => {
     expect(addSourceCommand(commandKind('microsoft'), { email: 'user@example.org' }, 'cmd')).toBe('msgvault add-o365 user@example.org');
   });
 
-  it('passes an IMAP server port separately from its host', () => {
-    expect(addSourceCommand(imap, { host: 'imap.example.com:993', username: 'reader' }, 'posix')).toBe('msgvault add-imap --host imap.example.com --port 993 --username reader');
-    expect(addSourceCommand(imap, { host: '[2001:db8::1]:1143', username: 'reader' }, 'cmd')).toBe('msgvault add-imap --host "[2001:db8::1]" --port 1143 --username reader');
-    expect(addSourceCommand(imap, { host: '2001:db8::1', username: 'reader' }, 'posix')).toBe('msgvault add-imap --host 2001:db8::1 --username reader');
-    expect(addSourceCommand(imap, { host: 'imap.example.com:0993', username: 'reader' }, 'posix')).toBe('msgvault add-imap --host imap.example.com --port 993 --username reader');
-    expect(addSourceCommand(imap, { host: 'imap.example.com:70000', username: 'reader' }, 'posix')).toBeUndefined();
-    expect(addSourceCommand(imap, { host: 'imap.example.com:mail', username: 'reader' }, 'posix')).toBeUndefined();
-    expect(addSourceCommand(imap, { host: 'imap.example.com:993:99999', username: 'reader' }, 'posix')).toBeUndefined();
-    expect(addSourceCommand(imap, { host: '2001:db8::1:99999', username: 'reader' }, 'posix')).toBeUndefined();
-  });
-
-  it('adds STARTTLS to the IMAP command', () => {
-    expect(addSourceCommand(imap, { host: 'imap.example.com:143', username: 'reader' }, 'posix', true)).toBe('msgvault add-imap --host imap.example.com --port 143 --username reader --starttls');
+  it('requires an IMAP server name without a port or spaces', () => {
+    expect(addSourceCommand(imap, { host: 'imap.example.com:143', username: 'reader' }, 'posix')).toBeUndefined();
+    expect(addSourceCommand(imap, { host: 'imap example.com', username: 'reader' }, 'posix')).toBeUndefined();
   });
 
   it('quotes spaces and shell characters for each platform', () => {
@@ -40,8 +30,8 @@ describe('addSourceCommand', () => {
   });
 
   it('keeps an address that starts with a hyphen from reading as an option', () => {
-    expect(addSourceCommand(gmail, { email: '-reader@example.org' }, 'posix')).toBe('msgvault add-account -- -reader@example.org');
-    expect(addSourceCommand(commandKind('microsoft'), { email: '-reader@example.org' }, 'cmd')).toBe('msgvault add-o365 -- -reader@example.org');
-    expect(addSourceCommand(imap, { host: 'imap.example.org', username: '-reader' }, 'posix')).toBe('msgvault add-imap --host imap.example.org --username -reader');
+    expect(addSourceCommand(gmail, { email: '-reader@example.org' }, 'posix')).toBeUndefined();
+    expect(addSourceCommand(commandKind('microsoft'), { email: '-reader@example.org' }, 'cmd')).toBeUndefined();
+    expect(addSourceCommand(imap, { host: 'imap.example.org', username: '-reader' }, 'posix')).toBeUndefined();
   });
 });

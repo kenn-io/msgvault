@@ -377,8 +377,8 @@ and source removal are not available in Sources.
 Gmail, Microsoft 365 or Outlook.com, IMAP mailbox, and Contacts. Contacts opens Settings ›
 Contacts. The others ask for an address, or an IMAP server and username, and
 then show the command to run, quoted for macOS or Linux or for Windows when the
-two differ. **Copy** reads "Copied" for two seconds. Run the command, run the
-first sync it prints, then press **Done** to reload Sources.
+two differ. **Copy** reads "Copied" for two seconds. Run the command, then press
+**Done** to reload Sources.
 
 Viewing Sources does not repair runs left marked as running after a crash.
 They remain active until the daemon restarts or another sync for that source

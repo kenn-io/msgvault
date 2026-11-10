@@ -2661,7 +2661,11 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 		return a.runCLIDraftLifecycle(ctx, req, emit)
 	}
 	runSubprocess := func(ctx context.Context) error {
-		return run(ctx, cliRunSubprocessArgs(req), req.Env, req.Cwd, emitSubprocess)
+		args := req.Args
+		if req.GrantDecided {
+			args = append(append([]string(nil), args...), "--"+addAccountGrantDecidedFlag+"=true")
+		}
+		return run(ctx, args, req.Env, req.Cwd, emitSubprocess)
 	}
 	if len(req.Args) > 0 && req.Args[0] == "repack-attachments" {
 		if !repackAttachmentsParentArgsAllowed(req.Args[1:]) {
@@ -2709,19 +2713,6 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 		runSubprocess,
 		emitWarning,
 	)
-}
-
-// cliRunSubprocessArgs adds the daemon-owned grant flag before any "--" so the
-// child parses it as a flag, never as a positional argument.
-func cliRunSubprocessArgs(req api.CLIRunRequest) []string {
-	if !req.GrantDecided {
-		return req.Args
-	}
-	at := slices.Index(req.Args, "--")
-	if at < 0 {
-		at = len(req.Args)
-	}
-	return slices.Insert(slices.Clone(req.Args), at, "--"+addAccountGrantDecidedFlag+"=true")
 }
 
 // Lease each media write so downloads can proceed while packing runs.

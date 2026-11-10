@@ -150,14 +150,19 @@ describe('PersonMergeHistoryController', () => {
     controller.destroy();
   });
 
-  it('uses exact pagination and keeps Previous on a successful empty nonzero page', async () => {
+  it.each([100, 101])('shows Next only when more than 100 merges exist: %i', async count => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       requests.push(request);
       const offset = Number(new URL(request.url).searchParams.get('offset'));
-      const merges =
-        offset === 0 ? Array.from({ length: PERSON_MERGE_HISTORY_LIMIT }, (_, index) => summary(index + 1)) : [];
+      const merges = Array.from({ length: offset === 0 ? count : 1 }, (_, index) => {
+        const id = offset + index + 1, item = summary(id);
+        item.merge.current_person_id = 7;
+        item.labels.participants = [{ merge_id: id, participant_id: id, origin_side: 'absorbed' }];
+        item.labels.addresses = [addressFixture(id, 'email', `person${id}@example.org`)];
+        return item;
+      });
       return Response.json({ merges, limit: PERSON_MERGE_HISTORY_LIMIT, offset });
     });
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
@@ -165,14 +170,17 @@ describe('PersonMergeHistoryController', () => {
     await controller.loadHistory();
     expect(requests.map(request => new URL(request.url).pathname)).toEqual(['/api/v1/people/7/merges']);
     expect(controller.historyRows.size).toBe(100);
-    await controller.nextHistoryPage();
-
-    expect(new URL(requests[0]!.url).searchParams.toString()).toBe('limit=100&offset=0');
-    expect(new URL(requests[1]!.url).searchParams.toString()).toBe('limit=100&offset=100');
-    expect(controller.history).toEqual([]);
-    expect(controller.historyOffset).toBe(100);
-    expect(controller.hasPreviousHistoryPage).toBe(true);
-    expect(controller.hasNextHistoryPage).toBe(false);
+    expect(controller.history).toHaveLength(100);
+    expect(controller.mergedIn).toHaveLength(100);
+    expect(controller.hasNextHistoryPage).toBe(count === 101);
+    expect(new URL(requests[0]!.url).searchParams.toString()).toBe('limit=101&offset=0');
+    if (count === 101) {
+      await controller.nextHistoryPage();
+      expect(new URL(requests[1]!.url).searchParams.toString()).toBe('limit=101&offset=100');
+      expect(controller.history).toHaveLength(1);
+      expect(controller.hasPreviousHistoryPage).toBe(true);
+      expect(controller.hasNextHistoryPage).toBe(false);
+    }
   });
 
   it('loads detail without exposing the verified snapshot until an explicit reveal', async () => {

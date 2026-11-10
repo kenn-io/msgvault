@@ -7,7 +7,7 @@
   import { sourceTypeLabel } from '../../sources/labels';
   import { valueProvenance } from './history-format';
   import { formatDateTime, formatShortDate } from '../../util/format';
-  import { workspaceLabels, type MergedInAddress } from '../../directory/merge-labels';
+  import { scopeText, workspaceLabels, type MergedInAddress } from '../../directory/merge-labels';
   import PersonMergeHistory from './PersonMergeHistory.svelte';
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
   import type { PersonSplitCommittedContext } from '../../directory/person-merge-history-controller.svelte';
@@ -123,7 +123,7 @@
   }
 
   function providerContext(point: Item, workspaces: Map<string, string>): string | null {
-    const scope = workspaces.get(point.scope_value ?? '') ?? point.scope_value ?? (point.scope_kind ? sentenceCase(point.scope_kind) : undefined);
+    const scope = scopeText(point, workspaces);
     const details = [point.service_label || (point.service_slug ? sourceTypeLabel(point.service_slug) : undefined), scope].filter(Boolean);
     return details.length ? details.join(' · ') : null;
   }

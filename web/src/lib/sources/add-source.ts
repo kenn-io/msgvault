@@ -34,7 +34,7 @@ export const ADD_SOURCE_KINDS: readonly AddSourceKind[] = [
       { id: 'host', label: 'Server', placeholder: 'imap.example.com' },
       { id: 'username', label: 'Username', placeholder: 'you@example.com' },
     ],
-    template: 'msgvault add-imap --host {host} --port {port} --username {username}',
+    template: 'msgvault add-imap --host {host} --username {username}',
   },
   {
     id: 'contacts', name: 'Contacts', description: 'Google, Microsoft, or CardDAV address books',
@@ -42,29 +42,12 @@ export const ADD_SOURCE_KINDS: readonly AddSourceKind[] = [
   },
 ];
 
-// A bare value starting with "-" needs "--" before it, or the CLI reads it as an option.
-function arg(value: string, shell: 'posix' | 'cmd', optionValue: boolean): string {
-  const separator = value.startsWith('-') && !optionValue ? '-- ' : '';
-  return separator + (/^[A-Za-z0-9@._+:/-]+$/.test(value) ? value : shellQuote(value, shell));
+function arg(value: string, shell: 'posix' | 'cmd'): string {
+  return /^[A-Za-z0-9@._+:/-]+$/.test(value) ? value : shellQuote(value, shell);
 }
 
-export function imapServer(value: string): { host: string; port?: string } | undefined {
-  const host = value.trim();
-  const match = /^(\[[^\]]+\]|[^:]+):([^:]*)$/.exec(host);
-  if (!match) {
-    // A server with several colons and no port is valid only as an IPv6 address.
-    try { if (host.includes(':')) new URL(`http://${host.startsWith('[') ? host : `[${host}]`}`); } catch { return undefined; }
-    return { host };
-  }
-  const port = Number(match[2]);
-  return /^\d+$/.test(match[2]!) && port >= 1 && port <= 65535 ? { host: match[1]!, port: String(port) } : undefined;
-}
-
-export function addSourceCommand(kind: CommandSourceKind, values: Record<string, string>, shell: 'posix' | 'cmd', starttls = false): string | undefined {
-  if (kind.fields.some(field => !values[field.id]?.trim())) return undefined;
-  const server = kind.id === 'imap' ? imapServer(values.host!) : {};
-  if (!server) return undefined;
-  const filled: Record<string, string | undefined> = { ...values, ...server };
-  // An option with no value, such as a server's unstated port, is left out.
-  return kind.template.replace(/ (\S+) \{(\w+)\}/g, (_, before: string, id: string) => filled[id]?.trim() ? ` ${before} ${arg(filled[id]!.trim(), shell, before.startsWith('--'))}` : '') + (starttls ? ' --starttls' : '');
+export function addSourceCommand(kind: CommandSourceKind, values: Record<string, string>, shell: 'posix' | 'cmd'): string | undefined {
+  if (kind.fields.some(field => !values[field.id]?.trim() || values[field.id]!.trim().startsWith('-'))) return undefined;
+  if (kind.id === 'imap' && /[:\s]/.test(values.host!.trim())) return undefined;
+  return kind.template.replace(/\{(\w+)\}/g, (_, id: string) => arg(values[id]!.trim(), shell));
 }

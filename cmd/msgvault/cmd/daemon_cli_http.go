@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"slices"
 	"sort"
 	"strings"
 
@@ -196,17 +195,8 @@ func daemonCLIArgsFromCobra(cmd *cobra.Command, args []string) ([]string, error)
 		runArgs = appendDaemonCLIFlag(runArgs, flag)
 	}
 
-	return appendDaemonCLIPositionals(runArgs, args), nil
-}
-
-// appendDaemonCLIPositionals appends args after "--" when one starts with "-",
-// so the daemon's subprocess reads an address such as "-reader@example.org" as
-// a positional rather than a flag. Every forwarded flag precedes it.
-func appendDaemonCLIPositionals(runArgs, args []string) []string {
-	if slices.ContainsFunc(args, func(arg string) bool { return strings.HasPrefix(arg, "-") }) {
-		runArgs = append(runArgs, "--")
-	}
-	return append(runArgs, args...)
+	runArgs = append(runArgs, args...)
+	return runArgs, nil
 }
 
 func daemonCLICommandPath(cmd *cobra.Command) []string {

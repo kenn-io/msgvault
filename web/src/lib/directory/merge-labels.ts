@@ -1,5 +1,5 @@
 import type { PersonContactPoint, PersonMergeDetail, PersonMergeRecordedContactPoint, PersonMergeLabels, ParticipantAddress } from '../api/generated/models';
-import { identityChipText, identityScopeText } from '../relationships/identity-chip';
+import { identityChipText } from '../relationships/identity-chip';
 
 export interface AddressIdentity { identity_key: string; service_slug?: string; scope_kind?: string; scope_value?: string }
 type AddressLabel = AddressIdentity & { title: string; detail: string };
@@ -101,21 +101,22 @@ function participantAddressMap(labels: PersonMergeLabels | undefined, workspaces
 }
 
 function participantAddress(address: ParticipantAddress, workspaces: Map<string, string>): AddressLabel {
-  const chip = identityChipText(address, undefined, []);
+  const chip = identityChipText({ ...address, is_primary: false, provenance: '', scope_kind: '', scope_value: '' }, undefined, []);
   const detail = ['email', 'phone'].includes(address.type) ? '' : [...new Set([
     chip.subtitle,
     ...(['handle', 'matrix', 'apple_id', 'imessage', 'whatsapp', 'sms', 'synctech_sms', 'google_voice'].includes(address.type)
-      ? [chip.detail] : [address.display_value, scopeText(address, workspaces)]),
+      ? [chip.detail, scopeText(address, workspaces)] : [address.display_value, scopeText(address, workspaces)]),
   ].filter(Boolean))].join(' · ');
   return { ...address, title: chip.title, detail };
 }
 
-/** Exact workspace keys stay in identities; numbers name them within the complete merge input. */
+/** Exact scope keys stay in identities; numbers name them within the complete merge input. */
 export function workspaceLabels(addresses: Omit<AddressIdentity, 'identity_key'>[], known = new Map<string, string>()): Map<string, string> {
   const labels = new Map(known);
-  const scopes = addresses.filter(address => address.service_slug === 'slack' && address.scope_kind === 'workspace' && address.scope_value).map(address => address.scope_value!);
+  const scopes = addresses.filter(address => address.scope_value).map(address => JSON.stringify([address.scope_kind || 'scope', address.scope_value]));
   for (const scope of [...new Set(scopes)].sort()) {
-    if (!labels.has(scope)) labels.set(scope, `workspace ${labels.size + 1}`);
+    const [kind] = JSON.parse(scope) as [string, string];
+    if (!labels.has(scope)) labels.set(scope, `${kind} ${[...labels.keys()].filter(key => (JSON.parse(key) as string[])[0] === kind).length + 1}`);
   }
   return labels;
 }
@@ -127,9 +128,8 @@ function mergeWorkspaceLabels(detail: MergeSides): Map<string, string> {
   ]);
 }
 
-function scopeText(identity: Omit<AddressIdentity, 'identity_key'>, workspaces: Map<string, string>): string {
-  return identity.service_slug === 'slack' && identity.scope_kind === 'workspace'
-    ? workspaces.get(identity.scope_value ?? '') ?? '' : identityScopeText(identity);
+export function scopeText(identity: Omit<AddressIdentity, 'identity_key'>, workspaces: Map<string, string>): string {
+  return identity.scope_value ? workspaces.get(JSON.stringify([identity.scope_kind || 'scope', identity.scope_value])) ?? '' : identity.scope_kind ?? '';
 }
 
 /** One label per participant, built over the whole set; labels that read alike gain "(n)" in participant-ID order. */

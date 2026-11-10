@@ -313,6 +313,28 @@ describe('saved contacts in Split', () => {
     participant_ids: [701], addresses: [addressFixture(701, 'email', 'guest@example.org')],
   });
 
+  it('keeps account numbers consistent in the choices and receipt', async () => {
+    const saved = { ...contact(12, 'username', 'reader'), identity_key: identityKeyFixture('whatsapp', 'reader', 'account', 'account-a'), service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'account-a' };
+    const linked = addressFixture(701, 'beeper', 'opaque', { display_value: 'reader', service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'account-b' });
+    const split = result(true);
+    const { controller } = await preparedController(async input => {
+      const request = input as Request, path = new URL(request.url).pathname;
+      if (request.method === 'POST') return Response.json(split);
+      if (path === '/api/v1/people/12') return sourceResponse();
+      if (path === '/api/v1/people/12/profile') return Response.json(structured(person(12), [saved]));
+      if (path === '/api/v1/people/19/profile') return Response.json(structured(person(19), []));
+      throw new Error(`Unexpected ${request.method} ${path}`);
+    }, undefined, () => ({ ...mergeDetail().labels, incomplete: false, participant_ids: [701], addresses: [linked], profiles: [{ id: 7, participant_ids: [], contact_points: [saved] }, { id: 9, participant_ids: [701] }] }));
+    render(PersonSplitSteps, { controller, onOpenPerson: vi.fn() });
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'WhatsApp · reader · account 2' }));
+    expect(screen.getByText('reader · WhatsApp · account 1')).toBeDefined();
+    await act(() => { controller.confirmSplit(); return controller.submitSplit(); });
+    expect(screen.getByRole('button', { name: 'Open Synthetic Source' }).closest('.detail-row')?.textContent).toContain('reader · WhatsApp · account 1');
+    expect(screen.getByRole('button', { name: 'Open Synthetic Restored' }).closest('.detail-row')?.textContent).toContain('WhatsApp · reader · account 2');
+    expect(document.body.textContent).not.toMatch(/account-a|account-b/);
+    controller.destroy();
+  });
+
   it.each([false, true])('shows saved contacts in the exact receipt, matching archived address=%s', async matching => {
     const number = '+12025550144';
     const scope = { service_slug: 'phone', service_label: '', scope_kind: '', scope_value: '' };

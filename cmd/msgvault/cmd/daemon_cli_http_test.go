@@ -317,37 +317,43 @@ func configureRemoteDaemonForTest(t *testing.T, url string, configs ...*config.C
 }
 
 func TestDaemonCLIArgsFromCobraForwardsCommandFlagsAndPositionals(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		use  string
-		args []string
-		want []string
-	}{
-		{"command flags", "import-mbox <identifier> <export-file>",
-			[]string{"--label", "inbox,archive", "--source-type", "hey", "--yes", "alice@example.com", "/tmp/export.mbox"},
-			[]string{"import-mbox", "--label=inbox", "--label=archive", "--source-type=hey", "--yes", "alice@example.com", "/tmp/export.mbox"}},
-		{"hyphen positional", "add-account <email>",
-			[]string{"--readonly", "--", "-reader@example.org"},
-			[]string{"add-account", "--readonly", "--", "-reader@example.org"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			cmd := &cobra.Command{
-				Use: tc.use,
-				RunE: func(cmd *cobra.Command, args []string) error {
-					got, err := daemonCLIArgsFromCobra(cmd, args)
-					require.NoError(t, err, "daemon args")
-					assert.Equal(t, tc.want, got, "daemon args")
-					return nil
-				},
-			}
-			cmd.Flags().String("source-type", "mbox", "")
-			cmd.Flags().StringSlice("label", nil, "")
-			cmd.Flags().Bool("yes", false, "")
-			cmd.Flags().Bool("readonly", false, "")
-			cmd.SetArgs(tc.args)
-			require.NoError(t, cmd.Execute(), "execute")
-		})
+	assert := assert.New(t)
+	require := require.New(t)
+
+	var (
+		yes    bool
+		kind   string
+		labels []string
+	)
+	cmd := &cobra.Command{
+		Use: "import-mbox <identifier> <export-file>",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			got, err := daemonCLIArgsFromCobra(cmd, args)
+			require.NoError(err, "daemon args")
+			assert.Equal([]string{
+				"import-mbox",
+				"--label=inbox",
+				"--label=archive",
+				"--source-type=hey",
+				"--yes",
+				"alice@example.com",
+				"/tmp/export.mbox",
+			}, got, "daemon args")
+			return nil
+		},
 	}
+	cmd.Flags().StringVar(&kind, "source-type", "mbox", "")
+	cmd.Flags().StringSliceVar(&labels, "label", nil, "")
+	cmd.Flags().BoolVar(&yes, "yes", false, "")
+	cmd.SetArgs([]string{
+		"--label", "inbox,archive",
+		"--source-type", "hey",
+		"--yes",
+		"alice@example.com",
+		"/tmp/export.mbox",
+	})
+
+	require.NoError(cmd.Execute(), "execute")
 }
 
 func TestRunDaemonCLICommandHTTPOmitsCallerCwdForConfiguredRemote(t *testing.T) {

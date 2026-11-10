@@ -182,7 +182,7 @@ Examples:
 			fmt.Printf("  Note: Password stored on disk at %s\n", imapclient.CredentialsPath(cfg.TokensDir(), identifier))
 			fmt.Println()
 			fmt.Println("You can now run:")
-			fmt.Printf("  msgvault sync-full --source-id %d\n", source.ID)
+			fmt.Printf("  msgvault sync-full %s\n", identifier)
 
 			return nil
 		},

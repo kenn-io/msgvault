@@ -81,7 +81,7 @@ it.each([
   { type: 'beeper', display: '', name: 'Neri Bloom', expected: 'WhatsApp · Neri Bloom' },
   { type: 'beeper', display: '@garden-member', name: '', expected: 'WhatsApp · @garden-member' },
   { type: 'handle', key: '@garden-member', display: '', name: '', expected: 'Custom chat · @garden-member' },
-  { type: 'beeper', display: '@garden-member', name: 'Garden member', scope: true, expected: 'WhatsApp · Garden member · @garden-member · account: garden-account' },
+  { type: 'beeper', display: '@garden-member', name: 'Garden member', scope: true, expected: 'WhatsApp · Garden member · @garden-member · account 1' },
 ].map(row => ({ key: 'beeper:8:whatsapp:9:@user:x.y', scope: false, ...row })))('preserves readable $type identity evidence with display "$display"', ({ type, key, display, name, scope, expected }) => {
   const identifiers = [{ participant_id: 701, type, value: key, normalized_value: type === 'beeper' ? `beeper:${key}` : 'garden-member', display_value: display, service_slug: type === 'beeper' ? 'whatsapp' : 'custom-chat', service_label: type === 'beeper' ? 'WhatsApp' : 'Custom chat', scope_kind: scope ? 'account' : '', scope_value: scope ? 'garden-account' : '' }];
   const participant = { merge_id: 41, participant_id: 701, origin_side: 'absorbed' };
@@ -109,5 +109,17 @@ it('numbers workspaces from the complete merge for current, saved, and merged-in
 });
 
 it('renders migrated opaque Beeper IDs by their readable name', () => {
-  expect(mergeSummaryRow({ merge, labels: labelsOf(migratedAddresses) }).addresses.get(2)?.map(addressText)).toEqual(['WhatsApp · Garden member · account: garden-account']);
+  expect(mergeSummaryRow({ merge, labels: labelsOf(migratedAddresses) }).addresses.get(2)?.map(addressText)).toEqual(['WhatsApp · Garden member · account 1']);
+});
+
+it('numbers accounts together for linked and saved addresses', () => {
+  const linked = addressFixture(701, 'beeper', 'opaque', { display_value: 'reader', service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'account-b' });
+  const saved = { identity_key: identityKeyFixture('whatsapp', 'reader', 'account', 'account-a'), address_kind: 'username', original_value: 'reader', normalized_value: 'reader', service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'account-a' };
+  const labels = labelsOf([linked]);
+  labels.profiles = [{ id: 9, participant_ids: [701], contact_points: [saved] }];
+  const value = { merge, participants: [absorbed(701)], labels };
+  const row = mergeSummaryRow(value);
+  expect(row.addresses.get(701)?.map(addressText)).toEqual(['WhatsApp · reader · account 2']);
+  expect(savedAddresses([saved], new Set(), row.workspaceLabels).map(addressText)).toEqual(['reader · WhatsApp · account 1']);
+  expect(mergeAddresses(value, 'absorbed').map(addressText)).toEqual(['WhatsApp · reader · account 2', 'reader · WhatsApp · account 1']);
 });
