@@ -105,8 +105,12 @@
     }
   },
   "participants": {
+    "background": {
+      "id": 13,
+      "identity": "email:archive-updates@example.net"
+    },
     "canary": {
-      "id": 18,
+      "id": 19,
       "identity": "email:canary-addr-7f3a@canary.example"
     },
     "casey": {
@@ -114,11 +118,11 @@
       "identity": "phone:+15550100105"
     },
     "filler_one": {
-      "id": 19,
+      "id": 20,
       "identity": "phone:+15550100106"
     },
     "filler_two": {
-      "id": 20,
+      "id": 21,
       "identity": "phone:+15550100107"
     },
     "jordan": {
@@ -126,11 +130,11 @@
       "identity": "email:jordan@client.example"
     },
     "newsletter": {
-      "id": 15,
+      "id": 16,
       "identity": "email:digest@news.example"
     },
     "noreply": {
-      "id": 14,
+      "id": 15,
       "identity": "email:no-reply@service.example"
     },
     "owner": {
@@ -170,15 +174,15 @@
       "identity": "phone:+15550100101"
     },
     "shortcode": {
-      "id": 17,
+      "id": 18,
       "identity": "sms:72345"
     },
     "slackbot": {
-      "id": 16,
+      "id": 17,
       "identity": "slack:B0DEPLOY"
     },
     "support_vendor": {
-      "id": 13,
+      "id": 14,
       "identity": "email:support@vendor.example"
     },
     "taylor": {
@@ -989,9 +993,9 @@
     ],
     "awaiting_owner_reply": [
       "jordan_contract_question",
-      "sam_signal_question",
       "riley_intro_question",
-      "vendor_ticket_question"
+      "vendor_ticket_question",
+      "sam_signal_question"
     ],
     "awaiting_their_reply": [
       "taylor_proposal_question",
@@ -1006,9 +1010,6 @@
       "newsletter_6",
       "newsletter_7",
       "newsletter_8"
-    ],
-    "deleted_at_source": [
-      "deleted_at_source"
     ],
     "first_contact_messages": [
       "riley_intro_question"

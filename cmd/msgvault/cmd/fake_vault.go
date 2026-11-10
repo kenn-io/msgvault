@@ -96,7 +96,7 @@ func runFakeVault(cmd *cobra.Command, opts fakeVaultCommandOptions) error {
 		return runAgentDemo(cmd, opts)
 	case "scale":
 	default:
-		return usageErr(cmd, fmt.Errorf("--scenario: choose scale, agent-demo"))
+		return usageErr(cmd, errors.New("--scenario: choose scale, agent-demo"))
 	}
 	attachBytes, err := parseByteSize(opts.attachmentSize)
 	if err != nil {
@@ -192,7 +192,7 @@ func runAgentDemo(cmd *cobra.Command, opts fakeVaultCommandOptions) error {
 		return err
 	}
 	refuse := func() error {
-		return fmt.Errorf("fake-vault: refusing to write a demo archive into an existing archive directory")
+		return errors.New("fake-vault: refusing to write a demo archive into an existing archive directory")
 	}
 	if output == live {
 		return refuse()

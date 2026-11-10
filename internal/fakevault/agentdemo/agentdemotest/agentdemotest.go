@@ -4,6 +4,7 @@ package agentdemotest
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -56,7 +57,10 @@ func build(ctx context.Context) (files map[string][]byte, err error) {
 		files[path] = data
 		return nil
 	})
-	return files, err
+	if err != nil {
+		return nil, fmt.Errorf("read demo template files: %w", err)
+	}
+	return files, nil
 }
 
 // Archive builds once per test binary and copies every file into a private directory.

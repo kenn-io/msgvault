@@ -64,7 +64,7 @@ type canonicalizer struct {
 }
 
 func quoteIdentifier(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }
-func (c *canonicalizer) load(name string) (*digestTable, error) {
+func (c *canonicalizer) load(name string) (result *digestTable, err error) {
 	if table, ok := c.tables[name]; ok {
 		return table, nil
 	}
@@ -72,9 +72,16 @@ func (c *canonicalizer) load(name string) (*digestTable, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer func(rows *sql.Rows) {
+		err = errors.Join(err, rows.Close())
+		if err != nil {
+			result = nil
+			delete(c.tables, name)
+		}
+	}(rows)
 	columns, err := rows.Columns()
 	if err != nil {
-		return nil, errors.Join(err, rows.Close())
+		return nil, err
 	}
 	table := &digestTable{columns: columns, byID: map[string]digestRow{}, foreign: map[string]string{}}
 	for rows.Next() {
@@ -84,7 +91,7 @@ func (c *canonicalizer) load(name string) (*digestTable, error) {
 			ptrs[i] = &values[i]
 		}
 		if err = rows.Scan(ptrs...); err != nil {
-			return nil, errors.Join(err, rows.Close())
+			return nil, err
 		}
 		row := digestRow{}
 		for i, col := range columns {
@@ -99,23 +106,25 @@ func (c *canonicalizer) load(name string) (*digestTable, error) {
 			table.byID[fmt.Sprint(id)] = row
 		}
 	}
-	err = rows.Err()
-	closeErr := rows.Close()
-	if err != nil {
+	if err = rows.Err(); err != nil {
 		return nil, err
-	}
-	if closeErr != nil {
-		return nil, closeErr
 	}
 	rows, err = c.db.QueryContext(c.ctx, "PRAGMA foreign_key_list("+quoteIdentifier(name)+")")
 	if err != nil {
 		return nil, err
 	}
+	defer func(rows *sql.Rows) {
+		err = errors.Join(err, rows.Close())
+		if err != nil {
+			result = nil
+			delete(c.tables, name)
+		}
+	}(rows)
 	for rows.Next() {
 		var id, seq int
 		var target, from, to, onUpdate, onDelete, match string
 		if err = rows.Scan(&id, &seq, &target, &from, &to, &onUpdate, &onDelete, &match); err != nil {
-			return nil, errors.Join(err, rows.Close())
+			return nil, err
 		}
 		switch to {
 		case "id":
@@ -124,13 +133,8 @@ func (c *canonicalizer) load(name string) (*digestTable, error) {
 			table.foreign[from] = "messages"
 		}
 	}
-	err = rows.Err()
-	closeErr = rows.Close()
-	if err != nil {
+	if err = rows.Err(); err != nil {
 		return nil, err
-	}
-	if closeErr != nil {
-		return nil, closeErr
 	}
 	c.tables[name] = table
 	return table, nil

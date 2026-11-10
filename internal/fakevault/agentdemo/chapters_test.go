@@ -109,30 +109,32 @@ func TestEmailAndChatLoopsMatchExpectations(t *testing.T) {
 	}
 }
 func TestEmailDraftProvenance(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
 	st, m := archive(t, 1)
 	for _, h := range []string{"sam_trip_sent_from_draft", "sam_trip_unsent_draft"} {
-		var authored, own bool
-		require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT draft_authored,is_from_me FROM messages WHERE id=?", m.Messages[h]).Scan(&authored, &own))
-		assert.True(authored, h)
-		assert.True(own, h)
-		var labels []string
-		rows, err := st.DB().QueryContext(t.Context(), "SELECT l.name FROM labels l JOIN message_labels ml ON ml.label_id=l.id WHERE ml.message_id=?", m.Messages[h])
-		require.NoError(err)
-		for rows.Next() {
-			var s string
-			require.NoError(rows.Scan(&s))
-			labels = append(labels, s)
-		}
-		require.NoError(rows.Err())
-		require.NoError(rows.Close())
-		if h == "sam_trip_sent_from_draft" {
-			assert.Contains(labels, "SENT")
-			assert.NotContains(labels, "DRAFT")
-		} else {
-			assert.Equal([]string{"DRAFT"}, labels)
-		}
+		t.Run(h, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			var authored, own bool
+			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT draft_authored,is_from_me FROM messages WHERE id=?", m.Messages[h]).Scan(&authored, &own))
+			assert.True(authored, h)
+			assert.True(own, h)
+			var labels []string
+			rows, err := st.DB().QueryContext(t.Context(), "SELECT l.name FROM labels l JOIN message_labels ml ON ml.label_id=l.id WHERE ml.message_id=?", m.Messages[h])
+			require.NoError(err)
+			defer func() { require.NoError(rows.Close()) }()
+			for rows.Next() {
+				var s string
+				require.NoError(rows.Scan(&s))
+				labels = append(labels, s)
+			}
+			require.NoError(rows.Err())
+			if h == "sam_trip_sent_from_draft" {
+				assert.Contains(labels, "SENT")
+				assert.NotContains(labels, "DRAFT")
+			} else {
+				assert.Equal([]string{"DRAFT"}, labels)
+			}
+		})
 	}
 }
 func TestEmailStarredLabelSynced(t *testing.T) {
@@ -332,7 +334,11 @@ func TestVoicePersonScopeMembership(t *testing.T) {
 	assert := assert.New(t)
 	st, m := archive(t, 1)
 	var oracle struct {
-		PersonSam struct{ Chat, Email, Never []string } `json:"person_sam"`
+		PersonSam struct {
+			Chat  []string `json:"chat"`
+			Email []string `json:"email"`
+			Never []string `json:"never"`
+		} `json:"person_sam"`
 	}
 	data, err := json.Marshal(m.Expect["voice"])
 	require.NoError(err)
