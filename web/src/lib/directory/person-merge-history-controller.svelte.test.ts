@@ -181,7 +181,7 @@ describe('PersonMergeHistoryController', () => {
         item.labels.addresses = [addressFixture(id, 'email', `person${id}@example.org`)];
         return item;
       });
-      return Response.json({ merges, limit: PERSON_MERGE_HISTORY_LIMIT, offset });
+      return Response.json({ merges, limit: PERSON_MERGE_HISTORY_LIMIT + 1, offset });
     });
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
 
@@ -350,6 +350,7 @@ describe('PersonMergeHistoryController', () => {
     { kind: 'transport', status: 0, error: '' },
     { kind: 'exception', status: 0, error: '' },
     { kind: 'application', status: 409, error: 'person_split_idempotency_conflict' },
+    { kind: 'application', status: 412, error: 'person_merge_revision_conflict' },
   ])('handles request IDs after $kind $status', async ({ kind, status, error }) => {
     const requests: Request[] = [];
     let postAttempts = 0;
