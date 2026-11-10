@@ -250,7 +250,7 @@ func (s *Store) persistICSDetailsWith(ctx context.Context, tx *loggedTx, sourceI
 	participants := make([]ParticipantPersistData, 0, len(e.Attendees))
 	organizer := -1
 	for _, attendee := range e.Attendees {
-		if attendee.Email == "" {
+		if attendee.Email == "" || attendee.Role == "room" {
 			continue
 		}
 		if attendee.Role == "organizer" {

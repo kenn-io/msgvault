@@ -310,3 +310,32 @@ func TestICalendarCancellationUsesLatestDetailStamp(t *testing.T) {
 	requirements.NotNil(row.Event.Start)
 	assertions.Equal("2027-03-02T14:00:00Z", row.Event.Start.Format(time.RFC3339))
 }
+
+func TestICalendarRoomAttendeesAreNotParticipants(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source := icsSource(t, st)
+	raw := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nORGANIZER:mailto:organizer@example.com\r\nATTENDEE:mailto:guest@example.org\r\nATTENDEE;CUTYPE=ROOM:mailto:conference@example.org\r\nATTENDEE:mailto:board@resource.calendar.google.com")
+	_, err := st.PersistICalendarContext(t.Context(), source, raw)
+	requirements.NoError(err)
+	for _, tc := range []struct {
+		email string
+		want  int
+	}{
+		{"organizer@example.com", 1}, {"guest@example.org", 1},
+		{"conference@example.org", 0}, {"board@resource.calendar.google.com", 0},
+	} {
+		var count int
+		requirements.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM participants WHERE email_address=?`, tc.email).Scan(&count))
+		assertions.Equal(tc.want, count, tc.email)
+	}
+	ids := emailEvents(t, st, source)
+	requirements.Len(ids, 1)
+	attendees := calendarRows(t, st, ids...)[0].Event.Attendees
+	rooms := map[string]string{}
+	for _, attendee := range attendees {
+		rooms[attendee.Email] = attendee.Role
+	}
+	assertions.Equal("room", rooms["conference@example.org"])
+	assertions.Equal("room", rooms["board@resource.calendar.google.com"])
+}
