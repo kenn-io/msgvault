@@ -199,29 +199,36 @@ func TestDeliveryPolicyUnchangedWritesKeepRevisionAndAudit(t *testing.T) {
 }
 
 func TestDeliveryPolicyUnchangedChatApprovals(t *testing.T) {
-	for _, ownerOnly := range []bool{false, true} {
-		name := "peer during roster refresh"
-		if ownerOnly {
-			name = "SQL owner only"
-		}
+	for _, name := range []string{"peer during roster refresh", "SQL owner only", "email member only"} {
 		t.Run(name, func(t *testing.T) {
-			f := deliveryChatFixture(t)
+			var f *storetest.Fixture
+			if name == "email member only" {
+				f = storetest.New(t)
+			} else {
+				f = deliveryChatFixture(t)
+			}
 			original := f.EnsureParticipant("original@example.test", "Original", "example.test")
 			peer := f.EnsureParticipant("peer@example.test", "Peer", "example.test")
 			p, _, err := f.Store.CreatePersonFromParticipant(original)
 			require.NoError(t, err)
-			setDelivery(t, f.Store, p.VCardUID, "", store.DeliverySendAllowed)
+			approved := setDelivery(t, f.Store, p.VCardUID, "", store.DeliverySendAllowed).After
 			require.NoError(t, f.Store.EnsureConversationParticipantContext(t.Context(), f.ConvID, peer, "member"))
-			if ownerOnly {
+			if name == "SQL owner only" {
 				require.NoError(t, f.Store.AddAccountIdentity(f.Source.ID, "peer@example.test", "manual"))
 			}
 			_, err = f.Store.LinkParticipants(original, peer)
 			require.NoError(t, err)
-			e := writeDeliveryChatEvidence(t, f)
-			require.NoError(t, f.Store.InvalidateConversationMessagingRouteEvidence(t.Context(), f.ConvID))
+			var e store.MessagingRouteEvidence
+			if name == "peer during roster refresh" {
+				e = writeDeliveryChatEvidence(t, f)
+				require.NoError(t, f.Store.InvalidateConversationMessagingRouteEvidence(t.Context(), f.ConvID))
+				_, err := f.Store.ChatRouteRecipientsContext(t.Context(), f.Source.ID, "chat-thread")
+				require.ErrorIs(t, err, store.ErrDeliveryPolicyInvalid, "approval must refresh even while route proof is invalid")
+			}
 			before := readDelivery(t, f.Store, p.VCardUID, "")
+			require.Greater(t, before.Revision, approved.Revision, "the binding must make the previous approval stale")
 			refresh := setDelivery(t, f.Store, p.VCardUID, "", store.DeliverySendAllowed)
-			if ownerOnly {
+			if name != "peer during roster refresh" {
 				assert.Nil(t, refresh.Audit)
 				assert.Equal(t, before.Revision, refresh.After.Revision)
 				return

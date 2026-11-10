@@ -316,18 +316,23 @@ var nativeRouteNetworks = map[string]string{
 	sourceTypeTeams:     sourceTypeTeams,
 }
 
-func (s *Store) readMessagingRoutes(
-	ctx context.Context, tx *loggedTx, q PersonMessagingRouteQuery, page *PersonMessagingRoutesPage, limit int,
-) error {
+// boundedRouteMetadataSQL reads proof metadata and its oversize flag from alias c.
+func (s *Store) boundedRouteMetadataSQL() string {
 	metadataBytes := `LENGTH(CAST(c.metadata AS BLOB))`
 	if s.IsPostgreSQL() {
 		metadataBytes = `OCTET_LENGTH(CAST(c.metadata AS TEXT))`
 	}
+	return `CASE WHEN ` + metadataBytes + `<=65536 THEN COALESCE(CAST(c.metadata AS TEXT),'') ELSE '' END,
+ COALESCE(` + metadataBytes + `,0)>65536`
+}
+
+func (s *Store) readMessagingRoutes(
+	ctx context.Context, tx *loggedTx, q PersonMessagingRouteQuery, page *PersonMessagingRoutesPage, limit int,
+) error {
 	query := `SELECT c.id,COALESCE(c.source_conversation_id,''),c.source_id,src.source_type,src.identifier,
  c.conversation_type,
  src.last_sync_at,
- CASE WHEN ` + metadataBytes + `<=65536 THEN COALESCE(CAST(c.metadata AS TEXT),'') ELSE '' END,
- COALESCE(` + metadataBytes + `,0)>65536,
+ ` + s.boundedRouteMetadataSQL() + `,
  EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=c.id)
   AND NOT EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND m.deleted_from_source_at IS NULL),
  COALESCE(srf.failure,''),

@@ -27,15 +27,10 @@ func (s *Store) chatRouteRecipientsTx(ctx context.Context, tx *loggedTx, sourceI
 	}
 
 	r := MessagingRoute{SourceID: sourceID, ProviderChatID: sourceConversationID}
-	metadataBytes := `LENGTH(CAST(c.metadata AS BLOB))`
-	if s.IsPostgreSQL() {
-		metadataBytes = `OCTET_LENGTH(CAST(c.metadata AS TEXT))`
-	}
 	var raw string
 	var oversized bool
 	err := tx.QueryRowContext(ctx, `SELECT c.id,src.identifier,c.conversation_type,
- CASE WHEN `+metadataBytes+`<=65536 THEN COALESCE(CAST(c.metadata AS TEXT),'') ELSE '' END,
- COALESCE(`+metadataBytes+`,0)>65536
+ `+s.boundedRouteMetadataSQL()+`
  FROM conversations c JOIN sources src ON src.id=c.source_id
  WHERE c.source_id=? AND c.source_conversation_id=? AND c.conversation_type IN `+chatConversationTypesSQL, sourceID, sourceConversationID).Scan(&r.ConversationID, &r.AccountID, &r.ConversationType, &raw, &oversized)
 	if errors.Is(err, sql.ErrNoRows) {
