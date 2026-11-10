@@ -8,6 +8,9 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Import selected [GroupMe conversations and direct messages](usage/text-messages.md#import-groupme)
+  from local JSON exports for search, with available image/video media and
+  coverage summaries. Reruns add missing messages and recover missing media.
 - `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.
 - [Instagram comment sync](usage/instagram-comments.md) archives linked professional
   account media comments and replies for search and existing person linking.

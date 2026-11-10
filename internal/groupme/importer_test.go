@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -106,7 +105,7 @@ func TestImportCoverageRawUnknownsAndReruns(t *testing.T) {
 }
 
 func TestImportMedia(t *testing.T) {
-	t.Run("recover missing bytes into the same slot", func(t *testing.T) {
+	t.Run("fills missing bytes for a reordered attachment list", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 		st := testutil.NewTestStore(t)
@@ -177,16 +176,16 @@ func TestImportMedia(t *testing.T) {
 		assert.Zero(summary.AttachmentsStored)
 		assert.Equal(2, summary.AttachmentsMissing)
 	})
-	for _, id := range []string{"../escape", "/absolute", `..\escape`} {
-		name, ok := galleryName(id, Attachment{Type: "image", URL: "https://images.example.invalid/800x600.png.example"})
-		assert.False(t, ok)
-		assert.Empty(t, name)
-	}
+	t.Run("hostile message IDs", func(t *testing.T) {
+		for _, id := range []string{"../escape", "/absolute", `..\escape`} {
+			name, ok := galleryName(id, Attachment{Type: "image", URL: "https://images.example.invalid/800x600.png.example"})
+			assert.False(t, ok, "message ID %q", id)
+			assert.Empty(t, name, "message ID %q", id)
+		}
+	})
 }
 
-type cancelLog struct{ cancel context.CancelFunc }
-
-func (w cancelLog) Write(p []byte) (int, error) { w.cancel(); return len(p), nil }
+// Not parallel: CancelAfterCommit replaces process-wide SQL logging.
 func TestImportCancellationThenRepeat(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -194,8 +193,15 @@ func TestImportCancellationThenRepeat(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	root := fixture(t)
-	summary, err := Import(ctx, st, ImportOptions{RootDir: root, Me: "fictional-owner", Logger: slog.New(slog.NewTextHandler(cancelLog{cancel}, &slog.HandlerOptions{Level: slog.LevelDebug}))})
+	canceled := testutil.CancelAfterCommit(t, cancel, func() bool {
+		var count int
+		// The commit probe must survive import cancellation.
+		require.NoError(st.DB().QueryRowContext(context.WithoutCancel(t.Context()), "SELECT count(*) FROM messages").Scan(&count))
+		return count > 0
+	})
+	summary, err := Import(ctx, st, ImportOptions{RootDir: root, Me: "fictional-owner"})
 	require.ErrorIs(err, context.Canceled)
+	require.True(canceled())
 	assert.EqualValues(1, summary.MessagesAdded)
 	summary, err = Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional-owner"})
 	require.NoError(err)
@@ -231,7 +237,6 @@ func TestReaderRecordLimitsAndMalformedInput(t *testing.T) {
 		{"object", `{}`, "array"},
 		{"truncated", `[{"id":"a"}`, "read message"},
 		{"trailing", `[] {}`, "trailing"},
-		{"conflicting", `[{"group_id":"a"},{"group_id":"b"}]`, "conflicting"},
 		{"oversized", `[{"text":"` + strings.Repeat("x", maxRecordBytes) + `"}]`, "exceeds"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -277,10 +282,27 @@ func TestReaderContainment(t *testing.T) {
 	})
 }
 
-func TestImportRequiresOwner(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	_, err := Import(t.Context(), st, ImportOptions{RootDir: t.TempDir()})
-	require.ErrorContains(t, err, "--me")
+func TestImportOwnerValidation(t *testing.T) {
+	for _, tc := range []struct{ name, me string }{
+		{"required", ""},
+		{"surrounding whitespace", "  owner  "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			root := t.TempDir()
+			require.NoError(os.WriteFile(filepath.Join(root, "message.json"), []byte(`[{"id":"one","group_id":"opaque","sender_id":"owner","text":"first"}]`), 0600))
+			_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: tc.me})
+			if tc.me == "" {
+				require.ErrorContains(err, "--me")
+				return
+			}
+			require.NoError(err)
+			var n int
+			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages WHERE is_from_me=true").Scan(&n))
+			assert.Equal(t, 1, n)
+		})
+	}
 }
 
 func TestImportUnknownAttachmentShapesKeepText(t *testing.T) {
@@ -342,9 +364,20 @@ func TestImportMetadataIdentityAndFolderScope(t *testing.T) {
 	assert.Equal(1, n)
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM conversation_participants").Scan(&n))
 	assert.Equal(1, n)
-	require.NoError(os.WriteFile(filepath.Join(renamed, "message.json"), []byte(`[{"id":"one","group_id":"different","text":"must not merge"}]`), 0600))
-	_, err = Import(t.Context(), st, ImportOptions{RootDir: root, Me: "owner"})
-	require.ErrorContains(err, "conflicting conversation IDs")
+	for _, tc := range []struct {
+		content     string
+		hasMetadata bool
+	}{
+		{`[{"id":"one","group_id":"different","text":"must not merge"}]`, true},
+		{`[{"group_id":"a"},{"group_id":"b"}]`, false},
+	} {
+		require.NoError(os.WriteFile(filepath.Join(renamed, "message.json"), []byte(tc.content), 0600))
+		if !tc.hasMetadata {
+			require.NoError(os.Remove(filepath.Join(renamed, "conversation.json")))
+		}
+		_, err = Import(t.Context(), st, ImportOptions{RootDir: root, Me: "owner"})
+		require.ErrorContains(err, "conflicting conversation IDs")
+	}
 	// A metadata-free conversation keeps the same fallback across parent/single
 	// selections and extraction roots, using its exported folder name.
 	for i := range 2 {
@@ -376,18 +409,15 @@ func TestImportSkipsScalarDrift(t *testing.T) {
  {"id":42,"group_id":"opaque","text":"unsupported ID"},
  {"id":"bad-time","created_at":"yesterday"},
  {"id":"after","group_id":"opaque","created_at":1704067201,"text":"last"} ]`), 0600))
-	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "  owner  "})
+	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "owner"})
 	require.NoError(err)
 	assert.EqualValues(2, summary.MessagesAdded)
 	assert.EqualValues(2, summary.UnsupportedEntriesSkipped)
 	assert.Equal(map[int]int64{2024: 2}, summary.Years)
 	assert.Equal(map[string]int64{"message": 2}, summary.Types)
-	var n int
-	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages WHERE is_from_me=true").Scan(&n))
-	assert.Equal(1, n)
 }
 
-func TestImportPreservesRawAndDuplicates(t *testing.T) {
+func TestImportDuplicatesAcrossBatchBoundaries(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)

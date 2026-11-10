@@ -79,13 +79,17 @@ func TestAssembleDocumentUsesMediaOnlyWhenContextNormalizesEmpty(t *testing.T) {
 	assert.Same(t, request.Media, doc.Parts[0].Media)
 }
 
-func TestAssembleDocumentTelegramContext(t *testing.T) {
-	request := revisionRequest()
-	request.Context = MessageContext{Body: "Photo caption", MessageType: "telegram"}
-	doc, _, err := AssembleDocument(request)
-	require.NoError(t, err)
-	require.Len(t, doc.Parts, 2)
-	assert.Equal(t, "Photo caption\n\nMessage type: chat message", doc.Parts[0].Text)
+func TestAssembleDocumentChatContext(t *testing.T) {
+	for _, messageType := range []string{"telegram", "groupme"} {
+		t.Run(messageType, func(t *testing.T) {
+			request := revisionRequest()
+			request.Context = MessageContext{Body: "Photo caption", MessageType: messageType}
+			doc, _, err := AssembleDocument(request)
+			require.NoError(t, err)
+			require.Len(t, doc.Parts, 2)
+			assert.Equal(t, "Photo caption\n\nMessage type: chat message", doc.Parts[0].Text)
+		})
+	}
 }
 
 func TestAssembleDocumentTruncatesContextOnRuneBoundary(t *testing.T) {
@@ -106,13 +110,4 @@ func revisionRequest() AssembleRequest {
 		Role:    store.AttachmentRoleStandalone, SourceSequence: 1,
 		Policy: ContextPolicy{MaxChars: 4000, InputVersion: "visual-input-v1", EligibilityVersion: "visual-eligibility-v1"},
 	}
-}
-
-func TestAssembleDocumentGroupmeContext(t *testing.T) {
-	request := revisionRequest()
-	request.Context = MessageContext{Body: "Photo caption", MessageType: "groupme"}
-	doc, _, err := AssembleDocument(request)
-	require.NoError(t, err)
-	require.Len(t, doc.Parts, 2)
-	assert.Equal(t, "Photo caption\n\nMessage type: chat message", doc.Parts[0].Text)
 }

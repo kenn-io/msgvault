@@ -4,16 +4,17 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"io"
+	"os"
+	"path/filepath"
+	"testing"
+
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
-	"io"
-	"os"
-	"path/filepath"
-	"testing"
 )
 
 func TestImportGroupmeEndToEnd(t *testing.T) {
@@ -53,25 +54,26 @@ func TestImportGroupmeEndToEnd(t *testing.T) {
 	assert.Equal(4, n)
 }
 
-func TestImportGroupmeRejectsClientFilesOnRemote(t *testing.T) {
-	server, requests := newDaemonCLIRunnerTestServer(t, nil, `{"type":"complete"}`)
-	command := newImportGroupmeCmd()
-	command.SetContext(configureRemoteDaemonForTest(t, server.URL))
-	command.SetOut(io.Discard)
-	command.SetErr(io.Discard)
-	command.SetArgs([]string{"--me", "fictional-owner", "export"})
-	require.ErrorContains(t, command.Execute(), "run it on the daemon host with --local")
-	assert.Zero(t, requests.Load())
-}
-func TestImportGroupmeRequiresOwnerBeforeDaemonRequest(t *testing.T) {
-	server, requests := newDaemonCLIRunnerTestServer(t, nil, `{"type":"complete"}`)
-	command := newImportGroupmeCmd()
-	command.SetContext(configureRemoteDaemonForTest(t, server.URL))
-	command.SetOut(io.Discard)
-	command.SetErr(io.Discard)
-	command.SetArgs([]string{"export"})
-	require.ErrorContains(t, command.Execute(), "--me")
-	assert.Zero(t, requests.Load())
+func TestImportGroupmeRemoteValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"client files stay on the daemon host", []string{"--me", "fictional-owner", "export"}, "run it on the daemon host with --local"},
+		{"owner required before daemon request", []string{"export"}, "--me"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, requests := newDaemonCLIRunnerTestServer(t, nil, `{"type":"complete"}`)
+			command := newImportGroupmeCmd()
+			command.SetContext(configureRemoteDaemonForTest(t, server.URL))
+			command.SetOut(io.Discard)
+			command.SetErr(io.Discard)
+			command.SetArgs(tc.args)
+			require.ErrorContains(t, command.Execute(), tc.want)
+			assert.Zero(t, requests.Load())
+		})
+	}
 }
 
 // A cancellation after a real commit still runs identity migrations and refreshes
