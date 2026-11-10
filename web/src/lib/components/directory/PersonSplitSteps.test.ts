@@ -1,6 +1,6 @@
 import { addressFixture } from '../../directory/merge-fixtures.test-support';
 import { emptyProfile } from '../../directory/profile-fixtures.test-support';
-import { envelope, mergeResult, person } from '../../directory/entity-fixtures.test-support';
+import { mergeResult, person } from '../../directory/entity-fixtures.test-support';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -250,14 +250,11 @@ describe('PersonSplitSteps', () => {
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
   });
 
-  it('splits a saved-only profile without calling it addressless', async () => {
-    const saved = { person_id: 19, identity_key: 'saved-key', address_kind: 'email', original_value: 'saved@example.org', normalized_value: 'saved@example.org', normalization: 'email', normalization_version: 1, envelope: envelope(190) };
+  it('splits a profile with no participant lineage', async () => {
     const response = { ...result(true), source_person: person(12, 5, [], 'Synthetic Source'), new_person: person(19, 1, [], 'Synthetic Restored') };
     const { controller } = await preparedController(async input => {
       const request = input as Request, path = new URL(request.url).pathname;
       if (path === '/api/v1/people/12') return Response.json(person(12, 4, [], 'Synthetic Source'), { headers: { ETag: '"person-12-r4"' } });
-      if (path === '/api/v1/people/12/profile') return Response.json({ ...emptyProfile(response.source_person), contact_points: [{ ...saved, person_id: 12 }] });
-      if (path === '/api/v1/people/19/profile') return Response.json({ ...emptyProfile(response.new_person), contact_points: [saved] });
       if (path === '/api/v1/people/12/split' && request.method === 'POST') return Response.json(response);
       throw new Error(`Unexpected ${request.method} ${path}`);
     }, [], () => ({ ...mergeDetail().labels, profiles: [{ id: 7, participant_ids: [] }, { id: 9, participant_ids: [] }], incomplete: false }));
