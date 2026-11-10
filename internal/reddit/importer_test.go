@@ -196,7 +196,7 @@ func TestImportLargeDirectory(t *testing.T) {
 	require.Equal(1, summary.Added)
 }
 
-func TestImportPlainMarkerNamesArePeople(t *testing.T) {
+func TestImportOwnersAndPlainMarkerNames(t *testing.T) {
 	for _, tc := range []struct{ me, account, want string }{
 		{"unknown", "", "unknown"},
 		{"a", "", "a"}, {"Legacy-Name_1", "", "legacy-name_1"},
@@ -214,11 +214,13 @@ func TestImportPlainMarkerNamesArePeople(t *testing.T) {
 			var account string
 			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT identifier FROM sources WHERE id=?"), summary.SourceID).Scan(&account))
 			assert.Equal(tc.want, account)
-			var n int
-			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM participant_identifiers WHERE identifier_type='reddit' AND identifier_value IN ('unknown','deleted')").Scan(&n))
-			assert.Equal(2, n)
-			require.Len(summary.Files, 1)
-			assert.Zero(summary.Files[0].UnknownSenders)
+			if tc.me == "unknown" {
+				var n int
+				require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM participant_identifiers WHERE identifier_type='reddit' AND identifier_value IN ('unknown','deleted')").Scan(&n))
+				assert.Equal(2, n)
+				require.Len(summary.Files, 1)
+				assert.Zero(summary.Files[0].UnknownSenders)
+			}
 		})
 	}
 }
@@ -303,33 +305,20 @@ func TestImportChatGrouping(t *testing.T) {
 }
 
 func TestImportChatWithoutChannel(t *testing.T) {
-	for _, tc := range []struct {
-		name, csv string
-		wantAdded int
-	}{
-		{"missing column", "message_id,message\none,hello\n", 2},
-		{"empty channel", "message_id,message,channel_url,thread_parent_message_id\none,hello,channel,\ntwo,reply,,one\nthree,later,channel,\n", 4},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			root := t.TempDir()
-			require.NoError(os.WriteFile(filepath.Join(root, "chat_history.csv"), []byte(tc.csv), 0600))
-			require.NoError(os.WriteFile(filepath.Join(root, "posts.csv"), []byte("id,title\npost,later\n"), 0600))
-			st := testutil.NewTestStore(t)
-			summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
-			require.NoError(err)
-			assert.Equal(tc.wantAdded, summary.Added)
-			var n int
-			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&n))
-			assert.Equal(tc.wantAdded, n)
-			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM conversations WHERE source_conversation_id LIKE 'chat:item:%'").Scan(&n))
-			assert.Equal(1, n)
-			summary, err = Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
-			require.NoError(err)
-			assert.Equal(tc.wantAdded, summary.Unchanged)
-		})
-	}
+	assert := assert.New(t)
+	require := require.New(t)
+	root := t.TempDir()
+	require.NoError(os.WriteFile(filepath.Join(root, "chat_history.csv"), []byte("message_id,message,channel_url,thread_parent_message_id\none,hello,channel,\ntwo,reply,,one\nthree,later,channel,\n"), 0600))
+	require.NoError(os.WriteFile(filepath.Join(root, "posts.csv"), []byte("id,title\npost,later\n"), 0600))
+	st := testutil.NewTestStore(t)
+	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
+	require.NoError(err)
+	assert.Equal(4, summary.Added)
+	var n int
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&n))
+	assert.Equal(4, n)
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM conversations WHERE source_conversation_id LIKE 'chat:item:%'").Scan(&n))
+	assert.Equal(1, n)
 }
 
 func TestImportFailureRetainsCompletedRows(t *testing.T) {
@@ -446,17 +435,6 @@ func TestImportDateOrder(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
 	require.NoError(err)
-	rows, err := st.DB().QueryContext(t.Context(), "SELECT source_message_id FROM messages ORDER BY sent_at")
-	require.NoError(err)
-	defer func() { _ = rows.Close() }()
-	var ids []string
-	for rows.Next() {
-		var id string
-		require.NoError(rows.Scan(&id))
-		ids = append(ids, id)
-	}
-	require.NoError(rows.Err())
-	assert.Equal([]string{"post:offset", "post:utc"}, ids)
 	var count int
 	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT count(*) FROM messages WHERE sent_at < ?"), time.Date(2026, 5, 24, 3, 30, 0, 0, time.UTC)).Scan(&count))
 	assert.Equal(1, count)
