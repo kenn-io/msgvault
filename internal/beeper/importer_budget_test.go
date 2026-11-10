@@ -900,18 +900,20 @@ func TestConversationStatsContextUsesCallerBudget(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, scheduledStopAt, scheduledDeadline, "scheduled stats use the remaining scheduled budget")
 
-	for name, opts := range map[string]ImportOptions{
-		"late":  {StopAt: time.Now().Add(-time.Minute)},
-		"yield": {ShouldStop: func() bool { return true }},
+	for name, makeOpts := range map[string]func() ImportOptions{
+		"late":  func() ImportOptions { return ImportOptions{StopAt: time.Now().Add(-time.Minute)} },
+		"yield": func() ImportOptions { return ImportOptions{ShouldStop: func() bool { return true }} },
 	} {
 		t.Run(name, func(t *testing.T) {
-			stopped, cancelStopped := opts.conversationStatsContext(parent)
-			defer cancelStopped()
-			require.NoError(t, stopped.Err(), "stopped stats still get a usable cleanup window")
-			deadline, ok := stopped.Deadline()
-			require.True(t, ok)
-			assert.InDelta(t, stoppedImportFinalizeTimeout.Seconds(), time.Until(deadline).Seconds(), 1,
-				"stopped stats receive a fresh bounded window")
+			synctest.Test(t, func(t *testing.T) {
+				stopped, cancelStopped := makeOpts().conversationStatsContext(parent)
+				defer cancelStopped()
+				require.NoError(t, stopped.Err(), "stopped stats still get a usable cleanup window")
+				deadline, ok := stopped.Deadline()
+				require.True(t, ok)
+				assert.InDelta(t, stoppedImportFinalizeTimeout.Seconds(), time.Until(deadline).Seconds(), 1,
+					"stopped stats receive a fresh bounded window")
+			})
 		})
 	}
 
