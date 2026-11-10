@@ -42,9 +42,6 @@ func newDiagnoseAcquisitionCmd() *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if sourceID <= 0 {
-				return usageErr(cmd, errors.New("source ID must be positive"))
-			}
 			ctx := cmd.Context()
 			if IsRemoteMode(invocationFromContext(ctx)) {
 				return errors.New("diagnose-acquisition requires a local archive; use --local when remote.url is configured")
