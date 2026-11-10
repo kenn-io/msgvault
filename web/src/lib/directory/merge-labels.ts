@@ -149,11 +149,11 @@ export function distinctLabels(ids: number[], label: (id: number) => string): Ma
   }));
 }
 
-interface MergedInParticipant { merge_id: number; participant_id: number; merged_at: string; addresses: ParticipantAddress[]; workspaces: Map<string, string> }
+interface MergedInParticipant { merge_id: number; participant_id: number; merged_at: string; addresses: ParticipantAddress[] }
 
-/** The addresses each current member brought in with its newest merge, numbering workspaces as that merge does. */
+/** The addresses each current member brought in with its newest merge. */
 export function mergedInAddresses(records: MergedInParticipant[]): MergedInAddress[] {
-  return records.flatMap(record => record.addresses.map(value => participantAddress(value, record.workspaces)).map(address => ({
+  return records.flatMap(record => record.addresses.map(value => participantAddress(value, new Map())).map(address => ({
     ...address, mergeID: record.merge_id, participantID: record.participant_id,
     mergedAt: record.merged_at, value: addressText(address)!,
   })));

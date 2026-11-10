@@ -15,10 +15,10 @@ it('shows the IMAP steps and one command when platforms agree', async () => {
   expect(command.textContent).toContain('reader');
 });
 
-it('asks for a server name when the Server holds a port', async () => {
+it.each(['imap.example.com:143', 'imap example.com'])('explains the server format for %s', async server => {
   render(AddSourceSteps, { kind: ADD_SOURCE_KINDS.find(kind => kind.id === 'imap') as CommandSourceKind });
   await fireEvent.input(screen.getByLabelText('Username'), { target: { value: 'reader' } });
-  await fireEvent.input(screen.getByLabelText('Server'), { target: { value: 'imap.example.com:143' } });
-  expect(screen.getByText('Enter the server name without a port. For port or STARTTLS options, see the Setup guide.')).toBeDefined();
+  await fireEvent.input(screen.getByLabelText('Server'), { target: { value: server } });
+  expect(screen.getByText('Enter the server name without spaces or a port. For port or STARTTLS options, see the Setup guide.')).toBeDefined();
   expect(screen.queryByText(/msgvault add-imap/, { selector: 'code' })).toBeNull();
 });

@@ -20,6 +20,7 @@ type ParticipantContactObservation struct {
 	ProviderUserID       *string            `json:"provider_user_id,omitzero" nullable:"false"`
 	OriginalValue        string             `json:"original_value"`
 	NormalizedValue      string             `json:"normalized_value"`
+	IdentityKey          string             `json:"identity_key"`
 	Normalization        string             `json:"normalization"`
 	NormalizationVersion int                `json:"normalization_version"`
 	ObservedAt           *time.Time         `json:"observed_at,omitempty"`
@@ -758,6 +759,7 @@ func scanParticipantObservation(row scanner) (*ParticipantContactObservation, er
 	observation.ServiceSlug = nullStringPtr(serviceSlug)
 	observation.ScopeKind = nullStringPtr(scopeKind)
 	observation.ScopeValue = nullStringPtr(scopeValue)
+	observation.IdentityKey = contactPointIdentityKey(observation.AddressKind, observation.ServiceSlug, observation.ScopeKind, observation.ScopeValue, observation.NormalizedValue)
 	observation.ProviderUserID = nullStringPtr(providerUserID)
 	observation.ObservedAt = nullTimePtr(observedAt)
 	if err := env.apply(&observation.Envelope); err != nil {

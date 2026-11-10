@@ -36,6 +36,9 @@ func TestObservationsAttachManyAddressesToOneParticipant(t *testing.T) {
 		require.NoError(err)
 		assert.True(result.Created)
 		assert.False(result.Conflicting)
+		if input.ScopeValue != nil {
+			assert.Equal(`["slack","workspace","T0EXAMPLE","alice"]`, result.Observation.IdentityKey)
+		}
 	}
 	observations, err := st.ListParticipantObservationsContext(ctx, participantID, true)
 	require.NoError(err)

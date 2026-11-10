@@ -10019,6 +10019,7 @@ func (p ParticipantCompletionHTTPRow) Validate() error {
 type ParticipantContactObservation struct {
 	AddressKind          string        `json:"address_kind" validate:"required"`
 	Envelope             ValueEnvelope `json:"envelope"`
+	IdentityKey          string        `json:"identity_key" validate:"required"`
 	Normalization        string        `json:"normalization" validate:"required"`
 	NormalizationVersion int64         `json:"normalization_version"`
 	NormalizedValue      string        `json:"normalized_value" validate:"required"`
@@ -10041,6 +10042,9 @@ func (p ParticipantContactObservation) Validate() error {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Envelope", err)
 		}
+	}
+	if err := typesValidator.Var(p.IdentityKey, "required"); err != nil {
+		errors = errors.Append("IdentityKey", err)
 	}
 	if err := typesValidator.Var(p.Normalization, "required"); err != nil {
 		errors = errors.Append("Normalization", err)

@@ -14,7 +14,6 @@
   import { onMount } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type {
-    ParticipantContactObservation,
     PersonProfileHistory as GeneratedPersonProfileHistory,
     ValueEnvelope as GeneratedValueEnvelope,
   } from '../../api/generated/models';
@@ -59,31 +58,29 @@
     // An address that is a current contact point shows once. One a service has seen shows here once, naming the service.
     const listed = new Set((history?.contact_points ?? []).filter(point => !ended(point.envelope)).map(point => point.identity_key));
     const observations = (history?.observations ?? []).filter(point => !ended(point.envelope));
+    const scopes = workspaceLabels(mergedIn, workspaces);
     const seen = new Set<number>();
     const rows = mergedIn.filter(address => {
       if (listed.has(address.identity_key)) return false;
       listed.add(address.identity_key);
       return true;
     }).map(address => {
-      const matches = observations.filter(point => observationKey(point) === address.identity_key);
+      const matches = observations.filter(point => point.identity_key === address.identity_key);
       for (const point of matches) seen.add(point.envelope.id);
       const observed = matches[0];
+      const value = [address.value, scopeText(address, scopes)].filter(Boolean).join(' · ');
+      const service = observed && providerContext(observed, false);
       return {
-        id: `merged-${address.mergeID}-${address.participantID}-${address.identity_key}`, value: address.value,
-        detail: observed ? providerContext(observed) : undefined,
+        id: `merged-${address.mergeID}-${address.participantID}-${address.identity_key}`, value,
+        detail: service && address.value !== service && !address.value.startsWith(`${service} · `) ? service : undefined,
         provenance: {
           text: `Merged in · ${formatShortDate(address.mergedAt)}`,
           title: [`Merged ${formatDateTime(address.mergedAt)}`, observed && `Seen ${formatDateTime(observed.observed_at ?? observed.envelope.created_at)}`].filter(Boolean).join('\n'),
         },
-        onclick: () => openMerge(address.mergeID), actionLabel: `Open the merge that brought in ${address.value}`,
+        onclick: () => openMerge(address.mergeID), actionLabel: `Open the merge that brought in ${value}`,
       };
     });
     return { rows, seen };
-  }
-
-  // A seen address's identity, built as the server builds a contact point's.
-  function observationKey(point: ParticipantContactObservation): string {
-    return JSON.stringify([point.service_slug || point.address_kind, point.scope_kind ?? '', point.scope_value ?? '', point.normalized_value]);
   }
 
   // Any closed validity or transaction interval makes a value historical.
@@ -121,8 +118,8 @@
     return { id: item.id, value: item.value, detail: item.context, provenance: valueProvenance(item.envelope, [['Seen', item.observedAt]]) };
   }
 
-  function providerContext(point: Item): string | null {
-    const details = [point.service_label || (point.service_slug ? sourceTypeLabel(point.service_slug) : undefined), scopeText(point, workspaces)].filter(Boolean);
+  function providerContext(point: Item, includeScope = true): string | null {
+    const details = [point.service_label || (point.service_slug ? sourceTypeLabel(point.service_slug) : undefined), includeScope && scopeText(point, workspaces)].filter(Boolean);
     return details.length ? details.join(' · ') : null;
   }
   function messageFor(value: unknown, status: number): string {

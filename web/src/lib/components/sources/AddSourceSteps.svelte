@@ -16,7 +16,7 @@
     <label>{field.label}<TextInput block bind:value={() => values[field.id] ?? '', value => (values[field.id] = value)} placeholder={field.placeholder} autofocus={index === 0} /></label>
   {/each}
   {#if kind.id === 'imap'}
-    <p>Enter the server name without a port. For port or STARTTLS options, see the Setup guide.</p>
+    <p>Enter the server name without spaces or a port. For port or STARTTLS options, see the Setup guide.</p>
     <p>The command asks for your password.</p>
   {/if}
   {#if posix && cmd}

@@ -96,9 +96,9 @@ describe('ProfileHistoryDialog', () => {
           envelope: { id: 8, ordinal: 0, source: 'user', active_until: '2026-07-31T00:00:00Z', created_at: when, updated_at: when, vcard: {} }
         }],
         media: [{ person_id: 7, media_kind: 'photo', has_data: false, original_value: 'Current photo', envelope: { ...currentEnvelope, id: 34 } }],
-        observations: [{ participant_id: 71, address_kind: 'username', original_value: 'observer', normalized_value: 'observer', normalization: 'none', normalization_version: 1, service_slug: 'slack', scope_kind: 'workspace', scope_value: 'T_BETA', source_id: 12, observed_at: when, envelope: { ...currentEnvelope, id: 36, source: 'archive_observation' } }, {
+        observations: [{ participant_id: 71, address_kind: 'username', original_value: 'observer', normalized_value: 'observer', identity_key: identityKeyFixture('slack', 'observer', 'workspace', 'T_BETA'), normalization: 'none', normalization_version: 1, service_slug: 'slack', scope_kind: 'workspace', scope_value: 'T_BETA', source_id: 12, observed_at: when, envelope: { ...currentEnvelope, id: 36, source: 'archive_observation' } }, {
           participant_id: 70, address_kind: 'email', original_value: 'observed@example.test',
-          normalized_value: 'observed@example.test', normalization: 'email', normalization_version: 1,
+          normalized_value: 'observed@example.test', identity_key: identityKeyFixture('email', 'observed@example.test'), normalization: 'email', normalization_version: 1,
           service_slug: 'email', source_id: 12, observed_at: '2026-07-31T12:00:00Z',
           envelope: { id: 9, ordinal: 0, source: 'archive_observation', created_at: when, updated_at: when, vcard: {} }
         }]
@@ -139,7 +139,7 @@ describe('ProfileHistoryDialog', () => {
       if (new URL(request.url).pathname.endsWith('/merges')) return Response.json({ merges: [] });
       return Response.json({ ...emptyProfile(person()), observations: [{
         participant_id: 70, address_kind: 'email', original_value: 'observed@example.test',
-        normalized_value: 'observed@example.test', normalization: 'email', normalization_version: 1,
+        normalized_value: 'observed@example.test', identity_key: identityKeyFixture('email', 'observed@example.test'), normalization: 'email', normalization_version: 1,
         service_slug: 'email', source_id: 987654321, observed_at: '2026-07-31T12:00:00Z',
         envelope: { ...currentEnvelope, id: 9, source: 'archive_observation', source_ref: 'synthetic-archive' },
       }] });
@@ -181,7 +181,7 @@ describe('ProfileHistoryDialog', () => {
           person: reconciled ? remaining : source,
           names: [{ person_id: 7, name_kind: 'formatted', formatted: 'Retained name', original_value: 'Retained name', is_derived: false, envelope: { ...currentEnvelope, id: 1 } }, ...(reconciled ? [] : [{ person_id: 7, name_kind: 'nickname', formatted: 'Moved alias', original_value: 'Moved alias', is_derived: false, envelope: { ...currentEnvelope, id: 2 } }])],
           contact_points: reconciled ? [] : [{ person_id: 7, address_kind: 'email', original_value: 'moved@example.com', normalized_value: 'moved@example.com', normalization: 'email', normalization_version: 1, envelope: { ...currentEnvelope, id: 3 } }],
-          observations: reconciled ? [] : [{ participant_id: 1, address_kind: 'email', original_value: 'observed@example.com', normalized_value: 'observed@example.com', service_slug: 'email', normalization: 'email', normalization_version: 1, observed_at: when, envelope: { ...currentEnvelope, id: 4, source: 'archive_observation' } }],
+          observations: reconciled ? [] : [{ participant_id: 1, address_kind: 'email', original_value: 'observed@example.com', normalized_value: 'observed@example.com', identity_key: identityKeyFixture('email', 'observed@example.com'), service_slug: 'email', normalization: 'email', normalization_version: 1, observed_at: when, envelope: { ...currentEnvelope, id: 4, source: 'archive_observation' } }],
           addresses: [], dates: [], categories: [], media: [],
         });
         if (historyReads === (initialFailure ? 2 : 1)) {
@@ -227,6 +227,23 @@ const mergedInCases = [
   { name: 'only seen in services', rows: 1, original: 'mira@example.org' },
 ];
 
+it('uses one account numbering for saved and merged-in addresses', async () => {
+  const merge = { ...mergeResult(person()).merge, id: 41, survivor_person_id: 7, absorbed_person_id: 9, current_person_id: 7 };
+  const address = addressFixture(1, 'beeper', 'beeper:whatsapp:neri', { participant_display_name: 'Neri', service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'account-b' });
+  const labels = { profiles: [{ id: 7, participant_ids: [] }, { id: 9, participant_ids: [1] }], participants: [{ merge_id: 41, participant_id: 1, origin_side: 'absorbed' }], participant_ids: [1], addresses: [address], absorbed_address_count: 1, incomplete: false };
+  const observed = { participant_id: 1, address_kind: 'beeper', original_value: 'beeper:whatsapp:neri', normalized_value: 'beeper:whatsapp:neri', identity_key: address.identity_key, service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'account-b', normalization: 'none', normalization_version: 1, source_id: 1, observed_at: when, envelope: { ...currentEnvelope, id: 9, source: 'archive_observation' } };
+  const saved = { person_id: 7, address_kind: 'username', original_value: 'reader', normalized_value: 'reader', identity_key: identityKeyFixture('whatsapp', 'reader', 'account', 'account-a'), service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'account-a', normalization: 'none', normalization_version: 1, envelope: { ...currentEnvelope, id: 10 } };
+  render(ProfileHistoryDialog, { personID: 7, onClose: vi.fn(), client: createAPIClient(async input => {
+    const path = new URL((input as Request).url).pathname;
+    if (path.endsWith('/merges')) return Response.json({ merges: [{ merge, labels, participant_count: 1, row_count: 0, split_count: 0, pending_candidate_count: 0, row_action_counts: {} }], limit: 100, offset: 0 });
+    return Response.json({ ...emptyProfile(person()), observations: [observed], contact_points: [saved] });
+  }) });
+  expect((await screen.findByText('reader')).closest('.detail-row')?.textContent).toContain('WhatsApp · account 1');
+  const row = (await screen.findByRole('button', { name: /Open the merge that brought in WhatsApp/ })).closest('.detail-row')!;
+  expect(row.textContent).toContain('WhatsApp · Neri · account 2');
+  expect(row.textContent?.match(/account \d/g)).toEqual(['account 2']);
+});
+
 async function renderMergedInAddress(entry: typeof mergedInCases[number]) {
   const tc = entry;
   const first = { ...mergeResult(person()).merge, id: 41, survivor_person_id: 7, absorbed_person_id: 9, current_person_id: 7 };
@@ -243,7 +260,7 @@ async function renderMergedInAddress(entry: typeof mergedInCases[number]) {
     const path = new URL((input as Request).url).pathname;
     if (path.endsWith('/merges')) return Response.json({ merges: merges.map(merge => ({ merge, labels: labels(merge), participant_count: recorded.length + 1, row_count: 0, split_count: 0, pending_candidate_count: 0, row_action_counts: {} })), limit: 100, offset: 0 });
     if (path.startsWith('/api/v1/person-merges/')) { const merge = merges.find(item => path.endsWith(`/${item.id}`))!; return Response.json({ merge, labels: { ...labels(merge), participants: undefined }, participants: labels(merge).participants, rows: [], splits: [], review_candidates: [] }); }
-    return Response.json({ ...emptyProfile(person()), observations: tc.name === 'only seen in services' ? [{ participant_id: 1, address_kind: 'email', original_value: tc.original, normalized_value: 'mira@example.org', service_slug: 'email', scope_kind: '', scope_value: '', normalization: 'email', normalization_version: 1, source_id: 1, observed_at: when, envelope: { ...currentEnvelope, id: 9, source: 'archive_observation' } }] : [], contact_points: tc.name === 'removed before the merge' ? [{ person_id: 7, address_kind: 'email', original_value: tc.original, identity_key: identityKeyFixture('email', 'mira@example.org'), normalized_value: 'mira@example.org', service_slug: 'email', service_label: '', scope_kind: '', scope_value: '', normalization: 'none', normalization_version: 1, envelope: { ...currentEnvelope, id: 3, superseded_at: '2026-07-31T00:00:00Z' } }] : [] });
+    return Response.json({ ...emptyProfile(person()), observations: tc.name === 'only seen in services' ? [{ participant_id: 1, address_kind: 'email', original_value: tc.original, normalized_value: 'mira@example.org', identity_key: identityKeyFixture('email', 'mira@example.org'), service_slug: 'email', scope_kind: '', scope_value: '', normalization: 'email', normalization_version: 1, source_id: 1, observed_at: when, envelope: { ...currentEnvelope, id: 9, source: 'archive_observation' } }] : [], contact_points: tc.name === 'removed before the merge' ? [{ person_id: 7, address_kind: 'email', original_value: tc.original, identity_key: identityKeyFixture('email', 'mira@example.org'), normalized_value: 'mira@example.org', service_slug: 'email', service_label: '', scope_kind: '', scope_value: '', normalization: 'none', normalization_version: 1, envelope: { ...currentEnvelope, id: 3, superseded_at: '2026-07-31T00:00:00Z' } }] : [] });
   }) });
   await screen.findAllByRole('button', { name: /^Open .+ merged into .+ · / });
   const section = screen.getByRole('heading', { name: 'Email and phone' }).closest('section')!;

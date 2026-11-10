@@ -10166,6 +10166,8 @@ components:
           type: string
         envelope:
           $ref: "#/components/schemas/ValueEnvelope"
+        identity_key:
+          type: string
         normalization:
           type: string
         normalization_version:
@@ -10198,6 +10200,7 @@ components:
         - address_kind
         - original_value
         - normalized_value
+        - identity_key
         - normalization
         - normalization_version
       type: object

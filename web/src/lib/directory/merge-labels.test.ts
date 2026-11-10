@@ -20,7 +20,7 @@ it('renders the store’s email and formatted phone through History and merged-i
   for (const addresses of [mergeAddresses({ participants, labels }, 'absorbed'), row.addresses.get(2)!]) {
     expect(addresses.map(addressText)).toEqual(['+1 (202) 555-0123', 'Reader@Example.org']);
   }
-  expect(mergedInAddresses([{ ...absorbed(2), merged_at: '2026-01-03T12:00:00Z', addresses: phoneAddresses, workspaces: row.workspaceLabels }]).map(a => a.value)).toEqual(['+1 (202) 555-0123', 'Reader@Example.org']);
+  expect(mergedInAddresses([{ ...absorbed(2), merged_at: '2026-01-03T12:00:00Z', addresses: phoneAddresses }]).map(a => a.value)).toEqual(['+1 (202) 555-0123', 'Reader@Example.org']);
 });
 
 it('keeps the legacy Beeper phone readable when its saved copy matches', () => {
@@ -97,7 +97,7 @@ it('numbers workspaces from the complete merge for current, saved, and merged-in
   const row = mergeSummaryRow(value);
   expect(row.addresses.get(701)?.map(addressText)).toEqual(expected);
   expect(mergeAddresses(value, 'absorbed').map(addressText)).toEqual(expected);
-  expect(mergedInAddresses([{ ...absorbed(701), merged_at: '2026-01-03T12:00:00Z', addresses, workspaces: row.workspaceLabels }]).map(a => a.value)).toEqual(expected);
+  expect(mergedInAddresses([{ ...absorbed(701), merged_at: '2026-01-03T12:00:00Z', addresses }]).map(a => a.value)).toEqual(['Slack · Neri Bloom', 'Slack · Neri Bloom']);
   const both = [
     addressFixture(702, 'slack', 'T_A:U_SURVIVOR', { participant_display_name: 'Survivor', service_slug: 'slack', service_label: 'Slack', scope_kind: 'workspace', scope_value: 'T_A' }),
     addressFixture(701, 'slack', 'T_B:U_ABSORBED', { participant_display_name: 'Absorbed', service_slug: 'slack', service_label: 'Slack', scope_kind: 'workspace', scope_value: 'T_B' }),
