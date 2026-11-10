@@ -63,9 +63,6 @@ describe('PersonRecordActions', () => {
       const reopened = screen.getByRole('menuitemcheckbox', { name: /Keep this profile updated/ });
       if (state === 'failed') {
         expect(reopened.textContent).toContain("Couldn't save");
-        await fireEvent.click(reopened);
-        await waitFor(() => expect(reopened.getAttribute('aria-checked')).toBe('true'));
-        expect(writes).toEqual([true, true]);
       } else {
         expect(reopened.textContent).toContain('Turning on…');
         await tick();

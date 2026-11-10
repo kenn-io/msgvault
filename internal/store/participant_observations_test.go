@@ -31,12 +31,12 @@ func TestObservationsAttachManyAddressesToOneParticipant(t *testing.T) {
 			ProviderUserID: new("wa-1"), OriginalValue: "Alice",
 			Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation}},
 	}
-	for _, input := range inputs {
+	for index, input := range inputs {
 		result, err := st.RecordContactObservationContext(ctx, participantID, input)
 		require.NoError(err)
 		assert.True(result.Created)
 		assert.False(result.Conflicting)
-		if input.ScopeValue != nil {
+		if index == 2 {
 			assert.Equal(`["slack","workspace","T0EXAMPLE","alice"]`, result.Observation.IdentityKey)
 		}
 	}

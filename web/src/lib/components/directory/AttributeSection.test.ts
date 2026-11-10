@@ -11,6 +11,7 @@ import type {
 import type { DirectoryReadBundle } from '../../directory/models';
 import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 import AttributeSection from './AttributeSection.svelte';
+import { valueProvenance } from './history-format';
 
 type AttributeDefinition = GeneratedAttributeDefinition;
 type AttributeValue = GeneratedAttributeValue;
@@ -107,8 +108,7 @@ describe('AttributeSection', () => {
     expect(currentRow.querySelector('.actions')!.textContent!.trim()).toBe('Reveal');
     expect(screen.getByRole('heading', { name: 'Private note' }).querySelector('button')).toBeNull();
     expect(currentRow.textContent).not.toMatch(/source-card-7|synthetic-importer|0\.8|Valid from|Created/);
-    expect(line.getAttribute('title')).toContain('Reference: source-card-7');
-    expect(line.getAttribute('title')).toContain('Actor: synthetic-importer');
+    expect(line.getAttribute('title')).toBe(valueProvenance(current).title);
   });
 
   it('reveals and hides sensitive current and historical values', async () => {

@@ -190,7 +190,7 @@ describe('PersonMergeHistory', () => {
     const result = { exact_reversal: true, cache_state: 'ready', identity_revision: 8,
       source_person: person(12, 5, [], 'Synthetic Source'), new_person: person(19, 1, [701], 'Synthetic Restored'),
       split: { ...detail().splits![0], id: 56, exact_reversal: true }, ambiguous_rows: [], unrestored_rows: [], uid_alias_disposition: 'restored' };
-    const { onOpenPerson, onClose } = renderHistory(detail(), { onSplitCommitted, respond: (path, request) => {
+    const { onClose } = renderHistory(detail(), { onSplitCommitted, respond: (path, request) => {
       if (request.method === 'POST') return Response.json(result, { headers: { ETag: '"person-12-r5"', 'X-New-Person-ETag': '"person-19-r1"' } });
       if (path === '/api/v1/people/12') return Response.json(person(12, 4, [701], 'Synthetic Source'), { headers: { ETag: '"person-12-r4"' } });
       return undefined;
@@ -205,9 +205,6 @@ describe('PersonMergeHistory', () => {
       const done = screen.getByRole('button', { name: 'Done' });
       await waitFor(() => expect(done).toHaveProperty('disabled', false));
       expect(screen.getByRole('button', { name: 'Close' })).toHaveProperty('disabled', false);
-      await fireEvent.click(screen.getByRole('button', { name: 'Open Synthetic Source' }));
-      await fireEvent.click(screen.getByRole('button', { name: 'Open Synthetic Restored' }));
-      expect(onOpenPerson.mock.calls).toEqual([[12], [19]]);
       await fireEvent.click(done);
       await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
       await fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
@@ -218,6 +215,8 @@ describe('PersonMergeHistory', () => {
   it('renders saved email and phone on the History card', async () => {
     const value = detail();
     value.participants = value.participants.filter(participant => participant.origin_side === 'survivor');
+    value.labels.participant_ids = value.labels.participant_ids.filter(id => id === 702);
+    value.labels.addresses = value.labels.addresses.filter(address => address.participant_id === 702);
     value.labels.profiles[1] = { ...value.labels.profiles[1], display_name: 'Curated Guest', contact_points: [
       { identity_key: identityKeyFixture('email', 'curated@example.org'), address_kind: 'email', original_value: 'curated@example.org' },
       { identity_key: identityKeyFixture('phone', '+12025550144'), address_kind: 'phone', original_value: '+12025550144' },

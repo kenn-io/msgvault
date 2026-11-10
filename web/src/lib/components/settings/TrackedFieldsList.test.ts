@@ -28,7 +28,7 @@ describe('Fields kept updated', () => {
       const sensitive = url.searchParams.get('include_sensitive') === 'true';
       if (sensitive && ++sensitiveReads === 1) return Response.json({ message: 'Synthetic lookup unavailable' }, { status: 503 });
       return Response.json({ targets: [
-        { kind: 'attribute', key: 'field:favorite_plant', slug: 'favorite_plant', description: 'A plant', sensitive: false },
+        { kind: 'attribute', key: 'field:favorite_plant', slug: 'favorite_plant', description: 'A plant', sensitive: false, revision: 'forbidden-revision', universal_id: 'forbidden-id', href: 'https://forbidden.example.test/profile', credential: 'forbidden-credential' },
         { kind: 'employment', key: 'system:employment', slug: 'employment', description: 'Current and historical employment', sensitive: false },
         ...(sensitive ? [{ kind: 'attribute', key: 'field:private_note', slug: 'private_note', description: 'A note', sensitive: true }] : []),
       ] });
@@ -36,6 +36,7 @@ describe('Fields kept updated', () => {
     render(TrackedFieldsList, { client });
     expect(await screen.findByText('Preferred greenery')).toBeDefined();
     expect(screen.getByText('A plant')).toBeDefined();
+    expect(document.body.innerHTML).not.toMatch(/forbidden/);
     expect(screen.getByText('Work')).toBeDefined();
     expect(screen.getByText('Current and historical employment')).toBeDefined();
     const disclosure = screen.getByText('Show sensitive fields');
