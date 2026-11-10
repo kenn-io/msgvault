@@ -1400,86 +1400,90 @@ func TestRevisionReconciliationResumesAcrossBoundedRuns(t *testing.T) {
 }
 
 func TestRevisionReconciliationResumesAcrossIdentityChanges(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	f, _ := projectorManyFixture(t, 7)
 	initial, err := NewProjector(f.Store, Options{Timezone: "UTC", BatchSize: 1})
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = initial.RunOnce(t.Context())
-	require.NoError(t, err)
+	require.NoError(err)
 
 	var cursor int64
 	var complete bool
 	for run := range 12 {
 		if run < 3 {
-			require.NoError(t, f.Store.AddAccountIdentityContext(t.Context(), f.Source.ID,
+			require.NoError(f.Store.AddAccountIdentityContext(t.Context(), f.Source.ID,
 				fmt.Sprintf("alias-%d@example.com", run), "manual"))
 		}
 		observed := &recordActivityScanStore{Store: f.Store}
 		p, err := NewProjector(observed, Options{Timezone: "UTC", BatchSize: 1, MaxBatches: 2})
-		require.NoError(t, err)
+		require.NoError(err)
 		_, err = p.RunOnce(t.Context())
-		require.True(t, err == nil || errors.Is(err, ErrWorkRemaining), "%v", err)
-		require.NotEmpty(t, observed.afterIDs)
-		assert.Equal(t, cursor, observed.afterIDs[0], "resume the last committed position despite identity churn")
+		require.True(err == nil || errors.Is(err, ErrWorkRemaining), "%v", err)
+		require.NotEmpty(observed.afterIDs)
+		assert.Equal(cursor, observed.afterIDs[0], "resume the last committed position despite identity churn")
 		cursor, err = f.Store.ActivityProjectionCursorContext(t.Context(), "revisions", "")
-		require.NoError(t, err)
+		require.NoError(err)
 		current, err := f.Store.ContactRevisionsContext(t.Context())
-		require.NoError(t, err)
+		require.NoError(err)
 		got, ok, err := f.Store.ActivityReconciledRevisionsContext(t.Context())
-		require.NoError(t, err)
-		require.True(t, ok)
+		require.NoError(err)
+		require.True(ok)
 		candidates, err := f.Store.ScanForActivityProjectionContext(t.Context(), 0, 10)
-		require.NoError(t, err)
+		require.NoError(err)
 		if len(candidates) == 0 {
-			assert.Equal(t, current, got)
+			assert.Equal(current, got)
 			complete = true
 			break
 		}
 	}
-	assert.True(t, complete, "reconciliation completes once identity churn stops")
+	assert.True(complete, "reconciliation completes once identity churn stops")
 }
 
 func TestRevisionReconciliationFiniteIdentityChurn(t *testing.T) {
 	for _, changes := range []int{projectorPassRetries - 1, projectorPassRetries} {
 		t.Run(fmt.Sprintf("changes_%d", changes), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			f, _ := projectorManyFixture(t, 7)
 			initial, err := NewProjector(f.Store, Options{Timezone: "UTC", BatchSize: 1})
-			require.NoError(t, err)
+			require.NoError(err)
 			_, err = initial.RunOnce(t.Context())
-			require.NoError(t, err)
-			require.NoError(t, f.Store.AddAccountIdentityContext(t.Context(), f.Source.ID, "start@example.com", "manual"))
+			require.NoError(err)
+			require.NoError(f.Store.AddAccountIdentityContext(t.Context(), f.Source.ID, "start@example.com", "manual"))
 			candidates, err := f.Store.ScanForActivityProjectionContext(t.Context(), 0, 1)
-			require.NoError(t, err)
-			require.Len(t, candidates, 1)
+			require.NoError(err)
+			require.Len(candidates, 1)
 			tracing := &finiteRevisionChurnStore{
-				recordActivityScanStore: recordActivityScanStore{Store: f.Store},
+				recordActivityScanStore: {Store: f.Store},
 				sourceID:                f.Source.ID, firstID: candidates[0].MessageID, maxChanges: changes,
 				freshnessChanges: changes == projectorPassRetries,
 			}
 			p, err := NewProjector(tracing, Options{Timezone: "UTC", BatchSize: 1})
-			require.NoError(t, err)
+			require.NoError(err)
 			_, err = p.RunOnce(t.Context())
 			if changes < projectorPassRetries {
-				require.GreaterOrEqual(t, len(tracing.afterIDs), 3)
-				assert.Equal(t, tracing.firstID, tracing.afterIDs[2], "epoch retry keeps committed progress")
-				assert.NoError(t, err, "manual build retains the base retry tolerance for finite identity churn")
+				require.GreaterOrEqual(len(tracing.afterIDs), 3)
+				assert.Equal(tracing.firstID, tracing.afterIDs[2], "epoch retry keeps committed progress")
+				require.NoError(err, "manual build retains the base retry tolerance for finite identity churn")
 			} else {
-				assert.ErrorContains(t, err, fmt.Sprintf("identity reconciliation did not stabilize after %d passes", projectorPassRetries))
-				assert.Equal(t, projectorPassRetries, tracing.zeroStartRemainders, "stale walks starting at zero spend the retry budget")
+				require.ErrorContains(err, fmt.Sprintf("identity reconciliation did not stabilize after %d passes", projectorPassRetries))
+				assert.Equal(projectorPassRetries, tracing.zeroStartRemainders, "stale walks starting at zero spend the retry budget")
 			}
-			assert.Equal(t, changes, tracing.changes)
+			assert.Equal(changes, tracing.changes)
 			current, readErr := f.Store.ContactRevisionsContext(t.Context())
-			require.NoError(t, readErr)
+			require.NoError(readErr)
 			got, ok, readErr := f.Store.ActivityReconciledRevisionsContext(t.Context())
-			require.NoError(t, readErr)
-			require.True(t, ok)
+			require.NoError(readErr)
+			require.True(ok)
 			stale, readErr := f.Store.ScanForActivityProjectionContext(t.Context(), 0, 10)
-			require.NoError(t, readErr)
+			require.NoError(readErr)
 			if err == nil {
-				assert.Equal(t, current, got)
-				assert.Empty(t, stale)
+				assert.Equal(current, got)
+				assert.Empty(stale)
 			} else {
-				assert.NotEqual(t, current, got)
-				assert.NotEmpty(t, stale)
+				assert.NotEqual(current, got)
+				assert.NotEmpty(stale)
 			}
 		})
 	}
@@ -1487,6 +1491,7 @@ func TestRevisionReconciliationFiniteIdentityChurn(t *testing.T) {
 
 type finiteRevisionChurnStore struct {
 	recordActivityScanStore
+
 	sourceID, firstID                            int64
 	changes, maxChanges                          int
 	freshnessChanges, tailReached, startedAtZero bool
@@ -1499,7 +1504,7 @@ func (s *finiteRevisionChurnStore) SetActivityProjectionCursorContext(ctx contex
 	}
 	if !s.freshnessChanges && pass == "revisions" && afterID == s.firstID && s.changes < s.maxChanges {
 		s.changes++
-		return s.Store.AddAccountIdentityContext(ctx, s.sourceID,
+		return s.AddAccountIdentityContext(ctx, s.sourceID,
 			fmt.Sprintf("churn-%d@example.com", s.changes), "manual")
 	}
 	return nil
@@ -1521,7 +1526,7 @@ func (s *finiteRevisionChurnStore) ScanForActivityProjectionContext(ctx context.
 		s.tailReached = false
 		if s.changes < s.maxChanges {
 			s.changes++
-			if err := s.Store.AddAccountIdentityContext(ctx, s.sourceID,
+			if err := s.AddAccountIdentityContext(ctx, s.sourceID,
 				fmt.Sprintf("churn-%d@example.com", s.changes), "manual"); err != nil {
 				return nil, err
 			}
