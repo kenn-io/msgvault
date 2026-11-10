@@ -105,11 +105,11 @@ func runManagedEmbeddingsCLI(ctx context.Context, req api.CLIRunRequest, emit fu
 	root.PersistentPreRunE = func(_ *cobra.Command, _ []string) error {
 		trace, err := root.PersistentFlags().GetBool("log-sql")
 		if err != nil {
-			return err
+			return fmt.Errorf("read --log-sql: %w", err)
 		}
 		slow, err := root.PersistentFlags().GetInt64("log-sql-slow-ms")
 		if err != nil {
-			return err
+			return fmt.Errorf("read --log-sql-slow-ms: %w", err)
 		}
 		if trace || slow > 0 {
 			return errors.New("SQL flags are unavailable for managed embeddings; configure [log] sql_trace or sql_slow_ms on the daemon")

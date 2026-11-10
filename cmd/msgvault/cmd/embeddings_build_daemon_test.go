@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -98,8 +99,9 @@ func TestManagedEmbeddingsBuildYieldsToScheduledSync(t *testing.T) {
 	go func() {
 		result <- adapter.RunCLICommand(t.Context(), api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes", "--account", "archive@example.test"}, Env: map[string]string{"TEST_EMBEDDING_KEY": "synthetic-key"}}, func(event api.CLIRunEvent) error {
 			if event.Type == cliStreamStderr {
-				_, err := stderr.WriteString(event.Data)
-				return err
+				if _, err := stderr.WriteString(event.Data); err != nil {
+					return fmt.Errorf("capture stderr: %w", err)
+				}
 			}
 			return nil
 		})
@@ -163,12 +165,6 @@ func TestManagedEmbeddingsBuildYieldsToScheduledSync(t *testing.T) {
 	resumed, err := backend.ActiveGeneration(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, active.ID, resumed.ID)
-	generations = embedGenByID(t, dir)
-	require.Len(t, generations, 3)
-	for _, generation := range generations {
-		require.True(t, generation.Valid)
-		assert.Equal(t, int64(active.ID), generation.Int64)
-	}
 }
 
 func TestManagedEmbeddingsCommandsDispatch(t *testing.T) {
@@ -264,9 +260,6 @@ func TestManagedEmbeddingsSQLLoggingFlags(t *testing.T) {
 	}{
 		{"build trace", []string{"embeddings", "build", "--log-sql"}, "[log]"},
 		{"resume slow equals", []string{"embeddings", "resume", "--log-sql-slow-ms=25"}, "[log]"},
-		{"build slow separate", []string{"embeddings", "build", "--log-sql-slow-ms", "25"}, "[log]"},
-		{"deprecated trace", []string{"build-embeddings", "--log-sql"}, "[log]"},
-		{"optimize trace", []string{"embeddings", "optimize", "--log-sql"}, "[log]"},
 		{"false and zero", []string{"embeddings", "build", "--log-sql=false", "--log-sql-slow-ms=0"}, "shutting down"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

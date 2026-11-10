@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,7 +26,7 @@ func TestCooperativeJobContextStopsWithCallerOrScheduler(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				require.FailNow(t, "context did not stop")
 			}
-			assert.ErrorIs(t, ctx.Err(), context.Canceled)
+			require.ErrorIs(t, ctx.Err(), context.Canceled)
 			if stopCaller {
 				<-s.Stop().Done()
 			}
