@@ -102,6 +102,20 @@ func (g Grant) AllowsSender(p Permission, src SourceRef, senderKey string) bool 
 	return false
 }
 
+// AllowsArchiveSender checks archive authority independently of outgoing senders.
+// An empty key is allowed only when the matching source has no sender restriction.
+func (g Grant) AllowsArchiveSender(src SourceRef, senderKey string) bool {
+	if !g.HasPermission(PermissionMessageArchive) {
+		return false
+	}
+	for _, source := range g.Sources {
+		if source.Type == src.Type && source.Identifier == src.Identifier {
+			return len(source.ArchiveSenderKeys) == 0 || (senderKey != "" && slices.Contains(source.ArchiveSenderKeys, senderKey))
+		}
+	}
+	return false
+}
+
 func cloneGrant(g Grant) Grant {
 	clone := Grant{
 		ID:          g.ID,

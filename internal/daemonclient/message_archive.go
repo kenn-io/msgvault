@@ -2,9 +2,7 @@ package daemonclient
 
 import (
 	"context"
-	"encoding/json/v2"
 	"fmt"
-	"io"
 	"net/http"
 
 	"go.kenn.io/msgvault/internal/emailtags"
@@ -24,23 +22,7 @@ func (c *Client) ArchiveMessage(ctx context.Context, id int64, change emailtags.
 	if err != nil {
 		return nil, archiveResponseError(change, err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, archiveResponseError(change, fmt.Errorf("read archive response: %w", err))
-	}
-	if resp.StatusCode != http.StatusOK {
-		var failure emailtags.MessageTagError
-		if err := json.Unmarshal(body, &failure); err != nil || failure.Code == "" {
-			return nil, archiveResponseError(change, fmt.Errorf("archive request failed (HTTP %d)", resp.StatusCode))
-		}
-		return nil, &failure
-	}
-	var result emailtags.ArchiveResult
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, archiveResponseError(change, fmt.Errorf("decode archive response: %w", err))
-	}
-	return &result, nil
+	return decodeMessageTagResponse[emailtags.ArchiveResult](resp, "archive", func(err error) error { return archiveResponseError(change, err) })
 }
 
 func archiveResponseError(change emailtags.ArchiveChange, cause error) error {

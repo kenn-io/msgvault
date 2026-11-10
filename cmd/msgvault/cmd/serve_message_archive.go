@@ -28,25 +28,18 @@ func (a *storeAPIAdapter) ArchiveMessage(ctx context.Context, id int64, change e
 			if !grant.Allows(agentgrant.PermissionMessageArchive, ref) {
 				return emailtags.Failure("message_not_found", "Message not found", nil, nil)
 			}
-			var allowed []string
-			for _, scoped := range grant.Sources {
-				if scoped.Type == ref.Type && scoped.Identifier == ref.Identifier {
-					allowed = scoped.ArchiveSenderKeys
-					break
-				}
-			}
-			if len(allowed) > 0 {
+			if !grant.AllowsArchiveSender(ref, "") {
 				senders, err := a.store.GetMessageRecipientsContext(ctx, id, "from")
 				if err != nil {
 					return err
 				}
 				if len(senders) == 0 {
-					return emailtags.Failure("permission_denied", "Message has no recorded From envelope", nil, nil)
+					return emailtags.Failure("message_not_found", "Message not found", nil, nil)
 				}
 				for _, sender := range senders {
 					_, key, parseErr := parseStoredMailbox(sender.EnvelopeAddress)
-					if parseErr != nil || !slices.Contains(allowed, key) {
-						return emailtags.Failure("permission_denied", "Grant does not allow archiving this From envelope", nil, nil)
+					if parseErr != nil || !grant.AllowsArchiveSender(ref, key) {
+						return emailtags.Failure("message_not_found", "Message not found", nil, nil)
 					}
 				}
 			}
