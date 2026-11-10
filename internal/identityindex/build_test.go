@@ -1071,9 +1071,4 @@ func TestCollectCacheStatsRelayedSenderEnvelope(t *testing.T) {
 	assert.EqualValues(t, 3, stats.UniqueSenders)
 	assert.EqualValues(t, 3, stats.UniqueDomains)
 
-	inputs.recipients = `(SELECT * FROM (VALUES (3, 'from')) AS t(participant_id, recipient_type))`
-	stats, err = collectCacheStats(t.Context(), db, inputs)
-	require.NoError(t, err)
-	assert.EqualValues(t, 1, stats.UniqueSenders)
-	assert.EqualValues(t, 1, stats.UniqueDomains)
 }

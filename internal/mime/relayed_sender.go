@@ -4,6 +4,7 @@ import (
 	"net/mail"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // RelayedSenderRule identifies the header carrying a relay's author.
@@ -27,7 +28,7 @@ func RelayedSender(raw []byte, from []Address, rules []RelayedSenderRule) (strin
 			return "", ""
 		}
 		value := strings.TrimSpace(values[0])
-		if value == "" {
+		if value == "" || !utf8.ValidString(value) || strings.IndexFunc(value, func(r rune) bool { return unicode.IsControl(r) }) >= 0 {
 			return "", ""
 		}
 		if rule.IdentifierType == "github" {

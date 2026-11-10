@@ -441,6 +441,32 @@ func TestExportMessagesPrefersDiscordMessageAuthorName(t *testing.T) {
 	assertions.Equal("user@example.test", sink.messages[0].Author.Address)
 }
 
+func TestExportMessagesPreservesRelayedFromAddress(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "reader@example.test")
+	require.NoError(t, err)
+	conversation := insertMessageExportConversation(t, st, source.ID, "thread", "", "email_thread", `{}`)
+	author, err := st.EnsureParticipantByIdentifier("github", "alice", "Alice")
+	require.NoError(t, err)
+	start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	id := insertMessageExportMessage(t, st, source.ID, conversation, "message", "email", start, "body", "subject", author, false, false)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name, email_address) VALUES (?, ?, 'from', ?, ?)`), id, author, "Alice", "notifications@github.com")
+	require.NoError(t, err)
+	for _, linked := range []bool{false, true} {
+		if linked {
+			contact, err := st.EnsureParticipant("alice@example.test", "Alice", "example.test")
+			require.NoError(t, err)
+			require.NoError(t, st.MergeParticipants(author, contact))
+		}
+		sink := &collectingMessageExportSink{}
+		_, err := st.ExportMessages(t.Context(), store.MessageExportFilter{Start: start, End: start.Add(time.Hour)}, sink)
+		require.NoError(t, err)
+		require.Len(t, sink.messages, 1)
+		require.NotNil(t, sink.messages[0].Author)
+		assert.Equal(t, "notifications@github.com", sink.messages[0].Author.Address)
+	}
+}
+
 func TestExportMessagesUsesLegacyFromRecipientAuthor(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

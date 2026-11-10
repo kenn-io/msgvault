@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 )
@@ -531,18 +530,6 @@ func collectCacheStats(
 	db sqlExecutor,
 	inputs cacheStatsRelations,
 ) (CacheStatsSummary, error) {
-	rows, err := db.QueryContext(ctx, "SELECT * FROM "+inputs.recipients+" LIMIT 0")
-	if err != nil {
-		return CacheStatsSummary{}, fmt.Errorf("inspect recipient cache: %w", err)
-	}
-	columns, err := rows.Columns()
-	_ = rows.Close()
-	if err != nil {
-		return CacheStatsSummary{}, fmt.Errorf("inspect recipient columns: %w", err)
-	}
-	if !slices.Contains(columns, "email_address") {
-		inputs.recipients = "(SELECT *, NULL::VARCHAR AS email_address FROM " + inputs.recipients + ")"
-	}
 	query := fmt.Sprintf(`
 WITH messages AS (
 	SELECT id::BIGINT AS id, source_id::BIGINT AS source_id,
@@ -573,7 +560,7 @@ SELECT
 	)
 	var result CacheStatsSummary
 	var minYear, maxYear sql.NullInt64
-	err = db.QueryRowContext(ctx, query).Scan(
+	err := db.QueryRowContext(ctx, query).Scan(
 		&result.TotalMessages,
 		&result.Sources,
 		&result.UniqueSenders,
