@@ -570,11 +570,16 @@ func writeThreadToStore(
 	archived map[string]store.StoredMessage,
 ) error {
 	threadKey := td.Section + "/" + td.Name
+	instagram := opts.Source == "instagram"
+	address := Address
+	if instagram {
+		address = func(name string) mime.Address { return instagramAddress(opts.Account, name) }
+	}
 	var convID, meID, parentLabelID, sectionLabelID int64
 	var nameToID map[string]int64
 	var nameToEmail map[string]string
 	var err error
-	if opts.Source != "instagram" {
+	if !instagram {
 
 		// Ensure conversation. Use section-qualified name so threads with
 		// the same basename in different sections (e.g. inbox vs archived)
@@ -623,20 +628,32 @@ func writeThreadToStore(
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if opts.Source == "instagram" {
-			stored := archived[m.sourceID]
-			if stored.ID == 0 && opts.Limit > 0 && summary.MessagesAdded >= int64(opts.Limit) {
-				return errLimitReached
-			}
-			if err := writeInstagramMessage(ctx, st, absRoot, sourceID, thread.instagramKey, m.sourceID, stored, m.instagramFilename, m.instagramShard, m.rawData, m, opts, summary); err != nil {
-				return err
-			}
-			continue
-		}
-		if opts.Limit > 0 && summary.MessagesAdded >= int64(opts.Limit) {
+		stored := archived[m.sourceID]
+		if opts.Limit > 0 && summary.MessagesAdded >= int64(opts.Limit) && (!instagram || stored.ID == 0) {
 			return errLimitReached
 		}
-		summary.MessagesProcessed++
+		declaredCount := 0
+		if instagram {
+			nameToID, nameToEmail = map[string]int64{}, map[string]string{}
+			var addrs []mime.Address
+			for _, p := range m.jsonShard.Participants {
+				if name := DecodeMojibake(p.Name); name != "" && nameToEmail[name] == "" {
+					addr := address(name)
+					nameToEmail[name] = addr.Email
+					addrs = append(addrs, addr)
+				}
+			}
+			participants, err := st.EnsureParticipantsBatch(ctx, addrs)
+			if err != nil {
+				return err
+			}
+			for name, email := range nameToEmail {
+				nameToID[name] = participants[email]
+			}
+			declaredCount = len(nameToID)
+		} else {
+			summary.MessagesProcessed++
+		}
 
 		// Resolve sender.
 		senderName := m.SenderName
@@ -648,22 +665,29 @@ func writeThreadToStore(
 			} else {
 				// Participant not in the thread's participants list;
 				// synthesize.
-				addr := Address(senderName)
+				addr := address(senderName)
 				m2, err := st.EnsureParticipantsBatch(ctx, []mime.Address{addr})
+				if err != nil && instagram {
+					return err
+				}
 				if err == nil {
 					if id, ok := m2[addr.Email]; ok {
 						senderID = sql.NullInt64{Int64: id, Valid: true}
 						nameToID[senderName] = id
 						nameToEmail[senderName] = addr.Email
-						_ = st.EnsureConversationParticipantContext(ctx, convID, id, "member")
+						if !instagram {
+							_ = st.EnsureConversationParticipantContext(ctx, convID, id, "member")
+						}
 					}
 				}
 			}
 		}
 		if senderName != "" {
-			if Slug(senderName) == meLocal {
+			if (!instagram && Slug(senderName) == meLocal) || (instagram && senderName == opts.SelfName) {
 				isFromMe = true
-				senderID = sql.NullInt64{Int64: meID, Valid: true}
+				if !instagram {
+					senderID = sql.NullInt64{Int64: meID, Valid: true}
+				}
 				summary.FromMeCount++
 			}
 		}
@@ -671,6 +695,9 @@ func writeThreadToStore(
 		// Build the source_message_id. Section-qualified to avoid
 		// collisions across sections with the same thread basename.
 		srcMsgID := fmt.Sprintf("%s__%s%d", threadKey, prefix, m.Index)
+		if instagram {
+			srcMsgID = m.sourceID
+		}
 
 		// If we couldn't resolve a sender this run but a previous import
 		// of the same message already recorded one, preserve it — the
@@ -680,7 +707,7 @@ func writeThreadToStore(
 		// downstream writes to message_recipients("from") and FTS don't
 		// clobber the prior display-name / from-address with empty
 		// strings derived from an unresolved current-run senderName.
-		if !senderID.Valid {
+		if !instagram && !senderID.Valid {
 			var priorID sql.NullInt64
 			var priorName, priorEmail sql.NullString
 			var priorIsFromMe bool
@@ -739,80 +766,187 @@ func writeThreadToStore(
 			HasAttachments:  len(m.Attachments) > 0,
 			AttachmentCount: len(m.Attachments),
 		}
-		messageID, err := st.UpsertMessageContext(ctx, msgRow)
-		if err != nil {
-			summary.Errors++
-			summary.MessagesSkipped++
-			logger.Warn("fbmessenger: upsert message", "err", err)
-			continue
-		}
-		summary.MessagesAdded++
-
-		// Body.
-		bodyText := sql.NullString{String: m.Body, Valid: m.Body != ""}
-		if err := st.UpsertMessageBodyContext(ctx, messageID, bodyText, sql.NullString{}); err != nil {
-			summary.Errors++
-			logger.Warn("fbmessenger: upsert body", "err", err)
-		}
-
-		// Raw bytes — store once per thread (first message only) to avoid bloat.
-		if mi == 0 && len(thread.RawBytes) > 0 {
-			if err := st.UpsertMessageRawWithFormatContext(ctx, messageID, thread.RawBytes, rawFormat); err != nil {
-				logger.Warn("fbmessenger: upsert raw", "err", err)
+		var messageID int64
+		if instagram {
+			msgRow.ConversationID, msgRow.MessageType = stored.ConversationID, "instagram"
+			msgRow.SentAt.Valid, msgRow.ReceivedAt.Valid = true, true
+			msgRow.PreserveAttachmentStats = true
+			relative, err := filepath.Rel(absRoot, m.jsonFilename)
+			if err != nil {
+				return err
 			}
-		}
-
-		// Recipients: from = sender, to = other participants.
-		// Only rewrite "from" when we have a valid sender — otherwise on
-		// re-import we would clobber a previously-recorded sender with an
-		// empty row.
-		if senderID.Valid {
-			fromIDs := []int64{senderID.Int64}
-			fromNames := []string{senderName}
-			if err := st.ReplaceMessageRecipientsContext(ctx, messageID, "from", fromIDs, fromNames); err != nil {
-				logger.Warn("fbmessenger: replace from recipients", "err", err)
+			rawData, err := json.Marshal(struct {
+				Shard      string         `json:"shard"`
+				ThreadPath string         `json:"thread_path"`
+				Header     any            `json:"header"`
+				Record     jsontext.Value `json:"record"`
+			}{filepath.ToSlash(relative), m.jsonShard.ThreadPath, struct {
+				Title        string               `json:"title"`
+				Participants []rawJSONParticipant `json:"participants"`
+			}{m.jsonShard.Title, m.jsonShard.Participants}, m.rawData}, jsontext.PreserveRawStrings(true))
+			if err != nil {
+				return err
 			}
-		}
-
-		var toIDs []int64
-		var toNames []string
-		seenPID := make(map[int64]bool)
-		if senderID.Valid {
-			seenPID[senderID.Int64] = true
-		}
-		sortedNames := make([]string, 0, len(nameToID))
-		for name := range nameToID {
-			sortedNames = append(sortedNames, name)
-		}
-		sort.Strings(sortedNames)
-		for _, name := range sortedNames {
-			pid := nameToID[name]
-			if seenPID[pid] {
+			var names []string
+			for name := range nameToID {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			var members []store.ConversationParticipantRef
+			var toIDs []int64
+			var toNames, toAddresses []string
+			for _, name := range names {
+				members = append(members, store.ConversationParticipantRef{ParticipantID: nameToID[name], Role: "member"})
+				if name != senderName {
+					toIDs, toNames, toAddresses = append(toIDs, nameToID[name]), append(toNames, name), append(toAddresses, nameToEmail[name])
+				}
+			}
+			recipients := []store.RecipientSet{{Type: "to", ParticipantIDs: toIDs, DisplayNames: toNames}}
+			if senderID.Valid {
+				recipients = append(recipients, store.RecipientSet{Type: "from", ParticipantIDs: []int64{senderID.Int64}, DisplayNames: []string{senderName}})
+			}
+			convType := "direct_chat"
+			if declaredCount > 2 {
+				convType = "group_chat"
+			}
+			title := DecodeMojibake(m.jsonShard.Title)
+			data := &store.MessagePersistData{
+				Message: msgRow, Conversation: &store.ConversationPersistData{SourceConversationID: thread.instagramKey, ConversationType: convType, Title: title, Participants: members, PreserveExistingParticipants: true},
+				BodyText: sql.NullString{String: m.Body, Valid: m.Body != ""}, RawMIME: rawData, RawFormat: "instagram_json", Recipients: recipients, PreserveLabels: true,
+				FTS: &store.FTSDoc{Subject: title, Body: m.Body, FromAddr: nameToEmail[senderName], ToAddrs: strings.Join(toAddresses, " ")},
+			}
+			messageID = stored.ID
+			if stored.ID == 0 || !stored.Matches(msgRow, rawData) {
+				messageID, err = st.PersistMessageContext(ctx, data)
+				if err != nil {
+					return err
+				}
+			}
+			if stored.ID == 0 {
+				summary.MessagesAdded++
+			} else {
+				summary.MessagesSkipped++
+			}
+		} else {
+			messageID, err = st.UpsertMessageContext(ctx, msgRow)
+			if err != nil {
+				summary.Errors++
+				summary.MessagesSkipped++
+				logger.Warn("fbmessenger: upsert message", "err", err)
 				continue
 			}
-			seenPID[pid] = true
-			toIDs = append(toIDs, pid)
-			toNames = append(toNames, name)
-		}
-		// If message is from someone else, ensure self is in "to".
-		if !isFromMe && !seenPID[meID] {
-			toIDs = append(toIDs, meID)
-			toNames = append(toNames, "")
-			seenPID[meID] = true
-		}
-		_ = st.ReplaceMessageRecipientsContext(ctx, messageID, "to", toIDs, toNames)
+			summary.MessagesAdded++
 
-		// Labels.
-		if parentLabelID != 0 {
-			_ = st.LinkMessageLabel(ctx, messageID, parentLabelID)
-		}
-		if sectionLabelID != 0 {
-			_ = st.LinkMessageLabel(ctx, messageID, sectionLabelID)
+			// Body.
+			bodyText := sql.NullString{String: m.Body, Valid: m.Body != ""}
+			if err := st.UpsertMessageBodyContext(ctx, messageID, bodyText, sql.NullString{}); err != nil {
+				summary.Errors++
+				logger.Warn("fbmessenger: upsert body", "err", err)
+			}
+
+			// Raw bytes — store once per thread (first message only) to avoid bloat.
+			if mi == 0 && len(thread.RawBytes) > 0 {
+				if err := st.UpsertMessageRawWithFormatContext(ctx, messageID, thread.RawBytes, rawFormat); err != nil {
+					logger.Warn("fbmessenger: upsert raw", "err", err)
+				}
+			}
+
+			// Recipients: from = sender, to = other participants.
+			// Only rewrite "from" when we have a valid sender — otherwise on
+			// re-import we would clobber a previously-recorded sender with an
+			// empty row.
+			if senderID.Valid {
+				fromIDs := []int64{senderID.Int64}
+				fromNames := []string{senderName}
+				if err := st.ReplaceMessageRecipientsContext(ctx, messageID, "from", fromIDs, fromNames); err != nil {
+					logger.Warn("fbmessenger: replace from recipients", "err", err)
+				}
+			}
+
+			var toIDs []int64
+			var toNames []string
+			seenPID := make(map[int64]bool)
+			if senderID.Valid {
+				seenPID[senderID.Int64] = true
+			}
+			sortedNames := make([]string, 0, len(nameToID))
+			for name := range nameToID {
+				sortedNames = append(sortedNames, name)
+			}
+			sort.Strings(sortedNames)
+			for _, name := range sortedNames {
+				pid := nameToID[name]
+				if seenPID[pid] {
+					continue
+				}
+				seenPID[pid] = true
+				toIDs = append(toIDs, pid)
+				toNames = append(toNames, name)
+			}
+			// If message is from someone else, ensure self is in "to".
+			if !isFromMe && !seenPID[meID] {
+				toIDs = append(toIDs, meID)
+				toNames = append(toNames, "")
+				seenPID[meID] = true
+			}
+			_ = st.ReplaceMessageRecipientsContext(ctx, messageID, "to", toIDs, toNames)
+
+			// Labels.
+			if parentLabelID != 0 {
+				_ = st.LinkMessageLabel(ctx, messageID, parentLabelID)
+			}
+			if sectionLabelID != 0 {
+				_ = st.LinkMessageLabel(ctx, messageID, sectionLabelID)
+			}
 		}
 
 		// Attachments.
 		for ai := range m.Attachments {
 			att := m.Attachments[ai]
+			if instagram {
+				summary.AttachmentsFound++
+				slot := "instagram:media:" + instagramHash(att.Kind+":"+path.Clean(att.URI))
+				write := store.AttachmentWrite{Filename: path.Base(att.URI), MIMEType: att.MimeType, SourcePartKey: slot, SourceAttachmentID: slot, MediaType: att.Kind, Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics}
+				if att.Kind == "sticker" {
+					write.Role = store.AttachmentRoleSticker
+					write.RoleSource = store.AttachmentRoleSourceProviderExplicit
+				}
+				filename := resolveAttachmentURI(absRoot, att.URI)
+				if filename == "" {
+					summary.MediaRejected++
+					summary.Incomplete = true
+				} else if _, err := os.Stat(filename); errors.Is(err, os.ErrNotExist) {
+					summary.MediaMissing++
+					summary.Incomplete = true
+				} else if err != nil {
+					summary.MediaRejected++
+					summary.Incomplete = true
+				} else if opts.AttachmentsDir != "" {
+					var err error
+					write.StoragePath, write.ContentHash, write.Size, err = export.StoreAttachmentFromPath(ctx, opts.AttachmentsDir, filename, 0)
+					if err != nil {
+						return fmt.Errorf("store Instagram media: %w", err)
+					}
+					summary.AttachmentsStored++
+				}
+
+				existing, err := st.MessageProviderAttachments(ctx, messageID, "instagram:media:")
+				if err != nil {
+					return err
+				}
+				if prev, ok := existing[slot]; ok {
+					if write.StoragePath == "" && write.ContentHash == "" && prev.StoragePath != "" {
+						write.StoragePath, write.ContentHash, write.Size = prev.StoragePath, prev.ContentHash, int64(prev.Size)
+					}
+					if prev.Filename == write.Filename && prev.MimeType == write.MIMEType && prev.StoragePath == write.StoragePath && prev.ContentHash == write.ContentHash && int64(prev.Size) == write.Size && prev.MediaType == write.MediaType && prev.Role == write.Role && prev.RoleSource == write.RoleSource && prev.SourcePartKey == write.SourcePartKey {
+						continue
+					}
+				}
+				if err := st.UpsertAttachmentRecordWithStats(ctx, messageID, write, true); err != nil {
+					return err
+				}
+				continue
+			}
 			summary.AttachmentsFound++
 			storagePath, contentHash, size := handleAttachment(ctx, att, opts.AttachmentsDir)
 			if storagePath != "" {
@@ -876,19 +1010,35 @@ func writeThreadToStore(
 		}
 
 		// Reactions: first-class rows and body-append already done.
+		var reactions []store.ReactionRef
 		for _, r := range m.Reactions {
-			actorAddr := Address(r.Actor)
+			if instagram && r.Actor == "" {
+				continue
+			}
+			actorAddr := address(r.Actor)
 			m2, err := st.EnsureParticipantsBatch(ctx, []mime.Address{actorAddr})
 			if err != nil {
+				if instagram {
+					return err
+				}
 				continue
 			}
 			pid := m2[actorAddr.Email]
 			if pid == 0 {
 				continue
 			}
-			if err := st.UpsertReaction(ctx, messageID, pid, "emoji", r.Reaction, m.SentAt); err == nil {
+			if instagram {
+				reactions = append(reactions, store.ReactionRef{ParticipantID: pid, Type: "emoji", Value: r.Reaction})
+			} else if err := st.UpsertReaction(ctx, messageID, pid, "emoji", r.Reaction, m.SentAt); err == nil {
 				summary.ReactionsAdded++
 			}
+		}
+		if instagram {
+			if err := st.ReplaceReactionsContext(ctx, messageID, reactions); err != nil {
+				return err
+			}
+			summary.ReactionsAdded += len(reactions)
+			continue
 		}
 
 		// FTS indexing.
@@ -1064,169 +1214,4 @@ func fbAttachmentHash(att Attachment, idx int) string {
 	}
 	sum := sha256.Sum256([]byte("fbmessenger\x00" + key))
 	return fbSyntheticAttachmentKeyPrefix + hex.EncodeToString(sum[:])
-}
-
-func writeInstagramMessage(ctx context.Context, st *store.Store, root string, sourceID int64, key, id string, stored store.StoredMessage, filename string, shard *instagramShard, raw jsontext.Value, message Message, opts ImportOptions, summary *ImportSummary) error {
-	fromMe := message.SenderName == opts.SelfName
-	if fromMe {
-		summary.FromMeCount++
-	}
-	relative, err := filepath.Rel(root, filename)
-	if err != nil {
-		return err
-	}
-	rawData, err := json.Marshal(struct {
-		Shard      string         `json:"shard"`
-		ThreadPath string         `json:"thread_path"`
-		Header     any            `json:"header"`
-		Record     jsontext.Value `json:"record"`
-	}{filepath.ToSlash(relative), shard.ThreadPath, struct {
-		Title        string               `json:"title"`
-		Participants []rawJSONParticipant `json:"participants"`
-	}{shard.Title, shard.Participants}, raw}, jsontext.PreserveRawStrings(true))
-	if err != nil {
-		return err
-	}
-	messageID := stored.ID
-	isNew := messageID == 0
-	names := map[string]bool{}
-	for _, p := range shard.Participants {
-		if name := DecodeMojibake(p.Name); name != "" {
-			names[name] = true
-		}
-	}
-	declaredCount := len(names)
-	if message.SenderName != "" {
-		names[message.SenderName] = true
-	}
-	sorted := make([]string, 0, len(names))
-	for name := range names {
-		sorted = append(sorted, name)
-	}
-	sort.Strings(sorted)
-	addresses := make([]mime.Address, 0, len(sorted))
-	for _, name := range sorted {
-		addresses = append(addresses, instagramAddress(opts.Account, name))
-	}
-	participants, err := st.EnsureParticipantsBatch(ctx, addresses)
-	if err != nil {
-		return err
-	}
-	var senderID int64
-	var members []store.ConversationParticipantRef
-	var toIDs []int64
-	var toNames, toAddresses []string
-	fromAddress := ""
-	for _, addr := range addresses {
-		pid := participants[addr.Email]
-		members = append(members, store.ConversationParticipantRef{ParticipantID: pid, Role: "member"})
-		if addr.Name == message.SenderName {
-			senderID = pid
-			fromAddress = addr.Email
-		} else {
-			toIDs = append(toIDs, pid)
-			toNames = append(toNames, addr.Name)
-			toAddresses = append(toAddresses, addr.Email)
-		}
-	}
-	recipients := []store.RecipientSet{{Type: "to", ParticipantIDs: toIDs, DisplayNames: toNames}}
-	if senderID != 0 {
-		recipients = append(recipients, store.RecipientSet{Type: "from", ParticipantIDs: []int64{senderID}, DisplayNames: []string{message.SenderName}})
-	}
-	convType := "direct_chat"
-	if declaredCount > 2 {
-		convType = "group_chat"
-	}
-	data := &store.MessagePersistData{
-		Message:      &store.Message{ConversationID: stored.ConversationID, SourceID: sourceID, SourceMessageID: id, MessageType: "instagram", SentAt: sql.NullTime{Time: message.SentAt, Valid: true}, ReceivedAt: sql.NullTime{Time: message.SentAt, Valid: true}, SenderID: sql.NullInt64{Int64: senderID, Valid: senderID != 0}, IsFromMe: fromMe, Snippet: sql.NullString{String: buildSnippet(message.Body), Valid: message.Body != ""}, SizeEstimate: int64(len(message.Body)), HasAttachments: len(message.Attachments) > 0, AttachmentCount: len(message.Attachments), PreserveAttachmentStats: true},
-		Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: convType, Title: DecodeMojibake(shard.Title), Participants: members, PreserveExistingParticipants: true},
-		BodyText:     sql.NullString{String: message.Body, Valid: message.Body != ""}, RawMIME: rawData, RawFormat: "instagram_json", Recipients: recipients, PreserveLabels: true,
-		FTS: &store.FTSDoc{Subject: DecodeMojibake(shard.Title), Body: message.Body, FromAddr: fromAddress, ToAddrs: strings.Join(toAddresses, " ")},
-	}
-	if isNew || !stored.Matches(data.Message, rawData) {
-		messageID, err = st.PersistMessageContext(ctx, data)
-		if err != nil {
-			return err
-		}
-	}
-
-	if isNew {
-		summary.MessagesAdded++
-	} else {
-		summary.MessagesSkipped++
-	}
-	// Ancillary writes are retried on every replay, including existing messages.
-	for _, att := range message.Attachments {
-		if err := writeInstagramMedia(ctx, st, root, messageID, att, opts, summary); err != nil {
-			return err
-		}
-	}
-	var reactionAddresses []mime.Address
-	for _, reaction := range message.Reactions {
-		if reaction.Actor != "" {
-			reactionAddresses = append(reactionAddresses, instagramAddress(opts.Account, reaction.Actor))
-		}
-	}
-	participants, err = st.EnsureParticipantsBatch(ctx, reactionAddresses)
-	if err != nil {
-		return err
-	}
-	var reactions []store.ReactionRef
-	for _, reaction := range message.Reactions {
-		if reaction.Actor == "" {
-			continue
-		}
-		addr := instagramAddress(opts.Account, reaction.Actor)
-		reactions = append(reactions, store.ReactionRef{ParticipantID: participants[addr.Email], Type: "emoji", Value: reaction.Reaction})
-	}
-	if err := st.ReplaceReactionsContext(ctx, messageID, reactions); err != nil {
-		return err
-	}
-	summary.ReactionsAdded += len(reactions)
-	return nil
-}
-
-func writeInstagramMedia(ctx context.Context, st *store.Store, root string, messageID int64, att Attachment, opts ImportOptions, summary *ImportSummary) error {
-	summary.AttachmentsFound++
-	slot := "instagram:media:" + instagramHash(att.Kind+":"+path.Clean(att.URI))
-	write := store.AttachmentWrite{Filename: path.Base(att.URI), MIMEType: att.MimeType, SourcePartKey: slot, SourceAttachmentID: slot, MediaType: att.Kind, Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics}
-	if att.Kind == "sticker" {
-		write.Role = store.AttachmentRoleSticker
-		write.RoleSource = store.AttachmentRoleSourceProviderExplicit
-	}
-	filename := resolveAttachmentURI(root, att.URI)
-	if filename == "" {
-		summary.MediaRejected++
-		summary.Incomplete = true
-	} else if _, err := os.Stat(filename); errors.Is(err, os.ErrNotExist) {
-		summary.MediaMissing++
-		summary.Incomplete = true
-	} else if err != nil {
-		summary.MediaRejected++
-		summary.Incomplete = true
-	} else if opts.AttachmentsDir != "" {
-		var err error
-		write.StoragePath, write.ContentHash, write.Size, err = export.StoreAttachmentFromPath(ctx, opts.AttachmentsDir, filename, 0)
-		if err != nil {
-			return fmt.Errorf("store Instagram media: %w", err)
-		}
-		summary.AttachmentsStored++
-	}
-
-	existing, err := st.MessageProviderAttachments(ctx, messageID, "instagram:media:")
-	if err != nil {
-		return err
-	}
-	if prev, ok := existing[slot]; ok {
-		if write.StoragePath == "" && write.ContentHash == "" && prev.StoragePath != "" {
-			write.StoragePath, write.ContentHash, write.Size = prev.StoragePath, prev.ContentHash, int64(prev.Size)
-		}
-		if prev.Filename == write.Filename && prev.MimeType == write.MIMEType && prev.StoragePath == write.StoragePath && prev.ContentHash == write.ContentHash && int64(prev.Size) == write.Size && prev.MediaType == write.MediaType && prev.Role == write.Role && prev.RoleSource == write.RoleSource && prev.SourcePartKey == write.SourcePartKey {
-			return nil
-		}
-	}
-	if err := st.UpsertAttachmentRecordWithStats(ctx, messageID, write, true); err != nil {
-		return err
-	}
-	return nil
 }

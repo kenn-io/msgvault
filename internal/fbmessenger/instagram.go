@@ -6,16 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
-	"os"
 	"path"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
@@ -23,16 +19,9 @@ import (
 
 const instagramInbox = "your_instagram_activity/messages/inbox"
 
-type instagramShard struct {
-	Participants []rawJSONParticipant `json:"participants"`
-	Title        string               `json:"title"`
-	ThreadPath   string               `json:"thread_path"`
-	Messages     []jsontext.Value     `json:"messages"`
-}
-
 type instagramPending struct {
 	id, filename string
-	shard        *instagramShard
+	shard        *rawJSONExport
 	raw          jsontext.Value
 	record       rawJSONMessage
 	message      Message
@@ -55,73 +44,18 @@ func instagramEvidence(record rawJSONMessage) instagramOccurrence {
 }
 
 func parseInstagramThread(ctx context.Context, st *store.Store, sourceID int64, td ThreadDir, summary *ImportSummary, keys map[string]string, archivedGroups map[string][]string, self string) (*Thread, map[string]store.StoredMessage, error) {
-	files, bad, err := numberedJSONFiles(td.Path)
+	parsed, err := parseJSONThread(ctx, "", td.Path, &instagramJSONOptions{td: td, summary: summary, keys: keys})
 	if err != nil {
 		return nil, nil, err
 	}
-	summary.FilesSkipped += int64(len(bad))
-	if len(bad) > 0 {
-		summary.Incomplete = true
-	}
-	threadDir := filepath.ToSlash(filepath.Join(instagramInbox, td.Name))
-	key := ""
+	key := parsed.instagramKey
 	var pending []*instagramPending
-	for _, name := range files {
-		filename := filepath.Join(td.Path, name)
-		if err := ctx.Err(); err != nil {
+	for _, message := range parsed.Messages {
+		var record rawJSONMessage
+		if err := json.Unmarshal(message.rawData, &record); err != nil {
 			return nil, nil, err
 		}
-		data, err := os.ReadFile(filename)
-		shard := &instagramShard{}
-		if err == nil {
-			err = json.Unmarshal(data, shard)
-		}
-		if err != nil || shard.Messages == nil {
-			if ctx.Err() != nil {
-				return nil, nil, ctx.Err()
-			}
-			summary.FilesSkipped++
-			summary.Incomplete = true
-			continue
-		}
-		shardKey := DecodeMojibake(shard.ThreadPath)
-		if shardKey == "" {
-			shardKey = strings.TrimPrefix(threadDir, path.Dir(instagramInbox)+"/")
-		}
-		if key != "" && key != shardKey {
-			return nil, nil, errors.New("conflicting thread_path across shards")
-		}
-		key = shardKey
-		if previous, ok := keys[key]; ok && previous != threadDir {
-			return nil, nil, errors.New("conflicting thread_path across directories")
-		}
-		keys[key] = threadDir
-		for _, raw := range shard.Messages {
-			if err := ctx.Err(); err != nil {
-				return nil, nil, err
-			}
-			summary.MessagesProcessed++
-			var record rawJSONMessage
-			var stamp struct {
-				Timestamp *int64 `json:"timestamp_ms"`
-			}
-			if json.Unmarshal(raw, &record) != nil || json.Unmarshal(raw, &stamp) != nil || stamp.Timestamp == nil {
-				summary.MessagesSkipped++
-				summary.RecordsUnsupported++
-				summary.Incomplete = true
-				continue
-			}
-			message := instagramJSONMessage(record)
-			message.SentAt = time.UnixMilli(*stamp.Timestamp).UTC()
-
-			if message.Body == "" && len(message.Attachments) == 0 {
-				summary.MessagesSkipped++
-				summary.RecordsUnsupported++
-				summary.Incomplete = true
-				continue
-			}
-			pending = append(pending, &instagramPending{filename: filename, shard: shard, raw: raw, record: record, message: message})
-		}
+		pending = append(pending, &instagramPending{filename: message.jsonFilename, shard: message.jsonShard, raw: message.rawData, record: record, message: message})
 	}
 	groups := map[string][]*instagramPending{}
 	for _, p := range pending {
@@ -142,11 +76,11 @@ func parseInstagramThread(ctx context.Context, st *store.Store, sourceID int64, 
 		numberInstagramGroup(prefix, group, archivedGroups[prefix])
 	}
 
-	parsed := &Thread{instagramKey: key, Format: formatJSON}
+	parsed.Messages = nil
 	for _, p := range instagramKept(pending) {
 		message := p.message
 		message.sourceID, message.rawData = p.id, p.raw
-		message.instagramShard, message.instagramFilename = p.shard, p.filename
+		message.jsonShard, message.jsonFilename = p.shard, p.filename
 		parsed.Messages = append(parsed.Messages, message)
 	}
 	return parsed, archived, nil

@@ -1,9 +1,13 @@
 package fbmessenger
 
 import (
+	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -15,7 +19,7 @@ import (
 // rawJSONExport is the shape of a single message_*.json DYI file.
 type rawJSONExport struct {
 	Participants []rawJSONParticipant `json:"participants"`
-	Messages     []rawJSONMessage     `json:"messages"`
+	Messages     []jsontext.Value     `json:"messages"`
 	Title        string               `json:"title"`
 	ThreadType   string               `json:"thread_type"`
 	ThreadPath   string               `json:"thread_path"`
@@ -113,43 +117,130 @@ func numberedJSONFiles(threadDir string) ([]string, []string, error) {
 	return names, badSiblings, nil
 }
 
-// ParseJSONThread parses every message_*.json file in a DYI thread
-// directory and returns a populated Thread. rootDir is the DYI export
-// root; threadDir is the thread path returned by Discover.
-func ParseJSONThread(rootDir, threadDir string) (*Thread, error) {
-	files, badSiblings, err := numberedJSONFiles(threadDir)
+func readJSONShards(threadDir string, visit func(string, []byte, *rawJSONExport, error) error) ([]string, error) {
+	files, bad, err := numberedJSONFiles(threadDir)
 	if err != nil {
 		return nil, err
 	}
+	for _, name := range files {
+		data, readErr := os.ReadFile(filepath.Join(threadDir, name))
+		var shard rawJSONExport
+		if readErr == nil {
+			if err := json.Unmarshal(data, &shard); err != nil {
+				readErr = fmt.Errorf("%w: %s: %w", ErrCorruptJSON, name, err)
+			}
+		}
+		if err := visit(name, data, &shard, readErr); err != nil {
+			return nil, err
+		}
+	}
+	return bad, nil
+}
 
+// ParseJSONThread parses every message_*.json file in a DYI thread
+// directory and returns a populated Thread. rootDir is the DYI export
+// root; threadDir is the thread path returned by Discover.
+type instagramJSONOptions struct {
+	td      ThreadDir
+	summary *ImportSummary
+	keys    map[string]string
+}
+
+func ParseJSONThread(rootDir, threadDir string) (*Thread, error) {
+	return parseJSONThread(context.Background(), rootDir, threadDir, nil)
+}
+
+func parseJSONThread(ctx context.Context, rootDir, threadDir string, instagram *instagramJSONOptions) (*Thread, error) {
 	// Decode every file. The DYI format emits each file as a complete
 	// object with `participants` and `messages`. We take participants
 	// from the lowest-numbered file, and concatenate all messages.
 	var thread Thread
 	thread.Format = formatJSON
 	thread.DirName = filepath.Base(threadDir)
-	thread.BadSiblings = badSiblings
 	var rawConcat []rawJSONMessage
 	var title string
 	var participants []Participant
-
-	for i, f := range files {
-		full := filepath.Join(threadDir, f)
-		data, err := os.ReadFile(full)
-		if err != nil {
-			return nil, fmt.Errorf("fbmessenger: read %s: %w", f, err)
+	var shards []string
+	badSiblings, err := readJSONShards(threadDir, func(f string, data []byte, decoded *rawJSONExport, readErr error) error {
+		if instagram != nil {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if readErr != nil || decoded.Messages == nil {
+				instagram.summary.FilesSkipped++
+				instagram.summary.Incomplete = true
+				return nil
+			}
+			threadPath := filepath.ToSlash(filepath.Join(instagramInbox, instagram.td.Name))
+			key := DecodeMojibake(decoded.ThreadPath)
+			if key == "" {
+				key = strings.TrimPrefix(threadPath, path.Dir(instagramInbox)+"/")
+			}
+			if thread.instagramKey != "" && thread.instagramKey != key {
+				return errors.New("conflicting thread_path across shards")
+			}
+			thread.instagramKey = key
+			if previous, ok := instagram.keys[key]; ok && previous != threadPath {
+				return errors.New("conflicting thread_path across directories")
+			}
+			instagram.keys[key] = threadPath
+			for _, raw := range decoded.Messages {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				instagram.summary.MessagesProcessed++
+				var record rawJSONMessage
+				var stamp struct {
+					Timestamp *int64 `json:"timestamp_ms"`
+				}
+				if json.Unmarshal(raw, &record) != nil || json.Unmarshal(raw, &stamp) != nil || stamp.Timestamp == nil {
+					instagram.summary.MessagesSkipped++
+					instagram.summary.RecordsUnsupported++
+					instagram.summary.Incomplete = true
+					continue
+				}
+				message := instagramJSONMessage(record)
+				message.SentAt = time.UnixMilli(*stamp.Timestamp).UTC()
+				if message.Body == "" && len(message.Attachments) == 0 {
+					instagram.summary.MessagesSkipped++
+					instagram.summary.RecordsUnsupported++
+					instagram.summary.Incomplete = true
+					continue
+				}
+				message.rawData, message.jsonShard, message.jsonFilename = raw, decoded, filepath.Join(threadDir, f)
+				thread.Messages = append(thread.Messages, message)
+			}
+			return nil
 		}
-		var decoded rawJSONExport
-		if err := json.Unmarshal(data, &decoded); err != nil {
-			return nil, fmt.Errorf("%w: %s: %w", ErrCorruptJSON, f, err)
+		if readErr != nil {
+			return fmt.Errorf("fbmessenger: read %s: %w", f, readErr)
 		}
-		if i == 0 {
+		if len(shards) == 0 {
 			title = DecodeMojibake(decoded.Title)
 			for _, p := range decoded.Participants {
 				participants = append(participants, Participant{Name: DecodeMojibake(p.Name)})
 			}
 		}
-		rawConcat = append(rawConcat, decoded.Messages...)
+		for _, raw := range decoded.Messages {
+			var record rawJSONMessage
+			if err := json.Unmarshal(raw, &record); err != nil {
+				return fmt.Errorf("%w: %s: %w", ErrCorruptJSON, f, err)
+			}
+			rawConcat = append(rawConcat, record)
+		}
+		shards = append(shards, string(data))
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	thread.BadSiblings = badSiblings
+	if instagram != nil {
+		instagram.summary.FilesSkipped += int64(len(badSiblings))
+		if len(badSiblings) > 0 {
+			instagram.summary.Incomplete = true
+		}
+		return &thread, nil
 	}
 
 	// Deduplicate participants (Facebook sometimes repeats).
@@ -181,20 +272,7 @@ func ParseJSONThread(rootDir, threadDir string) (*Thread, error) {
 	// JSON array so the stored raw is a self-contained round-trippable
 	// payload. Callers that want the exact per-file text can still read
 	// from disk.
-	var rawBuf strings.Builder
-	rawBuf.WriteByte('[')
-	for i, f := range files {
-		if i > 0 {
-			rawBuf.WriteByte(',')
-		}
-		data, err := os.ReadFile(filepath.Join(threadDir, f))
-		if err != nil {
-			return nil, err
-		}
-		rawBuf.Write(data)
-	}
-	rawBuf.WriteByte(']')
-	thread.RawBytes = []byte(rawBuf.String())
+	thread.RawBytes = []byte("[" + strings.Join(shards, ",") + "]")
 
 	// Render each message.
 	absRoot, err := filepath.Abs(rootDir)

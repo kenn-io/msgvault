@@ -366,7 +366,7 @@ func TestInstagramRejectsNewerFingerprintInAbsentThread(t *testing.T) {
 	require.NoError(t, os.Remove(old))
 	instagramTestShard(t, root, "new", "message_1.json", instagramTestRecord("new"))
 	for _, version := range []string{"ig:v2:", "ig:v10:"} {
-		_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET source_message_id = ? || substr(source_message_id, 7)`, version)
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET source_message_id = ? || substr(source_message_id, 7)`), version)
 		require.NoError(t, err)
 		_, err = ImportDYI(t.Context(), st, opts)
 		require.ErrorContains(t, err, "unsupported fingerprint version")
