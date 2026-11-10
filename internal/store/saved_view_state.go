@@ -14,6 +14,9 @@ import (
 	"go.kenn.io/msgvault/internal/jsonexact"
 )
 
+// SavedViewCalendarLocal is the only calendar a date filter may name.
+const SavedViewCalendarLocal = "local"
+
 // Version-1 Saved View vocabulary. Every value a definition may carry must be
 // executable through the Explore contract, so the store rejects anything the
 // daemon could not run rather than persisting a view no surface can open.
@@ -149,6 +152,18 @@ func validateSavedViewFilter(filter SavedViewFilter) error {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf(".values[%d] must not be empty", j)
 		}
+	}
+	return validateSavedViewFilterCalendar(filter)
+}
+
+func validateSavedViewFilterCalendar(filter SavedViewFilter) error {
+	switch {
+	case filter.Calendar == "":
+		return nil
+	case filter.Calendar != SavedViewCalendarLocal:
+		return fmt.Errorf(".calendar must be %s", SavedViewCalendarLocal)
+	case filter.Field != explorecatalog.FilterAfter && filter.Field != explorecatalog.FilterBefore:
+		return fmt.Errorf(".calendar applies only to %s and %s filters", explorecatalog.FilterAfter, explorecatalog.FilterBefore)
 	}
 	return nil
 }

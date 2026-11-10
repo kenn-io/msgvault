@@ -14676,8 +14676,10 @@ func (s SavedView) Validate() error {
 }
 
 type SavedViewFilter struct {
-	Field    SavedViewFilterField    `json:"field" validate:"required"`
-	Operator SavedViewFilterOperator `json:"operator" validate:"required"`
+	// Calendar Local calendar boundary for after or before filters
+	Calendar *SavedViewFilterCalendar `json:"calendar,omitempty"`
+	Field    SavedViewFilterField     `json:"field" validate:"required"`
+	Operator SavedViewFilterOperator  `json:"operator" validate:"required"`
 
 	// Values Exact filter values; numeric identifiers use decimal strings
 	Values []string `json:"values" validate:"required"`
@@ -14685,6 +14687,13 @@ type SavedViewFilter struct {
 
 func (s SavedViewFilter) Validate() error {
 	var errors runtime.ValidationErrors
+	if s.Calendar != nil {
+		if v, ok := any(s.Calendar).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Calendar", err)
+			}
+		}
+	}
 	if v, ok := any(s.Field).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Field", err)

@@ -32,7 +32,7 @@ export function canonicalSavedViewState(state: ExploreURLState): CanonicalState 
   return {
     ...(query ? { query, search_mode: state.searchMode } : {}),
     filters: state.filters.map((filter) => ({
-      field: filter.dimension,
+      field: filter.dimension, ...(filter.calendar ? { calendar: filter.calendar } : {}),
       operator: 'in',
       values: [...filter.values]
     })),
@@ -85,7 +85,7 @@ export function exploreStateFromSavedView(saved: CanonicalState, schemaVersion =
     query: schemaVersion === 1 && mode === 'full_text' ? quoteLegacyPipes(query) : query,
     searchMode: mode,
     filters: (saved.filters ?? []).map((filter) => ({
-      dimension: filterDimension(filter.field),
+      dimension: filterDimension(filter.field), ...(filter.calendar ? { calendar: filter.calendar } : {}),
       values: [...filter.values]
     })),
     groupingChain: [...(saved.grouping ?? [])] as ExploreURLState['groupingChain'],

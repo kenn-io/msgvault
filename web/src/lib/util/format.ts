@@ -18,10 +18,13 @@ export function formatBytes(value: number): string {
 }
 
 export function formatDateTime(value: string | null | undefined, timeStyle: 'short' | 'long' = 'short'): string {
-  if (!value) return 'Not available';
+  return formatMediumDate(value, timeStyle) ?? 'Not available';
+}
+
+function formatMediumDate(value: string | null | undefined, timeStyle?: 'short' | 'long'): string | undefined {
+  if (!value) return undefined;
   const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return 'Not available';
-  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle }).format(date);
+  return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', ...(timeStyle ? { timeStyle } : {}) }).format(date) : undefined;
 }
 
 export function formatShortDate(value: string): string {
@@ -48,6 +51,5 @@ export function formatRelativeTime(value: string, now: Date = new Date()): strin
 }
 
 export function formatDate(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.valueOf()) ? value : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date);
+  return formatMediumDate(value) ?? value;
 }

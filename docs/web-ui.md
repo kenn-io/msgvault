@@ -116,7 +116,7 @@ and Forward restore them.
 
 One toolbar sits above the results:
 
-- **Filter** holds Kind, Account, Identity, and optional From and To dates. New Messages dates use your time zone; saved UTC boundaries stay in UTC. Files dates use UTC. From must be on or before To.
+- **Filter** holds Kind, Account, Identity, and optional From and To dates. New Messages dates use your time zone; new Files dates use UTC. Existing boundaries retain their calendar when you switch views. From must be on or before To.
 - **Group by** adds a grouping level, including Entry kind. Month and Year list newest first in your time zone, with bars showing each group's share of all items. Add more levels to group within groups.
 - **Show as** switches between Table, Timeline, and Files.
 - **Sort** shows the fixed newest-first Messages order.

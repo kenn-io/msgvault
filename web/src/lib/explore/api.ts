@@ -10,6 +10,7 @@ import {
   listExploreFiles as generatedListExploreFiles,
 } from '../api/generated/exploration/exploration';
 import type { APIClient } from '../api/client';
+import { apiFilters } from './models';
 import type {
   ExploreCacheUnavailable,
   ExploreFilter,
@@ -159,15 +160,18 @@ function requireCompletedCLIRun(stream: string): void {
   if (!completed) throw new Error('Semantic index action did not complete');
 }
 export type TimelineScope = { kind: 'person'; id: number } | { kind: 'domain'; domain: string };
+function apiPredicate<T extends ExplorePredicate>(predicate: T): T {
+  return { ...predicate, ...(predicate.filters ? { filters: apiFilters(predicate.filters) } : {}) };
+}
 export function createExploreAPI(client: APIClient, scope?: TimelineScope): ExploreAPI {
   return {
     async explore(predicate, signal) {
       const options = { ...client, signal };
       const { data, error, response } = await (scope?.kind === 'person'
-        ? getParticipantTimeline({ id: scope.id }, predicate, options)
+        ? getParticipantTimeline({ id: scope.id }, apiPredicate(predicate), options)
         : scope?.kind === 'domain'
-          ? getDomainTimeline({ domain: scope.domain }, predicate, options)
-          : generatedExplore(predicate, options));
+          ? getDomainTimeline({ domain: scope.domain }, apiPredicate(predicate), options)
+          : generatedExplore(apiPredicate(predicate), options));
       if (data) return { status: 'ready', result: normalize(data) };
       if (response.status === 503 && isCacheUnavailable(error)) {
         return { status: 'unavailable', unavailable: error };
@@ -177,7 +181,7 @@ export function createExploreAPI(client: APIClient, scope?: TimelineScope): Expl
     async groups(predicate, dimension, signal) {
       const body = {
         ...(predicate.cursor ? { cursor: predicate.cursor } : {}),
-        ...(predicate.filters ? { filters: predicate.filters } : {}),
+        ...(predicate.filters ? { filters: apiFilters(predicate.filters) } : {}),
         ...(predicate.query ? { query: predicate.query, search_mode: predicate.search_mode } : {}),
         ...(predicate.group_key ? { group_key: predicate.group_key } : {}),
         ...('sent_only' in predicate ? { sent_only: Boolean(predicate.sent_only) } : {}),
@@ -198,7 +202,7 @@ export function createExploreAPI(client: APIClient, scope?: TimelineScope): Expl
       throw new ExploreAPIError(response.status, error);
     },
     async fileGroups(predicate, filenameQuery, mimeFamilies, dimension, signal) {
-      const { cursor, ...context } = predicate;
+      const { cursor, ...context } = apiPredicate(predicate);
       const { data, error, response } = await generatedGroupFiles(
         {
           predicate: context,
@@ -221,7 +225,7 @@ export function createExploreAPI(client: APIClient, scope?: TimelineScope): Expl
       throw new ExploreAPIError(response.status, error);
     },
     async files(predicate, signal) {
-      const { cursor, ...context } = predicate;
+      const { cursor, ...context } = apiPredicate(predicate);
       const { data, error, response } = await generatedListExploreFiles(
         { predicate: context, limit: 100, ...(cursor ? { cursor } : {}) },
         {
@@ -237,7 +241,7 @@ export function createExploreAPI(client: APIClient, scope?: TimelineScope): Expl
     },
     async coverage(filters, signal) {
       const { data, error, response } = await generatedGetSearchCoverage(
-        { filters },
+        { filters: apiFilters(filters) },
         {
           ...client,
           signal,
@@ -261,7 +265,7 @@ export function createExploreAPI(client: APIClient, scope?: TimelineScope): Expl
     },
     async matchCounts(predicate, rowKeys, signal) {
       const { data, error, response } = await generatedCountExploreMatches(
-        { predicate, row_keys: rowKeys },
+        { predicate: apiPredicate(predicate), row_keys: rowKeys },
         {
           ...client,
           signal,

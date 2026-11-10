@@ -42,7 +42,8 @@ import type { SettingsNavigationAuthority } from '../carddav/navigation';
 
 export type EntryRow = GeneratedEntryRow;
 export type ExploreCacheUnavailable = GeneratedExploreCacheUnavailableResponse;
-export type ExploreFilter = GeneratedExploreFilter;
+export type ExploreFilter = GeneratedExploreFilter & { calendar?: 'local' };
+export const apiFilters = (filters: readonly ExploreFilter[]) => filters.map(({ dimension, values }) => ({ dimension, values }));
 export type ExploreFilterDimension = ExploreFilter['dimension'];
 export type ExploreFileFact = GeneratedExploreFileFact;
 export type ExploreFilesResponse = GeneratedExploreFilesHTTPResponse;

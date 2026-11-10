@@ -100,12 +100,11 @@
   }
 
   function boundaryMode(dimension: 'after' | 'before'): 'utc' | 'local' {
+    const filter = filters.find((item) => item.dimension === dimension);
+    if (filter) return filter.calendar === 'local' ? 'local' : 'utc';
     if (dateMode === 'utc') return 'utc';
-    const value = filters.find((filter) => filter.dimension === dimension)?.values[0]
-      ?? filters.find((filter) => filter.dimension === (dimension === 'after' ? 'before' : 'after'))?.values[0];
-    if (!value) return 'local';
-    const date = new Date(value);
-    return date.getUTCHours() === 0 && date.getUTCMinutes() === 0 && date.getUTCSeconds() === 0 && date.getUTCMilliseconds() === 0 ? 'utc' : 'local';
+    const peer = filters.find((item) => item.dimension === (dimension === 'after' ? 'before' : 'after'));
+    return peer ? peer.calendar === 'local' ? 'local' : 'utc' : 'local';
   }
 
   function dateValue(dimension: 'after' | 'before'): string {
@@ -138,7 +137,7 @@
       if (mode === 'local') { boundary.setDate(boundary.getDate() + 1); boundary.setHours(0, 0, 0, 0); }
       else boundary.setUTCDate(boundary.getUTCDate() + 1);
     }
-    onChange([...rest, { dimension, values: [boundary.toISOString()] }]);
+    onChange([...rest, { dimension, values: [boundary.toISOString()], ...(mode === 'local' ? { calendar: 'local' as const } : {}) }]);
   }
 
   function clear(): void {

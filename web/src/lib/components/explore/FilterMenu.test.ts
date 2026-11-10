@@ -3,6 +3,36 @@ import { expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import FilterMenu from './FilterMenu.svelte';
 
+it('keeps a new London From date local when edited from January to July', async () => {
+  vi.stubEnv('TZ', 'Europe/London');
+  try {
+    const onChange = vi.fn();
+    const props = { client: createAPIClient(async () => Response.json({ rows: [], accounts: [] })), filters: [], dateMode: 'auto' as const, onChange, onClear: vi.fn() };
+    const view = render(FilterMenu, props);
+    await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+    await fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-01-01' } });
+    const filters = onChange.mock.lastCall![0];
+    expect(filters).toEqual([expect.objectContaining({ dimension: 'after', values: ['2026-01-01T00:00:00.000Z'] })]);
+    await view.rerender({ ...props, filters });
+    await fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-07-01' } });
+    expect(onChange).toHaveBeenLastCalledWith([expect.objectContaining({ dimension: 'after', values: ['2026-06-30T23:00:00.000Z'] })]);
+  } finally { vi.unstubAllEnvs(); }
+});
+
+it('keeps an existing local bound in Files while new Files bounds use UTC', async () => {
+  vi.stubEnv('TZ', 'Europe/London');
+  try {
+    const filters = [{ dimension: 'after' as const, values: ['2026-01-01T00:00:00.000Z'], calendar: 'local' as const }];
+    const onChange = vi.fn();
+    render(FilterMenu, { client: createAPIClient(async () => Response.json({ rows: [], accounts: [] })), filters, dateMode: 'utc', onChange, onClear: vi.fn() });
+    await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+    await fireEvent.change(screen.getByLabelText('From (your time zone)'), { target: { value: '2026-07-01' } });
+    expect(onChange).toHaveBeenLastCalledWith([{ dimension: 'after', values: ['2026-06-30T23:00:00.000Z'], calendar: 'local' }]);
+    await fireEvent.change(screen.getByLabelText('To (UTC)'), { target: { value: '2026-12-31' } });
+    expect(onChange).toHaveBeenLastCalledWith([filters[0], { dimension: 'before', values: ['2027-01-01T00:00:00.000Z'] }]);
+  } finally { vi.unstubAllEnvs(); }
+});
+
 it.each([
   ['Asia/Tokyo', '2024-11-30T15:00:00.000Z', '2024-12-31T15:00:00.000Z', '2024-12-14T15:00:00.000Z', '2024-12-20T15:00:00.000Z'],
   ['America/New_York', '2024-12-01T05:00:00.000Z', '2025-01-01T05:00:00.000Z', '2024-12-15T05:00:00.000Z', '2024-12-21T05:00:00.000Z'],
@@ -10,15 +40,15 @@ it.each([
   vi.stubEnv('TZ', zone);
   try {
     const onChange = vi.fn();
-    const filters = [{ dimension: 'after' as const, values: [after] }, { dimension: 'before' as const, values: [before] }];
+    const filters = [{ dimension: 'after' as const, values: [after], calendar: 'local' as const }, { dimension: 'before' as const, values: [before], calendar: 'local' as const }];
     render(FilterMenu, { client: createAPIClient(async () => Response.json({ rows: [], accounts: [] })), filters, dateMode: 'auto', onChange, onClear: vi.fn() });
     await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
     expect((screen.getByLabelText('From') as HTMLInputElement).value).toBe('2024-12-01');
     expect((screen.getByLabelText('To') as HTMLInputElement).value).toBe('2024-12-31');
     await fireEvent.change(screen.getByLabelText('From'), { target: { value: '2024-12-15' } });
-    expect(onChange).toHaveBeenLastCalledWith([filters[1], { dimension: 'after', values: [editedAfter] }]);
+    expect(onChange).toHaveBeenLastCalledWith([filters[1], { dimension: 'after', values: [editedAfter], calendar: 'local' }]);
     await fireEvent.change(screen.getByLabelText('To'), { target: { value: '2024-12-20' } });
-    expect(onChange).toHaveBeenLastCalledWith([filters[0], { dimension: 'before', values: [editedBefore] }]);
+    expect(onChange).toHaveBeenLastCalledWith([filters[0], { dimension: 'before', values: [editedBefore], calendar: 'local' }]);
   } finally { vi.unstubAllEnvs(); }
 });
 
@@ -29,7 +59,7 @@ it('ends a local date at the next midnight across daylight saving', async () => 
     render(FilterMenu, { client: createAPIClient(async () => Response.json({ rows: [], accounts: [] })), filters: [], dateMode: 'auto', onChange, onClear: vi.fn() });
     await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
     await fireEvent.change(screen.getByLabelText('To'), { target: { value: '2024-03-10' } });
-    expect(onChange).toHaveBeenLastCalledWith([{ dimension: 'before', values: ['2024-03-11T04:00:00.000Z'] }]);
+    expect(onChange).toHaveBeenLastCalledWith([{ dimension: 'before', values: ['2024-03-11T04:00:00.000Z'], calendar: 'local' }]);
   } finally { vi.unstubAllEnvs(); }
 });
 
@@ -52,7 +82,7 @@ it('keeps each calendar when the bounds use different time zones', async () => {
   vi.stubEnv('TZ', 'America/New_York');
   try {
     const onChange = vi.fn();
-    const filters = [{ dimension: 'after' as const, values: ['2024-03-01T00:00:00.000Z'] }, { dimension: 'before' as const, values: ['2024-04-01T04:00:00.000Z'] }];
+    const filters = [{ dimension: 'after' as const, values: ['2024-03-01T00:00:00.000Z'] }, { dimension: 'before' as const, values: ['2024-04-01T04:00:00.000Z'], calendar: 'local' as const }];
     render(FilterMenu, { client: createAPIClient(async () => Response.json({ rows: [], accounts: [] })), filters, dateMode: 'auto', onChange, onClear: vi.fn() });
     await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
     expect((screen.getByLabelText('From (UTC)') as HTMLInputElement).value).toBe('2024-03-01');
@@ -60,7 +90,7 @@ it('keeps each calendar when the bounds use different time zones', async () => {
     await fireEvent.change(screen.getByLabelText('From (UTC)'), { target: { value: '2024-03-02' } });
     expect(onChange).toHaveBeenLastCalledWith([filters[1], { dimension: 'after', values: ['2024-03-02T00:00:00.000Z'] }]);
     await fireEvent.change(screen.getByLabelText('To (your time zone)'), { target: { value: '2024-03-10' } });
-    expect(onChange).toHaveBeenLastCalledWith([filters[0], { dimension: 'before', values: ['2024-03-11T04:00:00.000Z'] }]);
+    expect(onChange).toHaveBeenLastCalledWith([filters[0], { dimension: 'before', values: ['2024-03-11T04:00:00.000Z'], calendar: 'local' }]);
   } finally { vi.unstubAllEnvs(); }
 });
 

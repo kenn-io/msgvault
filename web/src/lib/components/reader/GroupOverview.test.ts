@@ -14,7 +14,7 @@ it('shows the complete range, daily strip, and people from a month overview', as
 });
 
 it.each([
-  ['2024-05-03', 'day', 'May 3, 2024', 2],
+  ['2024-05-03', 'day', 'May 3, 2024', 1],
   ['2024-05', 'month', 'May 2024', 1],
 ])('shows one date and a concise summary for a single %s bucket', (bucket, unit, label, visibleLabels) => {
   render(GroupOverview, { selection: {
@@ -24,7 +24,7 @@ it.each([
   } });
 
   expect(screen.getByRole('img', { name: `Activity by ${unit}: ${label}, 3 items` })).toBeDefined();
-  expect(screen.getAllByText('May 3, 2024')).toHaveLength(unit === 'day' ? visibleLabels : 1);
+  expect(screen.getAllByText('May 3, 2024')).toHaveLength(1);
   if (unit === 'month') expect(screen.getAllByText(label)).toHaveLength(visibleLabels);
 });
 

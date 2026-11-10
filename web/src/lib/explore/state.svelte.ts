@@ -23,7 +23,7 @@ import type {
   OperationStatusAuthority,
   OperationState
 } from './models';
-import { DEFAULT_EXPLORE_COLUMNS, identityDirection, sameFilterID, singleSourceValue } from './models';
+import { apiFilters, DEFAULT_EXPLORE_COLUMNS, identityDirection, sameFilterID, singleSourceValue } from './models';
 import { trimAttributeText } from '../directory/attribute-text';
 import { isCalendarDate } from '../directory/dates';
 import { isGroupingDimension, validateGroupingChain } from '../grouping/catalog';
@@ -925,7 +925,7 @@ export class ExploreState {
     const query = this.current.query.trim();
     return {
       ...(query ? { query, search_mode: this.current.searchMode } : {}),
-      filters: this.current.filters,
+      filters: apiFilters(this.current.filters),
       grouping: this.current.groupingChain,
       presentation: this.current.presentation,
       sort: this.current.sort,

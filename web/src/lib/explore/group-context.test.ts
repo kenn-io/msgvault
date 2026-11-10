@@ -3,6 +3,15 @@ import { describe, expect, it, vi } from 'vitest';
 import { filtersForGroup, parseGroupSelection } from './group-context';
 
 describe('group context', () => {
+  it('preserves the calendar of each surviving boundary when drilling a month', () => {
+    vi.stubEnv('TZ', 'Europe/London');
+    try {
+      expect(filtersForGroup([{ dimension: 'after', values: ['2026-01-15T00:00:00.000Z'] }], 'month', '2026-01')).toEqual([
+        { dimension: 'after', values: ['2026-01-15T00:00:00.000Z'] },
+        { dimension: 'before', values: ['2026-02-01T00:00:00.000Z'], calendar: 'local' },
+      ]);
+    } finally { vi.unstubAllEnvs(); }
+  });
   it.each([
     ['source', '7'],
     ['kind', 'meeting'],
@@ -59,12 +68,12 @@ describe('group context', () => {
         '2026'
       )).toEqual([
         { dimension: 'domain', values: ['example.com'] },
-        { dimension: 'after', values: ['2026-01-01T05:00:00.000Z'] },
-        { dimension: 'before', values: ['2027-01-01T05:00:00.000Z'] }
+        { dimension: 'after', values: ['2026-01-01T05:00:00.000Z'], calendar: 'local' },
+        { dimension: 'before', values: ['2027-01-01T05:00:00.000Z'], calendar: 'local' }
       ]);
       expect(filtersForGroup([], 'month', '2026-12')).toEqual([
-        { dimension: 'after', values: ['2026-12-01T05:00:00.000Z'] },
-        { dimension: 'before', values: ['2027-01-01T05:00:00.000Z'] }
+        { dimension: 'after', values: ['2026-12-01T05:00:00.000Z'], calendar: 'local' },
+        { dimension: 'before', values: ['2027-01-01T05:00:00.000Z'], calendar: 'local' }
       ]);
     } finally { vi.unstubAllEnvs(); }
   });

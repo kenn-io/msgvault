@@ -410,7 +410,8 @@ import (
 // 4.1.0 adds recorded names, saved contacts, and reconciled addresses to merge-list and detail responses,
 // registered service labels to current contact points, and identity keys to observations.
 // 4.2.0 adds keyed group overviews and time-group item totals.
-const APISchemaVersion = "4.2.0"
+// 4.3.0 adds local-calendar metadata to saved-view date filters.
+const APISchemaVersion = "4.3.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
