@@ -166,19 +166,20 @@ func TestImportAccountIsolation(t *testing.T) {
 }
 
 func TestImportLargeCSV(t *testing.T) {
+	require := require.New(t)
 	root := t.TempDir()
 	f, err := os.Create(filepath.Join(root, "posts.csv"))
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = f.WriteString("id,title\none,hello\n")
-	require.NoError(t, err)
+	require.NoError(err)
 	blank := []byte(strings.Repeat("\n", 1<<20))
 	for range 257 {
 		_, err = f.Write(blank)
-		require.NoError(t, err)
+		require.NoError(err)
 	}
-	require.NoError(t, f.Close())
+	require.NoError(f.Close())
 	summary, err := Import(t.Context(), testutil.NewTestStore(t), ImportOptions{RootDir: root, Me: "fictional_owner"})
-	require.NoError(t, err)
+	require.NoError(err)
 	assert.Equal(t, 1, summary.Added)
 }
 
@@ -298,29 +299,32 @@ func TestImportContentLinkCoverage(t *testing.T) {
 }
 
 func TestImportCommentMediaInBodyAndSearch(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	root := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(root, "comments.csv"), []byte("id,body,media\none,lantern,https://example.com/picture.png\n"), 0600))
+	require.NoError(os.WriteFile(filepath.Join(root, "comments.csv"), []byte("id,body,media\none,lantern,https://example.com/picture.png\n"), 0600))
 	st := testutil.NewTestStore(t)
 	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
-	require.NoError(t, err)
+	require.NoError(err)
 	var id int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages WHERE source_message_id='comment:one'").Scan(&id))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages WHERE source_message_id='comment:one'").Scan(&id))
 	body, err := st.GetMessageBodyText(t.Context(), id)
-	require.NoError(t, err)
-	assert.Contains(t, body, "https://example.com/picture.png")
+	require.NoError(err)
+	assert.Contains(body, "https://example.com/picture.png")
 	results, err := query.NewEngine(st.DB(), st.IsPostgreSQL()).Search(t.Context(), search.Parse("example"), 20, 0)
-	require.NoError(t, err)
-	assert.Len(t, results, 1)
+	require.NoError(err)
+	assert.Len(results, 1)
 }
 
 func TestImportPreservesHandleDisplayCase(t *testing.T) {
+	require := require.New(t)
 	root := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(root, "chat_history.csv"), []byte("message_id,message,username\none,hello,u/Fictional_Peer\n"), 0600))
+	require.NoError(os.WriteFile(filepath.Join(root, "chat_history.csv"), []byte("message_id,message,username\none,hello,u/Fictional_Peer\n"), 0600))
 	st := testutil.NewTestStore(t)
 	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
-	require.NoError(t, err)
+	require.NoError(err)
 	var name string
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT p.display_name FROM participants p JOIN participant_identifiers pi ON pi.participant_id = p.id WHERE pi.identifier_value = 'fictional_peer'").Scan(&name))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT p.display_name FROM participants p JOIN participant_identifiers pi ON pi.participant_id = p.id WHERE pi.identifier_value = 'fictional_peer'").Scan(&name))
 	assert.Equal(t, "Fictional_Peer", name)
 }
 
