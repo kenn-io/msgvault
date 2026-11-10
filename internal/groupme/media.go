@@ -88,7 +88,11 @@ func mediaWrites(ctx context.Context, st *store.Store, root *os.Root, folder str
 		}
 		oversized := false
 		if opts.AttachmentsDir != "" {
-			file, err := root.Open(filepath.Join(folder, "gallery", name))
+			err := statRegular(root, filepath.Join(folder, "gallery", name))
+			var file *os.File
+			if err == nil {
+				file, err = root.Open(filepath.Join(folder, "gallery", name))
+			}
 			if err == nil {
 				info, statErr := file.Stat()
 				if statErr != nil {

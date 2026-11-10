@@ -43,6 +43,7 @@ func TestImportGroupmeEndToEnd(t *testing.T) {
 	rootCmd.SetArgs([]string{"--home", tmp, "import-groupme", "--me", "fictional-owner", fixture})
 	require.NoError(rootCmd.ExecuteContext(t.Context()))
 	assert.Contains(stdout.String(), "Import complete.")
+	assert.Contains(stdout.String(), "Messages from --me: 1")
 	assert.Contains(stdout.String(), "Year 2024 (UTC): 2")
 	st, err := store.Open(filepath.Join(tmp, "msgvault.db"))
 	require.NoError(err)

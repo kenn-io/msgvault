@@ -30,6 +30,7 @@ type ImportSummary struct {
 	Duration                                                                            time.Duration
 	ChatsProcessed                                                                      int
 	MessagesAdded, MessagesSkipped, UnsupportedEntriesSkipped, ServiceMessagesSkipped   int64
+	MessagesFromMe                                                                      int64
 	AttachmentsOversized, AttachmentsStored, AttachmentsMissing, AttachmentsUnsupported int
 	Oldest, Newest                                                                      time.Time
 	Years                                                                               map[int]int64
@@ -260,6 +261,9 @@ func importChat(ctx context.Context, st *store.Store, root *os.Root, absolute st
 		if m.ID == "" {
 			summary.UnsupportedEntriesSkipped++
 			return nil
+		}
+		if m.SenderID != "" && m.SenderID == opts.Me {
+			summary.MessagesFromMe++
 		}
 		if len(batch) == maxMessageBatch || batchBytes+len(raw) > maxMessageBatchBytes {
 			if err := flush(); err != nil {

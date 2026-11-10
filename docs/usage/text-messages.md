@@ -550,7 +550,11 @@ outside this adapter's scope.
 
 The summary reports selected conversations processed, oldest/newest known dates,
 UTC-year and observed message/system counts, added/existing/unsupported records,
-stored/missing/oversized media and unsupported attachment forms. Failed runs label their summary as partial.
+stored/missing/oversized media and unsupported attachment forms. It also reports
+how many supported messages have `--me` as their sender, including existing
+records on reruns. Skipped system and unsupported records do not count toward
+that figure. Zero does not prove the ID is wrong. Failed runs label their summary
+as partial.
 Coverage describes the supplied files, not lifetime account history.
 [GroupMe retention](https://support.microsoft.com/en-us/groupme/how-long-are-files-and-data-available-in-groupme)
 lists five-year availability for photos, videos and files. Its message wording

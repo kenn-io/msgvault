@@ -39,7 +39,23 @@ func (r *recordReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// statRegular rejects non-regular files before an open that could block,
+// such as a FIFO. Callers still check the opened descriptor.
+func statRegular(root *os.Root, name string) error {
+	info, err := root.Stat(name)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("groupme: %s must be a regular file", filepath.Base(name))
+	}
+	return nil
+}
+
 func messages(ctx context.Context, root *os.Root, folder string, visit func(*Message, jsontext.Value) error) (retErr error) {
+	if err := statRegular(root, filepath.Join(folder, "message.json")); err != nil {
+		return err
+	}
 	f, err := root.Open(filepath.Join(folder, "message.json"))
 	if err != nil {
 		return err
@@ -135,7 +151,11 @@ func discover(ctx context.Context, root *os.Root, absolute string, visit func(ch
 	sort.Strings(folders)
 	for _, folder := range folders {
 		c := chat{folder: folder, kind: "chat"}
-		metadata, err := root.Open(filepath.Join(folder, "conversation.json"))
+		err := statRegular(root, filepath.Join(folder, "conversation.json"))
+		var metadata *os.File
+		if err == nil {
+			metadata, err = root.Open(filepath.Join(folder, "conversation.json"))
+		}
 		if err == nil {
 			info, statErr := metadata.Stat()
 			if statErr != nil || !info.Mode().IsRegular() {

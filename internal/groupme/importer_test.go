@@ -49,6 +49,7 @@ func TestImportCoverageRawUnknownsAndReruns(t *testing.T) {
 	summary, err := Import(t.Context(), st, opts)
 	require.NoError(err)
 	assert.EqualValues(4, summary.MessagesAdded)
+	assert.EqualValues(1, summary.MessagesFromMe)
 	assert.EqualValues(3, summary.ServiceMessagesSkipped)
 	assert.EqualValues(1, summary.UnsupportedEntriesSkipped)
 	assert.Equal(3, summary.ChatsProcessed)
@@ -84,6 +85,7 @@ func TestImportCoverageRawUnknownsAndReruns(t *testing.T) {
 	require.NoError(err)
 	assert.Zero(summary.MessagesAdded)
 	assert.EqualValues(4, summary.MessagesSkipped)
+	assert.EqualValues(1, summary.MessagesFromMe)
 	// A later export cannot replace first-imported text.
 	path := filepath.Join(root, "renamed opaque folder", "message.json")
 	content, err := os.ReadFile(path)
@@ -100,6 +102,7 @@ func TestImportCoverageRawUnknownsAndReruns(t *testing.T) {
 	require.NoError(err)
 	assert.NotEqual(summary.SourceID, second.SourceID)
 	assert.EqualValues(4, second.MessagesAdded)
+	assert.Zero(second.MessagesFromMe)
 }
 
 func TestImportMedia(t *testing.T) {

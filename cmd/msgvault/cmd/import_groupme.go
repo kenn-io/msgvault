@@ -85,7 +85,7 @@ func runImportGroupme(cmd *cobra.Command, exportDir string, opts groupmeCLIOptio
 	} else {
 		_, _ = fmt.Fprintln(out, "Import complete.")
 	}
-	_, _ = fmt.Fprintf(out, "  Duration: %s\n  Conversations: %d\n  Messages: %d added, %d existing, %d unsupported, %d system skipped\n  Media: %d stored, %d missing, %d oversized\n  Unsupported attachment forms: %d\n", summary.Duration.Round(time.Millisecond), summary.ChatsProcessed, summary.MessagesAdded, summary.MessagesSkipped, summary.UnsupportedEntriesSkipped, summary.ServiceMessagesSkipped, summary.AttachmentsStored, summary.AttachmentsMissing, summary.AttachmentsOversized, summary.AttachmentsUnsupported)
+	_, _ = fmt.Fprintf(out, "  Duration: %s\n  Conversations: %d\n  Messages: %d added, %d existing, %d unsupported, %d system skipped\n  Messages from --me: %d\n  Media: %d stored, %d missing, %d oversized\n  Unsupported attachment forms: %d\n", summary.Duration.Round(time.Millisecond), summary.ChatsProcessed, summary.MessagesAdded, summary.MessagesSkipped, summary.UnsupportedEntriesSkipped, summary.ServiceMessagesSkipped, summary.MessagesFromMe, summary.AttachmentsStored, summary.AttachmentsMissing, summary.AttachmentsOversized, summary.AttachmentsUnsupported)
 	if !summary.Oldest.IsZero() {
 		_, _ = fmt.Fprintf(out, "  Known dates (UTC): %s to %s\n", summary.Oldest.Format(time.RFC3339), summary.Newest.Format(time.RFC3339))
 	} else {
