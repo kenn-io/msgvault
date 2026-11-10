@@ -218,18 +218,20 @@ func TestImportGoogleChatMediaSafety(t *testing.T) {
 }
 
 func TestImportGoogleChatStorageFailure(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	root := t.TempDir()
 	write(t, root, "Groups/DM a/messages.json", fixtureMessages(t))
 	write(t, root, "Groups/DM a/File-example.txt", "bytes")
 	blocked := filepath.Join(t.TempDir(), "file")
-	require.NoError(t, os.WriteFile(blocked, []byte("blocked"), 0600))
+	require.NoError(os.WriteFile(blocked, []byte("blocked"), 0600))
 	st := testutil.NewTestStore(t)
 	summary, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{root}, AttachmentsDir: blocked})
-	require.ErrorContains(t, err, "store media")
-	assert.Zero(t, summary.MessagesAdded)
+	require.ErrorContains(err, "store media")
+	assert.Zero(summary.MessagesAdded)
 	var count int
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages`).Scan(&count))
-	assert.Zero(t, count)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages`).Scan(&count))
+	assert.Zero(count)
 }
 
 func TestImportGoogleChatMembershipIsAdditiveOnDuplicateReplay(t *testing.T) {
@@ -417,6 +419,8 @@ func TestImportGoogleChatConversationKindRequiresRosterEvidence(t *testing.T) {
 }
 
 func TestImportGoogleChatFailedMessageDoesNotCountStoredAttachments(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	a, b := t.TempDir(), t.TempDir()
 	message := strings.Replace(fixtureMessages(t), `"export_name":"File-example.txt"`, `"export_name":"File-example.txt"},{"original_name":"second.txt","export_name":"File-second.txt"`, 1)
@@ -426,11 +430,11 @@ func TestImportGoogleChatFailedMessageDoesNotCountStoredAttachments(t *testing.T
 	write(t, b, "Groups/DM a/File-second.txt", "other")
 
 	summary, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{a, b}, AttachmentsDir: t.TempDir()})
-	require.ErrorContains(t, err, "ambiguous")
-	assert.Zero(t, summary.AttachmentsStored)
+	require.ErrorContains(err, "ambiguous")
+	assert.Zero(summary.AttachmentsStored)
 	var count int
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM attachments`).Scan(&count))
-	assert.Zero(t, count)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM attachments`).Scan(&count))
+	assert.Zero(count)
 }
 
 func TestImportGoogleChatContainerEvidenceSurvivesSparseReplay(t *testing.T) {
@@ -709,28 +713,30 @@ func cancelAfterCommittedMessage(t *testing.T, st *store.Store, opts ImportOptio
 }
 
 func TestImportGoogleChatRosterDoesNotProveDelivery(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
 	write(t, root, "Groups/DM a/messages.json", fixtureMessages(t))
 	write(t, root, "Groups/DM a/group_info.json", `{"members":[{"email":"owner@example.com"},{"email":"peer@example.com"}]}`)
 	opts := ImportOptions{Me: "owner@example.com", Roots: []string{root}, AttachmentsDir: t.TempDir()}
 	_, err := Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	require.NoError(t, os.Remove(filepath.Join(root, "Groups", "DM a", "group_info.json")))
+	require.NoError(err)
+	require.NoError(os.Remove(filepath.Join(root, "Groups", "DM a", "group_info.json")))
 	write(t, root, "Groups/DM a/File-example.txt", "synthetic")
 	_, err = Import(t.Context(), st, opts)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	var messageID, participantID, attachmentID int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&messageID))
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM participants WHERE email_address='peer@example.com'`).Scan(&participantID))
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM attachments`).Scan(&attachmentID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&messageID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM participants WHERE email_address='peer@example.com'`).Scan(&participantID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM attachments`).Scan(&attachmentID))
 	scope := personscope.Scope{ParticipantIDs: []int64{participantID}, Directions: []personscope.Direction{personscope.ToPerson}, IncludeUnclassifiedRosterRows: true}
 	provenance, err := st.PersonProvenanceForMessages(t.Context(), []int64{messageID}, scope)
-	require.NoError(t, err)
-	require.NotNil(t, provenance[messageID])
-	assert.Equal(t, []personscope.Role{personscope.RoleConversationMember}, provenance[messageID].Roles)
+	require.NoError(err)
+	require.NotNil(provenance[messageID])
+	assert.Equal([]personscope.Role{personscope.RoleConversationMember}, provenance[messageID].Roles)
 	rows, err := st.FilenameSuggestionRowsContext(t.Context(), []int64{attachmentID}, store.FilenameSuggestionScope{Person: &scope})
-	require.NoError(t, err)
-	assert.Empty(t, rows)
+	require.NoError(err)
+	assert.Empty(rows)
 }
