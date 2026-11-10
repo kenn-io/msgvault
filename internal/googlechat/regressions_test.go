@@ -1,6 +1,7 @@
 package googlechat
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json/v2"
 	"fmt"
@@ -13,34 +14,6 @@ import (
 )
 
 const fixtureDate = "Monday, January 18, 2021 at 1:27:33 PM UTC"
-
-func TestImportGoogleChatSenderSearchSurvivesRebuild(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	require.True(st.FTS5Available(), "probe requires real FTS")
-	root := t.TempDir()
-	testutil.WriteFile(t, root, "Groups/DM synthetic/messages.json", []byte(`{"messages":[{"message_id":"synthetic/topic/message","creator":{"email":"senderneedle@example.com","name":"Synthetic Sender"},"text":"bodyneedle ordinary body","created_date":"Monday, January 18, 2021 at 1:27:33 PM UTC"}]}`))
-	write(t, root, "Groups/DM synthetic/group_info.json", `{"members":[{"email":"senderneedle@example.com"},{"email":"recipientneedle@example.com"}]}`)
-	summary, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{root}})
-	require.NoError(err)
-	require.EqualValues(1, summary.MessagesAdded)
-	for _, rebuild := range []bool{false, true} {
-		if rebuild {
-			n, err := st.RebuildFTSContext(t.Context(), nil)
-			require.NoError(err)
-			require.EqualValues(1, n)
-		}
-		for _, search := range []struct {
-			term string
-			want int
-		}{{"bodyneedle", 1}, {"senderneedle", 1}, {"recipientneedle", 0}} {
-			_, count, err := st.SearchMessagesContext(t.Context(), search.term, 0, 10)
-			require.NoError(err)
-			assert.EqualValues(search.want, count, "term=%s rebuild=%t", search.term, rebuild)
-		}
-	}
-}
 
 func TestImportGoogleChatMetadataDoesNotEmbedWholeRoster(t *testing.T) {
 	assert := assert.New(t)
@@ -146,6 +119,13 @@ func TestImportGoogleChatRunAccounting(t *testing.T) {
 			assert.Equal(statusWant, status)
 			assert.EqualValues(1, processed)
 			assert.Equal(summary.MessagesAdded, added)
+			if mode == "cancelled" {
+				require.ErrorIs(err, context.Canceled)
+				replay, replayErr := Import(t.Context(), st, opts)
+				require.NoError(replayErr)
+				assert.EqualValues(2, replay.MessagesAdded+int64(replay.Duplicates))
+				assert.Positive(replay.Duplicates)
+			}
 			if mode == "completed" {
 				_, err = Import(t.Context(), st, opts)
 				require.NoError(err)

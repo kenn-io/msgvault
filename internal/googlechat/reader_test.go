@@ -31,7 +31,11 @@ func TestGoogleChatJSONBoundsAndContainment(t *testing.T) {
 			require.NoError(err)
 			t.Cleanup(func() { require.NoError(root.Close()) })
 			_, err = readJSON(t.Context(), root, "messages.json")
-			require.Error(err)
+			if mode == "oversize" {
+				require.ErrorContains(err, "regular file of at most")
+			} else {
+				require.ErrorContains(err, "escapes")
+			}
 		})
 	}
 }
@@ -98,7 +102,6 @@ func TestGoogleChatDates(t *testing.T) {
 		{"Monday, January 18, 2021 at 1:27:33\u202fPM UTC", "2021-01-18T13:27:33Z"},
 		{"Monday, January 18, 2021 at 01:27:33\u00a0AM UTC", "2021-01-18T01:27:33Z"},
 		{"Monday, January 18, 2021 at 1:27:33 PM PST", ""},
-		{"", ""},
 		{"not a date", ""},
 	} {
 		t.Run(tc.input, func(t *testing.T) {

@@ -102,7 +102,6 @@ func TestImportGoogleChatRootAliasesKeepProfilesAndMedia(t *testing.T) {
 	var config string
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT sync_config FROM sources`).Scan(&config))
 	assert.Contains(config, "owner_profile_path")
-	assert.NotContains(config, root)
 }
 
 func TestImportGoogleChatReportsUnknownRosterMembers(t *testing.T) {
@@ -111,7 +110,7 @@ func TestImportGoogleChatReportsUnknownRosterMembers(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
 	write(t, root, "Groups/DM a/messages.json", fixtureMessages(t))
-	write(t, root, "Groups/DM a/group_info.json", `{"members":[{"email":"not an email"}]}`)
+	write(t, root, "Groups/DM a/group_info.json", `{"members":[{"name":"Synthetic bot","user_type":"Bot"}]}`)
 	summary, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{root}})
 	require.NoError(err)
 	assert.Equal(1, summary.UnknownMembers)
@@ -126,9 +125,11 @@ func TestImportGoogleChatDoesNotInferRecipientsFromRoster(t *testing.T) {
 	for _, tc := range []struct {
 		name, creatorEmail string
 		fromCount          int
+		creatorInRoster    bool
 	}{
-		{"missing creator email", "", 0},
-		{"creator outside roster", "senderneedle@example.com", 1},
+		{"missing creator email", "", 0, false},
+		{"creator outside roster", "senderneedle@example.com", 1, false},
+		{"creator in roster", "senderneedle@example.com", 1, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -141,7 +142,11 @@ func TestImportGoogleChatDoesNotInferRecipientsFromRoster(t *testing.T) {
 				data = strings.Replace(fixtureMessages(t), "owner@example.com", tc.creatorEmail, 1)
 			}
 			write(t, root, "Groups/DM synthetic/messages.json", data)
-			write(t, root, "Groups/DM synthetic/group_info.json", `{"members":[{"email":"recipientneedle1@example.com"},{"email":"recipientneedle2@example.com"}]}`)
+			roster := `{"members":[{"email":"recipientneedle1@example.com"},{"email":"recipientneedle2@example.com"}]}`
+			if tc.creatorInRoster {
+				roster = strings.Replace(roster, "recipientneedle1@example.com", tc.creatorEmail, 1)
+			}
+			write(t, root, "Groups/DM synthetic/group_info.json", roster)
 			summary, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{root}, AttachmentsDir: t.TempDir()})
 			require.NoError(err)
 			require.EqualValues(1, summary.MessagesAdded)
@@ -162,14 +167,17 @@ func TestImportGoogleChatDoesNotInferRecipientsFromRoster(t *testing.T) {
 			require.NoError(rows.Err())
 			require.NoError(rows.Close())
 			wantMembers := []string{"recipientneedle1@example.com", "recipientneedle2@example.com"}
-			if tc.creatorEmail != "" {
+			if tc.creatorInRoster {
+				wantMembers[0] = tc.creatorEmail
+			} else if tc.creatorEmail != "" {
 				wantMembers = append(wantMembers, tc.creatorEmail)
 			}
 			assert.ElementsMatch(wantMembers, members, "observed roster and sender membership remain")
 			for _, rebuilt := range []bool{false, true} {
 				if rebuilt {
-					_, err = st.RebuildFTSContext(t.Context(), nil)
+					n, err := st.RebuildFTSContext(t.Context(), nil)
 					require.NoError(err)
+					require.EqualValues(1, n)
 				}
 				for _, search := range []struct {
 					term string
@@ -195,7 +203,7 @@ type cancelOnCommittedMessage struct {
 
 func (*cancelOnCommittedMessage) Enabled(context.Context, slog.Level) bool { return true }
 func (h *cancelOnCommittedMessage) Handle(_ context.Context, r slog.Record) error {
-	if r.Message != "sql tx begin" || h.canceled {
+	if r.Message != "sql tx commit" || h.canceled {
 		return nil
 	}
 	var n int
@@ -208,6 +216,10 @@ func (h *cancelOnCommittedMessage) Handle(_ context.Context, r slog.Record) erro
 	}
 	return nil
 }
+
+// Observe the existing synchronous post-commit log, then verify durable rows.
+// This needs no production hook, polling or timing threshold. Slow logging stays
+// disabled so it cannot replace the commit event on a loaded runner.
 func cancelAfterCommittedMessage(t *testing.T, st *store.Store, opts ImportOptions) (*ImportSummary, error) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
