@@ -395,7 +395,7 @@ Choose **Past runs…** in the status menu to browse history. Filter by Kind, in
 
 Select a run for its timestamps, counters, error, related status, and advertised actions. **All runs** returns to the list. Related status opens Sources, Contacts settings, or live visual index counts. **Start CardDAV sync**, **Build visual index**, and **Resume visual index** appear only when the daemon advertises them. Sources keeps **Sync now** and opens filtered history through **Sync history**. Contacts settings opens filtered history through **View CardDAV operations**.
 
-Settings › People › Fields lists system and custom field definitions, plus Work, with descriptions, kind, value type, sensitivity, and active state. **Search fields** filters names and descriptions. Custom fields offer **Edit**.
+Settings › People › Fields lists system and custom field definitions, plus Work, with descriptions, kind, value type, cardinality, sensitivity, and active state. **Search fields** filters the displayed names, descriptions, and metadata. Custom fields offer **Edit**.
 
 Settings Overview shows current feature status. **Details** opens live counts for configured Visual search, including features with no past run.
 

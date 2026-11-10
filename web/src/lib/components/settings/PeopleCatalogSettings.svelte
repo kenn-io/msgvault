@@ -20,10 +20,12 @@
   let targetsLoading = $state(false);
   let loading = $state(true);
   const catalogAbort = new AbortController();
-  const matching = (name: string, description = '') => `${name} ${description}`.toLowerCase().includes(query.trim().toLowerCase());
-  const visibleFields = $derived([...fields.definitions].sort((a, b) => a.display_order - b.display_order || a.label.localeCompare(b.label)).filter(field => matching(field.label, field.description ?? '')));
+  const fieldMetadata = (field: AttributeDefinition) => ['Profile field', valueTypeOptions.find(option => option.value === field.value_type)?.label ?? 'Other', field.cardinality === 'multi' ? 'several values' : 'one value', field.is_sensitive ? 'Sensitive' : '', field.is_active ? '' : 'Inactive'].filter(Boolean).join(' · ');
+  const workMetadata = (target: TargetDescriptor) => ['Jobs', target.cardinality === 'multi' ? 'several values' : '', target.sensitive ? 'Sensitive' : ''].filter(Boolean).join(' · ');
+  const matching = (...parts: string[]) => parts.join(' ').toLowerCase().includes(query.trim().toLowerCase());
+  const visibleFields = $derived([...fields.definitions].sort((a, b) => a.display_order - b.display_order || a.label.localeCompare(b.label)).filter(field => matching(field.label, field.description ?? '', fieldMetadata(field))));
   const work = $derived(targets.find(target => target.kind === 'employment'));
-  const visibleWork = $derived(work && matching('Work', work.description) ? work : undefined);
+  const visibleWork = $derived(work && matching('Work', work.description, workMetadata(work)) ? work : undefined);
   async function loadTargets(): Promise<void> {
     if (targetsLoading) return;
     targetsLoading = true;
@@ -84,9 +86,9 @@
   {#if catalogError}<InlineNotice message="Couldn't load Work details." actionLabel="Retry" onaction={() => void loadTargets()} />{/if}
   {#if visibleFields.length || visibleWork}
     <ul class="list">
-      {#if visibleWork}<li><span class="name">Work<small>{visibleWork.description}</small></span><small>Jobs{visibleWork.cardinality === 'multi' ? ' · several values' : ''}{visibleWork.sensitive ? ' · Sensitive' : ''}</small></li>{/if}
+      {#if visibleWork}<li><span class="name">Work<small>{visibleWork.description}</small></span><small>{workMetadata(visibleWork)}</small></li>{/if}
       {#each visibleFields as field (field.id)}
-        <li><span class="name">{field.label}<small>{field.description ?? ''}</small></span><small>{['Profile field', valueTypeOptions.find(option => option.value === field.value_type)?.label ?? 'Other', field.cardinality === 'multi' ? 'several values' : 'one value', field.is_sensitive ? 'Sensitive' : '', field.is_active ? '' : 'Inactive'].filter(Boolean).join(' · ')}</small>{#if field.ownership !== 'system'}<Button label="Edit" ariaLabel={`Edit ${field.label}`} size="sm" surface="soft" disabled={pending} onclick={() => void edit(field)} />{/if}</li>
+        <li><span class="name">{field.label}<small>{field.description ?? ''}</small></span><small>{fieldMetadata(field)}</small>{#if field.ownership !== 'system'}<Button label="Edit" ariaLabel={`Edit ${field.label}`} size="sm" surface="soft" disabled={pending} onclick={() => void edit(field)} />{/if}</li>
       {/each}
     </ul>
   {:else if loading || targetsLoading}<p class="muted" role="status">Loading fields…</p>
