@@ -882,7 +882,7 @@ func calendarParts(root *enmime.Part) []CalendarPart {
 		if strings.EqualFold(part.ContentType, "message/rfc822") {
 			return
 		}
-		if strings.EqualFold(part.ContentType, "text/calendar") || strings.EqualFold(part.ContentType, "application/ics") {
+		if strings.EqualFold(part.ContentType, "text/calendar") || strings.EqualFold(part.ContentType, "application/ics") || (strings.EqualFold(part.ContentType, "application/octet-stream") && strings.HasSuffix(strings.ToLower(part.FileName), ".ics")) {
 			_, params, _, _ := parseMediaTypeLenient(part.Header.Get("Content-Type"))
 			out = append(out, CalendarPart{Content: part.Content, Method: strings.ToUpper(params["method"])})
 		}
