@@ -3367,6 +3367,10 @@ Chat send adapters set `DeliveryPolicyQuery.RouteKind` to `chat`, supply
 `SourceID` and `SourceConversationID`, and resolve recipients with
 `Store.ChatRouteRecipientsContext`. The resolver returns every current
 non-owner member, including unbound members with an empty `PersonUID`.
+It requires complete provider roster evidence matching the current conversation
+and membership. Missing, invalid, incomplete, or refreshing proof blocks
+admission as `unresolved_recipient`. Validated provider self IDs and archived
+account owners are excluded from recipients.
 Admission rereads that roster in its policy snapshot and blocks if any member
 is unbound or lacks a person-wide `send_allowed` approval. Chat routes require
 a source and conversation ID and do not accept email endpoints.

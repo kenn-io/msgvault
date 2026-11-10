@@ -1,6 +1,12 @@
 package store
 
-import "context"
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"slices"
+)
 
 // ChatRouteRecipientsContext resolves the current canonical roster to one query
 // per non-owner member. An unbound member has an empty PersonUID and must not be
@@ -19,7 +25,40 @@ func (s *Store) chatRouteRecipientsTx(ctx context.Context, tx *loggedTx, sourceI
 	if sourceID <= 0 || !deliveryStringValid(sourceConversationID) {
 		return nil, ErrDeliveryPolicyInvalid
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT COALESCE(p.vcard_uid, '')
+
+	r := MessagingRoute{SourceID: sourceID, ProviderChatID: sourceConversationID}
+	metadataBytes := `LENGTH(CAST(c.metadata AS BLOB))`
+	if s.IsPostgreSQL() {
+		metadataBytes = `OCTET_LENGTH(CAST(c.metadata AS TEXT))`
+	}
+	var raw string
+	var oversized bool
+	err := tx.QueryRowContext(ctx, `SELECT c.id,src.identifier,c.conversation_type,
+ CASE WHEN `+metadataBytes+`<=65536 THEN COALESCE(CAST(c.metadata AS TEXT),'') ELSE '' END,
+ COALESCE(`+metadataBytes+`,0)>65536
+ FROM conversations c JOIN sources src ON src.id=c.source_id
+ WHERE c.source_id=? AND c.source_conversation_id=? AND c.conversation_type IN `+chatConversationTypesSQL, sourceID, sourceConversationID).Scan(&r.ConversationID, &r.AccountID, &r.ConversationType, &raw, &oversized)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrDeliveryPolicyInvalid
+	}
+	if err != nil {
+		return nil, err
+	}
+	roster, _, err := messagingRoster(ctx, tx, r.ConversationID, 0)
+	if err != nil {
+		return nil, err
+	}
+	metadata := readRouteMetadata(&r, raw, oversized)
+	e := metadata.Route
+	if e == nil {
+		return nil, fmt.Errorf("chat route proof missing: %w", ErrDeliveryPolicyInvalid)
+	}
+	checkRouteBindings(&r, e)
+	checkRouteRosterProof(&r, e, roster)
+	if len(r.Reasons) > 0 || e.Merged || e.MergedIntoChatID != "" || e.Failure != "" {
+		return nil, fmt.Errorf("chat route proof invalid: %w", ErrDeliveryPolicyInvalid)
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT cp.participant_id, COALESCE(p.vcard_uid, '')
  FROM conversations c JOIN conversation_participants cp ON cp.conversation_id=c.id
  LEFT JOIN person_participants pp ON pp.participant_id=cp.participant_id
  LEFT JOIN persons p ON p.id=pp.person_id
@@ -33,10 +72,13 @@ func (s *Store) chatRouteRecipientsTx(ctx context.Context, tx *loggedTx, sourceI
 	recipients := []DeliveryPolicyQuery{}
 	for rows.Next() {
 		q := DeliveryPolicyQuery{RouteKind: "chat", SourceID: sourceID, SourceConversationID: sourceConversationID}
-		if err := rows.Scan(&q.PersonUID); err != nil {
+		var participantID int64
+		if err := rows.Scan(&participantID, &q.PersonUID); err != nil {
 			return nil, err
 		}
-		recipients = append(recipients, q)
+		if !slices.Contains(e.SelfParticipantIDs, participantID) {
+			recipients = append(recipients, q)
+		}
 	}
 	return recipients, rows.Err()
 }

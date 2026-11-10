@@ -551,7 +551,8 @@ func (s *Store) writeDeliveryPolicy(ctx context.Context, w DeliveryPolicyWrite, 
 				if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM person_participants pp
      JOIN conversation_participants cp ON cp.participant_id=pp.participant_id
      JOIN conversations c ON c.id=cp.conversation_id
-     WHERE pp.person_id=? AND c.conversation_type IN `+chatConversationTypesSQL+` AND cp.left_at IS NULL)`, before.PersonID).Scan(&chatMember); err != nil {
+     WHERE pp.person_id=? AND c.conversation_type IN `+chatConversationTypesSQL+` AND cp.left_at IS NULL
+ AND NOT (`+s.chatOwnerSQL("cp.participant_id", "c.source_id")+`))`, before.PersonID).Scan(&chatMember); err != nil {
 					return err
 				}
 				if chatMember {

@@ -450,19 +450,7 @@ func evaluateMessagingRoute(
 		r.Reasons = append(r.Reasons, "evidence_truncated")
 		r.BoundParticipantIDs = bound[:min(len(bound), maxRouteEvidenceIDs)]
 	}
-	var metadata routeMetadata
-	if item.oversized {
-		r.Reasons = append(r.Reasons, "route_metadata_oversized")
-	}
-	if item.metadata != "" {
-		if err := json.Unmarshal([]byte(item.metadata), &metadata); err != nil {
-			r.Reasons = append(r.Reasons, "route_metadata_invalid")
-		}
-	}
-	if metadata.MemberCountUnknown {
-		r.MembershipComplete = false
-		r.Reasons = append(r.Reasons, "membership_incomplete")
-	}
+	metadata := readRouteMetadata(r, item.metadata, item.oversized)
 	if metadata.Route == nil {
 		r.Reasons = append(r.Reasons, "route_metadata_missing")
 	} else if err := applyRouteEvidence(ctx, tx, personID, now, r, metadata, roster); err != nil {
@@ -471,6 +459,23 @@ func evaluateMessagingRoute(
 	appendRouteSourceReasons(r, item, now)
 	finalizeRouteStatus(r)
 	return nil
+}
+
+func readRouteMetadata(r *MessagingRoute, raw string, oversized bool) routeMetadata {
+	var metadata routeMetadata
+	if oversized {
+		r.Reasons = append(r.Reasons, "route_metadata_oversized")
+	}
+	if raw != "" {
+		if err := json.Unmarshal([]byte(raw), &metadata); err != nil {
+			r.Reasons = append(r.Reasons, "route_metadata_invalid")
+		}
+	}
+	if metadata.MemberCountUnknown {
+		r.MembershipComplete = false
+		r.Reasons = append(r.Reasons, "membership_incomplete")
+	}
+	return metadata
 }
 
 func applyRouteEvidence(
@@ -523,8 +528,8 @@ func checkRouteBindings(r *MessagingRoute, e *MessagingRouteEvidence) {
 	}
 }
 
-// checkRouteRoster compares the archived roster with the captured snapshot.
-func checkRouteRoster(r *MessagingRoute, e *MessagingRouteEvidence, roster []int64) {
+// checkRouteRosterProof compares the archived roster with the captured snapshot.
+func checkRouteRosterProof(r *MessagingRoute, e *MessagingRouteEvidence, roster []int64) {
 	if !e.MembershipComplete {
 		r.Reasons = append(r.Reasons, "membership_incomplete")
 	}
@@ -538,6 +543,10 @@ func checkRouteRoster(r *MessagingRoute, e *MessagingRouteEvidence, roster []int
 		r.EvidenceTruncated = true
 		r.Reasons = append(r.Reasons, "evidence_truncated")
 	}
+}
+
+func checkRouteRoster(r *MessagingRoute, e *MessagingRouteEvidence, roster []int64) {
+	checkRouteRosterProof(r, e, roster)
 	nonSelf := []int64{}
 	for _, id := range r.BoundParticipantIDs {
 		if !slices.Contains(e.SelfParticipantIDs, id) {

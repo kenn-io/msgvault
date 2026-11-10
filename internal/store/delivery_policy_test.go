@@ -198,6 +198,43 @@ func TestDeliveryPolicyUnchangedWritesKeepRevisionAndAudit(t *testing.T) {
 	assert.Equal(2, audits)
 }
 
+func TestDeliveryPolicyUnchangedChatApprovals(t *testing.T) {
+	for _, ownerOnly := range []bool{false, true} {
+		name := "peer during roster refresh"
+		if ownerOnly {
+			name = "SQL owner only"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := deliveryChatFixture(t)
+			original := f.EnsureParticipant("original@example.test", "Original", "example.test")
+			peer := f.EnsureParticipant("peer@example.test", "Peer", "example.test")
+			p, _, err := f.Store.CreatePersonFromParticipant(original)
+			require.NoError(t, err)
+			setDelivery(t, f.Store, p.VCardUID, "", store.DeliverySendAllowed)
+			require.NoError(t, f.Store.EnsureConversationParticipantContext(t.Context(), f.ConvID, peer, "member"))
+			if ownerOnly {
+				require.NoError(t, f.Store.AddAccountIdentity(f.Source.ID, "peer@example.test", "manual"))
+			}
+			_, err = f.Store.LinkParticipants(original, peer)
+			require.NoError(t, err)
+			e := writeDeliveryChatEvidence(t, f)
+			require.NoError(t, f.Store.InvalidateConversationMessagingRouteEvidence(t.Context(), f.ConvID))
+			before := readDelivery(t, f.Store, p.VCardUID, "")
+			refresh := setDelivery(t, f.Store, p.VCardUID, "", store.DeliverySendAllowed)
+			if ownerOnly {
+				assert.Nil(t, refresh.Audit)
+				assert.Equal(t, before.Revision, refresh.After.Revision)
+				return
+			}
+			require.NotNil(t, refresh.Audit)
+			require.NoError(t, f.Store.SetConversationMessagingRouteEvidence(t.Context(), f.ConvID, e))
+			calls := 0
+			require.NoError(t, f.Store.WithDeliveryAdmissionContext(t.Context(), []store.DeliveryPolicyQuery{{RouteKind: "chat", SourceID: f.Source.ID, SourceConversationID: "chat-thread"}}, func(context.Context) error { calls++; return nil }))
+			assert.Equal(t, 1, calls)
+		})
+	}
+}
+
 func TestDeliveryPolicyRemovingAndReaddingTheAddress(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	f := storetest.New(t)
