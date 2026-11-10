@@ -118,10 +118,11 @@ repeated; there is no seek checkpoint or deletion inference.
 Only whole-line `<attached: NAME>` and `NAME (file attached)` markers resolve
 files; captions and markers remain in the body. Files must be regular, remain
 inside that root and fit within 100 MiB. Missing media can be supplied on a later
-run of that same TXT without duplicating messages or removing existing
-attachments. A new export with different markers, captions or timestamp
-precision is distinct evidence; there is no safe correspondence to the older
-record. In particular, Android minute-precision and iOS second-precision
+run of that same TXT without duplicating messages. A completed marker keeps
+its first archived media; later runs fill missing markers. A new export with
+different markers, captions or timestamp precision is distinct evidence; there
+is no safe correspondence to the older record. In particular, Android
+minute-precision and iOS second-precision
 exports do not share message keys. `<Media omitted>` and U+200E-marked English
 iPhone `… omitted` placeholders count omitted media. No files are searched for
 outside the root.
@@ -130,7 +131,7 @@ The summary counts input records, notices, newly added and already archived
 messages, and additional identical occurrences whose correspondence is
 ambiguous. Media counts distinguish stored references, missing files, omitted
 media, unsafe/unsupported references and oversized files. Stored references
-include attachments successfully verified on repeat imports. If an import
+include attachments already stored on repeat imports. If an import
 fails after committing messages, it still prints partial coverage for those
 records and returns an error; media counts cover references processed before
 the failure.

@@ -172,11 +172,13 @@ func TestTextImportMediaCompletion(t *testing.T) {
 	assert.Equal(1, s.MediaStored)
 	assert.Equal(1, s.Unchanged)
 	assert.Equal(1, textCount(t, st, "attachments"))
+	var originalHash, originalPath string
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT content_hash,storage_path FROM attachments").Scan(&originalHash, &originalPath))
 	before, err := st.DerivedDataRevisionContext(t.Context())
 	require.NoError(err)
 	s, err = importTextForTest(t.Context(), imp, p, opts)
 	require.NoError(err)
-	assert.Equal(1, s.MediaStored, "repeat verification still counts the reference")
+	assert.Equal(1, s.MediaStored, "repeat imports still count the stored reference")
 	after, err := st.DerivedDataRevisionContext(t.Context())
 	require.NoError(err)
 	assert.Equal(before, after, "an unchanged attachment must not invalidate the archive cache")
@@ -186,8 +188,19 @@ func TestTextImportMediaCompletion(t *testing.T) {
 	assert.Equal(1, s.MediaStored)
 	changed, err := st.DerivedDataRevisionContext(t.Context())
 	require.NoError(err)
-	assert.Greater(changed, after, "changed bytes still invalidate atomically")
+	assert.Equal(after, changed)
 	assert.Equal(1, textCount(t, st, "attachments"))
+	var hash, storagePath string
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT content_hash,storage_path FROM attachments").Scan(&hash, &storagePath))
+	assert.Equal(originalHash, hash)
+	assert.Equal(originalPath, storagePath)
+	stored, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, storagePath))
+	require.NoError(err)
+	assert.Equal("fictional pressed flower", string(stored))
+	opts.MediaDir = ""
+	s, err = importTextForTest(t.Context(), imp, p, opts)
+	require.NoError(err)
+	assert.Equal(1, s.MediaStored)
 }
 
 func TestTextImportMediaContainment(t *testing.T) {
