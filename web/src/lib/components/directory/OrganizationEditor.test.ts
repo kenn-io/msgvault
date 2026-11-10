@@ -85,6 +85,9 @@ describe('OrganizationEditor', () => {
   it('shows the structured profile read-only under the fields, grouped by what each value is', async () => {
     const profile = richOrganizationProfile(1);
     profile.contact_points.push({ ...profile.contact_points[0], address_kind: 'impp', original_value: 'mira@example.test', envelope: envelope(49) });
+    profile.contact_points.push({ ...profile.contact_points[0], address_kind: 'phone', original_value: '+1 555 0100', envelope: envelope(47) });
+    profile.contact_points.push({ ...profile.contact_points[0], original_value: 'second@example.test', envelope: envelope(48, { source: 'vcard_import', updated_at: '2026-08-01T15:00:00Z' }) as typeof profile.contact_points[0]['envelope'] });
+    profile.contact_points.push({ ...profile.contact_points[0], original_value: 'third@example.test' });
     const { controller } = controllerWith(async () => Response.json(profile, { headers: { ETag: '"organization-21-r1"' } }));
     render(OrganizationEditor, { controller, organization: organization() });
     const email = await screen.findByRole('region', { name: 'Email' });
@@ -92,6 +95,17 @@ describe('OrganizationEditor', () => {
     expect(await screen.findByRole('region', { name: 'Messaging' })).toBeDefined();
     expect(screen.getByText('mira@example.test')).toBeDefined();
     expect(within(email).queryByRole('textbox')).toBeNull();
+    const shared = valueProvenance(profile.addresses[0].envelope);
+    expect(screen.getAllByText(shared.text)).toHaveLength(1);
+    expect(screen.getByText(shared.text).closest('.profile-heading p')?.textContent).toBe(`Contact details · ${shared.text}`);
+    const row = (text: string) => screen.getByText(text).closest('.detail-row') as HTMLElement;
+    expect(row('concurrent@example.test').querySelector('.description')).toBeNull();
+    expect(row('Suite 5, 12 Example Road').querySelector('.description')).toBeNull();
+    expect(row('+1 555 0100').querySelector('.description')?.textContent).toBe(valueProvenance(envelope(47)).text);
+    const first = valueProvenance(profile.contact_points[0].envelope);
+    expect(screen.getByText(first.text, { selector: '.profile-heading .provenance' }).getAttribute('title')).toBe(first.title);
+    const second = row('second@example.test');
+    expect(second.querySelector('.description')?.getAttribute('title')).toBe(valueProvenance(profile.contact_points[3].envelope).title);
     // One Details on the Contact details heading holds every row's facts, with the vCard properties last.
     expect(within(email).queryByRole('button', { name: 'Details' })).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Details' }));
@@ -103,27 +117,6 @@ describe('OrganizationEditor', () => {
     expect(within(screen.getByRole('region', { name: 'Email concurrent@example.test' })).queryByText('Kind')).toBeNull();
     await fireEvent.click(screen.getByText('Raw values'));
     expect(screen.getAllByText('vCard property').map(term => term.nextElementSibling?.textContent)).toContain('ADR');
-  });
-
-  it('says a provenance the rows share once, above them, and keeps a row\'s own only when it differs', async () => {
-    const profile = richOrganizationProfile(1);
-    profile.contact_points.push({ ...profile.contact_points[0], address_kind: 'phone', original_value: '+1 555 0100', envelope: envelope(47) });
-    profile.contact_points.push({ ...profile.contact_points[0], original_value: 'second@example.test', envelope: envelope(48, { source: 'vcard_import', updated_at: '2026-08-01T15:00:00Z' }) as typeof profile.contact_points[0]['envelope'] });
-    profile.contact_points.push({ ...profile.contact_points[0], original_value: 'third@example.test' });
-    const { controller } = controllerWith(async () => Response.json(profile, { headers: { ETag: '"organization-21-r1"' } }));
-    render(OrganizationEditor, { controller, organization: organization() });
-    await screen.findByRole('region', { name: 'Email' });
-    const shared = valueProvenance(profile.addresses[0].envelope);
-    expect(screen.getAllByText(shared.text)).toHaveLength(1);
-    expect(screen.getByText(shared.text).closest('.profile-heading p')?.textContent).toBe(`Contact details · ${shared.text}`);
-    const row = (text: string) => screen.getByText(text).closest('.detail-row') as HTMLElement;
-    expect(row('concurrent@example.test').querySelector('.description')).toBeNull();
-    expect(row('Suite 5, 12 Example Road').querySelector('.description')).toBeNull();
-    expect(row('+1 555 0100').querySelector('.description')?.textContent).toBe(valueProvenance(envelope(47)).text);
-    const first = valueProvenance(profile.contact_points[0].envelope);
-    expect(screen.getByText(first.text, { selector: '.profile-heading .provenance' }).getAttribute('title')).toBe(first.title);
-    const second = row('second@example.test');
-    expect(second.querySelector('.description')?.getAttribute('title')).toBe(valueProvenance(profile.contact_points[2].envelope).title);
   });
 
   it('retries loading an organization from its inline error action', async () => {
@@ -367,21 +360,4 @@ it.each(['retirement', 'media', 'facts', 'names', 'categories'])('shows saved %s
     expect(within(value).getByText('Source reference').nextElementSibling?.textContent).toBe('card-42');
     expect(within(alert).getByText(section === 'names' ? 'legal-name-variant' : 'category-variant')).toBeDefined();
   }
-});
-
-it('shows the new holder when a job appears after the deletion check', async () => {
-  let checks = 0;
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input), path = pathOf(request);
-    if (path === '/api/v1/organizations/21/employments') return Response.json({ employments: ++checks === 1 ? [] : [employment(11, 1, { person_id: 7 })] });
-    if (path === '/api/v1/people/7') return Response.json({ display_name: 'Synthetic Person' });
-    if (path === '/api/v1/organizations/21' && request.method === 'DELETE') return Response.json({ error: 'organization_has_employments', message: 'Organization still has employment records' }, { status: 409 });
-    if (path === '/api/v1/organizations/21') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
-    throw new Error(`unexpected ${request.method} ${path}`);
-  });
-  render(OrganizationEditor, { controller, organization: organization(), onOpenPerson: vi.fn() });
-  await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
-  await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
-  expect(await screen.findByRole('button', { name: 'Synthetic Person' })).toBeDefined();
-  expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
 });

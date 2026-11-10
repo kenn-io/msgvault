@@ -70,7 +70,7 @@ it.each([
   else expect(body).toHaveProperty('is_primary', expected);
 });
 
-it('ends a primary job from Edit without overriding the stored primary rule', async () => {
+it.each([true, false])('edits a primary job with current=%s without overriding the stored primary rule', async isCurrent => {
   let body: Record<string, unknown> | undefined;
   const job = employment(11, 1, { is_primary: true });
   const { controller } = controllerWith(async input => {
@@ -80,13 +80,16 @@ it('ends a primary job from Edit without overriding the stored primary rule', as
     if (request.url.endsWith('/employments/11')) return Response.json(job, { headers: { ETag: '"employment-11-r1"' } });
     return Response.json({ employments: [] });
   });
+  controller.employments = [employment(12, 1, { is_primary: false })];
   render(EmploymentEditor, { controller, personID: 7, employment: job });
   const current = await screen.findByRole('checkbox', { name: 'Current' });
-  await fireEvent.click(current);
-  await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2026-11' } });
+  if (!isCurrent) {
+    await fireEvent.click(current);
+    await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2026-11' } });
+  }
   await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   await waitFor(() => expect(body).toBeDefined());
-  expect(body).toHaveProperty('is_current', false);
+  expect(body).toHaveProperty('is_current', isCurrent);
   expect(body).not.toHaveProperty('is_primary');
 });
 

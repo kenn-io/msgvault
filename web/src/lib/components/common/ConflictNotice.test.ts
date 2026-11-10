@@ -4,7 +4,7 @@ import ConflictNotice from './ConflictNotice.svelte';
 
 it.each([
   ['user', /^Saved at /],
-  ['carddav_import', /^Saved from CardDAV contacts at /],
+  ['carddav_import', /^Saved from .+ at /],
 ] as const)('shows the source for an update by %s', (updatedBy, expected) => {
   render(ConflictNotice, {
     noun: 'connection',

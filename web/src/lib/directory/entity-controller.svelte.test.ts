@@ -963,7 +963,8 @@ it.each([
     const path = pathOf(request);
     if (path.includes('/organizations/21')) return Response.json(organizationProfile(readRevision), { headers: { ETag: `"opaque-organization-${readRevision === 1 ? "opening" : "current"}"` } });
     if (path.includes('/employments/11')) return Response.json(employment(11, readRevision), { headers: { ETag: `"opaque-job-${readRevision === 1 ? "opening" : "current"}"` } });
-    return Response.json(relationship(41, readRevision), { headers: { ETag: `"opaque-connection-${readRevision === 1 ? "opening" : "current"}"` } });
+    if (path === '/api/v1/person-relationships/41') return Response.json(relationship(41, readRevision), { headers: { ETag: `"opaque-connection-${readRevision === 1 ? "opening" : "current"}"` } });
+    return defaultResponse(request);
   });
   const controller = new DirectoryEntityController(client, 7);
   const send = (prepared?: Prepared<never>) => {

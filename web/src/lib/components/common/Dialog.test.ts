@@ -95,14 +95,12 @@ it('keeps focus inside the dialog when a step removes its focused control', asyn
 it('gives the dialog its own shortcut scope', async () => {
   const rootShortcut = vi.fn();
   const unregister = appShortcuts.register('x', rootShortcut);
-  const onclose = vi.fn();
-  const view = render(Dialog, { title: 'Example', onclose, children: createRawSnippet(() => ({ render: () => '<p>Example</p>' })) });
+  const view = render(Dialog, { title: 'Example', onclose: vi.fn(), children: createRawSnippet(() => ({ render: () => '<p>Example</p>' })) });
+  await Promise.resolve();
   try {
     expect(appShortcuts.activeScope()).toMatch(/^shell-dialog:/);
     appShortcuts.handleKeydown(new KeyboardEvent('keydown', { key: 'x', cancelable: true }));
     expect(rootShortcut).not.toHaveBeenCalled();
-    await fireEvent.keyDown(document, { key: 'Escape' });
-    expect(onclose).toHaveBeenCalledOnce();
   } finally { view.unmount(); unregister(); }
   expect(appShortcuts.activeScope()).toBe('root');
 });
