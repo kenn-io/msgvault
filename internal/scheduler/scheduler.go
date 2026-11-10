@@ -462,13 +462,21 @@ func (s *Scheduler) SetEmbedJob(job *EmbedJob, schedule string, runAfterSync boo
 	maxRuntime := indexingPassRuntime
 	if job != nil {
 		run = job.Run
-		// Seven timed-out requests can precede successful singletons when a
-		// batch of eight splits. Leave one request timeout for the successes.
-		const maxDuration = time.Duration(1<<63 - 1)
-		if job.RequestTimeout > maxDuration/8 {
-			maxRuntime = maxDuration
-		} else {
-			maxRuntime = max(maxRuntime, 8*job.RequestTimeout)
+		// Keep the usual pass limit for the default remote configuration.
+		// Other configurations need room for every request in a split batch.
+		if job.RequestTimeout > 0 && (job.RequestTimeout != 30*time.Second || job.BatchSize != 32) {
+			const maxDuration = time.Duration(1<<63 - 1)
+			batchSize := int64(max(1, job.BatchSize))
+			if batchSize > int64(maxDuration)/2+1 {
+				maxRuntime = maxDuration
+			} else {
+				requests := (batchSize-1)*2 + 1
+				if job.RequestTimeout > maxDuration/time.Duration(requests) {
+					maxRuntime = maxDuration
+				} else {
+					maxRuntime = max(maxRuntime, time.Duration(requests*int64(job.RequestTimeout)))
+				}
+			}
 		}
 	}
 	return s.setIndexingJob(embedJobName, "embed", run, schedule, runAfterSync, maxRuntime)

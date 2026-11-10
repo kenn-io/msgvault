@@ -56,6 +56,7 @@ func TestAutomaticEmbeddingPassRetriesTimeoutAndSavesProgress(t *testing.T) {
 				<-r.Context().Done()
 				return
 			}
+			time.Sleep(4 * time.Minute)
 			_, _ = fmt.Fprint(w, `{"data":[{"index":0,"embedding":[1,0,0,0]}]}`)
 		}))
 		httpClient := server.Client()
@@ -67,7 +68,7 @@ func TestAutomaticEmbeddingPassRetriesTimeoutAndSavesProgress(t *testing.T) {
 		})
 		require.NoError(t, err)
 		worker := embed.NewWorker(embed.WorkerDeps{Backend: backend, VectorsDB: backend.DB(), MainDB: st.DB(), Store: st, Client: kitEmbeddingClient{client}, BatchSize: 8, Recorder: st})
-		job := &scheduler.EmbedJob{Worker: worker, Backend: backend, Store: st, Fingerprint: "synthetic:4", BackstopInterval: -1, RequestTimeout: 5 * time.Minute}
+		job := &scheduler.EmbedJob{Worker: worker, Backend: backend, Store: st, Fingerprint: "synthetic:4", BackstopInterval: -1, RequestTimeout: 5 * time.Minute, BatchSize: 8}
 		s := scheduler.New(nil)
 		defer func() { <-s.Stop().Done() }()
 		require.NoError(t, s.SetEmbedJob(job, "", false))

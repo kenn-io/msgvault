@@ -101,6 +101,7 @@ type EmbedJob struct {
 
 	// RequestTimeout is the configured timeout for one embedding request.
 	RequestTimeout time.Duration
+	BatchSize      int
 
 	// Store provides the main-DB coverage count used for activation
 	// gating (how many live messages still need embedding for the
