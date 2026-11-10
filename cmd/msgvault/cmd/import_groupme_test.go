@@ -62,12 +62,15 @@ func TestImportGroupmeRejectsClientFilesOnRemote(t *testing.T) {
 	require.ErrorContains(t, command.Execute(), "run it on the daemon host with --local")
 	assert.Zero(t, requests.Load())
 }
-func TestImportGroupmeRequiresOwner(t *testing.T) {
+func TestImportGroupmeRequiresOwnerBeforeDaemonRequest(t *testing.T) {
+	server, requests := newDaemonCLIRunnerTestServer(t, nil, `{"type":"complete"}`)
 	command := newImportGroupmeCmd()
+	command.SetContext(configureRemoteDaemonForTest(t, server.URL))
 	command.SetOut(io.Discard)
 	command.SetErr(io.Discard)
 	command.SetArgs([]string{"export"})
 	require.ErrorContains(t, command.Execute(), "--me")
+	assert.Zero(t, requests.Load())
 }
 
 // A cancellation after a real commit still runs identity migrations and refreshes

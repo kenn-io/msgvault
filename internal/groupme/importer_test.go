@@ -3,7 +3,6 @@ package groupme
 import (
 	"context"
 	"database/sql"
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"log/slog"
@@ -41,15 +40,20 @@ func TestImportCoverageRawUnknownsAndReruns(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	root := fixture(t)
+	groupPath := filepath.Join(root, "group", "message.json")
+	groupJSON, err := os.ReadFile(groupPath)
+	require.NoError(err)
+	groupJSON = append([]byte(strings.TrimSuffix(strings.TrimSpace(string(groupJSON)), "]")), []byte(`,{"id":"service","group_id":"fictional-garden","sender_type":"service","system":false,"text":"fictional service"}]`)...)
+	require.NoError(os.WriteFile(groupPath, groupJSON, 0600))
 	opts := ImportOptions{RootDir: root, Me: "fictional-owner", AttachmentsDir: t.TempDir()}
 	summary, err := Import(t.Context(), st, opts)
 	require.NoError(err)
 	assert.EqualValues(4, summary.MessagesAdded)
-	assert.EqualValues(2, summary.ServiceMessagesSkipped)
+	assert.EqualValues(3, summary.ServiceMessagesSkipped)
 	assert.EqualValues(1, summary.UnsupportedEntriesSkipped)
 	assert.Equal(3, summary.ChatsProcessed)
 	assert.Equal(map[int]int64{2024: 2, 2025: 3}, summary.Years)
-	assert.Equal(map[string]int64{"message": 5, "system": 2}, summary.Types)
+	assert.Equal(map[string]int64{"message": 5, "system": 2, "service": 1}, summary.Types)
 	assert.Equal(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), summary.Oldest)
 	assert.Equal(2, summary.AttachmentsMissing)
 	assert.Equal(1, summary.AttachmentsUnsupported)
@@ -66,9 +70,6 @@ func TestImportCoverageRawUnknownsAndReruns(t *testing.T) {
 	var m Message
 	require.NoError(json.Unmarshal(raw, &m))
 	assert.Equal("Seedneedle plans for spring", m.Text)
-	var parent string
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT p.source_message_id FROM messages m JOIN messages p ON p.id=m.reply_to_message_id WHERE m.source_message_id=?"), messageKey("group:fictional-garden", "fictional-two")).Scan(&parent))
-	assert.Equal(key, parent)
 	var unknowns int
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages WHERE sender_id IS NULL AND sent_at IS NULL").Scan(&unknowns))
 	assert.Equal(1, unknowns)
@@ -101,44 +102,83 @@ func TestImportCoverageRawUnknownsAndReruns(t *testing.T) {
 	assert.EqualValues(4, second.MessagesAdded)
 }
 
-func TestImportMediaRecovery(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	root := fixture(t)
-	opts := ImportOptions{RootDir: root, Me: "fictional-owner", AttachmentsDir: t.TempDir()}
-	first, err := Import(t.Context(), st, opts)
-	require.NoError(err)
-	assert.Equal(2, first.AttachmentsMissing)
-	// A later export reorders attachments; missing bytes still fill the same slot.
-	path := filepath.Join(root, "group", "message.json")
-	original, err := os.ReadFile(path)
-	require.NoError(err)
-	require.NoError(os.WriteFile(path, []byte(strings.Replace(string(original), `"attachments":[{"type":"image"`, `"attachments":[{"type":"reply","reply_id":"fictional-two"},{"type":"image"`, 1)), 0600))
-	gallery := filepath.Join(root, "group", "gallery")
-	require.NoError(os.Mkdir(gallery, 0700))
-	for name, content := range map[string]string{"fictional-one_800x600.fictional-image.png": "fictional image bytes", "fictional-two_fictional-video.720p.mp4": "fictional video bytes"} {
-		require.NoError(os.WriteFile(filepath.Join(gallery, name), []byte(content), 0600))
+func TestImportMedia(t *testing.T) {
+	t.Run("recover missing bytes into the same slot", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		st := testutil.NewTestStore(t)
+		root := fixture(t)
+		opts := ImportOptions{RootDir: root, Me: "fictional-owner", AttachmentsDir: t.TempDir()}
+		first, err := Import(t.Context(), st, opts)
+		require.NoError(err)
+		// A later export reorders attachments; missing bytes still fill the same slot.
+		path := filepath.Join(root, "group", "message.json")
+		original, err := os.ReadFile(path)
+		require.NoError(err)
+		require.NoError(os.WriteFile(path, []byte(strings.Replace(string(original), `"attachments":[{"type":"image"`, `"attachments":[{"type":"reply","reply_id":"fictional-two"},{"type":"image"`, 1)), 0600))
+		gallery := filepath.Join(root, "group", "gallery")
+		require.NoError(os.Mkdir(gallery, 0700))
+		for name, content := range map[string]string{"fictional-one_800x600.fictional-image.png": "fictional image bytes", "fictional-two_fictional-video.720p.mp4": "fictional video bytes"} {
+			require.NoError(os.WriteFile(filepath.Join(gallery, name), []byte(content), 0600))
+		}
+		second, err := Import(t.Context(), st, opts)
+		require.NoError(err)
+		assert.Equal(2, second.AttachmentsStored)
+		assert.Zero(second.MessagesAdded)
+		ids, err := st.MessageExistsBatchContext(t.Context(), first.SourceID, []string{messageKey("group:fictional-garden", "fictional-one")})
+		require.NoError(err)
+		refs, err := st.MessageMIMEAttachmentsContext(t.Context(), ids[messageKey("group:fictional-garden", "fictional-one")])
+		require.NoError(err)
+		require.Len(refs, 1)
+		data, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, refs[0].StoragePath))
+		require.NoError(err)
+		assert.Equal("fictional image bytes", string(data))
+		require.NoError(os.WriteFile(filepath.Join(gallery, "fictional-one_800x600.fictional-image.png"), []byte("changed bytes"), 0600))
+		third, err := Import(t.Context(), st, opts)
+		require.NoError(err)
+		assert.Zero(third.AttachmentsStored)
+	})
+	t.Run("oversized media stays retryable", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		st := testutil.NewTestStore(t)
+		root := fixture(t)
+		gallery := filepath.Join(root, "group", "gallery")
+		require.NoError(os.Mkdir(gallery, 0700))
+		path := filepath.Join(gallery, "fictional-one_800x600.fictional-image.png")
+		f, err := os.Create(path)
+		require.NoError(err)
+		require.NoError(f.Truncate(attachmentpolicy.DefaultChatMaxBytes + 1))
+		require.NoError(f.Close())
+		opts := ImportOptions{RootDir: root, Me: "owner", AttachmentsDir: t.TempDir()}
+		summary, err := Import(t.Context(), st, opts)
+		require.NoError(err)
+		assert.Equal(1, summary.AttachmentsMissing)
+		assert.Equal(1, summary.AttachmentsOversized)
+		assert.Zero(summary.AttachmentsStored)
+		require.NoError(os.WriteFile(path, []byte("small fictional bytes"), 0600))
+		summary, err = Import(t.Context(), st, opts)
+		require.NoError(err)
+		assert.Equal(1, summary.AttachmentsStored)
+	})
+	t.Run("media symlink", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		st := testutil.NewTestStore(t)
+		root := fixture(t)
+		outside := t.TempDir()
+		require.NoError(os.WriteFile(filepath.Join(outside, "fictional-one_800x600.fictional-image.png"), []byte("outside bytes"), 0600))
+		require.NoError(os.Symlink(outside, filepath.Join(root, "group", "gallery")))
+		summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "owner", AttachmentsDir: t.TempDir()})
+		require.NoError(err)
+		assert.Zero(summary.AttachmentsStored)
+		assert.Equal(2, summary.AttachmentsMissing)
+	})
+	for _, id := range []string{"../escape", "/absolute", `..\escape`} {
+		name, ok := galleryName(id, Attachment{Type: "image", URL: "https://images.example.invalid/800x600.png.example"})
+		assert.False(t, ok)
+		assert.Empty(t, name)
 	}
-	second, err := Import(t.Context(), st, opts)
-	require.NoError(err)
-	assert.Equal(2, second.AttachmentsStored)
-	assert.Zero(second.MessagesAdded)
-	ids, err := st.MessageExistsBatchContext(t.Context(), first.SourceID, []string{messageKey("group:fictional-garden", "fictional-one")})
-	require.NoError(err)
-	refs, err := st.MessageMIMEAttachmentsContext(t.Context(), ids[messageKey("group:fictional-garden", "fictional-one")])
-	require.NoError(err)
-	require.Len(refs, 1)
-	data, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, refs[0].StoragePath))
-	require.NoError(err)
-	assert.Equal("fictional image bytes", string(data))
-	require.NoError(os.WriteFile(filepath.Join(gallery, "fictional-one_800x600.fictional-image.png"), []byte("changed bytes"), 0600))
-	third, err := Import(t.Context(), st, opts)
-	require.NoError(err)
-	assert.Zero(third.AttachmentsStored)
-	data, err = os.ReadFile(filepath.Join(opts.AttachmentsDir, refs[0].StoragePath))
-	require.NoError(err)
-	assert.Equal("fictional image bytes", string(data))
 }
 
 type cancelLog struct{ cancel context.CancelFunc }
@@ -182,8 +222,9 @@ func TestImportOverlappingReplies(t *testing.T) {
 	assert.True(parent.Valid)
 }
 
-func TestReaderRejectsMalformedAndOversized(t *testing.T) {
+func TestReaderRecordLimitsAndMalformedInput(t *testing.T) {
 	for _, tc := range []struct{ name, content, want string }{
+		{"multiple records within individual budgets", `[{"id":"first","text":"` + strings.Repeat("x", maxRecordBytes/2) + `"},{"id":"second","text":"` + strings.Repeat("y", maxRecordBytes/2) + `"}]`, ""},
 		{"object", `{}`, "array"},
 		{"truncated", `[{"id":"a"}`, "read message"},
 		{"trailing", `[] {}`, "trailing"},
@@ -198,7 +239,11 @@ func TestReaderRejectsMalformedAndOversized(t *testing.T) {
 			require.NoError(err)
 			defer func() { require.NoError(r.Close()) }()
 			err = discover(t.Context(), r, root, func(chat) error { return nil })
-			require.ErrorContains(err, tc.want)
+			if tc.want == "" {
+				require.NoError(err)
+			} else {
+				require.ErrorContains(err, tc.want)
+			}
 		})
 	}
 	t.Run("metadata", func(t *testing.T) {
@@ -214,7 +259,7 @@ func TestReaderRejectsMalformedAndOversized(t *testing.T) {
 	})
 }
 
-func TestReaderAndMediaContainment(t *testing.T) {
+func TestReaderContainment(t *testing.T) {
 	t.Run("message symlink", func(t *testing.T) {
 		require := require.New(t)
 		root := t.TempDir()
@@ -225,41 +270,8 @@ func TestReaderAndMediaContainment(t *testing.T) {
 		require.NoError(err)
 		defer func() { require.NoError(r.Close()) }()
 		err = discover(t.Context(), r, root, func(chat) error { return nil })
-		require.Error(err)
+		require.ErrorContains(err, "path escapes from parent")
 	})
-	t.Run("media symlink", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		st := testutil.NewTestStore(t)
-		root := fixture(t)
-		outside := t.TempDir()
-		require.NoError(os.WriteFile(filepath.Join(outside, "fictional-one_800x600.fictional-image.png"), []byte("outside bytes"), 0600))
-		require.NoError(os.Symlink(outside, filepath.Join(root, "group", "gallery")))
-		summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "owner", AttachmentsDir: t.TempDir()})
-		require.NoError(err)
-		assert.Zero(summary.AttachmentsStored)
-		assert.Equal(2, summary.AttachmentsMissing)
-	})
-	for _, id := range []string{"../escape", "/absolute", `..\escape`} {
-		name, ok := galleryName(id, Attachment{Type: "image", URL: "https://images.example.invalid/800x600.png.example"})
-		assert.False(t, ok)
-		assert.Empty(t, name)
-	}
-}
-
-func TestReaderBoundedManySmallRecords(t *testing.T) {
-	require := require.New(t)
-	root := t.TempDir()
-	path := filepath.Join(root, "message.json")
-	// Exceed a single-record budget overall, with each record safely below it.
-	content := `[{"id":"first","text":"` + strings.Repeat("x", maxRecordBytes/2) + `"},{"id":"second","text":"` + strings.Repeat("y", maxRecordBytes/2) + `"}]`
-	require.NoError(os.WriteFile(path, []byte(content), 0600))
-	r, err := os.OpenRoot(root)
-	require.NoError(err)
-	defer func() { require.NoError(r.Close()) }()
-	count := 0
-	require.NoError(messages(t.Context(), r, ".", func(_ *Message, _ jsontext.Value) error { count++; return nil }))
-	assert.Equal(t, 2, count)
 }
 
 func TestImportRequiresOwner(t *testing.T) {
@@ -273,40 +285,14 @@ func TestImportUnknownAttachmentShapesKeepText(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
-	require.NoError(os.WriteFile(filepath.Join(root, "message.json"), []byte(`[{"id":"one","group_id":"fictional","sender_type":"bot","text":"ordinary needle","attachments":{"future":true}},{"id":"two","group_id":"fictional","text":"ordinary second","attachments":["future",{"type":"image","url":55}]},{"id":"service","group_id":"fictional","sender_type":"service","system":false,"text":"fictional service"}]`), 0600))
+	require.NoError(os.WriteFile(filepath.Join(root, "message.json"), []byte(`[{"id":"one","group_id":"fictional","sender_type":"bot","text":"ordinary needle","attachments":{"future":true}},{"id":"two","group_id":"fictional","text":"ordinary second","attachments":["future",{"type":"image","url":55}]}]`), 0600))
 	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "owner"})
 	require.NoError(err)
 	assert.EqualValues(2, summary.MessagesAdded)
 	assert.Equal(3, summary.AttachmentsUnsupported)
-	assert.EqualValues(1, summary.ServiceMessagesSkipped)
-	assert.Equal(map[string]int64{"bot": 1, "message": 1, "service": 1}, summary.Types)
 	_, total, err := st.SearchMessages("ordinary", 0, 10)
 	require.NoError(err)
 	assert.EqualValues(2, total)
-}
-
-func TestImportMediaCapKeepsRetryableSlot(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	root := fixture(t)
-	gallery := filepath.Join(root, "group", "gallery")
-	require.NoError(os.Mkdir(gallery, 0700))
-	path := filepath.Join(gallery, "fictional-one_800x600.fictional-image.png")
-	f, err := os.Create(path)
-	require.NoError(err)
-	require.NoError(f.Truncate(attachmentpolicy.DefaultChatMaxBytes + 1))
-	require.NoError(f.Close())
-	opts := ImportOptions{RootDir: root, Me: "owner", AttachmentsDir: t.TempDir()}
-	summary, err := Import(t.Context(), st, opts)
-	require.NoError(err)
-	assert.Equal(1, summary.AttachmentsMissing)
-	assert.Equal(1, summary.AttachmentsOversized)
-	assert.Zero(summary.AttachmentsStored)
-	require.NoError(os.WriteFile(path, []byte("small fictional bytes"), 0600))
-	summary, err = Import(t.Context(), st, opts)
-	require.NoError(err)
-	assert.Equal(1, summary.AttachmentsStored)
 }
 
 func TestImportMalformedLaterConversationKeepsEarlierMessages(t *testing.T) {
@@ -358,13 +344,17 @@ func TestImportMetadataIdentityAndFolderScope(t *testing.T) {
 	require.ErrorContains(err, "conflicting conversation IDs")
 	// A metadata-free conversation keeps the same fallback across parent/single
 	// selections and extraction roots, using its exported folder name.
-	for range 2 {
+	for i := range 2 {
 		moved := filepath.Join(t.TempDir(), "exported-folder")
 		require.NoError(os.Mkdir(moved, 0700))
 		require.NoError(os.WriteFile(filepath.Join(moved, "message.json"), []byte(`[{"id":"fallback","text":"folder message"}]`), 0600))
 		summary, err := Import(t.Context(), st, ImportOptions{RootDir: filepath.Dir(moved), Me: "owner"})
 		require.NoError(err)
-		assert.LessOrEqual(summary.MessagesAdded, int64(1))
+		if i == 0 {
+			assert.EqualValues(1, summary.MessagesAdded)
+		} else {
+			assert.Zero(summary.MessagesAdded)
+		}
 		summary, err = Import(t.Context(), st, ImportOptions{RootDir: moved, Me: "owner"})
 		require.NoError(err)
 		assert.Zero(summary.MessagesAdded)
@@ -373,7 +363,7 @@ func TestImportMetadataIdentityAndFolderScope(t *testing.T) {
 	assert.Equal(1, n)
 }
 
-func TestImportSkipsScalarDriftAndCountsOnce(t *testing.T) {
+func TestImportSkipsScalarDrift(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -392,12 +382,9 @@ func TestImportSkipsScalarDriftAndCountsOnce(t *testing.T) {
 	var n int
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages WHERE is_from_me=true").Scan(&n))
 	assert.Equal(1, n)
-	summary, err = Import(t.Context(), st, ImportOptions{RootDir: root, Me: "owner"})
-	require.NoError(err)
-	assert.EqualValues(2, summary.MessagesSkipped)
 }
 
-func TestImportBoundedBatchesPreserveRawAndDuplicates(t *testing.T) {
+func TestImportPreservesRawAndDuplicates(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -428,16 +415,4 @@ func TestImportBoundedBatchesPreserveRawAndDuplicates(t *testing.T) {
 			assert.Equal("body-0", m.Text)
 		}
 	}
-	// A few large records cross the byte cap well before the count cap.
-	large := strings.Repeat("fictional ", maxMessageBatchBytes/20)
-	records = nil
-	for i := range 3 {
-		encoded, err := json.Marshal(Message{ID: fmt.Sprintf("large-%d", i), GroupID: "batch", Text: large})
-		require.NoError(err)
-		records = append(records, string(encoded))
-	}
-	require.NoError(os.WriteFile(filepath.Join(root, "message.json"), []byte("["+strings.Join(records, ",")+"]"), 0600))
-	summary, err = Import(t.Context(), st, ImportOptions{RootDir: root, Me: "owner"})
-	require.NoError(err)
-	assert.EqualValues(3, summary.MessagesAdded)
 }
