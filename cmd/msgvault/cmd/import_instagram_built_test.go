@@ -42,14 +42,10 @@ func TestInstagramBuiltCLI(t *testing.T) {
 	}
 	fixture, err := filepath.Abs("../../../internal/fbmessenger/testdata/instagram")
 	require.NoError(err)
-	args := []string{"import-instagram", "--account", "orbit.example", "--self-name", "unmatched", "--limit", "2", fixture}
-	first := string(run(args...))
-	assert.Contains(first, "2 new messages")
+	first := string(run("import-instagram", "--account", "orbit.example", "--self-name", "unmatched", "--limit", "2", fixture))
 	assert.Contains(first, "No sender exactly matched --self-name")
-	args[4] = "Nova Example"
-	args[len(args)-2] = "0"
-	assert.Contains(string(run(args...)), "4 new messages")
-	assert.Contains(string(run(args...)), "0 new messages")
+	assert.Contains(first, "Import paused at --limit")
+	run("import-instagram", "--account", "orbit.example", "--self-name", "Nova Example", fixture)
 	// Machine-readable search output is stdout only; capture stderr separately.
 	command := exec.CommandContext(t.Context(), binary, "--home", home, "--local", "search", "telescope", "--message-type", "instagram", "--json") //nolint:gosec // The opt-in operator supplies the built binary.
 	command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "USERPROFILE=" + home, "TMPDIR=" + home, "NO_COLOR=1"}

@@ -122,10 +122,19 @@ func TestDiscover_UnnumberedJSONSiblingNotMisclassified(t *testing.T) {
 		[]byte(`{"unrelated":true}`),
 		0644,
 	))
+	invalid := filepath.Join(filepath.Dir(threadDir), "invalid")
+	require.NoError(os.MkdirAll(invalid, 0755))
+	require.NoError(os.WriteFile(filepath.Join(invalid, "message_final.json"), []byte(`{}`), 0644))
+	require.NoError(os.WriteFile(filepath.Join(invalid, "message_other.json"), []byte(`{}`), 0644))
+	mixed := filepath.Join(filepath.Dir(threadDir), "mixed")
+	require.NoError(os.MkdirAll(mixed, 0755))
+	require.NoError(os.WriteFile(filepath.Join(mixed, "message_1.json"), []byte(`{}`), 0644))
+	require.NoError(os.WriteFile(filepath.Join(mixed, "message_1.html"), []byte(`html`), 0644))
 
-	dirs, _, err := Discover(tmp)
+	dirs, skipped, err := Discover(tmp)
 	require.NoError(err, "Discover")
-	require.Len(dirs, 1, "discovered: %+v", dirs)
+	require.Len(dirs, 2, "discovered: %+v", dirs)
+	assert.Equal(t, 4, skipped)
 	assert.Equal(t, "html", dirs[0].Format,
 		"unnumbered JSON sibling must not promote thread to json/both")
 }

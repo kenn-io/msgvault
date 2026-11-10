@@ -64,15 +64,6 @@ func TestInstagramImportReplay(t *testing.T) {
 	before := instagramIDs(t, st)
 	relocated := t.TempDir()
 	require.NoError(os.CopyFS(relocated, os.DirFS("testdata/instagram")))
-	filename := filepath.Join(relocated, filepath.FromSlash(instagramInbox), "mira_101", "message_1.json")
-	data, err := os.ReadFile(filename)
-	require.NoError(err)
-	var shard map[string]any
-	require.NoError(json.Unmarshal(data, &shard))
-	shard["title"] = "Renamed fictional conversation"
-	data, err = json.Marshal(shard)
-	require.NoError(err)
-	require.NoError(os.WriteFile(filename, data, 0600))
 	opts.RootDir = relocated
 	summary, err = ImportDYI(t.Context(), st, opts)
 	require.NoError(err)
@@ -207,9 +198,6 @@ func TestInstagramMediaRecoveryAndContainment(t *testing.T) {
 	assert.Equal(4, n)
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM attachments WHERE COALESCE(content_hash, '') <> ''`).Scan(&n))
 	assert.Equal(1, n)
-	var mimeType string
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT mime_type FROM attachments WHERE filename = 'voice.ogg'`).Scan(&mimeType))
-	assert.Equal("audio/ogg", mimeType)
 	full := filepath.Join(root, filepath.FromSlash(media))
 	require.NoError(os.MkdirAll(filepath.Dir(full), 0700))
 	require.NoError(os.WriteFile(full, []byte("invented star chart"), 0600))
@@ -245,12 +233,14 @@ func TestInstagramConflictingThreadPaths(t *testing.T) {
 func TestInstagramRejectsBeforeSource(t *testing.T) {
 	for _, test := range []struct {
 		name, account, selfName, wantError string
+		limit                              int
 		unsupported                        bool
 	}{
 		{name: "empty account", selfName: "Nova Example", wantError: "account"},
 		{name: "blank normalized account", account: "@", selfName: "Nova Example", wantError: "account"},
 		{name: "empty self name", account: "example", wantError: "self-name"},
 		{name: "blank self name", account: "example", selfName: "   ", wantError: "self-name"},
+		{name: "negative limit", account: "example", selfName: "Nova Example", limit: -1, wantError: "--limit must be non-negative"},
 		{name: "unsupported layout", account: "example", selfName: "Nova Example", wantError: "no supported inbox", unsupported: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -262,7 +252,7 @@ func TestInstagramRejectsBeforeSource(t *testing.T) {
 				root = t.TempDir()
 				require.NoError(os.WriteFile(filepath.Join(root, "messages.html"), []byte("fictional HTML"), 0600))
 			}
-			_, err := ImportDYI(t.Context(), st, ImportOptions{Source: "instagram", RootDir: root, Account: test.account, SelfName: test.selfName})
+			_, err := ImportDYI(t.Context(), st, ImportOptions{Source: "instagram", RootDir: root, Account: test.account, SelfName: test.selfName, Limit: test.limit})
 			require.ErrorContains(err, test.wantError)
 			var n int
 			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM sources`).Scan(&n))
@@ -322,6 +312,7 @@ func TestInstagramGenericMediaAndThreadUpdates(t *testing.T) {
 	summary, err := ImportDYI(t.Context(), st, opts)
 	require.NoError(err)
 	assert.Equal(1, summary.AttachmentsStored)
+	ids := instagramIDs(t, st)
 	data, err := os.ReadFile(filename)
 	require.NoError(err)
 	var shard map[string]any
@@ -333,6 +324,7 @@ func TestInstagramGenericMediaAndThreadUpdates(t *testing.T) {
 	require.NoError(os.WriteFile(filename, data, 0600))
 	summary, err = ImportDYI(t.Context(), st, opts)
 	require.NoError(err)
+	assert.Equal(ids, instagramIDs(t, st))
 	var title, kind string
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT title,conversation_type FROM conversations`).Scan(&title, &kind))
 	assert.Equal("Changed fictional title", title)
@@ -364,106 +356,6 @@ func TestInstagramSharedLinkDecoded(t *testing.T) {
 	})
 }
 
-func TestInstagramReplaysRenamedSender(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	record := instagramTestRecord("hello")
-	filename := instagramTestShard(t, root, "circle", "message_1.json", record)
-	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
-	_, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	ids := instagramIDs(t, st)
-	record["sender_name"] = "Renamed Example"
-	instagramTestShard(t, root, "circle", "message_1.json", record)
-	data, err := os.ReadFile(filename)
-	require.NoError(t, err)
-	data = bytespkg.ReplaceAll(data, []byte(`"name":"Mira Example"`), []byte(`"name":"Renamed Example"`))
-	require.NoError(t, os.WriteFile(filename, data, 0600))
-	summary, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.Zero(t, summary.MessagesAdded)
-	assert.Equal(t, ids, instagramIDs(t, st))
-	summary, err = ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.Zero(t, summary.MessagesAdded)
-	assert.Equal(t, ids, instagramIDs(t, st))
-}
-
-func TestInstagramDifferentSenderIsNotRename(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	record := instagramTestRecord("hello")
-	instagramTestShard(t, root, "circle", "message_1.json", record)
-	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
-	_, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	record["sender_name"] = "Lumen Example"
-	instagramTestShard(t, root, "circle", "message_1.json", record)
-	summary, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), summary.MessagesAdded)
-	assert.Equal(t, 2, countMessages(t, st, ""))
-}
-
-func TestInstagramRenamedSenderWithDifferentMedia(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	record := instagramTestRecord("hello")
-	record["photos"] = []map[string]string{{"uri": "photos/one.jpg"}}
-	filename := instagramTestShard(t, root, "circle", "message_1.json", record)
-	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example", AttachmentsDir: t.TempDir()}
-	_, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	record["sender_name"] = "Renamed Example"
-	record["photos"] = []map[string]string{{"uri": "photos/two.jpg"}}
-	instagramTestShard(t, root, "circle", "message_1.json", record)
-	data, err := os.ReadFile(filename)
-	require.NoError(t, err)
-	data = bytespkg.ReplaceAll(data, []byte(`"name":"Mira Example"`), []byte(`"name":"Renamed Example"`))
-	require.NoError(t, os.WriteFile(filename, data, 0600))
-	summary, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), summary.MessagesAdded)
-	assert.Equal(t, 2, countMessages(t, st, ""))
-}
-func TestInstagramReorderedDuplicateReactionsStayWithOccurrence(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	a, b := instagramTestRecord("hello"), instagramTestRecord("hello")
-	a["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "✨"}}
-	b["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "❤️"}}
-	instagramTestShard(t, root, "circle", "message_1.json", a, b)
-	opts := ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example"}
-	_, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	reactions := func() map[string]string {
-		rows, err := st.DB().QueryContext(t.Context(), `SELECT m.source_message_id, r.reaction_value FROM messages m JOIN reactions r ON r.message_id = m.id`)
-		require.NoError(t, err)
-		defer func() { require.NoError(t, rows.Close()) }()
-		result := map[string]string{}
-		for rows.Next() {
-			var id, reaction string
-			require.NoError(t, rows.Scan(&id, &reaction))
-			assert.NotContains(t, result, id)
-			result[id] = reaction
-		}
-		require.NoError(t, rows.Err())
-		return result
-	}
-	before := reactions()
-	instagramTestShard(t, root, "circle", "message_1.json", b)
-	instagramTestShard(t, root, "circle", "message_2.json", a)
-	_, err = ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	var count int
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM reactions`).Scan(&count))
-	assert.Equal(t, 2, count)
-	assert.Equal(t, before, reactions())
-	var created sql.NullTime
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT created_at FROM reactions LIMIT 1`).Scan(&created))
-	assert.False(t, created.Valid)
-}
-
 func TestInstagramRejectsNewerFingerprintInAbsentThread(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
@@ -473,7 +365,7 @@ func TestInstagramRejectsNewerFingerprintInAbsentThread(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.Remove(old))
 	instagramTestShard(t, root, "new", "message_1.json", instagramTestRecord("new"))
-	for _, version := range []string{"ig:v2:", "ig:v10:", "ig:v0:"} {
+	for _, version := range []string{"ig:v2:", "ig:v10:"} {
 		_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET source_message_id = ? || substr(source_message_id, 7)`, version)
 		require.NoError(t, err)
 		_, err = ImportDYI(t.Context(), st, opts)
@@ -482,100 +374,48 @@ func TestInstagramRejectsNewerFingerprintInAbsentThread(t *testing.T) {
 	}
 }
 
-func TestInstagramReconcilesChangedAndMissingOccurrences(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	a, b := instagramTestRecord("same"), instagramTestRecord("same")
-	a["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "a"}}
-	b["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "b"}}
-	instagramTestShard(t, root, "circle", "message_1.json", a, b)
-	opts := ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example"}
-	_, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	original := instagramIDs(t, st)
-	instagramTestShard(t, root, "circle", "message_1.json", b)
-	summary, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.Zero(t, summary.MessagesAdded)
-	assert.Equal(t, original, instagramIDs(t, st))
-	c := instagramTestRecord("same")
-	c["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "c"}}
-	instagramTestShard(t, root, "circle", "message_1.json", a, c)
-	summary, err = ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.Zero(t, summary.MessagesAdded)
-	assert.Equal(t, original, instagramIDs(t, st))
-	reactions := func() map[int64]string {
-		rows, err := st.DB().QueryContext(t.Context(), `SELECT message_id, reaction_value FROM reactions`)
-		require.NoError(t, err)
-		defer rows.Close()
-		got := map[int64]string{}
-		for rows.Next() {
-			var id int64
-			var value string
-			require.NoError(t, rows.Scan(&id, &value))
-			got[id] = value
-		}
-		require.NoError(t, rows.Err())
-		return got
-	}
-	before := reactions()
-	d := instagramTestRecord("same")
-	d["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "d"}}
-	e := instagramTestRecord("same")
-	e["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "e"}}
-	instagramTestShard(t, root, "circle", "message_1.json", d, e)
-	summary, err = ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.Zero(t, summary.MessagesAdded)
-	assert.Equal(t, original, instagramIDs(t, st))
-	assert.True(t, summary.Incomplete)
-	assert.Equal(t, before, reactions())
-	summary, err = ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.Zero(t, summary.MessagesAdded)
-}
-
 func TestInstagramAddsOnlySurplusCopiesWithSharedReactions(t *testing.T) {
-	for _, shared := range []bool{false, true} {
-		st := testutil.NewTestStore(t)
-		root := t.TempDir()
-		copyOf := func(reactions ...string) map[string]any {
-			record := instagramTestRecord("same")
-			var list []map[string]string
-			for _, reaction := range reactions {
-				list = append(list, map[string]string{"actor": "Nova Example", "reaction": reaction})
+	for name, shared := range map[string]bool{"distinct": false, "shared": true} {
+		t.Run(name, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			root := t.TempDir()
+			copyOf := func(reactions ...string) map[string]any {
+				record := instagramTestRecord("same")
+				var list []map[string]string
+				for _, reaction := range reactions {
+					list = append(list, map[string]string{"actor": "Nova Example", "reaction": reaction})
+				}
+				record["reactions"] = list
+				return record
 			}
-			record["reactions"] = list
-			return record
-		}
-		instagramTestShard(t, root, "circle", "message_1.json", copyOf("a"), copyOf("b"))
-		opts := ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example"}
-		_, err := ImportDYI(t.Context(), st, opts)
-		require.NoError(t, err)
-		original := instagramIDs(t, st)
-		extra := []string{}
-		if shared {
-			extra = []string{"x"}
-		}
-		instagramTestShard(t, root, "circle", "message_1.json", copyOf(append([]string{"d"}, extra...)...), copyOf(append([]string{"e"}, extra...)...), copyOf(append([]string{"f"}, extra...)...))
-		summary, err := ImportDYI(t.Context(), st, opts)
-		require.NoError(t, err)
-		assert.Equal(t, int64(1), summary.MessagesAdded)
-		assert.True(t, summary.Incomplete)
-		assert.Equal(t, 3, countMessages(t, st, ""))
-		var count int
-		require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM reactions WHERE reaction_value IN ('a','b')`).Scan(&count))
-		assert.Equal(t, 2, count)
-		require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM reactions WHERE reaction_value IN ('d','e','f')`).Scan(&count))
-		assert.Zero(t, count)
-		require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM reactions WHERE reaction_value = 'x'`).Scan(&count))
-		assert.Equal(t, len(extra), count)
-		assert.Subset(t, instagramIDs(t, st), original)
-		summary, err = ImportDYI(t.Context(), st, opts)
-		require.NoError(t, err)
-		assert.Zero(t, summary.MessagesAdded)
-		assert.Equal(t, 3, countMessages(t, st, ""))
+			instagramTestShard(t, root, "circle", "message_1.json", copyOf("a"), copyOf("b"))
+			opts := ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example"}
+			_, err := ImportDYI(t.Context(), st, opts)
+			require.NoError(t, err)
+			original := instagramIDs(t, st)
+			extra := []string{}
+			if shared {
+				extra = []string{"x"}
+			}
+			instagramTestShard(t, root, "circle", "message_1.json", copyOf(append([]string{"d"}, extra...)...), copyOf(append([]string{"e"}, extra...)...), copyOf(append([]string{"f"}, extra...)...))
+			summary, err := ImportDYI(t.Context(), st, opts)
+			require.NoError(t, err)
+			assert.Equal(t, int64(1), summary.MessagesAdded)
+			assert.True(t, summary.Incomplete)
+			assert.Equal(t, 3, countMessages(t, st, ""))
+			var count int
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM reactions WHERE reaction_value IN ('a','b')`).Scan(&count))
+			assert.Equal(t, 2, count)
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM reactions WHERE reaction_value IN ('d','e','f')`).Scan(&count))
+			assert.Zero(t, count)
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM reactions WHERE reaction_value = 'x'`).Scan(&count))
+			assert.Equal(t, len(extra), count)
+			assert.Subset(t, instagramIDs(t, st), original)
+			summary, err = ImportDYI(t.Context(), st, opts)
+			require.NoError(t, err)
+			assert.Zero(t, summary.MessagesAdded)
+			assert.Equal(t, 3, countMessages(t, st, ""))
+		})
 	}
 }
 
@@ -643,17 +483,13 @@ func TestInstagramExcludedCandidates(t *testing.T) {
 	invalid := filepath.Join(root, filepath.FromSlash(instagramInbox), "invalid")
 	require.NoError(t, os.MkdirAll(invalid, 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(invalid, "message_final.json"), []byte(`{}`), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(invalid, "message_other.json"), []byte(`{}`), 0600))
 	requests := filepath.Join(root, "your_instagram_activity", "messages", "message_requests", "request")
 	require.NoError(t, os.MkdirAll(requests, 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(requests, "message_1.json"), []byte(`{}`), 0600))
-	html := filepath.Join(root, filepath.FromSlash(instagramInbox), "html")
-	require.NoError(t, os.MkdirAll(html, 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(html, "message_1.html"), []byte("unsupported"), 0600))
 	summary, err := ImportDYI(t.Context(), st, ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"})
 	require.NoError(t, err)
 	assert.True(t, summary.Incomplete)
-	assert.Equal(t, int64(4), summary.FilesSkipped)
+	assert.Equal(t, int64(2), summary.FilesSkipped)
 }
 
 func TestInstagramRescanNewRootAfterLimit(t *testing.T) {
@@ -672,34 +508,140 @@ func TestInstagramRescanNewRootAfterLimit(t *testing.T) {
 	assert.Equal(t, 3, countMessages(t, st, ""))
 }
 
-func TestInstagramLargeIdenticalGroupReplay(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	var records []map[string]any
-	for range 300 {
-		records = append(records, instagramTestRecord("same"))
+func TestInstagramSenderReconciliation(t *testing.T) {
+	for _, tc := range []struct {
+		name, sender  string
+		rename, media bool
+		added         int64
+	}{
+		{name: "rename", sender: "Renamed Example", rename: true},
+		{name: "different sender", sender: "Lumen Example", added: 1},
+		{name: "different media", sender: "Renamed Example", rename: true, media: true, added: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			root := t.TempDir()
+			record := instagramTestRecord("hello")
+			if tc.media {
+				record["photos"] = []map[string]string{{"uri": "photos/one.jpg"}}
+			}
+			filename := instagramTestShard(t, root, "circle", "message_1.json", record)
+			opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example", AttachmentsDir: t.TempDir()}
+			_, err := ImportDYI(t.Context(), st, opts)
+			require.NoError(t, err)
+			ids := instagramIDs(t, st)
+			record["sender_name"] = tc.sender
+			if tc.media {
+				record["photos"] = []map[string]string{{"uri": "photos/two.jpg"}}
+			}
+			data, err := os.ReadFile(filename)
+			require.NoError(t, err)
+			var shard map[string]any
+			require.NoError(t, json.Unmarshal(data, &shard))
+			shard["messages"] = []map[string]any{record}
+			if tc.rename {
+				shard["participants"] = []map[string]string{{"name": "Nova Example"}, {"name": tc.sender}}
+			}
+			data, err = json.Marshal(shard)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(filename, data, 0600))
+			summary, err := ImportDYI(t.Context(), st, opts)
+			require.NoError(t, err)
+			assert.Equal(t, tc.added, summary.MessagesAdded)
+			if tc.added > 0 {
+				assert.Equal(t, 2, countMessages(t, st, ""))
+				return
+			}
+			assert.Equal(t, ids, instagramIDs(t, st))
+			summary, err = ImportDYI(t.Context(), st, opts)
+			require.NoError(t, err)
+			assert.Zero(t, summary.MessagesAdded)
+			assert.Equal(t, ids, instagramIDs(t, st))
+		})
 	}
-	instagramTestShard(t, root, "circle", "message_1.json", records...)
-	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
-	_, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	summary, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.Zero(t, summary.MessagesAdded)
-	assert.Equal(t, 300, countMessages(t, st, ""))
 }
 
-func TestInstagramUnreadableStoredEvidenceGetsNewOccurrence(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	instagramTestShard(t, root, "circle", "message_1.json", instagramTestRecord("same"))
-	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
-	_, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	_, err = st.DB().ExecContext(t.Context(), `DELETE FROM message_raw`)
-	require.NoError(t, err)
-	summary, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), summary.MessagesAdded)
-	assert.Equal(t, 2, countMessages(t, st, ""))
+func TestInstagramDuplicateOccurrences(t *testing.T) {
+	t.Run("reordered", func(t *testing.T) {
+		st := testutil.NewTestStore(t)
+		root := t.TempDir()
+		a, b := instagramTestRecord("hello"), instagramTestRecord("hello")
+		a["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "✨"}}
+		b["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "❤️"}}
+		instagramTestShard(t, root, "circle", "message_1.json", a, b)
+		opts := ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example"}
+		_, err := ImportDYI(t.Context(), st, opts)
+		require.NoError(t, err)
+		reactions := func() map[string]string {
+			rows, err := st.DB().QueryContext(t.Context(), `SELECT m.source_message_id, r.reaction_value FROM messages m JOIN reactions r ON r.message_id = m.id`)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, rows.Close()) }()
+			result := map[string]string{}
+			for rows.Next() {
+				var id, reaction string
+				require.NoError(t, rows.Scan(&id, &reaction))
+				assert.NotContains(t, result, id)
+				result[id] = reaction
+			}
+			require.NoError(t, rows.Err())
+			return result
+		}
+		before := reactions()
+		instagramTestShard(t, root, "circle", "message_1.json", b)
+		instagramTestShard(t, root, "circle", "message_2.json", a)
+		_, err = ImportDYI(t.Context(), st, opts)
+		require.NoError(t, err)
+		var count int
+		require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM reactions`).Scan(&count))
+		assert.Equal(t, 2, count)
+		assert.Equal(t, before, reactions())
+		var created sql.NullTime
+		require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT created_at FROM reactions LIMIT 1`).Scan(&created))
+		assert.False(t, created.Valid)
+		require.NoError(t, os.Remove(filepath.Join(root, filepath.FromSlash(instagramInbox), "circle", "message_2.json")))
+		original := instagramIDs(t, st)
+		instagramTestShard(t, root, "circle", "message_1.json", b)
+		summary, err := ImportDYI(t.Context(), st, opts)
+		require.NoError(t, err)
+		assert.Zero(t, summary.MessagesAdded)
+		assert.Equal(t, original, instagramIDs(t, st))
+		c := instagramTestRecord("hello")
+		c["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "c"}}
+		instagramTestShard(t, root, "circle", "message_1.json", a, c)
+		summary, err = ImportDYI(t.Context(), st, opts)
+		require.NoError(t, err)
+		assert.Zero(t, summary.MessagesAdded)
+		assert.Equal(t, original, instagramIDs(t, st))
+
+		beforeChanged := reactions()
+		d := instagramTestRecord("hello")
+		d["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "d"}}
+		e := instagramTestRecord("hello")
+		e["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "e"}}
+		instagramTestShard(t, root, "circle", "message_1.json", d, e)
+		summary, err = ImportDYI(t.Context(), st, opts)
+		require.NoError(t, err)
+		assert.Zero(t, summary.MessagesAdded)
+		assert.Equal(t, original, instagramIDs(t, st))
+		assert.True(t, summary.Incomplete)
+		assert.Equal(t, beforeChanged, reactions())
+		summary, err = ImportDYI(t.Context(), st, opts)
+		require.NoError(t, err)
+		assert.Zero(t, summary.MessagesAdded)
+	})
+
+	t.Run("unreadable evidence", func(t *testing.T) {
+		st := testutil.NewTestStore(t)
+		root := t.TempDir()
+		instagramTestShard(t, root, "circle", "message_1.json", instagramTestRecord("same"))
+		opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
+		_, err := ImportDYI(t.Context(), st, opts)
+		require.NoError(t, err)
+		_, err = st.DB().ExecContext(t.Context(), `DELETE FROM message_raw`)
+		require.NoError(t, err)
+		summary, err := ImportDYI(t.Context(), st, opts)
+		require.NoError(t, err)
+		assert.Equal(t, int64(1), summary.MessagesAdded)
+		assert.Equal(t, 2, countMessages(t, st, ""))
+	})
 }

@@ -8,7 +8,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
-func TestMetaCommentsVisibleAsTextConversations(t *testing.T) {
+func TestMetaMessagesVisibleAsTextConversations(t *testing.T) {
 	for _, test := range []struct{ kind, source, identifier, conversationType, title, snippet string }{
 		{"facebook_comments", "facebook_comments", "app:9:page:100", "public_comments", "Example post", "Example comment"},
 		{"instagram_comments", "instagram_comments", "app:9:page:100", "public_comments", "Example post", "Example comment"},
