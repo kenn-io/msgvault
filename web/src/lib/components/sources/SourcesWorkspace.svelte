@@ -14,11 +14,10 @@
   import { contactCanSync, contactLabel, contactLastGood, contactRunState } from '../../sources/contacts';
   import { isOnDemandSourceType, sourceRunState, sourceTypeLabel, syncRunning, syncUnavailableLabel } from '../../sources/labels';
   import { formatDateTime } from '../../util/format';
-  import Dialog from '../common/Dialog.svelte';
   import InlineNotice from '../common/InlineNotice.svelte';
-  import { EmptyState } from '@kenn-io/kit-ui';
   import { operationStateChip } from '../../operations/labels';
-  import CommandLine from './CommandLine.svelte';
+  import AddSourceDialog from './AddSourceDialog.svelte';
+  import type { CommandSourceKind } from '../../sources/add-source';
   import ContactPanel from './ContactPanel.svelte';
   import SourcePanel from './SourcePanel.svelte';
 
@@ -26,7 +25,6 @@
   type RequestError = { message: string; details?: string };
   const MIN_POLL_MS = 500;
   const MAX_POLL_MS = 8000;
-  const ADD_SOURCE_COMMAND = 'msgvault add-account user@example.com';
 
   // Re-read idle scheduled sources to observe queued syncs.
   const IDLE_POLL_MS = 30_000;
@@ -60,6 +58,8 @@
   let contactsRequest: AbortController | undefined;
   let selected = $state<string>();
   let adding = $state(false);
+  // The kind whose steps the dialog opens at; unset opens the choices.
+  let addingKind = $state<CommandSourceKind>();
   let loading = $state(true);
   const initialLoading = $derived((loading || contactsLoading) && !sources.length && !contacts.length);
   const STALE_STATUS_MESSAGE = 'Automatic refresh paused. Source status may be stale.';
@@ -157,6 +157,7 @@
       if (contactsRequest === request) {
         contactsRequest = undefined;
         contactsLoading = false;
+        if (!loading && !sources.length && !contacts.length && !statusError && !contactsError && !addingKind) adding = false;
       }
     }
   }
@@ -309,6 +310,7 @@
       if (requestGeneration === generation) {
         controller = undefined;
         loading = false;
+        if (!contactsLoading && !sources.length && !contacts.length && !statusError && !contactsError && !addingKind) adding = false;
       }
     }
   }
@@ -366,7 +368,8 @@
       ? value.message
       : fallback;
   }
-  export function openAddSource(): void {
+  export function openAddSource(kind: CommandSourceKind | undefined = undefined): void {
+    addingKind = kind;
     adding = true;
   }
   export function refresh(): void {
@@ -412,7 +415,7 @@
     {#snippet actions()}
       <Button size="sm" label="Sync history" onclick={onOpenOperations} />
       {#if statusError || contactsError || sources.length > 0 || contacts.length > 0}
-        <Button size="sm" tone="info" surface="solid" label="Add source" onclick={openAddSource} />
+        <Button size="sm" tone="info" surface="solid" label="Add source…" onclick={() => openAddSource()} />
       {/if}
     {/snippet}
   </PageHeader>
@@ -423,9 +426,7 @@
   {#if triggerError}{@render syncErrorNotice()}{/if}
   {#if initialLoading}<p class="muted" role="status">Loading…</p>
   {:else if sources.length === 0 && contacts.length === 0}
-    {#if !loading && !contactsLoading && !statusError && !contactsError}<EmptyState title="No sources yet" description="Add an account or import an export to start your archive.">
-        <Button size="sm" tone="info" surface="solid" label="Add source" onclick={openAddSource} />
-      </EmptyState>{/if}
+    {#if !loading && !contactsLoading && !statusError && !contactsError}<AddSourceDialog inline onchoose={openAddSource} {onOpenSettings} />{/if}
   {:else}
     <Table ariaLabel="Sources" zebra={false} class="source-table" unsorted>
       {#snippet header()}
@@ -562,10 +563,8 @@
   />
 {/if}
 
-{#if adding}
-  <Dialog title="Add source" onclose={() => (adding = false)}>
-    <CommandLine command={ADD_SOURCE_COMMAND} />
-  </Dialog>
+{#if adding && (addingKind !== undefined || sources.length > 0 || contacts.length > 0 || statusError || contactsError)}
+  <AddSourceDialog onback={sources.length === 0 && contacts.length === 0 ? () => (adding = false) : undefined} bind:kind={addingKind} onclose={() => (adding = false)} ondone={() => { adding = false; refresh(); }} {onOpenSettings} />
 {/if}
 
 <style>

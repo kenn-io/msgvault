@@ -182,7 +182,7 @@ func TestIssueAgentTokenExpiryRefusesOldDaemon(t *testing.T) {
 }
 
 func TestIssueArchiveSenderRestrictionsRefusesOldDaemon(t *testing.T) {
-	for _, version := range []string{"4.0.0", "4.1.0"} {
+	for _, version := range []string{"4.1.0", "4.2.0"} {
 		t.Run(version, func(t *testing.T) {
 			posts := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -204,7 +204,7 @@ func TestIssueArchiveSenderRestrictionsRefusesOldDaemon(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, client.Close()) })
 			_, err = client.IssueAgentTokenWithArchiveSenders(t.Context(), "archive", []string{"message.archive"}, []int64{1}, nil, map[int64][]string{1: {"codes@example.test"}}, time.Time{})
-			if version == "4.0.0" {
+			if version == "4.1.0" {
 				require.ErrorContains(t, err, "archive sender restrictions require")
 				assert.Zero(t, posts)
 			} else {

@@ -38,10 +38,20 @@ func TestArchiveMessageCommands(t *testing.T) {
 		assert.Contains(t, output.String(), `"dry_run":true`)
 		assert.True(t, agentDelegatedCommand(command.Name()))
 	}
-	for _, args := range [][]string{{}, {"--message", "0"}, {"--message", "-1"}, {"--message", "x"}, {"7"}, {"--message", "7"}} {
-		backend := &cliArchiveBackend{}
+	for _, tc := range []struct {
+		args       []string
+		compatible bool
+	}{
+		{nil, true},
+		{[]string{"--message", "0"}, true},
+		{[]string{"--message", "-1"}, true},
+		{[]string{"--message", "x"}, true},
+		{[]string{"--message", "7", "extra"}, true},
+		{[]string{"--message", "7"}, false},
+	} {
+		backend := &cliArchiveBackend{compatible: tc.compatible}
 		command := newMessageArchiveCommand(true, backend)
-		command.SetArgs(args)
+		command.SetArgs(tc.args)
 		command.SetOut(&bytes.Buffer{})
 		command.SetErr(&bytes.Buffer{})
 		require.Error(t, command.ExecuteContext(t.Context()))

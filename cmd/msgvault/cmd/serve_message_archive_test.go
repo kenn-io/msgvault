@@ -282,9 +282,7 @@ func TestArchiveSenderRequiresEveryLiteralFromAndRechecksUnderLock(t *testing.T)
 	require.NoError(t, err)
 	require.Len(t, quoted.From, 1)
 	require.Equal(t, "first last@example.test", quoted.From[0].Email)
-	_, senderKey, err := parseStoredMailbox(quoted.From[0].Email)
-	require.NoError(t, err)
-	grant.Sources[0].ArchiveSenderKeys = append(grant.Sources[0].ArchiveSenderKeys, senderKey)
+	grant.Sources[0].ArchiveSenderKeys = append(grant.Sources[0].ArchiveSenderKeys, "first last@example.test")
 	newArchiveProviderFixture(t)
 	cfg := &config.Config{HomeDir: t.TempDir()}
 	cfg.Data.DataDir = cfg.HomeDir

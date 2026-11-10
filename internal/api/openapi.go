@@ -407,8 +407,10 @@ import (
 // 3.51.0 adds attachment processing outcomes and worker errors.
 // 4.0.0 removes local document commands, search, status, and operation lanes.
 // Docbank owns document processing.
-// 4.1.0 adds Gmail archive state writes with source- and sender-scoped message.archive grants.
-const APISchemaVersion = "4.1.0"
+// 4.1.0 adds recorded names, saved contacts, and reconciled addresses to merge-list and detail responses,
+// registered service labels to current contact points, and identity keys to observations.
+// 4.2.0 adds Gmail archive state writes with source- and sender-scoped message.archive grants.
+const APISchemaVersion = "4.2.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1034,6 +1036,12 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		{"MessagingRoute", "network_label"},
 		{"MessagingRoute", "provider_chat_id"},
 		{"PersonMessagingRoutesPage", "alias_reason"},
+		{"ParticipantAddress", "display_value"},
+		{"ParticipantAddress", "service_slug"},
+		{"ParticipantAddress", "service_label"},
+		{"ParticipantAddress", "scope_kind"},
+		{"ParticipantAddress", "scope_value"},
+		{"ParticipantAddress", "participant_display_name"},
 	} {
 		if schema := schemas[field.schema]; schema != nil {
 			if property := schema.Properties[field.property]; property != nil {

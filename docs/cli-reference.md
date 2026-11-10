@@ -315,7 +315,7 @@ After adding an account, sync it with `msgvault sync-full`. IMAP accounts use th
 ## archive and unarchive
 
 Remove one Gmail message from its inbox, or restore it, through the selected
-daemon. Use msgvault's positive archived message ID. Requires API schema 4.1.0.
+daemon. Use msgvault's positive archived message ID. Requires API schema 4.2.0.
 
 ```bash
 msgvault archive --message 42 --dry-run --json
@@ -5601,7 +5601,7 @@ msgvault agent-token issue --label code-reader \
 ```
 
 Repeat `--archive-sender SOURCE_ID=ADDRESS` for additional allowed addresses.
-Requires daemon API schema 4.1.0; older daemons reject issuance with restrictions.
+Requires daemon API schema 4.2.0; older daemons reject issuance with restrictions.
 Omitting the flag allows archiving from any sender on the selected sources.
 `message.read` remains account-scoped. The separate `--sender` flag still selects
 confirmed outgoing draft identities. See the [archive API](api-server.md#message-archiving)
