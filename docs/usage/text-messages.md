@@ -568,11 +568,7 @@ Dated cache-backed lists and totals omit them. Set
 [`[analytics].engine = "sql"`](../configuration.md#analytics) for live browsing;
 no date is invented to place records in the cache.
 
-Links are preserved; no media is downloaded. The link/media counter counts each
-eligible scanned row once when `body` or `message` contains an HTTP(S) URL,
-a post `url` contains one, or `media` is nonempty. It includes duplicates and
-already archived records. Identifying `permalink`/`channel_url` values do not
-count. A counted URL does not imply a missing media attachment.
+Links are preserved; no media is downloaded.
 Coverage depends on what Reddit supplied: no complete lifetime-history or
 removed-chat recovery guarantee. The separate legacy-PM archive UI's 1,000-PM
 cap does not establish an account-export limit. Format support follows the

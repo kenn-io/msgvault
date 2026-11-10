@@ -43,7 +43,6 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 			summary.MissingIDs += f.MissingIDs
 			summary.UnknownDates += f.UnknownDates
 			summary.UnknownSenders += f.UnknownSenders
-			summary.LinksNotDownloaded += f.LinksNotDownloaded
 		}
 		retErr = errors.Join(retErr, st.UpdateSyncCheckpointContext(cleanup, syncID, &store.Checkpoint{
 			MessagesProcessed: int64(summary.Added + summary.Unchanged), MessagesAdded: int64(summary.Added),
@@ -175,12 +174,6 @@ func importBatch(ctx context.Context, st *store.Store, sourceID int64, owner, ki
 		}
 		if sender == "" {
 			stats.UnknownSenders++
-		}
-		// Coverage describes eligible scanned rows, including retained originals.
-		// body includes any appended post URL or comment media.
-		linked := c["media"] != "" || strings.Contains(body, "https://") || strings.Contains(body, "http://")
-		if linked {
-			stats.LinksNotDownloaded++
 		}
 		if _, ok := known[key]; ok {
 			stats.Unchanged++

@@ -32,10 +32,6 @@ type exportReader struct {
 	owner string
 }
 
-func normalizeHandle(s string) string {
-	return strings.ToLower(displayHandle(s))
-}
-
 func displayHandle(s string) string {
 	s = strings.TrimSpace(s)
 	switch {
@@ -55,7 +51,7 @@ func displayHandle(s string) string {
 }
 
 func openExport(ctx context.Context, dir, me string, summary *ImportSummary) (*exportReader, error) {
-	owner := normalizeHandle(me)
+	owner := strings.ToLower(displayHandle(me))
 	if me != "" && owner == "" {
 		return nil, errors.New("reddit: invalid --me handle")
 	}
@@ -96,7 +92,7 @@ func openExport(ctx context.Context, dir, me string, summary *ImportSummary) (*e
 				value := row.Columns["value"]
 				switch row.Columns["statistic"] {
 				case "account name":
-					owner := normalizeHandle(value)
+					owner := strings.ToLower(displayHandle(value))
 					if value != "" && owner == "" {
 						return errors.New("invalid statistics account name")
 					}

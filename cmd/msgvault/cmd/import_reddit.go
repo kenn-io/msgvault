@@ -63,7 +63,7 @@ func runImportReddit(cmd *cobra.Command, dir string, opts redditCLIOptions) erro
 	summary, importErr := reddit.Import(ctx, s, reddit.ImportOptions{RootDir: dir, Me: opts.Me})
 	out := cmd.OutOrStdout()
 	for _, f := range summary.Files {
-		_, _ = fmt.Fprintf(out, "%s: %d rows, %d added, %d already archived (original retained), %d malformed, %d missing IDs; %d unknown dates, %d unknown senders, %d link/media rows not downloaded\n", f.Filename, f.Rows, f.Added, f.Unchanged, f.Malformed, f.MissingIDs, f.UnknownDates, f.UnknownSenders, f.LinksNotDownloaded)
+		_, _ = fmt.Fprintf(out, "%s: %d rows, %d added, %d already archived (original retained), %d malformed, %d missing IDs; %d unknown dates, %d unknown senders\n", f.Filename, f.Rows, f.Added, f.Unchanged, f.Malformed, f.MissingIDs, f.UnknownDates, f.UnknownSenders)
 	}
 	for _, name := range summary.Unsupported {
 		_, _ = fmt.Fprintf(out, "Unsupported: %s\n", name)

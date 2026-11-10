@@ -8,14 +8,14 @@ type ImportOptions struct {
 	Me      string
 }
 type FileSummary struct {
-	Filename                                         string
-	Rows, Added, Unchanged, Malformed, MissingIDs    int
-	UnknownDates, UnknownSenders, LinksNotDownloaded int
+	Filename                                      string
+	Rows, Added, Unchanged, Malformed, MissingIDs int
+	UnknownDates, UnknownSenders                  int
 }
 type ImportSummary struct {
-	SourceID                                         int64
-	Files                                            []*FileSummary
-	Unsupported                                      []string
-	Added, Unchanged, Malformed, MissingIDs          int
-	UnknownDates, UnknownSenders, LinksNotDownloaded int
+	SourceID                                int64
+	Files                                   []*FileSummary
+	Unsupported                             []string
+	Added, Unchanged, Malformed, MissingIDs int
+	UnknownDates, UnknownSenders            int
 }

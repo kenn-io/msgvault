@@ -271,30 +271,6 @@ func TestImportCoverageCountsExistingRecords(t *testing.T) {
 		require.NoError(err)
 		assert.Equal(4, summary.UnknownDates)
 		assert.Equal(4, summary.UnknownSenders)
-		assert.Equal(4, summary.LinksNotDownloaded)
-	}
-}
-
-func TestImportContentLinkCoverage(t *testing.T) {
-	for _, tc := range []struct {
-		name, file, data string
-		want             int
-	}{
-		{"identifying URLs", "chat_history.csv", "message_id,message,permalink,channel_url\none,plain,https://example.com/permalink,https://example.com/channel\n", 0},
-		{"body URL", "comments.csv", "id,body\none,https://example.com/content\n", 1},
-		{"message URL", "chat_history.csv", "message_id,message\none,https://example.com/content\n", 1},
-		{"post URL", "posts.csv", "id,title,url\none,lantern,https://example.com/content\n", 1},
-		{"explicit media", "comments.csv", "id,body,media\none,plain,fictional-media-id\n", 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			root := t.TempDir()
-			require.NoError(os.WriteFile(filepath.Join(root, tc.file), []byte(tc.data), 0600))
-			summary, err := Import(t.Context(), testutil.NewTestStore(t), ImportOptions{RootDir: root, Me: "fictional_owner"})
-			require.NoError(err)
-			assert.Equal(tc.want, summary.LinksNotDownloaded)
-		})
 	}
 }
 
@@ -421,12 +397,18 @@ func TestImportSubredditTitleCanonical(t *testing.T) {
 }
 
 func TestImportOptionalContentHeaders(t *testing.T) {
+	require := require.New(t)
 	root := t.TempDir()
 	for name, data := range map[string]string{"messages.csv": "id,subject\none,hello\n", "posts.csv": "id,url\nthree,https://example.com/post\n"} {
-		require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(data), 0600))
+		require.NoError(os.WriteFile(filepath.Join(root, name), []byte(data), 0600))
 	}
 	st := testutil.NewTestStore(t)
 	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
-	require.NoError(t, err)
+	require.NoError(err)
 	assert.Equal(t, 2, summary.Added)
+	var id int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages WHERE source_message_id='post:three'").Scan(&id))
+	body, err := st.GetMessageBodyText(t.Context(), id)
+	require.NoError(err)
+	assert.Equal(t, "https://example.com/post", body)
 }
