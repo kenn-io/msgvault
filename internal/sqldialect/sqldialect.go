@@ -40,8 +40,8 @@ func RebindPostgreSQL(query string) string {
 	return b.String()
 }
 
-// TokenSpans returns byte offsets of Unicode letter and digit runs.
-func TokenSpans(s string) [][2]int {
+// tokenSpans returns byte offsets of Unicode letter and digit runs.
+func tokenSpans(s string) [][2]int {
 	var spans [][2]int
 	start := -1
 	for i, r := range s {
@@ -62,7 +62,7 @@ func TokenSpans(s string) [][2]int {
 
 // EscapeTSQueryTerm splits a search term into Unicode letter and digit runs.
 func EscapeTSQueryTerm(s string) []string {
-	spans := TokenSpans(s)
+	spans := tokenSpans(s)
 	var lexemes []string
 	for _, span := range spans {
 		lexemes = append(lexemes, s[span[0]:span[1]])
@@ -76,7 +76,7 @@ func NormalizeFTSText(s string) string {
 	for i := range b {
 		b[i] = ' '
 	}
-	for _, span := range TokenSpans(s) {
+	for _, span := range tokenSpans(s) {
 		copy(b[span[0]:span[1]], s[span[0]:span[1]])
 	}
 	return string(b)

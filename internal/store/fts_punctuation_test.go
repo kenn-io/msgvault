@@ -4,7 +4,9 @@ import (
 	"database/sql"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -57,12 +59,28 @@ func TestPostgresFTSPhraseDoesNotCrossFields(t *testing.T) {
 		t.Skip("PostgreSQL weighted search vector")
 	}
 	crossField := f.NewMessage().WithSourceMessageID("cross-field").Create(t, f.Store)
+	crossRecipients := f.NewMessage().WithSourceMessageID("cross-recipients").Create(t, f.Store)
 	complete := f.NewMessage().WithSourceMessageID("complete-address").Create(t, f.Store)
+	require.NoError(t, f.Store.UpsertMessageBody(complete, sql.NullString{String: "alice@example.com", Valid: true}, sql.NullString{}))
 	require.NoError(t, f.Store.UpsertFTS(crossField, "alice", "", "example.com", "", ""))
+	require.NoError(t, f.Store.UpsertFTS(crossRecipients, "", "", "", "alice", "example.com"))
 	require.NoError(t, f.Store.UpsertFTS(complete, "", "alice@example.com", "", "", ""))
 
 	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alice@example.com"}}, 10)
 	require.NoError(t, err)
-	require.Contains(t, ids, complete)
-	require.NotContains(t, ids, crossField)
+	assert.Contains(t, ids, complete)
+	assert.NotContains(t, ids, crossField)
+	assert.NotContains(t, ids, crossRecipients)
+
+	ids, _, err = f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alice", "example"}}, 10)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []int64{crossField, crossRecipients, complete}, ids)
+
+	engine := query.NewEngine(f.Store.DB(), true)
+	bodySearcher, ok := engine.(query.MessageBodySearcher)
+	require.True(t, ok)
+	results, err := bodySearcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"alice@example.com"}}, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, results.Messages, 1)
+	assert.Equal(t, complete, results.Messages[0].ID)
 }
