@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/calevent"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/verification"
 )
 
@@ -754,11 +755,12 @@ func (s *Store) PopulateMessageBodiesContext(ctx context.Context, messages []API
 		ids[i] = messages[i].ID
 	}
 	metadata := make(map[int64]APIMessage, len(ids))
-	err := queryInChunksContext(ctx, s.db, ids, nil, `SELECT m.id, COALESCE(m.subject, ''), COALESCE(m.snippet, ''), COALESCE(c.title, '') FROM messages m LEFT JOIN conversations c ON c.id=m.conversation_id WHERE m.id IN (%s)`, func(rows *loggedRows) error {
+	err := queryInChunksContext(ctx, s.db, ids, nil, `SELECT m.id, m.source_id, COALESCE(m.subject, ''), COALESCE(m.snippet, ''), COALESCE(c.title, '') FROM messages m LEFT JOIN conversations c ON c.id=m.conversation_id WHERE m.id IN (%s)`, func(rows *loggedRows) error {
 		var msg APIMessage
-		if err := rows.Scan(&msg.ID, &msg.Subject, &msg.Snippet, &msg.ConversationTitle); err != nil {
+		if err := rows.Scan(&msg.ID, &msg.SourceID, &msg.Subject, &msg.Snippet, &msg.ConversationTitle); err != nil {
 			return err
 		}
+		msg.ConversationTitle = sourcescope.ConversationTitle(ctx, msg.SourceID, msg.ConversationTitle)
 		metadata[msg.ID] = msg
 		return nil
 	})

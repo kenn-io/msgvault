@@ -27,6 +27,15 @@ func WithIncomingSenders(ctx context.Context, senders map[int64][]string) contex
 	return context.WithValue(ctx, incomingKey{}, owned)
 }
 
+// ConversationTitle hides shared titles when a source has a sender restriction.
+func ConversationTitle(ctx context.Context, sourceID int64, title string) string {
+	senders, _ := ctx.Value(incomingKey{}).(map[int64][]string)
+	if len(senders[sourceID]) > 0 {
+		return ""
+	}
+	return title
+}
+
 // IncomingPredicate restricts messages to their source's literal From snapshots.
 func IncomingPredicate(ctx context.Context, message, source string, lower func(string) string) (string, []any) {
 	senders, ok := ctx.Value(incomingKey{}).(map[int64][]string)

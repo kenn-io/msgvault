@@ -452,6 +452,7 @@ its `incoming_senders`. Omission allows any sender on that source. Addresses are
 canonicalized; invalid or duplicate addresses, empty/null lists, unselected
 sources, and restrictions without a relevant permission are rejected. These lists
 limit reads, reply parents, and archive writes independently of outgoing `sender_selections`.
+Responses omit shared conversation titles for sender-restricted sources.
 Every recorded literal From address must be allowed. Missing From envelopes,
 including legacy NULL envelopes, fail closed for sender-restricted grants.
 This literal From filter does not authenticate the sender. Disallowed, missing,

@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/verification"
 )
 
 func TestAgentCLISearchOmitsHybridHint(t *testing.T) {
@@ -913,9 +914,13 @@ func TestAgentMessageReferenceScope(t *testing.T) {
 func TestAgentIncomingSenderScopesReads(t *testing.T) {
 	requirementsForTest := require.New(t)
 	st := testutil.NewTestStore(t)
-	src, allowed, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", "allowed", "allowed code", "")
+	src, err := st.GetOrCreateSource("test", "owner@example.test")
+	requirementsForTest.NoError(err)
+	_, err = st.EnsureConversation(t.Context(), src.ID, "thread", "private code")
 	requirementsForTest.NoError(err)
 	_, denied, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", "denied", "private code", "")
+	requirementsForTest.NoError(err)
+	_, allowed, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", "allowed", "allowed code", "")
 	requirementsForTest.NoError(err)
 	for _, entry := range []struct {
 		id      int64
@@ -937,7 +942,7 @@ func TestAgentIncomingSenderScopesReads(t *testing.T) {
 	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner-key", AgentAccess: true}}
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	defer srv.agentGrants.Close()
-	body := fmt.Sprintf(`{"label":"reader","permissions":["search.read","message.read","stats.read","attachment.read"],"source_ids":[%d],"incoming_senders":{"%d":["codes@example.test"]}}`, src.ID, src.ID)
+	body := fmt.Sprintf(`{"label":"reader","permissions":["search.read","message.read","stats.read","attachment.read","verification.read"],"source_ids":[%d],"incoming_senders":{"%d":["codes@example.test"]}}`, src.ID, src.ID)
 	issue := httptest.NewRequestWithContext(t.Context(), http.MethodPost, agentTokensPath, strings.NewReader(body))
 	issue.Header.Set("X-Api-Key", "owner-key")
 	issue.Header.Set("Content-Type", "application/json")
@@ -991,6 +996,81 @@ func TestAgentIncomingSenderScopesReads(t *testing.T) {
 	requirementsForTest.Equal(int64(1), fast.TotalCount)
 	requirementsForTest.NotNil(fast.Stats)
 	requirementsForTest.Equal(int64(1), fast.Stats.MessageCount)
+	requirementsForTest.Empty(deep.Messages[0].ConversationTitle)
+	requirementsForTest.Empty(fast.Messages[0].ConversationTitle)
+	detail, err := st.GetMessageContext(ctx, allowed)
+	requirementsForTest.NoError(err)
+	requirementsForTest.Empty(detail.ConversationTitle)
+	for _, lookup := range []func() (*query.MessageDetail, error){
+		func() (*query.MessageDetail, error) { return engine.GetMessage(ctx, allowed) },
+		func() (*query.MessageDetail, error) {
+			return engine.GetMessageBySourceID(ctx, "allowed", []int64{src.ID})
+		},
+	} {
+		message, err := lookup()
+		requirementsForTest.NoError(err)
+		requirementsForTest.Equal("allowed code", message.Subject)
+		requirementsForTest.Empty(message.ConversationTitle)
+	}
+	batch, err := engine.GetMessageSummariesByIDs(ctx, []int64{allowed})
+	requirementsForTest.NoError(err)
+	requirementsForTest.Len(batch, 1)
+	requirementsForTest.Empty(batch[0].ConversationTitle)
+	owner, err := st.GetMessageContext(t.Context(), allowed)
+	requirementsForTest.NoError(err)
+	requirementsForTest.Equal("private code", owner.ConversationTitle)
+
+	other, err := st.GetOrCreateSource("test", "other-account@example.test")
+	requirementsForTest.NoError(err)
+	_, err = st.EnsureConversation(t.Context(), other.ID, "thread", "other account title")
+	requirementsForTest.NoError(err)
+	_, otherID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "other-account@example.test", "other-message", "other subject", "")
+	requirementsForTest.NoError(err)
+	_, mixedToken, _, err := srv.agentGrants.Issue("mixed", []agentgrant.Permission{agentgrant.PermissionMessageRead, agentgrant.PermissionVerificationRead}, []agentgrant.SourceRef{
+		{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier, IncomingSenderKeys: []string{"codes@example.test"}},
+		{ID: other.ID, Type: other.SourceType, Identifier: other.Identifier},
+	}, time.Time{})
+	requirementsForTest.NoError(err)
+	for _, tc := range []struct {
+		id            int64
+		want, exclude string
+	}{{allowed, "allowed code", "private code"}, {otherID, "other account title", "private code"}} {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", tc.id), nil)
+		r.Header.Set(apiprotocol.AgentTokenHeader, mixedToken)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, r)
+		requirementsForTest.Equal(http.StatusOK, w.Code, w.Body.String())
+		requirementsForTest.Contains(w.Body.String(), tc.want)
+		requirementsForTest.NotContains(w.Body.String(), tc.exclude)
+	}
+
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE conversations SET title = ? WHERE source_id = ?"), "Your verification code is 482913", src.ID)
+	requirementsForTest.NoError(err)
+	issueWithoutVerification := httptest.NewRequestWithContext(t.Context(), http.MethodPost, agentTokensPath, strings.NewReader(strings.Replace(body, `,"verification.read"`, "", 1)))
+	issueWithoutVerification.Header.Set("X-Api-Key", "owner-key")
+	issueWithoutVerification.Header.Set("Content-Type", "application/json")
+	issuedWithoutVerification := httptest.NewRecorder()
+	srv.Router().ServeHTTP(issuedWithoutVerification, issueWithoutVerification)
+	requirementsForTest.Equal(http.StatusCreated, issuedWithoutVerification.Code, issuedWithoutVerification.Body.String())
+	var maskedGrant agentTokenIssueResponse
+	requirementsForTest.NoError(json.Unmarshal(issuedWithoutVerification.Body.Bytes(), &maskedGrant))
+	readAllowed := func() string {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", allowed), nil)
+		r.Header.Set(apiprotocol.AgentTokenHeader, maskedGrant.Secret)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, r)
+		requirementsForTest.Equal(http.StatusOK, w.Code, w.Body.String())
+		return w.Body.String()
+	}
+	ordinary := readAllowed()
+	requirementsForTest.Contains(ordinary, "allowed code")
+	requirementsForTest.NotContains(ordinary, "482913")
+	requirementsForTest.NotContains(ordinary, verification.Masked)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET subject = ? WHERE id = ?"), "Your verification code is 987654", allowed)
+	requirementsForTest.NoError(err)
+	masked := readAllowed()
+	requirementsForTest.Contains(masked, verification.Masked)
+	requirementsForTest.NotContains(masked, "987654")
 }
 
 func TestIncomingSenderScopedCountsUseMessageIDs(t *testing.T) {

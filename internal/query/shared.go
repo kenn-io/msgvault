@@ -583,6 +583,7 @@ func getMessageByQueryShared(ctx context.Context, db store.SQLReader, rebind reb
 		return nil, fmt.Errorf("get message: %w", err)
 	}
 
+	msg.ConversationTitle = sourcescope.ConversationTitle(ctx, msg.SourceID, msg.ConversationTitle)
 	msg.RelatedMessageID = store.RelatedMessageCandidate(msg.ID, msg.MessageType, metadata.String)
 	related := []store.APIMessage{{SourceID: msg.SourceID, MessageType: msg.MessageType, RelatedMessageID: msg.RelatedMessageID}}
 	if err := store.PopulateRelatedMessagesContext(ctx, db, rebind, tablePrefix, related); err != nil {
