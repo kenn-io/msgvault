@@ -176,7 +176,7 @@ func runAgentDemo(cmd *cobra.Command, opts fakeVaultCommandOptions) error {
 			return usageErr(cmd, fmt.Errorf("--as-of: expected RFC 3339 or now: %w", err))
 		}
 		if asOf.IsZero() {
-			return usageErr(cmd, errors.New("--as-of must not be the zero time"))
+			return usageErr(cmd, errors.New("--as-of: choose a more recent date"))
 		}
 	}
 	cfg := config.NewDefaultConfig()
@@ -209,7 +209,7 @@ func runAgentDemo(cmd *cobra.Command, opts fakeVaultCommandOptions) error {
 		return err
 	}
 	out := cmd.OutOrStdout()
-	_, _ = fmt.Fprintf(out, "Agent demo archive: %s (scenario %s v%d, seed %d, as of %s)\n", opts.output, m.Scenario, m.ScenarioVersion, m.Seed, m.AsOf.Format(time.RFC3339))
+	_, _ = fmt.Fprintf(out, "Agent demo archive: %s (seed %d, as of %s)\n", opts.output, m.Seed, m.AsOf.Format(time.RFC3339))
 	_, _ = fmt.Fprintf(out, "Messages: %d in %d conversations across %d sources\n", len(m.Messages), len(m.Conversations), len(m.Sources))
 	_, _ = fmt.Fprintf(out, "Persons: %d; unsaved participants: %d\n", len(m.Persons), countUnsavedParticipants(m))
 	_, _ = fmt.Fprintf(out, "Manifest: %s\n", filepath.Join(opts.output, agentdemo.ManifestFile))

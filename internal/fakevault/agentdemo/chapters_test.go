@@ -214,9 +214,9 @@ func TestArchiveIntegrity(t *testing.T) {
 	assert.Equal("ok", result)
 	rows, err := st.DB().QueryContext(t.Context(), "PRAGMA foreign_key_check")
 	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
 	assert.False(rows.Next())
 	require.NoError(rows.Err())
-	require.NoError(rows.Close())
 }
 
 type rejectTransport struct{ t *testing.T }
@@ -355,52 +355,60 @@ func TestVoicePersonScopeMembership(t *testing.T) {
 		if c.ConversationType != "direct_chat" && c.ConversationType != "email_thread" {
 			continue
 		}
-		family := m.Sources[c.Source].Family
-		var matches int
-		rows, err := st.DB().QueryContext(t.Context(), `SELECT m.id,m.is_from_me,EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id=ml.label_id WHERE ml.message_id=m.id AND l.name='DRAFT') FROM messages m WHERE conversation_id=?`, c.ID)
-		require.NoError(err)
-		for rows.Next() {
-			var id int64
-			var own, draft bool
-			require.NoError(rows.Scan(&id, &own, &draft))
-			p := provenance[id]
-			if p == nil {
-				continue
+		t.Run(handle, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			family := m.Sources[c.Source].Family
+			var matches int
+			rows, err := st.DB().QueryContext(t.Context(), `SELECT m.id,m.is_from_me,EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id=ml.label_id WHERE ml.message_id=m.id AND l.name='DRAFT') FROM messages m WHERE conversation_id=?`, c.ID)
+			require.NoError(err)
+			defer func() { require.NoError(rows.Close()) }()
+			for rows.Next() {
+				var id int64
+				var own, draft bool
+				require.NoError(rows.Scan(&id, &own, &draft))
+				p := provenance[id]
+				if p == nil {
+					continue
+				}
+				if !slices.Contains(p.Directions, personscope.FromPerson) && !slices.Contains(p.Directions, personscope.ToPerson) {
+					continue
+				}
+				matches++
+				if own && !draft {
+					ownCounts[family]++
+					assert.Contains(p.Roles, personscope.RoleTo)
+				}
 			}
-			if !slices.Contains(p.Directions, personscope.FromPerson) && !slices.Contains(p.Directions, personscope.ToPerson) {
-				continue
+			require.NoError(rows.Err())
+			if matches > 0 {
+				found[family] = append(found[family], handle)
 			}
-			matches++
-			if own && !draft {
-				ownCounts[family]++
-				assert.Contains(p.Roles, personscope.RoleTo)
-			}
-		}
-		require.NoError(rows.Err())
-		require.NoError(rows.Close())
-		if matches > 0 {
-			found[family] = append(found[family], handle)
-		}
+		})
 	}
 	assert.ElementsMatch(oracle.PersonSam.Chat, found["chat"])
 	assert.ElementsMatch(oracle.PersonSam.Email, found["email"])
 	assert.Equal(9, ownCounts["chat"])
 	assert.Equal(6, ownCounts["email"])
 	for _, h := range oracle.PersonSam.Never {
-		require.Contains(m.Conversations, h)
-		require.Equal("group_chat", m.Conversations[h].ConversationType)
-		require.Positive(count(t, st, "SELECT count(*) FROM messages WHERE conversation_id=?", m.Conversations[h].ID), h)
-		rows, err := st.DB().QueryContext(t.Context(), "SELECT id FROM messages WHERE conversation_id=?", m.Conversations[h].ID)
-		require.NoError(err)
-		for rows.Next() {
-			var id int64
-			require.NoError(rows.Scan(&id))
-			p := provenance[id]
-			require.NotNil(p, "group provenance for message %d in %s", id, h)
-			assert.Contains(p.Directions, personscope.Group)
-		}
-		require.NoError(rows.Err())
-		require.NoError(rows.Close())
+		t.Run(h, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			require.Contains(m.Conversations, h)
+			require.Equal("group_chat", m.Conversations[h].ConversationType)
+			require.Positive(count(t, st, "SELECT count(*) FROM messages WHERE conversation_id=?", m.Conversations[h].ID), h)
+			rows, err := st.DB().QueryContext(t.Context(), "SELECT id FROM messages WHERE conversation_id=?", m.Conversations[h].ID)
+			require.NoError(err)
+			defer func() { require.NoError(rows.Close()) }()
+			for rows.Next() {
+				var id int64
+				require.NoError(rows.Scan(&id))
+				p := provenance[id]
+				require.NotNil(p, "group provenance for message %d in %s", id, h)
+				assert.Contains(p.Directions, personscope.Group)
+			}
+			require.NoError(rows.Err())
+		})
 	}
 }
 func TestArchiveSurvivesBackupRoundTrip(t *testing.T) {

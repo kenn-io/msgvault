@@ -68,29 +68,29 @@ func (c *canonicalizer) load(name string) (result *digestTable, err error) {
 	if table, ok := c.tables[name]; ok {
 		return table, nil
 	}
-	rows, err := c.db.QueryContext(c.ctx, "SELECT * FROM "+quoteIdentifier(name))
+	dataRows, err := c.db.QueryContext(c.ctx, "SELECT * FROM "+quoteIdentifier(name))
 	if err != nil {
 		return nil, err
 	}
-	defer func(rows *sql.Rows) {
-		err = errors.Join(err, rows.Close())
+	defer func() {
+		err = errors.Join(err, dataRows.Close())
 		if err != nil {
 			result = nil
 			delete(c.tables, name)
 		}
-	}(rows)
-	columns, err := rows.Columns()
+	}()
+	columns, err := dataRows.Columns()
 	if err != nil {
 		return nil, err
 	}
 	table := &digestTable{columns: columns, byID: map[string]digestRow{}, foreign: map[string]string{}}
-	for rows.Next() {
+	for dataRows.Next() {
 		values := make([]any, len(columns))
 		ptrs := make([]any, len(columns))
 		for i := range values {
 			ptrs[i] = &values[i]
 		}
-		if err = rows.Scan(ptrs...); err != nil {
+		if err = dataRows.Scan(ptrs...); err != nil {
 			return nil, err
 		}
 		row := digestRow{}
@@ -106,24 +106,24 @@ func (c *canonicalizer) load(name string) (result *digestTable, err error) {
 			table.byID[fmt.Sprint(id)] = row
 		}
 	}
-	if err = rows.Err(); err != nil {
+	if err = dataRows.Err(); err != nil {
 		return nil, err
 	}
-	rows, err = c.db.QueryContext(c.ctx, "PRAGMA foreign_key_list("+quoteIdentifier(name)+")")
+	foreignRows, err := c.db.QueryContext(c.ctx, "PRAGMA foreign_key_list("+quoteIdentifier(name)+")")
 	if err != nil {
 		return nil, err
 	}
-	defer func(rows *sql.Rows) {
-		err = errors.Join(err, rows.Close())
+	defer func() {
+		err = errors.Join(err, foreignRows.Close())
 		if err != nil {
 			result = nil
 			delete(c.tables, name)
 		}
-	}(rows)
-	for rows.Next() {
+	}()
+	for foreignRows.Next() {
 		var id, seq int
 		var target, from, to, onUpdate, onDelete, match string
-		if err = rows.Scan(&id, &seq, &target, &from, &to, &onUpdate, &onDelete, &match); err != nil {
+		if err = foreignRows.Scan(&id, &seq, &target, &from, &to, &onUpdate, &onDelete, &match); err != nil {
 			return nil, err
 		}
 		switch to {
@@ -133,7 +133,7 @@ func (c *canonicalizer) load(name string) (result *digestTable, err error) {
 			table.foreign[from] = "messages"
 		}
 	}
-	if err = rows.Err(); err != nil {
+	if err = foreignRows.Err(); err != nil {
 		return nil, err
 	}
 	c.tables[name] = table
