@@ -17,7 +17,16 @@ test('opens live Saved View items and saves only canonical state', async ({ page
   });
   await page.route('**/api/v1/saved-views/8', route => route.fulfill({ json: { ...view, id: 8, name: 'Other queue', items: { include: [], exclude: [] } } }));
   const predicates: Array<Record<string, unknown>> = [];
-  await page.route('**/api/v1/explore', route => { predicates.push(route.request().postDataJSON()); return route.fulfill({ json: { rows: [], total_count: 0, cache_revision: 'synthetic', search_provenance: {} } }); });
+  await page.route('**/api/v1/explore', route => { predicates.push(route.request().postDataJSON()); return route.fulfill({ json: { rows: ['a', 'b'].map((id, index) => ({
+    key: `source:1:message:${id}`, kind: 'email', anchor_message_id: index + 1,
+    source_id: 1, source_type: 'gmail', source_identifier: 'review@example.test',
+    message_type: 'email', conversation_type: 'email',
+    title: ['Review release notes', 'Confirm documentation update'][index],
+    preview: 'Synthetic pinned review item', occurred_at: '2026-11-01T12:00:00Z',
+    inbox_state: 'inbox', read_state: 'unread', match: {}, message_count: 1,
+    has_attachments: false, attachment_count: 0, attachment_size: 0,
+    deleted_from_source: false, matched_sender_identities: [], matched_recipient_identities: []
+  })), total_count: 2, cache_revision: 'synthetic', search_provenance: {} } }); });
   await page.route('**/api/v1/explore/groups', route => route.fulfill({ json: { rows: [], total_count: 0 } }));
   await page.goto('/?workspace=everything');
   await selectWorkspace(page, 'Review queue');
@@ -36,5 +45,7 @@ test('opens live Saved View items and saves only canonical state', async ({ page
   await page.getByRole('button', { name: 'Save changes', exact: true }).click();
   expect((await request).headers()['if-match']).toContain('2');
   await expect.poll(() => patch?.canonical_state).toBeDefined();
+  await expect(page.getByText('Review release notes', { exact: true })).toBeVisible();
+  await expect(page.getByText('Confirm documentation update', { exact: true })).toBeVisible();
   await page.screenshot({ path: 'test-results/saved-view-items.png', fullPage: true });
 });

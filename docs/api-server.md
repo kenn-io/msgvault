@@ -2788,8 +2788,8 @@ For an Inbox Unread view across accounts, use:
 Read responses preserve `canonical_state` as the original JSON, including
 definitions from older or unsupported schema versions. Check
 `incompatibility_reason` before treating that JSON as an executable definition.
-An incompatible view remains readable through the API and MCP so clients can
-explain the problem and offer removal.
+An incompatible definition remains readable through the API and MCP so clients
+can explain the problem and offer removal.
 
 Mutations use the record revision as an optimistic-concurrency guard. Send
 the latest `ETag` (for example `"saved-view-7-r3"`) as `If-Match`; a stale tag
@@ -2808,7 +2808,12 @@ entry's `entry_key`, `source_id`, `message_id` or `conversation_id`, `kind`, and
 `added_by`. `include_count` and `exclude_count` count live, visible entries;
 `stale_item_count` counts missing or mismatched targets, and
 `redacted_item_count` counts entries omitted by source access restrictions.
-List responses expose the same counts.
+List responses expose the same counts. If stored item JSON is invalid, the list
+marks that row with `incompatibility_reason: "items_json_invalid"` and keeps
+healthy views visible. GET and run refuse that view with
+`400 invalid_saved_view` and message `items_json_invalid`. Source removal,
+merge, and deduplication abort atomically if membership cannot be decoded;
+they never silently abandon stored membership.
 
 Use the existing PATCH endpoint with any combination of `include_add`,
 `include_remove`, `exclude_add`, and `exclude_remove` arrays of entry keys.
