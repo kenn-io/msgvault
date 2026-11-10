@@ -383,7 +383,6 @@ func TestVectorSenderTermsBeforeRanking(t *testing.T) {
 	_, err := f.db.ExecContext(f.ctx, `CREATE TABLE participants(id BIGINT PRIMARY KEY,email_address TEXT,phone_number TEXT,display_name TEXT);
  ALTER TABLE message_recipients ADD COLUMN display_name TEXT;
  ALTER TABLE message_recipients ADD COLUMN email_address TEXT;
- ALTER TABLE message_recipients ADD COLUMN is_relayed BOOLEAN NOT NULL DEFAULT FALSE;
  INSERT INTO participants(id,email_address,phone_number,display_name) VALUES(1000,'alex@example.com',NULL,'Élodie Kim');
  INSERT INTO message_recipients(message_id,participant_id,recipient_type,display_name) VALUES(1,1000,'from','Álvaro Header'),(2,1000,'from','Other');`)
 	require.NoError(err)
@@ -402,4 +401,17 @@ func TestVectorSenderTermsBeforeRanking(t *testing.T) {
 		ids = append(ids, hit.MessageID)
 	}
 	assert.ElementsMatch([]int64{1}, ids)
+}
+
+func TestExactSenderExcludesRelayedEmail(t *testing.T) {
+	b, ctx, db := newBackendForTest(t)
+	gen := seedAndEmbed(t, b, db, map[int64][]float32{1: unitVec(4, 0), 2: unitVec(4, 0)})
+	_, err := db.ExecContext(ctx, `UPDATE messages SET sender_id = 10, message_type = CASE id WHEN 1 THEN 'whatsapp' ELSE 'email' END;
+ INSERT INTO message_recipients(message_id,participant_id,recipient_type,is_relayed) VALUES(2,10,'from',TRUE)`)
+	require.NoError(t, err)
+	hits, err := b.Search(ctx, gen, unitVec(4, 0), 10, vector.Filter{SenderExactGroups: [][]int64{{10}}})
+	require.NoError(t, err)
+	if assert.Len(t, hits, 1) {
+		assert.Equal(t, int64(1), hits[0].MessageID)
+	}
 }

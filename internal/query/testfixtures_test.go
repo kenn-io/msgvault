@@ -886,6 +886,9 @@ func newParquetBuilder(tb testing.TB) *parquetBuilder {
 
 // addTable adds a table definition to be written as Parquet.
 func (b *parquetBuilder) addTable(name, subdir, file, columns, values string) *parquetBuilder {
+	if name == "message_recipients" && columns == messageRecipientsCols {
+		b.legacyRecipientSchema = true
+	}
 	b.tables = append(b.tables, parquetTable{
 		name:    name,
 		subdir:  subdir,

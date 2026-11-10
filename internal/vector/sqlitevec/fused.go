@@ -15,6 +15,7 @@ import (
 
 	"go.kenn.io/kit/search/rrf"
 
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/sqliteutil"
@@ -900,12 +901,13 @@ func senderExactGroupClauses(groups [][]int64) (string, []any, error) {
 		}
 		paramName := fmt.Sprintf("sender_exact_grp_%d", i)
 		fmt.Fprintf(&sb, `
-       AND (m.sender_id IN (SELECT value FROM json_each(:%[1]s))
+       AND ((m.sender_id IN (SELECT value FROM json_each(:%[1]s)) AND %[2]s)
             OR EXISTS (
                 SELECT 1 FROM message_recipients mr
                  WHERE mr.message_id = m.id
                    AND mr.recipient_type = 'from'
-                   AND mr.participant_id IN (SELECT value FROM json_each(:%[1]s))))`, paramName)
+                   AND NOT mr.is_relayed
+                   AND mr.participant_id IN (SELECT value FROM json_each(:%[1]s))))`, paramName, identityindex.RelayAbsentExpr("m.id", "message_recipients"))
 		args = append(args, sql.Named(paramName, js))
 	}
 	return sb.String(), args, nil

@@ -852,6 +852,16 @@ func (e *DuckDBEngine) parquetCTEs() string {
 	}
 	srcCTE += fmt.Sprintf(" FROM read_parquet('%s')", e.parquetPath("sources"))
 
+	// --- message_recipients CTE: caches written before these columns read as
+	// non-relayed rows without a recorded address, as in the views.
+	var mrExtra string
+	if !e.hasCol("message_recipients", "email_address") {
+		mrExtra += ", NULL::VARCHAR AS email_address"
+	}
+	if !e.hasCol("message_recipients", "is_relayed") {
+		mrExtra += ", false AS is_relayed"
+	}
+
 	return fmt.Sprintf(`
 		msg AS (
 			%s
@@ -862,7 +872,7 @@ func (e *DuckDBEngine) parquetCTEs() string {
 				CAST(participant_id AS BIGINT) AS participant_id,
 				CAST(recipient_type AS VARCHAR) AS recipient_type,
 				CAST(display_name AS VARCHAR) AS display_name
-			) FROM read_parquet('%s')
+			)`+mrExtra+` FROM read_parquet('%s')
 		),
 		p AS (
 			%s

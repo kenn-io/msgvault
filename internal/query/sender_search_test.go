@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
@@ -180,4 +181,27 @@ func TestSenderSearchWithinExactScope(t *testing.T) {
 	require.Len(deep.Messages, 1)
 	assert.Equal(int64(100), deep.Messages[0].ID)
 	assert.Equal(int64(1), deep.TotalCount)
+}
+
+func TestRelayedSenderNameSearch(t *testing.T) {
+	env := newTestEnv(t)
+	author := env.AddParticipant(dbtest.ParticipantOpts{DisplayName: new("Relay Author")})
+	first := env.AddMessage(dbtest.MessageOpts{FromID: author})
+	second := env.AddMessage(dbtest.MessageOpts{FromID: author})
+	_, err := env.DB.ExecContext(t.Context(), `UPDATE message_recipients SET is_relayed = TRUE, email_address = 'relay@example.test', display_name = CASE WHEN message_id = ? THEN '' ELSE 'Relay Author' END WHERE message_id IN (?, ?) AND recipient_type = 'from'`, first, first, second)
+	require.NoError(t, err)
+	condition, matching, args := search.SenderLookup("Relay Author", (&store.SQLiteDialect{}).UnicodeLowerExpression, "messages", "message_recipients", "participants", "m")
+	for _, query := range []string{"SELECT m.id FROM messages m WHERE " + condition, matching} {
+		rows, err := env.DB.QueryContext(t.Context(), query, args...)
+		require.NoError(t, err)
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			require.NoError(t, rows.Scan(&id))
+			ids = append(ids, id)
+		}
+		require.NoError(t, rows.Err())
+		require.NoError(t, rows.Close())
+		assert.ElementsMatch(t, []int64{first, second}, ids)
+	}
 }
