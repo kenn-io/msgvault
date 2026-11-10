@@ -3,11 +3,17 @@ package cmd
 import (
 	"bytes"
 	"database/sql"
+	"io"
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/fakevault/agentdemo"
 )
 
 // The fakevault generator's shape and validation guarantees are covered in
@@ -39,4 +45,93 @@ func TestFakeVaultCommandPassesScaleFlagsToGenerator(t *testing.T) {
 	var participants int64
 	requirementsForTest.NoError(db.QueryRowContext(t.Context(), "SELECT count(*) FROM participants").Scan(&participants))
 	assert.Equal(t, int64(17), participants)
+}
+
+func TestFakeVaultAgentDemoWritesManifest(t *testing.T) {
+	dir := t.TempDir()
+	command := newFakeVaultCommand()
+	var out bytes.Buffer
+	command.SetOut(&out)
+	command.SetArgs([]string{"--scenario", "agent-demo", "--output", dir, "--quiet"})
+	require.NoError(t, command.ExecuteContext(t.Context()))
+	assert.Contains(t, out.String(), "Agent demo archive:")
+	assert.Contains(t, out.String(), "Manifest:")
+	_, err := agentdemo.Load(dir)
+	require.NoError(t, err)
+}
+func TestFakeVaultAgentDemoRejectsScaleFlags(t *testing.T) {
+	for _, args := range [][]string{{"--messages", "10"}, {"--participants", "3"}, {"--participant-edges", "9"}, {"--group-chat-members", "3"}, {"--attachment-bytes", "1MB"}, {"--append"}} {
+		t.Run(args[0], func(t *testing.T) {
+			dir := t.TempDir()
+			cmd := newFakeVaultCommand()
+			cmd.SetArgs(append([]string{"--scenario", "agent-demo", "--output", dir}, args...))
+			require.ErrorContains(t, cmd.ExecuteContext(t.Context()), args[0])
+			assert.NoFileExists(t, filepath.Join(dir, "msgvault.db"))
+		})
+	}
+}
+func TestFakeVaultAgentDemoRejectsBadAsOf(t *testing.T) {
+	for _, s := range []string{"yesterday", ""} {
+		t.Run(s, func(t *testing.T) {
+			dir := t.TempDir()
+			cmd := newFakeVaultCommand()
+			cmd.SetArgs([]string{"--scenario", "agent-demo", "--output", dir, "--as-of", s})
+			require.ErrorContains(t, cmd.ExecuteContext(t.Context()), "--as-of")
+			assert.NoFileExists(t, filepath.Join(dir, "msgvault.db"))
+		})
+	}
+}
+func TestFakeVaultUnknownScenario(t *testing.T) {
+	cmd := newFakeVaultCommand()
+	cmd.SetArgs([]string{"--scenario", "nope", "--output", t.TempDir()})
+	require.ErrorContains(t, cmd.ExecuteContext(t.Context()), "scale, agent-demo")
+}
+func TestFakeVaultAgentDemoRefusesLiveDataDir(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.NewDefaultConfig()
+	cfg.Data.DataDir = dir
+	inv := newInvocation()
+	inv.cfg = cfg
+	cmd := newFakeVaultCommand()
+	cmd.SetArgs([]string{"--scenario", "agent-demo", "--output", dir})
+	require.ErrorContains(t, cmd.ExecuteContext(withInvocation(t.Context(), inv)), "refusing to write a demo archive into an existing archive directory")
+	assert.NoFileExists(t, filepath.Join(dir, "msgvault.db"))
+}
+
+func TestFakeVaultAgentDemoAsOfNow(t *testing.T) {
+	before := time.Now().UTC().Truncate(time.Hour)
+	dir := t.TempDir()
+	cmd := newFakeVaultCommand()
+	cmd.SetOut(io.Discard)
+	cmd.SetArgs([]string{"--scenario", "agent-demo", "--output", dir, "--as-of", "now", "--quiet"})
+	require.NoError(t, cmd.ExecuteContext(t.Context()))
+	m, err := agentdemo.Load(dir)
+	require.NoError(t, err)
+	after := time.Now().UTC().Truncate(time.Hour)
+	assert.True(t, m.AsOf.Equal(before) || m.AsOf.Equal(after))
+	assert.Equal(t, m.AsOf.Truncate(time.Hour), m.AsOf)
+}
+func TestFakeVaultAgentDemoRefusesSymlinkedLiveDataDir(t *testing.T) {
+	live := t.TempDir()
+	alias := filepath.Join(t.TempDir(), "alias")
+	require.NoError(t, os.Symlink(live, alias))
+	cfg := config.NewDefaultConfig()
+	cfg.Data.DataDir = live
+	inv := newInvocation()
+	inv.cfg = cfg
+	cmd := newFakeVaultCommand()
+	cmd.SetArgs([]string{"--scenario", "agent-demo", "--output", alias})
+	require.ErrorContains(t, cmd.ExecuteContext(withInvocation(t.Context(), inv)), "refusing to write a demo archive into an existing archive directory")
+	assert.NoFileExists(t, filepath.Join(live, "msgvault.db"))
+}
+func TestFakeVaultAgentDemoRefusesExistingDatabase(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "msgvault.db")
+	require.NoError(t, os.WriteFile(path, []byte("keep me"), 0600))
+	cmd := newFakeVaultCommand()
+	cmd.SetArgs([]string{"--scenario", "agent-demo", "--output", dir})
+	require.ErrorContains(t, cmd.ExecuteContext(t.Context()), "refusing to write a demo archive into an existing archive directory")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "keep me", string(data))
 }

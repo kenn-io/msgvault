@@ -1,0 +1,397 @@
+package agentdemo_test
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	_ "time/tzdata"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/kit/backup"
+	"go.kenn.io/msgvault/internal/backupapp"
+	"go.kenn.io/msgvault/internal/fakevault/agentdemo"
+	"go.kenn.io/msgvault/internal/fakevault/agentdemo/agentdemotest"
+	"go.kenn.io/msgvault/internal/loops"
+	"go.kenn.io/msgvault/internal/msgsegment"
+	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
+)
+
+func archive(t *testing.T, seed uint64) (*store.Store, *agentdemo.Manifest) {
+	t.Helper()
+	if seed == 1 {
+		return agentdemotest.Store(t)
+	}
+	dir := t.TempDir()
+	m, err := agentdemo.GenerateDir(t.Context(), agentdemo.Options{Dir: dir, Seed: seed})
+	require.NoError(t, err)
+	st, err := store.OpenForTest(t.Context(), filepath.Join(dir, "msgvault.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	return st, m
+}
+func count(t *testing.T, st *store.Store, query string, args ...any) int {
+	t.Helper()
+	var n int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), query, args...).Scan(&n))
+	return n
+}
+func loopIDs(t *testing.T, st *store.Store, m *agentdemo.Manifest) []int64 {
+	t.Helper()
+	result, err := loops.List(t.Context(), st, loops.Options{Limit: 200}, m.AsOf)
+	require.NoError(t, err)
+	require.False(t, result.CoverageIncomplete)
+	ids := []int64{}
+	for _, l := range result.Loops {
+		ids = append(ids, l.Anchor.ID)
+	}
+	return ids
+}
+func TestCast(t *testing.T) {
+	st, m := archive(t, 1)
+	assert.Len(t, m.Sources, 7)
+	assert.Len(t, m.Persons, 5)
+	for handle, s := range m.Sources {
+		t.Run(handle, func(t *testing.T) {
+			var typ, identifier string
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT source_type, identifier FROM sources WHERE id=?", s.ID).Scan(&typ, &identifier))
+			assert.Equal(t, s.SourceType, typ)
+			assert.Equal(t, s.Identifier, identifier)
+		})
+	}
+	for _, h := range []string{"riley", "pat", "canary", "support_vendor", "noreply", "newsletter"} {
+		assert.Zero(t, count(t, st, "SELECT count(*) FROM person_participants WHERE participant_id=?", m.Participants[h].ID), h)
+	}
+	for _, h := range []string{"sam", "sam_phone"} {
+		assert.Equal(t, 1, count(t, st, "SELECT count(*) FROM person_participants WHERE person_id=? AND participant_id=?", m.Persons["sam"].ID, m.Participants[h].ID))
+	}
+}
+func TestEmailAndChatLoopsMatchExpectations(t *testing.T) {
+	st, m := archive(t, 1)
+	want := []int64{}
+	for _, h := range []string{"jordan_contract_question", "taylor_proposal_question", "riley_intro_question", "vendor_ticket_question", "sam_signal_question", "casey_sms_question"} {
+		require.NotZero(t, m.Messages[h], h)
+		want = append(want, m.Messages[h])
+	}
+	assert.ElementsMatch(t, want, loopIDs(t, st, m))
+	assert.GreaterOrEqual(t, count(t, st, "SELECT count(*) FROM messages WHERE message_type='email'"), 150)
+	assert.Zero(t, count(t, st, "SELECT count(*) FROM messages m WHERE message_type='email' AND NOT EXISTS (SELECT 1 FROM message_raw r WHERE r.message_id=m.id)"))
+	assert.Zero(t, count(t, st, "SELECT count(*) FROM messages WHERE source_id=?", m.Sources["discord"].ID))
+}
+func TestEmailDraftProvenance(t *testing.T) {
+	st, m := archive(t, 1)
+	for _, h := range []string{"sam_trip_sent_from_draft", "sam_trip_unsent_draft"} {
+		var authored, own bool
+		require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT draft_authored,is_from_me FROM messages WHERE id=?", m.Messages[h]).Scan(&authored, &own))
+		assert.True(t, authored, h)
+		assert.True(t, own, h)
+		var labels []string
+		rows, err := st.DB().QueryContext(t.Context(), "SELECT l.name FROM labels l JOIN message_labels ml ON ml.label_id=l.id WHERE ml.message_id=?", m.Messages[h])
+		require.NoError(t, err)
+		for rows.Next() {
+			var s string
+			require.NoError(t, rows.Scan(&s))
+			labels = append(labels, s)
+		}
+		require.NoError(t, rows.Err())
+		require.NoError(t, rows.Close())
+		if h == "sam_trip_sent_from_draft" {
+			assert.Contains(t, labels, "SENT")
+			assert.NotContains(t, labels, "DRAFT")
+		} else {
+			assert.Equal(t, []string{"DRAFT"}, labels)
+		}
+	}
+	assert.Equal(t, 1, count(t, st, "SELECT count(*) FROM message_labels ml JOIN labels l ON l.id=ml.label_id WHERE l.name='STARRED' AND ml.message_id=?", m.Messages["priya_budget_question"]))
+	assert.Equal(t, 1, count(t, st, "SELECT count(*) FROM message_labels ml JOIN labels l ON l.id=ml.label_id WHERE l.name='STARRED'"))
+}
+func TestEmailStarredLabelSynced(t *testing.T) {
+	st, m := archive(t, 1)
+	ids, total, err := st.SearchMessageIDsQueryContext(t.Context(), search.ParseOR("label:STARRED"), 50)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), total)
+	assert.Equal(t, []int64{m.Messages["priya_budget_question"]}, ids)
+	assert.NotContains(t, loopIDs(t, st, m), m.Messages["priya_budget_question"])
+}
+func TestVoiceOwnMessageCounts(t *testing.T) {
+	st, m := archive(t, 1)
+	for h, want := range map[string]int{"weekend_crew": 8, "dinner_group": 2, "sam_signal_dm": 7, "sam_imessage_dm": 2, "sam_trip_email": 6} {
+		assert.Equal(t, want, count(t, st, `SELECT count(*) FROM messages m WHERE conversation_id=? AND is_from_me=1 AND NOT EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id=ml.label_id WHERE ml.message_id=m.id AND l.name='DRAFT')`, m.Conversations[h].ID), h)
+	}
+}
+func TestSharedAttachmentSpansTwoFamilies(t *testing.T) {
+	st, m := archive(t, 1)
+	a := m.Attachments["contract_v2"]
+	assert.Equal(t, 2, count(t, st, "SELECT count(*) FROM attachments WHERE content_hash=?", a.ContentHash))
+	for _, h := range []string{"jordan_contract_question", "priya_contract_share"} {
+		assert.Equal(t, 1, count(t, st, "SELECT count(*) FROM attachments WHERE content_hash=? AND message_id=?", a.ContentHash, m.Messages[h]))
+	}
+}
+func TestSignalSyncInterruptedWithCheckpoint(t *testing.T) {
+	st, m := archive(t, 1)
+	var status string
+	var checkpoint sql.NullString
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT status,cursor_before FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1", m.Sources["signal"].ID).Scan(&status, &checkpoint))
+	assert.Equal(t, "failed", status)
+	assert.True(t, checkpoint.Valid)
+	assert.NotEmpty(t, checkpoint.String)
+}
+func TestGenerateIsDeterministicForSeed(t *testing.T) {
+	a, err := agentdemo.GenerateDir(t.Context(), agentdemo.Options{Dir: t.TempDir(), Seed: 1})
+	require.NoError(t, err)
+	b, err := agentdemo.GenerateDir(t.Context(), agentdemo.Options{Dir: t.TempDir(), Seed: 1})
+	require.NoError(t, err)
+	assert.Equal(t, a, b)
+}
+func TestSeedChangesFillerOnly(t *testing.T) {
+	sa, a := archive(t, 1)
+	sb, b := archive(t, 2)
+	assert.Equal(t, a.Expect, b.Expect)
+	assert.NotEqual(t, a.Digest, b.Digest)
+	assert.ElementsMatch(t, loopIDs(t, sa, a), loopIDs(t, sb, b))
+	// Every namespace and oracle is stable; only the seed and content digest differ.
+	want, got := *a, *b
+	want.Seed = got.Seed
+	want.Digest = got.Digest
+	assert.Equal(t, want, got)
+}
+func TestArchiveIntegrity(t *testing.T) {
+	st, _ := archive(t, 1)
+	var result string
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "PRAGMA integrity_check").Scan(&result))
+	assert.Equal(t, "ok", result)
+	rows, err := st.DB().QueryContext(t.Context(), "PRAGMA foreign_key_check")
+	require.NoError(t, err)
+	assert.False(t, rows.Next())
+	require.NoError(t, rows.Err())
+	require.NoError(t, rows.Close())
+}
+
+type rejectTransport struct{ t *testing.T }
+
+func (r rejectTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	assert.Fail(r.t, "generator attempted network")
+	return nil, fmt.Errorf("network prohibited")
+}
+func TestGenerateOpensNoNetwork(t *testing.T) {
+	previous := http.DefaultTransport
+	http.DefaultTransport = rejectTransport{t}
+	t.Cleanup(func() { http.DefaultTransport = previous })
+	_, err := agentdemo.GenerateDir(t.Context(), agentdemo.Options{Dir: t.TempDir(), Seed: 1})
+	require.NoError(t, err)
+}
+func TestGenerateHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err := agentdemo.GenerateDir(ctx, agentdemo.Options{Dir: t.TempDir()})
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+var updateGolden = flag.Bool("update", false, "update agent demo golden manifest")
+
+func TestManifestMatchesGolden(t *testing.T) {
+	_, m := archive(t, 1)
+	m.Digest = ""
+	dir := t.TempDir()
+	require.NoError(t, m.Write(dir))
+	got, err := os.ReadFile(filepath.Join(dir, agentdemo.ManifestFile))
+	require.NoError(t, err)
+	if *updateGolden {
+		require.NoError(t, os.MkdirAll("testdata", 0700))
+		require.NoError(t, os.WriteFile("testdata/seed1.manifest.golden.json", got, 0600))
+	}
+	want, err := os.ReadFile("testdata/seed1.manifest.golden.json")
+	require.NoError(t, err)
+	assert.JSONEq(t, string(want), string(got))
+}
+
+func TestCastUsesReservedIdentifiersOnly(t *testing.T) {
+	st, _ := archive(t, 1)
+	rows, err := st.DB().QueryContext(t.Context(), "SELECT identifier_value FROM participant_identifiers")
+	require.NoError(t, err)
+	defer rows.Close()
+	for rows.Next() {
+		var value string
+		require.NoError(t, rows.Scan(&value))
+		assert.Regexp(t, `(@example\.(com|org|net)$|@[a-z-]+\.example$|^\+155501001[0-9]{2}$|^[UB]0[A-Z]+$|^72345$)`, value)
+	}
+	require.NoError(t, rows.Err())
+}
+func TestEmailRecordsCanaries(t *testing.T) {
+	st, m := archive(t, 1)
+	var subject string
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT subject FROM messages WHERE id=?", m.Messages["canary"]).Scan(&subject))
+	assert.Contains(t, subject, "CANARY-SUBJ-7f3a")
+	body, err := st.GetMessageBodyText(t.Context(), m.Messages["canary"])
+	require.NoError(t, err)
+	assert.Contains(t, body, "CANARY-BODY-7f3a")
+	assert.Len(t, m.Canaries, 4)
+}
+func TestVoiceEmailQuotesAreBelowOwnText(t *testing.T) {
+	st, m := archive(t, 1)
+	for _, h := range []string{"sam_trip_own_1", "sam_trip_own_2", "sam_trip_sent_from_draft", "sam_trip_own_4", "sam_trip_own_5", "sam_trip_own_6"} {
+		body, err := st.GetMessageBodyText(t.Context(), m.Messages[h])
+		require.NoError(t, err)
+		assert.Contains(t, body, "On Mon,")
+		assert.Contains(t, body, "> The route")
+		quoted := false
+		for _, seg := range msgsegment.Split(body).Segments {
+			part := body[seg.Start:seg.End]
+			if seg.Kind == msgsegment.Authored {
+				assert.NotContains(t, part, "> The route")
+				assert.NotContains(t, part, "On Mon,")
+			}
+			if seg.Kind == msgsegment.Quoted {
+				quoted = true
+			}
+		}
+		assert.True(t, quoted, h)
+	}
+}
+func TestVoicePersonScopeMembership(t *testing.T) {
+	st, m := archive(t, 1)
+	// Discover every conversation involving Sam whose roster contains only Sam
+	// and account identities. Group chats must never enter this corpus.
+	rows, err := st.DB().QueryContext(t.Context(), `SELECT c.id,c.source_id,c.conversation_type FROM conversations c
+ WHERE EXISTS (SELECT 1 FROM conversation_participants cp JOIN person_participants pp ON pp.participant_id=cp.participant_id WHERE cp.conversation_id=c.id AND pp.person_id=?)`, m.Persons["sam"].ID)
+	require.NoError(t, err)
+	type conv struct {
+		id, source int64
+		typ        string
+	}
+	var found []conv
+	for rows.Next() {
+		var c conv
+		require.NoError(t, rows.Scan(&c.id, &c.source, &c.typ))
+		found = append(found, c)
+	}
+	require.NoError(t, rows.Err())
+	require.NoError(t, rows.Close())
+	groups := map[string][]string{"chat": {}, "email": {}}
+	for _, c := range found {
+		if c.typ != "direct_chat" && c.typ != "email_thread" {
+			continue
+		}
+		extras := count(t, st, `SELECT count(*) FROM conversation_participants cp WHERE cp.conversation_id=? AND NOT EXISTS (SELECT 1 FROM person_participants pp WHERE pp.participant_id=cp.participant_id AND pp.person_id=?) AND cp.participant_id NOT IN (?,?,?)`, c.id, m.Persons["sam"].ID, m.Participants["owner"].ID, m.Participants["owner_phone"].ID, m.Participants["owner_slack"].ID)
+		if extras > 0 {
+			continue
+		}
+		for h, mc := range m.Conversations {
+			if mc.ID == c.id {
+				family := m.Sources[mc.Source].Family
+				groups[family] = append(groups[family], h)
+			}
+		}
+	}
+	var oracle struct {
+		PersonSam struct {
+			Chat  []string `json:"chat"`
+			Email []string `json:"email"`
+		} `json:"person_sam"`
+	}
+	voiceJSON, err := json.Marshal(m.Expect["voice"])
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(voiceJSON, &oracle))
+	require.NotEmpty(t, oracle.PersonSam.Chat)
+	require.NotEmpty(t, oracle.PersonSam.Email)
+	assert.ElementsMatch(t, oracle.PersonSam.Chat, groups["chat"])
+	assert.ElementsMatch(t, oracle.PersonSam.Email, groups["email"])
+	dir, _ := agentdemotest.Archive(t)
+	data, err := os.ReadFile(filepath.Join(dir, agentdemo.ManifestFile))
+	require.NoError(t, err)
+	for _, key := range []string{"greeting_top", "signoff_top", "emoji", "lowercase_start"} {
+		assert.NotContains(t, string(data), `"`+key+`"`)
+	}
+}
+func TestArchiveSurvivesBackupRoundTrip(t *testing.T) {
+	dir, m := agentdemotest.Archive(t)
+	verifyBlobs(t, dir)
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	app := backupapp.New("agent-demo-test")
+	snapshot, err := backup.Create(t.Context(), repo, app, backup.CreateOptions{DBPath: filepath.Join(dir, "msgvault.db"), ContentDir: filepath.Join(dir, "attachments"), DataDir: dir})
+	require.NoError(t, err)
+	restoredDir := filepath.Join(t.TempDir(), "restored")
+	restored, err := backup.Restore(t.Context(), repo, app, backup.RestoreOptions{TargetDir: restoredDir})
+	require.NoError(t, err)
+	assert.Equal(t, snapshot.SnapshotID, restored.SnapshotID)
+	st, err := store.OpenForTest(t.Context(), filepath.Join(restoredDir, "msgvault.db"))
+	require.NoError(t, err)
+	defer st.Close()
+	assert.Equal(t, len(m.Messages), count(t, st, "SELECT count(*) FROM messages"))
+	verifyBlobs(t, restoredDir)
+}
+func verifyBlobs(t *testing.T, dir string) {
+	t.Helper()
+	st, err := store.OpenForTest(t.Context(), filepath.Join(dir, "msgvault.db"))
+	require.NoError(t, err)
+	defer st.Close()
+	rows, err := st.DB().QueryContext(t.Context(), "SELECT content_hash,storage_path,size FROM attachments")
+	require.NoError(t, err)
+	defer rows.Close()
+	for rows.Next() {
+		var hash, path string
+		var size int64
+		require.NoError(t, rows.Scan(&hash, &path, &size))
+		assert.Equal(t, hash[:2]+"/"+hash, path)
+		data, err := os.ReadFile(filepath.Join(dir, "attachments", filepath.FromSlash(path)))
+		require.NoError(t, err)
+		sum := sha256.Sum256(data)
+		assert.Equal(t, hash, hex.EncodeToString(sum[:]))
+		assert.Equal(t, size, int64(len(data)))
+	}
+	require.NoError(t, rows.Err())
+}
+func TestVoiceBelowMinSampleScopes(t *testing.T) {
+	st, m := archive(t, 1)
+	for _, h := range []string{"dinner_group", "sam_imessage_dm"} {
+		assert.Less(t, count(t, st, "SELECT count(*) FROM messages WHERE conversation_id=? AND is_from_me=1", m.Conversations[h].ID), 5)
+	}
+	for _, h := range []string{"weekend_crew", "sam_signal_dm", "sam_trip_email"} {
+		assert.GreaterOrEqual(t, count(t, st, `SELECT count(*) FROM messages m WHERE conversation_id=? AND is_from_me=1 AND NOT EXISTS(SELECT 1 FROM message_labels ml JOIN labels l ON l.id=ml.label_id WHERE ml.message_id=m.id AND l.name='DRAFT')`, m.Conversations[h].ID), 5)
+	}
+}
+func TestEmailNewsletterOpensNoLoop(t *testing.T) {
+	st, m := archive(t, 1)
+	ids := loopIDs(t, st, m)
+	for h, id := range m.Messages {
+		if strings.HasPrefix(h, "newsletter_") || strings.HasPrefix(h, "noreply_receipt_") {
+			assert.NotContains(t, ids, id, h)
+		}
+	}
+}
+
+func TestDigestIgnoresAllocatedIDs(t *testing.T) {
+	_, baseline := archive(t, 1)
+	dir := t.TempDir()
+	st, err := store.OpenForTest(t.Context(), filepath.Join(dir, "msgvault.db"))
+	require.NoError(t, err)
+	defer st.Close()
+	require.NoError(t, st.InitSchemaContext(t.Context()))
+	extra, err := st.GetOrCreateSourceContext(t.Context(), "gmail", "offset@example.net")
+	require.NoError(t, err)
+	participant, err := st.EnsureParticipantContext(t.Context(), "offset@example.net", "Offset Example", "example.net")
+	require.NoError(t, err)
+	m, err := agentdemo.Generate(t.Context(), st, filepath.Join(dir, "attachments"), agentdemo.Options{Seed: 1, AsOf: agentdemo.DefaultAsOf})
+	require.NoError(t, err)
+	assert.NotEqual(t, baseline.Sources["gmail"].ID, m.Sources["gmail"].ID)
+	assert.NotEqual(t, baseline.Participants["sam"].ID, m.Participants["sam"].ID)
+	_, err = st.DB().ExecContext(t.Context(), "DELETE FROM sources WHERE id=?", extra.ID)
+	require.NoError(t, err)
+	_, err = st.DB().ExecContext(t.Context(), "DELETE FROM participants WHERE id=?", participant)
+	require.NoError(t, err)
+	digest, err := agentdemo.Digest(t.Context(), st.DB())
+	require.NoError(t, err)
+	assert.Equal(t, baseline.Digest, digest)
+}

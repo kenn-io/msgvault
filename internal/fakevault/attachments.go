@@ -179,3 +179,13 @@ func incompressibleBytes(seed uint64, stream, index, size int64) []byte {
 	_, _ = src.Read(buf) // ChaCha8.Read never fails
 	return buf
 }
+
+// WriteBlob publishes synthetic content at the same content-addressed path as scale fixtures.
+func WriteBlob(attDir string, content []byte) (hash, relPath string, err error) {
+	hash = hashOf(content)
+	g := &generator{attDir: attDir, dirSeen: map[string]bool{}}
+	if err = g.writeBlob(hash, content); err != nil {
+		return "", "", err
+	}
+	return hash, blobRelPath(hash), nil
+}

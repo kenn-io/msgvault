@@ -3,11 +3,17 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
+
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/fakevault"
+	"go.kenn.io/msgvault/internal/fakevault/agentdemo"
 )
 
 // fakeVaultCmd is a hidden developer tool: benchmark harnesses and tests
@@ -16,6 +22,8 @@ import (
 var fakeVaultCmd = newFakeVaultCommand()
 
 type fakeVaultCommandOptions struct {
+	scenario         string
+	asOf             string
 	output           string
 	messages         int64
 	participants     int64
@@ -44,6 +52,9 @@ Setting --participants and --participant-edges selects the set-wise
 relationship benchmark generator. Participant edges count the union of one
 sender edge per message and all generated recipient rows.
 
+Use --scenario agent-demo for a small named synthetic archive for feature tests
+and safe exploration. --as-of accepts an RFC 3339 time or now.
+
 The generated data is synthetic and worthless; the tool exists to measure
 how msgvault (backup, search, sync machinery) behaves at scale.`,
 		Hidden: true,
@@ -52,6 +63,8 @@ how msgvault (backup, search, sync machinery) behaves at scale.`,
 			return runFakeVault(cmd, opts)
 		},
 	}
+	command.Flags().StringVar(&opts.scenario, "scenario", "scale", "scenario: scale or agent-demo")
+	command.Flags().StringVar(&opts.asOf, "as-of", agentdemo.DefaultAsOf.Format(time.RFC3339), "agent demo clock (RFC 3339 or now)")
 	command.Flags().StringVarP(&opts.output, "output", "o", "",
 		"vault directory to create (msgvault.db and attachments/ inside)")
 	command.Flags().Int64Var(&opts.messages, "messages", 10_000,
@@ -79,6 +92,13 @@ func init() {
 }
 
 func runFakeVault(cmd *cobra.Command, opts fakeVaultCommandOptions) error {
+	switch opts.scenario {
+	case agentdemo.Scenario:
+		return runAgentDemo(cmd, opts)
+	case "scale":
+	default:
+		return usageErr(cmd, fmt.Errorf("--scenario: choose scale, agent-demo"))
+	}
 	attachBytes, err := parseByteSize(opts.attachmentSize)
 	if err != nil {
 		return usageErr(cmd, fmt.Errorf("--attachment-bytes: %w", err))
@@ -139,4 +159,97 @@ func parseByteSize(s string) (int64, error) {
 		return 0, errors.New("size must not be negative")
 	}
 	return n * mult, nil
+}
+
+func runAgentDemo(cmd *cobra.Command, opts fakeVaultCommandOptions) error {
+	for _, flag := range []string{"messages", "participants", "participant-edges", "group-chat-members", "attachment-bytes", "append"} {
+		if cmd.Flags().Changed(flag) {
+			return usageErr(cmd, fmt.Errorf("--%s cannot be used with --scenario agent-demo", flag))
+		}
+	}
+	var asOf time.Time
+	if opts.asOf == "now" {
+		asOf = time.Now().UTC().Truncate(time.Hour)
+	} else {
+		var err error
+		asOf, err = time.Parse(time.RFC3339, opts.asOf)
+		if err != nil {
+			return usageErr(cmd, fmt.Errorf("--as-of: expected RFC 3339 or now: %w", err))
+		}
+	}
+	cfg := config.NewDefaultConfig()
+	if inv := invocationFromCommand(cmd); inv != nil && inv.cfg != nil {
+		cfg = inv.cfg
+	}
+	output, err := resolveDemoPath(opts.output)
+	if err != nil {
+		return err
+	}
+	live, err := resolveDemoPath(cfg.Data.DataDir)
+	if err != nil {
+		return err
+	}
+	refuse := func() error {
+		return fmt.Errorf("fake-vault: refusing to write a demo archive into an existing archive directory")
+	}
+	if output == live {
+		return refuse()
+	}
+	if _, err = os.Lstat(filepath.Join(output, "msgvault.db")); err == nil {
+		return refuse()
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	m, err := agentdemo.GenerateDir(cmd.Context(), agentdemo.Options{Dir: opts.output, Seed: opts.seed, AsOf: asOf, Progress: func(chapter string) {
+		if !opts.quiet {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Generating %s\n", chapter)
+		}
+	}})
+	if err != nil {
+		return err
+	}
+	out := cmd.OutOrStdout()
+	_, _ = fmt.Fprintf(out, "Agent demo archive: %s (scenario %s v%d, seed %d, as of %s)\n", opts.output, m.Scenario, m.ScenarioVersion, m.Seed, m.AsOf.Format(time.RFC3339))
+	_, _ = fmt.Fprintf(out, "Messages: %d in %d conversations across %d sources\n", len(m.Messages), len(m.Conversations), len(m.Sources))
+	_, _ = fmt.Fprintf(out, "Persons: %d; unsaved participants: %d\n", len(m.Persons), countUnsavedParticipants(m))
+	_, _ = fmt.Fprintf(out, "Manifest: %s\n", filepath.Join(opts.output, agentdemo.ManifestFile))
+	_, _ = fmt.Fprintf(out, "Try: MSGVAULT_HOME=%s msgvault serve\n", opts.output)
+	return nil
+}
+func countUnsavedParticipants(m *agentdemo.Manifest) int {
+	n := 0
+	for _, p := range m.Persons {
+		n += len(p.ParticipantIDs)
+	}
+	for h := range m.Participants {
+		if h == "owner" || strings.HasPrefix(h, "owner_") {
+			n++
+		}
+	}
+	return len(m.Participants) - n
+}
+
+// Resolve the existing prefix as well, so aliases through a symlinked parent
+// cannot bypass the configured archive-directory guard for a new output.
+func resolveDemoPath(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(absolute)
+	if err == nil {
+		return resolved, nil
+	}
+	if !os.IsNotExist(err) {
+		return "", err
+	}
+	parent := filepath.Dir(absolute)
+	if parent == absolute {
+		return "", err
+	}
+	resolved, err = resolveDemoPath(parent)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(resolved, filepath.Base(absolute)), nil
 }

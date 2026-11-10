@@ -1,0 +1,1107 @@
+{
+  "scenario": "agent-demo",
+  "scenario_version": 1,
+  "seed": 1,
+  "as_of": "2026-06-15T16:00:00Z",
+  "owner": {
+    "name": "Morgan Lee",
+    "email": "morgan@example.com",
+    "phone": "+15550100100",
+    "timezone": "America/New_York"
+  },
+  "sources": {
+    "discord": {
+      "id": 6,
+      "source_type": "discord",
+      "identifier": "demo-guild",
+      "family": "chat"
+    },
+    "gmail": {
+      "id": 1,
+      "source_type": "gmail",
+      "identifier": "morgan@example.com",
+      "family": "email"
+    },
+    "imessage": {
+      "id": 4,
+      "source_type": "apple_messages",
+      "identifier": "local",
+      "family": "chat"
+    },
+    "meetings": {
+      "id": 7,
+      "source_type": "meeting_import",
+      "identifier": "demo-notes",
+      "family": "meetings"
+    },
+    "signal": {
+      "id": 3,
+      "source_type": "beeper",
+      "identifier": "signal",
+      "family": "chat"
+    },
+    "slack": {
+      "id": 5,
+      "source_type": "slack",
+      "identifier": "demo-workspace",
+      "family": "chat"
+    },
+    "whatsapp": {
+      "id": 2,
+      "source_type": "whatsapp",
+      "identifier": "+15550100100",
+      "family": "chat"
+    }
+  },
+  "persons": {
+    "casey": {
+      "id": 5,
+      "participant_ids": [
+        10
+      ],
+      "identities": [
+        "phone:+15550100105"
+      ]
+    },
+    "jordan": {
+      "id": 3,
+      "participant_ids": [
+        8
+      ],
+      "identities": [
+        "email:jordan@client.example"
+      ]
+    },
+    "priya": {
+      "id": 2,
+      "participant_ids": [
+        6,
+        7
+      ],
+      "identities": [
+        "email:priya@corp.example",
+        "slack:U0PRIYA"
+      ]
+    },
+    "sam": {
+      "id": 1,
+      "participant_ids": [
+        4,
+        5
+      ],
+      "identities": [
+        "email:sam.rivera@example.org",
+        "phone:+15550100101"
+      ]
+    },
+    "taylor": {
+      "id": 4,
+      "participant_ids": [
+        9
+      ],
+      "identities": [
+        "email:taylor@partner.example"
+      ]
+    }
+  },
+  "participants": {
+    "canary": {
+      "id": 18,
+      "identity": "email:canary-addr-7f3a@canary.example"
+    },
+    "casey": {
+      "id": 10,
+      "identity": "phone:+15550100105"
+    },
+    "filler_one": {
+      "id": 19,
+      "identity": "phone:+15550100106"
+    },
+    "filler_two": {
+      "id": 20,
+      "identity": "phone:+15550100107"
+    },
+    "jordan": {
+      "id": 8,
+      "identity": "email:jordan@client.example"
+    },
+    "newsletter": {
+      "id": 15,
+      "identity": "email:digest@news.example"
+    },
+    "noreply": {
+      "id": 14,
+      "identity": "email:no-reply@service.example"
+    },
+    "owner": {
+      "id": 1,
+      "identity": "email:morgan@example.com"
+    },
+    "owner_phone": {
+      "id": 2,
+      "identity": "phone:+15550100100"
+    },
+    "owner_slack": {
+      "id": 3,
+      "identity": "slack:U0OWNER"
+    },
+    "pat": {
+      "id": 12,
+      "identity": "email:pat@vendor.example"
+    },
+    "priya": {
+      "id": 6,
+      "identity": "email:priya@corp.example"
+    },
+    "priya_slack": {
+      "id": 7,
+      "identity": "slack:U0PRIYA"
+    },
+    "riley": {
+      "id": 11,
+      "identity": "email:riley@newco.example"
+    },
+    "sam": {
+      "id": 4,
+      "identity": "email:sam.rivera@example.org"
+    },
+    "sam_phone": {
+      "id": 5,
+      "identity": "phone:+15550100101"
+    },
+    "shortcode": {
+      "id": 17,
+      "identity": "sms:72345"
+    },
+    "slackbot": {
+      "id": 16,
+      "identity": "slack:B0DEPLOY"
+    },
+    "support_vendor": {
+      "id": 13,
+      "identity": "email:support@vendor.example"
+    },
+    "taylor": {
+      "id": 9,
+      "identity": "email:taylor@partner.example"
+    }
+  },
+  "conversations": {
+    "background_01": {
+      "id": 13,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_02": {
+      "id": 14,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_03": {
+      "id": 15,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_04": {
+      "id": 16,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_05": {
+      "id": 17,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_06": {
+      "id": 18,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_07": {
+      "id": 19,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_08": {
+      "id": 20,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_09": {
+      "id": 21,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_10": {
+      "id": 22,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_11": {
+      "id": 23,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_12": {
+      "id": 24,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_13": {
+      "id": 25,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_14": {
+      "id": 26,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_15": {
+      "id": 27,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_16": {
+      "id": 28,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_17": {
+      "id": 29,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_18": {
+      "id": 30,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_19": {
+      "id": 31,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_20": {
+      "id": 32,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_21": {
+      "id": 33,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_22": {
+      "id": 34,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_23": {
+      "id": 35,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_24": {
+      "id": 36,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_25": {
+      "id": 37,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_26": {
+      "id": 38,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_27": {
+      "id": 39,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_28": {
+      "id": 40,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_29": {
+      "id": 41,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_30": {
+      "id": 42,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_31": {
+      "id": 43,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_32": {
+      "id": 44,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_33": {
+      "id": 45,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_34": {
+      "id": 46,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_35": {
+      "id": 47,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_36": {
+      "id": 48,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_37": {
+      "id": 49,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_38": {
+      "id": 50,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_39": {
+      "id": 51,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_40": {
+      "id": 52,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_41": {
+      "id": 53,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_42": {
+      "id": 54,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_43": {
+      "id": 55,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_44": {
+      "id": 56,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_45": {
+      "id": 57,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_46": {
+      "id": 58,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_47": {
+      "id": 59,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_48": {
+      "id": 60,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_49": {
+      "id": 61,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_50": {
+      "id": 62,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_51": {
+      "id": 63,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_52": {
+      "id": 64,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_53": {
+      "id": 65,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_54": {
+      "id": 66,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_55": {
+      "id": 67,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_56": {
+      "id": 68,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_57": {
+      "id": 69,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_58": {
+      "id": 70,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_59": {
+      "id": 71,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_60": {
+      "id": 72,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "background_deleted": {
+      "id": 11,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "canary": {
+      "id": 12,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "casey_sms": {
+      "id": 76,
+      "source": "imessage",
+      "conversation_type": "direct_chat"
+    },
+    "dinner_group": {
+      "id": 78,
+      "source": "imessage",
+      "conversation_type": "group_chat"
+    },
+    "followup_jordan": {
+      "id": 10,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "jordan_contract": {
+      "id": 1,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "newsletter": {
+      "id": 9,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "noreply_receipts": {
+      "id": 8,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "pat_quote": {
+      "id": 6,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "priya_budget": {
+      "id": 3,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "priya_slack_dm": {
+      "id": 79,
+      "source": "slack",
+      "conversation_type": "direct_chat"
+    },
+    "riley_intro": {
+      "id": 5,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "sam_imessage_dm": {
+      "id": 75,
+      "source": "imessage",
+      "conversation_type": "direct_chat"
+    },
+    "sam_signal_dm": {
+      "id": 74,
+      "source": "signal",
+      "conversation_type": "direct_chat"
+    },
+    "sam_trip_email": {
+      "id": 4,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "shortcode_sms": {
+      "id": 77,
+      "source": "imessage",
+      "conversation_type": "direct_chat"
+    },
+    "slack_general": {
+      "id": 80,
+      "source": "slack",
+      "conversation_type": "channel"
+    },
+    "taylor_proposal": {
+      "id": 2,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "vendor_ticket": {
+      "id": 7,
+      "source": "gmail",
+      "conversation_type": "email_thread"
+    },
+    "weekend_crew": {
+      "id": 73,
+      "source": "whatsapp",
+      "conversation_type": "group_chat"
+    }
+  },
+  "messages": {
+    "background_01_1": 37,
+    "background_01_2": 38,
+    "background_01_3": 39,
+    "background_02_1": 40,
+    "background_02_2": 41,
+    "background_02_3": 42,
+    "background_03_1": 43,
+    "background_03_2": 44,
+    "background_03_3": 45,
+    "background_04_1": 46,
+    "background_04_2": 47,
+    "background_04_3": 48,
+    "background_05_1": 49,
+    "background_05_2": 50,
+    "background_05_3": 51,
+    "background_06_1": 52,
+    "background_06_2": 53,
+    "background_06_3": 54,
+    "background_07_1": 55,
+    "background_07_2": 56,
+    "background_07_3": 57,
+    "background_08_1": 58,
+    "background_08_2": 59,
+    "background_08_3": 60,
+    "background_09_1": 61,
+    "background_09_2": 62,
+    "background_09_3": 63,
+    "background_10_1": 64,
+    "background_10_2": 65,
+    "background_10_3": 66,
+    "background_11_1": 67,
+    "background_11_2": 68,
+    "background_11_3": 69,
+    "background_12_1": 70,
+    "background_12_2": 71,
+    "background_12_3": 72,
+    "background_13_1": 73,
+    "background_13_2": 74,
+    "background_13_3": 75,
+    "background_14_1": 76,
+    "background_14_2": 77,
+    "background_14_3": 78,
+    "background_15_1": 79,
+    "background_15_2": 80,
+    "background_15_3": 81,
+    "background_16_1": 82,
+    "background_16_2": 83,
+    "background_16_3": 84,
+    "background_17_1": 85,
+    "background_17_2": 86,
+    "background_17_3": 87,
+    "background_18_1": 88,
+    "background_18_2": 89,
+    "background_18_3": 90,
+    "background_19_1": 91,
+    "background_19_2": 92,
+    "background_19_3": 93,
+    "background_20_1": 94,
+    "background_20_2": 95,
+    "background_20_3": 96,
+    "background_21_1": 97,
+    "background_21_2": 98,
+    "background_21_3": 99,
+    "background_22_1": 100,
+    "background_22_2": 101,
+    "background_22_3": 102,
+    "background_23_1": 103,
+    "background_23_2": 104,
+    "background_23_3": 105,
+    "background_24_1": 106,
+    "background_24_2": 107,
+    "background_24_3": 108,
+    "background_25_1": 109,
+    "background_25_2": 110,
+    "background_25_3": 111,
+    "background_26_1": 112,
+    "background_26_2": 113,
+    "background_26_3": 114,
+    "background_27_1": 115,
+    "background_27_2": 116,
+    "background_27_3": 117,
+    "background_28_1": 118,
+    "background_28_2": 119,
+    "background_28_3": 120,
+    "background_29_1": 121,
+    "background_29_2": 122,
+    "background_29_3": 123,
+    "background_30_1": 124,
+    "background_30_2": 125,
+    "background_30_3": 126,
+    "background_31_1": 127,
+    "background_31_2": 128,
+    "background_31_3": 129,
+    "background_32_1": 130,
+    "background_32_2": 131,
+    "background_32_3": 132,
+    "background_33_1": 133,
+    "background_33_2": 134,
+    "background_33_3": 135,
+    "background_34_1": 136,
+    "background_34_2": 137,
+    "background_34_3": 138,
+    "background_35_1": 139,
+    "background_35_2": 140,
+    "background_35_3": 141,
+    "background_36_1": 142,
+    "background_36_2": 143,
+    "background_36_3": 144,
+    "background_37_1": 145,
+    "background_37_2": 146,
+    "background_37_3": 147,
+    "background_38_1": 148,
+    "background_38_2": 149,
+    "background_38_3": 150,
+    "background_39_1": 151,
+    "background_39_2": 152,
+    "background_39_3": 153,
+    "background_40_1": 154,
+    "background_40_2": 155,
+    "background_40_3": 156,
+    "background_41_1": 157,
+    "background_41_2": 158,
+    "background_41_3": 159,
+    "background_42_1": 160,
+    "background_42_2": 161,
+    "background_42_3": 162,
+    "background_43_1": 163,
+    "background_43_2": 164,
+    "background_43_3": 165,
+    "background_44_1": 166,
+    "background_44_2": 167,
+    "background_44_3": 168,
+    "background_45_1": 169,
+    "background_45_2": 170,
+    "background_45_3": 171,
+    "background_46_1": 172,
+    "background_46_2": 173,
+    "background_46_3": 174,
+    "background_47_1": 175,
+    "background_47_2": 176,
+    "background_47_3": 177,
+    "background_48_1": 178,
+    "background_48_2": 179,
+    "background_48_3": 180,
+    "background_49_1": 181,
+    "background_49_2": 182,
+    "background_49_3": 183,
+    "background_50_1": 184,
+    "background_50_2": 185,
+    "background_50_3": 186,
+    "background_51_1": 187,
+    "background_51_2": 188,
+    "background_51_3": 189,
+    "background_52_1": 190,
+    "background_52_2": 191,
+    "background_52_3": 192,
+    "background_53_1": 193,
+    "background_53_2": 194,
+    "background_53_3": 195,
+    "background_54_1": 196,
+    "background_54_2": 197,
+    "background_54_3": 198,
+    "background_55_1": 199,
+    "background_55_2": 200,
+    "background_55_3": 201,
+    "background_56_1": 202,
+    "background_56_2": 203,
+    "background_56_3": 204,
+    "background_57_1": 205,
+    "background_57_2": 206,
+    "background_57_3": 207,
+    "background_58_1": 208,
+    "background_58_2": 209,
+    "background_58_3": 210,
+    "background_59_1": 211,
+    "background_59_2": 212,
+    "background_59_3": 213,
+    "background_60_1": 214,
+    "background_60_2": 215,
+    "background_60_3": 216,
+    "canary": 36,
+    "casey_sms_question": 256,
+    "deleted_at_source": 35,
+    "deploy_bot_1": 345,
+    "deploy_bot_2": 346,
+    "deploy_bot_3": 347,
+    "deploy_bot_4": 348,
+    "deploy_bot_5": 349,
+    "dinner_group_in_1": 260,
+    "dinner_group_in_2": 261,
+    "dinner_group_in_3": 262,
+    "dinner_group_in_4": 263,
+    "dinner_group_own_1": 367,
+    "dinner_group_own_2": 368,
+    "followup_jordan": 34,
+    "jordan_contract_question": 1,
+    "newsletter_1": 26,
+    "newsletter_2": 27,
+    "newsletter_3": 28,
+    "newsletter_4": 29,
+    "newsletter_5": 30,
+    "newsletter_6": 31,
+    "newsletter_7": 32,
+    "newsletter_8": 33,
+    "noreply_receipt_1": 22,
+    "noreply_receipt_2": 23,
+    "noreply_receipt_3": 24,
+    "noreply_receipt_4": 25,
+    "pat_quote_outbound": 19,
+    "pat_quote_reply": 20,
+    "priya_budget_answer": 4,
+    "priya_budget_question": 3,
+    "priya_contract_share": 264,
+    "riley_intro_question": 18,
+    "sam_imessage_dm_in_1": 252,
+    "sam_imessage_dm_in_2": 253,
+    "sam_imessage_dm_in_3": 254,
+    "sam_imessage_dm_in_4": 255,
+    "sam_imessage_own_1": 365,
+    "sam_imessage_own_2": 366,
+    "sam_signal_dm_in_1": 239,
+    "sam_signal_dm_in_10": 248,
+    "sam_signal_dm_in_11": 249,
+    "sam_signal_dm_in_12": 250,
+    "sam_signal_dm_in_2": 240,
+    "sam_signal_dm_in_3": 241,
+    "sam_signal_dm_in_4": 242,
+    "sam_signal_dm_in_5": 243,
+    "sam_signal_dm_in_6": 244,
+    "sam_signal_dm_in_7": 245,
+    "sam_signal_dm_in_8": 246,
+    "sam_signal_dm_in_9": 247,
+    "sam_signal_own_1": 358,
+    "sam_signal_own_2": 359,
+    "sam_signal_own_3": 360,
+    "sam_signal_own_4": 361,
+    "sam_signal_own_5": 362,
+    "sam_signal_own_6": 363,
+    "sam_signal_own_7": 364,
+    "sam_signal_question": 251,
+    "sam_trip_in_1": 5,
+    "sam_trip_in_2": 7,
+    "sam_trip_in_3": 9,
+    "sam_trip_in_4": 11,
+    "sam_trip_in_5": 13,
+    "sam_trip_in_6": 15,
+    "sam_trip_own_1": 6,
+    "sam_trip_own_2": 8,
+    "sam_trip_own_4": 12,
+    "sam_trip_own_5": 14,
+    "sam_trip_own_6": 16,
+    "sam_trip_sent_from_draft": 10,
+    "sam_trip_unsent_draft": 17,
+    "shortcode_1": 257,
+    "shortcode_2": 258,
+    "shortcode_3": 259,
+    "slack_general_in_1": 265,
+    "slack_general_in_10": 274,
+    "slack_general_in_11": 275,
+    "slack_general_in_12": 276,
+    "slack_general_in_13": 277,
+    "slack_general_in_14": 278,
+    "slack_general_in_15": 279,
+    "slack_general_in_16": 280,
+    "slack_general_in_17": 281,
+    "slack_general_in_18": 282,
+    "slack_general_in_19": 283,
+    "slack_general_in_2": 266,
+    "slack_general_in_20": 284,
+    "slack_general_in_21": 285,
+    "slack_general_in_22": 286,
+    "slack_general_in_23": 287,
+    "slack_general_in_24": 288,
+    "slack_general_in_25": 289,
+    "slack_general_in_26": 290,
+    "slack_general_in_27": 291,
+    "slack_general_in_28": 292,
+    "slack_general_in_29": 293,
+    "slack_general_in_3": 267,
+    "slack_general_in_30": 294,
+    "slack_general_in_31": 295,
+    "slack_general_in_32": 296,
+    "slack_general_in_33": 297,
+    "slack_general_in_34": 298,
+    "slack_general_in_35": 299,
+    "slack_general_in_36": 300,
+    "slack_general_in_37": 301,
+    "slack_general_in_38": 302,
+    "slack_general_in_39": 303,
+    "slack_general_in_4": 268,
+    "slack_general_in_40": 304,
+    "slack_general_in_41": 305,
+    "slack_general_in_42": 306,
+    "slack_general_in_43": 307,
+    "slack_general_in_44": 308,
+    "slack_general_in_45": 309,
+    "slack_general_in_46": 310,
+    "slack_general_in_47": 311,
+    "slack_general_in_48": 312,
+    "slack_general_in_49": 313,
+    "slack_general_in_5": 269,
+    "slack_general_in_50": 314,
+    "slack_general_in_51": 315,
+    "slack_general_in_52": 316,
+    "slack_general_in_53": 317,
+    "slack_general_in_54": 318,
+    "slack_general_in_55": 319,
+    "slack_general_in_56": 320,
+    "slack_general_in_57": 321,
+    "slack_general_in_58": 322,
+    "slack_general_in_59": 323,
+    "slack_general_in_6": 270,
+    "slack_general_in_60": 324,
+    "slack_general_in_61": 325,
+    "slack_general_in_62": 326,
+    "slack_general_in_63": 327,
+    "slack_general_in_64": 328,
+    "slack_general_in_65": 329,
+    "slack_general_in_66": 330,
+    "slack_general_in_67": 331,
+    "slack_general_in_68": 332,
+    "slack_general_in_69": 333,
+    "slack_general_in_7": 271,
+    "slack_general_in_70": 334,
+    "slack_general_in_71": 335,
+    "slack_general_in_72": 336,
+    "slack_general_in_73": 337,
+    "slack_general_in_74": 338,
+    "slack_general_in_75": 339,
+    "slack_general_in_76": 340,
+    "slack_general_in_77": 341,
+    "slack_general_in_78": 342,
+    "slack_general_in_79": 343,
+    "slack_general_in_8": 272,
+    "slack_general_in_80": 344,
+    "slack_general_in_9": 273,
+    "taylor_proposal_question": 2,
+    "vendor_ticket_question": 21,
+    "weekend_crew_in_1": 217,
+    "weekend_crew_in_10": 226,
+    "weekend_crew_in_11": 227,
+    "weekend_crew_in_12": 228,
+    "weekend_crew_in_13": 229,
+    "weekend_crew_in_14": 230,
+    "weekend_crew_in_15": 231,
+    "weekend_crew_in_16": 232,
+    "weekend_crew_in_17": 233,
+    "weekend_crew_in_18": 234,
+    "weekend_crew_in_19": 235,
+    "weekend_crew_in_2": 218,
+    "weekend_crew_in_20": 236,
+    "weekend_crew_in_21": 237,
+    "weekend_crew_in_3": 219,
+    "weekend_crew_in_4": 220,
+    "weekend_crew_in_5": 221,
+    "weekend_crew_in_6": 222,
+    "weekend_crew_in_7": 223,
+    "weekend_crew_in_8": 224,
+    "weekend_crew_in_9": 225,
+    "weekend_crew_own_1": 350,
+    "weekend_crew_own_2": 351,
+    "weekend_crew_own_3": 352,
+    "weekend_crew_own_4": 353,
+    "weekend_crew_own_5": 354,
+    "weekend_crew_own_6": 355,
+    "weekend_crew_own_7": 356,
+    "weekend_crew_own_8": 357,
+    "weekend_crew_question": 238
+  },
+  "attachments": {
+    "contract_v2": {
+      "content_hash": "bc61bd724c703f5764a54b6ae4c541121fa2f9a5402cbc6a5c7fdee241bc2a34",
+      "message_handles": [
+        "jordan_contract_question",
+        "priya_contract_share"
+      ]
+    }
+  },
+  "meetings": {},
+  "calendar_events": {},
+  "operations": {},
+  "collections": {},
+  "saved_views": {},
+  "expect": {
+    "automated_messages": [
+      "noreply_receipt_1",
+      "noreply_receipt_2",
+      "noreply_receipt_3",
+      "noreply_receipt_4",
+      "shortcode_1",
+      "shortcode_2",
+      "shortcode_3",
+      "deploy_bot_1",
+      "deploy_bot_2",
+      "deploy_bot_3",
+      "deploy_bot_4",
+      "deploy_bot_5"
+    ],
+    "awaiting_owner_reply": [
+      "jordan_contract_question",
+      "sam_signal_question",
+      "riley_intro_question",
+      "vendor_ticket_question"
+    ],
+    "awaiting_their_reply": [
+      "taylor_proposal_question",
+      "casey_sms_question"
+    ],
+    "bulk_messages": [
+      "newsletter_1",
+      "newsletter_2",
+      "newsletter_3",
+      "newsletter_4",
+      "newsletter_5",
+      "newsletter_6",
+      "newsletter_7",
+      "newsletter_8"
+    ],
+    "deleted_at_source": [
+      "deleted_at_source"
+    ],
+    "first_contact_messages": [
+      "riley_intro_question"
+    ],
+    "group_chat_questions_never_loops": [
+      "weekend_crew_question"
+    ],
+    "interrupted_sources": [
+      "signal"
+    ],
+    "persons_spanning_channels": {
+      "sam": [
+        "email",
+        "whatsapp",
+        "signal",
+        "imessage"
+      ]
+    },
+    "role_account_participants": [
+      "support_vendor",
+      "noreply"
+    ],
+    "settled": [
+      "priya_budget_question"
+    ],
+    "starred_messages": [
+      "priya_budget_question"
+    ],
+    "unsaved_participants": [
+      "riley",
+      "pat",
+      "canary"
+    ],
+    "voice": {
+      "dinner_group": {
+        "first": [
+          "dinner_group_own_1",
+          "dinner_group_own_2"
+        ],
+        "own_messages": 2,
+        "scope_used": "source",
+        "skipped": [
+          "person"
+        ]
+      },
+      "min_sample": 5,
+      "person_sam": {
+        "chat": [
+          "sam_signal_dm",
+          "sam_imessage_dm"
+        ],
+        "email": [
+          "sam_trip_email"
+        ],
+        "never": [
+          "weekend_crew",
+          "dinner_group"
+        ]
+      },
+      "sam_imessage_dm": {
+        "first": [
+          "sam_imessage_own_1",
+          "sam_imessage_own_2"
+        ],
+        "own_messages": 2,
+        "scope_used": "person"
+      },
+      "sam_signal_dm": {
+        "own_messages": 7,
+        "scope_used": "conversation"
+      },
+      "sam_trip_email": {
+        "must_exclude": [
+          "sam_trip_unsent_draft"
+        ],
+        "must_include": [
+          "sam_trip_sent_from_draft"
+        ],
+        "own_messages": 6,
+        "quoted_text_excluded": true,
+        "scope_used": "conversation"
+      },
+      "weekend_crew": {
+        "own_messages": 8,
+        "scope_used": "conversation"
+      }
+    }
+  },
+  "canaries": [
+    "CANARY-SUBJ-7f3a",
+    "CANARY-BODY-7f3a",
+    "canary-addr-7f3a@canary.example",
+    "Canary Q. Person"
+  ],
+  "digest": ""
+}
