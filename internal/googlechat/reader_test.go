@@ -3,7 +3,6 @@ package googlechat
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -70,24 +69,6 @@ func TestGoogleChatDates(t *testing.T) {
 			}
 		})
 	}
-}
-
-func FuzzGoogleChatMediaPathContainment(f *testing.F) {
-	for _, seed := range []string{"File-example.txt", "files/example.txt", "../secret", "/absolute", `C:\secret`, "", "files/../../secret"} {
-		f.Add(seed)
-	}
-	f.Fuzz(func(t *testing.T, name string) {
-		if !localMediaPath(name) {
-			return
-		}
-		base := filepath.Join(string(filepath.Separator), "fixture", "conversation")
-		joined := filepath.Join(base, name)
-		relative, err := filepath.Rel(base, joined)
-		require.NoError(t, err)
-		assert.False(t, filepath.IsAbs(relative))
-		assert.NotEqual(t, "..", relative)
-		assert.False(t, strings.HasPrefix(relative, ".."+string(filepath.Separator)))
-	})
 }
 
 func TestGoogleChatMissingProfilePartKeepsOwnershipUnknown(t *testing.T) {

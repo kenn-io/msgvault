@@ -44,22 +44,22 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 		// Committed messages need accurate stats and a terminal run status after
 		// cancellation; neither cleanup step reads more provider data.
 		cleanup := context.WithoutCancel(ctx)
-		retErr = errors.Join(retErr, st.RecomputeConversationStatsContext(cleanup, source.ID))
+		retErr = errors.Join(retErr, st.RecomputeConversationStatsContext(cleanup, source.ID),
+			st.UpdateSyncCheckpointContext(cleanup, syncID, &store.Checkpoint{MessagesProcessed: summary.MessagesAdded + int64(summary.Duplicates+summary.Unsupported), MessagesAdded: summary.MessagesAdded}))
 		if retErr != nil {
 			retErr = errors.Join(retErr, st.FailSyncContext(cleanup, syncID, retErr.Error()))
 		} else {
 			retErr = st.CompleteSyncContext(cleanup, syncID, "")
 		}
 	}()
-	config, err := json.Marshal(struct {
-		Roots    []string     `json:"supplied_roots"`
-		Profiles []provenance `json:"owner_profiles"`
-	}{opts.Roots, reader.users})
-	if err != nil {
-		return summary, err
-	}
-	if err := st.UpdateSourceSyncConfig(ctx, source.ID, string(config)); err != nil {
-		return summary, err
+	if len(reader.users) > 0 {
+		config, err := mergeContainerEvidence(source.SyncConfig, "owner_profiles", reader.users)
+		if err != nil {
+			return summary, err
+		}
+		if err := st.UpdateSourceSyncConfig(ctx, source.ID, config.String); err != nil {
+			return summary, err
+		}
 	}
 	resolve := func(p person) (int64, error) {
 		email, err := NormalizeOwner(p.Email)
@@ -78,9 +78,6 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 			return summary, err
 		}
 		supplied[group] = hasMessages
-		if opts.Logger != nil {
-			opts.Logger.Info("googlechat: supplied conversation processed")
-		}
 	}
 	for group := range reader.memberships {
 		if !supplied[group] {
@@ -115,12 +112,27 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 			kind = "direct_chat"
 		}
 	}
-	conversationID, err := st.EnsureConversationWithTypeContext(ctx, sourceID, group, kind, info.Name)
+	preserveKind := strings.HasPrefix(group, "DM ") && len(info.Members) < 2
+	conversationID, err := st.EnsureConversationWithTypePolicyContext(ctx, sourceID, group, kind, info.Name, preserveKind)
 	if err != nil {
 		return false, err
 	}
+	if len(groupPaths) > 0 {
+		prior, err := st.GetConversationMetadataContext(ctx, conversationID)
+		if err != nil {
+			return false, err
+		}
+		metadata, err := mergeContainerEvidence(prior, "group_files", groupPaths)
+		if err != nil {
+			return false, err
+		}
+		if err := st.SetConversationMetadataContext(ctx, conversationID, metadata); err != nil {
+			return false, err
+		}
+	}
 	summary.Conversations++
 	var members []store.ConversationParticipantRef
+	memberEmails := map[int64]string{}
 	for _, member := range info.Members {
 		id, err := resolve(member)
 		if err != nil {
@@ -132,6 +144,7 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 		if err := st.EnsureConversationParticipantContext(ctx, conversationID, id, "member"); err != nil {
 			return false, err
 		}
+		memberEmails[id], _ = NormalizeOwner(member.Email)
 		members = append(members, store.ConversationParticipantRef{ParticipantID: id, Role: "member"})
 	}
 	if raw == nil {
@@ -218,23 +231,24 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 		// Only the observed roster supplies recipients. --me scopes the archive;
 		// it does not assert membership in a conversation with no roster evidence.
 		var to []int64
+		var toEmails []string
 		for _, member := range members {
 			if member.ParticipantID != sender {
 				to = append(to, member.ParticipantID)
+				toEmails = append(toEmails, memberEmails[member.ParticipantID])
 			}
 		}
 		if len(to) > 0 {
 			recipients = append(recipients, store.RecipientSet{Type: "to", ParticipantIDs: to})
 		}
 		metadata, err := json.Marshal(struct {
-			Group    string         `json:"group_id"`
-			Topic    string         `json:"topic_id"`
-			Created  string         `json:"created_date"`
-			Provider jsontext.Value `json:"provider_record"`
-			Files    []provenance   `json:"message_files"`
-			Groups   []provenance   `json:"group_files"`
-			Profiles []provenance   `json:"owner_profiles"`
-		}{group, m.Topic, m.Created, record, paths, groupPaths, reader.users})
+			Group    string       `json:"group_id"`
+			Topic    string       `json:"topic_id"`
+			Created  string       `json:"created_date"`
+			Files    []provenance `json:"message_files"`
+			Groups   []provenance `json:"group_files"`
+			Profiles []provenance `json:"owner_profiles"`
+		}{group, m.Topic, m.Created, paths, provenancePaths(groupPaths), provenancePaths(reader.users)})
 		if err != nil {
 			return false, err
 		}
@@ -249,8 +263,8 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 		snippet := textutil.PrefixRunes(strings.TrimSpace(m.Text), 200)
 		id, err = st.PersistMessageContext(ctx, &store.MessagePersistData{
 			Message:      &store.Message{SourceID: sourceID, SourceMessageID: m.ID, MessageType: store.MessageTypeGoogleChat, SentAt: sql.NullTime{Time: sent, Valid: !sent.IsZero()}, SenderID: sql.NullInt64{Int64: sender, Valid: sender != 0}, IsFromMe: sender != 0 && email == owner, Snippet: sql.NullString{String: snippet, Valid: snippet != ""}, SizeEstimate: int64(len(record))},
-			Conversation: &store.ConversationPersistData{SourceConversationID: group, ConversationType: kind, Title: info.Name, Participants: refs, PreserveExistingParticipants: true},
-			RawMIME:      record, RawFormat: "google_chat_json", BodyText: sql.NullString{String: m.Text, Valid: m.Text != ""}, Metadata: &sql.NullString{String: string(metadata), Valid: true}, Recipients: recipients, MIMEAttachmentReplacement: replacement, FTS: &store.FTSDoc{Body: m.Text},
+			Conversation: &store.ConversationPersistData{SourceConversationID: group, ConversationType: kind, Title: info.Name, Participants: refs, PreserveExistingType: preserveKind, PreserveExistingParticipants: true},
+			RawMIME:      record, RawFormat: "google_chat_json", BodyText: sql.NullString{String: m.Text, Valid: m.Text != ""}, Metadata: &sql.NullString{String: string(metadata), Valid: true}, Recipients: recipients, MIMEAttachmentReplacement: replacement, FTS: &store.FTSDoc{Body: m.Text, FromAddr: email, ToAddrs: strings.Join(toEmails, " ")},
 		})
 		if err != nil {
 			return false, fmt.Errorf("googlechat: persist message: %w", err)
@@ -259,4 +273,48 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 		summary.MessagesAdded++
 	}
 	return len(envelope.Messages) > 0, nil
+}
+
+// Raw container snapshots live once per source/conversation. Distinct snapshots
+// remain available when a later export changes a file or omits it entirely.
+func mergeContainerEvidence(prior sql.NullString, key string, incoming []provenance) (sql.NullString, error) {
+	metadata := map[string]jsontext.Value{}
+	if prior.Valid {
+		if err := json.Unmarshal([]byte(prior.String), &metadata); err != nil {
+			return prior, err
+		}
+	}
+	var files []provenance
+	if raw := metadata[key]; len(raw) > 0 {
+		if err := json.Unmarshal(raw, &files); err != nil {
+			return prior, err
+		}
+	}
+	for _, file := range incoming {
+		found := false
+		for _, previous := range files {
+			if previous.Root == file.Root && previous.Path == file.Path && previous.Data == file.Data {
+				found = true
+				break
+			}
+		}
+		if !found {
+			files = append(files, file)
+		}
+	}
+	raw, err := json.Marshal(files)
+	if err != nil {
+		return prior, err
+	}
+	metadata[key] = raw
+	raw, err = json.Marshal(metadata)
+	return sql.NullString{String: string(raw), Valid: err == nil}, err
+}
+
+func provenancePaths(files []provenance) []provenance {
+	paths := make([]provenance, len(files))
+	for i, file := range files {
+		paths[i] = provenance{Root: file.Root, Path: file.Path}
+	}
+	return paths
 }

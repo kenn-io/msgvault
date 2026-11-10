@@ -50,7 +50,6 @@ func openExport(ctx context.Context, roots []string, owner string) (reader *expo
 		return reader, fmt.Errorf("googlechat: supply 1 to %d extracted part directories", maxRoots)
 	}
 	seen := map[string]bool{}
-	found := false
 	for _, name := range roots {
 		if err := ctx.Err(); err != nil {
 			return reader, err
@@ -76,6 +75,7 @@ func openExport(ctx context.Context, roots []string, owner string) (reader *expo
 		}
 		p := &part{root: root, path: absolute, groups: "Groups"}
 		reader.parts = append(reader.parts, p)
+		found := false
 		if filepath.Base(absolute) == "Groups" {
 			p.groups = "."
 			found = true
@@ -101,6 +101,9 @@ func openExport(ctx context.Context, roots []string, owner string) (reader *expo
 					break
 				}
 			}
+		}
+		if !found {
+			return reader, fmt.Errorf("googlechat: no Google Chat Groups/Users layout in supplied root %s", absolute)
 		}
 		err = reader.directories(ctx, p, p.groups, func(entry fs.DirEntry) error {
 			id := entry.Name()
@@ -138,7 +141,7 @@ func openExport(ctx context.Context, roots []string, owner string) (reader *expo
 					return errors.New("googlechat: supplied owner profile disagrees with --me")
 				}
 			}
-			reader.users = append(reader.users, provenance{Root: p.path, Path: path, Data: raw})
+			reader.users = append(reader.users, provenance{Root: p.path, Path: path, Data: string(raw)})
 			for _, membership := range info.Memberships {
 				if membership.State == "MEMBER_JOINED" {
 					reader.memberships[membership.Group] = true
@@ -149,9 +152,6 @@ func openExport(ctx context.Context, roots []string, owner string) (reader *expo
 		if err != nil {
 			return reader, err
 		}
-	}
-	if !found {
-		return reader, errors.New("googlechat: no Google Chat Groups/Users layout found")
 	}
 	return reader, nil
 }
@@ -165,16 +165,6 @@ func (r *exportReader) Close() error {
 }
 
 func (r *exportReader) directories(ctx context.Context, p *part, path string, visit func(fs.DirEntry) error) error {
-	info, err := p.root.Stat(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() {
-		return fmt.Errorf("googlechat: %s must be a directory", path)
-	}
 	dir, err := p.root.Open(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -221,13 +211,6 @@ func readJSON(ctx context.Context, root *os.Root, path string) (jsontext.Value, 
 		return nil, fmt.Errorf("googlechat: open JSON %s: %w", path, err)
 	}
 	defer func() { _ = file.Close() }()
-	info, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() || info.Size() > maxJSONBytes {
-		return nil, fmt.Errorf("googlechat: JSON %s must be a regular file of at most %d bytes", path, maxJSONBytes)
-	}
 	data, err := io.ReadAll(io.LimitReader(&export.ContextReader{Context: ctx, Reader: file}, maxJSONBytes+1))
 	if err != nil {
 		return nil, err
@@ -266,7 +249,7 @@ func (r *exportReader) groupFiles(ctx context.Context, id, name string) (jsontex
 		first = raw
 		entry := provenance{Root: candidate.part.path, Path: filepath.Join(candidate.dir, name)}
 		if name == "group_info.json" {
-			entry.Data = raw
+			entry.Data = string(raw)
 		}
 		paths = append(paths, entry)
 	}

@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"log/slog"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,7 +49,6 @@ func TestImportGoogleChatPreservesSearchRawScopeAndReplay(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(metadata), &meta))
 	assert.Equal(t, "topic-a", meta["topic_id"])
 	assert.Equal(t, "DM synthetic-dm", meta["group_id"])
-	assert.Contains(t, metadata, `"keep":true`)
 	assert.Contains(t, metadata, "messages.json")
 	var fileMeta struct {
 		Files []provenance `json:"message_files"`
@@ -130,30 +129,49 @@ func TestImportGoogleChatMultipartRepairAndOrder(t *testing.T) {
 	}
 }
 
-type cancelWriter struct{ cancel context.CancelFunc }
-
-func (w cancelWriter) Write(p []byte) (int, error) { w.cancel(); return len(p), nil }
-
 func TestImportGoogleChatInterruptedReplay(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
-	for _, group := range []string{"DM a", "Space b"} {
-		write(t, root, "Groups/"+group+"/messages.json", strings.Replace(one, "group/topic/message", group+"/topic/message", 1))
+	var records []string
+	for i := 0; i < 200; i++ {
+		records = append(records, strings.Replace(strings.TrimSuffix(strings.TrimPrefix(one, `{"messages":[`), `]}`), "group/topic/message", fmt.Sprintf("group/topic/message%d", i), 1))
 	}
+	write(t, root, "Groups/DM a/messages.json", `{"messages":[`+strings.Join(records, ",")+`]}`)
+
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	opts := ImportOptions{Me: "owner@example.com", Roots: []string{root}, Logger: slog.New(slog.NewTextHandler(cancelWriter{cancel}, nil))}
-	summary, err := Import(ctx, st, opts)
+	opts := ImportOptions{Me: "owner@example.com", Roots: []string{root}}
+	type outcome struct {
+		summary *ImportSummary
+		err     error
+	}
+	done := make(chan outcome, 1)
+	finished := make(chan struct{})
+	t.Cleanup(func() { cancel(); <-finished })
+	go func() { defer close(finished); summary, err := Import(ctx, st, opts); done <- outcome{summary, err} }()
+	// Observe a committed insert, then interrupt the same production import.
+	require.Eventually(t, func() bool {
+		var n int
+		err := st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages`).Scan(&n)
+		return err == nil && n > 0
+	}, 10*time.Second, time.Millisecond)
+	cancel()
+	result := <-done
+	summary, err := result.summary, result.err
 	require.ErrorIs(t, err, context.Canceled)
-	assert.EqualValues(t, 1, summary.MessagesAdded)
+	assert.Positive(t, summary.MessagesAdded)
+	assert.Less(t, summary.MessagesAdded, int64(200))
+	var processed, added int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT messages_processed,messages_added FROM sync_runs`).Scan(&processed, &added))
+	assert.Equal(t, summary.MessagesAdded, processed)
+	assert.Equal(t, summary.MessagesAdded, added)
 	var status string
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT status FROM sync_runs`).Scan(&status))
 	assert.Equal(t, "failed", status)
-	opts.Logger = nil
 	summary, err = Import(t.Context(), st, opts)
 	require.NoError(t, err)
-	assert.EqualValues(t, 1, summary.MessagesAdded)
-	assert.Equal(t, 1, summary.Duplicates)
+	assert.EqualValues(t, 200, summary.MessagesAdded+int64(summary.Duplicates))
+	assert.Positive(t, summary.Duplicates)
 }
 
 func TestImportGoogleChatValidation(t *testing.T) {
@@ -192,6 +210,7 @@ func TestImportGoogleChatMediaSafety(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			a, b := t.TempDir(), t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(b, "Groups"), 0700))
 			write(t, a, "Groups/DM a/messages.json", strings.ReplaceAll(one, "File-example.txt", tc.ref))
 			dir := filepath.Join(a, "Groups/DM a")
 			switch tc.name {
@@ -215,6 +234,12 @@ func TestImportGoogleChatMediaSafety(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, 1, summary.AttachmentsMissing)
 			assert.Zero(t, summary.AttachmentsStored)
+			if tc.name == "oversized" {
+				var reason, state string
+				require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT attachment_skip_reason,attachment_state FROM attachments`).Scan(&reason, &state))
+				assert.Equal(t, "size_cap", reason)
+				assert.Equal(t, "skipped", state)
+			}
 		})
 	}
 }

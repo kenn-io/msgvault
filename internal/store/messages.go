@@ -4548,6 +4548,12 @@ func (s *Store) EnsureConversationWithType(sourceID int64, sourceConversationID,
 
 // EnsureConversationWithTypeContext honors cancellation during EnsureConversationWithType.
 func (s *Store) EnsureConversationWithTypeContext(ctx context.Context, sourceID int64, sourceConversationID, conversationType, title string) (int64, error) {
+	return s.EnsureConversationWithTypePolicyContext(ctx, sourceID, sourceConversationID, conversationType, title, false)
+}
+
+// EnsureConversationWithTypePolicyContext optionally preserves an existing type
+// when the caller has no new classification evidence. New rows use the supplied type.
+func (s *Store) EnsureConversationWithTypePolicyContext(ctx context.Context, sourceID int64, sourceConversationID, conversationType, title string, preserveExistingType bool) (int64, error) {
 	if err := s.requireSyncSource(sourceID); err != nil {
 		return 0, err
 	}
@@ -4555,12 +4561,12 @@ func (s *Store) EnsureConversationWithTypeContext(ctx context.Context, sourceID 
 		var id int64
 		err := s.withTxContext(ctx, func(tx *loggedTx) error {
 			var err error
-			id, err = ensureConversationWithType(boundQuerier{ctx: ctx, q: tx}, s.dialect, sourceID, sourceConversationID, conversationType, title)
+			id, err = ensureConversationWithTypePolicy(boundQuerier{ctx: ctx, q: tx}, s.dialect, sourceID, sourceConversationID, conversationType, title, preserveExistingType)
 			return err
 		})
 		return id, err
 	}
-	return ensureConversationWithType(boundQuerier{ctx: ctx, q: s.db}, s.dialect, sourceID, sourceConversationID, conversationType, title)
+	return ensureConversationWithTypePolicy(boundQuerier{ctx: ctx, q: s.db}, s.dialect, sourceID, sourceConversationID, conversationType, title, preserveExistingType)
 }
 
 // SetConversationTitle applies an explicit provider title, including removal.
@@ -4578,10 +4584,6 @@ func (s *Store) SetConversationTitle(ctx context.Context, sourceID, conversation
 		return s.withTxContext(ctx, func(tx *loggedTx) error { return write(boundQuerier{ctx: ctx, q: tx}) })
 	}
 	return write(boundQuerier{ctx: ctx, q: s.db})
-}
-
-func ensureConversationWithType(q querier, dialect Dialect, sourceID int64, sourceConversationID, conversationType, title string) (int64, error) {
-	return ensureConversationWithTypePolicy(q, dialect, sourceID, sourceConversationID, conversationType, title, false)
 }
 
 func ensureConversationWithTypePolicy(

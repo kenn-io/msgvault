@@ -2,12 +2,10 @@
 package googlechat
 
 import (
-	"encoding/json/jsontext"
-	"errors"
-	"log/slog"
-	"net/mail"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/apiimport"
 )
 
 const SourceType = "google_chat"
@@ -17,7 +15,6 @@ type ImportOptions struct {
 	Me             string
 	Roots          []string
 	AttachmentsDir string
-	Logger         *slog.Logger
 }
 
 type ImportSummary struct {
@@ -63,19 +60,14 @@ type userInfo struct {
 }
 
 type provenance struct {
-	Root string         `json:"root"`
-	Path string         `json:"path"`
-	Data jsontext.Value `json:"data,omitempty"`
+	Root string `json:"root"`
+	Path string `json:"path"`
+	Data string `json:"data,omitempty"`
 }
 
 // NormalizeOwner validates a bare account email for both CLI and package callers.
 func NormalizeOwner(value string) (string, error) {
-	value = strings.TrimSpace(value)
-	address, err := mail.ParseAddress(value)
-	if err != nil || address.Address != value || !strings.Contains(value, "@") {
-		return "", errors.New("googlechat: --me must be a bare email address")
-	}
-	return strings.ToLower(value), nil
+	return apiimport.NormalizeEmail("googlechat: --me", value)
 }
 
 func parseDate(value string) time.Time {
@@ -85,10 +77,9 @@ func parseDate(value string) time.Time {
 	if !strings.HasSuffix(value, " UTC") {
 		return time.Time{}
 	}
-	for _, layout := range []string{"Monday, January 2, 2006 at 3:04:05 PM MST", "Monday, January 2, 2006 at 03:04:05 PM MST"} {
-		if parsed, err := time.Parse(layout, value); err == nil {
-			return parsed.UTC()
-		}
+	parsed, err := time.Parse("Monday, January 2, 2006 at 3:04:05 PM MST", value)
+	if err != nil {
+		return time.Time{}
 	}
-	return time.Time{}
+	return parsed.UTC()
 }

@@ -543,6 +543,9 @@ exact conversation-relative `export_name` paths across parts. Traversal and
 escaped symlinks are rejected. Empty files are retained. Missing files, invalid
 paths and oversized files are counted; ambiguous files and storage errors stop
 the run. A truncated or stale export filename is reported missing, never guessed.
+After independently verifying which local file belongs to that reference, restore
+its referenced `export_name` within the conversation directory and replay to
+repair the missing media slot.
 
 Output reports supplied conversations and messages, additions, duplicates,
 unsupported records, unknown senders, unparsed dates, stored/missing media and

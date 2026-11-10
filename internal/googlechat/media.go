@@ -17,18 +17,6 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-func localMediaPath(name string) bool {
-	if !filepath.IsLocal(name) || strings.Contains(name, "\\") || strings.Contains(name, ":") {
-		return false
-	}
-	for _, segment := range strings.Split(filepath.ToSlash(name), "/") {
-		if segment == ".." {
-			return false
-		}
-	}
-	return true
-}
-
 // openMedia keeps the containment boundary at the conversation, including when
 // a path traverses a symlink. No filename-prefix or URL fallback is used.
 func (r *exportReader) openMedia(ctx context.Context, group, name string) (file *os.File, retErr error) {
@@ -110,7 +98,7 @@ func mediaWrites(ctx context.Context, st *store.Store, reader *exportReader, gro
 		if err != nil {
 			return nil, err
 		}
-		write := store.AttachmentWrite{SourcePartKey: key, Filename: att.Original, Metadata: string(metadata), Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics}
+		write := store.AttachmentWrite{SkipReason: attachmentpolicy.SkipSourceUnavailable, SourcePartKey: key, Filename: att.Original, Metadata: string(metadata), Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics}
 		if write.Filename == "" {
 			write.Filename = filepath.Base(att.Export)
 		}
@@ -118,7 +106,7 @@ func mediaWrites(ctx context.Context, st *store.Store, reader *exportReader, gro
 		if write.MIMEType == "" {
 			write.MIMEType = "application/octet-stream"
 		}
-		if !localMediaPath(att.Export) {
+		if !filepath.IsLocal(att.Export) {
 			summary.AttachmentsUnsupported++
 		} else if opts.AttachmentsDir != "" {
 			file, err := reader.openMedia(ctx, group, att.Export)
@@ -133,10 +121,12 @@ func mediaWrites(ctx context.Context, st *store.Store, reader *exportReader, gro
 					summary.AttachmentsUnsupported++
 				case info.Size() > attachmentpolicy.DefaultChatMaxBytes:
 					summary.AttachmentsOversized++
+					write.SkipReason = attachmentpolicy.SkipSizeCap
 				default:
 					write.StoragePath, write.ContentHash, write.Size, err = export.StoreAttachmentStream(ctx, opts.AttachmentsDir, file, attachmentpolicy.DefaultChatMaxBytes)
 					if errors.Is(err, export.ErrAttachmentTooLarge) {
 						summary.AttachmentsOversized++
+						write.SkipReason = attachmentpolicy.SkipSizeCap
 						err = nil
 					}
 				}
@@ -158,11 +148,14 @@ func mediaWrites(ctx context.Context, st *store.Store, reader *exportReader, gro
 		if write.ContentHash == "" {
 			summary.AttachmentsMissing++
 			write.State = attachmentpolicy.StateFailed
-			write.SkipReason = attachmentpolicy.SkipSourceUnavailable
+			if write.SkipReason == attachmentpolicy.SkipSizeCap {
+				write.State = attachmentpolicy.StateSkipped
+			}
 			if messageID != 0 {
 				continue
 			}
 		} else {
+			write.SkipReason = ""
 			summary.AttachmentsStored++
 		}
 		writes = append(writes, write)
