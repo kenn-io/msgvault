@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/calevent"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/verification"
 )
 
@@ -756,12 +757,13 @@ func (s *Store) PopulateMessageBodiesContext(ctx context.Context, messages []API
 	metadata := make(map[int64]APIMessage, len(ids))
 	// Saved speech is searchable, so it is classified with the body.
 	voice := make(map[int64]string)
-	err := queryInChunksContext(ctx, s.db, ids, nil, `SELECT m.id, COALESCE(m.subject, ''), COALESCE(m.snippet, ''), COALESCE(c.title, ''), `+voiceSearchSQL(s.IsPostgreSQL(), "m.id")+` FROM messages m LEFT JOIN conversations c ON c.id=m.conversation_id WHERE m.id IN (%s)`, func(rows *loggedRows) error {
+	err := queryInChunksContext(ctx, s.db, ids, nil, `SELECT m.id, m.source_id, COALESCE(m.subject, ''), COALESCE(m.snippet, ''), COALESCE(c.title, ''), `+voiceSearchSQL(s.IsPostgreSQL(), "m.id")+` FROM messages m LEFT JOIN conversations c ON c.id=m.conversation_id WHERE m.id IN (%s)`, func(rows *loggedRows) error {
 		var msg APIMessage
 		var speech string
-		if err := rows.Scan(&msg.ID, &msg.Subject, &msg.Snippet, &msg.ConversationTitle, &speech); err != nil {
+		if err := rows.Scan(&msg.ID, &msg.SourceID, &msg.Subject, &msg.Snippet, &msg.ConversationTitle, &speech); err != nil {
 			return err
 		}
+		msg.ConversationTitle = sourcescope.ConversationTitle(ctx, msg.SourceID, msg.ConversationTitle)
 		metadata[msg.ID] = msg
 		if speech != "" {
 			voice[msg.ID] = speech

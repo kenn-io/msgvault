@@ -1124,6 +1124,7 @@ func (e *SQLiteEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 		); err != nil {
 			return nil, fmt.Errorf("scan message: %w", err)
 		}
+		msg.ConversationTitle = sourcescope.ConversationTitle(ctx, msg.SourceID, msg.ConversationTitle)
 		if sentAt.Valid {
 			msg.SentAt = sentAt.Time
 		}
@@ -1267,6 +1268,7 @@ func (e *SQLiteEngine) fetchMessageSummariesByIDsInto(
 		); err != nil {
 			return fmt.Errorf("scan message: %w", err)
 		}
+		msg.ConversationTitle = sourcescope.ConversationTitle(ctx, msg.SourceID, msg.ConversationTitle)
 		if sentAt.Valid {
 			msg.SentAt = sentAt.Time
 		}
@@ -2504,6 +2506,7 @@ func (e *SQLiteEngine) executeSearchQuery(ctx context.Context, conditions []stri
 		); err != nil {
 			return nil, fmt.Errorf("scan message: %w", err)
 		}
+		msg.ConversationTitle = sourcescope.ConversationTitle(ctx, msg.SourceID, msg.ConversationTitle)
 		if sentAt.Valid {
 			msg.SentAt = sentAt.Time
 		}

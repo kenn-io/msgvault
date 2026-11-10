@@ -474,12 +474,13 @@ labels. Unrelated labels and read/unread state are preserved. Source ownership
 and the daemon work gate follow the [native tag write rules](#native-email-tags).
 For 409 `sync_active`, retry after the active sync finishes.
 
-Owners may issue `archive_senders`, a map from selected source IDs to nonempty
-incoming mailbox lists, alongside `message.archive`. Each source view exposes
-its `archive_senders`. Omission allows any sender on that source. Addresses are
+Owners may issue `incoming_senders`, a map from selected source IDs to nonempty
+incoming mailbox lists, alongside a read, archive, or draft-create permission. Each source view exposes
+its `incoming_senders`. Omission allows any sender on that source. Addresses are
 canonicalized; invalid or duplicate addresses, empty/null lists, unselected
-sources, and restrictions without `message.archive` are rejected. These lists
-do not affect outgoing `sender_selections` or account-scoped read permissions.
+sources, and restrictions without a relevant permission are rejected. These lists
+limit reads, reply parents, and archive writes independently of outgoing `sender_selections`.
+Responses omit shared conversation titles for sender-restricted sources.
 Every recorded literal From address must be allowed. Missing From envelopes,
 including legacy NULL envelopes, fail closed for sender-restricted grants.
 This literal From filter does not authenticate the sender. Disallowed, missing,
