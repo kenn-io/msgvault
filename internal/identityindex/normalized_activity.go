@@ -225,6 +225,11 @@ func SenderAddressExpr(recipient, participant string) string {
 	return "COALESCE(CASE WHEN " + recipient + ".is_relayed THEN " + recipient + ".email_address END, " + participant + ".email_address)"
 }
 
+// SenderAddressMatchExpr keeps relay and participant address lookups separate.
+func SenderAddressMatchExpr(recipient, participant string) string {
+	return "((" + recipient + ".is_relayed AND LOWER(" + recipient + ".email_address) = ?) OR (NOT " + recipient + ".is_relayed AND (" + participant + ".email_address = ? OR " + participant + ".phone_number = ?)))"
+}
+
 // SenderDomainExpr selects the relay domain for relayed From rows.
 func SenderDomainExpr(recipient, participant string) string {
 	return "COALESCE(" + SenderEnvelopeDomainExpr("CASE WHEN "+recipient+".is_relayed THEN "+recipient+".email_address END") + ", " + participant + ".domain)"

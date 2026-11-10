@@ -36,7 +36,7 @@ func TestIngestRawMessage_DeclaredUTF8HTML(t *testing.T) {
 		"Content-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n" + encoded.String())
 	digest := sha256.Sum256(raw)
 	err = IngestRawMessage(t.Context(), st, source.ID, "archive@example.org", "",
-		nil, "reading-1", hex.EncodeToString(digest[:]), raw, time.Time{}, slog.Default(), nil)
+		nil, "reading-1", hex.EncodeToString(digest[:]), raw, time.Time{}, slog.Default())
 	require.NoError(err)
 
 	// The term occurs only in the body, so neither headers nor addresses can match.

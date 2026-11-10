@@ -67,7 +67,7 @@ func TestImportEmlxRecoverableClosingBoundary(t *testing.T) {
 					sum := sha256.Sum256(raw)
 					hash := hex.EncodeToString(sum[:])
 					r.NoError(IngestRawMessage(t.Context(), st, source.ID, opts.Identifier,
-						opts.AttachmentsDir, []int64{label}, "emlx-"+hash, hash, seedRaw, time.Now(), slog.Default(), nil))
+						opts.AttachmentsDir, []int64{label}, "emlx-"+hash, hash, seedRaw, time.Now(), slog.Default()))
 					r.NoError(os.Remove(filepath.Join(root, "Attachments", "1", "2", "old.bin")))
 					r.Zero(countEmlxLedgerEntries(t, st, source.ID, "emlx-occurrence", "imported"))
 				}

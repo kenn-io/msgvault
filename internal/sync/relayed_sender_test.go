@@ -14,7 +14,7 @@ func TestFullSyncRelayedSenders(t *testing.T) {
 	source := env.CreateSource(t)
 	seedMessages(env, 2, 1001, "one", "two")
 	for id, from := range map[string]string{"one": "Alice <notifications@github.com>\r\nX-GitHub-Sender: Alice", "two": "notifications@github.com\r\nX-GitHub-Sender: Bob"} {
-		env.Mock.Messages[id].Raw = []byte("From: " + from + "\r\nTo: test@example.com\r\nSubject: Notice\r\n\r\nHello")
+		env.Mock.Messages[id].Raw = []byte("From: " + from + "\r\nTo: test@example.com, notifications@github.com\r\nSubject: Notice\r\n\r\nHello")
 	}
 	runFullSync(t, env)
 	_, err := env.Syncer.RepairMessage(t.Context(), RepairRequest{Reference: "one", SourceID: source.ID})
@@ -35,6 +35,9 @@ func TestFullSyncRelayedSenders(t *testing.T) {
 	requirements.NoError(rows.Err())
 	requirements.NoError(rows.Close())
 	assertions.Equal(map[string]string{"one": "alice|Alice", "two": "bob|"}, got)
+	var recipientEmail string
+	requirements.NoError(env.Store.DB().QueryRowContext(t.Context(), `SELECT p.email_address FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id JOIN messages m ON m.id = mr.message_id WHERE m.source_message_id = 'one' AND mr.recipient_type = 'to' AND p.email_address = 'notifications@github.com'`).Scan(&recipientEmail))
+	assertions.Equal("notifications@github.com", recipientEmail)
 }
 
 func TestRelayedSenderNamesAfterSync(t *testing.T) {

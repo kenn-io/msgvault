@@ -68,7 +68,7 @@ func countingIngest(calls *int) rawMessageIngestFunc {
 	) error {
 		*calls++
 		return IngestRawMessage(ctx, st, sourceID, identifier, attachmentsDir,
-			labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, nil)
+			labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log)
 	}
 }
 

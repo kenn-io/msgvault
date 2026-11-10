@@ -22,7 +22,7 @@ func TestIngestRawMessageNUL(t *testing.T) {
 	raw, err := os.ReadFile("../mime/testdata/nul-projections.eml")
 	require.NoError(err)
 	err = IngestRawMessage(t.Context(), st, source.ID, source.Identifier, t.TempDir(), nil,
-		"nul", fmt.Sprintf("%x", sha256.Sum256(raw)), raw, time.Time{}, slog.Default(), nil)
+		"nul", fmt.Sprintf("%x", sha256.Sum256(raw)), raw, time.Time{}, slog.Default())
 	require.NoError(err)
 	ids, err := st.MessageExistsBatch(source.ID, []string{"nul"})
 	require.NoError(err)

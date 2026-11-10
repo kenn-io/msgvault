@@ -188,20 +188,26 @@ func TestRelayedSenderNameSearch(t *testing.T) {
 	author := env.AddParticipant(dbtest.ParticipantOpts{DisplayName: new("Relay Author")})
 	first := env.AddMessage(dbtest.MessageOpts{FromID: author})
 	second := env.AddMessage(dbtest.MessageOpts{FromID: author})
-	_, err := env.DB.ExecContext(t.Context(), `UPDATE message_recipients SET is_relayed = TRUE, email_address = 'relay@example.test', display_name = CASE WHEN message_id = ? THEN '' ELSE 'Relay Author' END WHERE message_id IN (?, ?) AND recipient_type = 'from'`, first, first, second)
+	third := env.AddMessage(dbtest.MessageOpts{FromID: author})
+	_, err := env.DB.ExecContext(t.Context(), `UPDATE message_recipients SET is_relayed = TRUE, email_address = 'relay@example.test', display_name = CASE WHEN message_id = ? THEN 'Relay Author' WHEN message_id = ? THEN 'New Name' ELSE '' END WHERE message_id IN (?, ?, ?) AND recipient_type = 'from'`, first, second, first, second, third)
 	require.NoError(t, err)
-	condition, matching, args := search.SenderLookup("Relay Author", (&store.SQLiteDialect{}).UnicodeLowerExpression, "messages", "message_recipients", "participants", "m")
-	for _, query := range []string{"SELECT m.id FROM messages m WHERE " + condition, matching} {
-		rows, err := env.DB.QueryContext(t.Context(), query, args...)
-		require.NoError(t, err)
-		var ids []int64
-		for rows.Next() {
-			var id int64
-			require.NoError(t, rows.Scan(&id))
-			ids = append(ids, id)
+	for _, tc := range []struct {
+		term string
+		want []int64
+	}{{"Relay Author", []int64{first, second, third}}, {"New Name", []int64{second}}} {
+		condition, matching, args := search.SenderLookup(tc.term, (&store.SQLiteDialect{}).UnicodeLowerExpression, "messages", "message_recipients", "participants", "m")
+		for _, query := range []string{"SELECT m.id FROM messages m WHERE " + condition, matching} {
+			rows, err := env.DB.QueryContext(t.Context(), query, args...)
+			require.NoError(t, err)
+			var ids []int64
+			for rows.Next() {
+				var id int64
+				require.NoError(t, rows.Scan(&id))
+				ids = append(ids, id)
+			}
+			require.NoError(t, rows.Err())
+			require.NoError(t, rows.Close())
+			assert.ElementsMatch(t, tc.want, ids)
 		}
-		require.NoError(t, rows.Err())
-		require.NoError(t, rows.Close())
-		assert.ElementsMatch(t, []int64{first, second}, ids)
 	}
 }

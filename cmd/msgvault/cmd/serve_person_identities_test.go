@@ -192,7 +192,7 @@ func TestPersonIdentitiesListImportedQuotedMailbox(t *testing.T) {
 				"Body\r\n")
 			require.NoError(importer.IngestRawMessage(t.Context(), fixture.store, fixture.source.ID,
 				testutil.IMAPTestUsername, "", nil, "INBOX|quoted", "quoted-hash", raw, time.Now(),
-				slog.New(slog.DiscardHandler), nil))
+				slog.New(slog.DiscardHandler)))
 			participantsBefore := countParticipants(t, fixture.store)
 			participantID, err := fixture.store.EnsureParticipant(strings.ReplaceAll(mailbox, `"`, ""), "", "example.com")
 			require.NoError(err)

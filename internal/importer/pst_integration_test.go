@@ -366,7 +366,7 @@ func TestImportPst_ContextCancellationResumesWithoutSkippingMessages(t *testing.
 				) error {
 					ingestCalls++
 					err := IngestRawMessage(ctx, st, sourceID, identifier, attachmentsDir, labelIDs,
-						sourceMsgID, rawHash, raw, fallbackDate, log, nil)
+						sourceMsgID, rawHash, raw, fallbackDate, log)
 					if err == nil && ingestCalls == 1 {
 						cancel()
 					}

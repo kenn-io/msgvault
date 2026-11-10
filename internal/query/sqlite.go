@@ -942,7 +942,7 @@ func senderMatchSQL(filter MessageFilter, limit int) (string, []any) {
 	if filter.Sender == "" {
 		return "", nil
 	}
-	address := `((mr_filter_from.is_relayed AND LOWER(mr_filter_from.email_address) = ?) OR (NOT mr_filter_from.is_relayed AND (p_filter_from.email_address = ? OR p_filter_from.phone_number = ?)))`
+	address := identityindex.SenderAddressMatchExpr("mr_filter_from", "p_filter_from")
 	directAddress := func(messageID string) string {
 		return `((p_direct_sender.email_address = ? OR p_direct_sender.phone_number = ?) AND ` + identityindex.RelayAbsentExpr(messageID, "message_recipients") + `)`
 	}

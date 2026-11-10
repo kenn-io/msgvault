@@ -85,7 +85,7 @@ func TestIngestRawMessage_SanitizesAddressFields(t *testing.T) {
 		src.ID, "test@example.com", "",
 		nil, "source-msg-1", "fakehash",
 		raw, time.Time{}, log,
-		nil)
+	)
 	require.NoError(err, "IngestRawMessage")
 
 	// Verify all participant fields are valid UTF-8
@@ -153,7 +153,7 @@ func TestIngestRawMessage_SalvagesHeadersAfterFatalMIMEParse(t *testing.T) {
 		src.ID, "owner@example.test", "",
 		nil, "source-msg-recovery", "fakehash",
 		raw, time.Time{}, slog.Default(),
-		nil)
+	)
 	require.NoError(err, "IngestRawMessage")
 
 	var subject, body, sender string
@@ -212,7 +212,7 @@ func TestIngestRawMessage_InvalidUTF8_RecipientLinkage(t *testing.T) {
 		src.ID, "test@example.com", "",
 		nil, "source-msg-linkage", "fakehash",
 		raw, time.Time{}, slog.Default(),
-		nil)
+	)
 	require.NoError(err, "IngestRawMessage")
 
 	db := st.DB()
@@ -281,7 +281,7 @@ func TestIngestRawMessage_ResolvesImplausibleDateFromReceivedChain(t *testing.T)
 		src.ID, "owner@example.com", "",
 		nil, "source-msg-date", "fakehash",
 		raw, fallback, slog.Default(),
-		nil)
+	)
 	require.NoError(err, "IngestRawMessage")
 
 	var sentAt, internalDate time.Time
@@ -317,7 +317,7 @@ func TestIngestRawMessage_LeavesCanonicalDateUnsetWhenNoDateIsPlausible(t *testi
 		src.ID, "owner@example.com", "",
 		nil, "source-msg-no-date", "fakehash",
 		raw, fallback, log,
-		nil)
+	)
 	require.NoError(err, "IngestRawMessage")
 
 	var sentAt, internalDate sql.NullTime

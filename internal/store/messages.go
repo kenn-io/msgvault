@@ -2158,17 +2158,11 @@ func (s *Store) PersistMessage(data *MessagePersistData) (int64, error) {
 // statement in the transaction observes ctx, and cancellation rolls the full
 // message snapshot back.
 func (s *Store) PersistMessageContext(ctx context.Context, data *MessagePersistData) (int64, error) {
-	return s.PersistEmailMessageContext(ctx, data, nil, "", "")
-}
-
-// PersistEmailMessageContext persists a message and resolves a relay author in the same transaction.
-func (s *Store) PersistEmailMessageContext(ctx context.Context, data *MessagePersistData, from []mime.Address, relayType, relayValue string) (int64, error) {
 	if data == nil || data.Message == nil {
 		return 0, errors.New("persist message requires a message")
 	}
-	participants, build := RelayedSenderBuilder(from, relayType, relayValue, nil, func([]int64) *MessagePersistData { return data })
 	return s.persistMessageWithParticipantsTransaction(
-		ctx, attributionLockForMessage(data.Message.SourceID, data.Message.MessageType), nil, participants, build, nil,
+		ctx, attributionLockForMessage(data.Message.SourceID, data.Message.MessageType), nil, nil, func([]int64) *MessagePersistData { return data }, nil,
 		func(ctx context.Context, tx *loggedTx, data *MessagePersistData, id int64) error {
 			q := boundQuerier{ctx: ctx, q: tx}
 			if data.MIMEAttachmentReplacement != nil {
@@ -2184,25 +2178,9 @@ func (s *Store) PersistEmailMessageContext(ctx context.Context, data *MessagePer
 	)
 }
 
-// RelayedSenderBuilder resolves a relay author in the message transaction.
-func RelayedSenderBuilder(addresses []mime.Address, relayType, relayValue string, participants []ParticipantPersistData, build func([]int64) *MessagePersistData) ([]ParticipantPersistData, func([]int64) *MessagePersistData) {
-	if relayType == "" {
-		return participants, build
-	}
-	from := addresses[0]
-	index := len(participants)
-	participants = append(participants, ParticipantPersistData{IdentifierType: relayType, IdentifierValue: relayValue, DisplayName: strings.TrimSpace(from.Name)})
-	return participants, func(ids []int64) *MessagePersistData {
-		data := build(ids[:index])
-		data.Message.SenderID = sql.NullInt64{Int64: ids[index], Valid: true}
-		for i := range data.Recipients {
-			if data.Recipients[i].Type == "from" {
-				data.Recipients[i] = RecipientSet{Type: "from", ParticipantIDs: []int64{ids[index]}, DisplayNames: []string{textutil.EnsureUTF8(from.Name)}, EmailAddresses: []string{from.Email}, IsRelayed: true}
-				break
-			}
-		}
-		return data
-	}
+// RelayedFromRecipient preserves the transport sender for an attributed author.
+func RelayedFromRecipient(from mime.Address, id int64) RecipientSet {
+	return RecipientSet{Type: "from", ParticipantIDs: []int64{id}, DisplayNames: []string{textutil.EnsureUTF8(from.Name)}, EmailAddresses: []string{from.Email}, IsRelayed: true}
 }
 
 func (s *Store) persistAttachmentSnapshotWith(q querier, messageID int64, replacement *[]AttachmentWrite) error {

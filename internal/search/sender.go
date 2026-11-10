@@ -65,10 +65,10 @@ func SenderLookup(value string, lower func(string) string, messages, recipients,
 	matching = `SELECT mr2.message_id FROM ` + recipients + ` mr2 WHERE mr2.recipient_type = 'from' AND mr2.is_relayed AND ` + envelope + ` UNION SELECT mr2.message_id FROM ` + recipients + ` mr2 WHERE mr2.recipient_type = 'from'
   AND mr2.participant_id IN (SELECT p2.id FROM ` + participants + ` p2 WHERE ` + participant + `) AND NOT mr2.is_relayed`
 	if metadata {
-		header := lower("COALESCE(NULLIF(TRIM(mr2.display_name), ''), p2.display_name, '')") + ` LIKE ? ESCAPE '\'`
+		header := `(` + lower("COALESCE(mr2.display_name, '')") + ` LIKE ? ESCAPE '\' OR ` + lower("COALESCE(p2.display_name, '')") + ` LIKE ? ESCAPE '\')`
 		from += ` OR EXISTS (SELECT 1 FROM ` + recipients + ` mr2 JOIN ` + participants + ` p2 ON p2.id = mr2.participant_id WHERE mr2.message_id = ` + alias + `.id AND mr2.recipient_type = 'from' AND ` + header + `)`
 		matching += ` UNION SELECT mr2.message_id FROM ` + recipients + ` mr2 JOIN ` + participants + ` p2 ON p2.id = mr2.participant_id WHERE mr2.recipient_type = 'from' AND ` + header
-		args = append(args, pattern)
+		args = append(args, pattern, pattern)
 	}
 	condition = `(` + from + ` OR EXISTS (SELECT 1 FROM ` + participants + ` p2 WHERE p2.id = ` + alias + `.sender_id AND ` + participant + `)` + ` AND ` + identityindex.RelayAbsentExpr(alias+".id", recipients) + `)`
 	matching += ` UNION SELECT ms.id FROM ` + messages + ` ms WHERE ms.sender_id IN (SELECT p2.id FROM ` + participants + ` p2 WHERE ` + participant + `)` + ` AND ` + identityindex.RelayAbsentExpr("ms.id", recipients)

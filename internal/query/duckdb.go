@@ -1539,7 +1539,7 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 		}
 		conditions = append(conditions, `(EXISTS (SELECT 1 FROM mr JOIN p ON p.id = mr.participant_id
             WHERE mr.message_id = msg.id AND mr.recipient_type = 'from'
-            AND ((mr.is_relayed AND LOWER(mr.email_address) = ?) OR (NOT mr.is_relayed AND (p.email_address = ? OR p.phone_number = ?)))`+fromName+`)
+            AND `+identityindex.SenderAddressMatchExpr("mr", "p")+fromName+`)
             OR EXISTS (SELECT 1 FROM p WHERE p.id = msg.sender_id AND (p.email_address = ? OR p.phone_number = ?) AND `+guard+``+directName+`))`)
 		args = append(args, senderArgs...)
 		args = append(args, directArgs...)

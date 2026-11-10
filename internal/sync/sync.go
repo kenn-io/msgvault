@@ -1785,8 +1785,15 @@ func (s *Syncer) resolvePreparedMessage(ctx context.Context, data *messageData) 
 	if err != nil {
 		return nil, fmt.Errorf("ensure participants: %w", err)
 	}
+	if data.relayType != "" {
+		id, err := s.store.EnsureParticipantByIdentifierContext(ctx, data.relayType, data.relayValue, strings.TrimSpace(data.from[0].Name))
+		if err != nil {
+			return nil, fmt.Errorf("ensure relay author: %w", err)
+		}
+		data.message.SenderID = sql.NullInt64{Int64: id, Valid: true}
+	}
 
-	if len(data.from) > 0 && data.from[0].Email != "" {
+	if data.relayType == "" && len(data.from) > 0 && data.from[0].Email != "" {
 		if id, ok := participantMap[data.from[0].Email]; ok {
 			data.message.SenderID = sql.NullInt64{Int64: id, Valid: true}
 		}
@@ -2016,6 +2023,9 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 		rs := buildRecipientSet(r.typ, r.addrs, data.participantMap)
 		recipientSets = append(recipientSets, rs)
 	}
+	if data.relayType != "" {
+		recipientSets[0] = store.RelayedFromRecipient(data.from[0], data.message.SenderID.Int64)
+	}
 
 	// Retain the original even if later file publication fails. A pending
 	// acquisition is settled only after its required files have been stored.
@@ -2033,7 +2043,7 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 			Phase: syncItemPhaseIngest, Status: store.SyncRunItemStatusError, ErrorKind: materializationKind(work), ErrorMessage: store.SyncRunItemFilesPendingMessage}
 	}
 	// Publish the search document with RAW before interruptible file I/O.
-	messageID, err := s.store.PersistEmailMessageContext(ctx, &store.MessagePersistData{
+	messageID, err := s.store.PersistMessageContext(ctx, &store.MessagePersistData{
 		Message:     data.message,
 		Metadata:    data.metadata,
 		BodyText:    sql.NullString{String: data.bodyText, Valid: data.bodyText != ""},
@@ -2049,7 +2059,7 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 			ToAddrs:  joinEmails(data.to),
 			CcAddrs:  joinEmails(data.cc),
 		},
-	}, data.from, data.relayType, data.relayValue)
+	})
 	if err != nil {
 		return 0, err
 	}

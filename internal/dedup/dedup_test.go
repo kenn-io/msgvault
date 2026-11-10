@@ -98,8 +98,7 @@ func ingestRawMessage(
 	err := importer.IngestRawMessage(
 		t.Context(), st, source.ID, source.Identifier, "",
 		nil, sourceMessageID, hex.EncodeToString(hash[:]), raw, fallbackDate,
-		slog.New(slog.DiscardHandler),
-		nil)
+		slog.New(slog.DiscardHandler))
 	require.NoError(t, err, "IngestRawMessage")
 
 	var messageID int64

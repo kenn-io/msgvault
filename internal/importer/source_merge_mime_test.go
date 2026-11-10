@@ -94,7 +94,7 @@ func TestMergeSourcesRequiresCompleteMIMEAttachments(t *testing.T) {
 				require.Len(parsed.Attachments, wantParts)
 				require.Equal(attachments[i], string(parsed.Attachments[0].Content))
 				providerID := fmt.Sprintf("message-%d", i)
-				require.NoError(IngestRawMessage(t.Context(), st, src.ID, src.Identifier, dir, nil, providerID, fmt.Sprintf("%x", sha256.Sum256(raw)), raw, time.Time{}, logger, nil))
+				require.NoError(IngestRawMessage(t.Context(), st, src.ID, src.Identifier, dir, nil, providerID, fmt.Sprintf("%x", sha256.Sum256(raw)), raw, time.Time{}, logger))
 				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`), src.ID, providerID).Scan(&ids[i]))
 				gotRaw, err := st.GetMessageRaw(ids[i])
 				require.NoError(err)

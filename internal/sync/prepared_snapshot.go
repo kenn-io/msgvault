@@ -3,6 +3,7 @@ package sync
 import (
 	"database/sql"
 	"sort"
+	"strings"
 
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
@@ -37,6 +38,9 @@ func preparedMessageParticipants(data *messageData) ([]store.ParticipantPersistD
 		}
 		index[email] = i
 	}
+	if data.relayType != "" {
+		participants = append(participants, store.ParticipantPersistData{IdentifierType: data.relayType, IdentifierValue: data.relayValue, DisplayName: strings.TrimSpace(data.from[0].Name)})
+	}
 	return participants, index
 }
 
@@ -51,12 +55,18 @@ func buildPreparedSnapshot(
 		participantMap[email] = participantIDs[index]
 	}
 	message := *prepared.message
-	if len(prepared.from) > 0 && prepared.from[0].Email != "" {
+	if prepared.relayType != "" {
+		message.SenderID = sql.NullInt64{Int64: participantIDs[len(participantIDs)-1], Valid: true}
+	} else if len(prepared.from) > 0 && prepared.from[0].Email != "" {
 		if senderID, ok := participantMap[prepared.from[0].Email]; ok {
 			message.SenderID = sql.NullInt64{Int64: senderID, Valid: true}
 		}
 	}
 
+	from := buildRecipientSet("from", prepared.from, participantMap)
+	if prepared.relayType != "" {
+		from = store.RelayedFromRecipient(prepared.from[0], message.SenderID.Int64)
+	}
 	return &store.MessagePersistData{
 		Message:  &message,
 		Metadata: prepared.metadata,
@@ -73,7 +83,7 @@ func buildPreparedSnapshot(
 		},
 		RawMIME: prepared.rawMIME,
 		Recipients: []store.RecipientSet{
-			buildRecipientSet("from", prepared.from, participantMap),
+			from,
 			buildRecipientSet("to", prepared.to, participantMap),
 			buildRecipientSet("cc", prepared.cc, participantMap),
 			buildRecipientSet("bcc", prepared.bcc, participantMap),
