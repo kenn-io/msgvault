@@ -92,9 +92,13 @@ or a.m./p.m. Normal, no-break and narrow no-break spaces before AM/PM are
 supported. UTF-8 BOM, CRLF and leading directional marks are accepted.
 Multiline bodies and blank lines are retained. A line that looks like a full
 supported header starts another record even if it was originally message text.
-A line shaped like a timestamp header with unsupported punctuation or spacing
-fails even when it was message text. Unsupported or malformed timestamp headers, invalid UTF-8, a preamble, or input
-over 128 MiB, 250,000 records or 1 MiB per record fail before archive writes.
+Any other line containing decimal digits separated by `:` or `.` fails. Lines
+starting with a numeric date followed by `, ` and containing ` - ` also fail,
+as do lines starting with `[` and a numeric date followed by a space and later
+`] `. This rejects message text such as `Meet at 10:01` or `£3.50` too.
+Unsupported headers without these patterns can be retained as continuation text. Invalid UTF-8,
+a preamble, or input over 128 MiB, 250,000 records or 1 MiB per record also
+fail before archive writes.
 
 `--timezone` must name a concrete IANA zone or UTC. It and `--date-order` are
 caller assumptions, not original exported timezone evidence. Raw timestamps,

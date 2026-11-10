@@ -41,8 +41,11 @@ Other dialects are not promised.
 
 Recognized English notices retain their entire payload without an asserted author.
 Other colon payloads keep their exact prefix as an unverified scoped label.
-Header-shaped lines inside a message cannot be distinguished from real records.
-The unit tests add original fictional cases for time interpretation, invalid
+Supported headers inside message text start new records. Other lines containing
+decimal digits separated by `:` or `.` are rejected, including message text such
+as `Meet at 10:01` or `£3.50`. Lines starting with a numeric date followed by `, ` and containing ` - ` also
+fail, as do lines starting with `[` and a numeric date followed by a space and
+later `] `. Unsupported headers without these patterns can remain continuation text. The unit tests add original fictional cases for time interpretation, invalid
 input, bounded parsing, repeated and overlapping windows and media containment.
 
 The U+200E-marked English iPhone `… omitted` placeholders and English group-creation and

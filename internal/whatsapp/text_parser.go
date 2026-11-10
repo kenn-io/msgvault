@@ -21,9 +21,8 @@ import (
 // and either Android's dash or iOS's brackets. Never guess date order.
 var textHeader = regexp.MustCompile(`^(\[?)([0-9]{1,4}[/.-][0-9]{1,2}[/.-][0-9]{1,4}), ([0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?(?:[ \x{00a0}\x{202f}]+(?:[AaPp][Mm]|[AaPp]\. ?[Mm]\.))?)(\] | - )(.*)$`)
 
-// A malformed header still needs its date and payload delimiters. Numeric
-// prose alone is continuation text.
-var textDateStart = regexp.MustCompile(`^(?:[0-9]{1,4}[/.-][0-9]{1,2}[/.-][0-9]{1,4}, [^\r\n]* - |\[[0-9]{1,4}[/.-][0-9]{1,2}[/.-][0-9]{1,4},? [^\r\n]*\] |\[?[\p{Nd}]{1,4}[/.-][\p{Nd}]{1,2}[/.-][\p{Nd}]{1,4}(?:,\s*|\s+)[\p{Nd}]{1,2}[:.][\p{Nd}]{2}[^\r\n]*(?:\s*[-–—]|\]|\s+[^:\r\n]+:))`)
+// Clock-shaped text and malformed numeric headers are ambiguous boundaries.
+var textDateStart = regexp.MustCompile(`(?:\p{Nd}+[.:]\p{Nd}+|^(?:[0-9]{1,4}[/.-][0-9]{1,2}[/.-][0-9]{1,4}, [^\r\n]* - |\[[0-9]{1,4}[/.-][0-9]{1,2}[/.-][0-9]{1,4},? [^\r\n]*\] ))`)
 var textNotice = regexp.MustCompile(`^(?:Messages and calls are end-to-end encrypted$|Messages to this chat and calls are now secured with end-to-end encryption$|.+ changed (?:the group (?:description|name|icon)|the subject)(?:$| )|.+ created group "|You created (?:group|this group)(?:$| ))`)
 
 func textLocation(order, zone string) (*time.Location, error) {

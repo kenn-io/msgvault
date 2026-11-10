@@ -131,6 +131,7 @@ func TestTextImportPreflight(t *testing.T) {
 		change     func(*TextOptions)
 	}{
 		{"parse", "13/6/26, 10:00 - Mira: valid\n31/2/26, 10:01 - Mira: bad", func(*TextOptions) {}},
+		{"named month", "13/6/26, 10:00 - Mira: valid\n13 Jun 2026, 10:01 - Ivo: bad", func(*TextOptions) {}},
 		{"missing space", "13/6/26, 10:00 - Mira: valid\n13/6/26,10:01 - Ivo: bad", func(*TextOptions) {}},
 		{"dot clock", "13/6/26, 10:00 - Mira: valid\n13/6/26 10.01 - Ivo: bad", func(*TextOptions) {}},
 		{"missing comma", "13/6/26, 10:00 - Mira: valid\n13/6/26 10:01 - Ivo: bad", func(*TextOptions) {}},
@@ -145,6 +146,9 @@ func TestTextImportPreflight(t *testing.T) {
 			tc.change(&opts)
 			_, err := importTextForTest(NewImporter(st, nil), t.Context(), textFile(t, tc.text), opts)
 			require.Error(t, err)
+			if tc.name == "named month" {
+				require.ErrorContains(t, err, "line 2: unsupported or malformed TXT header")
+			}
 			assert.Zero(t, textCount(t, st, "sources"))
 			assert.Zero(t, textCount(t, st, "messages"))
 		})

@@ -2364,8 +2364,8 @@ Android `msgstore.db` imports fail with an error when `--after` or `--before` is
 
 `text` requires all flags marked Text and rejects database-only flags
 `--contacts`, `--limit`, `--display-name`, `--full`, `--after` and `--before`.
-Text-specific flags require `--format text`. Lines shaped like malformed timestamp
-headers fail even when they were message text. See [per-chat TXT exports](/docs/usage/text-messages/#per-chat-txt-exports)
+Text-specific flags require `--format text`. Some lines with clock-shaped text
+fail even when they were message text. See [per-chat TXT exports](/docs/usage/text-messages/#per-chat-txt-exports)
 for supported grammar, bounds, timestamp assumptions, media and repeat-import limits.
 
 See [Text Messages](/docs/usage/text-messages/) for usage examples.
