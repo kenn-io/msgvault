@@ -32,7 +32,6 @@ func TestFullSyncRelayedSenders(t *testing.T) {
 	requirements.NoError(rows.Err())
 	requirements.NoError(rows.Close())
 	assertions.Equal(map[string]string{"one": "alice|Alice", "two": "bob|bob"}, got)
-
 }
 
 func TestRelayedSenderCustomRuleAndLinkedContact(t *testing.T) {
@@ -55,5 +54,4 @@ func TestRelayedSenderCustomRuleAndLinkedContact(t *testing.T) {
 	var relayNames int
 	requirements.NoError(env.Store.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM participants WHERE email_address='relay@example.test' AND display_name='Alice Author'`).Scan(&relayNames))
 	assertions.Zero(relayNames)
-
 }

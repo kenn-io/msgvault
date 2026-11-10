@@ -26,7 +26,6 @@ func TestBuildCacheRelayedAuthors(t *testing.T) {
 	for _, author := range []struct{ name, login string }{{"Alice", "alice"}, {"Build Bot", "build[bot]"}} {
 		raw := []byte("From: " + author.name + " <notifications@github.com>\r\nTo: reader@example.test\r\nX-GitHub-Sender: " + author.login + "\r\nAuthentication-Results: mx.example.test; dmarc=pass header.from=github.com\r\nDate: Mon, 01 Jan 2024 12:00:00 +0000\r\nSubject: Notice\r\n\r\nHello")
 		requirements.NoError(importer.IngestRawMessage(t.Context(), st, src.ID, src.Identifier, "", nil, author.login, author.login, raw, time.Time{}, slog.Default()))
-
 	}
 	author, err := st.EnsureParticipantByIdentifier("github", "alice", "Alice")
 	requirements.NoError(err)
