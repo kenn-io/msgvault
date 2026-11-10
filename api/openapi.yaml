@@ -2087,7 +2087,6 @@ components:
           enum:
             - shared_address
             - existing_person
-            - active_merge
           type: string
       required:
         - participant_id

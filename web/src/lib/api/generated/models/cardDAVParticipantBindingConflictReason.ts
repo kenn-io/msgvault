@@ -8,5 +8,4 @@ export type CardDAVParticipantBindingConflictReason =
 export const CardDAVParticipantBindingConflictReason = {
   shared_address: "shared_address",
   existing_person: "existing_person",
-  active_merge: "active_merge",
 } as const;

@@ -269,11 +269,8 @@ addresses. A shared address claimed by different saved people, or a participant
 already bound to another person, is reported without moving it or merging
 profiles. Correct the cards or inspect the people and explicitly merge them
 with [person merge](people.md#merge-duplicate-profiles-and-reverse-a-merge).
-People with active merge history can receive independent new identity components.
-Those bindings stay with the surviving person after a split. A component already
-recorded in active merge history cannot gain automatic memberships until its
-lineage is resolved. Components already fully bound to the matching person do
-not produce merge conflicts.
+People with active merge history can receive new matching archived identities.
+Those bindings stay with the surviving person after a split.
 
 Confirmed account identities and their linked components are excluded from
 automatic binding. Confirming an identity after it was automatically bound

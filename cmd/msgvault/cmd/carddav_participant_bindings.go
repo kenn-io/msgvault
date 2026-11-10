@@ -18,8 +18,6 @@ func cardDAVParticipantBindingConflictExplanation(reason string) string {
 		return "address shared by multiple people"
 	case "existing_person":
 		return "participant already belongs to another person"
-	case "active_merge":
-		return "blocked by an active merge"
 	default:
 		return "conflicting participant ownership"
 	}

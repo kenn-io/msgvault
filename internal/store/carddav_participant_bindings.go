@@ -16,7 +16,7 @@ type CardDAVParticipantBindingOptions struct {
 type CardDAVParticipantBindingConflict struct {
 	ParticipantID int64   `json:"participant_id"`
 	PersonIDs     []int64 `json:"person_ids"`
-	Reason        string  `json:"reason" enum:"shared_address,existing_person,active_merge"`
+	Reason        string  `json:"reason" enum:"shared_address,existing_person"`
 }
 
 // CardDAVParticipantBindingResult reports changes and conflicts for a captured state.
@@ -130,26 +130,6 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 	if err != nil {
 		return nil, err
 	}
-	activeMergeMembers := cardDAVPersonSet{}
-	rows, err = tx.QueryContext(ctx, `SELECT lineage.participant_id FROM person_merge_participants lineage
- WHERE EXISTS (SELECT 1 FROM person_merges merge_record
-   WHERE merge_record.id = lineage.merge_id AND merge_record.current_person_id IS NOT NULL)`)
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		activeMergeMembers[id] = struct{}{}
-	}
-	err = rows.Err()
-	_ = rows.Close()
-	if err != nil {
-		return nil, err
-	}
 	seeds := cardDAVPersonSet{}
 	for id := range matched {
 		seeds[id] = struct{}{}
@@ -173,13 +153,11 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 		}
 		members := sortedComponentMembers(seed, edges)
 		wanted, owners := cardDAVPersonSet{}, cardDAVPersonSet{}
-		ownComponent, mergeComponent := false, false
+		ownComponent := false
 		for _, id := range members {
 			visited[id] = struct{}{}
 			_, own := ownParticipants[id]
 			ownComponent = ownComponent || own
-			_, journaled := activeMergeMembers[id]
-			mergeComponent = mergeComponent || journaled
 			for personID := range matched[id] {
 				wanted[personID] = struct{}{}
 			}
@@ -206,19 +184,6 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 			for owner := range owners {
 				if owner != personID {
 					reason = "existing_person"
-				}
-			}
-			if reason == "" {
-				// Independent components are absent from the merge journal and
-				// remain with the survivor on split. Do not extend journaled
-				// components implicitly: splitting those must stay reversible.
-				if mergeComponent {
-					for _, id := range members {
-						if _, exists := bindings[id]; !exists {
-							reason = "active_merge"
-							break
-						}
-					}
 				}
 			}
 		}
