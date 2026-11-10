@@ -2039,7 +2039,8 @@ func TestStoreAPIAdapterRunCLISyncPacksOnlyAfterSubprocessSuccess(t *testing.T) 
 }
 
 func TestCLISyncSubprocessArgs(t *testing.T) {
-	assert.Equal(t,
+	assert := assert.New(t)
+	assert.Equal(
 		[]string{"sync", "--folder", "INBOX", "--folder", "Archive", "--skip-folder", "Trash", "--", "alice@example.com"},
 		cliSyncSubprocessArgs(api.CLISyncRequest{
 			Email:       "alice@example.com",
@@ -2047,14 +2048,14 @@ func TestCLISyncSubprocessArgs(t *testing.T) {
 			SkipFolders: []string{"Trash"},
 		}),
 	)
-	assert.Equal(t,
+	assert.Equal(
 		[]string{"sync", "--folder", "Folder,With,Comma", "--", "alice@example.com"},
 		cliSyncSubprocessArgs(api.CLISyncRequest{
 			Email:   "alice@example.com",
 			Folders: []string{"Folder,With,Comma"},
 		}),
 	)
-	assert.Equal(t,
+	assert.Equal(
 		[]string{"sync", "--folder", "Path\\To\\File", "--skip-folder", "Fold,er", "--", "alice@example.com"},
 		cliSyncSubprocessArgs(api.CLISyncRequest{
 			Email:       "alice@example.com",
@@ -2062,7 +2063,7 @@ func TestCLISyncSubprocessArgs(t *testing.T) {
 			SkipFolders: []string{"Fold,er"},
 		}),
 	)
-	assert.Equal(t, []string{"sync-full", "--", "-reader@example.org"},
+	assert.Equal([]string{"sync-full", "--", "-reader@example.org"},
 		cliSyncSubprocessArgs(api.CLISyncRequest{Full: true, Email: "-reader@example.org"}))
 }
 

@@ -308,6 +308,7 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 }
 
 func TestAddIMAPFirstSyncCommandQuotesUsername(t *testing.T) {
+	require := require.New(t)
 	const username = "reader$tag"
 	savedHost, savedPort, savedUsername := imapHost, imapPort, imapUsername
 	savedNoTLS, savedSTARTTLS, savedNoDefault := imapNoTLS, imapSTARTTLS, noDefaultIdentityAddImap
@@ -319,17 +320,17 @@ func TestAddIMAPFirstSyncCommandQuotesUsername(t *testing.T) {
 	t.Setenv("MSGVAULT_IMAP_PASSWORD", testutil.IMAPTestPassword)
 	mem := imapmemserver.New()
 	user := imapmemserver.NewUser(username, testutil.IMAPTestPassword)
-	require.NoError(t, user.Create("INBOX", nil))
+	require.NoError(user.Create("INBOX", nil))
 	mem.AddUser(user)
 	server := imapserver.New(&imapserver.Options{InsecureAuth: true, NewSession: func(*imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
 		return mem.NewSession(), nil, nil
 	}})
 	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
-	require.NoError(t, err)
+	require.NoError(err)
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() { _ = server.Close() })
 	host, port, err := net.SplitHostPort(listener.Addr().String())
-	require.NoError(t, err)
+	require.NoError(err)
 	home := t.TempDir()
 	cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}}
 	cmd := newAddIMAPCmd()
@@ -337,6 +338,6 @@ func TestAddIMAPFirstSyncCommandQuotesUsername(t *testing.T) {
 	stop := captureStdout(t)
 	err = cmd.ExecuteContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 	output := stop()
-	require.NoError(t, err)
+	require.NoError(err)
 	assert.Contains(t, output, "msgvault sync-full -- 'imap://reader$tag@"+net.JoinHostPort(host, port)+"'")
 }

@@ -179,7 +179,7 @@ func TestPlaudAuthorizationPreflightUsesOwningDaemon(t *testing.T) {
 			return
 		}
 		assert.Contains([][]string{
-			{"add-plaud", "work", "--check-owner-only"},
+			{"add-plaud", "--check-owner-only", "--", "work"},
 			{"add-plaud", "--check-owner-only", "work"},
 		}, req.Args)
 		rawSource, err := json.Marshal(cfg.Plaud[0])
@@ -219,7 +219,7 @@ func TestPlaudAuthorizationPreflightUsesOwningDaemon(t *testing.T) {
 	var stderr bytes.Buffer
 	cmd.SetErr(&stderr)
 	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
-	cmd.SetArgs([]string{"work"})
+	cmd.SetArgs([]string{"--", "work"})
 	err = cmd.Execute()
 	require.ErrorIs(err, errCLISubprocessProxied)
 	assert.Contains(stderr.String(), "plaud source owner differs or is unconfirmed")
