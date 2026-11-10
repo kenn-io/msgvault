@@ -880,6 +880,34 @@ func TestEditRollbackPrefersEarlierArchivedCiphertext(t *testing.T) {
 	}
 }
 
+func TestEditRollbackPreservesEarlierStrippedCopy(t *testing.T) {
+	req, check := require.New(t), assert.New(t)
+	f := newRecoveryFixture(t)
+	f.timeline = []*event.Event{f.message(t, "$other", "other", 10), f.edit(t, "$newest", "$other", "newest", 30)}
+	_, err := f.run(t, true, false)
+	req.NoError(err)
+	index := f.backup.out.MessageIndex()
+	earlier := f.edit(t, "$earlier", "$other", "older", 20)
+	raw, err := json.Marshal(earlier)
+	req.NoError(err)
+	replayed := matrixTestEvent(t, string(raw))
+	replayed.ID, replayed.Timestamp = "$replayed", 25
+	earlier.Content.AsEncrypted().RelatesTo = nil
+	f.timeline = []*event.Event{earlier}
+	_, err = f.run(t, false, false)
+	req.NoError(err)
+	check.Equal(encryptedPlaceholder, f.body(t, "$earlier"))
+	f.edits = []*event.Event{replayed}
+	f.timeline = []*event.Event{{ID: "$redaction", Type: event.EventRedaction, Redacts: "$newest", Content: event.Content{Raw: map[string]any{}}}}
+	_, err = f.run(t, true, false)
+	req.NoError(err)
+	check.Equal("other", f.body(t, "$other"))
+	check.Equal("* older", f.body(t, "$earlier"))
+	var owner string
+	req.NoError(f.store.DB().QueryRowContext(t.Context(), `SELECT event_id FROM matrix_megolm_claims WHERE session_id = ? AND message_index = ?`, f.backup.out.ID().String(), index).Scan(&owner))
+	check.Equal("$earlier", owner)
+}
+
 func TestEditRollbackAllowsEarlierEditThanPendingCopy(t *testing.T) {
 	for _, mode := range []string{"later timestamp", "equal timestamp"} {
 		t.Run(mode, func(t *testing.T) {
