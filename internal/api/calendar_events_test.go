@@ -33,11 +33,7 @@ type calendarEventsTestStore struct {
 func (s *calendarEventsTestStore) ListCalendarOccurrencesContext(ctx context.Context, from, to time.Time) (store.CalendarOccurrencePage, error) {
 	s.calls++
 	s.sourceIDs = sourcescope.IDs(ctx)
-	subject := s.subject
-	if subject == "" {
-		subject = "Planning"
-	}
-	return store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 42, Subject: subject, Start: from, End: to}}, Unexpandable: []store.CalendarUnexpandable{}}, s.err
+	return store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 42, Subject: s.subject, Start: from, End: to}}, Unexpandable: []store.CalendarUnexpandable{}}, s.err
 }
 
 func (s *calendarEventsTestStore) ListSourcesContext(context.Context, string) ([]*store.Source, error) {
