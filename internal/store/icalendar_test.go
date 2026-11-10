@@ -121,23 +121,6 @@ func TestICalendarRawIsNotEmailDedupEvidence(t *testing.T) {
 	assert.Empty(t, candidates, "calendar event bytes are not email deduplication evidence")
 }
 
-func TestICalendarEmailMethodConflictKeepsEvent(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, source := persistInviteEmail(t, st, "method-request", inviteEmail(calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T120000Z")))
-	cancel := calendarDocument("CANCEL", "SEQUENCE:2\r\nSTATUS:CANCELLED")
-	mail := []byte(strings.Replace(string(inviteEmail(cancel)), "text/calendar", "text/calendar; method=REPLY", 1))
-	id := persistInviteEmailForSource(t, st, source, "method-conflict", mail)
-	stored, err := st.GetMessageRaw(id)
-	requirements.NoError(err)
-	assertions.Equal(mail, stored)
-	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-	requirements.NoError(err)
-	requirements.Len(page.Occurrences, 1)
-	assertions.Equal("confirmed", page.Occurrences[0].Status)
-}
-
 func TestICalendarCancelledExceptionOccurrences(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

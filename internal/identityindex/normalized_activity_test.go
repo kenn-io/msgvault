@@ -309,7 +309,7 @@ func TestSparseNormalizedActivityExcludesEmailInviteEvents(t *testing.T) {
 	})
 	replaceRelationshipParquet(t, db, root, "sources", `SELECT i::BIGINT AS id, 'owner@example.test' AS account_email,
   CASE i WHEN 1 THEN 'gmail' WHEN 2 THEN 'gcal' ELSE 'ics' END AS source_type FROM range(1, 4) t(i)`)
-	_, err := db.ExecContext(t.Context(), `CREATE TEMP TABLE invite_messages AS SELECT * REPLACE (id::BIGINT AS source_id, (id = 1) AS archive_only) FROM read_parquet(?)`, parquetDatasetGlob(root, "messages"))
+	_, err := db.ExecContext(t.Context(), `CREATE TEMP TABLE invite_messages AS SELECT * REPLACE (id::BIGINT AS source_id, true AS archive_only) FROM read_parquet(?)`, parquetDatasetGlob(root, "messages"))
 	requirements.NoError(err)
 	replaceRelationshipParquet(t, db, root, "messages", "SELECT * FROM invite_messages")
 	path := func(dataset string) string { return parquetDatasetGlob(root, dataset) }

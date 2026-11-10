@@ -1310,8 +1310,10 @@ func TestActivityCandidatesExcludeEmailInvites(t *testing.T) {
 		requirements.NoError(err)
 		requirements.NoError(f.Store.ReplaceMessageRecipients(ids[typ], "to", []int64{participantID}, []string{"Activity Contact"}))
 	}
-	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO source_merge_archive_only_messages (message_id) VALUES (?)`), ids["gmail"])
-	requirements.NoError(err)
+	for _, typ := range []string{"gmail", "gcal", "ics"} {
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO source_merge_archive_only_messages (message_id) VALUES (?)`), ids[typ])
+		requirements.NoError(err)
+	}
 	candidates, err := f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 100)
 	requirements.NoError(err)
 	eligible := map[int64]bool{}

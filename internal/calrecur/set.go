@@ -131,7 +131,7 @@ func CivilDateBoundary(date string, loc *time.Location) (time.Time, bool, error)
 	var boundary time.Time
 	foundBoundary, exists := false, false
 	for cursor := searchStart; cursor < searchEndExclusive; {
-		end := ZoneEnd(time.Unix(cursor, 0).In(loc))
+		end := zoneEnd(time.Unix(cursor, 0).In(loc))
 		intervalEnd := searchEndExclusive
 		if !end.IsZero() && end.Unix() < intervalEnd {
 			intervalEnd = end.Unix()
