@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { DATE_HINT, dateNote, intervalDateError, isCalendarDate, isTextProfileDate, profileDateError, readablePartialDate } from './dates';
+import { intervalDateError, isCalendarDate, isTextProfileDate, profileDateError } from './dates';
 
 describe('isCalendarDate', () => {
   it.each([
@@ -41,13 +41,15 @@ describe('profileDateError', () => {
 });
 
 describe('date readings', () => {
-  it('reads dates', () => {
+  it('reads dates', async () => {
     const DateTimeFormat = Intl.DateTimeFormat;
     const formatter = vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function (locale, options) {
       return new DateTimeFormat(locale ?? 'en-US', options);
     });
     vi.setSystemTime(new Date(2026, 10, 6, 12));
     try {
+      vi.resetModules();
+      const { DATE_HINT, dateNote, readablePartialDate } = await import('./dates');
       expect(readablePartialDate('2024')).toBe('2024');
       expect(readablePartialDate({ year: 2024, month: 3 })).toBe('Mar 2024');
       expect(readablePartialDate('2024-03-05')).toBe('Mar 5, 2024');

@@ -476,14 +476,13 @@ export class DirectoryEntityController {
         },
       ),
       prepared,
-      false,
     );
   }
   async deleteEmployment(id: number, prepared?: Prepared<Employment>): Promise<DirectoryEntityMutationResult<never, Prepared<Employment>>> {
     let snapshot: Prepared<Employment>;
     try { snapshot = prepared ?? await this.prepareEmploymentMutation(id); }
     catch (cause) { return { ok: false, kind: 'error', status: 0, message: failureMessage(cause, 0) }; }
-    if (snapshot.data.person_id !== this.personID) return { ok: false, kind: 'conflict', status: 409, message: 'Job belongs to someone else.', current: snapshot };
+    if (snapshot.data.person_id !== this.personID) return this.afterDirectoryMutation({ ok: false, kind: 'conflict', status: 409, message: 'Job belongs to someone else.', current: snapshot }, true);
     const result = await this.deleteExisting(
       () => this.prepareEmploymentMutation(id),
       (signal, etag) =>
@@ -661,12 +660,11 @@ export class DirectoryEntityController {
     id: number,
     write: (current: Employment, signal: AbortSignal, etag: string) => Promise<RequestResult<Employment>>,
     prepared?: Prepared<Employment>,
-    refreshOnConflict = true,
   ): Promise<DirectoryEntityMutationResult<Employment, Prepared<Employment>>> {
     let snapshot: Prepared<Employment>;
     try { snapshot = prepared ?? await this.prepareEmploymentMutation(id); }
     catch (cause) { return { ok: false, kind: 'error', status: 0, message: failureMessage(cause, 0) }; }
-    if (snapshot.data.person_id !== this.personID) return { ok: false, kind: 'conflict', status: 409, message: 'Job belongs to someone else.', current: snapshot };
+    if (snapshot.data.person_id !== this.personID) return this.afterDirectoryMutation({ ok: false, kind: 'conflict', status: 409, message: 'Job belongs to someone else.', current: snapshot }, true);
     const result = await this.writeExisting(
       () => this.prepareEmploymentMutation(id),
       write,
@@ -676,7 +674,7 @@ export class DirectoryEntityController {
       snapshot,
     );
     await this.prepareConflictEmployer(result, prepared?.data ?? this.employments.find(item => item.id === id));
-    return this.afterDirectoryMutation(result, true, refreshOnConflict);
+    return this.afterDirectoryMutation(result, true);
   }
   private async prepareConflictEmployer<T>(result: DirectoryEntityMutationResult<T, Prepared<Employment>>, opened?: Employment): Promise<void> {
     if (result.ok || result.kind !== 'conflict' || !result.current || !opened || result.current.data.organization_id === opened.organization_id) return;
@@ -688,9 +686,9 @@ export class DirectoryEntityController {
     if (this.networkGeneration > 0) await this.loadNetwork(this.networkDepth);
   }
   private async afterDirectoryMutation<T, C>(
-    result: DirectoryEntityMutationResult<T, C>, refreshEmployments = false, refreshOnConflict = true,
+    result: DirectoryEntityMutationResult<T, C>, refreshEmployments = false,
   ): Promise<DirectoryEntityMutationResult<T, C>> {
-    if (result.ok || (refreshOnConflict && result.kind === 'conflict')) await Promise.all([refreshEmployments ? this.loadEmployments(false) : undefined, this.refreshDirectoryViews()]);
+    if (result.ok || result.kind === 'conflict') await Promise.all([refreshEmployments ? this.loadEmployments(false) : undefined, this.refreshDirectoryViews()]);
     return result;
   }
   private applyEmploymentEntity(entity: Employment): void {

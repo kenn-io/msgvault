@@ -23,6 +23,8 @@ it('offers creation last and shows the created fields with a way back', async ()
   expect(screen.getByRole('textbox', { name: 'Name' })).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Choose an existing organization instead' }));
   expect(onexisting).toHaveBeenCalledOnce();
+  await view.rerender({ disabled: true });
+  expect(screen.getByRole('button', { name: 'Choose an existing organization instead' })).toHaveProperty('disabled', true);
 });
 
 it('keeps Retry inside the failed lookup and sends queries to its loader', async () => {
@@ -34,9 +36,4 @@ it('keeps Retry inside the failed lookup and sends queries to its loader', async
   expect(onretry).toHaveBeenCalledOnce();
   await fireEvent.input(screen.getByRole('combobox'), { target: { value: 'garden' } });
   expect(onquery).toHaveBeenLastCalledWith('garden');
-});
-
-it('prevents leaving creation while a write is pending', () => {
-  render(FieldPicker, { placeholder: 'Organization', options, value: '', onselect: vi.fn(), creating: true, disabled: true, onexisting: vi.fn(), existingLabel: 'Choose an existing organization instead' });
-  expect(screen.getByRole('button', { name: 'Choose an existing organization instead' })).toHaveProperty('disabled', true);
 });

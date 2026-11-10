@@ -198,20 +198,6 @@ for (const width of [1440, 390]) {
   });
 }
 
-test('a moved job shows a conflict before making it primary', async ({ page }, testInfo) => {
-  let writes = 0;
-  await page.route('**/api/v1/employments/11', route => route.fulfill({ headers: { ETag: '"employment-11-r2"' }, json: { ...employment, person_id: 43, is_primary: false, title: 'Moved role' } }));
-  await page.route('**/api/v1/employments/11/primary', route => { writes++; return route.fulfill({ json: employment }); });
-  await page.route('**/api/v1/people/42/employments', route => route.fulfill({ json: { employments: [{ ...employment, is_primary: false }] } }));
-  await page.reload();
-  await page.getByRole('radio', { name: 'Details', exact: true }).click();
-  await page.getByRole('region', { name: 'Work' }).getByRole('button', { name: /^Actions for/ }).click();
-  await page.getByRole('menuitem', { name: 'Make primary' }).click();
-  await expect(page.getByRole('region', { name: 'Saved job' })).toContainText('Moved role');
-  expect(writes).toBe(0);
-  await page.screenshot({ path: testInfo.outputPath('moved.png') });
-});
-
 test('a Settings organization holder opens the durable person', async ({ page }, testInfo) => {
   await page.route('**/api/v1/organizations/21/employments*', route => route.fulfill({ json: { employments: [employment] } }));
   await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'settings', settingsCategory: 'people_catalog' })));

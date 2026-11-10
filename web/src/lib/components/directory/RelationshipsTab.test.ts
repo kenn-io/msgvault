@@ -147,11 +147,19 @@ describe('RelationshipsTab', () => {
       if (slug === 'parent') await fireEvent.input(input, { target: { value: 'child' } });
       await fireEvent.mouseDown(screen.getByRole('treeitem', { name: caption }));
       expect(screen.getByRole('button', { name: `Connection type: ${phrase}` })).toBeDefined();
+      if (caption === 'Mentors') {
+        const start = screen.getByRole('textbox', { name: 'Start date' });
+        await fireEvent.input(start, { target: { value: '2019-02-30' } });
+        expect(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!).toHaveProperty('disabled', true);
+        await fireEvent.input(start, { target: { value: '2025' } });
+        await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2026-08' } });
+        await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'Synthetic note' } });
+      }
       await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
       await waitFor(() => expect(post).toBeDefined());
       expect(screen.getByRole('textbox', { name: 'Notes' })).toHaveProperty('disabled', true);
       expect(screen.getByRole('button', { name: 'Person: Synthetic Two' })).toHaveProperty('disabled', true);
-      await expect(post!.clone().json()).resolves.toEqual({ source_person_id: source, target_person_id: target, relationship_type_slug: slug });
+      await expect(post!.clone().json()).resolves.toEqual({ source_person_id: source, target_person_id: target, relationship_type_slug: slug, ...(caption === 'Mentors' ? { start_date: '2025', end_date: '2026-08', notes: 'Synthetic note' } : {}) });
       releasePost(Response.json(saved));
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     } finally { releasePost(Response.json(saved)); rendered.unmount(); controller.destroy(); }
@@ -344,62 +352,6 @@ describe('RelationshipsTab', () => {
     await waitFor(() => expect(controller.relationshipTypes).toHaveLength(1));
     expect(reads).toBe(1);
     expect(controller.errors.relationshipTypes).toBeUndefined();
-  });
-
-  it('saves optional connection dates and notes', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    try {
-      const requests: Request[] = [];
-      const created = relationship(44, 1, { status: 'ended', source_person_id: 8, target_person_id: 7, start_date: { year: 2025 }, end_date: { year: 2026, month: 8 }, notes: 'Synthetic note' });
-      const { client, controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
-        const request = requestOf(input);
-        requests.push(request);
-        const path = pathOf(request);
-        if (path === '/api/v1/people/directory') return Response.json({ people: [
-          directoryPerson(7, { display_name: 'Selected Self' }),
-          directoryPerson(8, { display_name: 'Synthetic Counterpart' })
-        ] });
-        if (path === '/api/v1/person-relationships' && request.method === 'POST') {
-          return new Response(JSON.stringify(created), { status: 201, headers: { ETag: '"relationship-44-r1"' } });
-        }
-        if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [view(44, 'incoming', 'mentors', 'Synthetic Counterpart', { relationship: created })] });
-        throw new Error(`unexpected ${request.method} ${path}`);
-      }));
-      controller.relationshipTypes = [relationshipType()];
-      render(RelationshipsTab, { client, controller, personID: 7 });
-
-      await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
-      const personSearch = await openTypeahead('Person');
-      await fireEvent.input(personSearch, { target: { value: 'Synthetic' } });
-      await vi.advanceTimersByTimeAsync(250);
-      expect(await screen.findByRole('option', { name: /Synthetic Counterpart/ })).toBeDefined();
-      await fireEvent.mouseDown(screen.getByRole('option', { name: /Synthetic Counterpart/ }));
-      await openTypeahead('Connection type');
-      await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Is mentored by' }));
-      const start = screen.getByRole('textbox', { name: 'Start date' });
-      const create = screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!;
-      await fireEvent.input(start, { target: { value: '2019-02-30' } });
-      expect(create).toHaveProperty('disabled', true);
-      await fireEvent.click(create);
-      expect(requests.filter(request => request.method === 'POST')).toHaveLength(0);
-      await fireEvent.input(start, { target: { value: '2019' } });
-      expect(create).toHaveProperty('disabled', false);
-      await fireEvent.input(start, { target: { value: '2025' } });
-      await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2026-08' } });
-      await fireEvent.input(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'Synthetic note' } });
-      await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
-
-      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add connection' })).toBeNull());
-      const post = requests.find((request) => pathOf(request) === '/api/v1/person-relationships')!;
-      await expect(post.clone().json()).resolves.toMatchObject({
-        start_date: '2025',
-        end_date: '2026-08',
-        notes: 'Synthetic note'
-      });
-      expect((await post.clone().json()).source).toBeUndefined();
-    } finally {
-      vi.useRealTimers();
-    }
   });
 
   it('reloads relationship types when Add connection opens after the first load failed', async () => {

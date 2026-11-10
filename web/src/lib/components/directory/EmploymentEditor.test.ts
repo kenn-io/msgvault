@@ -285,7 +285,6 @@ it.each(['Keep yours', 'Use saved'] as const)('shows the saved job and resolves 
   let reads = 0;
   const bodies: Record<string, unknown>[] = [];
   const job = employment(11, 1, opening);
-  const directoryChanged = vi.fn();
   const { controller } = controllerWith(async input => {
     const request = requestOf(input);
     if (request.method === 'PATCH') {
@@ -295,7 +294,7 @@ it.each(['Keep yours', 'Use saved'] as const)('shows the saved job and resolves 
     if (pathOf(request).includes('/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
     if (pathOf(request) === '/api/v1/people/7/employments') return Response.json({ employments: [employment(11, 2, { ...opening, ...saved })] });
     return Response.json(employment(11, ++reads, reads === 1 ? opening : { ...opening, ...saved }), { headers: { ETag: `"employment-11-r${reads}"` } });
-  }, 7, { onDirectoryChange: directoryChanged });
+  });
   const onClose = vi.fn();
   render(EmploymentEditor, { controller, personID: 7, employment: job, onClose });
   await fireEvent.input(await screen.findByRole('textbox', { name: 'Job title' }), { target: { value: 'Lead' } });
@@ -309,6 +308,7 @@ it.each(['Keep yours', 'Use saved'] as const)('shows the saved job and resolves 
     expect(bodies[1]).toMatchObject({ title: 'Lead', department: 'Sales' });
   } else {
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    expect(bodies).toHaveLength(1);
   }
 });
 

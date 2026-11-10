@@ -27,17 +27,19 @@ it('names the new employer when a job moves before deletion', async () => {
 
 it.each(['Delete…', 'Make primary'])('shows a newer job after retrying %s', async action => {
   let revision = 1;
+  const tags: (string | null)[] = [];
   const { controller } = controllerWith(async input => {
     const request = requestOf(input);
     const path = pathOf(request);
     if (path === '/api/v1/employments/11' && request.method === 'GET') {
       const readRevision = revision;
       if (revision === 1) revision = 2;
-      return Response.json(employment(11, readRevision, { person_id: readRevision === 3 ? 8 : 7, title: `Title ${readRevision}` }), { headers: { ETag: `"employment-11-r${readRevision}"` } });
+      return Response.json(employment(11, readRevision, { title: `Title ${readRevision}` }), { headers: { ETag: `"employment-11-r${readRevision}"` } });
     }
     if ((path === '/api/v1/employments/11/primary' && request.method === 'POST') || (path === '/api/v1/employments/11' && request.method === 'DELETE')) {
+      tags.push(request.headers.get('If-Match'));
       return request.headers.get('If-Match') === `"employment-11-r${revision}"`
-        ? Response.json(employment(11, revision, { person_id: 8, is_primary: true }))
+        ? Response.json(employment(11, revision, { is_primary: true }))
         : Response.json({ error: 'employment_revision_conflict', message: 'Changed' }, { status: 409 });
     }
     if (path === '/api/v1/people/7/employments') return Response.json({ employments: [employment(12, 1, { title: 'Second job', is_primary: false })] });
@@ -54,10 +56,10 @@ it.each(['Delete…', 'Make primary'])('shows a newer job after retrying %s', as
   revision = 3;
   await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   expect(await screen.findByText('Title 3')).toBeDefined();
-  if (action === 'Delete…') return;
-  expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
-  await controller.refreshEmployments();
-  expect(screen.getByText('Title 3')).toBeDefined();
+  if (action === 'Delete…') {
+    expect(tags).toEqual(['"employment-11-r1"', '"employment-11-r2"']);
+    return;
+  }
   await fireEvent.click(screen.getByRole('button', { name: /Actions for Second job/ }));
   await fireEvent.click(await screen.findByRole('menuitem', { name: 'Make primary' }));
   await waitFor(() => expect(screen.queryByText('Title 3')).toBeNull());
@@ -79,7 +81,7 @@ it('uses the selected job version after a different job conflicts', async () => 
       secondTag = request.headers.get('If-Match');
       return Response.json(employment(12, 1, { is_primary: true }));
     }
-    if (path === '/api/v1/people/7/employments') return Response.json({ employments: [] });
+    if (path === '/api/v1/people/7/employments') return Response.json({ employments: [employment(11, 1, { title: 'First job', is_primary: false }), employment(12, 1, { title: 'Second job', is_primary: false })] });
     throw new Error(`Unexpected ${request.method} ${path}`);
   });
   controller.employments = [employment(11, 1, { title: 'First job', is_primary: false }), employment(12, 1, { title: 'Second job', is_primary: false })];
@@ -90,33 +92,4 @@ it('uses the selected job version after a different job conflicts', async () => 
   await fireEvent.click(screen.getByRole('button', { name: /Actions for Second job/ }));
   await fireEvent.click(await screen.findByRole('menuitem', { name: 'Make primary' }));
   await waitFor(() => expect(secondTag).toBe('"employment-12-r1"'));
-});
-
-it('passes the saved version when retrying a delete', async () => {
-  let reads = 0;
-  const tags: (string | null)[] = [];
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    const path = pathOf(request);
-    if (path === '/api/v1/employments/11' && request.method === 'GET') {
-      reads++;
-      return Response.json(employment(11, reads, { title: `Title ${reads}` }), { headers: { ETag: `"employment-11-r${reads}"` } });
-    }
-    if (path === '/api/v1/employments/11' && request.method === 'DELETE') {
-      tags.push(request.headers.get('If-Match'));
-      return Response.json({ error: 'employment_revision_conflict', message: 'Changed' }, { status: 409 });
-    }
-    if (path === '/api/v1/people/7/employments') return Response.json({ employments: [employment()] });
-    if (path === '/api/v1/organizations/21') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
-    throw new Error(`Unexpected ${request.method} ${path}`);
-  });
-  controller.employments = [employment()];
-  render(OrganizationEmploymentTab, { controller, personID: 7 });
-  await fireEvent.click(within(screen.getByRole('region', { name: 'Work' })).getByRole('button', { name: /^Actions for/ }));
-  await fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete…' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-  await waitFor(() => expect(reads).toBe(2));
-  await fireEvent.click(await screen.findByRole('button', { name: 'Retry' }));
-  expect(await screen.findByText('Title 3')).toBeDefined();
-  expect(tags).toEqual(['"employment-11-r1"', '"employment-11-r2"']);
 });

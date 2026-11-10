@@ -999,9 +999,11 @@ it.each(['primary', 'edit', 'end', 'delete'] as const)('refuses %s for a job mov
     requests.push(request);
     if (pathOf(request) === '/api/v1/employments/11' && request.method === 'GET') return Response.json(moved.data, { headers: { ETag: moved.etag } });
     if (request.method !== 'GET') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    if (pathOf(request) === '/api/v1/people/7/employments') return Response.json({ employments: [] });
     return defaultResponse(request);
   });
   const controller = new DirectoryEntityController(client, 7);
+  controller.employments = [employment(11, 1)];
   const send = (prepared?: Prepared<typeof moved.data>) => {
     switch (action) {
       case 'primary': return controller.makeEmploymentPrimary(11, prepared);
@@ -1012,6 +1014,7 @@ it.each(['primary', 'edit', 'end', 'delete'] as const)('refuses %s for a job mov
   };
   try {
     expect(await send()).toMatchObject({ ok: false, kind: 'conflict', current: moved });
+    expect(controller.employments).toEqual([]);
     expect(requests.filter(request => request.method !== 'GET')).toHaveLength(0);
     const opened = { data: employment(11, 1), etag: '"employment-11-r1"' };
     const conflict = await send(opened);

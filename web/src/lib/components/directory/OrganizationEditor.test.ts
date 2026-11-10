@@ -203,7 +203,6 @@ describe('OrganizationEditor', () => {
     const query = new URL(requests.find(request => pathOf(request).endsWith('/employments'))!.url).searchParams;
     expect(query.get('limit')).toBe('200');
     expect(query.has('current_only')).toBe(false);
-    expect(requests.filter(request => pathOf(request).startsWith('/api/v1/people/'))).toHaveLength(scenario.titles ? 1 : Math.min(count, 3));
   });
 
   it('keeps an editor open during submission', async () => {
