@@ -568,10 +568,10 @@ test.describe('wide grouped layout', () => {
     const row = grid.getByRole('row', { name: /Example source/ });
     await expect(row).toBeVisible();
     const group = await grid.getByRole('columnheader', { name: 'Group' }).boundingBox();
-    const latest = await row.getByRole('gridcell').nth(3).boundingBox();
+    const rowBounds = await row.boundingBox();
     const action = await row.getByRole('button', { name: /Show items in/ }).boundingBox();
     expect(group!.width).toBeLessThanOrEqual(480);
-    expect(action!.x - (latest!.x + latest!.width)).toBeLessThanOrEqual(48);
+    expect(rowBounds!.x + rowBounds!.width - action!.x - action!.width).toBeLessThanOrEqual(16);
     await row.getByText('Example source').click();
     await expect(page.getByRole('complementary', { name: /Reading pane/ })).toBeVisible();
     expect((await grid.getByRole('columnheader', { name: 'Group' }).boundingBox())!.width).toBeLessThanOrEqual(480);
