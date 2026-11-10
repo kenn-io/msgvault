@@ -124,7 +124,7 @@ Import local exports:
   import-slackdump    Import a Slackdump export
   import-synctech-sms Import SMS Backup & Restore exports
   import-telegram     Import a Telegram export
-  import-whatsapp     Import WhatsApp messages from an Android or Apple database
+  import-whatsapp     Import WhatsApp messages from a database or per-chat text export
 
 Drafts, calendar, and Kata (write to providers):
   calendar      Read archived events and control live calendars

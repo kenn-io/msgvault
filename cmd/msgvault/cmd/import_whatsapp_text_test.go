@@ -32,6 +32,7 @@ func TestWhatsAppTextCommand(t *testing.T) {
 			name = "incomplete"
 		}
 		t.Run(name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			markDaemonCLISubprocessForTest(t)
 			cfg := config.NewDefaultConfig()
 			home := t.TempDir()
@@ -41,18 +42,18 @@ func TestWhatsAppTextCommand(t *testing.T) {
 			args := []string{"--format", "text", "--phone", "+12025550123", "--chat-id", "garden", "--chat-type", "group", "--timezone", "UTC", "--date-order", "dmy", "--no-default-identity"}
 			if incomplete {
 				st, err := store.Open(cfg.DatabaseDSN())
-				require.NoError(t, err)
-				t.Cleanup(func() { assert.NoError(t, st.Close()) })
-				require.NoError(t, st.InitSchemaContext(t.Context()))
+				require.NoError(err)
+				t.Cleanup(func() { assert.NoError(st.Close()) })
+				require.NoError(st.InitSchemaContext(t.Context()))
 				_, err = st.DB().ExecContext(t.Context(), "CREATE TRIGGER reject_text_media BEFORE INSERT ON attachments BEGIN SELECT RAISE(FAIL, 'fictional attachment failure'); END")
-				require.NoError(t, err)
+				require.NoError(err)
 				payload = "13/6/26, 10:00 - Mira: <attached: note.txt>\n"
 				media := t.TempDir()
-				require.NoError(t, os.WriteFile(filepath.Join(media, "note.txt"), []byte("fictional seed list"), 0600))
+				require.NoError(os.WriteFile(filepath.Join(media, "note.txt"), []byte("fictional seed list"), 0600))
 				args = append(args, "--media-dir", media)
 			}
 			path := filepath.Join(t.TempDir(), "chat.txt")
-			require.NoError(t, os.WriteFile(path, []byte(payload), 0600))
+			require.NoError(os.WriteFile(path, []byte(payload), 0600))
 			command := &cobra.Command{Use: "test"}
 			command.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 			command.AddCommand(newImportWhatsAppCmd())
@@ -62,14 +63,14 @@ func TestWhatsAppTextCommand(t *testing.T) {
 			command.SetArgs(append([]string{"import-whatsapp", path}, args...))
 			err := command.Execute()
 			if incomplete {
-				require.ErrorContains(t, err, "fictional attachment failure")
-				assert.Contains(t, out.String(), "Import incomplete: 1 records")
-				assert.Contains(t, out.String(), "1 added, 0 unchanged")
-				assert.Contains(t, out.String(), "Media: 0 stored")
+				require.ErrorContains(err, "fictional attachment failure")
+				assert.Contains(out.String(), "Import incomplete: 1 records")
+				assert.Contains(out.String(), "1 added, 0 unchanged")
+				assert.Contains(out.String(), "Media: 0 stored")
 			} else {
-				require.NoError(t, err)
-				assert.Contains(t, out.String(), "1 records")
-				assert.Contains(t, out.String(), "1 added")
+				require.NoError(err)
+				assert.Contains(out.String(), "1 records")
+				assert.Contains(out.String(), "1 added")
 			}
 		})
 	}

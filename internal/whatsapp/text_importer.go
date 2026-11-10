@@ -205,7 +205,7 @@ func prepareTextChat(ctx context.Context, st *store.Store, sourceID int64, opts 
 	if raw, ok := metadata["whatsapp_txt"]; ok {
 		var got textAssumptions
 		if err := json.Unmarshal(raw, &got, json.RejectUnknownMembers(true)); err != nil {
-			return 0, fmt.Errorf("read TXT chat assumptions; upgrade msgvault to import newer assumptions: %w", err)
+			return 0, fmt.Errorf("upgrade msgvault to import this chat: %w", err)
 		}
 		if got != want {
 			return 0, errors.New("TXT chat parsing assumptions conflict; reuse the original timezone and chat type")

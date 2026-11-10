@@ -20,15 +20,16 @@ func TestTextParserHeaders(t *testing.T) {
 		{"dots", "13.06.2026, 9:25 p.m. - Mira: hello\nsecond\n\nlast", "dmy", "2026-06-13 21:25:00", "minute"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			rows, _, err := parseText(t.Context(), strings.NewReader(tc.text), tc.order, "UTC", textLimitsDefault)
-			require.NoError(t, err)
-			require.Len(t, rows, 1)
-			assert.Equal(t, "Mira", rows[0].Sender)
-			assert.Equal(t, "hello\nsecond\n\nlast", rows[0].Body)
-			assert.Equal(t, tc.wall, rows[0].WallTime)
-			assert.Equal(t, tc.precision, rows[0].Precision)
-			assert.Equal(t, 1, rows[0].StartLine)
-			assert.Equal(t, 4, rows[0].EndLine)
+			require.NoError(err)
+			require.Len(rows, 1)
+			assert.Equal("Mira", rows[0].Sender)
+			assert.Equal("hello\nsecond\n\nlast", rows[0].Body)
+			assert.Equal(tc.wall, rows[0].WallTime)
+			assert.Equal(tc.precision, rows[0].Precision)
+			assert.Equal(1, rows[0].StartLine)
+			assert.Equal(4, rows[0].EndLine)
 		})
 	}
 }
@@ -50,16 +51,17 @@ func TestTextParserNotices(t *testing.T) {
 		{"Mira cambió la descripción del grupo: flores", "Mira cambió la descripción del grupo", "flores"},
 	} {
 		t.Run(tc.payload, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			rows, _, err := parseText(t.Context(), strings.NewReader("13/6/26, 10:00 - "+tc.payload), "dmy", "UTC", textLimitsDefault)
-			require.NoError(t, err)
-			require.Len(t, rows, 1)
+			require.NoError(err)
+			require.Len(rows, 1)
 			kind := "message"
 			if tc.sender == "" {
 				kind = "notice"
 			}
-			assert.Equal(t, tc.sender, rows[0].Sender)
-			assert.Equal(t, kind, rows[0].Kind)
-			assert.Equal(t, tc.body, rows[0].Body)
+			assert.Equal(tc.sender, rows[0].Sender)
+			assert.Equal(kind, rows[0].Kind)
+			assert.Equal(tc.body, rows[0].Body)
 		})
 	}
 }
@@ -100,17 +102,18 @@ func TestTextParserEarlierFold(t *testing.T) {
 func TestTextParserOriginalByteDigest(t *testing.T) {
 	for _, input := range []string{"13/6/26, 10:00 - Mira: asters\nseedlings", "\ufeff13/6/26, 10:00 - Mira: asters\r\nseedlings\r\n"} {
 		t.Run(fmt.Sprintf("bytes-%d", len(input)), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			limits := textLimitsDefault
 			limits.Bytes = int64(len(input))
 			rows, digest, err := parseText(t.Context(), strings.NewReader(input), "dmy", "UTC", limits)
-			require.NoError(t, err)
-			require.Len(t, rows, 1)
-			assert.Equal(t, fmt.Sprintf("%x", sha256.Sum256([]byte(input))), digest)
-			assert.Equal(t, "asters\nseedlings", rows[0].Body)
-			assert.Equal(t, "13/6/26, 10:00 - Mira: asters\nseedlings", rows[0].Raw)
+			require.NoError(err)
+			require.Len(rows, 1)
+			assert.Equal(fmt.Sprintf("%x", sha256.Sum256([]byte(input))), digest)
+			assert.Equal("asters\nseedlings", rows[0].Body)
+			assert.Equal("13/6/26, 10:00 - Mira: asters\nseedlings", rows[0].Raw)
 			limits.Bytes--
 			_, _, err = parseText(t.Context(), strings.NewReader(input), "dmy", "UTC", limits)
-			require.ErrorContains(t, err, "byte limit")
+			require.ErrorContains(err, "byte limit")
 		})
 	}
 }

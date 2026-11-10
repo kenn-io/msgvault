@@ -23,51 +23,52 @@ func TestTextImportChatAssumptions(t *testing.T) {
 		{"chat-type", func(o *TextOptions) { o.ChatType = "direct" }, false, "13/6/26, 10:00 - Mira: asters\n", "assumptions conflict"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			st := testutil.NewTestStore(t)
 			imp := NewImporter(st, nil)
 			opts := textOptions()
 			_, err := imp.ImportText(t.Context(), textFile(t, "13/6/26, 10:00 - Mira: asters\n"), opts)
-			require.NoError(t, err)
+			require.NoError(err)
 			var id int64
 			var metadata string
-			require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id,metadata FROM conversations").Scan(&id, &metadata))
+			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id,metadata FROM conversations").Scan(&id, &metadata))
 			var outer map[string]any
-			require.NoError(t, json.Unmarshal([]byte(metadata), &outer))
+			require.NoError(json.Unmarshal([]byte(metadata), &outer))
 			if tc.future {
 				assumptions, ok := outer["whatsapp_txt"].(map[string]any)
-				require.True(t, ok)
+				require.True(ok)
 				assumptions["future_policy"] = "newer"
 			}
 			outer["unrelated"] = map[string]any{"kept": true}
 			raw, err := json.Marshal(outer)
-			require.NoError(t, err)
-			require.NoError(t, st.SetConversationMetadataContext(t.Context(), id, sql.NullString{String: string(raw), Valid: true}))
+			require.NoError(err)
+			require.NoError(st.SetConversationMetadataContext(t.Context(), id, sql.NullString{String: string(raw), Valid: true}))
 			tc.change(&opts)
 			summary, err := imp.ImportText(t.Context(), textFile(t, tc.input), opts)
 			if tc.wantError != "" {
-				require.ErrorContains(t, err, tc.wantError)
-				require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT metadata FROM conversations WHERE id = ?", id).Scan(&metadata))
-				assert.Equal(t, string(raw), metadata)
-				assert.Equal(t, 1, textCount(t, st, "messages"))
+				require.ErrorContains(err, tc.wantError)
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT metadata FROM conversations WHERE id = ?"), id).Scan(&metadata))
+				assert.Equal(string(raw), metadata)
+				assert.Equal(1, textCount(t, st, "messages"))
 				return
 			}
-			require.NoError(t, err)
-			assert.Equal(t, 1, summary.Added)
-			assert.Equal(t, 1, summary.Unchanged)
-			assert.Equal(t, 2, textCount(t, st, "messages"))
-			require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT metadata FROM conversations WHERE id = ?", id).Scan(&metadata))
+			require.NoError(err)
+			assert.Equal(1, summary.Added)
+			assert.Equal(1, summary.Unchanged)
+			assert.Equal(2, textCount(t, st, "messages"))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT metadata FROM conversations WHERE id = ?"), id).Scan(&metadata))
 			outer = nil
-			require.NoError(t, json.Unmarshal([]byte(metadata), &outer))
-			assert.Equal(t, map[string]any{"kept": true}, outer["unrelated"])
-			assert.NotContains(t, outer["whatsapp_txt"], "date_order_assumption")
+			require.NoError(json.Unmarshal([]byte(metadata), &outer))
+			assert.Equal(map[string]any{"kept": true}, outer["unrelated"])
+			assert.NotContains(outer["whatsapp_txt"], "date_order_assumption")
 			for _, provenanceCase := range []struct{ body, order string }{{"asters", "dmy"}, {"seedlings", "mdy"}} {
 				var messageID int64
-				require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages WHERE snippet = ?", provenanceCase.body).Scan(&messageID))
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT id FROM messages WHERE snippet = ?"), provenanceCase.body).Scan(&messageID))
 				provenance, err := st.GetMessageRawContext(t.Context(), messageID)
-				require.NoError(t, err)
+				require.NoError(err)
 				var got map[string]any
-				require.NoError(t, json.Unmarshal(provenance, &got))
-				assert.Equal(t, provenanceCase.order, got["date_order_assumption"])
+				require.NoError(json.Unmarshal(provenance, &got))
+				assert.Equal(provenanceCase.order, got["date_order_assumption"])
 			}
 		})
 	}

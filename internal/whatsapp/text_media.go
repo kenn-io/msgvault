@@ -16,11 +16,12 @@ import (
 )
 
 var textAttached = regexp.MustCompile(`^<\s*attached:\s*(.+?)\s*>$`)
+var textOmitted = regexp.MustCompile(`\x{200e}[\p{L} ]{2,40} omitted(?: \x{200e}<This message was edited>)?$`)
 
 func importTextMedia(ctx context.Context, st *store.Store, root *os.Root, messageID int64, body string, opts TextOptions, summary *TextSummary) error {
 	for line := range strings.SplitSeq(body, "\n") {
 		marker := strings.TrimSpace(strings.TrimLeft(line, "\u200e\u200f"))
-		if strings.EqualFold(marker, "<Media omitted>") || strings.HasSuffix(strings.TrimSpace(line), "\u200eimage omitted") {
+		if strings.EqualFold(marker, "<Media omitted>") || textOmitted.MatchString(strings.TrimSpace(line)) {
 			summary.MediaOmitted++
 			continue
 		}

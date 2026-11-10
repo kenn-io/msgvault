@@ -119,9 +119,9 @@ run of that same TXT without duplicating messages or removing existing
 attachments. A new export with different markers, captions or timestamp
 precision is distinct evidence; there is no safe correspondence to the older
 record. In particular, Android minute-precision and iOS second-precision
-exports do not share message keys. `<Media omitted>` and the exact iPhone
-U+200E-prefixed `image omitted` marker count omitted media. No files are searched
-for outside the root.
+exports do not share message keys. `<Media omitted>` and U+200E-marked English
+iPhone `… omitted` placeholders count omitted media. No files are searched for
+outside the root.
 
 The summary counts input records, notices, newly added and already archived
 messages, and additional identical occurrences whose correspondence is

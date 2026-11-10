@@ -35,8 +35,9 @@ A normal, no-break or narrow no-break space may precede AM/PM. Initial LRM/RLM
 and directional embedding marks are ignored only for recognizing a header;
 raw records retain them. Attachment references are whole-line `<attached: NAME>`
 (with optional spaces inside brackets) or `NAME (file attached)`;
-`<Media omitted>` and the exact LRM-prefixed `image omitted` line count omitted
-media. Other dialects are not promised.
+`<Media omitted>` and U+200E-marked English iPhone `… omitted` placeholders
+count omitted media, including the optional marked English edited note.
+Other dialects are not promised.
 
 Recognized English notices retain their entire payload without an asserted author.
 Other colon payloads keep their exact prefix as an unverified scoped label.
@@ -44,7 +45,7 @@ Header-shaped lines inside a message cannot be distinguished from real records.
 The unit tests add original fictional cases for time interpretation, invalid
 input, bounded parsing, repeated and overlapping windows and media containment.
 
-The iPhone U+200E `image omitted` marker and English group-creation and
+The U+200E-marked English iPhone `… omitted` placeholders and English group-creation and
 subject-change notice structures were also checked against the
 MIT-licensed [nicolasfeoli/whatsapp-chat-analyzer](https://github.com/nicolasfeoli/whatsapp-chat-analyzer)
 at `a9215e94c94db372ea750f87a655537996e77fcb`:
@@ -52,10 +53,13 @@ at `a9215e94c94db372ea750f87a655537996e77fcb`:
 - [group-notice tests](https://github.com/nicolasfeoli/whatsapp-chat-analyzer/blob/a9215e94c94db372ea750f87a655537996e77fcb/tests/core/parsing/group-notices.test.ts), covering creation and subject changes with quoted names
 - [group-notice parser](https://github.com/nicolasfeoli/whatsapp-chat-analyzer/blob/a9215e94c94db372ea750f87a655537996e77fcb/src/core/parsing/group-notices.ts)
 - [invented group events](https://github.com/nicolasfeoli/whatsapp-chat-analyzer/blob/a9215e94c94db372ea750f87a655537996e77fcb/tests/fixtures/group-events.ts)
+- [message-classification source](https://github.com/nicolasfeoli/whatsapp-chat-analyzer/blob/a9215e94c94db372ea750f87a655537996e77fcb/src/core/parsing/message-classification.ts), lines 111–112 and 250–270: marked typed placeholders
+- [message-classification tests](https://github.com/nicolasfeoli/whatsapp-chat-analyzer/blob/a9215e94c94db372ea750f87a655537996e77fcb/tests/core/parsing/message-classification.test.ts), lines 52–55 and 244–276: marked English placeholders, edited note and unmarked text
+- [media-type tests](https://github.com/nicolasfeoli/whatsapp-chat-analyzer/blob/a9215e94c94db372ea750f87a655537996e77fcb/tests/core/analysis/media-type.test.ts), lines 8–16: English kinds
 - [parse-chat tests](https://github.com/nicolasfeoli/whatsapp-chat-analyzer/blob/a9215e94c94db372ea750f87a655537996e77fcb/tests/core/parsing/parse-chat.test.ts)
 - [README](https://github.com/nicolasfeoli/whatsapp-chat-analyzer/blob/a9215e94c94db372ea750f87a655537996e77fcb/README.md), which identifies its example chats as invented
 - [MIT license](https://github.com/nicolasfeoli/whatsapp-chat-analyzer/blob/a9215e94c94db372ea750f87a655537996e77fcb/LICENSE)
 
 Only these structures informed our original fictional fixtures and parser
-cases. No chat content, parser code or fixture was copied. No other iPhone
-omitted-media forms are claimed.
+cases. No chat content, parser code or fixture was copied. Non-English
+omitted-media forms are not claimed.
