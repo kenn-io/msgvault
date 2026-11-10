@@ -3,7 +3,6 @@ package whatsapp
 import (
 	"database/sql"
 	"encoding/json/v2"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -49,14 +48,9 @@ func TestTextPersistedKeys(t *testing.T) {
 	assert.Equal("whatsapp_txt", kind)
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT sender_id FROM messages WHERE snippet LIKE 'You changed%'").Scan(&sender))
 	assert.False(sender.Valid)
-}
-
-func TestTextPayloadKeyIgnoresClassification(t *testing.T) {
-	rows, _, err := parseTextForTest(t.Context(), strings.NewReader(`13/6/26, 10:00 - Mira changed the subject to "Asters: blue"`), "dmy", "UTC", textLimitsDefault)
-	require.NoError(t, err)
-	require.Len(t, rows, 1)
-	require.Equal(t, "notice", rows[0].Kind)
-	assert.Equal(t, "whatsapp_txt:32fab6e2ab8d05c10874e3ca0027ad09a69e01277ef712a44169dc2e240ea4d8:0", textMessageKey("garden", rows[0], 0))
+	var noticeKey string
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT source_message_id FROM messages WHERE snippet LIKE 'You changed%'").Scan(&noticeKey))
+	assert.Equal("whatsapp_txt:a8215365edcf9c7c6082220e6eb0f47f497d2dc4b14c0e9accbaee33b5e2d8bb:0", noticeKey)
 }
 
 func TestTextSearchSenderAfterRebuild(t *testing.T) {

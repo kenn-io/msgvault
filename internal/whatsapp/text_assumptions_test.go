@@ -34,6 +34,7 @@ func TestTextImportChatAssumptions(t *testing.T) {
 			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id,metadata FROM conversations").Scan(&id, &metadata))
 			var outer map[string]any
 			require.NoError(json.Unmarshal([]byte(metadata), &outer))
+			assert.Equal("dmy", outer["whatsapp_txt"].(map[string]any)["date_order_assumption"])
 			if tc.future {
 				assumptions, ok := outer["whatsapp_txt"].(map[string]any)
 				require.True(ok)
@@ -48,7 +49,6 @@ func TestTextImportChatAssumptions(t *testing.T) {
 			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT metadata FROM conversations WHERE id = ?"), id).Scan(&metadata))
 			assert.JSONEq(string(raw), metadata)
 			assert.Equal(1, textCount(t, st, "messages"))
-			assert.Equal("dmy", outer["whatsapp_txt"].(map[string]any)["date_order_assumption"])
 		})
 	}
 }
