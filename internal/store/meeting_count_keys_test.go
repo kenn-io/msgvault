@@ -40,48 +40,51 @@ func TestMeetingCountKeysSingleSplitAfterCalendarCancellationOrDeletion(t *testi
 }
 
 func TestMeetingCountKeysSparseAllDayCancellation(t *testing.T) {
+	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	data, master := calendarFixture(t, st, "master", `{"id":"series","iCalUID":"weekly@example.org","start":{"date":"2027-03-07"},"end":{"date":"2027-03-08"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`)
-	require.NoError(t, st.UpdateSourceSyncConfig(data.Message.SourceID, `{"calendar_id":"calendar@example.com","time_zone":"Asia/Tokyo"}`))
+	requirements.NoError(st.UpdateSourceSyncConfig(data.Message.SourceID, `{"calendar_id":"calendar@example.com","time_zone":"Asia/Tokyo"}`))
 	_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
-	require.NoError(t, st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: master, Key: "20270314"}))
+	requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: master, Key: "20270314"}))
 	calendarFixture(t, st, "cancelled", `{"id":"series_20270314","recurringEventId":"series","status":"cancelled","originalStartTime":{"date":"2027-03-14"}}`)
-	require.NoError(t, st.UpdateSourceSyncConfig(data.Message.SourceID, `{"calendar_id":"calendar@example.com","time_zone":"Asia/Tokyo"}`))
+	requirements.NoError(st.UpdateSourceSyncConfig(data.Message.SourceID, `{"calendar_id":"calendar@example.com","time_zone":"Asia/Tokyo"}`))
 	keys, err := st.MeetingCountKeysContext(t.Context())
-	require.NoError(t, err)
-	require.Len(t, keys[note], 1)
+	requirements.NoError(err)
+	requirements.Len(keys[note], 1)
 	assert.Equal(t, "2027-03-14", keys[note][0].Date)
 }
 
 func TestMeetingCountKeysAllDaySourceCopies(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	data, _ := calendarFixture(t, st, "series", `{"id":"series","iCalUID":"weekly@example.org","start":{"date":"2027-03-07"},"end":{"date":"2027-03-08"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`)
-	require.NoError(t, st.UpdateSourceSyncConfig(data.Message.SourceID, `{"calendar_id":"calendar@example.com","time_zone":"Asia/Tokyo"}`))
+	requirements.NoError(st.UpdateSourceSyncConfig(data.Message.SourceID, `{"calendar_id":"calendar@example.com","time_zone":"Asia/Tokyo"}`))
 	_, granola := projectionFixture(t, st, "granola", "granola_json", `{"calendar_event":{"calendar_event_id":"series","scheduled_start_time":"2027-03-13T15:00:00Z"}}`)
 	_, twenty := projectionFixture(t, st, "twenty", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-13T15:00:00Z"}}`)
 	keys, err := st.MeetingCountKeysContext(t.Context())
-	require.NoError(t, err)
+	requirements.NoError(err)
 	for _, note := range []int64{granola, twenty} {
-		require.Len(t, keys[note], 1)
-		assert.Equal(t, "uid:weekly@example.org/20270314", keys[note][0].Key)
-		assert.Equal(t, "2027-03-14", keys[note][0].Date)
+		requirements.Len(keys[note], 1)
+		assertions.Equal("uid:weekly@example.org/20270314", keys[note][0].Key)
+		assertions.Equal("2027-03-14", keys[note][0].Date)
 	}
 }
 
 func TestMeetingCountKeysSeriesTypeChange(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, master := calendarFixture(t, st, "series", linkSeriesRaw)
 	_, saved := projectionFixture(t, st, "saved", "plaud_json", `{}`)
-	require.NoError(t, st.LinkMeetingContext(t.Context(), saved, OccurrenceRef{MessageID: master, Key: "20270314T100000Z"}))
+	requirements.NoError(st.LinkMeetingContext(t.Context(), saved, OccurrenceRef{MessageID: master, Key: "20270314T100000Z"}))
 	_, source := projectionFixture(t, st, "source", "granola_json", `{"calendar_event":{"calendar_event_id":"series_20270314T100000Z","scheduled_start_time":"2027-03-14T10:00:00Z"}}`)
-	require.NoError(t, st.UpsertMessageRawWithFormat(master, []byte(`{"id":"series","iCalUID":"weekly@example.org","start":{"date":"2027-03-07"},"end":{"date":"2027-03-08"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`), "gcal_json"))
+	requirements.NoError(st.UpsertMessageRawWithFormat(master, []byte(`{"id":"series","iCalUID":"weekly@example.org","start":{"date":"2027-03-07"},"end":{"date":"2027-03-08"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`), "gcal_json"))
 	keys, err := st.MeetingCountKeysContext(t.Context())
-	require.NoError(t, err)
+	requirements.NoError(err)
 	for _, note := range []int64{saved, source} {
-		require.Len(t, keys[note], 1)
-		assert.Equal(t, "uid:weekly@example.org/20270314T100000Z", keys[note][0].Key)
-		assert.Empty(t, keys[note][0].Date)
-		assert.Equal(t, "2027-03-14T10:00:00Z", keys[note][0].Start.UTC().Format(time.RFC3339))
+		requirements.Len(keys[note], 1)
+		assertions.Equal("uid:weekly@example.org/20270314T100000Z", keys[note][0].Key)
+		assertions.Empty(keys[note][0].Date)
+		assertions.Equal("2027-03-14T10:00:00Z", keys[note][0].Start.UTC().Format(time.RFC3339))
 	}
 }
 
@@ -217,6 +220,7 @@ func TestMeetingCountKeysGoogleAcrossMailboxes(t *testing.T) {
 }
 
 func TestMeetingCountKeysBudgetExhaustionKeepsOtherMessages(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	for _, id := range []string{"crowded-1", "crowded-2"} {
 		calendarFixture(t, st, id, singleLinkRaw(id, "crowded@example.org"))
@@ -225,10 +229,10 @@ func TestMeetingCountKeysBudgetExhaustionKeepsOtherMessages(t *testing.T) {
 	_, crowded := projectionFixture(t, st, "crowded", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"crowded@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
 	_, other := projectionFixture(t, st, "other", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"other@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
 	keys, err := st.meetingCountKeysContext(t.Context(), 3)
-	require.NoError(t, err)
-	assert.Empty(t, keys[crowded], "the cache uses the transcript's own key")
-	require.Len(t, keys[other], 1)
-	assert.Equal(t, "uid:other@example.org/", keys[other][0].Key)
+	requirements.NoError(err)
+	assertions.Empty(keys[crowded], "the cache uses the transcript's own key")
+	requirements.Len(keys[other], 1)
+	assertions.Equal("uid:other@example.org/", keys[other][0].Key)
 }
 
 func TestMeetingCountKeysGoogleCalendarCollisions(t *testing.T) {

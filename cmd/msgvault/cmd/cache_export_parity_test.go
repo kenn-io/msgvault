@@ -209,17 +209,18 @@ func TestStageMeetingKeysQuotes(t *testing.T) {
 }
 
 func TestStageMeetingKeysCopyDates(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	db := newParticipantClusterInsertRecorder(t)
 	keys := map[int64][]store.MeetingCountOccurrence{
 		1: {{Key: "uid:meeting@example.org/", Start: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)}},
 		2: {{Key: "uid:meeting@example.org/", Start: time.Date(2027, 3, 15, 10, 0, 0, 0, time.UTC)}},
 	}
-	require.NoError(t, stageMeetingKeys(t.Context(), db, keys, 2))
+	requirements.NoError(stageMeetingKeys(t.Context(), db, keys, 2))
 	var count int
 	var at time.Time
-	require.NoError(t, db.QueryRow(`SELECT count(DISTINCT occurrence_at), min(occurrence_at) FROM (`+meetingKeysSelectSQL+`)`).Scan(&count, &at))
-	assert.Equal(t, 1, count)
-	assert.Equal(t, time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), at)
+	requirements.NoError(db.QueryRow(`SELECT count(DISTINCT occurrence_at), min(occurrence_at) FROM (`+meetingKeysSelectSQL+`)`).Scan(&count, &at))
+	assertions.Equal(1, count)
+	assertions.Equal(time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), at)
 }
 
 func participantClusterTestMappings(count int) map[int64]int64 {

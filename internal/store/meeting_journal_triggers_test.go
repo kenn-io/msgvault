@@ -18,6 +18,7 @@ func TestMeetingJournalTriggers(t *testing.T) {
 		{name: "delete", decision: "link", query: `DELETE FROM meeting_link_decisions WHERE member_message_id=$note`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
 			if st.IsPostgreSQL() {
 				t.Skip("SQLite cache journal")
@@ -25,15 +26,15 @@ func TestMeetingJournalTriggers(t *testing.T) {
 			_, event := calendarFixture(t, st, "event", singleLinkRaw("event", "meeting@example.test"))
 			_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{}}`)
 			if tc.decision == "link" {
-				require.NoError(t, st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event}))
+				requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event}))
 			}
 			_, err := st.db.Exec(`DELETE FROM cache_related_change_journal`)
-			require.NoError(t, err)
+			requirements.NoError(err)
 			query := strings.NewReplacer("$event", strconv.FormatInt(event, 10), "$note", strconv.FormatInt(note, 10)).Replace(tc.query)
 			_, err = st.db.Exec(query)
-			require.NoError(t, err)
+			requirements.NoError(err)
 			var id int64
-			require.NoError(t, st.db.QueryRow(`SELECT message_id FROM cache_related_change_journal WHERE dataset='meeting_links'`).Scan(&id))
+			requirements.NoError(st.db.QueryRow(`SELECT message_id FROM cache_related_change_journal WHERE dataset='meeting_links'`).Scan(&id))
 			assert.Equal(t, note, id)
 		})
 	}
