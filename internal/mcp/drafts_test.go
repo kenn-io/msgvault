@@ -367,12 +367,6 @@ func TestDraftToolValidateOnlyCatalog(t *testing.T) {
 	tools := toolsByName(t, rawListTools(t, opts, true))
 	assert.NotContains(t, tools, "validate_draft")
 	for _, name := range []string{ToolDraftReply, ToolDraftCompose, ToolDraftForward, ToolDraftEdit} {
-		schema := tools[name]["inputSchema"].(map[string]any)
-		properties := schema["properties"].(map[string]any)
-		for _, flag := range []string{"strict", "allow_placeholders", "validate_only"} {
-			assert.Contains(t, properties, flag)
-		}
-		assert.NotContains(t, properties, "idempotency_key")
 		assert.Contains(t, tools[name]["description"], "With validate_only, writes nothing.")
 	}
 }

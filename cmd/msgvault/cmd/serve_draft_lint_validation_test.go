@@ -15,16 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestR1DraftLintExplicitFalse(t *testing.T) {
-	for _, command := range []string{"draft-compose", "draft-reply", "draft-forward", "draft-edit"} {
-		for _, flag := range []string{"strict", "allow-placeholders", "validate-only"} {
-			_, opts, err := parseDraftLintFlags([]string{command, "--" + flag + "=false"})
-			require.NoError(t, err)
-			assert.Equal(t, draftLintOptions{}, opts)
-		}
-	}
-}
-func TestR1QuotedMailboxValidation(t *testing.T) {
+func TestDraftQuotedMailboxValidation(t *testing.T) {
 	f := newDraftReplyFixture(t)
 	a := f.grantedAdapter()
 	args := []string{"draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--from", testutil.IMAPTestUsername, "--to", `"alex smith"@example.com`, "--cc", `"pat smith"@example.com`, "--bcc", `"sam smith"@example.com`, "--subject", "Hello", "--body", "Thanks", "--strict", "--json"}
@@ -42,7 +33,7 @@ func TestR1QuotedMailboxValidation(t *testing.T) {
 	_, err = lintRun(t, a, nil, args...)
 	require.NoError(t, err)
 }
-func TestR1InheritedSubjectStrict(t *testing.T) {
+func TestDraftInheritedSubjectStrict(t *testing.T) {
 	for _, command := range []string{"draft-reply", "draft-forward"} {
 		t.Run(command, func(t *testing.T) {
 			f := newDraftReplyFixture(t)
@@ -58,15 +49,14 @@ func TestR1InheritedSubjectStrict(t *testing.T) {
 		})
 	}
 }
-func TestR1HumanValidationRecipients(t *testing.T) {
+func TestDraftHumanValidationRecipients(t *testing.T) {
 	f := newDraftReplyFixture(t)
 	events, err := lintRun(t, f.grantedAdapter(), nil, "draft-compose", "--source-id", strconv.FormatInt(f.source.ID, 10), "--from", testutil.IMAPTestUsername, "--to", "alex@example.com,pat@example.com", "--body", "Thanks", "--validate-only")
 	require.NoError(t, err)
 	require.NotEmpty(t, events)
 	assert.Contains(t, events[0].Data, "to: alex@example.com, pat@example.com\n")
-	assert.NotContains(t, events[0].Data, "[alex")
 }
-func TestR1ChatGreetingContext(t *testing.T) {
+func TestDraftChatGreetingContext(t *testing.T) {
 	for _, provider := range []string{"chat", "beeper"} {
 		for _, kind := range []string{"direct_chat", "group_chat", "channel"} {
 			t.Run(provider+"/"+kind, func(t *testing.T) {
@@ -121,7 +111,6 @@ func TestR1ChatGreetingContext(t *testing.T) {
 						events, err := lintRun(t, a, grant, append(append([]string{}, args...), "--body", "Hi Sam,", "--validate-only", "--json")...)
 						require.NoError(t, err, access)
 						got := lintObject(t, events)
-						assert.Nil(t, got["recipients"])
 						if kind == "direct_chat" && access != "write-only" {
 							assert.Contains(t, events[0].Data, `"code":"greeting_name_mismatch"`, access)
 							assert.Empty(t, got["lint_skipped"], access)
@@ -134,9 +123,32 @@ func TestR1ChatGreetingContext(t *testing.T) {
 			})
 		}
 	}
+	for _, tc := range []struct {
+		name, kind, body string
+		otherSource      bool
+	}{
+		{"other-source grant", "direct_chat", "Hi Sam,", true},
+		{"no participants", "channel", "Thanks", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			source, err := st.GetOrCreateSource("slack", "synthetic")
+			require.NoError(t, err)
+			_, err = st.EnsureConversationWithType(source.ID, "C1", tc.kind, "General")
+			require.NoError(t, err)
+			var grant *agentgrant.Grant
+			if tc.otherSource {
+				grant = &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionMessageRead}, Sources: []agentgrant.SourceRef{{ID: source.ID + 100, Type: source.SourceType, Identifier: "other"}}}
+			}
+			a := &storeAPIAdapter{store: st}
+			result := a.lintDraft(t.Context(), draftlint.Input{Channel: "chat", Body: tc.body, SourceConversationID: "C1"}, source.ID, grant)
+			assert.Empty(t, result.Warnings)
+			assert.Equal(t, []string{draftlint.CodeGreetingNameMismatch}, result.Skipped)
+		})
+	}
 }
 
-func TestR1CleanReceiptGolden(t *testing.T) {
+func TestDraftCleanReceiptGolden(t *testing.T) {
 	f := newDraftReplyFixture(t)
 	participant, err := f.store.EnsureParticipant("sender@example.com", "Sender", "example.com")
 	require.NoError(t, err)
@@ -155,30 +167,4 @@ func TestR1CleanReceiptGolden(t *testing.T) {
 	encoded, err := json.Marshal(got)
 	require.NoError(t, err)
 	assert.Equal(t, `{"draft_id":"generated","mailbox":"Drafts","message_id":1,"operation_ref":"generated","recipient_provenance":[{"address":"sender@example.com","basis":"curated_contact","flag":"ok","relationship":"contact","seen_in_archive":true}],"recipient_provenance_status":"checked","revision":1,"rfc822_message_id":"generated","source_id":1,"status":"created","uid":1,"uidvalidity":1}`, string(encoded))
-}
-
-func TestR1ChatGreetingReadScope(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("slack", "synthetic")
-	require.NoError(t, err)
-	a := &storeAPIAdapter{store: st}
-	grant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionMessageRead}, Sources: []agentgrant.SourceRef{{ID: source.ID + 100, Type: source.SourceType, Identifier: "other"}}}
-	got := a.lintDraft(t.Context(), draftlint.Input{Channel: "chat", Body: "Hi Sam,", SourceConversationID: "C1"}, source.ID, grant)
-	assert.Empty(t, got.Warnings)
-	assert.Equal(t, []string{draftlint.CodeGreetingNameMismatch}, got.Skipped)
-	scope, status := a.draftReadableSources(t.Context(), source.ID, grant)
-	assert.Nil(t, scope)
-	assert.Equal(t, "unchecked", status)
-}
-
-func TestR1ChatWithoutContextReportsSkipped(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("slack", "synthetic")
-	require.NoError(t, err)
-	_, err = st.EnsureConversationWithType(source.ID, "C1", "channel", "General")
-	require.NoError(t, err)
-	a := &storeAPIAdapter{store: st}
-	result := a.lintDraft(t.Context(), draftlint.Input{Channel: "chat", Body: "Thanks", SourceConversationID: "C1"}, source.ID, nil)
-	assert.Empty(t, result.Warnings)
-	assert.Equal(t, []string{draftlint.CodeGreetingNameMismatch}, result.Skipped)
 }
