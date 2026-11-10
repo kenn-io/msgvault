@@ -306,7 +306,11 @@ func TestSavedViewItemsIgnoreStaleTargets(t *testing.T) {
 					require.NoError(t, err)
 					conv, err := f.Store.EnsureConversation(other.ID, "replacement", "Replacement")
 					require.NoError(t, err)
-					_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO messages (id,source_id,conversation_id,source_message_id,message_type) VALUES (?,?,?,?,?)`), id, other.ID, conv, "replacement", "email")
+					override := ""
+					if f.Store.IsPostgreSQL() {
+						override = " OVERRIDING SYSTEM VALUE"
+					}
+					_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO messages (id,source_id,conversation_id,source_message_id,message_type)`+override+` VALUES (?,?,?,?,?)`), id, other.ID, conv, "replacement", "email")
 					require.NoError(t, err)
 				}
 			}
