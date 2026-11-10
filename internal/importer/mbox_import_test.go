@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/mbox"
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/email"
@@ -167,39 +168,50 @@ func TestImportMbox_NoAttachmentsStillRecordsAttachmentMetadata(t *testing.T) {
 // TestImportMboxPersistsListID catches an offline MIME import that parses the
 // List-Id header but drops it before the shared message persistence boundary.
 func TestImportMboxPersistsListIDAndAutomation(t *testing.T) {
-	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
-	assert := assert.New(t)
-	require := require.New(t)
-	tmp := t.TempDir()
-	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmp, "msgvault.db"))
+	for _, tc := range []struct{ name, listID, stored string }{
+		{"valid", "announce.example.org", "<announce.example.org>"},
+		{"damaged identity", "announce\x00.example.org", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
+			assert := assert.New(t)
+			require := require.New(t)
+			tmp := t.TempDir()
+			st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmp, "msgvault.db"))
 
-	raw := email.NewMessage().
-		From("Alice <alice@example.com>").
-		To("Bob <bob@example.com>").
-		Subject("List announcement").
-		Header("List-Id", "Example <announce.example.org>").
-		Body("Body text.\n").
-		Bytes()
-	mboxPath := filepath.Join(tmp, "list-id.mbox")
-	mboxData := "From alice@example.com Mon Jan 1 12:00:00 2024\n" + string(raw)
-	require.NoError(os.WriteFile(mboxPath, []byte(mboxData), 0600), "write mbox")
+			raw := email.NewMessage().
+				From("Alice <alice@example.com>").
+				To("Bob <bob@example.com>").
+				Subject("List announcement").
+				Header("List-Id", "Example <"+tc.listID+">").
+				Body("Body text.\n").
+				Bytes()
+			parsed, parseErr := mime.Parse(raw)
+			require.NoError(parseErr)
+			require.False(parsed.Incomplete)
+			require.NotEmpty(parsed.ListID)
+			mboxPath := filepath.Join(tmp, "list-id.mbox")
+			mboxData := "From alice@example.com Mon Jan 1 12:00:00 2024\n" + string(raw)
+			require.NoError(os.WriteFile(mboxPath, []byte(mboxData), 0600), "write mbox")
 
-	_, err := ImportMbox(t.Context(), st, mboxPath, MboxImportOptions{
-		SourceType: "mbox",
-		Identifier: "owner@example.com",
-		NoResume:   true,
-	})
-	require.NoError(err, "import mbox")
+			_, err := ImportMbox(t.Context(), st, mboxPath, MboxImportOptions{
+				SourceType: "mbox",
+				Identifier: "owner@example.com",
+				NoResume:   true,
+			})
+			require.NoError(err, "import mbox")
 
-	var listID sql.NullString
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT list_id FROM messages`).Scan(&listID),
-		"read imported list ID")
-	assert.True(listID.Valid, "list ID should be present")
-	assert.Equal("<announce.example.org>", listID.String, "list ID")
-	var flags, version int
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT automation_flags, automation_rule_version FROM messages`).Scan(&flags, &version))
-	assert.Equal(4, flags)
-	assert.Equal(store.AutomationRuleVersion, version)
+			var listID sql.NullString
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT list_id FROM messages`).Scan(&listID),
+				"read imported list ID")
+			assert.Equal(tc.stored != "", listID.Valid)
+			assert.Equal(tc.stored, listID.String)
+			var flags, version int
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT automation_flags, automation_rule_version FROM messages`).Scan(&flags, &version))
+			assert.Equal(4, flags)
+			assert.Equal(store.AutomationRuleVersion, version)
+		})
+	}
 }
 
 func TestImportMbox_IsIdempotentAcrossPathChanges(t *testing.T) {

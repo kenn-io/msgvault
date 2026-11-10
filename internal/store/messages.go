@@ -6827,6 +6827,8 @@ type ArchivedRawMessage struct {
 	Snippet  string
 	// stored is the stored text and search envelope read with the payload.
 	stored derivedEmailText
+	// Automation values read with the same retained MIME snapshot.
+	automationFlags, automationRuleVersion sql.NullInt64
 	// rawFingerprint binds a scanned repair to its retained encoded MIME.
 	rawFingerprint *[sha256.Size]byte
 }
@@ -6856,8 +6858,8 @@ func (s *Store) ScanArchivedEmailContext(ctx context.Context, sourceID, afterID,
 	item := &ArchivedRawMessage{}
 	var raw []byte
 	var compression sql.NullString
-	dest := append([]any{&item.MessageID, &item.ConversationID, &raw, &compression}, item.stored.scanDest()...)
-	err := s.db.QueryRowContext(ctx, `SELECT m.id, m.conversation_id, r.raw_data, r.compression, `+s.derivedEmailTextColumns()+`
+	dest := append([]any{&item.MessageID, &item.ConversationID, &raw, &compression, &item.automationFlags, &item.automationRuleVersion}, item.stored.scanDest()...)
+	err := s.db.QueryRowContext(ctx, `SELECT m.id, m.conversation_id, r.raw_data, r.compression, m.automation_flags, m.automation_rule_version, `+s.derivedEmailTextColumns()+`
 		FROM messages m
 		JOIN message_raw r ON r.message_id = m.id
 		LEFT JOIN message_bodies b ON b.message_id = m.id

@@ -337,8 +337,7 @@ var (
 		37: "f6d6ae3d753476a4261d54df5d413994ec987dc34137fccf421f215bf0a11b7e",
 		38: "ac18227f57322ed8e822c5406000375e7e3aa2b47c73246ba36e9b0628c9bb66",
 		39: "3b4a4d69ac0ae321fddcd1836b788118f5a7f25cda49d89ef8c327bd7338288d",
-		// Pending upstream CI digest after attachment-role loop invalidation.
-		40: "2ddcaf741b355733fede179ebf6a0f297d48adf7249b209560e9f9c083d99790",
+		40: "88447c2ba867c57d3a208569bd1e10de7a1e5cdf09ea2d3778a918ecbf28db66",
 	}
 	schemaContractPostgresDigests = []string{
 		1:  "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
@@ -375,8 +374,7 @@ var (
 		37: "7620e8c5b65db28a3b5bd6a0f709e53df28c5d7ee2fae42454e372508d9bc10e",
 		38: "5244b660c5b79ef46144ba5a9fa9470f84a15fe6b2cb1a3ffd11d2a39157ec32",
 		39: "77f763ebf58ff6f1df95dac4e187489afb6cc3521177cac60e7eef0894a8306a",
-		// Pending upstream CI digest after attachment-role loop invalidation.
-		40: "f4edec1590bb32bb408d2d9e72c8e70d3312c4864e54602510e40b298243ea9f",
+		40: "1951b079aa8f491f785ae10fe5247f3530894c07972abda36d0c3dcd5ed46ed2",
 	}
 )
 

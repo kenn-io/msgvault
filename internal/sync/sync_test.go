@@ -2638,35 +2638,46 @@ func TestFullSyncWithAttachment(t *testing.T) {
 // TestFullSyncPersistsListID catches an email sync path that parses List-Id
 // but drops it before the shared message persistence boundary.
 func TestFullSyncPersistsListIDAndAutomation(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
 	t.Parallel()
-	env := newTestEnv(t)
-	raw := testemail.NewMessage().
-		From("Alice <alice@example.com>").
-		To("Bob <bob@example.com>").
-		Subject("List announcement").
-		Header("List-Id", "Example <announce.example.org>").
-		Header("List-Unsubscribe", "<mailto:leave@example.test>").
-		Body("Body text.").
-		Bytes()
-	env.Mock.Profile.MessagesTotal = 1
-	env.Mock.Profile.HistoryID = 12345
-	env.Mock.AddMessage("list-id-message", raw, []string{"INBOX"})
+	for _, tc := range []struct{ name, listID, stored string }{
+		{"valid", "announce.example.org", "<announce.example.org>"},
+		{"damaged identity", "announce\x00.example.org", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			env := newTestEnv(t)
+			raw := testemail.NewMessage().
+				From("Alice <alice@example.com>").
+				To("Bob <bob@example.com>").
+				Subject("List announcement").
+				Header("List-Id", "Example <"+tc.listID+">").
+				Header("List-Unsubscribe", "<mailto:leave@example.test>").
+				Body("Body text.").
+				Bytes()
+			parsed, parseErr := mime.Parse(raw)
+			require.NoError(parseErr)
+			require.False(parsed.Incomplete)
+			require.NotEmpty(parsed.ListID)
+			env.Mock.Profile.MessagesTotal = 1
+			env.Mock.Profile.HistoryID = 12345
+			env.Mock.AddMessage("list-id-message", raw, []string{"INBOX"})
 
-	summary := runFullSync(t, env)
-	assertSummary(t, summary, WantSummary{Added: new(int64(1)), Errors: new(int64(0))})
+			summary := runFullSync(t, env)
+			assertSummary(t, summary, WantSummary{Added: new(int64(1)), Errors: new(int64(0))})
 
-	var listID sql.NullString
-	require.NoError(env.Store.DB().QueryRowContext(t.Context(), `
-		SELECT list_id FROM messages WHERE source_message_id = ?`, "list-id-message",
-	).Scan(&listID), "read synced list ID")
-	assert.True(listID.Valid, "list ID should be present")
-	assert.Equal("<announce.example.org>", listID.String, "list ID")
-	var flags, version int
-	require.NoError(env.Store.DB().QueryRowContext(t.Context(), `SELECT automation_flags, automation_rule_version FROM messages WHERE source_message_id = ?`, "list-id-message").Scan(&flags, &version))
-	assert.Equal(12, flags)
-	assert.Equal(store.AutomationRuleVersion, version)
+			var listID sql.NullString
+			require.NoError(env.Store.DB().QueryRowContext(t.Context(), `
+				SELECT list_id FROM messages WHERE source_message_id = ?`, "list-id-message",
+			).Scan(&listID), "read synced list ID")
+			assert.Equal(tc.stored != "", listID.Valid)
+			assert.Equal(tc.stored, listID.String)
+			var flags, version int
+			require.NoError(env.Store.DB().QueryRowContext(t.Context(), `SELECT automation_flags, automation_rule_version FROM messages WHERE source_message_id = ?`, "list-id-message").Scan(&flags, &version))
+			assert.Equal(12, flags)
+			assert.Equal(store.AutomationRuleVersion, version)
+		})
+	}
 }
 
 func TestFullSyncWithEmptyAttachment(t *testing.T) {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"io"
 	"log/slog"
 	"path/filepath"
 	"strconv"
@@ -65,13 +64,16 @@ func TestRawMIMEChangeInvalidatesAutomation(t *testing.T) {
 	assertAutomation(t, f.Store, id, 0, false)
 	// Already-unknown flags leave message metadata untouched on raw changes.
 	require.NoError(f.Store.UpsertMessageRaw(id, []byte("Subject: unknown\r\n\r\nbody")))
+	replacement := f.CreateMessage("unknown-replacement")
+	require.NoError(f.Store.UpsertMessageRaw(replacement, []byte("Subject: changed unknown\r\n\r\nbody")))
 	for _, remove := range []bool{false, true} {
 		before := baselineLM(t, f.Store, id)
 		if remove {
 			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), id)
 			require.NoError(err)
 		} else {
-			require.NoError(f.Store.UpsertMessageRaw(id, []byte("Subject: changed unknown\r\n\r\nbody")))
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE message_raw SET raw_data = (SELECT raw_data FROM message_raw WHERE message_id = ?) WHERE message_id = ?`), replacement, id)
+			require.NoError(err)
 		}
 		assert.Equal(t, before, readLM(t, f.Store, id))
 	}
@@ -138,7 +140,7 @@ func TestRepairAutomationFlagsDryRunApply(t *testing.T) {
 				reads := 0
 				var mutationErr error
 				slog.SetDefault(slog.New(automationRepairLogHook{
-					Handler:     slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelDebug}),
+					Handler:     slog.DiscardHandler,
 					onStatement: func(loggedStatement string) {
 						if strings.HasPrefix(loggedStatement, "SELECT raw_data, compression, raw_format") {
 							reads++
@@ -218,8 +220,12 @@ func TestRepairAutomationFlagsDryRunApply(t *testing.T) {
 // Its callback runs before the delegated handler's write lock.
 type automationRepairLogHook struct {
 	slog.Handler
+
 	onStatement func(string)
 }
+
+// Enabled keeps debug SQL records visible to the callback even when discarding output.
+func (h automationRepairLogHook) Enabled(context.Context, slog.Level) bool { return true }
 
 func (h automationRepairLogHook) Handle(ctx context.Context, record slog.Record) error {
 	record.Attrs(func(attr slog.Attr) bool {
@@ -228,7 +234,10 @@ func (h automationRepairLogHook) Handle(ctx context.Context, record slog.Record)
 		}
 		return true
 	})
-	return h.Handler.Handle(ctx, record)
+	if err := h.Handler.Handle(ctx, record); err != nil {
+		return fmt.Errorf("handle repair SQL log: %w", err)
+	}
+	return nil
 }
 
 func TestRepairAutomationFlagsApplyIsResumable(t *testing.T) {
@@ -261,7 +270,7 @@ func TestRepairAutomationFlagsApplyIsResumable(t *testing.T) {
 			previous := slog.Default()
 			scans := 0
 			slog.SetDefault(slog.New(automationRepairLogHook{
-				Handler:     slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelDebug}),
+				Handler:     slog.DiscardHandler,
 				onStatement: func(statement string) {
 					if strings.HasPrefix(statement, "SELECT m.id FROM messages m WHERE") {
 						scans++

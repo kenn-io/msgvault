@@ -20,6 +20,7 @@ func TestLoopsIdenticalWithAndWithoutAutomationColumns(t *testing.T) {
 		{name: "auto submitted", headers: "Auto-Submitted: auto-replied\r\n"},
 		{name: "bulk", headers: "Precedence: bulk\r\n"},
 		{name: "list id", headers: "List-Id: Updates <updates.example.test>\r\n"},
+		{name: "damaged list identity", headers: "List-Id: Updates <updates\x00.example.test>\r\n"},
 		{name: "unsubscribe", headers: "List-Unsubscribe: <mailto:leave@example.test>\r\n"},
 		{name: "calendar", calendar: true},
 		{name: "reply to", headers: "Reply-To: noreply@example.test\r\n"},

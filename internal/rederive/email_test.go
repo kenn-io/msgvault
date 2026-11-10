@@ -336,17 +336,17 @@ func TestEmailFlagsOnlyBackfillPublishesRevisionOnce(t *testing.T) {
 	assert.Equal(before+1, derivedDataRevision(t, st))
 }
 
-// cancelAfterEmailTextCommit interrupts the real repair at the transaction boundary.
-// SQL logging observes the body write and then the successful commit before canceling.
+// cancelAfterEmailTextCommit cancels after the single-row repair's first
+// committed transaction. The initial ledger cleanup and MIME scan do not open
+// transactions, so that commit belongs to the stale text repair.
 type cancelAfterEmailTextCommit struct {
 	cancel    context.CancelFunc
-	wroteText bool
+	committed bool
 }
 
 func (w *cancelAfterEmailTextCommit) Write(data []byte) (int, error) {
-	line := string(data)
-	w.wroteText = w.wroteText || strings.Contains(line, "INSERT INTO message_bodies")
-	if w.wroteText && strings.Contains(line, "sql tx commit") {
+	if !w.committed && bytes.Contains(data, []byte(`"msg":"sql tx commit"`)) {
+		w.committed = true
 		w.cancel()
 	}
 	return len(data), nil
@@ -369,6 +369,7 @@ func TestEmailCommittedTextPublishesRevisionWhenAutomationCanceled(t *testing.T)
 	})
 	sum, err := Run(ctx, st, src.SourceType, src.Identifier, src.ID, nil)
 	require.ErrorIs(err, context.Canceled)
+	assert.True(writer.committed)
 	assert.Equal(int64(1), sum.BodiesRewritten)
 	body, err := st.GetMessageBodyText(t.Context(), id)
 	require.NoError(err)

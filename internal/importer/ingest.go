@@ -69,6 +69,8 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 	log *slog.Logger, images *remoteimage.Fetcher, threadID string, strict bool,
 ) error {
 	parsed, parseErr := mime.ParseWithRecovery(raw, "(MIME parse error)")
+	// Capture raw automation evidence before omitting damaged stored identities.
+	automation := parsed.AutomationFlags()
 	parsed.OmitNULIdentities()
 	if strict && parseErr != nil {
 		log.Warn("archived malformed MIME with salvaged headers", "source_msg", sourceMsgID, "error", parseErr)
@@ -198,8 +200,6 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 		buildRecipientSet("cc", parsed.Cc, participantMap),
 		buildRecipientSet("bcc", parsed.Bcc, participantMap),
 	}
-
-	automation := parsed.AutomationFlags()
 
 	// Persist atomically
 	messageID, err := st.PersistMessageContext(ctx, &store.MessagePersistData{

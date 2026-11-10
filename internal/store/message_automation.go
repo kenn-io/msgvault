@@ -138,6 +138,12 @@ func (s *Store) UpdateArchivedEmailAutomationContext(ctx context.Context, item *
 	if item.rawFingerprint == nil {
 		return false, errors.New("automation repair requires a scanned MIME fingerprint")
 	}
+	// A matching scanned pair needs no write. Any subsequent raw replacement
+	// invalidates its flags independently.
+	if item.automationFlags.Valid && item.automationFlags.Int64 == int64(flags) &&
+		item.automationRuleVersion.Valid && item.automationRuleVersion.Int64 == AutomationRuleVersion {
+		return false, ctx.Err()
+	}
 	err = s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.lockArchivedEmailTextContext(ctx, tx, item); err != nil {
 			return err

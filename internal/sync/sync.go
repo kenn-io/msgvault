@@ -1851,6 +1851,8 @@ func (s *Syncer) prepareMessage(
 			"error", errMsg)
 	}
 
+	// Capture raw automation evidence before omitting damaged stored identities.
+	automation := parsed.AutomationFlags()
 	originalMessageID := parsed.MessageID
 	parsed.OmitNULIdentities()
 
@@ -1951,9 +1953,6 @@ func (s *Syncer) prepareMessage(
 		}
 		metadata = &sql.NullString{String: string(encoded), Valid: true}
 	}
-
-	// Failed or incomplete originals must retain the loops readability fallback.
-	automation := parsed.AutomationFlags()
 
 	return &messageData{
 		originalMessageID: originalMessageID,

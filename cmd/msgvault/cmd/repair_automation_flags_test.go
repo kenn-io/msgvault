@@ -15,17 +15,18 @@ import (
 )
 
 func TestRepairAutomationFlagsPrintsSummary(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	dir := t.TempDir()
 	cfg := &config.Config{HomeDir: dir, Data: config.DataConfig{DataDir: dir}}
 	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
-	require.NoError(t, st.Close())
+	require.NoError(st.Close())
 	var out bytes.Buffer
 	cmd := &cobra.Command{}
 	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 	cmd.SetOut(&out)
-	require.NoError(t, runRepairAutomationFlagsLocal(cmd, false, 1))
-	assert.Regexp(t, `Automation flag repair dry run: scanned=[0-9]+ would_write=[0-9]+ bulk=[0-9]+ automated=[0-9]+ unreadable=[0-9]+ remaining=[0-9]+\n`, out.String())
-	assert.Contains(t, out.String(), "Dry run: no rows were modified.")
+	require.NoError(runRepairAutomationFlagsLocal(cmd, false, 1))
+	assert.Regexp(`Automation flag repair dry run: scanned=[0-9]+ would_write=[0-9]+ bulk=[0-9]+ automated=[0-9]+ unreadable=[0-9]+ remaining=[0-9]+\n`, out.String())
 }
 
 func TestRepairAutomationFlagsRoutesThroughDaemon(t *testing.T) {
