@@ -16,7 +16,6 @@ import (
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -77,25 +76,16 @@ func TestCalendarEventsRoute(t *testing.T) {
 	}
 }
 
-type calendarScopedTestStore struct {
-	*store.Store
-	scope []int64
-}
-
-func (s *calendarScopedTestStore) ListCalendarOccurrencesContext(ctx context.Context, from, to time.Time) (store.CalendarOccurrencePage, error) {
-	s.scope = sourcescope.IDs(ctx)
-	return s.Store.ListCalendarOccurrencesContext(ctx, from, to)
-}
-
 func TestCalendarEventsAgentScopeAndVerification(t *testing.T) {
-	st := &calendarScopedTestStore{Store: testutil.NewTestStore(t)}
+	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gcal", "allowed@example.test")
 	require.NoError(t, err)
 	for _, tc := range []struct{ id, subject, raw, body string }{
 		{"event", "Your verification code is 482913", `{"id":"event","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"}}`, ""},
-		{"series", "Your verification code is 482913", `{"id":"series","start":{"dateTime":"2027-03-04T17:00:00Z"},"end":{"dateTime":"2027-03-04T18:00:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=2"]}`, ""},
+		{"series", "Your verification code is 482913", `{"id":"series","start":{"dateTime":"2027-03-04T17:00:00Z"},"end":{"dateTime":"2027-03-04T18:00:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=4"]}`, ""},
 		{"cancelled", "", `{"id":"cancelled","recurringEventId":"series","status":"cancelled","originalStartTime":{"dateTime":"2027-03-05T17:00:00Z"}}`, ""},
-		{"meeting", "Weekly sync", `{"id":"meeting","start":{"dateTime":"2027-03-06T17:00:00Z"},"end":{"dateTime":"2027-03-06T18:00:00Z"}}`, "Zoom meeting ID: 812 3456 7890. Passcode: 482913"},
+		{"edited", "Planning", `{"id":"edited","recurringEventId":"series","status":"confirmed","originalStartTime":{"dateTime":"2027-03-07T17:00:00Z"},"start":{"dateTime":"2027-03-07T17:00:00Z"},"end":{"dateTime":"2027-03-07T18:00:00Z"}}`, ""},
+		{"meeting", "Weekly sync", `{"id":"meeting","start":{"dateTime":"2027-03-08T17:00:00Z"},"end":{"dateTime":"2027-03-08T18:00:00Z"}}`, "Zoom meeting ID: 812 3456 7890. Passcode: 482913"},
 	} {
 		id, err := st.PersistMessage(&store.MessagePersistData{
 			Message:      &store.Message{SourceID: source.ID, SourceMessageID: tc.id, MessageType: "calendar_event", Subject: sql.NullString{String: tc.subject, Valid: true}},
@@ -107,6 +97,14 @@ func TestCalendarEventsAgentScopeAndVerification(t *testing.T) {
 			require.NoError(t, st.UpsertMessageBodyContext(t.Context(), id, sql.NullString{String: tc.body, Valid: true}, sql.NullString{}))
 		}
 	}
+	other, err := st.GetOrCreateSource("gcal", "other@example.test")
+	require.NoError(t, err)
+	_, err = st.PersistMessage(&store.MessagePersistData{
+		Message:      &store.Message{SourceID: other.ID, SourceMessageID: "private", MessageType: "calendar_event", Subject: sql.NullString{String: "Private meeting", Valid: true}},
+		Conversation: &store.ConversationPersistData{SourceConversationID: "private", ConversationType: "calendar", Title: "Private meeting"},
+		RawMIME:      []byte(`{"id":"private","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"}}`), RawFormat: "gcal_json", Metadata: &sql.NullString{String: `{"calendar_id":"example.test"}`, Valid: true},
+	})
+	require.NoError(t, err)
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Logger: testLogger()})
 	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	for _, tc := range []struct {
@@ -116,7 +114,8 @@ func TestCalendarEventsAgentScopeAndVerification(t *testing.T) {
 		{"scoped", "2027-03-02", "2027-03-03", "[verification content masked]", "confirmed", []agentgrant.Permission{agentgrant.PermissionCalendarEventRead}},
 		{"reveal", "2027-03-02", "2027-03-03", "Your verification code is 482913", "confirmed", []agentgrant.Permission{agentgrant.PermissionCalendarEventRead, agentgrant.PermissionVerificationRead}},
 		{"inherited cancellation", "2027-03-05", "2027-03-06", "[verification content masked]", "cancelled", []agentgrant.Permission{agentgrant.PermissionCalendarEventRead}},
-		{"ordinary meeting", "2027-03-06", "2027-03-07", "Weekly sync", "confirmed", []agentgrant.Permission{agentgrant.PermissionCalendarEventRead}},
+		{"edited occurrence", "2027-03-07", "2027-03-08", "Planning", "confirmed", []agentgrant.Permission{agentgrant.PermissionCalendarEventRead}},
+		{"ordinary meeting", "2027-03-08", "2027-03-09", "Weekly sync", "confirmed", []agentgrant.Permission{agentgrant.PermissionCalendarEventRead}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, token, _, err := srv.agentGrants.Issue(tc.name, tc.permissions, []agentgrant.SourceRef{{ID: source.ID, Type: "gcal", Identifier: source.Identifier}}, time.Time{})
@@ -131,7 +130,7 @@ func TestCalendarEventsAgentScopeAndVerification(t *testing.T) {
 			require.Len(t, page.Occurrences, 1)
 			assert.Equal(t, tc.want, page.Occurrences[0].Subject)
 			assert.Equal(t, tc.status, page.Occurrences[0].Status)
-			assert.Equal(t, []int64{source.ID}, st.scope)
+			assert.NotContains(t, w.Body.String(), "Private meeting")
 		})
 	}
 }
