@@ -309,7 +309,7 @@ it('resetting People filters commits one complete navigation', async () => {
     await fireEvent.click(await screen.findByRole('button', { name: /Filter/ }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Clear filters' }));
     expect(onNavigate.mock.calls.length + onShowAllChange.mock.calls.length).toBe(1);
-    expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ relationshipSaved: false, relationshipShowAll: false, directoryContactState: '', directoryCategory: '', directoryOrganization: '', directoryPrimaryChannel: '', directoryLastContactAfter: '', directoryLastContactBefore: '' });
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ relationshipSaved: false, relationshipShowAll: false, relationshipCadence: '', relationshipDueWithinDays: null, directoryContactState: '', directoryCategory: '', directoryOrganization: '', directoryPrimaryChannel: '', directoryLastContactAfter: '', directoryLastContactBefore: '' });
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
@@ -1166,4 +1166,58 @@ it('refreshes linked identities after a pending attribute save fails and keeps i
     releaseSave(Response.json({ error: 'unavailable' }, { status: 503 }));
     view.unmount(); controller.destroy(); directory.destroy(); state.destroy();
   }
+});
+
+it('renders only real saved cadence and clears selection when its filter changes', async () => {
+  const client = clientFor({ '/api/v1/relationships': () => Response.json({ rows: [
+    { canonical_id: 1, display_label: 'Saved Example', person_id: 91, signals: { sent_count: 3 }, cadence: { frequency_days: 17, status: 'unknown', stale: true } },
+    { canonical_id: 2, display_label: 'Unsaved Example', signals: { sent_count: 1 } },
+  ] }) });
+  const controller = new RelationshipsController(client, () => 'UTC'), directory = new DirectoryController(client), state = new ExploreState(null);
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    expect(await screen.findByText('Every 17 days · Due date updating')).toBeDefined();
+    const savedRow = screen.getByRole('row', { name: /Saved Example/ });
+    expect(within(savedRow).getByRole('img', { name: 'Saved' })).toBeDefined();
+    expect(within(screen.getByRole('row', { name: /Unsaved Example/ })).queryByText('No list')).toBeNull();
+    await fireEvent.click(within(savedRow).getByRole('checkbox', { name: 'Select Saved Example' }));
+    expect(screen.getByText('1 selected')).toBeDefined();
+    await view.rerender({ urlState: { ...state.current, relationshipCadence: 'due', relationshipDueWithinDays: 0 } });
+    await waitFor(() => expect(screen.queryByText('1 selected')).toBeNull());
+    expect((screen.getByRole('spinbutton', { name: 'Due within days' }) as HTMLInputElement).value).toBe('0');
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
+it.each([
+  { identityQuery: 'Example' }, { relationshipSort: 'name' as const },
+  { relationshipSaved: true }, { directoryCategory: 'work' }, { relationshipFacet: 'domains' as const },
+])('keeps cadence clearable and suppresses incompatible loads: %j', async patch => {
+  const client = clientFor({});
+  const controller = new RelationshipsController(client, () => 'UTC'), directory = new DirectoryController(client), state = new ExploreState(null);
+  const load = vi.spyOn(controller, 'loadList'), directoryLoad = vi.spyOn(directory, 'applyURLState'), onNavigate = vi.fn();
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: { ...state.current, ...patch, relationshipCadence: 'overdue' }, target: null, filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    expect(await screen.findByText(/Keep-in-touch filters require People/)).toBeDefined();
+    expect(load).not.toHaveBeenCalled(); expect(directoryLoad).not.toHaveBeenCalled();
+    expect(screen.queryByRole('grid', { name: 'People results' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Remove Keep in touch: Overdue' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear cadence' }));
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ relationshipCadence: '', relationshipDueWithinDays: null });
+    await view.rerender({ urlState: { ...state.current, ...patch } });
+    await waitFor(() => expect(load.mock.calls.length + directoryLoad.mock.calls.length).toBe(1));
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
+it('shows invalid due drafts without issuing another ranked request', async () => {
+  const client = clientFor({});
+  const controller = new RelationshipsController(client, () => 'UTC'), directory = new DirectoryController(client), state = new ExploreState(null);
+  const load = vi.spyOn(controller, 'loadList');
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: { ...state.current, relationshipCadence: 'due' }, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    const input = await screen.findByRole('spinbutton', { name: 'Due within days' });
+    await fireEvent.input(input, { target: { value: '3661' } });
+    expect((await screen.findByRole('alert')).textContent).toBe('Enter a whole number from 0 to 3660.');
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(controller.listCursor).toBeNull();
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });

@@ -1,3 +1,4 @@
+import type { RelationshipRow } from '../api/generated/models';
 import type { ChipTone } from '@kenn-io/kit-ui';
 import { sentenceCase } from '../explore/labels';
 
@@ -29,4 +30,14 @@ export function formatContactDate(iso: string): string {
 
 export function formatDay(day: string): string {
   return new Date(`${day}T00:00:00Z`).toLocaleDateString('en-US', { ...DATE_FORMAT, timeZone: 'UTC' });
+}
+
+/** Only the saved directory projection supplies cadence; stale dates are provisional. */
+export function cadenceLabel(cadence: NonNullable<RelationshipRow['cadence']>): string {
+  const frequency = cadence.list ? `List ${cadence.list}` : cadence.frequency_days ? `Every ${cadence.frequency_days} ${cadence.frequency_days === 1 ? 'day' : 'days'}` : 'No list';
+  if (cadence.stale) return `${frequency} · Due date updating`;
+  if (!cadence.frequency_days) return frequency;
+  if (!cadence.due_at) return `${frequency} · Due date unknown`;
+  const date = formatDay(cadence.due_at.slice(0, 10));
+  return `${frequency} · ${cadence.status === 'overdue' ? `Overdue · ${date}` : `Due ${date}`}`;
 }

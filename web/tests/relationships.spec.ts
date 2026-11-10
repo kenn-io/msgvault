@@ -848,3 +848,95 @@ test('People list keys stay in that grid while Messages is open', async ({ page 
   expect(await messages.getAttribute('aria-activedescendant')).toBe(active);
   await expect(messages.getByRole('row', { selected: true })).toHaveCount(0);
 });
+
+const cadenceRows = [
+  { canonical_id: 1, display_label: 'Alice Example', person_id: 91, cadence: { list: 'A', frequency_days: 21, status: 'overdue', due_at: '2026-07-18T00:00:00Z', stale: false } },
+  { canonical_id: 2, display_label: 'Blair Example', person_id: 92, cadence: { frequency_days: 17, status: 'ok', due_at: '2026-07-25T00:00:00Z', stale: false } },
+  { canonical_id: 3, display_label: 'Casey Example', person_id: 93, cadence: { list: 'B', frequency_days: 60, status: 'unknown', stale: true } },
+  { canonical_id: 4, display_label: 'Drew Example' },
+].map(row => ({ ...row, last_at: when, member_ids: [row.canonical_id], score: 2,
+  signals: { last_interaction_at: when, meeting_count: 0, meetings_together: 0, modalities: 2, received_from_them: 1, sent_count: 3, sent_to_them: 1 } }));
+
+async function prepareCadence(page: Page, bodies: Record<string, unknown>[] = []) {
+  await prepare(page);
+  await page.route('**/api/v1/relationships', route => {
+    const body = route.request().postDataJSON(); bodies.push(body);
+    const filteredRows = {
+      overdue: cadenceRows.slice(0, 1), due: cadenceRows.slice(0, body.due_within_days ? 2 : 1),
+      unknown: cadenceRows.slice(2, 3), no_list: [],
+    };
+    const rows = body.cadence ? filteredRows[body.cadence] : cadenceRows;
+    return route.fulfill({ json: { rows, total_count: rows.length, cache_revision: 'synthetic-cadence', identity_revision: 1 } });
+  });
+}
+
+test('cadence filters reach ranked requests and remain clearable in incompatible modes', async ({ page }) => {
+  test.skip(Boolean(process.env.CADENCE_CAPTURE_BASE), 'The frozen base predates cadence controls.');
+  const bodies: Record<string, unknown>[] = [];
+  await prepareCadence(page, bodies);
+  await page.goto('/?workspace=relationships');
+  const list = page.getByRole('complementary', { name: 'People', exact: true });
+  await expect(list.getByText('List B · Due date updating', { exact: true })).toBeVisible();
+  await expect(list.getByRole('row', { name: /Drew Example/ }).locator('.cadence')).toHaveCount(0);
+  await list.getByRole('button', { name: /^Filter/ }).click();
+  await page.getByRole('button', { name: 'Due', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await list.getByRole('spinbutton', { name: 'Due within days' }).fill('4000');
+  await expect(list.getByRole('alert')).toHaveText('Enter a whole number from 0 to 3660.');
+  await list.getByRole('button', { name: /^Filter/ }).click();
+  await page.getByRole('button', { name: 'Overdue', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await list.getByRole('button', { name: /^Filter/ }).click();
+  await page.getByRole('button', { name: 'Due', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await expect(list.getByRole('spinbutton', { name: 'Due within days' })).toHaveValue('');
+  await expect(list.getByRole('alert')).toHaveCount(0);
+  await list.getByRole('spinbutton', { name: 'Due within days' }).fill('7');
+  await expect.poll(() => bodies.at(-1)).toMatchObject({ cadence: 'due', due_within_days: 7 });
+  await list.getByRole('spinbutton', { name: 'Due within days' }).fill('0');
+  await expect.poll(() => bodies.at(-1)).toMatchObject({ cadence: 'due', due_within_days: 0 });
+  await list.getByRole('combobox', { name: 'Sort: Closest', exact: true }).click();
+  await page.getByRole('option', { name: 'Most recent', exact: true }).click();
+  await expect(list.getByText(/Keep-in-touch filters require People/)).toBeVisible();
+  await expect(list.getByRole('row')).toHaveCount(0);
+  await expect(list.getByRole('button', { name: 'Remove Keep in touch: Due' })).toBeVisible();
+  await list.getByRole('button', { name: 'Clear cadence', exact: true }).click();
+  await expect(list.getByText(/Keep-in-touch filters require People/)).toBeHidden();
+  await expect(list.getByRole('button', { name: 'Remove Keep in touch: Due' })).toBeHidden();
+});
+
+test('cadence synthetic comparison capture', async ({ browser }) => {
+  test.skip(!process.env.CADENCE_MEDIA_DIR, 'Capture is opt-in and writes outside the repository.');
+  const { readFile, writeFile } = await import('node:fs/promises');
+  const stage = process.env.CADENCE_CAPTURE_BASE ? 'before' : 'after';
+  const directory = process.env.CADENCE_MEDIA_DIR!;
+  const context = await browser.newContext({ baseURL: `http://127.0.0.1:${process.env.MSGVAULT_PLAYWRIGHT_PORT ?? '4173'}`, viewport: { width: 1280, height: 720 }, deviceScaleFactor: 2, locale: 'en-US', timezoneId: 'UTC', reducedMotion: 'reduce', recordHar: { path: `${directory}/${stage}.har`, content: 'embed' } });
+  const page = await context.newPage();
+  try {
+    await prepareCadence(page);
+    await page.goto('/?workspace=relationships');
+    const list = page.getByRole('complementary', { name: 'People', exact: true });
+    await expect(list.getByText('Drew Example', { exact: true })).toBeVisible();
+    if (stage === 'after') await expect(list.getByText('List B · Due date updating', { exact: true })).toBeVisible();
+    for (const theme of ['light', 'dark'] as const) {
+      await setKitTheme(page, theme);
+      const measurements = await list.getByRole('row').evaluateAll(rows => rows.map(row => {
+        const name = row.querySelector('.name')!.getBoundingClientRect();
+        const detail = row.querySelector('.detail')!.getBoundingClientRect();
+        const cadence = row.querySelector('.cadence')?.getBoundingClientRect();
+        return { name: row.textContent, nameLeft: name.left, detailLeft: detail.left, cadenceLeft: cadence?.left, lineGap: detail.top - name.bottom, cadenceGap: cadence ? cadence.top - detail.bottom : null, rowHeight: row.getBoundingClientRect().height };
+      }));
+      await writeFile(`${directory}/${stage}-${theme}-spacing.json`, JSON.stringify(measurements, null, 2));
+      for (const row of measurements) {
+        expect(row.detailLeft).toBe(row.nameLeft);
+        if (row.cadenceLeft !== undefined) expect(row.cadenceLeft).toBe(row.nameLeft);
+      }
+      await page.screenshot({ path: `${directory}/${stage}-${theme}.png`, clip: { x: 0, y: 0, width: 740, height: 720 } });
+    }
+  } finally { await context.close(); }
+  const har = JSON.parse(await readFile(`${directory}/${stage}.har`, 'utf8'));
+  const responses = har.log.entries.filter(entry => new URL(entry.request.url).pathname.startsWith('/api/') && entry.response.content.mimeType.includes('application/json')).map(entry => ({
+    path: new URL(entry.request.url).pathname, method: entry.request.method, requestBody: entry.request.postData?.text, status: entry.response.status, body: JSON.parse(entry.response.content.text),
+  }));
+  await writeFile(`${directory}/${stage}-responses.json`, JSON.stringify(responses, null, 2));
+});

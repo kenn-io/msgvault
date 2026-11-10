@@ -272,6 +272,8 @@ meeting notes, plus the files associated with that person. Message filters conti
 
 People lists **People** or **Domains**. The one-way sender filter applies to Closest; saved profiles offer Name and Most recent. Use the global **Search people** field, **Filter**, and sort to narrow the list. **Saved** and profile filters show saved profiles, including people with no archived messages. Select **Merge** after checking multiple observed people to link their identities. Select saved profiles to delete them in bulk.
 
+In development builds, Closest also shows saved people’s keep-in-touch list or custom frequency and due status. In **Filter**, **Keep in touch** narrows the ranked People list to overdue, due within 0–3660 UTC days (including overdue), no list, or unknown due date. Clear search, Saved, and profile filters to use it. Unsaved clusters have no cadence. **Due date updating** marks stale cadence without claiming a current due date.
+
 A selected person or domain opens with **Messages**, **Files**, and **Details**. Messages uses the same table and reader as the Messages workspace. A person’s events and meetings appear when an account owner attended; email and chat keep their participant scope. Details holds contact fields, custom attributes, Work, Connections, Network, Tasks, Facts, and Briefs. Choose **Save** in the header to save an observed person. The name and avatar also open Details. Choose **Merge with…** beside the person’s menu to find another saved profile or observed person.
 For a saved profile, Files includes all bound identities; Messages and the calendar open its first observed identity cluster. Profiles without archived activity open Details.
 

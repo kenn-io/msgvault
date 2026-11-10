@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { appShortcuts, ROOT_SCOPE, Button, Modal, PageHeader, TextInput, SelectDropdown, type FilterDropdownSection } from '@kenn-io/kit-ui';
+  import { appShortcuts, ROOT_SCOPE, Button, NumberInput, Modal, PageHeader, TextInput, SelectDropdown, type FilterDropdownSection } from '@kenn-io/kit-ui';
   import { deletePerson } from '../../api/generated/api/api';
   import { onMount, tick, untrack } from 'svelte';
   import type { RelationshipsController, RelationshipsMergeContext } from '../../relationships/controller.svelte';
   import type { DirectoryController } from '../../directory/controller.svelte';
-  import { PRIMARY_CHANNELS, channelLabel, contactStateLabel, formatDay } from '../../directory/labels';
+  import { PRIMARY_CHANNELS, channelLabel, contactStateLabel, formatDay, cadenceLabel } from '../../directory/labels';
   import type { RelationshipRow } from '../../relationships/models';
   import type { DomainSummary, PersonSummary, ExploreURLState, FileSearchSort, FileMIMEFamily } from '../../explore/models';
   import { ExploreSelectionState } from '../../explore/state.svelte';
@@ -27,6 +27,19 @@
   const controller = $derived(page.controller);
   const facet = $derived(urlState.relationshipFacet);
   const showAll = $derived(urlState.relationshipShowAll);
+  const cadence = $derived(urlState.relationshipCadence);
+  let dueDraft = $state<number | null>(null);
+  $effect(() => { dueDraft = urlState.relationshipDueWithinDays; });
+  const invalidDue = $derived(cadence === 'due' && dueDraft !== null && (!Number.isInteger(dueDraft) || dueDraft < 0 || dueDraft > 3660));
+  function clearCadence(): void { onNavigate({ relationshipCadence: '', relationshipDueWithinDays: null }); }
+  function changeDue(value: number | null): void {
+    dueDraft = value;
+    if (value === null || (Number.isInteger(value) && value >= 0 && value <= 3660)) onNavigate({ relationshipDueWithinDays: value });
+  }
+  const cadenceOptions = [
+    { value: 'overdue', label: 'Overdue' }, { value: 'due', label: 'Due' },
+    { value: 'no_list', label: 'No list' }, { value: 'unknown', label: 'Due date unknown' },
+  ] as const;
   const selection = new ExploreSelectionState();
   let root = $state<HTMLElement>();
   let narrow = $state(false);
@@ -57,33 +70,36 @@
   const profileFilters = $derived(Boolean(urlState.directoryContactState || urlState.directoryCategory || urlState.directoryOrganization || urlState.directoryPrimaryChannel || urlState.directoryLastContactAfter || urlState.directoryLastContactBefore));
   const directoryMode = $derived(facet === 'people' && (saved || profileFilters));
   const rankedList = $derived(facet === 'people' && !directoryMode && sort === 'closest' && query.trim() === '');
+  const cadenceBlocked = $derived(Boolean(cadence) && !rankedList);
   const soloPerson = $derived(urlState.directoryPersonID);
   const predicateKey = $derived(JSON.stringify(page.predicate));
   // The directory outlives this view, so a new mount reloads its retained rows once.
   let appliedRestorationEpoch: number | undefined;
   $effect(() => {
     controller.facet = facet; controller.showAll = showAll; controller.query = query;
+    controller.cadence = cadence; controller.dueWithinDays = urlState.relationshipDueWithinDays;
     controller.sort = sort === 'name' ? { field: 'display_label', direction: 'asc' } : sort === 'last_contact_asc' ? { field: 'latest_at', direction: 'asc' } : sort === 'recent' ? { field: 'latest_at', direction: 'desc' } : { field: 'activity_count', direction: 'desc' };
     void predicateKey;
-    if (!directoryMode && !urlState.peopleDuplicates) untrack(() => void controller.loadList(page.predicate));
+    if (!directoryMode && !urlState.peopleDuplicates && !cadenceBlocked && !invalidDue) untrack(() => void controller.loadList(page.predicate));
+    else untrack(() => controller.suspendList());
   });
   $effect(() => {
-    if (!directoryMode || urlState.peopleDuplicates) return;
+    if (!directoryMode || urlState.peopleDuplicates || cadenceBlocked) return;
     const filters = { ...urlState, directoryQuery: query, directorySort: sort === 'last_contact_asc' ? 'last_contact_asc' : sort === 'recent' ? 'last_contact_desc' : 'name' } as const;
     untrack(() => directory.applyURLState(filters, appliedRestorationEpoch !== (appliedRestorationEpoch = restorationEpoch), false));
   });
-  $effect(() => { void [facet, query, sort, directoryMode, predicateKey, showAll, urlState.directoryContactState, urlState.directoryCategory, urlState.directoryOrganization, urlState.directoryPrimaryChannel, urlState.directoryLastContactAfter, urlState.directoryLastContactBefore]; untrack(() => selection.clear()); });
+  $effect(() => { void [facet, query, sort, directoryMode, predicateKey, showAll, cadence, urlState.relationshipDueWithinDays, invalidDue, urlState.directoryContactState, urlState.directoryCategory, urlState.directoryOrganization, urlState.directoryPrimaryChannel, urlState.directoryLastContactAfter, urlState.directoryLastContactBefore]; untrack(() => selection.clear()); });
   onMount(() => {
     const observer = new ResizeObserver(([entry]) => narrow = (entry?.contentRect.width ?? 1200) < 720);
     if (root) observer.observe(root);
-    return () => { observer.disconnect(); directory.resetForPromotion(); };
+    return () => { observer.disconnect(); controller.suspendList(); directory.resetForPromotion(); };
   });
-  const rows = $derived.by((): PeopleRow[] => directoryMode ? directory.rows.map((person) => ({
+  const rows = $derived.by((): PeopleRow[] => cadenceBlocked || invalidDue ? [] : directoryMode ? directory.rows.map((person) => ({
     key: `person:${person.id}`, label: person.display_name || `Person ${person.id}`, detail: person.organizations.join(', '), lastAt: person.last_contact_at ?? '', saved: true, domain: false,
   })) : (controller.listRows as Array<RelationshipRow | PersonSummary | DomainSummary>).map((row) => {
     if ('canonical_id' in row) {
       const person = row as RelationshipRow;
-      return { key: `cluster:${person.canonical_id}`, label: person.display_label, detail: `${person.signals.sent_count.toLocaleString()} from you`, lastAt: person.signals.last_interaction_at, saved: false, domain: false };
+      return { key: `cluster:${person.canonical_id}`, label: person.display_label, detail: `${person.signals.sent_count.toLocaleString()} from you`, lastAt: person.signals.last_interaction_at, saved: Boolean(person.person_id), domain: false, cadence: person.person_id && person.cadence ? cadenceLabel(person.cadence) : undefined, cadenceOverdue: Boolean(person.person_id && person.cadence && !person.cadence.stale && person.cadence.status === 'overdue') };
     }
     if ('domain' in row) {
       const domain = row as DomainSummary;
@@ -92,8 +108,8 @@
     const person = row as PersonSummary;
     return { key: `cluster:${person.id}`, label: person.display_label, detail: messageCount(person.activity_count), lastAt: person.last_at, saved: Boolean(person.profile), domain: false };
   }));
-  const loading = $derived(directoryMode ? directory.loading : controller.listLoading);
-  const hasMore = $derived(Boolean(directoryMode ? directory.cursor : controller.listCursor));
+  const loading = $derived(cadenceBlocked || invalidDue ? false : directoryMode ? directory.loading : controller.listLoading);
+  const hasMore = $derived(!cadenceBlocked && !invalidDue && Boolean(directoryMode ? directory.cursor : controller.listCursor));
   const activeKey = $derived(soloPerson !== null ? `person:${soloPerson}` : page.target);
   const hasPerson = $derived(page.target !== null || soloPerson !== null);
   $effect(() => {
@@ -126,20 +142,25 @@
     onNavigate({ directoryPersonID: null, relationshipTarget: null, relationshipFiles: false });
     void tick().then(() => root?.querySelector<HTMLElement>('[aria-label="People results"]')?.focus());
   }
-  function reset(): void { onNavigate({ relationshipSaved: false, relationshipShowAll: false, directoryContactState: '', directoryCategory: '', directoryOrganization: '', directoryPrimaryChannel: '', directoryLastContactAfter: '', directoryLastContactBefore: '' }); }
+  function reset(): void { onNavigate({ relationshipSaved: false, relationshipShowAll: false, relationshipCadence: '', relationshipDueWithinDays: null, directoryContactState: '', directoryCategory: '', directoryOrganization: '', directoryPrimaryChannel: '', directoryLastContactAfter: '', directoryLastContactBefore: '' }); }
   const filterSections = $derived<FilterDropdownSection[]>([{ items: [
     { id: 'duplicates', active: false, label: 'Possible duplicates', onSelect: () => onNavigate({ peopleDuplicates: true, identityState: 'candidate' }) },
     { id: 'saved', label: 'Saved', active: saved, closeOnSelect: false, onSelect: () => onNavigate({ relationshipSaved: !saved }) },
     ...(rankedList ? [{ id: 'one-way', label: 'Include one-way senders', active: showAll, closeOnSelect: false, onSelect: () => onShowAllChange(!showAll) }] : []),
     { id: 'profile', label: 'Profile filters', active: profileFilters, onSelect: () => filterOpen = !filterOpen },
-  ] }]);
-  const chips = $derived(facet === 'people' ? [
+  ] }, ...(facet === 'people' ? [{ title: 'Keep in touch', items: cadenceOptions.map(option => ({
+    id: `cadence-${option.value}`, label: option.label, active: cadence === option.value,
+    onSelect: () => onNavigate({ relationshipCadence: cadence === option.value ? '' : option.value, relationshipDueWithinDays: null }),
+  })) }] : [])]);
+  const chips = $derived([
+    ...(cadence ? [{ id: 'cadence', label: `Keep in touch: ${cadenceOptions.find(option => option.value === cadence)?.label}`, onremove: clearCadence }] : []),
+    ...(facet === 'people' ? [
     ...(saved ? [{ id: 'saved', label: 'Saved', onremove: () => onNavigate({ relationshipSaved: false }) }] : []),
     ...(showAll && rankedList ? [{ id: 'one-way', label: 'Including one-way senders', onremove: () => onShowAllChange(false) }] : []),
     ...(['directoryContactState', 'directoryCategory', 'directoryOrganization', 'directoryPrimaryChannel', 'directoryLastContactAfter', 'directoryLastContactBefore'] as const)
       .filter((key) => urlState[key]).map((key) => ({ id: key, label: key === 'directoryContactState' ? contactStateLabel(urlState[key]) : key === 'directoryPrimaryChannel' ? channelLabel(urlState[key]) : key === 'directoryLastContactAfter' ? `Last contacted after ${formatDay(urlState[key])}` : key === 'directoryLastContactBefore' ? `Last contacted before ${formatDay(urlState[key])}` : urlState[key], onremove: () => onNavigate({ [key]: '' }) })),
-  ] : []);
-  function loadMore(): void { if (directoryMode) void directory.loadNextPage(); else void controller.loadMoreList(); }
+  ] : [])]);
+  function loadMore(): void { if (cadenceBlocked || invalidDue) return; if (directoryMode) void directory.loadNextPage(); else void controller.loadMoreList(); }
   async function deleteSelected(): Promise<void> {
     if (bulkPending || selectedSaved.length === 0) return;
     bulkPending = true;
@@ -216,6 +237,19 @@
   }
 </script>
 
+{#snippet cadenceControls()}
+  {#if cadence === 'due'}
+    <div class="cadence-controls">
+      <label>Due within days<NumberInput ariaLabel="Due within days" value={dueDraft} min={0} max={3660} step={1} invalid={invalidDue} oninput={changeDue} /></label>
+      <span>Includes overdue. Uses UTC days; empty means today (0).</span>
+      {#if invalidDue}<span role="alert">Enter a whole number from 0 to 3660.</span>{/if}
+    </div>
+  {/if}
+  {#if cadenceBlocked}
+    <p class="cadence-explanation" role="status">Keep-in-touch filters require People sorted by Closest, without search, Saved, or profile filters.</p>
+    <Button label="Clear cadence" onclick={clearCadence} />
+  {/if}
+{/snippet}
 {#snippet list()}
   <div class="list">
     {#if filterOpen && facet === 'people'}
@@ -233,9 +267,9 @@
       </div>
     {/if}
     <div inert={bulkPending || Boolean(bulkConflict)} class="list-content">
-      <PeopleList pageRecovery={directoryMode ? directory.pageRecovery : null} {rows} {loading} loadingMore={directoryMode ? directory.loadingMore : controller.listLoadingMore} {hasMore}
+      <PeopleList blocked={cadenceBlocked || invalidDue} {cadenceControls} pageRecovery={directoryMode ? directory.pageRecovery : null} {rows} {loading} loadingMore={directoryMode ? directory.loadingMore : controller.listLoadingMore} {hasMore}
         countLabel={`${(directoryMode ? rows.length : controller.listTotalCount ?? rows.length).toLocaleString()}${hasMore && directoryMode ? '+' : ''} ${facet === 'domains' ? (rows.length === 1 && !hasMore ? 'domain' : 'domains') : (rows.length === 1 && !hasMore ? 'person' : 'people')}`}
-        error={directoryMode ? directory.error ?? directory.pageError : controller.listError} degraded={directoryMode ? null : controller.degraded}
+        error={cadenceBlocked || invalidDue ? null : directoryMode ? directory.error ?? directory.pageError : controller.listError} degraded={cadenceBlocked || invalidDue || directoryMode ? null : controller.degraded}
         {facet} savedOnly={saved} {query} {activeKey} {selection} {filterSections} filterCount={chips.length} onResetFilters={reset} {chips} sort={directoryMode && sort === 'closest' ? 'name' : sort}
         sortOptions={[...(!directoryMode ? [{ value: 'closest', label: 'Closest' }] : []), { value: 'recent', label: 'Most recent' }, { value: 'name', label: 'Name' }, ...(directoryMode || sort === 'last_contact_asc' ? [{ value: 'last_contact_asc', label: 'Least recently contacted' }] : [])]}
         canDelete={selectedSaved.length > 0 && [...selection.explicitKeys].every(key => key.startsWith('person:'))} onDelete={() => confirmDelete = true}
@@ -281,6 +315,9 @@
   .list { display: flex; min-height: 0; height: 100%; width: 100%; flex-direction: column; }
   .list-content { display: flex; min-height: 0; flex: 1; }
   .filters { display: flex; flex-wrap: wrap; gap: var(--control-gap); padding: var(--space-3); }
+  .cadence-controls { display: flex; flex-direction: column; gap: var(--space-2); color: var(--text-muted); font-size: var(--font-size-xs); }
+  .cadence-controls label { display: flex; align-items: center; gap: var(--control-gap); }
+  .cadence-explanation { margin: 0; color: var(--text-secondary); font-size: var(--font-size-sm); }
   .filters label { display: flex; flex-direction: column; color: var(--text-secondary); font-size: var(--font-size-sm); }
   .solo-page { height: 100%; min-width: 0; display: flex; flex-direction: column; min-height: 0; flex: 1; }
   .solo { padding: var(--page-gutter); }

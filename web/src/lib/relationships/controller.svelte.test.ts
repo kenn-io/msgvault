@@ -1490,3 +1490,83 @@ it('keeps the chosen People order on later pages', async () => {
   expect(controller.listRows.map((row) => 'id' in row ? row.id : null)).toEqual([1, 2]);
   controller.destroy();
 });
+
+it('captures cadence including zero for paging and rejects an old merge context', async () => {
+  const bodies: Record<string, unknown>[] = [];
+  const controller = new RelationshipsController(createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    bodies.push(await request.json());
+    return Response.json({ rows: [relationshipRow(bodies.length, 'Synthetic')], next_cursor: bodies.length === 1 ? 'next' : undefined });
+  }), () => 'UTC');
+  try {
+    controller.cadence = 'due'; controller.dueWithinDays = 0;
+    await controller.loadList({});
+    const context = controller.personMergeContextSnapshot();
+    controller.cadence = 'overdue'; controller.dueWithinDays = 7;
+    await controller.loadMoreList();
+    expect(bodies[0]).toMatchObject({ cadence: 'due', due_within_days: 0 });
+    expect(bodies[1]).toMatchObject({ cadence: 'due', due_within_days: 0, cursor: 'next' });
+    await controller.reconcilePersonMerge(context);
+    expect(bodies).toHaveLength(2);
+    await controller.loadList({});
+    expect(bodies[2]).toMatchObject({ cadence: 'overdue' });
+    expect(bodies[2]).not.toHaveProperty('due_within_days');
+  } finally { controller.destroy(); }
+});
+
+it('suspends pending list work and prevents merge and link refresh from reviving it', async () => {
+  let resolve!: (response: Response) => void;
+  const paths: string[] = [];
+  const controller = new RelationshipsController(createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    paths.push(new URL(request.url).pathname);
+    return paths.length === 1 ? new Promise<Response>(done => resolve = done) : Response.json({ identity_revision: 2, cache_state: 'ready' });
+  }), () => 'UTC');
+  try {
+    const pending = controller.loadList({});
+    const context = controller.personMergeContextSnapshot();
+    controller.suspendList();
+    resolve(Response.json({ rows: [relationshipRow(1, 'Hidden')], next_cursor: 'old' }));
+    await pending;
+    await controller.loadMoreList();
+    await controller.reconcilePersonMerge(context);
+    await controller.linkParticipants(1, 2);
+    expect(paths).toHaveLength(2);
+    expect(controller.listRows).toEqual([]);
+    expect(controller.listCursor).toBeNull();
+    expect(controller.listLoading).toBe(false);
+  } finally { controller.destroy(); }
+});
+
+it('cancels a building-cache retry when the list is suspended', async () => {
+  vi.useFakeTimers();
+  const fetch = vi.fn(async () => Response.json({ error: 'analytical_cache_unavailable', readiness: 'building', message: 'Building', recovery_action: '' }, { status: 503 }));
+  const controller = new RelationshipsController(createAPIClient(fetch), () => 'UTC');
+  try {
+    await controller.loadList({});
+    controller.suspendList();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(controller.degraded).toBeNull();
+  } finally { controller.destroy(); vi.useRealTimers(); }
+});
+
+it('clears rows on a cadence change and ignores a late old response', async () => {
+  let resolve!: (response: Response) => void;
+  let count = 0;
+  const controller = new RelationshipsController(createAPIClient(async () => ++count === 2
+    ? new Promise<Response>(done => resolve = done)
+    : Response.json({ rows: [relationshipRow(count, 'Synthetic')], next_cursor: 'next' })), () => 'UTC');
+  try {
+    await controller.loadList({});
+    controller.cadence = 'due'; controller.dueWithinDays = 7;
+    const pending = controller.loadList({});
+    expect(controller.listRows).toEqual([]);
+    expect(controller.listCursor).toBeNull();
+    controller.cadence = 'no_list';
+    await controller.loadList({});
+    resolve(Response.json({ rows: [relationshipRow(2, 'Old due row')] }));
+    await pending;
+    expect(controller.listRows.map(row => 'canonical_id' in row ? row.canonical_id : null)).toEqual([3]);
+  } finally { controller.destroy(); }
+});

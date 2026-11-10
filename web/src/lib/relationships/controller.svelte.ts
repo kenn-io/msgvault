@@ -1,3 +1,4 @@
+import type { RelationshipsHTTPRequest } from '../api/generated/models';
 import {
   getDomain as generatedGetDomain,
   getParticipant as generatedGetParticipant,
@@ -49,6 +50,8 @@ export interface RelationshipsMergeContext {
   facet: RelationshipFacet;
   query: string;
   showAll: boolean;
+  cadence: RelationshipsController['cadence'];
+  dueWithinDays: number | null;
 }
 type ListRow = RelationshipRow | PersonSummary | DomainSummary;
 type ListRows = RelationshipRow[] | PersonSummary[] | DomainSummary[];
@@ -61,6 +64,8 @@ type ListPageRequest =
       kind: 'relationships';
       filters: ExplorePredicate['filters'];
       showAll: boolean;
+      cadence?: RelationshipsHTTPRequest['cadence'];
+      due_within_days?: number;
     }
   | {
       kind: 'people' | 'domains';
@@ -103,6 +108,8 @@ export class RelationshipsController {
   query = $state('');
   sort = $state<IdentitySearchSort>({ ...DEFAULT_IDENTITY_SORT });
   showAll = $state(false);
+  cadence = $state<NonNullable<RelationshipsHTTPRequest['cadence']> | ''>('');
+  dueWithinDays = $state<number | null>(null);
   listRows = $state<ListRows>([]);
   listLoading = $state(false);
   listLoadingMore = $state(false);
@@ -180,6 +187,8 @@ export class RelationshipsController {
       facet: this.facet,
       query: this.query,
       showAll: this.showAll,
+      cadence: this.cadence,
+      dueWithinDays: this.dueWithinDays,
     };
   }
   async reconcilePersonMerge(context: RelationshipsMergeContext): Promise<void> {
@@ -200,12 +209,30 @@ export class RelationshipsController {
       this.facet === context.facet &&
       this.query === context.query &&
       this.showAll === context.showAll &&
+      this.cadence === context.cadence &&
+      this.dueWithinDays === context.dueWithinDays &&
       predicateFingerprint(this.lastListPredicate) === context.listPredicateFingerprint
     ) {
       reloads.push(this.loadList(context.listPredicate));
     }
     await Promise.all(reloads);
     if (reopened) this.activityRevision += 1;
+  }
+  /** Stop retained list work when another endpoint or an incompatible mode owns the view. */
+  suspendList(): void {
+    this.clearCacheBuildRetry();
+    this.listAbort?.abort();
+    ++this.listGeneration;
+    this.lastListPredicate = undefined;
+    this.listPageRequest = undefined;
+    this.listContextSignature = undefined;
+    this.listRows = [];
+    this.listCursor = null;
+    this.listTotalCount = null;
+    this.listLoading = false;
+    this.listLoadingMore = false;
+    this.listError = null;
+    this.degraded = null;
   }
   async loadList(predicate: ExplorePredicate): Promise<void> {
     this.clearCacheBuildRetry();
@@ -229,7 +256,9 @@ export class RelationshipsController {
       this.facet === 'domains'
         ? { kind: 'domains', context: contextPredicate(predicate), query, sort: { ...this.sort } }
         : query === '' && this.sort.field === 'activity_count'
-          ? { kind: 'relationships', filters: predicate.filters, showAll: this.showAll }
+          ? { kind: 'relationships', filters: predicate.filters, showAll: this.showAll,
+              ...(this.cadence ? { cadence: this.cadence } : {}),
+              ...(this.cadence === 'due' && this.dueWithinDays !== null ? { due_within_days: this.dueWithinDays } : {}) }
           : { kind: 'people', context: contextPredicate(predicate), query, sort: { ...this.sort } };
     this.listPageRequest = request;
     const signature = canonicalFingerprint(request);
@@ -297,7 +326,7 @@ export class RelationshipsController {
     const page = cursor === undefined ? {} : { cursor };
     if (request.kind === 'relationships') {
       return generatedListRelationships(
-        { filters: request.filters, show_all: request.showAll, limit: RANKED_LIST_LIMIT, ...page },
+        { filters: request.filters, show_all: request.showAll, limit: RANKED_LIST_LIMIT, ...(request.cadence ? { cadence: request.cadence } : {}), ...(request.due_within_days !== undefined ? { due_within_days: request.due_within_days } : {}), ...page },
         {
           ...this.client,
           signal,

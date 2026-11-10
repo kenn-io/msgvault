@@ -43,6 +43,8 @@ export function relationshipDestination(participantID: number) {
     peopleDuplicates: false,
     relationshipFiles: false,
     relationshipShowAll: false,
+    relationshipCadence: '' as const,
+    relationshipDueWithinDays: null,
     analysisTarget: null,
     selectedIdentifier: null,
     selectedRow: null,

@@ -1,3 +1,4 @@
+import type { RelationshipsHTTPRequest } from '../api/generated/models';
 import type {
   DomainContextSummaryHTTPResponse as GeneratedDomainContextSummaryHTTPResponse,
   DomainSummary as GeneratedDomainSummary,
@@ -154,6 +155,8 @@ export interface ExploreURLState {
   relationshipFacet: RelationshipFacet;
   relationshipTarget: string | null;
   relationshipShowAll: boolean;
+  relationshipCadence: NonNullable<RelationshipsHTTPRequest['cadence']> | '';
+  relationshipDueWithinDays: number | null;
   relationshipFiles: boolean;
   relationshipSaved: boolean;
   peopleDuplicates: boolean;

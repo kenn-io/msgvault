@@ -1839,3 +1839,16 @@ it('keeps embedded person navigation detached from shell history', () => {
   expect(window.history.state).toEqual({ marker: 'outer' });
   state.destroy();
 });
+
+it.each([0, 7, 3660])('round trips the due horizon %s', horizon => {
+  const state = { ...defaultExploreURLState, workspace: 'relationships' as const, relationshipCadence: 'due' as const, relationshipDueWithinDays: horizon };
+  expect(parseExploreURLState(serializeExploreURLState(state))).toMatchObject({ relationshipCadence: 'due', relationshipDueWithinDays: horizon });
+});
+it.each([-1, 3661, 1.5, '7'])('rejects invalid horizon %s', horizon => {
+  expect(parseExploreURLState(`?workspace=relationships&explore=${encodeURIComponent(JSON.stringify({ relationshipCadence: 'due', relationshipDueWithinDays: horizon }))}`)).toMatchObject({ relationshipCadence: 'due', relationshipDueWithinDays: null });
+});
+it('normalizes unsupported cadence and drops horizons outside due', () => {
+  for (const cadence of ['overdue', 'no_list', 'unknown', 'invalid']) {
+    expect(parseExploreURLState(`?workspace=relationships&explore=${encodeURIComponent(JSON.stringify({ relationshipCadence: cadence, relationshipDueWithinDays: 7 }))}`)).toMatchObject({ relationshipCadence: cadence === 'invalid' ? '' : cadence, relationshipDueWithinDays: null });
+  }
+});
