@@ -212,7 +212,7 @@
       const { renderPDF } = await import('./FileViewer.browser.svelte');
       if (signal.aborted || currentGeneration !== generation || host !== pdfHost) return;
       const handle = await renderPDF(bytes, host, signal);
-      if (signal.aborted || currentGeneration !== generation) { handle.destroy(); return; }
+      if (signal.aborted || currentGeneration !== generation) return;
       renderHandle = handle;
       pdfPages = handle.pages;
     } catch (loadError) {
@@ -301,7 +301,6 @@
     if (mime === 'text/csv' || mime === 'application/csv') return 'csv';
     if (mime === 'text/tab-separated-values') return 'tsv';
     if (mime.startsWith('audio/')) return 'audio';
-    if (mime.startsWith('video/')) return 'none';
     const extension = /\.(csv|tsv|txt)$/i.exec(value.filename)?.[1]?.toLowerCase();
     if (extension === 'csv' || extension === 'tsv') return extension;
     if (extension === 'txt') return 'text';
@@ -480,7 +479,7 @@
     padding: var(--pane-pad-y) var(--pane-pad-x);
     background: var(--bg-inset);
   }
-  .preview > p[role='status']:not(.truncated) {
+  .preview > p[role='status'] {
     display: grid;
     height: 100%;
     place-items: center;

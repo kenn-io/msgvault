@@ -141,7 +141,7 @@ func TestFilesSearchUsesAnalyticalQueryAndOneCatalogBatch(t *testing.T) {
 	catalog := &fileCatalogStore{mockStore: &mockStore{}, files: map[int64]store.FileMetadata{
 		1: {ID: 1, MessageID: 11, ConversationID: 21, Filename: "local.png", MimeType: "image/png", ContentHash: hash, StoragePath: "aa/" + hash},
 		2: {ID: 2, MessageID: 12, ConversationID: 22, Filename: "remote.pdf", MimeType: "application/pdf", URL: "https://files.example/remote.pdf"},
-		3: {ID: 3, MessageID: 13, ConversationID: 23, Filename: "missing.bin", ContentHash: strings.Repeat("cc", 32), StoragePath: "legacy/missing.bin"},
+		3: {ID: 3, MessageID: 13, ConversationID: 23, Filename: "missing.bin", ContentHash: strings.Repeat("cc", 32), StoragePath: ""},
 		4: {ID: 4, MessageID: 14, ConversationID: 24, Filename: "metadata.txt"},
 	}}
 	blobs := &countingFileBlobStore{}
@@ -597,7 +597,7 @@ func TestFileContentUsesSelectedAttachmentMetadata(t *testing.T) {
 // TestPackedFileWithoutStoragePathDownloadsAndReportsAvailable is the
 // regression for packed attachments that carry only a content hash: the row
 // must resolve through the blob store, not be rejected as missing because its
-// storage path is empty — in the download, the metadata endpoint, and the metadata endpoint.
+// storage path is empty — in the download and metadata endpoint.
 func TestPackedFileWithoutStoragePathDownloadsAndReportsAvailable(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)
@@ -929,11 +929,11 @@ func TestFileEndpointsReturnNotFoundForDedupHiddenMessageAttachments(t *testing.
 	hiddenID := f.CreateMessage("dedup-file-drop")
 	requirements.NoError(f.Store.UpsertAttachment(
 		t.Context(),
-		survivorID, "shared.pdf", "application/pdf", "aa/shared", strings.Repeat("ab", 32), 2048,
+		survivorID, "shared.pdf", "application/pdf", "ab/"+strings.Repeat("ab", 32), strings.Repeat("ab", 32), 2048,
 	))
 	requirements.NoError(f.Store.UpsertAttachment(
 		t.Context(),
-		hiddenID, "shared.pdf", "application/pdf", "aa/shared", strings.Repeat("ab", 32), 2048,
+		hiddenID, "shared.pdf", "application/pdf", "ab/"+strings.Repeat("ab", 32), strings.Repeat("ab", 32), 2048,
 	))
 	survivorFileID := apiSingleAttachmentID(t, f, survivorID)
 	hiddenFileID := apiSingleAttachmentID(t, f, hiddenID)
@@ -1043,13 +1043,20 @@ func TestVisualCoverageScanGuardsCrossOriginAndRateLimit(t *testing.T) {
 	require.Equal(http.StatusOK, light.Code, light.Body.String())
 }
 
+type unreadableFileBlobStore struct{}
+
+func (unreadableFileBlobStore) OpenStream(context.Context, string) (io.ReadCloser, int64, error) {
+	return nil, 0, os.ErrPermission
+}
+
 func TestFileDetailsReportsUnreadableContent(t *testing.T) {
+	t.Parallel()
 	catalog := &fileCatalogStore{mockStore: &mockStore{}, files: map[int64]store.FileMetadata{
 		8: {ID: 8, Filename: "report.pdf", ContentHash: strings.Repeat("ab", 32)},
 	}}
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}, Store: catalog,
-		BlobStore: &countingFileBlobStore{}, Logger: testLogger(),
+		BlobStore: unreadableFileBlobStore{}, Logger: testLogger(),
 	})
 	response := httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/files/8", nil))

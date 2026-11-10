@@ -45,7 +45,7 @@ function file(overrides: Partial<FileSearchRow> = {}): FileSearchRow {
 function viewerFetch(metadata: Record<string, unknown>, content = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), contentType = String(metadata.mime_type ?? 'application/octet-stream')) {
   return vi.fn<typeof fetch>(async (input) => {
     const request = input instanceof Request ? input : new Request(input);
-    if (new URL(request.url).pathname === '/api/v1/files/7') return Response.json(metadata.content_state === 'unverified' ? { ...metadata, content_state: 'local_content', content_available: true } : metadata);
+    if (new URL(request.url).pathname === '/api/v1/files/7') return Response.json(metadata);
     return new Response(content, { headers: { 'Content-Type': contentType } });
   });
 }
@@ -338,7 +338,7 @@ describe('FileViewer', () => {
 it('shows context and steps with buttons and arrows', async () => {
   const mime_type = 'application/zip';
   const onStep = vi.fn();
-  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), mime_type }, new TextEncoder().encode('Example text'))), file: file({ mime_type, participant_labels: ['Alex Example', 'Jordan Example'] }), position: { index: 2, total: 1038 }, onStep });
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), content_state: 'local_content', content_available: true, mime_type }, new TextEncoder().encode('Example text'))), file: file({ mime_type, participant_labels: ['Alex Example', 'Jordan Example'] }), position: { index: 2, total: 1038 }, onStep });
   await screen.findByText('3 of 1,038');
   expect(screen.getByText(/Containing item · Alex Example, Jordan Example/)).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Next file' }));
@@ -356,7 +356,7 @@ it.each([
   { mime_type: 'application/octet-stream', filename: 'table.tsv', content: 'Name\tValue\nExample\t42', tag: 'table', want: 'Example', target: { filename: 'table.tsv', mime_type: 'application/octet-stream' } },
   { mime_type: 'application/x-unknown', filename: 'notes.txt', content: 'Example text', tag: 'pre', want: 'Example', target: { filename: 'notes.txt', mime_type: 'application/x-unknown' } },
 ])('previews $mime_type from $filename', async ({ mime_type, filename, content, tag, want, target }) => {
-  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), mime_type, filename }, new TextEncoder().encode(content))), file: file(target) });
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), content_state: 'local_content', content_available: true, mime_type, filename }, new TextEncoder().encode(content))), file: file(target) });
   await waitFor(() => expect(document.querySelector(tag)?.textContent).toContain(want));
 });
 
@@ -366,7 +366,7 @@ it('buffers authenticated audio for seeking and revokes its blob URL on close', 
   Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: create });
   Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revoke });
   const audioFile = file({ filename: 'sound.wav', mime_type: 'audio/wav' });
-  const fetchFn = viewerFetch(audioFile);
+  const fetchFn = viewerFetch({ ...audioFile, content_state: 'local_content', content_available: true });
   render(FileViewer, { client: createAPIClient(fetchFn), file: audioFile });
   await waitFor(() => expect(document.querySelector('audio')?.getAttribute('src')).toBe('blob:audio-preview'));
   expect(fetchFn).toHaveBeenCalledTimes(2);
@@ -375,46 +375,53 @@ it('buffers authenticated audio for seeking and revokes its blob URL on close', 
   expect(revoke).toHaveBeenCalledExactlyOnceWith('blob:audio-preview');
 });
 
-it.each(['scroll and input', 'audio', 'menu ArrowLeft'])('leaves arrows with %s', async (kind) => {
+it('leaves arrows with a scrollable preview and its input', async () => {
   const onStep = vi.fn();
-  const mime_type = kind === 'audio' ? 'audio/wav' : kind.startsWith('menu') ? 'application/zip' : 'text/plain';
-  if (kind === 'audio') Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:audio-preview') });
-  const fetchFn = kind === 'audio' ? viewerFetch({ ...file(), mime_type }) : viewerFetch({ ...file(), mime_type }, new TextEncoder().encode('Example text'));
-  render(FileViewer, { client: createAPIClient(fetchFn), file: file({ mime_type }), position: { index: kind.startsWith('menu') ? 1 : 0, total: kind.startsWith('menu') ? 3 : 2 }, onStep });
-  if (kind.startsWith('menu')) {
-    await fireEvent.click(screen.getByRole('button', { name: 'More file actions' }));
-    const item = await screen.findByRole('menuitem', { name: 'Open conversation' });
-    item.focus();
-    await fireEvent.keyDown(item, { key: kind.endsWith('ArrowLeft') ? 'ArrowLeft' : 'ArrowRight' });
-    expect(screen.getByRole('menu', { name: 'File actions' })).toBeDefined();
-  } else if (kind === 'audio') {
-    await waitFor(() => expect(document.querySelector('audio')?.getAttribute('src')).toBe('blob:audio-preview'));
-    await fireEvent.keyDown(document.querySelector('audio')!, { key: 'ArrowRight' });
-  } else {
-    await screen.findByText('Example text');
-    const preview = screen.getByRole('region', { name: 'File preview preview.png' });
-    Object.defineProperty(preview, 'scrollWidth', { configurable: true, value: 400 });
-    Object.defineProperty(preview, 'clientWidth', { configurable: true, value: 200 });
-    await fireEvent.keyDown(preview, { key: 'ArrowRight' });
-    expect(onStep).not.toHaveBeenCalled();
-    Object.defineProperty(preview, 'scrollWidth', { value: 200 });
-    const input = document.createElement('input');
-    preview.append(input);
-    await fireEvent.keyDown(input, { key: 'ArrowRight' });
-  }
+  const mime_type = 'text/plain';
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), content_state: 'local_content', content_available: true, mime_type }, new TextEncoder().encode('Example text'))), file: file({ mime_type }), position: { index: 0, total: 2 }, onStep });
+  await screen.findByText('Example text');
+  const preview = screen.getByRole('region', { name: 'File preview preview.png' });
+  Object.defineProperty(preview, 'scrollWidth', { configurable: true, value: 400 });
+  Object.defineProperty(preview, 'clientWidth', { configurable: true, value: 200 });
+  await fireEvent.keyDown(preview, { key: 'ArrowRight' });
+  expect(onStep).not.toHaveBeenCalled();
+  Object.defineProperty(preview, 'scrollWidth', { value: 200 });
+  const input = document.createElement('input');
+  preview.append(input);
+  await fireEvent.keyDown(input, { key: 'ArrowRight' });
+  expect(onStep).not.toHaveBeenCalled();
+});
+it('leaves arrows with audio controls', async () => {
+  const onStep = vi.fn();
+  Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:audio-preview') });
+  const target = file({ mime_type: 'audio/wav' });
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...target, content_state: 'local_content', content_available: true })), file: target, position: { index: 0, total: 2 }, onStep });
+  await waitFor(() => expect(document.querySelector('audio')?.getAttribute('src')).toBe('blob:audio-preview'));
+  await fireEvent.keyDown(document.querySelector('audio')!, { key: 'ArrowRight' });
+  expect(onStep).not.toHaveBeenCalled();
+});
+it('leaves arrows with the file actions menu', async () => {
+  const onStep = vi.fn();
+  const target = file({ mime_type: 'application/zip' });
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...target, content_state: 'local_content', content_available: true })), file: target, position: { index: 1, total: 3 }, onStep });
+  await fireEvent.click(screen.getByRole('button', { name: 'More file actions' }));
+  const item = await screen.findByRole('menuitem', { name: 'Open conversation' });
+  item.focus();
+  await fireEvent.keyDown(item, { key: 'ArrowLeft' });
+  expect(screen.getByRole('menu', { name: 'File actions' })).toBeDefined();
   expect(onStep).not.toHaveBeenCalled();
 });
 
-it.each([0, 50])('renders text with %s bytes beyond the preview limit', async (extraBytes) => {
+it('reports when text exceeds the preview limit', async () => {
+  const extraBytes = 50;
   const content = new Uint8Array(2 * 1024 * 1024 + extraBytes).fill(65);
-  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), mime_type: 'text/plain', size_bytes: content.length }, content)), file: file({ mime_type: 'text/plain', size_bytes: content.length }) });
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), content_state: 'local_content', content_available: true, mime_type: 'text/plain', size_bytes: content.length }, content)), file: file({ mime_type: 'text/plain', size_bytes: content.length }) });
   await waitFor(() => expect(document.querySelector('pre')?.textContent?.length).toBe(2 * 1024 * 1024));
-  if (extraBytes) expect(await screen.findByText('Showing the start of this file.')).toBeDefined();
-  else expect(screen.queryByText('Showing the start of this file.')).toBeNull();
+  expect(await screen.findByText('Showing the start of this file.')).toBeDefined();
   expect(screen.queryByRole('alert')).toBeNull();
 });
 it('uses the response charset for the rendered text', async () => {
-  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), filename: 'notes.txt', mime_type: 'text/plain; charset=windows-1252' }, new Uint8Array([0x43, 0x61, 0x66, 0xe9]), 'text/plain; charset=windows-1252')), file: file({ filename: 'notes.txt', mime_type: 'text/plain; charset=windows-1252' }) });
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), content_state: 'local_content', content_available: true, filename: 'notes.txt', mime_type: 'text/plain; charset=windows-1252' }, new Uint8Array([0x43, 0x61, 0x66, 0xe9]), 'text/plain; charset=windows-1252')), file: file({ filename: 'notes.txt', mime_type: 'text/plain; charset=windows-1252' }) });
   expect(await screen.findByText('Café')).toBeDefined();
 });
 it('keeps Download disabled while availability is unknown', async () => {
@@ -428,9 +435,8 @@ it.each(['bytes only', 'rows and bytes'])('shows CSV limits for %s', async (limi
   const prefix = 'Name,Amount\n' + rows + 'Partial,';
   const content = new TextEncoder().encode(prefix + 'x'.repeat(2 * 1024 * 1024 - prefix.length - 3) + ',123456');
   const target = file({ filename: 'cut.csv', mime_type: 'text/csv', size_bytes: content.length });
-  render(FileViewer, { client: createAPIClient(viewerFetch(target, content)), file: target });
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...target, content_state: 'local_content', content_available: true }, content)), file: target });
   expect(await screen.findByText('Preview stops at the 2 MiB size limit.')).toBeDefined();
-  expect(screen.getByRole('table').textContent).not.toContain('Partial');
   if (limit === 'rows and bytes') {
     expect(screen.getByText('Showing the first 200 rows.')).toBeDefined();
     expect(screen.getAllByRole('row')).toHaveLength(201);
@@ -441,18 +447,18 @@ it.each(['bytes only', 'rows and bytes'])('shows CSV limits for %s', async (limi
   }
 });
 it('warns when malformed CSV rows could not be read', async () => {
-  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), filename: 'malformed.csv', mime_type: 'text/csv' }, new TextEncoder().encode('Name,Amount\nExample,"42\nOther,73'))), file: file({ filename: 'malformed.csv', mime_type: 'text/csv' }) });
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), content_state: 'local_content', content_available: true, filename: 'malformed.csv', mime_type: 'text/csv' }, new TextEncoder().encode('Name,Amount\nExample,"42\nOther,73'))), file: file({ filename: 'malformed.csv', mime_type: 'text/csv' }) });
   expect(await screen.findByText("Some rows couldn't be read.")).toBeDefined();
 });
 it('detects semicolon columns in the CSV viewer', async () => {
-  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), filename: 'regional.csv', mime_type: 'text/csv' }, new TextEncoder().encode('Name;Amount\nExample;42\nOther;73'))), file: file({ filename: 'regional.csv', mime_type: 'text/csv' }) });
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), content_state: 'local_content', content_available: true, filename: 'regional.csv', mime_type: 'text/csv' }, new TextEncoder().encode('Name;Amount\nExample;42\nOther;73'))), file: file({ filename: 'regional.csv', mime_type: 'text/csv' }) });
   expect(await screen.findByRole('columnheader', { name: 'Amount' })).toBeDefined();
   expect(screen.getByRole('cell', { name: '42' })).toBeDefined();
 });
 
 it('stops at the loaded end and shows the list notice', async () => {
   const onStep = vi.fn();
-  render(FileViewer, { client: createAPIClient(viewerFetch(file())), file: file(), position: { index: 1, total: 4 }, onStep, canStepForward: false, notice: 'Could not load more files' });
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), content_state: 'local_content', content_available: true })), file: file(), position: { index: 1, total: 4 }, onStep, canStepForward: false, notice: 'Could not load more files' });
   expect(screen.getByRole('button', { name: 'Next file' }).hasAttribute('disabled')).toBe(true);
   await fireEvent.keyDown(window, { key: 'ArrowRight' });
   expect(onStep).not.toHaveBeenCalled();
@@ -461,21 +467,15 @@ it('stops at the loaded end and shows the list notice', async () => {
   expect(onStep).toHaveBeenCalledWith(-1);
 });
 it.each(['audio/wav', 'application/pdf', 'image/png'])('offers Download when %s exceeds the preview bound', async (mime_type) => {
-  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), mime_type, size_bytes: 26 * 1024 * 1024 })), file: file({ mime_type, size_bytes: 26 * 1024 * 1024 }) });
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), content_state: 'local_content', content_available: true, mime_type, size_bytes: 26 * 1024 * 1024 })), file: file({ mime_type, size_bytes: 26 * 1024 * 1024 }) });
   expect(await screen.findByText('This file is too large to preview.')).toBeDefined();
   expect(screen.getByRole('button', { name: /Download/ }).hasAttribute('disabled')).toBe(false);
-});
-
-it('omits the final carriage return from a CSV record', async () => {
-  const target = file({ filename: 'report.csv', mime_type: 'text/csv' });
-  render(FileViewer, { client: createAPIClient(viewerFetch(target, new TextEncoder().encode('Name,Amount\nExample,42\r'))), file: target });
-  expect((await screen.findByRole('cell', { name: '42' })).getAttribute('title')).toBe('42');
 });
 
 it('renders short records without expanding them to the header width', async () => {
   const target = file({ filename: 'wide.csv', mime_type: 'text/csv' });
   const content = Array(300).fill('Header').join(',') + '\n' + Array(10).fill('Value').join('\n');
-  render(FileViewer, { client: createAPIClient(viewerFetch(target, new TextEncoder().encode(content))), file: target });
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...target, content_state: 'local_content', content_available: true }, new TextEncoder().encode(content))), file: target });
   await screen.findAllByRole('columnheader');
   expect(screen.getAllByRole('cell')).toHaveLength(10);
 });

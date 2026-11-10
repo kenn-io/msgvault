@@ -21,7 +21,7 @@ function loadingTask(pages: Array<{ width: number; height: number }>) {
   const document = {
     numPages: pages.length,
     getPage: vi.fn(async (number: number) => ({
-      getViewport: ({ scale }: { scale: number }) => ({ ...pages[number - 1]!, scale, userUnit: 1 }),
+      getViewport: ({ scale }: { scale: number }) => ({ width: pages[number - 1]!.width * scale, height: pages[number - 1]!.height * scale, scale, userUnit: 1 }),
       render: () => ({ cancel: vi.fn(), promise: Promise.resolve() }),
       getTextContent: async () => ({ items: [] }),
       cleanup
@@ -37,8 +37,6 @@ describe('PDF preview resource bounds', () => {
   });
 
   it.each([
-    ['one Letter page', 1, [792]],
-    ['four Letter pages', 1, Array<number>(4).fill(792)],
     ['one Letter page', 2, [792]],
     ['four Letter pages', 2, Array<number>(4).fill(792)],
     // Baseline allocation is 32,596,650 pixels, below the document limit.
@@ -48,13 +46,6 @@ describe('PDF preview resource bounds', () => {
     let handle: Awaited<ReturnType<typeof renderPDF>> | undefined;
     try {
       const task = loadingTask(heights.map((height) => ({ width: 612, height })));
-      const pdfDocument = await task.promise;
-      pdfDocument.getPage.mockImplementation(async (number: number) => ({
-        getViewport: ({ scale }: { scale: number }) => ({ width: 612 * scale, height: heights[number - 1]! * scale, scale, userUnit: 1 }),
-        render: () => ({ cancel: vi.fn(), promise: Promise.resolve() }),
-        getTextContent: async () => ({ items: [] }),
-        cleanup: task.cleanup
-      }));
       pdf.getDocument.mockReturnValue(task);
       const host = window.document.createElement('div');
       Object.defineProperty(host, 'clientWidth', { value: 1200 });

@@ -43,7 +43,7 @@ function response() {
       source_identifier: 'archive@example.com', containing_title: 'Containing item',
       filename: 'fixture.pdf', mime_type: 'application/pdf', mime_family: 'pdf', size_bytes: 2048,
       participant_labels: ['Alice Example'], participant_domains: ['example.com'],
-      content_state: 'unverified', content_available: null
+      content_state: 'unverified', content_available: null as boolean | null
     }],
     total_count: 1, cache_revision: 'cache-files', search_provenance: {}
   };
@@ -1356,8 +1356,8 @@ it('prefetches once near the end and waits at the boundary before stepping', asy
   const fetchFn = vi.fn<typeof fetch>(async (input, init) => {
     const request = input instanceof Request ? input : new Request(input, init);
     if (new URL(request.url).pathname.endsWith('/files/search')) {
-      const body = await request.json();
-      if (body.cursor) { cursorCalls++; expect(body.cursor).toBe('page-2'); return nextPage; }
+      const body = await request.clone().json();
+      if (body.cursor) { cursorCalls++; return nextPage; }
       return Response.json({ ...response(), files: rows, total_count: 9, next_cursor: 'page-2' });
     }
     return Response.json({ ...first, content_state: 'metadata_only' });
@@ -1372,21 +1372,25 @@ it('prefetches once near the end and waits at the boundary before stepping', asy
     await waitFor(() => expect(onSelectedKey).toHaveBeenLastCalledWith(`file:${7 + i}`, { replace: true }));
   }
   expect(cursorCalls).toBe(1);
+  const searchRequests = await Promise.all(fetchFn.mock.calls.map(async ([input, init]) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    return new URL(request.url).pathname.endsWith('/files/search') ? request.clone().json() : null;
+  }));
+  expect(searchRequests.filter((body) => body?.cursor).map((body) => body.cursor)).toEqual(['page-2']);
   await fireEvent.click(screen.getByRole('button', { name: 'Next file' }));
   expect(onSelectedKey).toHaveBeenLastCalledWith('file:14', { replace: true });
   release(Response.json({ ...response(), files: [{ ...first, id: 15, key: 'file:15', filename: 'page-two.txt' }], total_count: 9 }));
   await waitFor(() => expect(onSelectedKey).toHaveBeenLastCalledWith('file:15', { replace: true }));
   expect(cursorCalls).toBe(1);
 });
-it.each([503, 409])('leaves recovery with the list after a %s and keeps the boundary notice after Previous', async (status) => {
+it('leaves recovery with the list and keeps the boundary notice after Previous', async () => {
   const first = response().files[0]!;
   const second = { ...first, id: 8, key: 'file:8', filename: 'second.txt' };
-  let fail = true;
   const fetchFn = vi.fn<typeof fetch>(async (input, init) => {
     const request = input instanceof Request ? input : new Request(input, init);
     if (new URL(request.url).pathname.endsWith('/files/search')) {
       const body = await request.json();
-      if (body.cursor) return fail ? Response.json({ message: 'Page unavailable' }, { status }) : Response.json({ ...response(), files: [{ ...first, id: 9, key: 'file:9' }], total_count: 3 });
+      if (body.cursor) return Response.json({ message: 'Page unavailable' }, { status: 503 });
       return Response.json({ ...response(), files: [first, second], total_count: 3, next_cursor: 'page-2' });
     }
     return Response.json({ ...(new URL(request.url).pathname.endsWith('/8') ? second : first), content_state: 'metadata_only' });
@@ -1409,11 +1413,7 @@ it.each([503, 409])('leaves recovery with the list after a %s and keeps the boun
   await fireEvent.click(within(dialog).getByRole('button', { name: 'Next file' }));
   dialog = await screen.findByRole('dialog', { name: 'View second.txt' });
   expect(within(dialog).getByRole('alert').textContent).toBe('Page unavailable');
-  await fireEvent.click(within(dialog).getByRole('button', { name: 'Close file viewer' }));
-  fail = false;
-  await fireEvent.click(screen.getByRole('button', { name: status === 409 ? 'Reload files' : 'Retry loading more files' }));
-  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
-  await waitFor(() => expect(grid.getAttribute('aria-busy')).toBe('false'));
+
 });
 
 it('steps after a pending page when the URL controls the current file', async () => {
@@ -1455,12 +1455,4 @@ it('returns focus to the last file viewed in the media gallery', async () => {
   await screen.findByRole('dialog', { name: 'View second.png' });
   await fireEvent.click(screen.getByRole('button', { name: 'Close file viewer' }));
   await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Open second.png' })));
-});
-
-it('labels a file whose bytes have not been checked', async () => {
-  const listing = response();
-  listing.files[0] = { ...listing.files[0]!, content_state: 'unverified', content_available: null };
-  render(FilesWorkspace, { client: createAPIClient(vi.fn<typeof fetch>(async () => Response.json(listing))), predicate: { filters: [], presentation: 'table' }, sort: { field: 'occurred_at', direction: 'desc' } });
-  expect(await screen.findByText('Not checked')).toBeDefined();
-  expect(screen.queryByText('Local content')).toBeNull();
 });

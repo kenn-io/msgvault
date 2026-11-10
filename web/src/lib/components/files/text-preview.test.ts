@@ -1,19 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { decodeText, parseDelimited } from './text-preview';
 
-describe('text previews', () => {
-  it('parses quoted commas and embedded newlines', async () => {
-    expect(await parseDelimited('Name,Note\n"Example, A","First\nSecond"', ',')).toEqual({ header: ['Name', 'Note'], rows: [['Example, A', 'First\nSecond']], truncated: false, hasErrors: false });
-  });
-  it('parses TSV', async () => {
-    expect((await parseDelimited('Name\tCount\nExample\t42', '\t')).rows).toEqual([['Example', '42']]);
-  });
-  it('reports whether data rows were omitted', async () => {
-    expect(await parseDelimited('Name\nOne\nTwo\nThree', ',', 2)).toEqual({ header: ['Name'], rows: [['One'], ['Two']], truncated: true, hasErrors: false });
-    expect((await parseDelimited('Name\nOne\nTwo', ',', 2)).truncated).toBe(false);
-  });
-});
-
 it.each([
   [[0xff, 0xfe, 0x48, 0, 0xe9, 0], 'text/plain; charset=utf-8', 'Hé'],
   [[0xfe, 0xff, 0, 0x48, 0, 0xe9], 'text/plain; charset=windows-1252', 'Hé'],
@@ -30,51 +17,40 @@ it('omits only an unfinished character when a prefix cuts UTF-8', () => {
   expect(decodeText(new Uint8Array([0x41, 0xe2, 0x82, 0xac]), 'text/plain', true)).toBe('A€');
 });
 
-it('detects semicolon CSV columns', async () => {
-  expect((await parseDelimited('Name;Amount\nExample;42\nOther;73')).rows).toEqual([['Example', '42'], ['Other', '73']]);
-});
-it.each([
-  'Name,Note,Amount\nComplete,Ready,99\nPartial,Long note,12',
-  'Name,Note,Amount\nComplete,Ready,99\nPartial,"Long\nnote\n',
-])('drops the unfinished record in a byte prefix', async (text) => {
-  expect((await parseDelimited(text, ',', 200, true)).rows).toEqual([['Complete', 'Ready', '99']]);
-});
-it('retains the final record when the byte prefix ends at a record terminator', async () => {
-  expect((await parseDelimited('Name,Amount\nComplete,99\n', ',', 200, true)).rows).toEqual([['Complete', '99']]);
-});
-it('reports malformed quoted fields', async () => {
-  expect((await parseDelimited('Name,Amount\nExample,"42\nOther,73', ',')).hasErrors).toBe(true);
-});
-
-it.each(['Name\nOne\nTwo', 'Name,Amount\nExample,42,extra\nOther,73'])('keeps readable rows without an unreadable warning', async (text) => {
-  expect((await parseDelimited(text)).hasErrors).toBe(false);
-});
-
-it('pads the header while retaining short rows', async () => {
-  expect(await parseDelimited('Name,Amount\nExample,42,extra\nOther', ',')).toEqual({
-    header: ['Name', 'Amount', ''], rows: [['Example', '42', 'extra'], ['Other']], truncated: false, hasErrors: false
+describe('delimited previews', () => {
+  it('parses quoted commas and embedded newlines', async () => {
+    expect(await parseDelimited('Name,Note\n"Example, A","First\nSecond"', ',')).toEqual({ header: ['Name', 'Note'], rows: [['Example, A', 'First\nSecond']], truncated: false, hasErrors: false });
   });
-});
-
-it('does not blame a quoted field cut by the preview limit', async () => {
-  const result = await parseDelimited('Name,Note\nComplete,Ready\nPartial,"unfinished', ',', 200, true);
-  expect(result.rows).toEqual([['Complete', 'Ready']]);
-  expect(result.hasErrors).toBe(false);
-});
-
-it('keeps a complete record when a CRLF prefix ends after the carriage return', async () => {
-  const result = await parseDelimited('Name,Note\r\nComplete,Ready\r', ',', 200, true);
-  expect(result.rows).toEqual([['Complete', 'Ready']]);
-});
-
-it('keeps a CRLF-terminated record when a quoted field contains an LF', async () => {
-  const result = await parseDelimited('"Name\ncontinued",Note\r\nA,B\r', ',', 200, true);
-  expect(result.header).toEqual(['Name\ncontinued', 'Note']);
-  expect(result.rows).toEqual([['A', 'B']]);
-});
-
-it('keeps every column in a wide CSV preview', async () => {
-  const result = await parseDelimited(Array(101).fill('Header').join(',') + '\nValue', ',');
-  expect(result.header).toHaveLength(101);
-  expect(result.rows[0]).toHaveLength(1);
+  it('reports whether data rows were omitted', async () => {
+    expect(await parseDelimited('Name\nOne\nTwo\nThree', ',', 2)).toEqual({ header: ['Name'], rows: [['One'], ['Two']], truncated: true, hasErrors: false });
+    expect((await parseDelimited('Name\nOne\nTwo', ',', 2)).truncated).toBe(false);
+  });
+  it('keeps complete records at byte boundaries and drops unfinished records', async () => {
+    for (const text of ['Name,Note,Amount\nComplete,Ready,99\nPartial,Long note,12', 'Name,Note,Amount\nComplete,Ready,99\nPartial,"Long\nnote\n']) {
+      expect((await parseDelimited(text, ',', 200, true)).rows).toEqual([['Complete', 'Ready', '99']]);
+    }
+    expect((await parseDelimited('Name,Amount\nComplete,99\n', ',', 200, true)).rows).toEqual([['Complete', '99']]);
+    expect((await parseDelimited('Name,Note\r\nComplete,Ready\r', ',', 200, true)).rows).toEqual([['Complete', 'Ready']]);
+    const quoted = await parseDelimited('"Name\ncontinued",Note\r\nA,B\r', ',', 200, true);
+    expect(quoted.header).toEqual(['Name\ncontinued', 'Note']);
+    expect(quoted.rows).toEqual([['A', 'B']]);
+    expect((await parseDelimited('Name,Amount\nExample,42\r', ',')).rows).toEqual([['Example', '42']]);
+  });
+  it('reports malformed quotes without blaming readable or truncated rows', async () => {
+    expect((await parseDelimited('Name,Amount\nExample,"42\nOther,73', ',')).hasErrors).toBe(true);
+    for (const text of ['Name\nOne\nTwo', 'Name,Amount\nExample,42,extra\nOther,73']) {
+      expect((await parseDelimited(text)).hasErrors).toBe(false);
+    }
+    const result = await parseDelimited('Name,Note\nComplete,Ready\nPartial,"unfinished', ',', 200, true);
+    expect(result.rows).toEqual([['Complete', 'Ready']]);
+    expect(result.hasErrors).toBe(false);
+  });
+  it('pads headers, keeps short rows sparse, and retains wide headers', async () => {
+    expect(await parseDelimited('Name,Amount\nExample,42,extra\nOther', ',')).toEqual({
+      header: ['Name', 'Amount', ''], rows: [['Example', '42', 'extra'], ['Other']], truncated: false, hasErrors: false
+    });
+    const result = await parseDelimited(Array(101).fill('Header').join(',') + '\nValue', ',');
+    expect(result.header).toHaveLength(101);
+    expect(result.rows[0]).toHaveLength(1);
+  });
 });

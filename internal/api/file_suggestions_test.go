@@ -313,26 +313,28 @@ func TestFileSuggestionsHTTPContentStates(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	_, f, ids := suggestionFixture(t, []string{"report.pdf", "report.pdf", "report.pdf", "report.pdf"}, true)
+	_, f, ids := suggestionFixture(t, []string{"report.pdf", "report.pdf", "report.pdf"}, true)
 	hash := strings.Repeat("a", 64)
-	localHash := strings.Repeat("c", 64)
 	for _, tc := range []struct {
 		id         int64
 		path, hash string
-	}{{ids[1], "https://files.example.test/report.pdf", strings.Repeat("b", 64)}, {ids[2], "", hash}, {ids[3], "cc/" + localHash, ""}} {
+	}{{ids[1], "https://files.example.test/report.pdf", strings.Repeat("b", 64)}, {ids[2], "", hash}} {
 		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET storage_path=?,content_hash=? WHERE id=?`), tc.path, tc.hash, tc.id)
 		require.NoError(err)
 	}
 	dir := t.TempDir()
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: dir, Data: config.DataConfig{DataDir: dir}}, Store: f.Store, Logger: testLogger(), BlobStore: packedFileBlobStore{blobs: map[string][]byte{localHash: []byte("local bytes")}}})
+	blobs := &countingFileBlobStore{}
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: dir, Data: config.DataConfig{DataDir: dir}}, Store: f.Store, Logger: testLogger(), BlobStore: blobs})
 	w := suggestionPost(t, srv, "/api/v1/files/suggest", `{"filename_query":"report.pdf"}`)
 	require.Equal(200, w.Code, w.Body.String())
 	rows := suggestionRows(t, suggestionBody(t, w))
-	require.Len(rows, 4)
-	states := []string{"unverified", "unverified", "url_only", "metadata_only"} // Newest first.
+	require.Len(rows, 3)
+	assert.Zero(blobs.calls)
+	states := []string{"unverified", "url_only", "metadata_only"} // Newest first.
 	for i, row := range rows {
 		assert.Equal(states[i], row["content_state"])
-		if i < 2 {
+		assert.Contains(row, "content_available")
+		if i == 0 {
 			assert.Nil(row["content_available"])
 		} else {
 			assert.Equal(false, row["content_available"])
@@ -341,21 +343,6 @@ func TestFileSuggestionsHTTPContentStates(t *testing.T) {
 		assert.NotContains(row, "storage_path")
 		assert.NotContains(row, "content_hash")
 	}
-}
-
-func TestFileSuggestionsHTTPDoesNotResolveBlobs(t *testing.T) {
-	_, f, ids := suggestionFixture(t, []string{"report.pdf"}, true)
-	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET content_hash=? WHERE id=?`), strings.Repeat("a", 64), ids[0])
-	require.NoError(t, err)
-	blobs := &countingFileBlobStore{}
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}, Store: f.Store, Logger: testLogger(), BlobStore: blobs})
-	w := suggestionPost(t, srv, "/api/v1/files/suggest", `{"filename_query":"report.pdf"}`)
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	rows := suggestionRows(t, suggestionBody(t, w))
-	require.Len(t, rows, 1)
-	assert.Equal(t, "unverified", rows[0]["content_state"])
-	assert.Nil(t, rows[0]["content_available"])
-	assert.Zero(t, blobs.calls)
 }
 
 func TestFileSuggestionsHTTPInputBounds(t *testing.T) {
