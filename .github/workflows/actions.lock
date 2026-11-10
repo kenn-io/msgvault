@@ -4,7 +4,7 @@
 version: 'v0.0.3'
 workflows:
     '.github/workflows/ci-pr.yml':
-        - 'actions/checkout@v6.1.0'
+        - 'actions/checkout@v7.0.1'
         - 'kenn-io/actions@main'
     '.github/workflows/ci.yml':
         - 'actions/cache@v6.1.0'
@@ -49,26 +49,11 @@ dependencies:
         commit: 'sha1-55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
         owner_id: 44036562
         repo_id: 215566462
-    'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1':
-        ref: 'v7.0.1'
-        commit: 'sha1-3d3c42e5aac5ba805825da76410c181273ba90b1'
-        owner_id: 44036562
-        repo_id: 197814629
-    'actions/checkout@v6.1.0':
-        ref: 'v6.1.0'
-        commit: 'sha1-d23441a48e516b6c34aea4fa41551a30e30af803'
-        owner_id: 44036562
-        repo_id: 197814629
     'actions/checkout@v7.0.1':
         ref: 'v7.0.1'
         commit: 'sha1-3d3c42e5aac5ba805825da76410c181273ba90b1'
         owner_id: 44036562
         repo_id: 197814629
-    'actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e':
-        ref: 'v7.0.0'
-        commit: 'sha1-b7ad1dad31e06c5925ef5d2fc7ad053ef454303e'
-        owner_id: 44036562
-        repo_id: 192624594
     'actions/setup-go@v7.0.0':
         ref: 'v7.0.0'
         commit: 'sha1-b7ad1dad31e06c5925ef5d2fc7ad053ef454303e'
@@ -107,8 +92,7 @@ dependencies:
         owner_id: 259885253
         repo_id: 1427332808
         uses:
-            - 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'
-            - 'actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e'
+            - 'actions/checkout@v7.0.1'
             - 'actions/setup-go@v7.0.0'
     'kenn-io/kit@v0.48.4':
         ref: 'v0.48.4'
