@@ -145,15 +145,29 @@ var seededCommunicationServices = []CommunicationServiceInput{
 }
 
 func (s *Store) ListCommunicationServicesContext(ctx context.Context, includeInactive bool) ([]CommunicationService, error) {
-	query := `SELECT id, slug, display_label, scope_policy, default_scope_kind,
-		normalization, normalization_version, uri_scheme, profile_url_template,
-		is_system, is_active, created_at, updated_at
-		FROM communication_services`
+	services, err := listCommunicationServicesContext(ctx, s.db, includeInactive)
+	if err != nil {
+		return nil, err
+	}
+	aliases, err := s.loadAllServiceAliasesContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range services {
+		services[i].Aliases = aliases[services[i].ID]
+	}
+	return services, nil
+}
+
+func listCommunicationServicesContext(ctx context.Context, reader interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*loggedRows, error)
+}, includeInactive bool) ([]CommunicationService, error) {
+	query := serviceSelect
 	if !includeInactive {
 		query += ` WHERE is_active = TRUE`
 	}
 	query += ` ORDER BY slug`
-	rows, err := s.db.QueryContext(ctx, query)
+	rows, err := reader.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("list communication services: %w", err)
 	}
@@ -169,13 +183,6 @@ func (s *Store) ListCommunicationServicesContext(ctx context.Context, includeIna
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("list communication services: %w", err)
-	}
-	aliases, err := s.loadAllServiceAliasesContext(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for i := range services {
-		services[i].Aliases = aliases[services[i].ID]
 	}
 	return services, nil
 }

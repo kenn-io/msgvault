@@ -47,6 +47,8 @@ export async function expectKitTheme(page: Page, theme: 'light' | 'dark'): Promi
   else await expect(root).not.toHaveClass(/\bdark\b/);
 }
 
-export async function stubOperationStatus(target: Page | BrowserContext): Promise<void> {
-  await target.route('**/api/v1/operations/status', route => route.fulfill({ json: { lanes: lanes() } }));
+export async function stubOperationStatus(target: Page | BrowserContext, configuredKinds: string[] = []): Promise<void> {
+  await target.route('**/api/v1/operations/status', route => route.fulfill({ json: {
+    lanes: lanes().map(lane => configuredKinds.includes(lane.kind) ? { ...lane, configured: true } : lane)
+  } }));
 }

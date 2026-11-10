@@ -1140,6 +1140,7 @@ describe('DirectoryController', () => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
       const path = pathOf(request);
+      if (path === '/api/v1/attribute-definitions') return Response.json({ definitions: [] });
       if (path === '/api/v1/people/directory') return Response.json({ people: selected ? [directoryPerson(7)] : requests.length === 1 ? [directoryPerson(12)] : [directoryPerson(12), directoryPerson(19)] });
       return detailResponse(path);
     }));
@@ -1157,6 +1158,26 @@ describe('DirectoryController', () => {
         expect(requests.map(pathOf)).toEqual(['/api/v1/people/directory', '/api/v1/people/directory']);
         expect(controller.detail).toBeNull();
       }
+    } finally { controller.destroy(); }
+  });
+
+  it.each(['person', 'profile', 'attributes', 'definitions', 'contact-state', 'employments', 'relationships', 'relationship-types', 'network'])('reports a failed %s refresh after a split and allows retry', async resource => {
+    let fail = false;
+    const path = resource === 'person' ? '/api/v1/people/7' : resource === 'definitions' ? '/api/v1/attribute-definitions' : resource === 'relationship-types' ? '/api/v1/relationship-types' : `/api/v1/people/7/${resource}`;
+    const controller = new DirectoryController(createAPIClient(async input => {
+      const requestPath = pathOf(input instanceof Request ? input : new Request(input));
+      if (requestPath === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(7)] });
+      if (fail && requestPath === path) return Response.json({ message: 'Synthetic refresh failed' }, { status: 503 });
+      if (requestPath === '/api/v1/attribute-definitions') return Response.json({ definitions: [] });
+      return editableDetailResponse(requestPath, 7);
+    }));
+    try {
+      await controller.loadSelection(7);
+      await controller.entity!.loadNetwork(1);
+      fail = true;
+      await expect(controller.reconcilePersonSplit({ sourcePersonID: 7, newPersonID: 9 })).rejects.toThrow();
+      fail = false;
+      await expect(controller.reconcilePersonSplit({ sourcePersonID: 7, newPersonID: 9 })).resolves.toBeUndefined();
     } finally { controller.destroy(); }
   });
 

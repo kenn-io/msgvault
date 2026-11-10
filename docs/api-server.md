@@ -161,7 +161,9 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **4.0.0**.
+it is separate from the binary release version. The current schema is **4.1.0**.
+
+Schema 4.1.0 adds `labels` on merge-list and merge-detail responses: recorded names and saved contact points from the merge snapshot, reconciled current participant addresses, known participant IDs, and the count of distinct addresses added to the surviving profile. Addresses and current or recorded contact points carry an opaque `identity_key` for comparison across representations, services, and scopes. Current contact points include `service_label`, the registered name of their `service_slug`. History and Split use those labels. Summary labels are decoded from the stored snapshot during list and detail reads; opening the disclosure makes a separate request for its raw snapshot.
 
 Schema 3.51.0 adds attachment processing outcomes and worker errors.
 

@@ -947,26 +947,14 @@ func (e appliedEdit) olderThan(evt *event.Event) bool {
 }
 
 func (imp *Importer) persistEdit(ctx context.Context, sourceID, convID int64, evt *event.Event, target id.EventID, content *event.MessageEventContent, conversation attachmentpolicy.Conversation, opts ImportOptions, sum *ImportSummary) error {
-	found, err := imp.store.MessageExistsBatchContext(ctx, sourceID, []string{target.String()})
+	messageID, original, err := imp.editTarget(ctx, sourceID, convID, target)
 	if err != nil {
 		return err
 	}
-	messageID := found[target.String()]
 	if messageID == 0 {
 		return errRelationTargetMissing
 	}
-	targetMessage, err := imp.store.GetMessageRelationTarget(ctx, messageID)
-	if err != nil {
-		return err
-	}
-	if targetMessage.ConversationID != convID {
-		return nil
-	}
-	original, err := imp.archivedEvent(ctx, messageID)
-	if err != nil {
-		return err
-	}
-	if original.Sender != evt.Sender {
+	if !editAllowed(original, evt) {
 		return nil
 	}
 	if original.Type == event.EventEncrypted {
@@ -979,14 +967,43 @@ func (imp *Importer) persistEdit(ctx context.Context, sourceID, convID int64, ev
 		}
 		return errRelationTargetMissing
 	}
-	if !validReplacement(original, evt) {
-		return nil
-	}
 	current, err := imp.appliedEdit(ctx, messageID)
 	if err != nil || !current.olderThan(evt) {
 		return err
 	}
 	return imp.applyEdit(ctx, messageID, editedBody(original, evt.Content.AsMessage().NewContent), content, original.Type, appliedEdit{EventID: evt.ID.String(), TS: evt.Timestamp}, conversation, opts, sum)
+}
+
+func (imp *Importer) editTarget(ctx context.Context, sourceID, convID int64, target id.EventID) (int64, *event.Event, error) {
+	found, err := imp.store.MessageExistsBatchContext(ctx, sourceID, []string{target.String()})
+	if err != nil {
+		return 0, nil, err
+	}
+	messageID := found[target.String()]
+	if messageID == 0 {
+		return 0, nil, nil
+	}
+	targetMessage, err := imp.store.GetMessageRelationTarget(ctx, messageID)
+	if err != nil {
+		return 0, nil, err
+	}
+	if targetMessage.ConversationID != convID {
+		return messageID, nil, nil
+	}
+	original, err := imp.archivedEvent(ctx, messageID)
+	if err != nil {
+		return 0, nil, err
+	}
+	return messageID, original, nil
+}
+
+// editAllowed reports whether persistEdit would apply or queue edit. An
+// encrypted target can only be checked for sender until it is recovered.
+func editAllowed(original, edit *event.Event) bool {
+	if original == nil || original.Type == event.EventEncrypted {
+		return original != nil && original.Sender == edit.Sender
+	}
+	return validReplacement(original, edit)
 }
 
 // validReplacement applies Matrix's replacement rules: same sender and event
@@ -1090,9 +1107,18 @@ func (imp *Importer) restoreAfterEditRedaction(ctx context.Context, sourceID int
 		if err != nil {
 			return fmt.Errorf("list Matrix edits of %s: %w", original.ID, err)
 		}
+		type candidate struct {
+			event      *event.Event
+			content    *event.MessageEventContent
+			claim      *megolmIndex
+			ciphertext rollbackCiphertext
+		}
+		var prepared []candidate
+		candidates := make(map[rollbackCiphertext]*event.Event)
+		var conversationID int64
 		for _, edit := range page.Chunk {
 			var claim *megolmIndex
-			var conversationID int64
+			var ciphertext rollbackCiphertext
 			if edit == nil || edit.ID == redacted {
 				continue
 			}
@@ -1111,6 +1137,7 @@ func (imp *Importer) restoreAfterEditRedaction(ctx context.Context, sourceID int
 				}
 				claim = &megolmIndex{session: edit.Content.AsEncrypted().SessionID, index: index}
 				conversationID = target.ConversationID
+				ciphertext, _ = rollbackCiphertextKey(edit)
 				edit = plain
 			}
 			if edit.Content.Parsed == nil && edit.Content.ParseRaw(edit.Type) != nil {
@@ -1121,7 +1148,29 @@ func (imp *Importer) restoreAfterEditRedaction(ctx context.Context, sourceID int
 				continue
 			}
 			if claim != nil {
-				allowed, err := imp.claim(ctx, conversationID, *claim, edit.ID)
+				holder, err := imp.store.MatrixMegolmClaim(ctx, conversationID, claim.session.String(), claim.index)
+				if err != nil {
+					return err
+				}
+				if holder == "" {
+					if last := candidates[ciphertext]; last == nil || compareRelations(last, edit) < 0 {
+						candidates[ciphertext] = edit
+					}
+				}
+			}
+			prepared = append(prepared, candidate{edit, content, claim, ciphertext})
+		}
+		owners, err := imp.earlierRollbackCopies(ctx, sourceID, conversationID, roomID, candidates)
+		if err != nil {
+			return err
+		}
+		for _, item := range prepared {
+			edit, content := item.event, item.content
+			if item.claim != nil {
+				if first := owners[item.ciphertext]; first != nil && compareRelations(first, edit) < 0 {
+					continue
+				}
+				allowed, err := imp.claim(ctx, conversationID, *item.claim, edit.ID)
 				if err != nil {
 					return err
 				}
