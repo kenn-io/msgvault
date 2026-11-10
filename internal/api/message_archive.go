@@ -29,6 +29,18 @@ func (s *Server) registerMessageArchiveRoute(api huma.API) {
 	registerRawHumaRoute(api, op, s.handleMessageArchive)
 }
 
+func decodeArchiveChange(w http.ResponseWriter, r *http.Request, change *emailtags.ArchiveChange) bool {
+	fields, ok := decodeEntityRequestFields(w, r, change, "message archive")
+	if !ok {
+		return false
+	}
+	if string(fields["dry_run"]) == "null" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "dry_run must be true or false")
+		return false
+	}
+	return true
+}
+
 func (s *Server) handleMessageArchive(w http.ResponseWriter, r *http.Request) {
 	auth := s.requestAuthentication(r)
 	if !s.apiRequestAuthorized(r) && auth.Grant == nil {
@@ -45,7 +57,7 @@ func (s *Server) handleMessageArchive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var change emailtags.ArchiveChange
-	if !decodeEntityRequest(w, r, &change, "message archive") {
+	if !decodeArchiveChange(w, r, &change) {
 		return
 	}
 	if change.Archived == nil {

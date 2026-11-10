@@ -774,6 +774,7 @@ func TestAgentTokenArchiveSendersIndependentOfDraftIdentities(t *testing.T) {
 		{"canonical incoming", `{"1":["Code Sender <CODES@example.test>"]}`, []string{"message.read", "message.archive", "draft.create"}, http.StatusCreated},
 		{"omitted", "", []string{"message.archive"}, http.StatusCreated},
 		{"empty", `{"1":[]}`, []string{"message.archive"}, http.StatusBadRequest},
+		{"top-level null", `null`, []string{"message.archive"}, http.StatusBadRequest},
 		{"null", `{"1":null}`, []string{"message.archive"}, http.StatusBadRequest},
 		{"duplicate", `{"1":["codes@example.test","CODES@example.test"]}`, []string{"message.archive"}, http.StatusBadRequest},
 		{"invalid mailbox", `{"1":["invalid"]}`, []string{"message.archive"}, http.StatusBadRequest},
@@ -812,4 +813,16 @@ func TestAgentTokenArchiveSendersIndependentOfDraftIdentities(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAgentTokenRejectsUnknownIncomingSenderField(t *testing.T) {
+	srv, registry := newAgentTokenTestServer(t)
+	t.Cleanup(registry.Close)
+	body := `{"label":"reader","permissions":["message.read"],"source_ids":[1],"incoming_sender":{"1":["codes@example.test"]}}`
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, agentTokensPath, strings.NewReader(body))
+	req.Header.Set("X-Api-Key", agentTokenTestAPIKey)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 }

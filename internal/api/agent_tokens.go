@@ -182,6 +182,27 @@ func (s *Server) ownerAccessAuthorized(r *http.Request) bool {
 	return mode == AuthModeAPIKey || mode == AuthModeCaller
 }
 
+func decodeAgentTokenIssueRequest(w http.ResponseWriter, r *http.Request, req *agentTokenIssueRequest) bool {
+	dec := jsontext.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	raw, err := dec.ReadValue()
+	if err == nil {
+		err = json.Unmarshal(raw, req, json.RejectUnknownMembers(true))
+	}
+	var fields map[string]jsontext.Value
+	if err == nil {
+		err = json.Unmarshal(raw, &fields)
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
+		return false
+	}
+	if string(fields["incoming_senders"]) == "null" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "incoming_senders must be an object")
+		return false
+	}
+	return requireSingleJSONValue(w, dec, "invalid_request")
+}
+
 // handleIssueAgentToken issues a new restricted agent grant.
 // Requires owner API key.
 func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
@@ -199,13 +220,7 @@ func (s *Server) handleIssueAgentToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req agentTokenIssueRequest
-	dec := jsontext.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	if err := json.UnmarshalDecode(dec, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON request body")
-		return
-	}
-
-	if !requireSingleJSONValue(w, dec, "invalid_request") {
+	if !decodeAgentTokenIssueRequest(w, r, &req) {
 		return
 	}
 

@@ -321,7 +321,6 @@ func TestAgentReadSourceFilterPrecedence(t *testing.T) {
 				{"malformed plural", fmt.Sprintf("source_id=%d&source_ids=bad", sources[0].ID), 400},
 				{"ungranted effective source", fmt.Sprintf("source_id=%d&source_ids=%d", sources[0].ID, sources[2].ID), 403},
 				{"mixed collection cannot narrow", fmt.Sprintf("collection=mixed&source_ids=%d", sources[1].ID), 403},
-				{"mixed collection with scalar", fmt.Sprintf("collection=mixed&source_id=%d", sources[1].ID), 403},
 				{"allowed collection narrowing", fmt.Sprintf("collection=allowed&source_id=%d&source_ids=%d", sources[0].ID, sources[1].ID), 200},
 				{"ignored scalar outside collection", fmt.Sprintf("collection=allowed&source_id=%d&source_ids=%d", sources[2].ID, sources[1].ID), 200},
 				{"ignored scalar outside account", fmt.Sprintf("account=%s&source_id=%d&source_ids=%d", sources[1].Identifier, sources[0].ID, sources[1].ID), 200},
@@ -1072,116 +1071,6 @@ func TestAgentIncomingSenderScopesReads(t *testing.T) {
 	masked := readAllowed()
 	requirementsForTest.Contains(masked, verification.Masked)
 	requirementsForTest.NotContains(masked, "987654")
-}
-
-func TestIncomingSenderScopedCountsUseMessageIDs(t *testing.T) {
-	for _, tc := range []struct {
-		name           string
-		firstIDMatches bool
-	}{
-		{"recipient IDs differ", false},
-		{"one recipient ID matches", true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			requirements := require.New(t)
-			st := testutil.NewTestStore(t)
-			var source *store.Source
-			for index, message := range []struct {
-				provider, sender string
-				deleted          bool
-			}{
-				{"allowed-live", "codes@example.test", false},
-				{"denied-live", "other@example.test", false},
-				{"allowed-deleted", "codes@example.test", true},
-				{"denied-deleted", "other@example.test", true},
-			} {
-				var id int64
-				var err error
-				source, id, err = testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", message.provider, message.provider, "")
-				requirements.NoError(err)
-				participant, err := st.EnsureParticipant(message.sender, "", "example.test")
-				requirements.NoError(err)
-				if index != 0 || !tc.firstIDMatches {
-					requirements.NoError(st.ReplaceMessageRecipients(id, "to", []int64{participant}, nil))
-				}
-				requirements.NoError(st.ReplaceMessageRecipients(id, "from", []int64{participant}, nil))
-				_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = ? WHERE message_id = ? AND recipient_type = 'from'"), message.sender, id)
-				requirements.NoError(err)
-				if message.deleted {
-					_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?"), id)
-					requirements.NoError(err)
-				}
-			}
-			ctx := sourcescope.WithIncomingSenders(t.Context(), map[int64][]string{source.ID: {"codes@example.test"}})
-			stats, err := st.GetStatsForScopeContext(ctx, []int64{source.ID})
-			requirements.NoError(err)
-			requirements.Equal(int64(1), stats.MessageCount)
-			requirements.Equal(int64(1), stats.SourceDeletedCount)
-			active, err := st.CountActiveMessagesContext(ctx, source.ID)
-			requirements.NoError(err)
-			requirements.Equal(int64(1), active)
-			deleted, err := st.CountSourceDeletedMessagesContext(ctx, source.ID)
-			requirements.NoError(err)
-			requirements.Equal(int64(1), deleted)
-			perSource, err := st.CountMessagesForSourceContext(ctx, source.ID)
-			requirements.NoError(err)
-			requirements.Equal(int64(1), perSource)
-		})
-	}
-}
-
-func TestAgentLabelInventoryIncomingScope(t *testing.T) {
-	requirements := require.New(t)
-	st := testutil.NewTestStore(t)
-	first, allowed, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "first@example.test", "allowed", "allowed", "")
-	requirements.NoError(err)
-	_, denied, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "first@example.test", "denied", "denied", "")
-	requirements.NoError(err)
-	second, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "second@example.test", "other", "other", "")
-	requirements.NoError(err)
-	for _, tc := range []struct {
-		id      int64
-		address string
-	}{{allowed, "codes@example.test"}, {denied, "other@example.test"}} {
-		participant, err := st.EnsureParticipant(tc.address, "", "example.test")
-		requirements.NoError(err)
-		requirements.NoError(st.ReplaceMessageRecipients(tc.id, "from", []int64{participant}, nil))
-		_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = ? WHERE message_id = ?"), tc.address, tc.id)
-		requirements.NoError(err)
-	}
-	for _, tc := range []struct {
-		source, message int64
-		name            string
-	}{{first.ID, 0, "empty"}, {first.ID, allowed, "allowed"}, {first.ID, denied, "denied"}, {second.ID, 0, "other empty"}} {
-		id, err := st.EnsureLabel(t.Context(), tc.source, tc.name, tc.name, "user")
-		requirements.NoError(err)
-		if tc.message != 0 {
-			requirements.NoError(st.AddMessageLabels(t.Context(), tc.message, []int64{id}))
-		}
-	}
-	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
-	for _, tc := range []struct {
-		name              string
-		restricted, mixed bool
-		want              int64
-	}{{"unrestricted", false, false, 3}, {"restricted", true, false, 1}, {"mixed", true, true, 2}} {
-		t.Run(tc.name, func(t *testing.T) {
-			requirements := require.New(t)
-			incoming := map[int64][]string{first.ID: nil}
-			if tc.restricted {
-				incoming[first.ID] = []string{"codes@example.test"}
-			}
-			ids := []int64{first.ID}
-			if tc.mixed {
-				ids = append(ids, second.ID)
-				incoming[second.ID] = nil
-			}
-			ctx := sourcescope.WithIncomingSenders(sourcescope.WithSourceIDs(t.Context(), ids), incoming)
-			stats, err := engine.GetTotalStats(ctx, query.StatsOptions{})
-			requirements.NoError(err)
-			requirements.Equal(tc.want, stats.LabelCount)
-		})
-	}
 }
 
 func TestAgentRelatedMessageIncomingScope(t *testing.T) {

@@ -663,3 +663,34 @@ func TestDaemonMCPDocbankProbeFailureIsLogged(t *testing.T) {
 	assert.Contains(logs.String(), "Kata transcript citations hidden because the Docbank status probe failed")
 	assert.Contains(logs.String(), "503")
 }
+
+func TestDelegatedMCPArchiveCapability(t *testing.T) {
+	for _, version := range []string{"5.3.0", "5.4.0"} {
+		t.Run(version, func(t *testing.T) {
+			assertionsForTest := assert.New(t)
+			requirementsForTest := require.New(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/v1/health":
+					assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": version}))
+				case "/api/v1/agent-tokens/self":
+					assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"id": "fixture", "label": "agent", "permissions": []string{"message.archive"}, "sources": []any{map[string]any{"id": 1, "type": "gmail", "identifier": "owner@example.test"}}, "created_at": time.Now().UTC()}))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AgentToken: "fixture", AllowInsecure: true})
+			requirementsForTest.NoError(err)
+			t.Cleanup(func() { _ = client.Close() })
+			opts, err := delegatedMCPServeOptions(t.Context(), client)
+			requirementsForTest.NoError(err)
+			if version != "5.4.0" {
+				assertionsForTest.Nil(opts.MessageArchive)
+			} else {
+				assertionsForTest.NotNil(opts.MessageArchive)
+			}
+		})
+	}
+}
