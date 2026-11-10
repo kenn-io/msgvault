@@ -1103,21 +1103,25 @@ func TestExploreGroupsSupportsDailyActivity(t *testing.T) {
 func TestExploreGroupOverviewSerialization(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	srv := newTestServerWithEngine(t, newExploreDuckDBFixture(t))
-	source := postExploreJSON(t, srv, "/api/v1/explore/groups", `{"grouping":["source"]}`)
-	require.Equal(http.StatusOK, source.Code, source.Body.String())
-	assert.NotContains(source.Body.String(), `"total_items"`)
-	assert.NotContains(source.Body.String(), `"overview"`)
-
-	months := postExploreJSON(t, srv, "/api/v1/explore/groups", `{"grouping":["month"]}`)
-	require.Equal(http.StatusOK, months.Code, months.Body.String())
-	var page ExploreGroupsHTTPResponse
-	require.NoError(json.Unmarshal(months.Body.Bytes(), &page))
-	require.NotEmpty(page.Rows)
-	assert.Positive(page.Rows[0].TotalItems)
-	keyed := postExploreJSON(t, srv, "/api/v1/explore/groups", fmt.Sprintf(`{"grouping":["month"],"group_key":%q}`, page.Rows[0].Key))
+	now := time.Date(2024, 5, 1, 12, 0, 0, 0, time.UTC)
+	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{}, groupResult: &query.ExploreGroupResponse{
+		Rows:     []query.ExploreGroupRow{{Key: "2024-05", TotalItems: 4, LatestAt: now}},
+		Overview: &query.ExploreGroupOverview{FirstAt: now, Activity: []query.ExploreGroupActivity{{Bucket: "2024-05-01", Count: 2}}},
+	}}
+	srv := newTestServerWithEngine(t, engine)
+	keyed := postExploreJSON(t, srv, "/api/v1/explore/groups", `{"grouping":["month"],"group_key":"2024-05"}`)
 	require.Equal(http.StatusOK, keyed.Code, keyed.Body.String())
 	var detail ExploreGroupsHTTPResponse
 	require.NoError(json.Unmarshal(keyed.Body.Bytes(), &detail))
 	require.NotNil(detail.Overview)
+	assert.Equal(now, detail.Overview.FirstAt)
+	assert.Equal([]query.ExploreGroupActivity{{Bucket: "2024-05-01", Count: 2}}, detail.Overview.Activity)
+	require.Len(detail.Rows, 1)
+	assert.Equal(int64(4), detail.Rows[0].TotalItems)
+
+	engine.groupResult = &query.ExploreGroupResponse{Rows: []query.ExploreGroupRow{{Key: "7", LatestAt: now}}}
+	source := postExploreJSON(t, srv, "/api/v1/explore/groups", `{"grouping":["source"]}`)
+	require.Equal(http.StatusOK, source.Code, source.Body.String())
+	assert.NotContains(source.Body.String(), `"total_items"`)
+	assert.NotContains(source.Body.String(), `"overview"`)
 }

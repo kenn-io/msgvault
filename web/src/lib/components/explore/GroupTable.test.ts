@@ -291,11 +291,14 @@ describe('GroupTable', () => {
 
 
 it('keeps a later month page share relative to every grouped item and hides details in the inspector layout', async () => {
+ const clientWidth = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000);
  const onDrill = vi.fn();
  const row = { key: '2022-05', label: '2022-05', count: 20, total_items: 1000, estimated_bytes: 200, latest_at: '2022-05-31T12:00:00Z' };
  const view = render(GroupTable, { rows: [row], dimension: 'month', onDrill });
  expect(screen.getByRole('columnheader', { name: 'Share' })).toBeDefined();
  expect(screen.getByTitle('2% of 1,000 items').firstElementChild?.getAttribute('style')).toContain('width: 2%');
+ expect(screen.getByRole('columnheader', { name: 'Size' })).toBeDefined();
+ expect(screen.getByRole('columnheader', { name: 'Latest' })).toBeDefined();
 
  await view.rerender({ rows: [row], dimension: 'month', inspectedKey: 'group:month:2022-05', onDrill });
  expect(screen.queryByRole('columnheader', { name: 'Size' })).toBeNull();
@@ -303,6 +306,7 @@ it('keeps a later month page share relative to every grouped item and hides deta
  await view.rerender({ rows: [{ ...row, total_items: undefined }], dimension: 'month', onDrill });
  expect(screen.queryByTitle('2% of 1,000 items')).toBeNull();
  expect(screen.queryByRole('columnheader', { name: 'Share' })).toBeNull();
+ clientWidth.mockRestore();
 });
 
 it('updates a source name when its type arrives after the rows', async () => {

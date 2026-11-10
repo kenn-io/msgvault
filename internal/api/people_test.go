@@ -34,6 +34,7 @@ type peopleAPIEngine struct {
 	personClusterMembers []int64
 	domain               *query.DomainSummary
 	groupRequest         query.ExploreGroupRequest
+	groupResult          *query.ExploreGroupResponse
 	timeline             query.ExploreRequest
 	timelineResult       *query.ExploreResponse
 	peopleErr            error
@@ -90,6 +91,9 @@ func (e *peopleAPIEngine) ExploreCoverage(context.Context, query.ExploreCoverage
 
 func (e *peopleAPIEngine) ExploreGroups(_ context.Context, request query.ExploreGroupRequest) (*query.ExploreGroupResponse, error) {
 	e.groupRequest = request
+	if e.groupResult != nil {
+		return e.groupResult, e.peopleErr
+	}
 	return &query.ExploreGroupResponse{}, e.peopleErr
 }
 

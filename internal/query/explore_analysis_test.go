@@ -781,7 +781,7 @@ func TestExploreDayGroupsCountSentMessagesBeforeChatCollapse(t *testing.T) {
 	}
 }
 
-func TestExploreGroupOverviewOwnMembership(t *testing.T) {
+func TestExploreGroupOverviewMembershipAndTimeBuckets(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -820,8 +820,12 @@ func TestExploreGroupOverviewOwnMembership(t *testing.T) {
 			request := ExploreGroupRequest{Dimension: dimension, Timezone: "America/New_York", Page: PageSpec{Limit: 100}}
 			page, err := engine.ExploreGroups(t.Context(), request)
 			require.NoError(err)
+			require.NotEmpty(page.Rows)
 			assert.Nil(page.Overview)
 			for _, row := range page.Rows {
+				if dimension == "source" {
+					assert.Zero(row.TotalItems)
+				}
 				request.GroupKey = row.Key
 				detail, err := engine.ExploreGroups(t.Context(), request)
 				require.NoError(err)
