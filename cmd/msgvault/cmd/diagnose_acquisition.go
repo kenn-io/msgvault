@@ -20,7 +20,7 @@ func newDiagnoseAcquisitionCmd() *cobra.Command {
 	var timeout time.Duration
 	command := &cobra.Command{
 		Use:   "diagnose-acquisition --source-id ID",
-		Short: "Inspect known Gmail acquisition obligations without changing the archive",
+		Short: "Show known Gmail download and file-saving status (read-only)",
 		Long: `Read the selected Gmail source's local ledger, without starting the daemon,
 syncing, repairing, or contacting Gmail. Uses the local database configuration,
 including a configured PostgreSQL database; [remote].url is not used.

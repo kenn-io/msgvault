@@ -39,7 +39,7 @@ func TestAcquisitionDiagnosticClassificationAndPaging(t *testing.T) {
 	record(boundary, "resolved-real", "fetch", "acquired", "acquired", "resolved")
 	record(boundary, "active-file", "ingest", "attachment_remote_image_error", "local save failed", "error")
 	record(boundary, "active-synthetic", "ingest", "remote_image_error", store.SyncRunItemFilesPendingMessage, "error")
-	record(boundary, "active-real", "fetch", "fetch_error", "retry failed", "error")
+	record(boundary, "active-real", "fetch", "fetch_error", "retry failed for hidden@example.com https://example.com/private", "error")
 	// A non-acquisition outcome for the same message cannot erase file work.
 	record(boundary, "active-file", "delete", "delete_error", "unrelated failure", "error")
 	record(boundary, "gone", "fetch", "gmail_not_found", "not found", "skipped")
@@ -222,6 +222,12 @@ func TestAcquisitionDiagnosticEmptyAndValidation(t *testing.T) {
 	assert.Empty(report.Items)
 	assert.Contains(report.String(), "No known active obligation in the examined scope")
 	assert.Contains(report.String(), "does not prove archive completeness")
+	assert.Contains(report.String(), "0 resolved obligations")
+	assert.NotContains(report.String(), "0 active obligations")
+	assert.NotContains(report.String(), "fetch/fetch_error")
+	encoded, err := json.Marshal(report)
+	require.NoError(err)
+	assert.Contains(string(encoded), "fetch/fetch_error", "JSON must retain the recognized replay contracts")
 	for _, invalid := range []store.AcquisitionDiagnosticOptions{
 		{Limit: 10}, {SourceID: f.Source.ID, Limit: 0}, {SourceID: f.Source.ID, Limit: 1001},
 		{SourceID: f.Source.ID, Limit: 10, AfterID: -1}, {SourceID: f.Source.ID, Limit: 10, State: "complete"},

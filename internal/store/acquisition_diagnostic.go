@@ -8,6 +8,9 @@ import (
 	"time"
 )
 
+const acquisitionContractsCoverage = "Recognized contracts: fetch/fetch_error, fetch/batch_fetch_error, ingest/ingest_error, " +
+	"ingest/attachment_error, ingest/remote_image_error, ingest/attachment_remote_image_error."
+
 // AcquisitionDiagnosticOptions bounds details after classification. Totals cover
 // the source's retained ledger in one read snapshot, independently of the page.
 type AcquisitionDiagnosticOptions struct {
@@ -164,7 +167,7 @@ func (s *Store) DiagnoseAcquisitionContext(ctx context.Context, opts Acquisition
 		Coverage: []string{
 			"Retained sync ledger for this source in one read-only snapshot; counts are messages per state and may overlap.",
 			"Active obligations use the acquisition replay selection since the latest completed incremental; resolved requires a later explicit resolution.",
-			"Recognized contracts: fetch/fetch_error, fetch/batch_fetch_error, ingest/ingest_error, ingest/attachment_error, ingest/remote_image_error, ingest/attachment_remote_image_error.",
+			acquisitionContractsCoverage,
 			"Errors exclude the shipped synthetic file-saving marker. Details contain at most one outcome per message in the selected state.",
 			"Historical includes withdrawn skipped items retaining a recognized error contract and acquisition failures followed by a compatible skip. Withdrawal does not prove acquisition or identify its cause.",
 			"Indeterminate includes failures hidden by the replay boundary without resolution and outcomes with no known acquisition contract.",
@@ -300,8 +303,12 @@ func (s *Store) fillAcquisitionResolutions(ctx context.Context, report *Acquisit
 // error text, which may contain addresses, URLs, paths, or provider responses.
 func (r AcquisitionDiagnostic) String() string {
 	var out strings.Builder
-	fmt.Fprintf(&out, "Gmail source %d: %d active obligations, %d resolved obligations\n%d active errors, %d historical errors, %d indeterminate messages\n",
-		r.SourceID, r.Summary.ActiveObligations, r.Summary.ResolvedObligations, r.Summary.ActiveErrors, r.Summary.HistoricalErrors, r.Summary.Indeterminate)
+	fmt.Fprintf(&out, "Gmail source %d:", r.SourceID)
+	if r.Summary.ActiveObligations != 0 {
+		fmt.Fprintf(&out, " %d active obligations,", r.Summary.ActiveObligations)
+	}
+	fmt.Fprintf(&out, " %d resolved obligations\n%d active errors, %d historical errors, %d indeterminate messages\n",
+		r.Summary.ResolvedObligations, r.Summary.ActiveErrors, r.Summary.HistoricalErrors, r.Summary.Indeterminate)
 	if r.Summary.ActiveObligations == 0 {
 		out.WriteString("No known active obligation in the examined scope.\n")
 	}
@@ -318,6 +325,9 @@ func (r AcquisitionDiagnostic) String() string {
 		fmt.Fprintf(&out, "More details: --state %s --after-id %d\n", r.State, r.NextAfterID)
 	}
 	for _, limit := range r.Coverage {
+		if limit == acquisitionContractsCoverage {
+			continue
+		}
 		fmt.Fprintf(&out, "Coverage: %s\n", limit)
 	}
 	return out.String()
