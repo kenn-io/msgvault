@@ -18,7 +18,6 @@
   let {
     client,
     filters,
-    dateMode = 'utc',
     extraActive = false,
     lockedFilter = undefined,
     onChange,
@@ -30,7 +29,6 @@
     onClear?: () => void;
     client: APIClient;
     filters: ExploreFilter[];
-    dateMode?: 'auto' | 'utc';
     lockedFilter?: ExploreFilter;
     onChange: (filters: ExploreFilter[]) => void;
   } = $props();
@@ -47,9 +45,6 @@
   let controller: AbortController | undefined;
 
   const kindValues = $derived(filters.find((filter) => filter.dimension === 'kind')?.values ?? []);
-  const fromMode = $derived(boundaryMode('after'));
-  const toMode = $derived(boundaryMode('before'));
-  const mixedDates = $derived(fromMode !== toMode);
   let dateError = $state('');
 
   async function loadKinds(): Promise<void> {
@@ -99,24 +94,12 @@
     onChange(values.length > 0 ? [...rest, { dimension: 'kind', values }] : rest);
   }
 
-  function boundaryMode(dimension: 'after' | 'before'): 'utc' | 'local' {
-    const filter = filters.find((item) => item.dimension === dimension);
-    if (filter) return filter.calendar === 'local' ? 'local' : 'utc';
-    if (dateMode === 'utc') return 'utc';
-    const peer = filters.find((item) => item.dimension === (dimension === 'after' ? 'before' : 'after'));
-    return peer ? peer.calendar === 'local' ? 'local' : 'utc' : 'local';
-  }
-
   function dateValue(dimension: 'after' | 'before'): string {
     const value = filters.find((filter) => filter.dimension === dimension)?.values[0];
     if (!value) return '';
     const date = new Date(value);
-    if (dimension === 'before') date.setTime(date.getTime() - 1);
-    const local = boundaryMode(dimension) === 'local';
-    const year = local ? date.getFullYear() : date.getUTCFullYear();
-    const month = local ? date.getMonth() : date.getUTCMonth();
-    const day = local ? date.getDate() : date.getUTCDate();
-    return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    if (dimension === 'before') date.setUTCMilliseconds(date.getUTCMilliseconds() - 1);
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
   }
 
   function changeDate(dimension: 'after' | 'before', input: HTMLInputElement): void {
@@ -131,13 +114,8 @@
     }
     const rest = filters.filter((filter) => filter.dimension !== dimension);
     if (!value) return onChange(rest);
-    const mode = boundaryMode(dimension);
-    const boundary = new Date(`${value}T00:00:00${mode === 'utc' ? 'Z' : ''}`);
-    if (dimension === 'before') {
-      if (mode === 'local') { boundary.setDate(boundary.getDate() + 1); boundary.setHours(0, 0, 0, 0); }
-      else boundary.setUTCDate(boundary.getUTCDate() + 1);
-    }
-    onChange([...rest, { dimension, values: [boundary.toISOString()], ...(mode === 'local' ? { calendar: 'local' as const } : {}) }]);
+    const boundary = new Date(`${value}T00:00:00Z`).getTime() + (dimension === 'before' ? 86400000 : 0);
+    onChange([...rest, { dimension, values: [new Date(boundary).toISOString()] }]);
   }
 
   function clear(): void {
@@ -187,12 +165,12 @@
     <AccountFilter {client} {filters} {onChange} showSingleMailbox />
     {#if !lockedFilter}<IdentityFilter {client} {filters} {onChange} />{/if}
     <fieldset class="field">
-      <legend>Dates ({mixedDates ? 'UTC and your time zone' : fromMode === 'local' ? 'your time zone' : 'UTC'})</legend>
+      <legend>Dates (UTC)</legend>
       <div class="dates">
       <!-- kit-ui-check-ignore: independent optional boundaries; DateRangePicker commits complete ranges. -->
-      <label>From{mixedDates ? ` (${fromMode === 'utc' ? 'UTC' : 'your time zone'})` : ''}<input type="date" value={dateValue('after')} onchange={(event) => changeDate('after', event.currentTarget)} /></label>
+      <label>From<input type="date" aria-label="From" value={dateValue('after')} onchange={(event) => changeDate('after', event.currentTarget)} /></label>
       <!-- kit-ui-check-ignore: independent optional boundaries; DateRangePicker commits complete ranges. -->
-      <label>To{mixedDates ? ` (${toMode === 'utc' ? 'UTC' : 'your time zone'})` : ''}<input type="date" value={dateValue('before')} onchange={(event) => changeDate('before', event.currentTarget)} /></label>
+      <label>To<input type="date" aria-label="To" value={dateValue('before')} onchange={(event) => changeDate('before', event.currentTarget)} /></label>
       </div>
     </fieldset>
     {#if dateError}<p role="alert">{dateError}</p>{/if}

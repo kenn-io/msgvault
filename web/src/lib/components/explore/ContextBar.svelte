@@ -30,7 +30,6 @@
   let {
     client,
     messages = false,
-    dateMode = 'utc',
     lockedFilter = undefined,
     filterExtra = undefined,
     extraControls = undefined,
@@ -54,7 +53,6 @@
   }: {
     client: APIClient;
     messages?: boolean;
-    dateMode?: 'auto' | 'utc';
     lockedFilter?: ExploreFilter;
     filterExtra?: Snippet;
     extraControls?: Snippet;
@@ -130,7 +128,7 @@
   <div class="context-controls">
     <div class="context-group">
     {#if messages}
-      <FilterMenu {client} {filters} {lockedFilter} {dateMode} extraActive={extraInPopover && extraActive} onChange={onFiltersChange} onClear={() => { onClearFilters(); if (extraInPopover) onClearExtra?.(); }} extra={extraInPopover ? popoverExtra : filterExtra} />
+      <FilterMenu {client} {filters} {lockedFilter} extraActive={extraInPopover && extraActive} onChange={onFiltersChange} onClear={() => { onClearFilters(); if (extraInPopover) onClearExtra?.(); }} extra={extraInPopover ? popoverExtra : filterExtra} />
     {:else}
     <Button
       surface={filtersOpen || filters.length > 0 ? 'soft' : 'outline'}

@@ -2593,23 +2593,6 @@ func (r RunSavedViewResponseResultKind) Validate() error {
 	}
 }
 
-// SavedViewFilterCalendar Local calendar boundary for after or before filters
-type SavedViewFilterCalendar string
-
-const (
-	Local SavedViewFilterCalendar = "local"
-)
-
-// Validate checks if the SavedViewFilterCalendar value is valid
-func (s SavedViewFilterCalendar) Validate() error {
-	switch s {
-	case Local:
-		return nil
-	default:
-		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SavedViewFilterCalendar value, got: %v", s))
-	}
-}
-
 type SavedViewFilterField string
 
 const (

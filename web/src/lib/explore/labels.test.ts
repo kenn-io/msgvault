@@ -119,5 +119,5 @@ it.each([
 });
 
 it('uses the meeting icon for a Granola source group', () => {
-  expect(groupRowName('source', '7', 'fixture-granola', new Map([['7', 'granola']])).icon).toBe(Mic);
+  expect(groupRowName('source', '7', 'fixture-granola', 'granola').icon).toBe(Mic);
 });

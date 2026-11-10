@@ -15,17 +15,6 @@ const generatedFileStringContract: [
 ] = [true, true, true, true];
 
 describe('ExploreAPI routing', () => {
-  it('omits local calendar metadata from search and group requests', async () => {
-    const bodies: unknown[] = [];
-    const api = createExploreAPI(createAPIClient(async (input) => {
-      bodies.push(await (input as Request).clone().json());
-      return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} });
-    }));
-    const filters = [{ dimension: 'after' as const, values: ['2026-01-01T00:00:00Z'], calendar: 'local' as const }];
-    await api.explore({ filters, presentation: 'table' });
-    await api.groups({ filters, presentation: 'table' }, 'source');
-    for (const body of bodies) expect((body as { filters: unknown[] }).filters).toEqual([{ dimension: 'after', values: ['2026-01-01T00:00:00Z'] }]);
-  });
   it('keeps public TypeScript file metadata strings required and non-nullable', () => {
     expect(generatedFileStringContract).toEqual([true, true, true, true]);
   });

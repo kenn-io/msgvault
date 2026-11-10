@@ -102,10 +102,10 @@ export function sourceMailbox(identifier: string): string {
   }
 }
 
-export function sourceDisplayName(type: string | undefined, identifier: string, repeated = false): string {
+export function sourceDisplayName(type: string | undefined, identifier: string): string {
   if (type === 'gmail' || type === 'msmail') return identifier;
-  const name = type === 'imap' ? sourceMailbox(identifier) : type && Object.hasOwn(SOURCE_TYPES, type) ? sourceTypeLabel(type) : identifier;
-  return repeated && name !== identifier ? `${name} · ${identifier}` : name;
+  if (type === 'imap') return sourceMailbox(identifier);
+  return type && Object.hasOwn(SOURCE_TYPES, type) ? sourceTypeLabel(type) : identifier;
 }
 
 export function sourceIcon(type: string) {

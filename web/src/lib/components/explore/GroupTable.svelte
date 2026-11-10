@@ -348,7 +348,7 @@
         <div class="group-window" style:transform={`translateY(${slice.topPad}px)`}>
           {#each renderedRows as row, offset (row.key)}
             {@const index = slice.start + offset}
-            {@const display = groupRowName(dimension, row.key, row.label, sourceTypes)}
+            {@const display = groupRowName(dimension, row.key, row.label, sourceTypes.get(row.key))}
             <div
               class="group-row"
               class:group-row--active={index === activeIndex}

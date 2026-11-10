@@ -1384,7 +1384,6 @@
           <ContextBar
             {client}
             messages
-            dateMode="utc"
             extraControls={controls}
             extraActive={visualActive}
             onClearExtra={clearVisualSearch}

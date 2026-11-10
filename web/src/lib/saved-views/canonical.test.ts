@@ -44,12 +44,6 @@ function openedAndReloaded(saved: CanonicalState) {
 }
 
 describe('saved-view canonical state', () => {
-  it('retains local calendar metadata through saved views and URL reloads', () => {
-    const filters = [{ dimension: 'after' as const, values: ['2026-01-01T00:00:00.000Z'], calendar: 'local' as const }, { dimension: 'before' as const, values: ['2026-02-01T00:00:00.000Z'] }];
-    const saved = canonicalSavedViewState({ ...everything, filters });
-    expect(saved.filters).toEqual([{ field: 'after', operator: 'in', values: ['2026-01-01T00:00:00.000Z'], calendar: 'local' }, { field: 'before', operator: 'in', values: ['2026-02-01T00:00:00.000Z'] }]);
-    expect(openedAndReloaded(saved)).toEqual({ opened: filters, reloaded: filters });
-  });
   it('keeps a saved identity filter on open and URL-only reload', () => {
     const identity = ['1 ', 'person@example.com', 'SENDER'];
     const saved: CanonicalState = { filters: [

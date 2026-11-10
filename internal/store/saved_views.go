@@ -47,7 +47,6 @@ type SavedViewFilter struct {
 	Field    string   `json:"field"`
 	Operator string   `json:"operator"`
 	Values   []string `json:"values" doc:"Exact filter values; numeric identifiers use decimal strings"`
-	Calendar string   `json:"calendar,omitempty" enum:"local" doc:"Local calendar boundary for after or before filters"`
 }
 
 type SavedViewSort struct {

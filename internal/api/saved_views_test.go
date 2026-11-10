@@ -86,18 +86,6 @@ func TestSavedViewsAuthenticatedCRUDAndSharedSessionVisibility(t *testing.T) {
 	assertions.Equal(http.StatusNotFound, missing.Code, missing.Body.String())
 }
 
-func TestSavedViewsAPIRetainsLocalDateCalendar(t *testing.T) {
-	t.Parallel()
-	srv := newSavedViewTestServer(t)
-	session := loginSavedViewSession(t, srv)
-	state := `{"filters":[{"field":"after","operator":"in","values":["2026-01-01T00:00:00Z"],"calendar":"local"}]}`
-	created := performSavedViewRequest(t, srv, http.MethodPost, savedViewsPath,
-		[]byte(`{"name":"Dates","canonical_state":`+state+`,"schema_version":2}`), session.mutationHeaders())
-	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
-	view := decodeSavedView(t, created)
-	assert.JSONEq(t, state, string(view.CanonicalState))
-}
-
 func TestSavedViewsAPIRejectsInvalidStateAndRevisionHeaders(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)

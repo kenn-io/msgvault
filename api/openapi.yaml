@@ -14731,11 +14731,6 @@ components:
     SavedViewFilter:
       additionalProperties: false
       properties:
-        calendar:
-          description: Local calendar boundary for after or before filters
-          enum:
-            - local
-          type: string
         field:
           enum:
             - source
@@ -17156,7 +17151,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 4.3.0
+  version: 4.2.0
 openapi: 3.1.0
 paths:
   /api/ping:

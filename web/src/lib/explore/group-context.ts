@@ -31,7 +31,7 @@ export function filtersForGroup(
   }
   if (dimension === 'year' && /^\d{4}$/.test(key)) {
     const year = Number(key);
-    return replaceTimeFilters(filters, (utc ? new Date(Date.UTC(year, 0, 1)) : new Date(year, 0, 1)).toISOString(), (utc ? new Date(Date.UTC(year + 1, 0, 1)) : new Date(year + 1, 0, 1)).toISOString(), utc);
+    return replaceTimeFilters(filters, (utc ? new Date(Date.UTC(year, 0, 1)) : new Date(year, 0, 1)).toISOString(), (utc ? new Date(Date.UTC(year + 1, 0, 1)) : new Date(year + 1, 0, 1)).toISOString());
   }
   if (dimension === 'month' && /^\d{4}-(0[1-9]|1[0-2])$/.test(key)) {
     const [year, month] = key.split('-').map(Number) as [number, number];
@@ -40,7 +40,7 @@ export function filtersForGroup(
     return replaceTimeFilters(
       filters,
       (utc ? new Date(Date.UTC(year, month - 1, 1)) : new Date(year, month - 1, 1)).toISOString(),
-      (utc ? new Date(Date.UTC(nextYear, nextMonth - 1, 1)) : new Date(nextYear, nextMonth - 1, 1)).toISOString(), utc
+      (utc ? new Date(Date.UTC(nextYear, nextMonth - 1, 1)) : new Date(nextYear, nextMonth - 1, 1)).toISOString()
     );
   }
   return undefined;
@@ -67,29 +67,31 @@ function appendGroupMembershipFilter(
 function replaceTimeFilters(
   filters: readonly ExploreFilter[],
   after: string,
-  before: string, utc: boolean
+  before: string
 ): ExploreFilter[] | undefined {
-  const narrowed = narrowTimeFilters(filters, after, before, utc);
+  const narrowed = narrowTimeFilters(filters, after, before);
   const [lower, upper] = narrowed.slice(-2).map((filter) => Date.parse(filter.values[0]!));
   return lower! < upper! ? narrowed : undefined;
 }
 
 // narrowTimeFilters intersects [after, before) with the filters' own date bounds;
 // a disjoint pair is kept as an empty range.
-export function narrowTimeFilters(filters: readonly ExploreFilter[], after: string, before: string, utc = false): ExploreFilter[] {
-  const lower = dateBound('after', after, filters, utc);
-  const upper = dateBound('before', before, filters, utc);
+export function narrowTimeFilters(filters: readonly ExploreFilter[], after: string, before: string): ExploreFilter[] {
+  const lower = laterBound(after, filters.find((filter) => filter.dimension === 'after')?.values[0]);
+  const upper = earlierBound(before, filters.find((filter) => filter.dimension === 'before')?.values[0]);
   return [
     ...filters.filter((filter) => filter.dimension !== 'after' && filter.dimension !== 'before'),
-    lower,
-    upper
+    { dimension: 'after', values: [lower] },
+    { dimension: 'before', values: [upper] }
   ];
 }
 
-function dateBound(dimension: 'after' | 'before', groupBound: string, filters: readonly ExploreFilter[], utc: boolean): ExploreFilter {
-  const existing = filters.find((filter) => filter.dimension === dimension);
-  const existingTime = Date.parse(existing?.values[0] ?? '');
-  const groupTime = Date.parse(groupBound);
-  if (Number.isFinite(existingTime) && (dimension === 'after' ? existingTime >= groupTime : existingTime <= groupTime)) return existing!;
-  return { dimension, values: [groupBound], ...(!utc ? { calendar: 'local' } : {}) };
+function laterBound(groupBound: string, existing: string | undefined): string {
+  return existing && Number.isFinite(Date.parse(existing)) && Date.parse(existing) > Date.parse(groupBound)
+    ? existing : groupBound;
+}
+
+function earlierBound(groupBound: string, existing: string | undefined): string {
+  return existing && Number.isFinite(Date.parse(existing)) && Date.parse(existing) < Date.parse(groupBound)
+    ? existing : groupBound;
 }
