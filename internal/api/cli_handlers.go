@@ -1682,7 +1682,7 @@ func cliRunCommandAllowed(args []string) bool {
 		return len(args) >= 3 && (args[1] == "facebook-comments" || args[1] == "instagram-comments") && (args[2] == "add" || args[2] == "sync")
 	}
 	if args[0] == "comment" {
-		return len(args) >= 2 && args[1] == "moderate"
+		return len(args) >= 2 && (args[1] == "moderate" || args[1] == "reply")
 	}
 	// Internal subprocess commands are callable only by their owning public
 	// command on the daemon host, never through the generic HTTP runner.

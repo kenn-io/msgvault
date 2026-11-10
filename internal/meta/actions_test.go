@@ -29,32 +29,38 @@ func writeFixture(t *testing.T, status int, response string) (*Client, *[]graphW
 	return c, &writes
 }
 
+// archiveFacebookComment syncs comment 100_201 on post 100_200.
+func archiveFacebookComment(t *testing.T, st *store.Store) *store.Source {
+	t.Helper()
+	f, c := newGraphFixture(t)
+	f.comments["100_200"] = []Object{*comment("100_201", "100_200", "Example comment")}
+	imp := NewImporter(st, c)
+	src, err := imp.Register(t.Context(), "9", "100")
+	require.NoError(t, err)
+	_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(t, err)
+	return src
+}
+
+// archiveInstagramComment syncs comment 400 on media 300.
+func archiveInstagramComment(t *testing.T, st *store.Store) *store.Source {
+	t.Helper()
+	_, c := newInstagramImportFixture(t)
+	imp := NewImporter(st, c)
+	src, err := imp.RegisterInstagram(t.Context(), "9", "100", "200")
+	require.NoError(t, err)
+	_, err = imp.ImportInstagram(t.Context(), "9", "100", "200", ImportOptions{})
+	require.NoError(t, err)
+	return src
+}
+
 func TestModerateComment(t *testing.T) {
 	for _, tt := range []struct {
 		name, comment, hideParam string
 		archive                  func(t *testing.T, st *store.Store) *store.Source
 	}{
-		{"facebook", "100_201", "is_hidden", func(t *testing.T, st *store.Store) *store.Source {
-			t.Helper()
-			f, c := newGraphFixture(t)
-			f.comments["100_200"] = []Object{*comment("100_201", "100_200", "Example comment")}
-			imp := NewImporter(st, c)
-			src, err := imp.Register(t.Context(), "9", "100")
-			require.NoError(t, err)
-			_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
-			require.NoError(t, err)
-			return src
-		}},
-		{"instagram", "400", "hide", func(t *testing.T, st *store.Store) *store.Source {
-			t.Helper()
-			_, c := newInstagramImportFixture(t)
-			imp := NewImporter(st, c)
-			src, err := imp.RegisterInstagram(t.Context(), "9", "100", "200")
-			require.NoError(t, err)
-			_, err = imp.ImportInstagram(t.Context(), "9", "100", "200", ImportOptions{})
-			require.NoError(t, err)
-			return src
-		}},
+		{"facebook", "100_201", "is_hidden", archiveFacebookComment},
+		{"instagram", "400", "hide", archiveInstagramComment},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)

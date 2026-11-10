@@ -3994,3 +3994,19 @@ CREATE TABLE IF NOT EXISTS docbank_attachment_processing (
 CREATE INDEX IF NOT EXISTS idx_docbank_processing_due
  ON docbank_attachment_processing(destination_key, fingerprint, next_action_at, content_hash)
  WHERE next_action_at IS NOT NULL;
+
+-- Public replies msgvault posts to archived Facebook and Instagram comments.
+-- A row is written before the send. A row left 'sending' means Meta's answer
+-- was lost, so an identical reply is refused until the owner clears it.
+CREATE TABLE IF NOT EXISTS meta_comment_replies (
+ id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+ source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+ comment_id TEXT NOT NULL,
+ body TEXT NOT NULL,
+ state TEXT NOT NULL CHECK (state IN ('sending', 'sent', 'failed')),
+ reply_id TEXT,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_meta_comment_replies_comment
+ ON meta_comment_replies(source_id, comment_id);

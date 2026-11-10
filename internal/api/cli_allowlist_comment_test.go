@@ -9,6 +9,7 @@ import (
 func TestCommentModerateAllowedThroughDaemonCLIRunner(t *testing.T) {
 	t.Parallel()
 	assert.True(t, cliRunCommandAllowed([]string{"comment", "moderate", "--delete", "--yes", "42"}))
+	assert.True(t, cliRunCommandAllowed([]string{"comment", "reply", "--body=Thanks", "42"}))
 	assert.False(t, cliRunCommandAllowed([]string{"comment"}))
 	assert.False(t, cliRunCommandAllowed([]string{"comment", "triage", "42"}))
 }

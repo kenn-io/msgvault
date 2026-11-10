@@ -1662,6 +1662,27 @@ msgvault comment moderate <message-id> --hide|--unhide|--delete [--dry-run] [--y
 Choose exactly one of `--hide`, `--unhide`, or `--delete`. See
 [Hide or delete comments](usage/facebook-comments.md#hide-or-delete-comments).
 
+## comment reply
+
+Post a public reply to an archived Facebook Page or Instagram comment, then
+archive the reply (unreleased). The comment's profile must list `"reply"` in
+[`actions`](configuration.md#facebook-comments). msgvault refuses to send the
+same text to the same comment twice.
+
+```bash
+msgvault comment reply <message-id> --body <text> [--dry-run | --clear-unknown]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--body` | required | Reply text |
+| `--dry-run` | `false` | Show the comment and reply without calling Meta |
+| `--clear-unknown` | `false` | After checking the comment on Meta, allow a reply whose outcome is unknown to be sent again; sends nothing |
+
+A failed reply exits with code 6 when the same text was already posted, or when
+an earlier send of it has an unknown outcome. See
+[Reply to comments](usage/facebook-comments.md#reply-to-comments).
+
 ## add-chatwoot
 
 Register permitted Chatwoot inboxes from configured `[[chatwoot]]` profiles.
