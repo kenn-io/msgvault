@@ -96,7 +96,7 @@ func TestMCPArchiveFamilies(t *testing.T) {
 				assert.Contains(names, "list_saved_views")
 				assert.Contains(names, "get_person_merge_context")
 				for _, name := range names {
-					assert.False(strings.HasPrefix(name, "calendar_") || strings.HasPrefix(name, "draft_") || strings.Contains(name, "_kata_") || strings.Contains(name, "carddav") || strings.Contains(name, "meeting") || strings.Contains(name, "slack") || name == "find_chat" || name == "get_person_agenda", "%s", name)
+					assert.False(strings.HasPrefix(name, "calendar_") || name == "list_calendar_events" || strings.HasPrefix(name, "draft_") || strings.Contains(name, "_kata_") || strings.Contains(name, "carddav") || strings.Contains(name, "meeting") || strings.Contains(name, "slack") || name == "find_chat" || name == "get_person_agenda", "%s", name)
 				}
 			}
 		})
@@ -314,6 +314,33 @@ func TestMCPArchiveLocalChatDrafts(t *testing.T) {
 			require.True(ok)
 			assert.Equal("local chat draft", result["body"])
 			assert.Equal(output["draft_id"], result["draft_id"])
+		})
+	}
+}
+
+func TestMCPDaemonArchivedCalendarVersionGate(t *testing.T) {
+	for _, tc := range []struct {
+		version   string
+		available bool
+	}{{"3.34.0", false}, {"4.1.0", true}} {
+		t.Run(tc.version, func(t *testing.T) {
+			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/v1/health":
+					_, _ = io.WriteString(w, `{"status":"ok","api_schema_version":"`+tc.version+`"}`)
+				case "/api/v1/sources/status":
+					_, _ = io.WriteString(w, `{"sources":[{"source_type":"gcal"}]}`)
+				default:
+					http.NotFound(w, r)
+				}
+			})
+			listed := archiveMCPCatalog(t, daemonMCPServeOptions(t.Context(), client, nil))
+			names := make([]string, 0, len(listed.Tools))
+			for _, tool := range listed.Tools {
+				names = append(names, tool.Name)
+			}
+			assert.Equal(t, tc.available, slices.Contains(names, "list_calendar_events"))
 		})
 	}
 }

@@ -219,7 +219,7 @@ The [HTTP API](../api-server.md#calendar-control) and
 [MCP tools](chat.md#calendar-control) use the same daemon checks and archive path.
 Delegated grants apply to the exact calendar source identity
 `gcal` plus `account-email/calendar-id`: `calendar.read` permits availability,
-`calendar.event.read` permits provider-derived event details in delegated plans
+`calendar.event.read` permits archived event listing and provider-derived event details in delegated plans
 and write receipts, `calendar.write` permits event changes, and `calendar.invite`
 additionally permits guest changes. None of these permissions implies the others.
 Write-only grants still receive live validation results, which can reveal timing

@@ -40,6 +40,7 @@ const (
 )
 
 type catalogCapabilities struct {
+	calEvents       bool
 	sqlQuery        bool
 	semanticSearch  bool
 	vectorInMessage bool
@@ -130,6 +131,7 @@ func (d toolDefinition) bind(h *handlers) func(context.Context, toolRequest) (*t
 
 func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 	return catalogCapabilities{
+		calEvents:       opts.CalEvents != nil,
 		sqlQuery:        opts.ArchiveSQLQuerier != nil,
 		semanticSearch:  opts.HybridEngine != nil || opts.HybridSearcher != nil,
 		vectorInMessage: opts.HybridEngine != nil && opts.Backend != nil,
@@ -231,6 +233,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 
 func operationDefinitions(capabilities catalogCapabilities) []toolDefinition {
 	definitions := []toolDefinition{
+		listCalendarEventsDefinition(),
 		aggregateDefinition(nil),
 		createSavedViewDefinition(nil),
 		deleteSavedViewDefinition(nil),

@@ -201,8 +201,13 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 		Engine: daemonclient.NewEngineAdapter(st), AttachmentReader: st,
 		Calendar: st, GrantPermissions: grant.Permissions, Families: families,
 	}
+	if daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarEventsMCPMinAPISchemaVersion) {
+		opts.CalEvents = st
+	}
 	return opts, nil
 }
+
+const calendarEventsMCPMinAPISchemaVersion = "4.3.0"
 
 // messageTagsMinAPISchemaVersion adds native email tag reads and edits.
 const messageTagsMinAPISchemaVersion = "3.15.0"
@@ -313,6 +318,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		log.Warn("meeting tools disabled because the daemon capability probe failed", "error", capabilityErr)
 	} else if daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingsMinAPISchemaVersion) {
 		opts.Meetings = st
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarEventsMinAPISchemaVersion) {
+		opts.CalEvents = st
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarControlMinAPISchemaVersion) {
 		opts.Calendar = st

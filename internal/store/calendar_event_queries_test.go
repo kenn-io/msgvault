@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 	"testing"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
 func calendarWindow(t *testing.T, st *Store, from, to string) ([]CalendarEventRow, error) {
@@ -99,6 +101,28 @@ func TestCalendarEventRowsHardSeriesCap(t *testing.T) {
 	requirements.NoError(err)
 	_, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.Add(time.Hour))
 	requirements.NoError(err)
+}
+
+func TestCalendarEventRowsSourceScope(t *testing.T) {
+	requirements := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	first, firstID := calendarFixture(t, st, "one", calendarRaw)
+	other, err := st.GetOrCreateSource("gcal", "other@example.test")
+	requirements.NoError(err)
+	_, err = st.PersistMessage(&MessagePersistData{
+		Message:      &Message{SourceID: other.ID, SourceMessageID: "two", MessageType: "calendar_event", Subject: sql.NullString{String: "Example event", Valid: true}},
+		Conversation: &ConversationPersistData{SourceConversationID: "two", ConversationType: "calendar", Title: "Example event"},
+		RawMIME:      []byte(calendarRaw), RawFormat: "gcal_json",
+		Metadata: &sql.NullString{String: `{"calendar_id":"calendar@example.com"}`, Valid: true},
+	})
+	requirements.NoError(err)
+	ctx, release, err := st.BeginReadSnapshotContext(sourcescope.WithSourceIDs(t.Context(), []int64{first.Message.SourceID}))
+	requirements.NoError(err)
+	defer release()
+	rows, err := queryCalendarEventRowsWithinBudget(ctx, st.db, "1 = 1", nil, 1)
+	requirements.NoError(err)
+	requirements.Len(rows, 1)
+	assert.Equal(t, firstID, rows[0].MessageID)
 }
 
 func TestCalendarEventRowsBudgetRejectsBeforeDecoding(t *testing.T) {
