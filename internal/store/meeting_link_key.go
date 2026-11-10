@@ -25,13 +25,26 @@ func deriveMeetingLinkKey(content meetingcontent.Content) meetingLinkKey {
 	return key
 }
 
-func replaceMeetingLinkKey(ctx context.Context, tx *loggedTx, messageID int64, key meetingLinkKey) error {
+func (s *Store) replaceMeetingLinkKey(ctx context.Context, tx *loggedTx, messageID int64, key meetingLinkKey) error {
+	old, err := memberLinkKey(ctx, tx, messageID)
+	if err != nil {
+		return fmt.Errorf("read meeting key: %w", err)
+	}
+	sameTime := old.ScheduledAt == nil && key.ScheduledAt == nil || old.ScheduledAt != nil && key.ScheduledAt != nil && old.ScheduledAt.Equal(*key.ScheduledAt)
+	if old.Kind == key.Kind && old.Value == key.Value && sameTime {
+		return nil
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_key WHERE message_id = ?`, messageID); err != nil {
 		return fmt.Errorf("clear meeting key: %w", err)
 	}
 	if key.Value != "" || key.ScheduledAt != nil {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO meeting_link_key(message_id,kind,value,scheduled_at) VALUES (?,?,?,?)`, messageID, key.Kind, key.Value, key.ScheduledAt); err != nil {
 			return fmt.Errorf("write meeting key: %w", err)
+		}
+	}
+	if !s.IsPostgreSQL() {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO cache_related_change_journal(dataset,message_id) VALUES ('meeting_links',?)`, messageID); err != nil {
+			return fmt.Errorf("journal meeting key: %w", err)
 		}
 	}
 	return nil

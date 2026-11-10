@@ -7,7 +7,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
 func TestBuildCacheExportsHiddenText(t *testing.T) {
@@ -24,7 +23,7 @@ func TestBuildCacheExportsHiddenText(t *testing.T) {
 			dir := setupTestSQLite(t)
 			dbPath := filepath.Join(dir, "test.db")
 			analyticsDir := filepath.Join(dir, "analytics")
-			db, err := sql.Open(sqliteutil.DriverName(), dbPath)
+			db, err := sql.Open("sqlite3", dbPath)
 			require.NoError(err)
 			_, err = db.Exec(`UPDATE messages SET hidden_text_present = TRUE WHERE id = 1`)
 			require.NoError(err)

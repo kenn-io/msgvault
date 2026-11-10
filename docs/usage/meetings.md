@@ -50,7 +50,7 @@ aggregates remain email-only unless you choose another message type.
 
 ## Connect notes to calendar events
 
-Use `msgvault meetings links <message-id>` to see a note's linked calendar events, with their references, titles, and times, followed by the IDs of every note in the record. Pass `evt:<id>[@occurrence key]` instead to list the notes linked to a calendar occurrence. Exact calendar identifiers connect Granola and Twenty notes automatically when the archived evidence identifies one meeting; copies with the same identity share one row. Granola automatic links also require the note owner's email to match a Google Calendar source mailbox. When the note records a scheduled start, a copy starting at that time takes precedence. If no copy matches that time, or the note has no scheduled start, the lowest message ID wins.
+Use `msgvault meetings links <message-id>` to see a note's linked calendar events, with their references, titles, and times, followed by the IDs of every note in the record. Pass `evt:<id>[@occurrence key]` instead to list the notes linked to a calendar occurrence. Exact calendar identifiers connect Granola and Twenty notes automatically when the archived evidence identifies one meeting; copies with the same identity share one row. Granola automatic links require an exact Google event ID without conflicting archived identities. When the note records a scheduled start, a copy starting at that time takes precedence. If no copy matches that time, or the note has no scheduled start, the lowest message ID wins.
 
 ```bash
 msgvault meetings links 42
@@ -282,7 +282,7 @@ promoted profile. The attendee becomes a participant, and the next activity
 update (hourly, or `msgvault activity build`) adds the meeting to the person's
 timeline, relationships, and last-contact information.
 
-Transcripts count as attended meetings. Calendar events without a transcript don't count. Transcript copies sharing an exact occurrence identity count once, including across selected sources. A shared iCalendar UID and scheduled start, or a shared Google occurrence ID, can identify copies even when the event was never synced. If the series remains archived, its UID connects Google instance IDs to UID-based copies after a recurrence changes. A saved link takes precedence over unmatched source evidence, and a saved split applies only to its chosen occurrence. A transcript linked to two occurrences counts once for each. Counts update on the next scheduled cache refresh or when you run `msgvault build-cache`. Recurrence or UID edits take effect on the next full cache rebuild.
+Transcripts count as attended meetings. Calendar events without a transcript don't count. Transcript copies sharing an exact occurrence identity count once, including across selected sources. A shared iCalendar UID and scheduled start, or a shared Google occurrence ID, can identify copies even when the event was never synced. If the series remains archived, its UID connects Google instance IDs to UID-based copies after a recurrence changes. A saved link and separate source evidence can count different occurrences; a saved split excludes only its chosen occurrence. A transcript linked to two occurrences counts once for each. Counts update on the next scheduled cache refresh or when you run `msgvault build-cache`. Recurrence or UID edits take effect on the next full cache rebuild.
 
 Some sources also know that several emails and phone numbers are the same
 human. msgvault links those identities through the source's stable identifier,

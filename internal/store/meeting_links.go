@@ -38,10 +38,17 @@ type linkOccurrence struct {
 	Start, End time.Time
 }
 
+type meetingProspective struct {
+	memberID   int64
+	occurrence linkOccurrence
+}
+
 type reboundReader struct {
 	loggedReader
 
 	dialect     Dialect
+	countOnly   bool
+	prospective *meetingProspective
 	expansions  map[meetingExpansionKey]meetingReadResult[[]linkOccurrence]
 	occurrences map[OccurrenceRef]meetingReadResult[linkOccurrence]
 }
@@ -335,8 +342,13 @@ func conflictingGoogleMeetingRows(rows []CalendarEventRow) bool {
 }
 
 func (s *Store) automaticMeetingOccurrences(ctx context.Context, r reboundReader, key meetingLinkKey, budget *int) ([]linkOccurrence, error) {
+	matches, _, err := s.automaticMeetingEvidence(ctx, r, key, budget)
+	return matches, err
+}
+
+func (s *Store) automaticMeetingEvidence(ctx context.Context, r reboundReader, key meetingLinkKey, budget *int) ([]linkOccurrence, string, error) {
 	if key.Kind != "google_event_id" && key.Kind != "ical_uid" {
-		return nil, nil
+		return nil, "", nil
 	}
 	predicate, args := s.calendarUIDPredicate(), []any{key.Value}
 	base, instance, _ := calrecur.ParseInstanceID(key.Value)
@@ -350,12 +362,25 @@ func (s *Store) automaticMeetingOccurrences(ctx context.Context, r reboundReader
 	} else {
 		predicate += ` AND e.kind != 'exception'`
 	}
-	rows, err := meetingEventRows(ctx, r, predicate, args, budget)
+	var rows []CalendarEventRow
+	var err error
+	if r.countOnly {
+		rows, err = queryMeetingCountCandidates(ctx, r, predicate, args, budget)
+	} else {
+		rows, err = meetingEventRows(ctx, r, predicate, args, budget)
+	}
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if key.Kind == "google_event_id" && conflictingGoogleMeetingRows(rows) {
-		return nil, nil
+		return nil, "", nil
+	}
+	var source string
+	if r.countOnly {
+		source, err = sourceMeetingCountKey(key, rows)
+		if err != nil {
+			return nil, "", err
+		}
 	}
 	var out []linkOccurrence
 candidatesLoop:
@@ -378,7 +403,7 @@ candidatesLoop:
 				continue
 			}
 			if err != nil {
-				return nil, err
+				return nil, "", err
 			}
 			candidates = append(candidates, o)
 		} else if row.Event.Kind == meetingSeriesKind {
@@ -388,13 +413,13 @@ candidatesLoop:
 			// PostgreSQL rounds a nanosecond window to zero; compare exact starts below.
 			candidates, err = expandMeetingSeries(ctx, r, row, *key.ScheduledAt, key.ScheduledAt.Add(time.Second), budget)
 			if err != nil && !errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
-				return nil, err
+				return nil, "", err
 			}
 			original := calrecur.Identity{Instant: *key.ScheduledAt}
 			if row.Event.AllDay {
 				zone, err := calendarEventZone(row.Event)
 				if err != nil {
-					return nil, err
+					return nil, "", err
 				}
 				original = calrecur.Identity{AllDay: true, Date: key.ScheduledAt.In(zone).Format(time.DateOnly)}
 			}
@@ -403,7 +428,7 @@ candidatesLoop:
 				candidates = slices.DeleteFunc(candidates, func(candidate linkOccurrence) bool { return candidate.Ref == o.Ref })
 				candidates = append(candidates, o)
 			} else if !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
-				return nil, err
+				return nil, "", err
 			}
 		} else {
 			o, err := resolveMeetingOccurrence(ctx, r, OccurrenceRef{MessageID: row.MessageID}, budget)
@@ -411,18 +436,18 @@ candidatesLoop:
 				continue
 			}
 			if err != nil {
-				return nil, err
+				return nil, "", err
 			}
 			candidates = append(candidates, o)
 		}
 		for _, o := range candidates {
 			if key.Kind == "google_event_id" && len(out) > 0 && o.Identity != out[0].Identity {
-				return nil, nil
+				return nil, "", nil
 			}
 			if key.Kind == "ical_uid" && row.Event.Kind != "single" {
 				starts, _, err := meetingCopyStarts(ctx, r, o, nil, budget)
 				if err != nil {
-					return nil, err
+					return nil, "", err
 				}
 				if key.ScheduledAt == nil || !slices.ContainsFunc(starts, func(at any) bool {
 					instant, ok := at.(time.Time)
@@ -443,10 +468,10 @@ candidatesLoop:
 	}
 	for _, o := range out {
 		if o.Identity != out[0].Identity {
-			return nil, nil
+			return nil, "", nil
 		}
 	}
-	return out, nil
+	return out, source, nil
 }
 
 type meetingLinkDecision struct {
@@ -474,25 +499,24 @@ func savedOccurrence(ctx context.Context, r reboundReader, ref OccurrenceRef, bu
 	return o, err == nil, err
 }
 
-func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, memberID int64, budget *int) ([]linkOccurrence, []meetingIdentity, map[meetingIdentity]bool, bool, error) {
+func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, memberID int64, budget *int) ([]linkOccurrence, []meetingIdentity, map[meetingIdentity]bool, string, error) {
 	decisions, err := readMeetingLinkDecisions(ctx, r, memberID)
 	if err != nil {
-		return nil, nil, nil, false, err
+		return nil, nil, nil, "", err
+	}
+	if r.prospective != nil && r.prospective.memberID == memberID {
+		decisions = append(decisions, meetingLinkDecision{Ref: r.prospective.occurrence.Ref, Decision: "link"})
 	}
 	var out []linkOccurrence
 	var stale []meetingIdentity
-	hasLink := false
 	splits := map[meetingIdentity]bool{}
 	for _, d := range decisions {
-		if d.Decision == "link" {
-			hasLink = true
-		}
 		o, current, err := savedOccurrence(ctx, r, d.Ref, budget)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
 		if err != nil {
-			return nil, nil, nil, false, err
+			return nil, nil, nil, "", err
 		}
 		if d.Decision == "split" {
 			splits[o.Identity] = true
@@ -502,21 +526,24 @@ func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, m
 			stale = append(stale, o.Identity)
 		}
 	}
-	matches, err := s.memberAutomaticOccurrences(ctx, r, memberID, budget)
+	matches, source, err := s.memberAutomaticOccurrences(ctx, r, memberID, budget)
 	if err != nil {
-		return nil, nil, nil, false, err
+		return nil, nil, nil, "", err
 	}
 	out = slices.DeleteFunc(append(out, matches...), func(o linkOccurrence) bool { return splits[o.Identity] })
 	stale = slices.DeleteFunc(stale, func(id meetingIdentity) bool { return splits[id] })
-	return uniqueMeetingOccurrences(out), stale, splits, hasLink || len(matches) > 0, nil
+	if len(matches) > 0 {
+		source = ""
+	}
+	return uniqueMeetingOccurrences(out), stale, splits, source, nil
 }
 
-func (s *Store) memberAutomaticOccurrences(ctx context.Context, r reboundReader, memberID int64, budget *int) ([]linkOccurrence, error) {
+func (s *Store) memberAutomaticOccurrences(ctx context.Context, r reboundReader, memberID int64, budget *int) ([]linkOccurrence, string, error) {
 	key, err := memberLinkKey(ctx, r, memberID)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return s.automaticMeetingOccurrences(ctx, r, key, budget)
+	return s.automaticMeetingEvidence(ctx, r, key, budget)
 }
 
 func (s *Store) meetingReader() reboundReader {

@@ -30,6 +30,7 @@ func (s *Store) MeetingCountKeysContext(ctx context.Context) (map[int64][]string
 	}
 	defer release()
 	r := s.meetingReader()
+	r.countOnly = true
 
 	rows, err := r.QueryContext(ctx, `SELECT m.id FROM messages m
  WHERE m.message_type = 'meeting_transcript' AND m.deleted_at IS NULL
@@ -71,11 +72,10 @@ func (s *Store) MeetingCountKeysContext(ctx context.Context) (map[int64][]string
 	return keys, nil
 }
 
-// meetingCountOccurrences preserves current matches and saved choices, with
-// exact source evidence as a fallback when no occurrence or saved link matches.
+// meetingCountOccurrences combines saved choices and independently proved source evidence.
 func (s *Store) meetingCountOccurrences(ctx context.Context, r reboundReader, memberID int64, budget *int) ([]string, error) {
 	r = r.withMeetingCache()
-	matches, stale, splits, hasMatch, err := s.meetingMemberOccurrences(ctx, r, memberID, budget)
+	matches, stale, splits, source, err := s.meetingMemberOccurrences(ctx, r, memberID, budget)
 	if err != nil {
 		return nil, err
 	}
@@ -86,68 +86,42 @@ func (s *Store) meetingCountOccurrences(ctx context.Context, r reboundReader, me
 	for _, identity := range stale {
 		out = append(out, identity.countKey())
 	}
-	if !hasMatch {
-		key, err := memberLinkKey(ctx, r, memberID)
-		if err != nil {
-			return nil, err
+	for identity := range splits {
+		if identity.countKey() == source {
+			source = ""
+			break
 		}
-		fallback, err := s.unmatchedMeetingCountKey(ctx, r, key, budget)
-		if err != nil {
-			return nil, err
-		}
-		for identity := range splits {
-			if identity.countKey() == fallback {
-				fallback = ""
-				break
-			}
-		}
-		if fallback != "" {
-			out = append(out, fallback)
-		}
+	}
+	if source != "" {
+		out = append(out, source)
 	}
 	slices.Sort(out)
 	return slices.Compact(out), nil
 }
 
-// unmatchedMeetingCountKey uses a series only to canonicalize exact evidence.
+// sourceMeetingCountKey uses a series only to canonicalize exact evidence.
 // The transcript proves attendance even when recurrence no longer includes it.
-func (s *Store) unmatchedMeetingCountKey(ctx context.Context, r reboundReader, key meetingLinkKey, budget *int) (string, error) {
-	var predicate, fallback string
-	var args []any
+func sourceMeetingCountKey(key meetingLinkKey, rows []CalendarEventRow) (string, error) {
+	var fallback string
 	var instance calrecur.Identity
 	switch key.Kind {
 	case "google_event_id":
-		if key.Value == "" {
-			return "", nil
-		}
 		base, original, ok := calrecur.ParseInstanceID(key.Value)
 		if !ok {
-			if key.ScheduledAt == nil {
+			if key.Value == "" || key.ScheduledAt == nil {
 				return "", nil
 			}
 			base, original = key.Value, calrecur.Identity{Instant: *key.ScheduledAt}
 		}
 		instance = original
 		fallback = fmt.Sprintf("gcal:%q/%s", base, instance.Key())
-		predicate, args = `e.provider_event_id IN (?, ?) AND e.kind IN ('single', 'series')`, []any{key.Value, base}
 	case "ical_uid":
 		if key.Value == "" || key.ScheduledAt == nil {
 			return "", nil
 		}
 		instance = calrecur.Identity{Instant: *key.ScheduledAt}
 		fallback = (meetingIdentity{ICalUID: key.Value, OccurrenceKey: instance.Key()}).countKey()
-		predicate, args = s.calendarUIDPredicate(), []any{key.Value}
 	default:
-		return "", nil
-	}
-	if key.Kind == "ical_uid" {
-		predicate += ` AND e.kind = 'series'`
-	}
-	rows, err := meetingEventRows(ctx, r, predicate, args, budget)
-	if err != nil {
-		return "", err
-	}
-	if key.Kind == "google_event_id" && conflictingGoogleMeetingRows(rows) {
 		return "", nil
 	}
 	var found []meetingIdentity

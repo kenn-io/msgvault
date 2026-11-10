@@ -72,13 +72,13 @@ func TestMeetingCountKeysOneTranscriptTwoOccurrences(t *testing.T) {
 		}},
 		{name: "mixed removed link", notes: copies, links: []string{"20270314T100000Z"}, steps: []step{
 			{seriesRaw: linkSeriesRaw, want: []string{"uid:weekly@example.org/20270314T100000Z", "uid:weekly@example.org/20270321T100000Z"}},
-			{seriesRaw: shortened, want: []string{"uid:weekly@example.org/20270314T100000Z"}},
-			{seriesRaw: unsupported, want: []string{"uid:weekly@example.org/20270314T100000Z"}},
+			{seriesRaw: shortened, want: []string{"uid:weekly@example.org/20270314T100000Z", "uid:weekly@example.org/20270321T100000Z"}},
+			{seriesRaw: unsupported, want: []string{"uid:weekly@example.org/20270314T100000Z", "uid:weekly@example.org/20270321T100000Z"}},
 		}},
 		{name: "mixed surviving link", notes: copies, links: []string{"20270307T100000Z"}, steps: []step{
 			{seriesRaw: linkSeriesRaw, want: []string{"uid:weekly@example.org/20270307T100000Z", "uid:weekly@example.org/20270321T100000Z"}},
-			{seriesRaw: shortened, want: []string{"uid:weekly@example.org/20270307T100000Z"}},
-			{seriesRaw: unsupported, want: []string{"uid:weekly@example.org/20270307T100000Z"}},
+			{seriesRaw: shortened, want: []string{"uid:weekly@example.org/20270307T100000Z", "uid:weekly@example.org/20270321T100000Z"}},
+			{seriesRaw: unsupported, want: []string{"uid:weekly@example.org/20270307T100000Z", "uid:weekly@example.org/20270321T100000Z"}},
 		}},
 		{name: "moved exception", notes: plain, links: []string{"20270314T100000Z"}, exception: true, steps: []step{
 			{want: []string{"uid:weekly@example.org/20270314T100000Z"}},
@@ -190,15 +190,16 @@ func TestMeetingCountKeysGoogleAcrossMailboxes(t *testing.T) {
 	assert.Equal([]string{"uid:single@example.org/"}, keys[note])
 }
 
-func TestMeetingCountKeysRejectsBroadEvidence(t *testing.T) {
+func TestMeetingCountKeysManyCalendarCopies(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	for i := range 201 {
 		id := fmt.Sprintf("copy-%d", i)
 		calendarFixture(t, st, id, singleLinkRaw(id, "crowded@example.org"))
 	}
-	projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"crowded@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
-	_, err := st.MeetingCountKeysContext(t.Context())
-	require.ErrorIs(t, err, ErrQueryTooBroad)
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"crowded@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
+	keys, err := st.MeetingCountKeysContext(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"uid:crowded@example.org/"}, keys[note])
 }
 
 func TestMeetingCountKeysGoogleCalendarCollisions(t *testing.T) {
@@ -238,4 +239,15 @@ func TestMeetingCountKeysGoogleCalendarCollisions(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMeetingCountKeysMovedCalendarCopy(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	calendarFixture(t, st, "master", linkSeriesRaw)
+	calendarFixture(t, st, "copy", linkSeriesRaw, "copy@example.com")
+	calendarFixture(t, st, "moved", `{"id":"series_20270314T100000Z","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T12:00:00Z"},"end":{"dateTime":"2027-03-15T13:00:00Z"}}`, "copy@example.com")
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-15T12:00:00Z"}}`)
+	keys, err := st.MeetingCountKeysContext(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"uid:weekly@example.org/20270314T100000Z"}, keys[note])
 }
