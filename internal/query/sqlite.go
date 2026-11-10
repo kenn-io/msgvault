@@ -943,9 +943,7 @@ func senderMatchSQL(filter MessageFilter, limit int) (string, []any) {
 		return "", nil
 	}
 	address := identityindex.SenderAddressMatchExpr("mr_filter_from", "p_filter_from")
-	directAddress := func(messageID string) string {
-		return `((p_direct_sender.email_address = ? OR p_direct_sender.phone_number = ?) AND ` + identityindex.RelayAbsentExpr(messageID, "message_recipients") + `)`
-	}
+	directAddress := `((p_direct_sender.email_address = ? OR p_direct_sender.phone_number = ?) AND ` + identityindex.RelayAbsentExpr("m.id", "message_recipients") + `)`
 	fromName, directName := "", ""
 	fromArgs := []any{strings.ToLower(filter.Sender), filter.Sender, filter.Sender}
 	directArgs := []any{filter.Sender, filter.Sender}
@@ -979,7 +977,7 @@ func senderMatchSQL(filter MessageFilter, limit int) (string, []any) {
 	return `(EXISTS (SELECT 1 FROM message_recipients mr_filter_from
   JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
   WHERE mr_filter_from.message_id = m.id AND mr_filter_from.recipient_type = 'from' AND ` + address + fromName + `)
-  OR (EXISTS (SELECT 1 FROM participants p_direct_sender WHERE p_direct_sender.id = m.sender_id AND ` + directAddress("m.id") + directName + `)))`, append(fromArgs, directArgs...)
+  OR (EXISTS (SELECT 1 FROM participants p_direct_sender WHERE p_direct_sender.id = m.sender_id AND ` + directAddress + directName + `)))`, append(fromArgs, directArgs...)
 }
 
 // senderCandidateSQL lists every sender message ID for a negative limit. A positive limit instead

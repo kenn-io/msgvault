@@ -112,6 +112,7 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 	if err != nil {
 		return fmt.Errorf("ensure participants: %w", err)
 	}
+
 	var senderID sql.NullInt64
 	if relayType != "" {
 		id, err := st.EnsureParticipantByIdentifierContext(ctx, relayType, relayValue, strings.TrimSpace(parsed.From[0].Name))

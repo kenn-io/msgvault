@@ -114,13 +114,12 @@ func (s *Syncer) RepairMessage(ctx context.Context, request RepairRequest) (_ *R
 		return nil, err
 	}
 	guard := target.MessageIdentityGuard
-	build := func(participantIDs []int64) *store.MessagePersistData {
-		persist := buildPreparedSnapshot(prepared, participantIndex, participantIDs, attachmentWrites)
-		persist.LabelRefs = labelRefs
-		return persist
-	}
 	messageID, err := s.store.PersistRepairMessageWithParticipantsContext(
-		ctx, guard, participants, build,
+		ctx, guard, participants, func(participantIDs []int64) *store.MessagePersistData {
+			persist := buildPreparedSnapshot(prepared, participantIndex, participantIDs, attachmentWrites)
+			persist.LabelRefs = labelRefs
+			return persist
+		},
 	)
 	if err != nil {
 		return nil, err

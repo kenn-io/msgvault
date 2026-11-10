@@ -2164,7 +2164,8 @@ func (s *Store) PersistMessageContext(ctx context.Context, data *MessagePersistD
 		return 0, errors.New("persist message requires a message")
 	}
 	return s.persistMessageWithParticipantsTransaction(
-		ctx, attributionLockForMessage(data.Message.SourceID, data.Message.MessageType), nil, nil, func([]int64) *MessagePersistData { return data }, nil,
+		ctx, attributionLockForMessage(data.Message.SourceID, data.Message.MessageType),
+		nil, nil, func([]int64) *MessagePersistData { return data }, nil,
 		func(ctx context.Context, tx *loggedTx, data *MessagePersistData, id int64) error {
 			q := boundQuerier{ctx: ctx, q: tx}
 			if data.MIMEAttachmentReplacement != nil {
@@ -5457,78 +5458,75 @@ func (s *Store) EnsureParticipantByIdentifierContext(ctx context.Context, identi
 }
 
 func (s *Store) ensureParticipantByIdentifierTx(ctx context.Context, tx *loggedTx, identifierType, identifierValue, displayName string) (participantID int64, err error) {
-	err = func() error {
-		err = tx.QueryRowContext(ctx, `
-			SELECT participant_id FROM participant_identifiers
-			WHERE identifier_type = ? AND identifier_value = ?
-		`, identifierType, identifierValue).Scan(&participantID)
-		if err == nil {
-			if displayName != "" {
-				result, err := tx.ExecContext(ctx, `
-					UPDATE participants SET display_name = ?
-					WHERE id = ? AND (display_name IS NULL OR display_name = '')
-				`, displayName, participantID)
-				if err != nil {
-					return fmt.Errorf("backfill participant display name: %w", err)
-				}
-				changed, err := s.bumpParticipantDisplayNameRevisionIfChangedContext(ctx, tx, result)
-				if err != nil {
-					return err
-				}
-				if changed {
-					return s.invalidateParticipantPersonEnrichmentTx(
-						ctx, tx, participantID)
-				}
+	err = tx.QueryRowContext(ctx, `
+		SELECT participant_id FROM participant_identifiers
+		WHERE identifier_type = ? AND identifier_value = ?
+	`, identifierType, identifierValue).Scan(&participantID)
+	if err == nil {
+		if displayName != "" {
+			result, err := tx.ExecContext(ctx, `
+				UPDATE participants SET display_name = ?
+				WHERE id = ? AND (display_name IS NULL OR display_name = '')
+			`, displayName, participantID)
+			if err != nil {
+				return participantID, fmt.Errorf("backfill participant display name: %w", err)
 			}
-			return nil
+			changed, err := s.bumpParticipantDisplayNameRevisionIfChangedContext(ctx, tx, result)
+			if err != nil {
+				return participantID, err
+			}
+			if changed {
+				return participantID, s.invalidateParticipantPersonEnrichmentTx(
+					ctx, tx, participantID)
+			}
 		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("lookup participant identifier: %w", err)
-		}
+		return participantID, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return participantID, fmt.Errorf("lookup participant identifier: %w", err)
+	}
 
-		now := s.dialect.Now()
-		if err := tx.QueryRowContext(ctx, fmt.Sprintf(`
-			INSERT INTO participants (display_name, created_at, updated_at)
-			VALUES (?, %s, %s)
-			RETURNING id
-		`, now, now), displayName).Scan(&participantID); err != nil {
-			return fmt.Errorf("insert participant: %w", err)
-		}
-		if err := s.bumpParticipantDisplayNameRevisionContext(ctx, tx); err != nil {
-			return err
-		}
-		classificationColumns, err := s.participantIdentifierClassificationColumnsTx(ctx, tx)
+	now := s.dialect.Now()
+	if err := tx.QueryRowContext(ctx, fmt.Sprintf(`
+		INSERT INTO participants (display_name, created_at, updated_at)
+		VALUES (?, %s, %s)
+		RETURNING id
+	`, now, now), displayName).Scan(&participantID); err != nil {
+		return participantID, fmt.Errorf("insert participant: %w", err)
+	}
+	if err := s.bumpParticipantDisplayNameRevisionContext(ctx, tx); err != nil {
+		return participantID, err
+	}
+	classificationColumns, err := s.participantIdentifierClassificationColumnsTx(ctx, tx)
+	if err != nil {
+		return participantID, err
+	}
+	if !classificationColumns {
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO participant_identifiers (
+				participant_id, identifier_type, identifier_value, display_value, is_primary
+			) VALUES (?, ?, ?, ?, TRUE)
+		`, participantID, identifierType, identifierValue, identifierValue)
 		if err != nil {
-			return err
+			return participantID, fmt.Errorf("insert participant identifier: %w", err)
 		}
-		if !classificationColumns {
-			_, err = tx.ExecContext(ctx, `
-				INSERT INTO participant_identifiers (
-					participant_id, identifier_type, identifier_value, display_value, is_primary
-				) VALUES (?, ?, ?, ?, TRUE)
-			`, participantID, identifierType, identifierValue, identifierValue)
-			if err != nil {
-				return fmt.Errorf("insert participant identifier: %w", err)
-			}
-		} else {
-			serviceSlug, scopeKind, scopeValue := participantIdentifierClassificationValues(
-				identifierType, identifierValue,
-			)
-			_, err = tx.ExecContext(ctx, `
-				INSERT INTO participant_identifiers (
-					participant_id, identifier_type, identifier_value, display_value,
-					is_primary, service_id, scope_kind, scope_value
-				) VALUES (?, ?, ?, ?, TRUE,
-					(SELECT id FROM communication_services WHERE slug = ?), ?, ?)
-			`, participantID, identifierType, identifierValue, identifierValue,
-				serviceSlug, scopeKind, scopeValue)
-			if err != nil {
-				return fmt.Errorf("insert participant identifier: %w", err)
-			}
+	} else {
+		serviceSlug, scopeKind, scopeValue := participantIdentifierClassificationValues(
+			identifierType, identifierValue,
+		)
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO participant_identifiers (
+				participant_id, identifier_type, identifier_value, display_value,
+				is_primary, service_id, scope_kind, scope_value
+			) VALUES (?, ?, ?, ?, TRUE,
+				(SELECT id FROM communication_services WHERE slug = ?), ?, ?)
+		`, participantID, identifierType, identifierValue, identifierValue,
+			serviceSlug, scopeKind, scopeValue)
+		if err != nil {
+			return participantID, fmt.Errorf("insert participant identifier: %w", err)
 		}
-		return s.bumpParticipantIdentifierRevision(ctx, tx)
-	}()
-	return participantID, err
+	}
+	return participantID, s.bumpParticipantIdentifierRevision(ctx, tx)
 }
 
 // UpdateParticipantDisplayNameByPhone updates the display_name for an existing
