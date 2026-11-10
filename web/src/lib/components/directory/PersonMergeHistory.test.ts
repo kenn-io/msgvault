@@ -217,7 +217,7 @@ describe('PersonMergeHistory', () => {
     value.participants = value.participants.filter(participant => participant.origin_side === 'survivor');
     value.labels.participant_ids = value.labels.participant_ids.filter(id => id === 702);
     value.labels.addresses = value.labels.addresses.filter(address => address.participant_id === 702);
-    value.labels.profiles[1] = { ...value.labels.profiles[1], display_name: 'Curated Guest', contact_points: [
+    value.labels.profiles[1] = { ...value.labels.profiles[1], participant_ids: [], display_name: 'Curated Guest', contact_points: [
       { identity_key: 'curated-key', address_kind: 'email', original_value: 'curated@example.org' },
       { identity_key: 'phone-key', address_kind: 'phone', original_value: '+12025550144' },
     ] };

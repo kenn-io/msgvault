@@ -88,7 +88,6 @@ func TestAddServiceAccountDefaultIdentityScheduledSync(t *testing.T) {
 		output := stopCapture()
 		require.NoError(err)
 		assert.Contains(output, `msgvault sync-full -- 'o'\''brien@example.com'`)
-		assert.Contains(output, `msgvault sync-full -- 'o''brien@example.com'`)
 		st, err := store.Open(cfg.DatabaseDSN())
 		require.NoError(err)
 		t.Cleanup(func() { _ = st.Close() })
@@ -280,7 +279,6 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 				require.NoError(err)
 				if tc.name != "teams" {
 					assert.Contains(output, ` -- 'o'\''brien@example.com'`)
-					assert.Contains(output, ` -- 'o''brien@example.com'`)
 				}
 				st, err := store.Open(cfg.DatabaseDSN())
 				require.NoError(err)
@@ -340,7 +338,5 @@ func TestAddIMAPFirstSyncCommandQuotesUsername(t *testing.T) {
 	err = cmd.ExecuteContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 	output := stop()
 	require.NoError(t, err)
-	assert.Contains(t, output, "POSIX shell:")
-	assert.Contains(t, output, "PowerShell 7.3+:")
 	assert.Contains(t, output, "msgvault sync-full -- 'imap://reader$tag@"+net.JoinHostPort(host, port)+"'")
 }

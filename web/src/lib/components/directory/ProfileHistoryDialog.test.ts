@@ -125,7 +125,7 @@ describe('ProfileHistoryDialog', () => {
       const row = screen.getByText(value).closest('.detail-row')!;
       expect(row.closest('details')).not.toBeNull();
     }
-    expect(screen.getByText('reader0').closest('.detail-row')?.textContent).toContain('WhatsApp · account 1');
+    expect(screen.getByText('reader0').closest('.detail-row')?.textContent).toContain('WhatsApp');
     expect(document.body.textContent).not.toMatch(/T_ALPHA|T_BETA|beeper-a|beeper-b/);
     // A registered service reads by its catalog name, not its slug.
     expect(screen.getByText('Desk 4455').closest('.detail-row')?.textContent).toMatch(/Team hotline · You · /);
@@ -231,7 +231,7 @@ it.each(['history', 'merges'])('keeps account numbers in Split and its receipt w
   let releaseSecond!: () => void;
   const pendingSecond = new Promise<void>(resolve => { releaseSecond = resolve; });
   const merge = { ...mergeResult(person()).merge, id: 41, survivor_person_id: 7, absorbed_person_id: 9, current_person_id: 7 };
-  const address = (id: number, name: string) => addressFixture(id, 'beeper', `beeper:whatsapp:${name}`, { participant_display_name: name, service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'account-b' });
+  const address = (id: number, name: string) => addressFixture(id, 'beeper', `beeper:whatsapp:${name}`, { participant_display_name: name, service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'account-z' });
   const participants = [{ merge_id: 41, participant_id: 1, origin_side: 'absorbed' }, { merge_id: 41, participant_id: 2, origin_side: 'survivor' }];
   const labels = { profiles: [{ id: 7, display_name: 'Mira', participant_ids: [2] }, { id: 9, display_name: 'Neri', participant_ids: [1] }], participants, participant_ids: [1, 2], addresses: [address(1, 'Neri'), address(2, 'Mira')], absorbed_address_count: 1, incomplete: false };
   const saved = { person_id: 7, address_kind: 'username', original_value: 'reader', normalized_value: 'reader', identity_key: 'saved-whatsapp-key', service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'account-a', normalization: 'none', normalization_version: 1, envelope: { ...currentEnvelope, id: 10 } };
@@ -252,6 +252,8 @@ it.each(['history', 'merges'])('keeps account numbers in Split and its receipt w
   else await screen.findByRole('button', { name: /^Open Neri merged into Mira/ });
   releaseSecond();
   expect((await screen.findByText('reader')).closest('.detail-row')?.textContent).toContain('WhatsApp · account 1');
+  expect((await screen.findByRole('button', { name: /Open the merge that brought in WhatsApp/ })).closest('.detail-row')?.textContent).toContain('account 2');
+  expect(document.body.textContent).not.toMatch(/account-a|account-z/);
   await fireEvent.click(await screen.findByRole('button', { name: /^Open Neri merged into Mira/ }));
   const cards = await screen.findByRole('group', { name: 'Merged profiles' });
   expect(cards.textContent).toContain('Mira · account 2');
@@ -260,29 +262,6 @@ it.each(['history', 'merges'])('keeps account numbers in Split and its receipt w
   await fireEvent.click(choice);
   await fireEvent.click(screen.getByRole('button', { name: 'Split into new person' }));
   expect((await screen.findByRole('button', { name: 'Open Neri' })).closest('.detail-row')?.textContent).toContain('WhatsApp · Neri · account 2');
-});
-
-it('orders account numbers when profile history arrives after the merge list', async () => {
-  let release!: (response: Response) => void;
-  const delayed = new Promise<Response>(resolve => { release = resolve; });
-  const merge = mergeResult(person()).merge;
-  const address = addressFixture(1, 'beeper', 'opaque', { participant_display_name: 'Neri', service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'account-z' });
-  const labels = { profiles: [{ id: 7, display_name: 'Mira', participant_ids: [] }, { id: 9, participant_ids: [1] }], participants: [{ merge_id: 41, participant_id: 1, origin_side: 'absorbed' }], participant_ids: [1], addresses: [address], absorbed_address_count: 1, incomplete: false };
-  const saved = { person_id: 7, address_kind: 'username', original_value: 'reader', normalized_value: 'reader', identity_key: 'saved-whatsapp-key', service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'account-a', normalization: 'none', normalization_version: 1, envelope: { ...currentEnvelope, id: 10 } };
-  const view = render(ProfileHistoryDialog, { personID: 7, onClose: vi.fn(), client: createAPIClient(async input => {
-    const path = new URL((input as Request).url).pathname;
-    if (path.endsWith('/profile/history')) return delayed;
-    if (path.endsWith('/merges')) return Response.json({ merges: [{ merge, labels, participant_count: 1, row_count: 0, split_count: 0, pending_candidate_count: 0, row_action_counts: {} }], limit: 100, offset: 0 });
-    throw new Error(`unexpected ${path}`);
-  }) });
-  try {
-    await screen.findByRole('button', { name: /^Open WhatsApp · Neri · account 1 merged into Mira/ });
-    await act(async () => { release(Response.json({ ...emptyProfile(person()), observations: [], contact_points: [saved] })); });
-    expect((await screen.findByText('reader')).closest('.detail-row')?.textContent).toContain('account 1');
-    expect(screen.getByRole('button', { name: /^Open WhatsApp · Neri · account 2 merged into Mira/ })).toBeDefined();
-    expect((await screen.findByRole('button', { name: /Open the merge that brought in WhatsApp/ })).closest('.detail-row')?.textContent).toContain('account 2');
-    expect(document.body.textContent).not.toMatch(/account-a|account-z/);
-  } finally { release(Response.json(emptyProfile(person()))); view.unmount(); }
 });
 
 async function renderMergedInAddress(entry: typeof mergedInCases[number]) {

@@ -117,7 +117,7 @@ describe('PersonSplitSteps', () => {
     const choices = ['WhatsApp · Garden member (2)', 'WhatsApp · Garden member (1)'];
     // Reverse ID order so participant collision ordinals follow identity, rather than list position.
     const ids = [702, 701];
-    const addresses = ids.map(id => addressFixture(id, 'beeper', `beeper:8:whatsapp:3:${id}`, { participant_display_name: 'Garden member', service_slug: 'whatsapp', service_label: 'WhatsApp' }));
+    const addresses = ids.map(id => addressFixture(id, 'beeper', `beeper:5:acctA:3:${id}`, { participant_display_name: 'Garden member', service_slug: 'whatsapp', service_label: 'WhatsApp' }));
     const participants = ids.map(participant_id => ({ merge_id: 41, participant_id, origin_side: 'absorbed' }));
     const response = { ...result(false), source_person: person(12, 5, [702], 'Synthetic Source') };
     const fetchFn = vi.fn<typeof fetch>(async input => {
@@ -142,7 +142,7 @@ describe('PersonSplitSteps', () => {
     await act(() => controller.submitSplit());
     const receipt = screen.getByRole('button', { name: 'Open Synthetic Restored' }).closest('.detail-row')!;
     expect(receipt.textContent).toContain(choices[1]);
-    expect(document.body.textContent).not.toContain('beeper:8:');
+    expect(document.body.textContent).not.toContain('beeper:5:');
     expect(screen.getByRole('button', { name: 'Open Synthetic Source' }).closest('.detail-row')?.textContent).toContain(choices[0]);
     controller.destroy();
   });

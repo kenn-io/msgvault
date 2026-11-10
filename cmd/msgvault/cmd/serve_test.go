@@ -2018,7 +2018,7 @@ func TestStoreAPIAdapterRunCLISyncPacksOnlyAfterSubprocessSuccess(t *testing.T) 
 				},
 				func(_ context.Context, args []string, _ func(string, string) error) error {
 					runnerCalls++
-					assert.Equal([]string{"sync", "--", "alice@example.com"}, args)
+					assert.Equal(cliSyncSubprocessArgs(api.CLISyncRequest{Email: "alice@example.com"}), args)
 					assert.Nil(f.packedEntry(hash), "packing must follow subprocess success")
 					return tt.predecessorErr
 				},
@@ -2038,7 +2038,7 @@ func TestStoreAPIAdapterRunCLISyncPacksOnlyAfterSubprocessSuccess(t *testing.T) 
 	}
 }
 
-func TestCLISyncSubprocessArgsIncrementalIncludesFolderFilters(t *testing.T) {
+func TestCLISyncSubprocessArgs(t *testing.T) {
 	assert.Equal(t,
 		[]string{"sync", "--folder", "INBOX", "--folder", "Archive", "--skip-folder", "Trash", "--", "alice@example.com"},
 		cliSyncSubprocessArgs(api.CLISyncRequest{
@@ -2062,9 +2062,6 @@ func TestCLISyncSubprocessArgsIncrementalIncludesFolderFilters(t *testing.T) {
 			SkipFolders: []string{"Fold,er"},
 		}),
 	)
-}
-
-func TestCLISyncSubprocessArgsFullSeparatesMailbox(t *testing.T) {
 	assert.Equal(t, []string{"sync-full", "--", "-reader@example.org"},
 		cliSyncSubprocessArgs(api.CLISyncRequest{Full: true, Email: "-reader@example.org"}))
 }

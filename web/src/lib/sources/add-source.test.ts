@@ -12,15 +12,10 @@ const imap = commandKind('imap');
 
 describe('addSourceCommand', () => {
   it('builds account commands and requires every IMAP field', () => {
-    expect(addSourceCommand(gmail, { email: ' user@example.org ' }, 'posix')).toBe('msgvault add-account -- user@example.org');
+    expect(addSourceCommand(gmail, { email: ' -reader@example.org ' }, 'posix')).toBe('msgvault add-account -- -reader@example.org');
     expect(addSourceCommand(gmail, { email: '  ' }, 'posix')).toBeUndefined();
     expect(addSourceCommand(imap, { host: 'imap.example.com' }, 'posix')).toBeUndefined();
-    expect(addSourceCommand(commandKind('microsoft'), { email: 'user@example.org' }, 'cmd')).toBe('msgvault add-o365 -- user@example.org');
-  });
-
-  it.each(['gmail', 'microsoft'])('separates a hyphen-leading %s mailbox from flags', id => {
-    const command = addSourceCommand(commandKind(id), { email: '-reader@example.org' }, 'posix');
-    expect(command).toBe(`msgvault ${id === 'gmail' ? 'add-account' : 'add-o365'} -- -reader@example.org`);
+    expect(addSourceCommand(commandKind('microsoft'), { email: '-reader@example.org' }, 'cmd')).toBe('msgvault add-o365 -- -reader@example.org');
   });
 
   it('requires an IMAP server name without a port or spaces', () => {

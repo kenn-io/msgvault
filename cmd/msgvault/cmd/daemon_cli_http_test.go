@@ -336,7 +336,8 @@ func TestDaemonCLIArgsFromCobraForwardsCommandFlagsAndPositionals(t *testing.T) 
 				"--label=archive",
 				"--source-type=hey",
 				"--yes",
-				"alice@example.com",
+				"--",
+				"-reader@example.org",
 				"/tmp/export.mbox",
 			}, got, "daemon args")
 			return nil
@@ -349,31 +350,12 @@ func TestDaemonCLIArgsFromCobraForwardsCommandFlagsAndPositionals(t *testing.T) 
 		"--label", "inbox,archive",
 		"--source-type", "hey",
 		"--yes",
-		"alice@example.com",
+		"--",
+		"-reader@example.org",
 		"/tmp/export.mbox",
 	})
 
 	require.NoError(cmd.Execute(), "execute")
-}
-
-func TestDaemonCLIForwardsHyphenLeadingMailbox(t *testing.T) {
-	for _, commandName := range []string{"add-account", "add-o365"} {
-		t.Run(commandName, func(t *testing.T) {
-			var got []string
-			local := &cobra.Command{Use: commandName + " <email>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-				forwarded, err := daemonCLIArgsFromCobra(cmd, args)
-				if err != nil {
-					return err
-				}
-				remote := &cobra.Command{Use: commandName + " <email>", Args: cobra.ExactArgs(1), Run: func(_ *cobra.Command, args []string) { got = args }}
-				remote.SetArgs(forwarded[1:])
-				return remote.Execute()
-			}}
-			local.SetArgs([]string{"--", "-reader@example.org"})
-			require.NoError(t, local.Execute())
-			assert.Equal(t, []string{"-reader@example.org"}, got)
-		})
-	}
 }
 
 func TestRunDaemonCLICommandHTTPOmitsCallerCwdForConfiguredRemote(t *testing.T) {
