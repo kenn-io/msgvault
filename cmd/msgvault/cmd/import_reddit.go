@@ -27,6 +27,11 @@ entries and 256 MiB per CSV are accepted. Links are preserved; media are not
 downloaded. Unknown dates and senders remain unknown. Coverage depends on
 what Reddit supplied; complete lifetime history is not guaranteed.
 
+Content files run in name order. Schema errors, invalid UTF-8, read/quoting
+errors or oversized CSVs stop the run and name the file. Completed rows remain;
+later files are not read. Fix or move the named file, then re-run. Malformed
+statistics rows fail before archive writes.
+
 Re-running adds missing records and retains archived originals. After an
 interruption, re-run the directory to finish. No records are deleted.
 

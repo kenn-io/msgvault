@@ -520,14 +520,24 @@ msgvault search lantern --message-type reddit_pm
 
 The owner comes from `statistics.csv` (`account name`). Use `--me` if that is
 absent; conflicting accounts are refused before archive writes. Handles are
-case insensitive and accept `u/` or `/u/` prefixes. `--no-default-identity`
+case insensitive and accept `u/` or `/u/` prefixes. Supplied owners must contain
+ASCII letters, digits, underscores or hyphens after removing that prefix;
+invalid `--me` or nonempty statistics account values stop preflight. Empty
+statistics account values can use `--me`. `--no-default-identity`
 skips default identity creation.
 
 The importer reads top-level regular `chat_history.csv`, `messages.csv`,
 `messages_archive.csv`, `posts.csv`, and `comments.csv`, including `_N.csv`
 numbered splits. Extract ZIPs first. Reads are limited to 10,000 directory
 entries and 256 MiB per CSV. Unsupported files and skipped rows appear in the
-summary. CSV quoting/read errors stop the run and retain completed records.
+summary. Content files are processed in name order. Schema errors (empty or
+duplicate headers or missing essential columns), invalid UTF-8, read/quoting
+errors and files over 256 MiB stop the run with the filename. Essential columns
+are `message_id` and `message` for Chat, `id` and `body` for PMs/comments, and
+`id` and `title` for posts. Complete rows before the error are retained; later
+files are not read. Fix or move the named file, then re-run. Statistics are
+checked before archive writes; malformed statistics rows stop preflight with
+the filename and logical record number.
 
 Re-run the directory after interruption. Existing keys keep their archived
 originals; new keys are added, and absence never deletes messages. Chat and
@@ -536,8 +546,17 @@ are searchable as `reddit_post` and `reddit_comment` outside chat analytics.
 Unknown dates and senders stay unknown. Original column values, filenames,
 record numbers and supplied account/export-time evidence are archived.
 
-Links are preserved; no media is downloaded. Link/media-bearing rows are
-counted as not downloaded, without assuming every link is a missing attachment.
+A Chat `channel_url` groups records without inferring a conversation kind;
+`channel_name` supplies its title. Without an observed grouping key, a Chat row
+stays an isolated item. Post URLs are appended to displayed/searchable bodies;
+raw evidence retains the original cells. Comment parent/link values remain raw,
+without an invented cross-kind reply mapping.
+
+Links are preserved; no media is downloaded. The link/media counter counts each
+eligible scanned row once when `body` or `message` contains an HTTP(S) URL,
+a post `url` contains one, or `media` is nonempty. It includes duplicates and
+already archived records. Identifying `permalink`/`channel_url` values do not
+count. A counted URL does not imply a missing media attachment.
 Coverage depends on what Reddit supplied: no complete lifetime-history or
 removed-chat recovery guarantee. The separate legacy-PM archive UI's 1,000-PM
 cap does not establish an account-export limit. Format support follows the

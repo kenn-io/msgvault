@@ -2459,7 +2459,11 @@ msgvault import-reddit <export-dir>
 | `--no-default-identity` | `false` | Skip default identity creation |
 
 Reads at most 10,000 top-level entries and 256 MiB per CSV. Prints per-file
-coverage and partial results on failure. Re-run to add missing records while
+coverage, including already archived records, and partial results on failure.
+Content files run in name order. Schema errors, invalid UTF-8, read/quoting
+errors or oversized CSVs stop the run and name the file. Completed rows remain;
+later files are not read. Fix or move the named file, then re-run. Malformed
+statistics rows fail before archive writes. Re-run to add missing records while
 retaining originals. See [Reddit imports](usage/text-messages.md#import-reddit)
 for supported files, history kinds, unknown values, and media limits.
 

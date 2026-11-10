@@ -30,6 +30,13 @@ Structural research recorded 10 November 2026:
   `apps/reddit/src/lib/workspace/ingest/reddit/{csv-schemas.ts,parse.test.ts,index.test.ts,README.md}`
   corroborate headers, both PM filenames, numbered CSVs, BOMs and empty files.
   Structural facts only; current main has removed that app.
+- CPAL-1.0 [reddit-archive/reddit](https://github.com/reddit-archive/reddit)
+  at `753b17407e9a9dca09558526805922de24133d53`:
+  [`r2/r2/lib/validator/validator.py`, lines 1451–1466](https://github.com/reddit-archive/reddit/blob/753b17407e9a9dca09558526805922de24133d53/r2/r2/lib/validator/validator.py#L1451-L1466)
+  separates ASCII handle characters (letters/digits/underscore/hyphen) from
+  registration length limits. Historical lexical evidence only; no current
+  signup or availability claim. [License](https://github.com/reddit-archive/reddit/blob/753b17407e9a9dca09558526805922de24133d53/LICENSE).
+  No implementation or data copied.
 
 Fixture coverage includes all four kinds, PM aliases and same-file duplicates,
 multiline text, empty files, split files, unknown dates/senders and extra

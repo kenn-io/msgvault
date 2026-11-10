@@ -116,10 +116,6 @@ func importBatch(ctx context.Context, st *store.Store, sourceID int64, owner, ki
 			return err
 		}
 		key := keys[i]
-		if _, ok := known[key]; ok {
-			stats.Unchanged++
-			continue
-		}
 		c := row.Columns
 		body, subject, sender, to, conv, title, convType := c["body"], "", owner, "", "", "", ""
 		date := c["date"]
@@ -131,7 +127,6 @@ func importBatch(ctx context.Context, st *store.Store, sourceID int64, owner, ki
 			if c["channel_url"] != "" {
 				conv = "chat:channel:" + c["channel_url"]
 				title = c["channel_name"]
-				convType = "channel"
 			} else {
 				conv = "chat:item:" + c["message_id"]
 			}
@@ -177,14 +172,15 @@ func importBatch(ctx context.Context, st *store.Store, sourceID int64, owner, ki
 		if sender == "" {
 			stats.UnknownSenders++
 		}
-		linked := false
-		for column, value := range c {
-			if column == "media" && value != "" || strings.Contains(value, "https://") || strings.Contains(value, "http://") {
-				linked = true
-			}
-		}
+		// Coverage describes eligible scanned rows, including retained originals.
+		// body is the mapped body/message, including the appended post URL.
+		linked := c["media"] != "" || strings.Contains(body, "https://") || strings.Contains(body, "http://")
 		if linked {
 			stats.LinksNotDownloaded++
+		}
+		if _, ok := known[key]; ok {
+			stats.Unchanged++
+			continue
 		}
 		members := []store.ConversationParticipantRef{}
 		recipients := []store.RecipientSet{}
@@ -207,18 +203,18 @@ func importBatch(ctx context.Context, st *store.Store, sourceID int64, owner, ki
 		if err != nil {
 			return err
 		}
-		metadata := map[string]any{"columns": c}
+		var metadata *sql.NullString
 		if kind == "chat" && c["thread_parent_message_id"] != "" {
-			metadata["referenced_message_id"] = "chat:" + c["thread_parent_message_id"]
-		}
-		encoded, err := json.Marshal(metadata)
-		if err != nil {
-			return err
+			encoded, err := json.Marshal(map[string]string{"referenced_message_id": "chat:" + c["thread_parent_message_id"]})
+			if err != nil {
+				return err
+			}
+			metadata = &sql.NullString{String: string(encoded), Valid: true}
 		}
 		id, err := st.PersistMessageContext(ctx, &store.MessagePersistData{
 			Message:      &store.Message{SourceID: sourceID, SourceMessageID: key, MessageType: "reddit_" + kind, SentAt: sql.NullTime{Time: sent, Valid: !sent.IsZero()}, SenderID: sql.NullInt64{Int64: senderID, Valid: senderID != 0}, IsFromMe: sender != "" && sender == owner, Subject: sql.NullString{String: subject, Valid: subject != ""}, Snippet: sql.NullString{String: textutil.PrefixRunes(body, 200), Valid: body != ""}, SizeEstimate: int64(len(body))},
 			Conversation: &store.ConversationPersistData{SourceConversationID: conv, ConversationType: convType, Title: title, Participants: members, PreserveExistingParticipants: true},
-			BodyText:     sql.NullString{String: body, Valid: body != ""}, RawMIME: raw, RawFormat: "reddit_csv_row", Metadata: &sql.NullString{String: string(encoded), Valid: true}, Recipients: recipients, FTS: &store.FTSDoc{Body: body, Subject: subject},
+			BodyText:     sql.NullString{String: body, Valid: body != ""}, RawMIME: raw, RawFormat: "reddit_csv_row", Metadata: metadata, Recipients: recipients, FTS: &store.FTSDoc{Body: body, Subject: subject},
 		})
 		if err != nil {
 			return err

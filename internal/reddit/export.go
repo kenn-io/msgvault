@@ -35,24 +35,33 @@ type exportReader struct {
 }
 
 func normalizeHandle(s string) string {
-	s = strings.ToLower(strings.TrimSpace(s))
-	if strings.HasPrefix(s, "r/") || strings.HasPrefix(s, "/r/") {
-		return ""
+	s = strings.TrimSpace(s)
+	switch {
+	case len(s) >= 3 && strings.EqualFold(s[:3], "/u/"):
+		s = s[3:]
+	case len(s) >= 2 && strings.EqualFold(s[:2], "u/"):
+		s = s[2:]
 	}
-	s = strings.TrimPrefix(strings.TrimPrefix(s, "/u/"), "u/")
-	switch s {
-	case "", "[deleted]", "[removed]", "deleted", "unknown":
-		return ""
+	// Check original characters before case folding so Unicode cannot become ASCII.
+	// Empty/bracketed markers and subreddit endpoints never identify a person.
+	for _, c := range s {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+			return ""
+		}
 	}
-	return s
+	return strings.ToLower(s)
 }
 
 func openExport(ctx context.Context, dir, me string, summary *ImportSummary) (*exportReader, error) {
+	owner := normalizeHandle(me)
+	if me != "" && owner == "" {
+		return nil, errors.New("reddit: invalid --me handle")
+	}
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return nil, err
 	}
-	r := &exportReader{root: root, owner: normalizeHandle(me)}
+	r := &exportReader{root: root, owner: owner}
 	fail := func(err error) (*exportReader, error) { _ = root.Close(); return nil, err }
 	d, err := root.Open(".")
 	if err != nil {
@@ -103,6 +112,9 @@ func openExport(ctx context.Context, dir, me string, summary *ImportSummary) (*e
 				case "account name":
 					r.accounts = append(r.accounts, value)
 					owner := normalizeHandle(value)
+					if value != "" && owner == "" {
+						return errors.New("invalid statistics account name")
+					}
 					if owner != "" {
 						if r.owner != "" && owner != r.owner {
 							return errors.New("reddit: account name conflicts with --me or statistics account")
@@ -149,9 +161,6 @@ func (r *exportReader) rows(ctx context.Context, file csvFile, summary *FileSumm
 	if !info.Mode().IsRegular() {
 		return errors.New("nonregular CSV")
 	}
-	if info.Size() > maxCSVBytes {
-		return errors.New("CSV exceeds 256 MiB")
-	}
 	limited := &io.LimitedReader{R: &export.ContextReader{Context: ctx, Reader: f}, N: maxCSVBytes + 1}
 	reader := csv.NewReader(limited)
 	reader.FieldsPerRecord = -1
@@ -188,17 +197,20 @@ func (r *exportReader) rows(ctx context.Context, file csvFile, summary *FileSumm
 			return nil
 		}
 		if err != nil {
-			return err
+			return fmt.Errorf("record %d: %w", number, err)
 		}
 		if summary != nil {
 			summary.Rows++
 		}
 		for _, value := range values {
 			if !utf8.ValidString(value) {
-				return errors.New("invalid UTF-8 cell")
+				return fmt.Errorf("record %d: invalid UTF-8 cell", number)
 			}
 		}
 		if len(values) != len(headers) {
+			if file.kind == "statistics" {
+				return fmt.Errorf("record %d: field count %d, expected %d", number, len(values), len(headers))
+			}
 			if summary != nil {
 				summary.Malformed++
 			}
@@ -206,13 +218,10 @@ func (r *exportReader) rows(ctx context.Context, file csvFile, summary *FileSumm
 		}
 		row := csvRow{Filename: file.name, Record: number, Columns: map[string]string{}, AccountEvidence: r.accounts, ExportTimeEvidence: r.exportTimes}
 		for i, v := range values {
-			if !utf8.ValidString(v) {
-				return errors.New("invalid UTF-8 cell")
-			}
 			row.Columns[headers[i]] = v
 		}
 		if err := visit(row); err != nil {
-			return err
+			return fmt.Errorf("record %d: %w", number, err)
 		}
 	}
 }
