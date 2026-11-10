@@ -336,7 +336,6 @@ describe('AttributeDefinitionDialog', () => {
     expect(document.activeElement).toBe(result);
   });
 
-
   it.each([
     ['without a usable identity', () => Response.json({ ownership: 'user', object_type: 'person' }, { status: 201 }), 'usable identity'],
     ['with an empty body', () => new Response(null, { status: 204 }), 'usable identity'],

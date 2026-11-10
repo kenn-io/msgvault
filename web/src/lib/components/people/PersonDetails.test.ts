@@ -4,7 +4,6 @@ import { expect, it, onTestFinished } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { DirectoryController } from '../../directory/controller.svelte';
 import PersonDetails from './PersonDetails.svelte';
-import PersonMeetings from './PersonMeetings.svelte';
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import { meetingActions, meetingAction, meetingMetrics } from '../../meetings/fixtures.test-support';
 
@@ -45,9 +44,9 @@ async function renderDetails(participantIDs: number[], options: { meetingRequest
     if (path.endsWith('/employments')) return Response.json({ employments: [] });
     if (path.endsWith('/relationships')) return Response.json({ relationships: [] });
     if (path.endsWith('/network')) return Response.json({ root_person_id: 7, depth: 1, nodes: [], edges: [], truncated: false });
-    if (path === '/api/v1/meetings/metrics' && options.meetingResponses && person.revision === 1) return options.meetingResponses.metrics;
+    if (path === '/api/v1/meetings/metrics' && options.meetingResponses) return options.meetingResponses.metrics;
     if (path === '/api/v1/meetings/actions') {
-      if (options.meetingResponses && person.revision === 1) return options.meetingResponses.actions;
+      if (options.meetingResponses) return options.meetingResponses.actions;
       return Response.json(meetingActions({ rows: [meetingAction({ action: { ordinal: 0, locator: 'action:0', origin: 'source', title: `Revision ${person.revision} follow-up`, status: 'pending' } })] }));
     }
     return meetingFixtureResponse(path) ?? Response.json({});
@@ -72,7 +71,8 @@ it('scopes Meetings to the saved person, waits for both empty reads, and refresh
   const actions = new Promise<Response>(resolve => { releaseActions = resolve; });
   const metrics = new Promise<Response>(resolve => { releaseMetrics = resolve; });
   const meetingRequests: Request[] = [];
-  const { person, directory } = await renderDetails([5], { meetingRequests, meetingResponses: { actions, metrics } });
+  const options = { meetingRequests, meetingResponses: { actions, metrics } };
+  const { person, directory } = await renderDetails([5], options);
   expect(await screen.findByText('Loading meetings…')).toBeDefined();
   await waitFor(() => expect(meetingRequests.find(request => new URL(request.url).pathname.endsWith('/actions'))).toBeDefined());
   await expect(meetingRequests.find(request => new URL(request.url).pathname.endsWith('/actions'))!.json()).resolves.toMatchObject({ scope: { person_id: 7 } });
@@ -86,39 +86,23 @@ it('scopes Meetings to the saved person, waits for both empty reads, and refresh
   expect(screen.getAllByRole('heading', { name: 'Meetings' })).toHaveLength(1);
   expect(screen.queryByText('Loading meetings…')).toBeNull();
   expect(screen.queryByRole('region', { name: 'Meeting activity' })).toBeNull();
+  options.meetingResponses = {
+    actions: new Promise<Response>(resolve => { releaseActions = resolve; }),
+    metrics: new Promise<Response>(resolve => { releaseMetrics = resolve; })
+  };
   person.revision = 2;
   await directory.profile!.reload();
+  expect(await screen.findByText('Loading meetings…')).toBeDefined();
+  expect(screen.queryByText('No meetings yet')).toBeNull();
+  await act(async () => {
+    releaseActions(Response.json(meetingActions({ rows: [meetingAction({ action: { ordinal: 0, locator: 'action:0', origin: 'source', title: 'Revision 2 follow-up', status: 'pending' } })] })));
+    releaseMetrics(Response.json(meetingMetrics()));
+  });
   expect(await screen.findByText('Revision 2 follow-up')).toBeDefined();
   const meetings = within(screen.getByRole('region', { name: 'Meetings', exact: true }));
   expect(meetings.getByRole('heading', { name: 'Meetings', level: 3 })).toBeDefined();
   expect(meetings.getByRole('region', { name: 'Meeting activity', exact: true })).toBeDefined();
   expect(meetings.queryByRole('heading', { name: 'Meeting activity and follow-ups' })).toBeNull();
-});
-
-it('shows loading while an empty Meetings result refreshes', async () => {
-  let releaseActions!: (response: Response) => void;
-  let releaseMetrics!: (response: Response) => void;
-  let refreshing = false;
-  const client = createAPIClient(async input => {
-    const request = input instanceof Request ? input : new Request(input);
-    const path = new URL(request.url).pathname;
-    if (refreshing && path.endsWith('/actions')) return new Promise<Response>(resolve => { releaseActions = resolve; });
-    if (refreshing && path.endsWith('/metrics')) return new Promise<Response>(resolve => { releaseMetrics = resolve; });
-    if (path.endsWith('/actions')) return Response.json(meetingActions());
-    return Response.json(meetingMetrics({ totals: { meeting_count: 0, known_duration_count: 0, unknown_duration_count: 0, total_known_seconds: 0, average_known_seconds: null }, first_meeting_at: null, last_meeting_at: null, duration_by_basis: [], months: [] }));
-  });
-  const { rerender } = render(PersonMeetings, { client, personID: 7, refreshKey: '1' });
-  await screen.findByText('No meetings yet');
-  refreshing = true;
-  await rerender({ client, personID: 7, refreshKey: '2' });
-  await waitFor(() => expect(releaseActions).toBeDefined());
-  expect(screen.getByText('Loading meetings…')).toBeDefined();
-  expect(screen.queryByText('No meetings yet')).toBeNull();
-  await act(async () => {
-    releaseActions(Response.json(meetingActions({ rows: [meetingAction({ action: { ordinal: 0, locator: 'action:0', origin: 'source', title: 'New follow-up', status: 'pending' } })] })));
-    releaseMetrics(Response.json(meetingMetrics()));
-  });
-  expect(await screen.findByText('New follow-up')).toBeDefined();
 });
 
 it.each(['merge', 'split'] as const)('refreshes tasks after %s reconciliation', async operation => {
@@ -163,7 +147,6 @@ it.each(['save', 'clear'] as const)('refreshes open fact pins after an attribute
   expect(await screen.findByText('attribute · Pinned')).toBeDefined();
   expect(screen.getByRole('radio', { name: 'Pins' }).getAttribute('aria-checked')).toBe('true');
 });
-
 
 it.each([
   { name: 'attribute values fail to load', options: { attributesFailure: true } },
