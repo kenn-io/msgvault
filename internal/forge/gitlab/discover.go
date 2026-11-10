@@ -464,15 +464,14 @@ func (f *Forge) scanList(ctx context.Context, state *cursor, list listStream, ow
 			continue
 		}
 		through := cur.Through
-		batch, err := f.listPage(ctx, list, through, nil)
+		batch, more, err := f.listPage(ctx, list, through, nil)
 		if err != nil {
 			return err
 		}
 		refs := f.readListItems(list, batch, &cur, owners, nil)
-		full := len(batch) == perPage
 		// Decide the next request before reporting, since the callback can
 		// stop the scan.
-		if full && !cur.Through.After(through) {
+		if more && !cur.Through.After(through) {
 			if last := batch[len(batch)-1].UpdatedAt; last.Equal(through) {
 				// The whole page was updated at through: read that instant
 				// by creation time.
@@ -487,7 +486,7 @@ func (f *Forge) scanList(ctx context.Context, state *cursor, list listStream, ow
 		if err := page(refs, state.encode()); err != nil {
 			return err
 		}
-		if !full {
+		if !more {
 			return nil
 		}
 	}
@@ -500,8 +499,9 @@ var firstCreated = time.Unix(0, 0).UTC()
 type createdRange struct{ from, to time.Time }
 
 // listPage requests the first page of a list from through on, oldest update
-// first, within created when it is set.
-func (f *Forge) listPage(ctx context.Context, list listStream, through time.Time, created *createdRange) ([]listItem, error) {
+// first, within created when it is set, and reports whether another page
+// follows.
+func (f *Forge) listPage(ctx context.Context, list listStream, through time.Time, created *createdRange) ([]listItem, bool, error) {
 	query := url.Values{
 		"scope": {list.scope}, "state": {"all"}, "order_by": {"updated_at"}, "sort": {"asc"},
 		"per_page": {strconv.Itoa(perPage)},
@@ -517,10 +517,11 @@ func (f *Forge) listPage(ctx context.Context, list listStream, through time.Time
 		query.Set("created_before", updatedAfter(created.to))
 	}
 	var batch []listItem
-	if _, err := f.client.get(ctx, "/"+list.resource, query, &batch); err != nil {
-		return nil, fmt.Errorf("list GitLab %s: %w", strings.ReplaceAll(list.key(), "_", " "), err)
+	header, err := f.client.get(ctx, "/"+list.resource, query, &batch)
+	if err != nil {
+		return nil, false, fmt.Errorf("list GitLab %s: %w", strings.ReplaceAll(list.key(), "_", " "), err)
 	}
-	return batch, nil
+	return batch, len(batch) > 0 && forge.NextLink(header.Get("Link")) != "", nil
 }
 
 // readListItems records the items of a page not read before and returns
@@ -556,13 +557,13 @@ func (f *Forge) readInstant(ctx context.Context, state *cursor, list listStream,
 	end := at.Add(time.Millisecond) // a thread is created no later than it is updated
 	var bisect func(created createdRange) error
 	bisect = func(created createdRange) error {
-		batch, err := f.listPage(ctx, list, at, &created)
+		batch, more, err := f.listPage(ctx, list, at, &created)
 		if err != nil {
 			return err
 		}
-		// Oldest update first, so a page that ends past the instant holds
-		// all of the range's threads updated at it.
-		if len(batch) == perPage && batch[len(batch)-1].UpdatedAt.Equal(at) {
+		// Oldest update first, so a page that ends past the instant, or the
+		// last page, holds all of the range's threads updated at it.
+		if more && batch[len(batch)-1].UpdatedAt.Equal(at) {
 			if created.to.Sub(created.from) < 2*time.Millisecond {
 				return fmt.Errorf("more than %d GitLab %s were created and updated in the same millisecond, at %s; discovery can't read past them",
 					perPage, strings.ReplaceAll(list.resource, "_", " "), updatedAfter(at))

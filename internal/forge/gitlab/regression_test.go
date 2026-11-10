@@ -138,6 +138,33 @@ func TestListScanResumesAfterEveryPageAtTheSameUpdateTime(t *testing.T) {
 	}
 }
 
+func TestAPageOfThreadsCreatedAndUpdatedAtOneInstantIsReadWhole(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newFakeGitLab(t)
+	f.project(widgets, "acme/widgets")
+	ann := person(t, 2, "ann", "Ann Example")
+	at := time.Date(2026, 11, 8, 9, 0, 0, 0, time.UTC).Format(time.RFC3339)
+	// Exactly a page of threads created and updated together, as an
+	// import makes them, then one updated later.
+	for i := 1; i <= perPage; i++ {
+		issue := f.issue(widgets, int64(i), i, "An issue", ann, at, "assigned_to_me")
+		issue.object["created_at"] = at
+	}
+	f.issue(widgets, 1000, 1000, "A later issue", ann, "2026-11-08T10:00:00Z", "assigned_to_me")
+	list := listStream{resource: resourceIssues, scope: "assigned_to_me"}
+	state := cursor{Lists: map[string]listCursor{}}
+	var got []string
+	require.NoError(f.forge().scanList(t.Context(), &state, list, forge.NewOwnerFilter(nil, nil),
+		func(refs []forge.ThreadRef, _ []byte) error {
+			for _, ref := range refs {
+				got = append(got, ref.Key)
+			}
+			return nil
+		}))
+	assert.Len(got, perPage+1, "a last page that ends in the instant holds all of it")
+}
+
 func TestAThreadLeavingARunUpdatedAtOneInstantShiftsNoneOutOfTheScan(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
