@@ -36,7 +36,7 @@ export function withoutName<T>(name: string, items: T[], text: (item: T) => stri
 }
 
 /** Whether one name holds the other as whole words: Mira within "Mira Vale", but not Ann within "Joanna". */
-export function sameName(left: string, right: string): boolean {
+function sameName(left: string, right: string): boolean {
   const a = left.trim().toLocaleLowerCase(), b = right.trim().toLocaleLowerCase();
   return !!a && !!b && (containsWords(a, b) || containsWords(b, a));
 }
