@@ -3,6 +3,15 @@ import { WriteAttempt } from './write-attempt.svelte';
 
 it('clears failures before a retry and carries the saved version into the send', async () => {
   const attempt = new WriteAttempt<{ revision: number }>();
+  await attempt.run(async () => ({ ok: false, kind: 'conflict', status: 412, attempted: { revision: 1 }, message: 'Changed' }));
+  expect(attempt.conflict).toBeUndefined();
+  expect(attempt.prepared).toEqual({ revision: 1 });
+  await attempt.run(async current => {
+    expect(current).toEqual({ revision: 1 });
+    return { ok: false, kind: 'conflict', status: 412, attempted: { revision: 1 }, current: { revision: 2 }, message: 'Changed' };
+  });
+  expect(attempt.prepared).toEqual({ revision: 2 });
+  attempt.reset();
   await attempt.run(async () => ({ ok: false, kind: 'conflict', status: 412, current: { revision: 2 }, message: 'Changed' }));
   expect(attempt.failed).toBe(true);
   expect(attempt.conflict).toEqual({ revision: 2 });

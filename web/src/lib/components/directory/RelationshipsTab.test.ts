@@ -224,7 +224,7 @@ describe('RelationshipsTab', () => {
     const existing = relationship(41, 1, { ...type, source_person_id: direction === 'incoming' ? 141 : 7, target_person_id: direction === 'incoming' ? 7 : 141, start_date: { year: 2022 }, notes: 'Met at the seed exchange.' });
     const { client, controller } = controllerWith(async () => Response.json(existing, { headers: { ETag: '"person-relationship-41-r1"' } }));
     controller.relationshipTypes = [relationshipType(), relationshipType({ id: 32, slug: 'friend', forward_label: 'friend', reverse_label: 'friend', is_symmetric: true })];
-    controller.relationships = [view(41, direction, direction === 'incoming' ? 'is mentored by' : 'mentors', 'Synthetic Peer', { relationship: existing })];
+    controller.relationships = [view(41, direction, direction === 'incoming' ? existing.reverse_label : existing.forward_label, 'Synthetic Peer', { relationship: existing })];
     render(RelationshipsTab, { client, controller, personID: 7, personName: 'Synthetic Subject' });
     await rowAction('Edit…');
     const dialog = await screen.findByRole('dialog', { name: 'Edit connection' });
@@ -245,7 +245,6 @@ describe('RelationshipsTab', () => {
     const row = screen.getByText('Synthetic Peer').closest('.detail-row') as HTMLElement;
     expect(row.textContent).toContain('Friend');
     expect(within(row).queryByText('Pending')).toBeNull();
-    expect(screen.getAllByRole('button', { name: 'Open matched person' }).length).toBeGreaterThan(0);
     const rejected = screen.getByText('Rejected').closest('.detail-row') as HTMLElement;
     expect(rejected.querySelector('.description')?.getAttribute('title')).toContain('Reviewed');
     await fireEvent.click(within(row).getByRole('button', { name: 'Open matched person' }));
