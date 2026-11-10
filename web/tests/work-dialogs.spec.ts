@@ -184,7 +184,7 @@ for (const width of [1440, 390]) {
         ? { headers: { ETag: '"employment-11-r1"' }, json: employment }
         : { headers: { ETag: '"employment-11-r2"' }, json: { ...employment, revision: 2, start_date: { year: 2024 } } });
     });
-    await page.route('**/api/v1/employments/11/end', route => route.fulfill({ status: 412, json: { message: 'Changed elsewhere' } }));
+    await page.route('**/api/v1/employments/11/end', route => route.fulfill({ status: 409, json: { error: 'employment_revision_conflict', message: 'Changed elsewhere' } }));
     await page.getByRole('region', { name: 'Work', exact: true }).getByRole('button', { name: /^Actions for / }).click();
     await page.getByRole('menuitem', { name: 'End…', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'End job', exact: true });

@@ -9,7 +9,7 @@ it('shows an ended job conflict outside folded past jobs', async () => {
   const { controller } = controllerWith(async input => {
     const request = requestOf(input), path = pathOf(request);
     if (path === '/api/v1/employments/11' && request.method === 'GET') return Response.json(++reads === 1 ? employment(11, 1, { is_primary: false }) : ended, { headers: { ETag: `"employment-11-r${reads}"` } });
-    if (path === '/api/v1/employments/11/primary') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    if (path === '/api/v1/employments/11/primary') return Response.json({ error: 'employment_revision_conflict', message: 'Changed elsewhere' }, { status: 409 });
     if (path === '/api/v1/people/7/employments') return Response.json({ employments: [ended] });
     throw new Error(`Unexpected ${request.method} ${path}`);
   });

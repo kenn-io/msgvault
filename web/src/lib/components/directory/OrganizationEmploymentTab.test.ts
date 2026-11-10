@@ -1,10 +1,16 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
 import { openTypeahead } from '../../../test/kit-ui';
 import { requestOf, pathOf, organization, organizationProfile, employment, collection, controllerWith } from '../../directory/entity-fixtures.test-support';
 import OrganizationEmploymentTab from './OrganizationEmploymentTab.svelte';
+
+const formatter = vi.hoisted(() => {
+  const DateTimeFormat = Intl.DateTimeFormat;
+  return vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function (locale, options) { return new DateTimeFormat(locale ?? 'en-US', options); });
+});
+afterAll(() => formatter.mockRestore());
 
 async function rowAction(label: string): Promise<void> {
   await fireEvent.click(screen.getAllByRole('button', { name: /^Actions for /  })[0]);
@@ -205,6 +211,7 @@ describe('OrganizationEmploymentTab', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'End' })).toHaveProperty('disabled', false));
     await fireEvent.click(screen.getByRole('button', { name: 'End' }));
     await waitFor(() => expect(requests.some((request) => pathOf(request) === '/api/v1/employments/11/end')).toBe(true));
+    expect(await requests.find(request => pathOf(request) === '/api/v1/employments/11/end')!.clone().json()).toMatchObject({ end_date: '2026-08' });
     await waitFor(() => expect(screen.queryByRole('dialog', { name: /^End /  })).toBeNull());
 
     expect(await screen.findByText('1 past job')).toBeDefined();

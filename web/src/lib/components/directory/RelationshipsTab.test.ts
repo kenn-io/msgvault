@@ -405,7 +405,7 @@ describe('RelationshipsTab', () => {
           : Response.json(fresh, { headers: { ETag: '"relationship-41-r2"' } });
       }
       if (path === '/api/v1/person-relationships/41' && request.method === 'PATCH') {
-        if (request.headers.get('If-Match') === '"relationship-41-r1"') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+        if (request.headers.get('If-Match') === '"relationship-41-r1"') return Response.json({ error: 'relationship_revision_conflict', message: 'Changed elsewhere' }, { status: 409 });
         if (requests.filter(sent => sent.method === 'PATCH').length === 2) return Response.json({ message: 'Disk full' }, { status: 500 });
         return new Response(JSON.stringify(updated), { headers: { ETag: '"relationship-41-r3"' } });
       }
@@ -450,7 +450,7 @@ describe('RelationshipsTab', () => {
       const request = requestOf(input);
       if (request.method === 'PATCH') {
         bodies.push(await request.json());
-        if (bodies.length === 1) return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+        if (bodies.length === 1) return Response.json({ error: 'relationship_revision_conflict', message: 'Changed elsewhere' }, { status: 409 });
         if (bodies.length === 2) throw new TypeError('Network unavailable');
         return Response.json(ended);
       }

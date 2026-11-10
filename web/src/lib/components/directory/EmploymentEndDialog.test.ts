@@ -1,7 +1,13 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
-import { expect, it, vi } from 'vitest';
+import { afterAll, expect, it, vi } from 'vitest';
 import { controllerWith, employment, organizationProfile, pathOf, requestOf } from '../../directory/entity-fixtures.test-support';
 import EmploymentEndDialog from './EmploymentEndDialog.svelte';
+
+const formatter = vi.hoisted(() => {
+  const DateTimeFormat = Intl.DateTimeFormat;
+  return vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function (locale, options) { return new DateTimeFormat(locale ?? 'en-US', options); });
+});
+afterAll(() => formatter.mockRestore());
 
 it('keeps the End conflict valid and shows a failed retry', async () => {
   const opening = employment(11, 1, { start_date: { year: 2024, month: 3 } });
@@ -14,7 +20,7 @@ it('keeps the End conflict valid and shows a failed retry', async () => {
     if (pathOf(request) === '/api/v1/people/7/employments') return Response.json({ employments: [saved] });
     if (pathOf(request).endsWith('/end')) {
       writes++;
-      return Response.json({ message: writes === 1 ? 'Changed elsewhere' : 'Disk full' }, { status: writes === 1 ? 412 : 500 });
+      return Response.json({ error: writes === 1 ? 'employment_revision_conflict' : 'internal_error', message: writes === 1 ? 'Changed elsewhere' : 'Disk full' }, { status: writes === 1 ? 409 : 500 });
     }
     return Response.json(++reads === 1 ? opening : saved, { headers: { ETag: reads === 1 ? '"employment-11-r1"' : '"employment-11-r2"' } });
   });
@@ -57,7 +63,7 @@ it('offers no Keep yours for a moved job', async () => {
   const { controller } = controllerWith(async input => {
     const request = requestOf(input), path = pathOf(request);
     if (path === '/api/v1/employments/11' && request.method === 'GET') return Response.json(employment(11, ++reads, { person_id: reads === 1 ? 7 : 8 }), { headers: { ETag: `"employment-11-r${reads}"` } });
-    if (path === '/api/v1/employments/11/end') return Response.json({ message: 'Changed' }, { status: 412 });
+    if (path === '/api/v1/employments/11/end') return Response.json({ error: 'employment_revision_conflict', message: 'Changed' }, { status: 409 });
     if (path === '/api/v1/people/7/employments') return Response.json({ employments: [] });
     if (path === '/api/v1/organizations/21') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
     throw new Error(`unexpected ${request.method} ${path}`);

@@ -1,8 +1,14 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { valueProvenance } from './history-format';
 import { requestOf, pathOf, organization, employment, organizationProfile, envelope, richOrganizationProfile, controllerWith } from '../../directory/entity-fixtures.test-support';
 import OrganizationEditor from './OrganizationEditor.svelte';
+
+const formatter = vi.hoisted(() => {
+  const DateTimeFormat = Intl.DateTimeFormat;
+  return vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function (locale, options) { return new DateTimeFormat(locale ?? 'en-US', options); });
+});
+afterAll(() => formatter.mockRestore());
 
 describe('OrganizationEditor', () => {
   it.each([
@@ -22,7 +28,7 @@ describe('OrganizationEditor', () => {
       const request = requestOf(input);
       if (request.method === 'GET') { reads++; return Response.json(profile, { headers: { ETag: `"organization-21-r${revision}"` } }); }
       writes.push(request);
-      if (request.headers.get('If-Match') !== `"organization-21-r${revision}"`) return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+      if (request.headers.get('If-Match') !== `"organization-21-r${revision}"`) return Response.json({ error: 'organization_revision_conflict', message: 'Changed elsewhere' }, { status: 409 });
       const body = await request.clone().json();
       revision++;
       if (request.method === 'PATCH') profile = { ...profile, organization: organization(21, revision, body.name) };
@@ -120,7 +126,7 @@ describe('OrganizationEditor', () => {
       const request = requestOf(input);
       if (request.method === 'GET') return Response.json(writes.length ? newer : opening, { headers: { ETag: writes.length ? '"organization-21-r2"' : '"organization-21-r1"' } });
       writes.push(request);
-      if (conflict && writes.length === 1) return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+      if (conflict && writes.length === 1) return Response.json({ error: 'organization_revision_conflict', message: 'Changed elsewhere' }, { status: 409 });
       return Response.json(conflict ? newer : opening, { headers: { ETag: '"organization-21-r3"' } });
     });
     render(OrganizationEditor, { controller, organization: organization() });
@@ -288,7 +294,7 @@ it('deletes the displayed organization version and retries only after showing th
     if (pathOf(request).endsWith('/employments')) return Response.json({ employments: [] });
     if (request.method === 'DELETE') {
       tags.push(request.headers.get('If-Match'));
-      return request.headers.get('If-Match') === `"organization-21-r${revision}"` ? new Response(null, { status: 204 }) : Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+      return request.headers.get('If-Match') === `"organization-21-r${revision}"` ? new Response(null, { status: 204 }) : Response.json({ error: 'organization_revision_conflict', message: 'Changed elsewhere' }, { status: 409 });
     }
     return Response.json(organizationProfile(revision, revision === 1 ? 'Synthetic Org' : 'New saved name'), { headers: { ETag: `"organization-21-r${revision}"` } });
   });
@@ -303,7 +309,7 @@ it('deletes the displayed organization version and retries only after showing th
   expect(tags).toEqual(['"organization-21-r1"', '"organization-21-r2"']);
 });
 
-it.each(['failed request', 'revision conflict'] as const)('handles a delete %s', async outcome => {
+it('retries a failed delete request', async () => {
   let deletes = 0;
   let reads = 0;
   const onDone = vi.fn();
@@ -312,7 +318,6 @@ it.each(['failed request', 'revision conflict'] as const)('handles a delete %s',
     if (pathOf(request).endsWith('/employments')) return Response.json({ employments: [] });
     if (request.method === 'DELETE') {
       deletes++;
-      if (outcome === 'revision conflict') return Response.json({ error: 'organization_revision_conflict', message: 'Changed' }, { status: 409 });
       return deletes === 1 ? Response.json({ message: 'Temporarily unavailable' }, { status: 503 }) : new Response(null, { status: 204 });
     }
     reads++;
@@ -321,16 +326,11 @@ it.each(['failed request', 'revision conflict'] as const)('handles a delete %s',
   render(OrganizationEditor, { controller, organization: organization(), onDone });
   await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
   await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
-  if (outcome === 'failed request') {
-    await screen.findByText("Couldn't delete this organization.");
-    expect(screen.getByRole('button', { name: 'Delete' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
-    expect(deletes).toBe(2);
-  } else {
-    expect(await screen.findByText('New saved name')).toBeDefined();
-    expect(deletes).toBe(1);
-  }
+  await screen.findByText("Couldn't delete this organization.");
+  expect(screen.getByRole('button', { name: 'Delete' })).toBeDefined();
+  await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+  expect(deletes).toBe(2);
 });
 
 it('shows the new holder when a job appears after the deletion check', async () => {
@@ -379,7 +379,7 @@ it.each(['organization save', 'aliases save'] as const)('shows the latest notice
     methods.push(request.method);
     if (firstFailure === 'organization save') {
       return request.method === 'PATCH'
-        ? Response.json({ message: 'Changed elsewhere' }, { status: 412 })
+        ? Response.json({ error: 'organization_revision_conflict', message: 'Changed elsewhere' }, { status: 409 })
         : Response.json({ message: 'Disk full' }, { status: 500 });
     }
     return request.method === 'PUT'
@@ -419,7 +419,7 @@ it.each(['retirement', 'media', 'facts', 'names', 'categories'])('shows saved %s
   if (section === 'retirement') Object.assign(saved.organization, { retired_at: '2025-01-06T00:00:00Z' });
   if (section === 'media') Object.assign(saved.media[0], { original_value: 'https://example.org/logo.png', uri: 'https://example.org/logo.png' });
   const { controller } = controllerWith(async input => {
-    if (requestOf(input).method === 'PATCH') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    if (requestOf(input).method === 'PATCH') return Response.json({ error: 'organization_revision_conflict', message: 'Changed elsewhere' }, { status: 409 });
     return Response.json(++reads === 1 ? organizationProfile() : saved, { headers: { ETag: `"organization-21-r${reads}"` } });
   });
   render(OrganizationEditor, { controller, organization: organization() });

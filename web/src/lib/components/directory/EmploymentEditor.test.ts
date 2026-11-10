@@ -70,7 +70,7 @@ it.each([
   else expect(body).toHaveProperty('is_primary', expected);
 });
 
-it.each([true, false])('edits a primary job with current=%s without overriding the stored primary rule', async isCurrent => {
+it.each([true, false])('saves a primary job with current=%s and ignores a disabled end date', async isCurrent => {
   let body: Record<string, unknown> | undefined;
   const job = employment(11, 1, { is_primary: true });
   const { controller } = controllerWith(async input => {
@@ -303,7 +303,7 @@ it.each(['Keep yours', 'Use saved'] as const)('shows the saved job and resolves 
     const request = requestOf(input);
     if (request.method === 'PATCH') {
       bodies.push(await request.json());
-      return bodies.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : Response.json(job);
+      return bodies.length === 1 ? Response.json({ error: 'employment_revision_conflict', message: 'Changed elsewhere' }, { status: 409 }) : Response.json(job);
     }
     if (pathOf(request).includes('/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
     if (pathOf(request) === '/api/v1/people/7/employments') return Response.json({ employments: [employment(11, 2, { ...opening, ...saved })] });
@@ -374,7 +374,7 @@ it('offers no Keep yours for a moved job', async () => {
   const { controller } = controllerWith(async input => {
     const request = requestOf(input), path = pathOf(request);
     if (path === '/api/v1/employments/11' && request.method === 'GET') return Response.json(employment(11, ++reads, { person_id: reads === 1 ? 7 : 8 }), { headers: { ETag: `"employment-11-r${reads}"` } });
-    if (path === '/api/v1/employments/11' && request.method === 'PATCH') return Response.json({ message: 'Changed' }, { status: 412 });
+    if (path === '/api/v1/employments/11' && request.method === 'PATCH') return Response.json({ error: 'employment_revision_conflict', message: 'Changed' }, { status: 409 });
     if (path === '/api/v1/people/7/employments') return Response.json({ employments: [] });
     if (path === '/api/v1/organizations/21') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
     throw new Error(`unexpected ${request.method} ${path}`);
