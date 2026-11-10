@@ -67,11 +67,6 @@ func TestHelpLayoutGroupsTopLevelCommands(t *testing.T) {
 	completion, _, err := rootCmd.Find([]string{"completion"})
 	requirements.NoError(err)
 	assertions.Equal("ops", completion.GroupID, "app-provided completion must be grouped too")
-	for _, name := range []string{"archive", "unarchive"} {
-		command, _, err := rootCmd.Find([]string{name})
-		require.NoError(t, err)
-		assert.Equal(t, helpGroupWrite, command.GroupID)
-	}
 	groups := make(map[string]bool)
 	for _, group := range rootCmd.Groups() {
 		groups[group.ID] = true

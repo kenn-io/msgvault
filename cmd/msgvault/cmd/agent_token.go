@@ -50,7 +50,7 @@ var agentTokenIssueCmd = &cobra.Command{
 		}
 		senderSelections, err := parseAgentTokenSenders(agentTokenSenders)
 		if err != nil {
-			return err
+			return fmt.Errorf("--sender: %w", err)
 		}
 		archiveSenders, err := parseAgentTokenSenders(agentTokenArchiveSenders)
 		if err != nil {
@@ -143,7 +143,7 @@ func parseAgentTokenSenders(values []string) (map[int64][]string, error) {
 	for _, value := range values {
 		sourceID, address, ok := strings.Cut(value, "=")
 		if !ok || strings.TrimSpace(address) == "" {
-			return nil, errors.New("--sender must use SOURCE_ID=ADDRESS")
+			return nil, errors.New("must use SOURCE_ID=ADDRESS")
 		}
 		id, err := strconv.ParseInt(strings.TrimSpace(sourceID), 10, 64)
 		if err != nil || id <= 0 {

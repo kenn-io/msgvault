@@ -87,7 +87,7 @@ func (s *Server) writeEmailTagError(w http.ResponseWriter, err error) {
 		status = http.StatusBadRequest
 	case "message_not_found":
 		status = http.StatusNotFound
-	case "insufficient_scope", "keywords_not_permitted", "permission_denied":
+	case "insufficient_scope", "keywords_not_permitted":
 		status = http.StatusForbidden
 	case "stale_identity", "sync_active":
 		status = http.StatusConflict

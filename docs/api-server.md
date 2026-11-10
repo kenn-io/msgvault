@@ -429,6 +429,7 @@ back, then saves the verified snapshot locally. A retry that already matches
 returns `changed: false` without modifying Gmail and still reconciles local
 labels. Unrelated labels and read/unread state are preserved. Source ownership
 and the daemon work gate follow the [native tag write rules](#native-email-tags).
+For 409 `sync_active`, retry after the active sync finishes.
 
 Owners may issue `archive_senders`, a map from selected source IDs to nonempty
 incoming mailbox lists, alongside `message.archive`. Each source view exposes

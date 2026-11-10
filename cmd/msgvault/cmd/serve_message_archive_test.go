@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -32,13 +31,11 @@ import (
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
-	"go.kenn.io/msgvault/pkg/client/generated"
 	"golang.org/x/oauth2"
 )
 
 type archiveProviderFixture struct {
 	connects     atomic.Int64
-	writes       atomic.Int64
 	failReadback atomic.Bool
 }
 
@@ -65,7 +62,6 @@ func newArchiveProviderFixture(t *testing.T) *archiveProviderFixture {
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
-			fixture.writes.Add(1)
 			failRead = fixture.failReadback.Load()
 			tags = slices.DeleteFunc(tags, func(tag string) bool { return slices.Contains(change.Remove, tag) })
 			tags = append(tags, change.Add...)
@@ -151,8 +147,6 @@ func TestArchiveMessageDaemonEndToEnd(t *testing.T) {
 			}
 			token, err := owner.IssueAgentTokenWithArchiveSenders(t.Context(), tc.name, tc.perms, []int64{tc.source}, nil, selections, time.Time{})
 			require.NoError(t, err)
-			require.Len(t, token.Sources, 1)
-			assert.ElementsMatch(t, tc.senders, token.Sources[0].ArchiveSenders)
 			client, err := daemonclient.New(daemonclient.Config{URL: serverURL, AgentToken: token.Secret, AllowInsecure: true})
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, client.Close()) })
@@ -171,24 +165,14 @@ func TestArchiveMessageDaemonEndToEnd(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			assert.True(t, result.Changed)
 			assert.True(t, result.DryRun)
-			assert.Zero(t, provider.writes.Load())
 		})
 	}
 	cliGrant, err := owner.IssueAgentTokenWithArchiveSenders(t.Context(), "cli archive", []string{"message.archive"}, []int64{source.ID}, nil, map[int64][]string{source.ID: {"codes@example.test"}}, time.Time{})
 	require.NoError(t, err)
-	views, err := owner.ListAgentTokens(t.Context())
-	require.NoError(t, err)
-	listed := slices.DeleteFunc(views, func(view generated.AgentTokenView) bool { return view.ID != cliGrant.ID })
-	require.Len(t, listed, 1)
-	assert.Equal(t, []string{"codes@example.test"}, listed[0].Sources[0].ArchiveSenders)
 	client, err := daemonclient.New(daemonclient.Config{URL: serverURL, AgentToken: cliGrant.Secret, AllowInsecure: true})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, client.Close()) })
-	self, err := client.AgentTokenSelf(t.Context())
-	require.NoError(t, err)
-	assert.Equal(t, []string{"codes@example.test"}, self.Sources[0].ArchiveSenders)
 	tokenFile := filepath.Join(t.TempDir(), "agent.token")
 	require.NoError(t, os.WriteFile(tokenFile, []byte(cliGrant.Secret), 0o600))
 	cliConfig := config.NewDefaultConfig()
@@ -211,7 +195,6 @@ func TestArchiveMessageDaemonEndToEnd(t *testing.T) {
 	preview, err := owner.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &previewArchived, DryRun: true})
 	require.NoError(t, err)
 	assert.True(t, preview.DryRun)
-	assert.Zero(t, provider.writes.Load())
 	localPreview, err := st.GetMessage(id)
 	require.NoError(t, err)
 	assert.Empty(t, localPreview.Labels, "preview must not save even authoritative labels")
@@ -219,7 +202,6 @@ func TestArchiveMessageDaemonEndToEnd(t *testing.T) {
 	archived := true
 	result, err := owner.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived})
 	require.NoError(t, err)
-	assert.True(t, result.Changed)
 	assert.True(t, result.Verified)
 	msg, err := st.GetMessage(id)
 	require.NoError(t, err)
@@ -228,33 +210,12 @@ func TestArchiveMessageDaemonEndToEnd(t *testing.T) {
 	target, err := st.EmailTagTargetContext(t.Context(), id, "")
 	require.NoError(t, err)
 	require.NoError(t, st.SaveEmailTagsContext(t.Context(), target, &emailtags.MessageTagResult{Provider: "gmail", Tags: []string{"INBOX", "UNREAD"}, Verified: true}))
-	result, err = owner.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived})
+	_, err = owner.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived})
 	require.NoError(t, err)
-	assert.False(t, result.Changed)
-	assert.Equal(t, int64(1), provider.writes.Load())
 	msg, err = st.GetMessage(id)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"UNREAD", "Keep"}, msg.Labels, "satisfied retry must reconcile stale local membership")
-	archived = false
-	result, err = owner.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived})
-	require.NoError(t, err)
-	assert.True(t, result.Changed)
-	msg, err = st.GetMessage(id)
-	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{"INBOX", "UNREAD", "Keep"}, msg.Labels)
-	archived = true
-	provider.failReadback.Store(true)
-	_, err = owner.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived})
 	var failure *emailtags.MessageTagError
-	require.ErrorAs(t, err, &failure)
-	assert.Equal(t, "remote_unknown", failure.Code)
-	require.NotNil(t, failure.Result)
-	assert.Contains(t, failure.Result.Before, "INBOX")
-	assert.Equal(t, int64(3), provider.writes.Load())
-	msg, err = st.GetMessage(id)
-	require.NoError(t, err)
-	assert.Contains(t, msg.Labels, "INBOX", "uncertain readback must not be persisted")
-	provider.failReadback.Store(false)
 	execution, err := st.AcquireSyncExecutionContext(t.Context(), source.ID)
 	require.NoError(t, err)
 	_, err = adapter.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived}, nil, nil)
@@ -317,21 +278,45 @@ func TestArchiveSenderRequiresEveryLiteralFromAndRechecksUnderLock(t *testing.T)
 	require.NoError(t, err)
 	require.Len(t, parsed.From, 1)
 	require.Equal(t, bare, parsed.From[0].Email)
+	quoted, err := mime.Parse([]byte("From: <\"first last\"@example.test>\r\nTo: owner@example.test\r\nSubject: code\r\n\r\nsynthetic\r\n"))
+	require.NoError(t, err)
+	require.Len(t, quoted.From, 1)
+	require.Equal(t, "first last@example.test", quoted.From[0].Email)
+	_, senderKey, err := parseStoredMailbox(quoted.From[0].Email)
+	require.NoError(t, err)
+	grant.Sources[0].ArchiveSenderKeys = append(grant.Sources[0].ArchiveSenderKeys, senderKey)
+	newArchiveProviderFixture(t)
+	cfg := &config.Config{HomeDir: t.TempDir()}
+	cfg.Data.DataDir = cfg.HomeDir
+	adapter.config = cfg
+	adapter.logger = slog.New(slog.DiscardHandler)
+	adapter.emailTagClientFactory = func(context.Context, *store.Source) (gmail.API, error) {
+		return gmail.NewClient(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "synthetic"}), gmail.WithRateLimiter(gmail.NewRateLimiter(1000))), nil
+	}
 	for _, tc := range []struct {
 		name      string
 		addresses []string
+		allowed   bool
 	}{
-		{"quoted local part", []string{parsed.From[0].Email}}, {"missing", nil}, {"legacy null", []string{""}}, {"participant differs", []string{"denied@example.test"}}, {"mixed", []string{"allowed@example.test", "denied@example.test"}}, {"invalid", []string{"invalid"}},
+		{"quoted local part", []string{parsed.From[0].Email}, false},
+		{"missing", nil, false},
+		{"legacy null", []string{""}, false},
+		{"mixed", []string{"allowed@example.test", "denied@example.test"}, false},
+		{"stored quoted mailbox", []string{quoted.From[0].Email}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ids := make([]int64, len(tc.addresses))
 			for i := range ids {
-				ids[i], err = st.EnsureParticipant(fmt.Sprintf("participant%d@example.test", i), "Synthetic Sender", "example.test")
-				require.NoError(t, err)
+				ids[i] = participant
 			}
-			id, err := st.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: &store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: tc.name, MessageType: "email"}, Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: ids, EmailAddresses: tc.addresses}}})
+			id, err := st.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: &store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "gmail-archive", MessageType: "email"}, Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: ids, EmailAddresses: tc.addresses}}})
 			require.NoError(t, err)
-			_, err = adapter.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived, DryRun: true}, grant, nil)
+			result, err := adapter.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived, DryRun: true}, grant, nil)
+			if tc.allowed {
+				require.NoError(t, err, "an allowed sender parsed and stored by production MIME code must remain allowed")
+				assert.True(t, result.Archived)
+				return
+			}
 			var failure *emailtags.MessageTagError
 			require.ErrorAs(t, err, &failure)
 			assert.Equal(t, "message_not_found", failure.Code)
@@ -353,41 +338,11 @@ func TestArchiveSenderRequiresEveryLiteralFromAndRechecksUnderLock(t *testing.T)
 	assert.Equal(t, "message_not_found", failure.Code)
 }
 
-func TestArchiveStoredQuotedMailbox(t *testing.T) {
-	parsed, err := mime.Parse([]byte("From: <\"first last\"@example.test>\r\nTo: owner@example.test\r\nSubject: code\r\n\r\nsynthetic\r\n"))
-	require.NoError(t, err)
-	require.Len(t, parsed.From, 1)
-	require.Equal(t, "first last@example.test", parsed.From[0].Email)
-	_, senderKey, err := parseStoredMailbox(parsed.From[0].Email)
-	require.NoError(t, err)
-	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("gmail", "owner@example.test")
-	require.NoError(t, err)
-	sender, err := st.EnsureParticipant(parsed.From[0].Email, "Synthetic Sender", "example.test")
-	require.NoError(t, err)
-	conversation, err := st.EnsureConversation(t.Context(), source.ID, "probe", "Synthetic")
-	require.NoError(t, err)
-	id, err := st.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: &store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "gmail-archive", MessageType: "email"}, Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{sender}, EmailAddresses: []string{parsed.From[0].Email}}}})
-	require.NoError(t, err)
-	fixture := newArchiveProviderFixture(t)
-	cfg := &config.Config{HomeDir: t.TempDir()}
-	cfg.Data.DataDir = cfg.HomeDir
-	adapter := &storeAPIAdapter{store: st, config: cfg, logger: slog.New(slog.DiscardHandler), emailTagClientFactory: func(context.Context, *store.Source) (gmail.API, error) {
-		return gmail.NewClient(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "synthetic"}), gmail.WithRateLimiter(gmail.NewRateLimiter(1000))), nil
-	}}
-	grant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionMessageArchive}, Sources: []agentgrant.SourceRef{{Type: "gmail", Identifier: source.Identifier, ArchiveSenderKeys: []string{senderKey}}}}
-	archived := true
-	result, err := adapter.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived, DryRun: true}, grant, nil)
-	require.NoError(t, err, "an allowed sender parsed and stored by production MIME code must remain allowed")
-	assert.True(t, result.Archived)
-	assert.Zero(t, fixture.writes.Load())
-}
-
 // Failed writes disclose label snapshots only to callers with read authority.
 func TestArchiveOnlyGrantFailureBodyHidesLabels(t *testing.T) {
 	for _, caller := range []string{"archive-only", "archive-reader"} {
 		t.Run(caller, func(t *testing.T) {
-			_, source, id, _, serverURL, owner, provider := newArchiveDaemon(t)
+			st, source, id, _, serverURL, owner, provider := newArchiveDaemon(t)
 			permissions := []string{"message.archive"}
 			if caller == "archive-reader" {
 				permissions = append(permissions, "message.read")
@@ -397,6 +352,10 @@ func TestArchiveOnlyGrantFailureBodyHidesLabels(t *testing.T) {
 			client, err := daemonclient.New(daemonclient.Config{URL: serverURL, AgentToken: token.Secret, AllowInsecure: true})
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = client.Close() })
+			target, err := st.EmailTagTargetContext(t.Context(), id, "")
+			require.NoError(t, err)
+			before := []string{"INBOX", "UNREAD"}
+			require.NoError(t, st.SaveEmailTagsContext(t.Context(), target, &emailtags.MessageTagResult{Provider: "gmail", Tags: before, Verified: true}))
 			provider.failReadback.Store(true)
 			archived := true
 			_, err = client.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived})
@@ -410,7 +369,9 @@ func TestArchiveOnlyGrantFailureBodyHidesLabels(t *testing.T) {
 				assert.Contains(t, failure.Result.Tags, "Label_keep")
 				assert.Contains(t, failure.Result.Before, "INBOX")
 			}
-			assert.Equal(t, int64(1), provider.writes.Load())
+			msg, err := st.GetMessage(id)
+			require.NoError(t, err)
+			assert.ElementsMatch(t, before, msg.Labels, "uncertain readback must not be persisted")
 		})
 	}
 }

@@ -37,8 +37,8 @@ func (a *storeAPIAdapter) ArchiveMessage(ctx context.Context, id int64, change e
 					return emailtags.Failure("message_not_found", "Message not found", nil, nil)
 				}
 				for _, sender := range senders {
-					_, key, parseErr := parseStoredMailbox(sender.EnvelopeAddress)
-					if parseErr != nil || !grant.AllowsArchiveSender(ref, key) {
+					_, key, _ := parseStoredMailbox(sender.EnvelopeAddress)
+					if !grant.AllowsArchiveSender(ref, key) {
 						return emailtags.Failure("message_not_found", "Message not found", nil, nil)
 					}
 				}
