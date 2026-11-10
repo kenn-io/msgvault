@@ -18,6 +18,21 @@ it('omits only an unfinished character when a prefix cuts UTF-8', () => {
 });
 
 describe('delimited previews', () => {
+  it('keeps quoted empty values and blank lines but not a trailing terminator', async () => {
+    for (const text of ['value\nfirst\n""\nthird', 'value\nfirst\n""\nthird\n', 'value\r\nfirst\r\n""\r\nthird\r\n', 'value\rfirst\r""\rthird\r']) {
+      expect((await parseDelimited(text, ',')).rows).toEqual([['first'], [''], ['third']]);
+    }
+    expect((await parseDelimited('value\nfirst\n""\n', ',')).rows).toEqual([['first'], ['']]);
+    expect((await parseDelimited('value\nfirst\n""\n', ',', 200, true)).rows).toEqual([['first'], ['']]);
+    expect((await parseDelimited('value\nfirst\n""', ',', 200, true)).rows).toEqual([['first']]);
+    expect((await parseDelimited('value\nfirst\n\nthird\n', ',')).rows).toEqual([['first'], [''], ['third']]);
+    expect((await parseDelimited('h\n1\n', ',', 1)).truncated).toBe(false);
+    expect((await parseDelimited('h\n1\n2\n', ',', 1)).truncated).toBe(true);
+  });
+  it('still guesses delimiters when the text ends with a terminator', async () => {
+    expect((await parseDelimited('a;b\n1;2\n')).rows).toEqual([['1', '2']]);
+    expect((await parseDelimited('a|b\n\n1|2\n')).rows).toEqual([[''], ['1', '2']]);
+  });
   it('reports whether data rows were omitted', async () => {
     expect(await parseDelimited('Name\nOne\nTwo\nThree', ',', 2)).toEqual({ header: ['Name'], rows: [['One'], ['Two']], truncated: true, cellLimit: false, columnsTruncated: false, hasErrors: false });
     expect((await parseDelimited('Name\nOne\nTwo', ',', 2)).truncated).toBe(false);

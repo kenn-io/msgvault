@@ -15,7 +15,12 @@ export async function parseDelimited(text: string, delimiter = '', maxRows = 200
   const { default: Papa } = await import('papaparse');
   const linebreak = text.endsWith('\r') ? Papa.parse(text + '\n', { delimiter, preview: maxRows + 2, skipEmptyLines: true }).meta.linebreak : '';
   const prefix = text.endsWith('\r') && linebreak === '\n' ? text.slice(0, -1) + '\n' : text.endsWith('\r') && linebreak === '\r\n' ? text + '\n' : text;
-  const result = Papa.parse<string[]>(prefix, { delimiter, preview: maxRows + 2, skipEmptyLines: true });
+  // Guess with blank lines ignored, then retain every parsed record.
+  const resolved = delimiter || Papa.parse(prefix, { preview: 1, skipEmptyLines: true }).meta.delimiter;
+  const result = Papa.parse<string[]>(prefix, { delimiter: resolved, preview: maxRows + 2 });
+  // A final record terminator produces one extra empty row.
+  const last = result.data.at(-1);
+  if (!result.meta.truncated && prefix.endsWith(result.meta.linebreak) && last?.length === 1 && last[0] === '') result.data.pop();
   const hasErrors = result.errors.some((error) => error.type === 'Quotes' && !(inputTruncated && !result.meta.truncated && error.code === 'MissingQuotes' && error.row === result.data.length - 1));
   // A byte prefix can end inside a field, including a quoted multiline field.
   // Only a parsed record terminator proves the final record is complete.
