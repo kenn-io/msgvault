@@ -88,7 +88,7 @@ describe('RelationshipsTab', () => {
   });
 
   it.each([
-    ['uri', 'urn:uuid:11111111-2222-3333-4444-555555555555', 'Unknown contact', 'vcard_import', 'Contact · Friend · from a contact file · Jul 31'],
+    ['uri', 'urn:uuid:11111111-2222-3333-4444-555555555555', 'Unknown contact', 'vcard_import', 'Friend · from a contact file · Jul 31'],
     ['text', 'Alex', 'Alex', 'carddav_import', 'Text · Friend · from CardDAV contacts · Jul 31'],
   ])('describes an imported %s value', async (valueKind, value, title, source, description) => {
     vi.setSystemTime(new Date(2026, 10, 6, 12));

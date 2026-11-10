@@ -61,7 +61,7 @@
   // The value kind, imported type, and source appear before the import date; the review date sits in the tooltip.
   function importedLine(row: (typeof imports.rows)[number]): ProvenanceLine {
     const line = provenance(row.source, row.updated_at ?? row.reviewed_at ?? '', undefined, { times: [['Reviewed', row.reviewed_at ?? undefined]] });
-    const kind = row.raw_related_value.startsWith('urn:uuid:') ? 'Contact' : row.value_kind === 'uri' ? 'Reference' : 'Text';
+    const kind = row.raw_related_value.startsWith('urn:uuid:') ? '' : row.value_kind === 'uri' ? 'Reference' : 'Text';
     const lead = [kind, sentenceCase(row.raw_related_type)].filter(Boolean).join(' · ');
     return { text: lead ? `${lead} · ${line.text.charAt(0).toLowerCase()}${line.text.slice(1)}` : line.text, title: line.title };
   }

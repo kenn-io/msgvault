@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
 import { DirectoryEntityController } from './entity-controller.svelte';
+import { WriteAttempt } from './write-attempt.svelte';
 import type { Prepared } from './models';
 import { requestOf, pathOf, employment, organization, organizationProfile, relationship, relationshipType as makeRelationshipType } from './entity-fixtures.test-support';
 
@@ -918,6 +919,27 @@ describe('DirectoryEntityController', () => {
     await expect(create).resolves.toMatchObject({ ok: false, kind: 'error' });
     expect(controller.createBlocked.employments).toBe(false);
   });
+});
+
+it('retries deletion with the attempted version when the conflict refresh fails', async () => {
+  let reads = 0;
+  const deletedWith: (string | null)[] = [];
+  const client = createAPIClient(async input => {
+    const request = requestOf(input);
+    if (request.method === 'DELETE') {
+      deletedWith.push(request.headers.get('If-Match'));
+      return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    }
+    if (++reads === 2) return Response.json({ message: 'Unavailable' }, { status: 503 });
+    return Response.json(organizationProfile(reads), { headers: { ETag: reads === 1 ? '"original"' : '"newer"' } });
+  });
+  const controller = new DirectoryEntityController(client, 7);
+  const attempt = new WriteAttempt<Awaited<ReturnType<typeof controller.prepareOrganizationMutation>>>();
+  try {
+    await attempt.run(current => controller.deleteOrganization(21, current));
+    await attempt.run(current => controller.deleteOrganization(21, current));
+    expect(deletedWith).toEqual(['"original"', '"original"']);
+  } finally { controller.destroy(); }
 });
 
 it.each([
