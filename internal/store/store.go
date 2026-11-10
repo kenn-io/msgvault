@@ -3106,6 +3106,10 @@ func (s *Store) GetStatsForScopeContext(ctx context.Context, sourceIDs []int64) 
 			return out
 		}
 
+		plainScope, plainArgs := s.incomingScopeClause(ctx, "messages.id", "messages.source_id")
+		messageScope, messageArgs := s.incomingScopeClause(ctx, "m.id", "m.source_id")
+		withScope := func(scopeArgs []any) []any { return append(cloneArgs(), scopeArgs...) }
+
 		queries = []struct {
 			query string
 			args  []any

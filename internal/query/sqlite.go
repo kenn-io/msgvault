@@ -1991,6 +1991,7 @@ func (e *SQLiteEngine) SearchByDomains(ctx context.Context, domains []string, af
 	}
 
 	// Fetch one row past the page to learn whether another page follows.
+	conditions, args = e.appendIncomingScope(ctx, conditions, args)
 	messages, err := e.executeSearchQuery(ctx, conditions, args, "", limit+1, offset)
 	if err != nil {
 		return DomainSearchResult{}, err
@@ -2200,6 +2201,7 @@ func (e *SQLiteEngine) Search(ctx context.Context, q *search.Query, limit, offse
 	if page, ok, err := e.searchNewestFirst(ctx, q, conditions, args, ftsJoin, limit, offset); ok || err != nil {
 		return page, err
 	}
+	conditions, args = e.appendIncomingScope(ctx, conditions, args)
 	return e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
 }
 
@@ -2234,6 +2236,7 @@ func (e *SQLiteEngine) searchNewestFirst(ctx context.Context, q *search.Query, c
 		store.SQLiteFTSRowIDCondition(conditions[1]),
 	}
 	args = append([]any{window - 1}, args...)
+	conditions, args = e.appendIncomingScope(ctx, conditions, args)
 	page, err := e.executeSearchQuery(ctx, conditions, args, "INDEXED BY idx_messages_sent_at", limit, offset)
 	return page, len(page) == limit, err
 }
@@ -2401,6 +2404,7 @@ func (e *SQLiteEngine) SearchDeep(
 	ctx context.Context, searchQuery *search.Query, filter MessageFilter, limit, offset int,
 ) ([]MessageSummary, error) {
 	conditions, args, ftsJoin := e.buildFilteredDeepSearchQueryParts(ctx, searchQuery, filter)
+	conditions, args = e.appendIncomingScope(ctx, conditions, args)
 	return e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
 }
 
@@ -2410,6 +2414,7 @@ func (e *SQLiteEngine) SearchDeepWithStats(
 	ctx context.Context, searchQuery *search.Query, filter MessageFilter, limit, offset int,
 ) (*SearchFastResult, error) {
 	conditions, args, ftsJoin := e.buildFilteredDeepSearchQueryParts(ctx, searchQuery, filter)
+	conditions, args = e.appendIncomingScope(ctx, conditions, args)
 	var (
 		results  []MessageSummary
 		count    int64
