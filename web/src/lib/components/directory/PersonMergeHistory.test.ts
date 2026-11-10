@@ -1,5 +1,4 @@
 import { addressFixture, identityKeyFixture } from '../../directory/merge-fixtures.test-support';
-import { emptyProfile } from '../../directory/profile-fixtures.test-support';
 import { mergeResult, person } from '../../directory/entity-fixtures.test-support';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -120,7 +119,6 @@ function renderHistory(value: number | null | MergeDetail = 12, options: {
     const listed = options.fail ? { ...labels, participant_ids: mergeDetail.labels.participant_ids, addresses: mergeDetail.labels.addresses, incomplete: false } : labels;
     if (path === '/api/v1/people/7/merges') return Response.json({ merges: (options.list ?? [mergeDetail]).map(item => ({ ...summary(item), labels: item === mergeDetail ? listed : { ...item.labels, participants: item.participants } })), limit: 100, offset: 0 });
     if (path.endsWith('/snapshot')) return Response.json({ version: 1, sha256: 'synthetic-digest', snapshot: { explicitly_revealed: 'synthetic content', persons: labels.profiles } });
-    if (path === '/api/v1/people/12/profile') return Response.json(emptyProfile(person(12)));
     if (path.startsWith('/api/v1/people/')) {
       const id = Number(path.split('/').at(-1));
       return Response.json(person(id, 4, [701], id === 19 ? 'Alex Restored' : 'Alex Example'), { headers: { ETag: `"person-${id}-r4"` } });
@@ -144,10 +142,9 @@ function deferred<T = Response>() {
 const posts = (requests: Request[]) => requests.filter(request => request.method === 'POST');
 
 describe('PersonMergeHistory', () => {
-  it('lets the user choose addresses and leave while saved addresses and a past destination name load', async () => {
-    const saved = deferred(), name = deferred();
+  it('lets the user choose addresses and leave while a past destination name loads', async () => {
+    const name = deferred();
     const { requests, onClose } = renderHistory(detail(), { respond: path => {
-      if (path === '/api/v1/people/12/profile') return saved.promise;
       if (path === '/api/v1/people/19') return name.promise;
       return undefined;
     } });
@@ -156,7 +153,6 @@ describe('PersonMergeHistory', () => {
       await fireEvent.click(await screen.findByRole('button', { name: 'Split…' }));
       const choice = await screen.findByRole('checkbox', { name: 'address701@example.org, +12025550101' });
       expect(choice).toHaveProperty('disabled', false);
-      expect(screen.getByText('Loading saved addresses…')).toBeDefined();
       expect(screen.queryByRole('checkbox', { name: 'Unknown address 1' })).toBeNull();
       await fireEvent.click(choice);
       expect(choice).toHaveProperty('checked', true);
@@ -167,7 +163,6 @@ describe('PersonMergeHistory', () => {
       expect(onClose).toHaveBeenCalledOnce();
       expect(posts(requests)).toHaveLength(0);
     } finally {
-      saved.resolve(Response.json({ ...emptyProfile(person(12)), contact_points: [] }));
       name.resolve(Response.json(person(19, 4, [703], 'Alex Restored')));
     }
   });
@@ -189,17 +184,15 @@ describe('PersonMergeHistory', () => {
     } finally { pending.resolve(Response.json({}, { status: 503 })); }
   });
 
-  it('lets the user finish a committed split while the profiles refresh and the receipt loads', async () => {
-    const reconciliation = deferred<void>(), receipt = [deferred(), deferred()];
+  it('lets the user finish a committed split while the profiles refresh', async () => {
+    const reconciliation = deferred<void>();
     const onSplitCommitted = vi.fn(() => reconciliation.promise);
-    let savedReads = 0;
     const result = { exact_reversal: true, cache_state: 'ready', identity_revision: 8,
       source_person: person(12, 5, [], 'Synthetic Source'), new_person: person(19, 1, [701], 'Synthetic Restored'),
       split: { ...detail().splits![0], id: 56, exact_reversal: true }, ambiguous_rows: [], unrestored_rows: [], uid_alias_disposition: 'restored' };
     const { onOpenPerson, onClose } = renderHistory(detail(), { onSplitCommitted, respond: (path, request) => {
       if (request.method === 'POST') return Response.json(result, { headers: { ETag: '"person-12-r5"', 'X-New-Person-ETag': '"person-19-r1"' } });
       if (path === '/api/v1/people/12') return Response.json(person(12, 4, [701], 'Synthetic Source'), { headers: { ETag: '"person-12-r4"' } });
-      if (path.endsWith('/profile')) return ++savedReads === 1 ? Response.json({ ...emptyProfile(person(12)), contact_points: [] }) : receipt[savedReads - 2]!.promise;
       return undefined;
     } });
     try {
@@ -209,7 +202,6 @@ describe('PersonMergeHistory', () => {
       await fireEvent.click(screen.getByRole('button', { name: 'Split into new person' }));
 
       await screen.findByRole('dialog', { name: 'Split complete' });
-      expect(screen.getByText('Loading saved addresses…')).toBeDefined();
       const done = screen.getByRole('button', { name: 'Done' });
       await waitFor(() => expect(done).toHaveProperty('disabled', false));
       expect(screen.getByRole('button', { name: 'Close' })).toHaveProperty('disabled', false);
@@ -220,10 +212,7 @@ describe('PersonMergeHistory', () => {
       await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
       await fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
       expect(onClose).toHaveBeenCalledTimes(3);
-    } finally {
-      reconciliation.resolve();
-      for (const read of receipt) read.resolve(Response.json({ ...emptyProfile(person(12)), contact_points: [] }));
-    }
+    } finally { reconciliation.resolve(); }
   });
 
   it('renders saved email and phone on the History card', async () => {

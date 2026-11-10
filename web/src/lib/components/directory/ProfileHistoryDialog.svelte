@@ -67,16 +67,15 @@
       const matches = observations.filter(point => point.identity_key === address.identity_key);
       for (const point of matches) seen.add(point.envelope.id);
       const observed = matches[0];
-      const value = address.value;
       const service = observed && providerContext(observed, workspaces, false);
       return {
-        id: `merged-${address.mergeID}-${address.participantID}-${address.identity_key}`, value,
+        id: `merged-${address.mergeID}-${address.participantID}-${address.identity_key}`, value: address.value,
         detail: service && address.value !== service && !address.value.startsWith(`${service} · `) ? service : undefined,
         provenance: {
           text: `Merged in · ${formatShortDate(address.mergedAt)}`,
           title: [`Merged ${formatDateTime(address.mergedAt)}`, observed && `Seen ${formatDateTime(observed.observed_at ?? observed.envelope.created_at)}`].filter(Boolean).join('\n'),
         },
-        onclick: () => openMerge(address.mergeID), actionLabel: `Open the merge that brought in ${value}`,
+        onclick: () => openMerge(address.mergeID), actionLabel: `Open the merge that brought in ${address.value}`,
       };
     });
     return { rows, seen };

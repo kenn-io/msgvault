@@ -1,4 +1,4 @@
-import type { PersonContactPoint, PersonMergeDetail, PersonMergeRecordedContactPoint, PersonMergeLabels, ParticipantAddress } from '../api/generated/models';
+import type { PersonMergeDetail, PersonMergeLabels, ParticipantAddress } from '../api/generated/models';
 import { identityChipText } from '../relationships/identity-chip';
 
 export interface AddressIdentity { identity_key: string; service_slug?: string; scope_kind?: string; scope_value?: string }
@@ -6,7 +6,7 @@ type AddressLabel = AddressIdentity & { title: string; detail: string };
 export function addressText(address: { title: string; detail?: string } | undefined): string | undefined {
   return address ? [address.title, address.detail].filter(Boolean).join(' · ') : undefined;
 }
-export interface MergeLabels { names: Map<number, string>; addresses: Map<number, AddressLabel[]>; workspaceLabels: Map<string, string>; incomplete: boolean }
+export interface MergeLabels { names: Map<number, string>; addresses: Map<number, AddressLabel[]>; incomplete: boolean }
 export interface MergeRow extends MergeLabels { count: number; absorbedAddress?: string }
 export interface MergeAddress extends AddressIdentity { id: string; participantID?: number; title: string; value: string; detail?: string; splitID?: number }
 export interface MergedInAddress extends AddressIdentity { mergeID: number; participantID: number; value: string; mergedAt: string }
@@ -63,28 +63,22 @@ export function mergeAddresses(detail: MergeSides, side: 'absorbed' | 'survivor'
 
 type MergeSides = Pick<PersonMergeDetail, 'participants'> & Partial<Pick<PersonMergeDetail, 'merge' | 'labels'>>;
 
-/** Adds the addresses saved on the profile itself, by its editor or an import, which the merge moved with it. */
+/**
+ * Adds the addresses saved on the profile itself, by its editor or an import, which the merge moved with it, once each.
+ * An unserviced address is an ordinary email, phone, or username; one on WhatsApp, Slack, or a scope names them under
+ * it by the service's registered label. Language is profile metadata, not an address.
+ */
 function withSavedAddresses(detail: MergeSides, side: 'absorbed' | 'survivor', addresses: MergeAddress[], workspaces: Map<string, string>): MergeAddress[] {
   const personID = side === 'absorbed' ? detail.merge?.absorbed_person_id : detail.merge?.survivor_person_id;
   const seen = new Set(addresses.map(address => address.identity_key));
-  return addresses.concat(savedAddresses(detail.labels?.profiles.find(profile => profile.id === personID)?.contact_points ?? [], seen, workspaces)
-    .map((address, index) => ({ ...address, id: `saved-${personID}-${index}`, value: address.title })));
-}
-
-/**
- * The addresses saved on a profile, recorded or current, once each. An unserviced address is an ordinary
- * email, phone, or username; one on WhatsApp, Slack, or a scope names them under it by the service's
- * registered label. Language is profile metadata, not an address. `seen` skips addresses already listed.
- */
-function savedAddresses(points: (PersonMergeRecordedContactPoint | PersonContactPoint)[], seen: Set<string>, workspaces: Map<string, string>): (AddressIdentity & { title: string; detail?: string })[] {
-  return points.filter(point => point.address_kind !== 'language').flatMap(point => {
+  const points = (detail.labels?.profiles.find(profile => profile.id === personID)?.contact_points ?? [])
+    .filter(point => point.address_kind !== 'language' && !seen.has(point.identity_key) && !!seen.add(point.identity_key));
+  return addresses.concat(points.map((point, index) => {
     const service = point.service_slug || point.address_kind, scope_kind = point.scope_kind || '', scope_value = point.scope_value || '';
     const scope = scopeText({ service_slug: service, scope_kind, scope_value }, workspaces);
     const detail = [service === point.address_kind ? '' : point.service_label, scope].filter(Boolean).join(' · ') || undefined;
-    if (seen.has(point.identity_key)) return [];
-    seen.add(point.identity_key);
-    return [{ identity_key: point.identity_key, title: point.original_value, detail, service_slug: service, scope_kind, scope_value }];
-  });
+    return { identity_key: point.identity_key, id: `saved-${personID}-${index}`, title: point.original_value, value: point.original_value, detail, service_slug: service, scope_kind, scope_value };
+  }));
 }
 
 /** The server supplies recorded names and canonical identities for a page or selected merge. */
@@ -95,7 +89,7 @@ export function mergeSummaryRow(item: { merge: PersonMergeDetail['merge']; label
   const addresses = participantAddressMap(labels, workspaces);
   const rows = mergeAddresses({ participants, merge: item.merge, labels }, 'absorbed', workspaces);
   return {
-    names, addresses, workspaceLabels: workspaces, incomplete: labels.incomplete || participants.some(participant => !addresses.has(participant.participant_id)),
+    names, addresses, incomplete: labels.incomplete || participants.some(participant => !addresses.has(participant.participant_id)),
     count: labels.absorbed_address_count, absorbedAddress: addressText(rows[0]),
   };
 }
