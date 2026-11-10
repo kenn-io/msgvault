@@ -283,8 +283,19 @@ func TestArchivedThreadCheckCheckpointsEachBatch(t *testing.T) {
 }
 
 func TestArchivedThreadCheckFindsAnOpeningPostEditedDuringAPausedFetch(t *testing.T) {
+	// This machine's clock times a fetch; GitLab's times an edit and the
+	// check's watermark.
+	for _, behind := range []time.Duration{0, 3 * time.Minute} {
+		t.Run(fmt.Sprintf("GitLab's clock %s behind", behind), func(t *testing.T) {
+			checkFindsAnOpeningPostEditedDuringAPausedFetch(t, behind)
+		})
+	}
+}
+
+func checkFindsAnOpeningPostEditedDuringAPausedFetch(t *testing.T, behind time.Duration) {
 	st := testutil.NewTestStore(t)
 	f := newFakeGitLab(t)
+	f.behind = behind
 	source := newGitLabSource(t, st, f.forge().Instance())
 	synctest.Test(t, func(t *testing.T) {
 		assert := assert.New(t)
@@ -317,7 +328,7 @@ func TestArchivedThreadCheckFindsAnOpeningPostEditedDuringAPausedFetch(t *testin
 
 		synctest.Sleep(time.Minute)
 		issue.object["description"] = "Edited during the pause."
-		issue.object["updated_at"] = time.Now().Format(time.RFC3339)
+		issue.object["updated_at"] = time.Now().Add(-behind).Format(time.RFC3339)
 
 		// The next check finishes before the resumed fetch does, so its
 		// watermark falls between the fetch's first and last pages.

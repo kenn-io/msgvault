@@ -586,6 +586,10 @@ func (f *Forge) readInstant(ctx context.Context, state *cursor, list listStream,
 	return bisect(createdRange{from: state.Lists[list.key()].CreatedFrom, to: end})
 }
 
+// clockSlack is how far this machine's clock, which timed an archived
+// thread's fetch, may be from GitLab's.
+const clockSlack = 10 * time.Minute
+
 // knownCursor is how far the check of archived threads came. A check asks
 // for the threads updated since the sync of the last complete check
 // started. A fetch that straddled that check's start also needs changes
@@ -680,9 +684,12 @@ func (f *Forge) checkGroup(ctx context.Context, state *cursor, group knownGroup,
 		for _, iid := range batch {
 			thread := archived[iid]
 			// A fetch completed after the last check began may have read
-			// its opening post earlier, before an edit during a pause.
-			if thread.ReadAt.Before(through) && !thread.CheckedAt.Before(cur.Through) {
-				through = thread.ReadAt
+			// its opening post earlier, before an edit during a pause. This
+			// machine's clock timed the fetch and GitLab's the watermark,
+			// so both of the fetch's times are widened by clockSlack.
+			readFrom := thread.ReadAt.Add(-clockSlack)
+			if readFrom.Before(through) && !thread.CheckedAt.Before(cur.Through.Add(-clockSlack)) {
+				through = readFrom
 			}
 		}
 		items, gone, err := f.changedSince(ctx, through, group, batch)
