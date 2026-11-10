@@ -121,7 +121,7 @@ func importRawDirectory(ctx context.Context, st *store.Store, root string,
 	}
 	ingestFn := opts.IngestFunc
 	if ingestFn == nil {
-		ingestFn = rawMessageIngesterWithOptions(opts.RemoteImages, IngestOptions{RelayedSenders: opts.RelayedSenders})
+		ingestFn = rawMessageIngester(opts.RemoteImages, opts.RelayedSenders)
 	}
 	log := opts.Logger
 	if log == nil {

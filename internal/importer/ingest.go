@@ -34,30 +34,16 @@ func IngestRawMessage(
 	sourceID int64, identifier, attachmentsDir string,
 	labelIDs []int64, sourceMsgID, rawHash string,
 	raw []byte, fallbackDate time.Time,
-	log *slog.Logger,
+	log *slog.Logger, rules []mime.RelayedSenderRule,
 ) error {
-	return ingestRawMessage(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, nil, "", nil)
-}
-
-// IngestOptions configures raw message ingestion.
-type IngestOptions struct {
-	RelayedSenders []mime.RelayedSenderRule
-}
-
-// IngestRawMessageWithOptions applies configured relay rules during import.
-func IngestRawMessageWithOptions(ctx context.Context, st *store.Store, sourceID int64, identifier, attachmentsDir string, labelIDs []int64, sourceMsgID, rawHash string, raw []byte, fallbackDate time.Time, log *slog.Logger, opts IngestOptions) error {
-	return ingestRawMessage(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, nil, "", opts.RelayedSenders)
+	return ingestRawMessage(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, nil, "", rules)
 }
 
 type rawMessageIngestFunc func(context.Context, *store.Store, int64, string, string, []int64, string, string, []byte, time.Time, *slog.Logger) error
 
-func rawMessageIngester(images *remoteimage.Fetcher) rawMessageIngestFunc {
-	return rawMessageIngesterWithOptions(images, IngestOptions{})
-}
-
-func rawMessageIngesterWithOptions(images *remoteimage.Fetcher, opts IngestOptions) rawMessageIngestFunc {
+func rawMessageIngester(images *remoteimage.Fetcher, rules []mime.RelayedSenderRule) rawMessageIngestFunc {
 	return func(ctx context.Context, st *store.Store, sourceID int64, identifier, attachmentsDir string, labelIDs []int64, sourceMsgID, rawHash string, raw []byte, fallbackDate time.Time, log *slog.Logger) error {
-		return ingestRawMessage(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, images, "", opts.RelayedSenders)
+		return ingestRawMessage(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, images, "", rules)
 	}
 }
 

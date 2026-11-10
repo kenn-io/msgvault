@@ -137,7 +137,8 @@ func TestImportEMLDirResumesAfterInterruptedFileBoundary(t *testing.T) {
 			ingestCalls++
 			err := IngestRawMessage(
 				ctx, st, sourceID, identifier, attachmentsDir,
-				labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log)
+				labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log,
+				nil)
 			if err == nil && ingestCalls == 1 {
 				cancel()
 			}
@@ -296,7 +297,8 @@ func TestImportEMLDirResumeRescansFilesBeforeCheckpoint(t *testing.T) {
 		) error {
 			err := IngestRawMessage(
 				ctx, st, sourceID, identifier, attachmentsDir,
-				labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log)
+				labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log,
+				nil)
 			if err == nil {
 				cancel()
 			}
@@ -447,7 +449,7 @@ func TestRelayedSenderNamesAfterImport(t *testing.T) {
 		{"fallback", "Relay Service <notifications@github.com>", ""},
 	} {
 		raw := []byte("From: " + message.from + "\r\nTo: reader@example.test\r\n" + message.header + "Subject: Notice\r\n\r\nHello")
-		requirements.NoError(IngestRawMessage(t.Context(), st, source.ID, source.Identifier, "", nil, message.id, message.id, raw, time.Time{}, slog.Default()))
+		requirements.NoError(IngestRawMessage(t.Context(), st, source.ID, source.Identifier, "", nil, message.id, message.id, raw, time.Time{}, slog.Default(), nil))
 	}
 	for id, want := range map[string]string{"unnamed": "Bob Author", "named": "Bob Author", "first": "Alice Author", "fallback": "Relay Service"} {
 		var name string
