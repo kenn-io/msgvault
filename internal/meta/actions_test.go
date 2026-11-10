@@ -176,3 +176,26 @@ func TestImportResumesPastDeletedComment(t *testing.T) {
 	assert.False(sum.Partial)
 	assert.NotContains(f.paths, "/v26.0/100_201/comments")
 }
+
+func TestImportResumesPastRepliesOfDeletedComment(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, f, imp, src := setupImport(t)
+	f.comments["100_200"] = []Object{*comment("100_201", "100_200", "Example comment")}
+	f.comments["100_201"] = []Object{*comment("100_202", "100_201", "Example reply")}
+	// Page check, post page, and the comment pages of 100_200 and 100_201;
+	// the reply page of 100_202 is left for the next run.
+	sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 4})
+	require.NoError(err)
+	require.True(sum.Partial)
+	target, err := ResolveCommentTarget(t.Context(), st, message(t, st, src.ID, "100_201").ID)
+	require.NoError(err)
+	client, _ := writeFixture(t, http.StatusOK, `{"success":true}`)
+	require.NoError(ModerateComment(t.Context(), st, client, target, ActionDelete))
+
+	f.denied["100_202/comments"] = true
+	before := len(f.paths)
+	sum, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err, "saved traversal below a deleted comment is dropped")
+	assert.False(sum.Partial)
+	assert.NotContains(f.paths[before:], "/v26.0/100_202/comments")
+}

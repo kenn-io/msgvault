@@ -158,6 +158,9 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 			retErr = scoped.store.CompleteSyncAndUpdateSourceCursorContext(ctx, syncID, source.ID, checkpoint.PageToken)
 		}
 	}()
+	if err = run.dropDeletedFrames(ctx); err != nil {
+		return sum, err
+	}
 	// Publish the inherited state before any new request, so a crash cannot
 	// conceal a newer failed/paused checkpoint behind this run.
 	if err = run.save(ctx); err != nil {
@@ -193,6 +196,31 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 		}
 	}
 	return sum, phaseErr
+}
+
+// dropDeletedFrames removes saved reply traversal under comments deleted
+// through msgvault since the checkpoint was saved. Meta has no replies left
+// to read there, so asking would fail on every run. The run holds the source
+// lock, so no comment is deleted while it traverses.
+func (r *importRun) dropDeletedFrames(ctx context.Context) error {
+	for _, p := range r.state.Phases {
+		for i, f := range p.Stack {
+			if f.Parent == f.Root {
+				continue
+			}
+			deleted, err := r.imp.store.MessageDeletedFromSourceContext(ctx, r.source.ID, f.Parent)
+			if err != nil {
+				return err
+			}
+			if deleted {
+				// Each frame's comment was already taken from the frame below,
+				// so cutting here loses only the deleted comment's subtree.
+				p.Stack = p.Stack[:i]
+				break
+			}
+		}
+	}
+	return nil
 }
 
 func (r *importRun) verify(ctx context.Context) error {
@@ -293,18 +321,6 @@ func (r *importRun) phase(ctx context.Context, edge PostEdge) error {
 func (r *importRun) comments(ctx context.Context, p *phaseState, edge PostEdge) error {
 	index := len(p.Stack) - 1
 	f := &p.Stack[index]
-	if !f.Loaded && f.Parent != f.Root {
-		// A comment deleted through msgvault after this frame was saved has no
-		// replies left to read, and asking Meta for them would fail every run.
-		deleted, err := r.imp.store.MessageDeletedFromSourceContext(ctx, r.source.ID, f.Parent)
-		if err != nil {
-			return err
-		}
-		if deleted {
-			p.Stack = p.Stack[:index]
-			return nil
-		}
-	}
 	if !f.Loaded {
 		page, err := r.request(ctx, edge, f.After, func() (ObjectPage, error) { return r.readComments(ctx, *f) })
 		if err != nil {
