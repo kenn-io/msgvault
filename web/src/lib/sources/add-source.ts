@@ -22,7 +22,7 @@ export const ADD_SOURCE_KINDS: readonly AddSourceKind[] = [
     template: 'msgvault add-account -- {email}',
   },
   {
-    id: 'microsoft', name: 'Microsoft 365 or Outlook.com', description: 'Includes Hotmail',
+    id: 'microsoft', name: 'Microsoft', description: 'Outlook.com, Hotmail, or Microsoft 365',
     docs: 'https://msgvault.io/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail',
     fields: [{ id: 'email', label: 'Email address', placeholder: 'you@example.com' }],
     template: 'msgvault add-o365 -- {email}',
