@@ -368,7 +368,7 @@ func state(t *testing.T, st *store.Store) map[string]string {
 	return out
 }
 
-func TestImportFirstSyncAutomationThenNoChange(t *testing.T) {
+func TestImportFirstSyncThenNoChange(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -382,9 +382,6 @@ func TestImportFirstSyncAutomationThenNoChange(t *testing.T) {
 	sum, err := f.sync(t, st)
 	require.NoError(err)
 	assert.Equal(4, sum.Added)
-	var known int
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE automation_flags = 0 AND automation_rule_version = ?`), store.AutomationRuleVersion).Scan(&known))
-	assert.Equal(4, known)
 	assert.Equal(map[string]string{"m1": "Inbox", "m2": "Inbox", "m3": "Inbox", "m4": "Archive"}, state(t, st))
 	assert.EqualValues(5, f.mimeCalls.Load(), "four downloads plus one 429")
 

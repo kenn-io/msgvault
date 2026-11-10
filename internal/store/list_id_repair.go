@@ -290,7 +290,7 @@ func (s *Store) nextListIDRepairBatch(
 const listIDRepairEmailMessagePredicate = "COALESCE(m.message_type, '') IN ('', 'email')"
 
 func decodeListIDHeader(row listIDRepairRow, maxHeaderBytes int) (string, error) {
-	if row.rawFormat != emailLinkageRawFormat {
+	if row.rawFormat != "mime" {
 		return "", errors.New("unsupported raw format")
 	}
 	raw, err := readListIDRepairHeader(row.rawData, row.compression, maxHeaderBytes)

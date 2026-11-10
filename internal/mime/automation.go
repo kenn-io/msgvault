@@ -95,6 +95,18 @@ func (s AutomationSignals) Flags(fromAddress string) uint32 {
 	return flags
 }
 
+// SignalsFromFlags reconstructs MIME rule evidence, excluding sender and chat bits.
+func SignalsFromFlags(flags uint32) AutomationSignals {
+	return AutomationSignals{
+		AutoSubmitted:   flags&FlagAutoSubmitted != 0,
+		PrecedenceBulk:  flags&FlagPrecedenceBulk != 0,
+		ListID:          flags&FlagListID != 0,
+		ListUnsubscribe: flags&FlagListUnsubscribe != 0,
+		CalendarPart:    flags&FlagCalendarPart != 0,
+		ReplyToNoReply:  flags&FlagReplyToNoReply != 0,
+	}
+}
+
 const (
 	FlagAutoSubmitted uint32 = 1 << iota
 	FlagPrecedenceBulk

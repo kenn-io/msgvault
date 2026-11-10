@@ -108,14 +108,7 @@ func (r *storeReader) original(id int64) (mime.AutomationSignals, bool, bool, er
 	if !current {
 		return r.st.LoopOriginalEvidenceContext(r.ctx, id)
 	}
-	signals := mime.AutomationSignals{
-		AutoSubmitted:   flags&mime.FlagAutoSubmitted != 0,
-		PrecedenceBulk:  flags&mime.FlagPrecedenceBulk != 0,
-		ListID:          flags&mime.FlagListID != 0,
-		ListUnsubscribe: flags&mime.FlagListUnsubscribe != 0,
-		CalendarPart:    flags&mime.FlagCalendarPart != 0,
-		ReplyToNoReply:  flags&mime.FlagReplyToNoReply != 0,
-	}
+	signals := mime.SignalsFromFlags(flags)
 	return signals, true, false, nil
 }
 

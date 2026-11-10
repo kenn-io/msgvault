@@ -2869,9 +2869,9 @@ msgvault repair-automation-flags [--apply] [--batch-size 500]
 The default dry run reports `scanned`, `would_write`, `bulk`, `automated`,
 `unreadable`, and `remaining`. Pass `--apply` to write flags; the summary then
 reports `written`. Each batch commits separately. If interrupted, rerun the
-command to continue past messages already repaired. Batch size must be between
-1 and 5000. Missing or unreadable originals stay unknown and are included in
-`remaining`. Already-current messages and chat messages are skipped.
+command to continue past messages already repaired. Missing or unreadable
+originals stay unknown and are included in `remaining`. Already-current
+messages and chat messages are skipped.
 
 The daemon runs the command against your archive. Applied repairs mark derived
 analytics stale and refresh the cache. They leave message content and embedding

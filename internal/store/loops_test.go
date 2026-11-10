@@ -9,7 +9,6 @@ import (
 	"encoding/json/v2"
 	"log/slog"
 	"math/rand/v2"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -19,7 +18,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/loops"
-	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/email"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -692,10 +690,8 @@ func BenchmarkListLoops(b *testing.B) {
 	}
 }
 
-// BenchmarkListLoopsAutomation measures the cold MIME path and its ordinary
-// and warm controls. Set MSGVAULT_BENCH_AUTOMATION=1 only on a branch with the
-// automation columns; leaving it unset keeps this fixture compatible with base.
-// Both runs archive identical messages and truthful standalone attachment rows.
+// BenchmarkListLoopsAutomation measures current automation flags with cold
+// evidence, ordinary mail, and warm controls using truthful attachment rows.
 func BenchmarkListLoopsAutomation(b *testing.B) {
 	attachment := make([]byte, 96<<10)
 	_, err := rand.NewChaCha8([32]byte{1}).Read(attachment)
@@ -742,10 +738,8 @@ func BenchmarkListLoopsAutomation(b *testing.B) {
 					require.NoError(b, err)
 				}
 			}
-			if os.Getenv("MSGVAULT_BENCH_AUTOMATION") == "1" {
-				_, err := tx.ExecContext(b.Context(), `UPDATE messages SET automation_flags=0, automation_rule_version=?`, mime.AutomationEvidenceVersion<<8|1)
-				require.NoError(b, err)
-			}
+			_, err = tx.ExecContext(b.Context(), `UPDATE messages SET automation_flags=0, automation_rule_version=?`, store.AutomationRuleVersion)
+			require.NoError(b, err)
 			require.NoError(b, tx.Commit())
 			if tc.warm {
 				for {

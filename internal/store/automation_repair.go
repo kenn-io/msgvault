@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -19,7 +20,7 @@ type AutomationRepairSummary struct{ Scanned, Written, Bulk, Automated, Unreadab
 // RepairAutomationFlags derives unknown email flags from retained MIME. Each
 // keyset batch commits independently, so cancellation retains completed work.
 // Written means would-write in a dry run. Missing originals remain unknown.
-func (s *Store) RepairAutomationFlags(ctx context.Context, opts AutomationRepairOptions, progress func(AutomationRepairSummary)) (summary AutomationRepairSummary, err error) {
+func (s *Store) RepairAutomationFlags(ctx context.Context, opts AutomationRepairOptions) (summary AutomationRepairSummary, err error) {
 	size := opts.BatchSize
 	if size == 0 {
 		size = 500
@@ -34,6 +35,11 @@ func (s *Store) RepairAutomationFlags(ctx context.Context, opts AutomationRepair
 			defer cancel()
 			err = errors.Join(err, s.PublishPendingDerivedEmailRevisionContext(cleanup))
 		}()
+	}
+	type preparedAutomation struct {
+		id    int64
+		fp    [sha256.Size]byte
+		flags uint32
 	}
 	var after int64
 	haveCursor := false
@@ -71,49 +77,67 @@ func (s *Store) RepairAutomationFlags(ctx context.Context, opts AutomationRepair
 			break
 		}
 		var batch AutomationRepairSummary
-		process := func(q contextStatementQuerier) error {
-			for _, id := range ids {
-				batch.Scanned++
-				var raw []byte
-				var compression sql.NullString
-				var format sql.NullString
-				var encryption int
-				// One original at a time bounds memory independently of batch size. Lock
-				// the snapshot through the write; a later raw change invalidates it again.
-				query := `SELECT raw_data, compression, raw_format, COALESCE(encryption_version, 0) FROM message_raw WHERE message_id = ?`
-				if opts.Apply {
-					query += s.dialect.SelectForUpdate()
+		var prepared []preparedAutomation
+		// Parse one original at a time before taking the batch's writer lock.
+		// Retain only its fingerprint and flags for verification before publication.
+		for _, id := range ids {
+			batch.Scanned++
+			var raw []byte
+			var compression, format sql.NullString
+			var encryption int
+			readErr := s.db.QueryRowContext(ctx, `SELECT raw_data, compression, raw_format, COALESCE(encryption_version, 0) FROM message_raw WHERE message_id = ?`, id).Scan(&raw, &compression, &format, &encryption)
+			if readErr != nil && !errors.Is(readErr, sql.ErrNoRows) {
+				return summary, fmt.Errorf("read automation original: %w", readErr)
+			}
+			if errors.Is(readErr, sql.ErrNoRows) || format.String != emailLinkageRawFormat || encryption != 0 {
+				batch.Unreadable++
+				continue
+			}
+			fp := rawMIMEFingerprint(raw, compression)
+			raw, readErr = decompressArchivedRaw(id, raw, compression)
+			if readErr != nil {
+				batch.Unreadable++
+				continue
+			}
+			// Nested text/calendar requires a complete MIME parse.
+			parsed, parseErr := mime.ParseWithRecovery(raw, "")
+			flags := parsed.AutomationFlags()
+			if parseErr != nil || flags == nil {
+				batch.Unreadable++
+				continue
+			}
+			if *flags&BulkMask != 0 {
+				batch.Bulk++
+			}
+			if *flags != 0 {
+				batch.Automated++
+			}
+			prepared = append(prepared, preparedAutomation{id, fp, *flags})
+		}
+
+		if opts.Apply {
+			err = s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+				if err := s.lockListIDRepairSQLiteWriter(ctx, tx); err != nil {
+					return err
 				}
-				readErr := q.QueryRowContext(ctx, query, id).Scan(&raw, &compression, &format, &encryption)
-				if readErr != nil && !errors.Is(readErr, sql.ErrNoRows) {
-					return readErr
-				}
-				if errors.Is(readErr, sql.ErrNoRows) || format.String != emailLinkageRawFormat || encryption != 0 {
-					batch.Unreadable++
-					continue
-				}
-				raw, readErr = decompressArchivedRaw(id, raw, compression)
-				if readErr != nil {
-					batch.Unreadable++
-					continue
-				}
-				// MIME parts can carry text/calendar below a multipart header. A header-only
-				// parse would publish a false known-human flag set for those messages.
-				parsed, parseErr := mime.ParseWithRecovery(raw, "")
-				flags := parsed.AutomationFlags()
-				if parseErr != nil || flags == nil {
-					batch.Unreadable++
-					continue
-				}
-				if *flags&BulkMask != 0 {
-					batch.Bulk++
-				}
-				if *flags != 0 {
-					batch.Automated++
-				}
-				if opts.Apply {
-					result, writeErr := q.ExecContext(ctx, `UPDATE messages SET automation_flags = ?, automation_rule_version = ? WHERE id = ?
- AND (automation_flags IS NULL OR automation_rule_version IS NULL OR automation_rule_version <> ?)`, *flags, AutomationRuleVersion, id, AutomationRuleVersion)
+				for _, item := range prepared {
+					if s.IsPostgreSQL() {
+						if err := s.lockMeetingEvidenceWith(ctx, tx, item.id); err != nil {
+							return err
+						}
+					}
+					// The lock covers snapshot verification and writing, not parsing.
+					var raw []byte
+					var compression sql.NullString
+					readErr := tx.QueryRowContext(ctx, `SELECT raw_data, compression FROM message_raw WHERE message_id = ? AND raw_format = ? AND COALESCE(encryption_version, 0) = 0`+s.dialect.SelectForUpdate(), item.id, emailLinkageRawFormat).Scan(&raw, &compression)
+					if readErr != nil && !errors.Is(readErr, sql.ErrNoRows) {
+						return readErr
+					}
+					if errors.Is(readErr, sql.ErrNoRows) || rawMIMEFingerprint(raw, compression) != item.fp {
+						continue // A changed original remains eligible for a later repair.
+					}
+					result, writeErr := tx.ExecContext(ctx, `UPDATE messages SET automation_flags = ?, automation_rule_version = ? WHERE id = ?
+ AND (automation_flags IS NULL OR automation_rule_version IS NULL OR automation_rule_version <> ?)`, item.flags, AutomationRuleVersion, item.id, AutomationRuleVersion)
 					if writeErr != nil {
 						return writeErr
 					}
@@ -122,34 +146,15 @@ func (s *Store) RepairAutomationFlags(ctx context.Context, opts AutomationRepair
 						return countErr
 					}
 					batch.Written += n
-				} else {
-					batch.Written++
 				}
-			}
-			return nil
-		}
-		if opts.Apply {
-			err = s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
-				if err := s.lockListIDRepairSQLiteWriter(ctx, tx); err != nil {
-					return err
-				}
-				if s.IsPostgreSQL() {
-					for _, id := range ids {
-						if err := s.lockMeetingEvidenceWith(ctx, tx, id); err != nil {
-							return err
-						}
-					}
-				}
-				if err := process(tx); err != nil {
-					return err
-				}
+
 				if batch.Written > 0 {
 					return setArchiveMetadataValueTx(ctx, tx, pendingDerivedEmailRevisionKey, "1")
 				}
 				return nil
 			})
 		} else {
-			err = process(s.db)
+			batch.Written = int64(len(prepared))
 		}
 		if err != nil {
 			return summary, fmt.Errorf("repair automation batch: %w", err)
@@ -161,9 +166,6 @@ func (s *Store) RepairAutomationFlags(ctx context.Context, opts AutomationRepair
 		summary.Unreadable += batch.Unreadable
 		after = ids[len(ids)-1]
 		haveCursor = true
-		if progress != nil {
-			progress(summary)
-		}
 	}
 	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages m WHERE `+listIDRepairEmailMessagePredicate+`
  AND (m.automation_flags IS NULL OR m.automation_rule_version IS NULL OR m.automation_rule_version <> ?)`, AutomationRuleVersion).Scan(&summary.Remaining)

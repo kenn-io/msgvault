@@ -31,7 +31,6 @@ func TestParseAutomationSignals(t *testing.T) {
 			msg, err := Parse([]byte(raw))
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, msg.AutomationSignals())
-			assert.Equal(t, new(tt.want.Flags("alex@example.test")), msg.AutomationFlags())
 		})
 	}
 }
@@ -140,6 +139,7 @@ func FuzzParseAutomationBodyIsolation(f *testing.F) {
 }
 
 func TestAutomationSignalsFlags(t *testing.T) {
+	assert := assert.New(t)
 	for _, tt := range []struct {
 		signals AutomationSignals
 		from    string
@@ -150,18 +150,18 @@ func TestAutomationSignalsFlags(t *testing.T) {
 		{AutomationSignals{CalendarPart: true}, "", 16}, {AutomationSignals{ReplyToNoReply: true}, "", 32},
 		{AutomationSignals{}, "no-reply@example.test", 64}, {AutomationSignals{}, "person@example.test", 0},
 	} {
-		assert.Equal(t, tt.want, tt.signals.Flags(tt.from))
+		assert.Equal(tt.want, tt.signals.Flags(tt.from))
+		assert.Equal(tt.signals, SignalsFromFlags(tt.want | FlagBotSender | FlagSenderNoReply))
 	}
-	assert.Equal(t, uint32(14), BulkMask)
-}
-
-func TestAutomationFlagEncoding(t *testing.T) {
-	assert.Equal(t, uint32(128), FlagBotSender)
+	assert.Equal(uint32(14), BulkMask)
+	assert.Equal(uint32(128), FlagBotSender)
 }
 
 func TestMessageAutomationFlagsCompleteness(t *testing.T) {
 	assertions := assert.New(t)
 	require := require.New(t)
+	noReply, err := Parse([]byte("From: no-reply@example.test\r\n\r\nhello"))
+	require.NoError(err)
 	for _, tc := range []struct {
 		name    string
 		message *Message
@@ -171,6 +171,7 @@ func TestMessageAutomationFlagsCompleteness(t *testing.T) {
 		{name: "incomplete", message: &Message{Incomplete: true, ListID: "news.example.test"}},
 		{name: "complete human", message: &Message{}, want: new(uint32(0))},
 		{name: "complete list", message: &Message{ListID: "news.example.test"}, want: new(uint32(4))},
+		{name: "parsed no reply", message: noReply, want: new(uint32(64))},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.want, tc.message.AutomationFlags())

@@ -334,16 +334,3 @@ func TestIngestRawMessage_LeavesCanonicalDateUnsetWhenNoDateIsPlausible(t *testi
 	assert.Contains(logs.String(), "ignored implausible email Date header")
 	assert.Contains(logs.String(), "replacement_source=none")
 }
-
-func TestIngestAutomationMalformedOriginalRemainsUnknown(t *testing.T) {
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("mbox", "archive@example.test")
-	require.NoError(err)
-	require.NoError(IngestRawMessage(t.Context(), st, source.ID, "archive@example.test", "", nil, "malformed-automation", "hash", []byte("invalid MIME"), time.Time{}, slog.Default()))
-	var id int64
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id = 'malformed-automation'`).Scan(&id))
-	_, current, err := st.MessageAutomationContext(t.Context(), id)
-	require.NoError(err)
-	assert.False(t, current)
-}

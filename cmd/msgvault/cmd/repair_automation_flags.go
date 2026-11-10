@@ -19,15 +19,7 @@ func newRepairAutomationFlagsCmd() *cobra.Command {
 The default is a dry run: it reports the values that would change without
 modifying the archive. Pass --apply to write the repaired values. This command
 works entirely offline and never contacts a provider.`,
-		Args: func(cmd *cobra.Command, args []string) error {
-			if err := cobra.NoArgs(cmd, args); err != nil {
-				return err
-			}
-			if batchSize < 1 || batchSize > 5000 {
-				return errors.New("automation repair batch size must be between 1 and 5000")
-			}
-			return nil
-		},
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
@@ -36,7 +28,7 @@ works entirely offline and never contacts a provider.`,
 		},
 	}
 	cmd.Flags().BoolVar(&apply, "apply", false, "write repaired automation flags to the archive")
-	cmd.Flags().IntVar(&batchSize, "batch-size", 500, "messages per transaction (1–5000)")
+	cmd.Flags().IntVar(&batchSize, "batch-size", 500, "messages per transaction")
 	return cmd
 }
 
@@ -59,7 +51,7 @@ func runRepairAutomationFlagsLocal(cmd *cobra.Command, apply bool, batchSize int
 		}()
 	}
 
-	summary, err := st.RepairAutomationFlags(cmd.Context(), store.AutomationRepairOptions{Apply: apply, BatchSize: batchSize}, nil)
+	summary, err := st.RepairAutomationFlags(cmd.Context(), store.AutomationRepairOptions{Apply: apply, BatchSize: batchSize})
 	if err != nil {
 		return fmt.Errorf("repair automation flags: %w", err)
 	}
