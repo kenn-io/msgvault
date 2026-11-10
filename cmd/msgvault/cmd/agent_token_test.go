@@ -743,6 +743,14 @@ func TestAgentTokenArchiveSenderFlagAndViews(t *testing.T) {
 		source := map[string]any{"id": 1, "type": "gmail", "identifier": "owner@example.test", "sender_keys": []string{"owner@example.test"}, "archive_senders": []string{"codes@example.test", "alerts@example.test"}}
 		view := map[string]any{"id": "archive-fixture", "label": "archive", "permissions": []string{"message.archive"}, "sources": []any{source}, "created_at": time.Now().UTC()}
 		if r.Method == http.MethodPost {
+			var body struct {
+				ArchiveSenders map[string][]string `json:"archive_senders"`
+			}
+			if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&body)) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			assert.Equal(t, map[string][]string{"1": {"codes@example.test", "alerts@example.test"}}, body.ArchiveSenders)
 			view["secret"] = "synthetic-token"
 			w.WriteHeader(http.StatusCreated)
 			require.NoError(t, json.NewEncoder(w).Encode(view))
