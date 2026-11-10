@@ -1281,10 +1281,16 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.Server.ApplyDefaults()
 	cfg.Discord.ApplyDefaults()
+	seen := make(map[string]int, len(cfg.RelayedSenders))
 	for i, rule := range cfg.RelayedSenders {
 		if !mime.ValidateRelayedSenderRule(rule) {
 			return nil, fmt.Errorf("relayed_senders[%d]: invalid address, header, or identifier type", i)
 		}
+		key := strings.ToLower(rule.Address)
+		if j, ok := seen[key]; ok {
+			return nil, fmt.Errorf("relayed_senders[%d]: address duplicates relayed_senders[%d]", i, j)
+		}
+		seen[key] = i
 	}
 	if err := cfg.OAuth.Validate(); err != nil {
 		return nil, fmt.Errorf("oauth: %w", err)

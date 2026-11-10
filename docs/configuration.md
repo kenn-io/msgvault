@@ -2766,7 +2766,7 @@ GitHub notification email is attributed to the author named in its `X-GitHub-Sen
 
 The header names a person but does not authenticate them, and handles can change.
 
-Add rules for other relay addresses in `config.toml`. A rule for an existing address replaces its built-in rule.
+Add rules for other relay addresses in `config.toml`. A rule for an existing address replaces its built-in rule. Each address may appear in only one rule.
 
 ```toml
 [[relayed_senders]]

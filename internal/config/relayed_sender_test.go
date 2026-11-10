@@ -19,6 +19,8 @@ func TestRelayedSenderConfig(t *testing.T) {
 		{"invalid header", "address = \"relay@example.test\"\nheader = \"bad header\"\nidentifier_type = \"example\"\n", false},
 		{"reserved email type", "address = \"relay@example.test\"\nheader = \"X-Author\"\nidentifier_type = \"email\"\n", false},
 		{"reserved phone type", "address = \"relay@example.test\"\nheader = \"X-Author\"\nidentifier_type = \"phone\"\n", false},
+		{"duplicate address", "address = \"relay@example.test\"\nheader = \"X-Author\"\nidentifier_type = \"example\"\n[[relayed_senders]]\naddress = \"relay@example.test\"\nheader = \"X-Other\"\nidentifier_type = \"example\"\n", false},
+		{"duplicate address case", "address = \"relay@example.test\"\nheader = \"X-Author\"\nidentifier_type = \"example\"\n[[relayed_senders]]\naddress = \"Relay@Example.test\"\nheader = \"X-Other\"\nidentifier_type = \"example\"\n", false},
 		{"missing type", "address = \"relay@example.test\"\nheader = \"X-Author\"\n", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -29,6 +31,9 @@ func TestRelayedSenderConfig(t *testing.T) {
 			cfg, err := Load(path, "")
 			if !tc.valid {
 				assertions.ErrorContains(err, "relayed_senders")
+				if tc.name == "duplicate address" || tc.name == "duplicate address case" {
+					assertions.ErrorContains(err, "relayed_senders[1]: address duplicates relayed_senders[0]")
+				}
 				return
 			}
 			requirements.NoError(err)
