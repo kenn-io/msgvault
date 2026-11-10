@@ -351,7 +351,7 @@ for (const theme of ['light', 'dark'] as const) {
       await setKitTheme(page, theme);
       await expect(page.getByRole('radio', { name: 'Messages', exact: true })).toBeVisible();
       await page.getByRole('radio', { name: 'Details', exact: true }).click();
-      await expect(page.getByText('urn:uuid:synthetic-related-person')).toBeVisible();
+      await expect(page.getByText(/^Friend · from a contact file/)).toBeVisible();
       await assertNoViolations(page, `Imported relationships ${theme} ${viewport.width}`);
     }
   });

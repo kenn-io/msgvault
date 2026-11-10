@@ -262,6 +262,21 @@ body :is(.kit-button.kit-button, .kit-menu__trigger.kit-menu__trigger) {
   color: var(--link-ink);
 }
 
+/* A button marked data-link reads as a link in its sentence or row: the
+ * text's own font and line, underlined on hover. */
+:where(button[data-link]) {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+:where(button[data-link]):hover {
+  text-decoration: underline;
+}
+
 /* A row text action (Reveal, Details, Hide) reads as a link, not a button,
  * with Meta text centered in a 28px target. */
 :root:root .kit-button.text-action {
@@ -389,6 +404,13 @@ body .kit-text-input--lg.kit-text-input--lg {
   line-height: var(--type-body-line);
 }
 
+/* A focused invalid field draws one outline: the focus ring takes the error's red and lies over the border, inside
+ * the field, so the error still sits 4 below it. */
+:root:root .kit-text-input--invalid:has(.kit-text-input__control:focus-visible) {
+  outline-color: var(--accent-red);
+  outline-offset: -2px;
+}
+
 body :is(form:not([role='search']), .kit-modal-body, [data-form]) :is(select, input:not([type='checkbox'], [type='radio'], [type='hidden'], [type='range'], [type='color'], [type='button'], [type='submit'], [type='reset'])):not(.kit-text-input__control, .kit-typeahead__input, .cron__input) {
   box-sizing: border-box;
   height: var(--field-h);
@@ -469,10 +491,25 @@ body :is(.kit-menu__item.kit-menu__item, .kit-select-dropdown__option.kit-select
   margin: var(--space-tight) 0;
 }
 
+/* A picker's list sits 4 from both of the panel's sides, as a menu's does: it
+ * reserves no bar and pads nothing extra on the right, and a list long
+ * enough to scroll draws its bar there. */
+:root:root .kit-typeahead__body {
+  padding-right: 0;
+  scrollbar-gutter: auto;
+}
+
+/* "No matches" and "Loading…" read as the app's other empty lines: Meta,
+ * muted, upright. An error keeps its own color. */
 body :is(.kit-typeahead__empty.kit-typeahead__empty, .kit-typeahead__status.kit-typeahead__status) {
   padding: var(--space-group) var(--list-item-pad-x);
   font-size: var(--type-meta-size);
+  font-style: normal;
   line-height: var(--type-meta-line);
+}
+
+body :is(.kit-typeahead__empty.kit-typeahead__empty, .kit-typeahead__status.kit-typeahead__status:not(.kit-typeahead__status--error)) {
+  color: var(--text-muted);
 }
 
 :root:root :is(.kit-typeahead__search, .kit-typeahead__header) {

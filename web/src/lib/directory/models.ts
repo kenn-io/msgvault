@@ -80,12 +80,17 @@ export type DirectoryEntityResource =
   'organizations' | 'employments' | 'relationships' | 'relationshipTypes' | 'network';
 export type DirectoryEntityCreateResource = Exclude<DirectoryEntityResource, 'network'>;
 
-export type DirectoryEntityMutationResult<T, C = T> =
-  | { ok: true; entity?: T }
-  | { ok: false; kind: 'conflict'; status: 409 | 412; message: string; current?: C }
+/** A record as read for a write, with the ETag that write sends as If-Match. */
+export type Prepared<T> = { data: T; etag: string };
+
+export type DirectoryEntityMutationResult<T, C = never> =
+  // etag: the saved version's, so a second write from the same dialog collides only with someone else's edit.
+  | { ok: true; entity?: T; etag?: string }
+  | { ok: false; kind: 'conflict'; status: 409 | 412; message: string; current?: C; attempted?: C }
   | { ok: false; kind: 'unknown'; message: string }
   | { ok: false; kind: 'blocked'; message: string }
-  | { ok: false; kind: 'error'; status: number; message: string };
+  // attempted: the version a failed write or delete sent, so its retry collides with any edit made since.
+  | { ok: false; kind: 'error'; status: number; message: string; attempted?: C };
 
 export type DirectoryProfileDraft =
   | { kind: 'rename'; body: PatchPersonRequest }

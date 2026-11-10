@@ -1,9 +1,13 @@
 <script lang="ts">
+  import { Menu, MenuTrigger, MenuContent, MenuItem } from '@kenn-io/kit-ui';
   import type { Snippet } from 'svelte';
   import type { ProvenanceLine } from '../directory/history-format';
 
   interface Props {
     label?: string;
+    /** The row's actions, in a ⋯ menu named for the row. */
+    menu?: { label: string; onselect: () => void; danger?: boolean; disabled?: boolean }[];
+    exception?: string;
     /** A muted second line under the value: dates or a role, or a provenance line with its timestamps as the tooltip. */
     description?: string | ProvenanceLine;
     children: Snippet;
@@ -14,15 +18,19 @@
     actionLabel?: string;
   }
 
-  let { label = undefined, description = undefined, children, actions = undefined, onclick = undefined, actionLabel = 'Open' }: Props = $props();
+  let { label = undefined, description = undefined, children, actions = undefined, onclick = undefined, actionLabel = 'Open', menu = [], exception = undefined }: Props = $props();
   const line = $derived(typeof description === 'string' ? { text: description, title: undefined } : description);
 </script>
 
-<div class="detail-row" class:clickable={!!onclick}>
+<div class="detail-row" class:own-actions={menu.length > 0} class:clickable={!!onclick}>
   {#if onclick}<button class="row-hit" type="button" aria-label={actionLabel} title={line?.title} {onclick}></button>{/if}
   {#if label !== undefined}<span class="label">{label}</span>{/if}
-  <div class="value">{@render children()}{#if line?.text}<span class="description" title={line.title}>{line.text}</span>{/if}</div>
-  {#if actions}<div class="actions">{@render actions()}</div>{/if}
+  <div class="value">{@render children()}{#if line?.text || exception}<span class="description" title={line?.title}>{line?.text}{#if line?.text && exception}{' · '}{/if}{#if exception}<span class="exception">{exception}</span>{/if}</span>{/if}</div>
+  {#if actions || menu.length}<div class="actions">{@render actions?.()}
+    {#if menu.length}<Menu align="end"><MenuTrigger ariaLabel={`Actions for ${actionLabel}`}>⋯</MenuTrigger><MenuContent ariaLabel={`Actions for ${actionLabel}`}>
+      {#each menu as item}<MenuItem onselect={item.onselect} disabled={item.disabled} tone={item.danger ? 'danger' : 'neutral'}>{item.label}</MenuItem>{/each}
+    </MenuContent></Menu>{/if}
+  </div>{/if}
 </div>
 
 <style>
@@ -105,10 +113,12 @@
     margin-left: auto;
   }
 
-  /* On a phone the value takes the full width and the actions wrap under it. */
+  .actions :global(.kit-menu__trigger) { width: var(--control-h); min-height: var(--control-h); padding: 0; }
+
+  /* On a phone the value takes the full width and the actions wrap under it; a row's own actions stay on its first line. */
   @media (max-width: 640px) {
-    .detail-row:has(.actions) { flex-wrap: wrap; }
-    .detail-row:has(.actions) .value { flex-basis: 100%; }
+    .detail-row:not(.own-actions):has(.actions) { flex-wrap: wrap; }
+    .detail-row:not(.own-actions):has(.actions) .value { flex-basis: 100%; }
     .actions { flex-wrap: wrap; max-width: 100%; }
   }
 </style>
