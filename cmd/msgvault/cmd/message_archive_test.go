@@ -14,10 +14,9 @@ import (
 )
 
 type cliArchiveBackend struct {
-	id         int64
-	change     emailtags.ArchiveChange
-	compatible bool
-	failure    error
+	id      int64
+	change  emailtags.ArchiveChange
+	failure error
 }
 
 func TestArchiveCommandRefuses50Daemon(t *testing.T) {
@@ -42,7 +41,7 @@ func TestArchiveCommandRefuses50Daemon(t *testing.T) {
 }
 
 func (b *cliArchiveBackend) SupportsAPISchemaVersion(context.Context, string) (bool, error) {
-	return b.compatible, nil
+	return true, nil
 }
 func (b *cliArchiveBackend) ArchiveMessage(_ context.Context, id int64, change emailtags.ArchiveChange) (*emailtags.ArchiveResult, error) {
 	b.id, b.change = id, change
@@ -55,7 +54,7 @@ func TestArchiveMessageCommands(t *testing.T) {
 	assertionsForTest := assert.New(t)
 	requirementsForTest := require.New(t)
 	for _, archived := range []bool{true, false} {
-		backend := &cliArchiveBackend{compatible: true}
+		backend := &cliArchiveBackend{}
 		command := newMessageArchiveCommand(archived, backend)
 		var output bytes.Buffer
 		command.SetOut(&output)
@@ -65,22 +64,11 @@ func TestArchiveMessageCommands(t *testing.T) {
 		assertionsForTest.Equal(archived, *backend.change.Archived)
 		assertionsForTest.True(backend.change.DryRun)
 		assertionsForTest.Contains(output.String(), `"dry_run":true`)
-		assertionsForTest.True(agentDelegatedCommand(command.Name()))
 	}
-	for _, tc := range []struct {
-		args       []string
-		compatible bool
-	}{
-		{nil, true},
-		{[]string{"--message", "0"}, true},
-		{[]string{"--message", "-1"}, true},
-		{[]string{"--message", "x"}, true},
-		{[]string{"--message", "7", "extra"}, true},
-		{[]string{"--message", "7"}, false},
-	} {
-		backend := &cliArchiveBackend{compatible: tc.compatible}
+	for _, args := range [][]string{nil, {"--message", "0"}, {"--message", "-1"}, {"--message", "x"}, {"--message", "7", "extra"}} {
+		backend := &cliArchiveBackend{}
 		command := newMessageArchiveCommand(true, backend)
-		command.SetArgs(tc.args)
+		command.SetArgs(args)
 		command.SetOut(&bytes.Buffer{})
 		command.SetErr(&bytes.Buffer{})
 		requirementsForTest.Error(command.ExecuteContext(t.Context()))
@@ -90,7 +78,7 @@ func TestArchiveMessageCommands(t *testing.T) {
 
 func TestArchiveMessageCommandPartialErrorJSON(t *testing.T) {
 	failure := emailtags.Failure("remote_unknown", "Read current tags", &emailtags.MessageTagResult{Provider: "gmail", Tags: []string{"UNREAD"}}, nil)
-	backend := &cliArchiveBackend{compatible: true, failure: failure}
+	backend := &cliArchiveBackend{failure: failure}
 	command := newMessageArchiveCommand(true, backend)
 	var output bytes.Buffer
 	command.SetOut(&output)

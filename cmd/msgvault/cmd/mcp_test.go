@@ -33,8 +33,8 @@ func TestMCPToolSummaryFlagsExist(t *testing.T) {
 }
 
 func TestMCPCommandUsesDaemonInsteadOfOpeningLocalDatabase(t *testing.T) {
-	requirementsForTest := require.New(t)
-	assertionsForTest := assert.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	testCtx := withStoreResolverConfig(t, &config.Config{
 		HomeDir: t.TempDir(),
@@ -64,14 +64,14 @@ func TestMCPCommandUsesDaemonInsteadOfOpeningLocalDatabase(t *testing.T) {
 	cmd.SetContext(ctx)
 	err := cmd.RunE(cmd, nil)
 
-	requirementsForTest.Error(err, "canceled MCP serve should return")
-	requirementsForTest.ErrorIs(err, context.Canceled, "error should preserve context cancellation: %v", err)
-	assertionsForTest.NotContains(err.Error(), "open database", "MCP command must not open SQLite directly")
+	require.Error(err, "canceled MCP serve should return")
+	require.ErrorIs(err, context.Canceled, "error should preserve context cancellation: %v", err)
+	assert.NotContains(err.Error(), "open database", "MCP command must not open SQLite directly")
 }
 
 func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
-	assertionsForTest := assert.New(t)
-	requirementsForTest := require.New(t)
+	assert := assert.New(t)
+	require := require.New(t)
 
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/health" {
@@ -112,17 +112,17 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	savedConfirmSensitiveDrafts := mcpConfirmSensitiveDrafts
 	savedServeHTTP := serveMCPHTTPWithOptions
 	allowWritesFlag := mcpCmd.Flags().Lookup("http-allow-writes")
-	requirementsForTest.NotNil(allowWritesFlag, "mcp command must define --http-allow-writes")
-	requirementsForTest.NoError(allowWritesFlag.Value.Set("true"))
+	require.NotNil(allowWritesFlag, "mcp command must define --http-allow-writes")
+	require.NoError(allowWritesFlag.Value.Set("true"))
 	allowCalendarWritesFlag := mcpCmd.Flags().Lookup("allow-calendar-writes")
-	requirementsForTest.NotNil(allowCalendarWritesFlag, "mcp command must define --allow-calendar-writes")
-	requirementsForTest.NoError(allowCalendarWritesFlag.Value.Set("true"))
-	requirementsForTest.NoError(mcpCmd.Flags().Set("confirm-sensitive-drafts", "true"))
+	require.NotNil(allowCalendarWritesFlag, "mcp command must define --allow-calendar-writes")
+	require.NoError(allowCalendarWritesFlag.Value.Set("true"))
+	require.NoError(mcpCmd.Flags().Set("confirm-sensitive-drafts", "true"))
 	mcpHTTPAddr = "0.0.0.0:8081"
 	mcpHTTPAllowInsecure = true
 	loopWritesFlag := mcpCmd.Flags().Lookup("allow-loop-writes")
-	requirementsForTest.NotNil(loopWritesFlag)
-	requirementsForTest.NoError(loopWritesFlag.Value.Set("true"))
+	require.NotNil(loopWritesFlag)
+	require.NoError(loopWritesFlag.Value.Set("true"))
 	mcpAllowSourceWrites = false
 	mcpAllowProfileWrites = true
 	mcpAllowIdentityDecisions = true
@@ -130,8 +130,8 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	mcpAllowPersonMerges = true
 	mcpAllowCardDAVWrites = true
 	t.Cleanup(func() {
-		assertionsForTest.NoError(allowWritesFlag.Value.Set("false"))
-		assertionsForTest.NoError(allowCalendarWritesFlag.Value.Set("false"))
+		assert.NoError(allowWritesFlag.Value.Set("false"))
+		assert.NoError(allowCalendarWritesFlag.Value.Set("false"))
 		mcpHTTPAddr = savedHTTPAddr
 		mcpHTTPAllowInsecure = savedAllowInsecure
 		mcpAllowProfileWrites = savedAllowProfileWrites
@@ -157,16 +157,16 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	mcpCmd.SetContext(testCtx)
 	err := mcpCmd.RunE(mcpCmd, nil)
 
-	requirementsForTest.ErrorIs(err, wantErr)
-	assertionsForTest.ElementsMatch([]mcpserver.OperationFamily{mcpserver.OperationFamilyRecords, mcpserver.OperationFamilyLoops}, gotServeOpts.OperationWriteFamilies)
-	assertionsForTest.True(gotServeOpts.AllowProfileWrites)
-	assertionsForTest.True(gotServeOpts.AllowIdentityDecisions)
-	assertionsForTest.True(gotServeOpts.AllowIdentityScoring)
-	assertionsForTest.True(gotServeOpts.AllowPersonMerges)
-	assertionsForTest.True(gotServeOpts.AllowCardDAVWrites)
-	assertionsForTest.True(gotServeOpts.AllowCalendarWrites)
-	assertionsForTest.True(gotServeOpts.ConfirmSensitiveDrafts)
-	assertionsForTest.Equal(mcpserver.HTTPOptions{
+	require.ErrorIs(err, wantErr)
+	assert.ElementsMatch([]mcpserver.OperationFamily{mcpserver.OperationFamilyRecords, mcpserver.OperationFamilyLoops}, gotServeOpts.OperationWriteFamilies)
+	assert.True(gotServeOpts.AllowProfileWrites)
+	assert.True(gotServeOpts.AllowIdentityDecisions)
+	assert.True(gotServeOpts.AllowIdentityScoring)
+	assert.True(gotServeOpts.AllowPersonMerges)
+	assert.True(gotServeOpts.AllowCardDAVWrites)
+	assert.True(gotServeOpts.AllowCalendarWrites)
+	assert.True(gotServeOpts.ConfirmSensitiveDrafts)
+	assert.Equal(mcpserver.HTTPOptions{
 		Addr:               "0.0.0.0:8081",
 		DiscoveryDirectory: filepath.Join(home, "mcp"),
 		BackendURL:         daemon.URL,
@@ -176,9 +176,9 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 }
 
 func TestDaemonMCPHybridSearcherPreservesPhaseTimings(t *testing.T) {
-	assertionsForTest := assert.New(t)
+	assert := assert.New(t)
 	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
-		assertionsForTest.Equal("/api/v1/search", r.URL.Path)
+		assert.Equal("/api/v1/search", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"query":"semantic terms",
@@ -198,9 +198,9 @@ func TestDaemonMCPHybridSearcherPreservesPhaseTimings(t *testing.T) {
 		Query: "semantic terms", Mode: "hybrid", Limit: 10,
 	})
 	require.NoError(t, err)
-	assertionsForTest.Equal(int64(12), result.TookMS)
-	assertionsForTest.Equal("vec1_ivf_opq", result.Accelerator)
-	assertionsForTest.Equal(mcpserver.HybridSearchTimings{
+	assert.Equal(int64(12), result.TookMS)
+	assert.Equal("vec1_ivf_opq", result.Accelerator)
+	assert.Equal(mcpserver.HybridSearchTimings{
 		QueryEmbeddingMS: 2,
 		RetrievalMS:      7,
 		HydrationMS:      3,
@@ -238,7 +238,7 @@ func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assertionsForTest := assert.New(t)
+			assert := assert.New(t)
 			var healthRequests atomic.Int32
 			var discoveryRequests atomic.Int32
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -251,7 +251,7 @@ func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 					http.NotFound(w, r)
 					return
 				}
-				assertionsForTest.Equal("/api/v1/health", r.URL.Path, "startup must not request archive statistics")
+				assert.Equal("/api/v1/health", r.URL.Path, "startup must not request archive statistics")
 				healthRequests.Add(1)
 				if tt.health == "" {
 					http.Error(w, `{"error":"temporarily_unavailable"}`, http.StatusServiceUnavailable)
@@ -262,19 +262,19 @@ func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 			})
 
 			opts := daemonMCPServeOptions(t.Context(), client, invocationFromContext(t.Context()))
-			assertionsForTest.Equal(tt.wantText, opts.HybridSearcher != nil, "semantic search")
-			assertionsForTest.Equal(tt.wantText, opts.SimilarSearcher != nil, "similar messages")
-			assertionsForTest.Equal(tt.wantVisual, opts.VisualSearcher != nil, "visual search")
-			assertionsForTest.Equal(tt.wantEmbeddingStatus, opts.EmbeddingStatus != nil, "embedding status")
-			assertionsForTest.Equal(int32(1), healthRequests.Load(), "reuse the schema probe")
-			assertionsForTest.Equal(int32(1), discoveryRequests.Load(), "probe optional operations once")
+			assert.Equal(tt.wantText, opts.HybridSearcher != nil, "semantic search")
+			assert.Equal(tt.wantText, opts.SimilarSearcher != nil, "similar messages")
+			assert.Equal(tt.wantVisual, opts.VisualSearcher != nil, "visual search")
+			assert.Equal(tt.wantEmbeddingStatus, opts.EmbeddingStatus != nil, "embedding status")
+			assert.Equal(int32(1), healthRequests.Load(), "reuse the schema probe")
+			assert.Equal(int32(1), discoveryRequests.Load(), "probe optional operations once")
 		})
 	}
 }
 
 func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
-	assertionsForTest := assert.New(t)
-	requirementsForTest := require.New(t)
+	assert := assert.New(t)
+	require := require.New(t)
 	testCtx := withStoreResolverConfig(t, &config.Config{
 		Data: config.DataConfig{DataDir: t.TempDir()},
 	})
@@ -306,16 +306,16 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 		Mode:  "hybrid",
 	})
 	var coded interface{ APIErrorCode() string }
-	requirementsForTest.ErrorAs(err, &coded)
-	assertionsForTest.Equal("vector_initializing", coded.APIErrorCode())
+	require.ErrorAs(err, &coded)
+	assert.Equal("vector_initializing", coded.APIErrorCode())
 	path := <-requests
-	assertionsForTest.Equal("/api/v1/mcp/capabilities", path, "startup probes optional operations")
+	assert.Equal("/api/v1/mcp/capabilities", path, "startup probes optional operations")
 	path = <-requests
-	assertionsForTest.Equal("/api/v1/health", path, "startup reads the daemon schema")
+	assert.Equal("/api/v1/health", path, "startup reads the daemon schema")
 	path = <-requests
-	assertionsForTest.Equal("/api/v1/media/search/status", path, "capability detection checks Docbank separately")
+	assert.Equal("/api/v1/media/search/status", path, "capability detection checks Docbank separately")
 	path = <-requests
-	assertionsForTest.Equal("/api/v1/search", path, "vector readiness belongs to the request")
+	assert.Equal("/api/v1/search", path, "vector readiness belongs to the request")
 }
 
 func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
@@ -412,7 +412,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 func TestDaemonMCPServeOptionsWarnsWhenPeopleCapabilityProbeFails(t *testing.T) {
 	logger := testLoggerValue()
 
-	assertionsForTest := assert.New(t)
+	assert := assert.New(t)
 	testCtx := withStoreResolverConfig(t, &config.Config{
 		Data: config.DataConfig{DataDir: t.TempDir()},
 	})
@@ -434,17 +434,17 @@ func TestDaemonMCPServeOptionsWarnsWhenPeopleCapabilityProbeFails(t *testing.T) 
 	})
 
 	opts := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
-	assertionsForTest.Nil(opts.PeopleBackend)
-	assertionsForTest.Nil(opts.DirectoryBackend)
-	assertionsForTest.Nil(opts.ChatDiscoveryBackend)
-	assertionsForTest.Nil(opts.ArchiveSQLQuerier)
-	assertionsForTest.Contains(logs.String(), "people tools disabled")
+	assert.Nil(opts.PeopleBackend)
+	assert.Nil(opts.DirectoryBackend)
+	assert.Nil(opts.ChatDiscoveryBackend)
+	assert.Nil(opts.ArchiveSQLQuerier)
+	assert.Contains(logs.String(), "people tools disabled")
 }
 
 func TestDaemonMCPServeOptionsUsesOneCapabilityProbe(t *testing.T) {
 	logger := testLoggerValue()
 
-	assertionsForTest := assert.New(t)
+	assert := assert.New(t)
 	testCtx := withStoreResolverConfig(t, &config.Config{
 		Data: config.DataConfig{DataDir: t.TempDir()},
 	})
@@ -474,18 +474,18 @@ func TestDaemonMCPServeOptionsUsesOneCapabilityProbe(t *testing.T) {
 	})
 
 	opts := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
-	assertionsForTest.NotNil(opts.PeopleBackend)
-	assertionsForTest.NotNil(opts.DirectoryBackend)
-	assertionsForTest.NotNil(opts.SavedViews)
-	assertionsForTest.NotNil(opts.HybridSearcher)
-	assertionsForTest.NotNil(opts.SimilarSearcher)
-	assertionsForTest.NotNil(opts.VisualSearcher)
-	assertionsForTest.Equal(int32(1), healthRequests.Load())
-	assertionsForTest.Empty(logs.String())
+	assert.NotNil(opts.PeopleBackend)
+	assert.NotNil(opts.DirectoryBackend)
+	assert.NotNil(opts.SavedViews)
+	assert.NotNil(opts.HybridSearcher)
+	assert.NotNil(opts.SimilarSearcher)
+	assert.NotNil(opts.VisualSearcher)
+	assert.Equal(int32(1), healthRequests.Load())
+	assert.Empty(logs.String())
 }
 
 func TestDaemonMCPServeOptionsSavesDeletionManifestsThroughDaemon(t *testing.T) {
-	requirementsForTest := require.New(t)
+	require := require.New(t)
 
 	testCtx := withStoreResolverConfig(t, &config.Config{
 		Data: config.DataConfig{DataDir: t.TempDir()},
@@ -509,11 +509,11 @@ func TestDaemonMCPServeOptionsSavesDeletionManifestsThroughDaemon(t *testing.T) 
 	})
 
 	opts := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
-	requirementsForTest.NotNil(opts.ManifestSaver, "manifest saver")
+	require.NotNil(opts.ManifestSaver, "manifest saver")
 
 	manifest := deletion.NewManifest("mcp test", []string{"gmail-001"})
 	err := opts.ManifestSaver.SaveManifest(testCtx, manifest)
-	requirementsForTest.NoError(err)
+	require.NoError(err)
 	assert.Equal(t, int32(1), manifestRequests.Load(), "manifest requests")
 }
 
@@ -605,39 +605,39 @@ func TestDaemonMCPDocbankCapability(t *testing.T) {
 		{"3.12.0", true, false}, {"3.13.0", false, false}, {"3.13.0", true, true},
 	} {
 		t.Run(tc.version+"/"+strconv.FormatBool(tc.configured), func(t *testing.T) {
-			assertionsForTest := assert.New(t)
+			assert := assert.New(t)
 			ctx := withStoreResolverConfig(t, &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}})
 			var probes atomic.Int32
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/v1/health":
-					assertionsForTest.NoError(json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": tc.version}))
+					assert.NoError(json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": tc.version}))
 				case "/api/v1/media/search/status":
 					probes.Add(1)
-					assertionsForTest.NoError(json.NewEncoder(w).Encode(map[string]any{"configured": tc.configured}))
+					assert.NoError(json.NewEncoder(w).Encode(map[string]any{"configured": tc.configured}))
 				default:
 					http.NotFound(w, r)
 				}
 			})
 			opts := daemonMCPServeOptions(ctx, client, invocationFromContext(ctx))
-			assertionsForTest.True(opts.KataLookup)
-			assertionsForTest.Equal(tc.want, opts.KataDocbank)
+			assert.True(opts.KataLookup)
+			assert.Equal(tc.want, opts.KataDocbank)
 			if tc.version == "3.12.0" {
-				assertionsForTest.Zero(probes.Load())
+				assert.Zero(probes.Load())
 			} else {
-				assertionsForTest.Equal(int32(1), probes.Load())
+				assert.Equal(int32(1), probes.Load())
 			}
 		})
 	}
 }
 
 func TestDaemonMCPDocbankProbeFailureIsLogged(t *testing.T) {
-	assertionsForTest := assert.New(t)
+	assert := assert.New(t)
 	ctx := withStoreResolverConfig(t, &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}})
 	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/health":
-			assertionsForTest.NoError(json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "3.13.0"}))
+			assert.NoError(json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "3.13.0"}))
 		case "/api/v1/media/search/status":
 			http.Error(w, "unavailable", http.StatusServiceUnavailable)
 		default:
@@ -648,9 +648,9 @@ func TestDaemonMCPDocbankProbeFailureIsLogged(t *testing.T) {
 	state := *invocationFromContext(ctx)
 	state.logger = slog.New(slog.NewTextHandler(&logs, nil))
 	opts := daemonMCPServeOptions(ctx, client, &state)
-	assertionsForTest.False(opts.KataDocbank)
-	assertionsForTest.Contains(logs.String(), "Kata transcript citations hidden because the Docbank status probe failed")
-	assertionsForTest.Contains(logs.String(), "503")
+	assert.False(opts.KataDocbank)
+	assert.Contains(logs.String(), "Kata transcript citations hidden because the Docbank status probe failed")
+	assert.Contains(logs.String(), "503")
 }
 
 func TestDelegatedMCPArchiveCapability(t *testing.T) {

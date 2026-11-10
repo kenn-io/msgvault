@@ -37,16 +37,11 @@ import (
 type daemonTagGmailClient struct {
 	*gmail.MockAPI
 
-	tags    func(context.Context, string, *emailtags.MessageTagChange) (*emailtags.MessageTagResult, error)
-	archive func(context.Context, string, bool, bool) (*emailtags.MessageTagResult, error)
+	tags func(context.Context, string, *emailtags.MessageTagChange) (*emailtags.MessageTagResult, error)
 }
 
 func (c *daemonTagGmailClient) MessageTags(ctx context.Context, id string, change *emailtags.MessageTagChange) (*emailtags.MessageTagResult, error) {
 	return c.tags(ctx, id, change)
-}
-
-func (c *daemonTagGmailClient) ArchiveMessage(ctx context.Context, id string, archived, dryRun bool) (*emailtags.MessageTagResult, error) {
-	return c.archive(ctx, id, archived, dryRun)
 }
 
 func TestDaemonMessageTagsGmailReconciles(t *testing.T) {

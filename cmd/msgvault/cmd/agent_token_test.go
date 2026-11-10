@@ -117,8 +117,8 @@ type agentTokenListFixture struct {
 }
 
 func TestDelegatedDraftSourceScopeThroughHTTP(t *testing.T) {
-	assertionsForTest := assert.New(t)
-	requirementsForTest := require.New(t)
+	assert := assert.New(t)
+	require := require.New(t)
 	fixture := newDraftReplyFixture(t)
 	adapter := fixture.grantedAdapter()
 	providerCalls := 0
@@ -143,17 +143,17 @@ func TestDelegatedDraftSourceScopeThroughHTTP(t *testing.T) {
 			"permissions": []string{"draft.create"},
 			"source_ids":  []int64{sourceID},
 		})
-		requirementsForTest.NoError(err)
+		require.NoError(err)
 		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/api/v1/agent-tokens", bytes.NewReader(body))
-		requirementsForTest.NoError(err)
+		require.NoError(err)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Api-Key", "owner-test-key")
 		resp, err := http.DefaultClient.Do(req)
-		requirementsForTest.NoError(err)
+		require.NoError(err)
 		defer func() { _ = resp.Body.Close() }()
-		requirementsForTest.Equal(http.StatusCreated, resp.StatusCode)
+		require.Equal(http.StatusCreated, resp.StatusCode)
 		var issued agentTokenIssueFixture
-		requirementsForTest.NoError(json.NewDecoder(resp.Body).Decode(&issued))
+		require.NoError(json.NewDecoder(resp.Body).Decode(&issued))
 		return issued.Secret
 	}
 
@@ -163,49 +163,49 @@ func TestDelegatedDraftSourceScopeThroughHTTP(t *testing.T) {
 			"--from", testutil.IMAPTestUsername, "--body", "reply body", "--json",
 		}
 		body, err := json.Marshal(map[string]any{"args": args})
-		requirementsForTest.NoError(err)
+		require.NoError(err)
 		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(body))
-		requirementsForTest.NoError(err)
+		require.NoError(err)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Msgvault-Agent-Token", secret)
 		resp, err := http.DefaultClient.Do(req)
-		requirementsForTest.NoError(err)
+		require.NoError(err)
 		defer func() { _ = resp.Body.Close() }()
-		requirementsForTest.Equal(http.StatusOK, resp.StatusCode)
+		require.Equal(http.StatusOK, resp.StatusCode)
 		var events []api.CLIRunEvent
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
 			var event api.CLIRunEvent
-			requirementsForTest.NoError(json.Unmarshal(scanner.Bytes(), &event))
+			require.NoError(json.Unmarshal(scanner.Bytes(), &event))
 			events = append(events, event)
 		}
-		requirementsForTest.NoError(scanner.Err())
+		require.NoError(scanner.Err())
 		return events
 	}
 
 	events := run(issue(fixture.source.ID))
-	requirementsForTest.Len(events, 2)
-	assertionsForTest.Equal(cliStreamStdout, events[0].Type)
+	require.Len(events, 2)
+	assert.Equal(cliStreamStdout, events[0].Type)
 	var result draftReplyOutput
-	requirementsForTest.NoError(json.Unmarshal([]byte(events[0].Data), &result))
-	assertionsForTest.Equal(draftReplyStatusCreated, result.Status)
-	assertionsForTest.Equal(fixture.source.ID, result.SourceID)
-	assertionsForTest.Equal("Drafts", result.Mailbox)
-	assertionsForTest.Equal("complete", events[1].Type)
-	assertionsForTest.Equal(1, providerCalls)
+	require.NoError(json.Unmarshal([]byte(events[0].Data), &result))
+	assert.Equal(draftReplyStatusCreated, result.Status)
+	assert.Equal(fixture.source.ID, result.SourceID)
+	assert.Equal("Drafts", result.Mailbox)
+	assert.Equal("complete", events[1].Type)
+	assert.Equal(1, providerCalls)
 
 	secondSource, err := fixture.store.GetOrCreateSource("imap", "other@example.com")
-	requirementsForTest.NoError(err)
+	require.NoError(err)
 	events = run(issue(secondSource.ID))
-	requirementsForTest.Len(events, 1)
-	assertionsForTest.Equal("error", events[0].Type)
-	assertionsForTest.Equal("not_permitted", events[0].Error)
-	assertionsForTest.Equal(1, providerCalls, "an out-of-grant source must be rejected before provider work")
+	require.Len(events, 1)
+	assert.Equal("error", events[0].Type)
+	assert.Equal("not_permitted", events[0].Error)
+	assert.Equal(1, providerCalls, "an out-of-grant source must be rejected before provider work")
 }
 
 func TestDelegatedGmailDraftLifecycleThroughHTTP(t *testing.T) {
-	assertionsForTest := assert.New(t)
-	requirementsForTest := require.New(t)
+	assert := assert.New(t)
+	require := require.New(t)
 	fixture := newGmailDraftTestFixture(t)
 	draft := fixture.seedDraft(t)
 	providerCalls := 0
@@ -232,37 +232,37 @@ func TestDelegatedGmailDraftLifecycleThroughHTTP(t *testing.T) {
 			request["sender_selections"] = senderSelections[0]
 		}
 		body, err := json.Marshal(request)
-		requirementsForTest.NoError(err)
+		require.NoError(err)
 		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/api/v1/agent-tokens", bytes.NewReader(body))
-		requirementsForTest.NoError(err)
+		require.NoError(err)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Api-Key", "owner-test-key")
 		resp, err := http.DefaultClient.Do(req)
-		requirementsForTest.NoError(err)
+		require.NoError(err)
 		defer func() { _ = resp.Body.Close() }()
-		requirementsForTest.Equal(http.StatusCreated, resp.StatusCode)
+		require.Equal(http.StatusCreated, resp.StatusCode)
 		var issued agentTokenIssueFixture
-		requirementsForTest.NoError(json.NewDecoder(resp.Body).Decode(&issued))
+		require.NoError(json.NewDecoder(resp.Body).Decode(&issued))
 		return issued.Secret
 	}
 	run := func(secret string, args []string) (int, []api.CLIRunEvent) {
 		body, err := json.Marshal(map[string]any{"args": args})
-		requirementsForTest.NoError(err)
+		require.NoError(err)
 		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(body))
-		requirementsForTest.NoError(err)
+		require.NoError(err)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Msgvault-Agent-Token", secret)
 		resp, err := http.DefaultClient.Do(req)
-		requirementsForTest.NoError(err)
+		require.NoError(err)
 		defer func() { _ = resp.Body.Close() }()
 		var events []api.CLIRunEvent
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
 			var event api.CLIRunEvent
-			requirementsForTest.NoError(json.Unmarshal(scanner.Bytes(), &event))
+			require.NoError(json.Unmarshal(scanner.Bytes(), &event))
 			events = append(events, event)
 		}
-		requirementsForTest.NoError(scanner.Err())
+		require.NoError(scanner.Err())
 		return resp.StatusCode, events
 	}
 
@@ -271,39 +271,39 @@ func TestDelegatedGmailDraftLifecycleThroughHTTP(t *testing.T) {
 	getCode, getEvents := run(issue([]string{"draft.create"}, fixture.source.ID, ownerSender), []string{
 		api.CLIRunDraftGetCommand, draft.DraftID, "--json",
 	})
-	requirementsForTest.Equal(http.StatusOK, getCode)
-	requirementsForTest.Len(getEvents, 2)
-	assertionsForTest.Equal(cliStreamStdout, getEvents[0].Type)
-	assertionsForTest.Contains(getEvents[0].Data, `"content":"original`)
-	assertionsForTest.Equal("complete", getEvents[1].Type)
+	require.Equal(http.StatusOK, getCode)
+	require.Len(getEvents, 2)
+	assert.Equal(cliStreamStdout, getEvents[0].Type)
+	assert.Contains(getEvents[0].Data, `"content":"original`)
+	assert.Equal("complete", getEvents[1].Type)
 
 	originalRaw, err := fixture.store.GetMessageRawContext(t.Context(), draft.CurrentMessageID)
-	requirementsForTest.NoError(err)
+	require.NoError(err)
 	differentSenderRaw := strings.Replace(string(originalRaw), "From: owner@example.test", "From: other@example.test", 1)
-	requirementsForTest.NotEqual(string(originalRaw), differentSenderRaw)
-	requirementsForTest.NoError(fixture.store.UpsertMessageRaw(draft.CurrentMessageID, []byte(differentSenderRaw)))
+	require.NotEqual(string(originalRaw), differentSenderRaw)
+	require.NoError(fixture.store.UpsertMessageRaw(draft.CurrentMessageID, []byte(differentSenderRaw)))
 	beforeSenderProviderCalls := providerCalls
 	beforeSenderClientCalls := fixture.client.getCalls + fixture.client.updateCalls + fixture.client.deleteCalls
 	restrictedCode, restrictedEvents := run(issue([]string{"draft.create"}, fixture.source.ID, ownerSender), []string{
 		api.CLIRunDraftGetCommand, draft.DraftID, "--json",
 	})
-	requirementsForTest.Equal(http.StatusOK, restrictedCode)
-	requirementsForTest.Len(restrictedEvents, 1)
-	assertionsForTest.Equal("error", restrictedEvents[0].Type)
-	assertionsForTest.Equal("not_permitted", restrictedEvents[0].Error)
-	assertionsForTest.Equal(beforeSenderProviderCalls, providerCalls)
-	assertionsForTest.Equal(beforeSenderClientCalls, fixture.client.getCalls+fixture.client.updateCalls+fixture.client.deleteCalls)
+	require.Equal(http.StatusOK, restrictedCode)
+	require.Len(restrictedEvents, 1)
+	assert.Equal("error", restrictedEvents[0].Type)
+	assert.Equal("not_permitted", restrictedEvents[0].Error)
+	assert.Equal(beforeSenderProviderCalls, providerCalls)
+	assert.Equal(beforeSenderClientCalls, fixture.client.getCalls+fixture.client.updateCalls+fixture.client.deleteCalls)
 	emptySenders := map[string][]string{sourceID: {}}
 	emptyCode, emptyEvents := run(issue([]string{"draft.create"}, fixture.source.ID, emptySenders), []string{
 		api.CLIRunDraftGetCommand, draft.DraftID, "--json",
 	})
-	requirementsForTest.Equal(http.StatusOK, emptyCode)
-	requirementsForTest.Len(emptyEvents, 1)
-	assertionsForTest.Equal("error", emptyEvents[0].Type)
-	assertionsForTest.Equal("not_permitted", emptyEvents[0].Error)
-	assertionsForTest.Equal(beforeSenderProviderCalls, providerCalls)
-	assertionsForTest.Equal(beforeSenderClientCalls, fixture.client.getCalls+fixture.client.updateCalls+fixture.client.deleteCalls)
-	requirementsForTest.NoError(fixture.store.UpsertMessageRaw(draft.CurrentMessageID, originalRaw))
+	require.Equal(http.StatusOK, emptyCode)
+	require.Len(emptyEvents, 1)
+	assert.Equal("error", emptyEvents[0].Type)
+	assert.Equal("not_permitted", emptyEvents[0].Error)
+	assert.Equal(beforeSenderProviderCalls, providerCalls)
+	assert.Equal(beforeSenderClientCalls, fixture.client.getCalls+fixture.client.updateCalls+fixture.client.deleteCalls)
+	require.NoError(fixture.store.UpsertMessageRaw(draft.CurrentMessageID, originalRaw))
 
 	fixture.client.updateDraft = &gmail.Draft{
 		ID:      "gmail-draft-managed",
@@ -312,12 +312,12 @@ func TestDelegatedGmailDraftLifecycleThroughHTTP(t *testing.T) {
 	editCode, editEvents := run(issue([]string{"draft.edit"}, fixture.source.ID), []string{
 		api.CLIRunDraftEditCommand, draft.DraftID, "--revision", "1", "--body", "edited", "--json",
 	})
-	requirementsForTest.Equal(http.StatusOK, editCode)
-	requirementsForTest.Len(editEvents, 2)
-	assertionsForTest.Equal(cliStreamStdout, editEvents[0].Type)
-	assertionsForTest.Contains(editEvents[0].Data, `"status":"edited"`)
-	assertionsForTest.Contains(editEvents[0].Data, `"revision":2`)
-	assertionsForTest.Equal("complete", editEvents[1].Type)
+	require.Equal(http.StatusOK, editCode)
+	require.Len(editEvents, 2)
+	assert.Equal(cliStreamStdout, editEvents[0].Type)
+	assert.Contains(editEvents[0].Data, `"status":"edited"`)
+	assert.Contains(editEvents[0].Data, `"revision":2`)
+	assert.Equal("complete", editEvents[1].Type)
 
 	fixture.client.getDraft = &gmail.Draft{
 		ID:      "gmail-draft-managed",
@@ -326,47 +326,47 @@ func TestDelegatedGmailDraftLifecycleThroughHTTP(t *testing.T) {
 	getAfterEditCode, getAfterEditEvents := run(issue([]string{"draft.create"}, fixture.source.ID, ownerSender), []string{
 		api.CLIRunDraftGetCommand, draft.DraftID, "--json",
 	})
-	requirementsForTest.Equal(http.StatusOK, getAfterEditCode)
-	requirementsForTest.Len(getAfterEditEvents, 2)
-	assertionsForTest.Equal(cliStreamStdout, getAfterEditEvents[0].Type)
-	assertionsForTest.Contains(getAfterEditEvents[0].Data, `"content":"edited`)
-	assertionsForTest.Contains(getAfterEditEvents[0].Data, `"revision":2`)
-	assertionsForTest.Equal("complete", getAfterEditEvents[1].Type)
+	require.Equal(http.StatusOK, getAfterEditCode)
+	require.Len(getAfterEditEvents, 2)
+	assert.Equal(cliStreamStdout, getAfterEditEvents[0].Type)
+	assert.Contains(getAfterEditEvents[0].Data, `"content":"edited`)
+	assert.Contains(getAfterEditEvents[0].Data, `"revision":2`)
+	assert.Equal("complete", getAfterEditEvents[1].Type)
 
 	beforeNonDraftProviderCalls := providerCalls
 	beforeNonDraftClientCalls := fixture.client.getCalls + fixture.client.updateCalls + fixture.client.deleteCalls
 	nonDraftCode, nonDraftEvents := run(issue([]string{"draft.edit"}, fixture.source.ID), []string{
 		api.CLIRunDraftGetCommand, strconv.FormatInt(fixture.parentID, 10), "--json",
 	})
-	requirementsForTest.Equal(http.StatusOK, nonDraftCode)
-	requirementsForTest.Len(nonDraftEvents, 1)
-	assertionsForTest.Equal("error", nonDraftEvents[0].Type)
-	assertionsForTest.Equal("not_permitted", nonDraftEvents[0].Error)
-	assertionsForTest.Equal(beforeNonDraftProviderCalls, providerCalls)
-	assertionsForTest.Equal(beforeNonDraftClientCalls, fixture.client.getCalls+fixture.client.updateCalls+fixture.client.deleteCalls)
+	require.Equal(http.StatusOK, nonDraftCode)
+	require.Len(nonDraftEvents, 1)
+	assert.Equal("error", nonDraftEvents[0].Type)
+	assert.Equal("not_permitted", nonDraftEvents[0].Error)
+	assert.Equal(beforeNonDraftProviderCalls, providerCalls)
+	assert.Equal(beforeNonDraftClientCalls, fixture.client.getCalls+fixture.client.updateCalls+fixture.client.deleteCalls)
 
 	deleteCode, deleteEvents := run(issue([]string{"draft.delete"}, fixture.source.ID), []string{
 		api.CLIRunDraftDeleteCommand, draft.DraftID, "--revision", "2", "--json",
 	})
-	requirementsForTest.Equal(http.StatusOK, deleteCode)
-	requirementsForTest.Len(deleteEvents, 2)
-	assertionsForTest.Contains(deleteEvents[0].Data, `"status":"deleted"`)
-	assertionsForTest.Contains(deleteEvents[0].Data, `"lifecycle":"discarded"`)
-	assertionsForTest.Equal("complete", deleteEvents[1].Type)
+	require.Equal(http.StatusOK, deleteCode)
+	require.Len(deleteEvents, 2)
+	assert.Contains(deleteEvents[0].Data, `"status":"deleted"`)
+	assert.Contains(deleteEvents[0].Data, `"lifecycle":"discarded"`)
+	assert.Equal("complete", deleteEvents[1].Type)
 
 	secondSource, err := fixture.store.GetOrCreateSource("gmail", "other@example.test")
-	requirementsForTest.NoError(err)
+	require.NoError(err)
 	beforeProviderCalls := providerCalls
 	beforeClientCalls := fixture.client.getCalls + fixture.client.updateCalls + fixture.client.deleteCalls
 	deleteCode, deleteEvents = run(issue([]string{"draft.delete"}, secondSource.ID), []string{
 		api.CLIRunDraftDeleteCommand, draft.DraftID, "--revision", "2", "--json",
 	})
-	requirementsForTest.Equal(http.StatusOK, deleteCode)
-	requirementsForTest.Len(deleteEvents, 1)
-	assertionsForTest.Equal("error", deleteEvents[0].Type)
-	assertionsForTest.Equal("not_permitted", deleteEvents[0].Error)
-	assertionsForTest.Equal(beforeProviderCalls, providerCalls)
-	assertionsForTest.Equal(beforeClientCalls, fixture.client.getCalls+fixture.client.updateCalls+fixture.client.deleteCalls)
+	require.Equal(http.StatusOK, deleteCode)
+	require.Len(deleteEvents, 1)
+	assert.Equal("error", deleteEvents[0].Type)
+	assert.Equal("not_permitted", deleteEvents[0].Error)
+	assert.Equal(beforeProviderCalls, providerCalls)
+	assert.Equal(beforeClientCalls, fixture.client.getCalls+fixture.client.updateCalls+fixture.client.deleteCalls)
 }
 
 func TestDelegatedGmailDraftGetThroughAgentCLI(t *testing.T) {
@@ -413,8 +413,8 @@ func TestDelegatedGmailDraftGetThroughAgentCLI(t *testing.T) {
 //     text output
 //   - does NOT include the secret in a subsequent list response
 func TestAgentTokenIssueOutputsSecret(t *testing.T) {
-	assertionsForTest := assert.New(t)
-	requirementsForTest := require.New(t)
+	assert := assert.New(t)
+	require := require.New(t)
 
 	const wantSecret = "mva1_dGVzdHNlY3JldGZvcnVuaXR0ZXN0aW5ncHVycG9zZXM"
 
@@ -440,19 +440,19 @@ func TestAgentTokenIssueOutputsSecret(t *testing.T) {
 		"--permissions", "draft.create",
 		"--source-ids", "1",
 	)
-	requirementsForTest.NoError(err)
+	require.NoError(err)
 
-	assertionsForTest.Equal(http.MethodPost, gotMethod)
-	assertionsForTest.Equal("/api/v1/agent-tokens", gotPath)
-	assertionsForTest.Equal("Test Agent", gotBody["label"])
+	assert.Equal(http.MethodPost, gotMethod)
+	assert.Equal("/api/v1/agent-tokens", gotPath)
+	assert.Equal("Test Agent", gotBody["label"])
 
-	assertionsForTest.Contains(output, "tok_abc123")
-	assertionsForTest.Contains(output, "Test Agent")
-	assertionsForTest.Contains(output, wantSecret, "one-time secret must appear in issue output")
+	assert.Contains(output, "tok_abc123")
+	assert.Contains(output, "Test Agent")
+	assert.Contains(output, wantSecret, "one-time secret must appear in issue output")
 	output, err = runAgentTokenCommand(testCtx, t, agentTokenIssueCmd,
 		"--label", "Test Agent", "--permissions", "draft.create", "--source-ids", "1", "--json")
-	requirementsForTest.NoError(err)
-	assertionsForTest.True(strings.HasSuffix(output, "\n"), "JSON output must end with a newline")
+	require.NoError(err)
+	assert.True(strings.HasSuffix(output, "\n"), "JSON output must end with a newline")
 }
 
 // TestAgentTokenListFormatsTable verifies that the list subcommand (row 18):
@@ -460,8 +460,8 @@ func TestAgentTokenIssueOutputsSecret(t *testing.T) {
 //   - formats the response as a human-readable table
 //   - does NOT include any secret value in the output
 func TestAgentTokenListFormatsTable(t *testing.T) {
-	assertionsForTest := assert.New(t)
-	requirementsForTest := require.New(t)
+	assert := assert.New(t)
+	require := require.New(t)
 
 	var gotMethod, gotPath string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -477,23 +477,23 @@ func TestAgentTokenListFormatsTable(t *testing.T) {
 	_ = testCtx
 
 	output, err := runAgentTokenCommand(testCtx, t, agentTokenListCmd)
-	requirementsForTest.NoError(err)
+	require.NoError(err)
 
-	assertionsForTest.Equal(http.MethodGet, gotMethod)
-	assertionsForTest.Equal("/api/v1/agent-tokens", gotPath)
+	assert.Equal(http.MethodGet, gotMethod)
+	assert.Equal("/api/v1/agent-tokens", gotPath)
 
-	assertionsForTest.Contains(output, "tok_abc123")
-	assertionsForTest.Contains(output, "Test Agent")
-	assertionsForTest.Contains(output, "alice@example.com", "source identifier must appear in list output")
-	assertionsForTest.NotContains(output, "mva1_", "secret must never appear in list output")
+	assert.Contains(output, "tok_abc123")
+	assert.Contains(output, "Test Agent")
+	assert.Contains(output, "alice@example.com", "source identifier must appear in list output")
+	assert.NotContains(output, "mva1_", "secret must never appear in list output")
 }
 
 // TestAgentTokenRevokeCallsDelete verifies that the revoke subcommand (row 22):
 //   - sends DELETE /api/v1/agent-tokens/{id}
 //   - prints a confirmation message on success
 func TestAgentTokenRevokeCallsDelete(t *testing.T) {
-	assertionsForTest := assert.New(t)
-	requirementsForTest := require.New(t)
+	assert := assert.New(t)
+	require := require.New(t)
 
 	var gotMethod, gotPath string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -508,11 +508,11 @@ func TestAgentTokenRevokeCallsDelete(t *testing.T) {
 	_ = testCtx
 
 	output, err := runAgentTokenCommand(testCtx, t, agentTokenRevokeCmd, "tok_abc123")
-	requirementsForTest.NoError(err)
+	require.NoError(err)
 
-	assertionsForTest.Equal(http.MethodDelete, gotMethod)
-	assertionsForTest.Equal("/api/v1/agent-tokens/tok_abc123", gotPath)
-	assertionsForTest.Contains(output, "revoked")
+	assert.Equal(http.MethodDelete, gotMethod)
+	assert.Equal("/api/v1/agent-tokens/tok_abc123", gotPath)
+	assert.Contains(output, "revoked")
 }
 
 // TestOpenAgentDelegatedStore verifies that the --agent-url / --agent-token-file
@@ -621,7 +621,7 @@ func TestOpenHTTPStoreRejectsExplicitEmptyAgentFlags(t *testing.T) {
 		{"--agent-url=", "--agent-token-file="},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			requirementsForTest := require.New(t)
+			require := require.New(t)
 			ctx := withStoreResolverConfig(t, &config.Config{
 				Remote: config.RemoteConfig{URL: "https://daemon.example", APIKey: "owner-test-key"},
 			})
@@ -636,14 +636,14 @@ func TestOpenHTTPStoreRejectsExplicitEmptyAgentFlags(t *testing.T) {
 			cmd := &cobra.Command{Use: "draft-reply"}
 			root.AddCommand(cmd)
 			cmd.SetContext(ctx)
-			requirementsForTest.NoError(cmd.ParseFlags(args))
+			require.NoError(cmd.ParseFlags(args))
 			prepareInvocation(cmd)
 
 			client, info, err := OpenHTTPStore(cmd.Context())
 			if client != nil {
 				t.Cleanup(func() { _ = client.Close() })
 			}
-			requirementsForTest.ErrorContains(err, "--agent-url is required", "selected store: %s", info.Kind)
+			require.ErrorContains(err, "--agent-url is required", "selected store: %s", info.Kind)
 		})
 	}
 }

@@ -158,20 +158,20 @@ func TestRegistryLifecycle(t *testing.T) {
 	})
 
 	t.Run("revoked grant fails next Lookup", func(t *testing.T) {
-		assertionsForTest := assert.New(t)
+		assert := assert.New(t)
 		r := NewRegistry()
 		id, secret, _, err := r.Issue("test", perms, []SourceRef{src}, time.Time{})
 		require.NoError(t, err)
 
 		// Confirm it works before revocation
 		_, ok := r.Lookup(secret)
-		assertionsForTest.True(ok)
+		assert.True(ok)
 
 		revoked := r.Revoke(id)
-		assertionsForTest.True(revoked)
+		assert.True(revoked)
 
 		_, ok = r.Lookup(secret)
-		assertionsForTest.False(ok)
+		assert.False(ok)
 	})
 
 	t.Run("Revoke nonexistent ID returns false", func(t *testing.T) {

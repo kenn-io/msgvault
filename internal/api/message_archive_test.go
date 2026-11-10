@@ -48,7 +48,7 @@ func TestArchiveMessageRouteValidationAndGate(t *testing.T) {
 		srv.Router().ServeHTTP(w, req)
 		return w
 	}
-	for _, body := range []string{`{}`, `{"archived":null}`} {
+	for _, body := range []string{`{}`, `{"archived":null}`, `{"archived":true,"dry_run":null}`} {
 		response := call("7", body)
 		assertionsForTest.Equal(http.StatusBadRequest, response.Code, response.Body.String())
 	}
@@ -61,6 +61,7 @@ func TestArchiveMessageRouteValidationAndGate(t *testing.T) {
 	release, ok := gate.BeginLabeledWorkContext(t.Context(), "sync")
 	require.True(t, ok)
 	defer release()
+	// The route table permits previews past the middleware gate; adapter tests cover provider behavior.
 	preview := call("7", `{"archived":true,"dry_run":true}`)
 	assertionsForTest.Equal(http.StatusOK, preview.Code, preview.Body.String())
 	write := call("7", `{"archived":true}`)
