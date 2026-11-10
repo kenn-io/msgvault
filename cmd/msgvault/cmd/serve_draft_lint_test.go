@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	msgmime "go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -355,6 +356,22 @@ func TestValidateOnlyEditWritesNothing(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, draft.Revision, after.Revision)
 		assert.Nil(t, after.Pending)
+
+		// Saved read-only scopes must refuse preview before provider access.
+		_, state := setupCommandOAuth(t)
+		putCommandToken(t, state, f.source.Identifier, oauth.ScopesGmailReadonly)
+		f.adapter.config = state.cfg
+		events = nil
+		err = f.adapter.runCLIDraftLifecycle(withInvocation(t.Context(), state), api.CLIRunRequest{Args: []string{
+			"draft-edit", draft.DraftID, "--revision", "1", "--body", "Thanks", "--validate-only", "--json",
+		}}, func(event api.CLIRunEvent) error {
+			events = append(events, event)
+			return nil
+		})
+		require.EqualError(t, err, "insufficient_scope")
+		assert.Empty(t, events)
+		assert.Equal(t, before, f.client.getCalls)
+		assert.Zero(t, f.client.updateCalls)
 	})
 	t.Run("chat", func(t *testing.T) {
 		st := testutil.NewTestStore(t)

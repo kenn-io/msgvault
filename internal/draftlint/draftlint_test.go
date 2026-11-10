@@ -18,6 +18,9 @@ func TestCheck(t *testing.T) {
 		allow                                            bool
 	}{
 		{channel: "chat", name: "placeholder", body: "Hi FIRST_NAME,\n\nThanks", code: CodeUnresolvedPlaceholder, severity: "error", field: "body"},
+		{channel: "chat", name: "angle placeholder", body: "Hello <FIRST_NAME>", code: CodeUnresolvedPlaceholder, severity: "error", field: "body"},
+		{channel: "chat", name: "two letter angle placeholder", body: "Hello <AB>", code: CodeUnresolvedPlaceholder, severity: "error", field: "body"},
+		{channel: "chat", name: "single letter angle", body: "Use <A> or List<T>"},
 		{channel: "chat", name: "allowed", body: "Hi FIRST_NAME", code: CodeUnresolvedPlaceholder, severity: "warn", allow: true},
 		{name: "attachment", body: "See attached.", channel: "email", to: []string{"a@example.com"}, code: CodeAttachmentMentionedMissing, severity: "warn"},
 		{name: "attached", body: "See attached.", channel: "email", to: []string{"a@example.com"}, attachments: 1},

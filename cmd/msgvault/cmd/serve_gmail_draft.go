@@ -896,6 +896,9 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 	if err != nil {
 		return err
 	}
+	if err := gmailDraftScopeGate(ctx, a.config, source, oauth.ScopesGmailDraftWrite); err != nil {
+		return err
+	}
 	if intent.Operation == api.CLIRunDraftEditCommand {
 		if draft.Pending != nil && intent.ValidateOnly {
 			return draftReplyError("pending_operation", store.ErrGmailDraftPending)
@@ -920,9 +923,6 @@ func (a *storeAPIAdapter) runCLIGmailDraftLifecycle(
 	logger := a.logger
 	if logger == nil {
 		logger = loggerFromContext(ctx)
-	}
-	if err := gmailDraftScopeGate(ctx, a.config, source, oauth.ScopesGmailDraftWrite); err != nil {
-		return err
 	}
 	execution, err := a.store.AcquireSyncExecutionContext(ctx, source.ID)
 	if err != nil {
