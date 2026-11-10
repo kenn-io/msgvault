@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 
@@ -47,19 +46,7 @@ func newMessageArchiveCommand(archived bool, backend messageArchiveBackend) *cob
 			}
 			result, err := client.ArchiveMessage(cmd.Context(), id, emailtags.ArchiveChange{Archived: &archived, DryRun: dryRun})
 			if asJSON {
-				var value any = result
-				if err != nil {
-					if failure, ok := errors.AsType[*emailtags.MessageTagError](err); ok {
-						value = failure
-					} else {
-						value = emailtags.Failure("request_failed", "Cannot set provider archive state", nil, err)
-					}
-				}
-				data, encodeErr := json.Marshal(value)
-				if encodeErr != nil {
-					return encodeErr
-				}
-				if _, writeErr := fmt.Fprintln(cmd.OutOrStdout(), string(data)); writeErr != nil {
+				if writeErr := writeMessageTagJSON(cmd, result, err, emailtags.Failure("request_failed", "Cannot set provider archive state", nil, err), ""); writeErr != nil {
 					return writeErr
 				}
 				return err

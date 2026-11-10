@@ -57,20 +57,8 @@ Use --dry-run with an edit to preview it without writing.`,
 			}
 			result, err := client.MessageTags(cmd.Context(), id, input, change.Mailbox)
 			if asJSON {
-				var value any = result
-				if err != nil {
-					if failure, ok := errors.AsType[*emailtags.MessageTagError](err); ok {
-						value = failure
-					} else {
-						value = emailtags.Failure("request_failed", "Cannot read or update provider tags", result, nil)
-					}
-				}
-				data, encodeErr := json.Marshal(value)
-				if encodeErr != nil {
-					return encodeErr
-				}
-				if _, writeErr := fmt.Fprintln(cmd.OutOrStdout(), string(data)); writeErr != nil {
-					return fmt.Errorf("write message tags JSON: %w", writeErr)
+				if writeErr := writeMessageTagJSON(cmd, result, err, emailtags.Failure("request_failed", "Cannot read or update provider tags", result, nil), "write message tags JSON"); writeErr != nil {
+					return writeErr
 				}
 			} else if result != nil {
 				verb := "Tags"
@@ -101,3 +89,24 @@ Use --dry-run with an edit to preview it without writing.`,
 	return cmd
 }
 func init() { rootCmd.AddCommand(newMessageTagsCommand(nil)) }
+
+// writeMessageTagJSON preserves partial provider evidence and caller-specific errors.
+func writeMessageTagJSON(cmd *cobra.Command, result any, err error, fallback *emailtags.MessageTagError, writeContext string) error {
+	value := result
+	if err != nil {
+		if failure, ok := errors.AsType[*emailtags.MessageTagError](err); ok {
+			value = failure
+		} else {
+			value = fallback
+		}
+	}
+	data, encodeErr := json.Marshal(value)
+	if encodeErr != nil {
+		return encodeErr
+	}
+	_, writeErr := fmt.Fprintln(cmd.OutOrStdout(), string(data))
+	if writeErr != nil && writeContext != "" {
+		return fmt.Errorf("%s: %w", writeContext, writeErr)
+	}
+	return writeErr
+}
