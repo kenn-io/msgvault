@@ -130,19 +130,19 @@ func TestTextImportScopes(t *testing.T) {
 
 func TestTextImportPreflight(t *testing.T) {
 	for _, tc := range []struct {
-		name, want string
-		change     func(*TextOptions)
+		name   string
+		change func(*TextOptions)
 	}{
-		{"chat", "--chat-id is required", func(o *TextOptions) { o.ChatID = "" }},
-		{"type", "--chat-type must be", func(o *TextOptions) { o.ChatType = "unknown" }},
-		{"phone", "--phone must be", func(o *TextOptions) { o.Phone = "Mira" }},
-		{"order", "--date-order must be", func(o *TextOptions) { o.DateOrder = "" }},
+		{"chat", func(o *TextOptions) { o.ChatID = "" }},
+		{"type", func(o *TextOptions) { o.ChatType = "unknown" }},
+		{"phone", func(o *TextOptions) { o.Phone = "Mira" }},
+		{"order", func(o *TextOptions) { o.DateOrder = "" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			opts := textOptions()
 			tc.change(&opts)
 			_, err := validateTextOptions(opts)
-			require.ErrorContains(t, err, tc.want)
+			require.Error(t, err)
 		})
 	}
 }

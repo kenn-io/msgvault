@@ -88,12 +88,6 @@ func TestWhatsAppTextCommand(t *testing.T) {
 }
 
 func TestWhatsAppTextCommandPreflightArchive(t *testing.T) {
-	oldPhone, oldMediaDir, oldContacts := importPhone, importMediaDir, importContacts
-	oldLimit, oldDisplayName, oldNoDefaultIdentity := importLimit, importDisplayName, noDefaultIdentityImportWhatsApp
-	t.Cleanup(func() {
-		importPhone, importMediaDir, importContacts = oldPhone, oldMediaDir, oldContacts
-		importLimit, importDisplayName, noDefaultIdentityImportWhatsApp = oldLimit, oldDisplayName, oldNoDefaultIdentity
-	})
 	for _, subprocess := range []bool{false, true} {
 		for _, existing := range []bool{false, true} {
 			t.Run(fmt.Sprintf("subprocess=%t/existing=%t", subprocess, existing), func(t *testing.T) {
