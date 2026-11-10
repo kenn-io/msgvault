@@ -258,6 +258,25 @@ describe('PersonMergeHistoryController', () => {
     controller.destroy();
   });
 
+  it('keeps the partial-load warning when later scopes arrive', async () => {
+    let nameFails = true;
+    const controller = new PersonMergeHistoryController(createAPIClient(async input => {
+      const path = new URL(requestOf(input).url).pathname;
+      if (path === '/api/v1/person-merges/41') return Response.json({ ...detail(), splits: [splitResult().split] });
+      if (path === '/api/v1/people/19') return nameFails ? Response.json({}, { status: 503 }) : Response.json(person(19, 1, [], 'Restored Person'));
+      throw new Error(`Unexpected request: ${path}`);
+    }), 7);
+    await controller.selectMerge(41);
+    await vi.waitFor(() => expect(controller.labels?.incomplete).toBe(true));
+    controller.addScopes([{ scope_kind: 'account', scope_value: 'synthetic-account' }]);
+    expect(controller.labels?.incomplete).toBe(true);
+    nameFails = false;
+    await controller.retryDetail();
+    await vi.waitFor(() => expect(controller.labels?.names.get(19)).toBe('Restored Person'));
+    expect(controller.labels?.incomplete).toBe(false);
+    controller.destroy();
+  });
+
   it('retains loaded labels when a detail reload fails', async () => {
     let failing = false;
     const controller = new PersonMergeHistoryController(createAPIClient(async () => failing
