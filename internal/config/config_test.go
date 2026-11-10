@@ -2090,6 +2090,29 @@ strip_signatures = false
 	assert.True(cfg.Vector.Preprocess.StripQuotesEnabled(), "StripQuotesEnabled() should be true (unset → default)")
 }
 
+func TestLoadEmbeddingTransportDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		name, settings string
+		batch          int
+		timeout        time.Duration
+	}{
+		{"local", "local_only = true", 8, 5 * time.Minute},
+		{"remote", `endpoint = "https://example.com/v1"`, 32, 30 * time.Second},
+		{"local overrides", "local_only = true\nbatch_size = 17\ntimeout = \"45s\"", 17, 45 * time.Second},
+		{"local batch override", "local_only = true\nbatch_size = 32", 32, 5 * time.Minute},
+		{"local timeout override", "local_only = true\ntimeout = \"30s\"", 8, 30 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(t, os.WriteFile(path, []byte("[vector.embeddings]\n"+tc.settings+"\n"), 0o600))
+			cfg, err := Load(path, "")
+			require.NoError(t, err)
+			assert.Equal(t, tc.batch, cfg.Vector.Embeddings.BatchSize)
+			assert.Equal(t, tc.timeout, cfg.Vector.Embeddings.Timeout)
+		})
+	}
+}
+
 func TestLoadAllowsIndependentMultimodalVectorLane(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

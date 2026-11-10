@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.kenn.io/kit/embedclient"
 	"go.kenn.io/kit/embedmodel"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/operations"
@@ -532,6 +533,9 @@ func (w *Worker) run(
 			// short-circuit the loop on a persistent fault.
 			w.deps.Log.Warn("embed batch failed", "gen", gen, "ids", len(ids), "error", err)
 			res.Failed += len(ids)
+			if transport, ok := errors.AsType[*embedclient.TransportError](err); ok && transport.Timeout() {
+				return res, fmt.Errorf("embed batch: %w", err)
+			}
 			if consecutiveFailures >= w.deps.MaxConsecutiveFailures {
 				return res, fmt.Errorf("embed worker aborting after %d consecutive failures: %w",
 					consecutiveFailures, lastErr)
