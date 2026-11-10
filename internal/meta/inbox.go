@@ -160,8 +160,14 @@ func (b Inbox) persistMessage(ctx context.Context, st *store.Store, sourceID int
 	if err != nil {
 		return err
 	}
-	sender, fromName := ownerID, ""
-	if msg.From.ID == customer.ID {
+	// A message whose sender is missing or unknown keeps any author already
+	// archived for it instead of being credited to the inbox owner.
+	var sender int64
+	var fromName string
+	switch msg.From.ID {
+	case owner.ID:
+		sender, fromName = ownerID, owner.label()
+	case customer.ID:
 		sender, fromName = customerID, customer.label()
 	}
 	metadata, err := json.Marshal(inboxMetadata{AppID: b.App, PageID: b.Page, InstagramAccountID: b.Account, CustomerID: customer.ID})
@@ -175,7 +181,7 @@ func (b Inbox) persistMessage(ctx context.Context, st *store.Store, sourceID int
 	return archiveObject(ctx, st, sum, archivedObject{
 		sourceID: sourceID, messageType: b.SourceType(), format: inboxRawFormat, conversationType: "direct_chat",
 		obj: Object{ID: msg.ID, Message: msg.Message, CreatedTime: msg.CreatedTime}, conversation: customer.ID, title: customer.label(),
-		sender: sender, fromName: fromName, self: sender == ownerID, members: []int64{customerID, ownerID},
+		sender: sender, fromName: fromName, self: sender != 0 && sender == ownerID, members: []int64{customerID, ownerID},
 		metadata: metadata, raw: raw,
 	}, prior, priorMetadata)
 }
@@ -241,13 +247,20 @@ func (imp *InboxImporter) Import(ctx context.Context, b Inbox, opts ImportOption
 			return "", err
 		}
 		for _, conversation := range page.Data {
-			owner, customer := InboxParticipant{ID: b.owner()}, InboxParticipant{}
+			var owner, customer InboxParticipant
 			for _, p := range conversation.Participants {
 				if p.ID == b.owner() {
 					owner = p
 				} else if customer.ID == "" {
 					customer = p
 				}
+			}
+			// Meta reads the inbox of the account linked to the Page now. If
+			// the Page was linked to another account, its conversations do
+			// not include the configured one; refuse them instead of
+			// archiving another account's messages in this source.
+			if owner.ID == "" {
+				return "", fmt.Errorf("conversation %q does not include inbox owner %s; check which account the Page is linked to", conversation.ID, b.owner())
 			}
 			for _, msg := range conversation.Messages {
 				if err := b.persistMessage(ctx, st, source.ID, sum, owner, customer, msg); err != nil {

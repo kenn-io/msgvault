@@ -72,6 +72,8 @@ conversations.
 
 ## Limits
 
-- Message text only: attachments, stickers, reactions, edits and deletions are
-  not archived.
+- Message text only: attachments, stickers and reactions are not archived.
+- A later sync updates the text of a message that is still among the 20 most
+  recent, so an edit replaces the archived text. Earlier versions and
+  deletions are not kept.
 - No sending or replying.

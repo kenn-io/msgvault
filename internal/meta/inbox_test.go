@@ -87,3 +87,45 @@ func TestInboxImportArchivesConversationsAsChats(t *testing.T) {
 		})
 	}
 }
+
+func TestInboxImportRefusesOtherAccountsAndUnknownSenders(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	owner := "200"
+	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v26.0/me":
+			_, _ = fmt.Fprint(w, `{"id":"100","name":"Example Page","category":"Community"}`)
+		case "/v26.0/100":
+			_, _ = fmt.Fprint(w, `{"id":"100","instagram_business_account":{"id":"200","username":"example_business"}}`)
+		case "/v26.0/100/conversations":
+			_, _ = fmt.Fprintf(w, `{"data":[{"id":"t_1","participants":{"data":[{"id":%q,"username":"example_business"},{"id":"701","username":"example_visitor"}]},
+				"messages":{"data":[{"id":"m_1","created_time":"2026-10-02T09:00:00+0000","message":"no sender"},
+				{"id":"m_2","created_time":"2026-10-02T09:01:00+0000","from":{"id":%q,"username":"example_business"},"message":"our reply"}]}}]}`, owner, owner)
+		default:
+			assert.Fail("unexpected Graph read", r.URL.Path)
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	inbox := Inbox{App: "9", Page: "100", Account: "200"}
+	imp := NewInboxImporter(st, c)
+	src, err := imp.Register(t.Context(), inbox)
+	require.NoError(err)
+
+	owner = "299"
+	_, err = imp.Import(t.Context(), inbox, ImportOptions{})
+	require.Error(err, "a Page linked to another account must not fill this source")
+	ids, err := st.MessageExistsBatch(src.ID, []string{"m_1", "m_2"})
+	require.NoError(err)
+	assert.Empty(ids)
+
+	owner = "200"
+	_, err = imp.Import(t.Context(), inbox, ImportOptions{})
+	require.NoError(err)
+	assert.False(message(t, st, src.ID, "m_1").IsFromMe, "a message without a sender is not credited to the account")
+	reply := message(t, st, src.ID, "m_2")
+	assert.True(reply.IsFromMe)
+	var hits int
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages_fts WHERE messages_fts MATCH 'example_business'`).Scan(&hits))
+	assert.Equal(1, hits, "the account's own messages are searchable by its name")
+}
