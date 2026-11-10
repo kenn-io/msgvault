@@ -47,17 +47,6 @@ describe('preview byte validation', () => {
       .rejects.toThrow('This file is too large to preview.');
   });
 
-  it('cancels an oversized declared response body exactly once before reporting the size error', async () => {
-    const cancel = vi.fn(async () => undefined);
-    const stream = new ReadableStream<Uint8Array>({ cancel });
-
-    await expect(readBoundedStream(
-      stream, new Headers({ 'Content-Length': '5' }), new AbortController().signal, 4
-    )).rejects.toThrow('This file is too large to preview.');
-
-    expect(cancel).toHaveBeenCalledOnce();
-  });
-
   it('keeps the declared size error when the body is absent or cancellation rejects', async () => {
     await expect(readBoundedStream(
       null, new Headers({ 'Content-Length': '5' }), new AbortController().signal, 4

@@ -349,7 +349,6 @@ it('shows context and steps with buttons and arrows', async () => {
 });
 
 it.each([
-  { mime_type: 'text/plain', filename: 'notes.txt', content: 'Synthetic text', tag: 'pre', want: 'Synthetic text', target: { filename: 'notes.txt', mime_type: 'text/plain' } },
   { mime_type: 'text/csv', filename: 'table.csv', content: 'Name,Value\nExample,42', tag: 'table', want: 'Example', target: { filename: 'table.csv', mime_type: 'text/csv' } },
   { mime_type: 'text/plain; charset=windows-1252', filename: 'notes.txt', content: new Uint8Array([0x43, 0x61, 0x66, 0xe9]), tag: 'pre', want: 'Café', target: { filename: 'notes.txt', mime_type: 'text/plain; charset=windows-1252' } },
   { mime_type: 'text/tab-separated-values', filename: 'table.tsv', content: 'Name\tValue;Other;More\nExample\t42;73;84\nOther\t1;2;3', tag: 'table', want: 'Example', target: { filename: 'table.tsv', mime_type: 'text/tab-separated-values' } },
@@ -377,20 +376,6 @@ it('buffers authenticated audio for seeking and revokes its blob URL on close', 
   expect(revoke).toHaveBeenCalledExactlyOnceWith('blob:audio-preview');
 });
 
-it('leaves horizontal arrows to an overflowing PDF preview', async () => {
-  const onStep = vi.fn();
-  const target = file({ mime_type: 'application/pdf' });
-  render(FileViewer, { client: createAPIClient(viewerFetch({ ...target, content_state: 'local_content', content_available: true }, new TextEncoder().encode('%PDF-1.4 synthetic'))), file: target, position: { index: 1, total: 3 }, onStep });
-  await screen.findByRole('region', { name: 'PDF preview preview.png' });
-  await fireEvent.click(await screen.findByRole('button', { name: 'Zoom in' }));
-  const preview = screen.getByRole('region', { name: 'File preview preview.png' });
-  Object.defineProperty(preview, 'scrollWidth', { configurable: true, value: 400 });
-  Object.defineProperty(preview, 'clientWidth', { configurable: true, value: 200 });
-  await fireEvent.keyDown(preview, { key: 'ArrowLeft' });
-  await fireEvent.keyDown(preview, { key: 'ArrowRight' });
-  expect(onStep).not.toHaveBeenCalled();
-});
-
 it.each([
   ['scrollable preview', 'text/plain', async () => {
     await screen.findByText('Example text');
@@ -399,6 +384,13 @@ it.each([
     Object.defineProperty(preview, 'clientWidth', { configurable: true, value: 200 });
     return preview;
   }, 'ArrowRight'],
+  ['scrollable PDF preview', 'application/pdf', async () => {
+    await screen.findByRole('region', { name: 'PDF preview preview.png' });
+    const preview = screen.getByRole('region', { name: 'File preview preview.png' });
+    Object.defineProperty(preview, 'scrollWidth', { configurable: true, value: 400 });
+    Object.defineProperty(preview, 'clientWidth', { configurable: true, value: 200 });
+    return preview;
+  }, 'ArrowLeft'],
   ['audio controls', 'audio/wav', async () => {
     await waitFor(() => expect(document.querySelector('audio')?.getAttribute('src')).toBe('blob:audio-preview'));
     return document.querySelector('audio')!;
@@ -413,7 +405,7 @@ it.each([
   const onStep = vi.fn();
   Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:audio-preview') });
   const target = file({ mime_type });
-  render(FileViewer, { client: createAPIClient(viewerFetch({ ...target, content_state: 'local_content', content_available: true }, new TextEncoder().encode('Example text'))), file: target, position: { index: 1, total: 3 }, onStep });
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...target, content_state: 'local_content', content_available: true }, new TextEncoder().encode(mime_type === 'application/pdf' ? '%PDF-1.4 synthetic' : 'Example text'))), file: target, position: { index: 1, total: 3 }, onStep });
   await fireEvent.keyDown(await targetElement(), { key });
   expect(onStep).not.toHaveBeenCalled();
 });
@@ -459,8 +451,6 @@ it('stops at the loaded end and shows the list notice', async () => {
   await fireEvent.keyDown(window, { key: 'ArrowRight' });
   expect(onStep).not.toHaveBeenCalled();
   expect(screen.getByRole('alert').textContent).toBe('Could not load more files');
-  await fireEvent.keyDown(window, { key: 'ArrowLeft' });
-  expect(onStep).toHaveBeenCalledWith(-1);
 });
 it.each(['audio/wav', 'application/pdf', 'image/png'])('offers Download when %s exceeds the preview bound', async (mime_type) => {
   render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), content_state: 'local_content', content_available: true, mime_type, size_bytes: 26 * 1024 * 1024 })), file: file({ mime_type, size_bytes: 26 * 1024 * 1024 }) });

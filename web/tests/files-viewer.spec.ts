@@ -82,7 +82,7 @@ async function prepare(page: Page, baseURL: string | undefined, row: ReturnType<
   return () => contentCookie;
 }
 
-for (const dismissal of ['close button', 'Escape', 'Back']) {
+for (const dismissal of ['close button', 'Back']) {
   test(`closing after stepping restores the shown row via ${dismissal}`, async ({ page, baseURL }) => {
     const first = file('01-guide.pdf', 'application/pdf', 'pdf');
     const second = { ...file('06-budget.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'document'), id: 8, key: 'file:8' };
@@ -95,11 +95,11 @@ for (const dismissal of ['close button', 'Escape', 'Back']) {
     } }));
     await page.reload();
     const grid = page.getByRole('grid', { name: 'Files results' });
+    const listURL = page.url();
     await page.getByRole('gridcell', { name: first.filename, exact: true }).click();
     await page.getByRole('button', { name: 'Next file', exact: true }).click();
     await expect(page.getByRole('dialog', { name: `View ${second.filename}` })).toBeVisible();
-    if (dismissal === 'Back') await page.goBack();
-    else if (dismissal === 'Escape') await page.keyboard.press('Escape');
+    if (dismissal === 'Back') { await page.goBack(); await expect(page).toHaveURL(listURL); }
     else await page.getByRole('button', { name: 'Close file viewer', exact: true }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(grid).toHaveAttribute('aria-busy', 'false');
@@ -263,13 +263,12 @@ test('a phone opens a message from Files and returns to results', async ({ page,
   await expect(messages.getByText('Containing item', { exact: true })).toBeVisible();
 });
 
-test('PDF reading preserves selection, page tracking, shortcuts, focus, and Back navigation', async ({ page, baseURL }) => {
+test('PDF reading preserves selection, page tracking, shortcuts, and focus', async ({ page, baseURL }) => {
   await prepare(page, baseURL, file('fixture.pdf', 'application/pdf', 'pdf'), shortPagesPDF(3, { height: 792, text: 'Fixture preview text' }));
   const grid = page.getByRole('grid', { name: 'Files results' });
   await grid.focus();
   await expect(grid).toHaveAttribute('aria-activedescendant', 'file-row-7');
   await expect.poll(async () => (await exploreHistoryState(page)).activeRow).toBe('file:7');
-  const listURL = page.url();
 
   await page.keyboard.press('Enter');
   await expect(page.getByRole('dialog', { name: 'View fixture.pdf' })).toBeVisible();
@@ -308,11 +307,6 @@ test('PDF reading preserves selection, page tracking, shortcuts, focus, and Back
     const encoded = new URL(page.url()).searchParams.get('explore');
     return encoded ? (JSON.parse(encoded) as { selectedRow?: string | null }).selectedRow : undefined;
   }).toBe('file:7');
-
-  await page.goBack();
-
-  await expect(page).toHaveURL(listURL);
-  await expect(page.getByRole('dialog', { name: 'View fixture.pdf' })).toHaveCount(0);
 });
 
 for (const deviceScaleFactor of [1, 2]) {

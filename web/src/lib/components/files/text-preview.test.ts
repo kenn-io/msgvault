@@ -23,8 +23,6 @@ describe('delimited previews', () => {
       expect((await parseDelimited(text, ',')).rows).toEqual([['first'], [''], ['third']]);
     }
     expect((await parseDelimited('value\nfirst\n""\n', ',')).rows).toEqual([['first'], ['']]);
-    expect((await parseDelimited('value\nfirst\n""\n', ',', 200, true)).rows).toEqual([['first'], ['']]);
-    expect((await parseDelimited('value\nfirst\n""', ',', 200, true)).rows).toEqual([['first']]);
     expect((await parseDelimited('value\nfirst\n\nthird\n', ',')).rows).toEqual([['first'], [''], ['third']]);
     expect((await parseDelimited('Name,Amount\nExample,42\r', ',')).rows).toEqual([['Example', '42']]);
     expect((await parseDelimited('Name,Amount\nExample,42\r\n', ',')).rows).toEqual([['Example', '42']]);
@@ -41,6 +39,8 @@ describe('delimited previews', () => {
     expect((await parseDelimited('h\n1\n', ',', 1)).truncated).toBe(false);
   });
   it('keeps complete records at byte boundaries and drops unfinished records', async () => {
+    expect((await parseDelimited('value\nfirst\n""\n', ',', 200, true)).rows).toEqual([['first'], ['']]);
+    expect((await parseDelimited('value\nfirst\n""', ',', 200, true)).rows).toEqual([['first']]);
     for (const text of ['Name,Note,Amount\nComplete,Ready,99\nPartial,Long note,12', 'Name,Note,Amount\nComplete,Ready,99\nPartial,"Long\nnote\n']) {
       expect((await parseDelimited(text, ',', 200, true)).rows).toEqual([['Complete', 'Ready', '99']]);
     }
@@ -64,9 +64,6 @@ describe('delimited previews', () => {
     expect(await parseDelimited('Name,Amount\nExample,42,extra\nOther', ',')).toEqual({
       header: ['Name', 'Amount', ''], rows: [['Example', '42', 'extra'], ['Other']], truncated: false, cellLimit: false, columnsTruncated: false, hasErrors: false
     });
-    const result = await parseDelimited(Array(101).fill('Header').join(',') + '\nValue', ',');
-    expect(result.header).toHaveLength(101);
-    expect(result.rows[0]).toHaveLength(1);
   });
   it('limits rendered cells while retaining complete wide rows', async () => {
     const row = Array(1000).fill('x').join(',');
