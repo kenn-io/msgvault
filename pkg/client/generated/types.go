@@ -4809,6 +4809,15 @@ func (e EndEmploymentBody) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(e))
 }
 
+type EntryKeyRejection struct {
+	EntryKey string `json:"entry_key" validate:"required"`
+	Reason   string `json:"reason" validate:"required"`
+}
+
+func (e EntryKeyRejection) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
 type EntryRow struct {
 	AnchorMessageID          *int64 `json:"anchor_message_id,omitempty"`
 	AttachmentCount          int64  `json:"attachment_count"`
@@ -14707,6 +14716,36 @@ type SavedViewItemsApplied struct {
 	ExcludeRemoved int64 `json:"exclude_removed"`
 	IncludeAdded   int64 `json:"include_added"`
 	IncludeRemoved int64 `json:"include_removed"`
+}
+
+type SavedViewItemsRejectedResponse struct {
+	ErrorData string              `json:"error" validate:"required"`
+	Message   string              `json:"message" validate:"required"`
+	Rejected  []EntryKeyRejection `json:"rejected" validate:"required"`
+}
+
+func (s SavedViewItemsRejectedResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.ErrorData, "required"); err != nil {
+		errors = errors.Append("ErrorData", err)
+	}
+	if err := typesValidator.Var(s.Message, "required"); err != nil {
+		errors = errors.Append("Message", err)
+	}
+	if err := typesValidator.Var(s.Rejected, "required"); err != nil {
+		errors = errors.Append("Rejected", err)
+	}
+	for i, item := range s.Rejected {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Rejected[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type SavedViewSort struct {

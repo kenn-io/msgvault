@@ -5177,6 +5177,16 @@ components:
       required:
         - end_date
       type: object
+    EntryKeyRejection:
+      properties:
+        entry_key:
+          type: string
+        reason:
+          type: string
+      required:
+        - entry_key
+        - reason
+      type: object
     EntryRow:
       properties:
         anchor_message_id:
@@ -14712,6 +14722,21 @@ components:
         - include_removed
         - exclude_added
         - exclude_removed
+      type: object
+    SavedViewItemsRejectedResponse:
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        rejected:
+          items:
+            $ref: "#/components/schemas/EntryKeyRejection"
+          type: array
+      required:
+        - error
+        - message
+        - rejected
       type: object
     SavedViewSort:
       additionalProperties: false
@@ -31469,8 +31494,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
+                $ref: "#/components/schemas/SavedViewItemsRejectedResponse"
+          description: Unprocessable Entity
         "428":
           content:
             application/json:

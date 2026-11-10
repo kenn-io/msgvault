@@ -3523,7 +3523,7 @@ type PatchSavedViewErrorResponseJSON = ErrorResponse
 
 type PatchSavedViewErrorResponseJSON409 = ErrorResponse
 
-type PatchSavedViewErrorResponseJSON422 = ErrorResponse
+type PatchSavedViewErrorResponseJSON422 = SavedViewItemsRejectedResponse
 
 type PatchSavedViewErrorResponseJSON428 = ErrorResponse
 
