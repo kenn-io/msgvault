@@ -1173,3 +1173,46 @@ func TestSameUsernameUnderDifferentStableIDsStaysAConflict(t *testing.T) {
 	require.NoError(err, "alice current")
 	assert.Len(aliceCurrent, 1, "neither observation is repointed or superseded by the collision")
 }
+
+func TestWhatsAppMergeCountsResolvedAddresses(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	ctx := t.Context()
+	require := require.New(t)
+	account := "garden"
+	user := &User{ID: "@garden-reader:beeper.local", FullName: "Reader", PhoneNumber: "+12025550123"}
+	participant, err := newParticipantResolver(st, account).resolveUser(ctx, user)
+	require.NoError(err)
+	_, err = newObservationRecorder(st).capture(ctx, participant, user, captureContext{SourceID: newBeeperTestSource(t, st, account), AccountID: account, Network: "WhatsApp"})
+	require.NoError(err)
+	guest, _, err := st.CreatePersonFromParticipantContext(ctx, participant)
+	require.NoError(err)
+	_, err = st.AddPersonContactPointContext(ctx, guest.ID, store.PersonContactPointInput{AddressKind: store.ContactAddressPhone, ServiceSlug: new("whatsapp"), OriginalValue: "+12025550123", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+	require.NoError(err)
+	guest, err = st.GetPersonContext(ctx, guest.ID)
+	require.NoError(err)
+	ownerID, err := st.EnsureParticipantContext(ctx, "owner@example.org", "Owner", "example.org")
+	require.NoError(err)
+	owner, _, err := st.CreatePersonFromParticipantContext(ctx, ownerID)
+	require.NoError(err)
+	merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: owner.ID, AbsorbedID: guest.ID, ExpectedSurvivorRevision: owner.Revision, ExpectedAbsorbedRevision: guest.Revision, IdempotencyKey: "whatsapp-merge", Actor: "test"})
+	require.NoError(err)
+	detail, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
+	require.NoError(err)
+	assert.Equal(t, 2, detail.Labels.AbsorbedAddressCount, "%+v", detail.Labels.Addresses)
+	page, err := st.ListPersonMergesContext(ctx, owner.ID)
+	require.NoError(err)
+	require.Len(page, 1)
+	assert.Equal(t, 2, page[0].Labels.AbsorbedAddressCount)
+	for _, labels := range []store.PersonMergeLabels{detail.Labels, page[0].Labels} {
+		var keys []string
+		for _, address := range labels.Addresses {
+			if address.ParticipantID == participant {
+				keys = append(keys, address.IdentityKey)
+			}
+		}
+		assert.ElementsMatch(t, []string{`["phone","","","+12025550123"]`, `["whatsapp","","","+12025550123"]`}, keys)
+	}
+	again, err := newParticipantResolver(st, account).resolveUser(ctx, user)
+	require.NoError(err)
+	assert.Equal(t, participant, again)
+}

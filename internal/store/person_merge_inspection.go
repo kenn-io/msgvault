@@ -639,11 +639,11 @@ func (s *Store) loadPersonMergeIdentities(ctx context.Context, tx *loggedTx, lab
 	for _, participant := range participants {
 		ids = append(ids, participant.ParticipantID)
 	}
-	identities, err := s.getParticipantIdentityContext(ctx, tx.Tx, ids, false)
+	addresses, known, err := s.personMergeAddresses(ctx, tx, ids)
 	if err != nil {
 		label.Incomplete = true
 	} else {
-		label.Addresses, label.ParticipantIDs = participantAddresses(identities)
+		label.Addresses, label.ParticipantIDs = addresses, known
 	}
 	label.AbsorbedAddressCount = absorbedAddressCount(*label, participants, merge)
 	return nil
@@ -651,11 +651,7 @@ func (s *Store) loadPersonMergeIdentities(ctx context.Context, tx *loggedTx, lab
 
 // loadPersonMergePageIdentities labels a page's lineage with one identity read.
 func (s *Store) loadPersonMergePageIdentities(ctx context.Context, tx *loggedTx, page []PersonMergeSummary, participantIDs []int64) error {
-	identities, err := s.getParticipantIdentityContext(ctx, tx.Tx, participantIDs, false)
-	addresses, known := []ParticipantAddress{}, []int64{}
-	if err == nil {
-		addresses, known = participantAddresses(identities)
-	}
+	addresses, known, err := s.personMergeAddresses(ctx, tx, participantIDs)
 	for index := range page {
 		labels := &page[index].Labels
 		labels.Incomplete = labels.Incomplete || err != nil
@@ -676,6 +672,19 @@ func (s *Store) loadPersonMergePageIdentities(ctx context.Context, tx *loggedTx,
 		labels.AbsorbedAddressCount = absorbedAddressCount(*labels, labels.Participants, page[index].Merge)
 	}
 	return nil
+}
+
+func (s *Store) personMergeAddresses(ctx context.Context, tx *loggedTx, ids []int64) ([]ParticipantAddress, []int64, error) {
+	identities, err := s.getParticipantIdentityContext(ctx, tx.Tx, ids, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	observations, err := currentParticipantObservationsTx(ctx, tx, ids)
+	if err != nil {
+		return nil, nil, err
+	}
+	addresses, known := participantAddresses(identities, observations)
+	return addresses, known, nil
 }
 
 func absorbedAddressCount(labels PersonMergeLabels, participants []PersonMergeParticipant, merge PersonMerge) int {

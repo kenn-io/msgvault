@@ -411,6 +411,27 @@ func (s *Store) listObservationsForPersonTx(
 	return queryProfileRowsTx(ctx, tx, query, scanParticipantObservation, personID)
 }
 
+// currentParticipantObservationsTx reads current observations for a merge page.
+func currentParticipantObservationsTx(ctx context.Context, tx *loggedTx, ids []int64) ([]ParticipantContactObservation, error) {
+	var observations []ParticipantContactObservation
+	const chunkSize = 300
+	for start := 0; start < len(ids); start += chunkSize {
+		chunk := ids[start:min(start+chunkSize, len(ids))]
+		args := make([]any, len(chunk))
+		for i, id := range chunk {
+			args[i] = id
+		}
+		query := participantObservationSelect + fmt.Sprintf(` WHERE o.participant_id IN (%s)
+			AND o.active_until IS NULL AND o.superseded_at IS NULL ORDER BY o.participant_id, o.id`, placeholders(len(chunk)))
+		rows, err := queryProfileRowsTx(ctx, tx, query, scanParticipantObservation, args...)
+		if err != nil {
+			return nil, fmt.Errorf("read merge participant observations: %w", err)
+		}
+		observations = append(observations, rows...)
+	}
+	return observations, nil
+}
+
 func (s *Store) FindObservationsByAddressContext(
 	ctx context.Context, query ContactPointQuery,
 ) ([]ParticipantContactObservation, error) {

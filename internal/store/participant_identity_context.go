@@ -213,7 +213,7 @@ func addressIdentityKey(service, scopeKind, scopeValue, normalized string) strin
 	return string(key)
 }
 
-func participantAddresses(identities *ParticipantIdentityContext) ([]ParticipantAddress, []int64) {
+func participantAddresses(identities *ParticipantIdentityContext, observations []ParticipantContactObservation) ([]ParticipantAddress, []int64) {
 	addresses, ids := []ParticipantAddress{}, []int64{}
 	for i, identifier := range identities.Identifiers {
 		if identifier.ServiceSlug == "" && identifier.ScopeKind == "" && identifier.ScopeValue == "" {
@@ -240,6 +240,24 @@ func participantAddresses(identities *ParticipantIdentityContext) ([]Participant
 			}
 		}
 		for _, identifier := range byParticipant[member.ParticipantID] {
+			if identifier.Type == sourceTypeBeeper && identifier.ServiceSlug != "" {
+				replaced := false
+				for _, observation := range observations {
+					if observation.ParticipantID != member.ParticipantID || observation.ServiceSlug == nil || *observation.ServiceSlug != identifier.ServiceSlug ||
+						stringOrEmpty(observation.ScopeKind) != identifier.ScopeKind || stringOrEmpty(observation.ScopeValue) != identifier.ScopeValue ||
+						(observation.AddressKind != ContactAddressEmail && observation.AddressKind != ContactAddressPhone && observation.AddressKind != ContactAddressUsername) {
+						continue
+					}
+					address := identifier
+					address.Type, address.Value, address.DisplayValue = string(observation.AddressKind), observation.OriginalValue, ""
+					address.NormalizedValue = observation.NormalizedValue
+					appendAddress(address)
+					replaced = true
+				}
+				if replaced {
+					continue
+				}
+			}
 			if identifier.Type == sourceTypeBeeper && strings.HasPrefix(identifier.Value, beeperidentity.Prefix+":") &&
 				identifier.ServiceSlug == "" && identifier.ScopeKind == "" && identifier.ScopeValue == "" && (member.Email != "" || member.Phone != "") {
 				continue
@@ -298,4 +316,11 @@ func memberContactAddresses(member ParticipantIdentityMember) []ParticipantIdent
 		addresses = append(addresses, ParticipantIdentifierContext{ParticipantID: member.ParticipantID, Type: string(field.kind), Value: field.value, NormalizedValue: normalized, ServiceSlug: string(field.kind)})
 	}
 	return addresses
+}
+
+func stringOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }

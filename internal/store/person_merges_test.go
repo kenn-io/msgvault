@@ -444,7 +444,11 @@ func TestPersonMerge_LabelReadStates(t *testing.T) {
 	}{
 		{"identifiers", func(t *testing.T, f *personMergeInspectionFixture) {
 			t.Helper()
-			denyPersonMergeIdentityReads(t, f.store)
+			denyPersonMergeReads(t, f.store, "participant_identifiers")
+		}, true, true, 2, 0},
+		{"observations", func(t *testing.T, f *personMergeInspectionFixture) {
+			t.Helper()
+			denyPersonMergeReads(t, f.store, "participant_contact_observations")
 		}, true, true, 2, 0},
 		{"snapshot", func(t *testing.T, f *personMergeInspectionFixture) {
 			t.Helper()
@@ -2751,16 +2755,17 @@ func TestPersonMerge_DetailAddressLabels(t *testing.T) {
 	})
 }
 
-func denyPersonMergeIdentityReads(t *testing.T, st *store.Store) {
+func denyPersonMergeReads(t *testing.T, st *store.Store, table string) {
 	t.Helper()
 	require := require.New(t)
 	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
-		_, err := st.DB().ExecContext(t.Context(), `ALTER TABLE participant_identifiers RENAME TO unavailable_identifiers`)
+		_, err := st.DB().ExecContext(t.Context(), `ALTER TABLE `+table+` RENAME TO unavailable_merge_reads`)
 		require.NoError(err)
 		return
 	}
 	st.DB().SetMaxOpenConns(1)
 	st.DB().SetMaxIdleConns(1)
+	deniedTable := table
 	var fail atomic.Bool
 	fail.Store(true)
 	t.Cleanup(func() { fail.Store(false) })
@@ -2770,7 +2775,7 @@ func denyPersonMergeIdentityReads(t *testing.T, st *store.Store) {
 		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
 		require.True(ok)
 		sqliteConn.RegisterAuthorizer(func(action int, table, _, _ string) int {
-			if fail.Load() && action == sqlite3.SQLITE_READ && table == "participant_identifiers" {
+			if fail.Load() && action == sqlite3.SQLITE_READ && table == deniedTable {
 				return sqlite3.SQLITE_DENY
 			}
 			return sqlite3.SQLITE_OK
@@ -2940,4 +2945,49 @@ func TestPersonMergeCountsNewAddresses(t *testing.T) {
 		require.NoError(err)
 		assert.Equal(4, scoped.Labels.AbsorbedAddressCount)
 	})
+}
+
+func TestPersonMerge_BeeperObservations(t *testing.T) {
+	ctx := t.Context()
+	st := testutil.NewTestStore(t)
+	require, assert := require.New(t), assert.New(t)
+	service, err := st.ResolveCommunicationServiceContext(ctx, "slack")
+	require.NoError(err)
+	participant, err := st.EnsureParticipantByIdentifierContext(ctx, "beeper", beeperidentity.Fallback("account-a", "@reader:beeper.local"), "Reader")
+	require.NoError(err)
+	key := beeperidentity.Fallback("account-a", "@reader:beeper.local")
+	require.NoError(st.ClassifyParticipantIdentifierServiceContext(ctx, "beeper", key, &service.ID, new("workspace"), new("a")))
+	otherKey := beeperidentity.Fallback("account-b", "@reader:beeper.local")
+	require.NoError(st.SetParticipantIdentifierContext(ctx, participant, "beeper", otherKey))
+	require.NoError(st.ClassifyParticipantIdentifierServiceContext(ctx, "beeper", otherKey, &service.ID, new("workspace"), new("b")))
+	for _, scope := range []string{"a", "b"} {
+		_, err = st.RecordContactObservationContext(ctx, participant, store.ParticipantContactObservationInput{AddressKind: store.ContactAddressUsername, ServiceSlug: new("slack"), ScopeKind: new("workspace"), ScopeValue: &scope, OriginalValue: "Reader", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+		require.NoError(err)
+	}
+	old, err := st.RecordContactObservationContext(ctx, participant, store.ParticipantContactObservationInput{AddressKind: store.ContactAddressUsername, ServiceSlug: new("slack"), ScopeKind: new("workspace"), ScopeValue: new("a"), OriginalValue: "OldReader", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+	require.NoError(err)
+	require.NoError(st.SupersedeParticipantObservationContext(ctx, participant, old.Observation.Envelope.ID, nil))
+	_, err = st.RecordContactObservationContext(ctx, participant, store.ParticipantContactObservationInput{AddressKind: store.ContactAddressProviderIdentity, ServiceSlug: new("slack"), ScopeKind: new("workspace"), ScopeValue: new("a"), OriginalValue: "opaque-provider-id", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+	require.NoError(err)
+	guest, _, err := st.CreatePersonFromParticipantContext(ctx, participant)
+	require.NoError(err)
+	owner := mustPromotedPerson(ctx, t, st, "owner@example.org", "Owner")
+	merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: owner.ID, AbsorbedID: guest.ID, ExpectedSurvivorRevision: owner.Revision, ExpectedAbsorbedRevision: guest.Revision, IdempotencyKey: "beeper-observations", Actor: "test"})
+	require.NoError(err)
+	detail, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
+	require.NoError(err)
+	page, err := st.ListPersonMergesContext(ctx, owner.ID)
+	require.NoError(err)
+	require.Len(page, 1)
+	for _, labels := range []store.PersonMergeLabels{detail.Labels, page[0].Labels} {
+		var keys []string
+		for _, address := range labels.Addresses {
+			if address.ParticipantID == participant {
+				keys = append(keys, address.IdentityKey)
+				assert.Equal("Reader", address.Value)
+			}
+		}
+		assert.ElementsMatch([]string{`["slack","workspace","a","reader"]`, `["slack","workspace","b","reader"]`}, keys)
+		assert.Equal(2, labels.AbsorbedAddressCount)
+	}
 }
