@@ -46,9 +46,9 @@ func (s *Server) handleCreateStandalonePerson(w http.ResponseWriter, r *http.Req
 	case errors.Is(err, store.ErrPersonCreateInvalid):
 		writeError(w, http.StatusBadRequest, "invalid_person", err.Error())
 	case errors.As(err, &ambiguous):
-		writeJSON(w, http.StatusConflict, PersonCreateErrorResponse{Error: "person_ambiguous", Message: err.Error(), Details: ambiguous})
+		writeJSON(w, http.StatusConflict, PersonCreateErrorResponse{Error: store.PersonCreateCodeAmbiguous, Message: err.Error(), Details: ambiguous})
 	case errors.As(err, &participant):
-		writeJSON(w, http.StatusConflict, PersonCreateErrorResponse{Error: "person_matches_participant", Message: err.Error(), Details: participant})
+		writeJSON(w, http.StatusConflict, PersonCreateErrorResponse{Error: store.PersonCreateCodeMatchesParticipant, Message: err.Error(), Details: participant})
 	case errors.Is(err, store.ErrPersonContactExists):
 		writeError(w, http.StatusConflict, "person_contact_exists", err.Error())
 	case err != nil:

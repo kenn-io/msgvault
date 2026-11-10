@@ -22,6 +22,11 @@ const (
 	PersonEnsureMatchedExisting PersonEnsureStatus = "matched_existing"
 )
 
+const (
+	PersonCreateCodeAmbiguous          = "person_ambiguous"
+	PersonCreateCodeMatchesParticipant = "person_matches_participant"
+)
+
 type PersonMatchBasis struct {
 	Kind          ContactAddressKind `json:"kind"`
 	Value         string             `json:"value"`

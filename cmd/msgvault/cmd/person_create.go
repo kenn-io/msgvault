@@ -66,7 +66,7 @@ func newPersonCreateCommand() *cobra.Command {
 		person, err := client.CreateStandalonePerson(cmd.Context(), input)
 		if err != nil {
 			var conflict *daemonclient.APIError
-			if errors.As(err, &conflict) && (conflict.Code == "person_ambiguous" || conflict.Code == "person_matches_participant") {
+			if errors.As(err, &conflict) && (conflict.Code == store.PersonCreateCodeAmbiguous || conflict.Code == store.PersonCreateCodeMatchesParticipant) {
 				if jsonOutput {
 					if writeErr := json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), struct {
 						Error   string         `json:"error"`
@@ -86,7 +86,7 @@ func newPersonCreateCommand() *cobra.Command {
 		out := cmd.OutOrStdout()
 		if jsonOutput {
 			err = json.MarshalEncode(jsontext.NewEncoder(out), person, json.Deterministic(true))
-		} else if person.Ensure != nil && person.Ensure.Status == "matched_existing" {
+		} else if person.Ensure != nil && store.PersonEnsureStatus(person.Ensure.Status) == store.PersonEnsureMatchedExisting {
 			name := ""
 			if person.DisplayName != nil {
 				name = *person.DisplayName
@@ -105,7 +105,7 @@ func newPersonCreateCommand() *cobra.Command {
 		if err != nil {
 			return fmt.Errorf("write created person: %w", err)
 		}
-		if !publish || (input.IfExists == store.PersonIfExistsReturn && (person.Ensure == nil || person.Ensure.Status != "created")) {
+		if !publish || (input.IfExists == store.PersonIfExistsReturn && (person.Ensure == nil || store.PersonEnsureStatus(person.Ensure.Status) != store.PersonEnsureCreated)) {
 			return nil
 		}
 		_, err = daemonclient.APIResponse(client,

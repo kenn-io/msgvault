@@ -50,7 +50,7 @@ func personCreateOutputSchema(ifExists bool) *jsonschema.Schema {
 		return person
 	}
 	failure := closedObject(map[string]*jsonschema.Schema{
-		"error":   stringSchema("Creation conflict code", "person_ambiguous", "person_matches_participant"),
+		"error":   stringSchema("Creation conflict code", store.PersonCreateCodeAmbiguous, store.PersonCreateCodeMatchesParticipant),
 		"message": stringSchema("Conflict explanation"),
 		"details": {Type: "object"},
 	}, "error", "message", "details")
@@ -80,10 +80,10 @@ func (h *handlers) createPerson(ctx context.Context, req toolRequest) (*toolResu
 		var apiErr *daemonclient.APIError
 		switch {
 		case errors.As(err, &ambiguous):
-			return personCreateConflict("person_ambiguous", err.Error(), ambiguous)
+			return personCreateConflict(store.PersonCreateCodeAmbiguous, err.Error(), ambiguous)
 		case errors.As(err, &participant):
-			return personCreateConflict("person_matches_participant", err.Error(), participant)
-		case errors.As(err, &apiErr) && (apiErr.Code == "person_ambiguous" || apiErr.Code == "person_matches_participant"):
+			return personCreateConflict(store.PersonCreateCodeMatchesParticipant, err.Error(), participant)
+		case errors.As(err, &apiErr) && (apiErr.Code == store.PersonCreateCodeAmbiguous || apiErr.Code == store.PersonCreateCodeMatchesParticipant):
 			return personCreateConflict(apiErr.Code, apiErr.Message, apiErr.Details)
 		}
 		if personCreateRefusal(err) {
