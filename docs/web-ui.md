@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-29"
+last_edited: "2026-11-10"
 title: Web UI
 description: Browse messages and files, maintain people, and monitor archive work from your browser.
 ---
