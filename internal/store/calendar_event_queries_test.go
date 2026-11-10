@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 	"testing"
@@ -105,10 +106,14 @@ func TestCalendarEventRowsHardSeriesCap(t *testing.T) {
 func TestCalendarEventRowsSourceScope(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	first, firstID := calendarFixture(t, st, "one", calendarRaw)
-	_, secondID := calendarFixture(t, st, "two", calendarRaw)
 	other, err := st.GetOrCreateSource("gcal", "other@example.test")
 	require.NoError(t, err)
-	_, err = st.db.Exec(`UPDATE messages SET source_id = ? WHERE id = ?`, other.ID, secondID)
+	_, err = st.PersistMessage(&MessagePersistData{
+		Message:      &Message{SourceID: other.ID, SourceMessageID: "two", MessageType: "calendar_event", Subject: sql.NullString{String: "Example event", Valid: true}},
+		Conversation: &ConversationPersistData{SourceConversationID: "two", ConversationType: "calendar", Title: "Example event"},
+		RawMIME:      []byte(calendarRaw), RawFormat: "gcal_json",
+		Metadata: &sql.NullString{String: `{"calendar_id":"calendar@example.com"}`, Valid: true},
+	})
 	require.NoError(t, err)
 	ctx, release, err := st.BeginReadSnapshotContext(sourcescope.WithSourceIDs(t.Context(), []int64{first.Message.SourceID}))
 	require.NoError(t, err)

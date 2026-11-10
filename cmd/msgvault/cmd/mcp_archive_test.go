@@ -383,7 +383,7 @@ func TestMCPArchiveLocalChatDrafts(t *testing.T) {
 	}
 }
 
-func TestMCPArchivedCalendarVersionGate(t *testing.T) {
+func TestMCPDaemonArchivedCalendarVersionGate(t *testing.T) {
 	for _, tc := range []struct {
 		version   string
 		available bool

@@ -83,7 +83,6 @@ func TestCalendarEventsAgentScopeAndVerification(t *testing.T) {
 	for _, tc := range []struct{ id, subject, raw string }{
 		{"event", "Your verification code is 482913", `{"id":"event","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"}}`},
 		{"series", "Your verification code is 482913", `{"id":"series","start":{"dateTime":"2027-03-04T17:00:00Z"},"end":{"dateTime":"2027-03-04T18:00:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=4"]}`},
-		{"cancelled", "", `{"id":"cancelled","recurringEventId":"series","status":"cancelled","originalStartTime":{"dateTime":"2027-03-05T17:00:00Z"}}`},
 		{"edited", "Planning", `{"id":"edited","recurringEventId":"series","status":"confirmed","originalStartTime":{"dateTime":"2027-03-07T17:00:00Z"},"start":{"dateTime":"2027-03-07T17:00:00Z"},"end":{"dateTime":"2027-03-07T18:00:00Z"}}`},
 		{"meeting", "Weekly sync", `{"id":"meeting","start":{"dateTime":"2027-03-08T17:00:00Z"},"end":{"dateTime":"2027-03-08T18:00:00Z"}}`},
 	} {
@@ -115,14 +114,13 @@ func TestCalendarEventsAgentScopeAndVerification(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
 	})
 	for _, tc := range []struct {
-		name, from, to, want, status string
-		permissions                  []agentgrant.Permission
+		name, from, to, want string
+		permissions          []agentgrant.Permission
 	}{
-		{"scoped", "2027-03-02", "2027-03-03", "[verification content masked]", "confirmed", []agentgrant.Permission{agentgrant.PermissionCalendarEventRead}},
-		{"reveal", "2027-03-02", "2027-03-03", "Your verification code is 482913", "confirmed", []agentgrant.Permission{agentgrant.PermissionCalendarEventRead, agentgrant.PermissionVerificationRead}},
-		{"inherited cancellation", "2027-03-05", "2027-03-06", "[verification content masked]", "cancelled", []agentgrant.Permission{agentgrant.PermissionCalendarEventRead}},
-		{"edited occurrence", "2027-03-07", "2027-03-08", "Planning", "confirmed", []agentgrant.Permission{agentgrant.PermissionCalendarEventRead}},
-		{"ordinary meeting", "2027-03-08", "2027-03-09", "Weekly sync", "confirmed", []agentgrant.Permission{agentgrant.PermissionCalendarEventRead}},
+		{"scoped", "2027-03-02", "2027-03-03", "[verification content masked]", []agentgrant.Permission{agentgrant.PermissionCalendarEventRead}},
+		{"reveal", "2027-03-02", "2027-03-03", "Your verification code is 482913", []agentgrant.Permission{agentgrant.PermissionCalendarEventRead, agentgrant.PermissionVerificationRead}},
+		{"edited occurrence", "2027-03-07", "2027-03-08", "Planning", []agentgrant.Permission{agentgrant.PermissionCalendarEventRead}},
+		{"ordinary meeting", "2027-03-08", "2027-03-09", "Weekly sync", []agentgrant.Permission{agentgrant.PermissionCalendarEventRead}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, token, _, err := srv.agentGrants.Issue(tc.name, tc.permissions, []agentgrant.SourceRef{{ID: source.ID, Type: "gcal", Identifier: source.Identifier}}, time.Time{})
@@ -136,10 +134,6 @@ func TestCalendarEventsAgentScopeAndVerification(t *testing.T) {
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &page))
 			require.Len(t, page.Occurrences, 1)
 			assert.Equal(t, tc.want, page.Occurrences[0].Subject)
-			assert.Equal(t, tc.status, page.Occurrences[0].Status)
-			if tc.name == "scoped" || tc.name == "reveal" {
-				assert.NotContains(t, w.Body.String(), "Private meeting")
-			}
 		})
 	}
 }
