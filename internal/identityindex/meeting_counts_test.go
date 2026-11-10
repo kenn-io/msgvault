@@ -17,8 +17,8 @@ func TestMeetingCounts(t *testing.T) {
 		sourceCounts                              []int64
 		dailyOnly                                 bool
 	}{
-		{name: "multiple occurrences", messages: "(100,1,'meeting_transcript')", recipients: "(100,1),(100,2)", keys: "(100,'uid:weekly/20260801T100000Z'),(100,'uid:weekly/20260808T100000Z')", meetings: 2, activities: 1},
-		{name: "copies across sources", messages: "(100,1,'meeting_transcript'),(101,2,'meeting_transcript'),(102,1,'meeting_transcript'),(103,2,'calendar_event'),(104,1,'meeting_transcript')", recipients: "(100,2),(101,2),(102,2),(103,2),(104,2)", keys: "(100,'uid:planning@example.org/'),(101,'uid:planning@example.org/'),(104,'uid:planning@example.org/')", sources: "(1,'owner@example.com','granola'),(2,'copy@example.org','twenty')", meetings: 2, sourceCounts: []int64{2, 1}},
+		{name: "multiple occurrences", messages: "(100,1,'meeting_transcript')", recipients: "(100,1),(100,2)", keys: "(100,'uid:weekly/20260801T100000Z',TIMESTAMP '2026-08-01 10:00:00'),(100,'uid:weekly/20260808T100000Z',TIMESTAMP '2026-08-08 10:00:00')", meetings: 2, activities: 1},
+		{name: "copies across sources", messages: "(100,1,'meeting_transcript'),(101,2,'meeting_transcript'),(102,1,'meeting_transcript'),(103,2,'calendar_event'),(104,1,'meeting_transcript')", recipients: "(100,2),(101,2),(102,2),(103,2),(104,2)", keys: "(100,'uid:planning@example.org/',TIMESTAMP '2026-07-20 10:30:00'),(101,'uid:planning@example.org/',TIMESTAMP '2026-07-20 10:30:00'),(104,'uid:planning@example.org/',TIMESTAMP '2026-07-20 10:30:00')", sources: "(1,'owner@example.com','granola'),(2,'copy@example.org','twenty')", meetings: 2, sourceCounts: []int64{2, 1}},
 		{name: "calendar only", messages: "(100,1,'calendar_event')", recipients: "(100,1),(100,2)", dailyOnly: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -40,7 +40,7 @@ func TestMeetingCounts(t *testing.T) {
 			}
 			replaceRelationshipParquet(t, db, root, "message_recipients", `SELECT message_id::BIGINT AS message_id, participant_id::BIGINT AS participant_id, 'to'::VARCHAR AS recipient_type, ''::VARCHAR AS display_name FROM (VALUES `+tc.recipients+`) t(message_id,participant_id)`)
 			if tc.keys != "" {
-				replaceRelationshipParquet(t, db, root, "meeting_keys", `SELECT message_id::BIGINT AS message_id, meeting_key::VARCHAR AS meeting_key, NULL::TIMESTAMP AS occurrence_at, NULL::DATE AS occurrence_date FROM (VALUES `+tc.keys+`) t(message_id,meeting_key)`)
+				replaceRelationshipParquet(t, db, root, "meeting_keys", `SELECT message_id::BIGINT AS message_id, meeting_key::VARCHAR AS meeting_key, occurrence_at, NULL::DATE AS occurrence_date FROM (VALUES `+tc.keys+`) t(message_id,meeting_key,occurrence_at)`)
 			}
 			_, err := Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root})
 			requirements.NoError(err)
@@ -53,6 +53,9 @@ func TestMeetingCounts(t *testing.T) {
 			var meetings, activities int64
 			requirements.NoError(db.QueryRow(`SELECT meeting_count, activity_count FROM read_parquet(?) WHERE canonical_id=2`, relationshipParquetGlob(root, DatasetPeople)).Scan(&meetings, &activities))
 			assertions.Equal(tc.meetings, meetings)
+			var units int64
+			requirements.NoError(db.QueryRow(`SELECT coalesce(sum(meeting_units),0) FROM read_parquet(?) WHERE canonical_id=2`, relationshipParquetGlob(root, DatasetRelationshipDaily)).Scan(&units))
+			assertions.Equal(tc.meetings, units)
 			if tc.activities > 0 {
 				assertions.Equal(tc.activities, activities)
 			}
@@ -86,17 +89,6 @@ func TestValidateRejectsMeetingTotalsOutsideSourceBounds(t *testing.T) {
 }
 
 func TestMeetingKeyChangesControlTemperatureReuse(t *testing.T) {
-	requirements := require.New(t)
-	committed, db := writeRelationshipBaseFixture(t, true)
-	writeSyntheticRelationshipFanOut(t, db, committed, syntheticRelationshipFanOutOptions{
-		firstMessageID: 100, messageCount: 1, memberCount: 2, startDate: "2026-01-01",
-		messageType: "meeting_transcript", conversationType: "meeting",
-	})
-	replaceRelationshipParquet(t, db, committed, "message_recipients", `SELECT 100::BIGINT AS message_id, participant_id::BIGINT AS participant_id, 'to'::VARCHAR AS recipient_type, ''::VARCHAR AS display_name FROM (VALUES (1), (2)) t(participant_id)`)
-	replaceRelationshipParquet(t, db, committed, "meeting_keys", `SELECT 100::BIGINT AS message_id, 'uid:first@example.org/'::VARCHAR AS meeting_key, NULL::TIMESTAMP AS occurrence_at, NULL::DATE AS occurrence_date`)
-	at := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
-	_, err := Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: committed, OutputRoot: committed, EffectiveAt: at})
-	requirements.NoError(err)
 	for _, tc := range []struct {
 		name, keys           string
 		reuse, appendMessage bool
@@ -111,6 +103,20 @@ func TestMeetingKeyChangesControlTemperatureReuse(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
+			committed, db := writeRelationshipBaseFixture(t, true)
+			writeSyntheticRelationshipFanOut(t, db, committed, syntheticRelationshipFanOutOptions{
+				firstMessageID: 100, messageCount: 1, memberCount: 2, startDate: "2026-01-01",
+				messageType: "meeting_transcript", conversationType: "meeting",
+			})
+			replaceRelationshipParquet(t, db, committed, "message_recipients", `SELECT 100::BIGINT AS message_id, participant_id::BIGINT AS participant_id, 'to'::VARCHAR AS recipient_type, ''::VARCHAR AS display_name FROM (VALUES (1), (2)) t(participant_id)`)
+			occurrence := "NULL::TIMESTAMP"
+			if tc.later {
+				occurrence = "TIMESTAMP '2027-01-02'"
+			}
+			replaceRelationshipParquet(t, db, committed, "meeting_keys", `SELECT 100::BIGINT AS message_id, 'uid:first@example.org/'::VARCHAR AS meeting_key, `+occurrence+` AS occurrence_at, NULL::DATE AS occurrence_date`)
+			at := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+			_, err := Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: committed, OutputRoot: committed, EffectiveAt: at})
+			requirements.NoError(err)
 			staged := t.TempDir()
 			keysSQL := `SELECT 0::BIGINT AS message_id, ''::VARCHAR AS meeting_key, NULL::TIMESTAMP AS occurrence_at, NULL::DATE AS occurrence_date WHERE false`
 			if tc.keys != "" {
@@ -118,10 +124,7 @@ func TestMeetingKeyChangesControlTemperatureReuse(t *testing.T) {
 			}
 			if tc.later {
 				keysSQL = `SELECT *, TIMESTAMP '2027-01-02' AS occurrence_at, NULL::DATE AS occurrence_date FROM (VALUES ` + tc.keys + `) t(message_id,meeting_key)`
-				replaceRelationshipParquet(t, db, committed, "meeting_keys", keysSQL)
-				t.Cleanup(func() {
-					replaceRelationshipParquet(t, db, committed, "meeting_keys", `SELECT 100::BIGINT AS message_id, 'uid:first@example.org/'::VARCHAR AS meeting_key, NULL::TIMESTAMP AS occurrence_at, NULL::DATE AS occurrence_date`)
-				})
+
 			}
 			if tc.moved {
 				keysSQL = `SELECT *, TIMESTAMP '2026-01-02 10:00:00' AS occurrence_at, NULL::DATE AS occurrence_date FROM (VALUES ` + tc.keys + `) t(message_id,meeting_key)`

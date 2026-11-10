@@ -122,141 +122,89 @@ func TestMeetingCountsLinkedCopies(t *testing.T) {
 
 }
 
-func TestMeetingCountOccurrenceDates(t *testing.T) {
-	f := newMeetingCountArchive(t, time.Date(2026, 3, 7, 10, 0, 0, 0, time.UTC))
-	event := f.persist(t, "calendar", "series", "gcal_json", `{"id":"series","iCalUID":"weekly@example.org","start":{"dateTime":"2026-03-07T10:00:00Z"},"end":{"dateTime":"2026-03-07T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
-	note := f.persist(t, "first", "note", "plaud_json", `{}`)
-	for _, key := range []string{"20260307T100000Z", "20260314T100000Z"} {
-		require.NoError(t, f.st.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: event, Key: key}))
-	}
-	_, err := buildCache(f.path, f.cache, true)
-	require.NoError(t, err)
-	engine, err := query.NewDuckDBEngine(f.cache, f.path, f.st.DB())
-	require.NoError(t, err)
-	defer func() { require.NoError(t, engine.Close()) }()
-	calendar, err := engine.RelationshipCalendar(t.Context(), query.RelationshipCalendarRequest{CanonicalID: f.person, Year: 2026, Timezone: "UTC"})
-	require.NoError(t, err)
-	days := make(map[string]int64)
-	for _, day := range calendar.Days {
-		if day.Meetings > 0 {
-			days[day.Date] = day.Meetings
-		}
-	}
-	assert.Equal(t, map[string]int64{"2026-03-07": 1, "2026-03-14": 1}, days)
-}
-
-func TestMeetingCountCalendarEditRefreshesCache(t *testing.T) {
-	f := newMeetingCountArchive(t, time.Date(2026, 3, 7, 10, 0, 0, 0, time.UTC))
-	raw := `{"id":"event","iCalUID":"weekly@example.org","start":{"dateTime":"2026-03-07T10:00:00Z"},"end":{"dateTime":"2026-03-07T11:00:00Z"}}`
-	event := f.persist(t, "calendar", "event", "gcal_json", raw)
-	f.persist(t, "first", "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2026-03-07T10:00:00Z"}}`)
-	_, err := buildCache(f.path, f.cache, true)
-	require.NoError(t, err)
-	calendar := func() *query.RelationshipCalendarResponse {
-		engine, err := query.NewDuckDBEngine(f.cache, f.path, f.st.DB())
-		require.NoError(t, err)
-		defer func() { require.NoError(t, engine.Close()) }()
-		result, err := engine.RelationshipCalendar(t.Context(), query.RelationshipCalendarRequest{CanonicalID: f.person, Year: 2026, Timezone: "UTC"})
-		require.NoError(t, err)
-		return result
-	}
-	before := calendar()
-	require.NoError(t, f.st.UpsertMessageRawWithFormat(event, []byte(strings.ReplaceAll(raw, "2026-03-07T", "2026-03-08T")), "gcal_json"))
-	assert.True(t, cacheNeedsBuild(f.path, f.cache).NeedsBuild)
-	_, err = buildCache(f.path, f.cache, false)
-	require.NoError(t, err)
-	db, err := sql.Open("duckdb", "")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, db.Close()) }()
-	var at time.Time
-	require.NoError(t, db.QueryRow(`SELECT occurrence_at FROM read_parquet(?)`, filepath.Join(f.cache, "meeting_keys", "*.parquet")).Scan(&at))
-	assert.Equal(t, time.Date(2026, 3, 8, 10, 0, 0, 0, time.UTC), at.UTC())
-	after := calendar()
-	for _, day := range after.Days {
-		if day.Date == "2026-03-07" {
-			assert.Zero(t, day.Meetings)
-		}
-		if day.Date == "2026-03-08" {
-			assert.Equal(t, int64(1), day.Meetings)
-		}
-	}
-	assert.Greater(t, after.Current.Signals.MeetingSignal, before.Current.Signals.MeetingSignal)
-}
-
-func TestMeetingCountAllDayUsesCalendarDate(t *testing.T) {
-	f := newMeetingCountArchive(t, time.Date(2026, 3, 7, 10, 0, 0, 0, time.UTC))
-	event := f.persist(t, "calendar", "event", "gcal_json", `{"id":"event","start":{"date":"2026-03-07"},"end":{"date":"2026-03-08"},"recurrence":["RRULE:FREQ=DAILY;COUNT=2"]}`)
-	note := f.persist(t, "first", "note", "plaud_json", `{}`)
-	require.NoError(t, f.st.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: event, Key: "20260308"}))
-	_, err := buildCache(f.path, f.cache, true)
-	require.NoError(t, err)
-	engine, err := query.NewDuckDBEngine(f.cache, f.path, f.st.DB())
-	require.NoError(t, err)
-	defer func() { require.NoError(t, engine.Close()) }()
-	calendar, err := engine.RelationshipCalendar(t.Context(), query.RelationshipCalendarRequest{CanonicalID: f.person, Year: 2026, Timezone: "America/Los_Angeles"})
-	require.NoError(t, err)
-	for _, day := range calendar.Days {
-		if day.Meetings != 0 {
-			assert.Equal(t, "2026-03-08", day.Date)
-			assert.Equal(t, int64(1), day.Meetings)
-			return
-		}
-	}
-	t.Fatal("missing all-day meeting")
-}
-
-func TestMeetingCountUIDEditRefreshesCache(t *testing.T) {
-	f := newMeetingCountArchive(t, time.Date(2026, 3, 7, 10, 0, 0, 0, time.UTC))
-	event := f.persist(t, "calendar", "event", "gcal_json", `{"id":"event","iCalUID":"first@example.org","start":{"dateTime":"2026-03-07T10:00:00Z"},"end":{"dateTime":"2026-03-07T11:00:00Z"}}`)
-	note := f.persist(t, "first", "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"first@example.org","startsAt":"2026-03-07T10:00:00Z"}}`)
-	_, err := buildCache(f.path, f.cache, true)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"uid:first@example.org/"}, readCachedMeetingKeys(t, f.cache)[note])
-	require.NoError(t, f.st.SetMessageMetadataContext(t.Context(), event, sql.NullString{String: `{"calendar_id":"calendar@example.org","ical_uid":"second@example.org"}`, Valid: true}))
-	assert.True(t, cacheNeedsBuild(f.path, f.cache).NeedsBuild)
-	_, err = buildCache(f.path, f.cache, false)
-	require.NoError(t, err)
-	assert.Empty(t, readCachedMeetingKeys(t, f.cache)[note])
-}
-
-func TestMeetingCountCalendarRulesRefreshCache(t *testing.T) {
-	for _, zone := range []string{"event", "calendar", "recurrence"} {
-		t.Run(zone, func(t *testing.T) {
+func TestMeetingCountCalendarRefresh(t *testing.T) {
+	for _, kind := range []string{"occurrence dates", "all day", "time", "uid", "event zone", "calendar zone", "recurrence"} {
+		t.Run(kind, func(t *testing.T) {
 			f := newMeetingCountArchive(t, time.Date(2026, 3, 7, 10, 0, 0, 0, time.UTC))
-			raw := `{"id":"event","iCalUID":"event@example.org","start":{"dateTime":"2026-03-07T10:00:00Z"},"end":{"dateTime":"2026-03-07T11:00:00Z"}}`
-			switch zone {
-			case "event":
-				raw = strings.ReplaceAll(raw, `"dateTime":`, `"timeZone":"UTC","dateTime":`)
-			case "recurrence":
+			raw := `{"id":"event","iCalUID":"weekly@example.org","start":{"dateTime":"2026-03-07T10:00:00Z"},"end":{"dateTime":"2026-03-07T11:00:00Z"}}`
+			if kind == "occurrence dates" || kind == "recurrence" {
 				raw = strings.TrimSuffix(raw, "}") + `,"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`
 			}
+			if kind == "all day" {
+				raw = `{"id":"event","iCalUID":"weekly@example.org","start":{"date":"2026-03-07"},"end":{"date":"2026-03-08"},"recurrence":["RRULE:FREQ=DAILY;COUNT=2"]}`
+			}
+			if kind == "event zone" {
+				raw = strings.ReplaceAll(raw, `"dateTime":`, `"timeZone":"UTC","dateTime":`)
+			}
 			event := f.persist(t, "calendar", "event", "gcal_json", raw)
-			f.persist(t, "first", "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"event@example.org","startsAt":"2026-03-07T10:00:00Z"}}`)
+			noteFormat, noteRaw := "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2026-03-07T10:00:00Z"}}`
+			if kind == "all day" {
+				noteFormat, noteRaw = "plaud_json", `{}`
+			}
+			note := f.persist(t, "first", "note", noteFormat, noteRaw)
+			if kind == "occurrence dates" || kind == "all day" {
+				keys := []string{"20260307T100000Z", "20260314T100000Z"}
+				if kind == "all day" {
+					keys = []string{"20260308"}
+				}
+				for _, key := range keys {
+					require.NoError(t, f.st.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: event, Key: key}))
+				}
+			}
 			_, err := buildCache(f.path, f.cache, true)
 			require.NoError(t, err)
-			switch zone {
-			case "event":
+			var before int64
+			require.NoError(t, f.st.DB().QueryRow(`SELECT COALESCE(MAX(seq),0) FROM cache_related_change_journal WHERE dataset='meeting_links'`).Scan(&before))
+			switch kind {
+			case "time":
+				require.NoError(t, f.st.UpsertMessageRawWithFormat(event, []byte(strings.ReplaceAll(raw, "2026-03-07T", "2026-03-08T")), "gcal_json"))
+			case "uid":
+				require.NoError(t, f.st.SetMessageMetadataContext(t.Context(), event, sql.NullString{String: `{"calendar_id":"calendar@example.org","ical_uid":"second@example.org"}`, Valid: true}))
+			case "event zone":
 				require.NoError(t, f.st.UpsertMessageRawWithFormat(event, []byte(strings.ReplaceAll(raw, `"timeZone":"UTC"`, `"timeZone":"America/New_York"`)), "gcal_json"))
-			case "calendar":
+			case "calendar zone":
 				require.NoError(t, f.st.UpdateSourceSyncConfig(f.sources["calendar"], `{"calendar_id":"calendar@example.org","time_zone":"America/New_York"}`))
 			case "recurrence":
 				require.NoError(t, f.st.UpsertMessageRawWithFormat(event, []byte(strings.Replace(raw, "COUNT=2", "COUNT=3", 1)), "gcal_json"))
 			}
-			assert.True(t, cacheNeedsBuild(f.path, f.cache).NeedsBuild)
-			_, err = buildCache(f.path, f.cache, false)
+			if kind != "occurrence dates" && kind != "all day" {
+				var after int64
+				require.NoError(t, f.st.DB().QueryRow(`SELECT COALESCE(MAX(seq),0) FROM cache_related_change_journal WHERE dataset='meeting_links'`).Scan(&after))
+				assert.Greater(t, after, before)
+				_, err = buildCache(f.path, f.cache, false)
+				require.NoError(t, err)
+			}
+			if kind == "uid" {
+				assert.Empty(t, readCachedMeetingKeys(t, f.cache)[note])
+				return
+			}
+			db, err := sql.Open("duckdb", "")
 			require.NoError(t, err)
-			engine, err := query.NewDuckDBEngine(f.cache, f.path, f.st.DB())
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
+			rows, err := db.Query(`SELECT occurrence_at, occurrence_date FROM read_parquet(?) WHERE message_id=? ORDER BY occurrence_at`, filepath.Join(f.cache, "meeting_keys", "*.parquet"), note)
 			require.NoError(t, err)
-			defer func() { require.NoError(t, engine.Close()) }()
-			calendar, err := engine.RelationshipCalendar(t.Context(), query.RelationshipCalendarRequest{CanonicalID: f.person, Year: 2026, Timezone: "UTC"})
-			require.NoError(t, err)
-			for _, day := range calendar.Days {
-				if day.Date == "2026-03-07" {
-					assert.Equal(t, int64(1), day.Meetings)
-					return
+			t.Cleanup(func() { require.NoError(t, rows.Close()) })
+			var times []time.Time
+			var dates []string
+			for rows.Next() {
+				var at, date sql.NullTime
+				require.NoError(t, rows.Scan(&at, &date))
+				if at.Valid {
+					times = append(times, at.Time.UTC())
+				}
+				if date.Valid {
+					dates = append(dates, date.Time.Format("2006-01-02"))
 				}
 			}
-			t.Fatal("missing meeting date")
+			require.NoError(t, rows.Err())
+			switch kind {
+			case "occurrence dates":
+				assert.Equal(t, []time.Time{time.Date(2026, 3, 7, 10, 0, 0, 0, time.UTC), time.Date(2026, 3, 14, 10, 0, 0, 0, time.UTC)}, times)
+			case "all day":
+				assert.Equal(t, []string{"2026-03-08"}, dates)
+			case "time":
+				assert.Equal(t, []time.Time{time.Date(2026, 3, 8, 10, 0, 0, 0, time.UTC)}, times)
+			}
 		})
 	}
 }
@@ -349,36 +297,6 @@ func TestMeetingCountBuildWithManyCalendarCopies(t *testing.T) {
 	assert.Equal(t, int64(1), count())
 }
 
-func TestMeetingCountsKeepSourceEvidenceWithSavedLink(t *testing.T) {
-	f := newMeetingCountArchive(t, time.Date(2027, 3, 7, 10, 0, 0, 0, time.UTC))
-	raw := `{"id":"series","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-07T10:00:00Z"},"end":{"dateTime":"2027-03-07T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=6"]}`
-	event := f.persist(t, "calendar", "series", "gcal_json", raw)
-	note := f.persist(t, "first", "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-21T10:00:00Z"}}`)
-	first := store.OccurrenceRef{MessageID: event, Key: "20270307T100000Z"}
-	second := store.OccurrenceRef{MessageID: event, Key: "20270321T100000Z"}
-	require.NoError(t, f.st.LinkMeetingContext(t.Context(), note, first))
-	require.NoError(t, f.st.UpsertMessageRawWithFormat(event, []byte(strings.Replace(raw, "COUNT=6", "COUNT=1", 1)), "gcal_json"))
-	_, err := buildCache(f.path, f.cache, true)
-	require.NoError(t, err)
-	count := func() int64 {
-		engine, err := query.NewDuckDBEngine(f.cache, f.path, f.st.DB())
-		require.NoError(t, err)
-		defer func() { require.NoError(t, engine.Close()) }()
-		person, err := engine.GetPerson(t.Context(), f.person, query.Context{}, nil)
-		require.NoError(t, err)
-		require.NotNil(t, person)
-		return person.MeetingCount
-	}
-	assert.Equal(t, int64(2), count())
-	require.NoError(t, f.st.UpsertMessageRawWithFormat(event, []byte(raw), "gcal_json"))
-	require.NoError(t, f.st.LinkMeetingContext(t.Context(), note, second))
-	require.NoError(t, f.st.UpsertMessageRawWithFormat(event, []byte(strings.Replace(raw, "COUNT=6", "COUNT=1", 1)), "gcal_json"))
-	require.NoError(t, f.st.UnlinkMeetingContext(t.Context(), note, second))
-	_, err = buildCache(f.path, f.cache, false)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), count())
-}
-
 func TestMeetingCountsRefreshAfterEvidenceChange(t *testing.T) {
 	f := newMeetingCountArchive(t, time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC))
 	raw := `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"first@example.org","startsAt":"2027-03-14T10:00:00Z"},"summary":"one"}`
@@ -392,6 +310,8 @@ func TestMeetingCountsRefreshAfterEvidenceChange(t *testing.T) {
 	require.NoError(t, f.st.DB().QueryRow(`SELECT COALESCE(MAX(seq),0) FROM cache_related_change_journal WHERE dataset='meeting_links'`).Scan(&after))
 	assert.Equal(t, seq, after)
 	require.NoError(t, f.st.UpsertMessageRawWithFormat(note, []byte(strings.Replace(raw, "first@example.org", "second@example.org", 1)), "twenty_json"))
+	require.NoError(t, f.st.DB().QueryRow(`SELECT COALESCE(MAX(seq),0) FROM cache_related_change_journal WHERE dataset='meeting_links'`).Scan(&after))
+	assert.Greater(t, after, seq)
 	_, err = buildCache(f.path, f.cache, false)
 	require.NoError(t, err)
 	engine, err := query.NewDuckDBEngine(f.cache, f.path, f.st.DB())

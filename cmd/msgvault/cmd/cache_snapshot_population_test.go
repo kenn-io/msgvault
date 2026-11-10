@@ -222,6 +222,7 @@ func TestCSVIncrementalBuildExportsOnlyNewChildRows(t *testing.T) {
 			assert.Equal(int64(1), built.StagedCount)
 			_, err = buildCache(dbPath, fullDir, true)
 			require.NoError(err)
+			// This fixture has no meetings, so meeting_keys has no rows to compare.
 			datasets := slices.DeleteFunc(slices.Clone(query.RequiredParquetDirs), func(dataset string) bool { return dataset == "meeting_keys" })
 			assertCacheExportParity(t, tmp, incDir, fullDir, datasets)
 		})

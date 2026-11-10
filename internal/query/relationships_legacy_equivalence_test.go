@@ -332,6 +332,7 @@ func TestRelationshipIndexMatchesLegacyAcrossAdversarialSemantics(t *testing.T) 
 	})
 	requirementsForTest.Len(allRows, 2)
 	assertionsForTest.Equal(3, allRows[0].Signals.Modalities)
+	assertionsForTest.Equal(int64(1), allRows[0].Signals.MeetingCount)
 	assertionsForTest.Equal(futureIDTime(builder, futureID), allRows[0].LastAt)
 	page := compareRelationshipIndexWithLegacy(t, engine, RelationshipsRequest{
 		Now: now, Limit: 1, Offset: 1, ShowAll: true,

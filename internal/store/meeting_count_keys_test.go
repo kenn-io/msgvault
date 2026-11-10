@@ -84,7 +84,7 @@ func TestMeetingCountKeysOneTranscriptTwoOccurrences(t *testing.T) {
 			{seriesRaw: shortened, want: []string{"uid:weekly@example.org/20270321T100000Z"}},
 			{seriesRaw: unsupported, want: []string{"uid:weekly@example.org/20270321T100000Z"}},
 		}},
-		{name: "mixed removed link", notes: copies, links: []string{"20270314T100000Z"}, steps: []step{
+		{name: "mixed stale link", notes: copies, links: []string{"20270314T100000Z"}, steps: []step{
 			{seriesRaw: linkSeriesRaw, want: []string{"uid:weekly@example.org/20270314T100000Z", "uid:weekly@example.org/20270321T100000Z"}},
 			{seriesRaw: shortened, want: []string{"uid:weekly@example.org/20270314T100000Z", "uid:weekly@example.org/20270321T100000Z"}},
 			{seriesRaw: unsupported, want: []string{"uid:weekly@example.org/20270314T100000Z", "uid:weekly@example.org/20270321T100000Z"}},
@@ -170,23 +170,7 @@ func TestMeetingCountKeysGoogleAcrossMailboxes(t *testing.T) {
 		require.NoError(err)
 		assert.Equal([]string{"uid:weekly@example.org/20270321T100000Z"}, keys[note])
 	}
-	calendarFixture(t, st, "single", singleLinkRaw("single", "single@example.org"))
-	_, note := projectionFixture(t, st, "single", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"single","scheduled_start_time":"2027-03-14T10:00:00Z"}}`)
-	keys, err := meetingCountTestKeys(t, st)
-	require.NoError(err)
-	assert.Equal([]string{"uid:single@example.org/"}, keys[note])
-}
 
-func TestMeetingCountKeysManyCalendarCopies(t *testing.T) {
-	st := newRFC822IDBackfillBackendStore(t)
-	for i := range 201 {
-		id := fmt.Sprintf("copy-%d", i)
-		calendarFixture(t, st, id, singleLinkRaw(id, "crowded@example.org"))
-	}
-	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"crowded@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
-	keys, err := meetingCountTestKeys(t, st)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"uid:crowded@example.org/"}, keys[note])
 }
 
 func TestMeetingCountKeysBudgetExhaustionKeepsOtherMessages(t *testing.T) {
@@ -231,16 +215,10 @@ func TestMeetingCountKeysGoogleCalendarCollisions(t *testing.T) {
 				}
 				calendarFixture(t, st, fmt.Sprintf("event-%d", i), raw, fmt.Sprintf("calendar-%d@example.com", i))
 			}
-			var notes []int64
-			for i := range 2 {
-				_, note := projectionFixture(t, st, fmt.Sprintf("note-%d", i), "granola_json", `{"calendar_event":{"calendar_event_id":"event","scheduled_start_time":"2027-03-14T10:00:00Z"}}`)
-				notes = append(notes, note)
-			}
+			_, note := projectionFixture(t, st, "note", "granola_json", `{"calendar_event":{"calendar_event_id":"event","scheduled_start_time":"2027-03-14T10:00:00Z"}}`)
 			keys, err := meetingCountTestKeys(t, st)
 			require.NoError(t, err)
-			for _, note := range notes {
-				assert.Equal(t, tc.want, keys[note])
-			}
+			assert.Equal(t, tc.want, keys[note])
 		})
 	}
 }

@@ -38,19 +38,3 @@ func TestMeetingJournalTriggers(t *testing.T) {
 		})
 	}
 }
-
-func TestMeetingLinkEvidenceChangesJournal(t *testing.T) {
-	st := newRFC822IDBackfillBackendStore(t)
-	if st.IsPostgreSQL() {
-		t.Skip("SQLite cache journal")
-	}
-	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"first@example.org"},"summary":"one"}`)
-	var before, after int64
-	require.NoError(t, st.db.QueryRow(`SELECT COALESCE(MAX(seq),0) FROM cache_related_change_journal`).Scan(&before))
-	require.NoError(t, st.UpsertMessageRawWithFormat(note, []byte(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"first@example.org"},"summary":"two"}`), "twenty_json"))
-	require.NoError(t, st.db.QueryRow(`SELECT COALESCE(MAX(seq),0) FROM cache_related_change_journal WHERE dataset='meeting_links'`).Scan(&after))
-	assert.LessOrEqual(t, after, before)
-	require.NoError(t, st.UpsertMessageRawWithFormat(note, []byte(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"second@example.org"}}`), "twenty_json"))
-	require.NoError(t, st.db.QueryRow(`SELECT COALESCE(MAX(seq),0) FROM cache_related_change_journal WHERE dataset='meeting_links'`).Scan(&after))
-	assert.Greater(t, after, before)
-}
