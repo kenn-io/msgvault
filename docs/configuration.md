@@ -1093,6 +1093,7 @@ against Kata v0.18.0 and requires Kata API schema version 0.21.0 or later.
 |---|---|---|
 | `enabled` | `false` | Enable Kata person agendas and evidence issues |
 | `endpoint` | — | Required when enabled: an explicit HTTPS URL, loopback HTTP URL, or Unix socket URL |
+| `trust_private_network` | `false` | Also allow HTTP to DNS names and private, link-local, unspecified or CGNAT addresses on a network you trust; public literal IPs stay refused |
 | `api_key` | — | Bearer credential sent by the daemon to Kata; Settings returns only its configured state and a masked hint |
 | `default_project` | `msgvault` | Existing active Kata project used for person agendas and evidence issues |
 
@@ -1110,7 +1111,10 @@ default_project = "msgvault"
 Restart the msgvault daemon after saving. These settings are also editable in
 Settings and take effect after restart. Changing the endpoint to a different
 origin in Settings clears its saved key unless you provide a replacement key
-in the same save. Remote plaintext HTTP is rejected. Kata does not use local
+in the same save. For containers on a trusted private network, set
+`endpoint = "http://kata:7777"` and `trust_private_network = true` in this
+section. This sends traffic, including the API key, in plaintext on that network.
+Without the opt-in, non-loopback HTTP is rejected. Kata does not use local
 endpoint discovery, and `[integrations.tasks]` does not configure person agendas.
 
 Each Kata task can belong to one person. The scalar metadata value
@@ -1516,6 +1520,7 @@ all_sources_upload_consent = true # allow audio from every captured source to le
 |---|---|---|
 | `enabled` | `false` | Schedule the stored-media job in `msgvault serve` |
 | `url` | — | Docbank base URL: HTTPS, or HTTP on a loopback address. User info, query strings and fragments are rejected |
+| `trust_private_network` | `false` | Also allow HTTP to DNS names and private, link-local, unspecified or CGNAT addresses on a network you trust; public literal IPs stay refused |
 | `api_key_env` | — | Name of the daemon environment variable that holds the Docbank API key. It is read for each request and sent as `X-Api-Key` |
 | `api_key` | — | Inline Docbank API key; takes priority over file and environment sources |
 | `api_key_file` | — | Owner-only Docbank key file, read for each request; takes priority over `api_key_env` |
@@ -1523,6 +1528,11 @@ all_sources_upload_consent = true # allow audio from every captured source to le
 | `asr_profile` | — | Optional Docbank processing profile for stored audio without usable source text. An empty value retains audio without requesting processing. Msgvault rejects `supplied-transcript`, which Docbank reserves for supplied transcript input. |
 | `reference_consent` | `false` | Send Loom/Cap links from every message source and native Teams recording pointers to `url` as references. This consent is separate from audio upload consent. |
 | `reference_origins` | `[]` | Exact origins for self-hosted Cap, such as `https://cap.example.test`. Include only scheme, host and optional port. Register each origin in Docbank too. |
+
+For containers on a trusted private network, set `url = "http://docbank:8485"`
+and `trust_private_network = true` in `[integrations.docbank]`. This sends traffic,
+including the API key, in plaintext on that network. The Docbank and Kata
+opt-ins are independent; each defaults to `false`.
 
 With `enabled = true` and `reference_consent = true`, the daemon routes Loom and
 Cap links from normalized message text and HTML across every message source,
@@ -2370,14 +2380,18 @@ Scheduled projection commits at most ten batches per pass. When other
 scheduled work has waited for a minute, it stops after its current batch. A
 pass always stops at two minutes. A pass with committed progress releases the
 operation gate and resumes behind queued work without waiting for the next
-cron tick. Reaching the two-minute limit before any batch commits records an
-error and waits for the next scheduled or manual trigger, avoiding repeated
-retries of the same batch.
+cron tick while identity revisions stay stable. If a pass observes an identity
+change since the continuation chain began, it finishes that bounded pass and
+defers clean continuation until the next scheduled or manual trigger. Reaching
+the two-minute limit before any batch commits records an error and waits for
+the next scheduled or manual trigger, avoiding repeated retries of the same
+batch.
 
 Identity reconciliation and timezone or `max_direct_counterparts` changes save
-their progress in the archive. A new identity revision restarts identity
-reconciliation; completed batches remain committed. Manual builds are not
-limited to ten batches or two minutes.
+their progress in the archive. Identity reconciliation keeps its saved position
+across identity changes and rechecks earlier stale messages before completing.
+Completed batches remain committed. Manual builds are not limited to ten
+batches or two minutes.
 
 | Key | Default | Description |
 |---|---|---|

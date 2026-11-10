@@ -26,7 +26,7 @@ func configureRecordingReferenceJob(ctx context.Context, sched *scheduler.Schedu
 		return nil
 	}
 	endpoint := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
-	client, err := docbankmedia.NewClient(endpoint, cfg.ResolveAPIKey)
+	client, err := docbankmedia.NewClient(endpoint, cfg.ResolveAPIKey, docbankmedia.WithTrustPrivateNetwork(cfg.TrustPrivateNetwork))
 	if err != nil {
 		return err
 	}

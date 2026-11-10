@@ -131,6 +131,7 @@ type IntegrationsConfig struct {
 // DocbankIntegrationConfig configures the optional stored-media destination.
 // The selected API key source is read when a request runs.
 type DocbankIntegrationConfig struct {
+	TrustPrivateNetwork     bool     `toml:"trust_private_network"`
 	Enabled                 bool     `toml:"enabled"`
 	URL                     string   `toml:"url"`
 	APIKeyEnv               string   `toml:"api_key_env"`
@@ -171,10 +172,11 @@ func (d DocbankIntegrationConfig) validate() error {
 
 // TaskIntegrationConfig configures a task service connection.
 type TaskIntegrationConfig struct {
-	Enabled        bool   `toml:"enabled"`
-	Endpoint       string `toml:"endpoint"`
-	APIKey         string `toml:"api_key"`
-	DefaultProject string `toml:"default_project"`
+	TrustPrivateNetwork bool   `toml:"trust_private_network"`
+	Enabled             bool   `toml:"enabled"`
+	Endpoint            string `toml:"endpoint"`
+	APIKey              string `toml:"api_key"`
+	DefaultProject      string `toml:"default_project"`
 }
 
 func (t *TaskIntegrationConfig) ApplyDefaults() {
@@ -189,6 +191,9 @@ func (t *TaskIntegrationConfig) ApplyDefaults() {
 // (authentication, socket existence and ownership) still happen when the
 // client connects.
 func (t *TaskIntegrationConfig) Validate(section string) error {
+	if section != "kata" && t.TrustPrivateNetwork {
+		return fmt.Errorf("trust_private_network is only supported in [integrations.kata], not [integrations.%s]", section)
+	}
 	endpoint := strings.TrimSpace(t.Endpoint)
 	if endpoint == "" {
 		if section == "kata" && t.Enabled {
@@ -196,7 +201,7 @@ func (t *TaskIntegrationConfig) Validate(section string) error {
 		}
 		return nil
 	}
-	if err := taskclient.ValidateEndpoint(endpoint); err != nil {
+	if err := taskclient.ValidateEndpoint(endpoint, section == "kata" && t.TrustPrivateNetwork); err != nil {
 		return fmt.Errorf("invalid [integrations.%s] endpoint %q: %w "+
 			"(valid forms: https://tasks.example.com, http://localhost:8080, unix:///path/to/socket.sock)",
 			section, t.Endpoint, err)

@@ -44,7 +44,7 @@ also a separate opt-in because downloading an image can activate email tracking.
 | Inline | [Inline sync](../usage/inline.md) | All accessible chats, including hidden, archived, and child threads; optional exact chat filter; requires a complete catalog from the connected backend |
 | Matrix | [Matrix sync](../usage/matrix.md) | Joined-room history on any homeserver, with encrypted messages recovered from the account's key backup |
 | Google Chat Takeout (unreleased on main) | [Google Chat import](../usage/text-messages.md#import-google-chat) | Extracted parts and explicit owner email; tested 2024 English/UTC variants |
-| WhatsApp, iMessage, iMazing CSV, Google Voice, Messenger, Telegram | [Text message imports](../usage/text-messages.md) | Supported backups or exports, with your identity supplied where required |
+| WhatsApp, iMessage, iMazing CSV, Google Voice, Messenger, Telegram, X DMs (unreleased on `main`) | [Text message imports](../usage/text-messages.md) | Supported backups or exports, with your identity supplied where required |
 | SMS Backup & Restore | [Android SMS and call logs](../usage/text-messages.md) | Local XML/ZIP or scheduled imports from a configured Drive folder |
 | Another source, such as feed items or tool notifications | [Messages from any source](../usage/message-import.md) | Provider-neutral ingestion keyed by source and external message ID |
 
