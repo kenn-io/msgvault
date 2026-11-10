@@ -55,6 +55,7 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 - [Chatwoot](https://msgvault.io/docs/guides/chatwoot.md): shared inboxes, employee attribution, media, and calls
 - [Facebook Page comments](https://msgvault.io/docs/usage/facebook-comments.md): `source facebook-comments add` and `source facebook-comments sync`, coverage, and cursor recovery (unreleased)
 - [Instagram comments](https://msgvault.io/docs/usage/instagram-comments.md): `source instagram-comments add` and `source instagram-comments sync`, linked professional account comments and resumable media conversations (unreleased)
+- [Facebook and Instagram messages](https://msgvault.io/docs/usage/meta-messages.md): `source facebook-messages` and `source instagram-messages` add and sync for Page and Instagram inbox chats (unreleased)
 - [Meta webhooks](https://msgvault.io/docs/usage/meta-webhooks.md): `[meta_webhooks]` receiver that archives Facebook Page comment changes as they happen (unreleased)
 - [Matrix](https://msgvault.io/docs/usage/matrix.md)
 - [Slack](https://msgvault.io/docs/usage/slack.md)

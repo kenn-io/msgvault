@@ -5,8 +5,10 @@ Usage:
 
 Available Commands:
   facebook-comments  Archive comments from a configured Facebook Page
+  facebook-messages  Archive a Facebook Page's Messenger inbox
   instagram-comments Archive comments from a linked Instagram account
   instagram-mentions Archive Instagram media that tags a linked account
+  instagram-messages Archive a linked Instagram account's inbox
 
 Flags:
   -h, --help   help for source

@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/store"
@@ -40,7 +41,7 @@ func manualSyncCLICommand(args []string) bool {
 		return false
 	}
 	if args[0] == "source" {
-		return len(args) >= 3 && (args[1] == "facebook-comments" || args[1] == "instagram-comments" || args[1] == "instagram-mentions") && args[2] == "sync"
+		return len(args) >= 3 && slices.Contains([]string{"facebook-comments", "instagram-comments", "instagram-mentions", "facebook-messages", "instagram-messages"}, args[1]) && args[2] == "sync"
 	}
 	switch args[0] {
 	case "sync-slack", "sync-teams", "sync-beeper", "sync-chatwoot", "sync-discord", "sync-matrix", "sync-inline", "backfill-inline-media", "sync-circleback", "sync-plaud",

@@ -1671,6 +1671,18 @@ keys, and invalid schedules are rejected. The source identifier is
 `app:<app_id>:page:<page_id>`; scheduled jobs use
 `facebook_comments:<source-identifier>`, independently of email account dispatch.
 
+### `[[facebook_messages]]` and `[[instagram_messages]]` {#meta-inboxes}
+
+Select a Page's Messenger inbox or a linked Instagram account's inbox
+(unreleased). See [Facebook and Instagram messages](usage/meta-messages.md).
+`[[facebook_messages]]` takes the keys and rules of
+[`[[facebook_comments]]`](#facebook-comments), and `[[instagram_messages]]`
+those of [`[[instagram_comments]]`](#instagram-comments) except `mentions`.
+Each section is checked separately, so the same Page can have a comments
+profile and a messages profile. Scheduled jobs are
+`facebook_messages:<source-identifier>` and
+`instagram_messages:<source-identifier>`.
+
 ### `[meta_webhooks]` {#meta-webhooks}
 
 Start a listener for signed Meta webhook deliveries (unreleased). See

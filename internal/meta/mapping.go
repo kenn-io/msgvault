@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
+	"slices"
 	"time"
 
 	"go.kenn.io/msgvault/internal/meetingarchive"
@@ -185,6 +186,10 @@ type archivedObject struct {
 	fromName            string
 	self                bool
 	metadata, raw       []byte
+	// conversationType defaults to public_comments. members are conversation
+	// participants besides the sender, such as both sides of a chat.
+	conversationType string
+	members          []int64
 }
 
 // archiveObject writes o unless the archived row already holds the same
@@ -208,7 +213,15 @@ func archiveObject(ctx context.Context, st *store.Store, sum *ImportSummary, o a
 	}
 	if sender != 0 {
 		recipients = append(recipients, store.RecipientSet{Type: "from", ParticipantIDs: []int64{sender}, DisplayNames: []string{fromName}})
-		participants = append(participants, store.ConversationParticipantRef{ParticipantID: sender, Role: "member"})
+	}
+	for _, member := range append([]int64{sender}, o.members...) {
+		if member != 0 && !slices.ContainsFunc(participants, func(p store.ConversationParticipantRef) bool { return p.ParticipantID == member }) {
+			participants = append(participants, store.ConversationParticipantRef{ParticipantID: member, Role: "member"})
+		}
+	}
+	conversationType := o.conversationType
+	if conversationType == "" {
+		conversationType = "public_comments"
 	}
 	var sent sql.NullTime
 	if o.obj.CreatedTime != "" {
@@ -230,7 +243,7 @@ func archiveObject(ctx context.Context, st *store.Store, sum *ImportSummary, o a
 		Snippet: sql.NullString{String: text, Valid: true}, SizeEstimate: int64(len(text)),
 	}
 	data := &store.MessagePersistData{
-		Message: msg, Conversation: &store.ConversationPersistData{SourceConversationID: o.conversation, ConversationType: "public_comments", Title: o.title, Participants: participants, PreserveExistingParticipants: true},
+		Message: msg, Conversation: &store.ConversationPersistData{SourceConversationID: o.conversation, ConversationType: conversationType, Title: o.title, Participants: participants, PreserveExistingParticipants: true},
 		Metadata: &sql.NullString{String: string(o.metadata), Valid: true}, BodyText: sql.NullString{String: text, Valid: true},
 		RawMIME: o.raw, RawFormat: o.format, Recipients: recipients, PreserveLabels: true,
 		FTS: &store.FTSDoc{Subject: o.subject, Body: text, FromAddr: fromName},

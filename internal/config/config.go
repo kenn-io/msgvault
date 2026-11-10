@@ -629,6 +629,8 @@ type Config struct {
 	MetaWebhooks       MetaWebhooksConfig        `toml:"meta_webhooks"`
 	FacebookComments   []FacebookCommentsSource  `toml:"facebook_comments"`
 	InstagramComments  []InstagramCommentsSource `toml:"instagram_comments"`
+	FacebookMessages   []FacebookCommentsSource  `toml:"facebook_messages"`
+	InstagramMessages  []InstagramCommentsSource `toml:"instagram_messages"`
 	Matrix             MatrixConfig              `toml:"matrix"`
 	Slack              SlackConfig               `toml:"slack"`
 	Inline             InlineConfig              `toml:"inline"`
@@ -1175,6 +1177,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		slog.Warn("[attachments.documents] was removed; delete it and set [integrations.docbank] document_profile, see the Docbank section of docs/configuration.md; for Mistral run docbank processing probe --profile <name> --seeds <dir> (Docbank v0.17.0 or later)")
 	}
 	for _, key := range metadata.Undecoded() {
+		if len(key) > 0 && (key[0] == "facebook_messages" || key[0] == "instagram_messages") {
+			return nil, fmt.Errorf("unknown Meta inbox config key %q", key.String())
+		}
 		if len(key) > 0 && key[0] == "meta_webhooks" {
 			return nil, fmt.Errorf("unknown Meta webhooks config key %q", key.String())
 		}

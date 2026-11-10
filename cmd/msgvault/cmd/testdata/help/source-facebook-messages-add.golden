@@ -1,0 +1,9 @@
+Verify the Page token, then register [[facebook_messages]] profiles. With no identifier, register every profile. The Page token is read only from the named daemon environment variable.
+
+Usage:
+  msgvault source facebook-messages add [identifier] [flags]
+
+Flags:
+  -h, --help   help for add
+
+Global Flags: --agent-allow-insecure, --agent-token-file, --agent-url, --config, --home, --local, --log-file, --log-level, --log-sql, --log-sql-slow-ms, --no-log-file, -v/--verbose (see 'msgvault --help')

@@ -70,82 +70,26 @@ func (imp *MentionImporter) Register(ctx context.Context, app, page, account str
 
 // ImportTags archives tagged media one page at a time. The checkpoint is the
 // next page cursor, so a run that stops early resumes where it stopped.
-func (imp *MentionImporter) ImportTags(ctx context.Context, app, page, account string, opts ImportOptions) (sum *ImportSummary, retErr error) {
-	if !ValidAccountID(app) || !ValidAccountID(page) || !ValidAccountID(account) || opts.MaxRequests < 0 {
+func (imp *MentionImporter) ImportTags(ctx context.Context, app, page, account string, opts ImportOptions) (*ImportSummary, error) {
+	if !ValidAccountID(app) || !ValidAccountID(page) || !ValidAccountID(account) {
 		return nil, errors.New("invalid Instagram mentions import options")
 	}
-	source, execution, err := acquireSource(ctx, imp.store, MentionsSourceType, InstagramSourceIdentifier(app, page, account))
-	if err != nil {
-		return nil, err
-	}
-	defer func() { retErr = errors.Join(retErr, execution.Release()) }()
-	var cursor tagCursor
-	if !opts.Full {
-		blob, err := savedCheckpoint(ctx, imp.store, source)
-		if err != nil {
-			return nil, err
-		}
-		if blob != "" && json.Unmarshal([]byte(blob), &cursor) != nil {
-			return nil, errors.New("invalid Instagram tags checkpoint; restart this source with --full")
-		}
-	}
-	after := cursor.After
-	syncID, err := execution.StartSyncContext(ctx, MentionsSourceType, "")
-	if err != nil {
-		return nil, err
-	}
-	run := mentionRun{store: imp.store.ScopedToSync(source.ID, syncID), sourceID: source.ID, app: app, page: page, account: account, sum: &ImportSummary{}}
-	sum = run.sum
-	done := false
-	checkpoint := func() *store.Checkpoint {
-		cp := &store.Checkpoint{MessagesAdded: int64(sum.MessagesAdded), MessagesUpdated: int64(sum.MessagesUpdated), MessagesProcessed: int64(sum.MessagesProcessed)}
-		if !done {
-			// Never empty, so an unfinished run that starts from the top
-			// still replaces an older saved position.
-			blob, _ := json.Marshal(tagCursor{After: after})
-			cp.PageToken = string(blob)
-		}
-		return cp
-	}
-	defer func() {
-		sum.Partial = retErr != nil || !done
-		retErr = finishSync(ctx, imp.store, source.ID, syncID, checkpoint(), sum.Partial, retErr)
-	}()
-	maximum := opts.MaxRequests
-	if maximum == 0 {
-		maximum = DefaultMaxRequests
-	}
-	for !done && sum.Requests < maximum {
-		if err := ctx.Err(); err != nil {
-			return sum, err
-		}
-		sum.Requests++
+	return pollPages(ctx, imp.store, MentionsSourceType, InstagramSourceIdentifier(app, page, account), opts, func(st *store.Store, source *store.Source, sum *ImportSummary, after string) (string, error) {
 		tagged, err := imp.api.Tags(ctx, account, after)
-		var apiErr *APIError
-		if after != "" && errors.As(err, &apiErr) && apiErr.Status == 400 {
-			return sum, fmt.Errorf("instagram tags continuation request failed: %w", err)
-		} else if err != nil {
-			return sum, err
+		if err != nil {
+			return "", err
 		}
+		run := mentionRun{store: st, sourceID: source.ID, app: app, page: page, account: account, sum: sum}
 		for _, media := range tagged.Data {
 			if run.own(media) {
 				continue
 			}
 			if err := run.persistMedia(ctx, media, mentionTag); err != nil {
-				return sum, fmt.Errorf("instagram tagged media %q: %w", media.ID, err)
+				return "", fmt.Errorf("instagram tagged media %q: %w", media.ID, err)
 			}
 		}
-		after, done = tagged.After, tagged.After == ""
-		if err := run.store.UpdateSyncCheckpointContext(ctx, syncID, checkpoint()); err != nil {
-			return sum, err
-		}
-	}
-	return sum, nil
-}
-
-// tagCursor is the tag sync checkpoint: the cursor of the next page to read.
-type tagCursor struct {
-	After string `json:"after"`
+		return tagged.After, nil
+	})
 }
 
 type mentionRun struct {

@@ -1641,6 +1641,45 @@ msgvault source instagram-comments sync [identifier] [--max-requests 1000] [--fu
 See [Instagram comments](usage/instagram-comments.md) for setup, identity,
 resuming, and coverage limits. These commands do not send replies.
 
+## source facebook-messages add
+
+Register the Messenger inbox of the Page in a `[[facebook_messages]]` profile
+(unreleased). No identifier selects every profile.
+
+```bash
+msgvault source facebook-messages add [identifier]
+```
+
+## source facebook-messages sync
+
+Archive the Page's Messenger conversations as chats, with up to the 20 most
+recent messages of each (unreleased). An unfinished run resumes next time;
+`--full` restarts from the most recent conversations without deleting rows.
+
+```bash
+msgvault source facebook-messages sync [identifier] [--max-requests 1000] [--full]
+```
+
+## source instagram-messages add
+
+Register the inbox of the Instagram account in an `[[instagram_messages]]`
+profile (unreleased). No identifier selects every profile.
+
+```bash
+msgvault source instagram-messages add [identifier]
+```
+
+## source instagram-messages sync
+
+Archive the account's Instagram conversations as chats, with up to the 20 most
+recent messages of each (unreleased). Flags match `source facebook-messages sync`.
+
+```bash
+msgvault source instagram-messages sync [identifier] [--max-requests 1000] [--full]
+```
+
+See [Facebook and Instagram messages](usage/meta-messages.md) for setup and limits.
+
 ## source instagram-mentions add
 
 Register the mentions source for `[[instagram_comments]]` profiles that set

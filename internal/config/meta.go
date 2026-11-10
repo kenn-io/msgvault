@@ -9,7 +9,8 @@ import (
 	"go.kenn.io/msgvault/internal/meta"
 )
 
-// FacebookCommentsSource selects one Page. Tokens exist only in the named
+// FacebookCommentsSource selects one Page, for [[facebook_comments]] and for
+// its Messenger inbox in [[facebook_messages]]. Tokens exist only in the named
 // daemon environment variable; the profile label is not an archive identity.
 type FacebookCommentsSource struct {
 	Identifier string `toml:"identifier"`
@@ -40,40 +41,51 @@ func (c *Config) ScheduledFacebookCommentsSources() []FacebookCommentsSource {
 }
 
 func (c *Config) validateFacebookCommentsSources() error {
+	if err := validateFacebookPageProfiles("facebook_comments", c.FacebookComments); err != nil {
+		return err
+	}
+	return validateFacebookPageProfiles("facebook_messages", c.FacebookMessages)
+}
+
+// validateFacebookPageProfiles checks one section of Page profiles, such as
+// [[facebook_comments]] or [[facebook_messages]].
+func validateFacebookPageProfiles(section string, profiles []FacebookCommentsSource) error {
 	assets := map[string]bool{}
-	for i := range c.FacebookComments {
-		source := &c.FacebookComments[i]
+	for i := range profiles {
+		source := &profiles[i]
 		source.Identifier = strings.TrimSpace(source.Identifier)
 		if source.Identifier == "" {
-			return fmt.Errorf("facebook_comments[%d].identifier is empty or duplicate", i)
+			return fmt.Errorf("%s[%d].identifier is empty or duplicate", section, i)
 		}
-		for _, prior := range c.FacebookComments[:i] {
+		for _, prior := range profiles[:i] {
 			if strings.EqualFold(prior.Identifier, source.Identifier) {
-				return fmt.Errorf("facebook_comments[%d].identifier is empty or duplicate", i)
+				return fmt.Errorf("%s[%d].identifier is empty or duplicate", section, i)
 			}
 		}
 		if !meta.ValidAccountID(source.AppID) || !meta.ValidAccountID(source.PageID) {
-			return fmt.Errorf("facebook_comments[%d] requires decimal app_id and page_id", i)
+			return fmt.Errorf("%s[%d] requires decimal app_id and page_id", section, i)
 		}
 		key := meta.SourceIdentifier(source.AppID, source.PageID)
 		if assets[key] {
-			return fmt.Errorf("facebook_comments[%d] duplicates an app/Page pair", i)
+			return fmt.Errorf("%s[%d] duplicates an app/Page pair", section, i)
 		}
 		assets[key] = true
 		if !envutil.ValidName(source.TokenEnv) {
-			return fmt.Errorf("facebook_comments[%d].token_env must name an explicit environment variable", i)
+			return fmt.Errorf("%s[%d].token_env must name an explicit environment variable", section, i)
 		}
 		if source.Schedule != "" {
 			if _, err := cronexpr.Parser.Parse(source.Schedule); err != nil {
-				return fmt.Errorf("facebook_comments[%d].schedule: %w", i, err)
+				return fmt.Errorf("%s[%d].schedule: %w", section, i, err)
 			}
 		}
 	}
 	return nil
 }
 
-// InstagramCommentsSource selects one linked professional account. Tokens exist only in the named
-// daemon environment variable; the profile label is not an archive identity.
+// InstagramCommentsSource selects one linked professional account, for
+// [[instagram_comments]] and for its inbox in [[instagram_messages]]. Tokens
+// exist only in the named daemon environment variable; the profile label is
+// not an archive identity.
 type InstagramCommentsSource struct {
 	Identifier         string `toml:"identifier"`
 	AppID              string `toml:"app_id"`
@@ -105,32 +117,46 @@ func (c *Config) ScheduledInstagramCommentsSources() []InstagramCommentsSource {
 }
 
 func (c *Config) validateInstagramCommentsSources() error {
+	if err := validateInstagramProfiles("instagram_comments", c.InstagramComments); err != nil {
+		return err
+	}
+	for i, source := range c.InstagramMessages {
+		if source.Mentions {
+			return fmt.Errorf("instagram_messages[%d].mentions is only valid on [[instagram_comments]]", i)
+		}
+	}
+	return validateInstagramProfiles("instagram_messages", c.InstagramMessages)
+}
+
+// validateInstagramProfiles checks one section of linked Instagram account
+// profiles, such as [[instagram_comments]] or [[instagram_messages]].
+func validateInstagramProfiles(section string, profiles []InstagramCommentsSource) error {
 	assets := map[string]bool{}
-	for i := range c.InstagramComments {
-		source := &c.InstagramComments[i]
+	for i := range profiles {
+		source := &profiles[i]
 		source.Identifier = strings.TrimSpace(source.Identifier)
 		if source.Identifier == "" {
-			return fmt.Errorf("instagram_comments[%d].identifier is empty or duplicate", i)
+			return fmt.Errorf("%s[%d].identifier is empty or duplicate", section, i)
 		}
-		for _, prior := range c.InstagramComments[:i] {
+		for _, prior := range profiles[:i] {
 			if strings.EqualFold(prior.Identifier, source.Identifier) {
-				return fmt.Errorf("instagram_comments[%d].identifier is empty or duplicate", i)
+				return fmt.Errorf("%s[%d].identifier is empty or duplicate", section, i)
 			}
 		}
 		if !meta.ValidAccountID(source.AppID) || !meta.ValidAccountID(source.PageID) || !meta.ValidAccountID(source.InstagramAccountID) {
-			return fmt.Errorf("instagram_comments[%d] requires decimal app_id, page_id and instagram_account_id", i)
+			return fmt.Errorf("%s[%d] requires decimal app_id, page_id and instagram_account_id", section, i)
 		}
 		key := meta.InstagramSourceIdentifier(source.AppID, source.PageID, source.InstagramAccountID)
 		if assets[key] {
-			return fmt.Errorf("instagram_comments[%d] duplicates an app/Page/Instagram tuple", i)
+			return fmt.Errorf("%s[%d] duplicates an app/Page/Instagram tuple", section, i)
 		}
 		assets[key] = true
 		if !envutil.ValidName(source.TokenEnv) {
-			return fmt.Errorf("instagram_comments[%d].token_env must name an explicit environment variable", i)
+			return fmt.Errorf("%s[%d].token_env must name an explicit environment variable", section, i)
 		}
 		if source.Schedule != "" {
 			if _, err := cronexpr.Parser.Parse(source.Schedule); err != nil {
-				return fmt.Errorf("instagram_comments[%d].schedule: %w", i, err)
+				return fmt.Errorf("%s[%d].schedule: %w", section, i, err)
 			}
 		}
 	}

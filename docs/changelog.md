@@ -9,6 +9,11 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.
+- [Facebook and Instagram messages](usage/meta-messages.md) archive a Page's
+  Messenger inbox or a linked Instagram account's direct messages as searchable
+  chats. Configure `[[facebook_messages]]` or `[[instagram_messages]]`, then run
+  `msgvault source facebook-messages` or `instagram-messages` `add` and `sync`.
+  Meta returns the 20 most recent messages of each conversation.
 - Posts and comments by others that mention a Facebook Page are archived in
   its comment source when the [Meta webhook receiver](usage/meta-webhooks.md)
   gets the Page `mention` field.

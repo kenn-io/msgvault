@@ -111,6 +111,79 @@ func acquireSource(ctx context.Context, st *store.Store, sourceType, identifier 
 	return source, execution, nil
 }
 
+// pageCursor is the pollPages checkpoint: the cursor of the next page.
+type pageCursor struct {
+	After string `json:"after"`
+}
+
+// pollPages runs a polling sync of one cursor-paged edge, as tag and inbox
+// sync do. page archives the page at after and returns the next cursor; an
+// empty cursor ends the scan. The checkpoint holds that cursor, so a run that
+// stops early resumes where it stopped, and a complete scan starts over.
+func pollPages(ctx context.Context, st *store.Store, sourceType, identifier string, opts ImportOptions, page func(st *store.Store, source *store.Source, sum *ImportSummary, after string) (string, error)) (sum *ImportSummary, retErr error) {
+	if opts.MaxRequests < 0 {
+		return nil, errors.New("invalid import options")
+	}
+	source, execution, err := acquireSource(ctx, st, sourceType, identifier)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { retErr = errors.Join(retErr, execution.Release()) }()
+	var cursor pageCursor
+	if !opts.Full {
+		blob, err := savedCheckpoint(ctx, st, source)
+		if err != nil {
+			return nil, err
+		}
+		if blob != "" && json.Unmarshal([]byte(blob), &cursor) != nil {
+			return nil, errors.New("invalid checkpoint; restart this source with --full")
+		}
+	}
+	after := cursor.After
+	syncID, err := execution.StartSyncContext(ctx, sourceType, "")
+	if err != nil {
+		return nil, err
+	}
+	scoped := st.ScopedToSync(source.ID, syncID)
+	sum = &ImportSummary{}
+	done := false
+	checkpoint := func() *store.Checkpoint {
+		cp := &store.Checkpoint{MessagesAdded: int64(sum.MessagesAdded), MessagesUpdated: int64(sum.MessagesUpdated), MessagesProcessed: int64(sum.MessagesProcessed)}
+		if !done {
+			// Never empty, so an unfinished run that starts from the top
+			// still replaces an older saved position.
+			blob, _ := json.Marshal(pageCursor{After: after})
+			cp.PageToken = string(blob)
+		}
+		return cp
+	}
+	defer func() {
+		sum.Partial = retErr != nil || !done
+		retErr = finishSync(ctx, st, source.ID, syncID, checkpoint(), sum.Partial, retErr)
+	}()
+	maximum := opts.MaxRequests
+	if maximum == 0 {
+		maximum = DefaultMaxRequests
+	}
+	for !done && sum.Requests < maximum {
+		if err := ctx.Err(); err != nil {
+			return sum, err
+		}
+		sum.Requests++
+		next, err := page(scoped, source, sum, after)
+		if apiErr, ok := errors.AsType[*APIError](err); ok && after != "" && apiErr.Status == 400 {
+			return sum, fmt.Errorf("continuation request failed: %w", err)
+		} else if err != nil {
+			return sum, err
+		}
+		after, done = next, next == ""
+		if err := scoped.UpdateSyncCheckpointContext(ctx, syncID, checkpoint()); err != nil {
+			return sum, err
+		}
+	}
+	return sum, nil
+}
+
 // finishSync records how a polling run ended. Only a complete run advances the
 // source cursor; a failed or paused run keeps its checkpoint for the next run.
 func finishSync(ctx context.Context, st *store.Store, sourceID, syncID int64, cp *store.Checkpoint, partial bool, runErr error) error {

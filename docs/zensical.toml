@@ -42,6 +42,7 @@ nav = [
     {"Chatwoot" = "guides/chatwoot.md"},
     {"Facebook Page Comments" = "usage/facebook-comments.md"},
     {"Instagram Comments" = "usage/instagram-comments.md"},
+    {"Facebook and Instagram Messages" = "usage/meta-messages.md"},
     {"Meta Webhooks" = "usage/meta-webhooks.md"},
     {"Matrix" = "usage/matrix.md"},
     {"Slack" = "usage/slack.md"},

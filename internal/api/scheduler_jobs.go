@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/chatwoot"
@@ -116,16 +117,16 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 		return WhatsAppAppleJobName(identifier), true
 	case "apple_messages":
 		return IMessageJobName, true
-	case meta.InstagramSourceType, meta.MentionsSourceType:
+	case meta.InstagramSourceType, meta.MentionsSourceType, meta.InstagramMessagesSourceType:
 		if _, ok := meta.ParseInstagramSourceIdentifier(identifier); !ok {
 			return "", false
 		}
 		return sourceType + ":" + identifier, true
-	case meta.SourceType:
+	case meta.SourceType, meta.FacebookMessagesSourceType:
 		if _, _, ok := meta.ParseSourceIdentifier(identifier); !ok {
 			return "", false
 		}
-		return meta.SourceType + ":" + identifier, true
+		return sourceType + ":" + identifier, true
 	case chatwoot.SourceType:
 		baseURL, accountID, _, ok := chatwoot.ParseSourceIdentifier(identifier)
 		if !ok {
@@ -194,7 +195,7 @@ func isSourceSyncJobName(name string) bool {
 	if kind == CardDAVJobName {
 		return true
 	}
-	if kind == meta.SourceType || kind == meta.InstagramSourceType || kind == meta.MentionsSourceType {
+	if slices.Contains([]string{meta.SourceType, meta.InstagramSourceType, meta.MentionsSourceType, meta.FacebookMessagesSourceType, meta.InstagramMessagesSourceType}, kind) {
 		canonical, ok := SchedulerJobNameForSource(kind, identifier)
 		return ok && canonical == name
 	}
