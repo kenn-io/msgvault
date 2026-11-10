@@ -20,12 +20,12 @@ type cliArchiveBackend struct {
 	failure    error
 }
 
-func TestArchiveCommandRefuses42Daemon(t *testing.T) {
+func TestArchiveCommandRefuses50Daemon(t *testing.T) {
 	posts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/health" {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"4.2.0"}`))
+			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"5.0.0"}`))
 			return
 		}
 		posts++

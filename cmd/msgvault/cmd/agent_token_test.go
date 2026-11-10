@@ -739,7 +739,7 @@ func TestAgentTokenIncomingSenderFlagAndViews(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/api/v1/health" {
-			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "4.3.0"}))
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "5.1.0"}))
 			return
 		}
 		source := map[string]any{"id": 1, "type": "gmail", "identifier": "owner@example.test", "sender_keys": []string{"owner@example.test"}, "incoming_senders": []string{"codes@example.test", "alerts@example.test"}}

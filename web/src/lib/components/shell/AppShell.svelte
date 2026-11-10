@@ -1513,8 +1513,8 @@
                   scrollAnchor: null,
                 })}
               onActiveKey={(activeRow) => replaceTransient({ activeRow })}
-              onSelectedKey={(selectedRow) =>
-                selectedRow ? commitNavigation({ selectedRow }) : replaceCommittedNavigation({ selectedRow: null })}
+              onSelectedKey={(selectedRow, options) =>
+                selectedRow ? (options?.replace ? replaceCommittedNavigation({ selectedRow }) : commitNavigation({ selectedRow })) : replaceCommittedNavigation({ selectedRow: null })}
               onOpenItem={openFileItem}
               onOpenConversation={openFileConversation}
             />

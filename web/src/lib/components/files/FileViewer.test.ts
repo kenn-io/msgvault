@@ -6,12 +6,21 @@ import { createAPIClient } from '../../api/client';
 import type { FileSearchRow } from '../../explore/models';
 import FileViewer from './FileViewer.svelte';
 
+const originalCreateObjectURL = Object.getOwnPropertyDescriptor(URL, 'createObjectURL');
+const originalRevokeObjectURL = Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL');
+afterEach(() => {
+  if (originalCreateObjectURL) Object.defineProperty(URL, 'createObjectURL', originalCreateObjectURL);
+  else Reflect.deleteProperty(URL, 'createObjectURL');
+  if (originalRevokeObjectURL) Object.defineProperty(URL, 'revokeObjectURL', originalRevokeObjectURL);
+  else Reflect.deleteProperty(URL, 'revokeObjectURL');
+});
+
 const { renderPDF } = vi.hoisted(() => ({
   renderPDF: vi.fn(async (_bytes: Uint8Array, host: HTMLElement) => {
     const canvas = document.createElement('canvas');
     canvas.setAttribute('aria-label', 'PDF page 1');
     host.append(canvas);
-    return { pages: 1, destroy: vi.fn() };
+    return { pages: 1, setZoom: vi.fn(), destroy: vi.fn() };
   })
 }));
 
@@ -36,17 +45,17 @@ function file(overrides: Partial<FileSearchRow> = {}): FileSearchRow {
     mime_type: 'image/png',
     mime_family: 'image',
     size_bytes: 68,
-    content_state: 'local_content',
-    content_available: true,
+    content_state: 'unverified',
+    content_available: null,
     ...overrides
   };
 }
 
-function viewerFetch(metadata: Record<string, unknown>, content = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])) {
+function viewerFetch(metadata: Record<string, unknown>, content = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), contentType = String(metadata.mime_type ?? 'application/octet-stream')) {
   return vi.fn<typeof fetch>(async (input) => {
     const request = input instanceof Request ? input : new Request(input);
     if (new URL(request.url).pathname === '/api/v1/files/7') return Response.json(metadata);
-    return new Response(content, { headers: { 'Content-Type': String(metadata.mime_type ?? 'application/octet-stream') } });
+    return new Response(content, { headers: { 'Content-Type': contentType } });
   });
 }
 
@@ -153,20 +162,22 @@ describe('FileViewer', () => {
     expect(await screen.findByRole('region', { name: 'PDF preview fixture.pdf' })).toBeDefined();
     await waitFor(() => expect(renderPDF).toHaveBeenCalledOnce());
     expect(document.querySelector('iframe, embed, object')).toBeNull();
+    await screen.findByText("PDF · 32 B");
   });
 
   it.each([
-    ['missing_blob', 'Archived bytes are missing.'],
-    ['metadata_only', 'This attachment has metadata only.'],
-    ['url_only', 'This attachment is URL-only and is not fetched as local content.']
+    ['missing_blob', "The archive has this file's record, but its bytes are missing."],
+    ['metadata_only', "The import saved this file's name and size, not its contents."],
+    ['url_only', "This file is a link, and msgvault didn't download it."]
   ] as const)('names %s without fetching content bytes', async (contentState, message) => {
     const fetchFn = viewerFetch({
       id: 7, message_id: 11, conversation_id: 21, filename: 'unavailable.bin', mime_type: '',
       size_bytes: 12, content_state: contentState, content_available: false
     });
-    render(FileViewer, { client: createAPIClient(fetchFn), file: file({ content_state: contentState, content_available: false }) });
-    expect(await screen.findByText(message)).toBeDefined();
+    const { container } = render(FileViewer, { client: createAPIClient(fetchFn), file: file({ filename: 'unavailable.bin', mime_type: '', size_bytes: 12, content_state: contentState === 'missing_blob' ? 'unverified' : contentState, content_available: contentState === 'missing_blob' ? null : false }) });
+    await waitFor(() => expect(container.querySelector('.kit-empty-state__title')?.textContent).toBe(message));
     expect(fetchFn).toHaveBeenCalledOnce();
+    expect(screen.getByRole('button', { name: /Download/ }).hasAttribute('disabled')).toBe(true);
   });
 
   it('falls back to the attachment ID heading when the filename is empty or whitespace-only', async () => {
@@ -176,7 +187,7 @@ describe('FileViewer', () => {
     });
     render(FileViewer, {
       client: createAPIClient(fetchFn),
-      file: file({ filename: '', content_state: 'missing_blob', content_available: false })
+      file: file({ filename: '   ', mime_type: '', size_bytes: 12, content_state: 'unverified', content_available: null })
     });
 
     expect(await screen.findByRole('dialog', { name: 'View attachment 7' })).toBeDefined();
@@ -216,12 +227,13 @@ describe('FileViewer', () => {
       content_state: 'metadata_only', content_available: false
     });
     render(FileViewer, { client: createAPIClient(fetchFn), file: { id: 7 }, onOpenItem, onOpenConversation });
-    await screen.findByText('This attachment has metadata only.');
+    await screen.findByText("The import saved this file's name and size, not its contents.");
 
     await fireEvent.click(screen.getByRole('button', { name: 'Open message' }));
     expect(onOpenItem).toHaveBeenCalledExactlyOnceWith('source:1:message:m-11');
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Open conversation' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'More file actions' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Open conversation' }));
     expect(onOpenConversation).toHaveBeenCalledExactlyOnceWith('source:1:message:m-11', 11, 21);
     expect(fetchFn).toHaveBeenCalledOnce();
   });
@@ -238,20 +250,19 @@ describe('FileViewer', () => {
       file: file({ content_state: 'metadata_only', content_available: false }),
       onOpenItem
     });
-    await screen.findByText('This attachment has metadata only.');
+    await screen.findByText("The import saved this file's name and size, not its contents.");
 
     await fireEvent.click(screen.getByRole('button', { name: 'Open message' }));
     expect(onOpenItem).toHaveBeenCalledExactlyOnceWith('source:1:conversation:21');
   });
 
-  it('clears loading and shows an error when the metadata request fails', async () => {
-    const fetchFn = vi.fn<typeof fetch>(async () => {
-      throw new TypeError('network unreachable');
-    });
-    render(FileViewer, { client: createAPIClient(fetchFn), file: file() });
-
-    expect((await screen.findByRole('alert')).textContent).toContain('network unreachable');
-    expect(screen.queryByText('Loading file metadata…')).toBeNull();
+  it.each([
+    ['network failure', async () => { throw new TypeError('network unreachable'); }, 'network unreachable'],
+    ['storage error', async () => Response.json({ error: 'internal_error', message: 'Failed to open file content' }, { status: 500 }), 'Failed to open file content']
+  ])('clears loading and shows a metadata %s', async (_name, respond, message) => {
+    render(FileViewer, { client: createAPIClient(vi.fn<typeof fetch>(respond)), file: file() });
+    expect((await screen.findByRole('alert')).textContent).toContain(message);
+    expect(screen.queryByText('Loading file…')).toBeNull();
   });
 
   it('ignores a stale metadata failure after the viewed file changes', async () => {
@@ -270,11 +281,11 @@ describe('FileViewer', () => {
     await waitFor(() => expect(rejectStale).toBeDefined());
 
     await view.rerender({
-      file: file({ id: 8, key: 'file:8', filename: 'next.bin', content_state: 'missing_blob', content_available: false })
+      file: file({ id: 8, key: 'file:8', filename: 'next.bin', content_state: 'unverified', content_available: null })
     });
     rejectStale!(new TypeError('stale network failure'));
 
-    expect(await screen.findByText('Archived bytes are missing.')).toBeDefined();
+    expect(await screen.findByText("The archive has this file's record, but its bytes are missing.")).toBeDefined();
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.queryByText('stale network failure')).toBeNull();
   });
@@ -288,8 +299,9 @@ describe('FileViewer', () => {
       client: createAPIClient(fetchFn),
       file: file({ filename: 'archive.zip', mime_type: 'application/zip', mime_family: 'archive' })
     });
-    expect(await screen.findByText('Preview is not supported for this file type.')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Download archive.zip' })).toBeDefined();
+    expect(await screen.findByText('No preview for this file type')).toBeDefined();
+    expect(screen.getByText('Download it to open in another app.')).toBeDefined();
+    expect(screen.getAllByRole('button', { name: /Download/ })).toHaveLength(1);
     expect(fetchFn).toHaveBeenCalledOnce();
   });
 
@@ -303,6 +315,7 @@ describe('FileViewer', () => {
       file: file({ filename: 'archive.zip', mime_type: 'application/zip', mime_family: 'archive' })
     });
     const downloadButton = await screen.findByRole('button', { name: 'Download archive.zip' });
+    await waitFor(() => expect(downloadButton.hasAttribute('disabled')).toBe(false));
 
     let capturedHref: string | undefined;
     let capturedDownload: string | undefined;
@@ -321,3 +334,143 @@ describe('FileViewer', () => {
     expect(fetchFn).toHaveBeenCalledOnce();
   });
 });
+
+it('shows context and steps with buttons and arrows', async () => {
+  const mime_type = 'application/zip';
+  const onStep = vi.fn();
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), content_state: 'local_content', content_available: true, mime_type }, new TextEncoder().encode('Example text'))), file: file({ mime_type, participant_labels: ['Alex Example', 'Jordan Example'] }), position: { index: 2, total: 1038 }, onStep });
+  await screen.findByText('3 of 1,038');
+  expect(screen.getByText(/Containing item · Alex Example, Jordan Example/)).toBeDefined();
+  await fireEvent.click(screen.getByRole('button', { name: 'Next file' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Previous file' }));
+  await fireEvent.keyDown(screen.getByRole('region', { name: 'File preview preview.png' }), { key: 'ArrowRight' });
+  await fireEvent.keyDown(window, { key: 'ArrowLeft' });
+  expect(onStep.mock.calls).toEqual([[1], [-1], [1], [-1]]);
+});
+
+it.each([
+  { mime_type: 'text/csv', filename: 'table.csv', content: 'Name,Value\nExample,42', tag: 'table', want: 'Example', target: { filename: 'table.csv', mime_type: 'text/csv' } },
+  { mime_type: 'text/plain; charset=windows-1252', filename: 'notes.txt', content: new Uint8Array([0x43, 0x61, 0x66, 0xe9]), tag: 'pre', want: 'Café', target: { filename: 'notes.txt', mime_type: 'text/plain; charset=windows-1252' } },
+  { mime_type: 'text/tab-separated-values', filename: 'table.tsv', content: 'Name\tValue;Other;More\nExample\t42;73;84\nOther\t1;2;3', tag: 'table', want: 'Example', target: { filename: 'table.tsv', mime_type: 'text/tab-separated-values' } },
+  { mime_type: 'application/vnd.ms-excel', filename: 'table.csv', content: 'Name,Value\nExample,42', tag: 'table', want: 'Example', target: { filename: 'table.csv', mime_type: 'application/vnd.ms-excel' } },
+  { mime_type: 'application/octet-stream', filename: 'table.tsv', content: 'Name\tValue;Other;More\nExample\t42;73;84\nOther\t1;2;3', tag: 'table', want: 'Example', target: { filename: 'table.tsv', mime_type: 'application/octet-stream' } },
+  { mime_type: 'application/x-unknown', filename: 'notes.txt', content: 'Example text', tag: 'pre', want: 'Example', target: { filename: 'notes.txt', mime_type: 'application/x-unknown' } },
+])('previews $mime_type from $filename', async ({ mime_type, filename, content, tag, want, target }) => {
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), content_state: 'local_content', content_available: true, mime_type, filename }, (typeof content === 'string' ? new TextEncoder().encode(content) : content))), file: file(target) });
+  await waitFor(() => expect(document.querySelector(tag)?.textContent).toContain(want));
+  if (filename.endsWith('.tsv')) expect(document.querySelectorAll('th')).toHaveLength(2);
+});
+
+it('buffers authenticated audio for seeking and revokes its blob URL on close', async () => {
+  const create = vi.fn((_blob: Blob) => 'blob:audio-preview');
+  const revoke = vi.fn();
+  Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: create });
+  Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revoke });
+  const audioFile = file({ filename: 'sound.wav', mime_type: 'audio/wav' });
+  const fetchFn = viewerFetch({ ...audioFile, content_state: 'local_content', content_available: true });
+  render(FileViewer, { client: createAPIClient(fetchFn), file: audioFile });
+  await waitFor(() => expect(document.querySelector('audio')?.getAttribute('src')).toBe('blob:audio-preview'));
+  expect(fetchFn).toHaveBeenCalledTimes(2);
+  expect(create.mock.calls[0]?.[0]).toBeInstanceOf(Blob);
+  await fireEvent.click(screen.getByRole('button', { name: 'Close file viewer' }));
+  expect(revoke).toHaveBeenCalledExactlyOnceWith('blob:audio-preview');
+});
+
+it.each([
+  ['scrollable preview', 'text/plain', async () => {
+    await screen.findByText('Example text');
+    const preview = screen.getByRole('region', { name: 'File preview preview.png' });
+    Object.defineProperty(preview, 'scrollWidth', { configurable: true, value: 400 });
+    Object.defineProperty(preview, 'clientWidth', { configurable: true, value: 200 });
+    return preview;
+  }, 'ArrowRight'],
+  ['scrollable PDF preview', 'application/pdf', async () => {
+    await screen.findByRole('region', { name: 'PDF preview preview.png' });
+    const preview = screen.getByRole('region', { name: 'File preview preview.png' });
+    Object.defineProperty(preview, 'scrollWidth', { configurable: true, value: 400 });
+    Object.defineProperty(preview, 'clientWidth', { configurable: true, value: 200 });
+    return preview;
+  }, 'ArrowLeft'],
+  ['audio controls', 'audio/wav', async () => {
+    await waitFor(() => expect(document.querySelector('audio')?.getAttribute('src')).toBe('blob:audio-preview'));
+    return document.querySelector('audio')!;
+  }, 'ArrowRight'],
+  ['file actions menu', 'application/zip', async () => {
+    await fireEvent.click(screen.getByRole('button', { name: 'More file actions' }));
+    const item = await screen.findByRole('menuitem', { name: 'Open conversation' });
+    item.focus();
+    return item;
+  }, 'ArrowLeft'],
+] as const)('leaves arrows with %s', async (_name, mime_type, targetElement, key) => {
+  const onStep = vi.fn();
+  Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:audio-preview') });
+  const target = file({ mime_type });
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...target, content_state: 'local_content', content_available: true }, new TextEncoder().encode(mime_type === 'application/pdf' ? '%PDF-1.4 synthetic' : 'Example text'))), file: target, position: { index: 1, total: 3 }, onStep });
+  await fireEvent.keyDown(await targetElement(), { key });
+  expect(onStep).not.toHaveBeenCalled();
+});
+
+it('reports when text exceeds the preview limit', async () => {
+  const extraBytes = 50;
+  const content = new Uint8Array(2 * 1024 * 1024 + extraBytes).fill(65);
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), content_state: 'local_content', content_available: true, mime_type: 'text/plain', size_bytes: content.length }, content)), file: file({ mime_type: 'text/plain', size_bytes: content.length }) });
+  await waitFor(() => expect(document.querySelector('pre')?.textContent?.length).toBe(2 * 1024 * 1024));
+  expect(await screen.findByText('Showing the start of this file.')).toBeDefined();
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+it('keeps Download disabled while availability is unknown', async () => {
+  render(FileViewer, { client: createAPIClient(() => new Promise<Response>(() => undefined)), file: file() });
+  expect(screen.getByRole('button', { name: 'Download preview.png' }).hasAttribute('disabled')).toBe(true);
+  expect(screen.getByText('Loading file…')).toBeDefined();
+});
+
+it.each(['bytes only', 'rows and bytes'])('shows CSV limits for %s', async (limit) => {
+  const rows = limit === 'rows and bytes' ? Array.from({ length: 205 }, (_, i) => `Row ${i},${i}\n`).join('') : 'Complete,99\n';
+  const prefix = 'Name,Amount\n' + rows + 'Partial,';
+  const content = new TextEncoder().encode(prefix + 'x'.repeat(2 * 1024 * 1024 - prefix.length - 3) + ',123456');
+  const target = file({ filename: 'cut.csv', mime_type: 'text/csv', size_bytes: content.length });
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...target, content_state: 'local_content', content_available: true }, content)), file: target });
+  expect(await screen.findByText('Preview stops at the 2 MiB size limit.')).toBeDefined();
+  if (limit === 'rows and bytes') {
+    expect(screen.getByText('Showing the first 200 rows.')).toBeDefined();
+    expect(screen.getAllByRole('row')).toHaveLength(201);
+    expect(screen.queryByText('Row 200')).toBeNull();
+  } else {
+    expect(screen.getByRole('table').textContent).toContain('Complete');
+    expect(screen.queryByText('Showing the first 200 rows.')).toBeNull();
+  }
+});
+it('warns when malformed CSV rows could not be read', async () => {
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), content_state: 'local_content', content_available: true, filename: 'malformed.csv', mime_type: 'text/csv' }, new TextEncoder().encode('Name,Amount\nExample,"42\nOther,73'))), file: file({ filename: 'malformed.csv', mime_type: 'text/csv' }) });
+  expect(await screen.findByText("Some rows couldn't be read.")).toBeDefined();
+});
+it('stops at the loaded end and shows the list notice', async () => {
+  const onStep = vi.fn();
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), content_state: 'local_content', content_available: true })), file: file(), position: { index: 1, total: 4 }, onStep, canStepForward: false, notice: 'Could not load more files' });
+  expect(screen.getByRole('button', { name: 'Next file' }).hasAttribute('disabled')).toBe(true);
+  await fireEvent.keyDown(window, { key: 'ArrowRight' });
+  expect(onStep).not.toHaveBeenCalled();
+  expect(screen.getByRole('alert').textContent).toBe('Could not load more files');
+});
+it.each(['audio/wav', 'application/pdf', 'image/png'])('offers Download when %s exceeds the preview bound', async (mime_type) => {
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), content_state: 'local_content', content_available: true, mime_type, size_bytes: 26 * 1024 * 1024 })), file: file({ mime_type, size_bytes: 26 * 1024 * 1024 }) });
+  expect(await screen.findByText('This file is too large to preview.')).toBeDefined();
+  expect(screen.getByRole('button', { name: /Download/ }).hasAttribute('disabled')).toBe(false);
+});
+
+it('renders short records without expanding them to the header width', async () => {
+  const target = file({ filename: 'wide.csv', mime_type: 'text/csv' });
+  const content = Array(300).fill('Header').join(',') + '\n' + Array(10).fill('Value').join('\n');
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...target, content_state: 'local_content', content_available: true }, new TextEncoder().encode(content))), file: target });
+  await screen.findAllByRole('columnheader');
+  expect(screen.getAllByRole('cell')).toHaveLength(10);
+});
+
+it('reports when the cell limit omits rows', async () => {
+  const target = file({ filename: 'wide.csv', mime_type: 'text/csv' });
+  const row = Array(100).fill('x').join(',');
+  const content = new TextEncoder().encode(Array(202).fill(row).join('\n'));
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...target, content_state: 'local_content', content_available: true }, content)), file: target });
+  expect(await screen.findByText('Preview is limited to 20,000 cells; showing 199 rows.', {}, { timeout: 15000 })).toBeDefined();
+  expect(screen.getByText('Preview is limited to 200 rows.')).toBeDefined();
+}, 20000);

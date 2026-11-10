@@ -316,7 +316,7 @@ After adding an account, sync it with `msgvault sync-full`. IMAP accounts use th
 ## archive and unarchive
 
 Remove one Gmail message from its inbox, or restore it, through the selected
-daemon. Use msgvault's positive archived message ID. Requires API schema 4.3.0.
+daemon. Use msgvault's positive archived message ID. Requires API schema 5.1.0.
 
 ```bash
 msgvault archive --message 42 --dry-run --json
@@ -3317,6 +3317,9 @@ to one lane and cannot be used with `all`. See
 [person files](/docs/usage/people/#find-files-related-to-a-person) for index
 requirements, supported filters, and pagination.
 
+File results show `unverified` when a content hash is recorded but storage
+has not been checked.
+
 #### Typo-tolerant filenames
 
 Newer than the latest release, `--fuzzy-filename` explicitly selects filename
@@ -5620,7 +5623,7 @@ msgvault agent-token issue --label code-reader \
 ```
 
 Repeat `--incoming-sender SOURCE_ID=ADDRESS` for additional allowed addresses.
-Requires daemon API schema 4.3.0; older daemons reject issuance with restrictions.
+Requires daemon API schema 5.1.0; older daemons reject issuance with restrictions.
 Omitting the flag allows reads and archiving from any sender on the selected sources.
 The restriction applies to reads, reply parents, and archive writes. The separate `--sender` flag still selects
 confirmed outgoing draft identities. See the [archive API](api-server.md#message-archiving)

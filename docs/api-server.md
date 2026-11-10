@@ -65,8 +65,13 @@ The response contains `suggestions`, `candidate_limit_reached`, and
 `occurred_at` (always present, possibly `null`), the current `filename`,
 `mime_type` (possibly empty), `mime_family`, `filename_match`
 (`exact`, `prefix`, `typo`), `size_bytes`, `content_state`, and
-`content_available`. Content states are `metadata_only`, `url_only`,
-`missing_blob`, and `local_content`. Rows contain no storage paths, download
+`content_available`. File search and suggestion rows derive their content
+states from metadata: `metadata_only`, `url_only`, or `unverified`. An
+`unverified` row records a hash without checking storage and has a null
+`content_available`; the other two states have a false value. File details
+check whether storage can be opened and can return `local_content`,
+`missing_blob`, or an error. Opening storage does not verify the bytes; a read
+or integrity check can still fail. Rows contain no storage paths, download
 URLs or content hashes. Person rows also contain `person_provenance` with the
 matching participant IDs, roles and directions.
 
@@ -161,9 +166,13 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **4.3.0**.
+it is separate from the binary release version. The current schema is **5.1.0**.
 
-Schema 4.3.0 adds [message archiving](#message-archiving) and incoming sender restrictions for delegated grants.
+Schema 5.1.0 adds [message archiving](#message-archiving) and incoming sender restrictions for delegated grants.
+
+Schema 5.0.0 changes `content_available` in file lists and suggestions from a
+boolean to a nullable boolean. A null value means storage has not been checked;
+older clients can interpret it as false. Upgrade clients and the daemon together.
 
 Schema 4.1.0 adds `labels` on merge-list and merge-detail responses: recorded names and saved contact points from the merge snapshot, reconciled current participant addresses, known participant IDs, and the count of distinct addresses added to the surviving profile. Addresses and current or recorded contact points carry an opaque `identity_key` for comparison across representations, services, and scopes. Current contact points include `service_label`, the registered name of their `service_slug`. History and Split use those labels. Summary labels are decoded from the stored snapshot during list and detail reads; opening the disclosure makes a separate request for its raw snapshot.
 
@@ -418,7 +427,7 @@ returns `409 person_uid_ambiguous`.
 ### Message archiving
 
 `POST /api/v1/messages/{id}/archive` sets one Gmail message's archive state.
-Requires API schema 4.3.0 and owner authorization or a `message.archive` grant
+Requires API schema 5.1.0 and owner authorization or a `message.archive` grant
 for the message's source. Other providers return 501 `archive_unsupported`.
 
 ```json

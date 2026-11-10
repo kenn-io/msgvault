@@ -357,7 +357,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		{name: "identity review and scoring predecessor", schemaVersion: "2.35.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true},
 		{name: "identity review and scoring schema", schemaVersion: "3.0.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
 		{name: "native message tags schema", schemaVersion: "3.15.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true},
-		{name: "archive predecessor", schemaVersion: "4.2.0", wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
+		{name: "archive predecessor", schemaVersion: "5.0.0", wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
 		{name: "current schema", schemaVersion: api.APISchemaVersion, wantMessageArchive: true, wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
 		{name: "tags predecessor 3.14.0", schemaVersion: "3.14.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
 		{name: "before contact schema", schemaVersion: "3.19.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true},
@@ -654,7 +654,7 @@ func TestDaemonMCPDocbankProbeFailureIsLogged(t *testing.T) {
 }
 
 func TestDelegatedMCPArchiveCapability(t *testing.T) {
-	for _, version := range []string{"4.2.0", "4.3.0"} {
+	for _, version := range []string{"5.0.0", "5.1.0"} {
 		t.Run(version, func(t *testing.T) {
 			assertionsForTest := assert.New(t)
 			requirementsForTest := require.New(t)
@@ -675,7 +675,7 @@ func TestDelegatedMCPArchiveCapability(t *testing.T) {
 			t.Cleanup(func() { _ = client.Close() })
 			opts, err := delegatedMCPServeOptions(t.Context(), client)
 			requirementsForTest.NoError(err)
-			if version == "4.2.0" {
+			if version == "5.0.0" {
 				assertionsForTest.Nil(opts.MessageArchive)
 			} else {
 				assertionsForTest.NotNil(opts.MessageArchive)

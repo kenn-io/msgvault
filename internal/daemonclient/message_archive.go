@@ -10,7 +10,7 @@ import (
 )
 
 // MessageArchiveMinAPISchemaVersion adds archive actions and incoming sender restrictions.
-const MessageArchiveMinAPISchemaVersion = "4.3.0"
+const MessageArchiveMinAPISchemaVersion = "5.1.0"
 
 // ArchiveMessage sets the desired state without retrying an uncertain write.
 func (c *Client) ArchiveMessage(ctx context.Context, id int64, change emailtags.ArchiveChange) (*emailtags.ArchiveResult, error) {

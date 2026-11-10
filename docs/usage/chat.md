@@ -127,7 +127,7 @@ message from its inbox. Set `archived: false` to restore it. Optional `dry_run`
 previews the change. Repeated calls preserve the requested state and leave
 unrelated labels unchanged. Other providers return `archive_unsupported`.
 
-The tool requires daemon API schema 4.3.0. Delegated sessions list it when the
+The tool requires daemon API schema 5.1.0. Delegated sessions list it when the
 grant includes `message.archive`; the daemon checks the message's source.
 Owners can restrict incoming senders with
 [`--incoming-sender`](../cli-reference.md#restrict-incoming-senders).
