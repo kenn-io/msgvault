@@ -46,13 +46,13 @@ function arg(value: string, shell: 'posix' | 'cmd'): string {
   return /^[A-Za-z0-9@._+:/-]+$/.test(value) ? value : shellQuote(value, shell);
 }
 
-function validImapServer(value: string): boolean {
-  const host = value.trim();
+function validImapServer(host: string): boolean {
   return !/^-|\s/.test(host) && (!host.includes(':') || URL.canParse(`http://[${host.replace(/^\[(.*)\]$/, '$1')}]`));
 }
 
 export function addSourceCommand(kind: CommandSourceKind, values: Record<string, string>, shell: 'posix' | 'cmd'): string | undefined {
-  if (kind.fields.some(field => !(kind.id === 'imap' && field.id === 'username' ? values[field.id] : values[field.id]?.trim()))) return undefined;
-  if (kind.id === 'imap' && !validImapServer(values.host!)) return undefined;
-  return kind.template.replace(/\{(\w+)\}/g, (_, id: string) => arg(kind.id === 'imap' && id === 'username' ? values[id]! : values[id]!.trim(), shell));
+  const value = (id: string) => (id === 'username' ? values[id] : values[id]?.trim());
+  if (kind.fields.some(field => !value(field.id))) return undefined;
+  if (kind.id === 'imap' && !validImapServer(value('host')!)) return undefined;
+  return kind.template.replace(/\{(\w+)\}/g, (_, id: string) => arg(value(id)!, shell));
 }
