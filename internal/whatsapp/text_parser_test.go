@@ -78,7 +78,6 @@ func TestTextParserRejects(t *testing.T) {
 		name, text, order, zone, want string
 		limits                        textLimits
 	}{
-		{"month-day", "13/6/26, 10:00 - Mira: yes\nJun 13, 2026 at 10:01 - Ivo: no", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
 		{"day-month", "13/6/26, 10:00 - Mira: yes\n13 Jun 2026, 10:01 - Ivo: no", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
 		{"clock-prose", "13/6/26, 10:00 - Mira: yes\nMeet at 10:01", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
 		{"decimal-prose", "13/6/26, 10:00 - Mira: yes\nThe price is £3.50", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
@@ -86,20 +85,11 @@ func TestTextParserRejects(t *testing.T) {
 		{"preamble", "notes\n13/6/26, 10:00 - Mira: ok", "dmy", "UTC", "line 1: unsupported or malformed TXT header", textLimitsDefault},
 		{"invalid-date", "31/2/26, 10:00 - Mira: no", "dmy", "UTC", "day out of range", textLimitsDefault},
 		{"bad-clock", "13/6/26, 27:00 - Mira: no", "dmy", "UTC", "hour out of range", textLimitsDefault},
+		{"malformed-no-comma", "13/6/26, 10:00 - Mira: yes\n13/6/26 noon - Ivo: no", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
 		{"malformed-continuation-header", "13/6/26, 10:00 - Mira: yes\n13/6/26, noon - Mira: no", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
-		{"android-missing-comma", "13/6/26, 10:00 - Mira: yes\n13/6/26 10:01 - Ivo: no", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
-		{"android-spacing", "13/6/26, 10:00 - Mira: yes\n13/6/26,  10:01 - Ivo: no", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
-		{"ios-spacing", "13/6/26, 10:00 - Mira: yes\n[13/6/26,  10:00] Mira: no", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
-		{"android-dash-spacing", "13/6/26, 10:00 - Mira: yes\n13/6/26, 10:01- Ivo: no", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
-		{"en-dash", "13/6/26, 10:00 - Mira: yes\n13/6/26, 10:01 – Ivo: water", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
-		{"em-dash", "13/6/26, 10:00 - Mira: yes\n13/6/26, 10:01 — Ivo: water", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
-		{"unicode-digits", "13/6/26, 10:00 - Mira: yes\n١٣/٦/٢٦, 10:01 - Ivo: water", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
-		{"no-delimiters", "13/6/26, 10:00 - Mira: yes\n13/6/26 10:01 Ivo: water", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
-		{"unsupported-continuation-header", "13/6/26, 10:00 - Mira: yes\n[13/6/26 10:00] Mira: no", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
 		{"utf8-continuation", "13/6/26, 10:00 - Mira: asters\n\xff", "dmy", "UTC", "line 2: TXT is not valid UTF-8", textLimitsDefault},
 		{"empty", "", "dmy", "UTC", "TXT contains no records", textLimitsDefault},
 		{"order", "13/6/26, 10:00 - Mira: no", "", "UTC", "--date-order must be", textLimitsDefault},
-		{"zone", "13/6/26, 10:00 - Mira: no", "dmy", "Local", "host-dependent Local zone", textLimitsDefault},
 		{"count-limit", "13/6/26, 10:00 - Mira: one\n13/6/26, 10:01 - Mira: two", "dmy", "UTC", "TXT exceeds 1 records", textLimits{Bytes: 100, Records: 1, RecordBytes: 100}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

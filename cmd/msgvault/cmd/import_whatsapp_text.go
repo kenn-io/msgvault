@@ -16,9 +16,6 @@ func runWhatsAppTextImport(cmd *cobra.Command, args []string, opts whatsapp.Text
 		return err
 	}
 	if state == nil || state.cfg == nil {
-		if err := whatsapp.ValidateTextOptions(opts); err != nil {
-			return usageErr(cmd, err)
-		}
 		return errors.New("configuration is unavailable")
 	}
 	opts.AttachmentsDir = state.cfg.AttachmentsDir()

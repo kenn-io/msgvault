@@ -93,7 +93,7 @@ supported. UTF-8 BOM, CRLF and leading directional marks are accepted.
 Multiline bodies and blank lines are retained. A line that looks like a full
 supported header starts another record even if it was originally message text.
 Any other line containing decimal digits separated by `:` or `.` fails. Lines
-starting with a numeric date followed by `, ` and containing ` - ` also fail,
+starting with a numeric date followed by an optional comma, a space, and later ` - ` also fail,
 as do lines starting with `[` and a numeric date followed by a space and later
 `] `. This rejects message text such as `Meet at 10:01` or `£3.50` too.
 Unsupported headers without these patterns can be retained as continuation text. Invalid UTF-8,

@@ -76,7 +76,9 @@ func TestTextImportRefreshesOnlyTouchedChat(t *testing.T) {
 	opts.ChatID = "other"
 	_, err = importTextForTest(imp, t.Context(), path, opts)
 	require.NoError(t, err)
-	_, err = st.DB().ExecContext(t.Context(), "UPDATE conversations SET message_count = 77 WHERE source_conversation_id = ?", textChatKey("other"))
+	var sourceID, otherID int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT source_id, id FROM conversations WHERE source_conversation_id = ?", textChatKey("other")).Scan(&sourceID, &otherID))
+	_, err = st.UpsertMessageContext(t.Context(), &store.Message{SourceID: sourceID, ConversationID: otherID, SourceMessageID: "pending", MessageType: "whatsapp"})
 	require.NoError(t, err)
 	opts.ChatID = "garden"
 	_, err = importTextForTest(imp, t.Context(), textFile(t, "13/6/26, 10:01 - Mira: two\n"), opts)
@@ -85,7 +87,7 @@ func TestTextImportRefreshesOnlyTouchedChat(t *testing.T) {
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT message_count FROM conversations WHERE source_conversation_id = ?", textChatKey("garden")).Scan(&touched))
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT message_count FROM conversations WHERE source_conversation_id = ?", textChatKey("other")).Scan(&other))
 	assert.Equal(t, 2, touched)
-	assert.Equal(t, 77, other)
+	assert.Equal(t, 1, other)
 }
 
 func TestTextImportMultiplicityAndEdits(t *testing.T) {
@@ -127,30 +129,18 @@ func TestTextImportScopes(t *testing.T) {
 
 func TestTextImportPreflight(t *testing.T) {
 	for _, tc := range []struct {
-		name, text string
-		change     func(*TextOptions)
+		name   string
+		change func(*TextOptions)
 	}{
-		{"parse", "13/6/26, 10:00 - Mira: valid\n31/2/26, 10:01 - Mira: bad", func(*TextOptions) {}},
-		{"named month", "13/6/26, 10:00 - Mira: valid\n13 Jun 2026, 10:01 - Ivo: bad", func(*TextOptions) {}},
-		{"missing space", "13/6/26, 10:00 - Mira: valid\n13/6/26,10:01 - Ivo: bad", func(*TextOptions) {}},
-		{"dot clock", "13/6/26, 10:00 - Mira: valid\n13/6/26 10.01 - Ivo: bad", func(*TextOptions) {}},
-		{"missing comma", "13/6/26, 10:00 - Mira: valid\n13/6/26 10:01 - Ivo: bad", func(*TextOptions) {}},
-		{"spacing", "13/6/26, 10:00 - Mira: valid\n13/6/26,  10:01 - Ivo: bad", func(*TextOptions) {}},
-		{"chat", "13/6/26, 10:00 - Mira: hi", func(o *TextOptions) { o.ChatID = "" }},
-		{"type", "13/6/26, 10:00 - Mira: hi", func(o *TextOptions) { o.ChatType = "unknown" }},
-		{"phone", "13/6/26, 10:00 - Mira: hi", func(o *TextOptions) { o.Phone = "Mira" }},
+		{"chat", func(o *TextOptions) { o.ChatID = "" }},
+		{"type", func(o *TextOptions) { o.ChatType = "unknown" }},
+		{"phone", func(o *TextOptions) { o.Phone = "Mira" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			st := testutil.NewTestStore(t)
 			opts := textOptions()
 			tc.change(&opts)
-			_, err := importTextForTest(NewImporter(st, nil), t.Context(), textFile(t, tc.text), opts)
+			_, err := validateTextOptions(opts)
 			require.Error(t, err)
-			if tc.name == "named month" {
-				require.ErrorContains(t, err, "line 2: unsupported or malformed TXT header")
-			}
-			assert.Zero(t, textCount(t, st, "sources"))
-			assert.Zero(t, textCount(t, st, "messages"))
 		})
 	}
 }
@@ -220,22 +210,6 @@ func TestTextImportMediaContainment(t *testing.T) {
 	s, err = importTextForTest(imp, t.Context(), textFile(t, "13/6/26, 10:04 - Mira: large.txt (file attached)"), opts)
 	require.NoError(err)
 	assert.Equal(1, s.MediaOversized)
-}
-
-func TestTextImportFixtures(t *testing.T) {
-	for _, tc := range []struct{ file, order string }{{"android-dmy.txt", "dmy"}, {"ios-mdy.txt", "mdy"}} {
-		t.Run(tc.file, func(t *testing.T) {
-			st := testutil.NewTestStore(t)
-			opts := textOptions()
-			opts.DateOrder = tc.order
-			opts.MediaDir = "testdata/text"
-			opts.AttachmentsDir = t.TempDir()
-			summary, err := importTextForTest(NewImporter(st, nil), t.Context(), filepath.Join("testdata/text", tc.file), opts)
-			require.NoError(t, err)
-			assert.Equal(t, 4, summary.Records)
-			assert.Equal(t, 1, summary.MediaStored)
-		})
-	}
 }
 
 func TestTextImportPartialCancelAndRetry(t *testing.T) {

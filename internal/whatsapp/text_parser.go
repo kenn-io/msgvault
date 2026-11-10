@@ -22,7 +22,7 @@ import (
 var textHeader = regexp.MustCompile(`^(\[?)([0-9]{1,4}[/.-][0-9]{1,2}[/.-][0-9]{1,4}), ([0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?(?:[ \x{00a0}\x{202f}]+(?:[AaPp][Mm]|[AaPp]\. ?[Mm]\.))?)(\] | - )(.*)$`)
 
 // Clock-shaped text and malformed numeric headers are ambiguous boundaries.
-var textDateStart = regexp.MustCompile(`(?:\p{Nd}+[.:]\p{Nd}+|^(?:[0-9]{1,4}[/.-][0-9]{1,2}[/.-][0-9]{1,4}, [^\r\n]* - |\[[0-9]{1,4}[/.-][0-9]{1,2}[/.-][0-9]{1,4},? [^\r\n]*\] ))`)
+var textDateStart = regexp.MustCompile(`(?:\p{Nd}+[.:]\p{Nd}+|^(?:[0-9]{1,4}[/.-][0-9]{1,2}[/.-][0-9]{1,4},? [^\r\n]* - |\[[0-9]{1,4}[/.-][0-9]{1,2}[/.-][0-9]{1,4},? [^\r\n]*\] ))`)
 var textNotice = regexp.MustCompile(`^(?:Messages and calls are end-to-end encrypted$|Messages to this chat and calls are now secured with end-to-end encryption$|.+ changed (?:the group (?:description|name|icon)|the subject)(?:$| )|.+ created group "|You created (?:group|this group)(?:$| ))`)
 
 func textLocation(order, zone string) (*time.Location, error) {

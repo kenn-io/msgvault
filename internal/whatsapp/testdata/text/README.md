@@ -43,7 +43,7 @@ Recognized English notices retain their entire payload without an asserted autho
 Other colon payloads keep their exact prefix as an unverified scoped label.
 Supported headers inside message text start new records. Other lines containing
 decimal digits separated by `:` or `.` are rejected, including message text such
-as `Meet at 10:01` or `£3.50`. Lines starting with a numeric date followed by `, ` and containing ` - ` also
+as `Meet at 10:01` or `£3.50`. Lines starting with a numeric date followed by an optional comma, a space, and later ` - ` also
 fail, as do lines starting with `[` and a numeric date followed by a space and
 later `] `. Unsupported headers without these patterns can remain continuation text. The unit tests add original fictional cases for time interpretation, invalid
 input, bounded parsing, repeated and overlapping windows and media containment.

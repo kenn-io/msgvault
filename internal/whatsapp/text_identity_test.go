@@ -73,3 +73,17 @@ func TestTextPayloadKeyIgnoresClassification(t *testing.T) {
 		})
 	}
 }
+
+func TestTextSearchSenderAfterRebuild(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	_, err := importTextForTest(NewImporter(st, nil), t.Context(), textFile(t, "13/6/26, 10:00 - Mira: asters\n"), textOptions())
+	require.NoError(t, err)
+	_, total, err := st.SearchMessagesContext(t.Context(), "Mira", 0, 10)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	_, err = st.RebuildFTSContext(t.Context(), nil)
+	require.NoError(t, err)
+	_, total, err = st.SearchMessagesContext(t.Context(), "Mira", 0, 10)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, total)
+}
