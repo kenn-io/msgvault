@@ -329,7 +329,6 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 	if err != nil {
 		return nil, err
 	}
-	m.ConversationTitle = sourcescope.ConversationTitle(ctx, m.SourceID, m.ConversationTitle)
 	m.RelatedMessageID = RelatedMessageCandidate(m.ID, m.MessageType, metadata.String)
 	if m.MessageType == messageTypeCalendarEvent {
 		m.Calendar = ParseCalendarProjection(metadata.String)

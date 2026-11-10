@@ -15,6 +15,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/verification"
 )
@@ -107,6 +108,11 @@ func (s *Server) maskQuerySummaries(w http.ResponseWriter, r *http.Request, rows
 			row.AttachmentNames[j] = verification.Masked
 		}
 	})
+	if ok {
+		for i := range rows {
+			rows[i].ConversationTitle = sourcescope.ConversationTitle(r.Context(), rows[i].SourceID, rows[i].ConversationTitle)
+		}
+	}
 	return ok
 }
 
@@ -116,28 +122,25 @@ func (s *Server) maskThread(w http.ResponseWriter, r *http.Request, rows []query
 }
 
 func (s *Server) maskMessageDetail(r *http.Request, msg *query.MessageDetail) {
-	if !s.withholdsVerification(r) {
-		return
+	if s.withholdsVerification(r) && verification.Is(messageVerificationContent(msg.Subject, msg.Snippet, msg.ConversationTitle, msg.BodyText, msg.BodyHTML, len(msg.Attachments), func(i int) string { return msg.Attachments[i].Filename })) {
+		msg.Subject, msg.Snippet, msg.ConversationTitle, msg.BodyText, msg.BodyHTML = verification.Masked, verification.Masked, verification.Masked, verification.Masked, ""
+		for i := range msg.Attachments {
+			msg.Attachments[i].Filename = verification.Masked
+			msg.Attachments[i].URL = ""
+		}
 	}
-	if !verification.Is(messageVerificationContent(msg.Subject, msg.Snippet, msg.ConversationTitle, msg.BodyText, msg.BodyHTML, len(msg.Attachments), func(i int) string { return msg.Attachments[i].Filename })) {
-		return
-	}
-	msg.Subject, msg.Snippet, msg.ConversationTitle, msg.BodyText, msg.BodyHTML = verification.Masked, verification.Masked, verification.Masked, verification.Masked, ""
-	for i := range msg.Attachments {
-		msg.Attachments[i].Filename = verification.Masked
-		msg.Attachments[i].URL = ""
-	}
+	msg.ConversationTitle = sourcescope.ConversationTitle(r.Context(), msg.SourceID, msg.ConversationTitle)
 }
 
 func (s *Server) maskStoreMessage(r *http.Request, msg *store.APIMessage) {
-	if !s.withholdsVerification(r) || !verification.Is(messageVerificationContent(msg.Subject, msg.Snippet, msg.ConversationTitle, msg.BodyText, msg.BodyHTML, len(msg.Attachments), func(i int) string { return msg.Attachments[i].Filename })) {
-		return
+	if s.withholdsVerification(r) && verification.Is(messageVerificationContent(msg.Subject, msg.Snippet, msg.ConversationTitle, msg.BodyText, msg.BodyHTML, len(msg.Attachments), func(i int) string { return msg.Attachments[i].Filename })) {
+		msg.Subject, msg.Snippet, msg.ConversationTitle, msg.Body, msg.BodyText, msg.BodyHTML = verification.Masked, verification.Masked, verification.Masked, verification.Masked, verification.Masked, ""
+		for i := range msg.Attachments {
+			msg.Attachments[i].Filename = verification.Masked
+			msg.Attachments[i].URL = ""
+		}
 	}
-	msg.Subject, msg.Snippet, msg.ConversationTitle, msg.Body, msg.BodyText, msg.BodyHTML = verification.Masked, verification.Masked, verification.Masked, verification.Masked, verification.Masked, ""
-	for i := range msg.Attachments {
-		msg.Attachments[i].Filename = verification.Masked
-		msg.Attachments[i].URL = ""
-	}
+	msg.ConversationTitle = sourcescope.ConversationTitle(r.Context(), msg.SourceID, msg.ConversationTitle)
 }
 
 func (s *Server) attachmentWithheld(w http.ResponseWriter, r *http.Request, candidates []query.AttachmentInfo) (withheld, ok bool) {
