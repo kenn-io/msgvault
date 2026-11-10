@@ -346,7 +346,14 @@ func (r AcquisitionDiagnostic) String() string {
 	fmt.Fprintf(&out, "Details: %s\n", acquisitionDiagnosticStateLabel(r.State))
 	for _, item := range r.Items {
 		fmt.Fprintf(&out, "  %q: %s (run %d, item %d, synthetic=%t, error=%t)", item.SourceMessageID, acquisitionDiagnosticItemLabel(item), item.SyncRunID, item.OutcomeID, item.Synthetic, item.HasError)
-		fmt.Fprintf(&out, " latest=%q (run %d, item %d)", acquisitionDiagnosticLatestLabel(item.LatestStatus), item.LatestSyncRunID, item.LatestOutcomeID)
+		fmt.Fprintf(&out, " latest=%q", acquisitionDiagnosticLatestLabel(item.LatestStatus))
+		if item.LatestOutcomeID != item.OutcomeID {
+			if item.LatestSyncRunID != item.SyncRunID {
+				fmt.Fprintf(&out, " (run %d, item %d)", item.LatestSyncRunID, item.LatestOutcomeID)
+			} else {
+				fmt.Fprintf(&out, " (item %d)", item.LatestOutcomeID)
+			}
+		}
 		if len(item.BlockedBy) > 0 {
 			labels := make([]string, len(item.BlockedBy))
 			for i, blocker := range item.BlockedBy {

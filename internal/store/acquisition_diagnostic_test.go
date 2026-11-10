@@ -376,8 +376,8 @@ func TestAcquisitionDiagnosticHumanDetails(t *testing.T) {
 			require.NotNil(item, tc.id)
 			assert.Equal(tc.synthetic, item.Synthetic, tc.id)
 			assert.Equal(!tc.synthetic, item.HasError, tc.id)
-			assert.Contains(human, fmt.Sprintf("%q: %s (run %d, item %d, synthetic=%t, error=%t) latest=%q (run %d, item %d)",
-				tc.id, tc.label, run, item.OutcomeID, tc.synthetic, !tc.synthetic, "needs attention", run, item.LatestOutcomeID))
+			assert.Contains(human, fmt.Sprintf("%q: %s (run %d, item %d, synthetic=%t, error=%t) latest=%q",
+				tc.id, tc.label, run, item.OutcomeID, tc.synthetic, !tc.synthetic, "needs attention"))
 		}
 		assert.Len(report.Items, expected)
 		for _, hidden := range []string{"fetch_error", "batch_fetch_error", "ingest_error", "attachment_error", "remote_image_error", "attachment_remote_image_error", "future_kind", "future_phase", "ingest/error", "fetch/error", "hidden@example.com", "https://example.com/private"} {
@@ -386,6 +386,62 @@ func TestAcquisitionDiagnosticHumanDetails(t *testing.T) {
 		after, err := json.Marshal(report, json.Deterministic(true))
 		require.NoError(err)
 		assert.Equal(before, after)
+	}
+}
+
+func TestAcquisitionDiagnosticHumanRecordReferences(t *testing.T) {
+	for _, tc := range []struct {
+		name, latestReference string
+		addLatest, newRun     bool
+	}{
+		{"same-record", "", false, false},
+		{"same-run", " (item %[2]d)", true, false},
+		{"different-run", " (run %[1]d, item %[2]d)", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			f := storetest.New(t)
+			run := f.StartSync()
+			require.NoError(f.Store.RecordSyncRunItemContext(t.Context(), store.SyncRunItem{
+				SyncRunID: run, SourceMessageID: "message-record", Phase: "fetch", Status: "error", ErrorKind: "fetch_error",
+			}))
+			latestRun := run
+			if tc.newRun {
+				require.NoError(f.Store.FailSync(run, "interrupted"))
+				latestRun = f.StartSync()
+			}
+			if tc.addLatest {
+				// An unrelated later outcome leaves the download error active.
+				require.NoError(f.Store.RecordSyncRunItemContext(t.Context(), store.SyncRunItem{
+					SyncRunID: latestRun, SourceMessageID: "message-record", Phase: "delete", Status: "error", ErrorKind: "delete_error",
+				}))
+			}
+			report, err := f.Store.DiagnoseAcquisitionContext(t.Context(), store.AcquisitionDiagnosticOptions{
+				SourceID: f.Source.ID, Limit: 10, RemoteImagesEnabled: true,
+			})
+			require.NoError(err)
+			require.Len(report.Items, 1)
+			item := report.Items[0]
+			assert.Equal(run, item.SyncRunID)
+			assert.Equal(latestRun, item.LatestSyncRunID)
+			if tc.addLatest {
+				assert.Greater(item.LatestOutcomeID, item.OutcomeID)
+			} else {
+				assert.Equal(item.OutcomeID, item.LatestOutcomeID)
+			}
+			before, err := json.Marshal(report, json.Deterministic(true))
+			require.NoError(err)
+			suffix := tc.latestReference
+			if suffix != "" {
+				suffix = fmt.Sprintf(suffix, latestRun, item.LatestOutcomeID)
+			}
+			assert.Contains(report.String(), fmt.Sprintf(
+				"  %q: download failed (run %d, item %d, synthetic=false, error=true) latest=\"needs attention\"%s\n",
+				"message-record", run, item.OutcomeID, suffix))
+			after, err := json.Marshal(report, json.Deterministic(true))
+			require.NoError(err)
+			assert.Equal(before, after, "text rendering must preserve every JSON record reference")
+		})
 	}
 }
 
