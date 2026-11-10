@@ -5,7 +5,7 @@
   import DetailRow from '../people/DetailRow.svelte';
   import InlineNotice from '../common/InlineNotice.svelte';
   import MergeProfileCards from './MergeProfileCards.svelte';
-  import { addressText, distinctLabels, savedAddresses, workspaceLabels } from '../../directory/merge-labels';
+  import { addressText, distinctLabels, savedAddresses, withoutName, workspaceLabels } from '../../directory/merge-labels';
   import type { PersonContactPoint } from '../../api/generated/models';
   import type { PersonMergeHistoryController } from '../../directory/person-merge-history-controller.svelte';
 
@@ -35,17 +35,18 @@
   /**
    * The receipt line for one profile: its addresses, then what it saves, as read after the split. A linked
    * address the profile also saves reads once, under Saved; the same value on another service or scope stays.
+   * The address its name reads as is left out, and Saved stays when that was its only saved address.
    */
-  function receiptLine(lead: string[], ids: number[], saved: PersonContactPoint[] | null): string | undefined {
+  function receiptLine(name: string, lead: string[], ids: number[], saved: PersonContactPoint[] | null): string | undefined {
     const savedKeys = new Set<string>();
-    const lines = savedAddresses(saved ?? [], savedKeys, workspaces).map(address => addressText(address)!);
+    const lines = withoutName(name, savedAddresses(saved ?? [], savedKeys, workspaces).map(address => addressText(address)!));
     const linked = ids.flatMap(id => {
       const addresses = labels?.addresses.get(id) ?? [];
       const unsaved = addresses.filter(address => !savedKeys.has(address.identity_key));
       if (unsaved.length === addresses.length) return [participantLabel(id)];
       return unsaved.length ? [unsaved.map(address => addressText(address)).join(', ')] : [];
     });
-    return [...lead, ...linked, ...(lines.length ? [`Saved: ${lines.join(', ')}`] : [])].join(' · ') || undefined;
+    return [...lead, ...(lines.length < savedKeys.size ? linked : withoutName(name, linked)), ...(savedKeys.size ? [lines.length ? `Saved: ${lines.join(', ')}` : 'Saved'] : [])].join(' · ') || undefined;
   }
   function card(title: string, ids: number[], empty: string) {
     return { title, empty, addresses: ids.map(id => ({ id: String(id), value: participantLabel(id) })) };
@@ -88,13 +89,14 @@
   <div class="split" bind:this={splitContent} aria-busy={controller.splitBusy}>
     {#if committed}
       {@const remainingName = committed.source_person.display_name?.trim() || 'Remaining profile'}
+      {@const createdName = committed.new_person.display_name?.trim()}
       <!-- A receipt: the two people that now exist, each with its addresses. -->
       <section class="result">
         <!-- Exact means every record the merge moved was matched. A later edit stays on its record wherever that is now, and a deleted one stays deleted. -->
         {#if committed.exact_reversal && !partial}<p>The merge was fully reversed, and edits and deletions made since then were kept.</p>{/if}
         <div aria-label="Split result people">
-          <DetailRow actionLabel={`Open ${remainingName}`} onclick={() => onOpenPerson(committed.source_person.id)} description={receiptLine(['Stays'], committed.source_person.participant_ids, controller.receiptSaved.source)}>{remainingName}</DetailRow>
-          <DetailRow actionLabel={`Open ${committed.new_person.display_name?.trim() || 'new person'}`} onclick={() => onOpenPerson(committed.new_person.id)} description={receiptLine(committed.new_person.display_name?.trim() ? ['New person'] : [], committed.new_person.participant_ids, controller.receiptSaved.created)}>{committed.new_person.display_name?.trim() || 'New person'}</DetailRow>
+          <DetailRow actionLabel={`Open ${remainingName}`} onclick={() => onOpenPerson(committed.source_person.id)} description={receiptLine(remainingName, ['Stays'], committed.source_person.participant_ids, controller.receiptSaved.source)}>{remainingName}</DetailRow>
+          <DetailRow actionLabel={`Open ${createdName || 'new person'}`} onclick={() => onOpenPerson(committed.new_person.id)} description={receiptLine(createdName || 'New person', createdName ? ['New person'] : [], committed.new_person.participant_ids, controller.receiptSaved.created)}>{createdName || 'New person'}</DetailRow>
         </div>
         {#if controller.receiptSavedLoading}
           <p class="meta"><Spinner size={12} label="Loading saved addresses" /> Loading saved addresses…</p>

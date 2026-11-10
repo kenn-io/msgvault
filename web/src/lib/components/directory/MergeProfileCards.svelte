@@ -10,14 +10,13 @@
 
 <script lang="ts">
   import ArrowRight from '@lucide/svelte/icons/arrow-right';
-  import { addressText } from '../../directory/merge-labels';
+  import { addressText, withoutName } from '../../directory/merge-labels';
   let { from, to, label }: { from: MergeCard; to: MergeCard; label: string } = $props();
 </script>
 
 {#snippet card(profile: MergeCard)}
   <!-- A heading that reads as an address stands for one of them; another that reads the same still lists. -->
-  {@const heading = profile.addresses.findIndex(address => addressText({ title: address.value, detail: address.detail }) === profile.title)}
-  {@const addresses = profile.addresses.filter((_, index) => index !== heading)}
+  {@const addresses = withoutName(profile.title, profile.addresses, address => addressText({ title: address.value, detail: address.detail }))}
   <section class="card" aria-label={profile.title}>
     <h3>{profile.title}</h3>
     {#if addresses.length}

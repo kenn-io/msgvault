@@ -34,6 +34,12 @@ export function namedByAddress(absorbed: string | undefined, survivor: string | 
   return !absorbed || (!!survivor && sameName(absorbed, survivor));
 }
 
+/** A profile's entries without the one its name reads as, since the name stands for it; another that reads the same still lists. */
+export function withoutName<T>(name: string, items: T[], text: (item: T) => string | undefined = String): T[] {
+  const named = items.findIndex(item => text(item) === name);
+  return items.filter((_, index) => index !== named);
+}
+
 /** Whether one name holds the other as whole words: Mira within "Mira Vale", but not Ann within "Joanna". */
 export function sameName(left: string, right: string): boolean {
   const a = left.trim().toLocaleLowerCase(), b = right.trim().toLocaleLowerCase();

@@ -225,6 +225,27 @@ describe('PersonSplitSteps', () => {
     expect(onOpenPerson.mock.calls).toEqual([[12], [19]]);
   });
 
+  it.each([false, true])('does not repeat the new person\'s address in the receipt: saved=%s', async saved => {
+    const address = 'reader@example.org';
+    const response = { ...result(true), new_person: person(19, 1, [701], address) };
+    const contact = { person_id: 19, identity_key: identityKeyFixture('email', address), address_kind: 'email', original_value: address, normalized_value: address, normalization: 'email', normalization_version: 1, envelope: envelope(190) };
+    const { controller } = await preparedController(async input => {
+      const request = input as Request, path = new URL(request.url).pathname;
+      if (path === '/api/v1/people/12/split' && request.method === 'POST') return Response.json(response);
+      if (path === '/api/v1/people/12') return sourceResponse();
+      if (path === '/api/v1/people/12/profile') return Response.json(emptyProfile(response.source_person));
+      if (path === '/api/v1/people/19/profile') return Response.json({ ...emptyProfile(response.new_person), contact_points: saved ? [contact] : [] });
+      throw new Error(`Unexpected ${request.method} ${path}`);
+    }, undefined, () => ({ ...mergeDetail().labels, incomplete: false, participant_ids: [701], addresses: [addressFixture(701, 'email', address)] }));
+    render(PersonSplitSteps, { controller, onOpenPerson: vi.fn() });
+    await fireEvent.click(screen.getByRole('checkbox', { name: address }));
+    await act(() => { controller.confirmSplit(); return controller.submitSplit(); });
+    await waitFor(() => expect(controller.receiptSaved.created).not.toBeNull());
+    const row = screen.getByRole('button', { name: `Open ${address}` }).closest('.detail-row') as HTMLElement;
+    expect(within(row).getByText(saved ? 'New person · Saved' : 'New person')).toBeDefined();
+    controller.destroy();
+  });
+
   it('shows a known participant with no stored address without offering Retry', async () => {
     const { controller } = await preparedController(async input => new URL((input as Request).url).pathname.endsWith('/profile')
       ? Response.json({ ...emptyProfile(person(12)), contact_points: [] }) : sourceResponse(), undefined, () => ({ ...mergeDetail().labels, incomplete: false, participant_ids: [701] }));
