@@ -28,12 +28,16 @@ var (
 	ErrDeliveryPersonUnknown          = errors.New("unknown or retired canonical person UID")
 )
 
-// DeliveryPolicyQuery names a person, or one of the person's saved email
-// addresses. An empty Endpoint is the person-wide default. An address is the
-// value the contact writer stores (trimmed, lower case); it must be one mailbox.
+// DeliveryPolicyQuery names a person, a saved email address, or a chat route.
+// Empty/email RouteKind preserves email policy behavior; an empty Endpoint is
+// the person-wide default. Chat routes require source and conversation IDs and
+// use only person-wide approval.
 type DeliveryPolicyQuery struct {
-	PersonUID string `json:"person_uid"`
-	Endpoint  string `json:"endpoint,omitempty"`
+	PersonUID            string `json:"person_uid"`
+	Endpoint             string `json:"endpoint,omitempty"`
+	RouteKind            string `json:"route_kind,omitempty"`
+	SourceID             int64  `json:"source_id,omitempty"`
+	SourceConversationID string `json:"source_conversation_id,omitempty"`
 }
 
 // DeliveryPolicyState holds the stored and effective delivery policies for a person or email address.
@@ -118,6 +122,15 @@ func deliveryMailbox(endpoint string) string {
 // resolveDeliveryQuery validates a query and replaces its endpoint with the
 // canonical mailbox key.
 func resolveDeliveryQuery(q DeliveryPolicyQuery) (DeliveryPolicyQuery, error) {
+	switch q.RouteKind {
+	case "", "email":
+	case "chat":
+		if q.SourceID <= 0 || !deliveryStringValid(q.SourceConversationID) || q.Endpoint != "" {
+			return q, ErrDeliveryPolicyInvalid
+		}
+	default:
+		return q, ErrDeliveryPolicyInvalid
+	}
 	if !deliveryStringValid(q.PersonUID) {
 		return q, ErrDeliveryPolicyInvalid
 	}
@@ -196,6 +209,31 @@ func (s *Store) deliveryStateTx(ctx context.Context, tx *loggedTx, q DeliveryPol
 	case q.Endpoint != "" && hasDefault:
 		state.EffectivePolicy, state.InheritanceSource = stored, "person_default"
 	}
+	if q.RouteKind == "chat" {
+		var member bool
+		err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM conversation_participants cp
+   JOIN conversations c ON c.id=cp.conversation_id
+   JOIN person_participants pp ON pp.participant_id=cp.participant_id
+   WHERE pp.person_id=? AND c.source_id=? AND c.source_conversation_id=? AND c.conversation_type IN `+chatConversationTypesSQL+` AND cp.left_at IS NULL)`, state.PersonID, q.SourceID, q.SourceConversationID).Scan(&member)
+		if err != nil {
+			return nil, "", err
+		}
+		if !member {
+			return nil, "", ErrDeliveryPolicyInvalid
+		}
+		if state.EffectivePolicy == DeliverySendAllowed {
+			current, err := deliveryPersonApprovalCurrentTx(ctx, tx, state)
+			if err != nil {
+				return nil, "", err
+			}
+			if !current {
+				state.EffectivePolicy, state.Reason = DeliveryDraftOnly, "approval_predates_address"
+			} else {
+				state.Reason = "explicit_person_default"
+			}
+		}
+		return state, "", nil
+	}
 	if q.Endpoint == "" {
 		if state.EffectivePolicy == DeliverySendAllowed {
 			state.Reason = "explicit_person_default"
@@ -269,6 +307,17 @@ func (s *Store) deliveryApprovalCoversPointsTx(ctx context.Context, tx *loggedTx
 		}
 	}
 	return false, nil
+}
+
+// Chat approvals bind to the existing monotonic person/policy revision. This
+// conservatively requires reapproval after any later person or policy mutation,
+// including a participant binding, without relying on wall-clock precision.
+func deliveryPersonApprovalCurrentTx(ctx context.Context, tx *loggedTx, state *DeliveryPolicyState) (bool, error) {
+	var current bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM delivery_policy_audit
+  WHERE person_uid=? AND scope=? AND after_policy='send_allowed' AND revision=?)`,
+		state.PersonUID, DeliveryPersonAllRoutes, state.Revision).Scan(&current)
+	return current, err
 }
 
 // deliveryHolder is one active email contact point whose value resolves to a
@@ -496,6 +545,24 @@ func (s *Store) writeDeliveryPolicy(ctx context.Context, w DeliveryPolicyWrite, 
 			unchanged = before.StoredPolicy != nil && *before.StoredPolicy == w.Policy && before.Reason != "binding_changed"
 			if uncoveredAddress {
 				unchanged = false
+			}
+			if unchanged && w.Policy == DeliverySendAllowed && q.Endpoint == "" {
+				// Only chat recipients need a fresh revision-bound approval. Preserve
+				// unchanged email-only writes after unrelated contact edits.
+				var chatMember bool
+				if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM person_participants pp
+     JOIN conversation_participants cp ON cp.participant_id=pp.participant_id
+     JOIN conversations c ON c.id=cp.conversation_id
+     WHERE pp.person_id=? AND c.conversation_type IN `+chatConversationTypesSQL+` AND cp.left_at IS NULL)`, before.PersonID).Scan(&chatMember); err != nil {
+					return err
+				}
+				if chatMember {
+					current, err := deliveryPersonApprovalCurrentTx(ctx, tx, before)
+					if err != nil {
+						return err
+					}
+					unchanged = current
+				}
 			}
 		}
 		if unchanged {

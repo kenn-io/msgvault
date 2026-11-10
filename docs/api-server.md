@@ -3363,6 +3363,23 @@ until the owner approves that address or re-approves the person-wide default
 with the `person_all_routes` acknowledgement. A restriction survives removing and re-saving the
 address. Policy is an application gate, not proof of live reachability.
 
+Chat send adapters set `DeliveryPolicyQuery.RouteKind` to `chat`, supply
+`SourceID` and `SourceConversationID`, and resolve recipients with
+`Store.ChatRouteRecipientsContext`. The resolver returns every current
+non-owner member, including unbound members with an empty `PersonUID`.
+Admission rereads that roster in its policy snapshot and blocks if any member
+is unbound or lacks a person-wide `send_allowed` approval. Chat routes require
+a source and conversation ID and do not accept email endpoints.
+
+Chat approval covers the person and policy revision recorded in its audit.
+Any later person or policy change, including a new participant binding,
+requires the owner to repeat the person-wide approval with `person_all_routes`.
+Until then, the chat policy resolves as `draft_only` with reason
+`approval_predates_address`. This conservative check also requires reapproval
+after profile edits; it uses revisions rather than timestamps. Email policies
+retain their existing address-based behavior. An empty or `email` route kind
+selects that behavior.
+
 Msgvault has draft operations and no send command. A future send adapter calls
 `Store.ExecuteDeliveryContext(ctx, recipients, content, attempt)` immediately
 before every provider attempt, including retries and queued work, with every

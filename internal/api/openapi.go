@@ -403,6 +403,7 @@ import (
 // 3.46.0 adds measured CLI full-text pagination and semantic ranking cap overflow.
 // 3.47.0 adds retry hints to CLI and fast search.
 const APISchemaVersion = "3.48.0"
+
 // 3.48.0 adds owner-only contact delivery policy read/set/clear routes.
 
 // OpenAPIDocument builds the API schema from the same Huma route registration

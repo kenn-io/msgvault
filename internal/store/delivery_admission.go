@@ -19,7 +19,8 @@ func (e *DeliveryAdmissionError) Unwrap() error { return e.cause }
 // WithDeliveryAdmissionContext is the check a sender runs before each provider
 // attempt. One read snapshot reads every recipient's current policy, then
 // attempt runs once with no lock held. Each recipient is one exact envelope
-// recipient (person and address), including cc and bcc. A revocation committed before the check
+// recipient (person and address), including cc and bcc. Chat routes expand to
+// every current non-owner member in that same snapshot. A revocation committed before the check
 // blocks the attempt; one that lands later blocks the next attempt. The callback
 // is never called on denial.
 func (s *Store) WithDeliveryAdmissionContext(ctx context.Context, recipients []DeliveryPolicyQuery, attempt func(context.Context) error) error {
@@ -41,9 +42,50 @@ func (s *Store) WithDeliveryAdmissionContext(ctx context.Context, recipients []D
 	var denied *DeliveryAdmissionError
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		holders := newDeliveryHolderCache() // dies with the snapshot
+		// Resolve chat membership inside this admission snapshot. Caller-provided
+		// person IDs must never stand in for the current provider-route roster.
+		exact := make([]DeliveryPolicyQuery, 0, len(recipients))
+		seen := make(map[struct {
+			source       int64
+			conversation string
+		}]bool)
 		for _, recipient := range recipients {
+			if recipient.RouteKind != "chat" {
+				exact = append(exact, recipient)
+				continue
+			}
+			if recipient.Endpoint != "" {
+				if denied == nil {
+					denied = blocked("unresolved_recipient", ErrDeliveryPolicyInvalid, nil)
+				}
+				continue
+			}
+			key := struct {
+				source       int64
+				conversation string
+			}{recipient.SourceID, recipient.SourceConversationID}
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			members, err := s.chatRouteRecipientsTx(ctx, tx, recipient.SourceID, recipient.SourceConversationID)
+			if err != nil {
+				if !errors.Is(err, ErrDeliveryPolicyInvalid) {
+					return err
+				}
+				if denied == nil {
+					denied = blocked("unresolved_recipient", err, nil)
+				}
+				continue
+			}
+			if len(members) == 0 && denied == nil {
+				denied = blocked("unresolved_recipient", ErrDeliveryPolicyInvalid, nil)
+			}
+			exact = append(exact, members...)
+		}
+		for _, recipient := range exact {
 			q, err := resolveDeliveryQuery(recipient)
-			if err != nil || recipient.Endpoint == "" {
+			if err != nil || (q.RouteKind != "chat" && recipient.Endpoint == "") {
 				if err == nil {
 					err = ErrDeliveryPolicyInvalid
 				}
