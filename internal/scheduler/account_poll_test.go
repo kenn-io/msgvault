@@ -169,3 +169,19 @@ func TestPollingErrorPreservesCronError(t *testing.T) {
 		<-s.Stop().Done()
 	})
 }
+
+func TestRemoveAccountClearsPollingTimes(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		requirements := require.New(t)
+		checks := assert.New(t)
+		s := New(func(context.Context, string) error { return nil })
+		requirements.NoError(s.AddAccount("a@example.com", "0 * * * *"))
+		s.onAccountTick("a@example.com")
+		requirements.False(s.Status()[0].LastCompleted.IsZero())
+		s.RemoveAccount("a@example.com")
+		requirements.NoError(s.AddAccount("a@example.com", "0 * * * *"))
+		checks.True(s.Status()[0].LastAttempted.IsZero())
+		checks.True(s.Status()[0].LastCompleted.IsZero())
+		<-s.Stop().Done()
+	})
+}

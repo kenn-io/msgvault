@@ -203,6 +203,7 @@ func TestGmailPollAcquisitionAndQuota(t *testing.T) {
 	_, err = st.Store.UpdateSourceSettingsContext(ctx, src.ID, store.SourceSettingsUpdate{Alias: &alias})
 	requirements.NoError(err)
 	cfg.Accounts = []config.AccountSchedule{{Email: alias, Enabled: true, Schedule: "0 * * * *", PollInterval: 15 * time.Second}}
+	invocationFromContext(ctx).pollAccounts = append([]config.AccountSchedule(nil), cfg.Accounts...)
 	requirements.NoError(runEmailPoll(ctx, alias, st.Store, nil, invocationFromContext(ctx)))
 	checks.EqualValues(1, profiles.Load())
 	changed.Store(true)

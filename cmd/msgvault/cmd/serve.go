@@ -172,6 +172,16 @@ func (s serveSchedulers) Stop() context.Context {
 	return ctx
 }
 
+func (state *invocation) configurePolling(accounts []config.AccountSchedule, capture func(string, map[string]any) error) {
+	state.pollAccounts = nil
+	for _, account := range accounts {
+		if account.Enabled && account.PollInterval != 0 && config.ValidatePollingAccounts([]config.AccountSchedule{account}) == nil {
+			state.pollAccounts = append(state.pollAccounts, account)
+		}
+	}
+	state.syncFailures = &telemetry.SyncFailures{Capture: capture}
+}
+
 // newServeSchedulers returns the daemon scheduler, whose jobs hold the
 // operation gate, and one for Beeper media delivery. A media upload can run
 // for minutes, so that job takes the gate only around its Store writes.
@@ -447,7 +457,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create and configure scheduler
-	state.syncFailures = &telemetry.SyncFailures{Capture: telemetryReporter.Capture}
+	state.configurePolling(cfg.Accounts, telemetryReporter.Capture)
 	sched, mediaSched := newServeSchedulers(syncFunc, logger, idleTracker, operationGate, telemetryReporter.Capture)
 	sched.WithAccountPoll(func(ctx context.Context, identifier string) error {
 		ctx = withInvocation(ctx, state)

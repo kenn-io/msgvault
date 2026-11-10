@@ -20,16 +20,12 @@ type pollingTarget struct {
 	err    error
 }
 
-func validatePollingTargets(ctx context.Context, cfg *config.Config, s *store.Store, state *invocation) map[int]pollingTarget {
+func validatePollingTargets(ctx context.Context, accounts []config.AccountSchedule, s *store.Store, state *invocation) map[int]pollingTarget {
 	targets := make(map[int]pollingTarget)
-	seen := make(map[int64]bool)
-	names := make(map[string]bool)
-	for i, account := range cfg.Accounts {
+	seen, names := make(map[int64]bool), make(map[string]bool)
+	catalog := pollingCatalog(ctx, accounts, s, state)
+	for i, account := range accounts {
 		if !account.Enabled || account.PollInterval == 0 {
-			continue
-		}
-		if err := config.ValidatePollingAccounts([]config.AccountSchedule{account}); err != nil {
-			targets[i] = pollingTarget{err: err}
 			continue
 		}
 		key := strings.ToLower(account.Email)
@@ -38,7 +34,7 @@ func validatePollingTargets(ctx context.Context, cfg *config.Config, s *store.St
 			continue
 		}
 		names[key] = true
-		source, err := pollingSource(ctx, account.Email, s, state)
+		source, err := catalog[i].source, catalog[i].err
 		if err != nil {
 			targets[i] = pollingTarget{err: fmt.Errorf("polling account %q: %w", account.Email, err)}
 			continue
@@ -53,14 +49,45 @@ func validatePollingTargets(ctx context.Context, cfg *config.Config, s *store.St
 	return targets
 }
 
+func pollingCatalog(ctx context.Context, accounts []config.AccountSchedule, s *store.Store, state *invocation) map[int]pollingTarget {
+	result := make(map[int]pollingTarget)
+	rows, err := s.ListSourcesContext(ctx, "")
+	index := make(map[string][]*store.Source)
+	for _, row := range rows {
+		keys := map[string]bool{strings.ToLower(row.Identifier): true}
+		if row.DisplayName.Valid {
+			keys[strings.ToLower(row.DisplayName.String)] = true
+		}
+		if row.Alias != "" {
+			keys[strings.ToLower(row.Alias)] = true
+		}
+		for key := range keys {
+			index[key] = append(index[key], row)
+		}
+	}
+	for i, account := range accounts {
+		if err != nil {
+			result[i] = pollingTarget{err: fmt.Errorf("look up polling source: %w", err)}
+			continue
+		}
+		source, matchErr := pollingSourceFromRows(account.Email, index[strings.ToLower(account.Email)], state)
+		result[i] = pollingTarget{source: source, err: matchErr}
+	}
+	return result
+}
+
 func pollingSource(ctx context.Context, identifier string, s *store.Store, state *invocation) (*store.Source, error) {
 	rows, err := s.GetSourcesByIdentifierOrDisplayNameContext(ctx, identifier)
 	if err != nil {
 		return nil, fmt.Errorf("look up polling source: %w", err)
 	}
+	return pollingSourceFromRows(identifier, rows, state)
+}
+
+func pollingSourceFromRows(identifier string, rows []*store.Source, state *invocation) (*store.Source, error) {
 	var exact, named []*store.Source
 	for _, row := range rows {
-		if row.MergedIntoSourceID != 0 || (row.SourceType != sourceTypeGmail && row.SourceType != sourceTypeIMAP) {
+		if row.MergedIntoSourceID != 0 || (!strings.EqualFold(row.Identifier, identifier) && row.SourceType != sourceTypeGmail && row.SourceType != sourceTypeIMAP) {
 			continue
 		}
 		if strings.EqualFold(row.Identifier, identifier) {
@@ -73,7 +100,7 @@ func pollingSource(ctx context.Context, identifier string, s *store.Store, state
 	if len(candidates) == 0 {
 		candidates = named
 	}
-	if len(candidates) == 0 {
+	if len(candidates) == 0 || (len(candidates) == 1 && candidates[0].SourceType != sourceTypeGmail && candidates[0].SourceType != sourceTypeIMAP) {
 		return nil, fmt.Errorf("polling account %q matches no active Gmail or IMAP source", identifier)
 	}
 	if len(candidates) > 1 {
@@ -100,9 +127,9 @@ func pollingSource(ctx context.Context, identifier string, s *store.Store, state
 func runEmailPoll(ctx context.Context, identifier string, s *store.Store, getOAuthMgr func(context.Context, string) (*oauth.Manager, error), state *invocation) error {
 	var src *store.Source
 	var err error
-	for i, account := range state.cfg.Accounts {
+	for i, account := range state.pollAccounts {
 		if account.Enabled && account.PollInterval != 0 && strings.EqualFold(account.Email, identifier) {
-			target := validatePollingTargets(ctx, state.cfg, s, state)[i]
+			target := validatePollingTargets(ctx, state.pollAccounts, s, state)[i]
 			src, err = target.source, target.err
 			break
 		}

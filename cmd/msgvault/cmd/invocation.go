@@ -55,6 +55,7 @@ type invocation struct {
 	logResult *logging.Result
 	sends     *posthog.SendGroup
 
+	pollAccounts       []config.AccountSchedule
 	syncFailures       *telemetry.SyncFailures
 	imapFolderAccounts *sync.Once
 	gmailLimiters      *sync.Map

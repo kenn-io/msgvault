@@ -1661,6 +1661,57 @@ func (s *Server) sourceScheduling(sourceType, identifier string, sources []*stor
 	return sourceScheduleClassification{kind: sourceScheduleNonSchedulable}
 }
 
+// sourceScheduleAccount resolves the scheduler selector with the same exact-match
+// precedence used by source lookup. Ambiguous fallback names stay unscheduled.
+func (s *Server) sourceScheduleAccount(source *store.Source, sources []*store.Source) string {
+	if s.scheduler.IsScheduled(source.Identifier) {
+		return source.Identifier
+	}
+	for _, scheduled := range s.scheduler.Status() {
+		key := scheduled.Email
+		if !strings.EqualFold(key, source.Alias) && (!source.DisplayName.Valid || !strings.EqualFold(key, source.DisplayName.String)) {
+			continue
+		}
+		matches := 0
+		for _, candidate := range sources {
+			if candidate.MergedIntoSourceID != 0 {
+				continue
+			}
+			if strings.EqualFold(candidate.Identifier, key) {
+				matches = -1
+				break
+			}
+			if strings.EqualFold(candidate.Alias, key) || candidate.DisplayName.Valid && strings.EqualFold(candidate.DisplayName.String, key) {
+				matches++
+			}
+		}
+		if matches == 1 {
+			return key
+		}
+	}
+	return source.Identifier
+}
+
+func (s *Server) scheduledSourceAccount(ctx context.Context, sourceType, identifier string) string {
+	if s.scheduler.IsScheduled(identifier) {
+		return identifier
+	}
+	statusStore, ok := s.store.(SourceStatusStore)
+	if !ok {
+		return identifier
+	}
+	sources, err := statusStore.ListSourcesContext(ctx, "")
+	if err != nil {
+		return identifier
+	}
+	for _, source := range sources {
+		if source.SourceType == sourceType && source.Identifier == identifier {
+			return s.sourceScheduleAccount(source, sources)
+		}
+	}
+	return identifier
+}
+
 func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore, source *store.Source, sources []*store.Source) (SourceStatus, error) {
 	status := SourceStatus{
 		ID:         source.ID,
@@ -1690,12 +1741,12 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 		case sourceScheduleGeneric:
 			schedulerRunning = s.applyGenericJobStatus(&status, scheduling.jobName)
 		case sourceScheduleAccount:
-			status.Scheduled = s.scheduler.IsScheduled(source.Identifier)
+			account := s.sourceScheduleAccount(source, sources)
 			for _, scheduled := range s.scheduler.Status() {
-				if scheduled.Email != source.Identifier {
+				if scheduled.Email != account {
 					continue
 				}
-				status.Schedule = scheduled.Schedule
+				status.Scheduled, status.Schedule = true, scheduled.Schedule
 				status.SchedulerLastError = scheduled.LastError
 				schedulerRunning = scheduled.Running
 				if !scheduled.NextRun.IsZero() {
@@ -1900,7 +1951,7 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	case sourceScheduleAccount:
-		if !s.scheduler.IsScheduled(account) {
+		if account = s.scheduledSourceAccount(r.Context(), sourceType, account); !s.scheduler.IsScheduled(account) {
 			writeError(w, http.StatusNotFound, "not_found", "Account is not scheduled: "+account)
 			return
 		}

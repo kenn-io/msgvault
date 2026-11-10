@@ -1,7 +1,10 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -65,9 +68,9 @@ func TestPollingTargetsRejectDuplicateSource(t *testing.T) {
 	cfg.Accounts = []config.AccountSchedule{{Email: source.Identifier, Enabled: true, Schedule: "0 * * * *", PollInterval: 15 * time.Second}}
 	requirements.NoError(st.UpdateSourceDisplayName(source.ID, "mailbox@example.test"))
 	cfg.Accounts = append(cfg.Accounts, config.AccountSchedule{Email: "mailbox@example.test", Enabled: true, Schedule: "0 * * * *", PollInterval: 15 * time.Second})
-	requirements.ErrorContains(validatePollingTargets(t.Context(), cfg, st, state)[1].err, "already has a polling account")
+	requirements.ErrorContains(validatePollingTargets(t.Context(), cfg.Accounts, st, state)[1].err, "already has a polling account")
 	cfg.Accounts = append([]config.AccountSchedule{{Email: "missing@example.test", Enabled: true, Schedule: "0 * * * *", PollInterval: 15 * time.Second}}, cfg.Accounts...)
-	targets := validatePollingTargets(t.Context(), cfg, st, state)
+	targets := validatePollingTargets(t.Context(), cfg.Accounts, st, state)
 	requirements.ErrorContains(targets[0].err, "no active")
 	requirements.NoError(targets[1].err)
 	checks.Equal(source.ID, targets[1].source.ID)
@@ -109,7 +112,7 @@ func TestPollingSourceRecoversOnNextAttempt(t *testing.T) {
 		checks := assert.New(t)
 		calls := 0
 		sched := scheduler.New(func(context.Context, string) error { return nil }).WithAccountPoll(func(ctx context.Context, _ string) error {
-			target := validatePollingTargets(ctx, cfg, st, state)[0]
+			target := validatePollingTargets(ctx, cfg.Accounts, st, state)[0]
 			if target.err != nil {
 				return target.err
 			}
@@ -136,4 +139,65 @@ func TestPollingSourceRecoversOnNextAttempt(t *testing.T) {
 		checks.Contains(sched.Status()[0].LastError, "folder filter")
 		<-sched.Stop().Done()
 	})
+}
+
+func TestPollingExactUnsupportedSourceWins(t *testing.T) {
+	requirements := require.New(t)
+	st := storetest.New(t).Store
+	gmail, err := st.GetOrCreateSource(sourceTypeGmail, "gmail@example.test")
+	requirements.NoError(err)
+	requirements.NoError(st.UpdateSourceDisplayName(gmail.ID, "other@example.test"))
+	_, err = st.GetOrCreateSource(sourceTypeMSMail, "other@example.test")
+	requirements.NoError(err)
+	state := invocationFromContext(testInvocationContext(t.Context(), config.NewDefaultConfig(), invocationOptions{}))
+	_, err = pollingSource(t.Context(), "other@example.test", st, state)
+	requirements.Error(err)
+	accounts := []config.AccountSchedule{{Email: "other@example.test", Enabled: true, PollInterval: 15 * time.Second}}
+	requirements.Error(validatePollingTargets(t.Context(), accounts, st, state)[0].err)
+}
+
+func TestPollingWhileAccountsChange(t *testing.T) {
+	st := storetest.New(t).Store
+	cfg := config.NewDefaultConfig()
+	cfg.Accounts = []config.AccountSchedule{{Email: "missing@example.test", Enabled: true, Schedule: "0 * * * *", PollInterval: 15 * time.Second}}
+	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	invocationFromContext(ctx).configurePolling(cfg.Accounts, nil)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 100 {
+			cfg.Accounts = append(cfg.Accounts, config.AccountSchedule{})
+		}
+	}()
+	for range 100 {
+		_ = runEmailPoll(ctx, "missing@example.test", st, nil, invocationFromContext(ctx))
+	}
+	<-done
+}
+
+func TestPollingTargetsUseOneCatalogQuery(t *testing.T) {
+	requirements := require.New(t)
+	st := storetest.New(t).Store
+	cfg := config.NewDefaultConfig()
+	for _, email := range []string{"one@example.test", "two@example.test"} {
+		_, err := st.GetOrCreateSource(sourceTypeGmail, email)
+		requirements.NoError(err)
+		cfg.Accounts = append(cfg.Accounts, config.AccountSchedule{Email: email, Enabled: true, Schedule: "0 * * * *", PollInterval: 15 * time.Second})
+	}
+	state := invocationFromContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+	var logs bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	store.ConfigureSQLLogging(store.SQLLogOptions{FullTrace: true})
+	t.Cleanup(func() { store.ConfigureSQLLogging(store.SQLLogOptions{}); slog.SetDefault(old) })
+	targets := validatePollingTargets(t.Context(), cfg.Accounts, st, state)
+	requirements.NoError(targets[0].err)
+	requirements.NoError(targets[1].err)
+	count := 0
+	for line := range strings.SplitSeq(logs.String(), "\n") {
+		if strings.Contains(line, "FROM sources") {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count)
 }
