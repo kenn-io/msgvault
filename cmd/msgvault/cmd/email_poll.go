@@ -8,6 +8,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
@@ -15,9 +16,6 @@ import (
 )
 
 func validatePollingTargets(ctx context.Context, cfg *config.Config, s *store.Store, state *invocation) error {
-	if err := config.ValidatePollingAccounts(cfg.Accounts); err != nil {
-		return err
-	}
 	seen := make(map[int64]bool)
 	for _, account := range cfg.Accounts {
 		if !account.Enabled || account.PollInterval == 0 {
@@ -62,8 +60,19 @@ func pollingSource(ctx context.Context, identifier string, s *store.Store, state
 		return nil, fmt.Errorf("polling account %q matches multiple sources", identifier)
 	}
 	source := candidates[0]
-	if source.SourceType == sourceTypeIMAP && len(parseFolderFilter(state.cfg.Sync.IMAPSkipFolders[source.Identifier])) != 0 {
-		return nil, fmt.Errorf("polling account %q has an IMAP folder filter", identifier)
+	if source.SourceType == sourceTypeIMAP {
+		if len(parseFolderFilter(state.cfg.Sync.IMAPSkipFolders[source.Identifier])) != 0 {
+			return nil, fmt.Errorf("polling account %q has an IMAP folder filter", identifier)
+		}
+		if source.SyncConfig.Valid && source.SyncConfig.String != "" {
+			cfg, err := imap.ConfigFromJSON(source.SyncConfig.String)
+			if err != nil {
+				return nil, fmt.Errorf("polling account %q: %w", identifier, err)
+			}
+			if len(cfg.Folders) != 0 {
+				return nil, fmt.Errorf("polling account %q has an IMAP folder filter", identifier)
+			}
+		}
 	}
 	return source, nil
 }

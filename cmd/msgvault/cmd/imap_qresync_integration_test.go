@@ -1786,6 +1786,12 @@ func TestIMAPPollQresyncAppendAndFlags(t *testing.T) {
 	originalRebuild := rebuildCacheAfterScheduledSourceRun
 	rebuildCacheAfterScheduledSourceRun = func(context.Context, string) error { return nil }
 	t.Cleanup(func() { rebuildCacheAfterScheduledSourceRun = originalRebuild })
+	ic.Folders = []string{"INBOX"}
+	filtered, err := ic.ToJSON()
+	require.NoError(t, err)
+	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), source.ID, filtered))
+	assert.ErrorContains(t, runEmailPoll(ctx, ic.Identifier(), st, nil, invocationFromContext(ctx)), "folder filter")
+	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), source.ID, blob))
 	require.NoError(t, runEmailPoll(ctx, ic.Identifier(), st, nil, invocationFromContext(ctx)))
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET is_read = ? WHERE source_id = ? AND source_message_id = ?`), false, source.ID, "INBOX|1")
 	require.NoError(t, err)

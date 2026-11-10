@@ -304,10 +304,11 @@ func TestRunServeStartsReadOnlyWithoutOAuthConfig(t *testing.T) {
 func TestRunServeRejectsInvalidPollingTarget(t *testing.T) {
 	for _, tc := range []struct {
 		name, sourceType, identifier, want string
-		filtered                           bool
+		filtered, allowList                bool
 	}{
-		{"unsupported", sourceTypeMSMail, "user@example.test", "no active", false},
-		{"filtered", sourceTypeIMAP, "imaps://user@example.test", "folder filter", true},
+		{"unsupported", sourceTypeMSMail, "user@example.test", "no active", false, false},
+		{"filtered", sourceTypeIMAP, "imaps://user@example.test", "folder filter", true, false},
+		{"saved folders", sourceTypeIMAP, "imaps://user@example.test", "folder filter", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := lifecycleTestConfig(t.TempDir())
@@ -318,8 +319,11 @@ func TestRunServeRejectsInvalidPollingTarget(t *testing.T) {
 				cfg.Sync.IMAPSkipFolders = map[string][]string{tc.identifier: {"Archive"}}
 			}
 			st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
-			_, err := st.GetOrCreateSource(tc.sourceType, tc.identifier)
+			source, err := st.GetOrCreateSource(tc.sourceType, tc.identifier)
 			require.NoError(t, err)
+			if tc.allowList {
+				require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), source.ID, `{"folders":["INBOX"]}`))
+			}
 			require.NoError(t, st.Close())
 			cmd := &cobra.Command{Use: serveCmd.Use}
 			cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
