@@ -725,8 +725,11 @@ func (w *Worker) scanForEmbedding(ctx context.Context, gen int64, afterID int64)
 }
 
 func (w *Worker) batchSize() int {
-	size := w.deps.BatchSize
-	if client, ok := w.deps.Client.(interface{ BatchLimit() int }); ok {
+	return clientBatchSize(w.deps.Client, w.deps.BatchSize)
+}
+
+func clientBatchSize(client any, size int) int {
+	if client, ok := client.(interface{ BatchLimit() int }); ok {
 		if limit := client.BatchLimit(); limit > 0 {
 			size = min(size, limit)
 		}

@@ -131,12 +131,12 @@ func (w *PersonWorker) runOnce(
 		}
 	}
 	var runErr error
-	for start := 0; start < len(changed); start += w.deps.BatchSize {
+	for start := 0; start < len(changed); {
 		if jobctx.StopRequested(ctx) {
 			result.PersonsPending = true
 			return result, errors.Join(runErr, ctx.Err())
 		}
-		end := min(start+w.deps.BatchSize, len(changed))
+		end := min(start+clientBatchSize(w.deps.Client, w.deps.BatchSize), len(changed))
 		batch := changed[start:end]
 		result.Claimed += len(batch)
 		for _, document := range batch {
@@ -176,6 +176,7 @@ func (w *PersonWorker) runOnce(
 			}
 		}
 		pass.checkpoint(ctx, checkpointRunCounters(result))
+		start = end
 	}
 
 	current := documents
