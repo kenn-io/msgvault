@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -502,9 +501,9 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 	}
 	var multimodalAPIKey string
 	if vecCfg.Multimodal.Enabled {
-		multimodalAPIKey, _, err = credentialSnapshot.Resolve(
-			providercredentials.VectorMultimodalID,
-			vecCfg.Multimodal.Endpoint, vecCfg.Multimodal.APIKeyEnv, os.LookupEnv,
+		multimodalAPIKey, err = resolveProviderCredentialFromSnapshot(
+			credentialSnapshot, providercredentials.VectorMultimodalID,
+			vecCfg.Multimodal.Endpoint, vecCfg.Multimodal.APIKeyEnv,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("resolve visual embedding credential: %w", err)

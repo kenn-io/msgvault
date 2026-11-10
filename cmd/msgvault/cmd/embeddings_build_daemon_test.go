@@ -111,7 +111,7 @@ func TestManagedEmbeddingsBuildYieldsToScheduledSync(t *testing.T) {
 	}
 	require.NoError(t, sched.TriggerSync("archive@example.test", false))
 	// The scheduler asks cooperative jobs to yield after its one-minute grace.
-	time.Sleep(65 * time.Second)
+	time.Sleep(65 * time.Second) //nolint:kennlint // sleeptest: wait for the scheduler's one-minute grace
 	close(releaseFirst)
 	select {
 	case <-syncStarted:

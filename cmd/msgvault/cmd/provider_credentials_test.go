@@ -63,26 +63,26 @@ func TestVectorProviderCredentialResolutionUsesOneStartupSnapshot(t *testing.T) 
 	startup, err := providercredentials.Read(cfg.TokensDir())
 	requirements.NoError(err)
 
-	first, _, err := startup.Resolve(
+	first, err := resolveProviderCredentialFromSnapshot(startup,
 		providercredentials.VectorEmbeddingsID, cfg.Vector.Embeddings.Endpoint,
-		cfg.Vector.Embeddings.APIKeyEnv, os.LookupEnv)
+		cfg.Vector.Embeddings.APIKeyEnv)
 	requirements.NoError(err)
 	assertions.Equal("stored-first", first)
 
 	_, err = providercredentials.Put(cfg.TokensDir(), firstStore.ETag,
 		providercredentials.VectorEmbeddingsID, cfg.Vector.Embeddings.Endpoint, "stored-second")
 	requirements.NoError(err)
-	stillFirst, _, err := startup.Resolve(
+	stillFirst, err := resolveProviderCredentialFromSnapshot(startup,
 		providercredentials.VectorEmbeddingsID, cfg.Vector.Embeddings.Endpoint,
-		cfg.Vector.Embeddings.APIKeyEnv, os.LookupEnv)
+		cfg.Vector.Embeddings.APIKeyEnv)
 	requirements.NoError(err)
 	assertions.Equal("stored-first", stillFirst)
 
 	restarted, err := providercredentials.Read(cfg.TokensDir())
 	requirements.NoError(err)
-	second, _, err := restarted.Resolve(
+	second, err := resolveProviderCredentialFromSnapshot(restarted,
 		providercredentials.VectorEmbeddingsID, cfg.Vector.Embeddings.Endpoint,
-		cfg.Vector.Embeddings.APIKeyEnv, os.LookupEnv)
+		cfg.Vector.Embeddings.APIKeyEnv)
 	requirements.NoError(err)
 	assertions.Equal("stored-second", second)
 }

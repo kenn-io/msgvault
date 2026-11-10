@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -179,9 +178,9 @@ func TestNewVisualRuntimeUsesStoredCredentialSnapshotAndRejectsRedirectReplay(t 
 	require.NoError(t, err)
 	startup, err := providercredentials.Read(cfg.TokensDir())
 	require.NoError(t, err)
-	apiKey, _, err := startup.Resolve(
+	apiKey, err := resolveProviderCredentialFromSnapshot(startup,
 		providercredentials.VectorMultimodalID, cfg.Vector.Multimodal.Endpoint,
-		cfg.Vector.Multimodal.APIKeyEnv, os.LookupEnv)
+		cfg.Vector.Multimodal.APIKeyEnv)
 	require.NoError(t, err)
 	_, err = providercredentials.Put(cfg.TokensDir(), stored.ETag,
 		providercredentials.VectorMultimodalID, cfg.Vector.Multimodal.Endpoint, "stored-after-startup")

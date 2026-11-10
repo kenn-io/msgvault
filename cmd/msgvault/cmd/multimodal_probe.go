@@ -65,9 +65,9 @@ capability profile.`,
 		if err != nil {
 			return fmt.Errorf("load provider credentials: %w", err)
 		}
-		apiKey, _, err := credentials.Resolve(
-			providercredentials.VectorMultimodalID,
-			cfg.Vector.Multimodal.Endpoint, cfg.Vector.Multimodal.APIKeyEnv, os.LookupEnv,
+		apiKey, err := resolveProviderCredentialFromSnapshot(
+			credentials, providercredentials.VectorMultimodalID,
+			cfg.Vector.Multimodal.Endpoint, cfg.Vector.Multimodal.APIKeyEnv,
 		)
 		if err != nil {
 			return fmt.Errorf("resolve visual embedding credential: %w", err)

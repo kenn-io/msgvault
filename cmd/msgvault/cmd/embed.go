@@ -154,8 +154,8 @@ func runEmbeddingsBuildHTTP(cmd *cobra.Command, args []string) error {
 }
 
 // embeddingsForwardEnv carries the caller's embedding API key into the
-// daemon-spawned subprocess, which otherwise sees only the daemon's
-// environment: a key exported in the user's shell would silently not apply.
+// daemon's request-local credential lookup, which falls back to the daemon's
+// environment when the caller did not export the key.
 
 func embeddingsForwardEnv(state *invocation) map[string]string {
 	state = invocationState(context.Background(), state)

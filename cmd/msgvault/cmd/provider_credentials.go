@@ -22,6 +22,17 @@ func providerHTTPClientWithoutRedirects(client *http.Client) *http.Client {
 	return &isolated
 }
 
+func resolveProviderCredentialFromSnapshot(
+	snapshot providercredentials.Snapshot,
+	id, endpoint, environment string,
+) (string, error) {
+	credential, _, err := snapshot.Resolve(id, endpoint, environment, os.LookupEnv)
+	if err != nil {
+		return "", err
+	}
+	return credential, nil
+}
+
 func personEnrichmentProviderCredentialLookup(
 	cfg *config.Config,
 ) personenrichment.ProviderCredentialLookup {
