@@ -94,15 +94,10 @@ func (s *Store) meetingRowsForKey(ctx context.Context, key meetingLinkKey, budge
 	return s.meetingEventRows(ctx, `e.ical_uid = ? AND (e.kind <> 'exception' OR (`+window+`))`, append([]any{key[2]}, args...), budget)
 }
 
-func (s *Store) meetingRelatedEventPredicate(sourceID int64, id string, at time.Time) (string, []any) {
+func (s *Store) meetingRelatedEventRows(ctx context.Context, sourceID int64, id string, at time.Time, budget *int) ([]CalendarEventRow, error) {
 	window, args := calendarExceptionWindow(s.dialect, at.Add(-calendarCandidateMargin), at.Add(time.Second+calendarCandidateMargin))
 	predicate := `m.source_id = ? AND (e.provider_event_id = ? OR e.series_provider_id = ?) AND (e.kind <> 'exception' OR (` + window + `))`
-	return predicate, append([]any{sourceID, id, id}, args...)
-}
-
-func (s *Store) meetingRelatedEventRows(ctx context.Context, sourceID int64, id string, at time.Time, budget *int) ([]CalendarEventRow, error) {
-	predicate, args := s.meetingRelatedEventPredicate(sourceID, id, at)
-	return s.meetingEventRows(ctx, predicate, args, budget)
+	return s.meetingEventRows(ctx, predicate, append([]any{sourceID, id, id}, args...), budget)
 }
 
 // Include each candidate's series and exceptions in the shared expansion.
