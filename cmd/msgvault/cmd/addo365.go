@@ -225,7 +225,7 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Identifier: %s\n", identifier)
 	fmt.Println()
 	fmt.Println("You can now run:")
-	fmt.Printf("  msgvault sync-full %s\n", email)
+	fmt.Printf("  msgvault sync-full --source-id %d\n", source.ID)
 
 	return nil
 }
@@ -323,7 +323,7 @@ func runAddO365GraphLocal(cmd *cobra.Command, email string, mailWrite bool) erro
 	fmt.Printf("  Email: %s\n", email)
 	fmt.Println()
 	fmt.Println("You can now run:")
-	fmt.Printf("  msgvault sync %s\n", email)
+	fmt.Printf("  msgvault sync --source-id %d\n", source.ID)
 	return nil
 }
 
