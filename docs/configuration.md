@@ -2370,9 +2370,12 @@ Scheduled projection commits at most ten batches per pass. When other
 scheduled work has waited for a minute, it stops after its current batch. A
 pass always stops at two minutes. A pass with committed progress releases the
 operation gate and resumes behind queued work without waiting for the next
-cron tick. Reaching the two-minute limit before any batch commits records an
-error and waits for the next scheduled or manual trigger, avoiding repeated
-retries of the same batch.
+cron tick while identity revisions stay stable. If a pass observes an identity
+change since the continuation chain began, it finishes that bounded pass and
+defers clean continuation until the next scheduled or manual trigger. Reaching
+the two-minute limit before any batch commits records an error and waits for
+the next scheduled or manual trigger, avoiding repeated retries of the same
+batch.
 
 Identity reconciliation and timezone or `max_direct_counterparts` changes save
 their progress in the archive. A new identity revision restarts identity
