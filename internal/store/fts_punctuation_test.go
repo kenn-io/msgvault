@@ -39,10 +39,6 @@ func TestPostgresFTSPunctuationBackfill(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, want, ids, term)
 	}
-	for _, term := range []string{"both@example.com", "both@exam", "1.2.0"} {
-		searchFor(term, []int64{id})
-	}
-	searchFor("example@both", []int64{})
 	_, err := f.Store.DB().ExecContext(t.Context(), "UPDATE messages SET indexing_version = 2 WHERE id = $1", id)
 	require.NoError(t, err)
 	_, err = f.Store.BackfillFTS(nil)

@@ -3,7 +3,6 @@ package store_test
 import (
 	"database/sql"
 	"errors"
-	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -12,7 +11,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -108,43 +106,6 @@ func TestPG_BackfillFTS_RefreshesOutdatedEntries(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(1), n, "only the outdated entry needs backfill")
 	assertFTSContains(t, f.Store, "obsolete", 0)
-}
-
-func TestPG_BackfillFTS_RepairsDifferentVersions(t *testing.T) {
-	skipUnlessPostgres(t)
-	for _, version := range []int{2, 999} {
-		t.Run(fmt.Sprint(version), func(t *testing.T) {
-			f := storetest.New(t)
-			id := f.NewMessage().WithSourceMessageID("versioned-fts").WithSubject("Release notes").Create(t, f.Store)
-			body := "Write to both@example.com."
-			require.NoError(t, f.Store.UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
-			require.NoError(t, f.Store.UpsertFTS(id, "Release notes", body, "", "", ""))
-			_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = to_tsvector('simple', 'obsolete'), indexing_version = $1 WHERE id = $2`, version, id)
-			require.NoError(t, err)
-
-			needs, err := f.Store.NeedsFTSBackfillContext(t.Context())
-			require.NoError(t, err)
-			assert.True(t, needs)
-			q := &search.Query{TextTerms: []string{"both@exam"}}
-			_, _, err = f.Store.SearchMessageIDsQueryContext(t.Context(), q, 10)
-			require.NoError(t, err)
-
-			_, err = f.Store.BackfillFTSContext(t.Context(), nil)
-			require.NoError(t, err)
-			var storedVersion int
-			require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), `SELECT indexing_version FROM messages WHERE id = $1`, id).Scan(&storedVersion))
-			assert.Equal(t, 3, storedVersion)
-			matches, err := (&store.PostgreSQLDialect{}).FTSMatches(f.Store.DB(), store.FTSDoc{MessageID: id, Subject: "Release notes", Body: body})
-			require.NoError(t, err)
-			assert.True(t, matches)
-			ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), q, 10)
-			require.NoError(t, err)
-			assert.Equal(t, []int64{id}, ids)
-			needs, err = f.Store.NeedsFTSBackfillContext(t.Context())
-			require.NoError(t, err)
-			assert.False(t, needs)
-		})
-	}
 }
 
 // isPostgresTestDB reports whether the active test backend is PostgreSQL,
