@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"slices"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -47,12 +46,7 @@ func (s *Server) handleCalendarEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	if s.requestAuthentication(r).Grant != nil {
-		ids := agentReadSourceIDs(r)
-		if sourcescope.Restricted(ctx) {
-			allowed := sourcescope.IDs(ctx)
-			ids = slices.DeleteFunc(slices.Clone(ids), func(id int64) bool { return !slices.Contains(allowed, id) })
-		}
-		ctx = sourcescope.WithSourceIDs(ctx, ids)
+		ctx = sourcescope.WithSourceIDs(ctx, agentReadSourceIDs(r))
 	}
 	page, err := backend.ListCalendarOccurrencesContext(ctx, from, to)
 	if err != nil {
