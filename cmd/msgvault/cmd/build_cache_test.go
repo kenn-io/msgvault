@@ -29,15 +29,8 @@ import (
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
-
-func initCacheTestSchema(t *testing.T, path string) *store.Store {
-	t.Helper()
-	st, err := store.OpenForTest(path)
-	require.NoError(t, err)
-	require.NoError(t, st.InitSchema())
-	return st
-}
 
 func TestDaemonBuildCacheChildUsesQuietConsolePolicy(t *testing.T) {
 	t.Setenv(daemonCLISubprocessEnv, "")
@@ -89,7 +82,7 @@ func setupTestSQLite(t *testing.T) string {
 	tmpDir := t.TempDir()
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	st := initCacheTestSchema(t, dbPath)
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	defer func() { require.NoError(t, st.Close()) }()
 	db := st.DB()
 
@@ -2838,7 +2831,7 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "empty.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	require.NoError(initCacheTestSchema(t, dbPath).Close())
+	require.NoError(testutil.NewSQLiteTestStoreAt(t, dbPath).Close())
 
 	result, err := buildCache(dbPath, analyticsDir, false)
 	require.NoError(err, "buildCache on empty db")
@@ -3073,7 +3066,7 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 	tmpDir := t.TempDir()
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	st := initCacheTestSchema(t, dbPath)
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	defer func() { require.NoError(t, st.Close()) }()
 	db := st.DB()
 

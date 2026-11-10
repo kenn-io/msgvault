@@ -930,5 +930,5 @@ func quoteIdentitySQLPath(value string) string {
 func (e *DuckDBEngine) withMeetingKeysSQL(relation, messageID string) string {
 	return `SELECT p.*, ` + identityindex.MeetingKeysSQL("mk", "p.message_type", "p."+messageID) + ` AS meeting_keys
     FROM ` + relation + ` p
-    LEFT JOIN (SELECT message_id, list(meeting_key) AS meeting_keys FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(datasetMeetingKeys)) + `') GROUP BY message_id) mk ON mk.message_id = p.` + messageID
+    LEFT JOIN ` + identityindex.GroupedMeetingKeysSQL(e.parquetPath(datasetMeetingKeys)) + ` mk ON mk.message_id = p.` + messageID
 }

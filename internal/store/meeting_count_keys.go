@@ -167,5 +167,5 @@ func (s *Store) unmatchedMeetingCountKey(ctx context.Context, r reboundReader, k
 }
 
 func unresolvedMeetingCount(err error) bool {
-	return errors.Is(err, ErrQueryTooBroad) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) || errors.Is(err, sql.ErrNoRows)
+	return errors.Is(err, calrecur.ErrUnsupportedRecurrence) || errors.Is(err, sql.ErrNoRows)
 }

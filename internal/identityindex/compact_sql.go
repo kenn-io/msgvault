@@ -18,7 +18,7 @@ WITH logical_people AS (
 	SELECT l.entry_key, l.source_id, l.source_type, l.occurred_at, l.message_type, l.attachment_count,
 	       l.canonical_id, ` + MeetingKeysSQL("mk", "l.message_type", "l.anchor_message_id") + ` AS meeting_keys
 	FROM ` + logicalBuildRelation + ` l
-	LEFT JOIN (SELECT message_id, list(meeting_key) AS meeting_keys FROM read_parquet('` + quoteSQLString(keys) + `') GROUP BY message_id) mk ON mk.message_id = l.anchor_message_id
+	LEFT JOIN ` + GroupedMeetingKeysSQL(keys) + ` mk ON mk.message_id = l.anchor_message_id
 	WHERE relation_kind = 1
 ), people_totals AS (
 	SELECT canonical_id,
@@ -370,6 +370,11 @@ ORDER BY m.canonical_id`,
 		quoteSQLString(path("participant_identifiers")),
 		quoteSQLString(path("owner_participants")),
 	)
+}
+
+// GroupedMeetingKeysSQL collects occurrence keys for each transcript.
+func GroupedMeetingKeysSQL(path string) string {
+	return `(SELECT message_id, list(meeting_key) AS meeting_keys FROM read_parquet('` + quoteSQLString(path) + `') GROUP BY message_id)`
 }
 
 // MeetingKeysSQL collects each occurrence without multiplying activity rows.

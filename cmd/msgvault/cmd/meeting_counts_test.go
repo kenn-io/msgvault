@@ -181,3 +181,32 @@ func readCachedMeetingKeys(t *testing.T, cache string) map[int64][]string {
 	requirements.NoError(rows.Err())
 	return keys
 }
+
+func TestMeetingCountBuildKeepsCacheWhenEvidenceTooBroad(t *testing.T) {
+	f := newMeetingCountArchive(t, time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC))
+	for _, id := range []string{"first-note", "second-note"} {
+		f.persist(t, "first", id, "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"crowded@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
+	}
+	_, err := buildCache(f.path, f.cache, true)
+	require.NoError(t, err)
+	before := readCachedMeetingKeys(t, f.cache)
+	require.Len(t, before, 2)
+	meetingCount := func() int64 {
+		engine, err := query.NewDuckDBEngine(f.cache, f.path, f.st.DB())
+		require.NoError(t, err)
+		defer func() { require.NoError(t, engine.Close()) }()
+		person, err := engine.GetPerson(t.Context(), f.person, query.Context{}, nil)
+		require.NoError(t, err)
+		require.NotNil(t, person)
+		return person.MeetingCount
+	}
+	assert.Equal(t, int64(1), meetingCount())
+	for i := range 201 {
+		id := fmt.Sprintf("event-%d", i)
+		f.persist(t, "calendar", id, "gcal_json", fmt.Sprintf(`{"id":%q,"iCalUID":"crowded@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`, id))
+	}
+	_, err = buildCache(f.path, f.cache, true)
+	require.ErrorIs(t, err, store.ErrQueryTooBroad)
+	assert.Equal(t, before, readCachedMeetingKeys(t, f.cache))
+	assert.Equal(t, int64(1), meetingCount())
+}

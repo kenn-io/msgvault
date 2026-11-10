@@ -189,3 +189,14 @@ func TestMeetingCountKeysGoogleAcrossMailboxes(t *testing.T) {
 	require.NoError(err)
 	assert.Equal([]string{"uid:single@example.org/"}, keys[note])
 }
+
+func TestMeetingCountKeysRejectsBroadEvidence(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	for i := range 201 {
+		id := fmt.Sprintf("copy-%d", i)
+		calendarFixture(t, st, id, singleLinkRaw(id, "crowded@example.org"))
+	}
+	projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"crowded@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
+	_, err := st.MeetingCountKeysContext(t.Context())
+	require.ErrorIs(t, err, ErrQueryTooBroad)
+}
