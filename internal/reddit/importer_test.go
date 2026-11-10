@@ -46,8 +46,6 @@ func TestImportFictionalExport(t *testing.T) {
 	require.NoError(json.Unmarshal(raw, &evidence))
 	assert.Equal("chat_history.csv", evidence.Filename)
 	assert.Equal("lantern chat\nsecond line", evidence.Columns["message"])
-	assert.Equal([]string{"u/Fictional_Owner"}, evidence.AccountEvidence)
-	assert.Equal([]string{"2026-06-01 01:02:03 UTC"}, evidence.ExportTimeEvidence)
 	canonical, err := json.Marshal(evidence, json.Deterministic(true))
 	require.NoError(err)
 	assert.Equal(string(canonical), string(raw))
@@ -66,6 +64,12 @@ func TestImportFictionalExport(t *testing.T) {
 	chats, err := st.SearchChatsContext(t.Context(), store.ChatDiscoveryQuery{Query: "Invented"})
 	require.NoError(err)
 	assert.Len(chats.Results, 2, "imported Chat and PM conversations reach discovery")
+	allChats, err := st.SearchChatsContext(t.Context(), store.ChatDiscoveryQuery{Query: "fictional_garden"})
+	require.NoError(err)
+	assert.Len(allChats.Results, 2)
+	for _, chat := range allChats.Results {
+		assert.NotContains(chat.SourceConversationID, "subreddit:")
+	}
 }
 
 func TestImportSchemasAndOwner(t *testing.T) {
@@ -109,7 +113,7 @@ func TestImportReadLimitsAndSymlinks(t *testing.T) {
 	require.NoError(os.Remove(filepath.Join(root, "posts.csv")))
 	f, err := os.Create(filepath.Join(root, "posts.csv"))
 	require.NoError(err)
-	require.NoError(f.Truncate(maxCSVBytes+1))
+	require.NoError(f.Truncate(maxCSVBytes + 1))
 	require.NoError(f.Close())
 	_, err = Import(t.Context(), testutil.NewTestStore(t), ImportOptions{RootDir: root, Me: "fictional_owner"})
 	require.ErrorContains(err, "256 MiB")
@@ -313,7 +317,36 @@ func TestImportContentLinkCoverage(t *testing.T) {
 	}
 }
 
-func TestImportChatGroupingRemainsUnknown(t *testing.T) {
+func TestImportCommentMediaInBodyAndSearch(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "comments.csv"), []byte("id,body,media\none,lantern,https://example.com/picture.png\n"), 0600))
+	st := testutil.NewTestStore(t)
+	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
+	require.NoError(t, err)
+	var id int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages WHERE source_message_id='comment:one'").Scan(&id))
+	body, err := st.GetMessageBodyText(t.Context(), id)
+	require.NoError(t, err)
+	assert.Contains(t, body, "https://example.com/picture.png")
+	if !st.IsPostgreSQL() {
+		results, err := query.NewEngine(st.DB(), false).Search(t.Context(), search.Parse("picture"), 20, 0)
+		require.NoError(t, err)
+		assert.Len(t, results, 1)
+	}
+}
+
+func TestImportPreservesHandleDisplayCase(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "chat_history.csv"), []byte("message_id,message,username\none,hello,u/Fictional_Peer\n"), 0600))
+	st := testutil.NewTestStore(t)
+	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
+	require.NoError(t, err)
+	var name string
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT p.display_name FROM participants p JOIN participant_identifiers pi ON pi.participant_id = p.id WHERE pi.identifier_value = 'fictional_peer'").Scan(&name))
+	assert.Equal(t, "Fictional_Peer", name)
+}
+
+func TestImportChatGrouping(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	root := t.TempDir()
@@ -323,7 +356,7 @@ func TestImportChatGroupingRemainsUnknown(t *testing.T) {
 	require.NoError(err)
 	var kind, title string
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COALESCE(conversation_type,''),title FROM conversations").Scan(&kind, &title))
-	assert.Empty(kind)
+	assert.Equal("chat", kind)
 	assert.Equal("Fictional garden", title)
 	var id int64
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages WHERE source_message_id='chat:one'").Scan(&id))
@@ -348,7 +381,7 @@ func TestImportFatalSchemaRetainsEarlierFiles(t *testing.T) {
 	assert.Equal(1, n)
 }
 
-func TestImportPMConversationKindStaysUnknown(t *testing.T) {
+func TestImportPMConversationKind(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	root := t.TempDir()
@@ -359,7 +392,7 @@ func TestImportPMConversationKindStaysUnknown(t *testing.T) {
 	require.NoError(err)
 	var kind string
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT conversation_type FROM conversations WHERE source_conversation_id='pm:thread:two-people'").Scan(&kind))
-	assert.Empty(kind)
+	assert.Equal("chat", kind)
 	var n int
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM participant_identifiers WHERE identifier_type='reddit' AND identifier_value IN ('r/fictional_garden','/r/fictional_garden')").Scan(&n))
 	assert.Zero(n)

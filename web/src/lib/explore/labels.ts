@@ -80,6 +80,7 @@ const KNOWN_MIME: Record<string, string> = {
   'text/plain': 'Text',
   'text/html': 'HTML',
   'text/csv': 'CSV',
+  'text/tab-separated-values': 'TSV',
   'text/calendar': 'Calendar invite',
   'message/rfc822': 'Email message'
 };

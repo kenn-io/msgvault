@@ -1,7 +1,5 @@
 package store
 
-const ChatMembersProjectionVersionForTest = chatMembersProjectionVersion
-
 // SetChatMembersAfterClaimHookForTest pauses a chat member refresh after it
 // claims queued chats, before it rewrites their member rows.
 func (s *Store) SetChatMembersAfterClaimHookForTest(fn func()) func() {

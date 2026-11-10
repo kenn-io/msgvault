@@ -21,21 +21,22 @@ var statisticsName = regexp.MustCompile(`^statistics(_[0-9]+)?\.csv$`)
 
 type csvFile struct{ name, kind string }
 type csvRow struct {
-	Filename           string            `json:"filename"`
-	Record             int               `json:"record"`
-	Columns            map[string]string `json:"columns"`
-	AccountEvidence    []string          `json:"account_evidence,omitempty"`
-	ExportTimeEvidence []string          `json:"export_time_evidence,omitempty"`
+	Filename string            `json:"filename"`
+	Record   int               `json:"record"`
+	Columns  map[string]string `json:"columns"`
 }
 
 type exportReader struct {
-	root                  *os.Root
-	files                 []csvFile
-	owner                 string
-	accounts, exportTimes []string
+	root  *os.Root
+	files []csvFile
+	owner string
 }
 
 func normalizeHandle(s string) string {
+	return strings.ToLower(displayHandle(s))
+}
+
+func displayHandle(s string) string {
 	s = strings.TrimSpace(s)
 	switch {
 	case len(s) >= 3 && strings.EqualFold(s[:3], "/u/"):
@@ -50,7 +51,7 @@ func normalizeHandle(s string) string {
 			return ""
 		}
 	}
-	return strings.ToLower(s)
+	return s
 }
 
 func openExport(ctx context.Context, dir, me string, summary *ImportSummary) (*exportReader, error) {
@@ -111,7 +112,6 @@ func openExport(ctx context.Context, dir, me string, summary *ImportSummary) (*e
 				value := row.Columns["value"]
 				switch row.Columns["statistic"] {
 				case "account name":
-					r.accounts = append(r.accounts, value)
 					owner := normalizeHandle(value)
 					if value != "" && owner == "" {
 						return errors.New("invalid statistics account name")
@@ -122,8 +122,6 @@ func openExport(ctx context.Context, dir, me string, summary *ImportSummary) (*e
 						}
 						r.owner = owner
 					}
-				case "export time":
-					r.exportTimes = append(r.exportTimes, value)
 				}
 				return nil
 			})
@@ -216,7 +214,7 @@ func (r *exportReader) rows(ctx context.Context, file csvFile, summary *FileSumm
 			}
 			continue
 		}
-		row := csvRow{Filename: file.name, Record: number, Columns: map[string]string{}, AccountEvidence: r.accounts, ExportTimeEvidence: r.exportTimes}
+		row := csvRow{Filename: file.name, Record: number, Columns: map[string]string{}}
 		for i, v := range values {
 			row.Columns[headers[i]] = v
 		}

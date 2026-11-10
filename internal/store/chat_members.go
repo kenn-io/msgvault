@@ -14,24 +14,11 @@ import (
 // is applied in short write transactions instead of one long one.
 const chatMembersRefreshBatch = 200
 
-const chatMembersProjectionVersion = 2
-
 // ErrChatMembersStale reports pending chat membership changes that a
 // read-only Store cannot apply.
 var ErrChatMembersStale = errors.New("chat membership projection has pending changes")
 
 var chatConversationTypesSQL = "('" + strings.Join(identityindex.ChatConversationTypes, "', '") + "')"
-
-// chatDiscoveryMessageSQL preserves explicit non-chat conversation kinds while
-// classifying unknown kinds from message types. Call records remain discoverable
-// in known chat conversations without becoming text messages.
-func chatDiscoveryMessageSQL(messageType, conversationType string) string {
-	kind := "COALESCE(" + conversationType + ", '')"
-	calls := kind + " IN " + chatConversationTypesSQL + " AND " + messageType +
-		" IN ('" + MessageTypeGoogleVoiceCall + "', 'google_voice_voicemail', '" + MessageTypeSynctechCall + "')"
-	return "(" + kind + " IN ('', " + strings.TrimPrefix(chatConversationTypesSQL, "(") +
-		" AND ((" + identityindex.IsChatSQL(messageType, kind) + ") OR (" + calls + ")))"
-}
 
 // installChatMembers creates the chat membership projection. chat_members
 // holds every live sender and non-mention recipient of each chat, with the
@@ -86,22 +73,20 @@ func sqliteChatMemberTriggers() []string {
 	markMessage := func(messageExpr string) string {
 		return `INSERT INTO chat_members_dirty (conversation_id)
 			SELECT c.id FROM messages m JOIN conversations c ON c.id = m.conversation_id
-			WHERE m.id = ` + messageExpr + ` AND ` + chatDiscoveryMessageSQL("m.message_type", "c.conversation_type") + `
+			WHERE m.id = ` + messageExpr + ` AND c.conversation_type IN ` + chatConversationTypesSQL + `
 			ON CONFLICT (conversation_id) DO NOTHING;`
 	}
 	return []string{
 		`DROP TRIGGER IF EXISTS trg_chat_members_messages_update`,
 		`CREATE TRIGGER trg_chat_members_messages_update
-			AFTER UPDATE OF conversation_id, sender_id, deleted_at, sent_at, message_type ON messages FOR EACH ROW
+			AFTER UPDATE OF conversation_id, sender_id, deleted_at, sent_at ON messages FOR EACH ROW
 			WHEN OLD.conversation_id IS NOT NEW.conversation_id OR OLD.sender_id IS NOT NEW.sender_id
 				OR OLD.deleted_at IS NOT NEW.deleted_at OR OLD.sent_at IS NOT NEW.sent_at
-				OR OLD.message_type IS NOT NEW.message_type
 			BEGIN
 				INSERT INTO chat_members_dirty (conversation_id)
 				SELECT id FROM conversations
 				WHERE id IN (OLD.conversation_id, NEW.conversation_id)
-				AND (` + chatDiscoveryMessageSQL("OLD.message_type", "conversation_type") + `
-					OR ` + chatDiscoveryMessageSQL("NEW.message_type", "conversation_type") + `)
+				AND conversation_type IN ` + chatConversationTypesSQL + `
 				ON CONFLICT (conversation_id) DO NOTHING;
 			END`,
 		`DROP TRIGGER IF EXISTS trg_chat_members_messages_delete`,
@@ -110,7 +95,7 @@ func sqliteChatMemberTriggers() []string {
 			BEGIN
 				INSERT INTO chat_members_dirty (conversation_id)
 				SELECT id FROM conversations
-				WHERE id = OLD.conversation_id AND ` + chatDiscoveryMessageSQL("OLD.message_type", "conversation_type") + `
+				WHERE id = OLD.conversation_id AND conversation_type IN ` + chatConversationTypesSQL + `
 				ON CONFLICT (conversation_id) DO NOTHING;
 			END`,
 		`DROP TRIGGER IF EXISTS trg_chat_members_recipients_update`,
@@ -157,33 +142,28 @@ func postgresChatMemberTriggers() []string {
 		 BEGIN
 		     INSERT INTO chat_members_dirty (conversation_id)
 		     SELECT id FROM conversations
-		     WHERE id = p_conversation_id
+		     WHERE id = p_conversation_id AND conversation_type IN ` + chatConversationTypesSQL + `
 		     ON CONFLICT (conversation_id) DO UPDATE SET conversation_id = excluded.conversation_id;
 		 END;
 		 $$ LANGUAGE plpgsql`,
 		`CREATE OR REPLACE FUNCTION chat_members_messages_changed() RETURNS trigger AS $$
 		 BEGIN
 		     IF TG_OP = 'DELETE' THEN
-		         PERFORM mark_chat_members_dirty(c.id) FROM conversations c
-		         WHERE c.id = OLD.conversation_id AND ` + chatDiscoveryMessageSQL("OLD.message_type", "c.conversation_type") + `;
+		         PERFORM mark_chat_members_dirty(OLD.conversation_id);
 		         RETURN OLD;
 		     END IF;
-		     PERFORM mark_chat_members_dirty(c.id) FROM conversations c
-		     WHERE c.id IN (OLD.conversation_id, NEW.conversation_id)
-		       AND (` + chatDiscoveryMessageSQL("OLD.message_type", "c.conversation_type") + `
-		         OR ` + chatDiscoveryMessageSQL("NEW.message_type", "c.conversation_type") + `);
+		     PERFORM mark_chat_members_dirty(OLD.conversation_id);
+		     PERFORM mark_chat_members_dirty(NEW.conversation_id);
 		     RETURN NEW;
 		 END;
 		 $$ LANGUAGE plpgsql`,
 		`CREATE OR REPLACE FUNCTION chat_members_recipients_changed() RETURNS trigger AS $$
 		 BEGIN
-		     PERFORM mark_chat_members_dirty(c.id) FROM messages m JOIN conversations c ON c.id = m.conversation_id
-		     WHERE m.id = OLD.message_id AND ` + chatDiscoveryMessageSQL("m.message_type", "c.conversation_type") + `;
+		     PERFORM mark_chat_members_dirty((SELECT conversation_id FROM messages WHERE id = OLD.message_id));
 		     IF TG_OP = 'DELETE' THEN
 		         RETURN OLD;
 		     END IF;
-		     PERFORM mark_chat_members_dirty(c.id) FROM messages m JOIN conversations c ON c.id = m.conversation_id
-		     WHERE m.id = NEW.message_id AND ` + chatDiscoveryMessageSQL("m.message_type", "c.conversation_type") + `;
+		     PERFORM mark_chat_members_dirty((SELECT conversation_id FROM messages WHERE id = NEW.message_id));
 		     RETURN NEW;
 		 END;
 		 $$ LANGUAGE plpgsql`,
@@ -196,12 +176,11 @@ func postgresChatMemberTriggers() []string {
 		 $$ LANGUAGE plpgsql`,
 		`DROP TRIGGER IF EXISTS trg_chat_members_messages_update ON messages`,
 		`CREATE TRIGGER trg_chat_members_messages_update
-		     AFTER UPDATE OF conversation_id, sender_id, deleted_at, sent_at, message_type ON messages FOR EACH ROW
+		     AFTER UPDATE OF conversation_id, sender_id, deleted_at, sent_at ON messages FOR EACH ROW
 		     WHEN (OLD.conversation_id IS DISTINCT FROM NEW.conversation_id
 		         OR OLD.sender_id IS DISTINCT FROM NEW.sender_id
 		         OR OLD.deleted_at IS DISTINCT FROM NEW.deleted_at
-		         OR OLD.sent_at IS DISTINCT FROM NEW.sent_at
-		         OR OLD.message_type IS DISTINCT FROM NEW.message_type)
+		         OR OLD.sent_at IS DISTINCT FROM NEW.sent_at)
 		     EXECUTE FUNCTION chat_members_messages_changed()`,
 		`DROP TRIGGER IF EXISTS trg_chat_members_messages_delete ON messages`,
 		`CREATE TRIGGER trg_chat_members_messages_delete
@@ -227,13 +206,25 @@ func postgresChatMemberTriggers() []string {
 	}
 }
 
-// enqueueChatMembersForMessage queues a chat after a message or recipient write.
-// Its primary-key lookup avoids scanning unrelated messages. Updating an existing
-// marker holds its row lock until commit, so PostgreSQL refresh cannot claim early.
+// enqueueChatMembers queues a chat after UpsertMessage writes one of its
+// messages. Non-chat conversations are ignored. Enqueues update an existing
+// marker instead of ignoring it, so the writer holds the marker's row lock
+// until it commits and a PostgreSQL refresh cannot claim the chat early.
+func enqueueChatMembers(q querier, conversationID int64) error {
+	if _, err := q.Exec(`INSERT INTO chat_members_dirty (conversation_id)
+		SELECT id FROM conversations WHERE id = ? AND conversation_type IN `+chatConversationTypesSQL+`
+		ON CONFLICT (conversation_id) DO UPDATE SET conversation_id = excluded.conversation_id`, conversationID); err != nil {
+		return fmt.Errorf("enqueue chat members for conversation %d: %w", conversationID, err)
+	}
+	return nil
+}
+
+// enqueueChatMembersForMessage queues a message's chat after its recipients
+// are inserted. One statement per recipient set replaces a per-row trigger.
 func enqueueChatMembersForMessage(q querier, messageID int64) error {
 	if _, err := q.Exec(`INSERT INTO chat_members_dirty (conversation_id)
 		SELECT c.id FROM messages m JOIN conversations c ON c.id = m.conversation_id
-		WHERE m.id = ? AND `+chatDiscoveryMessageSQL("m.message_type", "c.conversation_type")+`
+		WHERE m.id = ? AND c.conversation_type IN `+chatConversationTypesSQL+`
 		ON CONFLICT (conversation_id) DO UPDATE SET conversation_id = excluded.conversation_id`, messageID); err != nil {
 		return fmt.Errorf("enqueue chat members for message %d: %w", messageID, err)
 	}
@@ -250,11 +241,7 @@ func (s *Store) rebuildChatMembersContext(ctx context.Context) error {
 		}
 		if _, err := tx.ExecContext(ctx, s.dialect.InsertOrIgnore(
 			`INSERT OR IGNORE INTO chat_members_dirty (conversation_id)
-			SELECT c.id FROM conversations c WHERE c.conversation_type IN `+chatConversationTypesSQL+`
-			OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id
-				AND `+chatDiscoveryMessageSQL("m.message_type", "c.conversation_type")+`)
-			OR EXISTS (SELECT 1 FROM chat_members cm WHERE cm.conversation_id = c.id)
-			OR EXISTS (SELECT 1 FROM chat_anchors ca WHERE ca.conversation_id = c.id)`,
+			SELECT id FROM conversations WHERE conversation_type IN `+chatConversationTypesSQL,
 		)); err != nil {
 			return fmt.Errorf("queue chat members rebuild: %w", err)
 		}
@@ -364,7 +351,7 @@ func (s *Store) rebuildChatProjectionTx(ctx context.Context, tx *loggedTx, ids [
 	}
 	live := LiveMessagesWhere("m", false)
 	chats := `JOIN conversations c ON c.id = m.conversation_id
-		WHERE m.conversation_id IN ` + in + ` AND ` + chatDiscoveryMessageSQL("m.message_type", "c.conversation_type") + ` AND ` + live
+		WHERE m.conversation_id IN ` + in + ` AND c.conversation_type IN ` + chatConversationTypesSQL + ` AND ` + live
 	members := `INSERT INTO chat_members (conversation_id, participant_id, alias)
 		SELECT m.conversation_id, m.sender_id, '' FROM messages m ` + chats + ` AND m.sender_id IS NOT NULL
 		UNION

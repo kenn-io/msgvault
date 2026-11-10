@@ -1449,8 +1449,9 @@ document_profile = "documents"
 | `attachment_upload_consent` | `false` | Allow attachment bytes from all sources, including future imports, to leave msgvault. Without consent, status reports mirroring as disabled |
 | `document_profile` | Empty | Docbank profile used to process mirrored attachments and search their text |
 | `attachment_folder` | `/msgvault` | Clean absolute virtual directory path; missing directories are created in Docbank |
+| `attachment_search_profile` | `""` | On newer `main` builds, name an existing Docbank processing profile for semantic/hybrid attachment retrieval. Does not queue processing or embeddings |
 
-Set `document_profile` to a Docbank profile with a rendition stage that extracts text. Processing covers the same files as attachment search: mirrored files except declared images, audio, and video, while a live message holds them. In Docbank, run `docbank processing plan <path-or-id> --profile <name>` on one mirrored file, review the plan, then run `docbank processing build <path-or-id> --profile <name> --plan-fingerprint <fp> --consent`. This grants consent for that profile across documents. msgvault always sends `consent:false`; consent stays in Docbank.
+Set `document_profile` to a Docbank profile with a rendition stage that extracts text. Processing covers mirrored files except declared images, audio, and video, while a live message holds them. Attachment search also includes images with text already processed in Docbank. In Docbank, run `docbank processing plan <path-or-id> --profile <name>` on one mirrored file, review the plan, then run `docbank processing build <path-or-id> --profile <name> --plan-fingerprint <fp> --consent`. This grants consent for that profile across documents. msgvault always sends `consent:false`; consent stays in Docbank.
 
 The mirror requests processing for files uploaded before this setting was enabled or before an upgrade. Changing the profile in Docbank requests processing again. `msgvault docbank attachments status` reports extracted, processing, and waiting counts, per-code counts for files without text, and worker errors. `msgvault docbank attachments backfill` retries failed uploads and restarts discovery. Backfill requests processing again for files that failed for missing consent, stale authority, a missing PDF password, an unreadable password file, a quarantined job, or a malformed Docbank answer. Backfill clears only settled recoverable failures. A job that fails after backfill needs another backfill. Other outcomes wait for a profile change.
 
@@ -1466,7 +1467,7 @@ Run `msgvault docbank attachments status` for consent, folder, delivered, sendin
 
 The daemon discovers newly stored attachments and restored messages automatically. Discovery queues each new file as `sending` without contacting Docbank, so it finishes even while Docbank is unreachable; uploads then drain the queue. Folder errors retry automatically. Temporary I/O or upload errors wait at least five minutes before retrying; status keeps these files under `sending` with their failure reason. Attempts interrupted before recording a result show `retrying`. Missing or corrupt bytes fail only that file. Restoring a message or updating its attachment makes unavailable files eligible again. HTTP 400, 413, 415 or 422 responses and invalid receipts need backfill after you fix the cause.
 
-Purging messages from msgvault preserves mirrored copies and delivery receipts. To start over against a rebuilt Docbank at the same URL, change `attachment_folder`. Restart the daemon after changing consent or the destination.
+Purging messages from msgvault preserves mirrored copies and delivery receipts. To start over against a rebuilt Docbank at the same URL, change `attachment_folder`. Restart the daemon after changing consent, the destination, or `attachment_search_profile`.
 
 Each unique file uploads once per destination under `<first 12 hex of hash>-<sanitized basename>`.
 Docbank resolves filename collisions and replays. Attachment and message details
@@ -2773,3 +2774,20 @@ Single-message HTTP, CLI JSON, and MCP reads return `sender_auth` for pinned ema
 A pin trusts the topmost header, so a copy that never passed through the pinned receiver can carry a forged one.
 
 Receivers that omit the authserv-id, such as Exchange Online and Outlook.com headers starting with `spf=...`, can't verify. Quoted or spaced property values report no result.
+
+### Relayed email senders
+
+GitHub notification email is attributed to the author named in its `X-GitHub-Sender` header. The original From address remains available for searches and authentication checks.
+
+The header names a person but does not authenticate them, and handles can change.
+
+Add rules for other relay addresses in `config.toml`. A rule for an existing address replaces its built-in rule. Each address may appear in only one rule.
+
+```toml
+[[relayed_senders]]
+address = "relay@example.test"
+header = "X-Author"
+identifier_type = "example"
+```
+
+Each rule requires one mailbox address, a header name, and an identifier type. A missing, repeated, or empty header leaves the message attributed to its From address. Rules apply to new Gmail, IMAP, and Microsoft mail, and mbox, eml, emlx, and PST imports. GitHub bot handles are supported. The recorded From address stays visible on messages. Attribution for already archived messages will be handled separately.

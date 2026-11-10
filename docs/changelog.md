@@ -9,6 +9,7 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - [Import Reddit account-data exports](usage/text-messages.md#import-reddit) to search Chat, legacy PMs, and your own posts/comments. Repeated imports retain originals and add missing records; media links are preserved without downloading files.
+- New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).
 
 - `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.
 - [Instagram comment sync](usage/instagram-comments.md) archives linked professional
@@ -33,6 +34,9 @@ All notable changes to msgvault, grouped by release.
   schema 3.50.0.
 - `msgvault search --message-type` accepts any type of lowercase letters,
   digits, and underscores, so it can filter imported types.
+- The CLI can suggest partial addresses with Google Places and fetch address
+  details for a selected candidate. See [address lookup](cli-reference.md#address)
+  for the key, session token, and optional location hints.
 - Plaud syncs wait longer and slow down when Plaud reports too many requests,
   so fewer recordings fail in a run. A new `limit` setting on `[[plaud]]` caps
   how many recordings each scheduled run checks. See [Plaud sources](configuration.md#plaud-sources).

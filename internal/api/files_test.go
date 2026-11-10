@@ -44,6 +44,13 @@ func (s packedFileBlobStore) OpenStream(_ context.Context, hash string) (io.Read
 	return io.NopCloser(bytes.NewReader(content)), int64(len(content)), nil
 }
 
+type countingFileBlobStore struct{ calls int }
+
+func (s *countingFileBlobStore) OpenStream(context.Context, string) (io.ReadCloser, int64, error) {
+	s.calls++
+	return nil, 0, os.ErrPermission
+}
+
 type fileSearchEngine struct {
 	*querytest.MockEngine
 
@@ -134,12 +141,13 @@ func TestFilesSearchUsesAnalyticalQueryAndOneCatalogBatch(t *testing.T) {
 	catalog := &fileCatalogStore{mockStore: &mockStore{}, files: map[int64]store.FileMetadata{
 		1: {ID: 1, MessageID: 11, ConversationID: 21, Filename: "local.png", MimeType: "image/png", ContentHash: hash, StoragePath: "aa/" + hash},
 		2: {ID: 2, MessageID: 12, ConversationID: 22, Filename: "remote.pdf", MimeType: "application/pdf", URL: "https://files.example/remote.pdf"},
-		3: {ID: 3, MessageID: 13, ConversationID: 23, Filename: "missing.bin", ContentHash: hash},
+		3: {ID: 3, MessageID: 13, ConversationID: 23, Filename: "missing.bin", ContentHash: strings.Repeat("cc", 32), StoragePath: ""},
 		4: {ID: 4, MessageID: 14, ConversationID: 24, Filename: "metadata.txt"},
 	}}
+	blobs := &countingFileBlobStore{}
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Store:  catalog, Engine: engine, Logger: testLogger(),
+		Store:  catalog, Engine: engine, Logger: testLogger(), BlobStore: blobs,
 	})
 
 	body := bytes.NewBufferString(`{"predicate":{"filters":[{"dimension":"source","values":["7"]}]},"filename_query":"report","mime_families":["image","pdf"],"sort":{"field":"size","direction":"asc"},"limit":25}`)
@@ -154,13 +162,16 @@ func TestFilesSearchUsesAnalyticalQueryAndOneCatalogBatch(t *testing.T) {
 	requirements.Len(result.Files, 4)
 	assertions.Equal([]int64{1, 2, 3, 4}, catalog.batchIDs)
 	assertions.Equal(1, catalog.batchCalls)
+	assertions.Zero(blobs.calls)
 	assertions.Equal("Zoe Sender", result.Files[0].SenderLabel)
-	assertions.Equal(FileContentLocal, result.Files[0].ContentState)
-	assertions.True(result.Files[0].ContentAvailable)
+	assertions.Equal(FileContentState("unverified"), result.Files[0].ContentState)
+	assertions.Nil(result.Files[0].ContentAvailable)
 	assertions.Equal(FileContentURLOnly, result.Files[1].ContentState)
-	assertions.False(result.Files[1].ContentAvailable)
-	assertions.Equal(FileContentMissingBlob, result.Files[2].ContentState)
+	requirements.NotNil(result.Files[1].ContentAvailable)
+	assertions.False(*result.Files[1].ContentAvailable)
 	assertions.Equal(FileContentMetadataOnly, result.Files[3].ContentState)
+	requirements.NotNil(result.Files[3].ContentAvailable)
+	assertions.False(*result.Files[3].ContentAvailable)
 	assertions.Equal([]int64{7}, engine.request.Explore.Context.SourceIDs)
 	assertions.Equal("report", engine.request.FilenameQuery)
 	assertions.Equal([]query.FileMIMEFamily{query.FileMIMEImage, query.FileMIMEPDF}, engine.request.MIMEFamilies)
@@ -481,11 +492,14 @@ func TestFileMetadataNamesEveryContentStateAndContainingAuthorities(t *testing.T
 	catalog := &fileCatalogStore{mockStore: &mockStore{}, files: map[int64]store.FileMetadata{
 		1: {ID: 1, MessageID: 11, ConversationID: 21, Filename: "metadata.txt"},
 		2: {ID: 2, MessageID: 12, ConversationID: 22, Filename: "remote.txt", URL: "https://files.example/remote.txt"},
-		3: {ID: 3, MessageID: 13, ConversationID: 23, Filename: "missing.pdf", MimeType: "application/pdf", ContentHash: hash},
+		3: {ID: 3, MessageID: 13, ConversationID: 23, Filename: "missing.pdf", MimeType: "application/pdf", ContentHash: strings.Repeat("cc", 32), StoragePath: "legacy/missing.pdf"},
 		4: {ID: 4, MessageID: 14, ConversationID: 24, Filename: "local.png", MimeType: "image/png", ContentHash: hash, StoragePath: "bb/" + hash},
 	}}
+	cfg := &config.Config{Server: config.ServerConfig{APIPort: 8080}, Data: config.DataConfig{DataDir: t.TempDir()}}
+	requirements.NoError(os.MkdirAll(filepath.Join(cfg.AttachmentsDir(), "bb"), 0o700))
+	requirements.NoError(os.WriteFile(filepath.Join(cfg.AttachmentsDir(), "bb", hash), []byte("png"), 0o600))
 	srv := NewServerWithOptions(ServerOptions{
-		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: catalog,
+		Config: cfg, Store: catalog,
 		Engine: &querytest.MockEngine{}, Logger: testLogger(),
 	})
 
@@ -584,8 +598,7 @@ func TestFileContentUsesSelectedAttachmentMetadata(t *testing.T) {
 // TestPackedFileWithoutStoragePathDownloadsAndReportsAvailable is the
 // regression for packed attachments that carry only a content hash: the row
 // must resolve through the blob store, not be rejected as missing because its
-// storage path is empty — in the download, the metadata endpoint, and the
-// search listing's availability flag.
+// storage path is empty — in the download and metadata endpoint.
 func TestPackedFileWithoutStoragePathDownloadsAndReportsAvailable(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)
@@ -595,17 +608,9 @@ func TestPackedFileWithoutStoragePathDownloadsAndReportsAvailable(t *testing.T) 
 	catalog := &fileCatalogStore{mockStore: &mockStore{}, files: map[int64]store.FileMetadata{
 		7: {ID: 7, MessageID: 11, ConversationID: 21, Filename: "packed.png", MimeType: "image/png", ContentHash: hash},
 	}}
-	engine := &fileSearchEngine{MockEngine: &querytest.MockEngine{}, result: &query.FileSearchResponse{
-		Files: []query.FileRow{{
-			ID: 7, Key: "file:7", EntryKey: "message:11", MessageID: 11, ConversationID: 21,
-			OccurredAt: time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC),
-			Filename:   "packed.png", MimeType: "image/png", MIMEFamily: query.FileMIMEImage,
-		}},
-		TotalCount: 1, CacheRevision: "cache-packed",
-	}}
 	srv := NewServerWithOptions(ServerOptions{
-		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}, Data: config.DataConfig{DataDir: t.TempDir()}},
-		Store:  catalog, Engine: engine,
+		Config:    &config.Config{Server: config.ServerConfig{APIPort: 8080}, Data: config.DataConfig{DataDir: t.TempDir()}},
+		Store:     catalog,
 		BlobStore: packedFileBlobStore{blobs: map[string][]byte{hash: packed}},
 		Logger:    testLogger(),
 	})
@@ -624,24 +629,11 @@ func TestPackedFileWithoutStoragePathDownloadsAndReportsAvailable(t *testing.T) 
 	requirements.NoError(json.NewDecoder(metadata.Body).Decode(&decoded))
 	assertions.Equal(FileContentLocal, decoded.ContentState)
 	assertions.True(decoded.ContentAvailable)
-
-	search := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/files/search", bytes.NewBufferString(`{"predicate":{}}`))
-	search.Header.Set("Content-Type", "application/json")
-	listing := httptest.NewRecorder()
-	srv.Router().ServeHTTP(listing, search)
-	requirements.Equal(http.StatusOK, listing.Code, listing.Body.String())
-	var searched FileSearchHTTPResponse
-	requirements.NoError(json.NewDecoder(listing.Body).Decode(&searched))
-	requirements.Len(searched.Files, 1)
-	assertions.Equal(FileContentLocal, searched.Files[0].ContentState)
-	assertions.True(searched.Files[0].ContentAvailable)
 }
 
-// TestPackedFileMissingBlobReportsMissingNotError covers a hash-only row whose
-// blob is truly absent from both the packed store and the loose layout: the
-// download must answer 404 file_content_unavailable, and the metadata must
-// classify the row missing_blob.
-func TestPackedFileMissingBlobReportsMissingNotError(t *testing.T) {
+// TestPackedFileMissingAndUnreadable distinguishes absent content from an
+// error opening content in the metadata response.
+func TestPackedFileMissingAndUnreadable(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -668,6 +660,16 @@ func TestPackedFileMissingBlobReportsMissingNotError(t *testing.T) {
 	requirements.NoError(json.NewDecoder(metadata.Body).Decode(&decoded))
 	assertions.Equal(FileContentMissingBlob, decoded.ContentState)
 	assertions.False(decoded.ContentAvailable)
+
+	brokenStore := &countingFileBlobStore{}
+	srv = NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}, Store: catalog,
+		BlobStore: brokenStore, Logger: testLogger(),
+	})
+	unreadable := httptest.NewRecorder()
+	srv.Router().ServeHTTP(unreadable, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/files/8", nil))
+	assertions.Equal(http.StatusInternalServerError, unreadable.Code)
+	assertions.Equal(1, brokenStore.calls)
 }
 
 // TestLegacyLooseFileWithRecordedPathStillDownloads keeps the legacy loose-row
@@ -936,17 +938,17 @@ func TestFileEndpointsReturnNotFoundForDedupHiddenMessageAttachments(t *testing.
 	hiddenID := f.CreateMessage("dedup-file-drop")
 	requirements.NoError(f.Store.UpsertAttachment(
 		t.Context(),
-		survivorID, "shared.pdf", "application/pdf", "aa/shared", "sharedhash", 2048,
+		survivorID, "shared.pdf", "application/pdf", "ab/"+strings.Repeat("ab", 32), strings.Repeat("ab", 32), 2048,
 	))
 	requirements.NoError(f.Store.UpsertAttachment(
 		t.Context(),
-		hiddenID, "shared.pdf", "application/pdf", "aa/shared", "sharedhash", 2048,
+		hiddenID, "shared.pdf", "application/pdf", "ab/"+strings.Repeat("ab", 32), strings.Repeat("ab", 32), 2048,
 	))
 	survivorFileID := apiSingleAttachmentID(t, f, survivorID)
 	hiddenFileID := apiSingleAttachmentID(t, f, hiddenID)
 	_, err := f.Store.MergeDuplicates(t.Context(), survivorID, []int64{hiddenID}, "dedup-file-batch")
 	requirements.NoError(err)
-	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, f.Store, nil, testLogger())
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}, Store: f.Store, BlobStore: fixedFileBlobStore{content: []byte("shared content")}, Logger: testLogger()})
 
 	metadata := httptest.NewRecorder()
 	srv.Router().ServeHTTP(metadata, httptest.NewRequestWithContext(
@@ -970,7 +972,7 @@ func TestFileEndpointsReturnNotFoundForDedupHiddenMessageAttachments(t *testing.
 	var decoded FileMetadataResponse
 	requirements.NoError(json.NewDecoder(live.Body).Decode(&decoded))
 	assertions.Equal(survivorID, decoded.MessageID)
-	assertions.Equal("sharedhash", decoded.ContentHash)
+	assertions.Equal(strings.Repeat("ab", 32), decoded.ContentHash)
 }
 
 func apiSingleAttachmentID(t *testing.T, f *storetest.Fixture, messageID int64) int64 {

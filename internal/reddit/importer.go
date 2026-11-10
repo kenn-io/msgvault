@@ -124,8 +124,9 @@ func importBatch(ctx context.Context, st *store.Store, sourceID int64, owner, ki
 		date := c["date"]
 		switch kind {
 		case "chat":
+			convType = "chat"
 			body = c["message"]
-			sender = normalizeHandle(c["username"])
+			sender = displayHandle(c["username"])
 			date = c["created_at"]
 			if c["channel_url"] != "" {
 				conv = "chat:channel:" + c["channel_url"]
@@ -134,8 +135,9 @@ func importBatch(ctx context.Context, st *store.Store, sourceID int64, owner, ki
 				conv = "chat:item:" + c["message_id"]
 			}
 		case "pm":
-			sender = normalizeHandle(c["from"])
-			to = normalizeHandle(c["to"])
+			convType = "chat"
+			sender = displayHandle(c["from"])
+			to = displayHandle(c["to"])
 			subject = c["subject"]
 			title = subject
 			conv = "pm:item:" + c["id"]
@@ -147,7 +149,6 @@ func importBatch(ctx context.Context, st *store.Store, sourceID int64, owner, ki
 			if sub != "" {
 				conv = "subreddit:" + sub
 				title = "r/" + sub
-				convType = "channel"
 			} else {
 				conv = kind + ":item:" + c["id"]
 			}
@@ -159,6 +160,11 @@ func importBatch(ctx context.Context, st *store.Store, sourceID int64, owner, ki
 					}
 					body += c["url"]
 				}
+			} else if c["media"] != "" {
+				if body != "" {
+					body += "\n"
+				}
+				body += c["media"]
 			}
 		}
 		sent, err := time.Parse("2006-01-02 15:04:05 MST", date)
@@ -173,7 +179,7 @@ func importBatch(ctx context.Context, st *store.Store, sourceID int64, owner, ki
 			stats.UnknownSenders++
 		}
 		// Coverage describes eligible scanned rows, including retained originals.
-		// body is the mapped body/message, including the appended post URL.
+		// body includes any appended post URL or comment media.
 		linked := c["media"] != "" || strings.Contains(body, "https://") || strings.Contains(body, "http://")
 		if linked {
 			stats.LinksNotDownloaded++
@@ -189,7 +195,7 @@ func importBatch(ctx context.Context, st *store.Store, sourceID int64, owner, ki
 			if person.handle == "" {
 				continue
 			}
-			pid, err := st.EnsureParticipantByIdentifierContext(ctx, "reddit", person.handle, person.handle)
+			pid, err := st.EnsureParticipantByIdentifierContext(ctx, "reddit", strings.ToLower(person.handle), person.handle)
 			if err != nil {
 				return err
 			}
@@ -212,7 +218,7 @@ func importBatch(ctx context.Context, st *store.Store, sourceID int64, owner, ki
 			metadata = &sql.NullString{String: string(encoded), Valid: true}
 		}
 		id, err := st.PersistMessageContext(ctx, &store.MessagePersistData{
-			Message:      &store.Message{SourceID: sourceID, SourceMessageID: key, MessageType: "reddit_" + kind, SentAt: sql.NullTime{Time: sent, Valid: !sent.IsZero()}, SenderID: sql.NullInt64{Int64: senderID, Valid: senderID != 0}, IsFromMe: sender != "" && sender == owner, Subject: sql.NullString{String: subject, Valid: subject != ""}, Snippet: sql.NullString{String: textutil.PrefixRunes(body, 200), Valid: body != ""}, SizeEstimate: int64(len(body))},
+			Message:      &store.Message{SourceID: sourceID, SourceMessageID: key, MessageType: "reddit_" + kind, SentAt: sql.NullTime{Time: sent, Valid: !sent.IsZero()}, SenderID: sql.NullInt64{Int64: senderID, Valid: senderID != 0}, IsFromMe: sender != "" && strings.EqualFold(sender, owner), Subject: sql.NullString{String: subject, Valid: subject != ""}, Snippet: sql.NullString{String: textutil.PrefixRunes(body, 200), Valid: body != ""}, SizeEstimate: int64(len(body))},
 			Conversation: &store.ConversationPersistData{SourceConversationID: conv, ConversationType: convType, Title: title, Participants: members, PreserveExistingParticipants: true},
 			BodyText:     sql.NullString{String: body, Valid: body != ""}, RawMIME: raw, RawFormat: "reddit_csv_row", Metadata: metadata, Recipients: recipients, FTS: &store.FTSDoc{Body: body, Subject: subject},
 		})

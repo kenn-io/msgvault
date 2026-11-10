@@ -549,14 +549,14 @@ new keys are added, and absence never deletes messages. Chat and
 legacy PMs stay separate (`reddit_chat` and `reddit_pm`); posts and comments
 are searchable as `reddit_post` and `reddit_comment` outside chat analytics.
 Unknown dates and senders stay unknown. Original column values, filenames,
-record numbers and supplied account/export-time evidence are archived.
+and record numbers are archived.
 
-Legacy PM conversation kind stays unknown even when a row names two people.
+Legacy PMs and Chat use the generic chat kind without inferring a direct or group conversation.
 Newly archived PM subjects or Chat channel names update their conversation title
 when nonempty. Subreddit titles use canonical `r/<normalized subreddit>` spelling.
-A Chat `channel_url` groups records without inferring a conversation kind;
+A Chat `channel_url` groups records without inferring a direct or group conversation;
 `channel_name` supplies its title. Without an observed grouping key, a Chat row
-stays an isolated item. Post URLs are appended to displayed/searchable bodies;
+stays an isolated item. Post URLs and comment media are appended to displayed/searchable bodies;
 raw evidence retains the original cells. Comment parent/link values remain raw,
 without an invented cross-kind reply mapping.
 
