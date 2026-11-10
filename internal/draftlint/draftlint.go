@@ -20,14 +20,16 @@ type Warning struct {
 }
 type Input struct {
 	Kind, Channel, Subject, Body string
-	SourceConversationID         string
-	ParticipantIDs               []int64
 	To, Cc, Bcc                  []string
 	AttachmentCount, BuiltSize   int
 	AllowPlaceholders            bool
 }
+type Name struct {
+	Text  string
+	Given bool
+}
 type NameResolver interface {
-	CuratedNames(context.Context, []string, []int64) (map[string][]string, error)
+	CuratedNames(context.Context, []string) ([]Name, error)
 }
 type Result struct {
 	Warnings []Warning
@@ -47,8 +49,6 @@ const (
 	CodeEmptyBody                  = "empty_body"
 	CodeQuotedOnlyBody             = "quoted_only_body"
 	CodeUnresolvedPlaceholder      = "unresolved_placeholder"
-	CodeEmptyRecipients            = "empty_recipients"
-	CodeInvalidAddress             = "invalid_address"
 	CodeControlCharacters          = "control_characters"
 	CodeAttachmentMentionedMissing = "attachment_mentioned_missing"
 	CodeGreetingNameMismatch       = "greeting_name_mismatch"

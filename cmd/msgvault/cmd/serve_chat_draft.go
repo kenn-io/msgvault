@@ -91,22 +91,25 @@ func (a *storeAPIAdapter) runCLIChatDraftCreate(
 	if err := invalidChatDraftBody(intent.Body); err != nil {
 		return err
 	}
-	authorize := chatDraftAuthorizer(grant, agentgrant.PermissionDraftCreate)
+	authorized := false
+	checkSource := chatDraftAuthorizer(grant, agentgrant.PermissionDraftCreate)
+	authorize := func(sourceType, identifier string) error {
+		err := checkSource(sourceType, identifier)
+		authorized = err == nil
+		return err
+	}
 	destination, err := a.store.ResolveChatDraftContext(ctx, intent.ConversationID, intent.ReplyTo, authorize)
 	if err != nil {
+		if authorized {
+			grant = nil
+		}
 		return chatDraftStoreError(err, grant)
 	}
-	lint, done, err := a.gateDraftLint(ctx, draftlint.Input{Kind: "compose", Channel: "chat", Body: intent.Body, SourceConversationID: destination.SourceConversationID}, destination.SourceID, grant, intent.draftLintOptions, intent.JSON, emit)
+	lint, done, err := a.gateDraftLint(ctx, draftlint.Input{Kind: "compose", Channel: "chat", Body: intent.Body}, destination.SourceID, grant, intent.draftLintOptions, intent.JSON, emit)
 	if done || err != nil {
 		return err
 	}
-	authorized := false
-	draft, err := a.store.CreateChatDraftContext(ctx, intent.ConversationID, intent.ReplyTo, intent.Body,
-		func(sourceType, identifier string) error {
-			err := authorize(sourceType, identifier)
-			authorized = err == nil
-			return err
-		})
+	draft, err := a.store.CreateChatDraftContext(ctx, intent.ConversationID, intent.ReplyTo, intent.Body, authorize)
 	if err != nil {
 		if authorized {
 			grant = nil // the grant covers this source, so later errors reveal nothing to hide
@@ -152,7 +155,7 @@ func (a *storeAPIAdapter) runCLIChatDraftLifecycle(
 		if draft.Revision != intent.Revision {
 			return draftReplyError("revision_mismatch", store.ErrChatDraftRevisionConflict)
 		}
-		lint, done, lintErr := a.gateDraftLint(ctx, draftlint.Input{Kind: "edit", Channel: "chat", Body: intent.Body, SourceConversationID: draft.SourceConversationID}, draft.SourceID, grant, intent.draftLintOptions, intent.JSON, emit)
+		lint, done, lintErr := a.gateDraftLint(ctx, draftlint.Input{Kind: "edit", Channel: "chat", Body: intent.Body}, draft.SourceID, grant, intent.draftLintOptions, intent.JSON, emit)
 		if done || lintErr != nil {
 			return lintErr
 		}

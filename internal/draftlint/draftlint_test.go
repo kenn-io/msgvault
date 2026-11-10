@@ -2,11 +2,13 @@ package draftlint
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/msgsegment"
 )
 
 func TestCheck(t *testing.T) {
@@ -22,8 +24,6 @@ func TestCheck(t *testing.T) {
 		{name: "attached", body: "See attached.", channel: "email", to: []string{"a@example.com"}, attachments: 1},
 		{name: "quoted", body: "> old\n> text\n", channel: "email", kind: "reply", to: []string{"a@example.com"}, code: CodeQuotedOnlyBody, severity: "error"},
 		{channel: "chat", name: "empty", body: " \n", code: CodeEmptyBody, severity: "error"},
-		{name: "no recipients", body: "hello", channel: "email", code: CodeEmptyRecipients, severity: "error"},
-		{name: "bad address", body: "hello", channel: "email", to: []string{"not an address"}, code: CodeInvalidAddress, severity: "error", field: "to", address: "not an address"},
 		{channel: "chat", name: "invalid UTF8", body: "a\xff", code: CodeControlCharacters, severity: "error", field: "body"},
 		{channel: "chat", name: "control", body: "a\x07b", code: CodeControlCharacters, severity: "error", field: "body"},
 		{name: "subject", body: "hello", channel: "email", kind: "compose", to: []string{"a@example.com"}, code: CodeEmptySubject, severity: "warn"},
@@ -80,10 +80,14 @@ func TestCheckSpanAndExcerpt(t *testing.T) {
 	}
 }
 
-type nameResolver map[string][]string
+type nameResolver []Name
 
-func (n nameResolver) CuratedNames(context.Context, []string, []int64) (map[string][]string, error) {
-	return n, nil
+func (n nameResolver) CuratedNames(context.Context, []string) ([]Name, error) { return n, nil }
+
+type failingNameResolver struct{}
+
+func (failingNameResolver) CuratedNames(context.Context, []string) ([]Name, error) {
+	return nil, errors.New("unavailable")
 }
 func TestGreetingNameMismatch(t *testing.T) {
 	for _, tc := range []struct {
@@ -91,9 +95,17 @@ func TestGreetingNameMismatch(t *testing.T) {
 		names      NameResolver
 		warn, skip bool
 	}{
-		{"Hi Sam,\nThanks", nameResolver{"alex@example.com": {"Alex", "Al"}}, true, false},
-		{"hey al,", nameResolver{"alex@example.com": {"Alex"}}, false, false},
-		{"Hi team,", nameResolver{}, false, true}, {"Hi Alex,", nil, false, true},
+		{"Hi Sam,\nThanks", nameResolver{{Text: "Alex", Given: true}, {Text: "Al"}}, true, false},
+		{"hey al,", nameResolver{{Text: "Alex", Given: true}}, false, false},
+		{"Hi Bu,", nameResolver{{Text: "Buddy"}}, true, false},
+		{"Hi Buddy,", nameResolver{{Text: "Buddy"}}, false, false},
+		{"Hi Jo,", nameResolver{{Text: "Jordan"}}, true, false},
+		{"Hi Jordan,", nameResolver{{Text: "Jordan"}}, false, false},
+		{"Hi A,", nameResolver{{Text: "Alex", Given: true}}, true, false},
+		{"Hi Ål,", nameResolver{{Text: "Åland", Given: true}}, false, false},
+		{"Hi Sam,", nameResolver{}, false, true},
+		{"Hi Sam,", failingNameResolver{}, false, true},
+		{"Hi team,", nameResolver{{Text: "Alex", Given: true}}, false, false}, {"Hi Alex,", nil, false, true},
 	} {
 		t.Run(tc.body, func(t *testing.T) {
 			r := Check(t.Context(), Input{Channel: "email", Body: tc.body, To: []string{"alex@example.com"}}, tc.names)
@@ -101,7 +113,7 @@ func TestGreetingNameMismatch(t *testing.T) {
 				require.Len(t, r.Warnings, 1)
 				assert.Equal(t, CodeGreetingNameMismatch, r.Warnings[0].Code)
 				assert.Equal(t, "warn", r.Warnings[0].Severity)
-				assert.Equal(t, &Span{3, 6}, r.Warnings[0].Span)
+				assert.Equal(t, &Span{3, 3 + len([]rune(strings.TrimSuffix(strings.Fields(tc.body)[1], ",")))}, r.Warnings[0].Span)
 			} else {
 				assert.Empty(t, r.Warnings)
 			}
@@ -134,5 +146,32 @@ func TestCheckCallerAuthoredSubject(t *testing.T) {
 				assert.Empty(t, got.Warnings)
 			}
 		})
+	}
+}
+
+func TestCheckUnexaminedQuoteTail(t *testing.T) {
+	body := strings.Repeat("> old text\n", msgsegment.MaxBodyBytes/11+1) + "FIRST_NAME\n"
+	for _, allow := range []bool{false, true} {
+		got := Check(t.Context(), Input{Channel: "email", Kind: "reply", Body: body, To: []string{"alex@example.com"}, AllowPlaceholders: allow}, nil)
+		require.Len(t, got.Warnings, 1)
+		assert.Equal(t, CodeUnresolvedPlaceholder, got.Warnings[0].Code)
+		assert.Equal(t, !allow, got.Blocking())
+		require.NotNil(t, got.Warnings[0].Span)
+		assert.Equal(t, "FIRST_NAME", string([]rune(body)[got.Warnings[0].Span.Start:got.Warnings[0].Span.End]))
+	}
+}
+func TestGreetingApplicableSkips(t *testing.T) {
+	for _, channel := range []string{"email", "chat"} {
+		for _, body := range []string{"Thanks", "Hi all,", "Hi everyone,", "Hi everybody,", "Hi team,", "Hi there,", "Hi folks,", "Hi Alex,"} {
+			t.Run(channel+"/"+body, func(t *testing.T) {
+				got := Check(t.Context(), Input{Channel: channel, Body: body, To: []string{"alex@example.com"}}, nil)
+				assert.Empty(t, got.Warnings)
+				if body == "Hi Alex," {
+					assert.Equal(t, []string{CodeGreetingNameMismatch}, got.Skipped)
+				} else {
+					assert.Empty(t, got.Skipped)
+				}
+			})
+		}
 	}
 }

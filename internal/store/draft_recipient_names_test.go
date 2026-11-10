@@ -5,12 +5,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/draftlint"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func TestCuratedNamesForAddresses(t *testing.T) {
-	for _, scenario := range []string{"curated names and source scope", "ambiguous alias", "quoted mailbox"} {
+	for _, scenario := range []string{"curated names and source scope", "ambiguous alias", "unbound competing alias", "quoted mailbox"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := storetest.New(t)
 			seed := func(address, given, nick, formatted string) int64 {
@@ -42,7 +43,7 @@ func TestCuratedNamesForAddresses(t *testing.T) {
 				id := seed("alex@example.com", "Alex", "Al", "Jordan Rivera")
 				got, err := f.Store.CuratedNamesForAddressesContext(t.Context(), []string{"ALEX@example.com", "pat@example.com"}, nil)
 				require.NoError(t, err)
-				assert.ElementsMatch(t, []string{"Alex", "Al", "Jordan"}, got["alex@example.com"])
+				assert.ElementsMatch(t, []draftlint.Name{{Text: "Alex", Given: true}, {Text: "Al"}, {Text: "Jordan"}}, got["alex@example.com"])
 				assert.NotContains(t, got, "pat@example.com")
 				for _, scope := range [][]int64{{}, {f.Source.ID + 100}} {
 					got, err = f.Store.CuratedNamesForAddressesContext(t.Context(), []string{"alex@example.com"}, scope)
@@ -52,7 +53,7 @@ func TestCuratedNamesForAddresses(t *testing.T) {
 				history(id, "history")
 				got, err = f.Store.CuratedNamesForAddressesContext(t.Context(), []string{"alex@example.com"}, []int64{f.Source.ID})
 				require.NoError(t, err)
-				assert.ElementsMatch(t, []string{"Alex", "Al", "Jordan"}, got["alex@example.com"])
+				assert.ElementsMatch(t, []draftlint.Name{{Text: "Alex", Given: true}, {Text: "Al"}, {Text: "Jordan"}}, got["alex@example.com"])
 			case "ambiguous alias":
 				alex := seed("alex@example.com", "Alex", "", "")
 				pat := seed("pat@example.com", "Pat", "", "")
@@ -70,12 +71,22 @@ func TestCuratedNamesForAddresses(t *testing.T) {
 				require.NoError(t, err)
 				got, err := f.Store.CuratedNamesForAddressesContext(t.Context(), []string{"alex@example.com"}, []int64{f.Source.ID})
 				require.NoError(t, err)
-				assert.Equal(t, []string{"Alex"}, got["alex@example.com"])
+				assert.Empty(t, got)
+			case "unbound competing alias":
+				alex := seed("alex@example.com", "Alex", "", "")
+				history(alex, "history-Alex")
+				other := f.EnsureParticipant("other@example.com", "Synthetic", "example.com")
+				require.NoError(t, f.Store.SetParticipantIdentifierContext(t.Context(), other, "email", "alex@example.com"))
+				for _, scope := range [][]int64{nil, {f.Source.ID}} {
+					got, err := f.Store.CuratedNamesForAddressesContext(t.Context(), []string{"alex@example.com"}, scope)
+					require.NoError(t, err)
+					assert.Empty(t, got)
+				}
 			case "quoted mailbox":
 				seed("alex smith@example.com", "Alex", "", "")
 				got, err := f.Store.CuratedNamesForAddressesContext(t.Context(), []string{`"alex smith"@example.com`}, nil)
 				require.NoError(t, err)
-				assert.Equal(t, []string{"Alex"}, got["alex smith@example.com"])
+				assert.Equal(t, []draftlint.Name{{Text: "Alex", Given: true}}, got["alex smith@example.com"])
 			}
 		})
 	}

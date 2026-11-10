@@ -80,14 +80,8 @@ func parseDraftLifecycleArgs(args []string) (draftLifecycleIntent, error) {
 	if !api.IsCLIRunDraftLifecycle(args) {
 		return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("expected a draft lifecycle command"))
 	}
-	args, options, lintErr := parseDraftLintFlags(args)
-	if lintErr != nil {
-		return draftLifecycleIntent{}, lintErr
-	}
-	if args[0] != api.CLIRunDraftEditCommand && options != (draftLintOptions{}) {
-		return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("lint flags require draft-edit"))
-	}
-	intent := draftLifecycleIntent{Operation: args[0], draftLintOptions: options}
+	intent := draftLifecycleIntent{Operation: args[0]}
+	lintSeen := map[string]bool{}
 	var positional string
 	var revisionSet, bodySet, jsonSet bool
 	rest := args[1:]
@@ -142,6 +136,10 @@ func parseDraftLifecycleArgs(args []string) (draftLifecycleIntent, error) {
 				return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("draft-get accepts one positive --conversation"))
 			}
 			intent.ConversationID = parsed
+		case "strict", "allow-placeholders", "validate-only":
+			if err := setDraftLintFlag(&intent.draftLintOptions, lintSeen, name, value, hasValue); err != nil {
+				return draftLifecycleIntent{}, err
+			}
 		case "json":
 			if jsonSet || (hasValue && value != "true") {
 				return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("--json accepts one flag without a value"))
@@ -154,6 +152,9 @@ func parseDraftLifecycleArgs(args []string) (draftLifecycleIntent, error) {
 		default:
 			return draftLifecycleIntent{}, draftReplyError("invalid_args", fmt.Errorf("unknown flag --%s", name))
 		}
+	}
+	if intent.Operation != api.CLIRunDraftEditCommand && intent.draftLintOptions != (draftLintOptions{}) {
+		return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("lint flags require draft-edit"))
 	}
 	if intent.ConversationID != 0 {
 		if positional != "" || revisionSet || bodySet {
@@ -516,7 +517,11 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 		if buildErr != nil {
 			return draftReplyError("invalid_draft", buildErr)
 		}
-		lint, done, lintErr := a.gateDraftLint(ctx, emailDraftLintInput("edit", intent.Body, replacement), source.ID, req.Grant, intent.draftLintOptions, intent.JSON, emit)
+		kind := "edit"
+		if imaplib.IsGeneratedForward(replacement.Raw) {
+			kind = "forward"
+		}
+		lint, done, lintErr := a.gateDraftLint(ctx, emailDraftLintInput(kind, intent.Body, replacement), source.ID, req.Grant, intent.draftLintOptions, intent.JSON, emit)
 		if done || lintErr != nil {
 			return lintErr
 		}

@@ -92,12 +92,8 @@ func parseDraftReplyArgs(args []string) (draftReplyIntent, error) {
 	if !api.IsCLIRunDraftReply(args) {
 		return invalidDraftReplyArgs("expected %s as the first argument", api.CLIRunDraftReplyCommand)
 	}
-	args, options, lintErr := parseDraftLintFlags(args)
-	if lintErr != nil {
-		return draftReplyIntent{}, lintErr
-	}
 	var intent draftReplyIntent
-	intent.draftLintOptions = options
+	lintSeen := map[string]bool{}
 	var positional string
 	var fromSet, bodySet, jsonSet, allSet, accountSet, sourceIDSet bool
 	rest := args[1:]
@@ -147,6 +143,10 @@ func parseDraftReplyArgs(args []string) (draftReplyIntent, error) {
 				return invalidDraftReplyArgs("--all accepts one flag without a value")
 			}
 			intent.ReplyAll, allSet = true, true
+		case "strict", "allow-placeholders", "validate-only":
+			if err := setDraftLintFlag(&intent.draftLintOptions, lintSeen, name, value, hasValue); err != nil {
+				return draftReplyIntent{}, err
+			}
 		case "json":
 			if jsonSet {
 				return invalidDraftReplyArgs("--json given more than once")

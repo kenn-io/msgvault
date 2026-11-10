@@ -25,43 +25,21 @@ func addDraftLintFlags(command *cobra.Command) {
 	command.Flags().Bool("validate-only", false, "validate the draft without writing")
 }
 
-// Strip only the shared lint flags, leaving existing command validation intact.
-func parseDraftLintFlags(args []string) ([]string, draftLintOptions, error) {
-	var options draftLintOptions
-	filtered := []string{args[0]}
-	seen := map[string]bool{}
-	for i := 1; i < len(args); i++ {
-		nameValue, ok := strings.CutPrefix(args[i], "--")
-		name, value, hasValue := strings.Cut(nameValue, "=")
-		if ok && (name == "strict" || name == "allow-placeholders" || name == "validate-only") {
-			if seen[name] || hasValue && value != "true" && value != "false" {
-				return nil, options, draftReplyError("invalid_args", fmt.Errorf("--%s accepts one boolean value", name))
-			}
-			seen[name] = true
-			enabled := !hasValue || value == "true"
-			switch name {
-			case "strict":
-				options.Strict = enabled
-			case "allow-placeholders":
-				options.AllowPlaceholders = enabled
-			case "validate-only":
-				options.ValidateOnly = enabled
-			}
-			continue
-		}
-		filtered = append(filtered, args[i])
-		// Preserve flag values verbatim, even when submitted text starts with --.
-		if ok && !hasValue {
-			switch name {
-			case "body", "subject", "from", "account", "source-id", "to", "cc", "bcc", "conversation", "reply-to", "revision", "log-level", "log-sql-slow-ms":
-				if i+1 < len(args) {
-					i++
-					filtered = append(filtered, args[i])
-				}
-			}
-		}
+func setDraftLintFlag(options *draftLintOptions, seen map[string]bool, name, value string, hasValue bool) error {
+	if seen[name] || hasValue && value != "true" && value != "false" {
+		return draftReplyError("invalid_args", fmt.Errorf("--%s accepts one boolean value", name))
 	}
-	return filtered, options, nil
+	seen[name] = true
+	enabled := !hasValue || value == "true"
+	switch name {
+	case "strict":
+		options.Strict = enabled
+	case "allow-placeholders":
+		options.AllowPlaceholders = enabled
+	case "validate-only":
+		options.ValidateOnly = enabled
+	}
+	return nil
 }
 
 type draftNameResolver struct {
@@ -69,26 +47,24 @@ type draftNameResolver struct {
 	sourceIDs []int64
 }
 
-func (r draftNameResolver) CuratedNames(ctx context.Context, addresses []string, participantIDs []int64) (map[string][]string, error) {
-	if len(participantIDs) > 0 {
-		return r.store.CuratedNamesForParticipantsContext(ctx, participantIDs)
+func (r draftNameResolver) CuratedNames(ctx context.Context, addresses []string) ([]draftlint.Name, error) {
+	resolved, err := r.store.CuratedNamesForAddressesContext(ctx, addresses, r.sourceIDs)
+	if err != nil {
+		return nil, err
 	}
-	return r.store.CuratedNamesForAddressesContext(ctx, addresses, r.sourceIDs)
+	var names []draftlint.Name
+	for _, values := range resolved {
+		names = append(names, values...)
+	}
+	return names, nil
 }
 func (a *storeAPIAdapter) lintDraft(ctx context.Context, in draftlint.Input, sourceID int64, grant *agentgrant.Grant) draftlint.Result {
 	var resolver draftlint.NameResolver
-	readable, status := a.draftReadableSources(ctx, sourceID, grant)
-	if status == "checked" {
-		resolver = draftNameResolver{store: a.store, sourceIDs: readable}
-		if in.Channel == "chat" {
-			var err error
-			in.ParticipantIDs, err = a.store.DraftConversationParticipantIDsContext(ctx, sourceID, in.SourceConversationID)
-			if err != nil || len(in.ParticipantIDs) == 0 {
-				resolver = nil
-			}
+	if in.Channel == "email" {
+		if readable, status := a.draftReadableSources(ctx, sourceID, grant); status == "checked" {
+			resolver = draftNameResolver{store: a.store, sourceIDs: readable}
 		}
 	}
-
 	return draftlint.Check(ctx, in, resolver)
 }
 func emailDraftLintInput(kind, body string, draft imaplib.ReplyDraft) draftlint.Input {

@@ -2,7 +2,6 @@ package draftlint
 
 import (
 	"context"
-	"net/mail"
 	"regexp"
 	"strings"
 	"unicode"
@@ -16,13 +15,21 @@ var placeholder = regexp.MustCompile(`\{\{[\pL_][\pL\pN_]*\}\}|\{[\pL_][\pL\pN_]
 var attachment = regexp.MustCompile(`(?i)\b(?:attached|attaching|enclosed|see attachment|find attached|PFA)\b`)
 var greeting = regexp.MustCompile(`(?i)^(?:hi|hey|hello|dear|hiya|morning|good morning|good afternoon|yo)[ \t]+([\pL][\pL\pM'-]*)`)
 
+var genericGreeting = regexp.MustCompile(`(?i)^(?:all|everyone|everybody|team|there|folks)$`)
+
 // maskQuotes blanks bytes rather than deleting them: all match offsets remain
 // offsets into the submitted text, even when quoted text contains Unicode.
 func maskQuotes(body string) string {
 	masked := []byte(body)
-	for _, seg := range msgsegment.Split(body).Segments {
+	result := msgsegment.Split(body)
+	limit := len(body)
+	if result.Truncated {
+		// Only the complete-line prefix was analyzed; scan the tail as authored.
+		limit = strings.LastIndexByte(body[:msgsegment.MaxBodyBytes], '\n') + 1
+	}
+	for _, seg := range result.Segments {
 		if seg.Kind == msgsegment.Quoted || seg.Kind == msgsegment.Forwarded {
-			blank(masked, seg.Start, seg.End)
+			blank(masked, min(seg.Start, limit), min(seg.End, limit))
 		}
 	}
 	return string(masked)
@@ -68,9 +75,6 @@ func textWarning(code, severity, field, message, original string, start, end int
 }
 func Check(ctx context.Context, in Input, names NameResolver) Result {
 	var r Result
-	if names == nil {
-		r.Skipped = append(r.Skipped, CodeGreetingNameMismatch)
-	}
 	add := func(code, severity, field, message string) {
 		r.Warnings = append(r.Warnings, Warning{Code: code, Severity: severity, Field: field, Message: message})
 	}
@@ -113,21 +117,8 @@ func Check(ctx context.Context, in Input, names NameResolver) Result {
 		}
 	}
 	if in.Channel == "email" {
-		if len(in.To)+len(in.Cc)+len(in.Bcc) == 0 {
-			add(CodeEmptyRecipients, "error", "to", "The email has no recipients.")
-		} else if len(in.To) == 0 {
+		if len(in.To) == 0 && len(in.Cc)+len(in.Bcc) > 0 {
 			add(CodeEmptyTo, "warn", "to", "The email has no To recipient.")
-		}
-		for _, field := range []struct {
-			name   string
-			values []string
-		}{{"to", in.To}, {"cc", in.Cc}, {"bcc", in.Bcc}} {
-			for _, address := range field.values {
-				_, err := mail.ParseAddress(address)
-				if err != nil || strings.ContainsFunc(address, unicode.IsControl) {
-					r.Warnings = append(r.Warnings, Warning{Code: CodeInvalidAddress, Severity: "error", Field: field.name, Address: address, Message: "The recipient address is invalid."})
-				}
-			}
 		}
 		if in.AttachmentCount == 0 && attachment.MatchString(maskFences(own)) {
 			add(CodeAttachmentMentionedMissing, "warn", "attachments", "The text mentions an attachment, but none is attached.")
@@ -155,29 +146,25 @@ func checkGreeting(ctx context.Context, in Input, names NameResolver, own string
 			return
 		}
 		start += leading
-		addresses := append(append([]string{}, in.To...), in.Cc...)
-		if names == nil {
-			return
-		}
-		resolved, err := names.CuratedNames(ctx, addresses, in.ParticipantIDs)
-		if err != nil {
-			r.Skipped = append(r.Skipped, CodeGreetingNameMismatch)
-			return
-		}
 		candidate := strings.ToLower(line[leading+loc[2] : leading+loc[3]])
-		found := false
-		for _, values := range resolved {
-			for _, name := range values {
-				found = true
-				name = strings.ToLower(name)
-				if candidate == name || utf8.RuneCountInString(candidate) >= 2 && strings.HasPrefix(name, candidate) {
-					return
-				}
-			}
+		if genericGreeting.MatchString(candidate) {
+			return
 		}
-		if !found {
+		if names == nil {
 			r.Skipped = append(r.Skipped, CodeGreetingNameMismatch)
 			return
+		}
+		addresses := append(append([]string{}, in.To...), in.Cc...)
+		resolved, err := names.CuratedNames(ctx, addresses)
+		if err != nil || len(resolved) == 0 {
+			r.Skipped = append(r.Skipped, CodeGreetingNameMismatch)
+			return
+		}
+		for _, name := range resolved {
+			value := strings.ToLower(name.Text)
+			if candidate == value || name.Given && utf8.RuneCountInString(candidate) >= 2 && strings.HasPrefix(value, candidate) {
+				return
+			}
 		}
 		r.Warnings = append(r.Warnings, textWarning(CodeGreetingNameMismatch, "warn", "body", "The greeting does not match a curated recipient name.", in.Body, start+loc[2], start+loc[3]))
 		return

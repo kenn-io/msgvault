@@ -38,12 +38,8 @@ func parseDraftComposeArgs(args []string) (draftComposeIntent, error) {
 	if !api.IsCLIRunDraftCompose(args) {
 		return invalidDraftComposeArgs("expected %s as the first argument", api.CLIRunDraftComposeCommand)
 	}
-	args, options, lintErr := parseDraftLintFlags(args)
-	if lintErr != nil {
-		return draftComposeIntent{}, lintErr
-	}
 	var intent draftComposeIntent
-	intent.draftLintOptions = options
+	lintSeen := map[string]bool{}
 	var fromSet, accountSet, sourceIDSet, subjectSet, bodySet, jsonSet bool
 	rest := args[1:]
 	for len(rest) > 0 {
@@ -123,6 +119,10 @@ func parseDraftComposeArgs(args []string) (draftComposeIntent, error) {
 					return invalidDraftComposeArgs("--bcc must not be empty")
 				}
 				intent.Bcc = append(intent.Bcc, value)
+			}
+		case "strict", "allow-placeholders", "validate-only":
+			if err := setDraftLintFlag(&intent.draftLintOptions, lintSeen, name, value, hasValue); err != nil {
+				return draftComposeIntent{}, err
 			}
 		case "json":
 			if jsonSet || (hasValue && value != "true") {

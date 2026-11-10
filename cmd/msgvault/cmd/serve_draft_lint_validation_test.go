@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/agentgrant"
-	"go.kenn.io/msgvault/internal/draftlint"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -58,92 +57,56 @@ func TestDraftHumanValidationRecipients(t *testing.T) {
 }
 func TestDraftChatGreetingContext(t *testing.T) {
 	for _, provider := range []string{"chat", "beeper"} {
-		for _, kind := range []string{"direct_chat", "group_chat", "channel"} {
-			t.Run(provider+"/"+kind, func(t *testing.T) {
-				var st *store.Store
-				var source *store.Source
-				var a *storeAPIAdapter
-				native := "C1"
-				if provider == "beeper" {
-					f := newBeeperDraftFixture(t)
-					st, source, a = f.store, f.source, f.adapter
-					native = beeperDraftTestChat
-				} else {
-					st = testutil.NewTestStore(t)
-					var err error
-					source, err = st.GetOrCreateSource("slack", "synthetic")
-					require.NoError(t, err)
-					a = &storeAPIAdapter{store: st}
-				}
-				conversation, err := st.EnsureConversationWithType(source.ID, native, kind, "Synthetic")
+		t.Run(provider, func(t *testing.T) {
+			var st *store.Store
+			var a *storeAPIAdapter
+			var source *store.Source
+			var create []string
+			var draftID string
+			if provider == "beeper" {
+				f := newBeeperDraftFixture(t)
+				st, a, source = f.store, f.adapter, f.source
+				create = []string{"draft-compose", "--source-id", strconv.FormatInt(source.ID, 10), "--to", beeperDraftTestChat}
+			} else {
+				st = testutil.NewTestStore(t)
+				var err error
+				source, err = st.GetOrCreateSource("slack", "synthetic")
 				require.NoError(t, err)
-				participant, err := st.EnsureParticipantByIdentifierContext(t.Context(), "slack", "U-ALEX", "Alex Rivera")
+				conversation, err := st.EnsureConversationWithType(source.ID, "C1", "direct_chat", "Synthetic")
 				require.NoError(t, err)
-				person, _, err := st.CreatePersonFromParticipantContext(t.Context(), participant)
-				require.NoError(t, err)
-				given := "Alex"
-				_, err = st.AddPersonNameContext(t.Context(), person.ID, store.PersonNameInput{NameKind: store.PersonNameStructured, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}, GivenName: &given})
-				require.NoError(t, err)
-				require.NoError(t, st.EnsureConversationParticipantContext(t.Context(), conversation, participant, "member"))
-				create := []string{"draft-compose", "--conversation", strconv.FormatInt(conversation, 10)}
-				var draftID string
-				if provider == "beeper" {
-					create = []string{"draft-compose", "--source-id", strconv.FormatInt(source.ID, 10), "--to", native}
-					draft, err := st.CreateBeeperDraftContext(t.Context(), source.ID, native, "original")
+				a = &storeAPIAdapter{store: st}
+				create = []string{"draft-compose", "--conversation", strconv.FormatInt(conversation, 10)}
+			}
+			// Create previews run before any managed row exists, including Beeper.
+			for _, body := range []string{"Thanks", "Hi team,", "Hi Sam,"} {
+				for _, access := range []string{"owner", "write-only"} {
+					var grant *agentgrant.Grant
+					if access == "write-only" {
+						grant = &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionDraftEdit}, Sources: []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}}
+					}
+					events, err := lintRun(t, a, grant, append(append([]string{}, create...), "--body", body, "--validate-only", "--json")...)
 					require.NoError(t, err)
-					draft, err = st.FinishBeeperDraftContext(t.Context(), draft.DraftID, draft.Revision, "original")
-					require.NoError(t, err)
-					draftID = draft.DraftID
-				} else {
-					draft, err := st.CreateChatDraftContext(t.Context(), conversation, 0, "original", func(string, string) error { return nil })
-					require.NoError(t, err)
-					draftID = draft.DraftID
-				}
-				for _, args := range [][]string{create, {"draft-edit", draftID, "--revision", "1"}} {
-					for _, access := range []string{"owner", "read", "write-only"} {
-						var grant *agentgrant.Grant
-						if access != "owner" {
-							grant = &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionDraftEdit}, Sources: []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}}
-							if access == "read" {
-								grant.Permissions = append(grant.Permissions, agentgrant.PermissionMessageRead)
-							}
-						}
-						events, err := lintRun(t, a, grant, append(append([]string{}, args...), "--body", "Hi Sam,", "--validate-only", "--json")...)
-						require.NoError(t, err, access)
-						got := lintObject(t, events)
-						if kind == "direct_chat" && access != "write-only" {
-							assert.Contains(t, events[0].Data, `"code":"greeting_name_mismatch"`, access)
-							assert.Empty(t, got["lint_skipped"], access)
-						} else {
-							assert.Empty(t, got["warnings"], access)
-							assert.Equal(t, []any{"greeting_name_mismatch"}, got["lint_skipped"], access)
-						}
+					got := lintObject(t, events)
+					assert.Empty(t, got["warnings"])
+					assert.Nil(t, got["recipients"])
+					if body == "Hi Sam," {
+						assert.Equal(t, []any{"greeting_name_mismatch"}, got["lint_skipped"])
+					} else {
+						assert.Empty(t, got["lint_skipped"])
 					}
 				}
-			})
-		}
-	}
-	for _, tc := range []struct {
-		name, kind, body string
-		otherSource      bool
-	}{
-		{"other-source grant", "direct_chat", "Hi Sam,", true},
-		{"no participants", "channel", "Thanks", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			st := testutil.NewTestStore(t)
-			source, err := st.GetOrCreateSource("slack", "synthetic")
-			require.NoError(t, err)
-			_, err = st.EnsureConversationWithType(source.ID, "C1", tc.kind, "General")
-			require.NoError(t, err)
-			var grant *agentgrant.Grant
-			if tc.otherSource {
-				grant = &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionMessageRead}, Sources: []agentgrant.SourceRef{{ID: source.ID + 100, Type: source.SourceType, Identifier: "other"}}}
 			}
-			a := &storeAPIAdapter{store: st}
-			result := a.lintDraft(t.Context(), draftlint.Input{Channel: "chat", Body: tc.body, SourceConversationID: "C1"}, source.ID, grant)
-			assert.Empty(t, result.Warnings)
-			assert.Equal(t, []string{draftlint.CodeGreetingNameMismatch}, result.Skipped)
+			events, err := lintRun(t, a, nil, append(append([]string{}, create...), "--body", "Thanks", "--json")...)
+			require.NoError(t, err)
+			got := lintObject(t, events)
+			assert.NotContains(t, got, "warnings")
+			assert.NotContains(t, got, "lint_skipped")
+			draftID = got["draft_id"].(string)
+			events, err = lintRun(t, a, nil, "draft-edit", draftID, "--revision", "1", "--body", "Hi Sam,", "--validate-only", "--json")
+			require.NoError(t, err)
+			got = lintObject(t, events)
+			assert.Empty(t, got["warnings"])
+			assert.Equal(t, []any{"greeting_name_mismatch"}, got["lint_skipped"])
 		})
 	}
 }
