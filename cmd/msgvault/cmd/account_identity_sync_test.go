@@ -210,7 +210,10 @@ func TestAddIMAPDefaultIdentityScheduledSync(t *testing.T) {
 			args = append(args, flag)
 		}
 		cmd.SetArgs(args)
-		require.NoError(cmd.ExecuteContext(ctx))
+		capture := captureStdout(t)
+		err = cmd.ExecuteContext(ctx)
+		output := capture()
+		require.NoError(err)
 		st, err := store.Open(cfg.DatabaseDSN())
 		require.NoError(err)
 		t.Cleanup(func() { _ = st.Close() })
@@ -218,6 +221,7 @@ func TestAddIMAPDefaultIdentityScheduledSync(t *testing.T) {
 		require.NoError(err)
 		require.Len(sources, 1)
 		src := sources[0]
+		assert.Contains(output, fmt.Sprintf("msgvault sync-full --source-id %d", src.ID))
 		// Re-enabling defaults creates the identity before this explicit removal.
 		// The next scheduled sync must preserve the removal.
 		if !optOut {
