@@ -100,7 +100,7 @@
           <p class="meta"><Spinner size={12} label="Loading saved addresses" /> Loading saved addresses…</p>
         {:else if controller.receiptSavedError}
           <!-- The split is done; Retry only reads the two profiles again. -->
-          <InlineNotice tone="warning" message="The split is done, but saved addresses couldn't be loaded." actionLabel="Retry" onaction={() => void controller.retryReceiptSaved()} details={controller.receiptSavedError} />
+          <InlineNotice tone="warning" message="Saved addresses couldn't be loaded." actionLabel="Retry" onaction={() => void controller.retryReceiptSaved()} details={controller.receiptSavedError} />
         {/if}
         {#if partial || !committed.exact_reversal}
           <ul class="result-details">

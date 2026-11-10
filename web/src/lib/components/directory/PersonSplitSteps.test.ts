@@ -407,7 +407,7 @@ describe('saved contacts in Split', () => {
     controller.receiptSavedError = 'Profile store busy';
     const retry = vi.spyOn(controller, 'retryReceiptSaved').mockResolvedValue();
     render(PersonSplitSteps, { controller, onOpenPerson: vi.fn() });
-    expect(screen.getByText("The split is done, but saved addresses couldn't be loaded.")).toBeDefined();
+    expect(screen.getByText("Saved addresses couldn't be loaded.")).toBeDefined();
     expect(screen.getByRole('button', { name: 'Open Synthetic Restored' })).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(retry).toHaveBeenCalledOnce();
