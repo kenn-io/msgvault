@@ -24,20 +24,14 @@ func (a *storeAPIAdapter) ArchiveMessage(ctx context.Context, id int64, change e
 			if !grant.Allows(agentgrant.PermissionMessageArchive, ref) {
 				return emailtags.Failure("message_not_found", "Message not found", nil, nil)
 			}
-			if !grant.AllowsArchiveSender(ref, "") {
-				senders, err := a.store.GetMessageRecipientsContext(ctx, id, "from")
-				if err != nil {
-					return err
-				}
-				if len(senders) == 0 {
-					return emailtags.Failure("message_not_found", "Message not found", nil, nil)
-				}
-				for _, sender := range senders {
-					_, key, _ := parseStoredMailbox(sender.EnvelopeAddress)
-					if !grant.AllowsArchiveSender(ref, key) {
-						return emailtags.Failure("message_not_found", "Message not found", nil, nil)
-					}
-				}
+			selected, _ := grant.Source(ref)
+			ctx = sourcescope.WithIncomingSenders(ctx, map[int64][]string{source.ID: selected.IncomingSenderKeys})
+			allowed, err := a.store.IncomingMessageAllowed(ctx, id)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				return emailtags.Failure("message_not_found", "Message not found", nil, nil)
 			}
 		}
 		if source.SourceType != "gmail" && source.SourceType != "" {
