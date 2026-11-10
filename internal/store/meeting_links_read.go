@@ -72,7 +72,7 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 func (s *Store) meetingNoteRecord(ctx context.Context, r reboundReader, memberID int64, budget *int) (MeetingRecord, error) {
 	record := MeetingRecord{Links: []MeetingLink{}, MessageIDs: []int64{}}
 	record.MessageIDs = append(record.MessageIDs, memberID)
-	occurrences, _, _, err := s.meetingMemberOccurrences(ctx, r, memberID, budget)
+	occurrences, _, _, _, err := s.meetingMemberOccurrences(ctx, r, memberID, budget)
 	if err != nil {
 		return record, err
 	}
@@ -167,7 +167,7 @@ func (s *Store) meetingOccurrenceMembers(ctx context.Context, r reboundReader, t
 		return membersOut, calendarRecurrenceBudgetError()
 	}
 	for _, id := range members {
-		occurrences, _, _, err := s.meetingMemberOccurrences(ctx, r, id, budget)
+		occurrences, _, _, _, err := s.meetingMemberOccurrences(ctx, r, id, budget)
 		if err != nil {
 			return membersOut, err
 		}

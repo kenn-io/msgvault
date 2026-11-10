@@ -15,9 +15,6 @@ func readMeetingCountKeys(ctx context.Context, dbPath string) (map[int64][]strin
 		return nil, fmt.Errorf("open meeting count reader: %w", err)
 	}
 	defer func() { _ = st.Close() }()
-	if err := st.ValidateSchemaContext(ctx); err != nil {
-		return nil, fmt.Errorf("validate meeting count archive: %w", err)
-	}
 	return st.MeetingCountKeysContext(ctx)
 }
 

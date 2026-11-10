@@ -75,7 +75,7 @@ func (s *Store) MeetingCountKeysContext(ctx context.Context) (map[int64][]string
 // exact source evidence as a fallback when no occurrence or saved link matches.
 func (s *Store) meetingCountOccurrences(ctx context.Context, r reboundReader, memberID int64, budget *int) ([]string, error) {
 	r = r.withMeetingCache()
-	matches, stale, hasMatch, err := s.meetingMemberOccurrences(ctx, r, memberID, budget)
+	matches, stale, splits, hasMatch, err := s.meetingMemberOccurrences(ctx, r, memberID, budget)
 	if err != nil {
 		return nil, err
 	}
@@ -95,22 +95,8 @@ func (s *Store) meetingCountOccurrences(ctx context.Context, r reboundReader, me
 		if err != nil {
 			return nil, err
 		}
-		decisions, err := readMeetingLinkDecisions(ctx, r, memberID)
-		if err != nil {
-			return nil, err
-		}
-		for _, d := range decisions {
-			if d.Decision != "split" {
-				continue
-			}
-			o, _, err := savedOccurrence(ctx, r, d.Ref, budget)
-			if errors.Is(err, sql.ErrNoRows) {
-				continue
-			}
-			if err != nil {
-				return nil, err
-			}
-			if o.Identity.countKey() == fallback {
+		for identity := range splits {
+			if identity.countKey() == fallback {
 				fallback = ""
 				break
 			}

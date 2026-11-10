@@ -456,10 +456,10 @@ func savedOccurrence(ctx context.Context, r reboundReader, ref OccurrenceRef, bu
 	return o, err == nil, err
 }
 
-func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, memberID int64, budget *int) ([]linkOccurrence, []meetingIdentity, bool, error) {
+func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, memberID int64, budget *int) ([]linkOccurrence, []meetingIdentity, map[meetingIdentity]bool, bool, error) {
 	decisions, err := readMeetingLinkDecisions(ctx, r, memberID)
 	if err != nil {
-		return nil, nil, false, err
+		return nil, nil, nil, false, err
 	}
 	var out []linkOccurrence
 	var stale []meetingIdentity
@@ -474,7 +474,7 @@ func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, m
 			continue
 		}
 		if err != nil {
-			return nil, nil, false, err
+			return nil, nil, nil, false, err
 		}
 		if d.Decision == "split" {
 			splits[o.Identity] = true
@@ -486,11 +486,11 @@ func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, m
 	}
 	matches, err := s.memberAutomaticOccurrences(ctx, r, memberID, budget)
 	if err != nil {
-		return nil, nil, false, err
+		return nil, nil, nil, false, err
 	}
 	out = slices.DeleteFunc(append(out, matches...), func(o linkOccurrence) bool { return splits[o.Identity] })
 	stale = slices.DeleteFunc(stale, func(id meetingIdentity) bool { return splits[id] })
-	return uniqueMeetingOccurrences(out), stale, hasLink || len(matches) > 0, nil
+	return uniqueMeetingOccurrences(out), stale, splits, hasLink || len(matches) > 0, nil
 }
 
 func (s *Store) memberAutomaticOccurrences(ctx context.Context, r reboundReader, memberID int64, budget *int) ([]linkOccurrence, error) {

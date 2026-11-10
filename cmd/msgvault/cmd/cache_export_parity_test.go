@@ -33,6 +33,12 @@ func TestCacheExportParityFullVersusDerived(t *testing.T) {
 		conv, _ := addCacheExportParityMessage(t, st, sourceID, sender, alice+bob-sender, i)
 		conversations = append(conversations, conv)
 	}
+	_, err := st.PersistMessage(&store.MessagePersistData{
+		Message:      &store.Message{SourceID: sourceID, SourceMessageID: "meeting-note", MessageType: "meeting_transcript", SentAt: sql.NullTime{Time: time.Date(2026, 3, 14, 10, 0, 0, 0, time.UTC), Valid: true}},
+		Conversation: &store.ConversationPersistData{SourceConversationID: "meeting-thread", ConversationType: "meeting"},
+		RawMIME:      []byte(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"meeting@example.org","startsAt":"2026-03-14T10:00:00Z"}}`), RawFormat: "twenty_json",
+	})
+	require.NoError(err)
 	person, _, err := st.CreatePersonFromParticipant(bob)
 	require.NoError(err)
 	require.NoError(st.Close())
@@ -67,7 +73,7 @@ func TestCacheExportParityFullVersusDerived(t *testing.T) {
 
 	assertCacheExportParity(t, tmp, derivedDir, fullDir, []string{
 		tableParticipants, tableParticipantIdentifiers, tablePersonDisplayNames, tableOwnerParticipants,
-		tableParticipantClusters, tableConversations, tableConversationParticipants,
+		tableParticipantClusters, tableConversations, tableConversationParticipants, tableMeetingKeys,
 	})
 }
 
