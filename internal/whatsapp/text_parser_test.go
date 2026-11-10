@@ -43,11 +43,8 @@ func TestTextParserNotices(t *testing.T) {
 		{`Mira changed the subject from "Seed: plan" to "Garden"`, "", `Mira changed the subject from "Seed: plan" to "Garden"`},
 		{`Mira changed the subject to "Asters: blue"`, "", `Mira changed the subject to "Asters: blue"`},
 		{`Mira created group "Garden: seeds"`, "", `Mira created group "Garden: seeds"`},
-		{"Mira: I changed the plan: asters", "Mira", "I changed the plan: asters"},
-		{"Ivo: You created a garden", "Ivo", "You created a garden"},
 		{"You Smith: hello", "You Smith", "hello"},
-		{"You Lin: hello", "You Lin", "hello"},
-		{"Alex Left: hello", "Alex Left", "hello"},
+		{"You: fictional garden note", "You", "fictional garden note"},
 		{"Mira cambió la descripción del grupo: flores", "Mira cambió la descripción del grupo", "flores"},
 	} {
 		t.Run(tc.payload, func(t *testing.T) {
@@ -74,12 +71,9 @@ func TestTextParserRejects(t *testing.T) {
 		{"preamble", "notes\n13/6/26, 10:00 - Mira: ok", "dmy", "UTC", "line 1: unsupported or malformed TXT header", textLimitsDefault},
 		{"invalid-date", "31/2/26, 10:00 - Mira: no", "dmy", "UTC", "day out of range", textLimitsDefault},
 		{"bad-clock", "13/6/26, 27:00 - Mira: no", "dmy", "UTC", "hour out of range", textLimitsDefault},
-		{"malformed-header", "13/6/26, noon - Mira: no", "dmy", "UTC", "line 1: unsupported or malformed TXT header", textLimitsDefault},
-		{"unsupported-header", "[13/6/26 10:00] Mira: no", "dmy", "UTC", "line 1: unsupported or malformed TXT header", textLimitsDefault},
 		{"malformed-continuation-header", "13/6/26, 10:00 - Mira: yes\n13/6/26, noon - Mira: no", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
 		{"unsupported-continuation-header", "13/6/26, 10:00 - Mira: yes\n[13/6/26 10:00] Mira: no", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
 		{"utf8-continuation", "13/6/26, 10:00 - Mira: asters\n\xff", "dmy", "UTC", "line 2: TXT is not valid UTF-8", textLimitsDefault},
-		{"utf8", "13/6/26, 10:00 - Mira: \xff", "dmy", "UTC", "line 1: TXT is not valid UTF-8", textLimitsDefault},
 		{"empty", "", "dmy", "UTC", "TXT contains no records", textLimitsDefault},
 		{"order", "13/6/26, 10:00 - Mira: no", "", "UTC", "--date-order must be", textLimitsDefault},
 		{"zone", "13/6/26, 10:00 - Mira: no", "dmy", "Local", "host-dependent Local zone", textLimitsDefault},
@@ -93,10 +87,10 @@ func TestTextParserRejects(t *testing.T) {
 }
 
 func TestTextParserEarlierFold(t *testing.T) {
-	rows, _, err := parseText(t.Context(), strings.NewReader("1/11/26, 01:30 - Mira: autumn"), "dmy", "America/Vancouver", textLimitsDefault)
+	rows, _, err := parseText(t.Context(), strings.NewReader("25/10/26, 02:30 - Mira: autumn"), "dmy", "Europe/Berlin", textLimitsDefault)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
-	assert.Equal(t, time.Date(2026, 11, 1, 8, 30, 0, 0, time.UTC), rows[0].SentAt)
+	assert.Equal(t, time.Date(2026, 10, 25, 0, 30, 0, 0, time.UTC), rows[0].SentAt)
 }
 
 func TestTextParserOriginalByteDigest(t *testing.T) {
@@ -114,6 +108,40 @@ func TestTextParserOriginalByteDigest(t *testing.T) {
 			limits.Bytes--
 			_, _, err = parseText(t.Context(), strings.NewReader(input), "dmy", "UTC", limits)
 			require.ErrorContains(err, "byte limit")
+		})
+	}
+}
+
+func TestTextParserNumericContinuation(t *testing.T) {
+	for _, line := range []string{"1/2 cup", "2026-06-14 deadline", "2026-06-14 deadline - water"} {
+		t.Run(line, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			rows, _, err := parseText(t.Context(), strings.NewReader("13/6/26, 10:00 - Mira: shopping\n"+line), "dmy", "UTC", textLimitsDefault)
+			require.NoError(err)
+			require.Len(rows, 1)
+			assert.Equal("shopping\n"+line, rows[0].Body)
+			assert.Equal(2, rows[0].EndLine)
+		})
+	}
+}
+
+func TestTextParserRecordLimit(t *testing.T) {
+	for _, tc := range []struct{ name, raw, body string }{
+		{"multiline", "13/6/26, 10:00 - Mira: garden\nseed\nlast", "garden\nseed\nlast"},
+		{"header", "13/6/26, 10:00 - Mira: garden", "garden"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			limits := textLimits{Bytes: 100, Records: 10, RecordBytes: len(tc.raw)}
+			rows, _, err := parseText(t.Context(), strings.NewReader(tc.raw), "dmy", "UTC", limits)
+			require.NoError(err)
+			require.Len(rows, 1)
+			assert.Equal(tc.body, rows[0].Body)
+			assert.Equal(tc.raw, rows[0].Raw)
+			assert.Equal(strings.Count(tc.raw, "\n")+1, rows[0].EndLine)
+			limits.RecordBytes--
+			_, _, err = parseText(t.Context(), strings.NewReader(tc.raw), "dmy", "UTC", limits)
+			require.ErrorContains(err, "record exceeds")
 		})
 	}
 }

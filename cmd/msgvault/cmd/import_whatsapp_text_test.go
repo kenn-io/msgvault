@@ -14,6 +14,12 @@ import (
 )
 
 func TestWhatsAppTextRejectsRemoteDaemon(t *testing.T) {
+	oldPhone, oldMediaDir, oldContacts := importPhone, importMediaDir, importContacts
+	oldLimit, oldDisplayName, oldNoDefaultIdentity := importLimit, importDisplayName, noDefaultIdentityImportWhatsApp
+	t.Cleanup(func() {
+		importPhone, importMediaDir, importContacts = oldPhone, oldMediaDir, oldContacts
+		importLimit, importDisplayName, noDefaultIdentityImportWhatsApp = oldLimit, oldDisplayName, oldNoDefaultIdentity
+	})
 	server, requests := newDaemonCLIRunnerTestServer(t, nil, `{"type":"complete"}`)
 	ctx := configureRemoteDaemonForTest(t, server.URL)
 	t.Setenv(daemonCLISubprocessEnv, "")
@@ -26,6 +32,12 @@ func TestWhatsAppTextRejectsRemoteDaemon(t *testing.T) {
 }
 
 func TestWhatsAppTextCommand(t *testing.T) {
+	oldPhone, oldMediaDir, oldContacts := importPhone, importMediaDir, importContacts
+	oldLimit, oldDisplayName, oldNoDefaultIdentity := importLimit, importDisplayName, noDefaultIdentityImportWhatsApp
+	t.Cleanup(func() {
+		importPhone, importMediaDir, importContacts = oldPhone, oldMediaDir, oldContacts
+		importLimit, importDisplayName, noDefaultIdentityImportWhatsApp = oldLimit, oldDisplayName, oldNoDefaultIdentity
+	})
 	for _, incomplete := range []bool{false, true} {
 		name := "complete"
 		if incomplete {
@@ -77,6 +89,12 @@ func TestWhatsAppTextCommand(t *testing.T) {
 }
 
 func TestWhatsAppTextFlagValidation(t *testing.T) {
+	oldPhone, oldMediaDir, oldContacts := importPhone, importMediaDir, importContacts
+	oldLimit, oldDisplayName, oldNoDefaultIdentity := importLimit, importDisplayName, noDefaultIdentityImportWhatsApp
+	t.Cleanup(func() {
+		importPhone, importMediaDir, importContacts = oldPhone, oldMediaDir, oldContacts
+		importLimit, importDisplayName, noDefaultIdentityImportWhatsApp = oldLimit, oldDisplayName, oldNoDefaultIdentity
+	})
 	markDaemonCLISubprocessForTest(t)
 	validText := []string{"--format", "text", "--chat-id", "garden", "--chat-type", "group", "--date-order", "dmy", "--timezone", "UTC"}
 	for _, tc := range []struct {
