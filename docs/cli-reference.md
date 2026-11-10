@@ -3095,6 +3095,89 @@ msgvault export-token <email> [flags]
 
 ---
 
+## diagnose-acquisition
+
+Inspect one Gmail source's known acquisition obligations without changing the
+archive or contacting Gmail:
+
+```bash
+msgvault diagnose-acquisition --source-id 1
+msgvault diagnose-acquisition --source-id 1 --json
+msgvault diagnose-acquisition --source-id 1 --state resolved --limit 20
+```
+
+This command reads the locally configured database (SQLite or PostgreSQL).
+It does not use `[remote].url`, start a daemon, sync, repair, migrate, create
+directories, or write logs. PostgreSQL requires database connectivity.
+
+| Flag | Description |
+|---|---|
+| `--source-id ID` | Required Gmail source ID |
+| `--state STATE` | Details for `active` (default), `resolved`, `historical`, or `indeterminate` |
+| `--limit N` | Message details per page, 1–1000 (default: 50) |
+| `--after-id ID` | Continue the same state after `next_after_id` from the previous page |
+| `--timeout DURATION` | Database deadline (default: `30s`, maximum: `5m`) |
+| `--json` | One JSON object with `version: 1` |
+
+Aggregates cover the source's retained sync ledger in one read snapshot,
+independently of the detail page. Counts are messages per state, so a message
+with an older resolved obligation and new work can appear in both counts.
+Details contain at most one representative outcome per message in the selected
+state. JSON includes the incremental boundary run, last visible ledger item,
+pagination, configuration blockers, and coverage limits.
+Each detail identifies the obligation's representative error outcome, the latest
+recorded outcome for that message, and any later explicit resolution.
+
+Active obligations use the same selection as acquisition replay: the latest
+fetch/ingest outcome per message since the latest completed incremental, ordered
+by completion time and then run ID. The six recognized phase/kind pairs are:
+
+| Phase | Kind | Operation |
+|---|---|---|
+| `fetch` | `fetch_error`, `batch_fetch_error` | Acquisition |
+| `ingest` | `ingest_error` | Acquisition |
+| `ingest` | `attachment_error` | MIME files |
+| `ingest` | `remote_image_error` | Remote images |
+| `ingest` | `attachment_remote_image_error` | MIME files and remote images |
+
+`resolved` requires an explicit later acknowledgement in the same source and
+message, from the same or a newer run. `resolved_by_id` identifies the first
+compatible acknowledgement. It does not verify physical files. A new file
+obligation does not implicitly resolve an earlier acquisition failure. A later
+skip can make an acquisition failure historical, but cannot settle file work.
+Items marked `skipped` that retain a recognized error contract are historical
+withdrawals, even if a later acknowledgement exists. Their status does not prove
+acquisition or identify the reason for withdrawal. Ordinary `gmail_not_found`
+skips are excluded from these withdrawn-error counts.
+
+An older failure hidden by the replay boundary without resolution, an unknown
+kind, or an outcome outside the acquisition contract is `indeterminate`. An
+unknown latest fetch/ingest outcome prevents an earlier error from becoming a
+replay candidate. Acquisition and file obligations remain separate operations.
+Only the shipped `Message files still need saving` marker with a file error kind
+counts as synthetic work rather than a failure; other error text has no special
+meaning. `active_errors` counts messages with genuine active failures;
+`historical_errors` counts messages with genuine resolved or withdrawn failures.
+Synthetic obligations alone do not increase these error counts. A detail's
+`has_error` covers all outcomes grouped into that message and state, while
+`synthetic` describes its representative outcome.
+
+Disabled remote image archiving is reported as a blocker for active image work.
+History-only and merged sources report their normal replay restrictions. These
+conditions do not prove permanent impossibility. Provider availability is not
+tested. Error text, message contents, addresses, and remote URLs are omitted.
+
+SQL errors, cancellation, and timeouts fail the command without emitting a
+partial report. Pages are classified before applying the limit. A concurrent
+sync can change subsequent invocations; use a quiet archive for stable paging.
+
+**The absence of known active obligations in the examined scope does not prove
+archive completeness.** This command does not inspect physical RAW or blobs, MIME
+occurrences, FTS freshness, the remote inventory, or historical omissions without
+ledger evidence.
+
+---
+
 ## verify
 
 Verify archive integrity against Gmail through the configured remote server or

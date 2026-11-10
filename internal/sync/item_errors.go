@@ -27,15 +27,6 @@ const (
 	syncItemKindAcquired                      = "acquired"
 )
 
-// isAcquisitionReplayCandidate reports whether a failed fetch or ingest names
-// a usable Gmail message ID.
-func isAcquisitionReplayCandidate(item store.SyncRunItem) bool {
-	return ((item.Phase == syncItemPhaseFetch &&
-		(item.ErrorKind == syncItemKindFetchError || item.ErrorKind == syncItemKindBatchFetchError)) ||
-		(item.Phase == syncItemPhaseIngest && (item.ErrorKind == syncItemKindIngestError || materializationFromKind(item.ErrorKind) != 0))) &&
-		item.SourceMessageID != "" && item.SourceMessageID != "(unknown)"
-}
-
 var (
 	errRawBatchMissing           = errors.New("missing raw message in batch result")
 	errAcquisitionFailureRecord  = errors.New("record acquisition failure")
@@ -135,7 +126,7 @@ func (s *Syncer) pendingAcquisitionReplayIDs(ctx context.Context, sourceID int64
 	s.pendingAttachmentRepairs = make(map[string]materializationWork)
 	ids := make([]string, 0, len(items))
 	for _, item := range items {
-		if !isAcquisitionReplayCandidate(item) {
+		if !item.IsAcquisitionReplayCandidate() {
 			continue
 		}
 		ids = append(ids, item.SourceMessageID)
@@ -258,7 +249,7 @@ func (s *Syncer) writeSyncItem(syncID int64, sourceMessageID, phase, status, kin
 		phase, status, kind = syncItemPhaseIngest, store.SyncRunItemStatusError, materializationKind(work|materializationFromKind(kind))
 	}
 	if s.pendingAcquisitions != nil && syncID == s.acquisitionSyncID && status == store.SyncRunItemStatusError &&
-		isAcquisitionReplayCandidate(store.SyncRunItem{SourceMessageID: sourceMessageID, Phase: phase, ErrorKind: kind}) {
+		(store.SyncRunItem{SourceMessageID: sourceMessageID, Phase: phase, ErrorKind: kind}).IsAcquisitionReplayCandidate() {
 		s.pendingAcquisitions[sourceMessageID] = struct{}{}
 		if work := materializationFromKind(kind); work != 0 {
 			if s.pendingAttachmentRepairs == nil {

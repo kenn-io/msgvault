@@ -182,6 +182,7 @@ var topLevelCommandGroups = map[string]string{
 	"unpack-attachments":      helpGroupMaintenance,
 	"update":                  helpGroupOperations,
 	"update-account":          helpGroupSources,
+	"diagnose-acquisition":    helpGroupSources,
 	"verify":                  helpGroupSources,
 	"version":                 helpGroupOperations,
 }

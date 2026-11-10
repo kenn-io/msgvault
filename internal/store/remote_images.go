@@ -73,15 +73,9 @@ func (s *Store) RecomputeRemoteImageAttachmentStatsContext(ctx context.Context, 
 		// ListUnresolvedSyncItemErrors. Image-only debt does not retain MIME counts.
 		var pending bool
 		if err := q.QueryRow(`SELECT EXISTS (
-			SELECT 1 FROM sync_run_items WHERE id = (
-				SELECT i.id FROM sync_run_items i JOIN sync_runs r ON r.id = i.sync_run_id
-				WHERE r.source_id = ? AND i.source_message_id = ? AND i.phase IN ('fetch', 'ingest')
-				AND r.id >= COALESCE((SELECT id FROM sync_runs WHERE source_id = ?
-					AND sync_type = 'incremental' AND status = 'completed'
-					ORDER BY completed_at DESC, id DESC LIMIT 1), 0)
-				ORDER BY i.id DESC LIMIT 1
-			) AND status = 'error' AND error_kind IN ('attachment_error', 'attachment_remote_image_error')
-		)`, sourceID, sourceMessageID, sourceID).Scan(&pending); err != nil {
+			SELECT 1 FROM sync_run_items WHERE id IN (`+latestAcquisitionOutcomeIDsSQL(true)+`)
+			AND status = 'error' AND error_kind IN ('attachment_error', 'attachment_remote_image_error')
+		)`, sourceID, sourceID, sourceMessageID).Scan(&pending); err != nil {
 			return err
 		}
 		if pending {
