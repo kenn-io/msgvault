@@ -812,12 +812,16 @@ func TestDeduplicateAccountResolutionExcludesCalendarSources(t *testing.T) {
 			}
 			calendar, err := f.Store.GetOrCreateSource(sourceType, identifier)
 			require.NoError(err)
+			selector := accountID
 			if sourceType == sourceTypeCalendar {
+				selector = "Shared"
+				require.NoError(f.Store.UpdateSourceDisplayName(f.Source.ID, selector))
+				require.NoError(f.Store.UpdateSourceDisplayName(calendar.ID, selector))
 				cfg, err := json.Marshal(map[string]string{"account_email": accountID, "calendar_id": "primary"})
 				require.NoError(err)
 				require.NoError(f.Store.UpdateSourceSyncConfig(t.Context(), calendar.ID, string(cfg)))
 			}
-			scope, err := ResolveEmailAccountFlag(t.Context(), f.Store, accountID)
+			scope, err := ResolveEmailAccountFlag(t.Context(), f.Store, selector)
 			require.NoError(err)
 			assert.ElementsMatch([]int64{f.Source.ID}, scope.SourceIDs())
 			assert.NotContains(scope.SourceIDs(), calendar.ID)
