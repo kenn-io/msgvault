@@ -101,3 +101,47 @@ func (c *Client) get(ctx context.Context, path string, q url.Values, out any) er
 	}
 	return nil
 }
+
+type graphPage[T any] struct {
+	Data  []T
+	After string
+}
+
+// readObjectPage shares bounded paging while callers choose explicit wire types.
+// The ID projection applies the same producer validation to every platform.
+func readObjectPage[T any](ctx context.Context, c *Client, path, after string, q url.Values, id func(T) string) (graphPage[T], error) {
+	if !c.safeCursor(after) {
+		return graphPage[T]{}, errors.New("invalid Graph cursor")
+	}
+	if after != "" {
+		q.Set("after", after)
+	}
+	var wire struct {
+		Data   []T `json:"data"`
+		Paging struct {
+			Cursors struct {
+				After string `json:"after"`
+			} `json:"cursors"`
+			Next string `json:"next"`
+		} `json:"paging"`
+	}
+	if err := c.get(ctx, path, q, &wire); err != nil {
+		return graphPage[T]{}, err
+	}
+	if wire.Data == nil || len(wire.Data) > pageLimit {
+		return graphPage[T]{}, errors.New("graph response missing or oversized data page")
+	}
+	next := ""
+	if wire.Paging.Next != "" {
+		next = wire.Paging.Cursors.After
+		if next == "" || next == after || !c.safeCursor(next) {
+			return graphPage[T]{}, errors.New("invalid Graph pagination progress")
+		}
+	}
+	for _, object := range wire.Data {
+		if !safeObjectID(id(object)) {
+			return graphPage[T]{}, errors.New("invalid Graph object identity")
+		}
+	}
+	return graphPage[T]{Data: wire.Data, After: next}, nil
+}
