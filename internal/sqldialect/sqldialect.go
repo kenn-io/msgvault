@@ -11,7 +11,8 @@
 package sqldialect
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 	"unicode"
@@ -61,7 +62,7 @@ func PostgreSQLSearchArg(terms []string, weight string) string {
 		Phrase    string   `json:"phrase"`
 		Candidate string   `json:"candidate"`
 		Patterns  []string `json:"patterns"`
-	}{phrase, strings.Join(candidates, " & "), patterns})
+	}{phrase, strings.Join(candidates, " & "), patterns}, jsontext.EscapeForHTML(true))
 	if err != nil {
 		panic(err) // Strings and string slices are always JSON encodable.
 	}
