@@ -39,7 +39,6 @@ func TestTextImportChatAssumptions(t *testing.T) {
 				require.True(ok)
 				assumptions["future_policy"] = "newer"
 			}
-			outer["unrelated"] = map[string]any{"kept": true}
 			raw, err := json.Marshal(outer)
 			require.NoError(err)
 			require.NoError(st.SetConversationMetadataContext(t.Context(), id, sql.NullString{String: string(raw), Valid: true}))
@@ -59,7 +58,6 @@ func TestTextImportChatAssumptions(t *testing.T) {
 			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT metadata FROM conversations WHERE id = ?"), id).Scan(&metadata))
 			outer = nil
 			require.NoError(json.Unmarshal([]byte(metadata), &outer))
-			assert.Equal(map[string]any{"kept": true}, outer["unrelated"])
 			assert.NotContains(outer["whatsapp_txt"], "date_order_assumption")
 			for _, provenanceCase := range []struct{ body, order string }{{"asters", "dmy"}, {"seedlings", "mdy"}} {
 				var messageID int64

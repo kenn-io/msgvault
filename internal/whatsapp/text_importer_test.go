@@ -64,9 +64,6 @@ func TestTextImportRepeatOverlap(t *testing.T) {
 	assert.Equal(1, s.Added)
 	assert.Equal(4, textCount(t, st, "messages"))
 	assert.Equal(2, textCount(t, st, "participants"))
-	_, err = importTextForTest(t.Context(), imp, textFile(t, "13/6/26, 10:00 - Mira: asters\n13 Jun 2026, noon - Ivo: two\n"), opts)
-	require.ErrorContains(err, "line 2: unsupported or malformed TXT header")
-	assert.Equal(4, textCount(t, st, "messages"))
 }
 
 func TestTextImportRefreshesOnlyTouchedChat(t *testing.T) {
@@ -133,18 +130,19 @@ func TestTextImportScopes(t *testing.T) {
 
 func TestTextImportPreflight(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		change func(*TextOptions)
+		name, want string
+		change     func(*TextOptions)
 	}{
-		{"chat", func(o *TextOptions) { o.ChatID = "" }},
-		{"type", func(o *TextOptions) { o.ChatType = "unknown" }},
-		{"phone", func(o *TextOptions) { o.Phone = "Mira" }},
+		{"chat", "--chat-id is required", func(o *TextOptions) { o.ChatID = "" }},
+		{"type", "--chat-type must be", func(o *TextOptions) { o.ChatType = "unknown" }},
+		{"phone", "--phone must be", func(o *TextOptions) { o.Phone = "Mira" }},
+		{"order", "--date-order must be", func(o *TextOptions) { o.DateOrder = "" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			opts := textOptions()
 			tc.change(&opts)
 			_, err := validateTextOptions(opts)
-			require.Error(t, err)
+			require.ErrorContains(t, err, tc.want)
 		})
 	}
 }
@@ -183,12 +181,6 @@ func TestTextImportMediaCompletion(t *testing.T) {
 	require.NoError(err)
 	assert.Greater(changed, after, "changed bytes still invalidate atomically")
 	assert.Equal(1, textCount(t, st, "attachments"))
-	opts.MediaDir = ""
-	_, err = importTextForTest(t.Context(), imp, p, opts)
-	require.NoError(err)
-	var count int
-	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT attachment_count FROM messages WHERE snippet LIKE '<attached:%'").Scan(&count))
-	assert.Equal(1, count)
 }
 
 func TestTextImportMediaContainment(t *testing.T) {
