@@ -993,6 +993,29 @@ it.each([
   } finally { controller.destroy(); }
 });
 
+it.each(['update', 'delete'] as const)('refuses to %s a connection moved to another person', async action => {
+  const moved = { data: relationship(41, 2, { source_person_id: 8, target_person_id: 9 }), etag: '"relationship-41-r2"' };
+  const requests: Request[] = [];
+  const client = createAPIClient(async input => {
+    const request = requestOf(input);
+    requests.push(request);
+    if (pathOf(request) === '/api/v1/person-relationships/41') return Response.json(moved.data, { headers: { ETag: moved.etag } });
+    if (pathOf(request) === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
+    return defaultResponse(request);
+  });
+  const controller = new DirectoryEntityController(client, 7);
+  const send = (prepared?: Prepared<typeof moved.data>) => action === 'update' ? controller.updateRelationship(41, { notes: 'Draft' }, prepared) : controller.deleteRelationship(41, prepared);
+  try {
+    for (const snapshot of [undefined, moved]) {
+      controller.relationships = [{ counterpart_person_id: 8, counterpart_label: 'Synthetic Peer', counterpart_vcard_uid: 'person-8', direction: 'outgoing', relationship: relationship(41) }];
+      expect(await send(snapshot)).toMatchObject({ ok: false, kind: 'error', message: 'This connection now belongs to someone else. Open it from their profile.' });
+      expect(controller.relationships).toEqual([]);
+    }
+    expect(requests.filter(request => request.method !== 'GET')).toHaveLength(0);
+    expect(requests.filter(request => pathOf(request) === '/api/v1/people/7/relationships')).toHaveLength(2);
+  } finally { controller.destroy(); }
+});
+
 it.each(['primary', 'edit', 'end', 'delete'] as const)('refuses %s for a job moved to another person', async action => {
   const moved = { data: employment(11, 2, { person_id: 8 }), etag: '"employment-11-r2"' };
   const requests: Request[] = [];

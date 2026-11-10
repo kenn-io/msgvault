@@ -279,6 +279,30 @@ describe('OrganizationEditor', () => {
   });
 });
 
+it('deletes the displayed organization version and retries only after showing the newer one', async () => {
+  let revision = 1;
+  const tags: (string | null)[] = [];
+  const onDone = vi.fn();
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    if (pathOf(request).endsWith('/employments')) return Response.json({ employments: [] });
+    if (request.method === 'DELETE') {
+      tags.push(request.headers.get('If-Match'));
+      return request.headers.get('If-Match') === `"organization-21-r${revision}"` ? new Response(null, { status: 204 }) : Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    }
+    return Response.json(organizationProfile(revision, revision === 1 ? 'Synthetic Org' : 'New saved name'), { headers: { ETag: `"organization-21-r${revision}"` } });
+  });
+  render(OrganizationEditor, { controller, organization: organization(), onDone });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
+  revision = 2;
+  await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+  expect(await screen.findByText('New saved name')).toBeDefined();
+  expect(tags).toEqual(['"organization-21-r1"']);
+  await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+  expect(tags).toEqual(['"organization-21-r1"', '"organization-21-r2"']);
+});
+
 it.each(['failed request', 'revision conflict'] as const)('handles a delete %s', async outcome => {
   let deletes = 0;
   let reads = 0;
@@ -292,7 +316,7 @@ it.each(['failed request', 'revision conflict'] as const)('handles a delete %s',
       return deletes === 1 ? Response.json({ message: 'Temporarily unavailable' }, { status: 503 }) : new Response(null, { status: 204 });
     }
     reads++;
-    return Response.json(organizationProfile(reads, reads < 3 ? 'Synthetic Org' : 'New saved name'), { headers: { ETag: `"organization-21-r${reads}"` } });
+    return Response.json(organizationProfile(reads, reads < 2 ? 'Synthetic Org' : 'New saved name'), { headers: { ETag: `"organization-21-r${reads}"` } });
   });
   render(OrganizationEditor, { controller, organization: organization(), onDone });
   await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));

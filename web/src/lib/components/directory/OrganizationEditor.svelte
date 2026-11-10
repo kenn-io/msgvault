@@ -147,7 +147,7 @@
 
   async function remove(): Promise<void> {
     if (!initialOrganization || submitting || deleteBlocked) return;
-    if (await removal.run(current => controller.deleteOrganization(initialOrganization.id, current))) onDone(); else await check.prepare(() => controller.organizationEmploymentHolders(initialOrganization.id));
+    if (await removal.run(current => controller.deleteOrganization(initialOrganization.id, current ?? opened))) onDone(); else await check.prepare(() => controller.organizationEmploymentHolders(initialOrganization.id));
   }
 
   async function refreshAfterUnknown(): Promise<void> {

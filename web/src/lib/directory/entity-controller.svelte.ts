@@ -520,6 +520,13 @@ export class DirectoryEntityController {
     body: PatchPersonRelationshipRequest,
     prepared?: Prepared<PersonRelationship>,
   ): Promise<DirectoryEntityMutationResult<PersonRelationship, Prepared<PersonRelationship>>> {
+    let snapshot: Prepared<PersonRelationship>;
+    try { snapshot = prepared ?? await this.prepareRelationshipMutation(id); }
+    catch (cause) { return { ok: false, kind: 'error', status: 0, message: failureMessage(cause, 0) }; }
+    if (snapshot.data.source_person_id !== this.personID && snapshot.data.target_person_id !== this.personID) {
+      await Promise.all([this.loadRelationships(false), this.refreshNetwork()]);
+      return { ok: false, kind: 'error', status: 409, message: 'This connection now belongs to someone else. Open it from their profile.' };
+    }
     const result = await this.writeExisting(
       () => this.prepareRelationshipMutation(id),
       (_current, signal, etag) =>
@@ -534,12 +541,19 @@ export class DirectoryEntityController {
         );
         this.relationshipRecords.set(id, entity);
       },
-      prepared,
+      snapshot,
     );
     if (result.ok || result.kind === 'conflict') await Promise.all([this.loadRelationships(false), this.refreshNetwork()]);
     return result;
   }
   async deleteRelationship(id: number, prepared?: Prepared<PersonRelationship>): Promise<DirectoryEntityMutationResult<never, Prepared<PersonRelationship>>> {
+    let snapshot: Prepared<PersonRelationship>;
+    try { snapshot = prepared ?? await this.prepareRelationshipMutation(id); }
+    catch (cause) { return { ok: false, kind: 'error', status: 0, message: failureMessage(cause, 0) }; }
+    if (snapshot.data.source_person_id !== this.personID && snapshot.data.target_person_id !== this.personID) {
+      await Promise.all([this.loadRelationships(false), this.refreshNetwork()]);
+      return { ok: false, kind: 'error', status: 409, message: 'This connection now belongs to someone else. Open it from their profile.' };
+    }
     const result = await this.deleteExisting(
       () => this.prepareRelationshipMutation(id),
       (signal, etag) =>
@@ -552,7 +566,7 @@ export class DirectoryEntityController {
         this.relationships = this.relationships.filter((view) => view.relationship.id !== id);
         this.relationshipRecords.delete(id);
       },
-      prepared,
+      snapshot,
     );
     if (result.ok || result.kind === 'conflict') await Promise.all([this.loadRelationships(false), this.refreshNetwork()]);
     return result;
