@@ -107,6 +107,7 @@ var topLevelCommandGroups = map[string]string{
 	"import-slackdump":        helpGroupImport,
 	"import-telegram":         helpGroupImport,
 	"import-reddit":           helpGroupImport,
+	"import-x":                helpGroupImport,
 	"import-synctech-sms":     helpGroupImport,
 	"import-whatsapp":         helpGroupImport,
 	"init-db":                 helpGroupMaintenance,

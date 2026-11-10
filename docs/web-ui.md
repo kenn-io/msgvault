@@ -483,6 +483,9 @@ The Save changes bar covers ordinary settings, and its edits survive category
 changes. Some controls save through their own buttons instead: provider
 credentials, person-enrichment providers, contact accounts, and People sweep.
 The bar stays visible on Contacts while ordinary settings have unsaved changes.
+Leaving Settings or reloading the page asks first when the bar or one of those
+forms has unsaved edits. Switching categories keeps the bar's edits but drops
+unsaved edits in those forms.
 After a save that needs a restart, Settings shows “Saved. Restart msgvault to
 apply these changes.”
 

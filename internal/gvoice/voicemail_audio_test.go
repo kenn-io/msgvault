@@ -473,6 +473,11 @@ func TestImportVoicemailPreservesMessageFields(t *testing.T) {
 	assert.Equal("Voicemail from Test User (1m 23s)", snippet.String)
 	assert.Equal("Voicemail from Test User (1m 23s)", body)
 	assert.Equal(raw, gotRaw)
+	// Metadata discovery must find the call-only chat before anchor refresh.
+	chats, err := st.SearchChatsMetadataContext(t.Context(), store.ChatDiscoveryQuery{Query: "Test User"})
+	require.NoError(err)
+	require.Len(chats.Results, 1)
+	assert.Equal("calls:+15550000001", chats.Results[0].SourceConversationID)
 
 	var labelCount int
 	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`

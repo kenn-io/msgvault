@@ -23,10 +23,14 @@ var ErrChatMembersStale = errors.New("chat membership projection has pending cha
 var chatConversationTypesSQL = "('" + strings.Join(identityindex.ChatConversationTypes, "', '") + "')"
 
 // chatDiscoveryMessageSQL preserves explicit non-chat conversation kinds while
-// classifying unknown kinds from message types, using the shared chat rules.
+// classifying unknown kinds from message types. Call records remain discoverable
+// in known chat conversations without becoming text messages.
 func chatDiscoveryMessageSQL(messageType, conversationType string) string {
-	return "(COALESCE(" + conversationType + ", '') IN ('', " + strings.TrimPrefix(chatConversationTypesSQL, "(") +
-		" AND (" + identityindex.IsChatSQL(messageType, "COALESCE("+conversationType+", '')") + "))"
+	kind := "COALESCE(" + conversationType + ", '')"
+	calls := kind + " IN " + chatConversationTypesSQL + " AND " + messageType +
+		" IN ('" + MessageTypeGoogleVoiceCall + "', 'google_voice_voicemail', '" + MessageTypeSynctechCall + "')"
+	return "(" + kind + " IN ('', " + strings.TrimPrefix(chatConversationTypesSQL, "(") +
+		" AND ((" + identityindex.IsChatSQL(messageType, kind) + ") OR (" + calls + ")))"
 }
 
 // installChatMembers creates the chat membership projection. chat_members

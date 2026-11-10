@@ -58,6 +58,10 @@ func TestImportRecordsConnectedCallLength(t *testing.T) {
 	assert.JSONEq(`{"call_connected_seconds":3723}`, got["Placed call to Test User (1h 2m 3s)"])
 	assert.JSONEq(`{"call_connected_seconds":45}`, got["Received call from Test User (45s)"])
 	assert.Empty(got["Missed call from Test User (30s)"], "a missed call never connected")
+	chats, err := st.SearchChatsContext(t.Context(), store.ChatDiscoveryQuery{Query: "Test User"})
+	require.NoError(err)
+	require.Len(chats.Results, 1)
+	assert.Equal("calls:+15550000008", chats.Results[0].SourceConversationID)
 }
 
 func TestDurationSeconds(t *testing.T) {

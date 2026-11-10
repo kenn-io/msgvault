@@ -93,6 +93,7 @@ describe('entryKindPresentation', () => {
     ['telegram', 'Conversation'],
     ['reddit_chat', 'Conversation'],
     ['reddit_pm', 'Conversation'],
+    ['x_dm', 'Conversation'],
     ['chat', 'Conversation'],
     ['meeting_transcript', 'Meeting'],
     ['meeting_note', 'Meeting'],

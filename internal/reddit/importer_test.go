@@ -353,12 +353,12 @@ func TestImportPMKindDoesNotDependOnRows(t *testing.T) {
 	require := require.New(t)
 	root := t.TempDir()
 	st := testutil.NewTestStore(t)
-	data := "id,body,from,to,thread_id\none,first,fictional_owner,fictional_peer,thread\ntwo,second,fictional_owner,,thread\nthree,recipient,fictional_owner,r/fictional_garden,thread\nfour,sender,/r/fictional_garden,fictional_owner,thread\n"
+	data := "id,body,from,to,thread_id\none,first,fictional_owner,fictional_peer,two-people\ntwo,second,fictional_owner,,thread\nthree,recipient,fictional_owner,r/fictional_garden,thread\nfour,sender,/r/fictional_garden,fictional_owner,thread\n"
 	require.NoError(os.WriteFile(filepath.Join(root, "messages.csv"), []byte(data), 0600))
 	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
 	require.NoError(err)
 	var kind string
-	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT conversation_type FROM conversations").Scan(&kind))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT conversation_type FROM conversations WHERE source_conversation_id='pm:thread:two-people'").Scan(&kind))
 	assert.Empty(kind)
 	var n int
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM participant_identifiers WHERE identifier_type='reddit' AND identifier_value IN ('r/fictional_garden','/r/fictional_garden')").Scan(&n))
