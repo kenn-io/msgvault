@@ -95,7 +95,7 @@ function participantAddressMap(labels: PersonMergeLabels | undefined, workspaces
 
 function participantAddress(address: ParticipantAddress, workspaces: Map<string, string>, name = ''): AddressLabel {
   const chip = identityChipText({ ...address, is_primary: false, provenance: '', scope_kind: '', scope_value: '' }, undefined, []);
-  const detail = ['email', 'phone'].includes(address.type) ? '' : [...new Set([
+  const detail = ['email', 'phone'].includes(address.type) ? [address.service_slug !== address.type && address.service_label, scopeText(address, workspaces)].filter(Boolean).join(' · ') : [...new Set([
     ...withoutName(name, [chip.subtitle]),
     ['handle', 'matrix', 'apple_id', 'imessage', 'whatsapp', 'sms', 'synctech_sms', 'google_voice'].includes(address.type) ? chip.detail : address.display_value,
     scopeText(address, workspaces),

@@ -103,3 +103,17 @@ it.each([
   const scopes = workspaceLabels([addresses[1]], workspaceLabels([addresses[0]]));
   expect(addresses.map(address => scopeText(address, scopes))).toEqual(expected);
 });
+
+it('keeps the service and account on observed phone and email addresses', () => {
+  const addresses = [
+    addressFixture(701, 'phone', '+12025550123', { service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'a' }),
+    addressFixture(702, 'phone', '+12025550123', { service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'b' }),
+    addressFixture(703, 'email', 'reader@example.org', { service_slug: 'slack', service_label: 'Slack', scope_kind: 'workspace', scope_value: 'c' }),
+  ];
+  const participants = addresses.map(address => absorbed(address.participant_id));
+  const labels = labelsOf(addresses);
+  const scopes = workspaceLabels(addresses);
+  const expected = ['+12025550123 · WhatsApp · account 1', '+12025550123 · WhatsApp · account 2', 'reader@example.org · Slack · workspace 1'];
+  expect(mergeAddresses({ merge, participants, labels }, 'absorbed', scopes).map(addressText)).toEqual(expected);
+  expect([...mergeSummaryRow({ merge, participants, labels }, scopes).addresses.values()].flat().map(addressText)).toEqual(expected);
+});
