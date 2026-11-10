@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -74,7 +75,7 @@ func newDiagnoseAcquisitionCmd() *cobra.Command {
 				}
 			}
 			if jsonOut {
-				return json.MarshalWrite(cmd.OutOrStdout(), active)
+				return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), active)
 			}
 			if len(active) == 0 {
 				if _, err := fmt.Fprintln(cmd.OutOrStdout(), "No pending acquisition failures."); err != nil {

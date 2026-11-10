@@ -81,6 +81,7 @@ func TestDiagnoseAcquisitionCommand(t *testing.T) {
 			root.SetArgs(args)
 			require.NoError(executeRootContext(t.Context(), root))
 			if tc.pending {
+				assert.True(bytes.HasSuffix(output.Bytes(), []byte("\n")))
 				var items []map[string]string
 				require.NoError(json.Unmarshal(output.Bytes(), &items))
 				require.Len(items, 1)
