@@ -1338,9 +1338,9 @@ func getViewDef(view ViewType, granularity TimeGranularity, tablePrefix string) 
 	switch view {
 	case ViewSenders:
 		return aggViewDef{
-			keyExpr:    "COALESCE(NULLIF(" + mrAlias + ".envelope_address, ''), " + pAlias + ".email_address)",
+			keyExpr:    "COALESCE(NULLIF(" + mrAlias + ".email_address, ''), " + pAlias + ".email_address)",
 			joinClause: fmt.Sprintf("JOIN mr %s ON %s.message_id = msg.id AND %s.recipient_type = 'from'\n\t\t\t\tJOIN p %s ON %s.id = %s.participant_id", mrAlias, mrAlias, mrAlias, pAlias, pAlias, mrAlias),
-			nullGuard:  "COALESCE(NULLIF(" + mrAlias + ".envelope_address, ''), " + pAlias + ".email_address) IS NOT NULL",
+			nullGuard:  "COALESCE(NULLIF(" + mrAlias + ".email_address, ''), " + pAlias + ".email_address) IS NOT NULL",
 		}, nil
 	case ViewSenderNames:
 		nameExpr := recipientNameExpr(mrAlias, pAlias)
@@ -1367,9 +1367,9 @@ func getViewDef(view ViewType, granularity TimeGranularity, tablePrefix string) 
 		}, nil
 	case ViewDomains:
 		return aggViewDef{
-			keyExpr:    "COALESCE(NULLIF(" + senderEnvelopeDomainExpr(mrAlias+".envelope_address") + ", ''), " + pAlias + ".domain)",
+			keyExpr:    "COALESCE(NULLIF(" + senderEnvelopeDomainExpr(mrAlias+".email_address") + ", ''), " + pAlias + ".domain)",
 			joinClause: fmt.Sprintf("JOIN mr %s ON %s.message_id = msg.id AND %s.recipient_type = 'from'\n\t\t\t\tJOIN p %s ON %s.id = %s.participant_id", mrAlias, mrAlias, mrAlias, pAlias, pAlias, mrAlias),
-			nullGuard:  "COALESCE(NULLIF(" + senderEnvelopeDomainExpr(mrAlias+".envelope_address") + ", ''), " + pAlias + ".domain, '') != ''",
+			nullGuard:  "COALESCE(NULLIF(" + senderEnvelopeDomainExpr(mrAlias+".email_address") + ", ''), " + pAlias + ".domain, '') != ''",
 		}, nil
 	case ViewLabels:
 		return aggViewDef{
@@ -1536,6 +1536,7 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 	// different rows.
 	if filter.Sender != "" {
 		guard := senderEnvelopeAbsent("mr", "envelope_address", "msg.id")
+		address := "CASE WHEN " + guard + " THEN mr.email_address ELSE mr.envelope_address END"
 		fromName, directName := "", ""
 		senderArgs := []any{filter.Sender, filter.Sender, filter.Sender}
 		directArgs := []any{filter.Sender, filter.Sender}
@@ -1547,7 +1548,7 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 		}
 		conditions = append(conditions, `(EXISTS (SELECT 1 FROM mr JOIN p ON p.id = mr.participant_id
             WHERE mr.message_id = msg.id AND mr.recipient_type = 'from'
-            AND (mr.envelope_address = ? OR (p.email_address = ? AND `+guard+`) OR p.phone_number = ?)`+fromName+`)
+            AND ((`+address+`) = ? OR (p.email_address = ? AND `+guard+`) OR p.phone_number = ?)`+fromName+`)
             OR EXISTS (SELECT 1 FROM p WHERE p.id = msg.sender_id AND ((p.email_address = ? AND `+guard+`) OR p.phone_number = ?)`+directName+`))`)
 		args = append(args, senderArgs...)
 		args = append(args, directArgs...)
@@ -1652,7 +1653,7 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 			JOIN p ON p.id = mr.participant_id
 			WHERE mr.message_id = msg.id
 			  AND mr.recipient_type = 'from'
-			  AND LOWER(`+senderDomainFallbackExpr("mr", "p", "mr", "envelope_address")+`) = ?
+			  AND LOWER(`+duckDBSenderDomainExpr("mr", "p")+`) = ?
 		)`)
 		args = append(args, strings.ToLower(filter.Domain))
 	} else if filter.MatchesEmpty(ViewDomains) {
@@ -1661,7 +1662,7 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 			JOIN p ON p.id = mr.participant_id
 			WHERE mr.message_id = msg.id
 			  AND mr.recipient_type = 'from'
-			  AND `+senderDomainFallbackExpr("mr", "p", "mr", "envelope_address")+` != ''
+			  AND `+duckDBSenderDomainExpr("mr", "p")+` != ''
 		)`)
 	}
 
@@ -2024,7 +2025,7 @@ func (e *DuckDBEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 		),
 		msg_sender AS (
 			SELECT mr.message_id,
-				   FIRST(COALESCE(NULLIF(mr.envelope_address, ''), p.email_address)) as from_email,
+				   FIRST(COALESCE(NULLIF(mr.email_address, ''), p.email_address)) as from_email,
 				   FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')) as from_name,
 				   FIRST(COALESCE(p.phone_number, '')) as from_phone
 			FROM mr
@@ -2747,7 +2748,7 @@ func (e *DuckDBEngine) SearchFast(ctx context.Context, q *search.Query, filter M
 		),
 		msg_sender AS (
 			SELECT mr.message_id,
-				   FIRST(COALESCE(NULLIF(mr.envelope_address, ''), p.email_address)) as from_email,
+				   FIRST(COALESCE(NULLIF(mr.email_address, ''), p.email_address)) as from_email,
 				   FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')) as from_name,
 				   FIRST(COALESCE(p.phone_number, '')) as from_phone
 			FROM mr
@@ -2867,7 +2868,7 @@ func (e *DuckDBEngine) SearchFastCount(ctx context.Context, q *search.Query, fil
 		WITH %s,
 		msg_sender AS (
 			SELECT mr.message_id,
-				   FIRST(COALESCE(NULLIF(mr.envelope_address, ''), p.email_address)) as from_email,
+				   FIRST(COALESCE(NULLIF(mr.email_address, ''), p.email_address)) as from_email,
 				   FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')) as from_name,
 				   FIRST(COALESCE(p.phone_number, '')) as from_phone
 			FROM mr
@@ -3170,7 +3171,7 @@ func (e *DuckDBEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 		WITH %s,
 		msg_sender AS (
 			SELECT mr.message_id,
-				   FIRST(COALESCE(NULLIF(mr.envelope_address, ''), p.email_address)) as from_email,
+				   FIRST(COALESCE(NULLIF(mr.email_address, ''), p.email_address)) as from_email,
 				   FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')) as from_name,
 				   FIRST(COALESCE(p.phone_number, '')) as from_phone
 			FROM mr
@@ -3433,6 +3434,12 @@ func (e *DuckDBEngine) ReadOriginalMessage(ctx context.Context, ref MessageRef, 
 	return e.sqliteEngine.ReadOriginalMessage(ctx, ref, maxBytes)
 }
 
+func duckDBSenderDomainExpr(recipient, participant string) string {
+	guard := senderEnvelopeAbsent("mr", "envelope_address", recipient+".message_id")
+	address := "CASE WHEN " + guard + " THEN " + recipient + ".email_address ELSE " + recipient + ".envelope_address END"
+	return "COALESCE(NULLIF(" + senderEnvelopeDomainExpr(address) + ", ''), CASE WHEN " + guard + " THEN " + participant + ".domain END, '')"
+}
+
 // ResolveMessageID reads from SQLite because the Parquet cache can lag recent syncs.
 func (e *DuckDBEngine) ResolveMessageID(ctx context.Context, ref string) (int64, string, error) {
 	if e.sqliteEngine == nil {
@@ -3451,7 +3458,7 @@ func (e *DuckDBEngine) ListThread(ctx context.Context, q ThreadQuery) (*ThreadPa
 
 func appendDuckDBSenderConditions(conditions []string, args []any, addresses []string) ([]string, []any) {
 	for _, address := range addresses {
-		condition, _, senderArgs := search.SenderLookup(address, func(column string) string { return "LOWER(" + column + ")" }, "msg", "mr", "p", "msg")
+		condition, _, senderArgs := search.SenderLookupCached(address, func(column string) string { return "LOWER(" + column + ")" }, "msg", "mr", "p", "msg")
 		conditions = append(conditions, condition)
 		args = append(args, senderArgs...)
 	}

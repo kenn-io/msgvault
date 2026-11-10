@@ -17,7 +17,7 @@ func TestRelayedSender(t *testing.T) {
 		{"ordinary", "other@example.test", "X-GitHub-Sender: Alice\r\n", "", "", nil},
 		{"missing", "notifications@github.com", "Subject: hello\r\n", "", "", nil},
 		{"duplicate", "notifications@github.com", "X-GitHub-Sender: Alice\r\nX-GitHub-Sender: Bob\r\n", "", "", nil},
-		{"invalid login", "notifications@github.com", "X-GitHub-Sender: bad user\r\n", "", "", nil},
+		{"bot", "notifications@github.com", "X-GitHub-Sender: DeepDocsAI[bot]\r\n", "github", "deepdocsai[bot]", nil},
 		{"override", "notifications@github.com", "X-Author: Named\r\n", "example", "Named", []RelayedSenderRule{{Address: "notifications@github.com", Header: "X-Author", IdentifierType: "example"}}},
 	}
 	for _, tc := range cases {

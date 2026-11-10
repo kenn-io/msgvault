@@ -973,22 +973,42 @@ func senderMatchSQL(filter MessageFilter, limit int) (string, []any) {
 		directArgs = append(directArgs, filter.SenderName)
 	}
 	if limit != 0 {
+		participantName := ""
+		if filter.SenderName != "" {
+			participantName = " AND " + participantNameExpr("p_direct_sender") + " = ?"
+		}
+		participant := func(column, name string) string {
+			return `SELECT p_direct_sender.id FROM participants p_direct_sender WHERE p_direct_sender.` + column + ` = ?` + name
+		}
+		bind := func() []any {
+			args := []any{filter.Sender}
+			if filter.SenderName != "" {
+				args = append(args, filter.SenderName)
+			}
+			return args
+		}
+		direct := `SELECT m_direct.id FROM messages m_direct WHERE m_direct.sender_id IN (` + participant("email_address", participantName) + `) AND ` + senderEnvelopeAbsent("message_recipients", "email_address", "m_direct.id") + `
+			UNION ALL SELECT m_direct.id FROM messages m_direct WHERE m_direct.sender_id IN (` + participant("phone_number", participantName) + `)`
+		directArgs = slices.Concat(bind(), bind())
 		from := `SELECT mr_filter_from.message_id AS id FROM message_recipients mr_filter_from
-            JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
-            WHERE mr_filter_from.recipient_type = 'from' AND mr_filter_from.email_address = ?` + fromName + `
-            UNION ALL SELECT mr_filter_from.message_id AS id FROM message_recipients mr_filter_from
-            JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
-            WHERE mr_filter_from.recipient_type = 'from' AND ((p_filter_from.email_address = ? AND ` + guard + `) OR p_filter_from.phone_number = ?)` + fromName
+			JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
+			WHERE mr_filter_from.recipient_type = 'from' AND mr_filter_from.email_address = ?` + fromName + `
+			UNION ALL SELECT mr_filter_from.message_id AS id FROM message_recipients mr_filter_from
+			JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
+			WHERE mr_filter_from.recipient_type = 'from' AND mr_filter_from.participant_id IN (` + participant("email_address", "") + `) AND ` + guard + fromName + `
+			UNION ALL SELECT mr_filter_from.message_id AS id FROM message_recipients mr_filter_from
+			JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
+			WHERE mr_filter_from.recipient_type = 'from' AND mr_filter_from.participant_id IN (` + participant("phone_number", "") + `)` + fromName
 		fromArgs = []any{filter.Sender}
 		if filter.SenderName != "" {
 			fromArgs = append(fromArgs, filter.SenderName)
 		}
-		fromArgs = append(fromArgs, filter.Sender, filter.Sender)
-		if filter.SenderName != "" {
-			fromArgs = append(fromArgs, filter.SenderName)
+		for range 2 {
+			fromArgs = append(fromArgs, filter.Sender)
+			if filter.SenderName != "" {
+				fromArgs = append(fromArgs, filter.SenderName)
+			}
 		}
-		direct := `SELECT m_direct.id FROM messages m_direct WHERE m_direct.sender_id IN (
-   SELECT id FROM participants p_direct_sender WHERE ` + directAddress("m_direct.id") + directName + `)`
 		return senderCandidateSQL(direct, from, directArgs, fromArgs, limit)
 	}
 	return `(EXISTS (SELECT 1 FROM message_recipients mr_filter_from
@@ -1987,8 +2007,8 @@ func (e *SQLiteEngine) SearchByDomains(ctx context.Context, domains []string, af
 		SELECT 1 FROM message_recipients mr_dom
 		JOIN participants p_dom ON p_dom.id = mr_dom.participant_id
 		WHERE mr_dom.message_id = m.id
-		  AND LOWER(CASE WHEN mr_dom.recipient_type = 'from' THEN `+senderDomainExpr("mr_dom", "p_dom")+` ELSE p_dom.domain END) IN (%s)
-	)`, strings.Join(placeholders, ", ")))
+		  AND LOWER(CASE WHEN mr_dom.recipient_type = 'from' THEN %s ELSE p_dom.domain END) IN (%s)
+	)`, senderDomainExpr("mr_dom", "p_dom"), strings.Join(placeholders, ", ")))
 
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourceIDs)
 	if after != nil {

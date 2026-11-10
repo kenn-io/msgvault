@@ -106,6 +106,12 @@ func TestDuckDBRelayedEnvelopeMixedAndLegacy(t *testing.T) {
 		require.Len(t, rows, 1)
 		assert.Equal(t, "Legacy", rows[0].Subject)
 	}
+	for _, term := range []string{"author@example.test", "@example.test"} {
+		results, err := engine.SearchFast(t.Context(), search.Parse("from:"+term), MessageFilter{}, 10, 0)
+		require.NoError(t, err)
+		require.Len(t, results, 1)
+		assert.Equal(t, "Legacy", results[0].Subject)
+	}
 	rows, err := engine.ListMessages(t.Context(), MessageFilter{Sender: "other@example.test"})
 	require.NoError(t, err)
 	assert.Empty(t, rows)

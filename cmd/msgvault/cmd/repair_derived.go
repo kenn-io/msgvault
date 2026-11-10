@@ -84,7 +84,7 @@ Examples:
 			ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Stopping...")
 			defer stop()
 			if attachmentMessage != "" {
-				service := syncer.New(nil, s, &syncer.Options{AttachmentsDir: cfg.AttachmentsDir()})
+				service := syncer.New(nil, s, &syncer.Options{AttachmentsDir: cfg.AttachmentsDir(), RelayedSenders: cfg.RelayedSenders})
 				if err := service.RepairMessageAttachments(ctx, syncer.RepairRequest{Reference: attachmentMessage, SourceID: sourceID}); err != nil {
 					return fmt.Errorf("repair message attachments: %w", err)
 				}

@@ -207,8 +207,6 @@ func (e *LiveExploreEngine) Explore(ctx context.Context, request ExploreRequest)
 func buildSQLiteExplorePageSQL(core, conditions, chat string, values []string) string {
 	// SQLite's bare grouped columns select one sender row, like DuckDB FIRST.
 	senders := strings.ReplaceAll(sqlPageSenderLabels("SELECT anchor_id FROM page WHERE entry_kind <> 'conversation'"), "FIRST(", "(")
-	senders = strings.ReplaceAll(senders, senderEnvelopeDomainExpr("mr.envelope_address"), senderEnvelopeDomainExpr("mr.email_address"))
-	senders = strings.ReplaceAll(senders, "mr.envelope_address", "mr.email_address")
 	return core + `, page_keys(entry_key, entry_kind, anchor_id, page_conversation_id, position) AS MATERIALIZED (
  VALUES ` + strings.Join(values, ",") + `
  ), members AS MATERIALIZED (

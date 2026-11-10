@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -530,6 +531,18 @@ func collectCacheStats(
 	db sqlExecutor,
 	inputs cacheStatsRelations,
 ) (CacheStatsSummary, error) {
+	rows, err := db.QueryContext(ctx, "SELECT * FROM "+inputs.recipients+" LIMIT 0")
+	if err != nil {
+		return CacheStatsSummary{}, fmt.Errorf("inspect recipient cache: %w", err)
+	}
+	columns, err := rows.Columns()
+	_ = rows.Close()
+	if err != nil {
+		return CacheStatsSummary{}, fmt.Errorf("inspect recipient columns: %w", err)
+	}
+	if !slices.Contains(columns, "email_address") {
+		inputs.recipients = "(SELECT *, NULL::VARCHAR AS email_address FROM " + inputs.recipients + ")"
+	}
 	query := fmt.Sprintf(`
 WITH messages AS (
 	SELECT id::BIGINT AS id, source_id::BIGINT AS source_id,
@@ -537,7 +550,7 @@ WITH messages AS (
 	       coalesce(try_cast(size_estimate AS BIGINT), 0) AS size_estimate
 	FROM %s
 ), senders AS (
-	SELECT DISTINCT COALESCE(NULLIF(mr.envelope_address, ''), p.email_address) AS email_address,
+	SELECT DISTINCT COALESCE(NULLIF(mr.email_address, ''), p.email_address) AS email_address,
 	       COALESCE(NULLIF(%s, ''), p.domain) AS domain
 	FROM %s mr
 	JOIN %s p ON p.id = try_cast(mr.participant_id AS BIGINT)
@@ -553,14 +566,14 @@ SELECT
 	(SELECT coalesce(sum(size_estimate), 0) FROM messages),
 	(SELECT coalesce(sum(try_cast(size AS BIGINT)), 0) FROM %s)`,
 		inputs.messages,
-		SenderEnvelopeDomainExpr("mr.envelope_address"),
+		SenderEnvelopeDomainExpr("mr.email_address"),
 		inputs.recipients,
 		inputs.participants,
 		inputs.attachments,
 	)
 	var result CacheStatsSummary
 	var minYear, maxYear sql.NullInt64
-	err := db.QueryRowContext(ctx, query).Scan(
+	err = db.QueryRowContext(ctx, query).Scan(
 		&result.TotalMessages,
 		&result.Sources,
 		&result.UniqueSenders,

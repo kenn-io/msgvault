@@ -2,7 +2,6 @@ package mime
 
 import (
 	"net/mail"
-	"regexp"
 	"strings"
 	"unicode"
 )
@@ -13,8 +12,6 @@ type RelayedSenderRule struct {
 	Header         string `toml:"header"`
 	IdentifierType string `toml:"identifier_type"`
 }
-
-var githubLogin = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$`)
 
 // RelayedSender returns a service identifier only for an unambiguous header.
 func RelayedSender(raw []byte, from []Address, rules []RelayedSenderRule) (string, string) {
@@ -30,14 +27,11 @@ func RelayedSender(raw []byte, from []Address, rules []RelayedSenderRule) (strin
 			return "", ""
 		}
 		value := strings.TrimSpace(values[0])
-		if value == "" || strings.IndexFunc(value, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) }) >= 0 {
+		if value == "" {
 			return "", ""
 		}
 		if rule.IdentifierType == "github" {
 			value = strings.ToLower(value)
-			if !githubLogin.MatchString(value) || strings.Contains(value, "--") {
-				return "", ""
-			}
 		}
 		return rule.IdentifierType, value
 	}
@@ -69,4 +63,12 @@ func RelayedSenderRules(custom []RelayedSenderRule) []RelayedSenderRule {
 		}
 	}
 	return rules
+}
+
+// RelayedSenderName chooses the observed author name or their handle.
+func RelayedSenderName(from Address, value string) string {
+	if name := strings.TrimSpace(from.Name); name != "" {
+		return name
+	}
+	return value
 }

@@ -3,7 +3,6 @@ package sync
 import (
 	"database/sql"
 	"sort"
-	"strings"
 
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
@@ -40,10 +39,7 @@ func preparedMessageParticipants(data *messageData) ([]store.ParticipantPersistD
 	}
 	if data.relayType != "" {
 		index["\x00relay"] = len(participants)
-		name := strings.TrimSpace(data.from[0].Name)
-		if name == "" {
-			name = data.relayValue
-		}
+		name := mime.RelayedSenderName(data.from[0], data.relayValue)
 		participants = append(participants, store.ParticipantPersistData{IdentifierType: data.relayType, IdentifierValue: data.relayValue, DisplayName: name})
 	}
 	return participants, index

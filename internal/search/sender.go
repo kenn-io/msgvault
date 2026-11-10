@@ -42,19 +42,33 @@ func senderCondition(operator, pattern string, metadata bool, lower func(string)
 // Both forms bind identical arguments so adaptive search can switch between them.
 // Callers supply trusted table references and the outer message alias.
 func SenderLookup(value string, lower func(string) string, messages, recipients, participants, alias string) (condition, matching string, args []any) {
+	return senderLookup(value, lower, messages, recipients, participants, alias, "email_address", false)
+}
+
+// SenderLookupCached distinguishes the recorded address from a cache's resolved address.
+func SenderLookupCached(value string, lower func(string) string, messages, recipients, participants, alias string) (condition, matching string, args []any) {
+	return senderLookup(value, lower, messages, recipients, participants, alias, "envelope_address", true)
+}
+
+func senderLookup(value string, lower func(string) string, messages, recipients, participants, alias, snapshotColumn string, cached bool) (condition, matching string, args []any) {
 	operator, pattern, metadata := senderMatch(value)
 	participant, participantArgs := senderCondition(operator, pattern, metadata, lower)
 	args = append(args, participantArgs...)
-	envelope := lower("COALESCE(mr2.email_address, '')") + ` LIKE ? ESCAPE '\'`
+	address := "mr2.email_address"
+	if cached {
+		guard := `NOT EXISTS (SELECT 1 FROM ` + recipients + ` mr_address_guard WHERE mr_address_guard.message_id = mr2.message_id AND mr_address_guard.recipient_type = 'from' AND COALESCE(mr_address_guard.` + snapshotColumn + `, '') <> '')`
+		address = `CASE WHEN ` + guard + ` THEN mr2.email_address ELSE mr2.envelope_address END`
+	}
+	envelope := lower("COALESCE(("+address+"), '')") + ` LIKE ? ESCAPE '\'`
 	if operator == "=" {
-		envelope = "LOWER(mr2.email_address) = ?"
+		envelope = "LOWER(" + address + ") = ?"
 	}
 	recipientFallback := ""
 	directFallback := ""
 	matchingFallback := ""
 	if !metadata {
 		guard := func(messageID string) string {
-			return ` AND NOT EXISTS (SELECT 1 FROM ` + recipients + ` mr_guard WHERE mr_guard.message_id = ` + messageID + ` AND mr_guard.recipient_type = 'from' AND COALESCE(mr_guard.email_address, '') <> '')`
+			return ` AND NOT EXISTS (SELECT 1 FROM ` + recipients + ` mr_guard WHERE mr_guard.message_id = ` + messageID + ` AND mr_guard.recipient_type = 'from' AND COALESCE(mr_guard.` + snapshotColumn + `, '') <> '')`
 		}
 		recipientFallback = guard("mr2.message_id")
 		directFallback = guard(alias + ".id")

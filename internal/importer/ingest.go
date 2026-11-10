@@ -218,10 +218,7 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 	}
 	var messageID int64
 	if relayType != "" {
-		name := strings.TrimSpace(parsed.From[0].Name)
-		if name == "" {
-			name = relayValue
-		}
+		name := mime.RelayedSenderName(parsed.From[0], relayValue)
 		participants := []store.ParticipantPersistData{{IdentifierType: relayType, IdentifierValue: relayValue, DisplayName: name}}
 		messageID, err = st.PersistEmailMessageWithParticipantsContext(ctx, sourceID, participants, func(ids []int64) *store.MessagePersistData { return build(ids[0]) })
 	} else {
