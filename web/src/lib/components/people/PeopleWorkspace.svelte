@@ -30,11 +30,12 @@
   const cadence = $derived(urlState.relationshipCadence);
   let dueDraft = $state<number | null>(null);
   $effect(() => { dueDraft = urlState.relationshipDueWithinDays; });
-  const invalidDue = $derived(cadence === 'due' && dueDraft !== null && (!Number.isInteger(dueDraft) || dueDraft < 0 || dueDraft > 3660));
+  const validDue = (value: number | null): boolean => value === null || (Number.isInteger(value) && value >= 0 && value <= 3660);
+  const invalidDue = $derived(cadence === 'due' && !validDue(dueDraft));
   function clearCadence(): void { onNavigate({ relationshipCadence: '', relationshipDueWithinDays: null }); }
   function changeDue(value: number | null): void {
     dueDraft = value;
-    if (value === null || (Number.isInteger(value) && value >= 0 && value <= 3660)) onDraftNavigation({ relationshipDueWithinDays: value });
+    if (validDue(value)) onDraftNavigation({ relationshipDueWithinDays: value });
   }
   const cadenceOptions = [
     { value: 'overdue', label: 'Overdue' }, { value: 'due', label: 'Due' },
@@ -240,14 +241,16 @@
 {#snippet cadenceControls()}
   {#if cadence === 'due'}
     <div class="cadence-controls">
-      <label>Due within days<NumberInput ariaLabel="Due within days" value={dueDraft} min={0} max={3660} step={1} invalid={invalidDue} oninput={changeDue} /></label>
+      <label>Due within days<span class="due-value"><NumberInput block ariaLabel="Due within days" value={dueDraft} min={0} max={3660} step={1} invalid={invalidDue} oninput={changeDue} /></span></label>
       <span>Includes overdue. Uses UTC days; empty means today (0).</span>
-      {#if invalidDue}<span role="alert">Enter a whole number from 0 to 3660.</span>{/if}
+      {#if invalidDue}<span class="cadence-error" role="alert">Enter a whole number from 0 to 3660 to show results.</span>{/if}
     </div>
   {/if}
   {#if cadenceBlocked}
-    <p class="cadence-explanation" role="status">Keep-in-touch filters require People sorted by Closest, without search, Saved, or profile filters.</p>
-    <Button label="Clear cadence" onclick={clearCadence} />
+    <div class="cadence-explanation">
+      <p role="status">Keep-in-touch filters require People sorted by Closest, without search, Saved, or profile filters.</p>
+      <Button size="sm" surface="outline" label="Clear cadence" onclick={clearCadence} />
+    </div>
   {/if}
 {/snippet}
 {#snippet list()}
@@ -267,7 +270,7 @@
       </div>
     {/if}
     <div inert={bulkPending || Boolean(bulkConflict)} class="list-content">
-      <PeopleList blocked={cadenceBlocked || invalidDue} {cadenceControls} pageRecovery={directoryMode ? directory.pageRecovery : null} {rows} {loading} loadingMore={directoryMode ? directory.loadingMore : controller.listLoadingMore} {hasMore}
+      <PeopleList blocked={cadenceBlocked || invalidDue} {cadenceControls} pageRecovery={directoryMode ? directory.pageRecovery : controller.listError && !controller.listCursor ? 'reload' : null} {rows} {loading} loadingMore={directoryMode ? directory.loadingMore : controller.listLoadingMore} {hasMore}
         countLabel={`${(directoryMode ? rows.length : controller.listTotalCount ?? rows.length).toLocaleString()}${hasMore && directoryMode ? '+' : ''} ${facet === 'domains' ? (rows.length === 1 && !hasMore ? 'domain' : 'domains') : (rows.length === 1 && !hasMore ? 'person' : 'people')}`}
         error={cadenceBlocked || invalidDue ? null : directoryMode ? directory.error ?? directory.pageError : controller.listError} degraded={cadenceBlocked || invalidDue || directoryMode ? null : controller.degraded}
         {facet} savedOnly={saved} {query} {activeKey} {selection} {filterSections} filterCount={chips.length} onResetFilters={reset} {chips} sort={directoryMode && sort === 'closest' ? 'name' : sort}
@@ -316,8 +319,11 @@
   .list-content { display: flex; min-height: 0; flex: 1; }
   .filters { display: flex; flex-wrap: wrap; gap: var(--control-gap); padding: var(--space-3); }
   .cadence-controls { display: flex; flex-direction: column; gap: var(--space-2); color: var(--text-muted); font-size: var(--font-size-xs); }
-  .cadence-controls label { display: flex; align-items: center; gap: var(--control-gap); }
-  .cadence-explanation { margin: 0; color: var(--text-secondary); font-size: var(--font-size-sm); }
+  .cadence-controls label { display: flex; align-items: center; gap: var(--space-3); }
+  .due-value { width: 8ch; }
+  .cadence-error { color: var(--status-error-ink); }
+  .cadence-explanation { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); color: var(--text-muted); font-size: var(--font-size-xs); }
+  .cadence-explanation p { margin: 0; }
   .filters label { display: flex; flex-direction: column; color: var(--text-secondary); font-size: var(--font-size-sm); }
   .solo-page { height: 100%; min-width: 0; display: flex; flex-direction: column; min-height: 0; flex: 1; }
   .solo { padding: var(--page-gutter); }

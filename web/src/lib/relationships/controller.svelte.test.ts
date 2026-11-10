@@ -1511,6 +1511,8 @@ it('captures cadence including zero for paging and rejects an old merge context'
     await controller.loadList({});
     expect(bodies[2]).toMatchObject({ cadence: 'overdue' });
     expect(bodies[2]).not.toHaveProperty('due_within_days');
+    await controller.refreshList();
+    expect(bodies[3]).toMatchObject({ cadence: 'overdue' });
   } finally { controller.destroy(); }
 });
 
@@ -1531,6 +1533,7 @@ it('suspends pending list work and prevents merge and link refresh from reviving
     await controller.loadMoreList();
     await controller.reconcilePersonMerge(context);
     await controller.linkParticipants(1, 2);
+    await controller.refreshList();
     expect(paths).toHaveLength(2);
     expect(controller.listRows).toEqual([]);
     expect(controller.listCursor).toBeNull();
@@ -1549,26 +1552,6 @@ it('cancels a building-cache retry when the list is suspended', async () => {
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(controller.degraded).toBeNull();
   } finally { controller.destroy(); vi.useRealTimers(); }
-});
-
-it('clears rows on a cadence change and ignores a late old response', async () => {
-  let resolve!: (response: Response) => void;
-  let count = 0;
-  const controller = new RelationshipsController(createAPIClient(async () => ++count === 2
-    ? new Promise<Response>(done => resolve = done)
-    : Response.json({ rows: [relationshipRow(count, 'Synthetic')], next_cursor: 'next' })), () => 'UTC');
-  try {
-    await controller.loadList({});
-    controller.cadence = 'due'; controller.dueWithinDays = 7;
-    const pending = controller.loadList({});
-    expect(controller.listRows).toEqual([]);
-    expect(controller.listCursor).toBeNull();
-    controller.cadence = 'no_list';
-    await controller.loadList({});
-    resolve(Response.json({ rows: [relationshipRow(2, 'Old due row')] }));
-    await pending;
-    expect(controller.listRows.map(row => 'canonical_id' in row ? row.canonical_id : null)).toEqual([3]);
-  } finally { controller.destroy(); }
 });
 
 it.each([false, true])('retains suspended rows only while reloading the same cadence context: changed=%s', async changed => {

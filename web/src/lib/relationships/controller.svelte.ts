@@ -232,6 +232,9 @@ export class RelationshipsController {
     this.listError = null;
     this.degraded = null;
   }
+  refreshList(): Promise<void> {
+    return this.lastListPredicate ? this.loadList(this.lastListPredicate) : Promise.resolve();
+  }
   async loadList(predicate: ExplorePredicate): Promise<void> {
     this.clearCacheBuildRetry();
     this.listAbort?.abort();

@@ -1216,7 +1216,7 @@ it('shows invalid due drafts without issuing another ranked request', async () =
   try {
     const input = await screen.findByRole('spinbutton', { name: 'Due within days' });
     await fireEvent.input(input, { target: { value: '3661' } });
-    expect((await screen.findByRole('alert')).textContent).toBe('Enter a whole number from 0 to 3660.');
+    expect((await screen.findByRole('alert')).textContent).toBe('Enter a whole number from 0 to 3660 to show results.');
     expect(load).toHaveBeenCalledTimes(1);
     expect(controller.listCursor).toBeNull();
     expect(onDraftNavigation).not.toHaveBeenCalled();
@@ -1233,5 +1233,24 @@ it.each(['', 'no_list'] as const)('distinguishes an empty archive from empty cad
   try {
     expect(await screen.findByText(relationshipCadence ? 'No matches' : 'No people yet', { exact: true })).toBeDefined();
     expect(screen.queryByText(relationshipCadence ? 'No people yet' : 'No matches', { exact: true })).toBeNull();
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
+it('reloads cadence page one after a revision conflict without reusing its cursor', async () => {
+  const bodies: Record<string, unknown>[] = [];
+  const client = clientFor({ '/api/v1/relationships': async request => {
+    const body = await request.json(); bodies.push(body);
+    return body.cursor ? Response.json({ error: 'cadence_revision_changed', message: 'Cadence changed; reload the list.' }, { status: 409 })
+      : Response.json({ rows: [{ canonical_id: 1, display_label: 'Saved Example', person_id: 91, signals: { sent_count: 3 }, cadence: { list: 'A', frequency_days: 21, status: 'overdue', due_at: '2026-07-18T00:00:00Z', stale: false } }], next_cursor: 'next' });
+  } });
+  const controller = new RelationshipsController(client, () => 'UTC'), directory = new DirectoryController(client), state = new ExploreState(null);
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: { ...state.current, relationshipCadence: 'due', relationshipDueWithinDays: 7 }, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    await screen.findByText('Saved Example');
+    await controller.loadMoreList();
+    await fireEvent.click(await screen.findByRole('button', { name: 'Reload' }));
+    await waitFor(() => expect(bodies).toHaveLength(3));
+    expect(bodies[2]).toMatchObject({ cadence: 'due', due_within_days: 7 });
+    expect(bodies[2]).not.toHaveProperty('cursor');
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });

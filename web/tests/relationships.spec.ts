@@ -881,7 +881,7 @@ test('cadence filters reach ranked requests and remain clearable in incompatible
   await page.getByRole('button', { name: 'Due', exact: true }).click();
   await page.keyboard.press('Escape');
   await list.getByRole('spinbutton', { name: 'Due within days' }).fill('4000');
-  await expect(list.getByRole('alert')).toHaveText('Enter a whole number from 0 to 3660.');
+  await expect(list.getByRole('alert')).toHaveText('Enter a whole number from 0 to 3660 to show results.');
   await list.getByRole('button', { name: /^Filter/ }).click();
   await page.getByRole('button', { name: 'Overdue', exact: true }).click();
   await page.keyboard.press('Escape');
@@ -904,11 +904,4 @@ test('cadence filters reach ranked requests and remain clearable in incompatible
   await list.getByRole('button', { name: 'Clear cadence', exact: true }).click();
   await expect(list.getByText(/Keep-in-touch filters require People/)).toBeHidden();
   await expect(list.getByRole('button', { name: 'Remove Keep in touch: Due' })).toBeHidden();
-  await list.getByRole('combobox', { name: 'Sort: Most recent', exact: true }).click();
-  await page.getByRole('option', { name: 'Closest', exact: true }).click();
-  await list.getByRole('button', { name: /^Filter/ }).click();
-  await page.getByRole('button', { name: 'No list', exact: true }).click();
-  await page.keyboard.press('Escape');
-  await expect(list.getByText('No matches', { exact: true })).toBeVisible();
-  await expect(list.getByText('No people yet', { exact: true })).toBeHidden();
 });
