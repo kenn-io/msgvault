@@ -3,8 +3,6 @@ package scheduler
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -15,29 +13,6 @@ import (
 
 	"go.kenn.io/msgvault/internal/config"
 )
-
-func TestPollingAccountStartsAndRepeats(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
-	require.NoError(t, os.WriteFile(path, []byte("[[accounts]]\nemail = 'a@example.com'\nenabled = true\nschedule = '0 * * * *'\npoll_interval = '15s'\n"), 0600))
-	cfg, err := config.Load(path, "")
-	require.NoError(t, err)
-	synctest.Test(t, func(t *testing.T) {
-		var calls int
-		s := New(func(context.Context, string) error { return nil }).WithAccountPoll(func(context.Context, string) error { calls++; return nil })
-		n, errs := s.AddAccountsFromConfig(cfg)
-		require.Empty(t, errs)
-		require.Equal(t, 1, n)
-		s.Start()
-		s.Start()
-		synctest.Wait()
-		assert.Equal(t, 1, calls)
-		assert.Equal(t, 15*time.Second, s.Status()[0].NextRun.Sub(time.Now()))
-		time.Sleep(15 * time.Second)
-		synctest.Wait()
-		assert.Equal(t, 2, calls)
-		<-s.Stop().Done()
-	})
-}
 
 func TestCronRegistrationPreservesPolling(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -50,8 +25,10 @@ func TestCronRegistrationPreservesPolling(t *testing.T) {
 		_, errs := s.AddAccountsFromConfig(cfg)
 		require.Empty(t, errs)
 		s.Start()
+		s.Start()
 		synctest.Wait()
 		assert.EqualValues(t, 1, calls.Load())
+		assert.Equal(t, 15*time.Second, s.Status()[0].NextRun.Sub(time.Now()))
 		time.Sleep(15 * time.Second)
 		synctest.Wait()
 		assert.EqualValues(t, 2, calls.Load())
@@ -59,7 +36,7 @@ func TestCronRegistrationPreservesPolling(t *testing.T) {
 	})
 }
 
-func TestPollingCanFinishLongGmailRecovery(t *testing.T) {
+func TestPollingAllowsLongAcquisition(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		completed := make(chan struct{}, 1)
 		s := New(func(context.Context, string) error { return nil }).
@@ -88,10 +65,9 @@ func TestPollingCanFinishLongGmailRecovery(t *testing.T) {
 
 func TestIncompletePollingPreservesCompletion(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		calls := 0
+		var calls atomic.Int32
 		s := New(func(context.Context, string) error { return nil }).WithAccountPoll(func(context.Context, string) error {
-			calls++
-			if calls == 2 {
+			if calls.Add(1) == 2 {
 				return ErrAcquisitionIncomplete
 			}
 			return nil
@@ -110,7 +86,7 @@ func TestIncompletePollingPreservesCompletion(t *testing.T) {
 		s.RemoveAccount("a@example.com")
 		time.Sleep(15 * time.Second)
 		synctest.Wait()
-		assert.Equal(t, 2, calls)
+		assert.EqualValues(t, 2, calls.Load())
 		<-s.Stop().Done()
 	})
 }

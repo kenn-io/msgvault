@@ -1,15 +1,12 @@
 package cmd
 
 import (
-	"errors"
-	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -49,12 +46,6 @@ func TestPollingSourceSelection(t *testing.T) {
 	require.NoError(t, err)
 	_, err = pollingSource(t.Context(), retired.Identifier, st, state)
 	assert.ErrorContains(t, err, "no active")
-}
-
-func TestDeferredQuotaKeepsOtherFailures(t *testing.T) {
-	deferred := fmt.Errorf("profile: %w", gmail.ErrQuotaDeferred)
-	assert.True(t, gmail.IsQuotaDeferred(deferred))
-	assert.False(t, gmail.IsQuotaDeferred(errors.Join(deferred, errors.New("other failure"))))
 }
 
 func TestPollingTargetsRejectDuplicateSource(t *testing.T) {

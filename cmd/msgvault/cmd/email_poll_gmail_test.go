@@ -116,7 +116,7 @@ func TestRapidEmailGmailProfileMismatchDoesNotMutateArchive(t *testing.T) {
 	assert.Equal("100", current.SyncCursor.String)
 }
 
-func TestGmailPollUsesOneVerifiedProfile(t *testing.T) {
+func TestGmailPollAcquisitionAndQuota(t *testing.T) {
 	cfg := testGmailServiceAccountConfig(t)
 	var profiles, histories atomic.Int32
 	var changed, healthy, expired, quota, labelsQuota atomic.Bool

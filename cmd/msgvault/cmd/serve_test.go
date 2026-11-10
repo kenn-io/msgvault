@@ -3308,11 +3308,7 @@ func TestRunScheduledSyncUsesSharedDiscordImporterAndRebuildsOnce(t *testing.T) 
 				require.FailNow("Discord scheduled sync must not resolve Gmail OAuth")
 				return nil, errors.New("unreachable Gmail OAuth resolution")
 			}, state)
-			if tc.wantErr == nil {
-				require.NoError(err)
-			} else {
-				require.ErrorIs(err, tc.wantErr)
-			}
+			require.ErrorIs(err, tc.wantErr)
 			assert.Equal([]int64{source.ID}, imported)
 			assert.Equal(1, rebuilds)
 			if tc.importErr == nil {
