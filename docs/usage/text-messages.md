@@ -534,8 +534,9 @@ command on the daemon host; a remote client cannot upload local exports.
 
 The importer keeps provider message IDs, folder conversation IDs, topic IDs,
 original date strings and full message records, including unknown fields. English
-UTC dates become timestamps; other dates remain unknown and are counted. It does
-not infer reply links from topic IDs or identify people by display name. Roster
+UTC dates become timestamps; other dates remain unknown and are counted. Unknown-date
+messages remain archived and searchable, but timestamp-based analytical-cache lists
+and analytics exclude them. It does not infer reply links from topic IDs or identify people by display name. Roster
 members remain conversation members; they never become message recipients, even
 in two-person DMs. Sender and body search remain available. Relative input-file
 paths and group metadata are kept once on each conversation. Owner profiles are
