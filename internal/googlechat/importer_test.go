@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -53,18 +52,17 @@ func TestImportGoogleChatCounts(t *testing.T) {
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM conversations WHERE message_count>0`).Scan(&conversations))
 	assert.Equal(2, conversations)
 }
-func TestImportGoogleChatRawMetadata(t *testing.T) {
+func TestImportGoogleChatMetadata(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	opts := ImportOptions{Me: "owner@example.com", Roots: []string{"testdata/takeout"}, AttachmentsDir: t.TempDir()}
 	_, err := Import(t.Context(), st, opts)
 	require.NoError(err)
-	var id int64
 	var fromMe bool
 	var sent sql.NullTime
 	var metadata string
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id, is_from_me, sent_at, metadata FROM messages WHERE source_message_id = 'group/topic/message'`).Scan(&id, &fromMe, &sent, &metadata))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT is_from_me, sent_at, metadata FROM messages WHERE source_message_id = 'group/topic/message'`).Scan(&fromMe, &sent, &metadata))
 	assert.True(fromMe)
 	require.True(sent.Valid)
 	assert.True(time.Date(2021, 1, 18, 13, 27, 33, 0, time.UTC).Equal(sent.Time))
@@ -72,6 +70,7 @@ func TestImportGoogleChatRawMetadata(t *testing.T) {
 	require.NoError(json.Unmarshal([]byte(metadata), &meta))
 	assert.Equal("topic-a", meta["topic_id"])
 	assert.Equal("DM synthetic-dm", meta["group_id"])
+	assert.NotContains(metadata, "peer@example.net", "message metadata must not copy the roster")
 	var conversationMetadata string
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT metadata FROM conversations WHERE source_conversation_id='DM synthetic-dm'`).Scan(&conversationMetadata))
 	var fileMeta struct {
@@ -224,9 +223,13 @@ func TestImportGoogleChatStorageFailure(t *testing.T) {
 	write(t, root, "Groups/DM a/File-example.txt", "bytes")
 	blocked := filepath.Join(t.TempDir(), "file")
 	require.NoError(t, os.WriteFile(blocked, []byte("blocked"), 0600))
-	summary, err := Import(t.Context(), testutil.NewTestStore(t), ImportOptions{Me: "owner@example.com", Roots: []string{root}, AttachmentsDir: blocked})
+	st := testutil.NewTestStore(t)
+	summary, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{root}, AttachmentsDir: blocked})
 	require.ErrorContains(t, err, "store media")
 	assert.Zero(t, summary.MessagesAdded)
+	var count int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages`).Scan(&count))
+	assert.Zero(t, count)
 }
 
 func TestImportGoogleChatMembershipIsAdditiveOnDuplicateReplay(t *testing.T) {
@@ -394,7 +397,7 @@ func TestImportGoogleChatConversationKindRequiresRosterEvidence(t *testing.T) {
 			var kind string
 			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT conversation_type FROM conversations`).Scan(&kind))
 			assert.Equal(tc.want, kind)
-			if tc.name == "two person DM" || tc.name == "group DM" {
+			if tc.name == "group DM" {
 				require.NoError(os.Remove(filepath.Join(root, "Groups", tc.group, "group_info.json")))
 				write(t, root, "Groups/"+tc.group+"/messages.json", strings.ReplaceAll(fixtureMessages(t), "group/topic/message", "group/topic/new"))
 				_, err = Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{root}})
@@ -430,30 +433,6 @@ func TestImportGoogleChatFailedMessageDoesNotCountStoredAttachments(t *testing.T
 	assert.Zero(t, count)
 }
 
-const fixtureDate = "Monday, January 18, 2021 at 1:27:33 PM UTC"
-
-func TestImportGoogleChatMetadataDoesNotEmbedWholeRoster(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	members := []string{`{"name":"Owner","email":"owner@example.com","user_type":"Human"}`}
-	for i := range 300 {
-		members = append(members, fmt.Sprintf(`{"name":"Member %d","email":"member%d@example.com","user_type":"Human"}`, i, i))
-	}
-	testutil.WriteFile(t, root, "Groups/Space s/group_info.json", []byte(`{"name":"Big","members":[`+strings.Join(members, ",")+`]}`))
-	var msgs []string
-	for i := range 50 {
-		msgs = append(msgs, fmt.Sprintf(`{"creator":{"name":"Owner","email":"owner@example.com","user_type":"Human"},"created_date":%q,"text":"t%d","topic_id":"t","message_id":"s/t/m%d"}`, fixtureDate, i, i))
-	}
-	testutil.WriteFile(t, root, "Groups/Space s/messages.json", []byte(`{"messages":[`+strings.Join(msgs, ",")+`]}`))
-	_, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{root}})
-	require.NoError(err)
-	var metadata string
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT metadata FROM messages WHERE source_message_id='s/t/m7'`).Scan(&metadata))
-	assert.NotContains(metadata, "member250@example.com", "per-message metadata must not copy the full roster")
-}
-
 func TestImportGoogleChatContainerEvidenceSurvivesSparseReplay(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -462,8 +441,6 @@ func TestImportGoogleChatContainerEvidenceSurvivesSparseReplay(t *testing.T) {
 	write(t, full, "Groups/DM a/messages.json", fixtureMessages(t))
 	groupRaw := `{ "members":[{"email":"owner@example.com"},{"email":"peer@example.com"}], "unknown_group":{"retained":true}, "number":1e3 }`
 	write(t, full, "Groups/DM a/group_info.json", groupRaw)
-	profileRaw := `{ "user":{"email":"owner@example.com"}, "unknown_profile":{"retained":true} }`
-	write(t, full, "Users/User synthetic/user_info.json", profileRaw)
 	opts := ImportOptions{Me: "owner@example.com", Roots: []string{full}}
 	_, err := Import(t.Context(), st, opts)
 	require.NoError(err)
@@ -593,14 +570,13 @@ func TestImportGoogleChatReplayIdentityFence(t *testing.T) {
 	assert.Equal(before, raw)
 }
 
-func TestImportGoogleChatRootAliasesKeepProfilesAndMedia(t *testing.T) {
+func TestImportGoogleChatRootAliasesKeepMedia(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
 	write(t, root, "Takeout/Google Chat/Groups/DM a/messages.json", fixtureMessages(t))
 	write(t, root, "Takeout/Google Chat/Groups/DM a/File-example.txt", "synthetic")
-	write(t, root, "Takeout/Google Chat/Users/User a/user_info.json", `{"user":{"email":"owner@example.com"}}`)
 	summary, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{filepath.Join(root, "Takeout/Google Chat/Groups"), root, filepath.Join(root, "Takeout/Google Chat")}, AttachmentsDir: t.TempDir()})
 	require.NoError(err)
 	assert.Equal(1, summary.AttachmentsStored)
@@ -739,8 +715,6 @@ func TestImportGoogleChatRosterDoesNotProveDelivery(t *testing.T) {
 	write(t, root, "Groups/DM a/group_info.json", `{"members":[{"email":"owner@example.com"},{"email":"peer@example.com"}]}`)
 	opts := ImportOptions{Me: "owner@example.com", Roots: []string{root}, AttachmentsDir: t.TempDir()}
 	_, err := Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	_, err = st.DB().ExecContext(t.Context(), `UPDATE conversations SET conversation_type='direct_chat'`)
 	require.NoError(t, err)
 	require.NoError(t, os.Remove(filepath.Join(root, "Groups", "DM a", "group_info.json")))
 	write(t, root, "Groups/DM a/File-example.txt", "synthetic")

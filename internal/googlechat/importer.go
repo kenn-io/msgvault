@@ -258,8 +258,7 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 }
 
 // conversationKind classifies a group from its roster size. A sparse roster is
-// not evidence of a direct chat, so it keeps an established group_chat; any
-// other prior type (such as legacy direct_chat) is reclassified as chat.
+// not evidence of a direct chat, so it keeps an established group_chat.
 func conversationKind(ctx context.Context, st *store.Store, sourceID int64, group string, members int) (string, error) {
 	if !strings.HasPrefix(group, "DM ") || members > 2 {
 		return "group_chat", nil
