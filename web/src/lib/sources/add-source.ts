@@ -52,7 +52,7 @@ export function validImapServer(value: string): boolean {
 }
 
 export function addSourceCommand(kind: CommandSourceKind, values: Record<string, string>, shell: 'posix' | 'cmd'): string | undefined {
-  if (kind.fields.some(field => !values[field.id]?.trim() || (field.id !== 'username' && values[field.id]!.trim().startsWith('-')))) return undefined;
+  if (kind.fields.some(field => !values[field.id]?.trim())) return undefined;
   if (kind.id === 'imap' && !validImapServer(values.host!)) return undefined;
-  return kind.template.replace(/\{(\w+)\}/g, (_, id: string) => arg(values[id]!.trim(), shell));
+  return kind.template.replace(/\{(\w+)\}/g, (_, id: string) => `${id === 'email' && values[id]!.trim().startsWith('-') ? '-- ' : ''}${arg(values[id]!.trim(), shell)}`);
 }

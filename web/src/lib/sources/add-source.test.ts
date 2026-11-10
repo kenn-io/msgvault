@@ -37,7 +37,7 @@ describe('addSourceCommand', () => {
   });
 
   it('keeps an address that starts with a hyphen from reading as an option', () => {
-    expect(addSourceCommand(gmail, { email: '-reader@example.org' }, 'posix')).toBeUndefined();
-    expect(addSourceCommand(commandKind('microsoft'), { email: '-reader@example.org' }, 'cmd')).toBeUndefined();
+    expect(addSourceCommand(gmail, { email: '-reader@example.org' }, 'posix')).toBe('msgvault add-account -- -reader@example.org');
+    expect(addSourceCommand(commandKind('microsoft'), { email: '-reader@example.org' }, 'cmd')).toBe('msgvault add-o365 -- -reader@example.org');
   });
 });
