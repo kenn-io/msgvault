@@ -60,7 +60,7 @@ func newPersonCreateCommand() *cobra.Command {
 				return fmt.Errorf("check daemon person creation return support: %w", err)
 			}
 			if !supported {
-				return fmt.Errorf("this daemon is too old for person create --if-exists return; upgrade it to API schema %s or newer", personCreateIfExistsMinAPISchemaVersion)
+				return errors.New("this daemon does not support person create --if-exists return; upgrade msgvault")
 			}
 		}
 		person, err := client.CreateStandalonePerson(cmd.Context(), input)
@@ -116,10 +116,14 @@ func newPersonCreateCommand() *cobra.Command {
 					})
 			})
 		if err != nil {
-			return fmt.Errorf("person %d was created; CardDAV publication failed: %w; "+
+			err = fmt.Errorf("CardDAV publication failed: %w; "+
 				"retry with msgvault person publish %d "+
 				"(use --preview and --approve if review is required)",
-				person.ID, err, person.ID)
+				err, person.ID)
+			if jsonOutput {
+				return fmt.Errorf("person %d was created; %w", person.ID, err)
+			}
+			return err
 		}
 		if !jsonOutput {
 			_, _ = fmt.Fprintf(out, "Person %d CardDAV publication updated\n", person.ID)

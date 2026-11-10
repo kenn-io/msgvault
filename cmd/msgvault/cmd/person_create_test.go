@@ -240,8 +240,8 @@ func TestPersonCreateCLIIfExistsRejectsInvalid(t *testing.T) {
 		cmd.SetErr(io.Discard)
 		cmd.SetArgs([]string{"--name", "Alex Example", "--if-exists", "return"})
 		err := cmd.Execute()
-		require.ErrorContains(t, err, "upgrade")
-		assert.ErrorContains(t, err, "3.50.0")
+		require.ErrorContains(t, err, "upgrade msgvault")
+		assert.ErrorContains(t, err, "does not support person create --if-exists return")
 		assert.Zero(t, creates)
 	})
 }
