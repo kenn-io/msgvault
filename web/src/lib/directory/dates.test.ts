@@ -42,12 +42,16 @@ describe('profileDateError', () => {
 
 describe('date readings', () => {
   it('reads dates', () => {
-    expect(readablePartialDate('2024')).toBe('2024');
-    expect(readablePartialDate({ year: 2024, month: 3 })).toBe('Mar 2024');
-    expect(readablePartialDate('2024-03-05')).toBe('Mar 5, 2024');
-    expect(readablePartialDate('20240305')).toBe('Mar 5, 2024');
+    const DateTimeFormat = Intl.DateTimeFormat;
+    const formatter = vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function (locale, options) {
+      return new DateTimeFormat(locale ?? 'en-US', options);
+    });
     vi.setSystemTime(new Date(2026, 10, 6, 12));
     try {
+      expect(readablePartialDate('2024')).toBe('2024');
+      expect(readablePartialDate({ year: 2024, month: 3 })).toBe('Mar 2024');
+      expect(readablePartialDate('2024-03-05')).toBe('Mar 5, 2024');
+      expect(readablePartialDate('20240305')).toBe('Mar 5, 2024');
       expect(readablePartialDate('2026-03-05')).toBe('Mar 5');
       expect(readablePartialDate('2026-03')).toBe('Mar 2026');
       expect(dateNote('2026-11-06', false)).toBe('Today, Nov 6');
@@ -59,6 +63,6 @@ describe('date readings', () => {
       expect(dateNote('2024', false)).toBe('');
       expect(dateNote('2024', true)).toBe(DATE_HINT);
       expect(dateNote('invalid', false)).toBe('');
-    } finally { vi.useRealTimers(); }
+    } finally { formatter.mockRestore(); vi.useRealTimers(); }
   });
 });

@@ -40,8 +40,7 @@ async function rowAction(label: string): Promise<void> {
 describe('RelationshipsTab', () => {
   it('shows ended connection dates with day precision', async () => {
     const { client, controller } = controllerWith(async () => Response.json({ relationships: [] }));
-    const item = view(41, 'outgoing', 'is mentored by', 'Synthetic Peer');
-    item.relationship = relationship(41, 1, { status: 'ended', start_date: { year: 2024, month: 1, day: 5 }, end_date: { year: 2024, month: 1, day: 6 } });
+    const item = view(41, 'outgoing', 'is mentored by', 'Synthetic Peer', { relationship: relationship(41, 1, { source_person_id: 7, target_person_id: 141, status: 'ended', start_date: { year: 2024, month: 1, day: 5 }, end_date: { year: 2024, month: 1, day: 6 } }) });
     controller.relationships = [item];
     render(RelationshipsTab, { client, controller, personID: 7 });
     await fireEvent.click(screen.getByText('1 past connection'));

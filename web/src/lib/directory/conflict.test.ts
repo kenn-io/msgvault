@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 import { employment } from './entity-fixtures.test-support';
 import { employmentConflictDetails, employmentFacts } from './conflict';
 
-it('formats optional confidence for job conflicts', () => {
+it('formats job conflict facts', () => {
   const job = employment(11, 1, { source_ref: 'imported-card-42', department: 'Research', location: 'North office', description: 'Leads field studies' });
   const facts = employmentFacts(job, { organizationName: () => 'Synthetic Org' }, 7);
   expect(facts).not.toHaveProperty('Confidence');
@@ -17,7 +17,7 @@ it('formats optional confidence for job conflicts', () => {
 });
 
 it('formats source references in job conflict details', () => {
-  const job = employment(11, 1, { source_ref: 'imported-card-42' });
-  expect(employmentConflictDetails({ ...job, source_ref: 'example-source-42' }, 'Save failed'))
+  const job = employment(11, 1, { source_ref: 'example-source-42' });
+  expect(employmentConflictDetails(job, 'Save failed'))
     .toBe('Save failed\nSource reference: example-source-42');
 });

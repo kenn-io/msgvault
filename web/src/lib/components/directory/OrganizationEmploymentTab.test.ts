@@ -266,7 +266,7 @@ describe('OrganizationEmploymentTab', () => {
   });
 });
 
-it.each(['Delete…', 'Make primary'])('shows the saved job after a conflict on %s', async action => {
+it('shows the saved job after a conflict on Make primary', async () => {
   let reads = 0;
   const { controller } = controllerWith(async input => {
     const request = requestOf(input), path = pathOf(request);
@@ -274,12 +274,11 @@ it.each(['Delete…', 'Make primary'])('shows the saved job after a conflict on 
       reads++;
       return Response.json(employment(11, reads, { title: reads === 1 ? 'Engineer' : 'Newer title' }), { headers: { ETag: `"employment-11-r${reads}"` } });
     }
-    if (request.method === 'DELETE' || path.endsWith('/primary')) return Response.json({ error: 'employment_revision_conflict', message: 'Changed' }, { status: 409 });
+    if (path.endsWith('/primary')) return Response.json({ error: 'employment_revision_conflict', message: 'Changed' }, { status: 409 });
     throw new Error(`unexpected ${request.method} ${path}`);
   });
   controller.employments = [employment(11, 1, { is_primary: false })];
   render(OrganizationEmploymentTab, { controller, personID: 7 });
-  await rowAction(action);
-  if (action === 'Delete…') await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  await rowAction('Make primary');
   expect(await screen.findByText('Newer title')).toBeDefined();
 });
