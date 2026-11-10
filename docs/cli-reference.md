@@ -2458,18 +2458,10 @@ msgvault import-reddit <export-dir>
 | `--me` | from `statistics.csv` | Reddit handle fallback; conflicts are refused |
 | `--no-default-identity` | `false` | Skip default identity creation |
 
-Reads at most 10,000 top-level entries and 256 MiB per CSV. Prints per-file
-coverage, including already archived records, and partial results on failure.
-Content files run in name order. Schema errors, invalid UTF-8, read/quoting
-errors stop the run and name the file. Inventory rejects recognized oversize
-files before source writes; streaming growth/read/parse failures retain completed
-rows, and later files are not read. Header-only CSVs are valid; zero-byte files
-fail. Fix or move the named file, then re-run. Malformed statistics rows fail
-before source writes. Re-runs retain originals when later exports contain edits.
-PM kind stays unknown. Undated rows are searchable/readable live but omitted by dated
-cache lists/totals; use [`[analytics].engine = "sql"`](configuration.md#analytics)
-for live browsing. See [Reddit imports](usage/text-messages.md#import-reddit)
-for supported files, history kinds, unknown values, and media limits.
+Prints per-file coverage and partial results on failure. See
+[Reddit imports](usage/text-messages.md#import-reddit) for supported files,
+read limits, failure and retry behavior, original retention, live browsing,
+and unknown-value and media coverage.
 
 ---
 

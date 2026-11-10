@@ -46,7 +46,7 @@ func normalizeHandle(s string) string {
 	// Check original characters before case folding so Unicode cannot become ASCII.
 	// Empty/bracketed markers and subreddit endpoints never identify a person.
 	for _, c := range s {
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '_' && c != '-' {
 			return ""
 		}
 	}

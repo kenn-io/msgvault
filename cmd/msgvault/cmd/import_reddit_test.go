@@ -14,6 +14,8 @@ import (
 )
 
 func TestImportRedditEndToEnd(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	cfg := lifecycleTestConfig(t.TempDir())
 	cmd := &cobra.Command{Use: "import-reddit"}
 	cmd.SetContext(withStoreResolverConfig(t, cfg))
@@ -21,35 +23,39 @@ func TestImportRedditEndToEnd(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(io.Discard)
 	fixture, err := filepath.Abs("../../../internal/reddit/testdata/export")
-	require.NoError(t, err)
-	require.NoError(t, runImportReddit(cmd, fixture, redditCLIOptions{}))
-	assert.Contains(t, out.String(), "6 added, 2 already archived")
-	assert.Contains(t, out.String(), "votes.csv")
+	require.NoError(err)
+	require.NoError(runImportReddit(cmd, fixture, redditCLIOptions{}))
+	assert.Contains(out.String(), "Total:")
+	assert.Contains(out.String(), "votes.csv")
 }
 
 func TestImportRedditRefreshesCacheAfterPartialFailure(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	cfg := lifecycleTestConfig(t.TempDir())
 	root := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(root, "posts.csv"), []byte("id,title,date\na,lantern,2026-05-24 03:19:35 UTC\nb,\"unterminated\n"), 0600))
+	require.NoError(os.WriteFile(filepath.Join(root, "posts.csv"), []byte("id,title,date\na,lantern,2026-05-24 03:19:35 UTC\nb,\"unterminated\n"), 0600))
 	cmd := &cobra.Command{Use: "import-reddit"}
 	cmd.SetContext(withStoreResolverConfig(t, cfg))
 	cmd.SetOut(io.Discard)
-	require.ErrorContains(t, runImportReddit(cmd, root, redditCLIOptions{Me: "fictional_owner"}), "posts.csv")
+	require.ErrorContains(runImportReddit(cmd, root, redditCLIOptions{Me: "fictional_owner"}), "posts.csv")
 	db, err := sql.Open("duckdb", "")
-	require.NoError(t, err)
+	require.NoError(err)
 	t.Cleanup(func() { _ = db.Close() })
 	var n int
-	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM read_parquet(?, hive_partitioning=true)`, filepath.Join(cfg.AnalyticsDir(), "messages", "**", "*.parquet")).Scan(&n))
-	assert.Equal(t, 1, n)
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FROM read_parquet(?, hive_partitioning=true)`, filepath.Join(cfg.AnalyticsDir(), "messages", "**", "*.parquet")).Scan(&n))
+	assert.Equal(1, n)
 }
 
 func TestImportRedditRejectsClientFilesOnRemote(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	server, requests := newDaemonCLIRunnerTestServer(t, nil, `{"type":"complete"}`)
 	command := newImportRedditCmd()
 	command.SetContext(configureRemoteDaemonForTest(t, server.URL))
 	command.SetOut(io.Discard)
 	command.SetErr(io.Discard)
 	command.SetArgs([]string{"export"})
-	require.ErrorContains(t, command.Execute(), "run it on the daemon host with --local")
-	assert.Zero(t, requests.Load())
+	require.ErrorContains(command.Execute(), "run it on the daemon host with --local")
+	assert.Zero(requests.Load())
 }

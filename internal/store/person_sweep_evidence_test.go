@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/personscope/resolver"
+	"go.kenn.io/msgvault/internal/reddit"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -763,5 +764,41 @@ func TestPersonSweepStoredDocumentEvidenceFollowsMessage(t *testing.T) {
 			}
 			assert.ElementsMatch(want, changes)
 		})
+	}
+}
+
+func TestPersonSweepAttributesRedditPublicHistoryToPerson(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	for name, data := range map[string]string{
+		"posts.csv":    "id,title,body,date\none,Work,I work in product.,2026-06-01T12:00:00Z\n",
+		"comments.csv": "id,body,date\ntwo,I prefer chat.,2026-06-02T12:00:00Z\n",
+	} {
+		requirements.NoError(os.WriteFile(filepath.Join(root, name), []byte(data), 0600))
+	}
+	_, err := reddit.Import(t.Context(), st, reddit.ImportOptions{RootDir: root, Me: "fictional_owner"})
+	requirements.NoError(err)
+	var owner, post, comment int64
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT participant_id FROM participant_identifiers WHERE identifier_type='reddit' AND identifier_value='fictional_owner'`).Scan(&owner))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='post:one'`).Scan(&post))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='comment:two'`).Scan(&comment))
+	person, _, err := st.CreatePersonFromParticipant(owner)
+	requirements.NoError(err)
+	_, err = st.SetPersonTrackingContext(t.Context(), person.ID, true)
+	requirements.NoError(err)
+	candidates, err := st.ListPersonSweepHistoricalCandidates(t.Context(), peoplesweep.HistoricalCandidateRequest{
+		PersonID: person.ID, AuthoredByPerson: true, Limit: 10,
+	})
+	requirements.NoError(err)
+	checks.Equal([]int64{comment, post}, candidates)
+	items, err := st.HydratePersonSweepMessages(t.Context(), person.ID, candidates, 0)
+	requirements.NoError(err)
+	requirements.Len(items, 2)
+	for _, item := range items {
+		requirements.NotNil(item.SubjectPersonID)
+		checks.Equal(person.ID, *item.SubjectPersonID)
+		checks.Equal(personfacts.DirectSelf, item.Directness)
 	}
 }

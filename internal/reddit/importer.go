@@ -36,11 +36,6 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 		// Record partial runs and finalize committed rows even after cancellation.
 		cleanup := context.WithoutCancel(ctx)
 		retErr = errors.Join(retErr, st.ResolveDeferredMessageRepliesContext(cleanup, source.ID, "reddit_chat", batchSize), st.RecomputeConversationStatsContext(cleanup, source.ID))
-		if retErr != nil {
-			retErr = errors.Join(retErr, st.FailSyncContext(cleanup, syncID, retErr.Error()))
-		} else {
-			retErr = st.CompleteSyncContext(cleanup, syncID, "")
-		}
 		for _, f := range summary.Files {
 			summary.Added += f.Added
 			summary.Unchanged += f.Unchanged
@@ -49,6 +44,14 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 			summary.UnknownDates += f.UnknownDates
 			summary.UnknownSenders += f.UnknownSenders
 			summary.LinksNotDownloaded += f.LinksNotDownloaded
+		}
+		retErr = errors.Join(retErr, st.UpdateSyncCheckpointContext(cleanup, syncID, &store.Checkpoint{
+			MessagesProcessed: int64(summary.Added + summary.Unchanged), MessagesAdded: int64(summary.Added),
+		}))
+		if retErr != nil {
+			retErr = errors.Join(retErr, st.FailSyncContext(cleanup, syncID, retErr.Error()))
+		} else {
+			retErr = st.CompleteSyncContext(cleanup, syncID, "")
 		}
 	}()
 	for _, file := range reader.files {

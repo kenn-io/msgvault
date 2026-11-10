@@ -194,12 +194,12 @@ func (s *Store) SearchChatsMetadataContext(ctx context.Context, q ChatDiscoveryQ
 		FROM conversations c
 		JOIN messages anchor ON anchor.id = COALESCE((
 			SELECT a.id FROM chat_anchors ca JOIN messages a ON a.id = ca.message_id
-			WHERE ca.conversation_id = c.id AND a.conversation_id = c.id AND ` + LiveMessagesWhere("a", false) + `
+			WHERE ca.conversation_id = c.id AND a.conversation_id = c.id AND ` + LiveMessagesWhere("a", false) + ` AND ` + chatDiscoveryMessageSQL("a.message_type", "c.conversation_type") + `
 		), (
-			SELECT m.id FROM messages m WHERE m.conversation_id = c.id AND ` + LiveMessagesWhere("m", false) + `
+			SELECT m.id FROM messages m WHERE m.conversation_id = c.id AND ` + LiveMessagesWhere("m", false) + ` AND ` + chatDiscoveryMessageSQL("m.message_type", "c.conversation_type") + `
 			ORDER BY ` + sentKey + ` DESC NULLS LAST, m.id DESC LIMIT 1
 		))
-		WHERE c.conversation_type IN ` + chatConversationTypesSQL
+		WHERE ` + chatDiscoveryMessageSQL("anchor.message_type", "c.conversation_type")
 	args := []any{}
 	if q.SourceID != 0 {
 		statement += ` AND c.source_id = ?`
@@ -275,7 +275,7 @@ func (s *Store) SearchChatsMetadataContext(ctx context.Context, q ChatDiscoveryQ
 		WHERE cm.alias <> ''
 	)
 	SELECT e.id, e.message_id, e.source_id, COALESCE(e.source_conversation_id, ''),
-		COALESCE(e.title, ''), e.conversation_type, e.last_at,
+		COALESCE(e.title, ''), COALESCE(e.conversation_type, ''), e.last_at,
 		s.source_type, s.identifier, COALESCE(s.display_name, ''),
 		COALESCE(n.value, '')
 	FROM eligible e JOIN sources s ON s.id = e.source_id

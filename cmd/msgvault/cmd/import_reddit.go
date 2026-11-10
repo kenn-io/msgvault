@@ -19,25 +19,20 @@ func newImportRedditCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "import-reddit <export-dir>", Short: "Import a Reddit account-data export",
 		Long: `Import Chat, legacy private messages, and your own posts and comments from
-an extracted Reddit account-data export directory. The owner comes from
-statistics.csv; use --me when it is absent. Conflicting accounts are refused.
+an extracted Reddit account-data export directory. Conflicting accounts are refused.
 
-Reads top-level CSVs only, including numbered split files. At most 10,000
-entries and 256 MiB per CSV are accepted. Links are preserved; media are not
-downloaded. Unknown dates and senders remain unknown. Coverage depends on
-what Reddit supplied; complete lifetime history is not guaranteed.
+Reads top-level CSVs, including numbered splits, with limits of 10,000 directory
+entries and 256 MiB per CSV. Links are preserved; media are not downloaded.
+Coverage depends on what Reddit supplied; complete lifetime history is not guaranteed.
 
-Content files run in name order. Schema errors, invalid UTF-8, read/quoting
-errors stop the run and name the file. Recognized oversize files fail inventory
-before source writes. Streaming growth/read/parse failures retain completed rows;
-later files are not read. Header-only CSVs are valid; zero-byte files fail.
-Fix or move the named file, then re-run. Malformed statistics fail preflight.
-PM conversation kind stays unknown. Undated rows remain in live search/details
-and SQL browsing; dated cache lists/totals omit them. Set [analytics].engine = "sql"
-for live browsing (see the analytics configuration guide).
+Errors stop the run; completed rows remain archived. Header-only CSVs are valid;
+zero-byte files fail. Fix the named file and re-run to add missing records while
+retaining originals. No records are deleted. PM kind, unknown dates and unknown
+senders stay unknown. Undated records remain in live search/details and SQL browsing;
+dated caches omit them. Set [analytics].engine = "sql" for live browsing.
 
-Re-running adds missing records and retains originals when later exports contain
-edits. After interruption, re-run the directory to finish. No records are deleted.
+Supported files, failure policy and coverage details:
+https://msgvault.io/docs/usage/text-messages/#import-reddit
 
 Example:
   msgvault import-reddit --me fictional_owner ./reddit-export`,

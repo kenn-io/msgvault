@@ -559,6 +559,11 @@ stays an isolated item. Post URLs are appended to displayed/searchable bodies;
 raw evidence retains the original cells. Comment parent/link values remain raw,
 without an invented cross-kind reply mapping.
 
+Browse dated posts and comments in the Web UI's Everything/Explore view,
+filtered by the Reddit source. They appear as Archive items; Texts mode excludes
+public history. Chat discovery includes Chat and PM history without assigning
+a direct or group kind.
+
 Undated records remain available in live search, details and SQL browsing.
 Dated cache-backed lists and totals omit them. Set
 [`[analytics].engine = "sql"`](../configuration.md#analytics) for live browsing;

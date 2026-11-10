@@ -1600,7 +1600,7 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 	if err := enqueueActivityProjectionMessage(q, d, id); err != nil {
 		return 0, err
 	}
-	if err := enqueueChatMembers(q, msg.ConversationID); err != nil {
+	if err := enqueueChatMembersForMessage(q, id); err != nil {
 		return 0, err
 	}
 	if journalCandidate && !prior.found && d.DriverName() != postgresDriverName {

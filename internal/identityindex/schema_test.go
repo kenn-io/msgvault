@@ -7,13 +7,15 @@ import (
 )
 
 func TestMatrixMessagesAreClassifiedAsChat(t *testing.T) {
-	assert.True(t, IsChat("matrix", "group_chat"))
-	assert.True(t, IsChat("matrix", "direct_chat"))
+	assert := assert.New(t)
+	assert.True(IsChat("matrix", "group_chat"))
+	assert.True(IsChat("matrix", "direct_chat"))
 }
 
 func TestRedditPublicHistoryStaysOutsideChat(t *testing.T) {
-	assert.True(t, IsChat("reddit_chat", "channel"))
-	assert.True(t, IsChat("reddit_pm", "direct_chat"))
-	assert.False(t, IsChat("reddit_post", "channel"))
-	assert.False(t, IsChat("reddit_comment", "channel"))
+	assert := assert.New(t)
+	assert.True(IsChat("reddit_chat", ""))
+	assert.True(IsChat("reddit_pm", ""))
+	assert.False(IsChat("reddit_post", "channel"))
+	assert.False(IsChat("reddit_comment", "channel"))
 }

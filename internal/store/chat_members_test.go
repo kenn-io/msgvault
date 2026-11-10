@@ -128,24 +128,39 @@ func seedAliasChat(t *testing.T, st *store.Store) int64 {
 }
 
 func TestChatDiscoveryUpgradeBuildsMembersFromExistingMessages(t *testing.T) {
+	checks := assert.New(t)
 	requirements := require.New(t)
-	st, err := store.OpenForTest(t.Context(), filepath.Join(t.TempDir(), "upgrade.db"))
-	requirements.NoError(err)
-	t.Cleanup(func() { _ = st.Close() })
-	requirements.NoError(st.InitSchema())
+	st := testutil.NewTestStore(t)
 	chat := seedAliasChat(t, st)
-	// An archive from before the projection has messages but no member rows.
+	source, err := st.GetOrCreateSource("beeper", "upgrade-account")
+	requirements.NoError(err)
+	unknown, _ := seedDiscoveryChat(t, st, source.ID, "Unknown Upgrade", "", time.Unix(100, 0))
+	mail, err := st.EnsureConversationWithType(source.ID, "obsolete-chat", "email_thread", "Obsolete chat")
+	requirements.NoError(err)
+	message, err := st.UpsertMessageContext(t.Context(), &store.Message{
+		SourceID: source.ID, SourceMessageID: "obsolete", ConversationID: mail, MessageType: "email",
+	})
+	requirements.NoError(err)
+	// Missing projection rows and an obsolete anchor must both be repaired.
 	for _, statement := range []string{
-		`DELETE FROM chat_members`, `DELETE FROM chat_members_dirty`,
-		`DELETE FROM applied_migrations WHERE name = 'chat_members_v1'`,
+		`DELETE FROM chat_members`, `DELETE FROM chat_anchors`, `DELETE FROM chat_members_dirty`,
 	} {
 		_, err = st.DB().ExecContext(t.Context(), statement)
 		requirements.NoError(err)
 	}
-	assert.Empty(t, discoveredChats(t, st, "Upgrade"))
-	requirements.NoError(st.InitSchema())
-	assert.Equal(t, []int64{chat}, discoveredChats(t, st, "Upgrade Sender"))
-	assert.Equal(t, []int64{chat}, discoveredChats(t, st, "Kilo"))
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO chat_anchors (conversation_id,message_id) VALUES (?,?)`), mail, message)
+	requirements.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE applied_migrations SET version=? WHERE name='chat_members_v1'`), store.ChatMembersProjectionVersionForTest-1)
+	requirements.NoError(err)
+	checks.Empty(discoveredChats(t, st, "Upgrade"))
+	requirements.NoError(st.InitSchemaContext(t.Context()))
+	checks.Equal([]int64{chat}, discoveredChats(t, st, "Kilo"))
+	checks.ElementsMatch([]int64{chat, unknown}, discoveredChats(t, st, "Upgrade"))
+	var n int
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM chat_anchors WHERE conversation_id=?`), mail).Scan(&n))
+	checks.Zero(n)
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT version FROM applied_migrations WHERE name='chat_members_v1'`).Scan(&n))
+	checks.Equal(store.ChatMembersProjectionVersionForTest, n)
 }
 
 func TestChatDiscoveryReadOnlyStoreRefusesPendingChanges(t *testing.T) {
@@ -246,4 +261,59 @@ func TestChatDiscoveryRejectsAnchorChangedAfterRefresh(t *testing.T) {
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET conversation_id = ? WHERE id = ?"), other, middle)
 	requirements.NoError(err)
 	assert.Equal(t, oldest, metadataAnchor(), "an anchor moved to another chat is not reported for this one")
+}
+
+func TestChatDiscoveryUsesMessageTypeForUnknownKinds(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSourceContext(t.Context(), "reddit", "fictional_owner")
+	requirements.NoError(err)
+	for _, kind := range []string{"reddit_chat", "reddit_pm"} {
+		chat, err := st.EnsureConversationWithType(source.ID, kind, "", "Unknown chat")
+		requirements.NoError(err)
+		message, err := st.UpsertMessageContext(t.Context(), &store.Message{
+			SourceID: source.ID, SourceMessageID: kind, ConversationID: chat, MessageType: kind,
+		})
+		requirements.NoError(err)
+		page, err := st.SearchChatsContext(t.Context(), store.ChatDiscoveryQuery{Query: "Unknown"})
+		requirements.NoError(err)
+		requirements.Len(page.Results, 1)
+		checks.Empty(page.Results[0].ConversationType)
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET message_type='reddit_comment' WHERE id=?`), message)
+		requirements.NoError(err)
+		checks.Empty(discoveredChats(t, st, "Unknown"))
+		var n int
+		requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM chat_anchors WHERE conversation_id=?`), chat).Scan(&n))
+		checks.Zero(n)
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET message_type=? WHERE id=?`), kind, message)
+		requirements.NoError(err)
+		checks.Equal([]int64{chat}, discoveredChats(t, st, "Unknown"))
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM messages WHERE id=?`), message)
+		requirements.NoError(err)
+		requirements.NoError(st.RefreshChatMembersContext(t.Context()))
+	}
+	public, err := st.EnsureConversationWithType(source.ID, "subreddit:garden", "channel", "Garden")
+	requirements.NoError(err)
+	_, err = st.UpsertMessageContext(t.Context(), &store.Message{
+		SourceID: source.ID, SourceMessageID: "post:one", ConversationID: public, MessageType: "reddit_post",
+	})
+	requirements.NoError(err)
+	checks.Empty(discoveredChats(t, st, "Garden"))
+	// Ordinary email/calendar writes should not add dirty projection work.
+	for _, tc := range []struct{ conversation, message string }{{"email_thread", "email"}, {"calendar_event", "calendar_event"}} {
+		conversation, err := st.EnsureConversationWithType(source.ID, tc.conversation, tc.conversation, "")
+		requirements.NoError(err)
+		id, err := st.UpsertMessageContext(t.Context(), &store.Message{
+			SourceID: source.ID, SourceMessageID: tc.message, ConversationID: conversation, MessageType: tc.message,
+		})
+		requirements.NoError(err)
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET sent_at=CURRENT_TIMESTAMP WHERE id=?`), id)
+		requirements.NoError(err)
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM messages WHERE id=?`), id)
+		requirements.NoError(err)
+		var n int
+		requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM chat_members_dirty`).Scan(&n))
+		checks.Zero(n)
+	}
 }
