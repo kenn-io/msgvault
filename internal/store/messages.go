@@ -5094,6 +5094,50 @@ func (s *Store) ParticipantByIdentifierContext(ctx context.Context, identifierTy
 	return id, hasPhone, err
 }
 
+// ParticipantBinding is the current owner of an identifier and its phone precedence.
+type ParticipantBinding struct {
+	ID          int64
+	HasPhone    bool
+	Phone       string
+	Email       string
+	DisplayName string
+}
+
+// ParticipantsByIdentifiersContext reloads identifier owners in bounded batches.
+func (s *Store) ParticipantsByIdentifiersContext(ctx context.Context, identifierType string, identifiers []string) (map[string]ParticipantBinding, error) {
+	result := make(map[string]ParticipantBinding, len(identifiers))
+	const chunkSize = 300
+	for start := 0; start < len(identifiers); start += chunkSize {
+		chunk := identifiers[start:min(start+chunkSize, len(identifiers))]
+		args := make([]any, 1, len(chunk)+1)
+		args[0] = identifierType
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		rows, err := s.db.QueryContext(ctx, `SELECT pi.identifier_value, p.id, COALESCE(p.phone_number, '') != '', COALESCE(p.phone_number, ''), COALESCE(p.email_address, ''), COALESCE(p.display_name, '') FROM participant_identifiers pi JOIN participants p ON p.id = pi.participant_id WHERE pi.identifier_type = ? AND pi.identifier_value IN (`+placeholders(len(chunk))+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var key string
+			var binding ParticipantBinding
+			if err := rows.Scan(&key, &binding.ID, &binding.HasPhone, &binding.Phone, &binding.Email, &binding.DisplayName); err != nil {
+				return nil, errors.Join(err, rows.Close())
+			}
+			result[key] = binding
+		}
+		err = rows.Err()
+		closeErr := rows.Close()
+		if err != nil {
+			return nil, err
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+	}
+	return result, nil
+}
+
 // AdoptLegacyParticipantIdentifier atomically upgrades one legacy identifier
 // to a scoped value. The legacy value is consumed on success, so another
 // account cannot claim the same unscoped identifier after the first account
@@ -5986,6 +6030,54 @@ func mergeConversationParticipantsWith(
 		}
 	}
 	return nil
+}
+
+// ConversationParticipantsContext lists the archived membership for a conversation.
+func (s *Store) ConversationParticipantsContext(ctx context.Context, conversationID int64) ([]ConversationParticipantRef, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT participant_id, COALESCE(role, '') FROM conversation_participants WHERE conversation_id = ? ORDER BY participant_id`, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	var members []ConversationParticipantRef
+	for rows.Next() {
+		var member ConversationParticipantRef
+		if err := rows.Scan(&member.ParticipantID, &member.Role); err != nil {
+			return nil, errors.Join(err, rows.Close())
+		}
+		members = append(members, member)
+	}
+	return members, errors.Join(rows.Err(), rows.Close())
+}
+
+// ApplyConversationParticipantBatchContext applies up to sixteen membership changes.
+func (s *Store) ApplyConversationParticipantBatchContext(ctx context.Context, conversationID int64, upserts []ConversationParticipantRef, removals []int64) error {
+	if len(upserts)+len(removals) > 16 {
+		return errors.New("conversation membership batch exceeds sixteen changes")
+	}
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		q := boundQuerier{ctx: ctx, q: tx}
+		if err := s.requireSyncConversationSourceTx(q, conversationID); err != nil {
+			return err
+		}
+		if s.dialect.DriverName() != postgresDriverName {
+			if _, err := q.Exec(`UPDATE embedding_change_clock SET sequence = sequence WHERE singleton = 1`); err != nil {
+				return fmt.Errorf("lock conversation membership journal: %w", err)
+			}
+		}
+		var before int64
+		if err := q.QueryRow(`SELECT sequence FROM embedding_change_clock WHERE singleton = 1`).Scan(&before); err != nil {
+			return err
+		}
+		for _, id := range removals {
+			if _, err := q.Exec(`DELETE FROM conversation_participants WHERE conversation_id = ? AND participant_id = ?`, conversationID, id); err != nil {
+				return err
+			}
+		}
+		if err := mergeConversationParticipantsWith(q, s.dialect, conversationID, upserts); err != nil {
+			return err
+		}
+		return consolidateConversationParticipantJournal(q, s.dialect, conversationID, before)
+	})
 }
 
 // ReplaceConversationParticipants atomically replaces a conversation's

@@ -76,6 +76,30 @@ func (r *participantResolver) identifierForUser(userID string) string {
 	return beeperidentity.Fallback(r.accountID, userID)
 }
 
+func (r *participantResolver) seedUser(u *User, binding store.ParticipantBinding) {
+	key := r.identifierForUser(u.ID)
+	if binding.HasPhone || strings.HasPrefix(u.PhoneNumber, "+") || strings.Contains(u.Email, "@") {
+		r.rich[key] = richEntry{pid: binding.ID, byPhone: binding.HasPhone}
+		delete(r.fallback, key)
+	} else {
+		r.fallback[key] = binding.ID
+	}
+}
+
+// bindingSatisfiesUser follows the resolver's precedence and name backfill rules.
+func bindingSatisfiesUser(u *User, b store.ParticipantBinding) bool {
+	if b.ID == 0 {
+		return false
+	}
+	if strings.HasPrefix(u.PhoneNumber, "+") {
+		return b.Phone == u.PhoneNumber && (strings.TrimSpace(b.DisplayName) != "" || u.FullName == "")
+	}
+	if strings.Contains(u.Email, "@") {
+		return b.HasPhone || strings.EqualFold(b.Email, u.Email)
+	}
+	return b.DisplayName != "" || u.FullName == ""
+}
+
 func (r *participantResolver) resolveUser(ctx context.Context, u *User) (int64, error) {
 	if u == nil || u.ID == "" {
 		return 0, nil

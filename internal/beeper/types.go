@@ -211,7 +211,8 @@ type SearchChatsOutput struct {
 type ImportOptions struct {
 	// Route proof is obtained from the exact account endpoint during this run.
 	// Neither a display label nor a user/account identifier can replace it.
-	routeAccount *Account
+	routeAccount        *Account
+	rosterDetailFetched bool
 	// AccountID is the Beeper account to sync (e.g. "whatsapp", "signal").
 	// It doubles as the msgvault source identifier.
 	AccountID string
@@ -237,9 +238,9 @@ type ImportOptions struct {
 	// Progress, if non-nil, is called after each chat with a human-readable
 	// status line. Safe to leave nil (silent mode).
 	Progress func(msg string) `json:"-"`
-	// ShouldStop, if non-nil, is polled during chat enumeration and at message
-	// page boundaries in backfill, incremental, reconciliation, and tail-probe
-	// walks. Once it reports true the run stops at that boundary, checkpoints
+	// ShouldStop, if non-nil, is polled during chat enumeration, between roster
+	// members and membership batches, and at message page boundaries in backfill, incremental,
+	// reconciliation, and tail-probe walks. The run stops there, checkpoints
 	// its cursors, keeps unvisited chats discoverable, and completes normally so
 	// the next run resumes. Scheduled runs use it for their time budget and to
 	// yield to queued work.

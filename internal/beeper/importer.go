@@ -134,6 +134,18 @@ func (o ImportOptions) budgetError(parent context.Context, err error) error {
 	return err
 }
 
+// rosterStop polls between roster operations; an in-flight transaction keeps
+// the parent context so an identical scheduled retry can retain its work.
+func (o ImportOptions) rosterStop(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if o.stopRequested() {
+		return errBeeperBudgetExpired
+	}
+	return nil
+}
+
 func (o ImportOptions) budgetExpired() bool {
 	return !o.StopAt.IsZero() && !time.Now().Before(o.StopAt)
 }
@@ -801,18 +813,14 @@ func chatActivityCutoff(opts ImportOptions, state *SyncState, reconcileCutoff ti
 // incrementally extends the chat's messages. Returns the processed message
 // count, whether the chat work completed, and any fatal error.
 func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *Chat, opts ImportOptions, state *SyncState, reconcileCutoff time.Time, tailScan, tailOnly bool, sum *ImportSummary) (_ int64, chatComplete bool, err error) {
-	convID, membershipComplete, membership, err := imp.ensureConversation(
-		ctx, syncID, sourceID, ch, opts, sum,
+	cs := state.EnsureChat(ch.ID)
+	convID, membershipComplete, membership, observations, err := imp.ensureConversation(
+		ctx, syncID, sourceID, ch, opts, sum, cs,
 	)
-	if errors.Is(err, errBeeperBudgetExpired) {
-		sum.Stopped = true
-		return 0, false, nil
-	}
-	if err != nil {
-		return 0, false, err
-	}
-
 	defer func() {
+		if convID == 0 {
+			return
+		}
 		statsCtx, cancel := opts.conversationStatsContext(ctx)
 		defer cancel()
 		statsErr := imp.store.RecomputeConversationStatsForConversationContext(statsCtx, convID)
@@ -820,14 +828,12 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 		statsErr = opts.budgetError(ctx, statsErr)
 		if opts.stopRequested() {
 			sum.Stopped = true
-			if statsErr != nil && (errors.Is(statsErr, errBeeperBudgetExpired) ||
-				errors.Is(statsErr, context.Canceled) ||
-				errors.Is(statsErr, context.DeadlineExceeded) || ctx.Err() != nil) {
+			if statsErr != nil && (errors.Is(statsErr, errBeeperBudgetExpired) || errors.Is(statsErr, context.Canceled) || errors.Is(statsErr, context.DeadlineExceeded) || ctx.Err() != nil) {
 				chatComplete = false
 				statsErr = nil
 			}
 		}
-		if statsRefreshed && ctx.Err() == nil {
+		if statsRefreshed && ctx.Err() == nil && cs.RosterWork != nil && cs.RosterWork.MembershipApplied {
 			pendingCtx := ctx
 			var cancelPending context.CancelFunc
 			if opts.stopRequested() {
@@ -840,9 +846,29 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 				statsErr = fmt.Errorf("clear roster repair pending marker after active sync: %w", clearErr)
 			}
 		}
+		if (!statsRefreshed || statsErr != nil) && cs.RosterWork != nil {
+			cs.RosterWork.MembershipApplied = false
+		}
 		err = errors.Join(err, statsErr)
 	}()
-	cs := state.EnsureChat(ch.ID)
+
+	if errors.Is(err, errBeeperBudgetExpired) {
+		sum.Stopped = true
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	if observations != nil && membershipComplete {
+		observationErr := imp.captureRosterObservations(ctx, sourceID, opts, observations, sum)
+		if errors.Is(observationErr, errBeeperBudgetExpired) {
+			sum.Stopped = true
+			return 0, false, nil
+		}
+		if observationErr != nil {
+			return 0, false, observationErr
+		}
+	}
 	if membership.known {
 		cs.RosterRetryAfter = ""
 	}
@@ -944,145 +970,293 @@ func (m chatMembership) policyCount(policy attachmentpolicy.Policy) int {
 // evaluate the same membership rather than the participant rows, which a
 // truncated listing undercounts.
 func (imp *Importer) ensureConversation(
-	ctx context.Context, syncID, sourceID int64, ch *Chat, opts ImportOptions, sum *ImportSummary,
-) (int64, bool, chatMembership, error) {
+	ctx context.Context, syncID, sourceID int64, ch *Chat, opts ImportOptions, sum *ImportSummary, cs *ChatState,
+) (int64, bool, chatMembership, *rosterObservations, error) {
 	detail := ch
-	membershipComplete := !ch.Participants.HasMore
-	if ch.Participants.HasMore {
+	complete := !ch.Participants.HasMore
+	work := cs.RosterWork
+	if work == nil {
+		work = &rosterWork{Members: make(map[string]rosterMemberWork)}
+		cs.RosterWork = work
+	}
+	if work.Members == nil {
+		work.Members = make(map[string]rosterMemberWork)
+	}
+	if !opts.rosterDetailFetched && (ch.Participants.HasMore || work.DetailBacked) {
 		if err := imp.store.InvalidateSourceConversationMessagingRouteEvidenceContext(ctx, sourceID, ch.ID); err != nil {
-			return 0, false, chatMembership{}, fmt.Errorf("invalidate route evidence before Beeper roster refresh for chat %q: %w", ch.ID, err)
+			return 0, false, chatMembership{}, nil, err
 		}
 		requestCtx, cancel := opts.requestContext(ctx)
-		d, gerr := imp.client.GetChat(requestCtx, ch.ID)
+		fetched, fetchErr := imp.client.GetChat(requestCtx, ch.ID)
 		cancel()
-		gerr = opts.budgetError(ctx, gerr)
-		if errors.Is(gerr, errBeeperBudgetExpired) {
-			return 0, false, chatMembership{}, gerr
+		fetchErr = opts.budgetError(ctx, fetchErr)
+		if errors.Is(fetchErr, errBeeperBudgetExpired) {
+			return 0, false, chatMembership{}, nil, fetchErr
 		}
-		if gerr != nil {
+		if fetchErr != nil {
 			if ctx.Err() != nil {
-				return 0, false, chatMembership{}, ctx.Err()
+				return 0, false, chatMembership{}, nil, ctx.Err()
 			}
-			imp.recordItem(syncID, ch.ID, "fetch", store.SyncRunItemStatusError, "beeper_fetch_error", gerr)
-			sum.failChat(ch.ID, false, gerr)
+			imp.recordItem(syncID, ch.ID, "fetch", store.SyncRunItemStatusError, "beeper_fetch_error", fetchErr)
+			sum.failChat(ch.ID, false, fetchErr)
 			sum.FetchErrors++
 			sum.Errors++
+			complete = false
 		} else {
-			detail = d
-			membershipComplete = !d.Participants.HasMore
+			detail = fetched
+			complete = !detail.Participants.HasMore
+			work.DetailBacked = true
 		}
 	}
-	membership := chatMembershipOf(detail, membershipComplete)
-	convID, err := imp.store.EnsureConversationWithTypeContext(
-		ctx, sourceID, ch.ID, conversationType(ch.Type), ch.Title,
-	)
+	signature := rosterSignature(detail, opts.AccountID)
+	if work.Signature != signature {
+		work.Signature = signature
+		work.MembershipApplied = false
+	}
+	membership := chatMembershipOf(detail, complete)
+	convID, err := imp.store.EnsureConversationWithTypeContext(ctx, sourceID, ch.ID, conversationType(ch.Type), ch.Title)
 	if err != nil {
-		return 0, false, chatMembership{}, err
+		return 0, false, chatMembership{}, nil, err
 	}
-	// Invalidate earlier proof before any roster writes. An interrupted refresh
-	// cannot retain a complete route snapshot beside partially updated members.
-	routeEvidence := routeEvidenceFor(detail, opts)
+	evidence := routeEvidenceFor(detail, opts)
+	evidence.ChatID = ch.ID
 	if ch.AccountID != opts.AccountID {
-		routeEvidence.Failure = "account_binding_mismatch"
+		evidence.Failure = "account_binding_mismatch"
 	}
-	routeEvidence.ChatID = ch.ID
 	if detail.ID != ch.ID {
-		routeEvidence.Failure = "chat_binding_mismatch"
+		evidence.Failure = "chat_binding_mismatch"
 	}
-	if err := imp.store.SetConversationMessagingRouteEvidence(ctx, convID, routeEvidence); err != nil {
-		return 0, false, chatMembership{}, err
+	// The pending marker keeps partial batches conservative until stats and proof finish.
+	if err := imp.store.SetConversationRosterRepairPendingContext(ctx, convID, true); err != nil {
+		return convID, false, chatMembership{}, nil, err
 	}
-
+	if err := imp.store.SetConversationMessagingRouteEvidence(ctx, convID, evidence); err != nil {
+		return convID, false, chatMembership{}, nil, err
+	}
+	if err := opts.rosterStop(ctx); err != nil {
+		return convID, false, chatMembership{}, nil, err
+	}
 	if membership.known {
 		err = imp.store.SetConversationMemberCountContext(ctx, convID, membership.count)
 	} else {
 		err = imp.store.MarkConversationMemberCountUnknownContext(ctx, convID)
 	}
 	if err != nil {
-		return 0, false, chatMembership{}, err
+		return convID, false, chatMembership{}, nil, err
 	}
-	members := make([]store.ConversationParticipantRef, 0, len(detail.Participants.Items))
-	type resolvedMember struct {
-		participantID int64
-		user          *User
+	imp.res.accountID = opts.AccountID
+	keys := make([]string, 0, len(detail.Participants.Items))
+	for i := range detail.Participants.Items {
+		keys = append(keys, imp.res.identifierForUser(detail.Participants.Items[i].ID))
 	}
-	resolvedMembers := make([]resolvedMember, 0, len(detail.Participants.Items))
+	bindings, err := imp.store.ParticipantsByIdentifiersContext(ctx, participantIdentifierType, keys)
+	if err != nil {
+		return convID, false, chatMembership{}, nil, err
+	}
 	var bridgePrefix string
-	if membershipComplete {
+	if complete {
 		bridgePrefix = participantBridgePrefix(detail.Participants.Items)
 	}
-	// Keep the resolver tied to the import option, not to any account value
-	// echoed by the remote chat payload. This also covers direct callers of
-	// ensureConversation that do not go through Import's cache reset.
-	imp.res.accountID = opts.AccountID
+	resolved := make([]resolvedMember, 0, len(detail.Participants.Items))
+	desired := make(map[int64]string, len(detail.Participants.Items))
+	active := make(map[string]bool, len(detail.Participants.Items))
 	for i := range detail.Participants.Items {
-		if err := ctx.Err(); err != nil {
-			return 0, false, chatMembership{}, err
+		if err := opts.rosterStop(ctx); err != nil {
+			return convID, false, chatMembership{}, nil, err
 		}
 		p := &detail.Participants.Items[i]
-		pid, rerr := imp.res.resolveUser(ctx, &p.User)
-		if rerr != nil {
-			return 0, false, chatMembership{}, rerr
+		key := imp.res.identifierForUser(p.ID)
+		binding := bindings[key]
+		var pid int64
+		if bindingSatisfiesUser(&p.User, binding) {
+			pid = binding.ID
+			imp.res.seedUser(&p.User, binding)
+		} else {
+			pid, err = imp.res.resolveUser(ctx, &p.User)
+			if err != nil {
+				return convID, false, chatMembership{}, nil, err
+			}
 		}
 		if pid == 0 {
 			continue
+		}
+		active[key] = true
+		inputs := rosterMemberSignature(&p.User, detail, opts.AccountID, bridgePrefix)
+		if progress := work.Members[key]; progress.Inputs != inputs {
+			work.Members[key] = rosterMemberWork{Inputs: inputs}
+			work.MatchingPending = true
 		}
 		role := "member"
 		if p.IsAdmin {
 			role = "admin"
 		}
-		members = append(members, store.ConversationParticipantRef{ParticipantID: pid, Role: role})
-		resolvedMembers = append(resolvedMembers, resolvedMember{participantID: pid, user: &p.User})
+		desired[pid] = role
+		resolved = append(resolved, resolvedMember{participantID: pid, user: &p.User, key: key, role: role})
 	}
-	if err := ctx.Err(); err != nil {
-		return 0, false, chatMembership{}, err
-	}
-	if membershipComplete {
-		if err := imp.store.ReplaceConversationParticipantsContext(ctx, convID, members); err != nil {
-			return 0, false, chatMembership{}, err
-		}
-	} else {
-		for _, member := range members {
-			if err := ctx.Err(); err != nil {
-				return 0, false, chatMembership{}, err
-			}
-			cerr := imp.store.EnsureConversationParticipantContext(
-				ctx, convID, member.ParticipantID, member.Role,
-			)
-			if cerr != nil && ctx.Err() == nil {
-				sum.Errors++
+	if complete {
+		for key := range work.Members {
+			if !active[key] {
+				delete(work.Members, key)
 			}
 		}
 	}
-	routeEvidence.MembershipComplete = membershipComplete && membership.known && len(resolvedMembers) == membership.count
-	for _, member := range resolvedMembers {
-		routeEvidence.ParticipantIDs = append(routeEvidence.ParticipantIDs, member.participantID)
+	keys = keys[:0]
+	for _, member := range resolved {
+		keys = append(keys, member.key)
+	}
+	bindings, err = imp.store.ParticipantsByIdentifiersContext(ctx, participantIdentifierType, keys)
+	if err != nil {
+		return convID, false, chatMembership{}, nil, err
+	}
+	desired = make(map[int64]string, len(resolved))
+	for i := range resolved {
+		binding, ok := bindings[resolved[i].key]
+		if !ok {
+			work.MembershipApplied = false
+			return convID, false, chatMembership{}, nil, errors.New("participant binding disappeared during roster refresh")
+		}
+		resolved[i].participantID = binding.ID
+		imp.res.seedUser(resolved[i].user, binding)
+		desired[binding.ID] = resolved[i].role
+	}
+	archived, err := imp.store.ConversationParticipantsContext(ctx, convID)
+	if err != nil {
+		return convID, false, chatMembership{}, nil, err
+	}
+	existing := make(map[int64]string, len(archived))
+	for _, member := range archived {
+		existing[member.ParticipantID] = member.Role
+	}
+	ids := make([]int64, 0, len(desired))
+	for id := range desired {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	var additions []store.ConversationParticipantRef
+	for _, id := range ids {
+		if role, ok := existing[id]; !ok || role != desired[id] {
+			additions = append(additions, store.ConversationParticipantRef{ParticipantID: id, Role: desired[id]})
+		}
+	}
+	var removals []int64
+	if complete {
+		for _, member := range archived {
+			if _, ok := desired[member.ParticipantID]; !ok {
+				removals = append(removals, member.ParticipantID)
+			}
+		}
+	}
+	if len(additions) > 0 || len(removals) > 0 {
+		work.MembershipApplied = false
+	}
+	for len(additions) > 0 {
+		if err := opts.rosterStop(ctx); err != nil {
+			return convID, false, chatMembership{}, nil, err
+		}
+		n := min(16, len(additions))
+		if err := imp.store.ApplyConversationParticipantBatchContext(ctx, convID, additions[:n], nil); err != nil {
+			return convID, false, chatMembership{}, nil, err
+		}
+		additions = additions[n:]
+	}
+	if err := opts.rosterStop(ctx); err != nil {
+		return convID, false, chatMembership{}, nil, err
+	}
+	if complete && !work.MembershipApplied {
+		if err := opts.rosterStop(ctx); err != nil {
+			return convID, false, chatMembership{}, nil, err
+		}
+		requestCtx, cancel := opts.requestContext(ctx)
+		verified, verifyErr := imp.client.GetChat(requestCtx, ch.ID)
+		cancel()
+		verifyErr = opts.budgetError(ctx, verifyErr)
+		if errors.Is(verifyErr, errBeeperBudgetExpired) {
+			return convID, false, chatMembership{}, nil, verifyErr
+		}
+		if ctx.Err() != nil {
+			return convID, false, chatMembership{}, nil, ctx.Err()
+		}
+		if verifyErr == nil && (verified == nil || verified.ID != ch.ID || verified.AccountID != opts.AccountID || verified.Participants.HasMore || rosterSignature(verified, opts.AccountID) != signature) {
+			verifyErr = errors.New("beeper roster changed or became incomplete during verification")
+			work.DetailBacked = true
+		}
+		if verifyErr != nil {
+			imp.recordItem(syncID, ch.ID, "fetch", store.SyncRunItemStatusError, "beeper_fetch_error", verifyErr)
+			sum.failChat(ch.ID, false, verifyErr)
+			sum.FetchErrors++
+			sum.Errors++
+			return convID, false, chatMembership{}, nil, nil
+		}
+		if err := opts.rosterStop(ctx); err != nil {
+			return convID, false, chatMembership{}, nil, err
+		}
+		for len(removals) > 0 {
+			if err := opts.rosterStop(ctx); err != nil {
+				return convID, false, chatMembership{}, nil, err
+			}
+			n := min(16, len(removals))
+			if err := imp.store.ApplyConversationParticipantBatchContext(ctx, convID, nil, removals[:n]); err != nil {
+				return convID, false, chatMembership{}, nil, err
+			}
+			removals = removals[n:]
+		}
+	}
+	evidence.MembershipComplete = complete && membership.known && len(resolved) == membership.count
+	for _, member := range resolved {
+		evidence.ParticipantIDs = append(evidence.ParticipantIDs, member.participantID)
 		if member.user.IsSelf {
-			routeEvidence.SelfParticipantIDs = append(routeEvidence.SelfParticipantIDs, member.participantID)
+			evidence.SelfParticipantIDs = append(evidence.SelfParticipantIDs, member.participantID)
 		}
 	}
-	if err := imp.store.SetConversationMessagingRouteEvidence(ctx, convID, routeEvidence); err != nil {
-		return 0, false, chatMembership{}, err
+	if err := imp.store.SetConversationMessagingRouteEvidence(ctx, convID, evidence); err != nil {
+		return convID, false, chatMembership{}, nil, err
 	}
+	work.MembershipApplied = evidence.MembershipComplete
+	if !evidence.MembershipComplete {
+		membership.known = false
+	}
+	return convID, evidence.MembershipComplete, membership, &rosterObservations{detail: detail, members: resolved, bridgePrefix: bridgePrefix, work: work, state: cs}, nil
+}
 
-	// Membership must be visible before matching. The chat participant list is
-	// the only place Beeper hands us a person's phone, email, and username
-	// together, and matching those observations gathers shared-conversation
-	// evidence immediately. Recording observations first would omit this chat
-	// from every candidate created on its first import.
-	for _, member := range resolvedMembers {
-		if err := ctx.Err(); err != nil {
-			return 0, false, chatMembership{}, err
+type resolvedMember struct {
+	role          string
+	key           string
+	participantID int64
+	user          *User
+}
+
+type rosterObservations struct {
+	work         *rosterWork
+	state        *ChatState
+	detail       *Chat
+	members      []resolvedMember
+	bridgePrefix string
+}
+
+// Capture follows committed membership and precedes message work.
+// A member already in flight may finish its own transactions before yielding.
+func (imp *Importer) captureRosterObservations(ctx context.Context, sourceID int64, opts ImportOptions, roster *rosterObservations, sum *ImportSummary) error {
+	for _, member := range roster.members {
+		if err := opts.rosterStop(ctx); err != nil {
+			return err
 		}
-		imp.captureObservations(
-			ctx, member.participantID, member.user, detail,
-			sourceID, opts.AccountID, bridgePrefix, sum,
-		)
+		progress := roster.work.Members[member.key]
+		if progress.Enriched {
+			continue
+		}
+		if imp.captureObservations(ctx, member.participantID, member.user, roster.detail,
+			sourceID, opts.AccountID, roster.bridgePrefix, sum) {
+			progress.Enriched = true
+			roster.work.Members[member.key] = progress
+		}
 	}
-	if err := ctx.Err(); err != nil {
-		return 0, false, chatMembership{}, err
+	for _, member := range roster.members {
+		if !roster.work.Members[member.key].Enriched {
+			return ctx.Err()
+		}
 	}
-	return convID, membershipComplete, membership, nil
+	roster.work.MatchingPending = false
+	return ctx.Err()
 }
 
 // recordChatFetchError records a failed message-page read for one chat. Route
@@ -1233,11 +1407,15 @@ func (imp *Importer) captureObservations(
 	accountID string,
 	bridgePrefix string,
 	sum *ImportSummary,
-) {
+) bool {
+	success := true
 	results, err := imp.obs.capture(ctx, participantID, u, captureContext{
 		SourceID: sourceID, AccountID: accountID, Network: ch.Network,
 		BridgePrefix: bridgePrefix,
 	})
+	if err != nil {
+		success = false
+	}
 	if err != nil && ctx.Err() == nil {
 		slog.Warn("beeper observation capture failed",
 			"participant_id", participantID, "beeper_user_id", u.ID, "error", err)
@@ -1245,13 +1423,14 @@ func (imp *Importer) captureObservations(
 	}
 	for _, result := range results {
 		if ctx.Err() != nil {
-			return
+			return false
 		}
 		if result.Created {
 			sum.ObservationsRecorded++
 		}
 		outcome, merr := imp.matcher.match(ctx, participantID, result)
 		if merr != nil {
+			success = false
 			if ctx.Err() == nil {
 				slog.Warn("beeper identity matching failed",
 					"participant_id", participantID, "beeper_user_id", u.ID, "error", merr)
@@ -1263,6 +1442,7 @@ func (imp *Importer) captureObservations(
 		sum.IdentityCandidates += int64(len(outcome.Suggested))
 		sum.IdentityConflicts += int64(len(outcome.Conflicts))
 	}
+	return success && ctx.Err() == nil
 }
 
 // recentIDWindow remembers the message IDs of the last few pages of a

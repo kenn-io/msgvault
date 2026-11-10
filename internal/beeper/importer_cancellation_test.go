@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -83,25 +82,6 @@ func logMessage(msg string) func(slog.Record) bool {
 	return func(record slog.Record) bool { return record.Message == msg }
 }
 
-// sqlStatementContaining matches the log line the store writes after a
-// statement outside a transaction finishes.
-func sqlStatementContaining(fragment string) func(slog.Record) bool {
-	return func(record slog.Record) bool {
-		if record.Message != "sql" {
-			return false
-		}
-		matched := false
-		record.Attrs(func(attr slog.Attr) bool {
-			if attr.Key != "stmt" {
-				return true
-			}
-			matched = strings.Contains(attr.Value.String(), fragment)
-			return false
-		})
-		return matched
-	}
-}
-
 func rosterMembers(t *testing.T, st *store.Store, sourceID int64, chatID string) []int64 {
 	t.Helper()
 	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
@@ -158,25 +138,26 @@ func TestEnsureConversationCancellation(t *testing.T) {
 			_, _, err = imp.obs.services.resolveBridge(ctx, "telegram", "Telegram", "telegram")
 			require.NoError(err)
 
-			// Each cached resolver still checks legacy identifier adoption in
-			// a transaction. Roster replacement follows those checks, then the
-			// first anchor classification begins with the import context.
-			when, at := logMessage("sql tx begin"), count+2
+			// Cached resolution needs no writes. Roster replacement is the
+			// first transaction, then anchor classification begins with the
+			// import context.
+			when, at := logMessage("sql tx begin"), 1
 			wantObserved := 0
 			if tc.afterCapture {
 				// Cancel after the first observation's transaction commits,
 				// before its result can start identity matching transactions.
-				when, at = logMessage("sql tx commit"), count+3
+				when, at = logMessage("sql tx commit"), 2
 				wantObserved = 1
 			}
-			handler := installCancelOnLog(t, cancel, at, when)
 			sum := &ImportSummary{}
-			_, complete, _, err := imp.ensureConversation(
-				ctx, 0, sourceID, detail, ImportOptions{AccountID: "telegram"}, sum,
+			_, _, _, observations, err := imp.ensureConversation(
+				ctx, 0, sourceID, detail, ImportOptions{AccountID: "telegram"}, sum, &ChatState{},
 			)
+			require.NoError(err)
+			handler := installCancelOnLog(t, cancel, at, when)
+			err = imp.captureRosterObservations(ctx, sourceID, ImportOptions{AccountID: "telegram"}, observations, sum)
 			require.ErrorIs(ctx.Err(), context.Canceled, "the classification boundary must be reached")
 			require.ErrorIs(err, context.Canceled)
-			assert.False(complete)
 			assert.Zero(handler.afterCancel, "no remaining member may attempt BeginTx")
 			assert.Empty(handler.warnings, "expected cancellation must not log warnings")
 			assert.Zero(sum.Errors)
@@ -216,10 +197,16 @@ func TestEnsureConversationCancellation(t *testing.T) {
 
 // serial: changes slog.Default and SQL logging.
 func TestEnsureConversationCancellationBeforeMembership(t *testing.T) {
-	// Begins 1 and 2 are the members' resolver adoption checks; begin 3 is
+	// Begins 1 and 2 create new roster members; begin 3 is
 	// roster replacement.
-	for _, at := range []int{1, 2, 3} {
-		t.Run(fmt.Sprintf("begin %d", at), func(t *testing.T) {
+	for _, tc := range []struct {
+		at   int
+		stop string
+	}{
+		{1, "parent"}, {2, "parent"}, {3, "parent"}, {1, "yield"}, {2, "yield"},
+	} {
+		at := tc.at
+		t.Run(fmt.Sprintf("%s %d", tc.stop, at), func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			st := testutil.NewTestStore(t)
 			sourceID := newBeeperTestSource(t, st, "telegram")
@@ -230,8 +217,6 @@ func TestEnsureConversationCancellationBeforeMembership(t *testing.T) {
 			newUsers := []User{{ID: "@telegram_new1:beeper.local"}, {ID: "@telegram_new2:beeper.local"}}
 			participants := make([]Participant, 0, len(newUsers))
 			for i := range newUsers {
-				_, err = imp.res.resolveUser(t.Context(), &newUsers[i])
-				require.NoError(err)
 				participants = append(participants, Participant{User: newUsers[i]})
 			}
 			convID, err := st.EnsureConversationWithType(sourceID, "!cancel:example.com", "group", "Members")
@@ -239,14 +224,31 @@ func TestEnsureConversationCancellationBeforeMembership(t *testing.T) {
 			require.NoError(st.EnsureConversationParticipant(convID, oldID, "member"))
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			handler := installCancelOnLog(t, cancel, at, logMessage("sql tx begin"))
-			_, complete, _, err := imp.ensureConversation(ctx, 0, sourceID, &Chat{
+			yield := false
+			opts := ImportOptions{AccountID: "telegram", ShouldStop: func() bool { return yield }}
+
+			// Yield after a new member's commit; parent cancellation also
+			// exercises rollback at BeginTx.
+			when := logMessage("sql tx begin")
+			stop := cancel
+			if tc.stop != "parent" {
+				when = logMessage("sql tx commit")
+				stop = func() { yield = true }
+			}
+			handler := installCancelOnLog(t, stop, at, when)
+			_, complete, _, _, err := imp.ensureConversation(ctx, 0, sourceID, &Chat{
 				ID: "!cancel:example.com", Type: "group", Title: "Members", Network: "Telegram",
 				Participants: ChatParticipants{Items: participants},
-			}, ImportOptions{AccountID: "telegram"}, &ImportSummary{})
-			require.ErrorIs(err, context.Canceled)
+			}, opts, &ImportSummary{}, &ChatState{})
+			if tc.stop == "parent" {
+				require.ErrorIs(err, context.Canceled)
+			} else {
+				require.ErrorIs(err, errBeeperBudgetExpired)
+			}
 			assert.False(complete)
-			assert.Zero(handler.afterCancel, "no later member or roster write may attempt BeginTx")
+			if tc.stop == "parent" {
+				assert.Zero(handler.afterCancel, "parent cancellation stops later transactions")
+			}
 			assert.Empty(handler.warnings)
 			assert.Equal([]int64{oldID}, rosterMembers(t, st, sourceID, "!cancel:example.com"),
 				"canceled replacement must preserve the existing roster")
@@ -259,38 +261,59 @@ func TestEnsureConversationCancellationBeforeMembership(t *testing.T) {
 // must stop the remaining members without counting or logging failures.
 // serial: changes slog.Default and SQL logging.
 func TestEnsureConversationCancellationDuringPartialRoster(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	const chatID = "!partial:example.com"
-	f := newFakeBeeper(t)
-	f.setChatGetFailure(chatID, true)
-	imp, st, closeServer := newTestImporter(t, f)
-	defer closeServer()
-	sourceID := newBeeperTestSource(t, st, "telegram")
-	syncID, err := st.StartSync(sourceID, sourceTypeBeeper)
-	require.NoError(err)
-	participants := make([]Participant, 0, 3)
-	for i := range 3 {
-		user := User{ID: fmt.Sprintf("@telegram_listed%d:beeper.local", i)}
-		participants = append(participants, Participant{User: user})
+	testutil.SkipIfPostgres(t, "SQLite trigger injects a stop during a membership batch")
+	for _, parentCancel := range []bool{true, false} {
+		t.Run(fmt.Sprint("parentCancel=", parentCancel), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			const chatID = "!partial:example.com"
+			f := newFakeBeeper(t)
+			f.setChatGetFailure(chatID, true)
+			imp, st, closeServer := newTestImporter(t, f)
+			defer closeServer()
+			sourceID := newBeeperTestSource(t, st, "telegram")
+			syncID, err := st.StartSync(sourceID, sourceTypeBeeper)
+			require.NoError(err)
+			participants := make([]Participant, 0, 3)
+			for i := range 3 {
+				user := User{ID: fmt.Sprintf("@telegram_listed%d:beeper.local", i)}
+				participants = append(participants, Participant{User: user})
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			yield := false
+			opts := ImportOptions{AccountID: "telegram", ShouldStop: func() bool { return yield }}
+			st.DB().SetMaxOpenConns(1)
+			registerSQLiteFunc(t, st, "cancel_partial_roster", func() int {
+				if parentCancel {
+					cancel()
+				} else {
+					yield = true
+				}
+				return 0
+			})
+			_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER cancel_partial_roster AFTER INSERT ON conversation_participants BEGIN SELECT cancel_partial_roster(); END`)
+			require.NoError(err)
+			sum := &ImportSummary{}
+			_, complete, _, _, err := imp.ensureConversation(ctx, syncID, sourceID, &Chat{
+				ID: chatID, Type: "group", Title: "Partial", Network: "Telegram",
+				Participants: ChatParticipants{Items: participants, HasMore: true},
+			}, opts, sum, &ChatState{})
+			if parentCancel {
+				require.ErrorIs(err, context.Canceled)
+			} else {
+				require.ErrorIs(err, errBeeperBudgetExpired)
+			}
+			assert.False(complete)
+			assert.Equal(int64(1), sum.FetchErrors)
+			assert.Equal(sum.FetchErrors, sum.Errors, "cancellation must not count as a member write error")
+			members := rosterMembers(t, st, sourceID, chatID)
+			if parentCancel {
+				assert.Empty(members, "canceled batch rolls back")
+			} else {
+				assert.Len(members, 3, "the current batch may finish")
+			}
+		})
 	}
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	handler := installCancelOnLog(
-		t, cancel, 1, sqlStatementContaining("INTO conversation_participants"),
-	)
-	sum := &ImportSummary{}
-	_, complete, _, err := imp.ensureConversation(ctx, syncID, sourceID, &Chat{
-		ID: chatID, Type: "group", Title: "Partial", Network: "Telegram",
-		Participants: ChatParticipants{Items: participants, HasMore: true},
-	}, ImportOptions{AccountID: "telegram"}, sum)
-	require.ErrorIs(err, context.Canceled)
-	assert.False(complete)
-	assert.Empty(handler.warnings, "no member write may run with the canceled context")
-	assert.Equal(int64(1), sum.FetchErrors)
-	assert.Equal(sum.FetchErrors, sum.Errors, "cancellation must not count as a member write error")
-	first := participantForBeeperUser(t, st, participants[0].ID)
-	assert.Equal([]int64{first}, rosterMembers(t, st, sourceID, chatID),
-		"only the member written before cancellation joins the roster")
 }
 
 // serial: changes slog.Default and SQL logging.
@@ -303,10 +326,11 @@ func TestEnsureConversationCancellationAtEntry(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	handler := installCancelOnLog(t, cancel, 0, logMessage(""))
-	_, complete, _, err := imp.ensureConversation(ctx, 0, sourceID, &Chat{
+	//nolint:dogsled // 5-return helper; this case needs only completeness and error.
+	_, complete, _, _, err := imp.ensureConversation(ctx, 0, sourceID, &Chat{
 		ID: "!cancel:example.com", Type: "group", Title: "Members",
 		Participants: ChatParticipants{HasMore: true},
-	}, ImportOptions{AccountID: "telegram"}, &ImportSummary{})
+	}, ImportOptions{AccountID: "telegram"}, &ImportSummary{}, &ChatState{})
 	require.ErrorIs(err, context.Canceled)
 	assert.False(complete)
 	assert.Empty(f.requests(), "an already-canceled import must not fetch the roster")

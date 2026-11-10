@@ -922,7 +922,7 @@ func TestMediaPolicyArchivesAuthoritativeParticipantTotal(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(8, membership.Conversation.ParticipantCount,
 		"the archive carries the total sync weighed, not the truncated participant rows")
-	assert.True(membership.RosterArchived)
+	assert.False(membership.RosterArchived, "an incomplete membership refresh remains pending")
 
 	f.resetRequests()
 	summary, err := imp.BackfillMedia(t.Context(), opts)
