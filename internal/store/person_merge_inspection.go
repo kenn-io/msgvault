@@ -111,9 +111,6 @@ func (s *Store) ListPersonMergesPageContext(
 			return fmt.Errorf("close person merge summaries: %w", err)
 		}
 		for index, blob := range snapshotBlobs {
-			if err := ctx.Err(); err != nil {
-				return fmt.Errorf("iterate person merge summaries: %w", err)
-			}
 			result[index].Labels = personMergeRecordedLabels(blob, result[index].Merge.SnapshotSHA256, services)
 		}
 		if len(mergeIDs) == 0 {
