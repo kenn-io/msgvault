@@ -1455,8 +1455,8 @@ func TestRevisionReconciliationFiniteIdentityChurn(t *testing.T) {
 			require.NoError(err)
 			require.Len(candidates, 1)
 			tracing := &finiteRevisionChurnStore{
-				recordActivityScanStore: {Store: f.Store},
-				sourceID:                f.Source.ID, firstID: candidates[0].MessageID, maxChanges: changes,
+				Store:    f.Store,
+				sourceID: f.Source.ID, firstID: candidates[0].MessageID, maxChanges: changes,
 				freshnessChanges: changes == projectorPassRetries,
 			}
 			p, err := NewProjector(tracing, Options{Timezone: "UTC", BatchSize: 1})
