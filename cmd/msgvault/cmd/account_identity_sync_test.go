@@ -36,6 +36,7 @@ func TestAddServiceAccountDefaultIdentityScheduledSync(t *testing.T) {
 }
 
 func checkAddServiceAccount(t *testing.T, hint bool) {
+	t.Helper()
 	assert, require := assert.New(t), require.New(t)
 	saveAddAccountFlags(t)
 	// Only Google's token and profile responses are simulated. Registration,
@@ -200,6 +201,7 @@ func TestAddIMAPFirstSyncHint(t *testing.T)                { checkAddIMAP(t, tru
 func TestAddIMAPDefaultIdentityScheduledSync(t *testing.T) { checkAddIMAP(t, false) }
 
 func checkAddIMAP(t *testing.T, hint bool) {
+	t.Helper()
 	assert, require := assert.New(t), require.New(t)
 	savedHost, savedPort, savedUsername := imapHost, imapPort, imapUsername
 	savedNoTLS, savedSTARTTLS, savedNoDefault := imapNoTLS, imapSTARTTLS, noDefaultIdentityAddImap
@@ -264,6 +266,7 @@ func TestAddMicrosoftFirstSyncHint(t *testing.T)         { checkAddMicrosoft(t, 
 func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) { checkAddMicrosoft(t, false) }
 
 func checkAddMicrosoft(t *testing.T, hint bool) {
+	t.Helper()
 	savedGraph := o365Graph
 	savedO365, savedTeams := noDefaultIdentityAddO365, noDefaultIdentityAddTeams
 	savedO365Headless, savedTeamsHeadless := o365Headless, teamsHeadless
