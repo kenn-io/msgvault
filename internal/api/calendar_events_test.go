@@ -166,3 +166,53 @@ func TestCalendarEventsEditedOccurrence(t *testing.T) {
 	requirements.Len(page.Occurrences, 1)
 	assert.Equal(t, "Planning", page.Occurrences[0].Subject)
 }
+
+func TestCalendarEventsAgentSourceScopeRealStore(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	allowed, err := st.GetOrCreateSource("gcal", "allowed@example.test")
+	requirements.NoError(err)
+	other, err := st.GetOrCreateSource("gcal", "other@example.test")
+	requirements.NoError(err)
+	for _, src := range []*store.Source{allowed, other} {
+		for _, event := range []struct{ id, subject, raw string }{
+			{"series", src.Identifier + " series", `{"id":"series","start":{"dateTime":"2027-03-04T17:00:00Z"},"end":{"dateTime":"2027-03-04T18:00:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=2"]}`},
+			{"edited", src.Identifier + " edited", `{"id":"edited","recurringEventId":"series","status":"confirmed","originalStartTime":{"dateTime":"2027-03-05T17:00:00Z"},"start":{"dateTime":"2027-03-05T17:00:00Z"},"end":{"dateTime":"2027-03-05T18:00:00Z"}}`},
+		} {
+			_, err := st.PersistMessage(&store.MessagePersistData{
+				Message:      &store.Message{SourceID: src.ID, SourceMessageID: event.id, MessageType: "calendar_event", Subject: sql.NullString{String: event.subject, Valid: true}},
+				Conversation: &store.ConversationPersistData{SourceConversationID: event.id, ConversationType: "calendar", Title: event.subject},
+				RawMIME:      []byte(event.raw), RawFormat: "gcal_json", Metadata: &sql.NullString{String: `{"calendar_id":"example.test"}`, Valid: true},
+			})
+			requirements.NoError(err)
+		}
+	}
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Logger: testLogger()})
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	_, token, _, err := srv.agentGrants.Issue("calendar", []agentgrant.Permission{agentgrant.PermissionCalendarEventRead}, []agentgrant.SourceRef{{ID: allowed.ID, Type: "gcal", Identifier: allowed.Identifier}}, time.Time{})
+	requirements.NoError(err)
+	for _, tc := range []struct {
+		name, header, token string
+		want                map[string]int64
+	}{
+		{"agent", apiprotocol.AgentTokenHeader, token, map[string]int64{allowed.Identifier + " series": allowed.ID, allowed.Identifier + " edited": allowed.ID}},
+		{"owner", "X-Api-Key", "owner", map[string]int64{allowed.Identifier + " series": allowed.ID, allowed.Identifier + " edited": allowed.ID, other.Identifier + " series": other.ID, other.Identifier + " edited": other.ID}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/calendar/events?from=2027-03-04T00:00:00Z&to=2027-03-06T00:00:00Z", nil)
+			r.Header.Set(tc.header, tc.token)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, r)
+			requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+			var page store.CalendarOccurrencePage
+			requirements.NoError(json.Unmarshal(w.Body.Bytes(), &page))
+			requirements.Len(page.Occurrences, len(tc.want))
+			got := make(map[string]int64, len(page.Occurrences))
+			for _, occurrence := range page.Occurrences {
+				got[occurrence.Subject] = occurrence.SourceID
+			}
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
