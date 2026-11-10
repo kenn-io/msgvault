@@ -3,6 +3,7 @@
 package embed
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/msgvault/internal/jobctx"
 )
 
 func TestWorkerEmbeddingTimeout(t *testing.T) {
@@ -56,5 +59,48 @@ func TestWorkerEmbeddingTimeout(t *testing.T) {
 			defer mu.Unlock()
 			assert.Equal(t, tc.wantCalls, calls)
 		})
+	}
+}
+
+func TestWorkerSavesProgressAcrossYieldedLocalPasses(t *testing.T) {
+	var mu sync.Mutex
+	var cancel context.CancelCauseFunc
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		request := decodeRequest(t, r)
+		mu.Lock()
+		calls++
+		call := calls
+		cancelPass := cancel
+		mu.Unlock()
+		if len(request.Input) == 8 {
+			<-r.Context().Done()
+			return
+		}
+		if call == 2 {
+			cancelPass(jobctx.ErrYieldedToWaiter)
+			<-r.Context().Done()
+			return
+		}
+		vectors := make([][]float32, len(request.Input))
+		for i := range vectors {
+			vectors[i] = []float32{1, 0, 0, 0}
+		}
+		writeEmbeddings(t, w, vectors)
+	}))
+	defer server.Close()
+
+	f := newWorkerFixture(t, 12)
+	client := NewClient(Config{Endpoint: server.URL, Model: "test-model", Dimension: 4, Timeout: 100 * time.Millisecond, MaxRetries: 1, Builtin: true}) //nolint:kennlint // deadlinetest: the request timeout triggers splitting
+	worker := NewWorker(WorkerDeps{Backend: f.Backend, VectorsDB: f.VectorsDB, MainDB: f.MainDB, Store: f.Store, Client: client, BatchSize: 8, Recorder: f.Recorder})
+	for _, wantMissing := range []int{12, 8, 4, 0} {
+		ctx, cancelPass := context.WithCancelCause(t.Context())
+		mu.Lock()
+		cancel, calls = cancelPass, 0
+		mu.Unlock()
+		_, err := worker.RunOnce(ctx, f.BuildingGen, testEmbeddingPassScope())
+		cancelPass(nil)
+		require.NoError(t, err)
+		assert.Equal(t, wantMissing, countMissing(t, f.MainDB, int64(f.BuildingGen)))
 	}
 }

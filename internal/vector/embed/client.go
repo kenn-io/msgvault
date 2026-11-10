@@ -75,6 +75,13 @@ func NewClient(cfg Config) *Client {
 	return &Client{cfg: cfg, http: newHTTPClient(cfg.Timeout, nil, cfg.RejectRedirects || cfg.BeforeRequest != nil)}
 }
 
+// BatchLimit returns the learned local request limit, or zero if unset.
+func (c *Client) BatchLimit() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.batchLimit
+}
+
 // Embed embeds document chunks in input order. Kit owns transport
 // validation; MaxRetries is the total attempt budget. Empty input is a no-op.
 func (c *Client) Embed(ctx context.Context, inputs []string) ([][]float32, error) {

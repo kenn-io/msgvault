@@ -710,9 +710,10 @@ func (w *Worker) run(
 }
 
 func (w *Worker) scanForEmbedding(ctx context.Context, gen int64, afterID int64) ([]int64, error) {
+	batchSize := w.batchSize()
 	scope := vector.NewBuildScope(w.deps.BuildScope.MessageTypes, w.deps.BuildScope.SourceIDs)
 	if scope.IsEmpty() {
-		return w.deps.Store.ScanForEmbedding(ctx, gen, afterID, w.deps.BatchSize)
+		return w.deps.Store.ScanForEmbedding(ctx, gen, afterID, batchSize)
 	}
 	scoped, ok := w.deps.Store.(interface {
 		ScanForEmbeddingScoped(ctx context.Context, target int64, afterID int64, limit int, messageTypes []string, sourceIDs []int64) ([]int64, error)
@@ -720,7 +721,17 @@ func (w *Worker) scanForEmbedding(ctx context.Context, gen int64, afterID int64)
 	if !ok {
 		return nil, errors.New("work store does not support scoped embedding scans")
 	}
-	return scoped.ScanForEmbeddingScoped(ctx, gen, afterID, w.deps.BatchSize, scope.MessageTypes, scope.SourceIDs)
+	return scoped.ScanForEmbeddingScoped(ctx, gen, afterID, batchSize, scope.MessageTypes, scope.SourceIDs)
+}
+
+func (w *Worker) batchSize() int {
+	size := w.deps.BatchSize
+	if client, ok := w.deps.Client.(interface{ BatchLimit() int }); ok {
+		if limit := client.BatchLimit(); limit > 0 {
+			size = min(size, limit)
+		}
+	}
+	return size
 }
 
 // advanceWatermark persists the per-gen forward-scan cursor to id after a
@@ -937,17 +948,17 @@ func (w *Worker) embedBatch(ctx context.Context, gen vector.GenerationID, ids []
 			pending = append(pending, i)
 		}
 	}
-	embedSubBatchSize := w.deps.BatchSize
-	if embedSubBatchSize <= 0 {
-		embedSubBatchSize = len(pending)
-	}
 	start := time.Now()
 	fresh, subBatches := 0, 0
-	for from := 0; from < len(pending); from += embedSubBatchSize {
+	for from := 0; from < len(pending); {
 		if jobctx.StopRequested(ctx) {
 			return embedBatchResult{}, jobctx.ErrYieldedToWaiter
 		}
-		batch := pending[from:min(from+embedSubBatchSize, len(pending))]
+		size := w.batchSize()
+		if size <= 0 {
+			size = len(pending)
+		}
+		batch := pending[from:min(from+size, len(pending))]
 		batchInputs := make([]string, len(batch))
 		for j, i := range batch {
 			batchInputs[j] = inputs[i]
@@ -993,6 +1004,7 @@ func (w *Worker) embedBatch(ctx context.Context, gen vector.GenerationID, ids []
 			vecs[i] = got[j]
 		}
 		fresh += len(got)
+		from += len(batch)
 	}
 	w.deps.Log.Debug("embed batch",
 		"messages", len(msgs), "chunks", len(pieces),
