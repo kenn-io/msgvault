@@ -74,7 +74,7 @@
   async function removeRelationship(): Promise<void> {
     if (!deletingRelationship || acting) return;
     const target = deletingRelationship.relationship;
-    if (await removal.run(() => controller.deleteRelationship(target.id))) deletingRelationship = undefined;
+    if (await removal.run(current => controller.deleteRelationship(target.id, current))) deletingRelationship = undefined;
   }
 
   function openDelete(view: PersonRelationshipView): void {
@@ -84,7 +84,7 @@
 
   async function removeRelationshipType(): Promise<void> {
     if (!deletingType || acting) return;
-    if (await typeRemoval.run(() => controller.deleteRelationshipType(deletingType!.id))) deletingType = undefined;
+    if (await typeRemoval.run(current => controller.deleteRelationshipType(deletingType!.id, current))) deletingType = undefined;
   }
 
   function openTypeDelete(type: RelationshipType): void {

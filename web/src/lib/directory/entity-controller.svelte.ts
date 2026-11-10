@@ -412,22 +412,20 @@ export class DirectoryEntityController {
     );
     return this.afterDirectoryMutation(result);
   }
-  async deleteOrganization(id: number): Promise<DirectoryEntityMutationResult<never, Prepared<OrganizationProfile>>> {
+  async deleteOrganization(id: number, prepared?: Prepared<OrganizationProfile>): Promise<DirectoryEntityMutationResult<never, Prepared<OrganizationProfile>>> {
     const result = await this.deleteExisting(
       () => this.prepareOrganizationMutation(id),
       (signal, etag) =>
-        generatedDeleteOrganization(
-          { id: id },
-          {
-            ...this.client,
-            signal,
-            headers: { 'If-Match': etag },
-          },
-        ),
+        generatedDeleteOrganization({ id: id }, {
+          ...this.client,
+          signal,
+          headers: { 'If-Match': etag },
+        }),
       () => {
         this.organizations = this.organizations.filter((item) => item.id !== id);
         this.organizationRecords.delete(id);
       },
+      prepared,
     );
     return this.afterDirectoryMutation(result);
   }
@@ -482,23 +480,21 @@ export class DirectoryEntityController {
       prepared,
     );
   }
-  async deleteEmployment(id: number): Promise<DirectoryEntityMutationResult<never, Prepared<Employment>>> {
+  async deleteEmployment(id: number, prepared?: Prepared<Employment>): Promise<DirectoryEntityMutationResult<never, Prepared<Employment>>> {
     const result = await this.deleteExisting(
       () => this.prepareEmploymentMutation(id),
       (signal, etag) =>
-        generatedDeleteEmployment(
-          { id: id },
-          {
-            ...this.client,
-            signal,
-            headers: { 'If-Match': etag },
-          },
-        ),
+        generatedDeleteEmployment({ id: id }, {
+          ...this.client,
+          signal,
+          headers: { 'If-Match': etag },
+        }),
       () => {
         this.employments = this.employments.filter((item) => item.id !== id);
         this.employmentProjection = undefined;
         this.employmentRecords.delete(id);
       },
+      prepared,
     );
     return this.afterDirectoryMutation(result, true);
   }
@@ -543,22 +539,20 @@ export class DirectoryEntityController {
     if (result.ok) await Promise.all([this.loadRelationships(false), this.refreshNetwork()]);
     return result;
   }
-  async deleteRelationship(id: number): Promise<DirectoryEntityMutationResult<never, Prepared<PersonRelationship>>> {
+  async deleteRelationship(id: number, prepared?: Prepared<PersonRelationship>): Promise<DirectoryEntityMutationResult<never, Prepared<PersonRelationship>>> {
     const result = await this.deleteExisting(
       () => this.prepareRelationshipMutation(id),
       (signal, etag) =>
-        generatedDeletePersonRelationship(
-          { id: id },
-          {
-            ...this.client,
-            signal,
-            headers: { 'If-Match': etag },
-          },
-        ),
+        generatedDeletePersonRelationship({ id: id }, {
+          ...this.client,
+          signal,
+          headers: { 'If-Match': etag },
+        }),
       () => {
         this.relationships = this.relationships.filter((view) => view.relationship.id !== id);
         this.relationshipRecords.delete(id);
       },
+      prepared,
     );
     if (result.ok) await Promise.all([this.loadRelationships(false), this.refreshNetwork()]);
     return result;
@@ -608,10 +602,10 @@ export class DirectoryEntityController {
     );
     return result;
   }
-  async deleteRelationshipType(id: number): Promise<DirectoryEntityMutationResult<never, Prepared<RelationshipType>>> {
+  async deleteRelationshipType(id: number, shown?: Prepared<RelationshipType>): Promise<DirectoryEntityMutationResult<never, Prepared<RelationshipType>>> {
     let prepared: Prepared<RelationshipType>;
     try {
-      prepared = await this.prepareRelationshipTypeMutation(id);
+      prepared = shown ?? await this.prepareRelationshipTypeMutation(id);
     } catch (cause: unknown) {
       return { ok: false, kind: 'error', status: 0, message: failureMessage(cause, 0) };
     }

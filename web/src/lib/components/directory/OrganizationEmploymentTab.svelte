@@ -65,7 +65,7 @@
   async function removeEmployment(): Promise<void> {
     if (!deletingEmployment || acting) return;
     const target = deletingEmployment;
-    if (await removal.run(() => controller.deleteEmployment(target.id))) closeDelete();
+    if (await removal.run(current => controller.deleteEmployment(target.id, current))) closeDelete();
   }
 
   function openDelete(employment: Employment): void {
