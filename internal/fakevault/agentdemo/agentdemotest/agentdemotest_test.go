@@ -32,12 +32,11 @@ func TestArchiveCopiesArePrivate(t *testing.T) {
 	_, mc := Archive(t)
 	assert.NotZero(mc.Messages["canary"])
 }
-func TestStoreOpensAtSchemaVersion(t *testing.T) {
+func TestStoreContainsManifestMessages(t *testing.T) {
 	st, m := Store(t)
 	var n int
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&n))
 	assert.Equal(t, len(m.Messages), n)
-	assert.Equal(t, m.AsOf, Now(m))
 }
 
 func TestArchiveBuildsOnce(t *testing.T) {

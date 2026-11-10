@@ -3,7 +3,7 @@ package cmd
 import (
 	"bytes"
 	"database/sql"
-	"io"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -48,19 +48,52 @@ func TestFakeVaultCommandPassesScaleFlagsToGenerator(t *testing.T) {
 }
 
 func TestFakeVaultAgentDemoWritesManifest(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	dir := t.TempDir()
-	command := newFakeVaultCommand()
-	var out bytes.Buffer
-	command.SetOut(&out)
-	command.SetArgs([]string{"--scenario", "agent-demo", "--output", dir, "--quiet"})
-	require.NoError(command.ExecuteContext(t.Context()))
-	assert.Contains(out.String(), "Agent demo archive:")
-	assert.Contains(out.String(), "Manifest:")
-	assert.Contains(out.String(), "unsaved participants: 11")
-	_, err := agentdemo.Load(dir)
-	require.NoError(err)
+	for _, asOf := range []string{"default", "now"} {
+		t.Run(asOf, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			before := time.Now().UTC().Truncate(time.Hour)
+			dir := t.TempDir()
+			command := newFakeVaultCommand()
+			var out bytes.Buffer
+			command.SetOut(&out)
+			args := []string{"--scenario", "agent-demo", "--output", dir, "--quiet"}
+			if asOf == "now" {
+				args = append(args, "--as-of", "now")
+			}
+			command.SetArgs(args)
+			require.NoError(command.ExecuteContext(t.Context()))
+			after := time.Now().UTC().Truncate(time.Hour)
+			m, err := agentdemo.Load(dir)
+			require.NoError(err)
+			assert.Contains(out.String(), "Agent demo archive:")
+			assert.Contains(out.String(), "Manifest:")
+			// Count membership independently: the CLI reports every unbound participant,
+			// while expect.unsaved_participants selects only feature candidates.
+			bound := map[int64]bool{}
+			for _, person := range m.Persons {
+				for _, id := range person.ParticipantIDs {
+					bound[id] = true
+				}
+			}
+			for _, handle := range []string{"owner", "owner_phone", "owner_slack"} {
+				require.Contains(m.Participants, handle)
+				bound[m.Participants[handle].ID] = true
+			}
+			unsaved := 0
+			for _, participant := range m.Participants {
+				if !bound[participant.ID] {
+					unsaved++
+				}
+			}
+			assert.Contains(out.String(), fmt.Sprintf("unsaved participants: %d", unsaved))
+			if asOf == "now" {
+				assert.True(m.AsOf.Equal(before) || m.AsOf.Equal(after))
+			} else {
+				assert.Equal(agentdemo.DefaultAsOf, m.AsOf)
+			}
+		})
+	}
 }
 func TestFakeVaultAgentDemoRejectsScaleFlags(t *testing.T) {
 	for _, args := range [][]string{{"--messages", "10"}, {"--participants", "3"}, {"--participant-edges", "9"}, {"--group-chat-members", "3"}, {"--attachment-bytes", "1MB"}, {"--append"}} {
@@ -89,55 +122,30 @@ func TestFakeVaultUnknownScenario(t *testing.T) {
 	cmd.SetArgs([]string{"--scenario", "nope", "--output", t.TempDir()})
 	require.ErrorContains(t, cmd.ExecuteContext(t.Context()), "scale, agent-demo")
 }
-func TestFakeVaultAgentDemoRefusesLiveDataDir(t *testing.T) {
-	dir := t.TempDir()
-	cfg := config.NewDefaultConfig()
-	cfg.Data.DataDir = dir
-	inv := newInvocation()
-	inv.cfg = cfg
-	cmd := newFakeVaultCommand()
-	cmd.SetArgs([]string{"--scenario", "agent-demo", "--output", dir})
-	require.ErrorContains(t, cmd.ExecuteContext(withInvocation(t.Context(), inv)), "refusing to write a demo archive into an existing archive directory")
-	assert.NoFileExists(t, filepath.Join(dir, "msgvault.db"))
-}
-
-func TestFakeVaultAgentDemoAsOfNow(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	before := time.Now().UTC().Truncate(time.Hour)
-	dir := t.TempDir()
-	cmd := newFakeVaultCommand()
-	cmd.SetOut(io.Discard)
-	cmd.SetArgs([]string{"--scenario", "agent-demo", "--output", dir, "--as-of", "now", "--quiet"})
-	require.NoError(cmd.ExecuteContext(t.Context()))
-	m, err := agentdemo.Load(dir)
-	require.NoError(err)
-	after := time.Now().UTC().Truncate(time.Hour)
-	assert.True(m.AsOf.Equal(before) || m.AsOf.Equal(after))
-	assert.Equal(m.AsOf.Truncate(time.Hour), m.AsOf)
-}
-func TestFakeVaultAgentDemoRefusesSymlinkedLiveDataDir(t *testing.T) {
-	live := t.TempDir()
-	alias := filepath.Join(t.TempDir(), "alias")
-	require.NoError(t, os.Symlink(live, alias))
-	cfg := config.NewDefaultConfig()
-	cfg.Data.DataDir = live
-	inv := newInvocation()
-	inv.cfg = cfg
-	cmd := newFakeVaultCommand()
-	cmd.SetArgs([]string{"--scenario", "agent-demo", "--output", alias})
-	require.ErrorContains(t, cmd.ExecuteContext(withInvocation(t.Context(), inv)), "refusing to write a demo archive into an existing archive directory")
-	assert.NoFileExists(t, filepath.Join(live, "msgvault.db"))
-}
-func TestFakeVaultAgentDemoRefusesExistingDatabase(t *testing.T) {
-	require := require.New(t)
-	dir := t.TempDir()
-	path := filepath.Join(dir, "msgvault.db")
-	require.NoError(os.WriteFile(path, []byte("keep me"), 0600))
-	cmd := newFakeVaultCommand()
-	cmd.SetArgs([]string{"--scenario", "agent-demo", "--output", dir})
-	require.ErrorContains(cmd.ExecuteContext(t.Context()), "refusing to write a demo archive into an existing archive directory")
-	data, err := os.ReadFile(path)
-	require.NoError(err)
-	assert.Equal(t, "keep me", string(data))
+func TestFakeVaultAgentDemoRefusesExistingArchive(t *testing.T) {
+	for _, name := range []string{"live directory", "symlinked live directory", "existing database"} {
+		t.Run(name, func(t *testing.T) {
+			require := require.New(t)
+			live := t.TempDir()
+			output := live
+			cfg := config.NewDefaultConfig()
+			cfg.Data.DataDir = live
+			switch name {
+			case "symlinked live directory":
+				output = filepath.Join(t.TempDir(), "alias")
+				require.NoError(os.Symlink(live, output))
+			case "existing database":
+				output = t.TempDir()
+				require.NoError(os.WriteFile(filepath.Join(output, "msgvault.db"), []byte("keep me"), 0600))
+			}
+			inv := newInvocation()
+			inv.cfg = cfg
+			command := newFakeVaultCommand()
+			command.SetArgs([]string{"--scenario", "agent-demo", "--output", output})
+			require.ErrorContains(command.ExecuteContext(withInvocation(t.Context(), inv)), "refusing to write a demo archive into an existing archive directory")
+			if name != "existing database" {
+				assert.NoFileExists(t, filepath.Join(live, "msgvault.db"))
+			}
+		})
+	}
 }

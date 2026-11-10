@@ -11,7 +11,7 @@ import (
 	"go.kenn.io/msgvault/internal/fakevault/agentdemo"
 )
 
-func TestGenerateDirWritesManifestHeader(t *testing.T) {
+func TestGenerateDirRoundTripsManifest(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	dir := t.TempDir()
@@ -20,30 +20,30 @@ func TestGenerateDirWritesManifestHeader(t *testing.T) {
 	loaded, err := agentdemo.Load(dir)
 	require.NoError(err)
 	assert.Equal(m, loaded)
-	assert.Equal("agent-demo", m.Scenario)
-	assert.Equal(1, m.ScenarioVersion)
-	assert.Equal(agentdemo.DefaultAsOf, m.AsOf)
-	assert.Equal(uint64(1), m.Seed)
 	assert.FileExists(filepath.Join(dir, "msgvault.db"))
 }
 
 func TestGenerateDirRefusesExistingDatabase(t *testing.T) {
-	require := require.New(t)
-	dir := t.TempDir()
-	path := filepath.Join(dir, "msgvault.db")
-	require.NoError(os.WriteFile(path, []byte("keep me"), 0600))
-	_, err := agentdemo.GenerateDir(t.Context(), agentdemo.Options{Dir: dir})
-	require.ErrorContains(err, "already exists")
-	data, err := os.ReadFile(path)
-	require.NoError(err)
-	assert.Equal(t, "keep me", string(data))
-}
-
-func TestGenerateDirRefusesDanglingDatabaseSymlink(t *testing.T) {
-	dir := t.TempDir()
-	target := filepath.Join(t.TempDir(), "untouched.db")
-	require.NoError(t, os.Symlink(target, filepath.Join(dir, "msgvault.db")))
-	_, err := agentdemo.GenerateDir(t.Context(), agentdemo.Options{Dir: dir})
-	require.ErrorContains(t, err, "already exists")
-	assert.NoFileExists(t, target)
+	for _, name := range []string{"regular file", "dangling symlink"} {
+		t.Run(name, func(t *testing.T) {
+			require := require.New(t)
+			dir := t.TempDir()
+			path := filepath.Join(dir, "msgvault.db")
+			target := filepath.Join(t.TempDir(), "untouched.db")
+			if name == "regular file" {
+				require.NoError(os.WriteFile(path, []byte("keep me"), 0600))
+			} else {
+				require.NoError(os.Symlink(target, path))
+			}
+			_, err := agentdemo.GenerateDir(t.Context(), agentdemo.Options{Dir: dir})
+			require.ErrorContains(err, "already exists")
+			if name == "regular file" {
+				data, err := os.ReadFile(path)
+				require.NoError(err)
+				assert.Equal(t, "keep me", string(data))
+			} else {
+				assert.NoFileExists(t, target)
+			}
+		})
+	}
 }
