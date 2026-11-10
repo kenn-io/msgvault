@@ -1177,7 +1177,7 @@ func TestSameUsernameUnderDifferentStableIDsStaysAConflict(t *testing.T) {
 func TestWhatsAppMergeCountsResolvedAddresses(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	ctx := t.Context()
-	require := require.New(t)
+	require, assert := require.New(t), assert.New(t)
 	account := "garden"
 	user := &User{ID: "@garden-reader:beeper.local", FullName: "Reader", PhoneNumber: "+12025550123"}
 	participant, err := newParticipantResolver(st, account).resolveUser(ctx, user)
@@ -1198,11 +1198,11 @@ func TestWhatsAppMergeCountsResolvedAddresses(t *testing.T) {
 	require.NoError(err)
 	detail, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
 	require.NoError(err)
-	assert.Equal(t, 2, detail.Labels.AbsorbedAddressCount, "%+v", detail.Labels.Addresses)
+	assert.Equal(2, detail.Labels.AbsorbedAddressCount, "%+v", detail.Labels.Addresses)
 	page, err := st.ListPersonMergesContext(ctx, owner.ID)
 	require.NoError(err)
 	require.Len(page, 1)
-	assert.Equal(t, 2, page[0].Labels.AbsorbedAddressCount)
+	assert.Equal(2, page[0].Labels.AbsorbedAddressCount)
 	for _, labels := range []store.PersonMergeLabels{detail.Labels, page[0].Labels} {
 		var keys []string
 		for _, address := range labels.Addresses {
@@ -1210,9 +1210,9 @@ func TestWhatsAppMergeCountsResolvedAddresses(t *testing.T) {
 				keys = append(keys, address.IdentityKey)
 			}
 		}
-		assert.ElementsMatch(t, []string{`["phone","","","+12025550123"]`, `["whatsapp","","","+12025550123"]`}, keys)
+		assert.ElementsMatch([]string{`["phone","","","+12025550123"]`, `["whatsapp","","","+12025550123"]`}, keys)
 	}
 	again, err := newParticipantResolver(st, account).resolveUser(ctx, user)
 	require.NoError(err)
-	assert.Equal(t, participant, again)
+	assert.Equal(participant, again)
 }
