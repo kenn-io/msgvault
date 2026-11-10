@@ -52,7 +52,6 @@
   type HistoryRow = { id: number; value: string; context?: Item; envelope: ValueEnvelope; observedAt?: string };
   /**
    * An address a merge brought in, under Email and phone: "Merged in · Nov 6", opening that merge.
-   * `seen` holds the observations those rows stand in for, which Seen in services leaves out.
    */
   function mergedInRows(openMerge: (mergeID: number) => void, mergedIn: MergedInAddress[], workspaces: Map<string, string>): { rows: SectionRow[]; seen: Set<number> } {
     // An address that is a current contact point shows once. One a service has seen shows here once, naming the service.
@@ -66,14 +65,17 @@
     }).map(address => {
       const matches = observations.filter(point => point.identity_key === address.identity_key);
       for (const point of matches) seen.add(point.envelope.id);
-      const observed = matches[0];
-      const service = observed && providerContext(observed, workspaces, false);
+      const services = [...new Set(matches.map(point => providerContext(point, workspaces, false)).filter(Boolean))];
+      const details = matches.map(point => {
+        const line = valueProvenance(point.envelope, [['Seen', point.observed_at]]);
+        return [providerContext(point, workspaces), line.text, line.title].filter(Boolean).join(' · ');
+      });
       return {
         id: `merged-${address.mergeID}-${address.participantID}-${address.identity_key}`, value: address.value,
-        detail: service && address.value !== service && !address.value.startsWith(`${service} · `) ? service : undefined,
+        detail: services.filter(service => address.value !== service && !address.value.startsWith(`${service} · `)).join(' · ') || undefined,
         provenance: {
           text: `Merged in · ${formatShortDate(address.mergedAt)}`,
-          title: [`Merged ${formatDateTime(address.mergedAt)}`, observed && `Seen ${formatDateTime(observed.observed_at ?? observed.envelope.created_at)}`].filter(Boolean).join('\n'),
+          title: [`Merged ${formatDateTime(address.mergedAt)}`, ...details].join('\n'),
         },
         onclick: () => openMerge(address.mergeID), actionLabel: `Open the merge that brought in ${address.value}`,
       };
