@@ -17,8 +17,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/emersion/go-imap/v2/imapserver"
-	"github.com/emersion/go-imap/v2/imapserver/imapmemserver"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -83,8 +81,11 @@ func TestAddServiceAccountDefaultIdentityScheduledSync(t *testing.T) {
 			args = append(args, flag)
 		}
 		cmd.SetArgs(args)
+		stop := captureStdout(t)
 		err := cmd.ExecuteContext(ctx)
+		output := stop()
 		require.NoError(err)
+		assert.Contains(output, "msgvault sync-full -- user@example.com")
 		st, err := store.Open(cfg.DatabaseDSN())
 		require.NoError(err)
 		t.Cleanup(func() { _ = st.Close() })
@@ -209,7 +210,11 @@ func TestAddIMAPDefaultIdentityScheduledSync(t *testing.T) {
 			args = append(args, flag)
 		}
 		cmd.SetArgs(args)
-		require.NoError(cmd.ExecuteContext(ctx))
+		stop := captureStdout(t)
+		err := cmd.ExecuteContext(ctx)
+		output := stop()
+		require.NoError(err)
+		assert.Contains(output, "msgvault sync-full -- imap://"+testutil.IMAPTestUsername+"@"+net.JoinHostPort(host, port))
 		st, err := store.Open(cfg.DatabaseDSN())
 		require.NoError(err)
 		t.Cleanup(func() { _ = st.Close() })
@@ -270,8 +275,16 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 					args = append(args, flag)
 				}
 				cmd.SetArgs(args)
+				stop := captureStdout(t)
 				err := cmd.ExecuteContext(ctx)
+				output := stop()
 				require.NoError(err)
+				if tc.name == "o365" {
+					assert.Contains(output, "msgvault sync-full -- user@example.com")
+				}
+				if tc.name == "graph" {
+					assert.Contains(output, "msgvault sync -- user@example.com")
+				}
 				st, err := store.Open(cfg.DatabaseDSN())
 				require.NoError(err)
 				t.Cleanup(func() { _ = st.Close() })
@@ -297,39 +310,4 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestAddIMAPFirstSyncCommandQuotesUsername(t *testing.T) {
-	require := require.New(t)
-	const username = "reader$tag"
-	savedHost, savedPort, savedUsername := imapHost, imapPort, imapUsername
-	savedNoTLS, savedSTARTTLS, savedNoDefault := imapNoTLS, imapSTARTTLS, noDefaultIdentityAddImap
-	t.Cleanup(func() {
-		imapHost, imapPort, imapUsername = savedHost, savedPort, savedUsername
-		imapNoTLS, imapSTARTTLS, noDefaultIdentityAddImap = savedNoTLS, savedSTARTTLS, savedNoDefault
-	})
-	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
-	t.Setenv("MSGVAULT_IMAP_PASSWORD", testutil.IMAPTestPassword)
-	mem := imapmemserver.New()
-	user := imapmemserver.NewUser(username, testutil.IMAPTestPassword)
-	require.NoError(user.Create("INBOX", nil))
-	mem.AddUser(user)
-	server := imapserver.New(&imapserver.Options{InsecureAuth: true, NewSession: func(*imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
-		return mem.NewSession(), nil, nil
-	}})
-	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
-	require.NoError(err)
-	go func() { _ = server.Serve(listener) }()
-	t.Cleanup(func() { _ = server.Close() })
-	host, port, err := net.SplitHostPort(listener.Addr().String())
-	require.NoError(err)
-	home := t.TempDir()
-	cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}}
-	cmd := newAddIMAPCmd()
-	cmd.SetArgs([]string{"--host", host, "--port", port, "--username", username, "--no-tls"})
-	stop := captureStdout(t)
-	err = cmd.ExecuteContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
-	output := stop()
-	require.NoError(err)
-	assert.Contains(t, output, "msgvault sync-full -- 'imap://reader$tag@"+net.JoinHostPort(host, port)+"'")
 }

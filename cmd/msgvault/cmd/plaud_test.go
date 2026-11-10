@@ -180,6 +180,8 @@ func TestPlaudAuthorizationPreflightUsesOwningDaemon(t *testing.T) {
 		}
 		if requestNumber == 1 {
 			assert.Equal([]string{"add-plaud", "--check-owner-only", "--", "work"}, req.Args)
+		} else {
+			assert.Equal([]string{"add-plaud", "--check-owner-only", "work"}, req.Args)
 		}
 		rawSource, err := json.Marshal(cfg.Plaud[0])
 		if !assert.NoError(err) {

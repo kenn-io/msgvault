@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import type { DirectoryReadBundle } from '../../directory/models';
 import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
+import { PersonTrackingController } from '../../directory/person-tracking-controller.svelte';
 import PersonRecordActions from './PersonRecordActions.svelte';
 
 const when = '2026-08-01T00:00:00Z';
@@ -33,22 +34,32 @@ async function choose(action: string): Promise<void> {
 }
 
 describe('PersonRecordActions', () => {
-  it.each(['failed', 'in flight'] as const)('keeps a %s tracking save when the menu reopens', async state => {
+  it.each(['failed', 'in flight', 'replaced'] as const)('keeps a %s tracking save when the menu reopens', async state => {
     let release!: () => void;
     const held = new Promise<void>(resolve => { release = resolve; });
     const onAnnounce = vi.fn();
     const writes: boolean[] = [];
     let reads = 0;
     let tracked = false;
+    let replaced = false;
+    if (state === 'replaced') {
+      const original = PersonTrackingController.prototype.setTracked;
+      vi.spyOn(PersonTrackingController.prototype, 'setTracked').mockImplementation(async function (this: PersonTrackingController, desired) {
+        const outcome = await original.call(this, desired);
+        await this.setPerson(9);
+        replaced = true;
+        return outcome;
+      });
+    }
     renderActions(async input => {
       const request = input as Request;
       if (request.method === 'PUT') {
         writes.push((await request.json()).tracked);
         if (state === 'failed' && writes.length === 1) return Response.json({}, { status: 503 });
-        if (state === 'in flight') await held;
+        if (state !== 'failed') await held;
         tracked = true;
       } else reads++;
-      return Response.json({ person_id: 7, tracked, tracked_at: tracked ? when : null });
+      return Response.json({ person_id: Number(new URL(request.url).pathname.split('/').at(-2)), tracked, tracked_at: tracked ? when : null });
     }, undefined, undefined, onAnnounce);
     try {
       await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
@@ -68,7 +79,10 @@ describe('PersonRecordActions', () => {
         await tick();
         expect(reads).toBe(readsBeforeReopen);
         release();
-        await waitFor(() => expect(onAnnounce).toHaveBeenCalledWith('Keeping this profile updated.'));
+        if (state === 'replaced') {
+          await waitFor(() => expect(replaced).toBe(true));
+          expect(onAnnounce).not.toHaveBeenCalled();
+        } else await waitFor(() => expect(onAnnounce).toHaveBeenCalledWith('Keeping this profile updated.'));
       }
     } finally { release(); }
   });

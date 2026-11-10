@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -208,6 +209,13 @@ func TestShellQuote(t *testing.T) {
 			assert.Equal(t, tt.want, got, "shellQuote(%q)", tt.input)
 		})
 	}
+}
+
+func TestPrintHeadlessCommandQuotesIdentifier(t *testing.T) {
+	var output bytes.Buffer
+	PrintHeadlessCommand(&output, "msgvault", "sync-full", "--", "imap://reader$tag@host.example:143")
+	assert.Contains(t, output.String(), "POSIX shell:\n    msgvault sync-full -- 'imap://reader$tag@host.example:143'")
+	assert.Contains(t, output.String(), "PowerShell 7.3+:\n    msgvault sync-full -- 'imap://reader$tag@host.example:143'")
 }
 
 func TestSanitizeEmail(t *testing.T) {

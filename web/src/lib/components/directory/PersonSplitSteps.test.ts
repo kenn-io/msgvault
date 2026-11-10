@@ -78,38 +78,18 @@ function result(exactReversal: boolean) {
 describe('PersonSplitSteps', () => {
   it('keeps an unknown address selectable when labels fail and preserves it on retry', async () => {
     const participants = [701, 702].map(participant_id => ({ merge_id: 41, participant_id, origin_side: 'absorbed' }));
-    const { controller } = await preparedController(async input => new URL((input as Request).url).pathname.endsWith('/profile')
-      ? Response.json(emptyProfile(person(12))) : Response.json(person(12, 4, [701, 702]), { headers: { ETag: '"person-12-r4"' } }),
-    participants, () => ({ ...mergeDetail().labels, participant_ids: [701], addresses: [addressFixture(701, 'email', 'person701@example.org')] }));
+    let loads = 0;
+    const { controller } = await preparedController(async () => Response.json(person(12, 4, [701, 702]), { headers: { ETag: '"person-12-r4"' } }),
+      participants, () => ++loads <= 2 ? { ...mergeDetail().labels, participant_ids: [], addresses: [], incomplete: true } : { ...mergeDetail().labels, participant_ids: [701, 702], addresses: [addressFixture(701, 'email', 'person701@example.org'), addressFixture(702, 'email', 'person702@example.org')], incomplete: false });
     render(PersonSplitSteps, { controller, onOpenPerson: vi.fn() });
     expect(screen.getByText("Some addresses couldn't be loaded.")).toBeDefined();
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Unknown address 2' }));
     expect(controller.selectedParticipantIDs).toEqual([702]);
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(controller.selectedParticipantIDs).toEqual([702]));
-    expect(screen.getByRole('checkbox', { name: 'Unknown address 2' })).toHaveProperty('checked', true);
+    expect(screen.getByRole('checkbox', { name: 'person702@example.org' })).toHaveProperty('checked', true);
     expect(screen.getByRole('checkbox', { name: 'person701@example.org' })).toHaveProperty('disabled', false);
     expect(controller.confirmSplit()).toBe(true);
-    controller.destroy();
-  });
-
-  it('describes a successful subset split without calling it a partial restore', async () => {
-    const response = { ...result(false), unrestored_rows: [], uid_alias_disposition: 'retired_uid_alias_unchanged', source_person: person(12, 5, [702, 999], 'Synthetic Source') };
-    const participants = [701, 702].map(participant_id => ({ merge_id: 41, participant_id, origin_side: 'absorbed' }));
-    const { controller } = await preparedController(async input => {
-      const request = input as Request, path = new URL(request.url).pathname;
-      if (request.method === 'POST') return Response.json(response);
-      if (path === '/api/v1/people/12') return Response.json(person(12, 4, [999, 701, 702], 'Synthetic Source'), { headers: { ETag: '"person-12-r4"' } });
-      if (path.endsWith('/profile')) return Response.json(emptyProfile(person(12)));
-      throw new Error(`Unexpected ${request.method} ${path}`);
-    }, participants, () => ({ ...mergeDetail().labels, incomplete: false, participant_ids: [701, 702], addresses: [701, 702].map(id => addressFixture(id, 'email', `person${id}@example.org`)) }));
-    render(PersonSplitSteps, { controller, onOpenPerson: vi.fn() });
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'person701@example.org' }));
-    expect(screen.getByRole('checkbox', { name: 'person702@example.org' })).toBeDefined();
-    await act(() => { controller.confirmSplit(); return controller.submitSplit(); });
-    expect(screen.queryByText('Partly restored')).toBeNull();
-    expect(screen.queryByText(/fully reversed/)).toBeNull();
-    expect(screen.getByText('Links to the merged-in profile still open Synthetic Source')).toBeDefined();
     controller.destroy();
   });
 
@@ -169,27 +149,35 @@ describe('PersonSplitSteps', () => {
     controller.destroy();
   });
 
-  it.each([false, true])('names both people and places the restore result beside them: exact=%s', async exact => {
-    const response = { ...result(exact), source_person: person(12, 5, [999], 'Synthetic Source') };
+  it.each([
+    { name: 'partial', exact: false, subset: false, addressName: false },
+    { name: 'exact', exact: true, subset: false, addressName: false },
+    { name: 'subset', exact: false, subset: true, addressName: false },
+    { name: 'address fallback', exact: true, subset: false, addressName: true },
+  ])('names both people and places the restore result beside them: $name', async ({ exact, subset, addressName }) => {
+    const label = addressName ? 'alex@example.org' : 'alex@example.org, +12025550101, neri@example.org';
+    const restoredName = addressName ? label : 'Synthetic Restored';
+    const response = { ...result(exact), source_person: person(12, 5, subset ? [702, 999] : [999], 'Synthetic Source'),
+      new_person: person(19, 1, [701], restoredName),
+      ...(subset ? { unrestored_rows: [], uid_alias_disposition: 'retired_uid_alias_unchanged' } : {}) };
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
       if (path === '/api/v1/people/7') return Response.json(person(7));
-      if (path === '/api/v1/people/12') return Response.json(person(12, 4, [701, 999], 'Synthetic Source'), { headers: { ETag: '"person-12-r4"' } });
+      if (path === '/api/v1/people/12') return Response.json(person(12, 4, subset ? [701, 702, 999] : [701, 999], 'Synthetic Source'), { headers: { ETag: '"person-12-r4"' } });
       if (path === '/api/v1/people/12/profile') return Response.json(emptyProfile(response.source_person));
       if (path === '/api/v1/people/19/profile') return Response.json(emptyProfile(response.new_person));
       if (path === '/api/v1/people/12/split' && request.method === 'POST') return Response.json(response);
       throw new Error(`Unexpected ${request.method} ${path}`);
     });
-    const { controller } = await preparedController(fetchFn, undefined, () => ({ ...mergeDetail().labels, incomplete: false,
-      participant_ids: [701, 999], addresses: [
+    const { controller } = await preparedController(fetchFn, subset ? [701, 702].map(participant_id => ({ merge_id: 41, participant_id, origin_side: 'absorbed' })) : undefined, () => ({ ...mergeDetail().labels, incomplete: false,
+      participant_ids: subset ? [701, 702, 999] : [701, 999], addresses: [
       { participant_id: 701, type: 'email', value: 'alex@example.org', display_value: '', service_slug: 'email', service_label: '', scope_kind: '', scope_value: '' },
       { participant_id: 701, type: 'phone', value: '+12025550101', display_value: '', service_slug: 'phone', service_label: '', scope_kind: '', scope_value: '' },
-    ].map(a => addressFixture(a.participant_id, a.type, a.value, a)).concat([addressFixture(701, 'email', 'neri@example.org'), addressFixture(999, 'email', 'later@example.org')]) }));
+    ].filter(a => !addressName || a.type === 'email').map(a => addressFixture(a.participant_id, a.type, a.value, a)).concat([...(addressName ? [] : [addressFixture(701, 'email', 'neri@example.org')]), ...(subset ? [addressFixture(702, 'email', 'person702@example.org')] : []), addressFixture(999, 'email', 'later@example.org')]) }));
     const onOpenPerson = vi.fn();
     render(PersonSplitSteps, { controller, onOpenPerson });
 
-    const label = 'alex@example.org, +12025550101, neri@example.org';
     expect(screen.getByText('None chosen yet')).toBeDefined();
     await fireEvent.click(screen.getByRole('checkbox', { name: label }));
     expect(screen.getByRole('group', { name: 'Addresses to move' })).toBeDefined();
@@ -200,7 +188,7 @@ describe('PersonSplitSteps', () => {
     expect(within(stays).queryByText(label)).toBeNull();
     await act(() => { controller.confirmSplit(); return controller.submitSplit(); });
 
-    expect(await screen.findByRole('button', { name: 'Open Synthetic Restored' })).toBeDefined();
+    expect(await screen.findByRole('button', { name: `Open ${restoredName}` })).toBeDefined();
     expect(screen.getByRole('button', { name: 'Open Synthetic Source' }).closest('.detail-row')?.textContent).toContain('later@example.org');
     expect(document.body.textContent?.toLowerCase()).not.toContain('undo');
     if (exact) {
@@ -211,6 +199,10 @@ describe('PersonSplitSteps', () => {
       expect(sentence.textContent).toMatch(/edits and deletions made since .* kept/);
       expect(sentence.textContent).not.toMatch(/Synthetic Source|Synthetic Restored|put back/);
       expect(screen.queryByText('Partly restored')).toBeNull();
+    } else if (subset) {
+      expect(screen.queryByText('Partly restored')).toBeNull();
+      expect(screen.queryByText(/fully reversed/)).toBeNull();
+      expect(screen.getByText('Links to the merged-in profile still open Synthetic Source')).toBeDefined();
     } else {
       // The partial-restore lines are shown under the two people, not folded away.
       const details = screen.getAllByRole('listitem').map(item => item.textContent);
@@ -219,26 +211,16 @@ describe('PersonSplitSteps', () => {
       expect(screen.queryByText(/fully reversed/)).toBeNull();
       expect(screen.getByLabelText('Split result people').compareDocumentPosition(screen.getByRole('list')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     }
-    expect(screen.getByText(`New person · ${label}`)).toBeDefined();
+    if (addressName) {
+      const row = screen.getByRole('button', { name: `Open ${restoredName}` }).closest('.detail-row') as HTMLElement;
+      expect(within(row).getByText('New person')).toBeDefined();
+    } else {
+      expect(screen.getByText(`New person · ${label}`)).toBeDefined();
+    }
     expect(document.body.textContent).not.toMatch(/concealed-key|uid_alias/i);
     await fireEvent.click(screen.getByRole('button', { name: 'Open Synthetic Source' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Open Synthetic Restored' }));
+    await fireEvent.click(screen.getByRole('button', { name: `Open ${restoredName}` }));
     expect(onOpenPerson.mock.calls).toEqual([[12], [19]]);
-  });
-
-  it('does not repeat the new person\'s address in the receipt', async () => {
-    const address = 'reader@example.org';
-    const response = { ...result(true), new_person: person(19, 1, [701], address) };
-    const { controller } = await preparedController(async input => {
-      const request = input as Request;
-      if (request.method === 'POST') return Response.json(response);
-      return sourceResponse();
-    }, undefined, () => ({ ...mergeDetail().labels, incomplete: false, participant_ids: [701], addresses: [addressFixture(701, 'email', address)] }));
-    render(PersonSplitSteps, { controller, onOpenPerson: vi.fn() });
-    await fireEvent.click(screen.getByRole('checkbox', { name: address }));
-    await act(() => { controller.confirmSplit(); return controller.submitSplit(); });
-    const row = screen.getByRole('button', { name: `Open ${address}` }).closest('.detail-row') as HTMLElement;
-    expect(within(row).getByText('New person')).toBeDefined();
     controller.destroy();
   });
 

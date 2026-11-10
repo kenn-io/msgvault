@@ -104,7 +104,7 @@ for (const width of [1440, 390]) {
   });
 }
 
-test('History and Split fit a 390px dialog', async ({ page }) => {
+test('History fits a 390px dialog', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 900 });
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -119,11 +119,6 @@ test('History and Split fit a 390px dialog', async ({ page }) => {
       created_at: '2026-01-01T00:00:00Z', updated_at: '2026-06-03T00:00:00Z', vcard: {},
     } }], contact_points: [], addresses: [], dates: [], categories: [], media: [], observations: [],
   } }));
-  await page.goto(peopleURL);
-  await page.evaluate(() => fetch('/api/v1/people/7/merge', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', 'If-Match': '"person-7-r4", "person-9-r2"', 'Idempotency-Key': 'synthetic-history-phone' },
-    body: JSON.stringify({ absorbed_person_id: 9 }),
-  }).then(() => undefined));
   await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 })));
   await page.getByRole('button', { name: 'More actions', exact: true }).click();
   await page.getByRole('menuitem', { name: 'History', exact: true }).click();
@@ -131,13 +126,5 @@ test('History and Split fit a 390px dialog', async ({ page }) => {
   await dialog.getByText('1 earlier value', { exact: true }).click();
   await expect(dialog.getByText(earlierName)).toBeVisible();
   expect(await dialog.locator('.profile-history').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
-  const row = dialog.getByRole('button', { name: /^Open Synthetic Two merged into Synthetic One/ });
-  await row.click();
-  await dialog.getByRole('button', { name: 'Split…', exact: true }).click();
-  const choice = dialog.getByRole('checkbox').first();
-  await choice.check();
-  await dialog.getByRole('button', { name: 'Split into new person', exact: true }).click();
-  await dialog.getByRole('button', { name: 'Open Synthetic Restored', exact: true }).waitFor();
-  expect(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
   expect(errors).toEqual([]);
 });

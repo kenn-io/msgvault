@@ -8,7 +8,7 @@ import type { ParticipantAddress, PersonMergeDetail, PersonMergeLabels } from '.
 import { addressFixture } from './merge-fixtures.test-support';
 import { addressText, mergeSummaryRow, mergeAddresses, mergedInAddresses, mergeSentence, scopeText, workspaceLabels } from './merge-labels';
 
-const labelsOf = (addresses: ParticipantAddress[], count = addresses.length): PersonMergeLabels => ({ profiles: [], participant_ids: [...new Set(addresses.map(a => a.participant_id))], addresses, absorbed_address_count: count, incomplete: false });
+const labelsOf = (addresses: ParticipantAddress[], count = addresses.length): PersonMergeLabels => ({ profiles: [{ id: 7, participant_ids: [] }, { id: 9, participant_ids: [...new Set(addresses.map(a => a.participant_id))] }], participant_ids: [...new Set(addresses.map(a => a.participant_id))], addresses, absorbed_address_count: count, incomplete: false });
 const merge = { id: 41, survivor_person_id: 7, absorbed_person_id: 9 } as PersonMergeDetail['merge'];
 const absorbed = (participant_id: number) => ({ merge_id: 41, participant_id, origin_side: 'absorbed' });
 
@@ -96,9 +96,9 @@ it('renders migrated opaque Beeper IDs by their readable name', () => {
 });
 
 it.each([
-  { kind: 'workspace', values: ['T_TWO', 'T_ONE'], expected: ['workspace 2', 'workspace 1'] },
-  { kind: 'account', values: ['account-b', 'account-a'], expected: ['account 2', 'account 1'] },
-])('numbers $kind scopes in sorted order across arrivals', ({ kind, values, expected }) => {
+  { kind: 'workspace', values: ['T_TWO', 'T_ONE'], expected: ['workspace 1', 'workspace 2'] },
+  { kind: 'account', values: ['account-b', 'account-a'], expected: ['account 1', 'account 2'] },
+])('keeps $kind numbers when an earlier scope arrives', ({ kind, values, expected }) => {
   const addresses = values.map(scope_value => ({ scope_kind: kind, scope_value }));
   const scopes = workspaceLabels([addresses[1]], workspaceLabels([addresses[0]]));
   expect(addresses.map(address => scopeText(address, scopes))).toEqual(expected);

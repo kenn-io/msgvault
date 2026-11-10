@@ -248,12 +248,12 @@ it.each(['history', 'merges'])('keeps account numbers when %s arrives first', as
   if (first === 'history') expect((await screen.findByText('reader')).closest('.detail-row')?.textContent).toContain('WhatsApp · account 1');
   else await screen.findByRole('button', { name: /^Open Neri merged into Mira/ });
   releaseSecond();
-  expect((await screen.findByText('reader')).closest('.detail-row')?.textContent).toContain('WhatsApp · account 1');
-  expect((await screen.findByRole('button', { name: /Open the merge that brought in WhatsApp/ })).closest('.detail-row')?.textContent).toContain('account 2');
+  expect((await screen.findByText('reader')).closest('.detail-row')?.textContent).toContain(`WhatsApp · account ${first === 'history' ? 1 : 2}`);
+  expect((await screen.findByRole('button', { name: /Open the merge that brought in WhatsApp/ })).closest('.detail-row')?.textContent).toContain(`account ${first === 'history' ? 2 : 1}`);
   expect(document.body.textContent).not.toMatch(/account-a|account-z/);
   await fireEvent.click(await screen.findByRole('button', { name: /^Open Neri merged into Mira/ }));
   const cards = await screen.findByRole('group', { name: 'Merged profiles' });
-  expect(cards.textContent).toContain('Mira · account 2');
+  expect(cards.textContent).toContain(`Mira · account ${first === 'history' ? 2 : 1}`);
 
 });
 
