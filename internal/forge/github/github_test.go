@@ -404,6 +404,32 @@ func TestSearchReadsBackForAnUpdateTheIndexShowsLate(t *testing.T) {
 	assert.Equal(ts("2026-11-07T10:03:00Z"), through)
 }
 
+func TestSearchReadsBackPastMoreThanAWindowOfUpdates(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newFakeGitHub(t)
+	readBackFrom := ts("2026-11-07T10:00:00Z")
+	// Four updates a second fill the five minutes the next search reads back.
+	for i := range 1200 {
+		f.issueSearch = append(f.issueSearch, found("Issue", "acme", "busy", i+1, readBackFrom.Add(time.Duration(i/4)*time.Second).Format(time.RFC3339)))
+	}
+	// The index shows this update only now, after the thousandth result of
+	// the read back.
+	f.issueSearch = append(f.issueSearch, found("Issue", "acme", "busy", 5000, "2026-11-07T10:04:30Z"))
+	through := ts("2026-11-07T10:05:00Z")
+
+	var refs []forge.ThreadRef
+	err := f.forge().searchThreads(t.Context(), searchIssues, "involves:octo", &cursor{}, &through, forge.NewOwnerFilter(nil, nil),
+		func(page []forge.ThreadRef, _ []byte) error {
+			refs = append(refs, page...)
+			return nil
+		})
+	require.NoError(err)
+	assert.Contains(uniqueKeys(refs), "acme/busy#5000", "the second window starts at the first one's last update, not the saved position")
+	assert.Len(uniqueKeys(refs), 1201)
+	assert.Equal(ts("2026-11-07T10:05:00Z"), through, "a read back never moves the saved position back")
+}
+
 func TestSearchReadsASecondHoldingMoreThanAWindow(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

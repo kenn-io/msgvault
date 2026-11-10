@@ -300,8 +300,9 @@ type searchPage struct {
 // after searchOverlap before *through, oldest first. A thread read again
 // unchanged is already archived, and the core skips it. GitHub returns at
 // most 1,000 results per search, so a longer history is read in windows,
-// each starting at the last update the previous one read. *through
-// advances after every page.
+// each starting at the last update the previous one read, which may be
+// earlier than *through while the search reads back. *through advances
+// after every page.
 func (f *Forge) searchThreads(ctx context.Context, kind searchKind, query string, state *cursor, through *time.Time,
 	owners forge.OwnerFilter, page func([]forge.ThreadRef, []byte) error,
 ) error {
@@ -310,17 +311,17 @@ func (f *Forge) searchThreads(ctx context.Context, kind searchKind, query string
 	if !windowStart.IsZero() {
 		windowStart = windowStart.Add(-searchOverlap)
 	}
-	for ; ; windowStart = *through {
+	for {
 		q := base + " sort:updated-asc"
 		if !windowStart.IsZero() {
 			q += " updated:>=" + windowStart.UTC().Format(time.RFC3339)
 		}
+		lastRead := windowStart
 		read, total, err := f.readSearch(ctx, kind, q, func(nodes []searchNode) error {
 			refs := searchRefs(nodes, owners)
 			for _, node := range nodes {
-				if node.UpdatedAt.After(*through) {
-					*through = node.UpdatedAt
-				}
+				lastRead = later(lastRead, node.UpdatedAt)
+				*through = later(*through, node.UpdatedAt)
 			}
 			return page(refs, state.encode())
 		})
@@ -330,15 +331,24 @@ func (f *Forge) searchThreads(ctx context.Context, kind searchKind, query string
 		if read < searchWindow || total <= read {
 			return nil
 		}
-		if !through.After(windowStart) {
+		if !lastRead.After(windowStart) {
 			// The whole window was updated in one second: read that second
 			// by creation time, then move past it.
 			if err := f.exhaustSecond(ctx, kind, base, windowStart, owners, state, page); err != nil {
 				return err
 			}
-			*through = windowStart.Add(time.Second)
+			lastRead = windowStart.Add(time.Second)
+			*through = later(*through, lastRead)
 		}
+		windowStart = lastRead
 	}
+}
+
+func later(a, b time.Time) time.Time {
+	if b.After(a) {
+		return b
+	}
+	return a
 }
 
 // readSearch reads every page of one search, at most searchWindow results,
