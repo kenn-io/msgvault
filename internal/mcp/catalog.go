@@ -488,6 +488,24 @@ func outputSchemaFor[T any]() *jsonschema.Schema {
 	return schema
 }
 
+// successOrFailureOutputSchema keeps success references relative to the root
+// without modifying either reusable input schema.
+func successOrFailureOutputSchema(output, failure *jsonschema.Schema) *jsonschema.Schema {
+	success := *output
+	success.Schema = ""
+	success.Defs = nil
+	success.Definitions = nil
+	refusal := *failure
+	refusal.Schema = ""
+	return &jsonschema.Schema{
+		Schema:      schema202012,
+		Type:        "object",
+		Defs:        output.Defs,
+		Definitions: output.Definitions,
+		AnyOf:       []*jsonschema.Schema{&success, &refusal},
+	}
+}
+
 func searchMessagesOutputSchema() *jsonschema.Schema {
 	metadata := outputSchemaFor[searchMetadataResponse]()
 	metadata.Schema = ""

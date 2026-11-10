@@ -54,14 +54,7 @@ func personCreateOutputSchema(ifExists bool) *jsonschema.Schema {
 		"message": stringSchema("Conflict explanation"),
 		"details": {Type: "object"},
 	}, "error", "message", "details")
-	person.Schema, failure.Schema = "", ""
-	output := &jsonschema.Schema{
-		Schema: schema202012, Type: "object",
-		Defs: person.Defs, Definitions: person.Definitions,
-		AnyOf: []*jsonschema.Schema{person, failure},
-	}
-	person.Defs, person.Definitions = nil, nil
-	return output
+	return successOrFailureOutputSchema(person, failure)
 }
 
 func (h *handlers) createPerson(ctx context.Context, req toolRequest) (*toolResult, error) {

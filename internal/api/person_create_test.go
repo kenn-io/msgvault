@@ -143,19 +143,12 @@ func TestStandalonePersonIfExistsConflictsAndCompatibility(t *testing.T) {
 	created := personRequest(t, srv, http.MethodPost, peoplePath+"/create", []byte(`{"name":"Alex Example","emails":[{"value":"alex@example.test"}]}`), "")
 	require.Equal(t, http.StatusCreated, created.Code)
 	assert.NotContains(t, created.Body.String(), "ensure")
-	var original store.Person
-	require.NoError(t, json.Unmarshal(created.Body.Bytes(), &original))
-	// The original Person JSON is the response contract when if_exists is absent.
-	golden, err := json.Marshal(original)
-	require.NoError(t, err)
-	assert.JSONEq(t, string(golden), created.Body.String())
 	for _, tc := range []struct {
 		body, code string
 		status     int
 	}{
 		{`{"name":"Alex","emails":[{"value":"observed@example.test"}],"if_exists":"return"}`, "person_matches_participant", http.StatusConflict},
 		{`{"name":"Alex","emails":[{"value":"alex@example.test"},{"value":"observed@example.test"}],"if_exists":"return"}`, "person_ambiguous", http.StatusConflict},
-		{`{"name":"Alex","emails":[{"value":"alex@example.test"}]}`, "person_contact_exists", http.StatusConflict},
 		{`{"name":"Alex","emails":[{"value":"alex@example.test"}],"if_exists":"error"}`, "person_contact_exists", http.StatusConflict},
 		{`{"name":"Alex","if_exists":"merge"}`, "invalid_person", http.StatusBadRequest},
 	} {

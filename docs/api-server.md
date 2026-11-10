@@ -744,6 +744,9 @@ engine returns `503` without falling back to the privileged engine.
 
 ### Person creation conflicts {#person-creation-conflicts}
 
+`ensure` belongs to the shared `Person` response schema, but is emitted only
+by person creation with `if_exists: "return"`. Other `Person` responses omit it.
+
 With `if_exists: "return"`, `POST /api/v1/people/create` returns HTTP 409
 when contacts identify multiple targets or a single unbound participant cluster.
 The response has `error`, `message`, and `details` fields:

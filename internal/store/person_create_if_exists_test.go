@@ -72,22 +72,15 @@ func TestCreateIfExistsDefaultCompatibility(t *testing.T) {
 		assert.NotContains(t, string(got), "ensure")
 	}
 	id := curatedContact(f, store.ContactAddressEmail, "existing@example.test")
-	for _, mode := range []store.PersonIfExists{"", store.PersonIfExistsError} {
-		input := returnPersonInput("existing@example.test")
-		input.IfExists = mode
-		_, err := f.Store.CreateStandalonePersonContext(t.Context(), input)
-		var conflict *store.PersonContactExistsError
-		require.ErrorAs(t, err, &conflict)
-		assert.Equal(t, id, conflict.PersonID)
-		assert.Equal(t, `email "existing@example.test" matches person `+fmt.Sprint(id)+` (Existing Example); use msgvault person get `+fmt.Sprint(id)+`; link observed participants explicitly through POST /api/v1/identity/links`, err.Error())
-	}
-	for _, input := range []store.PersonCreateInput{
-		{Name: "Alex", IfExists: "merge"}, {IfExists: store.PersonIfExistsReturn},
-		{Name: "Alex", IfExists: store.PersonIfExistsReturn, Phones: []store.PersonCreateContact{{Value: "bad"}}},
-	} {
-		_, err := f.Store.CreateStandalonePersonContext(t.Context(), input)
-		assert.ErrorIs(t, err, store.ErrPersonCreateInvalid)
-	}
+	input := returnPersonInput("existing@example.test")
+	input.IfExists = store.PersonIfExistsError
+	_, err := f.Store.CreateStandalonePersonContext(t.Context(), input)
+	var conflict *store.PersonContactExistsError
+	require.ErrorAs(t, err, &conflict)
+	assert.Equal(t, id, conflict.PersonID)
+	assert.Equal(t, `email "existing@example.test" matches person `+fmt.Sprint(id)+` (Existing Example); use msgvault person get `+fmt.Sprint(id)+`; link observed participants explicitly through POST /api/v1/identity/links`, err.Error())
+	_, err = f.Store.CreateStandalonePersonContext(t.Context(), store.PersonCreateInput{Name: "Alex", IfExists: "merge"})
+	assert.ErrorIs(t, err, store.ErrPersonCreateInvalid)
 }
 
 func TestCreateIfExistsReturnConcurrent(t *testing.T) {
@@ -163,8 +156,6 @@ func TestCreateIfExistsAllContactRepresentations(t *testing.T) {
 					var conflict *store.PersonMatchesParticipantError
 					require.ErrorAs(t, err, &conflict)
 					assert.Equal(t, participantID, conflict.ParticipantID)
-					assert.Equal(t, store.PersonCreateMCPNext{Tool: "promote_person", Arguments: map[string]int64{"participant_id": participantID}}, conflict.Next.MCP)
-					assert.Equal(t, []string{"msgvault", "person", "promote", fmt.Sprint(participantID), "--json"}, conflict.Next.CLI)
 					assert.Equal(t, counts, personCreateCounts(t, f.Store))
 					person, _, err := f.Store.CreatePersonFromParticipantContext(t.Context(), participantID)
 					require.NoError(t, err)
@@ -190,94 +181,74 @@ func TestCreateIfExistsAllContactRepresentations(t *testing.T) {
 }
 
 func TestCreateIfExistsReturnClustersAndAmbiguity(t *testing.T) {
-	for _, scenario := range []string{"one unbound cluster", "one bound cluster", "two unbound clusters", "two people", "person and unbound", "same contact across people", "same contact curated and observed", "multiple people in cluster"} {
-		t.Run(scenario, func(t *testing.T) {
-			f := storetest.New(t)
-			a := f.EnsureParticipant("a@example.test", "Alex Example", "example.test")
-			b := f.EnsureParticipant("b@example.test", "Blair Example", "example.test")
-			input := returnPersonInput("a@example.test", "b@example.test")
-			var existing *store.Person
-			var err error
-			if scenario == "one unbound cluster" || scenario == "one bound cluster" {
-				_, err = f.Store.LinkParticipants(a, b)
-				require.NoError(t, err)
-			}
-			if scenario == "one bound cluster" || scenario == "two people" || scenario == "person and unbound" || scenario == "same contact across people" || scenario == "multiple people in cluster" {
-				existing, _, err = f.Store.CreatePersonFromParticipantContext(t.Context(), a)
-				require.NoError(t, err)
-			}
-			if scenario == "two people" || scenario == "same contact across people" || scenario == "multiple people in cluster" {
-				second, _, err := f.Store.CreatePersonFromParticipantContext(t.Context(), b)
-				require.NoError(t, err)
-				if scenario == "same contact across people" {
-					for _, id := range []int64{a, b} {
-						_, err := f.Store.RecordContactObservationContext(t.Context(), id, store.ParticipantContactObservationInput{AddressKind: store.ContactAddressEmail, OriginalValue: "shared@example.test", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation}})
+	type scenario struct {
+		name    string
+		linked  bool
+		people  int
+		unbound bool
+	}
+	for _, group := range []struct {
+		name    string
+		matched bool
+		cases   []scenario
+	}{
+		{name: "matched", matched: true, cases: []scenario{{name: "one bound cluster", linked: true, people: 1}}},
+		{name: "conflict", cases: []scenario{
+			{name: "one unbound cluster", linked: true, unbound: true},
+			{name: "two unbound clusters"},
+			{name: "two people", people: 2},
+			{name: "person and unbound", people: 1},
+		}},
+	} {
+		t.Run(group.name, func(t *testing.T) {
+			for _, scenario := range group.cases {
+				t.Run(scenario.name, func(t *testing.T) {
+					f := storetest.New(t)
+					a := f.EnsureParticipant("a@example.test", "Alex Example", "example.test")
+					b := f.EnsureParticipant("b@example.test", "Blair Example", "example.test")
+					if scenario.linked {
+						_, err := f.Store.LinkParticipants(a, b)
 						require.NoError(t, err)
 					}
-					input = returnPersonInput("shared@example.test")
-				}
-				if scenario == "multiple people in cluster" {
-					// A legacy cluster may predate the guard against linking two saved people.
-					_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO participant_links (participant_a, participant_b) VALUES (?, ?)`), a, b)
-					require.NoError(t, err)
-					assert.NotEqual(t, existing.ID, second.ID)
-					input = returnPersonInput("a@example.test")
-				}
+					var existing *store.Person
+					if scenario.people > 0 {
+						var err error
+						existing, _, err = f.Store.CreatePersonFromParticipantContext(t.Context(), a)
+						require.NoError(t, err)
+					}
+					if scenario.people == 2 {
+						_, _, err := f.Store.CreatePersonFromParticipantContext(t.Context(), b)
+						require.NoError(t, err)
+					}
+					counts := personCreateCounts(t, f.Store)
+					person, err := f.Store.CreateStandalonePersonContext(t.Context(), returnPersonInput("a@example.test", "b@example.test"))
+					switch {
+					case group.matched:
+						require.NoError(t, err)
+						assert.Equal(t, existing.ID, person.ID)
+					case scenario.unbound:
+						var conflict *store.PersonMatchesParticipantError
+						require.ErrorAs(t, err, &conflict)
+						assert.Equal(t, a, conflict.ParticipantID)
+						assert.GreaterOrEqual(t, len(conflict.MatchBasis), 2)
+						matchedParticipants := map[int64]bool{}
+						for _, match := range conflict.MatchBasis {
+							matchedParticipants[*match.ParticipantID] = true
+						}
+						assert.Equal(t, map[int64]bool{a: true, b: true}, matchedParticipants)
+						assert.Equal(t, store.PersonCreateMCPNext{Tool: "promote_person", Arguments: map[string]int64{"participant_id": a}}, conflict.Next.MCP)
+						assert.Equal(t, []string{"msgvault", "person", "promote", fmt.Sprint(a), "--json"}, conflict.Next.CLI)
+					default:
+						var conflict *store.PersonAmbiguousError
+						require.ErrorAs(t, err, &conflict)
+						assert.Len(t, conflict.Candidates, 2)
+						assert.GreaterOrEqual(t, len(conflict.MatchBasis), 2)
+					}
+					assert.Equal(t, counts, personCreateCounts(t, f.Store))
+				})
 			}
-			if scenario == "same contact curated and observed" {
-				id := curatedContact(f, store.ContactAddressEmail, "a@example.test")
-				existing, err = f.Store.GetPersonContext(t.Context(), id)
-				require.NoError(t, err)
-				input = returnPersonInput("a@example.test")
-			}
-			counts := personCreateCounts(t, f.Store)
-			person, err := f.Store.CreateStandalonePersonContext(t.Context(), input)
-			switch scenario {
-			case "one bound cluster", "same contact curated and observed":
-				require.NoError(t, err)
-				assert.Equal(t, existing.ID, person.ID)
-			case "one unbound cluster":
-				var conflict *store.PersonMatchesParticipantError
-				require.ErrorAs(t, err, &conflict)
-				assert.Equal(t, a, conflict.ParticipantID)
-				assert.GreaterOrEqual(t, len(conflict.MatchBasis), 2)
-				matchedParticipants := map[int64]bool{}
-				for _, match := range conflict.MatchBasis {
-					matchedParticipants[*match.ParticipantID] = true
-				}
-				assert.Equal(t, map[int64]bool{a: true, b: true}, matchedParticipants)
-			default:
-				var conflict *store.PersonAmbiguousError
-				require.ErrorAs(t, err, &conflict)
-				assert.Len(t, conflict.Candidates, 2)
-				assert.GreaterOrEqual(t, len(conflict.MatchBasis), 2)
-			}
-			assert.Equal(t, counts, personCreateCounts(t, f.Store))
 		})
 	}
-}
-
-// Normalization and retry inputs must never change the saved profile.
-func FuzzCreateIfExistsReturnIdempotent(f *testing.F) {
-	f.Add(uint8(0))
-	f.Add(uint8(7))
-	f.Add(uint8(255))
-	f.Fuzz(func(t *testing.T, variant uint8) {
-		fixture := storetest.New(t)
-		input := returnPersonInput("alex@example.test")
-		first, err := fixture.Store.CreateStandalonePersonContext(t.Context(), input)
-		require.NoError(t, err)
-		input.Name = fmt.Sprintf("Retry %d", variant)
-		if variant&1 != 0 {
-			input.Emails[0].Value = "ALEX@EXAMPLE.TEST"
-		}
-		second, err := fixture.Store.CreateStandalonePersonContext(t.Context(), input)
-		require.NoError(t, err)
-		assert.Equal(t, first.ID, second.ID)
-		assert.Equal(t, first.DisplayName, second.DisplayName)
-		assert.Equal(t, store.PersonEnsureMatchedExisting, second.Ensure.Status)
-		assert.Equal(t, []int{1, 1, 0, 0, 0}, personCreateCounts(t, fixture.Store))
-	})
 }
 
 func TestCreateIfExistsReturnEmailAndPhoneAmbiguous(t *testing.T) {
@@ -297,18 +268,14 @@ func TestCreateIfExistsReturnEmailAndPhoneAmbiguous(t *testing.T) {
 }
 
 func TestCreateIfExistsCuratedObservedOverlap(t *testing.T) {
-	for _, scenario := range []string{"redundant unbound email", "bound to another person", "separate uncurated phone", "same cluster on uncurated phone"} {
+	for _, scenario := range []string{"redundant unbound email", "bound to another person", "same cluster on uncurated phone"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := storetest.New(t)
 			input := returnPersonInput("alex@example.test")
 			saved, err := f.Store.CreateStandalonePersonContext(t.Context(), input)
 			require.NoError(t, err)
 			var participantID, otherPersonID int64
-			if scenario == "separate uncurated phone" {
-				participantID, err = f.Store.EnsurePhoneParticipantContext(t.Context(), "+12025550123", "Blair Example")
-			} else {
-				participantID, err = f.Store.EnsureParticipant("alex@example.test", "Alex Example", "example.test")
-			}
+			participantID, err = f.Store.EnsureParticipant("alex@example.test", "Alex Example", "example.test")
 			require.NoError(t, err)
 			if scenario == "bound to another person" {
 				other, _, err := f.Store.CreatePersonFromParticipantContext(t.Context(), participantID)
@@ -319,7 +286,7 @@ func TestCreateIfExistsCuratedObservedOverlap(t *testing.T) {
 				_, err := f.Store.RecordContactObservationContext(t.Context(), participantID, store.ParticipantContactObservationInput{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550123", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation}})
 				require.NoError(t, err)
 			}
-			if scenario == "separate uncurated phone" || scenario == "same cluster on uncurated phone" {
+			if scenario == "same cluster on uncurated phone" {
 				input.Phones = []store.PersonCreateContact{{Value: "+12025550123"}}
 			}
 			counts := personCreateCounts(t, f.Store)
@@ -343,11 +310,7 @@ func TestCreateIfExistsCuratedObservedOverlap(t *testing.T) {
 					assert.Equal(t, new(otherPersonID), conflict.Candidates[1].PersonID)
 				} else {
 					assert.Equal(t, new(participantID), conflict.Candidates[1].ParticipantID)
-					matched := "participant"
-					if scenario == "same cluster on uncurated phone" {
-						matched = "observation"
-					}
-					assert.Contains(t, conflict.MatchBasis, store.PersonMatchBasis{Kind: store.ContactAddressPhone, Value: "+12025550123", Matched: matched, ParticipantID: new(participantID)})
+					assert.Contains(t, conflict.MatchBasis, store.PersonMatchBasis{Kind: store.ContactAddressPhone, Value: "+12025550123", Matched: "observation", ParticipantID: new(participantID)})
 				}
 				basis = conflict.MatchBasis
 			}

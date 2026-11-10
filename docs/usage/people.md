@@ -90,8 +90,9 @@ msgvault person create --name "Alex Example" --email alex@example.test --if-exis
 Name-only calls create a new person each time.
 
 `--if-exists return` requires a daemon with API schema 3.50.0 or newer.
-Older daemons reject the unknown `if_exists` field; upgrade the daemon before
-using return mode.
+The CLI checks this version before creation and asks you to upgrade an older
+daemon. Direct API requests to older daemons reject the unknown `if_exists`
+field.
 
 When all matching contacts identify one saved person, the command returns that
 person without changing its saved profile. Supplied `name`, `org`, `title`,
@@ -107,7 +108,8 @@ uncurated contact still counts toward ambiguity.
 An unbound participant cluster returns `person_matches_participant` with a
 CLI argv array and an MCP tool-and-arguments call in `details.next`. Multiple
 saved people or separate clusters return `person_ambiguous` with `details.candidates`; resolve them explicitly.
-Both conflicts exit with an error, and `--json` prints the error envelope. See
+Both conflicts exit with an error. Text-mode ambiguity errors give a summary;
+`--json` includes candidate IDs and other structured resolution details. See
 [person creation conflict details](../api-server.md#person-creation-conflicts)
 for both response shapes.
 
