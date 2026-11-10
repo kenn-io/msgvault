@@ -152,6 +152,7 @@ func TestImportGoogleChatDoesNotInferRecipientsFromRoster(t *testing.T) {
 			assert.Equal(tc.fromCount, fromCount)
 			rows, err := st.DB().QueryContext(t.Context(), `SELECT p.email_address FROM conversation_participants cp JOIN participants p ON p.id=cp.participant_id`)
 			require.NoError(err)
+			defer func() { _ = rows.Close() }()
 			var members []string
 			for rows.Next() {
 				var email string
