@@ -199,15 +199,9 @@ for (const width of [1440, 390]) {
 }
 
 test('a Settings organization holder opens the durable person', async ({ page }, testInfo) => {
-  await page.route('**/api/v1/person-fact-targets*', route => route.fulfill({ json: { targets: [{ kind: 'employment', key: 'system:employment', description: 'Current and historical jobs', cardinality: 'multi', sensitive: false }] } }));
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.route('**/api/v1/organizations/21/employments*', route => route.fulfill({ json: { employments: [employment] } }));
   await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'settings', settingsCategory: 'people_catalog' })));
-  await page.getByRole('searchbox', { name: 'Search fields' }).fill('Work');
-  const row = page.getByRole('region', { name: 'Fields', exact: true }).getByRole('listitem').filter({ hasText: /^Work/ });
-  await expect(row).toContainText('Current and historical jobs');
-  const inset = await row.evaluate(element => element.getBoundingClientRect().right - parseFloat(getComputedStyle(element).paddingRight) - element.querySelector(':scope > small')!.getBoundingClientRect().right);
-  expect(inset, 'built-in metadata reaches the row padding when there is no Edit column').toBeLessThanOrEqual(1);
   await page.getByRole('button', { name: 'Edit Example Org' }).click();
   await page.getByRole('button', { name: 'Delete organization…' }).click();
   await page.getByRole('dialog', { name: 'Delete Example Org?' }).getByRole('button', { name: 'Archive Person' }).click();
@@ -215,4 +209,15 @@ test('a Settings organization holder opens the durable person', async ({ page },
   await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
   expect(JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}').directoryPersonID).toBe(42);
   await page.screenshot({ path: testInfo.outputPath('person.png') });
+});
+
+test('built-in Work metadata reaches the row padding', async ({ page }) => {
+  await page.route('**/api/v1/person-fact-targets*', route => route.fulfill({ json: { targets: [{ kind: 'employment', key: 'system:employment', description: 'Current and historical jobs', cardinality: 'multi', sensitive: false }] } }));
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'settings', settingsCategory: 'people_catalog' })));
+  await page.getByRole('searchbox', { name: 'Search fields' }).fill('Work');
+  const row = page.getByRole('region', { name: 'Fields', exact: true }).getByRole('listitem').filter({ hasText: /^Work/ });
+  await expect(row).toContainText('Current and historical jobs');
+  const inset = await row.evaluate(element => element.getBoundingClientRect().right - parseFloat(getComputedStyle(element).paddingRight) - element.querySelector(':scope > small')!.getBoundingClientRect().right);
+  expect(inset, 'built-in metadata reaches the row padding when there is no Edit column').toBeLessThanOrEqual(1);
 });

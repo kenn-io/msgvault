@@ -68,7 +68,7 @@ it('gates catalog search through failed reads and retries, then orders and filte
   const pendingTargets = new Promise<Response>(resolve => { releaseTargets = resolve; });
   let initialRead = true;
   let targetsRead = 0;
-  const { container, fields, targets, unmount } = renderCatalog({
+  const { fields, targets, unmount } = renderCatalog({
     definitions: () => { if (initialRead) { initialRead = false; return pendingInitial; } },
     targets: () => ++targetsRead === 1 ? Response.json({ message: 'Targets unavailable' }, { status: 503 }) : pendingTargets,
   });
@@ -90,45 +90,42 @@ it('gates catalog search through failed reads and retries, then orders and filte
     expect(fields.queryByText('No fields match')).toBeNull();
     releaseTargets(Response.json({ targets }));
     expect(await fields.findByText(/Current and historical employment/)).toBeDefined();
-    await fireEvent.input(search, { target: { value: '' } });
+  } finally { unmount(); }
+});
+
+it('orders loaded fields and shows their metadata', async () => {
+  const { container, fields, unmount } = renderCatalog();
+  try {
+    await fields.findByText('Garden preferences');
     expect([...container.querySelectorAll('.fields .name')].map(row => row.firstChild?.textContent)).toEqual(['Work', 'Location', 'Favorite color']);
     expect(fields.getByText(/Current and historical employment/).closest('li')?.textContent).toContain('Jobs · several values');
     expect(fields.getByText('Where they live').closest('li')?.textContent).toContain('Text · one value');
     expect(fields.getByText('Garden preferences').closest('li')?.textContent).toContain('Profile field · Text · several values · Sensitive');
     expect(fields.queryByRole('button', { name: 'Edit Location' })).toBeNull();
-    await fireEvent.input(search, { target: { value: 'garden' } });
-    expect(fields.getByText('Garden preferences')).toBeDefined();
-    expect(fields.queryByText('Where they live')).toBeNull();
-    expect(fields.queryByText(/Current and historical employment/)).toBeNull();
-    await fireEvent.input(search, { target: { value: 'location' } });
-    expect(fields.getByText('Where they live')).toBeDefined();
-    await fireEvent.input(search, { target: { value: 'work' } });
-    expect(fields.getByText(/Current and historical employment/)).toBeDefined();
-    expect(fields.queryByText('Where they live')).toBeNull();
-    expect(fields.queryByText('Garden preferences')).toBeNull();
-    await fireEvent.input(search, { target: { value: 'jobs' } });
-    expect(fields.getByText(/Current and historical employment/)).toBeDefined();
-    expect(fields.queryByText('Where they live')).toBeNull();
-    await fireEvent.input(search, { target: { value: 'several values' } });
-    expect(fields.getByText(/Current and historical employment/)).toBeDefined();
-    expect(fields.getByText('Garden preferences')).toBeDefined();
-    expect(fields.queryByText('Where they live')).toBeNull();
-    await fireEvent.input(search, { target: { value: 'sensitive' } });
-    expect(fields.getByText('Garden preferences')).toBeDefined();
-    expect(fields.queryByText(/Current and historical employment/)).toBeNull();
-    await fireEvent.input(search, { target: { value: 'one value' } });
-    expect(fields.getByText('Where they live')).toBeDefined();
-    expect(fields.queryByText('Garden preferences')).toBeNull();
-    await fireEvent.input(search, { target: { value: 'profile field' } });
-    expect(fields.getByText('Where they live')).toBeDefined();
-    expect(fields.queryByText(/Current and historical employment/)).toBeNull();
-    await fireEvent.input(search, { target: { value: 'text' } });
-    expect(fields.getByText('Garden preferences')).toBeDefined();
-    await fireEvent.input(search, { target: { value: 'inactive' } });
-    expect(fields.getByText('Where they live')).toBeDefined();
-    expect(fields.queryByText('Garden preferences')).toBeNull();
-    await fireEvent.input(search, { target: { value: 'plant' } });
-    expect(screen.getByText('No fields match')).toBeDefined();
+  } finally { unmount(); }
+});
+
+it.each([
+  { query: 'garden', expected: ['Garden preferences'] },
+  { query: 'location', expected: ['Current and historical employment', 'Where they live'] },
+  { query: 'work', expected: ['Current and historical employment'] },
+  { query: 'jobs', expected: ['Current and historical employment'] },
+  { query: 'several values', expected: ['Current and historical employment', 'Garden preferences'] },
+  { query: 'sensitive', expected: ['Garden preferences'] },
+  { query: 'one value', expected: ['Where they live'] },
+  { query: 'profile field', expected: ['Where they live', 'Garden preferences'] },
+  { query: 'text', expected: ['Where they live', 'Garden preferences'] },
+  { query: 'inactive', expected: ['Where they live'] },
+  { query: 'plant', expected: [] }
+])('filters fields for $query', async ({ query, expected }) => {
+  const { fields, unmount } = renderCatalog();
+  try {
+    await fields.findByText('Garden preferences');
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search fields' }), { target: { value: query } });
+    for (const description of ['Current and historical employment', 'Where they live', 'Garden preferences']) {
+      expect(Boolean(fields.queryByText(new RegExp(description)))).toBe(expected.includes(description));
+    }
+    if (!expected.length) expect(screen.getByText('No fields match')).toBeDefined();
   } finally { unmount(); }
 });
 

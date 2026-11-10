@@ -63,7 +63,7 @@ it('keeps a conflicted structured editor available when Cancel is clicked during
   } finally { releaseReload(Response.json({ message: 'Profile unavailable' }, { status: 503 })); view.unmount(); controller.destroy(); }
 });
 
-it('groups labels, identifies scoped row actions, and copies a contact value with feedback', async () => {
+it('groups labels and identifies scoped row actions', async () => {
   const initial = profile();
   initial.contact_points = [
     ...['first@example.com', 'second@example.com'].map((value, index) => ({ person_id: 7, identity_key: `email-${index}`, address_kind: 'email', original_value: value, normalized_value: value, normalization: 'email', normalization_version: 1, envelope: { ...envelope, id: 20 + index, ordinal: index } })),
@@ -72,11 +72,7 @@ it('groups labels, identifies scoped row actions, and copies a contact value wit
   ];
   const note = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'multi', object_type: 'person', display_order: 1, ownership: 'user', is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 } as AttributeDefinition;
   const values = (definition: AttributeDefinition, texts: string[]) => texts.map((text, ordinal) => ({ id: definition.id * 10 + ordinal, person_id: 7, definition_id: definition.id, definition_slug: definition.slug, ordinal, value: { type: 'text' as const, text }, active_from: when, created_at: when, source: 'user' }));
-  const writeText = vi.fn(async () => undefined);
-  const originalClipboard = navigator.clipboard;
-  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
-  const onAnnounce = vi.fn();
-  const { controller, view } = harness(initial, { onAnnounce, bundle: { definitions: { definitions: [note] }, attributes: { person_id: 7, attributes: [{ definition: note, current: values(note, ['First note', 'Second note']), history: [] }] } } });
+  const { controller, view } = harness(initial, { bundle: { definitions: { definitions: [note] }, attributes: { person_id: 7, attributes: [{ definition: note, current: values(note, ['First note', 'Second note']), history: [] }] } } });
   try {
     expect(screen.getAllByText('Email', { selector: '.label' })).toHaveLength(1);
     for (const label of ['Email: first@example.com', 'Email: second@example.com', 'Username: example · slack · workspace · T-WORK', 'Username: example · slack · workspace · T-PERSONAL', 'Phone: +12025550123', 'Phone: +12025550124', 'Note: First note', 'Note: Second note']) {
@@ -86,13 +82,22 @@ it('groups labels, identifies scoped row actions, and copies a contact value wit
       expect(confirmation.textContent).toContain(label);
       await fireEvent.click(within(confirmation).getByRole('button', { name: 'Cancel' }));
     }
+  } finally { view.unmount(); controller.destroy(); }
+});
+
+it('copies a contact value with feedback', async () => {
+  const initial = profile();
+  initial.contact_points = [{ person_id: 7, identity_key: 'email-0', address_kind: 'email', original_value: 'first@example.com', normalized_value: 'first@example.com', normalization: 'email', normalization_version: 1, envelope }];
+  const writeText = vi.fn(async () => undefined);
+  const originalClipboard = navigator.clipboard;
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  const onAnnounce = vi.fn();
+  const { controller, view } = harness(initial, { onAnnounce });
+  try {
     await fireEvent.click(screen.getByRole('button', { name: 'Copy first@example.com' }));
     await waitFor(() => expect(onAnnounce).toHaveBeenLastCalledWith('Copied'));
     expect(writeText).toHaveBeenCalledWith('first@example.com');
-  } finally {
-    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard });
-    view.unmount(); controller.destroy();
-  }
+  } finally { Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard }); view.unmount(); controller.destroy(); }
 });
 
 it('blocks attribute additions after a failed read and routes Retry to the profile controller', async () => {
