@@ -50,6 +50,37 @@ func TestMeetingCountsAcrossFilters(t *testing.T) {
 	}
 }
 
+func TestRelationshipMeetingOccurrenceDateFilters(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("owner@example.org", "granola")
+	owner := b.AddParticipant("owner@example.org", "example.org", "Owner")
+	person := b.AddParticipant("person@example.org", "example.org", "Person")
+	b.AddOwnerParticipant(source, owner)
+	id := b.AddMessage(MessageOpt{SourceID: source, MessageType: "meeting_transcript", SentAt: time.Date(2026, 3, 7, 10, 0, 0, 0, time.UTC)})
+	b.AddTo(id, owner, "Owner")
+	b.AddTo(id, person, "Person")
+	b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, 'uid:series/20260307T100000Z', TIMESTAMP '2026-03-07 10:00:00', NULL::DATE),(%d, 'uid:series/20260314T100000Z', TIMESTAMP '2026-03-14 10:00:00', NULL::DATE)", id, id))
+	engine := b.BuildEngine()
+	first := time.Date(2026, 3, 7, 0, 0, 0, 0, time.UTC)
+	second := first.AddDate(0, 0, 7)
+	for _, tc := range []struct {
+		name          string
+		after, before *time.Time
+	}{
+		{"first day", &first, new(first.AddDate(0, 0, 1))},
+		{"second day", &second, new(second.AddDate(0, 0, 1))},
+		{"after only", &second, nil},
+		{"before only", nil, &second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := engine.Relationships(t.Context(), RelationshipsRequest{Context: Context{After: tc.after, Before: tc.before}, Now: time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC), ShowAll: true})
+			require.NoError(t, err)
+			require.Len(t, result.Rows, 1)
+			assert.Equal(t, int64(1), result.Rows[0].Signals.MeetingCount)
+		})
+	}
+}
+
 func TestRelationshipMeetingCounts(t *testing.T) {
 	for _, tc := range []struct {
 		name           string

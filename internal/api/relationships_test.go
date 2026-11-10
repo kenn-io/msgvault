@@ -31,6 +31,9 @@ const (
 
 const relationshipIdentityIdentifier = "z-owner@example.test"
 
+const meetingKeyFixtureColumns = "message_id, meeting_key, occurrence_at, occurrence_date"
+const meetingKeyFixtureEmptyRow = `(0::BIGINT, NULL::VARCHAR, NULL::TIMESTAMP, NULL::DATE)`
+
 type recordingRelationshipEngine struct {
 	*query.DuckDBEngine
 
@@ -163,7 +166,7 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time, meeting .
 		{dir: "conversations", file: "conversations.parquet", columns: "id, source_conversation_id, title, conversation_type", values: `(0::BIGINT, '', '', 'email')`, empty: true},
 		{dir: "conversation_participants", file: "conversation_participants.parquet", columns: "conversation_id, participant_id", values: `(0::BIGINT, 0::BIGINT)`, empty: true},
 		{dir: "owner_participants", file: "owner_participants.parquet", columns: "source_id, participant_id", values: `(1::BIGINT, 1::BIGINT)`},
-		{dir: "meeting_keys", file: "meeting_keys.parquet", columns: "message_id, meeting_key", values: `(0::BIGINT, NULL::VARCHAR)`, empty: true},
+		{dir: "meeting_keys", file: "meeting_keys.parquet", columns: meetingKeyFixtureColumns, values: meetingKeyFixtureEmptyRow, empty: true},
 		{
 			dir: "participant_clusters", file: "participant_clusters.parquet", columns: "participant_id, canonical_id",
 			values: `(2::BIGINT, 2::BIGINT), (3::BIGINT, 2::BIGINT)`,

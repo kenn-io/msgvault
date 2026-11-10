@@ -52,6 +52,31 @@ func TestMeetingCountKeysSparseAllDayCancellation(t *testing.T) {
 	assert.Equal(t, "2027-03-14", keys[note][0].Date)
 }
 
+func TestMeetingCountKeysAllDaySourceCopies(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	data, _ := calendarFixture(t, st, "series", `{"id":"series","iCalUID":"weekly@example.org","start":{"date":"2027-03-07"},"end":{"date":"2027-03-08"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`)
+	require.NoError(t, st.UpdateSourceSyncConfig(data.Message.SourceID, `{"calendar_id":"calendar@example.com","time_zone":"Asia/Tokyo"}`))
+	_, granola := projectionFixture(t, st, "granola", "granola_json", `{"calendar_event":{"calendar_event_id":"series","scheduled_start_time":"2027-03-13T15:00:00Z"}}`)
+	_, twenty := projectionFixture(t, st, "twenty", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-13T15:00:00Z"}}`)
+	keys, err := st.MeetingCountKeysContext(t.Context())
+	require.NoError(t, err)
+	for _, note := range []int64{granola, twenty} {
+		require.Len(t, keys[note], 1)
+		assert.Equal(t, "uid:weekly@example.org/20270314", keys[note][0].Key)
+		assert.Equal(t, "2027-03-14", keys[note][0].Date)
+	}
+}
+
+func TestMeetingCountKeysAmbiguousStaleGoogleID(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	calendarFixture(t, st, "series", strings.Replace(linkSeriesRaw, "COUNT=6", "COUNT=1", 1))
+	calendarFixture(t, st, "other", `{"id":"series","iCalUID":"other@example.org"}`, "other@example.com")
+	_, note := projectionFixture(t, st, "note", "granola_json", `{"calendar_event":{"calendar_event_id":"series_20270314T100000Z","scheduled_start_time":"2027-03-14T10:00:00Z"}}`)
+	keys, err := st.MeetingCountKeysContext(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, keys[note])
+}
+
 func TestMeetingCountKeysOneTranscriptTwoOccurrences(t *testing.T) {
 	type note struct{ format, raw string }
 	type step struct {

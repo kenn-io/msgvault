@@ -445,6 +445,9 @@ candidatesLoop:
 			return nil, nil, nil
 		}
 	}
+	if source != nil && key.Kind == "google_event_id" && hasOtherICalUID(rows, source.Identity.ICalUID) {
+		return nil, nil, nil
+	}
 	return out, source, nil
 }
 

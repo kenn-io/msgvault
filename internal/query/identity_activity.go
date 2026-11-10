@@ -80,13 +80,32 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	ctx context.Context,
 	request ExploreRequest,
 	identityCandidateSQL string,
+	occurrenceDates bool,
 ) (string, []any, error) {
+	after, before := request.Context.After, request.Context.Before
+	if occurrenceDates {
+		request.Context.After, request.Context.Before = nil, nil
+	}
 	var err error
 	request, err = e.narrowIdentityFactCandidates(ctx, request)
 	if err != nil {
 		return "", nil, err
 	}
 	conditions, args := buildExploreConditions(request)
+	if occurrenceDates && (after != nil || before != nil) {
+		// Keep meeting transcripts until their occurrences are expanded; filter
+		// other messages before chat grouping as usual.
+		var bounds []string
+		if after != nil {
+			bounds = append(bounds, "occurred_at >= CAST(? AS TIMESTAMP)")
+			args = append(args, after.UTC())
+		}
+		if before != nil {
+			bounds = append(bounds, "occurred_at < CAST(? AS TIMESTAMP)")
+			args = append(args, before.UTC())
+		}
+		conditions += " AND (message_type = 'meeting_transcript' OR (" + strings.Join(bounds, " AND ") + "))"
+	}
 	conditions, err = e.sentIdentityConditions(conditions)
 	if err != nil {
 		return "", nil, err
@@ -476,6 +495,7 @@ func (e *DuckDBEngine) searchPeople(
 			ctx,
 			request.Explore,
 			candidates,
+			false,
 		)
 		if logicalErr != nil {
 			return nil, logicalErr

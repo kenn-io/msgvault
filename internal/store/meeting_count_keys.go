@@ -142,12 +142,12 @@ func sourceMeetingCountOccurrence(key meetingLinkKey, rows []CalendarEventRow) (
 			continue
 		}
 		original := instance
-		if key.Kind == "ical_uid" && row.Event.AllDay {
+		if row.Event.AllDay && !original.AllDay {
 			zone, err := calendarEventZone(row.Event)
 			if err != nil {
 				return nil, err
 			}
-			original = calrecur.Identity{AllDay: true, Date: key.ScheduledAt.In(zone).Format(time.DateOnly)}
+			original = calrecur.Identity{AllDay: true, Date: original.Instant.In(zone).Format(time.DateOnly)}
 		}
 		o := occurrenceFromRow(row, original.Key())
 		if !original.AllDay {
