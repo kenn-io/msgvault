@@ -177,7 +177,7 @@ func (r *exportReader) rows(ctx context.Context, file csvFile, summary *FileSumm
 		}
 		seen[h] = true
 	}
-	required := map[string][]string{"chat": {"message_id", "message"}, "pm": {"id", "body"}, "post": {"id", "title"}, "comment": {"id", "body"}, "statistics": {"statistic", "value"}}
+	required := map[string][]string{"chat": {"message_id", "message"}, "pm": {"id"}, "post": {"id"}, "comment": {"id"}, "statistics": {"statistic", "value"}}
 	for _, key := range required[file.kind] {
 		if !seen[key] {
 			return fmt.Errorf("unsupported schema: missing essential column %s", key)

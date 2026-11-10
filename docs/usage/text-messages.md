@@ -536,8 +536,8 @@ duplicate headers or missing essential columns), invalid UTF-8, read/quoting
 errors stop the run with the filename. Recognized oversize files found during
 inventory fail before source writes; growth past the cap or read/parse failure
 while streaming may leave completed rows. Essential columns
-are `message_id` and `message` for Chat, `id` and `body` for PMs/comments, and
-`id` and `title` for posts. Complete rows before the error are retained; later
+are `message_id` and `message` for Chat and `id` for PMs, posts, and comments.
+Complete rows before the error are retained; later
 files are not read. Header-only CSVs are valid empty files; zero-byte files
 fail as missing headers. Fix or move the named file, then re-run. Statistics are
 checked before archive writes; malformed statistics rows stop preflight with

@@ -145,12 +145,10 @@ func importBatch(ctx context.Context, st *store.Store, sourceID int64, owner, ki
 				conv = "pm:thread:" + c["thread_id"]
 			}
 		case "post", "comment":
+			conv = kind + ":item:" + c["id"]
 			sub := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(c["subreddit"])), "r/")
 			if sub != "" {
-				conv = "subreddit:" + sub
 				title = "r/" + sub
-			} else {
-				conv = kind + ":item:" + c["id"]
 			}
 			if kind == "post" {
 				subject = c["title"]

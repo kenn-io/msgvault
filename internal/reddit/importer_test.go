@@ -75,7 +75,7 @@ func TestImportFictionalExport(t *testing.T) {
 func TestImportSchemasAndOwner(t *testing.T) {
 	for _, tc := range []struct{ name, file, data, me, want string }{
 		{"missing owner", "posts.csv", "id,title\na,title\n", "", "owner"},
-		{"missing header", "posts.csv", "id,body\na,body\n", "fictional_owner", "essential"},
+		{"missing header", "posts.csv", "title,body\na,body\n", "fictional_owner", "essential"},
 		{"duplicate header", "posts.csv", "id,title,title\na,b,c\n", "fictional_owner", "header"},
 		{"empty header", "posts.csv", "id,title,\na,b,c\n", "fictional_owner", "header"},
 		{"zero byte", "posts.csv", "", "fictional_owner", "schema"},
@@ -369,7 +369,7 @@ func TestImportFatalSchemaRetainsEarlierFiles(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	root := t.TempDir()
-	for name, data := range map[string]string{"chat_history.csv": "message_id,message\none,lantern\n", "comments.csv": "id,renamed\ntwo,invalid\n", "posts.csv": "id,title\nthree,later\n"} {
+	for name, data := range map[string]string{"chat_history.csv": "message_id,message\none,lantern\n", "comments.csv": "renamed\ninvalid\n", "posts.csv": "id,title\nthree,later\n"} {
 		require.NoError(os.WriteFile(filepath.Join(root, name), []byte(data), 0600))
 	}
 	st := testutil.NewTestStore(t)
@@ -379,6 +379,11 @@ func TestImportFatalSchemaRetainsEarlierFiles(t *testing.T) {
 	var n int
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&n))
 	assert.Equal(1, n)
+	require.NoError(os.WriteFile(filepath.Join(root, "comments.csv"), []byte("id,media\ntwo,https://example.com/photo.png\n"), 0600))
+	summary, err = Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
+	require.NoError(err)
+	assert.Equal(2, summary.Added)
+	assert.Equal(1, summary.Unchanged)
 }
 
 func TestImportPMConversationKind(t *testing.T) {
@@ -409,7 +414,7 @@ func TestImportSubredditTitleCanonical(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	root := t.TempDir()
-	for name, data := range map[string]string{"posts.csv": "id,title,subreddit\none,lantern,Fictional_Garden\n", "comments.csv": "id,body,subreddit\ntwo,comment,r/fictional_garden\n"} {
+	for name, data := range map[string]string{"posts.csv": "id,title,subreddit\none,lantern,Fictional_Garden\nthree,another,Fictional_Garden\n", "comments.csv": "id,body,subreddit\ntwo,comment,r/fictional_garden\n"} {
 		require.NoError(os.WriteFile(filepath.Join(root, name), []byte(data), 0600))
 	}
 	st := testutil.NewTestStore(t)
@@ -417,8 +422,29 @@ func TestImportSubredditTitleCanonical(t *testing.T) {
 	require.NoError(err)
 	var n int
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM conversations").Scan(&n))
-	assert.Equal(1, n)
-	var title string
-	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT title FROM conversations WHERE source_conversation_id='subreddit:fictional_garden'").Scan(&title))
-	assert.Equal("r/fictional_garden", title)
+	assert.Equal(3, n)
+	reader := query.NewEngine(st.DB(), st.IsPostgreSQL()).(query.OriginalMessageReader)
+	for _, sourceID := range []string{"post:one", "post:three", "comment:two"} {
+		var id int64
+		var title string
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT m.id,c.title FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE m.source_message_id=?"), sourceID).Scan(&id, &title))
+		assert.Equal("r/fictional_garden", title)
+		page, err := reader.ListThread(t.Context(), query.ThreadQuery{MessageRef: query.MessageRef{ID: id}})
+		require.NoError(err)
+		assert.Len(page.Messages, 1)
+	}
+}
+
+func TestImportOptionalContentHeaders(t *testing.T) {
+	root := t.TempDir()
+	for name, data := range map[string]string{"messages.csv": "id,subject\none,hello\n", "comments.csv": "id,media\ntwo,https://example.com/photo.png\n", "posts.csv": "id,url\nthree,https://example.com/post\n"} {
+		require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(data), 0600))
+	}
+	st := testutil.NewTestStore(t)
+	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
+	require.NoError(t, err)
+	assert.Equal(t, 3, summary.Added)
+	summary, err = Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
+	require.NoError(t, err)
+	assert.Equal(t, 3, summary.Unchanged)
 }
