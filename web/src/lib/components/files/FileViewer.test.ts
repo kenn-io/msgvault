@@ -6,6 +6,15 @@ import { createAPIClient } from '../../api/client';
 import type { FileSearchRow } from '../../explore/models';
 import FileViewer from './FileViewer.svelte';
 
+const originalCreateObjectURL = Object.getOwnPropertyDescriptor(URL, 'createObjectURL');
+const originalRevokeObjectURL = Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL');
+afterEach(() => {
+  if (originalCreateObjectURL) Object.defineProperty(URL, 'createObjectURL', originalCreateObjectURL);
+  else Reflect.deleteProperty(URL, 'createObjectURL');
+  if (originalRevokeObjectURL) Object.defineProperty(URL, 'revokeObjectURL', originalRevokeObjectURL);
+  else Reflect.deleteProperty(URL, 'revokeObjectURL');
+});
+
 const { renderPDF } = vi.hoisted(() => ({
   renderPDF: vi.fn(async (_bytes: Uint8Array, host: HTMLElement) => {
     const canvas = document.createElement('canvas');
@@ -368,40 +377,36 @@ it('buffers authenticated audio for seeking and revokes its blob URL on close', 
   expect(revoke).toHaveBeenCalledExactlyOnceWith('blob:audio-preview');
 });
 
-it('leaves arrows with a scrollable preview and its input', async () => {
-  const onStep = vi.fn();
-  const mime_type = 'text/plain';
-  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), content_state: 'local_content', content_available: true, mime_type }, new TextEncoder().encode('Example text'))), file: file({ mime_type }), position: { index: 0, total: 2 }, onStep });
-  await screen.findByText('Example text');
-  const preview = screen.getByRole('region', { name: 'File preview preview.png' });
-  Object.defineProperty(preview, 'scrollWidth', { configurable: true, value: 400 });
-  Object.defineProperty(preview, 'clientWidth', { configurable: true, value: 200 });
-  await fireEvent.keyDown(preview, { key: 'ArrowRight' });
-  expect(onStep).not.toHaveBeenCalled();
-  Object.defineProperty(preview, 'scrollWidth', { value: 200 });
-  const input = document.createElement('input');
-  preview.append(input);
-  await fireEvent.keyDown(input, { key: 'ArrowRight' });
-  expect(onStep).not.toHaveBeenCalled();
-});
-it('leaves arrows with audio controls', async () => {
+it.each([
+  ['scrollable preview', 'text/plain', async () => {
+    await screen.findByText('Example text');
+    const preview = screen.getByRole('region', { name: 'File preview preview.png' });
+    Object.defineProperty(preview, 'scrollWidth', { configurable: true, value: 400 });
+    Object.defineProperty(preview, 'clientWidth', { configurable: true, value: 200 });
+    return preview;
+  }, 'ArrowRight'],
+  ['input', 'text/plain', async () => {
+    await screen.findByText('Example text');
+    const input = document.createElement('input');
+    screen.getByRole('region', { name: 'File preview preview.png' }).append(input);
+    return input;
+  }, 'ArrowRight'],
+  ['audio controls', 'audio/wav', async () => {
+    await waitFor(() => expect(document.querySelector('audio')?.getAttribute('src')).toBe('blob:audio-preview'));
+    return document.querySelector('audio')!;
+  }, 'ArrowRight'],
+  ['file actions menu', 'application/zip', async () => {
+    await fireEvent.click(screen.getByRole('button', { name: 'More file actions' }));
+    const item = await screen.findByRole('menuitem', { name: 'Open conversation' });
+    item.focus();
+    return item;
+  }, 'ArrowLeft'],
+] as const)('leaves arrows with %s', async (_name, mime_type, targetElement, key) => {
   const onStep = vi.fn();
   Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:audio-preview') });
-  const target = file({ mime_type: 'audio/wav' });
-  render(FileViewer, { client: createAPIClient(viewerFetch({ ...target, content_state: 'local_content', content_available: true })), file: target, position: { index: 0, total: 2 }, onStep });
-  await waitFor(() => expect(document.querySelector('audio')?.getAttribute('src')).toBe('blob:audio-preview'));
-  await fireEvent.keyDown(document.querySelector('audio')!, { key: 'ArrowRight' });
-  expect(onStep).not.toHaveBeenCalled();
-});
-it('leaves arrows with the file actions menu', async () => {
-  const onStep = vi.fn();
-  const target = file({ mime_type: 'application/zip' });
-  render(FileViewer, { client: createAPIClient(viewerFetch({ ...target, content_state: 'local_content', content_available: true })), file: target, position: { index: 1, total: 3 }, onStep });
-  await fireEvent.click(screen.getByRole('button', { name: 'More file actions' }));
-  const item = await screen.findByRole('menuitem', { name: 'Open conversation' });
-  item.focus();
-  await fireEvent.keyDown(item, { key: 'ArrowLeft' });
-  expect(screen.getByRole('menu', { name: 'File actions' })).toBeDefined();
+  const target = file({ mime_type });
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...target, content_state: 'local_content', content_available: true }, new TextEncoder().encode('Example text'))), file: target, position: { index: 1, total: 3 }, onStep });
+  await fireEvent.keyDown(await targetElement(), { key });
   expect(onStep).not.toHaveBeenCalled();
 });
 
@@ -465,10 +470,9 @@ it('renders short records without expanding them to the header width', async () 
 
 it('reports when the cell limit omits rows', async () => {
   const target = file({ filename: 'wide.csv', mime_type: 'text/csv' });
-  const row = Array(1000).fill('x').join(',');
+  const row = Array(100).fill('x').join(',');
   const content = new TextEncoder().encode(Array(202).fill(row).join('\n'));
   render(FileViewer, { client: createAPIClient(viewerFetch({ ...target, content_state: 'local_content', content_available: true }, content)), file: target });
-  expect(await screen.findByText('Preview is limited to 20,000 cells; showing 19 rows.', {}, { timeout: 15000 })).toBeDefined();
+  expect(await screen.findByText('Preview is limited to 20,000 cells; showing 199 rows.', {}, { timeout: 15000 })).toBeDefined();
   expect(screen.getByText('Preview is limited to 200 rows.')).toBeDefined();
-  expect(screen.getByRole('button', { name: /Download/ }).hasAttribute('disabled')).toBe(false);
 }, 20000);

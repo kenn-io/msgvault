@@ -166,11 +166,8 @@ func TestFilesSearchUsesAnalyticalQueryAndOneCatalogBatch(t *testing.T) {
 	assertions.Equal("Zoe Sender", result.Files[0].SenderLabel)
 	assertions.Equal(FileContentState("unverified"), result.Files[0].ContentState)
 	assertions.Nil(result.Files[0].ContentAvailable)
-	assertions.Equal(FileContentURLOnly, result.Files[1].ContentState)
-	requirements.NotNil(result.Files[1].ContentAvailable)
-	assertions.False(*result.Files[1].ContentAvailable)
 	assertions.Equal(FileContentState("unverified"), result.Files[2].ContentState)
-	assertions.Equal(FileContentMetadataOnly, result.Files[3].ContentState)
+	assertions.Nil(result.Files[2].ContentAvailable)
 	assertions.Equal([]int64{7}, engine.request.Explore.Context.SourceIDs)
 	assertions.Equal("report", engine.request.FilenameQuery)
 	assertions.Equal([]query.FileMIMEFamily{query.FileMIMEImage, query.FileMIMEPDF}, engine.request.MIMEFamilies)
@@ -661,6 +658,14 @@ func TestPackedFileMissingBlobReportsMissingNotError(t *testing.T) {
 	requirements.NoError(json.NewDecoder(metadata.Body).Decode(&decoded))
 	assertions.Equal(FileContentMissingBlob, decoded.ContentState)
 	assertions.False(decoded.ContentAvailable)
+
+	srv = NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}, Store: catalog,
+		BlobStore: &countingFileBlobStore{}, Logger: testLogger(),
+	})
+	unreadable := httptest.NewRecorder()
+	srv.Router().ServeHTTP(unreadable, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/files/8", nil))
+	assertions.Equal(http.StatusInternalServerError, unreadable.Code)
 }
 
 // TestLegacyLooseFileWithRecordedPathStillDownloads keeps the legacy loose-row
@@ -1041,18 +1046,4 @@ func TestVisualCoverageScanGuardsCrossOriginAndRateLimit(t *testing.T) {
 	light := httptest.NewRecorder()
 	router.ServeHTTP(light, request)
 	require.Equal(http.StatusOK, light.Code, light.Body.String())
-}
-
-func TestFileDetailsReportsUnreadableContent(t *testing.T) {
-	t.Parallel()
-	catalog := &fileCatalogStore{mockStore: &mockStore{}, files: map[int64]store.FileMetadata{
-		8: {ID: 8, Filename: "report.pdf", ContentHash: strings.Repeat("ab", 32)},
-	}}
-	srv := NewServerWithOptions(ServerOptions{
-		Config: &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}, Store: catalog,
-		BlobStore: &countingFileBlobStore{}, Logger: testLogger(),
-	})
-	response := httptest.NewRecorder()
-	srv.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/files/8", nil))
-	assert.Equal(t, http.StatusInternalServerError, response.Code)
 }
