@@ -212,7 +212,7 @@ describe('PersonTrackingController', () => {
     controller.destroy();
   });
 
-  it('aborts pending work on destroy and blocks late state and announcements', async () => {
+  it.each(['destroy', 'replace'] as const)('aborts pending work on %s and blocks late state and announcements', async action => {
     const mutation = deferredResponse();
     const signals: AbortSignal[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -220,18 +220,21 @@ describe('PersonTrackingController', () => {
       signals.push(request.signal);
       const path = new URL(request.url).pathname;
       if (request.method === 'PUT') return mutation.promise;
-      if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false, tracked_at: null });
+      if (path.endsWith('/tracking')) return Response.json({ person_id: path.includes('/9/') ? 9 : 7, tracked: false, tracked_at: null });
       throw new Error(`Unexpected ${request.method} ${new URL(request.url).pathname}`);
     });
     const controller = new PersonTrackingController(createAPIClient(fetchFn));
     await controller.setPerson(7);
     const pending = controller.setTracked(true);
 
-    controller.destroy();
-    expect(signals.at(-1)?.aborted).toBe(true);
+    if (action === 'destroy') controller.destroy();
+    else await controller.setPerson(9);
+    expect(signals[1]?.aborted).toBe(true);
     mutation.resolve(Response.json({ person_id: 7, tracked: true, tracked_at: '2026-08-29T00:00:00Z' }));
     expect(await pending).toEqual({ kind: 'ignored' });
     expect(controller.tracking?.tracked).toBe(false);
     expect(controller.announcement).toBeNull();
+    if (action === 'replace') expect(controller.tracking?.person_id).toBe(9);
+    controller.destroy();
   });
 });

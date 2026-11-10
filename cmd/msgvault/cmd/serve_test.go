@@ -2018,7 +2018,7 @@ func TestStoreAPIAdapterRunCLISyncPacksOnlyAfterSubprocessSuccess(t *testing.T) 
 				},
 				func(_ context.Context, args []string, _ func(string, string) error) error {
 					runnerCalls++
-					assert.Equal(cliSyncSubprocessArgs(api.CLISyncRequest{Email: "alice@example.com"}), args)
+					assert.Equal([]string{"sync", "--", "alice@example.com"}, args)
 					assert.Nil(f.packedEntry(hash), "packing must follow subprocess success")
 					return tt.predecessorErr
 				},

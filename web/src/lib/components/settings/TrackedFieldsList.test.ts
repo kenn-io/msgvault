@@ -84,6 +84,7 @@ describe('Fields kept updated', () => {
     render(TrackedFieldsList, { client });
     if (sensitive) await fireEvent.click(screen.getByText('Show sensitive fields'));
     expect(await screen.findByText('Employment')).toBeDefined();
+    expect(screen.getByText('Work')).toBeDefined();
     expect(screen.getByText('Employment').closest('details') !== null).toBe(sensitive);
   });
 });

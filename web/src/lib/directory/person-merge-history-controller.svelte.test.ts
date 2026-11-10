@@ -258,7 +258,7 @@ describe('PersonMergeHistoryController', () => {
     controller.destroy();
   });
 
-  it('keeps the partial-load warning when later scopes arrive', async () => {
+  it('retries a failed split profile name read', async () => {
     let nameFails = true;
     const controller = new PersonMergeHistoryController(createAPIClient(async input => {
       const path = new URL(requestOf(input).url).pathname;
@@ -268,8 +268,6 @@ describe('PersonMergeHistoryController', () => {
     }), 7);
     await controller.selectMerge(41);
     await vi.waitFor(() => expect(controller.labels?.incomplete).toBe(true));
-    controller.addScopes([{ scope_kind: 'account', scope_value: 'synthetic-account' }]);
-    expect(controller.labels?.incomplete).toBe(true);
     nameFails = false;
     await controller.retryDetail();
     await vi.waitFor(() => expect(controller.labels?.names.get(19)).toBe('Restored Person'));

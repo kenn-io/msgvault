@@ -2720,6 +2720,13 @@ func TestPersonMerge_DetailAddressLabels(t *testing.T) {
 		detail, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
 		require.NoError(err)
 		assertPersonMergeIdentityFixture(t, detail, "beeper-raw-phone")
+		require.Len(detail.Labels.Profiles[1].ContactPoints, 1)
+		point := detail.Labels.Profiles[1].ContactPoints[0]
+		assert.Equal(`["whatsapp","","","+12025550123"]`, point.IdentityKey)
+		assert.Equal(store.ContactAddressPhone, point.AddressKind)
+		assert.Equal("+1 (202) 555-0123", point.OriginalValue)
+		assert.Equal(new("whatsapp"), point.ServiceSlug)
+		assert.Equal(new("WhatsApp"), point.ServiceLabel)
 
 		require.NoError(st.ClassifyParticipantIdentifierServiceContext(ctx, "beeper", "+12025550123", &service.ID, new("account"), new("garden")))
 		scoped, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)

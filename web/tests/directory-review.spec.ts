@@ -35,32 +35,43 @@ test('People Filter restores History on reload and To review on Back', async ({ 
   await expect(page.getByRole('radio', { name: 'To review', exact: true })).toBeChecked();
 });
 
-test('History lays its groups and rows on the Layout scale', async ({ page }) => {
+test('History follows the Layout scale and fits a phone', async ({ page }) => {
   await installDirectoryReviewArchive(page);
-  await page.setViewportSize({ width: 1440, height: 900 });
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
   const profile = { id: 7, name: 'Synthetic One' };
   const envelope = (id: number) => ({ id, ordinal: 0, source: 'user', actor: 'user', confidence: 1, active_from: '2026-01-01T00:00:00Z', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', vcard: {} });
-  await page.route(`**/api/v1/people/${profile.id}/profile/history`, route => route.fulfill({ json: {
-    person: { id: profile.id, revision: 4, display_name: profile.name, participant_ids: [], vcard_uid: `synthetic-${profile.id}`, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-07-01T00:00:00Z' },
-    names: [{ person_id: profile.id, name_kind: 'formatted', formatted: profile.name, original_value: profile.name, is_derived: false, envelope: envelope(71) }],
-    contact_points: [{ identity_key: '["email","","","one@example.org"]', person_id: profile.id, address_kind: 'email', original_value: 'one@example.org', normalized_value: 'one@example.org', normalization: 'email', normalization_version: 1, envelope: envelope(72) } satisfies PersonContactPoint],
-    addresses: [], dates: [], categories: [], media: [], observations: [],
-  } }));
-  await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 })));
-  await page.getByRole('button', { name: 'More actions', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'History', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'History', exact: true });
-  const names = dialog.getByRole('heading', { name: 'Names', exact: true });
-  const email = dialog.getByRole('heading', { name: 'Email and phone', exact: true });
-  await expect(email).toBeVisible();
-  const rect = (locator: import('@playwright/test').Locator) => locator.evaluate(el => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, height: r.height }; });
-  const nameHeading = await rect(names);
-  const nameRow = await rect(dialog.locator('.detail-row', { hasText: profile.name }));
-  const emailHeading = await rect(email);
-  // A group's heading is 8 above its rows, a value over its provenance line is a 54 row, and groups are 24 apart.
-  expect.soft(nameRow.top - nameHeading.bottom, 'heading to rows').toBe(8);
-  expect.soft(nameRow.height, 'two-line row').toBe(54);
-  expect.soft(emailHeading.top - nameRow.bottom, 'between groups').toBe(24);
+  const earlierName = 'SyntheticEarlierName'.repeat(12);
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.route(`**/api/v1/people/${profile.id}/profile/history`, route => route.fulfill({ json: {
+      person: { id: profile.id, revision: 4, display_name: profile.name, participant_ids: [], vcard_uid: `synthetic-${profile.id}`, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-07-01T00:00:00Z' },
+      names: width === 1440 ? [{ person_id: profile.id, name_kind: 'formatted', formatted: profile.name, original_value: profile.name, is_derived: false, envelope: envelope(71) }] : [{ person_id: profile.id, name_kind: 'formatted', formatted: earlierName, original_value: earlierName, is_derived: false, envelope: { ...envelope(71), active_until: '2026-06-01T00:00:00Z', superseded_at: '2026-06-02T00:00:00Z' } }],
+      contact_points: width === 1440 ? [{ identity_key: '["email","","","one@example.org"]', person_id: profile.id, address_kind: 'email', original_value: 'one@example.org', normalized_value: 'one@example.org', normalization: 'email', normalization_version: 1, envelope: envelope(72) } satisfies PersonContactPoint] : [],
+      addresses: [], dates: [], categories: [], media: [], observations: [],
+    } }));
+    await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 })));
+    await page.getByRole('button', { name: 'More actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'History', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'History', exact: true });
+    if (width === 1440) {
+      const names = dialog.getByRole('heading', { name: 'Names', exact: true });
+      const email = dialog.getByRole('heading', { name: 'Email and phone', exact: true });
+      await expect(email).toBeVisible();
+      const rect = (locator: import('@playwright/test').Locator) => locator.evaluate(el => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, height: r.height }; });
+      const nameHeading = await rect(names);
+      const nameRow = await rect(dialog.locator('.detail-row', { hasText: profile.name }));
+      const emailHeading = await rect(email);
+      expect.soft(nameRow.top - nameHeading.bottom, 'heading to rows').toBe(8);
+      expect.soft(nameRow.height, 'two-line row').toBe(54);
+      expect.soft(emailHeading.top - nameRow.bottom, 'between groups').toBe(24);
+    } else {
+      await dialog.getByText('1 earlier value', { exact: true }).click();
+      await expect(dialog.getByText(earlierName)).toBeVisible();
+      expect(await dialog.locator('.profile-history').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    }
+  }
+  expect(errors).toEqual([]);
 });
 
 test('address actions align with the first text line while details opens', async ({ page }) => {
@@ -103,28 +114,3 @@ for (const width of [1440, 390]) {
     expect(Math.abs(labelBounds!.x - titleBounds!.x)).toBeLessThanOrEqual(1);
   });
 }
-
-test('History fits a 390px dialog', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 900 });
-  const errors: string[] = [];
-  page.on('pageerror', error => errors.push(error.message));
-  await installDirectoryReviewArchive(page);
-  const profile = { id: 7, name: 'Synthetic One' };
-  const earlierName = 'SyntheticEarlierName'.repeat(12);
-  await page.route(`**/api/v1/people/${profile.id}/profile/history`, route => route.fulfill({ json: {
-    person: { id: profile.id, revision: 4, display_name: profile.name, participant_ids: [], vcard_uid: `synthetic-${profile.id}`, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-07-01T00:00:00Z' },
-    names: [{ person_id: profile.id, name_kind: 'formatted', formatted: earlierName, original_value: earlierName, is_derived: false, envelope: {
-      id: 71, ordinal: 0, source: 'carddav_import', source_ref: 'synthetic-reference', actor: 'synthetic-importer', confidence: 0.95,
-      active_from: '2026-01-01T00:00:00Z', active_until: '2026-06-01T00:00:00Z', superseded_at: '2026-06-02T00:00:00Z',
-      created_at: '2026-01-01T00:00:00Z', updated_at: '2026-06-03T00:00:00Z', vcard: {},
-    } }], contact_points: [], addresses: [], dates: [], categories: [], media: [], observations: [],
-  } }));
-  await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 })));
-  await page.getByRole('button', { name: 'More actions', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'History', exact: true }).click();
-  const dialog = page.getByRole('dialog');
-  await dialog.getByText('1 earlier value', { exact: true }).click();
-  await expect(dialog.getByText(earlierName)).toBeVisible();
-  expect(await dialog.locator('.profile-history').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
-  expect(errors).toEqual([]);
-});

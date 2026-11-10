@@ -1,6 +1,6 @@
 import { tick } from 'svelte';
 import { emptyProfile } from '../../directory/profile-fixtures.test-support';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
@@ -81,6 +81,7 @@ describe('PersonRecordActions', () => {
         release();
         if (state === 'replaced') {
           await waitFor(() => expect(replaced).toBe(true));
+          await act(async () => { await tick(); });
           expect(onAnnounce).not.toHaveBeenCalled();
         } else await waitFor(() => expect(onAnnounce).toHaveBeenCalledWith('Keeping this profile updated.'));
       }
