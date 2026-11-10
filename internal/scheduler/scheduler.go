@@ -459,16 +459,25 @@ const indexingPassRuntime = 5 * time.Minute
 // A schedule rejected by ValidateCronExpr leaves the previous job in place.
 func (s *Scheduler) SetEmbedJob(job *EmbedJob, schedule string, runAfterSync bool) error {
 	var run func(context.Context) error
+	maxRuntime := indexingPassRuntime
 	if job != nil {
 		run = job.Run
+		// Seven timed-out requests can precede successful singletons when a
+		// batch of eight splits. Leave one request timeout for the successes.
+		const maxDuration = time.Duration(1<<63 - 1)
+		if job.RequestTimeout > maxDuration/8 {
+			maxRuntime = maxDuration
+		} else {
+			maxRuntime = max(maxRuntime, 8*job.RequestTimeout)
+		}
 	}
-	return s.setIndexingJob(embedJobName, "embed", run, schedule, runAfterSync)
+	return s.setIndexingJob(embedJobName, "embed", run, schedule, runAfterSync, maxRuntime)
 }
 
 // setIndexingJob registers an indexing job as a preemptible background job
 // with a bounded pass. It waits for the gate without asking another holder
 // to yield, and yields to waiting syncs after the usual grace period.
-func (s *Scheduler) setIndexingJob(name, label string, run func(context.Context) error, schedule string, runAfterSync bool) error {
+func (s *Scheduler) setIndexingJob(name, label string, run func(context.Context) error, schedule string, runAfterSync bool, maxRuntime time.Duration) error {
 	if run == nil {
 		s.mu.RLock()
 		registered := s.genericFuncs[name] != nil
@@ -485,7 +494,7 @@ func (s *Scheduler) setIndexingJob(name, label string, run func(context.Context)
 	}
 	return s.addJob(Job{
 		Name: name, Schedule: schedule, Run: run,
-		Preemptible: true, CooperativePreemption: true, Background: true, MaxRuntime: indexingPassRuntime,
+		Preemptible: true, CooperativePreemption: true, Background: true, MaxRuntime: maxRuntime,
 	}, runAfterSync)
 }
 

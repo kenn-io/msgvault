@@ -1875,6 +1875,24 @@ func TestEmbedJob_Run_NilSafe(t *testing.T) {
 
 // ---------- SetEmbedJob tests ----------
 
+func TestScheduler_EmbedPassRuntime(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		timeout time.Duration
+		want    time.Duration
+	}{
+		{"default", 30 * time.Second, 5 * time.Minute},
+		{"local", 5 * time.Minute, 40 * time.Minute},
+		{"explicit", 2 * time.Minute, 16 * time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := New(nil)
+			require.NoError(t, s.SetEmbedJob(&EmbedJob{RequestTimeout: tc.timeout}, "", false))
+			assert.Equal(t, tc.want, s.genericMaxRuntime[embedJobName])
+		})
+	}
+}
+
 func TestScheduler_SetEmbedJob_AddsCronEntry(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

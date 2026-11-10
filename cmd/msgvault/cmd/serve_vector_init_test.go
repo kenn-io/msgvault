@@ -370,10 +370,12 @@ func TestNewSchedulerEmbedJobThreadsGenerationRunnerAndConvergenceChecker(t *tes
 		Backend: &fakeCmdVectorBackend{}, Runner: runner, Convergence: checker,
 		Cfg: config.NewDefaultConfig().Vector,
 	}
+	vf.Cfg.Embeddings.Timeout = 7 * time.Minute
 
 	job := newSchedulerEmbedJob(vf, nil, testDiscardLogger())
 	assert.Same(t, runner, job.Worker)
 	assert.Same(t, checker, job.Convergence)
+	assert.Equal(t, 7*time.Minute, job.RequestTimeout)
 }
 
 type registeredEmbedJobCapture struct {
