@@ -22,14 +22,14 @@ func TestImportSignalExportRefreshesCacheAndReportsPartialFailure(t *testing.T) 
 	data, err := os.ReadFile("../../../internal/signalexport/testdata/native-v1/main.jsonl")
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(root, "metadata.json"), []byte(`{"version":1}`), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), append(data, []byte("\n{broken")...), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "main.jsonl"), append(data, []byte("{broken")...), 0600))
 	cmd := &cobra.Command{Use: "import-signal-export"}
 	cmd.SetContext(ctx)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(io.Discard)
 	err = runImportSignalExport(cmd, root, "fictional")
-	require.ErrorContains(t, err, "line")
+	require.ErrorContains(t, err, "line 12")
 	assert.Contains(t, out.String(), "3 added")
 	assert.Contains(t, out.String(), "Re-run")
 	db, err := sql.Open("duckdb", "")
@@ -45,7 +45,10 @@ func TestImportSignalExportRefreshesCacheAndReportsPartialFailure(t *testing.T) 
 	t.Cleanup(func() { _ = st.Close() })
 	var address string
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT address FROM account_identities").Scan(&address))
-	assert.NotEqual(t, "fictional", address)
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM account_identities").Scan(&n))
+	assert.Equal(t, 1, n)
+	const scopedSelf = "v1:a524644266885e16a3bb16166ae38bdbfb36af08fc51036f4dbb91423c7cbcc1:self"
+	assert.Equal(t, scopedSelf, address)
 }
 func TestImportSignalExportRefusesRemoteClientFiles(t *testing.T) {
 	server, requests := newDaemonCLIRunnerTestServer(t, nil, `{"type":"complete"}`)

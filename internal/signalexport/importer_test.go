@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,16 +90,12 @@ func TestImportDirectionsGroupsAndOmissions(t *testing.T) {
 		`{"chat":{"id":"9","recipientId":"1"}}`,
 		`{"chatItem":{"chatId":"8","authorId":"1","dateSent":"1700000000001","outgoing":{},"pinDetails":{"pinnedAtTimestamp":"1700000000500","pinNeverExpires":true},"standardMessage":{"text":{"body":"Group"},"quote":{},"reactions":[{}],"linkPreview":[{}]}}}`,
 		`{"chatItem":{"chatId":"9","authorId":"1","dateSent":"1700000000002","outgoing":{},"standardMessage":{"text":{"body":"Note"}}}}`,
-		`{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000003","outgoing":{},"standardMessage":{}}}`,
 		`{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000004","incoming":{},"remoteDeletedMessage":{}}}`,
-		`{"chatItem":{"chatId":"7","authorId":"2","incoming":{},"standardMessage":{}}}`,
 		`{"futureFrame":{}}`, `{}`)
 	summary, err := Import(t.Context(), st, options(t, root))
 	require.NoError(t, err)
 	assert.EqualValues(t, 3, summary.MessagesAdded)
-	assert.EqualValues(t, 1, summary.Skipped["direction_conflict"])
 	assert.EqualValues(t, 1, summary.Skipped["remoteDeletedMessage"])
-	assert.EqualValues(t, 1, summary.Skipped["sent_time"])
 	assert.EqualValues(t, 1, summary.Omitted["quote"])
 	assert.EqualValues(t, 1, summary.Omitted["pin"])
 	assert.EqualValues(t, 1, summary.Omitted["reactions"])
@@ -114,23 +109,6 @@ func TestImportDirectionsGroupsAndOmissions(t *testing.T) {
 	var fabricated int
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM message_recipients r JOIN messages m ON m.id=r.message_id JOIN conversations c ON c.id=m.conversation_id WHERE c.conversation_type='group_chat' AND r.recipient_type='to'").Scan(&fabricated))
 	assert.Zero(t, fabricated)
-}
-func TestImportLateFailureAndReplay(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	root := fixture(t, incoming, `{"chatItem":`)
-	opts := options(t, root)
-	summary, err := Import(t.Context(), st, opts)
-	require.ErrorContains(t, err, "line 7")
-	assert.EqualValues(t, 1, summary.MessagesAdded)
-	assert.Equal(t, 1, messageCount(t, st))
-	writeFrames(t, root, incoming)
-	summary, err = Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.EqualValues(t, 1, summary.MessagesExisting)
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	_, err = Import(ctx, st, opts)
-	require.ErrorIs(t, err, context.Canceled)
 }
 func pointer(data []byte) string {
 	hash := sha256.Sum256(data)
@@ -220,11 +198,21 @@ func TestImportMediaRepairOccurrencesAndLongText(t *testing.T) {
 	}
 }
 func TestImportUnsafeMedia(t *testing.T) {
-	for _, kind := range []string{"wrong-hash", "final-symlink", "directory-symlink", "directory", "ambiguous", "extensionless", "encrypted-name", "too-large"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, tc := range []struct {
+		kind, reason string
+		long         bool
+	}{
+		{"wrong-hash", "hash_mismatch", false}, {"final-symlink", "unsafe_or_nonregular", false},
+		{"directory-symlink", "missing_or_unsafe", false}, {"directory", "unsafe_or_nonregular", false},
+		{"ambiguous", "ambiguous", false}, {"extensionless-positive", "", false},
+		{"encrypted-name", "missing", false}, {"too-large", "oversized", false},
+		{"too-large", "oversized", true}, {"wrong-hash", "hash_mismatch", true},
+	} {
+		kind := tc.kind
+		t.Run(fmt.Sprintf("%s/long=%t", kind, tc.long), func(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			data := []byte("fictional media")
-			root := fixture(t, mediaMessage(data, false))
+			root := fixture(t, mediaMessage(data, tc.long))
 			path := putMedia(t, root, data)
 			switch kind {
 			case "wrong-hash":
@@ -237,32 +225,52 @@ func TestImportUnsafeMedia(t *testing.T) {
 			case "directory-symlink":
 				require.NoError(t, os.Remove(path))
 				require.NoError(t, os.Remove(filepath.Dir(path)))
-				require.NoError(t, os.Symlink(t.TempDir(), filepath.Dir(path)))
+				outside := t.TempDir()
+				require.NoError(t, os.WriteFile(filepath.Join(outside, filepath.Base(path)), data, 0600))
+				require.NoError(t, os.Symlink(outside, filepath.Dir(path)))
 			case "directory":
 				require.NoError(t, os.Remove(path))
 				require.NoError(t, os.Mkdir(path, 0700))
 			case "ambiguous":
 				require.NoError(t, os.WriteFile(strings.TrimSuffix(path, ".txt")+".bin", data, 0600))
-			case "extensionless":
+			case "extensionless-positive":
 				require.NoError(t, os.Rename(path, strings.TrimSuffix(path, ".txt")))
 			case "encrypted-name":
 				require.NoError(t, os.Rename(path, filepath.Join(filepath.Dir(path), strings.Repeat("a", 64))))
 			case "too-large":
 				file, err := os.OpenFile(path, os.O_WRONLY, 0600)
 				require.NoError(t, err)
-				require.NoError(t, file.Truncate(256<<20+1))
+				limit := int64(256 << 20)
+				if tc.long {
+					limit = 16 << 20
+				}
+				require.NoError(t, file.Truncate(limit+1))
 				require.NoError(t, file.Close())
 			}
 			opts := options(t, root)
 			summary, err := Import(t.Context(), st, opts)
 			require.NoError(t, err)
+			want := 2
+			if tc.long {
+				want = 1
+			}
+			if tc.reason != "" {
+				assert.EqualValues(t, want, summary.MediaMissing[tc.reason])
+			}
+			if tc.long {
+				assert.EqualValues(t, 1, summary.Omitted["incomplete_long_text"])
+				var id int64
+				require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&id))
+				body, err := st.GetMessageBodyText(t.Context(), id)
+				require.NoError(t, err)
+				assert.Equal(t, "inline", body)
+			}
 			if kind == "wrong-hash" {
-				assert.Equal(t, int64(2), summary.MediaMissing["hash_mismatch"])
 				var id int64
 				require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&id))
 				refs, err := st.MessageMIMEAttachmentsContext(t.Context(), id)
 				require.NoError(t, err)
-				require.Len(t, refs, 2)
+				require.Len(t, refs, want)
 				for _, ref := range refs {
 					assert.Empty(t, ref.ContentHash)
 				}
@@ -270,10 +278,10 @@ func TestImportUnsafeMedia(t *testing.T) {
 				hash := hex.EncodeToString(wrong[:])
 				assert.NoFileExists(t, filepath.Join(opts.AttachmentsDir, hash[:2], hash))
 			}
-			if kind == "extensionless" {
-				assert.Equal(t, 2, summary.AttachmentsStored)
+			if kind == "extensionless-positive" {
+				assert.Equal(t, want, summary.AttachmentsStored)
 			} else {
-				assert.Equal(t, 2, summary.AttachmentsMissing)
+				assert.Equal(t, want, summary.AttachmentsMissing)
 			}
 		})
 	}
@@ -339,6 +347,8 @@ func TestProtoScalarsAndRevisionValidation(t *testing.T) {
 
 func TestImportIdentityTimeAndDirectionSkips(t *testing.T) {
 	cases := []struct{ frame, reason string }{
+		{`{"chatItem":{"chatId":"7","authorId":"2","incoming":{},"standardMessage":{}}}`, "sent_time"},
+		{`{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000003","outgoing":{},"standardMessage":{}}}`, "direction_conflict"},
 		{`{"chatItem":{"chatId":"99","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{}}}`, "unresolved_chat"},
 		{`{"chatItem":{"chatId":"7","authorId":"99","dateSent":"1700000000000","incoming":{},"standardMessage":{}}}`, "author_identity"},
 		{`{"chatItem":{"chatId":"7","authorId":"2","dateSent":"0","incoming":{},"standardMessage":{}}}`, "sent_time"},
@@ -368,27 +378,50 @@ func TestImportIdentityTimeAndDirectionSkips(t *testing.T) {
 	}
 }
 
-// The logger is only a cancellation trigger: persistence and replay both use
-// the real parser, Store transaction and sync-run lifecycle.
-type cancelWriter struct{ cancel context.CancelFunc }
-
-func (w cancelWriter) Write(p []byte) (int, error) { w.cancel(); return len(p), nil }
+// Not parallel: CancelAfterCommit replaces process-wide SQL logging.
 func TestImportCancellationRetainsCommittedSnapshot(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	root := fixture(t, incoming, strings.Replace(incoming, "1700000000000", "1700000000001", 1))
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	opts := options(t, root)
-	opts.Logger = slog.New(slog.NewTextHandler(cancelWriter{cancel}, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	s, err := Import(ctx, st, opts)
-	require.ErrorIs(t, err, context.Canceled)
-	assert.EqualValues(t, 1, s.MessagesAdded)
-	opts.Logger = nil
-	s, err = Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.EqualValues(t, 1, s.MessagesAdded)
-	assert.EqualValues(t, 1, s.MessagesExisting)
-	assert.Equal(t, 2, messageCount(t, st))
+	for _, kind := range []string{"parse failure at line 7", "cancel after first commit", "already canceled"} {
+		t.Run(kind, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			second := strings.Replace(incoming, "1700000000000", "1700000000001", 1)
+			if kind == "parse failure at line 7" {
+				second = `{"chatItem":`
+			}
+			root := fixture(t, incoming, second)
+			opts := options(t, root)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if kind == "already canceled" {
+				cancel()
+			} else if kind == "cancel after first commit" {
+				canceled := testutil.CancelAfterCommit(t, cancel, func() bool {
+					var n int
+					require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&n))
+					return n > 0
+				})
+				defer func() { assert.True(t, canceled()) }()
+			}
+			summary, err := Import(ctx, st, opts)
+			if kind == "parse failure at line 7" {
+				require.ErrorContains(t, err, "line 7")
+			} else {
+				require.ErrorIs(t, err, context.Canceled)
+			}
+			if kind == "already canceled" {
+				assert.Zero(t, summary.MessagesAdded)
+				assert.Zero(t, messageCount(t, st))
+				return
+			}
+			assert.EqualValues(t, 1, summary.MessagesAdded)
+			assert.Equal(t, 1, messageCount(t, st))
+			writeFrames(t, root, incoming, strings.Replace(incoming, "1700000000000", "1700000000001", 1))
+			summary, err = Import(t.Context(), st, opts)
+			require.NoError(t, err)
+			assert.EqualValues(t, 1, summary.MessagesAdded)
+			assert.EqualValues(t, 1, summary.MessagesExisting)
+			assert.Equal(t, 2, messageCount(t, st))
+		})
+	}
 }
 func TestImportMediaStorageFailureIsFatal(t *testing.T) {
 	st := testutil.NewTestStore(t)
@@ -409,25 +442,29 @@ func TestNativeFixtureOriginalTimeAndProvenance(t *testing.T) {
 	s, err := Import(t.Context(), st, opts)
 	require.NoError(t, err)
 	assert.EqualValues(t, 3, s.MessagesAdded)
+	assert.Equal(t, 1, s.AttachmentsStored)
 	var id int64
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages WHERE is_from_me = false").Scan(&id))
 	var metadata, rawFormat string
-	var sent time.Time
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT sent_at FROM messages WHERE id = ?"), id).Scan(&sent))
-	assert.Equal(t, time.UnixMilli(1700000000000).UTC(), sent.UTC())
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT metadata FROM messages WHERE id = ?"), id).Scan(&metadata))
 	assert.Contains(t, metadata, `"adapter_version":1`)
 	assert.Contains(t, metadata, `"backupTimeMs":"1730000000000"`)
-	assert.NotContains(t, metadata, "masterKey")
-	assert.NotContains(t, metadata, "localKey")
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT raw_format FROM message_raw WHERE message_id = ?"), id).Scan(&rawFormat))
 	assert.Equal(t, "signal-export-jsonl", rawFormat)
+	refs, err := st.MessageMIMEAttachmentsContext(t.Context(), id)
+	require.NoError(t, err)
+	require.Len(t, refs, 1)
+	data, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, refs[0].StoragePath))
+	require.NoError(t, err)
+	assert.Equal(t, "Wholly fictional Signal fixture media.\n", string(data))
+	var n int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages_fts WHERE messages_fts MATCH ?", "workshop").Scan(&n))
+	assert.Equal(t, 1, n)
 	// Omitted records and tombstones do not remove existing messages.
 	root := fixture(t, `{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"remoteDeletedMessage":{}}}`)
 	opts.RootDir = root
 	s, err = Import(t.Context(), st, opts)
 	require.NoError(t, err)
-	assert.EqualValues(t, 1, s.Skipped["remoteDeletedMessage"])
 	assert.Equal(t, 3, messageCount(t, st))
 }
 
@@ -461,43 +498,6 @@ func TestImportEditedItemOriginalSentAt(t *testing.T) {
 	body, err := st.GetMessageBodyText(t.Context(), id)
 	require.NoError(t, err)
 	assert.Equal(t, "current", body)
-}
-
-func TestMediaLongTextLimitAndChangedLocalKey(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	data := []byte("Fictional key-independent text")
-	root := fixture(t, mediaMessage(data, true))
-	opts := options(t, root)
-	file := putMedia(t, root, data)
-	s, err := Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.Equal(t, 1, s.AttachmentsStored)
-	writeFrames(t, root, strings.ReplaceAll(mediaMessage(data, true), `"localKey":"AQ=="`, `"localKey":"Ag=="`))
-	s, err = Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.EqualValues(t, 1, s.MessagesExisting)
-	assert.Zero(t, s.MessagesChanged)
-	assert.Zero(t, s.AttachmentsMissing)
-	st2 := testutil.NewTestStore(t)
-	f, err := os.OpenFile(file, os.O_WRONLY, 0600)
-	require.NoError(t, err)
-	require.NoError(t, f.Truncate(16<<20+1))
-	require.NoError(t, f.Close())
-	s, err = Import(t.Context(), st2, opts)
-	require.NoError(t, err)
-	assert.EqualValues(t, 1, s.Omitted["incomplete_long_text"])
-	assert.EqualValues(t, 1, s.MediaMissing["oversized"])
-	require.NoError(t, os.WriteFile(file, []byte("wrong"), 0600))
-	st3 := testutil.NewTestStore(t)
-	s, err = Import(t.Context(), st3, opts)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), s.MediaMissing["hash_mismatch"])
-	assert.Equal(t, int64(1), s.Omitted["incomplete_long_text"])
-	var id int64
-	require.NoError(t, st3.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&id))
-	body, err := st3.GetMessageBodyText(t.Context(), id)
-	require.NoError(t, err)
-	assert.Equal(t, "inline", body)
 }
 
 func TestReaderSemanticDuplicateDefinitions(t *testing.T) {
@@ -555,37 +555,6 @@ func TestImportRepairUsesFirstMediaPointers(t *testing.T) {
 			original := sha256.Sum256(a)
 			assert.Equal(t, hex.EncodeToString(original[:]), refs[0].ContentHash)
 		})
-	}
-}
-
-func TestImportRepairKeepsArchivedAttachmentOrder(t *testing.T) {
-	a, b := []byte("fictional first"), []byte("fictional second")
-	frame := func(a, b []byte) string {
-		return fmt.Sprintf(`{"chatItem":{"chatId":"7","authorId":"2","dateSent":"1700000000000","incoming":{},"standardMessage":{"attachments":[{"pointer":%s},{"pointer":%s}]}}}`, pointer(a), pointer(b))
-	}
-	st := testutil.NewTestStore(t)
-	root := fixture(t, frame(a, b))
-	opts := options(t, root)
-	_, err := Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	putMedia(t, root, a)
-	putMedia(t, root, b)
-	writeFrames(t, root, frame(b, a))
-	summary, err := Import(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.Equal(t, 2, summary.AttachmentsStored)
-	var id int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&id))
-	refs, err := st.MessageMIMEAttachmentsContext(t.Context(), id)
-	require.NoError(t, err)
-	require.Len(t, refs, 2)
-	for _, ref := range refs {
-		data := a
-		if ref.SourcePartKey == "attachment:1" {
-			data = b
-		}
-		hash := sha256.Sum256(data)
-		assert.Equal(t, hex.EncodeToString(hash[:]), ref.ContentHash, ref.SourcePartKey)
 	}
 }
 

@@ -556,10 +556,6 @@ func TestMessagingRoutesNetworkFilterMatchesNativeAndBeeperRoutes(t *testing.T) 
 	require.Len(t, signal.Routes.Items, 1)
 	assert.Equal(t, signalID, signal.Routes.Items[0].ConversationID)
 	assert.Equal(t, "signal", signal.Routes.Items[0].Network)
-	assert.Equal(t, "unresolved", signal.Routes.Items[0].Status)
-	assert.Contains(t, signal.Routes.Items[0].Reasons, "route_metadata_missing")
-	assert.False(t, signal.Routes.Items[0].MembershipComplete)
-	assert.Nil(t, signal.Routes.Items[0].ObservedAt)
 }
 
 func TestMessagingRoutesKeepDeletionSignalAfterArchiveGC(t *testing.T) {

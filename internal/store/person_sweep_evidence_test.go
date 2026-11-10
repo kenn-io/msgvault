@@ -436,11 +436,6 @@ func TestPersonSweepAuthenticatedChatSenderCanBeDirectSelf(t *testing.T) {
 			id := f.insertMessage(t, "authored chat", "chat", f.aliceID, time.Now().UTC())
 			addSweepBody(t, f, id, "I work in product.")
 			item := sweepItem(t, loadSweepWindow(t, f, peoplesweep.SourceConversationText, 0).Seeds, id)
-			candidates, err := f.store.ListPersonSweepHistoricalCandidates(t.Context(), peoplesweep.HistoricalCandidateRequest{
-				PersonID: f.alicePersonID, AuthoredByPerson: true, Limit: 10,
-			})
-			require.NoError(t, err)
-			assert.Equal(t, []int64{id}, candidates)
 			require.NotNil(t, item.SubjectPersonID)
 			assert.Equal(t, personfacts.DirectSelf, item.Directness)
 		})

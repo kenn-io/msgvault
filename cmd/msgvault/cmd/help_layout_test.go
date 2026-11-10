@@ -185,18 +185,15 @@ func TestRootHelpGolden(t *testing.T) {
 	rootCmd.SetErr(&output)
 	rootCmd.SetArgs([]string{"--help"})
 	requirements.NoError(executeRootContext(t.Context(), rootCmd))
-	// The eval stub has different help in builds without sqlite_vec. Keep the
-	// root layout fixture stable across both supported build profiles.
-	goldenOutput := strings.ReplaceAll(output.String(), "Score search quality (requires sqlite_vec build)", "Score search quality against relevance judgments (qrels)")
 	file := "testdata/help/root.golden"
 	if *updateGolden {
 		requirements.NoError(os.MkdirAll(filepath.Dir(file), 0o755))
-		requirements.NoError(os.WriteFile(file, []byte(goldenOutput), 0o644))
+		requirements.NoError(os.WriteFile(file, output.Bytes(), 0o644))
 	}
 	want, err := os.ReadFile(file)
 	requirements.NoError(err)
 	expected := strings.ReplaceAll(string(want), "\r\n", "\n")
-	actual := strings.ReplaceAll(goldenOutput, "\r\n", "\n")
+	actual := strings.ReplaceAll(output.String(), "\r\n", "\n")
 	assertions.Equal(expected, actual)
 	assertions.LessOrEqual(output.Len(), 12500, "shorten start-here comments if root exceeds its help budget")
 	assertions.Contains(output.String(), "Start here:")
