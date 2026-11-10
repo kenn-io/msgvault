@@ -27,7 +27,6 @@
     pageError = '',
     unavailable = undefined,
     drillable = true,
-    canDrill = () => true,
     focusedKey = null,
     inspectedKey = null,
     scrollAnchor = null,
@@ -53,7 +52,6 @@
     pageError?: string;
     unavailable?: ExploreCacheUnavailable;
     drillable?: boolean;
-    canDrill?: (row: ExploreGroupRow) => boolean;
     focusedKey?: string | null;
     inspectedKey?: string | null;
     scrollAnchor?: ExploreScrollAnchor | null;
@@ -179,10 +177,6 @@
     return `group:${dimension}:${row.key}`;
   }
 
-  function isDrillable(row: ExploreGroupRow): boolean {
-    return drillable && canDrill(row);
-  }
-
   function anchorSignature(anchor: ExploreScrollAnchor): string {
     return `${generation}:${dimension}:${anchor.key}:${anchor.offset}:${rows.length}`;
   }
@@ -258,7 +252,7 @@
     else if (event.key === 'End') {
       if (hasMore) await onLoadThroughEnd?.();
       await move(rows.length - 1);
-    } else if (event.key === 'Enter' && activeIndex >= 0 && isDrillable(rows[activeIndex]!)) onDrill(rows[activeIndex]!);
+    } else if (event.key === 'Enter' && activeIndex >= 0 && drillable) onDrill(rows[activeIndex]!);
     else return;
     event.preventDefault();
   }
@@ -364,7 +358,7 @@
                 gridElement?.focus();
                 if (!(event.target as Element).closest('button')) onInspect?.(row);
               }}
-              ondblclick={() => { if (isDrillable(row)) onDrill(row); }}
+              ondblclick={() => { if (drillable) onDrill(row); }}
             >
               <div role="gridcell" class="group-name" title={display.title}>
                 {#if typeof display.icon === 'string'}<span class="group-icon" aria-hidden="true">{display.icon}</span>
@@ -385,7 +379,7 @@
                 </div>
               {/if}
               <span role="gridcell" class="group-action">
-                {#if isDrillable(row)}<IconButton size="sm" ariaLabel={`Show items in ${display.name}`} onclick={() => onDrill(row)}><ChevronRight size={14} /></IconButton>{/if}
+                {#if drillable}<IconButton size="sm" ariaLabel={`Show items in ${display.name}`} onclick={() => onDrill(row)}><ChevronRight size={14} /></IconButton>{/if}
               </span>
             </div>
           {/each}

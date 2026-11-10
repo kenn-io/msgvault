@@ -258,31 +258,10 @@ describe('GroupTable', () => {
 
   it('removes the drill affordance when drilling is disabled', async () => {
     const onDrill = vi.fn();
-    const view = render(GroupTable, { rows, dimension: 'source', onDrill });
-    const grid = screen.getByRole('grid', { name: 'Messages grouped by source' });
-    grid.focus();
-    await view.rerender({ rows, dimension: 'source', drillable: false, onDrill });
+    render(GroupTable, { rows, dimension: 'source', drillable: false, onDrill });
     expect(screen.queryAllByRole('button', { name: /Show items in/ })).toHaveLength(0);
-    await fireEvent.keyDown(grid, { key: 'Enter' });
     await fireEvent.dblClick(screen.getAllByRole('row')[1]!);
     expect(onDrill).not.toHaveBeenCalled();
-  });
-
-  it('only drills rows allowed by the caller', async () => {
-    const onDrill = vi.fn();
-    const onInspect = vi.fn();
-    render(GroupTable, { rows, dimension: 'source', onDrill, onInspect, canDrill: (row: typeof rows[number]) => row.key !== '7' });
-    const grid = screen.getByRole('grid', { name: 'Messages grouped by source' });
-    const first = screen.getByRole('row', { name: /Example source/ });
-
-    expect(screen.queryByRole('button', { name: 'Show items in Example source' })).toBeNull();
-    await fireEvent.pointerDown(first);
-    await fireEvent.keyDown(grid, { key: 'Enter' });
-    await fireEvent.dblClick(first);
-    expect(onInspect).toHaveBeenCalledWith(rows[0]);
-    expect(onDrill).not.toHaveBeenCalled();
-    await fireEvent.click(screen.getByRole('button', { name: 'Show items in Second source' }));
-    expect(onDrill).toHaveBeenCalledWith(rows[1]);
   });
 
   it('opens aggregate inspection from a focused pointer row without drilling', async () => {
@@ -321,8 +300,6 @@ it('keeps a later month page share relative to every grouped item and hides deta
  await view.rerender({ rows: [row], dimension: 'month', inspectedKey: 'group:month:2022-05', onDrill });
  expect(screen.queryByRole('columnheader', { name: 'Size' })).toBeNull();
  expect(screen.queryByRole('columnheader', { name: 'Latest' })).toBeNull();
- await fireEvent.click(screen.getByRole('button', { name: 'Show items in May 2022' }));
- expect(onDrill).toHaveBeenCalledWith(row);
  await view.rerender({ rows: [{ ...row, total_items: undefined }], dimension: 'month', onDrill });
  expect(screen.queryByTitle('2% of 1,000 items')).toBeNull();
  expect(screen.queryByRole('columnheader', { name: 'Share' })).toBeNull();

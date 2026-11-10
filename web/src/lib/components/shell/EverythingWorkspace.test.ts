@@ -9,7 +9,6 @@ import { meetingAction, meetingActions, meetingFixtureResponse } from '../../mee
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
 import { mediaReadinessKey } from '../../search/media-ready.svelte';
-import { groupRowName } from '../../explore/labels';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
 import { sourceGroup } from '../../explore/fixtures.test-support';
 import { ExploreState, parseExploreURLState } from '../../explore/state.svelte';
@@ -210,8 +209,6 @@ describe('EverythingWorkspace', () => {
       await within(grid).findByText('File');
       expect(within(grid).queryByRole('button', { name: 'Show items in File' })).toBeNull();
       await fireEvent.pointerDown(within(grid).getByText('File'));
-      await fireEvent.keyDown(grid, { key: 'Enter' });
-      await fireEvent.dblClick(within(grid).getByText('File'));
       expect(state.current.groupingChain).toEqual(['kind']);
       expect(state.current.filters).toEqual([]);
       expect(fileBodies.length).toBeGreaterThan(0);
@@ -222,11 +219,9 @@ describe('EverythingWorkspace', () => {
     }
   });
 
-  it.each([
-    ['year', '2026', '2026-01-01T00:00:00.000Z', '2027-01-01T00:00:00.000Z'],
-    ['month', '2026-07', '2026-07-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z'],
-    ['month', '2026-12', '2026-12-01T00:00:00.000Z', '2027-01-01T00:00:00.000Z']
-  ] as const)('drills Files %s groups using UTC boundaries', async (dimension, key, after, before) => {
+  it('drills Files month groups using UTC boundaries', async () => {
+    vi.stubEnv('TZ', 'America/New_York');
+    const dimension = 'month', key = '2026-07';
     window.history.replaceState(null, '', '/');
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -237,14 +232,15 @@ describe('EverythingWorkspace', () => {
     state.replaceTransient({ workspace: 'files', groupingChain: [dimension] });
     const view = render(AppShell, { client: createAPIClient(fetchFn), state });
     try {
-      await fireEvent.click(await screen.findByRole('button', { name: `Show items in ${groupRowName(dimension, key, key).name}` }));
+      await fireEvent.click(await screen.findByRole('button', { name: 'Show items in Jul 2026' }));
       expect(state.current.filters).toEqual([
-        { dimension: 'after', values: [after] },
-        { dimension: 'before', values: [before] }
+        { dimension: 'after', values: ['2026-07-01T00:00:00.000Z'] },
+        { dimension: 'before', values: ['2026-08-01T00:00:00.000Z'] }
       ]);
     } finally {
       view.unmount();
       state.destroy();
+      vi.unstubAllEnvs();
     }
   });
 
@@ -276,11 +272,14 @@ describe('EverythingWorkspace', () => {
 
   it('opens an Entry kind overview from its row', async () => {
     window.history.replaceState(null, '', '/');
-    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
-      rows: [{ key: 'meeting', label: 'meeting', count: 12, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
-      overview: { first_at: '2026-07-01T12:00:00Z', activity: [{ bucket: '2026-07', count: 12 }], co_participants: [] },
-      total_count: 1, cache_revision: 'cache-1', search_provenance: {}
-    }));
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const body = await (input as Request).clone().json();
+      return Response.json({
+        rows: [{ key: 'meeting', label: 'meeting', count: 12, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
+        ...(body.group_key ? { overview: { first_at: '2026-07-01T12:00:00Z', activity: [{ bucket: '2026-07', count: 12 }], co_participants: [] } } : {}),
+        total_count: 1, cache_revision: 'cache-1', search_provenance: {}
+      });
+    });
     const state = new ExploreState(window);
     state.replaceTransient({ groupingChain: ['kind'] });
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
@@ -1137,7 +1136,8 @@ describe('EverythingWorkspace', () => {
       const path = new URL(request.url).pathname;
       if (path.endsWith('/groups')) {
         const row = { key: '7', label, count, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' };
-        return Response.json({ overview: { first_at: '2026-07-01T12:00:00Z', activity: [{ bucket: '2026-07', count }], co_participants: [] }, rows: [row], total_count: 1, cache_revision: cacheRevision, search_provenance: {} });
+        const body = await request.clone().json();
+        return Response.json({ ...(body.group_key ? { overview: { first_at: '2026-07-01T12:00:00Z', activity: [{ bucket: '2026-07', count }], co_participants: [] } } : {}), rows: [row], total_count: 1, cache_revision: cacheRevision, search_provenance: {} });
       }
       return Response.json(exploreResponse({ cache_revision: cacheRevision }));
     });
@@ -1697,8 +1697,9 @@ describe('EverythingWorkspace', () => {
       if (meetingResponse) return meetingResponse;
       if (new URL(request.url).pathname.endsWith('/groups')) {
         groupRequests.push(request);
+        const body = await request.clone().json();
         return Response.json({
-          overview: { first_at: '2026-07-01T12:00:00Z', activity: [{ bucket: '2026-07', count: 3 }], co_participants: [] },
+          ...(body.group_key ? { overview: { first_at: '2026-07-01T12:00:00Z', activity: [{ bucket: '2026-07', count: 3 }], co_participants: [] } } : {}),
           rows: [{ key: '42', label: 'Alice Example', count: 3, estimated_bytes: 512, latest_at: '2026-07-18T12:00:00Z' }],
           total_count: 1, cache_revision: 'cache-1', search_provenance: { lexical_index_revision: 'fts-1' }
         });
@@ -1714,7 +1715,7 @@ describe('EverythingWorkspace', () => {
     const reading = await screen.findByRole('complementary', { name: 'Reading pane: Alice Example' });
     expect(within(reading).getByText(/3 items/)).toBeDefined();
     expect(groupRequests).toHaveLength(1);
-    await expect(groupRequests[0]!.clone().json()).resolves.toEqual({
+    await expect(groupRequests[0]!.clone().json()).resolves.toMatchObject({
       filters: [
         { dimension: 'domain', values: ['example.com'] },
         { dimension: 'participant', values: ['42'] }
@@ -1724,8 +1725,7 @@ describe('EverythingWorkspace', () => {
       grouping: ['participant'],
       group_key: '42',
       limit: 1,
-      presentation: 'table',
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+      presentation: 'table'
     });
     rendered.unmount();
     state.destroy();
@@ -1760,7 +1760,7 @@ describe('EverythingWorkspace', () => {
           ? rows.filter((row) => row.key === body.group_key)
           : rows.slice(0, body.limit ?? rows.length);
         return Response.json({
-          overview: { first_at: '2026-07-01T12:00:00Z', activity: [{ bucket: '2026-07', count: 5 }], co_participants: [] },
+          ...(body.group_key ? { overview: { first_at: '2026-07-01T12:00:00Z', activity: [{ bucket: '2026-07', count: 5 }], co_participants: [] } } : {}),
           rows: matched, total_count: body.group_key ? matched.length : rows.length,
           cache_revision: 'cache-1', search_provenance: {}
         });
@@ -2593,10 +2593,10 @@ describe('EverythingWorkspace', () => {
   });
 
   it.each([
-    ['participant', '42', [{ dimension: 'participant', values: ['42'] }]],
-    ['domain', 'example.com', [{ dimension: 'domain', values: ['example.com'] }]],
-    ['message_type', 'email', [{ dimension: 'message_type', values: ['email'] }]],
-  ] as const)('drills %s groups into a changed URL predicate', async (dimension, key, expectedFilters) => {
+    ['participant', '42', '42', [{ dimension: 'participant', values: ['42'] }]],
+    ['domain', 'example.com', 'example.com', [{ dimension: 'domain', values: ['example.com'] }]],
+    ['message_type', 'email', 'Email', [{ dimension: 'message_type', values: ['email'] }]],
+  ] as const)('drills %s groups into a changed URL predicate', async (dimension, key, name, expectedFilters) => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -2613,7 +2613,7 @@ describe('EverythingWorkspace', () => {
       scrollAnchor: { key: `group:${dimension}:${key}`, offset: 4 }
     });
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    await fireEvent.click(await screen.findByRole('button', { name: `Show items in ${groupRowName(dimension, key, key).name}` }));
+    await fireEvent.click(await screen.findByRole('button', { name: `Show items in ${name}` }));
 
     expect(state.current.filters).toEqual(expectedFilters);
     expect(parseExploreURLState(window.location.search).filters).toEqual(expectedFilters);

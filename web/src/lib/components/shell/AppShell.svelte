@@ -1103,7 +1103,7 @@
   }
   function drillGroup(row: ExploreGroupRow): void {
     const [dimension, ...remaining] = exploreState.current.groupingChain;
-    if (!dimension || !groupingByDimension(dimension).drillable || (exploreState.current.workspace === 'files' && dimension === 'kind' && row.key === 'file')) return;
+    if (!dimension || !groupingByDimension(dimension).drillable || (exploreState.current.workspace === 'files' && dimension === 'kind')) return;
     const filters = filtersForGroup(exploreState.current.filters, dimension, row.key, exploreState.current.workspace === 'files');
     if (!filters) {
       commitNavigation({ selectedRow: `group:${dimension}:${row.key}` });
@@ -1454,8 +1454,7 @@
               error={loader.error}
               pageError={loader.pageError}
               unavailable={loader.unavailable}
-              drillable={groupingByDimension(exploreState.current.groupingChain[0]!).drillable}
-              canDrill={(row) => exploreState.current.groupingChain[0] !== 'kind' || row.key !== 'file'}
+              drillable={groupingByDimension(exploreState.current.groupingChain[0]!).drillable && exploreState.current.groupingChain[0] !== 'kind'}
               focusedKey={exploreState.current.activeRow}
               inspectedKey={readingTargetKey}
               scrollAnchor={exploreState.current.scrollAnchor}
