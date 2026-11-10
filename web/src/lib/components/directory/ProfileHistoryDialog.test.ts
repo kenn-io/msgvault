@@ -250,7 +250,8 @@ it.each(['history', 'merges'])('keeps account numbers when %s arrives first', as
   expect(document.body.textContent).not.toMatch(/account-a|account-z/);
   await fireEvent.click(await screen.findByRole('button', { name: /^Open Neri merged into Mira/ }));
   const cards = await screen.findByRole('group', { name: 'Merged profiles' });
-  expect(cards.textContent).toContain(`Mira · account ${first === 'history' ? 2 : 1}`);
+  const survivor = within(cards).getByRole('region', { name: 'Mira' });
+  expect(within(survivor).getByText(`account ${first === 'history' ? 2 : 1}`)).toBeDefined();
 
 });
 
