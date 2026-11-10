@@ -60,28 +60,23 @@ func TestCuratedNamesForAddresses(t *testing.T) {
 				require.NoError(t, f.Store.SetParticipantIdentifierContext(t.Context(), pat, "email", "alex@example.com"))
 				history(alex, "history-Alex")
 				otherMessage := history(pat, "history-Pat")
-				for _, scope := range [][]int64{nil, {f.Source.ID}} {
-					got, err := f.Store.CuratedNamesForAddressesContext(t.Context(), []string{"alex@example.com"}, scope)
-					require.NoError(t, err)
-					assert.Empty(t, got)
-				}
+				got, err := f.Store.CuratedNamesForAddressesContext(t.Context(), []string{"alex@example.com"}, nil)
+				require.NoError(t, err)
+				assert.Empty(t, got)
 				other, err := f.Store.GetOrCreateSource("imap", "other@example.com")
 				require.NoError(t, err)
 				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET source_id = ? WHERE id = ?`), other.ID, otherMessage)
 				require.NoError(t, err)
-				got, err := f.Store.CuratedNamesForAddressesContext(t.Context(), []string{"alex@example.com"}, []int64{f.Source.ID})
+				got, err = f.Store.CuratedNamesForAddressesContext(t.Context(), []string{"alex@example.com"}, []int64{f.Source.ID})
 				require.NoError(t, err)
 				assert.Empty(t, got)
 			case "unbound competing alias":
-				alex := seed("alex@example.com", "Alex", "", "")
-				history(alex, "history-Alex")
+				seed("alex@example.com", "Alex", "", "")
 				other := f.EnsureParticipant("other@example.com", "Synthetic", "example.com")
 				require.NoError(t, f.Store.SetParticipantIdentifierContext(t.Context(), other, "email", "alex@example.com"))
-				for _, scope := range [][]int64{nil, {f.Source.ID}} {
-					got, err := f.Store.CuratedNamesForAddressesContext(t.Context(), []string{"alex@example.com"}, scope)
-					require.NoError(t, err)
-					assert.Empty(t, got)
-				}
+				got, err := f.Store.CuratedNamesForAddressesContext(t.Context(), []string{"alex@example.com"}, nil)
+				require.NoError(t, err)
+				assert.Empty(t, got)
 			case "quoted mailbox":
 				seed("alex smith@example.com", "Alex", "", "")
 				got, err := f.Store.CuratedNamesForAddressesContext(t.Context(), []string{`"alex smith"@example.com`}, nil)

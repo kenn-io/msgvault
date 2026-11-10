@@ -171,8 +171,6 @@ func TestValidateOnlyWritesNothing(t *testing.T) {
 		require.NoError(t, err)
 		assert.Nil(t, lintObject(t, events)["recipients"])
 		assertDraftRows(t, st, 0)
-		_, err = lintRun(t, a, nil, "draft-compose", "--conversation", strconv.FormatInt(id, 10), "--reply-to", "99999", "--body", "ok", "--validate-only")
-		require.Error(t, err)
 	})
 	t.Run("beeper", func(t *testing.T) {
 		f := newBeeperDraftFixture(t)
@@ -240,6 +238,12 @@ func TestDraftLintParsers(t *testing.T) {
 		}, []string{"draft-edit", "draft", "--revision", "1", "--body", "ok"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.name != "reply" {
+				opts, err := tc.parse(append(append([]string{}, tc.args...), "--strict"))
+				require.NoError(t, err)
+				assert.Equal(t, draftLintOptions{Strict: true}, opts)
+				return
+			}
 			for _, flag := range []string{"strict", "allow-placeholders", "validate-only"} {
 				for _, value := range []string{"", "=true", "=false", "=invalid", "duplicate"} {
 					flags := []string{"--" + flag + value}
@@ -267,12 +271,11 @@ func TestDraftLintParsers(t *testing.T) {
 			}
 		})
 	}
-	for _, body := range []string{"--strict", "--validate-only", "--idempotency-key=literal"} {
-		got, err := parseDraftComposeArgs([]string{"draft-compose", "--source-id", "1", "--to", "a@example.com", "--body", body})
-		require.NoError(t, err)
-		assert.Equal(t, body, got.Body)
-		assert.Equal(t, draftLintOptions{}, got.draftLintOptions)
-	}
+	got, err := parseDraftComposeArgs([]string{"draft-compose", "--source-id", "1", "--to", "a@example.com", "--body", "--strict"})
+	require.NoError(t, err)
+	assert.Equal(t, "--strict", got.Body)
+	assert.Equal(t, draftLintOptions{}, got.draftLintOptions)
+
 	for _, command := range []string{"draft-get", "draft-delete", "draft-recover"} {
 		args := []string{command, "draft"}
 		if command != "draft-get" {

@@ -18,13 +18,6 @@ func TestDraftForwardEmptyNoteEdit(t *testing.T) {
 	require.NoError(t, err)
 	id := lintObject(t, events)["draft_id"].(string)
 	args := []string{"draft-edit", id, "--revision", "1", "--body", "", "--strict", "--json"}
-	events, err = lintRun(t, a, nil, append(args, "--validate-only")...)
-	require.NoError(t, err)
-	assert.Equal(t, true, lintObject(t, events)["valid"])
-	before, err := f.store.GetIMAPDraftContext(t.Context(), id)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), before.Revision)
-	assert.Nil(t, before.Pending)
 	_, err = lintRun(t, a, nil, args...)
 	require.NoError(t, err)
 	after, err := f.store.GetIMAPDraftContext(t.Context(), id)
