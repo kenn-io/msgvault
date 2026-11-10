@@ -121,7 +121,7 @@ func (e setupEnvironment) reportMissingCredential(lane *laneStatus, name string)
 }
 
 func (e setupEnvironment) reportVectorCredential(lane *laneStatus, id, endpoint, name string) {
-	credential, _, err := resolveProviderCredentialFromSnapshot(e.credentials, id, endpoint, name, e.lookupEnv)
+	credential, _, err := e.credentials.Resolve(id, endpoint, name, e.lookupEnv)
 	if err != nil {
 		lane.State = laneStatePending
 		lane.Reason += "; provider credential unavailable: " + err.Error()

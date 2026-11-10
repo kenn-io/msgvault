@@ -502,8 +502,8 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 	}
 	var multimodalAPIKey string
 	if vecCfg.Multimodal.Enabled {
-		multimodalAPIKey, _, err = resolveProviderCredentialFromSnapshot(
-			credentialSnapshot, providercredentials.VectorMultimodalID,
+		multimodalAPIKey, _, err = credentialSnapshot.Resolve(
+			providercredentials.VectorMultimodalID,
 			vecCfg.Multimodal.Endpoint, vecCfg.Multimodal.APIKeyEnv, os.LookupEnv,
 		)
 		if err != nil {

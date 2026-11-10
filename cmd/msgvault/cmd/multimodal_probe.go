@@ -65,8 +65,8 @@ capability profile.`,
 		if err != nil {
 			return fmt.Errorf("load provider credentials: %w", err)
 		}
-		apiKey, _, err := resolveProviderCredentialFromSnapshot(
-			credentials, providercredentials.VectorMultimodalID,
+		apiKey, _, err := credentials.Resolve(
+			providercredentials.VectorMultimodalID,
 			cfg.Vector.Multimodal.Endpoint, cfg.Vector.Multimodal.APIKeyEnv, os.LookupEnv,
 		)
 		if err != nil {

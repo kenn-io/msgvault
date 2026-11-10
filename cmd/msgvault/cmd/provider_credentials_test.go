@@ -63,7 +63,7 @@ func TestVectorProviderCredentialResolutionUsesOneStartupSnapshot(t *testing.T) 
 	startup, err := providercredentials.Read(cfg.TokensDir())
 	requirements.NoError(err)
 
-	first, _, err := resolveProviderCredentialFromSnapshot(startup,
+	first, _, err := startup.Resolve(
 		providercredentials.VectorEmbeddingsID, cfg.Vector.Embeddings.Endpoint,
 		cfg.Vector.Embeddings.APIKeyEnv, os.LookupEnv)
 	requirements.NoError(err)
@@ -72,7 +72,7 @@ func TestVectorProviderCredentialResolutionUsesOneStartupSnapshot(t *testing.T) 
 	_, err = providercredentials.Put(cfg.TokensDir(), firstStore.ETag,
 		providercredentials.VectorEmbeddingsID, cfg.Vector.Embeddings.Endpoint, "stored-second")
 	requirements.NoError(err)
-	stillFirst, _, err := resolveProviderCredentialFromSnapshot(startup,
+	stillFirst, _, err := startup.Resolve(
 		providercredentials.VectorEmbeddingsID, cfg.Vector.Embeddings.Endpoint,
 		cfg.Vector.Embeddings.APIKeyEnv, os.LookupEnv)
 	requirements.NoError(err)
@@ -80,7 +80,7 @@ func TestVectorProviderCredentialResolutionUsesOneStartupSnapshot(t *testing.T) 
 
 	restarted, err := providercredentials.Read(cfg.TokensDir())
 	requirements.NoError(err)
-	second, _, err := resolveProviderCredentialFromSnapshot(restarted,
+	second, _, err := restarted.Resolve(
 		providercredentials.VectorEmbeddingsID, cfg.Vector.Embeddings.Endpoint,
 		cfg.Vector.Embeddings.APIKeyEnv, os.LookupEnv)
 	requirements.NoError(err)

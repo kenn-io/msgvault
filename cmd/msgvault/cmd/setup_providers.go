@@ -265,7 +265,7 @@ func detectSetupProviders(ctx context.Context, loaded *config.Config, deps setup
 		detection.visualUnavailable = err.Error() + "; configure [vector.multimodal] before enabling visual search"
 	} else {
 		credentials, _ := providercredentials.Read(loaded.TokensDir())
-		credential, _, err := resolveProviderCredentialFromSnapshot(credentials, providercredentials.VectorMultimodalID, multimodal.Endpoint, multimodal.APIKeyEnv, deps.lookupEnv)
+		credential, _, err := credentials.Resolve(providercredentials.VectorMultimodalID, multimodal.Endpoint, multimodal.APIKeyEnv, deps.lookupEnv)
 		if err != nil {
 			detection.visualUnavailable = "visual provider credential unavailable: " + err.Error()
 		} else {
