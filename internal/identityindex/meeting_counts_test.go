@@ -17,7 +17,7 @@ func TestMeetingCounts(t *testing.T) {
 		sourceCounts                              []int64
 		dailyOnly                                 bool
 	}{
-		{name: "multiple occurrences", messages: "(100,1,'meeting_transcript')", recipients: "(100,1),(100,2)", keys: "(100,'uid:weekly/first'),(100,'uid:weekly/second')", meetings: 2, activities: 1},
+		{name: "multiple occurrences", messages: "(100,1,'meeting_transcript')", recipients: "(100,1),(100,2)", keys: "(100,'uid:weekly/20260801T100000Z'),(100,'uid:weekly/20260808T100000Z')", meetings: 2, activities: 1},
 		{name: "copies across sources", messages: "(100,1,'meeting_transcript'),(101,2,'meeting_transcript'),(102,1,'meeting_transcript'),(103,2,'calendar_event'),(104,1,'meeting_transcript')", recipients: "(100,2),(101,2),(102,2),(103,2),(104,2)", keys: "(100,'uid:planning@example.org/'),(101,'uid:planning@example.org/'),(104,'uid:planning@example.org/')", sources: "(1,'owner@example.com','granola'),(2,'copy@example.org','twenty')", meetings: 2, sourceCounts: []int64{2, 1}},
 		{name: "calendar only", messages: "(100,1,'calendar_event')", recipients: "(100,1),(100,2)", dailyOnly: true},
 	} {

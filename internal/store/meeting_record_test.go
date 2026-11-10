@@ -151,35 +151,27 @@ func TestMeetingDecisionsFollowMessageIdentity(t *testing.T) {
 }
 
 func TestMeetingDecisionReplacesUnexpandableCopy(t *testing.T) {
-	require, assert := require.New(t), assert.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, automatic := calendarFixture(t, st, "automatic", singleLinkRaw("automatic", "automatic@example.org"))
-	_, first := calendarFixture(t, st, "first", linkSeriesRaw)
-	_, second := calendarFixture(t, st, "second", linkSeriesRaw, "second@example.com")
-	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"automatic@example.org"}}`)
-	require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: first, Key: "20270314T100000Z"}))
-	require.NoError(st.UpsertMessageRawWithFormat(first, []byte(strings.Replace(linkSeriesRaw, "FREQ=WEEKLY", "FREQ=HOURLY", 1)), "gcal_json"))
-	require.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: second, Key: "20270314T100000Z"}))
-	require.NoError(st.UpsertMessageRawWithFormat(first, []byte(linkSeriesRaw), "gcal_json"))
-	links, err := meetingLinksForTest(t, st, note)
-	require.NoError(err)
-	require.Len(links, 1)
-	assert.Equal(formatMeetingOccurrence(OccurrenceRef{MessageID: automatic}), links[0].Ref)
-}
-
-func TestMeetingUnlinkReadableCopyAfterSeriesExceedsBudget(t *testing.T) {
-	require := require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, first := calendarFixture(t, st, "first", linkSeriesRaw)
-	_, second := calendarFixture(t, st, "second", linkSeriesRaw, "second@example.com")
-	_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
-	require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: first, Key: "20270314T100000Z"}))
-	calendarFixture(t, st, "first", `{"id":"series","iCalUID":"weekly@example.org","start":{"dateTime":"1800-01-01T10:00:00Z"},"end":{"dateTime":"1800-01-01T11:00:00Z"},"recurrence":["RRULE:FREQ=DAILY"]}`)
-	require.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: second, Key: "20270314T100000Z"}))
-	calendarFixture(t, st, "first", linkSeriesRaw)
-	links, err := meetingLinksForTest(t, st, note)
-	require.NoError(err)
-	assert.Empty(t, links)
+	for _, tc := range []struct{ name, raw string }{
+		{"unsupported", strings.Replace(linkSeriesRaw, "FREQ=WEEKLY", "FREQ=HOURLY", 1)},
+		{"over budget", `{"id":"series","iCalUID":"weekly@example.org","start":{"dateTime":"1800-01-01T10:00:00Z"},"end":{"dateTime":"1800-01-01T11:00:00Z"},"recurrence":["RRULE:FREQ=DAILY"]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, automatic := calendarFixture(t, st, "automatic", singleLinkRaw("automatic", "automatic@example.org"))
+			_, first := calendarFixture(t, st, "first", linkSeriesRaw)
+			_, second := calendarFixture(t, st, "second", linkSeriesRaw, "second@example.com")
+			_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"automatic@example.org"}}`)
+			require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: first, Key: "20270314T100000Z"}))
+			require.NoError(st.UpsertMessageRawWithFormat(first, []byte(tc.raw), "gcal_json"))
+			require.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: second, Key: "20270314T100000Z"}))
+			require.NoError(st.UpsertMessageRawWithFormat(first, []byte(linkSeriesRaw), "gcal_json"))
+			links, err := meetingLinksForTest(t, st, note)
+			require.NoError(err)
+			require.Len(links, 1)
+			assert.Equal(formatMeetingOccurrence(OccurrenceRef{MessageID: automatic}), links[0].Ref)
+		})
+	}
 }
 
 func TestMeetingUnlinkUnavailableOccurrence(t *testing.T) {
@@ -190,9 +182,7 @@ func TestMeetingUnlinkUnavailableOccurrence(t *testing.T) {
 	ref := OccurrenceRef{MessageID: master, Key: "20270314T100000Z"}
 	require.NoError(st.LinkMeetingContext(t.Context(), note, ref))
 	calendarFixture(t, st, "master", strings.Replace(linkSeriesRaw, "COUNT=6", "COUNT=1", 1))
-	t.Run("unavailable saved link", func(t *testing.T) {
-		assert.Empty(t, linkedMeetingRefs(t, st, note)[note])
-	})
+	assert.Empty(t, linkedMeetingRefs(t, st, note)[note])
 	require.Error(st.LinkMeetingContext(t.Context(), note, ref), "new links still require an available occurrence")
 	require.NoError(st.UnlinkMeetingContext(t.Context(), note, ref))
 	calendarFixture(t, st, "master", linkSeriesRaw)

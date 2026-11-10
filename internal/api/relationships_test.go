@@ -98,16 +98,16 @@ func newRelationshipIdentityAPIServer(
 // newsletter sender (relNewsletterID). Mirrors the scenario used by the
 // query-package fixture test, built directly as Parquet since the typed
 // TestDataBuilder lives in an unexported _test.go file in another package.
-func newRelationshipsDuckDBFixture(t *testing.T, now time.Time) *query.DuckDBEngine {
+func newRelationshipsDuckDBFixture(t *testing.T, now time.Time, meeting ...bool) *query.DuckDBEngine {
 	t.Helper()
-	engine, _ := newRelationshipsDuckDBFixtureWithDir(t, now)
+	engine, _ := newRelationshipsDuckDBFixtureWithDir(t, now, meeting...)
 	return engine
 }
 
 // newRelationshipsDuckDBFixtureWithDir is newRelationshipsDuckDBFixture plus
 // the analytics directory, for tests that need to mutate the committed cache
 // state file directly (e.g. simulating a real identity-revision bump).
-func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.DuckDBEngine, string) {
+func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time, meeting ...bool) (*query.DuckDBEngine, string) {
 	t.Helper()
 	requirementsForTest := require.New(t)
 	analyticsDir := t.TempDir()
@@ -131,6 +131,9 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.D
 		addMessage(relOwnerID, relAliceID, true, "email", now.AddDate(0, 0, -(3-i)))
 	}
 	addMessage(relAlice2ID, relOwnerID, false, "imessage", now.AddDate(0, 0, -1))
+	if len(meeting) > 0 && meeting[0] {
+		addMessage(relOwnerID, relAliceID, true, "meeting_transcript", now.AddDate(0, 0, -2))
+	}
 	for i := range 50 {
 		addMessage(relNewsletterID, relOwnerID, false, "email", now.AddDate(0, 0, -(10+i)))
 	}
@@ -253,7 +256,7 @@ func TestRelationshipsRanksAndGatesOverHTTP(t *testing.T) {
 	require := require.New(t)
 
 	now := time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC)
-	srv := newTestServerWithEngine(t, newRelationshipsDuckDBFixture(t, now))
+	srv := newTestServerWithEngine(t, newRelationshipsDuckDBFixture(t, now, true))
 
 	response := postExploreJSON(t, srv, "/api/v1/relationships", `{}`)
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
@@ -264,6 +267,7 @@ func TestRelationshipsRanksAndGatesOverHTTP(t *testing.T) {
 	assert.Equal(relAliceID, page.Rows[0].CanonicalID)
 	assert.Equal([]int64{relAliceID, relAlice2ID}, page.Rows[0].MemberIDs)
 	assert.Equal(int64(3), page.Rows[0].Signals.SentCount)
+	assert.Equal(int64(1), page.Rows[0].Signals.MeetingCount)
 	assert.NotEmpty(page.CacheRevision)
 
 	showAll := postExploreJSON(t, srv, "/api/v1/relationships", `{"show_all":true}`)

@@ -16,7 +16,7 @@ import (
 // conversation — two at 23:00/23:30 UTC on 2026-07-13, one at 00:30 UTC the
 // next day — plus one email and one meeting, all with the owner. Returns the
 // engine, the canonical (cluster) ID, and the three notable message IDs.
-func buildTimelineFixture(t *testing.T) (engine *DuckDBEngine, canonicalID, emailID, meetingID int64) {
+func buildTimelineFixture(t *testing.T, attended ...bool) (engine *DuckDBEngine, canonicalID, emailID, meetingID int64) {
 	t.Helper()
 	b := NewTestDataBuilder(t)
 	srcID := b.AddSource("owner@example.com")
@@ -67,6 +67,11 @@ func buildTimelineFixture(t *testing.T) (engine *DuckDBEngine, canonicalID, emai
 	})
 	b.AddFrom(meetingID, ownerID, "Owner")
 	b.AddTo(meetingID, pID, "Pat")
+	if len(attended) > 0 && attended[0] {
+		note := b.AddMessage(MessageOpt{SourceID: srcID, MessageType: "meeting_transcript", SentAt: time.Date(2026, 7, 11, 9, 0, 0, 0, time.UTC)})
+		b.AddFrom(note, ownerID, "Owner")
+		b.AddTo(note, pID, "Pat")
+	}
 
 	return b.BuildEngine(), canonicalID, emailID, meetingID
 }

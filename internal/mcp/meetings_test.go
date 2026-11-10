@@ -321,45 +321,19 @@ func TestMeetingLinkToolsRoundTrip(t *testing.T) {
 			require.False(result.IsError)
 			assert.Equal([]meetingBackendCall{tc.call}, backend.calls)
 			assert.Equal(tc.want, meetingStructuredContent(t, result))
-		})
-	}
-}
-
-func TestMeetingLinkToolsReportDaemonClientErrors(t *testing.T) {
-	backend := &meetingBackendFixture{}
-	ctx := t.Context()
-	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
-	serverSession, err := newMCPServer(ServeOptions{Engine: &querytest.MockEngine{}, Meetings: backend, MeetingLinks: true}, true).Connect(ctx, serverTransport, nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, serverSession.Close()) })
-	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "meeting-errors-test", Version: "1.0.0"}, nil)
-	session, err := client.Connect(ctx, clientTransport, nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, session.Close()) })
-	for _, tc := range []struct {
-		name, tool string
-		args       map[string]any
-		code       string
-	}{
-		{"record", ToolGetMeetingRecord, map[string]any{"ref": "msg:73"}, "meeting_not_found"},
-		{"suggest", ToolSuggestMeetingLinks, map[string]any{"ref": "msg:73"}, "invalid_argument"},
-		{"link", ToolLinkMeeting, map[string]any{"message_id": float64(73), "event": "evt:1"}, "invalid_argument"},
-		{"unlink", ToolUnlinkMeeting, map[string]any{"message_id": float64(73), "event": "evt:1"}, "invalid_argument"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			require := require.New(t)
-			status := 400
-			if tc.code == "meeting_not_found" {
-				status = 404
+			status, code := 400, "invalid_argument"
+			if tc.tool == ToolGetMeetingRecord {
+				status, code = 404, "meeting_not_found"
 			}
-			backend.err = &daemonclient.APIError{Status: status, Code: tc.code, Message: "fixture daemon refusal"}
-			result, err := session.CallTool(ctx, &sdkmcp.CallToolParams{Name: tc.tool, Arguments: tc.args})
+			backend.err = &daemonclient.APIError{Status: status, Code: code, Message: "fixture daemon refusal"}
+			t.Cleanup(func() { backend.err = nil })
+			result, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: tc.tool, Arguments: tc.args})
 			require.NoError(err)
 			require.True(result.IsError)
 			require.NotEmpty(result.Content)
 			content, ok := result.Content[0].(*sdkmcp.TextContent)
 			require.True(ok)
-			assert.Contains(t, content.Text, tc.code)
+			assert.Contains(content.Text, code)
 		})
 	}
 }

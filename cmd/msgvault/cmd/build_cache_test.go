@@ -1558,7 +1558,7 @@ func TestBuildCache_PublishesSnapshotWhenZeroCounterRunInterruptedDuringExport(t
 			assert.NotEqual(stateBefore, stateAfter, "snapshot publication replaces committed state")
 			stale := cacheNeedsBuild(dbPath, analyticsDir)
 			assert.True(stale.NeedsBuild, "run interrupted during export leaves the cache stale: %+v", stale)
-			assert.True(stale.FullRebuild, "partial snapshot needs a full rebuild: %+v", stale)
+			assert.True(stale.FullRebuild, "interrupted sync requires a full rebuild: %+v", stale)
 		})
 	}
 }
@@ -1643,7 +1643,7 @@ func TestBuildCache_PublishesSnapshotWhenOlderRunFailsDuringExport(t *testing.T)
 	buildCacheBeforeStateWriteHook = nil
 	stale := cacheNeedsBuild(dbPath, analyticsDir)
 	assert.True(stale.NeedsBuild, "older run failing during export leaves the cache stale: %+v", stale)
-	assert.True(stale.FullRebuild, "partial snapshot needs a full rebuild: %+v", stale)
+	assert.True(stale.FullRebuild, "interrupted sync requires a full rebuild: %+v", stale)
 
 	_, err = buildCache(dbPath, analyticsDir, false)
 	require.NoError(err)

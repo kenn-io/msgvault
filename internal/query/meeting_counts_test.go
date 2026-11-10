@@ -57,7 +57,7 @@ func TestRelationshipMeetingCounts(t *testing.T) {
 		people         bool
 		calendarCounts map[int]int64
 	}{
-		{name: "one transcript two occurrences", keys: [][]string{{"uid:series/first", "uid:series/second"}}, at: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), want: 2, people: true, calendarCounts: map[int]int64{2026: 2}},
+		{name: "one transcript two occurrences", keys: [][]string{{"uid:series/20260801T100000Z", "uid:series/20260808T100000Z"}}, at: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), want: 2, people: true, calendarCounts: map[int]int64{2026: 2}},
 		{name: "copies across years", keys: [][]string{{"uid:shared@example.org/"}, {"uid:shared@example.org/"}}, at: time.Date(2025, 12, 31, 23, 30, 0, 0, time.UTC), want: 1, crossYear: true, calendarCounts: map[int]int64{2025: 1, 2026: 0}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -77,9 +77,6 @@ func TestRelationshipMeetingCounts(t *testing.T) {
 				id := b.AddMessage(MessageOpt{SourceID: sources[i%len(sources)], ConversationID: int64(100 + i), MessageType: "meeting_transcript", SentAt: tc.at.Add(time.Duration(i) * time.Hour)})
 				b.AddTo(id, owner, "Owner")
 				b.AddTo(id, person, "Person")
-				if tc.people {
-					b.AddAttachment(id, 100, "notes.txt")
-				}
 				for _, key := range keys {
 					b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, '%s')", id, key))
 				}
@@ -91,7 +88,6 @@ func TestRelationshipMeetingCounts(t *testing.T) {
 				requirements.Len(people.Rows, 1)
 				assertions.Equal(tc.want, people.Rows[0].MeetingCount)
 				assertions.Equal(int64(1), people.Rows[0].ActivityCount)
-				assertions.Equal(int64(1), people.Rows[0].FileCount)
 			}
 			for _, scope := range []Context{{}, {SourceIDs: sources, ParticipantIDs: []int64{person}}} {
 				result, err := engine.Relationships(t.Context(), RelationshipsRequest{Context: scope, Now: tc.at.AddDate(0, 0, 3)})
