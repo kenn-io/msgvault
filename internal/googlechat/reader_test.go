@@ -86,7 +86,7 @@ func TestGoogleChatDates(t *testing.T) {
 		{"Monday, January 18, 2021 at 1:27:33\u202fPM UTC", "2021-01-18T13:27:33Z"},
 		{"Monday, January 18, 2021 at 01:27:33\u00a0AM UTC", "2021-01-18T01:27:33Z"},
 		{"Monday, January 18, 2021 at 1:27:33 PM PST", ""},
-		{"not a date", ""},
+		{"not a date UTC", ""},
 	} {
 		t.Run(tc.input, func(t *testing.T) {
 			got := parseDate(tc.input)

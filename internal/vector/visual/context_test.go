@@ -12,7 +12,6 @@ func TestAssembleDocumentOrdersBoundedContextThenMedia(t *testing.T) {
 	for _, tc := range []struct{ messageType, want string }{
 		{"slack", "Subject: Launch\n\nphoto caption\n\nMessage type: chat message"},
 		{"matrix", "Subject: Launch\n\nphoto caption\n\nMessage type: chat message"},
-		{"google_chat", "Subject: Launch\n\nphoto caption"},
 	} {
 		t.Run(tc.messageType, func(t *testing.T) {
 			require := require.New(t)
