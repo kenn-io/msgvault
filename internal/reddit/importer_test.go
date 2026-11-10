@@ -227,13 +227,11 @@ func TestImportOwnersAndPlainMarkerNames(t *testing.T) {
 			var account string
 			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT identifier FROM sources WHERE id=?"), summary.SourceID).Scan(&account))
 			assert.Equal(tc.want, account)
-			if tc.me == "unknown" {
-				var n int
-				require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM participant_identifiers WHERE identifier_type='reddit' AND identifier_value IN ('unknown','deleted')").Scan(&n))
-				assert.Equal(2, n)
-				require.Len(summary.Files, 1)
-				assert.Zero(summary.Files[0].UnknownSenders)
-			}
+			var n int
+			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM participant_identifiers WHERE identifier_type='reddit' AND identifier_value IN ('unknown','deleted')").Scan(&n))
+			assert.Equal(2, n)
+			require.Len(summary.Files, 1)
+			assert.Zero(summary.Files[0].UnknownSenders)
 		})
 	}
 }
@@ -298,40 +296,42 @@ func TestImportCoverageCountsExistingRecords(t *testing.T) {
 }
 
 func TestImportChatGrouping(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	root := t.TempDir()
-	require.NoError(os.WriteFile(filepath.Join(root, "chat_history.csv"), []byte("message_id,message,channel_url,channel_name,conversation_type,thread_parent_message_id,username\none,lantern,fictional-channel,Fictional garden,group,,u/Fictional_Peer\ntwo,reply,fictional-channel,Fictional garden,group,one,\n"), 0600))
-	st := testutil.NewTestStore(t)
-	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
-	require.NoError(err)
-	var kind, title string
-	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COALESCE(conversation_type,''),title FROM conversations").Scan(&kind, &title))
-	assert.Equal("chat", kind)
-	assert.Equal("Fictional garden", title)
-	var count int
-	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM conversations").Scan(&count))
-	assert.Equal(1, count)
-	var name string
-	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT p.display_name FROM participants p JOIN participant_identifiers pi ON pi.participant_id = p.id WHERE pi.identifier_value = 'fictional_peer'").Scan(&name))
-	assert.Equal("Fictional_Peer", name)
-}
+	t.Run("channel", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		root := t.TempDir()
+		require.NoError(os.WriteFile(filepath.Join(root, "chat_history.csv"), []byte("message_id,message,channel_url,channel_name,conversation_type,thread_parent_message_id,username\none,lantern,fictional-channel,Fictional garden,group,,u/Fictional_Peer\ntwo,reply,fictional-channel,Fictional garden,group,one,\n"), 0600))
+		st := testutil.NewTestStore(t)
+		_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
+		require.NoError(err)
+		var kind, title string
+		require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COALESCE(conversation_type,''),title FROM conversations").Scan(&kind, &title))
+		assert.Equal("chat", kind)
+		assert.Equal("Fictional garden", title)
+		var count int
+		require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM conversations").Scan(&count))
+		assert.Equal(1, count)
+		var name string
+		require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT p.display_name FROM participants p JOIN participant_identifiers pi ON pi.participant_id = p.id WHERE pi.identifier_value = 'fictional_peer'").Scan(&name))
+		assert.Equal("Fictional_Peer", name)
+	})
 
-func TestImportChatWithoutChannel(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	root := t.TempDir()
-	require.NoError(os.WriteFile(filepath.Join(root, "chat_history.csv"), []byte("message_id,message,channel_url\none,hello,channel\ntwo,reply,\nthree,later,channel\n"), 0600))
-	require.NoError(os.WriteFile(filepath.Join(root, "posts.csv"), []byte("id,title\npost,later\n"), 0600))
-	st := testutil.NewTestStore(t)
-	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
-	require.NoError(err)
-	assert.Equal(4, summary.Added)
-	var n int
-	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&n))
-	assert.Equal(4, n)
-	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM conversations WHERE source_conversation_id LIKE 'chat:item:%'").Scan(&n))
-	assert.Equal(1, n)
+	t.Run("without channel", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		root := t.TempDir()
+		require.NoError(os.WriteFile(filepath.Join(root, "chat_history.csv"), []byte("message_id,message,channel_url\none,hello,channel\ntwo,reply,\nthree,later,channel\n"), 0600))
+		require.NoError(os.WriteFile(filepath.Join(root, "posts.csv"), []byte("id,title\npost,later\n"), 0600))
+		st := testutil.NewTestStore(t)
+		summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
+		require.NoError(err)
+		assert.Equal(4, summary.Added)
+		var n int
+		require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&n))
+		assert.Equal(4, n)
+		require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM conversations WHERE source_conversation_id LIKE 'chat:item:%'").Scan(&n))
+		assert.Equal(1, n)
+	})
 }
 
 func TestImportFailureRetainsCompletedRows(t *testing.T) {
@@ -440,7 +440,7 @@ func TestImportPermalinks(t *testing.T) {
 	assert.Len(results, 6)
 }
 
-func TestImportDateOrder(t *testing.T) {
+func TestImportOffsetDateFilter(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	root := t.TempDir()
