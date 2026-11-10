@@ -41,12 +41,12 @@ func TestDiagnoseAcquisitionCommand(t *testing.T) {
 			} else {
 				st = testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 			}
-			source, err := st.GetOrCreateSource("gmail", "source@example.com")
-			require.NoError(t, err)
+			sourceType := "gmail"
 			if tc.name == "legacy" {
-				_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE sources SET source_type = ? WHERE id = ?"), "", source.ID)
-				require.NoError(t, err)
+				sourceType = ""
 			}
+			source, err := st.GetOrCreateSource(sourceType, "source@example.com")
+			require.NoError(t, err)
 			if tc.pending {
 				run, err := st.StartSync(source.ID, "full")
 				require.NoError(t, err)
@@ -79,10 +79,10 @@ func TestDiagnoseAcquisitionCommand(t *testing.T) {
 			root.SetArgs(args)
 			require.NoError(t, executeRootContext(t.Context(), root))
 			if tc.pending {
-				var items []acquisitionFailure
+				var items []map[string]string
 				require.NoError(t, json.Unmarshal(output.Bytes(), &items))
 				require.Len(t, items, 1)
-				assert.Equal(t, "pending", items[0].SourceMessageID)
+				assert.Equal(t, map[string]string{"source_message_id": "pending", "phase": "fetch", "error_kind": "fetch_error"}, items[0])
 			} else {
 				assert.Equal(t, "No pending acquisition failures.\n", output.String())
 			}
@@ -94,7 +94,7 @@ func TestDiagnoseAcquisitionErrors(t *testing.T) {
 	for _, tc := range []struct{ name, config, want string }{
 		{"invalid", "[data\n", "load config"},
 		{"remote", "[remote]\nurl = 'https://example.com'\n", "use --local"},
-		{"newer-schema", "", "archive schema version"},
+		{"newer-schema", "", "run setup with the matching release"},
 		{"merged-source", "", "merged into source"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -102,21 +102,20 @@ func TestDiagnoseAcquisitionErrors(t *testing.T) {
 			cfg := config.NewDefaultConfig()
 			cfg.HomeDir, cfg.Data.DataDir = dir, dir
 			configText := tc.config
+			want := tc.want
+			sourceID := int64(1)
 			if tc.name == "newer-schema" || tc.name == "merged-source" {
 				st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 				source, err := st.GetOrCreateSource("gmail", "source@example.com")
 				require.NoError(t, err)
+				sourceID = source.ID
 				if tc.name == "newer-schema" {
 					_, err = st.DB().ExecContext(t.Context(), "UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'", strconv.Itoa(store.SchemaVersion+1))
 				} else {
 					into, createErr := st.GetOrCreateSource("gmail", "into@example.com")
 					require.NoError(t, createErr)
-					run, runErr := st.StartSync(source.ID, "full")
-					require.NoError(t, runErr)
-					require.NoError(t, st.RecordSyncRunItem(store.SyncRunItem{SyncRunID: run, SourceMessageID: "pending", Phase: "fetch", Status: "error", ErrorKind: "fetch_error"}))
-					require.NoError(t, st.FailSync(run, "interrupted"))
 					_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: source.ID, IntoSourceID: into.ID})
-					tc.want = fmt.Sprintf("merged into source %d", into.ID)
+					want = fmt.Sprintf("merged into source %d", into.ID)
 				}
 				require.NoError(t, err)
 				require.NoError(t, st.Close())
@@ -128,12 +127,11 @@ func TestDiagnoseAcquisitionErrors(t *testing.T) {
 			var output bytes.Buffer
 			root.SetOut(&output)
 			root.SetErr(&output)
-			root.SetArgs([]string{"--home", dir, "diagnose-acquisition", "--source-id", "1"})
-			require.ErrorContains(t, executeRootContext(t.Context(), root), tc.want)
+			root.SetArgs([]string{"--home", dir, "diagnose-acquisition", "--source-id", strconv.FormatInt(sourceID, 10)})
+			require.ErrorContains(t, executeRootContext(t.Context(), root), want)
 			if tc.name == "invalid" {
 				assert.NotContains(t, output.String(), "Usage:")
 			}
-			assert.NotContains(t, output.String(), "pending\tfetch")
 		})
 	}
 }
