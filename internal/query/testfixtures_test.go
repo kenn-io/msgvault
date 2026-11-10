@@ -723,6 +723,7 @@ func (b *TestDataBuilder) Build() (string, func()) {
 
 	pb := newParquetBuilder(b.t)
 	pb.unsentMessages = b.unsentMessages
+	pb.legacyRecipientSchema = b.legacyRecipientSchema
 	b.addMessageTables(pb)
 	b.addAuxiliaryTables(pb)
 	b.addAttachmentsTable(pb)
@@ -843,9 +844,10 @@ type parquetTable struct {
 
 // parquetBuilder creates a temp directory with Parquet test data files.
 type parquetBuilder struct {
-	t              testing.TB
-	tables         []parquetTable
-	unsentMessages string
+	t                     testing.TB
+	tables                []parquetTable
+	unsentMessages        string
+	legacyRecipientSchema bool
 }
 
 // Like dbtest.schemaTemplates and testutil.sqliteTemplate, retain templates in
@@ -870,7 +872,7 @@ func (b *parquetBuilder) contentKey() [sha256.Size]byte {
 			_, _ = fmt.Fprintf(h, "%d:%s", len(field), field)
 		}
 	}
-	_, _ = fmt.Fprintf(h, "%d:%s", len(b.unsentMessages), b.unsentMessages)
+	_, _ = fmt.Fprintf(h, "%d:%s:%t", len(b.unsentMessages), b.unsentMessages, b.legacyRecipientSchema)
 	return [sha256.Size]byte(h.Sum(nil))
 }
 
@@ -958,6 +960,17 @@ func (b *parquetBuilder) buildTemplate() (fstest.MapFS, identityindex.BuildResul
 	require.NoError(b.t, err, "open duckdb")
 	defer func() { _ = db.Close() }()
 	b.writeParquetFiles(db, tmpDir)
+	var legacyRecipients []byte
+	var recipientPath string
+	if b.legacyRecipientSchema {
+		recipientPath = filepath.Join(tmpDir, "message_recipients", "message_recipients.parquet")
+		legacyRecipients, err = os.ReadFile(recipientPath)
+		require.NoError(b.t, err)
+		currentPath := recipientPath + ".current"
+		_, err = db.ExecContext(b.t.Context(), "COPY (SELECT *, NULL::VARCHAR AS email_address, NULL::VARCHAR AS envelope_address FROM read_parquet('"+escapePath(recipientPath)+"')) TO '"+escapePath(currentPath)+"' (FORMAT PARQUET)")
+		require.NoError(b.t, err)
+		require.NoError(b.t, os.Rename(currentPath, recipientPath))
+	}
 	derived, err := identityindex.Build(b.t.Context(), db, identityindex.BuildOptions{
 		Mode:           identityindex.ModeFull,
 		StagedBaseRoot: tmpDir,
@@ -965,6 +978,9 @@ func (b *parquetBuilder) buildTemplate() (fstest.MapFS, identityindex.BuildResul
 		UnsentMessages: b.unsentMessages,
 	})
 	require.NoError(b.t, err, "derive identity fixture datasets")
+	if b.legacyRecipientSchema {
+		require.NoError(b.t, os.WriteFile(recipientPath, legacyRecipients, 0o600))
+	}
 	files := fstest.MapFS{}
 	err = fs.WalkDir(os.DirFS(tmpDir), ".", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
