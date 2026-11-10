@@ -65,7 +65,7 @@ describe('RelationshipsTab', () => {
     await fireEvent.input(input, { target: { value: 'child' } });
     expect(document.getElementById(input.getAttribute('aria-activedescendant')!)?.textContent?.trim()).toBe('Child');
     await fireEvent.keyDown(input, { key: 'Enter' });
-    expect(screen.getByRole('button', { name: 'Connection type: is a child of' })).toBeDefined();
+    expect(screen.queryByRole('combobox', { name: 'Connection type' })).toBeNull();
   });
 
   it('shows a type failure with retry, then query-specific empty copy', async () => {

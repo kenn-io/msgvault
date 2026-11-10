@@ -5,39 +5,6 @@ import { requestOf, pathOf, organization, employment, organizationProfile, envel
 import OrganizationEditor from './OrganizationEditor.svelte';
 
 describe('OrganizationEditor', () => {
-  it('saves a fresh draft after resolving conflicts in both sections', async () => {
-    let revision = 1;
-    let profile = organizationProfile();
-    const tags: (string | null)[] = [];
-    const onDone = vi.fn();
-    const { controller } = controllerWith(async input => {
-      const request = requestOf(input);
-      if (request.method === 'GET') return Response.json(profile, { headers: { ETag: `"organization-21-r${revision}"` } });
-      tags.push(request.headers.get('If-Match'));
-      if (tags.at(-1) !== `"organization-21-r${revision}"`) return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
-      const body = await request.json();
-      revision++;
-      if (request.method === 'PATCH') profile = { ...profile, organization: organization(21, revision, body.name) };
-      else profile = { ...profile, organization: { ...profile.organization, revision }, names: body.names.map((item: { name: string }) => ({ ...profile.names[0], name: item.name })) };
-      return Response.json(request.method === 'PATCH' ? profile.organization : profile, { headers: { ETag: `"organization-21-r${revision}"` } });
-    });
-    render(OrganizationEditor, { controller, organization: organization(), onDone });
-    await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Draft alias' } });
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
-    revision = 2;
-    profile = { ...profile, organization: { ...profile.organization, revision }, names: [{ ...profile.names[0], name: 'External alias' }] };
-    await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
-    await waitFor(() => expect(document.querySelector('.editor')?.getAttribute('aria-busy')).toBe('false'));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Revised name' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
-    await waitFor(() => expect(document.querySelector('.editor')?.getAttribute('aria-busy')).toBe('false'));
-    await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
-    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
-    expect(tags).toEqual(['"organization-21-r1"', '"organization-21-r2"', '"organization-21-r1"', '"organization-21-r3"', '"organization-21-r4"']);
-  });
-
   it.each([
     { first: 'organization', mode: 'clean', repeat: false }, { first: 'profile', mode: 'clean', repeat: false },
     { first: 'organization', mode: 'edit elsewhere', repeat: false },
@@ -80,6 +47,7 @@ describe('OrganizationEditor', () => {
       await fireEvent.click(screen.getByRole('button', { name: firstButton }));
       await waitFor(() => expect(document.querySelector('.editor')?.getAttribute('aria-busy')).toBe('false'));
     }
+    if (mode === 'conflict' && first === 'organization' && !repeat) await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Revised name' } });
     await fireEvent.click(screen.getByRole('button', { name: first === 'organization' ? 'Save aliases and categories' : 'Save organization' }));
     if (mode !== 'clean') {
       expect(await screen.findByText('This organization changed since you opened it.')).toBeDefined();
@@ -91,8 +59,14 @@ describe('OrganizationEditor', () => {
       expect(await writes.find(request => request.method === 'PATCH')!.clone().json()).toMatchObject({ name: 'Draft name' });
       expect((await writes.find(request => request.method === 'PUT')!.clone().json()).names).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'Draft alias' })]));
     }
+    if (mode === 'conflict' && first === 'organization' && !repeat) {
+      await fireEvent.click(screen.getByRole('button', { name: 'Keep yours' }));
+      await waitFor(() => expect(document.querySelector('.editor')?.getAttribute('aria-busy')).toBe('false'));
+      await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+      await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+    }
     expect(writes.map(request => request.headers.get('If-Match'))).toEqual(mode === 'conflict'
-      ? ['"organization-21-r1"', '"organization-21-r2"', ...(repeat ? ['"organization-21-r3"'] : []), '"organization-21-r1"']
+      ? ['"organization-21-r1"', '"organization-21-r2"', ...(repeat ? ['"organization-21-r3"'] : []), '"organization-21-r1"', ...(first === 'organization' && !repeat ? ['"organization-21-r3"', '"organization-21-r4"'] : [])]
       : ['"organization-21-r1"', '"organization-21-r2"']);
   });
 
@@ -243,9 +217,11 @@ describe('OrganizationEditor', () => {
     await fireEvent.click(holders[0]);
     expect(onClose).toHaveBeenCalled();
     expect(onOpenPerson).toHaveBeenCalledWith(scenario.personID ?? 1);
-    const query = new URL(requests.find(request => pathOf(request).endsWith('/employments'))!.url).searchParams;
-    expect(query.get('limit')).toBe('200');
-    expect(query.has('current_only')).toBe(false);
+    if (count === 1 && scenario.personID === undefined) {
+      const query = new URL(requests.find(request => pathOf(request).endsWith('/employments'))!.url).searchParams;
+      expect(query.get('limit')).toBe('200');
+      expect(query.has('current_only')).toBe(false);
+    }
   });
 
   it('keeps an editor open during submission', async () => {

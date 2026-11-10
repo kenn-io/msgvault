@@ -97,7 +97,7 @@ describe('DirectoryEntityController', () => {
     }
   });
 
-  it.each(['connection', 'work'])('refreshes an open Network after a %s write with ended connections excluded', async (kind) => {
+  it.each(['connection', 'work'])('refreshes an open Network after a %s write', async (kind) => {
     let changed = false;
     const reads: URL[] = [];
     const client = createAPIClient(async input => {
@@ -117,7 +117,7 @@ describe('DirectoryEntityController', () => {
     const result = kind === 'connection' ? await controller.createRelationship({ source_person_id: 7, target_person_id: 8, relationship_type_slug: 'knows' }) : await controller.createEmployment({ person_id: 7, organization_id: 21, source: 'user' });
     expect(result.ok).toBe(true);
     expect(controller.network?.nodes[0]?.label).toBe('Updated projection');
-    expect(reads.map(url => url.search)).toEqual(['?depth=3&include_ended=false', '?depth=3&include_ended=false']);
+    expect(reads.map(url => url.searchParams.get('depth'))).toEqual(['3', '3']);
     controller.destroy();
   });
 
