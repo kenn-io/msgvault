@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"fmt"
+	"slices"
 
 	"go.kenn.io/msgvault/internal/mime"
 )
@@ -33,18 +34,45 @@ func (s *Store) ReconcilePstEmailThreadsContext(ctx context.Context, sourceID in
 			return err
 		}
 		facts.join(groups)
-		return s.applyConversationThreadGroups(ctx, tx, sourceID, "email", groups)
+		return s.applyPstThreadGroups(ctx, tx, sourceID, groups)
 	})
 }
 
-func loadPstThreadGroups(ctx context.Context, tx *loggedTx, sourceID int64) (*conversationThreadGroups, error) {
+// pstThreadGroups is a union-find over one source's email conversations.
+type pstThreadGroups struct {
+	parents map[int64]int64
+	keys    map[string]int64
+}
+
+func (g *pstThreadGroups) find(id int64) int64 {
+	root := id
+	for g.parents[root] != root {
+		root = g.parents[root]
+	}
+	for g.parents[id] != id {
+		next := g.parents[id]
+		g.parents[id] = root
+		id = next
+	}
+	return root
+}
+
+func (g *pstThreadGroups) join(a, b int64) {
+	a, b = g.find(a), g.find(b)
+	if a > b {
+		a, b = b, a
+	}
+	g.parents[b] = a
+}
+
+func loadPstThreadGroups(ctx context.Context, tx *loggedTx, sourceID int64) (*pstThreadGroups, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT id, source_conversation_id FROM conversations
    WHERE source_id = ? AND conversation_type = 'email_thread' ORDER BY id`, sourceID)
 	if err != nil {
 		return nil, fmt.Errorf("list PST conversations: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	groups := &conversationThreadGroups{parents: make(map[int64]int64), keys: make(map[string]int64)}
+	groups := &pstThreadGroups{parents: make(map[int64]int64), keys: make(map[string]int64)}
 	for rows.Next() {
 		var id int64
 		var key sql.NullString
@@ -62,11 +90,21 @@ func loadPstThreadGroups(ctx context.Context, tx *loggedTx, sourceID int64) (*co
 	return groups, rows.Close()
 }
 
+type pstIdentity struct {
+	conversation int64
+	count        int
+}
+
+type pstKeyedConversation struct {
+	conversation int64
+	key          string
+}
+
 // pstThreadFacts holds the message facts that connect conversations.
 type pstThreadFacts struct {
-	identities map[string]threadIdentity
-	parents    []threadKeyedConversation
-	threadKeys []threadKeyedConversation
+	identities map[string]pstIdentity
+	parents    []pstKeyedConversation
+	threadKeys []pstKeyedConversation
 }
 
 type pstThreadMetadata struct {
@@ -75,7 +113,7 @@ type pstThreadMetadata struct {
 }
 
 func loadPstThreadFacts(
-	ctx context.Context, tx *loggedTx, sourceID int64, groups *conversationThreadGroups,
+	ctx context.Context, tx *loggedTx, sourceID int64, groups *pstThreadGroups,
 ) (*pstThreadFacts, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT id, conversation_id, rfc822_message_id, metadata FROM messages
    WHERE source_id = ? AND message_type = 'email' AND deleted_at IS NULL`, sourceID)
@@ -83,7 +121,7 @@ func loadPstThreadFacts(
 		return nil, fmt.Errorf("list PST thread facts: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	facts := &pstThreadFacts{identities: make(map[string]threadIdentity)}
+	facts := &pstThreadFacts{identities: make(map[string]pstIdentity)}
 	for rows.Next() {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -110,10 +148,10 @@ func loadPstThreadFacts(
 			return nil, fmt.Errorf("decode PST thread metadata for message %d: %w", id, err)
 		}
 		if key := mime.NormalizeMessageID(fields.Parent); key != "" {
-			facts.parents = append(facts.parents, threadKeyedConversation{conversation: conv, key: key})
+			facts.parents = append(facts.parents, pstKeyedConversation{conversation: conv, key: key})
 		}
 		if key := mime.NormalizeMessageID(fields.ThreadKey); key != "" {
-			facts.threadKeys = append(facts.threadKeys, threadKeyedConversation{conversation: conv, key: key})
+			facts.threadKeys = append(facts.threadKeys, pstKeyedConversation{conversation: conv, key: key})
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -122,7 +160,7 @@ func loadPstThreadFacts(
 	return facts, rows.Close()
 }
 
-func (f *pstThreadFacts) join(groups *conversationThreadGroups) {
+func (f *pstThreadFacts) join(groups *pstThreadGroups) {
 	// Messages that share a thread key belong together even when no
 	// conversation or archived message carries that key, such as a References
 	// root that is missing from the archive.
@@ -151,4 +189,44 @@ func (f *pstThreadFacts) join(groups *conversationThreadGroups) {
 			groups.join(parent.conversation, identity.conversation)
 		}
 	}
+}
+
+func (s *Store) applyPstThreadGroups(ctx context.Context, tx *loggedTx, sourceID int64, groups *pstThreadGroups) error {
+	ids := make([]int64, 0, len(groups.parents))
+	for id := range groups.parents {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	affected := make(map[int64]bool)
+	for _, id := range ids {
+		target := groups.find(id)
+		if id == target {
+			continue
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE messages SET conversation_id = ?
+   WHERE source_id = ? AND conversation_id = ? AND message_type = 'email' AND deleted_at IS NULL`,
+			target, sourceID, id)
+		if err != nil {
+			return fmt.Errorf("move PST conversation: %w", err)
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("count moved PST messages: %w", err)
+		}
+		if count > 0 {
+			affected[id] = true
+			affected[target] = true
+		}
+	}
+	if len(affected) == 0 {
+		return nil
+	}
+	for _, id := range ids {
+		if affected[id] {
+			if err := s.recomputeConversationStatsWith(boundQuerier{ctx: ctx, q: tx}, "id = ?", id); err != nil {
+				return err
+			}
+		}
+	}
+	return s.bumpDerivedDataRevisionContext(ctx, tx)
 }

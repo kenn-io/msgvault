@@ -6,9 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"regexp"
-	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -65,32 +65,13 @@ func openExport(ctx context.Context, dir, me string, summary *ImportSummary) (*e
 	}
 	r := &exportReader{root: root, owner: owner}
 	fail := func(err error) (*exportReader, error) { _ = root.Close(); return nil, err }
-	d, err := root.Open(".")
+	// Directory order must not decide which original wins an overlap; fs.ReadDir sorts by name.
+	entries, err := fs.ReadDir(root.FS(), ".")
 	if err != nil {
 		return fail(err)
 	}
-	// Directory order must not decide which original wins an overlap.
-	var names []string
-	for {
-		if err := ctx.Err(); err != nil {
-			return fail(errors.Join(err, d.Close()))
-		}
-		entries, err := d.ReadDir(256)
-		for _, e := range entries {
-			names = append(names, e.Name())
-		}
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				err = nil
-			}
-			if err = errors.Join(err, d.Close()); err != nil {
-				return fail(err)
-			}
-			break
-		}
-	}
-	sort.Strings(names)
-	for _, name := range names {
+	for _, entry := range entries {
+		name := entry.Name()
 		if err := ctx.Err(); err != nil {
 			return fail(err)
 		}
@@ -156,13 +137,6 @@ func (r *exportReader) rows(ctx context.Context, file csvFile, summary *FileSumm
 			retErr = fmt.Errorf("reddit: %s: %w", file.name, retErr)
 		}
 	}()
-	info, err := f.Stat()
-	if err != nil {
-		return err
-	}
-	if !info.Mode().IsRegular() {
-		return errors.New("nonregular CSV")
-	}
 	reader := csv.NewReader(textutil.WithoutUTF8BOM(&export.ContextReader{Context: ctx, Reader: f}))
 	headers, err := reader.Read()
 	if err != nil {
