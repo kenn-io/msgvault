@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/clirun"
 	imapclient "go.kenn.io/msgvault/internal/imap"
+	"go.kenn.io/msgvault/internal/oauth"
 )
 
 // passwordMethod describes how to read the password.
@@ -182,7 +183,7 @@ Examples:
 			fmt.Printf("  Note: Password stored on disk at %s\n", imapclient.CredentialsPath(cfg.TokensDir(), identifier))
 			fmt.Println()
 			fmt.Println("You can now run:")
-			fmt.Printf("  msgvault sync-full %s\n", identifier)
+			oauth.PrintHeadlessCommand(os.Stdout, "msgvault", "sync-full", "--", identifier)
 
 			return nil
 		},

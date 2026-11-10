@@ -3,11 +3,13 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
 	imapclient "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/microsoft"
+	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -225,7 +227,7 @@ func runAddO365Local(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Identifier: %s\n", identifier)
 	fmt.Println()
 	fmt.Println("You can now run:")
-	fmt.Printf("  msgvault sync-full -- %s\n", email)
+	oauth.PrintHeadlessCommand(os.Stdout, "msgvault", "sync-full", "--", email)
 
 	return nil
 }
@@ -323,7 +325,7 @@ func runAddO365GraphLocal(cmd *cobra.Command, email string, mailWrite bool) erro
 	fmt.Printf("  Email: %s\n", email)
 	fmt.Println()
 	fmt.Println("You can now run:")
-	fmt.Printf("  msgvault sync -- %s\n", email)
+	oauth.PrintHeadlessCommand(os.Stdout, "msgvault", "sync", "--", email)
 	return nil
 }
 

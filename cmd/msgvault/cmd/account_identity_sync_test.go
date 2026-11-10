@@ -17,6 +17,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/emersion/go-imap/v2/imapserver"
+	"github.com/emersion/go-imap/v2/imapserver/imapmemserver"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -46,7 +48,7 @@ func TestAddServiceAccountDefaultIdentityScheduledSync(t *testing.T) {
 		case "POST https://token.example.com/oauth2":
 			body = `{"access_token":"synthetic-token","token_type":"Bearer","expires_in":3600}`
 		case "GET https://gmail.googleapis.com/gmail/v1/users/me/profile":
-			body = `{"emailAddress":"user@example.com","historyId":"100"}`
+			body = `{"emailAddress":"o'brien@example.com","historyId":"100"}`
 		default:
 			return nil, fmt.Errorf("unexpected request: %s %s", req.Method, req.URL)
 		}
@@ -76,7 +78,7 @@ func TestAddServiceAccountDefaultIdentityScheduledSync(t *testing.T) {
 		optOut := flag != "--no-default-identity=false"
 		cmd := &cobra.Command{Use: addAccountUse, RunE: runAddAccountLocal}
 		registerAddAccountFlags(cmd)
-		args := []string{"user@example.com"}
+		args := []string{"o'brien@example.com"}
 		if flag != "" {
 			args = append(args, flag)
 		}
@@ -85,16 +87,17 @@ func TestAddServiceAccountDefaultIdentityScheduledSync(t *testing.T) {
 		err := cmd.ExecuteContext(ctx)
 		output := stopCapture()
 		require.NoError(err)
-		assert.Contains(output, "msgvault sync-full -- user@example.com")
+		assert.Contains(output, `msgvault sync-full -- 'o'\''brien@example.com'`)
+		assert.Contains(output, `msgvault sync-full -- 'o''brien@example.com'`)
 		st, err := store.Open(cfg.DatabaseDSN())
 		require.NoError(err)
 		t.Cleanup(func() { _ = st.Close() })
-		src, err := findGmailSource(st, "user@example.com")
+		src, err := findGmailSource(st, "o'brien@example.com")
 		require.NoError(err)
 		// Seed the cursor of an already-synced mailbox so this scheduled run
 		// completes with no new messages.
 		require.NoError(st.UpdateSourceSyncCursor(src.ID, "100"))
-		summary, err := runScheduledGmailSync(ctx, "user@example.com", src, st, nil, invocationFromContext(ctx))
+		summary, err := runScheduledGmailSync(ctx, "o'brien@example.com", src, st, nil, invocationFromContext(ctx))
 		require.NoError(err)
 		assert.Zero(summary.Errors)
 		ids, err := st.ListAccountIdentities(src.ID)
@@ -103,12 +106,12 @@ func TestAddServiceAccountDefaultIdentityScheduledSync(t *testing.T) {
 			assert.Empty(ids, "scheduled sync must preserve the service-account opt-out")
 		} else {
 			require.Len(ids, 1)
-			assert.Equal("user@example.com", ids[0].Address)
+			assert.Equal("o'brien@example.com", ids[0].Address)
 			if flag == "--no-default-identity=false" {
-				removed, err := st.RemoveAccountIdentity(src.ID, "user@example.com")
+				removed, err := st.RemoveAccountIdentity(src.ID, "o'brien@example.com")
 				require.NoError(err)
 				require.EqualValues(1, removed)
-				summary, err = runScheduledGmailSync(ctx, "user@example.com", src, st, nil, invocationFromContext(ctx))
+				summary, err = runScheduledGmailSync(ctx, "o'brien@example.com", src, st, nil, invocationFromContext(ctx))
 				require.NoError(err)
 				assert.Zero(summary.Errors)
 				ids, err = st.ListAccountIdentities(src.ID)
@@ -260,7 +263,7 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 			cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home},
 				Microsoft: config.MicrosoftConfig{ClientID: "synthetic-client"}}
 			ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-			const email = "user@example.com"
+			const email = "o'brien@example.com"
 			mgr := microsoft.NewManager(cfg.Microsoft.ClientID, "common", cfg.Microsoft.EffectiveRedirectURI(), cfg.TokensDir(), testDiscardLogger())
 			require.NoError(os.MkdirAll(cfg.TokensDir(), 0700))
 			require.NoError(os.WriteFile(mgr.TokenPath(email), []byte(`{"access_token":"synthetic-token"}`), 0600))
@@ -276,7 +279,8 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 				output := stopCapture()
 				require.NoError(err)
 				if tc.name != "teams" {
-					assert.Contains(output, " -- "+email)
+					assert.Contains(output, ` -- 'o'\''brien@example.com'`)
+					assert.Contains(output, ` -- 'o''brien@example.com'`)
 				}
 				st, err := store.Open(cfg.DatabaseDSN())
 				require.NoError(err)
@@ -303,4 +307,40 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAddIMAPFirstSyncCommandQuotesUsername(t *testing.T) {
+	const username = "reader$tag"
+	savedHost, savedPort, savedUsername := imapHost, imapPort, imapUsername
+	savedNoTLS, savedSTARTTLS, savedNoDefault := imapNoTLS, imapSTARTTLS, noDefaultIdentityAddImap
+	t.Cleanup(func() {
+		imapHost, imapPort, imapUsername = savedHost, savedPort, savedUsername
+		imapNoTLS, imapSTARTTLS, noDefaultIdentityAddImap = savedNoTLS, savedSTARTTLS, savedNoDefault
+	})
+	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
+	t.Setenv("MSGVAULT_IMAP_PASSWORD", testutil.IMAPTestPassword)
+	mem := imapmemserver.New()
+	user := imapmemserver.NewUser(username, testutil.IMAPTestPassword)
+	require.NoError(t, user.Create("INBOX", nil))
+	mem.AddUser(user)
+	server := imapserver.New(&imapserver.Options{InsecureAuth: true, NewSession: func(*imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
+		return mem.NewSession(), nil, nil
+	}})
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+	host, port, err := net.SplitHostPort(listener.Addr().String())
+	require.NoError(t, err)
+	home := t.TempDir()
+	cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}}
+	cmd := newAddIMAPCmd()
+	cmd.SetArgs([]string{"--host", host, "--port", port, "--username", username, "--no-tls"})
+	stop := captureStdout(t)
+	err = cmd.ExecuteContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+	output := stop()
+	require.NoError(t, err)
+	assert.Contains(t, output, "POSIX shell:")
+	assert.Contains(t, output, "PowerShell 7.3+:")
+	assert.Contains(t, output, "msgvault sync-full -- 'imap://reader$tag@"+net.JoinHostPort(host, port)+"'")
 }
