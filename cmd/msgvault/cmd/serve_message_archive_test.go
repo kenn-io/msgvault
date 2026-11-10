@@ -7,10 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"golang.org/x/oauth2"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/mail"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -29,11 +29,15 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/emailtags"
 	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/pkg/client/generated"
+	"golang.org/x/oauth2"
 )
 
 type archiveProviderFixture struct {
+	connects     atomic.Int64
 	writes       atomic.Int64
 	failReadback atomic.Bool
 }
@@ -94,11 +98,10 @@ func newArchiveProviderFixture(t *testing.T) *archiveProviderFixture {
 	return fixture
 }
 
-func TestArchiveMessageDaemonEndToEnd(t *testing.T) {
+func newArchiveDaemon(t *testing.T) (*store.Store, *store.Source, int64, *storeAPIAdapter, string, *daemonclient.Client, *archiveProviderFixture) {
+	t.Helper()
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "account@example.test")
-	require.NoError(t, err)
-	other, err := st.GetOrCreateSource("gmail", "other@example.test")
 	require.NoError(t, err)
 	sender, err := st.EnsureParticipant("codes@example.test", "Code Sender", "example.test")
 	require.NoError(t, err)
@@ -110,9 +113,8 @@ func TestArchiveMessageDaemonEndToEnd(t *testing.T) {
 	cfg.Data.DataDir = cfg.HomeDir
 	cfg.OAuth.ClientSecrets = filepath.Join(cfg.HomeDir, "no-credentials.json")
 	provider := newArchiveProviderFixture(t)
-	connects := 0
 	adapter := &storeAPIAdapter{store: st, config: cfg, logger: slog.New(slog.DiscardHandler), emailTagClientFactory: func(context.Context, *store.Source) (gmail.API, error) {
-		connects++
+		provider.connects.Add(1)
 		return gmail.NewClient(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "synthetic-fixture-token"}), gmail.WithRateLimiter(gmail.NewRateLimiter(1000))), nil
 	}, draftCacheRefresh: func(context.Context, string) error { return nil }}
 	srv := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: adapter, Logger: slog.New(slog.DiscardHandler)})
@@ -122,6 +124,13 @@ func TestArchiveMessageDaemonEndToEnd(t *testing.T) {
 	owner, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "owner", AllowInsecure: true})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, owner.Close()) })
+	return st, source, id, adapter, server.URL, owner, provider
+}
+
+func TestArchiveMessageDaemonEndToEnd(t *testing.T) {
+	st, source, id, adapter, serverURL, owner, provider := newArchiveDaemon(t)
+	other, err := st.GetOrCreateSource("gmail", "other@example.test")
+	require.NoError(t, err)
 	for _, tc := range []struct {
 		name    string
 		perms   []string
@@ -144,24 +153,11 @@ func TestArchiveMessageDaemonEndToEnd(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, token.Sources, 1)
 			assert.ElementsMatch(t, tc.senders, token.Sources[0].ArchiveSenders)
-			views, err := owner.ListAgentTokens(t.Context())
-			require.NoError(t, err)
-			found := false
-			for _, view := range views {
-				if view.ID == token.ID {
-					found = true
-					assert.ElementsMatch(t, tc.senders, view.Sources[0].ArchiveSenders)
-				}
-			}
-			assert.True(t, found)
-			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AgentToken: token.Secret, AllowInsecure: true})
+			client, err := daemonclient.New(daemonclient.Config{URL: serverURL, AgentToken: token.Secret, AllowInsecure: true})
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, client.Close()) })
-			self, err := client.AgentTokenSelf(t.Context())
-			require.NoError(t, err)
-			assert.ElementsMatch(t, tc.senders, self.Sources[0].ArchiveSenders)
 			archived := true
-			before := connects
+			before := provider.connects.Load()
 			result, err := client.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived, DryRun: true})
 			if !tc.allowed {
 				var failure *emailtags.MessageTagError
@@ -171,7 +167,7 @@ func TestArchiveMessageDaemonEndToEnd(t *testing.T) {
 					want = "message_not_found"
 				}
 				assert.Equal(t, want, failure.Code)
-				assert.Equal(t, before, connects, "denials must precede provider access")
+				assert.Equal(t, before, provider.connects.Load(), "denials must precede provider access")
 				return
 			}
 			require.NoError(t, err)
@@ -182,12 +178,23 @@ func TestArchiveMessageDaemonEndToEnd(t *testing.T) {
 	}
 	cliGrant, err := owner.IssueAgentTokenWithArchiveSenders(t.Context(), "cli archive", []string{"message.archive"}, []int64{source.ID}, nil, map[int64][]string{source.ID: {"codes@example.test"}}, time.Time{})
 	require.NoError(t, err)
+	views, err := owner.ListAgentTokens(t.Context())
+	require.NoError(t, err)
+	listed := slices.DeleteFunc(views, func(view generated.AgentTokenView) bool { return view.ID != cliGrant.ID })
+	require.Len(t, listed, 1)
+	assert.Equal(t, []string{"codes@example.test"}, listed[0].Sources[0].ArchiveSenders)
+	client, err := daemonclient.New(daemonclient.Config{URL: serverURL, AgentToken: cliGrant.Secret, AllowInsecure: true})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+	self, err := client.AgentTokenSelf(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"codes@example.test"}, self.Sources[0].ArchiveSenders)
 	tokenFile := filepath.Join(t.TempDir(), "agent.token")
 	require.NoError(t, os.WriteFile(tokenFile, []byte(cliGrant.Secret), 0o600))
 	cliConfig := config.NewDefaultConfig()
 	cliConfig.HomeDir = t.TempDir()
 	cliConfig.Data.DataDir = cliConfig.HomeDir
-	cliContext := testInvocationContext(t.Context(), cliConfig, invocationOptions{agentURL: server.URL, agentTokenFile: tokenFile, agentAllowInsecure: true, agentURLChanged: true, agentTokenChanged: true})
+	cliContext := testInvocationContext(t.Context(), cliConfig, invocationOptions{agentURL: serverURL, agentTokenFile: tokenFile, agentAllowInsecure: true, agentURLChanged: true, agentTokenChanged: true})
 	root := newTestRootCmd()
 	root.AddCommand(newMessageArchiveCommand(true, nil))
 	root.SetArgs([]string{"archive", "--message", strconv.FormatInt(id, 10), "--dry-run", "--json"})
@@ -241,6 +248,9 @@ func TestArchiveMessageDaemonEndToEnd(t *testing.T) {
 	var failure *emailtags.MessageTagError
 	require.ErrorAs(t, err, &failure)
 	assert.Equal(t, "remote_unknown", failure.Code)
+	require.NotNil(t, failure.Result)
+	assert.Contains(t, failure.Result.Before, "INBOX")
+	assert.Equal(t, int64(3), provider.writes.Load())
 	msg, err = st.GetMessage(id)
 	require.NoError(t, err)
 	assert.Contains(t, msg.Labels, "INBOX", "uncertain readback must not be persisted")
@@ -302,11 +312,16 @@ func TestArchiveSenderRequiresEveryLiteralFromAndRechecksUnderLock(t *testing.T)
 	archived := true
 	grant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionMessageArchive}, Sources: []agentgrant.SourceRef{{Type: source.SourceType, Identifier: source.Identifier, ArchiveSenderKeys: []string{"allowed@example.test"}}}}
 	adapter := &storeAPIAdapter{store: st}
+	bare := `"allowed"@example.test`
+	parsed, err := mime.Parse([]byte("From: " + (&mail.Address{Address: bare}).String() + "\r\n\r\nsynthetic\r\n"))
+	require.NoError(t, err)
+	require.Len(t, parsed.From, 1)
+	require.Equal(t, bare, parsed.From[0].Email)
 	for _, tc := range []struct {
 		name      string
 		addresses []string
 	}{
-		{"missing", nil}, {"legacy null", []string{""}}, {"participant differs", []string{"denied@example.test"}}, {"mixed", []string{"allowed@example.test", "denied@example.test"}}, {"invalid", []string{"invalid"}},
+		{"quoted local part", []string{parsed.From[0].Email}}, {"missing", nil}, {"legacy null", []string{""}}, {"participant differs", []string{"denied@example.test"}}, {"mixed", []string{"allowed@example.test", "denied@example.test"}}, {"invalid", []string{"invalid"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ids := make([]int64, len(tc.addresses))
@@ -336,4 +351,66 @@ func TestArchiveSenderRequiresEveryLiteralFromAndRechecksUnderLock(t *testing.T)
 	var failure *emailtags.MessageTagError
 	require.ErrorAs(t, err, &failure)
 	assert.Equal(t, "permission_denied", failure.Code)
+}
+
+func TestArchiveStoredQuotedMailbox(t *testing.T) {
+	parsed, err := mime.Parse([]byte("From: <\"first last\"@example.test>\r\nTo: owner@example.test\r\nSubject: code\r\n\r\nsynthetic\r\n"))
+	require.NoError(t, err)
+	require.Len(t, parsed.From, 1)
+	require.Equal(t, "first last@example.test", parsed.From[0].Email)
+	_, senderKey, err := parseStoredMailbox(parsed.From[0].Email)
+	require.NoError(t, err)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "owner@example.test")
+	require.NoError(t, err)
+	sender, err := st.EnsureParticipant(parsed.From[0].Email, "Synthetic Sender", "example.test")
+	require.NoError(t, err)
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "probe", "Synthetic")
+	require.NoError(t, err)
+	id, err := st.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: &store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "gmail-archive", MessageType: "email"}, Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{sender}, EmailAddresses: []string{parsed.From[0].Email}}}})
+	require.NoError(t, err)
+	fixture := newArchiveProviderFixture(t)
+	cfg := &config.Config{HomeDir: t.TempDir()}
+	cfg.Data.DataDir = cfg.HomeDir
+	adapter := &storeAPIAdapter{store: st, config: cfg, logger: slog.New(slog.DiscardHandler), emailTagClientFactory: func(context.Context, *store.Source) (gmail.API, error) {
+		return gmail.NewClient(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "synthetic"}), gmail.WithRateLimiter(gmail.NewRateLimiter(1000))), nil
+	}}
+	grant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionMessageArchive}, Sources: []agentgrant.SourceRef{{Type: "gmail", Identifier: source.Identifier, ArchiveSenderKeys: []string{senderKey}}}}
+	archived := true
+	result, err := adapter.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived, DryRun: true}, grant, nil)
+	require.NoError(t, err, "an allowed sender parsed and stored by production MIME code must remain allowed")
+	assert.True(t, result.Archived)
+	assert.Zero(t, fixture.writes.Load())
+}
+
+// Failed writes disclose label snapshots only to callers with read authority.
+func TestArchiveOnlyGrantFailureBodyHidesLabels(t *testing.T) {
+	for _, caller := range []string{"archive-only", "archive-reader"} {
+		t.Run(caller, func(t *testing.T) {
+			_, source, id, _, serverURL, owner, provider := newArchiveDaemon(t)
+			permissions := []string{"message.archive"}
+			if caller == "archive-reader" {
+				permissions = append(permissions, "message.read")
+			}
+			token, err := owner.IssueAgentTokenWithArchiveSenders(t.Context(), caller, permissions, []int64{source.ID}, nil, nil, time.Time{})
+			require.NoError(t, err)
+			client, err := daemonclient.New(daemonclient.Config{URL: serverURL, AgentToken: token.Secret, AllowInsecure: true})
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = client.Close() })
+			provider.failReadback.Store(true)
+			archived := true
+			_, err = client.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived})
+			var failure *emailtags.MessageTagError
+			require.ErrorAs(t, err, &failure)
+			require.Equal(t, "remote_unknown", failure.Code)
+			if caller == "archive-only" {
+				assert.Nil(t, failure.Result, "archive-only grant received message label state: %+v", failure.Result)
+			} else {
+				require.NotNil(t, failure.Result)
+				assert.Contains(t, failure.Result.Tags, "Label_keep")
+				assert.Contains(t, failure.Result.Before, "INBOX")
+			}
+			assert.Equal(t, int64(1), provider.writes.Load())
+		})
+	}
 }
