@@ -133,6 +133,14 @@ func escapeSQLiteLike(s string) string {
 	return r.Replace(s)
 }
 
+func senderDomainExpr(d Dialect, recipient, participant string) string {
+	address := "NULLIF(" + recipient + ".email_address, '')"
+	if _, ok := d.(PostgreSQLQueryDialect); ok {
+		return "COALESCE(NULLIF(SPLIT_PART(" + address + ", '@', 2), ''), " + participant + ".domain, '')"
+	}
+	return "COALESCE(NULLIF(SUBSTR(" + address + ", INSTR(" + address + ", '@') + 1), ''), " + participant + ".domain, '')"
+}
+
 // aggDimension describes the variable parts of an aggregate query for a given ViewType.
 type aggDimension struct {
 	keyExpr   string // SQL expression returned as the grouping key
@@ -146,10 +154,10 @@ func aggDimensionForView(d Dialect, view ViewType, timeGranularity TimeGranulari
 	switch view {
 	case ViewSenders:
 		return aggDimension{
-			keyExpr: "p.email_address",
+			keyExpr: "COALESCE(NULLIF(mr.email_address, ''), p.email_address)",
 			joins: `JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from'
 				JOIN participants p ON p.id = mr.participant_id`,
-			whereExpr: "p.email_address IS NOT NULL",
+			whereExpr: "COALESCE(NULLIF(mr.email_address, ''), p.email_address) IS NOT NULL",
 		}, nil
 	case ViewSenderNames:
 		nameExpr := recipientNameExpr("mr", "p")
@@ -176,10 +184,10 @@ func aggDimensionForView(d Dialect, view ViewType, timeGranularity TimeGranulari
 		}, nil
 	case ViewDomains:
 		return aggDimension{
-			keyExpr: "p.domain",
+			keyExpr: senderDomainExpr(d, "mr", "p"),
 			joins: `JOIN message_recipients mr ON mr.message_id = m.id AND mr.recipient_type = 'from'
 				JOIN participants p ON p.id = mr.participant_id`,
-			whereExpr: "p.domain IS NOT NULL AND p.domain != ''",
+			whereExpr: senderDomainExpr(d, "mr", "p") + " != ''",
 		}, nil
 	case ViewLabels:
 		return aggDimension{
@@ -521,7 +529,7 @@ func (e *SQLiteEngine) buildFilterWithSender(filter MessageFilter, sourceColumn 
 			JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
 			WHERE mr_filter_from.message_id = m.id
 			  AND mr_filter_from.recipient_type = 'from'
-			  AND LOWER(p_filter_from.domain) = ?
+			  AND LOWER(`+senderDomainExpr(e.dialect, "mr_filter_from", "p_filter_from")+`) = ?
 		)`)
 		args = append(args, strings.ToLower(filter.Domain))
 	} else if filter.MatchesEmpty(ViewDomains) {
@@ -532,8 +540,7 @@ func (e *SQLiteEngine) buildFilterWithSender(filter MessageFilter, sourceColumn 
 			JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
 			WHERE mr_filter_from.message_id = m.id
 			  AND mr_filter_from.recipient_type = 'from'
-			  AND p_filter_from.domain IS NOT NULL
-			  AND p_filter_from.domain != ''
+			  AND `+senderDomainExpr(e.dialect, "mr_filter_from", "p_filter_from")+` != ''
 		)`)
 	}
 
@@ -942,7 +949,7 @@ func senderMatchSQL(filter MessageFilter, limit int) (string, []any) {
 	if filter.Sender == "" {
 		return "", nil
 	}
-	address := `(p_filter_from.email_address = ? OR p_filter_from.phone_number = ?)`
+	address := `(COALESCE(NULLIF(mr_filter_from.email_address, ''), p_filter_from.email_address) = ? OR p_filter_from.phone_number = ?)`
 	directAddress := `(p_direct_sender.email_address = ? OR p_direct_sender.phone_number = ?)`
 	fromName, directName := "", ""
 	fromArgs := []any{filter.Sender, filter.Sender}
@@ -955,8 +962,8 @@ func senderMatchSQL(filter MessageFilter, limit int) (string, []any) {
 	}
 	if limit != 0 {
 		from := `SELECT mr_filter_from.message_id AS id FROM message_recipients mr_filter_from
-			WHERE mr_filter_from.recipient_type = 'from' AND mr_filter_from.participant_id IN (
-				SELECT id FROM participants p_filter_from WHERE ` + address + `)`
+			JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
+			WHERE mr_filter_from.recipient_type = 'from' AND ` + address
 		if fromName != "" {
 			from += ` AND EXISTS (SELECT 1 FROM participants p_filter_from WHERE p_filter_from.id = mr_filter_from.participant_id` + fromName + `)`
 		}
@@ -1064,7 +1071,7 @@ func (e *SQLiteEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 			COALESCE(conv.source_conversation_id, ''),
 			COALESCE(m.subject, ''),
 			COALESCE(m.snippet, ''),
-			COALESCE(p_sender.email_address, ''),
+			COALESCE((SELECT NULLIF(mr_email.email_address, '') FROM message_recipients mr_email WHERE mr_email.message_id = m.id AND mr_email.recipient_type = 'from' LIMIT 1), p_sender.email_address, ''),
 			%s,
 			COALESCE(p_sender.phone_number, ''),
 			m.sent_at,
@@ -1213,7 +1220,7 @@ func (e *SQLiteEngine) fetchMessageSummariesByIDsInto(
 			COALESCE(conv.source_conversation_id, ''),
 			COALESCE(m.subject, ''),
 			COALESCE(m.snippet, ''),
-			COALESCE(p_sender.email_address, ''),
+			COALESCE((SELECT NULLIF(mr_email.email_address, '') FROM message_recipients mr_email WHERE mr_email.message_id = m.id AND mr_email.recipient_type = 'from' LIMIT 1), p_sender.email_address, ''),
 			%s,
 			COALESCE(p_sender.phone_number, ''),
 			m.sent_at,
@@ -1623,7 +1630,7 @@ func (e *SQLiteEngine) GetDeletionTargetsByFilter(ctx context.Context, filter Me
 				SELECT 1 FROM message_recipients mr_from
 				JOIN participants p_from ON p_from.id = mr_from.participant_id
 				WHERE mr_from.message_id = m.id AND mr_from.recipient_type = 'from'
-				  AND (p_from.email_address = ? OR p_from.phone_number = ?)
+				  AND (COALESCE(NULLIF(mr_from.email_address, ''), p_from.email_address) = ? OR p_from.phone_number = ?)
 				  AND %s = ?
 			)
 			OR EXISTS (
@@ -1640,7 +1647,7 @@ func (e *SQLiteEngine) GetDeletionTargetsByFilter(ctx context.Context, filter Me
 				SELECT 1 FROM message_recipients mr_from
 				JOIN participants p_from ON p_from.id = mr_from.participant_id
 				WHERE mr_from.message_id = m.id AND mr_from.recipient_type = 'from'
-				  AND (p_from.email_address = ? OR p_from.phone_number = ?)
+				  AND (COALESCE(NULLIF(mr_from.email_address, ''), p_from.email_address) = ? OR p_from.phone_number = ?)
 			)
 			OR EXISTS (
 				SELECT 1 FROM participants p_ds
@@ -1703,7 +1710,7 @@ func (e *SQLiteEngine) GetDeletionTargetsByFilter(ctx context.Context, filter Me
 			SELECT 1 FROM message_recipients mr_from
 			JOIN participants p_from ON p_from.id = mr_from.participant_id
 			WHERE mr_from.message_id = m.id AND mr_from.recipient_type = 'from'
-			  AND LOWER(p_from.domain) = ?
+			  AND LOWER(`+senderDomainExpr(e.dialect, "mr_from", "p_from")+`) = ?
 		)`)
 		args = append(args, strings.ToLower(filter.Domain))
 	}
@@ -1993,7 +2000,7 @@ func (e *SQLiteEngine) SearchByDomains(ctx context.Context, domains []string, af
 		SELECT 1 FROM message_recipients mr_dom
 		JOIN participants p_dom ON p_dom.id = mr_dom.participant_id
 		WHERE mr_dom.message_id = m.id
-		  AND LOWER(p_dom.domain) IN (%s)
+		  AND LOWER(CASE WHEN mr_dom.recipient_type = 'from' THEN `+senderDomainExpr(e.dialect, "mr_dom", "p_dom")+` ELSE p_dom.domain END) IN (%s)
 	)`, strings.Join(placeholders, ", ")))
 
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourceIDs)
@@ -2555,7 +2562,7 @@ func searchResultsSQL(pageSource, whereClause string) string {
 			COALESCE(conv.source_conversation_id, ''),
 			COALESCE(m.subject, ''),
 			COALESCE(m.snippet, ''),
-			COALESCE(p_sender.email_address, ''),
+			COALESCE((SELECT NULLIF(mr_email.email_address, '') FROM message_recipients mr_email WHERE mr_email.message_id = m.id AND mr_email.recipient_type = 'from' LIMIT 1), p_sender.email_address, ''),
 			%s,
 			COALESCE(p_sender.phone_number, ''),
 			m.sent_at,

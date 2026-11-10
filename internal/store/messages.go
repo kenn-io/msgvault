@@ -69,7 +69,9 @@ type RecipientSet struct {
 // ParticipantPersistData describes one email participant to resolve inside a
 // message persistence transaction.
 type ParticipantPersistData struct {
-	EmailAddress string
+	IdentifierType  string
+	IdentifierValue string
+	EmailAddress    string
 	// PhoneNumber is an E.164 phone that identifies the participant when
 	// EmailAddress is empty. It is backed by a participant_identifiers row of
 	// type PhoneIdentifierType so owner attribution can match it.
@@ -2175,6 +2177,11 @@ func (s *Store) PersistMessageContext(ctx context.Context, data *MessagePersistD
 	)
 }
 
+// PersistEmailMessageWithParticipantsContext resolves sender identities with the message.
+func (s *Store) PersistEmailMessageWithParticipantsContext(ctx context.Context, sourceID int64, participants []ParticipantPersistData, build func([]int64) *MessagePersistData) (int64, error) {
+	return s.persistMessageWithParticipantsTransaction(ctx, attributionLock{Sources: []int64{sourceID}}, nil, participants, build, nil, nil)
+}
+
 func (s *Store) persistAttachmentSnapshotWith(q querier, messageID int64, replacement *[]AttachmentWrite) error {
 	if err := s.replaceMIMEAttachmentsWith(q, messageID, replacement); err != nil {
 		return fmt.Errorf("persist attachments: %w", err)
@@ -2302,7 +2309,7 @@ func (s *Store) persistMessageWithParticipantsTransaction(
 	afterPersist messagePersistAfter,
 ) (int64, error) {
 	for _, participant := range participants {
-		if participant.EmailAddress == "" && participant.PhoneNumber != "" {
+		if participant.IdentifierType != "" || (participant.EmailAddress == "" && participant.PhoneNumber != "") {
 			lock = attributionLock{Exclusive: true}
 			break
 		}
@@ -2339,24 +2346,24 @@ func (s *Store) persistMessageWithParticipantsTx(
 			return 0, fmt.Errorf("lock message persistence: %w", err)
 		}
 	}
-	hasPhoneParticipant := false
+	hasIdentifierParticipant := false
 	for idx, participant := range participants {
-		if participant.EmailAddress == "" && participant.PhoneNumber == "" {
-			return 0, fmt.Errorf("ensure participant %d: an email address or phone number is required", idx)
+		if participant.EmailAddress == "" && participant.PhoneNumber == "" && (participant.IdentifierType == "" || strings.TrimSpace(participant.IdentifierValue) == "") {
+			return 0, fmt.Errorf("ensure participant %d: an identity is required", idx)
 		}
 		if participant.EmailAddress == "" {
-			hasPhoneParticipant = true
+			hasIdentifierParticipant = true
 		}
 	}
-	if hasPhoneParticipant {
-		// Phone participants write participant_identifiers, which participant
+	if hasIdentifierParticipant {
+		// Identifier participants write participant_identifiers, which participant
 		// merges rewrite under the identity lock. Take it before the directory
 		// lock, the same order MergeParticipants uses.
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return 0, err
 		}
 	}
-	if len(participants) > 1 || hasPhoneParticipant {
+	if len(participants) > 1 || hasIdentifierParticipant {
 		// Participant merges take the directory lock before rewriting
 		// message rows. Keep the same order when a repair's preflight
 		// callback locks its target message for identity revalidation.
@@ -2378,7 +2385,9 @@ func (s *Store) persistMessageWithParticipantsTx(
 		}
 		var participantID int64
 		var err error
-		if participant.EmailAddress == "" {
+		if participant.IdentifierType != "" {
+			participantID, err = s.ensureParticipantByIdentifierTx(ctx, tx, participant.IdentifierType, participant.IdentifierValue, participant.DisplayName)
+		} else if participant.EmailAddress == "" {
 			participantID, err = s.ensureParticipantByPhoneTx(
 				ctx, tx, participant.PhoneNumber, participant.DisplayName, PhoneIdentifierType,
 			)
@@ -5433,7 +5442,19 @@ func (s *Store) EnsureParticipantByIdentifierContext(ctx context.Context, identi
 
 	var participantID int64
 	err := s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
-		err := tx.QueryRowContext(ctx, `
+		var err error
+		participantID, err = s.ensureParticipantByIdentifierTx(ctx, tx, identifierType, identifierValue, displayName)
+		return err
+	})
+	if err != nil {
+		return 0, err
+	}
+	return participantID, nil
+}
+
+func (s *Store) ensureParticipantByIdentifierTx(ctx context.Context, tx *loggedTx, identifierType, identifierValue, displayName string) (participantID int64, err error) {
+	err = func() error {
+		err = tx.QueryRowContext(ctx, `
 			SELECT participant_id FROM participant_identifiers
 			WHERE identifier_type = ? AND identifier_value = ?
 		`, identifierType, identifierValue).Scan(&participantID)
@@ -5502,11 +5523,8 @@ func (s *Store) EnsureParticipantByIdentifierContext(ctx context.Context, identi
 			}
 		}
 		return s.bumpParticipantIdentifierRevision(ctx, tx)
-	})
-	if err != nil {
-		return 0, err
-	}
-	return participantID, nil
+	}()
+	return participantID, err
 }
 
 // UpdateParticipantDisplayNameByPhone updates the display_name for an existing

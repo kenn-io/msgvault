@@ -2759,3 +2759,18 @@ Single-message HTTP, CLI JSON, and MCP reads return `sender_auth` for pinned ema
 A pin trusts the topmost header, so a copy that never passed through the pinned receiver can carry a forged one.
 
 Receivers that omit the authserv-id, such as Exchange Online and Outlook.com headers starting with `spf=...`, can't verify. Quoted or spaced property values report no result.
+
+### Relayed email senders
+
+GitHub notification email is attributed to the author named in its `X-GitHub-Sender` header. The original From address remains available for searches and authentication checks.
+
+Add rules for other relay addresses in `config.toml`. A rule for an existing address replaces its built-in rule.
+
+```toml
+[[relayed_senders]]
+address = "relay@example.test"
+header = "X-Author"
+identifier_type = "example"
+```
+
+Each rule requires one mailbox address, a header name, and an identifier type. A missing, repeated, or empty header leaves the message attributed to its From address. Rules apply to new Gmail and IMAP mail.

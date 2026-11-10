@@ -576,10 +576,10 @@ func buildNarrowFileEntriesCTE(name string) string {
 }
 
 func buildScalarAnalyticalEntriesCTE(name string, includeAttachmentSummary bool) string {
-	return buildScalarAnalyticalEntriesCTEWithSource(name, includeAttachmentSummary, "s.account_email", "m.archive_only")
+	return buildScalarAnalyticalEntriesCTEWithSource(name, includeAttachmentSummary, "s.account_email", "m.archive_only", "mr.envelope_address", "split_part(mr.envelope_address, '@', 2)")
 }
 
-func buildScalarAnalyticalEntriesCTEWithSource(name string, includeAttachmentSummary bool, sourceIdentifier, archiveOnly string) string {
+func buildScalarAnalyticalEntriesCTEWithSource(name string, includeAttachmentSummary bool, sourceIdentifier, archiveOnly, envelopeAddress, envelopeDomain string) string {
 	attachmentColumns := `
 		CAST(0 AS BIGINT) AS attachment_count,
 		CAST(0 AS BIGINT) AS attachment_size`
@@ -609,9 +609,9 @@ func buildScalarAnalyticalEntriesCTEWithSource(name string, includeAttachmentSum
 		COALESCE(m.message_type, '') AS message_type,
 		m.list_id,
 		m.sender_id,
-		COALESCE(NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), '') AS sender_identifier,
+		COALESCE((SELECT NULLIF(` + envelopeAddress + `, '') FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'from' LIMIT 1), NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), '') AS sender_identifier,
 		COALESCE(NULLIF(sender.display_name, ''), NULLIF(sender.phone_number, ''), sender.email_address, '') AS sender_display,
-		COALESCE(sender.domain, '') AS sender_domain,
+		COALESCE((SELECT NULLIF(` + envelopeDomain + `, '') FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'from' LIMIT 1), sender.domain, '') AS sender_domain,
 		m.sent_at AS occurred_at,
 		COALESCE(m.subject, '') AS subject,
 		COALESCE(m.snippet, '') AS snippet,
@@ -672,9 +672,9 @@ SELECT
     COALESCE(m.message_type, '') AS message_type,
     m.list_id,
     m.sender_id,
-    COALESCE(NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), '') AS sender_identifier,
+    COALESCE((SELECT NULLIF(mr.envelope_address, '') FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'from' LIMIT 1), NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), '') AS sender_identifier,
     COALESCE(NULLIF(sender.display_name, ''), NULLIF(sender.phone_number, ''), sender.email_address, '') AS sender_display,
-    COALESCE(sender.domain, '') AS sender_domain,
+    COALESCE((SELECT NULLIF(split_part(mr.envelope_address, '@', 2), '') FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'from' LIMIT 1), sender.domain, '') AS sender_domain,
     m.sent_at AS occurred_at,
     COALESCE(m.subject, '') AS subject,
     COALESCE(m.snippet, '') AS snippet,
@@ -748,13 +748,13 @@ LEFT JOIN (
 const sqlVSenders = `
 CREATE OR REPLACE VIEW v_senders AS
 SELECT
-    p.email_address AS from_email,
+    COALESCE(NULLIF(mr.envelope_address, ''), p.email_address) AS from_email,
     COALESCE(
         NULLIF(TRIM(FIRST(mr.display_name)), ''),
         NULLIF(TRIM(FIRST(p.display_name)), ''),
-        p.email_address
+        FIRST(p.email_address)
     ) AS from_name,
-    p.domain AS from_domain,
+    COALESCE(NULLIF(split_part(mr.envelope_address, '@', 2), ''), p.domain) AS from_domain,
     COUNT(*) AS message_count,
     SUM(m.size_estimate) AS total_size,
     COALESCE(SUM(att.attachment_size), 0) AS attachment_size,
@@ -773,22 +773,22 @@ LEFT JOIN (
     GROUP BY message_id
 ) att ON att.message_id = m.id
 WHERE mr.recipient_type = 'from'
-GROUP BY p.email_address, p.domain
+GROUP BY COALESCE(NULLIF(mr.envelope_address, ''), p.email_address), COALESCE(NULLIF(split_part(mr.envelope_address, '@', 2), ''), p.domain)
 `
 
 // sqlVDomains: per-domain aggregates.
 const sqlVDomains = `
 CREATE OR REPLACE VIEW v_domains AS
 SELECT
-    p.domain,
+    COALESCE(NULLIF(split_part(mr.envelope_address, '@', 2), ''), p.domain) AS domain,
     COUNT(*) AS message_count,
     SUM(m.size_estimate) AS total_size,
-    COUNT(DISTINCT p.email_address) AS sender_count
+    COUNT(DISTINCT COALESCE(NULLIF(mr.envelope_address, ''), p.email_address)) AS sender_count
 FROM message_recipients mr
 JOIN participants p ON p.id = mr.participant_id
 JOIN messages m ON m.id = mr.message_id
 WHERE mr.recipient_type = 'from'
-GROUP BY p.domain
+GROUP BY COALESCE(NULLIF(split_part(mr.envelope_address, '@', 2), ''), p.domain)
 `
 
 // sqlVLabels: label name with message count and total size.
@@ -836,11 +836,11 @@ const sqlMessageSenderJoins = sqlMessageSenderJoinsStart + sqlMessageSenderJoins
 const sqlMessageSenderJoinsStart = `LEFT JOIN (
     SELECT
         mr.message_id,
-        FIRST(p.email_address) AS from_email,
+        FIRST(COALESCE(NULLIF(mr.envelope_address, ''), p.email_address)) AS from_email,
         FIRST(
             COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')
         ) AS from_name,
-        FIRST(p.domain) AS from_domain,
+        FIRST(COALESCE(NULLIF(split_part(mr.envelope_address, '@', 2), ''), p.domain)) AS from_domain,
         FIRST(COALESCE(p.phone_number, '')) AS from_phone
     FROM message_recipients mr
     JOIN participants p ON p.id = mr.participant_id
