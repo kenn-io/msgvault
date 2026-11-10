@@ -32,6 +32,7 @@
     title: string;
     onclose: () => void;
     children: Snippet;
+    footerStart?: Snippet;
     width?: 'small' | 'medium' | 'large';
     /** A step's way back, left of the title; its name says where it returns to. */
     onback?: () => void;
@@ -56,6 +57,7 @@
     title,
     onclose,
     children,
+    footerStart = undefined,
     width = 'medium',
     onback = undefined,
     backLabel = 'Back',
@@ -77,6 +79,7 @@
 
 {#snippet footer()}
   {#if primaryLabel}
+    {#if footerStart}<div class="footer-start">{@render footerStart()}</div>{/if}
     {#if cancellable}<Button label={cancelLabel} disabled={cancelDisabled || busy} onclick={dismiss} />{/if}
     <Button
       surface="solid"
@@ -101,7 +104,7 @@
   >
     <div class="dialog-header">
       {#if onback}<IconButton ariaLabel={backLabel} disabled={busy} onclick={onback}><ArrowLeft size={14} aria-hidden="true" /></IconButton>{/if}
-      <h2 tabindex="-1" title={title}>{title}</h2>
+      <h2 tabindex="-1">{title}</h2>
       <IconButton ariaLabel="Close" disabled={busy} onclick={dismiss}><X size={14} aria-hidden="true" /></IconButton>
     </div>
     <!-- One scroll pane between the header and the footer: the fields, then the notice when one shows. -->
@@ -113,8 +116,11 @@
 </div>
 
 <style>
-  /* The dialog stays 16 from the screen's edges and opens 32 from the top (16 on a phone). */
+  .footer-start { margin-right: auto; }
+  /* The dialog stays 16 from the screen's edges and opens 32 from the top (16 on a phone). The shell lays out
+   * no box of its own, so opening a dialog never adds a gap to the page behind it. */
   .dialog-shell {
+    display: contents;
     --dialog-inset: var(--space-6);
     --dialog-top: 32px;
   }
@@ -134,12 +140,13 @@
     overflow: hidden;
     scrollbar-gutter: auto;
   }
-  /* A 44 band: a 28 control 8 above and below, the title 12 from the left edge and truncated. */
+  /* A 44 band: a 28 control 8 above and below, the title 12 from the left edge. A long title wraps, so what it
+   * names stays readable; its first line stays centered on the controls. */
   .dialog-header {
     box-sizing: border-box;
     display: flex;
     flex: none;
-    align-items: center;
+    align-items: flex-start;
     gap: var(--space-group);
     min-height: 44px;
     padding: var(--space-group) var(--space-group) var(--space-group) var(--pane-pad-x);
@@ -150,14 +157,12 @@
   h2 {
     flex: 1;
     min-width: 0;
-    margin: 0;
-    overflow: hidden;
+    margin: calc((var(--control-h) - var(--type-title-line)) / 2) 0;
     font-size: var(--type-title-size);
     line-height: var(--type-title-line);
     font-weight: 600;
-    text-overflow: ellipsis;
     outline: none;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
   }
   /* The body pads 12 on every side; on the right that is 4 plus the bar's reserved 8. Long words wrap. */
   .dialog-content {
@@ -170,6 +175,8 @@
     overflow-wrap: anywhere;
   }
   .dialog-notice { margin-top: var(--pane-pad-x); }
+  /* With no fields above it, as when they failed to load, the notice sits 12 below the header like the fields would. */
+  .dialog-notice:first-child { margin-top: 0; }
   /* A notice snippet that shows nothing renders nothing: no empty band under the fields. */
   .dialog-notice:not(:has(*)) { display: none; }
 </style>

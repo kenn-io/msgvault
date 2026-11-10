@@ -3315,6 +3315,9 @@ to one lane and cannot be used with `all`. See
 [person files](/docs/usage/people/#find-files-related-to-a-person) for index
 requirements, supported filters, and pagination.
 
+File results show `unverified` when a content hash is recorded but storage
+has not been checked.
+
 #### Typo-tolerant filenames
 
 Newer than the latest release, `--fuzzy-filename` explicitly selects filename

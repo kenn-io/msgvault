@@ -2,7 +2,8 @@ import { stubOperationStatus } from './kit-ui';
 import { expect, test, type Page } from '@playwright/test';
 import { expectKitTheme, selectWorkspace } from './kit-ui';
 
-import { candidate, directoryPerson, person } from '../src/lib/directory/entity-fixtures.test-support';
+import { candidate, directoryPerson } from '../src/lib/directory/entity-data.test-support';
+import { person } from '../src/lib/directory/person-fixtures.test-support';
 import { emptyProfile } from '../src/lib/directory/profile-fixtures.test-support';
 import { meetingActions, meetingMetrics } from '../src/lib/meetings/fixtures.test-support';
 import { mockArchiveLayout, row } from './archive-layout';
@@ -621,12 +622,12 @@ test.describe('form picker focus', () => {
         await page.route('**/api/v1/organizations**', route => route.fulfill({ json: { organizations: [], total: 0, limit: 50, offset: 0 } }));
         await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 })));
         await page.getByRole('radio', { name: 'Details', exact: true }).click();
-        await page.getByRole('button', { name: 'Add work', exact: true }).click();
+        await page.getByRole('button', { name: 'Add job…', exact: true }).click();
       }
       const trigger = page.getByRole('button', { name: new RegExp(`^${picker}:`) });
       const predecessor = picker === 'Time zone'
         ? page.getByRole('textbox', { name: 'Slack schedule', exact: true })
-        : page.getByRole('button', { name: 'New organization', exact: true });
+        : page.getByRole('textbox', { name: 'Job title', exact: true });
       await predecessor.focus();
       const restingBorder = await trigger.evaluate(element => getComputedStyle(element).borderColor);
       await page.keyboard.press(picker === 'Time zone' ? 'Tab' : 'Shift+Tab');

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { requestOf, pathOf, organization, organizationProfile, controllerWith } from '../../directory/entity-fixtures.test-support';
 import OrganizationsSettings from './OrganizationsSettings.svelte';
@@ -36,9 +36,9 @@ describe('OrganizationsSettings', () => {
     await waitFor(() => expect(staleRequest).toBeDefined());
     await fireEvent.click(screen.getByRole('button', { name: 'Add organization' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Synthetic New Org' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
+    await fireEvent.click(within(screen.getByRole('dialog', { name: 'Add organization' })).getByRole('button', { name: 'Add organization' }));
 
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Create organization' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add organization' })).toBeNull());
     await waitFor(() => expect(queries.filter((value) => value === query)).toHaveLength(2));
     expect(staleRequest?.signal.aborted).toBe(true);
     resolveStale(Response.json({ organizations: [organization()], total: 1, limit: 50, offset: 0 }));
@@ -71,10 +71,10 @@ describe('OrganizationsSettings', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Retry organizations' }));
     expect(await screen.findByRole('button', { name: 'Edit Synthetic Org' })).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Add organization' }));
-    expect(screen.getByRole('dialog', { name: 'Create organization' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Close organization editor' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Create organization' })).toBeNull());
+    expect(screen.getByRole('dialog', { name: 'Add organization' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add organization' })).toBeNull());
     await fireEvent.click(screen.getByRole('button', { name: 'Edit Synthetic Org' }));
-    expect(await screen.findByRole('dialog', { name: 'Edit Synthetic Org' })).toBeDefined();
+    expect(await screen.findByRole('dialog', { name: 'Synthetic Org' })).toBeDefined();
   });
 });

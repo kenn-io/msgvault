@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 
 import { mockArchiveLayout } from './archive-layout';
 import { selectWorkspace } from './kit-ui';
+import { shortPagesPDF } from './pdf-fixture';
 
 // Headless Chromium hides scrollbars by default, which would hide the
 // scrollbar-width shift these tests guard against.
@@ -56,31 +57,6 @@ test('Settings panel stays in place when a long category makes it scroll', async
   expect(await page.evaluate(() => window.innerWidth - document.documentElement.clientWidth)).toBe(0);
 });
 
-function shortPagesPDF(pageCount: number): Buffer {
-  const fontObject = 3 + pageCount + 1;
-  const contentObject = 3 + pageCount;
-  const stream = 'BT /F1 18 Tf 36 100 Td (Fixture page) Tj ET';
-  const objects = [
-    '<< /Type /Catalog /Pages 2 0 R >>',
-    `<< /Type /Pages /Kids [${Array.from({ length: pageCount }, (_, index) => `${3 + index} 0 R`).join(' ')}] /Count ${pageCount} >>`,
-    ...Array.from({ length: pageCount }, () =>
-      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 200] /Resources << /Font << /F1 ${fontObject} 0 R >> >> /Contents ${contentObject} 0 R >>`),
-    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
-    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
-  ];
-  let source = '%PDF-1.4\n';
-  const offsets: number[] = [];
-  objects.forEach((object, index) => {
-    offsets.push(source.length);
-    source += `${index + 1} 0 obj\n${object}\nendobj\n`;
-  });
-  const xref = source.length;
-  source += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  source += offsets.map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`).join('');
-  source += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
-  return Buffer.from(source, 'ascii');
-}
-
 test('first PDF page stays in place when a later page makes the preview scroll', async ({ page, baseURL }) => {
   if (!baseURL) throw new Error('Playwright baseURL is required');
   const bytes = shortPagesPDF(3);
@@ -90,7 +66,7 @@ test('first PDF page stays in place when a later page makes the preview scroll',
     source_identifier: 'archive@example.com', containing_title: 'Containing item',
     filename: 'receipt.pdf', mime_type: 'application/pdf', mime_family: 'pdf', size_bytes: bytes.length,
     participant_labels: ['Example Person'], participant_domains: ['example.com'],
-    content_state: 'local_content', content_available: true
+    content_state: 'unverified', content_available: null
   };
   await page.context().addCookies([{
     name: 'msgvault_session', value: 'browser-fixture-session', url: new URL(baseURL).origin
@@ -132,7 +108,7 @@ test('first PDF page stays in place when a later page makes the preview scroll',
   await page.keyboard.press('Home');
   await page.keyboard.press('Enter');
   const preview = page.getByRole('region', { name: 'PDF preview receipt.pdf' });
-  await expect(preview.locator('.pdf-text')).toHaveCount(3);
+  await expect(preview.locator('.textLayer')).toHaveCount(3);
 
   const samples = await page.evaluate(() =>
     (window as unknown as { pdfLayoutSamples: Array<{ pages: number; x: number; scrolls: boolean }> }).pdfLayoutSamples);
