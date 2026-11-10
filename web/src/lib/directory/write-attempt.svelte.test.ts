@@ -55,8 +55,7 @@ it('drops a load that finishes after a reset', async () => {
 });
 it('keeps the version sent when a conflict comes back without the saved one', async () => {
   const attempt = new WriteAttempt<{ revision: number }>();
-  await attempt.prepare(async () => ({ revision: 1 }));
-  await attempt.run(async () => ({ ok: false, kind: 'conflict', status: 412, message: 'Changed' }));
+  await attempt.run(async () => ({ ok: false, kind: 'conflict', status: 412, sent: { revision: 1 }, message: 'Changed' }));
   expect(attempt.conflict).toBeUndefined();
   expect(attempt.prepared).toEqual({ revision: 1 });
   await attempt.run(async current => {
