@@ -54,7 +54,7 @@
   }: {
     client: APIClient;
     messages?: boolean;
-    dateMode?: 'local' | 'utc';
+    dateMode?: 'auto' | 'utc';
     lockedFilter?: ExploreFilter;
     filterExtra?: Snippet;
     extraControls?: Snippet;

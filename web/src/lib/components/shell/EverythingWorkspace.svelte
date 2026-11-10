@@ -682,7 +682,7 @@
 
   <ContextBar
     messages
-    dateMode="local"
+    dateMode="auto"
     lockedFilter={scope}
     {client}
     query={exploreState.current.query}

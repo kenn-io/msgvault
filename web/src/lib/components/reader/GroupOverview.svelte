@@ -1,12 +1,11 @@
 <script lang="ts">
-  import type { ReadingPaneSelection, ReadingPaneStatus } from './ReadingPane.svelte';
+  import type { ReadingPaneSelection } from './ReadingPane.svelte';
   import { bucketSeries } from '../../explore/group-activity';
   import { groupRowName } from '../../explore/labels';
   import { formatBytes, formatDate } from '../../util/format';
 
-  let { selection, status = 'ready' }: {
+  let { selection }: {
     selection: Extract<ReadingPaneSelection, { kind: 'group' }>;
-    status?: ReadingPaneStatus;
   } = $props();
   const series = $derived(bucketSeries(selection.overview?.activity ?? []));
   const first = $derived(series[0]);
@@ -28,35 +27,29 @@
     <strong>{selection.count?.toLocaleString() ?? '—'} {selection.count === 1 ? 'item' : 'items'}</strong>
     {#if selection.estimatedBytes !== undefined}<span>{formatBytes(selection.estimatedBytes)}</span>{/if}
   </div>
-  {#if status === 'loading'}
-    <p role="status">Loading activity…</p>
-  {:else if status !== 'ready'}
-    <p>Activity isn't available right now.</p>
-  {:else}
-    {#if selection.overview?.first_at && selection.latestAt}
-      {@const firstDate = formatDate(selection.overview.first_at)}
-      {@const lastDate = formatDate(selection.latestAt)}
-      <p>{firstDate}{firstDate === lastDate ? '' : ` – ${lastDate}`}</p>
-    {/if}
-    {#if series.length > 0 && first && last}
-      <div class="activity">
-        <svg role="img" aria-label={stripLabel} viewBox={`0 0 ${series.length * 8} 32`} preserveAspectRatio="none">
-          {#each series as month, index (month.bucket)}
-            {@const height = busiest.count ? month.count / busiest.count * 32 : 0}
-            <rect x={index * 8} y={32 - height} width="6" {height} />
-          {/each}
-        </svg>
-        <div class="month-labels"><span>{monthName(first.bucket)}</span>{#if series.length > 1}<span>{monthName(last.bucket)}</span>{/if}</div>
-      </div>
-    {/if}
-    {#if selection.overview?.co_participants?.length}
-      <div class="people">
-        <h2>Most often with</h2>
-        {#each selection.overview?.co_participants as person (person.key)}
-          <div class="person"><span>{person.label}</span><span data-mono>{person.count.toLocaleString()}</span></div>
+  {#if selection.overview?.first_at && selection.latestAt}
+    {@const firstDate = formatDate(selection.overview.first_at)}
+    {@const lastDate = formatDate(selection.latestAt)}
+    <p>{firstDate}{firstDate === lastDate ? '' : ` – ${lastDate}`}</p>
+  {/if}
+  {#if series.length > 0 && first && last}
+    <div class="activity">
+      <svg role="img" aria-label={stripLabel} viewBox={`0 0 ${series.length * 8} 32`} preserveAspectRatio="none">
+        {#each series as month, index (month.bucket)}
+          {@const height = busiest.count ? month.count / busiest.count * 32 : 0}
+          <rect x={index * 8} y={32 - height} width="6" {height} />
         {/each}
-      </div>
-    {/if}
+      </svg>
+      <div class="month-labels"><span>{monthName(first.bucket)}</span>{#if series.length > 1}<span>{monthName(last.bucket)}</span>{/if}</div>
+    </div>
+  {/if}
+  {#if selection.overview?.co_participants?.length}
+    <div class="people">
+      <h2>Most often with</h2>
+      {#each selection.overview?.co_participants as person (person.key)}
+        <div class="person"><span>{person.label}</span><span data-mono>{person.count.toLocaleString()}</span></div>
+      {/each}
+    </div>
   {/if}
 </section>
 
