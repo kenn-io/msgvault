@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -340,14 +339,8 @@ func TestCalendarEventsTableMeetingHandoff(t *testing.T) {
 	cmd.SetOut(&table)
 	cmd.SetArgs([]string{"--from", "2027-03-14T00:00:00Z", "--to", "2027-03-22T00:00:00Z"})
 	require.NoError(t, cmd.Execute())
-	want := fmt.Sprintf("evt:%d@20270321T100000Z", series)
-	var ref string
-	for _, word := range strings.Fields(table.String()) {
-		if word == want {
-			ref = word
-		}
-	}
-	require.NotEmpty(t, ref, table.String())
+	ref := fmt.Sprintf("evt:%d@20270321T100000Z", series)
+	require.Contains(t, table.String(), " "+ref+" ")
 	bare := newMeetingLinksCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
 	bare.SetArgs([]string{fmt.Sprintf("evt:%d", series)})
 	require.ErrorContains(t, bare.Execute(), "copy the full occurrence reference from calendar events")
@@ -359,7 +352,7 @@ func TestCalendarEventsTableMeetingHandoff(t *testing.T) {
 	var record store.MeetingRecord
 	require.NoError(t, json.Unmarshal(out.Bytes(), &record))
 	require.Len(t, record.Links, 1)
-	assert.Equal(t, want, record.Links[0].Ref)
+	assert.Equal(t, ref, record.Links[0].Ref)
 	assert.Equal(t, "2027-03-21T10:00:00Z", record.Links[0].Start.UTC().Format(time.RFC3339))
 	assert.Equal(t, []int64{note}, record.MessageIDs)
 }

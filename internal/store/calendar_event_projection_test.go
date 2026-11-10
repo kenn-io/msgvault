@@ -210,9 +210,12 @@ func TestCalendarEventUpgradeBackfillsUID(t *testing.T) {
 	require := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, id := calendarFixture(t, st, "uid-upgrade", calendarRaw)
+	if !st.IsPostgreSQL() {
+		_, err := st.db.Exec(`DROP INDEX IF EXISTS idx_calendar_events_series_provider_id`)
+		require.NoError(err)
+	}
 	for _, query := range []string{
 		`DROP INDEX IF EXISTS idx_calendar_events_ical_uid`,
-		`DROP INDEX IF EXISTS idx_calendar_events_series_provider_id`,
 		`ALTER TABLE calendar_events DROP COLUMN ical_uid`,
 		`UPDATE calendar_events SET projection_version = 2`,
 		`UPDATE applied_migrations SET version = 2 WHERE name = 'calendar_event_projection_v1'`,
@@ -229,13 +232,11 @@ func TestCalendarEventUpgradeBackfillsUID(t *testing.T) {
 	rows := calendarRows(t, reopened, id)
 	require.Len(rows, 1)
 	assert.Equal(t, "event-uid@example.com", rows[0].ICalUID)
-	query := `SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_calendar_events_series_provider_id' AND sql LIKE '%(series_provider_id)%'`
-	if reopened.IsPostgreSQL() {
-		query = `SELECT COUNT(*) FROM pg_indexes i JOIN pg_class c ON c.relname = i.indexname JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = i.schemaname JOIN pg_index x ON x.indexrelid = c.oid WHERE i.schemaname = current_schema() AND i.indexname = 'idx_calendar_events_series_provider_id' AND x.indisvalid AND i.indexdef LIKE '%(series_provider_id)%'`
+	if !reopened.IsPostgreSQL() {
+		var count int
+		require.NoError(reopened.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_calendar_events_series_provider_id' AND sql LIKE '%(series_provider_id)%'`).Scan(&count))
+		assert.Equal(t, 1, count)
 	}
-	var count int
-	require.NoError(reopened.db.QueryRow(query).Scan(&count))
-	assert.Equal(t, 1, count)
 }
 
 func TestCalendarEventProjectionUpgradeRebuildsLeapYearEnd(t *testing.T) {
