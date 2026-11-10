@@ -1252,6 +1252,17 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			nullableSchemaProperty(brief, propertyName)
 		}
 	}
+	// Creation conflicts carry either ambiguity or participant-promotion data.
+	// Keep that JSON intact instead of generating an empty details struct.
+	if response := schemas["PersonCreateErrorResponse"]; response != nil {
+		if details := response.Properties["details"]; details != nil {
+			if details.Extensions == nil {
+				details.Extensions = map[string]any{}
+			}
+			details.Extensions["x-go-type"] = "jsontext.Value"
+			details.Extensions["x-go-type-import"] = map[string]any{pathKey: "encoding/json/jsontext"}
+		}
+	}
 	nullableSchemaProperty(schemas["PersonBriefEnrollment"], "enabled_at")
 	// Read responses preserve definitions from any stored schema version.
 	if view := schemas["SavedView"]; view != nil {

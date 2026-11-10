@@ -11296,13 +11296,27 @@ func (p PersonCreateContact) Validate() error {
 }
 
 type PersonCreateErrorResponse struct {
-	Details   *struct{} `json:"details,omitempty"`
-	ErrorData string    `json:"error" validate:"required"`
-	Message   *string   `json:"message,omitzero"`
+	Details   *jsontext.Value `json:"details,omitzero"`
+	ErrorData string          `json:"error" validate:"required"`
+	Message   *string         `json:"message,omitzero"`
 }
 
 func (p PersonCreateErrorResponse) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+	var errors runtime.ValidationErrors
+	if p.Details != nil {
+		if v, ok := any(p.Details).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Details", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.ErrorData, "required"); err != nil {
+		errors = errors.Append("ErrorData", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type PersonCreateInput struct {

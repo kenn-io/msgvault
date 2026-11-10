@@ -216,18 +216,24 @@ func TestPersonCreateCLIIfExistsProduction(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, first["id"], second["id"])
 	assert.Equal(t, "matched_existing", second["ensure"].(map[string]any)["status"])
-	_, err = st.EnsureParticipant("observed@example.test", "Observed Example", "example.test")
+	observed, err := st.EnsureParticipant("observed@example.test", "Observed Example", "example.test")
 	require.NoError(t, err)
 	conflict, err := run("observed@example.test")
 	require.ErrorContains(t, err, "person_matches_participant")
 	assert.Equal(t, "person_matches_participant", conflict["error"])
 	assert.Contains(t, conflict["details"], "next")
-	// The same address on a saved person and a separate unbound cluster
-	// must reach the CLI as an ambiguity, with both candidates intact.
+	// Redundant unbound evidence on a curated address remains retry-safe.
 	_, err = st.AddPersonContactPointContext(t.Context(), int64(first["id"].(float64)), store.PersonContactPointInput{
 		AddressKind: store.ContactAddressEmail, OriginalValue: "observed@example.test",
 		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
 	})
+	require.NoError(t, err)
+	matched, err := run("observed@example.test")
+	require.NoError(t, err)
+	assert.Equal(t, first["id"], matched["id"])
+	assert.Equal(t, "matched_existing", matched["ensure"].(map[string]any)["status"])
+	// A participant bound to another saved person still produces ambiguity.
+	_, _, err = st.CreatePersonFromParticipantContext(t.Context(), observed)
 	require.NoError(t, err)
 	ambiguous, err := run("observed@example.test")
 	require.ErrorContains(t, err, "person_ambiguous")

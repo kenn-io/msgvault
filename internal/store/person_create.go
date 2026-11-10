@@ -200,7 +200,7 @@ func (s *Store) CreateStandalonePersonContext(
 			if err != nil {
 				return err
 			}
-			if len(matches) > 0 {
+			if len(matches.basis) > 0 {
 				person, err = s.resolvePersonCreateMatchesTx(ctx, tx, points, matches)
 				return err
 			}
@@ -369,9 +369,8 @@ func (s *Store) refusePersonContactDuplicateTx(
 	err := tx.QueryRowContext(ctx, `
 		SELECT c.person_id, COALESCE(p.display_name, '')
 		FROM person_contact_points c JOIN persons p ON p.id = c.person_id
-		WHERE c.address_kind = ? AND c.normalized_value = ?
-		  AND c.active_until IS NULL AND c.superseded_at IS NULL
-		ORDER BY c.person_id LIMIT 1`, kind, value).Scan(&match.PersonID, &match.Name)
+        WHERE `+personCreateCuratedPredicate+`
+        ORDER BY c.person_id LIMIT 1`, kind, value).Scan(&match.PersonID, &match.Name)
 	if err == nil {
 		return match
 	}
@@ -382,7 +381,7 @@ func (s *Store) refusePersonContactDuplicateTx(
 	if err != nil || !found {
 		return err
 	}
-	edges, err := s.loadLinkEdgesTx(tx)
+	edges, err := s.loadLinkEdgesTxContext(ctx, tx)
 	if err != nil {
 		return err
 	}
@@ -410,21 +409,10 @@ func (s *Store) findObservedContactParticipantTx(
 	ctx context.Context, tx *loggedTx, kind ContactAddressKind, value string,
 	match *PersonContactExistsError,
 ) (bool, error) {
-	participantLookup := `SELECT id FROM participants WHERE LOWER(email_address) = ?`
-	if kind == ContactAddressPhone {
-		participantLookup = `SELECT id FROM participants WHERE phone_number = ?`
-	}
 	err := tx.QueryRowContext(ctx, `
-		SELECT p.id, COALESCE(p.display_name, '') FROM participants p
-		WHERE p.id IN (`+participantLookup+`
-			UNION
-			SELECT i.participant_id FROM participant_identifiers i
-			WHERE LOWER(i.identifier_value) = ?
-			UNION
-			SELECT o.participant_id FROM participant_contact_observations o
-			WHERE o.address_kind = ? AND o.normalized_value = ?
-			  AND o.active_until IS NULL AND o.superseded_at IS NULL)
-		ORDER BY p.id LIMIT 1`, value, value, kind, value).Scan(&match.ParticipantID, &match.Name)
+        SELECT p.id, COALESCE(p.display_name, '') FROM participants p
+        WHERE p.id IN (SELECT participant_id FROM (`+personCreateObservedMatchesSQL(kind)+`) observed)
+        ORDER BY p.id LIMIT 1`, value, value, kind, value).Scan(&match.ParticipantID, &match.Name)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}

@@ -11324,7 +11324,10 @@ components:
       type: object
     PersonCreateErrorResponse:
       properties:
-        details: {}
+        details:
+          x-go-type: jsontext.Value
+          x-go-type-import:
+            path: encoding/json/jsontext
         error:
           type: string
         message:

@@ -166,7 +166,14 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.1.0**.
+it is separate from the binary release version. The current schema is **5.2.0**.
+
+Schema 5.2.0 adds `if_exists: "return"` to `POST /api/v1/people/create`.
+It returns a single matching saved person unchanged with HTTP 200 and
+`ensure.status: matched_existing`, or creates a new person with HTTP 201 and
+`ensure.status: created`. Return-mode HTTP 409 conflicts include `details` with all
+ambiguous candidates or explicit participant-promotion guidance. The MCP
+`create_person` argument requires this schema version or newer.
 
 Schema 5.1.0 adds `POST /api/v1/people/create` for standalone curated
 profiles. The MCP `create_person` tool requires this schema version or newer.

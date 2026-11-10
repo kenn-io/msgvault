@@ -225,13 +225,15 @@ func TestCreateIfExistsReturnClustersAndAmbiguity(t *testing.T) {
 				}
 			}
 			if scenario == "same contact curated and observed" {
-				_ = curatedContact(f, store.ContactAddressEmail, "a@example.test")
+				id := curatedContact(f, store.ContactAddressEmail, "a@example.test")
+				existing, err = f.Store.GetPersonContext(t.Context(), id)
+				require.NoError(t, err)
 				input = returnPersonInput("a@example.test")
 			}
 			counts := personCreateCounts(t, f.Store)
 			person, err := f.Store.CreateStandalonePersonContext(t.Context(), input)
 			switch scenario {
-			case "one bound cluster":
+			case "one bound cluster", "same contact curated and observed":
 				require.NoError(t, err)
 				assert.Equal(t, existing.ID, person.ID)
 			case "one unbound cluster":
@@ -292,4 +294,79 @@ func TestCreateIfExistsReturnEmailAndPhoneAmbiguous(t *testing.T) {
 	assert.Equal(t, emailPerson, *conflict.Candidates[0].PersonID)
 	assert.Equal(t, phonePerson, *conflict.Candidates[1].PersonID)
 	assert.Equal(t, counts, personCreateCounts(t, f.Store))
+}
+
+func TestCreateIfExistsCuratedObservedOverlap(t *testing.T) {
+	for _, scenario := range []string{"redundant unbound email", "bound to another person", "separate uncurated phone", "same cluster on uncurated phone"} {
+		t.Run(scenario, func(t *testing.T) {
+			f := storetest.New(t)
+			input := returnPersonInput("alex@example.test")
+			saved, err := f.Store.CreateStandalonePersonContext(t.Context(), input)
+			require.NoError(t, err)
+			var participantID, otherPersonID int64
+			if scenario == "separate uncurated phone" {
+				participantID, err = f.Store.EnsurePhoneParticipantContext(t.Context(), "+12025550123", "Blair Example")
+			} else {
+				participantID, err = f.Store.EnsureParticipant("alex@example.test", "Alex Example", "example.test")
+			}
+			require.NoError(t, err)
+			if scenario == "bound to another person" {
+				other, _, err := f.Store.CreatePersonFromParticipantContext(t.Context(), participantID)
+				require.NoError(t, err)
+				otherPersonID = other.ID
+			}
+			if scenario == "same cluster on uncurated phone" {
+				_, err := f.Store.RecordContactObservationContext(t.Context(), participantID, store.ParticipantContactObservationInput{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550123", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation}})
+				require.NoError(t, err)
+			}
+			if scenario == "separate uncurated phone" || scenario == "same cluster on uncurated phone" {
+				input.Phones = []store.PersonCreateContact{{Value: "+12025550123"}}
+			}
+			counts := personCreateCounts(t, f.Store)
+			got, err := f.Store.CreateStandalonePersonContext(t.Context(), input)
+			var basis []store.PersonMatchBasis
+			if scenario == "redundant unbound email" {
+				require.NoError(t, err)
+				require.NotNil(t, got.Ensure)
+				assert.Equal(t, saved.ID, got.ID)
+				assert.Equal(t, store.PersonEnsureMatchedExisting, got.Ensure.Status)
+				require.Len(t, got.Ensure.MatchBasis, 1)
+				assert.Equal(t, "contact_point", got.Ensure.MatchBasis[0].Matched)
+				assert.Empty(t, got.Ensure.UnappliedContacts)
+				basis = got.Ensure.MatchBasis
+			} else {
+				var conflict *store.PersonAmbiguousError
+				require.ErrorAs(t, err, &conflict)
+				require.Len(t, conflict.Candidates, 2)
+				assert.Equal(t, new(saved.ID), conflict.Candidates[0].PersonID)
+				if otherPersonID != 0 {
+					assert.Equal(t, new(otherPersonID), conflict.Candidates[1].PersonID)
+				} else {
+					assert.Equal(t, new(participantID), conflict.Candidates[1].ParticipantID)
+					matched := "participant"
+					if scenario == "same cluster on uncurated phone" {
+						matched = "observation"
+					}
+					assert.Contains(t, conflict.MatchBasis, store.PersonMatchBasis{Kind: store.ContactAddressPhone, Value: "+12025550123", Matched: matched, ParticipantID: new(participantID)})
+				}
+				basis = conflict.MatchBasis
+			}
+			for _, match := range basis {
+				if match.Kind == store.ContactAddressEmail && match.ParticipantID != nil {
+					assert.NotNil(t, match.PersonID, "curated email must not retain redundant unbound evidence")
+				}
+			}
+			unchanged, err := f.Store.GetPersonContext(t.Context(), saved.ID)
+			require.NoError(t, err)
+			assert.Empty(t, unchanged.ParticipantIDs)
+			assert.Equal(t, saved.Revision, unchanged.Revision)
+			assert.Equal(t, saved.UpdatedAt, unchanged.UpdatedAt)
+			assert.Equal(t, counts, personCreateCounts(t, f.Store))
+			input.IfExists = ""
+			_, err = f.Store.CreateStandalonePersonContext(t.Context(), input)
+			var refusal *store.PersonContactExistsError
+			require.ErrorAs(t, err, &refusal)
+			assert.Equal(t, saved.ID, refusal.PersonID)
+		})
+	}
 }

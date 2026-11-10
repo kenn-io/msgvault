@@ -80,17 +80,28 @@ person, or run `msgvault person promote <participant-id>` for an observed
 contact. Use [explicit identity linking](#review-identity-matches) to combine
 observed identities; creation never links them silently.
 
-For retry-safe intake, add `--if-exists return` (the default is `error`):
+For retry-safe intake, supply an email or phone and add `--if-exists return`
+(the default is `error`):
 
 ```bash
 msgvault person create --name "Alex Example" --email alex@example.test --if-exists return --json
 ```
+
+Name-only calls create a new person each time.
+
+`--if-exists return` requires a daemon with API schema 3.50.0 or newer.
+Older daemons reject the unknown `if_exists` field; upgrade the daemon before
+using return mode.
 
 When all matching contacts identify one saved person, the command returns that
 person without changing its name, contacts, or other details. The JSON `ensure`
 field reports `status: matched_existing`; `unapplied_contacts` lists supplied
 contacts that did not match and were not added. A new person reports
 `status: created`. With `--publish`, only a newly created person is published.
+Current curated contacts take precedence over unbound observations of that
+same value. A match bound to another saved person or an unbound cluster on an
+uncurated contact still counts toward ambiguity.
+
 An unbound participant cluster returns `person_matches_participant` with a
 promotion command in `details.next`. Multiple saved people or separate clusters
 return `person_ambiguous` with `details.candidates`; resolve them explicitly.
