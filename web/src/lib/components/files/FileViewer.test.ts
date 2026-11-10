@@ -377,6 +377,20 @@ it('buffers authenticated audio for seeking and revokes its blob URL on close', 
   expect(revoke).toHaveBeenCalledExactlyOnceWith('blob:audio-preview');
 });
 
+it('leaves horizontal arrows to an overflowing PDF preview', async () => {
+  const onStep = vi.fn();
+  const target = file({ mime_type: 'application/pdf' });
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...target, content_state: 'local_content', content_available: true }, new TextEncoder().encode('%PDF-1.4 synthetic'))), file: target, position: { index: 1, total: 3 }, onStep });
+  await screen.findByRole('region', { name: 'PDF preview preview.png' });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Zoom in' }));
+  const preview = screen.getByRole('region', { name: 'File preview preview.png' });
+  Object.defineProperty(preview, 'scrollWidth', { configurable: true, value: 400 });
+  Object.defineProperty(preview, 'clientWidth', { configurable: true, value: 200 });
+  await fireEvent.keyDown(preview, { key: 'ArrowLeft' });
+  await fireEvent.keyDown(preview, { key: 'ArrowRight' });
+  expect(onStep).not.toHaveBeenCalled();
+});
+
 it.each([
   ['scrollable preview', 'text/plain', async () => {
     await screen.findByText('Example text');

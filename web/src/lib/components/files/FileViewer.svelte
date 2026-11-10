@@ -319,7 +319,7 @@
     if (target instanceof HTMLElement) {
       if (target.closest('audio, input, textarea, select, [role="menu"], [contenteditable]:not([contenteditable="false"])')) return;
       const preview = target.closest<HTMLElement>('.preview');
-      if (preview?.querySelector('pre, table') && [...preview.querySelectorAll<HTMLElement>('.kit-table-wrapper'), preview].some((element) => element.scrollWidth > element.clientWidth)) return;
+      if (preview?.querySelector('pre, table, .pdf-preview') && [...preview.querySelectorAll<HTMLElement>('.kit-table-wrapper'), preview].some((element) => element.scrollWidth > element.clientWidth)) return;
     }
     const delta = event.key === 'ArrowLeft' ? -1 : 1;
     if (delta === 1 && !canStepForward || position.index + delta < 0 || position.index + delta >= position.total) return;
