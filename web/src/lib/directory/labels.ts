@@ -37,7 +37,7 @@ type SpanDate = { year?: number; month?: number; day?: number } | null | undefin
 export function dateSpan(start: SpanDate, end: SpanDate, current: boolean, { later = false, precision = 'month' }: { later?: boolean; precision?: 'month' | 'day' } = {}): string {
   const when = (value: SpanDate) => readablePartialDate(value && { year: value.year, month: value.month, ...(precision === 'day' ? { day: value.day } : {}) });
   const from = when(start), until = when(end) || (current ? 'present' : '');
-  const text = from && until ? (from === until ? from : `${from} – ${until}`) : from ? `From ${from}` : until && until !== 'present' ? `Until ${until}` : '';
+  const text = from && until ? `${from} – ${until}` : from ? `From ${from}` : until && until !== 'present' ? `Until ${until}` : '';
   return later ? text.replace(/^(From|Until) /, word => word.toLowerCase()) : text;
 }
 
