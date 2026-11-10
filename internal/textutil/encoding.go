@@ -2,6 +2,8 @@
 package textutil
 
 import (
+	"bufio"
+	"io"
 	"strings"
 	"unicode/utf8"
 
@@ -13,6 +15,15 @@ import (
 	"golang.org/x/text/encoding/simplifiedchinese"
 	"golang.org/x/text/encoding/traditionalchinese"
 )
+
+// WithoutUTF8BOM removes a leading UTF-8 BOM before parsing bytes.
+func WithoutUTF8BOM(reader io.Reader) io.Reader {
+	buffered := bufio.NewReader(reader)
+	if prefix, err := buffered.Peek(3); err == nil && string(prefix) == "\ufeff" {
+		_, _ = buffered.Discard(3)
+	}
+	return buffered
+}
 
 // EnsureUTF8 ensures a string is valid UTF-8.
 // If already valid UTF-8, returns as-is.

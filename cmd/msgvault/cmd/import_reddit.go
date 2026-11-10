@@ -28,12 +28,16 @@ downloaded. Unknown dates and senders remain unknown. Coverage depends on
 what Reddit supplied; complete lifetime history is not guaranteed.
 
 Content files run in name order. Schema errors, invalid UTF-8, read/quoting
-errors or oversized CSVs stop the run and name the file. Completed rows remain;
-later files are not read. Fix or move the named file, then re-run. Malformed
-statistics rows fail before archive writes.
+errors stop the run and name the file. Recognized oversize files fail inventory
+before source writes. Streaming growth/read/parse failures retain completed rows;
+later files are not read. Header-only CSVs are valid; zero-byte files fail.
+Fix or move the named file, then re-run. Malformed statistics fail preflight.
+PM conversation kind stays unknown. Undated rows remain in live search/details
+and SQL browsing; dated cache lists/totals omit them. Set [analytics].engine = "sql"
+for live browsing (see the analytics configuration guide).
 
-Re-running adds missing records and retains archived originals. After an
-interruption, re-run the directory to finish. No records are deleted.
+Re-running adds missing records and retains originals when later exports contain
+edits. After interruption, re-run the directory to finish. No records are deleted.
 
 Example:
   msgvault import-reddit --me fictional_owner ./reddit-export`,
@@ -62,7 +66,7 @@ func runImportReddit(cmd *cobra.Command, dir string, opts redditCLIOptions) erro
 	defer cleanup()
 	ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Re-run the export directory to finish.")
 	defer stop()
-	summary, importErr := reddit.Import(ctx, s, reddit.ImportOptions{RootDir: dir, Me: opts.Me, Logger: state.logger})
+	summary, importErr := reddit.Import(ctx, s, reddit.ImportOptions{RootDir: dir, Me: opts.Me})
 	out := cmd.OutOrStdout()
 	for _, f := range summary.Files {
 		_, _ = fmt.Fprintf(out, "%s: %d rows, %d added, %d already archived (original retained), %d malformed, %d missing IDs; %d unknown dates, %d unknown senders, %d link/media rows not downloaded\n", f.Filename, f.Rows, f.Added, f.Unchanged, f.Malformed, f.MissingIDs, f.UnknownDates, f.UnknownSenders, f.LinksNotDownloaded)

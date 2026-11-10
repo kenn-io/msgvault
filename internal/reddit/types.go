@@ -1,8 +1,6 @@
 // Package reddit imports extracted Reddit account-data CSV exports.
 package reddit
 
-import "log/slog"
-
 const maxCSVBytes int64 = 256 << 20
 const maxEntries = 10000
 const batchSize = 100
@@ -10,7 +8,6 @@ const batchSize = 100
 type ImportOptions struct {
 	RootDir string
 	Me      string
-	Logger  *slog.Logger
 }
 type FileSummary struct {
 	Filename                                         string

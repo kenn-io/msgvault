@@ -14,6 +14,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 var requiredHeaders = []string{"chat session", "message date", "service", "type"}
@@ -101,7 +103,7 @@ func parseFile(ctx context.Context, path string, loc *time.Location) ([]Row, err
 	}
 	defer func() { _ = file.Close() }()
 
-	reader := csv.NewReader(withoutBOM(newValidUTF8Reader(file)))
+	reader := csv.NewReader(textutil.WithoutUTF8BOM(newValidUTF8Reader(file)))
 	reader.Comma = delimiter
 	reader.FieldsPerRecord = -1
 	header, err := reader.Read()
@@ -141,7 +143,7 @@ func detectDelimiter(path string) (rune, error) {
 		if err != nil {
 			return 0, fmt.Errorf("open %s: %w", filepath.Base(path), err)
 		}
-		reader := csv.NewReader(withoutBOM(newValidUTF8Reader(file)))
+		reader := csv.NewReader(textutil.WithoutUTF8BOM(newValidUTF8Reader(file)))
 		reader.Comma = delimiter
 		reader.FieldsPerRecord = -1
 		header, readErr := reader.Read()
@@ -427,12 +429,4 @@ func (r *validUTF8Reader) Read(buffer []byte) (int, error) {
 		r.pending = append(r.pending, encoded[:encodedSize]...)
 	}
 	return written, nil
-}
-
-func withoutBOM(reader io.Reader) io.Reader {
-	buffered := bufio.NewReader(reader)
-	if prefix, err := buffered.Peek(3); err == nil && string(prefix) == "\ufeff" {
-		_, _ = buffered.Discard(3)
-	}
-	return buffered
 }

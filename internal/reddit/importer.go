@@ -60,7 +60,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 			if len(batch) == 0 {
 				return nil
 			}
-			err := importBatch(ctx, st, source.ID, reader.owner, file.kind, batch, stats, opts)
+			err := importBatch(ctx, st, source.ID, reader.owner, file.kind, batch, stats)
 			batch = batch[:0]
 			bytes = 0
 			return err
@@ -102,7 +102,7 @@ func rowKey(kind string, row csvRow) string {
 	return kind + ":" + row.Columns[field]
 }
 
-func importBatch(ctx context.Context, st *store.Store, sourceID int64, owner, kind string, rows []csvRow, stats *FileSummary, opts ImportOptions) error {
+func importBatch(ctx context.Context, st *store.Store, sourceID int64, owner, kind string, rows []csvRow, stats *FileSummary) error {
 	keys := make([]string, len(rows))
 	for i, row := range rows {
 		keys[i] = rowKey(kind, row)
@@ -139,14 +139,11 @@ func importBatch(ctx context.Context, st *store.Store, sourceID int64, owner, ki
 			if c["thread_id"] != "" {
 				conv = "pm:thread:" + c["thread_id"]
 			}
-			if sender != "" && to != "" {
-				convType = "direct_chat"
-			}
 		case "post", "comment":
 			sub := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(c["subreddit"])), "r/")
 			if sub != "" {
 				conv = "subreddit:" + sub
-				title = c["subreddit"]
+				title = "r/" + sub
 				convType = "channel"
 			} else {
 				conv = kind + ":item:" + c["id"]
@@ -199,7 +196,7 @@ func importBatch(ctx context.Context, st *store.Store, sourceID int64, owner, ki
 			members = append(members, store.ConversationParticipantRef{ParticipantID: pid, Role: "member"})
 			recipients = append(recipients, store.RecipientSet{Type: person.role, ParticipantIDs: []int64{pid}, DisplayNames: []string{person.handle}})
 		}
-		raw, err := json.Marshal(row)
+		raw, err := json.Marshal(row, json.Deterministic(true))
 		if err != nil {
 			return err
 		}
@@ -221,9 +218,6 @@ func importBatch(ctx context.Context, st *store.Store, sourceID int64, owner, ki
 		}
 		known[key] = id
 		stats.Added++
-		if opts.Logger != nil {
-			opts.Logger.Info("reddit: record imported", "kind", kind)
-		}
 	}
 	return nil
 }

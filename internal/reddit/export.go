@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 var contentName = regexp.MustCompile(`^(chat_history|messages_archive|messages|posts|comments)(_[0-9]+)?\.csv$`)
@@ -162,13 +163,12 @@ func (r *exportReader) rows(ctx context.Context, file csvFile, summary *FileSumm
 		return errors.New("nonregular CSV")
 	}
 	limited := &io.LimitedReader{R: &export.ContextReader{Context: ctx, Reader: f}, N: maxCSVBytes + 1}
-	reader := csv.NewReader(limited)
-	reader.FieldsPerRecord = -1
+	reader := csv.NewReader(textutil.WithoutUTF8BOM(limited))
 	headers, err := reader.Read()
 	if err != nil {
 		return fmt.Errorf("unsupported schema: %w", err)
 	}
-	headers[0] = strings.TrimPrefix(headers[0], "\ufeff")
+	reader.FieldsPerRecord = len(headers)
 	seen := map[string]bool{}
 	for _, h := range headers {
 		if !utf8.ValidString(h) {
@@ -196,7 +196,7 @@ func (r *exportReader) rows(ctx context.Context, file csvFile, summary *FileSumm
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
-		if err != nil {
+		if err != nil && !errors.Is(err, csv.ErrFieldCount) {
 			return fmt.Errorf("record %d: %w", number, err)
 		}
 		if summary != nil {
@@ -207,9 +207,9 @@ func (r *exportReader) rows(ctx context.Context, file csvFile, summary *FileSumm
 				return fmt.Errorf("record %d: invalid UTF-8 cell", number)
 			}
 		}
-		if len(values) != len(headers) {
+		if errors.Is(err, csv.ErrFieldCount) {
 			if file.kind == "statistics" {
-				return fmt.Errorf("record %d: field count %d, expected %d", number, len(values), len(headers))
+				return fmt.Errorf("record %d: %w", number, err)
 			}
 			if summary != nil {
 				summary.Malformed++

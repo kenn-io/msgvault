@@ -11,6 +11,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestImportRedditEndToEnd(t *testing.T) {
@@ -25,6 +28,32 @@ func TestImportRedditEndToEnd(t *testing.T) {
 	require.NoError(t, runImportReddit(cmd, fixture, redditCLIOptions{}))
 	assert.Contains(t, out.String(), "6 added, 2 already archived")
 	assert.Contains(t, out.String(), "votes.csv")
+	st, err := store.OpenContext(t.Context(), cfg.DatabaseDSN())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	// This is the existing live engine selected by analytics.engine = "sql".
+	live := query.NewSQLiteEngine(st.DB())
+	found, err := live.Search(t.Context(), search.Parse("lantern"), 20, 0)
+	require.NoError(t, err)
+	assert.Len(t, found, 6)
+	listed, err := live.ListMessages(t.Context(), query.MessageFilter{
+		Sorting: query.MessageSorting{Field: query.MessageSortByDate, Direction: query.SortDesc},
+	})
+	require.NoError(t, err)
+	assert.Len(t, listed, 6)
+	for _, key := range []string{"chat:c3", "comment:r1"} {
+		detail, err := live.GetMessageBySourceID(t.Context(), key, nil)
+		require.NoError(t, err)
+		require.NotNil(t, detail)
+		assert.True(t, detail.SentAt.IsZero())
+		assert.Contains(t, detail.BodyText, "lantern")
+	}
+	db, err := sql.Open("duckdb", "")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	var cached int
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM read_parquet(?, hive_partitioning=true)`, filepath.Join(cfg.AnalyticsDir(), "messages", "**", "*.parquet")).Scan(&cached))
+	assert.Equal(t, 4, cached, "the dated cache omits the two undated records")
 }
 
 func TestImportRedditRefreshesCacheAfterPartialFailure(t *testing.T) {

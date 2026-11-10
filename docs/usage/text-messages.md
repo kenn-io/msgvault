@@ -532,25 +532,37 @@ numbered splits. Extract ZIPs first. Reads are limited to 10,000 directory
 entries and 256 MiB per CSV. Unsupported files and skipped rows appear in the
 summary. Content files are processed in name order. Schema errors (empty or
 duplicate headers or missing essential columns), invalid UTF-8, read/quoting
-errors and files over 256 MiB stop the run with the filename. Essential columns
+errors stop the run with the filename. Recognized oversize files found during
+inventory fail before source writes; growth past the cap or read/parse failure
+while streaming may leave completed rows. Essential columns
 are `message_id` and `message` for Chat, `id` and `body` for PMs/comments, and
 `id` and `title` for posts. Complete rows before the error are retained; later
-files are not read. Fix or move the named file, then re-run. Statistics are
+files are not read. Header-only CSVs are valid empty files; zero-byte files
+fail as missing headers. Fix or move the named file, then re-run. Statistics are
 checked before archive writes; malformed statistics rows stop preflight with
 the filename and logical record number.
 
 Re-run the directory after interruption. Existing keys keep their archived
-originals; new keys are added, and absence never deletes messages. Chat and
+originals, including their original text when a later export contains edits;
+new keys are added, and absence never deletes messages. Chat and
 legacy PMs stay separate (`reddit_chat` and `reddit_pm`); posts and comments
 are searchable as `reddit_post` and `reddit_comment` outside chat analytics.
 Unknown dates and senders stay unknown. Original column values, filenames,
 record numbers and supplied account/export-time evidence are archived.
 
+Legacy PM conversation kind stays unknown even when a row names two people.
+Newly archived PM subjects or Chat channel names update their conversation title
+when nonempty. Subreddit titles use canonical `r/<normalized subreddit>` spelling.
 A Chat `channel_url` groups records without inferring a conversation kind;
 `channel_name` supplies its title. Without an observed grouping key, a Chat row
 stays an isolated item. Post URLs are appended to displayed/searchable bodies;
 raw evidence retains the original cells. Comment parent/link values remain raw,
 without an invented cross-kind reply mapping.
+
+Undated records remain available in live search, details and SQL browsing.
+Dated cache-backed lists and totals omit them. Set
+[`[analytics].engine = "sql"`](../configuration.md#analytics) for live browsing;
+no date is invented to place records in the cache.
 
 Links are preserved; no media is downloaded. The link/media counter counts each
 eligible scanned row once when `body` or `message` contains an HTTP(S) URL,
