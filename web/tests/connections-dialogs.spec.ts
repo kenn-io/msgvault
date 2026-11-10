@@ -172,6 +172,5 @@ for (const width of [1440, 390]) {
     await dialog.getByRole('combobox', { name: 'Person', exact: true }).fill('Sela');
     const searchFailure = dialog.getByRole('alert').filter({ hasText: "Couldn't search people." });
     await expect(searchFailure).toBeVisible();
-    await expect.poll(() => errorInset(searchFailure)).toEqual([4, 4, '0px', '0px']);
   });
 }

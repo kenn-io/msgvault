@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { conflictSaved, dateSpan, channelLabel, contactStateLabel, formatContactDate, formatDay } from './labels';
+import { conflictSaved, channelLabel, contactStateLabel, formatContactDate, formatDay } from './labels';
 
 describe('directory labels', () => {
   it('names known codes and sentence-cases unknown ones', () => {
@@ -16,14 +16,22 @@ describe('directory labels', () => {
 });
 
 describe('work and connection labels', () => {
-  it('reads current and ended periods, including an open start', () => {
-    expect(dateSpan({ year: 2024, month: 3 }, undefined, true)).toBe('Mar 2024 – present');
-    expect(dateSpan({ year: 2020 }, { year: 2023 }, false)).toBe('2020 – 2023');
-    expect(dateSpan(undefined, { year: 2023 }, false, { later: true })).toBe('until 2023');
-    expect(dateSpan({ year: 2019 }, undefined, false)).toBe('From 2019');
-    expect(dateSpan(undefined, undefined, true)).toBe('');
-    expect(dateSpan({ year: 2024, month: 1, day: 5 }, { year: 2024, month: 1, day: 6 }, false, { precision: 'day' })).toBe('Jan 5, 2024 – Jan 6, 2024');
-    expect(dateSpan({ year: 2024, month: 1, day: 5 }, { year: 2024, month: 1, day: 6 }, false)).toBe('Jan 2024');
+  it('reads current and ended periods, including an open start', async () => {
+    const DateTimeFormat = Intl.DateTimeFormat;
+    const formatter = vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function (locale, options) {
+      return new DateTimeFormat(locale ?? 'en-US', options);
+    });
+    try {
+      vi.resetModules();
+      const { dateSpan } = await import('./labels');
+      expect(dateSpan({ year: 2024, month: 3 }, undefined, true)).toBe('Mar 2024 – present');
+      expect(dateSpan({ year: 2020 }, { year: 2023 }, false)).toBe('2020 – 2023');
+      expect(dateSpan(undefined, { year: 2023 }, false, { later: true })).toBe('until 2023');
+      expect(dateSpan({ year: 2019 }, undefined, false)).toBe('From 2019');
+      expect(dateSpan(undefined, undefined, true)).toBe('');
+      expect(dateSpan({ year: 2024, month: 1, day: 5 }, { year: 2024, month: 1, day: 6 }, false, { precision: 'day' })).toBe('Jan 5, 2024 – Jan 6, 2024');
+      expect(dateSpan({ year: 2024, month: 1, day: 5 }, { year: 2024, month: 1, day: 6 }, false)).toBe('Jan 2024');
+    } finally { formatter.mockRestore(); }
   });
 
   it('dates saved conflicts and names imported edits', () => {

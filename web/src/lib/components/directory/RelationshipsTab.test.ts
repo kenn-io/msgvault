@@ -1,11 +1,17 @@
 import { controllerWith as entityControllerWith, directoryPerson, relationshipType, relationship, requestOf, pathOf } from '../../directory/entity-fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
 import { DirectoryEntityController } from '../../directory/entity-controller.svelte';
 import { openTypeahead } from '../../../test/kit-ui';
 import RelationshipsTab from './RelationshipsTab.svelte';
+
+const formatter = vi.hoisted(() => {
+  const DateTimeFormat = Intl.DateTimeFormat;
+  return vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function (locale, options) { return new DateTimeFormat(locale ?? 'en-US', options); });
+});
+afterAll(() => formatter.mockRestore());
 
 function controllerWith(fetchFn: typeof fetch, personID = 7, options: { onDirectoryChange?: () => void | Promise<void> } = {}) {
   const result = entityControllerWith(async (input, init) => {

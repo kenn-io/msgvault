@@ -51,3 +51,23 @@ it('keeps the End conflict valid when the saved start date changes', async () =>
       expect(field).toHaveProperty('value', '2026-11-04');
     } finally { vi.useRealTimers(); vi.unstubAllEnvs(); view.unmount(); controller.destroy(); }
   });
+
+
+it('offers no Keep yours for a moved job', async () => {
+  let reads = 0;
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input), path = pathOf(request);
+    if (path === '/api/v1/employments/11' && request.method === 'GET') return Response.json(employment(11, ++reads, { person_id: reads === 1 ? 7 : 8 }), { headers: { ETag: `"employment-11-r${reads}"` } });
+    if (path === '/api/v1/employments/11/end') return Response.json({ message: 'Changed' }, { status: 412 });
+    if (path === '/api/v1/people/7/employments') return Response.json({ employments: [] });
+    if (path === '/api/v1/organizations/21') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+    throw new Error(`unexpected ${request.method} ${path}`);
+  });
+  render(EmploymentEndDialog, { controller, employment: employment(), onClose: vi.fn() });
+  const submit = screen.getByRole('button', { name: 'End' });
+  await waitFor(() => expect(submit).toHaveProperty('disabled', false));
+  await fireEvent.click(submit);
+  await screen.findByRole('region', { name: 'Saved job' });
+  expect(screen.queryByRole('button', { name: 'Keep yours' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Close' })).toBeDefined();
+});

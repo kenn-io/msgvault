@@ -72,7 +72,7 @@ it.each(['Delete…', 'Make primary'])('shows a newer job after retrying %s', as
   revision = 3;
   await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   expect(await screen.findByText('Title 3')).toBeDefined();
-  if (action === 'Delete…') expect(tags).toEqual(['"employment-11-r1"', '"employment-11-r2"']);
+  expect(tags).toEqual(['"employment-11-r1"', '"employment-11-r2"']);
 });
 
 it('uses the selected job version after a different job conflicts', async () => {
