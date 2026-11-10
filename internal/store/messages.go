@@ -534,6 +534,8 @@ type StoredMessage struct {
 	InternalDate   sql.NullTime
 	Snippet        sql.NullString
 	SizeEstimate   int64
+	// ReplyToMessageID is the linked parent, NULL when none is linked.
+	ReplyToMessageID sql.NullInt64
 	// Raw is nil when the message has no readable raw payload in the requested
 	// format.
 	Raw []byte
@@ -571,7 +573,7 @@ func (s *Store) StoredMessagesContext(
 		SELECT m.source_message_id, m.id, m.conversation_id, m.sender_id,
 		       m.source_is_from_me, m.subject, COALESCE(m.message_type, ''), m.sent_at,
 		       m.internal_date, m.snippet, COALESCE(m.size_estimate, 0),
-		       r.raw_data, r.compression
+		       m.reply_to_message_id, r.raw_data, r.compression
 		FROM messages m
 		LEFT JOIN message_raw r ON r.message_id = m.id AND r.raw_format = ?
 		WHERE m.source_id = ? AND m.source_message_id IN (%s)`,
@@ -584,7 +586,7 @@ func (s *Store) StoredMessagesContext(
 				&sourceMessageID, &stored.ID, &stored.ConversationID, &stored.SenderID,
 				&stored.SourceIsFromMe, &stored.Subject, &stored.MessageType, &stored.SentAt,
 				&stored.InternalDate, &stored.Snippet, &stored.SizeEstimate,
-				&raw, &compression,
+				&stored.ReplyToMessageID, &raw, &compression,
 			); err != nil {
 				return err
 			}
