@@ -92,7 +92,7 @@ func (imp *Importer) earlierRollbackCopies(ctx context.Context, sourceID, convID
 			if err != nil {
 				return nil, err
 			}
-			if original == nil || original.Type == event.EventEncrypted || !validReplacement(original, plain) {
+			if original == nil || (original.Type == event.EventEncrypted && original.Sender != plain.Sender) || (original.Type != event.EventEncrypted && !validReplacement(original, plain)) {
 				continue
 			}
 			if first := owners[key]; first == nil || compareRelations(plain, first) < 0 {
