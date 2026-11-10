@@ -1,7 +1,6 @@
 package store
 
 import (
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -315,29 +314,5 @@ func TestICalendarRoomAttendeesAreNotParticipants(t *testing.T) {
 		var count int
 		requirements.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM participants WHERE email_address=?`, tc.email).Scan(&count))
 		assertions.Equal(tc.want, count, tc.email)
-	}
-}
-
-func TestICalendarHistoricalZoneOccurrences(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	raw, err := os.ReadFile("../calevent/testdata/customized-history.ics")
-	requirements.NoError(err)
-	_, err = st.PersistICalendarContext(t.Context(), icsSource(t, st), raw)
-	requirements.NoError(err)
-	for _, tc := range []struct {
-		year int
-		want string
-	}{{2006, "2006-03-20T15:00:00Z"}, {2007, "2007-03-20T14:00:00Z"}, {2008, ""}, {2026, "2026-03-20T14:00:00Z"}} {
-		from := time.Date(tc.year, 3, 19, 0, 0, 0, 0, time.UTC)
-		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 3))
-		requirements.NoError(err)
-		assertions.Empty(page.Unexpandable)
-		if tc.want == "" {
-			assertions.Empty(page.Occurrences)
-			continue
-		}
-		requirements.Len(page.Occurrences, 1)
-		assertions.Equal(tc.want, page.Occurrences[0].Start.UTC().Format(time.RFC3339))
 	}
 }

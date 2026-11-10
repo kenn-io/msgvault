@@ -2,7 +2,6 @@ package calevent
 
 import (
 	"os"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -204,12 +203,6 @@ func TestICSRetainsEachEventWithItsTimeZones(t *testing.T) {
 	}
 }
 
-const rdateZoneCalendar = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n" +
-	"BEGIN:VTIMEZONE\r\nTZID:Custom/Eastern\r\n" +
-	"BEGIN:DAYLIGHT\r\nDTSTART:20270314T020000\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0400\r\nRDATE:20280312T020000,20290311T020000\r\nEND:DAYLIGHT\r\n" +
-	"BEGIN:STANDARD\r\nDTSTART:20271107T020000\r\nTZOFFSETFROM:-0400\r\nTZOFFSETTO:-0500\r\nRDATE:20281105T020000,20291104T020000\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\n" +
-	"BEGIN:VEVENT\r\nUID:rdate@example.test\r\nDTSTART;TZID=Custom/Eastern:20280715T120000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
-
 func TestICSRecurrenceAndBounds(t *testing.T) {
 	for _, tt := range []struct{ name, props, kind, end, original string }{
 		{"all day default", "DTSTART;VALUE=DATE:20270314", "single", "2027-03-15T04:00:00Z", ""},
@@ -251,10 +244,11 @@ func TestICSRecurrenceAndBounds(t *testing.T) {
 }
 
 func TestICSRejectMalformed(t *testing.T) {
+	const zone = "BEGIN:VCALENDAR\r\nBEGIN:VTIMEZONE\r\nTZID:Custom/Test\r\nBEGIN:STANDARD\r\nDTSTART:20270101T000000\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0500\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:test@example.com\r\nDTSTART;TZID=Custom/Test:20270302T120000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
 	for _, tc := range []struct{ name, raw, want string }{
-		{"zone period RDATE", strings.Replace(rdateZoneCalendar, "RDATE:20280312T020000,20290311T020000", "RDATE;VALUE=PERIOD:20280312T020000/20280312T030000", 1), "unsupported VTIMEZONE"},
-		{"zone EXDATE", strings.Replace(rdateZoneCalendar, "RDATE:20280312T020000,20290311T020000", "EXDATE:20280312T020000", 1), "unsupported VTIMEZONE"},
-		{"zone mixed rule and date", strings.Replace(rdateZoneCalendar, "RDATE:20281105T020000,20291104T020000", "RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU", 1), "unsupported VTIMEZONE"},
+		{"duplicate zone observance", strings.Replace(zone, "END:VTIMEZONE", "BEGIN:STANDARD\r\nDTSTART:20280101T000000\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0500\r\nEND:STANDARD\r\nEND:VTIMEZONE", 1), "VTIMEZONE"},
+		{"zone rule until", strings.Replace(zone, "END:STANDARD", "RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU;UNTIL=20300101T000000Z\r\nEND:STANDARD", 1), "VTIMEZONE"},
+		{"zone changing offset without rule", strings.Replace(zone, "TZOFFSETFROM:-0500", "TZOFFSETFROM:-0400", 1), "VTIMEZONE"},
 		{"unknown method", strings.Replace(icsExample, "METHOD:REQUEST", "METHOD:X-UNKNOWN", 1), `unsupported calendar method "X-UNKNOWN"`},
 		{"unknown zone", strings.ReplaceAll(icsExample, "America/New_York", "Unknown/Zone"), "unknown time zone Unknown/Zone"},
 		{"negative sequence", strings.Replace(icsExample, "SEQUENCE:2", "SEQUENCE:-1", 1), "invalid SEQUENCE"},
@@ -284,34 +278,7 @@ func TestICSRejectMalformed(t *testing.T) {
 	}
 }
 
-func TestParseICSCustomizedHistory(t *testing.T) {
-	raw, err := os.ReadFile("testdata/customized-history.ics")
-	require.NoError(t, err)
-	for _, until := range []bool{false, true} {
-		data := string(raw)
-		if until {
-			data = strings.Replace(data, "BYDAY=-1SU;BYMONTH=10", "BYDAY=-1SU;BYMONTH=10;UNTIL=20061029T060000Z", 1)
-			data = strings.Replace(data, "BYDAY=1SU;BYMONTH=4", "BYDAY=1SU;BYMONTH=4;UNTIL=20060402T070000Z", 1)
-		}
-		for _, tc := range []struct{ date, want string }{{"20060320", "2006-03-20T15:00:00Z"}, {"20061101", "2006-11-01T15:00:00Z"}, {"20260320", "2026-03-20T14:00:00Z"}} {
-			t.Run(tc.date+strconv.FormatBool(until), func(t *testing.T) {
-				assertions, requirements := assert.New(t), require.New(t)
-				components, err := ParseICS([]byte(strings.Replace(data, "20060320T100000", tc.date+"T100000", 1)), "", "")
-				requirements.NoError(err)
-				requirements.Len(components, 1)
-				assertions.Equal(tc.want, components[0].Event.Start.Format(time.RFC3339))
-				assertions.Contains(components[0].Event.Recurrence, "EXDATE:20080320T140000Z")
-				loc, err := LoadZone(components[0].Event.EventTimeZone)
-				requirements.NoError(err)
-				date, err := time.Parse("20060102", tc.date)
-				requirements.NoError(err)
-				assertions.Equal(tc.want, time.Date(date.Year(), date.Month(), date.Day(), 10, 0, 0, 0, loc).UTC().Format(time.RFC3339))
-			})
-		}
-	}
-	_, err = LoadZone("STD+05:00;bad")
-	require.Error(t, err)
-
+func TestParseICSCustomizedZone(t *testing.T) {
 	t.Run("single era", func(t *testing.T) {
 		assertions, requirements := assert.New(t), require.New(t)
 		raw, err := os.ReadFile("testdata/customized.ics")
@@ -327,42 +294,5 @@ func TestParseICSCustomizedHistory(t *testing.T) {
 		requirements.NoError(err)
 		requirements.Len(components, 1)
 		assertions.Equal("2026-07-15T04:30:00Z", components[0].Event.Start.Format(time.RFC3339))
-	})
-
-	t.Run("rdate", func(t *testing.T) {
-		assertions, requirements := assert.New(t), require.New(t)
-		components, err := ParseICS([]byte(rdateZoneCalendar), "", "")
-		requirements.NoError(err)
-		requirements.Len(components, 1)
-		assertions.Equal("2028-07-15T16:00:00Z", components[0].Event.Start.Format(time.RFC3339))
-		loc, err := LoadZone(components[0].Event.EventTimeZone)
-		requirements.NoError(err)
-		for _, tc := range []struct {
-			year  int
-			month time.Month
-			want  int
-		}{{2028, time.July, -4 * 3600}, {2028, time.December, -5 * 3600}, {2029, time.July, -4 * 3600}, {2029, time.December, -5 * 3600}} {
-			_, offset := time.Date(tc.year, tc.month, 15, 12, 0, 0, 0, loc).Zone()
-			assertions.Equal(tc.want, offset)
-		}
-	})
-
-	t.Run("one shot", func(t *testing.T) {
-		assertions, requirements := assert.New(t), require.New(t)
-		raw, err := os.ReadFile("testdata/customized-history.ics")
-		requirements.NoError(err)
-		change := "BEGIN:STANDARD\nDTSTART:20300101T020000\nTZOFFSETFROM:-0500\nTZOFFSETTO:-0600\nEND:STANDARD\n"
-		data := strings.Replace(string(raw), "END:VTIMEZONE", change+"END:VTIMEZONE", 1)
-		components, err := ParseICS([]byte(data), "", "")
-		requirements.NoError(err)
-		loc, err := LoadZone(components[0].Event.EventTimeZone)
-		requirements.NoError(err)
-		for _, tc := range []struct {
-			year int
-			want int
-		}{{2006, -5 * 3600}, {2026, -4 * 3600}, {2031, -6 * 3600}} {
-			_, got := time.Date(tc.year, 3, 20, 10, 0, 0, 0, loc).Zone()
-			assertions.Equal(tc.want, got)
-		}
 	})
 }

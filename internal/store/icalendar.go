@@ -115,22 +115,13 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 				return fmt.Errorf("decode retained ICS metadata: %w", err)
 			}
 		}
-		// New instances follow the organizer of the first event in the family.
+		familyKey, familyOrganizer, err := icsFamily(ctx, tx, sourceID, id, calevent.ICSMessageID(item.component.UID, ""), item.fromEmail && old.Organizer == "")
+		if err != nil {
+			return err
+		}
 		organizer := old.Organizer
-		if item.fromEmail && !exists {
-			family := calevent.ICSMessageID(item.component.UID, "")
-			var familyMetadata sql.NullString
-			err := q.QueryRow(`SELECT m.id,m.metadata FROM messages m JOIN conversations c ON c.id=m.conversation_id JOIN message_raw r ON r.message_id=m.id WHERE m.source_id=? AND c.source_conversation_id=COALESCE((SELECT c2.source_conversation_id FROM source_merge_archive_only_messages a JOIN messages m2 ON m2.id=a.message_id JOIN conversations c2 ON c2.id=m2.conversation_id WHERE a.original_source_message_id=? AND m2.source_id=? ORDER BY m2.id LIMIT 1), ?) AND r.raw_format=? ORDER BY m.id LIMIT 1`, sourceID, family, sourceID, family, rawFormatICS).Scan(&id, &familyMetadata)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return fmt.Errorf("read ICS family organizer: %w", err)
-			}
-			if err == nil {
-				var familyMeta calevent.ICSMetadata
-				if err := json.Unmarshal([]byte(familyMetadata.String), &familyMeta); err != nil {
-					return fmt.Errorf("decode ICS family metadata: %w", err)
-				}
-				organizer = familyMeta.Organizer
-			}
+		if item.fromEmail && organizer == "" {
+			organizer = familyOrganizer
 		}
 		foreign := item.fromEmail && organizer != "" && item.component.OrganizerEmail != organizer
 		if foreign {
@@ -156,7 +147,7 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 				return err
 			}
 		} else if apply || fill {
-			if err := s.persistICSDetailsWith(ctx, tx, sourceID, sourceMessageID, id, item); err != nil {
+			if err := s.persistICSDetailsWith(ctx, tx, sourceID, sourceMessageID, familyKey, item); err != nil {
 				return err
 			}
 		}
@@ -172,6 +163,38 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 		}
 	}
 	return nil
+}
+
+func icsFamily(ctx context.Context, tx *loggedTx, sourceID, retainedID int64, familyKey string, needOrganizer bool) (string, string, error) {
+	q := boundQuerier{ctx: ctx, q: tx}
+	if err := q.QueryRow(`SELECT COALESCE((SELECT c.source_conversation_id FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE m.id=? AND m.source_id=?), (SELECT source_conversation_id FROM conversations WHERE source_id=? AND source_conversation_id=?), (SELECT c.source_conversation_id FROM source_merge_archive_only_messages a JOIN messages m ON m.id=a.message_id JOIN conversations c ON c.id=m.conversation_id LEFT JOIN calendar_events e ON e.message_id=m.id WHERE m.source_id=? AND (a.original_source_message_id=? OR e.series_provider_id=?) ORDER BY m.id LIMIT 1), ?)`, retainedID, sourceID, sourceID, familyKey, sourceID, familyKey, familyKey, familyKey).Scan(&familyKey); err != nil {
+		return "", "", fmt.Errorf("resolve ICS family conversation: %w", err)
+	}
+	if !needOrganizer {
+		return familyKey, "", nil
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT m.metadata FROM messages m JOIN conversations c ON c.id=m.conversation_id JOIN message_raw r ON r.message_id=m.id WHERE m.source_id=? AND c.source_conversation_id=? AND r.raw_format=? ORDER BY m.id`, sourceID, familyKey, rawFormatICS)
+	if err != nil {
+		return "", "", fmt.Errorf("read ICS family organizer: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var metadata sql.NullString
+		if err := rows.Scan(&metadata); err != nil {
+			return "", "", fmt.Errorf("read ICS family metadata: %w", err)
+		}
+		var meta calevent.ICSMetadata
+		if err := json.Unmarshal([]byte(metadata.String), &meta); err != nil {
+			return "", "", fmt.Errorf("decode ICS family metadata: %w", err)
+		}
+		if meta.Organizer != "" {
+			return familyKey, meta.Organizer, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", "", fmt.Errorf("read ICS family organizer: %w", err)
+	}
+	return familyKey, "", nil
 }
 
 func icsDetailsNewer(q boundQuerier, id int64, incoming calevent.ICSComponent) (bool, error) {
@@ -229,7 +252,7 @@ func icsEventSentAt(e calevent.Event) (sql.NullTime, error) {
 	return sql.NullTime{Time: sent, Valid: true}, nil
 }
 
-func (s *Store) persistICSDetailsWith(ctx context.Context, tx *loggedTx, sourceID int64, sourceMessageID string, retainedID int64, item preparedICS) error {
+func (s *Store) persistICSDetailsWith(ctx context.Context, tx *loggedTx, sourceID int64, sourceMessageID, familyKey string, item preparedICS) error {
 	c := item.component
 	e := c.Event
 	item.meta.ICalUID = c.UID
@@ -270,10 +293,6 @@ func (s *Store) persistICSDetailsWith(ctx context.Context, tx *loggedTx, sourceI
 	title := c.Summary
 	if e.Kind == calendarExceptionKind {
 		title = ""
-	}
-	familyKey := calevent.ICSMessageID(c.UID, "")
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT c.source_conversation_id FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE m.id=? AND m.source_id=?), (SELECT source_conversation_id FROM conversations WHERE source_id=? AND source_conversation_id=?), (SELECT c.source_conversation_id FROM source_merge_archive_only_messages a JOIN messages m ON m.id=a.message_id JOIN conversations c ON c.id=m.conversation_id WHERE a.original_source_message_id=? AND m.source_id=? ORDER BY m.id LIMIT 1), ?)`, retainedID, sourceID, sourceID, familyKey, familyKey, sourceID, familyKey).Scan(&familyKey); err != nil {
-		return fmt.Errorf("resolve ICS family conversation: %w", err)
 	}
 	id, err := s.persistMessageWithParticipantsTx(ctx, tx, nil, participants, func(ids []int64) *MessagePersistData {
 		from, to := RecipientSet{Type: meetingSenderRole}, RecipientSet{Type: "to"}

@@ -400,7 +400,7 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 		for _, prop := range p.Values(name) {
 			var line strings.Builder
 			line.WriteString(name)
-			custom := isCustomZone(prop.Params.Get("TZID"))
+			custom := customZonePattern.MatchString(prop.Params.Get("TZID"))
 			for _, param := range []string{"VALUE", "TZID"} {
 				if v := prop.Params.Get(param); v != "" && (param != "TZID" || !custom) {
 					line.WriteString(";" + param + "=" + v)
