@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-08"
+last_edited: "2026-11-10"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -1638,7 +1638,9 @@ restarts cursors without deleting rows. No identifier selects all profiles.
 msgvault source instagram-comments sync [identifier] [--max-requests 1000] [--full]
 ```
 
-See [Instagram comments](usage/instagram-comments.md) for setup, identity,
+Profiles with `ad_account_id` also archive comments on media used by that ad
+account's ads when the configured account owns it. See
+[Instagram comments](usage/instagram-comments.md) for setup, identity,
 resuming, and coverage limits. These commands do not send replies.
 
 ## add-chatwoot

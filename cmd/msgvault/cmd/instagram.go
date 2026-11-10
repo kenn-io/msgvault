@@ -31,9 +31,13 @@ func resolveInstagramCommentsProfiles(args []string, cfg *config.Config) ([]conf
 }
 
 func configuredInstagramCommentsClient(source config.InstagramCommentsSource) (*meta.Client, error) {
-	token := os.Getenv(source.TokenEnv)
+	return instagramProfileClient(source.Identifier, source.TokenEnv)
+}
+
+func instagramProfileClient(identifier, env string) (*meta.Client, error) {
+	token := os.Getenv(env)
 	if strings.TrimSpace(token) == "" {
-		return nil, &sourceCommandError{err: fmt.Errorf("instagram profile %q needs %s in the daemon environment", source.Identifier, source.TokenEnv), code: 7, hint: "set the named credential in the daemon environment and restart the daemon"}
+		return nil, &sourceCommandError{err: fmt.Errorf("instagram profile %q needs %s in the daemon environment", identifier, env), code: 7, hint: "set the named credential in the daemon environment and restart the daemon"}
 	}
 	client, err := meta.NewClient(token)
 	if err != nil {
@@ -59,7 +63,16 @@ func importInstagramCommentsProfile(ctx context.Context, st *store.Store, source
 	if err != nil {
 		return nil, err
 	}
-	sum, err = meta.NewImporter(st, client).ImportInstagram(ctx, source.AppID, source.PageID, source.InstagramAccountID, options)
+	importer := meta.NewImporter(st, client)
+	if source.AdAccountID == "" {
+		sum, err = importer.ImportInstagram(ctx, source.AppID, source.PageID, source.InstagramAccountID, options)
+		return sum, metaSourceStateError(err, "instagram-comments")
+	}
+	ads, err := instagramProfileClient(source.Identifier, source.AdTokenEnv)
+	if err != nil {
+		return nil, err
+	}
+	sum, err = importer.ImportInstagramAds(ctx, source.AppID, source.PageID, source.InstagramAccountID, source.AdAccountID, ads, options)
 	return sum, metaSourceStateError(err, "instagram-comments")
 }
 
@@ -118,7 +131,7 @@ func newSyncInstagramCommentsCmd() *cobra.Command {
 	options := meta.ImportOptions{MaxRequests: meta.DefaultMaxRequests}
 	cmd := &cobra.Command{
 		Use: "sync [identifier]", Short: "Archive Instagram comments and replies",
-		Long: "Sync Instagram professional account comments for registered [[instagram_comments]] profiles. Read available media, comments and replies with resumable progress; ordinary media discovery does not promise ad-only coverage. Tokens come from the daemon environment. Partial writes stay searchable; missing or inaccessible objects never delete archived history.",
+		Long: "Sync Instagram professional account comments for registered [[instagram_comments]] profiles. Read available media, comments and replies with resumable progress; profiles with ad_account_id also visit media used by that ad account's creatives when the configured account owns it. Tokens come from the daemon environment. Partial writes stay searchable; missing or inaccessible objects never delete archived history.",
 		Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			if options.MaxRequests <= 0 {
 				return opserr.Invalid(errors.New("--max-requests must be positive"))

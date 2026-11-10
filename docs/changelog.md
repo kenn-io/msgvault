@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-08"
+last_edited: "2026-11-10"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -11,7 +11,10 @@ All notable changes to msgvault, grouped by release.
 - `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.
 - [Instagram comment sync](usage/instagram-comments.md) archives linked professional
   account media comments and replies for search and existing person linking.
-  Sending and ad-only discovery are not included.
+  Sending is not included.
+- Instagram comment sync can also archive comments on the account's ads that
+  its media list leaves out. Set `ad_account_id` and `ad_token_env` on the
+  profile; see [Include ad media](usage/instagram-comments.md#include-ad-media).
 - [Facebook Page comment sync](usage/facebook-comments.md) archives comments and
   nested replies on organic, visitor, and ad posts returned for a selected Page.
   Search the archive and link commenters through existing people tools. This

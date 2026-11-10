@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-07"
+last_edited: "2026-11-10"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -1677,10 +1677,13 @@ Select a professional Instagram account linked to an explicitly selected Page
 (unreleased). See [Instagram comments](usage/instagram-comments.md) for setup
 and coverage. Each profile requires `identifier`, `app_id`, `page_id`,
 `instagram_account_id`, and `token_env`; `enabled` defaults to `false`, and
-an empty `schedule` means manual sync only.
+an empty `schedule` means manual sync only. Set `ad_account_id` and
+`ad_token_env` together to also archive comments on the account's ads; see
+[Include ad media](usage/instagram-comments.md#include-ad-media).
 
-The label is trimmed, nonempty, and unique ignoring case. All three IDs must
-be positive decimal IDs without leading zeros. Duplicate app/Page/Instagram
+The label is trimmed, nonempty, and unique ignoring case. All three IDs, and
+`ad_account_id` when set, must be positive decimal IDs without leading zeros;
+omit the `act_` prefix. Duplicate app/Page/Instagram
 tuples, unknown keys, invalid environment variable names, and invalid five-field
 cron expressions are rejected. Tokens come only from the named daemon
 environment variable. Renaming the label preserves archive identity.

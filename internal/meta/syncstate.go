@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"slices"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/store"
@@ -15,6 +16,7 @@ type syncState struct {
 	Version     int                      `json:"version"`
 	Source      string                   `json:"source"`
 	Platform    string                   `json:"platform,omitempty"`
+	AdAccountID string                   `json:"ad_account_id,omitempty"`
 	NextSurface PostEdge                 `json:"next_surface"`
 	Phases      map[PostEdge]*phaseState `json:"phases"`
 }
@@ -56,21 +58,28 @@ func (st *syncState) complete() bool {
 
 func (st *syncState) edges() []PostEdge {
 	if st.Platform == "instagram" {
+		if st.AdAccountID != "" {
+			return instagramAdEdges[:]
+		}
 		return instagramEdges[:]
 	}
 	return postEdges[:]
 }
 
-func freshSourceState(src *store.Source) *syncState {
-	if src.SourceType == InstagramSourceType {
-		return &syncState{Version: 1, Platform: "instagram", Source: src.Identifier, NextSurface: instagramMediaEdge, Phases: map[PostEdge]*phaseState{instagramMediaEdge: {}}}
+func freshSourceState(src *store.Source, adAccount string) *syncState {
+	if src.SourceType != InstagramSourceType {
+		return freshState(src.Identifier)
 	}
-	return freshState(src.Identifier)
+	s := &syncState{Version: 1, Platform: "instagram", Source: src.Identifier, AdAccountID: adAccount, NextSurface: instagramMediaEdge, Phases: map[PostEdge]*phaseState{}}
+	for _, edge := range s.edges() {
+		s.Phases[edge] = &phaseState{}
+	}
+	return s
 }
 
-func loadState(ctx context.Context, st *store.Store, src *store.Source, full bool) (*syncState, error) {
+func loadState(ctx context.Context, st *store.Store, src *store.Source, full bool, adAccount string) (*syncState, error) {
 	if full {
-		return freshSourceState(src), nil
+		return freshSourceState(src, adAccount), nil
 	}
 	var blob string
 	var priorID int64
@@ -90,14 +99,18 @@ func loadState(ctx context.Context, st *store.Store, src *store.Source, full boo
 		blob = checkpoint.CursorBefore.String
 	}
 	if blob == "" {
-		return freshSourceState(src), nil
+		return freshSourceState(src, adAccount), nil
 	}
 	var state syncState
 	if json.Unmarshal([]byte(blob), &state) != nil || !state.valid(src.Identifier) {
 		return nil, errors.New("invalid comment checkpoint; restart this source with --full")
 	}
+	// A changed ad account setting restarts the cycle with the new edges.
+	if state.AdAccountID != adAccount {
+		return freshSourceState(src, adAccount), nil
+	}
 	if state.complete() {
-		fresh := freshSourceState(src)
+		fresh := freshSourceState(src, adAccount)
 		fresh.NextSurface = state.NextSurface
 		return fresh, nil
 	}
@@ -115,8 +128,8 @@ func loadState(ctx context.Context, st *store.Store, src *store.Source, full boo
 
 func (st *syncState) valid(source string) bool {
 	_, instagram := ParseInstagramSourceIdentifier(source)
-	if st.Source != source || (instagram && (st.Platform != "instagram" || st.Version != 1 || st.NextSurface != instagramMediaEdge)) ||
-		(!instagram && (st.Platform != "" || st.Version != 2 || !st.NextSurface.valid())) || len(st.Phases) != len(st.edges()) {
+	if st.Source != source || (instagram && (st.Platform != "instagram" || st.Version != 1)) ||
+		(!instagram && (st.Platform != "" || st.Version != 2)) || !slices.Contains(st.edges(), st.NextSurface) || len(st.Phases) != len(st.edges()) {
 		return false
 	}
 	cursorOK := func(s string) bool { return len(s) <= 4096 && !strings.ContainsAny(s, "\r\n\x00") }
@@ -126,7 +139,8 @@ func (st *syncState) valid(source string) bool {
 			return false
 		}
 		for _, post := range p.Posts {
-			if !safeObjectID(post.ID) || (instagram && (post.InstagramMedia == nil || post.InstagramMedia.ID != post.ID)) {
+			// Ad posts hold only a media ID until adMedia reads the media.
+			if !safeObjectID(post.ID) || (instagram && edge != adCreativesEdge && (post.InstagramMedia == nil || post.InstagramMedia.ID != post.ID)) {
 				return false
 			}
 		}

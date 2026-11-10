@@ -18,6 +18,7 @@ var instagramEdges = [...]PostEdge{instagramMediaEdge}
 type instagramAPI interface {
 	LinkedInstagramAccount(ctx context.Context, pageID, accountID string) (IGUser, error)
 	InstagramMedia(ctx context.Context, accountID, after string) (IGMediaPage, error)
+	InstagramMediaByID(ctx context.Context, id string) (IGMedia, error)
 	InstagramComments(ctx context.Context, mediaID, after string) (IGCommentPage, error)
 	InstagramReplies(ctx context.Context, commentID, after string) (IGCommentPage, error)
 }
@@ -93,6 +94,9 @@ func (r *importRun) readPosts(ctx context.Context, edge PostEdge, after string) 
 	if r.imp.instagram == "" {
 		return r.imp.api.Posts(ctx, r.page, edge, after)
 	}
+	if edge == adCreativesEdge {
+		return r.readAdCreatives(ctx, after)
+	}
 	page, err := r.imp.igAPI.InstagramMedia(ctx, r.imp.instagram, after)
 	if err != nil {
 		return ObjectPage{}, err
@@ -155,7 +159,7 @@ func (c *Client) InstagramMedia(ctx context.Context, accountID, after string) (I
 		return IGMediaPage{}, errors.New("invalid selected Instagram account ID")
 	}
 	page, err := readObjectPage(ctx, c, accountID+"/media", after, url.Values{
-		"fields": {"id,caption,timestamp,permalink,owner{id}"}, "limit": {"100"},
+		"fields": {instagramMediaFields}, "limit": {"100"},
 	}, func(media IGMedia) string { return media.ID })
 	return IGMediaPage(page), err
 }

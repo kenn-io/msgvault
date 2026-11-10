@@ -80,8 +80,12 @@ type InstagramCommentsSource struct {
 	PageID             string `toml:"page_id"`
 	InstagramAccountID string `toml:"instagram_account_id"`
 	TokenEnv           string `toml:"token_env"`
-	Enabled            bool   `toml:"enabled"`
-	Schedule           string `toml:"schedule"`
+	// AdAccountID and AdTokenEnv, set together, add the media used by the ad
+	// account's creatives. The ad token is read from its own variable.
+	AdAccountID string `toml:"ad_account_id"`
+	AdTokenEnv  string `toml:"ad_token_env"`
+	Enabled     bool   `toml:"enabled"`
+	Schedule    string `toml:"schedule"`
 }
 
 func (c *Config) GetInstagramCommentsSource(identifier string) *InstagramCommentsSource {
@@ -126,6 +130,9 @@ func (c *Config) validateInstagramCommentsSources() error {
 		assets[key] = true
 		if !envutil.ValidName(source.TokenEnv) {
 			return fmt.Errorf("instagram_comments[%d].token_env must name an explicit environment variable", i)
+		}
+		if (source.AdAccountID != "" || source.AdTokenEnv != "") && (!meta.ValidAccountID(source.AdAccountID) || !envutil.ValidName(source.AdTokenEnv)) {
+			return fmt.Errorf("instagram_comments[%d] requires a decimal ad_account_id without act_ and an ad_token_env variable name together", i)
 		}
 		if source.Schedule != "" {
 			if _, err := cronexpr.Parser.Parse(source.Schedule); err != nil {

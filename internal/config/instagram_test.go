@@ -32,6 +32,9 @@ func TestInstagramCommentsProfiles(t *testing.T) {
 	second := strings.Replace(instagramProfile, `identifier="example-account"`, `identifier="other"`, 1)
 	second = strings.Replace(second, `instagram_account_id="200"`, `instagram_account_id="201"`, 1)
 	assert.Len(loadConfigText(t, instagramProfile+second).InstagramComments, 2)
+	ads := loadConfigText(t, instagramProfile+"ad_account_id=\"700\"\nad_token_env=\"EXAMPLE_META_AD_TOKEN\"\n").InstagramComments[0]
+	assert.Equal("700", ads.AdAccountID)
+	assert.Equal("EXAMPLE_META_AD_TOKEN", ads.AdTokenEnv)
 }
 
 func TestInstagramCommentsRejectsInvalidProfiles(t *testing.T) {
@@ -47,6 +50,14 @@ func TestInstagramCommentsRejectsInvalidProfiles(t *testing.T) {
 		require.Error(loadConfigTextError(t, strings.Replace(instagramProfile, change[0], change[1], 1)))
 	}
 	require.Error(loadConfigTextError(t, instagramProfile+"token=\"inline-secret\"\n"))
+	for _, ads := range []string{
+		"ad_account_id=\"700\"\n",
+		"ad_token_env=\"EXAMPLE_META_AD_TOKEN\"\n",
+		"ad_account_id=\"act_700\"\nad_token_env=\"EXAMPLE_META_AD_TOKEN\"\n",
+		"ad_account_id=\"700\"\nad_token_env=\"TOKEN=value\"\n",
+	} {
+		require.ErrorContains(loadConfigTextError(t, instagramProfile+ads), "ad_account_id", ads)
+	}
 	for _, labels := range [][2]string{{"account", "ACCOUNT"}, {"s", "ſ"}} {
 		first := strings.Replace(instagramProfile, `identifier="example-account"`, `identifier="`+labels[0]+`"`, 1)
 		second := strings.Replace(instagramProfile, `identifier="example-account"`, `identifier="`+labels[1]+`"`, 1)
