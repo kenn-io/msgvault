@@ -130,6 +130,22 @@ func TestMeetingCountKeysOneTranscriptTwoOccurrences(t *testing.T) {
 	}
 }
 
+func TestMeetingCountKeysAfterRemovingRecurrence(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "series", linkSeriesRaw)
+	_, manual := projectionFixture(t, st, "manual", "plaud_json", `{}`)
+	require.NoError(st.LinkMeetingContext(t.Context(), manual, OccurrenceRef{MessageID: master, Key: "20270307T100000Z"}))
+	_, twenty := projectionFixture(t, st, "twenty", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-07T10:00:00Z"}}`)
+	_, granola := projectionFixture(t, st, "granola", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"series_20270307T100000Z","scheduled_start_time":"2027-03-07T10:00:00Z"}}`)
+	require.NoError(st.UpsertMessageRawWithFormat(master, []byte(strings.Replace(linkSeriesRaw, `,"recurrence":["RRULE:FREQ=WEEKLY;COUNT=6"]`, "", 1)), "gcal_json"))
+	keys, err := st.MeetingCountKeysContext(t.Context())
+	require.NoError(err)
+	for _, note := range []int64{manual, twenty, granola} {
+		assert.Equal([]string{"uid:weekly@example.org/"}, keys[note])
+	}
+}
+
 func TestMeetingCountKeysExactEvidenceWithoutCalendar(t *testing.T) {
 	for _, tc := range []struct {
 		name, format, first, second string

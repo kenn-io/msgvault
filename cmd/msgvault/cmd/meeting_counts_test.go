@@ -118,6 +118,22 @@ func TestMeetingCountsLinkedCopies(t *testing.T) {
 	_, err = buildCache(path, cache, true)
 	requirements.NoError(err)
 	readKeys(first)
+
+	t.Run("recurrence removed", func(t *testing.T) {
+		require, assert := require.New(t), assert.New(t)
+		f := newMeetingCountArchive(t, time.Date(2027, 3, 7, 10, 0, 0, 0, time.UTC))
+		series := f.persist(t, "calendar", "series", "gcal_json", `{"id":"series","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-07T10:00:00Z"},"end":{"dateTime":"2027-03-07T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=6"]}`)
+		manual := f.persist(t, "first", "manual", "plaud_json", `{}`)
+		automatic := f.persist(t, "second", "automatic", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-07T10:00:00Z"}}`)
+		require.NoError(f.st.LinkMeetingContext(t.Context(), manual, store.OccurrenceRef{MessageID: series, Key: "20270307T100000Z"}))
+		_, err := buildCache(f.path, f.cache, true)
+		require.NoError(err)
+		require.NoError(f.st.UpsertMessageRawWithFormat(series, []byte(`{"id":"series","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-07T10:00:00Z"},"end":{"dateTime":"2027-03-07T11:00:00Z"}}`), "gcal_json"))
+		assert.False(cacheNeedsBuild(f.path, f.cache).FullRebuild)
+		_, err = buildCache(f.path, f.cache, false)
+		require.NoError(err)
+		assert.Equal(map[int64][]string{manual: {"uid:weekly@example.org/"}, automatic: {"uid:weekly@example.org/"}}, readCachedMeetingKeys(t, f.cache))
+	})
 }
 
 func TestMeetingKeysAckSnapshotBoundary(t *testing.T) {
