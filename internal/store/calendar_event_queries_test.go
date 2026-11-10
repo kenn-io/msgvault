@@ -104,23 +104,24 @@ func TestCalendarEventRowsHardSeriesCap(t *testing.T) {
 }
 
 func TestCalendarEventRowsSourceScope(t *testing.T) {
+	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	first, firstID := calendarFixture(t, st, "one", calendarRaw)
 	other, err := st.GetOrCreateSource("gcal", "other@example.test")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	_, err = st.PersistMessage(&MessagePersistData{
 		Message:      &Message{SourceID: other.ID, SourceMessageID: "two", MessageType: "calendar_event", Subject: sql.NullString{String: "Example event", Valid: true}},
 		Conversation: &ConversationPersistData{SourceConversationID: "two", ConversationType: "calendar", Title: "Example event"},
 		RawMIME:      []byte(calendarRaw), RawFormat: "gcal_json",
 		Metadata: &sql.NullString{String: `{"calendar_id":"calendar@example.com"}`, Valid: true},
 	})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	ctx, release, err := st.BeginReadSnapshotContext(sourcescope.WithSourceIDs(t.Context(), []int64{first.Message.SourceID}))
-	require.NoError(t, err)
+	requirements.NoError(err)
 	defer release()
 	rows, err := queryCalendarEventRowsWithinBudget(ctx, st.db, "1 = 1", nil, 1)
-	require.NoError(t, err)
-	require.Len(t, rows, 1)
+	requirements.NoError(err)
+	requirements.Len(rows, 1)
 	assert.Equal(t, firstID, rows[0].MessageID)
 }
 

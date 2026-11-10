@@ -77,9 +77,10 @@ func TestCalendarEventsRoute(t *testing.T) {
 }
 
 func TestCalendarEventsAgentScopeAndVerification(t *testing.T) {
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gcal", "allowed@example.test")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	for _, tc := range []struct{ id, subject, raw string }{
 		{"event", "Your verification code is 482913", `{"id":"event","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"}}`},
 		{"series", "Your verification code is 482913", `{"id":"series","start":{"dateTime":"2027-03-04T17:00:00Z"},"end":{"dateTime":"2027-03-04T18:00:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=4"]}`},
@@ -91,16 +92,16 @@ func TestCalendarEventsAgentScopeAndVerification(t *testing.T) {
 			Conversation: &store.ConversationPersistData{SourceConversationID: tc.id, ConversationType: "calendar", Title: tc.subject},
 			RawMIME:      []byte(tc.raw), RawFormat: "gcal_json", Metadata: &sql.NullString{String: `{"calendar_id":"example.test"}`, Valid: true},
 		})
-		require.NoError(t, err)
+		requirements.NoError(err)
 	}
 	other, err := st.GetOrCreateSource("gcal", "other@example.test")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	_, err = st.PersistMessage(&store.MessagePersistData{
 		Message:      &store.Message{SourceID: other.ID, SourceMessageID: "private", MessageType: "calendar_event", Subject: sql.NullString{String: "Private meeting", Valid: true}},
 		Conversation: &store.ConversationPersistData{SourceConversationID: "private", ConversationType: "calendar", Title: "Private meeting"},
 		RawMIME:      []byte(`{"id":"private","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"}}`), RawFormat: "gcal_json", Metadata: &sql.NullString{String: `{"calendar_id":"example.test"}`, Valid: true},
 	})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Logger: testLogger()})
 	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	t.Run("ungranted source filter", func(t *testing.T) {
@@ -123,16 +124,17 @@ func TestCalendarEventsAgentScopeAndVerification(t *testing.T) {
 		{"ordinary meeting", "2027-03-08", "2027-03-09", "Weekly sync", []agentgrant.Permission{agentgrant.PermissionCalendarEventRead}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
 			_, token, _, err := srv.agentGrants.Issue(tc.name, tc.permissions, []agentgrant.SourceRef{{ID: source.ID, Type: "gcal", Identifier: source.Identifier}}, time.Time{})
-			require.NoError(t, err)
+			requirements.NoError(err)
 			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/calendar/events?from="+tc.from+"T00:00:00Z&to="+tc.to+"T00:00:00Z", nil)
 			r.Header.Set(apiprotocol.AgentTokenHeader, token)
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, r)
-			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			requirements.Equal(http.StatusOK, w.Code, w.Body.String())
 			var page store.CalendarOccurrencePage
-			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &page))
-			require.Len(t, page.Occurrences, 1)
+			requirements.NoError(json.Unmarshal(w.Body.Bytes(), &page))
+			requirements.Len(page.Occurrences, 1)
 			assert.Equal(t, tc.want, page.Occurrences[0].Subject)
 		})
 	}
