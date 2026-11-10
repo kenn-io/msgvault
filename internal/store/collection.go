@@ -230,9 +230,19 @@ func (s *Store) ListCollections() ([]*CollectionWithSources, error) {
 
 // ListCollectionsContext is the request-aware form of ListCollections.
 func (s *Store) ListCollectionsContext(ctx context.Context) ([]*CollectionWithSources, error) {
+	// Authorize complete membership before hydration filters member IDs.
+	// Both queries use the delegated request's read snapshot.
+	scope, args := sourceScopeClause(ctx, "cs.source_id")
+	where := ""
+	if scope != "" {
+		where = ` WHERE NOT EXISTS (
+			SELECT 1 FROM collection_sources cs
+			WHERE cs.collection_id = collections.id AND NOT (TRUE` + scope + `)
+		)`
+	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, name, description, created_at
-		 FROM collections ORDER BY name`,
+		 FROM collections`+where+` ORDER BY name`, args...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list collections: %w", err)

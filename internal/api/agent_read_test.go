@@ -974,20 +974,26 @@ func TestAgentIncomingSenderScopesReads(t *testing.T) {
 			requirementsForTest.NoError(err)
 		}
 	}
-	requirementsForTest.NoError(st.UpsertAttachment(t.Context(), denied, "private.bin", "application/octet-stream", "private.bin", strings.Repeat("b", 64), 1))
+	_, err = st.CreateCollection("sender-scoped", "", []int64{src.ID})
+	requirementsForTest.NoError(err)
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner-key", AgentAccess: true}}
+	hash, content := strings.Repeat("b", 64), "synthetic private attachment"
+	path, err := msgexport.StoragePath(cfg.AttachmentsDir(), hash)
+	requirementsForTest.NoError(err)
+	requirementsForTest.NoError(os.MkdirAll(filepath.Dir(path), 0700))
+	requirementsForTest.NoError(os.WriteFile(path, []byte(content), 0600))
+	requirementsForTest.NoError(st.UpsertAttachment(t.Context(), denied, "private.bin", "application/octet-stream", filepath.Join(hash[:2], hash), hash, len(content)))
 	var deniedAttachment int64
 	requirementsForTest.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT id FROM attachments WHERE message_id = ?"), denied).Scan(&deniedAttachment))
-	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner-key", AgentAccess: true}}
-	requirementsForTest.NoError(os.MkdirAll(cfg.AttachmentsDir(), 0o700))
-	requirementsForTest.NoError(os.WriteFile(filepath.Join(cfg.AttachmentsDir(), "private.bin"), []byte("synthetic attachment"), 0o600))
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	defer srv.agentGrants.Close()
-	ownerRequest := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/attachments/"+strings.Repeat("b", 64)+"/content", nil)
+	contentRoute := "/api/v1/attachments/" + hash + "/content"
+	ownerRequest := httptest.NewRequestWithContext(t.Context(), http.MethodGet, contentRoute, nil)
 	ownerRequest.Header.Set("X-Api-Key", "owner-key")
 	ownerResponse := httptest.NewRecorder()
 	srv.Router().ServeHTTP(ownerResponse, ownerRequest)
 	requirementsForTest.Equal(http.StatusOK, ownerResponse.Code, ownerResponse.Body.String())
-	requirementsForTest.Equal("synthetic attachment", ownerResponse.Body.String())
+	requirementsForTest.Equal(content, ownerResponse.Body.String())
 	body := fmt.Sprintf(`{"label":"reader","permissions":["search.read","message.read","stats.read","attachment.read","verification.read"],"source_ids":[%d],"incoming_senders":{"%d":["codes@example.test"]}}`, src.ID, src.ID)
 	issue := httptest.NewRequestWithContext(t.Context(), http.MethodPost, agentTokensPath, strings.NewReader(body))
 	issue.Header.Set("X-Api-Key", "owner-key")
@@ -1008,10 +1014,11 @@ func TestAgentIncomingSenderScopesReads(t *testing.T) {
 		{"/api/v1/search/fast?q=code", http.StatusOK, "allowed code", "private code"},
 		{"/api/v1/messages/filter", http.StatusOK, "allowed code", "private code"},
 		{"/api/v1/stats/total", http.StatusOK, `"message_count":1`, `"message_count":2`},
+		{"/api/v1/cli/collections", http.StatusOK, `"message_count":1`, `"message_count":2`},
 		{fmt.Sprintf("/api/v1/cli/message/thread?id=%d", allowed), http.StatusOK, "allowed code", "private code"},
 		{fmt.Sprintf("/api/v1/cli/message/thread?id=%d", denied), http.StatusNotFound, "", "private code"},
 		{fmt.Sprintf("/api/v1/attachments/%d", deniedAttachment), http.StatusNotFound, "", "private.bin"},
-		{"/api/v1/attachments/" + strings.Repeat("b", 64) + "/content", http.StatusNotFound, "", "private.bin"},
+		{contentRoute, http.StatusNotFound, "", content},
 		{fmt.Sprintf("/api/v1/messages/%d", allowed), http.StatusOK, "allowed code", "private code"},
 		{fmt.Sprintf("/api/v1/messages/%d", denied), http.StatusNotFound, "", "private code"},
 	} {
