@@ -32,7 +32,7 @@ Discord-produced JSON export.
 
 Run the command on the daemon host; a remote client cannot upload its local
 package. ZIP input is not supported. The importer refuses packages with more
-than 100000 channel folders.
+than 100,000 channel folders.
 
 A package contains only the exporting account's **sent messages**, including
 sent messages in DMs. It is not bilateral conversation history or complete
@@ -41,20 +41,20 @@ The account ID creates a separate `discord_package` source; bot guild sources
 remain separate, even when they contain the same message.
 
 The importer keeps native message and channel IDs, original text and timestamp
-strings, channel metadata, the exporting account's username when present, and
-sent-only provenance. An explicit timestamp offset determines the instant. When
-the timestamp has no offset, the message's
-snowflake ID supplies its exact UTC instant; without either, sent time stays
-unknown. Receipt times, incoming messages, edit chronology, and missing
-membership information stay unknown.
+strings, channel metadata, and sent-only provenance. A supplied username fills
+a missing account display name. An explicit timestamp offset determines the
+instant. When the timestamp has no offset, the message's snowflake ID supplies
+its exact UTC instant; without either, sent time stays unknown. Receipt times,
+incoming messages, edit chronology, and missing membership information stay
+unknown.
 
 Attachment URLs are stored as links. The importer does not download media or
 claim those links are archived files. Its report counts attachment links
 without local media, unsupported links, processed/added/updated/skipped records,
 and skip reasons, including when an import fails partway through. Omitted
-channel directories
-and symlinks are counted separately from skipped messages. Record size-limit
-errors identify the relative input path, record number, and byte limit.
+channel directories and symlinks are counted separately from skipped messages.
+Record size-limit errors identify the relative input path, record number, and
+byte limit.
 
 Re-importing updates each message to the last explicitly imported snapshot,
 including its attachment links. It creates no duplicate within the same
