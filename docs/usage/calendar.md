@@ -26,9 +26,13 @@ Date-only bounds use midnight in your machine's time zone. You can also pass RFC
 
 JSON includes status, attendees, roles, RSVPs, and events that could not be expanded. The table prints a warning for those events and shows `deleted` for events deleted at the source. Narrow the window when the command asks you to.
 
+Coverage reports each permitted, active registered Google calendar, including calendars with no events in the window. `complete` means its latest qualifying sync is at most 24 hours old; `stale` means it is older, `sync_failed` means a later recorded sync failed or was cancelled, and `no_baseline` means a full sync or current cursor is missing. `as_of` is the last qualifying successful sync. Coverage describes the archive, not live availability.
+
+Subset copies do not include sync history, so they report `no_baseline` until a full sync. After a source merge, copied history does not refresh with the active destination; coverage reflects the destination’s own sync. Recurrence expansion failures remain separate under `unexpandable`.
+
 Queries allow up to 2,000 recurring series and 500,000 candidate steps across the request, with 50,000 steps per series. When recurrence expansion reaches the request work limit, the response keeps completed series, standalone events, and archived exceptions, and lists the interrupted series and every remaining series under `unexpandable`. Long-running series count steps from their start, so a narrower window may not reduce the work. A narrower window will not reduce the number of open-ended series.
 
-This archive read requires daemon API schema 3.35.0 or newer and owner access. Use the live commands below for `--account`, `--dry-run`, `--read-only`, and `--send-updates`. See the [CLI reference](https://msgvault.io/docs/cli-reference/#calendar) for the command contract.
+This archive read requires daemon API schema 3.35.0 or newer and owner access. Coverage needs schema 4.3.0 or newer. Use the live commands below for `--account`, `--dry-run`, `--read-only`, and `--send-updates`. See the [CLI reference](https://msgvault.io/docs/cli-reference/#calendar) for the command contract.
 
 ## Prerequisites
 

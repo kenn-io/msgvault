@@ -2,6 +2,7 @@ package calsync
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -263,6 +264,10 @@ func TestFull_BoundedSyncDoesNotAdvanceCursor(t *testing.T) {
 	src := primarySource(t, st)
 	assert.Equal(2, countMessages(t, st, src.ID), "bounded full sync still ingests in-window events")
 	assert.Empty(src.SyncCursor.String, "a time-bounded run must NOT advance the incremental cursor")
+	var cursorAfter sql.NullString
+	err = st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT cursor_after FROM sync_runs WHERE source_id=? AND status='completed' ORDER BY id DESC LIMIT 1`), src.ID).Scan(&cursorAfter)
+	require.NoError(err)
+	assert.Empty(cursorAfter.String, "a bounded run must not record a final cursor")
 }
 
 func TestIncremental_AppliesAccessRoleSelection(t *testing.T) {

@@ -33,7 +33,7 @@ type calendarEventsTestStore struct {
 func (s *calendarEventsTestStore) ListCalendarOccurrencesContext(ctx context.Context, from, to time.Time) (store.CalendarOccurrencePage, error) {
 	s.calls++
 	s.sourceIDs = sourcescope.IDs(ctx)
-	return store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 42, Subject: s.subject, Start: from, End: to}}, Unexpandable: []store.CalendarUnexpandable{}}, s.err
+	return store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 42, Subject: s.subject, Start: from, End: to}}, Unexpandable: []store.CalendarUnexpandable{}, Coverage: &store.CalendarCoverage{Notice: "Archive only", Sources: []store.CalendarSourceCoverage{{SourceID: 1, Name: "Work", Status: "no_baseline"}}}}, s.err
 }
 
 func (s *calendarEventsTestStore) ListSourcesContext(context.Context, string) ([]*store.Source, error) {
@@ -57,15 +57,15 @@ func TestCalendarEventsRoute(t *testing.T) {
 		name, path, token string
 		err               error
 		status            int
-		want              string
+		want              []string
 	}{
-		{"owner", path, "", nil, 200, `"message_id":42`},
-		{"delegated without calendar.event.read", path, secret, nil, 403, ""},
-		{"remote", path, "synthetic-reader-key", nil, 403, ""},
-		{"missing", "/api/v1/calendar/events", "", nil, 400, "invalid_argument"},
-		{"reversed", strings.Replace(path, "2027-04-01", "2027-02-01", 1), "", nil, 400, "invalid_argument"},
-		{"broad", path, "", store.ErrQueryTooBroad, 400, "query_too_broad"},
-		{"series cap", path, "", fmt.Errorf("%w: more than 2000 recurring series overlap the window; a narrower window will not reduce open-ended series", store.ErrQueryTooBroad), 400, "more than 2000 recurring series overlap the window; a narrower window will not reduce open-ended series"},
+		{"owner", path, "", nil, 200, []string{`"message_id":42`, `"status":"no_baseline"`}},
+		{"delegated without calendar.event.read", path, secret, nil, 403, nil},
+		{"remote", path, "synthetic-reader-key", nil, 403, nil},
+		{"missing", "/api/v1/calendar/events", "", nil, 400, []string{"invalid_argument"}},
+		{"reversed", strings.Replace(path, "2027-04-01", "2027-02-01", 1), "", nil, 400, []string{"invalid_argument"}},
+		{"broad", path, "", store.ErrQueryTooBroad, 400, []string{"query_too_broad"}},
+		{"series cap", path, "", fmt.Errorf("%w: more than 2000 recurring series overlap the window; a narrower window will not reduce open-ended series", store.ErrQueryTooBroad), 400, []string{"more than 2000 recurring series overlap the window; a narrower window will not reduce open-ended series"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			backend.err = tc.err
@@ -81,8 +81,8 @@ func TestCalendarEventsRoute(t *testing.T) {
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, r)
 			require.Equal(t, tc.status, w.Code, w.Body.String())
-			if tc.want != "" {
-				assert.Contains(t, w.Body.String(), tc.want)
+			for _, want := range tc.want {
+				assert.Contains(t, w.Body.String(), want)
 			}
 			if tc.status == 401 || tc.status == 403 {
 				assert.Equal(t, before, backend.calls)

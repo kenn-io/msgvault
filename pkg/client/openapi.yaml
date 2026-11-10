@@ -1315,6 +1315,21 @@ components:
         - start
         - end
       type: object
+    CalendarCoverage:
+      properties:
+        complete:
+          type: boolean
+        notice:
+          type: string
+        sources:
+          items:
+            $ref: "#/components/schemas/CalendarSourceCoverage"
+          type: array
+      required:
+        - complete
+        - notice
+        - sources
+      type: object
     CalendarEventTarget:
       properties:
         start:
@@ -1382,6 +1397,8 @@ components:
       type: object
     CalendarOccurrencePage:
       properties:
+        coverage:
+          $ref: "#/components/schemas/CalendarCoverage"
         occurrences:
           items:
             $ref: "#/components/schemas/CalendarOccurrence"
@@ -1611,6 +1628,38 @@ components:
         - dry_run
         - plan
         - writes
+      type: object
+    CalendarSourceCoverage:
+      properties:
+        as_of:
+          format: date-time
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        name:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        status:
+          enum:
+            - complete
+            - stale
+            - sync_failed
+            - no_baseline
+          type: string
+          x-enum-names:
+            - CalendarSourceCoverageStatusComplete
+            - CalendarSourceCoverageStatusStale
+            - CalendarSourceCoverageStatusSyncFailed
+            - CalendarSourceCoverageStatusNoBaseline
+      required:
+        - source_id
+        - name
+        - status
+        - as_of
       type: object
     CalendarUnexpandable:
       properties:
