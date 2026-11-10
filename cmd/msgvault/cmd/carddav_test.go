@@ -420,7 +420,7 @@ func TestCardDAVParticipantBindingCLIUsesDaemonAndPrintsCounts(t *testing.T) {
 	assert.Contains(out.String(), "2 cards scanned, 0 participants bound, 3 participants unbound, 3 conflicts")
 	assert.Contains(out.String(), "participant 7, people [1 2]: address shared by multiple people")
 	assert.Contains(out.String(), "participant 8, people [2]: participant already belongs to another person")
-	assert.Contains(out.String(), "participant 9, people [3]: identity component has active merge history")
+	assert.Contains(out.String(), "participant 9, people [3]: blocked by an active merge")
 	assert.NotContains(out.String(), "shared_address")
 	assert.NotContains(out.String(), "existing_person")
 	assert.NotContains(out.String(), "active_merge")
