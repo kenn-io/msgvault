@@ -25,6 +25,9 @@ func customICSZones(cal *ical.Calendar) (map[string]string, error) {
 		offsets, rules := make(map[string]string), make(map[string]string)
 		for _, part := range zone.Children {
 			offset, from, start, rule := part.Props.Get("TZOFFSETTO"), part.Props.Get("TZOFFSETFROM"), part.Props.Get("DTSTART"), part.Props.Get("RRULE")
+			if part.Props.Get("RDATE") != nil || part.Props.Get("EXDATE") != nil || part.Props.Get("EXRULE") != nil {
+				return nil, fmt.Errorf("unsupported VTIMEZONE %q observance", id)
+			}
 			if (part.Name != "STANDARD" && part.Name != "DAYLIGHT") || offsets[part.Name] != "" || offset == nil || start == nil {
 				return nil, fmt.Errorf("VTIMEZONE %q requires distinct STANDARD or DAYLIGHT observances with TZOFFSETTO and DTSTART", id)
 			}

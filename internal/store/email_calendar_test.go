@@ -362,6 +362,27 @@ func TestEmailCalendarSubsetAfterSourceMerge(t *testing.T) {
 }
 
 func TestEmailCalendarFamilyOrganizer(t *testing.T) {
+	t.Run("cancellation establishes organizer", func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		original := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nSUMMARY:Original")
+		_, source := persistInviteEmail(t, st, "original", inviteEmail(original))
+		cancel := calendarDocument("CANCEL", "SEQUENCE:1\r\nSTATUS:CANCELLED\r\nORGANIZER:mailto:first@example.com")
+		persistInviteEmailForSource(t, st, source, "cancel", inviteEmail(cancel))
+		ids := emailEvents(t, st, source)
+		requirements.Len(ids, 1)
+		stored, err := st.GetMessageRaw(ids[0])
+		requirements.NoError(err)
+		assertions.Equal(original, stored)
+		foreign := calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTART:20270302T140000Z\r\nSUMMARY:Foreign\r\nORGANIZER:mailto:other@example.com")
+		persistInviteEmailForSource(t, st, source, "foreign", inviteEmail(foreign))
+		row := calendarRows(t, st, ids[0])[0]
+		assertions.Equal("Original", row.Subject)
+		assertions.Equal("cancelled", row.Event.Status)
+		stored, err = st.GetMessageRaw(ids[0])
+		requirements.NoError(err)
+		assertions.Equal(original, stored)
+	})
 	t.Run("blank original adopts family organizer", func(t *testing.T) {
 		assertions, requirements := assert.New(t), require.New(t)
 		st := newRFC822IDBackfillBackendStore(t)
