@@ -307,7 +307,7 @@
         <span role="columnheader" class={[compact.current && 'kit-sr-only']}>Latest</span>
       {/if}
       {#if timeGroup}<span role="columnheader" class={[compact.current && 'kit-sr-only']}>Share</span>{/if}
-      <span role="columnheader" class="group-action" aria-label="Show items"></span>
+      <span role="columnheader" aria-label="Show items"></span>
     </div>
     <div class="group-body" role="rowgroup">
       {#if unavailable}
@@ -540,7 +540,7 @@
   .group-name { display: flex; align-items: center; gap: var(--space-2); }
   .group-name strong { overflow: hidden; text-overflow: ellipsis; }
   .group-name :global(.group-icon) { flex-shrink: 0; color: var(--artifact-ink); }
-  .group-header > .group-action, .group-row > .group-action { grid-column: -2; }
+  .group-row > .group-action { grid-column: -2; }
   .group-row > .group-action { padding: 0; }
   .share-track { height: 6px; border-radius: var(--radius-sm); background: var(--bg-inset); overflow: hidden; }
   .share-fill { height: 100%; background: var(--accent-blue); }

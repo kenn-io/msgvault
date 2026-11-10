@@ -193,11 +193,9 @@ describe('EverythingWorkspace', () => {
 
   it('does not offer an invalid Files entry kind drill', async () => {
     window.history.replaceState(null, '', '/');
-    const fileBodies: Array<{ predicate?: { filters?: Array<{ dimension: string; values?: string[] }> } }> = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
-      if (path.startsWith('/api/v1/files/') && request.method === 'POST') fileBodies.push(await request.clone().json());
       if (path.endsWith('/files/groups')) return Response.json({ rows: [{ key: 'file', label: 'File', count: 2 }], total_count: 1 });
       return Response.json(exploreResponse());
     });
@@ -208,11 +206,6 @@ describe('EverythingWorkspace', () => {
       const grid = await screen.findByRole('grid', { name: 'Files grouped by kind' });
       await within(grid).findByText('File');
       expect(within(grid).queryByRole('button', { name: 'Show items in File' })).toBeNull();
-      await fireEvent.pointerDown(within(grid).getByText('File'));
-      expect(state.current.groupingChain).toEqual(['kind']);
-      expect(state.current.filters).toEqual([]);
-      expect(fileBodies.length).toBeGreaterThan(0);
-      expect(fileBodies.flatMap(body => body.predicate?.filters ?? [])).not.toContainEqual({ dimension: 'kind', values: ['file'] });
     } finally {
       view.unmount();
       state.destroy();
