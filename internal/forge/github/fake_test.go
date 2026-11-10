@@ -302,7 +302,12 @@ func (f *fakeGitHub) serveSearch(w http.ResponseWriter, vars map[string]any) {
 		}
 		matching = append(matching, node)
 	}
+	// sort:updated-asc gives the oldest update first; without it, GitHub
+	// ranks by relevance, which the fake stands in for with newest first.
 	slices.SortStableFunc(matching, func(a, b searchNode) int { return a.UpdatedAt.Compare(b.UpdatedAt) })
+	if !strings.Contains(q, "sort:updated-asc") {
+		slices.Reverse(matching)
+	}
 	total := len(matching)
 	// GitHub returns at most 1000 results for one search.
 	matching = matching[:min(len(matching), searchWindow)]
