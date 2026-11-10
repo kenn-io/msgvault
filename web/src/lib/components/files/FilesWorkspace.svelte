@@ -720,7 +720,9 @@
     await moveAcrossLoadedBoundary(target);
     if (viewerFile !== current || !rows[target]) return;
     if (nextCursor && !pageError && target >= rows.length - OVERSCAN) void loadMore();
-    open(rows[target], viewerReturnFocus, { replace: true });
+    const gallery = viewerReturnFocus?.closest('.media-gallery');
+    const returnFocus = gallery?.querySelector<HTMLElement>(`[data-file-id="${rows[target].id}"]`) ?? viewerReturnFocus;
+    open(rows[target], returnFocus, { replace: true });
   }
   function move(index: number): void {
     const height = rowHeight;

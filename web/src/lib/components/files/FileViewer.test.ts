@@ -153,7 +153,7 @@ describe('FileViewer', () => {
     expect(await screen.findByRole('region', { name: 'PDF preview fixture.pdf' })).toBeDefined();
     await waitFor(() => expect(renderPDF).toHaveBeenCalledOnce());
     expect(document.querySelector('iframe, embed, object')).toBeNull();
-    await screen.findByText("PDF · 32 B · 1 page");
+    await screen.findByText("PDF · 32 B");
   });
 
   it.each([
@@ -376,7 +376,7 @@ it('buffers authenticated audio for seeking and revokes its blob URL on close', 
 it('names spreadsheets and keeps Download in the footer', async () => {
   render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), mime_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })), file: file() });
   await screen.findByText('No preview for this file type');
-  expect(screen.getByText(/Excel spreadsheet.*Download it/)).toBeDefined();
+  expect(screen.getByText('Download it to open in another app.')).toBeDefined();
   expect(screen.getAllByRole('button', { name: /Download/ })).toHaveLength(1);
 });
 

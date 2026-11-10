@@ -171,7 +171,7 @@ for (const theme of ['light', 'dark'] as const) {
     const filesGrid = page.getByRole('grid', { name: 'Files results' });
     await filesGrid.focus();
     await page.keyboard.press('ArrowDown');
-    await expect(filesGrid).toHaveCSS('box-shadow', /0px 0px 0px 2px inset/);
+    await expect(filesGrid.locator('.data-row--active')).toHaveCSS('box-shadow', /0px 0px 0px 2px inset/);
 
     await stubOperationStatus(page);
     await selectWorkspace(page, 'Settings');

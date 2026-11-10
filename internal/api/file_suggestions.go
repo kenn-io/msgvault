@@ -253,7 +253,7 @@ func (s *Server) handleFilenameSuggestions(w http.ResponseWriter, r *http.Reques
 		case filenamediscovery.Typo:
 			label = "typo"
 		}
-		state, available := s.fileContentState(ctx, file)
+		state, available := fileContentState(file)
 		suggestion := FileSuggestionRow{ID: file.ID, MessageID: file.MessageID, ConversationID: file.ConversationID, SourceID: file.SourceID, OccurredAt: row.OccurredAt, Filename: file.Filename, MimeType: file.MimeType, MIMEFamily: row.MIMEFamily, FilenameMatch: label, Size: file.Size, ContentState: state, ContentAvailable: available}
 		if personID == nil {
 			result.Suggestions = append(result.Suggestions, suggestion)

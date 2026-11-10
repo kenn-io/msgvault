@@ -15,11 +15,12 @@ const MAX_PREVIEW_COLUMNS = 100;
 
 export async function parseDelimited(text: string, delimiter = '', maxRows = 200, inputTruncated = false): Promise<{ header: string[]; rows: string[][]; truncated: boolean; hasErrors: boolean; columnsTruncated: boolean }> {
   const { default: Papa } = await import('papaparse');
-  const result = Papa.parse<string[]>(text, { delimiter, preview: maxRows + 2, skipEmptyLines: true });
-  const hasErrors = result.errors.some((error) => error.type === 'Quotes');
+  const prefix = inputTruncated && text.endsWith('\r') && text.includes('\r\n') ? text + '\n' : text;
+  const result = Papa.parse<string[]>(prefix, { delimiter, preview: maxRows + 2, skipEmptyLines: true });
+  const hasErrors = result.errors.some((error) => error.type === 'Quotes' && !(inputTruncated && !result.meta.truncated && error.code === 'MissingQuotes' && error.row === result.data.length - 1));
   // A byte prefix can end inside a field, including a quoted multiline field.
   // Only a parsed record terminator proves the final record is complete.
-  if (inputTruncated && !result.meta.truncated && (!text.endsWith(result.meta.linebreak) || hasErrors)) result.data.pop();
+  if (inputTruncated && !result.meta.truncated && (!prefix.endsWith(result.meta.linebreak) || result.errors.some((error) => error.code === 'MissingQuotes'))) result.data.pop();
   const visible = result.data.slice(0, maxRows + 1);
   const columns = Math.max(0, ...visible.map((row) => row.length));
   const padded = visible.map((row) => Array.from({ length: Math.min(columns, MAX_PREVIEW_COLUMNS) }, (_, index) => row[index] ?? ''));

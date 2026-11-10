@@ -44,6 +44,13 @@ func (s packedFileBlobStore) OpenStream(_ context.Context, hash string) (io.Read
 	return io.NopCloser(bytes.NewReader(content)), int64(len(content)), nil
 }
 
+type countingFileBlobStore struct{ calls int }
+
+func (s *countingFileBlobStore) OpenStream(context.Context, string) (io.ReadCloser, int64, error) {
+	s.calls++
+	return nil, 0, os.ErrPermission
+}
+
 type fileSearchEngine struct {
 	*querytest.MockEngine
 
@@ -137,10 +144,10 @@ func TestFilesSearchUsesAnalyticalQueryAndOneCatalogBatch(t *testing.T) {
 		3: {ID: 3, MessageID: 13, ConversationID: 23, Filename: "missing.bin", ContentHash: strings.Repeat("cc", 32), StoragePath: "legacy/gone.bin"},
 		4: {ID: 4, MessageID: 14, ConversationID: 24, Filename: "metadata.txt"},
 	}}
+	blobs := &countingFileBlobStore{}
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
-		Store:  catalog, Engine: engine, Logger: testLogger(),
-		BlobStore: packedFileBlobStore{blobs: map[string][]byte{hash: []byte("local bytes")}},
+		Store:  catalog, Engine: engine, Logger: testLogger(), BlobStore: blobs,
 	})
 
 	body := bytes.NewBufferString(`{"predicate":{"filters":[{"dimension":"source","values":["7"]}]},"filename_query":"report","mime_families":["image","pdf"],"sort":{"field":"size","direction":"asc"},"limit":25}`)
@@ -155,12 +162,13 @@ func TestFilesSearchUsesAnalyticalQueryAndOneCatalogBatch(t *testing.T) {
 	requirements.Len(result.Files, 4)
 	assertions.Equal([]int64{1, 2, 3, 4}, catalog.batchIDs)
 	assertions.Equal(1, catalog.batchCalls)
+	assertions.Zero(blobs.calls)
 	assertions.Equal("Zoe Sender", result.Files[0].SenderLabel)
 	assertions.Equal(FileContentLocal, result.Files[0].ContentState)
 	assertions.True(result.Files[0].ContentAvailable)
 	assertions.Equal(FileContentURLOnly, result.Files[1].ContentState)
 	assertions.False(result.Files[1].ContentAvailable)
-	assertions.Equal(FileContentMissingBlob, result.Files[2].ContentState)
+	assertions.Equal(FileContentLocal, result.Files[2].ContentState)
 	assertions.Equal(FileContentMetadataOnly, result.Files[3].ContentState)
 	assertions.Equal([]int64{7}, engine.request.Explore.Context.SourceIDs)
 	assertions.Equal("report", engine.request.FilenameQuery)
@@ -1052,4 +1060,23 @@ func TestVisualCoverageScanGuardsCrossOriginAndRateLimit(t *testing.T) {
 	light := httptest.NewRecorder()
 	router.ServeHTTP(light, request)
 	require.Equal(http.StatusOK, light.Code, light.Body.String())
+}
+
+type unreadableFileBlobStore struct{}
+
+func (unreadableFileBlobStore) OpenStream(context.Context, string) (io.ReadCloser, int64, error) {
+	return nil, 0, os.ErrPermission
+}
+
+func TestFileDetailsReportsUnreadableContent(t *testing.T) {
+	catalog := &fileCatalogStore{mockStore: &mockStore{}, files: map[int64]store.FileMetadata{
+		8: {ID: 8, Filename: "report.pdf", ContentHash: strings.Repeat("ab", 32)},
+	}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}, Store: catalog,
+		BlobStore: unreadableFileBlobStore{}, Logger: testLogger(),
+	})
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/files/8", nil))
+	assert.Equal(t, http.StatusInternalServerError, response.Code)
 }

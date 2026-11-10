@@ -1456,3 +1456,19 @@ it('steps after a pending page when the URL controls the current file', async ()
   expect(onSelectedKey).toHaveBeenCalledWith('file:8', { replace: true });
   expect(cursorCalls).toBe(1);
 });
+
+it('returns focus to the last file viewed in the media gallery', async () => {
+  const first = { ...personResponse().files[0]!, filename: 'first.png', mime_type: 'image/png', mime_family: 'image', content_state: 'metadata_only', content_available: false };
+  const second = { ...first, id: 8, key: 'file:8', filename: 'second.png' };
+  const fetchFn = vi.fn<typeof fetch>(async (input) => {
+    const path = new URL(input instanceof Request ? input.url : String(input), document.baseURI).pathname;
+    if (path.endsWith('/files/search')) return Response.json({ ...personResponse(), files: [first, second], total_count: 2 });
+    return Response.json({ ...(path.endsWith('/8') ? second : first), content_state: 'metadata_only' });
+  });
+  render(FilesWorkspace, { client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' }, identityScope: { kind: 'person', id: 1 }, personPresentation: 'media', sort: { field: 'occurred_at', direction: 'desc' } });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Open first.png' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Next file' }));
+  await screen.findByRole('dialog', { name: 'View second.png' });
+  await fireEvent.click(screen.getByRole('button', { name: 'Close file viewer' }));
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Open second.png' })));
+});

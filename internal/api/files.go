@@ -547,7 +547,7 @@ func (s *Server) handleSearchFilesRequest(
 			writeError(w, http.StatusConflict, "file_metadata_changed", "The authoritative file metadata changed; refresh the Files workspace")
 			return
 		}
-		state, available := s.fileContentState(r.Context(), authority)
+		state, available := fileContentState(authority)
 		response.Files = append(response.Files, FileSearchRow{
 			ID: file.ID, Key: file.Key, EntryKey: file.EntryKey, MessageID: file.MessageID,
 			SenderLabel:    file.SenderLabel,
@@ -859,7 +859,18 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "file_not_found", "File not found")
 		return
 	}
-	state, available := s.fileContentState(r.Context(), *file)
+	state, available := fileContentState(*file)
+	if available {
+		content, _, err := s.openFileContent(r.Context(), *file)
+		if errors.Is(err, os.ErrNotExist) {
+			state, available = FileContentMissingBlob, false
+		} else if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to open file content")
+			return
+		} else {
+			_ = content.Close()
+		}
+	}
 	writeJSON(w, http.StatusOK, FileMetadataResponse{
 		ID: file.ID, MessageID: file.MessageID, ConversationID: file.ConversationID,
 		EntryKey: fileEntryKey(*file),
@@ -946,26 +957,13 @@ func (s *Server) openFileContent(ctx context.Context, file store.FileMetadata) (
 	return content, length, err
 }
 
-// fileContentState uses the same content resolver for lists, suggestions, and
-// details, including packed blobs and recorded legacy paths.
-func (s *Server) fileContentState(ctx context.Context, file store.FileMetadata) (FileContentState, bool) {
+// fileContentState classifies list rows from their metadata. Details check the bytes.
+func fileContentState(file store.FileMetadata) (FileContentState, bool) {
 	if file.URL != "" {
 		return FileContentURLOnly, false
 	}
 	if file.ContentHash == "" {
 		return FileContentMetadataOnly, false
 	}
-	if !s.fileContentResolvable(ctx, file) {
-		return FileContentMissingBlob, false
-	}
 	return FileContentLocal, true
-}
-
-func (s *Server) fileContentResolvable(ctx context.Context, file store.FileMetadata) bool {
-	content, _, err := s.openFileContent(ctx, file)
-	if err != nil {
-		return false
-	}
-	_ = content.Close()
-	return true
 }

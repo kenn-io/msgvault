@@ -64,3 +64,14 @@ it('bounds ragged CSV expansion to 100 columns and 200 rows', async () => {
   expect(result.rows.every((row) => row.length === 100 && row[0] === 'Value')).toBe(true);
   expect(result.rows.reduce((count, row) => count + row.length, 0)).toBeLessThanOrEqual(20_000);
 });
+
+it('does not blame a quoted field cut by the preview limit', async () => {
+  const result = await parseDelimited('Name,Note\nComplete,Ready\nPartial,"unfinished', ',', 200, true);
+  expect(result.rows).toEqual([['Complete', 'Ready']]);
+  expect(result.hasErrors).toBe(false);
+});
+
+it('keeps a complete record when a CRLF prefix ends after the carriage return', async () => {
+  const result = await parseDelimited('Name,Note\r\nComplete,Ready\r', ',', 200, true);
+  expect(result.rows).toEqual([['Complete', 'Ready']]);
+});

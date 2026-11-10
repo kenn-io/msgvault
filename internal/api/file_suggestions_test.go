@@ -332,10 +332,10 @@ func TestFileSuggestionsHTTPContentStates(t *testing.T) {
 	require.Equal(200, w.Code, w.Body.String())
 	rows := suggestionRows(t, suggestionBody(t, w))
 	require.Len(rows, 4)
-	states := []string{"local_content", "missing_blob", "url_only", "metadata_only"} // Newest first.
+	states := []string{"local_content", "local_content", "url_only", "metadata_only"} // Newest first.
 	for i, row := range rows {
 		assert.Equal(states[i], row["content_state"])
-		assert.Equal(i == 0, row["content_available"])
+		assert.Equal(i < 2, row["content_available"])
 		assert.NotContains(row, "url")
 		assert.NotContains(row, "storage_path")
 		assert.NotContains(row, "content_hash")

@@ -238,9 +238,10 @@
     closed = true;
     cleanupPreview();
     releaseScope();
+    const focusTarget = returnFocus;
     onClose?.();
     await tick();
-    returnFocus?.focus();
+    focusTarget?.focus();
   }
   function cleanupPreview(): void {
     generation += 1;
@@ -328,7 +329,7 @@
   }
   const context = $derived([file.occurred_at ? formatShortDate(file.occurred_at) : '', file.containing_title, file.participant_labels?.join(', ')].filter(Boolean).join(' · '));
   const typeLabel = $derived(fileTypeLabel(metadata?.mime_type ?? file.mime_type ?? '', file.mime_family ?? 'other'));
-  const footerMeta = $derived([typeLabel, formatBytes(metadata?.size_bytes ?? file.size_bytes ?? 0), pdfPages ? `${pdfPages} ${pdfPages === 1 ? 'page' : 'pages'}` : imageSize].filter(Boolean).join(' · '));
+  const footerMeta = $derived([typeLabel, formatBytes(metadata?.size_bytes ?? file.size_bytes ?? 0), imageSize].filter(Boolean).join(' · '));
   function namedFilename(value: string | undefined): string | undefined {
     return value?.trim() ? value : undefined;
   }
@@ -387,7 +388,7 @@
           </EmptyState>
         {:else if error || previewKind(metadata) === 'none'}
           <div role={error ? 'alert' : undefined}>
-            <EmptyState title={error || 'No preview for this file type'} description={`${typeLabel} · ${formatBytes(metadata.size_bytes)}. Download it to open in another app.`}>
+            <EmptyState title={error || 'No preview for this file type'} description="Download it to open in another app.">
               {#snippet icon()}<FileIcon size={48} />{/snippet}
             </EmptyState>
           </div>
