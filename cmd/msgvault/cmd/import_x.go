@@ -25,8 +25,8 @@ ID; pass --me <numeric-id> when account.js is absent. A conflicting override
 is rejected. Available local media is copied; URLs are never fetched.
 
 Re-running safely skips archived messages and retries missing media. Original
-message JSON is retained. Service events are skipped as messages; observed
-group membership is additive and does not establish per-message recipients.
+message JSON is retained. Service events are skipped as messages.
+Adds observed group members without inferring message recipients.
 Only supplied archive history is covered, without claims about deleted or
 newer encrypted chats. HTML-only exports and ZIP files are not supported.
 

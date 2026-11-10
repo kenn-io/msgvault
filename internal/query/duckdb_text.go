@@ -487,7 +487,7 @@ func (e *DuckDBEngine) listConversationMessages(
 		msg_sender AS (
 			SELECT mr.message_id,
 				FIRST(p.email_address) AS from_email,
-				FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')) AS from_name,
+				FIRST(`+recipientNameExpr("mr", "p")+`) AS from_name,
 				FIRST(COALESCE(p.phone_number, '')) AS from_phone
 			FROM mr
 			JOIN p ON p.id = mr.participant_id
@@ -498,7 +498,7 @@ func (e *DuckDBEngine) listConversationMessages(
 		direct_sender AS (
 			SELECT msg.id AS message_id,
 				COALESCE(p.email_address, '') AS from_email,
-				COALESCE(p.display_name, '') AS from_name,
+				COALESCE(NULLIF(p.display_name, ''), `+xUserIDExpr("p", "")+`, '') AS from_name,
 				COALESCE(p.phone_number, '') AS from_phone
 			FROM msg
 			JOIN filtered_msgs fm ON fm.id = msg.id

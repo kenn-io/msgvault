@@ -324,3 +324,16 @@ func TestDuckDBListConversationsParticipantMembership(t *testing.T) {
 	assert.Equal(int64(2), byID[senderFallbackConversationID].MessageCount)
 	assert.Equal(int64(2), byID[recipientFallbackConversation].MessageCount)
 }
+
+func TestDuckDBTextTimelineShowsUnnamedXSender(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("1", "x_archive")
+	participant := b.AddParticipant("", "", "")
+	b.AddParticipantIdentifier(participant, "x_user", "2", "2", true)
+	b.AddMessage(MessageOpt{MessageType: "x_dm", SourceID: source, SenderID: &participant, ConversationID: 701})
+	engine := b.BuildEngine()
+	messages, err := engine.ListConversationMessages(t.Context(), 701, TextFilter{})
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	assert.Equal(t, "2", messages[0].FromName)
+}

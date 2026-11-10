@@ -36,14 +36,20 @@ const participantDisplaySQL = `COALESCE(
 				NULLIF(p.phone_number, ''),
 				NULLIF(TRIM(mr.display_name), ''),
 				NULLIF(TRIM(p.display_name), ''),
+				` + participantXUserIDSQL + `,
 				''
 			)
 		END,
 		''
 	)`
 
+// Numeric X IDs are display fallbacks, never persisted as observed names.
+const participantXUserIDSQL = `(SELECT pi.identifier_value FROM participant_identifiers pi
+    WHERE pi.participant_id = p.id AND pi.identifier_type = 'x_user'
+    ORDER BY pi.identifier_value LIMIT 1)`
+
 const participantSenderEmailSQL = `COALESCE(NULLIF(p.email_address, ''), '')`
-const participantSenderNameSQL = `COALESCE(NULLIF(TRIM(COALESCE(NULLIF(mr.display_name, ''), p.display_name)), ''), '')`
+const participantSenderNameSQL = `COALESCE(NULLIF(TRIM(COALESCE(NULLIF(mr.display_name, ''), p.display_name)), ''), ` + participantXUserIDSQL + `, '')`
 const participantSenderPhoneSQL = `COALESCE(NULLIF(p.phone_number, ''), '')`
 const participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
 			` + participantSenderEmailSQL + ` as from_email,

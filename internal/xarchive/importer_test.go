@@ -80,6 +80,34 @@ func TestImportRedactedEvidenceReplay(t *testing.T) {
 	assert.Equal(t, raw, raw2)
 }
 
+func TestImportUnnamedParticipantsRemainVisible(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	synthetic(t, root, "direct-messages.js", `[{"dmConversation":{"conversationId":"1-2","messages":[{"messageCreate":{"id":"3","senderId":"2","recipientId":"1","text":"fictional needle"}}]}}]`)
+	_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "1"})
+	require.NoError(t, err)
+	var id, convID int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id, conversation_id FROM messages").Scan(&id, &convID))
+	msg, err := st.GetMessageContext(t.Context(), id)
+	require.NoError(t, err)
+	assert.Equal(t, "2", msg.From)
+	assert.Equal(t, []string{"1"}, msg.To)
+	var names int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM participants WHERE COALESCE(display_name, '') <> ''").Scan(&names))
+	assert.Zero(t, names, "an identifier label must not become a person's name")
+	if !st.IsPostgreSQL() {
+		engine := query.NewSQLiteEngine(st.DB())
+		timeline, err := engine.ListConversationMessages(t.Context(), convID, query.TextFilter{})
+		require.NoError(t, err)
+		require.Len(t, timeline, 1)
+		assert.Equal(t, "2", timeline[0].FromName)
+		hits, err := engine.TextSearch(t.Context(), "fictional", nil, 10, 0)
+		require.NoError(t, err)
+		require.Len(t, hits, 1)
+		assert.Equal(t, "2", hits[0].FromName)
+	}
+}
+
 func TestImportOwnerScopeAndUnknownValues(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
