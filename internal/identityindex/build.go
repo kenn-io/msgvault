@@ -537,7 +537,9 @@ WITH messages AS (
 	       coalesce(try_cast(size_estimate AS BIGINT), 0) AS size_estimate
 	FROM %s
 ), senders AS (
-	SELECT DISTINCT p.email_address, p.domain
+	SELECT DISTINCT COALESCE(NULLIF(mr.envelope_address, ''), p.email_address) AS email_address,
+	       COALESCE(NULLIF(CASE WHEN mr.envelope_address LIKE '%%@%%'
+	           THEN lower(substr(mr.envelope_address, length(rtrim(mr.envelope_address, replace(mr.envelope_address, '@', ''))) + 1)) END, ''), p.domain) AS domain
 	FROM %s mr
 	JOIN %s p ON p.id = try_cast(mr.participant_id AS BIGINT)
 	WHERE mr.recipient_type = 'from'

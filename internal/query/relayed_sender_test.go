@@ -5,13 +5,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/msgvault/internal/search"
 )
 
 func TestDuckDBRelayedSenderEnvelope(t *testing.T) {
 	b := NewTestDataBuilder(t)
 	b.AddSource("reader@example.test")
-	author := b.AddParticipant("", "", "alice")
+	author := b.AddParticipant("alice@example.test", "example.test", "alice")
 	message := b.AddMessage(MessageOpt{Subject: "Notice", SenderID: &author})
 	b.AddRecipientWithEnvelope(message, author, "from", "GitHub", "notifications@github.com")
 	dir, cleanup := b.Build()
@@ -23,6 +24,9 @@ func TestDuckDBRelayedSenderEnvelope(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, "notifications@github.com", results[0].FromEmail)
+	results, err = engine.SearchFast(t.Context(), search.Parse("from:alice@example.test"), MessageFilter{}, 10, 0)
+	require.NoError(t, err)
+	assert.Empty(t, results)
 	rows, err := engine.ListMessages(t.Context(), MessageFilter{Sender: "notifications@github.com", Domain: "github.com"})
 	require.NoError(t, err)
 	require.Len(t, rows, 1)

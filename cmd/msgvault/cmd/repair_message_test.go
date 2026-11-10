@@ -15,8 +15,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	syncer "go.kenn.io/msgvault/internal/sync"
 	testemail "go.kenn.io/msgvault/internal/testutil/email"
@@ -603,4 +606,26 @@ func marshalRepairCommandJSON(t *testing.T, value string) []byte {
 	encoded, err := json.Marshal(value)
 	require.NoError(t, err)
 	return encoded
+}
+
+func TestRepairMessageCommandUsesRelayedSenderRules(t *testing.T) {
+	fixture := storetest.New(t)
+	fixture.CreateMessage("gmail-42")
+	mock := gmail.NewMockAPI()
+	mock.Profile = &gmail.Profile{EmailAddress: fixture.Source.Identifier}
+	mock.AddMessage("gmail-42", []byte("From: Alice <relay@example.test>\r\nTo: bob@example.test\r\nX-Author: alice\r\nSubject: Notice\r\n\r\nHello"), []string{"INBOX"})
+	command := newRepairMessageCmd(repairMessageCommandDeps{
+		isDaemonSubprocess: func() bool { return true },
+		openWritableStore:  func() (*store.Store, func(), error) { return fixture.Store, func() {}, nil },
+		newGmailClient:     func(context.Context, *store.Source) (gmail.API, error) { return mock, nil },
+		attachmentsDir:     filepath.Join(t.TempDir(), "attachments"),
+	})
+	command.SetContext(withInvocation(t.Context(), &invocation{cfg: &config.Config{RelayedSenders: []mime.RelayedSenderRule{{Address: "relay@example.test", Header: "X-Author", IdentifierType: "example"}}}}))
+	command.SetOut(&bytes.Buffer{})
+	command.SetErr(&bytes.Buffer{})
+	command.SetArgs([]string{"gmail-42", "--source-id", "1"})
+	require.NoError(t, command.Execute())
+	var author string
+	require.NoError(t, fixture.Store.DB().QueryRowContext(t.Context(), `SELECT pi.identifier_value FROM messages m JOIN participant_identifiers pi ON pi.participant_id=m.sender_id WHERE pi.identifier_type='example'`).Scan(&author))
+	assert.Equal(t, "alice", author)
 }

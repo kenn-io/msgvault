@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
@@ -107,10 +108,16 @@ func TestRelayedSenderCustomRuleAndLinkedContact(t *testing.T) {
 		opts.RelayedSenders = []mime.RelayedSenderRule{{Address: "relay@example.test", Header: "X-Author", IdentifierType: "example"}}
 	})
 	seedMessages(env, 1, 1001, "one")
-	env.Mock.Messages["one"].Raw = []byte("From: Relay <relay@example.test>\r\nTo: test@example.com\r\nX-Author: author\r\nSubject: Notice\r\n\r\nHello")
+	env.Mock.Messages["one"].Raw = []byte("From: Alice Author <relay@example.test>\r\nTo: test@example.com\r\nX-Author: author\r\nSubject: Notice\r\n\r\nHello")
 	runFullSync(t, env)
 	var id, author int64
 	require.NoError(t, env.Store.DB().QueryRowContext(t.Context(), `SELECT id, sender_id FROM messages`).Scan(&id, &author))
+	var displayName string
+	require.NoError(t, env.Store.DB().QueryRowContext(t.Context(), `SELECT display_name FROM participants WHERE id=?`, author).Scan(&displayName))
+	assert.Equal(t, "Alice Author", displayName)
+	var relayNames int
+	require.NoError(t, env.Store.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM participants WHERE email_address='relay@example.test' AND display_name='Alice Author'`).Scan(&relayNames))
+	assert.Zero(t, relayNames)
 	contact, err := env.Store.EnsureParticipant("author@example.test", "Author", "example.test")
 	require.NoError(t, err)
 	require.NoError(t, env.Store.MergeParticipants(author, contact))
@@ -120,6 +127,11 @@ func TestRelayedSenderCustomRuleAndLinkedContact(t *testing.T) {
 	var owner int64
 	require.NoError(t, env.Store.DB().QueryRowContext(t.Context(), `SELECT participant_id FROM participant_identifiers WHERE identifier_type='example' AND identifier_value='author'`).Scan(&owner))
 	assert.Equal(t, contact, owner)
+	for value, want := range map[string]int64{"relay@example.test": 1, "author@example.test": 0} {
+		_, count, err := env.Store.SearchMessagesQueryContext(t.Context(), search.Parse("from:"+value), 0, 10)
+		require.NoError(t, err)
+		assert.Equal(t, want, count, value)
+	}
 }
 
 func TestRelayedSenderAuthentication(t *testing.T) {
@@ -138,4 +150,14 @@ func TestRelayedSenderAuthentication(t *testing.T) {
 	verdict := senderauth.Evaluate(archived, []string{"mx.example.test"}, msg.FromEmail)
 	assert.True(t, verdict.Verified)
 	assert.Equal(t, "github.com", verdict.Domain)
+}
+
+func TestRelayedSenderWithoutDisplayNameUsesHandle(t *testing.T) {
+	env := newTestEnv(t)
+	seedMessages(env, 1, 1001, "one")
+	env.Mock.Messages["one"].Raw = []byte("From: notifications@github.com\r\nTo: test@example.com\r\nX-GitHub-Sender: Alice\r\nSubject: Notice\r\n\r\nHello")
+	runFullSync(t, env)
+	var name string
+	require.NoError(t, env.Store.DB().QueryRowContext(t.Context(), `SELECT p.display_name FROM messages m JOIN participants p ON p.id=m.sender_id`).Scan(&name))
+	assert.Equal(t, "alice", name)
 }

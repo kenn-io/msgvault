@@ -2,13 +2,15 @@ package query_test
 
 import (
 	"database/sql"
+	"testing"
+	"time"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
-	"testing"
-	"time"
 )
 
 func TestQuotedLocalPartSenderDomain(t *testing.T) {

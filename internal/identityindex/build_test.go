@@ -975,6 +975,9 @@ func writeRelationshipParquet(
 	root, dataset, query string,
 ) {
 	tb.Helper()
+	if dataset == "message_recipients" {
+		query = "SELECT *, NULL::VARCHAR AS envelope_address FROM (" + query + ")"
+	}
 	directory := filepath.Join(root, dataset)
 	require.NoError(tb, os.MkdirAll(directory, 0o755))
 	path := filepath.Join(directory, dataset+".parquet")
@@ -1053,4 +1056,18 @@ func TestBuildPeopleCuratedNamePreservesObservedPrimitives(t *testing.T) {
 	assertions.Equal("person", source)
 	assertions.Equal("Alice Curated", name)
 	t.Log("all observed search values and primitives retained; curated primitive source=person participant_id=3")
+}
+
+func TestCollectCacheStatsRelayedSenderEnvelope(t *testing.T) {
+	_, db := writeRelationshipBaseFixture(t, true)
+	inputs := cacheStatsRelations{
+		messages:     "(SELECT 1 AS id, 1 AS source_id, TIMESTAMP '2026-01-01' AS sent_at, 0 AS size_estimate)",
+		recipients:   `(SELECT * FROM (VALUES (1, 'from', 'relay@service.test'), (2, 'from', 'relay@service.test'), (3, 'from', NULL), (4, 'from', '"odd@name"@elsewhere.test')) AS t(participant_id, recipient_type, envelope_address))`,
+		participants: `(SELECT * FROM (VALUES (1, NULL, NULL), (2, NULL, NULL), (3, 'fallback@example.test', 'example.test'), (4, NULL, NULL)) AS t(id, email_address, domain))`,
+		attachments:  "(SELECT 0 AS size)",
+	}
+	stats, err := collectCacheStats(t.Context(), db, inputs)
+	require.NoError(t, err)
+	assert.EqualValues(t, 3, stats.UniqueSenders)
+	assert.EqualValues(t, 3, stats.UniqueDomains)
 }
