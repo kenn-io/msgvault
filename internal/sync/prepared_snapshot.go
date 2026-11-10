@@ -67,7 +67,8 @@ func buildPreparedSnapshot(
 		BodyHTML: sql.NullString{
 			String: prepared.bodyHTML, Valid: prepared.bodyHTML != "",
 		},
-		RawMIME: prepared.rawMIME,
+		RawMIME:    prepared.rawMIME,
+		Automation: prepared.automation,
 		Recipients: []store.RecipientSet{
 			buildRecipientSet("from", prepared.from, participantMap),
 			buildRecipientSet("to", prepared.to, participantMap),

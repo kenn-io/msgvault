@@ -36,6 +36,10 @@ func TestLoopsIdenticalWithAndWithoutAutomationColumns(t *testing.T) {
 			assert.Equal(t, before, after)
 			if tc.attachment != "" {
 				assert.Zero(t, counting.originals)
+				assert.Positive(t, counting.automationReads)
+			} else {
+				assert.Positive(t, counting.originals)
+				assert.Zero(t, counting.automationReads)
 			}
 		})
 	}
@@ -61,4 +65,15 @@ func TestLoopsAutomationRetainsMissingAttachmentAndUnreadableFallback(t *testing
 			assert.Positive(t, counting.originals)
 		})
 	}
+}
+
+func TestLoopsAutomationUnknownMalformedOriginalWithAttachment(t *testing.T) {
+	f := storetest.New(t)
+	f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you send it?", Raw: "invalid MIME", FileName: "report.pdf", SentAt: ago(3 * day)})
+	counting := &countingStore{Store: f.Store}
+	result, err := loops.List(t.Context(), counting, loops.Options{}, now)
+	require.NoError(t, err)
+	assert.Positive(t, result.SkippedUnparseable)
+	assert.Positive(t, counting.originals)
+	assert.Positive(t, counting.automationReads)
 }

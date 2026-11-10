@@ -548,3 +548,47 @@ func repairRaw(id, threadID, subject, body string, attachment []byte) *gmail.Raw
 	}
 	return &gmail.RawMessage{ID: id, ThreadID: threadID, LabelIDs: []string{"INBOX"}, Raw: builder.Bytes()}
 }
+
+func TestRepairMessagePublishesAutomation(t *testing.T) {
+	env := newTestEnv(t)
+	source := env.CreateSource(t)
+	id := seedRepairRow(t, env.Store, source.ID, "automation-repair", "thread", "old")
+	raw := repairRaw("automation-repair", "thread", "repaired", "body", nil)
+	raw.Raw = append([]byte("List-Unsubscribe: <mailto:leave@example.test>\r\n"), raw.Raw...)
+	env.Mock.Messages["automation-repair"] = raw
+	_, err := env.Syncer.RepairMessage(t.Context(), RepairRequest{Reference: "automation-repair", SourceID: source.ID})
+	require.NoError(t, err)
+	flags, current, err := env.Store.MessageAutomationContext(t.Context(), id)
+	require.NoError(t, err)
+	assert.True(t, current)
+	assert.Equal(t, uint32(store.FlagListUnsubscribe), flags)
+}
+
+func TestSyncAutomationMalformedRefetchRetainsAttachmentAndUnknown(t *testing.T) {
+	env := newTestEnv(t)
+	source := env.CreateSource(t)
+	raw := repairRaw("automation-refetch", "thread", "hello", "body", nil)
+	prepared, err := env.Syncer.prepareMessage(source.ID, raw, "thread", false)
+	require.NoError(t, err)
+	prepared, err = env.Syncer.resolvePreparedMessage(t.Context(), prepared)
+	require.NoError(t, err)
+	id, err := env.Syncer.persistMessage(t.Context(), prepared, nil)
+	require.NoError(t, err)
+	require.NoError(t, env.Store.UpsertAttachmentRecord(t.Context(), id, store.AttachmentWrite{Filename: "report.pdf", MIMEType: "application/pdf", StoragePath: "ab/report.pdf", ContentHash: "hash", Size: 4, Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceProviderExplicit}))
+	raw.Raw = []byte("invalid MIME")
+	prepared, err = env.Syncer.prepareMessage(source.ID, raw, "thread", false)
+	require.NoError(t, err)
+	prepared, err = env.Syncer.resolvePreparedMessage(t.Context(), prepared)
+	require.NoError(t, err)
+	_, err = env.Syncer.persistMessage(t.Context(), prepared, nil)
+	require.NoError(t, err)
+	_, current, err := env.Store.MessageAutomationContext(t.Context(), id)
+	require.NoError(t, err)
+	assert.False(t, current)
+	var retained int
+	require.NoError(t, env.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM attachments WHERE message_id = ? AND attachment_role = 'standalone'`, id).Scan(&retained))
+	assert.Equal(t, 1, retained)
+	_, _, unreadable, err := env.Store.LoopOriginalEvidenceContext(t.Context(), id)
+	require.NoError(t, err)
+	assert.True(t, unreadable)
+}

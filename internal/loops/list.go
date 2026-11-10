@@ -96,6 +96,11 @@ func (r *storeReader) original(id int64) (mime.AutomationSignals, bool, bool, er
 	if r.chat {
 		return mime.AutomationSignals{}, false, false, nil
 	}
+	// Only a positive archive attachment fact can avoid the original read.
+	// Ordinary messages keep the existing path without an extra flags query.
+	if !r.attachments[id] {
+		return r.st.LoopOriginalEvidenceContext(r.ctx, id)
+	}
 	flags, current, err := r.st.MessageAutomationContext(r.ctx, id)
 	if err != nil {
 		return mime.AutomationSignals{}, false, false, err
@@ -111,13 +116,7 @@ func (r *storeReader) original(id int64) (mime.AutomationSignals, bool, bool, er
 		CalendarPart:    flags&mime.FlagCalendarPart != 0,
 		ReplyToNoReply:  flags&mime.FlagReplyToNoReply != 0,
 	}
-	// The positive archive fact is conclusive. A missing fact can mean that
-	// attachment extraction has not completed, so retain the original fallback.
-	if r.attachments[id] {
-		return signals, true, false, nil
-	}
-	_, attachment, unreadable, err := r.st.LoopOriginalEvidenceContext(r.ctx, id)
-	return signals, attachment, unreadable, err
+	return signals, true, false, nil
 }
 
 func (r *storeReader) Evidence(id int64) (store.LoopMessageEvidence, error) {

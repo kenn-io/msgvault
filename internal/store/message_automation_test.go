@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	testemail "go.kenn.io/msgvault/internal/testutil/email"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -238,4 +240,68 @@ func TestAutomationRawCompletenessMarkerIsAtomic(t *testing.T) {
 	assertAutomation(t, f.Store, id, store.FlagBotSender, true)
 	require.NoError(t, f.Store.UpsertMessageRawWithAutomationContext(t.Context(), id, []byte(`{"text":"human"}`), "slack_json", 0))
 	assertAutomation(t, f.Store, id, 0, true)
+}
+
+func TestRepairAutomationFlagsRecoveredCSVAndNonpositiveIDs(t *testing.T) {
+	f := storetest.New(t)
+	insert := `INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type)`
+	if f.Store.IsPostgreSQL() {
+		insert += ` OVERRIDING SYSTEM VALUE`
+	}
+	insert += ` VALUES (?, ?, ?, ?, 'email')`
+	for _, id := range []int64{-7, 0, 9} {
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(insert), id, f.ConvID, f.Source.ID, fmt.Sprint(id))
+		require.NoError(t, err)
+		require.NoError(t, f.Store.UpsertMessageRaw(id, testemail.LegacyCSV(true, testemail.LegacyCSVOptions{})))
+	}
+	sum, err := f.Store.RepairAutomationFlags(t.Context(), store.AutomationRepairOptions{Apply: true, BatchSize: 1}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), sum.Written)
+	assert.Zero(t, sum.Unreadable)
+	assert.Zero(t, sum.Remaining)
+	for _, id := range []int64{-7, 0, 9} {
+		assertAutomation(t, f.Store, id, 0, true)
+	}
+}
+
+func TestAutomationUnknownRawInvalidationDoesNotWriteMessage(t *testing.T) {
+	f := storetest.New(t)
+	id := f.CreateMessage("unknown-raw")
+	require.NoError(t, f.Store.UpsertMessageRaw(id, []byte("Subject: old\r\n\r\nbody")))
+	for _, remove := range []bool{false, true} {
+		before := baselineLM(t, f.Store, id)
+		if remove {
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), id)
+			require.NoError(t, err)
+		} else {
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE message_raw SET raw_data = ? WHERE message_id = ?`), []byte("changed"), id)
+			require.NoError(t, err)
+		}
+		assert.Equal(t, before, readLM(t, f.Store, id))
+	}
+}
+
+func TestRepairAutomationFlagsEmbeddingConsumerCAS(t *testing.T) {
+	f := storetest.New(t)
+	covered := f.CreateMessage("covered")
+	pending := f.CreateMessage("pending")
+	for _, id := range []int64{covered, pending} {
+		require.NoError(t, f.Store.UpsertMessageRaw(id, []byte("Subject: hello\r\n\r\nbody")))
+	}
+	require.NoError(t, f.Store.SetEmbedGen(t.Context(), []int64{covered}, 7))
+	before := baselineLM(t, f.Store, pending)
+	sum, err := f.Store.RepairAutomationFlags(t.Context(), store.AutomationRepairOptions{Apply: true}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), sum.Written)
+	missed, count, err := f.Store.SetEmbedGenIfUnchanged(t.Context(), []store.EmbedGenStamp{{ID: pending, LastModified: before}}, 7)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{pending}, missed)
+	assert.Zero(t, count)
+	candidates, err := f.Store.ScanForEmbedding(t.Context(), 7, 0, 10)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{pending}, candidates, "covered rows stay excluded; only pending work needs a fresh token")
+	missed, count, err = f.Store.SetEmbedGenIfUnchanged(t.Context(), []store.EmbedGenStamp{{ID: pending, LastModified: readLM(t, f.Store, pending)}}, 7)
+	require.NoError(t, err)
+	assert.Empty(t, missed)
+	assert.Equal(t, 1, count)
 }

@@ -89,7 +89,7 @@ run [`msgvault repair-automation-flags --apply`](../cli-reference.md#repair-auto
 The command reads stored originals and can resume after an interruption.
 
 Loops reuse current flags when the archive also confirms a file attachment.
-When attachment evidence is missing, loops still parse the original so an
+When attachment evidence is missing, loops skip the flags lookup and parse the original so an
 unrecorded file cannot disappear from the result. This also preserves checks
 for unreadable originals. Bot and sender flag bits do not change loop rules.
 

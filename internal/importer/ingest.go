@@ -199,10 +199,16 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 		buildRecipientSet("bcc", parsed.Bcc, participantMap),
 	}
 
+	var automation *uint32
+	if parseErr == nil && !parsed.Incomplete {
+		flags := parsed.AutomationFlags()
+		automation = &flags
+	}
+
 	// Persist atomically
 	messageID, err := st.PersistMessageContext(ctx, &store.MessagePersistData{
 		Message:    rec,
-		Automation: ptrAutomationFlags(parsed.AutomationFlags()),
+		Automation: automation,
 		BodyText:   sql.NullString{String: bodyText, Valid: bodyText != ""},
 		BodyHTML:   sql.NullString{String: bodyHTML, Valid: bodyHTML != ""},
 		RawMIME:    raw,
@@ -397,5 +403,3 @@ func storeAttachment(
 		ContentID:     att.ContentID,
 	})
 }
-
-func ptrAutomationFlags(flags uint32) *uint32 { return &flags }

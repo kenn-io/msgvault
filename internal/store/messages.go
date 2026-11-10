@@ -2530,7 +2530,7 @@ func (s *Store) persistMessageWith(
 	}
 
 	if data.Automation != nil {
-		if _, err := tx.ExecContext(ctx, `UPDATE messages SET automation_flags = ?, automation_rule_version = ? WHERE id = ?`, *data.Automation, AutomationRuleVersion, messageID); err != nil {
+		if _, err := putMessageAutomationWith(ctx, tx, messageID, *data.Automation); err != nil {
 			return 0, fmt.Errorf("set automation: %w", err)
 		}
 	}
@@ -6290,7 +6290,7 @@ func (s *Store) upsertMessageRawWithAutomationContext(ctx context.Context, messa
 			return err
 		}
 		if automation != nil {
-			if _, err := tx.ExecContext(ctx, `UPDATE messages SET automation_flags = ?, automation_rule_version = ? WHERE id = ?`, *automation, AutomationRuleVersion, messageID); err != nil {
+			if _, err := putMessageAutomationWith(ctx, tx, messageID, *automation); err != nil {
 				return err
 			}
 		}

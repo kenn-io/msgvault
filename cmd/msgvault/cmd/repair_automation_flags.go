@@ -32,7 +32,7 @@ works entirely offline and never contacts a provider.`,
 	return cmd
 }
 
-func runRepairAutomationFlagsLocal(cmd *cobra.Command, apply bool, batchSize int) error {
+func runRepairAutomationFlagsLocal(cmd *cobra.Command, apply bool, batchSize int) (repairErr error) {
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
@@ -53,6 +53,13 @@ func runRepairAutomationFlagsLocal(cmd *cobra.Command, apply bool, batchSize int
 		return fmt.Errorf("open archive for automation flags repair: %w", err)
 	}
 	defer cleanup()
+	if apply {
+		// Durable revision drift also covers partial commits and a failed prior
+		// refresh. The existing helper ignores cancellation and skips current caches.
+		defer func() {
+			repairErr = errors.Join(repairErr, rebuildCacheAfterWrite(cmd.Context(), cfg.DatabaseDSN(), state))
+		}()
+	}
 
 	summary, err := st.RepairAutomationFlags(cmd.Context(), store.AutomationRepairOptions{Apply: apply, BatchSize: batchSize}, nil)
 	if err != nil {
@@ -76,11 +83,6 @@ func runRepairAutomationFlagsLocal(cmd *cobra.Command, apply bool, batchSize int
 		if _, err := fmt.Fprintln(cmd.OutOrStdout(),
 			"Dry run: no rows were modified. Re-run with --apply to write repairs."); err != nil {
 			return fmt.Errorf("write automation flags repair dry-run guidance: %w", err)
-		}
-	}
-	if apply && summary.Written > 0 {
-		if err := rebuildCacheAfterWrite(cmd.Context(), cfg.DatabaseDSN(), state); err != nil {
-			return err
 		}
 	}
 	return nil

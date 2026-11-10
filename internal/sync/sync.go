@@ -1749,7 +1749,7 @@ func (s *Syncer) syncLabels(ctx context.Context, sourceID int64) (map[string]int
 
 // messageData holds all parsed data for a message before persistence.
 type messageData struct {
-	automation        uint32
+	automation        *uint32
 	originalMessageID string // Parsed identity evidence, before omission from new projections.
 	metadata          *sql.NullString
 	message           *store.Message
@@ -1952,6 +1952,13 @@ func (s *Syncer) prepareMessage(
 		metadata = &sql.NullString{String: string(encoded), Valid: true}
 	}
 
+	// Failed or incomplete originals must retain the loops readability fallback.
+	var automation *uint32
+	if parseErr == nil && !parsed.Incomplete {
+		flags := parsed.AutomationFlags()
+		automation = &flags
+	}
+
 	return &messageData{
 		originalMessageID: originalMessageID,
 		metadata:          metadata,
@@ -1962,7 +1969,7 @@ func (s *Syncer) prepareMessage(
 		bodyText:          bodyText,
 		bodyHTML:          bodyHTML,
 		rawMIME:           raw.Raw,
-		automation:        parsed.AutomationFlags(),
+		automation:        automation,
 		from:              parsed.From,
 		to:                parsed.To,
 		cc:                parsed.Cc,
@@ -2027,7 +2034,7 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 	// Publish the search document with RAW before interruptible file I/O.
 	messageID, err := s.store.PersistMessageContext(ctx, &store.MessagePersistData{
 		Message:     data.message,
-		Automation:  &data.automation,
+		Automation:  data.automation,
 		Metadata:    data.metadata,
 		BodyText:    sql.NullString{String: data.bodyText, Valid: data.bodyText != ""},
 		BodyHTML:    sql.NullString{String: data.bodyHTML, Valid: data.bodyHTML != ""},

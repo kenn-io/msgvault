@@ -37,11 +37,23 @@ func (s *Store) MessageAutomationContext(ctx context.Context, id int64) (flags u
 
 // PutMessageAutomationContext publishes both derived columns together.
 func (s *Store) PutMessageAutomationContext(ctx context.Context, id int64, flags uint32) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE messages SET automation_flags = ?, automation_rule_version = ? WHERE id = ?`, flags, AutomationRuleVersion, id)
+	_, err := putMessageAutomationWith(ctx, s.db, id, flags)
 	if err != nil {
 		return fmt.Errorf("write message automation: %w", err)
 	}
 	return nil
+}
+
+// putMessageAutomationWith publishes under the caller's raw snapshot lock.
+// Fingerprint validation and transaction ownership stay with the caller.
+func putMessageAutomationWith(ctx context.Context, q contextStatementQuerier, id int64, flags uint32) (bool, error) {
+	result, err := q.ExecContext(ctx, `UPDATE messages SET automation_flags = ?, automation_rule_version = ? WHERE id = ?
+ AND (automation_flags IS DISTINCT FROM ? OR automation_rule_version IS DISTINCT FROM ?)`, flags, AutomationRuleVersion, id, flags, AutomationRuleVersion)
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	return n > 0, err
 }
 
 // Install after legacy columns: the schema script also runs on older archives.
@@ -52,11 +64,11 @@ func (s *Store) initAutomationTriggers(ctx context.Context) error {
  OR OLD.compression IS NOT NEW.compression OR OLD.encryption_version IS NOT NEW.encryption_version
  BEGIN
  UPDATE messages SET automation_flags = NULL, automation_rule_version = NULL
- WHERE id IN (OLD.message_id, NEW.message_id);
+ WHERE id IN (OLD.message_id, NEW.message_id) AND (automation_flags IS NOT NULL OR automation_rule_version IS NOT NULL);
  END;
  CREATE TRIGGER IF NOT EXISTS trg_messages_automation_raw_delete
  AFTER DELETE ON message_raw FOR EACH ROW BEGIN
- UPDATE messages SET automation_flags = NULL, automation_rule_version = NULL WHERE id = OLD.message_id;
+ UPDATE messages SET automation_flags = NULL, automation_rule_version = NULL WHERE id = OLD.message_id AND (automation_flags IS NOT NULL OR automation_rule_version IS NOT NULL);
  END;`
 	if s.IsPostgreSQL() {
 		statement = `CREATE OR REPLACE FUNCTION invalidate_messages_automation_raw() RETURNS TRIGGER AS $$
@@ -65,9 +77,9 @@ func (s *Store) initAutomationTriggers(ctx context.Context) error {
  IF OLD.message_id IS NOT DISTINCT FROM NEW.message_id AND OLD.raw_data IS NOT DISTINCT FROM NEW.raw_data
  AND OLD.raw_format IS NOT DISTINCT FROM NEW.raw_format AND OLD.compression IS NOT DISTINCT FROM NEW.compression
  AND OLD.encryption_version IS NOT DISTINCT FROM NEW.encryption_version THEN RETURN NULL; END IF;
- UPDATE messages SET automation_flags = NULL, automation_rule_version = NULL WHERE id IN (OLD.message_id, NEW.message_id);
+ UPDATE messages SET automation_flags = NULL, automation_rule_version = NULL WHERE id IN (OLD.message_id, NEW.message_id) AND (automation_flags IS NOT NULL OR automation_rule_version IS NOT NULL);
  ELSE
- UPDATE messages SET automation_flags = NULL, automation_rule_version = NULL WHERE id = OLD.message_id;
+ UPDATE messages SET automation_flags = NULL, automation_rule_version = NULL WHERE id = OLD.message_id AND (automation_flags IS NOT NULL OR automation_rule_version IS NOT NULL);
  END IF;
  RETURN NULL;
  END;
@@ -91,16 +103,11 @@ func (s *Store) UpdateArchivedEmailAutomationContext(ctx context.Context, item *
 		if err := s.lockArchivedEmailTextContext(ctx, tx, item); err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE messages SET automation_flags = ?, automation_rule_version = ? WHERE id = ?
- AND (automation_flags IS DISTINCT FROM ? OR automation_rule_version IS DISTINCT FROM ?)`, flags, AutomationRuleVersion, item.MessageID, flags, AutomationRuleVersion)
-		if err != nil {
-			return err
+		var writeErr error
+		changed, writeErr = putMessageAutomationWith(ctx, tx, item.MessageID, flags)
+		if writeErr != nil {
+			return writeErr
 		}
-		n, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		changed = n > 0
 		if changed {
 			return setArchiveMetadataValueTx(ctx, tx, pendingDerivedEmailRevisionKey, "1")
 		}

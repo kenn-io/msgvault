@@ -57,7 +57,7 @@ func alternativeRelocationRaw(
 	))
 }
 
-func TestIMAPRelocationAdoptsEditedSentSnapshot(t *testing.T) {
+func TestIMAPRelocationAutomationAdoptsEditedSentSnapshot(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
@@ -81,6 +81,8 @@ func TestIMAPRelocationAdoptsEditedSentSnapshot(t *testing.T) {
 		"finalword",
 		"<p>htmlfinal</p>",
 	)
+
+	sentRaw = append([]byte("List-Unsubscribe: <mailto:leave@example.test>\r\n"), sentRaw...)
 
 	addr, user := testutil.StartIMAPMemServerWithSpecialUse(
 		t,
@@ -133,6 +135,11 @@ func TestIMAPRelocationAdoptsEditedSentSnapshot(t *testing.T) {
 	raw, err := env.Store.GetMessageRaw(initialID)
 	require.NoError(err)
 	assert.Equal(sentRaw, raw)
+	flags, current, err := env.Store.MessageAutomationContext(t.Context(), initialID)
+	require.NoError(err)
+	assert.True(current)
+	assert.Equal(uint32(store.FlagListUnsubscribe), flags)
+
 	assertMessageCount(t, env.Store, 1)
 	results, total, err := env.Store.SearchMessagesQuery(
 		&search.Query{TextTerms: []string{"finalword"}}, 0, 10)

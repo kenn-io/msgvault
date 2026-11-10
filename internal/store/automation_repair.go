@@ -36,13 +36,23 @@ func (s *Store) RepairAutomationFlags(ctx context.Context, opts AutomationRepair
 		}()
 	}
 	var after int64
+	haveCursor := false
 	for {
 		if err = ctx.Err(); err != nil {
 			return summary, err
 		}
 		var ids []int64
-		rows, queryErr := s.db.QueryContext(ctx, `SELECT m.id FROM messages m WHERE m.id > ? AND `+listIDRepairEmailMessagePredicate+`
- AND (m.automation_flags IS NULL OR m.automation_rule_version IS NULL OR m.automation_rule_version <> ?) ORDER BY m.id LIMIT ?`, after, AutomationRuleVersion, size)
+		query := `SELECT m.id FROM messages m WHERE ` + listIDRepairEmailMessagePredicate + `
+ AND (m.automation_flags IS NULL OR m.automation_rule_version IS NULL OR m.automation_rule_version <> ?)`
+		args := []any{AutomationRuleVersion}
+		// The first page includes legal zero and negative IDs.
+		if haveCursor {
+			query += ` AND m.id > ?`
+			args = append(args, after)
+		}
+		query += ` ORDER BY m.id LIMIT ?`
+		args = append(args, size)
+		rows, queryErr := s.db.QueryContext(ctx, query, args...)
 		if queryErr != nil {
 			return summary, fmt.Errorf("scan automation repair: %w", queryErr)
 		}
@@ -89,8 +99,8 @@ func (s *Store) RepairAutomationFlags(ctx context.Context, opts AutomationRepair
 				}
 				// MIME parts can carry text/calendar below a multipart header. A header-only
 				// parse would publish a false known-human flag set for those messages.
-				parsed, parseErr := mime.Parse(raw)
-				if parseErr != nil {
+				parsed, parseErr := mime.ParseWithRecovery(raw, "")
+				if parseErr != nil || parsed.Incomplete {
 					batch.Unreadable++
 					continue
 				}
@@ -123,9 +133,11 @@ func (s *Store) RepairAutomationFlags(ctx context.Context, opts AutomationRepair
 				if err := s.lockListIDRepairSQLiteWriter(ctx, tx); err != nil {
 					return err
 				}
-				for _, id := range ids {
-					if err := s.lockMeetingEvidenceWith(ctx, tx, id); err != nil {
-						return err
+				if s.IsPostgreSQL() {
+					for _, id := range ids {
+						if err := s.lockMeetingEvidenceWith(ctx, tx, id); err != nil {
+							return err
+						}
 					}
 				}
 				if err := process(tx); err != nil {
@@ -148,6 +160,7 @@ func (s *Store) RepairAutomationFlags(ctx context.Context, opts AutomationRepair
 		summary.Automated += batch.Automated
 		summary.Unreadable += batch.Unreadable
 		after = ids[len(ids)-1]
+		haveCursor = true
 		if progress != nil {
 			progress(summary)
 		}
