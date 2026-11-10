@@ -233,6 +233,7 @@ describe('PersonNetwork', () => {
     try {
       expect((await screen.findByRole('alert')).textContent).toContain("Couldn't load the network.");
       expect(view.container.querySelector('details pre')?.textContent).toBe('Synthetic network unavailable.');
+      expect(view.container.querySelector('.summary')).toBeNull();
       await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
       expect(await screen.findByText('Curated Peer')).toBeDefined();
     } finally { view.unmount(); controller.destroy(); }

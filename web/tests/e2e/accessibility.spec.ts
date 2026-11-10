@@ -321,6 +321,13 @@ for (const theme of ['light', 'dark'] as const) {
       await expect(tab).toBeChecked();
       await assertNoViolations(page, `Person ${section} ${theme}`);
     }
+    for (const depth of [2, 3]) {
+      await detail.getByRole('radio', { name: `${depth} steps` }).click();
+      const network = detail.getByRole('region', { name: `Network at ${depth} steps` });
+      await expect(network).toHaveAttribute('aria-busy', 'false');
+      await expect(network.getByRole('button', { name: 'Shared Organization' })).toBeVisible();
+      await assertNoViolations(page, `Person Details ${depth} steps ${theme}`);
+    }
   });
 
   test(`${theme} Possible duplicates and imported connections have no axe violations`, async ({ page }) => {
