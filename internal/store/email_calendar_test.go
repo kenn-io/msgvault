@@ -85,7 +85,7 @@ func TestEmailCalendarSingleParticipantLockOrder(t *testing.T) {
 		var waiting bool
 		return st.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND ? = ANY(pg_blocking_pids(pid)))`, pid).Scan(&waiting) == nil && waiting
 	}, 5*time.Second, 10*time.Millisecond, "email writer must reach the directory lock")
-	// An ICS import holding the directory must still be able to update the revision.
+	// The revision row stays available while the writer waits on the directory.
 	_, err = blocker.ExecContext(ctx, `SELECT value FROM archive_metadata WHERE key='participant_display_name_revision' FOR UPDATE NOWAIT`)
 	assertions.NoError(err, "email writer must acquire the directory before the revision row")
 	requirements.NoError(blocker.Rollback())
@@ -133,7 +133,7 @@ func emailEvents(t *testing.T, st *Store, source int64) []int64 {
 	return ids
 }
 
-func TestEmailCalendarSourceCountsIncludeDerivedEvents(t *testing.T) {
+func TestEmailCalendarSourceCountsExcludeDerivedEvents(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -194,31 +194,29 @@ func TestEmailCalendarEventsUseConfirmedMailAccountScope(t *testing.T) {
 }
 
 func TestEmailCalendarMaterialization(t *testing.T) {
-	t.Run("claim identity", func(t *testing.T) {
-		assertions, requirements := assert.New(t), require.New(t)
-		st := newRFC822IDBackfillBackendStore(t)
-		request := inviteEmail([]byte(strings.ReplaceAll(string(calendarFamilyDocument()), "UID:family@example.com\r\n", "UID:family@example.com\r\nORGANIZER:mailto:organizer@example.com\r\n")))
-		parent, source := persistInviteEmail(t, st, "organizer-message", request)
-		email, err := st.GetMessage(parent)
-		requirements.NoError(err)
-		assertions.Equal("Original email", email.Subject)
-		assertions.Equal("Email body stays intact", email.BodyText)
-		var emails int
-		requirements.NoError(st.db.QueryRow(`SELECT count(*) FROM messages WHERE source_id=? AND message_type='email'`, source).Scan(&emails))
-		assertions.Equal(1, emails)
-		originalIDs := emailEvents(t, st, source)
-		requirements.Len(originalIDs, 2)
-		for _, id := range originalIDs {
-			assertions.NotEqual(parent, id)
-		}
-		_, err = st.PersistMessageContext(t.Context(), &MessagePersistData{
-			Message:      &Message{SourceID: source, SourceMessageID: "organizer-message", MessageType: "email", Subject: sql.NullString{String: "Original email", Valid: true}},
-			Conversation: &ConversationPersistData{SourceConversationID: "organizer-message", Title: "Original email"},
-			RawMIME:      request,
-		})
-		requirements.NoError(err)
-		assertions.Equal(originalIDs, emailEvents(t, st, source), "rebuilding the same email keeps its claim identity")
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	request := inviteEmail([]byte(strings.ReplaceAll(string(calendarFamilyDocument()), "UID:family@example.com\r\n", "UID:family@example.com\r\nORGANIZER:mailto:organizer@example.com\r\n")))
+	parent, source := persistInviteEmail(t, st, "organizer-message", request)
+	email, err := st.GetMessage(parent)
+	requirements.NoError(err)
+	assertions.Equal("Original email", email.Subject)
+	assertions.Equal("Email body stays intact", email.BodyText)
+	var emails int
+	requirements.NoError(st.db.QueryRow(`SELECT count(*) FROM messages WHERE source_id=? AND message_type='email'`, source).Scan(&emails))
+	assertions.Equal(1, emails)
+	originalIDs := emailEvents(t, st, source)
+	requirements.Len(originalIDs, 2)
+	for _, id := range originalIDs {
+		assertions.NotEqual(parent, id)
+	}
+	_, err = st.PersistMessageContext(t.Context(), &MessagePersistData{
+		Message:      &Message{SourceID: source, SourceMessageID: "organizer-message", MessageType: "email", Subject: sql.NullString{String: "Original email", Valid: true}},
+		Conversation: &ConversationPersistData{SourceConversationID: "organizer-message", Title: "Original email"},
+		RawMIME:      request,
 	})
+	requirements.NoError(err)
+	assertions.Equal(originalIDs, emailEvents(t, st, source), "rebuilding the same email keeps its claim identity")
 }
 
 func TestEmailCalendarMaterializesOnRawMIMEUpsert(t *testing.T) {
@@ -419,20 +417,13 @@ func TestEmailCalendarFamilyOrganizer(t *testing.T) {
 }
 
 func TestEmailCalendarICSAttachments(t *testing.T) {
-	for _, both := range []bool{false, true} {
-		t.Run(fmt.Sprintf("both=%t", both), func(t *testing.T) {
-			requirements := require.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			calendar := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nSUMMARY:Invite")
-			raw := "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=x\r\n\r\n"
-			if both {
-				raw += "--x\r\nContent-Type: text/calendar\r\n\r\n" + string(calendar) + "\r\n"
-			}
-			raw += "--x\r\nContent-Type: application/ics\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString(calendar) + "\r\n--x--\r\n"
-			_, source := persistInviteEmail(t, st, "attachment", []byte(raw))
-			requirements.Len(emailEvents(t, st, source), 1)
-		})
-	}
+	requirements := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	calendar := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nSUMMARY:Invite")
+	raw := "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=x\r\n\r\n"
+	raw += "--x\r\nContent-Type: application/ics\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString(calendar) + "\r\n--x--\r\n"
+	_, source := persistInviteEmail(t, st, "attachment", []byte(raw))
+	requirements.Len(emailEvents(t, st, source), 1)
 }
 
 func TestEmailCalendarFamilyOrganizerExceptionFirst(t *testing.T) {

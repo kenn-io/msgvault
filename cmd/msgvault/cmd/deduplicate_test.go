@@ -801,39 +801,28 @@ func newDeduplicateRoutingTestCommand() *cobra.Command {
 }
 
 func TestDeduplicateAccountResolutionExcludesCalendarSources(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f, accountID, _ := setupScopeFixture(t)
-
-	cal, err := f.Store.GetOrCreateSource(sourceTypeCalendar, accountID+"/primary")
-	require.NoError(err, "GetOrCreateSource calendar")
-	cfg, err := json.Marshal(map[string]string{
-		"account_email": accountID,
-		"calendar_id":   "primary",
-	})
-	require.NoError(err, "marshal sync_config")
-	require.NoError(f.Store.UpdateSourceSyncConfig(t.Context(), cal.ID, string(cfg)), "UpdateSourceSyncConfig")
-
-	scope, err := ResolveEmailAccountFlag(t.Context(), f.Store, accountID)
-	require.NoError(err)
-
-	assert.ElementsMatch([]int64{f.Source.ID}, scope.SourceIDs())
-	assert.NotContains(scope.SourceIDs(), cal.ID, "dedup account scope must not include Calendar sources")
-}
-
-func TestDeduplicateAccountResolutionExcludesICSSources(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f, accountID, _ := setupScopeFixture(t)
-
-	ics, err := f.Store.GetOrCreateSource("ics", accountID)
-	require.NoError(err, "GetOrCreateSource ics")
-
-	scope, err := ResolveEmailAccountFlag(t.Context(), f.Store, accountID)
-	require.NoError(err)
-
-	assert.ElementsMatch([]int64{f.Source.ID}, scope.SourceIDs())
-	assert.NotContains(scope.SourceIDs(), ics.ID, "dedup account scope must not include ICS sources")
+	for _, sourceType := range []string{sourceTypeCalendar, sourceTypeICS} {
+		t.Run(sourceType, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f, accountID, _ := setupScopeFixture(t)
+			identifier := accountID
+			if sourceType == sourceTypeCalendar {
+				identifier += "/primary"
+			}
+			calendar, err := f.Store.GetOrCreateSource(sourceType, identifier)
+			require.NoError(err)
+			if sourceType == sourceTypeCalendar {
+				cfg, err := json.Marshal(map[string]string{"account_email": accountID, "calendar_id": "primary"})
+				require.NoError(err)
+				require.NoError(f.Store.UpdateSourceSyncConfig(t.Context(), calendar.ID, string(cfg)))
+			}
+			scope, err := ResolveEmailAccountFlag(t.Context(), f.Store, accountID)
+			require.NoError(err)
+			assert.ElementsMatch([]int64{f.Source.ID}, scope.SourceIDs())
+			assert.NotContains(scope.SourceIDs(), calendar.ID)
+		})
+	}
 }
 
 // TestDeduplicateCollectionResolution_MultiSource confirms SourceIDs expands
