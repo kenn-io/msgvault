@@ -260,6 +260,10 @@ describe('GroupTable', () => {
     const onDrill = vi.fn();
     render(GroupTable, { rows, dimension: 'source', drillable: false, onDrill });
     expect(screen.queryAllByRole('button', { name: /Show items in/ })).toHaveLength(0);
+    const grid = screen.getByRole('grid');
+    grid.focus();
+    await fireEvent.keyDown(grid, { key: 'Enter' });
+    expect(onDrill).not.toHaveBeenCalled();
     await fireEvent.dblClick(screen.getAllByRole('row')[1]!);
     expect(onDrill).not.toHaveBeenCalled();
   });
@@ -287,33 +291,36 @@ describe('GroupTable', () => {
     expect(screen.getByRole('row', { name: /Example source/ }).getAttribute('aria-current')).toBeNull();
     expect(screen.getByRole('row', { name: /Second source/ }).getAttribute('aria-current')).toBe('true');
   });
-});
+  it('keeps a later month page share relative to every grouped item and hides details in the inspector layout', async () => {
+    const clientWidth = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000);
+    const onDrill = vi.fn();
+    const row = { key: '2022-05', label: '2022-05', count: 20, total_items: 1000, estimated_bytes: 200, latest_at: '2022-05-31T12:00:00Z' };
+    const view = render(GroupTable, { rows: [row], dimension: 'month', onDrill });
+    try {
+      expect(screen.getByRole('columnheader', { name: 'Share' })).toBeDefined();
+      expect(screen.getByTitle('2% of 1,000 items').firstElementChild?.getAttribute('style')).toContain('width: 2%');
+      expect(screen.getByRole('columnheader', { name: 'Size' })).toBeDefined();
+      expect(screen.getByRole('columnheader', { name: 'Latest' })).toBeDefined();
 
+      await view.rerender({ rows: [row], dimension: 'month', inspectedKey: 'group:month:2022-05', onDrill });
+      expect(screen.queryByRole('columnheader', { name: 'Size' })).toBeNull();
+      expect(screen.queryByRole('columnheader', { name: 'Latest' })).toBeNull();
+      await view.rerender({ rows: [{ ...row, total_items: undefined }], dimension: 'month', onDrill });
+      expect(screen.queryByTitle('2% of 1,000 items')).toBeNull();
+      expect(screen.queryByRole('columnheader', { name: 'Share' })).toBeNull();
+    } finally {
+      clientWidth.mockRestore();
+      view.unmount();
+    }
+  });
 
-it('keeps a later month page share relative to every grouped item and hides details in the inspector layout', async () => {
- const clientWidth = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000);
- const onDrill = vi.fn();
- const row = { key: '2022-05', label: '2022-05', count: 20, total_items: 1000, estimated_bytes: 200, latest_at: '2022-05-31T12:00:00Z' };
- const view = render(GroupTable, { rows: [row], dimension: 'month', onDrill });
- expect(screen.getByRole('columnheader', { name: 'Share' })).toBeDefined();
- expect(screen.getByTitle('2% of 1,000 items').firstElementChild?.getAttribute('style')).toContain('width: 2%');
- expect(screen.getByRole('columnheader', { name: 'Size' })).toBeDefined();
- expect(screen.getByRole('columnheader', { name: 'Latest' })).toBeDefined();
-
- await view.rerender({ rows: [row], dimension: 'month', inspectedKey: 'group:month:2022-05', onDrill });
- expect(screen.queryByRole('columnheader', { name: 'Size' })).toBeNull();
- expect(screen.queryByRole('columnheader', { name: 'Latest' })).toBeNull();
- await view.rerender({ rows: [{ ...row, total_items: undefined }], dimension: 'month', onDrill });
- expect(screen.queryByTitle('2% of 1,000 items')).toBeNull();
- expect(screen.queryByRole('columnheader', { name: 'Share' })).toBeNull();
- clientWidth.mockRestore();
-});
-
-it('updates a source name when its type arrives after the rows', async () => {
- const props = { rows: [{ key: '7', label: 'fixture-granola', count: 1, estimated_bytes: 1, latest_at: '2024-01-01T12:00:00Z' }], dimension: 'source' as const, onDrill: vi.fn() };
- const view = render(GroupTable, props);
- expect(screen.getByText('fixture-granola')).toBeDefined();
- await view.rerender({ ...props, sourceTypes: new Map([['7', 'granola']]) });
- expect(screen.getByText('Granola')).toBeDefined();
- expect(screen.getByTitle('fixture-granola')).toBeDefined();
+  it('updates a source name when its type arrives after the rows', async () => {
+    const props = { rows: [{ key: '7', label: 'fixture-granola', count: 1, estimated_bytes: 1, latest_at: '2024-01-01T12:00:00Z' }], dimension: 'source' as const, onDrill: vi.fn() };
+    const view = render(GroupTable, props);
+    expect(screen.getByText('fixture-granola')).toBeDefined();
+    await view.rerender({ ...props, sourceTypes: new Map([['7', 'granola']]) });
+    expect(screen.getByText('Granola')).toBeDefined();
+    expect(screen.getByTitle('fixture-granola')).toBeDefined();
+    view.unmount();
+  });
 });

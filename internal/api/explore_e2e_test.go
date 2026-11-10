@@ -1105,8 +1105,11 @@ func TestExploreGroupOverviewSerialization(t *testing.T) {
 	require := require.New(t)
 	now := time.Date(2024, 5, 1, 12, 0, 0, 0, time.UTC)
 	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{}, groupResult: &query.ExploreGroupResponse{
-		Rows:     []query.ExploreGroupRow{{Key: "2024-05", TotalItems: 4, LatestAt: now}},
-		Overview: &query.ExploreGroupOverview{FirstAt: now, Activity: []query.ExploreGroupActivity{{Bucket: "2024-05-01", Count: 2}}},
+		Rows: []query.ExploreGroupRow{{Key: "2024-05", TotalItems: 4, LatestAt: now}},
+		Overview: &query.ExploreGroupOverview{
+			FirstAt: now, Activity: []query.ExploreGroupActivity{{Bucket: "2024-05-01", Count: 2}},
+			CoParticipants: []query.ExploreGroupCoParticipant{},
+		},
 	}}
 	srv := newTestServerWithEngine(t, engine)
 	keyed := postExploreJSON(t, srv, "/api/v1/explore/groups", `{"grouping":["month"],"group_key":"2024-05"}`)

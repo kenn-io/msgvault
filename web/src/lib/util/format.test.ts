@@ -19,8 +19,8 @@ describe('format', () => {
     expect(formatRelativeTime('2026-07-19T10:00:00Z', now)).toBe('now');
     expect(formatRelativeTime('soon', now)).toBe('soon');
   });
-});
 
-it('preserves invalid date input', () => {
- expect(formatDate('invalid')).toBe('invalid');
+  it('preserves invalid date input', () => {
+    expect(formatDate('invalid')).toBe('invalid');
+  });
 });

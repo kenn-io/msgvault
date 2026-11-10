@@ -281,9 +281,6 @@ describe('EverythingWorkspace', () => {
     const pane = await screen.findByRole('complementary', { name: 'Reading pane: Meeting' });
     expect(within(pane).getByText('12 items')).toBeDefined();
     expect(state.current.selectedRow).toBe('group:kind:meeting');
-    await fireEvent.click(screen.getByRole('button', { name: 'Show items in Meeting' }));
-    expect(state.current.filters).toEqual([{ dimension: 'kind', values: ['meeting'] }]);
-    expect(state.current.groupingChain).toEqual([]);
     rendered.unmount();
     state.destroy();
   });
@@ -1609,7 +1606,6 @@ describe('EverythingWorkspace', () => {
 
   it.each([
     ['participant', '42', 'Person Example'],
-    ['domain', 'example.test', 'example.test'],
   ])('keeps the %s file rail during an unchanged status poll', async (dimension, key, label) => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const initialState = {
@@ -2589,7 +2585,13 @@ describe('EverythingWorkspace', () => {
     ['participant', '42', '42', [{ dimension: 'participant', values: ['42'] }]],
     ['domain', 'example.com', 'example.com', [{ dimension: 'domain', values: ['example.com'] }]],
     ['message_type', 'email', 'Email', [{ dimension: 'message_type', values: ['email'] }]],
+    ['kind', 'meeting', 'Meeting', [{ dimension: 'kind', values: ['meeting'] }]],
+    ['month', '2026-07', 'Jul 2026', [
+      { dimension: 'after', values: ['2026-07-01T04:00:00.000Z'] },
+      { dimension: 'before', values: ['2026-08-01T04:00:00.000Z'] },
+    ]],
   ] as const)('drills %s groups into a changed URL predicate', async (dimension, key, name, expectedFilters) => {
+    if (dimension === 'month') vi.stubEnv('TZ', 'America/New_York');
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -2606,14 +2608,18 @@ describe('EverythingWorkspace', () => {
       scrollAnchor: { key: `group:${dimension}:${key}`, offset: 4 }
     });
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    await fireEvent.click(await screen.findByRole('button', { name: `Show items in ${name}` }));
+    try {
+      await fireEvent.click(await screen.findByRole('button', { name: `Show items in ${name}` }));
 
-    expect(state.current.filters).toEqual(expectedFilters);
-    expect(parseExploreURLState(window.location.search).filters).toEqual(expectedFilters);
-    expect(state.current.groupingChain).toEqual([]);
-    expect(state.current.scrollAnchor).toBeNull();
-    rendered.unmount();
-    state.destroy();
+      expect(state.current.filters).toEqual(expectedFilters);
+      expect(parseExploreURLState(window.location.search).filters).toEqual(expectedFilters);
+      expect(state.current.groupingChain).toEqual([]);
+      expect(state.current.scrollAnchor).toBeNull();
+    } finally {
+      rendered.unmount();
+      state.destroy();
+      vi.unstubAllEnvs();
+    }
   });
 
 

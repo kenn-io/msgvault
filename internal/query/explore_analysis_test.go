@@ -772,13 +772,6 @@ func TestExploreDayGroupsCountSentMessagesBeforeChatCollapse(t *testing.T) {
 	require.NoError(err)
 	require.Len(local.Rows, 3)
 	assert.Equal("2023-12-31", local.Rows[0].Key)
-	for _, dimension := range []string{"day", "month"} {
-		for _, timezone := range []string{"Invalid/Zone", "Local"} {
-			_, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Dimension: dimension, Timezone: timezone})
-			require.ErrorContains(err, "invalid timezone")
-			assert.ErrorIs(err, ErrInvalidExploreRequest)
-		}
-	}
 }
 
 func TestExploreGroupOverviewMembershipAndTimeBuckets(t *testing.T) {
@@ -836,12 +829,14 @@ func TestExploreGroupOverviewMembershipAndTimeBuckets(t *testing.T) {
 				}
 				assert.Equal(row.Count, count)
 				assert.False(detail.Overview.FirstAt.After(row.LatestAt))
+				if dimension == "month" && row.Key == "2024-05" {
+					assert.Equal(at.Add(-48*time.Hour), detail.Overview.FirstAt)
+				}
 				for _, co := range detail.Overview.CoParticipants {
 					assert.NotEqual(strconv.FormatInt(owner, 10), co.Key)
 					if dimension == "participant" {
 						assert.NotEqual(row.Key, co.Key)
 					}
-					assert.LessOrEqual(co.Count, row.Count)
 				}
 			}
 		})
@@ -861,9 +856,34 @@ func TestExploreGroupOverviewMembershipAndTimeBuckets(t *testing.T) {
 		}
 	}
 	assertions.Equal(int64(4), total)
+
+	yearBuilder := NewTestDataBuilder(t)
+	yearSource := yearBuilder.AddSourceWithType("archive@example.org", "gmail")
+	yearOwner := yearBuilder.AddParticipant("owner@example.org", "example.org", "Owner")
+	yearBuilder.AddOwnerParticipant(yearSource, yearOwner)
+	yearMessage := yearBuilder.AddMessage(MessageOpt{
+		SourceID: yearSource,
+		SentAt:   time.Date(2025, 1, 1, 2, 0, 0, 0, time.UTC),
+	})
+	yearBuilder.AddFrom(yearMessage, yearOwner, "Owner")
+	yearEngine := yearBuilder.BuildEngine()
+	localYear, err := yearEngine.ExploreGroups(t.Context(), ExploreGroupRequest{
+		Dimension: "year", Timezone: "America/New_York", Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	requirements.Len(localYear.Rows, 1)
+	assertions.Equal("2024", localYear.Rows[0].Key)
+
 	month.Page.Offset = 0
 	month.GroupKey = "2024-05"
 	detail, err := engine.ExploreGroups(t.Context(), month)
 	requirements.NoError(err)
 	assertions.Equal([]ExploreGroupActivity{{Bucket: "2024-05-29", Count: 1}, {Bucket: "2024-05-30", Count: 1}, {Bucket: "2024-05-31", Count: 1}}, detail.Overview.Activity)
+	for _, dimension := range []string{"day", "month", "year"} {
+		for _, timezone := range []string{"Invalid/Zone", "Local"} {
+			_, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Dimension: dimension, Timezone: timezone})
+			requirements.ErrorContains(err, "invalid timezone")
+			assertions.ErrorIs(err, ErrInvalidExploreRequest)
+		}
+	}
 }

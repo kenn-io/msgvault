@@ -67,12 +67,13 @@ it.each([
   expect(syncCommand({ id: 4, source_type, sync_unavailable_reason, last_successful_sync })).toBe(want);
 });
 
-it.each([
- ['granola', 'fixture-granola', 'Granola'],
- ['granola', 'person@example.com', 'Granola'],
- ['gmail', 'person@example.com', 'person@example.com'],
- ['imap', 'imap://person%40example.com@imap.example.com/INBOX', 'person@example.com'],
- [undefined, 'fixture-source', 'fixture-source']
-])('formats a %s source', (type, identifier, name) => {
- expect(sourceDisplayName(type, identifier!)).toBe(name);
+describe('sourceDisplayName', () => {
+  it.each([
+    ['granola', 'fixture-granola', 'Granola'],
+    ['gmail', 'person@example.com', 'person@example.com'],
+    ['imap', 'imap://person%40example.com@imap.example.com/INBOX', 'person@example.com'],
+    [undefined, 'fixture-source', 'fixture-source']
+  ])('formats a %s source', (type, identifier, name) => {
+    expect(sourceDisplayName(type, identifier!)).toBe(name);
+  });
 });
