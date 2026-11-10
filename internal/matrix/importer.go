@@ -954,7 +954,7 @@ func (imp *Importer) persistEdit(ctx context.Context, sourceID, convID int64, ev
 	if messageID == 0 {
 		return errRelationTargetMissing
 	}
-	if original == nil || original.Sender != evt.Sender {
+	if !editAllowed(original, evt) {
 		return nil
 	}
 	if original.Type == event.EventEncrypted {
@@ -966,9 +966,6 @@ func (imp *Importer) persistEdit(ctx context.Context, sourceID, convID int64, ev
 			return err
 		}
 		return errRelationTargetMissing
-	}
-	if !validReplacement(original, evt) {
-		return nil
 	}
 	current, err := imp.appliedEdit(ctx, messageID)
 	if err != nil || !current.olderThan(evt) {
@@ -998,6 +995,15 @@ func (imp *Importer) editTarget(ctx context.Context, sourceID, convID int64, tar
 		return 0, nil, err
 	}
 	return messageID, original, nil
+}
+
+// editAllowed reports whether persistEdit would apply or queue edit. An
+// encrypted target can only be checked for sender until it is recovered.
+func editAllowed(original, edit *event.Event) bool {
+	if original == nil || original.Type == event.EventEncrypted {
+		return original != nil && original.Sender == edit.Sender
+	}
+	return validReplacement(original, edit)
 }
 
 // validReplacement applies Matrix's replacement rules: same sender and event

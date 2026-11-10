@@ -83,17 +83,15 @@ func (imp *Importer) earlierRollbackCopies(ctx context.Context, sourceID, convID
 			if (plain.Type != event.EventMessage && plain.Type != event.EventSticker) || !parseContent(plain) {
 				continue
 			}
-			content := plain.Content.AsMessage()
-			target := content.RelatesTo.GetReplaceID()
-			if target == "" || content.NewContent == nil {
-				continue
-			}
-			_, original, err := imp.editTarget(ctx, sourceID, convID, target)
-			if err != nil {
-				return nil, err
-			}
-			if original == nil || (original.Type == event.EventEncrypted && original.Sender != plain.Sender) || (original.Type != event.EventEncrypted && !validReplacement(original, plain)) {
-				continue
+			// Without a replacement relation, recovery claims the copy as a message.
+			if content := plain.Content.AsMessage(); content.RelatesTo.GetReplaceID() != "" {
+				_, original, err := imp.editTarget(ctx, sourceID, convID, content.RelatesTo.GetReplaceID())
+				if err != nil {
+					return nil, err
+				}
+				if content.NewContent == nil || !editAllowed(original, plain) {
+					continue
+				}
 			}
 			if first := owners[key]; first == nil || compareRelations(plain, first) < 0 {
 				owners[key] = &event.Event{ID: plain.ID, Timestamp: plain.Timestamp}
