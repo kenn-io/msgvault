@@ -1,33 +1,55 @@
 <script lang="ts">
-  import { CopyButton } from '@kenn-io/kit-ui';
+  import { Button, copyToClipboard } from '@kenn-io/kit-ui';
+  import { onDestroy } from 'svelte';
 
-  /** A command the user runs in a terminal, shown with a copy button. */
+  /** A command the user runs in a terminal, with Copy, which reads "Copied" or "Couldn't copy" for two seconds after a click. */
   let { command }: { command: string } = $props();
+  let attempt = $state<{ command: string; copied: boolean }>();
+  let reset: ReturnType<typeof setTimeout> | undefined;
+  // A changed command reads Copy again.
+  const outcome = $derived(attempt?.command !== command ? undefined : attempt.copied ? 'Copied' : "Couldn't copy");
+
+  async function copy(): Promise<void> {
+    const text = command;
+    attempt = { command: text, copied: await copyToClipboard(text) };
+    clearTimeout(reset);
+    reset = setTimeout(() => (attempt = undefined), 2000);
+  }
+  onDestroy(() => clearTimeout(reset));
 </script>
 
 <span class="command">
   <code>{command}</code>
-  <CopyButton text={command} ariaLabel={`Copy ${command}`} />
+  <Button size="sm" label={outcome ?? 'Copy'} ariaLabel={outcome ?? `Copy ${command}`} onclick={() => void copy()} />
 </span>
 
 <style>
+  /* A 36 row: the command inset 12, and Copy (28) centered on it. A long command
+   * wraps and the row grows with it, Copy staying on the first line. */
   .command {
-    display: inline-flex;
-    max-width: 100%;
-    min-height: var(--control-h);
-    align-items: center;
-    gap: var(--control-gap);
-    padding: 0 var(--space-2) 0 var(--pane-pad-x);
-    border: 1px solid var(--border-default);
+    display: flex;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    min-height: 36px;
+    align-items: flex-start;
+    gap: var(--space-group);
+    padding: calc((36px - var(--control-h)) / 2 - var(--border-width, 1px));
+    padding-left: var(--space-box);
+    border: var(--border-width, 1px) solid var(--border-default);
     border-radius: var(--radius-md);
     background: var(--bg-inset);
   }
   code {
+    flex: 1;
     min-width: 0;
+    padding-block: calc((var(--control-h) - var(--type-meta-line)) / 2);
     overflow-wrap: anywhere;
     color: var(--text-primary);
     font-family: var(--font-mono);
-    font-size: var(--font-size-sm);
+    font-size: var(--type-meta-size);
+    line-height: var(--type-meta-line);
     user-select: all;
   }
+  .command :global(.kit-button) { flex: none; }
 </style>

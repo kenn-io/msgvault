@@ -10053,6 +10053,59 @@ components:
           format: int64
           type: integer
       type: object
+    ParticipantAddress:
+      properties:
+        display_value:
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        identity_key:
+          type: string
+        participant_display_name:
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        participant_id:
+          format: int64
+          type: integer
+        scope_kind:
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        scope_value:
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        service_label:
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        service_slug:
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        type:
+          type: string
+        value:
+          type: string
+      required:
+        - identity_key
+        - participant_display_name
+        - participant_id
+        - type
+        - value
+        - display_value
+        - service_slug
+        - service_label
+        - scope_kind
+        - scope_value
+      type: object
     ParticipantCompletionHTTPRequest:
       additionalProperties: false
       properties:
@@ -10113,6 +10166,8 @@ components:
           type: string
         envelope:
           $ref: "#/components/schemas/ValueEnvelope"
+        identity_key:
+          type: string
         normalization:
           type: string
         normalization_version:
@@ -10145,6 +10200,7 @@ components:
         - address_kind
         - original_value
         - normalized_value
+        - identity_key
         - normalization
         - normalization_version
       type: object
@@ -11145,6 +11201,8 @@ components:
           type: string
         envelope:
           $ref: "#/components/schemas/ValueEnvelope"
+        identity_key:
+          type: string
         normalization:
           type: string
         normalization_version:
@@ -11161,11 +11219,14 @@ components:
           type: string
         scope_value:
           type: string
+        service_label:
+          type: string
         service_slug:
           type: string
         uri:
           type: string
       required:
+        - identity_key
         - envelope
         - person_id
         - address_kind
@@ -12487,6 +12548,8 @@ components:
       type: object
     PersonMergeDetail:
       properties:
+        labels:
+          $ref: "#/components/schemas/PersonMergeLabels"
         merge:
           $ref: "#/components/schemas/PersonMerge"
         participants:
@@ -12510,11 +12573,43 @@ components:
           type: array
           x-omitempty: false
       required:
+        - labels
         - merge
         - participants
         - rows
         - splits
         - review_candidates
+      type: object
+    PersonMergeLabels:
+      properties:
+        absorbed_address_count:
+          format: int64
+          type: integer
+        addresses:
+          items:
+            $ref: "#/components/schemas/ParticipantAddress"
+          type: array
+        incomplete:
+          type: boolean
+        participant_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+        participants:
+          items:
+            $ref: "#/components/schemas/PersonMergeParticipant"
+          type: array
+        profiles:
+          items:
+            $ref: "#/components/schemas/PersonMergeRecordedProfile"
+          type: array
+      required:
+        - profiles
+        - participant_ids
+        - addresses
+        - absorbed_address_count
+        - incomplete
       type: object
     PersonMergeParticipant:
       properties:
@@ -12543,6 +12638,41 @@ components:
       required:
         - person
         - etag
+      type: object
+    PersonMergeRecordedContactPoint:
+      properties:
+        address_kind:
+          type: string
+        identity_key:
+          type: string
+        original_value:
+          type: string
+        scope_kind:
+          type: string
+        scope_value:
+          type: string
+        service_label:
+          type: string
+        service_slug:
+          type: string
+      required:
+        - identity_key
+        - address_kind
+        - original_value
+      type: object
+    PersonMergeRecordedProfile:
+      properties:
+        contact_points:
+          items:
+            $ref: "#/components/schemas/PersonMergeRecordedContactPoint"
+          type: array
+        display_name:
+          type: string
+        id:
+          format: int64
+          type: integer
+      required:
+        - id
       type: object
     PersonMergeRequiredError:
       properties:
@@ -12702,6 +12832,8 @@ components:
       type: object
     PersonMergeSummary:
       properties:
+        labels:
+          $ref: "#/components/schemas/PersonMergeLabels"
         merge:
           $ref: "#/components/schemas/PersonMerge"
         participant_count:
@@ -12722,6 +12854,7 @@ components:
           format: int64
           type: integer
       required:
+        - labels
         - merge
         - participant_count
         - row_count
@@ -16662,7 +16795,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 4.0.0
+  version: 4.1.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
