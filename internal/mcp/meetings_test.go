@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http/httptest"
 	"testing"
@@ -80,7 +81,7 @@ func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.
 
 	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
 	serverSession, err := newMCPServer(ServeOptions{
-		Engine: &querytest.MockEngine{}, Meetings: backend,
+		Engine: &querytest.MockEngine{}, Meetings: backend, MeetingRecords: true,
 	}, false).Connect(ctx, serverTransport, nil)
 	must.NoError(err)
 	t.Cleanup(func() { checks.NoError(serverSession.Close()) })
@@ -102,6 +103,13 @@ func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.
 		must.Contains(tools, name)
 		checks.True(tools[name].Annotations.ReadOnlyHint)
 	}
+	recordResult, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{
+		Name:      ToolGetMeetingRecord,
+		Arguments: map[string]any{"ref": fmt.Sprintf("msg:%d", imported[0].MessageID)},
+	})
+	must.NoError(err)
+	must.False(recordResult.IsError)
+	checks.Equal(map[string]any{"links": []any{}, "message_ids": []any{float64(imported[0].MessageID)}, "unexpandable": []any{}}, meetingStructuredContent(t, recordResult))
 
 	contextResult, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{
 		Name: ToolGetMeetingContext,

@@ -12,7 +12,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/meetingcontent"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
@@ -319,4 +321,33 @@ func boundedIntegerWithDefault(description string, minimum, maximum, defaultValu
 
 func validateMeetingTextArg(value string, limit int) bool {
 	return utf8.RuneCountInString(strings.TrimSpace(value)) <= limit
+}
+
+func (h *handlers) getMeetingRecord(ctx context.Context, req toolRequest) (*toolResult, error) {
+	ref, _ := req.GetArguments()["ref"].(string)
+	if ref == "" {
+		return toolErrorResult("ref is required"), nil
+	}
+	backend, ok := h.meetings.(interface {
+		MeetingRecord(ctx context.Context, ref string) (store.MeetingRecord, error)
+	})
+	if !ok {
+		return nil, newInternalError("get meeting record", errors.New("meeting record unavailable"))
+	}
+	record, err := backend.MeetingRecord(ctx, ref)
+	if err != nil {
+		if apiErr, ok := errors.AsType[*daemonclient.APIError](err); ok && apiErr.Status >= 400 && apiErr.Status < 500 {
+			return toolErrorResult(apiErr.Code + ": " + apiErr.Message), nil
+		}
+		return nil, newInternalError("get meeting record", err)
+	}
+	return jsonResult(record)
+}
+
+func getMeetingRecordDefinition() toolDefinition {
+	definition := readDefinition(ToolGetMeetingRecord, "Read a meeting's calendar occurrences and linked notes.",
+		closedObject(map[string]*jsonschema.Schema{"ref": stringSchema("msg:<id> or evt:<id>[@occurrence key]")}, "ref"),
+		outputSchemaFor[store.MeetingRecord](), (*handlers).getMeetingRecord)
+	definition.availability = meetingRecordsAvailable
+	return definition
 }

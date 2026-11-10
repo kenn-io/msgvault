@@ -27,3 +27,7 @@ func (a *storeAPIAdapter) GetMeetingMetricsContext(
 }
 
 var _ api.MeetingStore = (*storeAPIAdapter)(nil)
+
+func (a *storeAPIAdapter) MeetingRecordContext(ctx context.Context, ref store.MeetingLinkRef) (store.MeetingRecord, error) {
+	return a.store.MeetingRecordContext(ctx, ref)
+}

@@ -4323,6 +4323,7 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     projection_version INTEGER NOT NULL,
     content_hash TEXT NOT NULL,
     provider_event_id TEXT NOT NULL DEFAULT '',
+    ical_uid TEXT NOT NULL DEFAULT '',
     series_provider_id TEXT NOT NULL DEFAULT '',
     kind TEXT NOT NULL DEFAULT '',
     original_start_at DATETIME,
@@ -4425,3 +4426,8 @@ CREATE INDEX IF NOT EXISTS idx_meta_comment_replies_comment
  ON meta_comment_replies(source_id, comment_id);
 CREATE INDEX IF NOT EXISTS idx_meta_comment_replies_sent
  ON meta_comment_replies(source_id, reply_id) WHERE state = 'sent';
+CREATE TABLE IF NOT EXISTS meeting_link_key (
+    message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    key TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_key_value ON meeting_link_key(key);

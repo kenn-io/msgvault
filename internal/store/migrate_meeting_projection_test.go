@@ -15,6 +15,35 @@ import (
 
 const projectionMigrationName = "meeting_projection_v1"
 
+func TestMeetingLinkProjectionBackfill(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, note := projectionFixture(t, st, "link-backfill", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
+	_, event := calendarFixture(t, st, "event-backfill", `{"id":"event","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+	for _, query := range []string{
+		`DROP TABLE meeting_link_key`,
+		`UPDATE meeting_details SET projection_version = 1`,
+		`UPDATE applied_migrations SET version = 1 WHERE name = 'meeting_projection_v1'`,
+		`UPDATE archive_metadata SET value = '40' WHERE key = 'schema_version'`,
+	} {
+		_, err := st.db.Exec(query)
+		require.NoError(err)
+	}
+	require.NoError(st.Close())
+	reopened, err := OpenForTest(t.Context(), st.dbPath)
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(reopened.Close()) })
+	require.NoError(reopened.InitSchemaContext(t.Context()))
+	for _, seed := range []MeetingLinkRef{{Kind: "msg", MessageID: note}, {Kind: "evt", MessageID: event}} {
+		record, err := reopened.MeetingRecordContext(t.Context(), seed)
+		require.NoError(err)
+		require.Len(record.Links, 1)
+		assert.Equal(fmt.Sprintf("evt:%d", event), record.Links[0].Ref)
+		assert.Equal([]int64{note}, record.MessageIDs)
+	}
+}
+
 func removeMeetingProjectionSchema(t *testing.T, st *Store) {
 	t.Helper()
 	for _, statement := range []string{`DROP TABLE meeting_action_items`, `DROP TABLE meeting_details`, `DELETE FROM applied_migrations WHERE name = 'meeting_projection_v1'`} {

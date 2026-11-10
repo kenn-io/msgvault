@@ -19,7 +19,10 @@ var ErrQueryTooBroad = errors.New("calendar query is too broad")
 
 type CalendarEventRow struct {
 	MessageID, SourceID int64
+	SubjectOriginID     int64
 	Subject             string
+	ICalUID             string
+	CalendarID          string
 	DeletedFromSource   bool
 	ics                 bool
 	Event               calevent.Event
@@ -29,14 +32,14 @@ const maxCalendarSeries = 2000
 const maxCalendarExceptions = 20000
 const calendarCandidateMargin = 28 * time.Hour
 
-var calendarEventSelect = `SELECT e.message_id, m.source_id, COALESCE(m.subject, ''),
+var calendarEventSelect = `SELECT e.message_id, m.source_id, COALESCE(m.subject, ''), src.sync_config,
  m.deleted_from_source_at IS NOT NULL, EXISTS (SELECT 1 FROM message_raw raw WHERE raw.message_id=m.id AND raw.raw_format='ics'),
- e.provider_event_id, e.series_provider_id, e.kind, e.original_start_at, e.original_start_date,
+ e.ical_uid, e.provider_event_id, e.series_provider_id, e.kind, e.original_start_at, e.original_start_date,
  e.status, e.all_day, e.start_at, e.end_at, e.start_date, e.end_date,
  e.event_time_zone, e.calendar_time_zone, e.recurrence_json
  ` + calendarEventFrom
 
-var calendarEventFrom = `FROM calendar_events e JOIN messages m ON m.id = e.message_id
+var calendarEventFrom = `FROM calendar_events e JOIN messages m ON m.id = e.message_id JOIN sources src ON src.id = m.source_id
  WHERE m.deleted_at IS NULL
  AND ` + calendarEventVisibility("e", "m") + `
  AND `
@@ -60,6 +63,9 @@ func queryCalendarEventRowsWithinBudget(ctx context.Context, r *loggedDB, predic
 	}
 	// Public callers supply a snapshot: probe only IDs before decoding event
 	// payloads or loading attendees, and stop once the budget is exceeded.
+	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
+	predicate = "(" + predicate + ")" + scope
+	args = append(append([]any(nil), args...), scopeArgs...)
 	probe := `SELECT COUNT(*) FROM (SELECT e.message_id ` + calendarEventFrom + "(" + predicate + ") LIMIT ?) AS candidates"
 	probeArgs := append([]any(nil), args...)
 	probeArgs = append(probeArgs, budget+1)
@@ -93,13 +99,16 @@ func queryCalendarEventRows(ctx context.Context, r *loggedDB, predicate string, 
 		e := &row.Event
 		var original, start, end sql.NullTime
 		var originalDate, recurrence string
-		err := result.Scan(&row.MessageID, &row.SourceID, &row.Subject, &row.DeletedFromSource, &row.ics,
-			&e.ProviderEventID, &e.SeriesProviderID, &e.Kind, &original, &originalDate, &e.Status, &e.AllDay,
+		var uid, config sql.NullString
+		err := result.Scan(&row.MessageID, &row.SourceID, &row.Subject, &config, &row.DeletedFromSource, &row.ics,
+			&uid, &e.ProviderEventID, &e.SeriesProviderID, &e.Kind, &original, &originalDate, &e.Status, &e.AllDay,
 			&start, &end, &e.StartDate, &e.EndDate, &e.EventTimeZone, &e.CalendarTimeZone, &recurrence)
 		if err != nil {
 			_ = result.Close()
 			return nil, fmt.Errorf("scan calendar event: %w", err)
 		}
+		row.ICalUID = uid.String
+		row.CalendarID = calendarMailbox(config)
 		if originalDate != "" {
 			e.Original = &calrecur.Identity{Date: originalDate, AllDay: true}
 		} else if original.Valid {
@@ -253,6 +262,11 @@ func queryCalendarSeriesWithinBudget(ctx context.Context, r *loggedDB, predicate
 }
 
 func queryCalendarExceptionsInWindow(ctx context.Context, r *loggedDB, dialect Dialect, lower, upper time.Time) ([]CalendarEventRow, error) {
+	predicate, args := calendarExceptionWindow(dialect, lower, upper)
+	return queryCalendarEventRowsWithinBudget(ctx, r, predicate, args, maxCalendarExceptions)
+}
+
+func calendarExceptionWindow(dialect Dialect, lower, upper time.Time) (string, []any) {
 	// A shortened series may end before the window. Look up each exception's
 	// own visible master to retain its full original interval without loading
 	// unrelated series or charging them against the series budget.
@@ -282,10 +296,10 @@ func queryCalendarExceptionsInWindow(ctx context.Context, r *loggedDB, dialect D
     (e.original_start_date < ? AND ` + dateEnd + `))) OR
 	   (e.original_start_at IS NULL AND e.original_start_date = ''))`
 	dateLower, dateUpper := lower.Format(time.DateOnly), upper.AddDate(0, 0, 1).Format(time.DateOnly)
-	return queryCalendarEventRowsWithinBudget(ctx, r, predicate, []any{
+	return predicate, []any{
 		upper, lower, upper, lower, lower, upper, lower, upper, dateLower, dateUpper,
 		upper, dialect.TimestampParam(lower), dateUpper, dateLower,
-	}, maxCalendarExceptions)
+	}
 }
 
 // Only sparse cancellations inherit omitted details from the master.
@@ -315,6 +329,7 @@ func inheritCalendarCancellation(ctx context.Context, r *loggedDB, row, master C
 func inheritSparseCalendarCancellation(row, master CalendarEventRow, fields map[string]any) CalendarEventRow {
 	if _, supplied := fields["summary"]; !supplied {
 		row.Subject = master.Subject
+		row.SubjectOriginID = master.MessageID
 	}
 	row.Event.Attendees = inheritSparseCalendarAttendees(row.Event.Attendees, master.Event.Attendees, fields)
 	return row

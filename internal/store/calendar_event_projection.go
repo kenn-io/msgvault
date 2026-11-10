@@ -16,7 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
 )
 
-const calendarEventProjectionVersion = 2
+const calendarEventProjectionVersion = 3
 
 // Decode failures have no provider status. Keep a marker while retaining the
 // single kind so unknown bounds remain candidates for the occurrence reader.
@@ -99,8 +99,8 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 			originalAt = &event.Original.Instant
 		}
 	}
-	columns := []string{"message_id", "projection_version", "content_hash", "provider_event_id", "series_provider_id", "kind", "original_start_at", "original_start_date", "status", "all_day", "start_at", "end_at", "start_date", "end_date", "event_time_zone", "calendar_time_zone", "recurrence_json", "recurrence_end_at"}
-	values := []any{messageID, calendarEventProjectionVersion, hash, event.ProviderEventID, event.SeriesProviderID, event.Kind, originalAt, originalDate, event.Status, event.AllDay, event.Start, event.End, event.StartDate, event.EndDate, event.EventTimeZone, event.CalendarTimeZone, string(recurrence), recurrenceEnd}
+	columns := []string{"message_id", "projection_version", "content_hash", "provider_event_id", "ical_uid", "series_provider_id", "kind", "original_start_at", "original_start_date", "status", "all_day", "start_at", "end_at", "start_date", "end_date", "event_time_zone", "calendar_time_zone", "recurrence_json", "recurrence_end_at"}
+	values := []any{messageID, calendarEventProjectionVersion, hash, event.ProviderEventID, event.ICalUID, event.SeriesProviderID, event.Kind, originalAt, originalDate, event.Status, event.AllDay, event.Start, event.End, event.StartDate, event.EndDate, event.EventTimeZone, event.CalendarTimeZone, string(recurrence), recurrenceEnd}
 	updates := make([]string, 0, len(columns)-1)
 	for _, column := range columns[1:] {
 		updates = append(updates, column+" = excluded."+column)

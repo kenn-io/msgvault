@@ -24,6 +24,7 @@ var agentReadPermissions = map[string]agentgrant.Permission{
 	"searchMessagesByDomains": agentgrant.PermissionSearchRead,
 	"getStats":                agentgrant.PermissionStatsRead, "getCLIStats": agentgrant.PermissionStatsRead, "getTotalStats": agentgrant.PermissionStatsRead,
 	"getCLIMessageThread": agentgrant.PermissionMessageRead,
+	"getMeetingRecord":    agentgrant.PermissionMessageRead,
 	"getMessage":          agentgrant.PermissionMessageRead, "getCLIMessage": agentgrant.PermissionMessageRead,
 	"getAttachment": agentgrant.PermissionAttachmentRead, "getAttachmentContent": agentgrant.PermissionAttachmentRead,
 	"getCLIAttachment": agentgrant.PermissionAttachmentRead,
@@ -148,6 +149,9 @@ func (s *Server) authorizeAgentRead(r *http.Request, operation string, grant *ag
 	}
 	*r = *r.WithContext(context.WithValue(r.Context(), agentReadScopeKey{}, agentReadScope{ids: allowed}))
 	switch operation {
+	case "getMeetingRecord":
+		*r = *r.WithContext(sourcescope.WithSourceIDs(r.Context(), allowed))
+		return nil
 	case "getCLIMessageThread":
 		if account != "" && !accountGranted {
 			return agentReadDenied(permission)
