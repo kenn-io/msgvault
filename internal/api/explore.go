@@ -315,14 +315,19 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 	if scope != nil {
 		prepared.query.SentOnly = true
 		prepared.query.PersonInteractionsOnly = scope.Dimension == exploreFilterParticipant
-		if err := applyIdentityScope(&prepared.query.Context, *scope); err != nil {
+		if err := applyExploreIdentityScope(&prepared.query, *scope); err != nil {
 			writeError(w, http.StatusConflict, "identity_scope_conflict", err.Error())
 			return
 		}
 	}
 	semanticPage := searchSpec.Mode == query.SearchSemantic || searchSpec.Mode == query.SearchHybrid
 	if semanticPage {
-		prepared.query.Page = query.PageSpec{Limit: exploreMaxLimit}
+		limit := exploreMaxLimit
+		if !prepared.query.Items.Empty() {
+			// Each candidate or pin contributes at most one logical row.
+			limit = max(1, len(searchSpec.CandidateMessageIDs)+len(prepared.query.Items.IncludeMessageIDs)+len(prepared.query.Items.IncludeConversationIDs))
+		}
+		prepared.query.Page = query.PageSpec{Limit: limit}
 	}
 	explorer, ok := s.queryEngineForContext(r.Context()).(query.Explorer)
 	if !ok {
@@ -919,6 +924,20 @@ func canonicalScopedExploreHash(request ExploreHTTPRequest, scope *ExploreFilter
 		Request ExploreHTTPRequest `json:"request"`
 		Scope   ExploreFilter      `json:"identity_scope"`
 	}{Request: request, Scope: *scope}, false)
+}
+
+// applyExploreIdentityScope preserves the endpoint constraint after item overrides.
+// Without overrides the original Context path keeps its exact SQL and bind order.
+func applyExploreIdentityScope(request *query.ExploreRequest, scope ExploreFilter) error {
+	if request.Items.Empty() {
+		return applyIdentityScope(&request.Context, scope)
+	}
+	context := query.Context{}
+	if err := applyIdentityScope(&context, scope); err != nil {
+		return err
+	}
+	request.RequiredContext = &context
+	return nil
 }
 
 // applyIdentityScope pins an identity-scoped endpoint's person or domain onto

@@ -1,6 +1,7 @@
 package query
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -74,4 +75,43 @@ func TestExploreItemsDistinctExplicitChats(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, map[string]int64{"source:1:conversation:900": 1, "source:1:conversation:901": 0}, counts.Counts)
+}
+
+func TestExploreItemsRespectRequiredTimelineConstraints(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("owner@example.test")
+	owner := b.AddParticipant("owner@example.test", "example.test", "Owner")
+	b.AddOwnerParticipant(source, owner)
+	person := b.AddParticipant("person@person.example", "person.example", "Person")
+	alias := b.AddParticipant("alias@person.example", "person.example", "Alias")
+	b.LinkCluster(person, alias)
+	other := b.AddParticipant("other@other.example", "other.example", "Other")
+	ids := make([]int64, 4)
+	for i := range ids {
+		kind := "email"
+		if i == 3 {
+			kind = "calendar_event"
+		}
+		ids[i] = b.AddMessage(MessageOpt{SourceID: source, MessageType: kind, SentAt: time.Date(2026, 1, i+1, 0, 0, 0, 0, time.UTC)})
+	}
+	b.AddFrom(ids[0], alias, "Alias")
+	b.AddTo(ids[0], owner, "Owner")
+	b.AddFrom(ids[1], other, "Other")
+	b.AddTo(ids[1], owner, "Owner")
+	b.AddFrom(ids[2], owner, "Owner")
+	b.AddTo(ids[2], alias, "Alias")
+	b.AddFrom(ids[3], alias, "Alias")
+	b.AddTo(ids[3], other, "Other")
+	b.unsentMessages = fmt.Sprintf("(SELECT %d::BIGINT AS message_id)", ids[2])
+	engine := b.BuildEngine()
+	after := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, scope := range []Context{{ParticipantIDs: []int64{person}}, {Domains: []string{"person.example"}}} {
+		for _, legacy := range []bool{false, true} {
+			engine.exploreFastPathDisabled = legacy
+			page, err := engine.Explore(t.Context(), ExploreRequest{Context: Context{After: &after}, RequiredContext: &scope, SentOnly: true, PersonInteractionsOnly: true, Items: EntryItems{IncludeMessageIDs: ids}})
+			require.NoError(t, err)
+			require.Len(t, page.Rows, 1)
+			assert.Equal(t, &ids[0], page.Rows[0].AnchorMessageID)
+		}
+	}
 }

@@ -11,13 +11,16 @@ import (
 // API layer validates the finite grouping/sort catalog before constructing it.
 type EntryItems struct{ IncludeMessageIDs, IncludeConversationIDs, ExcludeMessageIDs, ExcludeConversationIDs []int64 }
 
-func (items EntryItems) empty() bool {
+// Empty reports whether the request has any explicit membership overrides.
+func (items EntryItems) Empty() bool {
 	return len(items.IncludeMessageIDs) == 0 && len(items.IncludeConversationIDs) == 0 &&
 		len(items.ExcludeMessageIDs) == 0 && len(items.ExcludeConversationIDs) == 0
 }
 
 type ExploreRequest struct {
 	Items EntryItems `json:"-"`
+	// RequiredContext is the endpoint scope that membership overrides cannot bypass.
+	RequiredContext *Context `json:"-"`
 	// PersonInteractionsOnly excludes owner-absent events and meetings from person timelines.
 	PersonInteractionsOnly bool `json:"-"`
 	// SentOnly excludes unsent messages before grouping for contact activity timelines.

@@ -77,7 +77,7 @@ func (e *DuckDBEngine) Explore(ctx context.Context, request ExploreRequest) (*Ex
 	var queryText string
 	fastPath := !e.exploreFastPathDisabled
 	if fastPath {
-		shareFilteredPopulation := len(request.Context.Domains) > 0 || len(request.Context.ParticipantIDs) > 0 || len(request.Context.AdditionalParticipantGroups) > 0
+		shareFilteredPopulation := request.RequiredContext != nil || len(request.Context.Domains) > 0 || len(request.Context.ParticipantIDs) > 0 || len(request.Context.AdditionalParticipantGroups) > 0
 		for _, group := range request.Context.AdditionalDomainGroups {
 			if len(group) > 0 {
 				shareFilteredPopulation = true
@@ -314,10 +314,10 @@ func validateResolvedSearch(search SearchSpec) (SearchProvenance, error) {
 func buildExploreConditions(request ExploreRequest) (string, []any) {
 	var conditions []string
 	var args []any
-	if request.SentOnly {
+	if request.SentOnly && request.Items.Empty() {
 		conditions = append(conditions, sentIdentityConditions("true"))
 	}
-	if request.PersonInteractionsOnly {
+	if request.PersonInteractionsOnly && request.Items.Empty() {
 		conditions = append(conditions, `(`+identityindex.EntryKindSQL("analytical_entries.message_type")+` NOT IN ('event', 'meeting') OR EXISTS (
 			SELECT 1 FROM relationship_activity_expanded a
 			WHERE a.message_id = analytical_entries.message_id AND a.is_owner AND a.is_direct
@@ -466,7 +466,17 @@ func buildExploreConditions(request ExploreRequest) (string, []any) {
 	if len(conditions) > 0 {
 		base = strings.Join(conditions, " AND ")
 	}
-	return applyExploreItems(base, args, request.Items)
+	base, args = applyExploreItems(base, args, request.Items)
+	if !request.Items.Empty() && (request.RequiredContext != nil || request.SentOnly || request.PersonInteractionsOnly) {
+		required := ExploreRequest{SentOnly: request.SentOnly, PersonInteractionsOnly: request.PersonInteractionsOnly}
+		if request.RequiredContext != nil {
+			required.Context = *request.RequiredContext
+		}
+		conditions, requiredArgs := buildExploreConditions(required)
+		base = "(" + base + ") AND (" + conditions + ")"
+		args = append(args, requiredArgs...)
+	}
+	return base, args
 }
 
 func buildIdentityPredicateCondition(identity *IdentityPredicate, prefix string) (string, []any) {
@@ -1045,7 +1055,7 @@ func exploreLogicalEntryKeysCTE() string {
 }
 
 func applyExploreItems(base string, args []any, items EntryItems) (string, []any) {
-	if items.empty() {
+	if items.Empty() {
 		return base, args
 	}
 	predicate := func(messages, conversations []int64) string {

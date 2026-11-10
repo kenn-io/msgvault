@@ -377,6 +377,13 @@ func (e *DuckDBEngine) expandParticipantFilterClusters(ctx context.Context, expl
 	if err := validateIdentityPredicate(explore.Context); err != nil {
 		return explore, err
 	}
+	if explore.RequiredContext != nil {
+		required, err := e.expandParticipantFilterClusters(ctx, ExploreRequest{Context: *explore.RequiredContext})
+		if err != nil {
+			return explore, err
+		}
+		explore.RequiredContext = &required.Context
+	}
 	// Every public Explore/Files consumer prepares its predicate here. SentOnly
 	// requests need current exclusions even when they have no participant filter.
 	if explore.SentOnly {
@@ -694,7 +701,7 @@ func validateExploreAnalysisPage(page PageSpec, maxLimit int) error {
 
 func buildExploreMatchCountConditions(request ExploreRequest) (string, []any) {
 	conditions, args := buildExploreConditions(request)
-	if request.Items.empty() {
+	if request.Items.Empty() {
 		return conditions, args
 	}
 	// Membership overrides do not turn nonmatching messages into lexical hits.

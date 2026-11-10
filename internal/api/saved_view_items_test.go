@@ -202,3 +202,16 @@ func TestSavedViewItemsCorruptionListAndRead(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, run.Code)
 	assert.Contains(t, run.Body.String(), "items_json_invalid")
 }
+
+func TestExploreItemsRespectEndpointIdentityScope(t *testing.T) {
+	srv, st := newSavedViewRunTestServer(t)
+	seedSavedViewItemArchive(t, st)
+	for _, path := range []string{"/api/v1/participants/2/timeline", "/api/v1/domains/members.example/timeline"} {
+		response := postExploreJSON(t, srv, path, `{"include_keys":["source:1:message:m1"]}`)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		var page ExploreHTTPResponse
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &page))
+		require.Len(t, page.Rows, 1)
+		assert.Equal(t, "source:2:message:m3", page.Rows[0].Key)
+	}
+}

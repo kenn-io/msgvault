@@ -1098,3 +1098,55 @@ func TestExploreGroupsSupportsDailyActivity(t *testing.T) {
 	assert.Equal(t, "Pacific/Pago_Pago", engine.groupRequest.Timezone)
 	assert.True(t, engine.groupRequest.Explore.SentOnly)
 }
+
+func TestExploreSemanticItemsRankCompleteUnionBeforePaging(t *testing.T) {
+	subjects := make([]string, exploreMaxLimit+1)
+	for i := range subjects {
+		subjects[i] = "Pinned"
+	}
+	subjects[0] = "alpha"
+	st, engine := newExploreSearchFixture(t, subjects)
+	backend := &fakeFusingBackend{
+		fakeVectorBackend: &fakeVectorBackend{
+			active:     &vector.Generation{ID: 7, Model: "test", Dimension: 2, Fingerprint: "test:2", State: vector.GenerationActive},
+			searchHits: []vector.Hit{{MessageID: 1, Score: .9, Rank: 1}},
+		},
+		fusedHits: []vector.FusedHit{{MessageID: 1, RRFScore: .9, VectorScore: .9}},
+	}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{}, Store: st, SavedViewStore: st, Engine: engine,
+		HybridEngine: hybrid.NewEngine(backend, nil, realEmbedder{dim: 2}, hybrid.Config{ExpectedFingerprint: "test:2"}),
+		Backend:      backend, Logger: testLogger(),
+	})
+	t.Cleanup(func() { assert.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	keys := make([]string, exploreMaxLimit)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("source:1:message:m%d", i+2)
+	}
+	for _, mode := range []string{"semantic", "hybrid"} {
+		t.Run(mode, func(t *testing.T) {
+			request, err := json.Marshal(ExploreHTTPRequest{Query: "alpha", SearchMode: mode, IncludeKeys: keys, Limit: exploreMaxLimit})
+			require.NoError(t, err)
+			first := postExploreJSON(t, srv, "/api/v1/explore", string(request))
+			require.Equal(t, http.StatusOK, first.Code, first.Body.String())
+			var page ExploreHTTPResponse
+			require.NoError(t, json.Unmarshal(first.Body.Bytes(), &page))
+			require.Len(t, page.Rows, exploreMaxLimit)
+			assert.Equal(t, "source:1:message:m1", page.Rows[0].Key, "the older semantic candidate ranks ahead of all newer pins")
+			require.NotEmpty(t, page.NextCursor)
+			seen := map[string]bool{}
+			for _, row := range page.Rows {
+				seen[row.Key] = true
+			}
+			second := postExploreJSON(t, srv, "/api/v1/explore", addExploreCursor(t, string(request), page.NextCursor))
+			require.Equal(t, http.StatusOK, second.Code, second.Body.String())
+			page = ExploreHTTPResponse{}
+			require.NoError(t, json.Unmarshal(second.Body.Bytes(), &page))
+			require.Len(t, page.Rows, 1)
+			assert.False(t, seen[page.Rows[0].Key])
+			seen[page.Rows[0].Key] = true
+			assert.Len(t, seen, exploreMaxLimit+1)
+			assert.Empty(t, page.NextCursor)
+		})
+	}
+}
