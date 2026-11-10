@@ -2279,7 +2279,7 @@ func (e *DuckDBEngine) GetMessageRaw(ctx context.Context, id int64) ([]byte, err
 }
 
 func (e *DuckDBEngine) getMessageByQuery(ctx context.Context, whereClause string, args ...any) (*MessageDetail, error) {
-	return getMessageByQueryShared(ctx, e.db, noopRebind, "sqlite_db.", whereClause, args...)
+	return getMessageByQueryShared(ctx, e.db, noopRebind, func(expr string) string { return "LOWER(" + expr + ")" }, "sqlite_db.", whereClause, args...)
 }
 
 // Search performs a Gmail-style search query.

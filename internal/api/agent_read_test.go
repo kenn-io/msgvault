@@ -321,6 +321,7 @@ func TestAgentReadSourceFilterPrecedence(t *testing.T) {
 				{"malformed plural", fmt.Sprintf("source_id=%d&source_ids=bad", sources[0].ID), 400},
 				{"ungranted effective source", fmt.Sprintf("source_id=%d&source_ids=%d", sources[0].ID, sources[2].ID), 403},
 				{"mixed collection cannot narrow", fmt.Sprintf("collection=mixed&source_ids=%d", sources[1].ID), 403},
+				{"mixed collection with scalar", fmt.Sprintf("collection=mixed&source_id=%d", sources[1].ID), 403},
 				{"allowed collection narrowing", fmt.Sprintf("collection=allowed&source_id=%d&source_ids=%d", sources[0].ID, sources[1].ID), 200},
 				{"ignored scalar outside collection", fmt.Sprintf("collection=allowed&source_id=%d&source_ids=%d", sources[2].ID, sources[1].ID), 200},
 				{"ignored scalar outside account", fmt.Sprintf("account=%s&source_id=%d&source_ids=%d", sources[1].Identifier, sources[0].ID, sources[1].ID), 200},
@@ -1127,4 +1128,118 @@ func TestIncomingSenderScopedCountsUseMessageIDs(t *testing.T) {
 			requirements.Equal(int64(1), perSource)
 		})
 	}
+}
+
+func TestAgentLabelInventoryIncomingScope(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	first, allowed, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "first@example.test", "allowed", "allowed", "")
+	requirements.NoError(err)
+	_, denied, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "first@example.test", "denied", "denied", "")
+	requirements.NoError(err)
+	second, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "second@example.test", "other", "other", "")
+	requirements.NoError(err)
+	for _, tc := range []struct {
+		id      int64
+		address string
+	}{{allowed, "codes@example.test"}, {denied, "other@example.test"}} {
+		participant, err := st.EnsureParticipant(tc.address, "", "example.test")
+		requirements.NoError(err)
+		requirements.NoError(st.ReplaceMessageRecipients(tc.id, "from", []int64{participant}, nil))
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = ? WHERE message_id = ?"), tc.address, tc.id)
+		requirements.NoError(err)
+	}
+	for _, tc := range []struct {
+		source, message int64
+		name            string
+	}{{first.ID, 0, "empty"}, {first.ID, allowed, "allowed"}, {first.ID, denied, "denied"}, {second.ID, 0, "other empty"}} {
+		id, err := st.EnsureLabel(t.Context(), tc.source, tc.name, tc.name, "user")
+		requirements.NoError(err)
+		if tc.message != 0 {
+			requirements.NoError(st.AddMessageLabels(t.Context(), tc.message, []int64{id}))
+		}
+	}
+	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
+	for _, tc := range []struct {
+		name              string
+		restricted, mixed bool
+		want              int64
+	}{{"unrestricted", false, false, 3}, {"restricted", true, false, 1}, {"mixed", true, true, 2}} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			incoming := map[int64][]string{first.ID: nil}
+			if tc.restricted {
+				incoming[first.ID] = []string{"codes@example.test"}
+			}
+			ids := []int64{first.ID}
+			if tc.mixed {
+				ids = append(ids, second.ID)
+				incoming[second.ID] = nil
+			}
+			ctx := sourcescope.WithIncomingSenders(sourcescope.WithSourceIDs(t.Context(), ids), incoming)
+			stats, err := engine.GetTotalStats(ctx, query.StatsOptions{})
+			requirements.NoError(err)
+			requirements.Equal(tc.want, stats.LabelCount)
+		})
+	}
+}
+
+func TestAgentRelatedMessageIncomingScope(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, allowed, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", "allowed", "allowed", "")
+	requirements.NoError(err)
+	_, target, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", "target", "target", "")
+	requirements.NoError(err)
+	for _, tc := range []struct {
+		id      int64
+		address string
+	}{{allowed, "codes@example.test"}, {target, "other@example.test"}} {
+		participant, err := st.EnsureParticipant(tc.address, "", "example.test")
+		requirements.NoError(err)
+		requirements.NoError(st.ReplaceMessageRecipients(tc.id, "from", []int64{participant}, nil))
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = ? WHERE message_id = ?"), tc.address, tc.id)
+		requirements.NoError(err)
+	}
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET message_type = ?, metadata = ? WHERE id = ?"), "chatwoot", fmt.Sprintf(`{"meeting_message_id":%d}`, target), allowed)
+	requirements.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET message_type = ? WHERE id = ?"), "meeting_transcript", target)
+	requirements.NoError(err)
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	defer srv.agentGrants.Close()
+	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier, IncomingSenderKeys: []string{"codes@example.test"}}}, time.Time{})
+	requirements.NoError(err)
+	for _, owner := range []bool{true, false} {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", allowed), nil)
+		if owner {
+			r.Header.Set("X-Api-Key", "owner")
+		} else {
+			r.Header.Set(apiprotocol.AgentTokenHeader, token)
+		}
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, r)
+		requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+		var message struct {
+			RelatedMessageID *int64 `json:"related_message_id"`
+		}
+		requirements.NoError(json.Unmarshal(w.Body.Bytes(), &message))
+		if owner {
+			requirements.Equal(&target, message.RelatedMessageID)
+		} else {
+			requirements.Nil(message.RelatedMessageID)
+		}
+	}
+	ctx := sourcescope.WithIncomingSenders(t.Context(), map[int64][]string{source.ID: {"codes@example.test"}})
+	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
+	message, err := engine.GetMessage(ctx, allowed)
+	requirements.NoError(err)
+	requirements.Nil(message.RelatedMessageID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = ? WHERE message_id = ?"), "codes@example.test", target)
+	requirements.NoError(err)
+	message, err = engine.GetMessage(ctx, allowed)
+	requirements.NoError(err)
+	requirements.Equal(&target, message.RelatedMessageID)
+	storeMessage, err := st.GetMessageContext(ctx, allowed)
+	requirements.NoError(err)
+	requirements.Equal(&target, storeMessage.RelatedMessageID)
 }

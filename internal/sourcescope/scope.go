@@ -27,6 +27,18 @@ func WithIncomingSenders(ctx context.Context, senders map[int64][]string) contex
 	return context.WithValue(ctx, incomingKey{}, owned)
 }
 
+// UnrestrictedIncomingSourceIDs returns sources without sender restrictions.
+func UnrestrictedIncomingSourceIDs(ctx context.Context) []int64 {
+	senders, _ := ctx.Value(incomingKey{}).(map[int64][]string)
+	var ids []int64
+	for _, id := range slices.Sorted(maps.Keys(senders)) {
+		if len(senders[id]) == 0 {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
 // ConversationTitle hides shared titles when a source has a sender restriction.
 func ConversationTitle(ctx context.Context, sourceID int64, title string) string {
 	senders, _ := ctx.Value(incomingKey{}).(map[int64][]string)
