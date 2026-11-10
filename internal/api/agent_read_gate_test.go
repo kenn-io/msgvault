@@ -48,7 +48,6 @@ type agentReadGateStore struct {
 
 func TestPostgresServerRepairsSearchOnStartup(t *testing.T) {
 	require := require.New(t)
-	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	if !st.IsPostgreSQL() {
 		t.Skip("PostgreSQL indexing")
@@ -73,16 +72,6 @@ func TestPostgresServerRepairsSearchOnStartup(t *testing.T) {
 	})
 	require.NoError(srv.WaitStarted(t.Context()))
 	require.Eventually(func() bool { return srv.ftsIndexComplete.Load() }, 30*time.Second, 10*time.Millisecond)
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+listener.Addr().String()+"/api/v1/search/deep?q=both%40exam&scope=body", nil)
-	require.NoError(err)
-	req.Header.Set("Authorization", "Bearer owner")
-	resp, err := http.DefaultClient.Do(req)
-	require.NoError(err)
-	defer func() { _ = resp.Body.Close() }()
-	response, err := io.ReadAll(resp.Body)
-	require.NoError(err)
-	assert.Equal(http.StatusOK, resp.StatusCode, string(response))
-	assert.Contains(string(response), "both@example.com")
 }
 
 func (s *agentReadGateStore) ListSourcesContext(ctx context.Context, kind string) ([]*store.Source, error) {

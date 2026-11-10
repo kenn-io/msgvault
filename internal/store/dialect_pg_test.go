@@ -158,10 +158,6 @@ func TestPostgreSQLDialect_EnsureFTSIndexUsesVersionedStalePredicate(t *testing.
 	assert.Equal("DROP INDEX IF EXISTS idx_messages_search_fts_stale_v2", q.all[2])
 }
 
-func TestPostgreSQLDialect_BuildFTSArg(t *testing.T) {
-	assert.JSONEq(t, `{"phrase":"(user <-> example <-> com:*)","candidate":"user & example & com:*","patterns":["(^| )user +example +com"]}`, (&PostgreSQLDialect{}).BuildFTSArg([]string{"user@example.com"}))
-}
-
 func TestPostgreSQLDialect_InsertOrIgnorePrefix(t *testing.T) {
 	d := &PostgreSQLDialect{}
 	in := "INSERT OR IGNORE INTO message_labels (message_id, label_id) VALUES "

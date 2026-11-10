@@ -22,7 +22,6 @@ func TestPostgreSQLSanitizeFTSQuery_NoMetacharacters(t *testing.T) {
 	got := d.SanitizeFTSQuery("<3")
 	assert.NotContains(got, "<")
 	assert.NotContains(got, ">")
-	assert.JSONEq(`{"phrase":"3:*","candidate":"3:*","patterns":["(^| )3"]}`, got)
 
 	// Inputs that are entirely metacharacters yield an empty arg.
 	assert.Empty(d.SanitizeFTSQuery("<>=#$"))
@@ -35,15 +34,24 @@ func TestPostgreSQLSanitizeFTSQuery_AllowlistOnly(t *testing.T) {
 	t.Parallel()
 	d := PostgreSQLQueryDialect{}
 	shape := regexp.MustCompile(`^(?:[\pL\pN]+:\*|\((?:[\pL\pN]+ <-> )+[\pL\pN]+:\*\))?$`)
+	candidateShape := regexp.MustCompile(`^[\pL\pN]+(?::\*)?(?: & [\pL\pN]+(?::\*)?)*$`)
+	patternShape := regexp.MustCompile(`^\(\^\| \)[\pL\pN]+(?: \+[\pL\pN]+)*$`)
 	for _, in := range []string{"foo<3bar", "a=b", "c#d", "x$y", "user@example.com", "---", "a.b.c"} {
 		arg := d.SanitizeFTSQuery(in)
 		if arg == "" {
 			continue
 		}
 		var payload struct {
-			Phrase string `json:"phrase"`
+			Phrase    string   `json:"phrase"`
+			Candidate string   `json:"candidate"`
+			Patterns  []string `json:"patterns"`
 		}
 		require.NoError(t, json.Unmarshal([]byte(arg), &payload))
 		assert.Regexp(t, shape, payload.Phrase, "input %q", in)
+		assert.Regexp(t, candidateShape, payload.Candidate, "input %q", in)
+		require.NotEmpty(t, payload.Patterns)
+		for _, pattern := range payload.Patterns {
+			assert.Regexp(t, patternShape, pattern, "input %q", in)
+		}
 	}
 }

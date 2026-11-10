@@ -110,7 +110,7 @@ func TestPG_BackfillFTS_RefreshesOutdatedEntries(t *testing.T) {
 	assertFTSContains(t, f.Store, "obsolete", 0)
 }
 
-func TestPG_BackfillFTS_PagesLargeMessages(t *testing.T) {
+func TestPG_BackfillFTS_IndexesLargeMessages(t *testing.T) {
 	skipUnlessPostgres(t)
 	f := storetest.New(t)
 	body := strings.Repeat("filler ", 83000) + "alice@example.com"
