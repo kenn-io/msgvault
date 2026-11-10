@@ -127,7 +127,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 		var e event
 		if json.Unmarshal(rec.Raw, &e) != nil {
 			summary.InvalidRecords++
-			return nil
+			return nil //nolint:nilerr // Count malformed records and continue importing later messages.
 		}
 		prov := provenance{Filename: rec.Filename, Conversation: rec.Peer, Owner: owner}
 		if e.Join != nil && rec.Group {
