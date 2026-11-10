@@ -4,6 +4,7 @@ import { expect, it, onTestFinished } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { DirectoryController } from '../../directory/controller.svelte';
 import PersonDetails from './PersonDetails.svelte';
+import PersonMeetings from './PersonMeetings.svelte';
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import { meetingActions, meetingAction, meetingMetrics } from '../../meetings/fixtures.test-support';
 
@@ -92,6 +93,32 @@ it('scopes Meetings to the saved person, waits for both empty reads, and refresh
   expect(meetings.getByRole('heading', { name: 'Meetings', level: 3 })).toBeDefined();
   expect(meetings.getByRole('region', { name: 'Meeting activity', exact: true })).toBeDefined();
   expect(meetings.queryByRole('heading', { name: 'Meeting activity and follow-ups' })).toBeNull();
+});
+
+it('shows loading while an empty Meetings result refreshes', async () => {
+  let releaseActions!: (response: Response) => void;
+  let releaseMetrics!: (response: Response) => void;
+  let refreshing = false;
+  const client = createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (refreshing && path.endsWith('/actions')) return new Promise<Response>(resolve => { releaseActions = resolve; });
+    if (refreshing && path.endsWith('/metrics')) return new Promise<Response>(resolve => { releaseMetrics = resolve; });
+    if (path.endsWith('/actions')) return Response.json(meetingActions());
+    return Response.json(meetingMetrics({ totals: { meeting_count: 0, known_duration_count: 0, unknown_duration_count: 0, total_known_seconds: 0, average_known_seconds: null }, first_meeting_at: null, last_meeting_at: null, duration_by_basis: [], months: [] }));
+  });
+  const { rerender } = render(PersonMeetings, { client, personID: 7, refreshKey: '1' });
+  await screen.findByText('No meetings yet');
+  refreshing = true;
+  await rerender({ client, personID: 7, refreshKey: '2' });
+  await waitFor(() => expect(releaseActions).toBeDefined());
+  expect(screen.getByText('Loading meetings…')).toBeDefined();
+  expect(screen.queryByText('No meetings yet')).toBeNull();
+  await act(async () => {
+    releaseActions(Response.json(meetingActions({ rows: [meetingAction({ action: { ordinal: 0, locator: 'action:0', origin: 'source', title: 'New follow-up', status: 'pending' } })] })));
+    releaseMetrics(Response.json(meetingMetrics()));
+  });
+  expect(await screen.findByText('New follow-up')).toBeDefined();
 });
 
 it.each(['merge', 'split'] as const)('refreshes tasks after %s reconciliation', async operation => {

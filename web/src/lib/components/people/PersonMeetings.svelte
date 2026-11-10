@@ -14,7 +14,7 @@
   let settledEmpty = $state<{ personID: number; empty: boolean }>();
   $effect.pre(() => {
     const scope = { kind: 'direct' as const, scope: { person_id: personID } }, key = refreshKey;
-    untrack(() => { void controller.setScope(scope, key); });
+    untrack(() => { settledEmpty = undefined; void controller.setScope(scope, key); });
   });
   $effect(() => {
     if (controller.metricsLoading || controller.actionsLoading || !controller.metrics || !controller.actions) return;
