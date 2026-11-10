@@ -99,9 +99,9 @@ it('scopes Meetings to the saved person, waits for both empty reads, and refresh
     releaseMetrics(Response.json(meetingMetrics()));
   });
   expect(await screen.findByText('Revision 2 follow-up')).toBeDefined();
-  const meetings = within(screen.getByRole('region', { name: 'Meetings', exact: true }));
+  const meetings = within(screen.getByRole('region', { name: 'Meetings' }));
   expect(meetings.getByRole('heading', { name: 'Meetings', level: 3 })).toBeDefined();
-  expect(meetings.getByRole('region', { name: 'Meeting activity', exact: true })).toBeDefined();
+  expect(meetings.getByRole('region', { name: 'Meeting activity' })).toBeDefined();
   expect(meetings.queryByRole('heading', { name: 'Meeting activity and follow-ups' })).toBeNull();
 });
 
