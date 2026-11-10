@@ -69,7 +69,7 @@ func TestGoogleChatReaderValidation(t *testing.T) {
 		reader, err := openExport(t.Context(), []string{a, b}, "owner@example.com")
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, reader.Close()) })
-		_, _, err = reader.groupFiles(t.Context(), "DM a", "messages.json")
+		_, err = reader.groupFiles(t.Context(), "DM a", "messages.json")
 		require.ErrorContains(t, err, "conflict")
 	})
 	t.Run("empty valid layout", func(t *testing.T) {

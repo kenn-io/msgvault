@@ -24,7 +24,6 @@ const maxRoots = 128
 type part struct {
 	root         *os.Root
 	path, groups string
-	prefix       string
 }
 type groupPart struct {
 	part *part
@@ -92,7 +91,6 @@ func openExport(ctx context.Context, roots []string, owner string) (reader *expo
 						}
 						p.root = nested
 						p.path = filepath.Join(absolute, prefix)
-						p.prefix = prefix
 					}
 					found = true
 					break
@@ -227,13 +225,12 @@ func readJSON(ctx context.Context, root *os.Root, path string) (jsontext.Value, 
 
 // groupFiles accepts identical repeated JSON files, and refuses conflicting
 // snapshots rather than letting argument order decide which provider data wins.
-func (r *exportReader) groupFiles(ctx context.Context, id, name string) (jsontext.Value, []provenance, error) {
+func (r *exportReader) groupFiles(ctx context.Context, id, name string) (jsontext.Value, error) {
 	var first jsontext.Value
-	var paths []provenance
 	for _, candidate := range r.groups[id] {
 		root, err := candidate.part.root.OpenRoot(candidate.dir)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		raw, err := readJSON(ctx, root, name)
 		err = errors.Join(err, root.Close())
@@ -241,19 +238,14 @@ func (r *exportReader) groupFiles(ctx context.Context, id, name string) (jsontex
 			continue
 		}
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		if first != nil && !bytes.Equal(bytes.TrimSpace(first), bytes.TrimSpace(raw)) {
-			return nil, nil, fmt.Errorf("googlechat: conflicting %s for %s", name, id)
+			return nil, fmt.Errorf("googlechat: conflicting %s for %s", name, id)
 		}
 		first = raw
-		entry := provenance{Path: filepath.ToSlash(filepath.Join(candidate.part.prefix, candidate.dir, name))}
-		if name == "group_info.json" {
-			entry.Data = string(raw)
-		}
-		paths = append(paths, entry)
 	}
-	return first, paths, nil
+	return first, nil
 }
 
 func (r *exportReader) groupIDs() []string {

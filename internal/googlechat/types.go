@@ -58,11 +58,6 @@ type userInfo struct {
 	} `json:"membership_info"`
 }
 
-type provenance struct {
-	Path string `json:"path"`
-	Data string `json:"data,omitempty"`
-}
-
 // NormalizeOwner validates a bare account email for both CLI and package callers.
 func NormalizeOwner(value string) (string, error) {
 	return apiimport.NormalizeEmail("googlechat: --me", value)

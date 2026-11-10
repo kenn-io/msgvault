@@ -539,8 +539,8 @@ UTC dates become timestamps; other dates remain unknown and are counted. Unknown
 messages remain archived and searchable, but timestamp-based analytical-cache lists
 and analytics exclude them. It does not infer reply links from topic IDs or identify people by display name. Roster
 members remain conversation members; they never become message recipients, even
-in two-person DMs. Sender and body search remain available. Relative input-file
-paths and group metadata are kept once on each conversation. Owner profiles are validated while reading.
+in two-person DMs. Sender and body search remain available. Owner profiles are
+validated while reading.
 
 All supplied parts are indexed before importing. Limits are 128 roots, 100,000
 indexed entries, 64 MiB per JSON file, and 250 MiB per attachment. Media matches

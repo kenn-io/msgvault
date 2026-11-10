@@ -84,11 +84,11 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 }
 
 func importGroup(ctx context.Context, st *store.Store, reader *exportReader, group, owner string, sourceID int64, resolve func(person) (int64, error), opts ImportOptions, summary *ImportSummary) (bool, error) {
-	raw, paths, err := reader.groupFiles(ctx, group, "messages.json")
+	raw, err := reader.groupFiles(ctx, group, "messages.json")
 	if err != nil {
 		return false, err
 	}
-	groupRaw, groupPaths, err := reader.groupFiles(ctx, group, "group_info.json")
+	groupRaw, err := reader.groupFiles(ctx, group, "group_info.json")
 	if err != nil {
 		return false, err
 	}
@@ -105,19 +105,6 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 	conversationID, err := st.EnsureConversationWithTypeContext(ctx, sourceID, group, kind, info.Name)
 	if err != nil {
 		return false, err
-	}
-	if len(groupPaths)+len(paths) > 0 {
-		prior, err := st.GetConversationMetadataContext(ctx, conversationID)
-		if err != nil {
-			return false, err
-		}
-		metadata, err := mergeContainerEvidence(prior, "group_files", append(groupPaths, paths...))
-		if err != nil {
-			return false, err
-		}
-		if err := st.SetConversationMetadataContext(ctx, conversationID, metadata); err != nil {
-			return false, err
-		}
 	}
 	summary.Conversations++
 	for _, member := range info.Members {
@@ -190,7 +177,8 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 			if err := json.Unmarshal(original, &archived); err != nil {
 				return false, fmt.Errorf("googlechat: read archived media references: %w", err)
 			}
-			writes, err := mediaWrites(ctx, st, reader, group, id, &archived, opts, summary)
+			var mediaSummary ImportSummary
+			writes, err := mediaWrites(ctx, st, reader, group, id, &archived, opts, &mediaSummary)
 			if err != nil {
 				return false, err
 			}
@@ -200,6 +188,7 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 				}
 				summary.AttachmentsStored++
 			}
+			summary.addMediaOutcomes(mediaSummary)
 			summary.Duplicates++
 			continue
 		}
@@ -229,7 +218,8 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 		if err != nil {
 			return false, err
 		}
-		writes, err := mediaWrites(ctx, st, reader, group, 0, &m, opts, summary)
+		var mediaSummary ImportSummary
+		writes, err := mediaWrites(ctx, st, reader, group, 0, &m, opts, &mediaSummary)
 		if err != nil {
 			return false, err
 		}
@@ -246,6 +236,7 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 		if err != nil {
 			return false, fmt.Errorf("googlechat: persist message: %w", err)
 		}
+		summary.addMediaOutcomes(mediaSummary)
 		for _, write := range writes {
 			if write.ContentHash != "" {
 				summary.AttachmentsStored++
@@ -273,38 +264,8 @@ func conversationKind(ctx context.Context, st *store.Store, sourceID int64, grou
 	return "chat", nil
 }
 
-// Raw container snapshots live once per source/conversation. Distinct snapshots
-// remain available when a later export changes a file or omits it entirely.
-func mergeContainerEvidence(prior sql.NullString, key string, incoming []provenance) (sql.NullString, error) {
-	metadata := map[string]jsontext.Value{}
-	if prior.Valid {
-		if err := json.Unmarshal([]byte(prior.String), &metadata); err != nil {
-			return prior, err
-		}
-	}
-	var files []provenance
-	if raw := metadata[key]; len(raw) > 0 {
-		if err := json.Unmarshal(raw, &files); err != nil {
-			return prior, err
-		}
-	}
-	for _, file := range incoming {
-		found := false
-		for _, previous := range files {
-			if previous.Path == file.Path && previous.Data == file.Data {
-				found = true
-				break
-			}
-		}
-		if !found {
-			files = append(files, file)
-		}
-	}
-	raw, err := json.Marshal(files)
-	if err != nil {
-		return prior, err
-	}
-	metadata[key] = raw
-	raw, err = json.Marshal(metadata)
-	return sql.NullString{String: string(raw), Valid: err == nil}, err
+func (summary *ImportSummary) addMediaOutcomes(media ImportSummary) {
+	summary.AttachmentsMissing += media.AttachmentsMissing
+	summary.AttachmentsUnsupported += media.AttachmentsUnsupported
+	summary.AttachmentsOversized += media.AttachmentsOversized
 }

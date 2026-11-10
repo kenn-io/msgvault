@@ -71,17 +71,8 @@ func TestImportGoogleChatMetadata(t *testing.T) {
 	assert.Equal("topic-a", meta["topic_id"])
 	assert.Equal("DM synthetic-dm", meta["group_id"])
 	assert.NotContains(metadata, "peer@example.net", "message metadata must not copy the roster")
-	var conversationMetadata string
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT metadata FROM conversations WHERE source_conversation_id='DM synthetic-dm'`).Scan(&conversationMetadata))
-	var fileMeta struct {
-		Files []provenance `json:"group_files"`
-	}
-	require.NoError(json.Unmarshal([]byte(conversationMetadata), &fileMeta))
-	require.NotEmpty(fileMeta.Files)
-	for _, file := range fileMeta.Files {
-		assert.False(filepath.IsAbs(file.Path))
-		_, err := os.Stat(filepath.Join(opts.Roots[0], file.Path))
-		require.NoError(err, "relative provenance resolves under the supplied input")
+	for _, key := range []string{"provider_record", "group_info.json", "messages.json"} {
+		assert.NotContains(metadata, key)
 	}
 }
 func TestImportGoogleChatReplayKeepsSnapshot(t *testing.T) {
@@ -137,6 +128,9 @@ func TestImportGoogleChatMultipartRepairAndOrder(t *testing.T) {
 			summary, err := Import(t.Context(), st, opts)
 			require.NoError(err)
 			assert.Equal(1, summary.AttachmentsMissing)
+			replay, err := Import(t.Context(), st, opts)
+			require.NoError(err)
+			assert.Equal(1, replay.AttachmentsMissing)
 			write(t, b, "Groups/DM test/File-example.txt", "")
 			opts.Roots = []string{a, b}
 			if reverse {
@@ -199,8 +193,14 @@ func TestImportGoogleChatMediaSafety(t *testing.T) {
 				require.NoError(f.Truncate(251 << 20))
 				require.NoError(f.Close())
 			}
-			summary, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{a, b}, AttachmentsDir: t.TempDir()})
+			opts := ImportOptions{Me: "owner@example.com", Roots: []string{a, b}, AttachmentsDir: t.TempDir()}
+			summary, err := Import(t.Context(), st, opts)
 			require.NoError(err)
+			replay, err := Import(t.Context(), st, opts)
+			require.NoError(err)
+			assert.Equal(summary.AttachmentsMissing, replay.AttachmentsMissing)
+			assert.Equal(summary.AttachmentsUnsupported, replay.AttachmentsUnsupported)
+			assert.Equal(summary.AttachmentsOversized, replay.AttachmentsOversized)
 			assert.Equal(1, summary.AttachmentsMissing)
 			assert.Zero(summary.AttachmentsStored)
 			if tc.name == "nonregular" || tc.name == "traversal" {
@@ -435,41 +435,6 @@ func TestImportGoogleChatFailedMessageDoesNotCountStoredAttachments(t *testing.T
 	var count int
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM attachments`).Scan(&count))
 	assert.Zero(count)
-}
-
-func TestImportGoogleChatContainerEvidenceSurvivesSparseReplay(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	full, partial := t.TempDir(), t.TempDir()
-	write(t, full, "Groups/DM a/messages.json", fixtureMessages(t))
-	groupRaw := `{ "members":[{"email":"owner@example.com"},{"email":"peer@example.com"}], "unknown_group":{"retained":true}, "number":1e3 }`
-	write(t, full, "Groups/DM a/group_info.json", groupRaw)
-	opts := ImportOptions{Me: "owner@example.com", Roots: []string{full}}
-	_, err := Import(t.Context(), st, opts)
-	require.NoError(err)
-	_, err = Import(t.Context(), st, opts)
-	require.NoError(err, "repeated full export retains one copy of each container snapshot")
-	write(t, partial, "Groups/DM a/messages.json", strings.Replace(fixtureMessages(t), "group/topic/message", "group/topic/new", 1))
-	opts.Roots = []string{partial}
-	_, err = Import(t.Context(), st, opts)
-	require.NoError(err)
-	var group sql.NullString
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT metadata FROM conversations`).Scan(&group))
-	var evidence struct {
-		Files []provenance `json:"group_files"`
-	}
-	require.NoError(json.Unmarshal([]byte(group.String), &evidence))
-	assert.ElementsMatch([]provenance{
-		{Path: "Groups/DM a/group_info.json", Data: groupRaw},
-		{Path: "Groups/DM a/messages.json"},
-	}, evidence.Files, "relative container provenance is retained once")
-	assert.NotContains(group.String, full)
-	var metadata string
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT metadata FROM messages ORDER BY id LIMIT 1`).Scan(&metadata))
-	for _, key := range []string{"provider_record", "group_info.json", "messages.json"} {
-		assert.NotContains(metadata, key)
-	}
 }
 
 func TestImportGoogleChatRunAccounting(t *testing.T) {
@@ -739,4 +704,50 @@ func TestImportGoogleChatRosterDoesNotProveDelivery(t *testing.T) {
 	rows, err := st.FilenameSuggestionRowsContext(t.Context(), []int64{attachmentID}, store.FilenameSuggestionScope{Person: &scope})
 	require.NoError(err)
 	assert.Empty(rows)
+}
+
+func TestImportGoogleChatFailedMessageDoesNotCountMissingMedia(t *testing.T) {
+	for _, tc := range []struct{ name, first string }{
+		{"missing", "missing.txt"},
+		{"unsupported", "../outside.txt"},
+		{"oversized", "large.txt"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			a, b := t.TempDir(), t.TempDir()
+			message := strings.Replace(fixtureMessages(t), `"export_name":"File-example.txt"`, `"export_name":"`+tc.first+`"},{"original_name":"second.txt","export_name":"second.txt"`, 1)
+			write(t, a, "Groups/DM a/messages.json", message)
+			write(t, a, "Groups/DM a/second.txt", "first")
+			write(t, b, "Groups/DM a/second.txt", "second")
+			if tc.name == "oversized" {
+				f, err := os.Create(filepath.Join(a, "Groups/DM a/large.txt"))
+				require.NoError(err)
+				require.NoError(f.Truncate(251 << 20))
+				require.NoError(f.Close())
+			}
+			summary, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{a, b}, AttachmentsDir: t.TempDir()})
+			require.ErrorContains(err, "ambiguous")
+			assert.Zero(summary.AttachmentsMissing)
+			assert.Zero(summary.AttachmentsUnsupported)
+			assert.Zero(summary.AttachmentsOversized)
+			var count int
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages`).Scan(&count))
+			assert.Zero(count)
+		})
+	}
+}
+
+func TestImportGoogleChatSaveFailureDoesNotCountMissingMedia(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER reject_message BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'synthetic save failure'); END`)
+	require.NoError(err)
+	root := t.TempDir()
+	write(t, root, "Groups/DM a/messages.json", fixtureMessages(t))
+	summary, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{root}, AttachmentsDir: t.TempDir()})
+	require.ErrorContains(err, "synthetic save failure")
+	assert.Zero(summary.AttachmentsMissing)
 }
