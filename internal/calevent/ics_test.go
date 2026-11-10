@@ -239,6 +239,10 @@ func TestICSRejectMalformed(t *testing.T) {
 		{"negative sequence", strings.Replace(icsExample, "SEQUENCE:2", "SEQUENCE:-1", 1), "invalid SEQUENCE"},
 		{"missing UID", strings.Replace(icsExample, "UID:invite@example.com\r\n", "", 1), "event has no UID"},
 		{"ends after year 9999", strings.NewReplacer("DTSTART;TZID=America/New_York:20270314T090000", "DTSTART:99991231T230000Z", "DTEND;TZID=America/New_York:20270314T100000", "DURATION:PT2H").Replace(icsExample), "outside years 0 to 9999"},
+		{"elapsed DURATION overflow", strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DURATION:PT18446744074S", 1), "calendar DURATION exceeds limit"},
+		{"week DURATION overflow", strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DURATION:P1317624576693539403W", 1), "calendar DURATION exceeds limit"},
+		{"hour DURATION overflow", strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DURATION:PT5124096H", 1), "calendar DURATION exceeds limit"},
+		{"combined DURATION overflow", strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DURATION:PT2562047H47M17S", 1), "calendar DURATION exceeds limit"},
 		{"malformed property", "BEGIN:VCALENDAR\r\nSUMMARY;CN=x\r\nEND:VCALENDAR\r\n", "malformed iCalendar parameters"},
 		{"second calendar", icsExample + icsExample, "calendar has trailing content"},
 		{"ranged recurrence", strings.Replace(icsExample, "SUMMARY:", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270314T140000Z\r\nSUMMARY:", 1), "RECURRENCE-ID: RANGE is unsupported"},
@@ -248,6 +252,14 @@ func TestICSRejectMalformed(t *testing.T) {
 			require.ErrorContains(t, err, tc.want)
 		})
 	}
+}
+
+func TestICSLargeElapsedDuration(t *testing.T) {
+	raw := strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DURATION:PT3000000000S", 1)
+	components, err := ParseICS([]byte(raw), "", "")
+	require.NoError(t, err)
+	require.Len(t, components, 1)
+	assert.Equal(t, 3000000000*time.Second, components[0].Event.End.Sub(*components[0].Event.Start))
 }
 
 func TestParseICSCustomizedHistory(t *testing.T) {

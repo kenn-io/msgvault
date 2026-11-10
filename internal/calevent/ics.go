@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -253,8 +254,17 @@ func icsDuration(value string) (int, time.Duration, error) {
 		}
 		n[i] = v
 	}
+	if n[1] > int64(math.MaxInt) || n[0] > (int64(math.MaxInt)-n[1])/7 {
+		return 0, 0, errors.New("calendar DURATION exceeds limit")
+	}
 	days := n[0]*7 + n[1]
-	secs := n[2]*3600 + n[3]*60 + n[4]
+	var secs int64
+	for i, multiplier := range [...]int64{3600, 60, 1} {
+		if n[i+2] > (int64(math.MaxInt64/time.Second)-secs)/multiplier {
+			return 0, 0, errors.New("calendar DURATION exceeds limit")
+		}
+		secs += n[i+2] * multiplier
+	}
 	return int(days), time.Duration(secs) * time.Second, nil
 }
 
