@@ -93,8 +93,13 @@ func personEnrichmentEnvironmentLookup(cfg *config.Config) personenrichment.Cred
 }
 
 func resolveTextEmbeddingCredential(snapshot providercredentials.Snapshot, cfg vector.Config) (string, error) {
+	return resolveTextEmbeddingCredentialWithLookup(snapshot, cfg, os.LookupEnv)
+}
+
+func resolveTextEmbeddingCredentialWithLookup(snapshot providercredentials.Snapshot, cfg vector.Config, lookup func(string) (string, bool)) (string, error) {
 	if cfg.Embeddings.LocalOnly {
 		return "", nil
 	}
-	return resolveProviderCredentialFromSnapshot(snapshot, providercredentials.VectorEmbeddingsID, cfg.Embeddings.Endpoint, cfg.Embeddings.APIKeyEnv)
+	credential, _, err := snapshot.Resolve(providercredentials.VectorEmbeddingsID, cfg.Embeddings.Endpoint, cfg.Embeddings.APIKeyEnv, lookup)
+	return credential, err
 }

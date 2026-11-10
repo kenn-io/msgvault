@@ -650,6 +650,19 @@ func IsCLIRunEmbeddingsOptimize(args []string) bool {
 	return len(args) > 0 && cliRunCommandWords(args) == "embeddings optimize"
 }
 
+// IsCLIRunEmbeddingsBuild identifies commands coordinated by the daemon.
+func IsCLIRunEmbeddingsBuild(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch cliRunCommandWords(args) {
+	case "embeddings build", "embeddings resume", "build-embeddings":
+		return true
+	default:
+		return false
+	}
+}
+
 func cliRunGateDecision(r *http.Request, auth requestAuthentication) (label string, skip bool, err error) {
 	if r == nil || r.Body == nil {
 		return "", false, nil
@@ -675,7 +688,7 @@ func cliRunGateDecision(r *http.Request, auth requestAuthentication) (label stri
 			return "", true, nil
 		}
 		command := cliRunCommandWords(req.Args)
-		if cliRunReadOnlyCommands[command] || cliRunSelfGatedCommands[command] || IsCLIRunEmbeddingsOptimize(req.Args) {
+		if cliRunReadOnlyCommands[command] || cliRunSelfGatedCommands[command] || IsCLIRunEmbeddingsOptimize(req.Args) || IsCLIRunEmbeddingsBuild(req.Args) {
 			return "", true, nil
 		}
 		if command != "" {

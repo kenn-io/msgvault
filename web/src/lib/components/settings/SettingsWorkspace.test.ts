@@ -93,6 +93,7 @@ function fixture(doc: ReturnType<typeof settingsDoc> = settingsDoc(), extra?: (r
     seen.push({ method: request.method, path, query: new URL(request.url).search, ifMatch: request.headers.get('If-Match'), body });
     const custom = await extra?.(request);
     if (custom) return custom;
+    if (path === '/api/v1/person-fact-targets') return Response.json({ targets: [] });
     if (path === '/api/v1/settings' && request.method === 'GET') {
       return Response.json(doc, { headers: { ETag: `"s${etag}"`, 'Credential-ETag': '"credential-a"' } });
     }
@@ -427,7 +428,7 @@ it.each([
   await fireEvent.click(await screen.findByRole('button', { name: 'Add Exa' }));
   await fireEvent.input(screen.getByLabelText('Exa name'), { target: { value: name } });
   await fireEvent.submit(screen.getByRole('form', { name: 'Add Exa' }));
-  expect((await screen.findByRole('alert')).textContent).toContain(error);
+  await waitFor(() => expect(screen.getByRole('alert').textContent).toContain(error));
   expect(seen.filter(request => request.method !== 'GET')).toEqual([]);
 });
 
