@@ -27,7 +27,7 @@ func TestTextImportOmittedMedia(t *testing.T) {
 			opts := textOptions()
 			opts.DateOrder = "mdy"
 			input := "[6/13/2026, 10:00:01 AM] Mira: " + tc.body + "\r\n"
-			summary, err := importTextForTest(NewImporter(st, nil), t.Context(), textFile(t, input), opts)
+			summary, err := importTextForTest(t.Context(), NewImporter(st, nil), textFile(t, input), opts)
 			require.NoError(err)
 			assert.Equal(tc.omitted, summary.MediaOmitted)
 			assert.Zero(summary.MediaSkipped)

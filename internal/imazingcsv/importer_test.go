@@ -1094,9 +1094,9 @@ func TestImporterRejectsTimezoneChangeAndRecordsFailedSync(t *testing.T) {
 func TestImporterRejectsHostDependentLocalTimezone(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	_, err := ValidateTimezone("UTC")
-	assert.NoError(err)
+	require.NoError(err)
 	_, err = ValidateTimezone("Europe/Berlin")
-	assert.NoError(err)
+	require.NoError(err)
 	_, err = ValidateTimezone("Local")
 	require.ErrorContains(err, "host-dependent Local")
 

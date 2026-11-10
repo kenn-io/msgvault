@@ -90,6 +90,7 @@ func TestWhatsAppTextCommandPreflightArchive(t *testing.T) {
 	for _, subprocess := range []bool{false, true} {
 		for _, existing := range []bool{false, true} {
 			t.Run(fmt.Sprintf("subprocess=%t/existing=%t", subprocess, existing), func(t *testing.T) {
+				assert, require := assert.New(t), require.New(t)
 				if subprocess {
 					markDaemonCLISubprocessForTest(t)
 				} else {
@@ -100,14 +101,14 @@ func TestWhatsAppTextCommandPreflightArchive(t *testing.T) {
 				cfg.Data.DataDir = cfg.HomeDir
 				if existing {
 					st, err := store.Open(cfg.DatabaseDSN())
-					require.NoError(t, err)
-					require.NoError(t, st.InitSchemaContext(t.Context()))
+					require.NoError(err)
+					require.NoError(st.InitSchemaContext(t.Context()))
 					_, err = st.GetOrCreateSource("whatsapp", "+12025550123")
-					require.NoError(t, err)
-					require.NoError(t, st.Close())
+					require.NoError(err)
+					require.NoError(st.Close())
 				}
 				path := filepath.Join(t.TempDir(), "chat.txt")
-				require.NoError(t, os.WriteFile(path, []byte("13/6/26, 10:00 - Mira: one\n13 Jun 2026, 10:01 - Mira: two\n"), 0600))
+				require.NoError(os.WriteFile(path, []byte("13/6/26, 10:00 - Mira: one\n13 Jun 2026, 10:01 - Mira: two\n"), 0600))
 				command := &cobra.Command{Use: "test"}
 				command.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 				command.AddCommand(newImportWhatsAppCmd())
@@ -115,22 +116,22 @@ func TestWhatsAppTextCommandPreflightArchive(t *testing.T) {
 				command.SetOut(&out)
 				command.SetErr(&out)
 				command.SetArgs([]string{"import-whatsapp", path, "--format", "text", "--phone", "+12025550123", "--chat-id", "garden", "--chat-type", "group", "--timezone", "UTC", "--date-order", "dmy"})
-				require.ErrorContains(t, command.Execute(), "line 2: unsupported or malformed TXT header")
-				assert.NotContains(t, out.String(), "Import complete:")
-				assert.NotContains(t, out.String(), "Import incomplete:")
+				require.ErrorContains(command.Execute(), "line 2: unsupported or malformed TXT header")
+				assert.NotContains(out.String(), "Import complete:")
+				assert.NotContains(out.String(), "Import incomplete:")
 				if !existing {
 					_, err := os.Stat(cfg.DatabaseDSN())
-					assert.True(t, os.IsNotExist(err))
+					assert.True(os.IsNotExist(err))
 					return
 				}
 				st, err := store.Open(cfg.DatabaseDSN())
-				require.NoError(t, err)
-				defer func() { assert.NoError(t, st.Close()) }()
+				require.NoError(err)
+				defer func() { assert.NoError(st.Close()) }()
 				var sources, messages int
-				require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM sources").Scan(&sources))
-				require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages").Scan(&messages))
-				assert.Equal(t, 1, sources)
-				assert.Zero(t, messages)
+				require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM sources").Scan(&sources))
+				require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages").Scan(&messages))
+				assert.Equal(1, sources)
+				assert.Zero(messages)
 			})
 		}
 	}

@@ -14,7 +14,7 @@ import (
 func TestTextPersistedKeys(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := testutil.NewTestStore(t)
-	_, err := importTextForTest(NewImporter(st, nil), t.Context(), textFile(t, "13/6/26, 10:00 - Mira: asters\n13/6/26, 10:01 - You: fictional garden note\n13/6/26, 10:02 - You changed the group description: garden\n"), textOptions())
+	_, err := importTextForTest(t.Context(), NewImporter(st, nil), textFile(t, "13/6/26, 10:00 - Mira: asters\n13/6/26, 10:01 - You: fictional garden note\n13/6/26, 10:02 - You changed the group description: garden\n"), textOptions())
 	require.NoError(err)
 	// Fixed SHA-256 values independently calculated from byte-length-framed fields.
 	var chat, message, senderKey string
@@ -75,15 +75,16 @@ func TestTextPayloadKeyIgnoresClassification(t *testing.T) {
 }
 
 func TestTextSearchSenderAfterRebuild(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	st := testutil.NewTestStore(t)
-	_, err := importTextForTest(NewImporter(st, nil), t.Context(), textFile(t, "13/6/26, 10:00 - Mira: asters\n"), textOptions())
-	require.NoError(t, err)
+	_, err := importTextForTest(t.Context(), NewImporter(st, nil), textFile(t, "13/6/26, 10:00 - Mira: asters\n"), textOptions())
+	require.NoError(err)
 	_, total, err := st.SearchMessagesContext(t.Context(), "Mira", 0, 10)
-	require.NoError(t, err)
-	require.EqualValues(t, 1, total)
+	require.NoError(err)
+	require.EqualValues(1, total)
 	_, err = st.RebuildFTSContext(t.Context(), nil)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, total, err = st.SearchMessagesContext(t.Context(), "Mira", 0, 10)
-	require.NoError(t, err)
-	assert.EqualValues(t, 1, total)
+	require.NoError(err)
+	assert.EqualValues(1, total)
 }

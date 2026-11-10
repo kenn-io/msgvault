@@ -43,7 +43,7 @@ func storedFTSEnvelopeSQL(aggregate string) ftsEnvelopeExpressions {
 	return ftsEnvelopeExpressions{
 		subject: "COALESCE(m.subject, '')",
 		fromAddr: `COALESCE(CASE WHEN m.message_type != 'email' AND m.message_type IS NOT NULL AND m.message_type != ''
-			THEN (SELECT COALESCE(p.phone_number, p.email_address, p.display_name) FROM participants p WHERE p.id = m.sender_id) END, ` + recipients("from") + `)`,
+			THEN (SELECT COALESCE(p.phone_number, p.email_address, CASE WHEN m.message_type = 'whatsapp' AND substr(m.source_message_id, 1, 13) = 'whatsapp_txt:' THEN p.display_name END) FROM participants p WHERE p.id = m.sender_id) END, ` + recipients("from") + `)`,
 		toAddrs: recipients("to"),
 		ccAddrs: recipients("cc"),
 	}

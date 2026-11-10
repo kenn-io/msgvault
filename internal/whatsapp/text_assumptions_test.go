@@ -27,7 +27,7 @@ func TestTextImportChatAssumptions(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			imp := NewImporter(st, nil)
 			opts := textOptions()
-			_, err := importTextForTest(imp, t.Context(), textFile(t, "13/6/26, 10:00 - Mira: asters\n"), opts)
+			_, err := importTextForTest(t.Context(), imp, textFile(t, "13/6/26, 10:00 - Mira: asters\n"), opts)
 			require.NoError(err)
 			var id int64
 			var metadata string
@@ -44,11 +44,11 @@ func TestTextImportChatAssumptions(t *testing.T) {
 			require.NoError(err)
 			require.NoError(st.SetConversationMetadataContext(t.Context(), id, sql.NullString{String: string(raw), Valid: true}))
 			tc.change(&opts)
-			summary, err := importTextForTest(imp, t.Context(), textFile(t, tc.input), opts)
+			summary, err := importTextForTest(t.Context(), imp, textFile(t, tc.input), opts)
 			if tc.wantError != "" {
 				require.ErrorContains(err, tc.wantError)
 				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT metadata FROM conversations WHERE id = ?"), id).Scan(&metadata))
-				assert.Equal(string(raw), metadata)
+				assert.JSONEq(string(raw), metadata)
 				assert.Equal(1, textCount(t, st, "messages"))
 				return
 			}

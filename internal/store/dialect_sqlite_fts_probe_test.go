@@ -129,8 +129,9 @@ func TestSQLiteFTSProbeQueryPlan(t *testing.T) {
 				_, err := db.ExecContext(t.Context(), `ALTER TABLE messages ADD COLUMN subject TEXT;
 					ALTER TABLE messages ADD COLUMN message_type TEXT;
 					ALTER TABLE messages ADD COLUMN sender_id INTEGER;
+					ALTER TABLE messages ADD COLUMN source_message_id TEXT;
 					CREATE TABLE message_bodies (message_id INTEGER PRIMARY KEY, body_text TEXT);
-					CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT, phone_number TEXT);
+					CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT, phone_number TEXT, display_name TEXT);
 					CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, email_address TEXT, is_relayed BOOLEAN NOT NULL DEFAULT FALSE);
 					DROP TABLE messages_fts;
 					CREATE VIRTUAL TABLE messages_fts USING fts5(message_id UNINDEXED, subject, body, from_addr, to_addr, cc_addr)`)
