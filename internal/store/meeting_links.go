@@ -319,6 +319,21 @@ func (s *Store) calendarUIDPredicate() string {
 	return calendarUIDExpression(s.dialect, "m.metadata") + ` = ? AND m.message_type = 'calendar_event'`
 }
 
+func conflictingGoogleMeetingRows(rows []CalendarEventRow) bool {
+	var identity *meetingIdentity
+	for _, row := range rows {
+		if row.Event.Kind != "single" && row.Event.Kind != meetingSeriesKind {
+			continue
+		}
+		current := occurrenceFromRow(row, "").Identity
+		if identity != nil && *identity != current {
+			return true
+		}
+		identity = &current
+	}
+	return false
+}
+
 func (s *Store) automaticMeetingOccurrences(ctx context.Context, r reboundReader, key meetingLinkKey, budget *int) ([]linkOccurrence, error) {
 	if key.Kind != "google_event_id" && key.Kind != "ical_uid" {
 		return nil, nil
@@ -338,6 +353,9 @@ func (s *Store) automaticMeetingOccurrences(ctx context.Context, r reboundReader
 	rows, err := meetingEventRows(ctx, r, predicate, args, budget)
 	if err != nil {
 		return nil, err
+	}
+	if key.Kind == "google_event_id" && conflictingGoogleMeetingRows(rows) {
+		return nil, nil
 	}
 	var out []linkOccurrence
 candidatesLoop:

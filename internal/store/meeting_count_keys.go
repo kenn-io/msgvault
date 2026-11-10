@@ -128,20 +128,8 @@ func (s *Store) unmatchedMeetingCountKey(ctx context.Context, r reboundReader, k
 			base, original = key.Value, calrecur.Identity{Instant: *key.ScheduledAt}
 		}
 		instance = original
-		rows, err := meetingEventRows(ctx, r, `e.kind = 'single' AND e.provider_event_id IN (?, ?)`, []any{key.Value, base}, budget)
-		if err != nil {
-			return "", err
-		}
-		if len(rows) > 1 {
-			identity := occurrenceFromRow(rows[0], "").Identity
-			for _, row := range rows[1:] {
-				if occurrenceFromRow(row, "").Identity != identity {
-					return "", nil
-				}
-			}
-		}
 		fallback = fmt.Sprintf("gcal:%q/%s", base, instance.Key())
-		predicate, args = `e.provider_event_id = ?`, []any{base}
+		predicate, args = `e.provider_event_id IN (?, ?) AND e.kind IN ('single', 'series')`, []any{key.Value, base}
 	case "ical_uid":
 		if key.Value == "" || key.ScheduledAt == nil {
 			return "", nil
@@ -152,12 +140,21 @@ func (s *Store) unmatchedMeetingCountKey(ctx context.Context, r reboundReader, k
 	default:
 		return "", nil
 	}
-	rows, err := meetingEventRows(ctx, r, predicate+` AND e.kind = 'series'`, args, budget)
+	if key.Kind == "ical_uid" {
+		predicate += ` AND e.kind = 'series'`
+	}
+	rows, err := meetingEventRows(ctx, r, predicate, args, budget)
 	if err != nil {
 		return "", err
 	}
+	if key.Kind == "google_event_id" && conflictingGoogleMeetingRows(rows) {
+		return "", nil
+	}
 	var found []meetingIdentity
 	for _, row := range rows {
+		if row.Event.Kind != meetingSeriesKind {
+			continue
+		}
 		original := instance
 		if key.Kind == "ical_uid" && row.Event.AllDay {
 			zone, err := calendarEventZone(row.Event)

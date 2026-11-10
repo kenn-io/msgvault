@@ -202,19 +202,29 @@ func TestMeetingCountKeysRejectsBroadEvidence(t *testing.T) {
 }
 
 func TestMeetingCountKeysGoogleCalendarCollisions(t *testing.T) {
+	type event struct{ uid, kind string }
 	for _, tc := range []struct {
-		name string
-		uids []string
-		want []string
+		name   string
+		events []event
+		want   []string
 	}{
-		{name: "one calendar", uids: []string{"first@example.org"}, want: []string{"uid:first@example.org/"}},
-		{name: "same occurrence", uids: []string{"first@example.org", "first@example.org"}, want: []string{"uid:first@example.org/"}},
-		{name: "different occurrences", uids: []string{"first@example.org", "second@example.org"}},
+		{name: "no calendar", want: []string{`gcal:"event"/20270314T100000Z`}},
+		{name: "one calendar", events: []event{{"first@example.org", "single"}}, want: []string{"uid:first@example.org/"}},
+		{name: "same occurrence", events: []event{{"first@example.org", "single"}, {"first@example.org", "single"}}, want: []string{"uid:first@example.org/"}},
+		{name: "different singles", events: []event{{"first@example.org", "single"}, {"second@example.org", "single"}}},
+		{name: "different series", events: []event{{"first@example.org", "series"}, {"second@example.org", "series"}}},
+		{name: "different single and series", events: []event{{"first@example.org", "single"}, {"second@example.org", "series"}}},
+		{name: "same series", events: []event{{"first@example.org", "series"}, {"first@example.org", "series"}}, want: []string{"uid:first@example.org/20270314T100000Z"}},
+		{name: "same single and series", events: []event{{"first@example.org", "single"}, {"first@example.org", "series"}}, want: []string{"uid:first@example.org/"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := newRFC822IDBackfillBackendStore(t)
-			for i, uid := range tc.uids {
-				calendarFixture(t, st, fmt.Sprintf("event-%d", i), singleLinkRaw("event", uid), fmt.Sprintf("calendar-%d@example.com", i))
+			for i, event := range tc.events {
+				raw := singleLinkRaw("event", event.uid)
+				if event.kind == "series" {
+					raw = fmt.Sprintf(`{"id":"event","iCalUID":%q,"start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=6"]}`, event.uid)
+				}
+				calendarFixture(t, st, fmt.Sprintf("event-%d", i), raw, fmt.Sprintf("calendar-%d@example.com", i))
 			}
 			var notes []int64
 			for i := range 2 {
