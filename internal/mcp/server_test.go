@@ -953,7 +953,7 @@ func TestSearchMessageBodies_PostgreSQLContextIgnoresAccentLookalikes(t *testing
 	}, "context snippets must include the true PostgreSQL simple-dictionary hit")
 }
 
-func TestSearchMessageBodies_PostgreSQLContextUsesParserTokens(t *testing.T) {
+func TestSearchMessageBodies_PostgreSQLContextPreservesCombiningMark(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
