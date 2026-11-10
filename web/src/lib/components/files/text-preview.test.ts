@@ -52,6 +52,7 @@ describe('delimited previews', () => {
     expect((await parseDelimited('Name,Amount\nExample,42\r\nOther,73\n', ',')).rows).toEqual([['Example', '42'], ['Other', '73']]);
     expect((await parseDelimited('Name,Note\nExample,"line\r\ninside"\nOther,done\n', ',')).rows).toEqual([['Example', 'line\r\ninside'], ['Other', 'done']]);
     expect((await parseDelimited('name\x1enote\nalpha\x1e"one\r\ntwo"\n')).rows).toEqual([['alpha', 'one\r\ntwo']]);
+    expect((await parseDelimited('name,note\r\nA,semi;"word\r\nB,ok\r\n')).rows).toEqual([['A', 'semi;"word'], ['B', 'ok']]);
   });
   it('reports malformed quotes without blaming readable or truncated rows', async () => {
     expect((await parseDelimited('Name,Amount\nExample,"42\nOther,73', ',')).hasErrors).toBe(true);
