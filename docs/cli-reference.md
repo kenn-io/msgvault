@@ -3121,7 +3121,7 @@ msgvault export-token <email> [flags]
 
 ## diagnose-acquisition
 
-List pending Gmail download and file-saving failures for a source:
+List pending Gmail message download, processing, and file-saving failures for a source:
 
 ```bash
 msgvault diagnose-acquisition --source-id 1

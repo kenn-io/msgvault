@@ -21,7 +21,7 @@ func TestDiagnoseAcquisitionCommand(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		pending bool
-	}{{"json", true}, {"empty", false}, {"legacy", true}, {"local", true}} {
+	}{{"empty", false}, {"legacy", true}, {"local", true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)

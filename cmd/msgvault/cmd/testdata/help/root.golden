@@ -6,6 +6,7 @@ Start here:
   msgvault search 'from:alice@example.com newer_than:30d' --json
   msgvault show-message <id> --json
   msgvault export-eml <id> -o msg.eml
+  msgvault export-messages --help
   msgvault person --help
   msgvault daemon status
   msgvault setup status --json
