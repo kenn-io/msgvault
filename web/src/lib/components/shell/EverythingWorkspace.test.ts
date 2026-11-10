@@ -2500,6 +2500,26 @@ describe('EverythingWorkspace', () => {
     state.destroy();
   });
 
+  it('distinguishes a repeated source in its inspector title', async () => {
+    window.history.replaceState(null, '', '/');
+    const rows = [{ key: '7', label: 'workspace-a', count: 2, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }];
+    const baseClient = createAPIClient(async (input) => new URL((input as Request).url).pathname.endsWith('/groups')
+      ? Response.json({ rows, total_count: 1, cache_revision: 'cache-1', search_provenance: {} })
+      : Response.json(exploreResponse()));
+    const client = { fetch: (async (input, init) => {
+      const url = input instanceof Request ? input.url : new URL(String(input), window.location.href);
+      if (new URL(url).pathname === '/api/v1/sources/status') return Response.json({ sources: [{ id: 7, source_type: 'mbox' }, { id: 8, source_type: 'mbox' }] });
+      return baseClient.fetch(input, init);
+    }) satisfies typeof fetch };
+    const state = new ExploreState(window);
+    state.commitNavigation({ groupingChain: ['source'] });
+    const view = render(AppShell, { client, state });
+    try {
+      await fireEvent.click(await screen.findByRole('button', { name: 'Show items in Mbox import · workspace-a' }));
+      expect(await screen.findByRole('complementary', { name: 'Reading pane: Mbox import · workspace-a' })).toBeDefined();
+    } finally { view.unmount(); state.destroy(); }
+  });
+
 
   it('reapplies a retained group anchor across same-count result generations', async () => {
     const initialState = {

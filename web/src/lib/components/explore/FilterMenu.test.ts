@@ -3,6 +3,36 @@ import { expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import FilterMenu from './FilterMenu.svelte';
 
+it.each([
+  ['Asia/Tokyo', '2024-11-30T15:00:00.000Z', '2024-12-31T15:00:00.000Z', '2024-12-14T15:00:00.000Z', '2024-12-20T15:00:00.000Z'],
+  ['America/New_York', '2024-12-01T05:00:00.000Z', '2025-01-01T05:00:00.000Z', '2024-12-15T05:00:00.000Z', '2024-12-21T05:00:00.000Z'],
+])('edits local December bounds in %s', async (zone, after, before, editedAfter, editedBefore) => {
+  vi.stubEnv('TZ', zone);
+  try {
+    const onChange = vi.fn();
+    const filters = [{ dimension: 'after' as const, values: [after] }, { dimension: 'before' as const, values: [before] }];
+    render(FilterMenu, { client: createAPIClient(async () => Response.json({ rows: [], accounts: [] })), filters, dateMode: 'local', onChange, onClear: vi.fn() });
+    await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+    expect((screen.getByLabelText('From') as HTMLInputElement).value).toBe('2024-12-01');
+    expect((screen.getByLabelText('To') as HTMLInputElement).value).toBe('2024-12-31');
+    await fireEvent.change(screen.getByLabelText('From'), { target: { value: '2024-12-15' } });
+    expect(onChange).toHaveBeenLastCalledWith([filters[1], { dimension: 'after', values: [editedAfter] }]);
+    await fireEvent.change(screen.getByLabelText('To'), { target: { value: '2024-12-20' } });
+    expect(onChange).toHaveBeenLastCalledWith([filters[0], { dimension: 'before', values: [editedBefore] }]);
+  } finally { vi.unstubAllEnvs(); }
+});
+
+it('ends a local date at the next midnight across daylight saving', async () => {
+  vi.stubEnv('TZ', 'America/New_York');
+  try {
+    const onChange = vi.fn();
+    render(FilterMenu, { client: createAPIClient(async () => Response.json({ rows: [], accounts: [] })), filters: [], dateMode: 'local', onChange, onClear: vi.fn() });
+    await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+    await fireEvent.change(screen.getByLabelText('To'), { target: { value: '2024-03-10' } });
+    expect(onChange).toHaveBeenLastCalledWith([{ dimension: 'before', values: ['2024-03-11T04:00:00.000Z'] }]);
+  } finally { vi.unstubAllEnvs(); }
+});
+
 it("offers the server's Conversation kind for an empty message type in a group chat", async () => {
   const requests: Request[] = [];
   const onChange = vi.fn();

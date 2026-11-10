@@ -241,7 +241,7 @@
       session.readingGroupDetail?.kind === 'group' &&
       session.readingGroupDetail.dimension === group.dimension &&
       session.readingGroupDetail.key === group.key
-      ? { ...session.readingGroupDetail, label: groupRowName(group.dimension, group.key, session.readingGroupDetail.label, group.dimension === 'source' ? sourceTypes.get(group.key) : undefined).name }
+      ? { ...session.readingGroupDetail, label: groupRowName(group.dimension, group.key, session.readingGroupDetail.label, group.dimension === 'source' ? sourceTypes : undefined).name }
       : undefined;
   });
 
@@ -682,6 +682,7 @@
 
   <ContextBar
     messages
+    dateMode="local"
     lockedFilter={scope}
     {client}
     query={exploreState.current.query}

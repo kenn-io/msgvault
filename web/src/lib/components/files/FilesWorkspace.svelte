@@ -1,10 +1,4 @@
 <script lang="ts" module>
-  function formatDate(value: string): string {
-    const date = new Date(value);
-    return Number.isNaN(date.valueOf())
-      ? value
-      : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date);
-  }
   function people(row: FileSearchRow): string {
     const labels = row.participant_labels ?? [];
     const domains = row.participant_domains ?? [];
@@ -31,6 +25,7 @@
 </script>
 
 <script lang="ts">
+  import { formatDate } from '../../util/format';
   import {
     searchDomainFiles as generatedSearchDomainFiles,
     searchFiles as generatedSearchFiles,
