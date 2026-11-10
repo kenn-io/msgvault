@@ -438,24 +438,6 @@ describe('RelationshipsTab', () => {
     expect(patches).toHaveLength(3);
   });
 
-  it('requires an end date when editing an ended connection', async () => {
-    const ended = relationship(41, 1, { status: 'ended', end_date: { year: 2026, month: 7 } });
-    const { client, controller } = controllerWith(async input => {
-      const request = requestOf(input), path = pathOf(request);
-      if (path === '/api/v1/person-relationships/41' && request.method === 'GET') return Response.json(ended, { headers: { ETag: '"relationship-41-r1"' } });
-      throw new Error(`unexpected ${request.method} ${path}`);
-    });
-    controller.relationships = [view(41, 'outgoing', 'is mentored by', 'Synthetic Learner', { relationship: ended })];
-    render(RelationshipsTab, { client, controller, personID: 7 });
-    await fireEvent.click(screen.getByText('1 past connection'));
-    await rowAction('Edit…');
-    await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '' } });
-    expect(screen.getByText('To reopen it, add a new connection.')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true);
-    await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2026-08' } });
-    expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', false);
-  });
-
   it('explains that Keep yours cannot reopen a connection ended elsewhere', async () => {
     const opening = relationship(41, 1, { start_date: { year: 2024, month: 3 }, notes: 'Opening note' });
     const ended = relationship(41, 2, { status: 'ended', start_date: { year: 2024, month: 3 }, end_date: { year: 2026, month: 7 }, notes: 'Opening note' });

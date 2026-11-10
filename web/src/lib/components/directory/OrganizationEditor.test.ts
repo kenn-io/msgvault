@@ -5,10 +5,11 @@ import { requestOf, pathOf, organization, employment, organizationProfile, envel
 import OrganizationEditor from './OrganizationEditor.svelte';
 
 describe('OrganizationEditor', () => {
-  it.each([['organization', false], ['profile', false], ['organization', true], ['profile', true]] as const)('keeps the other section on its opening version after a %s conflict (repeat: %s)', async (first, repeat) => {
+  it('saves a fresh draft after resolving conflicts in both sections', async () => {
     let revision = 1;
     let profile = organizationProfile();
     const tags: (string | null)[] = [];
+    const onDone = vi.fn();
     const { controller } = controllerWith(async input => {
       const request = requestOf(input);
       if (request.method === 'GET') return Response.json(profile, { headers: { ETag: `"organization-21-r${revision}"` } });
@@ -20,73 +21,79 @@ describe('OrganizationEditor', () => {
       else profile = { ...profile, organization: { ...profile.organization, revision }, names: body.names.map((item: { name: string }) => ({ ...profile.names[0], name: item.name })) };
       return Response.json(request.method === 'PATCH' ? profile.organization : profile, { headers: { ETag: `"organization-21-r${revision}"` } });
     });
-    render(OrganizationEditor, { controller, organization: organization() });
+    render(OrganizationEditor, { controller, organization: organization(), onDone });
     await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Draft alias' } });
     await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
     revision = 2;
-    if (first === 'organization') profile = { ...profile, organization: { ...profile.organization, revision }, names: [{ ...profile.names[0], name: 'External alias' }] };
-    else profile = { ...profile, organization: organization(21, 2, 'External name') };
+    profile = { ...profile, organization: { ...profile.organization, revision }, names: [{ ...profile.names[0], name: 'External alias' }] };
+    await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
+    await waitFor(() => expect(document.querySelector('.editor')?.getAttribute('aria-busy')).toBe('false'));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Revised name' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
+    await waitFor(() => expect(document.querySelector('.editor')?.getAttribute('aria-busy')).toBe('false'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+    expect(tags).toEqual(['"organization-21-r1"', '"organization-21-r2"', '"organization-21-r1"', '"organization-21-r3"', '"organization-21-r4"']);
+  });
+
+  it.each([
+    { first: 'organization', mode: 'clean', repeat: false }, { first: 'profile', mode: 'clean', repeat: false },
+    { first: 'organization', mode: 'edit elsewhere', repeat: false },
+    { first: 'organization', mode: 'conflict', repeat: false }, { first: 'profile', mode: 'conflict', repeat: false },
+    { first: 'organization', mode: 'conflict', repeat: true }, { first: 'profile', mode: 'conflict', repeat: true },
+  ] as const)('keeps the other draft after $first save: $mode, repeat $repeat', async ({ first, mode, repeat }) => {
+    let revision = 1, reads = 0;
+    let profile = organizationProfile();
+    const writes: Request[] = [];
+    const onDone = vi.fn();
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (request.method === 'GET') { reads++; return Response.json(profile, { headers: { ETag: `"organization-21-r${revision}"` } }); }
+      writes.push(request);
+      if (request.headers.get('If-Match') !== `"organization-21-r${revision}"`) return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+      const body = await request.clone().json();
+      revision++;
+      if (request.method === 'PATCH') profile = { ...profile, organization: organization(21, revision, body.name) };
+      else profile = { ...profile, organization: { ...profile.organization, revision }, names: body.names.map((item: { name: string }) => ({ ...profile.names[0], name: item.name })) };
+      return Response.json(request.method === 'PATCH' ? profile.organization : profile, { headers: { ETag: `"organization-21-r${revision}"` } });
+    });
+    render(OrganizationEditor, { controller, organization: organization(), onDone });
+    await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Draft alias' } });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
+    if (mode === 'conflict') {
+      revision = 2;
+      if (first === 'organization') profile = { ...profile, organization: { ...profile.organization, revision }, names: [{ ...profile.names[0], name: 'External alias' }] };
+      else profile = { ...profile, organization: organization(21, revision, 'External name') };
+    }
     const firstButton = first === 'organization' ? 'Save organization' : 'Save aliases and categories';
     await fireEvent.click(screen.getByRole('button', { name: firstButton }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
-    await waitFor(() => expect(tags).toHaveLength(2));
+    if (mode === 'conflict') await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
     await waitFor(() => expect(document.querySelector('.editor')?.getAttribute('aria-busy')).toBe('false'));
+    expect(screen.getByRole('textbox', { name: 'Organization aliases' })).toHaveProperty('value', 'Draft alias');
+    expect(screen.getByRole('textbox', { name: 'Organization name' })).toHaveProperty('value', 'Draft name');
+    if (mode === 'edit elsewhere') revision++;
     if (repeat) {
       if (first === 'organization') await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Revised name' } });
       else await fireEvent.input(screen.getByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Revised alias' } });
       await fireEvent.click(screen.getByRole('button', { name: firstButton }));
-      await waitFor(() => expect(tags).toHaveLength(3));
       await waitFor(() => expect(document.querySelector('.editor')?.getAttribute('aria-busy')).toBe('false'));
     }
     await fireEvent.click(screen.getByRole('button', { name: first === 'organization' ? 'Save aliases and categories' : 'Save organization' }));
-    expect(await screen.findByText('This organization changed since you opened it.')).toBeDefined();
-    expect(tags).toEqual(['"organization-21-r1"', '"organization-21-r2"', ...(repeat ? ['"organization-21-r3"'] : []), '"organization-21-r1"']);
-    expect(screen.getByRole('region', { name: 'Saved organization' }).textContent).toContain(first === 'organization' ? 'External alias' : 'External name');
-  });
-
-  it.each(['organization', 'profile', 'edit elsewhere'] as const)('keeps the other draft after saving %s and sends the version it made', async first => {
-    let revision = 1;
-    let reads = 0;
-    let profile = organizationProfile();
-    const writes: Request[] = [];
-    const onDone = vi.fn();
-    const etag = () => ({ ETag: `"organization-21-r${revision}"` });
-    const { controller } = controllerWith(async input => {
-      const request = requestOf(input);
-      if (request.method === 'GET') { reads++; return Response.json(profile, { headers: etag() }); }
-      writes.push(request);
-      if (request.headers.get('If-Match') !== etag().ETag) return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
-      revision++;
-      if (request.method === 'PATCH') profile = { ...profile, organization: organization(21, revision, 'Lumen Grove Ltd') };
-      else profile = { ...profile, names: [{ ...profile.names[0], name: 'LG' }] };
-      return Response.json(request.method === 'PATCH' ? profile.organization : profile, { headers: etag() });
-    });
-    render(OrganizationEditor, { controller, organization: organization(), onDone });
-    await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'LG' } });
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Lumen Grove Ltd' } });
-    await fireEvent.click(screen.getByRole('button', { name: first === 'profile' ? 'Save aliases and categories' : 'Save organization' }));
-    await waitFor(() => expect(writes).toHaveLength(1));
-    await waitFor(() => expect(document.querySelector('.editor')?.getAttribute('aria-busy')).toBe('false'));
-    expect(onDone).not.toHaveBeenCalled();
-    expect(screen.getByRole('textbox', { name: 'Organization aliases' })).toHaveProperty('value', 'LG');
-    expect(screen.getByRole('textbox', { name: 'Organization name' })).toHaveProperty('value', 'Lumen Grove Ltd');
-    if (first !== 'profile') await screen.findByRole('dialog', { name: 'Lumen Grove Ltd' });
-    if (first === 'edit elsewhere') revision++;
-    await fireEvent.click(screen.getByRole('button', { name: first === 'profile' ? 'Save organization' : 'Save aliases and categories' }));
-    await waitFor(() => expect(writes).toHaveLength(2));
-    expect(writes[1].headers.get('If-Match')).toBe('"organization-21-r2"');
-    if (first === 'edit elsewhere') {
+    if (mode !== 'clean') {
       expect(await screen.findByText('This organization changed since you opened it.')).toBeDefined();
       expect(onDone).not.toHaveBeenCalled();
+      if (mode === 'conflict') expect(screen.getByRole('region', { name: 'Saved organization' }).textContent).toContain(first === 'organization' ? 'External alias' : 'External name');
     } else {
       await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
       expect(reads).toBe(1);
-      expect(writes.map(request => request.method)).toEqual(first === 'organization' ? ['PATCH', 'PUT'] : ['PUT', 'PATCH']);
-      const patch = writes.find(request => request.method === 'PATCH')!;
-      const put = writes.find(request => request.method === 'PUT')!;
-      expect(await patch.json()).toMatchObject({ name: 'Lumen Grove Ltd' });
-      expect((await put.json()).names).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'LG' })]));
+      expect(await writes.find(request => request.method === 'PATCH')!.clone().json()).toMatchObject({ name: 'Draft name' });
+      expect((await writes.find(request => request.method === 'PUT')!.clone().json()).names).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'Draft alias' })]));
     }
+    expect(writes.map(request => request.headers.get('If-Match'))).toEqual(mode === 'conflict'
+      ? ['"organization-21-r1"', '"organization-21-r2"', ...(repeat ? ['"organization-21-r3"'] : []), '"organization-21-r1"']
+      : ['"organization-21-r1"', '"organization-21-r2"']);
   });
 
   it('can close while the organization is still loading', async () => {

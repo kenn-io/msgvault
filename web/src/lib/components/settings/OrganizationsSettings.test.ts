@@ -77,6 +77,4 @@ describe('OrganizationsSettings', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Edit Synthetic Org' }));
     expect(await screen.findByRole('dialog', { name: 'Synthetic Org' })).toBeDefined();
   });
-
-
 });

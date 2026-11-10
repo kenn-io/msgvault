@@ -242,7 +242,7 @@ it.each(['none', 'same name'] as const)('reconciles an inline organization creat
     expect(posts).toBe(1);
   });
 
-  it('keeps Add job disabled while the year-less date is invalid', async () => {
+  it('keeps Add job disabled while a date is invalid', async () => {
     const requests: Request[] = [];
     const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input); requests.push(request);

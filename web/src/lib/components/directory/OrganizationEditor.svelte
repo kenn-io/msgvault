@@ -95,7 +95,7 @@
 
   async function saveOrganization(): Promise<void> {
     if (saveDisabled || submitting) return;
-    const resolved = !!attempt.prepared && attempt.prepared.etag !== (heldOrganizationEtag ?? opened?.etag);
+    const resolved = !!attempt.prepared && attempt.prepared.etag !== opened?.etag;
     // The notice and Retry follow the latest save.
     profileAttempt.reset();
     let entity: Organization | undefined;
@@ -118,7 +118,7 @@
 
   async function saveProfile(): Promise<void> {
     if (!initialOrganization || !currentProfile || submitting) return;
-    const resolved = !!profileAttempt.prepared && profileAttempt.prepared.etag !== (heldProfileEtag ?? opened?.etag);
+    const resolved = !!profileAttempt.prepared && profileAttempt.prepared.etag !== opened?.etag;
     attempt.reset();
     let saved: Prepared<OrganizationProfile> | undefined;
     const ok = await profileAttempt.run(async current => {
