@@ -10,7 +10,7 @@ import (
 )
 
 // MessageArchiveMinAPISchemaVersion adds archive actions and incoming sender restrictions.
-const MessageArchiveMinAPISchemaVersion = "4.2.0"
+const MessageArchiveMinAPISchemaVersion = "4.3.0"
 
 // ArchiveMessage sets the desired state without retrying an uncertain write.
 func (c *Client) ArchiveMessage(ctx context.Context, id int64, change emailtags.ArchiveChange) (*emailtags.ArchiveResult, error) {
@@ -22,9 +22,13 @@ func (c *Client) ArchiveMessage(ctx context.Context, id int64, change emailtags.
 	if err != nil {
 		return nil, archiveResponseError(change, err)
 	}
+	defer func() { _ = resp.Body.Close() }()
 	return decodeMessageTagResponse[emailtags.ArchiveResult](resp, "archive", func(err error) error { return archiveResponseError(change, err) })
 }
 
 func archiveResponseError(change emailtags.ArchiveChange, cause error) error {
-	return messageWriteResponseError(!change.DryRun, "archive update outcome is unknown; read current tags or retry the desired state", cause)
+	if !change.DryRun {
+		return emailtags.Failure("remote_unknown", "archive update outcome is unknown; read current tags or retry the desired state", nil, cause)
+	}
+	return cause
 }

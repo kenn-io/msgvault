@@ -3,10 +3,13 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/emailtags"
 )
 
@@ -15,6 +18,27 @@ type cliArchiveBackend struct {
 	change     emailtags.ArchiveChange
 	compatible bool
 	failure    error
+}
+
+func TestArchiveCommandRefuses42Daemon(t *testing.T) {
+	posts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"4.2.0"}`))
+			return
+		}
+		posts++
+	}))
+	t.Cleanup(server.Close)
+	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "fixture", AllowInsecure: true})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+	command := newMessageArchiveCommand(true, client)
+	command.SetArgs([]string{"--message", "7"})
+	command.SetErr(&bytes.Buffer{})
+	require.ErrorContains(t, command.ExecuteContext(t.Context()), "upgrade the daemon")
+	assert.Zero(t, posts)
 }
 
 func (b *cliArchiveBackend) SupportsAPISchemaVersion(context.Context, string) (bool, error) {
@@ -28,18 +52,20 @@ func (b *cliArchiveBackend) ArchiveMessage(_ context.Context, id int64, change e
 	return &emailtags.ArchiveResult{MessageID: id, Archived: *change.Archived, Changed: true, DryRun: change.DryRun}, nil
 }
 func TestArchiveMessageCommands(t *testing.T) {
+	assertionsForTest := assert.New(t)
+	requirementsForTest := require.New(t)
 	for _, archived := range []bool{true, false} {
 		backend := &cliArchiveBackend{compatible: true}
 		command := newMessageArchiveCommand(archived, backend)
 		var output bytes.Buffer
 		command.SetOut(&output)
 		command.SetArgs([]string{"--message", "7", "--dry-run", "--json"})
-		require.NoError(t, command.ExecuteContext(t.Context()))
-		assert.Equal(t, int64(7), backend.id)
-		assert.Equal(t, archived, *backend.change.Archived)
-		assert.True(t, backend.change.DryRun)
-		assert.Contains(t, output.String(), `"dry_run":true`)
-		assert.True(t, agentDelegatedCommand(command.Name()))
+		requirementsForTest.NoError(command.ExecuteContext(t.Context()))
+		assertionsForTest.Equal(int64(7), backend.id)
+		assertionsForTest.Equal(archived, *backend.change.Archived)
+		assertionsForTest.True(backend.change.DryRun)
+		assertionsForTest.Contains(output.String(), `"dry_run":true`)
+		assertionsForTest.True(agentDelegatedCommand(command.Name()))
 	}
 	for _, tc := range []struct {
 		args       []string
@@ -57,8 +83,8 @@ func TestArchiveMessageCommands(t *testing.T) {
 		command.SetArgs(tc.args)
 		command.SetOut(&bytes.Buffer{})
 		command.SetErr(&bytes.Buffer{})
-		require.Error(t, command.ExecuteContext(t.Context()))
-		assert.Zero(t, backend.id)
+		requirementsForTest.Error(command.ExecuteContext(t.Context()))
+		assertionsForTest.Zero(backend.id)
 	}
 }
 

@@ -44,6 +44,7 @@ Export:
   export-messages    Export messages in a time window as provider-neutral JSONL
 
 People, organizations, and identity:
+  address              Find address suggestions with Google Places
   attribute-definition Manage portable attribute definitions
   carddav              Manage CardDAV connections, books, and conflicts
   collection           Manage named groups of accounts
@@ -125,6 +126,7 @@ Import local exports:
   import-synctech-sms Import SMS Backup & Restore exports
   import-telegram     Import a Telegram export
   import-whatsapp     Import WhatsApp messages from an Android or Apple database
+  import-x            Import X direct-message archives
 
 Drafts, calendar, and Kata (write to providers):
   archive       Archive one Gmail message

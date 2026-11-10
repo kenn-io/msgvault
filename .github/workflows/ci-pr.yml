@@ -17,12 +17,26 @@ jobs:
     cache-mode: read
     uses: kenn-io/msgvault/.github/workflows/ci.yml@main
 
+  released-commands:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: kenn-io/actions/release-commands@main
+        with:
+          files: |
+            README.md
+            scripts/install.sh
+            scripts/install.ps1
+          binaries: msgvault
+          asset: msgvault_*[0-9]_linux_amd64.tar.gz
+
   gate:
     name: CI gate
-    needs: run
+    needs: [run, released-commands]
     if: always()
     runs-on: namespace-profile-linux-1cpu
     steps:
       - name: Check CI result
-        if: needs.run.result != 'success'
+        if: needs.run.result != 'success' || needs.released-commands.result != 'success'
         run: exit 1

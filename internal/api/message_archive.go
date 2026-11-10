@@ -13,7 +13,7 @@ import (
 
 // MessageArchiveStore authorizes the exact source and sender before provider access.
 type MessageArchiveStore interface {
-	ArchiveMessage(context.Context, int64, emailtags.ArchiveChange, *agentgrant.Grant, func(context.Context) (func(), error)) (*emailtags.ArchiveResult, error)
+	ArchiveMessage(ctx context.Context, id int64, change emailtags.ArchiveChange, grant *agentgrant.Grant, acquire func(context.Context) (func(), error)) (*emailtags.ArchiveResult, error)
 }
 
 func (s *Server) registerMessageArchiveRoute(api huma.API) {

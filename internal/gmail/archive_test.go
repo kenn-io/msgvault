@@ -9,6 +9,8 @@ import (
 )
 
 func TestArchiveMessageDeltaPreviewAndRetry(t *testing.T) {
+	assertionsForTest := assert.New(t)
+	requirementsForTest := require.New(t)
 	writes := 0
 	c := newTagDeltaTestClient(t, []string{"INBOX", "UNREAD", "Label_keep"}, func(add, remove, tags []string) {
 		if slices.Contains(tags, "INBOX") {
@@ -21,17 +23,17 @@ func TestArchiveMessageDeltaPreviewAndRetry(t *testing.T) {
 		writes++
 	})
 	preview, err := c.ArchiveMessage(t.Context(), "message-1", true, true)
-	require.NoError(t, err)
-	assert.True(t, preview.DryRun)
-	assert.NotContains(t, preview.Tags, "INBOX")
-	assert.Zero(t, writes)
+	requirementsForTest.NoError(err)
+	assertionsForTest.True(preview.DryRun)
+	assertionsForTest.NotContains(preview.Tags, "INBOX")
+	assertionsForTest.Zero(writes)
 	for _, archived := range []bool{true, true, false, false} {
 		result, err := c.ArchiveMessage(t.Context(), "message-1", archived, false)
-		require.NoError(t, err)
-		assert.True(t, result.Verified)
-		assert.Equal(t, !archived, slices.Contains(result.Tags, "INBOX"))
-		assert.Contains(t, result.Tags, "UNREAD")
-		assert.Contains(t, result.Tags, "Label_keep")
+		requirementsForTest.NoError(err)
+		assertionsForTest.True(result.Verified)
+		assertionsForTest.Equal(!archived, slices.Contains(result.Tags, "INBOX"))
+		assertionsForTest.Contains(result.Tags, "UNREAD")
+		assertionsForTest.Contains(result.Tags, "Label_keep")
 	}
-	assert.Equal(t, 2, writes)
+	assertionsForTest.Equal(2, writes)
 }

@@ -20,24 +20,26 @@ func (b *archiveToolBackend) ArchiveMessage(_ context.Context, id int64, change 
 	return &emailtags.ArchiveResult{MessageID: id, Archived: *change.Archived, Changed: true, DryRun: change.DryRun}, b.failure
 }
 func TestArchiveMessageToolPolicyAndArguments(t *testing.T) {
+	assertionsForTest := assert.New(t)
+	requirementsForTest := require.New(t)
 	backend := &archiveToolBackend{}
 	opts := ServeOptions{Engine: &querytest.MockEngine{}, MessageArchive: backend}
-	assert.NotContains(t, toolsByName(t, rawListTools(t, opts, false)), ToolArchiveMessage)
-	require.Contains(t, toolsByName(t, rawListTools(t, opts, true)), ToolArchiveMessage)
+	assertionsForTest.NotContains(toolsByName(t, rawListTools(t, opts, false)), ToolArchiveMessage)
+	requirementsForTest.Contains(toolsByName(t, rawListTools(t, opts, true)), ToolArchiveMessage)
 	result := rawCallTool(t, opts, ToolArchiveMessage, map[string]any{"message_id": float64(7), "archived": false, "dry_run": true})
-	require.NotEqual(t, true, result["isError"])
-	require.NotNil(t, backend.change.Archived)
-	assert.False(t, *backend.change.Archived)
-	assert.True(t, backend.change.DryRun)
+	requirementsForTest.NotEqual(true, result["isError"])
+	requirementsForTest.NotNil(backend.change.Archived)
+	assertionsForTest.False(*backend.change.Archived)
+	assertionsForTest.True(backend.change.DryRun)
 	result = rawCallTool(t, opts, ToolArchiveMessage, map[string]any{"message_id": float64(7)})
-	assert.Equal(t, true, result["isError"])
+	assertionsForTest.Equal(true, result["isError"])
 	backend.failure = emailtags.Failure("archive_unsupported", "Gmail only", nil, nil)
 	result = rawCallTool(t, opts, ToolArchiveMessage, map[string]any{"message_id": float64(7), "archived": true})
-	assert.Equal(t, "archive_unsupported", toolStructuredContent(t, result)["error"])
+	assertionsForTest.Equal("archive_unsupported", toolStructuredContent(t, result)["error"])
 	opts.DelegatedOnly = true
 	opts.GrantPermissions = []string{"message.read"}
-	assert.NotContains(t, toolsByName(t, rawListTools(t, opts, true)), ToolArchiveMessage)
+	assertionsForTest.NotContains(toolsByName(t, rawListTools(t, opts, true)), ToolArchiveMessage)
 	opts.GrantPermissions = []string{"message.archive"}
-	require.Contains(t, toolsByName(t, rawListTools(t, opts, true)), ToolArchiveMessage)
-	assert.NotContains(t, toolsByName(t, rawListTools(t, opts, false)), ToolArchiveMessage)
+	requirementsForTest.Contains(toolsByName(t, rawListTools(t, opts, true)), ToolArchiveMessage)
+	assertionsForTest.NotContains(toolsByName(t, rawListTools(t, opts, false)), ToolArchiveMessage)
 }

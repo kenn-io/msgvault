@@ -3,9 +3,9 @@
  */
 
 export interface AgentTokenSourceView {
-  archive_senders: string[];
   id: number;
   identifier: string;
+  incoming_senders: string[];
   sender_keys: string[];
   type: string;
   [key: string]: unknown;

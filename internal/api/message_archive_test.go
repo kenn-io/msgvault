@@ -17,6 +17,7 @@ import (
 
 type archiveHTTPStore struct {
 	mockStore
+
 	calls int
 	fail  error
 }
@@ -32,7 +33,8 @@ func (s *archiveHTTPStore) ArchiveMessage(ctx context.Context, id int64, change 
 	s.calls++
 	return &emailtags.ArchiveResult{MessageID: id, Archived: *change.Archived, DryRun: change.DryRun}, s.fail
 }
-func TestArchiveMessageRouteValidationAndGate(t *testing.T) { //nolint:paralleltest // swaps the gate wait bound
+func TestArchiveMessageRouteValidationAndGate(t *testing.T) {
+	assertionsForTest := assert.New(t) //nolint:paralleltest // swaps the gate wait bound
 	old := operationGateWaitLimit
 	operationGateWaitLimit = 20 * time.Millisecond
 	t.Cleanup(func() { operationGateWaitLimit = old })
@@ -48,17 +50,19 @@ func TestArchiveMessageRouteValidationAndGate(t *testing.T) { //nolint:parallelt
 	}
 	for _, body := range []string{`{}`, `{"archived":null}`} {
 		response := call("7", body)
-		assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+		assertionsForTest.Equal(http.StatusBadRequest, response.Code, response.Body.String())
 	}
-	assert.Equal(t, http.StatusBadRequest, call("0", `{"archived":true}`).Code)
-	assert.Zero(t, st.calls)
+	assertionsForTest.Equal(http.StatusBadRequest, call("0", `{"archived":true}`).Code)
+	assertionsForTest.Zero(st.calls)
 	st.fail = emailtags.Failure("archive_unsupported", "synthetic failure", nil, nil)
 	response := call("7", `{"archived":false}`)
-	assert.Equal(t, http.StatusNotImplemented, response.Code, response.Body.String())
+	assertionsForTest.Equal(http.StatusNotImplemented, response.Code, response.Body.String())
 	st.fail = nil
 	release, ok := gate.BeginLabeledWorkContext(t.Context(), "sync")
 	require.True(t, ok)
 	defer release()
+	preview := call("7", `{"archived":true,"dry_run":true}`)
+	assertionsForTest.Equal(http.StatusOK, preview.Code, preview.Body.String())
 	write := call("7", `{"archived":true}`)
-	assert.Equal(t, http.StatusServiceUnavailable, write.Code, write.Body.String())
+	assertionsForTest.Equal(http.StatusServiceUnavailable, write.Code, write.Body.String())
 }

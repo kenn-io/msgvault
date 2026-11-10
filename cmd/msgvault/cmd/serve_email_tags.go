@@ -97,7 +97,7 @@ func (a *storeAPIAdapter) messageTags(ctx context.Context, id int64, change *ema
 	if err := a.store.SaveEmailTagsContext(evidenceCtx, target, result); err != nil {
 		return result, emailtags.Failure("remote_accepted_local_failed", "Provider tags were verified but could not be saved locally; sync the account", result, err)
 	}
-	if target.Provider == "gmail" || target.Provider == sourceTypeMSMail {
+	if target.Provider == sourceTypeGmail || target.Provider == sourceTypeMSMail {
 		a.releaseDraftSourceAndRefreshCache(ctx, source, execution)
 	}
 	return result, nil
@@ -134,7 +134,7 @@ func (a *storeAPIAdapter) providerMessageTags(ctx context.Context, source *store
 		return client.MessageTags(ctx, target.SourceMessageID, change)
 	}
 	scopes := []string{oauth.ScopeGmailModify, oauth.ScopeGmailFull}
-	if target.Provider == "gmail" && write {
+	if target.Provider == sourceTypeGmail && write {
 		if err := gmailDraftScopeGate(ctx, a.config, source, scopes); err != nil {
 			return nil, emailtags.Failure("insufficient_scope", "Gmail edits require gmail.modify; reauthorize with add-account --force", nil, err)
 		}

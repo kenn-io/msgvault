@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -170,6 +171,7 @@ func (e *SQLiteEngine) resolveMessageRecord(ctx context.Context, ref MessageRef,
 	}
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourceIDs)
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
+	conditions, args = e.appendIncomingScope(ctx, conditions, args)
 	rows, err := e.queryContext(ctx, `
 		SELECT m.id, COALESCE(m.source_message_id, ''), COALESCE(m.conversation_id, 0),
 		       COALESCE(conv.source_conversation_id, ''),
@@ -350,6 +352,7 @@ func (e *SQLiteEngine) ListThread(ctx context.Context, q ThreadQuery) (*ThreadPa
 
 	conditions, args := appendSourceFilter([]string{"m.conversation_id = ?", store.LiveMessagesWhere("m", false)}, []any{header.ConversationID}, "m.", nil, q.SourceIDs)
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
+	conditions, args = e.appendIncomingScope(ctx, conditions, args)
 	where := strings.Join(conditions, " AND ")
 	page := &ThreadPage{MessageRecord: *header, Offset: offset, Messages: []ThreadMessage{}}
 	if !q.All {
@@ -419,10 +422,11 @@ func (e *SQLiteEngine) ListThread(ctx context.Context, q ThreadQuery) (*ThreadPa
 }
 
 func (e *SQLiteEngine) resolveThreadRecord(ctx context.Context, threadID, account string, sourceIDs []int64) (*MessageRecord, error) {
+	incoming, incomingArgs := sourcescope.IncomingPredicate(ctx, "m.id", "m.source_id", e.dialect.UnicodeLowerExpression)
 	conditions := `conv.source_conversation_id = ? AND EXISTS (
-		SELECT 1 FROM messages m WHERE m.conversation_id = conv.id AND ` + store.LiveMessagesWhere("m", false) + `
+		SELECT 1 FROM messages m WHERE m.conversation_id = conv.id AND ` + store.LiveMessagesWhere("m", false) + ` AND ` + incoming + `
 	)`
-	args := []any{threadID}
+	args := append([]any{threadID}, incomingArgs...)
 	if account != "" {
 		conditions += " AND s.identifier = ?"
 		args = append(args, account)
@@ -480,7 +484,7 @@ func (e *SQLiteEngine) fillThreadParticipants(ctx context.Context, messages []Th
 		SELECT message_id, recipient_type, address, display_name
 		FROM (
 			SELECT mr.message_id, mr.recipient_type,
-			       COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), '') AS address,
+			       COALESCE(NULLIF(`+identityindex.SenderAddressExpr("mr", "p")+`, ''), NULLIF(p.phone_number, ''), '') AS address,
 			       %[1]s AS display_name, mr.id AS recipient_id
 			FROM message_recipients mr
 			JOIN participants p ON p.id = mr.participant_id

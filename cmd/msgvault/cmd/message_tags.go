@@ -105,8 +105,11 @@ func writeMessageTagJSON(cmd *cobra.Command, result any, err error, fallback *em
 		return encodeErr
 	}
 	_, writeErr := fmt.Fprintln(cmd.OutOrStdout(), string(data))
-	if writeErr != nil && writeContext != "" {
+	if writeErr != nil {
+		if writeContext == "" {
+			writeContext = "write JSON"
+		}
 		return fmt.Errorf("%s: %w", writeContext, writeErr)
 	}
-	return writeErr
+	return nil
 }

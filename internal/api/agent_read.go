@@ -138,15 +138,25 @@ func (s *Server) authorizeAgentRead(r *http.Request, operation string, grant *ag
 		return newAPIHTTPError(503, "source_scope_unavailable", "Source authorization is unavailable")
 	}
 	allowed := make([]int64, 0)
+	incoming := make(map[int64][]string)
 	account := r.URL.Query().Get("account")
 	accountGranted := false
 	for _, src := range sources {
-		if grant.MatchesSource(agentgrant.SourceRef{Type: src.SourceType, Identifier: src.Identifier}) {
+		ref := agentgrant.SourceRef{Type: src.SourceType, Identifier: src.Identifier}
+		if grant.MatchesSource(ref) {
 			allowed = append(allowed, src.ID)
+			for _, source := range grant.Sources {
+				if source.Type == ref.Type && source.Identifier == ref.Identifier {
+					incoming[src.ID] = source.IncomingSenderKeys
+					break
+				}
+			}
 			accountGranted = accountGranted || src.Identifier == account
 		}
 	}
-	*r = *r.WithContext(context.WithValue(r.Context(), agentReadScopeKey{}, agentReadScope{ids: allowed}))
+	ctx := sourcescope.WithSourceIDs(r.Context(), allowed)
+	ctx = sourcescope.WithIncomingSenders(ctx, incoming)
+	*r = *r.WithContext(context.WithValue(ctx, agentReadScopeKey{}, agentReadScope{ids: allowed}))
 	switch operation {
 	case "getCLIMessageThread":
 		if account != "" && !accountGranted {

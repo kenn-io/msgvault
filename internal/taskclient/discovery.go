@@ -75,7 +75,7 @@ func Discover(_ context.Context, options DiscoveryOptions) (*Client, error) {
 	}
 
 	apiKey := strings.TrimSpace(options.APIKey)
-	parsed, err := parseEndpoint(strings.TrimSpace(value.Endpoint))
+	parsed, err := parseEndpoint(strings.TrimSpace(value.Endpoint), false)
 	if err != nil {
 		return nil, err
 	}

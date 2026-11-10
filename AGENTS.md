@@ -28,6 +28,11 @@ provide different ways to use the same archive.
 - Pull requests must have a user-facing benefit or improve the developer
   experience, and the body must say which one.
 - Write issues and pull requests in English.
+- End every commit message with a `Co-authored-by:` trailer naming the agent
+  that wrote the change.
+- End the pull request description with a `Model used:` line naming the model,
+  such as `Model used: Opus 5.5` or `Model used: GPT-6.1 Sol`. Squash-merge
+  keeps only the description, so put the `Co-authored-by:` trailer there too.
 - Keep PR descriptions focused on the problem, resulting behavior, and review
   boundaries. Do not add `Validation`, `Test plan`, or equivalent command-run
   sections; CI carries routine check results.

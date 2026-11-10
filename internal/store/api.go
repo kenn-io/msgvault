@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/calevent"
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/senderauth"
 	"go.kenn.io/msgvault/internal/sourcescope"
@@ -23,29 +24,37 @@ import (
 // bare name. The store-backed API used to read only p.email_address,
 // which dropped phone-only and identifier-only participants (synctech
 // SMS/MMS, etc.). Standard SQL (CASE + ||) — works on SQLite and PG.
-const participantDisplaySQL = `COALESCE(
+var participantDisplaySQL = `COALESCE(
 		CASE
 			WHEN COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), '')) <> ''
-			  AND COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, '')) <> ''
+			  AND COALESCE(NULLIF(` + identityindex.SenderAddressExpr("mr", "p") + `, ''), NULLIF(p.phone_number, '')) <> ''
 			THEN COALESCE(NULLIF(TRIM(mr.display_name), ''), TRIM(p.display_name))
 				|| ' <'
-				|| COALESCE(NULLIF(p.email_address, ''), p.phone_number)
+				|| COALESCE(NULLIF(` + identityindex.SenderAddressExpr("mr", "p") + `, ''), p.phone_number)
 				|| '>'
 			ELSE COALESCE(
-				NULLIF(p.email_address, ''),
+				NULLIF(` + identityindex.SenderAddressExpr("mr", "p") + `, ''),
 				NULLIF(p.phone_number, ''),
 				NULLIF(TRIM(mr.display_name), ''),
 				NULLIF(TRIM(p.display_name), ''),
+				` + participantXUserIDSQL + `,
 				''
 			)
 		END,
 		''
 	)`
 
-const participantSenderEmailSQL = `COALESCE(NULLIF(p.email_address, ''), '')`
-const participantSenderNameSQL = `COALESCE(NULLIF(TRIM(COALESCE(NULLIF(mr.display_name, ''), p.display_name)), ''), '')`
+// Numeric X IDs are display fallbacks, never persisted as observed names.
+const participantXUserIDSQL = `(SELECT pi.identifier_value FROM participant_identifiers pi
+    WHERE pi.participant_id = p.id AND pi.identifier_type = 'x_user'
+    ORDER BY pi.identifier_value LIMIT 1)`
+
+var participantSenderEmailSQL = `COALESCE(NULLIF(` + identityindex.SenderAddressExpr("mr", "p") + `, ''), '')`
+
+const participantSenderNameSQL = `COALESCE(NULLIF(TRIM(COALESCE(NULLIF(mr.display_name, ''), p.display_name)), ''), ` + participantXUserIDSQL + `, '')`
 const participantSenderPhoneSQL = `COALESCE(NULLIF(p.phone_number, ''), '')`
-const participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
+
+var participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
 			` + participantSenderEmailSQL + ` as from_email,
 			` + participantSenderNameSQL + ` as from_name,
 			` + participantSenderPhoneSQL + ` as from_phone`
@@ -146,6 +155,9 @@ func (s *Store) ListMessagesContext(ctx context.Context, offset, limit int, sour
 	authorizedScope, authorizedArgs := sourceScopeClause(ctx, "m.source_id")
 	scope += authorizedScope
 	args = append(args, authorizedArgs...)
+	incoming, incomingArgs := s.incomingScopeClause(ctx, "m.id", "m.source_id")
+	scope += incoming
+	args = append(args, incomingArgs...)
 	// Get total count. Use the canonical live-messages predicate so
 	// dedup-hidden rows (deleted_at) are excluded alongside source-
 	// deleted rows.
@@ -248,6 +260,9 @@ func (s *Store) GetMessage(id int64) (*APIMessage, error) {
 // attachment queries carry the request_id for SQL logging and cancel together.
 func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, error) {
 	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
+	incoming, incomingArgs := s.incomingScopeClause(ctx, "m.id", "m.source_id")
+	scope += incoming
+	scopeArgs = append(scopeArgs, incomingArgs...)
 	query := fmt.Sprintf(`
 		SELECT
 			m.id,
@@ -433,11 +448,13 @@ func (s *Store) GetMessagesSummariesByIDsContext(ctx context.Context, ids []int6
 		return nil, nil
 	}
 	placeholders := make([]string, len(ids))
-	args := make([]any, len(ids))
+	args := make([]any, 0, len(ids))
 	for i, id := range ids {
 		placeholders[i] = "?"
-		args[i] = id
+		args = append(args, id)
 	}
+	scope, scopeArgs := s.incomingScopeClause(ctx, "m.id", "m.source_id")
+	args = append(args, scopeArgs...)
 	q := fmt.Sprintf(`
 		SELECT
 			m.id,
@@ -461,8 +478,8 @@ func (s *Store) GetMessagesSummariesByIDsContext(ctx context.Context, ids []int6
 		)
 		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
 		LEFT JOIN conversations c ON c.id = m.conversation_id
-		WHERE m.id IN (%s) AND %s
-	`, participantSummarySenderSQL, strings.Join(placeholders, ","), LiveMessagesWhere("m", true))
+		WHERE m.id IN (%s) AND %s%s
+	`, participantSummarySenderSQL, strings.Join(placeholders, ","), LiveMessagesWhere("m", true), scope)
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("get message summaries: %w", err)
@@ -588,6 +605,9 @@ func (s *Store) buildMessageSearchSQL(ctx context.Context, q *search.Query, ftsA
 
 	plan := s.buildMessageSearchSQLWithVisibility(ctx, q, ftsAvailable, visibility)
 	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
+	incoming, incomingArgs := s.incomingScopeClause(ctx, "m.id", "m.source_id")
+	scope += incoming
+	scopeArgs = append(scopeArgs, incomingArgs...)
 	plan.where += scope
 	plan.args = append(plan.args, scopeArgs...)
 	return plan

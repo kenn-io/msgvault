@@ -20,6 +20,7 @@ import (
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/sourceops"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -329,6 +330,15 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 	grant *agentgrant.Grant,
 	inferReplySender bool,
 ) (draftReplyTarget, string, []string, error) {
+	if grant != nil && parentID != nil {
+		var release func()
+		var err error
+		ctx, release, err = a.store.BeginReadSnapshotContext(ctx)
+		if err != nil {
+			return draftReplyTarget{}, "", nil, draftReplyNotPermitted(errors.New("parent source is not available"))
+		}
+		defer release()
+	}
 	var parentSource *store.Source
 	if parentID != nil {
 		var err error
@@ -341,6 +351,20 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 		}
 		if err := authorizeDelegatedDraftSource(grant, parentSource); err != nil {
 			return draftReplyTarget{}, "", nil, err
+		}
+		if grant != nil {
+			var senders []string
+			for _, source := range grant.Sources {
+				if source.Type == parentSource.SourceType && source.Identifier == parentSource.Identifier {
+					senders = source.IncomingSenderKeys
+					break
+				}
+			}
+			ctx = sourcescope.WithIncomingSenders(ctx, map[int64][]string{parentSource.ID: senders})
+			allowed, err := a.store.IncomingMessageAllowed(ctx, *parentID)
+			if err != nil || !allowed {
+				return draftReplyTarget{}, "", nil, draftReplyNotPermitted(errors.New("parent source is not available"))
+			}
 		}
 	}
 
@@ -356,7 +380,7 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 			}
 			return draftReplyTarget{}, "", nil, draftReplyError("invalid_source", fmt.Errorf("resolve destination source: %w", err))
 		}
-	} else if parentSource != nil && (parentSource.SourceType == "imap" || parentSource.SourceType == "gmail") {
+	} else if parentSource != nil && (parentSource.SourceType == "imap" || parentSource.SourceType == sourceTypeGmail) {
 		source = parentSource
 	} else if parentSource != nil {
 		return draftReplyTarget{}, "", nil, draftReplyError("invalid_source", errors.New("an offline parent requires --account or --source-id for a live IMAP destination"))
@@ -420,7 +444,7 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 		if imapConfig.Identifier() != source.Identifier {
 			return draftReplyTarget{}, "", nil, draftReplyError("invalid_source", fmt.Errorf("source %d sync config identifier does not match the source", source.ID))
 		}
-	case "gmail":
+	case sourceTypeGmail:
 		if parentSource == nil {
 			return draftReplyTarget{}, "", nil, draftReplyError("draft_disabled", errors.New("draft-compose requires an IMAP source"))
 		}
@@ -479,7 +503,7 @@ func (a *storeAPIAdapter) runCLIReplyDraft(
 	if err != nil {
 		return draftReplyError("invalid_reply_metadata", err)
 	}
-	if target.source.SourceType == "gmail" {
+	if target.source.SourceType == sourceTypeGmail {
 		if len(reply.Parsed.From) != 1 || len(reply.Parsed.To)+len(reply.Parsed.Cc)+len(reply.Parsed.Bcc) == 0 {
 			return draftReplyError("invalid_reply_metadata", errors.New("composed reply needs one From and at least one recipient"))
 		}

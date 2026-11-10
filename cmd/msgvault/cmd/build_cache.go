@@ -2151,8 +2151,8 @@ func (s *cacheSourceSnapshot) tables(through int64, afterMessageIDs map[string]i
 		// CSV view that lacks the column and the export fails on Windows.
 		{tableMessages, "SELECT " + messageColumns + " FROM messages WHERE sent_at IS NOT NULL", messageTypes, identityColumns("source_message_id", "rfc822_message_id", "list_id")},
 		{"source_merge_archive_only_messages", "SELECT message_id FROM source_merge_archive_only_messages", "types={'message_id': 'BIGINT'}", nil},
-		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name, " + recipientEnvelopeColumn + ", " + recipientEnvelopePresence + " FROM message_recipients" + childFilter("message_recipients"),
-			"types={'message_id': 'BIGINT', 'participant_id': 'BIGINT', 'recipient_type': 'VARCHAR', 'display_name': 'VARCHAR', 'email_address': 'VARCHAR', 'envelope_present': 'BOOLEAN'}",
+		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name, " + recipientEnvelopeColumn + ", " + recipientEnvelopePresence + ", is_relayed FROM message_recipients" + childFilter("message_recipients"),
+			"types={'message_id': 'BIGINT', 'participant_id': 'BIGINT', 'recipient_type': 'VARCHAR', 'display_name': 'VARCHAR', 'email_address': 'VARCHAR', 'envelope_present': 'BOOLEAN', 'is_relayed': 'BOOLEAN'}",
 			identityColumns("recipient_type", "email_address")},
 		{"message_labels", "SELECT message_id, label_id FROM message_labels" + childFilter("message_labels"),
 			"types={'message_id': 'BIGINT', 'label_id': 'BIGINT'}", nil},

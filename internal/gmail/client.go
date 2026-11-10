@@ -50,6 +50,11 @@ type Client struct {
 // ClientOption configures a Client.
 type ClientOption func(*Client)
 
+// WithHTTPClient sets the HTTP client used for Gmail requests.
+func WithHTTPClient(client *http.Client) ClientOption {
+	return func(c *Client) { c.httpClient = client }
+}
+
 // WithLogger sets the logger for the client.
 func WithLogger(logger *slog.Logger) ClientOption {
 	return func(c *Client) {

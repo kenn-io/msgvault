@@ -57,8 +57,8 @@ type SourceRef struct {
 	Type       string
 	Identifier string
 	SenderKeys []string
-	// ArchiveSenderKeys limits incoming From envelopes; empty permits all senders.
-	ArchiveSenderKeys []string
+	// IncomingSenderKeys limits incoming From envelopes; empty permits all senders.
+	IncomingSenderKeys []string
 }
 
 type Grant struct {
@@ -103,16 +103,6 @@ func (g Grant) AllowsSender(p Permission, src SourceRef, senderKey string) bool 
 	return ok && slices.Contains(source.SenderKeys, senderKey)
 }
 
-// AllowsArchiveSender checks archive authority independently of outgoing senders.
-// An empty key is allowed only when the matching source has no sender restriction.
-func (g Grant) AllowsArchiveSender(src SourceRef, senderKey string) bool {
-	if !g.HasPermission(PermissionMessageArchive) {
-		return false
-	}
-	source, ok := g.matchingSource(src)
-	return ok && (len(source.ArchiveSenderKeys) == 0 || (senderKey != "" && slices.Contains(source.ArchiveSenderKeys, senderKey)))
-}
-
 func cloneGrant(g Grant) Grant {
 	clone := Grant{
 		ID:          g.ID,
@@ -124,11 +114,11 @@ func cloneGrant(g Grant) Grant {
 	}
 	for i, source := range g.Sources {
 		clone.Sources[i] = SourceRef{
-			ID:                source.ID,
-			Type:              source.Type,
-			Identifier:        source.Identifier,
-			SenderKeys:        append([]string(nil), source.SenderKeys...),
-			ArchiveSenderKeys: append([]string(nil), source.ArchiveSenderKeys...),
+			ID:                 source.ID,
+			Type:               source.Type,
+			Identifier:         source.Identifier,
+			SenderKeys:         append([]string(nil), source.SenderKeys...),
+			IncomingSenderKeys: append([]string(nil), source.IncomingSenderKeys...),
 		}
 	}
 	return clone

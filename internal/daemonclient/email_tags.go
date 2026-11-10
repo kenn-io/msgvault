@@ -29,6 +29,7 @@ func (c *Client) MessageTags(ctx context.Context, id int64, change *emailtags.Me
 	if err != nil {
 		return nil, messageTagResponseError(change, err)
 	}
+	defer func() { _ = resp.Body.Close() }()
 	result, err := decodeMessageTagResponse[emailtags.MessageTagResult](resp, "message tags", func(err error) error { return messageTagResponseError(change, err) })
 	if failure, ok := errors.AsType[*emailtags.MessageTagError](err); ok {
 		return failure.Result, err
@@ -39,7 +40,6 @@ func (c *Client) MessageTags(ctx context.Context, id int64, change *emailtags.Me
 // decodeMessageTagResponse handles the shared tag/archive failure envelope.
 // The request layer bounds error bodies; only unstructured failures are uncertain.
 func decodeMessageTagResponse[T any](resp *http.Response, operation string, responseError func(error) error) (*T, error) {
-	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, responseError(fmt.Errorf("read %s response: %w", operation, err))
@@ -59,12 +59,8 @@ func decodeMessageTagResponse[T any](resp *http.Response, operation string, resp
 }
 
 func messageTagResponseError(change *emailtags.MessageTagChange, cause error) error {
-	return messageWriteResponseError(change != nil && !change.DryRun, "tag update outcome is unknown; read current tags before retrying", cause)
-}
-
-func messageWriteResponseError(write bool, message string, cause error) error {
-	if write {
-		return emailtags.Failure("remote_unknown", message, nil, cause)
+	if change != nil && !change.DryRun {
+		return emailtags.Failure("remote_unknown", "tag update outcome is unknown; read current tags before retrying", nil, cause)
 	}
 	return cause
 }

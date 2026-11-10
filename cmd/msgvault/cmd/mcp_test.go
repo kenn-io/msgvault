@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,8 +33,8 @@ func TestMCPToolSummaryFlagsExist(t *testing.T) {
 }
 
 func TestMCPCommandUsesDaemonInsteadOfOpeningLocalDatabase(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	requirementsForTest := require.New(t)
+	assertionsForTest := assert.New(t)
 
 	testCtx := withStoreResolverConfig(t, &config.Config{
 		HomeDir: t.TempDir(),
@@ -63,14 +64,14 @@ func TestMCPCommandUsesDaemonInsteadOfOpeningLocalDatabase(t *testing.T) {
 	cmd.SetContext(ctx)
 	err := cmd.RunE(cmd, nil)
 
-	require.Error(err, "canceled MCP serve should return")
-	require.ErrorIs(err, context.Canceled, "error should preserve context cancellation: %v", err)
-	assert.NotContains(err.Error(), "open database", "MCP command must not open SQLite directly")
+	requirementsForTest.Error(err, "canceled MCP serve should return")
+	requirementsForTest.ErrorIs(err, context.Canceled, "error should preserve context cancellation: %v", err)
+	assertionsForTest.NotContains(err.Error(), "open database", "MCP command must not open SQLite directly")
 }
 
 func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	assertionsForTest := assert.New(t)
+	requirementsForTest := require.New(t)
 
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/health" {
@@ -111,17 +112,17 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	savedConfirmSensitiveDrafts := mcpConfirmSensitiveDrafts
 	savedServeHTTP := serveMCPHTTPWithOptions
 	allowWritesFlag := mcpCmd.Flags().Lookup("http-allow-writes")
-	require.NotNil(allowWritesFlag, "mcp command must define --http-allow-writes")
-	require.NoError(allowWritesFlag.Value.Set("true"))
+	requirementsForTest.NotNil(allowWritesFlag, "mcp command must define --http-allow-writes")
+	requirementsForTest.NoError(allowWritesFlag.Value.Set("true"))
 	allowCalendarWritesFlag := mcpCmd.Flags().Lookup("allow-calendar-writes")
-	require.NotNil(allowCalendarWritesFlag, "mcp command must define --allow-calendar-writes")
-	require.NoError(allowCalendarWritesFlag.Value.Set("true"))
-	require.NoError(mcpCmd.Flags().Set("confirm-sensitive-drafts", "true"))
+	requirementsForTest.NotNil(allowCalendarWritesFlag, "mcp command must define --allow-calendar-writes")
+	requirementsForTest.NoError(allowCalendarWritesFlag.Value.Set("true"))
+	requirementsForTest.NoError(mcpCmd.Flags().Set("confirm-sensitive-drafts", "true"))
 	mcpHTTPAddr = "0.0.0.0:8081"
 	mcpHTTPAllowInsecure = true
 	loopWritesFlag := mcpCmd.Flags().Lookup("allow-loop-writes")
-	require.NotNil(loopWritesFlag)
-	require.NoError(loopWritesFlag.Value.Set("true"))
+	requirementsForTest.NotNil(loopWritesFlag)
+	requirementsForTest.NoError(loopWritesFlag.Value.Set("true"))
 	mcpAllowSourceWrites = false
 	mcpAllowProfileWrites = true
 	mcpAllowIdentityDecisions = true
@@ -129,8 +130,8 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	mcpAllowPersonMerges = true
 	mcpAllowCardDAVWrites = true
 	t.Cleanup(func() {
-		assert.NoError(allowWritesFlag.Value.Set("false"))
-		assert.NoError(allowCalendarWritesFlag.Value.Set("false"))
+		assertionsForTest.NoError(allowWritesFlag.Value.Set("false"))
+		assertionsForTest.NoError(allowCalendarWritesFlag.Value.Set("false"))
 		mcpHTTPAddr = savedHTTPAddr
 		mcpHTTPAllowInsecure = savedAllowInsecure
 		mcpAllowProfileWrites = savedAllowProfileWrites
@@ -156,16 +157,16 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	mcpCmd.SetContext(testCtx)
 	err := mcpCmd.RunE(mcpCmd, nil)
 
-	require.ErrorIs(err, wantErr)
-	assert.ElementsMatch([]mcpserver.OperationFamily{mcpserver.OperationFamilyRecords, mcpserver.OperationFamilyLoops}, gotServeOpts.OperationWriteFamilies)
-	assert.True(gotServeOpts.AllowProfileWrites)
-	assert.True(gotServeOpts.AllowIdentityDecisions)
-	assert.True(gotServeOpts.AllowIdentityScoring)
-	assert.True(gotServeOpts.AllowPersonMerges)
-	assert.True(gotServeOpts.AllowCardDAVWrites)
-	assert.True(gotServeOpts.AllowCalendarWrites)
-	assert.True(gotServeOpts.ConfirmSensitiveDrafts)
-	assert.Equal(mcpserver.HTTPOptions{
+	requirementsForTest.ErrorIs(err, wantErr)
+	assertionsForTest.ElementsMatch([]mcpserver.OperationFamily{mcpserver.OperationFamilyRecords, mcpserver.OperationFamilyLoops}, gotServeOpts.OperationWriteFamilies)
+	assertionsForTest.True(gotServeOpts.AllowProfileWrites)
+	assertionsForTest.True(gotServeOpts.AllowIdentityDecisions)
+	assertionsForTest.True(gotServeOpts.AllowIdentityScoring)
+	assertionsForTest.True(gotServeOpts.AllowPersonMerges)
+	assertionsForTest.True(gotServeOpts.AllowCardDAVWrites)
+	assertionsForTest.True(gotServeOpts.AllowCalendarWrites)
+	assertionsForTest.True(gotServeOpts.ConfirmSensitiveDrafts)
+	assertionsForTest.Equal(mcpserver.HTTPOptions{
 		Addr:               "0.0.0.0:8081",
 		DiscoveryDirectory: filepath.Join(home, "mcp"),
 		BackendURL:         daemon.URL,
@@ -175,9 +176,9 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 }
 
 func TestDaemonMCPHybridSearcherPreservesPhaseTimings(t *testing.T) {
-	assert := assert.New(t)
+	assertionsForTest := assert.New(t)
 	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal("/api/v1/search", r.URL.Path)
+		assertionsForTest.Equal("/api/v1/search", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"query":"semantic terms",
@@ -197,9 +198,9 @@ func TestDaemonMCPHybridSearcherPreservesPhaseTimings(t *testing.T) {
 		Query: "semantic terms", Mode: "hybrid", Limit: 10,
 	})
 	require.NoError(t, err)
-	assert.Equal(int64(12), result.TookMS)
-	assert.Equal("vec1_ivf_opq", result.Accelerator)
-	assert.Equal(mcpserver.HybridSearchTimings{
+	assertionsForTest.Equal(int64(12), result.TookMS)
+	assertionsForTest.Equal("vec1_ivf_opq", result.Accelerator)
+	assertionsForTest.Equal(mcpserver.HybridSearchTimings{
 		QueryEmbeddingMS: 2,
 		RetrievalMS:      7,
 		HydrationMS:      3,
@@ -237,7 +238,7 @@ func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert := assert.New(t)
+			assertionsForTest := assert.New(t)
 			var healthRequests atomic.Int32
 			var discoveryRequests atomic.Int32
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -250,7 +251,7 @@ func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 					http.NotFound(w, r)
 					return
 				}
-				assert.Equal("/api/v1/health", r.URL.Path, "startup must not request archive statistics")
+				assertionsForTest.Equal("/api/v1/health", r.URL.Path, "startup must not request archive statistics")
 				healthRequests.Add(1)
 				if tt.health == "" {
 					http.Error(w, `{"error":"temporarily_unavailable"}`, http.StatusServiceUnavailable)
@@ -261,19 +262,19 @@ func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 			})
 
 			opts := daemonMCPServeOptions(t.Context(), client, invocationFromContext(t.Context()))
-			assert.Equal(tt.wantText, opts.HybridSearcher != nil, "semantic search")
-			assert.Equal(tt.wantText, opts.SimilarSearcher != nil, "similar messages")
-			assert.Equal(tt.wantVisual, opts.VisualSearcher != nil, "visual search")
-			assert.Equal(tt.wantEmbeddingStatus, opts.EmbeddingStatus != nil, "embedding status")
-			assert.Equal(int32(1), healthRequests.Load(), "reuse the schema probe")
-			assert.Equal(int32(1), discoveryRequests.Load(), "probe optional operations once")
+			assertionsForTest.Equal(tt.wantText, opts.HybridSearcher != nil, "semantic search")
+			assertionsForTest.Equal(tt.wantText, opts.SimilarSearcher != nil, "similar messages")
+			assertionsForTest.Equal(tt.wantVisual, opts.VisualSearcher != nil, "visual search")
+			assertionsForTest.Equal(tt.wantEmbeddingStatus, opts.EmbeddingStatus != nil, "embedding status")
+			assertionsForTest.Equal(int32(1), healthRequests.Load(), "reuse the schema probe")
+			assertionsForTest.Equal(int32(1), discoveryRequests.Load(), "probe optional operations once")
 		})
 	}
 }
 
 func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	assertionsForTest := assert.New(t)
+	requirementsForTest := require.New(t)
 	testCtx := withStoreResolverConfig(t, &config.Config{
 		Data: config.DataConfig{DataDir: t.TempDir()},
 	})
@@ -305,16 +306,16 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 		Mode:  "hybrid",
 	})
 	var coded interface{ APIErrorCode() string }
-	require.ErrorAs(err, &coded)
-	assert.Equal("vector_initializing", coded.APIErrorCode())
+	requirementsForTest.ErrorAs(err, &coded)
+	assertionsForTest.Equal("vector_initializing", coded.APIErrorCode())
 	path := <-requests
-	assert.Equal("/api/v1/mcp/capabilities", path, "startup probes optional operations")
+	assertionsForTest.Equal("/api/v1/mcp/capabilities", path, "startup probes optional operations")
 	path = <-requests
-	assert.Equal("/api/v1/health", path, "startup reads the daemon schema")
+	assertionsForTest.Equal("/api/v1/health", path, "startup reads the daemon schema")
 	path = <-requests
-	assert.Equal("/api/v1/media/search/status", path, "capability detection checks Docbank separately")
+	assertionsForTest.Equal("/api/v1/media/search/status", path, "capability detection checks Docbank separately")
 	path = <-requests
-	assert.Equal("/api/v1/search", path, "vector readiness belongs to the request")
+	assertionsForTest.Equal("/api/v1/search", path, "vector readiness belongs to the request")
 }
 
 func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
@@ -356,7 +357,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		{name: "identity review and scoring predecessor", schemaVersion: "2.35.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true},
 		{name: "identity review and scoring schema", schemaVersion: "3.0.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
 		{name: "native message tags schema", schemaVersion: "3.15.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true},
-		{name: "archive predecessor", schemaVersion: "4.1.0", wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
+		{name: "archive predecessor", schemaVersion: "4.2.0", wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
 		{name: "current schema", schemaVersion: api.APISchemaVersion, wantMessageArchive: true, wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
 		{name: "tags predecessor 3.14.0", schemaVersion: "3.14.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
 		{name: "before contact schema", schemaVersion: "3.19.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true},
@@ -368,7 +369,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert := assert.New(t)
+			assertionsForTest := assert.New(t)
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/v1/health":
@@ -384,26 +385,26 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 
 			opts := daemonMCPServeOptions(t.Context(), client, invocationFromContext(t.Context()))
 			if tt.wantPeople {
-				assert.NotNil(opts.PeopleBackend)
+				assertionsForTest.NotNil(opts.PeopleBackend)
 			} else {
-				assert.Nil(opts.PeopleBackend)
+				assertionsForTest.Nil(opts.PeopleBackend)
 			}
 			if tt.wantSavedViews {
-				assert.NotNil(opts.SavedViews, "Saved View tools need the daemon run endpoint")
+				assertionsForTest.NotNil(opts.SavedViews, "Saved View tools need the daemon run endpoint")
 			} else {
-				assert.Nil(opts.SavedViews, "an older daemon cannot run Saved Views")
+				assertionsForTest.Nil(opts.SavedViews, "an older daemon cannot run Saved Views")
 			}
-			assert.Equal(tt.wantDirectory, opts.DirectoryBackend != nil)
-			assert.Equal(tt.wantChatDiscovery, opts.ChatDiscoveryBackend != nil)
-			assert.Equal(tt.wantMeetings, opts.Meetings != nil)
-			assert.Equal(tt.wantAgenda, opts.PersonAgendaBackend != nil)
-			assert.Equal(tt.wantContacts, opts.ContactRoutesBackend != nil)
-			assert.Equal(tt.wantArchiveSQL, opts.ArchiveSQLQuerier != nil)
-			assert.Equal(tt.wantReview, opts.IdentityReview != nil)
-			assert.Equal(tt.wantCardDAV, opts.PersonCardDAV != nil)
-			assert.Equal(tt.wantScoring, opts.IdentityScoring != nil)
-			assert.Equal(tt.wantMessageTags, opts.MessageTags != nil)
-			assert.Equal(tt.wantMessageArchive, opts.MessageArchive != nil)
+			assertionsForTest.Equal(tt.wantDirectory, opts.DirectoryBackend != nil)
+			assertionsForTest.Equal(tt.wantChatDiscovery, opts.ChatDiscoveryBackend != nil)
+			assertionsForTest.Equal(tt.wantMeetings, opts.Meetings != nil)
+			assertionsForTest.Equal(tt.wantAgenda, opts.PersonAgendaBackend != nil)
+			assertionsForTest.Equal(tt.wantContacts, opts.ContactRoutesBackend != nil)
+			assertionsForTest.Equal(tt.wantArchiveSQL, opts.ArchiveSQLQuerier != nil)
+			assertionsForTest.Equal(tt.wantReview, opts.IdentityReview != nil)
+			assertionsForTest.Equal(tt.wantCardDAV, opts.PersonCardDAV != nil)
+			assertionsForTest.Equal(tt.wantScoring, opts.IdentityScoring != nil)
+			assertionsForTest.Equal(tt.wantMessageTags, opts.MessageTags != nil)
+			assertionsForTest.Equal(tt.wantMessageArchive, opts.MessageArchive != nil)
 		})
 	}
 }
@@ -411,7 +412,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 func TestDaemonMCPServeOptionsWarnsWhenPeopleCapabilityProbeFails(t *testing.T) {
 	logger := testLoggerValue()
 
-	assert := assert.New(t)
+	assertionsForTest := assert.New(t)
 	testCtx := withStoreResolverConfig(t, &config.Config{
 		Data: config.DataConfig{DataDir: t.TempDir()},
 	})
@@ -433,17 +434,17 @@ func TestDaemonMCPServeOptionsWarnsWhenPeopleCapabilityProbeFails(t *testing.T) 
 	})
 
 	opts := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
-	assert.Nil(opts.PeopleBackend)
-	assert.Nil(opts.DirectoryBackend)
-	assert.Nil(opts.ChatDiscoveryBackend)
-	assert.Nil(opts.ArchiveSQLQuerier)
-	assert.Contains(logs.String(), "people tools disabled")
+	assertionsForTest.Nil(opts.PeopleBackend)
+	assertionsForTest.Nil(opts.DirectoryBackend)
+	assertionsForTest.Nil(opts.ChatDiscoveryBackend)
+	assertionsForTest.Nil(opts.ArchiveSQLQuerier)
+	assertionsForTest.Contains(logs.String(), "people tools disabled")
 }
 
 func TestDaemonMCPServeOptionsUsesOneCapabilityProbe(t *testing.T) {
 	logger := testLoggerValue()
 
-	assert := assert.New(t)
+	assertionsForTest := assert.New(t)
 	testCtx := withStoreResolverConfig(t, &config.Config{
 		Data: config.DataConfig{DataDir: t.TempDir()},
 	})
@@ -473,18 +474,18 @@ func TestDaemonMCPServeOptionsUsesOneCapabilityProbe(t *testing.T) {
 	})
 
 	opts := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
-	assert.NotNil(opts.PeopleBackend)
-	assert.NotNil(opts.DirectoryBackend)
-	assert.NotNil(opts.SavedViews)
-	assert.NotNil(opts.HybridSearcher)
-	assert.NotNil(opts.SimilarSearcher)
-	assert.NotNil(opts.VisualSearcher)
-	assert.Equal(int32(1), healthRequests.Load())
-	assert.Empty(logs.String())
+	assertionsForTest.NotNil(opts.PeopleBackend)
+	assertionsForTest.NotNil(opts.DirectoryBackend)
+	assertionsForTest.NotNil(opts.SavedViews)
+	assertionsForTest.NotNil(opts.HybridSearcher)
+	assertionsForTest.NotNil(opts.SimilarSearcher)
+	assertionsForTest.NotNil(opts.VisualSearcher)
+	assertionsForTest.Equal(int32(1), healthRequests.Load())
+	assertionsForTest.Empty(logs.String())
 }
 
 func TestDaemonMCPServeOptionsSavesDeletionManifestsThroughDaemon(t *testing.T) {
-	require := require.New(t)
+	requirementsForTest := require.New(t)
 
 	testCtx := withStoreResolverConfig(t, &config.Config{
 		Data: config.DataConfig{DataDir: t.TempDir()},
@@ -508,11 +509,11 @@ func TestDaemonMCPServeOptionsSavesDeletionManifestsThroughDaemon(t *testing.T) 
 	})
 
 	opts := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
-	require.NotNil(opts.ManifestSaver, "manifest saver")
+	requirementsForTest.NotNil(opts.ManifestSaver, "manifest saver")
 
 	manifest := deletion.NewManifest("mcp test", []string{"gmail-001"})
 	err := opts.ManifestSaver.SaveManifest(testCtx, manifest)
-	require.NoError(err)
+	requirementsForTest.NoError(err)
 	assert.Equal(t, int32(1), manifestRequests.Load(), "manifest requests")
 }
 
@@ -604,39 +605,39 @@ func TestDaemonMCPDocbankCapability(t *testing.T) {
 		{"3.12.0", true, false}, {"3.13.0", false, false}, {"3.13.0", true, true},
 	} {
 		t.Run(tc.version+"/"+strconv.FormatBool(tc.configured), func(t *testing.T) {
-			assert := assert.New(t)
+			assertionsForTest := assert.New(t)
 			ctx := withStoreResolverConfig(t, &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}})
 			var probes atomic.Int32
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/v1/health":
-					assert.NoError(json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": tc.version}))
+					assertionsForTest.NoError(json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": tc.version}))
 				case "/api/v1/media/search/status":
 					probes.Add(1)
-					assert.NoError(json.NewEncoder(w).Encode(map[string]any{"configured": tc.configured}))
+					assertionsForTest.NoError(json.NewEncoder(w).Encode(map[string]any{"configured": tc.configured}))
 				default:
 					http.NotFound(w, r)
 				}
 			})
 			opts := daemonMCPServeOptions(ctx, client, invocationFromContext(ctx))
-			assert.True(opts.KataLookup)
-			assert.Equal(tc.want, opts.KataDocbank)
+			assertionsForTest.True(opts.KataLookup)
+			assertionsForTest.Equal(tc.want, opts.KataDocbank)
 			if tc.version == "3.12.0" {
-				assert.Zero(probes.Load())
+				assertionsForTest.Zero(probes.Load())
 			} else {
-				assert.Equal(int32(1), probes.Load())
+				assertionsForTest.Equal(int32(1), probes.Load())
 			}
 		})
 	}
 }
 
 func TestDaemonMCPDocbankProbeFailureIsLogged(t *testing.T) {
-	assert := assert.New(t)
+	assertionsForTest := assert.New(t)
 	ctx := withStoreResolverConfig(t, &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}})
 	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/health":
-			assert.NoError(json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "3.13.0"}))
+			assertionsForTest.NoError(json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "3.13.0"}))
 		case "/api/v1/media/search/status":
 			http.Error(w, "unavailable", http.StatusServiceUnavailable)
 		default:
@@ -647,7 +648,38 @@ func TestDaemonMCPDocbankProbeFailureIsLogged(t *testing.T) {
 	state := *invocationFromContext(ctx)
 	state.logger = slog.New(slog.NewTextHandler(&logs, nil))
 	opts := daemonMCPServeOptions(ctx, client, &state)
-	assert.False(opts.KataDocbank)
-	assert.Contains(logs.String(), "Kata transcript citations hidden because the Docbank status probe failed")
-	assert.Contains(logs.String(), "503")
+	assertionsForTest.False(opts.KataDocbank)
+	assertionsForTest.Contains(logs.String(), "Kata transcript citations hidden because the Docbank status probe failed")
+	assertionsForTest.Contains(logs.String(), "503")
+}
+
+func TestDelegatedMCPArchiveCapability(t *testing.T) {
+	for _, version := range []string{"4.2.0", "4.3.0"} {
+		t.Run(version, func(t *testing.T) {
+			assertionsForTest := assert.New(t)
+			requirementsForTest := require.New(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/v1/health":
+					assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": version}))
+				case "/api/v1/agent-tokens/self":
+					assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"id": "fixture", "label": "agent", "permissions": []string{"message.archive"}, "sources": []any{map[string]any{"id": 1, "type": "gmail", "identifier": "owner@example.test"}}, "created_at": time.Now().UTC()}))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AgentToken: "fixture", AllowInsecure: true})
+			requirementsForTest.NoError(err)
+			t.Cleanup(func() { _ = client.Close() })
+			opts, err := delegatedMCPServeOptions(t.Context(), client)
+			requirementsForTest.NoError(err)
+			if version == "4.2.0" {
+				assertionsForTest.Nil(opts.MessageArchive)
+			} else {
+				assertionsForTest.NotNil(opts.MessageArchive)
+			}
+		})
+	}
 }

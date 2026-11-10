@@ -21,7 +21,7 @@ type MessageTagClient interface {
 
 // MessageArchiveClient is the optional capability for changing INBOX membership.
 type MessageArchiveClient interface {
-	ArchiveMessage(context.Context, string, bool, bool) (*emailtags.MessageTagResult, error)
+	ArchiveMessage(ctx context.Context, id string, archived, dryRun bool) (*emailtags.MessageTagResult, error)
 }
 
 func (c *Client) readTagIDs(ctx context.Context, id string) ([]string, error) {

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/mime"
 )
 
@@ -261,7 +262,7 @@ func (s *Store) FindDuplicatesByRFC822ID(ctx context.Context, sourceIDs ...int64
 // can't drift apart; GetDuplicateGroupMessagesBatch prepends
 // m.rfc822_message_id (needed to key its result map) since it has no per-call
 // rfc822ID to bind.
-const duplicateGroupMessageColumns = `m.id, m.source_id, s.source_type, s.identifier,
+var duplicateGroupMessageColumns = `m.id, m.source_id, s.source_type, s.identifier,
 		       m.source_message_id,
 		       COALESCE(m.subject, ''), m.sent_at, m.archived_at,
 		       COALESCE(m.rfc822_message_id, ''), COALESCE(CAST(m.metadata AS TEXT), ''),
@@ -284,7 +285,7 @@ const duplicateGroupMessageColumns = `m.id, m.source_id, s.source_type, s.identi
 		             AND (l.source_label_id = 'SENT' OR UPPER(l.name) = 'SENT')
 		       ) THEN 1 ELSE 0 END AS has_sent_label,
 		       COALESCE((
-		           SELECT p_from.email_address
+		           SELECT ` + identityindex.SenderAddressExpr("mr_from", "p_from") + `
 		           FROM message_recipients mr_from
 		           JOIN participants p_from
 		             ON p_from.id = mr_from.participant_id
@@ -418,7 +419,7 @@ func (s *Store) GetDuplicateGroupMessagesBatchContext(
 		return result, nil
 	}
 
-	const selectCols = "\n\t\tm.rfc822_message_id, " + duplicateGroupMessageColumns
+	selectCols := "\n\t\tm.rfc822_message_id, " + duplicateGroupMessageColumns
 
 	// queryInChunks binds prefixArgs BEFORE the chunked %s placeholder, so
 	// the source_id filter (prefixArgs) must appear textually before the
@@ -613,7 +614,7 @@ func (s *Store) GetAllRawMIMECandidates(
 		             AND (l.source_label_id = 'SENT' OR UPPER(l.name) = 'SENT')
 		       ) THEN 1 ELSE 0 END AS has_sent_label,
 		       COALESCE((
-		           SELECT p_from.email_address
+		           SELECT ` + identityindex.SenderAddressExpr("mr_from", "p_from") + `
 		           FROM message_recipients mr_from
 		           JOIN participants p_from
 		             ON p_from.id = mr_from.participant_id
@@ -931,6 +932,9 @@ func (s *Store) CountActiveMessagesContext(ctx context.Context, sourceIDs ...int
 		}
 		query += " AND source_id IN (" + strings.Join(placeholders, ",") + ")"
 	}
+	scope, scopeArgs := s.incomingScopeClause(ctx, "id", "source_id")
+	query += scope
+	args = append(args, scopeArgs...)
 	var count int64
 	err := s.db.QueryRowContext(ctx, query, args...).Scan(&count)
 	return count, err
@@ -960,6 +964,9 @@ func (s *Store) CountSourceDeletedMessagesContext(
 		}
 		query += " AND source_id IN (" + strings.Join(placeholders, ",") + ")"
 	}
+	scope, scopeArgs := s.incomingScopeClause(ctx, "id", "source_id")
+	query += scope
+	args = append(args, scopeArgs...)
 	var count int64
 	err := s.db.QueryRowContext(ctx, query, args...).Scan(&count)
 	return count, err

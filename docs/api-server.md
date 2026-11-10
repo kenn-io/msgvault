@@ -161,11 +161,13 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **4.2.0**.
+it is separate from the binary release version. The current schema is **4.3.0**.
 
-Schema 4.2.0 adds [message archiving](#message-archiving) and incoming sender restrictions for delegated archive grants.
+Schema 4.3.0 adds [message archiving](#message-archiving) and incoming sender restrictions for delegated grants.
 
 Schema 4.1.0 adds `labels` on merge-list and merge-detail responses: recorded names and saved contact points from the merge snapshot, reconciled current participant addresses, known participant IDs, and the count of distinct addresses added to the surviving profile. Addresses and current or recorded contact points carry an opaque `identity_key` for comparison across representations, services, and scopes. Current contact points include `service_label`, the registered name of their `service_slug`. History and Split use those labels. Summary labels are decoded from the stored snapshot during list and detail reads; opening the disclosure makes a separate request for its raw snapshot.
+
+Schema 4.2.0 adds semantic/hybrid attachment retrieval and per-list mode, coverage and degradation fields to [media search](#media-transcript-search).
 
 Schema 3.51.0 adds attachment processing outcomes and worker errors.
 
@@ -416,7 +418,7 @@ returns `409 person_uid_ambiguous`.
 ### Message archiving
 
 `POST /api/v1/messages/{id}/archive` sets one Gmail message's archive state.
-Requires API schema 4.2.0 and owner authorization or a `message.archive` grant
+Requires API schema 4.3.0 and owner authorization or a `message.archive` grant
 for the message's source. Other providers return 501 `archive_unsupported`.
 
 ```json
@@ -435,12 +437,12 @@ labels. Unrelated labels and read/unread state are preserved. Source ownership
 and the daemon work gate follow the [native tag write rules](#native-email-tags).
 For 409 `sync_active`, retry after the active sync finishes.
 
-Owners may issue `archive_senders`, a map from selected source IDs to nonempty
-incoming mailbox lists, alongside `message.archive`. Each source view exposes
-its `archive_senders`. Omission allows any sender on that source. Addresses are
+Owners may issue `incoming_senders`, a map from selected source IDs to nonempty
+incoming mailbox lists, alongside a read, archive, or draft-create permission. Each source view exposes
+its `incoming_senders`. Omission allows any sender on that source. Addresses are
 canonicalized; invalid or duplicate addresses, empty/null lists, unselected
-sources, and restrictions without `message.archive` are rejected. These lists
-do not affect outgoing `sender_selections` or account-scoped read permissions.
+sources, and restrictions without a relevant permission are rejected. These lists
+limit reads, reply parents, and archive writes independently of outgoing `sender_selections`.
 Every recorded literal From address must be allowed. Missing From envelopes,
 including legacy NULL envelopes, fail closed for sender-restricted grants.
 This literal From filter does not authenticate the sender. Disallowed, missing,
@@ -1985,7 +1987,7 @@ Successful responses set:
 
 `GET /api/v1/media/search?q=quarterly%20numbers&mode=lexical&limit=20` finds spoken words and returns every matching live message occurrence. Results include message, conversation and attachment IDs, optional `filename`, `containing_title` and `occurred_at`, supplied or generated origin, an excerpt, and timing when Docbank recorded it. Optional `person_id` selects durable person bindings; `participant_id` selects the current identity cluster used by Explore's Person filter. They can't be combined. Repeated `direction` values select `from_person`, `to_person` or `group` relations and require either ID.
 
-The recording search covers the complete allowed population, with a ceiling of 4,096 distinct versions and source selectors. Oversized scopes return `media_search_scope_limit` before contacting Docbank; set `person_id` or `participant_id` to narrow the scope. A recording with more than 64 distinct current supplied transcript input IDs is left out of the search. Its message occurrences count in `unavailable_occurrences`, and `partial=true`. Repeated occurrences of the same input count once. Semantic and hybrid modes return `media_search_mode_unavailable`. An unconfigured or unreachable integration returns `media_search_unavailable`.
+The recording search covers the complete allowed population, with a ceiling of 4,096 distinct versions and source selectors. Oversized scopes return `media_search_scope_limit` before contacting Docbank; set `person_id` or `participant_id` to narrow the scope. A recording with more than 64 distinct current supplied transcript input IDs is left out of the search. Its message occurrences count in `unavailable_occurrences`, and `partial=true`. Repeated occurrences of the same input count once. Recordings support lexical mode only; semantic and hybrid return `recordings_error=media_search_mode_unavailable` when attachment search succeeds. An unconfigured or unreachable integration returns `media_search_unavailable`.
 
 The response has Docbank `coverage`, local `pending_occurrences` and `unavailable_occurrences`, `attribution_unavailable`, `partial`, and `truncated`. Pending counts require durable worker work; unmapped audio counts as unavailable. Coverage state `unknown` stays unknown. `partial` also reports local gaps and withheld excerpts. An empty result with complete coverage and `partial=false` means the query found no transcript match. The output limit applies after shared recordings expand into messages; `truncated` reports remaining occurrences or Docbank's retrieval limit.
 
@@ -1994,6 +1996,21 @@ Selected transcript completeness must be `complete`, `partial`, or `degraded_pro
 Recording search requires Docbank's source-selected search contract: `media_sources` selectors, a `media_source_selection` report marker and query-independent `media_selections`, including empty results. The daemon sends each source's current supplied-input set; generated transcripts stay eligible while supplied work is queued. Docbank selects each source's current transcript before ranking and returns build and exact source associations with each plain excerpt; source selections carry origin and supplied-input identity. Pending or missing transcripts leave coverage partial while ready matches remain searchable. Older servers and remote lookup failures report `media_search_unavailable` for recordings. Supplied text requires `supplied_input_id` to match the occurrence's saved delivery; mismatches count as unavailable attribution even when the query has no hits. The daemon validates supplied transcript revisions before search and rechecks visibility, recording identity, supplied text and person scope afterward.
 
 Schema 3.27.0 adds optional `attachments` with `results`, `truncated`, and optional `error` containing `error` and `message`. Each result has `message_id`, `conversation_id`, `attachment_id`, `filename`, `containing_title`, optional `occurred_at`, and a plain `excerpt`. It searches delivered mirror versions using text Docbank has extracted. More than 4096 such files are searched in batches of 4,096. Results from each batch are interleaved by their position within that batch, so order across batches is approximate. A Docbank result limit or occurrence limit sets `truncated`, meaning more may match. Docbank may include filename-only candidates in its limit even when all extracted-text matches fit. Visibility and Person scope apply to both lists. The limit applies independently to each list. An empty attachment list without an error means no match in extracted text and says nothing about files whose text Docbank hasn't extracted.
+
+Schema 4.2.0 (newer `main`, after v0.23.0) accepts `mode=semantic` and
+`mode=hybrid` for attachment text. `attachments` adds `requested_mode`,
+`actual_mode`, `coverage`, `partial`, and `degradations`. `actual_mode` is
+`unavailable` when no search ran or remote retrieval failed. Coverage describes
+mirrored versions delivered to Docbank and is present even without hits.
+The configured `attachment_search_profile` names an existing Docbank processing
+profile for semantic/hybrid; lexical keeps the built-in `supplied-transcript` profile. Retrieval never schedules processing. Without it, hybrid uses lexical
+with `semantic_unconfigured` degradation, and semantic fails with
+`media_search_mode_unavailable`. Fenced searches submit configured profiles and
+report configuration, consent and runtime failures. Empty scopes contact no service.
+Docbank-reported hybrid downgrade is preserved. Downgrade, degradations,
+or nonlexical coverage other than `complete` set attachment `partial=true`.
+Lexical `unknown` coverage alone does not. Each list reports its own partial
+status; `truncated` remains separate. Nonlexical requests skip recording retrieval. Files are searched in batches of 4,096.
 
 The attachment field is omitted when attachment mirroring is off. Attachment failures leave recording results intact and set `attachments.error`. Docbank-rejected recording queries return HTTP 400 with `invalid_media_search`. Other recording failures, including oversized scopes and remote timeouts, leave attachment results intact and set `recordings_error` with `error` and `message`. The request fails when both searches fail or its context ends. Recording-only responses retain their existing error behavior.
 

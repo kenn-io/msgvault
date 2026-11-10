@@ -2,11 +2,13 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"slices"
 
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/emailtags"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -24,28 +26,31 @@ func (a *storeAPIAdapter) ArchiveMessage(ctx context.Context, id int64, change e
 			if !grant.Allows(agentgrant.PermissionMessageArchive, ref) {
 				return emailtags.Failure("message_not_found", "Message not found", nil, nil)
 			}
-			if !grant.AllowsArchiveSender(ref, "") {
-				senders, err := a.store.GetMessageRecipientsContext(ctx, id, "from")
-				if err != nil {
-					return err
-				}
-				if len(senders) == 0 {
-					return emailtags.Failure("message_not_found", "Message not found", nil, nil)
-				}
-				for _, sender := range senders {
-					_, key, _ := parseStoredMailbox(sender.EnvelopeAddress)
-					if !grant.AllowsArchiveSender(ref, key) {
-						return emailtags.Failure("message_not_found", "Message not found", nil, nil)
-					}
+			var senders []string
+			for _, selected := range grant.Sources {
+				if selected.Type == ref.Type && selected.Identifier == ref.Identifier {
+					senders = selected.IncomingSenderKeys
+					break
 				}
 			}
+			ctx = sourcescope.WithIncomingSenders(ctx, map[int64][]string{source.ID: senders})
+			allowed, err := a.store.IncomingMessageAllowed(ctx, id)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				return emailtags.Failure("message_not_found", "Message not found", nil, nil)
+			}
 		}
-		if source.SourceType != "gmail" && source.SourceType != "" {
+		if source.SourceType != sourceTypeGmail && source.SourceType != "" {
 			return emailtags.Failure("archive_unsupported", "Archiving is supported only for Gmail messages", nil, nil)
 		}
 		return nil
 	}
 	result, err := a.messageTags(ctx, id, nil, "", acquireWrite, &change, authorize)
+	if failure, ok := errors.AsType[*emailtags.MessageTagError](err); grant != nil && ok && failure.Code == "message_not_found" {
+		return nil, emailtags.Failure("message_not_found", "Message not found", nil, nil)
+	}
 	if result == nil {
 		return nil, err
 	}

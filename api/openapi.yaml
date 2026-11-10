@@ -299,15 +299,15 @@ components:
     AgentTokenIssueRequest:
       additionalProperties: false
       properties:
-        archive_senders:
+        expires_at:
+          format: date-time
+          type: string
+        incoming_senders:
           additionalProperties:
             items:
               type: string
             type: array
           type: object
-        expires_at:
-          format: date-time
-          type: string
         label:
           type: string
         permissions:
@@ -377,15 +377,15 @@ components:
     AgentTokenSourceView:
       additionalProperties: true
       properties:
-        archive_senders:
-          items:
-            type: string
-          type: array
         id:
           format: int64
           type: integer
         identifier:
           type: string
+        incoming_senders:
+          items:
+            type: string
+          type: array
         sender_keys:
           items:
             type: string
@@ -397,7 +397,7 @@ components:
         - type
         - identifier
         - sender_keys
-        - archive_senders
+        - incoming_senders
       type: object
     AgentTokenView:
       additionalProperties: true
@@ -7457,8 +7457,21 @@ components:
     MediaAttachmentSearch:
       additionalProperties: true
       properties:
+        actual_mode:
+          type: string
+        coverage:
+          $ref: "#/components/schemas/SearchCoverage"
+          description: Coverage of delivered mirrored versions, excluding files awaiting upload
+        degradations:
+          items:
+            type: string
+          type: array
         error:
           $ref: "#/components/schemas/ErrorResponse"
+        partial:
+          type: boolean
+        requested_mode:
+          type: string
         results:
           items:
             $ref: "#/components/schemas/MediaAttachmentResult"
@@ -7466,6 +7479,11 @@ components:
         truncated:
           type: boolean
       required:
+        - requested_mode
+        - actual_mode
+        - coverage
+        - partial
+        - degradations
         - results
         - truncated
       type: object
@@ -17146,7 +17164,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 4.2.0
+  version: 4.3.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -24587,7 +24605,7 @@ paths:
           required: true
           schema:
             type: string
-        - description: Lexical mode; semantic and hybrid are unavailable
+        - description: "Attachment mode: lexical (default), semantic, or hybrid; recordings support lexical only"
           in: query
           name: mode
           schema:

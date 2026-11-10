@@ -11,8 +11,8 @@ import (
 )
 
 type messageArchiveBackend interface {
-	SupportsAPISchemaVersion(context.Context, string) (bool, error)
-	ArchiveMessage(context.Context, int64, emailtags.ArchiveChange) (*emailtags.ArchiveResult, error)
+	SupportsAPISchemaVersion(ctx context.Context, version string) (bool, error)
+	ArchiveMessage(ctx context.Context, id int64, change emailtags.ArchiveChange) (*emailtags.ArchiveResult, error)
 }
 
 func newMessageArchiveCommand(archived bool, backend messageArchiveBackend) *cobra.Command {
@@ -55,7 +55,10 @@ func newMessageArchiveCommand(archived bool, backend messageArchiveBackend) *cob
 				return err
 			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Message %d: archived=%t changed=%t dry_run=%t\n", id, result.Archived, result.Changed, result.DryRun)
-			return err
+			if err != nil {
+				return fmt.Errorf("write archive result: %w", err)
+			}
+			return nil
 		},
 	}
 	cmd.Flags().Int64Var(&id, "message", 0, "Archived message ID")

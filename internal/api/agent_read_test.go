@@ -907,3 +907,69 @@ func TestAgentMessageReferenceScope(t *testing.T) {
 		assertions.Equal(scope.id, response.Messages[0].ID)
 	}
 }
+
+func TestAgentIncomingSenderScopesReads(t *testing.T) {
+	requirementsForTest := require.New(t)
+	st := testutil.NewTestStore(t)
+	src, allowed, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", "allowed", "allowed code", "")
+	requirementsForTest.NoError(err)
+	_, denied, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", "denied", "private code", "")
+	requirementsForTest.NoError(err)
+	for _, entry := range []struct {
+		id      int64
+		address string
+	}{{allowed, "codes@example.test"}, {denied, "other@example.test"}} {
+		participant, err := st.EnsureParticipant(entry.address, "", "example.test")
+		requirementsForTest.NoError(err)
+		requirementsForTest.NoError(st.ReplaceMessageRecipients(entry.id, "from", []int64{participant}, nil))
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = ? WHERE message_id = ? AND recipient_type = 'from'"), entry.address, entry.id)
+		requirementsForTest.NoError(err)
+		if entry.id == allowed {
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE participants SET email_address = ? WHERE id = ?"), "changed@example.test", participant)
+			requirementsForTest.NoError(err)
+		}
+	}
+	requirementsForTest.NoError(st.UpsertAttachment(t.Context(), denied, "private.bin", "application/octet-stream", "private.bin", strings.Repeat("b", 64), 1))
+	var deniedAttachment int64
+	requirementsForTest.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT id FROM attachments WHERE message_id = ?"), denied).Scan(&deniedAttachment))
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner-key", AgentAccess: true}}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	defer srv.agentGrants.Close()
+	body := fmt.Sprintf(`{"label":"reader","permissions":["search.read","message.read","stats.read","attachment.read"],"source_ids":[%d],"incoming_senders":{"%d":["codes@example.test"]}}`, src.ID, src.ID)
+	issue := httptest.NewRequestWithContext(t.Context(), http.MethodPost, agentTokensPath, strings.NewReader(body))
+	issue.Header.Set("X-Api-Key", "owner-key")
+	issue.Header.Set("Content-Type", "application/json")
+	issued := httptest.NewRecorder()
+	srv.Router().ServeHTTP(issued, issue)
+	requirementsForTest.Equal(http.StatusCreated, issued.Code, issued.Body.String())
+	var grant agentTokenIssueResponse
+	requirementsForTest.NoError(json.Unmarshal(issued.Body.Bytes(), &grant))
+	token := grant.Secret
+	for _, tc := range []struct {
+		path               string
+		status             int
+		contains, excludes string
+	}{
+		{"/api/v1/messages", http.StatusOK, "allowed code", "private code"},
+		{"/api/v1/search?q=code", http.StatusOK, "allowed code", "private code"},
+		{"/api/v1/search/fast?q=code", http.StatusOK, "allowed code", "private code"},
+		{"/api/v1/messages/filter", http.StatusOK, "allowed code", "private code"},
+		{"/api/v1/stats/total", http.StatusOK, `"message_count":1`, `"message_count":2`},
+		{fmt.Sprintf("/api/v1/cli/message/thread?id=%d", allowed), http.StatusOK, "allowed code", "private code"},
+		{fmt.Sprintf("/api/v1/cli/message/thread?id=%d", denied), http.StatusNotFound, "", "private code"},
+		{fmt.Sprintf("/api/v1/attachments/%d", deniedAttachment), http.StatusNotFound, "", "private.bin"},
+		{"/api/v1/attachments/" + strings.Repeat("b", 64) + "/content", http.StatusNotFound, "", "private.bin"},
+		{fmt.Sprintf("/api/v1/messages/%d", allowed), http.StatusOK, "allowed code", "private code"},
+		{fmt.Sprintf("/api/v1/messages/%d", denied), http.StatusNotFound, "", "private code"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, tc.path, nil)
+			r.Header.Set(apiprotocol.AgentTokenHeader, token)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, r)
+			require.Equal(t, tc.status, w.Code, w.Body.String())
+			assert.Contains(t, w.Body.String(), tc.contains)
+			assert.NotContains(t, w.Body.String(), tc.excludes)
+		})
+	}
+}

@@ -10,7 +10,7 @@ import (
 const ToolArchiveMessage = "archive_message"
 
 type MessageArchiveBackend interface {
-	ArchiveMessage(context.Context, int64, emailtags.ArchiveChange) (*emailtags.ArchiveResult, error)
+	ArchiveMessage(ctx context.Context, id int64, change emailtags.ArchiveChange) (*emailtags.ArchiveResult, error)
 }
 
 func messageArchiveDefinition() toolDefinition {

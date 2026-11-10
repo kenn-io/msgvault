@@ -409,8 +409,9 @@ import (
 // Docbank owns document processing.
 // 4.1.0 adds recorded names, saved contacts, and reconciled addresses to merge-list and detail responses,
 // registered service labels to current contact points, and identity keys to observations.
-// 4.2.0 adds Gmail archive state writes with source- and sender-scoped message.archive grants.
-const APISchemaVersion = "4.2.0"
+// 4.2.0 adds attachment retrieval modes, coverage, and degradations to media search.
+// 4.3.0 adds Gmail archive state writes and incoming sender restrictions.
+const APISchemaVersion = "4.3.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1031,6 +1032,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		{"ContactCandidate", "display_name"},
 		{"MediaAttachmentResult", "filename"},
 		{"MediaAttachmentResult", "containing_title"},
+		{"MediaAttachmentResult", "excerpt"},
 		{"MessagingRoute", "merged_into_chat_id"},
 		{"MessagingRoute", "network"},
 		{"MessagingRoute", "network_label"},
