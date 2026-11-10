@@ -687,6 +687,10 @@ type ClientInterface interface {
 	GetMessage(ctx context.Context, options *GetMessageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMessageResponse, error)
 	GetMessageWithResponse(ctx context.Context, options *GetMessageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMessageResp, error)
 
+	// ArchiveMessage Set a Gmail message's archive state
+	ArchiveMessage(ctx context.Context, options *ArchiveMessageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ArchiveMessageResponse, error)
+	ArchiveMessageWithResponse(ctx context.Context, options *ArchiveMessageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ArchiveMessageResp, error)
+
 	// GetMessageInlinePart Get an inline MIME part
 	GetMessageInlinePart(ctx context.Context, options *GetMessageInlinePartRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMessageInlinePartResponse, error)
 	GetMessageInlinePartWithResponse(ctx context.Context, options *GetMessageInlinePartRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMessageInlinePartResp, error)
@@ -11346,6 +11350,70 @@ func (c *Client) GetMessage(ctx context.Context, options *GetMessageRequestOptio
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/messages/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ArchiveMessage Set a Gmail message's archive state
+func (c *Client) ArchiveMessage(ctx context.Context, options *ArchiveMessageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ArchiveMessageResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/messages/{id}/archive",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ArchiveMessageResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ArchiveMessageErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ArchiveMessageErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ArchiveMessageResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ArchiveMessageResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/messages/{id}/archive")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

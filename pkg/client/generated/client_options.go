@@ -6278,6 +6278,59 @@ func (o *GetMessageRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// ArchiveMessageRequestOptions is the options needed to make a request to ArchiveMessage.
+type ArchiveMessageRequestOptions struct {
+	PathParams *ArchiveMessagePath
+	Body       *ArchiveMessageBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ArchiveMessageRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ArchiveMessageRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *ArchiveMessageRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ArchiveMessageRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ArchiveMessageRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GetMessageInlinePartRequestOptions is the options needed to make a request to GetMessageInlinePart.
 type GetMessageInlinePartRequestOptions struct {
 	PathParams *GetMessageInlinePartPath

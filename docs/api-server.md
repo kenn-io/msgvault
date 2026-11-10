@@ -409,6 +409,42 @@ retired UID that still aliases a person, or the UID of a CardDAV card mapped to
 that person. If the same CardDAV UID is mapped to different people, the API
 returns `409 person_uid_ambiguous`.
 
+### Message archiving
+
+`POST /api/v1/messages/{id}/archive` sets one Gmail message's archive state.
+Requires API schema 4.1.0 and owner authorization or a `message.archive` grant
+for the message's source. Other providers return 501 `archive_unsupported`.
+
+```json
+{"archived":true,"dry_run":false}
+```
+
+`archived` is required: `true` removes Gmail's `INBOX` label and `false` restores
+it. `dry_run` defaults to `false`; a preview changes neither Gmail nor the local
+archive. The result contains `message_id`, `source_id`, `archived`, `changed`,
+`dry_run`, and `verified`. Previews report the projected state and are unverified.
+
+A write reads current labels, modifies only `INBOX` when needed, reads the labels
+back, then saves the verified snapshot locally. A retry that already matches
+returns `changed: false` without modifying Gmail and still reconciles local
+labels. Unrelated labels and read/unread state are preserved. Source ownership
+and the daemon work gate follow the [native tag write rules](#native-email-tags).
+
+Owners may issue `archive_senders`, a map from selected source IDs to nonempty
+incoming mailbox lists, alongside `message.archive`. Each source view exposes
+its `archive_senders`. Omission allows any sender on that source. Addresses are
+canonicalized; invalid or duplicate addresses, empty/null lists, unselected
+sources, and restrictions without `message.archive` are rejected. These lists
+do not affect outgoing `sender_selections` or account-scoped read permissions.
+Every recorded literal From address must be allowed. Missing From envelopes,
+including legacy NULL envelopes, fail closed for sender-restricted grants.
+
+Gmail writes require `gmail.modify` or `mail.google.com`. Missing consent returns
+403 `insufficient_scope`; reauthorize with `msgvault add-account <account> --force`.
+Readback failures return `remote_unknown`, mismatches return
+`verification_failed`, and failed local reconciliation returns
+`remote_accepted_local_failed`, with the last observed label result when available.
+
 ### Native email tags
 
 Read or update one archived message's live Gmail labels, IMAP keywords, or

@@ -19,6 +19,11 @@ type MessageTagClient interface {
 	Close() error
 }
 
+// MessageArchiveClient is the optional capability for changing INBOX membership.
+type MessageArchiveClient interface {
+	ArchiveMessage(context.Context, string, bool, bool) (*emailtags.MessageTagResult, error)
+}
+
 func (c *Client) readTagIDs(ctx context.Context, id string) ([]string, error) {
 	path := fmt.Sprintf("/users/%s/messages/%s?format=metadata&fields=id,labelIds", url.PathEscape(c.userID), url.PathEscape(id))
 	data, err := c.request(ctx, OpMessagesGet, http.MethodGet, path, nil)
@@ -73,6 +78,19 @@ func (c *Client) MessageTags(ctx context.Context, id string, input *emailtags.Me
 	if input != nil {
 		change = *input
 	}
+	result, err := c.userTagResult(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range append(slices.Clone(change.Add), change.Remove...) {
+		if !slices.ContainsFunc(result.AvailableTags, func(tag emailtags.MessageTag) bool { return tag.ID == id }) {
+			return nil, emailtags.Failure("unavailable_tag", "use an existing user label ID from available_tags", nil, nil)
+		}
+	}
+	return c.applyMessageTagChange(ctx, id, input, result)
+}
+
+func (c *Client) userTagResult(ctx context.Context) (*emailtags.MessageTagResult, error) {
 	labels, err := c.ListLabels(ctx)
 	if err != nil {
 		return nil, emailtags.Failure("provider_read_failed", "cannot list Gmail labels; check account access and retry", nil, err)
@@ -83,10 +101,31 @@ func (c *Client) MessageTags(ctx context.Context, id string, input *emailtags.Me
 			result.AvailableTags = append(result.AvailableTags, emailtags.MessageTag{ID: label.ID, Name: label.Name})
 		}
 	}
-	for _, id := range append(slices.Clone(change.Add), change.Remove...) {
-		if !slices.ContainsFunc(result.AvailableTags, func(tag emailtags.MessageTag) bool { return tag.ID == id }) {
-			return nil, emailtags.Failure("unavailable_tag", "use an existing user label ID from available_tags", nil, nil)
-		}
+	return result, nil
+}
+
+// ArchiveMessage sets INBOX membership without permitting system-label tag edits.
+func (c *Client) ArchiveMessage(ctx context.Context, id string, archived, dryRun bool) (*emailtags.MessageTagResult, error) {
+	if id == "" {
+		return nil, emailtags.Failure("stale_identity", "message has no Gmail identity; sync the account", nil, nil)
+	}
+	change := emailtags.MessageTagChange{DryRun: dryRun}
+	if archived {
+		change.Remove = []string{"INBOX"}
+	} else {
+		change.Add = []string{"INBOX"}
+	}
+	result, err := c.userTagResult(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return c.applyMessageTagChange(ctx, id, &change, result)
+}
+
+func (c *Client) applyMessageTagChange(ctx context.Context, id string, input *emailtags.MessageTagChange, result *emailtags.MessageTagResult) (*emailtags.MessageTagResult, error) {
+	var change emailtags.MessageTagChange
+	if input != nil {
+		change = *input
 	}
 	tags, err := c.readTagIDs(ctx, id)
 	if err != nil {

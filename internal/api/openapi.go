@@ -407,7 +407,8 @@ import (
 // 3.51.0 adds attachment processing outcomes and worker errors.
 // 4.0.0 removes local document commands, search, status, and operation lanes.
 // Docbank owns document processing.
-const APISchemaVersion = "4.0.0"
+// 4.1.0 adds Gmail archive state writes with source- and sender-scoped message.archive grants.
+const APISchemaVersion = "4.1.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

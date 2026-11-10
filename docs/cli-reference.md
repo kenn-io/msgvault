@@ -19,6 +19,7 @@ appear in full under Inherited Flags.
 | Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [media search](#media-search), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [loops](#loops), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
+| Archive or restore one Gmail message | [archive and unarchive](#archive-and-unarchive) |
 | Edit live email tags | [message-tags](#message-tags) |
 | Inspect staged room policy | [policy](#policy) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account), [merge-account](#merge-account) |
@@ -308,6 +309,31 @@ Credentials are stored in `tokens/imap_<hash>.json` with restricted file permiss
 ---
 
 After adding an account, sync it with `msgvault sync-full`. IMAP accounts use the same `sync` and `sync-full` commands as Gmail. See [Setup Guide](/docs/setup/#add-an-imap-account) for a walkthrough.
+
+---
+
+## archive and unarchive
+
+Remove one Gmail message from its inbox, or restore it, through the selected
+daemon. Use msgvault's positive archived message ID. Requires API schema 4.1.0.
+
+```bash
+msgvault archive --message 42 --dry-run --json
+msgvault archive --message 42
+msgvault unarchive --message 42
+```
+
+`--dry-run` previews without changing Gmail or local labels. `--json` returns
+`message_id`, `source_id`, `archived`, `changed`, `dry_run`, and `verified`.
+A repeated request reads current Gmail labels and returns `changed: false`
+without a provider mutation when the desired state is already satisfied.
+Unrelated labels and read/unread state are preserved.
+
+The owner has access. Delegated calls require `message.archive` on the message's
+source. Gmail writes require `gmail.modify` or `mail.google.com`; reauthorize
+with `msgvault add-account <account> --force` if the daemon reports
+`insufficient_scope`. Other providers return `archive_unsupported`.
+See the [API contract](api-server.md#message-archiving) for readback and errors.
 
 ---
 
@@ -5563,6 +5589,24 @@ A grant is valid until it is revoked, reaches its optional expiry, or the daemon
 restarts. Revocation blocks subsequent authentication; requests already
 authenticated may complete.
 
+### Restrict incoming archive senders
+
+Grant archive access to selected incoming From addresses independently of
+outgoing draft identities:
+
+```bash
+msgvault agent-token issue --label code-reader \
+  --permissions message.read,message.archive --source-ids 1 \
+  --archive-sender 1=codes@example.test --expires 24h
+```
+
+Repeat `--archive-sender SOURCE_ID=ADDRESS` for additional allowed addresses.
+Requires daemon API schema 4.1.0; older daemons reject issuance with restrictions.
+Omitting the flag allows archiving from any sender on the selected sources.
+`message.read` remains account-scoped. The separate `--sender` flag still selects
+confirmed outgoing draft identities. See the [archive API](api-server.md#message-archiving)
+for validation and missing From-envelope behavior.
+
 ### Scoped archive reads
 
 Use a scoped grant for an agent that needs archive reads. Keep the owner key on
@@ -5631,10 +5675,11 @@ msgvault agent-token issue --label <name> \
 | Flag | Description |
 |---|---|
 | `--label <name>` | (required) Human-readable name for the grant |
-| `--permissions <perms>` | Comma-separated permissions: `search.read`, `message.read`, `attachment.read`, `stats.read`, and the `verification.read` reveal modifier (see [scoped archive reads](#scoped-archive-reads)); `calendar.read` for availability, `calendar.event.read` for provider-derived event details in delegated plans and write receipts, `calendar.write` for calendar mutations, and additional `calendar.invite` for guest changes; `draft.create` for `draft-reply`, `draft-compose`, and `draft-get`; `draft.edit` for `draft-get`, `draft-edit`, and `draft-recover`; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
+| `--permissions <perms>` | Comma-separated permissions: `search.read`, `message.read`, `attachment.read`, `stats.read`, `message.archive` for [archive and unarchive](#archive-and-unarchive), and the `verification.read` reveal modifier (see [scoped archive reads](#scoped-archive-reads)); `calendar.read` for availability, `calendar.event.read` for provider-derived event details in delegated plans and write receipts, `calendar.write` for calendar mutations, and additional `calendar.invite` for guest changes; `draft.create` for `draft-reply`, `draft-compose`, and `draft-get`; `draft.edit` for `draft-get`, `draft-edit`, and `draft-recover`; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
 | `--source-ids <ids>` | Comma-separated source IDs that the permissions apply to |
 | `--expires <expiry>` | Optional future RFC3339 timestamp or positive duration such as `24h`; the CLI clock converts a duration to absolute expiry |
 | `--sender <source-id>=<address>` | Restrict a source to one confirmed sender identity; repeat for multiple choices |
+| `--archive-sender <source-id>=<address>` | Limit incoming archive senders; see [archive sender restrictions](#restrict-incoming-archive-senders) |
 
 The grant is valid until it is revoked, reaches its optional expiry, or the daemon
 restarts.

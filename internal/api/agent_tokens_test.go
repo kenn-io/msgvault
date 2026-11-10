@@ -758,3 +758,60 @@ func TestAgentTokenManagementDisabled(t *testing.T) {
 		})
 	}
 }
+
+func TestAgentTokenArchiveSendersIndependentOfDraftIdentities(t *testing.T) {
+	stub := &agentTokenIdentityStore{
+		stubSourceStore: &stubSourceStore{src: &store.Source{ID: 1, SourceType: "gmail", Identifier: "owner@example.test"}},
+		identities:      []store.AccountIdentity{{SourceID: 1, Address: "owner@example.test", ConfirmedAt: time.Now()}},
+	}
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: agentTokenTestAPIKey, AgentAccess: true}}, Store: stub, Logger: testLogger()})
+	srv.agentGrants = agentgrant.NewRegistry()
+	for _, tc := range []struct {
+		name, restrictions string
+		permissions        []string
+		status             int
+	}{
+		{"canonical incoming", `{"1":["Code Sender <CODES@example.test>"]}`, []string{"message.read", "message.archive", "draft.create"}, http.StatusCreated},
+		{"omitted", "", []string{"message.archive"}, http.StatusCreated},
+		{"empty", `{"1":[]}`, []string{"message.archive"}, http.StatusBadRequest},
+		{"null", `{"1":null}`, []string{"message.archive"}, http.StatusBadRequest},
+		{"duplicate", `{"1":["codes@example.test","CODES@example.test"]}`, []string{"message.archive"}, http.StatusBadRequest},
+		{"invalid mailbox", `{"1":["invalid"]}`, []string{"message.archive"}, http.StatusBadRequest},
+		{"unselected", `{"2":["codes@example.test"]}`, []string{"message.archive"}, http.StatusBadRequest},
+		{"noncanonical source", `{"01":["codes@example.test"]}`, []string{"message.archive"}, http.StatusBadRequest},
+		{"invalid source", `{"invalid":["codes@example.test"]}`, []string{"message.archive"}, http.StatusBadRequest},
+		{"missing permission", `{"1":["codes@example.test"]}`, []string{"message.read", "draft.create"}, http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			permissions, err := json.Marshal(tc.permissions)
+			require.NoError(t, err)
+			body := fmt.Sprintf(`{"label":"archive-test","permissions":%s,"source_ids":[1]}`, permissions)
+			if tc.restrictions != "" {
+				body = strings.TrimSuffix(body, "}") + `,"archive_senders":` + tc.restrictions + "}"
+			}
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, agentTokensPath, strings.NewReader(body))
+			req.Header.Set("X-Api-Key", agentTokenTestAPIKey)
+			req.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			srv.Router().ServeHTTP(response, req)
+			require.Equal(t, tc.status, response.Code, response.Body.String())
+			if tc.status != http.StatusCreated {
+				return
+			}
+			var issued agentTokenIssueResponse
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &issued))
+			require.Len(t, issued.Sources, 1)
+			assert.Equal(t, []string{"owner@example.test"}, issued.Sources[0].SenderKeys)
+			grant, ok := srv.agentGrants.Lookup(issued.Secret)
+			require.True(t, ok)
+			if tc.restrictions == "" {
+				assert.Empty(t, grant.Sources[0].ArchiveSenderKeys)
+			} else {
+				assert.Equal(t, []string{"codes@example.test"}, grant.Sources[0].ArchiveSenderKeys)
+				assert.Equal(t, []string{"codes@example.test"}, issued.Sources[0].ArchiveSenders)
+				assert.True(t, grant.AllowsSender(agentgrant.PermissionDraftCreate, grant.Sources[0], "owner@example.test"))
+				assert.False(t, grant.AllowsSender(agentgrant.PermissionDraftCreate, grant.Sources[0], "codes@example.test"))
+			}
+		})
+	}
+}

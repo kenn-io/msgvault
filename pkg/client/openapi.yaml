@@ -289,6 +289,12 @@ components:
     AgentTokenIssueRequest:
       additionalProperties: false
       properties:
+        archive_senders:
+          additionalProperties:
+            items:
+              type: string
+            type: array
+          type: object
         expires_at:
           format: date-time
           type: string
@@ -358,6 +364,10 @@ components:
       type: object
     AgentTokenSourceView:
       properties:
+        archive_senders:
+          items:
+            type: string
+          type: array
         id:
           format: int64
           type: integer
@@ -374,6 +384,7 @@ components:
         - type
         - identifier
         - sender_keys
+        - archive_senders
       type: object
     AgentTokenView:
       properties:
@@ -516,6 +527,40 @@ components:
           type: string
       required:
         - text
+      type: object
+    ArchiveChange:
+      additionalProperties: false
+      properties:
+        archived:
+          type: boolean
+        dry_run:
+          type: boolean
+      required:
+        - archived
+      type: object
+    ArchiveResult:
+      properties:
+        archived:
+          type: boolean
+        changed:
+          type: boolean
+        dry_run:
+          type: boolean
+        message_id:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        verified:
+          type: boolean
+      required:
+        - message_id
+        - source_id
+        - archived
+        - changed
+        - dry_run
+        - verified
       type: object
     AttachmentInfo:
       properties:
@@ -16662,7 +16707,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 4.0.0
+  version: 4.1.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -24905,6 +24950,88 @@ paths:
       security:
         - apiKey: []
       summary: Get one message
+      tags:
+        - API
+  /api/v1/messages/{id}/archive:
+    post:
+      operationId: archiveMessage
+      parameters:
+        - description: Archived message ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ArchiveChange"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArchiveResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Not Implemented
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagError"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Set a Gmail message's archive state
       tags:
         - API
   /api/v1/messages/{id}/inline:

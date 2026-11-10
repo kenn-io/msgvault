@@ -862,7 +862,7 @@ func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	meetingContextPath := "/api/v1/meetings/context"
 	meetingMetricsPath := "/api/v1/meetings/metrics"
 
-	expected := []string{remoteImagePath, cardDAVAccountTestPath, completionPath, kataEvidencePreparePath, "/api/v1/saved-views/{id}/run", messageTagsPath, meetingActionsPath, meetingContextPath, meetingMetricsPath}
+	expected := []string{remoteImagePath, cardDAVAccountTestPath, completionPath, kataEvidencePreparePath, "/api/v1/saved-views/{id}/run", messageTagsPath, meetingActionsPath, meetingContextPath, meetingMetricsPath, "/api/v1/messages/{id}/archive"}
 	for path, item := range doc.Paths {
 		if item.Post != nil && slices.Contains(item.Post.Tags, "Exploration") {
 			expected = append(expected, path)
