@@ -1,11 +1,15 @@
 package meta
 
 import (
+	"context"
 	"encoding/json/v2"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/metawebhook"
 )
 
 func mentionEvent(t *testing.T, value string) FeedEvent {
@@ -29,7 +33,7 @@ func TestApplyMentionPayloadPost(t *testing.T) {
 	assert.Equal(t, "applied", out.Class)
 	assert.True(t, out.ArchiveChanged)
 	out = applyMention(t, imp, ev)[0]
-	assert.Equal(t, "applied", out.Class)
+	assert.Equal(t, "ignored", out.Class)
 	assert.False(t, out.ArchiveChanged)
 	assert.Empty(t, f.paths)
 	root := message(t, st, src.ID, "400_500")
@@ -133,6 +137,85 @@ func TestApplyMentionReadFailures(t *testing.T) {
 			assert.Empty(t, ids, "reject incomplete evidence before writing ancestors")
 		})
 	}
+}
+
+func TestApplyMentionWorkerCompletesSparseBudgetRetries(t *testing.T) {
+	st, f, imp, src := eventImporter(t)
+	f.posts, f.paths = nil, nil
+	ids := make([]string, 51)
+	changes := make([]map[string]any, len(ids))
+	for i := range ids {
+		ids[i] = fmt.Sprintf("400_%d", 500+i)
+		f.posts = append(f.posts, Object{ID: ids[i], Message: "Hydrated budget mention"})
+		changes[i] = map[string]any{"field": "mention", "value": map[string]string{"item": "post", "verb": "add", "post_id": ids[i]}}
+	}
+	body, err := json.Marshal(map[string]any{"object": "page", "entry": []map[string]any{{"id": "100", "time": 10, "changes": changes}}})
+	require.NoError(t, err)
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	spool, err := metawebhook.OpenSpool(t.TempDir(), 1<<20, func() time.Time { return now })
+	require.NoError(t, err)
+	_, duplicate, err := spool.Accept("9", body)
+	require.NoError(t, err)
+	require.False(t, duplicate)
+	due, err := spool.Due(1)
+	require.NoError(t, err)
+	require.Len(t, due, 1)
+	receipt := due[0].ReceiptOrder
+	require.NotZero(t, receipt)
+	reg := metawebhook.NewRegistry()
+	reg.Register("page", "mention", func(ctx context.Context, app string, items []metawebhook.Item) []metawebhook.ItemOutcome {
+		events := make([]FeedEvent, len(items))
+		for i, item := range items {
+			require.NoError(t, json.Unmarshal(item.Value, &events[i]))
+			events[i].Time, events[i].ReceiptOrder = item.Time, item.ReceiptOrder
+		}
+		results, err := imp.ApplyFeedEvents(ctx, app, items[0].EntryID, events, EventOptions{Mention: true})
+		require.NoError(t, err)
+		out := make([]metawebhook.ItemOutcome, len(results))
+		for i, result := range results {
+			out[i] = metawebhook.ItemOutcome{Class: metawebhook.Class(result.Class), ErrorClass: result.ErrorClass, CountAttempt: result.CountAttempt, ArchiveChanged: result.ArchiveChanged}
+		}
+		return out
+	})
+	worker := metawebhook.NewWorker(metawebhook.WorkerOptions{Spool: spool, Registry: reg})
+	check := func(wantArchived, wantReads, wantPending, wantDone int) {
+		t.Helper()
+		archived, err := st.MessageExistsBatchContext(t.Context(), src.ID, ids)
+		require.NoError(t, err)
+		assert.Len(t, archived, wantArchived)
+		assert.Len(t, f.paths, wantReads)
+		stats, err := spool.Stats()
+		require.NoError(t, err)
+		assert.Equal(t, wantPending, stats["9"].Pending)
+		assert.Equal(t, wantDone, stats["9"].Done)
+	}
+	_, err = worker.DrainOnce(t.Context())
+	require.NoError(t, err)
+	check(50, 50, 1, 0)
+	now = now.Add(time.Minute)
+	_, err = worker.DrainOnce(t.Context())
+	require.NoError(t, err)
+	check(51, 51, 0, 1)
+	noop, err := worker.DrainOnce(t.Context())
+	require.NoError(t, err)
+	assert.Zero(t, noop.Deliveries)
+	assert.Len(t, f.paths, 51)
+
+	// Explicit replay gets a new receipt and must hydrate every target again.
+	count, err := spool.Requeue(metawebhook.RequeueFilter{States: []metawebhook.State{metawebhook.StateDone}}, false)
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+	due, err = spool.Due(1)
+	require.NoError(t, err)
+	require.Len(t, due, 1)
+	require.Greater(t, due[0].ReceiptOrder, receipt)
+	_, err = worker.DrainOnce(t.Context())
+	require.NoError(t, err)
+	check(51, 101, 1, 0)
+	now = now.Add(time.Minute)
+	_, err = worker.DrainOnce(t.Context())
+	require.NoError(t, err)
+	check(51, 102, 0, 1)
 }
 
 func TestApplyMentionStaleSparseDoesNotNeedTarget(t *testing.T) {

@@ -209,7 +209,9 @@ func (b *feedBatch) apply(ctx context.Context, ev FeedEvent) EventOutcome {
 	if exists && (!metadata.matches(b.run.app, b.run.page, "", ev.PostID) || metadata.ParentID != parent || metadata.Version != objectMetadataVersion) {
 		return EventOutcome{Class: "invalid", ErrorClass: "conflicting_parent"}
 	}
-	if body && olderEvent(metadata.BodyTime, metadata.BodyOrder, ev) {
+	// A completed body receipt needs no target read on an automatic retry.
+	if body && (olderEvent(metadata.BodyTime, metadata.BodyOrder, ev) ||
+		(metadata.BodyTime != 0 && metadata.BodyOrder != 0 && metadata.BodyTime == ev.Time && metadata.BodyOrder == ev.ReceiptOrder)) {
 		return b.fillMissingEvidence(ctx, ev, row, id, parent)
 	}
 	if state && olderEvent(metadata.StateTime, metadata.StateOrder, ev) {
