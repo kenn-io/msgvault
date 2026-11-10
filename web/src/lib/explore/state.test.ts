@@ -22,7 +22,7 @@ describe('Explore URL state', () => {
     window.history.replaceState(null, '', '/?workspace=everything');
     const state = new ExploreState(window);
     const view = (id: number, key: string) => ({ id, name: `View ${id}`, revision: id, schema_version: 2,
-      canonical_state: {}, created_at: '', updated_at: '', include_count: 1, exclude_count: 0, stale_item_count: 0, redacted_item_count: 0, items: { include: [{ entry_key: key, source_id: 1, message_id: id, added_by: 'owner', kind: 'message' as const }], exclude: [] } });
+      canonical_state: {}, created_at: '', updated_at: '', include_count: 1, exclude_count: 0, stale_item_count: 0, redacted_item_count: 0, items: { include: [{ entry_key: key, source_id: Number(key.split(':')[1]), message_id: id, added_by: 'owner', kind: 'message' as const }], exclude: [] } });
     try {
       state.commitSavedView(view(1, 'source:1:message:a'), { query: 'alpha' });
       state.commitSavedView(view(2, 'source:1:message:b'), { query: 'beta' });
@@ -30,14 +30,18 @@ describe('Explore URL state', () => {
       await waitFor(() => expect(state.current.query).toBe('alpha'));
       expect(state.savedView?.id).toBe(1);
       expect(state.savedView?.revision).toBe(1);
-      expect(state.savedViewItems.include.map(item => item.entry_key)).toEqual(['source:1:message:a']);
+      expect(state.savedViewNeedsRefresh).toBe(true);
+      state.updateSavedView({ ...view(1, 'source:2:message:a'), revision: 3 });
+      expect(state.savedViewNeedsRefresh).toBe(false);
+      expect(state.current.query).toBe('alpha');
+      expect(state.savedViewItems.include.map(item => item.entry_key)).toEqual(['source:2:message:a']);
       state.commitWorkspace('files');
       expect(state.savedView).toBeUndefined();
       expect(state.savedViewItems.include).toEqual([]);
       window.history.back();
       await waitFor(() => expect(state.savedView?.id).toBe(1));
       expect(state.current.query).toBe('alpha');
-      expect(state.savedViewItems.include.map(item => item.entry_key)).toEqual(['source:1:message:a']);
+      expect(state.savedViewItems.include.map(item => item.entry_key)).toEqual(['source:2:message:a']);
     } finally { state.destroy(); }
   });
 

@@ -522,7 +522,7 @@
     untrack(() => client),
     exploreState,
     {
-      isEnabled: () => enabled,
+      isEnabled: () => enabled && !exploreState.savedViewNeedsRefresh,
       onPredicateChange: () => selection.clear(),
       onPagingNotice: (message) => {
         sortNotice = message ?? '';
@@ -672,6 +672,25 @@
   }
   const openedSavedView = $derived(exploreState.savedView);
   let openingView = 0;
+
+  $effect(() => {
+    const restoration = exploreState.restorationEpoch;
+    const view = exploreState.savedView;
+    if (!exploreState.savedViewNeedsRefresh || !view) return;
+    const opening = ++openingView;
+    const controller = new AbortController();
+    void getSavedView({ id: view.id }, { ...client, signal: controller.signal })
+      .then(({ data }) => {
+        if (controller.signal.aborted || opening !== openingView || restoration !== exploreState.restorationEpoch) return;
+        if (!data) throw new Error('Unable to reload this saved view.');
+        // History owns the edited query; only live metadata and membership refresh.
+        exploreState.updateSavedView(data);
+      })
+      .catch((cause) => {
+        if (!controller.signal.aborted) announceOperation(cause instanceof Error ? cause.message : 'Unable to reload this saved view.');
+      });
+    return () => controller.abort();
+  });
 
   async function saveOpenedView(): Promise<void> {
     if (!openedSavedView) return;
@@ -1302,7 +1321,9 @@
       </div>
     </header>
     <div class="app-main">
-      {#if exploreState.current.workspace === 'settings'}
+      {#if exploreState.savedViewNeedsRefresh}
+        <p role="status">Loading saved view…</p>
+      {:else if exploreState.current.workspace === 'settings'}
         {#if settings}{@render settings(
           cardDAVSettingsRequest,
           consumeCardDAVSettingsRequest,

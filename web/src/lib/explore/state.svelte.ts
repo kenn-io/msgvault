@@ -634,6 +634,7 @@ export function parseExploreURLState(search: string): ExploreURLState {
 
 export class ExploreState {
   savedView = $state<SavedView>();
+  savedViewNeedsRefresh = $state(false);
   get savedViewItems() {
     return this.savedView?.items ?? { include: [], exclude: [] };
   }
@@ -644,6 +645,7 @@ export class ExploreState {
 
   updateSavedView(view: SavedView): void {
     this.savedView = view;
+    this.savedViewNeedsRefresh = false;
     if (!this.detached) this.browser.history.replaceState({ ...this.browser.history.state, ...this.savedViewHistoryState() }, '', this.browser.location.href);
   }
 
@@ -655,6 +657,7 @@ export class ExploreState {
     const context = this.browser.history.state?.savedViewContext;
     this.savedView = isRecord(context) && isRecord(context.view) && Number.isSafeInteger(context.view.id)
       ? context.view as unknown as SavedView : undefined;
+    this.savedViewNeedsRefresh = this.savedView !== undefined;
   }
 
   current = $state<ExploreURLState>(freshDefaults());
@@ -1030,6 +1033,7 @@ export class ExploreState {
     }
     if (savedView !== undefined || (effectivePatch.workspace !== undefined && effectivePatch.workspace !== this.current.workspace)) {
       this.savedView = savedView ?? undefined;
+      this.savedViewNeedsRefresh = false;
     }
     const next = normalize({ ...this.current, ...effectivePatch });
     // Preserve per-field reactivity: transient scroll/column changes must not

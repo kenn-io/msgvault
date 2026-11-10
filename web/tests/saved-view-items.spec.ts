@@ -11,9 +11,13 @@ test('opens live Saved View items and saves only canonical state', async ({ page
   const items = { include: ['a', 'b'].map((id, i) => ({ entry_key: `source:1:message:${id}`, message_id: i + 1, source_id: 1, added_by: 'owner', kind: 'message' })), exclude: [{ entry_key: 'source:1:message:c', message_id: 3, source_id: 1, added_by: 'owner', kind: 'message' }] };
   await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [view, { ...view, id: 8, name: 'Other queue' }] } }));
   let patch: Record<string, unknown> | undefined;
+  let revision = 1;
+  let gets = 0;
+  let liveItems = items;
   await page.route('**/api/v1/saved-views/7', route => {
-    if (route.request().method() === 'PATCH') { patch = route.request().postDataJSON(); return route.fulfill({ json: { ...view, revision: 2, items } }); }
-    return route.fulfill({ json: { ...view, items, include_count: 2, exclude_count: 1 } });
+    if (route.request().method() === 'PATCH') { patch = route.request().postDataJSON(); return route.fulfill({ json: { ...view, revision: ++revision, items: liveItems } }); }
+    gets += 1;
+    return route.fulfill({ json: { ...view, revision, items: liveItems, include_count: 2, exclude_count: 1 } });
   });
   await page.route('**/api/v1/saved-views/8', route => route.fulfill({ json: { ...view, id: 8, name: 'Other queue', items: { include: [], exclude: [] } } }));
   const predicates: Array<Record<string, unknown>> = [];
@@ -35,16 +39,33 @@ test('opens live Saved View items and saves only canonical state', async ({ page
   await expect.poll(() => predicates.at(-1)?.exclude_keys).toEqual(['source:1:message:c']);
   await page.getByRole('button', { name: 'Save changes', exact: true }).click();
   await expect.poll(() => patch).toEqual({ canonical_state: { filters: [], grouping: [], presentation: 'table', sort: [{ field: 'occurred_at', direction: 'desc' }], columns: ['kind', 'people', 'title', 'excerpt', 'time', 'attachments'] } });
+  const search = page.getByRole('searchbox', { name: 'Search messages', exact: true });
+  await search.fill('review');
+  await search.press('Enter');
   await selectWorkspace(page, 'Other queue');
   await expect(page.getByText('2 pinned · 1 hidden', { exact: true })).toHaveCount(0);
+  // A source merge while this entry is in history changes live keys and ETag.
+  liveItems = {
+    include: items.include.map(item => ({ ...item, source_id: 2, entry_key: item.entry_key.replace('source:1:', 'source:2:') })),
+    exclude: items.exclude.map(item => ({ ...item, source_id: 2, entry_key: item.entry_key.replace('source:1:', 'source:2:') })),
+  };
+  revision = 3;
   await page.goBack();
   await expect(page.getByText('2 pinned · 1 hidden', { exact: true })).toBeVisible();
-  await expect.poll(() => predicates.at(-1)?.include_keys).toEqual(['source:1:message:a', 'source:1:message:b']);
+  await expect.poll(() => predicates.at(-1)?.include_keys).toEqual(['source:2:message:a', 'source:2:message:b']);
+  await expect.poll(() => predicates.at(-1)?.exclude_keys).toEqual(['source:2:message:c']);
+  await expect(search).toHaveValue('review');
   patch = undefined;
   const request = page.waitForRequest(req => req.method() === 'PATCH' && req.url().endsWith('/saved-views/7'));
   await page.getByRole('button', { name: 'Save changes', exact: true }).click();
-  expect((await request).headers()['if-match']).toBe('"saved-view-7-r2"');
-  await expect.poll(() => patch?.canonical_state).toBeDefined();
+  expect((await request).headers()['if-match']).toBe('"saved-view-7-r3"');
+  await expect.poll(() => (patch?.canonical_state as { query?: string } | undefined)?.query).toBe('review');
+  const beforeReload = gets;
+  await page.reload();
+  await expect.poll(() => gets).toBeGreaterThan(beforeReload);
+  await expect(search).toHaveValue('review');
+  await expect.poll(() => predicates.at(-1)?.exclude_keys).toEqual(['source:2:message:c']);
+
   await expect(page.getByText('Review release notes', { exact: true })).toBeVisible();
   await expect(page.getByText('Confirm documentation update', { exact: true })).toBeVisible();
   await page.screenshot({ path: 'test-results/saved-view-items.png', fullPage: true });
