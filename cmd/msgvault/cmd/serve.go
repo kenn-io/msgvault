@@ -2663,7 +2663,12 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	runSubprocess := func(ctx context.Context) error {
 		args := req.Args
 		if req.GrantDecided {
-			args = append(append([]string(nil), args...), "--"+addAccountGrantDecidedFlag+"=true")
+			args = append([]string(nil), args...)
+			index := slices.Index(args, "--")
+			if index < 0 {
+				index = len(args)
+			}
+			args = slices.Insert(args, index, "--"+addAccountGrantDecidedFlag+"=true")
 		}
 		return run(ctx, args, req.Env, req.Cwd, emitSubprocess)
 	}

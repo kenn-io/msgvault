@@ -195,6 +195,9 @@ func daemonCLIArgsFromCobra(cmd *cobra.Command, args []string) ([]string, error)
 		runArgs = appendDaemonCLIFlag(runArgs, flag)
 	}
 
+	if cmd.ArgsLenAtDash() >= 0 {
+		runArgs = append(runArgs, "--")
+	}
 	runArgs = append(runArgs, args...)
 	return runArgs, nil
 }
