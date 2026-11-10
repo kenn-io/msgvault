@@ -53,7 +53,7 @@ WITH message_facts AS (
 	JOIN read_parquet('%s') s ON s.id = m.source_id
 	LEFT JOIN read_parquet('%s') c ON c.id = m.conversation_id
 	LEFT JOIN %s u ON u.message_id = m.id
-	WHERE year(m.sent_at) = %d
+	WHERE year(m.sent_at) = %d AND NOT %s
 ), canon AS (
 	%s
 ), owner_canon AS (
@@ -106,7 +106,7 @@ SELECT m.message_id, m.conversation_id, m.source_id, m.source_type,
 FROM message_facts m`, EntryKindSQL("m.message_type"),
 		IsChatSQL("m.message_type", "coalesce(c.conversation_type, '')"),
 		messages, quoteSQLString(path("sources")),
-		quoteSQLString(path("conversations")), unsentMessages, occurredYear,
+		quoteSQLString(path("conversations")), unsentMessages, occurredYear, calevent.EmailInviteSQL("m.message_type", "s.source_type"),
 		CanonicalParticipantsSQL(fmt.Sprintf("read_parquet('%s')", quoteSQLString(path("participants"))), fmt.Sprintf("read_parquet('%s')", quoteSQLString(path("participant_clusters")))),
 		OwnerCanonicalsSQL(fmt.Sprintf("read_parquet('%s')", quoteSQLString(path("owner_participants"))), "canon"), recipients,
 		SenderEnvelopeDomainExpr("mr.email_address"), recipients)

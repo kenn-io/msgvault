@@ -1,12 +1,14 @@
 package store
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/search"
 )
 
 func calendarDocument(method, props string) []byte {
@@ -292,4 +294,51 @@ func TestICalendarRoomAttendeesAreNotParticipants(t *testing.T) {
 		requirements.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM participants WHERE email_address=?`, tc.email).Scan(&count))
 		assertions.Equal(tc.want, count, tc.email)
 	}
+}
+
+func TestICalendarHistoricalZoneOccurrences(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	raw, err := os.ReadFile("../calevent/testdata/customized-history.ics")
+	require.NoError(t, err)
+	_, err = st.PersistICalendarContext(t.Context(), icsSource(t, st), raw)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		year int
+		want string
+	}{{2006, "2006-03-20T15:00:00Z"}, {2007, "2007-03-20T14:00:00Z"}, {2008, ""}, {2026, "2026-03-20T14:00:00Z"}} {
+		from := time.Date(tc.year, 3, 19, 0, 0, 0, 0, time.UTC)
+		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 3))
+		require.NoError(t, err)
+		assert.Empty(t, page.Unexpandable)
+		if tc.want == "" {
+			assert.Empty(t, page.Occurrences)
+			continue
+		}
+		require.Len(t, page.Occurrences, 1)
+		assert.Equal(t, tc.want, page.Occurrences[0].Start.UTC().Format(time.RFC3339))
+	}
+}
+
+func TestEmailCalendarHistoricalZone(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	raw, err := os.ReadFile("../calevent/testdata/customized-history.ics")
+	require.NoError(t, err)
+	parent, source := persistInviteEmail(t, st, "historical-zone", inviteEmail(raw))
+	email, err := st.GetMessage(parent)
+	require.NoError(t, err)
+	assert.Equal(t, "Original email", email.Subject)
+	ids := emailEvents(t, st, source)
+	require.Len(t, ids, 1)
+	rows := calendarRows(t, st, ids...)
+	require.Len(t, rows, 1)
+	assert.Len(t, rows[0].Event.Attendees, 2)
+	matches, _, err := st.SearchMessagesQuery(search.Parse("from:organizer@example.com"), 0, 10)
+	require.NoError(t, err)
+	var found bool
+	for _, match := range matches {
+		if match.ID == ids[0] {
+			found = true
+		}
+	}
+	assert.True(t, found)
 }
