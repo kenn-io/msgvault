@@ -2458,8 +2458,9 @@ msgvault import-discord-package <package-dir>
 |------|-------------|
 | `--no-default-identity` | Skip assigning the exporting account to the default identity |
 
-Supports JSON and legacy CSV transcripts. Stores attachment URLs as links,
-without downloading files. Re-imports update the last imported snapshot and
+Supports legacy CSV transcripts, checked against a real redacted export.
+JSON import is experimental and synthetic-tested against Discord's documented
+fields. Stores attachment URLs as links without downloading files. Re-imports update the last imported snapshot and
 can safely repeat an interrupted run. Coverage is sent-only, including for
 DMs. See [Discord packages](usage/discord.md#import-a-personal-data-package)
 for source identity, timestamps, and coverage limits.

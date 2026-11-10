@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 type PackageSummary struct {
 	SourceID                   int64
 	Channels                   int
+	ChannelsSkipped            int
 	MessagesProcessed          int64
 	MessagesAdded              int64
 	MessagesUpdated            int64
@@ -39,6 +41,7 @@ func ImportPackage(ctx context.Context, st *store.Store, directory string) (summ
 		return summary, err
 	}
 	defer func() { retErr = errors.Join(retErr, reader.root.Close()) }()
+	summary.ChannelsSkipped = reader.channelsSkipped
 	source, err := st.GetOrCreateSourceContext(ctx, "discord_package", reader.owner)
 	if err != nil {
 		return summary, err
@@ -54,13 +57,21 @@ func ImportPackage(ctx context.Context, st *store.Store, directory string) (summ
 		// the caller cancels the import.
 		cleanup := context.WithoutCancel(ctx)
 		retErr = errors.Join(retErr, st.RecomputeConversationStatsContext(cleanup, source.ID))
+		var errorsCount int64
+		if retErr != nil {
+			errorsCount = 1
+		}
+		retErr = errors.Join(retErr, st.UpdateSyncCheckpointContext(cleanup, syncID, &store.Checkpoint{
+			MessagesProcessed: summary.MessagesProcessed, MessagesAdded: summary.MessagesAdded,
+			MessagesUpdated: summary.MessagesUpdated, ErrorsCount: errorsCount,
+		}))
 		if retErr != nil {
 			retErr = errors.Join(retErr, st.FailSyncContext(cleanup, syncID, retErr.Error()))
 		} else {
 			retErr = st.CompleteSyncContext(cleanup, syncID, "")
 		}
 	}()
-	sender, err := st.EnsureParticipantByIdentifierContext(ctx, "discord_user_id", reader.owner, "")
+	sender, err := st.EnsureParticipantByIdentifierContext(ctx, discordUserIdentifier, reader.owner, "")
 	if err != nil {
 		return summary, err
 	}
@@ -70,7 +81,7 @@ func ImportPackage(ctx context.Context, st *store.Store, directory string) (summ
 		blob, err := reader.readMetadata(ctx, path.Join(reader.messages, folder, "channel.json"))
 		if err == nil {
 			if err = json.Unmarshal(blob, &metadata); err != nil {
-				return summary, fmt.Errorf("Discord package channel %s: %w", channelID, err)
+				return summary, fmt.Errorf("discord package channel %s: %w", channelID, err)
 			}
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return summary, err
@@ -83,7 +94,17 @@ func ImportPackage(ctx context.Context, st *store.Store, directory string) (summ
 		if err != nil {
 			return summary, err
 		}
-		channelMeta, err := json.Marshal(map[string]any{"coverage": "sent_only", "channel": metadata})
+		var to []int64
+		if kind == "direct_chat" {
+			if peerID := packageDirectCounterpart(metadata["recipients"], reader.owner); peerID != "" {
+				peer, err := st.EnsureParticipantByIdentifierContext(ctx, discordUserIdentifier, peerID, "")
+				if err != nil {
+					return summary, err
+				}
+				to = []int64{peer}
+			}
+		}
+		channelMeta, err := json.Marshal(map[string]any{"coverage": "sent_only", "channel": metadata}, json.Deterministic(true))
 		if err != nil {
 			return summary, err
 		}
@@ -109,7 +130,7 @@ func ImportPackage(ctx context.Context, st *store.Store, directory string) (summ
 			summary.UnsupportedAttachmentLinks += unsupported
 			reason := ""
 			switch {
-			case record.Invalid:
+			case record.InvalidReason != "":
 				reason = "malformed_record"
 			case strings.TrimSpace(record.ID) == "":
 				reason = "missing_id"
@@ -121,13 +142,17 @@ func ImportPackage(ctx context.Context, st *store.Store, directory string) (summ
 			if reason != "" {
 				summary.MessagesSkipped++
 				summary.SkipReasons[reason]++
-				return st.RecordSyncRunItemContext(ctx, store.SyncRunItem{SyncRunID: syncID, SourceMessageID: record.ID, Phase: record.Path, Status: store.SyncRunItemStatusSkipped, ErrorKind: reason, ErrorMessage: fmt.Sprintf("record %d", record.Ordinal)})
+				diagnostic := fmt.Sprintf("record %d", record.Ordinal)
+				if record.InvalidReason != "" {
+					diagnostic += ": " + record.InvalidReason
+				}
+				return st.RecordSyncRunItemContext(ctx, store.SyncRunItem{SyncRunID: syncID, SourceMessageID: record.ID, Phase: record.Path, Status: store.SyncRunItemStatusSkipped, ErrorKind: reason, ErrorMessage: diagnostic})
 			}
 			sent, timeSource := packageSentTime(record.Timestamp, record.ID)
 			messageMeta, err := json.Marshal(map[string]any{
 				"coverage": "sent_only", "account_id": reader.owner, "original_timestamp": record.Timestamp,
 				"time_source": timeSource, "format": record.Format, "input_path": record.Path, "row_ordinal": record.Ordinal,
-			})
+			}, json.Deterministic(true))
 			if err != nil {
 				return err
 			}
@@ -138,7 +163,7 @@ func ImportPackage(ctx context.Context, st *store.Store, directory string) (summ
 			_, err = st.PersistMessageContext(ctx, &store.MessagePersistData{
 				Message:  &store.Message{SourceID: source.ID, ConversationID: conversationID, SourceMessageID: record.ID, MessageType: "discord", SenderID: sql.NullInt64{Int64: sender, Valid: true}, IsFromMe: true, SentAt: sent, Snippet: sql.NullString{String: textutil.PrefixRunes(record.Contents, 200), Valid: record.Contents != ""}, SizeEstimate: int64(len(record.Contents))},
 				BodyText: sql.NullString{String: record.Contents, Valid: true}, Metadata: &sql.NullString{String: string(messageMeta), Valid: true}, RawMIME: record.Raw, RawFormat: "discord_package_" + record.Format,
-				Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{sender}}}, MIMEAttachmentReplacement: &writes, FTS: &store.FTSDoc{Body: record.Contents}, PreserveLabels: true,
+				Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{sender}}, {Type: "to", ParticipantIDs: to}}, MIMEAttachmentReplacement: &writes, FTS: &store.FTSDoc{Body: record.Contents}, PreserveLabels: true,
 				SyncRunItem: &store.SyncRunItem{SyncRunID: syncID, SourceMessageID: record.ID, Phase: record.Path, Status: store.SyncRunItemStatusResolved},
 			})
 			if err != nil {
@@ -185,4 +210,28 @@ func packageSentTime(original, id string) (sql.NullTime, string) {
 		}
 	}
 	return sql.NullTime{}, "unknown"
+}
+
+// Only an unambiguous, explicitly listed direct-chat counterpart is known.
+func packageDirectCounterpart(raw jsontext.Value, owner string) string {
+	var recipients []jsontext.Value
+	if json.Unmarshal(raw, &recipients) != nil {
+		return ""
+	}
+	peer := ""
+	for _, recipient := range recipients {
+		id := packageScalarID(recipient)
+		value, err := strconv.ParseUint(id, 10, 64)
+		if err != nil || value == 0 {
+			return ""
+		}
+		if id == owner {
+			continue
+		}
+		if peer != "" && peer != id {
+			return ""
+		}
+		peer = id
+	}
+	return peer
 }

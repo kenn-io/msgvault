@@ -10,34 +10,37 @@ import (
 	"io"
 	"os"
 	"path"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 const packageRecordLimit = 1 << 20
 
 // packageRecord is shared by current JSON and legacy CSV transcripts.
 type packageRecord struct {
-	ID          string
-	Timestamp   string
-	Contents    string
-	Attachments []string
-	Raw         []byte
-	Format      string
-	Path        string
-	Ordinal     int
-	Invalid     bool
+	ID            string
+	Timestamp     string
+	Contents      string
+	Attachments   []string
+	Raw           []byte
+	Format        string
+	Path          string
+	Ordinal       int
+	InvalidReason string
 }
 
 type packageReader struct {
-	root     *os.Root
-	owner    string
-	messages string
-	channels []string
-	titles   map[string]string
+	root            *os.Root
+	owner           string
+	messages        string
+	channels        []string
+	channelsSkipped int
+	titles          map[string]string
 }
 
 func openPackage(ctx context.Context, directory string) (*packageReader, error) {
@@ -58,7 +61,7 @@ func openPackage(ctx context.Context, directory string) (*packageReader, error) 
 		}
 	}
 	if err != nil {
-		return fail(fmt.Errorf("Discord package account: %w", err))
+		return fail(fmt.Errorf("discord package account: %w", err))
 	}
 	var user struct {
 		ID string `json:"id"`
@@ -68,7 +71,7 @@ func openPackage(ctx context.Context, directory string) (*packageReader, error) 
 	}
 	id, err := strconv.ParseUint(user.ID, 10, 64)
 	if err != nil || id == 0 {
-		return fail(errors.New("Discord package requires a numeric account ID in user.json"))
+		return fail(errors.New("discord package requires a numeric account ID in user.json"))
 	}
 	r.owner = user.ID
 	var dir *os.File
@@ -93,17 +96,22 @@ func openPackage(ctx context.Context, directory string) (*packageReader, error) 
 		entries, readErr := dir.ReadDir(256)
 		for _, entry := range entries {
 			// Never follow a directory symlink, including one aimed outside the root.
+			if entry.Type()&os.ModeSymlink != 0 {
+				r.channelsSkipped++
+				continue
+			}
 			if !entry.IsDir() {
 				continue
 			}
 			name := strings.TrimPrefix(entry.Name(), "c")
 			if _, err := strconv.ParseUint(name, 10, 64); err != nil {
+				r.channelsSkipped++
 				continue
 			}
 			r.channels = append(r.channels, entry.Name())
 		}
 		if len(r.channels) > 100000 {
-			return fail(errors.New("Discord package has too many channels"))
+			return fail(errors.New("discord package has too many channels"))
 		}
 		if errors.Is(readErr, io.EOF) {
 			break
@@ -116,7 +124,7 @@ func openPackage(ctx context.Context, directory string) (*packageReader, error) 
 	index, err := r.readMetadata(ctx, path.Join(r.messages, "index.json"))
 	if err == nil {
 		if err = json.Unmarshal(index, &r.titles); err != nil {
-			return fail(fmt.Errorf("Discord package index: %w", err))
+			return fail(fmt.Errorf("discord package index: %w", err))
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fail(err)
@@ -135,7 +143,7 @@ func (r *packageReader) readMetadata(ctx context.Context, name string) ([]byte, 
 		return nil, err
 	}
 	if len(b) > packageRecordLimit {
-		return nil, fmt.Errorf("Discord package metadata exceeds %d bytes: %s", packageRecordLimit, name)
+		return nil, fmt.Errorf("discord package metadata exceeds %d bytes: %s", packageRecordLimit, name)
 	}
 	return b, nil
 }
@@ -161,7 +169,7 @@ func (r *packageReader) transcript(ctx context.Context, channel string, visit fu
 		}
 		return errors.Join(err, f.Close())
 	}
-	return fmt.Errorf("Discord package channel %s has no messages.json or messages.csv", channel)
+	return fmt.Errorf("discord package channel %s has no messages.json or messages.csv", channel)
 }
 
 func readPackageJSON(input *io.LimitedReader, name string, visit func(packageRecord) error) error {
@@ -171,16 +179,19 @@ func readPackageJSON(input *io.LimitedReader, name string, visit func(packageRec
 		return err
 	}
 	if token.Kind() != '[' {
-		return errors.New("Discord package transcript must be a JSON array")
+		return errors.New("discord package transcript must be a JSON array")
 	}
 	for ordinal := 1; dec.PeekKind() != ']'; ordinal++ {
 		input.N = packageRecordLimit + 1
 		raw, err := dec.ReadValue()
 		if err != nil {
-			return fmt.Errorf("Discord package %s record %d: %w", name, ordinal, err)
+			if input.N == 0 {
+				return packageRecordLimitError(name, ordinal)
+			}
+			return fmt.Errorf("discord package %s record %d: %w", name, ordinal, err)
 		}
 		if len(raw) > packageRecordLimit {
-			return errors.New("Discord package message exceeds record limit")
+			return packageRecordLimitError(name, ordinal)
 		}
 		record := packageRecord{Raw: append([]byte(nil), raw...), Format: "json", Path: name, Ordinal: ordinal}
 		var fields struct {
@@ -190,7 +201,18 @@ func readPackageJSON(input *io.LimitedReader, name string, visit func(packageRec
 			Attachments string         `json:"Attachments"`
 		}
 		if err = json.Unmarshal(raw, &fields, json.MatchCaseInsensitiveNames(true)); err != nil {
-			record.Invalid = true
+			record.InvalidReason = "incompatible JSON record"
+			var semantic *json.SemanticError
+			if errors.As(err, &semantic) {
+				record.InvalidReason = fmt.Sprintf("field %s: JSON %s cannot decode as %v", textutil.PrefixRunes(string(semantic.JSONPointer), 128), semantic.JSONKind, semantic.GoType)
+			}
+			// Decode the ID independently so a later field error cannot hide it.
+			var identity struct {
+				ID jsontext.Value `json:"ID"`
+			}
+			if json.Unmarshal(raw, &identity, json.MatchCaseInsensitiveNames(true)) == nil {
+				record.ID = packageScalarID(identity.ID)
+			}
 		} else {
 			record.ID = packageScalarID(fields.ID)
 			record.Timestamp = fields.Timestamp
@@ -205,7 +227,7 @@ func readPackageJSON(input *io.LimitedReader, name string, visit func(packageRec
 		return err
 	}
 	if _, err = dec.ReadToken(); !errors.Is(err, io.EOF) {
-		return errors.New("Discord package transcript has trailing data")
+		return errors.New("discord package transcript has trailing data")
 	}
 	return nil
 }
@@ -227,7 +249,7 @@ func readPackageCSV(ctx context.Context, f *os.File, input *io.LimitedReader, na
 	if err != nil {
 		return err
 	}
-	if strings.Join(header, ",") != "ID,Timestamp,Contents,Attachments" {
+	if !slices.Equal(header, []string{"ID", "Timestamp", "Contents", "Attachments"}) {
 		return errors.New("unsupported Discord package CSV header")
 	}
 	for ordinal := 1; ; ordinal++ {
@@ -238,11 +260,14 @@ func readPackageCSV(ctx context.Context, f *os.File, input *io.LimitedReader, na
 			return nil
 		}
 		if err != nil {
-			return fmt.Errorf("Discord package %s row %d: %w", name, ordinal, err)
+			if input.N == 0 {
+				return packageRecordLimitError(name, ordinal)
+			}
+			return fmt.Errorf("discord package %s row %d: %w", name, ordinal, err)
 		}
 		size := reader.InputOffset() - start
 		if size > packageRecordLimit {
-			return errors.New("Discord package CSV message exceeds record limit")
+			return packageRecordLimitError(name, ordinal)
 		}
 		raw, err := io.ReadAll(&export.ContextReader{Context: ctx, Reader: io.NewSectionReader(f, start, size)})
 		if err != nil {
@@ -252,4 +277,8 @@ func readPackageCSV(ctx context.Context, f *os.File, input *io.LimitedReader, na
 			return err
 		}
 	}
+}
+
+func packageRecordLimitError(name string, ordinal int) error {
+	return fmt.Errorf("discord package %s record %d exceeds %d bytes", name, ordinal, packageRecordLimit)
 }

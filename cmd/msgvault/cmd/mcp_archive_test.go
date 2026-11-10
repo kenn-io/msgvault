@@ -59,7 +59,7 @@ func TestMCPArchiveFamilies(t *testing.T) {
 		{"teams", "draft_compose"}, {"discord", "draft_compose"},
 		{"whatsapp", "find_chat"}, {"telegram", "find_chat"}, {"matrix", "find_chat"},
 		{"apple_messages", "find_chat"}, {"synctech_sms", "find_chat"}, {"imazing_csv", "find_chat"},
-		{"facebook_messenger", "find_chat"},
+		{"facebook_messenger", "find_chat"}, {"discord_package", "find_chat"},
 		{"inline", "find_chat"}, {"google_voice", "find_chat"}, {"gmail", "find_chat"},
 	} {
 		t.Run(tc.source, func(t *testing.T) {
@@ -90,6 +90,9 @@ func TestMCPArchiveFamilies(t *testing.T) {
 			}
 			if tc.tool != "" {
 				assert.Contains(names, tc.tool)
+			}
+			if tc.source == "discord_package" {
+				assert.NotContains(names, "draft_compose")
 			}
 			if tc.source == "mbox" {
 				assert.Contains(names, "get_stats")

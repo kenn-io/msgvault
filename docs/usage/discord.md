@@ -1,7 +1,7 @@
 ---
 last_edited: "2026-11-10"
 title: Discord
-description: Archive Discord guild channels, threads, and attachments through a read-only bot.
+description: Import personal Discord data packages or archive guild channels through a read-only bot.
 ---
 
 msgvault can archive Discord guild history into the same local database as
@@ -22,9 +22,13 @@ msgvault import-discord-package /path/to/extracted-package
 ```
 
 The package must include `account/user.json` and `messages/` (capitalized
-`Account` and `Messages` are also accepted). Current JSON transcripts and
-legacy CSV transcripts are supported. Run the command on the daemon host;
-a remote client cannot upload its local package. ZIP input is not supported.
+`Account` and `Messages` are also accepted). Legacy CSV transcripts are
+supported and checked against a real redacted export. JSON import is experimental and tested only
+with synthetic data based on Discord's documented fields; a real current JSON
+fixture is not available.
+
+Run the command on the daemon host; a remote client cannot upload its local
+package. ZIP input is not supported.
 
 A package contains only the exporting account's **sent messages**, including
 sent messages in DMs. It is not bilateral conversation history or complete
@@ -42,7 +46,9 @@ membership information stay unknown.
 Attachment URLs are stored as links. The importer does not download media or
 claim those links are archived files. Its report counts attachment links,
 missing local media, processed/added/updated/skipped records, and skip reasons,
-including when an import fails partway through.
+including when an import fails partway through. Omitted channel directories
+and symlinks are counted separately from skipped messages. Record size-limit
+errors identify the relative input path, record number, and byte limit.
 
 Re-importing updates each message to the last explicitly imported snapshot,
 including its attachment links. It creates no duplicate within the same

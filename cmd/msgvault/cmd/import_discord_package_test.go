@@ -3,22 +3,18 @@ package cmd
 import (
 	"bytes"
 	"database/sql"
+	"io"
+	"os"
+	"path/filepath"
+	"testing"
+
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
-	"io"
-	"path/filepath"
-	"testing"
 )
-
-func TestImportDiscordPackageCommand(t *testing.T) {
-	command, _, err := rootCmd.Find([]string{"import-discord-package"})
-	require.NoError(t, err)
-	assert.Equal(t, "import-discord-package", command.Name())
-}
 
 func TestImportDiscordPackageEndToEnd(t *testing.T) {
 	assert := assert.New(t)
@@ -41,13 +37,19 @@ func TestImportDiscordPackageEndToEnd(t *testing.T) {
 	home := t.TempDir()
 	fixture, err := filepath.Abs("../../../internal/discord/testdata/package-csv")
 	require.NoError(err)
+	root := t.TempDir()
+	require.NoError(os.CopyFS(root, os.DirFS(fixture)))
+	require.NoError(os.Mkdir(filepath.Join(root, "messages/renamed"), 0o700))
+	require.NoError(os.Symlink("333333333333333333", filepath.Join(root, "messages/444444444444444444")))
+	testutil.WriteFile(t, root, "messages/notes.txt", []byte("unrelated"))
+	fixture = root
 	var output bytes.Buffer
 	rootCmd.SetOut(&output)
 	rootCmd.SetErr(io.Discard)
 	rootCmd.SetArgs([]string{"--home", home, "import-discord-package", fixture})
 	require.NoError(rootCmd.ExecuteContext(t.Context()))
 	assert.Contains(output.String(), "sent_only")
-	assert.Contains(output.String(), "5 added")
+	assert.Contains(output.String(), "Channels: 1 imported, 2 skipped")
 	assert.Contains(output.String(), "1 missing local media")
 	st, err := store.Open(filepath.Join(home, "msgvault.db"))
 	require.NoError(err)
