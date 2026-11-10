@@ -3,6 +3,7 @@ package daemonclient
 import (
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,21 +29,31 @@ func (c *Client) MessageTags(ctx context.Context, id int64, change *emailtags.Me
 	if err != nil {
 		return nil, messageTagResponseError(change, err)
 	}
+	result, err := decodeMessageTagResponse[emailtags.MessageTagResult](resp, "message tags", func(err error) error { return messageTagResponseError(change, err) })
+	if failure, ok := errors.AsType[*emailtags.MessageTagError](err); ok {
+		return failure.Result, err
+	}
+	return result, err
+}
+
+// decodeMessageTagResponse handles the shared tag/archive failure envelope.
+// The request layer bounds error bodies; only unstructured failures are uncertain.
+func decodeMessageTagResponse[T any](resp *http.Response, operation string, responseError func(error) error) (*T, error) {
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, messageTagResponseError(change, fmt.Errorf("read message tags: %w", err))
+		return nil, responseError(fmt.Errorf("read %s response: %w", operation, err))
 	}
 	if resp.StatusCode != http.StatusOK {
 		var failure emailtags.MessageTagError
 		if err := json.Unmarshal(body, &failure); err != nil || failure.Code == "" {
-			return nil, messageTagResponseError(change, fmt.Errorf("message tags request failed (HTTP %d)", resp.StatusCode))
+			return nil, responseError(fmt.Errorf("%s request failed (HTTP %d)", operation, resp.StatusCode))
 		}
-		return failure.Result, &failure
+		return nil, &failure
 	}
-	var result emailtags.MessageTagResult
+	var result T
 	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, messageTagResponseError(change, fmt.Errorf("decode message tags: %w", err))
+		return nil, responseError(fmt.Errorf("decode %s response: %w", operation, err))
 	}
 	return &result, nil
 }

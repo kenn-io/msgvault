@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/emailtags"
 )
 
@@ -37,12 +38,12 @@ func newMessageArchiveCommand(archived bool, backend messageArchiveBackend) *cob
 				defer func() { _ = st.Close() }()
 				client = st
 			}
-			supported, err := client.SupportsAPISchemaVersion(cmd.Context(), messageArchiveMinAPISchemaVersion)
+			supported, err := client.SupportsAPISchemaVersion(cmd.Context(), daemonclient.MessageArchiveMinAPISchemaVersion)
 			if err != nil {
 				return fmt.Errorf("check daemon archive support: %w", err)
 			}
 			if !supported {
-				return fmt.Errorf("upgrade the daemon to API schema %s or newer for message archiving", messageArchiveMinAPISchemaVersion)
+				return fmt.Errorf("upgrade the daemon to API schema %s or newer for message archiving", daemonclient.MessageArchiveMinAPISchemaVersion)
 			}
 			result, err := client.ArchiveMessage(cmd.Context(), id, emailtags.ArchiveChange{Archived: &archived, DryRun: dryRun})
 			if asJSON {

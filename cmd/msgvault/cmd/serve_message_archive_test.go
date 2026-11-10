@@ -162,9 +162,9 @@ func TestArchiveMessageDaemonEndToEnd(t *testing.T) {
 			if !tc.allowed {
 				var failure *emailtags.MessageTagError
 				require.ErrorAs(t, err, &failure)
-				want := "permission_denied"
-				if tc.source != source.ID {
-					want = "message_not_found"
+				want := "message_not_found"
+				if !slices.Contains(tc.perms, "message.archive") {
+					want = "permission_denied"
 				}
 				assert.Equal(t, want, failure.Code)
 				assert.Equal(t, before, provider.connects.Load(), "denials must precede provider access")
@@ -334,7 +334,7 @@ func TestArchiveSenderRequiresEveryLiteralFromAndRechecksUnderLock(t *testing.T)
 			_, err = adapter.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived, DryRun: true}, grant, nil)
 			var failure *emailtags.MessageTagError
 			require.ErrorAs(t, err, &failure)
-			assert.Equal(t, "permission_denied", failure.Code)
+			assert.Equal(t, "message_not_found", failure.Code)
 		})
 	}
 	data := &store.MessagePersistData{Message: &store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "changing", MessageType: "email"}, Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{participant}, EmailAddresses: []string{"allowed@example.test"}}}}
@@ -350,7 +350,7 @@ func TestArchiveSenderRequiresEveryLiteralFromAndRechecksUnderLock(t *testing.T)
 	assert.True(t, entered)
 	var failure *emailtags.MessageTagError
 	require.ErrorAs(t, err, &failure)
-	assert.Equal(t, "permission_denied", failure.Code)
+	assert.Equal(t, "message_not_found", failure.Code)
 }
 
 func TestArchiveStoredQuotedMailbox(t *testing.T) {

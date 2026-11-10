@@ -438,7 +438,10 @@ sources, and restrictions without `message.archive` are rejected. These lists
 do not affect outgoing `sender_selections` or account-scoped read permissions.
 Every recorded literal From address must be allowed. Missing From envelopes,
 including legacy NULL envelopes, fail closed for sender-restricted grants.
-This literal From filter does not authenticate the sender.
+This literal From filter does not authenticate the sender. Disallowed, missing,
+or invalid From targets return `404 message_not_found`, matching wrong-source
+targets. A token without `message.archive` receives `403 permission_denied`
+before the message lookup.
 
 Gmail writes require `gmail.modify` or `mail.google.com`. Missing consent returns
 403 `insufficient_scope`; reauthorize with `msgvault add-account <account> --force`.
