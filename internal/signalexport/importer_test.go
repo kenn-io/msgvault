@@ -138,7 +138,15 @@ func TestImportMediaRepairOccurrencesAndLongText(t *testing.T) {
 		t.Run(fmt.Sprint(long), func(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			data := []byte("Fictional long text 星")
-			root := fixture(t, mediaMessage(data, long))
+			if !long {
+				data = []byte{0, 0, 0, 1} // Two fictional 16-bit PCM samples.
+			}
+			frame := mediaMessage(data, long)
+			if !long {
+				frame = strings.ReplaceAll(frame, `"contentType":"text/plain"`, `"contentType":"audio/L16;rate=8000;channels=1"`)
+				frame = strings.Replace(frame, `"pointer":`, `"flag":"VOICE_MESSAGE","pointer":`, 1)
+			}
+			root := fixture(t, frame)
 			opts := options(t, root)
 			summary, err := Import(t.Context(), st, opts)
 			require.NoError(t, err)
@@ -163,6 +171,12 @@ func TestImportMediaRepairOccurrencesAndLongText(t *testing.T) {
 			refs, err := st.MessageMIMEAttachmentsContext(t.Context(), id)
 			require.NoError(t, err)
 			require.Len(t, refs, want)
+			if !long {
+				assert.EqualValues(t, 1, summary.Omitted["attachment_flag"])
+				stored, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, refs[0].StoragePath))
+				require.NoError(t, err)
+				assert.Equal(t, data, stored)
+			}
 			for _, ref := range refs {
 				assert.NotEmpty(t, ref.ContentHash)
 				assert.Equal(t, "display.txt", ref.Filename)

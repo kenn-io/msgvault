@@ -3,7 +3,6 @@ package signalexport
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
@@ -134,8 +133,7 @@ func mediaWrites(ctx context.Context, st *store.Store, r *reader, messageID int6
 			if err != nil {
 				return "", nil, false, err
 			}
-			digest := sha256.Sum256([]byte(archived))
-			knownChanged = hex.EncodeToString(digest[:]) != prev.ContentHash
+			knownChanged = contentverify.VerifyBytes([]byte(archived), prev.ContentHash) != nil
 			body = archived
 			continue
 		}

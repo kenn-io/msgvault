@@ -140,6 +140,11 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (s *Import
 		}
 		s.Omitted["reactions"] += int64(len(standard.Reactions))
 		s.Omitted["link_preview"] += int64(len(standard.LinkPreview))
+		for _, attachment := range standard.Attachments {
+			if attachment.Flag != nil && attachment.Flag != "NONE" {
+				s.Omitted["attachment_flag"]++
+			}
+		}
 		if standard.Text != nil {
 			s.Omitted["formatting"] += int64(len(standard.Text.Ranges))
 		}

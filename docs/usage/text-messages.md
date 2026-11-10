@@ -633,11 +633,13 @@ stop the import.
 Coverage is reported by reason. Unsupported items include updates/calls,
 contacts, stickers, stories, polls, payments, view-once items and deletion
 tombstones. Unknown direction or missing stable identity/time causes a skip.
-Quotes, reactions, formatting, link previews, pins and revision history are not
-rendered; supported text and exact raw ChatItem JSON are retained. Empty and
-unknown frames are counted separately. Signal omits disappearing messages
-from readable exports and strips view-once media, so these files do not
-promise complete history.
+Quotes, reactions, formatting, link previews, pins, revision history and
+attachment flags (voice note, GIF, borderless) are not rendered; supported
+text and exact raw ChatItem JSON are retained. Mention ranges count under
+formatting; the body keeps Signal's placeholder character and the mentioned
+person is not resolved. Empty and unknown frames are counted separately.
+Signal omits disappearing messages from readable exports and strips view-once
+media, so these files do not promise complete history.
 
 The tested format is the researched Desktop native-v1 layout, using
 [independently authored fictional fixtures and pinned format sources](https://github.com/kenn-io/msgvault/blob/main/internal/signalexport/testdata/README.md).

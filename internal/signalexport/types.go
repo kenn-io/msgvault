@@ -73,6 +73,7 @@ type standardMessage struct {
 	} `json:"text"`
 	Attachments []struct {
 		Pointer *filePointer `json:"pointer"`
+		Flag    any          `json:"flag"`
 	} `json:"attachments"`
 	LongText    *filePointer `json:"longText"`
 	Quote       any          `json:"quote"`
