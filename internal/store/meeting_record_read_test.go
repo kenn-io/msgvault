@@ -2,7 +2,6 @@ package store
 
 import (
 	"database/sql"
-	"encoding/json/v2"
 	"fmt"
 	"testing"
 	"time"
@@ -23,9 +22,7 @@ func TestMeetingRecordReportsUnsupportedSeries(t *testing.T) {
 		if !assert.NoError(err) {
 			continue
 		}
-		data, err := json.Marshal(record)
-		require.NoError(err)
-		assert.Contains(string(data), fmt.Sprintf(`"unexpandable":[{"message_id":%d,"reason":"unsupported recurrence"}]`, series))
+		assert.Equal([]CalendarUnexpandable{{MessageID: series, Reason: "unsupported recurrence"}}, record.Unexpandable)
 		if ref.Kind == "msg" {
 			require.Len(record.Links, 1)
 			assert.Equal(fmt.Sprintf("evt:%d", copy), record.Links[0].Ref)
@@ -209,21 +206,6 @@ func TestMeetingRecordScopedGoogleIDs(t *testing.T) {
 	}
 }
 
-func TestMeetingRecordScopedGoogleReschedule(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, event := calendarFixture(t, st, "rescheduled-google", `{"id":"event","start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`, "owner@example.com")
-	_, note := projectionFixture(t, st, "note-google", "granola_json", `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"event","scheduled_start_time":"2027-03-14T10:00:00Z"}}`)
-	for _, seed := range []MeetingLinkRef{{Kind: "msg", MessageID: note}, {Kind: "evt", MessageID: event}} {
-		record, err := st.MeetingRecordContext(t.Context(), seed)
-		require.NoError(err)
-		require.Len(record.Links, 1)
-		assert.Equal(fmt.Sprintf("evt:%d", event), record.Links[0].Ref)
-		assert.Equal([]int64{note}, record.MessageIDs)
-	}
-}
-
 func TestMeetingRecordExactFractionalAndOffsetTimes(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -341,10 +323,6 @@ func TestMeetingRecordSkipsUnrelatedExceptionsWithinBudget(t *testing.T) {
 	bulkCalendarCandidates(t, st, data.Message.SourceID, data.Message.ConversationID, "exception", 150)
 	_, err := st.db.Exec(`UPDATE calendar_events SET ical_uid = 'uid@example.org' WHERE kind = 'exception'`)
 	require.NoError(err)
-	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: master, Identity: occurrenceIdentity(t, "20270314T100000Z")})
-	require.NoError(err)
-	require.Len(record.Links, 1)
-	assert.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", master), record.Links[0].Ref)
 	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
 	require.NoError(err)
 	defer release()

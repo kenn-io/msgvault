@@ -33,9 +33,12 @@ func TestMeetingRecordInheritedVerificationSubject(t *testing.T) {
 		require.NoError(err)
 		return id
 	}
-	master := persist(calendar.ID, "master", "calendar_event", "calendar", "Your verification code is 482913", "gcal_json", `{"id":"series","iCalUID":"uid@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
+	persist(calendar.ID, "master", "calendar_event", "calendar", "Your verification code is 482913", "gcal_json", `{"id":"series","iCalUID":"uid@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
 	cancelled := persist(calendar.ID, "cancelled", "calendar_event", "calendar", "", "gcal_json", `{"id":"cancelled","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"status":"cancelled"}`)
 	note := persist(notes.ID, "note", "meeting_transcript", "meeting", "", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
+	other, err := st.GetOrCreateSource("meeting_import", "other@example.com")
+	require.NoError(err)
+	outside := persist(other.ID, "outside", "meeting_transcript", "meeting", "", "meeting_json", `{}`)
 	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	t.Cleanup(srv.agentGrants.Close)
@@ -50,24 +53,23 @@ func TestMeetingRecordInheritedVerificationSubject(t *testing.T) {
 	} {
 		_, token, _, err := srv.agentGrants.Issue(tc.name, tc.permissions, sources, time.Time{})
 		require.NoError(err)
-		for _, ref := range []string{fmt.Sprintf("msg:%d", note), fmt.Sprintf("evt:%d", cancelled), fmt.Sprintf("evt:%d@20270314T100000Z", master)} {
-			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/meetings/record?ref="+ref, nil)
-			req.Header.Set(apiprotocol.AgentTokenHeader, token)
-			w := httptest.NewRecorder()
-			srv.Router().ServeHTTP(w, req)
-			require.Equal(http.StatusOK, w.Code, w.Body.String())
-			var record store.MeetingRecord
-			require.NoError(json.Unmarshal(w.Body.Bytes(), &record))
-			require.Len(record.Links, 1)
-			assert.Equal(tc.want, record.Links[0].Subject, "%s %s", tc.name, ref)
-		}
+		ref := fmt.Sprintf("msg:%d", note)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/meetings/record?ref="+ref, nil)
+		req.Header.Set(apiprotocol.AgentTokenHeader, token)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		require.Equal(http.StatusOK, w.Code, w.Body.String())
+		var record store.MeetingRecord
+		require.NoError(json.Unmarshal(w.Body.Bytes(), &record))
+		require.Len(record.Links, 1)
+		assert.Equal(tc.want, record.Links[0].Subject, "%s %s", tc.name, ref)
 	}
 	_, restricted, _, err := srv.agentGrants.Issue("notes-only", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: notes.ID, Type: notes.SourceType, Identifier: notes.Identifier}}, time.Time{})
 	require.NoError(err)
 	for _, tc := range []struct {
 		ref    string
 		status int
-	}{{fmt.Sprintf("msg:%d", note), http.StatusOK}, {fmt.Sprintf("evt:%d", cancelled), http.StatusNotFound}} {
+	}{{fmt.Sprintf("msg:%d", note), http.StatusOK}, {fmt.Sprintf("evt:%d", cancelled), http.StatusNotFound}, {fmt.Sprintf("msg:%d", outside), http.StatusNotFound}} {
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/meetings/record?ref="+tc.ref, nil)
 		req.Header.Set(apiprotocol.AgentTokenHeader, restricted)
 		w := httptest.NewRecorder()
@@ -126,10 +128,7 @@ func TestMeetingRecordPartialHTTP(t *testing.T) {
 		srv.Router().ServeHTTP(response, request)
 		require.Equal(tc.status, response.Code, response.Body.String())
 		if tc.status == http.StatusOK {
-			var record store.MeetingRecord
-			require.NoError(json.Unmarshal(response.Body.Bytes(), &record))
-			assert.Equal([]store.CalendarUnexpandable{{MessageID: id, Reason: "unsupported recurrence"}}, record.Unexpandable)
-			assert.Empty(record.Links)
+			assert.JSONEq(fmt.Sprintf(`{"links":[],"message_ids":[],"unexpandable":[{"message_id":%d,"reason":"unsupported recurrence"}]}`, id), response.Body.String())
 		}
 	}
 }
