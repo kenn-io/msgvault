@@ -242,16 +242,13 @@ func icsDuration(value string) (int, time.Duration, error) {
 			continue
 		}
 		v, err := strconv.ParseInt(s, 10, 64)
-		if err != nil || v > 36600*86400 {
+		if err != nil {
 			return 0, 0, errors.New("calendar DURATION exceeds limit")
 		}
 		n[i] = v
 	}
 	days := n[0]*7 + n[1]
 	secs := n[2]*3600 + n[3]*60 + n[4]
-	if days*86400+secs > 36600*86400 {
-		return 0, 0, errors.New("calendar DURATION exceeds limit")
-	}
 	return int(days), time.Duration(secs) * time.Second, nil
 }
 

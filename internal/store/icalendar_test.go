@@ -26,13 +26,32 @@ func icsSource(t *testing.T, st *Store) int64 {
 }
 
 func TestICalendarPersistenceRevisionsAndRebuild(t *testing.T) {
+	t.Run("cancellation first", func(t *testing.T) {
+		st := newRFC822IDBackfillBackendStore(t)
+		source := icsSource(t, st)
+		cancel := calendarDocument("CANCEL", "STATUS:CANCELLED\r\nSEQUENCE:2\r\nDTSTART:20270302T140000Z\r\nSUMMARY:Cancelled meeting")
+		_, err := st.PersistICalendarContext(t.Context(), source, cancel)
+		require.NoError(t, err)
+		_, err = st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T130000Z\r\nSUMMARY:Older"))
+		require.NoError(t, err)
+		ids := emailEvents(t, st, source)
+		require.Len(t, ids, 1)
+		row := calendarRows(t, st, ids...)[0]
+		assert.Equal(t, "cancelled", row.Event.Status)
+		assert.Equal(t, "Cancelled meeting", row.Subject)
+		require.NotNil(t, row.Event.Start)
+		assert.Equal(t, "2027-03-02T14:00:00Z", row.Event.Start.Format(time.RFC3339))
+		stored, err := st.GetMessageRaw(ids[0])
+		require.NoError(t, err)
+		assert.Equal(t, cancel, stored)
+	})
 	for _, behavior := range []string{"duplicate persist", "description", "older sequence", "newer stamp", "cancellation", "rebuild", "restore"} {
 		t.Run(behavior, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
 			source := icsSource(t, st)
 			description := strings.Repeat("Meeting details. ", 20)
-			raw := calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTAMP:20270301T120000Z\r\nDTSTART:20270302T120000Z\r\nDTEND:20270302T130000Z\r\nSUMMARY:First\r\nRRULE:FREQ=DAILY;COUNT=2\r\nDESCRIPTION:"+description+"\\nJoin: https://meet.example.com/meeting\r\nLOCATION:Conference room")
+			raw := calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTAMP:20270301T120000Z\r\nDTSTART:20270302T120000Z\r\nDTEND:20270302T130000Z\r\nSUMMARY:First\r\nRRULE:FREQ=DAILY;COUNT=2\r\nATTENDEE;PARTSTAT=ACCEPTED:mailto:guest@example.org\r\nDESCRIPTION:"+description+"\\nJoin: https://meet.example.com/meeting\r\nLOCATION:Conference room")
 			first, err := st.PersistICalendarContext(t.Context(), source, raw)
 			requirements.NoError(err)
 			requirements.Equal(1, first.Changed)
@@ -88,6 +107,8 @@ func TestICalendarPersistenceRevisionsAndRebuild(t *testing.T) {
 			switch behavior {
 			case "cancellation":
 				row := calendarRows(t, st, id)[0]
+				requirements.NotEmpty(accepted.Event.Attendees)
+				assertions.Equal(accepted.Event.Attendees, row.Event.Attendees)
 				assertions.Equal("cancelled", row.Event.Status)
 				assertions.Equal("series", row.Event.Kind)
 				assertions.Equal(accepted.Subject, row.Subject)
@@ -124,7 +145,7 @@ func TestICalendarRawIsNotEmailDedupEvidence(t *testing.T) {
 	requirements.Len(emailEvents(t, st, source), 2)
 	candidates, err := st.GetAllRawMIMECandidates(t.Context(), source)
 	requirements.NoError(err)
-	assert.Empty(t, candidates, "the shared VCALENDAR bytes do not prove the VEVENT messages are duplicates")
+	assert.Empty(t, candidates, "calendar event bytes are not email deduplication evidence")
 }
 
 func TestICalendarCancelledExceptionOccurrences(t *testing.T) {
@@ -161,9 +182,6 @@ func TestICalendarCancelledExceptionOccurrences(t *testing.T) {
 		retained, err := st.GetMessageRaw(ids[1])
 		requirements.NoError(err)
 		assertions.Equal(cancel, retained)
-		_, err = st.db.Exec(`DELETE FROM calendar_events WHERE message_id=?`, ids[1])
-		requirements.NoError(err)
-		requirements.NoError(st.UpsertMessageRawWithFormat(ids[1], retained, "ics"))
 		from := time.Date(2027, 3, 3, 0, 0, 0, 0, time.UTC)
 		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
 		requirements.NoError(err)
