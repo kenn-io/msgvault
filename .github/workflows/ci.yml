@@ -1155,7 +1155,7 @@ jobs:
       matrix:
         include:
           - name: cli
-            job_timeout: 54
+            job_timeout: 36
             test_timeout: 18m
             package: ./cmd/msgvault/cmd
             extra_packages: true
@@ -1169,7 +1169,7 @@ jobs:
             package: ./internal/api
             followups: true
     runs-on: ubuntu-26.04
-    timeout-minutes: ${{ matrix.job_timeout }}
+    timeout-minutes: ${{ matrix.extra_packages && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') && 54 || matrix.job_timeout }}
     services:
       postgres:
         image: postgres:18
