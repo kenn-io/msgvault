@@ -114,21 +114,20 @@ func TestPG_BackfillFTS_RefreshesOutdatedEntries(t *testing.T) {
 func TestBackfillFTSPreservesSenderSearches(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
-	slack, err := f.Store.EnsureParticipantByIdentifier("slack", "sender-a", "Current name")
+	slack, err := f.Store.EnsureParticipantByPhone(t.Context(), "+15550123457", "Current name", "slack")
 	require.NoError(err)
-	teams, err := f.Store.EnsureParticipantByIdentifier("teams", "sender-b", "Current name")
-	require.NoError(err)
+	teams := f.EnsureParticipant("alpha@example.org", "Current name", "example.org")
 	phone, err := f.Store.EnsureParticipantByPhone(t.Context(), "+15550123456", "", "whatsapp")
 	require.NoError(err)
 	email := f.EnsureParticipant("sender@example.test", "Email Sender", "example.test")
 	cases := []struct {
-		kind, name, indexed, query string
-		sender                     int64
+		kind, name, indexed, query, addressQuery string
+		sender                                   int64
 	}{
-		{"slack", "Horizon Sender", "Horizon Sender", "horizon", slack},
-		{"teams", "Monarch Sender", "Monarch Sender", "monarch", teams},
-		{"whatsapp", "", "+15550123456", "+15550123456", phone},
-		{"email", "Email Sender", "sender@example.test", "sender@example.test", email},
+		{"slack", "Horizon Sender", "Horizon Sender +15550123457", "horizon", "+15550123457", slack},
+		{"teams", "Monarch Sender", "Monarch Sender alpha@example.org", "monarch", "alpha@example.org", teams},
+		{"whatsapp", "", "+15550123456", "+15550123456", "", phone},
+		{"email", "Email Sender", "sender@example.test", "sender@example.test", "", email},
 	}
 	ids := make([]int64, len(cases))
 	for i, tc := range cases {
@@ -148,6 +147,11 @@ func TestBackfillFTSPreservesSenderSearches(t *testing.T) {
 			matches, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{tc.query}}, 10)
 			require.NoError(err, tc.kind)
 			require.Equal([]int64{ids[i]}, matches, tc.kind)
+			if tc.addressQuery != "" {
+				matches, _, err = f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{tc.addressQuery}}, 10)
+				require.NoError(err, tc.kind)
+				require.Equal([]int64{ids[i]}, matches, tc.kind)
+			}
 		}
 	}
 	check()
