@@ -1,6 +1,8 @@
 package store
 
 import (
+	"context"
+	"database/sql/driver"
 	"fmt"
 	"strings"
 	"testing"
@@ -8,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
 func calendarWindow(t *testing.T, st *Store, from, to string) ([]CalendarEventRow, error) {
@@ -345,19 +348,38 @@ func TestCalendarClearedMasterKeepsStandaloneAndFirstOccurrenceExceptions(t *tes
 }
 
 func TestMeetingRelatedQueryPlan(t *testing.T) {
-	st := newRFC822IDBackfillBackendStore(t)
-	data, _ := calendarFixture(t, st, "plan-target", calendarRaw)
-	bulkCalendarCandidates(t, st, data.Message.SourceID, data.Message.ConversationID, "single", 3000)
-	_, err := st.db.Exec(`ANALYZE`)
+	base := newRFC822IDBackfillBackendStore(t)
+	data, _ := calendarFixture(t, base, "plan-target", calendarRaw)
+	bulkCalendarCandidates(t, base, data.Message.SourceID, data.Message.ConversationID, "single", 3000)
+	_, err := base.db.Exec(`ANALYZE`)
 	require.NoError(t, err)
-	at := time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)
-	predicate, args := st.meetingRelatedEventPredicate(data.Message.SourceID, "event-example", at)
-	for _, query := range []string{`SELECT COUNT(*) FROM (SELECT e.message_id ` + calendarEventFrom + "(" + predicate + ") LIMIT ?) AS candidates", calendarEventSelect + "(" + predicate + ") ORDER BY e.message_id LIMIT ?"} {
+	type statement struct {
+		query string
+		args  []any
+	}
+	var statements []statement
+	gate := &meetingProjectionGate{before: func(_ context.Context, query string, args []driver.NamedValue) error {
+		if strings.HasPrefix(query, "SELECT COUNT(*) FROM (SELECT e.message_id FROM calendar_events e") || strings.HasPrefix(query, "SELECT e.message_id, m.source_id,") {
+			captured := statement{query: query}
+			for _, arg := range args {
+				captured.args = append(captured.args, arg.Value)
+			}
+			statements = append(statements, captured)
+		}
+		return nil
+	}}
+	st := gatedMeetingProjectionStore(t, base, gate)
+	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{data.Message.SourceID})
+	budget := 500
+	_, err = st.meetingRelatedEventRows(ctx, data.Message.SourceID, "event-example", time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), &budget)
+	require.NoError(t, err)
+	require.Len(t, statements, 2)
+	for _, statement := range statements {
 		prefix := "EXPLAIN QUERY PLAN "
 		if st.IsPostgreSQL() {
 			prefix = "EXPLAIN "
 		}
-		rows, err := st.db.QueryContext(t.Context(), prefix+query, append(append([]any(nil), args...), 500)...)
+		rows, err := base.db.QueryContext(t.Context(), prefix+statement.query, statement.args...)
 		require.NoError(t, err)
 		columns, err := rows.Columns()
 		require.NoError(t, err)
@@ -371,6 +393,7 @@ func TestMeetingRelatedQueryPlan(t *testing.T) {
 			require.NoError(t, rows.Scan(ptrs...))
 			fmt.Fprintln(&plan, vals[len(vals)-1])
 		}
+		require.NoError(t, rows.Err())
 		require.NoError(t, rows.Close())
 		require.Contains(t, plan.String(), "idx_calendar_events_series_provider_id")
 		require.Contains(t, plan.String(), "idx_calendar_events_provider_id")
