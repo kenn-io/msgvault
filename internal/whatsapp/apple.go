@@ -558,11 +558,20 @@ func fetchAppleGroupMembers(
 	db *sql.DB,
 	chatRowID int64,
 ) ([]appleGroupMember, error) {
+	// ZWAGROUPMEMBER also holds rows for people who are not in the group:
+	// former members and people WhatsApp only knows through a shared
+	// community or contact. ZISACTIVE marks the current roster, so a group
+	// with 33 members can carry 400+ rows. Senders who left are still
+	// attached through their messages.
+	activeFilter := ""
+	if hasColumn(ctx, db, "ZWAGROUPMEMBER", "ZISACTIVE") {
+		activeFilter = " AND COALESCE(ZISACTIVE, 1) <> 0"
+	}
 	rows, err := db.QueryContext(ctx, `
 		SELECT COALESCE(ZMEMBERJID, ''), COALESCE(ZCONTACTNAME, ''),
 		       COALESCE(ZFIRSTNAME, ''), COALESCE(ZISADMIN, 0)
 		FROM ZWAGROUPMEMBER
-		WHERE ZCHATSESSION = ? AND TRIM(COALESCE(ZMEMBERJID, '')) <> ''
+		WHERE ZCHATSESSION = ? AND TRIM(COALESCE(ZMEMBERJID, '')) <> ''`+activeFilter+`
 		ORDER BY Z_PK ASC
 	`, chatRowID)
 	if err != nil {

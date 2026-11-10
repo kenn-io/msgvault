@@ -107,11 +107,9 @@ type DocbankBinding struct {
 // Selector identifies a stored occurrence and either an exact range or a
 // window of at most MaxChars runes. The daemon derives all other provenance.
 type Selector struct {
-	Kind         string `json:"kind" enum:"message,document_chunk,docbank_rendition"`
+	Kind         string `json:"kind" enum:"message,docbank_rendition"`
 	MessageID    int64  `json:"message_id"`
 	AttachmentID int64  `json:"attachment_id,omitzero"`
-	ExtractionID string `json:"extraction_id,omitzero"`
-	ChunkKey     string `json:"chunk_key,omitzero"`
 	StartRune    *int   `json:"start_rune,omitzero"`
 	EndRune      *int   `json:"end_rune,omitzero"`
 	MaxChars     *int   `json:"max_chars,omitzero"`

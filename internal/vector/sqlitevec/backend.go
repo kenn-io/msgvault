@@ -1514,15 +1514,11 @@ func (b *Backend) filteredMessageIDsLimit(ctx context.Context, f vector.Filter, 
 		}
 		clauses = append(clauses, "("+strings.Join(messageTypeClauses, " OR ")+")")
 	}
-	// Sender filters: one EXISTS per group, AND'd across groups so
-	// repeated `from:` operators each become an independent
-	// message-level requirement. Each group matches solely against
-	// the message's `from` recipient rows — the same source the
-	// SQLite FTS path uses (internal/store/api.go:327-336). Using a
-	// single source keeps repeated `from:` tokens coherent: mixed
-	// satisfaction (one token via sender_id, another via recipient
-	// row) cannot create matches the SQLite path would not also
-	// produce.
+	for _, term := range f.SenderTerms {
+		predicate, _, senderArgs := search.SenderLookup(term, (&store.SQLiteDialect{}).UnicodeLowerExpression, "messages", "message_recipients", "participants", "m")
+		clauses = append(clauses, predicate)
+		args = append(args, senderArgs...)
+	}
 	for _, group := range f.SenderGroups {
 		if len(group) == 0 {
 			continue

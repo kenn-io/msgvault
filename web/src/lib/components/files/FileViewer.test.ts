@@ -4,7 +4,6 @@ import { appShortcuts } from '@kenn-io/kit-ui';
 
 import { createAPIClient } from '../../api/client';
 import type { FileSearchRow } from '../../explore/models';
-import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
 import FileViewer from './FileViewer.svelte';
 
 const { renderPDF } = vi.hoisted(() => ({
@@ -114,45 +113,6 @@ describe('FileViewer', () => {
     view.unmount();
     expect(appShortcuts.activeScope()).toBe('root');
     unregister();
-  });
-
-  it('closes only the top Kata dialog on Escape, leaving the file open', async () => {
-    const onClose = vi.fn();
-    const metadata = {
-      id: 7, message_id: 11, conversation_id: 21, filename: 'notes.txt', mime_type: 'image/png',
-      size_bytes: 8, content_hash: 'a'.repeat(64), content_state: 'local_content', content_available: true
-    };
-    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      const path = new URL(request.url).pathname;
-      if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example', message: 'Ready' });
-      if (path === '/api/v1/files/7') return Response.json(metadata);
-      if (path.endsWith('/documents/search')) return Response.json({ results: [
-        { attachment_id: 7, message_id: 11, extraction_id: 'extract-1', chunk_key: 'chunk-0', excerpt: 'Send the budget', excerpt_start_rune: 0, highlight_start: 0, highlight_end: 4, matched_signals: ['content'] },
-      ] });
-      if (path.endsWith('/evidence/prepare')) return new Promise<Response>(() => undefined);
-      return new Response(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), { headers: { 'Content-Type': 'image/png' } });
-    }));
-    render(FileViewer, { props: { client, file: file(), onClose }, context: new Map([[kataReadinessKey, new KataReadiness(client)]]) });
-    const escape = () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-
-    await fireEvent.click(await screen.findByRole('button', { name: 'Add to task…' }));
-    expect(screen.getByRole('dialog', { name: 'Add to task' })).toBeTruthy();
-    escape();
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add to task' })).toBeNull());
-    expect(onClose).not.toHaveBeenCalled();
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Add to task…' }));
-    await fireEvent.input(screen.getByLabelText('Search this file'), { target: { value: 'budget' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Use quote 1' }));
-    expect(await screen.findByRole('dialog', { name: 'Kata issue' })).toBeTruthy();
-    escape();
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Kata issue' })).toBeNull());
-    expect(onClose).not.toHaveBeenCalled();
-
-    escape();
-    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it('rejects malformed image bytes before creating a URL', async () => {

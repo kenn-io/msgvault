@@ -44,6 +44,7 @@ Choose the connection the owner has authorized:
   grant's permissions and source scope on every call. Scoped archive reads
   require daemon API schema 3.9.0 or newer. The owner can set an expiry and
   select permissions and sources when [issuing a grant](../cli-reference.md#agent-token-issue).
+  Withholding detected verification content from delegated reads requires daemon API schema 3.49.0 or newer. The `verification.read` modifier allows that content and grants no reads alone. See [detection rules and limits](../api-server.md#verification-content).
 
 Use the client's MCP `tools/list` capability to discover the tools and input
 schemas available in this session. Availability depends on the daemon version,
@@ -274,7 +275,6 @@ backend checks for action permissions, source scope, and sender identity;
 | `query_sql` | read | — | owner-only |
 | `run_saved_view` | read | — | owner-only |
 | `search_by_domains` | read | — | search.read |
-| `search_document_attachments` | read | — | owner-only |
 | `search_in_message` | read | — | message.read |
 | `search_media` | read | — | owner-only |
 | `search_message_bodies` | read | — | search.read |

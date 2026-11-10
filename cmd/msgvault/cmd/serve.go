@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/circleback"
+	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/discord"
@@ -580,11 +581,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err := registerSQLiteMaintenanceJob(sched, s); err != nil {
 		return fmt.Errorf("schedule SQLite maintenance: %w", err)
 	}
-	if err := configureDocumentReconcileJob(
-		ctx, sched, s, cfg.Attachments.Documents.Enabled,
-	); err != nil {
-		return fmt.Errorf("configure document reconciliation: %w", err)
-	}
 	if err := registerFilenameDiscoveryJob(sched, s); err != nil {
 		return fmt.Errorf("schedule filename discovery: %w", err)
 	}
@@ -639,9 +635,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		if err := sched.AddJob(scheduler.Job{
 			Name: api.MatrixJobName, Schedule: cfg.Matrix.Schedule, Preemptible: true,
 			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
-				return runScheduledSource(ctx, attachmentMaint, false, func(ctx context.Context) error {
-					return runConfiguredMatrixSync(ctx, s)
-				})
+				return runConfiguredMatrixSync(ctx, s, matrixMediaMutation(attachmentMaint))
 			}),
 		}); err != nil {
 			logger.Error("failed to schedule matrix sync", "error", err)
@@ -704,6 +698,32 @@ func runServe(cmd *cobra.Command, args []string) error {
 			} else {
 				logger.Info("scheduled "+name+" sync", "schedule", block.Schedule)
 			}
+		}
+	}
+
+	for _, source := range cfg.FacebookComments {
+		if source.Enabled && source.Schedule == "" {
+			logger.Warn("Facebook comments profile is enabled but has no schedule", "profile", source.Identifier)
+		}
+	}
+	for _, source := range cfg.ScheduledFacebookCommentsSources() {
+		if err := registerScheduledFacebookCommentsJob(sched, source, attachmentMaint, invocationBoundJobRun(state, func(ctx context.Context) error {
+			return runConfiguredFacebookCommentsSync(ctx, s, source)
+		})); err != nil {
+			logger.Error("failed to schedule Facebook comments", "profile", source.Identifier, "error", err)
+		}
+	}
+
+	for _, source := range cfg.InstagramComments {
+		if source.Enabled && source.Schedule == "" {
+			logger.Warn("Instagram comments profile is enabled but has no schedule", "profile", source.Identifier)
+		}
+	}
+	for _, source := range cfg.ScheduledInstagramCommentsSources() {
+		if err := registerScheduledInstagramCommentsJob(sched, source, attachmentMaint, invocationBoundJobRun(state, func(ctx context.Context) error {
+			return runConfiguredInstagramCommentsSync(ctx, s, source)
+		})); err != nil {
+			logger.Error("failed to schedule Instagram comments", "profile", source.Identifier, "error", err)
 		}
 	}
 
@@ -1864,9 +1884,9 @@ func hasServeOAuthConfig(c *config.Config) bool {
 	return c.OAuth.HasAnyConfig() || c.Microsoft.ClientID != ""
 }
 
-func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slog.Logger) *api.IdleTracker {
-	if c == nil || os.Getenv(serveBackgroundChildEnv) != "1" {
-		return nil
+func effectiveDaemonIdleTimeout(c *config.Config, logger *slog.Logger) time.Duration {
+	if c == nil || os.Getenv(serveBackgroundChildEnv) != "1" || os.Getenv(servePersistentChildEnv) == runtimeBackgroundValue {
+		return 0
 	}
 	logger = repairLogger(logger)
 	timeout := c.Server.DaemonIdleTimeout
@@ -1881,11 +1901,16 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slo
 			timeout = parsed
 		}
 	}
+	return max(timeout, 0)
+}
+
+func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slog.Logger) *api.IdleTracker {
+	timeout := effectiveDaemonIdleTimeout(c, logger)
 	if timeout <= 0 {
 		return nil
 	}
 	return api.NewIdleTracker(timeout, func() {
-		logger.Info("background daemon idle timeout elapsed; shutting down", "timeout", timeout)
+		repairLogger(logger).Info("background daemon idle timeout elapsed; shutting down", "timeout", timeout)
 		stop()
 	})
 }
@@ -2027,9 +2052,6 @@ var _ api.ConversationWindowStore = (*storeAPIAdapter)(nil)
 var _ api.ChangedMessageLister = (*storeAPIAdapter)(nil)
 var _ api.ArchiveIdentifier = (*storeAPIAdapter)(nil)
 var _ operations.HistoryReader = (*storeAPIAdapter)(nil)
-var _ api.DocumentSearchStore = (*storeAPIAdapter)(nil)
-var _ api.DocumentStatusStore = (*storeAPIAdapter)(nil)
-var _ api.DocumentVectorStatusStore = (*storeAPIAdapter)(nil)
 var _ api.ActivityStore = (*storeAPIAdapter)(nil)
 var _ api.ParticipantIdentityContextStore = (*storeAPIAdapter)(nil)
 
@@ -2180,77 +2202,6 @@ func (a *storeAPIAdapter) LaneStatus(
 	return a.store.LaneStatus(ctx, kind)
 }
 
-func (a *storeAPIAdapter) SearchDocuments(
-	ctx context.Context,
-	request store.DocumentSearchRequest,
-) (store.DocumentSearchResponse, error) {
-	ctx = a.invocationContext(ctx)
-	if err := reconcileDocumentOccurrencesForSearch(ctx, a.store); err != nil {
-		return store.DocumentSearchResponse{}, err
-	}
-	return a.store.SearchDocuments(ctx, request)
-}
-
-func (a *storeAPIAdapter) ReconcileDocumentOccurrences(ctx context.Context) error {
-	ctx = a.invocationContext(ctx)
-	return reconcileDocumentOccurrencesForSearch(ctx, a.store)
-}
-
-func (a *storeAPIAdapter) GetDocumentIndexStatusForScope(
-	ctx context.Context,
-	profileID string,
-	extractionInputKey string,
-	allowedMediaTypes []string,
-	allowedMessageTypes []string,
-) (store.DocumentIndexStatus, error) {
-	return a.store.GetDocumentIndexStatusForScope(
-		ctx, profileID, extractionInputKey, allowedMediaTypes, allowedMessageTypes,
-	)
-}
-
-func (a *storeAPIAdapter) GetCurrentDocumentIndexStatusScope(
-	ctx context.Context,
-) (string, []string, error) {
-	return a.store.GetCurrentDocumentIndexStatusScope(ctx)
-}
-
-func (a *storeAPIAdapter) GetActiveDocumentExtractionRebuild(
-	ctx context.Context,
-	profileID string,
-	extractionInputKey string,
-) (store.DocumentExtractionRebuild, error) {
-	return a.store.GetActiveDocumentExtractionRebuild(ctx, profileID, extractionInputKey)
-}
-
-func (a *storeAPIAdapter) CountIncompleteDocumentExtractionRebuild(
-	ctx context.Context,
-	rebuild store.DocumentExtractionRebuild,
-	allowedMediaTypes []string,
-	allowedMessageTypes []string,
-) (int64, error) {
-	return a.store.CountIncompleteDocumentExtractionRebuild(
-		ctx, rebuild, allowedMediaTypes, allowedMessageTypes,
-	)
-}
-
-func (a *storeAPIAdapter) GetDocumentVectorTargetProfileID(ctx context.Context) (string, error) {
-	return a.store.GetDocumentVectorTargetProfileID(ctx)
-}
-
-func (a *storeAPIAdapter) GetDocumentVectorOperationsStatus(
-	ctx context.Context,
-	configured store.DocumentVectorGenerationSpec,
-	documentEgressFingerprint, queryEgressFingerprint string,
-	generationID int64,
-	afterToken string,
-	limit int,
-) (store.DocumentVectorOperationsStatus, error) {
-	return a.store.GetDocumentVectorOperationsStatus(
-		ctx, configured, documentEgressFingerprint, queryEgressFingerprint,
-		generationID, afterToken, limit,
-	)
-}
-
 func (a *storeAPIAdapter) GetStats() (*api.StoreStats, error) {
 	return a.store.GetStats()
 }
@@ -2323,6 +2274,12 @@ func (a *storeAPIAdapter) ListMessagesContext(
 	ctx context.Context, offset, limit int, sourceIDs []int64,
 ) ([]api.APIMessage, int64, error) {
 	return a.store.ListMessagesContext(ctx, offset, limit, sourceIDs)
+}
+
+var _ api.MessageBodyLoader = (*storeAPIAdapter)(nil)
+
+func (a *storeAPIAdapter) PopulateMessageBodiesContext(ctx context.Context, messages []store.APIMessage) error {
+	return a.store.PopulateMessageBodiesContext(ctx, messages)
 }
 
 func (a *storeAPIAdapter) GetMessageContext(ctx context.Context, id int64) (*api.APIMessage, error) {
@@ -2792,6 +2749,16 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	)
 }
 
+// Lease each media write so downloads can proceed while packing runs.
+func matrixMediaMutation(maintenance *attachmentMaintenance) func(context.Context, func() error) error {
+	if maintenance == nil {
+		return nil
+	}
+	return func(ctx context.Context, write func() error) error {
+		return runScheduledSource(ctx, maintenance, true, func(context.Context) error { return write() })
+	}
+}
+
 func attachmentRemovalCommand(args []string) bool {
 	if len(args) == 0 {
 		return false
@@ -2824,19 +2791,8 @@ func attachmentRemovalCommand(args []string) bool {
 // need no further interpretation here, but they must not be mistaken for
 // command-specific arguments.
 func repackAttachmentsParentArgsAllowed(args []string) bool {
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "--") {
-			return false
-		}
-		name := strings.TrimPrefix(arg, "--")
-		if before, _, ok := strings.Cut(name, "="); ok {
-			name = before
-		}
-		if !loggingPassthroughFlags[name] {
-			return false
-		}
-	}
-	return true
+	flags := clirun.NewFlagSet()
+	return clirun.Parse(flags, args) == nil && flags.NArg() == 0
 }
 
 func (a *storeAPIAdapter) PlanCLIAddCalendar(

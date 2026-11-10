@@ -91,8 +91,10 @@ but it is fully resumable: interrupt it any time and the next run continues
 from the saved checkpoint. Later runs only fetch chats with new activity.
 
 Recent messages (last 24 hours) are re-checked on every incremental run so
-edits, deletions, and reaction changes are captured; older in-place changes
-are only picked up by `--full` runs.
+edits, deletions, and reaction changes are captured. Only messages that changed
+since they were archived are rewritten, and the summary counts them as
+`updated`; `added` counts only messages archived for the first time. Older
+in-place changes are only picked up by `--full` runs.
 
 | Flag | Default | Description |
 |---|---|---|

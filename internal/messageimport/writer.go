@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"go.kenn.io/msgvault/internal/apiimport"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -65,10 +66,10 @@ type Evidence struct {
 
 // Write validates and stores one message, keyed by message.external_id
 // within the source. Evidence identical to the stored copy writes nothing.
-func (w *Writer) Write(ctx context.Context, message ImportedMessage) (WriteResult, error) {
+func (w *Writer) Write(ctx context.Context, message ImportedMessage) (apiimport.Write, error) {
 	snapshot, err := w.snapshot(message)
 	if err != nil {
-		return WriteResult{}, err
+		return apiimport.Write{}, err
 	}
 	return persist(ctx, w.store, w.sourceID, snapshot)
 }
@@ -77,18 +78,18 @@ func (w *Writer) Write(ctx context.Context, message ImportedMessage) (WriteResul
 // evidence as its raw evidence instead of the normalized message. Evidence
 // and message metadata identical to the stored copy write nothing, so
 // whatever the message is built from belongs in one of them.
-func (w *Writer) WriteFrom(ctx context.Context, message ImportedMessage, evidence Evidence) (WriteResult, error) {
+func (w *Writer) WriteFrom(ctx context.Context, message ImportedMessage, evidence Evidence) (apiimport.Write, error) {
 	snapshot, err := w.snapshot(message)
 	if err != nil {
-		return WriteResult{}, err
+		return apiimport.Write{}, err
 	}
 	if len(evidence.Raw) == 0 {
-		return WriteResult{}, errors.New("message evidence is empty")
+		return apiimport.Write{}, errors.New("message evidence is empty")
 	}
 	// Stored raw formats have the shape of message types. An empty format
 	// would be stored as MIME.
 	if !store.IsWellFormedMessageType(evidence.Format) {
-		return WriteResult{}, fmt.Errorf("message evidence format %q must be lowercase letters, digits and underscores, starting with a letter", evidence.Format)
+		return apiimport.Write{}, fmt.Errorf("message evidence format %q must be lowercase letters, digits and underscores, starting with a letter", evidence.Format)
 	}
 	snapshot.Raw, snapshot.RawFormat = evidence.Raw, evidence.Format
 	return persist(ctx, w.store, w.sourceID, snapshot)

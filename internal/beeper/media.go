@@ -162,6 +162,19 @@ func isConfirmedAssetNotFound(previous store.AttachmentRef, timestamp, now time.
 	return !timestamp.IsZero() && !timestamp.After(now.Add(-assetNotFoundMaxAge))
 }
 
+// effectiveMediaPolicy returns the run's media policy with its size cap
+// resolved: the policy's own cap, else the run's, else the default.
+func effectiveMediaPolicy(opts ImportOptions) attachmentpolicy.Policy {
+	policy := opts.MediaPolicy
+	if policy.MaxBytes <= 0 {
+		policy.MaxBytes = opts.MaxMediaBytes
+	}
+	if policy.MaxBytes <= 0 {
+		policy.MaxBytes = defaultMaxMediaBytes
+	}
+	return policy
+}
+
 // persistAttachments downloads a message's media into content-addressed
 // storage and replaces the message's Beeper attachment rows. Media already
 // downloaded for this message (matched by source_attachment_id) is kept
@@ -173,31 +186,25 @@ func isConfirmedAssetNotFound(previous store.AttachmentRef, timestamp, now time.
 // only becomes terminal once the message is old (assetNotFoundMaxAge) and a
 // later run's not-found confirms the previous run's provisional miss (see
 // isConfirmedAssetNotFound). The message itself is always archived
-// regardless.
-func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID int64, chatID string, m *Message, opts ImportOptions, sum *ImportSummary) {
+// regardless. It reports false when a store read or write failed, which
+// leaves no marker to drive a retry.
+func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID int64, chatID string, m *Message, opts ImportOptions, sum *ImportSummary) bool {
 	if imp.mediaFailures == nil {
 		imp.mediaFailures = make(map[mediaAttemptKey]store.AttachmentRef)
 	}
 	existing, err := imp.store.MessageBeeperAttachments(ctx, messageID)
 	if err != nil {
 		sum.Errors++
-		return
+		return false
 	}
 	// Media removed at the source (e.g. an edit) falls through with zero
 	// refs: the replace below clears the stale rows, including pending
 	// markers that BackfillMedia would otherwise revisit forever.
 	if len(m.Attachments) == 0 && len(existing) == 0 {
-		return
+		return true
 	}
-	maxBytes := opts.MaxMediaBytes
-	if opts.MediaPolicy.MaxBytes > 0 {
-		maxBytes = opts.MediaPolicy.MaxBytes
-	}
-	if maxBytes <= 0 {
-		maxBytes = defaultMaxMediaBytes
-	}
-	policy := opts.MediaPolicy
-	policy.MaxBytes = maxBytes
+	policy := effectiveMediaPolicy(opts)
+	maxBytes := policy.MaxBytes
 	isPreview := sharedLink(m) != ""
 	refs := make([]store.AttachmentRef, 0, len(m.Attachments))
 	for i := range m.Attachments {
@@ -379,13 +386,15 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 	}
 	if err := imp.store.ReplaceMessageBeeperAttachments(messageID, refs); err != nil {
 		sum.Errors++
-		return
+		return false
 	}
 	// The rows above are already replaced; refresh the message's attachment
 	// flags even after a cancel so they match those rows.
 	if err := imp.store.RecomputeMessageAttachmentStatsContext(context.WithoutCancel(ctx), messageID); err != nil {
 		sum.Errors++
+		return false
 	}
+	return true
 }
 
 func setBeeperAttachmentRole(ref *store.AttachmentRef, att *Attachment, isPreview bool) {

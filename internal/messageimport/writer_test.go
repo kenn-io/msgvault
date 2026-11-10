@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/apiimport"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -113,7 +114,7 @@ func TestWriterWriteFromKeepsTheConnectorsEvidence(t *testing.T) {
 	evidence := Evidence{Raw: []byte(`{"id":7,"body":"Looks good."}`), Format: "example_forge_json"}
 	result, err := writer.WriteFrom(t.Context(), examplePost("comment-1", MessageImportSender{ID: "1001", Name: "octo"}), evidence)
 	require.NoError(err)
-	assert.Equal(WriteResult{MessageID: result.MessageID, Created: true, Changed: true}, result)
+	assert.Equal(apiimport.Write{MessageID: result.MessageID, Created: true, Changed: true}, result)
 
 	raw, err := st.GetMessageRawContext(t.Context(), result.MessageID)
 	require.NoError(err)
@@ -173,14 +174,14 @@ func TestWriterWriteFromWritesOnlyChangedEvidence(t *testing.T) {
 
 	again, err := writer.WriteFrom(t.Context(), post, Evidence{Raw: []byte(`{"id":7,"body":"Looks good."}`), Format: "example_forge_json"})
 	require.NoError(err)
-	assert.Equal(WriteResult{MessageID: first.MessageID}, again)
+	assert.Equal(apiimport.Write{MessageID: first.MessageID}, again)
 	assert.Equal(before, lastModified(), "identical evidence writes nothing")
 
 	post.BodyMarkdown = "Looks great."
 	edited := Evidence{Raw: []byte(`{"id":7,"body":"Looks great."}`), Format: "example_forge_json"}
 	updated, err := writer.WriteFrom(t.Context(), post, edited)
 	require.NoError(err)
-	assert.Equal(WriteResult{MessageID: first.MessageID, Changed: true}, updated)
+	assert.Equal(apiimport.Write{MessageID: first.MessageID, Changed: true}, updated)
 	raw, err := st.GetMessageRawContext(t.Context(), first.MessageID)
 	require.NoError(err)
 	assert.Equal(edited.Raw, raw)
@@ -301,12 +302,12 @@ func TestWriterWriteFromRewritesWhenOnlyMetadataOrFormatChanged(t *testing.T) {
 	post.Metadata = map[string]any{"repository": "acme/gadgets"}
 	moved, err := writer.WriteFrom(t.Context(), post, evidence)
 	require.NoError(err)
-	assert.Equal(WriteResult{MessageID: first.MessageID, Changed: true}, moved, "a renamed repository changes only the metadata")
+	assert.Equal(apiimport.Write{MessageID: first.MessageID, Changed: true}, moved, "a renamed repository changes only the metadata")
 
 	evidence.Format = "other_forge_json"
 	reformatted, err := writer.WriteFrom(t.Context(), post, evidence)
 	require.NoError(err)
-	assert.Equal(WriteResult{MessageID: first.MessageID, Changed: true}, reformatted, "the same bytes in another format are other evidence")
+	assert.Equal(apiimport.Write{MessageID: first.MessageID, Changed: true}, reformatted, "the same bytes in another format are other evidence")
 	_, format, err := st.GetMessageRawWithFormatContext(t.Context(), first.MessageID)
 	require.NoError(err)
 	assert.Equal("other_forge_json", format)

@@ -109,15 +109,7 @@ type MessagePersistData struct {
 	PreserveLabels            bool
 	MIMEAttachmentReplacement *[]AttachmentWrite
 	FTS                       *FTSDoc
-	// FTSFromStoredRows indexes the message from its stored rows, in place
-	// of FTS, so the indexed sender follows the rule a search-index rebuild
-	// applies. A message too large to index is left unsearchable.
-	FTSFromStoredRows bool
-	SyncRunItem       *SyncRunItem
-	// RecomputeConversationStats refreshes the stats of the message's
-	// conversation, and of the conversation it left, in the write's own
-	// transaction, so no interruption leaves either one stale.
-	RecomputeConversationStats bool
+	SyncRunItem               *SyncRunItem
 }
 
 // MessageIdentityGuard binds repair persistence to the exact archive row that
@@ -542,6 +534,8 @@ type StoredMessage struct {
 	InternalDate   sql.NullTime
 	Snippet        sql.NullString
 	SizeEstimate   int64
+	// ReplyToMessageID is the linked parent, NULL when none is linked.
+	ReplyToMessageID sql.NullInt64
 	// Raw is nil when the message has no readable raw payload in the requested
 	// format.
 	Raw []byte
@@ -579,7 +573,7 @@ func (s *Store) StoredMessagesContext(
 		SELECT m.source_message_id, m.id, m.conversation_id, m.sender_id,
 		       m.source_is_from_me, m.subject, COALESCE(m.message_type, ''), m.sent_at,
 		       m.internal_date, m.snippet, COALESCE(m.size_estimate, 0),
-		       r.raw_data, r.compression
+		       m.reply_to_message_id, r.raw_data, r.compression
 		FROM messages m
 		LEFT JOIN message_raw r ON r.message_id = m.id AND r.raw_format = ?
 		WHERE m.source_id = ? AND m.source_message_id IN (%s)`,
@@ -592,7 +586,7 @@ func (s *Store) StoredMessagesContext(
 				&sourceMessageID, &stored.ID, &stored.ConversationID, &stored.SenderID,
 				&stored.SourceIsFromMe, &stored.Subject, &stored.MessageType, &stored.SentAt,
 				&stored.InternalDate, &stored.Snippet, &stored.SizeEstimate,
-				&raw, &compression,
+				&stored.ReplyToMessageID, &raw, &compression,
 			); err != nil {
 				return err
 			}
@@ -2179,24 +2173,9 @@ func (s *Store) PersistMessageContext(ctx context.Context, data *MessagePersistD
 	if data == nil || data.Message == nil {
 		return 0, errors.New("persist message requires a message")
 	}
-	var priorConversationID sql.NullInt64
-	var readPriorConversation messagePersistBeforeParticipants
-	if data.RecomputeConversationStats {
-		readPriorConversation = func(ctx context.Context, tx *loggedTx) error {
-			err := tx.QueryRowContext(ctx, `
-				SELECT conversation_id FROM messages
-				WHERE source_id = ? AND source_message_id = ?`,
-				data.Message.SourceID, data.Message.SourceMessageID,
-			).Scan(&priorConversationID)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return fmt.Errorf("read prior message conversation: %w", err)
-			}
-			return nil
-		}
-	}
 	return s.persistMessageWithParticipantsTransaction(
 		ctx, attributionLockForMessage(data.Message.SourceID, data.Message.MessageType),
-		readPriorConversation, nil, func([]int64) *MessagePersistData { return data }, nil,
+		nil, nil, func([]int64) *MessagePersistData { return data }, nil,
 		func(ctx context.Context, tx *loggedTx, data *MessagePersistData, id int64) error {
 			q := boundQuerier{ctx: ctx, q: tx}
 			if data.MIMEAttachmentReplacement != nil {
@@ -2205,35 +2184,11 @@ func (s *Store) PersistMessageContext(ctx context.Context, data *MessagePersistD
 				}
 			}
 			if data.Edited {
-				if err := setMessageEditedStateWith(q, id, true); err != nil {
-					return err
-				}
-			}
-			if data.RecomputeConversationStats {
-				return s.recomputePersistedConversationStatsWith(q, id, priorConversationID)
+				return setMessageEditedStateWith(q, id, true)
 			}
 			return nil
 		},
 	)
-}
-
-// recomputePersistedConversationStatsWith refreshes the conversation that
-// now holds messageID and, when the write moved it, the one it left.
-func (s *Store) recomputePersistedConversationStatsWith(
-	q querier, messageID int64, prior sql.NullInt64,
-) error {
-	var current int64
-	if err := q.QueryRow(`SELECT conversation_id FROM messages WHERE id = ?`,
-		messageID).Scan(&current); err != nil {
-		return fmt.Errorf("read message conversation: %w", err)
-	}
-	if err := s.recomputeConversationStatsWith(q, "id = ?", current); err != nil {
-		return err
-	}
-	if prior.Valid && prior.Int64 != current {
-		return s.recomputeConversationStatsWith(q, "id = ?", prior.Int64)
-	}
-	return nil
 }
 
 func (s *Store) persistAttachmentSnapshotWith(q querier, messageID int64, replacement *[]AttachmentWrite) error {
@@ -2619,23 +2574,10 @@ func (s *Store) persistMessageWith(
 	if err := s.refreshAccountAttributionAfterWriteTx(ctx, tx, messageID, delivery); err != nil {
 		return 0, err
 	}
-	switch {
-	case !s.fts5Available:
-	case data.FTSFromStoredRows:
-		// The rebuild's fields, written through the byte-bounded upsert that
-		// marks an overflowing message unsearchable instead of failing it.
-		row, err := s.loadDerivedEmailText(q, messageID)
-		if err != nil {
-			return 0, fmt.Errorf("read stored search fields: %w", err)
-		}
-		row.fts.Body = row.body
-		if _, err := s.upsertFTSOrUnsearchable(q, row.fts); err != nil {
-			return 0, fmt.Errorf("index message from stored rows: %w", err)
-		}
-	case data.FTS != nil:
+	if data.FTS != nil && s.fts5Available {
 		fts := *data.FTS
 		fts.MessageID = messageID
-		if err := s.dialect.FTSUpsert(q, fts); err != nil {
+		if _, err := s.upsertFTSOrUnsearchable(q, fts); err != nil {
 			return 0, fmt.Errorf("upsert fts: %w", err)
 		}
 	}
@@ -3612,7 +3554,11 @@ func (s *Store) ReplaceMessageTextContext(ctx context.Context, messageID int64, 
 			sql.NullString{String: snippet, Valid: snippet != ""}, FTSDoc{MessageID: messageID, Body: body}, s.dialect.FTSUpsert); err != nil {
 			return err
 		}
-		if _, err := q.Exec(`UPDATE messages SET size_estimate = ?, is_edited = ? WHERE id = ?`, int64(len(body)), edited, messageID); err != nil {
+		if err := setMessageEditedStateWith(q, messageID, edited); err != nil {
+			return err
+		}
+		// Matrix estimates include stored media, which an edit keeps.
+		if err := recomputeMessageSizeEstimateWith(q, messageID); err != nil {
 			return err
 		}
 		if err := setMessageMetadataWith(q, s.dialect, messageID, metadata); err != nil {
@@ -6481,6 +6427,30 @@ func (s *Store) RecomputeMessageAttachmentStatsContext(ctx context.Context, mess
 	return s.withTxContext(ctx, func(tx *loggedTx) error { return write(boundQuerier{ctx: ctx, q: tx}) })
 }
 
+// RecomputeMessageSizeEstimateContext includes stored attachments after a body edit.
+func (s *Store) RecomputeMessageSizeEstimateContext(ctx context.Context, messageID int64) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		q := boundQuerier{ctx: ctx, q: tx}
+		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
+			return err
+		}
+		return recomputeMessageSizeEstimateWith(q, messageID)
+	})
+}
+
+func recomputeMessageSizeEstimateWith(q querier, messageID int64) error {
+	var body sql.NullString
+	err := q.QueryRow(`SELECT body_text FROM message_bodies WHERE message_id = ?`, messageID).Scan(&body)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("read message body for size estimate: %w", err)
+	}
+	_, err = q.Exec(`UPDATE messages SET size_estimate = ? + (
+		SELECT COALESCE(SUM(size), 0) FROM attachments
+		WHERE message_id = ? AND content_hash IS NOT NULL AND content_hash != ''
+	) WHERE id = ?`, len(body.String), messageID, messageID)
+	return err
+}
+
 func recomputeMessageAttachmentStatsWith(q querier, messageID int64) error {
 	_, err := q.Exec(`
 		UPDATE messages
@@ -6644,21 +6614,7 @@ func (s *Store) ReplaceMessageInlineAttachments(ctx context.Context, messageID i
 		if err := s.replaceMessageAttachmentsWhereTxContext(ctx, tx, messageID, deleteWhere, refs); err != nil {
 			return err
 		}
-		var body sql.NullString
-		err := tx.QueryRowContext(ctx, `SELECT body_text FROM message_bodies WHERE message_id = ?`, messageID).Scan(&body)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("read Teams message body for size estimate: %w", err)
-		}
-		_, err = tx.ExecContext(ctx, `
-			UPDATE messages SET size_estimate = ? + (
-				SELECT COALESCE(SUM(size), 0) FROM attachments
-				WHERE message_id = ? AND content_hash != ''
-			) WHERE id = ?
-		`, len(body.String), messageID, messageID)
-		if err != nil {
-			return fmt.Errorf("update Teams message size estimate: %w", err)
-		}
-		return nil
+		return recomputeMessageSizeEstimateWith(boundQuerier{ctx: ctx, q: tx}, messageID)
 	})
 }
 
@@ -6819,6 +6775,27 @@ func ftsMessageUnsearchable(q querier, messageID int64) (bool, error) {
 	var terminal bool
 	err := q.QueryRow(`SELECT COALESCE(search_fts = ''::tsvector AND indexing_version = ?, FALSE) FROM messages WHERE id = ?`, CurrentFTSIndexingVersion, messageID).Scan(&terminal)
 	return terminal, err
+}
+
+// ReplaceMessageMatrixAttachments replaces Matrix-managed media occurrences.
+func (s *Store) ReplaceMessageMatrixAttachments(ctx context.Context, messageID int64, refs []AttachmentRef) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.requireSyncMessageSourceTx(boundQuerier{ctx: ctx, q: tx}, messageID); err != nil {
+			return err
+		}
+		if err := s.replaceMessageAttachmentsWhereTxContext(ctx, tx, messageID, `source_attachment_id LIKE ?`, refs, "matrix:%"); err != nil {
+			return err
+		}
+		if err := recomputeMessageAttachmentStatsWith(boundQuerier{ctx: ctx, q: tx}, messageID); err != nil {
+			return err
+		}
+		return recomputeMessageSizeEstimateWith(boundQuerier{ctx: ctx, q: tx}, messageID)
+	})
+}
+
+// MessageMatrixAttachments returns Matrix-managed media keyed by MXC identity.
+func (s *Store) MessageMatrixAttachments(ctx context.Context, messageID int64) (map[string]AttachmentRef, error) {
+	return s.messageProviderAttachmentsContext(ctx, messageID, "matrix:")
 }
 
 // ArchivedRawMessage is one archived message paired with the verbatim provider

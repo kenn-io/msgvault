@@ -8,6 +8,18 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.
+- [Instagram comment sync](usage/instagram-comments.md) archives linked professional
+  account media comments and replies for search and existing person linking.
+  Sending and ad-only discovery are not included.
+- [Facebook Page comment sync](usage/facebook-comments.md) archives comments and
+  nested replies on organic, visitor, and ad posts returned for a selected Page.
+  Search the archive and link commenters through existing people tools. This
+  does not send messages or include Instagram or ad-creative discovery.
+
+- Matrix sync archives images, stickers, video, audio and files under the shared chat media policy, including encrypted attachments. Syncs after upgrading also find media in messages archived earlier. `sync-matrix --no-media` leaves media for a later sync, and failed downloads retry on later syncs.
+- People sweeps record employment again when the model names the organization as plain text or writes dates such as `2023-05`. Such claims were rejected as malformed, so no sweep ever set an employer.
+
 - A source build replaces a local daemon from its release or an earlier one, and prints the restart command when another source build of that release is running.
 
 - Messages can show live archive rows while auto mode rebuilds its analytical cache after an upgrade, and keeps them available if the rebuild fails.
@@ -26,14 +38,14 @@ All notable changes to msgvault, grouped by release.
   message keeps the type its sender chose, such as `feed_item`, for search
   and export filters, and a retry updates it instead of adding a copy. See
   [Messages from any source](usage/message-import.md). It needs HTTP API
-  schema 3.49.0.
+  schema 3.50.0.
 - `msgvault search --message-type` accepts any type of lowercase letters,
   digits, and underscores, so it can filter imported types.
 - Plaud syncs wait longer and slow down when Plaud reports too many requests,
   so fewer recordings fail in a run. A new `limit` setting on `[[plaud]]` caps
   how many recordings each scheduled run checks. See [Plaud sources](configuration.md#plaud-sources).
 - CLI search and sender, domain, and label lists now report when more results match, with a hint to fetch more. Full-text and list JSON stay arrays; semantic JSON includes one actionable `hints` entry at a time. Semantic hints name the server's page cap and any measured hybrid candidate cap that must increase before raising `--limit`. Raise the named settings and restart the daemon first. Complete combined candidate sets stay quiet.
-- Empty sender searches suggest matching addresses and a query you can retry, including incomplete addresses such as `from:alex@exam`. CLI hints stay on stderr, and MCP metadata results carry structured retry hints. Counts keep your search filters and account scope.
+- `from:` now finds messages by sender name, address, or phone number across CLI, MCP, and web search, replacing address retry hints. Full addresses match exactly, and domains match by suffix. Repeated `from:` values must all match, including in CLI searches that previously matched any value.
 
 - See who is waiting on a reply from you, and whose reply you are waiting on,
   with [open loops](usage/open-loops.md). `msgvault loops list` shows them, and
@@ -63,6 +75,19 @@ All notable changes to msgvault, grouped by release.
   `2026-07-28` or newer.
 
 - Email imports and repairs now index explicit header links for related-copy lookups. Existing emails are indexed on their next sync or with `msgvault repair-derived`.
+- Set `document_profile` in the [attachment mirror configuration](configuration.md#mirror-stored-attachments-to-docbank) to request text extraction in Docbank. Attachment status reports extracted, processing, and waiting counts, per-code counts for files without text, and worker errors in `last_error`.
+
+- Document text search now uses the Docbank mirror and Docbank processing. Search with `media search`, `GET /api/v1/media/search`, MCP `search_media`, or Web Everything. Use `media search --person <id> --direction from_person` in place of `person files --lane documents`.
+
+  The `documents` commands, `/api/v1/documents/*`, MCP `search_document_attachments`, document operation lanes, Mistral probe and consent (use `docbank processing probe`, Docbank v0.17.0 or later), and file-based Kata issue actions are removed. Remove `[attachments.documents]` and drop `document_text` from `allowed_sources`; the loader warns and ignores these retired settings. A people sweep configured only for `document_text` is disabled.
+
+  A people inference provider profile that listed `document_text` gets a new fingerprint when that source is removed. Checks and consent are bound to the exact fingerprint. Run `msgvault person provider check <name>`, review the updated policy, then run `msgvault person provider consent <name> --yes` before inference resumes.
+
+  Set `[integrations.docbank] document_profile`, review `docbank processing plan`, and grant consent with `docbank processing build --consent`. The upgrade drops the local document text, chunk, and consent tables. Backups made before the upgrade keep them, still restore, and stay marked by `backup list`. Docbank processes the mirrored files again, and Mistral users pay for OCR again. Stored Kata document citations retain their saved quote and resolve as unavailable.
+
+- Media search in Everything, `msgvault media search`, the HTTP API, and MCP now finds text Docbank has extracted from mirrored attachments. More than 4096 such files are searched in batches of 4,096. Results from each batch are interleaved by their position within that batch, so order across batches is approximate.
+
+- Set `document_profile` in the [attachment mirror configuration](configuration.md#mirror-stored-attachments-to-docbank) to request text extraction in Docbank. Attachment status reports extracted, processing, and waiting counts, per-code counts for files without text, and worker errors in `last_error`.
 
 ## 0.23.0
 <small>2026-11-04</small>
@@ -436,7 +461,7 @@ adds reviewed identity tools for agents and reduces repeated sync and search wor
   that scope; the former `upload_consent` no longer permits uploads. Document
   extraction with `include_inline = true` also needs fresh consent. See
   [audio processing](usage/beeper.md#send-audio-to-docbank) and
-  [document indexing](usage/document-indexing.md).
+  [document indexing](https://github.com/kenn-io/msgvault/blob/v0.21.0/docs/usage/document-indexing.md).
 - **Allow one full analytics rebuild.** Existing caches need a full rebuild
   before later refreshes can reuse retained data. Existing message embeddings
   remain compatible. Build the optional SQLite search accelerator with

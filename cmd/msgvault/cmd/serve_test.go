@@ -2461,6 +2461,7 @@ func TestRepackAttachmentsParentArgsAllowed(t *testing.T) {
 		{name: "forwarded logging", args: []string{
 			"--log-level=debug", "--log-sql", "--log-sql-slow-ms=250", "--verbose",
 		}, want: true},
+		{name: "non-integer slow query threshold", args: []string{"--log-sql-slow-ms=soon"}},
 		{name: "non-forwarded root flag", args: []string{"--config=/tmp/config.toml"}},
 		{name: "command-specific flag", args: []string{"--target-size=1024"}},
 		{name: "positional argument", args: []string{"unexpected"}},
