@@ -36,7 +36,7 @@ func TestMCPToolSummaryFlagsExist(t *testing.T) {
 }
 
 func TestDaemonMCPMeetingLinkToolsRequireSupportedSchema(t *testing.T) {
-	for _, version := range []string{"3.45.0", "3.46.0"} {
+	for _, version := range []string{"4.0.0", "4.1.0"} {
 		t.Run(version, func(t *testing.T) {
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/api/v1/health" {
@@ -55,7 +55,7 @@ func TestDaemonMCPMeetingLinkToolsRequireSupportedSchema(t *testing.T) {
 			names := mcpDraftToolNames(t, session)
 			assert.Contains(t, names, mcpserver.ToolGetMeetingContext)
 			for _, name := range []string{mcpserver.ToolGetMeetingRecord, mcpserver.ToolSuggestMeetingLinks, mcpserver.ToolLinkMeeting, mcpserver.ToolUnlinkMeeting} {
-				assert.Equal(t, version == "3.46.0", slices.Contains(names, name), name)
+				assert.Equal(t, version == "4.1.0", slices.Contains(names, name), name)
 			}
 		})
 	}
@@ -193,7 +193,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	}, gotHTTPOpts)
 }
 
-func TestMCPDelegatedModeServesDraftsWithoutCalendarAPI(t *testing.T) {
+func TestMCPDelegatedModeServesDrafts(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	previousHTTPAddr := mcpHTTPAddr
@@ -205,7 +205,7 @@ func TestMCPDelegatedModeServesDraftsWithoutCalendarAPI(t *testing.T) {
 	serveMCPStdioWithOptions = func(_ context.Context, options mcpserver.ServeOptions) error {
 		serveCalled = true
 		assertions.True(options.DelegatedOnly)
-		assertions.Nil(options.Calendar)
+		assertions.NotNil(options.Calendar)
 		assertions.NotEmpty(options.DraftCommands)
 		return errors.New("stop after capture")
 	}
@@ -221,10 +221,13 @@ func TestMCPDelegatedModeServesDraftsWithoutCalendarAPI(t *testing.T) {
 		case "/api/v1/health":
 			healthRequests.Add(1)
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "3.0.0"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": api.APISchemaVersion})
 		case "/api/session":
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]string{"auth_mode": "delegated"})
+		case "/api/v1/agent-tokens/self":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"permissions":["draft.create"]}`))
 		default:
 			http.NotFound(w, r)
 		}

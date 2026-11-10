@@ -27,7 +27,19 @@ import (
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func createMeetingLinkFixtureTables(t *testing.T, db *sql.DB) {
+	t.Helper()
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(t.TempDir(), "schema.db"))
+	for _, table := range []string{"meeting_link_key", "meeting_link_decisions"} {
+		var schema string
+		require.NoError(t, st.DB().QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&schema))
+		_, err := db.Exec(schema)
+		require.NoError(t, err)
+	}
+}
 
 func TestDaemonBuildCacheChildUsesQuietConsolePolicy(t *testing.T) {
 	t.Setenv(daemonCLISubprocessEnv, "")
@@ -86,8 +98,6 @@ func setupTestSQLite(t *testing.T) string {
 	// Create schema
 	schema := `
 		CREATE TABLE source_merge_archive_only_messages (message_id INTEGER PRIMARY KEY);
-		CREATE TABLE meeting_link_key (message_id INTEGER PRIMARY KEY, kind TEXT, value TEXT, scheduled_at DATETIME);
-		CREATE TABLE meeting_link_decisions (member_message_id INTEGER, target_message_id INTEGER, occurrence_key TEXT, decision TEXT);
 		CREATE TABLE imap_message_memberships (message_id INTEGER, source_id INTEGER, flags TEXT);
 		CREATE TABLE imap_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
 		CREATE TABLE gmail_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
@@ -232,6 +242,7 @@ func setupTestSQLite(t *testing.T) string {
 		_ = os.RemoveAll(tmpDir)
 		require.NoError(t, err, "create schema")
 	}
+	createMeetingLinkFixtureTables(t, db)
 
 	// Insert test data
 	testData := `
@@ -3036,8 +3047,6 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 	db, _ := sql.Open("sqlite3", dbPath)
 	_, _ = db.Exec(`
 		CREATE TABLE source_merge_archive_only_messages (message_id INTEGER PRIMARY KEY);
-		CREATE TABLE meeting_link_key (message_id INTEGER PRIMARY KEY, kind TEXT, value TEXT, scheduled_at DATETIME);
-		CREATE TABLE meeting_link_decisions (member_message_id INTEGER, target_message_id INTEGER, occurrence_key TEXT, decision TEXT);
 		CREATE TABLE imap_message_memberships (message_id INTEGER, source_id INTEGER, flags TEXT);
 		CREATE TABLE imap_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
 		CREATE TABLE gmail_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
@@ -3070,6 +3079,7 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 			UNIQUE(participant_id)
 		);
 	`)
+	createMeetingLinkFixtureTables(t, db)
 	_ = db.Close()
 
 	result, err := buildCache(dbPath, analyticsDir, false)
@@ -3269,8 +3279,6 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 
 	schema := `
 		CREATE TABLE source_merge_archive_only_messages (message_id INTEGER PRIMARY KEY);
-		CREATE TABLE meeting_link_key (message_id INTEGER PRIMARY KEY, kind TEXT, value TEXT, scheduled_at DATETIME);
-		CREATE TABLE meeting_link_decisions (member_message_id INTEGER, target_message_id INTEGER, occurrence_key TEXT, decision TEXT);
 		CREATE TABLE imap_message_memberships (message_id INTEGER, source_id INTEGER, flags TEXT);
 		CREATE TABLE imap_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
 		CREATE TABLE gmail_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
@@ -3397,6 +3405,7 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 	`
 	_, err = db.Exec(schema)
 	require.NoError(t, err, "create schema")
+	createMeetingLinkFixtureTables(t, db)
 
 	// Insert metadata but NO messages
 	metadata := `

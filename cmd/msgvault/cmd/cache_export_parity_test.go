@@ -208,6 +208,20 @@ func TestStageMeetingKeysQuotes(t *testing.T) {
 	assert.Equal("uid:example'o@example.test/", key)
 }
 
+func TestStageMeetingKeysCopyDates(t *testing.T) {
+	db := newParticipantClusterInsertRecorder(t)
+	keys := map[int64][]store.MeetingCountOccurrence{
+		1: {{Key: "uid:meeting@example.org/", Start: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)}},
+		2: {{Key: "uid:meeting@example.org/", Start: time.Date(2027, 3, 15, 10, 0, 0, 0, time.UTC)}},
+	}
+	require.NoError(t, stageMeetingKeys(t.Context(), db, keys, 2))
+	var count int
+	var at time.Time
+	require.NoError(t, db.QueryRow(`SELECT count(DISTINCT occurrence_at), min(occurrence_at) FROM (`+meetingKeysSelectSQL+`)`).Scan(&count, &at))
+	assert.Equal(t, 1, count)
+	assert.Equal(t, time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), at)
+}
+
 func participantClusterTestMappings(count int) map[int64]int64 {
 	clusters := make(map[int64]int64, count)
 	for id := int64(1); id <= int64(count); id++ {

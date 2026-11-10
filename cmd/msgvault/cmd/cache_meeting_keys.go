@@ -48,4 +48,8 @@ func stageMeetingKeys(ctx context.Context, db sqlRunner, keys map[int64][]store.
 	return nil
 }
 
-const meetingKeysSelectSQL = `SELECT message_id, meeting_key, occurrence_at, occurrence_date FROM tmp_meeting_keys`
+const meetingKeysSelectSQL = `SELECT message_id, meeting_key,
+	first_value(occurrence_at) OVER occurrence AS occurrence_at,
+	first_value(occurrence_date) OVER occurrence AS occurrence_date
+FROM tmp_meeting_keys
+WINDOW occurrence AS (PARTITION BY meeting_key ORDER BY (occurrence_at IS NULL AND occurrence_date IS NULL), message_id, occurrence_at, occurrence_date)`
