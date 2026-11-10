@@ -27,6 +27,24 @@ func (s *Store) ConversationTypeContext(ctx context.Context, sourceID int64, sou
 	return kind, nil
 }
 
+// ConversationSenderIDsContext returns up to three distinct archived senders.
+func (s *Store) ConversationSenderIDsContext(ctx context.Context, conversationID int64) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(`SELECT DISTINCT sender_id FROM messages WHERE conversation_id = ? AND sender_id IS NOT NULL LIMIT 3`), conversationID)
+	if err != nil {
+		return nil, fmt.Errorf("read conversation senders: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("read conversation sender: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // ConversationWindow is a bounded, stable slice of full message details.
 type ConversationWindow struct {
 	Messages       []APIMessage

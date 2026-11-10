@@ -106,6 +106,23 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 	if err != nil {
 		return false, err
 	}
+	var authors map[int64]bool
+	if kind == "chat" {
+		ids, err := st.ConversationSenderIDsContext(ctx, conversationID)
+		if err != nil {
+			return false, err
+		}
+		authors = make(map[int64]bool, 3)
+		for _, id := range ids {
+			authors[id] = true
+		}
+		if len(authors) == 3 {
+			kind = "group_chat"
+			if _, err := st.EnsureConversationWithTypeContext(ctx, sourceID, group, kind, info.Name); err != nil {
+				return false, err
+			}
+		}
+	}
 	summary.Conversations++
 	for _, member := range info.Members {
 		id, err := resolve(member)
@@ -244,6 +261,15 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 		}
 		existing[m.ID] = store.StoredMessage{ID: id, ConversationID: conversationID, Raw: record}
 		summary.MessagesAdded++
+		if kind == "chat" && sender != 0 {
+			authors[sender] = true
+			if len(authors) == 3 {
+				kind = "group_chat"
+				if _, err := st.EnsureConversationWithTypeContext(ctx, sourceID, group, kind, info.Name); err != nil {
+					return false, err
+				}
+			}
+		}
 	}
 	return len(envelope.Messages) > 0, nil
 }

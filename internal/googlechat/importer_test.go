@@ -691,6 +691,42 @@ func TestImportGoogleChatRosterDoesNotProveDelivery(t *testing.T) {
 	assert.Empty(rows)
 }
 
+func TestImportGoogleChatAuthorsEstablishGroupFileScope(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	first := `{"message_id":"one","creator":{"email":"one@example.com"},"text":"first","attached_files":[{"original_name":"file.txt","export_name":"file.txt"}]}`
+	second := `{"message_id":"two","creator":{"email":"two@example.com"},"text":"second"}`
+	third := `{"message_id":"three","creator":{"email":"three@example.com"},"text":"third"}`
+	write(t, root, "Groups/DM a/messages.json", `{"messages":[`+first+`,`+second+`]}`)
+	write(t, root, "Groups/DM a/file.txt", "file")
+	opts := ImportOptions{Me: "owner@example.com", Roots: []string{root}, AttachmentsDir: t.TempDir()}
+	_, err := Import(t.Context(), st, opts)
+	require.NoError(err)
+	var kind string
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT conversation_type FROM conversations`).Scan(&kind))
+	assert.Equal("chat", kind)
+	write(t, root, "Groups/DM a/messages.json", `{"messages":[`+third+`]}`)
+	_, err = Import(t.Context(), st, opts)
+	require.NoError(err)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT conversation_type FROM conversations`).Scan(&kind))
+	assert.Equal("group_chat", kind)
+	_, err = Import(t.Context(), st, opts)
+	require.NoError(err)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT conversation_type FROM conversations`).Scan(&kind))
+	assert.Equal("group_chat", kind)
+	var participant, attachment, recipients int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM participants WHERE email_address='two@example.com'`).Scan(&participant))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM attachments`).Scan(&attachment))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM message_recipients WHERE recipient_type='to'`).Scan(&recipients))
+	assert.Zero(recipients)
+	scope := personscope.Scope{ParticipantIDs: []int64{participant}, Directions: []personscope.Direction{personscope.Group}}
+	rows, err := st.FilenameSuggestionRowsContext(t.Context(), []int64{attachment}, store.FilenameSuggestionScope{Person: &scope})
+	require.NoError(err)
+	assert.Len(rows, 1)
+}
+
 func TestImportGoogleChatFailedMessageDoesNotCountMissingMedia(t *testing.T) {
 	for _, tc := range []struct{ name, first string }{
 		{"missing", "missing.txt"},
