@@ -118,3 +118,60 @@ func TestStandalonePersonEnrichmentSource(t *testing.T) {
 	require.Len(notes, 1)
 	assert.Equal(store.ProvenanceEnrichment, notes[0].Source)
 }
+
+func TestStandalonePersonIfExists(t *testing.T) {
+	srv, _ := newIdentityLinkTestServer(t)
+	body := []byte(`{"name":"Alex Example","emails":[{"value":"alex@example.test"}],"if_exists":"return"}`)
+	created := personRequest(t, srv, http.MethodPost, peoplePath+"/create", body, "")
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	var first map[string]any
+	require.NoError(t, json.Unmarshal(created.Body.Bytes(), &first))
+	require.Contains(t, first, "ensure")
+	assert.Equal(t, "created", first["ensure"].(map[string]any)["status"])
+	matched := personRequest(t, srv, http.MethodPost, peoplePath+"/create", body, "")
+	require.Equal(t, http.StatusOK, matched.Code, matched.Body.String())
+	var second map[string]any
+	require.NoError(t, json.Unmarshal(matched.Body.Bytes(), &second))
+	assert.Equal(t, first["id"], second["id"])
+	assert.Equal(t, "matched_existing", second["ensure"].(map[string]any)["status"])
+}
+
+func TestStandalonePersonIfExistsConflictsAndCompatibility(t *testing.T) {
+	srv, st := newIdentityLinkTestServer(t)
+	_, err := st.Store.EnsureParticipant("observed@example.test", "Observed Example", "example.test")
+	require.NoError(t, err)
+	created := personRequest(t, srv, http.MethodPost, peoplePath+"/create", []byte(`{"name":"Alex Example","emails":[{"value":"alex@example.test"}]}`), "")
+	require.Equal(t, http.StatusCreated, created.Code)
+	assert.NotContains(t, created.Body.String(), "ensure")
+	var original store.Person
+	require.NoError(t, json.Unmarshal(created.Body.Bytes(), &original))
+	// The original Person JSON is the response contract when if_exists is absent.
+	golden, err := json.Marshal(original)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(golden), created.Body.String())
+	for _, tc := range []struct {
+		body, code string
+		status     int
+	}{
+		{`{"name":"Alex","emails":[{"value":"observed@example.test"}],"if_exists":"return"}`, "person_matches_participant", http.StatusConflict},
+		{`{"name":"Alex","emails":[{"value":"alex@example.test"},{"value":"observed@example.test"}],"if_exists":"return"}`, "person_ambiguous", http.StatusConflict},
+		{`{"name":"Alex","emails":[{"value":"alex@example.test"}]}`, "person_contact_exists", http.StatusConflict},
+		{`{"name":"Alex","emails":[{"value":"alex@example.test"}],"if_exists":"error"}`, "person_contact_exists", http.StatusConflict},
+		{`{"name":"Alex","if_exists":"merge"}`, "invalid_person", http.StatusBadRequest},
+	} {
+		response := personRequest(t, srv, http.MethodPost, peoplePath+"/create", []byte(tc.body), "")
+		require.Equal(t, tc.status, response.Code, response.Body.String())
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+		assert.Equal(t, tc.code, body["error"])
+		if tc.code == "person_ambiguous" {
+			details := body["details"].(map[string]any)
+			assert.Len(t, details["candidates"], 2)
+			assert.GreaterOrEqual(t, len(details["match_basis"].([]any)), 2)
+		} else if tc.code == "person_matches_participant" {
+			assert.Contains(t, body["details"], "next")
+		} else {
+			assert.NotContains(t, body, "details")
+		}
+	}
+}

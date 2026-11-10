@@ -10475,14 +10475,15 @@ func (p PeopleResponse) Validate() error {
 }
 
 type Person struct {
-	CarddavBindings []CardDAVBinding `json:"carddav_bindings,omitempty"`
-	CreatedAt       time.Time        `json:"created_at" validate:"required"`
-	DisplayName     *string          `json:"display_name,omitzero"`
-	ID              int64            `json:"id"`
-	ParticipantIds  []int64          `json:"participant_ids" validate:"required"`
-	Revision        int64            `json:"revision"`
-	UpdatedAt       time.Time        `json:"updated_at" validate:"required"`
-	VcardUID        string           `json:"vcard_uid" validate:"required"`
+	CarddavBindings []CardDAVBinding  `json:"carddav_bindings,omitempty"`
+	CreatedAt       time.Time         `json:"created_at" validate:"required"`
+	DisplayName     *string           `json:"display_name,omitzero"`
+	Ensure          *PersonEnsureInfo `json:"ensure,omitempty"`
+	ID              int64             `json:"id"`
+	ParticipantIds  []int64           `json:"participant_ids" validate:"required"`
+	Revision        int64             `json:"revision"`
+	UpdatedAt       time.Time         `json:"updated_at" validate:"required"`
+	VcardUID        string            `json:"vcard_uid" validate:"required"`
 }
 
 func (p Person) Validate() error {
@@ -10496,6 +10497,13 @@ func (p Person) Validate() error {
 	}
 	if err := typesValidator.Var(p.CreatedAt, "required"); err != nil {
 		errors = errors.Append("CreatedAt", err)
+	}
+	if p.Ensure != nil {
+		if v, ok := any(p.Ensure).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Ensure", err)
+			}
+		}
 	}
 	if err := typesValidator.Var(p.ParticipantIds, "required"); err != nil {
 		errors = errors.Append("ParticipantIds", err)
@@ -11287,13 +11295,24 @@ func (p PersonCreateContact) Validate() error {
 	return errors
 }
 
+type PersonCreateErrorResponse struct {
+	Details   *struct{} `json:"details,omitempty"`
+	ErrorData string    `json:"error" validate:"required"`
+	Message   *string   `json:"message,omitzero"`
+}
+
+func (p PersonCreateErrorResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
 type PersonCreateInput struct {
-	Address *string               `json:"address,omitzero" validate:"omitempty,max=1000"`
-	Emails  []PersonCreateContact `json:"emails,omitempty"`
-	Name    string                `json:"name" validate:"required,max=256,min=1"`
-	Note    *string               `json:"note,omitzero" validate:"omitempty,max=10000"`
-	Org     *string               `json:"org,omitzero" validate:"omitempty,max=256"`
-	Phones  []PersonCreateContact `json:"phones,omitempty"`
+	Address  *string                    `json:"address,omitzero" validate:"omitempty,max=1000"`
+	Emails   []PersonCreateContact      `json:"emails,omitempty"`
+	IfExists *PersonCreateInputIfExists `json:"if_exists,omitempty"`
+	Name     string                     `json:"name" validate:"required,max=256,min=1"`
+	Note     *string                    `json:"note,omitzero" validate:"omitempty,max=10000"`
+	Org      *string                    `json:"org,omitzero" validate:"omitempty,max=256"`
+	Phones   []PersonCreateContact      `json:"phones,omitempty"`
 
 	// Source Provenance of every created value; defaults to user
 	Source *PersonCreateInputSource `json:"source,omitempty"`
@@ -11316,6 +11335,13 @@ func (p PersonCreateInput) Validate() error {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Emails[%d]", i), err)
+			}
+		}
+	}
+	if p.IfExists != nil {
+		if v, ok := any(p.IfExists).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("IfExists", err)
 			}
 		}
 	}
@@ -11650,6 +11676,45 @@ func (p PersonEnrichmentProviderUpdate) Validate() error {
 	}
 	if err := typesValidator.Var(p.TrainingPosture, "required"); err != nil {
 		errors = errors.Append("TrainingPosture", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonEnsureInfo struct {
+	MatchBasis        []PersonMatchBasis       `json:"match_basis" validate:"required"`
+	Status            PersonEnsureInfoStatus   `json:"status" validate:"required"`
+	UnappliedContacts []PersonUnappliedContact `json:"unapplied_contacts" validate:"required"`
+}
+
+func (p PersonEnsureInfo) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.MatchBasis, "required"); err != nil {
+		errors = errors.Append("MatchBasis", err)
+	}
+	for i, item := range p.MatchBasis {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("MatchBasis[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(p.Status).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Status", err)
+		}
+	}
+	if err := typesValidator.Var(p.UnappliedContacts, "required"); err != nil {
+		errors = errors.Append("UnappliedContacts", err)
+	}
+	for i, item := range p.UnappliedContacts {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("UnappliedContacts[%d]", i), err)
+			}
+		}
 	}
 	if len(errors) == 0 {
 		return nil
@@ -12516,6 +12581,33 @@ type PersonInboxRow struct {
 
 func (p PersonInboxRow) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonMatchBasis struct {
+	Kind          string                  `json:"kind" validate:"required"`
+	Matched       PersonMatchBasisMatched `json:"matched" validate:"required"`
+	ParticipantID *int64                  `json:"participant_id,omitempty"`
+	PersonID      *int64                  `json:"person_id,omitempty"`
+	Value         string                  `json:"value" validate:"required"`
+}
+
+func (p PersonMatchBasis) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Kind, "required"); err != nil {
+		errors = errors.Append("Kind", err)
+	}
+	if v, ok := any(p.Matched).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Matched", err)
+		}
+	}
+	if err := typesValidator.Var(p.Value, "required"); err != nil {
+		errors = errors.Append("Value", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type PersonMatchBatchError struct {
@@ -13961,6 +14053,16 @@ type PersonTracking struct {
 }
 
 func (p PersonTracking) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonUnappliedContact struct {
+	Kind  string  `json:"kind" validate:"required"`
+	Type  *string `json:"type,omitzero"`
+	Value string  `json:"value" validate:"required"`
+}
+
+func (p PersonUnappliedContact) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 

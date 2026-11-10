@@ -844,7 +844,7 @@ type ClientInterface interface {
 	FindContactCandidatesWithResponse(ctx context.Context, options *FindContactCandidatesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FindContactCandidatesResp, error)
 
 	// CreateStandalonePerson Create a person without message participants
-	CreateStandalonePerson(ctx context.Context, options *CreateStandalonePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateStandalonePersonResponse, error)
+	CreateStandalonePerson(ctx context.Context, options *CreateStandalonePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateStandalonePersonResponseJSON, error)
 	CreateStandalonePersonWithResponse(ctx context.Context, options *CreateStandalonePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateStandalonePersonResp, error)
 
 	// ListDirectoryPeople Query durable people for the Directory
@@ -13763,7 +13763,7 @@ func (c *Client) FindContactCandidates(ctx context.Context, options *FindContact
 }
 
 // CreateStandalonePerson Create a person without message participants
-func (c *Client) CreateStandalonePerson(ctx context.Context, options *CreateStandalonePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateStandalonePersonResponse, error) {
+func (c *Client) CreateStandalonePerson(ctx context.Context, options *CreateStandalonePersonRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateStandalonePersonResponseJSON, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/people/create",
@@ -13777,7 +13777,7 @@ func (c *Client) CreateStandalonePerson(ctx context.Context, options *CreateStan
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(ctx context.Context, resp *runtime.Response) (*CreateStandalonePersonResponse, error) {
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*CreateStandalonePersonResponseJSON, error) {
 		bodyBytes := resp.Content
 		if resp.StatusCode != 201 {
 			target := new(CreateStandalonePersonErrorResponse)
@@ -13801,7 +13801,7 @@ func (c *Client) CreateStandalonePerson(ctx context.Context, options *CreateStan
 			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
 				runtime.WithStatusCode(resp.StatusCode))
 		}
-		target := new(CreateStandalonePersonResponse)
+		target := new(CreateStandalonePersonResponseJSON)
 		// Handle empty response body gracefully
 		if len(bodyBytes) == 0 {
 			return target, nil
@@ -13811,7 +13811,7 @@ func (c *Client) CreateStandalonePerson(ctx context.Context, options *CreateStan
 				StatusCode:    resp.StatusCode,
 				ContentType:   resp.Headers.Get("Content-Type"),
 				ContentLength: len(bodyBytes),
-				TargetType:    "CreateStandalonePersonResponse",
+				TargetType:    "CreateStandalonePersonResponseJSON",
 				Body:          bodyBytes,
 				Err:           err,
 			}

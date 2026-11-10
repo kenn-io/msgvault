@@ -21028,8 +21028,27 @@ func (c *Client) CreateStandalonePersonWithResponse(ctx context.Context, options
 	}
 
 	switch resp.StatusCode {
+	case 200:
+		out.JSON200 = new(CreateStandalonePersonResponse)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "CreateStandalonePersonResponse",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		out.Headers200 = &CreateStandalonePersonResp200Headers{
+			ETag: resp.Headers.Get("ETag"),
+		}
+		return out, nil
 	case 201:
-		out.JSON201 = new(CreateStandalonePersonResponse)
+		out.JSON201 = new(CreateStandalonePersonResponseJSON)
 		bodyBytes := resp.Content
 		if len(bodyBytes) > 0 {
 			if err := json.Unmarshal(bodyBytes, out.JSON201); err != nil {
@@ -21037,7 +21056,7 @@ func (c *Client) CreateStandalonePersonWithResponse(ctx context.Context, options
 					StatusCode:    resp.StatusCode,
 					ContentType:   resp.Headers.Get("Content-Type"),
 					ContentLength: len(bodyBytes),
-					TargetType:    "CreateStandalonePersonResponse",
+					TargetType:    "CreateStandalonePersonResponseJSON",
 					Body:          bodyBytes,
 					Err:           err,
 				}

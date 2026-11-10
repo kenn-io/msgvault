@@ -199,6 +199,8 @@ type ServeOptions struct {
 	// PersonCreator is present only when the daemon serves standalone person
 	// creation. Older daemons omit create_person.
 	PersonCreator PersonCreator
+	// PersonCreateIfExists enables the argument only on supporting daemons.
+	PersonCreateIfExists bool
 	// IdentityScoring exposes consented manual scoring. Consent is
 	// recorded through the CLI/API, never by an MCP tool.
 	IdentityScoring IdentityScoringBackend

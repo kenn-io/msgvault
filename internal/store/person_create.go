@@ -44,14 +44,15 @@ type PersonCreateContact struct {
 
 // PersonCreateInput creates a profile without inventing message participants.
 type PersonCreateInput struct {
-	Name    string                `json:"name" minLength:"1" maxLength:"256"`
-	Emails  []PersonCreateContact `json:"emails,omitempty" maxItems:"200"`
-	Phones  []PersonCreateContact `json:"phones,omitempty" maxItems:"200"`
-	Org     string                `json:"org,omitzero" maxLength:"256"`
-	Title   string                `json:"title,omitzero" maxLength:"280" doc:"Job title at org; requires org"`
-	Address string                `json:"address,omitzero" maxLength:"1000"`
-	Note    string                `json:"note,omitzero" maxLength:"10000"`
-	Source  Provenance            `json:"source,omitzero" enum:"user,enrichment" doc:"Provenance of every created value; defaults to user"`
+	IfExists PersonIfExists        `json:"if_exists,omitzero" enum:"error,return"`
+	Name     string                `json:"name" minLength:"1" maxLength:"256"`
+	Emails   []PersonCreateContact `json:"emails,omitempty" maxItems:"200"`
+	Phones   []PersonCreateContact `json:"phones,omitempty" maxItems:"200"`
+	Org      string                `json:"org,omitzero" maxLength:"256"`
+	Title    string                `json:"title,omitzero" maxLength:"280" doc:"Job title at org; requires org"`
+	Address  string                `json:"address,omitzero" maxLength:"1000"`
+	Note     string                `json:"note,omitzero" maxLength:"10000"`
+	Source   Provenance            `json:"source,omitzero" enum:"user,enrichment" doc:"Provenance of every created value; defaults to user"`
 }
 
 // PersonContactExistsError identifies a match and the explicit existing-person
@@ -94,6 +95,11 @@ func ValidatePersonCreateInput(input PersonCreateInput) error {
 }
 
 func validatePersonCreateInput(input PersonCreateInput) ([]personCreateContactPoint, error) {
+	switch input.IfExists {
+	case "", PersonIfExistsError, PersonIfExistsReturn:
+	default:
+		return nil, fmt.Errorf("%w: if_exists must be error or return", ErrPersonCreateInvalid)
+	}
 	if strings.TrimSpace(input.Name) == "" {
 		return nil, fmt.Errorf("%w: name is required", ErrPersonCreateInvalid)
 	}
@@ -189,9 +195,20 @@ func (s *Store) CreateStandalonePersonContext(
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
-		for _, point := range points {
-			if err := s.refusePersonContactDuplicateTx(ctx, tx, point.kind, point.normalized); err != nil {
+		if input.IfExists == PersonIfExistsReturn {
+			matches, err := s.collectPersonContactMatchesTx(ctx, tx, points)
+			if err != nil {
 				return err
+			}
+			if len(matches) > 0 {
+				person, err = s.resolvePersonCreateMatchesTx(ctx, tx, points, matches)
+				return err
+			}
+		} else {
+			for _, point := range points {
+				if err := s.refusePersonContactDuplicateTx(ctx, tx, point.kind, point.normalized); err != nil {
+					return err
+				}
 			}
 		}
 		uid, err := newVCardUID()
@@ -215,6 +232,9 @@ func (s *Store) CreateStandalonePersonContext(
 			return err
 		}
 		person, err = s.getPersonTx(ctx, tx, id)
+		if err == nil && input.IfExists == PersonIfExistsReturn {
+			person.Ensure = &PersonEnsureInfo{Status: PersonEnsureCreated, MatchBasis: []PersonMatchBasis{}, UnappliedContacts: []PersonUnappliedContact{}}
+		}
 		return err
 	})
 	if err != nil {

@@ -10808,6 +10808,8 @@ components:
           type: string
         display_name:
           type: string
+        ensure:
+          $ref: "#/components/schemas/PersonEnsureInfo"
         id:
           format: int64
           type: integer
@@ -11522,6 +11524,17 @@ components:
       required:
         - value
       type: object
+    PersonCreateErrorResponse:
+      additionalProperties: true
+      properties:
+        details: {}
+        error:
+          type: string
+        message:
+          type: string
+      required:
+        - error
+      type: object
     PersonCreateInput:
       additionalProperties: false
       properties:
@@ -11533,6 +11546,11 @@ components:
             $ref: "#/components/schemas/PersonCreateContact"
           maxItems: 200
           type: array
+        if_exists:
+          enum:
+            - error
+            - return
+          type: string
         name:
           maxLength: 256
           minLength: 1
@@ -11833,6 +11851,27 @@ components:
         - max_retries
         - max_requests_per_run
         - max_requests_per_day
+      type: object
+    PersonEnsureInfo:
+      additionalProperties: true
+      properties:
+        match_basis:
+          items:
+            $ref: "#/components/schemas/PersonMatchBasis"
+          type: array
+        status:
+          enum:
+            - created
+            - matched_existing
+          type: string
+        unapplied_contacts:
+          items:
+            $ref: "#/components/schemas/PersonUnappliedContact"
+          type: array
+      required:
+        - status
+        - match_basis
+        - unapplied_contacts
       type: object
     PersonFactClaim:
       additionalProperties: true
@@ -12629,6 +12668,35 @@ components:
         - received_count
         - sent_count
         - latest_at
+      type: object
+    PersonMatchBasis:
+      additionalProperties: true
+      properties:
+        kind:
+          type: string
+        matched:
+          enum:
+            - contact_point
+            - participant
+            - identifier
+            - observation
+          type: string
+        participant_id:
+          format: int64
+          type:
+            - integer
+            - "null"
+        person_id:
+          format: int64
+          type:
+            - integer
+            - "null"
+        value:
+          type: string
+      required:
+        - kind
+        - value
+        - matched
       type: object
     PersonMatchBatchError:
       additionalProperties: true
@@ -13954,6 +14022,19 @@ components:
         - person_id
         - tracked
         - tracked_at
+      type: object
+    PersonUnappliedContact:
+      additionalProperties: true
+      properties:
+        kind:
+          type: string
+        type:
+          type: string
+        value:
+          type: string
+      required:
+        - kind
+        - value
       type: object
     PinState:
       additionalProperties: true
@@ -27461,7 +27542,7 @@ paths:
         - API
   /api/v1/people/create:
     post:
-      description: Creates a durable profile with a new vCard UID and user-curated contact data. Refuses contacts already present on a person or observed participant cluster. A title requires an organization. Does not publish to CardDAV.
+      description: Creates a durable profile with a new vCard UID and user-curated contact data. With if_exists=return, returns a single matching person without updating it; otherwise refuses existing contacts. A title requires an organization. Does not publish to CardDAV.
       operationId: createStandalonePerson
       requestBody:
         content:
@@ -27470,6 +27551,17 @@ paths:
               $ref: "#/components/schemas/PersonCreateInput"
         required: true
       responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Person"
+          description: OK
+          headers:
+            ETag:
+              description: Strong person profile revision tag for optimistic concurrency
+              schema:
+                type: string
         "201":
           content:
             application/json:
@@ -27491,8 +27583,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
+                $ref: "#/components/schemas/PersonCreateErrorResponse"
+          description: Conflict
         "503":
           content:
             application/json:

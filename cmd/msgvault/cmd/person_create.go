@@ -20,10 +20,12 @@ func newPersonCreateCommand() *cobra.Command {
 	var input store.PersonCreateInput
 	var emails, phones []string
 	var jsonOutput, publish bool
+	var ifExists string
 	command := &cobra.Command{
 		Use: "create", Short: "Create a person without message participants", Args: cobra.NoArgs,
 	}
 	flags := command.Flags()
+	flags.StringVar(&ifExists, "if-exists", "error", "Existing contacts: error or return the matching person")
 	flags.StringVar(&input.Name, "name", "", "Person's display name (required)")
 	flags.StringArrayVar(&emails, "email", nil,
 		"Email address with optional :type; repeat for multiple addresses")
@@ -37,6 +39,11 @@ func newPersonCreateCommand() *cobra.Command {
 	flags.BoolVar(&publish, "publish", false,
 		"Publish the new person to CardDAV")
 	command.RunE = func(cmd *cobra.Command, _ []string) error {
+		input.IfExists = store.PersonIfExists(ifExists)
+		// Omit the default so creation still works against older daemons.
+		if input.IfExists == store.PersonIfExistsError {
+			input.IfExists = ""
+		}
 		input.Emails = parsePersonCreateContacts(emails)
 		input.Phones = parsePersonCreateContacts(phones)
 		if err := store.ValidatePersonCreateInput(input); err != nil {
@@ -49,6 +56,19 @@ func newPersonCreateCommand() *cobra.Command {
 		defer func() { _ = client.Close() }()
 		person, err := client.CreateStandalonePerson(cmd.Context(), input)
 		if err != nil {
+			var conflict *daemonclient.APIError
+			if errors.As(err, &conflict) && (conflict.Code == "person_ambiguous" || conflict.Code == "person_matches_participant") {
+				if jsonOutput {
+					if writeErr := json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), struct {
+						Error   string         `json:"error"`
+						Message string         `json:"message"`
+						Details jsontext.Value `json:"details,omitempty"`
+					}{conflict.Code, conflict.Message, conflict.Details}); writeErr != nil {
+						return writeErr
+					}
+				}
+				return fmt.Errorf("%s: %s", conflict.Code, conflict.Message)
+			}
 			return err
 		}
 		if person == nil {
@@ -57,6 +77,18 @@ func newPersonCreateCommand() *cobra.Command {
 		out := cmd.OutOrStdout()
 		if jsonOutput {
 			err = json.MarshalEncode(jsontext.NewEncoder(out), person, json.Deterministic(true))
+		} else if person.Ensure != nil && person.Ensure.Status == "matched_existing" {
+			name := ""
+			if person.DisplayName != nil {
+				name = *person.DisplayName
+			}
+			if len(person.Ensure.MatchBasis) > 0 {
+				match := person.Ensure.MatchBasis[0]
+				_, err = fmt.Fprintf(out, "Matched person %d (%s) by %s %s\n", person.ID,
+					textutil.SanitizeTerminal(name), match.Kind, textutil.SanitizeTerminal(match.Value))
+			} else {
+				_, err = fmt.Fprintf(out, "Matched person %d (%s)\n", person.ID, textutil.SanitizeTerminal(name))
+			}
 		} else {
 			_, err = fmt.Fprintf(out, "Created person %d: %s\n",
 				person.ID, textutil.SanitizeTerminal(strings.TrimSpace(input.Name)))
@@ -64,7 +96,7 @@ func newPersonCreateCommand() *cobra.Command {
 		if err != nil {
 			return fmt.Errorf("write created person: %w", err)
 		}
-		if !publish {
+		if !publish || (input.IfExists == store.PersonIfExistsReturn && (person.Ensure == nil || person.Ensure.Status != "created")) {
 			return nil
 		}
 		_, err = daemonclient.APIResponse(client,
