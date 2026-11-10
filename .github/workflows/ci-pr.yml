@@ -20,12 +20,8 @@ jobs:
   released-commands:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions:
-      contents: read
     steps:
       - uses: actions/checkout@v7.0.1
-        with:
-          persist-credentials: false
       - uses: kenn-io/actions/release-commands@main
         with:
           files: |
