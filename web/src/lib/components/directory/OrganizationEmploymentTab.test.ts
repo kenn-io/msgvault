@@ -13,32 +13,6 @@ async function rowAction(label: string): Promise<void> {
 }
 
 describe('OrganizationEmploymentTab', () => {
-  it('reloads a delete conflict before showing a saved job or retrying deletion', async () => {
-    let reads = 0, deletes = 0;
-    const { controller } = controllerWith(async input => {
-      const request = requestOf(input), path = pathOf(request);
-      if (path === '/api/v1/employments/11' && request.method === 'GET') {
-        reads++;
-        if (reads === 2) return Response.json({ message: 'Reload unavailable' }, { status: 503 });
-        return Response.json(employment(11, reads === 1 ? 1 : 2, { title: reads === 1 ? 'Original job' : 'Updated job' }), { headers: { ETag: reads === 1 ? '"employment-11-r1"' : '"employment-11-r2"' } });
-      }
-      if (path === '/api/v1/employments/11' && request.method === 'DELETE') { deletes++; return Response.json({ message: 'Changed elsewhere' }, { status: 412 }); }
-      if (path === '/api/v1/people/7/employments') return collection([]);
-      throw new Error(`unexpected ${request.method} ${path}`);
-    });
-    controller.employments = [employment(11, 1, { title: 'Original job' })];
-    const view = render(OrganizationEmploymentTab, { controller, personID: 7 });
-    try {
-      await rowAction('Delete…');
-      await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-      expect(await screen.findByText("Couldn't delete this job.")).toBeDefined();
-      expect(screen.queryByRole('region', { name: 'Saved job' })).toBeNull();
-      await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-      expect((await screen.findByRole('region', { name: 'Saved job' })).textContent).toContain('Updated job');
-      expect(deletes).toBe(1);
-    } finally { view.unmount(); controller.destroy(); }
-  });
-
   it.each([true, false])('explains permanent deletion for current=%s employment', async current => {
     let release!: (response: Response) => void;
     const pending = new Promise<Response>(resolve => { release = resolve; });

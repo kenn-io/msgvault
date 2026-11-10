@@ -6,8 +6,6 @@ export class WriteAttempt<C = never> {
   conflict = $state<C>();
   details = $state('');
   prepared = $state<C>();
-  /** Set when a conflict's own refresh failed, so the held version is stale until reload() succeeds. */
-  reloadNeeded = $state(false);
   // Bumped by reset(), so a load started for a dialog that has since closed or changed target is dropped.
   #generation = 0;
 
@@ -25,12 +23,6 @@ export class WriteAttempt<C = never> {
     }
   }
 
-  /** Shows the saved version after a conflict whose refresh failed, so the next run sends it. */
-  async reload(load: () => Promise<C>): Promise<void> {
-    const current = await this.prepare(load);
-    if (current) { this.conflict = current; this.reloadNeeded = false; }
-  }
-
   get busy(): boolean {
     return this.#sending;
   }
@@ -39,7 +31,7 @@ export class WriteAttempt<C = never> {
     if (this.busy) return false;
     const current = this.conflict ?? this.prepared;
     this.prepared = current;
-    this.failed = this.reloadNeeded = false;
+    this.failed = false;
     this.conflict = undefined;
     this.details = '';
     this.#sending = true;
@@ -48,7 +40,6 @@ export class WriteAttempt<C = never> {
       if (result.ok) { this.prepared = undefined; return true; }
       this.failed = true;
       if (result.kind === 'conflict' && result.current) this.conflict = this.prepared = result.current;
-      this.reloadNeeded = result.kind === 'conflict' && !result.current;
       this.details = result.kind === 'unknown' || result.kind === 'blocked' ? '' : result.message;
       return false;
     } finally {
@@ -58,7 +49,7 @@ export class WriteAttempt<C = never> {
 
   reset(): void {
     this.#generation++;
-    this.failed = this.reloadNeeded = false;
+    this.failed = false;
     this.conflict = undefined;
     this.prepared = undefined;
     this.details = '';

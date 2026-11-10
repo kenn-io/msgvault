@@ -73,8 +73,7 @@
   async function removeRelationship(): Promise<void> {
     if (!deletingRelationship || acting) return;
     const target = deletingRelationship.relationship;
-    if (removal.reloadNeeded) await removal.reload(() => controller.prepareRelationshipMutation(target.id));
-    else if (await removal.run(current => controller.deleteRelationship(target.id, current))) deletingRelationship = undefined;
+    if (await removal.run(current => controller.deleteRelationship(target.id, current))) deletingRelationship = undefined;
   }
 
   function openDelete(view: PersonRelationshipView): void {
@@ -84,8 +83,7 @@
 
   async function removeRelationshipType(): Promise<void> {
     if (!deletingType || acting) return;
-    if (typeRemoval.reloadNeeded) await typeRemoval.reload(() => controller.prepareRelationshipTypeMutation(deletingType!.id));
-    else if (await typeRemoval.run(current => controller.deleteRelationshipType(deletingType!.id, current))) deletingType = undefined;
+    if (await typeRemoval.run(current => controller.deleteRelationshipType(deletingType!.id, current))) deletingType = undefined;
   }
 
   function openTypeDelete(type: RelationshipType): void {

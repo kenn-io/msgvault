@@ -285,25 +285,6 @@ it.each(['failed request', 'revision conflict'] as const)('handles a delete %s',
   }
 });
 
-it('reloads a delete conflict before showing the saved organization or retrying deletion', async () => {
-  let reads = 0, deletes = 0;
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    if (pathOf(request).endsWith('/employments')) return Response.json({ employments: [] });
-    if (request.method === 'DELETE') { deletes++; return Response.json({ error: 'organization_revision_conflict', message: 'Changed' }, { status: 409 }); }
-    if (++reads === 3) return Response.json({ message: 'Reload unavailable' }, { status: 503 });
-    return Response.json(organizationProfile(reads, reads < 3 ? 'Synthetic Org' : 'New saved name'), { headers: { ETag: `"organization-21-r${reads}"` } });
-  });
-  render(OrganizationEditor, { controller, organization: organization(), onDone: vi.fn() });
-  await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
-  await fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
-  expect(await screen.findByText("Couldn't delete this organization.")).toBeDefined();
-  expect(screen.queryByRole('region', { name: 'Saved organization' })).toBeNull();
-  await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-  expect((await screen.findByRole('region', { name: 'Saved organization' })).textContent).toContain('New saved name');
-  expect(deletes).toBe(1);
-});
-
 it('shows the new holder when a job appears after the deletion check', async () => {
   let checks = 0;
   const { controller } = controllerWith(async input => {

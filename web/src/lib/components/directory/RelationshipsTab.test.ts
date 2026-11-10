@@ -858,30 +858,3 @@ it.each(['connection', 'type'])('shows the saved %s after a delete conflict', as
   expect(await screen.findByText(kind === 'connection' ? 'New saved note' : 'New saved label')).toBeDefined();
   if (kind === 'connection') await waitFor(() => expect(controller.relationships[0].relationship.notes).toBe('New saved note'));
 });
-
-it.each(['connection', 'type'])('reloads a delete conflict before showing the saved %s or retrying deletion', async kind => {
-  let reads = 0, deletes = 0;
-  const { client, controller } = controllerWith(async input => {
-    const request = requestOf(input), path = pathOf(request);
-    if (request.method === 'GET' && (path === '/api/v1/person-relationships/41' || path === '/api/v1/relationship-types/31')) {
-      reads++;
-      if (reads === 2) return Response.json({ message: 'Reload unavailable' }, { status: 503 });
-      const item = kind === 'connection' ? relationship(41, reads, { notes: reads === 1 ? 'Old note' : 'New saved note' }) : relationshipType({ revision: reads, forward_label: reads === 1 ? 'mentors' : 'New saved label' });
-      return Response.json(item, { headers: { ETag: `"${kind === 'connection' ? 'relationship-41' : 'relationship-type-31'}-r${reads}"` } });
-    }
-    if (request.method === 'DELETE') { deletes++; return Response.json({ error: 'relationship_revision_conflict', message: 'Changed' }, { status: 409 }); }
-    if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [view(41, 'incoming', 'mentors', 'Synthetic Guide')] });
-    throw new Error(`unexpected ${request.method} ${path}`);
-  });
-  controller.relationships = [view(41, 'incoming', 'mentors', 'Synthetic Guide')];
-  controller.relationshipTypes = [relationshipType()];
-  render(RelationshipsTab, { client, controller, personID: 7, catalogOnly: kind === 'type' });
-  if (kind === 'connection') await rowAction('Delete…');
-  else await fireEvent.click(screen.getByRole('button', { name: 'Delete mentor relationship type' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-  expect(await screen.findByText(kind === 'connection' ? "Couldn't delete this connection." : "Couldn't delete this connection type.")).toBeDefined();
-  expect(screen.queryByRole('region', { name: `Saved ${kind === 'connection' ? 'connection' : 'connection type'}` })).toBeNull();
-  await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-  expect((await screen.findByRole('region', { name: `Saved ${kind === 'connection' ? 'connection' : 'connection type'}` })).textContent).toContain(kind === 'connection' ? 'New saved note' : 'New saved label');
-  expect(deletes).toBe(1);
-});

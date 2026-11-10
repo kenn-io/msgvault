@@ -12,7 +12,9 @@ it('keeps Add in the header, history folded, and the subgroup after the rows', a
     historyLabel: '2 past connections', history: createRawSnippet(() => ({ render: () => '<p>Past connections</p>' })),
     subgroupTitle: 'From address books', subgroup: createRawSnippet(() => ({ render: () => '<p>Suggested (2)</p>' })),
   });
-  await fireEvent.click(screen.getByRole('button', { name: 'Add connection…' }));
+  const add = screen.getByRole('button', { name: 'Add connection…' });
+  expect(add.closest('header')).not.toBeNull();
+  await fireEvent.click(add);
   expect(onadd).toHaveBeenCalledOnce();
   const fold = screen.getByText('2 past connections').closest('details')!;
   expect(fold.open).toBe(false);

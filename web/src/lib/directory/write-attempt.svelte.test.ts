@@ -20,10 +20,11 @@ it('clears failures before a retry and carries the saved version into the send',
     return { ok: false, kind: 'error', status: 500, message: 'Unavailable' };
   });
   expect(attempt.details).toBe('Unavailable');
-  await attempt.run(async current => {
+  expect(await attempt.run(async current => {
     expect(current).toEqual({ revision: 2 });
     return { ok: true };
-  });
+  })).toBe(true);
+  expect(attempt.prepared).toBeUndefined();
 });
 it.each(['unknown', 'blocked'] as const)('keeps %s outcomes out of Details', async kind => {
   const attempt = new WriteAttempt();
