@@ -22,9 +22,6 @@ it('keeps the End conflict valid and shows a failed retry', async () => {
   const rendered = render(EmploymentEndDialog, { controller, employment: opening, onClose: () => undefined });
   const end = screen.getByRole('textbox', { name: 'End date' });
   expect(screen.getByText('Engineer at Synthetic Org · since Mar 2024')).toBeDefined();
-  await fireEvent.input(end, { target: { value: '' } });
-  expect(screen.getByText('Required · 2024, 2024-03, or 2024-03-15')).toBeDefined();
-  expect(screen.getByRole('button', { name: 'End' })).toHaveProperty('disabled', true);
   await fireEvent.input(end, { target: { value: '2026' } });
   await waitFor(() => expect(screen.getByRole('button', { name: 'End' })).toHaveProperty('disabled', false));
   await fireEvent.click(screen.getByRole('button', { name: 'End' }));

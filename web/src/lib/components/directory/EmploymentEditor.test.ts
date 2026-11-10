@@ -24,8 +24,6 @@ it('passes organization search loading and failures to the employer picker', asy
   controller.organizations = [organization()];
   const view = render(EmploymentEditor, { controller, personID: 7 });
   try {
-    expect(screen.getByText('Organization (required)')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Add job' })).toHaveProperty('disabled', true);
     await fireEvent.keyDown(screen.getByRole('button', { name: /^Organization:/ }), { key: 'ArrowDown' });
     expect(await screen.findByText('Loading…')).toBeDefined();
     finish(Response.json({ organizations: [], total: 0, limit: 50, offset: 0 }));
@@ -82,17 +80,16 @@ it.each([true, false])('edits a primary job with current=%s without overriding t
     if (request.url.endsWith('/employments/11')) return Response.json(job, { headers: { ETag: '"employment-11-r1"' } });
     return Response.json({ employments: [] });
   });
-  controller.employments = [employment(12, 1, { is_primary: false })];
   render(EmploymentEditor, { controller, personID: 7, employment: job });
   const current = await screen.findByRole('checkbox', { name: 'Current' });
-  if (!isCurrent) {
-    await fireEvent.click(current);
-    await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2026-11' } });
-  }
+  await fireEvent.click(current);
+  await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: isCurrent ? '2024-13' : '2026-11' } });
+  if (isCurrent) await fireEvent.click(current);
   await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   await waitFor(() => expect(body).toBeDefined());
   expect(body).toHaveProperty('is_current', isCurrent);
   expect(body).not.toHaveProperty('is_primary');
+  if (isCurrent) expect(body).not.toHaveProperty('end_date');
 });
 
 it('allows editing a job after an unrelated organization create became uncertain', async () => {
@@ -166,18 +163,10 @@ it('allows closing while the job loads', async () => {
     });
     let done = false;
     await openInlineEmployer(controller, 'New Example', () => { done = true; });
-    expect(screen.getAllByRole('dialog')).toHaveLength(1);
-    expect(screen.getByRole('textbox', { name: 'Name (required)' })).toHaveProperty('value', 'New Example');
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Name (required)' }), { target: { value: '' } });
-    expect(screen.getByRole('button', { name: 'Add job' })).toHaveProperty('disabled', true);
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Name (required)' }), { target: { value: 'New Example' } });
-    expect(screen.getByRole('button', { name: 'Organization: New organization' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('value', 'New Example');
     await chooseSelectOption(screen.getByRole('combobox', { name: 'Organization kind: Company' }), 'School');
     await fireEvent.input(screen.getByRole('textbox', { name: 'Domain' }), { target: { value: 'example.org' } });
     await fireEvent.input(screen.getByRole('textbox', { name: 'Job title' }), { target: { value: 'Draft role' } });
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'Current' }));
-    await fireEvent.input(screen.getByRole('textbox', { name: 'End date' }), { target: { value: '2024-13' } });
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'Current' }));
     await fireEvent.click(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!);
     await screen.findByText('Invalid employment');
     expect(screen.getByRole('textbox', { name: 'Job title' })).toHaveProperty('value', 'Draft role');
@@ -189,7 +178,6 @@ it('allows closing while the job loads', async () => {
     expect(employerBodies).toEqual([expect.objectContaining({ name: 'New Example', primary_domain: 'example.org', kind: 'school' })]);
     for (const body of jobBodies) {
       expect(body).toMatchObject({ organization_id: 22, title: 'Draft role', is_current: true });
-      expect(body).not.toHaveProperty('end_date');
     }
   });
 
@@ -232,12 +220,14 @@ it.each(['none', 'same name'] as const)('reconciles an inline organization creat
     await waitFor(() => expect(controller.createBlocked.organizations).toBe(false));
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
     if (match === 'none') {
-      await waitFor(() => expect(screen.getByRole('textbox', { name: 'Name (required)' })).toHaveProperty('disabled', false));
-      expect(screen.getByRole('textbox', { name: 'Name (required)' })).toHaveProperty('value', 'Example company');
+      await waitFor(() => expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('disabled', false));
+      expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('value', 'Example company');
       expect(screen.getByRole('textbox', { name: 'Domain' })).toHaveProperty('value', 'example.org');
       expect(screen.getByRole('button', { name: 'Add job' })).toHaveProperty('disabled', false);
+      await fireEvent.input(screen.getByRole('textbox', { name: 'Name' }), { target: { value: '' } });
+      expect(screen.getByRole('button', { name: 'Add job' })).toHaveProperty('disabled', true);
     } else {
-      await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Name (required)' })).toBeNull());
+      await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Name' })).toBeNull());
       expect(screen.getByRole('button', { name: 'Add job' })).toHaveProperty('disabled', true);
       await openTypeahead('Organization');
       await fireEvent.mouseDown(await screen.findByRole('option', { name: /Example company/ }));

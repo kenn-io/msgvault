@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
 import { DirectoryEntityController } from './entity-controller.svelte';
-import { WriteAttempt } from './write-attempt.svelte';
 import type { Prepared } from './models';
 import { requestOf, pathOf, employment, organization, organizationProfile, relationship, relationshipType as makeRelationshipType } from './entity-fixtures.test-support';
 
@@ -934,10 +933,11 @@ it('retries deletion with the attempted version when the conflict refresh fails'
     return Response.json(organizationProfile(reads), { headers: { ETag: reads === 1 ? '"original"' : '"newer"' } });
   });
   const controller = new DirectoryEntityController(client, 7);
-  const attempt = new WriteAttempt<Awaited<ReturnType<typeof controller.prepareOrganizationMutation>>>();
   try {
-    await attempt.run(current => controller.deleteOrganization(21, current));
-    await attempt.run(current => controller.deleteOrganization(21, current));
+    const result = await controller.deleteOrganization(21);
+    expect(result).toMatchObject({ ok: false, kind: 'conflict', current: { etag: '"original"' } });
+    if (result.ok || result.kind !== 'conflict' || !result.current) throw new Error('Expected conflict with original version');
+    await controller.deleteOrganization(21, result.current);
     expect(deletedWith).toEqual(['"original"', '"original"']);
   } finally { controller.destroy(); }
 });

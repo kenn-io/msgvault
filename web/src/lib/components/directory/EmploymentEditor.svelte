@@ -159,7 +159,7 @@
     {#if loading}<p role="status">Loading job…</p>{:else}
       {#if initialEmployment}<p class="context">At {selectedOrganization?.name ?? 'this organization'}</p>
       {:else}
-      <div class="field"><span>Organization (required)</span>
+      <div class="field"><span>Organization</span>
           <FieldPicker remote title="Organization" placeholder="Organization" fallbackLabel={creatingOrganization ? 'New organization' : 'Search or create'} value={creatingOrganization || !organizationID ? '' : `organization:${organizationID}`} options={organizationOptions}
             loading={controller.organizationsLoading} errorDetails={controller.errors.organizations} error={controller.errors.organizations ? "Couldn't load organizations." : ''}
             onretry={() => void controller.refreshOrganizations(organizationQuery)}
@@ -169,7 +169,7 @@
             oncreate={query => { organizationName = query; creatingOrganization = true; }} creating={creatingOrganization}
             onexisting={() => creatingOrganization = false} disabled={locked}>
             {#snippet creation()}
-              <FormField field={{ id: 'work-org-name', label: 'Name (required)', value: organizationName, disabled: locked }} required oninput={value => organizationName = value} />
+              <FormField field={{ id: 'work-org-name', label: 'Name', value: organizationName, disabled: locked }} required oninput={value => organizationName = value} />
               <div class="form-pair">
                 <label>Kind<SelectDropdown title="Organization kind" value={organizationKind} options={kindOptions} onchange={value => organizationKind = value} disabled={locked} /></label>
                 <FormField field={{ id: 'work-org-domain', label: 'Domain', value: organizationDomain, disabled: locked }} oninput={value => organizationDomain = value} />

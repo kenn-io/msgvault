@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { localDateStr } from '@kenn-io/kit-ui';
-  import { DATE_HINT, formatPartialDate, readablePartialDate } from '../../directory/dates';
+  import { formatPartialDate, readablePartialDate } from '../../directory/dates';
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import type { Employment, Prepared } from '../../directory/models';
   import ConflictNotice from '../common/ConflictNotice.svelte';
@@ -33,7 +33,7 @@
   cancelLabel={attempt.conflict ? 'Use saved' : 'Cancel'}>
   <form onsubmit={(event) => { event.preventDefault(); void submit(); }}>
     <p class="context">{context}</p>
-    <DateField bind:value={endDate} start={formatPartialDate((attempt.conflict?.data ?? attempt.prepared?.data ?? shown).start_date)} bind:error={dateError} note={!endDate.trim() ? `Required · ${DATE_HINT}` : undefined} disabled={attempt.busy} />
+    <DateField bind:value={endDate} start={formatPartialDate((attempt.conflict?.data ?? attempt.prepared?.data ?? shown).start_date)} bind:error={dateError} disabled={attempt.busy} />
   </form>
   {#snippet notice()}
     {#if attempt.conflict}<ConflictNotice noun="job" saved={attempt.conflict.data} record={employmentFacts(attempt.conflict.data, controller, employment.person_id)} message={employmentConflictDetails(attempt.conflict.data, attempt.details)} />
