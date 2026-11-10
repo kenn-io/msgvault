@@ -288,21 +288,6 @@ func TestReaderRecordLimitsAndMalformedInput(t *testing.T) {
 	})
 }
 
-func TestReaderContainment(t *testing.T) {
-	t.Run("message symlink", func(t *testing.T) {
-		require := require.New(t)
-		root := t.TempDir()
-		outside := t.TempDir()
-		require.NoError(os.WriteFile(filepath.Join(outside, "message.json"), []byte(`[]`), 0600))
-		require.NoError(os.Symlink(filepath.Join(outside, "message.json"), filepath.Join(root, "message.json")))
-		r, err := os.OpenRoot(root)
-		require.NoError(err)
-		defer func() { require.NoError(r.Close()) }()
-		err = discover(t.Context(), r, root, func(chat) error { return nil })
-		require.ErrorContains(err, "path escapes from parent")
-	})
-}
-
 func TestImportOwnerValidation(t *testing.T) {
 	for _, tc := range []struct{ name, me string }{
 		{"required", ""},

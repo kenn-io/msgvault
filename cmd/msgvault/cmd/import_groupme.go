@@ -23,11 +23,11 @@ func newImportGroupmeCmd() *cobra.Command {
 		Use: "import-groupme <export-dir>", Short: "Import a GroupMe JSON export",
 		Long: `Import selected GroupMe conversations and direct messages from an extracted
 JSON export. Select a conversation directory containing message.json, or its
-parent directory. --me is your opaque GroupMe account ID, not a phone number.
-Find it in a message you know you sent: sender_id, corroborated by user_id;
-or use your own member user_id in conversation.json. Reuse exactly that ID for
-later imports. Selected incoming-only or empty conversations may omit your ID;
-msgvault does not infer ownership from which IDs occur.
+parent directory. Find your account ID in a message you know you sent:
+sender_id, corroborated by user_id. You can also use your own member user_id
+in conversation.json. Reuse exactly that ID for later imports. Selected
+incoming-only or empty conversations may omit your ID; msgvault does not
+infer ownership from which IDs occur.
 
 Messages, raw JSON, observed participants and supported local image/video media
 are copied into the archive. URLs are never fetched. System records and unsupported
@@ -51,7 +51,7 @@ Example:
 			return runImportGroupme(cmd, args[0], opts)
 		},
 	}
-	cmd.Flags().StringVar(&opts.Me, "me", "", "your opaque GroupMe account ID (required)")
+	cmd.Flags().StringVar(&opts.Me, "me", "", "your opaque GroupMe account ID (required, not a phone number)")
 	cmd.Flags().BoolVar(&opts.NoDefaultIdentity, "no-default-identity", false, noDefaultIdentityHelp)
 	return cmd
 }
