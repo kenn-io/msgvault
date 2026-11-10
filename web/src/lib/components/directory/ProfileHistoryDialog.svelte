@@ -65,17 +65,14 @@
     }).map(address => {
       const matches = observations.filter(point => point.identity_key === address.identity_key);
       for (const point of matches) seen.add(point.envelope.id);
-      const services = [...new Set(matches.map(point => providerContext(point, workspaces, false)).filter(Boolean))];
-      const details = matches.map(point => {
-        const line = valueProvenance(point.envelope, [['Seen', point.observed_at]]);
-        return [providerContext(point, workspaces), line.text, line.title].filter(Boolean).join(' · ');
-      });
+      const service = matches[0] && providerContext(matches[0], workspaces, false);
+      const seenLines = matches.map(point => valueProvenance(point.envelope, [['Seen', point.observed_at]])).map(line => `${line.text} · ${line.title}`);
       return {
         id: `merged-${address.mergeID}-${address.participantID}-${address.identity_key}`, value: address.value,
-        detail: services.filter(service => address.value !== service && !address.value.startsWith(`${service} · `)).join(' · ') || undefined,
+        detail: service && address.value !== service && !address.value.startsWith(`${service} · `) ? service : undefined,
         provenance: {
           text: `Merged in · ${formatShortDate(address.mergedAt)}`,
-          title: [`Merged ${formatDateTime(address.mergedAt)}`, ...details].join('\n'),
+          title: [`Merged ${formatDateTime(address.mergedAt)}`, ...seenLines].join('\n'),
         },
         onclick: () => openMerge(address.mergeID), actionLabel: `Open the merge that brought in ${address.value}`,
       };
