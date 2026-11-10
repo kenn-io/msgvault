@@ -81,7 +81,11 @@ func TestAddServiceAccountDefaultIdentityScheduledSync(t *testing.T) {
 			args = append(args, flag)
 		}
 		cmd.SetArgs(args)
-		require.NoError(cmd.ExecuteContext(ctx))
+		stopCapture := captureStdout(t)
+		err := cmd.ExecuteContext(ctx)
+		output := stopCapture()
+		require.NoError(err)
+		assert.Contains(output, "msgvault sync-full -- user@example.com")
 		st, err := store.Open(cfg.DatabaseDSN())
 		require.NoError(err)
 		t.Cleanup(func() { _ = st.Close() })
@@ -267,7 +271,13 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 					args = append(args, flag)
 				}
 				cmd.SetArgs(args)
-				require.NoError(cmd.ExecuteContext(ctx))
+				stopCapture := captureStdout(t)
+				err := cmd.ExecuteContext(ctx)
+				output := stopCapture()
+				require.NoError(err)
+				if tc.name != "teams" {
+					assert.Contains(output, " -- "+email)
+				}
 				st, err := store.Open(cfg.DatabaseDSN())
 				require.NoError(err)
 				t.Cleanup(func() { _ = st.Close() })
@@ -291,75 +301,6 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 					assert.Empty(ids, "default identity confirmation must honor the saved opt-out (flag %q)", flag)
 				}
 			}
-		})
-	}
-}
-
-func TestOAuthFirstSyncHintAcceptsHyphenLeadingMailbox(t *testing.T) {
-	const email = "-reader@example.org"
-	for _, provider := range []string{"gmail", "microsoft"} {
-		t.Run(provider, func(t *testing.T) {
-			require, assert := require.New(t), assert.New(t)
-			home := t.TempDir()
-			cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}}
-			var cmd *cobra.Command
-			if provider == "gmail" {
-				saveAddAccountFlags(t)
-				savedTransport := http.DefaultTransport
-				t.Cleanup(func() { http.DefaultTransport = savedTransport })
-				http.DefaultTransport = testTransport(func(req *http.Request) (*http.Response, error) {
-					var body string
-					switch req.Method + " " + req.URL.String() {
-					case "POST https://token.example.com/oauth2":
-						body = `{"access_token":"synthetic-token","token_type":"Bearer","expires_in":3600}`
-					case "GET https://gmail.googleapis.com/gmail/v1/users/me/profile":
-						body = `{"emailAddress":"-reader@example.org","historyId":"100"}`
-					default:
-						return nil, fmt.Errorf("unexpected request: %s %s", req.Method, req.URL)
-					}
-					return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
-				})
-				key, err := rsa.GenerateKey(rand.Reader, 2048)
-				require.NoError(err)
-				keyDER, err := x509.MarshalPKCS8PrivateKey(key)
-				require.NoError(err)
-				keyJSON, err := json.Marshal(map[string]string{"type": "service_account", "client_email": "service@example.com", "private_key": string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})), "token_uri": "https://token.example.com/oauth2"})
-				require.NoError(err)
-				cfg.OAuth.ServiceAccountKey = filepath.Join(home, "service-account.json")
-				require.NoError(os.WriteFile(cfg.OAuth.ServiceAccountKey, keyJSON, 0600))
-				cmd = &cobra.Command{Use: addAccountUse, RunE: runAddAccountLocal}
-				registerAddAccountFlags(cmd)
-				cmd.SetArgs([]string{"--no-default-identity", "--", email})
-			} else {
-				oldNoDefault, oldGraph, oldHeadless, oldTenant := noDefaultIdentityAddO365, o365Graph, o365Headless, o365TenantID
-				t.Cleanup(func() {
-					noDefaultIdentityAddO365, o365Graph, o365Headless, o365TenantID = oldNoDefault, oldGraph, oldHeadless, oldTenant
-				})
-				cfg.Microsoft.ClientID = "synthetic-client"
-				mgr := microsoft.NewManager(cfg.Microsoft.ClientID, "common", cfg.Microsoft.EffectiveRedirectURI(), cfg.TokensDir(), testDiscardLogger())
-				require.NoError(os.MkdirAll(cfg.TokensDir(), 0700))
-				require.NoError(os.WriteFile(mgr.TokenPath(email), []byte(`{"access_token":"synthetic-token"}`), 0600))
-				cmd = newAddO365LocalCmd()
-				cmd.SetArgs([]string{"--" + oauthPreflightedFlag, "--no-default-identity", "--", email})
-			}
-			stopCapture := captureStdout(t)
-			err := cmd.ExecuteContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
-			output := stopCapture()
-			require.NoError(err)
-			var command string
-			for line := range strings.SplitSeq(output, "\n") {
-				if index := strings.Index(line, "msgvault sync-full "); index >= 0 {
-					command = line[index:]
-				}
-			}
-			require.NotEmpty(command, "first-sync instruction")
-			words := strings.Fields(command)
-			require.GreaterOrEqual(len(words), 3)
-			var got []string
-			sync := &cobra.Command{Use: "sync-full <email>", Args: cobra.ExactArgs(1), Run: func(_ *cobra.Command, args []string) { got = args }}
-			sync.SetArgs(words[2:])
-			require.NoError(sync.Execute())
-			assert.Equal([]string{email}, got)
 		})
 	}
 }

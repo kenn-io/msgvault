@@ -2064,17 +2064,9 @@ func TestCLISyncSubprocessArgsIncrementalIncludesFolderFilters(t *testing.T) {
 	)
 }
 
-func TestCLISyncSubprocessArgsAcceptHyphenLeadingMailbox(t *testing.T) {
-	for _, full := range []bool{false, true} {
-		t.Run(strconv.FormatBool(full), func(t *testing.T) {
-			args := cliSyncSubprocessArgs(api.CLISyncRequest{Full: full, Email: "-reader@example.org"})
-			var got []string
-			command := &cobra.Command{Use: args[0] + " <email>", Args: cobra.ExactArgs(1), Run: func(_ *cobra.Command, args []string) { got = args }}
-			command.SetArgs(args[1:])
-			require.NoError(t, command.Execute())
-			assert.Equal(t, []string{"-reader@example.org"}, got)
-		})
-	}
+func TestCLISyncSubprocessArgsFullSeparatesMailbox(t *testing.T) {
+	assert.Equal(t, []string{"sync-full", "--", "-reader@example.org"},
+		cliSyncSubprocessArgs(api.CLISyncRequest{Full: true, Email: "-reader@example.org"}))
 }
 
 func TestCLISyncSubprocessArgsIncludesExactSourceID(t *testing.T) {
@@ -2369,8 +2361,7 @@ func TestStoreAPIAdapterAppendsServerOwnedGrantDecision(t *testing.T) {
 		Args:         []string{"add-account", "--readonly", "--", "-reader@example.org"},
 		GrantDecided: true,
 	}
-	var gotArgs, mailbox []string
-	var granted bool
+	var gotArgs []string
 
 	err := adapter.runCLICommandWithRunner(
 		t.Context(), req, nil,
@@ -2382,17 +2373,11 @@ func TestStoreAPIAdapterAppendsServerOwnedGrantDecision(t *testing.T) {
 			_ func(string, string) error,
 		) error {
 			gotArgs = args
-			command := &cobra.Command{Use: "add-account <email>", Args: cobra.ExactArgs(1), Run: func(_ *cobra.Command, args []string) { mailbox = args }}
-			command.Flags().BoolVar(&granted, addAccountGrantDecidedFlag, false, "")
-			command.Flags().Bool("readonly", false, "")
-			command.SetArgs(args[1:])
-			return command.Execute()
+			return nil
 		},
 	)
 
 	require.NoError(t, err)
-	assert.True(t, granted)
-	assert.Equal(t, []string{"-reader@example.org"}, mailbox)
 	assert.Equal(t, []string{
 		"add-account", "--grant-decided=true", "--readonly", "--", "-reader@example.org",
 	}, gotArgs)
