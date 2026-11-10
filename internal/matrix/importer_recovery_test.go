@@ -926,7 +926,7 @@ func TestEditRollbackPrefersEarlierArchivedCiphertext(t *testing.T) {
 			check.Equal("second", <-pages)
 			check.Equal("other", f.body(t, "$other"))
 			var owner string
-			req.NoError(f.store.DB().QueryRowContext(t.Context(), `SELECT event_id FROM matrix_megolm_claims WHERE session_id = ? AND message_index = ?`, f.backup.out.ID().String(), index).Scan(&owner))
+			req.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT event_id FROM matrix_megolm_claims WHERE session_id = ? AND message_index = ?`), f.backup.out.ID().String(), index).Scan(&owner))
 			check.Equal(wantOwner, owner)
 			if mode == "stripped relation" {
 				check.Equal("* edited", f.body(t, "$edit"))
