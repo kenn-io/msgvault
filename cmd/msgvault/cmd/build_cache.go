@@ -1381,11 +1381,6 @@ func buildCacheLockedAttempt(
 		return nil, fmt.Errorf("inspect recipient envelope schema: %w", err)
 	}
 	sourceSnapshot.hasRecipientEnvelope = recipientEnvelopeColumnCount > 0
-	var recipientRelayColumnCount int
-	if err := sourceSnapshot.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('message_recipients') WHERE name = 'is_relayed'`).Scan(&recipientRelayColumnCount); err != nil {
-		return nil, fmt.Errorf("inspect recipient relay schema: %w", err)
-	}
-	sourceSnapshot.hasRecipientRelay = recipientRelayColumnCount > 0
 	publicationPlan := cachePublishPlanForMode(replaceAll)
 	for dataset, changed := range relatedKinds.datasets() {
 		if changed {
@@ -1920,7 +1915,6 @@ type cacheSourceSnapshot struct {
 	hasMessageSourceAttribution bool
 	hasAccountAttribution       bool
 	hasRecipientEnvelope        bool
-	hasRecipientRelay           bool
 	// csvSnapshot records that the sqlite_db tables are CSV views exported
 	// from SQLite, not the attached database itself. It is set once at
 	// construction: prepareTables closes the SQLite transaction before the
@@ -2133,10 +2127,6 @@ func (s *cacheSourceSnapshot) tables(through int64, afterMessageIDs map[string]i
 		recipientEnvelopeColumn = "email_address"
 		recipientEnvelopePresence = emailPresence + " AS envelope_present"
 	}
-	recipientRelayColumn := "FALSE AS is_relayed"
-	if s.hasRecipientRelay {
-		recipientRelayColumn = "is_relayed"
-	}
 	messageColumns := "id, source_id, source_message_id, rfc822_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, hidden_text_present, attachment_count, deleted_from_source_at, deleted_at, sender_id, message_type, list_id, is_from_me"
 	messageTypes := "types={'id': 'BIGINT', 'source_id': 'BIGINT', 'source_message_id': 'VARCHAR', 'rfc822_message_id': 'VARCHAR', 'conversation_id': 'BIGINT', 'subject': 'VARCHAR', 'snippet': 'VARCHAR', 'sent_at': 'TIMESTAMP', 'size_estimate': 'BIGINT', 'has_attachments': 'BOOLEAN', 'hidden_text_present': 'BOOLEAN', 'attachment_count': 'INTEGER', 'deleted_from_source_at': 'TIMESTAMP', 'deleted_at': 'TIMESTAMP', 'sender_id': 'BIGINT', 'message_type': 'VARCHAR', 'list_id': 'VARCHAR', 'is_from_me': 'BOOLEAN'"
 	if s.hasMessageSourceAttribution {
@@ -2161,7 +2151,7 @@ func (s *cacheSourceSnapshot) tables(through int64, afterMessageIDs map[string]i
 		// CSV view that lacks the column and the export fails on Windows.
 		{tableMessages, "SELECT " + messageColumns + " FROM messages WHERE sent_at IS NOT NULL", messageTypes, identityColumns("source_message_id", "rfc822_message_id", "list_id")},
 		{"source_merge_archive_only_messages", "SELECT message_id FROM source_merge_archive_only_messages", "types={'message_id': 'BIGINT'}", nil},
-		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name, " + recipientEnvelopeColumn + ", " + recipientEnvelopePresence + ", " + recipientRelayColumn + " FROM message_recipients" + childFilter("message_recipients"),
+		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name, " + recipientEnvelopeColumn + ", " + recipientEnvelopePresence + ", is_relayed FROM message_recipients" + childFilter("message_recipients"),
 			"types={'message_id': 'BIGINT', 'participant_id': 'BIGINT', 'recipient_type': 'VARCHAR', 'display_name': 'VARCHAR', 'email_address': 'VARCHAR', 'envelope_present': 'BOOLEAN', 'is_relayed': 'BOOLEAN'}",
 			identityColumns("recipient_type", "email_address")},
 		{"message_labels", "SELECT message_id, label_id FROM message_labels" + childFilter("message_labels"),

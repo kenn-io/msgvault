@@ -602,8 +602,8 @@ func (b *TestDataBuilder) participantIdentifiersSQL() string {
 func (b *TestDataBuilder) recipientsSQL() string {
 	if b.legacyRecipientSchema {
 		return joinRows(b.recipients, func(r RecipientFixture) string {
-			return fmt.Sprintf("(%d::BIGINT, %d::BIGINT, %s, %s)",
-				r.MessageID, r.ParticipantID, sqlStr(r.Type), sqlStr(r.DisplayName))
+			return fmt.Sprintf("(%d::BIGINT, %d::BIGINT, %s, %s, %t)",
+				r.MessageID, r.ParticipantID, sqlStr(r.Type), sqlStr(r.DisplayName), r.IsRelayed)
 		})
 	}
 	return joinRows(b.recipients, func(r RecipientFixture) string {
@@ -694,7 +694,7 @@ const (
 	// messageRecipientsColsWithEnvelope adds the resolved recipient address
 	// and the raw header address (cache schema v26). messageRecipientsCols
 	// stays for fixtures that model pre-v17 caches without either column.
-	messageRecipientsColsWithEnvelope = "message_id, participant_id, recipient_type, display_name, email_address, envelope_address"
+	messageRecipientsColsWithEnvelope = "message_id, participant_id, recipient_type, display_name, email_address, envelope_address, is_relayed"
 	labelsCols                        = "id, name"
 	messageLabelsCols                 = "message_id, label_id"
 	attachmentsCols                   = "attachment_id, message_id, size, filename, mime_type"
@@ -767,15 +767,15 @@ func (b *TestDataBuilder) addMessageTables(pb *parquetBuilder) {
 // builder's schema mode.
 func (b *TestDataBuilder) recipientCols() string {
 	if b.legacyRecipientSchema {
-		return messageRecipientsCols
+		return messageRecipientsCols + ", is_relayed"
 	}
-	return messageRecipientsColsWithEnvelope + ", is_relayed"
+	return messageRecipientsColsWithEnvelope
 }
 
 // recipientDummyRow returns the schema-only dummy row matching recipientCols.
 func (b *TestDataBuilder) recipientDummyRow() string {
 	if b.legacyRecipientSchema {
-		return "(0::BIGINT, 0::BIGINT, '', '')"
+		return "(0::BIGINT, 0::BIGINT, '', '', false)"
 	}
 	return "(0::BIGINT, 0::BIGINT, '', '', '', '', false)"
 }
@@ -968,21 +968,9 @@ func (b *parquetBuilder) buildTemplate() (fstest.MapFS, identityindex.BuildResul
 		legacyRecipients, err = os.ReadFile(recipientPath)
 		require.NoError(b.t, err)
 		currentPath := recipientPath + ".current"
-		_, err = db.ExecContext(b.t.Context(), "COPY (SELECT *, NULL::VARCHAR AS email_address, NULL::VARCHAR AS envelope_address, FALSE AS is_relayed FROM read_parquet('"+escapePath(recipientPath)+"')) TO '"+escapePath(currentPath)+"' (FORMAT PARQUET)")
+		_, err = db.ExecContext(b.t.Context(), "COPY (SELECT *, NULL::VARCHAR AS email_address, NULL::VARCHAR AS envelope_address FROM read_parquet('"+escapePath(recipientPath)+"')) TO '"+escapePath(currentPath)+"' (FORMAT PARQUET)")
 		require.NoError(b.t, err)
 		require.NoError(b.t, os.Rename(currentPath, recipientPath))
-	}
-	if !b.legacyRecipientSchema {
-		recipientPath = filepath.Join(tmpDir, "message_recipients", "message_recipients.parquet")
-		var count int
-		err = db.QueryRowContext(b.t.Context(), "SELECT count(*) FROM parquet_schema('"+escapePath(recipientPath)+"') WHERE name = 'is_relayed'").Scan(&count)
-		require.NoError(b.t, err)
-		if count == 0 {
-			currentPath := recipientPath + ".current"
-			_, err = db.ExecContext(b.t.Context(), "COPY (SELECT *, FALSE AS is_relayed FROM read_parquet('"+escapePath(recipientPath)+"')) TO '"+escapePath(currentPath)+"' (FORMAT PARQUET)")
-			require.NoError(b.t, err)
-			require.NoError(b.t, os.Rename(currentPath, recipientPath))
-		}
 	}
 	derived, err := identityindex.Build(b.t.Context(), db, identityindex.BuildOptions{
 		Mode:           identityindex.ModeFull,

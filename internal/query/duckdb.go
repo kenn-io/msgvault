@@ -859,9 +859,6 @@ func (e *DuckDBEngine) parquetCTEs() string {
 	if !e.hasCol("message_recipients", "envelope_address") {
 		recipientExtras += ", NULL::VARCHAR AS envelope_address"
 	}
-	if !e.hasCol("message_recipients", "is_relayed") {
-		recipientExtras += ", FALSE AS is_relayed"
-	}
 
 	return fmt.Sprintf(`
 		msg AS (

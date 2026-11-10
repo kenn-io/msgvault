@@ -156,10 +156,6 @@ func exportRelatedDatasets(
 			" = '' THEN NULL ELSE " + snapshot.identityExportSQL("mr.email_address") + " END"
 		presence = snapshot.identityPresenceSQL("mr.email_address", "mr.envelope_present")
 	}
-	relay := "FALSE"
-	if snapshot.hasRecipientRelay {
-		relay = "mr.is_relayed"
-	}
 	mimeType := "'' AS mime_type"
 	if snapshot.hasAttachmentMIME {
 		mimeType = "COALESCE(" + snapshot.textSQL("mime_type") + ", '') AS mime_type"
@@ -178,10 +174,10 @@ func exportRelatedDatasets(
 			%[3]s AS recipient_type,
 			COALESCE(%[4]s, '') AS display_name,
 			CASE WHEN %[5]s THEN %[1]s ELSE %[6]s END AS email_address,
-			%[1]s AS envelope_address, %[9]s AS is_relayed
+			%[1]s AS envelope_address, mr.is_relayed AS is_relayed
 			FROM %[7]s mr
 			LEFT JOIN sqlite_db.participants p ON p.id = mr.participant_id
-			WHERE mr.message_id > %[8]d AND TRY_CAST(mr.message_id AS BIGINT) IN (%[2]s)`, envelope, parents["message_recipients"], snapshot.identityExportSQL("mr.recipient_type"), snapshot.textSQL("mr.display_name"), presence, participant, children["message_recipients"], afterMessageIDs["message_recipients"], relay)},
+			WHERE mr.message_id > %[8]d AND TRY_CAST(mr.message_id AS BIGINT) IN (%[2]s)`, envelope, parents["message_recipients"], snapshot.identityExportSQL("mr.recipient_type"), snapshot.textSQL("mr.display_name"), presence, participant, children["message_recipients"], afterMessageIDs["message_recipients"])},
 		{"message_labels", fmt.Sprintf(`SELECT message_id, label_id
 			FROM %s WHERE message_id > %d AND TRY_CAST(message_id AS BIGINT) IN (%s)`, children["message_labels"], afterMessageIDs["message_labels"], parents["message_labels"])},
 		{tableAttachments, fmt.Sprintf(`SELECT id AS attachment_id, message_id, size,
