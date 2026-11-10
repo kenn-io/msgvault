@@ -549,7 +549,7 @@
   .group-name :global(.group-icon) { flex-shrink: 0; color: var(--artifact-ink); }
   .group-row > .group-action { padding: 0; }
   @media (min-width: 641px) {
-    .group-row:not(:has(.group-share)) > .group-action { position: absolute; right: 0; }
+    .group-row:not(:has(.group-share)) > .group-action { position: absolute; right: 0; width: 40px; }
   }
   .share-track { height: 6px; border-radius: var(--radius-sm); background: var(--bg-inset); overflow: hidden; }
   .share-fill { height: 100%; background: var(--accent-blue); }

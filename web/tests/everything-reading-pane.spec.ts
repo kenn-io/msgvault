@@ -572,6 +572,10 @@ test.describe('wide grouped layout', () => {
     const action = await row.getByRole('button', { name: /Show items in/ }).boundingBox();
     expect(group!.width).toBeLessThanOrEqual(480);
     expect(rowBounds!.x + rowBounds!.width - action!.x - action!.width).toBeLessThanOrEqual(16);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const sourceRow = (await row.boundingBox())!;
+    const sourceAction = (await row.getByRole('button', { name: /Show items in/ }).boundingBox())!;
+    const sourceInset = sourceRow.x + sourceRow.width - sourceAction.x - sourceAction.width;
     await row.getByText('Example source').click();
     await expect(page.getByRole('complementary', { name: /Reading pane/ })).toBeVisible();
     expect((await grid.getByRole('columnheader', { name: 'Group' }).boundingBox())!.width).toBeLessThanOrEqual(480);
@@ -582,6 +586,10 @@ test.describe('wide grouped layout', () => {
     await expect(months.getByRole('row', { name: /Jan 2026/ })).toBeVisible();
     const monthGroup = await months.getByRole('columnheader', { name: 'Group' }).boundingBox();
     expect(monthGroup!.width).toBeLessThanOrEqual(480);
+    const monthRow = months.getByRole('row', { name: /Jan 2026/ });
+    const monthBounds = (await monthRow.boundingBox())!;
+    const monthAction = (await monthRow.getByRole('button', { name: /Show items in/ }).boundingBox())!;
+    expect(Math.abs(monthBounds.x + monthBounds.width - monthAction.x - monthAction.width - sourceInset)).toBeLessThanOrEqual(1);
   });
 });
 
