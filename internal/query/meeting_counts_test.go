@@ -153,12 +153,10 @@ func TestRelationshipMeetingCounts(t *testing.T) {
 				}
 			}
 			engine := b.BuildEngine()
-			for _, scope := range []Context{{SourceIDs: sources, ParticipantIDs: []int64{person}}} {
-				result, err := engine.Relationships(t.Context(), RelationshipsRequest{Context: scope, Now: tc.at.AddDate(0, 0, 3)})
-				requirements.NoError(err)
-				requirements.Len(result.Rows, 1)
-				assertions.Equal(tc.want, result.Rows[0].Signals.MeetingCount)
-			}
+			result, err := engine.Relationships(t.Context(), RelationshipsRequest{Context: Context{SourceIDs: sources, ParticipantIDs: []int64{person}}, Now: tc.at.AddDate(0, 0, 3)})
+			requirements.NoError(err)
+			requirements.Len(result.Rows, 1)
+			assertions.Equal(tc.want, result.Rows[0].Signals.MeetingCount)
 			for _, year := range []int{2025, 2026} {
 				zone := "UTC"
 				if tc.name == "all day" {

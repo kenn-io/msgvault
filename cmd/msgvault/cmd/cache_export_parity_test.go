@@ -196,31 +196,32 @@ func (r *participantClusterInsertRecorder) ExecContext(ctx context.Context, quer
 	return r.DB.ExecContext(ctx, query, args...)
 }
 
-func TestStageMeetingKeysQuotes(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	recorder := newParticipantClusterInsertRecorder(t)
-	keys := map[int64][]store.MeetingCountOccurrence{1: {{Key: "uid:example'o@example.test/"}}}
-	require.NoError(stageMeetingKeys(t.Context(), recorder, keys, 1))
-	var count int
-	var key string
-	require.NoError(recorder.DB.QueryRow(`SELECT count(*), min(meeting_key) FROM tmp_meeting_keys`).Scan(&count, &key))
-	assert.Equal(1, count)
-	assert.Equal("uid:example'o@example.test/", key)
-}
-
-func TestStageMeetingKeysCopyDates(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	db := newParticipantClusterInsertRecorder(t)
-	keys := map[int64][]store.MeetingCountOccurrence{
-		1: {{Key: "uid:meeting@example.org/", Start: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)}},
-		2: {{Key: "uid:meeting@example.org/", Start: time.Date(2027, 3, 15, 10, 0, 0, 0, time.UTC)}},
-	}
-	requirements.NoError(stageMeetingKeys(t.Context(), db, keys, 2))
-	var count int
-	var at time.Time
-	requirements.NoError(db.QueryRow(`SELECT count(DISTINCT occurrence_at), min(occurrence_at) FROM (`+meetingKeysSelectSQL+`)`).Scan(&count, &at))
-	assertions.Equal(1, count)
-	assertions.Equal(time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), at)
+func TestStageMeetingKeys(t *testing.T) {
+	t.Run("quotes", func(t *testing.T) {
+		assert, require := assert.New(t), require.New(t)
+		recorder := newParticipantClusterInsertRecorder(t)
+		keys := map[int64][]store.MeetingCountOccurrence{1: {{Key: "uid:example'o@example.test/"}}}
+		require.NoError(stageMeetingKeys(t.Context(), recorder, keys, 1))
+		var count int
+		var key string
+		require.NoError(recorder.DB.QueryRow(`SELECT count(*), min(meeting_key) FROM tmp_meeting_keys`).Scan(&count, &key))
+		assert.Equal(1, count)
+		assert.Equal("uid:example'o@example.test/", key)
+	})
+	t.Run("copy dates", func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
+		db := newParticipantClusterInsertRecorder(t)
+		keys := map[int64][]store.MeetingCountOccurrence{
+			1: {{Key: "uid:meeting@example.org/", Start: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)}},
+			2: {{Key: "uid:meeting@example.org/", Start: time.Date(2027, 3, 15, 10, 0, 0, 0, time.UTC)}},
+		}
+		requirements.NoError(stageMeetingKeys(t.Context(), db, keys, 2))
+		var count int
+		var at time.Time
+		requirements.NoError(db.QueryRow(`SELECT count(DISTINCT occurrence_at), min(occurrence_at) FROM (`+meetingKeysSelectSQL+`)`).Scan(&count, &at))
+		assertions.Equal(1, count)
+		assertions.Equal(time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), at)
+	})
 }
 
 func participantClusterTestMappings(count int) map[int64]int64 {

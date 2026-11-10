@@ -88,16 +88,6 @@ func TestMeetingCountKeysSeriesTypeChange(t *testing.T) {
 	}
 }
 
-func TestMeetingCountKeysAmbiguousStaleGoogleID(t *testing.T) {
-	st := newRFC822IDBackfillBackendStore(t)
-	calendarFixture(t, st, "series", strings.Replace(linkSeriesRaw, "COUNT=6", "COUNT=1", 1))
-	calendarFixture(t, st, "other", `{"id":"series","iCalUID":"other@example.org"}`, "other@example.com")
-	_, note := projectionFixture(t, st, "note", "granola_json", `{"calendar_event":{"calendar_event_id":"series_20270314T100000Z","scheduled_start_time":"2027-03-14T10:00:00Z"}}`)
-	keys, err := st.MeetingCountKeysContext(t.Context())
-	require.NoError(t, err)
-	assert.Empty(t, keys[note])
-}
-
 func TestMeetingCountKeysOneTranscriptTwoOccurrences(t *testing.T) {
 	type note struct{ format, raw string }
 	type step struct {
@@ -134,6 +124,10 @@ func TestMeetingCountKeysOneTranscriptTwoOccurrences(t *testing.T) {
 			{seriesRaw: linkSeriesRaw, want: []string{"uid:weekly@example.org/20270314T100000Z", "uid:weekly@example.org/20270321T100000Z"}},
 			{seriesRaw: shortened, want: []string{"uid:weekly@example.org/20270314T100000Z", "uid:weekly@example.org/20270321T100000Z"}},
 			{seriesRaw: unsupported, want: []string{"uid:weekly@example.org/20270314T100000Z", "uid:weekly@example.org/20270321T100000Z"}},
+		}},
+		{name: "mixed stale link and split", notes: []note{{"twenty_json", twentyRaw}}, links: []string{"20270307T100000Z", "20270321T100000Z"}, steps: []step{
+			{seriesRaw: shortened, want: []string{"uid:weekly@example.org/20270307T100000Z", "uid:weekly@example.org/20270321T100000Z"}},
+			{splitKey: "20270321T100000Z", want: []string{"uid:weekly@example.org/20270307T100000Z"}},
 		}},
 		{name: "mixed surviving link", notes: copies, links: []string{"20270307T100000Z"}, steps: []step{
 			{seriesRaw: linkSeriesRaw, want: []string{"uid:weekly@example.org/20270307T100000Z", "uid:weekly@example.org/20270321T100000Z"}},
@@ -237,9 +231,11 @@ func TestMeetingCountKeysBudgetExhaustionKeepsOtherMessages(t *testing.T) {
 func TestMeetingCountKeysGoogleCalendarCollisions(t *testing.T) {
 	type event struct{ uid, kind string }
 	for _, tc := range []struct {
-		name   string
-		events []event
-		want   []string
+		name      string
+		events    []event
+		rawEvents []string
+		noteID    string
+		want      []string
 	}{
 		{name: "no calendar"},
 		{name: "one calendar", events: []event{{"first@example.org", "single"}}, want: []string{"uid:first@example.org/"}},
@@ -247,6 +243,7 @@ func TestMeetingCountKeysGoogleCalendarCollisions(t *testing.T) {
 		{name: "different singles", events: []event{{"first@example.org", "single"}, {"second@example.org", "single"}}},
 		{name: "different series", events: []event{{"first@example.org", "series"}, {"second@example.org", "series"}}},
 		{name: "different single and series", events: []event{{"first@example.org", "single"}, {"second@example.org", "series"}}},
+		{name: "stale instance with different single and series", rawEvents: []string{strings.Replace(linkSeriesRaw, "COUNT=6", "COUNT=1", 1), `{"id":"series","iCalUID":"other@example.org"}`}, noteID: "series_20270314T100000Z"},
 		{name: "single without UID and series", events: []event{{"", "single"}, {"second@example.org", "series"}}},
 		{name: "single and series without UID", events: []event{{"first@example.org", "single"}, {"", "series"}}},
 		{name: "same series", events: []event{{"first@example.org", "series"}, {"first@example.org", "series"}}, want: []string{"uid:first@example.org/20270314T100000Z"}},
@@ -261,7 +258,13 @@ func TestMeetingCountKeysGoogleCalendarCollisions(t *testing.T) {
 				}
 				calendarFixture(t, st, fmt.Sprintf("event-%d", i), raw, fmt.Sprintf("calendar-%d@example.com", i))
 			}
-			_, note := projectionFixture(t, st, "note", "granola_json", `{"calendar_event":{"calendar_event_id":"event","scheduled_start_time":"2027-03-14T10:00:00Z"}}`)
+			for i, raw := range tc.rawEvents {
+				calendarFixture(t, st, fmt.Sprintf("event-%d", i), raw, fmt.Sprintf("calendar-%d@example.com", i))
+			}
+			if tc.noteID == "" {
+				tc.noteID = "event"
+			}
+			_, note := projectionFixture(t, st, "note", "granola_json", fmt.Sprintf(`{"calendar_event":{"calendar_event_id":%q,"scheduled_start_time":"2027-03-14T10:00:00Z"}}`, tc.noteID))
 			keys, err := meetingCountTestKeys(t, st)
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, keys[note])

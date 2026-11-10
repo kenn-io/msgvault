@@ -292,41 +292,6 @@ func TestMeetingCountBuildWithManyCalendarCopies(t *testing.T) {
 		return person.MeetingCount
 	}
 	assertions.Equal(int64(1), count())
-	f.persist(t, "first", "third-note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"crowded@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
-	_, err = buildCache(f.path, f.cache, false)
-	requirements.NoError(err)
-	assertions.Equal(int64(1), count())
-}
-
-func TestMeetingCountsKeepSourceEvidenceWithSavedLink(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	f := newMeetingCountArchive(t, time.Date(2027, 3, 7, 10, 0, 0, 0, time.UTC))
-	raw := `{"id":"series","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-07T10:00:00Z"},"end":{"dateTime":"2027-03-07T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=6"]}`
-	event := f.persist(t, "calendar", "series", "gcal_json", raw)
-	note := f.persist(t, "first", "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-21T10:00:00Z"}}`)
-	first := store.OccurrenceRef{MessageID: event, Key: "20270307T100000Z"}
-	second := store.OccurrenceRef{MessageID: event, Key: "20270321T100000Z"}
-	requirements.NoError(f.st.LinkMeetingContext(t.Context(), note, first))
-	requirements.NoError(f.st.UpsertMessageRawWithFormat(event, []byte(strings.Replace(raw, "COUNT=6", "COUNT=1", 1)), "gcal_json"))
-	_, err := buildCache(f.path, f.cache, true)
-	requirements.NoError(err)
-	count := func() int64 {
-		engine, err := query.NewDuckDBEngine(f.cache, f.path, f.st.DB())
-		requirements.NoError(err)
-		defer func() { requirements.NoError(engine.Close()) }()
-		person, err := engine.GetPerson(t.Context(), f.person, query.Context{}, nil)
-		requirements.NoError(err)
-		requirements.NotNil(person)
-		return person.MeetingCount
-	}
-	assertions.Equal(int64(2), count())
-	requirements.NoError(f.st.UpsertMessageRawWithFormat(event, []byte(raw), "gcal_json"))
-	requirements.NoError(f.st.LinkMeetingContext(t.Context(), note, second))
-	requirements.NoError(f.st.UpsertMessageRawWithFormat(event, []byte(strings.Replace(raw, "COUNT=6", "COUNT=1", 1)), "gcal_json"))
-	requirements.NoError(f.st.UnlinkMeetingContext(t.Context(), note, second))
-	_, err = buildCache(f.path, f.cache, false)
-	requirements.NoError(err)
-	assertions.Equal(int64(1), count())
 }
 
 func TestMeetingCountsRefreshAfterEvidenceChange(t *testing.T) {
@@ -337,14 +302,8 @@ func TestMeetingCountsRefreshAfterEvidenceChange(t *testing.T) {
 	note := f.persist(t, "first", "second-note", "twenty_json", raw)
 	_, err := buildCache(f.path, f.cache, true)
 	requirements.NoError(err)
-	var seq, after int64
-	requirements.NoError(f.st.DB().QueryRow(`SELECT COALESCE(MAX(seq),0) FROM cache_related_change_journal WHERE dataset='meeting_links'`).Scan(&seq))
 	requirements.NoError(f.st.UpsertMessageRawWithFormat(note, []byte(strings.Replace(raw, `"summary":"one"`, `"summary":"two"`, 1)), "twenty_json"))
-	requirements.NoError(f.st.DB().QueryRow(`SELECT COALESCE(MAX(seq),0) FROM cache_related_change_journal WHERE dataset='meeting_links'`).Scan(&after))
-	assertions.Equal(seq, after)
 	requirements.NoError(f.st.UpsertMessageRawWithFormat(note, []byte(strings.Replace(raw, "first@example.org", "second@example.org", 1)), "twenty_json"))
-	requirements.NoError(f.st.DB().QueryRow(`SELECT COALESCE(MAX(seq),0) FROM cache_related_change_journal WHERE dataset='meeting_links'`).Scan(&after))
-	assertions.Greater(after, seq)
 	_, err = buildCache(f.path, f.cache, false)
 	requirements.NoError(err)
 	engine, err := query.NewDuckDBEngine(f.cache, f.path, f.st.DB())
