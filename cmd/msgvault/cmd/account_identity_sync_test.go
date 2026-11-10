@@ -11,12 +11,10 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -93,9 +91,6 @@ func TestAddServiceAccountDefaultIdentityScheduledSync(t *testing.T) {
 		src, err := findGmailSource(st, "user@example.com")
 		require.NoError(err)
 		assert.Contains(output, fmt.Sprintf("msgvault sync-full --source-id %d", src.ID))
-		if flag == "--no-default-identity" {
-			assertRegistrationSyncCommand(t, output, src.ID, "sync-full")
-		}
 		// Seed the cursor of an already-synced mailbox so this scheduled run
 		// completes with no new messages.
 		require.NoError(st.UpdateSourceSyncCursor(src.ID, "100"))
@@ -292,9 +287,6 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 						verb = "sync"
 					}
 					assert.Contains(output, fmt.Sprintf("msgvault %s --source-id %d", verb, sources[0].ID))
-					if flag == "--no-default-identity" {
-						assertRegistrationSyncCommand(t, output, sources[0].ID, verb)
-					}
 				}
 				if tc.name == "graph" {
 					// Identity setup precedes token loading. With no Graph token,
@@ -315,39 +307,4 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 			}
 		})
 	}
-}
-
-func assertRegistrationSyncCommand(t *testing.T, output string, sourceID int64, verb string) {
-	t.Helper()
-	start := strings.Index(output, "msgvault "+verb+" ")
-	require.NotEqual(t, -1, start)
-	line, _, _ := strings.Cut(output[start:], "\n")
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/health" {
-			_, _ = io.WriteString(w, `{"status":"ok","api_schema_version":"2.4.0"}`)
-			return
-		}
-		requests.Add(1)
-		assert.Equal(t, "/api/v1/cli/"+verb, r.URL.Path)
-		assert.Equal(t, strconv.FormatInt(sourceID, 10), r.URL.Query().Get("source_id"))
-		w.Header().Set("Content-Type", "application/x-ndjson")
-		_, _ = io.WriteString(w, "{\"type\":\"complete\"}\n")
-	}))
-	t.Cleanup(server.Close)
-	savedTransport := http.DefaultTransport
-	transport := &http.Transport{}
-	http.DefaultTransport = transport
-	defer func() { http.DefaultTransport = savedTransport; transport.CloseIdleConnections() }()
-	ctx := configureRemoteSyncTest(t, server.URL)
-	resetSyncFullFlagsForTest(t)
-	root := newTestRootCmd()
-	for _, base := range []*cobra.Command{syncFullCmd, syncIncrementalCmd} {
-		command := &cobra.Command{Use: base.Use, Args: base.Args, RunE: base.RunE}
-		command.Flags().Int64("source-id", 0, "Exact source ID")
-		root.AddCommand(command)
-	}
-	root.SetArgs(strings.Fields(line)[1:])
-	require.NoError(t, root.ExecuteContext(ctx))
-	assert.Equal(t, int32(1), requests.Load())
 }

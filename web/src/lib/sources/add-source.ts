@@ -46,7 +46,7 @@ function arg(value: string, shell: 'posix' | 'cmd'): string {
   return /^[A-Za-z0-9@._+:/-]+$/.test(value) ? value : shellQuote(value, shell);
 }
 
-export function validImapServer(value: string): boolean {
+function validImapServer(value: string): boolean {
   const host = value.trim();
   return !/^-|\s/.test(host) && (!host.includes(':') || URL.canParse(`http://[${host.replace(/^\[(.*)\]$/, '$1')}]`));
 }
