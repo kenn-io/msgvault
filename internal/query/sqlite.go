@@ -951,7 +951,7 @@ func senderMatchSQL(filter MessageFilter, limit int) (string, []any) {
 		return "", nil
 	}
 	guard := relayedEnvelopeAbsent("message_recipients", "email_address", "mr_filter_from.message_id")
-	address := `(LOWER(mr_filter_from.email_address) = ? OR (p_filter_from.email_address = ? AND ` + guard + `) OR p_filter_from.phone_number = ?)`
+	address := `((mr_filter_from.is_relayed AND LOWER(mr_filter_from.email_address) = ?) OR (p_filter_from.email_address = ? AND ` + guard + `) OR p_filter_from.phone_number = ?)`
 	directAddress := func(messageID string) string {
 		return `((p_direct_sender.email_address = ? AND ` + relayedEnvelopeAbsent("message_recipients", "email_address", messageID) + `) OR p_direct_sender.phone_number = ?)`
 	}
@@ -975,7 +975,7 @@ func senderMatchSQL(filter MessageFilter, limit int) (string, []any) {
 		directArgs = append(directArgs, filter.Sender)
 		from := `SELECT mr_filter_from.message_id AS id FROM message_recipients mr_filter_from
             JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
-            WHERE mr_filter_from.recipient_type = 'from' AND LOWER(mr_filter_from.email_address) = ?` + fromName + `
+            WHERE mr_filter_from.recipient_type = 'from' AND mr_filter_from.is_relayed AND LOWER(mr_filter_from.email_address) = ?` + fromName + `
             UNION ALL SELECT mr_filter_from.message_id AS id FROM message_recipients mr_filter_from
             JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
             WHERE mr_filter_from.recipient_type = 'from' AND mr_filter_from.participant_id IN (SELECT id FROM participants WHERE email_address = ? OR phone_number = ?)

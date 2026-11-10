@@ -1528,7 +1528,6 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 	// different rows.
 	if filter.Sender != "" {
 		guard := relayedEnvelopeAbsent("mr", "envelope_address", "msg.id")
-		address := "CASE WHEN " + guard + " THEN mr.email_address ELSE mr.envelope_address END"
 		fromName, directName := "", ""
 		senderArgs := []any{filter.Sender, filter.Sender, filter.Sender}
 		directArgs := []any{filter.Sender, filter.Sender}
@@ -1540,7 +1539,7 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 		}
 		conditions = append(conditions, `(EXISTS (SELECT 1 FROM mr JOIN p ON p.id = mr.participant_id
             WHERE mr.message_id = msg.id AND mr.recipient_type = 'from'
-            AND ((`+address+`) = ? OR (p.email_address = ? AND `+guard+`) OR p.phone_number = ?)`+fromName+`)
+            AND ((mr.is_relayed AND mr.email_address = ?) OR (p.email_address = ? AND `+guard+`) OR p.phone_number = ?)`+fromName+`)
             OR EXISTS (SELECT 1 FROM p WHERE p.id = msg.sender_id AND ((p.email_address = ? AND `+guard+`) OR p.phone_number = ?)`+directName+`))`)
 		args = append(args, senderArgs...)
 		args = append(args, directArgs...)

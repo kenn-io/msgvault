@@ -99,7 +99,7 @@ func TestVectorRelayedSenderDrilldowns(t *testing.T) {
  ALTER TABLE message_recipients ADD COLUMN email_address TEXT;
  ALTER TABLE message_recipients ADD COLUMN is_relayed BOOLEAN NOT NULL DEFAULT FALSE;
  INSERT INTO participants VALUES(10,NULL,NULL,'Alice',NULL),(11,'other@github.com',NULL,'Other','github.com');
- INSERT INTO message_recipients(message_id,participant_id,recipient_type,email_address,is_relayed) VALUES(1,10,'from','notifications@github.com',TRUE),(2,11,'from','other@github.com',FALSE);
+ INSERT INTO message_recipients(message_id,participant_id,recipient_type,email_address,is_relayed) VALUES(1,10,'from','notifications@github.com',TRUE),(2,11,'from','old@old.test',FALSE);
  UPDATE messages SET sender_id=11 WHERE id=3;`)
 	require.NoError(t, err)
 	for _, tc := range []struct {
@@ -107,6 +107,9 @@ func TestVectorRelayedSenderDrilldowns(t *testing.T) {
 		want   []int64
 	}{
 		{vector.Filter{SenderTerms: []string{"notifications@github.com"}}, []int64{1}},
+		{vector.Filter{SenderTerms: []string{"old@old.test"}}, nil},
+		{vector.Filter{SenderTerms: []string{"@old.test"}}, nil},
+		{vector.Filter{SenderTerms: []string{"old"}}, nil},
 		{vector.Filter{SenderDomain: "github.com"}, []int64{1, 2}},
 	} {
 		filter := tc.filter
@@ -304,6 +307,7 @@ func TestVectorSenderTermsBeforeRanking(t *testing.T) {
 	_, err := b.mainDB.ExecContext(ctx, `CREATE TABLE participants(id INTEGER PRIMARY KEY,email_address TEXT,phone_number TEXT,display_name TEXT);
  ALTER TABLE message_recipients ADD COLUMN display_name TEXT;
  ALTER TABLE message_recipients ADD COLUMN email_address TEXT;
+ ALTER TABLE message_recipients ADD COLUMN is_relayed BOOLEAN NOT NULL DEFAULT FALSE;
  INSERT INTO participants VALUES(10,'alex@example.com',NULL,'Élodie Kim');
  INSERT INTO message_recipients(message_id,participant_id,recipient_type,display_name) VALUES(1,10,'from','Álvaro Header'),(2,10,'from','Other');`)
 	require.NoError(err)

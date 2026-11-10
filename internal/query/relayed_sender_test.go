@@ -51,7 +51,7 @@ func TestDuckDBRelayedSenderViews(t *testing.T) {
 	messages, err := engine.ListMessages(t.Context(), filter)
 	requirements.NoError(err)
 	assert.Len(t, messages, 1)
-	for term, want := range map[string]int{"notifications@github.com": 1, "author@example.test": 1, "@github.com": 1, "@example.test": 1} {
+	for term, want := range map[string]int{"notifications@github.com": 1, "author@example.test": 1, "@github.com": 1, "@example.test": 1, "old@old.test": 0, "@old.test": 0, "old": 0} {
 		results, err := engine.SearchFast(t.Context(), search.Parse("from:"+term), MessageFilter{}, 10, 0)
 		requirements.NoError(err)
 		assert.Len(t, results, want, term)
@@ -64,4 +64,11 @@ func TestDuckDBRelayedSenderViews(t *testing.T) {
 	targets, err := engine.GetDeletionTargetsByFilter(t.Context(), filter)
 	requirements.NoError(err)
 	assert.Len(t, targets, 1)
+	old := MessageFilter{Sender: "old@old.test"}
+	messages, err = engine.ListMessages(t.Context(), old)
+	requirements.NoError(err)
+	assert.Empty(t, messages)
+	targets, err = engine.GetDeletionTargetsByFilter(t.Context(), old)
+	requirements.NoError(err)
+	assert.Empty(t, targets)
 }

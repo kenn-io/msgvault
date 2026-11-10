@@ -75,7 +75,7 @@ func TestRelayedSenderAfterParticipantMerge(t *testing.T) {
 		}
 		assertions.ElementsMatch(want, keys)
 	}
-	for address, want := range map[string]int{"author@example.test": 1, "notifications@github.com": 1, "+12025550199": 2} {
+	for address, want := range map[string]int{"author@example.test": 1, "notifications@github.com": 1, "old@old.test": 0, "+12025550199": 2} {
 		filter := query.MessageFilter{Sender: address}
 		rows, err := engine.ListMessages(t.Context(), filter)
 		requirements.NoError(err)
@@ -89,7 +89,15 @@ func TestRelayedSenderAfterParticipantMerge(t *testing.T) {
 	targets, err := engine.GetDeletionTargetsByFilter(t.Context(), query.MessageFilter{Sender: "notifications@github.com"})
 	requirements.NoError(err)
 	assertions.Len(targets, 1)
+	targets, err = engine.GetDeletionTargetsByFilter(t.Context(), query.MessageFilter{Sender: "old@old.test"})
+	requirements.NoError(err)
+	assertions.Empty(targets)
 	_, count, err := st.SearchMessagesQueryContext(t.Context(), search.Parse("from:notifications@github.com"), 0, 10)
 	requirements.NoError(err)
 	assertions.Equal(int64(1), count)
+	for _, term := range []string{"old@old.test", "@old.test", "old"} {
+		_, count, err := st.SearchMessagesQueryContext(t.Context(), search.Parse("from:"+term), 0, 10)
+		requirements.NoError(err)
+		assertions.Zero(count, term)
+	}
 }

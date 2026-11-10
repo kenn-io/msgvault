@@ -70,10 +70,10 @@ func SenderLookup(value string, lower func(string) string, messages, recipients,
 		directFallback = guard(alias + ".id")
 		matchingFallback = guard("ms.id")
 	}
-	from := `EXISTS (SELECT 1 FROM ` + recipients + ` mr2 WHERE mr2.message_id = ` + alias + `.id AND mr2.recipient_type = 'from' AND ` + envelope + `) OR EXISTS (SELECT 1 FROM ` + recipients + ` mr2 JOIN ` + participants + ` p2 ON p2.id = mr2.participant_id
+	from := `EXISTS (SELECT 1 FROM ` + recipients + ` mr2 WHERE mr2.message_id = ` + alias + `.id AND mr2.recipient_type = 'from' AND mr2.is_relayed AND ` + envelope + `) OR EXISTS (SELECT 1 FROM ` + recipients + ` mr2 JOIN ` + participants + ` p2 ON p2.id = mr2.participant_id
   WHERE mr2.message_id = ` + alias + `.id AND mr2.recipient_type = 'from' AND ` + participant + recipientFallback + `)`
 	args = append([]any{pattern}, args...)
-	matching = `SELECT mr2.message_id FROM ` + recipients + ` mr2 WHERE mr2.recipient_type = 'from' AND ` + envelope + ` UNION SELECT mr2.message_id FROM ` + recipients + ` mr2 WHERE mr2.recipient_type = 'from'
+	matching = `SELECT mr2.message_id FROM ` + recipients + ` mr2 WHERE mr2.recipient_type = 'from' AND mr2.is_relayed AND ` + envelope + ` UNION SELECT mr2.message_id FROM ` + recipients + ` mr2 WHERE mr2.recipient_type = 'from'
   AND mr2.participant_id IN (SELECT p2.id FROM ` + participants + ` p2 WHERE ` + participant + `)` + recipientFallback
 	if metadata {
 		header := lower("COALESCE(mr2.display_name, '')") + ` LIKE ? ESCAPE '\'`
