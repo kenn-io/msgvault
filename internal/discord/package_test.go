@@ -87,10 +87,49 @@ func TestPackageImportSnapshot(t *testing.T) {
 	assert.Len(matches, 1)
 }
 
+// TestPackageJSONFixture exercises the independently authored, documented mock
+// layout without implying that the fixture is a Discord-produced export.
+func TestPackageJSONFixture(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	st := testutil.NewTestStore(t)
+	summary, err := ImportPackage(t.Context(), st, "testdata/package-json")
+	requirements.NoError(err)
+	checks.Equal(2, summary.Channels)
+	checks.EqualValues(2, summary.MessagesAdded)
+	checks.Zero(summary.MessagesSkipped)
+	checks.EqualValues(2, summary.AttachmentLinks)
+
+	for _, channelID := range []string{"725000000000000051", "725000000000000052"} {
+		t.Run(channelID, func(t *testing.T) {
+			var metadata string
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT metadata FROM conversations WHERE source_conversation_id=?`), channelID).Scan(&metadata))
+			channelJSON, err := os.ReadFile(filepath.Join("testdata/package-json/Messages", "c"+channelID, "channel.json"))
+			require.NoError(t, err)
+			assert.JSONEq(t, `{"coverage":"sent_only","channel":`+string(channelJSON)+`}`, metadata)
+		})
+	}
+	var title string
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT title FROM conversations WHERE source_conversation_id='725000000000000052'`).Scan(&title))
+	checks.Equal("sketchbook", title)
+
+	rows, err := st.DB().QueryContext(t.Context(), `SELECT storage_path FROM attachments ORDER BY storage_path`)
+	requirements.NoError(err)
+	defer func() { requirements.NoError(rows.Close()) }()
+	var links []string
+	for rows.Next() {
+		var link string
+		requirements.NoError(rows.Scan(&link))
+		links = append(links, link)
+	}
+	requirements.NoError(rows.Err())
+	checks.Equal([]string{"https://media.example.com/attachments/lantern.png", "https://media.example.com/attachments/palette.txt"}, links)
+}
+
 func TestPackageTimestampProvenance(t *testing.T) {
 	for _, tt := range []struct{ stamp, id, want, source string }{
-		{"2024-03-15 18:22:41", "175928847299117063", "2016-04-30T11:18:25.796Z", "snowflake"},
-		{"2011-02-02 02:05:02.000000+00:00", "000000000000000005", "2011-02-02T02:05:02Z", "timestamp"},
+		{"2016-04-30 11:18:25", "175928847299117063", "2016-04-30T11:18:25.796Z", "snowflake"},
+		{"2025-02-09 13:14:15.123456+00:00", "726000000000000061", "2025-02-09T13:14:15.123456Z", "timestamp"},
 		{"2024-03-15 18:22:41", "unknown-stable-id", "", "unknown"},
 	} {
 		t.Run(tt.source, func(t *testing.T) {
@@ -127,8 +166,8 @@ func TestPackageLegacyCSV(t *testing.T) {
 	assert.EqualValues(5, summary.MessagesAdded)
 	assert.EqualValues(1, summary.AttachmentLinks)
 	var sent time.Time
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT sent_at FROM messages WHERE source_message_id='000000000000000005'`).Scan(&sent))
-	assert.Equal("2011-02-02T02:05:02Z", sent.UTC().Format(time.RFC3339))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT sent_at FROM messages WHERE source_message_id='726000000000000061'`).Scan(&sent))
+	assert.Equal("2025-02-09T13:14:15Z", sent.UTC().Format(time.RFC3339))
 }
 
 func TestPackagePartialFailureReplay(t *testing.T) {
@@ -150,7 +189,7 @@ func TestPackagePartialFailureReplay(t *testing.T) {
 
 func TestPackageUnsafeAndOversizedInput(t *testing.T) {
 	for _, tt := range []struct{ kind, want string }{
-		{"symlink", "path escapes from parent"}, {"large metadata", "metadata exceeds"}, {"large record", "record 1 exceeds 1048576 bytes"}, {"large CSV record", "record 1 exceeds 1048576 bytes"},
+		{"symlink", "path escapes from parent"}, {"large metadata", "metadata exceeds"}, {"large record", "record 1 exceeds 1048576 bytes"}, {"large CSV record", "record 1 exceeds 1048576 bytes"}, {"combined CSV header", "CSV header"},
 	} {
 		t.Run(tt.kind, func(t *testing.T) {
 			require := require.New(t)
@@ -163,6 +202,9 @@ func TestPackageUnsafeAndOversizedInput(t *testing.T) {
 				require.NoError(os.Symlink(filepath.Join(outside, "messages.json"), filepath.Join(root, "Messages/c200000000000000001/messages.json")))
 			case "large metadata":
 				testutil.WriteFile(t, root, "Account/user.json", []byte(`{"id":"1","unused":"`+strings.Repeat("x", 2<<20)+`"}`))
+			case "combined CSV header":
+				require.NoError(os.Remove(filepath.Join(root, "Messages/c200000000000000001/messages.json")))
+				testutil.WriteFile(t, root, "Messages/c200000000000000001/messages.csv", []byte("\"ID,Timestamp,Contents,Attachments\"\n1\n"))
 			case "large CSV record":
 				require.NoError(os.Remove(filepath.Join(root, "Messages/c200000000000000001/messages.json")))
 				testutil.WriteFile(t, root, "Messages/c200000000000000001/messages.csv", []byte("ID,Timestamp,Contents,Attachments\n1,,\""+strings.Repeat("x", 2<<20)+"\",\n"))
@@ -183,12 +225,15 @@ func TestPackageChannelTypesAndSkips(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	root := packageFixture(t, `[{"ID":"1","Contents":""},{"Contents":"missing id"},{"ID":"3","Attachments":"https://example.com/a file:///etc/passwd ../escape"},{"ID":"7","Contents":"bad attachment shape","Attachments":["https://example.com/unsupported-shape"]},{"ID":"8","Attachments":"../escape"}]`)
+	root := packageFixture(t, `[{"ID":"1","Contents":""},{"Contents":"missing id"},{"ID":3,"Attachments":"https://example.com/a file:///etc/passwd ../escape"},{"ID":"7","Contents":"bad attachment shape","Attachments":["https://example.com/unsupported-shape"]},{"ID":"8","Attachments":"../escape"}]`)
 	testutil.WriteFile(t, root, "Messages/200000000000000002/channel.json", []byte(`{"id":"200000000000000002","type":"GROUP_DM","name":"Example group","recipients":["100000000000000002"]}`))
 	testutil.WriteFile(t, root, "Messages/200000000000000002/messages.json", []byte(`[{"ID":"4","Contents":"group text"}]`))
 	testutil.WriteFile(t, root, "Messages/200000000000000003/channel.json", []byte(`{"id":"200000000000000003","type":0,"name":"general","guild":{"id":"200000000000000004","name":"Example guild"}}`))
 	testutil.WriteFile(t, root, "Messages/200000000000000003/messages.json", []byte(`[{"ID":"5","Contents":"guild text"}]`))
 	testutil.WriteFile(t, root, "Messages/200000000000000004/messages.json", []byte(`[{"ID":"6","Contents":"unknown channel"}]`))
+	require.NoError(os.Mkdir(filepath.Join(root, "Messages/renamed"), 0o700))
+	require.NoError(os.Symlink("c200000000000000001", filepath.Join(root, "Messages/200000000000000005")))
+	testutil.WriteFile(t, root, "Messages/notes.txt", []byte("unrelated"))
 	summary, err := ImportPackage(t.Context(), st, root)
 	require.NoError(err)
 	assert.EqualValues(4, summary.MessagesAdded)
@@ -205,6 +250,7 @@ func TestPackageChannelTypesAndSkips(t *testing.T) {
 	assert.EqualValues(1, summary.SkipReasons["unsupported_attachment_only"])
 	assert.EqualValues(3, summary.UnsupportedAttachmentLinks)
 	assert.Equal(4, summary.Channels)
+	assert.Equal(2, summary.ChannelsSkipped)
 	var kind string
 	for id, want := range map[string]string{"200000000000000001": "direct_chat", "200000000000000002": "group_chat", "200000000000000003": "channel", "200000000000000004": "channel"} {
 		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT conversation_type FROM conversations WHERE source_conversation_id=?`), id).Scan(&kind))
@@ -278,14 +324,6 @@ func FuzzPackageJSON(f *testing.F) {
 			return nil
 		})
 	})
-}
-
-func TestPackageRejectsCombinedCSVHeader(t *testing.T) {
-	root := packageFixture(t, `[]`)
-	require.NoError(t, os.Remove(filepath.Join(root, "Messages/c200000000000000001/messages.json")))
-	testutil.WriteFile(t, root, "Messages/c200000000000000001/messages.csv", []byte("\"ID,Timestamp,Contents,Attachments\"\n1\n"))
-	_, err := ImportPackage(t.Context(), testutil.NewTestStore(t), root)
-	require.ErrorContains(t, err, "CSV header")
 }
 
 func TestPackageReplayStableMetadata(t *testing.T) {

@@ -23,9 +23,12 @@ msgvault import-discord-package /path/to/extracted-package
 
 The package must include `account/user.json` and `messages/` (capitalized
 `Account` and `Messages` are also accepted). Legacy CSV transcripts are
-supported and checked against a real redacted export. JSON import is experimental and tested only
-with synthetic data based on Discord's documented fields; a real current JSON
-fixture is not available.
+supported and tested with independently authored fictional data. JSON import remains
+experimental. Its fictional test fixture follows Discord's documented fields
+and a published parser's MIT-licensed mock package layout, with
+[fixture provenance](https://github.com/kenn-io/msgvault/tree/main/internal/discord/testdata/package-json).
+This provides structural evidence, not verification against a real current
+Discord-produced JSON export.
 
 Run the command on the daemon host; a remote client cannot upload its local
 package. ZIP input is not supported.

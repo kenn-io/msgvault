@@ -40,8 +40,6 @@ func TestImportDiscordPackageEndToEnd(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(os.CopyFS(root, os.DirFS(fixture)))
 	require.NoError(os.Mkdir(filepath.Join(root, "messages/renamed"), 0o700))
-	require.NoError(os.Symlink("333333333333333333", filepath.Join(root, "messages/444444444444444444")))
-	testutil.WriteFile(t, root, "messages/notes.txt", []byte("unrelated"))
 	fixture = root
 	var output bytes.Buffer
 	rootCmd.SetOut(&output)
@@ -49,7 +47,7 @@ func TestImportDiscordPackageEndToEnd(t *testing.T) {
 	rootCmd.SetArgs([]string{"--home", home, "import-discord-package", fixture})
 	require.NoError(rootCmd.ExecuteContext(t.Context()))
 	assert.Contains(output.String(), "sent_only")
-	assert.Contains(output.String(), "Channels: 1 imported, 2 skipped")
+	assert.Contains(output.String(), "Channels: 1 imported, 1 skipped")
 	assert.Contains(output.String(), "1 missing local media")
 	st, err := store.Open(filepath.Join(home, "msgvault.db"))
 	require.NoError(err)
