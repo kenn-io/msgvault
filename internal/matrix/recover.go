@@ -2,7 +2,9 @@ package matrix
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"slices"
@@ -32,6 +34,73 @@ type decryptedEvent struct {
 	store.MatrixEncryptedEvent
 
 	plain *event.Event
+}
+
+type rollbackCiphertext struct {
+	session id.SessionID
+	digest  [sha256.Size]byte
+}
+
+func rollbackCiphertextKey(evt *event.Event) (rollbackCiphertext, bool) {
+	if evt.Type != event.EventEncrypted || !parseContent(evt) {
+		return rollbackCiphertext{}, false
+	}
+	content := evt.Content.AsEncrypted()
+	raw, err := base64.RawStdEncoding.DecodeString(string(content.MegolmCiphertext))
+	if err != nil {
+		return rollbackCiphertext{}, false
+	}
+	return rollbackCiphertext{content.SessionID, sha256.Sum256(raw)}, true
+}
+
+func (imp *Importer) earlierRollbackCopies(ctx context.Context, sourceID, convID int64, roomID id.RoomID, candidates map[rollbackCiphertext]*event.Event) (map[rollbackCiphertext]*event.Event, error) {
+	owners := make(map[rollbackCiphertext]*event.Event)
+	var after int64
+	for len(candidates) > 0 {
+		page, err := imp.store.MatrixDueEncryptedEvents(ctx, convID, after, store.MatrixRecoveryDue{All: true}, recoveryPageSize)
+		if err != nil || len(page) == 0 {
+			return owners, err
+		}
+		after = page[len(page)-1].MessageID
+		for _, item := range page {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			evt, err := decodeArchivedEvent(item.Ciphertext)
+			if err != nil {
+				continue
+			}
+			key, ok := rollbackCiphertextKey(evt)
+			candidate := candidates[key]
+			if !ok || candidate == nil || compareRelations(evt, candidate) >= 0 {
+				continue
+			}
+			evt.RoomID = roomID
+			plain, _, err := imp.runtime.decryptWithIndex(ctx, evt)
+			if err != nil {
+				return nil, err
+			}
+			if (plain.Type != event.EventMessage && plain.Type != event.EventSticker) || !parseContent(plain) {
+				continue
+			}
+			content := plain.Content.AsMessage()
+			target := content.RelatesTo.GetReplaceID()
+			if target == "" || content.NewContent == nil {
+				continue
+			}
+			_, original, err := imp.editTarget(ctx, sourceID, convID, target)
+			if err != nil {
+				return nil, err
+			}
+			if original == nil || original.Type == event.EventEncrypted || !validReplacement(original, plain) {
+				continue
+			}
+			if first := owners[key]; first == nil || compareRelations(plain, first) < 0 {
+				owners[key] = &event.Event{ID: plain.ID, Timestamp: plain.Timestamp}
+			}
+		}
+	}
+	return owners, nil
 }
 
 // recoverPlaceholders decrypts archived placeholders with keys from the

@@ -3,6 +3,7 @@ package matrix
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
@@ -823,6 +824,127 @@ func TestImportRecoveryRejectsReplayedIndex(t *testing.T) {
 			req.NoError(err)
 			check.Equal("other", f.body(t, "$other"))
 			check.Equal("older", f.body(t, "$original"))
+		})
+	}
+}
+
+func TestEditRollbackPrefersEarlierArchivedCiphertext(t *testing.T) {
+	for _, mode := range []string{"same", "alternate base64", "equal timestamp"} {
+		t.Run(mode, func(t *testing.T) {
+			req, check := require.New(t), assert.New(t)
+			f := newRecoveryFixture(t)
+			newest := f.edit(t, "$newest", "$other", "newest", 30)
+			f.timeline = []*event.Event{f.message(t, "$original", "original", 10), f.message(t, "$other", "other", 11), newest}
+			_, err := f.run(t, true, false)
+			req.NoError(err)
+
+			olderIndex := f.backup.out.MessageIndex()
+			older := f.edit(t, "$older", "$original", "older", 20)
+			f.timeline = []*event.Event{older}
+			_, err = f.run(t, false, false)
+			req.NoError(err)
+			check.Equal(encryptedPlaceholder, f.body(t, "$older"))
+
+			raw, err := json.Marshal(older)
+			req.NoError(err)
+			replayed := matrixTestEvent(t, string(raw))
+			replayed.ID, replayed.Timestamp = "$replayed", 25
+			req.True(parseContent(replayed))
+			replayed.Content.AsEncrypted().RelatesTo.EventID = "$other"
+			if mode == "equal timestamp" {
+				replayed.Timestamp = older.Timestamp
+			}
+			if mode == "alternate base64" {
+				ciphertext := replayed.Content.AsEncrypted().MegolmCiphertext
+				req.Contains([]int{2, 3}, len(ciphertext)%4)
+				decoded, err := base64.RawStdEncoding.DecodeString(string(ciphertext))
+				req.NoError(err)
+				alphabet := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+				last := strings.IndexByte(alphabet, ciphertext[len(ciphertext)-1])
+				req.GreaterOrEqual(last, 0)
+				ciphertext[len(ciphertext)-1] = alphabet[last^1]
+				alternate, err := base64.RawStdEncoding.DecodeString(string(ciphertext))
+				req.NoError(err)
+				req.Equal(decoded, alternate)
+			}
+			f.edits = []*event.Event{replayed}
+			f.timeline = []*event.Event{{ID: "$redaction", Type: event.EventRedaction, Redacts: "$newest", Content: event.Content{Raw: map[string]any{}}}}
+			_, err = f.run(t, true, false)
+			req.NoError(err)
+			check.Equal("other", f.body(t, "$other"))
+			check.Equal("older", f.body(t, "$original"))
+			var owner string
+			req.NoError(f.store.DB().QueryRowContext(t.Context(), `SELECT event_id FROM matrix_megolm_claims WHERE session_id = ? AND message_index = ?`, f.backup.out.ID().String(), olderIndex).Scan(&owner))
+			check.Equal("$older", owner)
+		})
+	}
+}
+
+func TestEditRollbackAllowsEarlierEditThanPendingCopy(t *testing.T) {
+	for _, mode := range []string{"later timestamp", "equal timestamp"} {
+		t.Run(mode, func(t *testing.T) {
+			req, check := require.New(t), assert.New(t)
+			f := newRecoveryFixture(t)
+			index := f.backup.out.MessageIndex()
+			older := f.edit(t, "$older", "$original", "older", 20)
+			newest := f.edit(t, "$newest", "$original", "newest", 30)
+			f.timeline = []*event.Event{f.message(t, "$original", "original", 10), newest}
+			_, err := f.run(t, true, false)
+			req.NoError(err)
+
+			copied := *older
+			copied.ID, copied.Timestamp = "$copy", 40
+			if mode == "equal timestamp" {
+				copied.ID, copied.Timestamp = "$z-copy", older.Timestamp
+			}
+			f.timeline = []*event.Event{&copied}
+			_, err = f.run(t, false, false)
+			req.NoError(err)
+			check.Equal(encryptedPlaceholder, f.body(t, copied.ID.String()))
+
+			f.edits = []*event.Event{older}
+			f.timeline = []*event.Event{{ID: "$redaction", Type: event.EventRedaction, Redacts: "$newest", Content: event.Content{Raw: map[string]any{}}}}
+			_, err = f.run(t, true, false)
+			req.NoError(err)
+			check.Equal("older", f.body(t, "$original"))
+			var owner string
+			req.NoError(f.store.DB().QueryRowContext(t.Context(), `SELECT event_id FROM matrix_megolm_claims WHERE session_id = ? AND message_index = ?`, f.backup.out.ID().String(), index).Scan(&owner))
+			check.Equal("$older", owner)
+		})
+	}
+}
+
+func TestEditRollbackKeepsEligibleEdit(t *testing.T) {
+	for _, mode := range []string{"invalid earlier copy", "already claimed"} {
+		t.Run(mode, func(t *testing.T) {
+			req, check := require.New(t), assert.New(t)
+			f := newRecoveryFixture(t)
+			original := f.message(t, "$original", "original", 10)
+			index := f.backup.out.MessageIndex()
+			edit := f.edit(t, "$edit", "$original", "edited", 20)
+			newest := f.edit(t, "$newest", "$original", "newest", 30)
+			f.timeline = []*event.Event{original, newest}
+			if mode == "already claimed" {
+				f.timeline = append(f.timeline, edit)
+			}
+			_, err := f.run(t, true, false)
+			req.NoError(err)
+			copied := *edit
+			copied.ID, copied.Timestamp = "$copy", 15
+			if mode == "invalid earlier copy" {
+				copied.Sender = "@other:example.org"
+			}
+			f.timeline = []*event.Event{&copied}
+			_, err = f.run(t, false, false)
+			req.NoError(err)
+			f.edits = []*event.Event{edit}
+			f.timeline = []*event.Event{{ID: "$redaction", Type: event.EventRedaction, Redacts: "$newest", Content: event.Content{Raw: map[string]any{}}}}
+			_, err = f.run(t, true, false)
+			req.NoError(err)
+			check.Equal("edited", f.body(t, "$original"))
+			var owner string
+			req.NoError(f.store.DB().QueryRowContext(t.Context(), `SELECT event_id FROM matrix_megolm_claims WHERE session_id = ? AND message_index = ?`, f.backup.out.ID().String(), index).Scan(&owner))
+			check.Equal("$edit", owner)
 		})
 	}
 }
