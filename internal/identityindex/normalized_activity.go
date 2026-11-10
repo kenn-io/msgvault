@@ -222,20 +222,20 @@ WHERE f.is_direct
 
 // SenderAddressExpr selects the relay address for relayed From rows.
 func SenderAddressExpr(recipient, participant string) string {
-	return "COALESCE(CASE WHEN " + recipient + ".is_relayed THEN NULLIF(" + recipient + ".email_address, '') END, " + participant + ".email_address)"
+	return "COALESCE(CASE WHEN " + recipient + ".is_relayed THEN " + recipient + ".email_address END, " + participant + ".email_address)"
 }
 
 // SenderDomainExpr selects the relay domain for relayed From rows.
 func SenderDomainExpr(recipient, participant string) string {
-	return "COALESCE(NULLIF(" + SenderEnvelopeDomainExpr("CASE WHEN "+recipient+".is_relayed THEN "+recipient+".email_address END") + ", ''), " + participant + ".domain)"
+	return "COALESCE(" + SenderEnvelopeDomainExpr("CASE WHEN "+recipient+".is_relayed THEN "+recipient+".email_address END") + ", " + participant + ".domain)"
 }
 
 // RelayAddressSubquery selects a message's relayed From address.
 func RelayAddressSubquery(messageID, recipients string) string {
-	return "(SELECT NULLIF(mr_relay.email_address, '') FROM " + recipients + " mr_relay WHERE mr_relay.message_id = " + messageID + " AND mr_relay.recipient_type = 'from' AND mr_relay.is_relayed LIMIT 1)"
+	return "(SELECT mr_relay.email_address FROM " + recipients + " mr_relay WHERE mr_relay.message_id = " + messageID + " AND mr_relay.recipient_type = 'from' AND mr_relay.is_relayed LIMIT 1)"
 }
 
 // RelayAbsentExpr prevents a linked author from replacing the relay sender.
 func RelayAbsentExpr(messageID, recipients string) string {
-	return "NOT EXISTS (SELECT 1 FROM " + recipients + " mr_guard WHERE mr_guard.message_id = " + messageID + " AND mr_guard.recipient_type = 'from' AND mr_guard.is_relayed AND COALESCE(mr_guard.email_address, '') <> '')"
+	return "NOT EXISTS (SELECT 1 FROM " + recipients + " mr_guard WHERE mr_guard.message_id = " + messageID + " AND mr_guard.recipient_type = 'from' AND mr_guard.is_relayed)"
 }

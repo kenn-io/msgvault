@@ -972,7 +972,7 @@ func aggregateTextSearchParts(termPattern string) ([]string, []any) {
 			JOIN p p_search ON p_search.id = mr_search.participant_id
 			WHERE mr_search.message_id = msg.id
 			  AND mr_search.recipient_type = 'from'
-			  AND (p_search.email_address ILIKE ? ESCAPE '\' OR COALESCE(p_search.display_name, '') ILIKE ? ESCAPE '\')
+			  AND (` + identityindex.SenderAddressExpr("mr_search", "p_search") + ` ILIKE ? ESCAPE '\' OR COALESCE(p_search.display_name, '') ILIKE ? ESCAPE '\')
 		)`,
 	}, []any{termPattern, termPattern, termPattern, termPattern}
 }
@@ -1304,7 +1304,7 @@ type aggViewDef struct {
 func aggregateNameKeyColumns(mrAlias, pAlias string) []string {
 	return []string{
 		mrAlias + ".display_name",
-		pAlias + ".email_address",
+		identityindex.SenderAddressExpr(mrAlias, pAlias),
 		pAlias + ".display_name",
 		pAlias + ".phone_number",
 	}
@@ -2017,7 +2017,7 @@ func (e *DuckDBEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 		msg_sender AS (
 			SELECT mr.message_id,
 				   FIRST(`+identityindex.SenderAddressExpr("mr", "p")+`) as from_email,
-				   FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')) as from_name,
+				   FIRST(`+recipientNameExpr("mr", "p")+`) as from_name,
 				   FIRST(COALESCE(p.phone_number, '')) as from_phone
 			FROM mr
 			JOIN p ON p.id = mr.participant_id
@@ -2740,7 +2740,7 @@ func (e *DuckDBEngine) SearchFast(ctx context.Context, q *search.Query, filter M
 		msg_sender AS (
 			SELECT mr.message_id,
 				   FIRST(`+identityindex.SenderAddressExpr("mr", "p")+`) as from_email,
-				   FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')) as from_name,
+				   FIRST(`+recipientNameExpr("mr", "p")+`) as from_name,
 				   FIRST(COALESCE(p.phone_number, '')) as from_phone
 			FROM mr
 			JOIN p ON p.id = mr.participant_id
@@ -2860,7 +2860,7 @@ func (e *DuckDBEngine) SearchFastCount(ctx context.Context, q *search.Query, fil
 		msg_sender AS (
 			SELECT mr.message_id,
 				   FIRST(`+identityindex.SenderAddressExpr("mr", "p")+`) as from_email,
-				   FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')) as from_name,
+				   FIRST(`+recipientNameExpr("mr", "p")+`) as from_name,
 				   FIRST(COALESCE(p.phone_number, '')) as from_phone
 			FROM mr
 			JOIN p ON p.id = mr.participant_id
@@ -3163,7 +3163,7 @@ func (e *DuckDBEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 		msg_sender AS (
 			SELECT mr.message_id,
 				   FIRST(`+identityindex.SenderAddressExpr("mr", "p")+`) as from_email,
-				   FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')) as from_name,
+				   FIRST(`+recipientNameExpr("mr", "p")+`) as from_name,
 				   FIRST(COALESCE(p.phone_number, '')) as from_phone
 			FROM mr
 			JOIN p ON p.id = mr.participant_id

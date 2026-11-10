@@ -17,6 +17,8 @@ func TestRelayedSenderConfig(t *testing.T) {
 		{"valid", "address = \"relay@example.test\"\nheader = \"X-Author\"\nidentifier_type = \"example\"\n", true},
 		{"invalid address", "address = \"not-a-mailbox\"\nheader = \"X-Author\"\nidentifier_type = \"example\"\n", false},
 		{"invalid header", "address = \"relay@example.test\"\nheader = \"bad header\"\nidentifier_type = \"example\"\n", false},
+		{"reserved email type", "address = \"relay@example.test\"\nheader = \"X-Author\"\nidentifier_type = \"email\"\n", false},
+		{"reserved phone type", "address = \"relay@example.test\"\nheader = \"X-Author\"\nidentifier_type = \"phone\"\n", false},
 		{"missing type", "address = \"relay@example.test\"\nheader = \"X-Author\"\n", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

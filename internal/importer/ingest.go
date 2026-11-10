@@ -194,15 +194,22 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 		AttachmentCount: attachmentCount,
 	}
 
+	// Build recipient sets
+	recipientSets := []store.RecipientSet{
+		buildRecipientSet("from", parsed.From, participantMap),
+		buildRecipientSet("to", parsed.To, participantMap),
+		buildRecipientSet("cc", parsed.Cc, participantMap),
+		buildRecipientSet("bcc", parsed.Bcc, participantMap),
+	}
+
+	// Persist atomically
 	messageID, err := st.PersistEmailMessageContext(ctx, &store.MessagePersistData{
-		Message: rec, BodyText: sql.NullString{String: bodyText, Valid: bodyText != ""},
-		BodyHTML: sql.NullString{String: bodyHTML, Valid: bodyHTML != ""}, RawMIME: raw,
-		Recipients: []store.RecipientSet{
-			buildRecipientSet("from", parsed.From, participantMap),
-			buildRecipientSet("to", parsed.To, participantMap),
-			buildRecipientSet("cc", parsed.Cc, participantMap),
-			buildRecipientSet("bcc", parsed.Bcc, participantMap),
-		}, LabelIDs: labelIDs,
+		Message:    rec,
+		BodyText:   sql.NullString{String: bodyText, Valid: bodyText != ""},
+		BodyHTML:   sql.NullString{String: bodyHTML, Valid: bodyHTML != ""},
+		RawMIME:    raw,
+		Recipients: recipientSets,
+		LabelIDs:   labelIDs,
 	}, parsed.From, relayType, relayValue)
 	if err != nil {
 		return err

@@ -1774,20 +1774,20 @@ type messageData struct {
 // resolvePreparedMessage performs the store-mutating resolution needed by
 // ordinary ingest after pure MIME preparation and deduplication have finished.
 func (s *Syncer) resolvePreparedMessage(ctx context.Context, data *messageData) (*messageData, error) {
-	var err error
-	addresses := make([]mime.Address, 0, len(data.from)+len(data.to)+len(data.cc)+len(data.bcc))
+	allAddresses := make([]mime.Address, 0, len(data.from)+len(data.to)+len(data.cc)+len(data.bcc))
 	if data.relayType == "" {
-		addresses = append(addresses, data.from...)
+		allAddresses = append(allAddresses, data.from...)
 	}
-	addresses = append(addresses, data.to...)
-	addresses = append(addresses, data.cc...)
-	addresses = append(addresses, data.bcc...)
-	data.participantMap, err = s.store.EnsureParticipantsBatch(ctx, addresses)
+	allAddresses = append(allAddresses, data.to...)
+	allAddresses = append(allAddresses, data.cc...)
+	allAddresses = append(allAddresses, data.bcc...)
+	participantMap, err := s.store.EnsureParticipantsBatch(ctx, allAddresses)
 	if err != nil {
 		return nil, fmt.Errorf("ensure participants: %w", err)
 	}
-	if len(data.from) > 0 {
-		if id, ok := data.participantMap[data.from[0].Email]; ok {
+
+	if len(data.from) > 0 && data.from[0].Email != "" {
+		if id, ok := participantMap[data.from[0].Email]; ok {
 			data.message.SenderID = sql.NullInt64{Int64: id, Valid: true}
 		}
 	}
@@ -1808,6 +1808,7 @@ func (s *Syncer) resolvePreparedMessage(ctx context.Context, data *messageData) 
 		return nil, fmt.Errorf("ensure conversation: %w", err)
 	}
 	data.message.ConversationID = conversationID
+	data.participantMap = participantMap
 	return data, nil
 }
 
@@ -2000,6 +2001,22 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 		}
 	}
 
+	// Build recipient sets
+	recipients := []struct {
+		typ   string
+		addrs []mime.Address
+	}{
+		{"from", data.from},
+		{"to", data.to},
+		{"cc", data.cc},
+		{"bcc", data.bcc},
+	}
+	var recipientSets []store.RecipientSet
+	for _, r := range recipients {
+		rs := buildRecipientSet(r.typ, r.addrs, data.participantMap)
+		recipientSets = append(recipientSets, rs)
+	}
+
 	// Retain the original even if later file publication fails. A pending
 	// acquisition is settled only after its required files have been stored.
 	resolution := s.acquisitionResolution(data.message.SourceMessageID)
@@ -2016,18 +2033,22 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 			Phase: syncItemPhaseIngest, Status: store.SyncRunItemStatusError, ErrorKind: materializationKind(work), ErrorMessage: store.SyncRunItemFilesPendingMessage}
 	}
 	// Publish the search document with RAW before interruptible file I/O.
-	recipients := []store.RecipientSet{
-		buildRecipientSet("from", data.from, data.participantMap),
-		buildRecipientSet("to", data.to, data.participantMap),
-		buildRecipientSet("cc", data.cc, data.participantMap),
-		buildRecipientSet("bcc", data.bcc, data.participantMap),
-	}
 	messageID, err := s.store.PersistEmailMessageContext(ctx, &store.MessagePersistData{
-		Message: data.message, Metadata: data.metadata,
-		BodyText: sql.NullString{String: data.bodyText, Valid: data.bodyText != ""},
-		BodyHTML: sql.NullString{String: data.bodyHTML, Valid: data.bodyHTML != ""},
-		RawMIME:  data.rawMIME, Recipients: recipients, LabelIDs: labelIDs, SyncRunItem: resolution,
-		FTS: &store.FTSDoc{Subject: data.message.Subject.String, Body: data.bodyText, FromAddr: joinEmails(data.from), ToAddrs: joinEmails(data.to), CcAddrs: joinEmails(data.cc)},
+		Message:     data.message,
+		Metadata:    data.metadata,
+		BodyText:    sql.NullString{String: data.bodyText, Valid: data.bodyText != ""},
+		BodyHTML:    sql.NullString{String: data.bodyHTML, Valid: data.bodyHTML != ""},
+		RawMIME:     data.rawMIME,
+		Recipients:  recipientSets,
+		LabelIDs:    labelIDs,
+		SyncRunItem: resolution,
+		FTS: &store.FTSDoc{
+			Subject:  data.message.Subject.String,
+			Body:     data.bodyText,
+			FromAddr: joinEmails(data.from),
+			ToAddrs:  joinEmails(data.to),
+			CcAddrs:  joinEmails(data.cc),
+		},
 	}, data.from, data.relayType, data.relayValue)
 	if err != nil {
 		return 0, err

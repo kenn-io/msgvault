@@ -17,7 +17,7 @@ func newMessageSyncer(client gmail.API, st *store.Store, opts *msgsync.Options, 
 		opts = msgsync.DefaultOptions()
 	}
 	configured := *opts
-	if state != nil && state.cfg != nil {
+	if state.cfg != nil {
 		configured.RelayedSenders = state.cfg.RelayedSenders
 	}
 	configured.RemoteImages = configuredRemoteImageFetcher(state.cfg)

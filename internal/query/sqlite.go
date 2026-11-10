@@ -959,10 +959,6 @@ func senderMatchSQL(filter MessageFilter, limit int) (string, []any) {
 		direct := `SELECT m_direct.id FROM messages m_direct WHERE m_direct.sender_id IN (
             SELECT p_direct_sender.id FROM participants p_direct_sender WHERE (p_direct_sender.email_address = ? OR p_direct_sender.phone_number = ?)` + directName + `)
             AND ` + identityindex.RelayAbsentExpr("m_direct.id", "message_recipients")
-		directArgs = []any{filter.Sender, filter.Sender}
-		if filter.SenderName != "" {
-			directArgs = append(directArgs, filter.SenderName)
-		}
 		from := `SELECT mr_filter_from.message_id AS id FROM message_recipients mr_filter_from
             JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
             WHERE mr_filter_from.recipient_type = 'from' AND mr_filter_from.is_relayed AND LOWER(mr_filter_from.email_address) = ?` + fromName + `
@@ -1976,7 +1972,7 @@ func (e *SQLiteEngine) SearchByDomains(ctx context.Context, domains []string, af
 		SELECT 1 FROM message_recipients mr_dom
 		JOIN participants p_dom ON p_dom.id = mr_dom.participant_id
 		WHERE mr_dom.message_id = m.id
-		  AND LOWER(CASE WHEN mr_dom.recipient_type = 'from' THEN %s ELSE p_dom.domain END) IN (%s)
+		  AND LOWER(%s) IN (%s)
 	)`, identityindex.SenderDomainExpr("mr_dom", "p_dom"), strings.Join(placeholders, ", ")))
 
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourceIDs)
@@ -2330,7 +2326,7 @@ func (e *SQLiteEngine) buildMetadataSearchCriteria(ctx context.Context, q *searc
 					%s OR
 					%s OR
 					%s OR
-					(mr_meta.recipient_type = 'from' AND mr_meta.is_relayed AND %s)
+					(mr_meta.is_relayed AND %s)
 				  )
 			) OR
 			EXISTS (

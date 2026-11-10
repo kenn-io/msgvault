@@ -19,8 +19,6 @@ type ActivityClassification struct {
 	Persons   []ActivityEventPerson
 }
 
-const recipientTypeFrom = "from"
-
 // ClassifyActivityCandidate applies the same pure rules used by the external
 // activity projector. Keeping one implementation prevents inline identity
 // repairs from drifting from incremental and backstop projection.
@@ -42,7 +40,7 @@ func ClassifyActivityCandidate(
 
 	owningSenderIndex := -1
 	for index, counterpart := range counterparts {
-		if counterpart.RecipientType == recipientTypeFrom && counterpart.IsOwner {
+		if counterpart.RecipientType == "from" && counterpart.IsOwner {
 			owningSenderIndex = index
 			break
 		}
@@ -87,7 +85,7 @@ func ClassifyActivityCandidate(
 		if ownerLinked(counterpart) || counterpart.PersonID == nil {
 			continue
 		}
-		isSender := counterpart.RecipientType == recipientTypeFrom
+		isSender := counterpart.RecipientType == "from"
 		result.Persons = append(result.Persons, ActivityEventPerson{
 			PersonID: *counterpart.PersonID,
 			Role:     classifiedActivityRole(counterpart.RecipientType, isSender, meeting),
@@ -178,7 +176,7 @@ func activityChannelFor(conversationType string, meeting bool) ActivityChannel {
 
 func activityOwnerAmongNonSenders(counterparts []ActivityCounterpart) bool {
 	for _, counterpart := range counterparts {
-		if counterpart.RecipientType != recipientTypeFrom && counterpart.IsOwner {
+		if counterpart.RecipientType != "from" && counterpart.IsOwner {
 			return true
 		}
 	}
@@ -187,7 +185,7 @@ func activityOwnerAmongNonSenders(counterparts []ActivityCounterpart) bool {
 
 func firstActivityNonSenderOwnerAddress(counterparts []ActivityCounterpart) string {
 	for _, counterpart := range counterparts {
-		if counterpart.RecipientType != recipientTypeFrom && counterpart.IsOwner {
+		if counterpart.RecipientType != "from" && counterpart.IsOwner {
 			return counterpart.OwnerAddress
 		}
 	}

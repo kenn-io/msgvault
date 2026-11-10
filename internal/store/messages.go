@@ -2369,24 +2369,24 @@ func (s *Store) persistMessageWithParticipantsTx(
 			return 0, fmt.Errorf("lock message persistence: %w", err)
 		}
 	}
-	hasIdentifierParticipant := false
+	hasPhoneParticipant := false
 	for idx, participant := range participants {
 		if participant.EmailAddress == "" && participant.PhoneNumber == "" && (participant.IdentifierType == "" || strings.TrimSpace(participant.IdentifierValue) == "") {
 			return 0, fmt.Errorf("ensure participant %d: an identity is required", idx)
 		}
 		if participant.EmailAddress == "" {
-			hasIdentifierParticipant = true
+			hasPhoneParticipant = true
 		}
 	}
-	if hasIdentifierParticipant {
-		// Identifier participants write participant_identifiers, which participant
+	if hasPhoneParticipant {
+		// Phone participants write participant_identifiers, which participant
 		// merges rewrite under the identity lock. Take it before the directory
 		// lock, the same order MergeParticipants uses.
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return 0, err
 		}
 	}
-	if len(participants) > 1 || hasIdentifierParticipant {
+	if len(participants) > 1 || hasPhoneParticipant {
 		// Participant merges take the directory lock before rewriting
 		// message rows. Keep the same order when a repair's preflight
 		// callback locks its target message for identity revalidation.

@@ -142,8 +142,8 @@ func participantNameExpr(alias string) string {
 // participants table aliases (typically "mr" and "p").
 func recipientNameExpr(mrAlias, pAlias string) string {
 	return fmt.Sprintf(
-		"COALESCE(NULLIF(TRIM(%s.display_name), ''), NULLIF(TRIM(%s.display_name), ''), NULLIF(%s.phone_number, ''), %s.email_address, '')",
-		mrAlias, pAlias, pAlias, pAlias,
+		"COALESCE(NULLIF(TRIM(%s.display_name), ''), NULLIF(TRIM(%s.display_name), ''), NULLIF(%s.phone_number, ''), %s, '')",
+		mrAlias, pAlias, pAlias, identityindex.SenderAddressExpr(mrAlias, pAlias),
 	)
 }
 

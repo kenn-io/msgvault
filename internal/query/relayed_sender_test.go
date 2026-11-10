@@ -104,3 +104,58 @@ func TestRelayedSenderViews(t *testing.T) {
 		})
 	}
 }
+
+func TestUnnamedRelaySenderViews(t *testing.T) {
+	for _, backend := range []string{"sqlite", "duckdb"} {
+		t.Run(backend, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			var engine Engine
+			if backend == "sqlite" {
+				st, err := store.OpenForTest(t.Context(), filepath.Join(t.TempDir(), "archive.db"))
+				requirements.NoError(err)
+				t.Cleanup(func() { _ = st.Close() })
+				requirements.NoError(st.InitSchema())
+				source, err := st.GetOrCreateSource("gmail", "reader@example.test")
+				requirements.NoError(err)
+				conversation, err := st.EnsureConversation(t.Context(), source.ID, "thread", "")
+				requirements.NoError(err)
+				author, err := st.EnsureParticipantByIdentifier("github", "author", "")
+				requirements.NoError(err)
+				_, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{
+					Message:    &store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "relay", MessageType: "email", SenderID: sql.NullInt64{Int64: author, Valid: true}, SentAt: sql.NullTime{Time: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}},
+					Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{author}, EmailAddresses: []string{"notifications@github.com"}, IsRelayed: true}},
+				})
+				requirements.NoError(err)
+				engine = NewEngine(st.DB(), false)
+			} else {
+				b := NewTestDataBuilder(t)
+				b.AddSource("reader@example.test")
+				author := b.AddParticipant("", "", "")
+				id := b.AddMessage(MessageOpt{Subject: "Notice", SenderID: &author})
+				b.AddRecipientWithEnvelope(id, author, "from", "", "notifications@github.com")
+				b.recipients[len(b.recipients)-1].IsRelayed = true
+				engine = b.BuildEngine()
+			}
+			t.Cleanup(func() { _ = engine.Close() })
+			rows, err := engine.Aggregate(t.Context(), ViewSenderNames, DefaultAggregateOptions())
+			requirements.NoError(err)
+			if assertions.Len(rows, 1) {
+				assertions.Equal("notifications@github.com", rows[0].Key)
+			}
+			messages, err := engine.ListMessages(t.Context(), MessageFilter{SenderName: "notifications@github.com"})
+			requirements.NoError(err)
+			if assertions.Len(messages, 1) {
+				assertions.Equal("notifications@github.com", messages[0].FromName)
+			}
+			rows, err = engine.Aggregate(t.Context(), ViewSenderNames, AggregateOptions{SearchQuery: "notifications@github.com"})
+			requirements.NoError(err)
+			assertions.Len(rows, 1)
+			if backend == "duckdb" {
+				rows, err = engine.Aggregate(t.Context(), ViewDomains, AggregateOptions{SearchQuery: "notifications@github.com"})
+				requirements.NoError(err)
+				assertions.Len(rows, 1)
+			}
+		})
+	}
+}
