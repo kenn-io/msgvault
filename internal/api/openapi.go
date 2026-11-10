@@ -411,7 +411,7 @@ import (
 // registered service labels to current contact points, and identity keys to observations.
 // 4.2.0 adds attachment retrieval modes, coverage, and degradations to media search.
 // 4.3.0 exposes archived calendar lists to scoped agent grants.
-const APISchemaVersion = "4.2.0"
+const APISchemaVersion = "4.3.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

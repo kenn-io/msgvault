@@ -161,7 +161,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **4.2.0**.
+it is separate from the binary release version. The current schema is **4.3.0**.
 
 Schema 4.3.0 lets agents with `calendar.event.read` list archived calendar occurrences from their granted sources through the API and MCP. Event subjects containing verification codes are masked without `verification.read`.
 
