@@ -2458,14 +2458,11 @@ msgvault import-discord-package <package-dir>
 |------|-------------|
 | `--no-default-identity` | Skip assigning the exporting account to the default identity |
 
-Supports legacy CSV transcripts, tested with independently authored fictional data.
-JSON import remains experimental, tested with a fictional fixture informed by
-Discord's documented fields and a published parser's mock layout. It has not
-been verified against a real current Discord-produced JSON export. Stores
-attachment URLs as links without downloading files. Re-imports update the last imported snapshot and
-can safely repeat an interrupted run. Coverage is sent-only, including for
-DMs. See [Discord packages](usage/discord.md#import-a-personal-data-package)
-for source identity, timestamps, and coverage limits.
+Imports only the exporting account's sent messages, including DMs. Legacy CSV
+transcripts are supported; JSON transcripts are experimental. Attachment URLs
+are stored as links. Re-running is safe and resumes an interrupted import. See
+[Discord packages](usage/discord.md#import-a-personal-data-package) for
+requirements and limits.
 
 ## import-telegram
 

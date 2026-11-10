@@ -21,44 +21,28 @@ Available on `main` (not yet in a release): import an extracted official
 msgvault import-discord-package /path/to/extracted-package
 ```
 
-The package must include `account/user.json` and `messages/` (capitalized
-`Account` and `Messages` are also accepted). Legacy CSV transcripts are
-supported and tested with independently authored fictional data. JSON import remains
-experimental. Its fictional test fixture follows Discord's documented fields
-and a published parser's MIT-licensed mock package layout, with
-[fixture provenance](https://github.com/kenn-io/msgvault/tree/main/internal/discord/testdata/package-json).
-This provides structural evidence, not verification against a real current
-Discord-produced JSON export.
-
-Run the command on the daemon host; a remote client cannot upload its local
-package. ZIP input is not supported. The importer refuses packages with more
-than 100,000 channel folders.
-
 A package contains only the exporting account's **sent messages**, including
-sent messages in DMs. It is not bilateral conversation history or complete
-guild history. Importing requires no Discord credentials or network access.
-The account ID creates a separate `discord_package` source; bot guild sources
-remain separate, even when they contain the same message.
+DMs. Messages from other people are not in it. Importing needs no Discord
+credentials or network access.
 
-The importer keeps native message and channel IDs, original text and timestamp
-strings, channel metadata, and sent-only provenance. A supplied username fills
-a missing account display name. An explicit timestamp offset determines the
-instant. When the timestamp has no offset, the message's snowflake ID supplies
-its exact UTC instant; without either, sent time stays unknown. Receipt times,
-incoming messages, edit chronology, and missing membership information stay
-unknown.
+- The package directory must contain `account/user.json` and `messages/`
+  (`Account` and `Messages` also work). ZIP files are not supported; extract
+  the package first.
+- Run the command on the daemon host. A remote client cannot upload a package.
+- Legacy CSV transcripts are supported. JSON transcripts from current packages
+  are experimental: they have not yet been checked against a real export.
+- Each exporting account gets its own `discord_package` source, separate from
+  bot guild sources, even when both hold the same message.
+- Message and channel IDs, original text, timestamps, and channel metadata are
+  kept. A timestamp without a time zone is resolved from the message ID.
+- Attachment URLs are stored as links. Media is not downloaded.
+- Packages with more than 100,000 channel folders are refused.
 
-Attachment URLs are stored as links. The importer does not download media or
-claim those links are archived files. Its report counts attachment links
-without local media, unsupported links, processed/added/updated/skipped records,
-and skip reasons, including when an import fails partway through. Omitted
-channel directories and symlinks are counted separately from skipped messages.
-Record size-limit errors identify the relative input path, record number, and
-byte limit.
+The command reports how many channels and messages it imported, updated, or
+skipped, with skip reasons, even when it stops partway.
 
-Re-importing updates each message to the last explicitly imported snapshot,
-including its attachment links. It creates no duplicate within the same
-account source and does not infer deletions from absent messages. After an
+Re-running the import updates each message to the latest package without
+creating duplicates. Messages missing from a newer package are kept. After an
 interruption, run the same command again. Use `--no-default-identity` to skip
 assigning this account to your default identity.
 
