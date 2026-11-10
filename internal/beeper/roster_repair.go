@@ -127,7 +127,7 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 
 	opts.rosterDetailFetched = true
 	repairSummary := &ImportSummary{}
-	conversationID, complete, membership, observations, err := imp.ensureConversation(ctx, syncID, sourceID, detail, opts, repairSummary, cs)
+	conversationID, complete, _, observations, err := imp.ensureConversation(ctx, syncID, sourceID, detail, opts, repairSummary, cs)
 	if conversationID != 0 {
 		statsCtx, cancelStats := opts.conversationStatsContext(ctx)
 		statsErr := imp.store.RecomputeConversationStatsForConversationContext(statsCtx, conversationID)
@@ -159,7 +159,7 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 	if repairSummary.FetchErrors > 0 {
 		return failed(errors.New("roster verification failed"))
 	}
-	if complete && observations != nil {
+	if observations != nil {
 		err = imp.captureRosterObservations(ctx, sourceID, opts, observations, repairSummary)
 	}
 	sum.ObservationsRecorded += repairSummary.ObservationsRecorded
@@ -173,7 +173,7 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 		return failed(fmt.Errorf("capture roster observations: %w", err))
 	}
 
-	if !membership.known {
+	if !complete {
 		stop, err := deferRoom("beeper_roster_repair_deferred", store.SyncRunItemStatusSkipped, nil)
 		return stop || opts.budgetExpired(), err
 	}

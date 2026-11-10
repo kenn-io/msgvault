@@ -78,7 +78,7 @@ func (r *participantResolver) identifierForUser(userID string) string {
 
 func (r *participantResolver) seedUser(u *User, binding store.ParticipantBinding) {
 	key := r.identifierForUser(u.ID)
-	if binding.HasPhone || strings.HasPrefix(u.PhoneNumber, "+") || strings.Contains(u.Email, "@") {
+	if binding.HasPhone || identityKind(u) != identityFallback {
 		r.rich[key] = richEntry{pid: binding.ID, byPhone: binding.HasPhone}
 		delete(r.fallback, key)
 	} else {
@@ -86,18 +86,37 @@ func (r *participantResolver) seedUser(u *User, binding store.ParticipantBinding
 	}
 }
 
+type userIdentityKind int
+
+const (
+	identityFallback userIdentityKind = iota
+	identityPhone
+	identityEmail
+)
+
+func identityKind(u *User) userIdentityKind {
+	if strings.HasPrefix(u.PhoneNumber, "+") {
+		return identityPhone
+	}
+	if strings.Contains(u.Email, "@") {
+		return identityEmail
+	}
+	return identityFallback
+}
+
 // bindingSatisfiesUser follows the resolver's precedence and name backfill rules.
 func bindingSatisfiesUser(u *User, b store.ParticipantBinding) bool {
 	if b.ID == 0 {
 		return false
 	}
-	if strings.HasPrefix(u.PhoneNumber, "+") {
+	switch identityKind(u) {
+	case identityPhone:
 		return b.Phone == u.PhoneNumber && (strings.TrimSpace(b.DisplayName) != "" || u.FullName == "")
-	}
-	if strings.Contains(u.Email, "@") {
+	case identityEmail:
 		return b.HasPhone || strings.EqualFold(b.Email, u.Email)
+	default:
+		return b.DisplayName != "" || u.FullName == ""
 	}
-	return b.DisplayName != "" || u.FullName == ""
 }
 
 func (r *participantResolver) resolveUser(ctx context.Context, u *User) (int64, error) {
@@ -108,12 +127,13 @@ func (r *participantResolver) resolveUser(ctx context.Context, u *User) (int64, 
 	if _, err := r.adoptLegacyIdentifier(ctx, u.ID, identifier); err != nil {
 		return 0, err
 	}
-	hasPhone := strings.HasPrefix(u.PhoneNumber, "+")
+	kind := identityKind(u)
+	hasPhone := kind == identityPhone
 	if e, ok := r.rich[identifier]; ok && (e.byPhone || !hasPhone) {
 		return e.pid, nil
 	}
-	switch {
-	case hasPhone:
+	switch kind {
+	case identityPhone:
 		pid, err := r.store.EnsureParticipantByPhone(ctx, u.PhoneNumber, u.FullName, participantIdentifierType)
 		if err != nil {
 			return 0, err
@@ -131,7 +151,7 @@ func (r *participantResolver) resolveUser(ctx context.Context, u *User) (int64, 
 			}
 		}
 		return pid, r.recordRich(ctx, identifier, pid, true)
-	case strings.Contains(u.Email, "@"):
+	case identityEmail:
 		// Never downgrade: if a prior run already resolved this Beeper user
 		// by phone, an email-only sighting must keep pointing at that
 		// participant instead of re-pointing the identifier to a weaker row.

@@ -59,7 +59,7 @@ func TestRosterSignatureIgnoresOrder(t *testing.T) {
 func TestRosterWorkCheckpointClear(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	state := NewSyncState()
-	state.EnsureChat("room").RosterWork = &rosterWork{Signature: "snapshot", Members: map[string]rosterMemberWork{"member": {Inputs: "inputs", Enriched: true}}, MembershipApplied: true}
+	state.EnsureChat("room").RosterWork = &rosterWork{Version: 1, Signature: "snapshot", Members: map[string]rosterMemberWork{"member": {Inputs: "inputs", Enriched: true}}, MembershipApplied: true}
 	blob, err := state.Marshal()
 	require.NoError(err)
 	restored, err := LoadSyncState(blob)
@@ -150,7 +150,7 @@ func TestRosterResumeUsesMergedParticipant(t *testing.T) {
 	first := &detail.Participants.Items[0].User
 	old, err := imp.res.resolveUser(t.Context(), first)
 	require.NoError(err)
-	state := &ChatState{RosterWork: &rosterWork{Signature: rosterSignature(detail, "signal"), Members: map[string]rosterMemberWork{imp.res.identifierForUser(first.ID): {Inputs: "inputs"}}}}
+	state := &ChatState{RosterWork: &rosterWork{Version: 1, Signature: rosterSignature(detail, "signal"), Members: map[string]rosterMemberWork{imp.res.identifierForUser(first.ID): {Inputs: "inputs"}}}}
 	blob, err := (&SyncState{Chats: map[string]*ChatState{chat.ID: state}}).Marshal()
 	require.NoError(err)
 	winner, err := st.EnsureParticipantByPhone(t.Context(), "+12025550123", "Merged", "beeper")
@@ -346,4 +346,42 @@ func TestRosterJoinRetainsUnchangedMatchingProgress(t *testing.T) {
 	require.NoError(err)
 	assert.NotEmpty(observed)
 	assert.False(state.RosterWork.MatchingPending)
+}
+
+func TestRosterWorkRejectsFutureVersion(t *testing.T) {
+	_, err := LoadSyncState(`{"chats":{"room":{"roster_work":{"version":2,"membership_applied":true}}}}`)
+	require.Error(t, err)
+}
+
+func TestRosterAndMessagesAlternateAfterBudgetStops(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	f.pageSize = 1
+	chat := budgetTestChat("!alternating:example.test", 2, time.Now().Add(-48*time.Hour))
+	chat.Participants[1]["username"] = "example"
+	f.addChat(chat)
+	imp, st := newHandlerTestImporter(t, f)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	count := func(table string) int {
+		var n int
+		require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM "+table).Scan(&n))
+		return n
+	}
+	opts := ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { return count("messages") > 0 }}
+	sum, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	require.True(sum.Stopped)
+	assert.Positive(count("messages"))
+	assert.Zero(count("participant_contact_observations"))
+	opts.ShouldStop = func() bool { return count("participant_contact_observations") > 0 }
+	sum, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	require.True(sum.Stopped)
+	assert.Positive(count("participant_contact_observations"))
+	priorMessages := count("messages")
+	opts.ShouldStop = func() bool { return count("messages") > priorMessages }
+	sum, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	require.True(sum.Stopped)
+	assert.Greater(count("messages"), priorMessages)
 }

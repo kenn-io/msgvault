@@ -859,8 +859,19 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 	if err != nil {
 		return 0, false, err
 	}
-	if observations != nil && membershipComplete {
-		observationErr := imp.captureRosterObservations(ctx, sourceID, opts, observations, sum)
+	if opts.stopRequested() {
+		sum.Stopped = true
+		return 0, false, nil
+	}
+	capture := func() error {
+		if observations == nil {
+			return nil
+		}
+		return imp.captureRosterObservations(ctx, sourceID, opts, observations, sum)
+	}
+	if observations != nil && observations.work.MatchingFirst {
+		observations.work.MatchingFirst = false
+		observationErr := capture()
 		if errors.Is(observationErr, errBeeperBudgetExpired) {
 			sum.Stopped = true
 			return 0, false, nil
@@ -868,8 +879,22 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 		if observationErr != nil {
 			return 0, false, observationErr
 		}
+	} else if observations != nil {
+		observations.work.MatchingFirst = true
+		defer func() {
+			if err != nil || sum.Stopped {
+				return
+			}
+			observationErr := capture()
+			if errors.Is(observationErr, errBeeperBudgetExpired) {
+				sum.Stopped = true
+				chatComplete = false
+				return
+			}
+			err = errors.Join(err, observationErr)
+		}()
 	}
-	if membership.known {
+	if membershipComplete {
 		cs.RosterRetryAfter = ""
 	}
 	cc := &chatScope{
@@ -976,7 +1001,7 @@ func (imp *Importer) ensureConversation(
 	complete := !ch.Participants.HasMore
 	work := cs.RosterWork
 	if work == nil {
-		work = &rosterWork{Members: make(map[string]rosterMemberWork)}
+		work = &rosterWork{Version: 1, Members: make(map[string]rosterMemberWork)}
 		cs.RosterWork = work
 	}
 	if work.Members == nil {
@@ -1185,7 +1210,7 @@ func (imp *Importer) ensureConversation(
 			sum.failChat(ch.ID, false, verifyErr)
 			sum.FetchErrors++
 			sum.Errors++
-			return convID, false, chatMembership{}, nil, nil
+			return convID, false, membership, &rosterObservations{detail: detail, members: resolved, bridgePrefix: bridgePrefix, work: work, state: cs}, nil
 		}
 		if err := opts.rosterStop(ctx); err != nil {
 			return convID, false, chatMembership{}, nil, err
@@ -1212,10 +1237,7 @@ func (imp *Importer) ensureConversation(
 		return convID, false, chatMembership{}, nil, err
 	}
 	work.MembershipApplied = evidence.MembershipComplete
-	if !evidence.MembershipComplete {
-		membership.known = false
-	}
-	return convID, evidence.MembershipComplete, membership, &rosterObservations{detail: detail, members: resolved, bridgePrefix: bridgePrefix, work: work, state: cs}, nil
+	return convID, evidence.MembershipComplete, membership, &rosterObservations{detail: detail, members: resolved, bridgePrefix: bridgePrefix, work: work, state: cs, complete: complete}, nil
 }
 
 type resolvedMember struct {
@@ -1231,9 +1253,10 @@ type rosterObservations struct {
 	detail       *Chat
 	members      []resolvedMember
 	bridgePrefix string
+	complete     bool
 }
 
-// Capture follows committed membership and precedes message work.
+// Capture follows committed membership and alternates with message work.
 // A member already in flight may finish its own transactions before yielding.
 func (imp *Importer) captureRosterObservations(ctx context.Context, sourceID int64, opts ImportOptions, roster *rosterObservations, sum *ImportSummary) error {
 	for _, member := range roster.members {
@@ -1255,7 +1278,9 @@ func (imp *Importer) captureRosterObservations(ctx context.Context, sourceID int
 			return ctx.Err()
 		}
 	}
-	roster.work.MatchingPending = false
+	if roster.complete {
+		roster.work.MatchingPending = false
+	}
 	return ctx.Err()
 }
 

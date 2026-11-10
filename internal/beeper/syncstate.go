@@ -2,6 +2,7 @@ package beeper
 
 import (
 	"encoding/json/v2"
+	"fmt"
 	"time"
 )
 
@@ -112,6 +113,11 @@ func LoadSyncState(blob string) (*SyncState, error) {
 	}
 	if s.Chats == nil {
 		s.Chats = map[string]*ChatState{}
+	}
+	for _, chat := range s.Chats {
+		if chat != nil && chat.RosterWork != nil && chat.RosterWork.Version != 1 {
+			return nil, fmt.Errorf("unsupported roster work version %d", chat.RosterWork.Version)
+		}
 	}
 	return s, nil
 }

@@ -1751,3 +1751,19 @@ func TestIsConfirmedAssetNotFound(t *testing.T) {
 		})
 	}
 }
+
+func TestMediaPolicyUsesKnownTotalWithIncompleteRoster(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	chat := mediaGroupChat(4)
+	f.addChat(chat)
+	f.setChatGetFailure(chat.ID, true)
+	f.setAsset("mxc://beeper.local/photo1", []byte("group photo"))
+	imp, _, done := newTestImporter(t, f)
+	defer done()
+	opts := mediaImportOptions(t)
+	opts.MediaPolicy = attachmentpolicy.Policy{MaxParticipants: 5}
+	_, err := imp.Import(t.Context(), opts)
+	require.Error(err)
+	assert.Len(assetRequests(f), 1)
+}

@@ -13,6 +13,8 @@ type rosterMemberWork struct {
 }
 
 type rosterWork struct {
+	Version           int                         `json:"version"`
+	MatchingFirst     bool                        `json:"matching_first,omitzero"`
 	Signature         string                      `json:"signature"`
 	Members           map[string]rosterMemberWork `json:"members"`
 	MembershipApplied bool                        `json:"membership_applied,omitzero"`
