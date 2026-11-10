@@ -480,40 +480,29 @@ describe('PersonMergeHistoryController', () => {
     expect(fetchFn.mock.calls.filter(([input]) => requestOf(input).method === 'POST')).toHaveLength(1);
   });
 
-  it('retries a committed receipt with profile reads rather than another split', async () => {
-    let failing = true;
-    const requests: Request[] = [];
+  it('keeps account numbers after a split removes a merged-in address', async () => {
+    let split = false;
+    const item = summary(41);
+    item.merge.current_person_id = 7;
+    item.labels.addresses = [addressFixture(701, 'beeper', 'opaque', { participant_display_name: 'Neri', service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'account-b' })];
     const controller = new PersonMergeHistoryController(createAPIClient(async input => {
-      const request = requestOf(input);
-      requests.push(request);
-      const path = new URL(request.url).pathname;
-      if (path === '/api/v1/person-merges/41') return Response.json(detail());
-      if (request.method === 'POST') return Response.json(splitResult());
-      if (path === '/api/v1/people/12') return Response.json(person(12, 4, [701, 702]), { headers: { ETag: '"person-12-r4"' } });
-      if (path === '/api/v1/people/12/profile') return Response.json(emptyProfile(person(12)));
-      if (path === '/api/v1/people/19/profile') return failing
-        ? Response.json({ message: 'Profile store busy' }, { status: 503 })
-        : Response.json(emptyProfile(person(19)));
-      throw new Error(`Unexpected ${request.method} ${path}`);
+      const request = requestOf(input), path = new URL(request.url).pathname;
+      if (path.endsWith('/merges')) return Response.json({ merges: [{ ...item, labels: { ...item.labels, participants: item.labels.participants.map(p => p.participant_id === 701 && split ? { ...p, split_id: 55 } : p) } }], limit: 100, offset: 0 });
+      if (path === '/api/v1/person-merges/41') return Response.json({ ...detail({ current_person_id: 7 }), labels: { ...item.labels, participants: undefined }, participants: item.labels.participants });
+      if (request.method === 'POST') { split = true; return Response.json(splitResult()); }
+      return Response.json(person(7, 4, [701, 702]), { headers: { ETag: '"person-7-r4"' } });
     }), 7);
+    controller.addScopes([{ scope_kind: 'account', scope_value: 'account-a' }]);
+    await controller.loadHistory();
+    expect(controller.mergedIn[0]?.value).toContain('account 2');
     await controller.selectMerge(41);
     await controller.openSplit();
     controller.setParticipantSelected(701, true);
-    controller.confirmSplit();
+    expect(controller.confirmSplit()).toBe(true);
     await controller.submitSplit();
-    const committed = controller.committedResult;
-    expect(committed).not.toBeNull();
-    expect(controller.receiptSavedError).toBe('Profile store busy');
-    const beforeRetry = requests.length;
-    failing = false;
-    await controller.retryReceiptSaved();
-    expect(requests.slice(beforeRetry).map(request => `${request.method} ${new URL(request.url).pathname}`)).toEqual([
-      'GET /api/v1/people/12/profile', 'GET /api/v1/people/19/profile',
-    ]);
-    expect(requests.filter(request => request.method === 'POST')).toHaveLength(1);
-    expect(controller.committedResult).toBe(committed);
-    expect(controller.receiptSaved).toEqual({ source: [], created: [] });
-    expect(controller.receiptSavedError).toBeNull();
+    await controller.loadHistory();
+    expect(controller.mergedIn).toHaveLength(0);
+    expect(controller.labels?.addresses.get(701)?.[0]?.detail).toContain('account 2');
     controller.destroy();
   });
 
@@ -604,41 +593,6 @@ describe('PersonMergeHistoryController', () => {
     expect(controller.snapshot).toBeNull();
     expect(controller.committedResult).toBeNull();
   });
-  it.each(['merge', 'person', 'close and reopen'] as const)('drops late saved addresses after a %s change', async change => {
-    const saved = [deferredResponse(), deferredResponse()];
-    let savedReads = 0;
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const path = new URL(requestOf(input).url).pathname;
-      if (path === '/api/v1/person-merges/41') return Response.json(detail());
-      if (path === '/api/v1/people/12') return Response.json(person(12, 4, [701, 702], 'Synthetic Source'), { headers: { ETag: '"person-12-r4"' } });
-      if (path === '/api/v1/people/12/profile') return saved[savedReads++]!.promise;
-      return Response.json({ merges: [], limit: 100, offset: 0 });
-    });
-    const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
-    await controller.selectMerge(41);
-    await controller.openSplit();
-    await vi.waitFor(() => expect(savedReads).toBe(1));
-    controller.setParticipantSelected(701, true);
-    expect(controller.confirmSplit()).toBe(true);
-
-    if (change === 'merge') await controller.selectMerge(41);
-    else if (change === 'person') controller.setPerson(8);
-    else {
-      controller.closeSplit();
-      expect(fetchFn.mock.calls.find(([input]) => new URL(requestOf(input).url).pathname === '/api/v1/people/12/profile')![0]).toHaveProperty('signal.aborted', true);
-      await expect(controller.openSplit()).resolves.toBe(true);
-    }
-    const answer = Response.json({ ...emptyProfile(person(12)), contact_points: [{ person_id: 12, identity_key: identityKeyFixture('email', 'late@example.org'), address_kind: 'email', original_value: 'late@example.org', normalized_value: 'late@example.org', normalization: 'email', normalization_version: 1, envelope: envelope(1) }] });
-    const consumed = responseConsumed(answer);
-    saved[0]!.resolve(answer);
-    await consumed;
-    expect(controller.sourceSaved).toBeNull();
-    expect(controller.sourceSavedError).toBeNull();
-    saved[1]!.resolve(Response.json(emptyProfile(person(12))));
-    if (change === 'close and reopen') await vi.waitFor(() => expect(controller.sourceSaved).toEqual([]));
-    controller.destroy();
-  });
-
   it('records a failed snapshot reveal', async () => {
     const controller = new PersonMergeHistoryController(createAPIClient(async input => {
       const path = new URL(requestOf(input).url).pathname;

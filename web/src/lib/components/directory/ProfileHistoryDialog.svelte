@@ -7,7 +7,7 @@
   import { sourceTypeLabel } from '../../sources/labels';
   import { valueProvenance } from './history-format';
   import { formatDateTime, formatShortDate } from '../../util/format';
-  import { scopeText, workspaceLabels, type MergedInAddress } from '../../directory/merge-labels';
+  import { scopeText, type MergedInAddress } from '../../directory/merge-labels';
   import PersonMergeHistory from './PersonMergeHistory.svelte';
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
   import type { PersonSplitCommittedContext } from '../../directory/person-merge-history-controller.svelte';
@@ -49,16 +49,15 @@
       loading = false;
     }
   }
-  type HistoryRow = { id: number; value: string; context?: string | null; envelope: ValueEnvelope; observedAt?: string };
+  type HistoryRow = { id: number; value: string; context?: Item; envelope: ValueEnvelope; observedAt?: string };
   /**
    * An address a merge brought in, under Email and phone: "Merged in · Nov 6", opening that merge.
    * `seen` holds the observations those rows stand in for, which Seen in services leaves out.
    */
-  function mergedInRows(openMerge: (mergeID: number) => void, mergedIn: MergedInAddress[]): { rows: SectionRow[]; seen: Set<number> } {
+  function mergedInRows(openMerge: (mergeID: number) => void, mergedIn: MergedInAddress[], workspaces: Map<string, string>): { rows: SectionRow[]; seen: Set<number> } {
     // An address that is a current contact point shows once. One a service has seen shows here once, naming the service.
     const listed = new Set((history?.contact_points ?? []).filter(point => !ended(point.envelope)).map(point => point.identity_key));
     const observations = (history?.observations ?? []).filter(point => !ended(point.envelope));
-    const scopes = workspaceLabels(mergedIn, workspaces);
     const seen = new Set<number>();
     const rows = mergedIn.filter(address => {
       if (listed.has(address.identity_key)) return false;
@@ -68,8 +67,8 @@
       const matches = observations.filter(point => point.identity_key === address.identity_key);
       for (const point of matches) seen.add(point.envelope.id);
       const observed = matches[0];
-      const value = [address.value, scopeText(address, scopes)].filter(Boolean).join(' · ');
-      const service = observed && providerContext(observed, false);
+      const value = address.value;
+      const service = observed && providerContext(observed, workspaces, false);
       return {
         id: `merged-${address.mergeID}-${address.participantID}-${address.identity_key}`, value,
         detail: service && address.value !== service && !address.value.startsWith(`${service} · `) ? service : undefined,
@@ -89,21 +88,20 @@
   }
 
   type Item = { envelope: ValueEnvelope; original_value: string; formatted?: string; label?: string; date_kind?: string; date_text?: string; observed_at?: string; service_slug?: string; service_label?: string; scope_kind?: string; scope_value?: string };
-  function rows(items: Item[], value: ((item: Item) => string) | null = null, context: ((item: Item) => string | null) | null = null): HistoryRow[] {
-    return items.map((item) => ({ id: item.envelope.id, value: value ? value(item) : item.original_value, context: context?.(item), envelope: item.envelope, observedAt: item.observed_at }));
+  function rows(items: Item[], value: ((item: Item) => string) | null = null, context = false): HistoryRow[] {
+    return items.map((item) => ({ id: item.envelope.id, value: value ? value(item) : item.original_value, context: context ? item : undefined, envelope: item.envelope, observedAt: item.observed_at }));
   }
 
-  const workspaces = $derived(workspaceLabels([...(history?.contact_points ?? []), ...(history?.observations ?? [])]));
   const sections = $derived.by(() => {
     if (!history) return [];
     return [
       { title: 'Names', rows: rows(history.names ?? [], (row) => row.formatted ?? row.original_value) },
-      { title: 'Email and phone', rows: rows(history.contact_points ?? [], null, providerContext) },
+      { title: 'Email and phone', rows: rows(history.contact_points ?? [], null, true) },
       { title: 'Addresses', rows: rows(history.addresses ?? []) },
       { title: 'Dates', rows: rows(history.dates ?? [], (row) => `${row.label ?? sentenceCase(row.date_kind ?? '')}: ${row.date_text ?? row.original_value}`) },
       { title: 'Categories', rows: rows(history.categories ?? []) },
       { title: 'Media', rows: rows(history.media ?? []) },
-      { title: 'Seen in services', rows: rows(history.observations ?? [], null, providerContext) },
+      { title: 'Seen in services', rows: rows(history.observations ?? [], null, true) },
     ]
       // Email and phone stays for the addresses merges brought in, which join it when it renders.
       .filter((section) => section.rows.length > 0 || section.title === 'Email and phone')
@@ -114,11 +112,11 @@
       }));
   });
 
-  function historyRow(item: HistoryRow): SectionRow {
-    return { id: item.id, value: item.value, detail: item.context, provenance: valueProvenance(item.envelope, [['Seen', item.observedAt]]) };
+  function historyRow(item: HistoryRow, workspaces: Map<string, string>): SectionRow {
+    return { id: item.id, value: item.value, detail: item.context && providerContext(item.context, workspaces), provenance: valueProvenance(item.envelope, [['Seen', item.observedAt]]) };
   }
 
-  function providerContext(point: Item, includeScope = true): string | null {
+  function providerContext(point: Item, workspaces: Map<string, string>, includeScope = true): string | null {
     const details = [point.service_label || (point.service_slug ? sourceTypeLabel(point.service_slug) : undefined), includeScope && scopeText(point, workspaces)].filter(Boolean);
     return details.length ? details.join(' · ') : null;
   }
@@ -135,18 +133,18 @@
   }
 </script>
 
-<PersonMergeHistory {client} {personID} {onClose} scopeLabels={workspaces} definitions={controller?.definitions}
+<PersonMergeHistory {client} {personID} {onClose} scopeSources={[...(history?.contact_points ?? []), ...(history?.observations ?? [])]} definitions={controller?.definitions}
   onOpenPerson={onOpenPerson ? (id) => { onClose(); onOpenPerson?.(id); } : undefined}
   onSplitCommitted={async (context) => { await onSplitCommitted?.(context); await load(); }}>
-  {#snippet fields(openMerge, mergedIn)}
+  {#snippet fields(openMerge, mergedIn, workspaces)}
     <div class="profile-history">
       {#if loading}<p role="status">Loading profile history…</p>
       {:else if history}
-        {@const merged = mergedInRows(openMerge, mergedIn)}
+        {@const merged = mergedInRows(openMerge, mergedIn, workspaces)}
         {#each sections as section (section.title)}
           {@const current = section.title === 'Seen in services' ? section.current.filter(row => !merged.seen.has(row.id)) : section.current}
-          {@const rows = [...current.map(historyRow), ...(section.title === 'Email and phone' ? merged.rows : [])]}
-          {#if rows.length || section.past.length}<HistorySection title={section.title} {rows} earlier={section.past.map(historyRow)} />{/if}
+          {@const rows = [...current.map(row => historyRow(row, workspaces)), ...(section.title === 'Email and phone' ? merged.rows : [])]}
+          {#if rows.length || section.past.length}<HistorySection title={section.title} {rows} earlier={section.past.map(row => historyRow(row, workspaces))} />{/if}
         {/each}
       {/if}
       {#if error}<InlineNotice message="Couldn't load names, email, phone, and other details." actionLabel="Retry" onaction={() => void load()} details={error} />{/if}

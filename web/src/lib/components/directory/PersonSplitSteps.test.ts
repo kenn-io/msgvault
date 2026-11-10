@@ -38,8 +38,7 @@ async function preparedController(fetchFn: typeof fetch, participants?: MergeDet
   });
   const controller = new PersonMergeHistoryController(createAPIClient(routedFetch), 7);
   await controller.selectMerge(41);
-  // Saved addresses load on their own after Split opens; these tests read them settled.
-  if (await controller.openSplit()) await vi.waitFor(() => expect(controller.sourceSaved ?? controller.sourceSavedError).not.toBeNull());
+  await controller.openSplit();
   return { controller };
 }
 
@@ -227,24 +226,19 @@ describe('PersonSplitSteps', () => {
     expect(onOpenPerson.mock.calls).toEqual([[12], [19]]);
   });
 
-  it.each([false, true])('does not repeat the new person\'s address in the receipt: saved=%s', async saved => {
+  it('does not repeat the new person\'s address in the receipt', async () => {
     const address = 'reader@example.org';
     const response = { ...result(true), new_person: person(19, 1, [701], address) };
-    const contact = { person_id: 19, identity_key: identityKeyFixture('email', address), address_kind: 'email', original_value: address, normalized_value: address, normalization: 'email', normalization_version: 1, envelope: envelope(190) };
     const { controller } = await preparedController(async input => {
-      const request = input as Request, path = new URL(request.url).pathname;
-      if (path === '/api/v1/people/12/split' && request.method === 'POST') return Response.json(response);
-      if (path === '/api/v1/people/12') return sourceResponse();
-      if (path === '/api/v1/people/12/profile') return Response.json(emptyProfile(response.source_person));
-      if (path === '/api/v1/people/19/profile') return Response.json({ ...emptyProfile(response.new_person), contact_points: saved ? [contact] : [] });
-      throw new Error(`Unexpected ${request.method} ${path}`);
+      const request = input as Request;
+      if (request.method === 'POST') return Response.json(response);
+      return sourceResponse();
     }, undefined, () => ({ ...mergeDetail().labels, incomplete: false, participant_ids: [701], addresses: [addressFixture(701, 'email', address)] }));
     render(PersonSplitSteps, { controller, onOpenPerson: vi.fn() });
     await fireEvent.click(screen.getByRole('checkbox', { name: address }));
     await act(() => { controller.confirmSplit(); return controller.submitSplit(); });
-    await waitFor(() => expect(controller.receiptSaved.created).not.toBeNull());
     const row = screen.getByRole('button', { name: `Open ${address}` }).closest('.detail-row') as HTMLElement;
-    expect(within(row).getByText(saved ? 'New person · Saved' : 'New person')).toBeDefined();
+    expect(within(row).getByText('New person')).toBeDefined();
     controller.destroy();
   });
 
@@ -269,11 +263,10 @@ describe('PersonSplitSteps', () => {
       throw new Error(`Unexpected ${request.method} ${path}`);
     }, [], () => ({ ...mergeDetail().labels, profiles: [{ id: 7, participant_ids: [] }, { id: 9, participant_ids: [] }], incomplete: false }));
     render(PersonSplitSteps, { controller, onOpenPerson: vi.fn() });
-    expect(screen.getByText('saved@example.org')).toBeDefined();
     expect(screen.getByText('Splitting restores its profile history.')).toBeDefined();
     await act(() => { expect(controller.confirmSplit()).toBe(true); return controller.submitSplit(); });
     expect(await posted!.json()).toMatchObject({ participant_ids: [] });
-    expect(screen.getByRole('button', { name: 'Open Synthetic Restored' }).closest('.detail-row')?.textContent).toContain('Saved: saved@example.org');
+    expect(screen.getByRole('button', { name: 'Open Synthetic Restored' })).toBeDefined();
     controller.destroy();
   });
 
@@ -315,125 +308,6 @@ describe('PersonSplitSteps', () => {
     const participant = await screen.findByRole('checkbox', { name: 'person701@example.org' });
     await waitFor(() => expect(document.activeElement).toBe(participant));
     expect(screen.queryByText(/^This profile changed since you opened it\.$/)).toBeNull();
-    controller.destroy();
-  });
-});
-
-describe('saved contacts in Split', () => {
-  const contact = (id: number, address_kind: string, original_value: string) => ({
-    person_id: id, address_kind, original_value, identity_key: identityKeyFixture(address_kind, original_value), normalized_value: original_value, normalization: address_kind, normalization_version: 1,
-    envelope: { id: id * 10, source: 'user', ordinal: 0, actor: 'user', confidence: 1, active_from: '2026-08-01T00:00:00Z', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', vcard: {} },
-  });
-  const structured = (profile: ReturnType<typeof person>, contact_points: ReturnType<typeof contact>[]) => ({
-    person: profile, contact_points, names: [], addresses: [], dates: [], categories: [], media: [],
-  });
-  const catalogContacts = (id: number) => [
-    { ...contact(id, 'username', 'Desk 4455'), service_slug: 'pager', service_label: 'Team hotline', identity_key: identityKeyFixture('pager', 'Desk 4455'), normalization: 'none' },
-    contact(id, 'email', 'plain@example.org'),
-  ];
-  const savedLabels = () => ({ ...mergeDetail().labels, incomplete: false,
-    profiles: [{ id: 7, participant_ids: [], contact_points: [contact(7, 'email', 'kept@example.org')] }, { id: 9, participant_ids: [701], contact_points: [contact(9, 'phone', '+12025550144')] }],
-    participant_ids: [701], addresses: [addressFixture(701, 'email', 'guest@example.org')],
-  });
-
-  it('keeps account numbers consistent in the choices and receipt', async () => {
-    const saved = { ...contact(12, 'username', 'reader'), identity_key: identityKeyFixture('whatsapp', 'reader', 'account', 'account-a'), service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'account-a' };
-    const linked = addressFixture(701, 'beeper', 'opaque', { display_value: 'reader', service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'account-b' });
-    const split = result(true);
-    const { controller } = await preparedController(async input => {
-      const request = input as Request, path = new URL(request.url).pathname;
-      if (request.method === 'POST') return Response.json(split);
-      if (path === '/api/v1/people/12') return sourceResponse();
-      if (path === '/api/v1/people/12/profile') return Response.json(structured(person(12), [saved]));
-      if (path === '/api/v1/people/19/profile') return Response.json(structured(person(19), []));
-      throw new Error(`Unexpected ${request.method} ${path}`);
-    }, undefined, () => ({ ...mergeDetail().labels, incomplete: false, participant_ids: [701], addresses: [linked], profiles: [{ id: 7, participant_ids: [], contact_points: [saved] }, { id: 9, participant_ids: [701] }] }));
-    render(PersonSplitSteps, { controller, onOpenPerson: vi.fn() });
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'WhatsApp · reader · account 2' }));
-    expect(screen.getByText('reader · WhatsApp · account 1')).toBeDefined();
-    await act(() => { controller.confirmSplit(); return controller.submitSplit(); });
-    expect(screen.getByRole('button', { name: 'Open Synthetic Source' }).closest('.detail-row')?.textContent).toContain('reader · WhatsApp · account 1');
-    expect(screen.getByRole('button', { name: 'Open Synthetic Restored' }).closest('.detail-row')?.textContent).toContain('WhatsApp · reader · account 2');
-    expect(document.body.textContent).not.toMatch(/account-a|account-b/);
-    controller.destroy();
-  });
-
-  it.each([false, true])('shows saved contacts in the exact receipt, matching archived address=%s', async matching => {
-    const number = '+12025550144';
-    const scope = { service_slug: 'phone', service_label: '', scope_kind: '', scope_value: '' };
-    const points = matching ? [
-      { ...contact(19, 'phone', number), ...scope, original_value: '+1 (202) 555-0144' },
-      ...catalogContacts(19),
-    ] : [contact(19, 'phone', number)];
-    const kept = matching ? [] : [contact(12, 'email', 'kept@example.org')];
-    let committed = false;
-    const source = person(12, 4, [701], 'Synthetic Source');
-    const splitResult = result(true);
-    const { controller } = await preparedController(async input => {
-      const request = input as Request, path = new URL(request.url).pathname;
-      if (path === '/api/v1/people/12/split' && request.method === 'POST') { committed = true; return Response.json(splitResult); }
-      if (path === '/api/v1/people/12/profile') return Response.json(structured(committed ? splitResult.source_person : source, [...kept, ...(!committed ? points.map(point => ({ ...point, person_id: 12 })) : [])]));
-      if (path === '/api/v1/people/19/profile') return Response.json(structured(splitResult.new_person, points));
-      if (path === '/api/v1/people/12') return sourceResponse();
-      throw new Error(`Unexpected request: ${path}`);
-    }, mergeDetail().participants, () => matching ? { ...savedLabels(), addresses: [addressFixture(701, 'phone', number, scope)] } : savedLabels());
-    controller.setParticipantSelected(701, true);
-    expect(controller.confirmSplit()).toBe(true);
-    await controller.submitSplit();
-    render(PersonSplitSteps, { controller, onOpenPerson: vi.fn() });
-    const stayed = screen.getByRole('button', { name: 'Open Synthetic Source' }).closest('.detail-row')!;
-    const moved = screen.getByRole('button', { name: 'Open Synthetic Restored' }).closest('.detail-row')!;
-    if (matching) {
-      expect.soft(moved.textContent?.match(/\+1(?:[ ()-]*\d){10}/g)).toHaveLength(1);
-      expect.soft(moved.textContent).toContain('Saved:');
-      expect.soft(moved.textContent).toContain('Desk 4455 · Team hotline');
-      expect.soft(moved.textContent).toContain('plain@example.org');
-    } else {
-      expect.soft(stayed.textContent).toContain('kept@example.org');
-      expect.soft(moved.textContent).toContain(number);
-      expect.soft(stayed.textContent).not.toContain(number);
-    }
-    controller.destroy();
-  });
-
-  it.each(['every', 'some', 'also saved'] as const)('lists unmatched saved addresses beside the choices: %s', async choice => {
-    const participants = [701, 703].map(participant_id => ({ merge_id: 41, participant_id, origin_side: 'absorbed' }));
-    const alsoSaved = choice === 'also saved';
-    const { controller } = await preparedController(async input => {
-      const path = new URL((input as Request).url).pathname;
-      if (path === '/api/v1/people/12/profile') return Response.json(structured(person(12, 4, [701, 703], 'Synthetic Source'), [contact(12, 'email', alsoSaved ? 'guest@example.org' : 'kept@example.org'), contact(12, 'phone', '+12025550144'), ...(choice === 'some' ? catalogContacts(12) : [])]));
-      if (path === '/api/v1/people/12') return Response.json(person(12, 4, [701, 703], 'Synthetic Source'), { headers: { ETag: '"person-12-r4"' } });
-      throw new Error(`Unexpected request: ${path}`);
-    }, participants, () => alsoSaved ? savedLabels() : { ...savedLabels(), participant_ids: [701, 703], addresses: [...savedLabels().addresses, addressFixture(703, 'email', 'other@example.org')] });
-    render(PersonSplitSteps, { controller, onOpenPerson: vi.fn() });
-    const guest = screen.getByRole('checkbox', { name: 'guest@example.org' });
-    if (alsoSaved) {
-      expect(document.getElementById(guest.getAttribute('aria-describedby')!)?.textContent).toBe('Also saved');
-    }
-    await fireEvent.click(guest);
-    if (choice === 'every') await fireEvent.click(screen.getByRole('checkbox', { name: 'other@example.org' }));
-    const [stays, moves] = within(screen.getByRole('group', { name: 'After the split' })).getAllByRole('region');
-    if (alsoSaved) expect(moves.textContent).toContain('guest@example.org');
-    else {
-      expect(within(stays).queryAllByRole('listitem').map(item => item.textContent)).toEqual(choice === 'every' ? [] : ['other@example.org']);
-      expect(within(moves).queryByText('+12025550144')).toBeNull();
-    }
-    const saved = screen.getByRole('region', { name: 'Saved on Synthetic Source' });
-    expect(within(saved).getByText('Saved on Synthetic Source now. The result shows where each one ends up.')).toBeDefined();
-    expect(within(saved).getAllByRole('listitem').map(item => item.textContent)).toEqual(alsoSaved ? ['+12025550144'] : ['kept@example.org', '+12025550144', ...(choice === 'some' ? ['Desk 4455 · Team hotline', 'plain@example.org'] : [])]);
-    controller.destroy();
-  });
-
-  it('shows the committed receipt and connects Retry to saved-address recovery', async () => {
-    const controller = new PersonMergeHistoryController(createAPIClient(vi.fn()), 7);
-    controller.committedResult = { result: result(true), receiptETags: { source: null, created: null } };
-    controller.receiptSavedError = 'Profile store busy';
-    const retry = vi.spyOn(controller, 'retryReceiptSaved').mockResolvedValue();
-    render(PersonSplitSteps, { controller, onOpenPerson: vi.fn() });
-    expect(screen.getByText("Saved addresses couldn't be loaded.")).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Open Synthetic Restored' })).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(retry).toHaveBeenCalledOnce();
     controller.destroy();
   });
 });

@@ -6,7 +6,12 @@ import mailboxAddresses from './mailbox-case-identities.test-fixture.json';
 import { describe, expect, it } from 'vitest';
 import type { ParticipantAddress, PersonMergeDetail, PersonMergeLabels } from '../api/generated/models';
 import { addressFixture, identityKeyFixture } from './merge-fixtures.test-support';
-import { addressText, mergeSummaryRow, mergeAddresses, mergedInAddresses, mergeSentence, savedAddresses } from './merge-labels';
+import { addressText, mergeSummaryRow as summary, mergeAddresses as addressesFor, mergedInAddresses as mergedInFor, mergeSentence, workspaceLabels } from './merge-labels';
+
+const mergeScopes = (value: Parameters<typeof addressesFor>[0]) => workspaceLabels([...(value.labels?.addresses ?? []), ...(value.labels?.profiles ?? []).flatMap(profile => profile.contact_points ?? [])]);
+const mergeSummaryRow = (value: Parameters<typeof summary>[0]) => summary(value, mergeScopes({ ...value, participants: value.participants ?? value.labels.participants ?? [] }));
+const mergeAddresses = (value: Parameters<typeof addressesFor>[0], side: Parameters<typeof addressesFor>[1]) => addressesFor(value, side, mergeScopes(value));
+const mergedInAddresses = (records: Parameters<typeof mergedInFor>[0]) => mergedInFor(records, workspaceLabels(records.flatMap(record => record.addresses)));
 
 const labelsOf = (addresses: ParticipantAddress[], count = addresses.length): PersonMergeLabels => ({ profiles: [], participant_ids: [...new Set(addresses.map(a => a.participant_id))], addresses, absorbed_address_count: count, incomplete: false });
 const merge = { id: 41, survivor_person_id: 7, absorbed_person_id: 9 } as PersonMergeDetail['merge'];
@@ -73,7 +78,8 @@ it('groups saved addresses by the keys supplied by the server', () => {
     { address_kind: 'email', original_value: 'Curated@example.org', identity_key: identityKeyFixture('email', 'curated@example.org') },
     { address_kind: 'language', original_value: 'en', identity_key: identityKeyFixture('language', 'en') },
   ];
-  expect(savedAddresses(points, new Set([identityKeyFixture('email', 'reader@example.org')])).map(addressText)).toEqual(['curated@example.org']);
+  const value = { merge, participants: [absorbed(701)], labels: { ...labelsOf([addressFixture(701, 'email', 'reader@example.org')]), profiles: [{ id: 9, participant_ids: [701], contact_points: points }] } };
+  expect(mergeAddresses(value, 'absorbed').map(addressText)).toEqual(['reader@example.org', 'curated@example.org']);
 });
 
 it.each([
@@ -97,15 +103,16 @@ it('numbers workspaces from the complete merge for current, saved, and merged-in
   const row = mergeSummaryRow(value);
   expect(row.addresses.get(701)?.map(addressText)).toEqual(expected);
   expect(mergeAddresses(value, 'absorbed').map(addressText)).toEqual(expected);
-  expect(mergedInAddresses([{ ...absorbed(701), merged_at: '2026-01-03T12:00:00Z', addresses }]).map(a => a.value)).toEqual(['Slack · Neri Bloom', 'Slack · Neri Bloom']);
+  expect(mergedInAddresses([{ ...absorbed(701), merged_at: '2026-01-03T12:00:00Z', addresses }]).map(a => a.value)).toEqual(expected);
   const both = [
     addressFixture(702, 'slack', 'T_A:U_SURVIVOR', { participant_display_name: 'Survivor', service_slug: 'slack', service_label: 'Slack', scope_kind: 'workspace', scope_value: 'T_A' }),
     addressFixture(701, 'slack', 'T_B:U_ABSORBED', { participant_display_name: 'Absorbed', service_slug: 'slack', service_label: 'Slack', scope_kind: 'workspace', scope_value: 'T_B' }),
   ];
   const complete = { merge, participants: [{ ...absorbed(702), origin_side: 'survivor' }, absorbed(701)], labels: labelsOf(both) };
   expect(mergeSummaryRow(complete).addresses.get(701)?.map(addressText)).toEqual(['Slack · Absorbed · workspace 2']);
-  const point = { identity_key: identityKeyFixture('slack', 'T_TWO:U_NERI', 'workspace', 'T_TWO'), address_kind: 'username', original_value: 'Neri Bloom', service_slug: 'slack', service_label: 'Slack', scope_kind: 'workspace', scope_value: 'T_TWO' };
-  expect(savedAddresses([point], new Set(), row.workspaceLabels).map(addressText)).toEqual(['Neri Bloom · Slack · workspace 2']);
+  const point = { identity_key: identityKeyFixture('slack', 'T_TWO:U_SAVED', 'workspace', 'T_TWO'), address_kind: 'username', original_value: 'Neri Bloom', service_slug: 'slack', service_label: 'Slack', scope_kind: 'workspace', scope_value: 'T_TWO' };
+  const withSaved = { ...value, labels: { ...value.labels, profiles: [{ id: 9, participant_ids: [701], contact_points: [point] }] } };
+  expect(mergeAddresses(withSaved, 'absorbed').map(addressText)).toContain('Neri Bloom · Slack · workspace 2');
 });
 
 it('renders migrated opaque Beeper IDs by their readable name', () => {
@@ -120,6 +127,5 @@ it('numbers accounts together for linked and saved addresses', () => {
   const value = { merge, participants: [absorbed(701)], labels };
   const row = mergeSummaryRow(value);
   expect(row.addresses.get(701)?.map(addressText)).toEqual(['WhatsApp · reader · account 2']);
-  expect(savedAddresses([saved], new Set(), row.workspaceLabels).map(addressText)).toEqual(['reader · WhatsApp · account 1']);
   expect(mergeAddresses(value, 'absorbed').map(addressText)).toEqual(['WhatsApp · reader · account 2', 'reader · WhatsApp · account 1']);
 });

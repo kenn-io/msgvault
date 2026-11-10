@@ -2,16 +2,14 @@ import {
   getPersonMerge as generatedGetPersonMerge,
   getPersonMergeSnapshot as generatedGetPersonMergeSnapshot,
   getPersonProfile as generatedGetPersonProfile,
-  getPersonStructuredProfile as generatedGetPersonStructuredProfile,
   listPersonMerges as generatedListPersonMerges,
   splitPersonMerge as generatedSplitPersonMerge,
 } from '../api/generated/api/api';
-import { mergedInAddresses, mergeSummaryRow, type MergedInAddress, type MergeLabels } from './merge-labels';
+import { mergedInAddresses, mergeSummaryRow, workspaceLabels, type AddressIdentity, type MergedInAddress, type MergeLabels } from './merge-labels';
 import { createBrowserRequestID } from '../api/request-id';
 import type { APIClient } from '../api/client';
 import type {
   Person as GeneratedPerson,
-  PersonContactPoint,
   PersonMergeDetail as GeneratedPersonMergeDetail,
   PersonMergeSnapshotResponse as GeneratedPersonMergeSnapshotResponse,
   PersonMergeSummary as GeneratedPersonMergeSummary,
@@ -43,11 +41,6 @@ interface ConfirmedSplitSnapshot {
   sourceETag: string;
   sourceRevision: number;
 }
-/** A profile's current saved contact points, or why they couldn't be read. */
-interface SavedRead {
-  points: PersonContactPoint[] | null;
-  error: string | null;
-}
 interface StaleSplitReloadTarget {
   sourcePersonID: number;
   mergeID: number;
@@ -61,6 +54,7 @@ export class PersonMergeHistoryController {
   historyError = $state<string | null>(null);
   pendingHistoryOffset = $state<number | null>(null);
   historyRows = $state(new Map<number, Awaited<ReturnType<typeof mergeSummaryRow>>>());
+  scopes = $state(new Map<string, string>());
   selectedMergeID = $state<number | null>(null);
   detail = $state<MergeDetail | null>(null);
   labels = $state<({ for: MergeDetail } & MergeLabels) | null>(null);
@@ -80,25 +74,16 @@ export class PersonMergeHistoryController {
   splitError = $state<string | null>(null);
   committedResult = $state<CommittedPersonSplit | null>(null);
   reconciliationError = $state<string | null>(null);
-  /** What the source profile saves now. Split can't say which of these move, so they are shown as they are. */
-  sourceSaved = $state<PersonContactPoint[] | null>(null);
-  sourceSavedError = $state<string | null>(null);
-  /** What each profile saves after the split, read fresh; a side is null until it loads. */
-  receiptSaved = $state<{ source: PersonContactPoint[] | null; created: PersonContactPoint[] | null }>({ source: null, created: null });
-  receiptSavedLoading = $state(false);
-  receiptSavedError = $state<string | null>(null);
   private readonly client: APIClient;
   private readonly reconcile: SplitReconciler;
   private historyAbort: AbortController | undefined;
   private detailAbort: AbortController | undefined;
   private snapshotAbort: AbortController | undefined;
   private splitAbort: AbortController | undefined;
-  private savedAbort: AbortController | undefined;
   private historyGeneration = 0;
   private detailGeneration = 0;
   private snapshotGeneration = 0;
   private splitGeneration = 0;
-  private savedGeneration = 0;
   private contextGeneration = 0;
   private retryKey: string | null = null;
   private retrySnapshot: ConfirmedSplitSnapshot | null = null;
@@ -110,6 +95,15 @@ export class PersonMergeHistoryController {
     this.client = client;
     this.personID = personID;
     this.reconcile = reconcile;
+  }
+  addScopes(identities: Omit<AddressIdentity, 'identity_key'>[]): void {
+    const next = workspaceLabels(identities, this.scopes);
+    if (next.size === this.scopes.size) return;
+    this.scopes = next;
+    this.historyRows = new Map(this.history.map(item => [item.merge.id, mergeSummaryRow(item, next)]));
+    if (this.detail && this.labels?.for === this.detail) {
+      this.labels = { ...mergeSummaryRow(this.detail, next), for: this.detail, names: this.labels.names };
+    }
   }
   get hasPreviousHistoryPage(): boolean {
     return this.historyOffset > 0;
@@ -127,7 +121,7 @@ export class PersonMergeHistoryController {
           merge_id: merge.id, participant_id: participant.participant_id, merged_at: merge.created_at,
           addresses: labels.addresses.filter(address => address.participant_id === participant.participant_id),
         };
-      })));
+      })), this.scopes);
   }
   get absorbedParticipants() {
     return (this.detail?.participants ?? []).filter((participant) => participant.origin_side === 'absorbed');
@@ -156,6 +150,7 @@ export class PersonMergeHistoryController {
     this.personID = personID;
     this.history = [];
     this.historyRows = new Map();
+    this.scopes = new Map();
     this.historyOffset = 0;
     this.historyHasNext = false;
     this.historyError = null;
@@ -190,7 +185,8 @@ export class PersonMergeHistoryController {
         this.history = merges.slice(0, PERSON_MERGE_HISTORY_LIMIT);
         this.historyOffset = response.data.offset;
         this.pendingHistoryOffset = null;
-        this.historyRows = new Map(this.history.map(item => [item.merge.id, mergeSummaryRow(item)]));
+        this.addScopes(this.history.flatMap(item => [...item.labels.addresses, ...item.labels.profiles.flatMap(profile => profile.contact_points ?? [])]));
+        this.historyRows = new Map(this.history.map(item => [item.merge.id, mergeSummaryRow(item, this.scopes)]));
       } else {
         this.history = retainedHistory;
         this.historyError = failureMessage(response.error, response.response.status);
@@ -305,7 +301,6 @@ export class PersonMergeHistoryController {
     this.splitError = null;
     this.sourcePerson = null;
     this.sourceETag = null;
-    this.clearSourceSaved();
     this.clearConfirmation();
     this.splitAbort?.abort();
     const request = new AbortController();
@@ -336,7 +331,6 @@ export class PersonMergeHistoryController {
     ++this.splitGeneration;
     this.splitOpen = false;
     this.sourceLoading = false;
-    this.clearSourceSaved();
     this.clearConfirmation();
   }
   setParticipantSelected(participantID: number, selected: boolean): void {
@@ -436,13 +430,11 @@ export class PersonMergeHistoryController {
           },
         };
         const committed = this.committedResult;
-        const saved = this.loadReceiptSaved(committed);
         const reconciled = this.reconcileCommitted(response.data, committed, () =>
           this.ownsSplit(request, generation, context, snapshot.mergeID),
         );
-        // The split is done, so Done and Open work while the profiles refresh and the receipt's reads load.
         this.splitPending = false;
-        await Promise.all([reconciled, saved]);
+        await reconciled;
         return;
       }
       this.clearConfirmation();
@@ -469,18 +461,6 @@ export class PersonMergeHistoryController {
     } finally {
       if (generation === this.splitGeneration) this.splitPending = false;
     }
-  }
-  /** Reads the source's saved addresses again, leaving the chosen addresses and the profile as they are. */
-  async retrySourceSaved(): Promise<void> {
-    const source = this.sourcePerson;
-    if (!source || this.splitBusy || this.committedResult) return;
-    await this.loadSourceSaved(source);
-  }
-  /** Reads both profiles' saved addresses for the receipt. Only reads: the split is already done. */
-  async retryReceiptSaved(): Promise<void> {
-    const committed = this.committedResult;
-    if (!committed || this.receiptSavedLoading || this.destroyed) return;
-    await this.loadReceiptSaved(committed);
   }
   async retryReconciliation(): Promise<void> {
     const committed = this.committedResult;
@@ -539,7 +519,6 @@ export class PersonMergeHistoryController {
   private applySplitState(state: { person: Person; etag: string; detail: MergeDetail }): void {
     this.sourcePerson = state.person;
     this.sourceETag = state.etag;
-    void this.loadSourceSaved(this.sourcePerson);
     this.detail = state.detail;
     void this.refreshLabels(this.detail);
     this.clearConfirmation();
@@ -550,7 +529,8 @@ export class PersonMergeHistoryController {
     const owns = () => !this.destroyed && !signal.aborted && this.detail === detail;
     if (!owns()) return;
     // What the merge recorded shows at once; each restored profile's name fills in as it loads.
-    const row = mergeSummaryRow(detail);
+    this.addScopes([...(detail.labels?.addresses ?? []), ...(detail.labels?.profiles ?? []).flatMap(profile => profile.contact_points ?? [])]);
+    const row = mergeSummaryRow(detail, this.scopes);
     this.historyRows = new Map(this.historyRows).set(detail.merge.id, row);
     this.labels = { for: detail, ...row, names: new Map(row.names) };
     await Promise.all([...new Set((detail.splits ?? []).map(split => split.new_person_id))].map(async id => {
@@ -564,54 +544,6 @@ export class PersonMergeHistoryController {
       if (!owns() || labels?.for !== detail) return;
       this.labels = { ...labels, names: name === undefined ? labels.names : new Map(labels.names).set(id, name), incomplete: labels.incomplete || incomplete };
     }));
-  }
-  private async loadReceiptSaved(committed: CommittedPersonSplit): Promise<void> {
-    const { request, generation } = this.beginSavedRead();
-    this.receiptSavedLoading = true;
-    this.receiptSavedError = null;
-    const options = { ...this.client, signal: request.signal };
-    const [source, created] = await Promise.all([
-      this.readSaved(committed.result.source_person.id, options),
-      this.readSaved(committed.result.new_person.id, options),
-    ]);
-    if (!this.ownsSaved(request, generation) || this.committedResult !== committed) return;
-    this.receiptSaved = { source: source.points, created: created.points };
-    this.receiptSavedError = source.error ?? created.error;
-    this.receiptSavedLoading = false;
-  }
-  private async readSaved(personID: number, options: APIClient & { signal: AbortSignal }): Promise<SavedRead> {
-    try {
-      const response = await generatedGetPersonStructuredProfile({ id: personID }, options);
-      if (response.data?.person.id === personID) return { points: response.data.contact_points ?? [], error: null };
-      return { points: null, error: failureMessage(response.error, response.response.status) };
-    } catch (cause) {
-      return { points: null, error: failureMessage(cause, 0) };
-    }
-  }
-  /** Saved addresses are optional: Split works while they load, and a late answer for a replaced source is dropped. */
-  private async loadSourceSaved(source: Person): Promise<void> {
-    const { request, generation } = this.beginSavedRead();
-    this.sourceSaved = null;
-    this.sourceSavedError = null;
-    const saved = await this.readSaved(source.id, { ...this.client, signal: request.signal });
-    if (!this.ownsSaved(request, generation) || this.sourcePerson !== source || this.committedResult) return;
-    this.sourceSaved = saved.points;
-    this.sourceSavedError = saved.error;
-  }
-  private clearSourceSaved(): void {
-    this.savedAbort?.abort();
-    ++this.savedGeneration;
-    this.sourceSaved = null;
-    this.sourceSavedError = null;
-  }
-  private beginSavedRead(): { request: AbortController; generation: number } {
-    this.savedAbort?.abort();
-    const request = new AbortController();
-    this.savedAbort = request;
-    return { request, generation: ++this.savedGeneration };
-  }
-  private ownsSaved(owner: AbortController, generation: number): boolean {
-    return !this.destroyed && !owner.signal.aborted && this.savedAbort === owner && generation === this.savedGeneration;
   }
   private async reconcileCommitted(
     result: SplitResult,
@@ -658,10 +590,6 @@ export class PersonMergeHistoryController {
     this.committedResult = null;
     this.reconciliationError = null;
     this.committedReconciled = false;
-    this.clearSourceSaved();
-    this.receiptSaved = { source: null, created: null };
-    this.receiptSavedLoading = false;
-    this.receiptSavedError = null;
     this.clearConfirmation();
   }
   private clearMergeContext(): void {
@@ -680,12 +608,10 @@ export class PersonMergeHistoryController {
     this.detailAbort?.abort();
     this.snapshotAbort?.abort();
     this.splitAbort?.abort();
-    this.savedAbort?.abort();
     ++this.historyGeneration;
     ++this.detailGeneration;
     ++this.snapshotGeneration;
     ++this.splitGeneration;
-    ++this.savedGeneration;
   }
   private ownsHistory(owner: AbortController, generation: number, context: number): boolean {
     return (

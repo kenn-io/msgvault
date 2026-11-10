@@ -3,7 +3,7 @@
   import { Button, Disclosure, Spinner } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, untrack, type Snippet } from 'svelte';
 
-  import { addressText, absorbedCardTitle, mergeAddresses, mergeSentence, mergeSummaryRow, mergeWorkspaceLabels, workspaceLabels, type MergedInAddress } from '../../directory/merge-labels';
+  import { addressText, absorbedCardTitle, mergeAddresses, mergeSentence, type AddressIdentity, type MergedInAddress } from '../../directory/merge-labels';
   import type { APIClient } from '../../api/client';
   import {
     PersonMergeHistoryController,
@@ -23,9 +23,9 @@
   interface Props {
     client: APIClient;
     personID: number;
-    scopeLabels?: Map<string, string>;
+    scopeSources?: Omit<AddressIdentity, 'identity_key'>[];
     /** Field history, under the merges, with what this page's merges brought in. */
-    fields?: Snippet<[(mergeID: number) => void, MergedInAddress[]]>;
+    fields?: Snippet<[(mergeID: number) => void, MergedInAddress[], Map<string, string>]>;
     onClose?: () => void;
     definitions?: { id: number; label: string; is_sensitive?: boolean }[];
     onOpenPerson?: (personID: number) => void;
@@ -33,7 +33,7 @@
   }
 
   let {
-    client, personID, fields, scopeLabels = new Map(), onClose = () => undefined,
+    client, personID, fields, scopeSources = [], onClose = () => undefined,
     definitions = [],
     onOpenPerson = () => undefined,
     onSplitCommitted = () => undefined
@@ -70,13 +70,12 @@
   }
 
   const labels = $derived(controller.labels?.for === controller.detail ? controller.labels : null);
-  const scopes = $derived(workspaceLabels(controller.mergedIn, scopeLabels));
-  const absorbedAddresses = $derived(controller.detail ? mergeAddresses(controller.detail, 'absorbed', mergeWorkspaceLabels(controller.detail, scopes)) : []);
+  $effect(() => controller.addScopes(scopeSources));
+  const absorbedAddresses = $derived(controller.detail ? mergeAddresses(controller.detail, 'absorbed', controller.scopes) : []);
   const absorbedAddress = $derived(addressText(absorbedAddresses[0]));
   function mergeTitle(merge: { id: number; absorbed_person_id: number; survivor_person_id: number }): string {
     if (!controller.historyRows.has(merge.id)) return 'Loading merge…';
-    const item = controller.history.find(item => item.merge.id === merge.id);
-    const address = controller.detail?.merge.id === merge.id && labels ? absorbedAddress : item ? mergeSummaryRow(item, scopes).absorbedAddress : undefined;
+    const address = controller.detail?.merge.id === merge.id && labels ? absorbedAddress : controller.historyRows.get(merge.id)?.absorbedAddress;
     const names = controller.historyRows.get(merge.id)?.names;
     return mergeSentence(names?.get(merge.absorbed_person_id), names?.get(merge.survivor_person_id), address);
   }
@@ -95,7 +94,7 @@
   // The merge step: the absorbed card is named as the title names it, and a card headed by its address doesn't list it again.
   const absorbedNames = $derived(controller.detail ? [labels?.names.get(controller.detail.merge.absorbed_person_id), labels?.names.get(controller.detail.merge.survivor_person_id)] as const : [undefined, undefined] as const);
   const absorbedTitle = $derived(controller.detail ? absorbedCardTitle(absorbedNames[0], absorbedNames[1], absorbedAddress) : '');
-  const survivorAddresses = $derived(controller.detail ? mergeAddresses(controller.detail, 'survivor') : []);
+  const survivorAddresses = $derived(controller.detail ? mergeAddresses(controller.detail, 'survivor', controller.scopes) : []);
   const onCards = (split: { id: number }) => [...absorbedAddresses, ...survivorAddresses].some(address => address.splitID === split.id);
   const tookAll = (split: { id: number }) => controller.absorbedParticipants.every(participant => participant.split_id === split.id);
   /** Splits the cards can't show: one that took no address listed on a card. */
@@ -179,7 +178,7 @@
         <Pager offset={controller.historyOffset} count={controller.history.length} hasNext={controller.hasNextHistoryPage}
           disabled={controller.historyLoading} onprevious={() => void controller.previousHistoryPage()} onnext={() => void controller.nextHistoryPage()} label="Merge history pages" />
       </section>
-      {@render fields?.(openMerge, controller.mergedIn)}
+      {@render fields?.(openMerge, controller.mergedIn, controller.scopes)}
     </div>
   {:else if controller.detailLoading}
     <p role="status"><Spinner size={12} label="Loading merge" /> Loading merge…</p>

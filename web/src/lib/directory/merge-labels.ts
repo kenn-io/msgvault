@@ -52,7 +52,7 @@ function containsWords(text: string, words: string): boolean {
 }
 
 /** The addresses one side's participants hold, in participant order, with the split that took each. */
-export function mergeAddresses(detail: MergeSides, side: 'absorbed' | 'survivor', workspaces = mergeWorkspaceLabels(detail)): MergeAddress[] {
+export function mergeAddresses(detail: MergeSides, side: 'absorbed' | 'survivor', workspaces: Map<string, string>): MergeAddress[] {
   const current = participantAddressMap(detail.labels, workspaces);
   return withSavedAddresses(detail, side, (detail.participants ?? []).filter(participant => participant.origin_side === side).flatMap(participant =>
     (current.get(participant.participant_id) ?? []).map((address, index) => ({
@@ -76,11 +76,10 @@ function withSavedAddresses(detail: MergeSides, side: 'absorbed' | 'survivor', a
  * email, phone, or username; one on WhatsApp, Slack, or a scope names them under it by the service's
  * registered label. Language is profile metadata, not an address. `seen` skips addresses already listed.
  */
-export function savedAddresses(points: (PersonMergeRecordedContactPoint | PersonContactPoint)[], seen = new Set<string>(), workspaces = new Map<string, string>()): (AddressIdentity & { title: string; detail?: string })[] {
-  const scopes = workspaceLabels(points, workspaces);
+function savedAddresses(points: (PersonMergeRecordedContactPoint | PersonContactPoint)[], seen: Set<string>, workspaces: Map<string, string>): (AddressIdentity & { title: string; detail?: string })[] {
   return points.filter(point => point.address_kind !== 'language').flatMap(point => {
     const service = point.service_slug || point.address_kind, scope_kind = point.scope_kind || '', scope_value = point.scope_value || '';
-    const scope = scopeText({ service_slug: service, scope_kind, scope_value }, scopes);
+    const scope = scopeText({ service_slug: service, scope_kind, scope_value }, workspaces);
     const detail = [service === point.address_kind ? '' : point.service_label, scope].filter(Boolean).join(' · ') || undefined;
     if (seen.has(point.identity_key)) return [];
     seen.add(point.identity_key);
@@ -89,10 +88,9 @@ export function savedAddresses(points: (PersonMergeRecordedContactPoint | Person
 }
 
 /** The server supplies recorded names and canonical identities for a page or selected merge. */
-export function mergeSummaryRow(item: { merge: PersonMergeDetail['merge']; labels: PersonMergeLabels; participants?: PersonMergeDetail['participants'] }, known = new Map<string, string>()): MergeRow {
+export function mergeSummaryRow(item: { merge: PersonMergeDetail['merge']; labels: PersonMergeLabels; participants?: PersonMergeDetail['participants'] }, workspaces: Map<string, string>): MergeRow {
   const labels = item.labels;
   const participants = item.participants ?? labels.participants ?? [];
-  const workspaces = mergeWorkspaceLabels({ ...item, participants }, known);
   const names = new Map(labels.profiles.flatMap(profile => profile.display_name ? [[profile.id, profile.display_name] as const] : []));
   const addresses = participantAddressMap(labels, workspaces);
   const rows = mergeAddresses({ participants, merge: item.merge, labels }, 'absorbed', workspaces);
@@ -127,13 +125,6 @@ export function workspaceLabels(addresses: Omit<AddressIdentity, 'identity_key'>
   return labels;
 }
 
-export function mergeWorkspaceLabels(detail: MergeSides, known = new Map<string, string>()): Map<string, string> {
-  return workspaceLabels([
-    ...(detail.labels?.addresses ?? []),
-    ...(detail.labels?.profiles ?? []).flatMap(profile => profile.contact_points ?? []),
-  ], known);
-}
-
 export function scopeText(identity: Omit<AddressIdentity, 'identity_key'>, workspaces: Map<string, string>): string {
   return identity.scope_value ? workspaces.get(JSON.stringify([identity.scope_kind || 'scope', identity.scope_value])) ?? '' : identity.scope_kind ?? '';
 }
@@ -152,8 +143,8 @@ export function distinctLabels(ids: number[], label: (id: number) => string): Ma
 interface MergedInParticipant { merge_id: number; participant_id: number; merged_at: string; addresses: ParticipantAddress[] }
 
 /** The addresses each current member brought in with its newest merge. */
-export function mergedInAddresses(records: MergedInParticipant[]): MergedInAddress[] {
-  return records.flatMap(record => record.addresses.map(value => participantAddress(value, new Map())).map(address => ({
+export function mergedInAddresses(records: MergedInParticipant[], workspaces: Map<string, string>): MergedInAddress[] {
+  return records.flatMap(record => record.addresses.map(value => participantAddress(value, workspaces)).map(address => ({
     ...address, mergeID: record.merge_id, participantID: record.participant_id,
     mergedAt: record.merged_at, value: addressText(address)!,
   })));
