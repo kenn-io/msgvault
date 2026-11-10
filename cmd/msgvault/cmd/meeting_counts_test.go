@@ -178,7 +178,10 @@ func TestMeetingCountCalendarRefresh(t *testing.T) {
 			case "calendar zone":
 				requirements.NoError(f.st.UpdateSourceSyncConfig(f.sources["calendar"], `{"calendar_id":"calendar@example.org","time_zone":"America/New_York"}`))
 			case "recurrence":
-				requirements.NoError(f.st.UpsertMessageRawWithFormat(event, []byte(strings.Replace(raw, `,"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]`, "", 1)), "gcal_json"))
+				requirements.NoError(f.st.UpsertMessageRawWithFormat(event, []byte(strings.Replace(raw, "COUNT=2", "COUNT=3", 1)), "gcal_json"))
+				staleness := cacheNeedsBuild(f.path, f.cache)
+				assertions.True(staleness.NeedsBuild)
+				assertions.True(staleness.HasRelatedRowDrift)
 			}
 			if kind != "occurrence dates" && kind != "all day" {
 				_, err = buildCache(f.path, f.cache, false)
@@ -193,7 +196,8 @@ func TestMeetingCountCalendarRefresh(t *testing.T) {
 				return
 			}
 			if kind == "recurrence" {
-				assertions.Equal([]string{"uid:weekly@example.org/"}, readCachedMeetingKeys(t, f.cache)[note])
+				assertions.False(cacheNeedsBuild(f.path, f.cache).NeedsBuild)
+				assertions.Equal([]string{"uid:weekly@example.org/20260314T100000Z"}, readCachedMeetingKeys(t, f.cache)[note])
 				return
 			}
 			db, err := sql.Open("duckdb", "")
