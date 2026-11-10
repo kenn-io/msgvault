@@ -63,7 +63,7 @@
     const line = provenance(row.source, row.updated_at ?? row.reviewed_at ?? '', undefined, { times: [['Reviewed', row.reviewed_at ?? undefined]] });
     const kind = row.raw_related_value.startsWith('urn:uuid:') ? '' : row.value_kind === 'uri' ? 'Reference' : 'Text';
     const lead = [kind, sentenceCase(row.raw_related_type)].filter(Boolean).join(' · ');
-    return { text: lead ? `${lead} · ${line.text.charAt(0).toLowerCase()}${line.text.slice(1)}` : line.text, title: line.title };
+    return { text: [lead ? `${lead} · ${line.text.charAt(0).toLowerCase()}${line.text.slice(1)}` : line.text, row.raw_related_value.startsWith('urn:uuid:') ? row.raw_related_value : ''].filter(Boolean).join(' · '), title: line.title };
   }
 
   function counterpart(view: PersonRelationshipView): string {

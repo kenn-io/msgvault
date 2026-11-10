@@ -88,18 +88,21 @@ describe('RelationshipsTab', () => {
   });
 
   it.each([
-    ['uri', 'urn:uuid:11111111-2222-3333-4444-555555555555', 'Unknown contact', 'vcard_import', 'Friend · from a contact file · Jul 31'],
-    ['text', 'Alex', 'Alex', 'carddav_import', 'Text · Friend · from CardDAV contacts · Jul 31'],
-  ])('describes an imported %s value', async (valueKind, value, title, source, description) => {
+    ['uri', 'urn:uuid:11111111-2222-3333-4444-555555555555', null, 'Unknown contact', 'vcard_import', 'Friend · from a contact file · Jul 31 · urn:uuid:11111111-2222-3333-4444-555555555555'],
+    ['uri', 'urn:uuid:11111111-2222-3333-4444-555555555555', 8, 'Matched contact', 'vcard_import', 'Friend · from a contact file · Jul 31 · urn:uuid:11111111-2222-3333-4444-555555555555'],
+    ['text', 'Alex', null, 'Alex', 'carddav_import', 'Text · Friend · from CardDAV contacts · Jul 31'],
+  ])('describes imported %s value %s with match %s', async (valueKind, value, matched, title, source, description) => {
     vi.setSystemTime(new Date(2026, 10, 6, 12));
     try {
     const client = createAPIClient(async () => Response.json({ reviews: [{
-      id: 1, person_id: 7, raw_related_value: value, raw_related_type: 'friend', value_kind: valueKind, status: 'pending',
+      id: 1, person_id: 7, raw_related_value: value, raw_related_type: 'friend', value_kind: valueKind, status: 'pending', matched_person_id: matched,
       source, created_at: '2026-07-31T12:00:00Z', updated_at: '2026-07-31T12:00:00Z',
     }] }));
-    render(RelationshipsTab, { client, controller: new DirectoryEntityController(client, 7), personID: 7 });
+    const onOpenPerson = vi.fn();
+    render(RelationshipsTab, { client, controller: new DirectoryEntityController(client, 7), personID: 7, onOpenPerson });
     const row = (await screen.findByText(title)).closest('.detail-row') as HTMLElement;
     expect(row.querySelector('.description')?.textContent).toBe(description);
+    if (matched) { await fireEvent.click(within(row).getByRole('button', { name: 'Open matched person' })); expect(onOpenPerson).toHaveBeenCalledWith(matched); }
     } finally { vi.useRealTimers(); }
   });
 
