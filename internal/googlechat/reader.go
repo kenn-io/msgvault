@@ -33,7 +33,6 @@ type groupPart struct {
 type exportReader struct {
 	parts       []*part
 	groups      map[string][]groupPart
-	profilePath string
 	memberships map[string]bool
 	entries     int
 }
@@ -146,9 +145,6 @@ func openExport(ctx context.Context, roots []string, owner string) (reader *expo
 				if err != nil || email != owner {
 					return errors.New("googlechat: supplied owner profile disagrees with --me")
 				}
-			}
-			if reader.profilePath == "" {
-				reader.profilePath = filepath.ToSlash(filepath.Join(p.prefix, path))
 			}
 			for _, membership := range info.Memberships {
 				if membership.State == "MEMBER_JOINED" {

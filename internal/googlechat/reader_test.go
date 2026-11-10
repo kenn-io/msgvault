@@ -1,14 +1,12 @@
 package googlechat
 
 import (
-	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestGoogleChatJSONSizeLimit(t *testing.T) {
@@ -99,17 +97,4 @@ func TestGoogleChatDates(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestGoogleChatMissingProfilePartKeepsOwnershipUnknown(t *testing.T) {
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	write(t, root, "Groups/DM a/messages.json", fixtureMessages(t))
-	require.NoError(os.MkdirAll(filepath.Join(root, "Users/User synthetic"), 0700))
-	_, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{root}})
-	require.NoError(err)
-	var config sql.NullString
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT sync_config FROM sources`).Scan(&config))
-	assert.NotContains(t, config.String, "owner_profile_path")
 }

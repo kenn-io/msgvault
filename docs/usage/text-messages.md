@@ -540,9 +540,7 @@ messages remain archived and searchable, but timestamp-based analytical-cache li
 and analytics exclude them. It does not infer reply links from topic IDs or identify people by display name. Roster
 members remain conversation members; they never become message recipients, even
 in two-person DMs. Sender and body search remain available. Relative input-file
-paths and group metadata are kept once on each conversation. Owner profiles are
-validated while reading; only one relative profile path is retained on the source,
-without profile JSON or host directory paths.
+paths and group metadata are kept once on each conversation. Owner profiles are validated while reading.
 
 All supplied parts are indexed before importing. Limits are 128 roots, 100,000
 indexed entries, 64 MiB per JSON file, and 250 MiB per attachment. Media matches

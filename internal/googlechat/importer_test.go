@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -375,7 +376,7 @@ func TestImportGoogleChatConversationKindRequiresRosterEvidence(t *testing.T) {
 		{"missing roster", "DM test", "", "chat"},
 		{"empty roster", "DM test", `{"members":[]}`, "chat"},
 		{"partial roster", "DM test", `{"members":[{"email":"owner@example.com"}]}`, "chat"},
-		{"two person DM", "DM test", `{"members":[{"email":"owner@example.com"},{"email":"peer@example.com"}]}`, "direct_chat"},
+		{"two person DM", "DM test", `{"members":[{"email":"owner@example.com"},{"email":"peer@example.com"}]}`, "chat"},
 		{"group DM", "DM test", `{"members":[{"email":"owner@example.com"},{"email":"peer@example.com"},{"email":"third@example.com"}]}`, "group_chat"},
 		{"space", "Space test", "", "group_chat"},
 	} {
@@ -399,7 +400,7 @@ func TestImportGoogleChatConversationKindRequiresRosterEvidence(t *testing.T) {
 				_, err = Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{root}})
 				require.NoError(err)
 				require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT conversation_type FROM conversations`).Scan(&kind))
-				assert.Equal("direct_chat", kind)
+				assert.Equal("chat", kind)
 			}
 		})
 	}
@@ -465,9 +466,8 @@ func TestImportGoogleChatContainerEvidenceSurvivesSparseReplay(t *testing.T) {
 	opts.Roots = []string{partial}
 	_, err = Import(t.Context(), st, opts)
 	require.NoError(err)
-	var group, profile sql.NullString
+	var group sql.NullString
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT metadata FROM conversations`).Scan(&group))
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT sync_config FROM sources`).Scan(&profile))
 	var evidence struct {
 		Files []provenance `json:"group_files"`
 	}
@@ -476,10 +476,7 @@ func TestImportGoogleChatContainerEvidenceSurvivesSparseReplay(t *testing.T) {
 		{Path: "Groups/DM a/group_info.json", Data: groupRaw},
 		{Path: "Groups/DM a/messages.json"},
 	}, evidence.Files, "relative container provenance is retained once")
-	assert.JSONEq(`{"owner_profile_path":"Users/User synthetic/user_info.json"}`, profile.String)
-	assert.NotContains(profile.String, "unknown_profile", "owner profile JSON is validated without being retained")
 	assert.NotContains(group.String, full)
-	assert.NotContains(profile.String, full)
 	var metadata string
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT metadata FROM messages ORDER BY id LIMIT 1`).Scan(&metadata))
 	for _, key := range []string{"provider_record", "group_info.json", "messages.json"} {
@@ -600,9 +597,6 @@ func TestImportGoogleChatRootAliasesKeepProfilesAndMedia(t *testing.T) {
 	summary, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{filepath.Join(root, "Takeout/Google Chat/Groups"), root, filepath.Join(root, "Takeout/Google Chat")}, AttachmentsDir: t.TempDir()})
 	require.NoError(err)
 	assert.Equal(1, summary.AttachmentsStored)
-	var config string
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT sync_config FROM sources`).Scan(&config))
-	assert.Contains(config, "owner_profile_path")
 }
 
 func TestImportGoogleChatReportsUnknownRosterMembers(t *testing.T) {
@@ -729,4 +723,30 @@ func cancelAfterCommittedMessage(t *testing.T, st *store.Store, opts ImportOptio
 	store.ConfigureSQLLogging(store.SQLLogOptions{SlowMs: -1})
 	defer store.ConfigureSQLLogging(store.SQLLogOptions{})
 	return Import(ctx, st, opts)
+}
+
+func TestImportGoogleChatRosterDoesNotProveDelivery(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	write(t, root, "Groups/DM a/messages.json", fixtureMessages(t))
+	write(t, root, "Groups/DM a/group_info.json", `{"members":[{"email":"owner@example.com"},{"email":"peer@example.com"}]}`)
+	opts := ImportOptions{Me: "owner@example.com", Roots: []string{root}, AttachmentsDir: t.TempDir()}
+	_, err := Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	write(t, root, "Groups/DM a/File-example.txt", "synthetic")
+	_, err = Import(t.Context(), st, opts)
+	require.NoError(t, err)
+
+	var messageID, participantID, attachmentID int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&messageID))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM participants WHERE email_address='peer@example.com'`).Scan(&participantID))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM attachments`).Scan(&attachmentID))
+	scope := personscope.Scope{ParticipantIDs: []int64{participantID}, Directions: []personscope.Direction{personscope.ToPerson}, IncludeUnclassifiedRosterRows: true}
+	provenance, err := st.PersonProvenanceForMessages(t.Context(), []int64{messageID}, scope)
+	require.NoError(t, err)
+	require.NotNil(t, provenance[messageID])
+	assert.Equal(t, []personscope.Role{personscope.RoleConversationMember}, provenance[messageID].Roles)
+	rows, err := st.FilenameSuggestionRowsContext(t.Context(), []int64{attachmentID}, store.FilenameSuggestionScope{Person: &scope})
+	require.NoError(t, err)
+	assert.Empty(t, rows)
 }

@@ -52,25 +52,6 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 			retErr = st.CompleteSyncContext(cleanup, syncID, "")
 		}
 	}()
-	if reader.profilePath != "" {
-		config := map[string]jsontext.Value{}
-		if source.SyncConfig.Valid {
-			if err := json.Unmarshal([]byte(source.SyncConfig.String), &config); err != nil {
-				return summary, err
-			}
-		}
-		config["owner_profile_path"], err = json.Marshal(reader.profilePath)
-		if err != nil {
-			return summary, err
-		}
-		raw, err := json.Marshal(config)
-		if err != nil {
-			return summary, err
-		}
-		if err := st.UpdateSourceSyncConfig(ctx, source.ID, string(raw)); err != nil {
-			return summary, err
-		}
-	}
 	resolve := func(p person) (int64, error) {
 		email, _ := NormalizeOwner(p.Email)
 		if email == "" {
@@ -118,17 +99,10 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 		}
 	}
 	kind := "group_chat"
-	if strings.HasPrefix(group, "DM ") {
-		// The folder prefix alone does not establish a two-person roster.
-		switch len(info.Members) {
-		case 0, 1:
-			kind = "chat"
-		case 2:
-			kind = "direct_chat"
-		}
+	if strings.HasPrefix(group, "DM ") && len(info.Members) <= 2 {
+		kind = "chat"
 	}
-	preserveKind := strings.HasPrefix(group, "DM ") && len(info.Members) < 2
-	conversationID, err := st.EnsureConversationWithTypePolicyContext(ctx, sourceID, group, kind, info.Name, preserveKind)
+	conversationID, err := st.EnsureConversationWithTypeContext(ctx, sourceID, group, kind, info.Name)
 	if err != nil {
 		return false, err
 	}
@@ -266,7 +240,7 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 		snippet := textutil.PrefixRunes(strings.TrimSpace(m.Text), 200)
 		id, err = st.PersistMessageContext(ctx, &store.MessagePersistData{
 			Message:      &store.Message{SourceID: sourceID, SourceMessageID: m.ID, MessageType: store.MessageTypeGoogleChat, SentAt: sql.NullTime{Time: sent, Valid: !sent.IsZero()}, SenderID: sql.NullInt64{Int64: sender, Valid: sender != 0}, IsFromMe: sender != 0 && email == owner, Snippet: sql.NullString{String: snippet, Valid: snippet != ""}, SizeEstimate: int64(len(record))},
-			Conversation: &store.ConversationPersistData{SourceConversationID: group, ConversationType: kind, Title: info.Name, Participants: refs, PreserveExistingType: preserveKind, PreserveExistingParticipants: true},
+			Conversation: &store.ConversationPersistData{SourceConversationID: group, ConversationType: kind, Title: info.Name, Participants: refs, PreserveExistingParticipants: true},
 			RawMIME:      record, RawFormat: "google_chat_json", BodyText: sql.NullString{String: m.Text, Valid: m.Text != ""}, Metadata: &sql.NullString{String: string(metadata), Valid: true}, Recipients: recipients, MIMEAttachmentReplacement: replacement, FTS: &store.FTSDoc{Body: m.Text, FromAddr: email},
 		})
 		if err != nil {
