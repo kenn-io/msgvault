@@ -93,18 +93,3 @@ func TestMeetingSuggestionsRejectOverBudgetEvidence(t *testing.T) {
 	_, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 10)
 	require.ErrorIs(t, err, ErrQueryTooBroad)
 }
-
-func TestMeetingSuggestionsExcludeUnsaveableCopies(t *testing.T) {
-	st := newRFC822IDBackfillBackendStore(t)
-	for i := range 201 {
-		id := fmt.Sprintf("copy-%d", i)
-		calendarFixture(t, st, id, singleLinkRaw(id, "crowded@example.org"))
-	}
-	_, safe := calendarFixture(t, st, "safe", singleLinkRaw("safe", "safe@example.org"))
-	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"startsAt":"2027-03-14T10:00:00Z"}}`)
-	page, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 10)
-	require.NoError(t, err)
-	require.Len(t, page.Suggestions, 1)
-	assert.Equal(t, fmt.Sprintf("evt:%d", safe), page.Suggestions[0].Ref)
-	require.NoError(t, st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: safe}))
-}

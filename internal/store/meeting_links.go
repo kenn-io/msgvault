@@ -38,17 +38,11 @@ type linkOccurrence struct {
 	Start, End time.Time
 }
 
-type meetingProspective struct {
-	memberID   int64
-	occurrence linkOccurrence
-}
-
 type reboundReader struct {
 	loggedReader
 
 	dialect     Dialect
 	countOnly   bool
-	prospective *meetingProspective
 	expansions  map[meetingExpansionKey]meetingReadResult[[]linkOccurrence]
 	occurrences map[OccurrenceRef]meetingReadResult[linkOccurrence]
 }
@@ -447,11 +441,17 @@ candidatesLoop:
 		}
 	}
 	for _, o := range out {
-		if o.Identity != out[0].Identity || key.Kind == "google_event_id" && slices.ContainsFunc(rows, func(row CalendarEventRow) bool { return row.ICalUID != o.Identity.ICalUID && (row.ICalUID != "" || row.Event.Kind != meetingExceptionKind) }) {
+		if o.Identity != out[0].Identity || key.Kind == "google_event_id" && hasOtherICalUID(rows, o.Identity.ICalUID) {
 			return nil, nil, nil
 		}
 	}
 	return out, source, nil
+}
+
+func hasOtherICalUID(rows []CalendarEventRow, uid string) bool {
+	return slices.ContainsFunc(rows, func(row CalendarEventRow) bool {
+		return row.ICalUID != uid && (row.ICalUID != "" || row.Event.Kind != meetingExceptionKind)
+	})
 }
 
 type meetingLinkDecision struct {
@@ -487,9 +487,6 @@ func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, m
 	decisions, err := readMeetingLinkDecisions(ctx, r, memberID)
 	if err != nil {
 		return nil, nil, nil, nil, err
-	}
-	if r.prospective != nil && r.prospective.memberID == memberID {
-		decisions = append(decisions, meetingLinkDecision{Ref: r.prospective.occurrence.Ref, Decision: "link"})
 	}
 	var out []linkOccurrence
 	var stale []linkOccurrence

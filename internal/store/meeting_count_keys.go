@@ -114,6 +114,7 @@ func (s *Store) meetingCountOccurrences(ctx context.Context, r reboundReader, me
 
 // sourceMeetingCountOccurrence uses an archived series to prove source evidence
 // even after the recurrence no longer generates that occurrence.
+//
 //nolint:nilnil // Missing archived evidence is a valid result.
 func sourceMeetingCountOccurrence(key meetingLinkKey, rows []CalendarEventRow) (*linkOccurrence, error) {
 	var instance calrecur.Identity

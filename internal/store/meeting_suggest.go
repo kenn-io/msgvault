@@ -327,16 +327,6 @@ func (s *Store) undecidedMeetingSuggestions(ctx context.Context, r reboundReader
 		}
 		// Each member's matched identities also mark the pairs already offered.
 		if !identities[suggestion.MemberMessageID][o.Identity] {
-			prospective := r.withMeetingCache()
-			prospective.prospective = &meetingProspective{memberID: suggestion.MemberMessageID, occurrence: o}
-			checkBudget := calrecur.RequestReadBudget
-			_, err := s.meetingNoteRecord(ctx, prospective, suggestion.MemberMessageID, &checkBudget)
-			if errors.Is(err, ErrQueryTooBroad) {
-				continue
-			}
-			if err != nil {
-				return nil, err
-			}
 			identities[suggestion.MemberMessageID][o.Identity] = true
 			filtered = append(filtered, suggestion)
 		}
