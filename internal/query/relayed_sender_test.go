@@ -13,6 +13,7 @@ func TestDuckDBRelayedSenderEnvelope(t *testing.T) {
 	b := NewTestDataBuilder(t)
 	b.AddSource("reader@example.test")
 	author := b.AddParticipant("alice@example.test", "example.test", "alice")
+	b.participants[0].PhoneNumber = "+12025550199"
 	message := b.AddMessage(MessageOpt{Subject: "Notice", SenderID: &author})
 	b.AddRecipientWithEnvelope(message, author, "from", "GitHub", "notifications@github.com")
 	dir, cleanup := b.Build()
@@ -31,6 +32,15 @@ func TestDuckDBRelayedSenderEnvelope(t *testing.T) {
 		rows, err := engine.ListMessages(t.Context(), MessageFilter{Sender: "alice@example.test", SenderName: name})
 		require.NoError(t, err)
 		assert.Empty(t, rows)
+	}
+	for _, name := range []string{"", "GitHub"} {
+		filter := MessageFilter{Sender: "+12025550199", SenderName: name}
+		rows, err := engine.ListMessages(t.Context(), filter)
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		targets, err := engine.GetDeletionTargetsByFilter(t.Context(), filter)
+		require.NoError(t, err)
+		require.Len(t, targets, 1)
 	}
 	results, err = engine.SearchFast(t.Context(), search.Parse("from:@example.test"), MessageFilter{}, 10, 0)
 	require.NoError(t, err)

@@ -46,6 +46,8 @@ func TestRelayedEnvelopeFiltersAndDeletion(t *testing.T) {
 	require.NoError(t, err)
 	sender, err := st.EnsureParticipant("author@example.test", "Author", "example.test")
 	require.NoError(t, err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE participants SET phone_number=? WHERE id=?`), "+12025550199", sender)
+	require.NoError(t, err)
 	_, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{
 		Message:    &store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "relay", MessageType: "email", SenderID: sql.NullInt64{Int64: sender, Valid: true}},
 		Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{sender}, DisplayNames: []string{"Author"}, EmailAddresses: []string{"relay@service.test"}}},
@@ -57,7 +59,7 @@ func TestRelayedEnvelopeFiltersAndDeletion(t *testing.T) {
 		for _, tc := range []struct {
 			address string
 			want    int
-		}{{"author@example.test", 0}, {"relay@service.test", 1}} {
+		}{{"author@example.test", 0}, {"relay@service.test", 1}, {"+12025550199", 1}} {
 			filter := query.MessageFilter{Sender: tc.address, SenderName: name}
 			rows, err := engine.ListMessages(t.Context(), filter)
 			require.NoError(t, err)

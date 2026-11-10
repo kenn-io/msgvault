@@ -959,8 +959,10 @@ func senderMatchSQL(filter MessageFilter, limit int) (string, []any) {
 		return "", nil
 	}
 	guard := senderEnvelopeAbsent("message_recipients", "email_address", "mr_filter_from.message_id")
-	address := `(mr_filter_from.email_address = ? OR ((p_filter_from.email_address = ? OR p_filter_from.phone_number = ?) AND ` + guard + `))`
-	directAddress := `(p_direct_sender.email_address = ? OR p_direct_sender.phone_number = ?)`
+	address := `(mr_filter_from.email_address = ? OR (p_filter_from.email_address = ? AND ` + guard + `) OR p_filter_from.phone_number = ?)`
+	directAddress := func(messageID string) string {
+		return `((p_direct_sender.email_address = ? AND ` + senderEnvelopeAbsent("message_recipients", "email_address", messageID) + `) OR p_direct_sender.phone_number = ?)`
+	}
 	fromName, directName := "", ""
 	fromArgs := []any{filter.Sender, filter.Sender, filter.Sender}
 	directArgs := []any{filter.Sender, filter.Sender}
@@ -976,8 +978,7 @@ func senderMatchSQL(filter MessageFilter, limit int) (string, []any) {
             WHERE mr_filter_from.recipient_type = 'from' AND mr_filter_from.email_address = ?` + fromName + `
             UNION ALL SELECT mr_filter_from.message_id AS id FROM message_recipients mr_filter_from
             JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
-            WHERE mr_filter_from.recipient_type = 'from' AND (p_filter_from.email_address = ? OR p_filter_from.phone_number = ?)
-            AND ` + guard + fromName
+            WHERE mr_filter_from.recipient_type = 'from' AND ((p_filter_from.email_address = ? AND ` + guard + `) OR p_filter_from.phone_number = ?)` + fromName
 		fromArgs = []any{filter.Sender}
 		if filter.SenderName != "" {
 			fromArgs = append(fromArgs, filter.SenderName)
@@ -987,13 +988,13 @@ func senderMatchSQL(filter MessageFilter, limit int) (string, []any) {
 			fromArgs = append(fromArgs, filter.SenderName)
 		}
 		direct := `SELECT m_direct.id FROM messages m_direct WHERE m_direct.sender_id IN (
-   SELECT id FROM participants p_direct_sender WHERE ` + directAddress + directName + `) AND ` + senderEnvelopeAbsent("message_recipients", "email_address", "m_direct.id")
+   SELECT id FROM participants p_direct_sender WHERE ` + directAddress("m_direct.id") + directName + `)`
 		return senderCandidateSQL(direct, from, directArgs, fromArgs, limit)
 	}
 	return `(EXISTS (SELECT 1 FROM message_recipients mr_filter_from
   JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
   WHERE mr_filter_from.message_id = m.id AND mr_filter_from.recipient_type = 'from' AND ` + address + fromName + `)
-  OR (EXISTS (SELECT 1 FROM participants p_direct_sender WHERE p_direct_sender.id = m.sender_id AND ` + directAddress + directName + `) AND ` + senderEnvelopeAbsent("message_recipients", "email_address", "m.id") + `))`, append(fromArgs, directArgs...)
+  OR (EXISTS (SELECT 1 FROM participants p_direct_sender WHERE p_direct_sender.id = m.sender_id AND ` + directAddress("m.id") + directName + `)))`, append(fromArgs, directArgs...)
 }
 
 // senderCandidateSQL lists every sender message ID for a negative limit. A positive limit instead

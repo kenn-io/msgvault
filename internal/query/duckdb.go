@@ -1547,8 +1547,8 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 		}
 		conditions = append(conditions, `(EXISTS (SELECT 1 FROM mr JOIN p ON p.id = mr.participant_id
             WHERE mr.message_id = msg.id AND mr.recipient_type = 'from'
-            AND (mr.envelope_address = ? OR ((p.email_address = ? OR p.phone_number = ?) AND `+guard+`))`+fromName+`)
-            OR (EXISTS (SELECT 1 FROM p WHERE p.id = msg.sender_id AND (p.email_address = ? OR p.phone_number = ?)`+directName+`) AND `+guard+`))`)
+            AND (mr.envelope_address = ? OR (p.email_address = ? AND `+guard+`) OR p.phone_number = ?)`+fromName+`)
+            OR EXISTS (SELECT 1 FROM p WHERE p.id = msg.sender_id AND ((p.email_address = ? AND `+guard+`) OR p.phone_number = ?)`+directName+`))`)
 		args = append(args, senderArgs...)
 		args = append(args, directArgs...)
 	} else if filter.MatchesEmpty(ViewSenders) {
