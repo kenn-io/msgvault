@@ -20,6 +20,7 @@ type ParticipantContactObservation struct {
 	ProviderUserID       *string            `json:"provider_user_id,omitzero" nullable:"false"`
 	OriginalValue        string             `json:"original_value"`
 	NormalizedValue      string             `json:"normalized_value"`
+	IdentityKey          string             `json:"identity_key"`
 	Normalization        string             `json:"normalization"`
 	NormalizationVersion int                `json:"normalization_version"`
 	ObservedAt           *time.Time         `json:"observed_at,omitempty"`
@@ -410,6 +411,27 @@ func (s *Store) listObservationsForPersonTx(
 	return queryProfileRowsTx(ctx, tx, query, scanParticipantObservation, personID)
 }
 
+// currentParticipantObservationsTx reads current observations for a merge page.
+func currentParticipantObservationsTx(ctx context.Context, tx *loggedTx, ids []int64) ([]ParticipantContactObservation, error) {
+	var observations []ParticipantContactObservation
+	const chunkSize = 300
+	for start := 0; start < len(ids); start += chunkSize {
+		chunk := ids[start:min(start+chunkSize, len(ids))]
+		args := make([]any, len(chunk))
+		for i, id := range chunk {
+			args[i] = id
+		}
+		query := participantObservationSelect + fmt.Sprintf(` WHERE o.participant_id IN (%s)
+			AND o.active_until IS NULL AND o.superseded_at IS NULL ORDER BY o.participant_id, o.id`, placeholders(len(chunk)))
+		rows, err := queryProfileRowsTx(ctx, tx, query, scanParticipantObservation, args...)
+		if err != nil {
+			return nil, fmt.Errorf("read merge participant observations: %w", err)
+		}
+		observations = append(observations, rows...)
+	}
+	return observations, nil
+}
+
 func (s *Store) FindObservationsByAddressContext(
 	ctx context.Context, query ContactPointQuery,
 ) ([]ParticipantContactObservation, error) {
@@ -758,6 +780,7 @@ func scanParticipantObservation(row scanner) (*ParticipantContactObservation, er
 	observation.ServiceSlug = nullStringPtr(serviceSlug)
 	observation.ScopeKind = nullStringPtr(scopeKind)
 	observation.ScopeValue = nullStringPtr(scopeValue)
+	observation.IdentityKey = contactPointIdentityKey(observation.AddressKind, observation.ServiceSlug, observation.ScopeKind, observation.ScopeValue, observation.NormalizedValue)
 	observation.ProviderUserID = nullStringPtr(providerUserID)
 	observation.ObservedAt = nullTimePtr(observedAt)
 	if err := env.apply(&observation.Envelope); err != nil {

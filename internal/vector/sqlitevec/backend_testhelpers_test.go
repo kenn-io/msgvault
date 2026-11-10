@@ -115,7 +115,8 @@ CREATE TABLE message_recipients (
     id INTEGER PRIMARY KEY,
     message_id INTEGER NOT NULL,
     recipient_type TEXT NOT NULL,
-    participant_id INTEGER NOT NULL
+    participant_id INTEGER NOT NULL,
+    is_relayed BOOLEAN NOT NULL DEFAULT FALSE
 );`
 	_, err = db.ExecContext(t.Context(), schema)
 	require.NoError(t, err, "schema")

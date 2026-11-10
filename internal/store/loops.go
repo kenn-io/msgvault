@@ -781,12 +781,15 @@ func (s *Store) LoopMessageEvidenceContext(ctx context.Context, id int64, versio
 		return e, "", false, err
 	}
 	token = rand.Text()
-	_, err = s.db.ExecContext(ctx, `INSERT INTO loop_message_evidence(message_id,rule_version,token,facts)
+	err = s.withSourceMaintenanceGateContext(ctx, func(tx *loggedTx) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO loop_message_evidence(message_id,rule_version,token,facts)
  SELECT id, ?, ?, NULL FROM messages WHERE id = ?
  ON CONFLICT(message_id) DO UPDATE SET
   rule_version = excluded.rule_version,
   token = CASE WHEN loop_message_evidence.rule_version <> excluded.rule_version THEN excluded.token ELSE loop_message_evidence.token END,
   facts = CASE WHEN loop_message_evidence.rule_version <> excluded.rule_version THEN NULL ELSE loop_message_evidence.facts END`, version, token, id)
+		return err
+	})
 	if err != nil {
 		return e, "", false, err
 	}

@@ -181,4 +181,5 @@ var KnownMessageTypes = []string{
 	"matrix",
 	"telegram",
 	"groupme",
+	"x_dm",
 }

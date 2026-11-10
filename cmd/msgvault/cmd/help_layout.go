@@ -29,6 +29,7 @@ const (
 
 var topLevelCommandGroups = map[string]string{
 	"source":                  helpGroupSources,
+	"address":                 helpGroupPeople,
 	"activity":                helpGroupIndex,
 	"add-account":             helpGroupSources,
 	"add-beeper":              helpGroupSources,
@@ -97,6 +98,7 @@ var topLevelCommandGroups = map[string]string{
 	"identity":                helpGroupPeople,
 	"import-eml":              helpGroupImport,
 	"import-emlx":             helpGroupImport,
+	"import-groupme":          helpGroupImport,
 	"import-gvoice":           helpGroupImport,
 	"import-imazing-csv":      helpGroupImport,
 	"import-imessage":         helpGroupImport,
@@ -106,7 +108,7 @@ var topLevelCommandGroups = map[string]string{
 	"import-pst":              helpGroupImport,
 	"import-slackdump":        helpGroupImport,
 	"import-telegram":         helpGroupImport,
-	"import-groupme":          helpGroupImport,
+	"import-x":                helpGroupImport,
 	"import-synctech-sms":     helpGroupImport,
 	"import-whatsapp":         helpGroupImport,
 	"init-db":                 helpGroupMaintenance,

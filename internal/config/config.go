@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/identityops"
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/netguard"
 	"go.kenn.io/msgvault/internal/omi"
 	"go.kenn.io/msgvault/internal/peoplesweep"
@@ -131,6 +132,7 @@ type IntegrationsConfig struct {
 // DocbankIntegrationConfig configures the optional stored-media destination.
 // The selected API key source is read when a request runs.
 type DocbankIntegrationConfig struct {
+	TrustPrivateNetwork     bool     `toml:"trust_private_network"`
 	Enabled                 bool     `toml:"enabled"`
 	URL                     string   `toml:"url"`
 	APIKeyEnv               string   `toml:"api_key_env"`
@@ -143,6 +145,7 @@ type DocbankIntegrationConfig struct {
 	ReferenceOrigins        []string `toml:"reference_origins"`
 	AttachmentUploadConsent bool     `toml:"attachment_upload_consent"`
 	AttachmentFolder        string   `toml:"attachment_folder"`
+	AttachmentSearchProfile string   `toml:"attachment_search_profile"`
 }
 
 // MirrorFolder returns the destination virtual directory.
@@ -171,10 +174,11 @@ func (d DocbankIntegrationConfig) validate() error {
 
 // TaskIntegrationConfig configures a task service connection.
 type TaskIntegrationConfig struct {
-	Enabled        bool   `toml:"enabled"`
-	Endpoint       string `toml:"endpoint"`
-	APIKey         string `toml:"api_key"`
-	DefaultProject string `toml:"default_project"`
+	TrustPrivateNetwork bool   `toml:"trust_private_network"`
+	Enabled             bool   `toml:"enabled"`
+	Endpoint            string `toml:"endpoint"`
+	APIKey              string `toml:"api_key"`
+	DefaultProject      string `toml:"default_project"`
 }
 
 func (t *TaskIntegrationConfig) ApplyDefaults() {
@@ -189,6 +193,9 @@ func (t *TaskIntegrationConfig) ApplyDefaults() {
 // (authentication, socket existence and ownership) still happen when the
 // client connects.
 func (t *TaskIntegrationConfig) Validate(section string) error {
+	if section != "kata" && t.TrustPrivateNetwork {
+		return fmt.Errorf("trust_private_network is only supported in [integrations.kata], not [integrations.%s]", section)
+	}
 	endpoint := strings.TrimSpace(t.Endpoint)
 	if endpoint == "" {
 		if section == "kata" && t.Enabled {
@@ -196,7 +203,7 @@ func (t *TaskIntegrationConfig) Validate(section string) error {
 		}
 		return nil
 	}
-	if err := taskclient.ValidateEndpoint(endpoint); err != nil {
+	if err := taskclient.ValidateEndpoint(endpoint, section == "kata" && t.TrustPrivateNetwork); err != nil {
 		return fmt.Errorf("invalid [integrations.%s] endpoint %q: %w "+
 			"(valid forms: https://tasks.example.com, http://localhost:8080, unix:///path/to/socket.sock)",
 			section, t.Endpoint, err)
@@ -596,6 +603,7 @@ func (c SenderAuthConfig) Pins() map[int64][]string {
 }
 
 type Config struct {
+	RelayedSenders     []mime.RelayedSenderRule  `toml:"relayed_senders"`
 	SenderAuth         SenderAuthConfig          `toml:"sender_auth"`
 	ConversationPolicy ConversationPolicyConfig  `toml:"conversation_policy"`
 	Data               DataConfig                `toml:"data"`
@@ -1279,6 +1287,17 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.Server.ApplyDefaults()
 	cfg.Discord.ApplyDefaults()
+	seen := make(map[string]int, len(cfg.RelayedSenders))
+	for i, rule := range cfg.RelayedSenders {
+		if !mime.ValidateRelayedSenderRule(rule) {
+			return nil, fmt.Errorf("relayed_senders[%d]: invalid address, header, or identifier type", i)
+		}
+		key := strings.ToLower(rule.Address)
+		if j, ok := seen[key]; ok {
+			return nil, fmt.Errorf("relayed_senders[%d]: address duplicates relayed_senders[%d]", i, j)
+		}
+		seen[key] = i
+	}
 	if err := cfg.OAuth.Validate(); err != nil {
 		return nil, fmt.Errorf("oauth: %w", err)
 	}
