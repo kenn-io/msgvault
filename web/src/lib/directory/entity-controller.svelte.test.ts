@@ -122,7 +122,7 @@ describe('DirectoryEntityController', () => {
     controller.destroy();
   });
 
-  it('loads generated collections without the network and without treating collection ETags as entity ETags', async () => {
+  it('loads generated collections without the network', async () => {
     const requests: Request[] = [];
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
@@ -140,6 +140,8 @@ describe('DirectoryEntityController', () => {
     expect(controller.relationshipTypes.map((item) => item.id)).toEqual([31]);
     expect(controller.network).toBeNull();
     expect(requests.map(pathOf)).not.toContain('/api/v1/people/7/network');
+    const relationshipRequest = requests.find(request => pathOf(request) === '/api/v1/people/7/relationships')!;
+    expect(new URL(relationshipRequest.url).searchParams.get('include_ended')).toBe('true');
 
     await controller.loadNetwork();
 

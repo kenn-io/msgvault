@@ -1,14 +1,9 @@
+import '../../../test/english-locale.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
-import { afterAll, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { valueProvenance } from './history-format';
 import { requestOf, pathOf, organization, employment, organizationProfile, envelope, richOrganizationProfile, controllerWith } from '../../directory/entity-fixtures.test-support';
 import OrganizationEditor from './OrganizationEditor.svelte';
-
-const formatter = vi.hoisted(() => {
-  const DateTimeFormat = Intl.DateTimeFormat;
-  return vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function (locale, options) { return new DateTimeFormat(locale ?? 'en-US', options); });
-});
-afterAll(() => formatter.mockRestore());
 
 describe('OrganizationEditor', () => {
   it.each([

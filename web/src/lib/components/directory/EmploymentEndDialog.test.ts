@@ -1,25 +1,22 @@
+import '../../../test/english-locale.test-support';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
-import { afterAll, expect, it, vi } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { controllerWith, employment, organizationProfile, pathOf, requestOf } from '../../directory/entity-fixtures.test-support';
 import EmploymentEndDialog from './EmploymentEndDialog.svelte';
-
-const formatter = vi.hoisted(() => {
-  const DateTimeFormat = Intl.DateTimeFormat;
-  return vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function (locale, options) { return new DateTimeFormat(locale ?? 'en-US', options); });
-});
-afterAll(() => formatter.mockRestore());
 
 it('keeps the End conflict valid and shows a failed retry', async () => {
   const opening = employment(11, 1, { start_date: { year: 2024, month: 3 } });
   const saved = employment(11, 2, { start_date: { year: 2028 } });
   let reads = 0;
   let writes = 0;
+  let firstBody: unknown;
   const { controller } = controllerWith(async input => {
     const request = requestOf(input);
     if (pathOf(request) === '/api/v1/organizations/21') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
     if (pathOf(request) === '/api/v1/people/7/employments') return Response.json({ employments: [saved] });
     if (pathOf(request).endsWith('/end')) {
       writes++;
+      if (writes === 1) firstBody = await request.json();
       return Response.json({ error: writes === 1 ? 'employment_revision_conflict' : 'internal_error', message: writes === 1 ? 'Changed elsewhere' : 'Disk full' }, { status: writes === 1 ? 409 : 500 });
     }
     return Response.json(++reads === 1 ? opening : saved, { headers: { ETag: reads === 1 ? '"employment-11-r1"' : '"employment-11-r2"' } });
@@ -28,11 +25,12 @@ it('keeps the End conflict valid and shows a failed retry', async () => {
   const rendered = render(EmploymentEndDialog, { controller, employment: opening, onClose: () => undefined });
   const end = screen.getByRole('textbox', { name: 'End date' });
   expect(screen.getByText('Engineer at Synthetic Org · since Mar 2024')).toBeDefined();
-  await fireEvent.input(end, { target: { value: '2026' } });
+  await fireEvent.input(end, { target: { value: '2026-08' } });
   await waitFor(() => expect(screen.getByRole('button', { name: 'End' })).toHaveProperty('disabled', false));
   await fireEvent.click(screen.getByRole('button', { name: 'End' }));
   await screen.findByRole('button', { name: 'Keep yours' });
-  expect(end).toHaveProperty('value', '2026');
+  expect(firstBody).toEqual({ end_date: '2026-08' });
+  expect(end).toHaveProperty('value', '2026-08');
   expect(reads).toBe(2);
   expect(screen.getByRole('button', { name: 'Keep yours' })).toHaveProperty('disabled', true);
   await fireEvent.input(end, { target: { value: '2029' } });
