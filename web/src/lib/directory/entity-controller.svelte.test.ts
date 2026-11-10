@@ -317,6 +317,38 @@ describe('DirectoryEntityController', () => {
     expect(postCount).toBe(2);
   });
 
+  it('keeps an uncertain connection create blocked until Network and the list finish refreshing', async () => {
+    const networkRead = deferredResponse();
+    let networkReads = 0;
+    let posts = 0;
+    let networkFinished = false;
+    let listBeforeNetwork = false;
+    const client = createAPIClient(async input => {
+      const request = requestOf(input);
+      if (pathOf(request) === '/api/v1/person-relationships' && request.method === 'POST') {
+        posts++;
+        throw new TypeError('response lost');
+      }
+      if (pathOf(request) === '/api/v1/people/7/network' && ++networkReads > 1) return networkRead.promise;
+      if (pathOf(request) === '/api/v1/people/7/relationships' && !networkFinished) listBeforeNetwork = true;
+      return defaultResponse(request);
+    });
+    const controller = new DirectoryEntityController(client, 7);
+    const body = { source_person_id: 7, target_person_id: 8, relationship_type_slug: 'knows' };
+    await controller.loadNetwork();
+    await expect(controller.createRelationship(body)).resolves.toMatchObject({ ok: false, kind: 'unknown' });
+    const refresh = controller.refreshRelationships();
+    await vi.waitFor(() => expect(networkReads).toBe(2));
+    await expect(controller.createRelationship(body)).resolves.toMatchObject({ ok: false, kind: 'blocked' });
+    expect(posts).toBe(1);
+    networkFinished = true;
+    networkRead.resolve(Response.json(network(7, 1)));
+    await refresh;
+    expect(controller.createBlocked.relationships).toBe(false);
+    expect(listBeforeNetwork).toBe(false);
+    controller.destroy();
+  });
+
   it('keeps an unknown create blocked when a refresh that began before it resolves later', async () => {
     const staleRefresh = deferredResponse();
     let collectionReads = 0;

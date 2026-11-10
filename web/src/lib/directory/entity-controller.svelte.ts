@@ -197,7 +197,8 @@ export class DirectoryEntityController {
     return response;
   }
   async refreshRelationships(): Promise<void> {
-    await Promise.all([this.loadRelationships(true), this.refreshNetwork()]);
+    await this.refreshNetwork();
+    await this.loadRelationships(true);
   }
   private async loadRelationships(clearCreateBlock: boolean): Promise<boolean> {
     const { abort, generation } = this.beginCollection('relationships');
@@ -812,7 +813,7 @@ export class DirectoryEntityController {
           kind: 'conflict',
           status,
           message: failureMessage(response.error, status),
-          current,
+          ...(current === undefined ? { sent: snapshot } : { current }),
         };
       }
       return { ok: false, kind: 'error', status, message: failureMessage(response.error, status) };

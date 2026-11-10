@@ -110,3 +110,33 @@ it('uses the selected job version after a different job conflicts', async () => 
   await fireEvent.click(await screen.findByRole('menuitem', { name: 'Make primary' }));
   await waitFor(() => expect(secondTag).toBe('"employment-12-r1"'));
 });
+
+it('retries a delete whose conflict refresh failed with the version it sent', async () => {
+  let reads = 0;
+  const tags: (string | null)[] = [];
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input);
+    const path = pathOf(request);
+    if (path === '/api/v1/employments/11' && request.method === 'GET') {
+      reads++;
+      if (reads === 2) throw new TypeError('offline');
+      return Response.json(employment(11, reads, { title: `Title ${reads}` }), { headers: { ETag: `"employment-11-r${reads}"` } });
+    }
+    if (path === '/api/v1/employments/11' && request.method === 'DELETE') {
+      tags.push(request.headers.get('If-Match'));
+      return Response.json({ error: 'employment_revision_conflict', message: 'Changed' }, { status: 409 });
+    }
+    if (path === '/api/v1/people/7/employments') return Response.json({ employments: [employment()] });
+    if (path === '/api/v1/organizations/21') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+    throw new Error(`Unexpected ${request.method} ${path}`);
+  });
+  controller.employments = [employment()];
+  render(OrganizationEmploymentTab, { controller, personID: 7 });
+  await fireEvent.click(within(screen.getByRole('region', { name: 'Work' })).getByRole('button', { name: /^Actions for/ }));
+  await fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete…' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  await waitFor(() => expect(reads).toBe(2));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Retry' }));
+  expect(await screen.findByText('Title 3')).toBeDefined();
+  expect(tags).toEqual(['"employment-11-r1"', '"employment-11-r1"']);
+});

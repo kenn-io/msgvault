@@ -41,6 +41,7 @@ export class WriteAttempt<C = never> {
       this.failed = true;
       if (result.kind === 'conflict') {
         if (result.current) this.conflict = this.prepared = result.current;
+        else if (result.sent) this.prepared = result.sent;
       }
       this.details = result.kind === 'unknown' || result.kind === 'blocked' ? '' : result.message;
       return false;
