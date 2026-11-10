@@ -8,7 +8,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/search"
 )
 
 func calendarDocument(method, props string) []byte {
@@ -28,26 +27,6 @@ func icsSource(t *testing.T, st *Store) int64 {
 }
 
 func TestICalendarPersistenceRevisionsAndRebuild(t *testing.T) {
-	t.Run("cancellation first", func(t *testing.T) {
-		assertions, requirements := assert.New(t), require.New(t)
-		st := newRFC822IDBackfillBackendStore(t)
-		source := icsSource(t, st)
-		cancel := calendarDocument("CANCEL", "STATUS:CANCELLED\r\nSEQUENCE:2\r\nDTSTART:20270302T140000Z\r\nSUMMARY:Cancelled meeting")
-		_, err := st.PersistICalendarContext(t.Context(), source, cancel)
-		requirements.NoError(err)
-		_, err = st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T130000Z\r\nSUMMARY:Older"))
-		requirements.NoError(err)
-		ids := emailEvents(t, st, source)
-		requirements.Len(ids, 1)
-		row := calendarRows(t, st, ids...)[0]
-		assertions.Equal("cancelled", row.Event.Status)
-		assertions.Equal("Cancelled meeting", row.Subject)
-		requirements.NotNil(row.Event.Start)
-		assertions.Equal("2027-03-02T14:00:00Z", row.Event.Start.Format(time.RFC3339))
-		stored, err := st.GetMessageRaw(ids[0])
-		requirements.NoError(err)
-		assertions.Equal(cancel, stored)
-	})
 	for _, behavior := range []string{"duplicate persist", "older sequence", "newer stamp", "cancellation", "rebuild"} {
 		t.Run(behavior, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
@@ -168,9 +147,7 @@ func TestICalendarCancelledExceptionOccurrences(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
-			source := icsSource(t, st)
-			_, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=2\r\nSUMMARY:Team meeting\r\nATTENDEE:mailto:guest@example.org\r\nORGANIZER:mailto:owner@example.com"))
-			requirements.NoError(err)
+			_, source := persistInviteEmail(t, st, "master", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=2\r\nSUMMARY:Team meeting\r\nATTENDEE:mailto:guest@example.org\r\nORGANIZER:mailto:owner@example.com")))
 			cancel := []byte(strings.ReplaceAll(string(calendarDocument("CANCEL", "RECURRENCE-ID:20270303T120000Z\r\n"+tc.props+"ORGANIZER:mailto:owner@example.com")), "METHOD:CANCEL\r\n", ""))
 			mail := []byte(strings.Replace(string(inviteEmail(cancel)), "text/calendar", "text/calendar; method=CANCEL", 1))
 			persistInviteEmailForSource(t, st, source, "sparse-cancel", mail)
@@ -195,6 +172,27 @@ func TestICalendarCancelledExceptionOccurrences(t *testing.T) {
 }
 
 func TestICalendarCancellationArrivalOrder(t *testing.T) {
+	t.Run("cancellation first", func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		source := icsSource(t, st)
+		cancel := calendarDocument("CANCEL", "STATUS:CANCELLED\r\nSEQUENCE:2\r\nDTSTART:20270302T140000Z\r\nSUMMARY:Cancelled meeting")
+		_, err := st.PersistICalendarContext(t.Context(), source, cancel)
+		requirements.NoError(err)
+		_, err = st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T130000Z\r\nSUMMARY:Older"))
+		requirements.NoError(err)
+		ids := emailEvents(t, st, source)
+		requirements.Len(ids, 1)
+		row := calendarRows(t, st, ids...)[0]
+		assertions.Equal("cancelled", row.Event.Status)
+		assertions.Equal("Cancelled meeting", row.Subject)
+		requirements.NotNil(row.Event.Start)
+		assertions.Equal("2027-03-02T14:00:00Z", row.Event.Start.Format(time.RFC3339))
+		stored, err := st.GetMessageRaw(ids[0])
+		requirements.NoError(err)
+		assertions.Equal(cancel, stored)
+	})
+
 	original := calendarDocument("REQUEST", "SEQUENCE:0\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Original")
 	moved := calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTART:20270302T140000Z\r\nSUMMARY:Moved")
 	cancel := calendarDocument("CANCEL", "SEQUENCE:3\r\nSTATUS:CANCELLED")
@@ -236,11 +234,13 @@ func TestICalendarCancellationArrivalOrder(t *testing.T) {
 				assertions.Equal("2027-03-02T14:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
 			}
 			check()
+			beforeRebuild := calendarRows(t, st, ids...)[0].Event
 			raw, err := st.GetMessageRaw(ids[0])
 			requirements.NoError(err)
 			_, err = st.db.Exec(`DELETE FROM calendar_events WHERE message_id=?`, ids[0])
 			requirements.NoError(err)
 			requirements.NoError(st.UpsertMessageRawWithFormat(ids[0], raw, "ics"))
+			assertions.Equal(beforeRebuild, calendarRows(t, st, ids...)[0].Event)
 			check()
 			restore := calendarDocument("REQUEST", "SEQUENCE:4\r\nDTSTART:20270302T150000Z\r\nSUMMARY:Restored")
 			_, err = st.PersistICalendarContext(t.Context(), source, restore)
@@ -252,28 +252,29 @@ func TestICalendarCancellationArrivalOrder(t *testing.T) {
 			assertions.Equal("confirmed", page.Occurrences[0].Status)
 		})
 	}
-}
 
-func TestICalendarCancellationUsesLatestDetailStamp(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	source := icsSource(t, st)
-	for _, raw := range [][]byte{
-		calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTAMP:20270301T100000Z\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Original"),
-		calendarDocument("CANCEL", "SEQUENCE:3\r\nSTATUS:CANCELLED"),
-		calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTAMP:20270301T110000Z\r\nDTSTART:20270302T140000Z\r\nSUMMARY:Later"),
-		calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTAMP:20270301T090000Z\r\nDTSTART:20270302T100000Z\r\nSUMMARY:Earlier"),
-	} {
-		_, err := st.PersistICalendarContext(t.Context(), source, raw)
-		requirements.NoError(err)
-	}
-	ids := emailEvents(t, st, source)
-	requirements.Len(ids, 1)
-	row := calendarRows(t, st, ids...)[0]
-	assertions.Equal("Later", row.Subject)
-	assertions.Equal("cancelled", row.Event.Status)
-	requirements.NotNil(row.Event.Start)
-	assertions.Equal("2027-03-02T14:00:00Z", row.Event.Start.Format(time.RFC3339))
+	t.Run("latest detail stamp", func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		source := icsSource(t, st)
+		for _, raw := range [][]byte{
+			calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTAMP:20270301T100000Z\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Original"),
+			calendarDocument("CANCEL", "SEQUENCE:3\r\nSTATUS:CANCELLED"),
+			calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTAMP:20270301T110000Z\r\nDTSTART:20270302T140000Z\r\nSUMMARY:Later"),
+			calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTAMP:20270301T090000Z\r\nDTSTART:20270302T100000Z\r\nSUMMARY:Earlier"),
+		} {
+			_, err := st.PersistICalendarContext(t.Context(), source, raw)
+			requirements.NoError(err)
+		}
+		ids := emailEvents(t, st, source)
+		requirements.Len(ids, 1)
+		row := calendarRows(t, st, ids...)[0]
+		assertions.Equal("Later", row.Subject)
+		assertions.Equal("cancelled", row.Event.Status)
+		requirements.NotNil(row.Event.Start)
+		assertions.Equal("2027-03-02T14:00:00Z", row.Event.Start.Format(time.RFC3339))
+
+	})
 }
 
 func TestICalendarRoomAttendeesAreNotParticipants(t *testing.T) {
@@ -317,28 +318,4 @@ func TestICalendarHistoricalZoneOccurrences(t *testing.T) {
 		require.Len(t, page.Occurrences, 1)
 		assert.Equal(t, tc.want, page.Occurrences[0].Start.UTC().Format(time.RFC3339))
 	}
-}
-
-func TestEmailCalendarHistoricalZone(t *testing.T) {
-	st := newRFC822IDBackfillBackendStore(t)
-	raw, err := os.ReadFile("../calevent/testdata/customized-history.ics")
-	require.NoError(t, err)
-	parent, source := persistInviteEmail(t, st, "historical-zone", inviteEmail(raw))
-	email, err := st.GetMessage(parent)
-	require.NoError(t, err)
-	assert.Equal(t, "Original email", email.Subject)
-	ids := emailEvents(t, st, source)
-	require.Len(t, ids, 1)
-	rows := calendarRows(t, st, ids...)
-	require.Len(t, rows, 1)
-	assert.Len(t, rows[0].Event.Attendees, 2)
-	matches, _, err := st.SearchMessagesQuery(search.Parse("from:organizer@example.com"), 0, 10)
-	require.NoError(t, err)
-	var found bool
-	for _, match := range matches {
-		if match.ID == ids[0] {
-			found = true
-		}
-	}
-	assert.True(t, found)
 }

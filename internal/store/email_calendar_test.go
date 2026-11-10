@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/search"
 )
 
 func TestEmailCalendarGmailAuditExcludesDerivedEvents(t *testing.T) {
@@ -157,23 +158,21 @@ func TestEmailCalendarSourceCountsExcludeDerivedEvents(t *testing.T) {
 
 func TestEmailCalendarEventsUseConfirmedMailAccountScope(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		sourceType string
-		identifier string
-		confirmed  bool
+		name      string
+		confirmed bool
 		// confirmLater confirms the mailbox after the invitation is archived.
 		confirmLater bool
 		want         string
 	}{
-		{name: "confirmed Gmail", sourceType: "gmail", identifier: "owner@example.com", confirmed: true, want: "owner@example.com"},
-		{name: "unconfirmed Gmail", sourceType: "gmail", identifier: "owner@example.com"},
-		{name: "Gmail confirmed after archival", sourceType: "gmail", identifier: "owner@example.com", confirmLater: true, want: "owner@example.com"},
+		{name: "confirmed Gmail", confirmed: true, want: "owner@example.com"},
+		{name: "unconfirmed Gmail"},
+		{name: "Gmail confirmed after archival", confirmLater: true, want: "owner@example.com"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
-			source, err := st.GetOrCreateSource(tc.sourceType, tc.identifier)
+			source, err := st.GetOrCreateSource("gmail", "owner@example.com")
 			requirements.NoError(err)
 			if tc.confirmed {
 				requirements.NoError(st.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
@@ -196,7 +195,7 @@ func TestEmailCalendarEventsUseConfirmedMailAccountScope(t *testing.T) {
 func TestEmailCalendarMaterialization(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
-	request := inviteEmail([]byte(strings.ReplaceAll(string(calendarFamilyDocument()), "UID:family@example.com\r\n", "UID:family@example.com\r\nORGANIZER:mailto:organizer@example.com\r\n")))
+	request := inviteEmail([]byte(strings.ReplaceAll(string(calendarFamilyDocument()), "UID:family@example.com\r\n", "UID:family@example.com\r\nORGANIZER:mailto:organizer@example.com\r\nATTENDEE:mailto:guest@example.org\r\n")))
 	parent, source := persistInviteEmail(t, st, "organizer-message", request)
 	email, err := st.GetMessage(parent)
 	requirements.NoError(err)
@@ -207,6 +206,16 @@ func TestEmailCalendarMaterialization(t *testing.T) {
 	assertions.Equal(1, emails)
 	originalIDs := emailEvents(t, st, source)
 	requirements.Len(originalIDs, 2)
+	assertions.Len(calendarRows(t, st, originalIDs...)[0].Event.Attendees, 2)
+	matches, _, err := st.SearchMessagesQuery(search.Parse("from:organizer@example.com"), 0, 10)
+	requirements.NoError(err)
+	var found bool
+	for _, match := range matches {
+		if match.ID == originalIDs[0] {
+			found = true
+		}
+	}
+	assertions.True(found)
 	for _, id := range originalIDs {
 		assertions.NotEqual(parent, id)
 	}
@@ -284,40 +293,6 @@ func TestEmailCalendarRevisionAfterSourceMerge(t *testing.T) {
 		requirements.NoError(st.db.QueryRow(`SELECT message_count FROM conversations WHERE id=?`, conversationID).Scan(&count))
 		assertions.Equal(2, count)
 	})
-	t.Run("different organizer is ignored", func(t *testing.T) {
-		assertions, requirements := assert.New(t), require.New(t)
-		st := newRFC822IDBackfillBackendStore(t)
-		var logs bytes.Buffer
-		previous := slog.Default()
-		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
-		t.Cleanup(func() { slog.SetDefault(previous) })
-		original := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nSUMMARY:Original\r\nORGANIZER:mailto:organizer@example.com")
-		_, from := persistInviteEmail(t, st, "original", inviteEmail(original))
-		into, err := st.GetOrCreateSource("mbox", "destination@example.com")
-		requirements.NoError(err)
-		_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: from, IntoSourceID: into.ID})
-		requirements.NoError(err)
-		ids := emailEvents(t, st, into.ID)
-		requirements.Len(ids, 1)
-		update := calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270303T120000Z\r\nSUMMARY:Moved\r\nORGANIZER:mailto:replacement@example.com")
-		persistInviteEmailForSource(t, st, into.ID, "update", inviteEmail(update))
-		assertions.Equal(ids, emailEvents(t, st, into.ID))
-		row := calendarRows(t, st, ids...)[0]
-		assertions.Equal("Original", row.Subject)
-		requirements.NotNil(row.Event.Start)
-		assertions.Equal("2027-03-02T12:00:00Z", row.Event.Start.Format(time.RFC3339))
-		stored, err := st.GetMessageRaw(ids[0])
-		requirements.NoError(err)
-		assertions.Equal(original, stored)
-		assertions.Contains(logs.String(), "level=WARN")
-		persistInviteEmailForSource(t, st, into.ID, "cancel", inviteEmail(calendarDocument("CANCEL", "SEQUENCE:2\r\nSTATUS:CANCELLED\r\nORGANIZER:mailto:replacement@example.com")))
-		fromDate := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-		page, err := st.ListCalendarOccurrencesContext(t.Context(), fromDate, fromDate.AddDate(0, 0, 2))
-		requirements.NoError(err)
-		requirements.Len(page.Occurrences, 1)
-		assertions.Equal("Original", page.Occurrences[0].Subject)
-		assertions.Equal("confirmed", page.Occurrences[0].Status)
-	})
 	t.Run("masterless exception retains conversation", func(t *testing.T) {
 		assertions, requirements := assert.New(t), require.New(t)
 		st := newRFC822IDBackfillBackendStore(t)
@@ -373,6 +348,41 @@ func TestEmailCalendarSubsetAfterSourceMerge(t *testing.T) {
 }
 
 func TestEmailCalendarFamilyOrganizer(t *testing.T) {
+	t.Run("different organizer is ignored", func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		var logs bytes.Buffer
+		previous := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+		t.Cleanup(func() { slog.SetDefault(previous) })
+		original := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nSUMMARY:Original\r\nORGANIZER:mailto:organizer@example.com")
+		_, from := persistInviteEmail(t, st, "original", inviteEmail(original))
+		into, err := st.GetOrCreateSource("mbox", "destination@example.com")
+		requirements.NoError(err)
+		_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: from, IntoSourceID: into.ID})
+		requirements.NoError(err)
+		ids := emailEvents(t, st, into.ID)
+		requirements.Len(ids, 1)
+		update := calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270303T120000Z\r\nSUMMARY:Moved\r\nORGANIZER:mailto:replacement@example.com")
+		persistInviteEmailForSource(t, st, into.ID, "update", inviteEmail(update))
+		assertions.Equal(ids, emailEvents(t, st, into.ID))
+		row := calendarRows(t, st, ids...)[0]
+		assertions.Equal("Original", row.Subject)
+		requirements.NotNil(row.Event.Start)
+		assertions.Equal("2027-03-02T12:00:00Z", row.Event.Start.Format(time.RFC3339))
+		stored, err := st.GetMessageRaw(ids[0])
+		requirements.NoError(err)
+		assertions.Equal(original, stored)
+		assertions.Contains(logs.String(), "level=WARN")
+		persistInviteEmailForSource(t, st, into.ID, "cancel", inviteEmail(calendarDocument("CANCEL", "SEQUENCE:2\r\nSTATUS:CANCELLED\r\nORGANIZER:mailto:replacement@example.com")))
+		fromDate := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+		page, err := st.ListCalendarOccurrencesContext(t.Context(), fromDate, fromDate.AddDate(0, 0, 2))
+		requirements.NoError(err)
+		requirements.Len(page.Occurrences, 1)
+		assertions.Equal("Original", page.Occurrences[0].Subject)
+		assertions.Equal("confirmed", page.Occurrences[0].Status)
+	})
+
 	for _, merged := range []bool{false, true} {
 		t.Run(fmt.Sprintf("merged=%t", merged), func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
@@ -414,6 +424,20 @@ func TestEmailCalendarFamilyOrganizer(t *testing.T) {
 			assertions.Equal("cancelled", page.Occurrences[1].Status)
 		})
 	}
+
+	t.Run("exception first", func(t *testing.T) {
+		assertions := assert.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		exception := calendarDocument("CANCEL", "RECURRENCE-ID:20270303T120000Z\r\nORGANIZER:mailto:organizer@example.com")
+		_, source := persistInviteEmail(t, st, "exception-first", inviteEmail(exception))
+		master := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nORGANIZER:mailto:other@example.com")
+		persistInviteEmailForSource(t, st, source, "foreign-master", inviteEmail(master))
+		assertions.Len(emailEvents(t, st, source), 1)
+		master = calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nORGANIZER:mailto:organizer@example.com")
+		persistInviteEmailForSource(t, st, source, "own-master", inviteEmail(master))
+		assertions.Len(emailEvents(t, st, source), 2)
+
+	})
 }
 
 func TestEmailCalendarICSAttachments(t *testing.T) {
@@ -424,19 +448,6 @@ func TestEmailCalendarICSAttachments(t *testing.T) {
 	raw += "--x\r\nContent-Type: application/ics\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString(calendar) + "\r\n--x--\r\n"
 	_, source := persistInviteEmail(t, st, "attachment", []byte(raw))
 	requirements.Len(emailEvents(t, st, source), 1)
-}
-
-func TestEmailCalendarFamilyOrganizerExceptionFirst(t *testing.T) {
-	assertions := assert.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	exception := calendarDocument("CANCEL", "RECURRENCE-ID:20270303T120000Z\r\nORGANIZER:mailto:organizer@example.com")
-	_, source := persistInviteEmail(t, st, "exception-first", inviteEmail(exception))
-	master := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nORGANIZER:mailto:other@example.com")
-	persistInviteEmailForSource(t, st, source, "foreign-master", inviteEmail(master))
-	assertions.Len(emailEvents(t, st, source), 1)
-	master = calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nORGANIZER:mailto:organizer@example.com")
-	persistInviteEmailForSource(t, st, source, "own-master", inviteEmail(master))
-	assertions.Len(emailEvents(t, st, source), 2)
 }
 
 func TestEmailCalendarDuplicatePartsSummary(t *testing.T) {
