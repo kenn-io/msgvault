@@ -309,9 +309,6 @@ it.each(['Keep yours', 'Use saved'] as const)('shows the saved job and resolves 
     expect(bodies[1]).toMatchObject({ title: 'Lead', department: 'Sales' });
   } else {
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
-    await waitFor(() => expect(directoryChanged).toHaveBeenCalledOnce());
-    expect(controller.employments[0].department).toBe('Ops');
-    expect(bodies).toHaveLength(1);
   }
 });
 

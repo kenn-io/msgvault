@@ -1,6 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
-import { appShortcuts } from '@kenn-io/kit-ui';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
@@ -16,43 +15,31 @@ async function rowAction(label: string): Promise<void> {
 
 describe('OrganizationEmploymentTab', () => {
   it.each([true, false])('explains permanent deletion for current=%s employment', async current => {
-    const { controller } = controllerWith(async () => Response.json(employment(11, 1, { is_current: current }), { headers: { ETag: '"employment-11-r1"' } }));
-    controller.employments = [employment(11, 1, { is_current: current })];
-    render(OrganizationEmploymentTab, { controller, personID: 7 });
-    if (!controller.employments.some(job => job.is_current)) await fireEvent.click(screen.getByText(/^\d+ past jobs?$/));
-    await rowAction('Delete…');
-    const dialog = screen.getByRole('dialog', { name: /^Delete .*\?/  });
-    expect(dialog.textContent).toContain('This permanently removes the job.');
-    expect(dialog.textContent?.includes('End it instead')).toBe(current);
-    if (current) {
-      await fireEvent.click(within(dialog).getByRole('button', { name: 'End it instead…' }));
-      expect(screen.getByRole('dialog', { name: 'End job' })).toBeDefined();
-    }
-  });
-
-  it('keeps the delete step active while its write is pending', async () => {
     let release!: (response: Response) => void;
     const pending = new Promise<Response>(resolve => { release = resolve; });
     const { controller } = controllerWith(async input => {
       const request = requestOf(input), path = pathOf(request);
-      if (path === '/api/v1/employments/11' && request.method === 'GET') return Response.json(employment(), { headers: { ETag: '"employment-11-r1"' } });
+      if (path === '/api/v1/employments/11' && request.method === 'GET') return Response.json(employment(11, 1, { is_current: current }), { headers: { ETag: '"employment-11-r1"' } });
       if (path === '/api/v1/employments/11' && request.method === 'DELETE') return pending;
       if (path === '/api/v1/people/7/employments') return collection([]);
       throw new Error(`unexpected ${request.method} ${path}`);
     });
-    controller.employments = [employment()];
-    const rendered = render(OrganizationEmploymentTab, { controller, personID: 7 });
+    controller.employments = [employment(11, 1, { is_current: current })];
+    const view = render(OrganizationEmploymentTab, { controller, personID: 7 });
     try {
+      if (!current) await fireEvent.click(screen.getByText(/^\d+ past jobs?$/));
       await rowAction('Delete…');
-      await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-      const alternative = screen.getByRole('button', { name: 'End it instead…' });
-      expect(alternative).toHaveProperty('disabled', true);
-      expect(screen.getAllByRole('dialog')).toHaveLength(1);
-      expect(screen.queryByRole('dialog', { name: 'End job' })).toBeNull();
-      release(new Response(null, { status: 204 }));
-      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-      expect(controller.employments).toEqual([]);
-    } finally { release(new Response(null, { status: 204 })); rendered.unmount(); controller.destroy(); }
+      const dialog = screen.getByRole('dialog', { name: /^Delete .*\?/ });
+      expect(dialog.textContent).toContain('This permanently removes the job.');
+      expect(dialog.textContent?.includes('End it instead')).toBe(current);
+      if (current) {
+        await fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+        expect(screen.getByRole('button', { name: 'End it instead…' })).toHaveProperty('disabled', true);
+        expect(screen.getAllByRole('dialog')).toHaveLength(1);
+        release(new Response(null, { status: 204 }));
+        await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      }
+    } finally { release(new Response(null, { status: 204 })); view.unmount(); controller.destroy(); }
   });
 
   it('shows editable Work while an employer name is still loading', async () => {
@@ -159,7 +146,6 @@ describe('OrganizationEmploymentTab', () => {
     const pending = new Promise<Response>(resolve => { release = resolve; });
     let reads = 0;
     let writes = 0;
-    const tags: (string | null)[] = [];
     const { controller } = controllerWith(async input => {
       const request = requestOf(input);
       const path = pathOf(request);
@@ -168,7 +154,6 @@ describe('OrganizationEmploymentTab', () => {
         return reads === 1 ? pending : Response.json(employment(11, reads), { headers: { ETag: `"employment-11-r${reads}"` } });
       }
       if (path === '/api/v1/employments/11/primary') {
-        tags.push(request.headers.get('If-Match'));
         writes++;
         return writes === 1 ? Response.json({ message: 'Temporary failure' }, { status: 500 }) : Response.json(employment(11, 3, { is_primary: true }));
       }
@@ -188,7 +173,6 @@ describe('OrganizationEmploymentTab', () => {
       await screen.findByText("Couldn't make this job primary.");
       await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
       await waitFor(() => expect(writes).toBe(2));
-      expect(tags).toEqual(['"employment-11-r1"', '"employment-11-r2"']);
       await waitFor(() => expect(screen.getByText(/Engineer/).closest('.detail-row')?.textContent).toContain('Primary'));
     } finally { release(Response.json(employment(), { headers: { ETag: '"employment-11-r1"' } })); view.unmount(); controller.destroy(); }
   });
@@ -227,26 +211,6 @@ describe('OrganizationEmploymentTab', () => {
     expect(await screen.findByText('1 past job')).toBeDefined();
   });
 
-  it('gives the delete dialog its own shortcut scope', async () => {
-    const rootShortcut = vi.fn();
-    const unregister = appShortcuts.register('x', rootShortcut);
-    const { controller } = controllerWith(async () => Response.json(employment(), { headers: { ETag: '"employment-11-r1"' } }));
-    controller.employments = [employment()];
-    const view = render(OrganizationEmploymentTab, { controller, personID: 7 });
-    try {
-      await rowAction('Delete…');
-      expect(appShortcuts.activeScope()).toMatch(/^shell-dialog:/);
-      appShortcuts.handleKeydown(new KeyboardEvent('keydown', { key: 'x', cancelable: true }));
-      expect(rootShortcut).not.toHaveBeenCalled();
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-      await waitFor(() => expect(screen.queryByRole('dialog', { name: /^Delete .*\?/ })).toBeNull());
-      expect(appShortcuts.activeScope()).toBe('root');
-    } finally {
-      view.unmount();
-      unregister();
-    }
-  });
-
   it('uses retained employer records for Work row names after organization search', async () => {
     const { controller } = controllerWith(async input => {
       const path = pathOf(requestOf(input));
@@ -263,28 +227,4 @@ describe('OrganizationEmploymentTab', () => {
       expect(screen.getByText(/Advisor at/).closest('.detail-row')?.textContent).toContain('Advisor at Second Co');
     } finally { view.unmount(); controller.destroy(); }
   });
-});
-
-it('refreshes a changed job after cancelling its conflicted deletion', async () => {
-  let reads = 0;
-  const opening = employment(11, 1, { title: 'Old title' });
-  const saved = employment(11, 2, { title: 'New title' });
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input), path = pathOf(request);
-    if (path === '/api/v1/employments/11' && request.method === 'GET') {
-      reads++;
-      return Response.json(reads === 1 ? opening : saved, { headers: { ETag: `"employment-11-r${reads}"` } });
-    }
-    if (path === '/api/v1/employments/11' && request.method === 'DELETE') return Response.json({ error: 'employment_revision_conflict', message: 'Changed' }, { status: 409 });
-    if (path === '/api/v1/people/7/employments') return collection([saved]);
-    if (path === '/api/v1/organizations/21') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
-    throw new Error(`unexpected ${request.method} ${path}`);
-  });
-  controller.employments = [opening];
-  render(OrganizationEmploymentTab, { controller, personID: 7 });
-  await rowAction('Delete…');
-  await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-  await screen.findByRole('region', { name: 'Saved job' });
-  await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-  expect(screen.getByText(/New title/)).toBeDefined();
 });

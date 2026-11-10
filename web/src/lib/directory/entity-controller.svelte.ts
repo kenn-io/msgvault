@@ -480,6 +480,10 @@ export class DirectoryEntityController {
     );
   }
   async deleteEmployment(id: number, prepared?: Prepared<Employment>): Promise<DirectoryEntityMutationResult<never, Prepared<Employment>>> {
+    let snapshot: Prepared<Employment>;
+    try { snapshot = prepared ?? await this.prepareEmploymentMutation(id); }
+    catch (cause) { return { ok: false, kind: 'error', status: 0, message: failureMessage(cause, 0) }; }
+    if (snapshot.data.person_id !== this.personID) return { ok: false, kind: 'conflict', status: 409, message: 'Job belongs to someone else.', current: snapshot };
     const result = await this.deleteExisting(
       () => this.prepareEmploymentMutation(id),
       (signal, etag) =>
@@ -493,7 +497,7 @@ export class DirectoryEntityController {
         this.employmentProjection = undefined;
         this.employmentRecords.delete(id);
       },
-      prepared,
+      snapshot,
     );
     await this.prepareConflictEmployer(result, prepared?.data ?? this.employments.find(item => item.id === id));
     return this.afterDirectoryMutation(result, true);
@@ -659,13 +663,17 @@ export class DirectoryEntityController {
     prepared?: Prepared<Employment>,
     refreshOnConflict = true,
   ): Promise<DirectoryEntityMutationResult<Employment, Prepared<Employment>>> {
+    let snapshot: Prepared<Employment>;
+    try { snapshot = prepared ?? await this.prepareEmploymentMutation(id); }
+    catch (cause) { return { ok: false, kind: 'error', status: 0, message: failureMessage(cause, 0) }; }
+    if (snapshot.data.person_id !== this.personID) return { ok: false, kind: 'conflict', status: 409, message: 'Job belongs to someone else.', current: snapshot };
     const result = await this.writeExisting(
       () => this.prepareEmploymentMutation(id),
       write,
       (entity) => {
         this.applyEmploymentEntity(entity);
       },
-      prepared,
+      snapshot,
     );
     await this.prepareConflictEmployer(result, prepared?.data ?? this.employments.find(item => item.id === id));
     return this.afterDirectoryMutation(result, true, refreshOnConflict);

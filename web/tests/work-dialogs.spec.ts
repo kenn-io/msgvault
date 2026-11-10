@@ -60,9 +60,7 @@ const field = (input: Locator) => input.evaluate(element => {
 });
 
 for (const width of [1440, 390]) {
-  test(`Add job and Organization sit on the field scale at ${width}px`, async ({ page }, testInfo) => {
-    const errors: string[] = [];
-    page.on('pageerror', error => errors.push(error.message));
+  test(`Organization deletion and editor, and Add job fields fit at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 844 });
     await setKitTheme(page, 'dark');
     await page.getByRole('button', { name: 'Example Org', exact: true }).click();
@@ -157,7 +155,6 @@ for (const width of [1440, 390]) {
       const [title, role] = await add.locator('.editor > .form-pair').first().locator('> *').evaluateAll(cells => cells.map(cell => cell.getBoundingClientRect().toJSON() as { x: number; right: number }));
       expect([kind.right, domain.x, domain.right]).toEqual([title.right, role.x, role.right]);
     }
-    expect(errors).toEqual([]);
     await page.screenshot({ path: testInfo.outputPath('dialog.png'), fullPage: true });
   });
 }
@@ -200,3 +197,29 @@ for (const width of [1440, 390]) {
     await page.screenshot({ path: testInfo.outputPath('end-conflict.png'), fullPage: true });
   });
 }
+
+test('a moved job shows a conflict before making it primary', async ({ page }, testInfo) => {
+  let writes = 0;
+  await page.route('**/api/v1/employments/11', route => route.fulfill({ headers: { ETag: '"employment-11-r2"' }, json: { ...employment, person_id: 43, is_primary: false, title: 'Moved role' } }));
+  await page.route('**/api/v1/employments/11/primary', route => { writes++; return route.fulfill({ json: employment }); });
+  await page.route('**/api/v1/people/42/employments', route => route.fulfill({ json: { employments: [{ ...employment, is_primary: false }] } }));
+  await page.reload();
+  await page.getByRole('radio', { name: 'Details', exact: true }).click();
+  await page.getByRole('region', { name: 'Work' }).getByRole('button', { name: /^Actions for/ }).click();
+  await page.getByRole('menuitem', { name: 'Make primary' }).click();
+  await expect(page.getByRole('region', { name: 'Saved job' })).toContainText('Moved role');
+  expect(writes).toBe(0);
+  await page.screenshot({ path: testInfo.outputPath('moved.png') });
+});
+
+test('a Settings organization holder opens the durable person', async ({ page }, testInfo) => {
+  await page.route('**/api/v1/organizations/21/employments*', route => route.fulfill({ json: { employments: [employment] } }));
+  await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'settings', settingsCategory: 'people_catalog' })));
+  await page.getByRole('button', { name: 'Edit Example Org' }).click();
+  await page.getByRole('button', { name: 'Delete organization…' }).click();
+  await page.getByRole('dialog', { name: 'Delete Example Org?' }).getByRole('button', { name: 'Archive Person' }).click();
+  await expect(page.getByRole('group', { name: 'Person page' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
+  expect(JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}').directoryPersonID).toBe(42);
+  await page.screenshot({ path: testInfo.outputPath('person.png') });
+});

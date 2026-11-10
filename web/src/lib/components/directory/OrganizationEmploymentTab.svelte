@@ -86,6 +86,7 @@
     {#if controller.employmentsLoading}<p role="status">Loading jobs…</p>{/if}
     {#if !controller.employments.length && !controller.employmentsLoading && !controller.errors.employments}<EmptyLine message="No work yet" />{/if}
     <div class="records">{#each currentJobs as employment (employment.id)}{@render jobRow(employment)}{/each}</div>
+    {#if primaryTarget && !controller.employments.some(job => job.id === primaryTarget?.id)}{@render primaryFeedback()}{/if}
     {#if controller.errors.employments}<InlineNotice message="Couldn't load jobs." details={controller.errors.employments} actionLabel="Retry" onaction={() => void controller.refreshEmployments()} />{/if}
   </DetailSection>
 </div>
@@ -101,9 +102,13 @@
   ]}>
     {employmentLabel(employment)} at <button type="button" data-link onclick={() => openRequestedOrganization(employment.organization_id)}>{controller.organizationName(employment.organization_id)}</button>
   </DetailRow>
-  {#if primary.failed && primaryTarget?.id === employment.id}
+  {#if primaryTarget?.id === employment.id}{@render primaryFeedback()}{/if}
+{/snippet}
+
+{#snippet primaryFeedback()}
+  {#if primary.failed}
     {#if primary.conflict}
-      <ConflictNotice noun="job" saved={primary.conflict.data} record={employmentFacts(primary.conflict.data, controller, personID)} message={employmentConflictDetails(primary.conflict.data, primary.details)} actionLabel="Retry" onaction={() => { if (primaryTarget) void makePrimary(primaryTarget); }} />
+      <ConflictNotice noun="job" saved={primary.conflict.data} record={employmentFacts(primary.conflict.data, controller, personID)} message={employmentConflictDetails(primary.conflict.data, primary.details)} actionLabel={primary.conflict.data.person_id === personID ? 'Retry' : undefined} onaction={() => { if (primaryTarget) void makePrimary(primaryTarget); }} />
     {:else}<InlineNotice message="Couldn't make this job primary." details={primary.details} actionLabel="Retry" onaction={() => { if (primaryTarget) void makePrimary(primaryTarget); }} />{/if}
   {/if}
 {/snippet}

@@ -156,7 +156,7 @@ describe('DirectoryEntityController', () => {
     let individualRead = 0;
     let employmentSeenByBuilder: unknown;
     const freshEmployment = employment(11, 2, {
-      person_id: 8,
+      person_id: 7,
       organization_id: 22,
       source: 'extraction',
       source_ref: 'fresh-card',
@@ -201,7 +201,7 @@ describe('DirectoryEntityController', () => {
     const write = requests.find((request) => request.method === 'PATCH')!;
     expect(write.headers.get('If-Match')).toBe('"employment-11-r2"');
     await expect(write.clone().json()).resolves.toMatchObject({
-      person_id: 8,
+      person_id: 7,
       organization_id: 22,
       source: 'extraction',
       source_ref: 'fresh-card',
@@ -245,6 +245,7 @@ describe('DirectoryEntityController', () => {
   it('does not retry a conflict, refreshes the exact entity, and returns a typed result', async () => {
     const requests: Request[] = [];
     let individualRead = 0;
+    const directoryChanged = vi.fn();
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       requests.push(request);
@@ -257,9 +258,10 @@ describe('DirectoryEntityController', () => {
       if (path === '/api/v1/employments/11' && request.method === 'PATCH') {
         return Response.json({ error: 'revision_conflict', message: 'changed elsewhere' }, { status: 412 });
       }
+      if (path === '/api/v1/people/7/employments' && individualRead > 0) return Response.json({ employments: [employment(11, 3)] });
       return defaultResponse(request);
     }));
-    const controller = new DirectoryEntityController(client, 7);
+    const controller = new DirectoryEntityController(client, 7, { onDirectoryChange: directoryChanged });
     await controller.load();
 
     const result = await controller.updateEmployment(11, () => ({
@@ -269,6 +271,8 @@ describe('DirectoryEntityController', () => {
     expect(result).toMatchObject({ ok: false, kind: 'conflict', status: 412, current: { data: employment(11, 3), etag: '"employment-11-r3"' } });
     expect(requests.filter((request) => request.method === 'PATCH')).toHaveLength(1);
     expect(individualRead).toBe(2);
+    expect(directoryChanged).toHaveBeenCalledOnce();
+    expect(controller.employments).toEqual([employment(11, 3)]);
   });
 
   it('refreshes a cached employer when a conflict moves a job there', async () => {
@@ -984,5 +988,38 @@ it.each([
     expect(await send((conflict as { current?: Prepared<never> }).current)).toMatchObject({ ok: false, kind: 'conflict' });
     expect(requests[0].method).not.toBe('GET');
     expect(requests[0].headers.get('If-Match')).toBe(openingTag.replace('opening', 'current'));
+  } finally { controller.destroy(); }
+});
+
+it.each(['primary', 'edit', 'end', 'delete'] as const)('refuses %s for a job moved to another person', async action => {
+  const moved = { data: employment(11, 2, { person_id: 8 }), etag: '"employment-11-r2"' };
+  const requests: Request[] = [];
+  const client = createAPIClient(async input => {
+    const request = requestOf(input);
+    requests.push(request);
+    if (pathOf(request) === '/api/v1/employments/11' && request.method === 'GET') return Response.json(moved.data, { headers: { ETag: moved.etag } });
+    if (request.method !== 'GET') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+    return defaultResponse(request);
+  });
+  const controller = new DirectoryEntityController(client, 7);
+  const send = (prepared?: Prepared<typeof moved.data>) => {
+    switch (action) {
+      case 'primary': return controller.makeEmploymentPrimary(11, prepared);
+      case 'edit': return controller.updateEmployment(11, () => ({ person_id: 7, organization_id: 21, source: 'user' }), prepared);
+      case 'end': return controller.endEmployment(11, { end_date: '2026' }, prepared);
+      case 'delete': return controller.deleteEmployment(11, prepared);
+    }
+  };
+  try {
+    expect(await send()).toMatchObject({ ok: false, kind: 'conflict', current: moved });
+    expect(requests.filter(request => request.method !== 'GET')).toHaveLength(0);
+    const opened = { data: employment(11, 1), etag: '"employment-11-r1"' };
+    const conflict = await send(opened);
+    expect(conflict).toMatchObject({ ok: false, kind: 'conflict', current: moved });
+    const writes = requests.filter(request => request.method !== 'GET');
+    expect(writes).toHaveLength(1);
+    expect(writes[0].headers.get('If-Match')).toBe(opened.etag);
+    expect(await send(moved)).toMatchObject({ ok: false, kind: 'conflict', current: moved });
+    expect(requests.filter(request => request.method !== 'GET')).toHaveLength(1);
   } finally { controller.destroy(); }
 });

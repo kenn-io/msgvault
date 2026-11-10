@@ -3,7 +3,7 @@ import { expect, it, vi } from 'vitest';
 import { controllerWith, employment, organizationProfile, pathOf, requestOf } from '../../directory/entity-fixtures.test-support';
 import EmploymentEndDialog from './EmploymentEndDialog.svelte';
 
-it('keeps the End conflict valid through retry', async () => {
+it('keeps the End conflict valid when the saved start date changes', async () => {
   const opening = employment(11, 1, { start_date: { year: 2024, month: 3 } });
   const saved = employment(11, 2, { start_date: { year: 2028 } });
   let reads = 0;
@@ -18,9 +18,10 @@ it('keeps the End conflict valid through retry', async () => {
     }
     return Response.json(++reads === 1 ? opening : saved, { headers: { ETag: reads === 1 ? '"employment-11-r1"' : '"employment-11-r2"' } });
   });
+  controller.organizationRecords.set(21, organizationProfile());
   const rendered = render(EmploymentEndDialog, { controller, employment: opening, onClose: () => undefined });
   const end = screen.getByRole('textbox', { name: 'End date' });
-  expect(screen.getByText('Engineer at this organization · since Mar 2024')).toBeDefined();
+  expect(screen.getByText('Engineer at Synthetic Org · since Mar 2024')).toBeDefined();
   await fireEvent.input(end, { target: { value: '2026' } });
   await waitFor(() => expect(screen.getByRole('button', { name: 'End' })).toHaveProperty('disabled', false));
   await fireEvent.click(screen.getByRole('button', { name: 'End' }));

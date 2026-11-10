@@ -80,6 +80,7 @@
     onAppearanceSaved = () => undefined,
     onStatusChange = () => undefined,
     onDirectoryChange,
+    onOpenPerson,
   }: {
     client: APIClient;
     operationsController: OperationsController;
@@ -94,6 +95,7 @@
     onAppearanceSaved?: (saved: SavedAppearance) => void;
     onStatusChange?: () => void;
     onDirectoryChange?: () => void | Promise<void>;
+    onOpenPerson?: (personID: number) => void;
   } = $props();
 
   let settings = $state<SettingState[]>([]);
@@ -657,7 +659,7 @@
               onDetails={onOpenStatus} {onSources} rows={features} working={building} onSetUp={(action) => void setUp(action)} onStart={startFeature} />
           {/if}
         {:else if activeId === 'people_catalog'}
-          <PeopleCatalogSettings {client} {onDirectoryChange} />
+          <PeopleCatalogSettings {client} {onDirectoryChange} {onOpenPerson} />
         {:else if activeId === 'carddav'}
           <CardDAVSettingsWorkspace
             {onStatusChange}

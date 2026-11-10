@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
-import { requestOf, pathOf, organization, organizationProfile, controllerWith } from '../../directory/entity-fixtures.test-support';
+import { requestOf, pathOf, organization, organizationProfile, employment, controllerWith } from '../../directory/entity-fixtures.test-support';
 import OrganizationsSettings from './OrganizationsSettings.svelte';
 
 describe('OrganizationsSettings', () => {
@@ -77,4 +77,22 @@ describe('OrganizationsSettings', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Edit Synthetic Org' }));
     expect(await screen.findByRole('dialog', { name: 'Synthetic Org' })).toBeDefined();
   });
+  it('opens a holder by durable person ID', async () => {
+    const onOpenPerson = vi.fn();
+    const { controller } = controllerWith(async input => {
+      const path = pathOf(requestOf(input));
+      if (path === '/api/v1/organizations') return Response.json({ organizations: [organization()], total: 1, limit: 50, offset: 0 });
+      if (path === '/api/v1/organizations/21') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+      if (path === '/api/v1/organizations/21/employments') return Response.json({ employments: [employment(11, 1, { person_id: 42 })] });
+      if (path === '/api/v1/people/42') return Response.json({ display_name: 'Synthetic Person' });
+      throw new Error(`unexpected ${path}`);
+    }, 0);
+    render(OrganizationsSettings, { controller, onOpenPerson });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Edit Synthetic Org' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Delete organization…' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Synthetic Person' }));
+    expect(onOpenPerson).toHaveBeenCalledWith(42);
+    controller.destroy();
+  });
+
 });

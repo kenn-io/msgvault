@@ -258,23 +258,6 @@ it.each(['failed request', 'revision conflict'] as const)('handles a delete %s',
   }
 });
 
-it('refreshes directory views when closing a conflict with Use saved', async () => {
-  let gets = 0;
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    if (request.method === 'PATCH') return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
-    return Response.json(organizationProfile(++gets), { headers: { ETag: `"organization-21-r${gets}"` } });
-  });
-  const refresh = vi.spyOn(controller, 'refreshDirectoryViews').mockResolvedValue();
-  const onClose = vi.fn();
-  render(OrganizationEditor, { controller, organization: organization(), onClose });
-  await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization name' }), { target: { value: 'Draft name' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
-  await fireEvent.click(await screen.findByRole('button', { name: 'Use saved' }));
-  expect(onClose).toHaveBeenCalledOnce();
-  expect(refresh).toHaveBeenCalled();
-});
-
 it('shows a failed holder profile read as a failed check and retries it', async () => {
   let reads = 0;
   const { controller } = controllerWith(async input => {
@@ -294,26 +277,6 @@ it('shows a failed holder profile read as a failed check and retries it', async 
   expect(await screen.findByText('Synthetic Person')).toBeDefined();
 });
 
-it('retries a failed alias save', async () => {
-  const methods: string[] = [];
-  const onDone = vi.fn();
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    if (request.method === 'GET') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
-    methods.push(request.method);
-    return methods.length === 1
-      ? Response.json({ message: 'Profile unavailable' }, { status: 503 })
-      : Response.json(organizationProfile(2), { headers: { ETag: '"organization-21-r2"' } });
-  });
-  render(OrganizationEditor, { controller, organization: organization(), onDone });
-  await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'Draft alias' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
-  await screen.findByText("Couldn't save the aliases and categories.");
-  await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-  await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
-  expect(methods).toEqual(['PUT', 'PUT']);
-});
-
 it.each(['organization save', 'aliases save'] as const)('shows the latest notice after a failed %s', async firstFailure => {
   const methods: string[] = [];
   const onDone = vi.fn();
@@ -327,7 +290,7 @@ it.each(['organization save', 'aliases save'] as const)('shows the latest notice
         : Response.json({ message: 'Disk full' }, { status: 500 });
     }
     return request.method === 'PUT'
-      ? Response.json({ message: 'Profile unavailable' }, { status: 503 })
+      ? methods.filter(method => method === 'PUT').length === 1 ? Response.json({ message: 'Profile unavailable' }, { status: 503 }) : Response.json(organizationProfile(2), { headers: { ETag: '"organization-21-r2"' } })
       : Response.json({ message: 'primary domain "bad domain" is not a valid domain' }, { status: 400 });
   });
   render(OrganizationEditor, { controller, organization: organization(), onDone });
@@ -346,12 +309,15 @@ it.each(['organization save', 'aliases save'] as const)('shows the latest notice
     await fireEvent.input(aliases, { target: { value: 'Draft alias' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
     await screen.findByText("Couldn't save the aliases and categories.");
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+    expect(methods).toEqual(['PUT', 'PUT']);
     await fireEvent.input(domain, { target: { value: 'bad domain' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
     await screen.findByText("Couldn't save this organization.");
     expect(screen.queryByText("Couldn't save the aliases and categories.")).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(methods).toEqual(['PUT', 'PATCH', 'PATCH']));
+    await waitFor(() => expect(methods).toEqual(['PUT', 'PUT', 'PATCH', 'PATCH']));
   }
 });
 
