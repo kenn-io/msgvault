@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -19,8 +20,7 @@ func newImportSignalExportCmd() *cobra.Command {
 		Long: `Import standard messages and available local media from a native Signal
 readable directory (metadata.json version 1, main.jsonl, optional files/).
 
---account is a stable label for one account. Reuse it for later exports of
-that account. The export does not provide an owner phone or ACI.
+The export does not provide an owner phone or ACI.
 Re-running adds missing history and retries missing media. First archived
 text and raw messages remain unchanged, including after edits. Unsupported
 items, nested features and missing media are counted. No history completeness
@@ -53,7 +53,7 @@ func runImportSignalExport(cmd *cobra.Command, root, account string) error {
 		return err
 	}
 	defer cleanup()
-	ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Re-run to continue through deduplication.")
+	ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Re-run to continue.")
 	defer stop()
 	summary, err := signalexport.Import(ctx, st, signalexport.ImportOptions{
 		RootDir:        root,
@@ -67,7 +67,7 @@ func runImportSignalExport(cmd *cobra.Command, root, account string) error {
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 		"Messages: %d added, %d existing, %d changed existing (first snapshot retained)\n"+
 			"Media: %d stored, %d missing\n"+
-			"Frames: %d empty, %d unknown\n",
+			"Records: %d empty, %d unrecognized\n",
 		summary.MessagesAdded, summary.MessagesExisting, summary.MessagesChanged,
 		summary.AttachmentsStored, summary.AttachmentsMissing,
 		summary.EmptyFrames, summary.UnknownFrames,
@@ -84,7 +84,7 @@ func runImportSignalExport(cmd *cobra.Command, root, account string) error {
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s %s: %d\n", group.name, key, group.counts[key])
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s %s: %d\n", group.name, signalExportReasonLabel(key), group.counts[key])
 		}
 	}
 	if summary.SourceID != 0 {
@@ -92,11 +92,44 @@ func runImportSignalExport(cmd *cobra.Command, root, account string) error {
 		err = errors.Join(err, rebuildCacheAfterWrite(context.WithoutCancel(ctx), state.cfg.DatabaseDSN(), state))
 	}
 	if err != nil {
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Import failed after any progress shown above. Re-run to continue through deduplication.")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Import failed. Re-run to continue; committed messages are preserved.")
 		return err
 	}
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Import complete. Coverage is limited to supported records; omissions are shown above.")
 	return nil
+}
+
+var signalReasonWordBoundary = regexp.MustCompile(`([a-z0-9])([A-Z])`)
+
+func signalExportReasonLabel(reason string) string {
+	switch reason {
+	case "remoteDeletedMessage":
+		return "deleted messages"
+	case "adminDeletedMessage":
+		return "messages deleted by an admin"
+	case "recipient_identity":
+		return "unsupported chat recipient"
+	case "author_identity":
+		return "unsupported message author"
+	case "self_identity":
+		return "missing account identity"
+	case "revision":
+		return "invalid edit history"
+	case "sent_time":
+		return "missing or invalid sent time"
+	case "missing":
+		return "file not found"
+	case "ambiguous":
+		return "multiple matching files"
+	case "invalid_hash":
+		return "missing or invalid file hash"
+	case "hash_mismatch":
+		return "file hash mismatch"
+	case "unsafe_or_nonregular":
+		return "unsafe path or non-regular file"
+	}
+	words := signalReasonWordBoundary.ReplaceAllString(reason, "${1} ${2}")
+	return strings.ToLower(strings.ReplaceAll(words, "_", " "))
 }
 
 func init() {

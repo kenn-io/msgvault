@@ -326,11 +326,11 @@ func TestReaderBounds(t *testing.T) {
 				writeFrames(t, root, `{"padding":"`+strings.Repeat("x", 16<<20)+`"}`)
 			}
 			if kind == "metadata" {
-				require.NoError(t, os.WriteFile(filepath.Join(root, "metadata.json"), []byte(strings.Repeat(" ", 64<<10+1)), 0600))
+				require.NoError(t, os.WriteFile(filepath.Join(root, "metadata.json"), []byte(`{"version":1}`+strings.Repeat(" ", 64<<10)), 0600))
 			}
 			r, err := openReader(t.Context(), root)
 			if kind == "metadata" {
-				require.ErrorContains(t, err, "metadata")
+				require.EqualError(t, err, "signal export: metadata limit (64 KiB)")
 				return
 			}
 			require.NoError(t, err)
