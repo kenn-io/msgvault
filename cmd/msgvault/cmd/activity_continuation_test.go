@@ -18,24 +18,26 @@ import (
 func TestScheduledProjectionDefersChangedIdentityChain(t *testing.T) {
 	f := newScheduledProjectionFixture(t)
 	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
 		sched, waitIdle := startScheduledProjectionWithQueuedSync(t, f, func(ctx context.Context) error {
 			return f.Store.AddAccountIdentityContext(ctx, f.Source.ID, "chain-owner@example.com", "manual")
 		})
 		waitIdle()
 		var count int
-		require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM activity_events`).Scan(&count))
-		assert.Equal(t, 2*activityProjectionMaxBatches, count, "accepted second pass commits another ten messages before deferring")
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM activity_events`).Scan(&count))
+		assert.Equal(2*activityProjectionMaxBatches, count, "accepted second pass commits another ten messages before deferring")
 		current, err := f.Store.ContactRevisionsContext(t.Context())
-		require.NoError(t, err)
+		require.NoError(err)
 
-		require.NoError(t, sched.TriggerJob(activityProjectionJob))
+		require.NoError(sched.TriggerJob(activityProjectionJob))
 		waitIdle()
-		require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM activity_events`).Scan(&count))
-		assert.Equal(t, 23, count, "a later trigger drains the stable remainder")
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM activity_events`).Scan(&count))
+		assert.Equal(23, count, "a later trigger drains the stable remainder")
 		reconciled, ok, err := f.Store.ActivityReconciledRevisionsContext(t.Context())
-		require.NoError(t, err)
-		assert.True(t, ok)
-		assert.Equal(t, current, reconciled)
+		require.NoError(err)
+		assert.True(ok)
+		assert.Equal(current, reconciled)
 	})
 }
 
@@ -109,9 +111,9 @@ func TestActivityProjectionContinuationOutcomes(t *testing.T) {
 				}
 				got := run(ctx)
 				if tc.want == nil {
-					assert.NoError(t, got)
+					require.NoError(t, got)
 				} else {
-					assert.ErrorIs(t, got, tc.want)
+					require.ErrorIs(t, got, tc.want)
 				}
 				if tc.want == scheduler.ErrDeferUntilNextTrigger { //nolint:errorlint // Only bare deferral ends a clean chain.
 					assert.Same(t, tc.want, got, "deferral must be bare")
