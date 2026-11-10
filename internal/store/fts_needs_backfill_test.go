@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -108,6 +109,57 @@ func TestPG_BackfillFTS_RefreshesOutdatedEntries(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(1), n, "only the outdated entry needs backfill")
 	assertFTSContains(t, f.Store, "obsolete", 0)
+}
+
+func TestBackfillFTSPreservesSenderSearches(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	slack, err := f.Store.EnsureParticipantByIdentifier("slack", "sender-a", "Current name")
+	require.NoError(err)
+	teams, err := f.Store.EnsureParticipantByIdentifier("teams", "sender-b", "Current name")
+	require.NoError(err)
+	phone, err := f.Store.EnsureParticipantByPhone(t.Context(), "+15550123456", "", "whatsapp")
+	require.NoError(err)
+	email := f.EnsureParticipant("sender@example.test", "Email Sender", "example.test")
+	cases := []struct {
+		kind, name, indexed, query string
+		sender                     int64
+	}{
+		{"slack", "Horizon Sender", "Horizon Sender", "horizon", slack},
+		{"teams", "Monarch Sender", "Monarch Sender", "monarch", teams},
+		{"whatsapp", "", "+15550123456", "+15550123456", phone},
+		{"email", "Email Sender", "sender@example.test", "sender@example.test", email},
+	}
+	ids := make([]int64, len(cases))
+	for i, tc := range cases {
+		msg := f.NewMessage().WithSourceMessageID(tc.kind).Build()
+		msg.MessageType = tc.kind
+		msg.SenderID = sql.NullInt64{Int64: tc.sender, Valid: true}
+		ids[i], err = f.Store.UpsertMessage(msg)
+		require.NoError(err)
+		if tc.name != "" {
+			require.NoError(f.Store.ReplaceMessageRecipients(ids[i], "from", []int64{tc.sender}, []string{tc.name}))
+		}
+		require.NoError(f.Store.UpsertFTS(ids[i], "", "", tc.indexed, "", ""))
+	}
+	check := func() {
+		t.Helper()
+		for i, tc := range cases {
+			matches, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{tc.query}}, 10)
+			require.NoError(err, tc.kind)
+			require.Equal([]int64{ids[i]}, matches, tc.kind)
+		}
+	}
+	check()
+	if f.Store.IsPostgreSQL() {
+		_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET indexing_version = 2`)
+	} else {
+		_, err = f.Store.DB().ExecContext(t.Context(), `DELETE FROM messages_fts`)
+	}
+	require.NoError(err)
+	_, err = f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	check()
 }
 
 func TestPG_BackfillFTS_IndexesLargeMessages(t *testing.T) {
