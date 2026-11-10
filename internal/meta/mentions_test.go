@@ -16,6 +16,7 @@ func TestImportTagsResumesAndArchivesOtherAccountsMedia(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := testutil.NewSQLiteTestStore(t)
 	var afters []string
+	unavailable := false
 	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v26.0/me":
@@ -23,6 +24,10 @@ func TestImportTagsResumesAndArchivesOtherAccountsMedia(t *testing.T) {
 		case "/v26.0/100":
 			_, _ = fmt.Fprint(w, `{"id":"100","instagram_business_account":{"id":"200","username":"example_business"}}`)
 		case "/v26.0/200/tags":
+			if unavailable {
+				http.Error(w, "synthetic outage", http.StatusServiceUnavailable)
+				return
+			}
 			after := r.URL.Query().Get("after")
 			afters = append(afters, after)
 			switch after {
@@ -76,4 +81,17 @@ func TestImportTagsResumesAndArchivesOtherAccountsMedia(t *testing.T) {
 	assert.Equal([]string{"", "p2", "p3"}, afters, "a completed scan starts again from the newest tags")
 	assert.Equal(2, sum.MessagesProcessed)
 	assert.Zero(sum.MessagesAdded + sum.MessagesUpdated)
+
+	// An interrupted --full run replaces the saved position, so the next
+	// ordinary sync starts from the top instead of an older cursor.
+	_, err = imp.ImportTags(t.Context(), "9", "100", "200", ImportOptions{MaxRequests: 1})
+	require.NoError(err)
+	unavailable = true
+	_, err = imp.ImportTags(t.Context(), "9", "100", "200", ImportOptions{Full: true})
+	require.Error(err)
+	unavailable = false
+	afters = nil
+	_, err = imp.ImportTags(t.Context(), "9", "100", "200", ImportOptions{})
+	require.NoError(err)
+	assert.Equal([]string{"", "p2", "p3"}, afters)
 }

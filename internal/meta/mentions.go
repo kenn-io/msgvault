@@ -75,12 +75,17 @@ func (imp *MentionImporter) ImportTags(ctx context.Context, app, page, account s
 		return nil, err
 	}
 	defer func() { retErr = errors.Join(retErr, execution.Release()) }()
-	after := ""
+	var cursor tagCursor
 	if !opts.Full {
-		if after, err = savedCheckpoint(ctx, imp.store, source.ID); err != nil {
+		blob, err := savedCheckpoint(ctx, imp.store, source.ID)
+		if err != nil {
 			return nil, err
 		}
+		if blob != "" && json.Unmarshal([]byte(blob), &cursor) != nil {
+			return nil, errors.New("invalid Instagram tags checkpoint; restart this source with --full")
+		}
 	}
+	after := cursor.After
 	syncID, err := execution.StartSyncContext(ctx, MentionsSourceType, "")
 	if err != nil {
 		return nil, err
@@ -89,9 +94,12 @@ func (imp *MentionImporter) ImportTags(ctx context.Context, app, page, account s
 	sum = run.sum
 	done := false
 	checkpoint := func() *store.Checkpoint {
-		cp := &store.Checkpoint{PageToken: after, MessagesAdded: int64(sum.MessagesAdded), MessagesUpdated: int64(sum.MessagesUpdated), MessagesProcessed: int64(sum.MessagesProcessed)}
-		if done {
-			cp.PageToken = ""
+		cp := &store.Checkpoint{MessagesAdded: int64(sum.MessagesAdded), MessagesUpdated: int64(sum.MessagesUpdated), MessagesProcessed: int64(sum.MessagesProcessed)}
+		if !done {
+			// Never empty, so an unfinished run that starts from the top
+			// still replaces an older saved position.
+			blob, _ := json.Marshal(tagCursor{After: after})
+			cp.PageToken = string(blob)
 		}
 		return cp
 	}
@@ -111,7 +119,7 @@ func (imp *MentionImporter) ImportTags(ctx context.Context, app, page, account s
 		tagged, err := imp.api.Tags(ctx, account, after)
 		var apiErr *APIError
 		if after != "" && errors.As(err, &apiErr) && apiErr.Status == 400 {
-			return sum, fmt.Errorf("instagram tags continuation request failed; rerun with --full: %w", err)
+			return sum, fmt.Errorf("instagram tags continuation request failed: %w", err)
 		} else if err != nil {
 			return sum, err
 		}
@@ -130,6 +138,11 @@ func (imp *MentionImporter) ImportTags(ctx context.Context, app, page, account s
 		}
 	}
 	return sum, nil
+}
+
+// tagCursor is the tag sync checkpoint: the cursor of the next page to read.
+type tagCursor struct {
+	After string `json:"after"`
 }
 
 type mentionRun struct {
