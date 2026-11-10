@@ -26,12 +26,7 @@ export function mergeSentence(absorbed: string | undefined, survivor: string | u
  * only when it has neither.
  */
 export function absorbedCardTitle(absorbed: string | undefined, survivor: string | undefined, firstAddress?: string): string {
-  return namedByAddress(absorbed, survivor) ? firstAddress ?? absorbed ?? 'Merged-in profile' : absorbed!;
-}
-
-/** Whether the absorbed profile goes by its first address, so its card leaves that address out of the list. */
-export function namedByAddress(absorbed: string | undefined, survivor: string | undefined): boolean {
-  return !absorbed || (!!survivor && sameName(absorbed, survivor));
+  return !absorbed || (!!survivor && sameName(absorbed, survivor)) ? firstAddress ?? absorbed ?? 'Merged-in profile' : absorbed;
 }
 
 /** A profile's entries without the one its name reads as, since the name stands for it; another that reads the same still lists. */
