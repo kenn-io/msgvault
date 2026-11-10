@@ -118,9 +118,8 @@
   const splitUnavailable = $derived.by(() => {
     const detail = controller.detail;
     if (!detail || controller.canOfferSplit) return '';
-    const absorbed = (detail.participants ?? []).filter(participant => participant.origin_side === 'absorbed');
-    if (detail.splits?.length && absorbed.every(participant => participant.split_id !== undefined)) return 'nothing left to split';
-    return detail.merge.current_person_id ? 'nothing left to split' : 'the profile it merged into is gone';
+    return detail.merge.current_person_id || (detail.splits?.length && controller.absorbedParticipants.every(participant => participant.split_id !== undefined))
+      ? 'nothing left to split' : 'the profile it merged into is gone';
   });
   function splitLine(split: { id: number; exact_reversal: boolean; actor: string; created_at: string }) {
     const line = provenance(split.actor, split.created_at);
