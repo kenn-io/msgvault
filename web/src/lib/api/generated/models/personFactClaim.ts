@@ -11,6 +11,9 @@ export interface PersonFactClaim {
   evidence_ids: number[];
   generation_id: number;
   id: number;
+  kind: string;
+  /** @nullable */
+  latest_supported_at?: string | null;
   /** @nullable */
   normalized_value?: string | null;
   origin: string;
@@ -18,6 +21,7 @@ export interface PersonFactClaim {
   program_id: string;
   program_version: string;
   relation: string;
+  status: string;
   submitted_value: string;
   target: TargetRef;
   /** @nullable */

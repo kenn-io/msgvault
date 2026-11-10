@@ -8,6 +8,8 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Person fact claims show their kind and whether supporting evidence is fresh, stale, or expired. The CLI and HTTP API expose the same metadata.
+
 ### Upgrade notes
 
 - `[telemetry] enabled = false` is now ignored. To keep [usage telemetry](configuration.md#usage-reporting) off, set `MSGVAULT_TELEMETRY_ENABLED=0` instead.
