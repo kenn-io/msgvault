@@ -12,12 +12,13 @@ same persistence path as polling. Mentions become searchable in the existing
 Facebook archive.
 
 Comments keep their conversation, parent, and participant links. For `feed`
-events, edits update the body; hide and unhide update metadata; removal leaves
-a tombstone and preserves the archived row. Older webhook events cannot undo
-newer webhook body or state changes. Equal timestamps apply in arrival order. Automatic
-retries keep their original order; explicit replay gets a new order. Older
-adds can fill missing author and creation time without replacing a newer body.
-Polling remains the backfill and reconciliation path, with its own checkpoints.
+events, edits update the body; hide and unhide update metadata; removal leaves a
+tombstone and preserves the archived row. Older webhook events cannot undo newer
+webhook body or state changes. Equal timestamps apply in arrival order.
+Automatic retries keep their original order; explicit replay gets a new order.
+Older adds can fill missing author and creation time without replacing a newer
+body. Polling remains the backfill and reconciliation path, with its own
+checkpoints.
 
 ## Connect the receiver
 
@@ -75,20 +76,21 @@ fields are selected in the dashboard; this command manages Page fields only.
 
 ## Capture new Page mentions
 
-The `mention` subscription captures newly delivered post and comment mentions
-of the selected Page in threads its token can read, including other Pages'
-posts. It does not discover historical mentions. Supported post items (`post`, `status`, `photo`,
-`video`, `share`, and `link`) and comments are archived on `add` only. Other
-mention lifecycle verbs are ignored: removing a mention does not establish
-that its host post or comment was deleted.
+The `mention` subscription captures newly delivered post and comment mentions of
+the selected Page in threads its token can read, including other Pages' posts.
+It does not discover historical mentions. Supported post items (`post`,
+`status`, `photo`, `video`, `share`, and `link`) and comments are archived on
+`add` only. Other mention lifecycle verbs are ignored: removing a mention does
+not establish that its host post or comment was deleted.
 
 When text is absent, null, or empty, the worker reads the target once for text.
 Newer mentions update archived text, including text read from the node; older
 deliveries cannot replace it.
 
 Mentions in another Page's thread require that thread to be readable by the Page
-token. An unreadable required target or ancestor remains retryable; retained
-deliveries can be replayed after access is fixed.
+token. An unreadable required target or ancestor is retried until the delivery
+reaches the counted-attempt limit and enters `failed`. Retained deliveries can
+be replayed after access is fixed.
 
 ## Hold other event types
 

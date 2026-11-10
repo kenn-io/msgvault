@@ -10,7 +10,7 @@ All notable changes to msgvault, grouped by release.
 
 - [Meta webhooks](usage/meta-webhooks.md) durably spool signed deliveries and
   archive Page feed comments and new Page mentions in posts and comments. After
-  upgrading, [replay retained held mentions](usage/meta-webhooks.md#inspect-and-replay-deliveries)
+  upgrading, [replay retained held mentions](usage/meta-webhooks.md#inspect-and-replay-deliveries).
   Other fields are held for a future release.
 - [Instagram comment sync](usage/instagram-comments.md) archives linked professional
   account media comments and replies for search and existing person linking.

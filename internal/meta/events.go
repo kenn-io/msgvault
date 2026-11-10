@@ -383,7 +383,7 @@ func (b *feedBatch) ancestors(ctx context.Context, root, parent string) ([]Objec
 		if obj.Parent == nil {
 			obj.Parent = &Actor{ID: root}
 		}
-		if obj.ID != parent || obj.Parent == nil || !safeObjectID(obj.Parent.ID) {
+		if obj.ID != parent || !safeObjectID(obj.Parent.ID) {
 			return nil, errors.New("invalid ancestor evidence")
 		}
 		chain = append(chain, obj)
