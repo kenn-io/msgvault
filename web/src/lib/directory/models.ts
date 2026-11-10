@@ -86,7 +86,7 @@ export type Prepared<T> = { data: T; etag: string };
 export type DirectoryEntityMutationResult<T, C = never> =
   // etag: the saved version's, so a second write from the same dialog collides only with someone else's edit.
   | { ok: true; entity?: T; etag?: string }
-  | { ok: false; kind: 'conflict'; status: 409 | 412; message: string; current?: C; sent?: C }
+  | { ok: false; kind: 'conflict'; status: 409 | 412; message: string; current?: C }
   | { ok: false; kind: 'unknown'; message: string }
   | { ok: false; kind: 'blocked'; message: string }
   | { ok: false; kind: 'error'; status: number; message: string };

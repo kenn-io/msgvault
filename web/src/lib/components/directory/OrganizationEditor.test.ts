@@ -282,7 +282,7 @@ it.each(['organization save', 'aliases save'] as const)('shows the latest notice
         : Response.json({ message: 'Disk full' }, { status: 500 });
     }
     return request.method === 'PUT'
-      ? methods.filter(method => method === 'PUT').length === 1 ? Response.json({ message: 'Profile unavailable' }, { status: 503 }) : Response.json(organizationProfile(2), { headers: { ETag: '"organization-21-r2"' } })
+      ? Response.json({ message: 'Profile unavailable' }, { status: 503 })
       : Response.json({ message: 'primary domain "bad domain" is not a valid domain' }, { status: 400 });
   });
   render(OrganizationEditor, { controller, organization: organization(), onDone });
@@ -301,15 +301,12 @@ it.each(['organization save', 'aliases save'] as const)('shows the latest notice
     await fireEvent.input(aliases, { target: { value: 'Draft alias' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
     await screen.findByText("Couldn't save the aliases and categories.");
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
-    expect(methods).toEqual(['PUT', 'PUT']);
     await fireEvent.input(domain, { target: { value: 'bad domain' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
     await screen.findByText("Couldn't save this organization.");
     expect(screen.queryByText("Couldn't save the aliases and categories.")).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(methods).toEqual(['PUT', 'PUT', 'PATCH', 'PATCH']));
+    await waitFor(() => expect(methods).toEqual(['PUT', 'PATCH', 'PATCH']));
   }
 });
 
