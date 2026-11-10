@@ -34,13 +34,14 @@ report changes after you subscribe.
 4. Restart the daemon. If either variable is empty, the daemon logs a warning
    and does not start the receiver.
 5. In your Meta app's Webhooks settings, subscribe the Page object to the
-   `feed` field. Use `https://<your-host>/meta/webhook/<app_id>` as the callback
+   `feed` field, and to `mention` to archive posts and comments by others
+   that mention the Page. Use `https://<your-host>/meta/webhook/<app_id>` as the callback
    URL and the same verify token.
 6. Subscribe the Page to the app with its Page token, once per Page:
 
    ```bash
    curl -X POST -H "Authorization: Bearer $EXAMPLE_FACEBOOK_PAGE_TOKEN" \
-     "https://graph.facebook.com/v26.0/<page_id>/subscribed_apps?subscribed_fields=feed"
+     "https://graph.facebook.com/v26.0/<page_id>/subscribed_apps?subscribed_fields=feed,mention"
    ```
 
 Each Page must have an enabled [`[[facebook_comments]]` profile](../configuration.md#facebook-comments)
@@ -64,6 +65,8 @@ secret and refuses deliveries that fail. It saves each accepted delivery under
 delivery survives a daemon restart. Deliveries are applied in the order they
 arrived and deleted once applied.
 
+A post or comment that mentions the Page is read from Meta and archived in the
+Page's comment source as its own conversation, with the post it belongs to.
 A new or edited comment is read from Meta with the Page token rather than
 taken from the delivery, so a late or repeated delivery cannot bring back older
 text. A post or parent comment that is not archived yet is read too. An
@@ -80,9 +83,10 @@ without holding back the other changes in its delivery.
 
 ## Limits
 
-- Only comment changes from the Page `feed` field and the Instagram
-  `comments`, `live_comments` and `mentions` fields are applied. Reactions, other feed
-  changes and other fields are logged and ignored.
+- msgvault applies comment changes from the Page `feed` field, new mentions
+  from the Page `mention` field, and the Instagram `comments`, `live_comments`
+  and `mentions` fields. Reactions, other feed changes and other fields are
+  logged and ignored.
 - Instagram does not send edits, hides or removals of comments.
 - A hide or unhide for a comment that is not archived yet is ignored.
 - Deliveries larger than 8 MiB are refused.

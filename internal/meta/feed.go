@@ -131,15 +131,11 @@ func (r *importRun) applyFeedChange(ctx context.Context, reader ObjectReader, ch
 	if err != nil {
 		return fmt.Errorf("read comment %q: %w", id, err)
 	}
-	ancestors := ancestorReader{
-		root:    func(ctx context.Context, id string) (Object, error) { return reader.Post(ctx, id) },
-		comment: func(ctx context.Context, id string) (Object, error) { return reader.Comment(ctx, id) },
-	}
 	parent := root
 	if obj.Parent != nil && obj.Parent.ID != "" {
 		parent = obj.Parent.ID
 	}
-	if err := r.archiveAncestors(ctx, ancestors, root, parent); err != nil {
+	if err := r.archiveAncestors(ctx, facebookAncestors(reader), root, parent); err != nil {
 		return err
 	}
 	return r.persist(ctx, obj, root, parent, "")
@@ -154,6 +150,13 @@ func (r *importRun) archived(ctx context.Context, id string) (bool, error) {
 // webhook comment.
 type ancestorReader struct {
 	root, comment func(ctx context.Context, id string) (Object, error)
+}
+
+func facebookAncestors(reader ObjectReader) ancestorReader {
+	return ancestorReader{
+		root:    func(ctx context.Context, id string) (Object, error) { return reader.Post(ctx, id) },
+		comment: func(ctx context.Context, id string) (Object, error) { return reader.Comment(ctx, id) },
+	}
 }
 
 // archiveAncestors reads and archives the root and parent comments that are
