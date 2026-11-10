@@ -554,7 +554,8 @@ Newly archived PM subjects or Chat channel names update their conversation title
 when nonempty. Subreddit titles use canonical `r/<normalized subreddit>` spelling.
 A Chat `channel_url` groups records without inferring a direct or group conversation;
 `channel_name` supplies its title. Without an observed grouping key, a Chat row
-stays an isolated item. Post URLs and comment media are appended to displayed/searchable bodies;
+stays an isolated item. PM, post, and comment permalinks, post URLs, and comment
+media are appended to displayed/searchable bodies;
 raw evidence retains the original cells. Comment parent/link values remain raw,
 without an invented cross-kind reply mapping.
 

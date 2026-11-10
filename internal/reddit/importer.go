@@ -164,6 +164,12 @@ func importBatch(ctx context.Context, st *store.Store, sourceID int64, owner, ki
 				body += c["media"]
 			}
 		}
+		if link := c["permalink"]; kind != "chat" && link != "" && !strings.Contains(body, link) {
+			if body != "" {
+				body += "\n"
+			}
+			body += link
+		}
 		sent, err := time.Parse("2006-01-02 15:04:05 MST", date)
 		if err != nil || !strings.HasSuffix(date, " UTC") {
 			sent, err = time.Parse(time.RFC3339Nano, date)
