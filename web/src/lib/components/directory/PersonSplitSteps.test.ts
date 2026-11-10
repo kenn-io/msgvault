@@ -182,8 +182,8 @@ describe('PersonSplitSteps', () => {
     });
     const { controller } = await preparedController(fetchFn, undefined, () => ({ ...mergeDetail().labels, incomplete: false,
       participant_ids: [701, 999], addresses: [
-      { participant_id: 701, type: 'email', value: 'alex@example.org', normalized_value: 'alex@example.org', display_value: '', service_slug: 'email', service_label: '', scope_kind: '', scope_value: '' },
-      { participant_id: 701, type: 'phone', value: '+12025550101', normalized_value: '+12025550101', display_value: '', service_slug: 'phone', service_label: '', scope_kind: '', scope_value: '' },
+      { participant_id: 701, type: 'email', value: 'alex@example.org', display_value: '', service_slug: 'email', service_label: '', scope_kind: '', scope_value: '' },
+      { participant_id: 701, type: 'phone', value: '+12025550101', display_value: '', service_slug: 'phone', service_label: '', scope_kind: '', scope_value: '' },
     ].map(a => addressFixture(a.participant_id, a.type, a.value, a)).concat([addressFixture(701, 'email', 'neri@example.org'), addressFixture(999, 'email', 'later@example.org')]) }));
     const onOpenPerson = vi.fn();
     render(PersonSplitSteps, { controller, onOpenPerson });

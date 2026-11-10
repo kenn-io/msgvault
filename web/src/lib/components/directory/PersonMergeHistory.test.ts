@@ -230,8 +230,8 @@ describe('PersonMergeHistory', () => {
     const value = detail();
     value.participants = value.participants.filter(participant => participant.origin_side === 'survivor');
     value.labels.profiles[1] = { ...value.labels.profiles[1], display_name: 'Curated Guest', contact_points: [
-      { identity_key: identityKeyFixture('email', 'curated@example.org'), address_kind: 'email', original_value: 'curated@example.org', normalized_value: 'curated@example.org' },
-      { identity_key: identityKeyFixture('phone', '+12025550144'), address_kind: 'phone', original_value: '+12025550144', normalized_value: '+12025550144' },
+      { identity_key: identityKeyFixture('email', 'curated@example.org'), address_kind: 'email', original_value: 'curated@example.org' },
+      { identity_key: identityKeyFixture('phone', '+12025550144'), address_kind: 'phone', original_value: '+12025550144' },
     ] };
     renderHistory(value);
     await fireEvent.click(await screen.findByRole('button', { name: /^Open Curated Guest merged into Alex Example/ }));
@@ -307,9 +307,9 @@ describe('PersonMergeHistory', () => {
       { merge_id: 41, participant_id: 702, origin_side: 'survivor' },
     ] as MergeDetail['participants'];
     value.labels.addresses = [
-      { participant_id: 701, type: 'email', value: 'first@example.org', normalized_value: 'first@example.org', display_value: '', service_slug: 'email', service_label: '', scope_kind: '', scope_value: '' },
-      { participant_id: 703, type: 'handle', value: '@alex', normalized_value: 'alex', display_value: '', service_slug: 'slack', service_label: 'Slack', scope_kind: 'workspace', scope_value: 'garden' },
-      { participant_id: 704, type: 'email', value: 'pending@example.org', normalized_value: 'pending@example.org', display_value: '', service_slug: 'email', service_label: '', scope_kind: '', scope_value: '' },
+      { participant_id: 701, type: 'email', value: 'first@example.org', display_value: '', service_slug: 'email', service_label: '', scope_kind: '', scope_value: '' },
+      { participant_id: 703, type: 'handle', value: '@alex', display_value: '', service_slug: 'slack', service_label: 'Slack', scope_kind: 'workspace', scope_value: 'garden' },
+      { participant_id: 704, type: 'email', value: 'pending@example.org', display_value: '', service_slug: 'email', service_label: '', scope_kind: '', scope_value: '' },
     ].map(a => addressFixture(a.participant_id, a.type, a.value, a));
     value.labels.participant_ids = [701, 702, 703, 704];
     value.splits = [value.splits![0], { ...value.splits![0], id: 56, new_person_id: 29, new_person_uid: 'synthetic-29' }];

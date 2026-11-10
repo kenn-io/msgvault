@@ -26,7 +26,7 @@ it('renders the store’s email and formatted phone through History and merged-i
 it('keeps the legacy Beeper phone readable when its saved copy matches', () => {
   const labels = labelsOf(rawPhoneAddresses, 1);
   labels.profiles = [{ id: 9, participant_ids: [1], contact_points: [{
-    identity_key: '["whatsapp","","","+12025550123"]', address_kind: 'phone', original_value: '+1 (202) 555-0123', normalized_value: '+12025550123', service_slug: 'whatsapp', service_label: 'WhatsApp',
+    identity_key: '["whatsapp","","","+12025550123"]', address_kind: 'phone', original_value: '+1 (202) 555-0123', service_slug: 'whatsapp', service_label: 'WhatsApp',
   }] }];
   const participants = [absorbed(1)];
   const row = mergeSummaryRow({ merge, participants, labels });
@@ -68,10 +68,10 @@ it('distinguishes a known empty participant from unavailable addresses', () => {
 
 it('groups saved addresses by the keys supplied by the server', () => {
   const points = [
-    { address_kind: 'email', original_value: 'Reader@Example.org', normalized_value: 'reader@example.org', identity_key: identityKeyFixture('email', 'reader@example.org') },
-    { address_kind: 'email', original_value: 'curated@example.org', normalized_value: 'curated@example.org', identity_key: identityKeyFixture('email', 'curated@example.org') },
-    { address_kind: 'email', original_value: 'Curated@example.org', normalized_value: 'curated@example.org', identity_key: identityKeyFixture('email', 'curated@example.org') },
-    { address_kind: 'language', original_value: 'en', normalized_value: 'en', identity_key: identityKeyFixture('language', 'en') },
+    { address_kind: 'email', original_value: 'Reader@Example.org', identity_key: identityKeyFixture('email', 'reader@example.org') },
+    { address_kind: 'email', original_value: 'curated@example.org', identity_key: identityKeyFixture('email', 'curated@example.org') },
+    { address_kind: 'email', original_value: 'Curated@example.org', identity_key: identityKeyFixture('email', 'curated@example.org') },
+    { address_kind: 'language', original_value: 'en', identity_key: identityKeyFixture('language', 'en') },
   ];
   expect(savedAddresses(points, new Set([identityKeyFixture('email', 'reader@example.org')])).map(addressText)).toEqual(['curated@example.org']);
 });
@@ -83,7 +83,7 @@ it.each([
   { type: 'handle', key: '@garden-member', display: '', name: '', expected: 'Custom chat · @garden-member' },
   { type: 'beeper', display: '@garden-member', name: 'Garden member', scope: true, expected: 'WhatsApp · Garden member · @garden-member · account 1' },
 ].map(row => ({ key: 'beeper:8:whatsapp:9:@user:x.y', scope: false, ...row })))('preserves readable $type identity evidence with display "$display"', ({ type, key, display, name, scope, expected }) => {
-  const identifiers = [{ participant_id: 701, type, value: key, normalized_value: type === 'beeper' ? `beeper:${key}` : 'garden-member', display_value: display, service_slug: type === 'beeper' ? 'whatsapp' : 'custom-chat', service_label: type === 'beeper' ? 'WhatsApp' : 'Custom chat', scope_kind: scope ? 'account' : '', scope_value: scope ? 'garden-account' : '' }];
+  const identifiers = [{ participant_id: 701, type, value: key, display_value: display, service_slug: type === 'beeper' ? 'whatsapp' : 'custom-chat', service_label: type === 'beeper' ? 'WhatsApp' : 'Custom chat', scope_kind: scope ? 'account' : '', scope_value: scope ? 'garden-account' : '' }];
   const participant = { merge_id: 41, participant_id: 701, origin_side: 'absorbed' };
   const listed = mergeAddresses({ participants: [participant], labels: labelsOf(identifiers.map(a => addressFixture(a.participant_id, a.type, a.value, { ...a, participant_display_name: name }))) }, 'absorbed')[0];
   expect(addressText({ title: listed.value, detail: listed.detail })).toBe(expected);
@@ -104,7 +104,7 @@ it('numbers workspaces from the complete merge for current, saved, and merged-in
   ];
   const complete = { merge, participants: [{ ...absorbed(702), origin_side: 'survivor' }, absorbed(701)], labels: labelsOf(both) };
   expect(mergeSummaryRow(complete).addresses.get(701)?.map(addressText)).toEqual(['Slack · Absorbed · workspace 2']);
-  const point = { identity_key: identityKeyFixture('slack', 'T_TWO:U_NERI', 'workspace', 'T_TWO'), address_kind: 'username', original_value: 'Neri Bloom', normalized_value: 'T_TWO:U_NERI', service_slug: 'slack', service_label: 'Slack', scope_kind: 'workspace', scope_value: 'T_TWO' };
+  const point = { identity_key: identityKeyFixture('slack', 'T_TWO:U_NERI', 'workspace', 'T_TWO'), address_kind: 'username', original_value: 'Neri Bloom', service_slug: 'slack', service_label: 'Slack', scope_kind: 'workspace', scope_value: 'T_TWO' };
   expect(savedAddresses([point], new Set(), row.workspaceLabels).map(addressText)).toEqual(['Neri Bloom · Slack · workspace 2']);
 });
 
@@ -114,7 +114,7 @@ it('renders migrated opaque Beeper IDs by their readable name', () => {
 
 it('numbers accounts together for linked and saved addresses', () => {
   const linked = addressFixture(701, 'beeper', 'opaque', { display_value: 'reader', service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'account-b' });
-  const saved = { identity_key: identityKeyFixture('whatsapp', 'reader', 'account', 'account-a'), address_kind: 'username', original_value: 'reader', normalized_value: 'reader', service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'account-a' };
+  const saved = { identity_key: identityKeyFixture('whatsapp', 'reader', 'account', 'account-a'), address_kind: 'username', original_value: 'reader', service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'account-a' };
   const labels = labelsOf([linked]);
   labels.profiles = [{ id: 9, participant_ids: [701], contact_points: [saved] }];
   const value = { merge, participants: [absorbed(701)], labels };

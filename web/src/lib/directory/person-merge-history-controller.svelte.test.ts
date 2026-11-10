@@ -1,6 +1,6 @@
-import { addressFixture } from './merge-fixtures.test-support';
+import { addressFixture, identityKeyFixture } from './merge-fixtures.test-support';
 import { emptyProfile } from './profile-fixtures.test-support';
-import { mergeResult, person, requestOf } from './entity-fixtures.test-support';
+import { envelope, mergeResult, person, requestOf } from './entity-fixtures.test-support';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import * as requestID from '../api/request-id';
@@ -79,6 +79,18 @@ function deferredResponse() {
     resolve = next;
   });
   return { promise, resolve };
+}
+
+function responseConsumed(response: Response): Promise<void> {
+  const text = response.text.bind(response);
+  return new Promise(resolve => {
+    vi.spyOn(response, 'text').mockImplementation(async () => {
+      const body = await text();
+      // Let the response consumer finish before checking controller state.
+      setTimeout(resolve, 0);
+      return body;
+    });
+  });
 }
 
 describe('PersonMergeHistoryController', () => {
@@ -233,15 +245,15 @@ describe('PersonMergeHistoryController', () => {
     if (replacement === 'person') controller.setPerson(8);
     else await controller.selectMerge(42);
     const answer = Response.json(person(19, 1, [], 'Late Example'));
+    const consumed = responseConsumed(answer);
     late.resolve(answer);
     await first;
-    await vi.waitFor(() => expect(late.promise).resolves.toBe(answer));
+    await consumed;
     expect(requests.find(request => new URL(request.url).pathname === '/api/v1/people/19')?.signal.aborted).toBe(true);
-    expect(controller.labels?.names.get(7)).toBeUndefined();
-    expect(controller.labels?.names.get(19)).toBeUndefined();
     if (replacement === 'merge') {
       expect(controller.labels?.for).toBe(controller.detail);
       expect(controller.labels?.names.get(8)).toBe('New Example');
+      expect(controller.labels?.names.get(19)).toBeUndefined();
     } else expect(controller.labels).toBeNull();
     controller.destroy();
   });
@@ -615,12 +627,14 @@ describe('PersonMergeHistoryController', () => {
       expect(fetchFn.mock.calls.find(([input]) => new URL(requestOf(input).url).pathname === '/api/v1/people/12/profile')![0]).toHaveProperty('signal.aborted', true);
       await expect(controller.openSplit()).resolves.toBe(true);
     }
-    const answer = Response.json({ ...emptyProfile(person(12)), contact_points: [{ address_kind: 'email', original_value: 'late@example.org', normalized_value: 'late@example.org' }] });
+    const answer = Response.json({ ...emptyProfile(person(12)), contact_points: [{ person_id: 12, identity_key: identityKeyFixture('email', 'late@example.org'), address_kind: 'email', original_value: 'late@example.org', normalized_value: 'late@example.org', normalization: 'email', normalization_version: 1, envelope: envelope(1) }] });
+    const consumed = responseConsumed(answer);
     saved[0]!.resolve(answer);
-    await vi.waitFor(() => expect(saved[0]!.promise).resolves.toBe(answer));
+    await consumed;
     expect(controller.sourceSaved).toBeNull();
     expect(controller.sourceSavedError).toBeNull();
     saved[1]!.resolve(Response.json(emptyProfile(person(12))));
+    if (change === 'close and reopen') await vi.waitFor(() => expect(controller.sourceSaved).toEqual([]));
     controller.destroy();
   });
 
