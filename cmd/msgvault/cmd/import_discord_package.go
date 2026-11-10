@@ -16,7 +16,7 @@ func newImportDiscordPackageCmd() *cobra.Command {
 		Short: "Import a Discord sent-message package",
 		Long: `Import sent messages from an extracted official Discord data package.
 
-Reads the account ID, channel metadata, and JSON or legacy CSV transcripts.
+Supports JSON or legacy CSV transcripts.
 Sent messages only, including DMs.
 Attachment URLs remain links. No media is downloaded. Re-importing replaces
 messages with the last imported snapshot and safely repeats interrupted runs.
@@ -43,7 +43,7 @@ func runImportDiscordPackage(cmd *cobra.Command, directory string, noDefaultIden
 		return err
 	}
 	defer cleanup()
-	ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Re-run to import remaining snapshots.")
+	ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Re-run to finish the import.")
 	defer stop()
 	summary, importErr := discord.ImportPackage(ctx, st, directory)
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Coverage: exporting account's sent messages only")
