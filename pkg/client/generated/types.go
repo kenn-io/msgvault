@@ -5421,7 +5421,7 @@ type FileSearchRow struct {
 	ContainingTitle string `json:"containing_title" validate:"required"`
 
 	// ContentAvailable Null means availability has not been checked.
-	ContentAvailable bool `json:"content_available"`
+	ContentAvailable *bool `json:"content_available" validate:"omitempty"`
 
 	// ContentState List availability is based on metadata; file details check whether storage can be opened.
 	ContentState       FileSearchRowContentState `json:"content_state" validate:"required"`
@@ -5449,6 +5449,11 @@ func (f FileSearchRow) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(f.ContainingTitle, "required"); err != nil {
 		errors = errors.Append("ContainingTitle", err)
+	}
+	if v, ok := any(f.ContentAvailable).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ContentAvailable", err)
+		}
 	}
 	if v, ok := any(f.ContentState).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
@@ -5579,7 +5584,7 @@ func (f FileSuggestionHTTPResponse) Validate() error {
 
 type FileSuggestionRow struct {
 	// ContentAvailable Null means availability has not been checked.
-	ContentAvailable bool `json:"content_available"`
+	ContentAvailable *bool `json:"content_available" validate:"omitempty"`
 
 	// ContentState Suggestion availability is based on metadata; file details check whether storage can be opened.
 	ContentState   FileSuggestionRowContentState  `json:"content_state" validate:"required"`
@@ -5597,6 +5602,11 @@ type FileSuggestionRow struct {
 
 func (f FileSuggestionRow) Validate() error {
 	var errors runtime.ValidationErrors
+	if v, ok := any(f.ContentAvailable).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ContentAvailable", err)
+		}
+	}
 	if v, ok := any(f.ContentState).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("ContentState", err)
@@ -12088,7 +12098,7 @@ type PersonFileSearchRow struct {
 	ContainingTitle string `json:"containing_title" validate:"required"`
 
 	// ContentAvailable Null means availability has not been checked.
-	ContentAvailable bool `json:"content_available"`
+	ContentAvailable *bool `json:"content_available" validate:"omitempty"`
 
 	// ContentState List availability is based on metadata; file details check whether storage can be opened.
 	ContentState       PersonFileSearchRowContentState `json:"content_state" validate:"required"`
@@ -12117,6 +12127,11 @@ func (p PersonFileSearchRow) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(p.ContainingTitle, "required"); err != nil {
 		errors = errors.Append("ContainingTitle", err)
+	}
+	if v, ok := any(p.ContentAvailable).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ContentAvailable", err)
+		}
 	}
 	if v, ok := any(p.ContentState).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
@@ -12251,7 +12266,7 @@ func (p PersonFileSuggestionHTTPResponse) Validate() error {
 
 type PersonFileSuggestionRow struct {
 	// ContentAvailable Null means availability has not been checked.
-	ContentAvailable bool `json:"content_available"`
+	ContentAvailable *bool `json:"content_available" validate:"omitempty"`
 
 	// ContentState Suggestion availability is based on metadata; file details check whether storage can be opened.
 	ContentState     PersonFileSuggestionRowContentState  `json:"content_state" validate:"required"`
@@ -12270,6 +12285,11 @@ type PersonFileSuggestionRow struct {
 
 func (p PersonFileSuggestionRow) Validate() error {
 	var errors runtime.ValidationErrors
+	if v, ok := any(p.ContentAvailable).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ContentAvailable", err)
+		}
+	}
 	if v, ok := any(p.ContentState).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("ContentState", err)

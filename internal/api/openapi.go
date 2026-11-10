@@ -1056,6 +1056,14 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			}
 		}
 	}
+	for _, name := range []string{"FileSearchRow", "FileSuggestionRow", "PersonFileSearchRow", "PersonFileSuggestionRow"} {
+		if schema := schemas[name]; schema != nil {
+			if property := schema.Properties["content_available"]; property != nil {
+				setCodegenGoType(property, "*bool")
+				nullableSchemaProperty(schema, "content_available")
+			}
+		}
+	}
 	const emailProperty = "email"
 	if calendar := schemas["CalendarProjection"]; calendar != nil {
 		for name, goType := range map[string]string{"all_day": "*bool", "sequence": "*int64"} {

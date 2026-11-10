@@ -5603,6 +5603,10 @@ components:
           description: Null means availability has not been checked.
           nullable: true
           type: boolean
+          x-go-type: "*bool"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
         content_state:
           description: List availability is based on metadata; file details check whether storage can be opened.
           enum:
@@ -5766,6 +5770,10 @@ components:
           description: Null means availability has not been checked.
           nullable: true
           type: boolean
+          x-go-type: "*bool"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
         content_state:
           description: Suggestion availability is based on metadata; file details check whether storage can be opened.
           enum:
@@ -11995,6 +12003,10 @@ components:
           description: Null means availability has not been checked.
           nullable: true
           type: boolean
+          x-go-type: "*bool"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
         content_state:
           description: List availability is based on metadata; file details check whether storage can be opened.
           enum:
@@ -12162,6 +12174,10 @@ components:
           description: Null means availability has not been checked.
           nullable: true
           type: boolean
+          x-go-type: "*bool"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
         content_state:
           description: Suggestion availability is based on metadata; file details check whether storage can be opened.
           enum:
