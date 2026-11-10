@@ -14,23 +14,24 @@ import (
 func TestGoogleChatJSONBoundsAndContainment(t *testing.T) {
 	for _, mode := range []string{"oversize", "symlink"} {
 		t.Run(mode, func(t *testing.T) {
+			require := require.New(t)
 			path := t.TempDir()
 			name := filepath.Join(path, "messages.json")
 			if mode == "oversize" {
 				f, err := os.Create(name)
-				require.NoError(t, err)
-				require.NoError(t, f.Truncate(65<<20))
-				require.NoError(t, f.Close())
+				require.NoError(err)
+				require.NoError(f.Truncate(65 << 20))
+				require.NoError(f.Close())
 			} else {
 				outside := filepath.Join(t.TempDir(), "messages.json")
-				require.NoError(t, os.WriteFile(outside, []byte(one), 0600))
-				require.NoError(t, os.Symlink(outside, name))
+				require.NoError(os.WriteFile(outside, []byte(one), 0600))
+				require.NoError(os.Symlink(outside, name))
 			}
 			root, err := os.OpenRoot(path)
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, root.Close()) })
+			require.NoError(err)
+			t.Cleanup(func() { require.NoError(root.Close()) })
 			_, err = readJSON(t.Context(), root, "messages.json")
-			require.Error(t, err)
+			require.Error(err)
 		})
 	}
 }
@@ -112,13 +113,14 @@ func TestGoogleChatDates(t *testing.T) {
 }
 
 func TestGoogleChatMissingProfilePartKeepsOwnershipUnknown(t *testing.T) {
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
 	write(t, root, "Groups/DM a/messages.json", one)
-	require.NoError(t, os.MkdirAll(filepath.Join(root, "Users/User synthetic"), 0700))
+	require.NoError(os.MkdirAll(filepath.Join(root, "Users/User synthetic"), 0700))
 	_, err := Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{root}})
-	require.NoError(t, err)
+	require.NoError(err)
 	var config sql.NullString
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT sync_config FROM sources`).Scan(&config))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT sync_config FROM sources`).Scan(&config))
 	assert.NotContains(t, config.String, "owner_profiles")
 }

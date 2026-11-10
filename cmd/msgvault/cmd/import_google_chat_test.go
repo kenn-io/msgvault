@@ -33,6 +33,7 @@ func TestImportGoogleChatRequiresOwner(t *testing.T) {
 }
 
 func TestImportGoogleChatRefreshesCacheAfterPartialFailure(t *testing.T) {
+	require := require.New(t)
 	cfg := lifecycleTestConfig(t.TempDir())
 	cfg.Data.DataDir = t.TempDir()
 	root := t.TempDir()
@@ -44,11 +45,11 @@ func TestImportGoogleChatRefreshesCacheAfterPartialFailure(t *testing.T) {
 	command.SetOut(&out)
 	command.SetErr(io.Discard)
 	err := runImportGoogleChat(command, []string{root}, googleChatCLIOptions{Me: "owner@example.com"})
-	require.ErrorContains(t, err, "JSON")
+	require.ErrorContains(err, "JSON")
 	db, err := sql.Open("duckdb", "")
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(db.Close()) })
 	var n int
-	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT count(*) FROM read_parquet(?, hive_partitioning=true)`, filepath.Join(cfg.AnalyticsDir(), "messages", "**", "*.parquet")).Scan(&n))
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FROM read_parquet(?, hive_partitioning=true)`, filepath.Join(cfg.AnalyticsDir(), "messages", "**", "*.parquet")).Scan(&n))
 	assert.Equal(t, 1, n)
 }

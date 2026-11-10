@@ -26,6 +26,10 @@ schema was found. The Chat API message format is not a Takeout schema.
 
 Additional sources were studied without copying content into these fixtures:
 
+- [Google Takeout documentation](https://github.com/google/takeout/tree/9a26ef7dcc0eb816adbf56731685496720c2c27a), commit `9a26ef7dcc0eb816adbf56731685496720c2c27a`, Apache-2.0. This documents Activity records, not a Chat conversation schema.
+- [GoogleChatViewer attachment reader](https://github.com/TauhidJ/GoogleChatViewer/blob/40e6dc7e83ff4e885d1afea21dfb7b9290cd9312/Services/ChatDataService.cs), commit `40e6dc7e83ff4e885d1afea21dfb7b9290cd9312`, no license stated. Studied as a consumer; its filename heuristics do not establish a producer contract.
+- [google-chat-takeout-html-exporter attachment notes](https://github.com/dmirandaa/google-chat-takeout-html-exporter/blob/20fa0add9c59ef1b0a3a79cb50760e55e54992bc/BUG.md), commit `20fa0add9c59ef1b0a3a79cb50760e55e54992bc`, MIT. Studied as consumer evidence; no fixture or content copied.
+
 - [google-chat-formatter sample](https://github.com/4kategreen/google-chat-formatter/blob/6b9762da4017f7526b566045e03445f663bd4c44/messages-sample.json),
   commit `6b9762da4017f7526b566045e03445f663bd4c44`, Unlicense. Its origin is
   not documented as a current unmodified export or as wholly synthetic.
