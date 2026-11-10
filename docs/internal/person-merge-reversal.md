@@ -23,9 +23,8 @@ Each merge stores two related forms of history:
 
 History lists each lineage participant's current identities, and reads saved
 profile contact points, including service and scope, from the existing
-snapshot. Split offers the same participant identities and reads each resulting
-profile's saved contacts after committing, so later edits appear in the result
-without changing the recorded merge.
+snapshot. Split offers participant identities and shows them on the resulting
+profiles in its receipt.
 
 Exact reversal means the selected lineage and live dependencies still permit
 the pre-merge profiles to be restored. Partial splits move only attributable
