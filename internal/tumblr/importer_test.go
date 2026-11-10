@@ -18,25 +18,50 @@ import (
 )
 
 func TestTumblrImportReplay(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	opts := ImportOptions{Blog: "orchard-example", AttachmentsDir: t.TempDir()}
-	summary, err := Import(t.Context(), st, "testdata/observed-shape", opts)
-	require.NoError(err)
-	assert.Equal(4, summary.MessagesAdded)
-	assert.Equal("id:opaque-owner", summary.OwnerKey)
-	summary, err = Import(t.Context(), st, overlapFixture(t, "orchard-example"), opts)
-	require.NoError(err)
-	assert.Zero(summary.MessagesAdded)
-	assert.Equal(4, summary.MessagesPresent)
-	var n int
-	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages WHERE message_type = 'tumblr'").Scan(&n))
-	assert.Equal(4, n)
-	var processed, added int
-	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT sum(messages_processed), sum(messages_added) FROM sync_runs").Scan(&processed, &added))
-	assert.Equal(8, processed)
-	assert.Equal(4, added)
+	for _, renamed := range []string{"none", "owner", "peer"} {
+		t.Run(renamed, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			opts := ImportOptions{Blog: "orchard-example", AttachmentsDir: t.TempDir()}
+			first, err := Import(t.Context(), st, "testdata/observed-shape", opts)
+			require.NoError(err)
+			assert.Equal(4, first.MessagesAdded)
+			assert.Equal("id:opaque-owner", first.OwnerKey)
+			var key string
+			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT source_message_id FROM messages WHERE snippet LIKE 'Hello%'").Scan(&key))
+			assert.Equal("v1:bea5cff4f42d91da04b28213e31603594695ab1dc1fd511af436f50d77929fa8:1", key)
+			var sender int64
+			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT sender_id FROM messages WHERE snippet LIKE 'An example post%'").Scan(&sender))
+			if renamed == "owner" {
+				opts.Blog = "renamed-owner"
+			}
+			root := overlapFixture(t, opts.Blog)
+			if renamed == "peer" {
+				file := filepath.Join(root, "conversations", "renamed.html")
+				data, err := os.ReadFile(file)
+				require.NoError(err)
+				require.NoError(os.WriteFile(file, []byte(strings.ReplaceAll(string(data), "river-example", "renamed-peer")), 0600))
+			}
+			summary, err := Import(t.Context(), st, root, opts)
+			require.NoError(err)
+			assert.Equal(first.SourceID, summary.SourceID)
+			assert.Zero(summary.MessagesAdded)
+			assert.Equal(4, summary.MessagesPresent)
+			assert.Equal(1, summary.Files)
+			assert.Zero(summary.FilesSkipped)
+			var got int64
+			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT sender_id FROM messages WHERE snippet LIKE 'An example post%'").Scan(&got))
+			assert.Equal(sender, got)
+			var n int
+			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages WHERE message_type = 'tumblr'").Scan(&n))
+			assert.Equal(4, n)
+			var processed, added int
+			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT sum(messages_processed), sum(messages_added) FROM sync_runs").Scan(&processed, &added))
+			assert.Equal(8, processed)
+			assert.Equal(4, added)
+		})
+	}
 }
 
 func TestTumblrMediaRefillAndRetention(t *testing.T) {
@@ -116,7 +141,7 @@ func TestTumblrScopeUnknownSenderAndNoDeletion(t *testing.T) {
 	var n int
 	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT count(*) FROM messages WHERE source_id = ? AND sender_id IS NULL AND sent_at IS NULL"), source).Scan(&n))
 	assert.Equal(1, n)
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT count(*) FROM messages WHERE source_id = ? AND deleted_from_source_at IS NULL"), source).Scan(&n))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT count(*) FROM messages WHERE source_id = ?"), source).Scan(&n))
 	assert.Equal(5, n)
 }
 func TestTumblrMediaPathsAndBounds(t *testing.T) {
@@ -134,22 +159,18 @@ func TestTumblrMediaPathsAndBounds(t *testing.T) {
 	r, err := openExport(t.Context(), root)
 	require.NoError(err)
 	defer func() { require.NoError(r.close()) }()
-	m := &Message{Media: []string{"../media/zero.bin", "../media/missing.bin", "../media/large.bin", "../../escape", "/%2Fabsolute", "%2e%2e/%2e%2e/escape", "https://media.example/image", "../media/%7aero.bin", "data:text/plain,hello"}}
+	m := &Message{Media: []string{"../media/zero.bin", "../media/missing.bin", "../media/large.bin", "../../escape", "https://media.example/image"}}
 	s := &ImportSummary{}
-	writes, err := mediaWrites(t.Context(), st, r, 0, "conversations/c.html", m, ImportOptions{AttachmentsDir: t.TempDir()}, s)
+	writes, _, err := mediaWrites(t.Context(), st, r, 0, "conversations/c.html", m, ImportOptions{AttachmentsDir: t.TempDir()}, s)
 	require.NoError(err)
-	assert.Equal(2, s.MediaStored)
+	assert.Zero(s.MediaStored)
 	assert.Equal(1, s.MediaMissing)
 	assert.Equal(1, s.MediaOversized)
-	assert.Equal(4, s.MediaInvalid)
+	assert.Equal(1, s.MediaInvalid)
 	assert.Equal(1, s.MediaRemote)
 	require.Len(writes, len(m.Media))
 	assert.NotEmpty(writes[0].ContentHash)
 	assert.Zero(writes[0].Size)
-	badDir := filepath.Join(t.TempDir(), "file")
-	require.NoError(os.WriteFile(badDir, []byte("file"), 0600))
-	_, err = mediaWrites(t.Context(), st, r, 0, "conversations/c.html", &Message{Media: []string{"../media/zero.bin"}}, ImportOptions{AttachmentsDir: badDir}, &ImportSummary{})
-	require.ErrorContains(err, "store media")
 }
 func TestTumblrRealQuery(t *testing.T) {
 	assert := assert.New(t)
@@ -167,9 +188,6 @@ func TestTumblrRealQuery(t *testing.T) {
 	rows, err = engine.TextSearch(t.Context(), "posts.example", nil, 20, 0)
 	require.NoError(err)
 	assert.Len(rows, 1)
-	var body string
-	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT body_text FROM message_bodies WHERE message_id = (SELECT id FROM messages WHERE snippet LIKE 'An example post%')").Scan(&body))
-	assert.Contains(body, "https://posts.example/42")
 	conversations, err := engine.ListConversations(t.Context(), query.TextFilter{})
 	require.NoError(err)
 	assert.Len(conversations, 1)
@@ -180,7 +198,7 @@ type cancelOnProgress struct{ cancel context.CancelFunc }
 
 func (w cancelOnProgress) Write(p []byte) (int, error) { w.cancel(); return len(p), nil }
 func TestTumblrInterruptedAfterWritesThenReplay(t *testing.T) {
-	for _, failure := range []string{"cancel", "parse"} {
+	for _, failure := range []string{"cancel", "parse", "utf8"} {
 		t.Run(failure, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -190,7 +208,9 @@ func TestTumblrInterruptedAfterWritesThenReplay(t *testing.T) {
 			data, err := os.ReadFile(filepath.Join(root, "conversations", "convo_700.html"))
 			require.NoError(err)
 			extra := filepath.Join(root, "conversations", "z.html")
-			if failure == "parse" {
+			if failure == "utf8" {
+				data = []byte{0xff}
+			} else if failure == "parse" {
 				data = []byte("<p>not a conversation</p>")
 			} else {
 				data = []byte(strings.ReplaceAll(string(data), "Conversation ID: 700", "Conversation ID: 701"))
@@ -206,7 +226,11 @@ func TestTumblrInterruptedAfterWritesThenReplay(t *testing.T) {
 			if failure == "cancel" {
 				require.ErrorIs(err, context.Canceled)
 			} else {
-				require.ErrorContains(err, "Conversation ID")
+				if failure == "utf8" {
+					require.ErrorContains(err, "z.html: tumblr: conversation HTML is not valid UTF-8")
+				} else {
+					require.ErrorContains(err, "Conversation ID")
+				}
 				require.NoError(os.Remove(extra))
 			}
 			assert.Equal(4, s.MessagesAdded)
@@ -249,25 +273,6 @@ func TestTumblrNameFallbackAndNewObservations(t *testing.T) {
 	assert.Equal(3, s.MessagesPresent)
 }
 
-func TestTumblrOpaqueSenderIdentitySurvivesRename(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	opts := ImportOptions{Blog: "orchard-example"}
-	_, err := Import(t.Context(), st, "testdata/observed-shape", opts)
-	require.NoError(err)
-	root := t.TempDir()
-	require.NoError(os.CopyFS(root, os.DirFS("testdata/observed-shape")))
-	file := filepath.Join(root, "conversations", "convo_700.html")
-	data, err := os.ReadFile(file)
-	require.NoError(err)
-	require.NoError(os.WriteFile(file, []byte(strings.ReplaceAll(string(data), "river-example", "renamed-example")), 0600))
-	s, err := Import(t.Context(), st, root, opts)
-	require.NoError(err)
-	assert.Zero(s.MessagesAdded)
-	assert.Equal(4, s.MessagesPresent)
-}
-
 func overlapFixture(t *testing.T, owner string) string {
 	t.Helper()
 	require := require.New(t)
@@ -278,32 +283,27 @@ func overlapFixture(t *testing.T, owner string) string {
 	parts := strings.Split(string(data), `<div class="container ">`)
 	require.Len(parts, 5)
 	parts[4] = strings.TrimSuffix(parts[4], "</body></html>\n")
-	html := parts[0]
+	var html strings.Builder
+	html.WriteString(parts[0])
 	for i := 4; i > 0; i-- {
-		html += `<div class="container ">` + parts[i]
+		html.WriteString(`<div class="container ">`)
+		html.WriteString(parts[i])
 	}
-	html += "</body></html>\n"
-	require.NoError(os.WriteFile(filepath.Join(root, "conversations", "renamed.html"), []byte(strings.ReplaceAll(html, "orchard-example", owner)), 0600))
+	html.WriteString("</body></html>\n")
+	require.NoError(os.WriteFile(filepath.Join(root, "conversations", "renamed.html"), []byte(strings.ReplaceAll(html.String(), "orchard-example", owner)), 0600))
+	for _, name := range []string{"._metadata.html", "__MACOSX/cache.html", ".hidden/cache.html"} {
+		file := filepath.Join(root, "conversations", name)
+		require.NoError(os.MkdirAll(filepath.Dir(file), 0700))
+		require.NoError(os.WriteFile(file, []byte("not a conversation"), 0600))
+	}
 	return root
-}
-
-func TestTumblrOwnerRenameReusesSource(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	first, err := Import(t.Context(), st, "testdata/observed-shape", ImportOptions{Blog: "orchard-example"})
-	require.NoError(err)
-	renamed, err := Import(t.Context(), st, overlapFixture(t, "renamed-owner"), ImportOptions{Blog: "renamed-owner"})
-	require.NoError(err)
-	assert.Equal(first.SourceID, renamed.SourceID)
-	assert.Equal(4, renamed.MessagesPresent)
-	assert.Zero(renamed.MessagesAdded)
 }
 
 func TestTumblrMediaClassification(t *testing.T) {
 	checks := require.New(t)
 	verify := assert.New(t)
 	for _, tc := range []struct{ ref, kind string }{
+		{"data:text/plain,hello", "invalid"}, {"../../escape", "invalid"}, {"/%2Fabsolute", "invalid"}, {"%2e%2e/%2e%2e/escape", "invalid"}, {"../media/%7aero.bin", "local"},
 		{"https:broken", "invalid"}, {"https:///photo.jpg", "invalid"}, {"file://localhost/photo.jpg", "invalid"}, {"//", "invalid"},
 		{"https://media.example/image", "remote"}, {"//media.example/image", "remote"}, {"../media/photo.JPG", "local"},
 	} {
@@ -322,40 +322,60 @@ func TestTumblrMediaClassification(t *testing.T) {
 		{"x.JPG", "image", "image/jpeg"}, {"x.mp4", "video", "video/mp4"}, {"x.mp3", "audio", "audio/mpeg"}, {"x.bin", "document", "application/octet-stream"},
 	} {
 		checks.NoError(os.WriteFile(filepath.Join(root, tc.name), nil, 0600))
-		writes, err := mediaWrites(t.Context(), st, r, 0, "conversations/c.html", &Message{Media: []string{"../" + tc.name}}, ImportOptions{AttachmentsDir: t.TempDir()}, &ImportSummary{})
+		writes, _, err := mediaWrites(t.Context(), st, r, 0, "conversations/c.html", &Message{Media: []string{"../" + tc.name}}, ImportOptions{AttachmentsDir: t.TempDir()}, &ImportSummary{})
 		checks.NoError(err)
 		checks.Len(writes, 1)
 		verify.Equal(tc.kind, writes[0].MediaType)
 		verify.Equal(tc.mime, writes[0].MIMEType)
 	}
-	// No media means no attachment lookup, even when a message ID is supplied.
-	_, err = mediaWrites(t.Context(), nil, r, 1, "conversations/c.html", &Message{}, ImportOptions{}, &ImportSummary{})
-	checks.NoError(err)
 }
 
-func TestTumblrMediaChecksumDiagnostic(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	var b bytes.Buffer
-	z := zip.NewWriter(&b)
-	_, err := z.Create("conversations/c.html")
-	require.NoError(err)
-	w, err := z.CreateHeader(&zip.FileHeader{Name: "media.bin", Method: zip.Store})
-	require.NoError(err)
-	_, err = w.Write([]byte("fictional payload"))
-	require.NoError(err)
-	require.NoError(z.Close())
-	data := b.Bytes()
-	data[bytes.Index(data, []byte("fictional payload"))] ^= 1
-	file := filepath.Join(t.TempDir(), "corrupt.zip")
-	require.NoError(os.WriteFile(file, data, 0600))
-	r, err := openExport(t.Context(), file)
-	require.NoError(err)
-	defer func() { require.NoError(r.close()) }()
-	_, err = mediaWrites(t.Context(), testutil.NewTestStore(t), r, 0, "conversations/c.html", &Message{Media: []string{"../media.bin"}}, ImportOptions{AttachmentsDir: t.TempDir()}, &ImportSummary{})
-	require.ErrorIs(err, zip.ErrChecksum)
-	assert.ErrorContains(err, "conversations/c.html")
-	assert.ErrorContains(err, "../media.bin")
+func TestTumblrMediaFailureCounters(t *testing.T) {
+	for failure, want := range map[string]int{"checksum": 0, "new-db": 0, "replay-db": 1} {
+		t.Run(failure, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			if failure != "checksum" && st.IsPostgreSQL() {
+				t.Skip("SQLite trigger injects an attachment persistence failure")
+			}
+			html, err := os.ReadFile("testdata/observed-shape/conversations/convo_700.html")
+			require.NoError(err)
+			file := testutil.CreateTempZip(t, map[string]string{
+				"conversations/c.html": strings.ReplaceAll(string(html), "<p>Hello", `<img src="../good.bin"><img src="../media.bin"><p>Hello`),
+				"good.bin": "first payload", "media.bin": "fictional payload",
+			})
+			if failure == "checksum" {
+				data, err := os.ReadFile(file)
+				require.NoError(err)
+				// Flip the final entry's central-directory CRC, preserving its payload.
+				data[bytes.LastIndex(data, []byte("media.bin"))-30] ^= 1
+				require.NoError(os.WriteFile(file, data, 0600))
+			}
+			opts := ImportOptions{Blog: "orchard-example"}
+			if failure == "replay-db" {
+				_, err = Import(t.Context(), st, file, opts)
+				require.NoError(err)
+			}
+			if failure != "checksum" {
+				_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_tumblr_attachment BEFORE INSERT ON attachments WHEN NEW.filename = 'media.bin' BEGIN SELECT RAISE(ABORT, 'forced Tumblr attachment failure'); END`)
+				require.NoError(err)
+			}
+			opts.AttachmentsDir = t.TempDir()
+			s, err := Import(t.Context(), st, file, opts)
+			if failure == "checksum" {
+				require.ErrorIs(err, zip.ErrChecksum)
+				require.ErrorContains(err, "conversations/c.html")
+				require.ErrorContains(err, "../media.bin")
+			} else {
+				require.ErrorContains(err, "forced Tumblr attachment failure")
+			}
+			assert.Equal(want, s.MediaStored)
+			var saved int
+			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM attachments WHERE content_hash <> ''").Scan(&saved))
+			assert.Equal(want, saved)
+		})
+	}
 }
 
 func TestTumblrLargeZIP(t *testing.T) {

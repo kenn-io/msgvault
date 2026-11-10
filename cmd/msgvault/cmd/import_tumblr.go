@@ -68,7 +68,7 @@ func runImportTumblr(cmd *cobra.Command, input string, opts tumblrCLIOptions) er
 	if len(s.UnsupportedTypes) > 0 {
 		_, _ = fmt.Fprintf(out, "Unsupported types: %v\n", s.UnsupportedTypes)
 	}
-	_, _ = fmt.Fprintf(out, "Media this run: %d newly stored slots; observations: %d missing local, %d remote-only, %d invalid, %d oversized\n", s.MediaStored, s.MediaMissing, s.MediaRemote, s.MediaInvalid, s.MediaOversized)
+	_, _ = fmt.Fprintf(out, "Media this run: %d saved, %d missing local files, %d remote-only, %d invalid, %d oversized\n", s.MediaStored, s.MediaMissing, s.MediaRemote, s.MediaInvalid, s.MediaOversized)
 	if s.SourceID != 0 {
 		err = errors.Join(err, rebuildCacheAfterWrite(maintenanceCtx, state.cfg.DatabaseDSN(), state))
 	}

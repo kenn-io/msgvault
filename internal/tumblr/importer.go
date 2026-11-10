@@ -23,16 +23,19 @@ func participantKey(blog string, p Participant) string {
 	}
 	return ""
 }
-func messageKey(c *Conversation, m *Message, sender string, occurrence int) string {
+func messageKey(c *Conversation, m *Message, sender string) (string, error) {
 	// Media references, filename and export ordering are deliberately excluded.
 	if sender == "" {
 		sender = "unknown:" + m.Sender
 	}
-	tuple, _ := json.Marshal(struct {
+	tuple, err := json.Marshal(struct {
 		Conversation, Sender, Date, Epoch, Type, Text string
 		Targets                                       []string
 	}{c.ID, sender, m.DateText, m.Epoch, m.Type, m.Text, m.Targets})
-	return fmt.Sprintf("v1:%x:%d", sha256.Sum256(tuple), occurrence)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("v1:%x", sha256.Sum256(tuple)), nil
 }
 
 // Import archives observations within an explicitly named blog. Replay preserves
@@ -166,9 +169,12 @@ func importConversation(ctx context.Context, st *store.Store, r *exportReader, s
 	occurrences := map[string]int{}
 	for i := range c.Messages {
 		m := &c.Messages[i]
-		base := messageKey(c, m, names[normalizeBlog(m.Sender)], 0)
+		base, err := messageKey(c, m, names[normalizeBlog(m.Sender)])
+		if err != nil {
+			return fmt.Errorf("tumblr: %s: message identity: %w", c.Filename, err)
+		}
 		occurrences[base]++
-		keys[i] = messageKey(c, m, names[normalizeBlog(m.Sender)], occurrences[base])
+		keys[i] = fmt.Sprintf("%s:%d", base, occurrences[base])
 	}
 	existing, err := st.MessageExistsBatchContext(ctx, sourceID, keys)
 	if err != nil {
@@ -193,7 +199,7 @@ func importConversation(ctx context.Context, st *store.Store, r *exportReader, s
 			s.ConflictingDates++
 		}
 		id, present := existing[keys[i]]
-		writes, err := mediaWrites(ctx, st, r, id, c.Filename, m, opts, s)
+		writes, prepared, err := mediaWrites(ctx, st, r, id, c.Filename, m, opts, s)
 		if err != nil {
 			return err
 		}
@@ -202,6 +208,7 @@ func importConversation(ctx context.Context, st *store.Store, r *exportReader, s
 				if err := st.UpsertAttachmentRecordWithStats(ctx, id, w, true); err != nil {
 					return err
 				}
+				s.MediaStored++
 			}
 			s.MessagesPresent++
 			continue
@@ -247,6 +254,7 @@ func importConversation(ctx context.Context, st *store.Store, r *exportReader, s
 		if err != nil {
 			return err
 		}
+		s.MediaStored += prepared
 		s.MessagesAdded++
 	}
 	return nil

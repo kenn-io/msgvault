@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"math"
 )
 
 type contextReaderAt struct {
@@ -32,7 +33,14 @@ func checkZIP(ctx context.Context, input io.ReaderAt, size int64, maxCount, maxB
 		_, err := r.ReadAt(b, off)
 		return b, err
 	}
-	u16, u32, u64 := binary.LittleEndian.Uint16, binary.LittleEndian.Uint32, binary.LittleEndian.Uint64
+	u16, u32 := binary.LittleEndian.Uint16, binary.LittleEndian.Uint32
+	zip64Int := func(p []byte) int64 {
+		v := binary.LittleEndian.Uint64(p)
+		if v > math.MaxInt64 {
+			return -1
+		}
+		return int64(v)
+	}
 	tail := min(size, 65*1024)
 	b, err := read(size-tail, int(tail))
 	if err != nil {
@@ -43,14 +51,14 @@ func checkZIP(ctx context.Context, input io.ReaderAt, size int64, maxCount, maxB
 		return zip.ErrFormat
 	}
 	footer, end := b[i:], size-tail+int64(i)
-	count, length, offset := uint64(u16(footer[10:])), uint64(u32(footer[12:])), uint64(u32(footer[16:]))
+	count, length, offset := int64(u16(footer[10:])), int64(u32(footer[12:])), int64(u32(footer[16:]))
 	if count == 0xffff || length == 0xffffffff || offset == 0xffffffff {
 		loc, err := read(end-20, 20)
 		if err != nil {
 			return err
 		}
 		if u32(loc) == 0x07064b50 && u32(loc[4:]) == 0 && u32(loc[16:]) == 1 {
-			pos := int64(u64(loc[8:]))
+			pos := zip64Int(loc[8:])
 			b, err := read(pos, 56)
 			if err != nil {
 				return err
@@ -58,15 +66,15 @@ func checkZIP(ctx context.Context, input io.ReaderAt, size int64, maxCount, maxB
 			if u32(b) != 0x06064b50 {
 				return zip.ErrFormat
 			}
-			count, length, offset, end = u64(b[32:]), u64(b[40:]), u64(b[48:]), pos
+			count, length, offset, end = zip64Int(b[32:]), zip64Int(b[40:]), zip64Int(b[48:]), pos
 		}
 	}
-	if count > uint64(maxCount) || length > uint64(maxBytes) {
+	if count < 0 || count > int64(maxCount) || length < 0 || length > int64(maxBytes) {
 		return errors.New("tumblr: ZIP metadata limit exceeded")
 	}
-	start := end - int64(length)
+	start := end - length
 	// archive/zip reads from the absolute offset instead when a header is there.
-	if h, err := read(int64(offset), 4); start > int64(offset) && err == nil && u32(h) == 0x02014b50 {
+	if h, err := read(offset, 4); offset < 0 || start < 0 || (start > offset && err == nil && u32(h) == 0x02014b50) {
 		return zip.ErrFormat
 	}
 	for n, pos := 0, start; ; n++ {

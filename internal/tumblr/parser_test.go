@@ -1,11 +1,12 @@
 package tumblr
 
 import (
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestTumblrParserEvidence(t *testing.T) {
@@ -25,12 +26,10 @@ func TestTumblrParserEvidence(t *testing.T) {
 	assert.Equal(int64(1704067201), c.Messages[1].SentAt.Time.Unix())
 	assert.Contains(c.Messages[1].HTML, "message-info")
 	assert.Empty(c.Messages[1].Media)
-	linked, err := parseConversation(t.Context(), []byte(strings.ReplaceAll(string(data), "<p>Hello", `<a href="../ordinary.html">ordinary link</a><p>Hello`)))
+	linked, err := parseConversation(t.Context(), []byte(strings.ReplaceAll(string(data), "<p>Hello", `<script>ignore me</script><style>ignore css</style><a href="../ordinary.html">ordinary link</a><p>Hello`)))
 	require.NoError(err)
 	assert.Empty(linked.Messages[1].Media)
-	c, err = parseConversation(t.Context(), []byte(strings.ReplaceAll(string(data), "<p>Hello", "<script>ignore me</script><style>ignore css</style><p>Hello")))
-	require.NoError(err)
-	assert.NotContains(c.Messages[1].Text, "ignore")
+	assert.NotContains(linked.Messages[1].Text, "ignore")
 }
 func TestTumblrParserSyntheticCases(t *testing.T) {
 	assert := assert.New(t)
@@ -52,6 +51,6 @@ func TestTumblrParserSyntheticCases(t *testing.T) {
 		c, err := parseConversation(t.Context(), []byte(html))
 		require.NoError(err)
 		require.Len(c.Messages, 1)
-		assert.Equal(date == "2024-01-01 00:00:00 GMT" || date == "unreadable (1704067200)", c.Messages[0].SentAt.Valid)
+		assert.Equal(date != "", c.Messages[0].SentAt.Valid)
 	}
 }

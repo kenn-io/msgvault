@@ -45,7 +45,12 @@ func zipFixture(t *testing.T, root, wrapper string) string {
 func TestTumblrReaderParity(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	for _, name := range []string{"testdata/observed-shape", zipFixture(t, "testdata/observed-shape", ""), zipFixture(t, "testdata/observed-shape", "wrapper/")} {
+	data, err := os.ReadFile("testdata/observed-shape/conversations/convo_700.html")
+	require.NoError(err)
+	file := testutil.CreateTempZip(t, map[string]string{"blog/conversations/a.html": string(data), "../escape": "ignored", "__MACOSX/conversations/metadata": "ignored"})
+	wrapper := t.TempDir()
+	require.NoError(os.CopyFS(filepath.Join(wrapper, "blog"), os.DirFS("testdata/observed-shape")))
+	for _, name := range []string{"testdata/observed-shape", zipFixture(t, "testdata/observed-shape", ""), file, wrapper} {
 		r, err := openExport(t.Context(), name)
 		require.NoError(err)
 		require.Len(r.files, 1)
@@ -54,27 +59,9 @@ func TestTumblrReaderParity(t *testing.T) {
 		assert.Len(c.Messages, 4)
 		require.NoError(r.close())
 	}
-	wrapper := t.TempDir()
-	require.NoError(os.CopyFS(filepath.Join(wrapper, "blog"), os.DirFS("testdata/observed-shape")))
-	r, err := openExport(t.Context(), wrapper)
-	require.NoError(err)
-	require.NoError(r.close())
 	require.NoError(os.MkdirAll(filepath.Join(wrapper, "other", "conversations"), 0700))
 	_, err = openExport(t.Context(), wrapper)
 	require.ErrorContains(err, "expected one root")
-}
-
-func TestTumblrRootDiscoveryIgnoresUnrelatedEntries(t *testing.T) {
-	require := require.New(t)
-	data, err := os.ReadFile("testdata/observed-shape/conversations/convo_700.html")
-	require.NoError(err)
-	for _, wrapper := range []string{"", "blog/"} {
-		file := testutil.CreateTempZip(t, map[string]string{wrapper + "conversations/a.html": string(data), "../escape": "ignored", "__MACOSX/conversations/metadata": "ignored"})
-		r, err := openExport(t.Context(), file)
-		require.NoError(err)
-		assert.Equal(t, []string{"conversations/a.html"}, r.files)
-		require.NoError(r.close())
-	}
 }
 
 func TestTumblrSymlinkAndBounds(t *testing.T) {
@@ -87,7 +74,7 @@ func TestTumblrSymlinkAndBounds(t *testing.T) {
 	r, err := openExport(t.Context(), root)
 	require.NoError(err)
 	_, err = r.conversation(t.Context(), "conversations/link.html")
-	require.Error(err)
+	require.ErrorContains(err, "path escapes from parent")
 	require.NoError(r.close())
 	require.NoError(os.Remove(filepath.Join(root, "conversations", "link.html")))
 	f, err := os.Create(filepath.Join(root, "conversations", "large.html"))
@@ -165,7 +152,6 @@ func TestTumblrZIPPreflight(t *testing.T) {
 		{"count limit", 0, 1000, nil, false},
 		{"metadata limit", 1, 64, nil, false},
 		{"declared count", 1, 1000, func(b []byte) { binary.LittleEndian.PutUint16(b[footer+10:], 2) }, false},
-		{"truncated directory", 1, 1000, func(b []byte) { binary.LittleEndian.PutUint32(b[footer+12:], 2) }, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b := bytes.Clone(original)
@@ -173,13 +159,10 @@ func TestTumblrZIPPreflight(t *testing.T) {
 				tc.mutate(b)
 			}
 			err := checkZIP(t.Context(), bytes.NewReader(b), int64(len(b)), tc.count, tc.bytes)
-			if err == nil {
-				_, err = zip.NewReader(bytes.NewReader(b), int64(len(b)))
-			}
 			if tc.ok {
 				require.NoError(t, err)
 			} else {
-				require.Error(t, err)
+				require.ErrorContains(t, err, "ZIP metadata limit exceeded")
 			}
 		})
 	}

@@ -2479,6 +2479,8 @@ msgvault import-tumblr --blog <blog-name> <folder-or-zip>
 
 Files must be on the daemon host. Stable owner IDs reuse the source after blog renames. If every conversation belongs to another blog, import fails before creating a source. Replay preserves first-import evidence and fills missing media. Media counts distinguish newly stored slots from gap observations this run. See [Tumblr imports](usage/text-messages.md#import-tumblr) for supported markup, synthetic media coverage, limits and overlap ambiguity.
 
+---
+
 ## import-messenger
 
 Import Facebook Messenger conversations from a Download Your Information export.

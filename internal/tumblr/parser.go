@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/net/html"
 )
@@ -18,6 +19,9 @@ var headerRE = regexp.MustCompile(`^(\S+)\s+(\S+)\s+@\s*(.*)$`)
 var dateRE = regexp.MustCompile(`^(.*?)\s*\(([^()]*)\)$`)
 
 func parseConversation(ctx context.Context, data []byte) (*Conversation, error) {
+	if !utf8.Valid(data) {
+		return nil, errors.New("tumblr: conversation HTML is not valid UTF-8")
+	}
 	doc, err := html.Parse(bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("tumblr: parse conversation HTML: %w", err)
@@ -147,21 +151,16 @@ func parseMessage(n, info *html.Node) (Message, bool) {
 		m.DateText, m.Epoch = strings.TrimSpace(d[1]), strings.TrimSpace(d[2])
 	}
 	date, err := time.Parse("2006-01-02 15:04:05 GMT", m.DateText)
-	if err == nil {
+	if err == nil && date.Year() > 0 {
 		m.SentAt.Time, m.SentAt.Valid = date, true
 	}
-	if m.Epoch != "" {
-		epoch, e := strconv.ParseInt(m.Epoch, 10, 64)
-		validEpoch := e == nil && epoch >= -62135596800 && epoch <= 253402300799
-		m.DateConflict = !validEpoch || (m.SentAt.Valid && date.Unix() != epoch)
-		if validEpoch && !m.SentAt.Valid {
-			m.SentAt.Time, m.SentAt.Valid = time.Unix(epoch, 0).UTC(), true
-		}
+	epoch, e := strconv.ParseInt(m.Epoch, 10, 64)
+	validEpoch := e == nil && epoch >= -62135596800 && epoch <= 253402300799
+	if validEpoch && !m.SentAt.Valid {
+		m.SentAt.Time, m.SentAt.Valid = time.Unix(epoch, 0).UTC(), true
 	}
-	// Conflicting evidence has no unambiguous timestamp.
-	if m.DateConflict {
-		m.SentAt.Valid = false
-	}
+	m.DateConflict = validEpoch && m.SentAt.Valid && m.SentAt.Time.Unix() != epoch
+	m.SentAt.Valid = m.SentAt.Valid && !m.DateConflict
 	m.Text = nodeText(n)
 	var raw bytes.Buffer
 	_ = html.Render(&raw, n)

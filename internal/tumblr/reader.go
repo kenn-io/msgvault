@@ -66,7 +66,7 @@ func (r *exportReader) discover(ctx context.Context, entries, pathBytes int) err
 	scan := func(name string, visit func(string, fs.DirEntry) error) error {
 		f, err := r.fsys.Open(name)
 		if err != nil {
-			return err
+			return fmt.Errorf("open export directory %q: %w", name, err)
 		}
 		defer func() { _ = f.Close() }()
 		dir, ok := f.(fs.ReadDirFile)
@@ -85,6 +85,9 @@ func (r *exportReader) discover(ctx context.Context, entries, pathBytes int) err
 				if entries < 0 || pathBytes < 0 {
 					return errors.New("tumblr: export entry/path metadata limit exceeded")
 				}
+				if strings.HasPrefix(d.Name(), ".") || d.Name() == "__MACOSX" {
+					continue
+				}
 				if err := visit(child, d); err != nil {
 					return err
 				}
@@ -93,7 +96,7 @@ func (r *exportReader) discover(ctx context.Context, entries, pathBytes int) err
 				return nil
 			}
 			if err != nil {
-				return err
+				return fmt.Errorf("read export directory %q: %w", name, err)
 			}
 		}
 	}
@@ -101,7 +104,7 @@ func (r *exportReader) discover(ctx context.Context, entries, pathBytes int) err
 	if info, err := fs.Stat(r.fsys, "conversations"); err != nil || !info.IsDir() {
 		roots := 0
 		if err := scan(".", func(name string, d fs.DirEntry) error {
-			if !d.IsDir() || strings.HasPrefix(d.Name(), ".") || d.Name() == "__MACOSX" {
+			if !d.IsDir() {
 				return nil
 			}
 			if info, err := fs.Stat(r.fsys, path.Join(name, "conversations")); err == nil && info.IsDir() {
@@ -119,7 +122,7 @@ func (r *exportReader) discover(ctx context.Context, entries, pathBytes int) err
 	var err error
 	r.fsys, err = fs.Sub(r.fsys, root)
 	if err != nil {
-		return err
+		return fmt.Errorf("select export root %q: %w", root, err)
 	}
 	pending := []string{"conversations"}
 	for len(pending) > 0 {
@@ -143,18 +146,11 @@ func (r *exportReader) discover(ctx context.Context, entries, pathBytes int) err
 }
 
 func (r *exportReader) conversation(ctx context.Context, name string) (*Conversation, error) {
-	f, err := r.fsys.Open(name)
+	f, err := r.openRegular(name)
 	if err != nil {
 		return nil, fmt.Errorf("tumblr: open conversation: %w", err)
 	}
 	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, errors.New("tumblr: nonregular conversation")
-	}
 	data, err := io.ReadAll(io.LimitReader(&export.ContextReader{Context: ctx, Reader: f}, maxHTMLBytes+1))
 	if err != nil {
 		return nil, err
@@ -170,3 +166,29 @@ func (r *exportReader) conversation(ctx context.Context, name string) (*Conversa
 }
 
 var errHTMLTooLarge = errors.New("tumblr: HTML exceeds 64 MiB")
+
+var errNonregular = errors.New("tumblr: nonregular file")
+
+func (r *exportReader) openRegular(name string) (fs.File, error) {
+	// Root.FS.Stat checks contained metadata without opening a FIFO or device.
+	info, err := fs.Stat(r.fsys, name)
+	if err != nil {
+		return nil, fmt.Errorf("inspect export file %q: %w", name, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errNonregular
+	}
+	f, err := r.fsys.Open(name)
+	if err != nil {
+		return nil, fmt.Errorf("open export file %q: %w", name, err)
+	}
+	info, err = f.Stat()
+	if err == nil && !info.Mode().IsRegular() {
+		err = errNonregular
+	}
+	if err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("inspect opened export file %q: %w", name, err)
+	}
+	return f, nil
+}

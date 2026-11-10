@@ -37,24 +37,20 @@ func mediaPath(filename, ref string) (string, string) {
 	return name, "local"
 }
 
-func mediaWrites(ctx context.Context, st *store.Store, r *exportReader, messageID int64, filename string, m *Message, opts ImportOptions, s *ImportSummary) ([]store.AttachmentWrite, error) {
-	if len(m.Media) == 0 {
-		return nil, nil
-	}
+func mediaWrites(ctx context.Context, st *store.Store, r *exportReader, messageID int64, filename string, m *Message, opts ImportOptions, s *ImportSummary) (writes []store.AttachmentWrite, prepared int, retErr error) {
 	existing := map[string]store.AttachmentRef{}
-	if messageID != 0 {
+	if messageID != 0 && len(m.Media) > 0 {
 		refs, err := st.MessageMIMEAttachmentsContext(ctx, messageID)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		for _, ref := range refs {
 			existing[ref.SourcePartKey] = ref
 		}
 	}
-	var writes []store.AttachmentWrite
 	for i, ref := range m.Media {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		slot := fmt.Sprintf("media:%d", i)
 		if previous, ok := existing[slot]; ok && previous.ContentHash != "" {
@@ -62,11 +58,9 @@ func mediaWrites(ctx context.Context, st *store.Store, r *exportReader, messageI
 		}
 		name, kind := mediaPath(filename, ref)
 		w := store.AttachmentWrite{SourcePartKey: slot, Filename: path.Base(name), MediaType: "document", MIMEType: mime.TypeByExtension(strings.ToLower(path.Ext(name))), Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics}
-		metadata, err := json.Marshal(struct {
-			Reference string `json:"reference"`
-		}{ref})
+		metadata, err := json.Marshal(map[string]string{"reference": ref})
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		w.Metadata = string(metadata)
 		if w.Filename == "." || w.Filename == "" {
@@ -75,13 +69,9 @@ func mediaWrites(ctx context.Context, st *store.Store, r *exportReader, messageI
 		if w.MIMEType == "" {
 			w.MIMEType = "application/octet-stream"
 		}
-		switch strings.SplitN(w.MIMEType, "/", 2)[0] {
-		case "image":
-			w.MediaType = "image"
-		case "video":
-			w.MediaType = "video"
-		case "audio":
-			w.MediaType = "audio"
+		switch mediaType, _, _ := strings.Cut(w.MIMEType, "/"); mediaType {
+		case "image", "video", "audio":
+			w.MediaType = mediaType
 		}
 		switch kind {
 		case "remote":
@@ -89,43 +79,35 @@ func mediaWrites(ctx context.Context, st *store.Store, r *exportReader, messageI
 		case "invalid":
 			s.MediaInvalid++
 		case "local":
-			f, err := r.fsys.Open(name)
-			if errors.Is(err, fs.ErrNotExist) {
+			f, err := r.openRegular(name)
+			switch {
+			case err == nil:
+				if opts.AttachmentsDir == "" {
+					s.MediaMissing++
+					_ = f.Close()
+					break
+				}
+				w.StoragePath, w.ContentHash, w.Size, err = export.StoreAttachmentStream(ctx, opts.AttachmentsDir, &export.ContextReader{Context: ctx, Reader: f}, maxMediaBytes)
+				err = errors.Join(err, f.Close())
+				if errors.Is(err, export.ErrAttachmentTooLarge) {
+					s.MediaOversized++
+					break
+				}
+				if err != nil {
+					return nil, 0, fmt.Errorf("tumblr: %s: store media %q (%s): %w", filename, ref, slot, err)
+				}
+				prepared++
+			case errors.Is(err, fs.ErrNotExist):
 				s.MediaMissing++
-				break
-			}
-			if err != nil {
-				return nil, fmt.Errorf("tumblr: %s: open media %q (%s): %w", filename, ref, slot, err)
-			}
-			info, statErr := f.Stat()
-			if statErr != nil {
-				_ = f.Close()
-				return nil, fmt.Errorf("tumblr: %s: inspect media %q (%s): %w", filename, ref, slot, statErr)
-			}
-			if !info.Mode().IsRegular() {
+			case errors.Is(err, errNonregular):
 				s.MediaInvalid++
-				_ = f.Close()
-				break
+			default:
+				return nil, 0, fmt.Errorf("tumblr: %s: open media %q (%s): %w", filename, ref, slot, err)
 			}
-			if opts.AttachmentsDir == "" {
-				s.MediaMissing++
-				_ = f.Close()
-				break
-			}
-			w.StoragePath, w.ContentHash, w.Size, err = export.StoreAttachmentStream(ctx, opts.AttachmentsDir, &export.ContextReader{Context: ctx, Reader: f}, maxMediaBytes)
-			err = errors.Join(err, f.Close())
-			if errors.Is(err, export.ErrAttachmentTooLarge) {
-				s.MediaOversized++
-				break
-			}
-			if err != nil {
-				return nil, fmt.Errorf("tumblr: %s: store media %q (%s): %w", filename, ref, slot, err)
-			}
-			s.MediaStored++
 		}
 		if messageID == 0 || w.ContentHash != "" {
 			writes = append(writes, w)
 		}
 	}
-	return writes, nil
+	return writes, prepared, nil
 }

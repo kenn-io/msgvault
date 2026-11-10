@@ -53,13 +53,13 @@ func TestTumblrCLIImportIdentityAndMaintenance(t *testing.T) {
 			} else {
 				require.Len(identities, 1)
 				assert.Contains(out.String(), "Confirmed identity id:opaque-owner")
+				db, err := sql.Open("duckdb", "")
+				require.NoError(err)
+				defer func() { require.NoError(db.Close()) }()
+				var n int
+				require.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FROM read_parquet(?, hive_partitioning=true)`, filepath.Join(cfg.AnalyticsDir(), "messages", "**", "*.parquet")).Scan(&n))
+				assert.Equal(4, n)
 			}
-			db, err := sql.Open("duckdb", "")
-			require.NoError(err)
-			defer func() { require.NoError(db.Close()) }()
-			var n int
-			require.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FROM read_parquet(?, hive_partitioning=true)`, filepath.Join(cfg.AnalyticsDir(), "messages", "**", "*.parquet")).Scan(&n))
-			assert.Equal(4, n)
 		})
 	}
 }
