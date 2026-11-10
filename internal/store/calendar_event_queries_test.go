@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
 func calendarWindow(t *testing.T, st *Store, from, to string) ([]CalendarEventRow, error) {
@@ -103,11 +104,22 @@ func TestCalendarEventRowsHardSeriesCap(t *testing.T) {
 
 func TestCalendarEventRowsBudgetRejectsBeforeDecoding(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
-	calendarFixture(t, st, "one", calendarRaw)
-	calendarFixture(t, st, "two", calendarRaw)
-	_, err := st.db.Exec(`UPDATE calendar_events SET recurrence_json = 'invalid'`)
+	first, firstID := calendarFixture(t, st, "one", calendarRaw)
+	_, secondID := calendarFixture(t, st, "two", calendarRaw)
+	other, err := st.GetOrCreateSource("gcal", "other@example.test")
 	require.NoError(t, err)
-	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
+	_, err = st.db.Exec(`UPDATE messages SET source_id = ? WHERE id = ?`, other.ID, secondID)
+	require.NoError(t, err)
+	ctx, release, err := st.BeginReadSnapshotContext(sourcescope.WithSourceIDs(t.Context(), []int64{first.Message.SourceID}))
+	require.NoError(t, err)
+	rows, err := queryCalendarEventRowsWithinBudget(ctx, st.db, "1 = 1", nil, 1)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, firstID, rows[0].MessageID)
+	release()
+	_, err = st.db.Exec(`UPDATE calendar_events SET recurrence_json = 'invalid'`)
+	require.NoError(t, err)
+	ctx, release, err = st.BeginReadSnapshotContext(t.Context())
 	require.NoError(t, err)
 	defer release()
 	_, err = queryCalendarEventRowsWithinBudget(ctx, st.db, "1 = 1", nil, 1)

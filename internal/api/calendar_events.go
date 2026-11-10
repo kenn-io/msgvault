@@ -66,21 +66,12 @@ func (s *Server) handleCalendarEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "calendar_failed", err.Error())
 		return
 	}
-	ids := make([]int64, 0, len(page.Occurrences)*2)
-	for _, row := range page.Occurrences {
-		ids = append(ids, row.MessageID)
-		if row.SeriesMessageID != 0 {
-			ids = append(ids, row.SeriesMessageID)
-		}
-	}
-	withheld, ok := s.verificationWithheld(w, r, ids)
-	if !ok {
-		return
-	}
-	for i := range page.Occurrences {
-		row := &page.Occurrences[i]
-		if withheld[row.MessageID] || withheld[row.SeriesMessageID] {
-			row.Subject = verification.Masked
+	if s.withholdsVerification(r) {
+		for i := range page.Occurrences {
+			row := &page.Occurrences[i]
+			if verification.Is(verification.Content{Subject: row.Subject}) {
+				row.Subject = verification.Masked
+			}
 		}
 	}
 	writeJSON(w, 200, page)
