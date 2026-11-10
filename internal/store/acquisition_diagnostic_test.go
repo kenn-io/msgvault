@@ -273,7 +273,8 @@ func TestAcquisitionDiagnosticHumanOutputPreservesJSON(t *testing.T) {
 	human := report.String()
 	assert.Contains(human, "Pending retries since the last completed incremental sync; resolution requires a later recorded confirmation.")
 	assert.Contains(human, "File-saving reminders are not errors. One detail per message in the selected state.")
-	for _, technical := range []string{"acquisition replay selection", "synthetic file-saving marker"} {
+	assert.Contains(human, "Historical includes errors marked as skipped and failed downloads later skipped. Withdrawal does not prove acquisition or identify its cause.")
+	for _, technical := range []string{"acquisition replay selection", "synthetic file-saving marker", "withdrawn skipped items retaining a recognized error contract"} {
 		assert.NotContains(human, technical)
 		assert.Contains(string(before), technical)
 	}
