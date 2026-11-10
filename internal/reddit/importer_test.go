@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	_ "time/tzdata"
 
@@ -101,19 +102,12 @@ func TestImportQuotedBOMHeaderAndRaggedRows(t *testing.T) {
 	assert.Equal(1, summary.Malformed)
 }
 
-func TestImportReadLimitsAndSymlinks(t *testing.T) {
+func TestImportSymlinks(t *testing.T) {
 	require := require.New(t)
 	root := t.TempDir()
 	require.NoError(os.Symlink(filepath.Join(t.TempDir(), "outside.csv"), filepath.Join(root, "posts.csv")))
 	_, err := Import(t.Context(), testutil.NewTestStore(t), ImportOptions{RootDir: root, Me: "fictional_owner"})
 	require.ErrorContains(err, "recognized")
-	require.NoError(os.Remove(filepath.Join(root, "posts.csv")))
-	f, err := os.Create(filepath.Join(root, "posts.csv"))
-	require.NoError(err)
-	require.NoError(f.Truncate(maxCSVBytes + 1))
-	require.NoError(f.Close())
-	_, err = Import(t.Context(), testutil.NewTestStore(t), ImportOptions{RootDir: root, Me: "fictional_owner"})
-	require.ErrorContains(err, "256 MiB")
 }
 
 func TestImportInterruptedRepeatAndOriginalRetention(t *testing.T) {
@@ -195,14 +189,33 @@ func TestImportQuotingFailureRetainsCompletedRows(t *testing.T) {
 	assert.Equal(1, summary.Unchanged)
 }
 
-func TestImportEntryBound(t *testing.T) {
+func TestImportLargeDirectory(t *testing.T) {
 	require := require.New(t)
 	root := t.TempDir()
 	for i := range 10001 {
 		require.NoError(os.WriteFile(filepath.Join(root, fmt.Sprintf("entry-%d", i)), nil, 0600))
 	}
-	_, err := Import(t.Context(), testutil.NewTestStore(t), ImportOptions{RootDir: root, Me: "fictional_owner"})
-	require.ErrorContains(err, "directory entries")
+	require.NoError(os.WriteFile(filepath.Join(root, "posts.csv"), []byte("id,title\none,hello\n"), 0600))
+	summary, err := Import(t.Context(), testutil.NewTestStore(t), ImportOptions{RootDir: root, Me: "fictional_owner"})
+	require.NoError(err)
+	require.Equal(1, summary.Added)
+}
+
+func TestImportLargeCSV(t *testing.T) {
+	root := t.TempDir()
+	f, err := os.Create(filepath.Join(root, "posts.csv"))
+	require.NoError(t, err)
+	_, err = f.WriteString("id,title\none,hello\n")
+	require.NoError(t, err)
+	blank := []byte(strings.Repeat("\n", 1<<20))
+	for range 257 {
+		_, err = f.Write(blank)
+		require.NoError(t, err)
+	}
+	require.NoError(t, f.Close())
+	summary, err := Import(t.Context(), testutil.NewTestStore(t), ImportOptions{RootDir: root, Me: "fictional_owner"})
+	require.NoError(t, err)
+	assert.Equal(t, 1, summary.Added)
 }
 
 func TestImportPlainMarkerNamesArePeople(t *testing.T) {
@@ -353,6 +366,74 @@ func TestImportChatGrouping(t *testing.T) {
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COALESCE(conversation_type,''),title FROM conversations").Scan(&kind, &title))
 	assert.Equal("chat", kind)
 	assert.Equal("Fictional garden", title)
+}
+
+func TestImportChatReplyConversations(t *testing.T) {
+	for _, tc := range []struct {
+		name, first, second string
+		want                int
+		split               bool
+	}{
+		{"parent first", "parent,first,,\nchild,reply,parent,\n", "", 2, false},
+		{"child first", "child,reply,parent,\nparent,first,,\n", "", 2, false},
+		{"split files", "child,reply,parent,\n", "parent,first,,\n", 2, true},
+		{"later parent", "child,reply,parent,\n", "parent,first,,\n", 2, false},
+		{"later channel parent", "child,reply,parent,\n", "parent,first,,channel-a\n", 2, false},
+		{"channel parent", "child,reply,parent,\nparent,first,,channel-a\n", "", 2, false},
+		{"chain", "leaf,last,child,\nchild,reply,parent,\nparent,first,,\n", "", 3, false},
+		{"distinct channels", "parent,first,,channel-a\nchild,reply,parent,channel-b\n", "", 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			file := filepath.Join(root, "chat_history.csv")
+			header := "message_id,message,thread_parent_message_id,channel_url\n"
+			require.NoError(t, os.WriteFile(file, []byte(header+tc.first), 0600))
+			if tc.split {
+				require.NoError(t, os.WriteFile(filepath.Join(root, "chat_history_1.csv"), []byte(header+tc.second), 0600))
+			}
+			st := testutil.NewTestStore(t)
+			_, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
+			require.NoError(t, err)
+			if tc.second != "" && !tc.split {
+				require.NoError(t, os.WriteFile(file, []byte(header+tc.second), 0600))
+				_, err = Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
+				require.NoError(t, err)
+			}
+			reader := query.NewEngine(st.DB(), st.IsPostgreSQL()).(query.OriginalMessageReader)
+			for _, id := range []string{"chat:parent", "chat:child"} {
+				page, err := reader.ListThread(t.Context(), query.ThreadQuery{MessageRef: query.MessageRef{SourceMessageID: id}})
+				require.NoError(t, err)
+				assert.Len(t, page.Messages, tc.want)
+			}
+			summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
+			require.NoError(t, err)
+			assert.Zero(t, summary.Added)
+			assert.Greater(t, summary.Unchanged, 0)
+			var parentID int64
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages WHERE source_message_id='chat:parent'").Scan(&parentID))
+			body, err := st.GetMessageBodyText(t.Context(), parentID)
+			require.NoError(t, err)
+			assert.Equal(t, "first", body)
+		})
+	}
+}
+
+func TestImportJoinedChatDiscovery(t *testing.T) {
+	root := t.TempDir()
+	data := "message_id,message,username,thread_parent_message_id,channel_url\nchild,reply,Peer,parent,\nparent,first,Owner,,channel-a\nunrelated,other,Other,,\n"
+	require.NoError(t, os.WriteFile(filepath.Join(root, "chat_history.csv"), []byte(data), 0600))
+	st := testutil.NewTestStore(t)
+	first, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "owner"})
+	require.NoError(t, err)
+	_, err = Import(t.Context(), st, ImportOptions{RootDir: root, Me: "another_owner"})
+	require.NoError(t, err)
+	chats, err := st.SearchChatsContext(t.Context(), store.ChatDiscoveryQuery{SourceID: first.SourceID, Query: "Peer"})
+	require.NoError(t, err)
+	require.Len(t, chats.Results, 1)
+	assert.Equal(t, "chat:channel:channel-a", chats.Results[0].SourceConversationID)
+	var n int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM conversation_participants WHERE conversation_id = ?`), chats.Results[0].ConversationID).Scan(&n))
+	assert.Equal(t, 2, n)
 }
 
 func TestImportFatalSchemaRetainsEarlierFiles(t *testing.T) {

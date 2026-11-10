@@ -21,15 +21,14 @@ func newImportRedditCmd() *cobra.Command {
 		Long: `Import Chat, legacy private messages, and your own posts and comments from
 an extracted Reddit account-data export directory. Conflicting accounts are refused.
 
-Reads top-level CSVs, including numbered splits, with limits of 10,000 directory
-entries and 256 MiB per CSV. Links are preserved; media are not downloaded.
+Reads top-level CSVs, including numbered splits. Links are preserved; media are not downloaded.
 Coverage depends on what Reddit supplied; complete lifetime history is not guaranteed.
 
 Errors stop the run; completed rows remain archived. Header-only CSVs are valid;
 zero-byte files fail. Fix the named file and re-run to add missing records while
-retaining originals. No records are deleted. PM kind, unknown dates and unknown
-senders stay unknown. Undated records remain in live search/details and SQL browsing;
-dated caches omit them. Set [analytics].engine = "sql" for live browsing.
+retaining originals. No records are deleted. Direct or group chat kinds, missing
+dates, and missing senders stay unknown. Undated records remain in live search and
+details; dated lists and totals omit them. Set [analytics].engine = "sql" for live browsing.
 
 Supported files, failure policy and coverage details:
 https://msgvault.io/docs/usage/text-messages/#import-reddit

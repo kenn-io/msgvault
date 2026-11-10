@@ -35,7 +35,7 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 	defer func() {
 		// Record partial runs and finalize committed rows even after cancellation.
 		cleanup := context.WithoutCancel(ctx)
-		retErr = errors.Join(retErr, st.ResolveDeferredMessageRepliesContext(cleanup, source.ID, "reddit_chat", batchSize), st.RecomputeConversationStatsContext(cleanup, source.ID))
+		retErr = errors.Join(retErr, st.ResolveDeferredMessageRepliesContext(cleanup, source.ID, "reddit_chat", batchSize), st.ReconcileRedditChatThreadsContext(cleanup, source.ID), st.RecomputeConversationStatsContext(cleanup, source.ID))
 		for _, f := range summary.Files {
 			summary.Added += f.Added
 			summary.Unchanged += f.Unchanged

@@ -529,13 +529,11 @@ skips default identity creation.
 
 The importer reads top-level regular `chat_history.csv`, `messages.csv`,
 `messages_archive.csv`, `posts.csv`, and `comments.csv`, including `_N.csv`
-numbered splits. Extract ZIPs first. Reads are limited to 10,000 directory
-entries and 256 MiB per CSV. Unsupported files and skipped rows appear in the
+numbered splits. Extract ZIPs first. Unsupported files and skipped rows appear in the
 summary. Content files are processed in name order. Schema errors (empty or
 duplicate headers or missing essential columns), invalid UTF-8, read/quoting
-errors stop the run with the filename. Recognized oversize files found during
-inventory fail before source writes; growth past the cap or read/parse failure
-while streaming may leave completed rows. Essential columns
+errors stop the run with the filename. A read or parse failure while streaming
+may leave completed rows. Essential columns
 are `message_id` and `message` for Chat and `id` for PMs, posts, and comments.
 Complete rows before the error are retained; later
 files are not read. Header-only CSVs are valid empty files; zero-byte files
@@ -556,7 +554,7 @@ Newly archived PM subjects or Chat channel names update their conversation title
 when nonempty. Subreddit titles use canonical `r/<normalized subreddit>` spelling.
 A Chat `channel_url` groups records without inferring a direct or group conversation;
 `channel_name` supplies its title. Without an observed grouping key, a Chat row
-stays an isolated item. Post URLs and comment media are appended to displayed/searchable bodies;
+stays an isolated item until its known parent is imported. Post URLs and comment media are appended to displayed/searchable bodies;
 raw evidence retains the original cells. Comment parent/link values remain raw,
 without an invented cross-kind reply mapping.
 

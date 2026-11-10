@@ -1,8 +1,6 @@
 // Package reddit imports extracted Reddit account-data CSV exports.
 package reddit
 
-const maxCSVBytes int64 = 256 << 20
-const maxEntries = 10000
 const batchSize = 100
 
 type ImportOptions struct {

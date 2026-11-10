@@ -69,19 +69,25 @@ func openExport(ctx context.Context, dir, me string, summary *ImportSummary) (*e
 	if err != nil {
 		return fail(err)
 	}
-	entries, readErr := d.ReadDir(maxEntries + 1)
-	closeErr := d.Close()
-	if err = errors.Join(readErr, closeErr); err != nil && !errors.Is(err, io.EOF) {
-		return fail(err)
-	}
-	if len(entries) > maxEntries {
-		return fail(fmt.Errorf("reddit: export exceeds %d directory entries", maxEntries))
-	}
 	// Directory order must not decide which original wins an overlap.
-	// ReadDir on File is unsorted; sort only the bounded inventory.
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		names = append(names, e.Name())
+	var names []string
+	for {
+		if err := ctx.Err(); err != nil {
+			return fail(errors.Join(err, d.Close()))
+		}
+		entries, err := d.ReadDir(256)
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				err = nil
+			}
+			if err = errors.Join(err, d.Close()); err != nil {
+				return fail(err)
+			}
+			break
+		}
 	}
 	sort.Strings(names)
 	for _, name := range names {
@@ -103,9 +109,6 @@ func openExport(ctx context.Context, dir, me string, summary *ImportSummary) (*e
 				summary.Unsupported = append(summary.Unsupported, name)
 			}
 			continue
-		}
-		if info.Size() > maxCSVBytes {
-			return fail(fmt.Errorf("reddit: %s exceeds 256 MiB", name))
 		}
 		if stats {
 			err = r.rows(ctx, csvFile{name, "statistics"}, nil, func(row csvRow) error {
@@ -160,8 +163,7 @@ func (r *exportReader) rows(ctx context.Context, file csvFile, summary *FileSumm
 	if !info.Mode().IsRegular() {
 		return errors.New("nonregular CSV")
 	}
-	limited := &io.LimitedReader{R: &export.ContextReader{Context: ctx, Reader: f}, N: maxCSVBytes + 1}
-	reader := csv.NewReader(textutil.WithoutUTF8BOM(limited))
+	reader := csv.NewReader(textutil.WithoutUTF8BOM(&export.ContextReader{Context: ctx, Reader: f}))
 	headers, err := reader.Read()
 	if err != nil {
 		return fmt.Errorf("unsupported schema: %w", err)
@@ -188,9 +190,6 @@ func (r *exportReader) rows(ctx context.Context, file csvFile, summary *FileSumm
 			return err
 		}
 		values, err := reader.Read()
-		if limited.N == 0 {
-			return errors.New("CSV exceeds 256 MiB")
-		}
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
