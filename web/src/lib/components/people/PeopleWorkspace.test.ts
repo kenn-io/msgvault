@@ -1211,13 +1211,27 @@ it.each([
 it('shows invalid due drafts without issuing another ranked request', async () => {
   const client = clientFor({});
   const controller = new RelationshipsController(client, () => 'UTC'), directory = new DirectoryController(client), state = new ExploreState(null);
-  const load = vi.spyOn(controller, 'loadList');
-  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: { ...state.current, relationshipCadence: 'due' }, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  const load = vi.spyOn(controller, 'loadList'), onNavigate = vi.fn(), onDraftNavigation = vi.fn();
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: { ...state.current, relationshipCadence: 'due' }, target: null, filesOpen: false, predicate: {}, onNavigate, onReplaceNavigation: vi.fn(), onDraftNavigation, onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     const input = await screen.findByRole('spinbutton', { name: 'Due within days' });
     await fireEvent.input(input, { target: { value: '3661' } });
     expect((await screen.findByRole('alert')).textContent).toBe('Enter a whole number from 0 to 3660.');
     expect(load).toHaveBeenCalledTimes(1);
     expect(controller.listCursor).toBeNull();
+    expect(onDraftNavigation).not.toHaveBeenCalled();
+    await fireEvent.input(input, { target: { value: '0' } });
+    expect(onDraftNavigation).toHaveBeenCalledExactlyOnceWith({ relationshipDueWithinDays: 0 });
+    expect(onNavigate).not.toHaveBeenCalled();
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
+it.each(['', 'no_list'] as const)('distinguishes an empty archive from empty cadence results: %s', async relationshipCadence => {
+  const client = clientFor({ '/api/v1/relationships': () => Response.json({ rows: [], total_count: 0 }) });
+  const controller = new RelationshipsController(client, () => 'UTC'), directory = new DirectoryController(client), state = new ExploreState(null);
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: { ...state.current, relationshipCadence }, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    expect(await screen.findByText(relationshipCadence ? 'No matches' : 'No people yet', { exact: true })).toBeDefined();
+    expect(screen.queryByText(relationshipCadence ? 'No people yet' : 'No matches', { exact: true })).toBeNull();
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });

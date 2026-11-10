@@ -225,8 +225,6 @@ export class RelationshipsController {
     ++this.listGeneration;
     this.lastListPredicate = undefined;
     this.listPageRequest = undefined;
-    this.listContextSignature = undefined;
-    this.listRows = [];
     this.listCursor = null;
     this.listTotalCount = null;
     this.listLoading = false;

@@ -1570,3 +1570,34 @@ it('clears rows on a cadence change and ignores a late old response', async () =
     expect(controller.listRows.map(row => 'canonical_id' in row ? row.canonical_id : null)).toEqual([3]);
   } finally { controller.destroy(); }
 });
+
+it.each([false, true])('retains suspended rows only while reloading the same cadence context: changed=%s', async changed => {
+  const pending: Array<(response: Response) => void> = [];
+  let requests = 0;
+  const controller = new RelationshipsController(createAPIClient(async () => ++requests === 1
+    ? Response.json({ rows: [relationshipRow(1, 'Retained Example')], next_cursor: 'old' })
+    : new Promise<Response>(resolve => pending.push(resolve))), () => 'UTC');
+  controller.cadence = 'due'; controller.dueWithinDays = 7;
+  try {
+    await controller.loadList({});
+    const abandoned = controller.loadList({});
+    controller.suspendList();
+    expect(controller.listRows).toEqual([relationshipRow(1, 'Retained Example')]);
+    expect(controller.listCursor).toBeNull();
+    await controller.loadMoreList();
+    expect(requests).toBe(2);
+    if (changed) controller.cadence = 'overdue';
+    const reloaded = controller.loadList({});
+    expect(controller.listLoading).toBe(true);
+    const retained = changed ? [] : [relationshipRow(1, 'Retained Example')];
+    expect(controller.listRows).toEqual(retained);
+    pending[0](Response.json({ rows: [relationshipRow(2, 'Abandoned Example')], next_cursor: 'abandoned' }));
+    await abandoned;
+    expect(controller.listRows).toEqual(retained);
+    expect(controller.listCursor).toBeNull();
+    pending[1](Response.json({ rows: [relationshipRow(3, 'Current Example')], next_cursor: 'current' }));
+    await reloaded;
+    expect(controller.listRows).toEqual([relationshipRow(3, 'Current Example')]);
+    expect(controller.listCursor).toBe('current');
+  } finally { controller.destroy(); }
+});

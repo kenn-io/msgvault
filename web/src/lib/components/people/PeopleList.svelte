@@ -240,7 +240,7 @@
         <p class="list-status" role="status">Loading…</p>
       {:else if rows.length === 0}
         <EmptyState
-          title={query.trim() ? 'No matches' : facet === 'domains' ? 'No domains yet' : 'No people yet'}
+          title={query.trim() || filterCount > 0 ? 'No matches' : facet === 'domains' ? 'No domains yet' : 'No people yet'}
         />
       {:else}
         {#each rows as row, index (row.key)}

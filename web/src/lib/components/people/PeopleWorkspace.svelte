@@ -34,7 +34,7 @@
   function clearCadence(): void { onNavigate({ relationshipCadence: '', relationshipDueWithinDays: null }); }
   function changeDue(value: number | null): void {
     dueDraft = value;
-    if (value === null || (Number.isInteger(value) && value >= 0 && value <= 3660)) onNavigate({ relationshipDueWithinDays: value });
+    if (value === null || (Number.isInteger(value) && value >= 0 && value <= 3660)) onDraftNavigation({ relationshipDueWithinDays: value });
   }
   const cadenceOptions = [
     { value: 'overdue', label: 'Overdue' }, { value: 'due', label: 'Due' },
