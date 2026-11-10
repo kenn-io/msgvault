@@ -33,7 +33,7 @@ var checkpointMinInterval = 15 * time.Second
 
 const (
 	// stoppedImportFinalizeTimeout reserves a small bounded window for
-	// checkpoint and terminal sync writes after the scheduled request budget.
+	// checkpoint and terminal sync writes from detection of a stop.
 	stoppedImportFinalizeTimeout = 15 * time.Second
 	// checkpointPageInterval flushes the sync checkpoint every N pages inside a
 	// single chat backfill. Per-chat-only checkpointing is insufficient here:
