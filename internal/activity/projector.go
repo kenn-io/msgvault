@@ -520,7 +520,7 @@ func (p *Projector) reconcileRevisions(
 	directTransition store.ActivityDirectLimitTransition,
 	result *RunResult,
 ) error {
-	for range projectorPassRetries {
+	for attempt := 0; attempt < projectorPassRetries; attempt++ {
 		current, err := p.store.ContactRevisionsContext(ctx)
 		if err != nil {
 			return err
@@ -560,6 +560,7 @@ func (p *Projector) reconcileRevisions(
 		if err != nil {
 			return err
 		}
+		resumed := afterID > 0
 		restart := false
 		for {
 			candidates, loadErr := p.store.ScanForActivityProjectionContext(
@@ -603,6 +604,11 @@ func (p *Projector) reconcileRevisions(
 		if len(remaining) != 0 {
 			if err := p.store.SetActivityProjectionCursorContext(ctx, "revisions", "", 0); err != nil {
 				return err
+			}
+			// A resumed walk gets one wrap without spending an epoch retry.
+			// A walk starting at zero still consumes a retry if it stays stale.
+			if resumed {
+				attempt--
 			}
 			continue
 		}
