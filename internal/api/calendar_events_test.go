@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 type calendarEventsTestStore struct {
@@ -42,7 +45,7 @@ func TestCalendarEventsRoute(t *testing.T) {
 		want              string
 	}{
 		{"owner", path, "", nil, 200, `"message_id":42`},
-		{"delegated", path, secret, nil, 401, ""},
+		{"delegated", path, secret, nil, 403, ""},
 		{"remote", path, "synthetic-reader-key", nil, 403, ""},
 		{"missing", "/api/v1/calendar/events", "", nil, 400, "invalid_argument"},
 		{"reversed", strings.Replace(path, "2027-04-01", "2027-02-01", 1), "", nil, 400, "invalid_argument"},
@@ -71,4 +74,77 @@ func TestCalendarEventsRoute(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCalendarEventsAgentScopeAndVerification(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	var sources []*store.Source
+	for _, tc := range []struct{ address, subject string }{{"allowed@example.test", "Your verification code is 482913"}, {"other@example.test", "Private meeting"}} {
+		source, err := st.GetOrCreateSource("gcal", tc.address)
+		require.NoError(t, err)
+		sources = append(sources, source)
+		data := &store.MessagePersistData{
+			Message:      &store.Message{SourceID: source.ID, SourceMessageID: "event", MessageType: "calendar_event", Subject: sql.NullString{String: tc.subject, Valid: true}},
+			Conversation: &store.ConversationPersistData{SourceConversationID: "event", ConversationType: "calendar", Title: tc.subject},
+			RawMIME:      []byte(`{"id":"event","status":"confirmed","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"}}`), RawFormat: "gcal_json",
+			Metadata: &sql.NullString{String: `{"calendar_id":"example.test"}`, Valid: true},
+		}
+		_, err = st.PersistMessage(data)
+		require.NoError(t, err)
+	}
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Logger: testLogger()})
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	for _, tc := range []struct {
+		name         string
+		permissions  []agentgrant.Permission
+		status       int
+		want, absent string
+	}{
+		{"scoped", []agentgrant.Permission{agentgrant.PermissionCalendarEventRead}, 200, "[verification content masked]", "Private meeting"},
+		{"reveal", []agentgrant.Permission{agentgrant.PermissionCalendarEventRead, agentgrant.PermissionVerificationRead}, 200, "482913", "Private meeting"},
+		{"message only", []agentgrant.Permission{agentgrant.PermissionMessageRead}, 403, "calendar.event.read", "482913"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, token, _, err := srv.agentGrants.Issue(tc.name, tc.permissions, []agentgrant.SourceRef{{ID: sources[0].ID, Type: "gcal", Identifier: sources[0].Identifier}}, time.Time{})
+			require.NoError(t, err)
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/calendar/events?from=2027-03-01T00:00:00Z&to=2027-03-03T00:00:00Z", nil)
+			r.Header.Set(apiprotocol.AgentTokenHeader, token)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, r)
+			require.Equal(t, tc.status, w.Code, w.Body.String())
+			assert.Contains(t, w.Body.String(), tc.want)
+			assert.NotContains(t, w.Body.String(), tc.absent)
+		})
+	}
+}
+
+func TestCalendarEventsMasksInheritedCancellationSubject(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gcal", "series@example.test")
+	require.NoError(t, err)
+	for _, tc := range []struct{ id, subject, raw string }{
+		{"series", "Your verification code is 482913", `{"id":"series","status":"confirmed","start":{"dateTime":"2027-03-01T17:00:00Z"},"end":{"dateTime":"2027-03-01T18:00:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=2"]}`},
+		{"cancelled", "", `{"id":"cancelled","recurringEventId":"series","status":"cancelled","originalStartTime":{"dateTime":"2027-03-02T17:00:00Z"}}`},
+	} {
+		_, err = st.PersistMessage(&store.MessagePersistData{
+			Message:      &store.Message{SourceID: source.ID, SourceMessageID: tc.id, MessageType: "calendar_event", Subject: sql.NullString{String: tc.subject, Valid: true}},
+			Conversation: &store.ConversationPersistData{SourceConversationID: tc.id, ConversationType: "calendar", Title: tc.subject},
+			RawMIME:      []byte(tc.raw), RawFormat: "gcal_json", Metadata: &sql.NullString{String: `{"calendar_id":"example.test"}`, Valid: true},
+		})
+		require.NoError(t, err)
+	}
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Logger: testLogger()})
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionCalendarEventRead}, []agentgrant.SourceRef{{ID: source.ID, Type: "gcal", Identifier: source.Identifier}}, time.Time{})
+	require.NoError(t, err)
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/calendar/events?from=2027-03-02T00:00:00Z&to=2027-03-03T00:00:00Z", nil)
+	r.Header.Set(apiprotocol.AgentTokenHeader, token)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, r)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var page store.CalendarOccurrencePage
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &page))
+	require.Len(t, page.Occurrences, 1)
+	assert.Equal(t, "cancelled", page.Occurrences[0].Status)
+	assert.Equal(t, "[verification content masked]", page.Occurrences[0].Subject)
 }

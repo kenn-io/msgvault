@@ -208,8 +208,13 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 		opts.MeetingRecords = true
 		opts.MeetingSuggestions = daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingSuggestionsMinAPISchemaVersion)
 	}
+	if daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarEventsMCPMinAPISchemaVersion) {
+		opts.CalEvents = st
+	}
 	return opts, nil
 }
+
+const calendarEventsMCPMinAPISchemaVersion = "4.2.0"
 
 // messageTagsMinAPISchemaVersion adds native email tag reads and edits.
 const messageTagsMinAPISchemaVersion = "3.15.0"
@@ -323,6 +328,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		opts.MeetingRecords = daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingLinksMinAPISchemaVersion)
 		opts.MeetingSuggestions = daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingSuggestionsMinAPISchemaVersion)
 		opts.MeetingDecisions = daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingDecisionsMinAPISchemaVersion)
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarEventsMCPMinAPISchemaVersion) {
+		opts.CalEvents = st
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarControlMinAPISchemaVersion) {
 		opts.Calendar = st
