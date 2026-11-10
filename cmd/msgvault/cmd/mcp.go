@@ -214,7 +214,7 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 	return opts, nil
 }
 
-const calendarEventsMCPMinAPISchemaVersion = "4.2.0"
+const calendarEventsMCPMinAPISchemaVersion = "5.15.0"
 
 // messageTagsMinAPISchemaVersion adds native email tag reads and edits.
 const messageTagsMinAPISchemaVersion = "3.15.0"
