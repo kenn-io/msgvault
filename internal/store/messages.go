@@ -55,6 +55,8 @@ type contextQuerier interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
+const recipientTypeFrom = "from"
+
 // RecipientSet groups participant IDs, display names, and envelope
 // addresses for one recipient type (from, to, cc, bcc). EmailAddresses
 // carries the address as it appeared in the message envelope; unlike the
@@ -2180,7 +2182,7 @@ func (s *Store) PersistMessageContext(ctx context.Context, data *MessagePersistD
 
 // RelayedFromRecipient preserves the transport sender for an attributed author.
 func RelayedFromRecipient(from mime.Address, id int64) RecipientSet {
-	return RecipientSet{Type: "from", ParticipantIDs: []int64{id}, DisplayNames: []string{textutil.EnsureUTF8(from.Name)}, EmailAddresses: []string{from.Email}, IsRelayed: true}
+	return RecipientSet{Type: recipientTypeFrom, ParticipantIDs: []int64{id}, DisplayNames: []string{textutil.EnsureUTF8(from.Name)}, EmailAddresses: []string{from.Email}, IsRelayed: true}
 }
 
 func (s *Store) persistAttachmentSnapshotWith(q querier, messageID int64, replacement *[]AttachmentWrite) error {
@@ -2778,7 +2780,7 @@ func (s *Store) ReplaceMessageRecipientsContext(ctx context.Context, messageID i
 		}); err != nil {
 			return err
 		}
-		if recipientType == "from" {
+		if recipientType == recipientTypeFrom {
 			// 'from' rows are attribution input: the message upsert's CTE could not
 			// see the envelope rows this call just replaced, and importers on this
 			// granular path never reach persistMessageWith's final recompute.
