@@ -2983,8 +2983,9 @@ func (s *Store) NeedsFTSBackfillQuickContext(ctx context.Context) bool {
 
 // Stats holds database statistics.
 //
-// MessageCount is the count of active messages: those still present in the
-// source account (deleted_at IS NULL AND deleted_from_source_at IS NULL).
+// MessageCount counts messages not deleted from the archive or source
+// (deleted_at IS NULL AND deleted_from_source_at IS NULL). It includes
+// archive-only rows such as events derived from email invitations.
 // SourceDeletedCount is the count of archived messages that were deleted from
 // the source account but are retained in the archive (deleted_at IS NULL AND
 // deleted_from_source_at IS NOT NULL). The archive is the system of record,
