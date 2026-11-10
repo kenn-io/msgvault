@@ -112,9 +112,9 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if mode == "" {
-		mode = "lexical"
+		mode = mediaSearchModeLexical
 	}
-	if mode != "lexical" && mode != "semantic" && mode != "hybrid" {
+	if mode != mediaSearchModeLexical && mode != "semantic" && mode != "hybrid" {
 		s.rejectBadParam(w, errors.New("mode must be lexical, semantic, or hybrid"))
 		return
 	}
@@ -149,7 +149,7 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 	var attachmentErr error
 	var searches sync.WaitGroup
 	searches.Go(func() {
-		if mode != "lexical" {
+		if mode != mediaSearchModeLexical {
 			err = errMediaSearchMode
 			return
 		}
@@ -178,7 +178,7 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 	if s.writeIfContextError(w, r.Context().Err()) {
 		return
 	}
-	if mode != "lexical" && attachmentErr != nil {
+	if mode != mediaSearchModeLexical && attachmentErr != nil {
 		if s.writeIfContextError(w, attachmentErr) {
 			return
 		}
@@ -224,6 +224,8 @@ func mediaSearchFailure(err error) (int, ErrorResponse) {
 		return http.StatusServiceUnavailable, ErrorResponse{Error: "media_search_unavailable", Message: "Docbank transcript search is unavailable"}
 	}
 }
+
+const mediaSearchModeLexical = "lexical"
 
 var errMediaSearchMode = errors.New("media search mode unavailable")
 
@@ -311,7 +313,7 @@ func (reader *MessageRecordingReader) search(ctx, remoteCtx context.Context, que
 			fence.ContentVersionIDs = append(fence.ContentVersionIDs, selector.ContentVersionID)
 		}
 	}
-	request := docbankmedia.SearchRequest{Query: query, Mode: "lexical", Limit: docbankmedia.MaxSearchResults, Profile: suppliedTranscriptProfile, ContentFirst: true}
+	request := docbankmedia.SearchRequest{Query: query, Mode: mediaSearchModeLexical, Limit: docbankmedia.MaxSearchResults, Profile: suppliedTranscriptProfile, ContentFirst: true}
 	var report docbankmedia.SearchReport
 	if len(fence.ContentVersionIDs) == 0 {
 		if err := reader.Client.ValidateSearch(remoteCtx, request); err != nil {

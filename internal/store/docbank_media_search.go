@@ -104,7 +104,8 @@ func (s *Store) documentSearchRows(destination string, scope *personscope.Scope,
 const documentSearchFormats = `d.mime_type NOT LIKE 'audio/%'
  AND d.mime_type NOT LIKE 'video/%'`
 
-const documentSearchDelivered = `d.state = 'delivered' AND ` + documentSearchFormats
+// Processing remains document-only; search can also read existing image renditions.
+const documentSearchDelivered = `d.state = 'delivered' AND d.mime_type NOT LIKE 'image/%' AND ` + documentSearchFormats
 
 func (s *Store) documentSearchVisible() string {
 	// Materialize eligible receipt matches before applying message visibility.

@@ -49,7 +49,7 @@ func (reader *DocbankAttachmentReader) SearchAttachments(ctx, remoteCtx context.
 		return response, err
 	}
 	profile := reader.SearchProfile
-	if mode == "lexical" {
+	if mode == mediaSearchModeLexical {
 		profile = suppliedTranscriptProfile
 	}
 	actual := mode
@@ -60,14 +60,14 @@ func (reader *DocbankAttachmentReader) SearchAttachments(ctx, remoteCtx context.
 			return fail(errMediaSearchMode)
 		}
 		if mode == "hybrid" {
-			actual = "lexical"
+			actual = mediaSearchModeLexical
 			response.Partial = true
 			response.Degradations = append(response.Degradations, "semantic_unconfigured")
 		}
 	}
 	request := docbankmedia.SearchRequest{Query: query, Mode: actual, ContentFirst: true, Profile: profile, Limit: limit}
 	if len(versions) == 0 {
-		response.Partial = response.Partial || mode != "lexical"
+		response.Partial = response.Partial || mode != mediaSearchModeLexical
 		return response, nil
 	}
 	fence, err := reader.Client.VaultFence(remoteCtx, versions)
@@ -97,7 +97,7 @@ func (reader *DocbankAttachmentReader) SearchAttachments(ctx, remoteCtx context.
 			response.Coverage.State = report.Coverage.State
 		} else {
 			if response.ActualMode != report.ActualMode {
-				response.ActualMode = "lexical"
+				response.ActualMode = mediaSearchModeLexical
 			}
 			if response.Coverage.State != report.Coverage.State {
 				response.Coverage.State = "incomplete"
@@ -108,7 +108,7 @@ func (reader *DocbankAttachmentReader) SearchAttachments(ctx, remoteCtx context.
 		response.Coverage.CompleteDocuments += report.Coverage.CompleteDocuments
 		response.Degradations = append(response.Degradations, report.Degradations...)
 		response.Partial = response.Partial || mode != report.ActualMode || len(response.Degradations) > 0 ||
-			(report.ActualMode != "lexical" && report.Coverage.State != "complete")
+			(report.ActualMode != mediaSearchModeLexical && report.Coverage.State != "complete")
 		batchSucceeded = true
 		hits = append(hits, report.Results...)
 		response.Truncated = response.Truncated || report.Truncated
