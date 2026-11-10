@@ -1749,6 +1749,7 @@ func (s *Syncer) syncLabels(ctx context.Context, sourceID int64) (map[string]int
 
 // messageData holds all parsed data for a message before persistence.
 type messageData struct {
+	automation        uint32
 	originalMessageID string // Parsed identity evidence, before omission from new projections.
 	metadata          *sql.NullString
 	message           *store.Message
@@ -1961,6 +1962,7 @@ func (s *Syncer) prepareMessage(
 		bodyText:          bodyText,
 		bodyHTML:          bodyHTML,
 		rawMIME:           raw.Raw,
+		automation:        parsed.AutomationFlags(),
 		from:              parsed.From,
 		to:                parsed.To,
 		cc:                parsed.Cc,
@@ -2025,6 +2027,7 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 	// Publish the search document with RAW before interruptible file I/O.
 	messageID, err := s.store.PersistMessageContext(ctx, &store.MessagePersistData{
 		Message:     data.message,
+		Automation:  &data.automation,
 		Metadata:    data.metadata,
 		BodyText:    sql.NullString{String: data.bodyText, Valid: data.bodyText != ""},
 		BodyHTML:    sql.NullString{String: data.bodyHTML, Valid: data.bodyHTML != ""},

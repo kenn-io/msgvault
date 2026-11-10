@@ -93,6 +93,7 @@ type MessageDeliveryEvidence struct {
 // MessagePersistData bundles everything needed to atomically
 // persist a message and its related rows in a single transaction.
 type MessagePersistData struct {
+	Automation *uint32 // nil preserves known flags unless raw MIME changes
 	// Edited records a source edit atomically with the message.
 	Edited                    bool
 	Message                   *Message
@@ -416,19 +417,21 @@ type ConversationPersistData struct {
 
 // Message represents a message in the database.
 type Message struct {
-	ID               int64
-	ConversationID   int64
-	SourceID         int64
-	SourceMessageID  string
-	RFC822MessageID  sql.NullString // RFC822 Message-ID header for cross-mailbox dedup
-	ListID           sql.NullString // RFC 2919 List-Id header for email list membership
-	MessageType      string         // "email"
-	SentAt           sql.NullTime
-	ReceivedAt       sql.NullTime
-	InternalDate     sql.NullTime
-	SenderID         sql.NullInt64
-	ReplyToMessageID sql.NullInt64
-	IsFromMe         bool
+	ID                    int64
+	ConversationID        int64
+	SourceID              int64
+	SourceMessageID       string
+	RFC822MessageID       sql.NullString // RFC822 Message-ID header for cross-mailbox dedup
+	AutomationFlags       sql.NullInt64
+	AutomationRuleVersion sql.NullInt64
+	ListID                sql.NullString // RFC 2919 List-Id header for email list membership
+	MessageType           string         // "email"
+	SentAt                sql.NullTime
+	ReceivedAt            sql.NullTime
+	InternalDate          sql.NullTime
+	SenderID              sql.NullInt64
+	ReplyToMessageID      sql.NullInt64
+	IsFromMe              bool
 	// IsSent is whether the message left the sender; invalid keeps the stored value.
 	IsSent sql.NullBool
 	// IdentityDerivedIsFromMe reports that IsFromMe came from a confirmed
@@ -1427,14 +1430,14 @@ func upsertMessageSQL(now string) string {
 	)
 	INSERT INTO messages (
 		conversation_id, source_id, source_message_id,
-		rfc822_message_id, list_id, message_type,
+		rfc822_message_id, list_id, automation_flags, automation_rule_version, message_type,
 		sent_at, received_at, internal_date, sender_id,
 		reply_to_message_id,
 		is_from_me, source_is_from_me, identity_is_from_me,
 		subject, snippet, size_estimate,
 		has_attachments, attachment_count, archived_at, last_modified, is_sent
 	)
-	SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+	SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 	       (source_is_from_me OR identity_is_from_me),
 	       source_is_from_me, identity_is_from_me,
 	       ?, ?, ?, ?, ?, %[1]s, %[1]s, COALESCE(CAST(? AS BOOLEAN), TRUE)
@@ -1451,6 +1454,8 @@ func upsertMessageSQL(now string) string {
 		conversation_id = excluded.conversation_id,
 		rfc822_message_id = COALESCE(NULLIF(messages.rfc822_message_id, ''), excluded.rfc822_message_id),
 		list_id = excluded.list_id,
+ automation_flags = COALESCE(excluded.automation_flags, messages.automation_flags),
+ automation_rule_version = COALESCE(excluded.automation_rule_version, messages.automation_rule_version),
 		sent_at = excluded.sent_at,
 		received_at = excluded.received_at,
 		internal_date = excluded.internal_date,
@@ -1525,6 +1530,10 @@ type bodylessMessageJournalState struct {
 }
 
 func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
+	if msg.AutomationFlags.Valid != msg.AutomationRuleVersion.Valid {
+		return 0, errors.New("automation flags and rule version must both be present or absent")
+	}
+
 	journalCandidate := isBodylessMessageJournalCandidate(msg)
 	var prior bodylessMessageJournalState
 	if journalCandidate {
@@ -1554,7 +1563,7 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 		msg.SenderID, msg.SourceID,
 		msg.SenderID, msg.SourceID,
 		msg.ConversationID, msg.SourceID, msg.SourceMessageID,
-		msg.RFC822MessageID, msg.ListID, msg.MessageType,
+		msg.RFC822MessageID, msg.ListID, msg.AutomationFlags, msg.AutomationRuleVersion, msg.MessageType,
 		msg.SentAt, msg.ReceivedAt, msg.InternalDate, msg.SenderID,
 		msg.ReplyToMessageID,
 		msg.Subject, msg.Snippet, msg.SizeEstimate,
@@ -2517,6 +2526,12 @@ func (s *Store) persistMessageWith(
 			if _, err := s.refreshEmailLinkageTx(ctx, tx, messageID, input); err != nil {
 				return 0, fmt.Errorf("refresh email linkage: %w", err)
 			}
+		}
+	}
+
+	if data.Automation != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE messages SET automation_flags = ?, automation_rule_version = ? WHERE id = ?`, *data.Automation, AutomationRuleVersion, messageID); err != nil {
+			return 0, fmt.Errorf("set automation: %w", err)
 		}
 	}
 
@@ -6239,6 +6254,16 @@ func (s *Store) UpsertMessageRawWithFormat(messageID int64, rawData []byte, form
 
 // UpsertMessageRawWithFormatContext honors cancellation during UpsertMessageRawWithFormat.
 func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID int64, rawData []byte, format string) error {
+	return s.upsertMessageRawWithAutomationContext(ctx, messageID, rawData, format, nil)
+}
+
+// UpsertMessageRawWithAutomationContext commits the raw completeness marker
+// together with flags for importers that write auxiliary rows before raw.
+func (s *Store) UpsertMessageRawWithAutomationContext(ctx context.Context, messageID int64, rawData []byte, format string, flags uint32) error {
+	return s.upsertMessageRawWithAutomationContext(ctx, messageID, rawData, format, &flags)
+}
+
+func (s *Store) upsertMessageRawWithAutomationContext(ctx context.Context, messageID int64, rawData []byte, format string, automation *uint32) error {
 	write := func(tx *loggedTx) error {
 		if err := s.lockMeetingEvidenceWith(ctx, tx, messageID); err != nil {
 			return err
@@ -6264,6 +6289,12 @@ func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID
 		if err := upsertMessageRawWithFormat(boundQuerier{ctx: ctx, q: tx}, messageID, rawData, format); err != nil {
 			return err
 		}
+		if automation != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE messages SET automation_flags = ?, automation_rule_version = ? WHERE id = ?`, *automation, AutomationRuleVersion, messageID); err != nil {
+				return err
+			}
+		}
+
 		// Non-MIME raw has no linkage to derive, and only a replaced MIME payload
 		// leaves keys to clear. Anything else would look the message type up for nothing.
 		if format == "mime" || replacesMIME {

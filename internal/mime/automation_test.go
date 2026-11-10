@@ -137,3 +137,19 @@ func FuzzParseAutomationBodyIsolation(f *testing.F) {
 		assert.Equal(t, AutomationSignals{}, msg.AutomationSignals())
 	})
 }
+
+func TestAutomationSignalsFlags(t *testing.T) {
+	for _, tt := range []struct {
+		signals AutomationSignals
+		from    string
+		want    uint32
+	}{
+		{AutomationSignals{AutoSubmitted: true}, "", 1}, {AutomationSignals{PrecedenceBulk: true}, "", 2},
+		{AutomationSignals{ListID: true}, "", 4}, {AutomationSignals{ListUnsubscribe: true}, "", 8},
+		{AutomationSignals{CalendarPart: true}, "", 16}, {AutomationSignals{ReplyToNoReply: true}, "", 32},
+		{AutomationSignals{}, "no-reply@example.test", 64}, {AutomationSignals{}, "person@example.test", 0},
+	} {
+		assert.Equal(t, tt.want, tt.signals.Flags(tt.from))
+	}
+	assert.Equal(t, uint32(14), BulkMask)
+}

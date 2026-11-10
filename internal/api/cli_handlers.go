@@ -1784,6 +1784,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"repair-identity",
 		"repair-labels",
 		"repair-list-ids",
+		"repair-automation-flags",
 		"repair-senders",
 		"repack-attachments",
 		"remove-account",

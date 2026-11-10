@@ -1507,9 +1507,14 @@ func (imp *Importer) persistPage(
 		if senderID != 0 {
 			mapped.Message.SenderID = sql.NullInt64{Int64: senderID, Valid: true}
 		}
+		automation := uint32(0)
+		if authorObservation(message).Automated {
+			automation = store.FlagBotSender
+		}
 		metadata := sql.NullString{String: string(mapped.Metadata), Valid: len(mapped.Metadata) != 0}
 		messageID, err := imp.store.PersistMessageContext(ctx, &store.MessagePersistData{
 			Message:        &mapped.Message,
+			Automation:     &automation,
 			Metadata:       &metadata,
 			BodyText:       sql.NullString{String: mapped.BodyText, Valid: mapped.BodyText != ""},
 			RawMIME:        mapped.Raw,

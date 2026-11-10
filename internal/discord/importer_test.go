@@ -2466,3 +2466,27 @@ func assertMessageDeletionState(
 	require.NoError(t, err)
 	assert.Equal(t, wantDeleted, deletedAt.Valid)
 }
+
+func TestDiscordAutomationBotAndHuman(t *testing.T) {
+	for _, bot := range []bool{false, true} {
+		t.Run(strconv.FormatBool(bot), func(t *testing.T) {
+			st := testutil.NewSQLiteTestStore(t)
+			api := newImporterFakeAPI(importerTestChannel("300", "general"))
+			message := importerTestMessage("101", "300", "hello")
+			message.Author.Bot = bot
+			api.messages["300"] = []Message{message}
+			_, err := newTestImporter(st, api).Import(t.Context(), ImportOptions{GuildID: "200", AttachmentsDir: t.TempDir()})
+			require.NoError(t, err)
+			var id int64
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&id))
+			flags, current, err := st.MessageAutomationContext(t.Context(), id)
+			require.NoError(t, err)
+			assert.True(t, current)
+			want := uint32(0)
+			if bot {
+				want = store.FlagBotSender
+			}
+			assert.Equal(t, want, flags)
+		})
+	}
+}

@@ -166,7 +166,7 @@ func TestImportMbox_NoAttachmentsStillRecordsAttachmentMetadata(t *testing.T) {
 
 // TestImportMboxPersistsListID catches an offline MIME import that parses the
 // List-Id header but drops it before the shared message persistence boundary.
-func TestImportMboxPersistsListID(t *testing.T) {
+func TestImportMboxPersistsListIDAndAutomation(t *testing.T) {
 	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	assert := assert.New(t)
 	require := require.New(t)
@@ -196,6 +196,10 @@ func TestImportMboxPersistsListID(t *testing.T) {
 		"read imported list ID")
 	assert.True(listID.Valid, "list ID should be present")
 	assert.Equal("<announce.example.org>", listID.String, "list ID")
+	var flags, version int
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT automation_flags, automation_rule_version FROM messages`).Scan(&flags, &version))
+	assert.Equal(4, flags)
+	assert.Equal(store.AutomationRuleVersion, version)
 }
 
 func TestImportMbox_IsIdempotentAcrossPathChanges(t *testing.T) {

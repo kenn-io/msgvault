@@ -67,3 +67,35 @@ func hasCalendarPart(root *enmime.Part) bool {
 		return strings.EqualFold(p.ContentType, "text/calendar")
 	}) != nil
 }
+
+// Flags packs parser evidence and the sender's explicit no-reply marker.
+func (s AutomationSignals) Flags(fromAddress string) uint32 {
+	var flags uint32
+	for i, present := range []bool{s.AutoSubmitted, s.PrecedenceBulk, s.ListID, s.ListUnsubscribe, s.CalendarPart, s.ReplyToNoReply, IsNoReplyAddress(fromAddress)} {
+		if present {
+			flags |= 1 << i
+		}
+	}
+	return flags
+}
+
+const (
+	FlagAutoSubmitted uint32 = 1 << iota
+	FlagPrecedenceBulk
+	FlagListID
+	FlagListUnsubscribe
+	FlagCalendarPart
+	FlagReplyToNoReply
+	FlagSenderNoReply
+	FlagBotSender
+	BulkMask = FlagPrecedenceBulk | FlagListID | FlagListUnsubscribe
+)
+
+// AutomationFlags returns the signals plus the first From address's marker.
+func (m *Message) AutomationFlags() uint32 {
+	from := ""
+	if len(m.From) > 0 {
+		from = m.From[0].Email
+	}
+	return m.AutomationSignals().Flags(from)
+}

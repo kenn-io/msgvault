@@ -279,3 +279,14 @@ func TestEmailUnchangedRetryPublishesPendingRevisionWithRowErrors(t *testing.T) 
 	require.NoError(err)
 	assert.False(t, applied, "unresolved row failures keep the pass retryable")
 }
+
+func TestRederiveRefreshesAutomationFlags(t *testing.T) {
+	st, src, id := archiveEmailSource(t, "imap", "stale")
+	require.NoError(t, st.UpsertMessageRaw(id, []byte("From: original@example.test\r\nList-Id: <news.example.test>\r\n\r\nhello")))
+	_, err := Run(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	require.NoError(t, err)
+	flags, current, err := st.MessageAutomationContext(t.Context(), id)
+	require.NoError(t, err)
+	assert.True(t, current)
+	assert.Equal(t, uint32(4), flags)
+}

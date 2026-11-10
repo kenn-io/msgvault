@@ -202,6 +202,7 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 	// Persist atomically
 	messageID, err := st.PersistMessageContext(ctx, &store.MessagePersistData{
 		Message:    rec,
+		Automation: ptrAutomationFlags(parsed.AutomationFlags()),
 		BodyText:   sql.NullString{String: bodyText, Valid: bodyText != ""},
 		BodyHTML:   sql.NullString{String: bodyHTML, Valid: bodyHTML != ""},
 		RawMIME:    raw,
@@ -396,3 +397,5 @@ func storeAttachment(
 		ContentID:     att.ContentID,
 	})
 }
+
+func ptrAutomationFlags(flags uint32) *uint32 { return &flags }

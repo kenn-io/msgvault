@@ -58,6 +58,7 @@ var ErrEvidenceIncomplete = &EvidenceIncompleteError{}
 // Store is what List, Done, and Snooze read and write; *store.Store
 // implements it.
 type Store interface {
+	MessageAutomationContext(ctx context.Context, id int64) (uint32, bool, error)
 	LoopConversationsContext(ctx context.Context, q store.LoopQuery) iter.Seq2[store.LoopConversation, error]
 	LoopMarksContext(ctx context.Context) (map[int64]store.LoopMark, error)
 	GetMessageBodyText(ctx context.Context, messageID int64) (string, error)
@@ -72,15 +73,20 @@ type Store interface {
 }
 
 type storeReader struct {
-	ctx  context.Context
-	st   Store
-	left int
-	chat bool
+	ctx         context.Context
+	st          Store
+	left        int
+	chat        bool
+	attachments map[int64]bool
 }
 
 // in points the reader at one conversation's messages.
 func (r *storeReader) in(conv store.LoopConversation) *storeReader {
 	r.chat = conv.ConversationType == "direct_chat"
+	r.attachments = make(map[int64]bool, len(conv.Messages))
+	for _, m := range conv.Messages {
+		r.attachments[m.ID] = m.HasFileAttachment
+	}
 	return r
 }
 
@@ -90,7 +96,28 @@ func (r *storeReader) original(id int64) (mime.AutomationSignals, bool, bool, er
 	if r.chat {
 		return mime.AutomationSignals{}, false, false, nil
 	}
-	return r.st.LoopOriginalEvidenceContext(r.ctx, id)
+	flags, current, err := r.st.MessageAutomationContext(r.ctx, id)
+	if err != nil {
+		return mime.AutomationSignals{}, false, false, err
+	}
+	if !current {
+		return r.st.LoopOriginalEvidenceContext(r.ctx, id)
+	}
+	signals := mime.AutomationSignals{
+		AutoSubmitted:   flags&mime.FlagAutoSubmitted != 0,
+		PrecedenceBulk:  flags&mime.FlagPrecedenceBulk != 0,
+		ListID:          flags&mime.FlagListID != 0,
+		ListUnsubscribe: flags&mime.FlagListUnsubscribe != 0,
+		CalendarPart:    flags&mime.FlagCalendarPart != 0,
+		ReplyToNoReply:  flags&mime.FlagReplyToNoReply != 0,
+	}
+	// The positive archive fact is conclusive. A missing fact can mean that
+	// attachment extraction has not completed, so retain the original fallback.
+	if r.attachments[id] {
+		return signals, true, false, nil
+	}
+	_, attachment, unreadable, err := r.st.LoopOriginalEvidenceContext(r.ctx, id)
+	return signals, attachment, unreadable, err
 }
 
 func (r *storeReader) Evidence(id int64) (store.LoopMessageEvidence, error) {

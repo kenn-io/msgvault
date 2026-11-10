@@ -1294,7 +1294,11 @@ func (imp *Importer) processMessage(ctx context.Context, cc *convScope, m *Messa
 	// Archive the exact original message JSON (captured at decode time) only
 	// after every fatal auxiliary write succeeds. Tombstone retries use its
 	// presence as the durable signal that this whole snapshot completed.
-	if err := imp.store.UpsertMessageRawWithFormatContext(ctx, messageID, raw, "slack_json"); err != nil {
+	automation := uint32(0)
+	if m.BotID != "" || imp.res.users[m.User].IsBot {
+		automation = store.FlagBotSender
+	}
+	if err := imp.store.UpsertMessageRawWithAutomationContext(ctx, messageID, raw, "slack_json", automation); err != nil {
 		return fmt.Errorf("archive slack message raw: %w", err)
 	}
 

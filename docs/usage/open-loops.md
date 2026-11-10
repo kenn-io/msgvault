@@ -82,6 +82,17 @@ These messages neither start nor answer a loop:
 
 A message deleted at the provider stays in your archive and still counts.
 
+## Reuse automation evidence
+
+New email keeps automation flags from ingest. To fill flags for older email,
+run [`msgvault repair-automation-flags --apply`](../cli-reference.md#repair-automation-flags).
+The command reads stored originals and can resume after an interruption.
+
+Loops reuse current flags when the archive also confirms a file attachment.
+When attachment evidence is missing, loops still parse the original so an
+unrecorded file cannot disappear from the result. This also preserves checks
+for unreadable originals. Bot and sender flag bits do not change loop rules.
+
 ## Mark a loop done or snooze it
 
 ```bash

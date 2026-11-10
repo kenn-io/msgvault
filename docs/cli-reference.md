@@ -26,7 +26,7 @@ appear in full under Inherited Flags.
 | Export | [export-messages](#export-messages), [export-eml](#export-eml), [export-attachments](#export-attachments), [create-subset](#create-subset) |
 | Review and remove mail | [stage-delete](#stage-delete), [delete-staged](#delete-staged), [deduplicate](#deduplicate), [gc](#gc) |
 | Back up and manage attachment storage | [backup](#backup), [pack-attachments](#pack-attachments), [purge-excluded-media](#purge-excluded-media) |
-| Repair older records | [repair-identity](#repair-identity), [repair-senders](#repair-senders), [repair-message](#repair-message), [repair-derived](#repair-derived), [repair-attachment-roles](#repair-attachment-roles), [repair-labels](#repair-labels), [repair-list-ids](#repair-list-ids), [repair-dates](#repair-dates) |
+| Repair older records | [repair-identity](#repair-identity), [repair-senders](#repair-senders), [repair-message](#repair-message), [repair-derived](#repair-derived), [repair-attachment-roles](#repair-attachment-roles), [repair-labels](#repair-labels), [repair-list-ids](#repair-list-ids), [repair-automation-flags](#repair-automation-flags), [repair-dates](#repair-dates) |
 | Operate or integrate | [setup](#setup), [credentials](#credentials), [daemon](#daemon), [serve](#serve), [activity](#activity), [mcp](#mcp), [query](#query), [openapi](#openapi), [agent-token](#agent-token) |
 
 ## loops
@@ -2854,6 +2854,29 @@ warns that results may be incomplete when the daemon finds an index gap or
 is rebuilding the index. The warning also applies while a rebuild waits for
 other daemon work to finish. An owner completeness check alone prints no warning. Agent searches report checking uncertainty on stderr.
 API clients can still observe `index_state="checking"` while that check runs.
+
+---
+
+## repair-automation-flags
+
+Recover automation flags for older email from stored MIME, without contacting
+providers. New email records these flags during ingest.
+
+```bash
+msgvault repair-automation-flags [--apply] [--batch-size 500]
+```
+
+The default dry run reports `scanned`, `would_write`, `bulk`, `automated`,
+`unreadable`, and `remaining`. Pass `--apply` to write flags; the summary then
+reports `written`. Each batch commits separately. If interrupted, rerun the
+command to continue past messages already repaired. Batch size must be between
+1 and 5000. Missing or unreadable originals stay unknown and are included in
+`remaining`. Already-current messages and chat messages are skipped.
+
+The daemon runs the command against your archive. Applied repairs mark derived
+analytics stale and refresh the cache. They leave message content and embedding
+coverage unchanged. Current flags help open loops reuse automation evidence;
+attachment evidence still comes from the archive or original MIME.
 
 ---
 

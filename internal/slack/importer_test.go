@@ -3723,3 +3723,17 @@ func dropReactionsTable(ctx context.Context, db *sql.DB) error {
 	_, err := db.ExecContext(ctx, `DROP TABLE reactions`)
 	return err
 }
+
+func TestSlackAutomationBotAndHuman(t *testing.T) {
+	f := testWorkspace(t)
+	f.users = append(f.users, map[string]any{"id": "UBOT", "is_bot": true, "name": "testbot"})
+	f.convs[0].Msgs = append(f.convs[0].Msgs, fakeMsg{TS: ts(43), User: "UBOT", Text: "automated notice"})
+	imp, opts := testImporter(t, f)
+	_, err := imp.Import(t.Context(), opts)
+	require.NoError(t, err)
+	var bots, humans int
+	require.NoError(t, imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(`SELECT COUNT(*) FROM messages WHERE automation_flags = ? AND automation_rule_version = ?`), store.FlagBotSender, store.AutomationRuleVersion).Scan(&bots))
+	require.NoError(t, imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(`SELECT COUNT(*) FROM messages WHERE automation_flags = 0 AND automation_rule_version = ?`), store.AutomationRuleVersion).Scan(&humans))
+	assert.Positive(t, bots)
+	assert.Positive(t, humans)
+}

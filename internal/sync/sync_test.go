@@ -2637,7 +2637,7 @@ func TestFullSyncWithAttachment(t *testing.T) {
 
 // TestFullSyncPersistsListID catches an email sync path that parses List-Id
 // but drops it before the shared message persistence boundary.
-func TestFullSyncPersistsListID(t *testing.T) {
+func TestFullSyncPersistsListIDAndAutomation(t *testing.T) {
 	t.Parallel()
 	env := newTestEnv(t)
 	raw := testemail.NewMessage().
@@ -2645,6 +2645,7 @@ func TestFullSyncPersistsListID(t *testing.T) {
 		To("Bob <bob@example.com>").
 		Subject("List announcement").
 		Header("List-Id", "Example <announce.example.org>").
+		Header("List-Unsubscribe", "<mailto:leave@example.test>").
 		Body("Body text.").
 		Bytes()
 	env.Mock.Profile.MessagesTotal = 1
@@ -2660,6 +2661,10 @@ func TestFullSyncPersistsListID(t *testing.T) {
 	).Scan(&listID), "read synced list ID")
 	assert.True(t, listID.Valid, "list ID should be present")
 	assert.Equal(t, "<announce.example.org>", listID.String, "list ID")
+	var flags, version int
+	require.NoError(t, env.Store.DB().QueryRowContext(t.Context(), `SELECT automation_flags, automation_rule_version FROM messages WHERE source_message_id = ?`, "list-id-message").Scan(&flags, &version))
+	assert.Equal(t, 12, flags)
+	assert.Equal(t, store.AutomationRuleVersion, version)
 }
 
 func TestFullSyncWithEmptyAttachment(t *testing.T) {
