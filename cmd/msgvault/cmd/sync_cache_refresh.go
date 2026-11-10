@@ -60,9 +60,17 @@ func manualSyncCLICommand(args []string) bool {
 }
 
 // commentWriteCLICommand reports a comment command that can change messages
-// in the analytics cache. A dry run changes nothing.
+// in the analytics cache. A dry run and --clear-unknown change none.
 func commentWriteCLICommand(args []string) bool {
-	return len(args) >= 2 && args[0] == "comment" && args[1] == "moderate" && !slices.Contains(args, "--dry-run") && !slices.Contains(args, "--dry-run=true")
+	if len(args) < 2 || args[0] != "comment" || (args[1] != "moderate" && args[1] != "reply") {
+		return false
+	}
+	for _, flag := range []string{"--dry-run", "--dry-run=true", "--clear-unknown", "--clear-unknown=true"} {
+		if slices.Contains(args, flag) {
+			return false
+		}
+	}
+	return true
 }
 
 func manualSyncCacheFlagValues(args []string) (force, skip bool) {

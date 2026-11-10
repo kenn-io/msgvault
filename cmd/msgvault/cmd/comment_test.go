@@ -96,6 +96,8 @@ func TestCommentWritesRefreshAnalyticsCache(t *testing.T) {
 	assert := assert.New(t)
 	assert.True(commentWriteCLICommand([]string{"comment", "moderate", "--delete", "--yes", "42"}))
 	assert.False(commentWriteCLICommand([]string{"comment", "moderate", "--delete", "--dry-run", "42"}))
+	assert.True(commentWriteCLICommand([]string{"comment", "reply", "--body=Thanks", "42"}))
+	assert.False(commentWriteCLICommand([]string{"comment", "reply", "--body=Thanks", "--clear-unknown", "42"}))
 	assert.False(manualSyncCLICommand([]string{"comment", "moderate", "--delete", "--yes", "42"}), "a comment change is not reported as a finished sync")
 }
 

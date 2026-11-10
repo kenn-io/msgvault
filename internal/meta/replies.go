@@ -62,8 +62,8 @@ func ReplyToComment(ctx context.Context, st *store.Store, client *Client, target
 	if err := st.FinishMetaCommentReplyContext(local, record, store.MetaCommentReplySent, posted.ID); err != nil {
 		return posted.ID, err
 	}
-	// Archive the reply as sync will see it. Meta decides its parent: a
-	// Facebook reply to a reply joins the top-level comment's thread.
+	// Archive the reply as sync will see it. Meta decides its parent, which
+	// may not be the target, for example for a Facebook reply to a reply.
 	reply, err := client.readComment(local, target.SourceType, posted.ID)
 	if err == nil && reply.ID != posted.ID {
 		err = errors.New("meta returned a different comment")
