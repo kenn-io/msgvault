@@ -796,17 +796,24 @@ func TestAFullSyncThatPausesResumesItsDiscoveryAsAFullOne(t *testing.T) {
 	source := newForgeSource(t, st)
 	f := newFakeForge()
 	unchanged := ref("i2", "acme", "2026-11-06T10:00:00Z")
-	f.pages = [][]ThreadRef{{ref("i1", "acme", "2026-11-07T10:00:00Z")}, {unchanged}}
+	f.pages = [][]ThreadRef{
+		{ref("i1", "acme", "2026-11-07T10:00:00Z")},
+		{ref("i3", "acme", "2026-11-05T10:00:00Z")},
+		{unchanged},
+	}
 	f.threads["i1"] = [][]Post{{post("p1", "issue", ann, "One", "Body.", "2026-11-01T10:00:00Z")}}
 	f.threads["i2"] = [][]Post{{post("p2", "issue", ann, "Two", "Body.", "2026-11-01T10:00:00Z")}}
+	f.threads["i3"] = [][]Post{{post("p3", "issue", ann, "Three", "Body.", "2026-11-01T10:00:00Z")}}
 	_, err := NewSyncer(st, f, nil).Sync(t.Context(), source.ID, Options{})
 	require.NoError(err)
 
-	// A full sync pauses after discovery's first page. Its second page shows
-	// i2 at the update it is archived at, with a reason it now has.
+	// A full sync is asked to yield after discovery's first page and pauses
+	// once the second is saved. Its last page, which only the resumed sync
+	// reads, shows i2 at the update it is archived at, with a reason it now
+	// has.
 	mentioned := unchanged
 	mentioned.Reason = "mention"
-	f.pages[1] = []ThreadRef{mentioned}
+	f.pages[2] = []ThreadRef{mentioned}
 	ctx, preempt := jobctx.WithPreemption(t.Context())
 	f.afterPage = func(i int) {
 		if i == 0 {
