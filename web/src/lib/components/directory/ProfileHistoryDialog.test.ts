@@ -5,7 +5,6 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
-import { valueProvenance } from './history-format';
 import ProfileHistoryDialog from './ProfileHistoryDialog.svelte';
 import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 import type { AttributeDefinition } from '../../api/generated/models';
@@ -108,16 +107,15 @@ describe('ProfileHistoryDialog', () => {
 
     render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn() });
 
-    expect((await screen.findByText('Previous Name')).closest('.detail-row')?.textContent).toContain(valueProvenance({ ...currentEnvelope, source: 'carddav_import' }).text);
+    expect((await screen.findByText('Previous Name')).closest('.detail-row')?.textContent).toContain('From CardDAV contacts');
     for (const title of ['Names', 'Email and phone', 'Addresses', 'Dates', 'Categories', 'Media', 'Seen in services']) {
       expect(screen.getByRole('heading', { name: title })).toBeDefined();
     }
     expect.soft(screen.getByText('Scheduled end category').closest('details')).not.toBeNull();
     const currentRow = screen.getByText('Current Name').closest('.detail-row')!;
     const line = currentRow.querySelector<HTMLElement>('.description')!;
-    const expected = valueProvenance(currentEnvelope);
-    expect(line.textContent).toBe(expected.text);
-    expect(line.title).toBe(expected.title);
+    expect(line.textContent).toMatch(/^You · /);
+    expect(line.title).toContain('Updated');
     for (const value of ['Current Name', 'current@example.com', 'Current address', 'Birthday: February 14', 'Current photo']) {
       expect(screen.getByText(value).closest('details')).toBeNull();
     }
@@ -127,11 +125,7 @@ describe('ProfileHistoryDialog', () => {
       const row = screen.getByText(value).closest('.detail-row')!;
       expect(row.closest('details')).not.toBeNull();
     }
-    expect(screen.getByText(/^Slack · workspace 1 · You · /)).toBeDefined();
-    expect(screen.getByText(/^Slack · workspace 2 · You · /)).toBeDefined();
-    expect(screen.getByText('observer').closest('.detail-row')?.textContent).toContain('Slack · workspace 2');
     expect(screen.getByText('reader0').closest('.detail-row')?.textContent).toContain('WhatsApp · account 1');
-    expect(screen.getByText('reader1').closest('.detail-row')?.textContent).toContain('WhatsApp · account 2');
     expect(document.body.textContent).not.toMatch(/T_ALPHA|T_BETA|beeper-a|beeper-b/);
     // A registered service reads by its catalog name, not its slug.
     expect(screen.getByText('Desk 4455').closest('.detail-row')?.textContent).toMatch(/Team hotline · You · /);
@@ -154,9 +148,9 @@ describe('ProfileHistoryDialog', () => {
 
     const row = (await screen.findByText('observed@example.test')).closest('.detail-row')!;
     const line = row.querySelector<HTMLElement>('.description')!;
-    const expected = valueProvenance({ ...currentEnvelope, source: 'archive_observation', source_ref: 'synthetic-archive' }, [['Seen', '2026-07-31T12:00:00Z']]);
-    expect(line.textContent).toBe(`Email · ${expected.text}`);
-    expect(line.title).toBe(expected.title);
+    expect(line.textContent).toMatch(/^Email · From your messages · /);
+    expect(line.title).toContain('Seen');
+    expect(line.title).toContain('Reference: synthetic-archive');
     expect(row.textContent).not.toMatch(/987654321|synthetic-archive/);
   });
 

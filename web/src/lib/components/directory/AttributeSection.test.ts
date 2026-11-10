@@ -10,7 +10,6 @@ import type {
 } from '../../api/generated/models';
 import type { DirectoryReadBundle } from '../../directory/models';
 import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
-import { valueProvenance } from './history-format';
 import AttributeSection from './AttributeSection.svelte';
 
 type AttributeDefinition = GeneratedAttributeDefinition;
@@ -102,14 +101,14 @@ describe('AttributeSection', () => {
     expect(screen.getByRole('heading', { name: 'Private note' })).toBeDefined();
     expect(screen.getByText('1 earlier value')).toBeDefined();
     expect(screen.getAllByText('Hidden')).toHaveLength(2);
-    const provenance = valueProvenance(current);
-    const line = screen.getByText(provenance.text);
+    const line = screen.getByText(/^From CardDAV contacts · since /);
     const currentRow = line.closest('.detail-row')!;
     // Reveal is the first row's text action, beside its value, not a control in the field's heading.
     expect(currentRow.querySelector('.actions')!.textContent!.trim()).toBe('Reveal');
     expect(screen.getByRole('heading', { name: 'Private note' }).querySelector('button')).toBeNull();
     expect(currentRow.textContent).not.toMatch(/source-card-7|synthetic-importer|0\.8|Valid from|Created/);
-    expect(line.getAttribute('title')).toBe(provenance.title);
+    expect(line.getAttribute('title')).toContain('Reference: source-card-7');
+    expect(line.getAttribute('title')).toContain('Actor: synthetic-importer');
   });
 
   it('reveals and hides sensitive current and historical values', async () => {

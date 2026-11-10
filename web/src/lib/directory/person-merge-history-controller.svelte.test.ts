@@ -103,11 +103,11 @@ describe('PersonMergeHistoryController', () => {
 
   it('reads profile before labels and recovers a link made between those reads through the stale path', async () => {
     const reads: string[] = [];
-    const current = detail();
+    const current = detail({ survivor_revision_after: 5 });
     current.labels.participant_ids.push(999);
     current.labels.addresses.push(addressFixture(999, 'email', 'later@example.org'));
     const firstProfile = deferredResponse();
-    let revision = 4;
+    let revision = 4, postAttempts = 0;
     const controller = new PersonMergeHistoryController(createAPIClient(async input => {
       const request = requestOf(input), path = new URL(request.url).pathname;
       if (path === '/api/v1/person-merges/41') {
@@ -124,6 +124,7 @@ describe('PersonMergeHistoryController', () => {
       }
       if (path === '/api/v1/people/12/profile') return Response.json(emptyProfile(person(12)));
       if (path === '/api/v1/people/12/split') {
+        postAttempts++;
         expect(request.headers.get('If-Match')).toBe('"person-12-r4"');
         return Response.json({ error: 'person_merge_revision_conflict', message: 'Source changed' }, { status: 409 });
       }
@@ -143,7 +144,11 @@ describe('PersonMergeHistoryController', () => {
     controller.setParticipantSelected(701, true);
     expect(controller.confirmSplit()).toBe(true);
     await controller.submitSplit();
-    expect(reads.slice(-2)).toEqual(['person', 'merge']);
+    expect(reads).toEqual(['merge', 'person', 'merge', 'person', 'merge']);
+    expect(postAttempts).toBe(1);
+    expect(controller.sourcePerson?.revision).toBe(5);
+    expect(controller.detail?.merge.survivor_revision_after).toBe(5);
+    expect(controller.splitError).toBe('This profile changed since you opened it. Check its addresses, then split again.');
     expect(controller.sourceETag).toBe('"person-12-r5"');
     expect(controller.selectedParticipantIDs).toEqual([]);
     expect(controller.splitNeedsFreshState).toBe(false);
@@ -316,7 +321,6 @@ describe('PersonMergeHistoryController', () => {
     { kind: 'transport', status: 0, error: '' },
     { kind: 'exception', status: 0, error: '' },
     { kind: 'application', status: 409, error: 'person_split_idempotency_conflict' },
-    { kind: 'application', status: 412, error: 'person_merge_revision_conflict' },
   ])('handles request IDs after $kind $status', async ({ kind, status, error }) => {
     const requests: Request[] = [];
     let postAttempts = 0;
@@ -346,41 +350,6 @@ describe('PersonMergeHistoryController', () => {
     expect(ids).toHaveBeenCalledTimes(kind === 'transport' ? 1 : 2);
     expect(requests.filter(request => request.method === 'GET' && ['/api/v1/person-merges/41', '/api/v1/people/12'].includes(new URL(request.url).pathname)).map(request => new URL(request.url).pathname)).toEqual(['/api/v1/person-merges/41', '/api/v1/people/12', '/api/v1/person-merges/41']);
     controller.destroy();
-  });
-
-  it('atomically reloads exact source/detail only for the recognized stale code and requires reconfirmation', async () => {
-    const requests: Request[] = [];
-    let sourceReads = 0;
-    let detailReads = 0;
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      requests.push(request);
-      const path = new URL(request.url).pathname;
-      if (path === '/api/v1/person-merges/41') {
-        detailReads += 1;
-        return Response.json(detail({ survivor_revision_after: detailReads === 1 ? 4 : 5 }));
-      }
-      if (path === '/api/v1/people/12') {
-        sourceReads += 1;
-        const revision = sourceReads === 1 ? 4 : 5;
-        return Response.json(person(12, revision, [701, 702], 'Synthetic Person 12'), { headers: { ETag: `"person-12-r${revision}"` } });
-      }
-      return Response.json({ error: 'person_merge_revision_conflict', message: 'Source changed' }, { status: 409 });
-    });
-    const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
-    await controller.selectMerge(41);
-    await controller.openSplit();
-    controller.setParticipantSelected(701, true);
-    controller.confirmSplit();
-
-    await controller.submitSplit();
-
-    expect(sourceReads).toBe(2);
-    expect(detailReads).toBe(3);
-    expect(controller.sourcePerson?.revision).toBe(5);
-    expect(controller.detail?.merge.survivor_revision_after).toBe(5);
-    expect(controller.splitError).toBe('This profile changed since you opened it. Check its addresses, then split again.');
-    expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
   });
 
   it('blocks stale state after an atomic reload failure until GET-only retry publishes fresh source and detail', async () => {

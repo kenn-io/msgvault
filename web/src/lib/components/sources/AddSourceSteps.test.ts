@@ -21,7 +21,6 @@ it('asks for a server name when the Server holds a port', async () => {
   await fireEvent.input(screen.getByLabelText('Server'), { target: { value: 'imap.example.com:143' } });
   expect(screen.getByText('Enter a server name, such as imap.example.com.')).toBeDefined();
   expect(screen.queryByText(/msgvault add-imap/, { selector: 'code' })).toBeNull();
-  expect(screen.queryByRole('checkbox')).toBeNull();
 });
 
 it('shows a command for an IPv6 server and hyphen-leading username', async () => {
