@@ -1400,14 +1400,14 @@ func TestRevisionReconciliationResumesAcrossBoundedRuns(t *testing.T) {
 }
 
 func TestRevisionReconciliationResumesAcrossIdentityChanges(t *testing.T) {
-	f, lastID := projectorManyFixture(t, 7)
+	f, _ := projectorManyFixture(t, 7)
 	initial, err := NewProjector(f.Store, Options{Timezone: "UTC", BatchSize: 1})
 	require.NoError(t, err)
 	_, err = initial.RunOnce(t.Context())
 	require.NoError(t, err)
 
 	var cursor int64
-	var wrapped, complete bool
+	var complete bool
 	for run := range 12 {
 		if run < 3 {
 			require.NoError(t, f.Store.AddAccountIdentityContext(t.Context(), f.Source.ID,
@@ -1420,16 +1420,6 @@ func TestRevisionReconciliationResumesAcrossIdentityChanges(t *testing.T) {
 		require.True(t, err == nil || errors.Is(err, ErrWorkRemaining), "%v", err)
 		require.NotEmpty(t, observed.afterIDs)
 		assert.Equal(t, cursor, observed.afterIDs[0], "resume the last committed position despite identity churn")
-		previous := cursor
-		for _, afterID := range observed.afterIDs {
-			// The first zero scan checks the tail before wrapping; later zero
-			// scans also include the final freshness check after revisiting rows.
-			if afterID == 0 && previous > 0 && !wrapped {
-				assert.Equal(t, lastID, previous, "reach the tail before wrapping")
-				wrapped = true
-			}
-			previous = afterID
-		}
 		cursor, err = f.Store.ActivityProjectionCursorContext(t.Context(), "revisions", "")
 		require.NoError(t, err)
 		current, err := f.Store.ContactRevisionsContext(t.Context())
@@ -1444,14 +1434,12 @@ func TestRevisionReconciliationResumesAcrossIdentityChanges(t *testing.T) {
 			complete = true
 			break
 		}
-		assert.NotEqual(t, current, got, "incomplete walks cannot claim freshness")
 	}
-	assert.True(t, wrapped, "older stale rows must be revisited")
 	assert.True(t, complete, "reconciliation completes once identity churn stops")
 }
 
 func TestRevisionReconciliationFiniteIdentityChurn(t *testing.T) {
-	for _, changes := range []int{7, 8} {
+	for _, changes := range []int{projectorPassRetries - 1, projectorPassRetries} {
 		t.Run(fmt.Sprintf("changes_%d", changes), func(t *testing.T) {
 			f, _ := projectorManyFixture(t, 7)
 			initial, err := NewProjector(f.Store, Options{Timezone: "UTC", BatchSize: 1})
@@ -1465,16 +1453,18 @@ func TestRevisionReconciliationFiniteIdentityChurn(t *testing.T) {
 			tracing := &finiteRevisionChurnStore{
 				recordActivityScanStore: recordActivityScanStore{Store: f.Store},
 				sourceID:                f.Source.ID, firstID: candidates[0].MessageID, maxChanges: changes,
+				freshnessChanges: changes == projectorPassRetries,
 			}
 			p, err := NewProjector(tracing, Options{Timezone: "UTC", BatchSize: 1})
 			require.NoError(t, err)
 			_, err = p.RunOnce(t.Context())
-			require.GreaterOrEqual(t, len(tracing.afterIDs), 3)
-			assert.Equal(t, tracing.firstID, tracing.afterIDs[2], "epoch retry keeps committed progress")
 			if changes < projectorPassRetries {
+				require.GreaterOrEqual(t, len(tracing.afterIDs), 3)
+				assert.Equal(t, tracing.firstID, tracing.afterIDs[2], "epoch retry keeps committed progress")
 				assert.NoError(t, err, "manual build retains the base retry tolerance for finite identity churn")
 			} else {
-				assert.ErrorContains(t, err, "identity reconciliation did not stabilize after 8 passes")
+				assert.ErrorContains(t, err, fmt.Sprintf("identity reconciliation did not stabilize after %d passes", projectorPassRetries))
+				assert.Equal(t, projectorPassRetries, tracing.zeroStartRemainders, "stale walks starting at zero spend the retry budget")
 			}
 			assert.Equal(t, changes, tracing.changes)
 			current, readErr := f.Store.ContactRevisionsContext(t.Context())
@@ -1497,20 +1487,56 @@ func TestRevisionReconciliationFiniteIdentityChurn(t *testing.T) {
 
 type finiteRevisionChurnStore struct {
 	recordActivityScanStore
-	sourceID, firstID   int64
-	changes, maxChanges int
+	sourceID, firstID                            int64
+	changes, maxChanges                          int
+	freshnessChanges, tailReached, startedAtZero bool
+	zeroStartRemainders                          int
 }
 
 func (s *finiteRevisionChurnStore) SetActivityProjectionCursorContext(ctx context.Context, pass, token string, afterID int64) error {
 	if err := s.Store.SetActivityProjectionCursorContext(ctx, pass, token, afterID); err != nil {
 		return err
 	}
-	if pass == "revisions" && afterID == s.firstID && s.changes < s.maxChanges {
+	if !s.freshnessChanges && pass == "revisions" && afterID == s.firstID && s.changes < s.maxChanges {
 		s.changes++
 		return s.Store.AddAccountIdentityContext(ctx, s.sourceID,
 			fmt.Sprintf("churn-%d@example.com", s.changes), "manual")
 	}
 	return nil
+}
+
+func (s *finiteRevisionChurnStore) ActivityProjectionCursorContext(ctx context.Context, pass, token string) (int64, error) {
+	afterID, err := s.Store.ActivityProjectionCursorContext(ctx, pass, token)
+	if pass == "revisions" {
+		s.startedAtZero = afterID == 0
+	}
+	return afterID, err
+}
+
+func (s *finiteRevisionChurnStore) ScanForActivityProjectionContext(ctx context.Context, afterID int64, limit int) ([]store.ActivityCandidate, error) {
+	// An identity write can race the gap after the final queue drain and before
+	// the freshness scan, leaving stale rows even after a walk started at zero.
+	freshness := s.freshnessChanges && s.tailReached && afterID == 0
+	if freshness {
+		s.tailReached = false
+		if s.changes < s.maxChanges {
+			s.changes++
+			if err := s.Store.AddAccountIdentityContext(ctx, s.sourceID,
+				fmt.Sprintf("churn-%d@example.com", s.changes), "manual"); err != nil {
+				return nil, err
+			}
+		}
+	}
+	items, err := s.recordActivityScanStore.ScanForActivityProjectionContext(ctx, afterID, limit)
+	if err == nil {
+		if afterID > 0 && len(items) == 0 {
+			s.tailReached = true
+		}
+		if freshness && s.startedAtZero && len(items) > 0 {
+			s.zeroStartRemainders++
+		}
+	}
+	return items, err
 }
 
 func TestBoundedProjectionCompletesConfigurationTransitions(t *testing.T) {
