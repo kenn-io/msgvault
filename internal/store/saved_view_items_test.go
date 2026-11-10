@@ -1,6 +1,8 @@
 package store_test
 
 import (
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 	"testing"
@@ -333,4 +335,58 @@ func TestSavedViewItemsIgnoreStaleTargets(t *testing.T) {
 			assert.Empty(t, got.ItemsJSON)
 		})
 	}
+}
+
+func TestSavedViewItemsTargetJSONShape(t *testing.T) {
+	f := storetest.New(t)
+	id := f.CreateMessage("shape")
+	view, err := f.Store.CreateSavedView(t.Context(), savedViewInput("Target shape"))
+	require.NoError(t, err)
+	view, err = f.Store.ChangeSavedViewItems(t.Context(), view.ID, 1, store.SavedViewItemChange{IncludeAdd: []store.SavedViewItemRef{{MessageID: id, SourceID: f.Source.ID}, {ConversationID: f.ConvID, SourceID: f.Source.ID}}})
+	require.NoError(t, err)
+	rendered, _, err := f.Store.SavedViewItemsForView(t.Context(), view)
+	require.NoError(t, err)
+	wire, err := json.Marshal(rendered)
+	require.NoError(t, err)
+	for _, raw := range [][]byte{view.ItemsJSON, wire} {
+		var document struct {
+			Include []map[string]jsontext.Value `json:"include"`
+		}
+		require.NoError(t, json.Unmarshal(raw, &document))
+		require.Len(t, document.Include, 2)
+		assert.Contains(t, document.Include[0], "message_id")
+		assert.NotContains(t, document.Include[0], "conversation_id")
+		assert.Contains(t, document.Include[1], "conversation_id")
+		assert.NotContains(t, document.Include[1], "message_id")
+	}
+}
+
+func TestMergeSourcesSavedViewItemsDoNotResurrectReusedConversation(t *testing.T) {
+	f := storetest.New(t)
+	from, err := f.Store.GetOrCreateSource("discord", "historical-guild")
+	require.NoError(t, err)
+	old, err := f.Store.EnsureConversationWithType(from.ID, "channel", "group_chat", "Historical")
+	require.NoError(t, err)
+	_, err = f.Store.UpsertMessage(&store.Message{SourceID: from.ID, ConversationID: old, SourceMessageID: "historical", MessageType: "discord"})
+	require.NoError(t, err)
+	view, err := f.Store.CreateSavedView(t.Context(), savedViewInput("Historical pin"))
+	require.NoError(t, err)
+	_, err = f.Store.ChangeSavedViewItems(t.Context(), view.ID, 1, store.SavedViewItemChange{IncludeAdd: []store.SavedViewItemRef{{ConversationID: old, SourceID: from.ID}}})
+	require.NoError(t, err)
+	require.NoError(t, f.Store.PurgeChannelContext(t.Context(), from.ID, "channel"))
+	into, err := f.Store.GetOrCreateSource("discord", "replacement-guild")
+	require.NoError(t, err)
+	override := ""
+	if f.Store.IsPostgreSQL() {
+		override = " OVERRIDING SYSTEM VALUE"
+	}
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO conversations (id,source_id,source_conversation_id,conversation_type,title)`+override+` VALUES (?,?,?,?,?)`), old, into.ID, "unrelated", "group_chat", "Unrelated")
+	require.NoError(t, err)
+	_, err = f.Store.UpsertMessage(&store.Message{SourceID: into.ID, ConversationID: old, SourceMessageID: "unrelated", MessageType: "discord"})
+	require.NoError(t, err)
+	_, err = f.Store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	require.NoError(t, err)
+	items, err := f.Store.GetSavedViewItems(t.Context(), view.ID)
+	require.NoError(t, err)
+	assert.Empty(t, items.Include, "a stale source-A pin cannot attach to source-B's reused conversation ID")
 }

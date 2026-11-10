@@ -706,3 +706,42 @@ func TestMeetingRouteStoreErrorDoesNotLeakDetails(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, response.Code)
 	assert.NotContains(t, response.Body.String(), "private transcript content")
 }
+
+func TestMeetingExploreItemsPopulation(t *testing.T) {
+	f := storetest.New(t)
+	second, err := f.Store.GetOrCreateSource("imap", "meetings@example.test")
+	require.NoError(t, err)
+	conv, err := f.Store.EnsureConversation(second.ID, "meeting-b", "Meeting B")
+	require.NoError(t, err)
+	var ids []int64
+	var values []string
+	for i, source := range []int64{f.Source.ID, second.ID} {
+		conversation := f.ConvID
+		if i == 1 {
+			conversation = conv
+		}
+		id, err := f.Store.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source, ConversationID: conversation, SourceMessageID: fmt.Sprintf("meeting-%d", i), MessageType: "meeting_transcript"}, RawMIME: []byte(`{"summary_text":"Synthetic meeting evidence"}`), RawFormat: "meeting_json"})
+		require.NoError(t, err)
+		ids = append(ids, id)
+		values = append(values, fmt.Sprintf(`(%d::BIGINT,%d::BIGINT,'meeting-%d',%d::BIGINT,'Meeting','',TIMESTAMP '2026-07-18 10:00:00',0::BIGINT,false,0::INTEGER,NULL::TIMESTAMP,NULL::BIGINT,NULL::BIGINT,'meeting_transcript',NULL::VARCHAR,false,2026,7)`, id, source, i, 101+i))
+	}
+	engine, _ := newExploreDuckDBFixtureWithMessages(t, strings.Join(values, ","), ids[1])
+	scope, err := engine.ResolveExploreMeetings(t.Context(), query.ExploreSelectionRequest{Explore: query.ExploreRequest{Context: query.Context{SourceIDs: []int64{f.Source.ID}}, Items: query.EntryItems{IncludeMessageIDs: ids[1:], ExcludeMessageIDs: ids[:1]}}}, 100)
+	require.NoError(t, err)
+	require.Equal(t, ids[1:], scope.MessageIDs)
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: f.Store, SavedViewStore: f.Store, Engine: engine, Logger: testLogger()})
+	t.Cleanup(func() { assert.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	predicate := fmt.Sprintf(`{"filters":[{"dimension":"source_id","values":[%q]}],"include_keys":["source:%d:message:meeting-1"],"exclude_keys":["source:%d:message:meeting-0"]}`, fmt.Sprint(f.Source.ID), second.ID, f.Source.ID)
+	metrics := postExploreJSON(t, srv, "/api/v1/meetings/metrics", fmt.Sprintf(`{"explore":{"predicate":%s,"cache_revision":%q,"search_provenance":{}}}`, predicate, scope.CacheRevision))
+	require.Equal(t, http.StatusOK, metrics.Code, metrics.Body.String())
+	var result meetingcontent.Metrics
+	require.NoError(t, json.Unmarshal(metrics.Body.Bytes(), &result))
+	assert.Equal(t, int64(1), result.Totals.MeetingCount)
+	for _, mode := range []string{"explicit", "all_matching"} {
+		selection := fmt.Sprintf(`{"mode":%q,"predicate":%s,"row_keys":["source:%d:message:meeting-1"],"cache_revision":%q,"search_provenance":{}}`, mode, predicate, second.ID, scope.CacheRevision)
+		response := postExploreJSON(t, srv, "/api/v1/meetings/context", `{"selection":`+selection+`}`)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		assert.Contains(t, response.Body.String(), fmt.Sprintf(`"message_id":%d`, ids[1]))
+		assert.NotContains(t, response.Body.String(), fmt.Sprintf(`"message_id":%d`, ids[0]))
+	}
+}
