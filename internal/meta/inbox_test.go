@@ -91,7 +91,7 @@ func TestInboxImportArchivesConversationsAsChats(t *testing.T) {
 func TestInboxImportRefusesOtherAccountsAndUnknownSenders(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := testutil.NewSQLiteTestStore(t)
-	owner := "200"
+	owner, firstFrom, visitor := "200", "", `,"username":"example_visitor"`
 	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v26.0/me":
@@ -99,9 +99,9 @@ func TestInboxImportRefusesOtherAccountsAndUnknownSenders(t *testing.T) {
 		case "/v26.0/100":
 			_, _ = fmt.Fprint(w, `{"id":"100","instagram_business_account":{"id":"200","username":"example_business"}}`)
 		case "/v26.0/100/conversations":
-			_, _ = fmt.Fprintf(w, `{"data":[{"id":"t_1","participants":{"data":[{"id":%q,"username":"example_business"},{"id":"701","username":"example_visitor"}]},
-				"messages":{"data":[{"id":"m_1","created_time":"2026-10-02T09:00:00+0000","message":"no sender"},
-				{"id":"m_2","created_time":"2026-10-02T09:01:00+0000","from":{"id":%q,"username":"example_business"},"message":"our reply"}]}}]}`, owner, owner)
+			_, _ = fmt.Fprintf(w, `{"data":[{"id":"t_1","participants":{"data":[{"id":%q,"username":"example_business"},{"id":"701"%s}]},
+				"messages":{"data":[{"id":"m_1","created_time":"2026-10-02T09:00:00+0000"%s,"message":"no sender"},
+				{"id":"m_2","created_time":"2026-10-02T09:01:00+0000","from":{"id":%q,"username":"example_business"},"message":"our reply"}]}}]}`, owner, visitor, firstFrom, owner)
 		default:
 			assert.Fail("unexpected Graph read", r.URL.Path)
 			http.Error(w, "unexpected", http.StatusNotFound)
@@ -128,4 +128,13 @@ func TestInboxImportRefusesOtherAccountsAndUnknownSenders(t *testing.T) {
 	var hits int
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages_fts WHERE messages_fts MATCH 'example_business'`).Scan(&hits))
 	assert.Equal(1, hits, "the account's own messages are searchable by its name")
+
+	// The sender appears later without a name: search uses the name already
+	// known for that participant.
+	firstFrom, visitor = `,"from":{"id":"701"}`, ""
+	_, err = imp.Import(t.Context(), inbox, ImportOptions{})
+	require.NoError(err)
+	var fromName string
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT from_addr FROM messages_fts WHERE rowid = ?`, message(t, st, src.ID, "m_1").ID).Scan(&fromName))
+	assert.Equal("example_visitor", fromName)
 }
