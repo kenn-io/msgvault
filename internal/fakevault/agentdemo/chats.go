@@ -140,12 +140,14 @@ func chats(ctx context.Context, b *builder) error {
 	if err != nil {
 		return err
 	}
-	if err = b.st.UpsertAttachmentRecord(ctx, b.message("priya_contract_share"), store.AttachmentWrite{Filename: "contract-v2.pdf", MIMEType: "application/pdf", ContentHash: hash, StoragePath: path, Size: int64(len(contractV2Bytes())), MediaType: "document", Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics}); err != nil {
+	if err = b.st.UpsertAttachmentRecordWithStats(ctx, b.message("priya_contract_share"), store.AttachmentWrite{Filename: "contract-v2.pdf", MIMEType: "application/pdf", ContentHash: hash, StoragePath: path, Size: int64(len(contractV2Bytes())), MediaType: "document", Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics}, true); err != nil {
 		return err
 	}
 	a := b.m.Attachments["contract_v2"]
 	a.MessageHandles = append(a.MessageHandles, "priya_contract_share")
 	b.m.Attachments["contract_v2"] = a
+	b.m.Expect["awaiting_owner_reply"] = append(b.m.Expect["awaiting_owner_reply"].([]string), "sam_signal_question")
+	b.m.Expect["awaiting_their_reply"] = append(b.m.Expect["awaiting_their_reply"].([]string), "casey_sms_question")
 	b.m.Expect["automated_messages"] = automated
 	b.m.Expect["group_chat_questions_never_loops"] = []string{"weekend_crew_question"}
 	b.m.Expect["interrupted_sources"] = []string{"signal"}

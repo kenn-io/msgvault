@@ -2,17 +2,17 @@ package agentdemo
 
 import (
 	"bytes"
-	"compress/zlib"
 	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"slices"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // Each exclusion is wall-clock or random state, never scenario content.
@@ -242,17 +242,9 @@ func Digest(ctx context.Context, db *sql.DB) (string, error) {
 					if !ok {
 						return "", fmt.Errorf("digest: raw_data is not bytes")
 					}
-					reader, err := zlib.NewReader(bytes.NewReader(data))
+					decoded, err := store.DecodeMessageRaw(data, "zlib")
 					if err != nil {
 						return "", err
-					}
-					decoded, err := io.ReadAll(reader)
-					closeErr := reader.Close()
-					if err != nil {
-						return "", err
-					}
-					if closeErr != nil {
-						return "", closeErr
 					}
 					value = decoded
 				}

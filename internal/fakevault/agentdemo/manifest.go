@@ -97,5 +97,11 @@ func Load(dir string) (*Manifest, error) {
 	if err = json.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("decode manifest: %w", err)
 	}
+	if m.Scenario != Scenario {
+		return nil, fmt.Errorf("unsupported manifest scenario %q (expected %q)", m.Scenario, Scenario)
+	}
+	if m.ScenarioVersion != ScenarioVersion {
+		return nil, fmt.Errorf("unsupported manifest scenario version %d (expected %d)", m.ScenarioVersion, ScenarioVersion)
+	}
 	return &m, nil
 }

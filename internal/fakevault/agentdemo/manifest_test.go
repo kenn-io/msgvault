@@ -38,7 +38,7 @@ func TestGenerateDirRefusesExistingDatabase(t *testing.T) {
 
 func TestManifestRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	m := &agentdemo.Manifest{Scenario: agentdemo.Scenario, Seed: 7, AsOf: agentdemo.DefaultAsOf}
+	m := &agentdemo.Manifest{Scenario: agentdemo.Scenario, ScenarioVersion: agentdemo.ScenarioVersion, Seed: 7, AsOf: agentdemo.DefaultAsOf}
 	require.NoError(t, m.Write(dir))
 	got, err := agentdemo.Load(dir)
 	require.NoError(t, err)

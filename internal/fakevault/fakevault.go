@@ -791,15 +791,18 @@ func labelType(name string) string {
 	return "system"
 }
 
+// ErrTargetExists identifies refusal to generate over an existing archive.
+var ErrTargetExists = errors.New("fakevault target already exists")
+
 // CheckNewTarget rejects an existing archive before generation writes files.
 func CheckNewTarget(dbPath string) error {
 	// A dangling symlink is still an existing target and must never redirect a write.
 	if _, err := os.Lstat(dbPath); err == nil {
-		return fmt.Errorf("fakevault: %s already exists", dbPath)
+		return fmt.Errorf("fakevault: %s already exists: %w", dbPath, ErrTargetExists)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("fakevault: checking %s: %w", dbPath, err)
 	}
-	return checkTargetState(dbPath, false)
+	return nil
 }
 
 // InitSchema initializes a synthetic archive through the production store.

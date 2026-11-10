@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	_ "time/tzdata"
@@ -24,6 +25,7 @@ import (
 	"go.kenn.io/msgvault/internal/fakevault/agentdemo/agentdemotest"
 	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/msgsegment"
+	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -70,7 +72,7 @@ func TestCast(t *testing.T) {
 			assert.Equal(t, s.Identifier, identifier)
 		})
 	}
-	for _, h := range []string{"riley", "pat", "canary", "support_vendor", "noreply", "newsletter"} {
+	for _, h := range []string{"riley", "pat", "canary", "support_vendor", "noreply", "newsletter", "background"} {
 		assert.Zero(t, count(t, st, "SELECT count(*) FROM person_participants WHERE participant_id=?", m.Participants[h].ID), h)
 	}
 	for _, h := range []string{"sam", "sam_phone"} {
@@ -80,11 +82,25 @@ func TestCast(t *testing.T) {
 func TestEmailAndChatLoopsMatchExpectations(t *testing.T) {
 	st, m := archive(t, 1)
 	want := []int64{}
-	for _, h := range []string{"jordan_contract_question", "taylor_proposal_question", "riley_intro_question", "vendor_ticket_question", "sam_signal_question", "casey_sms_question"} {
+	for _, h := range append(expectHandles(t, m, "awaiting_owner_reply"), expectHandles(t, m, "awaiting_their_reply")...) {
 		require.NotZero(t, m.Messages[h], h)
 		want = append(want, m.Messages[h])
 	}
 	assert.ElementsMatch(t, want, loopIDs(t, st, m))
+	result, err := loops.List(t.Context(), st, loops.Options{Limit: 200}, m.AsOf)
+	require.NoError(t, err)
+	for key, kind := range map[string]string{"awaiting_owner_reply": loops.ReplyOwed, "awaiting_their_reply": loops.AwaitingReply} {
+		var expected, actual []int64
+		for _, h := range expectHandles(t, m, key) {
+			expected = append(expected, m.Messages[h])
+		}
+		for _, l := range result.Loops {
+			if l.Kind == kind {
+				actual = append(actual, l.Anchor.ID)
+			}
+		}
+		assert.ElementsMatch(t, expected, actual, key)
+	}
 	assert.GreaterOrEqual(t, count(t, st, "SELECT count(*) FROM messages WHERE message_type='email'"), 150)
 	assert.Zero(t, count(t, st, "SELECT count(*) FROM messages m WHERE message_type='email' AND NOT EXISTS (SELECT 1 FROM message_raw r WHERE r.message_id=m.id)"))
 	assert.Zero(t, count(t, st, "SELECT count(*) FROM messages WHERE source_id=?", m.Sources["discord"].ID))
@@ -259,56 +275,85 @@ func TestVoiceEmailQuotesAreBelowOwnText(t *testing.T) {
 		assert.True(t, quoted, h)
 	}
 }
+func expectHandles(t *testing.T, m *agentdemo.Manifest, key string) []string {
+	t.Helper()
+	data, err := json.Marshal(m.Expect[key])
+	require.NoError(t, err)
+	var handles []string
+	require.NoError(t, json.Unmarshal(data, &handles))
+	require.NotEmpty(t, handles)
+	return handles
+}
+
 func TestVoicePersonScopeMembership(t *testing.T) {
 	st, m := archive(t, 1)
-	// Discover every conversation involving Sam whose roster contains only Sam
-	// and account identities. Group chats must never enter this corpus.
-	rows, err := st.DB().QueryContext(t.Context(), `SELECT c.id,c.source_id,c.conversation_type FROM conversations c
- WHERE EXISTS (SELECT 1 FROM conversation_participants cp JOIN person_participants pp ON pp.participant_id=cp.participant_id WHERE cp.conversation_id=c.id AND pp.person_id=?)`, m.Persons["sam"].ID)
+	var oracle struct {
+		PersonSam struct{ Chat, Email, Never []string } `json:"person_sam"`
+	}
+	data, err := json.Marshal(m.Expect["voice"])
 	require.NoError(t, err)
-	type conv struct {
-		id, source int64
-		typ        string
+	require.NoError(t, json.Unmarshal(data, &oracle))
+	var ids []int64
+	for _, id := range m.Messages {
+		ids = append(ids, id)
 	}
-	var found []conv
-	for rows.Next() {
-		var c conv
-		require.NoError(t, rows.Scan(&c.id, &c.source, &c.typ))
-		found = append(found, c)
-	}
-	require.NoError(t, rows.Err())
-	require.NoError(t, rows.Close())
-	groups := map[string][]string{"chat": {}, "email": {}}
-	for _, c := range found {
-		if c.typ != "direct_chat" && c.typ != "email_thread" {
+	provenance, err := st.PersonProvenanceForMessages(t.Context(), ids, personscope.Scope{ParticipantIDs: m.Persons["sam"].ParticipantIDs})
+	require.NoError(t, err)
+	found := map[string][]string{"chat": {}, "email": {}}
+	ownCounts := map[string]int{"chat": 0, "email": 0}
+	for handle, c := range m.Conversations {
+		if c.ConversationType != "direct_chat" && c.ConversationType != "email_thread" {
 			continue
 		}
-		extras := count(t, st, `SELECT count(*) FROM conversation_participants cp WHERE cp.conversation_id=? AND NOT EXISTS (SELECT 1 FROM person_participants pp WHERE pp.participant_id=cp.participant_id AND pp.person_id=?) AND cp.participant_id NOT IN (?,?,?)`, c.id, m.Persons["sam"].ID, m.Participants["owner"].ID, m.Participants["owner_phone"].ID, m.Participants["owner_slack"].ID)
-		if extras > 0 {
-			continue
-		}
-		for h, mc := range m.Conversations {
-			if mc.ID == c.id {
-				family := m.Sources[mc.Source].Family
-				groups[family] = append(groups[family], h)
+		family := m.Sources[c.Source].Family
+		var matches int
+		rows, err := st.DB().QueryContext(t.Context(), `SELECT m.id,m.is_from_me,EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id=ml.label_id WHERE ml.message_id=m.id AND l.name='DRAFT') FROM messages m WHERE conversation_id=?`, c.ID)
+		require.NoError(t, err)
+		for rows.Next() {
+			var id int64
+			var own, draft bool
+			require.NoError(t, rows.Scan(&id, &own, &draft))
+			p := provenance[id]
+			if p == nil {
+				continue
+			}
+			if !slices.Contains(p.Directions, personscope.FromPerson) && !slices.Contains(p.Directions, personscope.ToPerson) {
+				continue
+			}
+			matches++
+			if own && !draft {
+				ownCounts[family]++
+				assert.Contains(t, p.Roles, personscope.RoleTo)
 			}
 		}
+		require.NoError(t, rows.Err())
+		require.NoError(t, rows.Close())
+		if matches > 0 {
+			found[family] = append(found[family], handle)
+		}
 	}
-	var oracle struct {
-		PersonSam struct {
-			Chat  []string `json:"chat"`
-			Email []string `json:"email"`
-		} `json:"person_sam"`
+	assert.ElementsMatch(t, oracle.PersonSam.Chat, found["chat"])
+	assert.ElementsMatch(t, oracle.PersonSam.Email, found["email"])
+	assert.Equal(t, 9, ownCounts["chat"])
+	assert.Equal(t, 6, ownCounts["email"])
+	for _, h := range oracle.PersonSam.Never {
+		assert.NotContains(t, found["chat"], h)
+		rows, err := st.DB().QueryContext(t.Context(), "SELECT id FROM messages WHERE conversation_id=?", m.Conversations[h].ID)
+		require.NoError(t, err)
+		for rows.Next() {
+			var id int64
+			require.NoError(t, rows.Scan(&id))
+			p := provenance[id]
+			if p != nil {
+				assert.Contains(t, p.Directions, personscope.Group)
+			}
+		}
+		require.NoError(t, rows.Err())
+		require.NoError(t, rows.Close())
 	}
-	voiceJSON, err := json.Marshal(m.Expect["voice"])
-	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal(voiceJSON, &oracle))
-	require.NotEmpty(t, oracle.PersonSam.Chat)
-	require.NotEmpty(t, oracle.PersonSam.Email)
-	assert.ElementsMatch(t, oracle.PersonSam.Chat, groups["chat"])
-	assert.ElementsMatch(t, oracle.PersonSam.Email, groups["email"])
+	assert.Zero(t, count(t, st, "SELECT count(*) FROM conversation_participants cp WHERE EXISTS (SELECT 1 FROM conversations c WHERE c.id=cp.conversation_id AND c.conversation_type='email_thread')"))
 	dir, _ := agentdemotest.Archive(t)
-	data, err := os.ReadFile(filepath.Join(dir, agentdemo.ManifestFile))
+	data, err = os.ReadFile(filepath.Join(dir, agentdemo.ManifestFile))
 	require.NoError(t, err)
 	for _, key := range []string{"greeting_top", "signoff_top", "emoji", "lowercase_start"} {
 		assert.NotContains(t, string(data), `"`+key+`"`)

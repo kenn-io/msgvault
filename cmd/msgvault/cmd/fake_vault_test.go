@@ -56,6 +56,7 @@ func TestFakeVaultAgentDemoWritesManifest(t *testing.T) {
 	require.NoError(t, command.ExecuteContext(t.Context()))
 	assert.Contains(t, out.String(), "Agent demo archive:")
 	assert.Contains(t, out.String(), "Manifest:")
+	assert.Contains(t, out.String(), "unsaved participants: 11")
 	_, err := agentdemo.Load(dir)
 	require.NoError(t, err)
 }

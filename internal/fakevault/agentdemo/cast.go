@@ -28,6 +28,7 @@ var castParticipants = []struct{ handle, name, typ, value string }{
 	{"casey", "Casey Nguyen", "phone", "+15550100105"},
 	{"riley", "Riley Stone", "email", "riley@newco.example"},
 	{"pat", "Pat Vendor", "email", "pat@vendor.example"},
+	{"background", "Archive Updates", "email", "archive-updates@example.net"},
 	{"support_vendor", "Vendor Support", "email", "support@vendor.example"},
 	{"noreply", "Service Notifications", "email", "no-reply@service.example"},
 	{"newsletter", "Weekly Digest", "email", "digest@news.example"},

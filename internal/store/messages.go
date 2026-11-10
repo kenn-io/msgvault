@@ -1917,7 +1917,16 @@ func (s *Store) GetMessageBodyText(ctx context.Context, messageID int64) (string
 }
 
 func decodeMessageRaw(compressed []byte, compression sql.NullString) ([]byte, error) {
-	if !compression.Valid || compression.String != "zlib" {
+	if !compression.Valid {
+		return compressed, nil
+	}
+	return DecodeMessageRaw(compressed, compression.String)
+}
+
+// DecodeMessageRaw decodes stored raw data using the archive compression format.
+// Empty or unrecognized compression preserves the stored bytes.
+func DecodeMessageRaw(compressed []byte, compression string) ([]byte, error) {
+	if compression != "zlib" {
 		return compressed, nil
 	}
 	r, err := zlib.NewReader(bytes.NewReader(compressed))

@@ -3,9 +3,7 @@ package agentdemo
 import (
 	"context"
 	"fmt"
-	"go.kenn.io/msgvault/internal/store"
-	"maps"
-	"slices"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/gmail"
@@ -23,7 +21,7 @@ func email(ctx context.Context, b *builder) error {
 	api.Labels = append(api.Labels, &gmail.Label{ID: "clients", Name: "clients", Type: "user"})
 	var messages []emailMessage
 	add := func(h, thread, from, to, body string, days int, labels ...string) {
-		messages = append(messages, emailMessage{handle: h, thread: thread, from: from, to: to, subject: thread, body: body, at: b.m.AsOf.Add(-time.Duration(days) * 24 * time.Hour), labels: labels})
+		messages = append(messages, emailMessage{handle: h, thread: thread, from: from, to: to, subject: emailSubject(thread), body: body, at: b.m.AsOf.Add(-time.Duration(days) * 24 * time.Hour), labels: labels})
 	}
 	owner := "Morgan Lee <morgan@example.com>"
 	add("jordan_contract_question", "jordan_contract", "Jordan Kim <jordan@client.example>", owner, "Can you confirm the signed contract by Friday?", 6, "INBOX", "UNREAD", "clients")
@@ -68,14 +66,14 @@ func email(ctx context.Context, b *builder) error {
 		messages[len(messages)-1].extra = "List-Id: Weekly Digest <digest.news.example>\r\nList-Unsubscribe: <mailto:unsubscribe@news.example>\r\nPrecedence: bulk\r\n"
 	}
 	add("followup_jordan", "followup_jordan", owner, "Jordan Kim <jordan@client.example>", "Here are the notes from our kickoff. The contract is recorded in the project folder.", 4, "SENT", "clients")
-	add("deleted_at_source", "background_deleted", "Pat Vendor <pat@vendor.example>", owner, "The earlier project record is archived.", 20, "INBOX")
+	add("deleted_at_source", "background_deleted", "Archive Updates <archive-updates@example.net>", owner, "The earlier project record is archived.", 20, "INBOX")
 	add("canary", "canary", "Canary Q. Person <canary-addr-7f3a@canary.example>", owner, "The synthetic privacy marker is CANARY-BODY-7f3a.", 12, "INBOX")
 	messages[len(messages)-1].subject = "CANARY-SUBJ-7f3a"
 	for i := 0; i < 60; i++ {
 		thread := fmt.Sprintf("background_%02d", i+1)
 		for j := 0; j < 3; j++ {
 			h := fmt.Sprintf("%s_%d", thread, j+1)
-			from, to := owner, "Pat Vendor <pat@vendor.example>"
+			from, to := owner, "Archive Updates <archive-updates@example.net>"
 			label := "SENT"
 			if j == 0 {
 				from, to = to, from
@@ -121,49 +119,13 @@ func email(ctx context.Context, b *builder) error {
 		b.m.Messages[m.handle] = id
 		b.m.Conversations[m.thread] = Conversation{conv, "gmail", "email_thread"}
 	}
-	// Gmail sync stores envelope participants rather than a conversation roster.
-	// Publish those observed members through Store so person-scoped consumers can
-	// use the same conversation membership contract as direct chats.
-	for _, handle := range slices.Sorted(maps.Keys(b.m.Conversations)) {
-		conversation := b.m.Conversations[handle]
-		rows, err := b.st.DB().QueryContext(ctx, `SELECT sender_id FROM messages WHERE conversation_id=? AND sender_id IS NOT NULL
-   UNION SELECT r.participant_id FROM message_recipients r WHERE EXISTS
-   (SELECT 1 FROM messages m WHERE m.id=r.message_id AND m.conversation_id=?) ORDER BY 1`, conversation.ID, conversation.ID)
-		if err != nil {
-			return err
-		}
-		var members []store.ConversationParticipantRef
-		for rows.Next() {
-			var id int64
-			if err = rows.Scan(&id); err != nil {
-				_ = rows.Close()
-				return err
-			}
-			role := "member"
-			if id == b.participant("owner") {
-				role = "owner"
-			}
-			members = append(members, store.ConversationParticipantRef{ParticipantID: id, Role: role})
-		}
-		err = rows.Err()
-		closeErr := rows.Close()
-		if err != nil {
-			return err
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-		if err = b.st.ReplaceConversationParticipantsContext(ctx, conversation.ID, members); err != nil {
-			return err
-		}
-	}
 	var hash string
 	if err = b.st.DB().QueryRowContext(ctx, "SELECT content_hash FROM attachments WHERE message_id=?", b.message("jordan_contract_question")).Scan(&hash); err != nil {
 		return err
 	}
 	b.m.Attachments["contract_v2"] = Attachment{hash, []string{"jordan_contract_question"}}
-	b.m.Expect["awaiting_owner_reply"] = []string{"jordan_contract_question", "sam_signal_question", "riley_intro_question", "vendor_ticket_question"}
-	b.m.Expect["awaiting_their_reply"] = []string{"taylor_proposal_question", "casey_sms_question"}
+	b.m.Expect["awaiting_owner_reply"] = []string{"jordan_contract_question", "riley_intro_question", "vendor_ticket_question"}
+	b.m.Expect["awaiting_their_reply"] = []string{"taylor_proposal_question"}
 	b.m.Expect["settled"] = []string{"priya_budget_question"}
 	b.m.Expect["starred_messages"] = []string{"priya_budget_question"}
 	b.m.Expect["bulk_messages"] = bulk
@@ -172,6 +134,35 @@ func email(ctx context.Context, b *builder) error {
 	b.m.Expect["role_account_participants"] = []string{"support_vendor", "noreply"}
 	b.m.Expect["unsaved_participants"] = []string{"riley", "pat", "canary"}
 	b.m.Expect["first_contact_messages"] = []string{"riley_intro_question"}
-	b.m.Expect["deleted_at_source"] = []string{"deleted_at_source"}
 	return nil
+}
+
+// Subjects are presentation text; stable thread handles remain source identifiers.
+func emailSubject(thread string) string {
+	switch thread {
+	case "jordan_contract":
+		return "Signed contract for the summer project"
+	case "taylor_proposal":
+		return "Proposal timeline"
+	case "priya_budget":
+		return "Summer project budget"
+	case "sam_trip_email":
+		return "Trip itinerary and lodging"
+	case "riley_intro":
+		return "Introduction to the archive project"
+	case "pat_quote":
+		return "Quote for the project requirements"
+	case "vendor_ticket":
+		return "Support ticket details"
+	case "noreply_receipts":
+		return "Your service receipts"
+	case "newsletter":
+		return "Weekly archive digest"
+	case "followup_jordan":
+		return "Notes from our kickoff"
+	case "background_deleted":
+		return "Earlier project record"
+	default:
+		return "Project archive notes " + strings.TrimPrefix(thread, "background_")
+	}
 }

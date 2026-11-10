@@ -181,11 +181,11 @@ func runAgentDemo(cmd *cobra.Command, opts fakeVaultCommandOptions) error {
 	if inv := invocationFromCommand(cmd); inv != nil && inv.cfg != nil {
 		cfg = inv.cfg
 	}
-	output, err := resolveDemoPath(opts.output)
+	output, err := canonicalPathThroughExistingAncestor(opts.output)
 	if err != nil {
 		return err
 	}
-	live, err := resolveDemoPath(cfg.Data.DataDir)
+	live, err := canonicalPathThroughExistingAncestor(cfg.Data.DataDir)
 	if err != nil {
 		return err
 	}
@@ -195,17 +195,15 @@ func runAgentDemo(cmd *cobra.Command, opts fakeVaultCommandOptions) error {
 	if output == live {
 		return refuse()
 	}
-	if _, err = os.Lstat(filepath.Join(output, "msgvault.db")); err == nil {
-		return refuse()
-	} else if !os.IsNotExist(err) {
-		return err
-	}
 	m, err := agentdemo.GenerateDir(cmd.Context(), agentdemo.Options{Dir: opts.output, Seed: opts.seed, AsOf: asOf, Progress: func(chapter string) {
 		if !opts.quiet {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Generating %s\n", chapter)
 		}
 	}})
 	if err != nil {
+		if errors.Is(err, fakevault.ErrTargetExists) {
+			return refuse()
+		}
 		return err
 	}
 	out := cmd.OutOrStdout()
@@ -227,29 +225,4 @@ func countUnsavedParticipants(m *agentdemo.Manifest) int {
 		}
 	}
 	return len(m.Participants) - n
-}
-
-// Resolve the existing prefix as well, so aliases through a symlinked parent
-// cannot bypass the configured archive-directory guard for a new output.
-func resolveDemoPath(path string) (string, error) {
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	resolved, err := filepath.EvalSymlinks(absolute)
-	if err == nil {
-		return resolved, nil
-	}
-	if !os.IsNotExist(err) {
-		return "", err
-	}
-	parent := filepath.Dir(absolute)
-	if parent == absolute {
-		return "", err
-	}
-	resolved, err = resolveDemoPath(parent)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(resolved, filepath.Base(absolute)), nil
 }
