@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-04"
+last_edited: "2026-11-10"
 title: Text Messages
 description: Import chats and texts from common exports, and browse synchronized Teams and Discord conversations in msgvault.
 ---
@@ -15,7 +15,7 @@ open a conversation to read its messages. In the [TUI](/docs/usage/tui/), press
 
 | Local source | What to provide |
 |---|---|
-| [WhatsApp](#import-whatsapp) | Decrypted Android `msgstore.db` or Apple `ChatStorage.sqlite` |
+| [WhatsApp](#import-whatsapp) | Decrypted Android `msgstore.db`, Apple `ChatStorage.sqlite`, or unpacked per-chat TXT |
 | [iMessage](#import-imessage) | macOS `chat.db` |
 | [iMazing Messages](#import-imazing-csv) | CSV export root or `csv/` directory |
 | [Google Voice](#import-gvoice) | Google Takeout Voice directory |
@@ -60,6 +60,75 @@ msgvault import-whatsapp msgstore.db --phone +14155551234 \
 msgvault import-whatsapp msgstore.db --phone +14155551234 \
   --contacts contacts.vcf --media-dir ./Media
 ```
+
+### Per-chat TXT exports
+
+On newer `main` builds, import one unpacked WhatsApp TXT export with explicit
+parsing assumptions:
+
+```bash
+msgvault import-whatsapp ./chat.txt --format text --phone +12025550123 \
+  --chat-id garden-club --chat-type group --chat-title "Garden club" \
+  --date-order dmy --timezone America/Vancouver --media-dir ./export-media
+```
+
+Use the same `--phone` account and stable `--chat-id` on every export of this
+chat. Choose `--chat-type direct` or `group`; `--chat-title` is display only.
+TXT records use a separate namespace from database imports, so importing both
+can retain two representations of the same history. Names are scoped labels
+within this account and chat. They are never inferred phone numbers or “me”
+identities, and message direction stays unknown. Senderless notices have no
+author. Notice-shaped payloads with colons are kept whole when attribution is
+uncertain.
+
+Supported headers are `date, time - payload` (Android style) and
+`[date, time] payload` (iOS style). Dates are numeric, with a consistent `/`,
+`.` or `-` separator and explicit `dmy`, `mdy` or `ymd` order. Years have two
+or four digits; 00–68 means 2000–2068 and 69–99 means 1969–1999. Clocks use
+colon-separated hours/minutes, optional seconds, and optional English AM/PM
+or a.m./p.m. Normal, no-break and narrow no-break spaces before AM/PM are
+supported. UTF-8 BOM, CRLF and leading directional marks are accepted.
+Multiline bodies and blank lines are retained. A line that looks like a full
+supported header starts another record even if it was originally message text.
+Unsupported or malformed timestamp headers, invalid UTF-8, a preamble, or input
+over 128 MiB, 250,000 records or 1 MiB per record fail before archive writes.
+
+`--timezone` must name a concrete IANA zone or UTC. It and `--date-order` are
+caller assumptions, not original exported timezone evidence. Raw timestamps,
+precision, line spans and the input file digest remain in provenance. During
+a repeated autumn hour, msgvault chooses the earlier instant; nonexistent
+spring-forward times fail with line context. Changing timezone, date order or
+chat type for an existing chat fails rather than silently reinterpreting it.
+
+Repeat or overlapping exports add new evidence and retain absent records and
+labels. Message keys include wall time, precision, sender label, kind and exact
+body, plus an occurrence number for identical records. File name and location
+do not affect keys. Identical same-time records retain the maximum observed
+multiplicity; a partial window cannot reveal which identical occurrence it
+contains. Edited text becomes separate evidence. Interrupted imports can be
+repeated; there is no seek checkpoint or deletion inference.
+
+`--media-dir` is optional and must explicitly name the supplied media root.
+Only whole-line `<attached: NAME>` and `NAME (file attached)` markers resolve
+files; captions and markers remain in the body. Files must be regular, remain
+inside that root and fit within 100 MiB. Missing media can be supplied on a later
+run without duplicating messages or removing existing attachments. `<Media
+omitted>` is counted separately. No files are searched for outside the root.
+
+The summary counts input records, notices, newly added and already archived
+messages, and additional identical occurrences whose correspondence is
+ambiguous. Media counts distinguish stored references, missing files, omitted
+media, unsafe/unsupported references and oversized files. Stored references
+include attachments successfully verified on repeat imports.
+
+TXT is lossy: exports may omit older history or media and do not provide stable
+message IDs, verified authorship, original timezone offsets, reactions or reply
+links. There is no lifetime-history guarantee. Extract ZIP files yourself;
+decryption, account acquisition and Apple database-media support are separate.
+Database-only flags `--contacts`, `--limit`, `--display-name`, `--full`, `--after`
+and `--before` are rejected with `--format text`. Caller-local TXT and media
+paths require a local daemon; run on the daemon host with `--local` when a
+remote daemon is configured.
 
 ### Apple WhatsApp on macOS
 

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-08"
+last_edited: "2026-11-10"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -2331,7 +2331,8 @@ See [Importing Local Email](/docs/usage/importing/) for usage examples.
 ## import-whatsapp
 
 Import messages from a decrypted Android `msgstore.db` or Apple
-`ChatStorage.sqlite` WhatsApp database. Apple support currently imports text,
+`ChatStorage.sqlite` WhatsApp database, or one unpacked per-chat TXT file with `--format text`.
+Apple support currently imports text,
 participants, and available names; native Apple attachments are not imported.
 
 ```bash
@@ -2342,9 +2343,15 @@ The `--phone` flag is required and must be in E.164 format (e.g., `+447700900000
 
 | Flag | Required | Description |
 |---|---|---|
+| `--format` | No | `database` (default) or `text` |
+| `--chat-id` | Text | Stable caller-chosen key for this chat |
+| `--chat-type` | Text | `direct` or `group` |
+| `--chat-title` | No | Text only: display title |
+| `--date-order` | Text | `dmy`, `mdy` or `ymd`; no guessing |
+| `--timezone` | Text | Concrete IANA zone or UTC; caller assumption |
 | `--phone` | Yes | Your phone number in E.164 format (must start with `+`) |
 | `--contacts` | No | Path to contacts `.vcf` file for name resolution |
-| `--media-dir` | No | Path to decrypted Media folder for attachments |
+| `--media-dir` | No | Android Media folder or explicitly supplied TXT media root |
 | `--limit` | No | Limit number of messages (for testing) |
 | `--after` | No | Apple only: import messages on or after this date (`YYYY-MM-DD`, local time) |
 | `--before` | No | Apple only: import messages before this date (`YYYY-MM-DD`, local time) |
@@ -2353,6 +2360,12 @@ The `--phone` flag is required and must be in E.164 format (e.g., `+447700900000
 | `--no-default-identity` | No | Do not auto-confirm the phone number as this source's "me" identity |
 
 Android `msgstore.db` imports fail with an error when `--after` or `--before` is set.
+
+`text` requires all flags marked Text and rejects database-only flags
+`--contacts`, `--limit`, `--display-name`, `--full`, `--after` and `--before`.
+Text-specific flags require `--format text`. TXT support is available on newer
+`main` builds. See [per-chat TXT exports](/docs/usage/text-messages/#per-chat-txt-exports)
+for supported grammar, bounds, timestamp assumptions, media and repeat-import limits.
 
 See [Text Messages](/docs/usage/text-messages/) for usage examples.
 

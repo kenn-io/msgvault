@@ -27,13 +27,21 @@ var (
 	noDefaultIdentityImportWhatsApp bool
 )
 
-var importWhatsappCmd = &cobra.Command{
-	Use:   "import-whatsapp <database>",
-	Short: "Import WhatsApp messages from an Android or Apple database",
-	Long: `Import messages from a decrypted Android msgstore.db backup or an
+var importWhatsappCmd = newImportWhatsAppCmd()
+
+func newImportWhatsAppCmd() *cobra.Command {
+	var format string
+	var textOpts whatsapp.TextOptions
+	command := &cobra.Command{
+		Use:   "import-whatsapp <file>",
+		Short: "Import WhatsApp messages from a database or per-chat text export",
+		Long: `Import messages from a decrypted Android msgstore.db backup or an
 Apple ChatStorage.sqlite database. Apple databases currently import text
 messages from direct and group chats. Reading the native macOS WhatsApp store
 may require Full Disk Access in System Settings > Privacy & Security.
+
+For an unpacked per-chat TXT export, select --format text and supply --chat-id,
+--chat-type, --date-order and --timezone. See the text messages guide for scope.
 
 Examples:
   msgvault import-whatsapp --phone "+447700900000" /path/to/msgstore.db
@@ -45,13 +53,56 @@ Examples:
 --after and --before (YYYY-MM-DD, local time; after is inclusive, before is
 exclusive) limit an Apple import to that window. A later unfiltered run
 imports the rest. Android msgstore.db imports reject both flags.`,
-	Args: cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		if !isDaemonCLISubprocess() {
-			return runDaemonCLICommandHTTPFromCobra(cmd, args)
-		}
-		return runWhatsAppImport(cmd, args[0])
-	},
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if format != "database" && format != "text" {
+				return usageErr(cmd, errors.New("--format must be database or text"))
+			}
+			if format == "text" {
+				for _, name := range []string{"contacts", "limit", "full", "after", "before", "display-name"} {
+					if cmd.Flags().Changed(name) {
+						return usageErr(cmd, fmt.Errorf("--%s is not supported with --format text", name))
+					}
+				}
+				textOpts.Phone = importPhone
+				textOpts.MediaDir = importMediaDir
+				if err := whatsapp.ValidateTextOptions(textOpts); err != nil {
+					return usageErr(cmd, err)
+				}
+				if !isDaemonCLISubprocess() {
+					return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args)
+				}
+				return runWhatsAppTextImport(cmd, args[0], textOpts)
+			}
+			for _, name := range []string{"chat-id", "chat-type", "chat-title", "date-order", "timezone"} {
+				if cmd.Flags().Changed(name) {
+					return usageErr(cmd, fmt.Errorf("--%s requires --format text", name))
+				}
+			}
+			if !isDaemonCLISubprocess() {
+				return runDaemonCLICommandHTTPFromCobra(cmd, args)
+			}
+			return runWhatsAppImport(cmd, args[0])
+		},
+	}
+
+	command.Flags().StringVar(&format, "format", "database", "input format: database or text")
+	command.Flags().StringVar(&textOpts.ChatID, "chat-id", "", "stable caller-chosen chat key (text only)")
+	command.Flags().StringVar(&textOpts.ChatType, "chat-type", "", "direct or group (text only)")
+	command.Flags().StringVar(&textOpts.ChatTitle, "chat-title", "", "display title (text only)")
+	command.Flags().StringVar(&textOpts.DateOrder, "date-order", "", "dmy, mdy or ymd (text only)")
+	command.Flags().StringVar(&textOpts.Timezone, "timezone", "", "concrete IANA timezone assumption (text only)")
+	command.Flags().StringVar(&importPhone, "phone", "", "your phone number in E.164 format (required)")
+	command.Flags().StringVar(&importMediaDir, "media-dir", "", "path to decrypted Media folder (optional)")
+	command.Flags().StringVar(&importContacts, "contacts", "", "path to contacts .vcf file for name resolution (optional)")
+	command.Flags().IntVar(&importLimit, "limit", 0, "limit number of messages (for testing)")
+	command.Flags().StringVar(&importDisplayName, "display-name", "", "display name for the phone owner")
+	command.Flags().BoolVar(&importFull, "full", false, "Apple only: compare every message, including chats unchanged since the last import")
+	command.Flags().StringVar(&importWhatsAppAfter, "after", "", "only Apple messages on or after this date (YYYY-MM-DD)")
+	command.Flags().StringVar(&importWhatsAppBefore, "before", "", "only Apple messages before this date (YYYY-MM-DD)")
+	command.Flags().BoolVar(&noDefaultIdentityImportWhatsApp, "no-default-identity", false, noDefaultIdentityHelp)
+	_ = command.MarkFlagRequired("phone")
+	return command
 }
 
 func runWhatsAppImport(cmd *cobra.Command, sourcePath string) error {
@@ -304,16 +355,7 @@ var importCmd = &cobra.Command{
 
 func init() {
 	// import-whatsapp (canonical)
-	importWhatsappCmd.Flags().StringVar(&importPhone, "phone", "", "your phone number in E.164 format (required)")
-	importWhatsappCmd.Flags().StringVar(&importMediaDir, "media-dir", "", "path to decrypted Media folder (optional)")
-	importWhatsappCmd.Flags().StringVar(&importContacts, "contacts", "", "path to contacts .vcf file for name resolution (optional)")
-	importWhatsappCmd.Flags().IntVar(&importLimit, "limit", 0, "limit number of messages (for testing)")
-	importWhatsappCmd.Flags().StringVar(&importDisplayName, "display-name", "", "display name for the phone owner")
-	importWhatsappCmd.Flags().BoolVar(&importFull, "full", false, "Apple only: compare every message, including chats unchanged since the last import")
-	importWhatsappCmd.Flags().StringVar(&importWhatsAppAfter, "after", "", "only Apple messages on or after this date (YYYY-MM-DD)")
-	importWhatsappCmd.Flags().StringVar(&importWhatsAppBefore, "before", "", "only Apple messages before this date (YYYY-MM-DD)")
-	importWhatsappCmd.Flags().BoolVar(&noDefaultIdentityImportWhatsApp, "no-default-identity", false, noDefaultIdentityHelp)
-	_ = importWhatsappCmd.MarkFlagRequired("phone")
+
 	rootCmd.AddCommand(importWhatsappCmd)
 
 	// Deprecated "import --type whatsapp" alias
