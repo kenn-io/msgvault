@@ -115,6 +115,9 @@ func TestPackageJSONFixture(t *testing.T) {
 	var title string
 	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT title FROM conversations WHERE source_conversation_id='725000000000000052'`).Scan(&title))
 	checks.Equal("sketchbook", title)
+	var ownerName string
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT p.display_name FROM participants p JOIN participant_identifiers pi ON pi.participant_id=p.id WHERE pi.identifier_type='discord_user_id' AND pi.identifier_value='725000000000000041'`).Scan(&ownerName))
+	checks.Equal("paper_lantern", ownerName)
 
 	rows, err := st.DB().QueryContext(t.Context(), `SELECT storage_path FROM attachments ORDER BY storage_path`)
 	requirements.NoError(err)
@@ -229,7 +232,7 @@ func TestPackageChannelTypesAndSkips(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	root := packageFixture(t, `[{"ID":"1","Contents":""},{"Contents":"missing id"},{"ID":3,"Attachments":"https://example.com/a file:///etc/passwd ../escape"},{"ID":"7","Contents":"bad attachment shape","Attachments":["https://example.com/unsupported-shape"]},{"ID":"8","Attachments":"../escape"}]`)
+	root := packageFixture(t, `[{"ID":"1","Contents":""},{"Contents":"missing id"},{"ID":3,"Attachments":"https://example.com/a https://example.com http://example.com/ file:///etc/passwd ../escape"},{"ID":"7","Contents":"bad attachment shape","Attachments":["https://example.com/unsupported-shape"]},{"ID":"8","Attachments":"../escape"}]`)
 	testutil.WriteFile(t, root, "Messages/200000000000000002/channel.json", []byte(`{"id":"200000000000000002","type":"GROUP_DM","name":"Example group","recipients":["100000000000000002"]}`))
 	testutil.WriteFile(t, root, "Messages/200000000000000002/messages.json", []byte(`[{"ID":"4","Contents":"group text"}]`))
 	testutil.WriteFile(t, root, "Messages/200000000000000003/channel.json", []byte(`{"id":"200000000000000003","type":0,"name":"general","guild":{"id":"200000000000000004","name":"Example guild"}}`))
@@ -257,6 +260,12 @@ func TestPackageChannelTypesAndSkips(t *testing.T) {
 	assert.NotContains(diagnostic, "unsupported-shape")
 	assert.EqualValues(1, summary.SkipReasons["unsupported_attachment_only"])
 	assert.EqualValues(3, summary.UnsupportedAttachmentLinks)
+	assert.EqualValues(3, summary.AttachmentLinks)
+	for link, want := range map[string]string{"https://example.com/a": "a", "https://example.com": "attachment", "http://example.com/": "attachment"} {
+		var filename string
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT filename FROM attachments WHERE storage_path=?`), link).Scan(&filename))
+		assert.Equal(want, filename)
+	}
 	assert.Equal(6, summary.Channels)
 	assert.Equal(2, summary.ChannelsSkipped)
 	var kind string

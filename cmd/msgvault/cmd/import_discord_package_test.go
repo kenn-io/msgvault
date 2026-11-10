@@ -50,7 +50,7 @@ func TestImportDiscordPackageEndToEnd(t *testing.T) {
 	assert.Contains(output.String(), "Channels: 1 imported, 1 skipped")
 	lines := strings.Split(output.String(), "\n")
 	assert.Contains(lines, "Messages: 5 processed, 5 added, 0 updated, 0 skipped")
-	assert.Contains(lines, "Attachments: 1 links, 1 missing local media, 0 unsupported links")
+	assert.Contains(lines, "Attachments: 1 links without local media, 0 unsupported links")
 }
 
 func TestImportDiscordPackageRejectsRemoteClientFiles(t *testing.T) {

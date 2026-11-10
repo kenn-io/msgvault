@@ -47,7 +47,7 @@ func runImportDiscordPackage(cmd *cobra.Command, directory string, noDefaultIden
 	defer stop()
 	summary, importErr := discord.ImportPackage(ctx, st, directory)
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Coverage: exporting account's sent messages only")
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Channels: %d imported, %d skipped\nMessages: %d processed, %d added, %d updated, %d skipped\nAttachments: %d links, %d missing local media, %d unsupported links\n", summary.Channels, summary.ChannelsSkipped, summary.MessagesProcessed, summary.MessagesAdded, summary.MessagesUpdated, summary.MessagesSkipped, summary.AttachmentLinks, summary.AttachmentLinks, summary.UnsupportedAttachmentLinks)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Channels: %d imported, %d skipped\nMessages: %d processed, %d added, %d updated, %d skipped\nAttachments: %d links without local media, %d unsupported links\n", summary.Channels, summary.ChannelsSkipped, summary.MessagesProcessed, summary.MessagesAdded, summary.MessagesUpdated, summary.MessagesSkipped, summary.AttachmentLinks, summary.UnsupportedAttachmentLinks)
 	reasons := make([]string, 0, len(summary.SkipReasons))
 	for reason := range summary.SkipReasons {
 		reasons = append(reasons, reason)

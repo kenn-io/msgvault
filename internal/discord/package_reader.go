@@ -37,6 +37,7 @@ type packageRecord struct {
 type packageReader struct {
 	root            *os.Root
 	owner           string
+	username        string
 	messages        string
 	channels        []string
 	channelsSkipped int
@@ -64,7 +65,8 @@ func openPackage(ctx context.Context, directory string) (*packageReader, error) 
 		return fail(fmt.Errorf("discord package account: %w", err))
 	}
 	var user struct {
-		ID string `json:"id"`
+		ID       string `json:"id"`
+		Username string `json:"username"`
 	}
 	if err = json.Unmarshal(account, &user, json.MatchCaseInsensitiveNames(true)); err != nil {
 		return fail(err)
@@ -74,6 +76,7 @@ func openPackage(ctx context.Context, directory string) (*packageReader, error) 
 		return fail(errors.New("discord package requires a numeric account ID in user.json"))
 	}
 	r.owner = user.ID
+	r.username = user.Username
 	var dir *os.File
 	for _, name := range []string{"messages", "Messages"} {
 		dir, err = root.Open(name)

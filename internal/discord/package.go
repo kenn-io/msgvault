@@ -71,7 +71,7 @@ func ImportPackage(ctx context.Context, st *store.Store, directory string) (summ
 			retErr = st.CompleteSyncContext(cleanup, syncID, "")
 		}
 	}()
-	sender, err := st.EnsureParticipantByIdentifierContext(ctx, discordUserIdentifier, reader.owner, "")
+	sender, err := st.EnsureParticipantByIdentifierContext(ctx, discordUserIdentifier, reader.owner, reader.username)
 	if err != nil {
 		return summary, err
 	}
@@ -125,7 +125,11 @@ func ImportPackage(ctx context.Context, st *store.Store, directory string) (summ
 					unsupported++
 					continue
 				}
-				writes = append(writes, store.AttachmentWrite{StoragePath: link, Filename: path.Base(parsed.Path), MediaType: "link", SourcePartKey: fmt.Sprintf("url:%d", i), Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceProviderExplicit})
+				filename := path.Base(parsed.Path)
+				if filename == "." || filename == "/" {
+					filename = "attachment"
+				}
+				writes = append(writes, store.AttachmentWrite{StoragePath: link, Filename: filename, MediaType: "link", SourcePartKey: fmt.Sprintf("url:%d", i), Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceProviderExplicit})
 			}
 			summary.UnsupportedAttachmentLinks += unsupported
 			reason := ""
@@ -164,7 +168,6 @@ func ImportPackage(ctx context.Context, st *store.Store, directory string) (summ
 				Message:  &store.Message{SourceID: source.ID, ConversationID: conversationID, SourceMessageID: record.ID, MessageType: "discord", SenderID: sql.NullInt64{Int64: sender, Valid: true}, IsFromMe: true, SentAt: sent, Snippet: sql.NullString{String: textutil.PrefixRunes(record.Contents, 200), Valid: record.Contents != ""}, SizeEstimate: int64(len(record.Contents))},
 				BodyText: sql.NullString{String: record.Contents, Valid: true}, Metadata: &sql.NullString{String: string(messageMeta), Valid: true}, RawMIME: record.Raw, RawFormat: "discord_package_" + record.Format,
 				Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{sender}}, {Type: "to", ParticipantIDs: to}}, MIMEAttachmentReplacement: &writes, FTS: &store.FTSDoc{Body: record.Contents}, PreserveLabels: true,
-				SyncRunItem: &store.SyncRunItem{SyncRunID: syncID, SourceMessageID: record.ID, Phase: record.Path, Status: store.SyncRunItemStatusResolved},
 			})
 			if err != nil {
 				return fmt.Errorf("persist Discord package record %d: %w", record.Ordinal, err)
