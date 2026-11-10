@@ -4,6 +4,7 @@ package cmd
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
@@ -260,4 +261,96 @@ func TestManagedEmbeddingsSQLLoggingFlags(t *testing.T) {
 			require.ErrorContains(t, err, tc.want)
 		})
 	}
+}
+
+func TestManagedEmbeddingsReconcilesMessageChangedDuringYield(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir, cfg.Data.DataDir = dir, dir
+	cfg.Vector.Enabled = true
+	cfg.Vector.DBPath = filepath.Join(dir, "vectors.db")
+	cfg.Vector.Embeddings.Model = "test-model"
+	cfg.Vector.Embeddings.Dimension = 4
+	cfg.Vector.Embeddings.BatchSize = 1
+	firstRequest, releaseFirst := make(chan struct{}), make(chan struct{})
+	var requests atomic.Int32
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Input []string `json:"input"`
+		}
+		if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
+			return
+		}
+		if requests.Add(1) == 1 {
+			close(firstRequest)
+			select {
+			case <-releaseFirst:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		assert.NoError(t, writeFakeEmbeddingResponse(w, len(body.Input), 4))
+	}))
+	t.Cleanup(provider.Close)
+	cfg.Vector.Embeddings.Endpoint = provider.URL
+	st, err := store.OpenForTest(t.Context(), cfg.DatabaseDSN())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(t, st.InitSchema())
+	_, firstID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "archive@example.test", "first", "One", "First message")
+	require.NoError(t, err)
+	_, _, err = testutil.CreateIndexedSourceMessage(t.Context(), st, "archive@example.test", "second", "Two", "Second message")
+	require.NoError(t, err)
+	gate := api.NewSerialOperationGate()
+	sched := scheduler.New(nil).WithWorkTracker(labelWorkTracker(gate, "sync"))
+	t.Cleanup(func() { <-sched.Stop().Done() })
+	adapter := &storeAPIAdapter{config: cfg, store: st, operationGate: gate, embeddingsScheduler: sched}
+	result := make(chan error, 1)
+	go func() {
+		result <- adapter.RunCLICommand(t.Context(), api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes"}}, nil)
+	}()
+	select {
+	case <-firstRequest:
+	case err := <-result:
+		require.FailNowf(t, "build ended before provider", "%v", err)
+	case <-time.After(20 * time.Second):
+		require.FailNow(t, "provider did not start")
+	}
+	changed := make(chan error, 1)
+	go func() {
+		release, ok := gate.BeginRequestWorkContext(t.Context(), "sync")
+		if !ok {
+			changed <- t.Context().Err()
+			return
+		}
+		defer release()
+		changed <- st.UpsertMessageBodyContext(t.Context(), firstID, sql.NullString{String: "Updated first message", Valid: true}, sql.NullString{})
+	}()
+	require.Eventually(t, gate.HasRequestWaiters, 10*time.Second, 10*time.Millisecond)
+	time.Sleep(10 * time.Second) //nolint:kennlint // sleeptest: wait for scheduler preemption while the batch is in flight
+	close(releaseFirst)
+	select {
+	case err := <-changed:
+		require.NoError(t, err)
+	case err := <-result:
+		require.FailNowf(t, "build ended before sync", "%v", err)
+	case <-time.After(20 * time.Second):
+		require.FailNow(t, "sync did not run")
+	}
+	select {
+	case err := <-result:
+		require.NoError(t, err)
+	case <-time.After(20 * time.Second):
+		require.FailNow(t, "build did not finish")
+	}
+	backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{Path: cfg.Vector.DBPath, MainPath: cfg.DatabaseDSN(), MainDB: st.DB(), Dimension: 4})
+	require.NoError(t, err)
+	defer func() { _ = backend.Close() }()
+	active, err := backend.ActiveGeneration(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, vector.GenerationID(1), active.ID)
+	missing, err := st.MissingCount(t.Context(), int64(active.ID))
+	require.NoError(t, err)
+	assert.Zero(t, missing)
+	assert.Equal(t, int32(3), requests.Load())
 }

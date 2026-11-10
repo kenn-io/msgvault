@@ -229,6 +229,8 @@ func runEmbedWithOptions(cmd *cobra.Command, opts managedEmbedOptions) error {
 			return err
 		}
 		yielded = true
+		// A sync may have changed a message below the forward watermark.
+		opts.backstop = true
 	}
 	_, _ = fmt.Fprintf(out, "Scanned: %d, succeeded: %d, failed: %d, truncated: %d\n",
 		res.Claimed, res.Succeeded, res.Failed, res.Truncated)

@@ -65,7 +65,7 @@ func TestVectorProviderCredentialResolutionUsesOneStartupSnapshot(t *testing.T) 
 
 	first, err := resolveProviderCredentialFromSnapshot(startup,
 		providercredentials.VectorEmbeddingsID, cfg.Vector.Embeddings.Endpoint,
-		cfg.Vector.Embeddings.APIKeyEnv)
+		cfg.Vector.Embeddings.APIKeyEnv, os.LookupEnv)
 	requirements.NoError(err)
 	assertions.Equal("stored-first", first)
 
@@ -74,7 +74,7 @@ func TestVectorProviderCredentialResolutionUsesOneStartupSnapshot(t *testing.T) 
 	requirements.NoError(err)
 	stillFirst, err := resolveProviderCredentialFromSnapshot(startup,
 		providercredentials.VectorEmbeddingsID, cfg.Vector.Embeddings.Endpoint,
-		cfg.Vector.Embeddings.APIKeyEnv)
+		cfg.Vector.Embeddings.APIKeyEnv, os.LookupEnv)
 	requirements.NoError(err)
 	assertions.Equal("stored-first", stillFirst)
 
@@ -82,7 +82,7 @@ func TestVectorProviderCredentialResolutionUsesOneStartupSnapshot(t *testing.T) 
 	requirements.NoError(err)
 	second, err := resolveProviderCredentialFromSnapshot(restarted,
 		providercredentials.VectorEmbeddingsID, cfg.Vector.Embeddings.Endpoint,
-		cfg.Vector.Embeddings.APIKeyEnv)
+		cfg.Vector.Embeddings.APIKeyEnv, os.LookupEnv)
 	requirements.NoError(err)
 	assertions.Equal("stored-second", second)
 }
