@@ -25,9 +25,6 @@ func validatePollingTargets(ctx context.Context, accounts []config.AccountSchedu
 	seen, names := make(map[int64]bool), make(map[string]bool)
 	catalog := pollingCatalog(ctx, accounts, s, state)
 	for i, account := range accounts {
-		if !account.Enabled || account.PollInterval == 0 {
-			continue
-		}
 		key := strings.ToLower(account.Email)
 		if names[key] {
 			targets[i] = pollingTarget{err: fmt.Errorf("duplicate polling account %q", account.Email)}
@@ -76,14 +73,6 @@ func pollingCatalog(ctx context.Context, accounts []config.AccountSchedule, s *s
 	return result
 }
 
-func pollingSource(ctx context.Context, identifier string, s *store.Store, state *invocation) (*store.Source, error) {
-	rows, err := s.GetSourcesByIdentifierOrDisplayNameContext(ctx, identifier)
-	if err != nil {
-		return nil, fmt.Errorf("look up polling source: %w", err)
-	}
-	return pollingSourceFromRows(identifier, rows, state)
-}
-
 func pollingSourceFromRows(identifier string, rows []*store.Source, state *invocation) (*store.Source, error) {
 	var exact, named []*store.Source
 	for _, row := range rows {
@@ -125,21 +114,18 @@ func pollingSourceFromRows(identifier string, rows []*store.Source, state *invoc
 }
 
 func runEmailPoll(ctx context.Context, identifier string, s *store.Store, getOAuthMgr func(context.Context, string) (*oauth.Manager, error), state *invocation) error {
-	var src *store.Source
-	var err error
+	target := pollingTarget{err: fmt.Errorf("polling account %q is not configured", identifier)}
 	for i, account := range state.pollAccounts {
-		if account.Enabled && account.PollInterval != 0 && strings.EqualFold(account.Email, identifier) {
-			target := validatePollingTargets(ctx, state.pollAccounts, s, state)[i]
-			src, err = target.source, target.err
+		if account.Email == identifier {
+			target = validatePollingTargets(ctx, state.pollAccounts, s, state)[i]
 			break
 		}
 	}
-	if src == nil && err == nil {
-		src, err = pollingSource(ctx, identifier, s, state)
+	if target.err != nil {
+		return target.err
 	}
-	if err != nil {
-		return err
-	}
+	src := target.source
+	var err error
 	var incomplete bool
 	if src.SourceType == sourceTypeGmail {
 		summary, syncErr := runScheduledGmailSyncWithProfile(ctx, src.Identifier, src, s, getOAuthMgr, state, true)
@@ -148,7 +134,7 @@ func runEmailPoll(ctx context.Context, identifier string, s *store.Store, getOAu
 			incomplete, err = gmailAcquisitionIncomplete(ctx, s, src, summary)
 		}
 	} else {
-		_, complete, syncErr := runScheduledIMAPSyncWithCoverage(ctx, src, s, state)
+		_, complete, syncErr := runScheduledIMAPSync(ctx, src, s, state)
 		err = syncErr
 		incomplete = !complete
 	}

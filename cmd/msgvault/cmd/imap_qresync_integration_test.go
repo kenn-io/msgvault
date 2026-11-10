@@ -1147,7 +1147,7 @@ func TestIMAPQresyncEndToEndReplaysAfterFailedApplication(t *testing.T) {
 	known, err := st.GetIMAPKnownUIDs(source.ID)
 	requirements.NoError(err)
 	assertions.Equal(map[string][]uint32{"INBOX": {1}}, known)
-	assertions.Contains(server.commandsFor(4), "CHANGEDSINCE 1 VANISHED")
+	assertions.Contains(server.commandsFor(3), "CHANGEDSINCE 1 VANISHED")
 }
 
 func TestIMAPQresyncEndToEndFailedMoveApplyPreservesBaselineLabels(t *testing.T) {
@@ -1315,7 +1315,7 @@ func TestIMAPQresyncEndToEndConservativeFallbacks(t *testing.T) {
 			assertions.Equal(uint64(3), states[0].HighestModSeq)
 			assertions.Contains(server.commandsFor(2), "CHANGEDSINCE 1 VANISHED")
 			assertions.NotContains(server.commandsFor(2), "UID SEARCH")
-			assertions.Contains(server.commandsFor(5), "UID SEARCH")
+			assertions.Contains(server.commandsFor(3), "UID SEARCH")
 			assertions.GreaterOrEqual(server.connectionCount(), 3)
 		})
 	}
@@ -1749,7 +1749,7 @@ func TestIMAPQresyncEndToEndSelectCursorValidationFallsBackBeforeDeltaFetch(t *t
 
 			assertions.NotContains(server.commandsFor(2), "CHANGEDSINCE",
 				"invalid SELECT state must be rejected before delta FETCH")
-			assertions.Contains(server.commandsFor(5), "UID SEARCH",
+			assertions.Contains(server.commandsFor(3), "UID SEARCH",
 				"invalid SELECT state must force fresh full enumeration")
 			states, err := st.GetIMAPFolderStates(source.ID)
 			requirements.NoError(err)
@@ -1785,6 +1785,7 @@ func TestIMAPPollQresyncAppendAndFlags(t *testing.T) {
 	requirements.NoError(err)
 	requirements.NoError(st.UpdateSourceSyncConfig(t.Context(), source.ID, blob))
 	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	invocationFromContext(ctx).pollAccounts = []config.AccountSchedule{{Email: ic.Identifier(), Enabled: true, PollInterval: 15 * time.Second}}
 	originalRebuild := rebuildCacheAfterScheduledSourceRun
 	rebuildCacheAfterScheduledSourceRun = func(context.Context, string) error { return nil }
 	t.Cleanup(func() { rebuildCacheAfterScheduledSourceRun = originalRebuild })

@@ -1363,6 +1363,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	if err := cfg.validateMeetingSources(); err != nil {
 		return nil, err
 	}
+
 	return cfg, nil
 }
 

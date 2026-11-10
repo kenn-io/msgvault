@@ -185,3 +185,18 @@ func TestRemoveAccountClearsPollingTimes(t *testing.T) {
 		<-s.Stop().Done()
 	})
 }
+
+func TestInvalidIntervalReplacesEarlierPollingSchedule(t *testing.T) {
+	requirements := require.New(t)
+	sched := New(func(context.Context, string) error { return nil }).WithAccountPoll(func(context.Context, string) error { return nil })
+	cfg := &config.Config{Accounts: []config.AccountSchedule{{Email: "a@example.com", Enabled: true, Schedule: "0 * * * *", PollInterval: 15 * time.Second}}}
+	count, errs := sched.AddAccountsFromConfig(cfg)
+	requirements.Equal(1, count)
+	requirements.Empty(errs)
+	cfg.Accounts[0].PollInterval = 14 * time.Second
+	count, errs = sched.AddAccountsFromConfig(cfg)
+	requirements.Equal(1, count)
+	requirements.NotEmpty(errs)
+	requirements.Empty(sched.Status()[0].PollInterval)
+	<-sched.Stop().Done()
+}

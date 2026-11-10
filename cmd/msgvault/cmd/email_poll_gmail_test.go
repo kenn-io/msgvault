@@ -105,6 +105,7 @@ func TestRapidEmailGmailProfileMismatchDoesNotMutateArchive(t *testing.T) {
 	rebuildCacheAfterScheduledSourceRun = func(context.Context, string) error { return nil }
 	t.Cleanup(func() { rebuildCacheAfterScheduledSourceRun = originalRebuild })
 	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	invocationFromContext(ctx).pollAccounts = []config.AccountSchedule{{Email: src.Identifier, Enabled: true, PollInterval: 15 * time.Second}}
 	err = runEmailPoll(ctx, src.Identifier, st.Store, nil, invocationFromContext(ctx))
 	require.ErrorContains(err, "does not match", "authenticated mismatch must fail closed with stable remediation")
 	for _, table := range []string{"account_identities", "sync_runs", "messages"} {
@@ -206,6 +207,7 @@ func TestGmailPollAcquisitionAndQuota(t *testing.T) {
 	invocationFromContext(ctx).pollAccounts = append([]config.AccountSchedule(nil), cfg.Accounts...)
 	requirements.NoError(runEmailPoll(ctx, alias, st.Store, nil, invocationFromContext(ctx)))
 	checks.EqualValues(1, profiles.Load())
+	invocationFromContext(ctx).pollAccounts = []config.AccountSchedule{{Email: src.Identifier, Enabled: true, PollInterval: 15 * time.Second}}
 	changed.Store(true)
 	requirements.ErrorIs(runEmailPoll(ctx, src.Identifier, st.Store, nil, invocationFromContext(ctx)), scheduler.ErrAcquisitionIncomplete)
 	debt, err := st.Store.ListUnresolvedSyncItemErrors(ctx, src.ID)
@@ -289,6 +291,7 @@ func TestGmailPollAcquisitionAndQuota(t *testing.T) {
 	expired.Store(false)
 	labelsQuota.Store(true)
 	freshCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	invocationFromContext(freshCtx).pollAccounts = []config.AccountSchedule{{Email: src.Identifier, Enabled: true, PollInterval: 15 * time.Second}}
 	requirements.ErrorIs(runEmailPoll(freshCtx, src.Identifier, st.Store, nil, invocationFromContext(freshCtx)), scheduler.ErrAcquisitionIncomplete)
 	run, err := st.Store.GetLatestSync(src.ID)
 	requirements.NoError(err)

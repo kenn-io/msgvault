@@ -283,6 +283,7 @@ func (s *Scheduler) AddAccount(email, cronExpr string) error {
 		delete(s.jobs, email)
 		delete(s.schedules, email)
 	}
+
 	// Validate and add the cron job
 	entryID, err := s.cron.AddFunc(cronExpr, func() {
 		s.onAccountTick(email)
@@ -362,41 +363,43 @@ func (s *Scheduler) coalesceTickLocked(kind, name string, queuedAt map[string]ti
 func (s *Scheduler) AddAccountsFromConfig(cfg *config.Config) (int, []error) {
 	var errors []error
 	scheduled := 0
-	if err := config.ValidatePollingAccounts(cfg.Accounts); err != nil {
-		return 0, []error{err}
-	}
 
 	for _, acc := range cfg.ScheduledAccounts() {
-		if acc.PollInterval != 0 && s.pollFunc == nil {
-			errors = append(errors, fmt.Errorf("%s: polling callback is unavailable", acc.Email))
-			continue
-		}
 		if err := s.AddAccount(acc.Email, acc.Schedule); err != nil {
 			errors = append(errors, fmt.Errorf("%s: %w", acc.Email, err))
 		} else {
-			if acc.PollInterval > 0 {
-				s.mu.Lock()
-				email := acc.Email
-				if old, ok := s.pollJobs[email]; ok {
-					s.cron.Remove(old)
-					delete(s.pollJobs, email)
-					delete(s.pollIntervals, email)
-				}
-				id, err := s.cron.ScheduleJob(cron.Every(acc.PollInterval), cron.FuncJob(func() { s.onAccountTrigger(email, true) }))
-				if err != nil {
-					s.mu.Unlock()
-					errors = append(errors, fmt.Errorf("%s: schedule polling: %w", email, err))
-					continue
-				}
-				s.pollJobs[email] = id
-				s.pollIntervals[email] = acc.PollInterval
-				s.mu.Unlock()
-			}
 			scheduled++
+			if err := s.addAccountPoll(acc); err != nil {
+				errors = append(errors, fmt.Errorf("%s: %w", acc.Email, err))
+			}
 		}
 	}
 
 	return scheduled, errors
+}
+
+// addAccountPoll registers an account's optional polling interval. Its cron
+// schedule stays registered when the interval is invalid.
+func (s *Scheduler) addAccountPoll(acc config.AccountSchedule) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if old, ok := s.pollJobs[acc.Email]; ok {
+		s.cron.Remove(old)
+		delete(s.pollJobs, acc.Email)
+		delete(s.pollIntervals, acc.Email)
+	}
+	if acc.PollInterval == 0 {
+		return nil
+	}
+	if err := config.ValidatePollInterval(acc); err != nil {
+		return err
+	}
+	id, err := s.cron.ScheduleJob(cron.Every(acc.PollInterval), cron.FuncJob(func() { s.onAccountTrigger(acc.Email, true) }))
+	if err != nil {
+		return fmt.Errorf("schedule polling: %w", err)
+	}
+	s.pollJobs[acc.Email], s.pollIntervals[acc.Email] = id, acc.PollInterval
+	return nil
 }
 
 func (s *Scheduler) AddJob(job Job) error {
@@ -1292,5 +1295,13 @@ func NormalizeCronExpr(expr string) string {
 // preceded by a "CRON_TZ=<zone>" or "TZ=<zone>" prefix. It also rejects a
 // field made only of commas, which the parser stores but never matches.
 func ValidateCronExpr(expr string) error {
-	return cronexpr.Validate(expr)
+	for field := range strings.FieldsSeq(expr) {
+		if strings.Trim(field, ",") == "" {
+			return fmt.Errorf("invalid cron expression: field %q lists no values", field)
+		}
+	}
+	if _, err := cronexpr.Parser.Parse(expr); err != nil {
+		return fmt.Errorf("invalid cron expression: %w", err)
+	}
+	return nil
 }

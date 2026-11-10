@@ -17,6 +17,11 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
+func pollingSource(ctx context.Context, identifier string, s *store.Store, state *invocation) (*store.Source, error) {
+	target := pollingCatalog(ctx, []config.AccountSchedule{{Email: identifier}}, s, state)[0]
+	return target.source, target.err
+}
+
 func TestPollingSourceSelection(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)
@@ -74,6 +79,10 @@ func TestPollingTargetsRejectDuplicateSource(t *testing.T) {
 	requirements.ErrorContains(targets[0].err, "no active")
 	requirements.NoError(targets[1].err)
 	checks.Equal(source.ID, targets[1].source.ID)
+	duplicate := cfg.Accounts[1]
+	duplicate.Email = strings.ToUpper(duplicate.Email)
+	cfg.Accounts = append(cfg.Accounts, duplicate)
+	requirements.ErrorContains(validatePollingTargets(t.Context(), cfg.Accounts, st, state)[3].err, "duplicate polling account")
 }
 
 func TestPollingSourceArchiveAlias(t *testing.T) {
@@ -200,4 +209,23 @@ func TestPollingTargetsUseOneCatalogQuery(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, count)
+}
+
+func TestInvalidCronDoesNotClaimPollingSource(t *testing.T) {
+	requirements := require.New(t)
+	st := storetest.New(t).Store
+	source, err := st.GetOrCreateSource(sourceTypeGmail, "provider@example.test")
+	requirements.NoError(err)
+	requirements.NoError(st.UpdateSourceDisplayName(source.ID, "mailbox@example.test"))
+	cfg := config.NewDefaultConfig()
+	cfg.Accounts = []config.AccountSchedule{
+		{Email: source.Identifier, Enabled: true, Schedule: "bad", PollInterval: 15 * time.Second},
+		{Email: "mailbox@example.test", Enabled: true, Schedule: "0 * * * *", PollInterval: 15 * time.Second},
+	}
+	state := invocationFromContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+	state.configurePolling(cfg.Accounts, nil)
+	requirements.Len(state.pollAccounts, 1)
+	target := validatePollingTargets(t.Context(), state.pollAccounts, st, state)[0]
+	requirements.NoError(target.err)
+	assert.Equal(t, source.ID, target.source.ID)
 }

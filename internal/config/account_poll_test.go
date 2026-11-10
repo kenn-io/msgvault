@@ -33,12 +33,11 @@ func TestPollingAccountValidation(t *testing.T) {
 		interval time.Duration
 		want     string
 	}{
-		{"off", 0, ""}, {"minimum", 15 * time.Second, ""}, {"maximum", 120 * time.Second, ""},
+		{"minimum", 15 * time.Second, ""}, {"maximum", 120 * time.Second, ""},
 		{"too short", 14 * time.Second, "poll_interval"}, {"too long", 121 * time.Second, "poll_interval"}, {"fractional", 15500 * time.Millisecond, "poll_interval"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			account := AccountSchedule{Email: "user@example.com", Enabled: true, Schedule: "0 * * * *", PollInterval: tc.interval}
-			err := ValidatePollingAccounts([]AccountSchedule{account})
+			err := ValidatePollInterval(AccountSchedule{Email: "user@example.com", Enabled: true, Schedule: "0 * * * *", PollInterval: tc.interval})
 			if tc.want == "" {
 				require.NoError(t, err)
 			} else {
@@ -46,11 +45,4 @@ func TestPollingAccountValidation(t *testing.T) {
 			}
 		})
 	}
-	account := AccountSchedule{Email: "user@example.com", Enabled: true, Schedule: "0 * * * *", PollInterval: 15 * time.Second}
-	require.NoError(t, ValidatePollingAccounts([]AccountSchedule{account, {Email: account.Email, Enabled: true, Schedule: account.Schedule}}))
-	duplicate := account
-	duplicate.Email = "USER@example.com"
-	require.ErrorContains(t, ValidatePollingAccounts([]AccountSchedule{account, duplicate}), "duplicate polling account")
-	account.Schedule = ", * * * *"
-	require.ErrorContains(t, ValidatePollingAccounts([]AccountSchedule{account}), "invalid cron expression")
 }

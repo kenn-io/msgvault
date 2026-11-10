@@ -78,10 +78,10 @@ func TestRunScheduledIMAPSync_SavedFolderExclusions(t *testing.T) {
 	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	var logs bytes.Buffer
 	invocationFromContext(ctx).logger = slog.New(slog.NewTextHandler(&logs, nil))
-	summary, err := runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
+	summary, _, err := runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
 	require.NoError(err)
 	assert.Zero(summary.Errors)
-	_, err = runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
+	_, _, err = runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
 	require.NoError(err)
 	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`SELECT source_message_id FROM messages WHERE source_id = ?`), src.ID)
 	require.NoError(err)

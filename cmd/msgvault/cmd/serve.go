@@ -175,7 +175,7 @@ func (s serveSchedulers) Stop() context.Context {
 func (state *invocation) configurePolling(accounts []config.AccountSchedule, capture func(string, map[string]any) error) {
 	state.pollAccounts = nil
 	for _, account := range accounts {
-		if account.Enabled && account.PollInterval != 0 && config.ValidatePollingAccounts([]config.AccountSchedule{account}) == nil {
+		if account.Enabled && account.PollInterval != 0 && config.ValidatePollInterval(account) == nil && scheduler.ValidateCronExpr(account.Schedule) == nil {
 			state.pollAccounts = append(state.pollAccounts, account)
 		}
 	}
@@ -480,26 +480,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Add all scheduled accounts
-	count := 0
-	for _, account := range cfg.Accounts {
-		if !account.Enabled {
-			continue
-		}
-		one := *cfg
-		one.Accounts = []config.AccountSchedule{account}
-		registered, errs := sched.AddAccountsFromConfig(&one)
-		if len(errs) != 0 && account.PollInterval != 0 {
-			for _, err := range errs {
-				logger.Error("polling unavailable", "account", account.Email, "error", err)
-			}
-			account.PollInterval = 0
-			one.Accounts[0] = account
-			registered, errs = sched.AddAccountsFromConfig(&one)
-		}
+	count, errs := sched.AddAccountsFromConfig(cfg)
+	if len(errs) > 0 {
 		for _, err := range errs {
 			logger.Error("failed to schedule account", "error", err)
 		}
-		count += registered
 	}
 	if count == 0 {
 		logger.Warn("no accounts scheduled - upload tokens via API and add accounts to config.toml")
@@ -4371,7 +4356,7 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 				complete = !partial
 			}
 		case sourceTypeIMAP:
-			summary, complete, err = runScheduledIMAPSyncWithCoverage(ctx, src, s, state)
+			summary, complete, err = runScheduledIMAPSync(ctx, src, s, state)
 		case sourceTypeTeams:
 			err = runScheduledTeamsSync(ctx, src, s, state)
 		case sourceTypeMSMail:
@@ -4715,12 +4700,7 @@ func scheduledGmailAccountIdentifier(selector string, src *store.Source) string 
 // and relying on the store to dedupe by message-id. NoResume is forced
 // on because IMAP page tokens are numeric offsets that don't survive
 // across processes (see syncfull.go).
-func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store, state *invocation) (*gmail.SyncSummary, error) {
-	summary, _, err := runScheduledIMAPSyncWithCoverage(ctx, src, s, state)
-	return summary, err
-}
-
-func runScheduledIMAPSyncWithCoverage(ctx context.Context, src *store.Source, s *store.Store, state *invocation) (*gmail.SyncSummary, bool, error) {
+func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store, state *invocation) (*gmail.SyncSummary, bool, error) {
 	if state == nil {
 		state = invocationFromContext(ctx)
 	}
