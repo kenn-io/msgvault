@@ -368,7 +368,7 @@
             {#if onOpenPerson}<button type="button" data-link onclick={() => { onClose(); onOpenPerson(holder.personID); }}>{holder.name}</button>{:else}{holder.name}{/if}
           </DetailRow>{/each}</div>
         {@const shownPeople = new Set(holders.holders.map(holder => holder.personID)).size}
-        {#if holders.peopleCount > shownPeople}<p>and {holders.atLeast ? 'at least ' : ''}{holders.peopleCount - shownPeople} more</p>{/if}
+        {#if holders.peopleCount > shownPeople}<p>and {holders.atLeast ? 'at least ' : ''}{holders.peopleCount - shownPeople} more</p>{:else if holders.atLeast}<p>and maybe others</p>{/if}
       {/if}
       {#if !deleteBlocked}<p>This permanently removes the organization.</p>{/if}
     </div>

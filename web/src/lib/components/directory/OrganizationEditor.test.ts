@@ -164,6 +164,7 @@ describe('OrganizationEditor', () => {
   it.each([
     { label: 'one job', count: 1 },
     { label: '200 jobs', count: 200 },
+    { label: '200 jobs held by three people', count: 200, people: 3 },
     { label: 'an unnamed holder', count: 1, personID: 8, displayName: null },
     { label: 'two jobs held by one person', count: 2, personID: 8, displayName: 'Synthetic Person', titles: ['Engineer', 'Advisor'] },
   ])('blocks deletion for $label and links holders', async scenario => {
@@ -174,7 +175,7 @@ describe('OrganizationEditor', () => {
       const path = pathOf(request);
       if (path.endsWith('/employments')) return Response.json({ employments: scenario.titles
         ? scenario.titles.map((title, index) => employment(index + 11, 1, { person_id: scenario.personID, title, is_current: false }))
-        : Array.from({ length: count }, (_, i) => employment(i + 1, 1, { person_id: scenario.personID ?? Math.max(1, i), is_current: false })) });
+        : Array.from({ length: count }, (_, i) => employment(i + 1, 1, { person_id: scenario.personID ?? (scenario.people ? i % scenario.people + 1 : Math.max(1, i)), is_current: false })) });
       if (path.startsWith('/api/v1/people/')) return Response.json(scenario.displayName === null ? {} : { display_name: scenario.displayName ?? `Example Person ${path.split('/').at(-1)}` });
       return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
     });
@@ -187,7 +188,7 @@ describe('OrganizationEditor', () => {
     const holderName = scenario.displayName === null ? 'Unnamed person' : scenario.displayName ?? 'Example Person 1';
     const holders = screen.getAllByRole('button', { name: holderName });
     expect(first.compareDocumentPosition(holders[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    if (count === 200) expect(screen.getByText('and at least 196 more')).toBeDefined();
+    if (count === 200) expect(screen.getByText(scenario.people ? 'and maybe others' : 'and at least 196 more')).toBeDefined();
     if (scenario.titles) {
       expect(holders).toHaveLength(1);
       expect(holders[0].closest('.detail-row')?.textContent).toContain('Engineer · Advisor');
