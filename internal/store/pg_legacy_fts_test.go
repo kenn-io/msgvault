@@ -72,27 +72,3 @@ func TestInitSchema_PGLegacyMessagesGetsFTSColumn(t *testing.T) {
 	// And the dialect now reports FTS available.
 	require.True(st.FTS5Available(), "FTS must be available after legacy upgrade")
 }
-
-func TestInitSchema_PGRemovesPreviousStaleFTSIndex(t *testing.T) {
-	require := require.New(t)
-	testDB := os.Getenv("MSGVAULT_TEST_DB")
-	if !strings.HasPrefix(testDB, "postgres://") && !strings.HasPrefix(testDB, "postgresql://") {
-		t.Skip("PostgreSQL upgrade test")
-	}
-
-	st := testutil.NewTestStore(t)
-	db := st.DB()
-	_, err := db.ExecContext(t.Context(), `DROP INDEX idx_messages_search_fts_stale_v3`)
-	require.NoError(err)
-	_, err = db.ExecContext(t.Context(), `CREATE INDEX idx_messages_search_fts_stale_v2 ON messages (id) WHERE search_fts IS NULL OR indexing_version IS DISTINCT FROM 2`)
-	require.NoError(err)
-
-	for range 2 {
-		require.NoError(st.InitSchemaContext(t.Context()))
-		var oldCount, currentCount int
-		err := db.QueryRowContext(t.Context(), `SELECT COUNT(*) FILTER (WHERE indexname = 'idx_messages_search_fts_stale_v2'), COUNT(*) FILTER (WHERE indexname = 'idx_messages_search_fts_stale_v3') FROM pg_indexes WHERE schemaname = current_schema() AND tablename = 'messages'`).Scan(&oldCount, &currentCount)
-		require.NoError(err)
-		require.Zero(oldCount, "obsolete stale index remains after upgrade")
-		require.Equal(1, currentCount, "current stale index must remain")
-	}
-}

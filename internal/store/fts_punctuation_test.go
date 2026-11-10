@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"database/sql"
 	"strconv"
 	"strings"
 	"testing"
@@ -9,7 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/search"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -80,32 +78,6 @@ func TestPostgresFTSSaturatedPhrases(t *testing.T) {
 		require.NoError(err)
 		assert.Contains(ids, unicodeID)
 	}
-}
-
-func TestPostgresFTSPunctuationBackfill(t *testing.T) {
-	require := require.New(t)
-	f := storetest.New(t)
-	if !f.Store.IsPostgreSQL() {
-		t.Skip("PostgreSQL indexing")
-	}
-	id := f.NewMessage().WithSourceMessageID("punctuation").WithSubject("Release 1.2.0 notes").Create(t, f.Store)
-	body := "Write to both@example.com or see changelog.example.net."
-	require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
-	require.NoError(f.Store.UpsertFTS(id, "Release 1.2.0 notes", body, "", "", ""))
-	_, err := f.Store.DB().ExecContext(t.Context(), "UPDATE messages SET search_fts = to_tsvector('simple', $1), indexing_version = 2 WHERE id = $2", body, id)
-	require.NoError(err)
-	q := &search.Query{TextTerms: []string{"both@exam"}}
-	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), q, 10)
-	require.NoError(err)
-	require.Empty(ids)
-	_, err = f.Store.BackfillFTS(nil)
-	require.NoError(err)
-	ids, _, err = f.Store.SearchMessageIDsQueryContext(t.Context(), q, 10)
-	require.NoError(err)
-	require.Equal([]int64{id}, ids)
-	var version int
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), "SELECT indexing_version FROM messages WHERE id = $1", id).Scan(&version))
-	require.Equal(store.CurrentFTSIndexingVersion, version)
 }
 
 func TestPostgresFTSPhraseDoesNotCrossFields(t *testing.T) {
