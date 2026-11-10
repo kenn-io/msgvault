@@ -329,21 +329,6 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 			if row.Event.Kind != "series" || !slices.ContainsFunc(record.Unexpandable, func(item CalendarUnexpandable) bool { return item.MessageID == ref.MessageID }) {
 				return record, sql.ErrNoRows
 			}
-			if ref.Identity != (calrecur.Identity{}) {
-				at, err = calendarOriginalStart(ref.Identity, row.Event)
-				if err != nil {
-					return record, err
-				}
-			}
-			if row.ICalUID != "" {
-				keys = append(keys, canonicalMeetingKey("ical_uid", "", row.ICalUID, &at))
-				if ref.Identity.AllDay {
-					keys = append(keys, meetingLinkKey{"ical_date", "", row.ICalUID, ref.Identity.Date})
-				}
-			}
-			if ref.Identity != (calrecur.Identity{}) && row.CalendarID != "" && row.Event.ProviderEventID != "" {
-				keys = append(keys, canonicalMeetingKey("google_event_id", row.CalendarID, row.Event.ProviderEventID+"_"+ref.Identity.Key(), nil))
-			}
 		} else {
 			keys = occurrenceKeys(seed)
 		}
