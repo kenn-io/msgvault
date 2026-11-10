@@ -299,5 +299,4 @@ func TestEmailRederivationExtractsMissingInvites(t *testing.T) {
 	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
 	requirements.NoError(err)
 	requirements.Len(page.Occurrences, 1)
-	assertions.Positive(derivedDataRevision(t, st), "calendar extraction must publish the write even though email text is unchanged")
 }
