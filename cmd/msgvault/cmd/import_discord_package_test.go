@@ -46,7 +46,7 @@ func TestImportDiscordPackageEndToEnd(t *testing.T) {
 	rootCmd.SetErr(io.Discard)
 	rootCmd.SetArgs([]string{"--home", home, "import-discord-package", fixture})
 	require.NoError(rootCmd.ExecuteContext(t.Context()))
-	assert.Contains(output.String(), "sent_only")
+	assert.Contains(output.String(), "Coverage: exporting account's sent messages only")
 	assert.Contains(output.String(), "Channels: 1 imported, 1 skipped")
 	assert.Contains(output.String(), "1 missing local media")
 	st, err := store.Open(filepath.Join(home, "msgvault.db"))
@@ -82,7 +82,7 @@ func TestImportDiscordPackagePartialFailureReport(t *testing.T) {
 	var output bytes.Buffer
 	command.SetOut(&output)
 	require.Error(runImportDiscordPackage(command, root, false))
-	assert.Contains(output.String(), "sent_only")
+	assert.Contains(output.String(), "Coverage: exporting account's sent messages only")
 	assert.Contains(output.String(), "1 added")
 	db, err := sql.Open("duckdb", "")
 	require.NoError(err)

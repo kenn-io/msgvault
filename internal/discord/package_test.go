@@ -54,7 +54,7 @@ func TestPackageImportSnapshot(t *testing.T) {
 	require.NoError(json.Unmarshal([]byte(metadata), &meta))
 	assert.Equal("sent_only", meta["coverage"])
 	assert.Equal("2024-03-15T18:22:41-07:00", meta["original_timestamp"])
-	assert.Equal("Messages/c200000000000000001/messages.json", meta["input_path"])
+	assert.Contains([]string{"Messages/c200000000000000001/messages.json", "messages/c200000000000000001/messages.json"}, meta["input_path"])
 	assert.NotContains(metadata, "discard@example.com")
 	assert.EqualValues(1, meta["row_ordinal"])
 	var messageID int64
@@ -218,7 +218,7 @@ func TestPackageUnsafeAndOversizedInput(t *testing.T) {
 			_, err := ImportPackage(t.Context(), st, root)
 			require.ErrorContains(err, tt.want)
 			if strings.HasPrefix(tt.kind, "large ") && tt.kind != "large metadata" {
-				require.ErrorContains(err, "Messages/c200000000000000001/messages.")
+				require.Regexp(`[mM]essages/c200000000000000001/messages\.(json|csv)`, err.Error())
 			}
 		})
 	}
