@@ -18,7 +18,6 @@ jobs:
     uses: kenn-io/msgvault/.github/workflows/ci.yml@main
 
   released-commands:
-    name: Released commands
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
