@@ -116,8 +116,18 @@ func effectiveStatsFilter(opts StatsOptions) *MessageFilter {
 	return &filter
 }
 
+// xUserIDExpr supplies an opaque label without inventing an observed name.
+// prefix is empty for SQLite/cached views and sqlite_db. for hybrid readers.
+func xUserIDExpr(alias, prefix string) string {
+	return "(SELECT pi.identifier_value FROM " + prefix + "participant_identifiers pi WHERE pi.participant_id = " + alias + ".id AND pi.identifier_type = 'x_user' ORDER BY pi.identifier_value LIMIT 1)"
+}
+
+func directSenderNameExpr(alias, prefix string) string {
+	return "COALESCE(NULLIF(" + alias + ".display_name, ''), " + xUserIDExpr(alias, prefix) + ", '')"
+}
+
 // participantNameExpr returns the SQL expression for a participant's display
-// label, falling back through display_name → phone_number → email_address.
+// label, falling back through display_name → phone_number → email_address → numeric X ID.
 // Used by name-based aggregates and filters so phone-only participants
 // (typically iMessage/SMS handles imported without a matching contacts entry)
 // surface under their phone number instead of vanishing because email_address
@@ -126,8 +136,8 @@ func effectiveStatsFilter(opts StatsOptions) *MessageFilter {
 // (phone_number coerced to empty string at export); NULLIF squashes both forms.
 func participantNameExpr(alias string) string {
 	return fmt.Sprintf(
-		"COALESCE(NULLIF(TRIM(%s.display_name), ''), NULLIF(%s.phone_number, ''), %s.email_address)",
-		alias, alias, alias,
+		"COALESCE(NULLIF(TRIM(%s.display_name), ''), NULLIF(%s.phone_number, ''), NULLIF(%s.email_address, ''), %s)",
+		alias, alias, alias, xUserIDExpr(alias, ""),
 	)
 }
 
@@ -140,9 +150,13 @@ func participantNameExpr(alias string) string {
 // on the participant. mrAlias/pAlias are the message_recipients and
 // participants table aliases (typically "mr" and "p").
 func recipientNameExpr(mrAlias, pAlias string) string {
+	return recipientNameExprInSchema(mrAlias, pAlias, "")
+}
+
+func recipientNameExprInSchema(mrAlias, pAlias, prefix string) string {
 	return fmt.Sprintf(
-		"COALESCE(NULLIF(TRIM(%s.display_name), ''), NULLIF(TRIM(%s.display_name), ''), NULLIF(%s.phone_number, ''), %s.email_address, '')",
-		mrAlias, pAlias, pAlias, pAlias,
+		"COALESCE(NULLIF(TRIM(%s.display_name), ''), NULLIF(TRIM(%s.display_name), ''), NULLIF(%s.phone_number, ''), NULLIF(%s.email_address, ''), %s, '')",
+		mrAlias, pAlias, pAlias, pAlias, xUserIDExpr(pAlias, prefix),
 	)
 }
 
@@ -256,7 +270,7 @@ func fetchParticipantsForMessageList(ctx context.Context, db store.SQLReader, re
 		WHERE mr.message_id IN (%s)
 		  AND mr.recipient_type IN ('to', 'cc', 'bcc')
 		ORDER BY mr.message_id, mr.id
-	`, recipientNameExpr("mr", "p"), tablePrefix, tablePrefix, strings.Join(placeholders, ","))), ids...)
+	`, recipientNameExprInSchema("mr", "p", tablePrefix), tablePrefix, tablePrefix, strings.Join(placeholders, ","))), ids...)
 	if err != nil {
 		return err
 	}
@@ -341,8 +355,8 @@ func fetchParticipantsShared(ctx context.Context, db store.SQLReader, rebind reb
 			  AND mr_explicit.recipient_type = 'from'
 		  )
 	`,
-		recipientNameExpr("mr", "p"), tablePrefix, tablePrefix,
-		participantNameExpr("p"), tablePrefix, tablePrefix, tablePrefix,
+		recipientNameExprInSchema("mr", "p", tablePrefix), tablePrefix, tablePrefix,
+		recipientNameExprInSchema("p", "p", tablePrefix), tablePrefix, tablePrefix, tablePrefix,
 	)), msg.ID, msg.ID)
 	if err != nil {
 		return err

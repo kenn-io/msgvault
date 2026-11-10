@@ -9,6 +9,7 @@ import (
 	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
@@ -323,4 +324,56 @@ func TestDuckDBListConversationsParticipantMembership(t *testing.T) {
 	}, conversationIDs)
 	assert.Equal(int64(2), byID[senderFallbackConversationID].MessageCount)
 	assert.Equal(int64(2), byID[recipientFallbackConversation].MessageCount)
+}
+
+func TestDuckDBUnnamedXParticipantsAcrossViews(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("1", "x_archive")
+	participant := b.AddParticipant("", "", "")
+	b.AddParticipantIdentifier(participant, "x_user", "2", "2", true)
+	b.AddMessage(MessageOpt{MessageType: "x_dm", SourceID: source, SenderID: &participant, ConversationID: 701, ConversationType: "direct_chat"})
+	explicit := b.AddMessage(MessageOpt{MessageType: "x_dm", SourceID: source, SenderID: &participant, ConversationID: 701, ConversationType: "direct_chat"})
+	b.AddFrom(explicit, participant, "")
+	b.AddConversationParticipant(701, participant)
+	engine := b.BuildEngine()
+	messages, err := engine.ListConversationMessages(t.Context(), 701, TextFilter{})
+	require.NoError(err)
+	require.Len(messages, 2)
+	for _, message := range messages {
+		assert.Equal("2", message.FromName)
+	}
+	groups, err := engine.TextAggregate(t.Context(), TextViewContactNames, TextAggregateOptions{})
+	require.NoError(err)
+	require.Len(groups, 1)
+	assert.Equal("2", groups[0].Key)
+	conversations, err := engine.ListConversations(t.Context(), TextFilter{ContactName: groups[0].Key})
+	require.NoError(err)
+	require.Len(conversations, 1)
+	assert.EqualValues(701, conversations[0].ConversationID)
+	listed, err := engine.ListMessages(t.Context(), MessageFilter{})
+	require.NoError(err)
+	require.Len(listed, 2)
+	for _, message := range listed {
+		assert.Equal("2", message.FromName)
+	}
+	q := search.Parse("")
+	hits, err := engine.SearchFast(t.Context(), q, MessageFilter{}, 10, 0)
+	require.NoError(err)
+	require.Len(hits, 2)
+	for _, hit := range hits {
+		assert.Equal("2", hit.FromName)
+	}
+	cached, err := engine.SearchFastWithStats(t.Context(), q, "", MessageFilter{}, ViewNoStats, 10, 0)
+	require.NoError(err)
+	require.Len(cached.Messages, 2)
+	for _, hit := range cached.Messages {
+		assert.Equal("2", hit.FromName)
+	}
+	fast, legacy := runExploreBothPaths(t, engine, ExploreRequest{})
+	for _, result := range []*ExploreResponse{fast, legacy} {
+		require.Len(result.Rows, 1)
+		assert.Contains(result.Rows[0].ParticipantLabels, "2")
+	}
 }
