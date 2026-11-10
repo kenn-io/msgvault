@@ -824,35 +824,13 @@ describe('RelationshipsTab', () => {
 });
 
 
-it('checks again after a lost connection create', async () => {
-  let posts = 0;
-  const { client, controller } = controllerWith(async input => {
-    const request = requestOf(input), path = pathOf(request);
-    if (path === '/api/v1/person-relationships' && request.method === 'POST') { posts++; throw new TypeError('response lost'); }
-    if (path === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(8)] });
-    if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: posts ? [view(41, 'outgoing', 'is mentored by', 'Synthetic Two')] : [] });
-    throw new Error(`unexpected ${request.method} ${path}`);
-  });
-  controller.relationshipTypes = [relationshipType()];
-  render(RelationshipsTab, { client, controller, personID: 7 });
-  await fireEvent.click(screen.getByRole('button', { name: 'Add connection…' }));
-  await openTypeahead('Person');
-  await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Synthetic Two' }));
-  await openTypeahead('Connection type');
-  await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Mentors' }));
-  await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
-  await fireEvent.click(await screen.findByRole('button', { name: 'Check again' }));
-  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-  expect(posts).toBe(1);
-});
-
-it('keeps a saved connection open when its list refresh fails and retries only the refresh', async () => {
+it.each(['lost response', 'failed refresh'])('checks again after a %s', async failure => {
   let posts = 0, reads = 0;
   const { client, controller } = controllerWith(async input => {
     const request = requestOf(input), path = pathOf(request);
-    if (path === '/api/v1/person-relationships' && request.method === 'POST') { posts++; return Response.json(relationship()); }
+    if (path === '/api/v1/person-relationships' && request.method === 'POST') { posts++; if (failure === 'lost response') throw new TypeError('response lost'); return Response.json(relationship()); }
     if (path === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(8)] });
-    if (path === '/api/v1/people/7/relationships') return ++reads === 1 ? Response.json({ message: 'List unavailable' }, { status: 500 }) : Response.json({ relationships: [] });
+    if (path === '/api/v1/people/7/relationships') return failure === 'failed refresh' && ++reads === 1 ? Response.json({ message: 'List unavailable' }, { status: 500 }) : Response.json({ relationships: posts ? [view(41, 'outgoing', 'is mentored by', 'Synthetic Two')] : [] });
     throw new Error(`unexpected ${request.method} ${path}`);
   });
   controller.relationshipTypes = [relationshipType()];
@@ -863,8 +841,8 @@ it('keeps a saved connection open when its list refresh fails and retries only t
   await openTypeahead('Connection type');
   await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Mentors' }));
   await fireEvent.click(screen.getAllByRole('button', { name: /^Add connection/ }).at(-1)!);
-  expect(await screen.findByText('The relationship was saved, but the list could not be refreshed.')).toBeDefined();
-  await fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+  if (failure === 'failed refresh') expect(await screen.findByText('The relationship was saved, but the list could not be refreshed.')).toBeDefined();
+  await fireEvent.click(await screen.findByRole('button', { name: 'Check again' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   expect(posts).toBe(1);
 });

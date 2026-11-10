@@ -167,7 +167,7 @@ describe('OrganizationEmploymentTab', () => {
       await fireEvent.click(screen.getAllByRole('button', { name: /^Actions for / })[0]);
       await fireEvent.click(await screen.findByRole('menuitem', { name: 'Make primary' }));
       expect(reads).toBe(1);
-      release(new Response(JSON.stringify(employment(11, 2, { is_primary: true })), { headers: { ETag: '"employment-11-r1"' } }));
+      release(new Response(JSON.stringify(employment(11, 2, { is_primary: true })), { headers: { ETag: '"employment-11-r2"' } }));
       await waitFor(() => expect(writes).toBe(1));
       await screen.findByText("Couldn't make this job primary.");
       await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));

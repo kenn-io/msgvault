@@ -41,7 +41,8 @@ describe('profileDateError', () => {
 });
 
 describe('date readings', () => {
-  it.each(['en-US', 'fr-FR'])('reads dates in %s', async browserLocale => {
+  it('reads dates in en-US', async () => {
+    const browserLocale = 'en-US';
     const DateTimeFormat = Intl.DateTimeFormat;
     const formatter = vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function (locale, options) {
       return new DateTimeFormat(locale ?? browserLocale, options);
@@ -50,11 +51,6 @@ describe('date readings', () => {
     try {
       vi.resetModules();
       const { DATE_HINT, dateNote, readablePartialDate } = await import('./dates');
-      if (browserLocale === 'fr-FR') {
-        expect(readablePartialDate('2024-03')).toBe('mars 2024');
-        expect(dateNote('2026-03-05', false)).toBe('5 mars');
-        return;
-      }
       expect(readablePartialDate('2024')).toBe('2024');
       expect(readablePartialDate({ year: 2024, month: 3 })).toBe('Mar 2024');
       expect(readablePartialDate('2024-03-05')).toBe('Mar 5, 2024');
@@ -71,4 +67,18 @@ describe('date readings', () => {
       expect(dateNote('2024', true)).toBe(DATE_HINT);
     } finally { formatter.mockRestore(); vi.useRealTimers(); }
   }, 20_000);
+  it('reads dates in fr-FR', async () => {
+    const DateTimeFormat = Intl.DateTimeFormat;
+    const formatter = vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function (locale, options) {
+      return new DateTimeFormat(locale ?? 'fr-FR', options);
+    });
+    vi.setSystemTime(new Date(2026, 10, 6, 12));
+    try {
+      vi.resetModules();
+      const { dateNote, readablePartialDate } = await import('./dates');
+      expect(readablePartialDate('2024-03')).toBe('mars 2024');
+      expect(dateNote('2026-03-05', false)).toBe('5 mars');
+    } finally { formatter.mockRestore(); vi.useRealTimers(); }
+  }, 20_000);
+
 });

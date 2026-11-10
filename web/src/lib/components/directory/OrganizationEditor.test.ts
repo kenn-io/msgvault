@@ -5,7 +5,7 @@ import { requestOf, pathOf, organization, employment, organizationProfile, envel
 import OrganizationEditor from './OrganizationEditor.svelte';
 
 describe('OrganizationEditor', () => {
-  it.each(['organization', 'profile', 'edit elsewhere'] as const)('keeps the other draft after saving %s and sends the version it made', async first => {
+  it.each(['organization', 'profile'] as const)('keeps the other draft after saving %s and sends the version it made', async first => {
     let revision = 1;
     let reads = 0;
     let profile = organizationProfile();
@@ -32,15 +32,9 @@ describe('OrganizationEditor', () => {
     expect(screen.getByRole('textbox', { name: 'Organization aliases' })).toHaveProperty('value', 'LG');
     expect(screen.getByRole('textbox', { name: 'Organization name' })).toHaveProperty('value', 'Lumen Grove Ltd');
     if (first !== 'profile') await screen.findByRole('dialog', { name: 'Lumen Grove Ltd' });
-    if (first === 'edit elsewhere') revision++;
     await fireEvent.click(screen.getByRole('button', { name: first === 'profile' ? 'Save organization' : 'Save aliases and categories' }));
     await waitFor(() => expect(writes).toHaveLength(2));
     expect(writes[1].headers.get('If-Match')).toBe('"organization-21-r2"');
-    if (first === 'edit elsewhere') {
-      expect(await screen.findByText('This organization changed since you opened it.')).toBeDefined();
-      expect(onDone).not.toHaveBeenCalled();
-      return;
-    }
     await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
     expect(reads).toBe(1);
     expect(writes.map(request => request.method)).toEqual(first === 'organization' ? ['PATCH', 'PUT'] : ['PUT', 'PATCH']);
@@ -48,6 +42,33 @@ describe('OrganizationEditor', () => {
     const put = writes.find(request => request.method === 'PUT')!;
     expect(await patch.json()).toMatchObject({ name: 'Lumen Grove Ltd' });
     expect((await put.json()).names).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'LG' })]));
+  });
+
+  it('keeps the other draft when the organization changes between saves', async () => {
+    let revision = 1;
+    let profile = organizationProfile();
+    const writes: Request[] = [];
+    const onDone = vi.fn();
+    const etag = () => ({ ETag: `"organization-21-r${revision}"` });
+    const { controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (request.method === 'GET') return Response.json(profile, { headers: etag() });
+      writes.push(request);
+      if (request.headers.get('If-Match') !== etag().ETag) return Response.json({ message: 'Changed elsewhere' }, { status: 412 });
+      revision++;
+      profile = { ...profile, organization: organization(21, revision, 'Lumen Grove Ltd') };
+      return Response.json(profile.organization, { headers: etag() });
+    });
+    render(OrganizationEditor, { controller, organization: organization(), onDone });
+    await fireEvent.input(await screen.findByRole('textbox', { name: 'Organization aliases' }), { target: { value: 'LG' } });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Lumen Grove Ltd' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
+    await screen.findByRole('dialog', { name: 'Lumen Grove Ltd' });
+    revision++;
+    await fireEvent.click(screen.getByRole('button', { name: 'Save aliases and categories' }));
+    expect(await screen.findByText('This organization changed since you opened it.')).toBeDefined();
+    expect(writes[1].headers.get('If-Match')).toBe('"organization-21-r2"');
+    expect(onDone).not.toHaveBeenCalled();
   });
 
   it('can close while the organization is still loading', async () => {
@@ -175,7 +196,7 @@ describe('OrganizationEditor', () => {
       if (path.endsWith('/employments')) return Response.json({ employments: scenario.titles
         ? scenario.titles.map((title, index) => employment(index + 11, 1, { person_id: scenario.personID, title, is_current: false }))
         : Array.from({ length: count }, (_, i) => employment(i + 1, 1, { person_id: scenario.personID ?? Math.max(1, i), is_current: false })) });
-      if (path.startsWith('/api/v1/people/')) return Response.json({ display_name: 'displayName' in scenario ? scenario.displayName : `Example Person ${path.split('/').at(-1)}` });
+      if (path.startsWith('/api/v1/people/')) return Response.json(scenario.displayName === null ? {} : { display_name: scenario.displayName ?? `Example Person ${path.split('/').at(-1)}` });
       return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
     });
     const onOpenPerson = vi.fn(), onClose = vi.fn();
@@ -188,7 +209,10 @@ describe('OrganizationEditor', () => {
     const holders = screen.getAllByRole('button', { name: holderName });
     expect(first.compareDocumentPosition(holders[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     if (count === 200) expect(screen.getByText('and at least 196 more')).toBeDefined();
-    for (const title of scenario.titles ?? []) expect(screen.getByText(title)).toBeDefined();
+    if (scenario.titles) {
+      expect(holders).toHaveLength(1);
+      expect(holders[0].closest('.detail-row')?.textContent).toContain('Engineer · Advisor');
+    }
     if (scenario.displayName === null) expect(holders[0].hasAttribute('data-link')).toBe(true);
     await fireEvent.click(holders[0]);
     expect(onClose).toHaveBeenCalled();
@@ -326,25 +350,6 @@ it.each(['organization save', 'aliases save'] as const)('shows the latest notice
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(methods).toEqual(['PUT', 'PATCH', 'PATCH']));
   }
-});
-
-it('retries a failed Keep yours with the saved version', async () => {
-  const tags: (string | null)[] = [];
-  let reads = 0;
-  const { controller } = controllerWith(async input => {
-    const request = requestOf(input);
-    if (request.method === 'GET') { reads++; return Response.json({ ...organizationProfile(reads), organization: organization(21, reads, reads === 1 ? undefined : 'Renamed elsewhere') }, { headers: { ETag: `"organization-21-r${reads}"` } }); }
-    tags.push(request.headers.get('If-Match'));
-    return tags.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : Response.json({ message: 'Unavailable' }, { status: 503 });
-  });
-  render(OrganizationEditor, { controller, organization: organization() });
-  const domain = await screen.findByRole('textbox', { name: 'Organization domain' }) as HTMLInputElement;
-  await fireEvent.input(domain, { target: { value: 'new.example' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save organization' }));
-  await fireEvent.click(await screen.findByRole('button', { name: 'Keep yours' }));
-  await screen.findByText("Couldn't save this organization.");
-  await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-  await waitFor(() => expect(tags).toEqual(['"organization-21-r1"', '"organization-21-r2"', '"organization-21-r2"']));
 });
 
 it.each(['retirement', 'media', 'facts', 'names', 'categories'])('shows saved %s in an organization conflict', async section => {

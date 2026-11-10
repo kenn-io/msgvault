@@ -305,10 +305,7 @@ export class DirectoryEntityController {
         if (!person.data) throw new Error(failureMessage(person.error, person.response.status));
         return { personID, name: person.data.display_name?.trim() || 'Unnamed person' };
       }));
-      const holders = records.flatMap(record => {
-        const person = people.find(item => item.personID === record.person_id);
-        return person ? [{ ...person, job: record.title ?? record.role ?? '' }] : [];
-      });
+      const holders = people.map(person => ({ ...person, job: records.filter(record => record.person_id === person.personID).map(record => record.title ?? record.role ?? '').filter(Boolean).join(' · ') }));
       if (!this.isActive(abort)) throw new Error('Request was cancelled.');
       return { count: records.length, atLeast: records.length === organizationEmploymentCheckLimit, peopleCount: new Set(records.map(record => record.person_id)).size, holders };
     } finally { this.entityRequests.delete(abort); }
