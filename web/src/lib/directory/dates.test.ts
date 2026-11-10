@@ -14,7 +14,9 @@ describe('intervalDateError', () => {
   });
   it.each([
     ...['--04-12', '--04', '---12', 'spring 2019', '201904', '2019-4'].map(value => [value, '', 'Use 2024, 2024-03, or 2024-03-15.']),
-    ...['2019-13', '2019-02-30', '0000'].map(value => [value, '', 'This date does not exist. Check the month and day.']),
+    ...['2019-13', '2019-02-30'].map(value => [value, '', 'This date does not exist. Check the month and day.']),
+    ['0000', '', 'Year must be between 0001 and 9999.'],
+    ['0000-01', '', 'Year must be between 0001 and 9999.'],
     ['2024-02', '2024-03', 'End date must be on or after start date.'],
   ])('rejects %j with start %j', (value, start, error) => {
     expect(intervalDateError(value, start)).toBe(error);
@@ -24,8 +26,11 @@ describe('intervalDateError', () => {
 describe('profileDateError', () => {
   it.each(['', '2019', '2019-04', '2019-04-12', '--04-12', '--02-29', '--04', '---12', 'spring 2019'])(
     'accepts %j', (value) => expect(profileDateError(value)).toBeNull());
-  it.each(['2024-13', '2023-02-29', '--02-30', '--13', '---32', '0000-01'])('rejects %j', (value) => {
+  it.each(['2024-13', '2023-02-29', '--02-30', '--13', '---32'])('rejects %j', (value) => {
     expect(profileDateError(value)).toBe('This date does not exist. Check the month and day.');
+  });
+  it.each(['0000', '0000-01'])('identifies the invalid year in %j', (value) => {
+    expect(profileDateError(value)).toBe('Year must be between 0001 and 9999.');
   });
   it('marks free text as a text date only', () => {
     expect(isTextProfileDate('spring 2019')).toBe(true);

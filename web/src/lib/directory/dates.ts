@@ -25,6 +25,12 @@ function validParts(year: number | undefined, month: number | undefined, day: nu
   return probe.getUTCFullYear() === probeYear && probe.getUTCMonth() === month - 1 && probe.getUTCDate() === day;
 }
 
+function partsError(parts: DateParts): string | null {
+  const [year] = parts;
+  if (year !== undefined && (year < 1 || year > 9999)) return 'Year must be between 0001 and 9999.';
+  return validParts(...parts) ? null : RANGE_MESSAGE;
+}
+
 const num = (value: string | undefined): number | undefined => (value === undefined ? undefined : Number(value));
 
 export function isCalendarDate(value: string): boolean {
@@ -38,7 +44,8 @@ export function intervalDateError(value: string, start = ''): string | null {
   const match = YEAR_FORMS.exec(trimmed);
   if (!match) return DATE_ERROR;
   const [year, month, day] = match[1] ? [match[1], match[2], match[3]] : [match[4], match[5], match[6]];
-  if (!validParts(num(year), num(month), num(day))) return RANGE_MESSAGE;
+  const error = partsError([num(year), num(month), num(day)]);
+  if (error) return error;
   if (start.trim() && !intervalDateError(start)) {
     const a = start.trim().replaceAll('-', ''), b = trimmed.replaceAll('-', '');
     const precision = Math.min(a.length, b.length);
@@ -58,7 +65,7 @@ function profileParts(value: string): DateParts | undefined {
 export function profileDateError(value: string): string | null {
   const parts = profileParts(value.trim());
   if (!parts) return null;
-  return validParts(...parts) ? null : RANGE_MESSAGE;
+  return partsError(parts);
 }
 
 export function isTextProfileDate(value: string): boolean {
