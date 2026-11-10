@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/calevent"
-	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/verification"
 )
 
