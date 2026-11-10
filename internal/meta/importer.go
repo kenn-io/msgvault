@@ -24,6 +24,7 @@ type ImportOptions struct {
 type ImportSummary struct {
 	MessagesProcessed int
 	MessagesAdded     int
+	MessagesUpdated   int
 	Requests          int
 	Partial           bool
 }
@@ -225,7 +226,7 @@ func (r *importRun) checkpoint() (*store.Checkpoint, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &store.Checkpoint{PageToken: string(data), MessagesAdded: int64(r.sum.MessagesAdded), MessagesProcessed: int64(r.sum.MessagesProcessed)}, nil
+	return &store.Checkpoint{PageToken: string(data), MessagesAdded: int64(r.sum.MessagesAdded), MessagesUpdated: int64(r.sum.MessagesUpdated), MessagesProcessed: int64(r.sum.MessagesProcessed)}, nil
 }
 
 func (r *importRun) save(ctx context.Context) error {

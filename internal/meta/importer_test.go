@@ -133,12 +133,20 @@ func TestImportPageComments(t *testing.T) {
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages_fts WHERE messages_fts MATCH 'searchable'`).Scan(&hits))
 	assert.Equal(1, hits)
 	f.comments["100_200"][0].Message = "edited example"
-	_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+	sum, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
 	require.NoError(err)
 	assert.Equal(got.ID, message(t, st, src.ID, "100_201").ID)
 	body, err = st.GetMessageBodyText(t.Context(), got.ID)
 	require.NoError(err)
 	assert.Equal("edited example", body)
+	assert.Equal(0, sum.MessagesAdded)
+	assert.Equal(1, sum.MessagesUpdated)
+	run, err := st.GetLastSuccessfulSyncContext(t.Context(), src.ID)
+	require.NoError(err)
+	assert.Equal(int64(1), run.MessagesUpdated)
+	sum, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err)
+	assert.Equal(0, sum.MessagesUpdated, "an unchanged replay is not an update")
 }
 
 func TestImportResumeAfterBudget(t *testing.T) {

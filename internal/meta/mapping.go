@@ -227,8 +227,11 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 		}
 	}
 	r.sum.MessagesProcessed++
-	if !exists {
+	switch {
+	case !exists:
 		r.sum.MessagesAdded++
+	case !unchanged:
+		r.sum.MessagesUpdated++
 	}
 	return nil
 }

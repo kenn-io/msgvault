@@ -56,10 +56,20 @@ func newClient(token, origin string, h *http.Client) (*Client, error) {
 	return &Client{token: token, origin: origin, http: &clone}, nil
 }
 
-// APIError retains no provider text, URLs, request headers or token.
-type APIError struct{ Status int }
+// APIError retains no provider text, URLs, request headers or token. Code and
+// Subcode are Meta's numeric error identifiers, zero when the body has none.
+type APIError struct{ Status, Code, Subcode int }
 
-func (e *APIError) Error() string { return fmt.Sprintf("graph request failed (HTTP %d)", e.Status) }
+func (e *APIError) Error() string {
+	switch {
+	case e.Code == 0:
+		return fmt.Sprintf("graph request failed (HTTP %d)", e.Status)
+	case e.Subcode == 0:
+		return fmt.Sprintf("graph request failed (HTTP %d, code %d)", e.Status, e.Code)
+	default:
+		return fmt.Sprintf("graph request failed (HTTP %d, code %d, subcode %d)", e.Status, e.Code, e.Subcode)
+	}
+}
 
 // APIErrorCode lets CLI diagnostics classify a refused provider read without
 // interpreting discarded response bodies or inferring cursor expiry.
@@ -81,7 +91,7 @@ func (c *Client) get(ctx context.Context, path string, q url.Values, out any) er
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return &APIError{Status: resp.StatusCode}
+		return readAPIError(resp)
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil && ctx.Err() != nil {
@@ -100,6 +110,26 @@ func (c *Client) get(ctx context.Context, path string, q url.Values, out any) er
 		return errors.New("invalid Graph response")
 	}
 	return nil
+}
+
+// readAPIError keeps only the numeric codes from a bounded error body.
+func readAPIError(resp *http.Response) *APIError {
+	apiErr := &APIError{Status: resp.StatusCode}
+	const limit = 64 << 10
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil || len(data) > limit {
+		return apiErr
+	}
+	var wire struct {
+		Error struct {
+			Code    int `json:"code"`
+			Subcode int `json:"error_subcode"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(data, &wire) == nil {
+		apiErr.Code, apiErr.Subcode = wire.Error.Code, wire.Error.Subcode
+	}
+	return apiErr
 }
 
 type graphPage[T any] struct {

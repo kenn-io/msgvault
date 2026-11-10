@@ -154,7 +154,7 @@ func newSyncFacebookCommentsCmd() *cobra.Command {
 				}
 				sum, err := importFacebookCommentsProfile(ctx, st, profile, options)
 				if sum != nil {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Facebook %s: %d messages processed (%d added), %d requests\n", profile.Identifier, sum.MessagesProcessed, sum.MessagesAdded, sum.Requests)
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Facebook %s: %d messages processed (%d added, %d updated), %d requests\n", profile.Identifier, sum.MessagesProcessed, sum.MessagesAdded, sum.MessagesUpdated, sum.Requests)
 					if sum.Partial {
 						_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Partial coverage; unfinished surfaces resume on the next sync.")
 					}
