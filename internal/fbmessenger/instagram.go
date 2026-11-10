@@ -42,7 +42,7 @@ func instagramEvidence(record rawJSONMessage) instagramOccurrence {
 	return instagramOccurrence{instagramJSONMessage(record).Body, string(reactions)}
 }
 
-func parseInstagramThread(ctx context.Context, st *store.Store, sourceID int64, td ThreadDir, summary *ImportSummary, keys map[string]string, archivedGroups, archivedThreads map[string][]string, self string) (*Thread, map[string]store.StoredMessage, error) {
+func parseInstagramThread(ctx context.Context, st *store.Store, sourceID int64, td ThreadDir, summary *ImportSummary, keys map[string]string, archivedGroups map[string][]string) (*Thread, map[string]store.StoredMessage, error) {
 	parsed, err := parseJSONThread(ctx, "", td.Path, &instagramJSONOptions{td: td, summary: summary, keys: keys})
 	if err != nil {
 		return nil, nil, err
@@ -61,16 +61,18 @@ func parseInstagramThread(ctx context.Context, st *store.Store, sourceID int64, 
 		prefix := fmt.Sprintf("ig:v1:%s:%s:", instagramHash(key), instagramFingerprint(p.record))
 		groups[prefix] = append(groups[prefix], p)
 	}
-	ids := archivedThreads[instagramHash(key)]
+	var ids []string
+	for prefix := range groups {
+		ids = append(ids, archivedGroups[prefix]...)
+	}
 	archived, err := st.StoredMessagesContext(ctx, sourceID, "instagram_json", ids)
 	if err != nil {
 		return nil, nil, err
 	}
-	used, stored := map[string]bool{}, instagramStoredGroups(ids, archived)
+	used := map[string]bool{}
 	for prefix, group := range groups {
-		matchInstagramGroup(group, stored[prefix], archived, used, summary)
+		matchInstagramGroup(group, archivedGroups[prefix], archived, used, summary)
 	}
-	matchRenamedInstagram(pending, ids, archived, used, self)
 	for prefix, group := range groups {
 		numberInstagramGroup(prefix, group, archivedGroups[prefix])
 	}
@@ -86,22 +88,6 @@ func parseInstagramThread(ctx context.Context, st *store.Store, sourceID int64, 
 		parsed.Messages = append(parsed.Messages, message)
 	}
 	return parsed, archived, nil
-}
-
-// instagramStoredGroups indexes the archived IDs by the fingerprint prefix of
-// their stored record, so a message renamed on an earlier import still matches
-// under its new sender. An unreadable record falls back to its ID's prefix.
-func instagramStoredGroups(ids []string, archived map[string]store.StoredMessage) map[string][]string {
-	groups := map[string][]string{}
-	for _, id := range ids {
-		cut := strings.LastIndexByte(id, ':')
-		stored := id[:cut+1]
-		if record, ok := instagramArchivedRecord(archived[id]); ok {
-			stored = id[:strings.LastIndexByte(id[:cut], ':')+1] + instagramFingerprint(record) + ":"
-		}
-		groups[stored] = append(groups[stored], id)
-	}
-	return groups
 }
 
 func instagramArchivedRecord(stored store.StoredMessage) (rawJSONMessage, bool) {
@@ -216,59 +202,6 @@ func addInstagramSurplus(items []*instagramPending, n int) {
 	for _, p := range items[:n] {
 		*p = base
 	}
-}
-
-// matchRenamedInstagram keeps the ID of a message whose sender was renamed,
-// moving it to another fingerprint prefix, when everything but the sender
-// identifies one unclaimed archived copy. The old name must be gone from the
-// export and the new one absent from the archive; self is never renamed.
-func matchRenamedInstagram(pending []*instagramPending, ids []string, archived map[string]store.StoredMessage, used map[string]bool, self string) {
-	before, after := instagramThreadNames(pending, ids, archived, self)
-	remaining := map[instagramRenameEvidence][]*instagramPending{}
-	unused := map[instagramRenameEvidence][]string{}
-	for _, p := range pending {
-		if p.id == "" && !p.skip && !before[p.message.SenderName] {
-			key := instagramRenameKey(p.record)
-			remaining[key] = append(remaining[key], p)
-		}
-	}
-	for _, id := range ids {
-		if record, ok := instagramArchivedRecord(archived[id]); ok && !used[id] && !after[instagramJSONMessage(record).SenderName] {
-			key := instagramRenameKey(record)
-			unused[key] = append(unused[key], id)
-		}
-	}
-	for key, items := range remaining {
-		if len(items) == 1 && len(unused[key]) == 1 {
-			items[0].id = unused[key][0]
-		}
-	}
-}
-
-// instagramRenameKey fingerprints a message without its sender.
-type instagramRenameEvidence struct{ fingerprint, content string }
-
-func instagramRenameKey(record rawJSONMessage) instagramRenameEvidence {
-	record.SenderName = ""
-	return instagramRenameEvidence{instagramFingerprint(record), instagramEvidence(record).content}
-}
-
-// instagramThreadNames returns the senders in the archive and the senders and
-// participants in the new export, each including self.
-func instagramThreadNames(pending []*instagramPending, ids []string, archived map[string]store.StoredMessage, self string) (before, after map[string]bool) {
-	before, after = map[string]bool{self: true}, map[string]bool{self: true}
-	for _, id := range ids {
-		if record, ok := instagramArchivedRecord(archived[id]); ok {
-			before[instagramJSONMessage(record).SenderName] = true
-		}
-	}
-	for _, p := range pending {
-		after[p.message.SenderName] = true
-		for _, participant := range p.shard.Participants {
-			after[DecodeMojibake(participant.Name)] = true
-		}
-	}
-	return before, after
 }
 
 // numberInstagramGroup gives each unmatched message the next free ordinal.

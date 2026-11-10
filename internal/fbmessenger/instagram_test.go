@@ -537,13 +537,13 @@ func TestInstagramRescanNewRootAfterLimit(t *testing.T) {
 	assert.Equal(t, 3, countMessages(t, st, ""))
 }
 
-func TestInstagramSenderReconciliation(t *testing.T) {
+func TestInstagramSenderChangesRetainMessages(t *testing.T) {
 	for _, tc := range []struct {
 		name, sender  string
 		rename, media bool
 		added         int64
 	}{
-		{name: "rename", sender: "Renamed Example", rename: true},
+		{name: "rename", sender: "Renamed Example", rename: true, added: 1},
 		{name: "different sender", sender: "Lumen Example", added: 1},
 		{name: "different media", sender: "Renamed Example", rename: true, media: true, added: 1},
 	} {
@@ -579,11 +579,9 @@ func TestInstagramSenderReconciliation(t *testing.T) {
 			summary, err := ImportDYI(t.Context(), st, opts)
 			require.NoError(err)
 			assert.Equal(tc.added, summary.MessagesAdded)
-			if tc.added > 0 {
-				assert.Equal(2, countMessages(t, st, ""))
-				return
-			}
-			assert.Equal(ids, instagramIDs(t, st))
+			assert.Equal(2, countMessages(t, st, ""))
+			assert.Subset(instagramIDs(t, st), ids)
+			ids = instagramIDs(t, st)
 			summary, err = ImportDYI(t.Context(), st, opts)
 			require.NoError(err)
 			assert.Zero(summary.MessagesAdded)
