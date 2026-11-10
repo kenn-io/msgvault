@@ -1,8 +1,10 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	jsoncompact "encoding/json"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -68,6 +70,21 @@ func ValidateSavedViewItemsJSON(raw []byte) (SavedViewItems, error) {
 	return items, nil
 }
 
+func decodeStoredSavedViewItems(raw []byte) (SavedViewItems, error) {
+	if len(raw) == 0 {
+		return ValidateSavedViewItemsJSON(raw)
+	}
+	var compact bytes.Buffer
+	if err := jsoncompact.Compact(&compact, raw); err != nil {
+		return SavedViewItems{}, fmt.Errorf("%w: %v", ErrSavedViewItemsInvalid, err)
+	}
+	items, err := ValidateSavedViewItemsJSON(compact.Bytes())
+	if err != nil {
+		return items, fmt.Errorf("%w: %v", ErrSavedViewItemsInvalid, err)
+	}
+	return items, nil
+}
+
 func encodeSavedViewItems(items SavedViewItems) (any, error) {
 	raw, err := json.Marshal(items)
 	if err != nil {
@@ -118,7 +135,7 @@ func (s *Store) GetSavedViewItems(ctx context.Context, viewID int64) (SavedViewI
 	if err != nil {
 		return SavedViewItems{}, err
 	}
-	items, err := ValidateSavedViewItemsJSON(raw)
+	items, err := decodeStoredSavedViewItems(raw)
 	if err != nil {
 		return items, err
 	}
@@ -145,7 +162,7 @@ func (s *Store) changeSavedViewItems(ctx context.Context, viewID, revision int64
 	if current != revision {
 		return nil, ErrSavedViewRevisionConflict
 	}
-	items, err := ValidateSavedViewItemsJSON(raw)
+	items, err := decodeStoredSavedViewItems(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -332,7 +349,11 @@ func (s *Store) liveItemFacts(ctx context.Context, q itemSQL, items SavedViewIte
 					ref.ConversationID = id
 					kind = "conversation"
 				}
-				facts[ref] = SavedViewItem{EntryKey: fmt.Sprintf("source:%d:%s:%s", sid, kind, provider), Kind: kind}
+				key := entrykey.MessageKey(sid, id, provider)
+				if conversation {
+					key = entrykey.ConversationKey(sid, id)
+				}
+				facts[ref] = SavedViewItem{EntryKey: key, Kind: kind}
 			}
 			err = rows.Err()
 			_ = rows.Close()
@@ -372,7 +393,7 @@ func (s *Store) liveSavedViewItems(ctx context.Context, items SavedViewItems) (S
 
 // SavedViewItemsForView renders items from the same saved-row snapshot as revision.
 func (s *Store) SavedViewItemsForView(ctx context.Context, view *SavedView) (SavedViewItemList, int, error) {
-	items, err := ValidateSavedViewItemsJSON(view.ItemsJSON)
+	items, err := decodeStoredSavedViewItems(view.ItemsJSON)
 	if err != nil {
 		return SavedViewItemList{}, 0, err
 	}
@@ -415,7 +436,7 @@ func (s *Store) rewriteSavedViewItems(ctx context.Context, q itemSQL, rewrite fu
 			_ = rows.Close()
 			return err
 		}
-		items, err := ValidateSavedViewItemsJSON(raw)
+		items, err := decodeStoredSavedViewItems(raw)
 		if err != nil {
 			_ = rows.Close()
 			return err

@@ -54,3 +54,30 @@ func TestExploreEmptyItemsSQLUnchanged(t *testing.T) {
 	assert.Equal(t, base, got)
 	assert.Equal(t, args, gotArgs)
 }
+
+func TestExploreItemsDistinctExplicitChats(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	sid := b.AddSourceWithType("chat@example.test", "whatsapp")
+	matching := b.AddMessage(MessageOpt{SourceID: sid, MessageType: "whatsapp", ConversationID: 900, ConversationType: "group_chat"})
+	b.AddMessage(MessageOpt{SourceID: sid, MessageType: "whatsapp", ConversationID: 900, ConversationType: "group_chat"})
+	b.AddMessage(MessageOpt{SourceID: sid, MessageType: "whatsapp", ConversationID: 901, ConversationType: "direct_chat"})
+	e := b.BuildEngine()
+	after := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, disabled := range []bool{false, true} {
+		e.exploreFastPathDisabled = disabled
+		included, err := e.Explore(t.Context(), ExploreRequest{Context: Context{After: &after}, Items: EntryItems{IncludeConversationIDs: []int64{900}}})
+		require.NoError(t, err)
+		require.Len(t, included.Rows, 1)
+		assert.Equal(t, "source:1:conversation:900", included.Rows[0].Key)
+		excluded, err := e.Explore(t.Context(), ExploreRequest{Items: EntryItems{ExcludeConversationIDs: []int64{900}}})
+		require.NoError(t, err)
+		require.Len(t, excluded.Rows, 1)
+		assert.Equal(t, "source:1:conversation:901", excluded.Rows[0].Key)
+	}
+	counts, err := e.ExploreMatchCounts(t.Context(), ExploreMatchCountsRequest{
+		Explore: ExploreRequest{Search: SearchSpec{Mode: SearchFullText, Query: "needle", CandidateMessageIDs: []int64{matching}, LexicalIndexRevision: "fts5:test"}, Items: EntryItems{IncludeConversationIDs: []int64{900}}},
+		RowKeys: []string{"source:1:conversation:900", "source:1:conversation:901"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int64{"source:1:conversation:900": 1, "source:1:conversation:901": 0}, counts.Counts)
+}

@@ -1,3 +1,4 @@
+import type { SavedView } from '../api/generated/models';
 import { normalizeCategory } from '../settings/layout';
 import { SvelteSet } from 'svelte/reactivity';
 
@@ -632,10 +633,32 @@ export function parseExploreURLState(search: string): ExploreURLState {
 }
 
 export class ExploreState {
+  savedView = $state<SavedView>();
   savedViewItems = $state<{ include: { entry_key: string }[]; exclude: { entry_key: string }[] }>({ include: [], exclude: [] });
 
   setSavedViewItems(items: { include?: { entry_key: string }[]; exclude?: { entry_key: string }[] }): void {
     this.savedViewItems = { include: items.include ?? [], exclude: items.exclude ?? [] };
+  }
+
+  commitSavedView(view: SavedView, patch: Partial<ExploreURLState>): void {
+    this.navigate(patch, 'push', view);
+  }
+
+  updateSavedView(view: SavedView): void {
+    this.savedView = view;
+    this.setSavedViewItems(view.items ?? {});
+    if (!this.detached) this.browser.history.replaceState({ ...this.browser.history.state, ...this.savedViewHistoryState() }, '', this.browser.location.href);
+  }
+
+  private savedViewHistoryState(): Record<string, unknown> {
+    return { savedViewContext: JSON.parse(JSON.stringify({ view: this.savedView, items: this.savedViewItems })) };
+  }
+
+  private restoreSavedViewHistory(): void {
+    const context = this.browser.history.state?.savedViewContext;
+    this.savedView = isRecord(context) && isRecord(context.view) && Number.isSafeInteger(context.view.id)
+      ? context.view as unknown as SavedView : undefined;
+    this.setSavedViewItems(isRecord(context) && isRecord(context.items) ? context.items : {});
   }
 
   current = $state<ExploreURLState>(freshDefaults());
@@ -701,6 +724,7 @@ export class ExploreState {
     this.pendingHeldLeaveRestore = undefined;
     this.historyIndex = index;
     this.current = next;
+    this.restoreSavedViewHistory();
     this.committed = normalize(this.current);
     this.pendingSearchPriorFocus = undefined;
     this.restorationEpoch += 1;
@@ -711,7 +735,7 @@ export class ExploreState {
     this.pendingHeldLeaveRestore = undefined;
     const search = serializeExploreURLState(this.committed);
     const { pathname, hash } = this.browser.location;
-    this.browser.history.pushState(historyEntry(search, this.committed, this.historyIndex), '', `${pathname}${search}${hash}`);
+    this.browser.history.pushState({ ...historyEntry(search, this.committed, this.historyIndex), ...this.savedViewHistoryState() }, '', `${pathname}${search}${hash}`);
   }
 
   constructor(
@@ -733,6 +757,7 @@ export class ExploreState {
     this.historyIndex = browser.history.state?.exploreIndex ?? 0;
     browser.history.replaceState({ ...browser.history.state, exploreIndex: this.historyIndex }, '', browser.location.href);
     this.current = this.readURLState();
+    this.restoreSavedViewHistory();
     this.committed = normalize(this.current);
     this.rewriteLegacyFilesURL();
     browser.addEventListener('popstate', this.handlePopState);
@@ -753,7 +778,7 @@ export class ExploreState {
     history.replaceState(
       {
         ...(isRecord(history.state) ? history.state : {}),
-        ...historyEntry(search, this.current, this.historyIndex)
+        ...historyEntry(search, this.current, this.historyIndex), ...this.savedViewHistoryState()
       },
       '',
       `${location.pathname}${search}${location.hash}`
@@ -837,7 +862,7 @@ export class ExploreState {
       scrollAnchor: null,
       operationStatus: '',
       settingsAuthority: ''
-    }, 'push');
+    }, 'push', null);
   }
 
   commitSearchIn(workspace: ExploreWorkspace, query: string, searchMode: ExploreSearchMode): void {
@@ -889,7 +914,7 @@ export class ExploreState {
       this.pendingSearchPriorFocus = undefined;
       const search = serializeExploreURLState(this.current, this.browser.location.search);
       const { pathname, hash } = this.browser.location;
-      this.browser.history.replaceState(historyEntry(search, this.current, this.historyIndex), '', `${pathname}${search}${hash}`);
+      this.browser.history.replaceState({ ...historyEntry(search, this.current, this.historyIndex), ...this.savedViewHistoryState() }, '', `${pathname}${search}${hash}`);
     }
   }
 
@@ -975,9 +1000,10 @@ export class ExploreState {
 
   private navigate(
     patch: Partial<ExploreURLState>,
-    mode: 'push' | 'replace'
+    mode: 'push' | 'replace',
+    savedView: SavedView | null | undefined = undefined
   ): void {
-    if (this.holdNavigation(patch, () => this.navigate(patch, mode))) return;
+    if (this.holdNavigation(patch, () => this.navigate(patch, mode, savedView))) return;
     let effectivePatch = patch;
     // Files owns the 'files' presentation, so leaving it must not carry it into Everything.
     if (this.current.workspace === 'files' && patch.workspace !== undefined &&
@@ -1004,7 +1030,11 @@ export class ExploreState {
       const priorEntry = normalize({ ...this.committed, ...transient, ...priorFocus });
       const priorSearch = serializeExploreURLState(priorEntry, baseSearch);
       const committedURL = `${this.browser.location.pathname}${priorSearch}${this.browser.location.hash}`;
-      this.browser.history.replaceState({ ...historyEntry(priorSearch, priorEntry, this.historyIndex), ...this.archiveHistoryState(priorEntry.selectedRow), ...this.operationHistoryState(priorEntry), ...this.relationshipReaderHistoryState(priorEntry) }, '', committedURL);
+      this.browser.history.replaceState({ ...historyEntry(priorSearch, priorEntry, this.historyIndex), ...this.savedViewHistoryState(), ...this.archiveHistoryState(priorEntry.selectedRow), ...this.operationHistoryState(priorEntry), ...this.relationshipReaderHistoryState(priorEntry) }, '', committedURL);
+    }
+    if (savedView !== undefined || (effectivePatch.workspace !== undefined && effectivePatch.workspace !== this.current.workspace)) {
+      this.savedView = savedView ?? undefined;
+      this.setSavedViewItems(savedView?.items ?? {});
     }
     const next = normalize({ ...this.current, ...effectivePatch });
     // Preserve per-field reactivity: transient scroll/column changes must not
@@ -1028,10 +1058,10 @@ export class ExploreState {
     if (mode === 'push') this.historyIndex += 1;
     const history = historyEntry(search, this.current, this.historyIndex);
     if (mode === 'push') {
-      this.browser.history.pushState({ ...history, ...this.operationHistoryState(next, 1), ...this.relationshipReaderHistoryState(next) }, '', url);
+      this.browser.history.pushState({ ...history, ...this.savedViewHistoryState(), ...this.operationHistoryState(next, 1), ...this.relationshipReaderHistoryState(next) }, '', url);
       this.committed = normalize(this.current);
       this.pendingSearchPriorFocus = undefined;
-    } else this.browser.history.replaceState({ ...history, ...this.archiveHistoryState(this.current.selectedRow), ...this.operationHistoryState(this.current), ...this.relationshipReaderHistoryState(this.current) }, '', url);
+    } else this.browser.history.replaceState({ ...history, ...this.savedViewHistoryState(), ...this.archiveHistoryState(this.current.selectedRow), ...this.operationHistoryState(this.current), ...this.relationshipReaderHistoryState(this.current) }, '', url);
   }
 
   private relationshipReaderHistoryState(state: ExploreURLState): Record<string, unknown> | null {

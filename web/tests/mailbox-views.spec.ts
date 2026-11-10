@@ -132,8 +132,12 @@ for (const width of [1280, 390]) {
       expect(bounds!.x).toBeGreaterThanOrEqual(0);
       expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
     }
-    await expect(
-      page.getByText("In Inbox · Unread at provider", { exact: true }),
-    ).toHaveCount(1);
+    // Single-value filter chips already state both provider statuses.
+    await expect(page.getByText("Waiting for review", { exact: true })).toBeVisible();
+    await expect(page.getByText("In Inbox · Unread at provider", { exact: true })).toHaveCount(0);
+    await chips.getByRole("button", { name: "Remove Provider Inbox filter" }).click();
+    await expect(page.getByText("In Inbox", { exact: true })).toBeVisible();
+    await chips.getByRole("button", { name: "Remove Provider read status filter" }).click();
+    await expect(page.getByText("In Inbox · Unread at provider", { exact: true })).toHaveCount(1);
   });
 }

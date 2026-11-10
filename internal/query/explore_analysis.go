@@ -720,6 +720,12 @@ func (e *DuckDBEngine) ExploreMatchCounts(ctx context.Context, request ExploreMa
 		return nil, err
 	}
 	conditions, args := buildExploreConditions(explore)
+	// Membership overrides do not turn nonmatching messages into lexical hits.
+	lexical := ExploreRequest{Search: explore.Search}
+	lexicalConditions, lexicalArgs := buildExploreConditions(lexical)
+	conditions = "(" + conditions + ") AND (" + lexicalConditions + ")"
+	args = append(args, lexicalArgs...)
+
 	placeholders := make([]string, len(request.RowKeys))
 	for i, key := range request.RowKeys {
 		placeholders[i] = "?"

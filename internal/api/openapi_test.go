@@ -2367,3 +2367,13 @@ func TestSearchAttachmentMetadataSchemaScope(t *testing.T) {
 		assert.Contains(schemas["CLIQueryMessageSummary"].Properties, "attachment_count")
 	}
 }
+
+func TestSavedViewItemsRejectionSchema(t *testing.T) {
+	document := OpenAPIDocument()
+	response := document.Paths["/api/v1/saved-views/{id}"].Patch.Responses["422"]
+	require.NotNil(t, response)
+	assert.Equal(t, "#/components/schemas/SavedViewItemsRejectedResponse", response.Content["application/json"].Schema.Ref)
+	schema := document.Components.Schemas.Map()["SavedViewItemsRejectedResponse"]
+	require.NotNil(t, schema)
+	require.NotNil(t, schema.Properties["rejected"])
+}

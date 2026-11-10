@@ -19,6 +19,29 @@ import { createAllMatchingSelection, predicateFingerprint } from './selection';
 import { SEARCH_MODE_PREFERENCE_KEY } from '../search/modes';
 
 describe('Explore URL state', () => {
+  it('restores saved view ownership and membership with Back and workspace navigation', async () => {
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const state = new ExploreState(window);
+    const view = (id: number, key: string) => ({ id, name: `View ${id}`, revision: id, schema_version: 2,
+      canonical_state: {}, created_at: '', updated_at: '', items: { include: [{ entry_key: key, source_id: 1, message_id: id, added_by: 'owner', kind: 'message' as const }], exclude: [] } });
+    try {
+      state.commitSavedView(view(1, 'source:1:message:a'), { query: 'alpha' });
+      state.commitSavedView(view(2, 'source:1:message:b'), { query: 'beta' });
+      window.history.back();
+      await waitFor(() => expect(state.current.query).toBe('alpha'));
+      expect(state.savedView?.id).toBe(1);
+      expect(state.savedView?.revision).toBe(1);
+      expect(state.savedViewItems.include.map(item => item.entry_key)).toEqual(['source:1:message:a']);
+      state.commitWorkspace('files');
+      expect(state.savedView).toBeUndefined();
+      expect(state.savedViewItems.include).toEqual([]);
+      window.history.back();
+      await waitFor(() => expect(state.savedView?.id).toBe(1));
+      expect(state.current.query).toBe('alpha');
+      expect(state.savedViewItems.include.map(item => item.entry_key)).toEqual(['source:1:message:a']);
+    } finally { state.destroy(); }
+  });
+
   it.each([
     ['Back', 'stay'], ['Back', 'leave'], ['click', 'leave']
   ] as const)('holds Back to an unindexed entry from dirty Settings, then handles %s and %s', async (navigation, outcome) => {

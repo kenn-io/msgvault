@@ -78,18 +78,7 @@ func TestExploreItemsSourceScopeAndMalformedKeys(t *testing.T) {
 
 func TestRunSavedViewItemsPopulationAndSourceScope(t *testing.T) {
 	srv, st := newSavedViewRunTestServer(t)
-	for sourceIndex := 1; sourceIndex <= 2; sourceIndex++ {
-		source, err := st.GetOrCreateSource("gmail", fmt.Sprintf("run-%d@example.com", sourceIndex))
-		require.NoError(t, err)
-		require.Equal(t, int64(sourceIndex), source.ID)
-		for _, id := range map[int][]int{1: {1, 2}, 2: {3}}[sourceIndex] {
-			conv, err := st.EnsureConversation(source.ID, fmt.Sprint(id), "Run item")
-			require.NoError(t, err)
-			inserted, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: fmt.Sprintf("m%d", id), MessageType: "email"})
-			require.NoError(t, err)
-			require.Equal(t, int64(id), inserted)
-		}
-	}
+	seedSavedViewItemArchive(t, st)
 	view := createRunTestView(t, st, "Run membership", `{"filters":[{"field":"source_id","operator":"in","values":["1"]}]}`)
 	_, err := st.ChangeSavedViewItems(t.Context(), view.ID, 1, store.SavedViewItemChange{IncludeAdd: []store.SavedViewItemRef{{MessageID: 3, SourceID: 2}}, ExcludeAdd: []store.SavedViewItemRef{{MessageID: 2, SourceID: 1}}})
 	require.NoError(t, err)
@@ -124,4 +113,85 @@ func TestExploreItemsHTTPMalformedAndUnknownKeys(t *testing.T) {
 	require.NoError(t, json.Unmarshal(unknown.Body.Bytes(), &page))
 	require.NotNil(t, page.TotalCount)
 	assert.Equal(t, int64(3), *page.TotalCount)
+}
+
+func seedSavedViewItemArchive(t *testing.T, st *store.Store) {
+	t.Helper()
+	for sourceIndex := 1; sourceIndex <= 2; sourceIndex++ {
+		source, err := st.GetOrCreateSource("gmail", fmt.Sprintf("run-%d@example.com", sourceIndex))
+		require.NoError(t, err)
+		require.Equal(t, int64(sourceIndex), source.ID)
+		for _, id := range map[int][]int{1: {1, 2}, 2: {3}}[sourceIndex] {
+			conv, err := st.EnsureConversation(source.ID, fmt.Sprint(id), "Run item")
+			require.NoError(t, err)
+			inserted, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: fmt.Sprintf("m%d", id), MessageType: "email"})
+			require.NoError(t, err)
+			require.Equal(t, int64(id), inserted)
+		}
+	}
+}
+
+func TestExploreItemsAggregatePopulation(t *testing.T) {
+	srv, st := newSavedViewRunTestServer(t)
+	seedSavedViewItemArchive(t, st)
+	const predicate = `{"filters":[{"dimension":"source","values":["2"]}],"include_keys":["source:1:message:m1"],"exclude_keys":["source:2:message:m3"]}`
+	files := postExploreJSON(t, srv, "/api/v1/files/groups", `{"predicate":`+predicate+`,"grouping":["message_type"]}`)
+	require.Equal(t, http.StatusOK, files.Code, files.Body.String())
+	var groups FileGroupsHTTPResponse
+	require.NoError(t, json.Unmarshal(files.Body.Bytes(), &groups))
+	require.Len(t, groups.Rows, 1)
+	assert.Equal(t, int64(1), groups.Rows[0].Count)
+	for _, path := range []string{"/api/v1/participants/search", "/api/v1/domains/search"} {
+		response := postExploreJSON(t, srv, path, `{"predicate":`+predicate+`}`)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		var population struct {
+			Rows []struct {
+				ActivityCount int64 `json:"activity_count"`
+			} `json:"rows"`
+		}
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &population))
+		require.Len(t, population.Rows, 1, path)
+		assert.Equal(t, int64(1), population.Rows[0].ActivityCount, path)
+	}
+	for _, path := range []string{"/api/v1/participants/1/summary", "/api/v1/domains/example.com/summary"} {
+		response := postExploreJSON(t, srv, path, predicate)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		var population struct {
+			Summary struct {
+				ActivityCount int64 `json:"activity_count"`
+			} `json:"summary"`
+		}
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &population))
+		assert.Equal(t, int64(1), population.Summary.ActivityCount, path)
+	}
+}
+
+func TestSavedViewItemsCorruptionListAndRead(t *testing.T) {
+	srv, st := newSavedViewRunTestServer(t)
+	healthy := createRunTestView(t, st, "Healthy", `{}`)
+	corrupt := createRunTestView(t, st, "Corrupt", `{}`)
+	for _, raw := range []string{`{"version":2}`, `{"version":1,"include":[{"message_id":1,"source_id":1,"added_by":"` + strings.Repeat("a", 128<<10) + `"}]}`} {
+		_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE saved_views SET items_json=? WHERE id=?`), raw, corrupt.ID)
+		require.NoError(t, err)
+		headers := http.Header{"Authorization": []string{"Bearer " + testSessionAPIKey}}
+		response := performSavedViewRequest(t, srv, http.MethodGet, savedViewsPath, nil, headers)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		var list SavedViewsResponse
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &list))
+		require.Len(t, list.SavedViews, 2)
+		for _, view := range list.SavedViews {
+			if view.ID == healthy.ID {
+				assert.Empty(t, view.IncompatibilityReason)
+			} else {
+				assert.Equal(t, "items_json_invalid", view.IncompatibilityReason)
+			}
+		}
+		get := performSavedViewRequest(t, srv, http.MethodGet, fmt.Sprintf("%s/%d", savedViewsPath, corrupt.ID), nil, headers)
+		assert.Equal(t, http.StatusBadRequest, get.Code)
+		assert.Contains(t, get.Body.String(), `"error":"invalid_saved_view"`)
+		assert.Contains(t, get.Body.String(), "items_json_invalid")
+		run, _ := runSavedView(t, srv, corrupt.ID, `{}`)
+		assert.Equal(t, http.StatusBadRequest, run.Code)
+		assert.Contains(t, run.Body.String(), "items_json_invalid")
+	}
 }

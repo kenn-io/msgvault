@@ -50,8 +50,12 @@ func TestViewsPinExcludeRoundTripAndRetry(t *testing.T) {
 		err := cmd.Execute()
 		return out.String(), err
 	}
-	_, err = run("pin", "CLI view", key)
+	pinOutput, err := run("pin", "CLI view", key)
 	require.NoError(t, err)
+	assert.Contains(t, pinOutput, "include +1 -0; exclude +0 -0")
+	pinOutput, err = run("pin", "CLI view", key)
+	require.NoError(t, err)
+	assert.Contains(t, pinOutput, "include +0 -0; exclude +0 -0")
 	items, err := f.Store.GetSavedViewItems(t.Context(), view.ID)
 	require.NoError(t, err)
 	require.Len(t, items.Include, 1)

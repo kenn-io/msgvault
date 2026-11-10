@@ -117,11 +117,7 @@ func (s *Server) patchSavedViewItemChange(w http.ResponseWriter, r *http.Request
 		for _, rejection := range rejected {
 			message += fmt.Sprintf("; %s: %s", rejection.Key, rejection.Reason)
 		}
-		writeJSON(w, 422, struct {
-			Error    string                    `json:"error"`
-			Message  string                    `json:"message"`
-			Rejected []store.EntryKeyRejection `json:"rejected"`
-		}{"saved_view_items_rejected", message, rejected})
+		writeJSON(w, http.StatusUnprocessableEntity, SavedViewItemsRejectedResponse{Error: "saved_view_items_rejected", Message: message, Rejected: rejected})
 		return nil, false
 	}
 	change := &store.SavedViewItemChange{AddedBy: "owner"}

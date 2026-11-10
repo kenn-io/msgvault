@@ -233,8 +233,6 @@
   function commitWorkspace(workspace: ExploreWorkspace): void {
     beforeCommit();
     ++openingView;
-    openedSavedView = undefined;
-    exploreState.setSavedViewItems({});
     exploreState.commitWorkspace(workspace);
   }
   function openDirectoryPerson(personID: number): void {
@@ -672,7 +670,7 @@
     if (exploreState.current.workspace !== 'everything' || !candidate || candidate.mode !== mode) return;
     pendingDeletionReview = candidate;
   }
-  let openedSavedView = $state<SavedView>();
+  const openedSavedView = $derived(exploreState.savedView);
   let openingView = 0;
 
   async function saveOpenedView(): Promise<void> {
@@ -685,7 +683,7 @@
         { ...client, headers: { 'If-Match': `"saved-view-${view.id}-r${view.revision}"` } },
       );
       if (!data) throw new Error('Unable to save view; reload it and retry.');
-      if (openedSavedView?.id === view.id) openedSavedView = data;
+      if (openedSavedView?.id === view.id) exploreState.updateSavedView(data);
       announceOperation(`Saved view ${data.name}.`);
       void shellData.refresh();
     } catch (cause) {
@@ -697,19 +695,19 @@
     const state = viewState(view);
     if (exploreState.holdNavigation(state, () => void openSavedView(view))) return;
     const opening = ++openingView;
+    const restoration = exploreState.restorationEpoch;
     try {
       const { data } = await getSavedView({ id: view.id }, client);
-      if (opening !== openingView) return;
+      if (opening !== openingView || restoration !== exploreState.restorationEpoch) return;
       if (!data) throw new Error('Unable to open this saved view.');
       view = data;
     } catch (cause) {
       announceOperation(cause instanceof Error ? cause.message : 'Unable to open this saved view.');
       return;
     }
-    openedSavedView = view;
-    exploreState.setSavedViewItems(view.items ?? {});
     selection.clear();
-    commitNavigation(viewState(view));
+    beforeCommit();
+    exploreState.commitSavedView(view, viewState(view));
     if (exploreState.current.workspace === 'settings') return;
     await tick();
     (focusableResultsGrid() ?? searchInput)?.focus();

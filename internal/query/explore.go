@@ -1062,7 +1062,7 @@ func applyExploreItems(base string, args []any, items EntryItems) (string, []any
 			}
 			part := column + " IN (" + strings.Join(marks, ",") + ")"
 			if i == 1 {
-				part = "(" + sqlIsChatPredicate("message_type", "conversation_type") + " AND " + part + ")"
+				part = "((" + sqlIsChatPredicate("message_type", "conversation_type") + ") AND " + part + ")"
 			}
 			parts = append(parts, part)
 		}

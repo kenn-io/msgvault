@@ -289,8 +289,10 @@ func (s *Server) handleGroupFiles(w http.ResponseWriter, r *http.Request) {
 		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
+	population := predicate.query
+	population.Search = searchSpec
 	result, err := grouper.GroupFiles(r.Context(), query.FileGroupRequest{
-		Explore:       query.ExploreRequest{Context: predicate.query.Context, Search: searchSpec},
+		Explore:       population,
 		FilenameQuery: request.FilenameQuery, MIMEFamilies: request.MIMEFamilies,
 		Dimension: string(dimension), Sort: sortSpec,
 		Page: query.PageSpec{Limit: request.Limit, Offset: offset},

@@ -123,8 +123,10 @@ func (s *Server) handleSearchParticipants(w http.ResponseWriter, r *http.Request
 		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
+	population := prepared.predicate.query
+	population.Search = prepared.search
 	result, err := analyzer.SearchPeople(r.Context(), query.PersonSearchRequest{
-		Explore: query.ExploreRequest{Context: prepared.predicate.query.Context, Search: prepared.search},
+		Explore: population,
 		Query:   strings.TrimSpace(request.IdentityQuery), Sort: prepared.sort,
 		Page: query.PageSpec{Limit: request.Limit, Offset: prepared.offset},
 	})
@@ -156,8 +158,10 @@ func (s *Server) handleSearchDomains(w http.ResponseWriter, r *http.Request) {
 		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
+	population := prepared.predicate.query
+	population.Search = prepared.search
 	result, err := analyzer.SearchDomains(r.Context(), query.DomainSearchRequest{
-		Explore: query.ExploreRequest{Context: prepared.predicate.query.Context, Search: prepared.search},
+		Explore: population,
 		Query:   strings.TrimSpace(request.IdentityQuery), Sort: prepared.sort,
 		Page: query.PageSpec{Limit: request.Limit, Offset: prepared.offset},
 	})
@@ -432,7 +436,8 @@ func (s *Server) prepareIdentitySummary(w http.ResponseWriter, r *http.Request) 
 	if !ok || !requireCompleteCandidatePool(w, searchSpec) {
 		return query.ExploreRequest{}, "", false
 	}
-	return query.ExploreRequest{Context: prepared.query.Context, Search: searchSpec}, snapshotID, true
+	prepared.query.Search = searchSpec
+	return prepared.query, snapshotID, true
 }
 
 func (s *Server) handleParticipantTimeline(w http.ResponseWriter, r *http.Request) {

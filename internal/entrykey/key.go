@@ -49,3 +49,16 @@ func Parse(key string) (Ref, error) {
 	}
 	return ref, nil
 }
+
+// MessageKey renders an email-like entry, falling back to its internal ID.
+func MessageKey(sourceID, messageID int64, providerID string) string {
+	if providerID == "" {
+		providerID = strconv.FormatInt(messageID, 10)
+	}
+	return "source:" + strconv.FormatInt(sourceID, 10) + ":message:" + providerID
+}
+
+// ConversationKey renders a chat conversation entry.
+func ConversationKey(sourceID, conversationID int64) string {
+	return "source:" + strconv.FormatInt(sourceID, 10) + ":conversation:" + strconv.FormatInt(conversationID, 10)
+}

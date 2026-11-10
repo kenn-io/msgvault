@@ -18,17 +18,24 @@ import (
 	apiclient "go.kenn.io/msgvault/pkg/client"
 )
 
+type EntryKeyRejection struct {
+	EntryKey string `json:"entry_key"`
+	Reason   string `json:"reason"`
+}
+
 type apiErrorBody struct {
-	Error   string `json:"error"`
-	Message string `json:"message"`
+	Rejected []EntryKeyRejection `json:"rejected,omitempty"`
+	Error    string              `json:"error"`
+	Message  string              `json:"message"`
 }
 
 // APIError preserves the daemon's non-CLI HTTP status, stable machine code,
 // and sanitized message. Error retains the historical client-facing text.
 type APIError struct {
-	Status  int
-	Code    string
-	Message string
+	Rejected []EntryKeyRejection
+	Status   int
+	Code     string
+	Message  string
 }
 
 func (e *APIError) Error() string {
@@ -113,7 +120,9 @@ func handleErrorBody(status int, body []byte) error {
 		return err
 	}
 	message, code, _ := apiErrorMessage(body)
-	return &APIError{Status: status, Code: code, Message: message}
+	var details apiErrorBody
+	_ = json.Unmarshal(body, &details)
+	return &APIError{Status: status, Code: code, Message: message, Rejected: details.Rejected}
 }
 
 func handleCLIErrorBody(status int, body []byte) error {

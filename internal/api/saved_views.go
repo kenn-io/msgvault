@@ -61,6 +61,13 @@ type CreateSavedViewRequest struct {
 	SchemaVersion  int                          `json:"schema_version"`
 }
 
+// SavedViewItemsRejectedResponse describes an atomic item edit rejection.
+type SavedViewItemsRejectedResponse struct {
+	Error    string                    `json:"error"`
+	Message  string                    `json:"message"`
+	Rejected []store.EntryKeyRejection `json:"rejected"`
+}
+
 type PatchSavedViewRequest struct {
 	IncludeAdd     []string                      `json:"include_add,omitempty" maxItems:"500"`
 	IncludeRemove  []string                      `json:"include_remove,omitempty" maxItems:"500"`
@@ -100,6 +107,7 @@ func (s *Server) registerSavedViewRoutes(api huma.API) {
 	addSavedViewETagHeader(patch.Responses[httpStatusKey(http.StatusOK)])
 	addErrorResponses(api, patch.Responses, http.StatusBadRequest, http.StatusConflict, http.StatusNotFound,
 		http.StatusPreconditionRequired, http.StatusUnprocessableEntity, http.StatusServiceUnavailable)
+	patch.Responses[httpStatusKey(http.StatusUnprocessableEntity)] = jsonResponsesFor[SavedViewItemsRejectedResponse](api, http.StatusUnprocessableEntity)[httpStatusKey(http.StatusUnprocessableEntity)]
 	registerRawHumaRoute(api, patch, s.handlePatchSavedView)
 
 	remove := rawAPIV1Operation("deleteSavedView", http.MethodDelete, "/saved-views/{id}", "Delete a shared analytical Saved View")
@@ -159,8 +167,12 @@ func (s *Server) handleListSavedViews(w http.ResponseWriter, r *http.Request) {
 		_, err := prepareSavedView(views[i])
 		responseView, itemErr := s.savedViewItemsResponse(r, &views[i])
 		if itemErr != nil {
-			s.writeSavedViewError(w, itemErr)
-			return
+			if !errors.Is(itemErr, store.ErrSavedViewItemsInvalid) {
+				s.writeSavedViewError(w, itemErr)
+				return
+			}
+			responseView = savedViewResponse(&views[i], itemErr)
+			responseView.IncompatibilityReason = "items_json_invalid"
 		}
 		if err != nil {
 			responseView.IncompatibilityReason = err.Error()

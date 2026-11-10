@@ -354,3 +354,33 @@ func TestSavedViewItemsIgnoreChannelPurgeAndViewOnlyDelete(t *testing.T) {
 	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM messages WHERE id=?`), message).Scan(&remaining))
 	assert.Zero(t, remaining)
 }
+
+func TestSavedViewItemsStoredSizeAndJSONBWhitespace(t *testing.T) {
+	f := storetest.New(t)
+	id := f.CreateMessage("near-bound")
+	view, err := f.Store.CreateSavedView(t.Context(), savedViewInput("Size bound"))
+	require.NoError(t, err)
+	// Leave only a few bytes below the canonical serialized bound. PostgreSQL
+	// adds insignificant JSONB output whitespace; it must not shrink this limit.
+	raw := fmt.Sprintf(`{"version":1,"include":[{"message_id":%d,"source_id":%d,"added_by":""}]}`, id, f.Source.ID)
+	raw = strings.Replace(raw, `"added_by":""`, `"added_by":"`+strings.Repeat("a", (128<<10)-len(raw)-2)+`"`, 1)
+	_, err = store.ValidateSavedViewItemsJSON([]byte(raw))
+	require.NoError(t, err)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE saved_views SET items_json=? WHERE id=?`), raw, view.ID)
+	require.NoError(t, err)
+	items, err := f.Store.GetSavedViewItems(t.Context(), view.ID)
+	require.NoError(t, err)
+	require.Len(t, items.Include, 1)
+	assert.Equal(t, id, items.Include[0].MessageID)
+	oversized := strings.Replace(raw, `"added_by":"`, `"added_by":"oversized`, 1)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE saved_views SET items_json=? WHERE id=?`), oversized, view.ID)
+	require.NoError(t, err)
+	_, err = f.Store.GetSavedViewItems(t.Context(), view.ID)
+	assert.ErrorIs(t, err, store.ErrSavedViewItemsInvalid)
+	assert.NotErrorIs(t, err, store.ErrSavedViewItemsLimit)
+	// Cleanup may not abandon a corrupt row and leave dangling membership.
+	require.Error(t, f.Store.RemoveSource(f.Source.ID))
+	var remaining int
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM sources WHERE id=?`), f.Source.ID).Scan(&remaining))
+	assert.Equal(t, 1, remaining)
+}

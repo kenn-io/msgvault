@@ -2,8 +2,6 @@ package query
 
 import (
 	"go.kenn.io/msgvault/internal/entrykey"
-	"strconv"
-
 	"go.kenn.io/msgvault/internal/identityindex"
 )
 
@@ -26,15 +24,10 @@ type EntryKeyFacts struct {
 // inside DuckDB; TestGetFileEntryKeyMatchesExploreProducedKey pins that
 // equivalence through the HTTP API.
 func (f EntryKeyFacts) EntryKey() string {
-	source := strconv.FormatInt(f.SourceID, 10)
 	if IsChatEntry(f.MessageType, f.ConversationType) {
-		return "source:" + source + ":conversation:" + strconv.FormatInt(f.ConversationID, 10)
+		return entrykey.ConversationKey(f.SourceID, f.ConversationID)
 	}
-	messageID := f.SourceMessageID
-	if messageID == "" {
-		messageID = strconv.FormatInt(f.MessageID, 10)
-	}
-	return "source:" + source + ":message:" + messageID
+	return entrykey.MessageKey(f.SourceID, f.MessageID, f.SourceMessageID)
 }
 
 // IsChatEntry reports whether a message is grouped under its conversation

@@ -174,7 +174,11 @@ func newViewsCommand(open viewsOpen) *cobra.Command {
 				if jsonOutput {
 					return printJSON(updated)
 				}
-				_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s: %d entries applied\n", action, len(args)-1)
+				applied := store.SavedViewItemsApplied{}
+				if updated.Applied != nil {
+					applied = *updated.Applied
+				}
+				_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s: include +%d -%d; exclude +%d -%d\n", action, applied.IncludeAdded, applied.IncludeRemoved, applied.ExcludeAdded, applied.ExcludeRemoved)
 				return err
 			}
 		}
