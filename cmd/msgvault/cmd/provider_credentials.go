@@ -25,12 +25,8 @@ func providerHTTPClientWithoutRedirects(client *http.Client) *http.Client {
 func resolveProviderCredentialFromSnapshot(
 	snapshot providercredentials.Snapshot,
 	id, endpoint, environment string, lookup func(string) (string, bool),
-) (string, error) {
-	credential, _, err := snapshot.Resolve(id, endpoint, environment, lookup)
-	if err != nil {
-		return "", err
-	}
-	return credential, nil
+) (string, providercredentials.State, error) {
+	return snapshot.Resolve(id, endpoint, environment, lookup)
 }
 
 func personEnrichmentProviderCredentialLookup(
@@ -50,8 +46,8 @@ func personEnrichmentProviderCredentialLookup(
 		if err != nil {
 			return "", false, err
 		}
-		credential, state, err := snapshot.Resolve(
-			providercredentials.PersonEnrichmentID(profile.Name),
+		credential, state, err := resolveProviderCredentialFromSnapshot(
+			snapshot, providercredentials.PersonEnrichmentID(profile.Name),
 			credentialEndpoint, profile.APIKeyEnv, os.LookupEnv,
 		)
 		return credential, state.Configured, err
@@ -100,5 +96,6 @@ func resolveTextEmbeddingCredentialWithLookup(snapshot providercredentials.Snaps
 	if cfg.Embeddings.LocalOnly {
 		return "", nil
 	}
-	return resolveProviderCredentialFromSnapshot(snapshot, providercredentials.VectorEmbeddingsID, cfg.Embeddings.Endpoint, cfg.Embeddings.APIKeyEnv, lookup)
+	credential, _, err := resolveProviderCredentialFromSnapshot(snapshot, providercredentials.VectorEmbeddingsID, cfg.Embeddings.Endpoint, cfg.Embeddings.APIKeyEnv, lookup)
+	return credential, err
 }

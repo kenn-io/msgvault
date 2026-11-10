@@ -179,7 +179,7 @@ func TestNewVisualRuntimeUsesStoredCredentialSnapshotAndRejectsRedirectReplay(t 
 	require.NoError(t, err)
 	startup, err := providercredentials.Read(cfg.TokensDir())
 	require.NoError(t, err)
-	apiKey, err := resolveProviderCredentialFromSnapshot(startup,
+	apiKey, _, err := resolveProviderCredentialFromSnapshot(startup,
 		providercredentials.VectorMultimodalID, cfg.Vector.Multimodal.Endpoint,
 		cfg.Vector.Multimodal.APIKeyEnv, os.LookupEnv)
 	require.NoError(t, err)

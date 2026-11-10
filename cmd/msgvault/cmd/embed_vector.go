@@ -240,6 +240,7 @@ func runEmbedWithOptions(cmd *cobra.Command, opts managedEmbedOptions) error {
 	// worker later recovers from must not block activation, and an
 	// active generation must not be re-activated.
 	if rebuildInProgress {
+		activated := false
 		if yielded {
 			active, activeErr := backend.ActiveGeneration(ctx)
 			if activeErr == nil && active.ID == gen {
@@ -250,16 +251,18 @@ func runEmbedWithOptions(cmd *cobra.Command, opts managedEmbedOptions) error {
 				if !coverage.Complete() {
 					return convergenceError(gen, coverage)
 				}
-				return nil
+				activated = true
 			}
 			if activeErr != nil && !errors.Is(activeErr, vector.ErrNoActiveGeneration) {
 				return fmt.Errorf("read active generation: %w", activeErr)
 			}
 		}
-		activated, err := activateBuiltGeneration(ctx, backend, runtime.Convergence, gen,
-			cfg.Vector.Embeddings.EffectiveAPIFormat(), out, errOut)
-		if err != nil {
-			return err
+		if !activated {
+			activated, err = activateBuiltGeneration(ctx, backend, runtime.Convergence, gen,
+				cfg.Vector.Embeddings.EffectiveAPIFormat(), out, errOut)
+			if err != nil {
+				return err
+			}
 		}
 		if activated && (len(opts.accounts) > 0 || len(opts.collections) > 0) {
 			_, _ = fmt.Fprintln(errOut, "This active generation was scoped with --account/--collection. To keep it usable after a daemon restart, add equivalent accounts to [vector.embed.scope] in config.toml and restart the daemon; otherwise vector search reports index_stale.")

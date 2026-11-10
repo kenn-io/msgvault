@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json/v2"
@@ -63,20 +64,27 @@ func TestManagedEmbeddingsBuildYieldsToScheduledSync(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(t, st.InitSchema())
-	_, _, err = testutil.CreateIndexedSourceMessage(t.Context(), st, "archive@example.test", "first", "One", "First message")
+	source, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "archive@example.test", "first", "One", "First message")
 	require.NoError(t, err)
+	cfg.Vector.Embed.Scope.SourceIDs = []int64{source.ID}
 	_, _, err = testutil.CreateIndexedSourceMessage(t.Context(), st, "archive@example.test", "second", "Two", "Second message")
 	require.NoError(t, err)
 	gate := api.NewSerialOperationGate()
 	syncStarted := make(chan struct{})
 	jobs := make(chan *scheduler.EmbedJob, 1)
 	jobResult := make(chan error, 1)
+	releaseSync := make(chan struct{})
 	sched := scheduler.New(func(ctx context.Context, _ string) error {
 		close(syncStarted)
 		select {
 		case job := <-jobs:
 			err := job.Run(ctx)
 			jobResult <- err
+			select {
+			case <-releaseSync:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 			return err
 		case <-ctx.Done():
 			return ctx.Err()
@@ -86,8 +94,15 @@ func TestManagedEmbeddingsBuildYieldsToScheduledSync(t *testing.T) {
 	require.NoError(t, sched.AddAccount("archive@example.test", "0 0 1 1 *"))
 	adapter := &storeAPIAdapter{config: cfg, store: st, operationGate: gate, embeddingsScheduler: sched}
 	result := make(chan error, 1)
+	var stderr bytes.Buffer
 	go func() {
-		result <- adapter.RunCLICommand(t.Context(), api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes"}, Env: map[string]string{"TEST_EMBEDDING_KEY": "synthetic-key"}}, nil)
+		result <- adapter.RunCLICommand(t.Context(), api.CLIRunRequest{Args: []string{"embeddings", "build", "--full-rebuild", "--yes", "--account", "archive@example.test"}, Env: map[string]string{"TEST_EMBEDDING_KEY": "synthetic-key"}}, func(event api.CLIRunEvent) error {
+			if event.Type == cliStreamStderr {
+				_, err := stderr.WriteString(event.Data)
+				return err
+			}
+			return nil
+		})
 	}()
 	select {
 	case <-firstRequest:
@@ -107,7 +122,7 @@ func TestManagedEmbeddingsBuildYieldsToScheduledSync(t *testing.T) {
 	}
 	err = adapter.RunCLICommand(t.Context(), api.CLIRunRequest{Args: []string{"embeddings", "resume"}}, nil)
 	require.ErrorContains(t, err, "already running")
-	backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{Path: cfg.Vector.DBPath, MainPath: cfg.DatabaseDSN(), MainDB: st.DB(), Dimension: 4})
+	backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{Path: cfg.Vector.DBPath, MainPath: cfg.DatabaseDSN(), MainDB: st.DB(), Dimension: 4, BuildScope: cfg.Vector.Embed.Scope.BuildScope()})
 	require.NoError(t, err)
 	defer func() { _ = backend.Close() }()
 	state := &invocation{cfg: cfg}
@@ -121,6 +136,10 @@ func TestManagedEmbeddingsBuildYieldsToScheduledSync(t *testing.T) {
 	case <-time.After(20 * time.Second):
 		require.FailNow(t, "scheduled embedding did not finish")
 	}
+	scheduledActive, err := backend.ActiveGeneration(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, vector.GenerationID(1), scheduledActive.ID)
+	close(releaseSync)
 	select {
 	case err := <-result:
 		require.NoError(t, err)
@@ -128,6 +147,7 @@ func TestManagedEmbeddingsBuildYieldsToScheduledSync(t *testing.T) {
 		require.FailNow(t, "build did not finish")
 	}
 	assert.Equal(t, int32(2), count.Load())
+	assert.Contains(t, stderr.String(), "add equivalent accounts to [vector.embed.scope] in config.toml and restart the daemon")
 	active, err := backend.ActiveGeneration(t.Context())
 	require.NoError(t, err)
 	generations := embedGenByID(t, dir)
