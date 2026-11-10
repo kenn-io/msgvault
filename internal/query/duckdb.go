@@ -1535,7 +1535,7 @@ func (e *DuckDBEngine) buildFilterConditions(filter MessageFilter) (string, []an
 	// independent EXISTS that a multi-author message could satisfy via
 	// different rows.
 	if filter.Sender != "" {
-		guard := senderEnvelopeAbsent("mr", "envelope_address", "msg.id")
+		guard := relayedEnvelopeAbsent("mr", "envelope_address", "msg.id")
 		address := "CASE WHEN " + guard + " THEN mr.email_address ELSE mr.envelope_address END"
 		fromName, directName := "", ""
 		senderArgs := []any{filter.Sender, filter.Sender, filter.Sender}
@@ -3435,9 +3435,9 @@ func (e *DuckDBEngine) ReadOriginalMessage(ctx context.Context, ref MessageRef, 
 }
 
 func duckDBSenderDomainExpr(recipient, participant string) string {
-	guard := senderEnvelopeAbsent("mr", "envelope_address", recipient+".message_id")
-	address := "CASE WHEN " + guard + " THEN " + recipient + ".email_address ELSE " + recipient + ".envelope_address END"
-	return "COALESCE(NULLIF(" + identityindex.SenderEnvelopeDomainExpr(address) + ", ''), CASE WHEN " + guard + " THEN " + participant + ".domain END, '')"
+	guard := relayedEnvelopeAbsent("mr", "envelope_address", recipient+".message_id")
+	address := recipient + ".envelope_address"
+	return "COALESCE(CASE WHEN " + recipient + ".is_relayed THEN NULLIF(" + identityindex.SenderEnvelopeDomainExpr(address) + ", '') END, CASE WHEN " + guard + " THEN " + participant + ".domain END, '')"
 }
 
 // ResolveMessageID reads from SQLite because the Parquet cache can lag recent syncs.

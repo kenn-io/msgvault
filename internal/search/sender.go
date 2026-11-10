@@ -68,7 +68,7 @@ func senderLookup(value string, lower func(string) string, messages, recipients,
 	matchingFallback := ""
 	if !metadata {
 		guard := func(messageID string) string {
-			return ` AND NOT EXISTS (SELECT 1 FROM ` + recipients + ` mr_guard WHERE mr_guard.message_id = ` + messageID + ` AND mr_guard.recipient_type = 'from' AND COALESCE(mr_guard.` + snapshotColumn + `, '') <> '')`
+			return ` AND NOT EXISTS (SELECT 1 FROM ` + recipients + ` mr_guard WHERE mr_guard.message_id = ` + messageID + ` AND mr_guard.recipient_type = 'from' AND mr_guard.is_relayed AND COALESCE(mr_guard.` + snapshotColumn + `, '') <> '')`
 		}
 		recipientFallback = guard("mr2.message_id")
 		directFallback = guard(alias + ".id")

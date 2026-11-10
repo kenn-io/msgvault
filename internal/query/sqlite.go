@@ -139,7 +139,7 @@ func senderDomainExpr(recipient, participant string) string {
 }
 
 func senderDomainFallbackExpr(recipient, participant, table, address string) string {
-	return "COALESCE(NULLIF(" + identityindex.SenderEnvelopeDomainExpr(recipient+"."+address) + ", ''), CASE WHEN " + senderEnvelopeAbsent(table, address, recipient+".message_id") + " THEN " + participant + ".domain END, '')"
+	return "COALESCE(CASE WHEN " + recipient + ".is_relayed THEN NULLIF(" + identityindex.SenderEnvelopeDomainExpr(recipient+"."+address) + ", '') END, CASE WHEN " + relayedEnvelopeAbsent(table, address, recipient+".message_id") + " THEN " + participant + ".domain END, '')"
 }
 
 func senderDisplayDomainExpr(recipient, participant string) string {
@@ -948,8 +948,8 @@ func (e *SQLiteEngine) executeAggregateQuery(ctx context.Context, query string, 
 // senderMessageBound counts distinct messages across both sender representations, including hidden ones.
 const senderMessageBound = 5000
 
-func senderEnvelopeAbsent(recipients, address, messageID string) string {
-	return `NOT EXISTS (SELECT 1 FROM ` + recipients + ` mr_guard WHERE mr_guard.message_id = ` + messageID + ` AND mr_guard.recipient_type = 'from' AND COALESCE(mr_guard.` + address + `, '') <> '')`
+func relayedEnvelopeAbsent(recipients, address, messageID string) string {
+	return `NOT EXISTS (SELECT 1 FROM ` + recipients + ` mr_guard WHERE mr_guard.message_id = ` + messageID + ` AND mr_guard.recipient_type = 'from' AND mr_guard.is_relayed AND COALESCE(mr_guard.` + address + `, '') <> '')`
 }
 
 // senderMatchSQL owns the address and same-row name rules for both query paths.
@@ -958,10 +958,10 @@ func senderMatchSQL(filter MessageFilter, limit int) (string, []any) {
 	if filter.Sender == "" {
 		return "", nil
 	}
-	guard := senderEnvelopeAbsent("message_recipients", "email_address", "mr_filter_from.message_id")
+	guard := relayedEnvelopeAbsent("message_recipients", "email_address", "mr_filter_from.message_id")
 	address := `(mr_filter_from.email_address = ? OR (p_filter_from.email_address = ? AND ` + guard + `) OR p_filter_from.phone_number = ?)`
 	directAddress := func(messageID string) string {
-		return `((p_direct_sender.email_address = ? AND ` + senderEnvelopeAbsent("message_recipients", "email_address", messageID) + `) OR p_direct_sender.phone_number = ?)`
+		return `((p_direct_sender.email_address = ? AND ` + relayedEnvelopeAbsent("message_recipients", "email_address", messageID) + `) OR p_direct_sender.phone_number = ?)`
 	}
 	fromName, directName := "", ""
 	fromArgs := []any{filter.Sender, filter.Sender, filter.Sender}
@@ -987,7 +987,7 @@ func senderMatchSQL(filter MessageFilter, limit int) (string, []any) {
 			}
 			return args
 		}
-		direct := `SELECT m_direct.id FROM messages m_direct WHERE m_direct.sender_id IN (` + participant("email_address", participantName) + `) AND ` + senderEnvelopeAbsent("message_recipients", "email_address", "m_direct.id") + `
+		direct := `SELECT m_direct.id FROM messages m_direct WHERE m_direct.sender_id IN (` + participant("email_address", participantName) + `) AND ` + relayedEnvelopeAbsent("message_recipients", "email_address", "m_direct.id") + `
 			UNION ALL SELECT m_direct.id FROM messages m_direct WHERE m_direct.sender_id IN (` + participant("phone_number", participantName) + `)`
 		directArgs = slices.Concat(bind(), bind())
 		from := `SELECT mr_filter_from.message_id AS id FROM message_recipients mr_filter_from

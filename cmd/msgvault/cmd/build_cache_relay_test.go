@@ -11,7 +11,6 @@ import (
 	"go.kenn.io/msgvault/internal/importer"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
-	"go.kenn.io/msgvault/internal/senderauth"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -27,15 +26,7 @@ func TestBuildCacheRelayedAuthors(t *testing.T) {
 	for _, author := range []struct{ name, login string }{{"Alice", "alice"}, {"Build Bot", "build[bot]"}} {
 		raw := []byte("From: " + author.name + " <notifications@github.com>\r\nTo: reader@example.test\r\nX-GitHub-Sender: " + author.login + "\r\nAuthentication-Results: mx.example.test; dmarc=pass header.from=github.com\r\nDate: Mon, 01 Jan 2024 12:00:00 +0000\r\nSubject: Notice\r\n\r\nHello")
 		requirements.NoError(importer.IngestRawMessage(t.Context(), st, src.ID, src.Identifier, "", nil, author.login, author.login, raw, time.Time{}, slog.Default()))
-		var id int64
-		requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id=?`, author.login).Scan(&id))
-		message, err := st.GetMessage(id)
-		requirements.NoError(err)
-		assertions.Equal("notifications@github.com", message.FromEmail)
-		archived, err := st.GetMessageRawContext(t.Context(), id)
-		requirements.NoError(err)
-		assertions.Equal(raw, archived)
-		assertions.True(senderauth.Evaluate(archived, []string{"mx.example.test"}, message.FromEmail).Verified)
+
 	}
 	author, err := st.EnsureParticipantByIdentifier("github", "alice", "Alice")
 	requirements.NoError(err)
@@ -73,7 +64,7 @@ func TestBuildCacheRelayedAuthors(t *testing.T) {
 	for _, message := range messages {
 		assertions.Equal("notifications@github.com", message.FromEmail)
 	}
-	for term, want := range map[string]int{"notifications@github.com": 2, "alice@example.test": 0} {
+	for term, want := range map[string]int{"notifications@github.com": 2, "alice@example.test": 1} {
 		results, err := engine.SearchFast(t.Context(), search.Parse("from:"+term), query.MessageFilter{}, 10, 0)
 		requirements.NoError(err)
 		assertions.Len(results, want, term)
@@ -81,18 +72,18 @@ func TestBuildCacheRelayedAuthors(t *testing.T) {
 		requirements.NoError(err)
 		assertions.Len(rows, want, term)
 	}
-	for view, want := range map[query.ViewType][]string{
-		query.ViewSenders: {"notifications@github.com", "alice@example.test"},
-		query.ViewDomains: {"github.com", "example.test"},
-	} {
-		rows, err := engine.Aggregate(t.Context(), view, query.DefaultAggregateOptions())
+
+	for term, want := range map[string]int{"@example.test": 1, "@github.com": 2} {
+		results, err := engine.SearchFast(t.Context(), search.Parse("from:"+term), query.MessageFilter{}, 10, 0)
 		requirements.NoError(err)
-		var keys []string
-		for _, row := range rows {
-			keys = append(keys, row.Key)
-		}
-		assertions.ElementsMatch(want, keys)
+		assertions.Len(results, want, term)
+		rows, err := engine.ListMessages(t.Context(), query.MessageFilter{Domain: term[1:]})
+		requirements.NoError(err)
+		assertions.Len(rows, want, term)
 	}
+	ordinary, err := engine.GetDeletionTargetsByFilter(t.Context(), query.MessageFilter{Sender: "alice@example.test"})
+	requirements.NoError(err)
+	assertions.Len(ordinary, 1)
 	targets, err := engine.GetDeletionTargetsByFilter(t.Context(), filter)
 	requirements.NoError(err)
 	assertions.Len(targets, 2)

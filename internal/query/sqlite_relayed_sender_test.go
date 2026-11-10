@@ -75,7 +75,7 @@ func TestRelayedSenderAfterParticipantMerge(t *testing.T) {
 		}
 		assertions.ElementsMatch(want, keys)
 	}
-	for address, want := range map[string]int{"author@example.test": 0, "notifications@github.com": 1, "+12025550199": 2} {
+	for address, want := range map[string]int{"author@example.test": 1, "notifications@github.com": 1, "+12025550199": 2} {
 		filter := query.MessageFilter{Sender: address}
 		rows, err := engine.ListMessages(t.Context(), filter)
 		requirements.NoError(err)
@@ -84,7 +84,12 @@ func TestRelayedSenderAfterParticipantMerge(t *testing.T) {
 		requirements.NoError(err)
 		assertions.Len(targets, want, address)
 	}
-	for domain, want := range map[string]int64{"example.test": 0, "github.com": 1} {
+	for address, want := range map[string]int64{"author@example.test": 1, "notifications@github.com": 1} {
+		_, count, err := st.SearchMessagesQueryContext(t.Context(), search.Parse("from:"+address), 0, 10)
+		requirements.NoError(err)
+		assertions.Equal(want, count, address)
+	}
+	for domain, want := range map[string]int64{"example.test": 1, "github.com": 1} {
 		_, count, err := st.SearchMessagesQueryContext(t.Context(), search.Parse("from:@"+domain), 0, 10)
 		requirements.NoError(err)
 		assertions.Equal(want, count, domain)

@@ -2452,8 +2452,8 @@ func TestBuildCacheSQLiteScannerInvalidUTF8KeepsFastSearchWorking(t *testing.T) 
 	engine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	require.NoError(err)
 	defer func() { _ = engine.Close() }()
-	q := search.Parse("from:alice-envelope@example.com")
-	result, err := engine.SearchFastWithStats(t.Context(), q, "from:alice-envelope@example.com", query.MessageFilter{}, query.ViewSenders, 50, 0)
+	q := search.Parse("from:alice@example.com")
+	result, err := engine.SearchFastWithStats(t.Context(), q, "from:alice@example.com", query.MessageFilter{}, query.ViewSenders, 50, 0)
 	require.NoError(err)
 	var snippet string
 	for _, m := range result.Messages {
