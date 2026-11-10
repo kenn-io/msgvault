@@ -3,7 +3,7 @@
 
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import type { NetworkEdge, NetworkNode } from '../../directory/models';
-  import { joinWords } from '../../util/words';
+  import { joinWords, wordSeparator } from '../../util/words';
   import InlineNotice from '../common/InlineNotice.svelte';
   import DetailRow from '../people/DetailRow.svelte';
   import DetailSection from '../people/DetailSection.svelte';
@@ -93,7 +93,7 @@
     {/if}
     {#if depth === '1'}
       <!-- Direct links only: name them in one line rather than repeat Work and Connections. -->
-      <p class="summary">{#if controller.networkLoading}<span role="status">Loading network…</span>{:else}{#each reached as node, index (node.id)}{#if index > 0}{index === reached.length - 1 ? (reached.length === 2 ? ' and ' : ', and ') : ', '}{/if}{#if 'kind' in node}<!-- kit-ui-check-ignore: a record name styled as a link, matching Connections and Work. --><button type="button" class="link" onclick={() => node.kind === 'person' ? onOpenPerson(node.entity_id) : onOpenOrganization(node.entity_id)}>{node.label}</button>{:else}{node.label}{/if}{/each}{/if}</p>
+      <p class="summary">{#if controller.networkLoading}<span role="status">Loading network…</span>{:else}{#each reached as node, index (node.id)}{wordSeparator(index, reached.length)}{#if 'kind' in node}<!-- kit-ui-check-ignore: a record name styled as a link, matching Connections and Work. --><button type="button" class="link" onclick={() => node.kind === 'person' ? onOpenPerson(node.entity_id) : onOpenOrganization(node.entity_id)}>{node.label}</button>{:else}{node.label}{/if}{/each}{/if}</p>
     {:else}
       <div class="further" role="region" aria-label={`Network at ${depth} steps`} aria-busy={controller.networkLoading}>
         {#each further as { node, line } (node.id)}

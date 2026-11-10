@@ -52,6 +52,7 @@ test('Directory Network keeps desktop and phone section geometry and opens organ
   await expect(organizationEditor.getByRole('textbox', { name: 'Organization name' })).toHaveValue('Shared Organization');
   await organizationEditor.getByRole('button', { name: 'Close', exact: true }).click();
   await network.getByRole('radio', { name: 'Direct', exact: true }).click();
+  await expect(network.locator('.summary')).toHaveText('Curated Peer');
   const direct = network.getByRole('button', { name: 'Curated Peer', exact: true });
   const peer = { id: 43, revision: 1, display_name: 'Curated Peer', participant_ids: [], vcard_uid: 'urn:uuid:curated-peer', created_at: '2026-01-03T12:00:00Z', updated_at: '2026-01-03T12:00:00Z' };
   await page.route('**/api/v1/people/43', route => route.fulfill({ json: peer }));

@@ -1,5 +1,9 @@
+export function wordSeparator(index: number, length: number): string {
+  if (index === 0) return '';
+  if (index === length - 1) return length === 2 ? ' and ' : ', and ';
+  return ', ';
+}
+
 export function joinWords(items: string[]): string {
-  if (items.length <= 1) return items.join('');
-  if (items.length === 2) return `${items[0]} and ${items[1]}`;
-  return `${items.slice(0, -1).join(', ')}, and ${items.at(-1)}`;
+  return items.map((item, index) => wordSeparator(index, items.length) + item).join('');
 }
