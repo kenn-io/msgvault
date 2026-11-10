@@ -343,3 +343,37 @@ func TestCalendarClearedMasterKeepsStandaloneAndFirstOccurrenceExceptions(t *tes
 		})
 	}
 }
+
+func TestMeetingRelatedQueryPlan(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	data, _ := calendarFixture(t, st, "plan-target", calendarRaw)
+	bulkCalendarCandidates(t, st, data.Message.SourceID, data.Message.ConversationID, "single", 3000)
+	_, err := st.db.Exec(`ANALYZE`)
+	require.NoError(t, err)
+	at := time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)
+	predicate, args := st.meetingRelatedEventPredicate(data.Message.SourceID, "event-example", at)
+	for _, query := range []string{`SELECT COUNT(*) FROM (SELECT e.message_id ` + calendarEventFrom + "(" + predicate + ") LIMIT ?) AS candidates", calendarEventSelect + "(" + predicate + ") ORDER BY e.message_id LIMIT ?"} {
+		prefix := "EXPLAIN QUERY PLAN "
+		if st.IsPostgreSQL() {
+			prefix = "EXPLAIN "
+		}
+		rows, err := st.db.QueryContext(t.Context(), prefix+query, append(append([]any(nil), args...), 500)...)
+		require.NoError(t, err)
+		columns, err := rows.Columns()
+		require.NoError(t, err)
+		var plan strings.Builder
+		for rows.Next() {
+			vals := make([]any, len(columns))
+			ptrs := make([]any, len(columns))
+			for i := range vals {
+				ptrs[i] = &vals[i]
+			}
+			require.NoError(t, rows.Scan(ptrs...))
+			fmt.Fprintln(&plan, vals[len(vals)-1])
+		}
+		require.NoError(t, rows.Close())
+		t.Log(plan.String())
+		require.Contains(t, plan.String(), "idx_calendar_events_series_provider_id")
+		require.Contains(t, plan.String(), "idx_calendar_events_provider_id")
+	}
+}

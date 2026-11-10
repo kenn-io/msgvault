@@ -14,6 +14,8 @@ import (
 	"go.kenn.io/msgvault/internal/calrecur"
 )
 
+var ErrMeetingOccurrenceRequired = errors.New("copy the full occurrence reference from calendar events")
+
 type MeetingLink struct {
 	MessageID         int64     `json:"-"`
 	SubjectOriginID   int64     `json:"-"`
@@ -92,10 +94,15 @@ func (s *Store) meetingRowsForKey(ctx context.Context, key meetingLinkKey, budge
 	return s.meetingEventRows(ctx, `e.ical_uid = ? AND (e.kind <> 'exception' OR (`+window+`))`, append([]any{key[2]}, args...), budget)
 }
 
-func (s *Store) meetingRelatedEventRows(ctx context.Context, sourceID int64, id string, at time.Time, budget *int) ([]CalendarEventRow, error) {
+func (s *Store) meetingRelatedEventPredicate(sourceID int64, id string, at time.Time) (string, []any) {
 	window, args := calendarExceptionWindow(s.dialect, at.Add(-calendarCandidateMargin), at.Add(time.Second+calendarCandidateMargin))
 	predicate := `m.source_id = ? AND (e.provider_event_id = ? OR e.series_provider_id = ?) AND (e.kind <> 'exception' OR (` + window + `))`
-	return s.meetingEventRows(ctx, predicate, append([]any{sourceID, id, id}, args...), budget)
+	return predicate, append([]any{sourceID, id, id}, args...)
+}
+
+func (s *Store) meetingRelatedEventRows(ctx context.Context, sourceID int64, id string, at time.Time, budget *int) ([]CalendarEventRow, error) {
+	predicate, args := s.meetingRelatedEventPredicate(sourceID, id, at)
+	return s.meetingEventRows(ctx, predicate, args, budget)
 }
 
 // Include each candidate's series and exceptions in the shared expansion.
@@ -300,6 +307,9 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 			return record, sql.ErrNoRows
 		}
 		row := rows[0]
+		if row.Event.Kind == "series" && ref.Identity == (calrecur.Identity{}) {
+			return record, ErrMeetingOccurrenceRequired
+		}
 		var at time.Time
 		if ref.Identity != (calrecur.Identity{}) {
 			at, err = meetingIdentityTime(ref.Identity)
