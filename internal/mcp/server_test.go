@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"math"
 	"net"
@@ -24,6 +25,8 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/export"
@@ -1101,6 +1104,36 @@ func TestSearchMessageBodies_OverlappingAndDistantMatches(t *testing.T) {
 	assert.Equal(id, response.Data[0].ID)
 	require.NotEmpty(response.Data[0].Matches)
 	assert.True(response.Data[0].MatchesTruncated)
+}
+
+func TestSearchMessageBodies_PostgresDaemonRepairsOnStartup(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	if !f.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL indexing")
+	}
+	id := f.NewMessage().WithSourceMessageID("mcp-old-index").WithSubject("ordinary").Create(t, f.Store)
+	require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: "Write to both@example.com today", Valid: true}, sql.NullString{}))
+	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = to_tsvector('simple', 'old'), indexing_version = 2 WHERE id = $1`, id)
+	require.NoError(err)
+	engine := query.NewEngine(f.Store.DB(), true)
+	srv := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner"}}, Store: f.Store, Engine: engine, Logger: slog.New(slog.DiscardHandler)})
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(err)
+	done := make(chan error, 1)
+	go func() { done <- srv.StartOnListener(listener) }()
+	t.Cleanup(func() {
+		require.NoError(srv.Shutdown(context.WithoutCancel(t.Context())))
+		require.ErrorIs(<-done, http.ErrServerClosed)
+	})
+	require.NoError(srv.WaitStarted(t.Context()))
+	require.Eventually(func() bool { return !f.Store.NeedsFTSBackfill() }, 30*time.Second, 10*time.Millisecond)
+	response := runTool[paginatedSearchMessages](t, "search_message_bodies", newTestHandlers(engine).searchMessageBodies, map[string]any{"query": "both@exam"})
+	require.Len(response.Data, 1)
+	assert.Equal(id, response.Data[0].ID)
+	require.NotEmpty(response.Data[0].Matches)
+	assert.Contains(response.Data[0].Matches[0].Snippet, "both@example.com")
 }
 
 func TestSearchMessageBodies_WidePhrasePreservesMatchedEndpoint(t *testing.T) {
