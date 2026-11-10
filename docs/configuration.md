@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-07"
+last_edited: "2026-11-10"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -1663,11 +1663,12 @@ schedule = "*/30 * * * *"
 | `token_env` | required | Explicit environment variable name on the daemon host; no token values or fallback variables |
 | `enabled` | `false` | Enable scheduled sync; manual commands remain available |
 | `schedule` | empty | Five-field cron expression; empty means manual sync only |
+| `actions` | empty | Comment changes allowed on Meta: `"hide"` (also allows unhide) and `"delete"`. Empty means read only. See [Hide or delete comments](usage/facebook-comments.md#hide-or-delete-comments) |
 
 `identifier` is trimmed and must be nonempty and unique ignoring case.
 `app_id` and `page_id` must be positive decimal IDs without leading zeros.
 Duplicate app/Page pairs, invalid environment variable names, unknown profile
-keys, and invalid schedules are rejected. The source identifier is
+keys, unknown actions, and invalid schedules are rejected. The source identifier is
 `app:<app_id>:page:<page_id>`; scheduled jobs use
 `facebook_comments:<source-identifier>`, independently of email account dispatch.
 
@@ -1677,7 +1678,8 @@ Select a professional Instagram account linked to an explicitly selected Page
 (unreleased). See [Instagram comments](usage/instagram-comments.md) for setup
 and coverage. Each profile requires `identifier`, `app_id`, `page_id`,
 `instagram_account_id`, and `token_env`; `enabled` defaults to `false`, and
-an empty `schedule` means manual sync only.
+an empty `schedule` means manual sync only. `actions` works as in
+`[[facebook_comments]]`.
 
 The label is trimmed, nonempty, and unique ignoring case. All three IDs must
 be positive decimal IDs without leading zeros. Duplicate app/Page/Instagram

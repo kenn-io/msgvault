@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-08"
+last_edited: "2026-11-10"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -1640,6 +1640,27 @@ msgvault source instagram-comments sync [identifier] [--max-requests 1000] [--fu
 
 See [Instagram comments](usage/instagram-comments.md) for setup, identity,
 resuming, and coverage limits. These commands do not send replies.
+
+## comment moderate
+
+Hide, unhide, or delete an archived Facebook Page or Instagram comment on Meta,
+then record the change in the archive (unreleased). The comment's profile must
+allow the action in [`actions`](configuration.md#facebook-comments).
+
+```bash
+msgvault comment moderate <message-id> --hide|--unhide|--delete [--dry-run] [--yes]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--hide` | `false` | Hide the comment from public view |
+| `--unhide` | `false` | Make a hidden comment visible again |
+| `--delete` | `false` | Delete the comment from Meta; the archive keeps it, marked deleted |
+| `--dry-run` | `false` | Show the comment without calling Meta |
+| `--yes` | `false` | Confirm `--delete` |
+
+Choose exactly one of `--hide`, `--unhide`, or `--delete`. See
+[Hide or delete comments](usage/facebook-comments.md#hide-or-delete-comments).
 
 ## add-chatwoot
 

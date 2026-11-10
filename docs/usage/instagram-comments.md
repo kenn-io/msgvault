@@ -1,13 +1,13 @@
 ---
-last_edited: "2026-11-03"
+last_edited: "2026-11-10"
 title: Instagram Comments
 description: Archive a linked professional Instagram account's media comments and replies.
 ---
 
 Search returned Instagram media captions, comments, and replies beside your
 other communications, and link commenters with existing person tools. This
-unreleased integration reads comments; it does not publish replies or send
-messages.
+unreleased integration reads comments and can hide or delete comments you
+choose; it does not publish replies or send messages.
 
 ## Connect a professional account
 
@@ -60,6 +60,14 @@ numeric IDs across families do not merge people. Use the existing
 Missing authors stay unknown; later omissions preserve stronger stored evidence.
 Comment self attribution is unproven when Meta returns only a non-comparable
 commenter identity; equal digits do not establish account ownership.
+
+## Hide or delete comments
+
+Add `actions = ["hide", "delete"]` to the `[[instagram_comments]]` profile, then
+use `msgvault comment moderate`. The steps are the same as for
+[Facebook comments](facebook-comments.md#hide-or-delete-comments).
+
+## Limits
 
 Only media returned by the verified account's media edge is discovered here.
 Missing media owners remain unknown; explicit foreign owners are refused.

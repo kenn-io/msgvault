@@ -25,6 +25,9 @@ type objectMetadata struct {
 	Organic            bool   `json:"organic,omitempty"`
 	Visitor            bool   `json:"visitor,omitempty"`
 	Ad                 bool   `json:"ad,omitempty"`
+	// Hidden records a hide made through msgvault. Sync keeps it because it
+	// starts from the stored metadata and Graph reads do not return it.
+	Hidden bool `json:"hidden,omitempty"`
 }
 
 func (m objectMetadata) matches(app, page, account, root string) bool {

@@ -32,7 +32,7 @@ func safeObjectID(id string) bool {
 		!strings.ContainsAny(id, "/\\?#%") && strings.IndexFunc(id, unicode.IsControl) < 0
 }
 
-// Client is GET-only and binds credentials to one fixed Graph origin.
+// Client binds credentials to one fixed Graph origin.
 type Client struct {
 	token, origin string
 	http          *http.Client
@@ -76,11 +76,34 @@ func (e *APIError) Error() string {
 func (e *APIError) APIErrorCode() string { return "source_scope_unavailable" }
 
 func (c *Client) get(ctx context.Context, path string, q url.Values, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.origin+"/"+graphVersion+"/"+path+"?"+q.Encode(), nil)
+	return c.do(ctx, http.MethodGet, path, q, out)
+}
+
+// post sends form values in the request body rather than the URL.
+func (c *Client) post(ctx context.Context, path string, form url.Values, out any) error {
+	return c.do(ctx, http.MethodPost, path, form, out)
+}
+
+func (c *Client) delete(ctx context.Context, path string, out any) error {
+	return c.do(ctx, http.MethodDelete, path, nil, out)
+}
+
+func (c *Client) do(ctx context.Context, method, path string, values url.Values, out any) error {
+	target := c.origin + "/" + graphVersion + "/" + path
+	var body io.Reader
+	if method == http.MethodPost {
+		body = strings.NewReader(values.Encode())
+	} else if len(values) > 0 {
+		target += "?" + values.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, method, target, body)
 	if err != nil {
 		return errors.New("invalid Graph request")
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {

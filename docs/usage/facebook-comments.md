@@ -1,12 +1,13 @@
 ---
-last_edited: "2026-11-03"
+last_edited: "2026-11-10"
 title: Facebook Page Comments
 description: Archive comments on a selected Facebook Page and link commenters to existing people.
 ---
 
 Connect a selected Facebook Page to search its returned posts, comments, and
 nested replies in msgvault. This unreleased integration reads public comment
-conversations. It does not publish replies or send private messages.
+conversations and can hide or delete comments you choose. It does not publish
+replies or send private messages.
 
 ## Connect a Page
 
@@ -95,6 +96,51 @@ Commenter identities include the app, Page, and native actor ID. Matching
 display names or usernames never merge customers. Use the existing
 [participant linking and people tools](people.md) to link the observed identity
 to a person you already maintain. No separate customer database is created.
+
+## Hide or delete comments
+
+You can hide, unhide, or delete an archived comment on Meta from msgvault. This
+works for Facebook Page comments and [Instagram comments](instagram-comments.md).
+
+1. Allow the actions on the comment's profile. `"hide"` also allows unhiding.
+
+   ```toml
+   [[facebook_comments]]
+   identifier = "example-page"
+   # ...
+   actions = ["hide", "delete"]
+   ```
+
+2. Find the comment's message ID with `msgvault search` or the Web UI.
+3. Preview the change. `--dry-run` shows the comment and its author without
+   calling Meta.
+
+   ```bash
+   msgvault comment moderate 42 --hide --dry-run
+   msgvault comment moderate 42 --hide
+   msgvault comment moderate 42 --unhide
+   ```
+
+4. Deleting cannot be undone on Meta, so it also needs `--yes`:
+
+   ```bash
+   msgvault comment moderate 42 --delete --dry-run
+   msgvault comment moderate 42 --delete --yes
+   ```
+
+After Meta accepts the change, msgvault records it. A hidden comment stays
+hidden in the archive across later syncs. A deleted comment stays in the
+archive, marked as deleted from its source, like other messages removed from a
+provider. A comment already deleted from Meta cannot be changed. Posts and
+media captions cannot be changed with this command.
+
+The token needs Meta's `pages_manage_engagement` permission for Facebook
+comments, or `instagram_manage_comments` for Instagram comments. When Meta
+refuses a change, msgvault shows Meta's error code and leaves the archive as it
+was. If the comment's source is syncing, the command fails; run it again when
+the sync finishes.
+
+See [`comment moderate`](../cli-reference.md#comment-moderate) for all flags.
 
 ## Limits
 
