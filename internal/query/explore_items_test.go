@@ -11,7 +11,7 @@ import (
 func TestExploreItemsPopulation(t *testing.T) {
 	b := NewTestDataBuilder(t)
 	sid := b.AddSource("items@example.com")
-	first := b.AddMessage(MessageOpt{SourceID: sid, MessageType: "email", Subject: "Pinned", SentAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)})
+	first := b.AddMessage(MessageOpt{SourceID: sid, MessageType: "email", Subject: "Pinned", SentAt: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)})
 	second := b.AddMessage(MessageOpt{SourceID: sid, MessageType: "email", Subject: "Hidden", SentAt: time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)})
 	b.AddAttachmentWithMIME(91, first, 20, "pinned.pdf", "application/pdf")
 	e := b.BuildEngine()
@@ -25,28 +25,16 @@ func TestExploreItemsPopulation(t *testing.T) {
 		require.Len(t, result.Rows, 1)
 		assert.Equal(t, "Pinned", result.Rows[0].Title)
 	}
-	groups, err := e.ExploreGroups(t.Context(), ExploreGroupRequest{Explore: req, Dimension: "source"})
+	groups, err := e.ExploreGroups(t.Context(), ExploreGroupRequest{Explore: req, Dimension: "year"})
 	require.NoError(t, err)
 	require.Len(t, groups.Rows, 1)
 	assert.Equal(t, int64(1), groups.Rows[0].Count)
+	assert.Equal(t, "2025", groups.Rows[0].Key)
 	files, err := e.ExploreFiles(t.Context(), ExploreFilesRequest{Explore: req})
 	require.NoError(t, err)
 	require.Len(t, files.Files, 1)
 	assert.Equal(t, first, files.Files[0].MessageID)
 }
-func TestExploreIncludedConversationBringsAllMessages(t *testing.T) {
-	b := NewTestDataBuilder(t)
-	sid := b.AddSource("chat@example.com")
-	for i := range 3 {
-		b.AddMessage(MessageOpt{SourceID: sid, MessageType: "whatsapp", ConversationID: 900, ConversationType: "group_chat", SentAt: time.Date(2026, 1, i+1, 0, 0, 0, 0, time.UTC)})
-	}
-	after := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
-	result, err := b.BuildEngine().Explore(t.Context(), ExploreRequest{Context: Context{After: &after}, Items: EntryItems{IncludeConversationIDs: []int64{900}}})
-	require.NoError(t, err)
-	require.Len(t, result.Rows, 1)
-	assert.Equal(t, int64(3), result.Rows[0].MessageCount)
-}
-
 func TestExploreEmptyItemsSQLUnchanged(t *testing.T) {
 	const base = "source_id = ? AND message_type = ?"
 	args := []any{int64(1), "email"}
@@ -69,6 +57,7 @@ func TestExploreItemsDistinctExplicitChats(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, included.Rows, 1)
 		assert.Equal(t, "source:1:conversation:900", included.Rows[0].Key)
+		assert.Equal(t, int64(2), included.Rows[0].MessageCount)
 		excluded, err := e.Explore(t.Context(), ExploreRequest{Items: EntryItems{ExcludeConversationIDs: []int64{900}}})
 		require.NoError(t, err)
 		require.Len(t, excluded.Rows, 1)

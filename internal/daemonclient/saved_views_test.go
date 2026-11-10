@@ -2,6 +2,7 @@ package daemonclient
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -348,4 +349,40 @@ func TestMailboxSavedViewRequiresCapableDaemon(t *testing.T) {
 	_, err := client.CreateSavedView(t.Context(), store.SavedViewInput{Name: "Inbox", SchemaVersion: 2, CanonicalState: json.RawMessage(`{"filters":[{"field":"inbox_state","operator":"eq","values":["inbox"]}]}`)})
 	requirements.Error(err)
 	assertions.Contains(err.Error(), "3.44.0")
+}
+
+func TestSavedViewItemsPreserveExplicitEmptyOperations(t *testing.T) {
+	for _, combined := range []bool{false, true} {
+		t.Run(fmt.Sprint("canonical=", combined), func(t *testing.T) {
+			var bodies []map[string]json.RawMessage
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]json.RawMessage
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+				bodies = append(bodies, body)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(savedViewFixtureJSON))
+			}))
+			t.Cleanup(server.Close)
+			client := newSavedViewTestClient(t, server)
+			t.Cleanup(func() { assert.NoError(t, client.Close()) })
+			patch := savedview.Patch{IncludeAdd: []string{}, IncludeRemove: []string{}, ExcludeAdd: []string{}, ExcludeRemove: []string{}}
+			if combined {
+				patch.CanonicalState = &store.SavedViewStateEnvelope{}
+			}
+			_, err := client.UpdateSavedView(t.Context(), 7, 1, patch)
+			require.NoError(t, err)
+			require.Len(t, bodies, 1)
+			for _, key := range []string{"include_add", "include_remove", "exclude_add", "exclude_remove"} {
+				assert.JSONEq(t, `[]`, string(bodies[0][key]), key)
+			}
+			_, present := bodies[0]["canonical_state"]
+			assert.Equal(t, combined, present)
+			_, err = client.UpdateSavedView(t.Context(), 7, 1, savedview.Patch{Name: new("Renamed")})
+			require.NoError(t, err)
+			require.Len(t, bodies, 2)
+			for _, key := range []string{"include_add", "include_remove", "exclude_add", "exclude_remove"} {
+				assert.NotContains(t, bodies[1], key)
+			}
+		})
+	}
 }

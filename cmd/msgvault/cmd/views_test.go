@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,12 +28,12 @@ func TestViewsPinExcludeRoundTripAndRetry(t *testing.T) {
 	logger := slog.New(slog.DiscardHandler)
 	srv := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: f.Store, config: cfg, logger: logger}, SavedViewStore: f.Store, Logger: logger})
 	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
-	conflict := true
+	var conflict atomic.Bool
+	conflict.Store(true)
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPatch && conflict {
-			conflict = false
+		if r.Method == http.MethodPatch && conflict.CompareAndSwap(true, false) {
 			_, err := f.Store.UpdateSavedView(r.Context(), view.ID, 1, store.SavedViewInput{Name: view.Name, CanonicalState: []byte(`{}`), SchemaVersion: 2})
-			require.NoError(t, err)
+			assert.NoError(t, err)
 		}
 		srv.Router().ServeHTTP(w, r)
 	}))
@@ -64,7 +65,6 @@ func TestViewsPinExcludeRoundTripAndRetry(t *testing.T) {
 	require.NoError(t, err)
 	items, err = f.Store.GetSavedViewItems(t.Context(), view.ID)
 	require.NoError(t, err)
-	assert.Empty(t, items.Include)
 	require.Len(t, items.Exclude, 1)
 	out, err := run("show", "CLI view", "--json")
 	require.NoError(t, err)

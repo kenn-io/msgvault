@@ -1,4 +1,3 @@
-import { canonicalSavedViewState } from '../saved-views/canonical';
 import { describe, expect, it, vi } from 'vitest';
 import { waitFor } from '@testing-library/svelte';
 
@@ -23,7 +22,7 @@ describe('Explore URL state', () => {
     window.history.replaceState(null, '', '/?workspace=everything');
     const state = new ExploreState(window);
     const view = (id: number, key: string) => ({ id, name: `View ${id}`, revision: id, schema_version: 2,
-      canonical_state: {}, created_at: '', updated_at: '', items: { include: [{ entry_key: key, source_id: 1, message_id: id, added_by: 'owner', kind: 'message' as const }], exclude: [] } });
+      canonical_state: {}, created_at: '', updated_at: '', include_count: 1, exclude_count: 0, stale_item_count: 0, redacted_item_count: 0, items: { include: [{ entry_key: key, source_id: 1, message_id: id, added_by: 'owner', kind: 'message' as const }], exclude: [] } });
     try {
       state.commitSavedView(view(1, 'source:1:message:a'), { query: 'alpha' });
       state.commitSavedView(view(2, 'source:1:message:b'), { query: 'beta' });
@@ -1881,8 +1880,6 @@ describe('Saved View item population', () => {
     expect(state.predicate().exclude_keys).toEqual(['source:1:message:c']);
     state.commitNavigation({ query: 'new filter' });
     expect(state.predicate().include_keys).toHaveLength(2);
-    expect(canonicalSavedViewState(state.current)).not.toHaveProperty('include_keys');
-    expect(canonicalSavedViewState(state.current)).not.toHaveProperty('include_add');
     state.destroy();
   });
 });

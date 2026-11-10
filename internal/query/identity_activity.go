@@ -12,7 +12,9 @@ import (
 
 func identityRequestIsUnfiltered(request ExploreRequest) bool {
 	context := request.Context
-	return len(context.SourceIDs) == 0 &&
+	return len(request.Items.IncludeMessageIDs) == 0 && len(request.Items.ExcludeMessageIDs) == 0 &&
+		len(request.Items.IncludeConversationIDs) == 0 && len(request.Items.ExcludeConversationIDs) == 0 &&
+		len(context.SourceIDs) == 0 &&
 		len(context.AccountScopes) == 0 &&
 		context.Identity == nil &&
 		len(context.ParticipantIDs) == 0 &&

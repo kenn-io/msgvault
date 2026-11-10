@@ -43,7 +43,7 @@ test('opens live Saved View items and saves only canonical state', async ({ page
   patch = undefined;
   const request = page.waitForRequest(req => req.method() === 'PATCH' && req.url().endsWith('/saved-views/7'));
   await page.getByRole('button', { name: 'Save changes', exact: true }).click();
-  expect((await request).headers()['if-match']).toContain('2');
+  expect((await request).headers()['if-match']).toBe('"saved-view-7-r2"');
   await expect.poll(() => patch?.canonical_state).toBeDefined();
   await expect(page.getByText('Review release notes', { exact: true })).toBeVisible();
   await expect(page.getByText('Confirm documentation update', { exact: true })).toBeVisible();

@@ -365,7 +365,7 @@ func TestSavedViewReadToolsPreserveDaemonMetadata(t *testing.T) {
 func TestUpdateSavedViewItemArrays(t *testing.T) {
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var patch map[string]any
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&patch))
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&patch))
 		assert.Equal(t, []any{"source:1:message:one"}, patch["include_add"])
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":7,"name":"Items","canonical_state":{},"schema_version":2,"revision":2,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","items":{"include":[{"entry_key":"source:1:message:one","kind":"message","message_id":1,"source_id":1,"added_by":"owner"}],"exclude":[]},"stale_item_count":0,"redacted_item_count":0,"include_count":1,"exclude_count":0,"applied":{"include_added":1,"include_removed":0,"exclude_added":0,"exclude_removed":0}}`))

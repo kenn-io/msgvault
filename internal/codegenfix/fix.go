@@ -57,6 +57,9 @@ func RewriteRunQueryClient(source []byte) ([]byte, error) {
 // Present empty strings and raw JSON values must survive JSON v2 encoding of generated responses.
 var optionalValueJSONTag = regexp.MustCompile("((?:\\*string|\\*?jsontext\\.Value)\\s+`json:\"[^\"]+),omitempty(\")")
 
+// Item patches distinguish omitted arrays from explicitly empty operations.
+var savedViewItemJSONTag = regexp.MustCompile("(\\[\\]string\\s+`json:\"(?:include_add|include_remove|exclude_add|exclude_remove)),omitempty(\")")
+
 var requiredPointerValidators = [][3]string{
 	{"CliAccountResponse", "Alias", "c"},
 	{"FileMetadataResponse", "Filename", "f"},
@@ -211,5 +214,6 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		return nil, errors.New("generated AttributeValue.JSON shape changed")
 	}
 	result = optionalValueJSONTag.ReplaceAll(result, []byte("${1},omitzero${2}"))
+	result = savedViewItemJSONTag.ReplaceAll(result, []byte("${1},omitzero${2}"))
 	return result, nil
 }

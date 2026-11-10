@@ -238,7 +238,7 @@ func (s *Store) ResolveEntryKeys(ctx context.Context, keys []string) (map[string
 		}
 		rows, err := s.db.QueryContext(ctx, `WITH wanted(ord,sid,cid,mid) AS (VALUES `+strings.Join(values, ",")+`) SELECT w.ord,m.id,m.source_id,COALESCE(m.message_type,''),COALESCE(c.conversation_type,'')
  FROM wanted w JOIN messages m ON m.source_id=w.sid AND w.cid=0 AND (m.source_message_id=w.mid OR ((m.source_message_id IS NULL OR m.source_message_id='') AND CAST(m.id AS TEXT)=w.mid)) LEFT JOIN conversations c ON c.id=m.conversation_id
- UNION ALL SELECT w.ord,0,c.source_id,'','' FROM wanted w JOIN conversations c ON c.id=w.cid AND c.source_id=w.sid WHERE w.cid>0`, args...)
+ UNION ALL SELECT w.ord,0,c.source_id,'','' FROM wanted w JOIN conversations c ON c.id=w.cid AND c.source_id=w.sid WHERE w.cid>0 AND EXISTS (SELECT 1 FROM messages cm WHERE cm.conversation_id=c.id AND cm.source_id=c.source_id AND (`+identityindex.IsChatSQL("COALESCE(cm.message_type,'')", "COALESCE(c.conversation_type,'')")+`))`, args...)
 		if err != nil {
 			return nil, nil, err
 		}
