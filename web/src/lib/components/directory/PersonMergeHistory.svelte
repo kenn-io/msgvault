@@ -195,8 +195,8 @@
         {#if !labels}<p role="status"><Spinner size={12} label="Loading merge" /> Loading merge…</p>
         {:else}
         <MergeProfileCards label="Merged profiles"
-          from={{ title: absorbedTitle, addresses: absorbedAddresses }}
-          to={{ title: labels?.names.get(detail.merge.survivor_person_id) ?? 'This profile', addresses: survivorAddresses }} />
+          from={{ title: absorbedTitle, addresses: mergeAddresses(detail, 'absorbed', controller.scopes, absorbedTitle) }}
+          to={{ title: labels?.names.get(detail.merge.survivor_person_id) ?? 'This profile', addresses: mergeAddresses(detail, 'survivor', controller.scopes, labels?.names.get(detail.merge.survivor_person_id) ?? 'This profile') }} />
         {/if}
         <div class="merge-line">
           <p><span title={merged.title}>{merged.text}</span>{#if labels}{#each cardSplits as split (split.id)}{' · '}<span title={split.title}>split back{split.by} to {#if split.name !== undefined}<button class="link" type="button" onclick={() => onOpenPerson(split.personID)}>{split.name || 'another profile'}</button>{:else}another profile{/if}{#if split.addresses}{` (${split.addresses})`}{/if}{split.rest}</span>{/each}{/if}{#if splitUnavailable}{` · ${splitUnavailable}`}{/if}</p>

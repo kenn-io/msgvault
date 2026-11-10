@@ -47,8 +47,8 @@ function containsWords(text: string, words: string): boolean {
 }
 
 /** The addresses one side's participants hold, in participant order, with the split that took each. */
-export function mergeAddresses(detail: MergeSides, side: 'absorbed' | 'survivor', workspaces: Map<string, string>): MergeAddress[] {
-  const current = participantAddressMap(detail.labels, workspaces);
+export function mergeAddresses(detail: MergeSides, side: 'absorbed' | 'survivor', workspaces: Map<string, string>, name = ''): MergeAddress[] {
+  const current = participantAddressMap(detail.labels, workspaces, name);
   return withSavedAddresses(detail, side, (detail.participants ?? []).filter(participant => participant.origin_side === side).flatMap(participant =>
     (current.get(participant.participant_id) ?? []).map((address, index) => ({
       ...address, id: `${participant.participant_id}-${index}`, participantID: participant.participant_id,
@@ -89,14 +89,14 @@ export function mergeSummaryRow(item: { merge: PersonMergeDetail['merge']; label
   };
 }
 
-function participantAddressMap(labels: PersonMergeLabels | undefined, workspaces: Map<string, string>): Map<number, AddressLabel[]> {
-  return new Map((labels?.participant_ids ?? []).map(id => [id, (labels?.addresses ?? []).filter(address => address.participant_id === id).map(address => participantAddress(address, workspaces))]));
+function participantAddressMap(labels: PersonMergeLabels | undefined, workspaces: Map<string, string>, name = ''): Map<number, AddressLabel[]> {
+  return new Map((labels?.participant_ids ?? []).map(id => [id, (labels?.addresses ?? []).filter(address => address.participant_id === id).map(address => participantAddress(address, workspaces, name))]));
 }
 
-function participantAddress(address: ParticipantAddress, workspaces: Map<string, string>): AddressLabel {
+function participantAddress(address: ParticipantAddress, workspaces: Map<string, string>, name = ''): AddressLabel {
   const chip = identityChipText({ ...address, is_primary: false, provenance: '', scope_kind: '', scope_value: '' }, undefined, []);
   const detail = ['email', 'phone'].includes(address.type) ? '' : [...new Set([
-    chip.subtitle,
+    ...withoutName(name, [chip.subtitle]),
     ['handle', 'matrix', 'apple_id', 'imessage', 'whatsapp', 'sms', 'synctech_sms', 'google_voice'].includes(address.type) ? chip.detail : address.display_value,
     scopeText(address, workspaces),
   ].filter(Boolean))].join(' · ');

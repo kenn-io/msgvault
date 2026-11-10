@@ -223,6 +223,21 @@ describe('PersonMergeHistory', () => {
     expect(await screen.findByText(`${count} addresses moved in`, { exact: false })).toBeDefined();
   });
 
+  it('omits the card name from address details while retaining other names', async () => {
+    const value = detail();
+    value.labels.profiles = [{ id: 7, display_name: 'Survivor', participant_ids: [702] }, { id: 9, display_name: 'Garden member', participant_ids: [701, 703] }];
+    value.labels.addresses = [
+      addressFixture(701, 'beeper', 'opaque-one', { display_value: '@garden-member', participant_display_name: 'Garden member', service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'garden' }),
+      addressFixture(703, 'beeper', 'opaque-two', { display_value: '@other', participant_display_name: 'Other member', service_slug: 'whatsapp', service_label: 'WhatsApp', scope_kind: 'account', scope_value: 'garden' }),
+    ];
+    renderHistory(value);
+    await fireEvent.click(await screen.findByRole('button', { name: /^Open Garden member merged into Survivor/ }));
+    const card = await screen.findByRole('region', { name: 'Garden member' });
+    const rows = within(card).getAllByRole('listitem');
+    expect(rows[0].textContent).toBe('WhatsApp@garden-member · account 1');
+    expect(rows[1].textContent).toBe('WhatsAppOther member · @other · account 1');
+  });
+
   it('keeps each merge’s recorded survivor even after that profile was merged away', async () => {
     const merges = [detail(), detail()];
     merges[1].merge.id = 42;
