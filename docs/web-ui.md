@@ -397,7 +397,7 @@ Select a run for its timestamps, counters, error, related status, and advertised
 
 Settings › People › Fields lists system and custom field definitions, plus Work, with descriptions, kind, value type, sensitivity, and active state. **Search fields** filters names and descriptions. Custom fields offer **Edit**.
 
-Settings Overview shows current feature status. **Details** opens live counts for configured Document extraction, Document search, and Visual search, including features with no past run. Document extraction and document search are configured on the daemon host; see [Document indexing setup](/docs/usage/document-indexing/#configure-the-policy). Document extraction still requires the explicit CLI upload workflow in [Document Indexing](/docs/usage/document-indexing/).
+Settings Overview shows current feature status. **Details** opens live counts for configured Visual search, including features with no past run.
 
 Old Operations links with a run, status, or history filter open Past runs over Settings Overview; links without them open Settings Overview. Old Saved views links open Messages.
 
