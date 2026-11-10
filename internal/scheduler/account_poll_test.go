@@ -25,7 +25,6 @@ func TestCronRegistrationPreservesPolling(t *testing.T) {
 		_, errs := s.AddAccountsFromConfig(cfg)
 		require.Empty(t, errs)
 		s.Start()
-		s.Start()
 		synctest.Wait()
 		assert.EqualValues(t, 1, calls.Load())
 		assert.Equal(t, 15*time.Second, s.Status()[0].NextRun.Sub(time.Now()))

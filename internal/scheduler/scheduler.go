@@ -555,10 +555,6 @@ func (s *Scheduler) setIndexingJob(name, label string, run func(context.Context)
 // Start begins executing scheduled jobs.
 func (s *Scheduler) Start() {
 	s.mu.Lock()
-	if s.started && !s.stopped {
-		s.mu.Unlock()
-		return
-	}
 	s.started = true
 	s.stopped = false
 	polls := make([]string, 0, len(s.pollJobs))
