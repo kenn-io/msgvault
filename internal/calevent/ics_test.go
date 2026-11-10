@@ -159,6 +159,22 @@ func TestICSStatus(t *testing.T) {
 		requirements.Len(components, 1)
 		assertions.Equal("cancelled", components[0].Event.Status)
 	})
+	t.Run("email method", func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
+		cancel := strings.Replace(icsExample, "METHOD:REQUEST", "METHOD:CANCEL", 1)
+		_, err := ParseEmailICS([]byte(cancel), "REPLY", "")
+		requirements.ErrorContains(err, "conflicts")
+		reply := strings.Replace(icsExample, "METHOD:REQUEST", "METHOD:REPLY", 1)
+		_, err = ParseEmailICS([]byte(reply), "REQUEST", "")
+		requirements.ErrorContains(err, "conflicts")
+		components, err := ParseEmailICS([]byte(icsExample), " request", "")
+		requirements.NoError(err)
+		requirements.Len(components, 1)
+		components, err = ParseICS([]byte(icsExample), "CANCEL", "")
+		requirements.NoError(err)
+		requirements.Len(components, 1)
+		assertions.Equal("confirmed", components[0].Event.Status)
+	})
 }
 
 func TestICSRetainsEachEventWithItsTimeZones(t *testing.T) {
