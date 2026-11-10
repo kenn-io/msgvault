@@ -17,7 +17,7 @@ func deriveMeetingLinkKey(content meetingcontent.Content) meetingLinkKey {
 	evidence := content.LinkEvidence
 	key := meetingLinkKey{ScheduledAt: evidence.ScheduledAt}
 	switch {
-	case evidence.GoogleEventID != "" && evidence.CalendarID != "":
+	case evidence.GoogleEventID != "":
 		key.Kind, key.Value, key.CalendarID = "google_event_id", evidence.GoogleEventID, evidence.CalendarID
 	case evidence.ICalUID != "":
 		key.Kind, key.Value = "ical_uid", evidence.ICalUID

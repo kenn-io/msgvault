@@ -64,25 +64,20 @@ func (s *Store) writeMeetingLinkDecision(ctx context.Context, memberID int64, oc
 		}
 		target, err := resolveMeetingOccurrence(ctx, r, occurrence, &budget)
 		if decision == "split" && (errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence)) && slices.ContainsFunc(decisions, func(d meetingLinkDecision) bool { return d.Ref == occurrence }) {
-			target.Ref = occurrence
-			target.Identity, err = storedMeetingIdentity(ctx, r, occurrence, &budget)
+			target, _, err = savedOccurrence(ctx, r, occurrence, &budget)
 		}
 		if err != nil {
 			return fmt.Errorf("resolve meeting decision target: %w", err)
 		}
 		for _, d := range decisions {
-			previous, err := resolveMeetingOccurrence(ctx, r, d.Ref, &budget)
-			identity := previous.Identity
-			if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
-				identity, err = storedMeetingIdentity(ctx, r, d.Ref, &budget)
-			}
+			previous, _, err := savedOccurrence(ctx, r, d.Ref, &budget)
 			if errors.Is(err, sql.ErrNoRows) {
 				continue
 			}
 			if err != nil {
 				return err
 			}
-			if identity == target.Identity {
+			if previous.Identity == target.Identity {
 				if _, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE member_message_id = ? AND target_message_id = ? AND occurrence_key = ?`, memberID, d.Ref.MessageID, d.Ref.Key); err != nil {
 					return err
 				}
@@ -98,21 +93,21 @@ func (s *Store) writeMeetingLinkDecision(ctx context.Context, memberID int64, oc
 	})
 }
 
-func storedMeetingIdentity(ctx context.Context, r reboundReader, ref OccurrenceRef, budget *int) (meetingIdentity, error) {
-	rows, err := meetingEventRowsByID(ctx, r, ref.MessageID, budget)
-	if err != nil {
-		return meetingIdentity{}, err
-	}
-	if len(rows) != 1 {
-		return meetingIdentity{}, sql.ErrNoRows
-	}
-	return occurrenceFromRow(rows[0], storedOccurrenceKey(rows[0], ref.Key)).Identity, nil
-}
-
 // A bare reference saved before a standalone event became a series names its first occurrence.
 func storedOccurrenceKey(row CalendarEventRow, key string) string {
-	if key != "" || row.Event.Kind != meetingSeriesKind || row.Event.Start == nil {
-		return key
+	first := firstOccurrenceKey(row)
+	if row.Event.Kind == meetingSeriesKind && key == "" {
+		return first
+	}
+	if row.Event.Kind == "single" && key != "" && key == first {
+		return ""
+	}
+	return key
+}
+
+func firstOccurrenceKey(row CalendarEventRow) string {
+	if row.Event.Start == nil {
+		return ""
 	}
 	return calrecur.Identity{Instant: *row.Event.Start, Date: row.Event.StartDate, AllDay: row.Event.AllDay}.Key()
 }

@@ -263,7 +263,7 @@ func (s *Store) undecidedMeetingSuggestions(ctx context.Context, r reboundReader
 		}
 		refs := map[string]bool{}
 		matched := map[meetingIdentity]bool{}
-		occurrences, err := s.meetingMemberOccurrences(ctx, r, suggestion.MemberMessageID, budget)
+		occurrences, _, _, err := s.meetingMemberOccurrences(ctx, r, suggestion.MemberMessageID, budget)
 		if err != nil {
 			return nil, err
 		}
@@ -272,19 +272,17 @@ func (s *Store) undecidedMeetingSuggestions(ctx context.Context, r reboundReader
 		}
 		for _, d := range decisions {
 			refs[formatMeetingOccurrence(d.Ref)] = true
-			o, err := resolveMeetingOccurrence(ctx, r, d.Ref, budget)
-			if err == nil {
-				refs[formatMeetingOccurrence(o.Ref)] = true
-				matched[o.Identity] = true
-			} else if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
-				identity, err := storedMeetingIdentity(ctx, r, d.Ref, budget)
-				if err != nil && !errors.Is(err, sql.ErrNoRows) {
-					return nil, err
-				}
-				matched[identity] = true
-			} else {
+			o, current, err := savedOccurrence(ctx, r, d.Ref, budget)
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			if err != nil {
 				return nil, err
 			}
+			if current {
+				refs[formatMeetingOccurrence(o.Ref)] = true
+			}
+			matched[o.Identity] = true
 		}
 		decided[suggestion.MemberMessageID] = refs
 		identities[suggestion.MemberMessageID] = matched

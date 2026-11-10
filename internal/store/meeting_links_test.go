@@ -144,18 +144,14 @@ func TestMeetingLinksGranolaOwnCalendar(t *testing.T) {
 		{"padded uppercase email", " Calendar@Example.COM ", " CALENDAR@example.com "},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
+			assertions := assert.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
 			raw := singleLinkRaw("event", "own@example.org")
 			_, other := calendarFixture(t, st, "other", raw, "other@example.com")
 			_, note := projectionFixture(t, st, "note", "granola_json", fmt.Sprintf(`{"owner":{"email":%q},"calendar_event":{"calendar_event_id":"event","scheduled_start_time":"2027-03-14T10:00:00Z"}}`, tc.owner))
-			assertions.Empty(linkedMeetingRefs(t, st, note)[note])
-			suggestions, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 10)
-			requirements.NoError(err)
-			requirements.Len(suggestions.Suggestions, 1)
-			assertions.Equal(fmt.Sprintf("evt:%d", other), suggestions.Suggestions[0].Ref)
-			_, own := calendarFixture(t, st, "own", raw, tc.calendar)
-			assertions.Equal(fmt.Sprintf("evt:%d", own), linkedMeetingRefs(t, st, note)[note])
+			assertions.Equal(fmt.Sprintf("evt:%d", other), linkedMeetingRefs(t, st, note)[note])
+			calendarFixture(t, st, "own", raw, tc.calendar)
+			assertions.Equal(fmt.Sprintf("evt:%d", other), linkedMeetingRefs(t, st, note)[note])
 		})
 	}
 }

@@ -54,6 +54,10 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 	r := s.meetingReader().withMeetingCache()
 	budget := calrecur.RequestReadBudget
 	if ref.Kind == "msg" {
+		var found int64
+		if err := r.QueryRowContext(ctx, `SELECT id FROM messages WHERE id = ? AND message_type = 'meeting_transcript' AND deleted_at IS NULL`, ref.MessageID).Scan(&found); err != nil {
+			return record, err
+		}
 		return s.meetingNoteRecord(ctx, r, ref.MessageID, &budget)
 	}
 	target, err := resolveMeetingOccurrence(ctx, r, ref.OccurrenceRef, &budget)
@@ -67,12 +71,8 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 
 func (s *Store) meetingNoteRecord(ctx context.Context, r reboundReader, memberID int64, budget *int) (MeetingRecord, error) {
 	record := MeetingRecord{Links: []MeetingLink{}, MessageIDs: []int64{}}
-	var found int64
-	if err := r.QueryRowContext(ctx, `SELECT id FROM messages WHERE id = ? AND message_type = 'meeting_transcript' AND deleted_at IS NULL`, memberID).Scan(&found); err != nil {
-		return record, err
-	}
 	record.MessageIDs = append(record.MessageIDs, memberID)
-	occurrences, err := s.meetingMemberOccurrences(ctx, r, memberID, budget)
+	occurrences, _, _, err := s.meetingMemberOccurrences(ctx, r, memberID, budget)
 	if err != nil {
 		return record, err
 	}
@@ -106,6 +106,9 @@ func (s *Store) meetingOccurrenceMembers(ctx context.Context, r reboundReader, t
 	if target.Ref.Key != "" {
 		values = append(values, target.Row.Event.ProviderEventID+"_"+target.Ref.Key)
 	}
+	if target.Row.Event.Kind == "single" && firstOccurrenceKey(target.Row) != "" {
+		values = append(values, target.Row.Event.ProviderEventID+"_"+firstOccurrenceKey(target.Row))
+	}
 	if target.Identity.ICalUID != "" {
 		values = append(values, target.Identity.ICalUID)
 	}
@@ -113,6 +116,10 @@ func (s *Store) meetingOccurrenceMembers(ctx context.Context, r reboundReader, t
 		values = append(values, target.Row.ICalUID)
 	}
 	targets := []any{target.Ref.MessageID, target.Row.MessageID}
+	for _, row := range target.Exceptions {
+		values = append(values, row.Event.ProviderEventID)
+		targets = append(targets, row.MessageID)
+	}
 	starts, resolvedRows, err := meetingCopyStarts(ctx, r, target, copies, budget)
 	if err != nil {
 		return membersOut, err
@@ -126,10 +133,10 @@ func (s *Store) meetingOccurrenceMembers(ctx context.Context, r reboundReader, t
 		}
 		values = append(values, value, row.ICalUID)
 	}
-	args := slices.Concat(values, []any{target.Row.Event.Kind}, starts, []any{target.Ref.Key, target.Identity.OccurrenceKey}, targets)
+	args := slices.Concat(values, []any{target.Row.Event.Kind}, starts, targets)
 	rows, err := r.QueryContext(ctx, `SELECT m.id FROM (
  SELECT k.message_id FROM meeting_link_key k WHERE k.kind != '' AND k.value IN (`+placeholders(len(values))+`) AND (`+s.meetingKeyStartPredicate(len(starts))+`)
- UNION SELECT d.member_message_id FROM meeting_link_decisions d WHERE d.occurrence_key IN ('', ?, ?) AND EXISTS (
+ UNION SELECT d.member_message_id FROM meeting_link_decisions d WHERE EXISTS (
  SELECT 1 FROM calendar_events e JOIN messages m ON m.id = e.message_id JOIN calendar_events f ON f.message_id = d.target_message_id JOIN messages fm ON fm.id = f.message_id
  WHERE e.message_id IN (`+placeholders(len(targets))+`) AND fm.source_id = m.source_id AND COALESCE(NULLIF(f.series_provider_id, ''), f.provider_event_id) = COALESCE(NULLIF(e.series_provider_id, ''), e.provider_event_id))
  ) candidates JOIN messages m ON m.id = candidates.message_id
@@ -155,7 +162,7 @@ func (s *Store) meetingOccurrenceMembers(ctx context.Context, r reboundReader, t
 		return membersOut, calendarRecurrenceBudgetError()
 	}
 	for _, id := range members {
-		occurrences, err := s.meetingMemberOccurrences(ctx, r, id, budget)
+		occurrences, _, _, err := s.meetingMemberOccurrences(ctx, r, id, budget)
 		if err != nil {
 			return membersOut, err
 		}
