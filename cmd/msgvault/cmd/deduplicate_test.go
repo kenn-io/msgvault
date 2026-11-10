@@ -821,6 +821,21 @@ func TestDeduplicateAccountResolutionExcludesCalendarSources(t *testing.T) {
 	assert.NotContains(scope.SourceIDs(), cal.ID, "dedup account scope must not include Calendar sources")
 }
 
+func TestDeduplicateAccountResolutionExcludesICSSources(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f, accountID, _ := setupScopeFixture(t)
+
+	ics, err := f.Store.GetOrCreateSource("ics", accountID)
+	require.NoError(err, "GetOrCreateSource ics")
+
+	scope, err := ResolveEmailAccountFlag(t.Context(), f.Store, accountID)
+	require.NoError(err)
+
+	assert.ElementsMatch([]int64{f.Source.ID}, scope.SourceIDs())
+	assert.NotContains(scope.SourceIDs(), ics.ID, "dedup account scope must not include ICS sources")
+}
+
 // TestDeduplicateCollectionResolution_MultiSource confirms SourceIDs expands
 // to all members when a collection has more than one source.
 func TestDeduplicateCollectionResolution_MultiSource(t *testing.T) {

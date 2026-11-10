@@ -11,6 +11,7 @@ const (
 	sourceTypeTeams          = "teams"
 	sourceTypeMSMail         = msmail.SourceType
 	sourceTypeCalendar       = "gcal"
+	sourceTypeICS            = "ics"
 	sourceTypeBeeper         = "beeper"
 	sourceTypeMatrix         = "matrix"
 	sourceTypeSlack          = "slack"
