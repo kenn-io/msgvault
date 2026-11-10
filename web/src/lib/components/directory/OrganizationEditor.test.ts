@@ -168,6 +168,8 @@ describe('OrganizationEditor', () => {
     render(OrganizationEditor, { controller });
 
     const name = screen.getByRole('textbox', { name: 'Organization name' }) as HTMLInputElement;
+    expect(screen.getByText('Name (required)')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Add organization' })).toHaveProperty('disabled', true);
     // A new organization gets aliases and categories once it exists.
     expect(screen.queryByRole('button', { name: 'Add alias…' })).toBeNull();
     await fireEvent.input(name, { target: { value: 'Unknown Result Org' } });

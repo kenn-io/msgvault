@@ -387,7 +387,7 @@
   <div class="editor" aria-busy={loading || submitting}>
     {#if loading}<p role="status">Loading organization…</p>{:else}
       <form onsubmit={(event) => { event.preventDefault(); void saveOrganization(); }}>
-        <label>Name<TextInput ariaLabel="Organization name" bind:value={name} required block size="lg" disabled={submitting} /></label>
+        <label>Name (required)<TextInput ariaLabel="Organization name" bind:value={name} required block size="lg" disabled={submitting} /></label>
         <div class="form-pair">
           <label>Kind<SelectDropdown title="Organization kind" value={kind} options={kindOptions} onchange={(value) => { kind = value; }} disabled={submitting} /></label>
           <label>Domain<TextInput ariaLabel="Organization domain" bind:value={primaryDomain} block size="lg" disabled={submitting} /></label>

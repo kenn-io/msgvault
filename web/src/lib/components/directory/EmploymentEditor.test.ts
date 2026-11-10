@@ -24,6 +24,8 @@ it('passes organization search loading and failures to the employer picker', asy
   controller.organizations = [organization()];
   const view = render(EmploymentEditor, { controller, personID: 7 });
   try {
+    expect(screen.getByText('Organization (required)')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Add job' })).toHaveProperty('disabled', true);
     await fireEvent.keyDown(screen.getByRole('button', { name: /^Organization:/ }), { key: 'ArrowDown' });
     expect(await screen.findByText('Loading…')).toBeDefined();
     finish(Response.json({ organizations: [], total: 0, limit: 50, offset: 0 }));
@@ -165,7 +167,10 @@ it('allows closing while the job loads', async () => {
     let done = false;
     await openInlineEmployer(controller, 'New Example', () => { done = true; });
     expect(screen.getAllByRole('dialog')).toHaveLength(1);
-    expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('value', 'New Example');
+    expect(screen.getByRole('textbox', { name: 'Name (required)' })).toHaveProperty('value', 'New Example');
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Name (required)' }), { target: { value: '' } });
+    expect(screen.getByRole('button', { name: 'Add job' })).toHaveProperty('disabled', true);
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Name (required)' }), { target: { value: 'New Example' } });
     expect(screen.getByRole('button', { name: 'Organization: New organization' })).toHaveProperty('disabled', true);
     await chooseSelectOption(screen.getByRole('combobox', { name: 'Organization kind: Company' }), 'School');
     await fireEvent.input(screen.getByRole('textbox', { name: 'Domain' }), { target: { value: 'example.org' } });
@@ -227,12 +232,12 @@ it.each(['none', 'same name'] as const)('reconciles an inline organization creat
     await waitFor(() => expect(controller.createBlocked.organizations).toBe(false));
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
     if (match === 'none') {
-      await waitFor(() => expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('disabled', false));
-      expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('value', 'Example company');
+      await waitFor(() => expect(screen.getByRole('textbox', { name: 'Name (required)' })).toHaveProperty('disabled', false));
+      expect(screen.getByRole('textbox', { name: 'Name (required)' })).toHaveProperty('value', 'Example company');
       expect(screen.getByRole('textbox', { name: 'Domain' })).toHaveProperty('value', 'example.org');
       expect(screen.getByRole('button', { name: 'Add job' })).toHaveProperty('disabled', false);
     } else {
-      await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Name' })).toBeNull());
+      await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Name (required)' })).toBeNull());
       expect(screen.getByRole('button', { name: 'Add job' })).toHaveProperty('disabled', true);
       await openTypeahead('Organization');
       await fireEvent.mouseDown(await screen.findByRole('option', { name: /Example company/ }));
