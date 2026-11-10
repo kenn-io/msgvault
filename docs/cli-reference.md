@@ -3128,7 +3128,7 @@ msgvault diagnose-acquisition --source-id 1
 msgvault diagnose-acquisition --source-id 1 --json
 ```
 
-The command reads the local database without starting the daemon or contacting Gmail. It requires an archive without a configured remote URL. It lists failures eligible for sync retry, based on saved sync records. An empty list does not prove the archive is complete.
+The command reads the local database without starting the daemon or contacting Gmail. Use `--local` when a remote URL is configured. It lists failures eligible for sync retry, based on saved sync records. An empty list does not prove the archive is complete.
 
 ---
 

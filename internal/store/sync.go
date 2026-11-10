@@ -1043,7 +1043,8 @@ func (s *Store) ListSyncRunItemsContext(ctx context.Context, syncRunID int64, st
 		// Recognize the synthetic marker text without hiding genuine
 		// failures, even if a later attempt repaired the files.
 		query += ` AND NOT (
-			` + syntheticFileObligationSQL("sync_run_items") + `
+			COALESCE(error_kind, '') IN ('attachment_error', 'remote_image_error', 'attachment_remote_image_error')
+			AND COALESCE(error_message, '') = ?
 			AND EXISTS (
 				SELECT 1 FROM sync_run_items settled
 				JOIN sync_runs settled_run ON settled_run.id = settled.sync_run_id
@@ -1055,6 +1056,7 @@ func (s *Store) ListSyncRunItemsContext(ctx context.Context, syncRunID int64, st
 				  )
 			)
 		)`
+		args = append(args, SyncRunItemFilesPendingMessage)
 	}
 	query += ` ORDER BY created_at DESC, id DESC LIMIT ?`
 	args = append(args, limit)
@@ -1072,13 +1074,27 @@ func (s *Store) ListSyncRunItemsContext(ctx context.Context, syncRunID int64, st
 // each source message since the latest completed incremental run, keeping only
 // errors. That run supersedes older debt by recording anything still failing.
 func (s *Store) ListUnresolvedSyncItemErrors(ctx context.Context, sourceID int64) ([]SyncRunItem, error) {
+	var lowerBound int64
+	last, err := s.getLastSuccessfulSyncContext(ctx, sourceID, "incremental", true)
+	if err != nil && !errors.Is(err, ErrSyncRunNotFound) {
+		return nil, fmt.Errorf("find latest completed incremental: %w", err)
+	}
+	if last != nil {
+		lowerBound = last.ID
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, sync_run_id, source_message_id, phase, status,
 		       error_kind, error_message, created_at
 		FROM sync_run_items
-		WHERE id IN (`+latestAcquisitionOutcomeIDsSQL(false)+`) AND status = ?
+		WHERE id IN (
+			SELECT MAX(i.id)
+			FROM sync_run_items i
+			JOIN sync_runs r ON r.id = i.sync_run_id
+			WHERE r.source_id = ? AND r.id >= ? AND i.phase IN ('fetch', 'ingest')
+			GROUP BY i.source_message_id
+		) AND status = ?
 		ORDER BY id
-	`, sourceID, sourceID, "incremental", SyncRunItemStatusError)
+	`, sourceID, lowerBound, SyncRunItemStatusError)
 	if err != nil {
 		return nil, fmt.Errorf("list unresolved sync item errors: %w", err)
 	}
@@ -1738,18 +1754,19 @@ func (s *Store) GetLastSuccessfulSyncByType(ctx context.Context, sourceID int64,
 // idx_sync_runs_completed matches its filter and order, so the lookup stops at
 // the first row instead of sorting every completed run.
 func lastSuccessfulSyncQuery(filterByType bool) string {
-	return `SELECT id, source_id, started_at, completed_at, status,
-		messages_processed, messages_added, messages_updated, errors_count,
-		error_message, cursor_before, cursor_after, request_fingerprint ` + lastSuccessfulSyncFilter(filterByType)
-}
-
-func lastSuccessfulSyncFilter(filterByType bool) string {
 	whereType := ""
 	if filterByType {
 		whereType = " AND sync_type = ?"
 	}
-	return `FROM sync_runs WHERE source_id = ? AND status = 'completed'` + whereType + `
-		ORDER BY completed_at DESC, id DESC LIMIT 1`
+	return `
+		SELECT id, source_id, started_at, completed_at, status,
+		       messages_processed, messages_added, messages_updated, errors_count,
+		       error_message, cursor_before, cursor_after, request_fingerprint
+		FROM sync_runs
+		WHERE source_id = ? AND status = 'completed'` + whereType + `
+		ORDER BY completed_at DESC, id DESC
+		LIMIT 1
+	`
 }
 
 func (s *Store) getLastSuccessfulSyncContext(ctx context.Context, sourceID int64, syncType string, filterByType bool) (*SyncRun, error) {

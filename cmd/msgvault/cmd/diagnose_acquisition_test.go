@@ -21,7 +21,7 @@ func TestDiagnoseAcquisitionCommand(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		pending bool
-	}{{"json", true}, {"empty", false}} {
+	}{{"json", true}, {"empty", false}, {"legacy", true}, {"local", true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			cfg := config.NewDefaultConfig()
@@ -43,6 +43,10 @@ func TestDiagnoseAcquisitionCommand(t *testing.T) {
 			}
 			source, err := st.GetOrCreateSource("gmail", "source@example.com")
 			require.NoError(t, err)
+			if tc.name == "legacy" {
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE sources SET source_type = ? WHERE id = ?"), "", source.ID)
+				require.NoError(t, err)
+			}
 			if tc.pending {
 				run, err := st.StartSync(source.ID, "full")
 				require.NoError(t, err)
@@ -55,13 +59,20 @@ func TestDiagnoseAcquisitionCommand(t *testing.T) {
 				require.NoError(t, st.FailSync(run, "interrupted"))
 			}
 			require.NoError(t, st.Close())
-			require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(fmt.Sprintf("[data]\ndata_dir = %q\ndatabase_url = %q\n", dir, cfg.Data.DatabaseURL)), 0o600))
+			configText := fmt.Sprintf("[data]\ndata_dir = %q\ndatabase_url = %q\n", dir, cfg.Data.DatabaseURL)
+			if tc.name == "local" {
+				configText += "[remote]\nurl = 'https://example.com'\n"
+			}
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(configText), 0o600))
 			root := newRootCommand()
 			root.AddCommand(newDiagnoseAcquisitionCmd())
 			var output bytes.Buffer
 			root.SetOut(&output)
 			root.SetErr(&output)
 			args := []string{"--home", dir, "diagnose-acquisition", "--source-id", strconv.FormatInt(source.ID, 10)}
+			if tc.name == "local" {
+				args = append(args, "--local")
+			}
 			if tc.pending {
 				args = append(args, "--json")
 			}
@@ -82,7 +93,7 @@ func TestDiagnoseAcquisitionCommand(t *testing.T) {
 func TestDiagnoseAcquisitionErrors(t *testing.T) {
 	for _, tc := range []struct{ name, config, want string }{
 		{"invalid", "[data\n", "load config"},
-		{"remote", "[remote]\nurl = 'https://example.com'\n", "remote.url is configured"},
+		{"remote", "[remote]\nurl = 'https://example.com'\n", "use --local"},
 		{"newer-schema", "", "archive schema version"},
 		{"merged-source", "", "merged into source"},
 	} {

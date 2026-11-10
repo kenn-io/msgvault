@@ -23,7 +23,7 @@ func newDiagnoseAcquisitionCmd() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "diagnose-acquisition --source-id ID",
 		Short: "List pending Gmail acquisition failures",
-		Long:  "List pending Gmail acquisition failures in the local archive. A configured remote URL is not supported.",
+		Long:  "List pending Gmail acquisition failures in the local archive. Use --local when a remote is configured.",
 		Args:  cobra.NoArgs,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			inv := prepareInvocation(cmd)
@@ -44,8 +44,8 @@ func newDiagnoseAcquisitionCmd() *cobra.Command {
 				return usageErr(cmd, errors.New("source ID must be positive"))
 			}
 			ctx := cmd.Context()
-			if invocationFromContext(ctx).cfg.Remote.URL != "" {
-				return errors.New("diagnose-acquisition requires a local archive; remote.url is configured")
+			if IsRemoteMode(invocationFromContext(ctx)) {
+				return errors.New("diagnose-acquisition requires a local archive; use --local when remote.url is configured")
 			}
 			st, cleanup, err := openReadOnlyStoreForInvocation(ctx, invocationFromContext(ctx))
 			if err != nil {
@@ -56,7 +56,7 @@ func newDiagnoseAcquisitionCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if source.SourceType != "gmail" {
+			if source.SourceType != "" && source.SourceType != "gmail" {
 				return errors.New("acquisition diagnostic requires a Gmail source")
 			}
 			if source.MergedIntoSourceID != 0 {
