@@ -329,16 +329,21 @@ func TestApplyFeedLockBusyRetryUncounted(t *testing.T) {
 	assert.Equal(calls, f.calls)
 }
 func TestApplyFeedRetiredSourceUnrouted(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
 	st, f, imp, src := eventImporter(t)
+	f.paths = nil
+	out, err := imp.ApplyFeedEvents(t.Context(), "99", "100", []FeedEvent{feedEvent("add", 10)}, EventOptions{})
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	assert.Equal(t, "unrouted", out[0].Class)
+	assert.Equal(t, "source_missing", out[0].ErrorClass)
+	assert.Empty(t, f.paths)
 	other, err := st.GetOrCreateSource(SourceType, "app:99:page:100")
-	require.NoError(err)
+	require.NoError(t, err)
 	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: src.ID, IntoSourceID: other.ID})
-	require.NoError(err)
+	require.NoError(t, err)
 	before := f.calls
-	assert.Equal("unrouted", applyFeed(t, imp, feedEvent("add", 10))[0].Class)
-	assert.Equal(before, f.calls)
+	assert.Equal(t, "unrouted", applyFeed(t, imp, feedEvent("add", 10))[0].Class)
+	assert.Equal(t, before, f.calls)
 }
 func TestApplyFeedRunType(t *testing.T) {
 	assert := assert.New(t)

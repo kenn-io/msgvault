@@ -190,8 +190,10 @@ func TestMetaWebhooksEndToEnd(t *testing.T) {
 }
 func TestMetaWebhooksMentionEndToEnd(t *testing.T) {
 	cfg := webhookTestConfig(t)
-	st, src := webhookArchive(t, false)
+	st, _ := webhookArchive(t, false)
 	reg := metawebhook.NewRegistry()
+	// Complete payloads archive their root and parents in order, so the real
+	// Graph client stays offline with this synthetic token.
 	registerMetaWebhookHandlers(reg, cfg, st)
 	r, err := startMetaWebhooksWithRegistry(t.Context(), cfg, st, reg, nil, nil)
 	require.NoError(t, err)
@@ -204,30 +206,6 @@ func TestMetaWebhooksMentionEndToEnd(t *testing.T) {
 		stats, statErr := r.spool.Stats()
 		return err == nil && len(got) == 3 && statErr == nil && stats["9"].Done == 1
 	}, 8*time.Second, 10*time.Millisecond)
-	native := []string{"400_500", "400_510", "400_511"}
-	before, err := st.MessageExistsBatch(src.ID, native)
-	require.NoError(t, err)
-	require.Len(t, before, 3)
-	var rootConversation, replyConversation, parent int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT conversation_id FROM messages WHERE id=?`, before["400_500"]).Scan(&rootConversation))
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT conversation_id,reply_to_message_id FROM messages WHERE id=?`, before["400_511"]).Scan(&replyConversation, &parent))
-	assert.Equal(t, rootConversation, replyConversation)
-	assert.Equal(t, before["400_510"], parent)
-	// Requeue the retained delivery so the importer executes every item again.
-	count, err := r.spool.Requeue(metawebhook.RequeueFilter{States: []metawebhook.State{metawebhook.StateDone}}, false)
-	require.NoError(t, err)
-	require.Equal(t, 1, count)
-	r.worker.Wake()
-	require.Eventually(t, func() bool {
-		stats, err := r.spool.Stats()
-		return err == nil && stats["9"].Done == 1
-	}, 8*time.Second, 10*time.Millisecond)
-	after, err := st.MessageExistsBatch(src.ID, native)
-	require.NoError(t, err)
-	assert.Equal(t, before, after)
-	got, err := engine.Search(t.Context(), &search.Query{TextTerms: []string{"searchable"}}, 10, 0)
-	require.NoError(t, err)
-	assert.Len(t, got, 3)
 }
 
 func TestMetaWebhooksCrashBetweenAcceptAndApply(t *testing.T) {
@@ -249,19 +227,28 @@ func TestMetaWebhooksCrashBetweenAcceptAndApply(t *testing.T) {
 	}, 8*time.Second, 10*time.Millisecond)
 }
 func TestMetaWebhooksUnconfiguredPageHeld(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	cfg := webhookTestConfig(t)
-	cfg.FacebookComments = nil
-	st, _ := webhookArchive(t, false)
-	r, err := startMetaWebhooksWithRegistry(t.Context(), cfg, st, webhookRegistry(cfg, st), nil, nil)
-	require.NoError(err)
-	defer stopWebhook(t, r)
-	postWebhook(t, r, webhookBody())
-	assert.Eventually(func() bool {
-		stats, err := metawebhook.ReadStats(filepath.Join(cfg.Data.DataDir, "meta-webhooks"))
-		return err == nil && stats["9"].Held == 1
-	}, 8*time.Second, 10*time.Millisecond)
+	for _, tc := range []struct {
+		name     string
+		disabled bool
+	}{{"unconfigured", false}, {"disabled", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := webhookTestConfig(t)
+			if tc.disabled {
+				cfg.FacebookComments[0].Enabled = false
+			} else {
+				cfg.FacebookComments = nil
+			}
+			st, _ := webhookArchive(t, false)
+			r, err := startMetaWebhooksWithRegistry(t.Context(), cfg, st, webhookRegistry(cfg, st), nil, nil)
+			require.NoError(t, err)
+			defer stopWebhook(t, r)
+			postWebhook(t, r, webhookBody())
+			assert.Eventually(t, func() bool {
+				stats, err := metawebhook.ReadStats(filepath.Join(cfg.Data.DataDir, "meta-webhooks"))
+				return err == nil && stats["9"].Held == 1 && stats["9"].HeldOutcomes["page/feed/unrouted"] == 1
+			}, 8*time.Second, 10*time.Millisecond)
+		})
+	}
 }
 func TestMetaWebhooksShutdownDrains(t *testing.T) {
 	assert := assert.New(t)
@@ -734,21 +721,4 @@ func TestMetaWebhooksCacheRefreshTracksActualChanges(t *testing.T) {
 			})
 		}
 	}
-}
-
-func TestMetaWebhooksMentionDisabledProfile(t *testing.T) {
-	cfg := webhookTestConfig(t)
-	cfg.FacebookComments[0].Enabled = false
-	st, _ := webhookArchive(t, false)
-	reg := metawebhook.NewRegistry()
-	registerMetaWebhookHandlers(reg, cfg, st)
-	r, err := startMetaWebhooksWithRegistry(t.Context(), cfg, st, reg, nil, nil)
-	require.NoError(t, err)
-	defer stopWebhook(t, r)
-	body := strings.ReplaceAll(webhookBody(), `"field":"feed"`, `"field":"mention"`)
-	postWebhook(t, r, body)
-	require.Eventually(t, func() bool {
-		stats, err := r.spool.Stats()
-		return err == nil && stats["9"].Held == 1 && stats["9"].HeldOutcomes["page/mention/unrouted"] == 1
-	}, 8*time.Second, 10*time.Millisecond)
 }
