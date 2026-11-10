@@ -389,6 +389,8 @@ msgvault person directory --last-contact-after 2026-06-01 --cursor "<next_cursor
 
 ### Keep in touch with contact lists
 
+Use the [Web UI’s Keep in touch filter](../web-ui.md#people-and-domains) to find people to contact.
+
 A person's contact list is their `contact_frequency` attribute, an interval in
 days. Lists A, B, C, and D correspond to 21, 60, 180, and 365 days, while any
 other interval stays a custom list. Set a list with `person attributes set`,
