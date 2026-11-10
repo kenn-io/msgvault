@@ -188,7 +188,7 @@ func (r *participantClusterInsertRecorder) ExecContext(ctx context.Context, quer
 func TestStageMeetingKeysQuotes(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	recorder := newParticipantClusterInsertRecorder(t)
-	keys := map[int64][]string{1: {"uid:example'o@example.test/"}}
+	keys := map[int64][]store.MeetingCountOccurrence{1: {{Key: "uid:example'o@example.test/"}}}
 	require.NoError(stageMeetingKeys(t.Context(), recorder, keys, 1))
 	var count int
 	var key string

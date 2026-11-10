@@ -40,7 +40,7 @@ func TestMeetingCounts(t *testing.T) {
 			}
 			replaceRelationshipParquet(t, db, root, "message_recipients", `SELECT message_id::BIGINT AS message_id, participant_id::BIGINT AS participant_id, 'to'::VARCHAR AS recipient_type, ''::VARCHAR AS display_name FROM (VALUES `+tc.recipients+`) t(message_id,participant_id)`)
 			if tc.keys != "" {
-				replaceRelationshipParquet(t, db, root, "meeting_keys", `SELECT message_id::BIGINT AS message_id, meeting_key::VARCHAR AS meeting_key FROM (VALUES `+tc.keys+`) t(message_id,meeting_key)`)
+				replaceRelationshipParquet(t, db, root, "meeting_keys", `SELECT message_id::BIGINT AS message_id, meeting_key::VARCHAR AS meeting_key, NULL::TIMESTAMP AS occurrence_at, NULL::DATE AS occurrence_date FROM (VALUES `+tc.keys+`) t(message_id,meeting_key)`)
 			}
 			_, err := Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root})
 			requirements.NoError(err)
@@ -93,25 +93,30 @@ func TestMeetingKeyChangesControlTemperatureReuse(t *testing.T) {
 		messageType: "meeting_transcript", conversationType: "meeting",
 	})
 	replaceRelationshipParquet(t, db, committed, "message_recipients", `SELECT 100::BIGINT AS message_id, participant_id::BIGINT AS participant_id, 'to'::VARCHAR AS recipient_type, ''::VARCHAR AS display_name FROM (VALUES (1), (2)) t(participant_id)`)
-	replaceRelationshipParquet(t, db, committed, "meeting_keys", `SELECT 100::BIGINT AS message_id, 'uid:first@example.org/'::VARCHAR AS meeting_key`)
+	replaceRelationshipParquet(t, db, committed, "meeting_keys", `SELECT 100::BIGINT AS message_id, 'uid:first@example.org/'::VARCHAR AS meeting_key, NULL::TIMESTAMP AS occurrence_at, NULL::DATE AS occurrence_date`)
 	at := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
 	_, err := Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: committed, OutputRoot: committed, EffectiveAt: at})
 	requirements.NoError(err)
 	for _, tc := range []struct {
 		name, keys           string
 		reuse, appendMessage bool
+		moved                bool
 	}{
-		{"unchanged", `(100::BIGINT, 'uid:first@example.org/'::VARCHAR)`, true, false},
-		{"key removed", "", false, false},
-		{"new unrelated meeting", `(100::BIGINT, 'uid:first@example.org/'::VARCHAR),(101::BIGINT, 'uid:second@example.org/'::VARCHAR)`, true, true},
-		{"new copy of cached meeting", `(100::BIGINT, 'uid:first@example.org/'::VARCHAR),(101::BIGINT, 'uid:first@example.org/'::VARCHAR)`, false, true},
+		{name: "unchanged", keys: `(100::BIGINT, 'uid:first@example.org/'::VARCHAR)`, reuse: true},
+		{name: "key removed"},
+		{name: "new unrelated meeting", keys: `(100::BIGINT, 'uid:first@example.org/'::VARCHAR),(101::BIGINT, 'uid:second@example.org/'::VARCHAR)`, reuse: true, appendMessage: true},
+		{name: "new copy of cached meeting", keys: `(100::BIGINT, 'uid:first@example.org/'::VARCHAR),(101::BIGINT, 'uid:first@example.org/'::VARCHAR)`, appendMessage: true},
+		{name: "moved occurrence", keys: `(100::BIGINT, 'uid:first@example.org/'::VARCHAR)`, moved: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
 			staged := t.TempDir()
-			keysSQL := `SELECT 0::BIGINT AS message_id, ''::VARCHAR AS meeting_key WHERE false`
+			keysSQL := `SELECT 0::BIGINT AS message_id, ''::VARCHAR AS meeting_key, NULL::TIMESTAMP AS occurrence_at, NULL::DATE AS occurrence_date WHERE false`
 			if tc.keys != "" {
-				keysSQL = `SELECT * FROM (VALUES ` + tc.keys + `) t(message_id,meeting_key)`
+				keysSQL = `SELECT *, NULL::TIMESTAMP AS occurrence_at, NULL::DATE AS occurrence_date FROM (VALUES ` + tc.keys + `) t(message_id,meeting_key)`
+			}
+			if tc.moved {
+				keysSQL = `SELECT *, TIMESTAMP '2026-01-02 10:00:00' AS occurrence_at, NULL::DATE AS occurrence_date FROM (VALUES ` + tc.keys + `) t(message_id,meeting_key)`
 			}
 			replaceRelationshipParquet(t, db, staged, "meeting_keys", keysSQL)
 			if tc.appendMessage {

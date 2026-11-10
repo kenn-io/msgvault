@@ -18,7 +18,7 @@ func TestMeetingCountsAcrossFilters(t *testing.T) {
 		id := b.AddMessage(MessageOpt{SourceID: source, ConversationID: int64(100 + i), MessageType: "meeting_transcript", SentAt: time.Date(2026, 8, 1, 10+i, 0, 0, 0, time.UTC)})
 		b.AddTo(id, person, "Example Person")
 		if i < 2 {
-			b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, 'uid:shared@example.org/')", id))
+			b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, 'uid:shared@example.org/', NULL::TIMESTAMP, NULL::DATE)", id))
 		}
 	}
 	engine := b.BuildEngine()
@@ -78,7 +78,7 @@ func TestRelationshipMeetingCounts(t *testing.T) {
 				b.AddTo(id, owner, "Owner")
 				b.AddTo(id, person, "Person")
 				for _, key := range keys {
-					b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, '%s')", id, key))
+					b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, '%s', NULL::TIMESTAMP, NULL::DATE)", id, key))
 				}
 			}
 			engine := b.BuildEngine()

@@ -384,7 +384,7 @@ func MeetingKeysSQL(keys, messageType, messageID string) string {
 
 // DeduplicateMeetingSQL keeps transcript attendance once per person and occurrence.
 func DeduplicateMeetingSQL(relation, meetingKeys, messageID string) string {
-	return `SELECT * EXCLUDE (meeting_key, meeting_selected) FROM (SELECT p.*, ` + MeetingIdentityKeySQL("mk", "p."+messageID) + ` AS meeting_key,
+	return `SELECT * EXCLUDE (meeting_key, meeting_selected) FROM (SELECT p.* REPLACE (CASE WHEN p.entry_kind = 'meeting' THEN coalesce(mk.occurrence_date::TIMESTAMP, mk.occurrence_at, p.occurred_at) ELSE p.occurred_at END AS occurred_at), mk.occurrence_date AS meeting_date, ` + MeetingIdentityKeySQL("mk", "p."+messageID) + ` AS meeting_key,
 	(p.entry_kind <> 'meeting' OR row_number() OVER (
 	    PARTITION BY p.canonical_id, ` + MeetingIdentityKeySQL("mk", "p."+messageID) + `
 	    ORDER BY p.occurred_at, p.` + messageID + `) = 1) AS meeting_selected

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -22,8 +23,19 @@ func (i meetingIdentity) countKey() string {
 	return fmt.Sprintf("evt:%d/%s", i.EventMessageID, i.OccurrenceKey)
 }
 
-// MeetingCountKeysContext maps linked meeting messages to their occurrence keys in one read snapshot.
-func (s *Store) MeetingCountKeysContext(ctx context.Context) (map[int64][]string, error) {
+// MeetingCountOccurrence carries the occurrence time and, for all-day meetings, its civil date.
+type MeetingCountOccurrence struct {
+	Key   string
+	Start time.Time
+	Date  string
+}
+
+// MeetingCountKeysContext maps linked meeting messages to occurrences in one read snapshot.
+func (s *Store) MeetingCountKeysContext(ctx context.Context) (map[int64][]MeetingCountOccurrence, error) {
+	return s.meetingCountKeysContext(ctx, calrecur.RequestReadBudget)
+}
+
+func (s *Store) meetingCountKeysContext(ctx context.Context, readBudget int) (map[int64][]MeetingCountOccurrence, error) {
 	ctx, release, err := s.BeginReadSnapshotContext(ctx)
 	if err != nil {
 		return nil, err
@@ -55,11 +67,11 @@ func (s *Store) MeetingCountKeysContext(ctx context.Context) (map[int64][]string
 	if closeErr != nil {
 		return nil, closeErr
 	}
-	keys := make(map[int64][]string)
+	keys := make(map[int64][]MeetingCountOccurrence)
 	for _, id := range members {
-		budget := calrecur.RequestReadBudget
+		budget := readBudget
 		memberKeys, err := s.meetingCountOccurrences(ctx, r, id, &budget)
-		if unresolvedMeetingCount(err) {
+		if unresolvedMeetingCount(err) || errors.Is(err, ErrQueryTooBroad) {
 			continue
 		}
 		if err != nil {
@@ -73,58 +85,57 @@ func (s *Store) MeetingCountKeysContext(ctx context.Context) (map[int64][]string
 }
 
 // meetingCountOccurrences combines saved choices and independently proved source evidence.
-func (s *Store) meetingCountOccurrences(ctx context.Context, r reboundReader, memberID int64, budget *int) ([]string, error) {
+func (s *Store) meetingCountOccurrences(ctx context.Context, r reboundReader, memberID int64, budget *int) ([]MeetingCountOccurrence, error) {
 	r = r.withMeetingCache()
 	matches, stale, splits, source, err := s.meetingMemberOccurrences(ctx, r, memberID, budget)
 	if err != nil {
 		return nil, err
 	}
-	var out []string
-	for _, o := range matches {
-		out = append(out, o.Identity.countKey())
+	all := slices.Concat(matches, stale)
+	if source != nil && !splits[source.Identity] {
+		all = append(all, *source)
 	}
-	for _, identity := range stale {
-		out = append(out, identity.countKey())
-	}
-	for identity := range splits {
-		if identity.countKey() == source {
-			source = ""
-			break
+	var out []MeetingCountOccurrence
+	for _, o := range all {
+		value := MeetingCountOccurrence{Key: o.Identity.countKey(), Start: o.Start}
+		if o.Row.Event.AllDay {
+			value.Date = o.Row.Event.StartDate
+			if o.Identity.OccurrenceKey != "" && o.Row.Event.Kind != meetingExceptionKind {
+				if _, identity, ok := calrecur.ParseInstanceID("event_" + o.Identity.OccurrenceKey); ok && identity.AllDay {
+					value.Date = identity.Date
+				}
+			}
 		}
+		out = append(out, value)
 	}
-	if source != "" {
-		out = append(out, source)
-	}
-	slices.Sort(out)
-	return slices.Compact(out), nil
+	slices.SortFunc(out, func(a, b MeetingCountOccurrence) int { return cmp.Compare(a.Key, b.Key) })
+	return slices.CompactFunc(out, func(a, b MeetingCountOccurrence) bool { return a.Key == b.Key }), nil
 }
 
-// sourceMeetingCountKey uses a series only to canonicalize exact evidence.
-// The transcript proves attendance even when recurrence no longer includes it.
-func sourceMeetingCountKey(key meetingLinkKey, rows []CalendarEventRow) (string, error) {
-	var fallback string
+// sourceMeetingCountOccurrence uses an archived series to prove source evidence
+// even after the recurrence no longer generates that occurrence.
+//nolint:nilnil // Missing archived evidence is a valid result.
+func sourceMeetingCountOccurrence(key meetingLinkKey, rows []CalendarEventRow) (*linkOccurrence, error) {
 	var instance calrecur.Identity
 	switch key.Kind {
 	case "google_event_id":
-		base, original, ok := calrecur.ParseInstanceID(key.Value)
+		_, original, ok := calrecur.ParseInstanceID(key.Value)
 		if !ok {
 			if key.Value == "" || key.ScheduledAt == nil {
-				return "", nil
+				return nil, nil
 			}
-			base, original = key.Value, calrecur.Identity{Instant: *key.ScheduledAt}
+			original = calrecur.Identity{Instant: *key.ScheduledAt}
 		}
 		instance = original
-		fallback = fmt.Sprintf("gcal:%q/%s", base, instance.Key())
 	case "ical_uid":
 		if key.Value == "" || key.ScheduledAt == nil {
-			return "", nil
+			return nil, nil
 		}
 		instance = calrecur.Identity{Instant: *key.ScheduledAt}
-		fallback = (meetingIdentity{ICalUID: key.Value, OccurrenceKey: instance.Key()}).countKey()
 	default:
-		return "", nil
+		return nil, nil
 	}
-	var found []meetingIdentity
+	var found *linkOccurrence
 	for _, row := range rows {
 		if row.Event.Kind != meetingSeriesKind {
 			continue
@@ -133,20 +144,20 @@ func sourceMeetingCountKey(key meetingLinkKey, rows []CalendarEventRow) (string,
 		if key.Kind == "ical_uid" && row.Event.AllDay {
 			zone, err := calendarEventZone(row.Event)
 			if err != nil {
-				return "", err
+				return nil, err
 			}
 			original = calrecur.Identity{AllDay: true, Date: key.ScheduledAt.In(zone).Format(time.DateOnly)}
 		}
-		identity := occurrenceFromRow(row, original.Key()).Identity
-		if len(found) > 0 && identity != found[0] {
-			return fallback, nil
+		o := occurrenceFromRow(row, original.Key())
+		if !original.AllDay {
+			o.Start = original.Instant
 		}
-		found = append(found, identity)
+		if found != nil && found.Identity != o.Identity {
+			return nil, nil
+		}
+		found = &o
 	}
-	if len(found) == 0 {
-		return fallback, nil
-	}
-	return found[0].countKey(), nil
+	return found, nil
 }
 
 func unresolvedMeetingCount(err error) bool {

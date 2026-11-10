@@ -62,6 +62,8 @@ msgvault meetings unlink 42 --event evt:100
 
 `suggest` lists overlapping events for a note, or overlapping notes for an event such as `evt:100`. Results show overlap minutes, shared attendees, and shared title words. Suggestions leave links unchanged. `link` adds an event alongside any automatic links; `unlink` keeps that meeting and its calendar copies apart from the note, even after reimport, while the target stays archived. Removing the target deletes its saved decision.
 
+Links and splits also affect [meeting counts](#how-meetings-connect-to-people) after the next cache refresh.
+
 Some recurring series or exceptions cannot be fully expanded because their
 recurrence is unsupported, exceeds request bounds, or lacks an original start.
 Plain output warns on stderr and still lists readable candidates. JSON includes
@@ -282,7 +284,7 @@ promoted profile. The attendee becomes a participant, and the next activity
 update (hourly, or `msgvault activity build`) adds the meeting to the person's
 timeline, relationships, and last-contact information.
 
-Transcripts count as attended meetings. Calendar events without a transcript don't count. Transcript copies sharing an exact occurrence identity count once, including across selected sources. A shared iCalendar UID and scheduled start, or a shared Google occurrence ID, can identify copies even when the event was never synced. If the series remains archived, its UID connects Google instance IDs to UID-based copies after a recurrence changes. A saved link and separate source evidence can count different occurrences; a saved split excludes only its chosen occurrence. A transcript linked to two occurrences counts once for each. Counts update on the next scheduled cache refresh or when you run `msgvault build-cache`. Recurrence or UID edits take effect on the next full cache rebuild.
+Transcripts count as attended meetings. Calendar events without a transcript don't count. Transcript copies sharing an archived occurrence identity count once, including across selected sources. Notes without an archived match count separately until a link or archived event identifies their occurrence. If the series remains archived, its UID connects Google instance IDs to UID-based copies after a recurrence changes. A saved link and separate source evidence can count different occurrences; a saved split excludes only its chosen occurrence. A transcript linked to two occurrences counts once on each meeting date. Counts and relationship scores update on the next scheduled cache refresh or when you run `msgvault build-cache`, including after calendar, time zone, or UID edits.
 
 Some sources also know that several emails and phone numbers are the same
 human. msgvault links those identities through the source's stable identifier,

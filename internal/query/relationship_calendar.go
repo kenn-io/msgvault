@@ -265,7 +265,7 @@ func (e *DuckDBEngine) relationshipCalendarDays(
 		WITH relationship_facts AS (
 		`+facts+`
 		)
-		SELECT strftime(timezone(?, timezone('UTC', occurred_at)), '%Y-%m-%d') AS local_date,
+		SELECT coalesce(strftime(meeting_date, '%Y-%m-%d'), strftime(timezone(?, timezone('UTC', occurred_at)), '%Y-%m-%d')) AS local_date,
 		       count(*) FILTER (WHERE sent)::BIGINT AS sent_count,
 		       count(*) FILTER (WHERE received)::BIGINT AS received_count,
 		       count(*) FILTER (WHERE email)::BIGINT AS email_count,
@@ -275,10 +275,10 @@ func (e *DuckDBEngine) relationshipCalendarDays(
 		       bit_or(modality_mask)::UTINYINT AS modality_mask
 		FROM relationship_facts
 		WHERE canonical_id = ?
-		  AND occurred_at >= ? AND occurred_at < ?
+		  AND ((meeting_date IS NULL AND occurred_at >= ? AND occurred_at < ?) OR (meeting_date IS NOT NULL AND year(meeting_date) = ?))
 		GROUP BY local_date
 		ORDER BY local_date
-	`, request.TimezoneOrUTC(), request.CanonicalID, startUTC, endUTC)
+	`, request.TimezoneOrUTC(), request.CanonicalID, startUTC, endUTC, request.Year)
 	if err != nil {
 		return nil, fmt.Errorf("query relationship calendar: %w", err)
 	}

@@ -42,7 +42,6 @@ WITH message_owner AS (
 	WHERE f.canonical_id IS NOT NULL
 	  AND NOT f.is_owner
 	  AND NOT f.unsent
-	  AND f.occurred_at <= TIMESTAMP '%[2]s'
 	  AND (
 	      (f.entry_kind = 'meeting')
 	      OR (f.is_chat AND lower(f.conversation_type) = 'direct_chat'
@@ -86,13 +85,14 @@ WITH message_owner AS (
 	FROM classified
 	WHERE qualifies
 )
-SELECT message_id, canonical_id, occurred_at,
+SELECT message_id, canonical_id, occurred_at, meeting_date,
 	   sent, received,
 	   (NOT is_meeting AND NOT is_chat) AS email,
 	   (NOT is_meeting AND is_chat) AS chat,
 	   is_meeting AS meeting,
 	   modality_mask
 FROM (%[6]s)
+WHERE occurred_at <= TIMESTAMP '%[2]s'
 `,
 		activity,
 		cutoff,
