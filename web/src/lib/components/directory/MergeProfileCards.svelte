@@ -15,7 +15,6 @@
 </script>
 
 {#snippet card(profile: MergeCard)}
-  <!-- A heading that reads as an address stands for one of them; another that reads the same still lists. -->
   {@const addresses = withoutName(profile.title, profile.addresses, address => addressText({ title: address.value, detail: address.detail }))}
   <section class="card" aria-label={profile.title}>
     <h3>{profile.title}</h3>
