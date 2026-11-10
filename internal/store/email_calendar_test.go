@@ -147,7 +147,7 @@ func TestEmailCalendarSourceCountsExcludeDerivedEvents(t *testing.T) {
 	_, err = st.PersistICalendarContext(t.Context(), icsSourceID, calendarDocument("REQUEST", "DTSTART:20270302T120000Z"))
 	requirements.NoError(err)
 	for _, sourceID := range []int64{source, gcalData.Message.SourceID, icsSourceID} {
-		live, err := st.CountMessagesForSourceContext(t.Context(), sourceID)
+		live, err := st.CountNativeMessagesForSource(sourceID)
 		requirements.NoError(err)
 		assertions.Equal(int64(1), live)
 		raw, err := st.CountMessagesWithRaw(sourceID)
@@ -436,7 +436,6 @@ func TestEmailCalendarFamilyOrganizer(t *testing.T) {
 		master = calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nORGANIZER:mailto:organizer@example.com")
 		persistInviteEmailForSource(t, st, source, "own-master", inviteEmail(master))
 		assertions.Len(emailEvents(t, st, source), 2)
-
 	})
 }
 

@@ -48,3 +48,10 @@ func (s *Store) CountMessagesBySourceContext(ctx context.Context) (map[int64]Sou
 func SourceNativeMessagesWhere(alias, sources string) string {
 	return fmt.Sprintf("(COALESCE(%s.message_type, '') <> 'calendar_event' OR EXISTS (SELECT 1 FROM %s native_source WHERE native_source.id = %s.source_id AND native_source.source_type IN ('gcal', 'ics')))", alias, sources, alias)
 }
+
+// CountNativeMessagesForSource counts messages originating with the source provider.
+func (s *Store) CountNativeMessagesForSource(sourceID int64) (int64, error) {
+	var count int64
+	err := s.db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND %s AND %s`, LiveMessagesWhere("", true), SourceNativeMessagesWhere("messages", "sources")), sourceID).Scan(&count)
+	return count, err
+}

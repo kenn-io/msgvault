@@ -2,6 +2,7 @@ package calevent
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
@@ -10,6 +11,8 @@ import (
 	"io"
 	"math"
 	"regexp"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -21,8 +24,8 @@ import (
 )
 
 // EmailInviteSQL identifies email-derived events; source merges preserve source types.
-func EmailInviteSQL(messageType, sourceType string) string {
-	return fmt.Sprintf("(%s = 'calendar_event' AND COALESCE(%s, '') NOT IN ('gcal', 'ics'))", messageType, sourceType)
+func EmailInviteSQL(messageType, sourceType, archiveOnly string) string {
+	return fmt.Sprintf("(COALESCE(%s, '') = 'calendar_event' AND COALESCE(%s, '') NOT IN ('gcal', 'ics') AND %s)", messageType, sourceType, archiveOnly)
 }
 
 // ICSMetadata records the accepted revision independently of the retained raw.
@@ -78,14 +81,11 @@ func DecodeICS(raw, metadata []byte, calendarZone string) (Event, bool, error) {
 	return e, true, nil
 }
 
-func encodeICSEvent(cal *ical.Calendar, event *ical.Component) ([]byte, error) {
+func encodeICSEvent(cal *ical.Calendar, zones []*ical.Component, event *ical.Component, positions map[*ical.Component]int) ([]byte, error) {
 	retained := ical.NewCalendar()
 	retained.Props = cal.Props
-	for _, comp := range cal.Children {
-		if comp.Name == ical.CompTimezone || comp == event {
-			retained.Children = append(retained.Children, comp)
-		}
-	}
+	index := sort.Search(len(zones), func(i int) bool { return positions[zones[i]] > positions[event] })
+	retained.Children = slices.Insert(slices.Clone(zones), index, event)
 	var buf bytes.Buffer
 	err := ical.NewEncoder(&buf).Encode(retained)
 	return buf.Bytes(), err
@@ -101,9 +101,6 @@ func ParseICS(raw []byte, method, calendarZone string) (out []ICSComponent, err 
 			err = errors.New("malformed iCalendar parameters")
 		}
 	}()
-	// RFC 5545 requires UTF-8, but some producers write another charset
-	// without declaring it. Convert it as email text is; the caller still
-	// retains the original bytes.
 	text := raw
 	if !utf8.Valid(raw) {
 		text = []byte(textutil.EnsureUTF8(string(raw)))
@@ -124,9 +121,7 @@ func ParseICS(raw []byte, method, calendarZone string) (out []ICSComponent, err 
 	case "REPLY", "ADD", "REFRESH", "COUNTER", "DECLINECOUNTER":
 		return nil, nil
 	}
-	if calendarZone == "" {
-		calendarZone = "UTC"
-	}
+	calendarZone = cmp.Or(calendarZone, "UTC")
 	loc, err := time.LoadLocation(calendarZone)
 	if err != nil {
 		return nil, fmt.Errorf("calendar time zone: %w", err)
@@ -135,12 +130,17 @@ func ParseICS(raw []byte, method, calendarZone string) (out []ICSComponent, err 
 	if err != nil {
 		return nil, err
 	}
+	positions := make(map[*ical.Component]int, len(cal.Children))
+	for i, comp := range cal.Children {
+		positions[comp] = i
+	}
+	zoneComponents := slices.DeleteFunc(slices.Clone(cal.Children), func(comp *ical.Component) bool { return comp.Name != ical.CompTimezone })
 	events := cal.Events()
 	for index, event := range events {
 		comp := event.Component
 		retained := raw
 		if len(events) > 1 {
-			retained, err = encodeICSEvent(cal, comp)
+			retained, err = encodeICSEvent(cal, zoneComponents, comp, positions)
 			if err != nil {
 				return nil, fmt.Errorf("retain VEVENT %d: %w", index+1, err)
 			}

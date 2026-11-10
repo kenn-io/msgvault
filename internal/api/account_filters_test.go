@@ -306,7 +306,7 @@ func TestAgentAccountListingCountsMatchStatsForInvite(t *testing.T) {
 	var stats StatsResponse
 	requirements.NoError(json.NewDecoder(w.Body).Decode(&stats))
 	assertions.Equal(int64(2), stats.TotalMessages)
-	native, err := st.CountMessagesForSource(source.ID)
+	native, err := st.CountNativeMessagesForSource(source.ID)
 	requirements.NoError(err)
 	assertions.Equal(int64(1), native)
 }
