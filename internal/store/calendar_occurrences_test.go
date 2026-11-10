@@ -33,7 +33,9 @@ func TestListCalendarOccurrences(t *testing.T) {
 	requirements.Len(page.Occurrences, 3)
 	assertions.Empty(page.Unexpandable)
 	assertions.Equal(master, page.Occurrences[0].MessageID)
+	assertions.Equal(fmt.Sprintf("evt:%d@20270302T170000Z", master), page.Occurrences[0].Ref)
 	assertions.Equal(single, page.Occurrences[1].MessageID)
+	assertions.Equal(fmt.Sprintf("evt:%d", single), page.Occurrences[1].Ref)
 	assertions.Equal("cancelled", page.Occurrences[2].Status)
 	assertions.Equal(master, page.Occurrences[2].SeriesMessageID)
 	assertions.Equal(cancelled, page.Occurrences[2].MessageID)
@@ -45,6 +47,7 @@ func TestListCalendarOccurrences(t *testing.T) {
 	requirements.Len(page.Occurrences, 1)
 	assertions.Equal(master, page.Occurrences[0].SeriesMessageID)
 	assertions.Equal(moved, page.Occurrences[0].MessageID)
+	assertions.Equal(fmt.Sprintf("evt:%d@20270316T170000Z", master), page.Occurrences[0].Ref)
 	assertions.Equal("2027-04-02T19:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
 }
 func TestListCalendarOccurrencesStandaloneMovedToRetainedOriginal(t *testing.T) {

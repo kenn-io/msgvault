@@ -649,6 +649,7 @@ func (d *PostgreSQLDialect) FTSRebuildSchema(ctx context.Context, q contextQueri
 //	TEXT → TEXT, DATETIME → TIMESTAMPTZ, JSON → JSONB.
 func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 	return []ColumnMigration{
+		{`ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS ical_uid TEXT NOT NULL DEFAULT ''`, "calendar_events.ical_uid"},
 		{`ALTER TABLE carddav_resources ADD COLUMN IF NOT EXISTS owns_display_name BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_resources.owns_display_name"},
 		{`ALTER TABLE carddav_resources ADD COLUMN IF NOT EXISTS locally_published BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_resources.locally_published"},
 		{`ALTER TABLE person_match_judgment_cursor ADD COLUMN IF NOT EXISTS started_at_zero BOOLEAN NOT NULL DEFAULT FALSE`, "person_match_judgment_cursor.started_at_zero"},
@@ -2304,7 +2305,7 @@ var exclusiveLockTables = []string{
 	// uses the reverse order, so table ordering alone cannot fence both safely.
 	"recording_references",
 	"message_delivery_addresses", "email_link_keys",
-	"meeting_details", "meeting_action_items",
+	"meeting_link_key", "meeting_details", "meeting_action_items",
 	"calendar_events", "calendar_event_attendees",
 	"attachments", "labels", "participants", "participant_identifiers", "reactions", "reaction_source_events",
 	// Ungated attachment updates invalidate publications through triggers.

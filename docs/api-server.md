@@ -166,7 +166,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.0.0**.
+it is separate from the binary release version. The current schema is **5.1.0**.
 
 Schema 5.0.0 changes `content_available` in file lists and suggestions from a
 boolean to a nullable boolean. A null value means storage has not been checked;
@@ -2440,6 +2440,10 @@ for the user workflow and coverage meanings.
 | `POST /api/v1/meetings/context` | Exactly one of `message_ids` or an Explore `selection`; returns a context packet envelope |
 | `POST /api/v1/meetings/actions` | Optional `scope` or `explore`, plus action filters; returns rows, coverage, count, and cursor |
 | `POST /api/v1/meetings/metrics` | Optional `scope` or `explore`; returns totals, duration bases, monthly rows, and undated count |
+
+`GET /api/v1/meetings/record?ref=...` returns the notes and calendar copies
+for a `msg:<id>` or `evt:<id>[@occurrence key]` reference. It requires API
+schema 5.1.0 and accepts a `message.read` grant.
 
 Context accepts 1–100 meetings, `format: "json"` or `"markdown"`,
 `include_transcript` (default false), and `max_bytes` (default 131072, range

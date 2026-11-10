@@ -52,6 +52,7 @@ type catalogCapabilities struct {
 	embeddingStatus bool
 	savedViews      bool
 	meetings        bool
+	meetingRecords  bool
 	personAgenda    bool
 	personTier      bool
 	kata            bool
@@ -142,6 +143,7 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		embeddingStatus: opts.EmbeddingStatus != nil,
 		savedViews:      opts.SavedViews != nil,
 		meetings:        opts.Meetings != nil,
+		meetingRecords:  opts.Meetings != nil && opts.MeetingRecords,
 		personAgenda:    opts.PersonAgendaBackend != nil,
 		personTier:      opts.PersonTierBackend != nil,
 		kata:            opts.Kata != nil,
@@ -246,6 +248,7 @@ func operationDefinitions(capabilities catalogCapabilities) []toolDefinition {
 		getCardDAVPublicationDefinition(),
 		previewCardDAVPublicationDefinition(),
 		getCardDAVSyncStatusDefinition(),
+		getMeetingRecordDefinition(),
 		getMeetingContextDefinition(nil),
 		getMeetingMetricsDefinition(nil),
 		getPersonNotesDefinition(nil),
@@ -389,6 +392,8 @@ func directoryPeopleAvailable(c catalogCapabilities) bool { return c.directoryPe
 func savedViewsAvailable(c catalogCapabilities) bool { return c.savedViews }
 
 func meetingsAvailable(c catalogCapabilities) bool { return c.meetings }
+
+func meetingRecordsAvailable(c catalogCapabilities) bool { return c.meetingRecords }
 
 func personAgendaAvailable(c catalogCapabilities) bool { return c.personAgenda }
 

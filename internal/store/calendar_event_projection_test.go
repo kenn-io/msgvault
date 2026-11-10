@@ -19,16 +19,20 @@ import (
 
 const calendarRaw = `{"id":"event-example","status":"confirmed","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"},"iCalUID":"event-uid@example.com","description":"Raw description","attendees":[{"email":"PERSON@EXAMPLE.COM","responseStatus":"accepted"}]}`
 
-func calendarFixture(t *testing.T, st *Store, key, raw string) (*MessagePersistData, int64) {
+func calendarFixture(t *testing.T, st *Store, key, raw string, calendars ...string) (*MessagePersistData, int64) {
 	t.Helper()
-	source, err := st.GetOrCreateSource("gcal", "calendar@example.com")
+	calendar := "calendar@example.com"
+	if len(calendars) > 0 {
+		calendar = calendars[0]
+	}
+	source, err := st.GetOrCreateSource("gcal", calendar)
 	require.NoError(t, err)
-	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), source.ID, `{"calendar_id":"calendar@example.com","time_zone":"UTC"}`))
+	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), source.ID, fmt.Sprintf(`{"calendar_id":%q,"time_zone":"UTC"}`, calendar)))
 	data := &MessagePersistData{
 		Message:      &Message{SourceID: source.ID, SourceMessageID: key, MessageType: "calendar_event", Subject: sql.NullString{String: "Example event", Valid: true}},
 		Conversation: &ConversationPersistData{SourceConversationID: key, ConversationType: "calendar", Title: "Example event"},
 		RawMIME:      []byte(raw), RawFormat: "gcal_json",
-		Metadata: &sql.NullString{String: `{"calendar_id":"calendar@example.com"}`, Valid: true},
+		Metadata: &sql.NullString{String: fmt.Sprintf(`{"calendar_id":%q}`, calendar), Valid: true},
 	}
 	id, err := st.PersistMessage(data)
 	require.NoError(t, err)
@@ -200,6 +204,30 @@ func TestCalendarEventUpgradeRebuildsProjection(t *testing.T) {
 	rows := calendarRows(t, reopened, id)
 	requirements.Len(rows, 1)
 	assertions.Equal("event-example", rows[0].Event.ProviderEventID)
+}
+
+func TestCalendarEventUpgradeBackfillsUID(t *testing.T) {
+	require := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, id := calendarFixture(t, st, "uid-upgrade", calendarRaw)
+	for _, query := range []string{
+		`DROP INDEX IF EXISTS idx_calendar_events_ical_uid`,
+		`ALTER TABLE calendar_events DROP COLUMN ical_uid`,
+		`UPDATE calendar_events SET projection_version = 2`,
+		`UPDATE applied_migrations SET version = 2 WHERE name = 'calendar_event_projection_v1'`,
+		`UPDATE archive_metadata SET value = '40' WHERE key = 'schema_version'`,
+	} {
+		_, err := st.db.Exec(query)
+		require.NoError(err)
+	}
+	require.NoError(st.Close())
+	reopened, err := OpenForTest(t.Context(), st.dbPath)
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(t, reopened.Close()) })
+	require.NoError(reopened.InitSchemaContext(t.Context()))
+	rows := calendarRows(t, reopened, id)
+	require.Len(rows, 1)
+	assert.Equal(t, "event-uid@example.com", rows[0].ICalUID)
 }
 
 func TestCalendarEventProjectionUpgradeRebuildsLeapYearEnd(t *testing.T) {

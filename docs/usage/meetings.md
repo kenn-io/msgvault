@@ -50,6 +50,23 @@ aggregates remain email-only unless you choose another message type.
 
 ## Export context and read follow-ups
 
+Use `msgvault meetings links <note-id>` to see the calendar copies and notes
+that share an exact occurrence. You can also pass `msg:<id>` or an event `ref`
+from `msgvault calendar events --json`. The API and MCP expose the same record.
+Twenty notes use their iCalendar UID and scheduled time. Granola notes use the
+Google event ID only when their owner matches the archived calendar's mailbox.
+Twenty notes with the same UID and time and Granola notes with the same
+instance-suffixed Google ID can link before a calendar is imported. A bare
+Google series ID cannot identify one week, so those notes remain separate.
+A calendar single or exception can prove that a bare ID names one event,
+including after a reschedule. Circleback, Notion, Muesli, and generic notes
+supply no link evidence.
+
+Records show whether a calendar copy was cancelled or deleted at its source.
+When a recurrence cannot be expanded, the record keeps the copies it found and
+reports the affected message IDs and reasons in `unexpandable`. The CLI table
+prints those warnings to stderr; JSON and MCP return them with the record.
+
 In Messages, select meeting rows and choose **Meeting context…** in the
 selection bar. In its popover, choose JSON or Markdown, optionally turn on
 **Include transcript**, and choose **Export meeting context**. You can select

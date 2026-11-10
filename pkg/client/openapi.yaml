@@ -1345,6 +1345,8 @@ components:
         message_id:
           format: int64
           type: integer
+        ref:
+          type: string
         series_message_id:
           format: int64
           type: integer
@@ -7708,6 +7710,29 @@ components:
         - message_id
         - source_message_id
       type: object
+    MeetingLink:
+      properties:
+        deleted_from_source:
+          type: boolean
+        end:
+          format: date-time
+          type: string
+        ref:
+          type: string
+        start:
+          format: date-time
+          type: string
+        status:
+          type: string
+        subject:
+          type: string
+      required:
+        - ref
+        - start
+        - end
+        - status
+        - deleted_from_source
+      type: object
     MeetingMetricsRequest:
       additionalProperties: false
       not:
@@ -7742,6 +7767,26 @@ components:
           description: International phone number starting with + or 00; normalized to E.164
           maxLength: 64
           type: string
+      type: object
+    MeetingRecord:
+      properties:
+        links:
+          items:
+            $ref: "#/components/schemas/MeetingLink"
+          type: array
+        message_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+        unexpandable:
+          items:
+            $ref: "#/components/schemas/CalendarUnexpandable"
+          type: array
+      required:
+        - links
+        - message_ids
+        - unexpandable
       type: object
     MeetingRef:
       properties:
@@ -16851,7 +16896,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 5.0.0
+  version: 5.1.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -24654,6 +24699,69 @@ paths:
       security:
         - apiKey: []
       summary: Get archived meeting duration metrics
+      tags:
+        - Meetings
+  /api/v1/meetings/record:
+    get:
+      operationId: getMeetingRecord
+      parameters:
+        - in: query
+          name: ref
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingRecord"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read an archived meeting from a note or event
       tags:
         - Meetings
   /api/v1/messages:

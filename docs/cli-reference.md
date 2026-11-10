@@ -74,6 +74,13 @@ msgvault meetings actions --status pending --assignee alex@example.com --json
 msgvault meetings metrics --domain example.com --after 2026-01-01 --json
 ```
 
+### meetings links
+
+`msgvault meetings links <note-id|ref> [--json]` reads the calendar copies and
+notes that share an exact meeting occurrence. Use a note ID, `msg:<id>`, or an
+event `ref` from `calendar events --json`. This command requires daemon API
+schema 5.1.0 or newer.
+
 ### meetings context
 
 | Flag | Contract |
