@@ -16,6 +16,7 @@
   let opened = $state<Prepared<Employment>>();
   const prepare = async () => { opened = await attempt.prepare(() => controller.prepareEmploymentMutation(employment.id)); };
   onMount(() => { void prepare(); });
+  const moved = $derived(!!attempt.conflict && attempt.conflict.data.person_id !== controller.personID);
   const shown = $derived(opened?.data ?? employment);
   const employerName = $derived(controller.organizationName(shown.organization_id));
   let dateError = $state<string | null>(null);
@@ -24,11 +25,11 @@
   const context = $derived([`${shown.title || shown.role || 'Job'} at ${employerName}`, since ? `since ${since}` : ''].filter(Boolean).join(' · '));
   function close(): void { if (!attempt.busy) { attempt.reset(); onClose(); } }
   async function submit(): Promise<void> {
-    if (attempt.busy || !opened || !endDate.trim() || dateError) return;
+    if (attempt.busy || !opened || !endDate.trim() || dateError || moved) return;
     if (await attempt.run(current => controller.endEmployment(employment.id, { end_date: endDate.trim() }, current ?? opened))) close();
   }
 </script>
-<Dialog title="End job" width="small" onclose={close} primaryLabel={attempt.conflict ? 'Keep yours' : 'End'} onprimary={() => void submit()} primaryDisabled={!opened || !endDate.trim() || !!dateError} busy={attempt.busy}
+<Dialog title="End job" width="small" onclose={close} primaryLabel={moved ? undefined : attempt.conflict ? 'Keep yours' : 'End'} onprimary={() => void submit()} primaryDisabled={!opened || !endDate.trim() || !!dateError} busy={attempt.busy}
   cancelLabel={attempt.conflict ? 'Use saved' : 'Cancel'}>
   <form onsubmit={(event) => { event.preventDefault(); void submit(); }}>
     <p class="context">{context}</p>

@@ -81,6 +81,7 @@
   let committed = $state(false);
   const loading = $derived(!!initialView && !opened && !attempt.details);
   const locked = $derived(attempt.busy || committed || controller.createBlocked.relationships);
+  const cannotReopen = $derived(!!(attempt.conflict?.data.end_date ?? initialRelationship?.end_date) && !endDate.trim());
 
   let searchAbort: AbortController | undefined;
   let searchGeneration = 0;
@@ -159,7 +160,7 @@
   async function submit(): Promise<void> {
     if (
       attempt.busy || committed || loading || (!!initialView && !opened) ||
-      datesInvalid || !!endDateError ||
+      datesInvalid || !!endDateError || cannotReopen ||
       !relationshipTypeSlug ||
       (!initialRelationship && (counterpartID === null || counterpartID === personID))
     )
@@ -207,7 +208,7 @@
 <Dialog title={initialRelationship ? 'Edit connection' : 'Add connection'} onclose={requestClose}
   primaryLabel={attempt.conflict ? 'Keep yours' : initialRelationship ? 'Save' : 'Add connection'} onprimary={() => void submit()}
   cancelLabel={attempt.conflict ? 'Use saved' : 'Cancel'}
-  busy={attempt.busy} primaryDisabled={committed || loading || (!!initialView && !opened) || !relationshipTypeSlug || datesInvalid || !!endDateError || (!initialRelationship && (counterpartID === null || counterpartID === personID)) || controller.createBlocked.relationships}>
+  busy={attempt.busy} primaryDisabled={committed || loading || (!!initialView && !opened) || !relationshipTypeSlug || datesInvalid || !!endDateError || cannotReopen || (!initialRelationship && (counterpartID === null || counterpartID === personID)) || controller.createBlocked.relationships}>
   {#if loading}<p role="status">Loading connection…</p>{:else if !initialView || opened}
   <form onsubmit={(event) => { event.preventDefault(); void submit(); }}>
     <div class="editor" aria-busy={attempt.busy}>
@@ -246,7 +247,7 @@
       <section>
         {#if initialRelationship}
           <DateField bind:value={endDate} start={startDate} bind:error={endDateError} disabled={locked} />
-          {#if (attempt.conflict?.data.end_date ?? initialRelationship.end_date) && !endDate.trim()}<p class="muted">To reopen it, add a new connection.</p>{/if}
+          {#if cannotReopen}<p class="muted">To reopen it, add a new connection.</p>{/if}
         {:else}<DateRange bind:start={startDate} bind:end={endDate} showCurrent={false} bind:invalid={datesInvalid} disabled={locked} />{/if}
         <label class="notes">Notes<textarea aria-label="Notes" bind:value={notes} disabled={locked}></textarea></label>
       </section>

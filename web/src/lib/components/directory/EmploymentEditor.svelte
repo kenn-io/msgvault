@@ -42,8 +42,9 @@
   let organizationQuery = $state('');
   let moreDetails = $state(!!(initialEmployment?.department || initialEmployment?.location || initialEmployment?.description));
   const attempt = new WriteAttempt<Prepared<Employment>>();
-  // The job as the person opened it, so a conflict can tell their edits from changes made elsewhere.
+  // The version sent by the first save; a newer version causes a conflict.
   let opened = $state<Prepared<Employment>>();
+  const moved = $derived(!!attempt.conflict && attempt.conflict.data.person_id !== personID);
   const loading = $derived(!!initialEmployment && !opened && !attempt.details);
   const loadFailed = $derived(!!initialEmployment && !opened && !!attempt.details);
   let selectedOrganization = $state<Organization>();
@@ -119,7 +120,7 @@
   }
 
   async function submit(): Promise<void> {
-    if (saveDisabled || attempt.busy) return;
+    if (saveDisabled || attempt.busy || moved) return;
     const ok = await attempt.run(async current => {
       if (creatingOrganization) {
         const created = await controller.createOrganization({ name: organizationName.trim(), kind: organizationKind as OrganizationCreateBody['kind'], primary_domain: organizationDomain.trim() || null });
@@ -152,7 +153,7 @@
   }
 </script>
 
-<Dialog title={initialEmployment ? 'Edit job' : 'Add job'} onclose={requestClose} primaryLabel={loadFailed ? undefined : attempt.conflict ? 'Keep yours' : initialEmployment ? 'Save' : 'Add job'} onprimary={() => void submit()} primaryDisabled={saveDisabled} busy={attempt.busy}
+<Dialog title={initialEmployment ? 'Edit job' : 'Add job'} onclose={requestClose} primaryLabel={loadFailed || moved ? undefined : attempt.conflict ? 'Keep yours' : initialEmployment ? 'Save' : 'Add job'} onprimary={() => void submit()} primaryDisabled={saveDisabled} busy={attempt.busy}
   cancelLabel={attempt.conflict ? 'Use saved' : 'Cancel'}>
   {#if !loadFailed}<form class="editor" aria-busy={loading || attempt.busy} onsubmit={(event) => { event.preventDefault(); void submit(); }}>
     {#if loading}<p role="status">Loading job…</p>{:else}
