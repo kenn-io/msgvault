@@ -31,7 +31,10 @@ func openViews(ctx context.Context) (viewsClient, func(), error) {
 }
 func resolveCLIView(ctx context.Context, client viewsClient, value string) (*store.SavedView, error) {
 	if id, err := strconv.ParseInt(value, 10, 64); err == nil && id > 0 {
-		return client.GetSavedView(ctx, id)
+		view, err := client.GetSavedView(ctx, id)
+		if !errors.Is(err, store.ErrSavedViewNotFound) {
+			return view, err
+		}
 	}
 	views, err := client.ListSavedViews(ctx)
 	if err != nil {

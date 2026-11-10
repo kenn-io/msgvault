@@ -28,9 +28,20 @@ func TestViewsPinExcludeRoundTripAndRetry(t *testing.T) {
 	logger := slog.New(slog.DiscardHandler)
 	srv := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: f.Store, config: cfg, logger: logger}, SavedViewStore: f.Store, Logger: logger})
 	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	var failNumericLookup atomic.Bool
+	var listCalls atomic.Int64
 	var conflict atomic.Bool
 	conflict.Store(true)
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/saved-views" && r.Method == http.MethodGet {
+			listCalls.Add(1)
+		}
+		if r.URL.Path == "/api/v1/saved-views/2024" && failNumericLookup.Load() {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = fmt.Fprint(w, `{"error":"unavailable","message":"synthetic lookup failure"}`)
+			return
+		}
 		if r.Method == http.MethodPatch && conflict.CompareAndSwap(true, false) {
 			_, err := f.Store.UpdateSavedView(r.Context(), view.ID, 1, store.SavedViewInput{Name: view.Name, CanonicalState: []byte(`{}`), SchemaVersion: 2})
 			assert.NoError(t, err)
@@ -72,6 +83,17 @@ func TestViewsPinExcludeRoundTripAndRetry(t *testing.T) {
 	_, err = run("pin", "CLI view", "source:999999:message:missing")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "saved_view_items_rejected")
+	_, err = f.Store.CreateSavedView(t.Context(), store.SavedViewInput{Name: "2024", CanonicalState: []byte(`{}`), SchemaVersion: 2})
+	require.NoError(t, err)
+	out, err = run("show", "2024", "--json")
+	require.NoError(t, err)
+	assert.Contains(t, out, `"name":"2024"`)
+	before := listCalls.Load()
+	failNumericLookup.Store(true)
+	_, err = run("show", "2024", "--json")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "synthetic lookup failure")
+	assert.Equal(t, before, listCalls.Load(), "infrastructure errors must not fall back to listing names")
 }
 
 // The daemon wire fixture isolates the CLI's text rendering contract.

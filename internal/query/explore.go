@@ -1045,6 +1045,9 @@ func exploreLogicalEntryKeysCTE() string {
 }
 
 func applyExploreItems(base string, args []any, items EntryItems) (string, []any) {
+	if items.empty() {
+		return base, args
+	}
 	predicate := func(messages, conversations []int64) string {
 		parts := []string{}
 		for i, ids := range [][]int64{messages, conversations} {

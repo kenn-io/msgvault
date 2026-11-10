@@ -1221,6 +1221,12 @@ func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySou
 				if err := s.copyLoopDecisionTx(context.Background(), tx, legacyID, newID); err != nil {
 					return fmt.Errorf("transfer legacy loop decision: %w", err)
 				}
+				remap := ItemRemap{Messages: map[SavedViewItemRef]SavedViewItemRef{
+					{MessageID: legacyID, SourceID: sourceID}: {MessageID: newID, SourceID: sourceID},
+				}}
+				if err := s.remapSavedViewItemsTx(context.Background(), tx, remap); err != nil {
+					return fmt.Errorf("transfer legacy saved view items: %w", err)
+				}
 			}
 
 			_, err = tx.Exec(

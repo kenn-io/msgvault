@@ -11,6 +11,11 @@ import (
 // API layer validates the finite grouping/sort catalog before constructing it.
 type EntryItems struct{ IncludeMessageIDs, IncludeConversationIDs, ExcludeMessageIDs, ExcludeConversationIDs []int64 }
 
+func (items EntryItems) empty() bool {
+	return len(items.IncludeMessageIDs) == 0 && len(items.IncludeConversationIDs) == 0 &&
+		len(items.ExcludeMessageIDs) == 0 && len(items.ExcludeConversationIDs) == 0
+}
+
 type ExploreRequest struct {
 	Items EntryItems `json:"-"`
 	// PersonInteractionsOnly excludes owner-absent events and meetings from person timelines.

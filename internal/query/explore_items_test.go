@@ -41,6 +41,11 @@ func TestExploreEmptyItemsSQLUnchanged(t *testing.T) {
 	got, gotArgs := applyExploreItems(base, args, EntryItems{})
 	assert.Equal(t, base, got)
 	assert.Equal(t, args, gotArgs)
+	request := ExploreRequest{Context: Context{SourceIDs: []int64{1}}, Search: SearchSpec{Mode: SearchFullText, Query: "needle", CandidateMessageIDs: []int64{2, 3}}}
+	wantSQL, wantArgs := buildExploreConditions(request)
+	gotSQL, gotArgs := buildExploreMatchCountConditions(request)
+	assert.Equal(t, wantSQL, gotSQL)
+	assert.Equal(t, wantArgs, gotArgs)
 }
 
 func TestExploreItemsDistinctExplicitChats(t *testing.T) {

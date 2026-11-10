@@ -692,6 +692,16 @@ func validateExploreAnalysisPage(page PageSpec, maxLimit int) error {
 	return nil
 }
 
+func buildExploreMatchCountConditions(request ExploreRequest) (string, []any) {
+	conditions, args := buildExploreConditions(request)
+	if request.Items.empty() {
+		return conditions, args
+	}
+	// Membership overrides do not turn nonmatching messages into lexical hits.
+	lexicalConditions, lexicalArgs := buildExploreConditions(ExploreRequest{Search: request.Search})
+	return "(" + conditions + ") AND (" + lexicalConditions + ")", append(args, lexicalArgs...)
+}
+
 func (e *DuckDBEngine) ExploreMatchCounts(ctx context.Context, request ExploreMatchCountsRequest) (*ExploreMatchCountsResponse, error) {
 	if e.analyticsDir == "" {
 		return nil, &CacheUnavailableError{Readiness: CacheAbsent}
@@ -719,12 +729,7 @@ func (e *DuckDBEngine) ExploreMatchCounts(ctx context.Context, request ExploreMa
 	if err != nil {
 		return nil, err
 	}
-	conditions, args := buildExploreConditions(explore)
-	// Membership overrides do not turn nonmatching messages into lexical hits.
-	lexical := ExploreRequest{Search: explore.Search}
-	lexicalConditions, lexicalArgs := buildExploreConditions(lexical)
-	conditions = "(" + conditions + ") AND (" + lexicalConditions + ")"
-	args = append(args, lexicalArgs...)
+	conditions, args := buildExploreMatchCountConditions(explore)
 
 	placeholders := make([]string, len(request.RowKeys))
 	for i, key := range request.RowKeys {

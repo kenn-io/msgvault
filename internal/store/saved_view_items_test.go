@@ -390,3 +390,44 @@ func TestMergeSourcesSavedViewItemsDoNotResurrectReusedConversation(t *testing.T
 	require.NoError(t, err)
 	assert.Empty(t, items.Include, "a stale source-A pin cannot attach to source-B's reused conversation ID")
 }
+
+func TestMigrateSourceMessageIDRemapsSavedViewItems(t *testing.T) {
+	for _, mode := range []string{"include", "exclude", "collision"} {
+		t.Run(mode, func(t *testing.T) {
+			f := storetest.New(t)
+			legacyID := f.CreateMessage("legacy")
+			survivorID := f.CreateMessage("scoped")
+			legacy := store.SavedViewItemRef{MessageID: legacyID, SourceID: f.Source.ID}
+			survivor := store.SavedViewItemRef{MessageID: survivorID, SourceID: f.Source.ID}
+			change := store.SavedViewItemChange{AddedBy: "owner"}
+			if mode == "exclude" {
+				change.ExcludeAdd = []store.SavedViewItemRef{legacy}
+			} else {
+				change.IncludeAdd = []store.SavedViewItemRef{legacy}
+			}
+			if mode == "collision" {
+				change.ExcludeAdd = []store.SavedViewItemRef{survivor}
+			}
+			view, err := f.Store.CreateSavedView(t.Context(), savedViewInput("Migration"))
+			require.NoError(t, err)
+			view, err = f.Store.ChangeSavedViewItems(t.Context(), view.ID, view.Revision, change)
+			require.NoError(t, err)
+			require.NoError(t, f.Store.MigrateSourceMessageID(f.Source.ID, f.ConvID, "legacy", "scoped"))
+			updated, err := f.Store.GetSavedView(t.Context(), view.ID)
+			require.NoError(t, err)
+			assert.Equal(t, view.Revision+1, updated.Revision)
+			items, err := f.Store.GetSavedViewItems(t.Context(), view.ID)
+			require.NoError(t, err)
+			entries := items.Exclude
+			if mode == "include" {
+				assert.Empty(t, items.Exclude)
+				entries = items.Include
+			} else {
+				assert.Empty(t, items.Include)
+			}
+			require.Len(t, entries, 1)
+			assert.Equal(t, survivor, entries[0].SavedViewItemRef)
+			assert.Equal(t, "owner", entries[0].AddedBy)
+		})
+	}
+}
