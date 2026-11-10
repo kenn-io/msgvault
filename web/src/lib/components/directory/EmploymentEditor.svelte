@@ -143,8 +143,7 @@
   async function refreshOrganizationAfterUnknown(): Promise<void> {
     await controller.refreshOrganizations(organizationName.trim());
     if (controller.createBlocked.organizations) return;
-    creatingOrganization = false;
-    organizationID = '';
+    if (controller.organizations.length) { creatingOrganization = false; organizationID = ''; }
     attempt.details = '';
   }
 

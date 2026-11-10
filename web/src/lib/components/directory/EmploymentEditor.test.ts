@@ -201,12 +201,16 @@ it.each(['none', 'same name'] as const)('reconciles an inline organization creat
       throw new Error(`Unexpected ${request.method} ${path}`);
     });
     await openInlineEmployer(controller, 'Example company');
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Domain' }), { target: { value: 'example.org' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Add job' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Check again' }));
+    await waitFor(() => expect(controller.createBlocked.organizations).toBe(false));
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
     if (match === 'none') {
+      await waitFor(() => expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('disabled', false));
       expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('value', 'Example company');
-      expect(screen.getAllByRole('button', { name: /^Add job/ }).at(-1)!).toHaveProperty('disabled', false);
+      expect(screen.getByRole('textbox', { name: 'Domain' })).toHaveProperty('value', 'example.org');
+      expect(screen.getByRole('button', { name: 'Add job' })).toHaveProperty('disabled', false);
     } else {
       await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Name' })).toBeNull());
       expect(screen.getByRole('button', { name: 'Add job' })).toHaveProperty('disabled', true);
