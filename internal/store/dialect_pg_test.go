@@ -139,7 +139,6 @@ func TestPostgreSQLDialect_FTSLayoutVersioned(t *testing.T) {
 	assert.Contains(q.query, "setweight(to_tsvector('simple', LEFT(COALESCE($3, '')", "body vector")
 	assert.Contains(q.query, "), 'D')", "body weight")
 	assert.Contains(q.query, "indexing_version = 3", "layout version stamp")
-
 }
 
 func TestPostgreSQLDialect_FTSNeedsBackfillSQLUsesLiteralVersion(t *testing.T) {
