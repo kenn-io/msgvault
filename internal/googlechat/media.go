@@ -138,6 +138,9 @@ func mediaWrites(ctx context.Context, st *store.Store, reader *exportReader, gro
 				if ctx.Err() != nil {
 					return nil, ctx.Err()
 				}
+				if errors.Is(err, fs.ErrInvalid) {
+					summary.AttachmentsUnsupported++
+				}
 				// Source path failures are missing media; ambiguity is a fatal choice of
 				// bytes. Storage failures above always stop the import.
 				if _, ok := errors.AsType[*os.PathError](err); !ok && !errors.Is(err, fs.ErrNotExist) {

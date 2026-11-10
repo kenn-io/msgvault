@@ -21,7 +21,7 @@ type ImportSummary struct {
 	SourceID                                                                            int64
 	Duration                                                                            time.Duration
 	Conversations, MembershipWithoutMessages, MessagesSupplied                          int
-	Duplicates, Unsupported, DatesUnparsed, UnknownSenders                              int
+	Duplicates, Unsupported, DatesUnparsed, UnknownSenders, UnknownMembers              int
 	AttachmentsStored, AttachmentsMissing, AttachmentsUnsupported, AttachmentsOversized int
 	MessagesAdded                                                                       int64
 }

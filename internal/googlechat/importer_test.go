@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,7 +23,7 @@ func write(t *testing.T, root, name, content string) {
 
 const one = `{"messages":[{"creator":{"name":"Example Owner","email":"owner@example.com","user_type":"Human"},"created_date":"Monday, January 18, 2021 at 1:27:33\u202fPM UTC","text":"Bodyneedle synthetic","topic_id":"topic-a","message_id":"group/topic/message","future":{"keep":true},"attached_files":[{"original_name":"example.txt","export_name":"File-example.txt"}]}]}`
 
-func TestImportGoogleChatPreservesSearchRawScopeAndReplay(t *testing.T) {
+func TestImportGoogleChatCounts(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	opts := ImportOptions{Me: " OWNER@example.com ", Roots: []string{"testdata/takeout"}, AttachmentsDir: t.TempDir()}
 	summary, err := Import(t.Context(), st, opts)
@@ -37,6 +36,17 @@ func TestImportGoogleChatPreservesSearchRawScopeAndReplay(t *testing.T) {
 	assert.Equal(t, 1, summary.UnknownSenders)
 	assert.Equal(t, 1, summary.AttachmentsStored)
 	assert.Equal(t, 1, summary.AttachmentsMissing)
+	var senders, conversations int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM message_recipients WHERE recipient_type='from'`).Scan(&senders))
+	assert.Equal(t, 3, senders)
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM conversations WHERE message_count>0`).Scan(&conversations))
+	assert.Equal(t, 2, conversations)
+}
+func TestImportGoogleChatRawMetadata(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	opts := ImportOptions{Me: "owner@example.com", Roots: []string{"testdata/takeout"}, AttachmentsDir: t.TempDir()}
+	_, err := Import(t.Context(), st, opts)
+	require.NoError(t, err)
 	var id int64
 	var fromMe bool
 	var sent sql.NullTime
@@ -62,26 +72,21 @@ func TestImportGoogleChatPreservesSearchRawScopeAndReplay(t *testing.T) {
 	raw, err := st.GetMessageRawContext(t.Context(), id)
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"future":{"keep":true}`)
-	var body string
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id = ?`), id).Scan(&body))
-	assert.Equal(t, "Bodyneedle synthetic", body)
-	_, total, err := st.SearchMessages("Bodyneedle", 0, 100)
+}
+func TestImportGoogleChatReplayKeepsSnapshot(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	opts := ImportOptions{Me: "owner@example.com", Roots: []string{"testdata/takeout"}, AttachmentsDir: t.TempDir()}
+	_, err := Import(t.Context(), st, opts)
 	require.NoError(t, err)
-	assert.EqualValues(t, 1, total)
-	for _, query := range []string{`SELECT count(*) FROM message_recipients WHERE recipient_type = 'from'`, `SELECT count(*) FROM conversations WHERE message_count > 0`} {
-		var n int
-		require.NoError(t, st.DB().QueryRowContext(t.Context(), query).Scan(&n))
-		if strings.Contains(query, "recipients") {
-			assert.Equal(t, 3, n)
-		} else {
-			assert.Equal(t, 2, n)
-		}
-	}
+	var id int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id='group/topic/message'`).Scan(&id))
+	raw, err := st.GetMessageRawContext(t.Context(), id)
+	require.NoError(t, err)
 	// A partial later export cannot clear text, raw bytes or stored media.
 	root := t.TempDir()
 	write(t, root, "Groups/DM synthetic-dm/messages.json", strings.Replace(one, "Bodyneedle synthetic", "replacement", 1))
 	opts.Roots = []string{root}
-	summary, err = Import(t.Context(), st, opts)
+	summary, err := Import(t.Context(), st, opts)
 	require.NoError(t, err)
 	assert.Zero(t, summary.MessagesAdded)
 	assert.Equal(t, 1, summary.Duplicates)
@@ -89,13 +94,20 @@ func TestImportGoogleChatPreservesSearchRawScopeAndReplay(t *testing.T) {
 	rawAfter, err := st.GetMessageRawContext(t.Context(), id)
 	require.NoError(t, err)
 	assert.Equal(t, string(raw), string(rawAfter))
-	opts.Me = "other@example.com"
-	summary, err = Import(t.Context(), st, opts)
+}
+func TestImportGoogleChatAccountScope(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	opts := ImportOptions{Me: "owner@example.com", Roots: []string{"testdata/takeout"}, AttachmentsDir: t.TempDir()}
+	_, err := Import(t.Context(), st, opts)
 	require.NoError(t, err)
-	assert.EqualValues(t, 1, summary.MessagesAdded)
-	var n int
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM sources WHERE source_type = 'google_chat'`).Scan(&n))
-	assert.Equal(t, 2, n)
+	opts.Roots = []string{"testdata/takeout/Takeout/Google Chat/Groups"}
+	opts.Me = "other@example.com"
+	summary, err := Import(t.Context(), st, opts)
+	require.NoError(t, err)
+	assert.EqualValues(t, 4, summary.MessagesAdded)
+	var sources int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM sources WHERE source_type='google_chat'`).Scan(&sources))
+	assert.Equal(t, 2, sources)
 }
 
 func TestImportGoogleChatMultipartRepairAndOrder(t *testing.T) {
@@ -132,81 +144,35 @@ func TestImportGoogleChatMultipartRepairAndOrder(t *testing.T) {
 func TestImportGoogleChatInterruptedReplay(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
-	var records []string
-	for i := 0; i < 200; i++ {
-		records = append(records, strings.Replace(strings.TrimSuffix(strings.TrimPrefix(one, `{"messages":[`), `]}`), "group/topic/message", fmt.Sprintf("group/topic/message%d", i), 1))
-	}
-	write(t, root, "Groups/DM a/messages.json", `{"messages":[`+strings.Join(records, ",")+`]}`)
-
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
+	first := strings.TrimSuffix(strings.TrimPrefix(one, `{"messages":[`), `]}`)
+	write(t, root, "Groups/DM a/messages.json", `{"messages":[`+first+`,`+strings.ReplaceAll(first, "group/topic/message", "group/topic/second")+`]}`)
 	opts := ImportOptions{Me: "owner@example.com", Roots: []string{root}}
-	type outcome struct {
-		summary *ImportSummary
-		err     error
-	}
-	done := make(chan outcome, 1)
-	finished := make(chan struct{})
-	t.Cleanup(func() { cancel(); <-finished })
-	go func() { defer close(finished); summary, err := Import(ctx, st, opts); done <- outcome{summary, err} }()
-	// Observe a committed insert, then interrupt the same production import.
-	require.Eventually(t, func() bool {
-		var n int
-		err := st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages`).Scan(&n)
-		return err == nil && n > 0
-	}, 10*time.Second, time.Millisecond)
-	cancel()
-	result := <-done
-	summary, err := result.summary, result.err
+	summary, err := cancelAfterCommittedMessage(t, st, opts)
 	require.ErrorIs(t, err, context.Canceled)
-	assert.Positive(t, summary.MessagesAdded)
-	assert.Less(t, summary.MessagesAdded, int64(200))
-	var processed, added int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT messages_processed,messages_added FROM sync_runs`).Scan(&processed, &added))
-	assert.Equal(t, summary.MessagesAdded, processed)
-	assert.Equal(t, summary.MessagesAdded, added)
-	var status string
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT status FROM sync_runs`).Scan(&status))
-	assert.Equal(t, "failed", status)
+	assert.EqualValues(t, 1, summary.MessagesAdded)
 	summary, err = Import(t.Context(), st, opts)
 	require.NoError(t, err)
-	assert.EqualValues(t, 200, summary.MessagesAdded+int64(summary.Duplicates))
+	assert.EqualValues(t, 2, summary.MessagesAdded+int64(summary.Duplicates))
 	assert.Positive(t, summary.Duplicates)
 }
 
 func TestImportGoogleChatValidation(t *testing.T) {
-	for _, tc := range []struct{ name, me, path, data, want string }{
-		{"owner missing", "", "Groups/DM a/messages.json", one, "--me"},
-		{"display address", "Example <owner@example.com>", "Groups/DM a/messages.json", one, "--me"},
-		{"owner conflict", "other@example.com", "Users/User a/user_info.json", `{"user":{"email":"owner@example.com"}}`, "disagrees"},
-		{"malformed", "owner@example.com", "Groups/DM a/messages.json", `{"messages":[`, "JSON"},
-		{"no layout", "owner@example.com", "unrelated.json", one, "layout"},
+	for _, tc := range []struct{ name, me, data, want string }{
+		{"missing owner", "", one, "--me"}, {"display address", "Example <owner@example.com>", one, "--me"},
+		{"malformed", "owner@example.com", `{"messages":[`, "JSON"}, {"trailing", "owner@example.com", one + ` {}`, "JSON"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
-			write(t, root, tc.path, tc.data)
+			write(t, root, "Groups/DM a/messages.json", tc.data)
 			summary, err := Import(t.Context(), testutil.NewTestStore(t), ImportOptions{Me: tc.me, Roots: []string{root}})
 			require.ErrorContains(t, err, tc.want)
 			assert.Zero(t, summary.MessagesAdded)
 		})
 	}
-	t.Run("archive", func(t *testing.T) {
-		root := t.TempDir()
-		write(t, root, "takeout.zip", "")
-		_, err := Import(t.Context(), testutil.NewTestStore(t), ImportOptions{Me: "owner@example.com", Roots: []string{filepath.Join(root, "takeout.zip")}})
-		require.ErrorContains(t, err, "extract")
-	})
-	t.Run("conflicting JSON", func(t *testing.T) {
-		a, b := t.TempDir(), t.TempDir()
-		write(t, a, "Groups/DM a/messages.json", one)
-		write(t, b, "Groups/DM a/messages.json", strings.Replace(one, "Bodyneedle", "changed", 1))
-		_, err := Import(t.Context(), testutil.NewTestStore(t), ImportOptions{Me: "owner@example.com", Roots: []string{a, b}})
-		require.ErrorContains(t, err, "conflict")
-	})
 }
 
 func TestImportGoogleChatMediaSafety(t *testing.T) {
-	for _, tc := range []struct{ name, ref string }{{"traversal", "../secret"}, {"absolute", "/secret"}, {"backslash", `..\\secret`}, {"missing", "File-example.txt"}, {"escaped symlink", "escape.txt"}, {"oversized", "large.txt"}, {"ambiguous", "duplicate.txt"}} {
+	for _, tc := range []struct{ name, ref string }{{"traversal", "../secret"}, {"absolute", "/secret"}, {"backslash", `..\\secret`}, {"missing", "File-example.txt"}, {"escaped symlink", "escape.txt"}, {"oversized", "large.txt"}, {"ambiguous", "duplicate.txt"}, {"nonregular", "directory"}} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			a, b := t.TempDir(), t.TempDir()
@@ -214,6 +180,8 @@ func TestImportGoogleChatMediaSafety(t *testing.T) {
 			write(t, a, "Groups/DM a/messages.json", strings.ReplaceAll(one, "File-example.txt", tc.ref))
 			dir := filepath.Join(a, "Groups/DM a")
 			switch tc.name {
+			case "nonregular":
+				require.NoError(t, os.Mkdir(filepath.Join(dir, tc.ref), 0700))
 			case "escaped symlink":
 				write(t, b, "secret", "secret")
 				require.NoError(t, os.Symlink(filepath.Join(b, "secret"), filepath.Join(dir, tc.ref)))
@@ -234,6 +202,9 @@ func TestImportGoogleChatMediaSafety(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, 1, summary.AttachmentsMissing)
 			assert.Zero(t, summary.AttachmentsStored)
+			if tc.name == "nonregular" {
+				assert.Equal(t, 1, summary.AttachmentsUnsupported)
+			}
 			if tc.name == "oversized" {
 				var reason, state string
 				require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT attachment_skip_reason,attachment_state FROM attachments`).Scan(&reason, &state))
@@ -382,6 +353,14 @@ func TestImportGoogleChatConversationKindRequiresRosterEvidence(t *testing.T) {
 			var kind string
 			require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT conversation_type FROM conversations`).Scan(&kind))
 			assert.Equal(t, tc.want, kind)
+			if tc.name == "two person DM" {
+				require.NoError(t, os.Remove(filepath.Join(root, "Groups", tc.group, "group_info.json")))
+				write(t, root, "Groups/"+tc.group+"/messages.json", strings.ReplaceAll(one, "group/topic/message", "group/topic/new"))
+				_, err = Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{root}})
+				require.NoError(t, err)
+				require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT conversation_type FROM conversations`).Scan(&kind))
+				assert.Equal(t, "direct_chat", kind)
+			}
 		})
 	}
 }

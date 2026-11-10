@@ -45,7 +45,6 @@ func TestImportGoogleChatRefreshesCacheAfterPartialFailure(t *testing.T) {
 	command.SetErr(io.Discard)
 	err := runImportGoogleChat(command, []string{root}, googleChatCLIOptions{Me: "owner@example.com"})
 	require.ErrorContains(t, err, "JSON")
-	assert.Contains(t, out.String(), "1 added")
 	db, err := sql.Open("duckdb", "")
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })

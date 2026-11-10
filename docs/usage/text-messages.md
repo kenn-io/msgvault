@@ -548,7 +548,7 @@ its referenced `export_name` within the conversation directory and replay to
 repair the missing media slot.
 
 Output reports supplied conversations and messages, additions, duplicates,
-unsupported records, unknown senders, unparsed dates, stored/missing media and
+unsupported records, unknown senders, unparsed dates, unsupported roster members, stored/missing media and
 memberships with no supplied messages. These counts describe only supplied
 files. Re-run all parts after an interruption or missing-media extraction: replay
 adds missing messages and fills missing media slots. Previously stored text,

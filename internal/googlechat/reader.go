@@ -50,6 +50,7 @@ func openExport(ctx context.Context, roots []string, owner string) (reader *expo
 		return reader, fmt.Errorf("googlechat: supply 1 to %d extracted part directories", maxRoots)
 	}
 	seen := map[string]bool{}
+	seenGroups := map[string]bool{}
 	for _, name := range roots {
 		if err := ctx.Err(); err != nil {
 			return reader, err
@@ -105,17 +106,25 @@ func openExport(ctx context.Context, roots []string, owner string) (reader *expo
 		if !found {
 			return reader, fmt.Errorf("googlechat: no Google Chat Groups/Users layout in supplied root %s", absolute)
 		}
-		err = reader.directories(ctx, p, p.groups, func(entry fs.DirEntry) error {
-			id := entry.Name()
-			if !strings.HasPrefix(id, "DM ") && !strings.HasPrefix(id, "Space ") {
-				return nil
-			}
-			reader.groups[id] = append(reader.groups[id], groupPart{part: p, dir: filepath.Join(p.groups, id)})
-			return nil
-		})
-		if err != nil {
+		groupIdentity, err := filepath.EvalSymlinks(filepath.Join(p.path, p.groups))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return reader, err
 		}
+		if !seenGroups[groupIdentity] {
+			err = reader.directories(ctx, p, p.groups, func(entry fs.DirEntry) error {
+				id := entry.Name()
+				if !strings.HasPrefix(id, "DM ") && !strings.HasPrefix(id, "Space ") {
+					return fmt.Errorf("googlechat: unsupported group directory %q", id)
+				}
+				reader.groups[id] = append(reader.groups[id], groupPart{part: p, dir: filepath.Join(p.groups, id)})
+				return nil
+			})
+			if err != nil {
+				return reader, err
+			}
+			seenGroups[groupIdentity] = true
+		}
+
 		if p.groups == "." {
 			continue
 		}
@@ -218,11 +227,7 @@ func readJSON(ctx context.Context, root *os.Root, path string) (jsontext.Value, 
 	if int64(len(data)) > maxJSONBytes {
 		return nil, errors.New("googlechat: JSON byte limit exceeded")
 	}
-	var raw jsontext.Value
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("googlechat: JSON %s: %w", path, err)
-	}
-	return raw, nil
+	return data, nil
 }
 
 // groupFiles accepts identical repeated JSON files, and refuses conflicting

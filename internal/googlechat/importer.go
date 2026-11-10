@@ -62,11 +62,16 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 		}
 	}
 	resolve := func(p person) (int64, error) {
-		email, err := NormalizeOwner(p.Email)
-		if err != nil {
+		email, _ := NormalizeOwner(p.Email)
+		if email == "" {
 			return 0, nil
 		}
-		return st.EnsureParticipantContext(ctx, email, p.Name, strings.SplitN(email, "@", 2)[1])
+		id, ensureErr := st.EnsureParticipantContext(ctx, email, p.Name, strings.SplitN(email, "@", 2)[1])
+		if ensureErr != nil {
+			return 0, ensureErr
+		}
+		_, updateErr := st.UpdateParticipantDisplayNameByEmail(ctx, email, p.Name)
+		return id, updateErr
 	}
 	supplied := map[string]bool{}
 	for _, group := range reader.groupIDs() {
@@ -139,6 +144,7 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 			return false, err
 		}
 		if id == 0 {
+			summary.UnknownMembers++
 			continue
 		}
 		if err := st.EnsureConversationParticipantContext(ctx, conversationID, id, "member"); err != nil {
@@ -168,7 +174,7 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 			ids = append(ids, m.ID)
 		}
 	}
-	existing, err := st.MessageExistsBatchContext(ctx, sourceID, ids)
+	existing, err := st.StoredMessagesContext(ctx, sourceID, "google_chat_json", ids)
 	if err != nil {
 		return false, err
 	}
@@ -186,14 +192,18 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 			return false, fmt.Errorf("googlechat: conflicting message ID %q", m.ID)
 		}
 		seen[m.ID] = record
-		id := existing[m.ID]
+		stored := existing[m.ID]
+		id := stored.ID
 		if id != 0 {
+			if stored.ConversationID != conversationID {
+				return false, fmt.Errorf("googlechat: conflicting message ID %q in another conversation", m.ID)
+			}
+			if len(stored.Raw) == 0 {
+				return false, fmt.Errorf("googlechat: unsupported or unreadable stored raw format for %q", m.ID)
+			}
 			// Repair the archived slots using their original provider references.
 			// A later edit/reordering must not attach a different file by index.
-			original, err := st.GetMessageRawContext(ctx, id)
-			if err != nil {
-				return false, err
-			}
+			original := stored.Raw
 			var archived message
 			if err := json.Unmarshal(original, &archived); err != nil {
 				return false, fmt.Errorf("googlechat: read archived media references: %w", err)
@@ -222,20 +232,22 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 			summary.DatesUnparsed++
 		}
 		email, _ := NormalizeOwner(m.Creator.Email)
-		refs := append([]store.ConversationParticipantRef{}, members...)
+		var refs []store.ConversationParticipantRef
 		var recipients []store.RecipientSet
 		if sender != 0 {
 			refs = append(refs, store.ConversationParticipantRef{ParticipantID: sender, Role: "member"})
 			recipients = append(recipients, store.RecipientSet{Type: "from", ParticipantIDs: []int64{sender}, DisplayNames: []string{m.Creator.Name}})
 		}
-		// Only the observed roster supplies recipients. --me scopes the archive;
-		// it does not assert membership in a conversation with no roster evidence.
+		// Only a verified two-person DM has an unambiguous peer. Current group
+		// membership does not establish historical message delivery.
 		var to []int64
 		var toEmails []string
-		for _, member := range members {
-			if member.ParticipantID != sender {
-				to = append(to, member.ParticipantID)
-				toEmails = append(toEmails, memberEmails[member.ParticipantID])
+		if kind == "direct_chat" {
+			for _, member := range members {
+				if member.ParticipantID != sender {
+					to = append(to, member.ParticipantID)
+					toEmails = append(toEmails, memberEmails[member.ParticipantID])
+				}
 			}
 		}
 		if len(to) > 0 {
@@ -269,7 +281,7 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 		if err != nil {
 			return false, fmt.Errorf("googlechat: persist message: %w", err)
 		}
-		existing[m.ID] = id
+		existing[m.ID] = store.StoredMessage{ID: id, ConversationID: conversationID, Raw: record}
 		summary.MessagesAdded++
 	}
 	return len(envelope.Messages) > 0, nil

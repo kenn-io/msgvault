@@ -1,13 +1,17 @@
 # Google Chat Takeout fixtures
 
-`redacted-public/` contains derivatives of a **real Google Chat Takeout export,
-inferred from producer fingerprints; publisher provenance undocumented;
-publisher hand-edits noted**. This is a scoped format observation, not a claim
-that the publishers documented unmodified exports. The records date from 2024.
+`redacted-public/` contains derivatives of observed public Google Chat Takeout
+samples. Their producer provenance is inferred from fingerprints, not established
+by the publishers; publisher hand-edits are noted below. This is a scoped format
+observation. The records date from 2024.
 All names, addresses, identifiers, text, URLs and media bytes were replaced.
 Provider keys, tokens, numeric annotation offsets and record relationships remain.
 
 ## Pinned sources
+
+[Google's export help](https://support.google.com/chat/answer/10126829?hl=en)
+describes exported data and account restrictions. No published Chat Takeout JSON
+schema was found. The Chat API message format is not a Takeout schema.
 
 - [CivicTechAtlanta Space sample](https://github.com/CivicTechAtlanta/ieee-support/tree/477834ae0584d2b993b30452939a21ac37471572/IEEE-long-example),
   commit `477834ae0584d2b993b30452939a21ac37471572`. No license is stated.
@@ -16,6 +20,20 @@ Provider keys, tokens, numeric annotation offsets and record relationships remai
   commit `a2f4eb71fe3e14e835d8afd68c9b123e465a1374`. MIT grant and disclaimer
   are retained verbatim in [niimpy/LICENSE](redacted-public/niimpy/LICENSE).
   The pinned upstream license has no copyright line; none was invented.
+  Its MIT-licensed [parser](https://github.com/digitraceslab/niimpy/blob/a2f4eb71fe3e14e835d8afd68c9b123e465a1374/niimpy/reading/google_takeout.py)
+  (`chat`) and [test](https://github.com/digitraceslab/niimpy/blob/a2f4eb71fe3e14e835d8afd68c9b123e465a1374/tests/reading/test_read_google_takeout.py)
+  (`test_read_chat`) read and exercise the included samples.
+
+Additional sources were studied without copying content into these fixtures:
+
+- [google-chat-formatter sample](https://github.com/4kategreen/google-chat-formatter/blob/6b9762da4017f7526b566045e03445f663bd4c44/messages-sample.json),
+  commit `6b9762da4017f7526b566045e03445f663bd4c44`, Unlicense. Its origin is
+  not documented as a current unmodified export or as wholly synthetic.
+- [google-chat-takeout-reader](https://github.com/mrwoof/google-chat-takeout-reader/tree/ec003ff8a889188aceac86e12c11d7c360d3207c),
+  commit `ec003ff8a889188aceac86e12c11d7c360d3207c`, MIT. It has no fixture/test corpus.
+
+No parser corpus was verified as both wholly fictional and current Google Chat
+producer output. These sources do not establish current-format support.
 
 | Source | File | Source SHA-256 |
 | --- | --- | --- |
