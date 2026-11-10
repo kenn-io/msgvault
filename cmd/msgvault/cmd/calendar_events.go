@@ -88,6 +88,11 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 			}
 			return err
 		}
+		if page.Coverage == nil {
+			if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "Warning: daemon does not report calendar coverage; upgrade the daemon for sync status."); err != nil {
+				return fmt.Errorf("write calendar coverage warning: %w", err)
+			}
+		}
 		if jsonOutput {
 			data, err := json.Marshal(page)
 			if err != nil {

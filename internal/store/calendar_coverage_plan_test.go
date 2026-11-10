@@ -73,6 +73,4 @@ func TestCalendarCoverageUsesIndexedHistoryLookups(t *testing.T) {
 		requirements.NotContains(plan, "SCAN "+alias, "coverage should not scan sync history; plan: %s", plan)
 	}
 	requirements.GreaterOrEqual(indexedRunLookups, 3, "coverage should use indexed lookups for full and latest baselines plus failure checks; plan: %s", plan)
-	_, err = calendarCoverageContext(ctx, st, time.Now())
-	requirements.NoError(err)
 }

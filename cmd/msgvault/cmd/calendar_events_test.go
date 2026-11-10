@@ -41,12 +41,14 @@ func TestCalendarEventsCommand(t *testing.T) {
 		args                       []string
 		page                       store.CalendarOccurrencePage
 		version                    string
+		noCoverage                 bool
 		want, wantErr, wantWarning string
 		err                        error
 	}{
 		{name: "table", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, SeriesMessageID: 377, Subject: "Standup", Status: "confirmed", Start: start, End: start.Add(time.Hour)}, {MessageID: 412, Subject: "Offsite", Status: "confirmed", AllDay: true, StartDate: "2027-03-03", EndDate: "2027-03-04"}}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 500, Reason: "unsupported recurrence"}}}, want: "Standup", wantWarning: "1 event could not be expanded: message 500 (unsupported recurrence)"},
 		{name: "incomplete", page: store.CalendarOccurrencePage{Coverage: &store.CalendarCoverage{Notice: "Archive only", Sources: []store.CalendarSourceCoverage{{Name: "Work\x1b[31m", Status: "no_baseline"}}}}, want: "No archived", wantWarning: "Work: not fully synced"},
-		{name: "empty", want: "No archived calendar events from 2027-03-01 to 2027-04-01."},
+		{name: "empty", noCoverage: true, want: "No archived calendar events from 2027-03-01 to 2027-04-01.", wantWarning: "daemon does not report calendar coverage"},
+		{name: "old daemon json", noCoverage: true, args: []string{"--json"}, page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{}, Unexpandable: []store.CalendarUnexpandable{}}, want: `"occurrences":[]`, wantWarning: "daemon does not report calendar coverage"},
 		{name: "json", args: []string{"--json"}, page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, SeriesMessageID: 377, Subject: "Standup", Start: start, End: start.Add(time.Hour)}}, Unexpandable: []store.CalendarUnexpandable{}}, want: `"message_id":378`},
 		{name: "deleted", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, Subject: "Removed event", Status: "confirmed", DeletedFromSource: true, Start: start, End: start.Add(time.Hour)}}}, want: "deleted"},
 		{name: "terminal controls", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, Subject: "Planning\x1b[31m red\x1b[0m\nmeeting", Status: "confirmed", Start: start, End: start.Add(time.Hour)}}}, want: "Planning red meeting"},
@@ -62,6 +64,9 @@ func TestCalendarEventsCommand(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			fake := &calendarEventsFakeClient{page: tc.page, version: tc.version, err: tc.err}
+			if !tc.noCoverage && tc.page.Coverage == nil {
+				fake.page.Coverage = &store.CalendarCoverage{Complete: true}
+			}
 			if fake.version == "" {
 				fake.version = calendarEventsMinAPISchemaVersion
 			}

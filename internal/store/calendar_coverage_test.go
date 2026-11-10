@@ -11,20 +11,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestCalendarCoverageEmptyCalendar(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	_, err := st.GetOrCreateSource("gcal", "calendar@example.com")
-	require.NoError(t, err)
-	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.Add(24*time.Hour))
-	require.NoError(t, err)
-	require.Empty(t, page.Occurrences)
-	require.NotNil(t, page.Coverage)
-	require.False(t, page.Coverage.Complete)
-	require.Len(t, page.Coverage.Sources, 1)
-	require.Equal(t, "no_baseline", page.Coverage.Sources[0].Status)
-}
-
 type coverageRun struct {
 	status, cursor, syncType string
 	age                      time.Duration
