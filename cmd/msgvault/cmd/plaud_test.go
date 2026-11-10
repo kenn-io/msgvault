@@ -169,20 +169,15 @@ func TestPlaudAuthorizationPreflightUsesOwningDaemon(t *testing.T) {
 	tokenPath := plaud.NewManager("", cfg.TokensDir(), nil).TokenPath("work")
 	require.NoError(os.WriteFile(tokenPath, []byte("existing token"), 0600))
 
-	var requests atomic.Int32
+	requests := make(chan []string, 2)
 	mux := http.NewServeMux()
 	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{Service: daemonService, Version: Version}))
 	mux.HandleFunc("/api/v1/cli/run", func(w http.ResponseWriter, r *http.Request) {
-		requestNumber := requests.Add(1)
 		var req daemonCLIRunTestRequest
 		if !assert.NoError(json.UnmarshalRead(r.Body, &req)) {
 			return
 		}
-		if requestNumber == 1 {
-			assert.Equal([]string{"add-plaud", "--check-owner-only", "--", "work"}, req.Args)
-		} else {
-			assert.Equal([]string{"add-plaud", "--check-owner-only", "work"}, req.Args)
-		}
+		requests <- req.Args
 		rawSource, err := json.Marshal(cfg.Plaud[0])
 		if !assert.NoError(err) {
 			return
@@ -231,7 +226,9 @@ func TestPlaudAuthorizationPreflightUsesOwningDaemon(t *testing.T) {
 	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 	cmd.SetArgs([]string{"work", "--check-owner-only"})
 	require.NoError(cmd.Execute())
-	assert.Equal(int32(2), requests.Load())
+	require.Len(requests, 2)
+	assert.Equal([]string{"add-plaud", "--check-owner-only", "--", "work"}, <-requests)
+	assert.Equal([]string{"add-plaud", "--check-owner-only", "work"}, <-requests)
 	assert.Zero(oauthRequests.Load())
 	token, err := os.ReadFile(tokenPath)
 	require.NoError(err)

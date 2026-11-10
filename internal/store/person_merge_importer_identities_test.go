@@ -32,10 +32,9 @@ func beeperPhoneMergePeople(t *testing.T, st *store.Store) (*store.Person, *stor
 	// Model an unscoped legacy archive with a phone identifier stored in its original form.
 	email, err := st.EnsureParticipant("Reader@Example.org", "Reader", "example.org")
 	require.NoError(err)
-	phone, err := st.EnsureParticipantByPhone(t.Context(), "+1 (202) 555-0123", "Reader", "beeper")
+	phone, err := st.EnsureParticipantByPhone(t.Context(), "+1 (202) 555-0123", "Reader", "phone")
 	require.NoError(err)
 	require.NoError(st.MergeParticipantsContext(t.Context(), email, phone))
-	require.NoError(st.SetParticipantIdentifierContext(t.Context(), phone, "phone", "+1 (202) 555-0123"))
 	guest, _, err := st.CreatePersonFromParticipant(phone)
 	require.NoError(err)
 	return mustPromotedPerson(t.Context(), t, st, "owner@example.org", "Owner"), guest
@@ -44,7 +43,7 @@ func beeperPhoneMergePeople(t *testing.T, st *store.Store) (*store.Person, *stor
 func mailboxCaseMergePeople(t *testing.T, st *store.Store) (*store.Person, *store.Person) {
 	t.Helper()
 	require := require.New(t)
-	// Model an unscoped legacy archive whose Beeper identifier is a raw mailbox.
+	// Model two archive addresses that differ only by mailbox case.
 	var participants []int64
 	for _, value := range []string{"Reader@Example.org", "reader@example.org"} {
 		participant, err := st.EnsureParticipant(value, "Reader", "example.org")
@@ -53,7 +52,6 @@ func mailboxCaseMergePeople(t *testing.T, st *store.Store) (*store.Person, *stor
 	}
 	_, err := st.LinkParticipants(participants[0], participants[1])
 	require.NoError(err)
-	require.NoError(st.SetParticipantIdentifierContext(t.Context(), participants[0], "beeper", "Reader@Example.org"))
 	guest, _, err := st.CreatePersonFromParticipant(participants[0])
 	require.NoError(err)
 	return mustPromotedPerson(t.Context(), t, st, "owner@example.org", "Owner"), guest

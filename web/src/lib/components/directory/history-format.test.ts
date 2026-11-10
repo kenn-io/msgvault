@@ -27,18 +27,13 @@ describe('provenance', () => {
   });
 
   it.each([
-    {},
-    { active_until: `${year}-11-06T09:00:00` },
-    { superseded_at: `${year}-11-07T09:00:00` },
-    { active_until: `${year}-11-06T09:00:00`, superseded_at: `${year}-11-07T09:00:00` },
-  ])('keeps audit details in the tooltip while the line stays short: %j', interval => {
+    [{}, `Recorded Nov 5, ${year}, 10:04 PM\nValid from Nov 1, ${year}, 9:00 AM\nActor: you\nReference: ref-1\nConfidence: 0.8`],
+    [{ active_until: `${year}-11-06T09:00:00` }, `Recorded Nov 5, ${year}, 10:04 PM\nValid from Nov 1, ${year}, 9:00 AM\nValid until Nov 6, ${year}, 9:00 AM\nActor: you\nReference: ref-1\nConfidence: 0.8`],
+    [{ superseded_at: `${year}-11-07T09:00:00` }, `Recorded Nov 5, ${year}, 10:04 PM\nValid from Nov 1, ${year}, 9:00 AM\nReplaced Nov 7, ${year}, 9:00 AM\nActor: you\nReference: ref-1\nConfidence: 0.8`],
+    [{ active_until: `${year}-11-06T09:00:00`, superseded_at: `${year}-11-07T09:00:00` }, `Recorded Nov 5, ${year}, 10:04 PM\nValid from Nov 1, ${year}, 9:00 AM\nValid until Nov 6, ${year}, 9:00 AM\nReplaced Nov 7, ${year}, 9:00 AM\nActor: you\nReference: ref-1\nConfidence: 0.8`],
+  ])('keeps audit details in the tooltip while the line stays short: %j', (interval, title) => {
     const line = valueProvenance({ source: 'user', created_at: at, active_from: `${year}-11-01T09:00:00`, source_ref: 'ref-1', actor: 'user', confidence: 0.8, ...interval });
     expect(line.text).toBe('You · since Nov 1');
-    expect(line.title.split('\n').map(entry => entry.startsWith('Valid') ? entry.split(' ').slice(0, 2).join(' ') : entry.split(' ')[0])).toEqual([
-      'Recorded', 'Valid from', ...('active_until' in interval ? ['Valid until'] : []), ...('superseded_at' in interval ? ['Replaced'] : []), 'Actor:', 'Reference:', 'Confidence:',
-    ]);
-    if ('active_until' in interval) expect(line.title).toMatch(/Valid until Nov 6, \d{4}/);
-    if ('superseded_at' in interval) expect(line.title).toMatch(/Replaced Nov 7, \d{4}/);
-    expect(line.title).toContain('Actor: you\nReference: ref-1\nConfidence: 0.8');
+    expect(line.title).toBe(title);
   });
 });

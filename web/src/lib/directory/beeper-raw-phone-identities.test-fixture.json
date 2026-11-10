@@ -1,3 +1,26 @@
 [
-  {"participant_id":1,"type":"beeper","value":"+12025550123","display_value":"+12025550123","service_slug":"whatsapp","service_label":"WhatsApp","scope_kind":"","scope_value":"","identity_key":"[\"whatsapp\",\"\",\"\",\"+12025550123\"]","participant_display_name":"Reader"}
+  {
+    "participant_id": 1,
+    "type": "beeper",
+    "value": "+12025550123",
+    "display_value": "+12025550123",
+    "service_slug": "whatsapp",
+    "service_label": "WhatsApp",
+    "scope_kind": "",
+    "scope_value": "",
+    "identity_key": "[\"whatsapp\",\"\",\"\",\"+12025550123\"]",
+    "participant_display_name": "Reader"
+  },
+  {
+    "participant_id": 1,
+    "type": "phone",
+    "value": "+12025550123",
+    "display_value": "",
+    "service_slug": "phone",
+    "service_label": "",
+    "scope_kind": "",
+    "scope_value": "",
+    "identity_key": "[\"phone\",\"\",\"\",\"+12025550123\"]",
+    "participant_display_name": "Reader"
+  }
 ]

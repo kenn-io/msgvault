@@ -89,7 +89,7 @@ function renderSection(
 }
 
 describe('AttributeSection', () => {
-  it('leads with the value and puts its provenance under it, keeping every timestamp in the tooltip', async () => {
+  it('places Reveal beside the hidden value', async () => {
     const sensitive = definition();
     const current = personValue(sensitive, 19, { type: 'text', text: 'synthetic current secret' }, 0, { source: 'carddav_import', source_ref: 'source-card-7', actor: 'synthetic-importer', confidence: 0.8, active_from: '2026-07-20T09:00:00Z' });
     const historical = personValue(sensitive, 17, { type: 'text', text: 'synthetic historical secret' }, 0, {
@@ -102,11 +102,9 @@ describe('AttributeSection', () => {
     expect(screen.getByText('1 earlier value')).toBeDefined();
     expect(screen.getAllByText('Hidden')).toHaveLength(2);
     const currentRow = screen.getAllByText('Hidden')[0]!.closest('.detail-row')!;
-    const line = currentRow.querySelector('[title]')!;
     // Reveal is the first row's text action, beside its value, not a control in the field's heading.
     expect(currentRow.querySelector('.actions')!.textContent!.trim()).toBe('Reveal');
     expect(screen.getByRole('heading', { name: 'Private note' }).querySelector('button')).toBeNull();
-    expect(line.getAttribute('title')).toBeTruthy();
   });
 
   it('reveals and hides sensitive current and historical values', async () => {

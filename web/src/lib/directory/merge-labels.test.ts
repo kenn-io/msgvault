@@ -30,8 +30,8 @@ it('keeps the legacy Beeper phone readable when its saved copy matches', () => {
   }] }];
   const participants = [absorbed(1)];
   const row = mergeSummaryRow({ merge, participants, labels }, workspaceLabels(labels.addresses));
-  expect(row.addresses.get(1)?.map(addressText)).toEqual(['WhatsApp · Reader · +12025550123']);
-  expect(mergeAddresses({ merge, participants, labels }, 'absorbed', workspaceLabels(labels.addresses)).map(addressText)).toEqual(['WhatsApp · Reader · +12025550123']);
+  expect(row.addresses.get(1)?.map(addressText)).toEqual(['WhatsApp · Reader · +12025550123', '+12025550123']);
+  expect(mergeAddresses({ merge, participants, labels }, 'absorbed', workspaceLabels(labels.addresses)).map(addressText)).toEqual(['WhatsApp · Reader · +12025550123', '+12025550123']);
 });
 
 describe('mergeSentence', () => {

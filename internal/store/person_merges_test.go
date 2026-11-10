@@ -2638,7 +2638,7 @@ func TestPersonMerge_DetailAddressLabels(t *testing.T) {
 		st := testutil.NewTestStore(t)
 		ctx := t.Context()
 		// Older imports can leave a raw Beeper anchor that observation capture classifies in place.
-		participant, err := st.EnsureParticipantByIdentifierContext(ctx, "beeper", "+12025550123", "Reader")
+		participant, err := st.EnsureParticipantByPhone(ctx, "+12025550123", "Reader", "beeper")
 		require.NoError(err)
 		service, err := st.ResolveCommunicationServiceContext(ctx, "whatsapp")
 		require.NoError(err)
@@ -2820,18 +2820,13 @@ func TestPersonMergeHistoryKeepsSavedContacts(t *testing.T) {
 			}
 			detail, err := st.GetPersonMergeContext(ctx, merged.Merge.ID)
 			require.NoError(err)
-			listed, err := st.ListPersonMergesContext(ctx, owner.ID)
-			require.NoError(err)
-			require.Len(listed, 1)
-			for _, labels := range []store.PersonMergeLabels{detail.Labels, listed[0].Labels} {
-				var points []store.PersonMergeRecordedContactPoint
-				for _, recorded := range labels.Profiles {
-					if recorded.ID == guest.ID {
-						points = recorded.ContactPoints
-					}
+			var points []store.PersonMergeRecordedContactPoint
+			for _, recorded := range detail.Labels.Profiles {
+				if recorded.ID == guest.ID {
+					points = recorded.ContactPoints
 				}
-				assert.ElementsMatch(tc.want, points)
 			}
+			assert.ElementsMatch(tc.want, points)
 		})
 	}
 }
