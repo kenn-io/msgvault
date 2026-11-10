@@ -750,11 +750,11 @@ var sqlVSenders = `
 CREATE OR REPLACE VIEW v_senders AS
 SELECT
     ` + identityindex.SenderAddressExpr("mr", "p") + ` AS from_email,
-    COALESCE(
-        NULLIF(TRIM(FIRST(mr.display_name)), ''),
-        NULLIF(TRIM(FIRST(p.display_name)), ''),
-        FIRST(p.email_address)
-    ) AS from_name,
+    FIRST(CASE WHEN mr.is_relayed THEN mr.email_address ELSE COALESCE(
+        NULLIF(TRIM(mr.display_name), ''),
+        NULLIF(TRIM(p.display_name), ''),
+        p.email_address
+    ) END) AS from_name,
     ` + identityindex.SenderDomainExpr("mr", "p") + ` AS from_domain,
     COUNT(*) AS message_count,
     SUM(m.size_estimate) AS total_size,

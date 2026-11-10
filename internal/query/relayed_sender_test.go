@@ -64,6 +64,10 @@ func TestRelayedSenderViews(t *testing.T) {
 				b.AddRecipientWithEnvelope(relayID, author, "from", "Author", "notifications@github.com")
 				b.recipients[len(b.recipients)-1].IsRelayed = true
 				engine = b.BuildEngine()
+				var name string
+				err := engine.(*DuckDBEngine).db.QueryRowContext(t.Context(), `SELECT from_name FROM v_senders WHERE from_email = 'notifications@github.com'`).Scan(&name)
+				requirements.NoError(err)
+				assertions.Equal("notifications@github.com", name)
 			}
 			t.Cleanup(func() { _ = engine.Close() })
 			for view, want := range map[ViewType][]string{ViewSenders: {"notifications@github.com", "author@example.test"}, ViewDomains: {"github.com", "example.test"}} {

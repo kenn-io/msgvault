@@ -19,11 +19,11 @@ type ActivityClassification struct {
 	Persons   []ActivityEventPerson
 }
 
+const recipientTypeFrom = "from"
+
 // ClassifyActivityCandidate applies the same pure rules used by the external
 // activity projector. Keeping one implementation prevents inline identity
 // repairs from drifting from incremental and backstop projection.
-const recipientTypeFrom = "from"
-
 func ClassifyActivityCandidate(
 	candidate ActivityCandidate, maxDirectCounterparts int,
 ) ActivityClassification {
