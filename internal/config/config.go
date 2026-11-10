@@ -144,6 +144,7 @@ type DocbankIntegrationConfig struct {
 	ReferenceOrigins        []string `toml:"reference_origins"`
 	AttachmentUploadConsent bool     `toml:"attachment_upload_consent"`
 	AttachmentFolder        string   `toml:"attachment_folder"`
+	AttachmentSearchProfile string   `toml:"attachment_search_profile"`
 }
 
 // MirrorFolder returns the destination virtual directory.

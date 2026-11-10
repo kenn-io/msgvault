@@ -17,9 +17,9 @@ type MediaSearcher interface {
 }
 
 func searchMediaDefinition() toolDefinition {
-	definition := readDefinition(ToolSearchMedia, "Find text in recording transcripts and Docbank-extracted mirrored attachments as visible messages. Recordings preserve origin, optional timing, and partial coverage. Attachments have their own results, truncation, and error.", closedObject(map[string]*jsonschema.Schema{
+	definition := readDefinition(ToolSearchMedia, "Find text in recording transcripts and Docbank-extracted mirrored attachments as visible messages. Recordings preserve origin, optional timing, and partial coverage. Attachments support lexical, semantic, and hybrid retrieval with requested/actual mode, coverage, partial status, degradations, truncation, and error. Attachment coverage counts versions delivered to Docbank. Semantic requires a configured Docbank processing profile with embeddings; hybrid can fall back to lexical. Semantic/hybrid may send the query to Docbank's configured embedding provider. Nonlexical requests skip recordings with recordings_error=media_search_mode_unavailable.", closedObject(map[string]*jsonschema.Schema{
 		toolArgQuery:    stringSchema("Words to find"),
-		toolArgMode:     stringSchema("Search mode", "lexical"),
+		toolArgMode:     stringSchema("Attachment retrieval mode; recordings support lexical only", "lexical", "semantic", "hybrid"),
 		toolArgPersonID: safeIDSchema("Optional durable person ID"),
 		"directions":    {Type: schemaTypeArray, Items: stringSchema("Person relation", "from_person", "to_person", "group")},
 		toolArgLimit:    boundedIntegerSchema("Maximum occurrences per list, default 20", 1, 100),
