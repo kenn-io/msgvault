@@ -289,10 +289,10 @@ it.each(['Keep yours', 'Use saved'] as const)('shows the saved job and resolves 
       return bodies.length === 1 ? Response.json({ message: 'Changed elsewhere' }, { status: 412 }) : Response.json(job);
     }
     if (pathOf(request).includes('/organizations/')) return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+    if (pathOf(request) === '/api/v1/people/7/employments') return Response.json({ employments: [employment(11, 2, { ...opening, ...saved })] });
     return Response.json(employment(11, ++reads, reads === 1 ? opening : { ...opening, ...saved }), { headers: { ETag: `"employment-11-r${reads}"` } });
   }, 7, { onDirectoryChange: directoryChanged });
   const onClose = vi.fn();
-  const refresh = vi.spyOn(controller, 'refreshEmployments');
   render(EmploymentEditor, { controller, personID: 7, employment: job, onClose });
   await fireEvent.input(await screen.findByRole('textbox', { name: 'Job title' }), { target: { value: 'Lead' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
@@ -306,7 +306,7 @@ it.each(['Keep yours', 'Use saved'] as const)('shows the saved job and resolves 
   } else {
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
     await waitFor(() => expect(directoryChanged).toHaveBeenCalledOnce());
-    expect(refresh).toHaveBeenCalledOnce();
+    expect(controller.employments[0].department).toBe('Ops');
     expect(bodies).toHaveLength(1);
   }
 });

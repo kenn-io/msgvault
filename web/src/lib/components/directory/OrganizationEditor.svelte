@@ -150,7 +150,7 @@
   }
 
   function requestClose(): void {
-    if (!submitting) { if (attempt.hadConflict || profileAttempt.hadConflict) void controller.refreshDirectoryViews(); load.reset(); attempt.reset(); profileAttempt.reset(); removal.reset(); check.reset(); onClose(); }
+    if (!submitting) { load.reset(); attempt.reset(); profileAttempt.reset(); removal.reset(); check.reset(); onClose(); }
   }
 
   function values(value: string): string[] {

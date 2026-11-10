@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { expect, it, vi } from 'vitest';
-import { controllerWith, employment, pathOf, requestOf } from '../../directory/entity-fixtures.test-support';
+import { controllerWith, employment, organizationProfile, pathOf, requestOf } from '../../directory/entity-fixtures.test-support';
 import EmploymentEndDialog from './EmploymentEndDialog.svelte';
 
 it('keeps the End conflict valid through retry', async () => {
@@ -10,6 +10,8 @@ it('keeps the End conflict valid through retry', async () => {
   let writes = 0;
   const { controller } = controllerWith(async input => {
     const request = requestOf(input);
+    if (pathOf(request) === '/api/v1/organizations/21') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+    if (pathOf(request) === '/api/v1/people/7/employments') return Response.json({ employments: [saved] });
     if (pathOf(request).endsWith('/end')) {
       writes++;
       return Response.json({ message: writes === 1 ? 'Changed elsewhere' : 'Disk full' }, { status: writes === 1 ? 412 : 500 });

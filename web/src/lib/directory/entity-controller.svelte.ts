@@ -165,9 +165,6 @@ export class DirectoryEntityController {
   async refreshEmployments(): Promise<void> {
     await Promise.all([this.loadEmployments(true), this.refreshNetwork()]);
   }
-  async acceptSavedEmployment(): Promise<void> {
-    await Promise.all([this.refreshEmployments(), this.options.onDirectoryChange?.()]);
-  }
   async refreshDirectoryViews(): Promise<void> {
     await Promise.all([this.options.onDirectoryChange?.(), this.refreshNetwork()]);
   }
@@ -478,6 +475,7 @@ export class DirectoryEntityController {
         },
       ),
       prepared,
+      false,
     );
   }
   async deleteEmployment(id: number, prepared?: Prepared<Employment>): Promise<DirectoryEntityMutationResult<never, Prepared<Employment>>> {
@@ -537,7 +535,7 @@ export class DirectoryEntityController {
       },
       prepared,
     );
-    if (result.ok) await Promise.all([this.loadRelationships(false), this.refreshNetwork()]);
+    if (result.ok || result.kind === 'conflict') await Promise.all([this.loadRelationships(false), this.refreshNetwork()]);
     return result;
   }
   async deleteRelationship(id: number, prepared?: Prepared<PersonRelationship>): Promise<DirectoryEntityMutationResult<never, Prepared<PersonRelationship>>> {
@@ -555,7 +553,7 @@ export class DirectoryEntityController {
       },
       prepared,
     );
-    if (result.ok) await Promise.all([this.loadRelationships(false), this.refreshNetwork()]);
+    if (result.ok || result.kind === 'conflict') await Promise.all([this.loadRelationships(false), this.refreshNetwork()]);
     return result;
   }
   async createRelationshipType(
@@ -658,6 +656,7 @@ export class DirectoryEntityController {
     id: number,
     write: (current: Employment, signal: AbortSignal, etag: string) => Promise<RequestResult<Employment>>,
     prepared?: Prepared<Employment>,
+    refreshOnConflict = true,
   ): Promise<DirectoryEntityMutationResult<Employment, Prepared<Employment>>> {
     const result = await this.writeExisting(
       () => this.prepareEmploymentMutation(id),
@@ -668,7 +667,7 @@ export class DirectoryEntityController {
       prepared,
     );
     await this.prepareConflictEmployer(result, prepared?.data ?? this.employments.find(item => item.id === id));
-    return this.afterDirectoryMutation(result, true);
+    return this.afterDirectoryMutation(result, true, refreshOnConflict);
   }
   private async prepareConflictEmployer<T>(result: DirectoryEntityMutationResult<T, Prepared<Employment>>, opened?: Employment): Promise<void> {
     if (result.ok || result.kind !== 'conflict' || !result.current || !opened || result.current.data.organization_id === opened.organization_id) return;
@@ -680,9 +679,9 @@ export class DirectoryEntityController {
     if (this.networkGeneration > 0) await this.loadNetwork(this.networkDepth);
   }
   private async afterDirectoryMutation<T, C>(
-    result: DirectoryEntityMutationResult<T, C>, refreshEmployments = false,
+    result: DirectoryEntityMutationResult<T, C>, refreshEmployments = false, refreshOnConflict = true,
   ): Promise<DirectoryEntityMutationResult<T, C>> {
-    if (result.ok) await Promise.all([refreshEmployments ? this.loadEmployments(false) : undefined, this.refreshDirectoryViews()]);
+    if (result.ok || (refreshOnConflict && result.kind === 'conflict')) await Promise.all([refreshEmployments ? this.loadEmployments(false) : undefined, this.refreshDirectoryViews()]);
     return result;
   }
   private applyEmploymentEntity(entity: Employment): void {

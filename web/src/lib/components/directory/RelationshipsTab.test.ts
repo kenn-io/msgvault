@@ -932,3 +932,26 @@ it.each(['connection', 'type'])('shows the saved %s after a delete conflict', as
   await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
   expect(await screen.findByText(kind === 'connection' ? 'New saved note' : 'New saved label')).toBeDefined();
 });
+
+it('refreshes the connection after cancelling a conflicted delete', async () => {
+  let reads = 0;
+  const opening = relationship(41, 1, { notes: 'Old note' });
+  const saved = relationship(41, 2, { notes: 'New saved note' });
+  const { client, controller } = controllerWith(async input => {
+    const request = requestOf(input), path = pathOf(request);
+    if (path === '/api/v1/person-relationships/41' && request.method === 'GET') {
+      reads++;
+      return Response.json(reads === 1 ? opening : saved, { headers: { ETag: `"relationship-41-r${reads}"` } });
+    }
+    if (path === '/api/v1/person-relationships/41' && request.method === 'DELETE') return Response.json({ error: 'relationship_revision_conflict', message: 'Changed' }, { status: 409 });
+    if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [view(41, 'incoming', 'mentors', 'Synthetic Guide', { relationship: saved })] });
+    throw new Error(`unexpected ${request.method} ${path}`);
+  });
+  controller.relationships = [view(41, 'incoming', 'mentors', 'Synthetic Guide', { relationship: opening })];
+  render(RelationshipsTab, { client, controller, personID: 7 });
+  await rowAction('Delete…');
+  await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  await screen.findByRole('region', { name: 'Saved connection' });
+  await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(screen.getByText(/New saved note/)).toBeDefined();
+});

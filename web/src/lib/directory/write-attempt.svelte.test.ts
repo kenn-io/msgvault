@@ -6,7 +6,6 @@ it('clears failures before a retry and carries the saved version into the send',
   await attempt.run(async () => ({ ok: false, kind: 'conflict', status: 412, current: { revision: 2 }, message: 'Changed' }));
   expect(attempt.failed).toBe(true);
   expect(attempt.conflict).toEqual({ revision: 2 });
-  expect(attempt.hadConflict).toBe(true);
   await attempt.run(async current => {
     expect(current).toEqual({ revision: 2 });
     expect(attempt.conflict).toBeUndefined();
@@ -15,7 +14,6 @@ it('clears failures before a retry and carries the saved version into the send',
     return { ok: false, kind: 'error', status: 500, message: 'Unavailable' };
   });
   expect(attempt.details).toBe('Unavailable');
-  expect(attempt.hadConflict).toBe(true);
   await attempt.run(async current => {
     expect(current).toEqual({ revision: 2 });
     return { ok: true };
@@ -26,7 +24,6 @@ it('clears failures before a retry and carries the saved version into the send',
   expect(attempt.prepared).toBeUndefined();
   expect(attempt.failed).toBe(false);
   expect(attempt.details).toBe('');
-  expect(attempt.hadConflict).toBe(true);
 });
 it.each(['unknown', 'blocked'] as const)('keeps %s outcomes out of Details', async kind => {
   const attempt = new WriteAttempt();

@@ -4,8 +4,6 @@ export class WriteAttempt<C = never> {
   #sending = $state(false);
   failed = $state(false);
   conflict = $state<C>();
-  // Kept through reset(), so a dialog closing after any conflict still refreshes what it read.
-  hadConflict = $state(false);
   details = $state('');
   prepared = $state<C>();
   // Bumped by reset(), so a load started for a dialog that has since closed or changed target is dropped.
@@ -42,7 +40,6 @@ export class WriteAttempt<C = never> {
       if (result.ok) { this.prepared = undefined; return true; }
       this.failed = true;
       if (result.kind === 'conflict') {
-        this.hadConflict = true;
         if (result.current) this.conflict = this.prepared = result.current;
       }
       this.details = result.kind === 'unknown' || result.kind === 'blocked' ? '' : result.message;

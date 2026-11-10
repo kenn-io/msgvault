@@ -194,7 +194,7 @@
     if (!controller.createBlocked.relationships && !controller.errors.relationships) onDone();
   }
   function requestClose(): void {
-    if (!attempt.busy) { if (attempt.hadConflict) void controller.refreshRelationships(); attempt.reset(); onClose(); }
+    if (!attempt.busy) { attempt.reset(); onClose(); }
   }
   function failureMessage(value: unknown, status: number): string {
     if (typeof value === 'object' && value !== null && 'message' in value && typeof value.message === 'string')

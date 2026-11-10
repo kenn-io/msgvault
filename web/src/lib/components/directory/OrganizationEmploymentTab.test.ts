@@ -264,3 +264,27 @@ describe('OrganizationEmploymentTab', () => {
     } finally { view.unmount(); controller.destroy(); }
   });
 });
+
+it('refreshes a changed job after cancelling its conflicted deletion', async () => {
+  let reads = 0;
+  const opening = employment(11, 1, { title: 'Old title' });
+  const saved = employment(11, 2, { title: 'New title' });
+  const { controller } = controllerWith(async input => {
+    const request = requestOf(input), path = pathOf(request);
+    if (path === '/api/v1/employments/11' && request.method === 'GET') {
+      reads++;
+      return Response.json(reads === 1 ? opening : saved, { headers: { ETag: `"employment-11-r${reads}"` } });
+    }
+    if (path === '/api/v1/employments/11' && request.method === 'DELETE') return Response.json({ error: 'employment_revision_conflict', message: 'Changed' }, { status: 409 });
+    if (path === '/api/v1/people/7/employments') return collection([saved]);
+    if (path === '/api/v1/organizations/21') return Response.json(organizationProfile(), { headers: { ETag: '"organization-21-r1"' } });
+    throw new Error(`unexpected ${request.method} ${path}`);
+  });
+  controller.employments = [opening];
+  render(OrganizationEmploymentTab, { controller, personID: 7 });
+  await rowAction('Delete…');
+  await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  await screen.findByRole('region', { name: 'Saved job' });
+  await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(screen.getByText(/New title/)).toBeDefined();
+});
