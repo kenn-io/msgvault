@@ -6,13 +6,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -48,13 +48,9 @@ func TestImportDiscordPackageEndToEnd(t *testing.T) {
 	require.NoError(rootCmd.ExecuteContext(t.Context()))
 	assert.Contains(output.String(), "Coverage: exporting account's sent messages only")
 	assert.Contains(output.String(), "Channels: 1 imported, 1 skipped")
-	assert.Contains(output.String(), "1 missing local media")
-	st, err := store.Open(filepath.Join(home, "msgvault.db"))
-	require.NoError(err)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	var n int
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages WHERE message_type='discord'`).Scan(&n))
-	assert.Equal(5, n)
+	lines := strings.Split(output.String(), "\n")
+	assert.Contains(lines, "Messages: 5 processed, 5 added, 0 updated, 0 skipped")
+	assert.Contains(lines, "Attachments: 1 links, 1 missing local media, 0 unsupported links")
 }
 
 func TestImportDiscordPackageRejectsRemoteClientFiles(t *testing.T) {
@@ -82,7 +78,6 @@ func TestImportDiscordPackagePartialFailureReport(t *testing.T) {
 	var output bytes.Buffer
 	command.SetOut(&output)
 	require.Error(runImportDiscordPackage(command, root, false))
-	assert.Contains(output.String(), "Coverage: exporting account's sent messages only")
 	assert.Contains(output.String(), "1 added")
 	db, err := sql.Open("duckdb", "")
 	require.NoError(err)

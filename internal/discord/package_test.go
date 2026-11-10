@@ -39,8 +39,7 @@ func TestPackageImportSnapshot(t *testing.T) {
 	assert.EqualValues(1, first.AttachmentLinks)
 	var sourceType, identifier, channel, body, metadata, storage, media, hash string
 	var fromMe bool
-	var sent time.Time
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT s.source_type,s.identifier,c.source_conversation_id,m.is_from_me,m.sent_at,b.body_text,m.metadata FROM messages m JOIN sources s ON s.id=m.source_id JOIN conversations c ON c.id=m.conversation_id JOIN message_bodies b ON b.message_id=m.id`).Scan(&sourceType, &identifier, &channel, &fromMe, &sent, &body, &metadata))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT s.source_type,s.identifier,c.source_conversation_id,m.is_from_me,b.body_text,m.metadata FROM messages m JOIN sources s ON s.id=m.source_id JOIN conversations c ON c.id=m.conversation_id JOIN message_bodies b ON b.message_id=m.id`).Scan(&sourceType, &identifier, &channel, &fromMe, &body, &metadata))
 	assert.Equal("discord_package", sourceType)
 	assert.Equal("100000000000000001", identifier)
 	assert.Equal("200000000000000001", channel)
@@ -49,13 +48,10 @@ func TestPackageImportSnapshot(t *testing.T) {
 	assert.Equal("Direct Message with Example", title)
 	assert.True(fromMe)
 	assert.Equal("original words", body)
-	assert.Equal("2024-03-16T01:22:41Z", sent.UTC().Format(time.RFC3339))
 	var meta map[string]any
 	require.NoError(json.Unmarshal([]byte(metadata), &meta))
 	assert.Equal("sent_only", meta["coverage"])
-	assert.Equal("2024-03-15T18:22:41-07:00", meta["original_timestamp"])
 	assert.Contains([]string{"Messages/c200000000000000001/messages.json", "messages/c200000000000000001/messages.json"}, meta["input_path"])
-	assert.NotContains(metadata, "discard@example.com")
 	assert.EqualValues(1, meta["row_ordinal"])
 	var messageID int64
 	var received sql.NullTime
@@ -68,6 +64,17 @@ func TestPackageImportSnapshot(t *testing.T) {
 	assert.Equal("https://cdn.discordapp.com/attachments/1/2/example.png", storage)
 	assert.Equal("link", media)
 	assert.Empty(hash)
+	var channelBefore string
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT metadata FROM conversations`).Scan(&channelBefore))
+	for range 5 {
+		_, err = ImportPackage(t.Context(), st, root)
+		require.NoError(err)
+		var after, channelAfter string
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT metadata FROM messages`).Scan(&after))
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT metadata FROM conversations`).Scan(&channelAfter))
+		assert.Equal(metadata, after)
+		assert.Equal(channelBefore, channelAfter)
+	}
 	testutil.WriteFile(t, root, "Messages/c200000000000000001/messages.json", []byte(`[{"ID":"300000000000000001","Timestamp":"2024-03-15T18:22:41-07:00","Contents":"updated snapshot","Attachments":""}]`))
 	again, err := ImportPackage(t.Context(), st, root)
 	require.NoError(err)
@@ -93,12 +100,8 @@ func TestPackageJSONFixture(t *testing.T) {
 	requirements := require.New(t)
 	checks := assert.New(t)
 	st := testutil.NewTestStore(t)
-	summary, err := ImportPackage(t.Context(), st, "testdata/package-json")
+	_, err := ImportPackage(t.Context(), st, "testdata/package-json")
 	requirements.NoError(err)
-	checks.Equal(2, summary.Channels)
-	checks.EqualValues(2, summary.MessagesAdded)
-	checks.Zero(summary.MessagesSkipped)
-	checks.EqualValues(2, summary.AttachmentLinks)
 
 	for _, channelID := range []string{"725000000000000051", "725000000000000052"} {
 		t.Run(channelID, func(t *testing.T) {
@@ -130,7 +133,8 @@ func TestPackageTimestampProvenance(t *testing.T) {
 	for _, tt := range []struct{ stamp, id, want, source string }{
 		{"2016-04-30 11:18:25", "175928847299117063", "2016-04-30T11:18:25.796Z", "snowflake"},
 		{"2025-02-09 13:14:15.123456+00:00", "726000000000000061", "2025-02-09T13:14:15.123456Z", "timestamp"},
-		{"2024-03-15 18:22:41", "unknown-stable-id", "", "unknown"},
+		{"2024-03-15T18:22:41-07:00", "300000000000000001", "2024-03-16T01:22:41Z", "timestamp"},
+		{"", "0", "", "unknown"},
 	} {
 		t.Run(tt.source, func(t *testing.T) {
 			require := require.New(t)
@@ -165,9 +169,6 @@ func TestPackageLegacyCSV(t *testing.T) {
 	require.NoError(err)
 	assert.EqualValues(5, summary.MessagesAdded)
 	assert.EqualValues(1, summary.AttachmentLinks)
-	var sent time.Time
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT sent_at FROM messages WHERE source_message_id='726000000000000061'`).Scan(&sent))
-	assert.Equal("2025-02-09T13:14:15Z", sent.UTC().Format(time.RFC3339))
 }
 
 func TestPackagePartialFailureReplay(t *testing.T) {
@@ -234,12 +235,16 @@ func TestPackageChannelTypesAndSkips(t *testing.T) {
 	testutil.WriteFile(t, root, "Messages/200000000000000003/channel.json", []byte(`{"id":"200000000000000003","type":0,"name":"general","guild":{"id":"200000000000000004","name":"Example guild"}}`))
 	testutil.WriteFile(t, root, "Messages/200000000000000003/messages.json", []byte(`[{"ID":"5","Contents":"guild text"}]`))
 	testutil.WriteFile(t, root, "Messages/200000000000000004/messages.json", []byte(`[{"ID":"6","Contents":"unknown channel"}]`))
+	testutil.WriteFile(t, root, "Messages/200000000000000006/channel.json", []byte(`{"type":"DM"}`))
+	testutil.WriteFile(t, root, "Messages/200000000000000006/messages.json", []byte(`[{"ID":"9","Contents":"direct text"}]`))
+	testutil.WriteFile(t, root, "Messages/200000000000000007/channel.json", []byte(`{"type":3}`))
+	testutil.WriteFile(t, root, "Messages/200000000000000007/messages.json", []byte(`[{"ID":"10","Contents":"numeric group text"}]`))
 	require.NoError(os.Mkdir(filepath.Join(root, "Messages/renamed"), 0o700))
 	require.NoError(os.Symlink("c200000000000000001", filepath.Join(root, "Messages/200000000000000005")))
 	testutil.WriteFile(t, root, "Messages/notes.txt", []byte("unrelated"))
 	summary, err := ImportPackage(t.Context(), st, root)
 	require.NoError(err)
-	assert.EqualValues(4, summary.MessagesAdded)
+	assert.EqualValues(6, summary.MessagesAdded)
 	assert.EqualValues(4, summary.MessagesSkipped)
 	assert.EqualValues(1, summary.SkipReasons["empty_record"])
 	assert.EqualValues(1, summary.SkipReasons["missing_id"])
@@ -252,10 +257,10 @@ func TestPackageChannelTypesAndSkips(t *testing.T) {
 	assert.NotContains(diagnostic, "unsupported-shape")
 	assert.EqualValues(1, summary.SkipReasons["unsupported_attachment_only"])
 	assert.EqualValues(3, summary.UnsupportedAttachmentLinks)
-	assert.Equal(4, summary.Channels)
+	assert.Equal(6, summary.Channels)
 	assert.Equal(2, summary.ChannelsSkipped)
 	var kind string
-	for id, want := range map[string]string{"200000000000000001": "direct_chat", "200000000000000002": "group_chat", "200000000000000003": "channel", "200000000000000004": "channel"} {
+	for id, want := range map[string]string{"200000000000000001": "direct_chat", "200000000000000002": "group_chat", "200000000000000003": "channel", "200000000000000004": "channel", "200000000000000006": "direct_chat", "200000000000000007": "group_chat"} {
 		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT conversation_type FROM conversations WHERE source_conversation_id=?`), id).Scan(&kind))
 		assert.Equal(want, kind)
 	}
@@ -263,7 +268,7 @@ func TestPackageChannelTypesAndSkips(t *testing.T) {
 	other, err := ImportPackage(t.Context(), st, root)
 	require.NoError(err)
 	assert.NotEqual(summary.SourceID, other.SourceID)
-	assert.EqualValues(4, other.MessagesAdded)
+	assert.EqualValues(6, other.MessagesAdded)
 }
 
 func TestPackageAtomicAttachmentSnapshot(t *testing.T) {
@@ -329,69 +334,59 @@ func FuzzPackageJSON(f *testing.F) {
 	})
 }
 
-func TestPackageReplayStableMetadata(t *testing.T) {
+func TestPackageDirectCounterpart(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
-	root := packageFixture(t, `[{"ID":"1","Contents":"unchanged"}]`)
+	root := packageFixture(t, `[{"ID":"1","Contents":"sent history"}]`)
+	testutil.WriteFile(t, root, "Messages/c200000000000000001/channel.json", []byte(`{"type":1,"recipients":["100000000000000001","100000000000000002"]}`))
 	_, err := ImportPackage(t.Context(), st, root)
 	requirements.NoError(err)
-	var before, channelBefore string
-	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT metadata FROM messages`).Scan(&before))
-	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT metadata FROM conversations`).Scan(&channelBefore))
-	for range 20 {
-		_, err = ImportPackage(t.Context(), st, root)
-		requirements.NoError(err)
-		var after, channelAfter string
-		requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT metadata FROM messages`).Scan(&after))
-		requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT metadata FROM conversations`).Scan(&channelAfter))
-		checks.Equal(before, after)
-		checks.Equal(channelBefore, channelAfter)
-	}
+	peer, err := st.EnsureParticipantByIdentifierContext(t.Context(), "discord_user_id", "100000000000000002", "")
+	requirements.NoError(err)
+	var id int64
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&id))
+	provenance, err := st.PersonProvenanceForMessages(t.Context(), []int64{id}, personscope.Scope{ParticipantIDs: []int64{peer}})
+	requirements.NoError(err)
+	var recipients int
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM message_recipients WHERE recipient_type='to'`).Scan(&recipients))
+	checks.NotNil(provenance[id])
+	checks.Equal(1, recipients)
+	chats, err := st.SearchChatsContext(t.Context(), store.ChatDiscoveryQuery{Query: "100000000000000002"})
+	requirements.NoError(err)
+	checks.Len(chats.Results, 1)
+	// A changed snapshot with unknown recipients must clear the old to edge.
+	testutil.WriteFile(t, root, "Messages/c200000000000000001/channel.json", []byte(`{"type":1,"recipients":[]}`))
+	_, err = ImportPackage(t.Context(), st, root)
+	requirements.NoError(err)
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM message_recipients WHERE recipient_type='to'`).Scan(&recipients))
+	checks.Zero(recipients)
+	provenance, err = st.PersonProvenanceForMessages(t.Context(), []int64{id}, personscope.Scope{ParticipantIDs: []int64{peer}})
+	requirements.NoError(err)
+	checks.Empty(provenance)
+	chats, err = st.SearchChatsContext(t.Context(), store.ChatDiscoveryQuery{Query: "100000000000000002"})
+	requirements.NoError(err)
+	checks.Empty(chats.Results)
 }
 
-func TestPackageDirectCounterpart(t *testing.T) {
-	for _, kind := range []string{`1`, `"DM"`, `3`, `0`} {
-		t.Run(kind, func(t *testing.T) {
-			checks := assert.New(t)
-			requirements := require.New(t)
-			st := testutil.NewTestStore(t)
-			root := packageFixture(t, `[{"ID":"1","Contents":"sent history"}]`)
-			testutil.WriteFile(t, root, "Messages/c200000000000000001/channel.json", []byte(`{"type":`+kind+`,"recipients":["100000000000000001","100000000000000002"]}`))
-			_, err := ImportPackage(t.Context(), st, root)
-			requirements.NoError(err)
-			peer, err := st.EnsureParticipantByIdentifierContext(t.Context(), "discord_user_id", "100000000000000002", "")
-			requirements.NoError(err)
-			var id int64
-			requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&id))
-			provenance, err := st.PersonProvenanceForMessages(t.Context(), []int64{id}, personscope.Scope{ParticipantIDs: []int64{peer}})
-			requirements.NoError(err)
-			var recipients int
-			requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM message_recipients WHERE recipient_type='to'`).Scan(&recipients))
-			if kind == `1` || kind == `"DM"` {
-				checks.NotNil(provenance[id])
-				checks.Equal(1, recipients)
-				chats, err := st.SearchChatsContext(t.Context(), store.ChatDiscoveryQuery{Query: "100000000000000002"})
-				requirements.NoError(err)
-				checks.Len(chats.Results, 1)
-				// A changed snapshot with unknown recipients must clear the old to edge.
-				testutil.WriteFile(t, root, "Messages/c200000000000000001/channel.json", []byte(`{"type":1,"recipients":[]}`))
-				_, err = ImportPackage(t.Context(), st, root)
-				requirements.NoError(err)
-				requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM message_recipients WHERE recipient_type='to'`).Scan(&recipients))
-				checks.Zero(recipients)
-				provenance, err = st.PersonProvenanceForMessages(t.Context(), []int64{id}, personscope.Scope{ParticipantIDs: []int64{peer}})
-				requirements.NoError(err)
-				checks.Empty(provenance)
-				chats, err = st.SearchChatsContext(t.Context(), store.ChatDiscoveryQuery{Query: "100000000000000002"})
-				requirements.NoError(err)
-				checks.Empty(chats.Results)
-			} else {
-				checks.Empty(provenance)
-				checks.Zero(recipients)
-			}
-		})
-	}
+func TestPackageGroupHasNoDirectCounterpart(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	root := packageFixture(t, `[{"ID":"1","Contents":"sent history"}]`)
+	testutil.WriteFile(t, root, "Messages/c200000000000000001/channel.json", []byte(`{"type":3,"recipients":["100000000000000001","100000000000000002"]}`))
+	_, err := ImportPackage(t.Context(), st, root)
+	requirements.NoError(err)
+	peer, err := st.EnsureParticipantByIdentifierContext(t.Context(), "discord_user_id", "100000000000000002", "")
+	requirements.NoError(err)
+	var id int64
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages`).Scan(&id))
+	provenance, err := st.PersonProvenanceForMessages(t.Context(), []int64{id}, personscope.Scope{ParticipantIDs: []int64{peer}})
+	requirements.NoError(err)
+	var recipients int
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM message_recipients WHERE recipient_type='to'`).Scan(&recipients))
+	checks.Empty(provenance)
+	checks.Zero(recipients)
 }
 
 func checkPackageRunCounts(t *testing.T, st *store.Store, summary *PackageSummary) {

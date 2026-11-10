@@ -55,10 +55,10 @@ func TestPackageCancellationAfterCommittedMessage(t *testing.T) {
 	root := packageFixture(t, `[{"ID":"1","Contents":"committed"},{"ID":"2","Contents":"cancel here"},{"ID":"3","Contents":"not reached"}]`)
 	summary, err := ImportPackage(ctx, st, root)
 	requirements.Error(err)
-	requirements.ErrorIs(ctx.Err(), context.Canceled)
+	requirements.ErrorIs(err, context.Canceled)
 	var committed int64
 	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages`).Scan(&committed))
-	checks.GreaterOrEqual(committed, int64(1))
+	checks.Equal(int64(1), committed)
 	checks.Equal(committed, summary.MessagesAdded)
 	checkPackageRunCounts(t, st, summary)
 	var status string

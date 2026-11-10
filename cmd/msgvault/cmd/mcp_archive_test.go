@@ -46,21 +46,24 @@ func archiveMCPCatalog(t *testing.T, opts mcpserver.ServeOptions) *sdkmcp.ListTo
 }
 
 func TestMCPArchiveFamilies(t *testing.T) {
-	for _, tc := range []struct{ source, tool string }{
-		{"mbox", ""},
-		{"granola", "get_meeting_context"}, {"chatwoot", "get_meeting_context"},
-		{"circleback", "get_meeting_context"}, {"pocket", "get_meeting_context"},
-		{"muesli", "get_meeting_context"}, {"notion_meetings", "get_meeting_context"},
-		{"meeting_import", "get_meeting_context"}, {"omi", "get_meeting_context"},
-		{"plaud", "get_meeting_context"}, {"twilio", "get_meeting_context"},
-		{"twenty", "get_meeting_context"}, {"beeper", "find_chat"},
-		{"slack", "get_slack_sync_policy"},
-		{"imap", "draft_reply"},
-		{"teams", "draft_compose"}, {"discord", "draft_compose"},
-		{"whatsapp", "find_chat"}, {"telegram", "find_chat"}, {"matrix", "find_chat"},
-		{"apple_messages", "find_chat"}, {"synctech_sms", "find_chat"}, {"imazing_csv", "find_chat"},
-		{"facebook_messenger", "find_chat"}, {"discord_package", "find_chat"},
-		{"inline", "find_chat"}, {"google_voice", "find_chat"}, {"gmail", "find_chat"},
+	for _, tc := range []struct {
+		source, tool string
+		noDrafts     bool
+	}{
+		{"mbox", "", false},
+		{"granola", "get_meeting_context", false}, {"chatwoot", "get_meeting_context", false},
+		{"circleback", "get_meeting_context", false}, {"pocket", "get_meeting_context", false},
+		{"muesli", "get_meeting_context", false}, {"notion_meetings", "get_meeting_context", false},
+		{"meeting_import", "get_meeting_context", false}, {"omi", "get_meeting_context", false},
+		{"plaud", "get_meeting_context", false}, {"twilio", "get_meeting_context", false},
+		{"twenty", "get_meeting_context", false}, {"beeper", "find_chat", false},
+		{"slack", "get_slack_sync_policy", false},
+		{"imap", "draft_reply", false},
+		{"teams", "draft_compose", false}, {"discord", "draft_compose", false},
+		{"whatsapp", "find_chat", false}, {"telegram", "find_chat", false}, {"matrix", "find_chat", false},
+		{"apple_messages", "find_chat", false}, {"synctech_sms", "find_chat", false}, {"imazing_csv", "find_chat", false},
+		{"facebook_messenger", "find_chat", false}, {"discord_package", "find_chat", true},
+		{"inline", "find_chat", false}, {"google_voice", "find_chat", false}, {"gmail", "find_chat", false},
 	} {
 		t.Run(tc.source, func(t *testing.T) {
 			assert := assert.New(t)
@@ -91,7 +94,7 @@ func TestMCPArchiveFamilies(t *testing.T) {
 			if tc.tool != "" {
 				assert.Contains(names, tc.tool)
 			}
-			if tc.source == "discord_package" {
+			if tc.noDrafts {
 				assert.NotContains(names, "draft_compose")
 			}
 			if tc.source == "mbox" {
