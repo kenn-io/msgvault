@@ -268,8 +268,18 @@ recomputes them. Conflict details contain participant and person IDs, without
 addresses. A shared address claimed by different saved people, or a participant
 already bound to another person, is reported without moving it or merging
 profiles. Correct the cards or inspect the people and explicitly merge them
-with [person merge](people.md#merge-duplicate-profiles-and-reverse-a-merge). People with active merge
-lineage receive no new automatic bindings until that lineage is resolved.
+with [person merge](people.md#merge-duplicate-profiles-and-reverse-a-merge).
+People with active merge history can receive independent new identity components.
+Those bindings stay with the surviving person after a split. A component already
+recorded in active merge history cannot gain automatic memberships until its
+lineage is resolved. Components already fully bound to the matching person do
+not produce merge conflicts.
+
+Confirmed account identities and their linked components are excluded from
+automatic binding. Confirming an identity after it was automatically bound
+releases that component on the next sync or explicit reconciliation. Explicit
+manual memberships stay in place.
+
 An unresolved CardDAV edit conflict also suspends that card's automatic claims
 until you resolve it. Other subscribed cards can still support the same person.
 

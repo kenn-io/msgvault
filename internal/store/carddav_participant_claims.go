@@ -135,3 +135,27 @@ func cardDAVParticipantMatchesTx(ctx context.Context, tx *loggedTx, claims map[c
 	}
 	return matched, rows.Err()
 }
+
+// Confirmed identities use the same comparison rules as message ownership.
+// Read them in the reconciliation snapshot so preview and apply agree.
+func cardDAVOwnParticipantsTx(ctx context.Context, tx *loggedTx) (cardDAVPersonSet, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT p.id FROM account_identities ai
+ JOIN participants p ON `+ownerEmailMatch("p.email_address", "ai.address")+`
+ UNION ALL SELECT p.id FROM account_identities ai
+ JOIN participants p ON p.phone_number = ai.address
+ UNION ALL SELECT pi.participant_id FROM account_identities ai
+ JOIN participant_identifiers pi ON `+ownerIdentifierMatch("pi.identifier_type", "pi.identifier_value", "ai.address", ""))
+	if err != nil {
+		return nil, fmt.Errorf("read CardDAV owner identities: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	owners := cardDAVPersonSet{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		owners[id] = struct{}{}
+	}
+	return owners, rows.Err()
+}

@@ -504,7 +504,7 @@ func TestCardDAVParticipantBindingPersonMergeConfirmsBothSides(t *testing.T) {
 	assert.False(bindingOwned(t, st, b))
 }
 
-func TestCardDAVParticipantBindingActiveMergeReportsOnlyNewMembership(t *testing.T) {
+func TestCardDAVParticipantBindingActiveMergeAllowsIndependentMembership(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
 	st, account, book := newCardDAVResourceStore(t)
@@ -531,28 +531,32 @@ func TestCardDAVParticipantBindingActiveMergeReportsOnlyNewMembership(t *testing
 	require.NoError(err)
 	preview, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{DryRun: true})
 	require.NoError(err)
-	require.Len(preview.ConflictDetails, 1)
-	assert.Equal(1, preview.Conflicts)
-	assert.Equal(late, preview.ConflictDetails[0].ParticipantID)
-	assert.Equal([]int64{merged.Person.ID}, preview.ConflictDetails[0].PersonIDs)
-	assert.Equal("active_merge", preview.ConflictDetails[0].Reason)
-	assert.Zero(preview.ParticipantsBound)
+	assert.Empty(preview.ConflictDetails)
+	assert.Zero(preview.Conflicts)
+	assert.Equal(1, preview.ParticipantsBound)
 	assert.Zero(preview.ParticipantsUnbound)
 	unbound, err := st.PersonForParticipantsContext(t.Context(), []int64{late})
 	require.NoError(err)
-	assert.Nil(unbound, "new matches must not receive merge lineage implicitly")
+	assert.Nil(unbound, "preview must not bind the new component")
 
 	result, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
 	require.NoError(err)
-	assert.Equal(1, result.Conflicts)
-	assert.Zero(result.ParticipantsBound)
-	unbound, err = st.PersonForParticipantsContext(t.Context(), []int64{late})
+	assert.Equal(preview, result)
+	assert.True(bindingOwned(t, st, late))
+	current, err := st.GetPersonContext(t.Context(), merged.Person.ID)
 	require.NoError(err)
-	assert.Nil(unbound)
+	assert.ElementsMatch([]int64{a, b, late}, current.ParticipantIDs)
+	var lineageCount int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM person_merge_participants WHERE participant_id = ?`), late).Scan(&lineageCount))
+	assert.Zero(lineageCount, "automatic bindings must not inherit merge lineage")
+	noop, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{DryRun: true})
+	require.NoError(err)
+	assert.Zero(noop.Conflicts)
+	assert.Zero(noop.ParticipantsBound)
 
 	split, err := st.SplitPersonMergeContext(t.Context(), store.PersonSplitRequest{
 		SourcePersonID: merged.Person.ID, MergeID: merged.Merge.ID, ParticipantIDs: []int64{b},
-		ExpectedSourceRevision: merged.Person.Revision, IdempotencyKey: "carddav-active-merge-split", Actor: "test",
+		ExpectedSourceRevision: current.Revision, IdempotencyKey: "carddav-active-merge-split", Actor: "test",
 	})
 	require.NoError(err)
 	assert.False(bindingOwned(t, st, a))
@@ -560,7 +564,7 @@ func TestCardDAVParticipantBindingActiveMergeReportsOnlyNewMembership(t *testing
 	result, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
 	require.NoError(err)
 	assert.Zero(result.Conflicts)
-	assert.Equal(1, result.ParticipantsBound)
+	assert.Zero(result.ParticipantsBound)
 	latePerson, err := st.PersonForParticipantsContext(t.Context(), []int64{late})
 	require.NoError(err)
 	require.NotNil(latePerson)
@@ -962,4 +966,65 @@ func TestCardDAVParticipantBindingPublicationPreparationLockOrder(t *testing.T) 
 	assert.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT id FROM persons WHERE id=? FOR UPDATE NOWAIT`), personID).Scan(&id), "preparation cannot own the person before identity")
 	require.NoError(blocker.Rollback())
 	require.NoError(<-done)
+}
+
+func TestCardDAVParticipantBindingExcludesConfirmedOwnComponents(t *testing.T) {
+	for _, kind := range []string{"email", "phone", "linked_alias"} {
+		t.Run(kind, func(t *testing.T) {
+			assert := Assert.New(t)
+			require := Require.New(t)
+			st, account, book := newCardDAVResourceStore(t)
+			source, err := st.GetOrCreateSource("imap", "synthetic-owner@example.test")
+			require.NoError(err)
+			participant, err := st.EnsureParticipant("owner@example.test", "Owner Example", "example.test")
+			require.NoError(err)
+			identity := "OWNER@EXAMPLE.TEST"
+			card := remoteResource(book.CanonicalURL+"owner.vcf", "owner-card", "Owner Example", "owner@example.test", "one")
+			if kind == "phone" {
+				identity = "+12025550100"
+				participant, err = st.EnsureParticipantByPhone(t.Context(), identity, "Owner Example", "imessage")
+				require.NoError(err)
+				card.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:owner-card\r\nFN:Owner Example\r\nTEL:+1\u00a0202-555-0100\r\nEND:VCARD\r\n")
+				card.Emails = nil
+				card.Phones = []string{identity}
+			} else if kind == "linked_alias" {
+				alias, err := st.EnsureParticipant("alias@example.test", "Alias Example", "example.test")
+				require.NoError(err)
+				_, err = st.LinkParticipants(participant, alias)
+				require.NoError(err)
+				identity = "alias@example.test"
+			}
+			require.NoError(st.AddAccountIdentityContext(t.Context(), source.ID, identity, "manual"))
+			applyParticipantBindingCards(t, st, account, book, card)
+			person := bindingCardPerson(t, st, book, card.Href)
+			assert.Empty(person.ParticipantIDs)
+			preview, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{DryRun: true})
+			require.NoError(err)
+			assert.Zero(preview.ParticipantsBound)
+			assert.Zero(preview.Conflicts)
+			_, err = st.RemoveAccountIdentityContext(t.Context(), source.ID, identity)
+			require.NoError(err)
+			result, err := st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
+			require.NoError(err)
+			assert.Positive(result.ParticipantsBound)
+			require.True(bindingOwned(t, st, participant))
+			// Confirmation after binding releases only feature-owned memberships.
+			require.NoError(st.AddAccountIdentityContext(t.Context(), source.ID, identity, "manual"))
+			preview, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{DryRun: true})
+			require.NoError(err)
+			assert.Equal(result.ParticipantsBound, preview.ParticipantsUnbound)
+			result, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
+			require.NoError(err)
+			assert.Equal(preview, result)
+			person, err = st.GetPersonContext(t.Context(), person.ID)
+			require.NoError(err)
+			assert.Empty(person.ParticipantIDs)
+			_, _, err = st.CreatePersonFromParticipantContext(t.Context(), participant)
+			require.NoError(err)
+			result, err = st.ReconcileCardDAVParticipantBindingsContext(t.Context(), store.CardDAVParticipantBindingOptions{})
+			require.NoError(err)
+			assert.Zero(result.ParticipantsUnbound, "explicit own-identity memberships stay manual")
+			assert.False(bindingOwned(t, st, participant))
+		})
+	}
 }

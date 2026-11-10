@@ -19,7 +19,7 @@ func cardDAVParticipantBindingConflictExplanation(reason string) string {
 	case "existing_person":
 		return "participant already belongs to another person"
 	case "active_merge":
-		return "person has an active merge"
+		return "identity component has active merge history"
 	default:
 		return "conflicting participant ownership"
 	}

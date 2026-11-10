@@ -126,8 +126,14 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 	if err != nil {
 		return nil, err
 	}
-	activeMerges := cardDAVPersonSet{}
-	rows, err = tx.QueryContext(ctx, `SELECT current_person_id FROM person_merges WHERE current_person_id IS NOT NULL GROUP BY current_person_id`)
+	ownParticipants, err := cardDAVOwnParticipantsTx(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	activeMergeMembers := cardDAVPersonSet{}
+	rows, err = tx.QueryContext(ctx, `SELECT lineage.participant_id FROM person_merge_participants lineage
+ WHERE EXISTS (SELECT 1 FROM person_merges merge_record
+   WHERE merge_record.id = lineage.merge_id AND merge_record.current_person_id IS NOT NULL)`)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +143,7 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 			_ = rows.Close()
 			return nil, err
 		}
-		activeMerges[id] = struct{}{}
+		activeMergeMembers[id] = struct{}{}
 	}
 	err = rows.Err()
 	_ = rows.Close()
@@ -167,14 +173,24 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 		}
 		members := sortedComponentMembers(seed, edges)
 		wanted, owners := cardDAVPersonSet{}, cardDAVPersonSet{}
+		ownComponent, mergeComponent := false, false
 		for _, id := range members {
 			visited[id] = struct{}{}
+			_, own := ownParticipants[id]
+			ownComponent = ownComponent || own
+			_, journaled := activeMergeMembers[id]
+			mergeComponent = mergeComponent || journaled
 			for personID := range matched[id] {
 				wanted[personID] = struct{}{}
 			}
 			if binding, ok := bindings[id]; ok {
 				owners[binding.personID] = struct{}{}
 			}
+		}
+		// A confirmed account identity makes its entire linked component the
+		// owner. Release automatic memberships, but leave explicit links alone.
+		if ownComponent {
+			clear(wanted)
 		}
 		var personID int64
 		if len(wanted) == 1 {
@@ -193,7 +209,10 @@ func (s *Store) planCardDAVParticipantBindingsTx(ctx context.Context, tx *logged
 				}
 			}
 			if reason == "" {
-				if _, active := activeMerges[personID]; active {
+				// Independent components are absent from the merge journal and
+				// remain with the survivor on split. Do not extend journaled
+				// components implicitly: splitting those must stay reversible.
+				if mergeComponent {
 					for _, id := range members {
 						if _, exists := bindings[id]; !exists {
 							reason = "active_merge"
