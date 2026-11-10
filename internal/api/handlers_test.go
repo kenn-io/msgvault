@@ -1823,6 +1823,7 @@ func TestHandleCLIRunBackupSubcommandAdmission(t *testing.T) {
 		{"remove-account still allowed", []string{"remove-account", "alice@example.com", "--yes"}, true},
 		{"purge excluded media dry-run allowed", []string{"purge-excluded-media", "--dry-run"}, true},
 		{"pack-attachments allowed", []string{"pack-attachments"}, true},
+		{"repair-attachment-roles allowed", []string{"repair-attachment-roles"}, true},
 		{"repair-dates apply allowed", []string{"repair-dates", "--apply"}, true},
 		{"repair-labels apply allowed", []string{"repair-labels", "--apply"}, true},
 		{"repair list IDs apply allowed", []string{"repair-list-ids", "--apply"}, true},
