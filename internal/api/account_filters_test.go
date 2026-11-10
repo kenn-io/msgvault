@@ -260,3 +260,53 @@ func TestAgentAccountCatalogUsesAuthorizationSnapshot(t *testing.T) {
 	require.Equal(http.StatusOK, w.Code, w.Body.String())
 	assert.NotContains(w.Body.String(), "private@example.org", "the catalog read sees the authorization snapshot")
 }
+
+func TestAgentAccountListingCountsMatchStatsForInvite(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}},
+		Store:  st,
+		Logger: testLogger(),
+	})
+	t.Cleanup(func() { _ = srv.Shutdown(context.WithoutCancel(t.Context())) })
+	t.Cleanup(srv.agentGrants.Close)
+	source, err := st.GetOrCreateSource("mbox", "archive@example.net")
+	requirements.NoError(err)
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "thread", "Thread")
+	requirements.NoError(err)
+	for _, message := range []struct{ id, kind string }{{"mail", "email"}, {"event", "calendar_event"}} {
+		_, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: message.id, MessageType: message.kind})
+		requirements.NoError(err)
+	}
+	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+	requirements.NoError(err)
+	accounts := func(header, value string) int64 {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil)
+		req.Header.Set(header, value)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+		var response struct {
+			Accounts []struct {
+				MessageCount int64 `json:"message_count"`
+			} `json:"accounts"`
+		}
+		requirements.NoError(json.NewDecoder(w.Body).Decode(&response))
+		requirements.Len(response.Accounts, 1)
+		return response.Accounts[0].MessageCount
+	}
+	assertions.Equal(int64(2), accounts("Authorization", "Bearer owner"))
+	assertions.Equal(int64(2), accounts(apiprotocol.AgentTokenHeader, token))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/stats", nil)
+	req.Header.Set(apiprotocol.AgentTokenHeader, token)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+	var stats StatsResponse
+	requirements.NoError(json.NewDecoder(w.Body).Decode(&stats))
+	assertions.Equal(int64(2), stats.TotalMessages)
+	native, err := st.CountMessagesForSource(source.ID)
+	requirements.NoError(err)
+	assertions.Equal(int64(1), native)
+}
