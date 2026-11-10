@@ -202,8 +202,7 @@ func readPackageJSON(input *io.LimitedReader, name string, visit func(packageRec
 		}
 		if err = json.Unmarshal(raw, &fields, json.MatchCaseInsensitiveNames(true)); err != nil {
 			record.InvalidReason = "incompatible JSON record"
-			var semantic *json.SemanticError
-			if errors.As(err, &semantic) {
+			if semantic, ok := errors.AsType[*json.SemanticError](err); ok {
 				record.InvalidReason = fmt.Sprintf("field %s: JSON %s cannot decode as %v", textutil.PrefixRunes(string(semantic.JSONPointer), 128), semantic.JSONKind, semantic.GoType)
 			}
 			// Decode the ID independently so a later field error cannot hide it.
