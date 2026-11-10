@@ -394,13 +394,20 @@ func TestImportGoogleChatConversationKindRequiresRosterEvidence(t *testing.T) {
 			var kind string
 			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT conversation_type FROM conversations`).Scan(&kind))
 			assert.Equal(tc.want, kind)
-			if tc.name == "two person DM" {
+			if tc.name == "two person DM" || tc.name == "group DM" {
 				require.NoError(os.Remove(filepath.Join(root, "Groups", tc.group, "group_info.json")))
 				write(t, root, "Groups/"+tc.group+"/messages.json", strings.ReplaceAll(fixtureMessages(t), "group/topic/message", "group/topic/new"))
 				_, err = Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{root}})
 				require.NoError(err)
 				require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT conversation_type FROM conversations`).Scan(&kind))
-				assert.Equal("chat", kind)
+				assert.Equal(tc.want, kind)
+				if tc.name == "group DM" {
+					write(t, root, "Groups/"+tc.group+"/group_info.json", `{"members":[{"email":"owner@example.com"},{"email":"peer@example.com"}]}`)
+					_, err = Import(t.Context(), st, ImportOptions{Me: "owner@example.com", Roots: []string{root}})
+					require.NoError(err)
+					require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT conversation_type FROM conversations`).Scan(&kind))
+					assert.Equal(tc.want, kind)
+				}
 			}
 		})
 	}
@@ -733,6 +740,9 @@ func TestImportGoogleChatRosterDoesNotProveDelivery(t *testing.T) {
 	opts := ImportOptions{Me: "owner@example.com", Roots: []string{root}, AttachmentsDir: t.TempDir()}
 	_, err := Import(t.Context(), st, opts)
 	require.NoError(t, err)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE conversations SET conversation_type='direct_chat'`)
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(filepath.Join(root, "Groups", "DM a", "group_info.json")))
 	write(t, root, "Groups/DM a/File-example.txt", "synthetic")
 	_, err = Import(t.Context(), st, opts)
 	require.NoError(t, err)

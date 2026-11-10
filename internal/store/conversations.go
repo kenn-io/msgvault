@@ -14,6 +14,19 @@ import (
 	"go.kenn.io/msgvault/internal/verification"
 )
 
+// ConversationTypeContext returns the type of a source conversation, or an empty string if it is absent.
+func (s *Store) ConversationTypeContext(ctx context.Context, sourceID int64, sourceConversationID string) (string, error) {
+	var kind string
+	err := s.db.QueryRowContext(ctx, s.dialect.Rebind(`SELECT COALESCE(conversation_type, '') FROM conversations WHERE source_id = ? AND source_conversation_id = ?`), sourceID, sourceConversationID).Scan(&kind)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read conversation type: %w", err)
+	}
+	return kind, nil
+}
+
 // ConversationWindow is a bounded, stable slice of full message details.
 type ConversationWindow struct {
 	Messages       []APIMessage

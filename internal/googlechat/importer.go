@@ -98,9 +98,9 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 			return false, fmt.Errorf("googlechat: group JSON: %w", err)
 		}
 	}
-	kind := "group_chat"
-	if strings.HasPrefix(group, "DM ") && len(info.Members) <= 2 {
-		kind = "chat"
+	kind, err := conversationKind(ctx, st, sourceID, group, len(info.Members))
+	if err != nil {
+		return false, err
 	}
 	conversationID, err := st.EnsureConversationWithTypeContext(ctx, sourceID, group, kind, info.Name)
 	if err != nil {
@@ -255,6 +255,23 @@ func importGroup(ctx context.Context, st *store.Store, reader *exportReader, gro
 		summary.MessagesAdded++
 	}
 	return len(envelope.Messages) > 0, nil
+}
+
+// conversationKind classifies a group from its roster size. A sparse roster is
+// not evidence of a direct chat, so it keeps an established group_chat; any
+// other prior type (such as legacy direct_chat) is reclassified as chat.
+func conversationKind(ctx context.Context, st *store.Store, sourceID int64, group string, members int) (string, error) {
+	if !strings.HasPrefix(group, "DM ") || members > 2 {
+		return "group_chat", nil
+	}
+	prior, err := st.ConversationTypeContext(ctx, sourceID, group)
+	if err != nil {
+		return "", err
+	}
+	if prior == "group_chat" {
+		return prior, nil
+	}
+	return "chat", nil
 }
 
 // Raw container snapshots live once per source/conversation. Distinct snapshots
