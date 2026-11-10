@@ -455,3 +455,50 @@ func TestRosterJoinRefreshesExistingMatchEvidence(t *testing.T) {
 	}
 	assert.True(found, "the existing candidate gains shared conversation evidence")
 }
+
+func TestQuietMatchingRepairInvalidatesGoneRoute(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	chat := budgetTestChat("!gone-matching:example.test", 2, time.Now().Add(-48*time.Hour))
+	f.addChat(chat)
+	imp, st := newHandlerTestImporter(t, f)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	provider := f.handler()
+	imp.client.http.Transport = handlerTransport(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/accounts/signal" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"accountID":"signal","bridge":{"type":"signal"},"status":"connected"}`))
+			return
+		}
+		provider(w, r)
+	}))
+	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+	require.NoError(err)
+	state, err := imp.loadResumeState(t.Context(), sum.SourceID)
+	require.NoError(err)
+	cs := state.Chats[chat.ID]
+	require.True(cs.Done)
+	require.True(cs.RosterWork.MembershipApplied)
+	cs.RosterWork.MatchingPending = true
+	peer := participantForBeeperUser(t, st, "@signal_ann:beeper.local")
+	person, _, err := st.CreatePersonFromParticipant(peer)
+	require.NoError(err)
+	query := store.PersonMessagingRouteQuery{PersonUID: person.VCardUID}
+	before, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
+	require.NoError(err)
+	require.Len(before.Routes.Items, 1)
+	require.Equal("archive_verified", before.Routes.Items[0].Status)
+	f.mu.Lock()
+	f.goneChatGets = map[string]bool{chat.ID: true}
+	f.mu.Unlock()
+	runID, err := st.StartSync(sum.SourceID, sourceTypeBeeper)
+	require.NoError(err)
+	_, err = imp.repairQuietRosters(t.Context(), runID, sum.SourceID, ImportOptions{AccountID: "signal"}, state, nil, &ImportSummary{})
+	require.NoError(err)
+	require.NoError(st.CompleteSync(runID, ""))
+	assert.True(cs.Gone)
+	after, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
+	require.NoError(err)
+	require.Len(after.Routes.Items, 1)
+	assert.Equal("unresolved", after.Routes.Items[0].Status)
+}

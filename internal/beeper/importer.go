@@ -208,19 +208,35 @@ func (imp *Importer) scopedToSync(sourceID, syncID int64) *Importer {
 func (imp *Importer) loadResumeState(ctx context.Context, sourceID int64) (*SyncState, error) {
 	prev, _ := imp.store.GetLastSuccessfulSyncContext(ctx, sourceID)
 	cp, _ := imp.store.GetLatestCheckpointedSync(sourceID)
-	return resumeState(prev, cp)
+	return resumeState(prev, cp, false)
 }
 
-func resumeState(prev, cp *store.SyncRun) (*SyncState, error) {
+func (imp *Importer) loadFullResumeState(ctx context.Context, sourceID int64) (*SyncState, error) {
+	prev, _ := imp.store.GetLastSuccessfulSyncContext(ctx, sourceID)
+	cp, _ := imp.store.GetLatestCheckpointedSync(sourceID)
+	return resumeState(prev, cp, true)
+}
+
+func resumeState(prev, cp *store.SyncRun, full bool) (*SyncState, error) {
+	load := LoadSyncState
+	if full {
+		load = func(blob string) (*SyncState, error) {
+			state, err := decodeSyncState(blob)
+			if err != nil {
+				return NewSyncState(), nil //nolint:nilerr // Full sync verifies the archive when no cursor can be decoded.
+			}
+			return state, nil
+		}
+	}
 	state := NewSyncState()
 	if prev != nil && prev.CursorAfter.Valid {
 		var err error
-		if state, err = LoadSyncState(prev.CursorAfter.String); err != nil {
+		if state, err = load(prev.CursorAfter.String); err != nil {
 			return nil, err
 		}
 	}
 	if cp != nil && cp.CursorBefore.Valid {
-		cpState, err := LoadSyncState(cp.CursorBefore.String)
+		cpState, err := load(cp.CursorBefore.String)
 		if err != nil {
 			return nil, err
 		}
@@ -250,7 +266,11 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	}
 	sum = &ImportSummary{SourceID: src.ID}
 
-	state, err := imp.loadResumeState(ctx, src.ID)
+	load := imp.loadResumeState
+	if opts.Full {
+		load = imp.loadFullResumeState
+	}
+	state, err := load(ctx, src.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -1087,7 +1107,6 @@ func (imp *Importer) ensureConversation(
 		bridgePrefix = participantBridgePrefix(detail.Participants.Items)
 	}
 	resolved := make([]resolvedMember, 0, len(detail.Participants.Items))
-	desired := make(map[int64]string, len(detail.Participants.Items))
 	active := make(map[string]bool, len(detail.Participants.Items))
 	for i := range detail.Participants.Items {
 		if err := opts.rosterStop(ctx); err != nil {
@@ -1119,7 +1138,6 @@ func (imp *Importer) ensureConversation(
 		if p.IsAdmin {
 			role = "admin"
 		}
-		desired[pid] = role
 		resolved = append(resolved, resolvedMember{participantID: pid, user: &p.User, key: key, role: role})
 	}
 	if complete {
@@ -1137,7 +1155,7 @@ func (imp *Importer) ensureConversation(
 	if err != nil {
 		return convID, false, chatMembership{}, nil, err
 	}
-	desired = make(map[int64]string, len(resolved))
+	desired := make(map[int64]string, len(resolved))
 	for i := range resolved {
 		binding, ok := bindings[resolved[i].key]
 		if !ok {
@@ -1192,9 +1210,6 @@ func (imp *Importer) ensureConversation(
 		return convID, false, chatMembership{}, nil, err
 	}
 	if complete && !work.MembershipApplied {
-		if err := opts.rosterStop(ctx); err != nil {
-			return convID, false, chatMembership{}, nil, err
-		}
 		requestCtx, cancel := opts.requestContext(ctx)
 		verified, verifyErr := imp.client.GetChat(requestCtx, ch.ID)
 		cancel()
@@ -1214,7 +1229,7 @@ func (imp *Importer) ensureConversation(
 			sum.failChat(ch.ID, false, verifyErr)
 			sum.FetchErrors++
 			sum.Errors++
-			return convID, false, membership, &rosterObservations{detail: detail, members: resolved, bridgePrefix: bridgePrefix, work: work, state: cs}, nil
+			return convID, false, membership, &rosterObservations{detail: detail, members: resolved, bridgePrefix: bridgePrefix, work: work}, nil
 		}
 		if err := opts.rosterStop(ctx); err != nil {
 			return convID, false, chatMembership{}, nil, err
@@ -1243,7 +1258,7 @@ func (imp *Importer) ensureConversation(
 	if err := imp.completeRoster(ctx, convID, evidence.MembershipComplete, resolved, work); err != nil {
 		return convID, false, membership, nil, err
 	}
-	return convID, evidence.MembershipComplete, membership, &rosterObservations{detail: detail, members: resolved, bridgePrefix: bridgePrefix, work: work, state: cs, complete: complete}, nil
+	return convID, evidence.MembershipComplete, membership, &rosterObservations{detail: detail, members: resolved, bridgePrefix: bridgePrefix, work: work, complete: complete}, nil
 }
 
 type resolvedMember struct {
@@ -1255,7 +1270,6 @@ type resolvedMember struct {
 
 type rosterObservations struct {
 	work         *rosterWork
-	state        *ChatState
 	detail       *Chat
 	members      []resolvedMember
 	bridgePrefix string

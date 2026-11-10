@@ -305,3 +305,59 @@ func TestImportRecoversAfterAnchorRepair(t *testing.T) {
 	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err, "the next run verifies the restored installation and resumes")
 }
+
+func TestFullImportRecoversUnreadableProgressAndVerifiesArchive(t *testing.T) {
+	for _, tc := range []struct {
+		kind       string
+		checkpoint bool
+	}{{"malformed", false}, {"future roster", false}, {"malformed", true}, {"future roster", true}} {
+		t.Run(fmt.Sprintf("%s checkpoint=%t", tc.kind, tc.checkpoint), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			f := newFakeBeeper(t)
+			chat := e2eChat()
+			f.addChat(chat)
+			imp, st, done := newTestImporter(t, f)
+			defer done()
+			sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+			require.NoError(err)
+			state, err := imp.loadResumeState(t.Context(), sum.SourceID)
+			require.NoError(err)
+			require.NotEmpty(state.Anchors)
+			blob := "{"
+			if tc.kind == "future roster" {
+				state.Anchors[0].MessageID = chat.Msgs[0].ID
+				state.Anchors[0].Timestamp = chat.Msgs[0].Timestamp
+				if tc.checkpoint {
+					baseline, marshalErr := state.Marshal()
+					require.NoError(marshalErr)
+					runID, startErr := st.StartSync(sum.SourceID, sourceTypeBeeper)
+					require.NoError(startErr)
+					require.NoError(st.CompleteSync(runID, baseline))
+				}
+				state.EnsureChat(chat.ID).RosterWork.Version = 2
+				blob, err = state.Marshal()
+				require.NoError(err)
+			}
+			save := func() {
+				runID, saveErr := st.StartSync(sum.SourceID, sourceTypeBeeper)
+				require.NoError(saveErr)
+				if tc.checkpoint {
+					require.NoError(st.PauseSyncWithCheckpoint(t.Context(), runID, &store.Checkpoint{PageToken: blob}))
+				} else {
+					require.NoError(st.CompleteSync(runID, blob))
+				}
+			}
+			save()
+			_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Full: true})
+			require.NoError(err, "full sync can recover without trusting unreadable progress")
+			save()
+			for i := range chat.Msgs {
+				if tc.kind == "malformed" || i == 0 {
+					chat.Msgs[i].Timestamp = chat.Msgs[i].Timestamp.Add(time.Hour)
+				}
+			}
+			_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Full: true})
+			assert.ErrorIs(err, ErrNeedsReanchor, "full sync still verifies saved anchors or the archive sample")
+		})
+	}
+}

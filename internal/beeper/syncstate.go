@@ -104,6 +104,19 @@ func NewSyncState() *SyncState {
 }
 
 func LoadSyncState(blob string) (*SyncState, error) {
+	s, err := decodeSyncState(blob)
+	if err != nil {
+		return nil, err
+	}
+	for _, chat := range s.Chats {
+		if chat != nil && chat.RosterWork != nil && chat.RosterWork.Version != 1 {
+			return nil, fmt.Errorf("unsupported roster work version %d", chat.RosterWork.Version)
+		}
+	}
+	return s, nil
+}
+
+func decodeSyncState(blob string) (*SyncState, error) {
 	s := NewSyncState()
 	if blob == "" {
 		return s, nil
@@ -113,11 +126,6 @@ func LoadSyncState(blob string) (*SyncState, error) {
 	}
 	if s.Chats == nil {
 		s.Chats = map[string]*ChatState{}
-	}
-	for _, chat := range s.Chats {
-		if chat != nil && chat.RosterWork != nil && chat.RosterWork.Version != 1 {
-			return nil, fmt.Errorf("unsupported roster work version %d", chat.RosterWork.Version)
-		}
 	}
 	return s, nil
 }

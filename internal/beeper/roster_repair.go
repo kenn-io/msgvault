@@ -108,6 +108,9 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 		return false, err
 	}
 	if errors.Is(fetchErr, ErrNotFound) {
+		if err := imp.store.InvalidateSourceConversationMessagingRouteEvidenceContext(ctx, sourceID, chatID); err != nil {
+			return failed(fmt.Errorf("invalidate route for missing chat: %w", err))
+		}
 		// A chat Beeper no longer has keeps its invalidated route proof without a
 		// fetch-failure marker, and later runs stop probing it.
 		cs.Gone = true
