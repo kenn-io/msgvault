@@ -252,7 +252,7 @@ var icsDurationPattern = regexp.MustCompile(`(?i)^\+?P(?:(\d+)W|(?:(\d+)D)?(?:T(
 // icsDuration splits a DURATION into nominal days and exact elapsed time.
 func icsDuration(value string) (int, time.Duration, error) {
 	m := icsDurationPattern.FindStringSubmatch(value)
-	if m == nil {
+	if m == nil || strings.ContainsRune("PpTt", rune(value[len(value)-1])) {
 		return 0, 0, errors.New("invalid calendar DURATION")
 	}
 	var n [5]int64
@@ -333,6 +333,9 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 	if dur := p.Get("DURATION"); dur != nil && end.IsZero() {
 		if days, elapsed, err = icsDuration(dur.Value); err != nil {
 			return ICSComponent{}, err
+		}
+		if allDay && elapsed != 0 {
+			return ICSComponent{}, errors.New("all-day DURATION must be whole days")
 		}
 	} else if allDay {
 		days = 1
