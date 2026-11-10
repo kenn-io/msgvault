@@ -61,7 +61,7 @@ it.each(['edit', 'conflict recovery', 'delete'])('retains catalog %s', async ope
   } finally { unmount(); }
 });
 
-it('gates catalog search through failed reads and retries, then orders and filters loaded fields', async () => {
+it('gates catalog search through failed reads and retries', async () => {
   let releaseInitial!: (response: Response) => void;
   const pendingInitial = new Promise<Response>(resolve => { releaseInitial = resolve; });
   let releaseTargets!: (response: Response) => void;
@@ -99,8 +99,8 @@ it('orders loaded fields and shows their metadata', async () => {
     await fields.findByText('Garden preferences');
     expect([...container.querySelectorAll('.fields .name')].map(row => row.firstChild?.textContent)).toEqual(['Work', 'Location', 'Favorite color']);
     expect(fields.getByText(/Current and historical employment/).closest('li')?.textContent).toContain('Jobs · several values');
-    expect(fields.getByText('Where they live').closest('li')?.textContent).toContain('Text · one value');
-    expect(fields.getByText('Garden preferences').closest('li')?.textContent).toContain('Text · several values · Sensitive');
+    expect(fields.getByText('Where they live').closest('li')?.querySelector('li > small')?.textContent).toBe('Text · one value · Inactive');
+    expect(fields.getByText('Garden preferences').closest('li')?.querySelector('li > small')?.textContent).toBe('Text · several values · Sensitive');
     expect(fields.queryByRole('button', { name: 'Edit Location' })).toBeNull();
   } finally { unmount(); }
 });

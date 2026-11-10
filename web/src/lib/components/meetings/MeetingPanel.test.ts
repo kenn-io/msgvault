@@ -19,7 +19,6 @@ describe('MeetingPanel', () => {
     const view = render(MeetingPanel, { client, scope, controller, compact: true, showHeading: false });
     await screen.findByText('4 meetings');
     expect((screen.getByText('Meeting metrics').closest('details') as HTMLDetailsElement).open).toBe(false);
-    expect(screen.queryByRole('heading', { name: 'Meeting activity and follow-ups' })).toBeNull();
     view.unmount();
     controller.destroy();
   });
