@@ -871,9 +871,13 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 	opts.rosterState = cs.RosterWork
 	opts.skipRoster = !cs.RosterWork.MemberFirst
 	cs.RosterWork.MemberFirst = !cs.RosterWork.MemberFirst
+	before := sum.MessagesProcessed
 	convID, membershipComplete, membership, err := imp.ensureRosterWork(
 		ctx, syncID, sourceID, ch, opts, sum,
 	)
+	defer func() {
+		finishRosterTurn(cs, sum.MessagesProcessed > before || chatComplete && err == nil)
+	}()
 	defer func() {
 		if convID == 0 {
 			return
@@ -913,9 +917,6 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 	if err != nil {
 		return 0, false, err
 	}
-	if cs.RosterWork.Phase == "done" {
-		cs.RosterWork = nil
-	}
 	if membership.known {
 		cs.RosterRetryAfter = ""
 	}
@@ -928,7 +929,6 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 		Type:             conversationType(ch.Type),
 		ParticipantCount: membership.policyCount(opts.MediaPolicy),
 	}
-	before := sum.MessagesProcessed
 	tailProbeComplete := true
 
 	// Re-open a completed chat whose oldest end has grown since it was walked;
@@ -986,6 +986,20 @@ func stopBeforeMessages(cs *ChatState, opts ImportOptions, err error, sum *Impor
 	cs.RosterWork.MemberFirst = false
 	sum.Stopped = true
 	return true
+}
+
+// finishRosterTurn keeps a finished roster turn until the chat's messages
+// advance or the chat completes, so a message turn that runs out of budget is
+// retried before the roster is matched again.
+func finishRosterTurn(cs *ChatState, messagesMoved bool) {
+	if cs.RosterWork.Phase != "done" {
+		return
+	}
+	if messagesMoved {
+		cs.RosterWork = nil
+		return
+	}
+	cs.RosterWork.MemberFirst = false
 }
 
 // chatMembership is the roster media policy weighs for one chat: the
