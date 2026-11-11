@@ -87,10 +87,7 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 func (b *daemonMCPOperations) OperationDisclosure(ctx context.Context, name string, args map[string]any) (string, error) {
 	if slices.Contains(b.supported, name) {
 		if name == "retry_docbank_attachment_mirror" {
-			if len(args) != 0 {
-				return "", &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
-			}
-			return "Retry failed external attachment mirror uploads and restart discovery using existing attachment upload consent. Scheduling is not completion.", nil
+			return "Retry failed external attachment mirror uploads, re-request recoverable document processing, and restart full discovery even when no uploads have failed. Existing native upload and processing consent apply. Scheduling is not completion.", nil
 		}
 		if disclosure, handled, err := b.loopOperationDisclosure(name, args); handled {
 			return disclosure, err

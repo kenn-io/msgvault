@@ -65,7 +65,9 @@ All notable changes to msgvault, grouped by release.
 - See a saved person's open loops on their **Details** tab in People. When
   more history remains, **Check more** continues the scan.
 - Let an owner inspect the Docbank attachment mirror through MCP and, with
-  `--allow-document-writes` and per-call approval, retry failed external uploads.
+  `--allow-document-writes` and per-call approval, retry failed external uploads,
+  re-request recoverable processing, and restart full discovery under existing
+  native upload and processing consent, even when no uploads have failed.
   HTTP writes also need the general write opt-in and protocol `2026-07-28` or newer.
 - Let an MCP assistant list open loops. With `--allow-loop-writes`, it can
   also mark loops done, snooze them, or reopen them, with your approval for

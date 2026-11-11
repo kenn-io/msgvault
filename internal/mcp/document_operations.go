@@ -6,7 +6,6 @@ import "go.kenn.io/msgvault/pkg/client/generated"
 type DocumentMirrorStatus struct {
 	State         string                    `json:"state"`
 	UploadConsent bool                      `json:"upload_consent"`
-	HasLastError  bool                      `json:"has_last_error"`
 	Counts        *DocumentMirrorCounts     `json:"counts,omitempty"`
 	Processing    *DocumentProcessingCounts `json:"processing,omitempty"`
 }
@@ -25,6 +24,6 @@ type DocumentProcessingCounts struct {
 func documentOperationalDefinitions() []operationalDefinition {
 	return []operationalDefinition{
 		newOperationalDefinition("get_docbank_attachment_status", "Read the configured Docbank attachment mirror state and aggregate counts.", OperationFamilyDocuments, closedObject(nil), outputSchemaFor[DocumentMirrorStatus](), false),
-		newOperationalDefinition("retry_docbank_attachment_mirror", "Retry failed attachment mirror uploads and restart discovery using existing upload consent. Requires approval; scheduling is not completion.", OperationFamilyDocuments, closedObject(nil), outputSchemaFor[generated.DocbankAttachmentBackfillResponse](), true),
+		newOperationalDefinition("retry_docbank_attachment_mirror", "Retry failed external attachment uploads, re-request recoverable document processing, and restart full discovery even with no failed uploads, under existing native upload and processing consent. Requires approval; scheduling is not completion.", OperationFamilyDocuments, closedObject(nil), outputSchemaFor[generated.DocbankAttachmentBackfillResponse](), true),
 	}
 }

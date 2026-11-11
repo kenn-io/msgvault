@@ -894,9 +894,10 @@ retries a write by itself. If a write reports
 
 On unreleased `main`, owner clients can use `get_docbank_attachment_status` to
 inspect the configured Docbank attachment mirror and aggregate counts. Status
-omits paths and error details; `has_last_error` indicates a worker error.
-`retry_docbank_attachment_mirror` retries failures and restarts discovery under
-the existing attachment upload consent. It requires `--allow-document-writes`
+omits paths and errors. `retry_docbank_attachment_mirror` retries failed
+uploads, re-requests recoverable document processing, and restarts full discovery
+even when no uploads have failed. Existing native upload and processing consent
+apply. It requires `--allow-document-writes`
 and approval for each call. A scheduled receipt is not upload completion.
 A failure with `operation_may_have_completed: true` may have changed retry
 state; inspect status before deciding whether to retry. MCP does not retry it.

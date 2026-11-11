@@ -79,9 +79,11 @@ so it needs `--allow-loop-writes` and the owner's approval for each call; see
 `main`, requires daemon API schema 3.44.0 or newer.
 
 On unreleased `main`, owner clients can inspect the configured Docbank attachment
-mirror with `get_docbank_attachment_status`. Retrying failed external uploads
-requires `--allow-document-writes`, existing upload consent, and approval for
-each call. Scheduling is not completion. See [Attachment mirror](../usage/chat.md#attachment-mirror).
+mirror with `get_docbank_attachment_status`. Retry also re-requests recoverable
+document processing and restarts full discovery, even with no failed uploads.
+Existing native upload and processing consent apply. The retry requires
+`--allow-document-writes` and approval for each call. Scheduling is not
+completion. See [Attachment mirror](../usage/chat.md#attachment-mirror).
 
 Use `list_thread` with exactly one of `id`, `source_message_id`, or `thread_id`
 to list messages oldest first, paging with `offset` and `limit`. Use

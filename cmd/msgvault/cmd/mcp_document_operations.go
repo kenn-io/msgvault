@@ -19,15 +19,12 @@ func documentMCPCapabilities(hasRoute mcpRouteCheck) []string {
 	return names
 }
 
-func (b *daemonMCPOperations) executeDocumentOperation(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
+func (b *daemonMCPOperations) executeDocumentOperation(ctx context.Context, name string, _ map[string]any) (*mcpserver.OperationResult, bool, error) {
 	if name != "get_docbank_attachment_status" && name != "retry_docbank_attachment_mirror" {
 		return nil, false, nil
 	}
-	if len(args) != 0 {
-		return operationFailure("invalid_arguments", false), true, nil
-	}
 	if name == "retry_docbank_attachment_mirror" {
-		result, err := readMCPOperationJSONWithClassifier[generated.DocbankAttachmentBackfillResponse](ctx, b.client, http.MethodPost, "/api/v1/integrations/docbank/attachments/backfill", nil, func(code string) bool { return code == "conflict" || code == "server_busy" }, http.StatusAccepted)
+		result, err := readMCPOperationJSONWithClassifier[generated.DocbankAttachmentBackfillResponse](ctx, b.client, http.MethodPost, "/api/v1/integrations/docbank/attachments/backfill", nil, documentRefusal, http.StatusAccepted)
 		return result, true, err
 	}
 	result, err := readMCPOperationJSON[generated.DocbankAttachmentStatus](ctx, b.client, http.MethodGet, "/api/v1/integrations/docbank/attachments", nil, http.StatusOK)
@@ -35,7 +32,10 @@ func (b *daemonMCPOperations) executeDocumentOperation(ctx context.Context, name
 		return result, true, err
 	}
 	status := result.Output.(generated.DocbankAttachmentStatus)
-	safe := mcpserver.DocumentMirrorStatus{State: string(status.State), UploadConsent: status.UploadConsent, HasLastError: status.LastError != nil && *status.LastError != ""}
+	if err := status.State.Validate(); err != nil {
+		return operationFailure("invalid_operation_response", false), true, nil
+	}
+	safe := mcpserver.DocumentMirrorStatus{State: string(status.State), UploadConsent: status.UploadConsent}
 	if c := status.Counts; c != nil {
 		safe.Counts = &mcpserver.DocumentMirrorCounts{Sending: c.Sending, Delivered: c.Delivered, Remaining: c.Remaining, Failed: c.Failed}
 	}
@@ -45,3 +45,5 @@ func (b *daemonMCPOperations) executeDocumentOperation(ctx context.Context, name
 	result.Output = safe
 	return result, true, nil
 }
+
+func documentRefusal(code string) bool { return code == "conflict" || code == "server_busy" }
