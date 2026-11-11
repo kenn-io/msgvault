@@ -253,6 +253,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_message` | read | — | message.read |
 | `get_message_tags` | read | — | owner-only |
 | `get_participant_identity` | read | — | owner-only |
+| `get_people_sweep_status` | read | — | owner-only |
 | `get_person_agenda` | read | — | owner-only |
 | `get_person_edit_context` | read | — | owner-only |
 | `get_person_merge_context` | read | — | owner-only |
@@ -271,6 +272,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `list_meeting_action_items` | read | — | owner-only |
 | `list_messages` | read | — | search.read |
 | `list_open_loops` | read | — | owner-only |
+| `list_people_sweep_history` | read | — | owner-only |
 | `list_saved_views` | read | — | owner-only |
 | `list_source_status` | read | — | owner-only |
 | `list_thread` | read | — | message.read |
@@ -291,6 +293,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `semantic_search_messages` | read | — | owner-only |
 | `sync_source` | source_write | `--allow-source-writes` | owner-only |
 | `update_slack_sync_policy` | source_write | `--allow-source-writes` | owner-only |
+| `run_people_sweep` | sweep_write | `--allow-sweep-writes` | owner-only |
 | `create_saved_view` | write | — | owner-only |
 | `delete_saved_view` | write | — | owner-only |
 | `draft_compose` | write | — | backend-dependent |

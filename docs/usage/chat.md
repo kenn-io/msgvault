@@ -890,6 +890,12 @@ one second, then make a new call, which needs approval again. MCP never
 retries a write by itself. If a write reports
 `operation_may_have_completed: true`, list the loops again before retrying.
 
+## People sweep
+
+On unreleased `main`, owner sessions can read `get_people_sweep_status` and `list_people_sweep_history` without enabling writes. History accepts an optional configured `provider`, `person_id`, and `limit` from 1 to 200. Maintenance can refuse either read with `operation_in_progress`; retry later.
+
+Enable `--allow-sweep-writes` for `run_people_sweep`; each call requires approval and uses the daemon’s configured provider and existing consent. Its optional `person_id`, `limit`, and `backstop` select the run. The daemon enforces its configured batch limit. HTTP also requires general write access and protocol `2026-07-28` or newer. A response with `operation_may_have_completed: true` leaves the outcome uncertain.
+
 ## Write controls
 
 Enable only the writes intended for the assistant's session:
@@ -898,6 +904,7 @@ Enable only the writes intended for the assistant's session:
 |---|---|---|
 | Native email tag edits, Saved View management, attachment export, deletion staging, and drafts | Available by default | `--http-allow-writes` |
 | Person promotion, display names, and Notes | `--allow-profile-writes` | `--http-allow-writes --allow-profile-writes` |
+| People sweep runs | `--allow-sweep-writes` | `--http-allow-writes --allow-sweep-writes` |
 | Open-loop done, snooze, and reopen | `--allow-loop-writes` | `--http-allow-writes --allow-loop-writes` |
 | Source sync and Slack selection | `--allow-source-writes` | `--http-allow-writes --allow-source-writes` |
 | Calendar events | `--allow-calendar-writes` | `--http-allow-writes --allow-calendar-writes` |
@@ -986,6 +993,7 @@ msgvault mcp --http 8080
 | `--http-token-env` | — | Name the variable holding the inbound bearer key; file takes priority. Requires `--http`. |
 | `--http-allow-writes` | `false` | Expose write-class tools over HTTP. Identity review, scoring, person merges, CardDAV writes, profile writes, and other write tools still need their separate flags. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
+| `--allow-sweep-writes` | `false` | On unreleased `main`, expose approved people sweep runs. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-loop-writes` | `false` | On unreleased `main`, expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |
