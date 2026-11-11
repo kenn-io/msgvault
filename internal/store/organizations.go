@@ -592,8 +592,9 @@ func organizationWhere(filter OrganizationFilter) (string, []any) {
 			SELECT 1 FROM organization_names alias
 			WHERE alias.organization_id = organizations.id
 			AND alias.active_until IS NULL AND alias.superseded_at IS NULL
+			AND (alias.active_from IS NULL OR alias.active_from <= ?)
 			AND alias.name_normalized LIKE ? ESCAPE '\'))`)
-		args = append(args, query+"%", query+"%")
+		args = append(args, query+"%", time.Now().UTC(), query+"%")
 	}
 	if len(conditions) == 0 {
 		return "", args

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"go.kenn.io/msgvault/internal/peoplebrowser"
 	apiclient "go.kenn.io/msgvault/pkg/client"
@@ -42,18 +41,7 @@ func (b *PeopleBrowser) SearchSemanticPeople(ctx context.Context, request people
 	if err := b.engine.store.RequirePersonDiscoveryScope(ctx, request.OrganizationID); err != nil {
 		return nil, err
 	}
-	query := strings.TrimSpace(request.Query)
-	if query == "" {
-		return nil, errors.New("query must contain non-whitespace text")
-	}
-	limit := request.Limit
-	if limit == 0 {
-		limit = 20
-	}
-	if limit < 1 || limit > 100 {
-		return nil, errors.New("limit must be between 1 and 100")
-	}
-	body := generated.SearchPeopleBody{Query: query, Limit: new(int64(limit))}
+	body := generated.SearchPeopleBody{Query: request.Query, Limit: new(int64(request.Limit))}
 	if request.OrganizationID != 0 {
 		body.OrganizationID = &request.OrganizationID
 	}
@@ -74,12 +62,6 @@ func (b *PeopleBrowser) SearchSemanticPeople(ctx context.Context, request people
 }
 
 func (b *PeopleBrowser) ListOrganizations(ctx context.Context, query string, limit, offset int) (*peoplebrowser.OrganizationPage, error) {
-	if limit == 0 {
-		limit = 20
-	}
-	if limit < 1 || limit > 100 || offset < 0 {
-		return nil, errors.New("limit must be 1..100 and offset must not be negative")
-	}
 	if err := b.engine.store.requirePersonDiscovery(ctx); err != nil {
 		return nil, err
 	}
