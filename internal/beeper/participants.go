@@ -48,6 +48,7 @@ type participantResolver struct {
 	accountID    string
 	rich         map[string]richEntry // phone/email-based resolutions
 	fallback     map[string]int64     // bare-ID fallbacks; upgraded when metadata appears
+	mergedAway   map[int64]bool       // participants merged away this run; made on first merge
 	messageUsers map[string]User
 }
 
@@ -101,12 +102,8 @@ func (r *participantResolver) resolveUser(ctx context.Context, u *User) (int64, 
 		// phone one (which dedupes with SMS/WhatsApp archives). A previous
 		// phone participant stays separate, because numbers can be recycled.
 		if e, ok := r.rich[identifier]; ok && !e.byPhone && e.pid != pid {
-			if err := r.store.MergeParticipantsContext(ctx, e.pid, pid); err != nil {
-				if !errors.Is(err, store.ErrPersonBindingConflict) {
-					return 0, err
-				}
-				slog.Warn("skipping Beeper participant merge across durable persons",
-					"loser_participant_id", e.pid, "winner_participant_id", pid, "error", err)
+			if err := r.merge(ctx, e.pid, pid); err != nil {
+				return 0, err
 			}
 		}
 		return pid, r.recordRich(ctx, identifier, pid, true)
@@ -148,12 +145,8 @@ func (r *participantResolver) recordRich(ctx context.Context, userID string, pid
 	// its history into this resolution. A phone-bearing owner whose number
 	// differs is left un-merged (conservative: numbers can be recycled).
 	if prev != 0 && prev != pid && !hasPhone {
-		if err := r.store.MergeParticipantsContext(ctx, prev, pid); err != nil {
-			if !errors.Is(err, store.ErrPersonBindingConflict) {
-				return err
-			}
-			slog.Warn("skipping Beeper participant merge across durable persons",
-				"loser_participant_id", prev, "winner_participant_id", pid, "error", err)
+		if err := r.merge(ctx, prev, pid); err != nil {
+			return err
 		}
 	}
 	if err := r.store.SetParticipantIdentifierContext(ctx, pid, participantIdentifierType, userID); err != nil {
@@ -184,7 +177,45 @@ func (r *participantResolver) forgetUser(userID string) {
 
 func (r *participantResolver) rememberRosterOwner(userID string, owner int64) {
 	r.forgetUser(userID)
-	r.fallback[r.identifierForUser(userID)] = owner
+	r.cacheRosterOwner(userID, owner)
+}
+
+// cacheRosterOwner skips an owner merged away this run. The next lookup then
+// reads the identifier's current owner, so a reused row ID is never translated.
+func (r *participantResolver) cacheRosterOwner(userID string, owner int64) {
+	if !r.mergedAway[owner] {
+		r.fallback[r.identifierForUser(userID)] = owner
+	}
+}
+
+// merge folds loser into winner, or skips a merge across durable persons with a
+// warning. A completed merge deletes the loser, so cached entries for it are
+// dropped and the next lookup reads the identifier's current owner. The loser is
+// never cached again this run.
+func (r *participantResolver) merge(ctx context.Context, loser, winner int64) error {
+	if err := r.store.MergeParticipantsContext(ctx, loser, winner); err != nil {
+		if !errors.Is(err, store.ErrPersonBindingConflict) {
+			return err
+		}
+		slog.Warn("skipping Beeper participant merge across durable persons",
+			"loser_participant_id", loser, "winner_participant_id", winner, "error", err)
+		return nil
+	}
+	if r.mergedAway == nil {
+		r.mergedAway = make(map[int64]bool)
+	}
+	r.mergedAway[loser] = true
+	for key, e := range r.rich {
+		if e.pid == loser {
+			delete(r.rich, key)
+		}
+	}
+	for key, pid := range r.fallback {
+		if pid == loser {
+			delete(r.fallback, key)
+		}
+	}
+	return nil
 }
 
 func (r *participantResolver) resolveIDFallback(ctx context.Context, userID, displayName string) (int64, error) {

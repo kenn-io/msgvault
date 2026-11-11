@@ -131,23 +131,12 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 	opts.rosterState = cs.RosterWork
 	opts.rosterDetailFetched = true
 	conversationID, complete, _, err := imp.ensureRosterWork(ctx, syncID, sourceID, detail, opts, &ImportSummary{})
-	err = imp.finishQuietRosterStep(ctx, opts, conversationID, err)
+	err = imp.finishQuietRosterStep(ctx, opts, conversationID, complete, err)
 	if errors.Is(err, errBeeperBudgetExpired) {
 		return true, nil
 	}
 	if err != nil {
 		return failed(fmt.Errorf("repair archived roster: %w", err))
-	}
-	pendingCtx := ctx
-	if opts.stopRequested() {
-		var cancelPending context.CancelFunc
-		pendingCtx, cancelPending = opts.finalizeContext(ctx)
-		defer cancelPending()
-	}
-	if complete {
-		if err := imp.store.SetSourceConversationRosterRepairPendingContext(pendingCtx, sourceID, chatID, false); err != nil {
-			return failed(fmt.Errorf("clear roster repair pending marker: %w", err))
-		}
 	}
 	if cs.RosterWork.Phase == "done" {
 		cs.RosterWork = nil
@@ -163,7 +152,9 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 	return opts.stopRequested(), nil
 }
 
-func (imp *Importer) finishQuietRosterStep(ctx context.Context, opts ImportOptions, conversationID int64, rosterErr error) error {
+// finishQuietRosterStep refreshes the room's stats, then settles its pending
+// marker for the roster step's outcome.
+func (imp *Importer) finishQuietRosterStep(ctx context.Context, opts ImportOptions, conversationID int64, verified bool, rosterErr error) error {
 	if conversationID == 0 {
 		return rosterErr
 	}
@@ -171,6 +162,25 @@ func (imp *Importer) finishQuietRosterStep(ctx context.Context, opts ImportOptio
 	defer cancel()
 	if err := imp.store.RecomputeConversationStatsForConversationContext(statsCtx, conversationID); err != nil {
 		return fmt.Errorf("recompute conversation stats after roster repair: %w", err)
+	}
+	return imp.clearQuietRosterPending(ctx, opts, conversationID, verified, rosterErr)
+}
+
+// clearQuietRosterPending clears the pending marker of a room whose membership
+// is verified, once its stats are fresh, and returns the roster step's error.
+// During a stop the write uses the finalize window.
+func (imp *Importer) clearQuietRosterPending(ctx context.Context, opts ImportOptions, conversationID int64, verified bool, rosterErr error) error {
+	if !verified {
+		return rosterErr
+	}
+	pendingCtx := ctx
+	if opts.stopRequested() {
+		var cancelPending context.CancelFunc
+		pendingCtx, cancelPending = opts.finalizeContext(ctx)
+		defer cancelPending()
+	}
+	if err := imp.store.SetConversationRosterRepairPendingContext(pendingCtx, conversationID, false); err != nil {
+		return fmt.Errorf("clear roster repair pending marker: %w", err)
 	}
 	return rosterErr
 }
