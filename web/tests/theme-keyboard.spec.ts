@@ -306,7 +306,7 @@ test('clicking a filename returns to Files keyboard navigation without extra row
     occurred_at: '2026-07-18T12:00:00Z', source_id: 1, source_type: 'synthetic',
     source_identifier: 'archive@example.com', containing_title: `Containing item ${id}`,
     filename: `Attachment ${id}.pdf`, mime_type: 'application/pdf', mime_family: 'pdf', size_bytes: 2048,
-    content_state: 'missing_blob', content_available: false
+    content_state: 'unverified', content_available: null
   }));
   await page.route('**/api/v1/files/search', route => route.fulfill({ json: {
     files, total_count: 2, cache_revision: 'cache-theme', search_provenance: {}
