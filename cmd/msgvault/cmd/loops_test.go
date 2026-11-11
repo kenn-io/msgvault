@@ -122,23 +122,49 @@ func TestLoopsDoneAndSnooze(t *testing.T) {
 }
 
 func TestLoopsRequireDaemonSchema(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	var loopRequests int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/health" {
-			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.23.0"}`))
-			return
-		}
-		loopRequests++
-		http.NotFound(w, r)
-	}))
-	t.Cleanup(server.Close)
-	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	_, err := runLoops(ctx, t, "list")
-	require.ErrorContains(err, "require daemon API schema 3.44.0")
-	require.ErrorContains(err, `daemon reports "3.23.0"`)
-	assert.Zero(loopRequests)
+	for _, tc := range []struct {
+		name, version, minimum string
+		includeClosed          bool
+	}{
+		{"old_reply_loop_daemon", "3.23.0", "3.44.0", false},
+		{"compatible_reply_loop_daemon", "3.44.0", "", false},
+		{"old_closed_commitment_daemon", "5.1.0", "5.2.0", true},
+		{"compatible_closed_commitment_daemon", "5.2.0", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, r := assert.New(t), require.New(t)
+			var loopRequests int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if req.URL.Path == "/api/v1/health" {
+					a.NoError(json.NewEncoder(w).Encode(map[string]string{"status": "ok", "api_schema_version": tc.version}))
+					return
+				}
+				loopRequests++
+				a.Equal("/api/v1/loops", req.URL.Path)
+				if tc.includeClosed {
+					a.Equal("true", req.URL.Query().Get("include_closed"))
+				}
+				_, err := w.Write([]byte(`{"items":[],"commitments":[],"truncated":false}`))
+				a.NoError(err)
+			}))
+			t.Cleanup(server.Close)
+			ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+			args := []string{"list", "--json"}
+			if tc.includeClosed {
+				args = append(args, "--include-closed")
+			}
+			_, err := runLoops(ctx, t, args...)
+			if tc.minimum != "" {
+				r.ErrorContains(err, "require daemon API schema "+tc.minimum)
+				r.ErrorContains(err, fmt.Sprintf("daemon reports %q", tc.version))
+				a.Zero(loopRequests)
+				return
+			}
+			r.NoError(err)
+			a.Equal(1, loopRequests)
+		})
+	}
 }
 
 func TestWriteLoopsLayout(t *testing.T) {
