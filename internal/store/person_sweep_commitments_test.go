@@ -635,6 +635,113 @@ func TestCommitmentAgendaReceiptLifecycle(t *testing.T) {
 	a.Equal(linked, again)
 }
 
+// A create that fails after Mark leaves its frozen receipt pending. Model the
+// scheduled enqueue-eight/drain-eight contract without substituting a queue fake.
+func TestCommitmentAgendaPendingRetryGetsServiceDuringFreshArrivals(t *testing.T) {
+	r, a, ctx := require.New(t), assert.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "agenda-pending-fairness", false)
+	st := f.store
+	_, persist := newCommitmentTestConversation(t, f)
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01",
+		AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+	var body strings.Builder
+	var promises []peoplesweep.CommitmentPromise
+	for i := range 25 {
+		quote := fmt.Sprintf("I will send report %d.", i+1)
+		start := int64(body.Len())
+		body.WriteString(quote)
+		promises = append(promises, peoplesweep.CommitmentPromise{Direction: peoplesweep.CommitmentOwedTo,
+			Quote: quote, Summary: quote, Start: start, End: int64(body.Len())})
+		body.WriteByte(' ')
+	}
+	persist("queued-promises", strings.TrimSpace(body.String()), -time.Hour)
+	for page := range 8 {
+		window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+		r.NoError(err)
+		if len(window.Sources) == 0 {
+			break
+		}
+		if page > 0 {
+			f = nextCommitmentTestAttempt(t, f, fmt.Sprintf("-replay-%d", page))
+		}
+		output := peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{}, Fulfilments: []peoplesweep.CommitmentFulfilment{}}
+		if page == 0 {
+			r.Len(window.Sources, 1)
+			for i := range promises {
+				promises[i].SourceID = window.Sources[0].ID
+			}
+			output.Promises = promises
+		}
+		_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, output))
+		r.NoError(err)
+	}
+	now := f.request.CompletedAt
+	candidates, err := st.ListCommitmentAgendaCandidatesContext(ctx, now, 8)
+	r.NoError(err)
+	r.Len(candidates, 8, "the real matching cycle must finish before automatic filing")
+	items, err := st.ListPersonCommitmentsContext(ctx, f.personID, now, 25, false)
+	r.NoError(err)
+	r.Len(items, 25)
+	enqueue := func(commitment PersonCommitment) CommitmentAgendaSuggestion {
+		t.Helper()
+		start, end := int(commitment.Start), int(commitment.End)
+		evidence, err := kataevidence.New(st).Prepare(ctx, []kataevidence.Selector{{
+			Kind: "message", MessageID: commitment.AnchorMessageID, StartRune: &start, EndRune: &end,
+		}})
+		r.NoError(err)
+		r.Len(evidence, 1)
+		item, err := st.EnqueueCommitmentAgendaContext(ctx, CommitmentAgendaSuggestion{
+			CommitmentID: commitment.ID, TargetKey: commitment.TargetKey, Quote: commitment.Quote,
+			Request: kataissues.CreateInput{Title: commitment.Summary, List: "commitments", PersonUID: "synthetic-uid",
+				Evidence: []kataevidence.Reference{evidence[0].Reference}},
+		})
+		r.NoError(err)
+		return item
+	}
+	old := enqueue(items[0])
+	marked, err := st.MarkCommitmentAgendaAttemptContext(ctx, old, now, true)
+	r.NoError(err)
+	r.True(marked)
+	// No Link after the first Mark represents a transient create failure.
+	retries, freshServed := 0, 0
+	for round := range 3 {
+		now = now.Add(time.Minute)
+		for _, commitment := range items[1+round*8 : 1+(round+1)*8] {
+			enqueue(commitment)
+		}
+		batch, err := st.ListPendingCommitmentAgendaContext(ctx, now, 8)
+		r.NoError(err)
+		r.Len(batch, 8)
+		for _, item := range batch {
+			marked, err := st.MarkCommitmentAgendaAttemptContext(ctx, item, now, true)
+			r.NoError(err)
+			r.True(marked)
+			if item.CommitmentID == old.CommitmentID {
+				retries++
+				a.Equal(old.IdempotencyKey, item.IdempotencyKey)
+				a.Equal(old.Request, item.Request, "retry must recover the original frozen request")
+				// Repeated transient failures must not monopolize fresh work.
+				if round < 2 {
+					continue
+				}
+			} else {
+				freshServed++
+			}
+			_, err = st.LinkCommitmentAgendaContext(ctx, item.IdempotencyKey,
+				fmt.Sprintf("issue-%d", item.CommitmentID), fmt.Sprintf("synthetic#%d", item.CommitmentID))
+			r.NoError(err)
+		}
+	}
+	a.GreaterOrEqual(retries, 2, "an attempted receipt must get bounded retry access despite eight fresh arrivals per drain")
+	a.Positive(freshServed, "persistent retry failures must also leave room for fresh work")
+	old, err = st.GetCommitmentAgendaContext(ctx, old.CommitmentID)
+	r.NoError(err)
+	a.Equal(CommitmentAgendaLinked, old.State, "the older filing must reach successful recovery")
+}
+
 func commitmentSourceID(window peoplesweep.CommitmentWindow, id int64) string {
 	for _, source := range window.Sources {
 		if source.MessageID == id {
