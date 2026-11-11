@@ -75,8 +75,42 @@ A normalized record may include `source_label` as a display name for its source.
 The first supplied label fills an empty source display name unless it conflicts with another source’s identifier or alias. Imports still succeed on a conflict, and reimports preserve an existing name.
 
 The request limit is 1 MiB; its record and original raw payload are each limited
-to 512 KiB. No importer opens protected databases, retrieves encryption keys,
-changes connected account bindings, or requests additional platform permissions.
+to 512 KiB. The supplied-record importer does not open protected databases or
+retrieve encryption keys. Neither importer changes privacy settings, connected
+account bindings, or OAuth scopes.
+
+## Import macOS Phone and FaceTime history
+
+Run the reader on the Mac with access to the call database. It sends each
+observation to the selected local or remote daemon.
+
+```sh
+msgvault calls import-macos --account example-call-history
+msgvault calls import-macos --account example-call-history --db /path/to/CallHistory.storedata
+```
+
+Reuse the same `--account` for later imports of this history. On macOS the
+default path is `~/Library/Application Support/CallHistoryDB/CallHistory.storedata`.
+If access is denied, grant Full Disk Access to the terminal or application in
+System Settings, or use an accessible copy. A supplied copy needs its matching
+`-wal` file, if present. The reader creates a private SQLite snapshot that includes
+committed WAL data. Errors report how many records were imported; rerun to update
+the same records.
+
+Only explicit originated and answered flags establish direction and attendance.
+An unanswered row does not distinguish missed, declined or cancelled calls, and
+duration does not establish attendance. Names, addresses, call types, service
+bundle IDs and group/device metadata remain in raw evidence. Retrieve that JSON
+with the owner-authenticated `GET /api/v1/cli/message/raw?id=<message_id>` endpoint.
+
+The reader does not infer archive participants from addresses or group IDs. To
+attribute a call, import a normalized observation with the same `macos` provider
+and account, a separate `record_id`, preserved evidence and raw JSON, and explicit
+bindings to existing participants. Reimporting the macOS database updates the
+reader’s record without replacing the separate manual observation. The archive
+keeps these as separate observations and does not group or combine their claims.
+Updating the reader’s own `record_id` instead is temporary: the next macOS
+import replaces its evidence and participant bindings.
 
 ## Read the evidence and counts
 
@@ -115,6 +149,7 @@ phone numbers and similar titles never merge calls. `--after` is inclusive and
   minus start never becomes talk duration. Epoch timestamps do not identify
   the original time zone.
 - **Calendar:** synced events stay in the [calendar archive](calendar.md). Invitations never count as calls.
+- **macOS:** Use the [client-side Phone and FaceTime reader](#import-macos-phone-and-facetime-history) with existing database access.
 
 Call observations do not create ordinary message-contact activity. The
 per-person Store summary is available for relationship-tier integration;

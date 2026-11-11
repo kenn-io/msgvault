@@ -70,6 +70,7 @@ owner authentication and API schema 5.2.0 or newer. Output is JSON.
 
 ```bash
 msgvault calls import observation.json   # omit the file or use - for stdin
+msgvault calls import-macos --account example-call-history
 msgvault calls list --person-id 42 --limit 50 --after-id 100
 msgvault calls summary --person-id 42 --limit 50 --offset 0
 ```

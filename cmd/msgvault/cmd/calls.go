@@ -75,7 +75,7 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 			return writeJSONOutput(cmd, result)
 		},
 	}
-	root.AddCommand(importCommand)
+	root.AddCommand(importCommand, newMacOSCallsCommand(open, writeJSONOutput))
 	for _, summary := range []bool{false, true} {
 		name, description, limitHelp := "list", "List imported calls and who joined", "Maximum calls to return (1–100)"
 		if summary {
