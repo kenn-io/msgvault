@@ -359,7 +359,7 @@ func (s *Store) saveCommitmentFrontierTx(ctx context.Context, tx *loggedTx, requ
 	var observed any
 	var previousThrough int64
 	var previousScope string
-	if prepared.observedOnly || prepared.anchorAfterID > 0 {
+	if prepared.observedOnly || replay || prepared.anchorAfterID > 0 {
 		err := tx.QueryRowContext(ctx, `SELECT through_sequence, scope_fingerprint FROM person_commitment_frontiers WHERE person_id = ?`, request.Lease.PersonID).Scan(&previousThrough, &previousScope)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
@@ -373,11 +373,15 @@ func (s *Store) saveCommitmentFrontierTx(ctx context.Context, tx *loggedTx, requ
 		// Observations do not consume the model's journal frontier.
 		through = previousThrough
 	} else if replay {
-		backfill = 0
+		// Finish this frozen discovery cycle before admitting newer journal work.
+		backfill, through, anchorThrough = 0, previousThrough, prepared.through
 	} else if prepared.anchorAfterID > 0 {
 		after, anchorThrough, anchorBackfill = prepared.anchorAfterID, prepared.through, prepared.anchorBackfillID
 		// Keep the previously consumed journal prefix while paging anchors.
 		through = previousThrough
+	} else if backfill >= 0 {
+		// More recent-history pages remain within this cycle's snapshot.
+		anchorThrough = prepared.snapshot
 	}
 	var selected any
 	if backfill >= 0 || anchorThrough > 0 || after > 0 {
