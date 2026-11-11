@@ -283,6 +283,7 @@ func TestCommitmentMergeTransfersDecisionOnlyToExactSurvivorQuote(t *testing.T) 
 		{"different", "I will book the venue.", "", LoopStateOpen},
 		{"punctuation", "I will send the draft", "", LoopStateDone},
 		{"shifted_exact", original, "Copied history ends here. 📬 ", LoopStateDone},
+		{"stale_survivor", original, "", LoopStateDone},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, a, ctx := require.New(t), assert.New(t), t.Context()
@@ -292,6 +293,9 @@ func TestCommitmentMergeTransfersDecisionOnlyToExactSurvivorQuote(t *testing.T) 
 			survivorBody := tc.prefix + tc.quote
 			if tc.name == "punctuation" {
 				survivorBody = original
+			}
+			if tc.name == "stale_survivor" {
+				survivorBody = "I will book the venue."
 			}
 			survivor := persist("survivor", survivorBody, -time.Hour)
 			absorbed := persist("absorbed", original, -time.Hour)
@@ -308,6 +312,9 @@ func TestCommitmentMergeTransfersDecisionOnlyToExactSurvivorQuote(t *testing.T) 
 			if tc.name == "punctuation" {
 				promises = append(promises, peoplesweep.CommitmentPromise{SourceID: commitmentSourceID(window, survivor), Direction: peoplesweep.CommitmentOwedTo, Quote: tc.quote, Summary: "Send draft", End: int64(len(tc.quote))})
 			}
+			if tc.name == "stale_survivor" {
+				promises = append(promises, peoplesweep.CommitmentPromise{SourceID: commitmentSourceID(window, survivor), Direction: peoplesweep.CommitmentOwedTo, Quote: survivorBody, Summary: "Book venue", End: int64(len(survivorBody))})
+			}
 			_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: promises, Fulfilments: []peoplesweep.CommitmentFulfilment{}}))
 			r.NoError(err)
 			items, err := st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
@@ -322,6 +329,10 @@ func TestCommitmentMergeTransfersDecisionOnlyToExactSurvivorQuote(t *testing.T) 
 			r.Positive(absorbedID)
 			_, err = st.DecidePersonCommitmentContext(ctx, absorbedID, LoopStateDone, nil, f.request.CompletedAt)
 			r.NoError(err)
+			if tc.name == "stale_survivor" {
+				_, err = st.db.ExecContext(ctx, st.Rebind("UPDATE message_bodies SET body_text = ? WHERE message_id = ?"), original, survivor)
+				r.NoError(err)
+			}
 			_, err = st.MergeDuplicates(ctx, survivor, []int64{absorbed}, "commitment-different-survivor")
 			r.NoError(err)
 			f = nextCommitmentTestAttempt(t, f, "-survivor")
