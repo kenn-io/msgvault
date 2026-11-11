@@ -4028,5 +4028,7 @@ CREATE TABLE IF NOT EXISTS person_commitment_frontiers (
  backfill_message_id BIGINT NOT NULL DEFAULT 0,
  anchor_after_id BIGINT NOT NULL DEFAULT 0,
  anchor_through_sequence BIGINT NOT NULL DEFAULT 0,
- anchor_backfill_id BIGINT NOT NULL DEFAULT 0
+ anchor_backfill_id BIGINT NOT NULL DEFAULT 0,
+ scope_fingerprint TEXT NOT NULL DEFAULT '',
+ selection_at TIMESTAMPTZ
 );
