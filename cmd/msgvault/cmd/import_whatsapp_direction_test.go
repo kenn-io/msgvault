@@ -62,6 +62,30 @@ func TestWhatsAppTextUnknownDirectionPeople(t *testing.T) {
 	assert.EqualValues(1, inboxes.Rows[0].ConversationCount)
 	assert.Zero(inboxes.Rows[0].SentCount)
 	assert.Zero(inboxes.Rows[0].ReceivedCount)
+	var contactID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT sender_id FROM messages WHERE snippet='hi'").Scan(&contactID))
+	ownerID, err := st.EnsureParticipantByPhone(t.Context(), "+12025550123", "Owner", "whatsapp")
+	require.NoError(err)
+	_, err = st.LinkParticipants(ownerID, senderID)
+	require.NoError(err)
+	require.NoError(engine.Close())
+	_, err = buildCache(t.Context(), cfg.DatabaseDSN(), cfg.AnalyticsDir(), true)
+	require.NoError(err)
+	engine, err = query.NewDuckDBEngine(t.Context(), cfg.AnalyticsDir(), "", st.DB())
+	require.NoError(err)
+	inboxes, err = engine.ListPersonInboxes(t.Context(), query.PersonInboxRequest{CanonicalID: contactID})
+	require.NoError(err)
+	require.Len(inboxes.Rows, 1)
+	assert.EqualValues(1, inboxes.Rows[0].ConversationCount)
+	assert.Zero(inboxes.Rows[0].SentCount)
+	assert.Zero(inboxes.Rows[0].ReceivedCount)
+	calendar, err := engine.RelationshipCalendar(t.Context(), query.RelationshipCalendarRequest{CanonicalID: contactID, Year: 2026, Timezone: "UTC"})
+	require.NoError(err)
+	assert.Zero(calendar.Current.Population)
+	assert.Empty(calendar.Annual)
+	for _, day := range calendar.Days {
+		assert.Zero(day.Total)
+	}
 }
 
 func TestUnknownDirectionIncrementalCacheAndNoticeMedia(t *testing.T) {
