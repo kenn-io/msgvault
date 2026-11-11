@@ -461,6 +461,12 @@ func TestCommitmentAgendaReceiptLifecycle(t *testing.T) {
 	st, now := f.store, f.request.CompletedAt
 	r, a := require.New(t), assert.New(t)
 	ctx := t.Context()
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	// Finish the first extraction's frozen replay before importing new work.
+	f = nextCommitmentTestAttempt(t, f, "-initial-agenda-replay")
+	applyCommitmentTestSources(t, f, cfg.Commitments)
 	candidates, err := st.ListCommitmentAgendaCandidatesContext(ctx, now, 8)
 	r.NoError(err)
 	r.Len(candidates, 1)
@@ -478,9 +484,6 @@ func TestCommitmentAgendaReceiptLifecycle(t *testing.T) {
 	_, persist := newCommitmentTestConversation(t, f)
 	freshMessage := persist("fresh-agenda-promise", "I will book the venue.", -30*time.Minute)
 	f = nextCommitmentTestAttempt(t, f, "-fresh-agenda")
-	cfg := peoplesweep.Config{}
-	cfg.ApplyDefaults()
-	cfg.Commitments.Enabled = true
 	applyCommitmentTestSources(t, f, cfg.Commitments)
 	candidates, err = st.ListCommitmentAgendaCandidatesContext(ctx, now, 1)
 	r.NoError(err)
