@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-08"
+last_edited: "2026-11-10"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -8,6 +8,9 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Import supplied [Google Chat Takeout parts](usage/text-messages.md#import-google-chat)
+  for message search and available media. Repeat imports add missing messages and
+  repair missing media while preserving archived messages.
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).
 
 - `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.

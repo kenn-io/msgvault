@@ -6,7 +6,7 @@ Start here:
   msgvault search 'from:alice@example.com newer_than:30d' --json
   msgvault show-message <id> --json
   msgvault export-eml <id> -o msg.eml
-  msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
+  msgvault export-messages --help
   msgvault person --help
   msgvault daemon status
   msgvault setup status --json
@@ -115,6 +115,7 @@ Add and sync sources:
 Import local exports:
   import-eml          Import a tree of RFC 5322 .eml files
   import-emlx         Import Apple Mail .emlx files into msgvault
+  import-google-chat  Import extracted Google Chat Takeout parts
   import-gvoice       Import Google Voice history from Takeout export
   import-imazing-csv  Import Messages CSV exports created by iMazing
   import-imessage     Import iMessages from local database

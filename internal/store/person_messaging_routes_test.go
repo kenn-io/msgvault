@@ -510,6 +510,7 @@ func TestMessagingRoutesNetworkFilterMatchesNativeAndBeeperRoutes(t *testing.T) 
 	}
 	// Created first, so an unfiltered page of one would return only Slack.
 	nativeConversation("slack", "D-slack")
+	googleChatID := nativeConversation("google_chat", "DM synthetic")
 	native := nativeConversation("discord", "D-discord")
 	_, bridged := messagingConversation(t, f.Store, "discordgo", "!bridged:example.test", "direct_chat", peer)
 	writeMessagingEvidence(t, f.Store, bridged, store.MessagingRouteEvidence{
@@ -542,12 +543,17 @@ func TestMessagingRoutesNetworkFilterMatchesNativeAndBeeperRoutes(t *testing.T) 
 	assertions.Len(networks, 2, "only the Slack and Slack export routes match")
 
 	telegramID := nativeConversation("telegram", "user42")
-	telegram, err := f.Store.GetPersonMessagingRoutesContext(t.Context(),
-		store.PersonMessagingRouteQuery{PersonUID: person.VCardUID, Network: "telegram"})
-	requirements.NoError(err)
-	requirements.Len(telegram.Routes.Items, 1)
-	assertions.Equal(telegramID, telegram.Routes.Items[0].ConversationID)
-	assertions.Equal("telegram", telegram.Routes.Items[0].Network)
+	for _, tc := range []struct {
+		network string
+		id      int64
+	}{{"telegram", telegramID}, {"google-chat", googleChatID}} {
+		page, err := f.Store.GetPersonMessagingRoutesContext(t.Context(),
+			store.PersonMessagingRouteQuery{PersonUID: person.VCardUID, Network: tc.network})
+		requirements.NoError(err)
+		requirements.Len(page.Routes.Items, 1)
+		assertions.Equal(tc.id, page.Routes.Items[0].ConversationID)
+		assertions.Equal(tc.network, page.Routes.Items[0].Network)
+	}
 }
 
 func TestMessagingRoutesKeepDeletionSignalAfterArchiveGC(t *testing.T) {

@@ -67,6 +67,22 @@ func (s *Store) MessageMIMEAttachmentsContext(ctx context.Context, messageID int
 		)`)
 }
 
+// MissingMIMEAttachmentSlotsContext returns existing importer slots without bytes.
+// Missing slots and occurrences with content are never eligible for replay repair.
+func (s *Store) MissingMIMEAttachmentSlotsContext(ctx context.Context, messageID int64) (map[string]bool, error) {
+	refs, err := s.MessageMIMEAttachmentsContext(ctx, messageID)
+	if err != nil {
+		return nil, err
+	}
+	slots := make(map[string]bool)
+	for _, ref := range refs {
+		if ref.ContentHash == "" {
+			slots[ref.SourcePartKey] = true
+		}
+	}
+	return slots, nil
+}
+
 func (s *Store) messageAttachmentsWhere(ctx context.Context, messageID int64, where string, args ...any) ([]AttachmentRef, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(storage_path, ''), COALESCE(content_hash, ''),

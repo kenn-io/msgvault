@@ -24,7 +24,7 @@ func captureAttachmentQueryLogs(t *testing.T) *bytes.Buffer {
 	return &logs
 }
 
-func TestMessageMIMEAttachmentsContextIncludesOccurrenceState(t *testing.T) {
+func TestMIMEAttachmentOccurrencesAndMissingSlots(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -47,6 +47,13 @@ func TestMessageMIMEAttachmentsContextIncludesOccurrenceState(t *testing.T) {
 	assertions.Equal("mime:1", refs[0].SourcePartKey)
 	assertions.Equal(attachmentpolicy.StateStored, refs[0].State)
 	assertions.Equal("part@example.test", refs[0].ContentID)
+	requirements.NoError(st.UpsertAttachmentRecord(t.Context(), messageID, store.AttachmentWrite{
+		Filename: "missing.txt", MIMEType: "text/plain", SourcePartKey: "mime:2",
+		State: attachmentpolicy.StateFailed, SkipReason: attachmentpolicy.SkipSourceUnavailable,
+	}))
+	missing, err := st.MissingMIMEAttachmentSlotsContext(t.Context(), messageID)
+	requirements.NoError(err)
+	assertions.Equal(map[string]bool{"mime:2": true}, missing, "only an existing slot without bytes can be repaired")
 }
 
 func persistedProviderRef(ref store.AttachmentRef) store.AttachmentRef {

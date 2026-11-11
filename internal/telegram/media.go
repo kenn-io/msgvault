@@ -29,14 +29,12 @@ func mediaWrites(ctx context.Context, st *store.Store, messageID int64, m *Messa
 	if m.Photo == "" && m.File == "" && m.Thumbnail == "" && m.ContactVCard == "" {
 		return nil, nil
 	}
-	existing := map[string]store.AttachmentRef{}
+	var missing map[string]bool
 	if messageID != 0 {
-		refs, err := st.MessageMIMEAttachmentsContext(ctx, messageID)
+		var err error
+		missing, err = st.MissingMIMEAttachmentSlotsContext(ctx, messageID)
 		if err != nil {
 			return nil, err
-		}
-		for _, ref := range refs {
-			existing[ref.SourcePartKey] = ref
 		}
 	}
 	var writes []store.AttachmentWrite
@@ -44,11 +42,8 @@ func mediaWrites(ctx context.Context, st *store.Store, messageID int64, m *Messa
 		if slot.path == "" {
 			continue
 		}
-		if messageID != 0 {
-			previous, ok := existing[slot.key]
-			if !ok || previous.ContentHash != "" {
-				continue
-			}
+		if messageID != 0 && !missing[slot.key] {
+			continue
 		}
 		write := store.AttachmentWrite{SourcePartKey: slot.key, MediaType: m.MediaType, Role: store.AttachmentRoleStandalone, RoleSource: store.AttachmentRoleSourceImporterSemantics}
 		if write.MediaType == "" {

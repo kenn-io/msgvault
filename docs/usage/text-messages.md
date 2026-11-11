@@ -19,6 +19,7 @@ open a conversation to read its messages. In the [TUI](/docs/usage/tui/), press
 | [iMessage](#import-imessage) | macOS `chat.db` |
 | [iMazing Messages](#import-imazing-csv) | CSV export root or `csv/` directory |
 | [Google Voice](#import-gvoice) | Google Takeout Voice directory |
+| [Google Chat Takeout (unreleased on main)](#import-google-chat) | Extracted Takeout parts; explicit owner email |
 | [Telegram](#import-telegram) | Telegram Desktop Machine-readable JSON export |
 | [X DMs](#import-x) | Extracted X account archive (unreleased on `main`) |
 | [Facebook Messenger](#import-messenger) | Download Your Information export |
@@ -506,6 +507,71 @@ A later or overlapping export adds new messages and fills media slots that still
 Every exported chat becomes a conversation, even one with no messages. Each import replaces the conversation title with the export's chat name when that name is non-empty.
 
 An interrupted import resumes after the last completed chat when `result.json` in the same directory has the same size and modification time. Use `--no-resume` to scan every chat again, or `--limit N` to cap the messages added in one run.
+
+## import-google-chat
+
+**Unreleased on main.** Tested evidence covers redacted public 2024 personal-account
+exports with English, UTC-suffixed dates: a two-person DM, Space records, thread
+IDs and exact attachment filenames. Export provenance is inferred from producer
+fingerprints; the publishers edited their samples. The Space folder name and
+combined root layout are inferred. Current exports, other locales/time zones,
+non-Human senders, larger group DMs, edit/deletion markers, Workspace and
+externally owned spaces remain unverified. Multipart handling has synthetic tests.
+
+Extract each supplied archive part locally, then pass all part directories and
+your exporting account's email:
+
+```bash
+msgvault import-google-chat --me owner@example.com /path/to/part-001 /path/to/part-002
+```
+
+The command accepts a directory containing `Takeout/Google Chat`, `Google Chat`,
+or `Groups`, and a `Groups` directory itself. It reads DM and Space folders with
+`messages.json`, optional `group_info.json`, and optional
+`Users/User …/user_info.json`. It rejects a supplied owner profile that disagrees
+with `--me`. With no profile, ownership evidence remains unavailable; `--me`
+selects the archive source. Compressed files must be extracted first. Run this
+command on the daemon host; a remote client cannot upload local exports.
+
+The importer keeps provider message IDs, folder conversation IDs, topic IDs,
+original date strings and full message records, including unknown fields. English
+UTC dates become timestamps; other dates remain unknown and are counted. Unknown-date
+messages remain archived and searchable, but timestamp-based analytical-cache lists
+and analytics exclude them. It does not infer reply links from topic IDs or identify people by display name. Roster
+members remain conversation members; they never become message recipients, even
+in two-person DMs. Sender and body search remain available. Owner profiles are
+validated while reading.
+
+All supplied parts are indexed before importing. Limits are 128 roots, 100,000
+indexed entries, 64 MiB per JSON file, and 250 MiB per attachment. Media matches
+exact conversation-relative `export_name` paths across parts. Traversal and
+escaped symlinks are rejected. Empty files are retained. Missing media, invalid
+media paths, and oversized attachments are counted. Oversized JSON files,
+ambiguous media, and storage errors stop the run. A truncated or stale export
+filename is reported missing, never guessed.
+After independently verifying which local file belongs to that reference, restore
+its referenced `export_name` within the conversation directory and replay to
+repair the missing media slot.
+
+Output reports supplied conversations and messages, additions, duplicates,
+unsupported records, unknown senders, unparsed dates, unsupported roster members,
+stored/missing media and memberships with no supplied messages. These counts describe only supplied
+files. Conflicting individual message IDs are counted as unsupported and skipped;
+the first committed snapshot stays unchanged and later records continue. Invalid
+containers, ambiguous files, resource limits, storage failures and unsupported
+stored raw formats stop the run. Earlier committed messages remain available.
+Re-run all parts after an interruption or missing-media extraction: replay
+adds missing messages and fills missing media slots. Previously stored text,
+metadata and bytes stay as first imported. Membership is additive. Absence from
+a later export never deletes archived history. `--no-default-identity` skips
+assigning the source as your default identity.
+
+Takeout covers retained exported history, with no lifetime-history guarantee.
+[Google's export help](https://support.google.com/chat/answer/10126829?hl=en)
+says personal Chat exports exclude group messages and spaces created by work or
+school accounts. Work/school users should contact their administrator;
+organization exports exclude groups and spaces created outside the domain.
+A membership without supplied messages does not prove that history is available.
 
 ## import-x
 

@@ -16,7 +16,7 @@ appear in full under Inherited Flags.
 | Task | Commands and guides |
 |---|---|
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
-| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-x](#import-x), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
+| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-google-chat](#import-google-chat), [import-x](#import-x), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [media search](#media-search), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [loops](#loops), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
@@ -2462,6 +2462,28 @@ msgvault import-telegram <export-dir>
 | `--no-default-identity` | `false` | Skip automatic account identity creation |
 
 Re-imports add new messages and fill missing media. Archived text and edit flags stay unchanged. See [Telegram imports](usage/text-messages.md#import-telegram) for export and resume behavior.
+
+---
+
+## import-google-chat
+
+Import explicitly supplied, extracted Google Chat Takeout parts. **Unreleased
+on main.** Tested variants use English, UTC-suffixed dates from redacted public
+2024 samples; see the coverage limits below.
+
+```bash
+msgvault import-google-chat --me owner@example.com <part-dir>...
+```
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--me` | Required | Exporting account email; normalized as the source identifier |
+| `--no-default-identity` | `false` | Skip default identity assignment |
+
+Replay adds missing messages and repairs missing media without changing stored
+snapshots. Partial counts print even if the import stops. See
+[Google Chat Takeout imports](usage/text-messages.md#import-google-chat) for
+layouts, finite limits, exact media matching and export coverage restrictions.
 
 ---
 
