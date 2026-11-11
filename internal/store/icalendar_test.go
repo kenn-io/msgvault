@@ -86,6 +86,12 @@ func TestICalendarRangeKeepsSiblingsAndReportsSeries(t *testing.T) {
 						requirements.NoError(err)
 					}
 				}
+				before := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+				prefix, err := st.ListCalendarOccurrencesContext(t.Context(), before, before.AddDate(0, 0, 1))
+				requirements.NoError(err)
+				requirements.Len(prefix.Occurrences, 1)
+				requirements.Equal("2027-03-02T12:00:00Z", prefix.Occurrences[0].Start.Format(time.RFC3339))
+				requirements.Len(prefix.Unexpandable, 1)
 				from := time.Date(2027, 3, 8, 0, 0, 0, 0, time.UTC)
 				page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
 				requirements.NoError(err)
@@ -119,6 +125,92 @@ func TestICalendarRangeKeepsSiblingsAndReportsSeries(t *testing.T) {
 		requirements.Empty(page.Unexpandable)
 		requirements.Len(page.Occurrences, 1)
 	})
+}
+
+func TestICalendarRangePreservesOriginalPrefix(t *testing.T) {
+	for _, tc := range []struct {
+		name, master, boundary string
+		want                   []string
+	}{
+		{"timed", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=7", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270305T120000Z\r\nDTSTART:20270305T130000Z", []string{"2027-03-02T12:00:00Z", "2027-03-04T12:00:00Z", "2027-03-08T12:00:00Z"}},
+		{"all day", "DTSTART;VALUE=DATE:20270302\r\nRRULE:FREQ=DAILY;COUNT=7", "RECURRENCE-ID;VALUE=DATE;RANGE=THISANDFUTURE:20270305\r\nDTSTART;VALUE=DATE:20270305", []string{"2027-03-02T00:00:00Z", "2027-03-03T00:00:00Z", "2027-03-04T00:00:00Z"}},
+		{"mismatched", "DTSTART;VALUE=DATE:20270302\r\nRRULE:FREQ=DAILY;COUNT=7", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270305T120000Z\r\nDTSTART:20270305T130000Z", nil},
+		{"single", "DTSTART:20270302T120000Z\r\nDURATION:PT1H", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270305T120000Z\r\nDTSTART:20270305T130000Z", []string{"2027-03-02T12:00:00Z"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			source := icsSource(t, st)
+			events := [][]byte{calendarDocument("REQUEST", tc.master), calendarDocument("REQUEST", tc.boundary)}
+			if tc.name == "timed" {
+				events = append(events,
+					calendarDocument("REQUEST", "RECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270308T120000Z\r\nDURATION:PT1H"),
+					calendarDocument("REQUEST", "RECURRENCE-ID:20270306T120000Z\r\nDTSTART:20270304T140000Z\r\nDURATION:PT1H"),
+					calendarDocument("CANCEL", "RECURRENCE-ID:20270304T120000Z"))
+			}
+			for _, event := range events {
+				_, err := st.PersistICalendarContext(t.Context(), source, event)
+				requirements.NoError(err)
+			}
+			from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 7))
+			requirements.NoError(err)
+			var starts []string
+			for _, occurrence := range page.Occurrences {
+				starts = append(starts, occurrence.Start.Format(time.RFC3339))
+			}
+			requirements.Equal(tc.want, starts)
+			requirements.NotEmpty(page.Unexpandable)
+			if tc.name == "timed" {
+				requirements.Equal("cancelled", page.Occurrences[1].Status)
+				page, err = st.ListCalendarOccurrencesContext(t.Context(), from.AddDate(0, 0, 2), from.AddDate(0, 0, 3))
+				requirements.NoError(err)
+				requirements.Len(page.Occurrences, 1)
+				requirements.Equal("cancelled", page.Occurrences[0].Status)
+				requirements.NotEmpty(page.Unexpandable)
+			}
+		})
+	}
+}
+
+func TestICalendarRangeReportsIncompletePrefix(t *testing.T) {
+	for _, tc := range []struct{ name, master, want string }{
+		{"budget", "DTSTART:18000101T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY", "recurrence generation budget exceeded"},
+		{"unidentified", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=7", "exception original start cannot be compared"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			source := icsSource(t, st)
+			for _, event := range [][]byte{
+				calendarDocument("REQUEST", tc.master),
+				calendarDocument("REQUEST", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270305T120000Z\r\nDTSTART:20270305T130000Z"),
+			} {
+				_, err := st.PersistICalendarContext(t.Context(), source, event)
+				requirements.NoError(err)
+			}
+			if tc.name == "unidentified" {
+				_, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "RECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270304T140000Z\r\nDURATION:PT1H"))
+				requirements.NoError(err)
+				_, err = st.db.Exec(`UPDATE calendar_events SET original_start_at = NULL, original_start_date = '' WHERE kind = 'exception' AND start_at = ?`, time.Date(2027, 3, 4, 14, 0, 0, 0, time.UTC))
+				requirements.NoError(err)
+			}
+			from := time.Date(2027, 3, 4, 0, 0, 0, 0, time.UTC)
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+			requirements.NoError(err)
+			var reasons []string
+			for _, item := range page.Unexpandable {
+				reasons = append(reasons, item.Reason)
+			}
+			requirements.Len(reasons, 2)
+			requirements.Contains(strings.Join(reasons, " | "), tc.want)
+			requirements.Contains(strings.Join(reasons, " | "), "unsupported recurrence range")
+			if tc.name == "unidentified" {
+				requirements.Len(page.Occurrences, 1)
+				requirements.Equal("2027-03-04T12:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
+			}
+		})
+	}
 }
 
 func TestICSFamilyLookupUsesIndexes(t *testing.T) {

@@ -112,14 +112,8 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 			return page, err
 		}
 		e := row.Event
-		if e.Kind == "exception" && slices.Contains(e.Recurrence, calevent.ICSRangeRecurrence) && !masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
-			report(row.MessageID, "unsupported recurrence range")
-			continue
-		}
-		if e.Kind != "exception" && slices.ContainsFunc(exceptions[seriesKey{row.SourceID, e.ProviderEventID}], func(exception CalendarEventRow) bool {
-			return slices.Contains(exception.Event.Recurrence, calevent.ICSRangeRecurrence)
-		}) {
-			report(row.MessageID, "unsupported recurrence range")
+		boundary, skip := calendarRangeScope(row, masters[seriesKey{row.SourceID, e.SeriesProviderID}], exceptions[seriesKey{row.SourceID, e.ProviderEventID}], report)
+		if skip {
 			continue
 		}
 		if e.Kind == "exception" && e.Original == nil {
@@ -130,9 +124,12 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 			if e.Kind == "exception" && masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
 				continue
 			}
-			if e.Start != nil && e.End != nil {
+			switch {
+			case boundary != nil && !calendarIdentityBefore(calendarEventIdentity(e), boundary):
+				// The master itself lies in the omitted part of the series.
+			case e.Start != nil && e.End != nil:
 				add(row, 0, calrecur.Occurrence{Start: *e.Start, End: *e.End, AllDay: e.AllDay, StartDate: e.StartDate, EndDate: e.EndDate, Cancelled: e.Status == "cancelled"})
-			} else {
+			default:
 				report(row.MessageID, calendarMissingBoundsReason(e))
 			}
 			if e.Kind == "exception" || len(exceptions[seriesKey{row.SourceID, e.ProviderEventID}]) == 0 {
@@ -146,7 +143,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 					report(exception.MessageID, "exception original type differs from series and event bounds are missing")
 				}
 			}
-			occurrences, count, reason, err := expandCalendarSeries(ctx, row, exceptions[seriesKey{row.SourceID, e.ProviderEventID}], from, to, remaining)
+			occurrences, count, reason, err := expandCalendarSeries(ctx, row, exceptions[seriesKey{row.SourceID, e.ProviderEventID}], from, to, remaining, boundary)
 			remaining -= count
 			if err != nil {
 				return page, err
@@ -155,6 +152,9 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 				report(row.MessageID, reason)
 			}
 			for _, o := range occurrences {
+				if !calendarKeepBeforeBoundary(o, byID, boundary, report) {
+					continue
+				}
 				if err := addSeriesOccurrence(row, o); err != nil {
 					return page, err
 				}
@@ -170,6 +170,104 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 	return page, nil
 }
 
+func calendarIdentityBefore(a, b *calrecur.Identity) bool {
+	if a == nil || b == nil || a.AllDay != b.AllDay || a.Key() == "" || b.Key() == "" {
+		return false
+	}
+	if a.AllDay {
+		return a.Date < b.Date
+	}
+	return !a.Instant.IsZero() && a.Instant.Before(b.Instant)
+}
+
+// calendarIdentityComparable reports whether id can be ordered against identities of the given type.
+func calendarIdentityComparable(id *calrecur.Identity, allDay bool) bool {
+	return id != nil && id.AllDay == allDay && id.Key() != "" && (allDay || !id.Instant.IsZero())
+}
+
+func calendarEventIdentity(e calevent.Event) *calrecur.Identity {
+	id := &calrecur.Identity{AllDay: e.AllDay, Date: e.StartDate}
+	if e.Start != nil {
+		id.Instant = *e.Start
+	}
+	return id
+}
+
+// calendarRangeScope reports unsupported RANGE edits. An edit without a master is skipped; a series
+// keeps the occurrences before its earliest edit and is skipped only when that edit cannot be placed.
+func calendarRangeScope(row CalendarEventRow, hasMaster bool, seriesExceptions []CalendarEventRow, report func(int64, string)) (*calrecur.Identity, bool) {
+	e := row.Event
+	if e.Kind == "exception" {
+		orphan := slices.Contains(e.Recurrence, calevent.ICSRangeRecurrence) && !hasMaster
+		if orphan {
+			report(row.MessageID, "unsupported recurrence range")
+		}
+		return nil, orphan
+	}
+	boundary, id := calendarRangeBoundary(e, seriesExceptions)
+	if id != 0 {
+		reason := "unsupported recurrence range: later occurrences omitted"
+		if boundary == nil {
+			reason = "unsupported recurrence range"
+		}
+		report(id, reason)
+	}
+	return boundary, id != 0 && boundary == nil
+}
+
+// calendarKeepBeforeBoundary keeps occurrences whose original start precedes the range boundary,
+// whatever their effective start; occurrences with no comparable original start are dropped and reported.
+func calendarKeepBeforeBoundary(o calrecur.Occurrence, byID map[int64]CalendarEventRow, boundary *calrecur.Identity, report func(int64, string)) bool {
+	if boundary == nil {
+		return true
+	}
+	original := &o.Original
+	if o.HasException {
+		original = byID[o.ExceptionRef].Event.Original
+	}
+	if !calendarIdentityComparable(original, boundary.AllDay) {
+		report(o.ExceptionRef, "exception original start cannot be compared to recurrence range")
+		return false
+	}
+	return calendarIdentityBefore(original, boundary)
+}
+
+// calendarExpansionEnd stops generation at the range boundary; callers drop later occurrences by original start.
+func calendarExpansionEnd(zone *time.Location, upper time.Time, boundary *calrecur.Identity) time.Time {
+	if boundary == nil {
+		return upper
+	}
+	cutoff := boundary.Instant
+	if boundary.AllDay {
+		var err error
+		if cutoff, _, err = calrecur.CivilDateBoundary(boundary.Date, zone); err != nil {
+			return upper
+		}
+	}
+	if cutoff.Before(upper) {
+		return cutoff
+	}
+	return upper
+}
+
+func calendarRangeBoundary(master calevent.Event, exceptions []CalendarEventRow) (*calrecur.Identity, int64) {
+	var boundary *calrecur.Identity
+	var id int64
+	for _, row := range exceptions {
+		if !slices.Contains(row.Event.Recurrence, calevent.ICSRangeRecurrence) {
+			continue
+		}
+		original := row.Event.Original
+		if !calendarIdentityComparable(original, master.AllDay) {
+			return nil, row.MessageID
+		}
+		if boundary == nil || calendarIdentityBefore(original, boundary) {
+			boundary, id = original, row.MessageID
+		}
+	}
+	return boundary, id
+}
+
 func calendarMissingBoundsReason(event calevent.Event) string {
 	if event.Status == calendarEventDecodeFailureStatus {
 		return "event data could not be decoded"
@@ -181,7 +279,7 @@ func calendarMissingBoundsReason(event calevent.Event) string {
 }
 
 // Resolve archived exceptions once, then suppress their original generated instances.
-func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRows []CalendarEventRow, from, to time.Time, remaining int) ([]calrecur.Occurrence, int, string, error) {
+func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRows []CalendarEventRow, from, to time.Time, remaining int, boundary *calrecur.Identity) ([]calrecur.Occurrence, int, string, error) {
 	set, duration, days, prepareErr := prepareCalendarRecurrence(row.Event)
 	var prepared *calrecur.Set
 	if prepareErr == nil {
@@ -202,7 +300,7 @@ func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRo
 	if remaining <= 0 {
 		return resolved, 0, requestLimit, nil
 	}
-	occurrences, count, err := calrecur.Expand(ctx, set, duration, days, from.Add(-calendarCandidateMargin), to.Add(calendarCandidateMargin), min(remaining, calrecur.SeriesReadBudget))
+	occurrences, count, err := calrecur.Expand(ctx, set, duration, days, from.Add(-calendarCandidateMargin), calendarExpansionEnd(set.Zone, to.Add(calendarCandidateMargin), boundary), min(remaining, calrecur.SeriesReadBudget))
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, count, "", ctx.Err()
