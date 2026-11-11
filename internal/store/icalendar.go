@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -69,7 +70,7 @@ func (s *Store) prepareICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 	}
 	out := make([]preparedICS, 0, len(components))
 	for _, c := range components {
-		out = append(out, preparedICS{component: c, fromEmail: fromEmail, meta: calevent.ICSMetadata{Sequence: c.Sequence, Stamp: c.Stamp, Status: c.Event.Status, AllDay: c.Event.AllDay, Organizer: c.OrganizerEmail}})
+		out = append(out, preparedICS{component: c, fromEmail: fromEmail, meta: calevent.ICSMetadata{Sequence: c.Sequence, Stamp: c.Stamp, Status: c.Event.Status, AllDay: c.Event.AllDay, Organizer: c.OrganizerEmail, Range: slices.Contains(c.Event.Recurrence, calevent.ICSRangeRecurrence)}})
 	}
 	return out, nil
 }
@@ -132,6 +133,7 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 		if apply && exists && e.Status == SyncStatusCancelled && old.Details != nil {
 			// Like a provider cancellation, keep the accepted details.
 			old.Sequence, old.Stamp, old.Status = item.meta.Sequence, item.meta.Stamp, SyncStatusCancelled
+			old.Range = item.meta.Range
 			if item.fromEmail && old.Organizer == "" {
 				old.Organizer = item.meta.Organizer
 			}
@@ -143,6 +145,7 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 				item.meta.Details = &calevent.ICSRevision{Sequence: item.component.Sequence, Stamp: item.component.Stamp}
 				if !apply {
 					item.meta.Sequence, item.meta.Stamp, item.meta.Status = old.Sequence, old.Stamp, old.Status
+					item.meta.Range = old.Range
 				}
 			}
 			if err := s.persistICSDetailsWith(ctx, tx, sourceID, sourceMessageID, familyKey, item); err != nil {

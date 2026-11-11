@@ -2143,11 +2143,13 @@ Choose a stable `--identifier` for each calendar. Each VEVENT becomes its own
 event, identified by UID and original recurrence identity, and keeps its own
 VEVENT with the calendar's time zone definitions. A single-VEVENT file stays
 byte-identical. Re-importing updates events: higher SEQUENCE wins, equal
-sequences use DTSTAMP, and a cancellation wins an exact tie. A malformed
-component rejects the whole file. msgvault converts text in another charset to
+sequences use DTSTAMP, and a cancellation wins an exact tie. A component with an
+invalid value rejects the whole file. msgvault converts text in another charset to
 UTF-8, as it does for email. A series with unsupported recurrence stays archived and is reported as unexpandable by `calendar events`. The import command
 reports updated and unchanged counts. Floating times use UTC. The daemon
 reads the file locally; importing files through a remote daemon is unavailable.
+
+Series with `RECURRENCE-ID;RANGE=THISANDFUTURE` stay archived and are reported as unexpandable.
 
 A cancellation keeps the event's last accepted title, times, participants, and
 raw iCalendar data, and only marks it cancelled.

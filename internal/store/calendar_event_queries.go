@@ -263,7 +263,7 @@ func queryCalendarExceptionsInWindow(ctx context.Context, r *loggedDB, dialect D
 		timedEnd = `e.original_start_at + (p.end_at - p.start_at) >= ?`
 		dateEnd = `NULLIF(e.original_start_date, '')::date + (NULLIF(p.end_date, '')::date - NULLIF(p.start_date, '')::date) >= ?::date`
 	}
-	predicate := `e.kind = 'exception' AND ((e.start_at < ? AND e.end_at >= ?) OR
+	predicate := `e.kind = 'exception' AND (e.recurrence_json LIKE '%RECURRENCE-ID;RANGE=THISANDFUTURE%' OR (e.start_at < ? AND e.end_at >= ?) OR
   (e.start_at IS NULL AND e.end_at >= ?) OR
   (e.end_at IS NULL AND e.start_at < ?) OR
   (e.original_start_at >= ? AND e.original_start_at < ?) OR

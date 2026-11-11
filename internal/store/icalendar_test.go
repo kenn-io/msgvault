@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +24,68 @@ func icsSource(t *testing.T, st *Store) int64 {
 	source, err := st.GetOrCreateSource("ics", "synthetic-calendar")
 	require.NoError(t, err)
 	return source.ID
+}
+
+func TestICalendarRangeKeepsSiblingsAndReportsSeries(t *testing.T) {
+	master := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=10\r\nSUMMARY:Series")
+	rangeEvent := calendarDocument("REQUEST", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nDURATION:PT1H\r\nSUMMARY:Moved")
+	sibling := []byte(strings.Replace(string(calendarDocument("REQUEST", "DTSTART:20270308T120000Z\r\nDURATION:PT1H\r\nSUMMARY:Sibling")), "family@example.com", "sibling@example.com", 1))
+	for _, mode := range []string{"file", "email"} {
+		for _, reversed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s-reversed-%t", mode, reversed), func(t *testing.T) {
+				requirements := require.New(t)
+				st := newRFC822IDBackfillBackendStore(t)
+				source := icsSource(t, st)
+				if mode == "email" {
+					account, err := st.GetOrCreateSource("mbox", "owner@example.com")
+					requirements.NoError(err)
+					source = account.ID
+				}
+				items := [][]byte{master, rangeEvent, sibling}
+				if reversed {
+					items[0], items[1] = items[1], items[0]
+				}
+				for i, item := range items {
+					if mode == "email" {
+						persistInviteEmailForSource(t, st, source, fmt.Sprintf("range-%d", i), inviteEmail(item))
+					} else {
+						_, err := st.PersistICalendarContext(t.Context(), source, item)
+						requirements.NoError(err)
+					}
+				}
+				from := time.Date(2027, 3, 8, 0, 0, 0, 0, time.UTC)
+				page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+				requirements.NoError(err)
+				requirements.Len(page.Occurrences, 1)
+				requirements.Equal("Sibling", page.Occurrences[0].Subject)
+				requirements.Len(page.Unexpandable, 1)
+			})
+		}
+	}
+}
+
+func TestICalendarRangeCancellationRetainsSeriesState(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	source := icsSource(t, st)
+	for _, event := range [][]byte{
+		calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=10"),
+		calendarDocument("REQUEST", "RECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nDURATION:PT1H"),
+		calendarDocument("CANCEL", "SEQUENCE:1\r\nRECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z"),
+	} {
+		_, err := st.PersistICalendarContext(t.Context(), source, event)
+		require.NoError(t, err)
+	}
+	from := time.Date(2027, 3, 8, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	require.NoError(t, err)
+	assert.Empty(t, page.Occurrences)
+	require.Len(t, page.Unexpandable, 1)
+	_, err = st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "SEQUENCE:2\r\nRECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nDURATION:PT1H"))
+	require.NoError(t, err)
+	page, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	require.NoError(t, err)
+	require.Empty(t, page.Unexpandable)
+	require.Len(t, page.Occurrences, 1)
 }
 
 func TestICSFamilyLookupUsesIndexes(t *testing.T) {
