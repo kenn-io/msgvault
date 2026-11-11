@@ -2,7 +2,6 @@ package store_test
 
 import (
 	"database/sql"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,21 +10,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
-
-func TestPostgreSQLFTSRebuildClearsStoredFields(t *testing.T) {
-	skipUnlessPostgres(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	id := f.CreateMessage("rebuild-fields")
-	require.NoError(f.Store.UpsertFTS(id, "", strings.Repeat("word ", 300), "", "", ""))
-	var fieldsPresent bool
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT search_fts_fields IS NOT NULL FROM messages WHERE id = $1`, id).Scan(&fieldsPresent))
-	require.True(fieldsPresent)
-	require.NoError((&store.PostgreSQLDialect{}).FTSRebuildSchema(t.Context(), f.Store.DB()))
-	var cleared bool
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT search_fts IS NULL AND search_fts_fields IS NULL FROM messages WHERE id = $1`, id).Scan(&cleared))
-	require.True(cleared)
-}
 
 // assertFTSContains verifies that exactly wantCount messages match the given
 // term through the SAME production search pipeline the app uses

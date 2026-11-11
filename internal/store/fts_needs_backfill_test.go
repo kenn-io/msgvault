@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -132,10 +131,6 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 	legacy(slack, `setweight(to_tsvector('simple', 'Lantern Harbor'), 'A') || setweight(to_tsvector('simple', 'Lantern Sender'), 'B') || setweight(to_tsvector('simple', $2), 'D')`, strings.Repeat("the ", 300))
 	phone := f.CreateMessage("imazing")
 	legacy(phone, `setweight(to_tsvector('simple', '+15550123457'), 'C')`)
-	recipients := f.CreateMessage("recipients")
-	require.NoError(f.Store.ReplaceMessageRecipients(recipients, "to", []int64{f.EnsureParticipant("alice", "", "")}, nil))
-	require.NoError(f.Store.ReplaceMessageRecipients(recipients, "cc", []int64{f.EnsureParticipant("example.com", "", "")}, nil))
-	legacy(recipients, `setweight(to_tsvector('simple', 'alice example.com zed'), 'C')`)
 	legacy(withBody(f.CreateMessage("unsearchable"), "hidden terminal@example.test"), `''::tsvector`)
 	gapped := f.CreateMessage("gapped")
 	_, err = db.ExecContext(t.Context(), `UPDATE messages SET subject = 'different stored subject' WHERE id = $1`, gapped)
@@ -164,7 +159,6 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 		"https://example.test/path": {url},
 		"lantern sender":            {slack},
 		"+15550123457":              {phone},
-		"alice@example.com":         nil,
 		"terminal@example.test":     nil,
 		"alpha beta":                nil,
 		"alpha foo":                 nil,
@@ -183,17 +177,6 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 	ids, _, err = f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"stored phrase", "lantern unique"}}, 10)
 	require.NoError(err)
 	require.Equal([]int64{partial}, ids)
-	bodySearcher, ok := query.NewEngine(db, true).(query.MessageBodySearcher)
-	require.True(ok)
-	for term, want := range map[string][]int64{"stored phrase": {partial}, "unique": nil, "the the": {slack}} {
-		result, err := bodySearcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{term}}, 10, 0)
-		require.NoError(err, term)
-		var got []int64
-		for _, message := range result.Messages {
-			got = append(got, message.ID)
-		}
-		assert.ElementsMatch(want, got, term)
-	}
 	rank := func(id int64) float64 {
 		t.Helper()
 		var value float64

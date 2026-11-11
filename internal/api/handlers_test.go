@@ -2598,8 +2598,8 @@ func (s *postgresBackfillStore) NeedsFTSBackfillQuickContext(ctx context.Context
 	}
 	return true
 }
-func (*postgresBackfillStore) NeedsFTSBackfillContext(context.Context) (bool, error) {
-	return true, nil
+func (*postgresBackfillStore) NeedsFTSBackfillContext(ctx context.Context) (bool, error) {
+	return true, ctx.Err()
 }
 func (s *postgresBackfillStore) BackfillFTSContext(ctx context.Context, _ func(int64, int64)) (int64, error) {
 	s.started <- struct{}{}

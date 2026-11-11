@@ -17,6 +17,7 @@ func TestPostgreSQLSanitizeFTSQuery_NoMetacharacters(t *testing.T) {
 
 	// "<3" must collapse to the single lexeme "3:*" with no angle brackets.
 	got := d.SanitizeFTSQuery("<3")
+	assert.Equal("3:*", got)
 	assert.NotContains(got, "<")
 	assert.NotContains(got, ">")
 

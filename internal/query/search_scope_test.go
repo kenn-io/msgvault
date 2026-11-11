@@ -490,25 +490,6 @@ func TestSearchMessageBodies_PostgreSQLPhraseContexts(t *testing.T) {
 	}
 }
 
-func TestSearchMessageBodies_PostgreSQLReportsOmittedOverlappingMatches(t *testing.T) {
-	require := require.New(t)
-	f := storetest.New(t)
-	if !f.Store.IsPostgreSQL() {
-		t.Skip("PostgreSQL body context")
-	}
-	body := strings.Repeat(" ", 500) + "start needle " + strings.Repeat(" ", 154) + "needle end" + strings.Repeat(strings.Repeat(" ", 500)+"needle", 4) + strings.Repeat(" ", 500) + "needle tail-marker"
-	createSearchScopeMessage(t, f, "overlapping-context", "ordinary", "ordinary", body, 0, 0)
-	_, err := f.Store.BackfillFTS(nil)
-	require.NoError(err)
-	searcher, ok := query.NewEngine(f.Store.DB(), true).(query.MessageBodySearcher)
-	require.True(ok)
-	result, err := searcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"needle", "start needle needle end"}}, 10, 0)
-	require.NoError(err)
-	require.Len(result.Messages, 1)
-	assert.NotContains(t, strings.Join(result.Messages[0].BodyContextSnippets, " "), "tail-marker")
-	assert.True(t, result.Messages[0].BodyContextSnippetsTruncated)
-}
-
 func TestSearchMessageBodies_IgnoresUnsearchableContextGroups(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)

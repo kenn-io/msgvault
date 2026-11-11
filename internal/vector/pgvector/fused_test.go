@@ -350,10 +350,17 @@ func TestFusedSearchFiltersPhrasesBeforePoolLimit(t *testing.T) {
 	// Rows 4-6 fill the pool unless the phrase check runs first; only row 7 matches.
 	for id, tail := range map[int64]string{4: "middle example alice", 5: "middle example alice", 6: "middle example alice", 7: "alice example"} {
 		body := strings.Repeat("alice ", 300) + tail
-		f.seedMsg(t, id, "", body, 10, base, false)
-		_, err := f.db.ExecContext(f.ctx, `UPDATE messages SET search_fts_fields = ARRAY['', '', '', '', $2] WHERE id = $1`, id, body)
+		subject := ""
+		if id != 7 {
+			subject = strings.Repeat("alice middle example ", 8)
+		}
+		f.seedMsg(t, id, subject, body, 10, base, false)
+		_, err := f.db.ExecContext(f.ctx, `UPDATE messages SET search_fts_fields = ARRAY[$3, '', '', '', $2] WHERE id = $1`, id, body, subject)
 		require.NoError(t, err)
 	}
+	var higherRank bool
+	require.NoError(t, f.db.QueryRowContext(f.ctx, `SELECT min(rank) FILTER (WHERE id BETWEEN 4 AND 6) > max(rank) FILTER (WHERE id = 7) FROM (SELECT id, ts_rank_cd(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], search_fts, to_tsquery('simple', 'alice & example:*'), 32) AS rank FROM messages WHERE id BETWEEN 4 AND 7) ranked`).Scan(&higherRank))
+	require.True(t, higherRank, "nonmatching candidates must outrank the true phrase")
 	hits, metadata, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{FTSTerms: []string{"alice@example"}, Generation: f.gen, KPerSignal: 1, Limit: 1, RRFK: 60})
 	require.NoError(t, err)
 	require.Len(t, hits, 1)
