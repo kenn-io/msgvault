@@ -613,75 +613,95 @@ func TestInstagramReplayChangedUnknownMetadata(t *testing.T) {
 	}
 }
 
-func TestInstagramReplayChangedMediaTimestamp(t *testing.T) {
-	for _, kind := range []string{"photos", "videos"} {
-		t.Run(kind, func(t *testing.T) {
+func TestInstagramReplayChangedMediaEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind, field, want string
+		before, after           any
+	}{
+		{"photo timestamp", "photos", "creation_timestamp", `"creation_timestamp":200`, 100, 200},
+		{"video timestamp", "videos", "creation_timestamp", `"creation_timestamp":200`, 100, 200},
+		{"photo metadata", "photos", "unknown", `"unknown":"changed"`, nil, "changed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			st, root := testutil.NewTestStore(t), t.TempDir()
 			record := instagramTestRecord("same")
-			record[kind] = []map[string]any{{"uri": "media.jpg", "creation_timestamp": 100}}
+			media := map[string]any{"uri": "media.jpg", "creation_timestamp": 100}
+			if tc.before != nil {
+				media[tc.field] = tc.before
+			}
+			record[tc.kind] = []map[string]any{media}
 			instagramTestShard(t, root, "circle", "message_1.json", record)
 			opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
 			_, err := ImportDYI(t.Context(), st, opts)
 			require.NoError(err)
 			ids := instagramIDs(t, st)
 			require.Len(ids, 1)
-			record[kind] = []map[string]any{{"uri": "media.jpg", "creation_timestamp": 200}}
+			media[tc.field] = tc.after
 			instagramTestShard(t, root, "circle", "message_1.json", record)
-			summary, err := ImportDYI(t.Context(), st, opts)
-			require.NoError(err)
-			assert.Zero(summary.MessagesAdded)
-			assert.Equal(ids, instagramIDs(t, st))
-			raws, _ := instagramSnapshot(t, st)
-			assert.Contains(raws[ids[0]], `"creation_timestamp":200`)
+			for range 2 {
+				summary, err := ImportDYI(t.Context(), st, opts)
+				require.NoError(err)
+				assert.Zero(summary.MessagesAdded)
+				assert.Equal(ids, instagramIDs(t, st))
+				raws, _ := instagramSnapshot(t, st)
+				assert.Contains(raws[ids[0]], tc.want)
+			}
 		})
 	}
 }
 
-func TestInstagramPartialReplayPreservesMediaTimestamps(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st, root := testutil.NewTestStore(t), t.TempDir()
-	a, b := instagramTestRecord("same"), instagramTestRecord("same")
-	a["photos"] = []map[string]any{{"uri": "photo.jpg", "creation_timestamp": 100}}
-	b["photos"] = []map[string]any{{"uri": "photo.jpg", "creation_timestamp": 200}}
-	instagramTestShard(t, root, "circle", "message_1.json", a, b)
-	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
-	_, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(err)
-	before, _ := instagramSnapshot(t, st)
-	require.Len(before, 2)
-	a["photos"] = []map[string]any{{"uri": "photo.jpg", "creation_timestamp": 300}}
-	instagramTestShard(t, root, "circle", "message_1.json", a)
-	summary, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(err)
-	assert.True(summary.Incomplete)
-	assert.Zero(summary.MessagesAdded)
-	after, _ := instagramSnapshot(t, st)
-	assert.Equal(before, after)
-}
-
-func TestInstagramPartialReplayPreservesDistinctMetadata(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st, root := testutil.NewTestStore(t), t.TempDir()
-	a, b := instagramTestRecord("same"), instagramTestRecord("same")
-	a["extra_field"], b["extra_field"] = "first", "second"
-	instagramTestShard(t, root, "circle", "message_1.json", a, b)
-	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
-	_, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(err)
-	before, _ := instagramSnapshot(t, st)
-	a["extra_field"] = "third"
-	instagramTestShard(t, root, "circle", "message_1.json", a)
-	summary, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(err)
-	assert.True(summary.Incomplete)
-	assert.Zero(summary.MessagesAdded)
-	after, _ := instagramSnapshot(t, st)
-	for id, raw := range before {
-		assert.Equal(raw, after[id])
+func TestInstagramPartialReplayPreservesDistinctEvidence(t *testing.T) {
+	for _, kind := range []string{"media timestamps", "message metadata", "media metadata and reactions"} {
+		t.Run(kind, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st, root := testutil.NewTestStore(t), t.TempDir()
+			a, b := instagramTestRecord("same"), instagramTestRecord("same")
+			switch kind {
+			case "media timestamps":
+				a["photos"] = []map[string]any{{"uri": "photo.jpg", "creation_timestamp": 100}}
+				b["photos"] = []map[string]any{{"uri": "photo.jpg", "creation_timestamp": 200}}
+			case "message metadata":
+				a["extra_field"], b["extra_field"] = "first", "second"
+			case "media metadata and reactions":
+				a["photos"] = []map[string]any{{"uri": "photo.jpg", "creation_timestamp": 100, "extra": "first"}}
+				b["photos"] = []map[string]any{{"uri": "photo.jpg", "creation_timestamp": 100, "extra": "second"}}
+				a["reactions"], b["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "a"}}, []map[string]string{{"actor": "Nova Example", "reaction": "b"}}
+			}
+			instagramTestShard(t, root, "circle", "message_1.json", a, b)
+			opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
+			_, err := ImportDYI(t.Context(), st, opts)
+			require.NoError(err)
+			before, reactions := instagramSnapshot(t, st)
+			require.Len(before, 2)
+			if kind == "media metadata and reactions" {
+				instagramTestShard(t, root, "circle", "message_1.json", b, a)
+				_, err = ImportDYI(t.Context(), st, opts)
+				require.NoError(err)
+				after, _ := instagramSnapshot(t, st)
+				assert.Equal(before, after)
+			}
+			switch kind {
+			case "media timestamps":
+				a["photos"] = []map[string]any{{"uri": "photo.jpg", "creation_timestamp": 300}}
+			case "message metadata":
+				a["extra_field"] = "third"
+			case "media metadata and reactions":
+				a["photos"] = []map[string]any{{"uri": "photo.jpg", "creation_timestamp": 100, "extra": "changed"}}
+			}
+			instagramTestShard(t, root, "circle", "message_1.json", a)
+			for range 2 {
+				summary, err := ImportDYI(t.Context(), st, opts)
+				require.NoError(err)
+				assert.True(summary.Incomplete)
+				assert.Zero(summary.MessagesAdded)
+				after, afterReactions := instagramSnapshot(t, st)
+				assert.Equal(before, after)
+				assert.Equal(reactions, afterReactions)
+			}
+		})
 	}
 }
 
@@ -1461,57 +1481,4 @@ func TestInstagramDuplicateOccurrences(t *testing.T) {
 		require.NoError(err)
 		assert.Zero(run.ErrorsCount)
 	})
-}
-
-func TestInstagramReplayMediaUnknownMetadata(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st, root := testutil.NewTestStore(t), t.TempDir()
-	a, b := instagramTestRecord("same"), instagramTestRecord("same")
-	photoA := map[string]any{"uri": "photo.jpg", "creation_timestamp": 100, "extra": "first"}
-	photoB := map[string]any{"uri": "photo.jpg", "creation_timestamp": 100, "extra": "second"}
-	a["photos"], b["photos"] = []map[string]any{photoA}, []map[string]any{photoB}
-	a["reactions"], b["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "a"}}, []map[string]string{{"actor": "Nova Example", "reaction": "b"}}
-	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
-	instagramTestShard(t, root, "circle", "message_1.json", a, b)
-	_, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(err)
-	before, _ := instagramSnapshot(t, st)
-	instagramTestShard(t, root, "circle", "message_1.json", b, a)
-	_, err = ImportDYI(t.Context(), st, opts)
-	require.NoError(err)
-	after, _ := instagramSnapshot(t, st)
-	assert.Equal(before, after)
-	photoA["extra"] = "changed"
-	instagramTestShard(t, root, "circle", "message_1.json", a)
-	for range 2 {
-		summary, err := ImportDYI(t.Context(), st, opts)
-		require.NoError(err)
-		assert.True(summary.Incomplete)
-		assert.Zero(summary.MessagesAdded)
-		after, _ = instagramSnapshot(t, st)
-		assert.Equal(before, after)
-	}
-}
-
-func TestInstagramReplaySingleMediaUnknownMetadata(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st, root := testutil.NewTestStore(t), t.TempDir()
-	record := instagramTestRecord("same")
-	photo := map[string]any{"uri": "photo.jpg", "creation_timestamp": 100}
-	record["photos"] = []map[string]any{photo}
-	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
-	instagramTestShard(t, root, "circle", "message_1.json", record)
-	_, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(err)
-	ids := instagramIDs(t, st)
-	photo["unknown"] = "changed"
-	instagramTestShard(t, root, "circle", "message_1.json", record)
-	for range 2 {
-		summary, err := ImportDYI(t.Context(), st, opts)
-		require.NoError(err)
-		assert.Zero(summary.MessagesAdded)
-		assert.Equal(ids, instagramIDs(t, st))
-	}
 }
