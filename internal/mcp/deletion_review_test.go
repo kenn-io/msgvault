@@ -12,19 +12,20 @@ import (
 )
 
 func TestDeletionReviewCatalogReadOnly(t *testing.T) {
+	assert := assert.New(t)
 	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"list_deletions", "get_deletion"}}
 	definitions := operationalCatalog(opts, false)
 	require.Len(t, definitions, 2)
 	for _, definition := range definitions {
-		assert.False(t, definition.writes)
-		assert.True(t, definition.definition.annotations.ReadOnlyHint)
+		assert.False(definition.writes)
+		assert.True(definition.definition.annotations.ReadOnlyHint)
 	}
-	assert.Equal(t, []any{"pending", "in_progress", "completed", "failed", "cancelled"}, definitions[0].definition.inputSchema.Properties["status"].Enum)
-	assert.Equal(t, []string{"batch_id"}, definitions[1].definition.inputSchema.Required)
+	assert.Equal([]any{"pending", "in_progress", "completed", "failed", "cancelled"}, definitions[0].definition.inputSchema.Properties["status"].Enum)
+	assert.Equal([]string{"batch_id"}, definitions[1].definition.inputSchema.Required)
 	opts.OperationCapabilities = []string{"get_deletion"}
-	assert.Len(t, operationalCatalog(opts, false), 1)
+	assert.Len(operationalCatalog(opts, false), 1)
 	opts.DelegatedOnly = true
-	assert.Empty(t, operationalCatalog(opts, false))
+	assert.Empty(operationalCatalog(opts, false))
 }
 
 type deletionReviewBackend struct{}
@@ -41,26 +42,28 @@ func (deletionReviewBackend) OperationDisclosure(context.Context, string, map[st
 }
 
 func TestDeletionReviewSDKReadOnly(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	opts := ServeOptions{Operations: deletionReviewBackend{}, OperationCapabilities: []string{"list_deletions", "get_deletion"}}
 	tools := toolsByName(t, rawListTools(t, opts, false))
-	require.Contains(t, tools, "list_deletions")
-	require.Contains(t, tools, "get_deletion")
+	require.Contains(tools, "list_deletions")
+	require.Contains(tools, "get_deletion")
 	ctx := t.Context()
 	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
 	serverSession, err := newMCPServer(opts, false).Connect(ctx, serverTransport, nil)
-	require.NoError(t, err)
+	require.NoError(err)
 	t.Cleanup(func() { _ = serverSession.Close() })
 	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "synthetic", Version: "1"}, nil)
 	session, err := client.Connect(ctx, clientTransport, nil)
-	require.NoError(t, err)
+	require.NoError(err)
 	t.Cleanup(func() { _ = session.Close() })
 	for _, tc := range []struct {
 		name string
 		args map[string]any
 	}{{"list_deletions", map[string]any{}}, {"get_deletion", map[string]any{"batch_id": "batch"}}} {
 		result, err := session.CallTool(ctx, &sdkmcp.CallToolParams{Name: tc.name, Arguments: tc.args})
-		require.NoError(t, err)
-		assert.False(t, result.IsError)
-		assert.NotNil(t, result.StructuredContent)
+		require.NoError(err)
+		assert.False(result.IsError)
+		assert.NotNil(result.StructuredContent)
 	}
 }
