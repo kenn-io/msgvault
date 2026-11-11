@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -396,4 +397,49 @@ func TestXArchiveSavedRequestsFailClosed(t *testing.T) {
 			_testAssert.Equal(before, after)
 		})
 	}
+}
+
+func TestXControlCompactsSharedTokenHistory(t *testing.T) {
+	checks := assert.New(t)
+	needs := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("x", "100")
+	needs.NoError(err)
+
+	// Each legal token expands sixfold in JSON; the aggregate across walks,
+	// rather than the count in any one walk, exceeds the cursor limit.
+	token := strings.Repeat("\x01", 8192)
+	history := make([]string, 8)
+	for i := range history {
+		suffix := strconv.Itoa(i)
+		history[i] = strings.Repeat("\x01", 8192-len(suffix)) + suffix
+	}
+	own := &store.XWalk{Fingerprint: "own", Endpoint: "timeline", Token: token, SeenTokens: history, UnresolvedIDs: []string{"101"}}
+	mentions := &store.XWalk{Fingerprint: "mentions", Endpoint: "mentions", SeenTokens: history, UnresolvedIDs: []string{"102"}}
+	jobs := []store.XArchiveJob{{ID: "job", Fingerprint: "frozen", CapMicros: 900000, SpentMicros: 120000, ReservedMicros: 30000,
+		Own:      &store.XWalk{Fingerprint: "job-own", Endpoint: "search", Token: token, SeenTokens: history},
+		Mentions: &store.XWalk{Fingerprint: "job-mentions", Endpoint: "search", Token: token, SeenTokens: history}}}
+	buckets := []store.XSpendBucket{{Month: "2026-10", SpentMicros: 120000, ReservedMicros: 30000}}
+	reservations := []store.XReservation{{ID: "pending", Kind: "timeline", Month: "2026-10", JobID: "job", AmountMicros: 30000, State: "unknown"}}
+	_, err = st.UpdateXControlContext(t.Context(), source.ID, 0, store.XControlPatch{OwnerID: "100", Own: own, Mentions: mentions, Jobs: &jobs, SpendBuckets: &buckets, Reservations: &reservations})
+	needs.NoError(err)
+	got, err := st.LoadXControlContext(t.Context(), source.ID)
+	needs.NoError(err)
+	needs.NotNil(got.Own)
+	needs.NotNil(got.Mentions)
+	needs.Len(got.Jobs, 1)
+	checks.Equal(token, got.Own.Token)
+	checks.Equal([]string{"101"}, got.Own.UnresolvedIDs)
+	checks.Equal([]string{""}, got.Mentions.SeenTokens)
+	checks.Equal([]string{"102"}, got.Mentions.UnresolvedIDs)
+	checks.Empty(got.Own.SeenTokens)
+	checks.Equal(token, got.Jobs[0].Own.Token)
+	checks.Equal(int64(900000), got.Jobs[0].CapMicros)
+	checks.Equal(int64(120000), got.Jobs[0].SpentMicros)
+	checks.Equal(buckets, got.SpendBuckets)
+	checks.Equal(reservations, got.Reservations)
+	checks.Len(own.SeenTokens, 8) // Compaction must not mutate caller-owned input.
+	encoded, err := json.Marshal(got)
+	needs.NoError(err)
+	checks.LessOrEqual(len(encoded), store.XMaxControlBytes)
 }

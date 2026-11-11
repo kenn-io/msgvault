@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"crypto/rand"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"math"
@@ -242,12 +241,16 @@ func (s *Store) reserveXRequestTx(ctx context.Context, tx *loggedTx, sourceID in
 	if spec.Kind != XRequestCreate {
 		capacityProbe.ModelError = XModelErrorResourceShape
 	}
-	encoded, err := json.Marshal(capacityProbe)
+	encoded, err := marshalXControlWithHistoryCompaction(&capacityProbe)
 	if err != nil {
 		return XReservation{}, err
 	}
-	if len(encoded) > XMaxControlBytes {
-		return XReservation{}, ErrXBudgetCapacity
+	limit := XMaxControlBytes
+	if spec.Kind != XRequestCreate {
+		limit -= xControlReadHeadroom
+	}
+	if len(encoded) > limit {
+		return XReservation{}, fmt.Errorf("%w: insufficient control space for request outcome", ErrXBudgetCapacity)
 	}
 	patch := XControlPatch{OwnerID: state.OwnerID, SpendBuckets: &state.SpendBuckets, Reservations: &state.Reservations, Jobs: &state.Jobs}
 	if spec.Generation > state.Generation {

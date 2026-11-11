@@ -363,3 +363,33 @@ func TestXBudgetReservesCapacityForDurableModelHold(t *testing.T) {
 	_, err = st.ReserveXRequestContext(t.Context(), id, cost)
 	_testRequire.ErrorIs(err, store.ErrXBudgetCapacity)
 }
+
+func TestXReadAdmissionRequiresRoomForNextPage(t *testing.T) {
+	checks := assert.New(t)
+	needs := require.New(t)
+	st, id, cost := xBudgetFixture(t)
+	state, err := st.LoadXControlContext(t.Context(), id)
+	needs.NoError(err)
+
+	// Required current tokens alone leave less than one maximally escaped
+	// response token's space. They and the frozen jobs must never be pruned.
+	token := strings.Repeat("a", 8192)
+	jobs := make([]store.XArchiveJob, 60)
+	for i := range jobs {
+		jobs[i] = store.XArchiveJob{ID: "job-" + strconv.Itoa(i), Fingerprint: "frozen", CapMicros: 1000000,
+			Own:      &store.XWalk{Fingerprint: "own", Endpoint: "search", Token: token},
+			Mentions: &store.XWalk{Fingerprint: "mentions", Endpoint: "search", Token: token}}
+	}
+	_, err = st.UpdateXControlContext(t.Context(), id, state.Revision, store.XControlPatch{OwnerID: "100", Jobs: &jobs})
+	needs.NoError(err)
+	before, err := st.LoadXControlContext(t.Context(), id)
+	needs.NoError(err)
+	_, err = st.ReserveXRequestContext(t.Context(), id, cost)
+	needs.ErrorIs(err, store.ErrXBudgetCapacity)
+	after, err := st.LoadXControlContext(t.Context(), id)
+	needs.NoError(err)
+	checks.Equal(before, after)
+	checks.Len(after.Jobs, 60)
+	checks.Equal(token, after.Jobs[59].Mentions.Token)
+	checks.Empty(after.Reservations)
+}

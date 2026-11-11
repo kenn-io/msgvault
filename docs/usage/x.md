@@ -119,9 +119,12 @@ retention failures remain visible in source/run status.
 Timelines reach at most 3,200 recent own posts and 800 mentions. Saturation or
 outages can leave gaps; msgvault does not buy additional searches automatically.
 Each collection walk remembers its latest 1,000 page tokens to detect recent
-pagination cycles; cycles longer than that window may not be detected. A run
-stops each walk after 1,000 page requests. Resume the same job or sync to
+pagination cycles. The archive may discard token history sooner when the shared
+control state approaches its size limit, so longer cycles may not be detected.
+A run stops each walk after 1,000 page requests. Resume the same job or sync to
 continue from its saved cursor without resetting its frozen interval or cap.
+If required state fills the remaining control capacity, reads stop before a
+request rather than discarding cursors, unresolved items, or spending authority.
 Backfill uses the stored handle and explicit from/to queries across the entire
 interval. It cannot promise old-handle history, every bare mention, quote,
 nested reply or hidden reply. Unavailable content is not recoverable through

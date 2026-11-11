@@ -22,10 +22,13 @@ const (
 	XControlVersion          = 1
 	XModelErrorResourceShape = "resource_shape_exceeded"
 	XMaxControlBytes         = 1 << 20
-	XMaxReservations         = 256
-	XMaxArchiveJobs          = 64
-	XMaxSpendBuckets         = 120
-	XMaxUnresolvedIDs        = 1000
+	// Leave room for a maximally escaped continuation and up to 1,000
+	// maximum-length unresolved IDs from a response.
+	xControlReadHeadroom = 192 << 10
+	XMaxReservations     = 256
+	XMaxArchiveJobs      = 64
+	XMaxSpendBuckets     = 120
+	XMaxUnresolvedIDs    = 1000
 )
 
 var ErrXControlConflict = errors.New("x control revision conflict")
@@ -409,7 +412,7 @@ func (s *Store) updateXControlTx(ctx context.Context, tx *loggedTx, sourceID, ex
 	if err := validateXControl(state, state.OwnerID); err != nil {
 		return XControlState{}, err
 	}
-	data, err := json.Marshal(state)
+	data, err := marshalXControlWithHistoryCompaction(&state)
 	if err != nil {
 		return XControlState{}, errors.New("encode X control JSON")
 	}
@@ -425,6 +428,36 @@ func (s *Store) updateXControlTx(ctx context.Context, tx *loggedTx, sourceID, ex
 		return XControlState{}, errors.New("decode saved X control JSON")
 	}
 	return result, nil
+}
+
+// marshalXControlWithHistoryCompaction drops only optional cycle history when
+// the shared cursor approaches capacity. A nonempty history with no current
+// token marks an exhausted walk, so retain that marker for unresolved pages.
+func marshalXControlWithHistoryCompaction(state *XControlState) ([]byte, error) {
+	data, err := json.Marshal(state)
+	if err != nil || len(data) <= XMaxControlBytes-xControlReadHeadroom {
+		return data, err
+	}
+	compact := func(walk *XWalk) *XWalk {
+		if walk == nil || len(walk.SeenTokens) == 0 {
+			return walk
+		}
+		copy := *walk
+		copy.SeenTokens = nil
+		if walk.Token == "" {
+			copy.SeenTokens = []string{""}
+		}
+		return &copy
+	}
+	state.Own = compact(state.Own)
+	state.Mentions = compact(state.Mentions)
+	state.Overlap = compact(state.Overlap)
+	state.Jobs = slices.Clone(state.Jobs)
+	for i := range state.Jobs {
+		state.Jobs[i].Own = compact(state.Jobs[i].Own)
+		state.Jobs[i].Mentions = compact(state.Jobs[i].Mentions)
+	}
+	return json.Marshal(state)
 }
 
 // CompleteXSyncContext requires the exact ScopedToSync view. Control authority
