@@ -1666,7 +1666,10 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("migrate person fact claim origins: %w", err)
 	}
-	if err := s.runOnceMigration(ctx, migrationPersonSweepAttemptBriefFailure, 1, false, s.migratePersonSweepAttemptBriefFailure); err != nil {
+	if err := s.runOnceMigration(
+		ctx, migrationPersonSweepAttemptBriefFailure, 1, false,
+		s.migratePersonSweepAttemptBriefFailure,
+	); err != nil {
 		return fmt.Errorf("migrate person sweep attempt brief failure class: %w", err)
 	}
 	if err := s.runOnceMigration(
