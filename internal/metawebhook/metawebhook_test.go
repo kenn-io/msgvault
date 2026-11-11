@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/atomicfile"
 )
 
 const testSecret = "synthetic-app-secret"
@@ -182,6 +184,27 @@ func TestNewHandlerCleansStagingAndOrdersAfterPendingDeliveries(t *testing.T) {
 	}
 	require.Len(stored, 1)
 	assert.Greater(stored[0], existing, "the new delivery sorts after the pending one")
+}
+
+func TestWriteResultAcknowledgesOnlyDurableDeliveries(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		err       error
+		published bool
+		status    int
+	}{
+		{"stored", nil, true, http.StatusOK},
+		{"staging cleanup failed", fmt.Errorf("write: %w", atomicfile.ErrPublished), true, http.StatusOK},
+		{"directory not synced", fmt.Errorf("write: %w", atomicfile.ErrNotDurable), true, http.StatusServiceUnavailable},
+		{"name taken", fmt.Errorf("write: %w", fs.ErrExist), false, http.StatusServiceUnavailable},
+		{"spool full", errSpoolFull, false, http.StatusServiceUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			published, status := writeResult(tc.err)
+			assert.Equal(t, tc.published, published, "published")
+			assert.Equal(t, tc.status, status)
+		})
+	}
 }
 
 func TestHandlerChallenge(t *testing.T) {

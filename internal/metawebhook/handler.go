@@ -170,22 +170,42 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		if err := h.store(app, body); err != nil {
-			if errors.Is(err, errSpoolFull) {
-				slog.Warn("Meta webhook delivery refused; too many deliveries pending", "app", app)
-			} else {
-				slog.Error("store Meta webhook delivery", "app", app, "error", err)
-			}
-			w.WriteHeader(http.StatusServiceUnavailable)
-			return
+		err = h.store(app, body)
+		published, status := writeResult(err)
+		switch {
+		case errors.Is(err, errSpoolFull):
+			slog.Warn("Meta webhook delivery refused; too many deliveries pending", "app", app)
+		case err != nil && status == http.StatusOK:
+			slog.Warn("Meta webhook delivery stored; staging cleanup failed", "app", app, "error", err)
+		case err != nil:
+			slog.Error("store Meta webhook delivery", "app", app, "error", err)
 		}
-		if h.wake != nil {
+		if published && h.wake != nil {
 			h.wake()
 		}
-		w.WriteHeader(http.StatusOK)
+		w.WriteHeader(status)
 	default:
 		w.Header().Set("Allow", "GET, POST")
 		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+// writeResult reports whether store's error leaves the delivery in the
+// pending directory, and the status to answer.
+func writeResult(err error) (published bool, status int) {
+	switch {
+	case err == nil:
+		return true, http.StatusOK
+	case errors.Is(err, atomicfile.ErrNotDurable):
+		// The worker will apply the visible file, but a crash could still
+		// lose it, so 200 would break "durable before 200". Meta redelivers
+		// after 503, and applying a delivery twice is harmless.
+		return true, http.StatusServiceUnavailable
+	case errors.Is(err, atomicfile.ErrPublished):
+		// The delivery is durable; only removing the staging name failed.
+		return true, http.StatusOK
+	default:
+		return false, http.StatusServiceUnavailable
 	}
 }
 
@@ -204,7 +224,8 @@ func validSignature(secret, body []byte, header string) bool {
 // store writes the delivery under a name that sorts in arrival order and
 // carries the app ID. The delivery becomes visible only once complete. It
 // returns errSpoolFull, without writing, when the delivery would take the
-// pending directory past maxFiles or maxBytes.
+// pending directory past maxFiles or maxBytes. A WriteNew error that wraps
+// atomicfile.ErrPublished still counts the delivery; see writeResult.
 func (h *Handler) store(app string, body []byte) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -225,7 +246,7 @@ func (h *Handler) store(app string, body []byte) error {
 	h.last = max(time.Now().UnixNano(), h.last+1)
 	name := fmt.Sprintf("%020d-%s-%s.json", h.last, app, rand.Text())
 	err := atomicfile.WriteNew(filepath.Join(h.pending, name), body, atomicfile.WithPrivate())
-	if err == nil {
+	if published, _ := writeResult(err); published {
 		h.files++
 		h.bytes += size
 	}
