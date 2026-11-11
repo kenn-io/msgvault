@@ -29,7 +29,7 @@ describe('MeetingPanel', () => {
       const request = input instanceof Request ? input : new Request(input); requests.push(request); return response(request);
     }), scope: { kind: 'direct', scope: { person_id: 7 } } });
     expect(await screen.findByText('4 meetings')).toBeDefined();
-    expect(await screen.findByText('Coverage: 1 available · 1 partial · 1 unsupported · 1 unavailable')).toBeDefined();
+    expect(await screen.findByText('Action item records by meeting: 1 complete · 1 partial · 1 not supported · 1 unavailable')).toBeDefined();
     expect(screen.getByRole('combobox', { name: 'Source status: All source statuses' })).toBeDefined();
     await fireEvent.input(screen.getByRole('textbox', { name: 'Assignee email' }), { target: { value: 'person@example.test' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Apply action filters' }));

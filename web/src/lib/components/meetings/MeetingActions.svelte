@@ -59,7 +59,7 @@
   }
 
   function coverageSummary(coverage: ActionCoverage): string {
-    return `Coverage: ${coverage.available} available · ${coverage.partial} partial · ${coverage.unsupported} unsupported · ${coverage.unavailable} unavailable`;
+    return `Action item records by meeting: ${coverage.available} complete · ${coverage.partial} partial · ${coverage.unsupported} not supported · ${coverage.unavailable} unavailable`;
   }
 
 </script>
