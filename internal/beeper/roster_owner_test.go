@@ -7,6 +7,96 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestImportDefersTruncatedRosterAndContinues(t *testing.T) {
+	for _, incomplete := range []bool{false, true} {
+		name := "failed detail"
+		if incomplete {
+			name = "truncated detail"
+		}
+		t.Run(name, func(t *testing.T) {
+			require := require.New(t)
+			f := newFakeBeeper(t)
+			old := budgetTestChat("!old:example.test", 1, time.Now().Add(-time.Hour))
+			healthy := budgetTestChat("!healthy:example.test", 1, time.Now().Add(-time.Hour))
+			for _, chat := range []*fakeChat{old, healthy} {
+				chat.Participants[0]["id"] = "@signal_user:example.test"
+				chat.Msgs[0].SenderID = "@signal_user:example.test"
+				f.addChat(chat)
+			}
+			old.Participants[0]["phoneNumber"] = "+12025550123"
+			healthy.Participants[0]["phoneNumber"] = "+12025550124"
+			old.Participants[0], old.Participants[1] = old.Participants[1], old.Participants[0]
+			old.ParticipantsTruncated = true
+			imp, st := newHandlerTestImporter(t, f)
+			t.Cleanup(func() { require.NoError(st.Close()) })
+			opts := ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true}
+			sum, err := imp.Import(t.Context(), opts)
+			require.NoError(err)
+			oldOwner, err := st.EnsureParticipantByPhone(t.Context(), "+12025550123", "", "signal")
+			require.NoError(err)
+			newOwner, err := st.EnsureParticipantByPhone(t.Context(), "+12025550124", "", "signal")
+			require.NoError(err)
+			require.NotEqual(oldOwner, newOwner)
+			run, err := st.GetLastSuccessfulSync(sum.SourceID)
+			require.NoError(err)
+			state, err := LoadSyncState(run.CursorAfter.String)
+			require.NoError(err)
+			work := state.Chats[old.ID].RosterWork
+			require.True(work.Verified)
+			work.MemberFirst = false
+			receipts, err := st.BeeperRosterReceiptsContext(t.Context(), sum.SourceID, rosterProvider(old.ID))
+			require.NoError(err)
+			signature, listingSignature := work.Signature, work.ListingSignature
+			before := *state.Chats[old.ID]
+			blob, err := state.Marshal()
+			require.NoError(err)
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sync_runs SET cursor_after = ? WHERE id = ?`), blob, run.ID)
+			require.NoError(err)
+			now := time.Now()
+			f.appendMsg(old.ID, fakeMsg{ID: "old-new", SortKey: 100, Timestamp: now.Add(time.Second), SenderID: "@signal_user:example.test", Text: "old"})
+			f.appendMsg(healthy.ID, fakeMsg{ID: "healthy-new", SortKey: 100, Timestamp: now, SenderID: "@signal_user:example.test", Text: "healthy"})
+			if incomplete {
+				f.mu.Lock()
+				old.DetailTruncated = true
+				f.mu.Unlock()
+			} else {
+				f.setChatGetFailure(old.ID, true)
+			}
+			imp = NewImporter(st, imp.client)
+			sum, err = imp.Import(t.Context(), opts)
+			var partial *PartialSyncError
+			require.ErrorAs(err, &partial)
+			require.Positive(sum.FetchErrors)
+			require.Positive(sum.Errors)
+			var count int
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?`), sum.SourceID, "healthy-new").Scan(&count))
+			require.Equal(1, count)
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?`), sum.SourceID, "old-new").Scan(&count))
+			require.Zero(count)
+			state, err = imp.loadResumeState(t.Context(), sum.SourceID, false)
+			require.NoError(err)
+			require.Equal(before.Newest, state.Chats[old.ID].Newest)
+			require.Equal(before.Oldest, state.Chats[old.ID].Oldest)
+			require.False(state.Chats[old.ID].RosterWork.MemberFirst)
+			require.Equal(signature, state.Chats[old.ID].RosterWork.Signature)
+			require.Equal(listingSignature, state.Chats[old.ID].RosterWork.ListingSignature)
+			afterReceipts, err := st.BeeperRosterReceiptsContext(t.Context(), sum.SourceID, rosterProvider(old.ID))
+			require.NoError(err)
+			require.Equal(receipts, afterReceipts)
+			f.setChatGetFailure(old.ID, false)
+			f.mu.Lock()
+			old.DetailTruncated = false
+			f.mu.Unlock()
+			imp = NewImporter(st, imp.client)
+			_, err = imp.Import(t.Context(), opts)
+			require.NoError(err)
+			var sender int64
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE source_id = ? AND source_message_id = ?`), sum.SourceID, "old-new").Scan(&sender))
+			require.Equal(oldOwner, sender)
+		})
+	}
+}
+
 func TestRosterEachChatKeepsItsOwnPhone(t *testing.T) {
 	for _, tc := range []struct {
 		name                                       string
@@ -90,8 +180,12 @@ func testRosterEachChatKeepsItsOwnPhone(t *testing.T, messageFirst, sameRun, ver
 		require.True(detail.Participants.HasMore)
 		f.setChatGetFailure(old.ID, true)
 		state.Chats[old.ID].RosterWork.MemberFirst = false
-		_, _, err = imp.syncChat(t.Context(), 0, sourceID, detail, opts, state, time.Now().Add(-time.Hour), false, false, &ImportSummary{})
-		require.Error(err)
+		sum := &ImportSummary{}
+		_, complete, err := imp.syncChat(t.Context(), 0, sourceID, detail, opts, state, time.Now().Add(-time.Hour), false, false, sum)
+		require.NoError(err)
+		require.False(complete)
+		require.Positive(sum.FetchErrors)
+		require.False(state.Chats[old.ID].RosterWork.MemberFirst)
 		var count int
 		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?`), sourceID, "new-old-phone-message").Scan(&count))
 		require.Zero(count)
@@ -100,8 +194,12 @@ func testRosterEachChatKeepsItsOwnPhone(t *testing.T, messageFirst, sameRun, ver
 		old.DetailTruncated = true
 		f.mu.Unlock()
 		state.Chats[old.ID].RosterWork.MemberFirst = false
-		_, _, err = imp.syncChat(t.Context(), 0, sourceID, detail, opts, state, time.Now().Add(-time.Hour), false, false, &ImportSummary{})
-		require.ErrorContains(err, "incomplete roster")
+		sum = &ImportSummary{}
+		_, complete, err = imp.syncChat(t.Context(), 0, sourceID, detail, opts, state, time.Now().Add(-time.Hour), false, false, sum)
+		require.NoError(err)
+		require.False(complete)
+		require.Positive(sum.FetchErrors)
+		require.False(state.Chats[old.ID].RosterWork.MemberFirst)
 		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?`), sourceID, "new-old-phone-message").Scan(&count))
 		require.Zero(count)
 		f.mu.Lock()

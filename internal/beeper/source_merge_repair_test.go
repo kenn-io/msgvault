@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
+	"net/http"
 	"testing"
 	"time"
 
@@ -13,6 +14,85 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestMergeSourcesRepairsLiveRoster(t *testing.T) {
+	for _, quiet := range []bool{false, true} {
+		name := "active"
+		if quiet {
+			name = "quiet"
+		}
+		t.Run(name, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
+			f := newFakeBeeper(t)
+			chat := budgetTestChat("!merged:example.test", 1, time.Now().Add(-48*time.Hour))
+			f.addChat(chat)
+			imp, st := newHandlerTestImporter(t, f)
+			t.Cleanup(func() { require.NoError(st.Close()) })
+			provider := f.handler()
+			imp.client.http.Transport = handlerTransport(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/accounts/signal" {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"accountID":"signal","bridge":{"type":"signal"},"status":"connected"}`))
+					return
+				}
+				provider(w, r)
+			}))
+			opts := ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true}
+			sum, err := imp.Import(t.Context(), opts)
+			require.NoError(err)
+			want := rosterMembers(t, st, sum.SourceID, chat.ID)
+			require.Len(want, 2)
+			peer := participantForBeeperUser(t, st, "@signal_ann:beeper.local")
+			person, _, err := st.CreatePersonFromParticipant(peer)
+			require.NoError(err)
+			query := store.PersonMessagingRouteQuery{PersonUID: person.VCardUID}
+			routes, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
+			require.NoError(err)
+			require.Len(routes.Routes.Items, 1)
+			require.Equal("archive_verified", routes.Routes.Items[0].Status)
+			history, err := st.GetOrCreateSource("beeper", "signal-history")
+			require.NoError(err)
+			conv, err := st.EnsureConversation(t.Context(), history.ID, chat.ID, "History")
+			require.NoError(err)
+			departed, err := st.EnsureParticipantByPhone(t.Context(), "+12025550199", "Departed", "signal")
+			require.NoError(err)
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO conversation_participants(conversation_id, participant_id, role) VALUES (?, ?, 'member')`), conv, departed)
+			require.NoError(err)
+			historicalID, err := st.UpsertMessage(&store.Message{SourceID: history.ID, ConversationID: conv, SourceMessageID: "historical", MessageType: "beeper"})
+			require.NoError(err)
+			req := store.MergeSourcesRequest{FromSourceID: history.ID, IntoSourceID: sum.SourceID, DryRun: true}
+			_, err = st.MergeSourcesContext(t.Context(), req)
+			require.NoError(err)
+			pending, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
+			require.NoError(err)
+			assert.NotContains(pending, chat.ID)
+			req.DryRun = false
+			_, err = st.MergeSourcesContext(t.Context(), req)
+			require.NoError(err)
+			pending, err = st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
+			require.NoError(err)
+			assert.Contains(pending, chat.ID)
+			assert.Contains(rosterMembers(t, st, sum.SourceID, chat.ID), departed)
+			if !quiet {
+				f.appendMsg(chat.ID, fakeMsg{ID: "active", SortKey: 99, Timestamp: time.Now(), SenderID: "@signal_ann:beeper.local", Text: "active"})
+			}
+			imp = NewImporter(st, imp.client)
+			_, err = imp.Import(t.Context(), opts)
+			require.NoError(err)
+			assert.ElementsMatch(want, rosterMembers(t, st, sum.SourceID, chat.ID))
+			pending, err = st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
+			require.NoError(err)
+			assert.NotContains(pending, chat.ID)
+			var count int
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND id = ?`), sum.SourceID, historicalID).Scan(&count))
+			assert.Positive(count)
+			routes, err = st.GetPersonMessagingRoutesContext(t.Context(), query)
+			require.NoError(err)
+			require.Len(routes.Routes.Items, 1)
+			assert.Equal("archive_verified", routes.Routes.Items[0].Status)
+		})
+	}
+}
 
 func TestMergeSourcesRestartsBeeperRepairForMovedHistory(t *testing.T) {
 	t.Parallel()

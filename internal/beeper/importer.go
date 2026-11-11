@@ -878,6 +878,10 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 	if err != nil {
 		return 0, false, err
 	}
+	if convID == 0 {
+		cs.RosterWork.MemberFirst = false
+		return 0, false, nil
+	}
 	if membership.known {
 		cs.RosterRetryAfter = ""
 	}
@@ -1032,7 +1036,7 @@ func (imp *Importer) ensureConversation(
 				sum.FetchErrors++
 				sum.Errors++
 				if opts.skipRoster {
-					return 0, false, chatMembership{}, gerr
+					return 0, false, chatMembership{}, nil
 				}
 			} else {
 				imp.recordItem(syncID, ch.ID, "membership", store.SyncRunItemStatusSkipped, "beeper_roster_verification_deferred", gerr)

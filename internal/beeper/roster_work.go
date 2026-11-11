@@ -318,6 +318,22 @@ func (imp *Importer) refreshRosterProof(ctx context.Context, sourceID, convID in
 			return false, nil
 		}
 	}
+	members, err := imp.store.ConversationParticipantsContext(ctx, convID)
+	if err != nil {
+		return false, err
+	}
+	desired := make(map[int64]bool, len(owners))
+	for _, id := range owners {
+		desired[id] = true
+	}
+	if len(members) != len(desired) {
+		return false, nil
+	}
+	for _, member := range members {
+		if !desired[member.ParticipantID] {
+			return false, nil
+		}
+	}
 	return true, imp.publishRosterEvidence(ctx, convID, evidence, items, keys, owners, membership)
 }
 

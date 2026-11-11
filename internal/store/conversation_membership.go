@@ -2,8 +2,11 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
+	"strings"
 )
 
 // ListUnresolvedConversationIDs returns provider conversation IDs whose archived
@@ -60,9 +63,21 @@ func (s *Store) SetSourceConversationRosterRepairPendingContext(
 func (s *Store) SetConversationRosterRepairPendingContext(
 	ctx context.Context, conversationID int64, pending bool,
 ) error {
-	metadata, err := s.conversationMetadataObjectContext(ctx, conversationID)
-	if err != nil {
-		return err
+	return s.withSyncConversationWriteContext(ctx, conversationID, func(q querier) error {
+		return s.setConversationRosterRepairPending(q, conversationID, pending)
+	})
+}
+
+func (s *Store) setConversationRosterRepairPending(q querier, conversationID int64, pending bool) error {
+	var stored sql.NullString
+	if err := q.QueryRow(`SELECT metadata FROM conversations WHERE id = ?`, conversationID).Scan(&stored); err != nil {
+		return fmt.Errorf("get conversation metadata (id=%d): %w", conversationID, err)
+	}
+	metadata := make(map[string]jsontext.Value)
+	if stored.Valid && strings.TrimSpace(stored.String) != "" {
+		if err := json.Unmarshal([]byte(stored.String), &metadata); err != nil {
+			return fmt.Errorf("decode conversation metadata (id=%d): %w", conversationID, err)
+		}
 	}
 	_, alreadyPending := metadata["roster_repair_pending"]
 	if alreadyPending == pending {
@@ -73,7 +88,12 @@ func (s *Store) SetConversationRosterRepairPendingContext(
 	} else {
 		delete(metadata, "roster_repair_pending")
 	}
-	if err := s.writeConversationMetadataObjectContext(ctx, conversationID, metadata); err != nil {
+	encoded, err := json.Marshal(metadata, json.Deterministic(true))
+	if err != nil {
+		return fmt.Errorf("encode conversation metadata (id=%d): %w", conversationID, err)
+	}
+	_, err = q.Exec(fmt.Sprintf(`UPDATE conversations SET metadata = %s WHERE id = ?`, s.dialect.JSONBindExpr()), sql.NullString{String: string(encoded), Valid: len(metadata) != 0}, conversationID)
+	if err != nil {
 		return fmt.Errorf("set roster repair marker for conversation %d: %w", conversationID, err)
 	}
 	return nil
