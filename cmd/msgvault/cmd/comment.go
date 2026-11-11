@@ -27,7 +27,7 @@ func newCommentModerateCmd() *cobra.Command {
 		Short: "Hide, unhide or delete an archived comment on Facebook or Instagram",
 		Long: "Hide, unhide or delete an archived Facebook Page or Instagram comment on Meta, then record the change in the archive. " +
 			"The comment's [[facebook_comments]] or [[instagram_comments]] profile must list the action in actions; \"hide\" also allows unhide. " +
-			"--dry-run shows the comment without calling Meta. Delete cannot be undone, so it also needs --yes.",
+			"Delete cannot be undone, so it also needs --yes.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := strconv.ParseInt(args[0], 10, 64)
