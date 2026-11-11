@@ -422,10 +422,10 @@ func prepareEvidenceStatusChanges(
 
 func validEvidenceStatusTransition(supported bool, reason EvidenceStatusReason) bool {
 	if supported {
-		return reason == EvidenceStatusSourceReimported || reason == EvidenceStatusScopeRelinked
+		return reason == EvidenceStatusSourceReimported || reason == EvidenceStatusScopeRelinked || reason == EvidenceStatusConversationFull
 	}
 	return reason == EvidenceStatusSourceDeleted || reason == EvidenceStatusSourceEdited ||
-		reason == EvidenceStatusScopeUnlinked || reason == EvidenceStatusIdentityReassigned
+		reason == EvidenceStatusScopeUnlinked || reason == EvidenceStatusIdentityReassigned || reason == EvidenceStatusConversationCold
 }
 
 // GenerationKey hashes the canonical production envelope. ResolvedAt is

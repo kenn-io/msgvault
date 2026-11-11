@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/sqldialect"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -159,6 +160,15 @@ func Open(ctx context.Context, opts Options) (*Backend, error) {
 // Close is a no-op for the pgvector backend: the *sql.DB handle is
 // owned by the main store and closed there. Provided to satisfy the
 // vector.Backend interface.
+// senderEligibility applies archive value eligibility to sender filters when
+// the backend reads a policy-aware archive.
+func (b *Backend) senderEligibility() search.SenderEligibility {
+	if b.policyStore == nil {
+		return nil
+	}
+	return store.SenderEligibility
+}
+
 func (b *Backend) Close() error { return nil }
 
 // WithBuildScope pins message coverage without reopening or closing shared storage.
@@ -1213,7 +1223,7 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 // matching ids through Go. Filter values are bound via the supplied bind
 // closure; the live + filter clauses all reference the inner alias `m`. [V2].
 func (b *Backend) filterExistsClause(embedAlias string, f vector.Filter, bind func(any) string) string {
-	clauses := append([]string{b.embeddedMessageWhere("e")}, buildPGFilterClauses(f, bind)...)
+	clauses := append([]string{b.embeddedMessageWhere("e")}, buildPGFilterClauses(f, bind, b.senderEligibility())...)
 	return fmt.Sprintf(
 		"EXISTS (SELECT 1 FROM messages m WHERE m.id = %s.message_id AND %s)",
 		embedAlias, strings.Join(clauses, " AND "))

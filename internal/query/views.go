@@ -863,7 +863,7 @@ LEFT JOIN (
     SELECT
         msg.id AS message_id,
         COALESCE(p.email_address, '') AS from_email,
-        ` + directSenderNameExpr("p", "") + ` AS from_name,
+        ` + directSenderNameExpr() + ` AS from_name,
         COALESCE(p.domain, '') AS from_domain,
         COALESCE(p.phone_number, '') AS from_phone
     FROM messages msg

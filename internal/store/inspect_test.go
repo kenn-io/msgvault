@@ -22,23 +22,23 @@ func TestInspectMessage_NotFound(t *testing.T) {
 // TestInspectMessage_BasicFields verifies that InspectMessage returns correct
 // basic fields for a message.
 func TestInspectMessage_BasicFields(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := storetest.New(t)
 
 	// Create a message with a specific source_message_id
 	f.CreateMessage("inspect-test-msg")
 
 	insp, err := f.Store.InspectMessage("inspect-test-msg")
-	require.NoError(err, "InspectMessage")
+	requirements.NoError(err, "InspectMessage")
 
-	require.NotNil(insp, "InspectMessage returned nil inspection")
+	requirements.NotNil(insp, "InspectMessage returned nil inspection")
 
 	// Thread source ID should be populated from the default thread
-	assert.Equal("default-thread", insp.ThreadSourceID)
+	assertions.Equal("default-thread", insp.ThreadSourceID)
 
 	// RawDataExists should be false since we didn't add raw data
-	assert.False(insp.RawDataExists, "RawDataExists should be false when no raw data exists")
+	assertions.False(insp.RawDataExists, "RawDataExists should be false when no raw data exists")
 }
 
 // TestInspectMessage_WithRawData verifies that InspectMessage correctly detects
@@ -137,8 +137,8 @@ func TestInspectRawDataExists_MessageNotFound(t *testing.T) {
 // TestInspectMessage_RecipientCounts verifies that InspectMessage correctly
 // counts recipients by type.
 func TestInspectMessage_RecipientCounts(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := storetest.New(t)
 
 	msgID := f.CreateMessage("inspect-recipients-msg")
@@ -149,16 +149,16 @@ func TestInspectMessage_RecipientCounts(t *testing.T) {
 	pid3 := f.EnsureParticipant("carol@example.com", "Carol", "example.com")
 
 	err := f.Store.ReplaceMessageRecipients(msgID, "from", []int64{pid1}, []string{"Alice"})
-	require.NoError(err, "ReplaceMessageRecipients(from)")
+	requirements.NoError(err, "ReplaceMessageRecipients(from)")
 
 	err = f.Store.ReplaceMessageRecipients(msgID, "to", []int64{pid2, pid3}, []string{"Bob", "Carol"})
-	require.NoError(err, "ReplaceMessageRecipients(to)")
+	requirements.NoError(err, "ReplaceMessageRecipients(to)")
 
 	insp, err := f.Store.InspectMessage("inspect-recipients-msg")
-	require.NoError(err, "InspectMessage")
+	requirements.NoError(err, "InspectMessage")
 
-	assert.Equal(1, insp.RecipientCounts["from"], "RecipientCounts[from]")
-	assert.Equal(2, insp.RecipientCounts["to"], "RecipientCounts[to]")
+	assertions.Equal(1, insp.RecipientCounts["from"], "RecipientCounts[from]")
+	assertions.Equal(2, insp.RecipientCounts["to"], "RecipientCounts[to]")
 }
 
 // TestInspectMessage_RecipientDisplayNames verifies that InspectMessage correctly
@@ -177,4 +177,19 @@ func TestInspectMessage_RecipientDisplayNames(t *testing.T) {
 
 	key := "from:sender@example.com"
 	assert.Equal(t, "Custom Display Name", insp.RecipientDisplayName[key], "RecipientDisplayName[%s]", key)
+}
+
+func TestInspectMessage_BareParticipant(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	f := storetest.New(t)
+	id := f.CreateMessage("inspect-bare-msg")
+	pid, err := f.Store.EnsureParticipantByIdentifier("slack", "synthetic-bare", "")
+	requirements.NoError(err)
+	requirements.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{pid}, []string{"Raw envelope name"}))
+	got, err := f.Store.InspectMessage("inspect-bare-msg")
+	requirements.NoError(err)
+	assertions.Equal(1, got.RecipientCounts["from"])
+	assertions.Equal("Raw envelope name", got.RecipientDisplayName["from:"])
 }

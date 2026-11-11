@@ -234,7 +234,7 @@ func (r Resolver) prepareCandidate(
 
 	for _, evidence := range claim.Evidence {
 		status := statuses[effectiveEvidenceTupleKey(evidence)]
-		if !status.supported {
+		if !status.supported || evidence.PolicyExcluded {
 			continue
 		}
 		if evidence.PersonID != input.PersonID || evidence.Input.PersonID != input.PersonID ||
@@ -1077,7 +1077,7 @@ func resolverInputFingerprint(
 				Key: resolverEvidenceKey(evidence), Input: evidenceKeyView(evidence.Input),
 				Status: resolverFingerprintStatus{
 					PersonID: status.personID, EvidenceKey: status.key, SourceVersion: status.sourceVersion,
-					Supported: status.supported, EventID: status.eventID, Reason: status.reason,
+					Supported: status.supported && !evidence.PolicyExcluded, EventID: status.eventID, Reason: status.reason,
 				},
 			})
 		}

@@ -60,7 +60,7 @@ type identityDiscoveryMessage struct {
 func (s *Store) CountIdentityDiscoveryMessagesContext(ctx context.Context, sourceID int64) (int64, error) {
 	var count int64
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(DISTINCT m.id) FROM messages m WHERE m.source_id = ?`, sourceID,
+		`SELECT COUNT(DISTINCT m.id) FROM messages m WHERE m.source_id = ? AND `+FullMessageWhere("m"), sourceID,
 	).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count identity discovery messages: %w", err)
 	}
@@ -83,7 +83,7 @@ func (s *Store) ScanIdentityDiscoveryPageContext(
 		       COALESCE(m.source_is_from_me, FALSE),
 		       COALESCE(m.sent_at, m.received_at, m.internal_date, m.archived_at)
 		FROM messages m
-		WHERE m.source_id = ? AND m.id > ?
+		WHERE `+FullMessageWhere("m")+` AND m.source_id = ? AND m.id > ?
 		ORDER BY m.id
 		LIMIT ?
 	`, sourceID, afterID, limit)
@@ -139,7 +139,7 @@ func (s *Store) ScanIdentityObservationsForSourceMessageIDsContext(
 		       COALESCE(m.source_is_from_me, FALSE),
 		       COALESCE(m.sent_at, m.received_at, m.internal_date, m.archived_at)
 		FROM messages m
-		WHERE m.source_id = ? AND m.source_message_id IN (%s)
+		WHERE `+FullMessageWhere("m")+` AND m.source_id = ? AND m.source_message_id IN (%s)
 		ORDER BY m.id
 	`, func(rows *loggedRows) error {
 		message, scanErr := scanIdentityDiscoveryMessage(rows)

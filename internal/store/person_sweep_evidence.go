@@ -251,7 +251,7 @@ func (s *Store) personSweepReconcileChanges(ctx context.Context, request peoples
 	rows, err := s.db.QueryContext(ctx, s.Rebind(fmt.Sprintf(`
 		SELECT m.id FROM messages m JOIN conversations c ON c.id = m.conversation_id
 		WHERE %s AND m.id > ? AND m.id <= ? AND %s AND (%s)
-		ORDER BY m.id LIMIT ?`, LiveMessagesWhere("m", true), lane, predicate)), args...)
+		ORDER BY m.id LIMIT ?`, (LiveMessagesWhere("m", true)+" AND "+FullMessageWhere("m")), lane, predicate)), args...)
 	if err != nil {
 		return nil, request.ReconcileAfter, false, fmt.Errorf("scan person sweep reconciliation: %w", err)
 	}
@@ -293,7 +293,13 @@ func parsePersonSweepNumericKey(value string) (int64, error) {
 }
 
 func resolvePersonSweepScope(ctx context.Context, s *Store, personID int64) (personscope.Scope, error) {
-	person, err := s.GetPersonContext(ctx, personID)
+	var person *Person
+	var err error
+	if snapshot, ok := ctx.Value(readSnapshotKey{}).(*readSnapshot); ok && snapshot.db == s.db.DB {
+		person, err = s.getPersonTx(ctx, snapshot.tx, personID)
+	} else {
+		person, err = s.GetPersonContext(ctx, personID)
+	}
 	if err != nil {
 		return personscope.Scope{}, fmt.Errorf("resolve durable person %d: %w", personID, err)
 	}
@@ -374,7 +380,7 @@ func (s *Store) hydratePersonSweepMessageSet(
 		JOIN sources s ON s.id = m.source_id
 		LEFT JOIN message_bodies mb ON mb.message_id = m.id
 		WHERE m.id IN (%s) AND %s AND %s AND (%s)%s
-		ORDER BY m.id`, placeholders, LiveMessagesWhere("m", true), laneSQL, predicate,
+		ORDER BY m.id`, placeholders, (LiveMessagesWhere("m", true)+" AND "+FullMessageWhere("m")), laneSQL, predicate,
 		boundSQL)), args...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("read person sweep messages: %w", err)
@@ -551,7 +557,7 @@ func (s *Store) personSweepHistoricalCandidatesQuery(
 	args = append(args, request.Limit)
 	return s.Rebind(fmt.Sprintf(`SELECT m.id FROM messages m
 		JOIN conversations c ON c.id=m.conversation_id WHERE %s AND (%s) AND (%s)%s%s%s
-		ORDER BY %s DESC,m.id DESC LIMIT ?`, LiveMessagesWhere("m", true), predicate,
+		ORDER BY %s DESC,m.id DESC LIMIT ?`, (LiveMessagesWhere("m", true) + " AND " + FullMessageWhere("m")), predicate,
 		lanePredicate, authorshipPredicate, datePredicate, boundSQL, eventTime)), args, nil
 }
 

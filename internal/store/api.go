@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/calevent"
-	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/senderauth"
 	"go.kenn.io/msgvault/internal/sourcescope"
@@ -24,40 +23,48 @@ import (
 // bare name. The store-backed API used to read only p.email_address,
 // which dropped phone-only and identifier-only participants (synctech
 // SMS/MMS, etc.). Standard SQL (CASE + ||) — works on SQLite and PG.
-var participantDisplaySQL = `COALESCE(
-		CASE
-			WHEN COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), '')) <> ''
-			  AND COALESCE(NULLIF(` + identityindex.SenderAddressExpr("mr", "p") + `, ''), NULLIF(p.phone_number, '')) <> ''
-			THEN COALESCE(NULLIF(TRIM(mr.display_name), ''), TRIM(p.display_name))
-				|| ' <'
-				|| COALESCE(NULLIF(` + identityindex.SenderAddressExpr("mr", "p") + `, ''), p.phone_number)
-				|| '>'
-			ELSE COALESCE(
-				NULLIF(` + identityindex.SenderAddressExpr("mr", "p") + `, ''),
-				NULLIF(p.phone_number, ''),
-				NULLIF(TRIM(mr.display_name), ''),
-				NULLIF(TRIM(p.display_name), ''),
-				` + participantXUserIDSQL + `,
-				''
-			)
-		END,
-		''
-	)`
+func participantNameValueSQL(value string) string {
+	return `CASE WHEN ` + FullParticipantNameWhere("p.id", value) +
+		` THEN NULLIF(TRIM(` + value + `), '') END`
+}
 
 // Numeric X IDs are display fallbacks, never persisted as observed names.
 const participantXUserIDSQL = `(SELECT pi.identifier_value FROM participant_identifiers pi
     WHERE pi.participant_id = p.id AND pi.identifier_type = 'x_user'
     ORDER BY pi.identifier_value LIMIT 1)`
 
-var participantSenderEmailSQL = `COALESCE(NULLIF(` + identityindex.SenderAddressExpr("mr", "p") + `, ''), '')`
+func participantContactValueSQL(kind ContactAddressKind, value string) string {
+	return `CASE WHEN ` + FullParticipantValueWhere("p.id", "'"+string(kind)+"'", value) +
+		` THEN NULLIF(` + value + `, '') END`
+}
 
-const participantSenderNameSQL = `COALESCE(NULLIF(TRIM(COALESCE(NULLIF(mr.display_name, ''), p.display_name)), ''), ` + participantXUserIDSQL + `, '')`
-const participantSenderPhoneSQL = `COALESCE(NULLIF(p.phone_number, ''), '')`
+// participantSenderAddressSQL keeps a relayed author's envelope address and
+// otherwise uses the participant's eligible email.
+var participantSenderAddressSQL = `COALESCE(CASE WHEN mr.is_relayed THEN NULLIF(mr.email_address, '') END, ` +
+	participantContactValueSQL(ContactAddressEmail, "p.email_address") + `)`
 
-var participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
+var participantDisplaySQL = func() string {
+	name := `COALESCE(` + participantNameValueSQL("mr.display_name") + `,` +
+		participantNameValueSQL("p.display_name") + `)`
+	address := `COALESCE(` + participantSenderAddressSQL + `,` +
+		participantContactValueSQL(ContactAddressPhone, "p.phone_number") + `)`
+	return `COALESCE(CASE
+		WHEN NULLIF(TRIM(` + name + `), '') IS NOT NULL
+		 AND NULLIF(` + address + `, '') IS NOT NULL
+		THEN ` + name + ` || ' <' || ` + address + ` || '>'
+		ELSE COALESCE(NULLIF(` + address + `, ''), NULLIF(TRIM(` + name + `), ''), ` + participantXUserIDSQL + `, '')
+	END, '')`
+}()
+
+var (
+	participantSenderEmailSQL   = `COALESCE(` + participantSenderAddressSQL + `, '')`
+	participantSenderNameSQL    = `COALESCE(NULLIF(TRIM(COALESCE(` + participantNameValueSQL("mr.display_name") + `,` + participantNameValueSQL("p.display_name") + `)), ''), ` + participantXUserIDSQL + `, '')`
+	participantSenderPhoneSQL   = `COALESCE(` + participantContactValueSQL(ContactAddressPhone, "p.phone_number") + `, '')`
+	participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
 			` + participantSenderEmailSQL + ` as from_email,
 			` + participantSenderNameSQL + ` as from_name,
 			` + participantSenderPhoneSQL + ` as from_phone`
+)
 
 // APIMessage represents a message for API responses.
 type APIMessage struct {
@@ -842,7 +849,7 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 	// already narrowed by another filter.
 	var operators []searchOperator
 	for _, address := range q.FromAddrs {
-		condition, matching, senderArgs := search.SenderLookup(address, s.dialect.UnicodeLowerExpression, "messages", "message_recipients", "participants", "m")
+		condition, matching, senderArgs := search.SenderLookup(address, s.dialect.UnicodeLowerExpression, "messages", "message_recipients", "participants", "m", SenderEligibility)
 		if !rowIDs {
 			operators = append(operators, searchOperator{condition: len(conditions), matching: matching, args: senderArgs})
 		}
@@ -858,7 +865,8 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 			if !rowIDs {
 				operators = append(operators, searchOperator{condition: len(conditions), matching: fmt.Sprintf(`SELECT mr2.message_id FROM message_recipients mr2 INDEXED BY idx_message_recipients_participant
 					WHERE mr2.recipient_type = '%s' AND mr2.participant_id IN
-					(SELECT p2.id FROM participants p2 WHERE LOWER(p2.email_address) LIKE ? ESCAPE '\')`, group.role), args: []any{arg}})
+					(SELECT p2.id FROM participants p2 WHERE LOWER(p2.email_address) LIKE ? ESCAPE '\'
+					AND %s)`, group.role, FullParticipantValueWhere("p2.id", "'email'", "p2.email_address")), args: []any{arg}})
 			}
 			conditions = append(conditions, fmt.Sprintf(`EXISTS (
 			SELECT 1 FROM message_recipients mr2
@@ -866,7 +874,8 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 			WHERE mr2.message_id = m.id
 			AND mr2.recipient_type = '%s'
 			AND LOWER(p2.email_address) LIKE ? ESCAPE '\'
-		)`, group.role))
+			AND %s
+		)`, group.role, FullParticipantValueWhere("p2.id", "'email'", "p2.email_address")))
 			args = append(args, arg)
 		}
 	}

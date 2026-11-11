@@ -2120,7 +2120,7 @@ func (e *DuckDBEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 		direct_sender AS (
 			SELECT msg.id as message_id,
 				   COALESCE(p.email_address, '') as from_email,
-				   `+directSenderNameExpr("p", "")+` as from_name,
+				   `+directSenderNameExpr()+` as from_name,
 				   COALESCE(p.phone_number, '') as from_phone
 			FROM msg
 			JOIN filtered_msgs fm ON fm.id = msg.id
@@ -2423,8 +2423,12 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 	policyWhere := scannerPolicySQL(store.LexicalMessageWhere("m", q.IncludeCold))
 	conditions = append(conditions, searchMessageVisibilityWhere("m", q), policyWhere)
 
+	// Live scanner reads apply the same value eligibility as the SQLite store.
+	scannerEligibility := func(participant, value, kind string) string {
+		return scannerPolicySQL(store.SenderEligibility(participant, value, kind))
+	}
 	for _, address := range q.FromAddrs {
-		condition, _, senderArgs := search.SenderLookup(address, func(column string) string { return "LOWER(" + column + ")" }, "sqlite_db.messages", "sqlite_db.message_recipients", "sqlite_db.participants", "m")
+		condition, _, senderArgs := search.SenderLookup(address, func(column string) string { return "LOWER(" + column + ")" }, "sqlite_db.messages", "sqlite_db.message_recipients", "sqlite_db.participants", "m", scannerEligibility)
 		conditions = append(conditions, condition)
 		args = append(args, senderArgs...)
 	}
@@ -2440,7 +2444,8 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 			placeholders[i] = "?"
 			args = append(args, addr)
 		}
-		conditions = append(conditions, fmt.Sprintf("LOWER(p_to.email_address) IN (%s)", strings.Join(placeholders, ",")))
+		conditions = append(conditions, fmt.Sprintf("LOWER(p_to.email_address) IN (%s)", strings.Join(placeholders, ",")),
+			scannerPolicySQL(store.FullParticipantValueWhere("p_to.id", "'email'", "p_to.email_address")))
 	}
 
 	// Label filter
@@ -2547,8 +2552,8 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 			COALESCE(conv.source_conversation_id, ''),
 			COALESCE(m.subject, ''),
 			COALESCE(m.snippet, ''),
-			COALESCE(`+identityindex.SenderAddressExpr("mr_sender", "p_sender")+`, ''),
-			`+directSenderNameExpr("p_sender", "sqlite_db.")+`,
+			%s,
+			%s,
 			m.sent_at,
 			COALESCE(m.size_estimate, 0),
 			m.has_attachments,
@@ -2564,7 +2569,9 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 		WHERE %s
 		ORDER BY m.sent_at DESC
 		LIMIT ? OFFSET ?
-	`, strings.Join(joins, "\n"), strings.Join(conditions, " AND "))
+	`, "COALESCE(CASE WHEN mr_sender.is_relayed THEN NULLIF(mr_sender.email_address, '') END, NULLIF("+scannerPolicySQL(eligibleParticipantEmailExpr("p_sender"))+", ''), '')",
+		scannerPolicySQL(eligibleRecipientNameExpr("mr_sender", "p_sender")),
+		strings.Join(joins, "\n"), strings.Join(conditions, " AND "))
 
 	args = append(args, limit, offset)
 
@@ -2869,7 +2876,7 @@ func (e *DuckDBEngine) SearchFast(ctx context.Context, q *search.Query, filter M
 		direct_sender AS (
 			SELECT msg.id as message_id,
 				   COALESCE(p.email_address, '') as from_email,
-				   `+directSenderNameExpr("p", "")+` as from_name,
+				   `+directSenderNameExpr()+` as from_name,
 				   COALESCE(p.phone_number, '') as from_phone
 			FROM msg
 			JOIN p ON p.id = msg.sender_id
@@ -2994,7 +3001,7 @@ func (e *DuckDBEngine) SearchFastCount(ctx context.Context, q *search.Query, fil
 		direct_sender AS (
 			SELECT msg.id as message_id,
 				   COALESCE(p.email_address, '') as from_email,
-				   `+directSenderNameExpr("p", "")+` as from_name,
+				   `+directSenderNameExpr()+` as from_name,
 				   COALESCE(p.phone_number, '') as from_phone
 			FROM msg
 			JOIN p ON p.id = msg.sender_id
@@ -3309,7 +3316,7 @@ func (e *DuckDBEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 		direct_sender AS (
 			SELECT msg.id as message_id,
 				   COALESCE(p.email_address, '') as from_email,
-				   `+directSenderNameExpr("p", "")+` as from_name,
+				   `+directSenderNameExpr()+` as from_name,
 				   COALESCE(p.phone_number, '') as from_phone
 			FROM msg
 			JOIN p ON p.id = msg.sender_id
@@ -3586,7 +3593,7 @@ func (e *DuckDBEngine) ListThread(ctx context.Context, q ThreadQuery) (*ThreadPa
 
 func appendDuckDBSenderConditions(conditions []string, args []any, addresses []string) ([]string, []any) {
 	for _, address := range addresses {
-		condition, _, senderArgs := search.SenderLookup(address, func(column string) string { return "LOWER(" + column + ")" }, "msg", "mr", "p", "msg")
+		condition, _, senderArgs := search.SenderLookup(address, func(column string) string { return "LOWER(" + column + ")" }, "msg", "mr", "p", "msg", nil)
 		conditions = append(conditions, condition)
 		args = append(args, senderArgs...)
 	}

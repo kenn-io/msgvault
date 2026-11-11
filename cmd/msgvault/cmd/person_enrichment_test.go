@@ -428,10 +428,21 @@ func TestPersonEnrichmentConsentProfilesStatusAndRevoke(t *testing.T) {
 	provider, profile, _ := scheduleWorkerProfile(t, f, "cli-controls", "TEST_CLI_PROVIDER_KEY")
 	config := personenrichment.Config{Enabled: true, SuppressionKeyEnv: "TEST_SUPPRESSION_KEY", Providers: []personenrichment.ProviderConfig{provider}}
 	deps := testPersonEnrichmentCommandDeps(t, config, f.Store)
+	writerOpens, readerOpens := 0, 0
+	deps.openStore = func() (*store.Store, func(), error) {
+		writerOpens++
+		return f.Store, func() {}, nil
+	}
+	deps.openReadStore = func() (*store.Store, func(), error) {
+		readerOpens++
+		return f.Store, func() {}, nil
+	}
 
 	profiles, _, err := executePersonEnrichmentCommand(t, deps, "", "profiles", "--json")
 	requirements.NoError(err)
 	checks.Contains(profiles, profile.Fingerprint)
+	checks.Equal(0, writerOpens, "profile inspection must use the initialized read opener")
+	checks.Equal(1, readerOpens)
 	_, _, err = executePersonEnrichmentCommand(t, deps, "", "consent", profile.Fingerprint)
 	requirements.NoError(err)
 	status, _, err := executePersonEnrichmentCommand(t, deps, "", "status", "--limit", "1", "--json")

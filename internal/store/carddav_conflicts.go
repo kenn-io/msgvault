@@ -514,6 +514,11 @@ func (s *Store) CommitCardDAVConflictLocalTombstoneContext(
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
+		// Recipient replacement takes this lock before message and person rows,
+		// which contact changes invalidate below.
+		if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		mapping, err := s.findCardDAVResourceTx(ctx, tx, identity.AddressBookID, identity.Href)
 		if err != nil {
 			return ErrCardDAVConflictStale
@@ -1314,6 +1319,11 @@ func (s *Store) ResolveCardDAVConflictRemoteContext(
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
+		// Recipient replacement takes this lock before message and person rows,
+		// which contact changes invalidate below.
+		if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		mapping, err := s.findCardDAVResourceTx(ctx, tx, identity.AddressBookID, identity.Href)
 		if err != nil || mapping.MappingRevision != input.ExpectedMappingRevision {
 			return ErrCardDAVConflictStale
@@ -1441,6 +1451,11 @@ func (s *Store) ResolveCardDAVConflictLocalTombstoneContext(
 			return err
 		}
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		// Recipient replacement takes this lock before message and person rows,
+		// which contact changes invalidate below.
+		if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
 			return err
 		}
 		mapping, err := s.findCardDAVResourceTx(ctx, tx, identity.AddressBookID, identity.Href)

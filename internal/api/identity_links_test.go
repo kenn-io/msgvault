@@ -107,12 +107,14 @@ func TestLinkIdentity_CreatesEdgeAndReportsReadyCache(t *testing.T) {
 	srv, wrapped := newIdentityLinkTestServer(t)
 	a := wrapped.mustParticipant(t, "alice@example.com", "Alice", "example.com")
 	b := wrapped.mustParticipant(t, "alice@personal.example", "Alice P", "personal.example")
+	beforeRevision, err := wrapped.IdentityRevision()
+	require.NoError(err)
 
 	w := postIdentityLink(t, srv, "/api/v1/identity/links", IdentityLinkRequest{ParticipantA: a, ParticipantB: b})
 
 	require.Equal(http.StatusOK, w.Code, "body: %s", w.Body.String())
 	resp := decodeIdentityLinkResponse(t, w)
-	assert.Equal(int64(1), resp.IdentityRevision)
+	assert.Equal(beforeRevision+1, resp.IdentityRevision)
 	assert.Equal(identityCacheStateReady, resp.CacheState)
 	assert.Equal(1, wrapped.refreshCalls)
 }
@@ -244,12 +246,14 @@ func TestLinkIdentity_RefresherFailureReportsStaleWithoutFailingRequest(t *testi
 	wrapped.refreshErr = errors.New("cache build lock held by another process")
 	a := wrapped.mustParticipant(t, "alice@example.com", "Alice", "example.com")
 	b := wrapped.mustParticipant(t, "alice@personal.example", "Alice P", "personal.example")
+	beforeRevision, err := wrapped.IdentityRevision()
+	require.NoError(err)
 
 	w := postIdentityLink(t, srv, "/api/v1/identity/links", IdentityLinkRequest{ParticipantA: a, ParticipantB: b})
 
 	require.Equal(http.StatusOK, w.Code, "body: %s", w.Body.String())
 	resp := decodeIdentityLinkResponse(t, w)
-	assert.Equal(int64(1), resp.IdentityRevision, "mutation is durable despite refresh failure")
+	assert.Equal(beforeRevision+1, resp.IdentityRevision, "mutation is durable despite refresh failure")
 	assert.Equal(identityCacheStateStale, resp.CacheState)
 }
 

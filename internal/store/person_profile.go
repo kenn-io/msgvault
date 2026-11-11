@@ -103,6 +103,11 @@ func (s *Store) ApplyPersonProfilePatchContext(
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
+		// Recipient replacement takes this lock before message and person rows,
+		// which contact changes invalidate below.
+		if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		var updatedID int64
 		err := tx.QueryRowContext(ctx, `UPDATE persons
 			SET revision = revision + 1,
@@ -120,6 +125,11 @@ func (s *Store) ApplyPersonProfilePatchContext(
 		if err := s.applyPersonProfilePatchTx(ctx, tx, personID, patch); err != nil {
 			return err
 		}
+		if personProfilePatchChangesContactPoints(patch) {
+			if err := s.invalidatePersonContactPointParticipantsTx(ctx, tx, personID); err != nil {
+				return err
+			}
+		}
 		if personProfilePatchChangesEnrichmentIdentity(patch) {
 			if err := s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(
 				ctx, tx, personID); err != nil {
@@ -130,6 +140,11 @@ func (s *Store) ApplyPersonProfilePatchContext(
 		return err
 	})
 	return profile, err
+}
+
+func personProfilePatchChangesContactPoints(patch PersonProfilePatch) bool {
+	return patch.ContactPoints != nil &&
+		(len(patch.ContactPoints.Add) > 0 || len(patch.ContactPoints.Supersede) > 0)
 }
 
 func personProfilePatchChangesEnrichmentIdentity(patch PersonProfilePatch) bool {

@@ -31,7 +31,7 @@ func escapeLikeSubject(s string) string {
 // are expected to prepend that themselves (filterExistsClause and
 // filteredChunkAndMessageCount seed it from store.LiveMessagesWhere;
 // applyFilterClauses uses it inline).
-func buildPGFilterClauses(f vector.Filter, bind func(any) string) []string {
+func buildPGFilterClauses(f vector.Filter, bind func(any) string, eligible search.SenderEligibility) []string {
 	clauses := search.AccountScopeConditionsBound(f.AccountScopes, "m", bind)
 	if len(f.MessageIDs) > 0 {
 		clauses = append(clauses, fmt.Sprintf("m.id = ANY(%s::bigint[])", bind(int64Array(f.MessageIDs))))
@@ -64,14 +64,14 @@ func buildPGFilterClauses(f vector.Filter, bind func(any) string) []string {
 		clauses = append(clauses, "("+strings.Join(parts, " OR ")+")")
 	}
 	for _, term := range f.SenderTerms {
-		predicate, _, senderArgs := search.SenderLookup(term, (&store.PostgreSQLDialect{}).UnicodeLowerExpression, "messages", "message_recipients", "participants", "m")
+		predicate, _, senderArgs := search.SenderLookup(term, (&store.PostgreSQLDialect{}).UnicodeLowerExpression, "messages", "message_recipients", "participants", "m", eligible)
 		for _, arg := range senderArgs {
 			predicate = strings.Replace(predicate, "?", bind(arg), 1)
 		}
 		clauses = append(clauses, predicate)
 	}
 	if f.SenderDomain != "" {
-		clauses = append(clauses, search.SenderDomainCondition(bind(f.SenderDomain)))
+		clauses = append(clauses, search.SenderDomainCondition(bind(f.SenderDomain), eligible))
 	}
 	for _, group := range f.SenderGroups {
 		if len(group) == 0 {
@@ -192,8 +192,8 @@ func buildPGFilterClauses(f vector.Filter, bind func(any) string) []string {
 // buildPGFilterFragment converts buildPGFilterClauses output into the
 // " AND ..." string appended after an existing WHERE predicate. Returns
 // "" when the filter is empty so callers can safely concatenate.
-func buildPGFilterFragment(f vector.Filter, bind func(any) string) string {
-	clauses := buildPGFilterClauses(f, bind)
+func buildPGFilterFragment(f vector.Filter, bind func(any) string, eligible search.SenderEligibility) string {
+	clauses := buildPGFilterClauses(f, bind, eligible)
 	if len(clauses) == 0 {
 		return ""
 	}

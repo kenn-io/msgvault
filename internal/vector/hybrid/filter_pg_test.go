@@ -3,10 +3,7 @@
 package hybrid
 
 import (
-	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"os"
 	"strings"
 	"testing"
@@ -17,11 +14,11 @@ import (
 
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // openFilterPGTestDB connects to MSGVAULT_TEST_DB on a per-test schema
-// and creates the participants + labels tables BuildFilter resolves
-// against. Skips when MSGVAULT_TEST_DB is unset or not a postgres DSN.
+// with the full archive schema needed by value eligibility. Skips when MSGVAULT_TEST_DB is unset or not a postgres DSN.
 func openFilterPGTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	url := os.Getenv("MSGVAULT_TEST_DB")
@@ -29,48 +26,9 @@ func openFilterPGTestDB(t *testing.T) *sql.DB {
 		t.Skip("hybrid BuildFilter pgvector tests require MSGVAULT_TEST_DB to point at a PostgreSQL DSN")
 	}
 
-	buf := make([]byte, 8)
-	_, err := rand.Read(buf)
-	require.NoError(t, err, "random schema name")
-	schemaName := "hybrid_filter_test_" + hex.EncodeToString(buf)
+	db := testutil.NewTestStore(t).DB()
 
-	setup, err := sql.Open("pgx", url)
-	require.NoError(t, err, "open setup")
-	defer func() { _ = setup.Close() }()
-	_, err = setup.ExecContext(t.Context(), "CREATE SCHEMA "+schemaName)
-	require.NoError(t, err, "create schema")
-
-	sep := "?"
-	if strings.Contains(url, "?") {
-		sep = "&"
-	}
-	testURL := url + sep + "search_path=" + schemaName + ",public"
-
-	db, err := sql.Open("pgx", testURL)
-	require.NoError(t, err, "open")
-	// Cleanup runs after t.Context() is canceled.
-	t.Cleanup(func() {
-		_ = db.Close()
-		cleanup, err := sql.Open("pgx", url)
-		if err != nil {
-			return
-		}
-		defer func() { _ = cleanup.Close() }()
-		_, _ = cleanup.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA "+schemaName+" CASCADE")
-	})
-
-	_, err = db.ExecContext(t.Context(), `
-		CREATE TABLE participants (
-			id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-			email_address TEXT
-		);
-		CREATE TABLE labels (
-			id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-			name TEXT
-		);`)
-	require.NoError(t, err, "create participants/labels")
-
-	_, err = db.ExecContext(t.Context(), `INSERT INTO participants (email_address) VALUES
+	_, err := db.ExecContext(t.Context(), `INSERT INTO participants (email_address) VALUES
 		('alice@example.com'), ('bob@example.com'),
 		('carol@other.com'), ('dave.work@example.com')`)
 	require.NoError(t, err, "seed participants")

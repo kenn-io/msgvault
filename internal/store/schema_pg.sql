@@ -1007,7 +1007,7 @@ CREATE TABLE IF NOT EXISTS person_fact_evidence_status_events (
     supported      BOOLEAN NOT NULL,
     reason         TEXT NOT NULL CHECK (reason IN (
                        'source-deleted', 'source-edited', 'scope-unlinked',
-                       'identity-reassigned', 'source-reimported', 'scope-relinked')),
+                       'identity-reassigned', 'source-reimported', 'scope-relinked', 'conversation-cold', 'conversation-full')),
     created_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(person_id, generation_id, evidence_key, source_version)
 );
@@ -3199,7 +3199,7 @@ CREATE INDEX IF NOT EXISTS idx_participant_observations_provider_user
 CREATE UNIQUE INDEX IF NOT EXISTS idx_participant_observations_identity
     ON participant_contact_observations(
         participant_id, source_id, address_kind, service_id, scope_kind, scope_value,
-        normalized_value
+        normalized_value, COALESCE(provider_user_id, ''), COALESCE(source_ref, '')
     ) WHERE active_until IS NULL AND superseded_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS identity_match_candidates (
@@ -3999,3 +3999,11 @@ CREATE TABLE IF NOT EXISTS docbank_attachment_processing (
 CREATE INDEX IF NOT EXISTS idx_docbank_processing_due
  ON docbank_attachment_processing(destination_key, fingerprint, next_action_at, content_hash)
  WHERE next_action_at IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS participant_contact_observation_conversations (
+ observation_id BIGINT NOT NULL REFERENCES participant_contact_observations(id) ON DELETE CASCADE,
+ conversation_id BIGINT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+ PRIMARY KEY (observation_id, conversation_id)
+);
+CREATE INDEX IF NOT EXISTS idx_participant_observation_conversations_conversation
+ ON participant_contact_observation_conversations(conversation_id, observation_id);
