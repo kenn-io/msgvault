@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-10"
+last_edited: "2026-11-11"
 title: Meta Webhooks
 description: Archive Facebook Page and Instagram comments, mentions and inbox messages as Meta reports them, between polling syncs.
 ---
@@ -73,8 +73,8 @@ A message lands in the same chat that inbox sync uses; a chat that first
 appears through a webhook gets the customer's name on the next sync. A
 webhook only adds messages that are not archived yet, so a late event never
 replaces text that a sync updated. Messages without text are skipped. A
-dropped inbox delivery is lost if the message has already left the 20 most
-recent messages that sync can read.
+message the daemon skips after an hour of failures is lost if it has already
+left the 20 most recent messages that sync can read.
 
 ## How deliveries are applied
 
@@ -88,18 +88,23 @@ A post or comment that mentions the Page is read from Meta and archived in the
 Page's comment source as its own conversation, with the post it belongs to.
 A new or edited comment is read from Meta with the Page token rather than
 taken from the delivery, so a late or repeated delivery cannot bring back older
-text. A post or parent comment that is not archived yet is read too. An
-Instagram comment is also read from Meta, and media that is not archived yet
-must be owned by the configured account; otherwise the change is logged and
-skipped. When a delivery cannot be
+text. A post or parent comment that is not archived yet is read too. For a hide
+or unhide, the daemon reads whether Meta hides the comment now and records
+that, so a repeated hide cannot hide a visible comment. An Instagram comment
+is also read from Meta, and media that is not archived yet must be owned by
+the configured account; otherwise the change is logged and skipped.
+
+The daemon applies a delivery one change at a time. When a change cannot be
 applied, for example while a polling sync of the same Page is running, the
-daemon retries it with increasing waits and holds later deliveries until it
-succeeds. After an hour of failures it logs the delivery and drops it; the
-next polling sync still archives the comment text. No sync can find Instagram
-caption or comment mentions or posts by others that mention a Page, so a
-dropped mention delivery is lost. A change that can never be
-applied, such as a comment deleted before it was read, is logged and skipped
-without holding back the other changes in its delivery.
+daemon retries it with increasing waits. Later changes and deliveries wait
+until it succeeds. Changes that already succeeded are not applied again.
+
+Each delivery gets one hour of retries. After that the daemon logs the failing
+change and skips it, then tries each remaining change of the delivery once.
+The next polling sync still archives the comment text. No sync can find
+Instagram caption or comment mentions or posts by others that mention a Page,
+so a skipped mention is lost. A change that can never be applied, such as a
+comment deleted before it was read, is logged and skipped at once.
 
 ## Limits
 
@@ -109,5 +114,6 @@ without holding back the other changes in its delivery.
   edits and deletions, read receipts, other feed changes and other fields are
   logged and ignored.
 - Instagram does not send edits, hides or removals of comments.
-- A hide or unhide for a comment that is not archived yet is ignored.
+- A hide or unhide for a comment that is not archived yet is ignored. Polling
+  sync does not read hidden state, so that comment is not marked hidden.
 - Deliveries larger than 8 MiB are refused.

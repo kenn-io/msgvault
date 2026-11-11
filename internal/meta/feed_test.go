@@ -3,6 +3,7 @@ package meta
 import (
 	"database/sql"
 	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"slices"
@@ -33,6 +34,11 @@ func TestApplyFeedArchivesCommentsAndState(t *testing.T) {
 		reads = append(reads, r.URL.Path)
 		switch r.URL.Path {
 		case "/v26.0/100_202":
+			if r.URL.Query().Get("fields") == "id,is_hidden" {
+				reads[len(reads)-1] += " is_hidden"
+				_, _ = fmt.Fprint(w, `{"id":"100_202","is_hidden":true}`)
+				return
+			}
 			_, _ = fmt.Fprintf(w, `{"id":"100_202","message":%q,"created_time":"2026-10-01T12:30:00+0000","from":{"id":"301","name":"Example Visitor"},"parent":{"id":"100_201"}}`, replyText)
 		case "/v26.0/me":
 			_, _ = fmt.Fprint(w, `{"id":"100","name":"Example Page","category":"Community"}`)
@@ -68,7 +74,7 @@ func TestApplyFeedArchivesCommentsAndState(t *testing.T) {
 	require.NoError(ApplyFeed(t.Context(), st, c, "9", "100", feedValues(edit,
 		`{"item":"comment","verb":"hide","post_id":"100_200","comment_id":"100_202","parent_id":"100_201"}`,
 		`{"item":"comment","verb":"remove","post_id":"100_200","comment_id":"100_201","parent_id":"100_200"}`)))
-	assert.Equal([]string{"/v26.0/100_202"}, reads, "archived ancestors are not read again")
+	assert.Equal([]string{"/v26.0/100_202", "/v26.0/100_202 is_hidden"}, reads, "archived ancestors are not read again")
 	body, err = st.GetMessageBodyText(t.Context(), got.ID)
 	require.NoError(err)
 	assert.Equal("edited reply", body)
@@ -86,6 +92,57 @@ func TestApplyFeedArchivesCommentsAndState(t *testing.T) {
 	var webhookRuns int
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM sync_runs WHERE source_id=? AND sync_type=? AND status='completed'`, src.ID, WebhookSyncType).Scan(&webhookRuns))
 	assert.Equal(3, webhookRuns)
+}
+
+// Hidden state is read from Graph, so a hide that Meta delivers again after
+// an unhide cannot hide a visible comment.
+func TestApplyFeedHiddenStateFollowsGraph(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	hidden := false
+	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v26.0/me":
+			_, _ = fmt.Fprint(w, `{"id":"100","name":"Example Page","category":"Community"}`)
+		case r.URL.Path == "/v26.0/100_200":
+			_, _ = fmt.Fprint(w, `{"id":"100_200","message":"Example post","from":{"id":"100","name":"Example Page"}}`)
+		case r.URL.Path == "/v26.0/100_201" && r.URL.Query().Get("fields") == "id,is_hidden":
+			_, _ = fmt.Fprintf(w, `{"id":"100_201","is_hidden":%t}`, hidden)
+		case r.URL.Path == "/v26.0/100_201":
+			_, _ = fmt.Fprint(w, `{"id":"100_201","message":"first","created_time":"2026-10-01T12:00:00+0000","from":{"id":"300","name":"Example Customer"}}`)
+		default:
+			assert.Fail("unexpected Graph read", r.URL.Path)
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	src, err := NewImporter(st, c).Register(t.Context(), "9", "100")
+	require.NoError(err)
+	change := func(verb string) string {
+		return `{"item":"comment","verb":"` + verb + `","post_id":"100_200","comment_id":"100_201","parent_id":"100_200"}`
+	}
+	require.NoError(ApplyFeed(t.Context(), st, c, "9", "100", feedValues(change("add"))))
+	id := message(t, st, src.ID, "100_201").ID
+	archivedHidden := func() bool {
+		saved, err := st.GetMessageMetadataContext(t.Context(), id)
+		require.NoError(err)
+		var meta objectMetadata
+		require.NoError(json.Unmarshal([]byte(saved.String), &meta))
+		require.NotNil(meta.Hidden, "hidden state is recorded")
+		return *meta.Hidden
+	}
+
+	hide, unhide := change("hide"), change("unhide")
+	require.NoError(ApplyFeed(t.Context(), st, c, "9", "100", feedValues(hide)))
+	assert.False(archivedHidden(), "a hide records the visibility Graph reports")
+
+	hidden = true
+	require.NoError(ApplyFeed(t.Context(), st, c, "9", "100", feedValues(unhide)))
+	assert.True(archivedHidden(), "an unhide records the visibility Graph reports")
+
+	hidden = false
+	require.NoError(ApplyFeed(t.Context(), st, c, "9", "100", feedValues(unhide)))
+	require.NoError(ApplyFeed(t.Context(), st, c, "9", "100", feedValues(hide)))
+	assert.False(archivedHidden(), "a hide delivered again after the unhide leaves the comment visible")
 }
 
 func TestApplyFeedRefusesUnregisteredPage(t *testing.T) {
