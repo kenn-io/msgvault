@@ -128,7 +128,8 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 			slog.Warn("calendar invite ignored: organizer differs", "event_message_id", id, "organizer", item.component.OrganizerEmail)
 		}
 		apply := !foreign && (!exists || icsRevisionNewer(item.component, old))
-		if apply && exists && e.Status == SyncStatusCancelled {
+		details := !foreign && e.Status != SyncStatusCancelled && (!exists || old.Details == nil || icsRevisionNewer(item.component, calevent.ICSMetadata{Sequence: old.Details.Sequence, Stamp: old.Details.Stamp}))
+		if apply && exists && e.Status == SyncStatusCancelled && old.Details != nil {
 			// Like a provider cancellation, keep the accepted details.
 			old.Sequence, old.Stamp, old.Status = item.meta.Sequence, item.meta.Stamp, SyncStatusCancelled
 			if item.fromEmail && old.Organizer == "" {
@@ -137,12 +138,21 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 			if err := s.setICSMetadataWith(ctx, tx, id, old); err != nil {
 				return err
 			}
-		} else if apply {
+		} else if apply || details {
+			if e.Status != SyncStatusCancelled {
+				item.meta.Details = &calevent.ICSRevision{Sequence: item.component.Sequence, Stamp: item.component.Stamp}
+				if !apply {
+					item.meta.Sequence, item.meta.Stamp, item.meta.Status = old.Sequence, old.Stamp, old.Status
+					if item.meta.Organizer == "" {
+						item.meta.Organizer = old.Organizer
+					}
+				}
+			}
 			if err := s.persistICSDetailsWith(ctx, tx, sourceID, sourceMessageID, familyKey, item); err != nil {
 				return err
 			}
 		}
-		if apply {
+		if apply || details {
 			if exists {
 				if err := s.bumpDerivedDataRevisionContext(ctx, tx); err != nil {
 					return err
