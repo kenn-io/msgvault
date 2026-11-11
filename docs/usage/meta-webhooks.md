@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-10"
+last_edited: "2026-11-11"
 title: Meta Webhooks
 description: Archive Facebook Page and Instagram comment changes as Meta reports them, between polling syncs.
 ---
@@ -62,16 +62,22 @@ arrived and deleted once applied.
 
 A new or edited comment is read from Meta with the Page token rather than
 taken from the delivery, so a late or repeated delivery cannot bring back older
-text. A post or parent comment that is not archived yet is read too. An
-Instagram comment is also read from Meta, and media that is not archived yet
-must be owned by the configured account; otherwise the change is logged and
-skipped. When a delivery cannot be
+text. A post or parent comment that is not archived yet is read too. For a hide
+or unhide, the daemon reads whether Meta hides the comment now and records
+that, so a repeated hide cannot hide a visible comment. An Instagram comment
+is also read from Meta, and media that is not archived yet must be owned by
+the configured account; otherwise the change is logged and skipped.
+
+The daemon applies a delivery one change at a time. When a change cannot be
 applied, for example while a polling sync of the same Page is running, the
-daemon retries it with increasing waits and holds later deliveries until it
-succeeds. After an hour of failures it logs the delivery and drops it; the
-next polling sync still archives the comment text. A change that can never be
-applied, such as a comment deleted before it was read, is logged and skipped
-without holding back the other changes in its delivery.
+daemon retries it with increasing waits. Later changes and deliveries wait
+until it succeeds. Changes that already succeeded are not applied again.
+
+Each delivery gets one hour of retries. After that the daemon logs the failing
+change and skips it, then tries each remaining change of the delivery once.
+The next polling sync still archives the comment text. A change that can never
+be applied, such as a comment deleted before it was read, is logged and
+skipped at once.
 
 ## Limits
 
@@ -79,5 +85,6 @@ without holding back the other changes in its delivery.
   `comments` and `live_comments` fields are applied. Reactions, other feed
   changes and other fields are logged and ignored.
 - Instagram does not send edits, hides or removals of comments.
-- A hide or unhide for a comment that is not archived yet is ignored.
+- A hide or unhide for a comment that is not archived yet is ignored. Polling
+  sync does not read hidden state, so that comment is not marked hidden.
 - Deliveries larger than 8 MiB are refused.

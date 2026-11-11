@@ -24,14 +24,16 @@ const maxAncestorReads = 8
 var ErrInvalidChange = errors.New("invalid webhook change")
 
 // ObjectReader reads the comment a webhook names, and its post and parent
-// comments when they are not archived yet.
+// comments when they are not archived yet. CommentHidden reads whether Meta
+// currently hides a comment.
 type ObjectReader interface {
 	Post(ctx context.Context, id string) (Object, error)
 	Comment(ctx context.Context, id string) (Object, error)
+	CommentHidden(ctx context.Context, id string) (bool, error)
 }
 
-// feedChange is one Page feed webhook change value. Comment text, author and
-// parent are read from Graph, not taken from the change.
+// feedChange is one Page feed webhook change value. Comment text, author,
+// parent and hidden state are read from Graph, not taken from the change.
 type feedChange struct {
 	Item      string `json:"item"`
 	Verb      string `json:"verb"`
@@ -45,8 +47,9 @@ func (c feedChange) isPost() bool {
 
 // ApplyFeed applies Page feed changes for one Page's comment source. New and
 // edited comments are archived through the polling write path, reading a
-// missing post or parent comment first. Hides and unhides are recorded in the
-// comment's metadata, and removed comments and posts are marked deleted.
+// missing post or parent comment first. A hide or unhide reads the comment's
+// current visibility from Graph and records it in the comment's metadata, and
+// removed comments and posts are marked deleted.
 // Other changes, such as reactions, are ignored.
 func ApplyFeed(ctx context.Context, st *store.Store, reader ObjectReader, app, page string, values []jsontext.Value) error {
 	var changes []feedChange
@@ -118,11 +121,18 @@ func (r *importRun) applyFeedChange(ctx context.Context, reader ObjectReader, ch
 		r.sum.MessagesUpdated++
 		return r.imp.store.MarkMessageDeletedContext(ctx, r.source.ID, id)
 	case "hide", "unhide":
-		// A comment polling has not archived yet arrives with its state later.
+		// Polling does not read hidden state, so the state of a comment that
+		// is not archived yet is not recorded.
 		if !archived {
 			return nil
 		}
-		return r.setHidden(ctx, id, change.Verb == "hide")
+		// Recording Graph's current state instead of the verb means a late or
+		// repeated delivery cannot bring back an older state.
+		hidden, err := reader.CommentHidden(ctx, id)
+		if err != nil {
+			return fmt.Errorf("read comment %q: %w", id, err)
+		}
+		return r.setHidden(ctx, id, hidden)
 	}
 	// Reading the comment instead of using the change's text means a late or
 	// repeated delivery cannot replace newer text with older text.

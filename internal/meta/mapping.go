@@ -25,7 +25,8 @@ type objectMetadata struct {
 	Organic            bool   `json:"organic,omitempty"`
 	Visitor            bool   `json:"visitor,omitempty"`
 	Ad                 bool   `json:"ad,omitempty"`
-	// Hidden is set by a webhook hide or unhide; polling keeps it.
+	// Hidden is read from Graph when a webhook reports a hide or unhide;
+	// polling keeps it.
 	Hidden *bool `json:"hidden,omitempty"`
 }
 
