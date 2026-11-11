@@ -52,11 +52,12 @@ func messagesRootCandidates(root string) []string {
 // Discover walks a DYI export root and returns one ThreadDir per thread
 // directory found, sorted by (Section, Name). Absolute and relative root
 // inputs yield the same logical result (paths are converted to absolute).
-// The second result counts message candidates excluded from supported threads.
-func Discover(root string) ([]ThreadDir, int, error) {
-	return discover(root, false)
+func Discover(root string) ([]ThreadDir, error) {
+	threads, _, err := discover(root, false)
+	return threads, err
 }
 
+// discover also counts message candidates excluded from supported threads.
 func discover(root string, reportUnsupported bool) ([]ThreadDir, int, error) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
@@ -160,9 +161,6 @@ func discover(root string, reportUnsupported bool) ([]ThreadDir, int, error) {
 		}
 		return out[i].Name < out[j].Name
 	})
-	if !reportUnsupported {
-		skipped = 0
-	}
 	return out, skipped, nil
 }
 

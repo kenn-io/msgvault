@@ -13,7 +13,7 @@ import (
 func TestDiscover_JSONSimple(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	dirs, _, err := Discover("testdata/json_simple")
+	dirs, err := Discover("testdata/json_simple")
 	require.NoError(err, "Discover")
 	// json_simple has one inbox thread and one archived thread.
 	want := []struct {
@@ -32,14 +32,14 @@ func TestDiscover_JSONSimple(t *testing.T) {
 }
 
 func TestDiscover_HTMLOnly(t *testing.T) {
-	dirs, _, err := Discover("testdata/html_simple")
+	dirs, err := Discover("testdata/html_simple")
 	require.NoError(t, err, "Discover")
 	require.Len(t, dirs, 1)
 	assert.Equal(t, "html", dirs[0].Format)
 }
 
 func TestDiscover_Both(t *testing.T) {
-	dirs, _, err := Discover("testdata/mixed")
+	dirs, err := Discover("testdata/mixed")
 	require.NoError(t, err, "Discover")
 	require.Len(t, dirs, 1)
 	assert.Equal(t, "both", dirs[0].Format)
@@ -47,11 +47,11 @@ func TestDiscover_Both(t *testing.T) {
 
 func TestDiscover_AbsoluteAndRelativeInvariance(t *testing.T) {
 	require := require.New(t)
-	rel, _, err := Discover("testdata/json_simple")
+	rel, err := Discover("testdata/json_simple")
 	require.NoError(err, "relative Discover")
 	absRoot, err := filepath.Abs("testdata/json_simple")
 	require.NoError(err)
-	abs, _, err := Discover(absRoot)
+	abs, err := Discover(absRoot)
 	require.NoError(err, "absolute Discover")
 	sort.Slice(rel, func(i, j int) bool { return rel[i].Path < rel[j].Path })
 	sort.Slice(abs, func(i, j int) bool { return abs[i].Path < abs[j].Path })
@@ -63,7 +63,7 @@ func TestDiscover_IgnoresHiddenAndMediaSubdirs(t *testing.T) {
 	assert := assert.New(t)
 	// json_with_media contains a photos/ subdir with tiny.png; it must
 	// not be returned as a thread dir.
-	dirs, _, err := Discover("testdata/json_with_media")
+	dirs, err := Discover("testdata/json_with_media")
 	require.NoError(err, "Discover")
 	require.Len(dirs, 1)
 	assert.Equal("bob_XYZ789", dirs[0].Name)
@@ -93,7 +93,7 @@ func TestDiscover_AlternateLayouts(t *testing.T) {
 				[]byte(`{"participants":[{"name":"A"}],"messages":[]}`),
 				0644,
 			))
-			dirs, _, err := Discover(tmp)
+			dirs, err := Discover(tmp)
 			require.NoError(err, "Discover")
 			require.Len(dirs, 1, "discovered: %+v", dirs)
 			assert.Equal(t, "testthread_1", dirs[0].Name)
@@ -148,10 +148,9 @@ func TestDiscover_SkippedCountsAndFormat(t *testing.T) {
 		require.NoError(err)
 		assert.Empty(dirs)
 		assert.Equal(3, skipped)
-		dirs, skipped, err = Discover(root)
+		dirs, err = Discover(root)
 		require.NoError(err)
 		assert.Empty(dirs)
-		assert.Zero(skipped)
 	})
 	t.Run("unreadable thread", func(t *testing.T) {
 		assert := assert.New(t)
@@ -185,7 +184,7 @@ func TestDiscover_IgnoresDSStore(t *testing.T) {
 	require.NoError(os.WriteFile(filepath.Join(section, ".DS_Store"), []byte("x"), 0644))
 	require.NoError(os.Mkdir(filepath.Join(section, ".hidden"), 0755))
 
-	dirs, _, err := Discover(tmp)
+	dirs, err := Discover(tmp)
 	require.NoError(err, "Discover")
 	require.Len(dirs, 1, "discovered: %+v", dirs)
 	assert.Equal(t, "foo_1", dirs[0].Name)

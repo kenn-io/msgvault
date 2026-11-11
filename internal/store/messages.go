@@ -3993,14 +3993,11 @@ func (s *Store) UpsertFTSContext(ctx context.Context, messageID int64, subject, 
 // rows. Unchanged entries are left alone, and unavailable FTS is a no-op.
 func (s *Store) IndexStoredMessageContext(ctx context.Context, messageID int64) error {
 	return s.withSyncMessageWriteContext(ctx, messageID, func(q querier) error {
-		return s.indexStoredMessage(q, messageID, nil)
+		return s.indexStoredMessage(q, messageID)
 	})
 }
 
-func (s *Store) indexStoredMessage(q querier, messageID int64, subject *string) error {
-	if err := setMessageSubject(q, messageID, subject); err != nil {
-		return err
-	}
+func (s *Store) indexStoredMessage(q querier, messageID int64) error {
 	if !s.fts5Available {
 		return nil
 	}
@@ -4032,12 +4029,17 @@ func (s *Store) RetitleArchivedConversationContext(ctx context.Context, sourceID
 		if err != nil {
 			return err
 		}
+		// The search entry, including one rebuilt by RebuildFTS, derives from messages.subject.
+		if _, err := tx.ExecContext(ctx, `UPDATE messages SET subject = NULLIF(?, '') WHERE conversation_id = ?
+			AND id IN (SELECT message_id FROM message_raw WHERE raw_format = ?) AND COALESCE(subject, '') <> ?`, title, id, rawFormat, title); err != nil {
+			return fmt.Errorf("store message subjects: %w", err)
+		}
 		ids, err := archivedRawMessageIDs(ctx, tx, id, rawFormat)
 		if err != nil {
 			return err
 		}
 		for _, messageID := range ids {
-			if err := s.indexStoredMessage(q, messageID, &title); err != nil {
+			if err := s.indexStoredMessage(q, messageID); err != nil {
 				return err
 			}
 		}
@@ -4061,19 +4063,6 @@ func archivedRawMessageIDs(ctx context.Context, tx *loggedTx, conversationID int
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
-}
-
-// setMessageSubject stores a supplied subject, so the search entry derived from
-// messages.subject (including by RebuildFTS) matches it. Nil leaves it alone.
-func setMessageSubject(q querier, messageID int64, subject *string) error {
-	if subject == nil {
-		return nil
-	}
-	_, err := q.Exec(`UPDATE messages SET subject = NULLIF(?, '') WHERE id = ? AND COALESCE(subject, '') <> ?`, *subject, messageID, *subject)
-	if err != nil {
-		return fmt.Errorf("store message subject: %w", err)
-	}
-	return nil
 }
 
 // BackfillFTS fills missing search entries from existing message data on SQLite.

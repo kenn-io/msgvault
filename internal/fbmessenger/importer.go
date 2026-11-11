@@ -314,7 +314,7 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (summar
 		meLocal = StripDomain(opts.Me)
 
 		// Discover threads.
-		threads, _, err = Discover(absRoot)
+		threads, err = Discover(absRoot)
 		if err != nil {
 			syncErr = err
 			return summary, fmt.Errorf("fbmessenger: discover: %w", err)
