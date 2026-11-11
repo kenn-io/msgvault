@@ -182,3 +182,15 @@ promise was kept. With `auto_fulfil = true`, an explicit fulfilment supported
 by newer evidence can close it automatically. Reopen keeps older evidence
 from closing it again. If the supporting fulfilment is withdrawn, the
 promise can appear again.
+
+## File a commitment in Kata
+
+With [Kata integration](../configuration.md#integrationskata) configured, run
+`msgvault loops agenda c12` to create an issue on the person's agenda. The
+issue quotes the original message and links to the exact citation. Retrying
+the command returns the original issue, including after it is closed in Kata.
+
+Set `auto_agenda = true` in `[people.sweep.commitments]` to let the scheduled
+sweep create agenda issues for open commitments. Automatic creation is off
+by default. The manual command works without that setting. Both require
+daemon API schema 5.3.0 or newer.

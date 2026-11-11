@@ -355,6 +355,15 @@ func (l LinkKataEvidencePath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(l))
 }
 
+type CreateCommitmentAgendaIssuePath struct {
+	// CommitmentID The commitment ID, for example c12
+	CommitmentID string `json:"commitment_id" validate:"required"`
+}
+
+func (c CreateCommitmentAgendaIssuePath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
 type SetCommitmentDecisionPath struct {
 	// CommitmentID The commitment ID, for example c12
 	CommitmentID string `json:"commitment_id" validate:"required"`

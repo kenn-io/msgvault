@@ -413,7 +413,8 @@ import (
 // 5.0.0 makes file list and suggestion content availability nullable when storage has not been checked.
 // 5.1.0 adds person fact kinds and evidence freshness.
 // 5.2.0 adds cited commitments and owner decisions.
-const APISchemaVersion = "5.2.0"
+// 5.3.0 adds manual cited commitment agenda issues.
+const APISchemaVersion = "5.3.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

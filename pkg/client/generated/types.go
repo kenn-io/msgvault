@@ -2925,6 +2925,16 @@ func (c CodexModel) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
+type CommitmentAgendaResponse struct {
+	CommitmentID string `json:"commitment_id" validate:"required"`
+	IssueRef     string `json:"issue_ref" validate:"required"`
+	IssueUID     string `json:"issue_uid" validate:"required"`
+}
+
+func (c CommitmentAgendaResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
 type CommitmentDecisionRequest struct {
 	State CommitmentDecisionRequestState `json:"state" validate:"required"`
 	Until *time.Time                     `json:"until,omitempty"`

@@ -4394,7 +4394,7 @@ CREATE INDEX IF NOT EXISTS idx_docbank_processing_due
 -- Separately consented promise lifecycle. Owner state outlives an invalidated
 -- current claim (including absorbed person history during a person merge).
 CREATE TABLE IF NOT EXISTS person_commitments (
- id INTEGER PRIMARY KEY,
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
  person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
  current_claim_id INTEGER REFERENCES person_fact_claims(id) ON DELETE SET NULL,
  target_key TEXT NOT NULL,
@@ -4418,4 +4418,20 @@ CREATE TABLE IF NOT EXISTS person_commitment_frontiers (
  person_id INTEGER PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
  through_sequence INTEGER NOT NULL,
  processed_at DATETIME NOT NULL
+);
+
+-- Frozen intent survives source removal, so an issue created concurrently
+-- with closure can still have its actual result recorded.
+CREATE TABLE IF NOT EXISTS person_commitment_agenda (
+ commitment_id INTEGER PRIMARY KEY,
+ target_key TEXT NOT NULL,
+ idempotency_key TEXT NOT NULL,
+ destination_key TEXT NOT NULL,
+ request_json JSON NOT NULL,
+ quote TEXT NOT NULL,
+ state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','linked','retired')),
+ attempted_at DATETIME,
+ issue_uid TEXT,
+ issue_ref TEXT,
+ CHECK ((state = 'linked') = (issue_uid IS NOT NULL AND issue_ref IS NOT NULL))
 );

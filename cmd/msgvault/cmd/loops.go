@@ -32,7 +32,7 @@ request. A reply you owe lists after 24 hours, and a reply you are waiting on
 lists after 72 hours. Quiet conversations stay eligible at any age.
 The wording rules read English only.`,
 	}
-	group.AddCommand(newLoopsListCommand(), newLoopsDoneCommand(), newLoopsSnoozeCommand(), newLoopsReopenCommand())
+	group.AddCommand(newLoopsListCommand(), newLoopsDoneCommand(), newLoopsSnoozeCommand(), newLoopsReopenCommand(), newLoopsAgendaCommand())
 	return group
 }
 
@@ -202,6 +202,36 @@ func newLoopsReopenCommand() *cobra.Command {
 	}
 }
 
+func newLoopsAgendaCommand() *cobra.Command {
+	var jsonOutput bool
+	command := &cobra.Command{
+		Use:   "agenda <commitment-id>",
+		Short: "Create a cited Kata issue on the person's agenda",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id := args[0]
+			if _, err := loops.ParseCommitmentID(id); err != nil {
+				return usageErr(cmd, err)
+			}
+			return withLoopsClientVersion(cmd, "5.3.0", func(client *daemonclient.Client) error {
+				issue, err := client.CreateCommitmentAgendaIssue(cmd.Context(), id)
+				if err != nil {
+					return err
+				}
+				if jsonOutput {
+					return writeJSONOutput(cmd, issue)
+				}
+				if _, err := fmt.Fprintln(cmd.OutOrStdout(), textutil.SanitizeTerminal(issue.IssueRef)); err != nil {
+					return fmt.Errorf("write commitment agenda issue: %w", err)
+				}
+				return nil
+			})
+		},
+	}
+	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output as JSON")
+	return command
+}
+
 func runCommitmentDecision(cmd *cobra.Command, id, state string, until *time.Time) error {
 	if _, err := loops.ParseCommitmentID(id); err != nil {
 		return usageErr(cmd, err)
@@ -228,6 +258,10 @@ func loopActionError(id int64, err error) error {
 
 // withLoopsClient opens the daemon and refuses one that predates the loop routes.
 func withLoopsClient(cmd *cobra.Command, run func(*daemonclient.Client) error) error {
+	return withLoopsClientVersion(cmd, loopsMinAPISchemaVersion, run)
+}
+
+func withLoopsClientVersion(cmd *cobra.Command, minimum string, run func(*daemonclient.Client) error) error {
 	client, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return err
@@ -237,9 +271,9 @@ func withLoopsClient(cmd *cobra.Command, run func(*daemonclient.Client) error) e
 	if err != nil {
 		return fmt.Errorf("check daemon open loops capability: %w", err)
 	}
-	if !daemonclient.APISchemaVersionAtLeast(version, loopsMinAPISchemaVersion) {
+	if !daemonclient.APISchemaVersionAtLeast(version, minimum) {
 		return fmt.Errorf("open loops require daemon API schema %s or newer (daemon reports %q); upgrade and restart the daemon",
-			loopsMinAPISchemaVersion, version)
+			minimum, version)
 	}
 	return run(client)
 }

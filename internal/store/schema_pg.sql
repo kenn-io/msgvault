@@ -4024,3 +4024,17 @@ CREATE TABLE IF NOT EXISTS person_commitment_frontiers (
  through_sequence INTEGER NOT NULL,
  processed_at TIMESTAMPTZ NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS person_commitment_agenda (
+ commitment_id BIGINT PRIMARY KEY,
+ target_key TEXT NOT NULL,
+ idempotency_key TEXT NOT NULL,
+ destination_key TEXT NOT NULL,
+ request_json JSONB NOT NULL,
+ quote TEXT NOT NULL,
+ state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','linked','retired')),
+ attempted_at TIMESTAMPTZ,
+ issue_uid TEXT,
+ issue_ref TEXT,
+ CHECK ((state = 'linked') = (issue_uid IS NOT NULL AND issue_ref IS NOT NULL))
+);

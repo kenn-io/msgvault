@@ -68,6 +68,7 @@ type CommitmentConfig struct {
 	ExpireAfterDue  time.Duration `toml:"expire_after_due"`
 	MaxDuration     time.Duration `toml:"max_duration"`
 	AutoFulfil      bool          `toml:"auto_fulfil"`
+	AutoAgenda      bool          `toml:"auto_agenda"`
 }
 
 func (c *CommitmentConfig) applyDefaults() {

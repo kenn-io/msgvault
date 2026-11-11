@@ -41,8 +41,23 @@ func newPeopleSweepScheduledRun(
 			Kind: peoplesweep.RunScheduled, Mode: peoplesweep.RunIncremental,
 			Limit: cfg.People.Sweep.WorkBatchSize,
 		})
+		if !cfg.People.Sweep.Commitments.Enabled || !cfg.People.Sweep.Commitments.AutoAgenda || !cfg.Integrations.Kata.Enabled {
+			return err
+		}
+		return errors.Join(err, runAutomaticCommitmentAgenda(ctx, cfg, st))
+	}
+}
+
+func runAutomaticCommitmentAgenda(ctx context.Context, cfg *config.Config, st *store.Store) error {
+	profile, err := cfg.People.Sweep.Profile()
+	if err != nil {
 		return err
 	}
+	active, err := st.HasActivePersonCommitmentConsent(ctx, profile.Fingerprint)
+	if err != nil || !active {
+		return err
+	}
+	return api.NewCommitmentAgenda(cfg.Integrations.Kata, st).AutoRun(ctx, time.Now().UTC())
 }
 
 // newPersonBriefManualRun is the daemon's manual brief runner: one forced,

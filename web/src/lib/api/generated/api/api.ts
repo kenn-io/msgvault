@@ -77,6 +77,7 @@ import type {
   CliRebuildFTSEvent,
   CliSearchResponse,
   CliStatsResponse,
+  CommitmentAgendaResponse,
   CommitmentDecisionRequest,
   CommitmentDecisionResponse,
   CommunicationService,
@@ -86,6 +87,7 @@ import type {
   ContactState,
   ConversationResponse,
   CreateAttributeDefinitionRequest,
+  CreateCommitmentAgendaIssuePathParameters,
   CreateCommunicationServiceRequest,
   CreateDailyNoteEntryRequest,
   CreateDayEntryPathParameters,
@@ -2217,6 +2219,21 @@ export const listLoops = (
 ) => {
   return orvalFetch<LoopListResponse>(
     { url: `/api/v1/loops`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary Create a Kata agenda issue with the cited promise
+ */
+export const createCommitmentAgendaIssue = (
+  { commitmentId }: CreateCommitmentAgendaIssuePathParameters,
+  options?: SecondParameter<typeof orvalFetch<CommitmentAgendaResponse>>,
+) => {
+  return orvalFetch<CommitmentAgendaResponse>(
+    {
+      url: `/api/v1/loops/commitments/${encodeURIComponent(String(commitmentId))}/agenda`,
+      method: "POST",
+    },
     options,
   );
 };

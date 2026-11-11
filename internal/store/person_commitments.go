@@ -87,19 +87,57 @@ type commitmentCandidate struct {
 }
 
 func (s *Store) ListPersonCommitmentsContext(ctx context.Context, personID int64, now time.Time, limit int) ([]PersonCommitment, error) {
-	if personID < 0 || limit < 1 || limit > 201 {
+	return s.listPersonCommitments(ctx, commitmentListFilter{personID: personID}, now, limit)
+}
+
+type commitmentListFilter struct {
+	personID, id                   int64
+	includeSnoozed, awaitingAgenda bool
+}
+
+// GetOpenPersonCommitmentContext verifies a single promise even while it is snoozed.
+func (s *Store) GetOpenPersonCommitmentContext(ctx context.Context, id int64, now time.Time) (PersonCommitment, error) {
+	if id <= 0 {
+		return PersonCommitment{}, ErrInvalidActivityRequest
+	}
+	items, err := s.listPersonCommitments(ctx, commitmentListFilter{id: id, includeSnoozed: true}, now, 1)
+	if err != nil {
+		return PersonCommitment{}, err
+	}
+	if len(items) == 0 {
+		return PersonCommitment{}, sql.ErrNoRows
+	}
+	return items[0], nil
+}
+
+func (s *Store) ListCommitmentAgendaCandidatesContext(ctx context.Context, now time.Time, limit int) ([]PersonCommitment, error) {
+	return s.listPersonCommitments(ctx, commitmentListFilter{awaitingAgenda: true}, now, limit)
+}
+
+func (s *Store) listPersonCommitments(ctx context.Context, filter commitmentListFilter, now time.Time, limit int) ([]PersonCommitment, error) {
+	if filter.personID < 0 || limit < 1 || limit > 201 {
 		return nil, ErrInvalidActivityRequest
 	}
 	var candidates []commitmentCandidate
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		query := `SELECT ` + commitmentColumns + ` FROM person_commitments
 			WHERE current_claim_id IS NOT NULL AND owner_state <> 'done'
-			AND ` + s.loopTimeKey("expires_at") + ` > ` + s.loopTimeKey("?") + `
-			AND (owner_state <> 'snoozed' OR ` + s.loopTimeKey("snoozed_until") + ` <= ` + s.loopTimeKey("?") + `)`
-		args := []any{s.dialect.TimestampParam(now), s.dialect.TimestampParam(now)}
-		if personID > 0 {
+			AND ` + s.loopTimeKey("expires_at") + ` > ` + s.loopTimeKey("?")
+		args := []any{s.dialect.TimestampParam(now)}
+		if !filter.includeSnoozed {
+			query += ` AND (owner_state <> 'snoozed' OR ` + s.loopTimeKey("snoozed_until") + ` <= ` + s.loopTimeKey("?") + `)`
+			args = append(args, s.dialect.TimestampParam(now))
+		}
+		if filter.personID > 0 {
 			query += ` AND person_id = ?`
-			args = append(args, personID)
+			args = append(args, filter.personID)
+		}
+		if filter.id > 0 {
+			query += ` AND id = ?`
+			args = append(args, filter.id)
+		}
+		if filter.awaitingAgenda {
+			query += ` AND NOT EXISTS (SELECT 1 FROM person_commitment_agenda a WHERE a.commitment_id = person_commitments.id)`
 		}
 		query += ` ORDER BY ` + s.loopTimeKey("promised_at") + `, id LIMIT 1000`
 		rows, err := tx.QueryContext(ctx, query, args...)

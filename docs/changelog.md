@@ -8,6 +8,8 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- File an open commitment in Kata with its exact archive quote and person agenda link. Enable automatic filing if you want the scheduled sweep to create these issues.
+
 - Open loops can show cited promises owed by or to you, with due dates, proposed fulfilment, and owner decisions. Enable the commitment lane and grant separate consent to analyze both sides of direct conversations.
 
 - The CLI and HTTP API show person fact claim kinds and whether supporting evidence is fresh, stale, or expired.

@@ -68,6 +68,10 @@ promises are open. `--questions` selects reply-loop question IDs.
 Commitment extraction and decisions require API schema 5.2.0 or newer.
 See [cited commitments](usage/open-loops.md#see-cited-commitments).
 
+`msgvault loops agenda c12` creates or returns the cited Kata issue on that
+person’s agenda. Use `--json` for its reference and UID. Requires a configured
+Kata integration and API schema 5.3.0 or newer.
+
 ## meetings
 
 Read archived meeting evidence through the selected daemon. Requires API schema

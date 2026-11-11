@@ -66,6 +66,7 @@ func (s *Server) registerLoopRoutes(api huma.API) {
 	list.Parameters = loopListParameters()
 	registerRawHumaRoute(api, list, s.handleListLoops)
 	s.registerCommitmentDecision(api)
+	s.registerCommitmentAgenda(api)
 
 	for _, action := range []struct {
 		id, path, summary string

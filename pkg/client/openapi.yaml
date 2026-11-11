@@ -2992,6 +2992,19 @@ components:
         - default_reasoning_effort
         - supported_efforts
       type: object
+    CommitmentAgendaResponse:
+      properties:
+        commitment_id:
+          type: string
+        issue_ref:
+          type: string
+        issue_uid:
+          type: string
+      required:
+        - commitment_id
+        - issue_uid
+        - issue_ref
+      type: object
     CommitmentDecisionRequest:
       additionalProperties: false
       properties:
@@ -16961,7 +16974,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 5.2.0
+  version: 5.3.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -24120,6 +24133,82 @@ paths:
       security:
         - apiKey: []
       summary: List conversations waiting on a reply
+      tags:
+        - API
+  /api/v1/loops/commitments/{commitment_id}/agenda:
+    post:
+      operationId: createCommitmentAgendaIssue
+      parameters:
+        - description: The commitment ID, for example c12
+          in: path
+          name: commitment_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommitmentAgendaResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Create a Kata agenda issue with the cited promise
       tags:
         - API
   /api/v1/loops/commitments/{commitment_id}/decision:

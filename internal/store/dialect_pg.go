@@ -2335,7 +2335,7 @@ var exclusiveLockTables = []string{
 	"sync_operations",
 	"source_import_items", "sync_run_items", "sync_checkpoints",
 	"imap_folder_state", "imap_message_memberships", "imap_drafts", "gmail_drafts", "chat_drafts", "beeper_drafts",
-	"loop_decisions", "loop_message_evidence", "person_commitments", "person_commitment_frontiers",
+	"loop_decisions", "loop_message_evidence", "person_commitments", "person_commitment_frontiers", "person_commitment_agenda",
 }
 
 // BeginExclusive opens a transaction on conn and locks every table the

@@ -112,3 +112,19 @@ func (c *Client) SetCommitmentDecision(ctx context.Context, id, state string, un
 	}
 	return *resp.JSON200, nil
 }
+
+// CreateCommitmentAgendaIssue creates or finds the cited task for a promise.
+func (c *Client) CreateCommitmentAgendaIssue(ctx context.Context, id string) (generated.CommitmentAgendaResponse, error) {
+	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.CreateCommitmentAgendaIssueResp, error) {
+		return client.CreateCommitmentAgendaIssueWithResponse(ctx, &generated.CreateCommitmentAgendaIssueRequestOptions{
+			PathParams: &generated.CreateCommitmentAgendaIssuePath{CommitmentID: id},
+		})
+	})
+	if err != nil {
+		return generated.CommitmentAgendaResponse{}, err
+	}
+	if resp.JSON200 == nil {
+		return generated.CommitmentAgendaResponse{}, errors.New("empty commitment agenda issue response")
+	}
+	return *resp.JSON200, nil
+}

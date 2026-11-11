@@ -1677,6 +1677,9 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 	}); err != nil {
 		return fmt.Errorf("migrate commitments: %w", err)
 	}
+	if err := s.runOnceMigration(ctx, "person_commitment_agenda_v1", 1, false, s.migratePersonCommitmentAgendaIDs); err != nil {
+		return fmt.Errorf("migrate commitment agenda IDs: %w", err)
+	}
 	if err := s.runOnceMigration(
 		ctx, migrationPersonSweepAttemptBriefFailure, 1, false,
 		s.migratePersonSweepAttemptBriefFailure,

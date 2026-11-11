@@ -1857,6 +1857,26 @@ type ListLoopsErrorResponseJSON503 = ErrorResponse
 
 type ListLoopsErrorResponseJSONDefault = ErrorResponse
 
+type CreateCommitmentAgendaIssueResponse = CommitmentAgendaResponse
+
+type CreateCommitmentAgendaIssueErrorResponse = ErrorResponse
+
+type CreateCommitmentAgendaIssueErrorResponseJSON = ErrorResponse
+
+type CreateCommitmentAgendaIssueErrorResponseJSON403 = ErrorResponse
+
+type CreateCommitmentAgendaIssueErrorResponseJSON404 = ErrorResponse
+
+type CreateCommitmentAgendaIssueErrorResponseJSON409 = ErrorResponse
+
+type CreateCommitmentAgendaIssueErrorResponseJSON422 = ErrorResponse
+
+type CreateCommitmentAgendaIssueErrorResponseJSON500 = ErrorResponse
+
+type CreateCommitmentAgendaIssueErrorResponseJSON503 = ErrorResponse
+
+type CreateCommitmentAgendaIssueErrorResponseJSONDefault = ErrorResponse
+
 type SetCommitmentDecisionResponse = CommitmentDecisionResponse
 
 type SetCommitmentDecisionErrorResponse = ErrorResponse
@@ -5788,6 +5808,22 @@ type ListLoopsResp struct {
 	JSON500      *ListLoopsErrorResponseJSON500
 	JSON503      *ListLoopsErrorResponseJSON503
 	JSONDefault  *ListLoopsErrorResponseJSONDefault
+}
+
+type CreateCommitmentAgendaIssueResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *CreateCommitmentAgendaIssueResponse
+	JSON400      *CreateCommitmentAgendaIssueErrorResponse
+	JSON401      *CreateCommitmentAgendaIssueErrorResponseJSON
+	JSON403      *CreateCommitmentAgendaIssueErrorResponseJSON403
+	JSON404      *CreateCommitmentAgendaIssueErrorResponseJSON404
+	JSON409      *CreateCommitmentAgendaIssueErrorResponseJSON409
+	JSON422      *CreateCommitmentAgendaIssueErrorResponseJSON422
+	JSON500      *CreateCommitmentAgendaIssueErrorResponseJSON500
+	JSON503      *CreateCommitmentAgendaIssueErrorResponseJSON503
+	JSONDefault  *CreateCommitmentAgendaIssueErrorResponseJSONDefault
 }
 
 type SetCommitmentDecisionResp struct {
