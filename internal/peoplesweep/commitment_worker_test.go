@@ -221,3 +221,18 @@ func TestForcedBriefRefusesCommitmentOnlyConsent(t *testing.T) {
 	a.Empty(sink.requests, "a forced brief must not silently become a successful promise sweep")
 	a.Empty(st.failed)
 }
+
+func TestCommitmentConsentIdleDeferralDoesNotStartEmptyAttempt(t *testing.T) {
+	r, a := require.New(t), assert.New(t)
+	worker, st, sink := newConsentOnlyCommitmentWorker(t, false)
+	source := &workerProductionSource{windows: map[GenerationCursorMode]PersonWindow{}}
+	worker.Source, worker.Context = source, NewContextRetriever(source)
+	result, err := worker.Run(t.Context(), RunRequest{Kind: RunManual, Mode: RunIncremental, PersonID: 7})
+	r.NoError(err)
+	a.Zero(result.PeopleSucceeded)
+	a.Empty(st.started, "caught-up unauthorized work has no source envelope for a durable attempt")
+	a.Empty(st.finalized)
+	a.Empty(st.failed)
+	a.Empty(sink.statuses)
+	a.Empty(sink.requests)
+}
