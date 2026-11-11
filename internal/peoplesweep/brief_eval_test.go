@@ -19,6 +19,8 @@ var briefFixtureNames = []string{
 	"simple-catch-up.json",
 	"owner-appreciation-and-third-party.json",
 	"stale-fact.json",
+	"appreciation-ordinary-and-spanish.json",
+	"appreciation-generic-thanks.json",
 }
 
 type briefFixture struct {
@@ -53,6 +55,7 @@ type briefFixtureOutput struct {
 	FollowUps                 []briefFixtureFollowUp     `json:"follow_ups"`
 	Appreciations             []briefFixtureAppreciation `json:"appreciations"`
 	Uncertainties             []briefFixtureUncertainty  `json:"uncertainties"`
+	ThanksSuggestions         []briefFixtureThanks       `json:"thanks_suggestions"`
 	PossibleAttributes        []briefFixtureAttribute    `json:"possible_attributes"`
 }
 
@@ -79,6 +82,15 @@ type briefFixtureFollowUp struct {
 type briefFixtureAppreciation struct {
 	Text     string   `json:"text"`
 	Evidence []string `json:"evidence"`
+}
+
+type briefFixtureThanks struct {
+	Text       string `json:"text"`
+	Anchor     string `json:"anchor"`
+	Quote      string `json:"quote"`
+	Owner      string `json:"owner"`
+	OwnerQuote string `json:"owner_quote"`
+	State      string `json:"state"`
 }
 
 type briefFixtureUncertainty struct {
@@ -142,6 +154,14 @@ func runBriefFixture(t *testing.T, fixture briefFixture) {
 	for index, message := range fixture.Messages {
 		messageIDs[message.Key] = insertBriefMessage(t, f, index, message)
 	}
+	for _, message := range fixture.Messages {
+		if message.Author == "owner" {
+			require.NoError(t, f.Store.EnsureConversationParticipantContext(t.Context(), f.ConversationID, f.ScopedParticipant, "member"))
+			require.NoError(t, f.Store.EnsureConversationParticipantContext(t.Context(), f.ConversationID, f.OtherParticipant, "member"))
+			require.NoError(t, f.Store.SetConversationMemberCountContext(t.Context(), f.ConversationID, 2))
+			break
+		}
+	}
 	seedBriefContactState(t, f, fixture, messageIDs)
 
 	catalog, err := f.Store.BuildPersonFactCatalogContext(t.Context(), fixture.AllowSensitive)
@@ -173,7 +193,7 @@ func runBriefFixture(t *testing.T, fixture briefFixture) {
 	assert.Equal(t, briefFixtureTime(t, fixture.Expected.FromEventTime), window.Boundary.FromEventTime)
 	assert.Equal(t, briefFixtureTime(t, fixture.Expected.ThroughEventTime), window.Boundary.ThroughEventTime)
 	assert.Equal(t, fixture.ThroughSequence, window.Boundary.ThroughSequence)
-	assert.Equal(t, len(window.Items), window.Boundary.ItemCount)
+	assert.Equal(t, len(window.Items)+len(window.Batch.Packet.BriefOwners), window.Boundary.ItemCount)
 	assert.NotEmpty(t, window.Boundary.PacketSHA256)
 	assert.True(t, window.Batch.Request.ContainsSensitive)
 
@@ -217,7 +237,7 @@ func insertBriefMessage(
 ) int64 {
 	t.Helper()
 	senderID := f.ScopedParticipant
-	if message.Author == "other" {
+	if message.Author == "other" || message.Author == "owner" {
 		senderID = f.OtherParticipant
 	} else {
 		require.Equal(t, "person", message.Author)
@@ -237,6 +257,10 @@ func insertBriefMessage(
 		`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`),
 		messageID, message.Excerpt)
 	require.NoError(t, err)
+	if message.Author == "owner" {
+		_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET source_is_from_me = TRUE, is_sent = TRUE WHERE id = ?`), messageID)
+		require.NoError(t, err)
+	}
 	if message.Author == "other" {
 		_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 			INSERT INTO message_recipients (message_id, participant_id, recipient_type, email_address)
@@ -291,6 +315,9 @@ func briefEvidenceIDs(
 		ref, refErr := peoplesweep.DecodePersonSweepEvidenceRef(seed.SourceRef)
 		require.NoError(t, refErr)
 		byMessage[ref.MessageID] = seed.ID
+	}
+	for _, owner := range window.Batch.Packet.BriefOwners {
+		byMessage[owner.Ref.MessageID] = owner.EvidenceID
 	}
 	ids := make(map[string]string, len(messageIDs))
 	for key, messageID := range messageIDs {
@@ -356,6 +383,15 @@ func briefProviderJSON(
 		})
 	}
 	document["appreciations"] = appreciations
+	thanks := make([]any, 0, len(output.ThanksSuggestions))
+	for _, item := range output.ThanksSuggestions {
+		var owner any
+		if item.Owner != "" {
+			owner = map[string]any{"evidence_id": resolve([]string{item.Owner})[0], "quote": item.OwnerQuote}
+		}
+		thanks = append(thanks, map[string]any{"text": item.Text, "anchor_id": resolve([]string{item.Anchor})[0], "quote": item.Quote, "thanked": owner})
+	}
+	document["thanks_suggestions"] = thanks
 	uncertainties := make([]any, 0, len(output.Uncertainties))
 	for _, uncertainty := range output.Uncertainties {
 		uncertainties = append(uncertainties, map[string]any{
@@ -425,6 +461,13 @@ func assertBriefOutput(
 		assert.Equal(t, appreciation.Text, got.Appreciations[index].Text)
 		assert.Equal(t, resolve(appreciation.Evidence), got.Appreciations[index].EvidenceIDs)
 	}
+	require.Len(t, got.ThanksSuggestions, len(want.ThanksSuggestions))
+	for i, item := range want.ThanksSuggestions {
+		assert.Equal(t, item.Text, got.ThanksSuggestions[i].Text)
+		assert.Equal(t, evidenceIDs[item.Anchor], got.ThanksSuggestions[i].AnchorID)
+		assert.Equal(t, item.Quote, got.ThanksSuggestions[i].Quote)
+		assert.Equal(t, item.State, got.ThanksSuggestions[i].State)
+	}
 	require.Len(t, got.Uncertainties, len(want.Uncertainties))
 	for index, uncertainty := range want.Uncertainties {
 		assert.Equal(t, uncertainty.Text, got.Uncertainties[index].Text)
@@ -444,7 +487,7 @@ func assertBriefOutput(
 
 func briefExpectedSentenceCount(output briefFixtureOutput) int {
 	count := len(output.Highlights) + len(output.FollowUps) +
-		len(output.Appreciations) + len(output.Uncertainties)
+		len(output.Appreciations) + len(output.ThanksSuggestions) + len(output.Uncertainties)
 	if output.LastMeaningfulInteraction != nil {
 		count++
 	}

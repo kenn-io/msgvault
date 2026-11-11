@@ -84,6 +84,9 @@ the exact contribution cited. A later specific thank-you can be shown as
 already thanked when the archive proves the direct conversation and sender.
 Otherwise the prior-thanks status is unknown. The owner API can list and dismiss
 these suggestions; see [appreciation suggestions](/docs/api-server/#person-appreciation-suggestions).
+The provider judges whether a message describes completed help and whether a
+thank-you refers to that help. If it incorrectly pairs a bare “Thanks!” with a
+contribution, the suggestion can appear as already thanked.
 Dismissal persists across later briefs. The current brief hides dismissed or
 unsupported suggestions, while its history remains an immutable snapshot.
 

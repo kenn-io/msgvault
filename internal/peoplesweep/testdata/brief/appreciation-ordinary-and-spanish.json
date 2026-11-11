@@ -1,0 +1,14 @@
+{
+ "name":"recorded ordinary and Spanish help with specific and earlier thanks",
+ "allow_sensitive":true,"max_items":10,"max_bytes":65536,"overlap_items":2,"through_sequence":1200,
+ "messages":[
+  {"key":"early","lane":"conversation_text","author":"owner","event_time":"2026-08-19T09:00:00Z","excerpt":"Thanks for carrying the boxes!"},
+  {"key":"en","lane":"conversation_text","author":"person","event_time":"2026-08-20T09:00:00Z","excerpt":"I carried your boxes upstairs."},
+  {"key":"es","lane":"conversation_text","author":"person","event_time":"2026-08-21T09:00:00Z","excerpt":"Te llevé las cajas."},
+  {"key":"offer","lane":"conversation_text","author":"person","event_time":"2026-08-21T10:00:00Z","excerpt":"I can help next week."},
+  {"key":"third","lane":"conversation_text","author":"person","event_time":"2026-08-21T11:00:00Z","excerpt":"I carried boxes for my neighbor."},
+  {"key":"thanks","lane":"conversation_text","author":"owner","event_time":"2026-08-22T09:00:00Z","excerpt":"Gracias por llevarme las cajas."}
+ ],"last_contact":{"message":"","channel":""},
+ "provider":{"thanks_suggestions":[{"text":"carrying boxes","anchor":"en","quote":"carried your boxes","owner":"early","owner_quote":"Thanks for carrying the boxes!"},{"text":"llevar las cajas","anchor":"es","quote":"Te llevé las cajas","owner":"thanks","owner_quote":"Gracias por llevarme las cajas."}]},
+ "expected":{"window_messages":["third","offer","es","en"],"lanes":["conversation_text"],"from_event_time":"2026-08-20T09:00:00Z","through_event_time":"2026-08-21T11:00:00Z","dropped_item_count":0,"evidence_order":["en","es"],"output":{"thanks_suggestions":[{"text":"carrying boxes","anchor":"en","quote":"carried your boxes","state":"suggested"},{"text":"llevar las cajas","anchor":"es","quote":"Te llevé las cajas","state":"already_thanked"}]},"rendered_text":"If you have not already, consider thanking them for carrying boxes. You already thanked them for llevar las cajas."}
+}
