@@ -66,6 +66,7 @@ type activityMessageMetadata struct {
 
 type activityCandidateRow struct {
 	candidate           ActivityCandidate
+	policyEligible      bool
 	deletedAt           *time.Time
 	deletedFromSourceAt *time.Time
 	metadata            sql.NullString
@@ -143,6 +144,7 @@ func (s *Store) activityCandidateColumns() string {
 	m.sent_at, m.received_at, m.internal_date, m.last_modified,
 	m.deleted_at, m.deleted_from_source_at, m.metadata,
 	COALESCE(m.source_is_from_me, FALSE), ` + s.activityUnsentSQL() + `,
+	CASE WHEN ` + FullMessageWhere("m") + ` THEN 1 ELSE 0 END,
 	r.identity_revision, r.account_identity_revision,
 	r.timezone_active, r.timezone_target, r.timezone_generation,
 	r.direct_limit_active, r.direct_limit_target, r.direct_limit_generation`
@@ -421,7 +423,7 @@ func scanActivityCandidateRows(rows rowsScanner) ([]ActivityCandidate, error) {
 	for rows.Next() {
 		var row activityCandidateRow
 		var sentAt, receivedAt, internalDate, lastModified sql.NullTime
-		var queueExists, timezoneActive, directLimitActive int
+		var queueExists, policyEligible, timezoneActive, directLimitActive int
 		if err := rows.Scan(
 			&row.candidate.MessageID,
 			&row.candidate.SourceID,
@@ -437,6 +439,7 @@ func scanActivityCandidateRows(rows rowsScanner) ([]ActivityCandidate, error) {
 			&row.metadata,
 			&row.candidate.SourceIsFromMe,
 			&row.candidate.Unsent,
+			&policyEligible,
 			&row.candidate.IdentityRevision,
 			&row.candidate.AccountIdentityRevision,
 			&timezoneActive,
@@ -452,6 +455,7 @@ func scanActivityCandidateRows(rows rowsScanner) ([]ActivityCandidate, error) {
 			return nil, fmt.Errorf("scan activity candidate: %w", err)
 		}
 		row.candidate.Queue.Exists = queueExists != 0
+		row.policyEligible = policyEligible != 0
 		row.candidate.TimezoneTransition.Active = timezoneActive != 0
 		row.candidate.DirectLimitTransition.Active = directLimitActive != 0
 		row.candidate.SentAt = activityTimePointer(sentAt)
@@ -488,7 +492,8 @@ func applyActivityEligibility(row *activityCandidateRow) {
 		activityUsableTime(row.candidate.InternalDate)
 	cancelled := row.candidate.MessageType == "calendar_event" &&
 		strings.EqualFold(strings.TrimSpace(metadata.Status), "cancelled")
-	row.candidate.Eligible = row.deletedAt == nil &&
+	row.candidate.Eligible = row.policyEligible &&
+		row.deletedAt == nil &&
 		row.deletedFromSourceAt == nil &&
 		hasTimestamp &&
 		!cancelled && !row.candidate.Unsent

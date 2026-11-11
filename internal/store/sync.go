@@ -182,23 +182,6 @@ func (s *Store) withSyncMessageWriteContext(
 	})
 }
 
-func (s *Store) withSyncConversationWriteContext(
-	ctx context.Context,
-	conversationID int64,
-	write func(querier) error,
-) error {
-	if s.syncGeneration == nil {
-		return write(boundQuerier{ctx: ctx, q: s.db})
-	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		q := boundQuerier{ctx: ctx, q: tx}
-		if err := s.requireSyncConversationSourceTx(q, conversationID); err != nil {
-			return err
-		}
-		return write(q)
-	})
-}
-
 func (s *Store) withSyncSourceWriteContext(
 	ctx context.Context,
 	sourceID int64,
@@ -2045,8 +2028,10 @@ func (s *Store) UpdateSourceSyncConfig(ctx context.Context, sourceID int64, conf
 // those rows return to pending in the same transaction and re-derive after it.
 func (s *Store) UpdateSourceIdentifier(ctx context.Context, sourceID int64, identifier string) error {
 	var pending []int64
+	var renamed bool
 	err := s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
 		pending = nil
+		renamed = false
 		if reset := s.dialect.MaintenanceTimeoutResetSQL(); reset != "" {
 			if _, err := tx.ExecContext(ctx, reset); err != nil {
 				return fmt.Errorf("disable maintenance statement timeout: %w", err)
@@ -2082,6 +2067,7 @@ func (s *Store) UpdateSourceIdentifier(ctx context.Context, sourceID int64, iden
 		`, s.dialect.Now()), identifier, sourceID); err != nil {
 			return err
 		}
+		renamed = oldIdentifier != identifier
 		oldSink, newSink := accountSink(sourceType, oldIdentifier), accountSink(sourceType, identifier)
 		if oldSink == newSink {
 			return nil
@@ -2093,6 +2079,41 @@ func (s *Store) UpdateSourceIdentifier(ctx context.Context, sourceID int64, iden
 		return err
 	}
 	s.deriveAccountAttributionAfterCommit(ctx, sourceID, pending)
+	if renamed {
+		return s.refreshSourceConversationPolicies(ctx, sourceID)
+	}
+	return nil
+}
+
+// refreshSourceConversationPolicies re-evaluates a source's managed rooms
+// after its identifier changes. Config overrides match by identifier, so a
+// room may gain or lose an override. The refresh takes the policy fence in its
+// own transaction; the periodic check repairs a refresh that never ran.
+func (s *Store) refreshSourceConversationPolicies(ctx context.Context, sourceID int64) error {
+	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT c.id FROM conversations c
+		JOIN conversation_policy p ON p.conversation_id = c.id
+		WHERE c.source_id = ? ORDER BY c.id`), sourceID)
+	if err != nil {
+		return fmt.Errorf("list managed conversations for renamed source: %w", err)
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return fmt.Errorf("list managed conversations for renamed source: %w", err)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	if _, err := s.RefreshConversationPolicy(ctx, ids, time.Now()); err != nil {
+		return fmt.Errorf("refresh conversation policy after source rename: %w", err)
+	}
 	return nil
 }
 

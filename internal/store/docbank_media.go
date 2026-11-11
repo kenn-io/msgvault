@@ -689,7 +689,7 @@ func (s *Store) ListMessageMediaOccurrences(
 	var occurrences []MessageMediaOccurrence
 	if destination != "" {
 		var err error
-		occurrences, err = s.listMessageOccurrenceRows(ctx, destination, messageID, nil)
+		occurrences, err = s.listMessageOccurrenceRows(ctx, destination, messageID, nil, false)
 		if err != nil {
 			return nil, err
 		}
@@ -735,9 +735,12 @@ func (s *Store) ListMessageMediaOccurrences(
 const containingTitleMCVSQL = "COALESCE(NULLIF(m.subject, ''), NULLIF(cv.title, ''), '')"
 
 func (s *Store) listMessageOccurrenceRows(
-	ctx context.Context, destination string, messageID int64, scope *personscope.Scope,
+	ctx context.Context, destination string, messageID int64, scope *personscope.Scope, fullOnly bool,
 ) ([]MessageMediaOccurrence, error) {
 	where := ""
+	if fullOnly {
+		where += " AND " + FullMessageWhere("m")
+	}
 	args := []any{destination}
 	if messageID > 0 {
 		where += " AND m.id = ?"

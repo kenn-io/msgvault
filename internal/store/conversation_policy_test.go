@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,6 +18,8 @@ import (
 func TestConversationPolicyOverrides(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := testutil.NewTestStore(t)
+	_, policyErr := st.ConfigureConversationPolicy(t.Context(), conversationpolicy.RecommendedSettings(), time.Now())
+	require.NoError(t, policyErr)
 	a, err := st.GetOrCreateSource("beeper", "policy-account-a")
 	requirements.NoError(err)
 	b, err := st.GetOrCreateSource("beeper", "policy-account-b")
@@ -32,16 +35,18 @@ func TestConversationPolicyOverrides(t *testing.T) {
 	assertions.Equal(27, rows[0].Participants)
 	assertions.True(rows[0].KnownSize)
 	assertions.False(rows[1].KnownSize)
-	assertions.Equal(conversationpolicy.Full, rows[0].EffectiveTier)
+	assertions.Equal(conversationpolicy.Cold, rows[0].EffectiveTier)
+	beforeOverride, err := st.ConversationPolicyRevision(t.Context())
+	requirements.NoError(err)
 	requirements.NoError(st.SetConversationPolicyOverride(t.Context(), a.ID, "shared-room", conversationpolicy.Cold))
 	revision, err := st.ConversationPolicyRevision(t.Context())
 	requirements.NoError(err)
-	assertions.Equal(int64(1), revision)
+	assertions.Equal(beforeOverride+1, revision)
 	rows, err = st.ListConversationPolicies(t.Context())
 	requirements.NoError(err)
 	assertions.Equal(conversationpolicy.Cold, rows[0].Override)
 	assertions.Empty(rows[1].Override)
-	assertions.Equal(conversationpolicy.Full, rows[0].EffectiveTier, "configuration alone must not enable cold eligibility")
+	assertions.Equal(conversationpolicy.Cold, rows[0].EffectiveTier, "override immediately changes eligibility")
 	requirements.NoError(st.SetConversationPolicyOverride(t.Context(), a.ID, "shared-room", conversationpolicy.Cold))
 	unchanged, err := st.ConversationPolicyRevision(t.Context())
 	requirements.NoError(err)
@@ -61,6 +66,8 @@ func TestConversationPolicyOverrides(t *testing.T) {
 func TestConversationPolicyScopeAndRollback(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := testutil.NewTestStore(t)
+	before, err := st.ConversationPolicyRevision(t.Context())
+	requirements.NoError(err)
 	source, err := st.GetOrCreateSource("beeper", "policy-scope")
 	requirements.NoError(err)
 	_, err = st.EnsureConversation(t.Context(), source.ID, "room", "Room")
@@ -76,7 +83,7 @@ func TestConversationPolicyScopeAndRollback(t *testing.T) {
 	requirements.NoError(st.SetConversationPolicyOverride(t.Context(), source.ID, "room", ""))
 	revision, err := st.ConversationPolicyRevision(t.Context())
 	requirements.NoError(err)
-	assertions.Zero(revision)
+	assertions.Equal(before+1, revision)
 }
 
 func TestConversationPolicyUnresolvedRoster(t *testing.T) {
@@ -141,5 +148,34 @@ func TestConversationPolicySubset(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Len(rows, 1)
 	assertions.Equal(conversationpolicy.Cold, rows[0].Override)
+	assertions.Equal(conversationpolicy.Cold, rows[0].EffectiveTier)
+}
+
+func TestConversationPolicySubsetBootstrapsLegacySource(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "source.db")
+	st, err := store.OpenForTest(t.Context(), path)
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(st.Close()) })
+	requirements.NoError(st.InitSchemaContext(t.Context()))
+	source, err := st.GetOrCreateSource("beeper", "legacy-subset-policy")
+	requirements.NoError(err)
+	room, err := st.EnsureConversation(t.Context(), source.ID, "room", "Legacy room")
+	requirements.NoError(err)
+	_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: room, SourceMessageID: "message", MessageType: "beeper"})
+	requirements.NoError(err)
+	// An archive from before room policy has chats but no policy rows.
+	_, err = st.DB().ExecContext(t.Context(), `DROP TABLE conversation_policy`)
+	requirements.NoError(err)
+	dest := filepath.Join(dir, "subset")
+	_, err = store.CopySubset(t.Context(), path, dest, 1, false)
+	requirements.NoError(err)
+	copied, err := store.OpenForTest(t.Context(), filepath.Join(dest, "msgvault.db"))
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(copied.Close()) })
+	rows, err := copied.ListConversationPolicies(t.Context())
+	requirements.NoError(err)
+	requirements.Len(rows, 1, "the copied chat must be classified after the copy")
 	assertions.Equal(conversationpolicy.Full, rows[0].EffectiveTier)
 }

@@ -124,9 +124,13 @@ func buildViewSQL(def viewDef, probedCols map[string]bool) string {
 		selectClause += ", " + strings.Join(extra, ", ")
 	}
 
+	filter := ""
+	if def.name == datasetMessages && probedCols["conversation_tier"] {
+		filter = " WHERE conversation_tier='full'"
+	}
 	return fmt.Sprintf(
-		"CREATE OR REPLACE VIEW %s AS %s FROM read_parquet('%s'%s)",
-		def.name, selectClause, escaped, hiveOpt,
+		"CREATE OR REPLACE VIEW %s AS %s FROM read_parquet('%s'%s)%s",
+		def.name, selectClause, escaped, hiveOpt, filter,
 	)
 }
 
@@ -576,10 +580,16 @@ func buildNarrowFileEntriesCTE(name string) string {
 }
 
 func buildScalarAnalyticalEntriesCTE(name string, includeAttachmentSummary bool) string {
-	return buildScalarAnalyticalEntriesCTEWithSource(name, includeAttachmentSummary, "s.account_email", "m.archive_only")
+	return buildScalarAnalyticalEntriesCTEWithSource(name, includeAttachmentSummary, "s.account_email", "m.archive_only", "")
 }
 
-func buildScalarAnalyticalEntriesCTEWithSource(name string, includeAttachmentSummary bool, sourceIdentifier, archiveOnly string) string {
+// A non-empty where filters the message rows. Cache datasets already exclude
+// Cold rooms, so only live SQLite reads pass the policy predicate.
+func buildScalarAnalyticalEntriesCTEWithSource(name string, includeAttachmentSummary bool, sourceIdentifier, archiveOnly, where string) string {
+	if where != "" {
+		where = `
+	WHERE ` + where
+	}
 	attachmentColumns := `
 		CAST(0 AS BIGINT) AS attachment_count,
 		CAST(0 AS BIGINT) AS attachment_size`
@@ -604,7 +614,7 @@ func buildScalarAnalyticalEntriesCTEWithSource(name string, includeAttachmentSum
 		m.source_message_id,
 		m.conversation_id,
 		COALESCE(c.source_conversation_id, '') AS source_conversation_id,
-		COALESCE(c.conversation_type, '') AS conversation_type,
+		COALESCE(CAST(c.conversation_type AS VARCHAR), '') AS conversation_type,
 		COALESCE(c.title, '') AS conversation_title,
 		COALESCE(m.message_type, '') AS message_type,
 		m.list_id,
@@ -624,7 +634,7 @@ func buildScalarAnalyticalEntriesCTEWithSource(name string, includeAttachmentSum
 	FROM messages m
 	JOIN sources s ON s.id = m.source_id
 	LEFT JOIN conversations c ON c.id = m.conversation_id
-	LEFT JOIN participants sender ON sender.id = m.sender_id` + attachmentJoin + `
+	LEFT JOIN participants sender ON sender.id = m.sender_id` + attachmentJoin + where + `
 )`
 }
 
@@ -667,7 +677,7 @@ SELECT
     m.source_message_id,
     m.conversation_id,
     COALESCE(c.source_conversation_id, '') AS source_conversation_id,
-    COALESCE(c.conversation_type, '') AS conversation_type,
+    COALESCE(CAST(c.conversation_type AS VARCHAR), '') AS conversation_type,
     COALESCE(c.title, '') AS conversation_title,
     COALESCE(m.message_type, '') AS message_type,
     m.list_id,

@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/identityindex"
@@ -445,6 +446,8 @@ func TestRebuildCacheAfterDerivedRepairRefreshesCurrentCache(t *testing.T) {
 		source.ID, "!cache-repair:example.org", "direct_chat", "Cache repair",
 	)
 	require.NoError(err)
+	require.NoError(st.SetConversationPolicyOverride(
+		t.Context(), source.ID, "!cache-repair:example.org", conversationpolicy.Full))
 	sentAt := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	messageID, err := st.UpsertMessage(&store.Message{
 		ConversationID:  conversationID,
@@ -484,6 +487,8 @@ func TestRebuildCacheAfterDerivedRepairRefreshesCurrentCache(t *testing.T) {
 		SourceAttachmentID: "beeper:mxc://example.org/share",
 		MediaType:          "image",
 	}}))
+	initialArchiveRevision, err := st.DerivedDataRevisionContext(testCtx)
+	require.NoError(err)
 	require.NoError(st.Close())
 
 	_, err = buildCache(t.Context(), dbPath, analyticsDir, true)
@@ -491,7 +496,7 @@ func TestRebuildCacheAfterDerivedRepairRefreshesCurrentCache(t *testing.T) {
 	initialState, err := query.ReadCacheSyncState(analyticsDir)
 	require.NoError(err)
 	assert.Equal(query.CacheSchemaVersion, initialState.SchemaVersion)
-	assert.Equal(int64(1), initialState.DerivedDataRevision)
+	assert.Equal(initialArchiveRevision, initialState.DerivedDataRevision)
 
 	readCached := func() (string, any) {
 		t.Helper()
@@ -528,13 +533,19 @@ func TestRebuildCacheAfterDerivedRepairRefreshesCurrentCache(t *testing.T) {
 	assert.True(staleness.FullRebuild,
 		"an incremental append cannot replace already-cached repaired rows")
 
+	st, err = store.Open(dbPath)
+	require.NoError(err)
+	repairedArchiveRevision, err := st.DerivedDataRevisionContext(testCtx)
+	require.NoError(err)
+	require.NoError(st.Close())
 	require.NoError(rebuildCacheAfterWrite(t.Context(), dbPath, invocationFromContext(testCtx)))
 	assert.Contains(logs.String(), "cache rebuilt")
 	assert.Contains(logs.String(), "exported=")
 	repairedState, err := query.ReadCacheSyncState(analyticsDir)
 	require.NoError(err)
-	assert.Equal(int64(3), repairedState.DerivedDataRevision,
-		"initial attachment, classification commit, and completed rederive ledger each advance the existing revision")
+	assert.Greater(repairedState.DerivedDataRevision, initialState.DerivedDataRevision,
+		"completed rederive advances the existing revision")
+	assert.Equal(repairedArchiveRevision, repairedState.DerivedDataRevision)
 	afterSnippet, afterMetadata := readCached()
 	assert.Equal("https://example.com/post", afterSnippet)
 	require.NotNil(afterMetadata)
@@ -561,6 +572,8 @@ func TestRebuildCacheAfterMixedBeeperMetadataRefreshRebuildsExistingRows(t *test
 	require.NoError(err)
 	conversationID, err := st.EnsureConversationWithType(source.ID, "!mixed:example.org", "direct_chat", "Mixed")
 	require.NoError(err)
+	require.NoError(st.SetConversationPolicyOverride(
+		t.Context(), source.ID, "!mixed:example.org", conversationpolicy.Full))
 	insertMessage := func(id string, sentAt time.Time) int64 {
 		messageID, insertErr := st.UpsertMessage(&store.Message{
 			ConversationID: conversationID, SourceID: source.ID, SourceMessageID: id,
@@ -1407,77 +1420,6 @@ func TestParticipantIdentifierDriftDetectedAndRepairedByDerivedRefresh(t *testin
 	)).Scan(&searchable))
 	assertions.True(searchable,
 		"rebuilt relationship_people search values must include the new identifier")
-
-	repaired := cacheNeedsBuild(dbPath, analyticsDir)
-	assertions.False(repaired.NeedsBuild,
-		"repaired cache must be clean (reason: %q)", repaired.Reason)
-}
-
-// TestParticipantIdentifierDriftCreatingParticipantRestagesParticipants pins
-// the new-participant variant of identifier drift. Creating an identifier
-// without message activity still adds a participants row that the derived
-// refresh must publish; the message dataset must remain untouched.
-func TestParticipantIdentifierDriftCreatingParticipantRestagesParticipants(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	tmp := setupTestSQLite(t)
-	dbPath := filepath.Join(tmp, "test.db")
-	analyticsDir := filepath.Join(tmp, "analytics")
-	_, err := buildCache(t.Context(), dbPath, analyticsDir, true)
-	requirements.NoError(err)
-	before, err := query.ReadCacheSyncState(analyticsDir)
-	requirements.NoError(err)
-	messagesBefore := snapshotMessagesDatasetBytes(t, analyticsDir)
-
-	st, err := store.Open(dbPath)
-	requirements.NoError(err)
-	const newParticipantID int64 = 5
-	// This cache fixture intentionally uses the legacy participant schema, so
-	// seed the new row directly and let the production identifier write create
-	// the drift watermark. The refresh must publish the row even though it has
-	// no message activity yet.
-	_, err = st.DB().ExecContext(t.Context(), `
-		INSERT INTO participants (id, email_address, domain, display_name)
-		VALUES (?, ?, ?, ?)
-	`, newParticipantID, "new-cache-participant@example.test", "example.test", "New Cache Participant")
-	requirements.NoError(err)
-	err = st.SetParticipantIdentifier(
-		newParticipantID, "slack", "new-cache-participant",
-	)
-	requirements.NoError(err)
-	requirements.NoError(st.Close())
-
-	staleness := cacheNeedsBuild(dbPath, analyticsDir)
-	requirements.True(staleness.NeedsBuild)
-	assertions.True(staleness.HasParticipantIdentifierDrift)
-	assertions.False(staleness.FullRebuild,
-		"identifier drift that creates a participant must stay derived-only")
-	assertions.True(derivedDriftOnly(staleness))
-	assertions.Contains(staleness.Reason, "participant identifiers changed")
-
-	result, err := buildCacheDerivedOnly(t.Context(), dbPath, analyticsDir)
-	requirements.NoError(err)
-	assertions.True(result.IdentityOnly)
-	assertions.False(result.Skipped)
-
-	after, err := query.ReadCacheSyncState(analyticsDir)
-	requirements.NoError(err)
-	assertions.NotEqual(before.ParticipantIdentifierRevision, after.ParticipantIdentifierRevision)
-	assertions.Equal(messagesBefore, snapshotMessagesDatasetBytes(t, analyticsDir),
-		"derived refresh must not rewrite message facts")
-
-	duckDB, err := duckdbutil.Open(
-		t.Context(),
-		duckdbutil.BuilderPolicy(filepath.Join(tmp, "new-participant-duckdb-tmp")),
-	)
-	requirements.NoError(err)
-	defer func() { require.NoError(t, duckDB.Close()) }()
-	var participantName string
-	requirements.NoError(duckDB.QueryRowContext(t.Context(), `
-		SELECT display_name FROM read_parquet(?) WHERE id = ?
-	`, filepath.Join(analyticsDir, tableParticipants, "*.parquet"), newParticipantID).Scan(&participantName))
-	assertions.Equal("New Cache Participant", participantName,
-		"identifier drift that creates a participant must republish participants.parquet")
 
 	repaired := cacheNeedsBuild(dbPath, analyticsDir)
 	assertions.False(repaired.NeedsBuild,

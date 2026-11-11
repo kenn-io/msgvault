@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/filenamediscovery"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -99,4 +100,40 @@ func TestFilenameCandidatesDuplicateTypoStreams(t *testing.T) {
 	assert.ElementsMatch(t, ids, set.IDs)
 	assert.Equal(t, 2048, set.PostingRows)
 	assert.True(t, set.CandidateLimitReached, "deletion-posting duplicates cannot be free or imply exhausted ranges")
+}
+
+// Filename suggestions read the same Full-room scope as default search, so a
+// room's attachments disappear from candidates and rows once it turns Cold.
+func TestFilenameSuggestionsFollowRoomDemotion(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	f := storetest.New(t)
+	source, err := f.Store.GetOrCreateSource("slack", "synthetic:files")
+	requirements.NoError(err)
+	room, err := f.Store.EnsureConversation(t.Context(), source.ID, "room", "Room")
+	requirements.NoError(err)
+	requirements.NoError(f.Store.SetConversationPolicyOverride(t.Context(), source.ID, "room", conversationpolicy.Full))
+	message, err := f.Store.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: room, SourceMessageID: "with-file", MessageType: "slack"})
+	requirements.NoError(err)
+	var attachment int64
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments
+		(message_id, filename, storage_path) VALUES(?, 'roadmap.pdf', '') RETURNING id`), message).Scan(&attachment))
+	filenameReady(t, f.Store)
+
+	suggested := func() ([]int64, []store.FilenameSuggestionRow) {
+		t.Helper()
+		set := filenameCandidates(t, f.Store, "roadmap")
+		rows, err := f.Store.FilenameSuggestionRowsContext(t.Context(), []int64{attachment}, store.FilenameSuggestionScope{})
+		requirements.NoError(err)
+		return set.IDs, rows
+	}
+	ids, rows := suggested()
+	assertions.Equal([]int64{attachment}, ids)
+	assertions.Len(rows, 1)
+
+	requirements.NoError(f.Store.SetConversationPolicyOverride(t.Context(), source.ID, "room", conversationpolicy.Cold))
+	ids, rows = suggested()
+	assertions.Empty(ids, "a Cold room's file is not a candidate")
+	assertions.Empty(rows, "a Cold room's file is not hydrated")
 }
