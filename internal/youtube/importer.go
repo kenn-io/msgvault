@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -109,7 +110,8 @@ func (imp *Importer) resume(ctx context.Context, sourceID int64) (*syncState, er
 	}
 	if blob != "" {
 		if json.Unmarshal([]byte(blob), state) != nil || state.Version != 1 {
-			return nil, errors.New("invalid saved sync progress")
+			slog.WarnContext(ctx, "YouTube saved progress is invalid; restarting discovery", "source_id", sourceID)
+			state = &syncState{Version: 1, Queue: []work{{Kind: "uploads"}}}
 		}
 	}
 	return state, nil

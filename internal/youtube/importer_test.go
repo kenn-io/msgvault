@@ -149,6 +149,57 @@ func TestRegisterCompletesWhenChannelTitleConflictsWithSourceSelector(t *testing
 	}
 }
 
+func TestArchiveRestartsInvalidCheckpoint(t *testing.T) {
+	for _, tc := range []struct{ name, checkpoint string }{
+		{"unsupported version", `{"version":2,"ownership_cursor":"stale-owner","queue":[{"kind":"uploads","token":"stale-page"}]}`},
+		{"invalid version type", `{"ownership_cursor":"stale-owner","queue":[{"kind":"uploads","token":"stale-page"}],"version":"invalid"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			late := false
+			client := archiveFixture(t, false, &late, nil)
+			original := client.api.Transport
+			client.api.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if strings.HasPrefix(req.URL.Query().Get("pageToken"), "stale-") {
+					return nil, errors.New("stale checkpoint reached provider")
+				}
+				return original.RoundTrip(req)
+			})
+			imp := NewImporter(st, client)
+			source, err := imp.Register(t.Context(), "UCfixture")
+			require.NoError(err)
+			_, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 100})
+			require.NoError(err)
+			ids := []string{"parent", "parent.reply1", "parent.reply2"}
+			before, err := st.StoredMessagesContext(t.Context(), source.ID, "youtube_json", ids)
+			require.NoError(err)
+			require.Len(before, len(ids))
+			run, err := st.StartSyncContext(t.Context(), source.ID, SourceType)
+			require.NoError(err)
+			require.NoError(st.PauseSyncWithCheckpoint(t.Context(), run, &store.Checkpoint{PageToken: tc.checkpoint}))
+			late = true
+			finished := false
+			for range 50 {
+				sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 2})
+				require.NoError(err)
+				require.LessOrEqual(sum.Requests, 2)
+				if !sum.Partial {
+					finished = true
+					break
+				}
+			}
+			require.True(finished)
+			after, err := st.StoredMessagesContext(t.Context(), source.ID, "youtube_json", append(ids, "later"))
+			require.NoError(err)
+			require.Len(after, 4)
+			for _, id := range ids {
+				require.Equal(before[id].ID, after[id].ID)
+			}
+		})
+	}
+}
+
 func TestArchiveTinyBudgetsEventuallyFinishAndAppend(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
