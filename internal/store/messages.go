@@ -7011,6 +7011,19 @@ func legacyFTSVector(field, stored string) string {
 		FROM (SELECT 'ftsbreak' || n AS marker FROM generate_series(1, length(` + field + `) + 1) n WHERE strpos(lower(` + field + `), 'ftsbreak' || n) = 0 LIMIT 1) gap)`
 }
 
+// legacyFTSOldJoinSQL recovers a version-2 row's subject, sender, and recipient
+// text from its stored positions, marking gaps and dropping compound-word
+// tokens that duplicate their parts.
+func legacyFTSOldJoinSQL(legacy string) string {
+	return `LEFT JOIN LATERAL (SELECT
+			string_agg(CASE WHEN p.pos > p.previous + 1 THEN '! ' ELSE '' END || p.lexeme, ' ' ORDER BY p.pos) FILTER (WHERE p.weight = 'A') AS subject,
+			string_agg(CASE WHEN p.pos > p.previous + 1 THEN '! ' ELSE '' END || p.lexeme, ' ' ORDER BY p.pos) FILTER (WHERE p.weight = 'B') AS sender,
+			string_agg(CASE WHEN p.pos > p.previous + 1 THEN '! ' ELSE '' END || p.lexeme, ' ' ORDER BY p.pos) FILTER (WHERE p.weight = 'C') AS recipient
+			FROM (SELECT lexeme, pos - skipped AS pos, weight, lag(pos - skipped) OVER (PARTITION BY weight ORDER BY pos) AS previous FROM
+				(SELECT *, count(*) FILTER (WHERE compound) OVER (PARTITION BY weight ORDER BY pos ROWS UNBOUNDED PRECEDING) AS skipped FROM
+					(SELECT e.lexeme, pos, weight, strpos(e.lexeme, '-') > 0 AND EXISTS (SELECT 1 FROM ts_debug('simple', e.lexeme) d WHERE d.token = e.lexeme AND d.alias IN ('asciihword', 'hword', 'numhword')) AS compound FROM unnest(m.search_fts) e CROSS JOIN LATERAL unnest(e.positions, e.weights) p(pos, weight) WHERE ` + legacy + ` AND weight IN ('A', 'B', 'C')) tokens) marked WHERE NOT compound) p) old ON TRUE`
+}
+
 // backfillPostgresFTS locks and indexes bounded pages inside the batch transaction.
 func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query string, fromID, toID int64, useLegacy bool) (int64, error) {
 	env := storedFTSEnvelopeSQL("STRING_AGG")
@@ -7029,13 +7042,7 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 	selectSQL := `SELECT m.id, LEFT(` + env.subject + `, ` + charCap + `), LEFT(COALESCE(b.body_text, ''), ` + charCap + `), LEFT(` + env.fromAddr + `, ` + charCap + `), LEFT(` + env.toAddrs + `, ` + charCap + `), LEFT(` + env.ccAddrs + `, ` + charCap + `), COALESCE(` + terminal + `, FALSE),
 		LEFT(COALESCE(old.subject, ''), ` + charCap + `), LEFT(COALESCE(old.sender, ''), ` + charCap + `), LEFT(CASE WHEN EXISTS (SELECT 1 FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'cc') THEN '' ELSE COALESCE(old.recipient, '') END, ` + charCap + `)
 		FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id
-		LEFT JOIN LATERAL (SELECT
-			string_agg(CASE WHEN p.pos > p.previous + 1 THEN '! ' ELSE '' END || p.lexeme, ' ' ORDER BY p.pos) FILTER (WHERE p.weight = 'A') AS subject,
-			string_agg(CASE WHEN p.pos > p.previous + 1 THEN '! ' ELSE '' END || p.lexeme, ' ' ORDER BY p.pos) FILTER (WHERE p.weight = 'B') AS sender,
-			string_agg(CASE WHEN p.pos > p.previous + 1 THEN '! ' ELSE '' END || p.lexeme, ' ' ORDER BY p.pos) FILTER (WHERE p.weight = 'C') AS recipient
-			FROM (SELECT lexeme, pos - skipped AS pos, weight, lag(pos - skipped) OVER (PARTITION BY weight ORDER BY pos) AS previous FROM
-				(SELECT *, count(*) FILTER (WHERE compound) OVER (PARTITION BY weight ORDER BY pos ROWS UNBOUNDED PRECEDING) AS skipped FROM
-					(SELECT e.lexeme, pos, weight, strpos(e.lexeme, '-') > 0 AND EXISTS (SELECT 1 FROM ts_debug('simple', e.lexeme) d WHERE d.token = e.lexeme AND d.alias IN ('asciihword', 'hword', 'numhword')) AS compound FROM unnest(m.search_fts) e CROSS JOIN LATERAL unnest(e.positions, e.weights) p(pos, weight) WHERE ` + legacy + ` AND weight IN ('A', 'B', 'C')) tokens) marked WHERE NOT compound) p) old ON TRUE WHERE m.id = ANY(?::bigint[]) ORDER BY m.id`
+		` + legacyFTSOldJoinSQL(legacy) + ` WHERE m.id = ANY(?::bigint[]) ORDER BY m.id`
 	vector, _ := pgFTSVector(FTSDoc{})
 	replace := strings.NewReplacer("$2", "u.subject", "$3", "u.body", "$4", "u.sender", "$5", "u.to_addrs", "$6", "u.cc_addrs")
 	vector = replace.Replace(vector)
