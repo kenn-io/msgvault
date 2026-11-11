@@ -2659,10 +2659,11 @@ and daily attachment maintenance also stop after one minute, which lets queued
 scheduled work run. Each scheduled pack pass verifies at most 128
 indexed blobs with canonical loose copies or missing packs, up to 32 MiB of
 their raw content, allowing one oversized blob. Its durable hash cursor resumes
-verification after a restart, while new loose blobs are packed by sync-requested passes and the daily job when nothing
-is queued; verification-only follow-ups skip them. Manual unpacking reads the full
-catalog. Cancellation preserves committed packs. A pass with committed
-progress resumes behind waiting work; runtime expiry without a checkpoint
+verification after a restart, while new loose blobs are packed by sync-requested
+passes and the daily job when nothing is queued; verification-only follow-ups
+skip them. Manual unpacking reads the full catalog. Cancellation preserves
+committed packs. A pass with committed progress resumes behind waiting work;
+runtime expiry without a checkpoint
 records an error and waits for the next trigger. The first pack tick after a
 restart also checks for blobs left by the previous daemon.
 This command processes the complete eligible backlog immediately.

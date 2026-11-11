@@ -309,7 +309,7 @@ func TestPackVerificationWindowListsRowsAsKitReadsThem(t *testing.T) {
 	// row; repair must see the new location, or it deletes a live mapping.
 	require.NoError(st.AdoptPackedBlobs(store.PackRecord{PackID: newPack, EntryCount: 1, StoredBytes: 64, CreatedAt: created},
 		[]store.PackIndexEntry{{BlobHash: hash, PackID: newPack, Offset: 6, StoredLen: 64, RawLen: 64}}))
-	indexed, err := store.NewPackCatalog(st).ListIndexed(ctx)
+	indexed, err := store.NewMaintenancePackCatalog(st, t.TempDir()).ListIndexed(ctx)
 	require.NoError(err)
 	require.Len(indexed, 1)
 	assert.Equal(newPack, indexed[0].PackID)
@@ -332,16 +332,20 @@ func TestPackVerificationWindowKeepsItsRangeAcrossListings(t *testing.T) {
 	record(inWindow)
 	ctx, pass, err := st.BeginPackVerification(t.Context(), 128, 32<<20)
 	require.NoError(err)
-	catalog := store.NewPackCatalog(st)
+	catalog := store.NewMaintenancePackCatalog(st, t.TempDir())
 	repair, err := catalog.ListIndexed(ctx)
 	require.NoError(err)
 	require.Len(repair, 1)
-	// Pack records newly packed blobs between its repair and sweep listings.
+	// Pack can add a row and move a selected mapping between listings.
 	record("bb11223344556677889900aabbccddeeff00112233445566778899aabbccddee")
+	movedPack := pack.NewPackID()
+	require.NoError(st.AdoptPackedBlobs(store.PackRecord{PackID: movedPack, EntryCount: 1, StoredBytes: 64, CreatedAt: created},
+		[]store.PackIndexEntry{{BlobHash: inWindow, PackID: movedPack, Offset: 6, StoredLen: 64, RawLen: 64}}))
 	sweep, err := catalog.ListIndexed(ctx)
 	require.NoError(err)
 	require.Len(sweep, 1, "the sweep covers the window repair verified, not rows added after it")
 	assert.Equal(inWindow, sweep[0].Hash.String())
+	assert.Equal(movedPack, sweep[0].PackID, "the selected mapping is reread")
 	more, err := st.FinishPackVerification(t.Context(), pass)
 	require.NoError(err)
 	assert.False(more)
@@ -455,4 +459,28 @@ func TestPackVerificationCanceledCheckpointReplaysWindow(t *testing.T) {
 	replayed, err := catalog.ListIndexed(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, first, replayed)
+}
+
+func TestPackVerificationWindowSkipsUnindexedLooseBatches(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	for i := range 300 {
+		hash := fmt.Sprintf("%064x", i+1)
+		path := filepath.Join(root, hash[:2], hash)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+		require.NoError(t, os.WriteFile(path, []byte("synthetic"), 0o600))
+	}
+	id := pack.NewPackID()
+	indexed := fmt.Sprintf("%064x", 300)
+	require.NoError(t, st.RecordPackedBlobs(t.Context(), store.PackRecord{PackID: id, EntryCount: 1, StoredBytes: 1, CreatedAt: time.Now()},
+		[]store.PackIndexEntry{{BlobHash: indexed, PackID: id, Offset: 6, StoredLen: 1, RawLen: 1}}))
+	ctx, pass, err := st.BeginPackVerification(t.Context(), 1, 100)
+	require.NoError(t, err)
+	entries, err := store.NewMaintenancePackCatalog(st, root).ListIndexed(ctx)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, indexed, entries[0].Hash.String())
+	more, err := st.FinishPackVerification(t.Context(), pass)
+	require.NoError(t, err)
+	assert.False(t, more)
 }

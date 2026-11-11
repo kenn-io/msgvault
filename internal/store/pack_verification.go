@@ -5,9 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io/fs"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -63,94 +60,41 @@ func (s *Store) BeginPackVerification(
 	return context.WithValue(ctx, packVerificationKey{}, pass), pass, nil
 }
 
-// listPackVerificationWindow selects at most maxEntries rows or maxBytes of
-// raw content after the cursor, always admitting one oversized row. Maintenance
-// catalogs restrict selection to actionable candidates; catalogs without a
-// filesystem root retain the full index window. Later calls use the same window.
-func (s *Store) listPackVerificationWindow(
-	ctx context.Context, pass *PackVerificationPass, root string,
-) ([]PackIndexEntry, error) {
-	if root != "" {
-		return s.listActionablePackWindow(ctx, pass, root)
-	}
-	if pass.selected && pass.end == "" {
-		return nil, nil
-	}
-	query := `SELECT blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c
-		FROM attachment_pack_index WHERE blob_hash > ?`
-	args := []any{pass.start}
-	if pass.selected {
-		query += ` AND blob_hash <= ? ORDER BY blob_hash`
-		args = append(args, pass.end)
-	} else {
-		query += ` ORDER BY blob_hash LIMIT ?`
-		args = append(args, pass.maxEntries+1)
-	}
-	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
-	if err != nil {
-		return nil, fmt.Errorf("list pack verification window: %w", err)
-	}
-	defer rows.Close() //nolint:errcheck // read-only cursor
+// listPackVerificationWindow fixes candidate hashes on the first listing and
+// rereads their current mappings on the second, under the maintenance lease.
+func (s *Store) listPackVerificationWindow(ctx context.Context, pass *PackVerificationPass, root string) ([]PackIndexEntry, error) {
 	var entries []PackIndexEntry
-	var bytes int64
-	more := false
-	for rows.Next() {
-		entry, err := scanPackIndexEntry(rows)
-		if err != nil {
-			return nil, fmt.Errorf("scan pack verification window: %w", err)
-		}
-		if !pass.selected && (len(entries) >= pass.maxEntries ||
-			(len(entries) > 0 && entry.RawLen > pass.maxBytes-bytes)) {
-			more = true
-			break
-		}
-		entries = append(entries, entry)
-		bytes += entry.RawLen
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate pack verification window: %w", err)
-	}
-	if !pass.selected {
-		pass.selected = true
-		pass.more = more
-		if len(entries) > 0 {
-			pass.end = entries[len(entries)-1].BlobHash
-		}
-	}
-	return entries, nil
-}
-
-// listActionablePackWindow fixes the candidate hashes on the first listing,
-// then reads their current mappings on both listings under the maintenance lease.
-func (s *Store) listActionablePackWindow(ctx context.Context, pass *PackVerificationPass, root string) ([]PackIndexEntry, error) {
 	if !pass.selected {
 		hashes, err := s.packVerificationCandidates(ctx, root)
 		if err != nil {
 			return nil, err
 		}
 		var bytes int64
-		for _, hash := range hashes {
-			if hash <= pass.start {
-				continue
-			}
-			entry, err := s.GetAttachmentPackEntry(ctx, hash)
+		start := sort.Search(len(hashes), func(i int) bool { return hashes[i] > pass.start })
+		for start < len(hashes) {
+			end := min(start+256, len(hashes))
+			batch, err := s.listPackVerificationCandidates(ctx, hashes[start:end])
 			if err != nil {
 				return nil, err
 			}
-			if entry == nil {
-				continue
+			for _, entry := range batch {
+				if len(entries) >= pass.maxEntries || (len(entries) > 0 && entry.RawLen > pass.maxBytes-bytes) {
+					pass.more = true
+					break
+				}
+				entries = append(entries, entry)
+				pass.hashes = append(pass.hashes, entry.BlobHash)
+				pass.end = entry.BlobHash
+				bytes += entry.RawLen
 			}
-			if len(pass.hashes) >= pass.maxEntries || (len(pass.hashes) > 0 && entry.RawLen > pass.maxBytes-bytes) {
-				pass.more = true
+			if pass.more {
 				break
 			}
-			pass.hashes = append(pass.hashes, hash)
-			pass.end = hash
-			bytes += entry.RawLen
+			start = end
 		}
 		pass.selected = true
+		return entries, nil
 	}
-	entries := make([]PackIndexEntry, 0, len(pass.hashes))
 	for _, hash := range pass.hashes {
 		entry, err := s.GetAttachmentPackEntry(ctx, hash)
 		if err != nil {
@@ -163,6 +107,22 @@ func (s *Store) listActionablePackWindow(ctx context.Context, pass *PackVerifica
 	return entries, nil
 }
 
+// listPackVerificationCandidates avoids one query per unindexed loose file.
+func (s *Store) listPackVerificationCandidates(ctx context.Context, hashes []string) ([]PackIndexEntry, error) {
+	args := make([]any, len(hashes))
+	for i, hash := range hashes {
+		args[i] = hash
+	}
+	query := `SELECT blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c
+		FROM attachment_pack_index WHERE blob_hash IN (` + strings.TrimSuffix(strings.Repeat("?,", len(hashes)), ",") + `) ORDER BY blob_hash`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list pack verification candidates: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // read-only cursor
+	return scanPackIndexEntries(rows, "pack verification candidates", "")
+}
+
 // packVerificationCandidates finds canonical loose sources and mappings whose
 // physical pack is missing, including mappings without a pack record.
 func (s *Store) packVerificationCandidates(ctx context.Context, root string) ([]string, error) {
@@ -170,37 +130,22 @@ func (s *Store) packVerificationCandidates(ctx context.Context, root string) ([]
 	if err != nil {
 		return nil, err
 	}
-	candidates := make(map[string]struct{})
-	dirs, err := os.ReadDir(layout.Root())
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("list loose attachment directories: %w", err)
+	backend, err := packstore.NewFilesystemBackend(layout, packstore.FilesystemBackendOptions{})
+	if err != nil {
+		return nil, err
 	}
-	for _, dir := range dirs {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if !dir.IsDir() || len(dir.Name()) != 2 {
-			continue
-		}
-		files, err := os.ReadDir(filepath.Join(layout.Root(), dir.Name()))
-		if err != nil {
-			return nil, fmt.Errorf("list loose attachment directory: %w", err)
-		}
-		for _, file := range files {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			if !file.Type().IsRegular() {
-				continue
-			}
-			hash, err := packstore.ParseHash(strings.TrimSuffix(file.Name(), ".zst"))
-			if err != nil || hash.String()[:2] != dir.Name() {
-				continue
-			}
-			path := filepath.Join(layout.Root(), dir.Name(), file.Name())
-			if path == layout.LoosePath(hash) || path == layout.CompressedLoosePath(hash) {
-				candidates[hash.String()] = struct{}{}
-			}
+	defer backend.Close() //nolint:errcheck // inventory opens no pack readers
+	inventory, err := backend.Inventory(ctx, "")
+	if err != nil {
+		return nil, fmt.Errorf("inventory attachment files: %w", err)
+	}
+	candidates := make(map[string]struct{})
+	present := make(map[string]struct{})
+	for _, object := range inventory.Objects {
+		if object.Ref.LooseHash != "" {
+			candidates[object.Ref.LooseHash.String()] = struct{}{}
+		} else {
+			present[object.Ref.PackID] = struct{}{}
 		}
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT pack_id FROM attachment_pack_index`)
@@ -214,11 +159,8 @@ func (s *Store) packVerificationCandidates(ctx context.Context, root string) ([]
 			rows.Close() //nolint:errcheck // read-only cursor
 			return nil, err
 		}
-		if _, err := os.Stat(layout.PackPath(id)); errors.Is(err, fs.ErrNotExist) {
+		if _, ok := present[id]; !ok {
 			missing = append(missing, id)
-		} else if err != nil {
-			rows.Close() //nolint:errcheck // read-only cursor
-			return nil, fmt.Errorf("stat indexed pack: %w", err)
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -229,25 +171,12 @@ func (s *Store) packVerificationCandidates(ctx context.Context, root string) ([]
 		return nil, err
 	}
 	for _, id := range missing {
-		rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT blob_hash FROM attachment_pack_index WHERE pack_id = ?`), id)
+		entries, err := s.ListAttachmentPackEntriesContext(ctx, id)
 		if err != nil {
 			return nil, err
 		}
-		for rows.Next() {
-			var hash string
-			if err := rows.Scan(&hash); err != nil {
-				rows.Close() //nolint:errcheck // read-only cursor
-				return nil, err
-			}
-			candidates[hash] = struct{}{}
-		}
-		err = rows.Err()
-		closeErr := rows.Close()
-		if err != nil {
-			return nil, err
-		}
-		if closeErr != nil {
-			return nil, closeErr
+		for _, entry := range entries {
+			candidates[entry.BlobHash] = struct{}{}
 		}
 	}
 	hashes := make([]string, 0, len(candidates))
