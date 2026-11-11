@@ -440,3 +440,35 @@ func TestMCPLoopDiscoveryRequiresEveryDescriptorDetail(t *testing.T) {
 		}
 	}
 }
+
+func TestMCPCommitmentDecisionRequiresApprovalAndDisclosesExactTarget(t *testing.T) {
+	r, a := require.New(t), assert.New(t)
+	_, backend, _ := loopOperationFixture(t)
+	approved, prompts := false, 0
+	session := loopOperationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyLoops}, &sdkmcp.ClientOptions{
+		ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+			prompts++
+			a.Contains(request.Params.Message, `"commitment_id":"c999999"`)
+			a.Contains(request.Params.Message, `"state":"done"`)
+			action := "decline"
+			if approved {
+				action = "accept"
+			}
+			return &sdkmcp.ElicitResult{Action: action, Content: map[string]any{"confirm": approved}}, nil
+		},
+	})
+	call := func() *sdkmcp.CallToolResult {
+		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{
+			Name: "set_commitment_decision", Arguments: map[string]any{"commitment_id": "c999999", "state": "done"},
+		})
+		r.NoError(err)
+		return result
+	}
+	declined := call()
+	a.True(declined.IsError)
+	a.Equal(1, prompts)
+	approved = true
+	// Approval reaches the actual daemon route; this synthetic ID does not exist.
+	a.Equal("commitment_not_found", loopToolFailure(t, call())["error"])
+	a.Equal(2, prompts)
+}
