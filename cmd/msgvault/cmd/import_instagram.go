@@ -14,42 +14,6 @@ type instagramCLIOptions struct {
 	Limit             int
 }
 
-func newImportInstagramCmd() *cobra.Command {
-	var opts instagramCLIOptions
-	cmd := &cobra.Command{
-		Use:   "import-instagram <export-dir>",
-		Short: "Import Instagram account inbox JSON",
-		Long: `Import retained Instagram inbox messages and available media from an account download.
-
-Supported layout: your_instagram_activity/messages/inbox/<thread>/message_<N>.json.
-HTML, ZIP and other layouts are unsupported. Extract the JSON download first.
-Display names are not verified handles; identical names within
-one account merge. Both --account and --self-name are required.
-
-Each run rereads the export, preserving duplicates across export files and repairing
-reactions or missing media. Edited messages, changed sender display names and
-changed conversation paths cannot be matched to earlier imports.
-Deleted, unsent, encrypted and unexported history cannot be recovered.
-
-Example:
-  msgvault import-instagram --account orbit.example --self-name "Nova Example" ./export
-`,
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if !isDaemonCLISubprocess() {
-				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args)
-			}
-			return runImportInstagram(cmd, args[0], opts)
-		},
-	}
-	cmd.Flags().StringVar(&opts.Account, "account", "", "Instagram account handle (required; @ is optional)")
-	cmd.Flags().StringVar(&opts.SelfName, "self-name", "", "exact decoded export display name for sent messages")
-	cmd.Flags().IntVar(&opts.Limit, "limit", 0, "maximum new messages to add (0 imports all)")
-	_ = cmd.MarkFlagRequired("account")
-	_ = cmd.MarkFlagRequired("self-name")
-	return cmd
-}
-
 func runImportInstagram(cmd *cobra.Command, exportDir string, opts instagramCLIOptions) error {
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
@@ -86,5 +50,3 @@ func runImportInstagram(cmd *cobra.Command, exportDir string, opts instagramCLIO
 	_, _ = fmt.Fprintln(out, "Coverage: inbox JSON only; deleted, unsent, encrypted and unexported history cannot be recovered.")
 	return errors.Join(importErr, err)
 }
-
-func init() { rootCmd.AddCommand(newImportInstagramCmd()) }

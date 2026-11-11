@@ -31,12 +31,13 @@ func TestImportInstagramRejectsClientFilesOnRemote(t *testing.T) {
 	require := require.New(t)
 	server, requests := newDaemonCLIRunnerTestServer(t, nil, `{"type":"complete"}`)
 	ctx := configureRemoteDaemonForTest(t, server.URL)
-	command := newImportInstagramCmd()
+	t.Cleanup(saveMessengerState(t))
+	command := importMessengerCmd
+	previousContext := command.Context()
+	t.Cleanup(func() { command.SetContext(previousContext) })
 	command.SetContext(ctx)
-	command.SetOut(io.Discard)
-	command.SetErr(io.Discard)
-	command.SetArgs([]string{"--account", "example", "--self-name", "Nova Example", "/fictional/export"})
-	require.ErrorContains(command.Execute(), "run it on the daemon host with --local")
+	importMessengerSource, importMessengerAccount, importMessengerSelfName = "instagram", "example", "Nova Example"
+	require.ErrorContains(command.RunE(command, []string{"/fictional/export"}), "run it on the daemon host with --local")
 	assert.Zero(requests.Load())
 }
 

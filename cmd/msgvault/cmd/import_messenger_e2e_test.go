@@ -25,6 +25,11 @@ func saveMessengerState(t *testing.T) func() {
 	prevCfg := cfg
 	prevLogger := logger
 	prevMe := importMessengerMe
+	prevSource, prevAccount, prevSelfName := importMessengerSource, importMessengerAccount, importMessengerSelfName
+	changed := make(map[string]bool)
+	for _, name := range []string{"source", "account", "self-name"} {
+		changed[name] = importMessengerCmd.Flags().Lookup(name).Changed
+	}
 	prevFormat := importMessengerFormat
 	prevLimit := importMessengerLimit
 	prevNoResume := importMessengerNoResume
@@ -38,6 +43,10 @@ func saveMessengerState(t *testing.T) func() {
 		cfg = prevCfg
 		logger = prevLogger
 		importMessengerMe = prevMe
+		importMessengerSource, importMessengerAccount, importMessengerSelfName = prevSource, prevAccount, prevSelfName
+		for name, wasChanged := range changed {
+			importMessengerCmd.Flags().Lookup(name).Changed = wasChanged
+		}
 		importMessengerFormat = prevFormat
 		importMessengerLimit = prevLimit
 		importMessengerNoResume = prevNoResume
@@ -186,4 +195,24 @@ func TestImportMessenger_MissingDir(t *testing.T) {
 	msg := err.Error()
 	assert.True(t, strings.Contains(msg, "not found") || strings.Contains(msg, "no such"),
 		"error should describe missing path, got %v", err)
+}
+
+func TestImportMessengerInstagramEndToEnd(t *testing.T) {
+	markDaemonCLISubprocessForTest(t)
+	t.Cleanup(saveMessengerState(t))
+	tmp := t.TempDir()
+	fixture, err := filepath.Abs("../../../internal/fbmessenger/testdata/instagram")
+	require.NoError(t, err)
+	var stdout bytes.Buffer
+	rootCmd.SetOut(&stdout)
+	rootCmd.SetErr(io.Discard)
+	rootCmd.SetArgs([]string{"--home", tmp, "import-messenger", "--source", "instagram", "--account", "example", "--self-name", "Nova Example", fixture})
+	require.NoError(t, rootCmd.ExecuteContext(t.Context()))
+	assert.Contains(t, stdout.String(), "Instagram:")
+	st, err := store.Open(filepath.Join(tmp, "msgvault.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	var count int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE message_type='instagram'").Scan(&count))
+	assert.Equal(t, 6, count)
 }

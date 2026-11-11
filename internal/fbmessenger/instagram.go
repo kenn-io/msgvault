@@ -58,6 +58,7 @@ func instagramMediaEvidence(record rawJSONMessage) string {
 	for k, entries := range kinds {
 		for _, entry := range entries {
 			entry.URI = path.Clean(DecodeMojibake(entry.URI))
+			entry.Extra = nil
 			encoded, _ := json.Marshal(entry)
 			encodedKinds[k] = append(encodedKinds[k], instagramCanonical(encoded))
 		}
@@ -68,9 +69,9 @@ func instagramMediaEvidence(record rawJSONMessage) string {
 }
 
 // instagramExtraEvidence is the fields the importer doesn't parse, in the
-// record, its share and its sticker.
+// record, its media, its share and its sticker.
 func instagramExtraEvidence(record rawJSONMessage) string {
-	extras := make([]string, 3)
+	extras := make([]string, 4)
 	extras[0] = instagramCanonical(record.Extra)
 	if record.Share != nil {
 		extras[1] = instagramCanonical(record.Share.Extra)
@@ -78,6 +79,16 @@ func instagramExtraEvidence(record rawJSONMessage) string {
 	if record.Sticker != nil {
 		extras[2] = instagramCanonical(record.Sticker.Extra)
 	}
+	var media []string
+	for kind, entries := range [][]rawJSONPhoto{record.Photos, record.Videos, record.Audio, record.Files, record.Media, record.Gifs} {
+		for _, entry := range entries {
+			encoded, _ := json.Marshal([]any{kind, path.Clean(DecodeMojibake(entry.URI)), entry.CreationTimestamp, instagramCanonical(entry.Extra)})
+			media = append(media, string(encoded))
+		}
+	}
+	sort.Strings(media)
+	encodedMedia, _ := json.Marshal(media)
+	extras[3] = string(encodedMedia)
 	encoded, _ := json.Marshal(extras)
 	return string(encoded)
 }

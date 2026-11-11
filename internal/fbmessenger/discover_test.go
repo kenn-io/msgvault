@@ -120,7 +120,7 @@ func TestDiscover_SkippedCountsAndFormat(t *testing.T) {
 			for _, name := range test.files {
 				require.NoError(os.WriteFile(filepath.Join(thread, name), []byte(`{}`), 0644))
 			}
-			dirs, skipped, err := Discover(root)
+			dirs, skipped, err := discover(root, true)
 			require.NoError(err)
 			assert.Equal(test.skipped, skipped)
 			if test.format == "" {
@@ -144,10 +144,14 @@ func TestDiscover_SkippedCountsAndFormat(t *testing.T) {
 		media := filepath.Join(messages, "media", "photos")
 		require.NoError(os.MkdirAll(media, 0700))
 		require.NoError(os.WriteFile(filepath.Join(media, "photo.jpg"), []byte("photo"), 0600))
-		dirs, skipped, err := Discover(root)
+		dirs, skipped, err := discover(root, true)
 		require.NoError(err)
 		assert.Empty(dirs)
 		assert.Equal(3, skipped)
+		dirs, skipped, err = Discover(root)
+		require.NoError(err)
+		assert.Empty(dirs)
+		assert.Zero(skipped)
 	})
 	t.Run("unreadable thread", func(t *testing.T) {
 		assert := assert.New(t)
@@ -161,7 +165,7 @@ func TestDiscover_SkippedCountsAndFormat(t *testing.T) {
 		if _, err := os.ReadDir(thread); err == nil {
 			t.Skip("process can read a directory without permissions")
 		}
-		dirs, skipped, err := Discover(root)
+		dirs, skipped, err := discover(root, true)
 		require.NoError(err)
 		assert.Empty(dirs)
 		assert.Equal(1, skipped)

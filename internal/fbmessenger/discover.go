@@ -54,6 +54,10 @@ func messagesRootCandidates(root string) []string {
 // inputs yield the same logical result (paths are converted to absolute).
 // The second result counts message candidates excluded from supported threads.
 func Discover(root string) ([]ThreadDir, int, error) {
+	return discover(root, false)
+}
+
+func discover(root string, reportUnsupported bool) ([]ThreadDir, int, error) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return nil, 0, fmt.Errorf("fbmessenger: abs root: %w", err)
@@ -78,16 +82,21 @@ func Discover(root string) ([]ThreadDir, int, error) {
 			continue
 		}
 		// Check for DYI section subdirectories.
-		sections, err := os.ReadDir(candidate)
-		if err != nil {
-			skipped++
-			continue
-		}
-		for _, sectionEntry := range sections {
-			if strings.HasPrefix(sectionEntry.Name(), ".") || (!sectionEntry.IsDir() && !slices.Contains(knownSections, sectionEntry.Name())) {
+		sections := slices.Clone(knownSections)
+		if reportUnsupported {
+			entries, err := os.ReadDir(candidate)
+			if err != nil {
+				skipped++
 				continue
 			}
-			section := sectionEntry.Name()
+			sections = nil
+			for _, entry := range entries {
+				if !strings.HasPrefix(entry.Name(), ".") && (entry.IsDir() || slices.Contains(knownSections, entry.Name())) {
+					sections = append(sections, entry.Name())
+				}
+			}
+		}
+		for _, section := range sections {
 			sectionDir := filepath.Join(candidate, section)
 			entries, err := os.ReadDir(sectionDir)
 			if err != nil {
@@ -151,6 +160,9 @@ func Discover(root string) ([]ThreadDir, int, error) {
 		}
 		return out[i].Name < out[j].Name
 	})
+	if !reportUnsupported {
+		skipped = 0
+	}
 	return out, skipped, nil
 }
 

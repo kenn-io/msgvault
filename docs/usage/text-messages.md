@@ -21,7 +21,7 @@ open a conversation to read its messages. In the [TUI](/docs/usage/tui/), press
 | [Google Voice](#import-gvoice) | Google Takeout Voice directory |
 | [Telegram](#import-telegram) | Telegram Desktop Machine-readable JSON export |
 | [X DMs](#import-x) | Extracted X account archive (unreleased on `main`) |
-| [Instagram](#import-instagram) | Extracted account inbox JSON download |
+| [Instagram](#instagram-inbox-import) | Extracted account inbox JSON download |
 | [Facebook Messenger](#import-messenger) | Download Your Information export |
 | [SMS Backup & Restore](#import-synctech-sms) | XML backup |
 | [Slackdump](/docs/usage/slack/#import-a-slackdump-export) | Export directory or ZIP |
@@ -349,14 +349,14 @@ msgvault import-gvoice ~/Downloads/Takeout/Voice \
 3. Export and download the archive
 4. Extract the zip. The `Voice` folder inside the `Takeout` directory is what you pass to the command.
 
-## import-instagram
+## Instagram inbox import
 
 Import retained Instagram chats and available media from an extracted account
 JSON download. This personal account import is separate from
 [professional account comment sync](instagram-comments.md).
 
 ```bash
-msgvault import-instagram --account orbit.example --self-name "Nova Example" ./export
+msgvault import-messenger --source instagram --account orbit.example --self-name "Nova Example" ./export
 ```
 
 Only `your_instagram_activity/messages/inbox/<thread>/message_<N>.json` is

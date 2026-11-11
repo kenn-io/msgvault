@@ -1283,3 +1283,52 @@ func TestInstagramDuplicateOccurrences(t *testing.T) {
 		assert.Zero(run.ErrorsCount)
 	})
 }
+
+func TestInstagramReplayMediaUnknownMetadata(t *testing.T) {
+	st, root := testutil.NewTestStore(t), t.TempDir()
+	a, b := instagramTestRecord("same"), instagramTestRecord("same")
+	photoA := map[string]any{"uri": "photo.jpg", "creation_timestamp": 100, "extra": "first"}
+	photoB := map[string]any{"uri": "photo.jpg", "creation_timestamp": 100, "extra": "second"}
+	a["photos"], b["photos"] = []map[string]any{photoA}, []map[string]any{photoB}
+	a["reactions"], b["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "a"}}, []map[string]string{{"actor": "Nova Example", "reaction": "b"}}
+	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
+	instagramTestShard(t, root, "circle", "message_1.json", a, b)
+	_, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(t, err)
+	before, _ := instagramSnapshot(t, st)
+	instagramTestShard(t, root, "circle", "message_1.json", b, a)
+	_, err = ImportDYI(t.Context(), st, opts)
+	require.NoError(t, err)
+	after, _ := instagramSnapshot(t, st)
+	assert.Equal(t, before, after)
+	photoA["extra"] = "changed"
+	instagramTestShard(t, root, "circle", "message_1.json", a)
+	for range 2 {
+		summary, err := ImportDYI(t.Context(), st, opts)
+		require.NoError(t, err)
+		assert.True(t, summary.Incomplete)
+		assert.Zero(t, summary.MessagesAdded)
+		after, _ = instagramSnapshot(t, st)
+		assert.Equal(t, before, after)
+	}
+}
+
+func TestInstagramReplaySingleMediaUnknownMetadata(t *testing.T) {
+	st, root := testutil.NewTestStore(t), t.TempDir()
+	record := instagramTestRecord("same")
+	photo := map[string]any{"uri": "photo.jpg", "creation_timestamp": 100}
+	record["photos"] = []map[string]any{photo}
+	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
+	instagramTestShard(t, root, "circle", "message_1.json", record)
+	_, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(t, err)
+	ids := instagramIDs(t, st)
+	photo["unknown"] = "changed"
+	instagramTestShard(t, root, "circle", "message_1.json", record)
+	for range 2 {
+		summary, err := ImportDYI(t.Context(), st, opts)
+		require.NoError(t, err)
+		assert.Zero(t, summary.MessagesAdded)
+		assert.Equal(t, ids, instagramIDs(t, st))
+	}
+}

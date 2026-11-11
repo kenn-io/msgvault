@@ -161,7 +161,7 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (summar
 	var threads []ThreadDir
 	if instagram {
 		var skipped int
-		threads, skipped, err = Discover(filepath.Join(absRoot, "your_instagram_activity"))
+		threads, skipped, err = discover(filepath.Join(absRoot, "your_instagram_activity"), true)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return summary, err
 		}
@@ -182,7 +182,7 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (summar
 	}
 	sourceType, sourceName, command := "facebook_messenger", opts.Me, "import-messenger"
 	if instagram {
-		sourceType, sourceName, command = "instagram_messages", opts.Account, "import-instagram"
+		sourceType, sourceName = "instagram_messages", opts.Account
 	}
 	source, err := st.GetOrCreateSourceContext(ctx, sourceType, sourceName)
 	if err != nil {

@@ -13,6 +13,9 @@ import (
 
 var (
 	importMessengerMe              string
+	importMessengerSource          string
+	importMessengerAccount         string
+	importMessengerSelfName        string
 	importMessengerFormat          string
 	importMessengerLimit           int
 	importMessengerNoResume        bool
@@ -21,10 +24,13 @@ var (
 
 var importMessengerCmd = &cobra.Command{
 	Use:   "import-messenger <dyi-export-dir>",
-	Short: "Import Facebook Messenger from a Meta data export",
-	Long: `Import Facebook Messenger conversations from a DYI export (JSON or HTML).
+	Short: "Import Messenger or Instagram from a Meta data export",
+	Long: `Import Facebook Messenger conversations or Instagram inbox messages from a Meta export.
 
-Both JSON and HTML DYI formats are supported. When a thread contains both, the
+For Instagram, use --source instagram with --account and --self-name. Extract the
+JSON download first. The inbox layout is your_instagram_activity/messages/inbox.
+
+Messenger supports JSON and HTML DYI formats. When a thread contains both, the
 JSON form wins because it preserves timestamps at millisecond precision and
 reactions with relational fidelity. Use --format both to import both copies
 into a single conversation with disambiguated source_message_id values.
@@ -34,7 +40,7 @@ participants whose display names produce the same slug are merged with a
 warning — DYI exports do not expose stable user IDs, so this is the best we
 can do without false-splitting one person into two phantom participants.
 
-Your own identifier is required via --me and must itself be a
+For Messenger, your own identifier is required via --me and must be a
 <slug>@facebook.messenger address; this value becomes the source identifier
 and drives is_from_me on outbound messages.
 
@@ -43,16 +49,33 @@ UTC. JSON exports have millisecond-precision timestamps that are preserved
 verbatim.
 
 Examples:
+  msgvault import-messenger --source instagram --account orbit.example --self-name "Nova Example" ./export
   msgvault import-messenger --me test.user@facebook.messenger ~/downloads/facebook-export
   msgvault import-messenger --me test.user@facebook.messenger --format both ./dyi
   msgvault import-messenger --me test.user@facebook.messenger --limit 100 ./dyi
   `,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !isDaemonCLISubprocess() {
-			return runDaemonCLICommandHTTPFromCobra(cmd, args)
+		switch importMessengerSource {
+		case "instagram":
+			if importMessengerAccount == "" || importMessengerSelfName == "" {
+				return errors.New("--account and --self-name are required for Instagram")
+			}
+			if !isDaemonCLISubprocess() {
+				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args)
+			}
+			return runImportInstagram(cmd, args[0], instagramCLIOptions{Account: importMessengerAccount, SelfName: importMessengerSelfName, Limit: importMessengerLimit})
+		case "messenger":
+			if importMessengerMe == "" {
+				return errors.New("--me is required for Messenger")
+			}
+			if !isDaemonCLISubprocess() {
+				return runDaemonCLICommandHTTPFromCobra(cmd, args)
+			}
+			return runImportMessenger(cmd, args[0])
+		default:
+			return fmt.Errorf("unknown source %q: use messenger or instagram", importMessengerSource)
 		}
-		return runImportMessenger(cmd, args[0])
 	},
 }
 
@@ -137,11 +160,13 @@ func runImportMessenger(cmd *cobra.Command, rootDir string) error {
 }
 
 func init() {
-	importMessengerCmd.Flags().StringVar(&importMessengerMe, "me", "", "your <slug>@facebook.messenger identifier (required)")
+	importMessengerCmd.Flags().StringVar(&importMessengerSource, "source", "messenger", "source to import: messenger|instagram")
+	importMessengerCmd.Flags().StringVar(&importMessengerAccount, "account", "", "Instagram account handle (@ is optional)")
+	importMessengerCmd.Flags().StringVar(&importMessengerSelfName, "self-name", "", "exact Instagram export display name for sent messages")
+	importMessengerCmd.Flags().StringVar(&importMessengerMe, "me", "", "your <slug>@facebook.messenger identifier (required for Messenger)")
 	importMessengerCmd.Flags().StringVar(&importMessengerFormat, "format", "auto", "format to import: auto|json|html|both")
 	importMessengerCmd.Flags().IntVar(&importMessengerLimit, "limit", 0, "limit number of messages (for testing)")
 	importMessengerCmd.Flags().BoolVar(&importMessengerNoResume, "no-resume", false, "ignore any existing checkpoint and start fresh")
 	importMessengerCmd.Flags().IntVar(&importMessengerCheckpointEvery, "checkpoint-interval", 200, "checkpoint every N messages")
-	_ = importMessengerCmd.MarkFlagRequired("me")
 	rootCmd.AddCommand(importMessengerCmd)
 }
