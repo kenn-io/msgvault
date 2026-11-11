@@ -9,10 +9,10 @@ import (
 
 // CommitmentStore supplies the bounded separately consented conversation lane.
 type CommitmentStore interface {
-	HasActivePersonCommitmentConsent(context.Context, string) (bool, error)
-	PersonCommitmentsDue(context.Context, int64, time.Time, time.Duration, time.Duration) (bool, error)
-	LoadPersonCommitmentWindow(context.Context, int64, ProviderProfile, CommitmentConfig, time.Time, string) (CommitmentWindow, error)
-	EnsurePersonSweepWork(context.Context, int64, bool) (bool, error)
+	HasActivePersonCommitmentConsent(ctx context.Context, fingerprint string) (bool, error)
+	PersonCommitmentsDue(ctx context.Context, personID int64, now time.Time, interval, window time.Duration) (bool, error)
+	LoadPersonCommitmentWindow(ctx context.Context, personID int64, profile ProviderProfile, cfg CommitmentConfig, now time.Time, timezone string) (CommitmentWindow, error)
+	EnsurePersonSweepWork(ctx context.Context, personID int64, force bool) (bool, error)
 }
 
 type CommitmentResult struct {
