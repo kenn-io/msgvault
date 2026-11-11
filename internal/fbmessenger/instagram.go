@@ -219,8 +219,48 @@ func matchInstagramGroup(group []*instagramPending, old []string, archived map[s
 		}
 	}
 	summary.Errors += len(uncertain)
+	reconcileInstagramExtraSurplus(remaining, unused, used, summary, repairs, archived)
 	reconcileInstagramCopies(remaining, unused, used, summary, repairs, archived)
 	matchInstagramExtraChanges(remaining, unused, used, archived, summary, repairs)
+}
+
+// Reconcile surplus copies across unknown-field changes before treating the
+// archived surplus and the retained original as separate content groups.
+func reconcileInstagramExtraSurplus(remaining map[instagramContent][]*instagramPending, unused map[instagramContent][]string, used map[string]bool, summary *ImportSummary, repairs *[]string, archived map[string]store.StoredMessage) {
+	loose := func(c instagramContent) instagramContent { c.extra = ""; return c }
+	items, rows := map[instagramContent][]*instagramPending{}, map[instagramContent][]string{}
+	crosses, hasSurplus := map[instagramContent]bool{}, map[instagramContent]bool{}
+	for content, list := range remaining {
+		key := loose(content)
+		items[key] = append(items[key], list...)
+		crosses[key] = crosses[key] || len(unused[content]) == 0
+	}
+	for content, ids := range unused {
+		key := loose(content)
+		rows[key] = append(rows[key], ids...)
+		crosses[key] = crosses[key] || len(remaining[content]) == 0
+		for _, id := range ids {
+			hasSurplus[key] = hasSurplus[key] || instagramIsSurplus(archived[id])
+		}
+	}
+	handled := map[instagramContent]bool{}
+	for key, list := range items {
+		if !crosses[key] || len(rows[key]) == 0 || len(list) < len(rows[key]) || (len(list) == len(rows[key]) && !hasSurplus[key]) {
+			continue
+		}
+		reconcileInstagramCopies(map[instagramContent][]*instagramPending{key: list}, map[instagramContent][]string{key: rows[key]}, used, summary, repairs, archived)
+		handled[key] = true
+	}
+	for content := range remaining {
+		if handled[loose(content)] {
+			delete(remaining, content)
+		}
+	}
+	for content := range unused {
+		if handled[loose(content)] {
+			delete(unused, content)
+		}
+	}
 }
 
 // Unmatched copies reuse the rows of one earlier content when only unknown

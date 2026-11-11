@@ -556,6 +556,82 @@ func TestInstagramPartialReplayPreservesDistinctMetadata(t *testing.T) {
 	}
 }
 
+func TestInstagramReplayAddsSurplusWithChangedMetadata(t *testing.T) {
+	st, root := testutil.NewTestStore(t), t.TempDir()
+	original := instagramCopy("old")
+	a, b := instagramCopy("first", "shared"), instagramCopy("second", "shared")
+	instagramTestShard(t, root, "circle", "message_1.json", original)
+	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
+	_, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(t, err)
+	before, _ := instagramSnapshot(t, st)
+	a["is_geoblocked_for_viewer"], b["is_geoblocked_for_viewer"] = false, false
+	instagramTestShard(t, root, "circle", "message_1.json", a, b)
+	summary, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(t, err)
+	assert.True(t, summary.Incomplete)
+	require.Equal(t, int64(1), summary.MessagesAdded)
+	after, _ := instagramSnapshot(t, st)
+	require.Len(t, after, 2)
+	for id, raw := range before {
+		assert.Equal(t, raw, after[id])
+	}
+	var candidateReactions []string
+	for id, raw := range after {
+		if _, exists := before[id]; exists {
+			continue
+		}
+		var envelope instagramRaw
+		require.NoError(t, json.Unmarshal([]byte(raw), &envelope))
+		for _, candidate := range envelope.Candidates {
+			var source instagramRaw
+			var record rawJSONMessage
+			require.NoError(t, json.Unmarshal(candidate, &source))
+			require.NoError(t, json.Unmarshal(source.Record, &record))
+			require.Len(t, record.Reactions, 2)
+			candidateReactions = append(candidateReactions, record.Reactions[0].Reaction)
+		}
+	}
+	assert.ElementsMatch(t, []string{"first", "second"}, candidateReactions)
+	var retained, shared, unshared int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM reactions WHERE reaction_value = 'old'`).Scan(&retained))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM reactions WHERE reaction_value = 'shared'`).Scan(&shared))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM reactions WHERE reaction_value IN ('first', 'second')`).Scan(&unshared))
+	assert.Equal(t, 1, retained)
+	assert.Equal(t, 1, shared)
+	assert.Zero(t, unshared)
+	instagramTestShard(t, root, "circle", "message_1.json", b, a)
+	summary, err = ImportDYI(t.Context(), st, opts)
+	require.NoError(t, err)
+	assert.True(t, summary.Incomplete)
+	assert.Zero(t, summary.MessagesAdded)
+	assert.Equal(t, 2, countMessages(t, st, ""))
+}
+
+func TestInstagramReplaySurplusPreservesDistinctMetadata(t *testing.T) {
+	st, root := testutil.NewTestStore(t), t.TempDir()
+	a, b, c := instagramTestRecord("same"), instagramTestRecord("same"), instagramTestRecord("same")
+	a["extra_field"], b["extra_field"] = "first", "second"
+	instagramTestShard(t, root, "circle", "message_1.json", a, b)
+	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
+	_, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(t, err)
+	before, _ := instagramSnapshot(t, st)
+	a["extra_field"], b["extra_field"], c["extra_field"] = "third", "third", "third"
+	instagramTestShard(t, root, "circle", "message_1.json", c, b, a)
+	for i := range 2 {
+		summary, err := ImportDYI(t.Context(), st, opts)
+		require.NoError(t, err)
+		assert.True(t, summary.Incomplete)
+		assert.Equal(t, int64(1-i), summary.MessagesAdded)
+		after, _ := instagramSnapshot(t, st)
+		assert.Len(t, after, 3)
+		for id, raw := range before {
+			assert.Equal(t, raw, after[id])
+		}
+	}
+}
+
 func TestInstagramReplayChangedMetadataPreservesDistinctReactionEvidence(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
@@ -880,7 +956,7 @@ func TestInstagramExcludedCandidates(t *testing.T) {
 			instagramTestShard(t, root, "circle", "message_1.json", instagramTestRecord("hello"))
 			thread := filepath.Join(root, "your_instagram_activity", "messages", section, "thread")
 			require.NoError(t, os.MkdirAll(thread, 0700))
-			require.NoError(t, os.WriteFile(filepath.Join(thread, "message_1.json"), []byte(`{"messages":[{"content":"excluded"}]}`), 0600))
+			require.NoError(t, os.WriteFile(filepath.Join(thread, "message_1.json"), []byte(`{"messages":[{"sender_name":"Mira Example","timestamp_ms":1730500000123,"content":"excluded"}]}`), 0600))
 			summary, err := ImportDYI(t.Context(), st, ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"})
 			require.NoError(t, err)
 			assert.True(t, summary.Incomplete)
