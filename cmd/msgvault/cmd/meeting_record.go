@@ -82,7 +82,11 @@ func writeMeetingRecord(out io.Writer, record store.MeetingRecord) error {
 	for i, id := range record.MessageIDs {
 		notes[i] = strconv.FormatInt(id, 10)
 	}
-	if _, err := fmt.Fprintf(out, "Notes: %s\n", strings.Join(notes, ", ")); err != nil {
+	text := strings.Join(notes, ", ")
+	if text == "" {
+		text = "none"
+	}
+	if _, err := fmt.Fprintf(out, "Notes: %s\n", text); err != nil {
 		return fmt.Errorf("write meeting links: %w", err)
 	}
 	return nil

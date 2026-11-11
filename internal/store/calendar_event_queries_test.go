@@ -348,11 +348,12 @@ func TestCalendarClearedMasterKeepsStandaloneAndFirstOccurrenceExceptions(t *tes
 }
 
 func TestMeetingRelatedQueryPlan(t *testing.T) {
+	requirements := require.New(t)
 	base := newRFC822IDBackfillBackendStore(t)
 	data, _ := calendarFixture(t, base, "plan-target", calendarRaw)
 	bulkCalendarCandidates(t, base, data.Message.SourceID, data.Message.ConversationID, "single", 3000)
 	_, err := base.db.Exec(`ANALYZE`)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	type statement struct {
 		query string
 		args  []any
@@ -372,16 +373,16 @@ func TestMeetingRelatedQueryPlan(t *testing.T) {
 	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{data.Message.SourceID})
 	budget := 500
 	_, err = st.meetingRelatedEventRows(ctx, data.Message.SourceID, "event-example", time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), &budget)
-	require.NoError(t, err)
-	require.Len(t, statements, 2)
+	requirements.NoError(err)
+	requirements.Len(statements, 2)
 	for _, statement := range statements {
 		var plan string
 		if !st.IsPostgreSQL() {
 			plan = explainPlan(t, base, statement.query, statement.args...)
 		} else {
-			require.NoError(t, base.db.QueryRowContext(t.Context(), "EXPLAIN (FORMAT JSON) "+statement.query, statement.args...).Scan(&plan))
+			requirements.NoError(base.db.QueryRowContext(t.Context(), "EXPLAIN (FORMAT JSON) "+statement.query, statement.args...).Scan(&plan))
 		}
-		require.Contains(t, plan, "idx_calendar_events_series_provider_id")
-		require.Contains(t, plan, "idx_calendar_events_provider_id")
+		requirements.Contains(plan, "idx_calendar_events_series_provider_id")
+		requirements.Contains(plan, "idx_calendar_events_provider_id")
 	}
 }
