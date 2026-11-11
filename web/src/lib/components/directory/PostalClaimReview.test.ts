@@ -61,8 +61,10 @@ describe('Postal claim review', () => {
     const { requests } = setup();
     await fireEvent.click(screen.getByRole('radio', { name: 'Claims' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Reveal sensitive fact value' }));
+    expect(screen.getByText('Source text: Source address text')).toBeDefined();
     await fireEvent.click(await screen.findByRole('button', { name: 'Review address' }));
     expect(await screen.findByLabelText('Unit or apartment')).toHaveProperty('value', 'Unit 7');
+    expect(screen.queryByText('Source text: Source address text')).toBeNull();
     expect(requests.some(request => request.url.endsWith('/addresses/assess'))).toBe(false);
     expect(screen.getByLabelText('Address kind')).toHaveProperty('disabled', true);
     await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: 'Corrected street' } });

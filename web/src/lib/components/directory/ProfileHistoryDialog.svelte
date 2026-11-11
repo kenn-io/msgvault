@@ -103,7 +103,8 @@
         const current = postalAddressText(row, row.assessment?.proposed_extended_parts);
         const text = source?.original_value?.trim();
         const shown = new Set(`${current}, ${original ?? ''}`.split(/[,;\n]+/).map(part => part.trim()));
-        const lines = [original !== current && original, text && text.split(/[,;\n]+/).some(part => part.trim() && !shown.has(part.trim())) && text].filter(Boolean);
+        const distinctText = text && text.split(/[,;\n]+/).some(part => part.trim() && !shown.has(part.trim())) && text;
+        const lines = [distinctText, original !== current && original?.split(',').filter(part => !distinctText || !distinctText.split(/[,;\n]+/).some(segment => segment.trim() === part.trim() || segment.trim().startsWith(`${part.trim()} `))).join(', ')].filter(Boolean);
         return lines.length ? `Original: ${lines.join(' · ')}` : null;
       }) },
       { title: 'Dates', rows: rows(history.dates ?? [], (row) => `${row.label ?? sentenceCase(row.date_kind ?? '')}: ${row.date_text ?? row.original_value}`) },

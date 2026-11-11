@@ -98,7 +98,7 @@ describe('ProfileHistoryDialog', () => {
     });
     render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn() });
     const corrected = (await screen.findByText('14 Oak Ave')).closest('.detail-row') as HTMLElement;
-    expect(within(corrected).getByText(/12 Main St Apt 4B, Town/)).toBeDefined();
+    expect(within(corrected).getByText(/Original: 12 Main St Apt 4B, Town · You/)).toBeDefined();
     const legacy = screen.getByText('12 Main St, Town').closest('.detail-row')!;
     expect(legacy.textContent).not.toContain('Original:');
     const unit = screen.getByText('Unit 12').closest('.detail-row') as HTMLElement;
