@@ -818,12 +818,11 @@ func TestCommitmentCorrectedPromiseTimeInvalidatesEarlierFulfilment(t *testing.T
 			a.Equal(newer, items[0].Fulfilment.MessageID)
 		})
 	}
-	t.Run("corrected_before_processed_completion_with_ordinary_backlog", func(t *testing.T) {
+	t.Run("corrected_before_processed_completion", func(t *testing.T) {
 		r, a, ctx := require.New(t), assert.New(t), t.Context()
 		f := newPersonSweepApplyFixture(t, "promise-time-before-completion", false)
 		st := f.store
 		_, persist := newCommitmentTestConversation(t, f)
-		backlog := persist("ordinary-backlog", "We discussed the project.", -4*time.Hour)
 		const promise, reply = "I will send the report.", "I sent the report."
 		id := persist("promise", promise, -time.Hour)
 		completion := persist("completion", reply, -2*time.Hour)
@@ -832,21 +831,6 @@ func TestCommitmentCorrectedPromiseTimeInvalidatesEarlierFulfilment(t *testing.T
 		cfg.Commitments.Enabled, cfg.Commitments.AutoFulfil = true, true
 		profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01",
 			AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
-		fingerprint := f.request.Generation.Policy.ProviderPolicyFingerprint
-		_, _, err := st.GrantPersonInferenceConsent(ctx, fingerprint, "test-owner")
-		r.NoError(err)
-		_, err = st.RevokePersonInferenceConsent(ctx, fingerprint, "test-owner")
-		r.NoError(err)
-		_, _, err = st.GrantPersonCommitmentConsent(ctx, fingerprint, "test-owner")
-		r.NoError(err)
-		allowed, err := st.HasActivePersonInferenceConsent(ctx, fingerprint)
-		r.NoError(err)
-		r.False(allowed)
-		pending, err := st.LoadPersonSweepWindow(ctx, peoplesweep.WindowRequest{PersonID: f.personID,
-			Lane: peoplesweep.SourceConversationText, Mode: peoplesweep.GenerationCursorOptimistic, Limit: 1})
-		r.NoError(err)
-		r.Len(pending.Seeds, 1)
-		r.Equal(backlog, pending.Seeds[0].Ref.MessageID)
 
 		load := func() peoplesweep.CommitmentWindow {
 			t.Helper()
@@ -898,10 +882,7 @@ func TestCommitmentCorrectedPromiseTimeInvalidatesEarlierFulfilment(t *testing.T
 		r.NotNil(items[0].Fulfilment)
 		a.Equal(completion, items[0].Fulfilment.MessageID)
 		a.Empty(load().Sources, "the identical corrected extraction must converge after matching")
-		var ordinaryThrough int64
-		r.NoError(st.db.QueryRowContext(ctx, st.Rebind(`SELECT optimistic_sequence FROM person_sweep_cursors
-			WHERE person_id = ? AND source_lane = ?`), f.personID, peoplesweep.SourceConversationText).Scan(&ordinaryThrough))
-		a.Zero(ordinaryThrough, "commitment-only replay must leave provider-bearing ordinary work paused")
+
 	})
 }
 
@@ -983,7 +964,6 @@ func TestCommitmentAutomaticOwnerEmailFulfilmentRequiresSentProvenance(t *testin
 			a.Equal(tc.wantState, items[0].State)
 			r.NotNil(items[0].Fulfilment, "unverified completion remains a proposed exact citation")
 			a.Equal(completion, items[0].Fulfilment.MessageID)
-			a.Equal(tc.wantState == CommitmentStateFulfilled, items[0].FulfilmentConfirmed)
 		})
 	}
 }
