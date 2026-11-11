@@ -2483,7 +2483,7 @@ msgvault import-instagram --account <handle> --self-name "<export display name>"
 Runs replay from the beginning with stable fingerprint occurrence IDs and
 retry missing media. Only numbered JSON inbox shards in the observed account
 layout are supported. HTML, ZIP and other layouts are rejected. See
-[Instagram imports](usage/text-messages.md#import-instagram) for coverage,
+[Instagram imports](usage/text-messages.md#import-instagram) for coverage and
 identity limits. Run local file imports on the daemon host.
 Multipart ZIP containers are not assembled by this importer.
 
