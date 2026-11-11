@@ -18,6 +18,8 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+const mcpInvalidArguments = "invalid_arguments"
+
 type daemonMCPOperations struct {
 	now       func() time.Time
 	client    *daemonclient.Client

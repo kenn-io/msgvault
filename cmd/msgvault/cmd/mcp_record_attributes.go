@@ -44,10 +44,11 @@ type attributeListArgs struct {
 	UniversalID *string `json:"universal_id,omitempty"`
 }
 type attributeSetArgs struct {
-	PersonID                         int64  `json:"person_id"`
-	Slug                             string `json:"slug"`
-	DryRun                           *bool  `json:"dry_run,omitempty"`
 	generated.SetPersonAttributeBody `json:",inline"`
+
+	PersonID int64  `json:"person_id"`
+	Slug     string `json:"slug"`
+	DryRun   *bool  `json:"dry_run,omitempty"`
 }
 type attributeClearArgs struct {
 	PersonID        int64  `json:"person_id"`
@@ -71,6 +72,7 @@ type attributeDefinitionArgs struct {
 // Reuse its path and headers while retaining the native JSON merge field presence.
 type attributePatchOptions struct {
 	*generated.PatchAttributeDefinitionRequestOptions
+
 	changes map[string]any
 }
 
@@ -90,11 +92,7 @@ func unsafeAttributeJSON(value any) bool {
 	case float64:
 		return math.Trunc(v) == v && math.Abs(v) > maxJSONSafeInteger
 	case []any:
-		for _, item := range v {
-			if unsafeAttributeJSON(item) {
-				return true
-			}
-		}
+		return slices.ContainsFunc(v, unsafeAttributeJSON)
 	case map[string]any:
 		for _, item := range v {
 			if unsafeAttributeJSON(item) {
@@ -159,7 +157,7 @@ func (b *daemonMCPOperations) executeRecordAttributeOperation(ctx context.Contex
 	}
 	method, path, options, ok := attributeRequest(name, args)
 	if !ok {
-		return operationFailure("invalid_arguments", false), true, nil
+		return operationFailure(mcpInvalidArguments, false), true, nil
 	}
 	var result *mcpserver.OperationResult
 	var err error
@@ -219,13 +217,13 @@ func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, nam
 		return "", false, nil
 	}
 	if _, _, _, ok := attributeRequest(name, args); !ok {
-		return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+		return "", true, &mcpserver.OperationRefusalError{Code: mcpInvalidArguments}
 	}
 	var current any
 	if name == "set_person_attribute" || name == "clear_person_attribute" {
 		input, err := decodeMCPOperationArguments[attributeListArgs](map[string]any{"person_id": args["person_id"], "slug": args["slug"]})
 		if err != nil {
-			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+			return "", true, &mcpserver.OperationRefusalError{Code: mcpInvalidArguments}
 		}
 		result, _, err := b.executeRecordAttributeOperation(ctx, "list_person_attributes", map[string]any{"person_id": input.PersonID, "slug": *input.Slug})
 		if err != nil || result == nil || result.IsError {
@@ -244,7 +242,7 @@ func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, nam
 	if name == "patch_attribute_definition" || name == "delete_attribute_definition" {
 		input, err := decodeMCPOperationArguments[attributeDefinitionArgs](args)
 		if err != nil {
-			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+			return "", true, &mcpserver.OperationRefusalError{Code: mcpInvalidArguments}
 		}
 		result, _, err := b.executeRecordAttributeOperation(ctx, "get_attribute_definition", map[string]any{"definition_id": input.ID})
 		if err != nil || result == nil || result.IsError {

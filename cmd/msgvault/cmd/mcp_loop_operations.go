@@ -72,7 +72,7 @@ func (b *daemonMCPOperations) loopDeadline(value string) (time.Time, error) {
 
 func (b *daemonMCPOperations) executeLoopOperation(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
 	invalid := func() (*mcpserver.OperationResult, bool, error) {
-		return operationFailure("invalid_arguments", false), true, nil
+		return operationFailure(mcpInvalidArguments, false), true, nil
 	}
 	if name == "list_open_loops" {
 		input, err := decodeMCPOperationArguments[loopListArguments](args)
@@ -139,23 +139,23 @@ func (b *daemonMCPOperations) loopOperationDisclosure(name string, args map[stri
 	case "reopen_open_loop":
 		input, err := decodeMCPOperationArguments[loopDecisionArguments](args)
 		if err != nil || !validLoopID(input.MessageID) {
-			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+			return "", true, &mcpserver.OperationRefusalError{Code: mcpInvalidArguments}
 		}
 		id = input.MessageID
 	case "close_open_loop":
 		input, err := decodeMCPOperationArguments[loopDoneArguments](args)
 		if err != nil || !validLoopID(input.MessageID) || !validLoopQuestions(input.QuestionMessageIDs) {
-			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+			return "", true, &mcpserver.OperationRefusalError{Code: mcpInvalidArguments}
 		}
 		id, questions = input.MessageID, input.QuestionMessageIDs
 	case "snooze_open_loop":
 		input, err := decodeMCPOperationArguments[loopSnoozeArguments](args)
 		if err != nil || !validLoopID(input.MessageID) || !validLoopQuestions(input.QuestionMessageIDs) {
-			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+			return "", true, &mcpserver.OperationRefusalError{Code: mcpInvalidArguments}
 		}
 		deadline, err := b.loopDeadline(input.Until)
 		if err != nil {
-			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+			return "", true, &mcpserver.OperationRefusalError{Code: mcpInvalidArguments}
 		}
 		id, questions, until = input.MessageID, input.QuestionMessageIDs, deadline.Format(time.RFC3339Nano)
 	default:
