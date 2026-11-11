@@ -92,7 +92,7 @@ func (s *Store) RefreshArchivedEmailCalendarContext(ctx context.Context, sourceI
 
 func (s *Store) persistEmailCalendarPartsWith(ctx context.Context, tx *loggedTx, id, sourceID int64, parsed *mime.Message) (ICalendarImportSummary, error) {
 	var summary ICalendarImportSummary
-	prepared, diagnostics, err := s.prepareEmailCalendarPartsWith(ctx, tx, sourceID, parsed.CalendarParts)
+	prepared, diagnostics, err := prepareEmailCalendarParts(ctx, parsed.CalendarParts)
 	if err != nil {
 		return summary, err
 	}
@@ -105,16 +105,15 @@ func (s *Store) persistEmailCalendarPartsWith(ctx context.Context, tx *loggedTx,
 	return summary, nil
 }
 
-func (s *Store) prepareEmailCalendarPartsWith(ctx context.Context, tx *loggedTx, sourceID int64, parts []mime.CalendarPart) ([]preparedICS, []string, error) {
+func prepareEmailCalendarParts(ctx context.Context, parts []mime.CalendarPart) ([]preparedICS, []string, error) {
 	var prepared []preparedICS
 	var diagnostics []string
 	for _, part := range parts {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
-		items, skipped, err := s.prepareICalendarWith(ctx, tx, sourceID, part.Content, part.Method, true)
+		items, err := prepareICalendar(part.Content, part.Method, true)
 		if err != nil {
-			// Interpretation failures preserve the email; database failures abort archival.
 			if ctx.Err() != nil {
 				return nil, nil, ctx.Err()
 			}
@@ -124,9 +123,6 @@ func (s *Store) prepareEmailCalendarPartsWith(ctx context.Context, tx *loggedTx,
 			}
 			diagnostics = append(diagnostics, invalid.Error())
 			continue
-		}
-		for _, diagnostic := range skipped {
-			diagnostics = append(diagnostics, diagnostic.Error())
 		}
 		prepared = append(prepared, items...)
 	}

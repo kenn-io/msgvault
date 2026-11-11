@@ -341,8 +341,6 @@ func TestICalendarRecurrenceProjectionUpgrade(t *testing.T) {
 		`ALTER TABLE calendar_events DROP COLUMN start_local`,
 		`ALTER TABLE calendar_events DROP COLUMN duration_days`,
 		`ALTER TABLE calendar_events DROP COLUMN duration_elapsed_ns`,
-		`UPDATE calendar_events SET projection_version=2`,
-		`UPDATE applied_migrations SET version=2 WHERE name='calendar_event_projection_v1'`,
 		`UPDATE archive_metadata SET value='40' WHERE key='schema_version'`,
 	} {
 		_, err := st.db.ExecContext(t.Context(), query)

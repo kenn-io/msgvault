@@ -21,16 +21,6 @@ const rawFormatICS = "ics"
 // ICalendarImportSummary counts revision decisions, not generated occurrences.
 type ICalendarImportSummary struct {
 	Changed, Unchanged int
-	Skipped            []error
-}
-
-// SkippedLines reports events left out of the import, one per line.
-func (s ICalendarImportSummary) SkippedLines() string {
-	var b strings.Builder
-	for _, err := range s.Skipped {
-		fmt.Fprintf(&b, "\nSkipped %v", err)
-	}
-	return b.String()
 }
 
 // icsInterpretationError distinguishes unreadable calendars from archive failures.
@@ -53,11 +43,10 @@ func (s *Store) PersistICalendarContext(ctx context.Context, sourceID int64, raw
 		return summary, err
 	}
 	err := s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{sourceID}}, func(tx *loggedTx) error {
-		prepared, skipped, err := s.prepareICalendarWith(ctx, tx, sourceID, raw, "", false)
+		prepared, err := prepareICalendar(raw, "", false)
 		if err != nil {
 			return err
 		}
-		summary.Skipped = skipped
 		return s.persistICalendarWith(ctx, tx, sourceID, prepared, &summary)
 	})
 	if err != nil {
@@ -66,35 +55,28 @@ func (s *Store) PersistICalendarContext(ctx context.Context, sourceID int64, raw
 	return summary, nil
 }
 
-func parseICalendar(raw []byte, method, zone string, fromEmail bool) ([]calevent.ICSComponent, []error, error) {
+func parseICalendar(raw []byte, method string, fromEmail bool) ([]calevent.ICSComponent, error) {
 	parse := calevent.ParseICS
 	if fromEmail {
 		parse = calevent.ParseEmailICS
 	}
-	components, err := parse(raw, method, zone)
-	if skipped, ok := errors.AsType[*calevent.SkippedEventsError](err); ok {
-		return components, skipped.Errs, nil
-	}
+	components, err := parse(raw, method, "")
 	if err != nil {
-		return nil, nil, &icsInterpretationError{err}
+		return nil, &icsInterpretationError{err}
 	}
-	return components, nil, nil
+	return components, nil
 }
 
-func (s *Store) prepareICalendarWith(ctx context.Context, tx *loggedTx, sourceID int64, raw []byte, method string, fromEmail bool) ([]preparedICS, []error, error) {
-	var config sql.NullString
-	if err := tx.QueryRowContext(ctx, `SELECT sync_config FROM sources WHERE id=?`, sourceID).Scan(&config); err != nil {
-		return nil, nil, fmt.Errorf("read ICS source: %w", err)
-	}
-	components, skipped, err := parseICalendar(raw, method, calendarConfigZone(config), fromEmail)
+func prepareICalendar(raw []byte, method string, fromEmail bool) ([]preparedICS, error) {
+	components, err := parseICalendar(raw, method, fromEmail)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	out := make([]preparedICS, 0, len(components))
 	for _, c := range components {
 		out = append(out, preparedICS{component: c, fromEmail: fromEmail, meta: calevent.ICSMetadata{Sequence: c.Sequence, Stamp: c.Stamp, Status: c.Event.Status, AllDay: c.Event.AllDay, Organizer: c.OrganizerEmail, Range: slices.Contains(c.Event.Recurrence, calevent.ICSRangeRecurrence)}})
 	}
-	return out, skipped, nil
+	return out, nil
 }
 
 // The highest SEQUENCE wins, then the latest DTSTAMP; a cancellation wins a tie.

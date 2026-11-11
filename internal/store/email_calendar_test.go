@@ -434,22 +434,6 @@ func TestEmailCalendarInvalidPartPreservesEmail(t *testing.T) {
 		requirements.Len(page.Occurrences, 1)
 		assertions.Equal("confirmed", page.Occurrences[0].Status)
 	})
-	t.Run("unsupported zone", func(t *testing.T) {
-		st := newRFC822IDBackfillBackendStore(t)
-		var logs bytes.Buffer
-		previous := slog.Default()
-		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
-		t.Cleanup(func() { slog.SetDefault(previous) })
-		calendar := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\n" +
-			"BEGIN:VTIMEZONE\r\nTZID:Custom/Test\r\nBEGIN:STANDARD\r\nDTSTART:20270101T000000\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0500\r\nRDATE:20270301T020000\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\n" +
-			"BEGIN:VEVENT\r\nUID:invalid@example.com\r\nDTSTART;TZID=Custom/Test:20270302T120000\r\nEND:VEVENT\r\n" +
-			"BEGIN:VEVENT\r\nUID:valid@example.com\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Valid event\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
-		_, source := persistInviteEmail(t, st, "unsupported-zone", inviteEmail(calendar))
-		assert.Contains(t, logs.String(), "unsupported VTIMEZONE")
-		ids := emailEvents(t, st, source)
-		require.Len(t, ids, 1)
-		assert.Equal(t, "Valid event", calendarRows(t, st, ids[0])[0].Subject)
-	})
 }
 
 func TestEmailCalendarRevisionAfterSourceMerge(t *testing.T) {
