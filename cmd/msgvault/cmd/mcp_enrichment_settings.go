@@ -9,6 +9,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
+	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -37,14 +38,8 @@ type enrichmentProvider struct {
 	Credential            *generated.SecretSettingState `json:"credential"`
 }
 type enrichmentSettings struct {
-	Providers []enrichmentProvider `json:"person_enrichment_providers"`
-	Settings  []struct {
-		Key   string `json:"key"`
-		Value *struct {
-			Boolean *bool `json:"boolean"`
-		} `json:"value"`
-	} `json:"settings"`
-	PendingRestart bool `json:"pending_restart"`
+	Providers      []enrichmentProvider `json:"person_enrichment_providers"`
+	PendingRestart *bool                `json:"pending_restart"`
 }
 type enrichmentArguments struct {
 	Name              string `json:"name"`
@@ -104,13 +99,16 @@ func enrichmentProjection(result *mcpserver.OperationResult, writes bool) *mcpse
 		return result
 	}
 	settings, ok := result.Output.(enrichmentSettings)
-	if !ok || result.ETag == "" {
+	if !ok || result.ETag == "" || settings.PendingRestart == nil {
 		return operationFailure("invalid_operation_response", writes)
 	}
-	output := mcpserver.EnrichmentPolicy{ETag: result.ETag, PendingRestart: settings.PendingRestart, Providers: []mcpserver.EnrichmentProviderPolicy{}}
+	output := mcpserver.EnrichmentPolicy{ETag: result.ETag, PendingRestart: *settings.PendingRestart, Providers: []mcpserver.EnrichmentProviderPolicy{}}
 	for _, p := range settings.Providers {
 		if p.Name == "" || p.Enabled == nil || p.MaxRetries == nil || p.MaxRequestsPerRun == nil || p.MaxRequestsPerDay == nil {
 			return operationFailure("invalid_operation_response", writes)
+		}
+		if p.NumResults == nil {
+			p.NumResults = new(int64) // Native JSON omits zero.
 		}
 		output.Providers = append(output.Providers, mcpserver.EnrichmentProviderPolicy{Name: p.Name, Enabled: *p.Enabled, NumResults: p.NumResults, MaxRetries: *p.MaxRetries, MaxRequestsPerRun: *p.MaxRequestsPerRun, MaxRequestsPerDay: *p.MaxRequestsPerDay})
 	}
@@ -145,31 +143,6 @@ func (b *daemonMCPOperations) enrichmentContext(ctx context.Context, a enrichmen
 		return result, nil, "settings_conflict", nil
 	}
 	settings := result.Output.(enrichmentSettings)
-	if a.Enabled != nil && !*a.Enabled {
-		var enabled *bool
-		for _, setting := range settings.Settings {
-			if setting.Key == "people.enrichment.enabled" && setting.Value != nil {
-				enabled = setting.Value.Boolean
-			}
-		}
-		if enabled == nil {
-			return result, nil, "provider_policy_unreconstructable", nil
-		}
-		if *enabled {
-			others := false
-			for _, provider := range settings.Providers {
-				if provider.Enabled == nil {
-					return result, nil, "provider_policy_unreconstructable", nil
-				}
-				if provider.Name != a.Name && *provider.Enabled {
-					others = true
-				}
-			}
-			if !others {
-				return result, nil, "provider_policy_requires_enabled_provider", nil
-			}
-		}
-	}
 	for _, p := range settings.Providers {
 		if p.Name != a.Name {
 			continue
@@ -249,7 +222,7 @@ func (b *daemonMCPOperations) enrichmentOperationDisclosure(ctx context.Context,
 			if provider.Name == a.Name {
 				classes := []string{}
 				for _, class := range *provider.AllowedIdentifiers {
-					if !slices.Contains([]string{"name", "email", "phone", "current_company", "public_profile_url"}, class) {
+					if !slices.Contains([]personenrichment.IdentifierClass{personenrichment.IdentifierName, personenrichment.IdentifierEmail, personenrichment.IdentifierPhone, personenrichment.IdentifierCurrentCompany, personenrichment.IdentifierPublicProfileURL}, personenrichment.IdentifierClass(class)) {
 						return "", true, &mcpserver.OperationRefusalError{Code: "provider_policy_unreconstructable"}
 					}
 					classes = append(classes, class)

@@ -837,7 +837,7 @@ configured shared scheduler job. The response preserves `disposition` when the
 daemon supplies it, such as `started`, `pending`, or `coalesced`; check source and
 scheduler status for progress.
 
-Enrichment edits refuse to disable the last provider while enrichment is enabled.
+Native validation refuses to disable the last provider while enrichment is enabled.
 For Exa, `num_results: 0` reloads as 1; `max_retries: 0` reloads as 5 for
 all providers. These ineffective edits are refused before approval. Enabling
 shows the provider's permitted data classes and retention and training posture

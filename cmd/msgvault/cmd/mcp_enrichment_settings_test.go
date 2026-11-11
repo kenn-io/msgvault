@@ -100,7 +100,7 @@ func TestEnrichmentPolicyNativeReplacement(t *testing.T) {
 		require.Error(err)
 		assert.Contains(err.Error(), "provider_policy_zero_uses_default")
 	}
-	args := map[string]any{"name": "example", "etag": policy.ETag, "max_requests_per_day": 25, "max_requests_per_run": 7, "num_results": 3, "max_retries": 2}
+	args := map[string]any{"name": "example", "etag": policy.ETag, "max_requests_per_day": 25, "max_requests_per_run": 7, "num_results": 1, "max_retries": 2}
 	disclosure, handled, err := backend.enrichmentOperationDisclosure(t.Context(), "update_enrichment_policy", args)
 	require.NoError(err)
 	require.True(handled)
@@ -111,7 +111,7 @@ func TestEnrichmentPolicyNativeReplacement(t *testing.T) {
 	updated := operationOutput[mcpserver.EnrichmentPolicy](t, result)
 	assert.Equal(int64(25), updated.Providers[0].MaxRequestsPerDay)
 	require.NotNil(updated.Providers[0].NumResults)
-	assert.Equal(int64(3), *updated.Providers[0].NumResults)
+	assert.Equal(int64(1), *updated.Providers[0].NumResults)
 	assert.Equal(int64(2), updated.Providers[0].MaxRetries)
 	reloaded, err := config.Load(path, directory)
 	require.NoError(err)
@@ -140,6 +140,41 @@ func TestEnrichmentPolicyNativeReplacement(t *testing.T) {
 	enabledPolicy := operationOutput[mcpserver.EnrichmentPolicy](t, result)
 	assert.True(enabledPolicy.Providers[0].Enabled)
 
+	// Sixtyfour's native response omits zero num_results; the receipt preserves it.
+	sixtyDir := t.TempDir()
+	sixtyPath := filepath.Join(sixtyDir, "config.toml")
+	sixtyConfig := `[[people.enrichment.providers]]
+name = "example"
+kind = "sixtyfour"
+enabled = true
+endpoint = "https://provider.example/search"
+poll_endpoint = "https://provider.example/poll"
+tier = "standard"
+allowed_identifiers = ["name", "current_company"]
+target_keys = ["attribute:bio"]
+retention_posture = "zero_retention"
+training_posture = "no_training"
+refresh_interval = "24h"
+max_requests_per_run = 5
+max_requests_per_day = 50
+`
+	require.NoError(os.WriteFile(sixtyPath, []byte(sixtyConfig), 0o600))
+	sixtyCfg, err := config.Load(sixtyPath, sixtyDir)
+	require.NoError(err)
+	sixtyCfg.Data.DataDir = sixtyDir
+	sixty := sourceOperationFixture(t, api.NewServer(sixtyCfg, nil, nil, slog.New(slog.DiscardHandler)))
+	result, _, err = sixty.executeEnrichmentOperation(t.Context(), "get_enrichment_policy", nil)
+	require.NoError(err)
+	sixtyPolicy := operationOutput[mcpserver.EnrichmentPolicy](t, result)
+	require.Len(sixtyPolicy.Providers, 1)
+	require.NotNil(sixtyPolicy.Providers[0].NumResults)
+	assert.Equal(int64(0), *sixtyPolicy.Providers[0].NumResults)
+	result, _, err = sixty.executeEnrichmentOperation(t.Context(), "update_enrichment_policy", map[string]any{"name": "example", "etag": sixtyPolicy.ETag, "num_results": 3})
+	require.NoError(err)
+	sixtyUpdated := operationOutput[mcpserver.EnrichmentPolicy](t, result)
+	require.NotNil(sixtyUpdated.Providers[0].NumResults)
+	assert.Equal(int64(3), *sixtyUpdated.Providers[0].NumResults)
+
 	// A real settings snapshot with enrichment enabled cannot lose its last provider.
 	secondDir := t.TempDir()
 	secondPath := filepath.Join(secondDir, "config.toml")
@@ -154,11 +189,13 @@ func TestEnrichmentPolicyNativeReplacement(t *testing.T) {
 	current := operationOutput[mcpserver.EnrichmentPolicy](t, result)
 	disable := map[string]any{"name": "example", "etag": current.ETag, "enabled": false}
 	_, _, err = second.enrichmentOperationDisclosure(t.Context(), "update_enrichment_policy", disable)
-	require.Error(err)
-	assert.Contains(err.Error(), "provider_policy_requires_enabled_provider")
+	require.NoError(err)
 	result, _, err = second.executeEnrichmentOperation(t.Context(), "update_enrichment_policy", disable)
 	require.NoError(err)
-	assert.True(result.IsError)
+	require.True(result.IsError)
+	encoded, err = json.Marshal(result.Output)
+	require.NoError(err)
+	assert.Contains(string(encoded), "validation_failed")
 	after, err := os.ReadFile(secondPath)
 	require.NoError(err)
 	assert.Equal(initial, string(after))
@@ -184,10 +221,11 @@ func TestEnrichmentCapabilityRequiresExactRouteAndProperties(t *testing.T) {
 func TestEnrichmentProjectionRejectsMissingPolicyFields(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
+	body := `{"pending_restart":false,"person_enrichment_providers":[{"name":"example"}]}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("ETag", `"revision"`)
-		_, _ = w.Write([]byte(`{"person_enrichment_providers":[{"name":"example"}]}`))
+		_, _ = w.Write([]byte(body))
 	}))
 	t.Cleanup(server.Close)
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
@@ -196,6 +234,16 @@ func TestEnrichmentProjectionRejectsMissingPolicyFields(t *testing.T) {
 	result, _, err := backend.executeEnrichmentOperation(t.Context(), "get_enrichment_policy", nil)
 	require.NoError(err)
 	assert.True(result.IsError)
+	body = `{}`
+	result, _, err = backend.executeEnrichmentOperation(t.Context(), "get_enrichment_policy", nil)
+	require.NoError(err)
+	assert.True(result.IsError)
+	body = `{"pending_restart":false}`
+	result, _, err = backend.executeEnrichmentOperation(t.Context(), "get_enrichment_policy", nil)
+	require.NoError(err)
+	policy := operationOutput[mcpserver.EnrichmentPolicy](t, result)
+	assert.Empty(policy.Providers)
+	assert.False(policy.PendingRestart)
 }
 
 func TestEnrichmentPolicySDKRequiresApproval(t *testing.T) {
@@ -269,7 +317,7 @@ func TestEnrichmentWritePreservesUncertainty(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				if r.Method == http.MethodGet {
 					w.Header().Set("ETag", `"revision"`)
-					_, _ = w.Write([]byte(`{"person_enrichment_providers":[{"name":"example","kind":"sixtyfour","enabled":false,"endpoint":"https://provider.example/search","poll_endpoint":"https://provider.example/poll","allowed_identifiers":["name"],"target_keys":["attribute:bio"],"allow_sensitive_targets":false,"retention_posture":"zero_retention","training_posture":"no_training","refresh_interval":"24h","request_timeout":"1m","poll_interval":"1s","max_job_age":"1h","max_retries":1,"max_requests_per_run":5,"max_requests_per_day":50,"credential":{"configured":false,"source":"none"}}]}`))
+					_, _ = w.Write([]byte(`{"pending_restart":false,"person_enrichment_providers":[{"name":"example","kind":"sixtyfour","enabled":false,"endpoint":"https://provider.example/search","poll_endpoint":"https://provider.example/poll","allowed_identifiers":["name"],"target_keys":["attribute:bio"],"allow_sensitive_targets":false,"retention_posture":"zero_retention","training_posture":"no_training","refresh_interval":"24h","request_timeout":"1m","poll_interval":"1s","max_job_age":"1h","max_retries":1,"max_requests_per_run":5,"max_requests_per_day":50,"credential":{"configured":false,"source":"none"}}]}`))
 					return
 				}
 				sent = r.Header.Get("If-Match")
