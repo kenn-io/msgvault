@@ -960,9 +960,6 @@ func validateResolutionInput(input ResolutionInput) error {
 		if input.Target.ValueType != ValuePostalAddress || input.Target.Cardinality != CardinalityMulti {
 			return errors.New("postal resolution target must be a multi-value postal target")
 		}
-		if input.Pin.Pinned || input.Pin.EventID != nil {
-			return errors.New("postal address pins are unsupported")
-		}
 	default:
 		switch input.Target.ValueType {
 		case ValueText, ValueInteger, ValueReal, ValueBoolean, ValueDate, ValueTimestamp:

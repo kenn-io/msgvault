@@ -1344,8 +1344,10 @@ func TestPostalSnapshotExportsCurrentLabel(t *testing.T) {
 }
 
 func TestPostalAddressExportPreservesComponentsForUnsupportedSnapshot(t *testing.T) {
-	value, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: "msgvault:postal-input:v2\n{}", StreetAddress: new("12 Example Street")})
-	require.NoError(t, err)
-	assert.Equal(t, ";;12 Example Street;;;;", value)
-	assert.Nil(t, label)
+	for _, original := range []string{"msgvault:postal-input:v2\n{}", "msgvault:postal-input:v1\n" + `{"schema":1,"input":{},"new_field":true}`} {
+		value, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: original, StreetAddress: new("12 Example Street")})
+		require.NoError(t, err)
+		assert.Equal(t, ";;12 Example Street;;;;", value)
+		assert.Nil(t, label)
+	}
 }

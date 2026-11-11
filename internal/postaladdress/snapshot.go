@@ -9,7 +9,7 @@ import (
 
 const originalPrefix = "msgvault:postal-input:v1\n"
 
-// ErrUnsupportedEnvelope marks a postal input envelope of another version.
+// ErrUnsupportedEnvelope marks a postal input envelope this reader cannot decode.
 var ErrUnsupportedEnvelope = errors.New("unsupported postal input envelope")
 
 type originalSnapshot struct {
@@ -26,7 +26,7 @@ func EncodeOriginalInput(input Input) (string, error) {
 		}
 	}
 	data, err := json.Marshal(originalSnapshot{Schema: 1, Input: &input})
-	if err != nil {
+	if errors.Is(err, ErrUnsupportedEnvelope) {
 		return "", err
 	}
 	return originalPrefix + string(data), nil
@@ -42,21 +42,21 @@ func DecodeOriginalInput(value string) (Input, bool, error) {
 	}
 	var snapshot originalSnapshot
 	if err := json.Unmarshal([]byte(strings.TrimPrefix(value, originalPrefix)), &snapshot, json.RejectUnknownMembers(true)); err != nil {
-		return Input{}, false, err
+		return Input{}, false, errors.Join(ErrUnsupportedEnvelope, err)
 	}
 	if snapshot.Schema != 1 || snapshot.Input == nil {
-		return Input{}, false, errors.New("invalid postal input envelope")
+		return Input{}, false, errors.Join(ErrUnsupportedEnvelope, errors.New("invalid postal input envelope"))
 	}
 	return *snapshot.Input, true, nil
 }
 
 // DecodeStoredOriginalInput is the read-side decode. An envelope of an
-// unsupported version has no recoverable source, so it reads as an empty
+// unreadable version has no recoverable source, so it reads as an empty
 // snapshot: its text is never exposed and it cannot hide other addresses.
 // Writes keep using DecodeOriginalInput, which rejects it.
 func DecodeStoredOriginalInput(value string) (Input, bool, error) {
 	input, snapshot, err := DecodeOriginalInput(value)
-	if errors.Is(err, ErrUnsupportedEnvelope) {
+	if err != nil {
 		return Input{}, true, nil
 	}
 	return input, snapshot, err
