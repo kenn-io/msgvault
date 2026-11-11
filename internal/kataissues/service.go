@@ -9,9 +9,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-
-	"github.com/oklog/ulid/v2"
-
 	"go.kenn.io/msgvault/internal/kataevidence"
 	"go.kenn.io/msgvault/internal/personagenda"
 	"go.kenn.io/msgvault/internal/taskclient"
@@ -298,15 +295,10 @@ func (s *Service) Lookup(ctx context.Context, ref string) (taskclient.KataTask, 
 }
 
 func validIssueRef(id string) bool {
-	if len(id) == 26 {
-		if _, err := ulid.ParseStrict(strings.ToUpper(id)); err == nil {
-			return true
-		}
-	}
 	if len(id) < 4 || len(id) > 26 {
 		return false
 	}
-	for _, c := range id {
+	for _, c := range strings.ToLower(id) {
 		if !strings.ContainsRune("0123456789abcdefghjkmnpqrstvwxyz", c) {
 			return false
 		}

@@ -273,38 +273,15 @@ func TestKataIssueBackendOpenCombinesRefAndTitle(t *testing.T) {
 	require.NoError(t, err)
 	exact, err := client.CreateTask(t.Context(), katatest.Project, "exact", taskclient.KataCreate{Title: "First issue"})
 	require.NoError(t, err)
-	matching, err := client.CreateTask(t.Context(), katatest.Project, "matching", taskclient.KataCreate{Title: "Review " + exact.Ref})
+	_, err = client.CreateTask(t.Context(), katatest.Project, "matching", taskclient.KataCreate{Title: "Review " + exact.Ref})
 	require.NoError(t, err)
 	backend := &kataIssueBackend{config: cfg}
-	issues, truncated, err := backend.Open(t.Context(), exact.Ref)
-	require.NoError(t, err)
-	assert.False(t, truncated)
-	require.Len(t, issues, 2)
-	assert.Equal(t, exact.UID, issues[0].UID)
-	assert.Equal(t, matching.UID, issues[1].UID)
-
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodPatch, fmt.Sprintf("%s/api/v1/projects/%d/issues/%s", server.URL, native.ProjectID, exact.UID), strings.NewReader(fmt.Sprintf(`{"actor":"msgvault","title":"Review %s"}`, exact.Ref)))
-	require.NoError(t, err)
-	request.Header.Set("Authorization", "Bearer "+katatest.Token)
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("If-Match", `"rev-`+exact.Revision+`"`)
-	response, err := server.Client().Do(request)
-	require.NoError(t, err)
-	require.NoError(t, response.Body.Close())
-	require.Equal(t, http.StatusOK, response.StatusCode)
-	issues, truncated, err = backend.Open(t.Context(), exact.Ref)
-	require.NoError(t, err)
-	assert.False(t, truncated)
-	require.Len(t, issues, 2)
-	assert.Equal(t, exact.UID, issues[0].UID)
-	assert.Equal(t, matching.UID, issues[1].UID)
-
 	native.Endpoint(server).CloseIssue(t, exact.UID)
 	for i := range 24 {
 		_, err = client.CreateTask(t.Context(), katatest.Project, fmt.Sprintf("match-%d", i), taskclient.KataCreate{Title: "Review " + exact.Ref})
 		require.NoError(t, err)
 	}
-	issues, truncated, err = backend.Open(t.Context(), exact.Ref)
+	issues, truncated, err := backend.Open(t.Context(), exact.Ref)
 	require.NoError(t, err)
 	assert.True(t, truncated)
 	require.Len(t, issues, 25)
@@ -312,4 +289,13 @@ func TestKataIssueBackendOpenCombinesRefAndTitle(t *testing.T) {
 	for _, match := range issues[1:] {
 		assert.NotEqual(t, exact.UID, match.UID)
 	}
+}
+
+func TestExactIssueFirstDeduplicates(t *testing.T) {
+	exact := taskclient.KataTask{UID: "exact"}
+	other := taskclient.KataTask{UID: "other"}
+	issues, truncated, err := exactIssueFirst(exact, true, []taskclient.KataTask{other, exact}, false, nil)
+	require.NoError(t, err)
+	assert.False(t, truncated)
+	assert.Equal(t, []taskclient.KataTask{exact, other}, issues)
 }

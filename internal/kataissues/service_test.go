@@ -886,7 +886,7 @@ func TestLookupIssue(t *testing.T) {
 	created, _, err := f.service.Kata.CreateTaskReused(t.Context(), katatest.Project, "lookup-issue", taskclient.KataCreate{Title: "Older budget"})
 	require.NoError(t, err)
 	f.kata.endpoint().CloseIssue(t, created.UID)
-	for _, ref := range []string{created.Ref, created.QualifiedRef, created.UID} {
+	for _, ref := range []string{created.Ref, created.QualifiedRef, created.UID, strings.ToUpper(created.UID)} {
 		issue, found, err := f.service.Lookup(t.Context(), ref)
 		require.NoError(t, err)
 		require.True(t, found)

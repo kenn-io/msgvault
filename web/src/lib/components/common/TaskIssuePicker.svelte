@@ -3,7 +3,7 @@
   import { onMount } from 'svelte';
 
   let { load, noun, empty, disabled = false, moreNote = '', hint = '', searchLabel = `Filter ${noun}`, selected = $bindable('') }: {
-    load: (query: string, signal: AbortSignal) => Promise<{ items: { id: string; label: string; detail?: string }[]; truncated: boolean; error?: string }>;
+    load: (query: string, signal: AbortSignal) => Promise<{ items: { id: string; label: string; detail?: string }[]; truncated: boolean }>;
     moreNote?: string;
     hint?: string;
     searchLabel?: string;
@@ -25,7 +25,7 @@
     selected = ''; loading = true; error = ''; listedQuery = query.trim();
     try {
       const result = await load(listedQuery, current.signal);
-      if (!current.signal.aborted) { items = result.items; truncated = result.truncated; error = result.error ?? ''; }
+      if (!current.signal.aborted) { items = result.items; truncated = result.truncated; }
     } catch (cause) {
       if (!current.signal.aborted) { items = []; error = cause instanceof Error ? cause.message : `Unable to load ${noun}.`; }
     } finally {
