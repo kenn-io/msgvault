@@ -168,7 +168,6 @@ func (b *daemonMCPOperations) mergeRecoveryDisclosure(ctx context.Context, name 
 			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 		}
 		personID, mergeID, etag = a.PersonID, a.MergeID, a.ETag
-		effect = "Decide the specified review candidate; accepting can change the person's attribute and restrict exact reversal."
 	case "split_person_merge":
 		a, err := decodeMCPOperationArguments[mergeSplitArgs](args)
 		if err != nil || !validMergeSplit(a) {
