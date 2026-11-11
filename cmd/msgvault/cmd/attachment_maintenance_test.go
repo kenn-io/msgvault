@@ -230,6 +230,8 @@ func TestAutomaticAttachmentMaintenanceCancellationIsInformational(t *testing.T)
 func TestAttachmentIngestDefersPackingAndPreservesResult(t *testing.T) {
 	for _, partial := range []bool{false, true} {
 		t.Run(fmt.Sprintf("partial=%v", partial), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
 			f := newAttachmentMaintenanceFixture(t)
 			failure := errors.New("partial import")
 			var hash string
@@ -241,15 +243,15 @@ func TestAttachmentIngestDefersPackingAndPreservesResult(t *testing.T) {
 				return nil
 			})
 			if partial {
-				require.ErrorIs(t, err, failure)
+				require.ErrorIs(err, failure)
 			} else {
-				require.NoError(t, err)
+				require.NoError(err)
 			}
-			assert.Nil(t, f.packedEntry(hash))
-			assert.Equal(t, []byte("imported attachment"), f.readBlob(hash))
-			require.NoError(t, f.maintenance.runPendingPack(t.Context()))
-			assert.NotNil(t, f.packedEntry(hash))
-			assert.Equal(t, []byte("imported attachment"), f.readBlob(hash))
+			assert.Nil(f.packedEntry(hash))
+			assert.Equal([]byte("imported attachment"), f.readBlob(hash))
+			require.NoError(f.maintenance.runPendingPack(t.Context()))
+			assert.NotNil(f.packedEntry(hash))
+			assert.Equal([]byte("imported attachment"), f.readBlob(hash))
 		})
 	}
 }
