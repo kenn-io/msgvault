@@ -75,4 +75,20 @@ func TestCommitmentMigrationUpgradesVersion40(t *testing.T) {
  (person_id,target_key,anchor_message_id,direction,quote,quote_start,quote_end,summary,promised_at,expires_at)
  VALUES (?, 'promise', ?, 'owed_to', 'I will send it.', 0, 15, 'Send it', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING id`), f.personID, anchor).Scan(&id))
 	a.Positive(id)
+	// Journal positions must retain the clock's 64-bit range after the upgrade.
+	const sequence = int64(1) << 31
+	_, err = st.DB().ExecContext(ctx, st.Rebind(`UPDATE person_sweep_change_clock SET sequence = ? WHERE singleton = TRUE`), sequence)
+	r.NoError(err)
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01",
+		AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+	_, err = st.DB().ExecContext(ctx, st.Rebind(`INSERT INTO person_commitment_frontiers
+		(person_id, through_sequence, processed_at, backfill_message_id, scope_fingerprint)
+		VALUES (?, ?, ?, -1, ?)`), f.personID, sequence, sweepBudgetNow(), peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
+	r.NoError(err)
+	window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, sweepBudgetNow(), "UTC")
+	r.NoError(err)
+	a.Equal(sequence, window.ThroughSequence)
+	a.Empty(window.Sources)
 }
