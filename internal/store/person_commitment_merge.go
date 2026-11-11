@@ -63,6 +63,9 @@ func (s *Store) transferCommitmentDecisionTx(ctx context.Context, tx *loggedTx, 
 		_, err = tx.ExecContext(ctx, `UPDATE person_commitments SET owner_state = ?, snoozed_until = ?, reopened_at = ? WHERE id = ?`,
 			state, s.commitmentTimestamp(snooze), s.commitmentTimestamp(laterCommitmentTime(current.ReopenedAt, from.ReopenedAt)), current.ID)
 		if err == nil {
+			err = s.transferCommitmentAgendaTx(ctx, tx, from.ID, current.ID)
+		}
+		if err == nil {
 			_, err = tx.ExecContext(ctx, `DELETE FROM person_commitments WHERE id = ?`, from.ID)
 		}
 	}

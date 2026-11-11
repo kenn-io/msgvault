@@ -196,6 +196,10 @@ issue quotes and links to the original message. Retrying a successful filing
 returns the same issue, including after it is closed in Kata. A promise must
 still have a current citation when it is first filed.
 
+Manual filing uses the daemon's trusted request origin for the message link.
+Scheduled filing uses the daemon's local origin. The issue includes the exact
+archive citation, which you can use when the local address is out of reach.
+
 Set `auto_agenda = true` in `[people.sweep.commitments]` to let the scheduled
 sweep file open commitments in batches of up to eight. This includes promises
 already open when you enable the setting. Automatic creation is off by default. The manual command works without that setting. Both require

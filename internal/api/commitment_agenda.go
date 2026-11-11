@@ -35,9 +35,9 @@ type commitmentAgendaArchive interface {
 	EnqueueCommitmentAgendaContext(context.Context, store.CommitmentAgendaSuggestion) (store.CommitmentAgendaSuggestion, error)
 	ListPendingCommitmentAgendaContext(context.Context, string, time.Time, int) ([]store.CommitmentAgendaSuggestion, error)
 	MarkCommitmentAgendaAttemptContext(context.Context, store.CommitmentAgendaSuggestion, time.Time, bool) (bool, error)
-	RetireCommitmentAgendaContext(context.Context, int64) error
+	RetireCommitmentAgendaContext(context.Context, string) error
 	DeferCommitmentAgendaContext(context.Context, store.PersonCommitment, string, time.Time) error
-	LinkCommitmentAgendaContext(context.Context, int64, string, string) (store.CommitmentAgendaSuggestion, error)
+	LinkCommitmentAgendaContext(context.Context, string, string, string) (store.CommitmentAgendaSuggestion, error)
 	ReopenCommitmentAgendaContext(context.Context, int64) error
 }
 
@@ -259,7 +259,7 @@ func (a *CommitmentAgenda) retire(ctx context.Context, item store.CommitmentAgen
 			return a.link(ctx, item, result.Issue)
 		}
 	}
-	if err := a.archive.RetireCommitmentAgendaContext(ctx, item.CommitmentID); err != nil {
+	if err := a.archive.RetireCommitmentAgendaContext(ctx, item.IdempotencyKey); err != nil {
 		return item, err
 	}
 	return item, sql.ErrNoRows
@@ -275,7 +275,7 @@ func (a *CommitmentAgenda) link(ctx context.Context, item store.CommitmentAgenda
 	// disconnected after Kata committed it.
 	save, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	return a.archive.LinkCommitmentAgendaContext(save, item.CommitmentID, issue.UID, issue.QualifiedRef)
+	return a.archive.LinkCommitmentAgendaContext(save, item.IdempotencyKey, issue.UID, issue.QualifiedRef)
 }
 
 type CommitmentAgendaResponse struct {

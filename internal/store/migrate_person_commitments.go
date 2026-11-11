@@ -24,8 +24,8 @@ func (s *Store) migratePersonCommitmentFailure(ctx context.Context) error {
 	})
 }
 
-// An agenda receipt outlives its promise. Ensure SQLite never reuses a
-// retired c<ID> for another promise when the highest row is removed.
+// Kata retains the create key after a local promise is purged. Ensure
+// SQLite never reuses its c<ID> for another promise.
 func (s *Store) migratePersonCommitmentAgendaIDs(ctx context.Context) error {
 	if s.IsPostgreSQL() {
 		return nil

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/v2"
 	"errors"
 	"strconv"
@@ -33,6 +34,7 @@ type CommitmentAgendaSuggestion struct {
 
 const commitmentAgendaColumns = `commitment_id, target_key, idempotency_key, destination_key, CAST(request_json AS TEXT),
 	quote, state, attempted_at IS NOT NULL, COALESCE(issue_uid, ''), COALESCE(issue_ref, '')`
+const commitmentAgendaByID = `SELECT ` + commitmentAgendaColumns + ` FROM person_commitment_agenda WHERE commitment_id = ?`
 
 func scanCommitmentAgenda(row scanner) (CommitmentAgendaSuggestion, error) {
 	var item CommitmentAgendaSuggestion
@@ -46,8 +48,7 @@ func scanCommitmentAgenda(row scanner) (CommitmentAgendaSuggestion, error) {
 }
 
 func (s *Store) GetCommitmentAgendaContext(ctx context.Context, id int64) (CommitmentAgendaSuggestion, error) {
-	return scanCommitmentAgenda(s.db.QueryRowContext(ctx, s.Rebind(`SELECT `+commitmentAgendaColumns+
-		` FROM person_commitment_agenda WHERE commitment_id = ?`), id))
+	return scanCommitmentAgenda(s.db.QueryRowContext(ctx, s.Rebind(commitmentAgendaByID), id))
 }
 
 func (s *Store) EnqueueCommitmentAgendaContext(ctx context.Context, item CommitmentAgendaSuggestion) (CommitmentAgendaSuggestion, error) {
@@ -59,31 +60,41 @@ func (s *Store) EnqueueCommitmentAgendaContext(ctx context.Context, item Commitm
 	if err != nil {
 		return CommitmentAgendaSuggestion{}, err
 	}
-	_, err = s.db.ExecContext(ctx, s.Rebind(`INSERT INTO person_commitment_agenda
-		(commitment_id, target_key, idempotency_key, destination_key, request_json, quote)
-		SELECT ?, ?, ?, ?, `+s.dialect.JSONBindExpr()+`, ? WHERE EXISTS (SELECT 1 FROM person_commitments
-			WHERE id = ? AND target_key = ? AND quote = ? AND current_claim_id IS NOT NULL AND owner_state <> 'done')
-		ON CONFLICT (commitment_id) DO UPDATE SET target_key = excluded.target_key,
-			destination_key = excluded.destination_key, request_json = excluded.request_json,
-			quote = excluded.quote, state = 'pending', deferred_at = NULL
-		WHERE person_commitment_agenda.attempted_at IS NULL AND person_commitment_agenda.state <> 'linked' `), item.CommitmentID, item.TargetKey, item.IdempotencyKey, item.DestinationKey,
-		string(request), item.Quote, item.CommitmentID, item.TargetKey, item.Quote)
-	if err != nil {
-		return CommitmentAgendaSuggestion{}, err
-	}
-	return s.GetCommitmentAgendaContext(ctx, item.CommitmentID)
+	var queued CommitmentAgendaSuggestion
+	err = s.withSourceMaintenanceGateContext(ctx, func(tx *loggedTx) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO person_commitment_agenda
+			(commitment_id, target_key, idempotency_key, destination_key, request_json, quote)
+			SELECT ?, ?, ?, ?, `+s.dialect.JSONBindExpr()+`, ? WHERE EXISTS (SELECT 1 FROM person_commitments
+				WHERE id = ? AND target_key = ? AND quote = ? AND current_claim_id IS NOT NULL AND owner_state <> 'done')
+			ON CONFLICT (commitment_id) DO UPDATE SET target_key = excluded.target_key,
+				destination_key = excluded.destination_key, request_json = excluded.request_json,
+				quote = excluded.quote, state = 'pending', deferred_at = NULL
+			WHERE person_commitment_agenda.attempted_at IS NULL AND person_commitment_agenda.state <> 'linked'`,
+			item.CommitmentID, item.TargetKey, item.IdempotencyKey, item.DestinationKey,
+			string(request), item.Quote, item.CommitmentID, item.TargetKey, item.Quote)
+		if err != nil {
+			return err
+		}
+		queued, err = scanCommitmentAgenda(tx.QueryRowContext(ctx, commitmentAgendaByID, item.CommitmentID))
+		return err
+	})
+	return queued, err
 }
 
 // DeferCommitmentAgendaContext moves an unpreparable item out of the next
 // automatic batch. It records no attempted remote create.
 func (s *Store) DeferCommitmentAgendaContext(ctx context.Context, item PersonCommitment, destination string, now time.Time) error {
-	_, err := s.db.ExecContext(ctx, s.Rebind(`INSERT INTO person_commitment_agenda
-		(commitment_id, target_key, idempotency_key, destination_key, request_json, quote, state, deferred_at)
-		VALUES (?, ?, ?, ?, `+s.dialect.JSONBindExpr()+`, ?, 'retired', ?)
-		ON CONFLICT (commitment_id) DO UPDATE SET deferred_at = excluded.deferred_at
-		WHERE person_commitment_agenda.attempted_at IS NULL AND person_commitment_agenda.state <> 'linked'`),
-		item.ID, item.TargetKey, "commitment-agenda:c"+strconv.FormatInt(item.ID, 10), destination, "{}", item.Quote, s.dialect.TimestampParam(now))
-	return err
+	return s.withSourceMaintenanceGateContext(ctx, func(tx *loggedTx) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO person_commitment_agenda
+			(commitment_id, target_key, idempotency_key, destination_key, request_json, quote, state, deferred_at)
+			SELECT ?, ?, ?, ?, `+s.dialect.JSONBindExpr()+`, ?, 'retired', ? WHERE EXISTS (SELECT 1 FROM person_commitments
+				WHERE id = ? AND target_key = ? AND quote = ? AND current_claim_id IS NOT NULL AND owner_state <> 'done')
+			ON CONFLICT (commitment_id) DO UPDATE SET deferred_at = excluded.deferred_at
+			WHERE person_commitment_agenda.attempted_at IS NULL AND person_commitment_agenda.state <> 'linked'`,
+			item.ID, item.TargetKey, "commitment-agenda:c"+strconv.FormatInt(item.ID, 10), destination, "{}", item.Quote,
+			s.dialect.TimestampParam(now), item.ID, item.TargetKey, item.Quote)
+		return err
+	})
 }
 
 func (s *Store) ListPendingCommitmentAgendaContext(ctx context.Context, destination string, now time.Time, limit int) ([]CommitmentAgendaSuggestion, error) {
@@ -114,12 +125,12 @@ func (s *Store) ListPendingCommitmentAgendaContext(ctx context.Context, destinat
 
 func (s *Store) MarkCommitmentAgendaAttemptContext(ctx context.Context, item CommitmentAgendaSuggestion, now time.Time, automatic bool) (bool, error) {
 	query := `UPDATE person_commitment_agenda SET attempted_at = ?, deferred_at = NULL
-		WHERE commitment_id = ? AND state = 'pending' AND target_key = ? AND quote = ? AND destination_key = ?
+		WHERE commitment_id = ? AND idempotency_key = ? AND state = 'pending' AND target_key = ? AND quote = ? AND destination_key = ?
 		AND EXISTS (SELECT 1 FROM person_commitments c WHERE c.id = commitment_id
 			AND c.target_key = person_commitment_agenda.target_key AND c.quote = person_commitment_agenda.quote
 			AND c.current_claim_id IS NOT NULL AND c.owner_state <> 'done'
 			AND ` + s.loopTimeKey("c.expires_at") + ` > ` + s.loopTimeKey("?")
-	args := []any{s.dialect.TimestampParam(now), item.CommitmentID, item.TargetKey, item.Quote, item.DestinationKey, s.dialect.TimestampParam(now)}
+	args := []any{s.dialect.TimestampParam(now), item.CommitmentID, item.IdempotencyKey, item.TargetKey, item.Quote, item.DestinationKey, s.dialect.TimestampParam(now)}
 	if automatic {
 		query += ` AND (c.owner_state <> 'snoozed' OR ` + s.loopTimeKey("c.snoozed_until") + ` <= ` + s.loopTimeKey("?") + `)`
 		args = append(args, s.dialect.TimestampParam(now))
@@ -132,28 +143,66 @@ func (s *Store) MarkCommitmentAgendaAttemptContext(ctx context.Context, item Com
 	return count == 1, err
 }
 
-func (s *Store) RetireCommitmentAgendaContext(ctx context.Context, id int64) error {
+func (s *Store) RetireCommitmentAgendaContext(ctx context.Context, key string) error {
 	_, err := s.db.ExecContext(ctx, s.Rebind(`UPDATE person_commitment_agenda SET state = 'retired'
-		WHERE commitment_id = ? AND state = 'pending'`), id)
+		WHERE idempotency_key = ? AND state = 'pending'`), key)
 	return err
 }
 
-// LinkCommitmentAgendaContext records a successful create even if an owner
-// closed the promise while Kata was responding.
-func (s *Store) LinkCommitmentAgendaContext(ctx context.Context, id int64, uid, ref string) (CommitmentAgendaSuggestion, error) {
-	if uid == "" || ref == "" {
+// LinkCommitmentAgendaContext records a successful create by its frozen key,
+// even after a merge moved the receipt or an owner closed the promise.
+func (s *Store) LinkCommitmentAgendaContext(ctx context.Context, key, uid, ref string) (CommitmentAgendaSuggestion, error) {
+	if key == "" || uid == "" || ref == "" {
 		return CommitmentAgendaSuggestion{}, ErrInvalidActivityRequest
 	}
-	_, err := s.db.ExecContext(ctx, s.Rebind(`UPDATE person_commitment_agenda SET state = 'linked', issue_uid = ?, issue_ref = ?
-		WHERE commitment_id = ? AND state IN ('pending','retired')`), uid, ref, id)
-	if err != nil {
-		return CommitmentAgendaSuggestion{}, err
+	item, err := scanCommitmentAgenda(s.db.QueryRowContext(ctx, s.Rebind(`UPDATE person_commitment_agenda
+		SET state = 'linked', issue_uid = ?, issue_ref = ?
+		WHERE idempotency_key = ? AND attempted_at IS NOT NULL AND state IN ('pending','retired')
+		RETURNING `+commitmentAgendaColumns), uid, ref, key))
+	if !errors.Is(err, sql.ErrNoRows) {
+		return item, err
 	}
-	item, err := s.GetCommitmentAgendaContext(ctx, id)
+	item, err = scanCommitmentAgenda(s.db.QueryRowContext(ctx, s.Rebind(`SELECT `+commitmentAgendaColumns+
+		` FROM person_commitment_agenda WHERE idempotency_key = ? AND state = 'linked'`), key))
 	if err == nil && item.IssueUID != uid {
 		err = errors.New("commitment agenda already links a different issue")
 	}
 	return item, err
+}
+
+// Prefer an existing link, then an attempted receipt. Preserve the exact
+// request and key for a possible create already in flight.
+func (s *Store) transferCommitmentAgendaTx(ctx context.Context, tx *loggedTx, from, into int64) error {
+	query := `WITH receipts AS (
+		SELECT commitment_id, state, attempted_at FROM person_commitment_agenda
+		WHERE commitment_id IN (?, ?) ORDER BY commitment_id`
+	if s.IsPostgreSQL() {
+		// The parent locks fence inserts through the receipt foreign key.
+		// Lock both receipts before choosing so a completed create can win.
+		var locked int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM (
+			SELECT id FROM person_commitments WHERE id IN (?, ?) ORDER BY id FOR UPDATE
+		) AS commitments`, from, into).Scan(&locked); err != nil {
+			return err
+		}
+		query += " FOR UPDATE"
+	}
+	query += `) SELECT commitment_id FROM receipts
+		ORDER BY CASE WHEN state = 'linked' THEN 2 WHEN attempted_at IS NOT NULL THEN 1 ELSE 0 END DESC,
+			CASE WHEN commitment_id = ? THEN 0 ELSE 1 END LIMIT 1`
+	var winner int64
+	err := tx.QueryRowContext(ctx, query, from, into, into).Scan(&winner)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && winner == into {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM person_commitment_agenda WHERE commitment_id = ?`, into); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE person_commitment_agenda SET commitment_id = ? WHERE commitment_id = ?`, into, from)
+	return err
 }
 
 func (s *Store) ReopenCommitmentAgendaContext(ctx context.Context, id int64) error {

@@ -4426,12 +4426,12 @@ CREATE TABLE IF NOT EXISTS person_commitment_frontiers (
  anchor_backfill_id INTEGER NOT NULL DEFAULT 0
 );
 
--- Frozen intent survives source removal, so an issue created concurrently
--- with closure can still have its actual result recorded.
+-- Frozen intent survives owner closure. Purging the cited promise deletes
+-- its saved request and quote.
 CREATE TABLE IF NOT EXISTS person_commitment_agenda (
- commitment_id INTEGER PRIMARY KEY,
+ commitment_id INTEGER PRIMARY KEY REFERENCES person_commitments(id) ON DELETE CASCADE,
  target_key TEXT NOT NULL,
- idempotency_key TEXT NOT NULL,
+ idempotency_key TEXT NOT NULL UNIQUE,
  destination_key TEXT NOT NULL,
  request_json JSON NOT NULL,
  quote TEXT NOT NULL,

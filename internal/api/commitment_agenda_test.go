@@ -67,12 +67,12 @@ func (f *agendaArchiveFixture) MarkCommitmentAgendaAttemptContext(context.Contex
 	return true, nil
 }
 
-func (f *agendaArchiveFixture) RetireCommitmentAgendaContext(context.Context, int64) error {
+func (f *agendaArchiveFixture) RetireCommitmentAgendaContext(context.Context, string) error {
 	f.item.State = store.CommitmentAgendaRetired
 	return nil
 }
 
-func (f *agendaArchiveFixture) LinkCommitmentAgendaContext(_ context.Context, _ int64, uid, ref string) (store.CommitmentAgendaSuggestion, error) {
+func (f *agendaArchiveFixture) LinkCommitmentAgendaContext(_ context.Context, _ string, uid, ref string) (store.CommitmentAgendaSuggestion, error) {
 	f.item.State, f.item.IssueUID, f.item.IssueRef = store.CommitmentAgendaLinked, uid, ref
 	return f.item, nil
 }
