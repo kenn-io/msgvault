@@ -140,19 +140,35 @@ func TestDraftReplyGreetingLint(t *testing.T) {
 	given := "Pat"
 	_, err = f.store.AddPersonNameContext(t.Context(), person.ID, store.PersonNameInput{NameKind: store.PersonNameStructured, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}, GivenName: &given})
 	require.NoError(t, err)
-	t.Run("delegated mismatch", func(t *testing.T) {
-		grant := &agentgrant.Grant{
-			Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionMessageRead},
-			Sources:     []agentgrant.SourceRef{{ID: f.source.ID, Type: f.source.SourceType, Identifier: f.source.Identifier, SenderKeys: []string{store.NormalizeIdentifierForCompare(testutil.IMAPTestUsername)}}},
-		}
-		events, err := f.runAs(t, f.grantedAdapter(), grant, "--body", "Hi Alex,", "--json")
-		require.NoError(t, err)
-		var got draftReplyOutput
-		require.NoError(t, json.Unmarshal([]byte(events[0].Data), &got))
-		require.Len(t, got.Warnings, 1)
-		assert.Equal(t, "greeting_name_mismatch", got.Warnings[0].Code)
-		assert.Empty(t, got.LintSkipped)
-	})
+	for _, tc := range []struct {
+		name    string
+		canRead bool
+	}{
+		{"delegated mismatch", true},
+		{"delegated write only", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			grant := &agentgrant.Grant{
+				Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate},
+				Sources:     []agentgrant.SourceRef{{ID: f.source.ID, Type: f.source.SourceType, Identifier: f.source.Identifier, SenderKeys: []string{store.NormalizeIdentifierForCompare(testutil.IMAPTestUsername)}}},
+			}
+			if tc.canRead {
+				grant.Permissions = append(grant.Permissions, agentgrant.PermissionMessageRead)
+			}
+			events, err := f.runAs(t, f.grantedAdapter(), grant, "--body", "Hi Alex,", "--json")
+			require.NoError(t, err)
+			var got draftReplyOutput
+			require.NoError(t, json.Unmarshal([]byte(events[0].Data), &got))
+			if tc.canRead {
+				require.Len(t, got.Warnings, 1)
+				assert.Equal(t, "greeting_name_mismatch", got.Warnings[0].Code)
+				assert.Empty(t, got.LintSkipped)
+			} else {
+				assert.Empty(t, got.Warnings)
+				assert.Equal(t, []string{"greeting_name_mismatch"}, got.LintSkipped)
+			}
+		})
+	}
 	t.Run("clean receipt", func(t *testing.T) {
 		events, err := f.run(t, f.grantedAdapter(), "--body", "Thanks", "--json")
 		require.NoError(t, err)
