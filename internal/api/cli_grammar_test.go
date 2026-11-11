@@ -84,20 +84,21 @@ func TestCLIGrammarGatePreservesEmbeddingSlotKind(t *testing.T) {
 		for _, path := range []string{tc.old, tc.canonical} {
 			t.Run(path, func(t *testing.T) {
 				require := require.New(t)
+				assert := assert.New(t)
 				body, err := json.Marshal(CLIRunRequest{Args: strings.Fields(path)})
 				require.NoError(err)
 				request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", strings.NewReader(string(body)))
 				label, skip, err := cliRunGateDecision(request, requestAuthentication{})
 				require.NoError(err)
 				if tc.selfGated {
-					assert.True(t, skip)
-					assert.Empty(t, label)
-					assert.True(t, IsCLIRunEmbeddingsBuild(strings.Fields(path)))
-					assert.Equal(t, tc.kind, embeddingSlotKind("msgvault "+path, true))
+					assert.True(skip)
+					assert.Empty(label)
+					assert.True(IsCLIRunEmbeddingsBuild(strings.Fields(path)))
+					assert.Equal(tc.kind, embeddingSlotKind("msgvault "+path, true))
 					return
 				}
 				require.False(skip)
-				assert.Equal(t, tc.kind, embeddingSlotKind(label, true))
+				assert.Equal(tc.kind, embeddingSlotKind(label, true))
 			})
 		}
 	}

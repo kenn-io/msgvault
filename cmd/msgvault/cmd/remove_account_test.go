@@ -1713,6 +1713,7 @@ func TestRemoveAccountCmd_ClosedStdinReturnsError(t *testing.T) {
 	cfg := testConfigValue()
 
 	require := require.New(t)
+	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/msgvault.db"
 
@@ -1751,7 +1752,15 @@ func TestRemoveAccountCmd_ClosedStdinReturnsError(t *testing.T) {
 
 	err = root.Execute()
 	require.Error(err, "expected error when stdin is closed")
-	assert.ErrorContains(t, err, "use --yes")
+	assert.Contains(recoveryHint(err), "--yes")
+	assert.Contains(recoveryHint(err), "--dry-run")
+
+	check, err := store.Open(dbPath)
+	require.NoError(err)
+	defer func() { _ = check.Close() }()
+	require.NoError(check.InitSchema())
+	_, err = check.GetSourceByTypeAndIdentifier(t.Context(), "gmail", "eof@example.com")
+	require.NoError(err, "closed input must leave the source intact")
 }
 
 func TestRemoveAccountCommandStorePreservesSharedGrant(t *testing.T) {

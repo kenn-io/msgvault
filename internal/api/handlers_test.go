@@ -974,7 +974,7 @@ func TestHandleCLIRepairMessagePreservesSubprocessErrorMetadata(t *testing.T) {
 		return cliSyncMetadataTestError{}
 	}}
 	srv := newCLIHandlerTestServer(st)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/repair-message", strings.NewReader(`{"reference":"1"}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/repair-message", strings.NewReader(`{"reference":"1"}`))
 	req.Header.Set("Content-Type", "application/json")
 	resp := httptest.NewRecorder()
 	srv.Router().ServeHTTP(resp, req)
