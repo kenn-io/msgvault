@@ -64,7 +64,7 @@ func mediaWrites(ctx context.Context, st *store.Store, r *exportReader, messageI
 		}
 		w.Metadata = string(metadata)
 		if w.Filename == "." || w.Filename == "" {
-			w.Filename = slot
+			w.Filename = fmt.Sprintf("Unnamed media %d", i+1)
 		}
 		if w.MIMEType == "" {
 			w.MIMEType = "application/octet-stream"
