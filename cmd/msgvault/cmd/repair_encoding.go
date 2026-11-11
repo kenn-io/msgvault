@@ -76,7 +76,7 @@ func runRepairEncodingLocal(cmd *cobra.Command) (runErr error) {
 	usesAnalyticsCache := dateRepairUsesAnalyticsCache(dbPath)
 	unlockCache := func() error { return nil }
 	if usesAnalyticsCache {
-		releaseCacheLocks, err := lockCacheAndInvalidateSyncState(analyticsDir)
+		releaseCacheLocks, err := lockCacheAndInvalidateSyncState(s, analyticsDir)
 		if err != nil {
 			return fmt.Errorf("protect analytics cache for encoding repair: %w", err)
 		}

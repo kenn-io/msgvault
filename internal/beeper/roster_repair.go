@@ -137,6 +137,9 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 	if err := imp.store.SetSourceConversationRosterRepairPendingContext(pendingCtx, sourceID, chatID, false); err != nil {
 		return failed(fmt.Errorf("clear roster repair pending marker: %w", err))
 	}
+	if _, err := imp.store.RefreshConversationPolicy(pendingCtx, []int64{conversationID}, time.Now()); err != nil {
+		return failed(fmt.Errorf("refresh repaired roster policy: %w", err))
+	}
 	if !membership.known {
 		stop, err := deferRoom("beeper_roster_repair_deferred", store.SyncRunItemStatusSkipped, nil)
 		return stop || opts.budgetExpired(), err

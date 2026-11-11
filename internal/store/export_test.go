@@ -285,6 +285,12 @@ func SetPersonEnrichmentRunBarrierForTest(s *Store, barrier func(phase string)) 
 	s.personEnrichmentRunBarrier = barrier
 }
 
+// SetEnsureConversationFastPathHookForTest runs hook between the existing
+// conversation fast path's read and its write.
+func SetEnsureConversationFastPathHookForTest(s *Store, hook func()) {
+	s.ensureConversationFastPathHook = hook
+}
+
 // SetPersonEnrichmentTxBarrierForTest coordinates person/work/attempt lock order.
 func SetPersonEnrichmentTxBarrierForTest(s *Store, barrier func(phase string)) {
 	s.personEnrichmentTxBarrier = barrier

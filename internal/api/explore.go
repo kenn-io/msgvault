@@ -1205,6 +1205,15 @@ type exploreSearchDefinitionError struct {
 
 func (e *exploreSearchDefinitionError) Error() string { return e.message }
 
+// errExploreIncludeColdUnsupported refuses include:cold in every Explore mode.
+// Explore reads analytical views that hold Full conversations only, so Cold
+// candidates could never appear in its results; they would only consume the
+// candidate cap.
+var errExploreIncludeColdUnsupported = &exploreSearchDefinitionError{
+	code:    "include_cold_unsupported",
+	message: "include:cold is not available in Explore, which covers full conversations only; use message search to find cold text",
+}
+
 // validateExploreSearchDefinition applies the search rules that depend only on
 // the request and not on the daemon's environment: query syntax, and for the
 // semantic and hybrid modes an active-only deletion scope and free text to
@@ -1220,6 +1229,9 @@ func validateExploreSearchDefinition(
 	parsed := search.ParseWithOR(request.Query, request.SearchMode == exploreSearchModeFullText)
 	if err := parsed.Err(); err != nil {
 		return nil, &exploreSearchDefinitionError{code: "invalid_query", message: err.Error()}
+	}
+	if parsed.IncludeCold {
+		return nil, errExploreIncludeColdUnsupported
 	}
 	if request.SearchMode == exploreSearchModeFullText {
 		return parsed, nil
@@ -1420,6 +1432,11 @@ func (s *Server) resolvePagedExploreSearch(
 func (s *Server) resolveExploreSearch(ctx context.Context, w http.ResponseWriter, request ExploreHTTPRequest) (query.SearchSpec, string, bool) {
 	if request.SearchMode == "" {
 		return query.SearchSpec{}, "", true
+	}
+	// Refuse before vector preflight and cached snapshots answer instead.
+	if search.Parse(request.Query).IncludeCold {
+		writeError(w, http.StatusBadRequest, errExploreIncludeColdUnsupported.code, errExploreIncludeColdUnsupported.message)
+		return query.SearchSpec{}, "", false
 	}
 	if request.SearchMode == exploreSearchModeSemantic || request.SearchMode == exploreSearchModeHybrid {
 		return s.resolveExploreVectorSearch(ctx, w, request)

@@ -65,10 +65,14 @@ func TestRefreshRelatedCacheStatsRelayedSender(t *testing.T) {
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = db.Close() })
 	_, err = db.ExecContext(t.Context(), `CREATE SCHEMA sqlite_db;
-		CREATE TABLE sqlite_db.messages(id BIGINT, sent_at TIMESTAMP, deleted_at TIMESTAMP);
+		CREATE TABLE sqlite_db.sources(id BIGINT, source_type VARCHAR);
+		CREATE TABLE sqlite_db.conversations(id BIGINT, source_id BIGINT);
+		CREATE TABLE sqlite_db.conversation_policy(conversation_id BIGINT, effective_tier VARCHAR);
+		CREATE TABLE sqlite_db.messages(id BIGINT, source_id BIGINT, conversation_id BIGINT, sent_at TIMESTAMP, deleted_at TIMESTAMP);
+		INSERT INTO sqlite_db.sources VALUES (1, 'gmail');
 		CREATE TABLE sqlite_db.participants(id BIGINT, email_address VARCHAR, domain VARCHAR);
 		CREATE TABLE sqlite_db.message_recipients(message_id BIGINT, participant_id BIGINT, recipient_type VARCHAR, email_address VARCHAR, is_relayed BOOLEAN);
-		INSERT INTO sqlite_db.messages VALUES (1, '2024-01-01', NULL), (2, '2024-01-01', NULL);
+		INSERT INTO sqlite_db.messages VALUES (1, 1, NULL, '2024-01-01', NULL), (2, 1, NULL, '2024-01-01', NULL);
 		INSERT INTO sqlite_db.participants VALUES (1, 'author@example.test', 'example.test'), (2, 'other@example.test', 'example.test');
 		INSERT INTO sqlite_db.message_recipients VALUES (1, 1, 'from', 'relay@relay.test', true), (2, 2, 'from', 'old@old.test', false)`)
 	requirements.NoError(err)

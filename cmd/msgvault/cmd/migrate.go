@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/store"
@@ -58,6 +59,9 @@ func runMigrate(cmd *cobra.Command) (runErr error) {
 	defer func() { runErr = errors.Join(runErr, s.Close()) }()
 	if err := s.InitSchemaContext(cmd.Context()); err != nil {
 		return fmt.Errorf("migrate archive schema: %w", err)
+	}
+	if err := initializeConversationPolicy(cmd.Context(), s, currentCfg, time.Now()); err != nil {
+		return fmt.Errorf("initialize conversation policy: %w", err)
 	}
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Schema version: %d\n", store.SchemaVersion); err != nil {
 		return fmt.Errorf("write migration result: %w", err)

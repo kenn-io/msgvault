@@ -177,7 +177,8 @@ func TestEmailHeaderRepairRollsBackWhenRevisionWriteFails(t *testing.T) {
 	requirements.NoError(st.SetMessageMetadata(id, sql.NullString{String: `{"other":true}`, Valid: true}))
 	var err error
 	if st.IsPostgreSQL() {
-		_, err = st.DB().ExecContext(t.Context(), `ALTER TABLE archive_metadata ADD CONSTRAINT reject_email_revision CHECK (key <> 'derived_data_revision')`)
+		// Reject the next revision write, not a revision created during setup.
+		_, err = st.DB().ExecContext(t.Context(), `ALTER TABLE archive_metadata ADD CONSTRAINT reject_email_revision CHECK (key <> 'derived_data_revision') NOT VALID`)
 	} else {
 		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER reject_email_revision BEFORE INSERT ON archive_metadata
    WHEN NEW.key = 'derived_data_revision' BEGIN SELECT RAISE(ABORT,'synthetic revision failure'); END`)
@@ -371,8 +372,10 @@ func TestEmailHeaderRepairScopedRollsBackWhenRevisionWriteFails(t *testing.T) {
 	before := readEmailHeaderSnapshot(t, st, id)
 	var err error
 	if st.IsPostgreSQL() {
+		// Setup may already have a revision. Reject the repair's next write,
+		// without rejecting that existing row while installing the fault.
 		_, err = st.DB().ExecContext(t.Context(), `ALTER TABLE archive_metadata ADD CONSTRAINT reject_scoped_email_revision
-			CHECK (key <> 'derived_data_revision')`)
+			CHECK (key <> 'derived_data_revision') NOT VALID`)
 	} else {
 		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER reject_scoped_email_revision BEFORE INSERT ON archive_metadata
 			WHEN NEW.key = 'derived_data_revision' BEGIN SELECT RAISE(ABORT,'synthetic revision failure'); END`)

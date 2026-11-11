@@ -168,6 +168,7 @@ func resetSearchFlags() {
 	searchJSON = false
 	searchMode = "fts"
 	searchExplain = false
+	searchIncludeCold = false
 	searchDeletionScope = "active"
 	searchMessageTypes = nil
 	// Cobra remembers per-flag `Changed` state on the global searchCmd

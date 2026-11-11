@@ -1062,9 +1062,9 @@ func TestCollectCacheStatsRelayedSenderEnvelope(t *testing.T) {
 	_, db := writeRelationshipBaseFixture(t, true)
 	inputs := cacheStatsRelations{
 		messages:     "(SELECT 1 AS id, 1 AS source_id, TIMESTAMP '2026-01-01' AS sent_at, 0 AS size_estimate)",
-		recipients:   `(SELECT * FROM (VALUES (1, 'from', 'relay@service.test', TRUE), (2, 'from', 'relay@service.test', TRUE), (3, 'from', NULL, FALSE), (4, 'from', '"odd@name"@elsewhere.test', TRUE), (5, 'from', 'old@old.test', FALSE)) AS t(participant_id, recipient_type, email_address, is_relayed))`,
+		recipients:   `(SELECT * FROM (VALUES (1, 1, 'from', 'relay@service.test', TRUE), (1, 2, 'from', 'relay@service.test', TRUE), (1, 3, 'from', NULL, FALSE), (1, 4, 'from', '"odd@name"@elsewhere.test', TRUE), (1, 5, 'from', 'old@old.test', FALSE)) AS t(message_id, participant_id, recipient_type, email_address, is_relayed))`,
 		participants: `(SELECT * FROM (VALUES (1, NULL, NULL), (2, NULL, NULL), (3, 'fallback@example.test', 'example.test'), (4, NULL, NULL), (5, 'fallback@example.test', 'example.test')) AS t(id, email_address, domain))`,
-		attachments:  "(SELECT 0 AS size)",
+		attachments:  "(SELECT 1 AS message_id, 0 AS size)",
 	}
 	stats, err := collectCacheStats(t.Context(), db, inputs)
 	require.NoError(t, err)
