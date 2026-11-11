@@ -27,11 +27,15 @@ func TestMCPOperationalSettingsRealRouteAndApproval(t *testing.T) {
 	require.NoError(os.WriteFile(path, []byte("[analytics]\nauto_build_cache = true\nbuilder_memory_limit = '512MiB'\nbuilder_threads = 3\n[vector.embeddings]\nendpoint = 'https://secret.example.com'\n"), 0600))
 	cfg, err := config.Load(path, dir)
 	require.NoError(err)
-	cfg.Data.DataDir = t.TempDir()
+	// Persisted settings reload with dir as the default data directory.
+	cfg.Data.DataDir = dir
 	credentials, err := providercredentials.Read(cfg.TokensDir())
 	require.NoError(err)
 	_, err = providercredentials.Put(cfg.TokensDir(), credentials.ETag, providercredentials.VectorEmbeddingsID, "https://old.example.com", "synthetic-secret")
 	require.NoError(err)
+	credentials, err = providercredentials.Read(cfg.TokensDir())
+	require.NoError(err)
+	require.True(credentials.Stored(providercredentials.VectorEmbeddingsID))
 	st := testutil.NewSQLiteTestStore(t)
 	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: st}, Logger: slog.New(slog.DiscardHandler)}))
 	read, err := backend.ExecuteOperation(t.Context(), "get_operational_settings", nil)
@@ -51,6 +55,9 @@ func TestMCPOperationalSettingsRealRouteAndApproval(t *testing.T) {
 	loaded, err := config.Load(path, dir)
 	require.NoError(err)
 	assert.True(loaded.Analytics.AutoBuildCache)
+	credentials, err = providercredentials.Read(cfg.TokensDir())
+	require.NoError(err)
+	assert.True(credentials.Stored(providercredentials.VectorEmbeddingsID))
 	approved := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilySettings}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
 		assert.Contains(request.Params.Message, "delete stored provider credentials")
 		assert.Contains(request.Params.Message, "analytics.auto_build_cache")
@@ -60,7 +67,7 @@ func TestMCPOperationalSettingsRealRouteAndApproval(t *testing.T) {
 	}})
 	result, err = approved.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "update_operational_settings", Arguments: args})
 	require.NoError(err)
-	require.False(result.IsError)
+	require.False(result.IsError, "approved update result: %+v", result)
 	encoded, err = json.Marshal(result.StructuredContent)
 	require.NoError(err)
 	var updated mcpserver.OperationalSettings
