@@ -1016,7 +1016,7 @@ func (s *Store) prepareCommitmentStatuses(ctx context.Context, request peopleswe
 		prepared.statuses = append(prepared.statuses, change)
 		id, err := strconv.ParseInt(message, 10, 64)
 		if err != nil {
-			return err
+			return fmt.Errorf("decode stored commitment evidence %s: %w", stored.Key, err)
 		}
 		prepared.maintenanceIDs = append(prepared.maintenanceIDs, id)
 	}
