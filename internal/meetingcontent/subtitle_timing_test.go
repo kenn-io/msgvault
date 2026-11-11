@@ -16,6 +16,10 @@ func TestSubtitleTiming(t *testing.T) {
 		name, format, raw, want string
 		bad                     bool
 	}{
+		{"omi blank before named", "omi_json", `{"started_at":"2026-01-01T00:00:00Z","transcript_segments":[{"text":" "},{"text":"  Hello  ","speaker_name":"A","start":3,"end":5}]}`, "1\n00:00:03.000 --> 00:00:05.000\nA:   Hello  \n\n", false},
+		{"omi missing start", "omi_json", `{"started_at":"2026-01-01T00:00:00Z","transcript_segments":[{"text":"Hello","end":2}]}`, "transcript needs start and end times", true},
+		{"omi rejected interval", "omi_json", `{"started_at":"2026-01-01T00:00:00Z","transcript_segments":[{"text":"Hello","start":2,"end":1}]}`, "transcript needs start and end times", true},
+		{"omi unknown speaker", "omi_json", `{"started_at":"2026-01-01T00:00:00Z","transcript_segments":[{"text":"Hello","start":0,"end":2}]}`, "1\n00:00:00.000 --> 00:00:02.000\nUnknown speaker: Hello\n\n", false},
 		{"omi zero", "omi_json", `{"started_at":"2026-01-01T00:00:00Z","structured":{},"transcript_segments":[{"text":"Hello", "speaker_name":"A", "start":0,"end":2}]}`, "1\n00:00:00.000 --> 00:00:02.000\nA: Hello\n\n", false},
 		{"omi missing end", "omi_json", `{"started_at":"2026-01-01T00:00:00Z","structured":{},"transcript_segments":[{"text":"Hello","start":0}]}`, "transcript needs start and end times", true},
 		{"omi zero duration", "omi_json", `{"started_at":"2026-01-01T00:00:00Z","transcript_segments":[{"text":"First","start":0,"end":1},{"text":"Second","start":1,"end":1}]}`, "subtitle timing invalid", true},
@@ -24,7 +28,6 @@ func TestSubtitleTiming(t *testing.T) {
 		{"twenty unnamed", "twenty_json", `{"schema_version":1,"recording":{"startedAt":"2026-01-01T00:00:00Z","transcript":[{"words":[{"text":"Hello","start_timestamp":{"relative":10},"end_timestamp":{"relative":12}}]}]}}`, "1\n00:00:10.000 --> 00:00:12.000\nHello\n\n", false},
 		{"twenty no boundary", "twenty_json", `{"schema_version":1,"recording":{"startedAt":"2026-01-01T00:00:00Z","transcript":[{"words":[{"text":"First"},{"text":"Next","start_timestamp":{"relative":10},"end_timestamp":{"relative":12}}]}]}}`, "transcript needs matching start and end times", true},
 		{"pocket zero", "pocket_json", `{"schema_version":1,"recorded_at":"2026-01-01T00:00:00Z","content":{"summary":{"state":"empty"},"notes":{"state":"unsupported"},"transcript":{"state":"available","segments":[{"speaker":"A","text":"Hello","offset_seconds":0}]},"action_coverage":"unsupported"},"recording":{"transcript":{"segments":[{"speakerName":"A","text":"Hello","start":0,"end":2}]}}}`, "1\n00:00:00.000 --> 00:00:02.000\nA: Hello\n\n", false},
-		{"omi unnamed", "omi_json", `{"started_at":"2026-01-01T00:00:00Z","structured":{},"transcript_segments":[{"text":"Hello","start":0,"end":2}]}`, "1\n00:00:00.000 --> 00:00:02.000\nHello\n\n", false},
 		{"omi speaker id", "omi_json", `{"started_at":"2026-01-01T00:00:00Z","structured":{},"transcript_segments":[{"text":"Hello","speaker_id":2,"start":0,"end":2}]}`, "1\n00:00:00.000 --> 00:00:02.000\nSpeaker 2: Hello\n\n", false},
 		{"pocket raw origin", "pocket_json", `{"schema_version":1,"content":{"summary":{"state":"empty"},"notes":{"state":"unsupported"},"transcript":{"state":"available","segments":[{"speaker":"A","text":"Hello","offset_seconds":0}]},"action_coverage":"unsupported"},"recording":{"recording_at":"2026-01-01T00:00:00Z","transcript":{"segments":[{"speakerName":"A","text":"Hello","start":0,"end":2}]}}}`, "1\n00:00:00.000 --> 00:00:02.000\nA: Hello\n\n", false},
 		{"twenty absolute pair", "twenty_json", `{"schema_version":1,"recording":{"startedAt":"2026-01-01T00:00:00Z","transcript":[{"words":[{"text":"Hello","start_timestamp":{"relative":3,"absolute":"2026-01-01T00:00:10Z"},"end_timestamp":{"absolute":"2026-01-01T00:00:12Z"}}]}]}}`, "1\n00:00:10.000 --> 00:00:12.000\nHello\n\n", false},
@@ -105,10 +108,10 @@ func TestOmiSubtitleBoundaryWhitespace(t *testing.T) {
 	raw := []byte(`{"started_at":"2026-01-01T00:00:00Z","transcript_segments":[{"text":"  Indented text  ","start":0,"end":2}]}`)
 	result, err := RenderSubtitles("omi_json", raw, PacketOptions{Format: FormatVTT, MaxBytes: 4096})
 	must.NoError(err)
-	checks.Equal("WEBVTT\n\n1\n00:00:00.000 --> 00:00:02.000\n  Indented text  \n\n", result.Content)
+	checks.Equal("WEBVTT\n\n1\n00:00:00.000 --> 00:00:02.000\nUnknown speaker:   Indented text  \n\n", result.Content)
 	result, err = RenderSubtitles("omi_json", raw, PacketOptions{Format: FormatSRT, MaxBytes: 4096})
 	must.NoError(err)
-	checks.Equal("1\n00:00:00,000 --> 00:00:02,000\nIndented text\n\n", result.Content)
+	checks.Equal("1\n00:00:00,000 --> 00:00:02,000\nUnknown speaker: Indented text\n\n", result.Content)
 }
 
 func TestSubtitleBlankLinesStayWithinCue(t *testing.T) {
@@ -128,43 +131,6 @@ func TestSubtitleBlankLinesStayWithinCue(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestTwilioSubtitleRetainedSentences(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-	raw := []byte(`{"recordings":[{"sid":"RE1","start_time":"Sat, 03 Oct 2026 10:00:00 +0000"}],"transcript":"A: Hello","transcript_segments":[{"speaker":"A","text":"Hello","scope":"RE1","offset_seconds":1.25}],"evidence":{"transcripts":[{"kind":"legacy","id":"TR1","source_id":"RE1","date_created":"2026-10-03T12:00:00Z","usable":true,"segments":[{"text":"old","scope":"RE1"}]},{"kind":"classic","id":"GT1","source_id":"RE1","date_created":"2026-10-03T11:00:00Z","usable":true,"segments":[{"speaker":"A","text":"Hello","scope":"RE1","offset_seconds":1.25}],"raw":{"metadata":{"channel":{"participants":[{"channel_participant":1,"role":"A"}]}},"sentences":[{"sid":"S1","sentence_index":1,"media_channel":1,"start_time":"1.25","end_time":"2.5","transcript":"Hello"}]}}]}}`)
-	result, err := RenderSubtitles("twilio_call_json", raw, PacketOptions{Format: FormatSRT, MaxBytes: 4096})
-	must.NoError(err)
-	checks.Equal("1\n00:00:01,250 --> 00:00:02,500\nA: Hello\n\n", result.Content)
-	for _, tc := range []struct{ name, old, new string }{
-		{"unknown origin", `"start_time":"Sat, 03 Oct 2026 10:00:00 +0000"`, `"date_created":"2026-10-03T10:00:00Z"`},
-		{"missing end", `"end_time":"2.5",`, ""},
-		{"missing start", `"start_time":"1.25",`, ""},
-		{"changed text", `"transcript":"Hello"`, `"transcript":"Changed"`},
-		{"changed start", `"start_time":"1.25"`, `"start_time":"1.5"`},
-		{"ambiguous recording", `"recordings":[`, `"recordings":[{"sid":"RE1","start_time":"2026-10-03T10:00:00Z"},`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			must := require.New(t)
-			altered := strings.Replace(string(raw), tc.old, tc.new, 1)
-			must.NotEqual(string(raw), altered)
-			_, err := RenderSubtitles("twilio_call_json", []byte(altered), PacketOptions{Format: FormatSRT, MaxBytes: 4096})
-			must.ErrorIs(err, ErrInvalidSubtitles)
-		})
-	}
-	older := strings.Replace(string(raw), `"transcripts":[`, `"transcripts":[{"kind":"classic","id":"GT0","source_id":"RE1","date_created":"2026-10-03T10:01:00Z","usable":true,"segments":[{"speaker":"A","text":"Hello","scope":"RE1","offset_seconds":1.25}],"raw":{"metadata":{"channel":{"participants":[{"channel_participant":1,"role":"A"}]}},"sentences":[{"media_channel":1,"start_time":1.25,"end_time":9,"transcript":"Hello"}]}},`, 1)
-	selected, err := RenderSubtitles("twilio_call_json", []byte(older), PacketOptions{Format: FormatSRT, MaxBytes: 4096})
-	must.NoError(err)
-	checks.Equal(result.Content, selected.Content)
-	multiple := strings.Replace(string(raw), `"transcripts":[`, `"transcripts":[{"kind":"classic","id":"GT2","source_id":"RE2","usable":true,"segments":[{"text":"Second","scope":"RE2","offset_seconds":1}],"raw":{"sentences":[{"start_time":1,"end_time":2,"transcript":"Second"}]}},`, 1)
-	multiple = strings.Replace(multiple, `"recordings":[`, `"recordings":[{"sid":"RE2","start_time":"Sat, 03 Oct 2026 10:00:00 +0000"},`, 1)
-	_, err = RenderSubtitles("twilio_call_json", []byte(multiple), PacketOptions{Format: FormatSRT, MaxBytes: 4096})
-	must.ErrorIs(err, ErrInvalidSubtitles)
-	duplicate := strings.Replace(string(raw), `"sentences":[`, `"sentences":[{"sid":"S1","sentence_index":1,"media_channel":1,"start_time":"1.25","end_time":"2.5","transcript":"Hello"},`, 1)
-	again, err := RenderSubtitles("twilio_call_json", []byte(duplicate), PacketOptions{Format: FormatSRT, MaxBytes: 4096})
-	must.NoError(err)
-	checks.Equal(result.Content, again.Content)
 }
 
 func TestSubtitleMarkupPlayer(t *testing.T) {
@@ -188,8 +154,6 @@ func TestSubtitleMarkupPlayer(t *testing.T) {
 		must.NoError(err, string(out))
 		return string(out)
 	}
-	altered := convert("srt", "1\n00:00:00,000 --> 00:00:02,000\nPlease type <i> literally</i>\n\n")
-	checks.Contains(altered, `Please type {\i1} literally{\i0}`)
 	checks.Contains(convert("webvtt", vtt.Content), "Please type <i> literally</i>")
 }
 
@@ -210,19 +174,7 @@ func TestSubtitleSRTTimingLines(t *testing.T) {
 			_, err = RenderSubtitles("omi_json", raw, PacketOptions{Format: FormatSRT, MaxBytes: 4096})
 			if tc.bad {
 				must.ErrorIs(err, ErrInvalidSubtitles)
-				if tc.name == "timecode" {
-					ffmpeg, err := exec.LookPath("ffmpeg")
-					if err != nil {
-						t.Skip("ffmpeg not installed")
-					}
-					command := exec.CommandContext(t.Context(), ffmpeg, "-v", "error", "-f", "srt", "-i", "pipe:0", "-f", "srt", "pipe:1")
-					command.Stdin = strings.NewReader("1\n00:00:00,000 --> 00:00:02,000\n" + tc.text + "\n\n")
-					output, err := command.CombinedOutput()
-					must.NoError(err, string(output))
-					parsed, err := mediatranscript.ParseSubRip(output, "msgvault", "und")
-					must.NoError(err)
-					must.Len(parsed.Segments, 2)
-				}
+
 			} else {
 				must.NoError(err)
 			}

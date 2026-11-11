@@ -14,9 +14,6 @@ func subtitleTiming(format string, raw []byte) ([]subtitleSegment, error) {
 	if json.Unmarshal(raw, &fields) != nil || fields == nil {
 		return nil, errors.New("invalid raw transcript")
 	}
-	if format == "twilio_call_json" {
-		return twilioSubtitleTiming(fields)
-	}
 	var cues []subtitleSegment
 	switch format {
 	case "omi_json":
@@ -24,16 +21,18 @@ func subtitleTiming(format string, raw []byte) ([]subtitleSegment, error) {
 		if !ok || origin.IsZero() {
 			return nil, errors.New("recording start is unknown")
 		}
+		transcript, _ := decodeOmiTranscript(fields)
+		if transcript.State != StateAvailable {
+			return nil, errors.New("invalid transcript")
+		}
 		var items []struct {
-			Text      *string  `json:"text"`
-			Name      string   `json:"speaker_name"`
-			SpeakerID *int     `json:"speaker_id"`
-			Start     *float64 `json:"start"`
-			End       *float64 `json:"end"`
+			Text *string  `json:"text"`
+			End  *float64 `json:"end"`
 		}
 		if json.Unmarshal(fields["transcript_segments"], &items) != nil {
 			return nil, errors.New("invalid transcript")
 		}
+		cursor := 0
 		for _, item := range items {
 			if item.Text == nil {
 				return nil, errors.New("invalid transcript")
@@ -41,14 +40,12 @@ func subtitleTiming(format string, raw []byte) ([]subtitleSegment, error) {
 			if strings.TrimSpace(*item.Text) == "" {
 				continue
 			}
-			if item.Start == nil || item.End == nil {
+			seg := transcript.Segments[cursor]
+			cursor++
+			if seg.OffsetSeconds == nil || item.End == nil {
 				return nil, errors.New("transcript needs start and end times")
 			}
-			speaker := strings.TrimSpace(item.Name)
-			if speaker == "" && item.SpeakerID != nil {
-				speaker = fmt.Sprintf("Speaker %d", *item.SpeakerID)
-			}
-			cues = append(cues, subtitleSegment{speaker, *item.Text, *item.Start, *item.End})
+			cues = append(cues, subtitleSegment{seg.Speaker, *item.Text, *seg.OffsetSeconds, *item.End})
 		}
 
 	case "pocket_json":

@@ -8,13 +8,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/twilioevidence"
 )
 
 func TestSnapshotSnippetPreservesUnicode(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	text := strings.Repeat("界", 501)
-	snapshot, err := (archivedCall{Call: Call{SID: testCA}, Evidence: twilioevidence.Evidence{Transcripts: []twilioevidence.Transcript{{Kind: "classic", SourceID: testRE, Complete: true, Usable: true, Segments: []twilioevidence.Segment{{Text: text}}}}}}).snapshot(1, "owner@example.com")
+	snapshot, err := (archivedCall{Call: Call{SID: testCA}, Evidence: Evidence{Transcripts: []Transcript{{Kind: "classic", SourceID: testRE, Complete: true, Usable: true, Segments: []Segment{{Text: text}}}}}}).snapshot(1, "owner@example.com")
 	require.NoError(err)
 	assert.True(utf8.ValidString(snapshot.Snippet))
 	assert.Equal(strings.Repeat("界", 500), snapshot.Snippet)
@@ -44,18 +43,18 @@ func TestSnapshotDuration(t *testing.T) {
 func TestCanonicalSegments(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
-		transcripts []twilioevidence.Transcript
+		transcripts []Transcript
 		recordings  []Recording
-		want        []twilioevidence.Segment
+		want        []Segment
 	}{
-		{"intelligence over legacy", []twilioevidence.Transcript{
-			{Kind: "legacy", ID: "legacy", SourceID: testRE, Complete: true, Usable: true, Segments: []twilioevidence.Segment{{Text: "legacy text"}}},
-			{Kind: "classic", ID: testGT, SourceID: testRE, Complete: true, Usable: true, Segments: []twilioevidence.Segment{{Text: "intelligence text"}}},
-		}, nil, []twilioevidence.Segment{{Text: "intelligence text"}}},
-		{"newest retranscription", []twilioevidence.Transcript{
-			{Kind: "legacy", ID: "TRbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", SourceID: testRE, DateCreated: "Sat, 03 Oct 2026 10:05:00 +0000", Complete: true, Usable: true, Segments: []twilioevidence.Segment{{Text: "obsolete"}}},
-			{Kind: "legacy", ID: "TRaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", SourceID: testRE, DateCreated: "Sat, 03 Oct 2026 12:00:00 +0000", Complete: true, Usable: true, Segments: []twilioevidence.Segment{{Text: "current"}}},
-		}, nil, []twilioevidence.Segment{{Text: "current"}}},
+		{"intelligence over legacy", []Transcript{
+			{Kind: "legacy", ID: "legacy", SourceID: testRE, Complete: true, Usable: true, Segments: []Segment{{Text: "legacy text"}}},
+			{Kind: "classic", ID: testGT, SourceID: testRE, Complete: true, Usable: true, Segments: []Segment{{Text: "intelligence text"}}},
+		}, nil, []Segment{{Text: "intelligence text"}}},
+		{"newest retranscription", []Transcript{
+			{Kind: "legacy", ID: "TRbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", SourceID: testRE, DateCreated: "Sat, 03 Oct 2026 10:05:00 +0000", Complete: true, Usable: true, Segments: []Segment{{Text: "obsolete"}}},
+			{Kind: "legacy", ID: "TRaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", SourceID: testRE, DateCreated: "Sat, 03 Oct 2026 12:00:00 +0000", Complete: true, Usable: true, Segments: []Segment{{Text: "current"}}},
+		}, nil, []Segment{{Text: "current"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			segments, complete := canonicalSegments(tc.transcripts, tc.recordings)
@@ -71,13 +70,13 @@ func TestCanonicalSegments(t *testing.T) {
 // speaker adds no separator.
 func TestSnapshotStartsAtEarliestRecording(t *testing.T) {
 	later, earlier := "REaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "REbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	legacy := func(id, recording, text string) twilioevidence.Transcript {
-		return twilioevidence.Transcript{Kind: "legacy", ID: id, SourceID: recording, Complete: true, Usable: true, Segments: []twilioevidence.Segment{{Text: text, Scope: recording}}}
+	legacy := func(id, recording, text string) Transcript {
+		return Transcript{Kind: "legacy", ID: id, SourceID: recording, Complete: true, Usable: true, Segments: []Segment{{Text: text, Scope: recording}}}
 	}
 	snapshot, err := (archivedCall{Call: Call{SID: testCA}, Recordings: []Recording{
 		{SID: later, StartTime: "Sat, 03 Oct 2026 10:30:00 +0000"},
 		{SID: earlier, DateCreated: "Sat, 03 Oct 2026 10:00:00 +0000"},
-	}, Evidence: twilioevidence.Evidence{Transcripts: []twilioevidence.Transcript{legacy("first", later, "after transfer"), legacy("second", earlier, "before transfer")}}}).snapshot(1, "owner@example.com")
+	}, Evidence: Evidence{Transcripts: []Transcript{legacy("first", later, "after transfer"), legacy("second", earlier, "before transfer")}}}).snapshot(1, "owner@example.com")
 	require.NoError(t, err)
 	assert.Equal(t, time.Date(2026, 10, 3, 10, 0, 0, 0, time.UTC), snapshot.StartedAt)
 	assert.Equal(t, "Recording 1: before transfer\nRecording 2: after transfer", snapshot.Body)

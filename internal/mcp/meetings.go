@@ -60,13 +60,6 @@ func (h *handlers) getMeetingContext(ctx context.Context, req toolRequest) (*too
 	}
 	result, err := h.meetings.GetMeetingContext(ctx, body)
 	if err != nil {
-		var coded daemonAPIErrorCoder
-		if body.Format != nil && (*body.Format == "srt" || *body.Format == "vtt") && errors.As(err, &coded) && coded.APIErrorCode() == "invalid_meeting_format" {
-			return toolErrorResult("invalid_meeting_format: " + daemonErrorMessage(err)), nil
-		}
-		if body.Format != nil && (*body.Format == "srt" || *body.Format == "vtt") && errors.As(err, &coded) && coded.APIErrorCode() == "context_budget_too_small" {
-			return toolErrorResult("context_budget_too_small: increase max_bytes up to 1048576"), nil
-		}
 		return nil, newInternalError("get meeting context", err)
 	}
 	return jsonResult(result)

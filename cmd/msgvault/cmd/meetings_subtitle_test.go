@@ -56,8 +56,7 @@ func TestMeetingSubtitleWhitespace(t *testing.T) {
 	for _, tc := range []struct {
 		name, raw, format, want string
 	}{
-		{"omi", `{"started_at":"2026-01-01T00:00:00Z","structured":{},"transcript_segments":[{"text":"Hello\n  ordinary speech","start":1,"end":2}]}`, "srt", "1\n00:00:01,000 --> 00:00:02,000\nHello\nordinary speech\n\n"},
-		{"twilio", `{"recordings":[{"sid":"RE1","start_time":"Sat, 03 Oct 2026 10:00:00 +0000"}],"transcript":"A: Hello","transcript_segments":[{"speaker":"A","text":"Hello","scope":"RE1","offset_seconds":1.25}],"evidence":{"transcripts":[{"kind":"legacy","id":"TR1","source_id":"RE1","date_created":"2026-10-03T12:00:00Z","usable":true,"segments":[{"text":"old","scope":"RE1"}]},{"kind":"classic","id":"GT1","source_id":"RE1","date_created":"2026-10-03T11:00:00Z","usable":true,"segments":[{"speaker":"A","text":"Hello","scope":"RE1","offset_seconds":1.25}],"raw":{"metadata":{"channel":{"participants":[{"channel_participant":1,"role":"A"}]}},"sentences":[{"sid":"S1","sentence_index":1,"media_channel":1,"start_time":"1.25","end_time":"2.5","transcript":"Hello"}]}}]}}`, "srt", "1\n00:00:01,250 --> 00:00:02,500\nA: Hello\n\n"},
+		{"omi", `{"started_at":"2026-01-01T00:00:00Z","structured":{},"transcript_segments":[{"text":"Hello\n  ordinary speech","start":1,"end":2}]}`, "srt", "1\n00:00:01,000 --> 00:00:02,000\nUnknown speaker: Hello\nordinary speech\n\n"},
 		{"pocket-vtt", `{"schema_version":1,"recorded_at":"2026-01-01T00:00:00Z","content":{"summary":{"state":"empty"},"notes":{"state":"unsupported"},"transcript":{"state":"available","segments":[{"text":"  Hello  ","offset_seconds":0}]},"action_coverage":"unsupported"},"recording":{"transcript":{"segments":[{"text":"  Hello  ","start":0,"end":2}]}}}`, "vtt", "WEBVTT\n\n1\n00:00:00.000 --> 00:00:02.000\n  Hello  \n\n"},
 		{"pocket-srt", `{"schema_version":1,"recorded_at":"2026-01-01T00:00:00Z","content":{"summary":{"state":"empty"},"notes":{"state":"unsupported"},"transcript":{"state":"available","segments":[{"text":"  Hello  ","offset_seconds":0}]},"action_coverage":"unsupported"},"recording":{"transcript":{"segments":[{"text":"  Hello  ","start":0,"end":2}]}}}`, "srt", "1\n00:00:00,000 --> 00:00:02,000\nHello\n\n"},
 	} {
@@ -66,7 +65,7 @@ func TestMeetingSubtitleWhitespace(t *testing.T) {
 			must := require.New(t)
 			st := testutil.NewTestStore(t)
 			sourceName := "pocket"
-			if tc.name == "omi" || tc.name == "twilio" {
+			if tc.name == "omi" {
 				sourceName = tc.name
 			}
 			source, err := st.GetOrCreateSource(sourceName, "owner@example.test")
@@ -75,8 +74,6 @@ func TestMeetingSubtitleWhitespace(t *testing.T) {
 			switch tc.name {
 			case "omi":
 				format = "omi_json"
-			case "twilio":
-				format = "twilio_call_json"
 			}
 			snapshot := meetingarchive.Snapshot{SourceID: source.ID, AccountEmail: "owner@example.test", SourceMessageID: tc.name, SourceConversationID: tc.name, Title: "Meeting", StartedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Raw: []byte(tc.raw), RawFormat: format, Organizer: &meetingarchive.Person{Name: "Owner", Email: "owner@example.test"}}
 			archived, err := meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
@@ -99,7 +96,7 @@ func TestMeetingSubtitleWhitespace(t *testing.T) {
 				must.Len(parsed.Segments, 1)
 				checks.Equal(int64(1000), parsed.Segments[0].StartMS)
 				checks.Equal(int64(2000), parsed.Segments[0].EndMS)
-				checks.Equal("Hello\nordinary speech", parsed.Segments[0].Text)
+				checks.Equal("Unknown speaker: Hello\nordinary speech", parsed.Segments[0].Text)
 			}
 			checks.Empty(stdout)
 			requestFormat := generated.MeetingContextRequestFormat(tc.format)

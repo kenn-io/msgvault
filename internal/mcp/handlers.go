@@ -526,7 +526,7 @@ func translateDaemonRequestError(err error) *toolResult {
 
 	var message string
 	switch coded.APIErrorCode() {
-	case "permission_denied", "unsupported_agent_scope", "invalid_meeting_subtitles":
+	case "permission_denied", "unsupported_agent_scope", "invalid_meeting_subtitles", "invalid_meeting_format", "context_budget_too_small":
 		// These known public diagnostics explain how the caller can repair the request.
 		message = coded.APIErrorCode() + ": " + daemonErrorMessage(err)
 	case "unauthorized":
