@@ -168,11 +168,7 @@ func (s *Server) authorizeAgentRead(r *http.Request, operation string, grant *ag
 	*r = *r.WithContext(context.WithValue(r.Context(), agentReadScopeKey{}, agentReadScope{ids: allowed}))
 	switch operation {
 	case "listChangedMessages":
-		if len(allowed) == 0 {
-			allowed = []int64{-1}
-		}
-		ctx := context.WithValue(r.Context(), agentReadScopeKey{}, agentReadScope{ids: allowed})
-		*r = *r.WithContext(sourcescope.WithSourceIDs(ctx, allowed))
+		*r = *r.WithContext(sourcescope.WithSourceIDs(r.Context(), allowed))
 		return nil
 	case "getCLIMessageThread":
 		if account != "" && !accountGranted {

@@ -22,6 +22,7 @@ type daemonMCPOperations struct {
 	now       func() time.Time
 	client    *daemonclient.Client
 	supported []string
+	delegated bool
 }
 
 func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotocol.MCPCapabilities) *daemonMCPOperations {

@@ -1129,6 +1129,7 @@ type changeFeedProbeStore struct {
 	probes    atomic.Int32
 	readLimit atomic.Int32
 	beginErr  error
+	lastSince store.ChangedMessagesCursor
 }
 
 func (s *changeFeedProbeStore) BeginChangedMessagesReadSnapshotContext(ctx context.Context) (context.Context, func(), error) {
@@ -1141,6 +1142,7 @@ func (s *changeFeedProbeStore) BeginChangedMessagesReadSnapshotContext(ctx conte
 
 func (s *changeFeedProbeStore) ListChangedMessages(ctx context.Context, since store.ChangedMessagesCursor, limit int) (store.ChangedMessagePage, error) {
 	s.readLimit.Store(int32(limit))
+	s.lastSince = since
 	return s.Store.ListChangedMessages(ctx, since, limit)
 }
 

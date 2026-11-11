@@ -3402,6 +3402,9 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 	case len(rows) > 0:
 		last := rows[len(rows)-1]
 		next = store.ChangedMessagesAfter(last.ContentChangedAt, last.ID)
+	case grant != nil && page.CompleteThrough.After(since.At()):
+		// An exhausted scoped page can resume at the safe commit bound.
+		next = store.ChangedMessagesFrom(page.CompleteThrough)
 	case since.At().After(page.ServerTime) && !page.CompleteThrough.IsZero():
 		// A cursor above the database clock is unsatisfiable — the page query stops
 		// strictly below the clock — so echoing it back would wedge the consumer on

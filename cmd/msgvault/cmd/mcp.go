@@ -204,7 +204,7 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 	}
 	if daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.AgentChangeFeedMinAPISchemaVersion) {
 		opts.OperationCapabilities = []string{mcpserver.ToolListChanges}
-		opts.Operations = &daemonMCPOperations{client: st, now: time.Now, supported: opts.OperationCapabilities}
+		opts.Operations = &daemonMCPOperations{client: st, now: time.Now, supported: opts.OperationCapabilities, delegated: true}
 	}
 	return opts, nil
 }

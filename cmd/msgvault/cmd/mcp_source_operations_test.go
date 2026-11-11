@@ -688,6 +688,26 @@ func TestListChangesPreservesActionableRefusals(t *testing.T) {
 	}
 }
 
+func TestListChangesOwnerRefusalCompatibility(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	for _, code := range []string{"permission_denied", "agent_read_busy", "source_scope_unavailable", "internal_error", "invalid_source"} {
+		client := newMCPDaemonClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":"` + code + `"}`))
+		})
+		backend := &daemonMCPOperations{client: client}
+		result, handled, err := backend.executeSourceOperation(t.Context(), "list_changes", nil)
+		requirements.NoError(err)
+		requirements.True(handled)
+		requirements.True(result.IsError)
+		data, err := json.Marshal(result.Output)
+		requirements.NoError(err)
+		assertions.JSONEq(`{"error":"operation_refused","operation_may_have_completed":false}`, string(data))
+	}
+}
+
 func TestListChangesReturnsLargeArchivedSnippet(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

@@ -40,6 +40,17 @@ func TestChangedMessagesSnapshotDoesNotSkipLaterCommit(t *testing.T) {
 	requirements.NoError(err)
 	t.Cleanup(func() { assertions.NoError(st.Close()) })
 	requirements.NoError(st.InitSchema())
+	testChangedMessagesSnapshotOrdering(t, st)
+}
+
+func TestChangedMessagesSnapshotOrderingPostgres(t *testing.T) {
+	skipUnlessPostgresInternal(t)
+	testChangedMessagesSnapshotOrdering(t, newPGStoreInternal(t))
+}
+
+func testChangedMessagesSnapshotOrdering(t *testing.T, st *Store) {
+	t.Helper()
+	requirements := require.New(t)
 	source, err := st.GetOrCreateSource("test", "ordering@example.test")
 	requirements.NoError(err)
 	conv, err := st.EnsureConversation(t.Context(), source.ID, "ordering", "Ordering")
