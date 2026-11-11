@@ -3,26 +3,28 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/spf13/cobra"
 	msgsync "go.kenn.io/msgvault/internal/sync"
 )
 
-type acquisitionFailure struct {
-	SourceMessageID string `json:"source_message_id"`
-	Phase           string `json:"phase"`
-	ErrorKind       string `json:"error_kind"`
+var acquisitionStateLabels = map[string]string{
+	msgsync.AcquisitionActive:        "still failing",
+	msgsync.AcquisitionResolved:      "fixed",
+	msgsync.AcquisitionHistorical:    "retired",
+	msgsync.AcquisitionIndeterminate: "unknown",
 }
 
 func init() { rootCmd.AddCommand(newDiagnoseAcquisitionCmd()) }
 
 func newDiagnoseAcquisitionCmd() *cobra.Command {
 	var sourceID int64
-	var jsonOut bool
+	var jsonOut, all bool
 	command := &cobra.Command{
 		Use:   "diagnose-acquisition --source-id ID",
-		Short: "List pending Gmail acquisition failures",
-		Long:  "List pending Gmail acquisition failures in the local archive. Use --local when a remote is configured.",
+		Short: "List Gmail acquisition failures",
+		Long:  "List Gmail acquisition failures that sync still retries in the local archive. Use --all to include fixed, retired, and unknown failures, and --local when a remote is configured.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
@@ -44,27 +46,30 @@ func newDiagnoseAcquisitionCmd() *cobra.Command {
 			if source.MergedIntoSourceID != 0 {
 				return fmt.Errorf("source %d was merged into source %d and cannot sync", sourceID, source.MergedIntoSourceID)
 			}
-			items, err := st.ListUnresolvedSyncItemErrors(ctx, sourceID)
+			items, err := msgsync.DiagnoseAcquisitionContext(ctx, st, sourceID)
 			if err != nil {
 				return err
 			}
-			active := make([]acquisitionFailure, 0, len(items))
-			for _, item := range items {
-				if msgsync.IsAcquisitionReplayCandidate(item) {
-					active = append(active, acquisitionFailure{item.SourceMessageID, item.Phase, item.ErrorKind})
-				}
+			if !all {
+				items = slices.DeleteFunc(items, func(item msgsync.AcquisitionDiagnosticItem) bool {
+					return item.State != msgsync.AcquisitionActive
+				})
 			}
 			if jsonOut {
-				return printJSONTo(cmd.OutOrStdout(), active)
+				return printJSONTo(cmd.OutOrStdout(), items)
 			}
-			if len(active) == 0 {
-				if _, err := fmt.Fprintln(cmd.OutOrStdout(), "No pending acquisition failures."); err != nil {
+			if len(items) == 0 {
+				empty := "No pending acquisition failures."
+				if all {
+					empty = "No recorded acquisition failures."
+				}
+				if _, err := fmt.Fprintln(cmd.OutOrStdout(), empty); err != nil {
 					return fmt.Errorf("write acquisition diagnostic: %w", err)
 				}
 				return nil
 			}
-			for _, item := range active {
-				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", item.SourceMessageID, msgsync.AcquisitionFailureDescription(item.ErrorKind)); err != nil {
+			for _, item := range items {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", item.SourceMessageID, acquisitionStateLabels[item.State], msgsync.AcquisitionFailureDescription(item.ErrorKind)); err != nil {
 					return fmt.Errorf("write acquisition diagnostic: %w", err)
 				}
 			}
@@ -72,6 +77,7 @@ func newDiagnoseAcquisitionCmd() *cobra.Command {
 		},
 	}
 	command.Flags().Int64Var(&sourceID, "source-id", 0, "Gmail source ID (required)")
+	command.Flags().BoolVar(&all, "all", false, "Include fixed, retired, and unknown failures")
 	command.Flags().BoolVar(&jsonOut, "json", false, "Emit JSON")
 	_ = command.MarkFlagRequired("source-id")
 	return command

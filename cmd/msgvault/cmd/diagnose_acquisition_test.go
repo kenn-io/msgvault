@@ -16,149 +16,275 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestDiagnoseAcquisitionCommand(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		pending bool
-	}{{"empty", false}, {"legacy", true}, {"local", true}, {"logging", false}, {"text", true}} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			dir := t.TempDir()
-			cfg := config.NewDefaultConfig()
-			cfg.HomeDir, cfg.Data.DataDir = dir, dir
-			var st *store.Store
-			if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) && tc.pending {
-				st = testutil.NewTestStore(t)
-				setMatrixTestDatabaseURL(t, st, cfg)
-			} else {
-				st = testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
-			}
-			sourceType := "gmail"
-			if tc.name == "legacy" {
-				sourceType = ""
-			}
-			source, err := st.GetOrCreateSource(sourceType, "source@example.com")
-			require.NoError(err)
-			if tc.pending {
-				run, err := st.StartSync(source.ID, "full")
-				require.NoError(err)
-				for _, item := range []store.SyncRunItem{
-					{SyncRunID: run, SourceMessageID: "pending", Phase: "fetch", Status: "error", ErrorKind: "fetch_error"},
-					{SyncRunID: run, SourceMessageID: "(unknown)", Phase: "fetch", Status: "error", ErrorKind: "batch_fetch_error"},
-				} {
-					require.NoError(st.RecordSyncRunItem(item))
-				}
-				if tc.name == "text" {
-					for _, item := range []store.SyncRunItem{
-						{SyncRunID: run, SourceMessageID: "batch", Phase: "fetch", Status: "error", ErrorKind: "batch_fetch_error"},
-						{SyncRunID: run, SourceMessageID: "ingest", Phase: "ingest", Status: "error", ErrorKind: "ingest_error"},
-						{SyncRunID: run, SourceMessageID: "attachment", Phase: "ingest", Status: "error", ErrorKind: "attachment_error"},
-						{SyncRunID: run, SourceMessageID: "image", Phase: "ingest", Status: "error", ErrorKind: "remote_image_error"},
-						{SyncRunID: run, SourceMessageID: "both", Phase: "ingest", Status: "error", ErrorKind: "attachment_remote_image_error"},
-					} {
-						require.NoError(st.RecordSyncRunItem(item))
-					}
-				}
-				require.NoError(st.FailSync(run, "interrupted"))
-			}
-			require.NoError(st.Close())
-			var archiveBefore []byte
-			if tc.name == "logging" {
-				archiveBefore, err = os.ReadFile(cfg.DatabaseDSN())
-				require.NoError(err)
-			}
-			configText := fmt.Sprintf("[data]\ndata_dir = %q\ndatabase_url = %q\n", dir, cfg.Data.DatabaseURL)
-			if tc.name == "local" {
-				configText += "[remote]\nurl = 'https://example.com'\n"
-			}
-			require.NoError(os.WriteFile(filepath.Join(dir, "config.toml"), []byte(configText), 0o600))
-			root := newRootCommand()
-			root.AddCommand(newDiagnoseAcquisitionCmd())
-			var output bytes.Buffer
-			root.SetOut(&output)
-			root.SetErr(&output)
-			args := []string{"--home", dir, "diagnose-acquisition", "--source-id", strconv.FormatInt(source.ID, 10)}
-			if tc.name == "local" {
-				args = append(args, "--local")
-			}
-			if tc.pending && tc.name != "text" {
-				args = append(args, "--json")
-			}
-			logPath := filepath.Join(dir, "diagnostic.log")
-			if tc.name == "logging" {
-				t.Cleanup(func() { store.ConfigureSQLLogging(store.SQLLogOptions{}) })
-				args = append(args, "--log-sql", "--log-file", logPath)
-			}
-			root.SetArgs(args)
-			require.NoError(executeRootContext(t.Context(), root))
-			if tc.name == "logging" {
-				log, err := os.ReadFile(logPath)
-				require.NoError(err)
-				assert.Contains(string(log), `"msg":"sql"`)
-				archiveAfter, err := os.ReadFile(cfg.DatabaseDSN())
-				require.NoError(err)
-				assert.Equal(archiveBefore, archiveAfter)
-			}
-			if tc.name == "text" {
-				assert.Equal("pending\tmessage download failed\nbatch\tmessage download failed\ningest\tmessage processing failed\nattachment\tattachment saving failed\nimage\tremote image saving failed\nboth\tattachment and remote image saving failed\n", output.String())
-			} else if tc.pending {
-				assert.True(bytes.HasSuffix(output.Bytes(), []byte("\n")))
-				var items []map[string]string
-				require.NoError(json.Unmarshal(output.Bytes(), &items))
-				require.Len(items, 1)
-				assert.Equal(map[string]string{"source_message_id": "pending", "phase": "fetch", "error_kind": "fetch_error"}, items[0])
-			} else {
-				assert.Equal("No pending acquisition failures.\n", output.String())
-			}
-		})
+type acquisitionArchive struct {
+	t      *testing.T
+	dir    string
+	cfg    *config.Config
+	st     *store.Store
+	source int64
+}
+
+// newAcquisitionArchive uses the configured test database unless the case
+// inspects the SQLite file itself.
+func newAcquisitionArchive(t *testing.T, sourceType string, sqliteOnly bool) *acquisitionArchive {
+	t.Helper()
+	dir := t.TempDir()
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir, cfg.Data.DataDir = dir, dir
+	var st *store.Store
+	if sqliteOnly {
+		st = testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+	} else {
+		st = testutil.NewTestStore(t)
+		setMatrixTestDatabaseURL(t, st, cfg)
+	}
+	source, err := st.GetOrCreateSource(sourceType, "source@example.com")
+	require.NoError(t, err)
+	return &acquisitionArchive{t: t, dir: dir, cfg: cfg, st: st, source: source.ID}
+}
+
+func acquisitionOutcome(id, phase, status, kind string) store.SyncRunItem {
+	return store.SyncRunItem{SourceMessageID: id, Phase: phase, Status: status, ErrorKind: kind, ErrorMessage: kind}
+}
+
+// record writes one run's outcomes. Completed runs are incremental.
+func (a *acquisitionArchive) record(source int64, completed bool, items ...store.SyncRunItem) {
+	a.t.Helper()
+	syncType := "full"
+	if completed {
+		syncType = "incremental"
+	}
+	run, err := a.st.StartSync(source, syncType)
+	require.NoError(a.t, err)
+	for _, item := range items {
+		item.SyncRunID = run
+		require.NoError(a.t, a.st.RecordSyncRunItem(item))
+	}
+	if completed {
+		require.NoError(a.t, a.st.CompleteSync(run, ""))
+	} else {
+		require.NoError(a.t, a.st.FailSync(run, "interrupted"))
 	}
 }
 
-func TestDiagnoseAcquisitionErrors(t *testing.T) {
-	for _, tc := range []struct{ name, config, want string }{
-		{"invalid-level", "", "invalid log level"},
-		{"remote", "[remote]\nurl = 'https://example.com'\n", "use --local"},
-		{"newer-schema", "", "run setup with the matching release"},
-		{"merged-source", "", "merged into source"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			require := require.New(t)
-			dir := t.TempDir()
-			cfg := config.NewDefaultConfig()
-			cfg.HomeDir, cfg.Data.DataDir = dir, dir
-			configText := tc.config
-			want := tc.want
-			sourceID := int64(1)
-			if tc.name == "newer-schema" || tc.name == "merged-source" {
-				st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
-				source, err := st.GetOrCreateSource("gmail", "source@example.com")
-				require.NoError(err)
-				sourceID = source.ID
-				if tc.name == "newer-schema" {
-					_, err = st.DB().ExecContext(t.Context(), "UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'", strconv.Itoa(store.SchemaVersion+1))
-				} else {
-					into, createErr := st.GetOrCreateSource("gmail", "into@example.com")
-					require.NoError(createErr)
-					_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: source.ID, IntoSourceID: into.ID})
-					want = fmt.Sprintf("merged into source %d", into.ID)
-				}
-				require.NoError(err)
-				require.NoError(st.Close())
-				configText = fmt.Sprintf("[data]\ndata_dir = %q\n", dir)
-			}
-			require.NoError(os.WriteFile(filepath.Join(dir, "config.toml"), []byte(configText), 0o600))
-			root := newRootCommand()
-			root.AddCommand(newDiagnoseAcquisitionCmd())
-			var output bytes.Buffer
-			root.SetOut(&output)
-			root.SetErr(&output)
-			args := []string{"--home", dir, "diagnose-acquisition", "--source-id", strconv.FormatInt(sourceID, 10)}
-			if tc.name == "invalid-level" {
-				args = append(args, "--log-level", "invalid-level")
-			}
-			root.SetArgs(args)
-			require.ErrorContains(executeRootContext(t.Context(), root), want)
-		})
+func (a *acquisitionArchive) diagnose(configText string, args ...string) (string, error) {
+	a.t.Helper()
+	if a.st != nil {
+		require.NoError(a.t, a.st.Close())
+		a.st = nil
 	}
+	configText = fmt.Sprintf("[data]\ndata_dir = %q\ndatabase_url = %q\n", a.dir, a.cfg.Data.DatabaseURL) + configText
+	require.NoError(a.t, os.WriteFile(filepath.Join(a.dir, "config.toml"), []byte(configText), 0o600))
+	root := newRootCommand()
+	root.AddCommand(newDiagnoseAcquisitionCmd())
+	var output bytes.Buffer
+	root.SetOut(&output)
+	root.SetErr(&output)
+	root.SetArgs(append([]string{"--home", a.dir, "diagnose-acquisition", "--source-id", strconv.FormatInt(a.source, 10)}, args...))
+	err := executeRootContext(a.t.Context(), root)
+	return output.String(), err
+}
+
+func (a *acquisitionArchive) diagnoseJSON(args ...string) []map[string]string {
+	a.t.Helper()
+	output, err := a.diagnose("", append(args, "--json")...)
+	require.NoError(a.t, err)
+	assert.True(a.t, bytes.HasSuffix([]byte(output), []byte("\n")))
+	items := []map[string]string{}
+	require.NoError(a.t, json.Unmarshal([]byte(output), &items))
+	return items
+}
+
+func acquisitionJSON(id, phase, kind, state string) map[string]string {
+	return map[string]string{"source_message_id": id, "phase": phase, "error_kind": kind, "state": state}
+}
+
+func TestDiagnoseAcquisition(t *testing.T) {
+	t.Run("still failing", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		a := newAcquisitionArchive(t, "gmail", false)
+		other, err := a.st.GetOrCreateSource("gmail", "other@example.com")
+		require.NoError(err)
+		a.record(other.ID, false, acquisitionOutcome("other", "fetch", "error", "fetch_error"))
+		pending := acquisitionOutcome("pending", "ingest", "error", "attachment_error")
+		pending.ErrorMessage = store.SyncRunItemFilesPendingMessage
+		a.record(a.source, false,
+			acquisitionOutcome("download", "fetch", "error", "fetch_error"),
+			acquisitionOutcome("(unknown)", "fetch", "error", "batch_fetch_error"),
+		)
+		a.record(a.source, false,
+			acquisitionOutcome("download", "fetch", "error", "batch_fetch_error"),
+			acquisitionOutcome("ingest", "ingest", "error", "ingest_error"),
+			acquisitionOutcome("attachment", "ingest", "error", "attachment_error"),
+			acquisitionOutcome("image", "ingest", "error", "remote_image_error"),
+			acquisitionOutcome("both", "ingest", "error", "attachment_remote_image_error"),
+			pending,
+		)
+		output, err := a.diagnose("")
+		require.NoError(err)
+		assert.Equal("download\tstill failing\tmessage download failed\n"+
+			"ingest\tstill failing\tmessage processing failed\n"+
+			"attachment\tstill failing\tattachment saving failed\n"+
+			"image\tstill failing\tremote image saving failed\n"+
+			"both\tstill failing\tattachment and remote image saving failed\n"+
+			"pending\tstill failing\tattachment saving failed\n", output)
+		assert.Equal([]map[string]string{
+			acquisitionJSON("download", "fetch", "batch_fetch_error", "active"),
+			acquisitionJSON("ingest", "ingest", "ingest_error", "active"),
+			acquisitionJSON("attachment", "ingest", "attachment_error", "active"),
+			acquisitionJSON("image", "ingest", "remote_image_error", "active"),
+			acquisitionJSON("both", "ingest", "attachment_remote_image_error", "active"),
+			acquisitionJSON("pending", "ingest", "attachment_error", "active"),
+		}, a.diagnoseJSON())
+	})
+
+	t.Run("fixed", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		a := newAcquisitionArchive(t, "gmail", false)
+		a.record(a.source, false, acquisitionOutcome("reopened", "fetch", "error", "fetch_error"))
+		a.record(a.source, false, acquisitionOutcome("reopened", "fetch", "resolved", "acquired"))
+		a.record(a.source, false, acquisitionOutcome("reopened", "ingest", "error", "ingest_error"))
+		output, err := a.diagnose("")
+		require.NoError(err)
+		assert.Equal("reopened\tstill failing\tmessage processing failed\n", output)
+		output, err = a.diagnose("", "--all")
+		require.NoError(err)
+		assert.Equal("reopened\tfixed\tmessage download failed\nreopened\tstill failing\tmessage processing failed\n", output)
+		assert.Equal([]map[string]string{
+			acquisitionJSON("reopened", "fetch", "fetch_error", "resolved"),
+			acquisitionJSON("reopened", "ingest", "ingest_error", "active"),
+		}, a.diagnoseJSON("--all"))
+	})
+
+	t.Run("retired", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		a := newAcquisitionArchive(t, "gmail", false)
+		a.record(a.source, false,
+			acquisitionOutcome("cleaned", "ingest", "skipped", "attachment_error"),
+			acquisitionOutcome("gone", "fetch", "error", "fetch_error"),
+			acquisitionOutcome("files", "ingest", "error", "attachment_error"),
+		)
+		a.record(a.source, false,
+			acquisitionOutcome("gone", "fetch", "skipped", "gmail_not_found"),
+			acquisitionOutcome("files", "fetch", "skipped", "gmail_not_found"),
+		)
+		output, err := a.diagnose("")
+		require.NoError(err)
+		assert.Equal("No pending acquisition failures.\n", output)
+		assert.Equal([]map[string]string{
+			acquisitionJSON("cleaned", "ingest", "attachment_error", "historical"),
+			acquisitionJSON("gone", "fetch", "fetch_error", "historical"),
+			acquisitionJSON("files", "ingest", "attachment_error", "indeterminate"),
+		}, a.diagnoseJSON("--all"))
+	})
+
+	t.Run("unknown", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		a := newAcquisitionArchive(t, "gmail", false)
+		a.record(a.source, false,
+			acquisitionOutcome("stale", "fetch", "error", "fetch_error"),
+			acquisitionOutcome("(unknown)", "fetch", "error", "batch_fetch_error"),
+		)
+		a.record(a.source, true)
+		a.record(a.source, false,
+			acquisitionOutcome("odd", "fetch", "error", "label_error"),
+			acquisitionOutcome("odd", "fetch", "resolved", "acquired"),
+		)
+		output, err := a.diagnose("")
+		require.NoError(err)
+		assert.Equal("No pending acquisition failures.\n", output)
+		assert.Equal([]map[string]string{}, a.diagnoseJSON())
+		output, err = a.diagnose("", "--all")
+		require.NoError(err)
+		assert.Equal("stale\tunknown\tmessage download failed\n(unknown)\tunknown\tmessage download failed\nodd\tunknown\tmessage acquisition failed\n", output)
+		assert.Equal([]map[string]string{
+			acquisitionJSON("stale", "fetch", "fetch_error", "indeterminate"),
+			acquisitionJSON("(unknown)", "fetch", "batch_fetch_error", "indeterminate"),
+			acquisitionJSON("odd", "fetch", "label_error", "indeterminate"),
+		}, a.diagnoseJSON("--all"))
+	})
+
+	t.Run("newer archive", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		a := newAcquisitionArchive(t, "gmail", true)
+		a.record(a.source, false, acquisitionOutcome("newer-failure", "fetch", "error", "fetch_error"))
+		_, err := a.st.DB().ExecContext(t.Context(), "UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'", strconv.Itoa(store.SchemaVersion+1))
+		require.NoError(err)
+		output, err := a.diagnose("", "--all")
+		require.ErrorContains(err, "run setup with the matching release")
+		assert.NotContains(output, "newer-failure")
+		assert.NotContains(output, "acquisition failures.")
+	})
+
+	t.Run("deletion", func(t *testing.T) {
+		assert := assert.New(t)
+		a := newAcquisitionArchive(t, "gmail", false)
+		a.record(a.source, false,
+			acquisitionOutcome("deleted", "delete", "error", "delete_error"),
+			acquisitionOutcome("download", "fetch", "error", "fetch_error"),
+			acquisitionOutcome("download", "delete", "error", "delete_error"),
+		)
+		want := []map[string]string{acquisitionJSON("download", "fetch", "fetch_error", "active")}
+		assert.Equal(want, a.diagnoseJSON())
+		assert.Equal(want, a.diagnoseJSON("--all"))
+	})
+
+	t.Run("legacy source", func(t *testing.T) {
+		assert := assert.New(t)
+		a := newAcquisitionArchive(t, "", false)
+		a.record(a.source, false, acquisitionOutcome("legacy", "fetch", "error", "fetch_error"))
+		assert.Equal([]map[string]string{acquisitionJSON("legacy", "fetch", "fetch_error", "active")}, a.diagnoseJSON())
+	})
+
+	t.Run("local", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		a := newAcquisitionArchive(t, "gmail", false)
+		a.record(a.source, false, acquisitionOutcome("local", "fetch", "error", "fetch_error"))
+		remote := "[remote]\nurl = 'https://example.com'\n"
+		_, err := a.diagnose(remote)
+		require.ErrorContains(err, "use --local")
+		output, err := a.diagnose(remote, "--local")
+		require.NoError(err)
+		assert.Equal("local\tstill failing\tmessage download failed\n", output)
+	})
+
+	t.Run("merged source", func(t *testing.T) {
+		require := require.New(t)
+		a := newAcquisitionArchive(t, "gmail", true)
+		into, err := a.st.GetOrCreateSource("gmail", "into@example.com")
+		require.NoError(err)
+		_, err = a.st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: a.source, IntoSourceID: into.ID})
+		require.NoError(err)
+		_, err = a.diagnose("")
+		require.ErrorContains(err, fmt.Sprintf("merged into source %d", into.ID))
+	})
+
+	t.Run("logging", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		a := newAcquisitionArchive(t, "gmail", true)
+		require.NoError(a.st.Close())
+		a.st = nil
+		_, err := a.diagnose("", "--log-level", "invalid-level")
+		require.ErrorContains(err, "invalid log level")
+		archiveBefore, err := os.ReadFile(a.cfg.DatabaseDSN())
+		require.NoError(err)
+		logPath := filepath.Join(a.dir, "diagnostic.log")
+		t.Cleanup(func() { store.ConfigureSQLLogging(store.SQLLogOptions{}) })
+		output, err := a.diagnose("", "--all", "--log-sql", "--log-file", logPath)
+		require.NoError(err)
+		assert.Equal("No recorded acquisition failures.\n", output)
+		log, err := os.ReadFile(logPath)
+		require.NoError(err)
+		assert.Contains(string(log), `"msg":"sql"`)
+		archiveAfter, err := os.ReadFile(a.cfg.DatabaseDSN())
+		require.NoError(err)
+		assert.Equal(archiveBefore, archiveAfter)
+	})
 }
