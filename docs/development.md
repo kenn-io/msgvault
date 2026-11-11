@@ -604,13 +604,8 @@ admits other grant-aware handlers, which still check their selected resources.
 The remote-client fields preserve the remote CLI contract. A role permission
 alone does not admit either credential class.
 
-Source support records proven native enforcement for role principals. Keep
-`ScopeNone` until a regression demonstrates that hidden sources cannot affect
-the response. Grant-specific filtering does not prove native support. Use
-`ScopeIndependent` only when the operation discloses no source-dependent data;
-authenticated health includes account labels and does not qualify. Mixed-action
-operations also need action, target and sender checks before broader role
-admission. Until those exist, keep them administrative.
+Mixed-action operations need action, target and sender checks before broader
+role admission. Until those exist, keep them administrative.
 
 ## SQL Guidelines
 

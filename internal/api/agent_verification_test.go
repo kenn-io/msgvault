@@ -220,7 +220,10 @@ func TestAgentVerificationModifierGrantsNoRead(t *testing.T) {
 	t.Cleanup(registry.Close)
 	_, _, grant, err := registry.Issue("modifier", []agentgrant.Permission{agentgrant.PermissionVerificationRead}, []agentgrant.SourceRef{{ID: 1, Type: "test", Identifier: "reader@example.test"}}, time.Time{})
 	requirements.NoError(err)
-	for operation := range agentReadPermissions {
+	for operation, policy := range operationPolicies {
+		if policy.AgentReadPermission == "" {
+			continue
+		}
 		_, denied := agentReadPermission(operation, &grant)
 		requirements.NotNil(denied, operation)
 		assertions.Equal(http.StatusForbidden, denied.GetStatus(), operation)

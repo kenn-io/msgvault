@@ -14,18 +14,6 @@ import (
 	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
-// These legacy reads have grant-specific snapshot and resource authorization.
-// Native source support for role credentials is classified separately.
-var agentReadPermissions = func() map[string]agentgrant.Permission {
-	permissions := make(map[string]agentgrant.Permission)
-	for id, policy := range operationPolicies {
-		if policy.AgentReadPermission != "" {
-			permissions[id] = policy.AgentReadPermission
-		}
-	}
-	return permissions
-}()
-
 func agentReadDenied(permission agentgrant.Permission) *apiHTTPError {
 	return newAPIHTTPError(http.StatusForbidden, "permission_denied", "Agent grant requires "+string(permission)+" on the requested sources")
 }
@@ -38,10 +26,11 @@ func (s *Server) agentObjectSourceAllowed(r *http.Request, sourceID int64) bool 
 }
 
 func agentReadPermission(operation string, grant *agentgrant.Grant) (agentgrant.Permission, *apiHTTPError) {
-	permission, read := agentReadPermissions[operation]
-	if !read {
+	permission := operationPolicy(operation).AgentReadPermission
+	if permission == "" {
+		// Other delegated operations use their own handler checks.
 		return "", nil
-	} // runCLI has its own command authorization; health discloses no archive data.
+	}
 	if operation == "listCLIAccounts" || operation == "listCLICollections" {
 		permission = agentDiscoveryPermission(grant)
 		if permission == "" {

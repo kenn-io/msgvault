@@ -42,7 +42,6 @@ func TestEveryAPIV1OperationIsClassified(t *testing.T) {
 		}
 		_, known := authz.KnownPermission(string(policy.Permission))
 		assert.True(known, "%s", id)
-		assert.Contains([]ScopeSupport{ScopeNone, ScopeIndependent, ScopeFilter, ScopeObject}, policy.Sources, "%s", id)
 	}
 	for id := range operationPolicies {
 		assert.Contains(operations, id, "stale policy entry %s", id)
@@ -57,7 +56,6 @@ func TestOperationPolicyDefaultsDenyCapabilities(t *testing.T) {
 	for _, id := range []string{"", "unknown", "getPersonProfile.extra", "GETMESSAGE", "*"} {
 		policy := operationPolicy(id)
 		assert.Equal(authz.PermissionArchiveAdmin, policy.Permission)
-		assert.Equal(ScopeNone, policy.Sources)
 		assert.Empty(policy.AgentReadPermission)
 		assert.False(policy.Delegated)
 		assert.False(policy.RemoteRead)
@@ -65,8 +63,6 @@ func TestOperationPolicyDefaultsDenyCapabilities(t *testing.T) {
 		assert.False(delegatedOperationAllowed(id))
 		assert.False(remoteClientOperationAllowed(id, true))
 	}
-	// Person-resource grant checks are not native source filtering for roles.
-	assert.Equal(ScopeNone, operationPolicy("getPersonProfile").Sources)
 }
 
 func TestLegacyOperationAdmissionIsPreserved(t *testing.T) {
@@ -93,7 +89,6 @@ func TestLegacyOperationAdmissionIsPreserved(t *testing.T) {
 	wantRemoteWrite := map[string]bool{
 		"createCLICollection": true, "addCLICollectionSources": true, "removeCLICollectionSources": true, "deleteCLICollection": true,
 	}
-	assert.Equal(wantReads, agentReadPermissions)
 	operations := apiV1PolicyOperations(t)
 	operations["unknown"] = nil
 	for id := range operations {

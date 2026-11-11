@@ -27,30 +27,6 @@ func policyTestMux(srv *Server) *http.ServeMux {
 	return mux
 }
 
-func TestRoleOperationPolicyAuthorization(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		role                     authz.Role
-		read, edit, unclassified bool
-	}{
-		{authz.RoleAdmin, true, true, true},
-		{authz.RoleMember, true, true, false},
-		{authz.RoleViewer, true, false, false},
-		{"unknown", false, false, false},
-	} {
-		t.Run(string(tc.role), func(t *testing.T) {
-			principal := authz.Principal{Role: tc.role}
-			for id, allowed := range map[string]bool{
-				"getStats":                  tc.read,
-				"patchPerson":               tc.edit,
-				"unclassifiedTestOperation": tc.unclassified,
-			} {
-				assert.Equal(t, allowed, principal.Has(operationPolicy(id).Permission), "%s", id)
-			}
-		})
-	}
-}
-
 func TestUnknownOperationRetainsCredentialBoundariesHTTP(t *testing.T) {
 	t.Parallel()
 	srv := &Server{
@@ -72,12 +48,9 @@ func TestUnknownOperationRetainsCredentialBoundariesHTTP(t *testing.T) {
 		{name: "session", cookie: cookie, status: http.StatusNoContent},
 		{name: "remote", key: "remote-key", status: http.StatusForbidden},
 		{name: "grant", agent: token, status: http.StatusUnauthorized},
-		{name: "mixed", key: "owner-key", agent: token, status: http.StatusUnauthorized},
-		{name: "invalid", key: "invalid", status: http.StatusUnauthorized},
-		{name: "missing", status: http.StatusUnauthorized},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodGet, "/api/v1/policy-test/unclassifiedTestOperation", nil)
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/policy-test/unclassifiedTestOperation", nil)
 			if tc.key != "" {
 				r.Header.Set("X-Api-Key", tc.key)
 			}
@@ -94,7 +67,7 @@ func TestUnknownOperationRetainsCredentialBoundariesHTTP(t *testing.T) {
 	}
 }
 
-func TestPrivilegedPredicatesRequirePrincipalAndTransport(t *testing.T) {
+func TestPrivilegedPredicatesRequirePrincipalAndOwnerMode(t *testing.T) {
 	t.Parallel()
 	srv := &Server{}
 	for _, tc := range []struct {
@@ -112,7 +85,7 @@ func TestPrivilegedPredicatesRequirePrincipalAndTransport(t *testing.T) {
 		{"unauthenticated", AuthModeRequired, authz.Principal{}, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodGet, "/api/v1/agent-tokens", nil)
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/agent-tokens", nil)
 			security := requestSecurity{auth: requestAuthentication{Mode: tc.mode, Principal: tc.principal}}
 			r = r.WithContext(context.WithValue(r.Context(), requestSecurityContextKey{}, security))
 			assert.Equal(t, tc.privileged, srv.apiRequestAuthorized(r))

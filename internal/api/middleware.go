@@ -261,10 +261,7 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 				Mode: AuthModeDelegated, Grant: &grant,
 				Principal: authz.Principal{
 					ID: "grant:" + grant.ID, Kind: authz.KindGrant, DisplayName: grant.Label,
-					Permissions: permissions, ExpiresAt: grant.ExpiresAt,
-					// Pending durable source references remain on Grant. IDs are
-					// resolved only within beginAgentRead's bounded snapshot.
-					Sources: &authz.SourceScope{},
+					Permissions: permissions,
 				},
 			}
 		}
@@ -318,7 +315,7 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 		if session, ok := s.sessions.lookup(cookie.Value); ok {
 			return requestAuthentication{
 				Mode:      AuthModeSession,
-				Principal: authz.Principal{ID: "owner", Kind: authz.KindOwner, Role: authz.RoleAdmin, ExpiresAt: session.ExpiresAt},
+				Principal: authz.Principal{ID: "owner", Kind: authz.KindOwner, Role: authz.RoleAdmin},
 				SessionID: cookie.Value,
 				Session:   session,
 			}

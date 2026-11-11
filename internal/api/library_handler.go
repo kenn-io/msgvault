@@ -56,10 +56,6 @@ func (s *Server) Handler(authorize func(http.ResponseWriter, *http.Request, Oper
 			Mode:      AuthModeCaller,
 			Principal: authz.Principal{ID: "caller", Kind: authz.KindCaller, Role: authz.RoleAdmin},
 		}
-		if !security.auth.Principal.Has(operationPolicy(op.OperationID).Permission) {
-			writeHumaError(ctx, http.StatusForbidden, "permission_denied", "Principal does not authorize this operation")
-			return
-		}
 		*r = *r.WithContext(context.WithValue(r.Context(), requestSecurityContextKey{}, security))
 		// Select timeout policy after admission. Keep Huma's request pointer in
 		// sync with the context and body passed through timeout and gate handling.

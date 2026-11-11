@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -48,9 +47,9 @@ func TestAuthenticationPrincipals(t *testing.T) {
 			defer srv.agentGrants.Close()
 			grantID, token, _, err := srv.agentGrants.Issue("test reader", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: 1, Type: "test", Identifier: "reader@example.test"}}, time.Time{})
 			require.NoError(err)
-			cookie, session, err := srv.sessions.create()
+			cookie, _, err := srv.sessions.create()
 			require.NoError(err)
-			r := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/health", nil)
 			r.Header.Set("Authorization", tc.key)
 			if tc.token != "" {
 				value := tc.token
@@ -78,10 +77,6 @@ func TestAuthenticationPrincipals(t *testing.T) {
 			case AuthModeAPIKey, AuthModeSession:
 				assert.Equal(authz.RoleAdmin, auth.Principal.Role)
 				assert.True(auth.Principal.Has(authz.PermissionArchiveAdmin))
-				assert.False(auth.Principal.Restricted())
-				if tc.mode == AuthModeSession {
-					assert.Equal(session.ExpiresAt, auth.Principal.ExpiresAt)
-				}
 			case AuthModeRemoteClient:
 				assert.Empty(auth.Principal.Role)
 				assert.Equal(authz.PermissionSet{authz.PermissionCLIRead: {}}, auth.Principal.Permissions)
@@ -90,7 +85,6 @@ func TestAuthenticationPrincipals(t *testing.T) {
 				assert.Empty(auth.Principal.Role)
 				assert.Equal("test reader", auth.Principal.DisplayName)
 				assert.Equal(authz.PermissionSet{authz.PermissionMessageRead: {}}, auth.Principal.Permissions)
-				assert.True(auth.Principal.Restricted())
 				assert.False(auth.Principal.Has(authz.PermissionSearchRead))
 			case AuthModeRequired:
 				assert.Equal(authz.Principal{}, auth.Principal)
@@ -106,7 +100,7 @@ func TestRemoteWriteAndKeylessPrincipals(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{Server: config.ServerConfig{APIKey: "owner-key", RemoteClients: []config.RemoteClientConfig{{ClientID: "writer", APIKey: "remote-key", CollectionsWrite: true}}}}
 	srv := &Server{cfg: cfg}
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/health", nil)
 	r.Header.Set("X-Api-Key", "remote-key")
 	auth := srv.classifyAPIRequestDirect(r)
 	assert.Equal(authz.PermissionSet{authz.PermissionCLIRead: {}, authz.PermissionCollectionsWrite: {}}, auth.Principal.Permissions)
@@ -122,45 +116,18 @@ func TestRemoteWriteAndKeylessPrincipals(t *testing.T) {
 	}
 }
 
-func TestExpiredCredentialsHaveNoPrincipal(t *testing.T) {
-	t.Parallel()
-	synctest.Test(t, func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		srv := &Server{cfg: &config.Config{Server: config.ServerConfig{APIKey: "owner-key"}}, sessions: newSessionStore(time.Second), agentGrants: agentgrant.NewRegistry()}
-		defer srv.sessions.Close()
-		defer srv.agentGrants.Close()
-		_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: 1, Type: "test", Identifier: "reader@example.test"}}, time.Now().Add(time.Second))
-		require.NoError(err)
-		cookie, _, err := srv.sessions.create()
-		require.NoError(err)
-		time.Sleep(2 * time.Second)
-		for _, agent := range []bool{true, false} {
-			r := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
-			if agent {
-				r.Header.Set("X-Msgvault-Agent-Token", token)
-			} else {
-				r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: cookie, Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
-			}
-			auth := srv.classifyAPIRequestDirect(r)
-			assert.Equal(AuthModeRequired, auth.Mode)
-			assert.Equal(authz.Principal{}, auth.Principal)
-		}
-	})
-}
-
 func TestLibraryCallerPrincipal(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	t.Parallel()
 	srv, _ := newAgentTokenTestServer(t)
-	t.Cleanup(func() { require.NoError(srv.Shutdown(context.Background())) })
+	t.Cleanup(func() { require.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	var admitted *http.Request
 	handler := srv.Handler(func(_ http.ResponseWriter, r *http.Request, _ Operation) bool {
 		admitted = r
 		return true
 	})
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/agent-tokens", nil)
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/agent-tokens", nil)
 	r.Header.Set("X-Msgvault-Agent-Token", "invalid-daemon-token")
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, r)

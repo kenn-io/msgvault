@@ -92,17 +92,6 @@ func Grantable(permission Permission) bool {
 	return permissionDefinitions[permission].grantable
 }
 
-// RolePermissions returns an independent set; mutations cannot change roles.
-func RolePermissions(role Role) PermissionSet {
-	permissions := make(PermissionSet)
-	for permission, definition := range permissionDefinitions {
-		if roleRank(role) >= roleRank(definition.minimumRole) {
-			permissions[permission] = struct{}{}
-		}
-	}
-	return permissions
-}
-
 func roleRank(role Role) int {
 	switch role {
 	case RoleViewer:
