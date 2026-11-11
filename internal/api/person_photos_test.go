@@ -425,7 +425,7 @@ func TestPersonPhotoUnlink(t *testing.T) {
 						if tc.forwarded && uid == "current" {
 							resolved = "old"
 						}
-						assert.NoError(t, json.NewEncoder(w).Encode(docbankmedia.ExternalPersonResolution{PersonID: linked, System: "msgvault", ArchiveID: archive, RequestedUID: uid, ResolvedUID: resolved, UIDState: "current", Forwarded: resolved != uid}))
+						assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"person_id": linked, "system": "msgvault", "archive_id": archive, "requested_uid": uid, "resolved_uid": resolved, "uid_state": "current", "forwarded": resolved != uid}))
 					} else {
 						w.WriteHeader(http.StatusNotFound)
 						_, _ = w.Write([]byte(`{"code":"not_found"}`))

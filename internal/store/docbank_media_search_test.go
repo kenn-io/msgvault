@@ -86,55 +86,64 @@ func TestDocumentSearchVersionsAndOccurrences(t *testing.T) {
 		assert.Equal("new.pdf", onlyNew[0].Filename)
 		assert.Equal("new earlier.pdf", onlyNew[1].Filename)
 	})
-	t.Run("occurrences", func(t *testing.T) {
-		requirements := require.New(t)
+	t.Run("per-version limit and duplicate collapse", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
 		f := storetest.New(t)
 		versions := []string{"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"}
 		want := make(map[string][]int64)
 		for i, version := range versions {
 			hash := fmt.Sprintf("%064x", i+1)
-			requirements.NoError(f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash, MIMEType: "application/pdf"}, store.DocbankAttachmentRef{NodeID: int64(i + 1), VersionID: version}, ""))
+			require.NoError(f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash, MIMEType: "application/pdf"}, store.DocbankAttachmentRef{NodeID: int64(i + 1), VersionID: version}, ""))
 			for day := 5; day >= 1; day-- {
 				mid := f.CreateMessage(fmt.Sprintf("version-%d-day-%d", i, day))
-				requirements.NoError(f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{SourcePartKey: "original", ContentHash: hash, Filename: "report.pdf", StoragePath: hash[:2] + "/" + hash, State: "stored"}))
+				require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{SourcePartKey: "original", ContentHash: hash, Filename: "report.pdf", StoragePath: hash[:2] + "/" + hash, State: "stored"}))
 				// The same file can appear twice under separate source attachment IDs.
-				requirements.NoError(f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{SourcePartKey: "duplicate", SourceAttachmentID: "duplicate", ContentHash: hash, Filename: "copy.pdf", StoragePath: hash[:2] + "/" + hash, State: "stored"}))
+				require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{SourcePartKey: "duplicate", SourceAttachmentID: "duplicate", ContentHash: hash, Filename: "copy.pdf", StoragePath: hash[:2] + "/" + hash, State: "stored"}))
 				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sent_at=? WHERE id=?`), time.Date(2026, 1, day, 0, 0, 0, 0, time.UTC), mid)
-				requirements.NoError(err)
+				require.NoError(err)
 				if day >= 3 {
 					want[version] = append(want[version], mid)
 				}
 			}
 		}
-		t.Run("per-version limit and duplicate collapse", func(t *testing.T) {
-			assertions := assert.New(t)
-			requirements := require.New(t)
-			var attachments int
-			requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM attachments`).Scan(&attachments))
-			requirements.Equal(20, attachments)
-			occurrences, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", nil, versions, 2, nil)
-			requirements.NoError(err)
-			got := make(map[string][]int64)
-			for _, occurrence := range occurrences {
-				got[occurrence.VersionID] = append(got[occurrence.VersionID], occurrence.MessageID)
+		var attachments int
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM attachments`).Scan(&attachments))
+		require.Equal(20, attachments)
+		occurrences, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", nil, versions, 2, nil)
+		require.NoError(err)
+		got := make(map[string][]int64)
+		for _, occurrence := range occurrences {
+			got[occurrence.VersionID] = append(got[occurrence.VersionID], occurrence.MessageID)
+		}
+		assert.Equal(want, got)
+	})
+	t.Run("photo pages", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		f := storetest.New(t)
+		versions := []string{"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"}
+		for i, version := range versions {
+			hash := fmt.Sprintf("%064x", i+1)
+			require.NoError(f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash, MIMEType: "application/pdf"}, store.DocbankAttachmentRef{NodeID: int64(i + 1), VersionID: version}, ""))
+			for n := range 5 {
+				mid := f.CreateMessage(fmt.Sprintf("version-%d-message-%d", i, n))
+				for _, part := range []string{"original", "duplicate"} {
+					require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{SourcePartKey: part, ContentHash: hash, Filename: part, StoragePath: hash[:2] + "/" + hash, State: "stored"}))
+				}
 			}
-			assertions.Equal(want, got)
-		})
-		t.Run("photo pages", func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			first, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", nil, versions, 2, &store.DocumentOccurrencePage{})
-			require.NoError(err)
-			require.Len(first, 3)
-			require.Equal(first[0].MessageID, first[1].MessageID)
-			require.NotEqual(first[0].AttachmentID, first[1].AttachmentID)
-			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`), first[2].MessageID)
-			require.NoError(err)
-			next, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", nil, versions, 100, &store.DocumentOccurrencePage{VersionID: first[1].VersionID, AttachmentID: first[1].AttachmentID})
-			require.NoError(err)
-			require.Len(next, 16)
-			assert.NotEqual(first[2].MessageID, next[0].MessageID)
-		})
+		}
+		first, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", nil, versions, 2, &store.DocumentOccurrencePage{})
+		require.NoError(err)
+		require.Len(first, 3)
+		require.Equal(first[0].MessageID, first[1].MessageID)
+		require.NotEqual(first[0].AttachmentID, first[1].AttachmentID)
+		_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`), first[2].MessageID)
+		require.NoError(err)
+		next, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", nil, versions, 100, &store.DocumentOccurrencePage{VersionID: first[1].VersionID, AttachmentID: first[1].AttachmentID})
+		require.NoError(err)
+		require.Len(next, 16)
+		assert.NotEqual(first[2].MessageID, next[0].MessageID)
 	})
 }
 

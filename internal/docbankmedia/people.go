@@ -16,7 +16,6 @@ type ExternalPersonResolution struct {
 	RequestedUID string `json:"requested_uid"`
 	ResolvedUID  string `json:"resolved_uid"`
 	UIDState     string `json:"uid_state"`
-	Forwarded    bool   `json:"forwarded"`
 }
 
 type ExternalPersonIdentity struct {
@@ -51,7 +50,7 @@ func (c *Client) ResolveExternalPerson(ctx context.Context, archiveID, uid strin
 	if err := c.jsonRequest(ctx, http.MethodGet, "/api/v1/people/resolve-external?"+query.Encode(), nil, &out); err != nil {
 		return out, err
 	}
-	if out.PersonID == "" || out.System != "msgvault" || out.ArchiveID != archiveID || out.RequestedUID != uid || out.ResolvedUID == "" || out.UIDState != "current" || out.Forwarded != (out.ResolvedUID != uid) {
+	if out.PersonID == "" || out.System != "msgvault" || out.ArchiveID != archiveID || out.RequestedUID != uid || out.ResolvedUID == "" || out.UIDState != "current" {
 		return ExternalPersonResolution{}, ErrInvalidReceipt
 	}
 	return out, nil
