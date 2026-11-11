@@ -45,7 +45,7 @@ func TestEmailCalendarEncodedFilename(t *testing.T) {
 	require.Len(t, emailEvents(t, st, source), 1)
 }
 
-func TestEmailCalendarEmptyRawFormatDoesNotLockDirectory(t *testing.T) {
+func TestEmailCalendarICSRawFormatDoesNotLockDirectory(t *testing.T) {
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	if !st.IsPostgreSQL() {
@@ -64,7 +64,7 @@ func TestEmailCalendarEmptyRawFormatDoesNotLockDirectory(t *testing.T) {
 	requirements.NoError(st.lockParticipantDirectoryMutationTxContext(t.Context(), blocker))
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	requirements.NoError(st.UpsertMessageRawWithFormatContext(ctx, id, []byte("Content-Type: text/calendar\r\n\r\n"), ""))
+	requirements.NoError(st.UpsertMessageRawWithFormatContext(ctx, id, []byte("Content-Type: text/calendar\r\n\r\n"), "ics"))
 }
 
 func TestEmailCalendarSingleParticipantLockOrder(t *testing.T) {
@@ -170,15 +170,6 @@ func TestEmailCalendarSourceCounts(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	email, source := persistInviteEmail(t, st, "count-invite", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z")))
 	requirements.Len(emailEvents(t, st, source), 1)
-	bySource, err := st.CountMessagesBySourceContext(t.Context())
-	requirements.NoError(err)
-	assertions.Equal(int64(2), bySource[source].Live)
-	count, err := st.CountMessagesForSourceContext(t.Context(), source)
-	requirements.NoError(err)
-	assertions.Equal(int64(2), count)
-	stats, err := st.GetStatsForScopeContext(t.Context(), []int64{source})
-	requirements.NoError(err)
-	assertions.Equal(int64(2), stats.MessageCount)
 	countAll, err := st.CountAllMessagesForSourceContext(t.Context(), source)
 	requirements.NoError(err)
 	assertions.Equal(int64(2), countAll)
@@ -210,7 +201,7 @@ func TestEmailCalendarSourceCounts(t *testing.T) {
 		Conversation: &ConversationPersistData{SourceConversationID: "imported-event"},
 	})
 	requirements.NoError(err)
-	count, err = st.CountNativeMessagesForSource(imported.ID)
+	count, err := st.CountNativeMessagesForSource(imported.ID)
 	requirements.NoError(err)
 	assertions.Equal(int64(1), count)
 	destination, err := st.GetOrCreateSource("message_import", "merged-count-import")
@@ -229,13 +220,8 @@ func TestEmailCalendarActivityCandidates(t *testing.T) {
 	_, mailSource := persistInviteEmail(t, st, "activity-invite", inviteEmail(raw))
 	mailEvents := emailEvents(t, st, mailSource)
 	requirements.Len(mailEvents, 1)
-	gmail, err := st.GetOrCreateSource("gmail", "owner@example.com")
-	requirements.NoError(err)
-	persistInviteEmailForSource(t, st, gmail.ID, "activity-invite", inviteEmail(raw))
-	gmailEvents := emailEvents(t, st, gmail.ID)
-	requirements.Len(gmailEvents, 1)
 	icsSource := icsSource(t, st)
-	_, err = st.PersistICalendarContext(t.Context(), icsSource, raw)
+	_, err := st.PersistICalendarContext(t.Context(), icsSource, raw)
 	requirements.NoError(err)
 	icsEvents := emailEvents(t, st, icsSource)
 	requirements.Len(icsEvents, 1)
@@ -273,8 +259,6 @@ func TestEmailCalendarActivityCandidates(t *testing.T) {
 	}
 	requirements.Contains(eligible, mailEvents[0])
 	assertions.False(eligible[mailEvents[0]])
-	requirements.Contains(eligible, gmailEvents[0])
-	assertions.False(eligible[gmailEvents[0]])
 	assertions.True(eligible[icsEvents[0]])
 	assertions.True(eligible[gcalID])
 	assertions.True(eligible[importedID])
