@@ -1231,7 +1231,10 @@ func TestPostgresXContentLeaseCrossStoreAndDetachedSave(t *testing.T) {
 	var suppressed bool
 	needs.NoError(peer.DB().QueryRowContext(t.Context(), `SELECT suppressed_at IS NOT NULL FROM x_post_versions WHERE source_id=$1 AND post_id='102'`, f.source).Scan(&suppressed))
 	checks.False(suppressed)
-	_, _, err = remover.AcquireEmbeddingRead(t.Context())
+	_, unexpectedRelease, err := remover.AcquireEmbeddingRead(t.Context())
+	if unexpectedRelease != nil {
+		defer func() { _ = unexpectedRelease() }()
+	}
 	needs.ErrorContains(err, "cleanup pending")
 	// Reuse the reader Store for the second attempt to exercise a shared
 	// two-connection query pool while retaining a different content directory.
@@ -1320,7 +1323,10 @@ func TestPostgresXCancelledContentLeaseDoesNotLeak(t *testing.T) {
 	defer cancel()
 	result := make(chan error, 1)
 	go func() {
-		_, _, err := f.st.AcquireXContentLeaseContext(ctx, false)
+		release, _, err := f.st.AcquireXContentLeaseContext(ctx, false)
+		if release != nil {
+			defer func() { _ = release() }()
+		}
 		result <- err
 	}()
 	needs.Eventually(func() bool {
@@ -1381,7 +1387,10 @@ func TestPostgresXLostCleanerLeaseKeepsReadersFenced(t *testing.T) {
 			var exists bool
 			return peer.DB().QueryRowContext(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1)`, pid).Scan(&exists) == nil && !exists
 		}, 10*time.Second, 20*time.Millisecond)
-		_, _, readErr := reader.AcquireEmbeddingRead(t.Context())
+		_, unexpectedRelease, readErr := reader.AcquireEmbeddingRead(t.Context())
+		if unexpectedRelease != nil {
+			defer func() { _ = unexpectedRelease() }()
+		}
 		needs.ErrorContains(readErr, "cleanup pending")
 		return nil
 	}
