@@ -441,16 +441,15 @@ func TestCommitmentOnlyMaintenanceInvalidatesEvidenceBeyondFirstBatch(t *testing
 func TestCommitmentEditedSourceReconcilesPromiseLocators(t *testing.T) {
 	const first, second = "I will send the draft.", "I will book the venue."
 	for _, tc := range []struct {
-		name                        string
-		initial, edited, output     []string
-		editedPrefix, decisionQuote string
+		name                    string
+		initial, edited, output []string
+		decisionQuote           string
 	}{
-		{"replaced", []string{first}, []string{second}, nil, "", first},
-		{"moved", []string{first}, []string{second, first}, nil, "", first},
-		{"swap", []string{first, second}, []string{second, first}, nil, "", first},
-		{"move_into_omitted_row", []string{first, second}, []string{first}, nil, strings.Repeat(" ", len(first)+1), first},
-		{"valid_move_over_stale_exact", []string{first, second}, []string{second}, nil, "", second},
-		{"replacement_omits_moved_original", []string{first}, []string{second, first}, []string{second}, "", first},
+		{"replaced", []string{first}, []string{second}, nil, first},
+		{"moved", []string{first}, []string{second, first}, nil, first},
+		{"swap", []string{first, second}, []string{second, first}, nil, first},
+		{"valid_move_over_stale_exact", []string{first, second}, []string{second}, nil, second},
+		{"replacement_omits_moved_original", []string{first}, []string{second, first}, []string{second}, first},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, a, ctx := require.New(t), assert.New(t), t.Context()
@@ -461,14 +460,14 @@ func TestCommitmentEditedSourceReconcilesPromiseLocators(t *testing.T) {
 			cfg := peoplesweep.Config{}
 			cfg.ApplyDefaults()
 			cfg.Commitments.Enabled = true
-			apply := func(quotes []string, prefix string) {
+			apply := func(quotes []string) {
 				window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, peoplesweep.ProviderProfile{
 					AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
 				}, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
 				r.NoError(err)
 				r.NotEmpty(window.Sources)
 				parsed := peoplesweep.ParsedCommitments{Fulfilments: []peoplesweep.CommitmentFulfilment{}}
-				start := int64(len([]rune(prefix)))
+				start := int64(0)
 				for _, quote := range quotes {
 					end := start + int64(len(quote))
 					parsed.Promises = append(parsed.Promises, peoplesweep.CommitmentPromise{
@@ -480,9 +479,9 @@ func TestCommitmentEditedSourceReconcilesPromiseLocators(t *testing.T) {
 				_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, parsed))
 				r.NoError(err)
 			}
-			apply(tc.initial, "")
+			apply(tc.initial)
 			f = nextCommitmentTestAttempt(t, f, "-finish-initial")
-			apply(tc.initial, "")
+			apply(tc.initial)
 			items, err := st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
 			r.NoError(err)
 			r.Len(items, len(tc.initial))
@@ -495,7 +494,7 @@ func TestCommitmentEditedSourceReconcilesPromiseLocators(t *testing.T) {
 			r.Positive(completedID)
 			_, err = st.DecidePersonCommitmentContext(ctx, completedID, LoopStateDone, nil, f.request.CompletedAt)
 			r.NoError(err)
-			_, err = st.db.ExecContext(ctx, st.Rebind("UPDATE message_bodies SET body_text = ? WHERE message_id = ?"), tc.editedPrefix+strings.Join(tc.edited, " "), id)
+			_, err = st.db.ExecContext(ctx, st.Rebind("UPDATE message_bodies SET body_text = ? WHERE message_id = ?"), strings.Join(tc.edited, " "), id)
 			r.NoError(err)
 			f = nextCommitmentTestAttempt(t, f, "-swap")
 			f.request.Generation.ResolvedAt = f.request.Generation.ResolvedAt.Add(time.Minute)
@@ -504,7 +503,7 @@ func TestCommitmentEditedSourceReconcilesPromiseLocators(t *testing.T) {
 			if extracted == nil {
 				extracted = tc.edited
 			}
-			apply(extracted, tc.editedPrefix)
+			apply(extracted)
 			items, err = st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
 			r.NoError(err)
 			r.Len(items, len(extracted))

@@ -210,10 +210,11 @@ func TestCommitmentConsentDeferralAppliesLocalEvidenceInvalidation(t *testing.T)
 		t.Run(fmt.Sprintf("idle=%t", idle), func(t *testing.T) {
 			r, a := require.New(t), assert.New(t)
 			worker, st, sink := newConsentOnlyCommitmentWorker(t, false)
-			source := commitmentConsentSource{}
-			worker.Source, worker.Context = source, NewContextRetriever(source)
 			if idle {
 				source := &workerProductionSource{windows: map[GenerationCursorMode]PersonWindow{}}
+				worker.Source, worker.Context = source, NewContextRetriever(source)
+			} else {
+				source := commitmentConsentSource{}
 				worker.Source, worker.Context = source, NewContextRetriever(source)
 			}
 			result, err := worker.Run(t.Context(), RunRequest{Kind: RunManual, Mode: RunIncremental, PersonID: 7})
