@@ -205,20 +205,22 @@ func (s *Server) fillLoopEvidence(st loops.Store) {
 		personID := s.loopEvidencePending[0]
 		s.importMu.Unlock()
 		ctx, cancel := context.WithTimeout(jobctx.WithProgress(s.importContext), 2*time.Minute)
-		_, err := loops.Warm(ctx, &gatedLoopEvidence{Store: st, gate: s.operationGate, background: true}, personID, s.clockNow().UTC())
-		expired := errors.Is(ctx.Err(), context.DeadlineExceeded)
-		progress := jobctx.HasProgress(ctx)
-		if expired && !progress {
+		next := func(pass context.Context, advanced bool) (context.Context, bool) {
+			if !errors.Is(pass.Err(), context.DeadlineExceeded) || s.importContext.Err() != nil || (!advanced && !jobctx.HasProgress(pass)) {
+				return pass, false
+			}
+			cancel()
+			ctx, cancel = context.WithTimeout(jobctx.WithProgress(s.importContext), 2*time.Minute) //nolint:fatcontext // Each pass starts from the server lifetime.
+			return ctx, true
+		}
+		err := loops.Warm(ctx, &gatedLoopEvidence{Store: st, gate: s.operationGate, background: true}, personID, next)
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			s.logger.Warn("fill loop evidence stopped without progress")
 		} else if err != nil && ctx.Err() == nil && !errors.Is(err, errMutationGateBusy) {
 			s.logger.Error("fill loop evidence", "error", err)
 		}
 		cancel()
 		s.importMu.Lock()
-		if !s.importsClosed && expired && progress {
-			s.importMu.Unlock()
-			continue
-		}
 		s.loopEvidencePending = s.loopEvidencePending[1:]
 		if s.importsClosed || errors.Is(err, errMutationGateBusy) || len(s.loopEvidencePending) == 0 {
 			s.loopEvidenceRunning = false

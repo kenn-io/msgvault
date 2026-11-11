@@ -31,7 +31,7 @@ In the Web UI, open a saved person in **People** and choose **Details**. The
 message.
 
 When a list says more history remains, the daemon continues filling the cache
-in the background while each timed pass saves new facts. Later requests reuse
+in the background while each timed pass makes progress. Later requests reuse
 completed work. If the daemon stops, a pass fails, or a pass makes no progress,
 a later incomplete request resumes the remaining work.
 

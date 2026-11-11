@@ -8,7 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- Incomplete open-loop lists continue checking history in the background while passes save new facts. A later incomplete request resumes work after the daemon stops, a pass fails, or a pass makes no progress.
+- Incomplete open-loop lists continue checking history in the background while passes make progress. A later incomplete request resumes work after the daemon stops, a pass fails, or a pass makes no progress.
 
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).
 

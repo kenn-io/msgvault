@@ -142,8 +142,52 @@ func find(ctx context.Context, st Store, q store.LoopQuery, now time.Time, marks
 }
 
 // Warm prepares evidence for a person, or all conversations when personID is zero.
-func Warm(ctx context.Context, st Store, personID int64, now time.Time) (int, error) {
-	return find(ctx, st, store.LoopQuery{PersonID: personID}, now, nil, math.MaxInt, func(Loop) error { return nil })
+// next renews a timed pass after progress without restarting the conversation walk.
+func Warm(ctx context.Context, st Store, personID int64, next func(context.Context, bool) (context.Context, bool)) error {
+	pass, advanced := ctx, false
+	retry := func() bool {
+		newPass, ok := next(pass, advanced)
+		if ok {
+			pass, advanced = newPass, false //nolint:fatcontext // The caller supplies a fresh pass.
+		}
+		return ok
+	}
+	q := store.LoopQuery{PersonID: personID, PassContext: func() context.Context { return pass }, Retry: retry}
+	reader := &storeReader{st: st, left: math.MaxInt}
+	for conv, err := range st.LoopConversationsContext(ctx, q) {
+		if err != nil {
+			return err
+		}
+		for {
+			if pass.Err() != nil && !retry() {
+				return pass.Err()
+			}
+			if conv.PassContext != pass {
+				// Reload buffered conversations after a deadline so their
+				// messages and participants reflect the renewed pass.
+				found := false
+				for fresh, readErr := range st.LoopConversationsContext(pass, store.LoopQuery{PersonID: personID, ConversationID: conv.ConversationID}) {
+					if readErr != nil {
+						return readErr
+					}
+					conv, found = fresh, true
+				}
+				if !found {
+					break
+				}
+			}
+			reader.ctx = pass //nolint:fatcontext // The caller supplies a fresh pass.
+			_, err = Detect(conv, reader.in(conv))
+			if err == nil {
+				advanced = true
+				break
+			}
+			if !retry() {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // graceElapsed is whether a question has waited long enough to list: a reply

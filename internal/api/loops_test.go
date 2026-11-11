@@ -322,10 +322,27 @@ type pausedLoopStore struct {
 
 	reads     atomic.Int64
 	walks     atomic.Int64
+	pausedID  atomic.Int64
 	pauseAt   int64
 	paused    chan struct{}
 	resume    chan struct{}
 	completed chan struct{}
+}
+
+type slowCachedLoopStore struct {
+	*pausedLoopStore
+
+	evidenceReads  atomic.Int64
+	pausedEvidence chan struct{}
+}
+
+func (s *slowCachedLoopStore) LoopMessageEvidenceContext(ctx context.Context, id int64, version int) (store.LoopMessageEvidence, string, bool, error) {
+	if s.evidenceReads.Add(1) == loops.MaxListEvidenceComputations+3 {
+		close(s.pausedEvidence)
+		<-ctx.Done()
+		return store.LoopMessageEvidence{}, "", false, ctx.Err()
+	}
+	return s.Store.LoopMessageEvidenceContext(ctx, id, version)
 }
 
 func (s *pausedLoopStore) LoopConversationsContext(ctx context.Context, q store.LoopQuery) iter.Seq2[store.LoopConversation, error] {
@@ -336,6 +353,7 @@ func (s *pausedLoopStore) LoopConversationsContext(ctx context.Context, q store.
 func (s *pausedLoopStore) LoopOriginalEvidenceContext(ctx context.Context, id int64) (mime.AutomationSignals, bool, bool, error) {
 	n := s.reads.Add(1)
 	if n == s.pauseAt {
+		s.pausedID.Store(id)
 		close(s.paused)
 		select {
 		case <-s.resume:
@@ -368,7 +386,42 @@ func awaitLoopSignal(t *testing.T, ch <-chan struct{}) {
 
 func TestIncompleteListsContinueAcrossBoundedPasses(t *testing.T) {
 	t.Run("bounded continuation", testIncompleteListsContinueAcrossBoundedPasses)
+	t.Run("slow cached prefix", testLoopBackfillSlowCachedPrefix)
 	t.Run("overlapping scopes", testOverlappingIncompleteLoopListsContinueEachScope)
+}
+
+func testLoopBackfillSlowCachedPrefix(t *testing.T) {
+	f := storetest.New(t)
+	now := time.Now().UTC()
+	storetest.PersistLoopOriginalReadFixture(f, loops.MaxListEvidenceComputations+2, now)
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		st := &slowCachedLoopStore{pausedLoopStore: &pausedLoopStore{Store: f.Store}, pausedEvidence: make(chan struct{})}
+		server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
+		server.clock = func() time.Time { return now }
+		defer shutdownLoopServer(t, server)
+		w := httptest.NewRecorder()
+		server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil))
+		var first LoopListResponse
+		require.NoError(json.Unmarshal(w.Body.Bytes(), &first))
+		require.True(first.CoverageIncomplete)
+		awaitLoopSignal(t, st.pausedEvidence)
+		time.Sleep(2 * time.Minute)
+		require.Eventually(func() bool {
+			server.importMu.Lock()
+			defer server.importMu.Unlock()
+			return !server.loopEvidenceRunning
+		}, 10*time.Second, 10*time.Millisecond)
+		require.Equal(int64(loops.MaxListEvidenceComputations+3), st.reads.Load())
+		w = httptest.NewRecorder()
+		server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil))
+		var result LoopListResponse
+		require.NoError(json.Unmarshal(w.Body.Bytes(), &result))
+		require.False(result.CoverageIncomplete)
+		require.Len(result.Items, 1)
+		require.Equal(int64(1), result.Items[0].AnchorMessageID)
+		require.Equal(int64(loops.MaxListEvidenceComputations+3), st.reads.Load())
+	})
 }
 
 func testIncompleteListsContinueAcrossBoundedPasses(t *testing.T) {
@@ -396,6 +449,10 @@ func testIncompleteListsContinueAcrossBoundedPasses(t *testing.T) {
 		require.NoError(json.Unmarshal(w.Body.Bytes(), &first))
 		require.True(first.CoverageIncomplete)
 		awaitLoopSignal(t, st.paused)
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), "Thanks again!", st.pausedID.Load())
+		require.NoError(err)
+		_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sent_at = ? WHERE id = ?`), now.Add(-90*24*time.Hour), st.pausedID.Load())
+		require.NoError(err)
 		time.Sleep(2 * time.Minute)
 		require.Eventually(func() bool {
 			server.importMu.Lock()
