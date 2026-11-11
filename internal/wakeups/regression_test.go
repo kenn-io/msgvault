@@ -114,7 +114,7 @@ func TestZeroBoundDefersAndSharedPositionReadsOnce(t *testing.T) {
 	_, before, err := base.LoadWakeupState(t.Context(), "a")
 	require.NoError(err)
 	require.NoError(engine.RunPass(t.Context()))
-	assert.Equal([]int{2001}, st.reads)
+	assert.Equal([]int{changefeed.ScanBudget + 1}, st.reads)
 	_, after, err := base.LoadWakeupState(t.Context(), "a")
 	require.NoError(err)
 	assert.Equal(before, after)
@@ -124,7 +124,7 @@ func TestZeroBoundDefersAndSharedPositionReadsOnce(t *testing.T) {
 		initializedWakeup(t, base, "walk", time.Now().UTC().Add(-time.Hour))
 		engine := Engine{Store: st, Subscriptions: []Subscription{{Name: "new"}, {Name: "walk"}}}
 		Require.NoError(t, engine.RunPass(t.Context()))
-		Assert.Equal(t, []int{1, 2001}, st.reads)
+		Assert.Equal(t, []int{1, changefeed.ScanBudget + 1}, st.reads)
 	})
 }
 func TestPersonResolutionBackoff(t *testing.T) {
@@ -430,12 +430,10 @@ func TestSetupInitializesOtherEntriesAfterStateLoadError(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
 	base := testutil.NewTestStore(t)
-	now := time.Now().UTC()
-	seedWakeup(t, base, "corrupt-setup@example.com", 0, 1, now)
 	const invalid = "not valid wakeup state"
 	_, err := base.DB().ExecContext(t.Context(), base.Rebind(`INSERT INTO archive_metadata (key, value) VALUES (?, ?)`), "wakeup:v1:a", invalid)
 	require.NoError(err)
-	bound := now.Add(-30 * time.Second)
+	bound := time.Now().UTC().Add(-30 * time.Second)
 	engine := Engine{Store: &observedStore{Store: base, fixedBound: bound}, Subscriptions: []Subscription{{Name: "a"}, {Name: "b"}}}
 	require.Error(engine.InitializeMissing(t.Context()))
 	state, raw, err := base.LoadWakeupState(t.Context(), "b")
