@@ -101,42 +101,36 @@ func TestDiscover_AlternateLayouts(t *testing.T) {
 	}
 }
 
-// TestDiscover_UnnumberedJSONSiblingCountsAndFormat guards against a thread
-// directory that contains valid HTML plus only an unnumbered JSON sibling
-// (e.g. message_final.json) being classified as JSON or "both". ParseJSONThread
-// only accepts numbered message_<N>.json files, so misclassifying as JSON
-// would cause the thread to fail in auto/json mode and the valid HTML to
-// be skipped. It also counts unsupported sibling files.
 func TestDiscover_UnnumberedJSONSiblingCountsAndFormat(t *testing.T) {
-	require := require.New(t)
-	tmp := t.TempDir()
-	threadDir := filepath.Join(tmp, "your_activity_across_facebook", "messages", "inbox", "foo_1")
-	require.NoError(os.MkdirAll(threadDir, 0755))
-	require.NoError(os.WriteFile(
-		filepath.Join(threadDir, "message_1.html"),
-		[]byte(`<html><body>hi</body></html>`),
-		0644,
-	))
-	require.NoError(os.WriteFile(
-		filepath.Join(threadDir, "message_final.json"),
-		[]byte(`{"unrelated":true}`),
-		0644,
-	))
-	invalid := filepath.Join(filepath.Dir(threadDir), "invalid")
-	require.NoError(os.MkdirAll(invalid, 0755))
-	require.NoError(os.WriteFile(filepath.Join(invalid, "message_final.json"), []byte(`{}`), 0644))
-	require.NoError(os.WriteFile(filepath.Join(invalid, "message_other.json"), []byte(`{}`), 0644))
-	mixed := filepath.Join(filepath.Dir(threadDir), "mixed")
-	require.NoError(os.MkdirAll(mixed, 0755))
-	require.NoError(os.WriteFile(filepath.Join(mixed, "message_1.json"), []byte(`{}`), 0644))
-	require.NoError(os.WriteFile(filepath.Join(mixed, "message_1.html"), []byte(`html`), 0644))
-
-	dirs, skipped, err := Discover(tmp)
-	require.NoError(err, "Discover")
-	require.Len(dirs, 2, "discovered: %+v", dirs)
-	assert.Equal(t, 4, skipped)
-	assert.Equal(t, "html", dirs[0].Format,
-		"unnumbered JSON sibling must not promote thread to json/both")
+	for _, test := range []struct {
+		name, format string
+		files        []string
+		skipped      int
+	}{
+		{"html with unnumbered JSON", "html", []string{"message_1.html", "message_final.json"}, 1},
+		{"unnumbered JSON only", "", []string{"message_final.json", "message_other.json"}, 2},
+		{"HTML and numbered JSON", "both", []string{"message_1.html", "message_1.json"}, 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			root := t.TempDir()
+			thread := filepath.Join(root, "your_activity_across_facebook", "messages", "inbox", "thread")
+			require.NoError(os.MkdirAll(thread, 0755))
+			for _, name := range test.files {
+				require.NoError(os.WriteFile(filepath.Join(thread, name), []byte(`{}`), 0644))
+			}
+			dirs, skipped, err := Discover(root)
+			require.NoError(err)
+			assert.Equal(test.skipped, skipped)
+			if test.format == "" {
+				assert.Empty(dirs)
+			} else {
+				require.Len(dirs, 1)
+				assert.Equal(test.format, dirs[0].Format)
+			}
+		})
+	}
 }
 
 func TestDiscover_IgnoresDSStore(t *testing.T) {

@@ -12,7 +12,7 @@ func TestMetaMessagesVisibleAsTextConversations(t *testing.T) {
 	for _, test := range []struct{ kind, source, identifier, conversationID, messageID, conversationType, title, snippet string }{
 		{"facebook_comments", "facebook_comments", "app:9:page:100", "100_200", "100_201", "public_comments", "Example post", "Example comment"},
 		{"instagram_comments", "instagram_comments", "app:9:page:100", "100_200", "100_201", "public_comments", "Example post", "Example comment"},
-		{"instagram", "instagram_messages", "orbit.example", "inbox/fictional", "ig:v1:9eb6fb43c374a0f75d8413e28359697c136b8c31492b361d95a71f2d60998e6e:f381d2c678356978d8dd328d259fb5c61f79f27b7cfd885a661ba280c8416ef0:0", "direct_chat", "Fictional circle", "The telescope is ready."},
+		{"instagram", "instagram_messages", "orbit.example", "inbox/fictional", "example-message", "direct_chat", "Fictional circle", "The telescope is ready."},
 	} {
 		t.Run(test.kind, func(t *testing.T) {
 			assert := assert.New(t)
@@ -33,9 +33,7 @@ func TestMetaMessagesVisibleAsTextConversations(t *testing.T) {
 			require.Len(rows, 1)
 			assert.Equal(int64(701), rows[0].ConversationID)
 			assert.Contains(KnownMessageTypes, test.kind)
-			if test.kind != "instagram" {
-				assert.True(IsChatEntry(test.kind, test.conversationType))
-			}
+			assert.True(IsChatEntry(test.kind, test.conversationType))
 		})
 	}
 }

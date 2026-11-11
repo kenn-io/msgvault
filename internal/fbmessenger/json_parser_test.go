@@ -104,6 +104,10 @@ func TestParseJSONThread_AttachmentsAndUnresolvedMedia(t *testing.T) {
 			if test.kind != "audio" {
 				_, err = os.Stat(m.Attachments[0].AbsPath)
 				require.NoError(err, "attachment file should exist on disk")
+			} else {
+				assert.Equal("tiny"+test.extension, filepath.Base(m.Attachments[0].AbsPath))
+				_, err = os.Stat(m.Attachments[0].AbsPath)
+				assert.ErrorIs(err, os.ErrNotExist)
 			}
 			assert.Equal(test.mime, m.Attachments[0].MimeType)
 		})

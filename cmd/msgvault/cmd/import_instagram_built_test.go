@@ -11,8 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// This opt-in test exercises the packaged command, real daemon CLI runner,
-// archive writes and cache refresh using only invented data.
+// This opt-in test checks the packaged command's self-name and limit messages.
 func TestInstagramBuiltCLI(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
