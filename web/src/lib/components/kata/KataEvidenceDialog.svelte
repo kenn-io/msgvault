@@ -199,7 +199,7 @@
   label :global(.kit-text-input__control) { font-size: 16px; }
   textarea { resize: vertical; padding: var(--space-2); color: var(--text-primary); background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
   section { display: grid; gap: var(--space-2); }
-  pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 30px; max-height: 14rem; overflow: auto; font: inherit; font-size: 16px; padding: var(--space-2) var(--space-4); border: 1px solid var(--border-muted); border-radius: var(--radius-sm); }
+  pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 30px; max-height: 14rem; overflow: auto; font: inherit; font-family: var(--font-field); font-size: 16px; line-height: var(--type-body-line); padding: var(--space-2) var(--space-4); border: 1px solid var(--border-muted); border-radius: var(--radius-sm); }
   .passage-controls { display: flex; gap: var(--space-2); }
   .actions { display: flex; gap: var(--space-4); justify-content: flex-end; }
 </style>
