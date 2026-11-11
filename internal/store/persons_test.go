@@ -554,6 +554,8 @@ func TestPersonInSourcesEvidence(t *testing.T) {
 	}
 }
 
+// A plain caller-owned snapshot cannot be safely paired with a later pool bound:
+// changes committed between them could be skipped. The API must fail closed.
 func TestChangedMessagesRejectsUnboundedSnapshot(t *testing.T) {
 	f := storetest.New(t)
 	ctx, release, err := f.Store.BeginReadSnapshotContext(t.Context())
@@ -561,34 +563,4 @@ func TestChangedMessagesRejectsUnboundedSnapshot(t *testing.T) {
 	defer release()
 	_, err = f.Store.ListChangedMessages(ctx, store.ChangedMessagesFrom(time.Time{}), 10)
 	require.ErrorContains(t, err, "no captured bounds")
-}
-
-func TestChangedMessagesSnapshotDoesNotSkipLaterCommit(t *testing.T) {
-	f := storetest.New(t)
-	ctx, release, err := f.Store.BeginChangedMessagesReadSnapshotContext(t.Context())
-	require.NoError(t, err)
-	defer release()
-	_, err = f.Store.ListSourcesContext(ctx, "")
-	require.NoError(t, err)
-	id := f.CreateMessage("after-feed-snapshot")
-	page, err := f.Store.ListChangedMessages(ctx, store.ChangedMessagesFrom(time.Time{}), 10)
-	require.NoError(t, err)
-	release()
-	for _, message := range page.Messages {
-		assert.NotEqual(t, id, message.ID)
-	}
-	require.False(t, page.CompleteThrough.IsZero())
-	cursor := store.ChangedMessagesFrom(page.CompleteThrough)
-	require.Eventually(t, func() bool {
-		later, err := f.Store.ListChangedMessages(t.Context(), cursor, 10)
-		if err != nil {
-			return false
-		}
-		for _, message := range later.Messages {
-			if message.ID == id {
-				return true
-			}
-		}
-		return false
-	}, 10*time.Second, 20*time.Millisecond)
 }

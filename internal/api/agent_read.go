@@ -99,6 +99,13 @@ func (s *Server) beginAgentRead(req *http.Request, operation string, grant *agen
 	readContext, releaseSnapshot, err := begin(req.Context())
 	if err != nil {
 		<-s.readSnapshotSlots
+		if operation == "listChangedMessages" {
+			if apiErr := contextAPIHTTPError(err); apiErr != nil {
+				return nil, apiErr
+			}
+			s.logger.Error("changed messages query failed", "error", err)
+			return nil, newAPIHTTPError(http.StatusInternalServerError, "internal_error", "Message change query failed")
+		}
 		return nil, newAPIHTTPError(http.StatusServiceUnavailable, "source_scope_unavailable", "Source authorization is unavailable")
 	}
 	var once sync.Once

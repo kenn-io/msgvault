@@ -1248,12 +1248,15 @@ to later changes; use a fresh walk to reconcile its older history.
 Agents see only granted sources; an ungranted `source_id` or a person with no
 sender, recipient, or conversation roster appearance in a granted source returns
 `403 permission_denied`. Verification message subjects and snippets are masked
-unless the grant includes `verification.read`.
+unless the grant includes `verification.read`. An unfiltered request returns an
+empty `200` page when all of a grant's sources are gone.
 
 An agent cursor is bound to the grant's source references. A token with a
 different source set, or the owner, receives `400 invalid_cursor` and must
 restart the walk. A replacement token with the same references can resume,
-including after a source is removed and re-added.
+including after a source is removed and re-added. A legacy or unfiltered owner
+cursor without a filter binding can start an agent walk in the same archive;
+subsequent cursors carry the grant binding.
 
 A filtered request examines at most 2,000 changes in the authorized sources and
 can return an empty page with `has_more=true`; keep following `next_cursor`. A

@@ -20,6 +20,10 @@ type changesFilter struct {
 	grantRefs                  []changeGrantRef
 }
 
+func (f changesFilter) hasSelectors() bool {
+	return f.PersonID != 0 || len(f.SourceIDs) != 0 || len(f.ConversationIDs) != 0 || f.IncomingOnly
+}
+
 func parseChangesFilter(r *http.Request) (changesFilter, error) {
 	var f changesFilter
 	var err error
@@ -76,7 +80,7 @@ func (f *changesFilter) bindGrant(grant *agentgrant.Grant) {
 }
 
 func (f changesFilter) digest() string {
-	if f.PersonID == 0 && len(f.SourceIDs) == 0 && len(f.ConversationIDs) == 0 && !f.IncomingOnly && f.grantRefs == nil {
+	if !f.hasSelectors() && f.grantRefs == nil {
 		return ""
 	}
 	// Keep the owner encoding unchanged; delegated digests include the grant references.

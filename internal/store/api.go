@@ -1595,11 +1595,8 @@ func (c ChangedMessagesCursor) At() time.Time { return c.at }
 // between including the rows stamped there and excluding some of them.
 func (c ChangedMessagesCursor) AfterID() (int64, bool) { return c.afterID, c.afterRow }
 
-// changedMessagesQuery is the content-change feed's page query, for a cursor
-// that resumes after a particular row. changedMessagesFromInstantQuery is the
-// same query for a cursor at the start of an instant: identical but for the id
-// tiebreak, which it drops rather than binding, because there is no value that
-// would let every id at that instant through (see ChangedMessagesCursor).
+// The feed page query omits the id tiebreak for a cursor at the start of an
+// instant, so every id at that instant remains reachable.
 //
 // The lower bound is spelled `>= ? AND (> ? OR id > ?)` rather than the more
 // obvious `> ? OR (= ? AND id > ?)`. The two select identical rows. Measured on
@@ -1643,11 +1640,6 @@ const changedMessagesBounds = `
 	  AND content_changed_at < ?
 	ORDER BY content_changed_at, id
 	LIMIT ?`
-
-const changedMessagesQuery = changedMessagesSelect +
-	` AND (content_changed_at > ? OR id > ?)` + changedMessagesBounds
-
-const changedMessagesFromInstantQuery = changedMessagesSelect + changedMessagesBounds
 
 // ListChangedMessages returns messages whose content changed at or after the
 // given cursor, in (content_changed_at, id) order, along with the database's
@@ -1711,7 +1703,7 @@ func (s *Store) ListChangedMessages(
 		return ChangedMessagePage{}, nil
 	}
 
-	// Read the bounds BEFORE the page query, in their own statement (constant
+	// Read the bounds BEFORE the snapshot or page query, in their own statement (constant
 	// columns on the page query itself would vanish along with the rows on an
 	// empty page). Before, not after: a change committed while the page query
 	// runs may be invisible to that query's snapshot yet carry an earlier

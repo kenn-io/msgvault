@@ -415,7 +415,6 @@ func TestMCPDelegatedChangeFeedDiscovery(t *testing.T) {
 	}{
 		{"current search grant", "5.3.0", "search.read", true},
 		{"older daemon", "5.2.0", "search.read", false},
-		{"missing permission", "5.3.0", "stats.read", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newDraftReplyFixture(t)
@@ -440,12 +439,6 @@ func TestMCPDelegatedChangeFeedDiscovery(t *testing.T) {
 			require.NoError(t, err)
 			assert.False(t, result.IsError)
 			assert.NotNil(t, result.StructuredContent)
-			denied, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_changes", Arguments: map[string]any{"source_ids": []int64{fixture.source.ID + 1000000}}})
-			require.NoError(t, err)
-			assert.True(t, denied.IsError)
-			body, ok := denied.StructuredContent.(map[string]any)
-			require.True(t, ok)
-			assert.Equal(t, "permission_denied", body["error"])
 		})
 	}
 }
@@ -467,10 +460,16 @@ func TestMCPDelegatedChangeFeedUnavailableRefusals(t *testing.T) {
 		})
 	})
 	session := mcpDraftTestSession(mcpDraftAgentContext(t, server, fixture.source.ID, []string{"search.read"}), t)
-	for _, code := range []string{"agent_read_busy", "source_scope_unavailable"} {
+	for _, code := range []string{"permission_denied", "agent_read_busy", "source_scope_unavailable"} {
 		t.Run(code, func(t *testing.T) {
-			refusal.Store(code)
-			result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_changes", Arguments: map[string]any{}})
+			args := map[string]any{}
+			if code == "permission_denied" {
+				refusal.Store("")
+				args["source_ids"] = []int64{fixture.source.ID + 1000000}
+			} else {
+				refusal.Store(code)
+			}
+			result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_changes", Arguments: args})
 			require.NoError(t, err)
 			assert.True(t, result.IsError)
 			body, ok := result.StructuredContent.(map[string]any)

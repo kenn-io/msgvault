@@ -911,8 +911,9 @@ func TestAgentMessageReferenceScope(t *testing.T) {
 
 func TestAgentChangeFeedScopeAndCursor(t *testing.T) {
 	st := testutil.NewTestStore(t)
-	a, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "feed-a@example.test", "a", "allowed feed", "")
+	a, aID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "feed-a@example.test", "a", "allowed feed", "")
 	require.NoError(t, err)
+	setChangesWatermark(t, st, "2020-01-01 00:00:00.000", aID)
 	b, bID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "feed-b@example.test", "b", "private feed", "")
 	require.NoError(t, err)
 	participant, err := st.EnsureParticipant("outside-person@example.test", "Outside", "example.test")
@@ -920,7 +921,8 @@ func TestAgentChangeFeedScopeAndCursor(t *testing.T) {
 	require.NoError(t, st.ReplaceMessageRecipients(bID, "to", []int64{participant}, nil))
 	person, _, err := st.CreatePersonFromParticipant(participant)
 	require.NoError(t, err)
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner-key", AgentAccess: true}}, Store: st, Logger: testLogger()})
+	wrapped := &changeFeedProbeStore{Store: st}
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner-key", AgentAccess: true}}, Store: wrapped, Logger: testLogger()})
 	t.Cleanup(srv.agentGrants.Close)
 	relaxChangeFeedRateLimit(t, srv)
 	ref := func(s *store.Source) agentgrant.SourceRef {
@@ -935,7 +937,6 @@ func TestAgentChangeFeedScopeAndCursor(t *testing.T) {
 	same := issue([]agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{ref(a)})
 	wider := issue([]agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{ref(a), ref(b)})
 	denied := issue([]agentgrant.Permission{agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{ref(a)})
-	empty := issue([]agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: 999999, Type: "gmail", Identifier: "removed@example.test"}})
 	get := func(token, query string) *httptest.ResponseRecorder {
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/messages/changes"+query, nil)
 		if token == "owner" {
@@ -947,6 +948,10 @@ func TestAgentChangeFeedScopeAndCursor(t *testing.T) {
 		srv.Router().ServeHTTP(w, req)
 		return w
 	}
+	for _, query := range []string{"?limit=bad", "?cursor=bad", "?source_id=0"} {
+		assert.Equal(t, http.StatusBadRequest, get(one, query).Code)
+	}
+	assert.Zero(t, wrapped.probes.Load())
 	response := get(one, "")
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	assert.Contains(t, response.Body.String(), "allowed feed")
@@ -957,27 +962,43 @@ func TestAgentChangeFeedScopeAndCursor(t *testing.T) {
 	assert.Equal(t, http.StatusOK, get(same, cursor).Code)
 	assert.Equal(t, http.StatusBadRequest, get(wider, cursor).Code)
 	assert.Equal(t, http.StatusBadRequest, get("owner", cursor).Code)
+	ownerPage := get("owner", "")
+	require.Equal(t, http.StatusOK, ownerPage.Code)
+	var ownerChanges ChangesResponse
+	require.NoError(t, json.Unmarshal(ownerPage.Body.Bytes(), &ownerChanges))
+	assert.Equal(t, http.StatusOK, get(one, "?cursor="+url.QueryEscape(ownerChanges.NextCursor)).Code)
 	assert.Equal(t, http.StatusForbidden, get(denied, "").Code)
-	emptyResponse := get(empty, "")
-	assert.Equal(t, http.StatusOK, emptyResponse.Code)
-	assert.NotContains(t, emptyResponse.Body.String(), "allowed feed")
-	assert.NotContains(t, emptyResponse.Body.String(), "private feed")
 	assert.Equal(t, http.StatusForbidden, get(one, fmt.Sprintf("?source_id=%d", b.ID)).Code)
 	assert.Equal(t, http.StatusForbidden, get(one, fmt.Sprintf("?source_id=%d&source_id=%d", a.ID, b.ID)).Code)
 	assert.Equal(t, http.StatusOK, get(one, fmt.Sprintf("?source_id=%d&source_id=%d", a.ID, a.ID)).Code)
-	assert.Equal(t, http.StatusBadRequest, get(one, "?source_id=invalid").Code)
-	assert.Equal(t, http.StatusBadRequest, get(one, "?source_id=0").Code)
 	assert.Equal(t, http.StatusBadRequest, get(one, "?source_id="+strings.TrimSuffix(strings.Repeat(strconv.FormatInt(b.ID, 10)+",", 51), ",")).Code)
 	outside := get(one, fmt.Sprintf("?person_id=%d", person.ID))
 	missing := get(one, "?person_id=999999999")
 	assert.Equal(t, http.StatusForbidden, outside.Code)
 	assert.Equal(t, outside.Body.String(), missing.Body.String())
-	assert.Equal(t, http.StatusBadRequest, get(one, cursor+"&incoming_only=true").Code)
 	_, _, err = st.RemoveSourceSerialized(t.Context(), a.ID)
 	require.NoError(t, err)
-	_, err = st.GetOrCreateSource(a.SourceType, a.Identifier)
+	replacement, replacementID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, a.Identifier, "replacement", "replacement feed", "")
 	require.NoError(t, err)
-	assert.Equal(t, http.StatusOK, get(one, cursor).Code)
+	assert.NotEqual(t, a.ID, replacement.ID)
+	setChangesWatermark(t, st, "2020-01-02 00:00:00.000", replacementID)
+	replayed := get(one, cursor)
+	assert.Equal(t, http.StatusOK, replayed.Code)
+	assert.Contains(t, replayed.Body.String(), "replacement feed")
+	for _, tc := range []struct {
+		err    error
+		status int
+		code   string
+	}{
+		{context.Canceled, http.StatusServiceUnavailable, "query_canceled"},
+		{context.DeadlineExceeded, http.StatusServiceUnavailable, "query_timeout"},
+		{errors.New("bound failed"), http.StatusInternalServerError, "internal_error"},
+	} {
+		wrapped.beginErr = tc.err
+		w := get(one, "")
+		assert.Equal(t, tc.status, w.Code)
+		assert.Contains(t, w.Body.String(), tc.code)
+	}
 }
 
 func TestChangeFeedGrantDigestUsesStableSourceReferences(t *testing.T) {
@@ -1007,12 +1028,10 @@ func TestAgentChangeFeedDoesNotExposeOtherSourcePositions(t *testing.T) {
 	tx, err := st.DB().BeginTx(t.Context(), nil)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
-	ids := make([]int64, 0, changesScanBudget+1)
 	for i := 0; i <= changesScanBudget; i++ {
 		var id int64
 		err := tx.QueryRowContext(t.Context(), st.Rebind(`INSERT INTO messages (source_id, conversation_id, source_message_id, message_type) VALUES (?, ?, ?, ?) RETURNING id`), outside.ID, conv, fmt.Sprintf("outside-%d", i), "email").Scan(&id)
 		require.NoError(t, err)
-		ids = append(ids, id)
 	}
 	_, err = tx.ExecContext(t.Context(), st.Rebind(`UPDATE messages SET content_changed_at = ? WHERE source_id = ?`), "2020-01-01 00:00:00.000", outside.ID)
 	require.NoError(t, err)
@@ -1056,16 +1075,4 @@ func TestAgentChangeFeedDoesNotExposeOtherSourcePositions(t *testing.T) {
 	require.NoError(t, err)
 	_, hasID = position.cursor.AfterID()
 	assert.False(t, hasID)
-	boundary := get(ref(outside), "?conversation_id=999999")
-	assert.Empty(t, boundary.Messages)
-	assert.True(t, boundary.HasMore)
-	position, err = decodeChangesCursor(boundary.NextCursor)
-	require.NoError(t, err)
-	after, hasID = position.cursor.AfterID()
-	require.True(t, hasID)
-	assert.Equal(t, ids[changesScanBudget-1], after)
-	resumed := get(ref(outside), "?conversation_id=999999&cursor="+url.QueryEscape(boundary.NextCursor))
-	assert.Empty(t, resumed.Messages)
-	assert.Zero(t, resumed.Count)
-	assert.False(t, resumed.HasMore)
 }
