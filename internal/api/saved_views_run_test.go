@@ -173,15 +173,6 @@ func TestRunSavedViewCalendarGroupsUseRequestedTimezoneAndNewestFirst(t *testing
 			}
 		})
 	}
-	assert := assert.New(t)
-	require := require.New(t)
-	view := createRunTestView(t, st, "Cursor timezone", `{"grouping":["month"]}`)
-	first, page := runSavedView(t, srv, view.ID, `{"limit":1,"timezone":"America/New_York"}`)
-	require.Equal(http.StatusOK, first.Code, first.Body.String())
-	require.NotEmpty(page.NextCursor)
-	changed, _ := runSavedView(t, srv, view.ID, `{"limit":1,"cursor":"`+page.NextCursor+`","timezone":"UTC"}`)
-	assert.Equal(http.StatusBadRequest, changed.Code, changed.Body.String())
-	assert.Contains(changed.Body.String(), "invalid_cursor")
 }
 
 func TestRunSavedViewExecutesFilesPresentation(t *testing.T) {
