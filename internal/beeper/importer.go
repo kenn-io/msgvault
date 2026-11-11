@@ -907,8 +907,7 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 		}
 		err = errors.Join(err, statsErr)
 	}()
-	if errors.Is(err, errBeeperBudgetExpired) {
-		sum.Stopped = true
+	if stopBeforeMessages(cs, opts, err, sum) {
 		return 0, false, nil
 	}
 	if err != nil {
@@ -976,6 +975,17 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 		imp.flushReplies(ctx, cc, sum)
 	}
 	return sum.MessagesProcessed - before, tailProbeComplete, nil
+}
+
+// stopBeforeMessages ends a visit whose roster turn used the budget. Roster
+// progress stays saved, and the next visit gives messages their turn first.
+func stopBeforeMessages(cs *ChatState, opts ImportOptions, err error, sum *ImportSummary) bool {
+	if !errors.Is(err, errBeeperBudgetExpired) && (err != nil || !opts.stopRequested()) {
+		return false
+	}
+	cs.RosterWork.MemberFirst = false
+	sum.Stopped = true
+	return true
 }
 
 // chatMembership is the roster media policy weighs for one chat: the
