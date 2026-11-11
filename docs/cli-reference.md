@@ -2165,6 +2165,10 @@ contributing email keeps its full MIME and attachments, and the event survives
 deletion of any of them.
 Invalid calendar parts leave the email intact and log a warning with its message ID.
 
+An email and its event count as two archive records in account listings and
+statistics. Provider verification counts the email once. Deleting or hiding the
+email keeps the event; removing its account removes both.
+
 The next email re-derivation extracts invites from archived MIME automatically
 after a sync or import. To run it on demand, use
 [`repair-derived`](#repair-derived). It works from stored MIME without a provider
