@@ -217,7 +217,7 @@ func TestChatDraftDelegatedGrantIsSourceScoped(t *testing.T) {
 	assert.Equal("allowed-parent", allowedDraft.ReplyToSourceMessageID)
 	for _, parent := range []int64{denied, missingFrom, missingFrom + 1} {
 		out, err := reply(parent)
-		assert.EqualError(err, "not_permitted", "parent %d", parent)
+		require.EqualError(err, "not_permitted", "parent %d", parent)
 		assert.Empty(out, "parent %d", parent)
 	}
 	drafts, err := st.ListChatDraftsContext(t.Context(), grantedConversation, chatDraftAuthorizer(nil))
