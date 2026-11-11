@@ -132,7 +132,7 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (summar
 			return summary, errors.New("--limit must be non-negative")
 		}
 		account, err := store.NormalizeServiceValue(&store.CommunicationService{Normalization: store.NormalizationStripAtLower}, store.ContactAddressUsername, opts.Account)
-		if err != nil || account == "" {
+		if err != nil || account == "" || strings.HasPrefix(account, "@") {
 			return summary, errors.New("instagram: --account must identify an account")
 		}
 		if strings.TrimSpace(opts.SelfName) == "" {

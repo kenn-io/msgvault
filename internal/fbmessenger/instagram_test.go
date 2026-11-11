@@ -385,6 +385,7 @@ func TestInstagramRejectsBeforeSource(t *testing.T) {
 	}{
 		{name: "empty account", selfName: "Nova Example", wantError: "account"},
 		{name: "blank normalized account", account: "@", selfName: "Nova Example", wantError: "account"},
+		{name: "repeated account prefix", account: "@@example", selfName: "Nova Example", wantError: "account"},
 		{name: "blank self name", account: "example", selfName: "   ", wantError: "self-name"},
 		{name: "negative limit", account: "example", selfName: "Nova Example", limit: -1, wantError: "--limit must be non-negative"},
 		{name: "unsupported format", account: "example", selfName: "Nova Example", format: "html", wantError: "valid: auto, json"},
