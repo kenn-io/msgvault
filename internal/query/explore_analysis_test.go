@@ -324,6 +324,13 @@ func TestExploreGroupsGroupKeyComposesWithContextFilters(t *testing.T) {
 	requirements.Len(filtered.Rows, 1)
 	assertions.Equal("example.net", filtered.Rows[0].Key)
 	assertions.Equal(int64(1), filtered.Rows[0].Count, "the source filter must scope the keyed group's count")
+	requirements.NotNil(filtered.Overview)
+	var filteredActivity int64
+	for _, bucket := range filtered.Overview.Activity {
+		filteredActivity += bucket.Count
+	}
+	assertions.Equal(int64(1), filteredActivity)
+	assertions.Equal([]ExploreGroupCoParticipant{{Key: strconv.FormatInt(bob, 10), Label: "Bob Example", Count: 1}}, filtered.Overview.CoParticipants)
 
 	unfiltered, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{
 		Explore: ExploreRequest{}, Dimension: "domain", GroupKey: "example.net",
@@ -332,6 +339,16 @@ func TestExploreGroupsGroupKeyComposesWithContextFilters(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Len(unfiltered.Rows, 1)
 	assertions.Equal(int64(2), unfiltered.Rows[0].Count)
+	requirements.NotNil(unfiltered.Overview)
+	var unfilteredActivity int64
+	for _, bucket := range unfiltered.Overview.Activity {
+		unfilteredActivity += bucket.Count
+	}
+	assertions.Equal(int64(2), unfilteredActivity)
+	assertions.ElementsMatch([]ExploreGroupCoParticipant{
+		{Key: strconv.FormatInt(bob, 10), Label: "Bob Example", Count: 1},
+		{Key: strconv.FormatInt(carol, 10), Label: "Carol Example", Count: 1},
+	}, unfiltered.Overview.CoParticipants)
 }
 
 func TestExploreGroupsParticipantLabelsUseDurableIdentityPrecedence(t *testing.T) {
