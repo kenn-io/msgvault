@@ -2649,17 +2649,18 @@ msgvault pack-attachments
 
 The daemon serializes packing against sync and backup operations. Reads remain
 available from loose, packed, or mixed storage, and the command is safe to
-rerun as new loose content arrives. Bounded packing also runs after successful
-attachment-producing commands sent to the daemon. Scheduled syncs never pack
-inline: when one writes new loose blobs, the daemon's `attachment-pack` job
-(every 6 hours) packs them, and the daily `attachment-maintenance` job packs
-and repacks. Each automatic pack pass has a 256 MiB soft raw-byte budget and
-finishes its current blob before stopping for that byte limit. Scheduled packing
-and daily attachment maintenance also stop after one minute, which lets queued
+rerun as new loose content arrives. Attachment-producing commands sent to the
+daemon defer packing, including after a partial failure. Scheduled syncs also
+defer packing when they write new loose blobs. The daemon's `attachment-pack`
+job (every 6 hours) packs them, and the daily `attachment-maintenance` job
+packs and repacks. Automatic maintenance errors appear in scheduled job status.
+Each automatic pack pass has a 256 MiB soft raw-byte budget and finishes its
+current blob before stopping for that byte limit. Scheduled packing and daily
+attachment maintenance also stop after one minute, which lets queued
 scheduled work run. Each scheduled pack pass verifies at most 128
 existing packed blobs or 32 MiB of their raw content, allowing one oversized
 blob. Its durable hash cursor resumes verification after a restart, while new
-loose blobs are packed by sync-requested passes and the daily job when nothing
+loose blobs are packed by pending passes and the daily job when nothing
 is queued; verification-only follow-ups skip them. Manual unpacking reads the full
 catalog. Cancellation preserves committed packs. A pass with committed
 progress resumes behind waiting work; runtime expiry without a checkpoint

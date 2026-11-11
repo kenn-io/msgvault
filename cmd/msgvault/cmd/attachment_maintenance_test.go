@@ -156,19 +156,13 @@ func TestAutomaticAttachmentMaintenancePacksBoundedAndLogsCompleteStats(t *testi
 	f := newAttachmentMaintenanceFixture(t)
 	content := []byte("automatic attachment maintenance payload")
 	hash := f.addLoose(content)
-	warnings := 0
-
-	err := f.maintenance.runAutomaticPack(t.Context(), func(string) error {
-		warnings++
-		return nil
-	})
+	err := f.maintenance.runAutomaticPack(t.Context())
 
 	require.NoError(err, "runAutomaticPack")
 	gotAutomaticAttachmentBytes := automaticAttachmentBytes
 	assert.Equal(wantAutomaticAttachmentBytes, gotAutomaticAttachmentBytes)
 	assert.Equal("attachment-maintenance", attachmentMaintenanceJob)
 	assert.Equal("17 3 * * *", attachmentMaintenanceCron)
-	assert.Zero(warnings, "successful automatic packing must not emit CLI output")
 	require.NotNil(f.packedEntry(hash), "loose attachment must be packed")
 	assert.Equal(content, f.readBlob(hash), "packed attachment stays readable")
 
@@ -206,7 +200,7 @@ func TestLooseAttachmentModeSkipsAutomaticPackingAndRejectsPackCreation(t *testi
 	f.maintenance.packCreationEnabled = false
 	hash := f.addLoose([]byte("remain loose when attachment packing is disabled"))
 
-	err := f.maintenance.runAutomaticPack(t.Context(), nil)
+	err := f.maintenance.runAutomaticPack(t.Context())
 	require.NoError(err)
 	assert.Nil(f.packedEntry(hash))
 	assert.Contains(f.logs.String(), "automatic attachment packing disabled")
@@ -226,65 +220,46 @@ func TestAutomaticAttachmentMaintenanceCancellationIsInformational(t *testing.T)
 	f := newAttachmentMaintenanceFixture(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	warnings := 0
-
-	err := f.maintenance.runAutomaticPack(ctx, func(string) error {
-		warnings++
-		return nil
-	})
+	err := f.maintenance.runAutomaticPack(ctx)
 
 	require.ErrorIs(err, context.Canceled)
-	assert.Zero(warnings)
 	assert.Contains(f.logs.String(), "level=INFO msg=\"automatic attachment maintenance canceled\"")
 	assert.NotContains(f.logs.String(), "level=WARN")
 }
 
-func TestAutomaticAttachmentMaintenanceFailureWarnsWithoutReplacingIngestSuccess(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	maintenance, logs := newFailingAttachmentMaintenance(t)
-	var warning string
-
-	err := runAfterSuccessfulAttachmentIngest(
-		t.Context(),
-		maintenance,
-		func(context.Context) error { return nil },
-		func(message string) error {
-			warning = message
-			return nil
-		},
-	)
-
-	require.NoError(err, "maintenance failure must preserve successful ingest")
-	assert.Contains(warning, "pack-attachments")
-	assert.Contains(warning, "retry")
-	logOutput := logs.String()
-	progressAt := strings.Index(logOutput, "level=INFO msg=\"automatic attachment maintenance progress\"")
-	warnAt := strings.Index(logOutput, "level=WARN msg=\"automatic attachment maintenance failed\"")
-	assert.GreaterOrEqual(progressAt, 0, "partial stats are logged on error")
-	assert.Greater(warnAt, progressAt, "progress must be observable before the warning")
-	assert.NotContains(logOutput, "automatic attachment maintenance complete")
-	assert.Contains(logOutput, "blobs_deferred_oversized=0")
-	assert.Contains(logOutput, "packs_deferred_oversized=0")
-	assert.Contains(logOutput, "pack-attachments", "log names the explicit retry command")
-}
-
-func TestAutomaticAttachmentMaintenanceWarningFailurePreservesIngestSuccess(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	maintenance, logs := newFailingAttachmentMaintenance(t)
-	warningErr := errors.New("warning stream closed")
-
-	err := runAfterSuccessfulAttachmentIngest(
-		t.Context(),
-		maintenance,
-		func(context.Context) error { return nil },
-		func(string) error { return warningErr },
-	)
-
-	require.NoError(err, "warning failure must preserve successful ingest")
-	assert.Contains(logs.String(), "failed to emit automatic attachment maintenance warning")
-	assert.Contains(logs.String(), warningErr.Error())
+func TestAttachmentIngestDefersPackingAndPreservesResult(t *testing.T) {
+	for _, partial := range []bool{false, true} {
+		t.Run(fmt.Sprintf("partial=%v", partial), func(t *testing.T) {
+			f := newAttachmentMaintenanceFixture(t)
+			_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+				`INSERT INTO archive_metadata (key, value) VALUES (?, ?)`),
+				"attachment_pack_verification_cursor", "saved-cursor")
+			require.NoError(t, err)
+			failure := errors.New("partial import")
+			var hash string
+			err = runAttachmentIngest(t.Context(), f.maintenance, func(ctx context.Context) error {
+				hash = f.ingestLoose(ctx, []byte("imported attachment"))
+				if partial {
+					return failure
+				}
+				return nil
+			})
+			if partial {
+				require.ErrorIs(t, err, failure)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Nil(t, f.packedEntry(hash))
+			assert.Equal(t, []byte("imported attachment"), f.readBlob(hash))
+			var cursor string
+			require.NoError(t, f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
+				`SELECT value FROM archive_metadata WHERE key = ?`), "attachment_pack_verification_cursor").Scan(&cursor))
+			assert.Equal(t, "saved-cursor", cursor)
+			require.NoError(t, f.maintenance.runPendingPack(t.Context()))
+			assert.NotNil(t, f.packedEntry(hash))
+			assert.Equal(t, []byte("imported attachment"), f.readBlob(hash))
+		})
+	}
 }
 
 func (f *attachmentMaintenanceFixture) ingestLoose(ctx context.Context, content []byte) string {
@@ -672,12 +647,12 @@ func TestAttachmentIngestMutationLeaseWaitsForMaintenance(t *testing.T) {
 	ingestStarted := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		done <- runAfterSuccessfulAttachmentIngest(
+		done <- runAttachmentIngest(
 			t.Context(), f.maintenance,
 			func(context.Context) error {
 				close(ingestStarted)
 				return nil
-			}, nil,
+			},
 		)
 	}()
 
@@ -794,7 +769,7 @@ func TestRemovingRedundantOrphanPackCountsAsProgress(t *testing.T) {
 	require.NoError(os.MkdirAll(filepath.Dir(orphan), 0o700))
 	require.NoError(os.WriteFile(orphan, data, 0o600))
 	ctx := jobctx.WithProgress(t.Context())
-	require.NoError(f.maintenance.runAutomaticPack(ctx, nil))
+	require.NoError(f.maintenance.runAutomaticPack(ctx))
 	assert.NoFileExists(t, orphan)
 	assert.True(t, jobctx.HasProgress(ctx), "a removed pack is committed progress a timed-out pass can resume after")
 }

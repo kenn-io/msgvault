@@ -131,10 +131,8 @@ func (m *attachmentMaintenance) unpack(ctx context.Context) (packstore.UnpackSta
 	return stats, nil
 }
 
-// runAutomaticPack performs one bounded maintenance pass. Errors remain
-// visible to schedulers, while callers following a successful ingest can log
-// or stream the warning and deliberately preserve the ingest result.
-func (m *attachmentMaintenance) runAutomaticPack(ctx context.Context, emitWarning func(string) error) error {
+// runAutomaticPack performs one bounded maintenance pass and reports errors to the scheduler.
+func (m *attachmentMaintenance) runAutomaticPack(ctx context.Context) error {
 	if !m.packCreationEnabled {
 		m.log().Debug("automatic attachment packing disabled")
 		return nil
@@ -161,13 +159,6 @@ func (m *attachmentMaintenance) runAutomaticPack(ctx context.Context, emitWarnin
 		m.log().Warn("automatic attachment maintenance failed",
 			"error", err,
 			"retry", retry)
-		if emitWarning != nil {
-			warning := fmt.Sprintf("Automatic attachment maintenance failed: %v; %s.\n", err, retry)
-			if emitErr := emitWarning(warning); emitErr != nil {
-				m.log().Warn("failed to emit automatic attachment maintenance warning",
-					"error", emitErr)
-			}
-		}
 		return err
 	}
 
@@ -261,7 +252,7 @@ func (m *attachmentMaintenance) runScheduledPack(ctx context.Context, enumerateL
 	if !enumerateLoose {
 		pass.SkipLooseEnumeration()
 	}
-	if err := m.runAutomaticPack(packCtx, nil); err != nil {
+	if err := m.runAutomaticPack(packCtx); err != nil {
 		return err
 	}
 	more, err := m.store.FinishPackVerification(ctx, pass)
@@ -341,22 +332,15 @@ func (m *attachmentMaintenance) log() *slog.Logger {
 	return slog.Default()
 }
 
-// runAfterSuccessfulAttachmentIngest runs bounded maintenance only after a
-// successful ingest. Maintenance and warning-stream failures are best-effort:
-// neither may replace the successful ingest result.
-func runAfterSuccessfulAttachmentIngest(
+// runAttachmentIngest defers packing even when an import partially fails.
+func runAttachmentIngest(
 	ctx context.Context,
 	maintenance *attachmentMaintenance,
 	ingest func(context.Context) error,
-	emitWarning func(string) error,
 ) error {
-	if err := runWithAttachmentMutation(ctx, maintenance, ingest); err != nil {
-		return err
-	}
-	if maintenance != nil {
-		_ = maintenance.runAutomaticPack(ctx, emitWarning)
-	}
-	return nil
+	err := runWithAttachmentMutation(ctx, maintenance, ingest)
+	maintenance.markPackPending()
+	return err
 }
 
 // runAfterSuccessfulAttachmentRemoval runs bounded physical GC only after a
