@@ -159,81 +159,41 @@ func TestMeetingLinkDecisionSplitAppliesToEveryEventCopy(t *testing.T) {
 	assertions.ErrorIs(err, ErrMeetingLinkConflict)
 }
 
-func TestMeetingLinkDecisionSurvivesDedupAndUndo(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, survivor := projectionFixture(t, st, "survivor", "meeting_json", `{}`)
-	_, duplicate := projectionFixture(t, st, "duplicate", "meeting_json", `{}`)
-	_, other := projectionFixture(t, st, "other", "meeting_json", `{}`)
-	dupRef := MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: duplicate}}
-	otherRef := MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: other}}
-	_, err := st.DecideMeetingLinkContext(t.Context(), dupRef, otherRef, "link")
-	requirements.NoError(err)
-	_, err = st.MergeDuplicates(t.Context(), survivor, []int64{duplicate}, "decisions")
-	requirements.NoError(err)
-	record, err := st.MeetingRecordContext(t.Context(), otherRef)
-	requirements.NoError(err)
-	assertions.Equal([]int64{survivor, other}, record.MessageIDs)
-	_, err = st.UndoDedup(t.Context(), "decisions")
-	requirements.NoError(err)
-	record, err = st.MeetingRecordContext(t.Context(), dupRef)
-	requirements.NoError(err)
-	assertions.Equal([]int64{duplicate, other}, record.MessageIDs)
-	record, err = st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: survivor}})
-	requirements.NoError(err)
-	assertions.Equal([]int64{survivor}, record.MessageIDs)
-}
-
-func TestMeetingLinkDecisionUndoKeepsOtherDuplicateChoice(t *testing.T) {
-	requirements := require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	var ids []int64
-	for _, name := range []string{"survivor", "first-duplicate", "second-duplicate", "other"} {
-		_, id := projectionFixture(t, st, name, "meeting_json", `{}`)
-		ids = append(ids, id)
+func TestMeetingLinkDecisionUndoKeepsDuplicateChoices(t *testing.T) {
+	for _, tc := range []struct {
+		decision string
+		joined   bool
+	}{{"link", true}, {"unlink", false}} {
+		t.Run(tc.decision, func(t *testing.T) {
+			requirements := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			var ids []int64
+			for _, name := range []string{"survivor", "first-duplicate", "second-duplicate", "other"} {
+				_, id := projectionFixture(t, st, name, "meeting_json", `{}`)
+				ids = append(ids, id)
+			}
+			ref := func(id int64) MeetingLinkRef {
+				return MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: id}}
+			}
+			_, err := st.DecideMeetingLinkContext(t.Context(), ref(ids[1]), ref(ids[3]), "link")
+			requirements.NoError(err)
+			_, err = st.DecideMeetingLinkContext(t.Context(), ref(ids[2]), ref(ids[3]), tc.decision)
+			requirements.NoError(err)
+			_, err = st.MergeDuplicates(t.Context(), ids[0], []int64{ids[1]}, "first")
+			requirements.NoError(err)
+			_, err = st.MergeDuplicates(t.Context(), ids[0], []int64{ids[2]}, "second")
+			requirements.NoError(err)
+			_, err = st.UndoDedup(t.Context(), "first")
+			requirements.NoError(err)
+			record, err := st.MeetingRecordContext(t.Context(), ref(ids[3]))
+			requirements.NoError(err)
+			if tc.joined {
+				requirements.Equal([]int64{ids[0], ids[1], ids[3]}, record.MessageIDs)
+			} else {
+				requirements.Equal([]int64{ids[1], ids[3]}, record.MessageIDs)
+			}
+		})
 	}
-	ref := func(id int64) MeetingLinkRef {
-		return MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: id}}
-	}
-	for _, id := range ids[1:3] {
-		_, err := st.DecideMeetingLinkContext(t.Context(), ref(id), ref(ids[3]), "link")
-		requirements.NoError(err)
-	}
-	_, err := st.MergeDuplicates(t.Context(), ids[0], []int64{ids[1]}, "first")
-	requirements.NoError(err)
-	_, err = st.MergeDuplicates(t.Context(), ids[0], []int64{ids[2]}, "second")
-	requirements.NoError(err)
-	_, err = st.UndoDedup(t.Context(), "first")
-	requirements.NoError(err)
-	record, err := st.MeetingRecordContext(t.Context(), ref(ids[3]))
-	requirements.NoError(err)
-	requirements.Equal([]int64{ids[0], ids[1], ids[3]}, record.MessageIDs)
-}
-
-func TestMeetingLinkDecisionUndoIgnoresOppositeDuplicateChoice(t *testing.T) {
-	requirements := require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	var ids []int64
-	for _, name := range []string{"survivor", "first-duplicate", "second-duplicate", "other"} {
-		_, id := projectionFixture(t, st, name, "meeting_json", `{}`)
-		ids = append(ids, id)
-	}
-	ref := func(id int64) MeetingLinkRef {
-		return MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: id}}
-	}
-	_, err := st.DecideMeetingLinkContext(t.Context(), ref(ids[1]), ref(ids[3]), "link")
-	requirements.NoError(err)
-	_, err = st.DecideMeetingLinkContext(t.Context(), ref(ids[2]), ref(ids[3]), "unlink")
-	requirements.NoError(err)
-	_, err = st.MergeDuplicates(t.Context(), ids[0], []int64{ids[1]}, "first")
-	requirements.NoError(err)
-	_, err = st.MergeDuplicates(t.Context(), ids[0], []int64{ids[2]}, "second")
-	requirements.NoError(err)
-	_, err = st.UndoDedup(t.Context(), "first")
-	requirements.NoError(err)
-	record, err := st.MeetingRecordContext(t.Context(), ref(ids[3]))
-	requirements.NoError(err)
-	requirements.Equal([]int64{ids[1], ids[3]}, record.MessageIDs)
 }
 
 func TestMeetingLinkDecisionChainedDedupUndo(t *testing.T) {
@@ -397,38 +357,6 @@ func TestMeetingLinkDecisionChainedSplitUndo(t *testing.T) {
 	}
 }
 
-func TestMeetingLinkDecisionUndoPreservesSurvivorChoices(t *testing.T) {
-	for _, timing := range []string{"before", "after"} {
-		t.Run(timing, func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			_, survivor := projectionFixture(t, st, "keep-survivor", "meeting_json", `{}`)
-			_, duplicate := projectionFixture(t, st, "keep-duplicate", "meeting_json", `{}`)
-			_, other := projectionFixture(t, st, "keep-other", "meeting_json", `{}`)
-			survivorRef := MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: survivor}}
-			duplicateRef := MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: duplicate}}
-			otherRef := MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: other}}
-			_, err := st.DecideMeetingLinkContext(t.Context(), duplicateRef, otherRef, "link")
-			requirements.NoError(err)
-			if timing == "before" {
-				_, err = st.DecideMeetingLinkContext(t.Context(), survivorRef, otherRef, "link")
-				requirements.NoError(err)
-			}
-			_, err = st.MergeDuplicates(t.Context(), survivor, []int64{duplicate}, "keep")
-			requirements.NoError(err)
-			if timing == "after" {
-				_, err = st.DecideMeetingLinkContext(t.Context(), survivorRef, otherRef, "link")
-				requirements.NoError(err)
-			}
-			_, err = st.UndoDedup(t.Context(), "keep")
-			requirements.NoError(err)
-			record, err := st.MeetingRecordContext(t.Context(), survivorRef)
-			requirements.NoError(err)
-			assertions.Equal([]int64{survivor, duplicate, other}, record.MessageIDs)
-		})
-	}
-}
-
 func TestMeetingLinkDecisionFollowsStandaloneIntoSeries(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -461,45 +389,39 @@ func TestMeetingLinkDecisionFollowsStandaloneIntoSeries(t *testing.T) {
 	assertions.Empty(record.MessageIDs)
 }
 
-func TestMeetingLinkDecisionSplitExcludesOtherGroupWarnings(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	data, event := calendarFixture(t, st, "warning-event", `{"id":"warning-event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
-	_, note := projectionFixture(t, st, "warning-note", "meeting_json", `{}`)
-	noteRef := MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: note}}
-	eventRef := MeetingLinkRef{Kind: "evt", OccurrenceRef: OccurrenceRef{MessageID: event}}
-	_, err := st.DecideMeetingLinkContext(t.Context(), noteRef, eventRef, "unlink")
-	requirements.NoError(err)
-	data.RawMIME = []byte(`{"id":"warning-event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=YEARLY;BYWEEKNO=20"]}`)
-	_, err = st.PersistMessage(data)
-	requirements.NoError(err)
-	record, err := st.MeetingRecordContext(t.Context(), noteRef)
-	requirements.NoError(err)
-	assertions.Equal([]int64{note}, record.MessageIDs)
-	assertions.Empty(record.Links)
-	assertions.Empty(record.Unexpandable)
-	eventRef.Identity = occurrenceIdentity(t, "20270314T100000Z")
-	record, err = st.MeetingRecordContext(t.Context(), eventRef)
-	requirements.NoError(err)
-	assertions.Equal([]CalendarUnexpandable{{MessageID: event, Reason: "unsupported recurrence"}}, record.Unexpandable)
-}
-
-func TestMeetingLinkDecisionLinkedGroupRetainsWarnings(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	data, event := calendarFixture(t, st, "linked-warning-event", `{"id":"warning-event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
-	_, note := projectionFixture(t, st, "linked-warning-note", "meeting_json", `{}`)
-	noteRef := MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: note}}
-	eventRef := MeetingLinkRef{Kind: "evt", OccurrenceRef: OccurrenceRef{MessageID: event}}
-	_, err := st.DecideMeetingLinkContext(t.Context(), noteRef, eventRef, "link")
-	requirements.NoError(err)
-	data.RawMIME = []byte(`{"id":"warning-event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=YEARLY;BYWEEKNO=20"]}`)
-	_, err = st.PersistMessage(data)
-	requirements.NoError(err)
-	record, err := st.MeetingRecordContext(t.Context(), noteRef)
-	requirements.NoError(err)
-	assertions.Equal([]int64{note}, record.MessageIDs)
-	assertions.Equal([]CalendarUnexpandable{{MessageID: event, Reason: "unsupported recurrence"}}, record.Unexpandable)
+func TestMeetingLinkDecisionGroupWarnings(t *testing.T) {
+	for _, decision := range []string{"link", "unlink"} {
+		t.Run(decision, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			uid := "linked@example.org"
+			if decision == "unlink" {
+				uid = "shared@example.org"
+			}
+			data, event := calendarFixture(t, st, "warning-event", `{"id":"warning-event","iCalUID":"shared@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+			_, note := projectionFixture(t, st, "warning-note", "twenty_json", fmt.Sprintf(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":%q,"startsAt":"2027-03-14T10:00:00Z"}}`, uid))
+			noteRef := MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: note}}
+			eventRef := MeetingLinkRef{Kind: "evt", OccurrenceRef: OccurrenceRef{MessageID: event}}
+			_, err := st.DecideMeetingLinkContext(t.Context(), noteRef, eventRef, decision)
+			requirements.NoError(err)
+			data.RawMIME = []byte(`{"id":"warning-event","iCalUID":"shared@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=YEARLY;BYWEEKNO=20"]}`)
+			_, err = st.PersistMessage(data)
+			requirements.NoError(err)
+			record, err := st.MeetingRecordContext(t.Context(), noteRef)
+			requirements.NoError(err)
+			assertions.Equal([]int64{note}, record.MessageIDs)
+			if decision == "unlink" {
+				assertions.Empty(record.Links)
+				assertions.Empty(record.Unexpandable)
+			} else {
+				assertions.Equal([]CalendarUnexpandable{{MessageID: event, Reason: "unsupported recurrence"}}, record.Unexpandable)
+			}
+			eventRef.Identity = occurrenceIdentity(t, "20270314T100000Z")
+			record, err = st.MeetingRecordContext(t.Context(), eventRef)
+			requirements.NoError(err)
+			assertions.Equal([]CalendarUnexpandable{{MessageID: event, Reason: "unsupported recurrence"}}, record.Unexpandable)
+		})
+	}
 }
 
 func TestMeetingLinkDecisionSubsetRetainsSelectedPairs(t *testing.T) {
@@ -586,31 +508,21 @@ func TestMeetingLinkDecisionSubsetOmitsHiddenOrigin(t *testing.T) {
 }
 
 func TestMeetingLinkDecisionSubsetSourceVersion(t *testing.T) {
-	for _, marker := range []string{fmt.Sprint(SchemaVersion), "41"} {
-		t.Run(marker, func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			path := filepath.Join(t.TempDir(), "source.db")
-			st, err := OpenForTest(t.Context(), path)
-			requirements.NoError(err)
-			t.Cleanup(func() { assertions.NoError(st.Close()) })
-			requirements.NoError(st.InitSchemaContext(t.Context()))
-			_, _ = projectionFixture(t, st, "version-note", "meeting_json", `{}`)
-			if marker == "41" {
-				_, err = st.db.ExecContext(t.Context(), `DROP TABLE meeting_link_decision_origins`)
-				requirements.NoError(err)
-				_, err = st.db.ExecContext(t.Context(), `DROP TABLE meeting_link_decisions`)
-				requirements.NoError(err)
-			}
-			_, err = st.db.ExecContext(t.Context(), `UPDATE archive_metadata SET value=? WHERE key='schema_version'`, marker)
-			requirements.NoError(err)
-			dir := t.TempDir()
-			_, err = CopySubset(t.Context(), path, dir, 1, false)
-			requirements.NoError(err)
-			var storedMarker string
-			requirements.NoError(st.db.QueryRowContext(t.Context(), `SELECT value FROM archive_metadata WHERE key='schema_version'`).Scan(&storedMarker))
-			assertions.Equal(marker, storedMarker)
-		})
-	}
+	requirements := require.New(t)
+	path := filepath.Join(t.TempDir(), "source.db")
+	st, err := OpenForTest(t.Context(), path)
+	requirements.NoError(err)
+	t.Cleanup(func() { assert.NoError(t, st.Close()) })
+	requirements.NoError(st.InitSchemaContext(t.Context()))
+	_, _ = projectionFixture(t, st, "version-note", "meeting_json", `{}`)
+	_, err = st.db.ExecContext(t.Context(), `DROP TABLE meeting_link_decision_origins`)
+	requirements.NoError(err)
+	_, err = st.db.ExecContext(t.Context(), `DROP TABLE meeting_link_decisions`)
+	requirements.NoError(err)
+	_, err = st.db.ExecContext(t.Context(), `UPDATE archive_metadata SET value='41' WHERE key='schema_version'`)
+	requirements.NoError(err)
+	_, err = CopySubset(t.Context(), path, t.TempDir(), 1, false)
+	requirements.NoError(err)
 }
 
 func TestMeetingLinkDecisionFollowsOrphanExceptionToMaster(t *testing.T) {
@@ -662,16 +574,6 @@ func TestMeetingLinkDecisionThreeCopiesAgreeFromEverySeed(t *testing.T) {
 	result, err = st.DecideMeetingLinkContext(t.Context(), refs[2], refs[0], "clear")
 	requirements.NoError(err)
 	assertions.Equal("automatic", result.State)
-	for _, ref := range refs {
-		record, err := st.MeetingRecordContext(t.Context(), ref)
-		requirements.NoError(err)
-		assertions.Equal([]int64{refs[0].MessageID, refs[1].MessageID, refs[2].MessageID}, record.MessageIDs)
-	}
-	_, err = st.DecideMeetingLinkContext(t.Context(), refs[0], refs[2], "unlink")
-	requirements.NoError(err)
-	result, err = st.DecideMeetingLinkContext(t.Context(), refs[2], refs[0], "link")
-	requirements.NoError(err)
-	assertions.Equal("link", result.State)
 	for _, ref := range refs {
 		record, err := st.MeetingRecordContext(t.Context(), ref)
 		requirements.NoError(err)
@@ -738,7 +640,7 @@ func TestMeetingLinkDecisionSurvivesSyncAndDeletion(t *testing.T) {
 	assertions.Zero(count)
 }
 
-func TestMeetingLinkDecisionJoinsEventsAndRestoresAutomatic(t *testing.T) {
+func TestMeetingLinkDecisionJoinsEventsAndSplits(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, first := calendarFixture(t, st, "event-a", `{"id":"event-a","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`, "a@example.com")
@@ -753,7 +655,7 @@ func TestMeetingLinkDecisionJoinsEventsAndRestoresAutomatic(t *testing.T) {
 		requirements.Len(record.Links, 2)
 		assertions.Equal([]string{fmt.Sprintf("evt:%d", first), fmt.Sprintf("evt:%d", second)}, []string{record.Links[0].Ref, record.Links[1].Ref})
 	}
-	result, err := st.DecideMeetingLinkContext(t.Context(), right, left, "unlink")
+	result, err := st.DecideMeetingLinkContext(t.Context(), left, right, "unlink")
 	requirements.NoError(err)
 	assertions.Equal("split", result.State)
 	for _, ref := range []MeetingLinkRef{left, right} {

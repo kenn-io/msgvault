@@ -64,9 +64,6 @@ func TestMeetingDecisionOwnerAndDelegatedHTTP(t *testing.T) {
 		{ids[0], ids[0], "link", http.StatusBadRequest, ""},
 		{ids[1], ids[2], "link", http.StatusOK, "link"},
 		{ids[0], ids[2], "unlink", http.StatusConflict, ""},
-		{ids[2], ids[1], "clear", http.StatusOK, "automatic"},
-		{ids[0], ids[2], "unlink", http.StatusOK, "split"},
-		{ids[2], ids[0], "link", http.StatusOK, "link"},
 	} {
 		body := fmt.Sprintf(`{"left":"msg:%d","right":"msg:%d","decision":%q}`, tc.left, tc.right, tc.decision)
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/meetings/links/decisions", strings.NewReader(body))

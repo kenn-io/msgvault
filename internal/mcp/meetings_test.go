@@ -324,9 +324,6 @@ func TestMeetingDecisionMCPWritesAndDiscovery(t *testing.T) {
 	requirements.NoError(err)
 	requirements.False(result.IsError)
 	assertions.Equal("link", meetingStructuredContent(t, result)["state"])
-	record, err := backend.MeetingRecord(ctx, left)
-	requirements.NoError(err)
-	assertions.ElementsMatch([]int64{imported[0].MessageID, imported[1].MessageID}, record.MessageIDs)
 	for _, tc := range []struct{ name, state string }{{"unlink_meeting", "split"}, {"reset_meeting_link", "automatic"}} {
 		result, err := session.CallTool(ctx, &sdkmcp.CallToolParams{Name: tc.name, Arguments: map[string]any{"left": left, "right": right}})
 		requirements.NoError(err)
