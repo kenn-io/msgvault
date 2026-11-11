@@ -222,3 +222,55 @@ func TestCommitmentRejectsSourceDeletedBeforeFirstExtraction(t *testing.T) {
 	r.NoError(err)
 	a.Empty(claims, "an earlier provider window cannot create a supported claim from a deleted source")
 }
+
+func TestCommitmentDecisionSurvivesDuplicateMergeUndo(t *testing.T) {
+	for _, state := range []string{LoopStateDone, LoopStateSnoozed} {
+		t.Run(state, func(t *testing.T) {
+			r, a, ctx := require.New(t), assert.New(t), t.Context()
+			f := newPersonSweepApplyFixture(t, "commitment-undo", false)
+			st := f.store
+			_, persist := newCommitmentTestConversation(t, f)
+			const quote = "I will send the draft."
+			survivor := persist("survivor", quote, -time.Hour)
+			absorbed := persist("absorbed", quote, -time.Hour)
+			cfg := peoplesweep.Config{}
+			cfg.ApplyDefaults()
+			cfg.Commitments.Enabled = true
+			applyCommitmentTestSources(t, f, cfg.Commitments)
+			items, err := st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
+			r.NoError(err)
+			r.Len(items, 2)
+			var decisionID int64
+			for _, item := range items {
+				if item.AnchorMessageID == absorbed {
+					decisionID = item.ID
+				}
+			}
+			r.Positive(decisionID)
+			var until *time.Time
+			if state == LoopStateSnoozed {
+				value := f.request.CompletedAt.Add(24 * time.Hour)
+				until = &value
+			}
+			_, err = st.DecidePersonCommitmentContext(ctx, decisionID, state, until, f.request.CompletedAt)
+			r.NoError(err)
+			_, err = st.MergeDuplicates(ctx, survivor, []int64{absorbed}, "commitment-undo")
+			r.NoError(err)
+			restored, err := st.UndoDedup(ctx, "commitment-undo")
+			r.NoError(err)
+			r.Equal(int64(1), restored)
+			f = nextCommitmentTestAttempt(t, f, "-restored")
+			applyCommitmentTestSources(t, f, cfg.Commitments)
+			items, err = st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
+			r.NoError(err)
+			r.Len(items, 2)
+			for _, item := range items {
+				a.Equal(state, item.State, "the original and survivor retain the copied owner decision")
+				if until != nil {
+					r.NotNil(item.SnoozedUntil)
+					a.True(until.Equal(*item.SnoozedUntil))
+				}
+			}
+		})
+	}
+}
