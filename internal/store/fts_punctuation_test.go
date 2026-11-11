@@ -15,16 +15,11 @@ func TestSearchFTSPunctuation(t *testing.T) {
 	f := storetest.New(t)
 	id := f.NewMessage().WithSourceMessageID("m1").WithSubject("Release 1.2.0 notes").Create(t, f.Store)
 	require.NoError(t, f.Store.UpsertFTS(id, "Release 1.2.0 notes", "Write to both@example.com or see changelog.example.net.", "+15550100777", "", ""))
-	for _, term := range []string{"notes", "both@example.com", "both@exam", "changelog.example.net", "1.2.0", "+15550100777", "15550100777"} {
-		t.Run(term, func(t *testing.T) {
-			ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
-			require.NoError(t, err)
-			require.Equal(t, []int64{id}, ids)
-		})
+	for term, want := range map[string][]int64{"notes": {id}, "both@example.com": {id}, "both@exam": {id}, "changelog.example.net": {id}, "1.2.0": {id}, "+15550100777": {id}, "15550100777": {id}, "example@both": nil} {
+		ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
+		require.NoError(t, err, term)
+		assert.ElementsMatch(t, want, ids, term)
 	}
-	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"example@both"}}, 10)
-	require.NoError(t, err)
-	require.Empty(t, ids)
 }
 
 func TestPostgresFTSSaturatedPhrases(t *testing.T) {

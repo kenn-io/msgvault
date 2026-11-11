@@ -473,27 +473,19 @@ func TestSearchMessageBodies_PostgreSQLPhraseContexts(t *testing.T) {
 	if !f.Store.IsPostgreSQL() {
 		t.Skip("PostgreSQL indexing")
 	}
-	body := strings.Repeat("alice ", 300) + "alice@example.com appears here"
-	id := createSearchScopeMessage(t, f, "saturated-body", "ordinary", "ordinary", body, 0, 0)
-	combiningBody := "cafe\u0301teria marker foo.bar"
-	combiningID := createSearchScopeMessage(t, f, "combining-body", "ordinary", "ordinary", combiningBody, 0, 0)
+	createSearchScopeMessage(t, f, "saturated-body", "ordinary", "ordinary", strings.Repeat("alice ", 300)+"alice@example.com appears here", 0, 0)
+	createSearchScopeMessage(t, f, "combining-body", "ordinary", "ordinary", "cafe\u0301teria marker foo.bar", 0, 0)
 	_, err := f.Store.BackfillFTS(nil)
 	require.NoError(err)
-	engine := query.NewEngine(f.Store.DB(), true)
-	searcher, ok := engine.(query.MessageBodySearcher)
+	searcher, ok := query.NewEngine(f.Store.DB(), true).(query.MessageBodySearcher)
 	require.True(ok)
-	for term, want := range map[string]int64{"alice@exam": id, "cafe\u0301teria": combiningID, "cafe\u0301": combiningID, "foo.bar": combiningID} {
+	// Each excerpt appears in only one body, so it also identifies the hit.
+	for term, excerpt := range map[string]string{"alice@exam": "alice@exam", `"cafe teria"`: "cafe\u0301teria", "cafe\u0301teria": "cafe\u0301teria", "cafe\u0301": "cafe\u0301", "foo.bar": "foo.bar"} {
 		result, err := searcher.SearchMessageBodies(t.Context(), search.Parse(term), 10, 0)
 		require.NoError(err, term)
 		require.Len(result.Messages, 1, term)
-		assert.Equal(want, result.Messages[0].ID, term)
-		assert.Contains(strings.Join(result.Messages[0].BodyContextSnippets, " "), term, term)
+		assert.Contains(strings.Join(result.Messages[0].BodyContextSnippets, " "), excerpt, term)
 	}
-	result, err := searcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"cafe teria"}}, 10, 0)
-	require.NoError(err)
-	require.Len(result.Messages, 1)
-	assert.Equal(combiningID, result.Messages[0].ID)
-	assert.Contains(strings.Join(result.Messages[0].BodyContextSnippets, " "), "cafe\u0301teria")
 }
 
 func TestSearchMessageBodies_PostgreSQLReportsOmittedOverlappingMatches(t *testing.T) {

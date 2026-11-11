@@ -32,10 +32,8 @@ func newFusedFixture(t *testing.T) *fusedFixture {
 	// The shared minimal test schema lacks the inline search_fts column
 	// the fused query reads, so add it here. In production this column
 	// lives on the messages table from the main store schema.
-	_, err := db.ExecContext(t.Context(), `ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_fts TSVECTOR`)
+	_, err := db.ExecContext(t.Context(), `ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_fts TSVECTOR, ADD COLUMN IF NOT EXISTS search_fts_fields TEXT[]`)
 	require.NoError(t, err, "add search_fts")
-	_, err = db.ExecContext(t.Context(), `ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_fts_fields TEXT[]`)
-	require.NoError(t, err, "add search_fts_fields")
 	_, err = db.ExecContext(t.Context(), `CREATE TABLE IF NOT EXISTS attachments (
         id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
         message_id BIGINT NOT NULL,
@@ -349,16 +347,13 @@ func TestFusedSearch_Saturated(t *testing.T) {
 func TestFusedSearchFiltersPhrasesBeforePoolLimit(t *testing.T) {
 	f := seedThree(t)
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
-	for id := int64(4); id <= 6; id++ {
-		body := strings.Repeat("alice ", 300) + "middle example alice"
+	// Rows 4-6 fill the pool unless the phrase check runs first; only row 7 matches.
+	for id, tail := range map[int64]string{4: "middle example alice", 5: "middle example alice", 6: "middle example alice", 7: "alice example"} {
+		body := strings.Repeat("alice ", 300) + tail
 		f.seedMsg(t, id, "", body, 10, base, false)
 		_, err := f.db.ExecContext(f.ctx, `UPDATE messages SET search_fts_fields = ARRAY['', '', '', '', $2] WHERE id = $1`, id, body)
 		require.NoError(t, err)
 	}
-	body := strings.Repeat("alice ", 300) + "alice example"
-	f.seedMsg(t, 7, "", body, 10, base, false)
-	_, err := f.db.ExecContext(f.ctx, `UPDATE messages SET search_fts_fields = ARRAY['', '', '', '', $1] WHERE id = 7`, body)
-	require.NoError(t, err)
 	hits, metadata, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{FTSTerms: []string{"alice@example"}, Generation: f.gen, KPerSignal: 1, Limit: 1, RRFK: 60})
 	require.NoError(t, err)
 	require.Len(t, hits, 1)

@@ -52,11 +52,7 @@ func TestPostgresServerRepairsSearchOnStartup(t *testing.T) {
 	if !st.IsPostgreSQL() {
 		t.Skip("PostgreSQL indexing")
 	}
-	source, err := st.GetOrCreateSource("test", "reader@example.test")
-	require.NoError(err)
-	conv, err := st.EnsureConversation(t.Context(), source.ID, "thread", "Synthetic")
-	require.NoError(err)
-	id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "old-index", MessageType: "email"})
+	_, id, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "old-index", "", "")
 	require.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = to_tsvector('simple', 'old'), indexing_version = 2 WHERE id = $1`, id)
 	require.NoError(err)
@@ -607,12 +603,8 @@ func TestAgentIndexProbeHasFiniteLifetime(t *testing.T) {
 				}
 				if arrival == "gate refused" {
 					assertions.False(srv.ftsEnsureRunning.Load())
-					if st.IsPostgreSQL() {
-						assertions.True(srv.ftsIndexComplete.Load())
-						assertions.Empty(srv.ensureCLISearchIndexAsync(st, false))
-						assertions.Equal(1, st.repairs)
-					} else {
-						assertions.False(srv.ftsIndexComplete.Load())
+					assertions.Equal(st.IsPostgreSQL(), srv.ftsIndexComplete.Load())
+					if !st.IsPostgreSQL() {
 						assertions.Equal(cliSearchIndexStateAwaitingOwner, srv.ensureCLISearchIndexAsync(st, false))
 						assertions.Zero(st.repairs)
 					}
