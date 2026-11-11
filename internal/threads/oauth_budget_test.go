@@ -24,7 +24,7 @@ func TestThreadsOAuthPreservesWholeRunBudgetPause(t *testing.T) {
 	assert.Equal(t, 1, budget.Attempts())
 }
 
-func TestThreadsOAuthUsageStopsNextAttempt(t *testing.T) {
+func TestThreadsOAuthHighUsageDoesNotInterruptExchange(t *testing.T) {
 	for _, path := range []string{"/oauth/access_token", "/debug_token"} {
 		t.Run(path, func(t *testing.T) {
 			assert := assert.New(t)
@@ -44,22 +44,9 @@ func TestThreadsOAuthUsageStopsNextAttempt(t *testing.T) {
 			opts.OAuthBaseURL = server.URL
 			opts.HTTPClient = NewBudgetedHTTPClient(server.Client(), budget)
 			record, err := ExchangeCredential(t.Context(), opts, testOAuthRequest())
-			if path == "/oauth/access_token" {
-				var pause *PauseError
-				require.ErrorAs(err, &pause)
-				assert.Equal("high_usage", pause.Reason)
-				assert.Equal(int32(1), fixture.calls.Load())
-			} else {
-				require.NoError(err)
-				assert.NotEmpty(record.AccessToken())
-				request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+"/me", nil)
-				require.NoError(err)
-				_, err = opts.HTTPClient.Do(request)
-				var pause *PauseError
-				require.ErrorAs(err, &pause)
-				assert.Equal("high_usage", pause.Reason)
-				assert.Equal(int32(4), fixture.calls.Load())
-			}
+			require.NoError(err)
+			assert.NotEmpty(record.AccessToken())
+			assert.Equal(int32(4), fixture.calls.Load())
 		})
 	}
 }

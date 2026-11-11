@@ -32,7 +32,7 @@ func TestThreadsTokenLifecycleStorage(t *testing.T) {
 	m := NewTokenManager(dir)
 	_, err := m.Load("123", oauthTestOwner)
 	require.ErrorIs(err, ErrTokenNotFound)
-	require.NoError(m.Save(testTokenRecord()))
+	require.NoError(m.Save(t.Context(), testTokenRecord()))
 	r, err := m.Load("123", oauthTestOwner)
 	require.NoError(err)
 	assert.Equal("long-secret", r.AccessToken())
@@ -47,24 +47,24 @@ func TestThreadsTokenLifecycleStorage(t *testing.T) {
 	assert.NotContains(string(bytes), "app-secret")
 	assert.NotContains(string(bytes), "authorization-code")
 	r.secret = &credentialSecret{value: "new-secret"}
-	require.NoError(m.Save(r))
+	require.NoError(m.Save(t.Context(), r))
 	next, err := m.Load("123", oauthTestOwner)
 	require.NoError(err)
 	assert.Equal(uint64(2), next.Generation)
 	assert.Equal("new-secret", next.AccessToken())
-	require.Error(m.Save(r), "stale generation cannot overwrite a newer record")
+	require.Error(m.Save(t.Context(), r), "stale generation cannot overwrite a newer record")
 	for _, id := range []string{"", "0", "../123", "1/2", "1e3", "-1", "01"} {
 		_, err = m.Load(id, oauthTestOwner)
 		require.Error(err)
 		bad := testTokenRecord()
 		bad.AppID = id
-		require.Error(m.Save(bad))
-		require.Error(m.Delete(id, oauthTestOwner))
+		require.Error(m.Save(t.Context(), bad))
+		require.Error(m.Delete(t.Context(), id, oauthTestOwner))
 	}
-	require.NoError(m.Delete("123", oauthTestOwner))
+	require.NoError(m.Delete(t.Context(), "123", oauthTestOwner))
 	_, err = m.Load("123", oauthTestOwner)
 	require.ErrorIs(err, ErrTokenNotFound)
-	require.NoError(m.Delete("123", oauthTestOwner))
+	require.NoError(m.Delete(t.Context(), "123", oauthTestOwner))
 }
 
 func TestThreadsTokenLifecycleFilesystem(t *testing.T) {
@@ -80,7 +80,7 @@ func TestThreadsTokenLifecycleFilesystem(t *testing.T) {
 		link := filepath.Join(base, "link")
 		require.NoError(os.Symlink(target, link))
 		m := NewTokenManager(link)
-		require.Error(m.Save(testTokenRecord()))
+		require.Error(m.Save(t.Context(), testTokenRecord()))
 		_, err := m.Load("123", oauthTestOwner)
 		require.Error(err)
 		assert.Error(m.WithSourceLock(context.Background(), oauthTestSource, func() error { return nil }))
@@ -95,12 +95,12 @@ func TestThreadsTokenLifecycleFilesystem(t *testing.T) {
 			require.NoError(os.Symlink(target, filepath.Join(dir, name)))
 			m := NewTokenManager(dir)
 			if strings.HasSuffix(name, ".json") {
-				require.Error(m.Save(testTokenRecord()))
+				require.Error(m.Save(t.Context(), testTokenRecord()))
 				_, err := m.Load("123", oauthTestOwner)
 				require.Error(err)
-				require.Error(m.Delete("123", oauthTestOwner))
+				require.Error(m.Delete(t.Context(), "123", oauthTestOwner))
 			} else if name == ".threads-token.lock" {
-				require.Error(m.Save(testTokenRecord()))
+				require.Error(m.Save(t.Context(), testTokenRecord()))
 			} else {
 				require.Error(m.WithSourceLock(context.Background(), oauthTestSource, func() error {
 					return nil
@@ -149,7 +149,7 @@ func TestThreadsTokenLifecycleCrossProcessLock(t *testing.T) {
 			require.NoError(t, held.Unlock())
 		}
 		// Saving takes a different lock and must complete inside lifecycle ownership.
-		return m.Save(testTokenRecord())
+		return m.Save(t.Context(), testTokenRecord())
 	}))
 	for _, source := range []string{"threads:../:1", "threads:123:1:2", "123", "x:123:1"} {
 		assert.Error(t, m.WithSourceLock(context.Background(), source, func() error { return nil }))
@@ -165,13 +165,55 @@ func TestThreadsLongCredentialNamespaceRoundTrip(t *testing.T) {
 	record.OwnerID = strings.Repeat("2", 128)
 	source, err := SourceIdentifier(record.AppID, record.OwnerID)
 	require.NoError(err)
-	require.NoError(manager.WithSourceLock(t.Context(), source, func() error { return manager.Save(record) }))
+	require.NoError(manager.WithSourceLock(t.Context(), source, func() error { return manager.Save(t.Context(), record) }))
 	saved, err := manager.Load(record.AppID, record.OwnerID)
 	require.NoError(err)
 	assert.Equal(record.AppID, saved.AppID)
 	assert.Equal(record.OwnerID, saved.OwnerID)
 	assert.Equal(record.AccessToken(), saved.AccessToken())
-	require.NoError(manager.Delete(record.AppID, record.OwnerID))
+	require.NoError(manager.Delete(t.Context(), record.AppID, record.OwnerID))
 	_, err = manager.Load(record.AppID, record.OwnerID)
 	require.ErrorIs(err, ErrTokenNotFound)
+}
+
+func TestThreadsTokenRejectsNewerFormat(t *testing.T) {
+	dir := t.TempDir()
+	manager := NewTokenManager(dir)
+	require.NoError(t, manager.Save(t.Context(), testTokenRecord()))
+	path := tokenFilePath(dir)
+	original, err := os.ReadFile(path)
+	require.NoError(t, err)
+	legacy := strings.Replace(string(original), `"version":1`, `"version":0`, 1)
+	require.NotEqual(t, string(original), legacy)
+	require.NoError(t, os.WriteFile(path, []byte(legacy), 0600))
+	_, err = manager.Load("123", oauthTestOwner)
+	require.NoError(t, err)
+	newer := strings.Replace(string(original), `"version":1`, `"version":2`, 1)
+	require.NotEqual(t, string(original), newer)
+	require.NoError(t, os.WriteFile(path, []byte(newer), 0600))
+	_, err = manager.Load("123", oauthTestOwner)
+	require.ErrorContains(t, err, "unsupported Threads credential format")
+	require.ErrorContains(t, manager.Save(t.Context(), testTokenRecord()), "unsupported Threads credential format")
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, newer, string(after))
+}
+
+func TestThreadsTokenLockWaitHonorsCancellation(t *testing.T) {
+	dir := t.TempDir()
+	manager := NewTokenManager(dir)
+	require.NoError(t, manager.Save(t.Context(), testTokenRecord()))
+	lock := flock.New(filepath.Join(dir, ".threads-token.lock"))
+	held, err := lock.TryLock()
+	require.NoError(t, err)
+	require.True(t, held)
+	t.Cleanup(func() { assert.NoError(t, lock.Unlock()) })
+	saveCtx, cancelSave := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancelSave()
+	assert.ErrorIs(t, manager.Save(saveCtx, testTokenRecord()), context.DeadlineExceeded)
+	deleteCtx, cancelDelete := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancelDelete()
+	assert.ErrorIs(t, manager.Delete(deleteCtx, "123", oauthTestOwner), context.DeadlineExceeded)
+	_, err = manager.Load("123", oauthTestOwner)
+	require.NoError(t, err)
 }

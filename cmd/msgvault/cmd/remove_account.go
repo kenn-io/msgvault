@@ -476,8 +476,14 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 		appID, ownerID, parseErr := threads.ParseSourceIdentifier(source.Identifier)
 		if parseErr != nil {
 			fmt.Fprintln(os.Stderr, "Warning: invalid Threads source binding; credential was preserved")
-		} else if err := threads.NewTokenManager(cfg.TokensDir()).Delete(appID, ownerID); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not remove Threads credential: %v\n", err)
+		} else {
+			// After source removal, finish credential cleanup even if the caller cancels.
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(cmd.Context()), 5*time.Second)
+			err := threads.NewTokenManager(cfg.TokensDir()).Delete(cleanupCtx, appID, ownerID)
+			cancel()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not remove Threads credential: %v\n", err)
+			}
 		}
 	case sourceTypeSlack:
 		if teamID, userID, ok := splitSlackIdentifier(source.Identifier); ok {

@@ -24,7 +24,7 @@ func AuthorizationURL(appID, redirectURI, state string) (string, error) {
 	if _, err := oauthCallbackURI(redirectURI); err != nil {
 		return "", err
 	}
-	scopes := []string{"threads_basic", "threads_read_replies"}
+	scopes := requiredReadScopes
 	query := url.Values{"client_id": {appID}, "redirect_uri": {redirectURI}, "state": {state}, "scope": {strings.Join(scopes, ",")}, "response_type": {"code"}}
 	return "https://threads.com/oauth/authorize?" + query.Encode(), nil
 }

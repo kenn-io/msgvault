@@ -798,8 +798,16 @@ HTTPS callback. Set `MSGVAULT_THREADS_APP_SECRET` or enter the secret at the
 masked terminal prompt, open the displayed authorization URL, and paste the
 complete returned callback URL. The daemon verifies the account and stores its
 token in an owner-only JSON file (mode 0600); the file is not encrypted.
-This connection does not yet import or sync Threads content. Remove a connection
-with `remove-account` to delete its saved token.
+This connection does not yet import or sync Threads content. If the credential
+expires, rerun `add-threads` to reconnect. If registration fails after the
+token is saved, retry the same connection; if no source was created, the owner
+can instead remove its token file from the configured tokens directory. The
+filename is `threads_<app-id>_<owner-id>.json`; for long IDs it is
+`threads_sha256_<digest>.json`, where the digest is SHA-256 of the exact
+`threads:<app-id>:<owner-id>` identifier. The error reports that identifier.
+`remove-account` deletes the saved token when a source exists. OAuth handoff
+requires a literal loopback IP for HTTP; remote HTTPS requires an owner API key.
+The handoff does not follow redirects.
 
 ## add-discord
 

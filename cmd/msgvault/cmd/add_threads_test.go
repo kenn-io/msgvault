@@ -54,8 +54,6 @@ func newThreadsConnectFixture(t *testing.T, owner string) *threadsConnectFixture
 			assert.Equal(t, "synthetic-app-secret", r.Form.Get("client_secret"))
 			f.appID = r.Form.Get("client_id")
 			_, _ = fmt.Fprintf(w, `{"access_token":"synthetic-short-token","user_id":%q}`, f.ownerID)
-		case "/refresh_access_token":
-			_, _ = fmt.Fprint(w, `{"access_token":"synthetic-refreshed-token","expires_in":5184000}`)
 		case "/access_token":
 			_, _ = fmt.Fprint(w, `{"access_token":"synthetic-long-token","expires_in":5184000}`)
 		case "/me":
@@ -65,9 +63,6 @@ func newThreadsConnectFixture(t *testing.T, owner string) *threadsConnectFixture
 				f.beforeDebug()
 			}
 			expected := "TH|" + f.appID + "|synthetic-app-secret"
-			if r.URL.Query().Get("input_token") == "synthetic-refreshed-token" {
-				expected = "synthetic-refreshed-token"
-			}
 			assert.Equal(t, expected, r.URL.Query().Get("access_token"))
 			scopes, err := json.Marshal(f.scopes)
 			if !assert.NoError(t, err) {
@@ -90,7 +85,7 @@ func TestAddThreadsReauthorizationCannotRecreateRemovedSource(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	provider := newThreadsConnectFixture(t, "20")
 	deps := provider.deps(st, t.TempDir())
-	_, err := executeAddThreadsFixture(t, deps, "123", false)
+	_, err := executeAddThreadsFixture(t, deps, "123")
 	require.NoError(err)
 	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeThreads, "threads:123:20")
 	require.NoError(err)
@@ -152,7 +147,7 @@ func (f *threadsConnectFixture) deps(st *store.Store, dir string) threadsCommand
 		registerSource: registerThreadsSource, postSourceMigrations: func(*store.Store) error { return nil },
 	}
 }
-func executeAddThreadsFixture(t *testing.T, deps threadsCommandDeps, appID string, _ bool) (string, error) {
+func executeAddThreadsFixture(t *testing.T, deps threadsCommandDeps, appID string) (string, error) {
 	t.Helper()
 	payload, err := json.Marshal(threadsOAuthPayload{AppID: appID, RedirectURI: "https://example.com/threads-callback", Code: "synthetic-code", AppSecret: "synthetic-app-secret"})
 	require.NoError(t, err)
@@ -183,7 +178,7 @@ func TestAddThreadsDaemonExchange(t *testing.T) {
 		assert.NotEmpty(saved.AccessToken(), "credential must be durable before registration")
 		return original(ctx, s, r)
 	}
-	out, err := executeAddThreadsFixture(t, deps, "123", false)
+	out, err := executeAddThreadsFixture(t, deps, "123")
 	require.NoError(err)
 	const identifier = "threads:123:9007199254740993123"
 	assert.Contains(out, identifier)
@@ -199,14 +194,14 @@ func TestAddThreadsDaemonExchange(t *testing.T) {
 	originalConfig := source.SyncConfig
 	assert.False(originalConfig.Valid)
 	require.NoError(st.UpdateSourceSyncCursor(source.ID, "preserved-cursor"))
-	out, err = executeAddThreadsFixture(t, deps, "123", false)
+	out, err = executeAddThreadsFixture(t, deps, "123")
 	require.NoError(err)
 	again, err := st.GetSourceByID(source.ID)
 	require.NoError(err)
 	assert.Equal(originalConfig, again.SyncConfig)
 	assert.Equal("preserved-cursor", again.SyncCursor.String)
 	assert.Contains(out, identifier)
-	_, err = executeAddThreadsFixture(t, deps, "124", false)
+	_, err = executeAddThreadsFixture(t, deps, "124")
 	require.NoError(err)
 	other, err := st.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeThreads, "threads:124:9007199254740993123")
 	require.NoError(err)
@@ -226,15 +221,49 @@ func TestAddThreadsRejectsUngrantAndPreservesPartialRegistration(t *testing.T) {
 			}
 			return nil, errors.New("synthetic registration failure")
 		}
-		_, err := executeAddThreadsFixture(t, deps, "123", false)
+		_, err := executeAddThreadsFixture(t, deps, "123")
 		require.ErrorContains(err, "credential was saved")
 		_, err = deps.tokenManager().Load("123", "20")
 		require.NoError(err)
 		deps.registerSource = registerThreadsSource
-		_, err = executeAddThreadsFixture(t, deps, "123", false)
+		_, err = executeAddThreadsFixture(t, deps, "123")
 		require.NoError(err)
 		sources, err := st.ListSourcesContext(t.Context(), sourceTypeThreads)
 		require.NoError(err)
 		assert.Len(sources, 1)
 	})
+}
+
+func TestAddThreadsRegistrationFailureBeforeSourceCanReconnect(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	provider := newThreadsConnectFixture(t, "20")
+	deps := provider.deps(st, t.TempDir())
+	deps.registerSource = func(context.Context, *store.Store, threads.TokenRecord) (*store.Source, error) {
+		return nil, errors.New("synthetic source creation failure")
+	}
+	_, err := executeAddThreadsFixture(t, deps, "123")
+	require.ErrorContains(t, err, "rerun add-threads")
+	_, err = deps.tokenManager().Load("123", "20")
+	require.NoError(t, err)
+	_, err = st.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeThreads, "threads:123:20")
+	require.ErrorIs(t, err, store.ErrSourceNotFound)
+	deps.registerSource = registerThreadsSource
+	_, err = executeAddThreadsFixture(t, deps, "123")
+	require.NoError(t, err)
+	_, err = st.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeThreads, "threads:123:20")
+	require.NoError(t, err)
+}
+
+func TestAddThreadsRespectsDefaultIdentityOptOut(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(sourceTypeThreads, "threads:123:20")
+	require.NoError(t, err)
+	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), source.ID, `{"no_default_identity":true}`))
+	provider := newThreadsConnectFixture(t, "20")
+	deps := provider.deps(st, t.TempDir())
+	_, err = executeAddThreadsFixture(t, deps, "123")
+	require.NoError(t, err)
+	identities, err := st.ListAccountIdentitiesContext(t.Context(), source.ID)
+	require.NoError(t, err)
+	assert.Empty(t, identities)
 }

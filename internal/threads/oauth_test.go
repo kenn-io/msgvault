@@ -27,6 +27,8 @@ func TestThreadsOAuthFullCallback(t *testing.T) {
 	}{
 		{"valid", registered, good, "expected", true},
 		{"fragment", registered, good + "#_", "expected", true},
+		{"hostname case", registered, strings.Replace(good, "example.com", "EXAMPLE.COM", 1), "expected", true},
+		{"default port", registered, strings.Replace(good, "example.com", "example.com:443", 1), "expected", true},
 		{"missing state", registered, registered + "&code=secret", "expected", false},
 		{"wrong state", registered, good, "other", false},
 		{"empty expected", registered, good, "", false},
@@ -95,7 +97,6 @@ type oauthFixture struct {
 	issued, expires, dataExpires time.Time
 	failPath                     string
 	failStatus, failCode         int
-	beforeRefresh                func()
 }
 
 func newOAuthFixture(t *testing.T) *oauthFixture {
@@ -134,22 +135,9 @@ func newOAuthFixture(t *testing.T) *oauthFixture {
 			assert.Equal(t, "id,username,name", r.URL.Query().Get("fields"))
 			assert.Equal(t, "long-secret", r.URL.Query().Get("access_token"))
 			_, _ = fmt.Fprintf(w, `{"id":"%s","username":"example_owner","name":"Example Owner"}`, oauthTestOwner)
-		case "/refresh_access_token":
-			assert.Equal(t, http.MethodGet, r.Method)
-			assert.Equal(t, "th_refresh_token", r.URL.Query().Get("grant_type"))
-			assert.Equal(t, "long-secret", r.URL.Query().Get("access_token"))
-			assert.Empty(t, r.URL.Query().Get("client_secret"))
-			if f.beforeRefresh != nil {
-				f.beforeRefresh()
-			}
-			_, _ = fmt.Fprint(w, `{"access_token":"refreshed-secret","token_type":"bearer","expires_in":5184000}`)
 		case "/debug_token":
-			if r.URL.Query().Get("input_token") == "long-secret" {
-				assert.Equal(t, "TH|123|app-secret", r.URL.Query().Get("access_token"))
-			} else {
-				assert.Equal(t, "refreshed-secret", r.URL.Query().Get("access_token"))
-			}
-			assert.Contains(t, []string{"long-secret", "refreshed-secret"}, r.URL.Query().Get("input_token"))
+			assert.Equal(t, "TH|123|app-secret", r.URL.Query().Get("access_token"))
+			assert.Equal(t, "long-secret", r.URL.Query().Get("input_token"))
 			body := map[string]any{"data": map[string]any{"app_id": f.debugApp, "user_id": f.debugOwner, "is_valid": f.valid, "scopes": f.scopes, "issued_at": f.issued.Unix(), "expires_at": f.expires.Unix(), "data_access_expires_at": f.dataExpires.Unix()}}
 			if f.debugApp == "" {
 				data, ok := body["data"].(map[string]any)

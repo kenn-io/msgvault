@@ -31,12 +31,10 @@ type TokenRecord struct {
 	Name                string    `json:"name,omitempty"`
 	Scopes              []string  `json:"scopes"`
 	IssuedAt            time.Time `json:"issued_at"`
-	RefreshedAt         time.Time `json:"refreshed_at"`
 	ExpiresAt           time.Time `json:"expires_at"`
 	DataAccessExpiresAt time.Time `json:"data_access_expires_at"`
 	RedirectURI         string    `json:"redirect_uri"`
 	Generation          uint64    `json:"generation"`
-	Invalidated         bool      `json:"invalidated,omitempty"`
 	secret              *credentialSecret
 }
 type credentialSecret struct{ value string }
@@ -54,7 +52,11 @@ func (r TokenRecord) Format(s fmt.State, _ rune) {
 // tokenMetadata prevents serialization of the formatting methods; the secret
 // is added only in the private on-disk representation of a 0600 file.
 type tokenMetadata TokenRecord
+
+const tokenFormatVersion = 1
+
 type threadsTokenFile struct {
+	Version int `json:"version"`
 	tokenMetadata
 
 	AccessToken string `json:"access_token"`
@@ -246,6 +248,9 @@ func (m *TokenManager) Load(appID, ownerID string) (TokenRecord, error) {
 	if err = json.Unmarshal(data, &stored); err != nil {
 		return TokenRecord{}, errors.New("invalid Threads credential file")
 	}
+	if stored.Version != 0 && stored.Version != tokenFormatVersion {
+		return TokenRecord{}, errors.New("unsupported Threads credential format")
+	}
 	r := TokenRecord(stored.tokenMetadata)
 	r.secret = &credentialSecret{stored.AccessToken}
 	if err = validateThreadsToken(r); err != nil {
@@ -261,23 +266,22 @@ func (m *TokenManager) Load(appID, ownerID string) (TokenRecord, error) {
 // fresh exchange; a nonzero record must match the durable, usable generation.
 // Call under WithSourceLock whenever source state is involved. This method uses
 // only the distinct inner store lock and never reacquires the lifecycle lock.
-func (m *TokenManager) Save(record TokenRecord) error {
+func (m *TokenManager) Save(ctx context.Context, record TokenRecord) error {
 	if err := validateThreadsToken(record); err != nil {
 		return err
 	}
-	return m.withFileLock(context.Background(), ".threads-token.lock", func() error {
+	return m.withFileLock(ctx, ".threads-token.lock", func() error {
 		current, err := m.Load(record.AppID, record.OwnerID)
 		if err != nil && !errors.Is(err, ErrTokenNotFound) {
 			return err
 		}
-		if record.Generation != 0 && (err != nil || record.Generation != current.Generation || current.Invalidated) {
+		if record.Generation != 0 && (err != nil || record.Generation != current.Generation) {
 			return errors.New("stale Threads credential generation")
 		}
 		if current.Generation == ^uint64(0) {
 			return errors.New("threads credential generation exhausted")
 		}
 		record.Generation = current.Generation + 1
-		record.Invalidated = false
 		return m.writeToken(record)
 	})
 }
@@ -291,7 +295,7 @@ func validateThreadsToken(r TokenRecord) error {
 	if _, err := oauthCallbackURI(r.RedirectURI); err != nil {
 		return err
 	}
-	for _, required := range []string{"threads_basic", "threads_read_replies"} {
+	for _, required := range requiredReadScopes {
 		found := false
 		for _, scope := range r.Scopes {
 			if scope == required {
@@ -316,7 +320,7 @@ func (m *TokenManager) writeToken(r TokenRecord) error {
 	if err = tokenRegularPath(path, true); err != nil {
 		return err
 	}
-	stored := threadsTokenFile{tokenMetadata: tokenMetadata(r), AccessToken: r.AccessToken()}
+	stored := threadsTokenFile{Version: tokenFormatVersion, tokenMetadata: tokenMetadata(r), AccessToken: r.AccessToken()}
 	data, err := json.Marshal(stored)
 	if err != nil {
 		return errors.New("serialize Threads credential")
@@ -327,7 +331,7 @@ func (m *TokenManager) writeToken(r TokenRecord) error {
 	return m.inspectRoot(false)
 }
 
-func (m *TokenManager) Delete(appID, ownerID string) error {
+func (m *TokenManager) Delete(ctx context.Context, appID, ownerID string) error {
 	name, err := tokenFilename(appID, ownerID)
 	if err != nil {
 		return err
@@ -337,7 +341,7 @@ func (m *TokenManager) Delete(appID, ownerID string) error {
 	} else if err != nil {
 		return err
 	}
-	return m.withFileLock(context.Background(), ".threads-token.lock", func() error {
+	return m.withFileLock(ctx, ".threads-token.lock", func() error {
 		path := filepath.Join(m.tokensDir, name)
 		if err := tokenRegularPath(path, true); err != nil {
 			return err

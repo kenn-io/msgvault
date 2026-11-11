@@ -14,7 +14,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/config"
@@ -55,17 +54,6 @@ func (d *threadsConnectDaemon) RunCLICommand(ctx context.Context, req api.CLIRun
 		}
 		return nil
 	})
-}
-
-func TestThreadsConnectDirectGrantDeniedBeforeRunner(t *testing.T) {
-	adapter := &storeAPIAdapter{}
-	calls := 0
-	err := adapter.runCLICommandWithRunner(t.Context(), api.CLIRunRequest{Args: []string{"add-threads"}, Grant: &agentgrant.Grant{}}, nil, func(context.Context, []string, map[string]string, string, func(string, string) error) error {
-		calls++
-		return nil
-	})
-	require.ErrorContains(t, err, "owner")
-	assert.Zero(t, calls)
 }
 
 type threadsCallbackInput struct {

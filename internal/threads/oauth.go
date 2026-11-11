@@ -17,6 +17,8 @@ import (
 	"time"
 )
 
+var requiredReadScopes = []string{"threads_basic", "threads_read_replies"}
+
 // OAuthClientOptions is a constructor dependency, never runtime configuration.
 // HTTPClient must carry the operation's shared budget transport, including for
 // exchange before owner discovery. Binding the owner must not reset that budget.
@@ -63,7 +65,7 @@ func ParseOAuthCallback(registeredURI, returnedURL, expectedState string) (strin
 		return "", bad
 	}
 	returned, err := url.Parse(returnedURL)
-	if err != nil || returned.User != nil || returned.Opaque != "" || returned.Scheme != registered.Scheme || returned.Host != registered.Host || returned.EscapedPath() != registered.EscapedPath() {
+	if err != nil || returned.User != nil || returned.Opaque != "" || !strings.EqualFold(returned.Scheme, registered.Scheme) || !strings.EqualFold(returned.Hostname(), registered.Hostname()) || callbackPort(returned) != callbackPort(registered) || returned.EscapedPath() != registered.EscapedPath() {
 		return "", bad
 	}
 	// Meta may append #_; the code is parsed solely from the query string.
@@ -126,6 +128,16 @@ func oauthCallbackURI(raw string) (*url.URL, error) {
 	return u, nil
 }
 
+func callbackPort(u *url.URL) string {
+	if port := u.Port(); port != "" {
+		return port
+	}
+	if strings.EqualFold(u.Scheme, "https") {
+		return "443"
+	}
+	return ""
+}
+
 // ExchangeCredential verifies a long-lived user token. Callers must save the
 // result under source lifecycle ownership before registering/using the source.
 func ExchangeCredential(ctx context.Context, opts OAuthClientOptions, req OAuthRequest) (TokenRecord, error) {
@@ -135,7 +147,7 @@ func ExchangeCredential(ctx context.Context, opts OAuthClientOptions, req OAuthR
 	if _, err := oauthCallbackURI(req.RedirectURI); err != nil {
 		return TokenRecord{}, err
 	}
-	required := append([]string{"threads_basic", "threads_read_replies"}, req.RequiredScopes...)
+	required := append(append([]string(nil), requiredReadScopes...), req.RequiredScopes...)
 	c, err := newOAuthHTTP(opts)
 	if err != nil {
 		return TokenRecord{}, err

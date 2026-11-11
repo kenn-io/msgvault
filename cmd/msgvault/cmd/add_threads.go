@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -89,9 +90,6 @@ func newAddThreadsLocalCmd(deps threadsCommandDeps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "add-threads", Short: "Connect your Threads account", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if isAgentMode(invocationFromCommand(cmd)) {
-				return errors.New("threads connection requires the owner")
-			}
 			if invocationFromCommand(cmd) != nil && deps.bind != nil {
 				deps = deps.bind(cmd.Context())
 			}
@@ -136,7 +134,6 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 		now = deps.now
 	}
 	budget := threads.NewRequestBudget(threads.BudgetOptions{MaxAttempts: threads.ManualRequestLimit, Now: now, Wait: deps.wait})
-	scopes := []string{"threads_basic", "threads_read_replies"}
 	ctx, cancel := budget.RunContext(cmd.Context())
 	defer cancel()
 	manager := deps.tokenManager()
@@ -183,7 +180,7 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 			if err != nil || verified != identifier {
 				return threads.ErrReauthorizationRequired
 			}
-			if err := manager.Save(record); err != nil {
+			if err := manager.Save(ctx, record); err != nil {
 				return err
 			}
 			saved, err := manager.Load(record.AppID, record.OwnerID)
@@ -192,7 +189,7 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 			}
 			source, err := deps.registerSource(ctx, st, saved)
 			if err != nil {
-				return fmt.Errorf("threads credential was saved, but account registration failed: %w", err)
+				return fmt.Errorf("threads credential was saved for %s, but account registration failed; rerun add-threads to reconnect, or remove the token from the configured tokens directory: %w", identifier, err)
 			}
 			if execution == nil {
 				execution, err = st.AcquireSyncExecutionContext(ctx, source.ID)
@@ -200,6 +197,11 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 					return err
 				}
 			}
+			logger := slog.New(slog.DiscardHandler)
+			if state := invocationFromCommand(cmd); state != nil && state.logger != nil {
+				logger = state.logger
+			}
+			confirmDefaultIdentity(ctx, cmd.OutOrStdout(), st, source.ID, identifier, identifier, "threads_user_id", logger)
 			if deps.postSourceMigrations != nil {
 				if err := deps.postSourceMigrations(st); err != nil {
 					return fmt.Errorf("threads credential was saved, but registration migrations failed: %w", err)
@@ -210,7 +212,7 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 		})
 		return record, retErr
 	}
-	_, err = threads.ExchangeCredential(ctx, options, threads.NewOAuthRequest(appID, redirectURI, payload.Code, payload.AppSecret, scopes))
+	_, err = threads.ExchangeCredential(ctx, options, threads.NewOAuthRequest(appID, redirectURI, payload.Code, payload.AppSecret, nil))
 	return err
 }
 
@@ -237,9 +239,6 @@ func registerThreadsSource(ctx context.Context, st *store.Store, record threads.
 		return nil, err
 	}
 	if _, err := st.EnsureParticipantByIdentifierContext(ctx, "threads_user_id", identifier, label); err != nil {
-		return nil, err
-	}
-	if err := st.AddAccountIdentityContext(ctx, source.ID, identifier, "threads_user_id"); err != nil {
 		return nil, err
 	}
 	return st.GetSourceByIDContext(ctx, source.ID)
