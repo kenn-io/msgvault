@@ -384,6 +384,7 @@ func TestEmailCalendarMaterializesOnRawMIMEUpsert(t *testing.T) {
 
 func TestEmailCalendarInvalidPartPreservesEmail(t *testing.T) {
 	t.Run("ignored method", func(t *testing.T) {
+		assertions := assert.New(t)
 		st := newRFC822IDBackfillBackendStore(t)
 		var logs bytes.Buffer
 		previous := slog.Default()
@@ -391,11 +392,11 @@ func TestEmailCalendarInvalidPartPreservesEmail(t *testing.T) {
 		t.Cleanup(func() { slog.SetDefault(previous) })
 		raw := inviteEmail(calendarDocument("ADD", "DTSTART:20270302T120000Z"))
 		id, source := persistInviteEmail(t, st, "ignored-method", raw)
-		assert.Empty(t, emailEvents(t, st, source))
+		assertions.Empty(emailEvents(t, st, source))
 		stored, err := st.GetMessageRaw(id)
 		require.NoError(t, err)
-		assert.Equal(t, raw, stored)
-		assert.NotContains(t, logs.String(), "calendar invite ignored")
+		assertions.Equal(raw, stored)
+		assertions.NotContains(logs.String(), "calendar invite ignored")
 	})
 	t.Run("invalid calendar", func(t *testing.T) {
 		assertions, requirements := assert.New(t), require.New(t)
