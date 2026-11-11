@@ -64,3 +64,62 @@ func TestPersonBriefHTTPEventQuestionsAndLegacyHistoryKeepSentenceCitations(t *t
 	assert.Equal(legacy.rendered, versions.Versions[3].RenderedText)
 	assert.NotEmpty(versions.Versions[3].Sentences)
 }
+
+func TestPersonBriefHTTPBoundarySanitizesEventProsePreservingReferences(t *testing.T) {
+	checks := assert.New(t)
+	required := require.New(t)
+	f := newPersonBriefAPIFixture(t)
+	seed := personBriefAPISeedFor(t, personBriefAPIStructure(), personBriefAPINow, []int64{f.evidence[0].ID})
+	seed.boundary = `{"event_memory_version":1,"event_memory":[{"highlight":{"text":"move\u001b[31m soon","evidence_ids":["id\u001b[31m"],"life_event":{"quote":"I \u001b[31mmove","question":"How \u001b[31mwas it?","anchor_id":"id\u001b[31m","resolution":{"quote":"It \u001b[31mwent well","evidence_id":"outcome\u001b[31m"}}},"sources":[{"message_id":9007199254740993,"source_message_id":"source\u001b[31m"}]}],"future_field":{"value":9007199254740993}}`
+	f.seedBrief(t, seed)
+	for _, suffix := range []string{"", "/versions"} {
+		response := doRequest(t, f.server.Router(), http.MethodGet, personBriefPath(f.personID, suffix), nil, nil)
+		required.Equal(http.StatusOK, response.Code, response.Body.String())
+		var payload map[string]json.RawMessage
+		required.NoError(json.Unmarshal(response.Body.Bytes(), &payload))
+		if suffix != "" {
+			var versions []map[string]json.RawMessage
+			required.NoError(json.Unmarshal(payload["versions"], &versions))
+			required.Len(versions, 1)
+			payload = versions[0]
+		}
+		var boundary struct {
+			EventMemory []struct {
+				Highlight struct {
+					Text        string   `json:"text"`
+					EvidenceIDs []string `json:"evidence_ids"`
+					LifeEvent   struct {
+						Quote      string `json:"quote"`
+						Question   string `json:"question"`
+						AnchorID   string `json:"anchor_id"`
+						Resolution struct {
+							Quote      string `json:"quote"`
+							EvidenceID string `json:"evidence_id"`
+						} `json:"resolution"`
+					} `json:"life_event"`
+				} `json:"highlight"`
+				Sources []struct {
+					MessageID       int64  `json:"message_id"`
+					SourceMessageID string `json:"source_message_id"`
+				} `json:"sources"`
+			} `json:"event_memory"`
+			FutureField struct {
+				Value int64 `json:"value"`
+			} `json:"future_field"`
+		}
+		required.NoError(json.Unmarshal(payload["boundary"], &boundary))
+		required.Len(boundary.EventMemory, 1)
+		event := boundary.EventMemory[0]
+		checks.Equal("move soon", event.Highlight.Text)
+		checks.Equal("I move", event.Highlight.LifeEvent.Quote)
+		checks.Equal("How was it?", event.Highlight.LifeEvent.Question)
+		checks.Equal("It went well", event.Highlight.LifeEvent.Resolution.Quote)
+		checks.Equal([]string{"id\x1b[31m"}, event.Highlight.EvidenceIDs)
+		checks.Equal("id\x1b[31m", event.Highlight.LifeEvent.AnchorID)
+		checks.Equal("outcome\x1b[31m", event.Highlight.LifeEvent.Resolution.EvidenceID)
+		required.Len(event.Sources, 1)
+		checks.Equal(int64(9007199254740993), event.Sources[0].MessageID)
+		checks.Equal("source\x1b[31m", event.Sources[0].SourceMessageID)
+		checks.Equal(int64(9007199254740993), boundary.FutureField.Value)
+	}
+}

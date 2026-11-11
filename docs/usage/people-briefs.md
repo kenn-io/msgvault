@@ -90,9 +90,9 @@ it does not become a profile attribute, observation, or task.
 This is part of scheduled brief generation, with the same enrollment, tracking,
 provider consent, source limits, and budgets. Reading a saved brief makes no
 provider call. Existing briefs get one initial event-aware refresh after an
-upgrade, using the configured item, byte, and budget limits. A date becoming due can trigger a new version without another
-message. New activity can refresh retained events before the usual seven-day
-interval, so an outcome that reaches the evidence window can retire its question.
+upgrade, using the configured item, byte, and budget limits. A date becoming
+due can trigger a new version without another message. New activity can refresh
+retained unresolved events before the usual seven-day interval, so an outcome that reaches the evidence window can retire its question.
 A failed refresh uses the normal retry delay.
 
 Event memory holds at most eight events, with one event per announcement.
@@ -108,10 +108,14 @@ The evidence window is bounded, so this is not a complete event ledger. A burst
 of newer messages or the byte limit can hide an outcome. After the first event-
 aware brief, an older announcement cannot introduce a new event by replay or
 backfill; the admission date only moves forward. This prevents old resolved
-questions from reappearing when their memory leaves the eight-event set.
+questions from reappearing when their memory leaves the eight-event set. Late
+imports and rediscoveries with an event timestamp equal to the admission date
+are also excluded.
 Date normalization and classification are model interpretations, even though
 source identity and exact quotes are checked separately. A reschedule needs a
-new announcement and an explicit resolution of the previous event.
+new announcement and an explicit resolution of the previous event. Retiring a
+typed event does not semantically suppress free-form model follow-ups on
+ordinary highlights.
 
 If sources change or fall outside the provider's allowed dates, the next sweep
 revalidates the event before reusing it. When no admissible evidence remains,

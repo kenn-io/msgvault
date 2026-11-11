@@ -292,3 +292,36 @@ func TestBriefEventPlannedRefreshBuildsItsArchiveWindowOnce(t *testing.T) {
 	assert.Len(outcome.archive.candidateCalls, 1, "one refresh must not repeat archive listing")
 	assert.Len(outcome.archive.hydrateCalls, 1, "retained sources are read once for the paid packet")
 }
+
+func TestBriefEventFreshActivityRespectsIntervalForResolvedMemory(t *testing.T) {
+	config, _ := workerTestConfig(t)
+	now := time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC)
+	generated := now.Add(-time.Hour)
+	for _, tc := range []struct {
+		name    string
+		states  []BriefEventState
+		wantRun bool
+	}{
+		{"resolved only", []BriefEventState{BriefEventResolved}, false},
+		{"upcoming", []BriefEventState{BriefEventUpcoming}, true},
+		{"follow up", []BriefEventState{BriefEventFollowUp}, true},
+		{"mixed", []BriefEventState{BriefEventResolved, BriefEventFollowUp}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checks := assert.New(t)
+			required := require.New(t)
+			memory := make([]BriefEventMemory, 0, len(tc.states))
+			for _, state := range tc.states {
+				memory = append(memory, BriefEventMemory{Highlight: BriefHighlight{LifeEvent: &BriefLifeEvent{State: state}}})
+			}
+			store := &briefFakeStore{enrolled: true, highWater: 41, changedAfter: 41,
+				eligibility: BriefEligibility{Version: 3, Status: BriefStatusCurrent, GeneratedAt: &generated,
+					Boundary: &BriefBoundary{ThroughSequence: 40, EventMemory: memory}}}
+			worker := Worker{Config: config, Brief: store, Archive: &briefFakeArchive{}}
+			plan, err := worker.planPersonBrief(t.Context(), 7, BriefModeAuto, briefWindowProfile(), now)
+			required.NoError(err)
+			checks.Equal(tc.wantRun, plan.run)
+			checks.Equal(3, plan.retireVersion, "every retained event remains subject to source revalidation")
+		})
+	}
+}

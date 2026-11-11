@@ -80,7 +80,7 @@ type PersonBriefSentence struct {
 
 // PersonBrief is one immutable brief version. It carries the paragraph, the
 // sentence-to-item map, the validated structure, and the cited archive items —
-// never an excerpt of the archive text the brief was derived from.
+// including short evidence-backed event quotes when present.
 type PersonBrief struct {
 	Version          int                                `json:"version"`
 	Status           string                             `json:"status"`
@@ -363,7 +363,7 @@ func (s *Server) personBriefDTO(
 		Sentences:        sentences,
 		Structured:       s.sanitizedPersonBriefStructure(brief),
 		Evidence:         pointers,
-		Boundary:         personBriefJSON(brief.Boundary),
+		Boundary:         sanitizedPersonBriefBoundary(brief.Boundary),
 		DroppedItemCount: brief.DroppedItemCount,
 		ProgramID:        brief.ProgramID,
 		ProgramVersion:   brief.ProgramVersion,
@@ -417,6 +417,63 @@ func (s *Server) sanitizedPersonBriefStructure(brief store.PersonBrief) jsontext
 		s.logger.Error("person brief structure could not be re-encoded",
 			"person_id", brief.PersonID, "version", brief.Version)
 		return personBriefJSON(brief.Structured)
+	}
+	return encoded
+}
+
+// sanitizedPersonBriefBoundary sanitizes display prose without interpreting or
+// rewriting evidence references and fields from newer boundary formats.
+func sanitizedPersonBriefBoundary(raw jsontext.Value) jsontext.Value {
+	boundary := personBriefJSON(raw)
+	for _, path := range [][]string{
+		{"event_memory", "*", "highlight", "text"},
+		{"event_memory", "*", "highlight", "life_event", "quote"},
+		{"event_memory", "*", "highlight", "life_event", "question"},
+		{"event_memory", "*", "highlight", "life_event", "resolution", "quote"},
+	} {
+		boundary = sanitizeBriefJSONPath(boundary, path)
+	}
+	return boundary
+}
+
+func sanitizeBriefJSONPath(raw jsontext.Value, path []string) jsontext.Value {
+	if len(path) == 0 {
+		var value string
+		if json.Unmarshal(raw, &value) != nil {
+			return raw
+		}
+		encoded, err := json.Marshal(textutil.SanitizeTerminal(value))
+		if err != nil {
+			return raw
+		}
+		return encoded
+	}
+	if path[0] == "*" {
+		var items []jsontext.Value
+		if json.Unmarshal(raw, &items) != nil || items == nil {
+			return raw
+		}
+		for i := range items {
+			items[i] = sanitizeBriefJSONPath(items[i], path[1:])
+		}
+		encoded, err := json.Marshal(items, json.Deterministic(true))
+		if err != nil {
+			return raw
+		}
+		return encoded
+	}
+	var object map[string]jsontext.Value
+	if json.Unmarshal(raw, &object) != nil || object == nil {
+		return raw
+	}
+	value, ok := object[path[0]]
+	if !ok {
+		return raw
+	}
+	object[path[0]] = sanitizeBriefJSONPath(value, path[1:])
+	encoded, err := json.Marshal(object, json.Deterministic(true))
+	if err != nil {
+		return raw
 	}
 	return encoded
 }

@@ -229,7 +229,7 @@ func (w *Worker) planPersonBrief(
 	if !fresh {
 		return plan, nil
 	}
-	if eligibility.Status == BriefStatusSuperseded || len(eligibility.Boundary.EventMemory) > 0 {
+	if eligibility.Status == BriefStatusSuperseded || hasUnresolvedBriefEvent(eligibility.Boundary.EventMemory) {
 		plan.run = true
 		return plan, nil
 	}
@@ -248,6 +248,17 @@ func (w *Worker) planPersonBrief(
 		plan.run = true
 	}
 	return plan, nil
+}
+
+// Only unresolved events can gain a new outcome on fresh activity. All
+// retained events still undergo source revalidation through retireVersion.
+func hasUnresolvedBriefEvent(memory []BriefEventMemory) bool {
+	for _, item := range memory {
+		if item.Highlight.LifeEvent != nil && item.Highlight.LifeEvent.State != BriefEventResolved {
+			return true
+		}
+	}
+	return false
 }
 
 // briefWindowRequest turns the plan and the configuration into the window the
