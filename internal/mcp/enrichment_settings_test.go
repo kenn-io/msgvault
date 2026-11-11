@@ -18,7 +18,7 @@ func TestEnrichmentSettingsInputSchemaRejectsProviderSetup(t *testing.T) {
 	for _, field := range []struct {
 		name  string
 		value any
-	}{{"endpoint", "example"}, {"poll_endpoint", "example"}, {"credential", "example"}, {"target_keys", []any{"attribute:bio"}}, {"allowed_identifiers", []any{"name"}}, {"kind", "example"}} {
+	}{{"endpoint", "example"}, {"poll_endpoint", "example"}, {"credential", "example"}, {"target_keys", []any{"attribute:bio"}}, {"allowed_identifiers", []any{"name"}}, {"kind", "exa"}} {
 		require.Error(schema.Validate(map[string]any{"name": "example", "etag": `"revision"`, field.name: field.value}), field.name)
 	}
 	require.Error(schema.Validate(map[string]any{"name": "example", "etag": `"revision"`, "max_retries": float64(-1)}))
