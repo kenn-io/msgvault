@@ -790,9 +790,13 @@ func TestCommitmentCorrectedPromiseTimeInvalidatesEarlierFulfilment(t *testing.T
 			f = nextCommitmentTestAttempt(t, f, "-finish-correction")
 			window, err = st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
 			r.NoError(err)
-			_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
-				Promises: []peoplesweep.CommitmentPromise{}, Fulfilments: []peoplesweep.CommitmentFulfilment{},
-			}))
+			r.Empty(window.Sources)
+			request := f.request
+			request.CommitmentOnly = true
+			request.Budget = personSweepApplyBudget()
+			request.Generation.Policy.AllowSensitive = true
+			request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg.Commitments}
+			_, err = st.ApplyPersonSweep(ctx, request)
 			r.NoError(err)
 			newer := persist("newer-completion", reply, -30*time.Minute)
 			f = nextCommitmentTestAttempt(t, f, "-newer-completion")

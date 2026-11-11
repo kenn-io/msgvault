@@ -197,11 +197,21 @@ func newConsentOnlyCommitmentWorker(t *testing.T, due bool) (Worker, *commitment
 	return worker, st, sink
 }
 
+type commitmentConsentSource struct{ workerFailureSource }
+
+func (s commitmentConsentSource) LoadPersonSweepWindow(ctx context.Context, request WindowRequest) (PersonWindow, error) {
+	window, err := s.workerFailureSource.LoadPersonSweepWindow(ctx, request)
+	window.Seeds = []EvidenceItem{packetTestEvidence(71, SourceConversationText, "pending ordinary evidence")}
+	return window, err
+}
+
 func TestCommitmentConsentDeferralAppliesLocalEvidenceInvalidation(t *testing.T) {
 	for _, idle := range []bool{false, true} {
 		t.Run(fmt.Sprintf("idle=%t", idle), func(t *testing.T) {
 			r, a := require.New(t), assert.New(t)
 			worker, st, sink := newConsentOnlyCommitmentWorker(t, false)
+			source := commitmentConsentSource{}
+			worker.Source, worker.Context = source, NewContextRetriever(source)
 			if idle {
 				source := &workerProductionSource{windows: map[GenerationCursorMode]PersonWindow{}}
 				worker.Source, worker.Context = source, NewContextRetriever(source)
