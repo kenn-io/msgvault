@@ -174,8 +174,10 @@ func cobraCommandArgs(cmd *cobra.Command, args []string, includeRoot bool) ([]st
 	}
 	var runArgs []string
 	if includeRoot {
-		cmd.Root().PersistentFlags().Visit(func(flag *pflag.Flag) {
-			runArgs = appendDaemonCLIFlag(runArgs, flag)
+		cmd.Root().PersistentFlags().VisitAll(func(flag *pflag.Flag) {
+			if flag.Changed {
+				runArgs = appendDaemonCLIFlag(runArgs, flag)
+			}
 		})
 	}
 	runArgs = append(runArgs, daemonCLICommandPath(cmd)...)
