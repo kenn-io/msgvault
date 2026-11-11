@@ -90,14 +90,6 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 		if err := s.lockSyncMaintenanceGate(ctx, tx); err != nil {
 			return err
 		}
-		// Queue choice writers before reading their shared graph. The maintenance
-		// gate precedes this row lock, as it does for the tables choices touch.
-		if _, err := tx.ExecContext(ctx, s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO archive_metadata (key, value) VALUES (?, '0')`), "meeting_link_decision_lock"); err != nil {
-			return fmt.Errorf("seed meeting decision lock: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE archive_metadata SET value = value WHERE key = ?`, "meeting_link_decision_lock"); err != nil {
-			return fmt.Errorf("lock meeting decisions: %w", err)
-		}
 		for _, endpoint := range []meetingDecisionEndpoint{a, b} {
 			if err := s.lockMeetingEvidenceWith(ctx, tx, endpoint.ID); err != nil {
 				return err
@@ -229,8 +221,7 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 			if err != nil {
 				return err
 			}
-			var conflict meetingDecisionConflict
-			record, err := s.meetingRecordContext(ctx, leftRef, &conflict)
+			record, err := s.meetingRecordContext(ctx, leftRef)
 			if err != nil {
 				return err
 			}
@@ -240,9 +231,6 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 			}
 			for _, link := range record.Links {
 				found = found || b.Kind == meetingRefEvent && (link.Ref == b.ref() || b.Key == "" && link.MessageID == b.ID)
-			}
-			if conflict.link.decision != "" {
-				return fmt.Errorf("%w: link %s %s conflicts with split %s %s", ErrMeetingLinkConflict, conflict.link.a.ref(), conflict.link.b.ref(), conflict.split.a.ref(), conflict.split.b.ref())
 			}
 			if (state == "link") != found {
 				return fmt.Errorf("%w: cannot save %s for %s %s", ErrMeetingLinkConflict, state, a.ref(), b.ref())

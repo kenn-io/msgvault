@@ -18,10 +18,6 @@ type meetingDecisionEdge struct {
 	decision   string
 }
 
-type meetingDecisionConflict struct {
-	link, split meetingDecisionEdge
-}
-
 // meetingDecisionLoader reads the choices of every waiting message in one query, so a
 // large group costs one lookup per batch instead of one per message.
 type meetingDecisionLoader struct {
@@ -122,10 +118,10 @@ func meetingDecisionEndpointMatches(query, stored meetingDecisionEndpoint) bool 
 
 // MeetingRecordContext follows automatic evidence and owner choices in one snapshot.
 func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (MeetingRecord, error) {
-	return s.meetingRecordContext(ctx, ref, nil)
+	return s.meetingRecordContext(ctx, ref)
 }
 
-func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, conflict *meetingDecisionConflict) (MeetingRecord, error) {
+func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef) (MeetingRecord, error) {
 	result := MeetingRecord{Links: []MeetingLink{}, MessageIDs: []int64{}, Unexpandable: []CalendarUnexpandable{}}
 	ctx, release, err := s.BeginReadSnapshotContext(ctx)
 	if err != nil {
@@ -334,9 +330,6 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 			x, y := root(split.a.ref()), root(split.b.ref())
 			if x == a && y == b || x == b && y == a {
 				blocked = true
-				if edge.decision == "link" && conflict != nil {
-					*conflict = meetingDecisionConflict{link: edge, split: split}
-				}
 				break
 			}
 		}
@@ -348,26 +341,18 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 		join(edge)
 	}
 	slices.SortFunc(vertices, compareMeetingEndpoints)
-	if len(splits) == 0 {
-		for _, group := range groups {
-			for _, member := range group[1:] {
-				join(meetingDecisionEdge{a: group[0], b: member})
-			}
-		}
-	} else {
-		for _, member := range vertices {
-			var others []meetingDecisionEndpoint
-			for _, group := range groupByMember[member.ref()] {
-				for _, other := range group {
-					if compareMeetingEndpoints(member, other) < 0 {
-						others = append(others, other)
-					}
+	for _, member := range vertices {
+		var others []meetingDecisionEndpoint
+		for _, group := range groupByMember[member.ref()] {
+			for _, other := range group {
+				if compareMeetingEndpoints(member, other) < 0 {
+					others = append(others, other)
 				}
 			}
-			slices.SortFunc(others, compareMeetingEndpoints)
-			for _, other := range others {
-				join(meetingDecisionEdge{a: member, b: other})
-			}
+		}
+		slices.SortFunc(others, compareMeetingEndpoints)
+		for _, other := range others {
+			join(meetingDecisionEdge{a: member, b: other})
 		}
 	}
 	seedRoot := root(seed.ref())

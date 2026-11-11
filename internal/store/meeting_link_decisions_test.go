@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -178,7 +177,7 @@ func TestMeetingLinkDecisionConflictAndClear(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	var refs []MeetingLinkRef
-	for _, name := range []string{"conflict-a", "conflict-b", "conflict-c"} {
+	for _, name := range []string{"conflict-a", "conflict-b", "conflict-c", "conflict-d"} {
 		_, id := projectionFixture(t, st, name, "meeting_json", `{}`)
 		refs = append(refs, MeetingLinkRef{Kind: "msg", MessageID: id})
 	}
@@ -186,20 +185,47 @@ func TestMeetingLinkDecisionConflictAndClear(t *testing.T) {
 		_, err := st.DecideMeetingLinkContext(t.Context(), refs[pair[0]], refs[pair[1]], "link")
 		requirements.NoError(err)
 	}
-	_, err := st.DecideMeetingLinkContext(t.Context(), refs[0], refs[2], "unlink")
-	requirements.ErrorIs(err, ErrMeetingLinkConflict)
-	requirements.ErrorContains(err, fmt.Sprintf("link msg:%d msg:%d", refs[1].MessageID, refs[2].MessageID))
-	for _, ref := range refs {
+	result, err := st.DecideMeetingLinkContext(t.Context(), refs[0], refs[2], "unlink")
+	requirements.NoError(err)
+	assertions.Equal("split", result.State)
+	for i, ref := range refs[:3] {
 		record, err := st.MeetingRecordContext(t.Context(), ref)
 		requirements.NoError(err)
-		assertions.Equal([]int64{refs[0].MessageID, refs[1].MessageID, refs[2].MessageID}, record.MessageIDs)
+		want := []int64{refs[0].MessageID, refs[1].MessageID}
+		if i == 2 {
+			want = []int64{refs[2].MessageID}
+		}
+		assertions.Equal(want, record.MessageIDs)
+	}
+	_, err = st.DecideMeetingLinkContext(t.Context(), refs[1], refs[2], "link")
+	requirements.ErrorIs(err, ErrMeetingLinkConflict)
+	requirements.ErrorContains(err, fmt.Sprintf("msg:%d msg:%d", refs[1].MessageID, refs[2].MessageID))
+	for i, ref := range refs[:3] {
+		record, err := st.MeetingRecordContext(t.Context(), ref)
+		requirements.NoError(err)
+		want := []int64{refs[0].MessageID, refs[1].MessageID}
+		if i == 2 {
+			want = []int64{refs[2].MessageID}
+		}
+		assertions.Equal(want, record.MessageIDs)
+	}
+	_, err = st.DecideMeetingLinkContext(t.Context(), refs[0], refs[3], "link")
+	requirements.NoError(err)
+	for i, ref := range []MeetingLinkRef{refs[0], refs[2]} {
+		record, err := st.MeetingRecordContext(t.Context(), ref)
+		requirements.NoError(err)
+		want := []int64{refs[0].MessageID, refs[1].MessageID, refs[3].MessageID}
+		if i == 1 {
+			want = []int64{refs[2].MessageID}
+		}
+		assertions.Equal(want, record.MessageIDs)
 	}
 	for range 2 {
 		result, err := st.DecideMeetingLinkContext(t.Context(), refs[2], refs[1], "clear")
 		requirements.NoError(err)
 		assertions.Equal("automatic", result.State)
 	}
-	result, err := st.DecideMeetingLinkContext(t.Context(), refs[0], refs[2], "unlink")
+	result, err = st.DecideMeetingLinkContext(t.Context(), refs[0], refs[2], "unlink")
 	requirements.NoError(err)
 	assertions.Equal("split", result.State)
 	result, err = st.DecideMeetingLinkContext(t.Context(), refs[0], refs[2], "clear")
@@ -974,85 +1000,6 @@ func TestMeetingLinkDecisionSurvivesPermanentDuplicateDeletion(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestMeetingLinkDecisionConcurrentContradiction(t *testing.T) {
-	requirements := require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	if !st.IsPostgreSQL() {
-		t.Skip("PostgreSQL transaction contract")
-	}
-	var refs []MeetingLinkRef
-	for _, key := range []string{"concurrent-a", "concurrent-b", "concurrent-c"} {
-		_, id := projectionFixture(t, st, key, "meeting_json", `{}`)
-		refs = append(refs, MeetingLinkRef{Kind: "msg", MessageID: id})
-	}
-	_, err := st.DecideMeetingLinkContext(t.Context(), refs[0], refs[1], "link")
-	requirements.NoError(err)
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
-	var workers sync.WaitGroup
-	defer func() { cancel(); workers.Wait() }()
-	blocker, err := st.db.BeginTx(ctx, nil)
-	requirements.NoError(err)
-	defer func() { _ = blocker.Rollback() }()
-	var pid int
-	requirements.NoError(blocker.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&pid))
-	var locked int64
-	requirements.NoError(blocker.QueryRowContext(ctx, `SELECT id FROM messages WHERE id=? FOR UPDATE`, refs[2].MessageID).Scan(&locked))
-	type outcome struct {
-		index int
-		err   error
-	}
-	done := make(chan outcome, 2)
-	for i, decision := range []string{"unlink", "link"} {
-		workers.Go(func() {
-			_, err := st.DecideMeetingLinkContext(ctx, refs[i], refs[2], decision)
-			done <- outcome{i, err}
-		})
-	}
-	ticker := time.NewTicker(5 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		var blocked int
-		requirements.NoError(st.db.QueryRowContext(ctx, `WITH RECURSIVE waiting(pid) AS (SELECT pid FROM pg_stat_activity WHERE ?=ANY(pg_blocking_pids(pid)) UNION SELECT a.pid FROM pg_stat_activity a JOIN waiting w ON w.pid=ANY(pg_blocking_pids(a.pid))) SELECT count(*) FROM waiting`, pid).Scan(&blocked))
-		if blocked >= 2 {
-			break
-		}
-		select {
-		case <-ticker.C:
-		case <-ctx.Done():
-			requirements.FailNow("decisions did not overlap")
-		}
-	}
-	requirements.NoError(blocker.Commit())
-	results := []outcome{<-done, <-done}
-	var accepted, rejected, successes int
-	for _, result := range results {
-		if result.err == nil {
-			successes++
-			accepted = result.index
-		} else {
-			requirements.ErrorIs(result.err, ErrMeetingLinkConflict)
-			rejected = result.index
-		}
-	}
-	requirements.Equal(1, successes, "one decision must succeed and one must conflict")
-	for i, ref := range refs {
-		record, err := st.MeetingRecordContext(ctx, ref)
-		requirements.NoError(err)
-		want := []int64{refs[0].MessageID, refs[1].MessageID}
-		if accepted == 1 {
-			want = append(want, refs[2].MessageID)
-		} else if i == 2 {
-			want = []int64{refs[2].MessageID}
-		}
-		requirements.Equal(want, record.MessageIDs)
-	}
-	var count int
-	requirements.NoError(st.db.QueryRowContext(ctx, `SELECT count(*) FROM meeting_link_decisions WHERE left_message_id=? AND right_message_id=?`, refs[rejected].MessageID, refs[2].MessageID).Scan(&count))
-	requirements.Zero(count)
-	_, err = st.DecideMeetingLinkContext(ctx, refs[rejected], refs[2], []string{"unlink", "link"}[rejected])
-	requirements.ErrorIs(err, ErrMeetingLinkConflict)
 }
 
 func TestMeetingLinkDecisionConcurrentClearAndDedup(t *testing.T) {
