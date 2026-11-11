@@ -1346,10 +1346,12 @@ func TestCommitmentHistoricalReplayKeepsCompletionForNinthAnchor(t *testing.T) {
 	r, a, ctx := require.New(t), assert.New(t), t.Context()
 	f := newPersonSweepApplyFixture(t, "historical-ninth-anchor", false)
 	st := f.store
-	_, persist := newCommitmentTestConversation(t, f)
 	cfg := peoplesweep.Config{}
 	cfg.ApplyDefaults()
 	cfg.Commitments.Enabled = true
+	f, initial := applyCommitmentPromisePages(t, f, cfg.Commitments, 9, -2*time.Hour, func(page int) bool { return page == 0 })
+	r.Empty(initial.Sources, "initial discovery and replay must finish")
+	_, persist := newCommitmentTestConversation(t, f)
 	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
 	load := func() peoplesweep.CommitmentWindow {
 		window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
@@ -1358,29 +1360,10 @@ func TestCommitmentHistoricalReplayKeepsCompletionForNinthAnchor(t *testing.T) {
 	}
 	apply := func(window peoplesweep.CommitmentWindow, promises []peoplesweep.CommitmentPromise) {
 		t.Helper()
+		f = nextCommitmentTestAttempt(t, f, "-page")
 		_, err := st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: promises, Fulfilments: []peoplesweep.CommitmentFulfilment{}}))
 		r.NoError(err)
-		f = nextCommitmentTestAttempt(t, f, "-page")
 	}
-	var body strings.Builder
-	var promises []peoplesweep.CommitmentPromise
-	for i := range 9 {
-		quote := fmt.Sprintf("I will send report %d.", i+1)
-		start := int64(body.Len())
-		body.WriteString(quote)
-		promises = append(promises, peoplesweep.CommitmentPromise{Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Summary: quote, Start: start, End: int64(body.Len())})
-		body.WriteByte(' ')
-	}
-	promiseID := persist("nine-promises", strings.TrimSpace(body.String()), -2*time.Hour)
-	window := load()
-	for i := range promises {
-		promises[i].SourceID = commitmentSourceID(window, promiseID)
-	}
-	apply(window, promises)
-	for i := 0; i < 4 && len(load().Sources) > 0; i++ {
-		apply(load(), []peoplesweep.CommitmentPromise{})
-	}
-	r.Empty(load().Sources)
 	completionID := persist("completion", "I sent report 9.", -time.Hour)
 	for i := 0; i < 4 && len(load().Sources) > 0; i++ {
 		apply(load(), []peoplesweep.CommitmentPromise{})
@@ -1392,7 +1375,7 @@ func TestCommitmentHistoricalReplayKeepsCompletionForNinthAnchor(t *testing.T) {
 	ninthID := items[8].ID
 	const lateQuote = "I will check the venue."
 	lateID := persist("late-promise", lateQuote, -90*time.Minute)
-	window = load()
+	window := load()
 	r.Empty(commitmentSourceID(window, completionID), "the current journal batch contains only the late import")
 	apply(window, []peoplesweep.CommitmentPromise{{SourceID: commitmentSourceID(window, lateID), Direction: peoplesweep.CommitmentOwedTo, Quote: lateQuote, Summary: "Check venue", End: int64(len(lateQuote))}})
 	first := load()
@@ -1406,4 +1389,47 @@ func TestCommitmentHistoricalReplayKeepsCompletionForNinthAnchor(t *testing.T) {
 	}
 	r.True(ninthPresent, "the next bounded page includes the original ninth promise")
 	a.NotEmpty(commitmentSourceID(next, completionID), "every anchor must receive the same historical completion batch")
+}
+
+func applyCommitmentPromisePages(t *testing.T, f personSweepApplyFixture, cfg peoplesweep.CommitmentConfig, count int, offset time.Duration, emitPromises func(int) bool) (personSweepApplyFixture, peoplesweep.CommitmentWindow) {
+	t.Helper()
+	r, ctx := require.New(t), t.Context()
+	_, persist := newCommitmentTestConversation(t, f)
+	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01",
+		AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+	var body strings.Builder
+	var promises []peoplesweep.CommitmentPromise
+	for i := range count {
+		quote := fmt.Sprintf("I will send report %d.", i+1)
+		start := int64(body.Len())
+		body.WriteString(quote)
+		promises = append(promises, peoplesweep.CommitmentPromise{Direction: peoplesweep.CommitmentOwedTo,
+			Quote: quote, Summary: quote, Start: start, End: int64(body.Len())})
+		body.WriteByte(' ')
+	}
+	persist("paged-promises", strings.TrimSpace(body.String()), offset)
+	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	for page := range 8 {
+		if len(window.Sources) == 0 {
+			break
+		}
+		r.Len(window.Sources, 1)
+		if page > 0 {
+			f = nextCommitmentTestAttempt(t, f, fmt.Sprintf("-page-%d", page))
+		}
+		output := peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{}, Fulfilments: []peoplesweep.CommitmentFulfilment{}}
+		if emitPromises(page) {
+			for i := range promises {
+				promises[i].SourceID = window.Sources[0].ID
+			}
+			output.Promises = promises
+		}
+		_, err = f.store.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg, output))
+		r.NoError(err)
+		window, err = f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg, personFactLedgerNow, "UTC")
+		r.NoError(err)
+	}
+	return f, window
 }
