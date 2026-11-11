@@ -2445,6 +2445,12 @@ for the user workflow and coverage meanings.
 for a `msg:<id>` or `evt:<id>[@occurrence key]` reference. It requires API
 schema 5.1.0 and accepts a `message.read` grant.
 
+`POST /api/v1/meetings/links/decisions` accepts owner requests with `left`,
+`right`, and `decision` (`link` or `unlink`). It returns the canonical refs and
+`state` (`link`, `split`, or `automatic`). The opposite action clears a saved
+choice and restores automatic matching. A conflicting split returns 409. This
+operation requires API schema 5.2.0.
+
 Context accepts 1–100 meetings, `format: "json"` or `"markdown"`,
 `include_transcript` (default false), and `max_bytes` (default 131072, range
 4096–1048576). The budget applies to the UTF-8 bytes of `content`, not the HTTP

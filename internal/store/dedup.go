@@ -574,6 +574,9 @@ func (s *Store) MergeDuplicates(
 			if err := s.copyLoopDecisionTx(ctx, tx, dupID, survivorID); err != nil {
 				return err
 			}
+			if err := copyMeetingLinkDecisionsTx(ctx, tx, dupID, survivorID); err != nil {
+				return err
+			}
 		}
 		if result.RawMIMEBackfilled > 0 {
 			if _, err := s.refreshEmailLinkageTx(ctx, tx, survivorID, emailLinkageInput{}); err != nil {

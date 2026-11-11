@@ -304,14 +304,13 @@ func (s *Store) meetingNoteKeys(ctx context.Context, keys []string, budget *int)
 	return out, nil
 }
 
-func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (MeetingRecord, error) {
+func (s *Store) meetingAutomaticRecordContext(ctx context.Context, ref MeetingLinkRef, budget *int) (MeetingRecord, error) {
 	record := MeetingRecord{Links: []MeetingLink{}, MessageIDs: []int64{}, Unexpandable: []CalendarUnexpandable{}}
 	ctx, release, err := s.BeginReadSnapshotContext(ctx)
 	if err != nil {
 		return record, err
 	}
 	defer release()
-	budget := calrecur.RequestReadBudget
 	var keys []meetingLinkKey
 	var seed CalendarOccurrence
 	if ref.Kind == "msg" {
@@ -330,7 +329,7 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 			keys = append(keys, key)
 		}
 	} else {
-		rows, err := s.meetingEventRows(ctx, `e.message_id = ?`, []any{ref.MessageID}, &budget)
+		rows, err := s.meetingEventRows(ctx, `e.message_id = ?`, []any{ref.MessageID}, budget)
 		if err != nil {
 			return record, err
 		}
@@ -359,7 +358,7 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 			seed, diagnostic = untimedMeetingCopy(row)
 			record.Unexpandable = append(record.Unexpandable, diagnostic)
 		} else {
-			page, err := s.meetingExpand(ctx, rows, at, &budget)
+			page, err := s.meetingExpand(ctx, rows, at, budget)
 			if err != nil {
 				return record, err
 			}
@@ -402,11 +401,11 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 		if len(pending) == 0 {
 			break
 		}
-		notes, err := s.meetingNoteKeys(ctx, texts, &budget)
+		notes, err := s.meetingNoteKeys(ctx, texts, budget)
 		if err != nil {
 			return record, err
 		}
-		matches, err := s.meetingOccurrencesForKeys(ctx, pending, &budget, &record.Unexpandable)
+		matches, err := s.meetingOccurrencesForKeys(ctx, pending, budget, &record.Unexpandable)
 		if err != nil {
 			return record, err
 		}

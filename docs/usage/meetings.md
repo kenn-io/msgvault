@@ -60,7 +60,13 @@ Twenty notes with the same UID and time and Granola notes with the same
 instance-suffixed Google ID can link before a calendar is imported. A bare
 Google series ID cannot identify one week, so those notes remain separate.
 A calendar single or exception can prove that a bare ID names one event,
-including after a reschedule. Other note formats remain separate unless they supply supported evidence.
+including after a reschedule. Other note formats remain separate unless linked by the owner.
+
+Use `msgvault meetings link <ref> <ref>` to join copies, including notes from
+an unscheduled call. Use `msgvault meetings unlink <ref> <ref>` to separate an
+automatic match. Repeating the opposite command clears the saved choice and
+restores automatic matching. Choices survive sync and projection rebuilds;
+permanently deleting either message removes its choices.
 
 Records show whether a calendar copy was cancelled or deleted at its source.
 When a recurrence cannot be expanded, the record keeps the copies it found and

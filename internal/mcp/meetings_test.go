@@ -292,3 +292,38 @@ func (meetingBackendFixture) ListMeetingActionItems(context.Context, generated.L
 func (meetingBackendFixture) GetMeetingMetrics(context.Context, generated.GetMeetingMetricsBody) (*meetingcontent.Metrics, error) {
 	return &meetingcontent.Metrics{}, nil
 }
+
+func TestMeetingDecisionMCPWritesAndDiscovery(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	backend, imported, _ := newMeetingMCPBackend(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
+	server, err := newMCPServer(ServeOptions{Engine: &querytest.MockEngine{}, Meetings: backend, MeetingRecords: true, MeetingDecisions: true}, true).Connect(ctx, serverTransport, nil)
+	requirements.NoError(err)
+	t.Cleanup(func() { assertions.NoError(server.Close()) })
+	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "meeting-decision-test", Version: "1.0.0"}, nil)
+	session, err := client.Connect(ctx, clientTransport, nil)
+	requirements.NoError(err)
+	t.Cleanup(func() { assertions.NoError(session.Close()) })
+	listed, err := session.ListTools(ctx, nil)
+	requirements.NoError(err)
+	names := map[string]bool{}
+	for _, tool := range listed.Tools {
+		names[tool.Name] = true
+	}
+	assertions.True(names["link_meeting"])
+	assertions.True(names["unlink_meeting"])
+	left, right := fmt.Sprintf("msg:%d", imported[0].MessageID), fmt.Sprintf("msg:%d", imported[1].MessageID)
+	result, err := session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "link_meeting", Arguments: map[string]any{"left": left, "right": right}})
+	requirements.NoError(err)
+	requirements.False(result.IsError)
+	assertions.Equal("link", meetingStructuredContent(t, result)["state"])
+	record, err := backend.MeetingRecord(ctx, left)
+	requirements.NoError(err)
+	assertions.ElementsMatch([]int64{imported[0].MessageID, imported[1].MessageID}, record.MessageIDs)
+	without := operationCatalog(ServeOptions{Engine: &querytest.MockEngine{}, Meetings: backend, MeetingRecords: true}, &handlers{})
+	for _, definition := range without {
+		assertions.NotContains([]string{"link_meeting", "unlink_meeting"}, definition.name)
+	}
+}

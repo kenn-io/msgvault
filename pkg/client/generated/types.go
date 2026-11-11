@@ -7650,6 +7650,31 @@ func (m MeetingContextRequest) Validate() error {
 	return errors
 }
 
+type MeetingDecisionRequest struct {
+	Decision MeetingDecisionRequestDecision `json:"decision" validate:"required"`
+	Left     string                         `json:"left" validate:"required"`
+	Right    string                         `json:"right" validate:"required"`
+}
+
+func (m MeetingDecisionRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(m.Decision).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Decision", err)
+		}
+	}
+	if err := typesValidator.Var(m.Left, "required"); err != nil {
+		errors = errors.Append("Left", err)
+	}
+	if err := typesValidator.Var(m.Right, "required"); err != nil {
+		errors = errors.Append("Right", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type MeetingExploreScope struct {
 	CacheRevision       string             `json:"cache_revision" validate:"required"`
 	CandidateSnapshotID *string            `json:"candidate_snapshot_id,omitzero"`
@@ -7734,6 +7759,16 @@ type MeetingLink struct {
 }
 
 func (m MeetingLink) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MeetingLinkDecisionResult struct {
+	Left  string `json:"left" validate:"required"`
+	Right string `json:"right" validate:"required"`
+	State string `json:"state" validate:"required"`
+}
+
+func (m MeetingLinkDecisionResult) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(m))
 }
 

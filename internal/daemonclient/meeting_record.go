@@ -25,3 +25,22 @@ func (c *Client) MeetingRecord(ctx context.Context, ref string) (store.MeetingRe
 	}
 	return *decoded, nil
 }
+
+// DecideMeetingLink saves a link or split between archived copies.
+func (c *Client) DecideMeetingLink(ctx context.Context, left, right, decision string) (store.MeetingLinkDecisionResult, error) {
+	body := generated.DecideMeetingLinkBody{Left: left, Right: right, Decision: generated.MeetingDecisionRequestDecision(decision)}
+	response, err := APIResponse(c, func(client *apiclient.Client) (*generated.DecideMeetingLinkResp, error) {
+		return client.DecideMeetingLinkWithResponse(ctx, &generated.DecideMeetingLinkRequestOptions{Body: &body})
+	})
+	if err != nil {
+		return store.MeetingLinkDecisionResult{}, err
+	}
+	if response.JSON200 == nil {
+		return store.MeetingLinkDecisionResult{}, errors.New("meeting decision: empty response")
+	}
+	decoded, err := decodeMeetingResponse[store.MeetingLinkDecisionResult]("meeting decision", response.Body)
+	if err != nil {
+		return store.MeetingLinkDecisionResult{}, err
+	}
+	return *decoded, nil
+}

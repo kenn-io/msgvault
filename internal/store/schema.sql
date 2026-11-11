@@ -4392,3 +4392,21 @@ CREATE TABLE IF NOT EXISTS docbank_attachment_processing (
 CREATE INDEX IF NOT EXISTS idx_docbank_processing_due
  ON docbank_attachment_processing(destination_key, fingerprint, next_action_at, content_hash)
  WHERE next_action_at IS NOT NULL;
+CREATE TABLE IF NOT EXISTS meeting_link_key (
+    message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    key TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_key_value ON meeting_link_key(key);
+CREATE TABLE IF NOT EXISTS meeting_link_decisions (
+    left_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    left_kind TEXT NOT NULL CHECK (left_kind IN ('msg', 'evt')),
+    left_key TEXT NOT NULL,
+    left_anchor TEXT NOT NULL,
+    right_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    right_kind TEXT NOT NULL CHECK (right_kind IN ('msg', 'evt')),
+    right_key TEXT NOT NULL,
+    right_anchor TEXT NOT NULL,
+    decision TEXT NOT NULL CHECK (decision IN ('link', 'split')),
+    PRIMARY KEY (left_message_id, left_kind, left_key, right_message_id, right_kind, right_key)
+);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_right ON meeting_link_decisions(right_message_id);

@@ -412,7 +412,8 @@ import (
 // 4.2.0 adds attachment retrieval modes, coverage, and degradations to media search.
 // 5.0.0 makes file list and suggestion content availability nullable when storage has not been checked.
 // 5.1.0 adds meeting records.
-const APISchemaVersion = "5.1.0"
+// 5.2.0 adds owner meeting link decisions.
+const APISchemaVersion = "5.2.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
