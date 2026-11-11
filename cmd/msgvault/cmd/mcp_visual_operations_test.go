@@ -21,13 +21,13 @@ import (
 )
 
 func TestMCPVisualNativeOperationsAndApproval(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	cfg := config.NewDefaultConfig()
 	cfg.Data.DataDir = t.TempDir()
 	st := testutil.NewTestStore(t)
 	generation, err := st.EnsureVisualGeneration(t.Context(), store.VisualGenerationSpec{Fingerprint: "synthetic", Model: "fixture", Dimension: 1024})
-	require.NoError(err)
+	requirements.NoError(err)
 	fixture := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: st, Logger: slog.New(slog.DiscardHandler)})
 	var builds, resumes, retries, retires int
 	var ownerID int64
@@ -48,18 +48,18 @@ func TestMCPVisualNativeOperationsAndApproval(t *testing.T) {
 		},
 		func(ctx context.Context) error { retires++; return st.RetireVisualGeneration(ctx, generation.ID) })
 	backend := sourceOperationFixture(t, fixture)
-	assert.Subset(backend.capabilities(), []string{"get_visual_attachment_status", "start_visual_attachment_build", "resume_visual_attachment_build", "retry_visual_attachment_owner", "retire_visual_attachment_generation"})
+	assertions.Subset(backend.capabilities(), []string{"get_visual_attachment_status", "start_visual_attachment_build", "resume_visual_attachment_build", "retry_visual_attachment_owner", "retire_visual_attachment_generation"})
 	read, err := backend.ExecuteOperation(t.Context(), "get_visual_attachment_status", nil)
-	require.NoError(err)
-	require.False(read.IsError)
+	requirements.NoError(err)
+	requirements.False(read.IsError)
 	encoded, err := json.Marshal(read.Output)
-	require.NoError(err)
-	assert.NotContains(string(encoded), "synthetic")
-	assert.NotContains(string(encoded), "fingerprint")
-	assert.NotContains(string(encoded), `"eligible"`)
-	assert.NotContains(string(encoded), `"unknown_role"`)
-	assert.NotContains(string(encoded), `"unavailable"`)
-	assert.NotContains(string(encoded), `"formats"`)
+	requirements.NoError(err)
+	assertions.NotContains(string(encoded), "synthetic")
+	assertions.NotContains(string(encoded), "fingerprint")
+	assertions.NotContains(string(encoded), `"eligible"`)
+	assertions.NotContains(string(encoded), `"unknown_role"`)
+	assertions.NotContains(string(encoded), `"unavailable"`)
+	assertions.NotContains(string(encoded), `"formats"`)
 	var prompt string
 	approved := true
 	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyVisual}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
@@ -100,24 +100,24 @@ func TestMCPVisualNativeOperationsAndApproval(t *testing.T) {
 		{"retire_visual_attachment_generation", map[string]any{"generation_id": 0}, "validating"},
 	} {
 		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: tc.name, Arguments: tc.args})
-		require.NoError(err)
-		require.NotNil(result)
-		assert.True(result.IsError)
+		requirements.NoError(err)
+		requirements.NotNil(result)
+		assertions.True(result.IsError)
 		data, err := json.Marshal(result)
-		require.NoError(err)
-		assert.Contains(string(data), tc.want)
+		requirements.NoError(err)
+		assertions.Contains(string(data), tc.want)
 	}
-	assert.Zero(builds)
-	assert.Zero(retries)
-	assert.Zero(retires)
+	assertions.Zero(builds)
+	assertions.Zero(retries)
+	assertions.Zero(retires)
 	approved = false
 	declined, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "start_visual_attachment_build", Arguments: map[string]any{"consent": true}})
-	require.NoError(err)
-	require.True(declined.IsError)
+	requirements.NoError(err)
+	requirements.True(declined.IsError)
 	declinedData, err := json.Marshal(declined.Content)
-	require.NoError(err)
-	assert.Contains(string(declinedData), "action cancelled")
-	assert.Zero(builds)
+	requirements.NoError(err)
+	assertions.Contains(string(declinedData), "action cancelled")
+	assertions.Zero(builds)
 	approved = true
 	t.Run("build", func(t *testing.T) {
 		require := require.New(t)
