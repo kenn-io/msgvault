@@ -351,7 +351,7 @@ func TestPersonPhotoUnlink(t *testing.T) {
 		name, uid, linkedUID, wantUID string
 		remote                        map[string]string
 		status, remoteStatus          int
-		mapped                        bool
+		mapped, forwarded             bool
 	}{
 		{name: "explicit retired UID", uid: "current", linkedUID: "old", wantUID: "old", status: 200},
 		{name: "retired link", uid: "current", wantUID: "old", remote: map[string]string{"old": person}, status: 200},
@@ -359,13 +359,15 @@ func TestPersonPhotoUnlink(t *testing.T) {
 		{name: "mapped UID", uid: "mapped", wantUID: "current", remote: map[string]string{"current": person}, status: 200, mapped: true},
 		{name: "unlinked mapped UID", uid: "mapped", wantUID: "current", status: 200, mapped: true},
 		{name: "UID belongs elsewhere", uid: "current", linkedUID: "elsewhere", status: 400},
+		{name: "same person has two links", uid: "current", remote: map[string]string{"current": person, "old": person}, status: 409},
+		{name: "forwarded UID", uid: "current", wantUID: "old", remote: map[string]string{"current": person, "old": person}, status: 200, forwarded: true},
 		{name: "conflicting links", uid: "current", remote: map[string]string{"current": person, "old": other}, status: 409},
 		{name: "stale revision", uid: "old", linkedUID: "old", wantUID: "old", status: 412, remoteStatus: 412},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			var id int64
-			require.NoError(t, st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid,display_name) VALUES ('current',?) RETURNING id`, strings.Repeat("é", 101)).Scan(&id))
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`INSERT INTO persons (vcard_uid,display_name) VALUES ('current',?) RETURNING id`), strings.Repeat("é", 101)).Scan(&id))
 			_, err := st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO person_uid_aliases (retired_uid,surviving_person_id,reason) VALUES ('old',?,'merge')`), id)
 			require.NoError(t, err)
 			if tc.mapped {
@@ -383,7 +385,11 @@ func TestPersonPhotoUnlink(t *testing.T) {
 					uid := r.URL.Query().Get("uid")
 					reads[uid]++
 					if linked := tc.remote[uid]; linked != "" {
-						_, _ = fmt.Fprintf(w, `{"person_id":%q,"system":"msgvault","archive_id":%q,"requested_uid":%q,"resolved_uid":%q,"uid_state":"current"}`, linked, archive, uid, uid)
+						resolved := uid
+						if tc.forwarded && uid == "current" {
+							resolved = "old"
+						}
+						_, _ = fmt.Fprintf(w, `{"person_id":%q,"system":"msgvault","archive_id":%q,"requested_uid":%q,"resolved_uid":%q,"uid_state":"current","forwarded":%t}`, linked, archive, uid, resolved, resolved != uid)
 					} else {
 						w.WriteHeader(http.StatusNotFound)
 						_, _ = w.Write([]byte(`{"code":"not_found"}`))

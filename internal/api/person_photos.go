@@ -91,15 +91,20 @@ func photoIdentity(ctx context.Context, r *DocbankAttachmentReader, uid string) 
 	return person, uids, archive, nil
 }
 
-// photoUnlinkUID picks the UID to unlink: the explicit one, else the first of the
-// person's UIDs Docbank still links (409 if they link different people), else the requested UID if it is the person's, else canonical.
+// photoUnlinkUID selects an explicit UID or the unique active Docbank target.
 func photoUnlinkUID(ctx context.Context, r *DocbankAttachmentReader, archive string, uids []string, linked, requested, canonical string) (string, error) {
 	if linked != "" {
 		return linked, nil
 	}
 	id, first, err := photoRemotePerson(ctx, r, archive, uids)
-	if err != nil || id != "" {
-		return first, err
+	if err != nil {
+		return "", err
+	}
+	if id != "" {
+		if first == "" || !slices.Contains(uids, first) {
+			return "", huma.Error409Conflict("multiple or external Docbank links; review required")
+		}
+		return first, nil
 	}
 	if slices.Contains(uids, requested) {
 		return requested, nil
@@ -108,6 +113,7 @@ func photoUnlinkUID(ctx context.Context, r *DocbankAttachmentReader, archive str
 }
 
 func photoRemotePerson(ctx context.Context, r *DocbankAttachmentReader, archive string, uids []string) (id, first string, err error) {
+	multiple := false
 	for _, uid := range uids {
 		found, err := r.Client.ResolveExternalPerson(ctx, archive, uid)
 		if remote, ok := errors.AsType[*docbankmedia.HTTPError](err); ok && remote.Status == http.StatusNotFound && remote.Reason == "not_found" {
@@ -119,7 +125,13 @@ func photoRemotePerson(ctx context.Context, r *DocbankAttachmentReader, archive 
 		if id != "" && id != found.PersonID {
 			return "", "", huma.Error409Conflict("multiple Docbank people linked; review required")
 		}
-		id, first = found.PersonID, cmp.Or(first, uid)
+		if first != "" && first != found.ResolvedUID {
+			multiple = true
+		}
+		id, first = found.PersonID, cmp.Or(first, found.ResolvedUID)
+	}
+	if multiple {
+		first = ""
 	}
 	return id, first, nil
 }

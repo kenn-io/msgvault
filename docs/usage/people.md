@@ -63,10 +63,10 @@ Send `PUT /api/v1/people/by-uid/photo-link` with JSON containing `uid` (a
 current, retired, or bound CardDAV UID), the selected Docbank `person_id`, its
 current `revision`, and `state` set to `current` or `unlinked`. A current link
 uses the profile's canonical vCard UID. Without `linked_uid`, an unlink
-targets the first of the profile's UIDs that Docbank still links, falling back
+targets the active UID to which Docbank resolves the profile, falling back
 to the supplied `uid` (if it belongs to the profile) and then the canonical UID.
-If those UIDs are linked to different Docbank people, the request returns 409
-and writes nothing. To target a specific UID retained after a local merge,
+If those UIDs resolve to different active links or people, the request returns
+409 and writes nothing. To target a specific UID retained after a local merge,
 supply it as `linked_uid`; it must belong to that profile. The response
 returns the canonical `uid`, the `linked_uid`, the resulting `state`, and the
 new Docbank `revision`. A stale revision returns 412; conflicting links return
