@@ -13,26 +13,27 @@ import (
 )
 
 type enrichmentProvider struct {
-	Name                  string    `json:"name"`
-	Kind                  *string   `json:"kind"`
-	Enabled               *bool     `json:"enabled"`
-	Endpoint              *string   `json:"endpoint"`
-	PollEndpoint          *string   `json:"poll_endpoint"`
-	Mode                  *string   `json:"mode"`
-	Tier                  *string   `json:"tier"`
-	NumResults            *int64    `json:"num_results"`
-	AllowedIdentifiers    *[]string `json:"allowed_identifiers"`
-	TargetKeys            *[]string `json:"target_keys"`
-	AllowSensitiveTargets *bool     `json:"allow_sensitive_targets"`
-	RetentionPosture      *string   `json:"retention_posture"`
-	TrainingPosture       *string   `json:"training_posture"`
-	RefreshInterval       *string   `json:"refresh_interval"`
-	RequestTimeout        *string   `json:"request_timeout"`
-	PollInterval          *string   `json:"poll_interval"`
-	MaxJobAge             *string   `json:"max_job_age"`
-	MaxRetries            *int64    `json:"max_retries"`
-	MaxRequestsPerRun     *int64    `json:"max_requests_per_run"`
-	MaxRequestsPerDay     *int64    `json:"max_requests_per_day"`
+	Name                  string                        `json:"name"`
+	Kind                  *string                       `json:"kind"`
+	Enabled               *bool                         `json:"enabled"`
+	Endpoint              *string                       `json:"endpoint"`
+	PollEndpoint          *string                       `json:"poll_endpoint"`
+	Mode                  *string                       `json:"mode"`
+	Tier                  *string                       `json:"tier"`
+	NumResults            *int64                        `json:"num_results"`
+	AllowedIdentifiers    *[]string                     `json:"allowed_identifiers"`
+	TargetKeys            *[]string                     `json:"target_keys"`
+	AllowSensitiveTargets *bool                         `json:"allow_sensitive_targets"`
+	RetentionPosture      *string                       `json:"retention_posture"`
+	TrainingPosture       *string                       `json:"training_posture"`
+	RefreshInterval       *string                       `json:"refresh_interval"`
+	RequestTimeout        *string                       `json:"request_timeout"`
+	PollInterval          *string                       `json:"poll_interval"`
+	MaxJobAge             *string                       `json:"max_job_age"`
+	MaxRetries            *int64                        `json:"max_retries"`
+	MaxRequestsPerRun     *int64                        `json:"max_requests_per_run"`
+	MaxRequestsPerDay     *int64                        `json:"max_requests_per_day"`
+	Credential            *generated.SecretSettingState `json:"credential"`
 }
 type enrichmentSettings struct {
 	Providers      []enrichmentProvider `json:"person_enrichment_providers"`
@@ -60,11 +61,22 @@ func enrichmentMCPCapabilities(hasRoute mcpRouteCheck, capabilities *apiprotocol
 }
 
 func enrichmentReplacement(p enrichmentProvider) (*generated.PersonEnrichmentProviderUpdate, bool) {
-	// Empty endpoints may represent redacted values; neither can safely be reconstructed.
-	if p.Kind == nil || p.Enabled == nil || p.Endpoint == nil || *p.Endpoint == "" || p.PollEndpoint == nil || *p.PollEndpoint == "" || p.AllowedIdentifiers == nil || p.TargetKeys == nil || p.AllowSensitiveTargets == nil || p.RetentionPosture == nil || p.TrainingPosture == nil || p.RefreshInterval == nil || p.RequestTimeout == nil || p.PollInterval == nil || p.MaxJobAge == nil || p.MaxRetries == nil || p.MaxRequestsPerRun == nil || p.MaxRequestsPerDay == nil {
+	// A missing or empty primary endpoint may be redacted and cannot be reconstructed safely.
+	if p.Kind == nil || p.Enabled == nil || p.Endpoint == nil || *p.Endpoint == "" || p.AllowedIdentifiers == nil || p.TargetKeys == nil || p.AllowSensitiveTargets == nil || p.RetentionPosture == nil || p.TrainingPosture == nil || p.RefreshInterval == nil || p.RequestTimeout == nil || p.PollInterval == nil || p.MaxJobAge == nil || p.MaxRetries == nil || p.MaxRequestsPerRun == nil || p.MaxRequestsPerDay == nil {
 		return nil, false
 	}
-	return &generated.PersonEnrichmentProviderUpdate{Kind: generated.PersonEnrichmentProviderUpdateKind(*p.Kind), Enabled: *p.Enabled, Endpoint: *p.Endpoint, PollEndpoint: p.PollEndpoint, Mode: p.Mode, Tier: p.Tier, NumResults: p.NumResults, AllowedIdentifiers: *p.AllowedIdentifiers, TargetKeys: *p.TargetKeys, AllowSensitiveTargets: *p.AllowSensitiveTargets, RetentionPosture: *p.RetentionPosture, TrainingPosture: *p.TrainingPosture, RefreshInterval: *p.RefreshInterval, RequestTimeout: *p.RequestTimeout, PollInterval: p.PollInterval, MaxJobAge: p.MaxJobAge, MaxRetries: *p.MaxRetries, MaxRequestsPerRun: *p.MaxRequestsPerRun, MaxRequestsPerDay: *p.MaxRequestsPerDay}, true
+	pollEndpoint := p.PollEndpoint
+	if *p.Kind == string(generated.PersonEnrichmentProviderUpdateKindExa) {
+		// Successful native GETs omit Exa poll_endpoint; nonnil credential metadata proves CredentialEndpoint accepted its required empty value.
+		if p.Credential == nil || (pollEndpoint != nil && *pollEndpoint != "") {
+			return nil, false
+		}
+		empty := ""
+		pollEndpoint = &empty
+	} else if pollEndpoint == nil || *pollEndpoint == "" {
+		return nil, false
+	}
+	return &generated.PersonEnrichmentProviderUpdate{Kind: generated.PersonEnrichmentProviderUpdateKind(*p.Kind), Enabled: *p.Enabled, Endpoint: *p.Endpoint, PollEndpoint: pollEndpoint, Mode: p.Mode, Tier: p.Tier, NumResults: p.NumResults, AllowedIdentifiers: *p.AllowedIdentifiers, TargetKeys: *p.TargetKeys, AllowSensitiveTargets: *p.AllowSensitiveTargets, RetentionPosture: *p.RetentionPosture, TrainingPosture: *p.TrainingPosture, RefreshInterval: *p.RefreshInterval, RequestTimeout: *p.RequestTimeout, PollInterval: p.PollInterval, MaxJobAge: p.MaxJobAge, MaxRetries: *p.MaxRetries, MaxRequestsPerRun: *p.MaxRequestsPerRun, MaxRequestsPerDay: *p.MaxRequestsPerDay}, true
 }
 
 func enrichmentProjection(result *mcpserver.OperationResult, writes bool) *mcpserver.OperationResult {

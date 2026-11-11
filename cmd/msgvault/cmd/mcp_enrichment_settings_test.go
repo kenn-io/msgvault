@@ -19,13 +19,14 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 func TestEnrichmentReplacementRequiresReconstructablePolicy(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	enabled := true
-	kind, endpoint, poll, refresh, timeout, interval, age, retention, training := "exa", "https://provider.example/search", "https://provider.example/poll", "24h", "1m", "1s", "1h", "zero_retention", "no_training"
+	kind, endpoint, poll, refresh, timeout, interval, age, retention, training := "sixtyfour", "https://provider.example/search", "https://provider.example/poll", "24h", "1m", "1s", "1h", "zero_retention", "no_training"
 	ids, keys := []string{"name"}, []string{"attribute:bio"}
 	sensitive := false
 	retries, run, day := int64(2), int64(10), int64(20)
@@ -37,9 +38,20 @@ func TestEnrichmentReplacementRequiresReconstructablePolicy(t *testing.T) {
 	assert.Equal(keys, replacement.TargetKeys)
 	assert.Equal(day, replacement.MaxRequestsPerDay)
 	provider.PollEndpoint = nil
+	provider.Kind = new("exa")
+	provider.Credential = &generated.SecretSettingState{}
+	replacement, ok = enrichmentReplacement(provider)
+	require.True(ok)
+	assert.Equal("", *replacement.PollEndpoint)
+	provider.PollEndpoint = &poll
+	_, ok = enrichmentReplacement(provider)
+	assert.False(ok)
+	provider.PollEndpoint = nil
+	provider.Credential = nil
 	_, ok = enrichmentReplacement(provider)
 	assert.False(ok)
 	provider.PollEndpoint = &poll
+	provider.Kind = new("sixtyfour")
 	provider.Endpoint = nil
 	_, ok = enrichmentReplacement(provider)
 	assert.False(ok)
@@ -52,11 +64,10 @@ func TestEnrichmentPolicyNativeReplacement(t *testing.T) {
 	path := filepath.Join(directory, "config.toml")
 	require.NoError(os.WriteFile(path, []byte(`[[people.enrichment.providers]]
 name = "example"
-kind = "sixtyfour"
+kind = "exa"
 enabled = false
 endpoint = "https://provider.example/search"
-poll_endpoint = "https://provider.example/poll"
-tier = "standard"
+mode = "people"
 allowed_identifiers = ["name"]
 target_keys = ["attribute:bio"]
 retention_posture = "zero_retention"
@@ -93,7 +104,7 @@ max_requests_per_day = 50
 	require.Len(reloaded.People.Enrichment.Providers, 1)
 	native := reloaded.People.Enrichment.Providers[0]
 	assert.Equal("https://provider.example/search", native.Endpoint)
-	assert.Equal("https://provider.example/poll", native.PollEndpoint)
+	assert.Empty(native.PollEndpoint)
 	assert.Equal([]string{"attribute:bio"}, native.TargetKeys)
 	assert.Equal(int64(5), native.MaxRequestsPerRun)
 	result, _, err = backend.executeEnrichmentOperation(t.Context(), "update_enrichment_policy", args)
@@ -137,11 +148,10 @@ func TestEnrichmentPolicySDKRequiresApproval(t *testing.T) {
 	path := filepath.Join(directory, "config.toml")
 	require.NoError(os.WriteFile(path, []byte(`[[people.enrichment.providers]]
 name = "example"
-kind = "sixtyfour"
+kind = "exa"
 enabled = false
 endpoint = "https://provider.example/search"
-poll_endpoint = "https://provider.example/poll"
-tier = "standard"
+mode = "people"
 allowed_identifiers = ["name"]
 target_keys = ["attribute:bio"]
 retention_posture = "zero_retention"
@@ -186,6 +196,7 @@ func TestEnrichmentRefusesUnreconstructableAndUnknownProviders(t *testing.T) {
 name = "example"
 kind = "exa"
 enabled = false
+poll_endpoint = "https://provider.example/poll"
 allowed_identifiers = ["name"]
 target_keys = ["attribute:bio"]
 retention_posture = "zero_retention"
