@@ -131,6 +131,7 @@ func TestHegelMessageIDContract(t *testing.T) {
 			header = id + ">"
 		case 6:
 			header = "<>"
+		// IMAP recovers these legacy forms; storage rejects the malformed value.
 		case 7:
 			header, wantIMAP = "<"+id, id
 		case 8:

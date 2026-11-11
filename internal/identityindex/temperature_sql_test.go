@@ -228,6 +228,7 @@ func TestHegelAnnualTemperatureRollups(t *testing.T) {
 				date = hegel.Draw(ht, hegel.Dates().Min(time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC)).Max(time.Date(1969, 12, 31, 0, 0, 0, 0, time.UTC)))
 			} else {
 				date = hegel.Draw(ht, hegel.Dates().Min(time.Date(1971, 1, 1, 0, 0, 0, 0, time.UTC)).Max(effective))
+				// Keep the tie fixture alone in both of its years.
 				if date.Year() == 2000 {
 					date = time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)
 				}
