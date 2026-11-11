@@ -31,7 +31,7 @@ func TestMCPEventsPreservesUnavailableReasons(t *testing.T) {
 	for _, tc := range []struct {
 		reason       string
 		status, code int
-	}{{"disabled", 503, -32010}, {"head_unavailable", 503, -32010}, {"store_unavailable", 503, -32010}, {"invalid_scope", 400, -32602}} {
+	}{{"disabled", 503, -32010}, {"head_unavailable", 503, -32010}, {"store_unavailable", 503, -32010}, {"invalid_scope", 400, -32602}, {"subscriptions", http.StatusTooManyRequests, mcpevents.ResourceExhausted}} {
 		reason := tc.reason
 		t.Run(reason, func(t *testing.T) {
 			assertions := assert.New(t)
