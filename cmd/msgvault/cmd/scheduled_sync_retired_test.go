@@ -16,14 +16,19 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/twenty"
+	"go.kenn.io/msgvault/internal/youtube"
 )
 
 func retireScheduledSyncSourceForTest(t *testing.T, st *store.Store, sourceType string) {
 	t.Helper()
-	const identifier = "history"
+	retireScheduledSourceForTest(t, st, sourceType, "history", "history-current")
+}
+
+func retireScheduledSourceForTest(t *testing.T, st *store.Store, sourceType, identifier, destinationIdentifier string) {
+	t.Helper()
 	retired, err := st.GetOrCreateSource(sourceType, identifier)
 	require.NoError(t, err)
-	destination, err := st.GetOrCreateSource(sourceType, identifier+"-current")
+	destination, err := st.GetOrCreateSource(sourceType, destinationIdentifier)
 	require.NoError(t, err)
 	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
 		FromSourceID: retired.ID,
@@ -42,6 +47,26 @@ func TestConfiguredScheduledSyncSkipsMergedSources(t *testing.T) {
 		})
 
 		require.NoError(t, err)
+	})
+
+	t.Run("YouTube before credential validation", func(t *testing.T) {
+		require := require.New(t)
+		st := testutil.NewTestStore(t)
+		channelID := "UCfixture"
+		retireScheduledSourceForTest(t, st, youtube.SourceType,
+			youtube.SourceIdentifier(channelID), youtube.SourceIdentifier("UCcurrent"))
+		for _, name := range []string{"TEST_YOUTUBE_CLIENT_ID", "TEST_YOUTUBE_CLIENT_SECRET", "TEST_YOUTUBE_REFRESH_TOKEN"} {
+			t.Setenv(name, "")
+		}
+		ctx := testInvocationContext(t.Context(), &config.Config{}, invocationOptions{})
+
+		err := runConfiguredYouTubeSync(ctx, st, config.YouTubeSource{
+			Identifier: "history", ChannelID: channelID,
+			ClientIDEnv: "TEST_YOUTUBE_CLIENT_ID", ClientSecretEnv: "TEST_YOUTUBE_CLIENT_SECRET",
+			TokenEnv: "TEST_YOUTUBE_REFRESH_TOKEN",
+		})
+
+		require.NoError(err)
 	})
 
 	t.Run("Circleback before provider connection", func(t *testing.T) {

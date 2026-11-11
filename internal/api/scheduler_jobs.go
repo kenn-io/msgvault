@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/synctechsms"
 	"go.kenn.io/msgvault/internal/twenty"
 	"go.kenn.io/msgvault/internal/twilio"
+	"go.kenn.io/msgvault/internal/youtube"
 )
 
 type sourceScheduleKind uint8
@@ -126,6 +127,12 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 			return "", false
 		}
 		return meta.SourceType + ":" + identifier, true
+	case youtube.SourceType:
+		channelID, ok := youtube.ParseSourceIdentifier(identifier)
+		if !ok {
+			return "", false
+		}
+		return YouTubeJobNameForChannel(channelID)
 	case chatwoot.SourceType:
 		baseURL, accountID, _, ok := chatwoot.ParseSourceIdentifier(identifier)
 		if !ok {
@@ -188,9 +195,21 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 	}
 }
 
+// YouTubeJobNameForChannel is shared by registration and source status/trigger.
+func YouTubeJobNameForChannel(channelID string) (string, bool) {
+	if youtube.SourceIdentifier(channelID) == "" {
+		return "", false
+	}
+	return "youtube:" + channelID, true
+}
+
 // isSourceSyncJobName reports whether a generic scheduler job syncs a source.
 func isSourceSyncJobName(name string) bool {
 	kind, identifier, _ := strings.Cut(name, ":")
+	if kind == youtube.SourceType {
+		canonical, ok := YouTubeJobNameForChannel(identifier)
+		return ok && canonical == name
+	}
 	if kind == CardDAVJobName {
 		return true
 	}

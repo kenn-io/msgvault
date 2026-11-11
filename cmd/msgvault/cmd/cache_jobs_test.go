@@ -177,6 +177,8 @@ func TestManualSyncProbeDoesNotQueueCacheRefresh(t *testing.T) {
 	assert.True(manualSyncCLICommand([]string{"sync-chatwoot", "support"}))
 	assert.True(manualSyncCLICommand([]string{"source", "facebook-comments", "sync"}))
 	assert.True(manualSyncCLICommand([]string{"source", "instagram-comments", "sync"}))
+	assert.True(manualSyncCLICommand([]string{"source", "youtube", "sync", "example"}))
+	assert.False(manualSyncCLICommand([]string{"source", "youtube", "add", "example"}))
 	assert.False(manualSyncCLICommand([]string{"sync-twilio", "--probe"}))
 	assert.False(manualSyncCLICommand([]string{"sync-twilio", "--probe=true"}))
 }

@@ -651,6 +651,7 @@ type Config struct {
 	Deletion           DeletionConfig            `toml:"deletion"`
 	IMAP               IMAPConfig                `toml:"imap"`
 	Gmail              GmailConfig               `toml:"gmail"`
+	YouTube            []YouTubeSource           `toml:"youtube"`
 	Telemetry          TelemetryConfig           `toml:"telemetry"`
 
 	// Computed paths (not from config file)
@@ -1182,6 +1183,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		if len(key) > 0 && key[0] == "facebook_comments" {
 			return nil, fmt.Errorf("unknown Facebook comments config key %q", key.String())
 		}
+		if len(key) > 0 && key[0] == "youtube" {
+			return nil, fmt.Errorf("unknown YouTube config key %q", key.String())
+		}
 		if len(key) > 0 && key[0] == "chatwoot" {
 			return nil, fmt.Errorf("unknown Chatwoot config key %q", key.String())
 		}
@@ -1356,6 +1360,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		return nil, err
 	}
 	if err := cfg.validateInstagramCommentsSources(); err != nil {
+		return nil, err
+	}
+	if err := cfg.validateYouTubeSources(); err != nil {
 		return nil, err
 	}
 	cfg.applyMeetingSourceDefaults()

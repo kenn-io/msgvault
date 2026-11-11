@@ -1,0 +1,12 @@
+Poll registered YouTube videos, comments and replies
+
+Usage:
+  msgvault source youtube sync [identifier] [flags]
+
+Flags:
+      --build-cache        refresh analytics cache after this sync
+  -h, --help               help for sync
+      --max-requests int   maximum Data API requests including channel verification (minimum 2) (default 1000)
+      --no-build-cache     skip analytics cache refresh after this sync
+
+Global Flags: --agent-allow-insecure, --agent-token-file, --agent-url, --config, --home, --local, --log-file, --log-level, --log-sql, --log-sql-slow-ms, --no-log-file, -v/--verbose (see 'msgvault --help')

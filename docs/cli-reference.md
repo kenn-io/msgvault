@@ -1641,6 +1641,32 @@ msgvault source instagram-comments sync [identifier] [--max-requests 1000] [--fu
 See [Instagram comments](usage/instagram-comments.md) for setup, identity,
 resuming, and coverage limits. These commands do not send replies.
 
+## source youtube add
+
+Register channels from configured `[[youtube]]` profiles. With no identifier,
+register all configured profiles.
+
+```bash
+msgvault source youtube add [identifier]
+```
+
+## source youtube sync
+
+Archive videos, comments, and replies for registered channels. With no
+identifier, sync all configured profiles.
+
+```bash
+msgvault source youtube sync [identifier] [--max-requests 1000]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--max-requests` | Maximum API requests, including channel verification (default 1000, minimum 2) |
+| `--build-cache` | Refresh the analytics cache after sync |
+| `--no-build-cache` | Skip the analytics cache refresh |
+
+See [YouTube comments](usage/youtube.md) for setup and coverage.
+
 ## add-chatwoot
 
 Register permitted Chatwoot inboxes from configured `[[chatwoot]]` profiles.
