@@ -690,16 +690,24 @@ func reportRetainedDaemonVersion(ctx context.Context, w io.Writer, rt *DaemonRun
 func daemonRestartCommand(ctx context.Context) string {
 	options := optionsFromContext(ctx)
 	args := invocationGlobalArgs(invocationOptions{cfgFile: options.cfgFile, homeDir: options.homeDir})
+	restart, _ := formatNativeCommand(append(args, "daemon", "restart"))
+	return restart
+}
+
+func formatNativeCommand(args []string) (string, error) {
 	executable, err := daemonCLIExecutableResolver()
 	if err != nil {
 		executable = os.Args[0]
 	}
-	commands, _ := agenthook.BuildCommand(executable, append(args, "daemon", "restart")...)
+	commands, err := agenthook.BuildCommand(executable, args...)
+	if err != nil {
+		return "", err
+	}
 	restart := commands.POSIX
 	if runtime.GOOS == "windows" {
 		restart = commands.PowerShell
 	}
-	return restart
+	return restart, nil
 }
 
 func shouldUpgradeIncompatibleDaemonRuntimeWithPolicy(rt *DaemonRuntime, currentVersion string, policy string) bool {

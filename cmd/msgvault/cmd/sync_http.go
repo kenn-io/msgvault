@@ -2,17 +2,20 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"runtime"
+	"sort"
 	"strings"
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
-	"go.kenn.io/kit/agenthook"
+	"github.com/spf13/pflag"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/textutil"
 	"golang.org/x/oauth2"
 )
 
@@ -69,57 +72,84 @@ func runSyncFullHTTP(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return runSyncHTTPWithResume(cmd, req, resume)
+	return runSyncFullWithHint(cmd, resume, func() (bool, error) {
+		return runSyncHTTPWithOutcome(cmd, req)
+	})
+}
+
+func runSyncFullWithHint(cmd *cobra.Command, resume string, run func() (bool, error)) error {
+	interrupted, err := run()
+	if !interrupted && !errors.Is(err, context.Canceled) {
+		return err
+	}
+	if interrupted {
+		err = errors.Join(ErrSyncInterrupted, err)
+	}
+	cmd.SilenceErrors = true
+	if writeErr := printSyncResumeCommand(cmd.ErrOrStderr(), resume, runtime.GOOS); writeErr != nil {
+		return errors.Join(err, writeErr)
+	}
+	return err
 }
 
 func syncResumeCommand(cmd *cobra.Command, args []string) (string, error) {
-	runArgs, err := daemonCLIArgsFromCobra(cmd, args)
-	if err != nil {
-		return "", err
-	}
-	for i, arg := range runArgs {
-		if arg == "--" {
-			break
+	var rootFlags, commandFlags []*pflag.Flag
+	cmd.Root().PersistentFlags().Visit(func(flag *pflag.Flag) { rootFlags = append(rootFlags, flag) })
+	cmd.Flags().Visit(func(flag *pflag.Flag) {
+		if isRootPersistentFlag(cmd, flag) || flag.Name == "sync-operation-id" {
+			return
 		}
-		if strings.HasPrefix(arg, "--sync-operation-id=") {
-			runArgs = append(runArgs[:i], runArgs[i+1:]...)
-			break
+		commandFlags = append(commandFlags, flag)
+	})
+	sort.Slice(rootFlags, func(i, j int) bool { return rootFlags[i].Name < rootFlags[j].Name })
+	sort.Slice(commandFlags, func(i, j int) bool { return commandFlags[i].Name < commandFlags[j].Name })
+	var runArgs []string
+	for _, flag := range rootFlags {
+		runArgs = appendDaemonCLIFlag(runArgs, flag)
+	}
+	runArgs = append(runArgs, daemonCLICommandPath(cmd)...)
+	for _, flag := range commandFlags {
+		runArgs = appendDaemonCLIFlag(runArgs, flag)
+	}
+	if n := cmd.ArgsLenAtDash(); n >= 0 {
+		runArgs = append(append(runArgs, args[:n]...), "--")
+		args = args[n:]
+	}
+	return formatNativeCommand(append(runArgs, args...))
+}
+
+func printSyncResumeCommand(w io.Writer, command, goos string) error {
+	clean := textutil.SanitizeTerminal(command)
+	message := "Sync interrupted. To run it again, run:"
+	if goos == "windows" {
+		message = "Sync interrupted. In PowerShell 7.3+, run:"
+	}
+	if clean != command {
+		message = "Sync interrupted. Control characters were removed; check the command before running it again:"
+		if goos == "windows" {
+			message = "Sync interrupted. Control characters were removed; check the command before running it in PowerShell 7.3+:"
 		}
 	}
-	options := optionsFromContext(cmd.Context())
-	global := invocationGlobalArgs(invocationOptions{cfgFile: options.cfgFile, homeDir: options.homeDir})
-	if options.useLocal {
-		global = append(global, "--local")
-	} else if options.useLocalChanged {
-		global = append(global, "--local=false")
+	if _, err := fmt.Fprintf(w, "%s\n  %s\n", message, clean); err != nil {
+		return fmt.Errorf("write sync instruction: %w", err)
 	}
-	executable, err := daemonCLIExecutableResolver()
-	if err != nil {
-		executable = os.Args[0]
-	}
-	commands, err := agenthook.BuildCommand(executable, append(global, runArgs...)...)
-	if err != nil {
-		return "", err
-	}
-	if runtime.GOOS == "windows" {
-		return commands.PowerShell, nil
-	}
-	return commands.POSIX, nil
+	return nil
 }
 
 func runSyncHTTP(cmd *cobra.Command, req daemonclient.CLISyncRequest) error {
-	return runSyncHTTPWithResume(cmd, req, "")
+	_, err := runSyncHTTPWithOutcome(cmd, req)
+	return err
 }
 
-func runSyncHTTPWithResume(cmd *cobra.Command, req daemonclient.CLISyncRequest, resume string) error {
+func runSyncHTTPWithOutcome(cmd *cobra.Command, req daemonclient.CLISyncRequest) (bool, error) {
 	st, info, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer func() { _ = st.Close() }()
 
 	if err := preflightReauth(cmd.Context(), buildSyncPreflight(st, info, invocationFromCommand(cmd)), req.Email, req.SourceID); err != nil {
-		return err
+		return false, err
 	}
 
 	interrupted := false
@@ -138,20 +168,10 @@ func runSyncHTTPWithResume(cmd *cobra.Command, req daemonclient.CLISyncRequest, 
 		}
 		return nil
 	})
-	if resume != "" && (cmd.Context().Err() != nil || interrupted) {
-		cmd.SilenceErrors = true
-		if _, writeErr := fmt.Fprintf(cmd.ErrOrStderr(), "Sync interrupted. To run it again, run:\n  %s\n", resume); writeErr != nil {
-			return fmt.Errorf("write sync instruction: %w", writeErr)
-		}
-		if interrupted && cmd.Context().Err() == nil {
-			return ErrSyncInterrupted
-		}
-		return cmd.Context().Err()
-	}
-	if err == nil {
+	if err == nil && !interrupted {
 		reportCLISyncFinished(cmd, st)
 	}
-	return err
+	return interrupted, err
 }
 
 // preflightReauthManager is the subset of oauth.Manager the sync preflight

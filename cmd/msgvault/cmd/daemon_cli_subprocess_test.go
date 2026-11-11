@@ -69,15 +69,26 @@ func TestClassifyDaemonCLIWaitErrExitStatus(t *testing.T) {
 				events = append(events, stream+"="+data)
 				return nil
 			})
-			if mode == "paused" || mode == "interrupted" {
+			if mode == "paused" {
 				require.NoError(got)
 				assert.Equal([]string{"outcome=" + mode}, events)
+			} else if mode == "interrupted" {
+				require.EqualError(got, cliSubprocessExitSentinel)
+				assert.Equal([]string{"outcome=interrupted"}, events)
 			} else {
 				require.EqualError(got, cliSubprocessExitSentinel)
 				assert.Empty(events)
 			}
 		})
 	}
+}
+
+func TestClassifyInterruptedSyncPropagatesEmitFailure(t *testing.T) {
+	want := errors.New("stream closed")
+	waitErr := helperProcessCommand(t.Context(), "interrupted").Run()
+	require.Error(t, waitErr)
+	err := classifyDaemonCLIWaitErr(waitErr, []string{"sync-full"}, func(string, string) error { return want })
+	assert.ErrorIs(t, err, want)
 }
 
 // TestClassifyDaemonCLIWaitErrSignalTerminated verifies a signal-terminated

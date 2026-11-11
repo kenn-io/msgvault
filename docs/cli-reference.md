@@ -848,6 +848,11 @@ and streams the daemon's stdout/stderr back to the terminal. This keeps local
 and remote full sync behavior aligned and avoids running a separate direct
 SQLite writer beside `msgvault serve`.
 
+If a full sync is interrupted, the CLI exits with status 130 and prints a
+command on stderr that you can run yourself. It preserves the account, filters,
+configuration, and logging flags. On Windows, run the displayed command in
+PowerShell 7.3 or later. A fresh sync or an IMAP scan can restart enumeration.
+
 `sync-full` does not infer source deletion from messages absent from its result
 set. This is especially important with `--query`, `--limit`, or date filters,
 where the listing is intentionally incomplete. Gmail source-deletion

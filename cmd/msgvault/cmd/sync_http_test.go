@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -17,7 +18,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/agenthook"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/testutil"
 	extOAuth2 "golang.org/x/oauth2"
 )
@@ -81,8 +84,8 @@ func TestSyncFullInterruptionHint(t *testing.T) {
 					err := classifyDaemonCLIWaitErr(waitErr, []string{"sync-full"}, func(stream, data string) error {
 						return json.NewEncoder(w).Encode(map[string]string{"type": stream, "data": data})
 					})
-					assert.NoError(t, err)
-					_, _ = w.Write([]byte("{\"type\":\"complete\"}\n"))
+					assert.EqualError(t, err, cliSubprocessExitSentinel)
+					_ = json.NewEncoder(w).Encode(map[string]string{"type": "error", "error": err.Error()})
 				} else {
 					_, _ = w.Write([]byte("{\"type\":\"error\",\"error\":\"provider failed\"}\n"))
 				}
@@ -121,10 +124,17 @@ func TestSyncResumeCommandNativeArguments(t *testing.T) {
 	oldResolver := daemonCLIExecutableResolver
 	daemonCLIExecutableResolver = func() (string, error) { return "msgvault", nil }
 	t.Cleanup(func() { daemonCLIExecutableResolver = oldResolver })
-	inv := newInvocation()
-	inv.options = invocationOptions{cfgFile: "config file", homeDir: "home dir", useLocal: true}
+	root := &cobra.Command{Use: "msgvault"}
+	root.PersistentFlags().String("config", "", "")
+	root.PersistentFlags().String("home", "", "")
+	root.PersistentFlags().Bool("local", true, "")
+	root.PersistentFlags().String("log-file", "", "")
+	root.PersistentFlags().Bool("verbose", true, "")
 	command := &cobra.Command{Use: "sync-full"}
-	command.SetContext(withInvocation(t.Context(), inv))
+	root.AddCommand(command)
+	for name, value := range map[string]string{"config": "config file", "home": "home dir", "local": "false", "log-file": "", "verbose": "false"} {
+		require.NoError(t, root.PersistentFlags().Set(name, value))
+	}
 	command.Flags().String("query", "", "")
 	command.Flags().StringArray("folder", nil, "")
 	command.Flags().Bool("noresume", false, "")
@@ -140,7 +150,81 @@ func TestSyncResumeCommandNativeArguments(t *testing.T) {
 		line = strings.TrimPrefix(line, "& ")
 	}
 	got := headlessNativeArgs(t, shell, testutil.SecretCommand(t, "argv")[0], line)
-	assert.Equal(t, []string{"--config", "config file", "--home", "home dir", "--local", "sync-full", "--build-cache=false", "--folder=A B", "--folder=C", "--noresume", "--query=" + query, "--", "reader@example.test"}, got)
+	assert.Equal(t, []string{"--config=config file", "--home=home dir", "--local=false", "--log-file=", "--verbose=false", "sync-full", "--build-cache=false", "--folder=A B", "--folder=C", "--noresume", "--query=" + query, "--", "reader@example.test"}, got)
+}
+
+func TestSyncFullHintCancellationPhases(t *testing.T) {
+	for _, phase := range []string{"connection", "preflight", "completed"} {
+		t.Run(phase, func(t *testing.T) {
+			var cancel context.CancelFunc
+			server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { cancel() }))
+			t.Cleanup(server.Close)
+			ctx, cancel := context.WithCancel(configureRemoteSyncTest(t, server.URL))
+			defer cancel()
+			var stderr bytes.Buffer
+			command := &cobra.Command{}
+			command.SetContext(ctx)
+			command.SetErr(&stderr)
+			err := runSyncFullWithHint(command, "msgvault sync-full", func() (bool, error) {
+				if phase == "preflight" {
+					p := preflightConfig{Local: true, Interactive: true, OAuthConfigured: true, ListGmailAccounts: func(ctx context.Context) ([]preflightAccount, error) {
+						cancel()
+						return nil, ctx.Err()
+					}}
+					return false, preflightReauth(ctx, p, "", 0)
+				}
+				if phase == "connection" {
+					return runSyncHTTPWithOutcome(command, daemonclient.CLISyncRequest{Full: true})
+				}
+				cancel()
+				return false, nil
+			})
+			if phase == "completed" {
+				require.NoError(t, err)
+				assert.Empty(t, stderr.String())
+			} else {
+				require.ErrorIs(t, err, context.Canceled)
+				assert.Equal(t, 1, strings.Count(stderr.String(), "Sync interrupted."))
+			}
+		})
+	}
+}
+
+func TestSyncResumeCommandSanitizesControlCharacters(t *testing.T) {
+	var out bytes.Buffer
+	require.NoError(t, printSyncResumeCommand(&out, "msgvault sync-full 'a\x1b[31mb\nc'", "linux"))
+	assert.Contains(t, out.String(), "Control characters were removed")
+	assert.NotContains(t, out.String(), "\x1b")
+	assert.Equal(t, 2, strings.Count(out.String(), "\n"))
+}
+
+func TestSyncFullHintWriteFailurePreservesInterruption(t *testing.T) {
+	want := errors.New("write failed")
+	command := &cobra.Command{}
+	command.SetErr(evalRerankFailingWriter{err: want})
+	err := runSyncFullWithHint(command, "msgvault sync-full", func() (bool, error) { return true, nil })
+	assert.ErrorIs(t, err, ErrSyncInterrupted)
+	assert.ErrorIs(t, err, want)
+}
+
+func TestSyncResumeCommandPowerShell(t *testing.T) {
+	pwsh, err := exec.LookPath("pwsh")
+	if err != nil {
+		t.Skip("PowerShell unavailable")
+	}
+	fixture := testutil.SecretCommand(t, "argv")[0]
+	want := []string{"argv", "sync-full", `--query=from:'a b' $HOME;echo`, "--folder=A B", "--folder=C", "--", "reader@example.test"}
+	commands, err := agenthook.BuildCommand(fixture, want...)
+	require.NoError(t, err)
+	var out bytes.Buffer
+	require.NoError(t, printSyncResumeCommand(&out, commands.PowerShell, "windows"))
+	assert.Contains(t, out.String(), "In PowerShell 7.3+, run:")
+	line := strings.TrimSpace(strings.SplitN(out.String(), "\n", 2)[1])
+	data, err := exec.CommandContext(t.Context(), pwsh, "-NoProfile", "-NonInteractive", "-Command", line).CombinedOutput()
+	require.NoError(t, err, "%s", data)
+	var got []string
+	require.NoError(t, json.Unmarshal(data, &got))
+	assert.Equal(t, want[1:], got)
 }
 
 func TestSyncSourceIDUsesConfiguredRemoteHTTP(t *testing.T) {

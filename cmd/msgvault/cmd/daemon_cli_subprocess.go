@@ -97,8 +97,9 @@ func runDaemonCLISubprocessStreamWithEnv(
 const cliSubprocessExitSentinel = "msgvault: cli subprocess exited non-zero"
 
 // classifyDaemonCLIWaitErr maps a subprocess Wait() error to what the proxy
-// should report. A paused exit emits its outcome and succeeds. Other non-zero exits become the
-// sentinel: its real error was already streamed to the caller's stderr, so the
+// should report. A paused exit emits its outcome and succeeds; an interrupted
+// full sync emits its outcome and fails. Other non-zero exits become the
+// sentinel: their real error was already streamed to the caller's stderr, so the
 // client must not print a second, redundant "CLI subprocess ...: exit status
 // 1" wrapper. Any other failure (couldn't start, signal, etc.) is wrapped with
 // context because nothing else surfaced it.
@@ -110,9 +111,11 @@ func classifyDaemonCLIWaitErr(waitErr error, args []string, emit func(string, st
 	if errors.As(waitErr, &exitErr) && exitErr.Exited() {
 		if exitErr.ExitCode() == 130 && len(args) > 0 && args[0] == "sync-full" {
 			if emit != nil {
-				return emit("outcome", "interrupted")
+				if err := emit("outcome", "interrupted"); err != nil {
+					return err
+				}
 			}
-			return nil
+			return errors.New(cliSubprocessExitSentinel)
 		}
 		if exitErr.ExitCode() == ExitCodeSyncPaused {
 			if emit != nil {

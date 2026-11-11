@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/discord"
 	imaplib "go.kenn.io/msgvault/internal/imap"
@@ -2208,13 +2209,37 @@ func TestStoreAPIAdapterInterruptedSyncOperationIsFailed(t *testing.T) {
 		events = append(events, event)
 		return nil
 	}, func(_ context.Context, _ []string, emit func(string, string) error) error {
-		return emit("outcome", "interrupted")
+		if err := emit("outcome", "interrupted"); err != nil {
+			return err
+		}
+		return errors.New(cliSubprocessExitSentinel)
 	})
-	require.NoError(t, err)
+	require.EqualError(t, err, cliSubprocessExitSentinel)
 	assert.Equal(t, []api.CLISyncEvent{{Type: "outcome", Data: "interrupted"}}, events)
 	op, err := f.Store.GetSyncOperation("operation-1")
 	require.NoError(t, err)
 	assert.Equal(t, "failed", op.Status)
+}
+
+type interruptedSyncAdapter struct{ *storeAPIAdapter }
+
+func (a interruptedSyncAdapter) RunCLISync(ctx context.Context, req api.CLISyncRequest, emit func(api.CLISyncEvent) error) error {
+	return a.runCLISyncOperationWithRunner(ctx, req, emit, func(ctx context.Context, args []string, emit func(string, string) error) error {
+		return classifyDaemonCLIWaitErr(helperProcessCommand(ctx, "interrupted").Run(), args, emit)
+	})
+}
+
+func TestInterruptedSyncStreamFailsWithoutOutcomeHandling(t *testing.T) {
+	f := storetest.New(t)
+	adapter := interruptedSyncAdapter{&storeAPIAdapter{store: f.Store}}
+	srv := api.NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, adapter, nil, slog.New(slog.DiscardHandler))
+	httpServer := httptest.NewServer(srv.Router())
+	t.Cleanup(httpServer.Close)
+	client, err := daemonclient.New(daemonclient.Config{URL: httpServer.URL, AllowInsecure: true, RequestMode: daemonclient.RequestModeCLI})
+	require.NoError(t, err)
+	defer func() { _ = client.Close() }()
+	err = client.RunCLISync(t.Context(), daemonclient.CLISyncRequest{Full: true}, func(string, string) error { return nil })
+	require.ErrorContains(t, err, cliSubprocessExitSentinel)
 }
 
 func TestStoreAPIAdapterFinalizesSyncOperationAfterRunnerReturns(t *testing.T) {
