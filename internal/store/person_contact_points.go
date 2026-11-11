@@ -141,6 +141,11 @@ func (s *Store) AddPersonContactPointContext(
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
+		// Recipient replacement takes this lock before message and person rows,
+		// which contact changes invalidate below.
+		if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		if err := ensureProfilePersonTx(ctx, tx, personID); err != nil {
 			return err
 		}
@@ -227,6 +232,11 @@ func (s *Store) SupersedePersonContactPointContext(
 ) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		// Recipient replacement takes this lock before message and person rows,
+		// which contact changes invalidate below.
+		if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
 			return err
 		}
 		if err := s.reviewInferenceExportChangesTx(ctx, tx, personID, func() error {

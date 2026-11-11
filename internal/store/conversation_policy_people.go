@@ -74,6 +74,56 @@ func (s *Store) invalidateConversationPolicyPeopleTx(ctx context.Context, tx *lo
 	return s.invalidateConversationPolicyPersonsTx(ctx, tx, people, revision)
 }
 
+// errMovedMessageNeedsExclusive asks a shared message write to rerun under
+// the exclusive identity lock.
+var errMovedMessageNeedsExclusive = errors.New("moved message needs the exclusive identity lock")
+
+// reconcileMovedMessagePeopleTx updates people features when a room move
+// changes whether a message counts as Full. Facts cite messages, not rooms,
+// so moving a message into a room excluded from people features must retract
+// facts supported only by it, and moving it back must restore them. Manual and
+// independently supported facts keep their support. Moves that keep the same
+// eligibility need nothing, and eligibility-changing moves are rare, so this
+// reconciles the people of both rooms as a tier change would.
+func (s *Store) reconcileMovedMessagePeopleTx(ctx context.Context, tx *loggedTx, from sql.NullInt64, to int64) error {
+	if !from.Valid || from.Int64 == to {
+		return nil
+	}
+	full := `EXISTS(SELECT 1 FROM conversations c WHERE c.id=? AND ` + FullConversationWhere("c") + `)`
+	var changed bool
+	if err := tx.QueryRowContext(ctx, `SELECT (`+full+`) <> (`+full+`)`, from.Int64, to).Scan(&changed); err != nil {
+		return fmt.Errorf("check moved message people support: %w", err)
+	}
+	if !changed {
+		return nil
+	}
+	// Fact reconciliation takes the exclusive identity lock, which a shared
+	// attribution transaction cannot upgrade to. The caller reruns the write.
+	if tx.attribution != nil && !tx.attribution.exclusive {
+		return errMovedMessageNeedsExclusive
+	}
+	people, err := s.conversationPolicyPeopleForRoomsTx(ctx, tx, []int64{from.Int64, to})
+	if err != nil {
+		return err
+	}
+	if len(people) == 0 {
+		return nil
+	}
+	var revision int64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(CAST(value AS BIGINT)),0) FROM archive_metadata WHERE key='conversation_policy_revision'`).Scan(&revision); err != nil {
+		return err
+	}
+	if err := s.invalidateConversationPolicyPersonsTx(ctx, tx, people, revision); err != nil {
+		return err
+	}
+	// Directory rows show names and addresses the moved message may support.
+	marks, args := sortedIDPlaceholders(people)
+	if _, err := tx.ExecContext(ctx, `UPDATE person_contact_state SET dirty_at=COALESCE(dirty_at,`+s.dialect.Now()+`) WHERE person_id IN (`+marks+`)`, args...); err != nil {
+		return fmt.Errorf("mark moved message people dirty: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) conversationPolicyPeopleForRoomsTx(ctx context.Context, tx *loggedTx, conversationIDs []int64) ([]int64, error) {
 	// Bootstrap must include legacy observations even with no changed tier.
 	legacyCondition := `EXISTS(SELECT 1 FROM participant_contact_observations o JOIN sources src ON src.id=o.source_id WHERE o.participant_id=pp.participant_id AND src.source_type IN ('beeper','slack','slackdump','discord','teams') AND o.source NOT IN ('user','carddav_import','vcard_import') AND NOT EXISTS(SELECT 1 FROM participant_contact_observation_conversations edge WHERE edge.observation_id=o.id))`

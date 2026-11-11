@@ -161,6 +161,11 @@ func (s *Store) ReplaceCardDAVDiscoveryContext(
 		return nil, nil, err
 	}
 	if identityChanged {
+		// Recipient replacement takes this lock before message and person rows,
+		// which contact changes invalidate below.
+		if err := s.lockRecipientContextInvalidationTxContext(ctx, logged); err != nil {
+			return nil, nil, err
+		}
 		for _, oldBook := range existing {
 			if err := s.dropCardDAVBookResourcesForIdentityChangeTx(ctx, logged, oldBook.ID); err != nil {
 				return nil, nil, fmt.Errorf("clean prior CardDAV connection book: %w", err)
@@ -627,6 +632,11 @@ func (s *Store) SetCardDAVBookRolesContext(
 		}
 
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		// Recipient replacement takes this lock before message and person rows,
+		// which contact changes invalidate below.
+		if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
 			return err
 		}
 		if roles.IsWriteTarget && !current.IsWriteTarget {

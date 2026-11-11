@@ -150,6 +150,11 @@ func (s *Store) applyPersonProfilePatchOnce(
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
+		// Recipient replacement takes this lock before message and person rows,
+		// which contact changes invalidate below.
+		if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		var updatedID int64
 		err := tx.QueryRowContext(ctx, `UPDATE persons
 			SET revision = revision + 1,
