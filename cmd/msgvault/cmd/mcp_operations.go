@@ -111,7 +111,7 @@ func (b *daemonMCPOperations) OperationDisclosure(ctx context.Context, name stri
 		if disclosure, handled, err := b.personRecordDisclosure(ctx, name, args); handled {
 			return disclosure, err
 		}
-		if disclosure, handled, err := b.recordAttributeDisclosure(name, args); handled {
+		if disclosure, handled, err := b.recordAttributeDisclosure(ctx, name, args); handled {
 			return disclosure, err
 		}
 		if disclosure, handled, err := b.loopOperationDisclosure(name, args); handled {
