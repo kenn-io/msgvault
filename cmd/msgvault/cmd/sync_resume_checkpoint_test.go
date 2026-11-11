@@ -67,7 +67,9 @@ func TestInterruptedSyncCopiedCommandResumesCheckpoint(t *testing.T) {
 
 	query := "subject:first\nsecond\x1b[31m 'quoted' $HOME;echo\n"
 	secondPage := make(chan struct{}, 1)
-	queries := make(chan string, 4)
+	type searchRequest struct{ query, token string }
+	var queries []searchRequest
+	var queriesMu sync.Mutex
 	var pageRequests atomic.Int32
 	provider := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -77,7 +79,9 @@ func TestInterruptedSyncCopiedCommandResumesCheckpoint(t *testing.T) {
 		case "/gmail/v1/users/me/labels":
 			_, _ = io.WriteString(w, `{"labels":[]}`)
 		case "/gmail/v1/users/me/messages":
-			queries <- r.URL.Query().Get("q")
+			queriesMu.Lock()
+			queries = append(queries, searchRequest{r.URL.Query().Get("q"), r.URL.Query().Get("pageToken")})
+			queriesMu.Unlock()
 			if r.URL.Query().Get("pageToken") == "" {
 				_, _ = io.WriteString(w, `{"messages":[{"id":"one","threadId":"one"}],"nextPageToken":"page_1","resultSizeEstimate":2}`)
 			} else if pageRequests.Add(1) == 1 {
@@ -237,14 +241,14 @@ func TestInterruptedSyncCopiedCommandResumesCheckpoint(t *testing.T) {
 	case <-ctx.Done():
 		require.FailNow(t, "replayed sync handler did not finish")
 	}
-	for range 3 {
-		select {
-		case got := <-queries:
-			assert.Equal(t, query, got)
-		case <-ctx.Done():
-			require.FailNow(t, "provider did not receive the expected queries")
-		}
+	var tokens []string
+	queriesMu.Lock()
+	defer queriesMu.Unlock()
+	for _, request := range queries {
+		assert.Equal(t, query, request.query)
+		tokens = append(tokens, request.token)
 	}
+	assert.Equal(t, []string{"", "page_1", "page_1"}, tokens)
 	count, err := st.CountMessagesForSourceContext(ctx, source.ID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), count)
