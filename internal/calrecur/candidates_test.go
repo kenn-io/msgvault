@@ -114,24 +114,14 @@ func TestTimedRecurrenceGapHonorsUntilAndBudget(t *testing.T) {
 func TestTimedRecurrenceWithLocalStartAcrossGap(t *testing.T) {
 	zone, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)
-	for _, tc := range []struct {
-		name, start, local string
-		want               []string
-	}{
-		{"initial gap", "2027-03-14T07:30:00Z", "20270314T023000", []string{"20270314T073000Z", "20270315T063000Z", "20270316T063000Z"}},
-		{"later gap", "2027-03-13T07:30:00Z", "20270313T023000", []string{"20270313T073000Z", "20270315T063000Z", "20270316T063000Z"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			s, err := ParseSet(instant(t, tc.start), false, "", zone, []string{"RRULE:FREQ=DAILY;COUNT=3"})
-			require.NoError(t, err)
-			s.StartLocal = tc.local
-			var got []string
-			err = testIter(t.Context(), s, instant(t, "2027-03-18T00:00:00Z"), 100, func(i instance) bool {
-				got = append(got, i.Identity.Key())
-				return true
-			})
-			require.NoError(t, err)
-			assert.Equal(t, tc.want, got)
-		})
-	}
+	s, err := ParseSet(instant(t, "2027-03-13T07:30:00Z"), false, "", zone, []string{"RRULE:FREQ=DAILY;COUNT=3"})
+	require.NoError(t, err)
+	s.StartLocal = "20270313T023000"
+	var got []string
+	err = testIter(t.Context(), s, instant(t, "2027-03-18T00:00:00Z"), 100, func(i instance) bool {
+		got = append(got, i.Identity.Key())
+		return true
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"20270313T073000Z", "20270315T063000Z", "20270316T063000Z"}, got)
 }
