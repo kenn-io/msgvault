@@ -137,8 +137,7 @@ type BriefResult struct {
 	Boundary                 BriefBoundary
 	Structured               jsontext.Value
 	Rendered                 RenderedBrief
-	// CurrentEventEvidenceRefs remain mandatory at final source alignment even
-	// when capacity retires a resolved event from the future boundary memory.
+	// CurrentEventEvidenceRefs remain mandatory at final source alignment.
 	CurrentEventEvidenceRefs []EvidenceRef
 	// Evidence is the archive evidence the structure cites, in citation order.
 	// The store aligns each input and writes the surviving rows as the brief's
@@ -284,9 +283,8 @@ func briefEvidenceInputs(parsed ParsedBrief) []personfacts.EvidenceInput {
 }
 
 // briefCurrentEventEvidenceRefs captures the source refs behind event
-// highlights that remain in the current structure. Future memory may retire a
-// resolved event for capacity, but its current rendered statement still needs
-// every cited source revalidated before storage.
+// highlights that remain in the current structure so their sources are
+// revalidated before storage.
 func briefCurrentEventEvidenceRefs(parsed ParsedBrief, window BriefWindow) ([]EvidenceRef, error) {
 	itemsByID := make(map[string]EvidenceItem, len(window.Items))
 	for _, item := range window.Items {
@@ -349,7 +347,7 @@ func newBriefResult(
 	before := briefCitationOrder(parsed.Output)
 	for index := len(parsed.Output.Highlights) - 1; index >= 0; index-- {
 		event := parsed.Output.Highlights[index].LifeEvent
-		if event == nil || event.State == BriefEventResolved || retained[index] {
+		if event == nil || retained[index] {
 			continue
 		}
 		var dropped int

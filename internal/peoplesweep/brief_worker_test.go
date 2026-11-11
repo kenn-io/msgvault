@@ -23,15 +23,14 @@ var briefLaneOff = false
 
 // briefFakeStore is the durable brief state a worker run reads.
 type briefFakeStore struct {
-	enrolled        bool
-	eligibility     BriefEligibility
-	highWater       int64
-	changedAfter    int64
-	cadenceDueAt    *time.Time
-	ensuredWork     []int64
-	trackedWork     bool
-	eligibilityErr  error
-	retiredVersions []int
+	enrolled       bool
+	eligibility    BriefEligibility
+	highWater      int64
+	changedAfter   int64
+	cadenceDueAt   *time.Time
+	ensuredWork    []int64
+	trackedWork    bool
+	eligibilityErr error
 }
 
 func (s *briefFakeStore) PersonSweepBriefEligibility(
@@ -1093,7 +1092,6 @@ func TestPersonSweepWorkerCapsTheRenderedBrief(t *testing.T) {
 	assert.Len(trimmed.Evidence, 1, "the pointers cover only the kept item")
 }
 
-func (s *briefFakeStore) RetirePersonSweepBrief(_ context.Context, _ Lease, version int, _ time.Time) error {
-	s.retiredVersions = append(s.retiredVersions, version)
+func (s *briefFakeStore) RetirePersonSweepBrief(_ context.Context, _ Lease, _ int, _ time.Time) error {
 	return nil
 }

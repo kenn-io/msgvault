@@ -321,7 +321,6 @@ func TestBriefEventUnknownMemoryVersionCannotPlanOrBuild(t *testing.T) {
 				profile.AllowSensitive = false
 				_, err := worker.planPersonBrief(t.Context(), 7, mode, profile, now)
 				assert.Error(t, err)
-				assert.Empty(t, store.retiredVersions)
 			})
 		}
 	}

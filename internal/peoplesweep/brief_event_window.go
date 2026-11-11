@@ -218,8 +218,8 @@ func briefEventContext(request BriefWindowRequest) *BriefEventContext {
 // validateBriefEventMemoryCapacity makes sure the memory saved with this
 // result can fit in a later paid packet and leaves one item for new mandatory
 // evidence such as a last-contact message or an explicit outcome. Capacity
-// pressure may retire event memory. The caller removes retired unresolved
-// events from the current output and retains resolved statements with alignment.
+// pressure may retire event memory. The caller removes retired events from
+// the current output.
 func validateBriefEventMemoryCapacity(parsed ParsedBrief, window BriefWindow) ([]int, error) {
 	eventHighlights := make([]BriefHighlight, 0, len(parsed.Output.Highlights))
 	for _, highlight := range parsed.Output.Highlights {

@@ -465,18 +465,16 @@ func TestResolvedEventMemoryRetiresWhenItsExpandedFuturePacketExceedsBudget(t *t
 	assert.Greater(futureBoundary.InputBytes, window.Boundary.InputBytes,
 		"the resolution quote enlarges retained context beyond the current packet")
 
+	parsed.Output.LastMeaningfulInteraction = &BriefInteraction{EvidenceID: resolutionID, Summary: "they discussed their plans"}
 	window.Request.MaxBytes = window.Boundary.InputBytes
 	result, err := renderBriefResult(parsed, window, window.Request.AsOf)
-	require.NoError(err, "the current resolution fits after resolved memory retires")
-	assert.Contains(result.Rendered.Text, "Resolved:")
-	assert.Empty(result.Boundary.EventMemory,
-		"an oversized resolved event is not carried into the next packet")
-	assert.ElementsMatch([]EvidenceRef{anchor.Ref, resolution.Ref}, result.CurrentEventEvidenceRefs,
-		"current resolution sources remain available for final alignment after memory retires")
+	require.NoError(err)
+	assert.NotContains(result.Rendered.Text, "Resolved:")
+	assert.Empty(result.Boundary.EventMemory)
+	assert.Empty(result.CurrentEventEvidenceRefs)
+	assert.Empty(ParsedBriefOutput(t, result).Highlights)
 	assert.True(result.Boundary.AdmissionThroughEventTime.After(first.Boundary.AdmissionThroughEventTime),
 		"retiring resolved memory must retain and advance the admission watermark")
-	assert.Equal(BriefEventResolved, ParsedBriefOutput(t, result).Highlights[0].LifeEvent.State,
-		"the current brief still reports the resolution")
 }
 
 func TestBriefEventChangedSourceCannotInheritMemoryEvenWithTheSameWords(t *testing.T) {
