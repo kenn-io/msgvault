@@ -87,6 +87,21 @@ func TestImportVerifiesSmallRosterBeforeReplacement(t *testing.T) {
 	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
 	require.NoError(err)
 	assert.Equal(1, detailRequests(), "a rename is verified before replacement")
+	f.mu.Lock()
+	chat.Participants = append(chat.Participants, map[string]any{"id": "@signal_joined:example.test", "fullName": "Joined"})
+	chat.LastActivity = time.Now()
+	chat.Msgs = append(chat.Msgs, fakeMsg{ID: "joined", SortKey: 100, Timestamp: chat.LastActivity, Text: "joined", SenderID: "@signal_ann:beeper.local"})
+	f.mu.Unlock()
+	detailRequests()
+	sum, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool {
+		var members int
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = (SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?)`), sum.SourceID, chat.ID).Scan(&members))
+		return members >= 3
+	}})
+	require.NoError(err)
+	require.True(sum.Stopped)
+	assert.Zero(detailRequests(), "a yield after the final member commit must not start verification")
+	assert.Len(rosterMembers(t, st, sum.SourceID, chat.ID), 3, "the committed member stays")
 }
 
 func TestRosterSignatureIgnoresOrder(t *testing.T) {
@@ -345,11 +360,21 @@ func TestUnsupportedRosterSourceVersionStopsImport(t *testing.T) {
 	imp, st := newHandlerTestImporter(t, f)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	sourceID := newBeeperTestSource(t, st, "signal")
-	require.NoError(t, st.UpdateSourceSyncState(t.Context(), sourceID, `{"chats":{"room":{"roster_work":{"version":2}}}}`))
+	const blob = `{"chats":{"room":{"roster_work":{"version":2}}}}`
+	const want = "saved Beeper progress is incompatible with this version of msgvault. Update msgvault to resume"
+	require.NoError(t, st.UpdateSourceSyncState(t.Context(), sourceID, blob))
 	for _, full := range []bool{false, true} {
 		_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Full: full})
-		require.ErrorContains(t, err, "saved Beeper progress is incompatible with this version of msgvault. Update msgvault to resume")
+		require.ErrorContains(t, err, want)
 	}
+	_, err := imp.BackfillMedia(t.Context(), ImportOptions{AccountID: "signal", AttachmentsDir: t.TempDir()})
+	require.ErrorContains(t, err, want)
+	source, err := st.GetOrCreateSource(sourceTypeBeeper, "signal")
+	require.NoError(t, err)
+	assert.Equal(t, blob, source.SyncCursor.String, "newer saved progress is left unchanged")
+	var runs int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM sync_runs WHERE source_id = ?`), sourceID).Scan(&runs))
+	assert.Zero(t, runs, "no media run starts over newer progress")
 }
 
 func TestRosterJoinRefreshesExistingMatchEvidence(t *testing.T) {
