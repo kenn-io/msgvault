@@ -1861,6 +1861,7 @@ func cliRunPersonProviderFlags(operation string, args []string) (*pflag.FlagSet,
 		flags.Bool("all", false, "")
 		flags.Bool("json", false, "")
 		flags.Bool("semantic-embeddings", false, "")
+		flags.Bool("commitments", false, "")
 		flags.String("if-fingerprint", "", "")
 		flags.String("fingerprint", "", "")
 	case "history":
