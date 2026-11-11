@@ -280,7 +280,9 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 
 	requests := make(chan string, 8)
 	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
-		requests <- r.URL.Path
+		if r.URL.Path != "/api/v1/mcp-events/list" {
+			requests <- r.URL.Path
+		}
 		if r.URL.Path == "/api/v1/media/search/status" {
 			_ = json.NewEncoder(w).Encode(map[string]any{"configured": false})
 			return
@@ -311,8 +313,6 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 	assert.Equal("/api/v1/mcp/capabilities", path, "startup probes optional operations")
 	path = <-requests
 	assert.Equal("/api/v1/health", path, "startup reads the daemon schema")
-	path = <-requests
-	assert.Equal("/api/v1/mcp-events/list", path, "startup checks Events availability")
 	path = <-requests
 	assert.Equal("/api/v1/media/search/status", path, "capability detection checks Docbank separately")
 	path = <-requests
@@ -651,11 +651,11 @@ func TestDaemonMCPDocbankProbeFailureIsLogged(t *testing.T) {
 	assert.Contains(logs.String(), "503")
 }
 
-func TestDaemonMCPEventsRequireEnabledCurrentDaemon(t *testing.T) {
+func TestDaemonMCPEventsRequireCurrentDaemon(t *testing.T) {
 	for _, tc := range []struct {
 		name, version string
 		enabled, want bool
-	}{{"old", "5.2.0", true, false}, {"disabled", api.APISchemaVersion, false, false}, {"enabled", api.APISchemaVersion, true, true}} {
+	}{{"old", "5.2.0", true, false}, {"disabled", api.APISchemaVersion, false, true}, {"enabled", api.APISchemaVersion, true, true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			eventsCalls := 0
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -671,11 +671,7 @@ func TestDaemonMCPEventsRequireEnabledCurrentDaemon(t *testing.T) {
 			})
 			opts := daemonMCPServeOptions(t.Context(), client, nil)
 			assert.Equal(t, tc.want, opts.Events != nil)
-			if tc.version == "5.2.0" {
-				assert.Zero(t, eventsCalls)
-			} else {
-				assert.Equal(t, 1, eventsCalls)
-			}
+			assert.Zero(t, eventsCalls)
 		})
 	}
 }

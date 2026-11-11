@@ -16,16 +16,7 @@ import (
 // EventKey encrypts subscription secrets, binding them to their archive and ID.
 type EventKey [32]byte
 
-func LoadEventKey(home string, hasSubscriptions bool) (EventKey, error) {
-	return loadEventKey(home, !hasSubscriptions)
-}
-
-// ReadEventKey never creates a key on a read path.
-func ReadEventKey(home string) (EventKey, error) {
-	return loadEventKey(home, false)
-}
-
-func loadEventKey(home string, create bool) (EventKey, error) {
+func LoadEventKey(home string, create bool) (EventKey, error) {
 	var key EventKey
 	path := filepath.Join(home, "mcp-events.key")
 	data, err := os.ReadFile(path)

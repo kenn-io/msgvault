@@ -591,7 +591,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err := configureRecordingReferenceJob(ctx, mediaSched, operationGate, s, cfg.Integrations.Docbank, logger); err != nil {
 		logger.Warn("Recording reference submission unavailable", "error", err)
 	}
-	eventsService := &mcpevents.Service{Store: s, Home: cfg.HomeDir, Enabled: cfg.MCPEvents.Enabled, ConfigTargets: len(cfg.Wakeups)}
+	eventsService := &mcpevents.Service{Store: s, Home: cfg.HomeDir, Enabled: cfg.MCPEvents.Enabled, ConfigTargets: len(cfg.Wakeups), Logger: logger}
 	if err := configureWakeupJob(ctx, mediaSched, operationGate, s, cfg, logger, eventsService); err != nil {
 		logger.Warn("Wakeup scheduling unavailable", "category", "scheduler_error")
 	}

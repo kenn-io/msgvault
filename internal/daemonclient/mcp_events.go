@@ -39,7 +39,11 @@ func (c *Client) mcpEventsRequest(ctx context.Context, method, path string, body
 		if json.Unmarshal(raw, &e) == nil {
 			switch e.Code {
 			case mcpevents.InvalidParams, mcpevents.NotFound, mcpevents.Forbidden, mcpevents.ResourceExhausted, mcpevents.Unsupported:
-				return &mcpevents.Error{Code: e.Code, Reason: "request_rejected"}
+				reason := "request_rejected"
+				if e.Reason == "invalid_scope" {
+					reason = e.Reason
+				}
+				return &mcpevents.Error{Code: e.Code, Reason: reason}
 			}
 		}
 		return errors.New("events daemon unavailable")

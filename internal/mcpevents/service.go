@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
+	"log/slog"
 	"os"
 	"time"
 
@@ -28,6 +29,7 @@ type Service struct {
 	Enabled       bool
 	ConfigTargets int
 	Now           func() time.Time
+	Logger        *slog.Logger
 }
 
 func (s *Service) now() time.Time {
@@ -54,12 +56,7 @@ func (s *Service) key(ctx context.Context, entries []entry, create bool) (wakeup
 	if err != nil {
 		return wakeups.EventKey{}, "", err
 	}
-	var key wakeups.EventKey
-	if create {
-		key, err = wakeups.LoadEventKey(s.Home, len(entries) > 0)
-	} else {
-		key, err = wakeups.ReadEventKey(s.Home)
-	}
+	key, err := wakeups.LoadEventKey(s.Home, create && len(entries) == 0)
 	return key, uid, err
 }
 func (s *Service) Available(ctx context.Context) bool {
@@ -116,13 +113,7 @@ func (s *Service) Subscribe(ctx context.Context, in SubscribeRequest) (Subscribe
 		if index >= 0 {
 			id = entries[index].ID
 		} else {
-			active := s.ConfigTargets
-			for _, e := range entries {
-				if s.now().Before(e.Expires) {
-					active++
-				}
-			}
-			if active >= 32 {
+			if len(entries)+s.ConfigTargets >= 32 {
 				return out, failure(ResourceExhausted, "subscriptions")
 			}
 			var b [16]byte
@@ -188,13 +179,7 @@ func (s *Service) Unsubscribe(ctx context.Context, in UnsubscribeRequest) error 
 		if idx < 0 {
 			return failure(NotFound, "subscription")
 		}
-		id := entries[idx].ID
-		entries = append(entries[:idx], entries[idx+1:]...)
-		next, err := json.Marshal(entries)
-		if err != nil {
-			return err
-		}
-		ok, err := s.Store.SwapMCPEventsCatalog(ctx, raw, next, "", nil, id)
+		ok, err := s.removeEntry(ctx, entries, raw, idx)
 		if err != nil {
 			return failure(Unavailable, "store_unavailable")
 		}
@@ -202,6 +187,16 @@ func (s *Service) Unsubscribe(ctx context.Context, in UnsubscribeRequest) error 
 			return nil
 		}
 	}
+}
+
+func (s *Service) removeEntry(ctx context.Context, entries []entry, raw []byte, index int) (bool, error) {
+	id := entries[index].ID
+	entries = append(entries[:index:index], entries[index+1:]...)
+	next, err := json.Marshal(entries)
+	if err != nil {
+		return false, err
+	}
+	return s.Store.SwapMCPEventsCatalog(ctx, raw, next, "", nil, id)
 }
 
 // purgeExpired removes owner entries and positions without needing the key.
@@ -221,13 +216,7 @@ func (s *Service) purgeExpired(ctx context.Context) error {
 		if index < 0 {
 			return nil
 		}
-		id := entries[index].ID
-		entries = append(entries[:index:index], entries[index+1:]...)
-		next, err := json.Marshal(entries)
-		if err != nil {
-			return err
-		}
-		if _, err = s.Store.SwapMCPEventsCatalog(ctx, raw, next, "", nil, id); err != nil {
+		if _, err = s.removeEntry(ctx, entries, raw, index); err != nil {
 			return err
 		}
 	}
@@ -256,7 +245,12 @@ func (s *Service) Native(ctx context.Context) ([]wakeups.Subscription, error) {
 		}
 		secret, err := key.Open(uid, e.ID, e.Secret)
 		if err != nil {
-			return nil, errors.New("events secret unavailable")
+			logger := s.Logger
+			if logger == nil {
+				logger = slog.Default()
+			}
+			logger.Warn("native wakeup unavailable", "id", e.ID, "category", "secret_unavailable")
+			continue
 		}
 		if e.Arguments.IncomingOnly == nil {
 			return nil, errors.New("invalid events catalog")

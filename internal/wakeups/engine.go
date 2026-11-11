@@ -200,9 +200,6 @@ func (e *Engine) RunPass(ctx context.Context) error {
 	pages := make(map[store.ChangedMessagesCursor]store.ChangedMessagePage)
 	var head initialHead
 	for _, sub := range subscriptions {
-		if sub.StateKey == "" {
-			sub.StateKey = store.WakeupStateKey(sub.Name)
-		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -218,6 +215,15 @@ func (e *Engine) RunPass(ctx context.Context) error {
 		var matches []store.ChangedMessage
 		var uid string
 		var ready bool
+		recordFailure := func(category string) {
+			if sub.Native && category != "" {
+				state.LastError = category
+				if state.FailedSince == nil {
+					stamp := e.now()
+					state.FailedSince = &stamp
+				}
+			}
+		}
 		advance := func(before []byte) (bool, error) {
 			swapped, err := e.Store.AdvanceWakeupStateKey(ctx, sub.StateKey, before, state)
 			if err == nil && !swapped {
@@ -264,6 +270,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 					return err
 				}
 				state.NextAttemptAt = now.Add(retryDelay(1))
+				recordFailure("person_unavailable")
 				_, err = advance(raw)
 				if err == nil {
 					logger.Warn("wakeup failed", "name", sub.Name, "category", "person_unavailable", "failures", state.Failures)
@@ -276,6 +283,13 @@ func (e *Engine) RunPass(ctx context.Context) error {
 				if qualifies(row, now, sub.MaxMessageAge) {
 					matches = append(matches, row)
 				}
+			}
+			if sub.Native && state.Failures >= 5 {
+				state.At = next.At()
+				state.AfterID, state.AfterRow = next.AfterID()
+				state.Failures = 0
+				state.NextAttemptAt = time.Time{}
+				return advance(raw)
 			}
 			if len(matches) == 0 && state.Failures == 0 {
 				if len(page.Messages) > 0 || (!page.CompleteThrough.IsZero() && since.At().After(page.ServerTime)) {
@@ -354,6 +368,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 				continue
 			}
 		}
+		recordFailure(category)
 		if category == "" || sub.Native && (status == 410 || status == 413 || state.Failures >= 5) {
 			state.At = next.At()
 			state.AfterID, state.AfterRow = next.AfterID()
@@ -365,20 +380,10 @@ func (e *Engine) RunPass(ctx context.Context) error {
 					state.FailedSince = nil
 					stamp := e.now()
 					state.LastDeliveryAt = &stamp
-				} else {
-					state.LastError = category
-					if state.FailedSince == nil {
-						stamp := e.now()
-						state.FailedSince = &stamp
-					}
 				}
 			}
 		} else {
-			state.LastError = category
-			if state.FailedSince == nil {
-				stamp := e.now()
-				state.FailedSince = &stamp
-			}
+
 			failureTime := e.now()
 			state.NextAttemptAt = failureTime.Add(retryDelay(state.Failures))
 		}

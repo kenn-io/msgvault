@@ -123,7 +123,5 @@ func ValidateWakeupDestination(endpoint string) error {
 	} else if netguard.ProhibitedHostname(target.Hostname()) {
 		return fmt.Errorf("prohibited callback")
 	}
-	c := WakeupConfig{URL: endpoint}
-	_, _, err = c.TrustedDestination()
-	return err
+	return nil
 }

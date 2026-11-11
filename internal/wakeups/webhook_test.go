@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -27,14 +26,17 @@ func TestWebhookSigns(t *testing.T) {
 	t.Run("signature", func(t *testing.T) {
 		assert := Assert.New(t)
 
-		var signature, id, stamp string
+		var signature, id, stamp, subscription string
 		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			id, stamp, signature = r.Header.Get("Webhook-Id"), r.Header.Get("Webhook-Timestamp"), r.Header.Get("Webhook-Signature")
+			id, stamp, signature = r.Header.Get("webhook-id"), r.Header.Get("webhook-timestamp"), r.Header.Get("webhook-signature")
+			subscription = r.Header.Get("X-MCP-Subscription-Id")
 			w.WriteHeader(http.StatusNoContent)
 		}))
 		defer server.Close()
-		category, _ := testWebhookClient(t, server).sendEvent(t.Context(), "https://example.com/hook", "wk_test", "", secret, body)
+		category, status := testWebhookClient(t, server).sendEvent(t.Context(), "https://example.com/hook", "wk_test", "sub-1", secret, body)
 		assert.Empty(category)
+		assert.Equal(http.StatusNoContent, status)
+		assert.Equal("sub-1", subscription)
 		assert.Equal("wk_test", id)
 		assert.NotEmpty(stamp)
 		mac := hmac.New(sha256.New, secret)

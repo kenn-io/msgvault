@@ -138,6 +138,21 @@ func decode(raw []byte, out any) error {
 					return failure(InvalidParams, "invalid_params")
 				}
 			}
+			if key == "arguments" {
+				_, person := fields["person_id"]
+				_, source := fields["source_id"]
+				if person && source {
+					return failure(InvalidParams, "invalid_arguments")
+				}
+				for _, selector := range []string{"person_id", "source_id"} {
+					if raw, present := fields[selector]; present {
+						var id int64
+						if json.Unmarshal(raw, &id) == nil && id <= 0 {
+							return failure(InvalidParams, "invalid_arguments")
+						}
+					}
+				}
+			}
 		}
 	}
 	if err := json.Unmarshal(raw, out, json.RejectUnknownMembers(true)); err != nil {

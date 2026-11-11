@@ -21,7 +21,7 @@ const maxEventsBodyBytes = 1 << 20
 // method that requires Mcp-Name.
 func isEventsNameMethod(method string) bool {
 	switch method {
-	case "events/subscribe", "events/unsubscribe", "events/poll", "events/stream":
+	case "events/subscribe", "events/unsubscribe":
 		return true
 	}
 	return false
@@ -36,7 +36,7 @@ func isEventsNameMethod(method string) bool {
 // single requests the SDK rejects (HTTP 400, -32020) any request whose
 // Mcp-Method is missing or differs from the body's method. A request that
 // lies about its method never reaches the inner handler. If an SDK upgrade
-// drops that check, TestEventsNameHeaderRelyOnSDKMethodHeaderValidation fails.
+// drops that check, this guard must also validate the method.
 //
 // Like the SDK, a body over the limit is answered with HTTP 413 and a
 // plain-text "request body exceeds N bytes".

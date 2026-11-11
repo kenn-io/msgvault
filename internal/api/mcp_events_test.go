@@ -50,7 +50,6 @@ func TestOwnerEventsDisabledAndInvalidSubscription(t *testing.T) {
 	}
 	w := request(`{"name":"msgvault.messages.changed","arguments":{"source_id":1},"delivery":{"mode":"webhook","url":"https://example.com","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`)
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-	cfg.MCPEvents.Enabled = true
 	events.Enabled = true
 	w = request(`{"name":"msgvault.messages.changed","arguments":{"source_id":1,"source_id":2},"delivery":{"mode":"webhook","url":"https://example.com","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -69,5 +68,13 @@ func TestMCPEventsRejectsDelegatedGrant(t *testing.T) {
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, r)
 		assert.Equal(t, http.StatusUnauthorized, w.Code, route.path)
+	}
+}
+
+func TestMCPEventsRejectsRemoteClient(t *testing.T) {
+	f := newRemoteClientFixture(t, false)
+	for _, route := range []struct{ method, path string }{{http.MethodGet, "/api/v1/mcp-events/list"}, {http.MethodPost, "/api/v1/mcp-events/subscribe"}, {http.MethodPost, "/api/v1/mcp-events/unsubscribe"}} {
+		response := f.do(t, remoteClientTestReaderKey, route.method, route.path, "{}")
+		assert.Equal(t, http.StatusForbidden, response.Code, route.path)
 	}
 }

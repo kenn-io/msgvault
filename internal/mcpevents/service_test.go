@@ -1,7 +1,9 @@
 package mcpevents
 
 import (
+	"bytes"
 	"encoding/json/v2"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,6 +15,34 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
+func TestNativeSkipsUnreadableSubscription(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	var logs bytes.Buffer
+	service := Service{Store: st, Home: t.TempDir(), Enabled: true, Logger: slog.New(slog.NewTextHandler(&logs, nil))}
+	in := preparedSubscribe(t, SubscribeRequest{Name: Name, Arguments: Arguments{SourceID: 1}, Delivery: Delivery{Mode: "webhook", URL: "https://example.com/one", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	first, err := service.Subscribe(t.Context(), in)
+	require.NoError(err)
+	in.Delivery.URL = "https://example.com/two"
+	second, err := service.Subscribe(t.Context(), in)
+	require.NoError(err)
+	entries, raw, err := service.catalog(t.Context())
+	require.NoError(err)
+	entries[0].Secret = []byte("corrupt")
+	next, err := json.Marshal(entries)
+	require.NoError(err)
+	ok, err := st.SwapMCPEventsCatalog(t.Context(), raw, next, "", nil, "")
+	require.NoError(err)
+	require.True(ok)
+	targets, err := service.Native(t.Context())
+	require.NoError(err)
+	require.Len(targets, 1)
+	assert.Equal(second.ID, targets[0].Name)
+	assert.Contains(logs.String(), first.ID)
+	assert.Contains(logs.String(), "secret_unavailable")
+}
+
 func preparedSubscribe(t *testing.T, in SubscribeRequest) SubscribeRequest {
 	t.Helper()
 	raw, err := json.Marshal(in)
@@ -22,7 +52,7 @@ func preparedSubscribe(t *testing.T, in SubscribeRequest) SubscribeRequest {
 	return out
 }
 
-func TestEventsKeyIsCreatedOnlyBySubscribeAndExpiryCleansWithoutIt(t *testing.T) {
+func TestEventsKeyIsCreatedOnlyBySubscribe(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -43,14 +73,6 @@ func TestEventsKeyIsCreatedOnlyBySubscribeAndExpiryCleansWithoutIt(t *testing.T)
 	require.NoError(err)
 	require.NoError(service.Unsubscribe(t.Context(), unsubscribe))
 	assert.True(service.Available(t.Context()))
-	_, err = service.Subscribe(t.Context(), in)
-	require.NoError(err)
-	require.NoError(os.Remove(path))
-	now = now.Add(25 * time.Hour)
-	targets, err := service.Native(t.Context())
-	require.NoError(err)
-	assert.Empty(targets)
-	assert.True(service.Available(t.Context()))
 	assert.NoFileExists(path)
 }
 
@@ -67,6 +89,23 @@ func TestDecodeSubscribeRejectsInvalidArgumentsAndNulls(t *testing.T) {
 		var eventErr *Error
 		require.ErrorAs(t, err, &eventErr)
 		assert.Equal(t, InvalidParams, eventErr.Code)
+	}
+}
+
+func TestDecodeRejectsPresentZeroSelector(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	for _, arguments := range []string{`{"person_id":1,"source_id":0}`, `{"person_id":0,"source_id":1}`} {
+		raw := `{"name":"msgvault.messages.changed","arguments":` + arguments + `,"delivery":{"mode":"webhook","url":"https://example.com","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`
+		_, err := DecodeSubscribe([]byte(raw))
+		var eventErr *Error
+		require.ErrorAs(err, &eventErr)
+		assert.Equal(InvalidParams, eventErr.Code)
+		assert.Equal("invalid_arguments", eventErr.Reason)
+		_, err = DecodeUnsubscribe([]byte(raw))
+		require.ErrorAs(err, &eventErr)
+		assert.Equal(InvalidParams, eventErr.Code)
+		assert.Equal("invalid_arguments", eventErr.Reason)
 	}
 }
 
@@ -95,6 +134,9 @@ func TestSubscribeRefreshPreservesPosition(t *testing.T) {
 	require.NoError(err)
 	require.NotNil(raw)
 	pos.Failures = 2
+	stamp := time.Now().UTC().Truncate(time.Second)
+	pos.LastError = "http_5xx"
+	pos.FailedSince = &stamp
 	ok, err := st.AdvanceWakeupStateKey(t.Context(), key, raw, pos)
 	require.NoError(err)
 	require.True(ok)
@@ -104,6 +146,9 @@ func TestSubscribeRefreshPreservesPosition(t *testing.T) {
 	got, _, err := st.LoadWakeupStateKey(t.Context(), key)
 	require.NoError(err)
 	assert.Equal(pos, got)
+	assert.Equal("http_5xx", second.DeliveryStatus.LastError)
+	require.NotNil(second.DeliveryStatus.FailedSince)
+	assert.Equal(stamp, *second.DeliveryStatus.FailedSince)
 }
 
 func TestExpiredSubscriptionRemovedWithoutDelivery(t *testing.T) {
@@ -116,6 +161,7 @@ func TestExpiredSubscriptionRemovedWithoutDelivery(t *testing.T) {
 	in = preparedSubscribe(t, in)
 	result, err := service.Subscribe(t.Context(), in)
 	require.NoError(err)
+	require.NoError(os.Remove(filepath.Join(service.Home, "mcp-events.key")))
 	now = now.Add(25 * time.Hour)
 	targets, err := service.Native(t.Context())
 	require.NoError(err)
@@ -123,32 +169,6 @@ func TestExpiredSubscriptionRemovedWithoutDelivery(t *testing.T) {
 	_, position, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(result.ID))
 	require.NoError(err)
 	assert.Nil(position)
-}
-
-func TestRefreshReturnsCategorizedDeliveryStatus(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	service := Service{Store: st, Home: t.TempDir(), Enabled: true}
-	in := SubscribeRequest{Name: Name, Arguments: Arguments{SourceID: 1}, Delivery: Delivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}
-	in = preparedSubscribe(t, in)
-	first, err := service.Subscribe(t.Context(), in)
-	require.NoError(err)
-	key := store.MCPEventsPositionKey(first.ID)
-	state, raw, err := st.LoadWakeupStateKey(t.Context(), key)
-	require.NoError(err)
-	stamp := time.Now().UTC().Truncate(time.Second)
-	state.Failures = 1
-	state.LastError = "http_5xx"
-	state.FailedSince = &stamp
-	ok, err := st.AdvanceWakeupStateKey(t.Context(), key, raw, state)
-	require.NoError(err)
-	require.True(ok)
-	refreshed, err := service.Subscribe(t.Context(), in)
-	require.NoError(err)
-	assert.Equal("http_5xx", refreshed.DeliveryStatus.LastError)
-	require.NotNil(refreshed.DeliveryStatus.FailedSince)
-	assert.Equal(stamp, *refreshed.DeliveryStatus.FailedSince)
 }
 
 func TestConcurrentFinalSubscriptionUsesSharedLimit(t *testing.T) {

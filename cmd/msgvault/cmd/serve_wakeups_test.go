@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/fileutil"
+	"go.kenn.io/msgvault/internal/mcpevents"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -115,4 +116,12 @@ func TestWakeupSetupSafeDiagnostics(t *testing.T) {
 	assert.Contains(text, "category=secret_unavailable")
 	assert.Contains(text, "category=invalid_secret")
 	assert.NotContains(text, "short")
+}
+
+func TestWakeupJobWithOnlyEvents(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	sched := scheduler.New(nil)
+	service := &mcpevents.Service{Store: st, Home: t.TempDir(), Enabled: true}
+	Require.NoError(t, configureWakeupJob(t.Context(), sched, nil, st, &config.Config{}, nil, service))
+	Assert.True(t, sched.IsJobScheduled("wakeups"))
 }

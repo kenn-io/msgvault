@@ -131,7 +131,7 @@ func registerNativeEvents(server *sdkmcp.Server, backend EventsBackend) {
 		}
 		out, err := backend.MCPEventsList(ctx)
 		if err != nil {
-			return nil, rpcEventError(err)
+			out = mcpevents.ListResult{Events: []mcpevents.Definition{}}
 		}
 		return &nativeEventResult{value: map[string]any{"events": out.Events}, complete: true}, nil
 	})

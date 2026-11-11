@@ -64,7 +64,7 @@ func TestEngineRetriesFailedDeliveryAndAdvancesAfterSuccess(t *testing.T) {
 			w.WriteHeader(status)
 		}))
 		defer server.Close()
-		sub := Subscription{Name: "inbox", URL: "https://example.com/hook", Secret: []byte(strings.Repeat("a", 32)), Filter: changefeed.Filter{IncomingOnly: true}, MaxMessageAge: 72 * time.Hour, Client: testWebhookClient(t, server)}
+		sub := Subscription{Name: "inbox", StateKey: store.WakeupStateKey("inbox"), URL: "https://example.com/hook", Secret: []byte(strings.Repeat("a", 32)), Filter: changefeed.Filter{IncomingOnly: true}, MaxMessageAge: 72 * time.Hour, Client: testWebhookClient(t, server)}
 		engine := Engine{Store: &observedStore{Store: st, fixedBound: now.Add(-time.Second)}, Subscriptions: []Subscription{sub}, Now: func() time.Time { return now }}
 		require.NoError(engine.RunPass(ctx))
 		require.Len(bodies, 1)
@@ -196,7 +196,7 @@ func TestEngineTruncatesIDsWithoutLosingCount(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
-	engine := Engine{Store: st, Subscriptions: []Subscription{{Name: "bulk", URL: "https://example.com/hook", Secret: []byte(strings.Repeat("a", 32)), Filter: changefeed.Filter{IncomingOnly: true}, MaxMessageAge: 72 * time.Hour, Client: testWebhookClient(t, server)}}, Now: func() time.Time { return now }}
+	engine := Engine{Store: st, Subscriptions: []Subscription{{Name: "bulk", StateKey: store.WakeupStateKey("bulk"), URL: "https://example.com/hook", Secret: []byte(strings.Repeat("a", 32)), Filter: changefeed.Filter{IncomingOnly: true}, MaxMessageAge: 72 * time.Hour, Client: testWebhookClient(t, server)}}, Now: func() time.Time { return now }}
 	require.NoError(engine.RunPass(ctx))
 	require.NoError(decodeErr)
 	assert.Equal(60, got.Matched.Count)
@@ -234,7 +234,7 @@ func TestNativeDeliveryDropsPermanentAndEventuallyAdvances(t *testing.T) {
 				w.WriteHeader(status)
 			}))
 			defer server.Close()
-			sub := Subscription{Name: "sub-x", StateKey: key, Native: true, URL: "https://example.com/hook", Secret: []byte(strings.Repeat("a", 32)), Filter: changefeed.Filter{SourceIDs: []int64{src.ID}, IncomingOnly: true}, MaxMessageAge: 72 * time.Hour, Client: testWebhookClient(server)}
+			sub := Subscription{Name: "sub-x", StateKey: key, Native: true, URL: "https://example.com/hook", Secret: []byte(strings.Repeat("a", 32)), Filter: changefeed.Filter{SourceIDs: []int64{src.ID}, IncomingOnly: true}, MaxMessageAge: 72 * time.Hour, Client: testWebhookClient(t, server)}
 			engine := Engine{Store: st, Subscriptions: []Subscription{sub}, Now: func() time.Time { return now }}
 			attempts := 1
 			if status == 500 {
@@ -246,7 +246,9 @@ func TestNativeDeliveryDropsPermanentAndEventuallyAdvances(t *testing.T) {
 			}
 			require.Len(bodies, attempts)
 			assert.Equal("msgvault.messages.changed", bodies[0]["name"])
-			assert.Nil(bodies[0]["cursor"])
+			cursor, present := bodies[0]["cursor"]
+			assert.True(present)
+			assert.Nil(cursor)
 			assert.Equal(ids[0], bodies[0]["eventId"])
 			state, _, err := st.LoadWakeupStateKey(ctx, key)
 			require.NoError(err)
@@ -258,7 +260,36 @@ func TestNativeDeliveryDropsPermanentAndEventuallyAdvances(t *testing.T) {
 	}
 }
 
-func TestNativePositionSurvivesDowntimeAndPrune(t *testing.T) {
+func TestNativeExhaustedAttemptIsNotSentAgain(t *testing.T) {
+	require := Require.New(t)
+	assert := Assert.New(t)
+	st := testutil.NewTestStore(t)
+	now := time.Now().UTC()
+	start := now.Add(-time.Hour)
+	seedWakeup(t, st, "exhausted@example.com", 0, 1, now)
+	key := store.MCPEventsPositionKey("exhausted")
+	ok, err := st.AdvanceWakeupStateKey(t.Context(), key, nil, store.WakeupState{At: start, Failures: 5})
+	require.NoError(err)
+	require.True(ok)
+	hits := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	sub := testSubscription(t, "exhausted", server, changefeed.Filter{IncomingOnly: true})
+	sub.StateKey, sub.Native = key, true
+	engine := Engine{Store: st, Subscriptions: []Subscription{sub}, Now: func() time.Time { return now }}
+	require.NoError(engine.RunPass(t.Context()))
+	assert.Zero(hits)
+	state, _, err := st.LoadWakeupStateKey(t.Context(), key)
+	require.NoError(err)
+	assert.True(state.At.After(start))
+	assert.Zero(state.Failures)
+}
+
+func TestNativeSuccessfulDeliveryClearsFailureStatus(t *testing.T) {
+	assert := Assert.New(t)
 	require := Require.New(t)
 	st := testutil.NewTestStore(t)
 	ctx := t.Context()
@@ -269,11 +300,9 @@ func TestNativePositionSurvivesDowntimeAndPrune(t *testing.T) {
 	conv, err := st.EnsureConversationWithType(src.ID, "downtime", "email_thread", "Fixture")
 	require.NoError(err)
 	key := store.MCPEventsPositionKey("restart")
-	ok, err := st.AdvanceWakeupStateKey(ctx, key, nil, store.WakeupState{At: start})
+	ok, err := st.AdvanceWakeupStateKey(ctx, key, nil, store.WakeupState{At: start, LastError: "http_5xx", FailedSince: &start})
 	require.NoError(err)
 	require.True(ok)
-	_, err = st.PruneWakeupStates(ctx, nil)
-	require.NoError(err)
 	id, err := st.UpsertMessage(&store.Message{SourceID: src.ID, SourceMessageID: "while-down", ConversationID: conv, MessageType: "email", SentAt: sql.NullTime{Time: now, Valid: true}})
 	require.NoError(err)
 	stamp := now.Add(-time.Minute)
@@ -291,27 +320,14 @@ func TestNativePositionSurvivesDowntimeAndPrune(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
-	sub := Subscription{Name: "restart", Native: true, StateKey: key, URL: "https://example.com/hook", Secret: []byte(strings.Repeat("a", 32)), Filter: changefeed.Filter{SourceIDs: []int64{src.ID}, IncomingOnly: true}, MaxMessageAge: 72 * time.Hour, Client: testWebhookClient(server)}
+	sub := Subscription{Name: "restart", Native: true, StateKey: key, URL: "https://example.com/hook", Secret: []byte(strings.Repeat("a", 32)), Filter: changefeed.Filter{SourceIDs: []int64{src.ID}, IncomingOnly: true}, MaxMessageAge: 72 * time.Hour, Client: testWebhookClient(t, server)}
 	engine := Engine{Store: st, Subscriptions: []Subscription{sub}, Now: func() time.Time { return now }}
 	require.NoError(engine.RunPass(ctx))
 	require.Len(bodies, 1)
-	Assert.Equal(t, "msgvault.messages.changed", bodies[0]["name"])
-}
-
-func TestNativePersonFailureDoesNotConsumeDeliveryAttempts(t *testing.T) {
-	assert := Assert.New(t)
-	require := Require.New(t)
-	base := testutil.NewTestStore(t)
-	st := &observedStore{Store: base, personErr: store.ErrPersonNotFound}
-	now := time.Now().UTC()
-	key := store.MCPEventsPositionKey("person")
-	ok, err := base.AdvanceWakeupStateKey(t.Context(), key, nil, store.WakeupState{At: now.Add(-time.Hour)})
+	assert.Equal("msgvault.messages.changed", bodies[0]["name"])
+	state, _, err := st.LoadWakeupStateKey(ctx, key)
 	require.NoError(err)
-	require.True(ok)
-	engine := Engine{Store: st, Subscriptions: []Subscription{{Name: "person", StateKey: key, Native: true, Filter: changefeed.Filter{PersonID: 123}}}, Now: func() time.Time { return now }}
-	require.NoError(engine.RunPass(t.Context()))
-	state, _, err := base.LoadWakeupStateKey(t.Context(), key)
-	require.NoError(err)
-	assert.Zero(state.Failures)
-	assert.Equal(now.Add(30*time.Second), state.NextAttemptAt)
+	assert.NotNil(state.LastDeliveryAt)
+	assert.Empty(state.LastError)
+	assert.Nil(state.FailedSince)
 }

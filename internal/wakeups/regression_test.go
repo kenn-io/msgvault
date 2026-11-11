@@ -88,7 +88,7 @@ func initializedWakeup(t *testing.T, st *store.Store, name string, start time.Ti
 }
 func testSubscription(t *testing.T, name string, server *httptest.Server, filter changefeed.Filter) Subscription {
 	t.Helper()
-	return Subscription{Name: name, URL: "https://example.com/hook", Secret: []byte(strings.Repeat("k", 32)), Filter: filter, MaxMessageAge: 72 * time.Hour, Client: testWebhookClient(t, server)}
+	return Subscription{Name: name, StateKey: store.WakeupStateKey(name), URL: "https://example.com/hook", Secret: []byte(strings.Repeat("k", 32)), Filter: filter, MaxMessageAge: 72 * time.Hour, Client: testWebhookClient(t, server)}
 }
 
 func TestZeroBoundDefersAndSharedPositionReadsOnce(t *testing.T) {
@@ -98,7 +98,7 @@ func TestZeroBoundDefersAndSharedPositionReadsOnce(t *testing.T) {
 	base := testutil.NewTestStore(t)
 	st := &observedStore{Store: base, zeroBound: true}
 	now := time.Now().UTC()
-	engine := Engine{Store: st, Subscriptions: []Subscription{{Name: "a"}, {Name: "b"}}, Now: func() time.Time { return now }}
+	engine := Engine{Store: st, Subscriptions: []Subscription{{Name: "a", StateKey: store.WakeupStateKey("a")}, {Name: "b", StateKey: store.WakeupStateKey("b")}}, Now: func() time.Time { return now }}
 	require.NoError(engine.RunPass(t.Context()))
 	assert.Equal([]int{1}, st.reads)
 	for _, name := range []string{"a", "b"} {
@@ -122,23 +122,25 @@ func TestZeroBoundDefersAndSharedPositionReadsOnce(t *testing.T) {
 		base := testutil.NewTestStore(t)
 		st := &observedStore{Store: base}
 		initializedWakeup(t, base, "walk", time.Now().UTC().Add(-time.Hour))
-		engine := Engine{Store: st, Subscriptions: []Subscription{{Name: "new"}, {Name: "walk"}}}
+		engine := Engine{Store: st, Subscriptions: []Subscription{{Name: "new", StateKey: store.WakeupStateKey("new")}, {Name: "walk", StateKey: store.WakeupStateKey("walk")}}}
 		Require.NoError(t, engine.RunPass(t.Context()))
 		Assert.Equal(t, []int{1, changefeed.ScanBudget + 1}, st.reads)
 	})
 }
-func TestPersonResolutionBackoff(t *testing.T) {
+func TestPersonResolutionBackoffAndStoreErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		failure  error
 		person   *store.Person
 		category string
 		failures int
+		native   bool
 	}{
-		{"missing", store.ErrPersonNotFound, nil, "person_unavailable", 0},
-		{"empty", nil, &store.Person{ID: 1}, "person_unavailable", 0},
-		{"held delivery", store.ErrPersonNotFound, nil, "person_unavailable", 2},
-		{"store error", errors.New("database unavailable"), nil, "store_error", 0},
+		{"missing", store.ErrPersonNotFound, nil, "person_unavailable", 0, false},
+		{"empty", nil, &store.Person{ID: 1}, "person_unavailable", 0, false},
+		{"held delivery", store.ErrPersonNotFound, nil, "person_unavailable", 2, false},
+		{"store", errors.New("database unavailable"), nil, "store_error", 0, false},
+		{"native missing", store.ErrPersonNotFound, nil, "person_unavailable", 0, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := Assert.New(t)
@@ -148,21 +150,29 @@ func TestPersonResolutionBackoff(t *testing.T) {
 			st := &observedStore{Store: base, personErr: tc.failure, person: tc.person}
 			now := time.Now().UTC()
 			start := now.Add(-time.Hour)
+			key := store.WakeupStateKey("person")
+			if tc.native {
+				key = store.MCPEventsPositionKey("person")
+			}
 			initial := store.WakeupState{At: start, Failures: tc.failures}
 			if tc.failures > 0 {
 				initial.NextAttemptAt = now.Add(-time.Minute)
 			}
-			ok, err := base.AdvanceWakeupStateKey(t.Context(), store.WakeupStateKey("person"), nil, initial)
+			ok, err := base.AdvanceWakeupStateKey(t.Context(), key, nil, initial)
 			require.NoError(err)
 			require.True(ok)
 			var logs bytes.Buffer
-			engine := Engine{Store: st, Logger: slog.New(slog.NewTextHandler(&logs, nil)), Now: func() time.Time { return now }, Subscriptions: []Subscription{{Name: "person", Filter: changefeed.Filter{PersonID: 1}}}}
+			engine := Engine{Store: st, Logger: slog.New(slog.NewTextHandler(&logs, nil)), Now: func() time.Time { return now }, Subscriptions: []Subscription{{Name: "person", StateKey: key, Native: tc.native, Filter: changefeed.Filter{PersonID: 1}}}}
 			require.NoError(engine.RunPass(t.Context()))
 			assert.Contains(logs.String(), tc.category)
-			state, _, err := base.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("person"))
+			state, _, err := base.LoadWakeupStateKey(t.Context(), key)
 			require.NoError(err)
 			assert.Equal(start, state.At)
 			assert.Equal(tc.failures, state.Failures)
+			if tc.native {
+				assert.Equal("person_unavailable", state.LastError)
+				assert.NotNil(state.FailedSince)
+			}
 			if tc.category == "store_error" {
 				assert.True(state.NextAttemptAt.IsZero())
 			} else {

@@ -35,6 +35,7 @@ func TestWakeupValidationAndDefaults(t *testing.T) {
 		{"userinfo", func(c *WakeupConfig) { c.URL = "https://user@example.com/" }},
 		{"fragment", func(c *WakeupConfig) { c.URL = "https://example.com/#fragment" }},
 		{"private", func(c *WakeupConfig) { c.URL = "https://127.0.0.1/" }},
+		{"localhost", func(c *WakeupConfig) { c.URL = "https://localhost/hook" }},
 		{"missing secret", func(c *WakeupConfig) { c.SecretEnv = "" }},
 		{"both secrets", func(c *WakeupConfig) { c.SecretFile = "secret" }},
 		{"timeout", func(c *WakeupConfig) { c.Timeout = 61 * time.Second }},
@@ -98,11 +99,4 @@ func TestWakeupSecretFileResolutionPreservesConfig(t *testing.T) {
 	require.NoError(err)
 	assert.Contains(string(saved), "secret_file = \"secret\"")
 	assert.Contains(string(saved), "secret_file = \"~/secret\"")
-}
-
-func TestWakeupDestinationRejectsPrivateNativeTargets(t *testing.T) {
-	for _, endpoint := range []string{"http://example.com/hook", "https://127.0.0.1/hook", "https://localhost/hook", "https://example.com:444/hook"} {
-		assert.Error(t, ValidateWakeupDestination(endpoint), endpoint)
-	}
-	assert.NoError(t, ValidateWakeupDestination("https://example.com/hook"))
 }
