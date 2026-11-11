@@ -190,3 +190,35 @@ func applyCommitmentTestSources(t *testing.T, f personSweepApplyFixture, cfg peo
 	_, err = f.store.ApplyPersonSweep(t.Context(), commitmentApplyRequest(t, f, window, cfg, output))
 	r.NoError(err)
 }
+
+func TestCommitmentRejectsSourceDeletedBeforeFirstExtraction(t *testing.T) {
+	r, a, ctx := require.New(t), assert.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "deleted-before-promise", false)
+	_, persist := newCommitmentTestConversation(t, f)
+	const quote = "I will send the draft."
+	id := persist("promise", quote, -time.Hour)
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01",
+		AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	_, err = f.store.db.ExecContext(ctx, f.store.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), id)
+	r.NoError(err)
+	deleted, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	a.Empty(deleted.Sources, "a source deleted before extraction is not model input")
+	request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
+		Promises: []peoplesweep.CommitmentPromise{{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo,
+			Quote: quote, Summary: "Send draft", End: int64(len(quote))}},
+		Fulfilments: []peoplesweep.CommitmentFulfilment{},
+	})
+	result, err := f.store.ApplyPersonSweep(ctx, request)
+	r.NoError(err)
+	a.Equal(peoplesweep.FailureArchiveGap, result.CommitmentFailureClass)
+	claims, err := f.store.ListPersonFactClaimsContext(ctx, f.personID, personfacts.ClaimFilter{Limit: 10})
+	r.NoError(err)
+	a.Empty(claims, "an earlier provider window cannot create a supported claim from a deleted source")
+}

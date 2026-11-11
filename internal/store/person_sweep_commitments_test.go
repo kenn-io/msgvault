@@ -372,6 +372,56 @@ func commitmentApplyRequest(t *testing.T, f personSweepApplyFixture, window peop
 	return request
 }
 
+func TestCommitmentByteLimitRetainsUnprocessedSourceBoundary(t *testing.T) {
+	for _, small := range []bool{false, true} {
+		t.Run(fmt.Sprintf("small=%t", small), func(t *testing.T) {
+			r, a, ctx := require.New(t), assert.New(t), t.Context()
+			f := newPersonSweepApplyFixture(t, "commitment-byte-boundary", false)
+			_, persist := newCommitmentTestConversation(t, f)
+			const quote = "I will send the report."
+			messageID := persist("byte-bounded-promise", quote, -time.Hour)
+			cfg := peoplesweep.Config{}
+			cfg.ApplyDefaults()
+			cfg.Commitments.Enabled = true
+			if small {
+				cfg.Commitments.MaxBytes = len(quote) - 1
+			}
+			r.NoError(cfg.Commitments.Validate(personSweepApplyBudget()))
+			profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01",
+				AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+			window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
+			r.NoError(err)
+			r.Positive(window.SnapshotSequence, "the tracked source must have a journal entry")
+			request := f.request
+			if small {
+				a.Empty(window.Sources)
+				a.Less(window.ThroughSequence, window.SnapshotSequence, "an excluded source must stay ahead of the journal frontier")
+				a.Zero(window.BackfillMessageID, "an excluded source must stay ahead of the historical cursor")
+				request.Generation.Policy.AllowSensitive = true
+				request.Budget = personSweepApplyBudget()
+				request.CommitmentOnly = true
+				request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg.Commitments}
+			} else {
+				r.Len(window.Sources, 1)
+				a.Equal(messageID, window.Sources[0].MessageID)
+				request = commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
+					Promises: []peoplesweep.CommitmentPromise{{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo,
+						Quote: quote, Summary: "Send report", End: int64(len(quote))}},
+					Fulfilments: []peoplesweep.CommitmentFulfilment{},
+				})
+			}
+			_, err = f.store.ApplyPersonSweep(ctx, request)
+			r.NoError(err)
+			if small {
+				next, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, request.CompletedAt, "UTC")
+				r.NoError(err)
+				a.Less(next.ThroughSequence, next.SnapshotSequence, "saving an empty scan must preserve the excluded journal source")
+				a.Zero(next.BackfillMessageID, "saving an empty scan must preserve the excluded historical source")
+			}
+		})
+	}
+}
+
 func TestEmptyCommitmentScanKeepsProviderFrontierAndWaitsForNewWork(t *testing.T) {
 	r, a := require.New(t), assert.New(t)
 	ctx := t.Context()

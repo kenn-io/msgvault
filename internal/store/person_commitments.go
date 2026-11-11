@@ -689,7 +689,7 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 		if err != nil {
 			return backfillEnd, err
 		}
-		if !ok || !inProfile(source.EventTime) || len(source.Text) > cfg.MaxBytes ||
+		if !ok || !inProfile(source.EventTime) ||
 			(source.EventTime.Before(cutoff) && source.RecordedTime.Before(cutoff) && change.RecordedAt.Before(cutoff)) {
 			continue
 		}
@@ -719,7 +719,7 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 			if err != nil {
 				return backfillEnd, err
 			}
-			if ok && inProfile(source.EventTime) && len(source.Text) <= cfg.MaxBytes {
+			if ok && inProfile(source.EventTime) {
 				added, err := add(source)
 				if err != nil || !added {
 					return backfillEnd, err
