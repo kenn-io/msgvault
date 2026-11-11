@@ -166,7 +166,11 @@ func (c *KataClient) ListPersonTasks(ctx context.Context, project, personUID str
 // Kata API msgvault accepts orders an unsorted list this way, while
 // sort=created needs a newer one.
 func (c *KataClient) OpenIssues(ctx context.Context, project string, limit int) ([]KataTask, bool, error) {
-	return c.listProjectIssues(ctx, project, url.Values{"status": {"open"}, "limit": {strconv.Itoa(limit)}})
+	issues, truncated, err := c.listProjectIssues(ctx, project, url.Values{"status": {"open"}, "limit": {strconv.Itoa(limit + 1)}})
+	if len(issues) > limit {
+		return issues[:limit], true, err
+	}
+	return issues, truncated, err
 }
 
 // SearchOpenIssues searches all open issues in a project.

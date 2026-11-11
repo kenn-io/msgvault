@@ -203,6 +203,17 @@ func TestOpenIssues(t *testing.T) {
 		if strings.HasSuffix(r.URL.Path, "/issues") && r.Method == http.MethodGet {
 			assert.Equal("open", r.URL.Query().Get("status"))
 			assert.False(r.URL.Query().Has("sort"))
+			recorder := httptest.NewRecorder()
+			r.Header.Del("Accept-Encoding")
+			handler.ServeHTTP(recorder, r)
+			var body map[string]any
+			if !assert.NoError(json.Unmarshal(recorder.Body.Bytes(), &body)) {
+				http.Error(w, "invalid list response", http.StatusInternalServerError)
+				return
+			}
+			delete(body, "truncated")
+			assert.NoError(json.NewEncoder(w).Encode(body))
+			return
 		}
 		if strings.HasSuffix(r.URL.Path, "/search") {
 			assert.Equal("open", r.URL.Query().Get("status"))
