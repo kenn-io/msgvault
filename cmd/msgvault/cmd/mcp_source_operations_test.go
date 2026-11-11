@@ -662,49 +662,41 @@ func TestListChangesRequiresAllFilterCapabilities(t *testing.T) {
 
 func TestListChangesPreservesActionableRefusals(t *testing.T) {
 	for _, tc := range []struct {
-		code   string
-		status int
+		name, code, want string
+		status           int
+		delegated        bool
 	}{
-		{"invalid_cursor", http.StatusBadRequest}, {"rate_limit_exceeded", http.StatusTooManyRequests},
-		{"person_not_found", http.StatusNotFound}, {"person_scope_empty", http.StatusUnprocessableEntity},
-		{"invalid_source_id", http.StatusBadRequest}, {"person_scope_unavailable", http.StatusServiceUnavailable},
+		{"owner invalid cursor", "invalid_cursor", "invalid_cursor", http.StatusBadRequest, false},
+		{"owner rate limit", "rate_limit_exceeded", "rate_limit_exceeded", http.StatusTooManyRequests, false},
+		{"owner person missing", "person_not_found", "person_not_found", http.StatusNotFound, false},
+		{"owner empty person", "person_scope_empty", "person_scope_empty", http.StatusUnprocessableEntity, false},
+		{"owner invalid source ID", "invalid_source_id", "invalid_source_id", http.StatusBadRequest, false},
+		{"owner person scope unavailable", "person_scope_unavailable", "person_scope_unavailable", http.StatusServiceUnavailable, false},
+		{"owner permission denied", "permission_denied", "operation_refused", http.StatusForbidden, false},
+		{"owner agent busy", "agent_read_busy", "operation_refused", http.StatusServiceUnavailable, false},
+		{"owner source scope unavailable", "source_scope_unavailable", "operation_refused", http.StatusServiceUnavailable, false},
+		{"owner internal error", "internal_error", "operation_refused", http.StatusInternalServerError, false},
+		{"delegated permission denied", "permission_denied", "permission_denied", http.StatusForbidden, true},
+		{"delegated agent busy", "agent_read_busy", "agent_read_busy", http.StatusServiceUnavailable, true},
+		{"delegated source scope unavailable", "source_scope_unavailable", "source_scope_unavailable", http.StatusServiceUnavailable, true},
+		{"delegated internal error", "internal_error", "internal_error", http.StatusInternalServerError, true},
 	} {
-		t.Run(tc.code, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
-			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+			client := newMCPDaemonClient(t, func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(tc.status)
 				_, _ = w.Write([]byte(`{"error":"` + tc.code + `"}`))
 			})
-			backend := &daemonMCPOperations{client: client}
+			backend := &daemonMCPOperations{client: client, delegated: tc.delegated}
 			result, handled, err := backend.executeSourceOperation(t.Context(), "list_changes", nil)
 			requirements.NoError(err)
 			requirements.True(handled)
 			requirements.True(result.IsError)
 			data, err := json.Marshal(result.Output)
 			requirements.NoError(err)
-			assert.JSONEq(t, `{"error":"`+tc.code+`","operation_may_have_completed":false}`, string(data))
+			assert.JSONEq(t, `{"error":"`+tc.want+`","operation_may_have_completed":false}`, string(data))
 		})
-	}
-}
-
-func TestListChangesOwnerRefusalCompatibility(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	for _, code := range []string{"permission_denied", "agent_read_busy", "source_scope_unavailable", "internal_error", "invalid_source"} {
-		client := newMCPDaemonClient(t, func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusForbidden)
-			_, _ = w.Write([]byte(`{"error":"` + code + `"}`))
-		})
-		backend := &daemonMCPOperations{client: client}
-		result, handled, err := backend.executeSourceOperation(t.Context(), "list_changes", nil)
-		requirements.NoError(err)
-		requirements.True(handled)
-		requirements.True(result.IsError)
-		data, err := json.Marshal(result.Output)
-		requirements.NoError(err)
-		assertions.JSONEq(`{"error":"operation_refused","operation_may_have_completed":false}`, string(data))
 	}
 }
 

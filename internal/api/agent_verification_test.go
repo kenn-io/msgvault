@@ -39,6 +39,7 @@ func TestAgentVerificationReads(t *testing.T) {
 	requirements.NoError(st.ReplaceMessageRecipients(id, "from", []int64{participant}, nil))
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET snippet = ? WHERE id = ?"), "…code is 4829", id)
 	requirements.NoError(err)
+	setChangesWatermark(t, st, "2020-01-01 00:00:00.000", id)
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
@@ -50,7 +51,7 @@ func TestAgentVerificationReads(t *testing.T) {
 	for _, path := range []string{
 		"/search?q=verification", "/search/fast?q=verification", "/search/deep?q=verification&scope=body", "/cli/search?q=verification&include_snippet=true",
 		"/search/deep?q=verification",
-		"/messages/filter", "/messages", "/search/domains?domains=example.test",
+		"/messages/filter", "/messages", "/messages/changes", "/search/domains?domains=example.test",
 	} {
 		t.Run(path, func(t *testing.T) {
 			requirements := require.New(t)
@@ -486,34 +487,4 @@ func TestAgentVerificationSharedAttachmentBatches(t *testing.T) {
 	srv.Router().ServeHTTP(w, req)
 	requireErrorCode(t, w, http.StatusForbidden, "verification_masked")
 	assertions.Equal((total+maxPageSize-1)/maxPageSize, counter.calls, "bodies load one page of parents at a time")
-}
-
-func TestAgentChangeFeedVerification(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	st := testutil.NewTestStore(t)
-	source, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "verification@example.test", "code", "Your verification code is 482913", "Your verification code is 482913")
-	requirements.NoError(err)
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Logger: testLogger()})
-	t.Cleanup(srv.agentGrants.Close)
-	relaxChangeFeedRateLimit(t, srv)
-	for _, reveal := range []bool{false, true} {
-		permissions := []agentgrant.Permission{agentgrant.PermissionSearchRead}
-		if reveal {
-			permissions = append(permissions, agentgrant.PermissionVerificationRead)
-		}
-		_, token, _, err := srv.agentGrants.Issue("reader", permissions, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
-		requirements.NoError(err)
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/messages/changes", nil)
-		req.Header.Set(apiprotocol.AgentTokenHeader, token)
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, req)
-		requirements.Equal(http.StatusOK, w.Code, w.Body.String())
-		if reveal {
-			assertions.Contains(w.Body.String(), "482913")
-		} else {
-			assertions.NotContains(w.Body.String(), "482913")
-			assertions.Contains(w.Body.String(), "[verification content masked]")
-		}
-	}
 }

@@ -441,44 +441,12 @@ func TestMCPDelegatedChangeFeedDiscovery(t *testing.T) {
 			requirements.NoError(err)
 			assertions.False(result.IsError)
 			assertions.NotNil(result.StructuredContent)
-		})
-	}
-}
-
-func TestMCPDelegatedChangeFeedUnavailableRefusals(t *testing.T) {
-	fixture := newDraftReplyFixture(t)
-	var refusal atomic.Value
-	refusal.Store("")
-	// Inject daemon refusals that depend on transient snapshot capacity or failure.
-	server := mcpDraftTestDaemon(t, fixture.grantedAdapter(), func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if code, ok := refusal.Load().(string); ok && r.URL.Path == "/api/v1/messages/changes" && code != "" {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusServiceUnavailable)
-				_ = json.NewEncoder(w).Encode(map[string]string{"error": code, "message": "unavailable"})
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
-	})
-	session := mcpDraftTestSession(mcpDraftAgentContext(t, server, fixture.source.ID, []string{"search.read"}), t)
-	for _, code := range []string{"permission_denied", "agent_read_busy", "source_scope_unavailable"} {
-		t.Run(code, func(t *testing.T) {
-			assertions := assert.New(t)
-			requirements := require.New(t)
-			args := map[string]any{}
-			if code == "permission_denied" {
-				refusal.Store("")
-				args["source_ids"] = []int64{fixture.source.ID + 1000000}
-			} else {
-				refusal.Store(code)
-			}
-			result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_changes", Arguments: args})
+			denied, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_changes", Arguments: map[string]any{"source_ids": []int64{fixture.source.ID + 1000000}}})
 			requirements.NoError(err)
-			assertions.True(result.IsError)
-			body, ok := result.StructuredContent.(map[string]any)
+			assertions.True(denied.IsError)
+			body, ok := denied.StructuredContent.(map[string]any)
 			requirements.True(ok)
-			assertions.Equal(code, body["error"])
+			assertions.Equal("permission_denied", body["error"])
 		})
 	}
 }
