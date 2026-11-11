@@ -2,7 +2,8 @@ package query
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"sort"
 	"strings"
@@ -149,14 +150,14 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 		if overview {
 			detail := &ExploreGroupOverview{FirstAt: firstAt, Activity: []ExploreGroupActivity{}, CoParticipants: []ExploreGroupCoParticipant{}}
 			var buckets map[string]int64
-			if err := json.Unmarshal([]byte(activityJSON), &buckets); err != nil {
+			if err := json.Unmarshal([]byte(activityJSON), &buckets, jsontext.AllowInvalidUTF8(true)); err != nil {
 				return nil, fmt.Errorf("decode group activity: %w", err)
 			}
 			for bucket, count := range buckets {
 				detail.Activity = append(detail.Activity, ExploreGroupActivity{Bucket: bucket, Count: count})
 			}
 			sort.Slice(detail.Activity, func(i, j int) bool { return detail.Activity[i].Bucket < detail.Activity[j].Bucket })
-			if err := json.Unmarshal([]byte(peopleJSON), &detail.CoParticipants); err != nil {
+			if err := json.Unmarshal([]byte(peopleJSON), &detail.CoParticipants, jsontext.AllowInvalidUTF8(true)); err != nil {
 				return nil, fmt.Errorf("decode group people: %w", err)
 			}
 			response.Overview = detail

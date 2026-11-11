@@ -339,8 +339,9 @@ keep the Filename filter, Type filter, or file sort. Open the view from its row 
 
 An incompatible view stays dimmed with its reason in the tooltip. Its menu offers only Delete. Updates and deletion carry the record revision. If another browser changes the view first, msgvault reports a conflict or restores the row after a failed deletion.
 
-The daemon validates new definitions against the schema 2 vocabulary. It reads
-schema 1 views with pipes as literal text. A stored view can be opened here,
+The daemon validates new definitions against the saved view vocabulary. Schema 3
+preserves local date bounds; schema 2 uses UTC dates. Schema 1 views keep pipes
+as literal text. A stored view can be opened here,
 run by an API client through `POST /api/v1/saved-views/{id}/run`, or executed by an AI assistant
 with the [MCP server](/docs/usage/chat/#saved-views)'s `run_saved_view` tool.
 All three read the same records and see the same revisions.
