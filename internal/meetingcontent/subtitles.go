@@ -52,7 +52,6 @@ func renderSubtitles(segments []subtitleSegment, format string) (string, error) 
 		if strings.TrimSpace(s.Text) == "" {
 			continue
 		}
-		s.Text = strings.TrimSpace(s.Text)
 		s.Speaker = strings.TrimSpace(s.Speaker)
 		text := strings.ReplaceAll(strings.ReplaceAll(s.Text, "\r\n", "\n"), "\r", "\n")
 		if strings.ContainsAny(s.Speaker, "\r\n") {
@@ -71,6 +70,7 @@ func renderSubtitles(segments []subtitleSegment, format string) (string, error) 
 		if endMS <= startMS {
 			return "", fmt.Errorf("subtitle timing insufficient at segment %d: zero millisecond interval", i+1)
 		}
+		sourceText := text
 		if s.Speaker != "" {
 			text = s.Speaker + ": " + text
 		}
@@ -78,6 +78,9 @@ func renderSubtitles(segments []subtitleSegment, format string) (string, error) 
 			text = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(text)
 		} else {
 			unsafe := strings.ContainsAny(text, "{}\\") || srtTag.MatchString(text)
+			for line := range strings.SplitSeq(sourceText, "\n") {
+				unsafe = unsafe || strings.Trim(line, " \t\r\f\v") != line
+			}
 			for line := range strings.SplitSeq(text, "\n") {
 				// FFmpeg splits SRT input after 4095 UTF-8 bytes, exposing new headers.
 				unsafe = unsafe || len(line) > 4095 || srtTimingHeader.MatchString(line) || strings.Trim(line, " \t\r\f\v") != line

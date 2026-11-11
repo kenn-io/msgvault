@@ -19,6 +19,8 @@ func subtitleTiming(format string, raw []byte) ([]subtitleSegment, error) {
 	}
 	cues := make([]subtitleSegment, 0, len(content.Transcript.Segments))
 	switch format {
+	case "twilio_call_json":
+		return twilioSubtitleTiming(fields, content.Transcript.Segments)
 	case "omi_json":
 		origin, ok := rawTime(fields["started_at"], false)
 		if !ok || origin.IsZero() {

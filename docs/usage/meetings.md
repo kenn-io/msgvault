@@ -65,14 +65,14 @@ SRT writes plain text, preserving literal ampersands, arrows, and comparisons su
 at the start of a payload line, including signed timestamps, which players can
 treat as another cue. SRT also refuses leading or trailing ASCII whitespace on
 cue lines and lines over 4095 UTF-8 bytes, including the speaker prefix.
-VTT preserves indentation and longer lines. Use `--format vtt` for those transcripts.
+VTT preserves retained indentation and longer lines. Use `--format vtt` for those transcripts.
 Ordinary numeric arrows such as `2025 --> 2026` remain literal.
 Interior blank cue lines, multiline speaker labels, and NUL characters cause an
 explicit error.
 The command validates and renders everything before replacing a file. Timing,
 formatting, and size errors leave an existing destination untouched.
 
-Export uses retained structured segments from Omi, Pocket, and Twenty. Every cue needs a start and end, and the recording start must be known. Omi uses `started_at`; Pocket uses the retained `recorded_at` or `recording.recording_at`; Twenty uses `recording.startedAt`. Pocket's retained recording must match the archived transcript; pending or changed evidence can make timing unavailable. Twenty uses both relative bounds when available; otherwise both absolute bounds must be available. Calendar, creation, and message dates do not supply a recording start. Other sources, missing bounds, and unknown recording starts produce an error. Overlaps and leading silence survive.
+Export uses retained structured segments from Omi, Pocket, Twenty, and Twilio. Every cue needs a start and end, and the recording start must be known. Omi uses `started_at`; Pocket uses the retained `recorded_at` or `recording.recording_at`; Twenty uses `recording.startedAt`; Twilio uses the selected recording’s `start_time`. Pocket's retained recording must match the archived transcript; pending or changed evidence can make timing unavailable. Twenty uses both relative bounds when available; otherwise both absolute bounds must be available. Calendar, creation, and message dates do not supply a recording start. Twilio needs retained sentence timings for the selected transcript; recordings with different starts cannot share an export. Other sources, missing bounds, and unknown recording starts produce an error. Overlaps and leading silence survive.
 
 Subtitle exports load transcript evidence automatically and require exactly one distinct meeting ID. `--max-bytes` limits subtitle output to 4096–1048576 UTF-8 bytes (default 131072). An export that exceeds the limit fails without partial cues or file replacement.
 

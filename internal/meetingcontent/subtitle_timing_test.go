@@ -124,3 +124,55 @@ func TestSubtitleSRTComparisonText(t *testing.T) {
 		})
 	}
 }
+
+func TestTwilioSubtitleRetainedSentences(t *testing.T) {
+	raw := []byte(`{"recordings":[{"sid":"RE1","start_time":"Sat, 03 Oct 2026 10:00:00 +0000"}],"transcript":"A: Hello","transcript_segments":[{"speaker":"A","text":"Hello","scope":"RE1","offset_seconds":1.25}],"evidence":{"transcripts":[{"kind":"legacy","id":"TR1","source_id":"RE1","date_created":"2026-10-03T12:00:00Z","usable":true,"segments":[{"text":"old","scope":"RE1"}]},{"kind":"classic","id":"GT1","source_id":"RE1","date_created":"2026-10-03T11:00:00Z","usable":true,"segments":[{"speaker":"A","text":"Hello","scope":"RE1","offset_seconds":1.25}],"raw":{"metadata":{"channel":{"participants":[{"channel_participant":1,"role":"A"}]}},"sentences":[{"sid":"S1","sentence_index":1,"media_channel":1,"start_time":"1.25","end_time":"2.5","transcript":"Hello"}]}}]}}`)
+	result, err := RenderSubtitles("twilio_call_json", raw, PacketOptions{Format: FormatSRT, MaxBytes: 4096})
+	require.NoError(t, err)
+	assert.Equal(t, "1\n00:00:01,250 --> 00:00:02,500\nA: Hello\n\n", result.Content)
+	for _, tc := range []struct{ name, old, new string }{
+		{"unknown origin", `"start_time":"Sat, 03 Oct 2026 10:00:00 +0000"`, `"date_created":"2026-10-03T10:00:00Z"`},
+		{"missing end", `"end_time":"2.5",`, ""},
+		{"changed text", `"transcript":"Hello"`, `"transcript":"Changed"`},
+		{"changed start", `"start_time":"1.25"`, `"start_time":"1.5"`},
+		{"changed speaker", `"media_channel":1`, `"media_channel":2`},
+		{"ambiguous recording", `"recordings":[`, `"recordings":[{"sid":"RE1","start_time":"2026-10-03T10:00:00Z"},`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			altered := strings.Replace(string(raw), tc.old, tc.new, 1)
+			require.NotEqual(t, string(raw), altered)
+			_, err := RenderSubtitles("twilio_call_json", []byte(altered), PacketOptions{Format: FormatSRT, MaxBytes: 4096})
+			require.ErrorIs(t, err, ErrInvalidSubtitles)
+		})
+	}
+	older := strings.Replace(string(raw), `"transcripts":[`, `"transcripts":[{"kind":"classic","id":"GT0","source_id":"RE1","date_created":"2026-10-03T10:01:00Z","usable":true,"segments":[{"speaker":"A","text":"Hello","scope":"RE1","offset_seconds":1.25}],"raw":{"metadata":{"channel":{"participants":[{"channel_participant":1,"role":"A"}]}},"sentences":[{"media_channel":1,"start_time":1.25,"end_time":9,"transcript":"Hello"}]}},`, 1)
+	selected, err := RenderSubtitles("twilio_call_json", []byte(older), PacketOptions{Format: FormatSRT, MaxBytes: 4096})
+	require.NoError(t, err)
+	assert.Equal(t, result.Content, selected.Content)
+	ambiguous := strings.Replace(string(raw), `"transcripts":[`, `"transcripts":[{"kind":"classic","id":"GT1","source_id":"RE1","usable":true},`, 1)
+	_, err = RenderSubtitles("twilio_call_json", []byte(ambiguous), PacketOptions{Format: FormatSRT, MaxBytes: 4096})
+	require.ErrorIs(t, err, ErrInvalidSubtitles)
+	duplicate := strings.Replace(string(raw), `"sentences":[`, `"sentences":[{"sid":"S1","sentence_index":1,"media_channel":1,"start_time":"1.25","end_time":"2.5","transcript":"Hello"},`, 1)
+	again, err := RenderSubtitles("twilio_call_json", []byte(duplicate), PacketOptions{Format: FormatSRT, MaxBytes: 4096})
+	require.NoError(t, err)
+	assert.Equal(t, result.Content, again.Content)
+}
+
+func TestPocketSubtitleBoundaryWhitespace(t *testing.T) {
+	raw := []byte(`{"schema_version":1,"recorded_at":"2026-01-01T00:00:00Z","content":{"summary":{"state":"empty"},"notes":{"state":"unsupported"},"transcript":{"state":"available","segments":[{"text":"  Indented text  ","offset_seconds":0}]},"action_coverage":"unsupported"},"recording":{"transcript":{"segments":[{"text":"  Indented text  ","start":0,"end":2}]}}}`)
+	result, err := RenderSubtitles("pocket_json", raw, PacketOptions{Format: FormatVTT, MaxBytes: 4096})
+	require.NoError(t, err)
+	assert.Equal(t, "WEBVTT\n\n1\n00:00:00.000 --> 00:00:02.000\n  Indented text  \n\n", result.Content)
+	_, err = RenderSubtitles("pocket_json", raw, PacketOptions{Format: FormatSRT, MaxBytes: 4096})
+	require.ErrorIs(t, err, ErrInvalidSubtitles)
+}
+
+func TestTwilioSubtitleRecordingOrigins(t *testing.T) {
+	raw := `{"recordings":[{"sid":"RE1","start_time":"2026-10-03T10:00:00Z"},{"sid":"RE2","start_time":"2026-10-03T10:00:00Z"}],"transcript":"First Second","transcript_segments":[{"speaker":"Recording 1 / A","text":"First","scope":"RE1"},{"speaker":"Recording 2","text":"Second","scope":"RE2"}],"evidence":{"transcripts":[{"kind":"classic","id":"GT1","source_id":"RE1","usable":true,"segments":[{"speaker":"A","text":"First","scope":"RE1","offset_seconds":1}],"raw":{"metadata":{"channel":{"participants":[{"channel_participant":1,"role":"A"}]}},"sentences":[{"media_channel":1,"start_time":1,"end_time":2,"transcript":"First"}]}},{"kind":"classic","id":"GT2","source_id":"RE2","usable":true,"segments":[{"text":"Second","scope":"RE2","offset_seconds":3}],"raw":{"sentences":[{"start_time":3,"end_time":4,"transcript":"Second"}]}}]}}`
+	result, err := RenderSubtitles("twilio_call_json", []byte(raw), PacketOptions{Format: FormatVTT, MaxBytes: 4096})
+	require.NoError(t, err)
+	assert.Equal(t, "WEBVTT\n\n1\n00:00:01.000 --> 00:00:02.000\nRecording 1 / A: First\n\n2\n00:00:03.000 --> 00:00:04.000\nRecording 2: Second\n\n", result.Content)
+	different := strings.Replace(raw, `"sid":"RE2","start_time":"2026-10-03T10:00:00Z"`, `"sid":"RE2","start_time":"2026-10-03T10:00:01Z"`, 1)
+	_, err = RenderSubtitles("twilio_call_json", []byte(different), PacketOptions{Format: FormatVTT, MaxBytes: 4096})
+	require.ErrorIs(t, err, ErrInvalidSubtitles)
+}
