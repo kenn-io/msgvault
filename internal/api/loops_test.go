@@ -4,20 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"iter"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
@@ -321,39 +318,15 @@ type pausedLoopStore struct {
 	*store.Store
 
 	reads     atomic.Int64
-	walks     atomic.Int64
-	pausedID  atomic.Int64
 	pauseAt   int64
 	paused    chan struct{}
 	resume    chan struct{}
 	completed chan struct{}
 }
 
-type slowCachedLoopStore struct {
-	*pausedLoopStore
-
-	evidenceReads  atomic.Int64
-	pausedEvidence chan struct{}
-}
-
-func (s *slowCachedLoopStore) LoopMessageEvidenceContext(ctx context.Context, id int64, version int) (store.LoopMessageEvidence, string, bool, error) {
-	if s.evidenceReads.Add(1) == loops.MaxListEvidenceComputations+3 {
-		close(s.pausedEvidence)
-		<-ctx.Done()
-		return store.LoopMessageEvidence{}, "", false, ctx.Err()
-	}
-	return s.Store.LoopMessageEvidenceContext(ctx, id, version)
-}
-
-func (s *pausedLoopStore) LoopConversationsContext(ctx context.Context, q store.LoopQuery) iter.Seq2[store.LoopConversation, error] {
-	s.walks.Add(1)
-	return s.Store.LoopConversationsContext(ctx, q)
-}
-
 func (s *pausedLoopStore) LoopOriginalEvidenceContext(ctx context.Context, id int64) (mime.AutomationSignals, bool, bool, error) {
 	n := s.reads.Add(1)
 	if n == s.pauseAt {
-		s.pausedID.Store(id)
 		close(s.paused)
 		select {
 		case <-s.resume:
@@ -384,121 +357,73 @@ func awaitLoopSignal(t *testing.T, ch <-chan struct{}) {
 	}
 }
 
-func TestIncompleteListsContinueAcrossBoundedPasses(t *testing.T) {
-	t.Run("bounded continuation", testIncompleteListsContinueAcrossBoundedPasses)
-	t.Run("slow cached prefix", testLoopBackfillSlowCachedPrefix)
-	t.Run("overlapping scopes", testOverlappingIncompleteLoopListsContinueEachScope)
-}
-
-func testLoopBackfillSlowCachedPrefix(t *testing.T) {
-	f := storetest.New(t)
-	now := time.Now().UTC()
-	storetest.PersistLoopOriginalReadFixture(f, loops.MaxListEvidenceComputations+2, now)
-	synctest.Test(t, func(t *testing.T) {
-		require := require.New(t)
-		st := &slowCachedLoopStore{pausedLoopStore: &pausedLoopStore{Store: f.Store}, pausedEvidence: make(chan struct{})}
-		server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
-		server.clock = func() time.Time { return now }
-		defer shutdownLoopServer(t, server)
-		w := httptest.NewRecorder()
-		server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil))
-		var first LoopListResponse
-		require.NoError(json.Unmarshal(w.Body.Bytes(), &first))
-		require.True(first.CoverageIncomplete)
-		awaitLoopSignal(t, st.pausedEvidence)
-		time.Sleep(2 * time.Minute)
-		require.Eventually(func() bool {
-			server.importMu.Lock()
-			defer server.importMu.Unlock()
-			return !server.loopEvidenceRunning
-		}, 10*time.Second, 10*time.Millisecond)
-		require.Equal(int64(loops.MaxListEvidenceComputations+3), st.reads.Load())
-		w = httptest.NewRecorder()
-		server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil))
-		var result LoopListResponse
-		require.NoError(json.Unmarshal(w.Body.Bytes(), &result))
-		require.False(result.CoverageIncomplete)
-		require.Len(result.Items, 1)
-		require.Equal(int64(1), result.Items[0].AnchorMessageID)
-		require.Equal(int64(loops.MaxListEvidenceComputations+3), st.reads.Load())
-	})
-}
-
-func testIncompleteListsContinueAcrossBoundedPasses(t *testing.T) {
-	f := storetest.New(t)
-	now := time.Now().UTC()
-	var older []int64
-	for i := range 10 {
-		older = append(older, f.PersistEmail(storetest.EmailSpec{Thread: "settled", From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you send it?", SentAt: now.Add(-time.Duration(30-i) * 24 * time.Hour)}))
-	}
-	f.PersistEmail(storetest.EmailSpec{Thread: "settled", From: storetest.OwnerAddress, To: []string{"alex@example.test"}, Body: "Can you review it?", SentAt: now.Add(-6 * 24 * time.Hour)})
-	f.PersistEmail(storetest.EmailSpec{Thread: "settled", From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "It looks good.", SentAt: now.Add(-5 * 24 * time.Hour)})
-	storetest.PersistLoopOriginalReadFixture(f, loops.MaxListEvidenceComputations+3, now)
-	synctest.Test(t, func(t *testing.T) {
-		require := require.New(t)
-		st := &pausedLoopStore{Store: f.Store, pauseAt: loops.MaxListEvidenceComputations + 2, paused: make(chan struct{}), resume: make(chan struct{})}
-		server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
-		server.clock = func() time.Time { return now }
-		defer shutdownLoopServer(t, server)
-		ctx, cancel := context.WithCancel(t.Context())
-		w := httptest.NewRecorder()
-		server.Router().ServeHTTP(w, httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/loops", nil))
-		cancel()
-		require.Equal(http.StatusOK, w.Code)
-		var first LoopListResponse
-		require.NoError(json.Unmarshal(w.Body.Bytes(), &first))
-		require.True(first.CoverageIncomplete)
-		awaitLoopSignal(t, st.paused)
-		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), "Thanks again!", st.pausedID.Load())
-		require.NoError(err)
-		_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sent_at = ? WHERE id = ?`), now.Add(-90*24*time.Hour), st.pausedID.Load())
-		require.NoError(err)
-		time.Sleep(2 * time.Minute)
-		require.Eventually(func() bool {
-			server.importMu.Lock()
-			defer server.importMu.Unlock()
-			return !server.loopEvidenceRunning
-		}, 10*time.Second, 10*time.Millisecond)
-		require.Equal(int64(loops.MaxListEvidenceComputations+7), st.reads.Load())
-		w = httptest.NewRecorder()
-		server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil))
-		var result LoopListResponse
-		require.NoError(json.Unmarshal(w.Body.Bytes(), &result))
-		require.False(result.CoverageIncomplete)
-		require.Len(result.Items, 1)
-		require.Equal(int64(13), result.Items[0].AnchorMessageID)
-		require.Equal(int64(loops.MaxListEvidenceComputations+7), st.reads.Load())
-		var cached int
-		require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM loop_message_evidence WHERE message_id >= ? AND message_id <= ?`), older[0], older[len(older)-1]).Scan(&cached))
-		require.Zero(cached)
-	})
-}
-
-func TestLoopBackfillStopsAndRestartsWithRetainedFacts(t *testing.T) {
+func TestIncompleteListsContinueEachQueuedScope(t *testing.T) {
 	assert := assert.New(t)
-	req := require.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	now := time.Now().UTC()
+	storetest.PersistLoopOriginalReadFixture(f, loops.MaxListEvidenceComputations+1, now)
+	st := &scopePausingStore{pausedLoopStore: &pausedLoopStore{Store: f.Store, pauseAt: loops.MaxListEvidenceComputations + 1, paused: make(chan struct{}), resume: make(chan struct{})}, reached: make(chan struct{}), resumeScope: make(chan struct{})}
+	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
+	t.Cleanup(func() { shutdownLoopServer(t, server) })
+	list := func(ctx context.Context, path string) LoopListResponse {
+		w := httptest.NewRecorder()
+		server.Router().ServeHTTP(w, httptest.NewRequestWithContext(ctx, http.MethodGet, path, nil))
+		require.Equal(http.StatusOK, w.Code, w.Body.String())
+		var result LoopListResponse
+		require.NoError(json.Unmarshal(w.Body.Bytes(), &result))
+		return result
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	require.True(list(ctx, "/api/v1/loops").CoverageIncomplete)
+	cancel()
+	awaitLoopSignal(t, st.paused)
+	var first, last int64
+	for i := range 2*loops.MaxListEvidenceComputations + 2 {
+		body := "Thanks!"
+		if i == 0 {
+			body = "Can you send the contract?"
+		}
+		id := f.PersistEmail(storetest.EmailSpec{Thread: fmt.Sprintf("older-%d", i), From: "sam@example.test", To: []string{storetest.OwnerAddress}, Body: body, SentAt: now.Add(-30 * 24 * time.Hour)})
+		if i == 0 {
+			first = id
+		}
+		last = id
+	}
+	participant := f.EnsureParticipant("sam@example.test", "", "example.test")
+	person, _, err := f.Store.CreatePersonFromParticipant(participant)
+	require.NoError(err)
+	personPath := fmt.Sprintf("/api/v1/loops?person_id=%d", person.ID)
+	require.True(list(t.Context(), personPath).CoverageIncomplete)
+	require.True(list(t.Context(), "/api/v1/loops").CoverageIncomplete)
+	var target int64
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT m.id FROM messages m LEFT JOIN loop_message_evidence e ON e.message_id = m.id WHERE m.id >= ? AND m.id <= ? AND e.message_id IS NULL ORDER BY m.id LIMIT 1`), first, last).Scan(&target))
+	st.target.Store(target)
+	close(st.resume)
+	awaitLoopSignal(t, st.reached)
+	close(st.resumeScope)
+	require.Eventually(func() bool {
+		server.importMu.Lock()
+		defer server.importMu.Unlock()
+		return !server.loopEvidenceRunning
+	}, 20*time.Second, 10*time.Millisecond)
+	reads := st.reads.Load()
+	personResult := list(t.Context(), personPath)
+	assert.False(personResult.CoverageIncomplete)
+	require.Len(personResult.Items, 1)
+	assert.Equal(first, personResult.Items[0].AnchorMessageID)
+	all := list(t.Context(), "/api/v1/loops")
+	assert.False(all.CoverageIncomplete)
+	assert.Equal(reads, st.reads.Load())
+}
+
+func TestLoopBackfillStopsWhenServerShutsDown(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	now := time.Now().UTC()
 	first := f.PersistEmail(storetest.EmailSpec{Thread: "first", From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you send it?", SentAt: now.Add(-5 * 24 * time.Hour)})
 	second := f.PersistEmail(storetest.EmailSpec{Thread: "second", From: "sam@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you review it?", SentAt: now.Add(-4 * 24 * time.Hour)})
-	progress := jobctx.WithProgress(t.Context())
-	req.NoError(f.Store.SaveLoopMessageEvidenceContext(progress, first, 1, "stale", store.LoopMessageEvidence{}))
-	assert.False(jobctx.HasProgress(progress))
-	synctest.Test(t, func(t *testing.T) {
-		req := require.New(t)
-		stalled := &pausedLoopStore{Store: f.Store, pauseAt: 1, paused: make(chan struct{}), resume: make(chan struct{})}
-		s := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: stalled, Scheduler: newMockScheduler(), Logger: testLogger()})
-		defer shutdownLoopServer(t, s)
-		s.startLoopEvidence(stalled, 0)
-		awaitLoopSignal(t, stalled.paused)
-		time.Sleep(2 * time.Minute)
-		synctest.Wait()
-		s.importMu.Lock()
-		running := s.loopEvidenceRunning
-		s.importMu.Unlock()
-		req.False(running)
-		req.Equal(int64(1), stalled.reads.Load())
-	})
 	st := &pausedLoopStore{Store: f.Store, pauseAt: 2, paused: make(chan struct{}), resume: make(chan struct{}), completed: make(chan struct{})}
 	gate := NewSerialOperationGate()
 	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: st, Scheduler: newMockScheduler(), Logger: testLogger(), OperationGate: gate})
@@ -506,7 +431,7 @@ func TestLoopBackfillStopsAndRestartsWithRetainedFacts(t *testing.T) {
 	server.startLoopEvidence(st, 0)
 	awaitLoopSignal(t, st.paused)
 	release, ok := gate.BeginWorkContext(t.Context())
-	req.True(ok)
+	require.True(ok)
 	close(st.resume)
 	awaitLoopSignal(t, st.completed)
 	shutdownLoopServer(t, server)
@@ -516,10 +441,10 @@ func TestLoopBackfillStopsAndRestartsWithRetainedFacts(t *testing.T) {
 	t.Cleanup(func() { shutdownLoopServer(t, next) })
 	w := httptest.NewRecorder()
 	next.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil))
-	req.Equal(http.StatusOK, w.Code)
+	require.Equal(http.StatusOK, w.Code)
 	var result LoopListResponse
-	req.NoError(json.Unmarshal(w.Body.Bytes(), &result))
-	req.Len(result.Items, 2)
+	require.NoError(json.Unmarshal(w.Body.Bytes(), &result))
+	require.Len(result.Items, 2)
 	assert.Equal(first, result.Items[0].AnchorMessageID)
 	assert.Equal(second, result.Items[1].AnchorMessageID)
 	assert.Equal(reads+1, st.reads.Load())
@@ -543,77 +468,4 @@ func (s *scopePausingStore) LoopOriginalEvidenceContext(ctx context.Context, id 
 		}
 	}
 	return s.pausedLoopStore.LoopOriginalEvidenceContext(ctx, id)
-}
-
-func testOverlappingIncompleteLoopListsContinueEachScope(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	now := time.Now().UTC()
-	ids := make(map[string][]int64)
-	people := make(map[string]int64)
-	for i, address := range []string{"lee@example.test", "alex@example.test", "sam@example.test"} {
-		count := loops.MaxListEvidenceComputations + 2
-		if address == "alex@example.test" {
-			count += loops.MaxListEvidenceComputations
-		}
-		for n := range count {
-			body := "Thanks!"
-			if n == 0 {
-				body = "Can you send the contract?"
-			}
-			id := f.PersistEmail(storetest.EmailSpec{Thread: fmt.Sprintf("%d-%d", i, n), From: address, To: []string{storetest.OwnerAddress}, Body: body, SentAt: now.Add(-time.Duration(30-i*10) * 24 * time.Hour)})
-			ids[address] = append(ids[address], id)
-		}
-		participant := f.EnsureParticipant(address, "", "example.test")
-		person, _, err := f.Store.CreatePersonFromParticipant(participant)
-		require.NoError(err)
-		people[address] = person.ID
-	}
-	st := &scopePausingStore{pausedLoopStore: &pausedLoopStore{Store: f.Store, pauseAt: loops.MaxListEvidenceComputations + 1, paused: make(chan struct{}), resume: make(chan struct{})}, reached: make(chan struct{}), resumeScope: make(chan struct{})}
-	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
-	t.Cleanup(func() { shutdownLoopServer(t, server) })
-	list := func(path string) LoopListResponse {
-		w := httptest.NewRecorder()
-		server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
-		require.Equal(http.StatusOK, w.Code, w.Body.String())
-		var result LoopListResponse
-		require.NoError(json.Unmarshal(w.Body.Bytes(), &result))
-		return result
-	}
-	personPath := func(address string) string { return fmt.Sprintf("/api/v1/loops?person_id=%d", people[address]) }
-	require.True(list(personPath("alex@example.test")).CoverageIncomplete)
-	awaitLoopSignal(t, st.paused)
-	require.True(list(personPath("alex@example.test")).CoverageIncomplete)
-	require.True(list(personPath("sam@example.test")).CoverageIncomplete)
-	require.True(list("/api/v1/loops").CoverageIncomplete)
-	var target int64
-	samIDs := ids["sam@example.test"]
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT m.id FROM messages m LEFT JOIN loop_message_evidence e ON e.message_id = m.id WHERE m.id >= ? AND m.id <= ? AND e.message_id IS NULL ORDER BY m.id LIMIT 1`), samIDs[0], samIDs[len(samIDs)-1]).Scan(&target))
-	st.target.Store(target)
-	close(st.resume)
-	awaitLoopSignal(t, st.reached)
-	var leePending int
-	leeIDs := ids["lee@example.test"]
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM messages m LEFT JOIN loop_message_evidence e ON e.message_id = m.id WHERE m.id >= ? AND m.id <= ? AND e.message_id IS NULL`), leeIDs[0], leeIDs[len(leeIDs)-1]).Scan(&leePending))
-	assert.Positive(leePending, "the later global pass has not started")
-	close(st.resumeScope)
-	require.Eventually(func() bool {
-		server.importMu.Lock()
-		defer server.importMu.Unlock()
-		return !server.loopEvidenceRunning
-	}, 20*time.Second, 10*time.Millisecond)
-	reads := st.reads.Load()
-	assert.Equal(int64(7), st.walks.Load())
-	sam := list(personPath("sam@example.test"))
-	assert.False(sam.CoverageIncomplete)
-	require.Len(sam.Items, 1)
-	assert.Equal(samIDs[0], sam.Items[0].AnchorMessageID)
-	all := list("/api/v1/loops")
-	assert.False(all.CoverageIncomplete)
-	require.Len(all.Items, 3)
-	assert.Equal(int64(1), all.Items[0].AnchorMessageID)
-	assert.Equal(int64(1003), all.Items[1].AnchorMessageID)
-	assert.Equal(int64(3005), all.Items[2].AnchorMessageID)
-	assert.Equal(reads, st.reads.Load(), "both pending scopes completed")
 }

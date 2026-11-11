@@ -118,8 +118,8 @@ func (r *storeReader) Evidence(id int64) (store.LoopMessageEvidence, error) {
 // find derives loops only from conversations whose detection completed. It
 // reads conversations oldest activity first, so a request that stops at
 // MaxListEvidenceComputations has reached the oldest ones.
-func find(ctx context.Context, st Store, q store.LoopQuery, now time.Time, marks map[int64]store.LoopMark, budget int, found func(Loop) error) (int, error) {
-	reader := &storeReader{ctx: ctx, st: st, left: budget}
+func find(ctx context.Context, st Store, q store.LoopQuery, now time.Time, marks map[int64]store.LoopMark, found func(Loop) error) (int, error) {
+	reader := &storeReader{ctx: ctx, st: st, left: listEvidenceBudget}
 	var unparsed int
 	for conv, err := range st.LoopConversationsContext(ctx, q) {
 		if err != nil {
@@ -142,49 +142,14 @@ func find(ctx context.Context, st Store, q store.LoopQuery, now time.Time, marks
 }
 
 // Warm prepares evidence for a person, or all conversations when personID is zero.
-// next renews a timed pass after progress without restarting the conversation walk.
-func Warm(ctx context.Context, st Store, personID int64, next func(context.Context, bool) (context.Context, bool)) error {
-	pass, advanced := ctx, false
-	retry := func() bool {
-		newPass, ok := next(pass, advanced)
-		if ok {
-			pass, advanced = newPass, false //nolint:fatcontext // The caller supplies a fresh pass.
-		}
-		return ok
-	}
-	q := store.LoopQuery{PersonID: personID, PassContext: func() context.Context { return pass }, Retry: retry}
-	reader := &storeReader{st: st, left: math.MaxInt}
-	for conv, err := range st.LoopConversationsContext(ctx, q) {
+func Warm(ctx context.Context, st Store, personID int64) error {
+	reader := &storeReader{ctx: ctx, st: st, left: math.MaxInt}
+	for conv, err := range st.LoopConversationsContext(ctx, store.LoopQuery{PersonID: personID}) {
 		if err != nil {
 			return err
 		}
-		for {
-			if pass.Err() != nil && !retry() {
-				return pass.Err()
-			}
-			if conv.PassContext != pass {
-				// Reload buffered conversations after a deadline so their
-				// messages and participants reflect the renewed pass.
-				found := false
-				for fresh, readErr := range st.LoopConversationsContext(pass, store.LoopQuery{PersonID: personID, ConversationID: conv.ConversationID}) {
-					if readErr != nil {
-						return readErr
-					}
-					conv, found = fresh, true
-				}
-				if !found {
-					break
-				}
-			}
-			reader.ctx = pass //nolint:fatcontext // The caller supplies a fresh pass.
-			_, err = Detect(conv, reader.in(conv))
-			if err == nil {
-				advanced = true
-				break
-			}
-			if !retry() {
-				return err
-			}
+		if _, err := Detect(conv, reader.in(conv)); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -210,7 +175,7 @@ func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, e
 		return Result{}, err
 	}
 	var kept []Loop
-	unparsed, err := find(ctx, st, store.LoopQuery{PersonID: opts.PersonID}, now, marks, listEvidenceBudget,
+	unparsed, err := find(ctx, st, store.LoopQuery{PersonID: opts.PersonID}, now, marks,
 		func(l Loop) error {
 			if opts.PersonID != 0 && l.Counterparty.PersonID != opts.PersonID {
 				return nil
@@ -317,7 +282,7 @@ func requireAnchor(ctx context.Context, st Store, messageID int64, questions []i
 		return Loop{}, err
 	}
 	var anchored Loop
-	_, err = find(ctx, st, store.LoopQuery{ConversationID: ref.ConversationID}, now, marks, listEvidenceBudget,
+	_, err = find(ctx, st, store.LoopQuery{ConversationID: ref.ConversationID}, now, marks,
 		func(l Loop) error {
 			if l.Anchor.ID == messageID {
 				anchored = l

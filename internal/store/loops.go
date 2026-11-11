@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 )
@@ -38,10 +37,6 @@ const (
 type LoopQuery struct {
 	PersonID       int64
 	ConversationID int64
-	// PassContext and Retry let a background walk keep its conversation
-	// snapshot while renewing a timed pass between database reads.
-	PassContext func() context.Context
-	Retry       func() bool
 }
 
 // LoopParticipant is one side of a message with the identity fields a loop
@@ -84,7 +79,6 @@ type LoopConversation struct {
 	SourceID         int64
 	ConversationType string
 	GroupChat        bool
-	PassContext      context.Context
 	// Messages are the newest live messages, newest first.
 	Messages []LoopMessage
 
@@ -160,32 +154,14 @@ func (s *Store) LoopConversationsContext(ctx context.Context, q LoopQuery) iter.
 			yield(LoopConversation{}, err)
 			return
 		}
-		ownerPass := ctx
 		for start := 0; start < len(heads); start += loopChunkConversations {
 			end := min(start+loopChunkConversations, len(heads))
-			pass := ctx
-			if q.PassContext != nil {
-				pass = q.PassContext()
-			}
-			if q.PassContext != nil && pass != ownerPass {
-				owners, err = s.loopOwnerIdentities(pass)
-				ownerPass = pass //nolint:fatcontext // The caller supplies a fresh pass.
-			}
-			var chunk []LoopConversation
-			if err == nil {
-				chunk, err = s.loopChunk(pass, heads[start:end], owners)
-			}
-			if err != nil && q.Retry != nil && q.Retry() {
-				err = nil
-				start -= loopChunkConversations
-				continue
-			}
+			chunk, err := s.loopChunk(ctx, heads[start:end], owners)
 			if err != nil {
 				yield(LoopConversation{}, err)
 				return
 			}
 			for _, conv := range chunk {
-				conv.PassContext = pass
 				if !yield(conv, nil) {
 					return
 				}
@@ -839,14 +815,7 @@ func (s *Store) SaveLoopMessageEvidenceContext(ctx context.Context, id int64, ve
 	if err != nil {
 		return err
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE loop_message_evidence SET facts = ?
+	_, err = s.db.ExecContext(ctx, `UPDATE loop_message_evidence SET facts = ?
  WHERE message_id = ? AND rule_version = ? AND token = ?`, string(facts), id, version, token)
-	if err != nil {
-		return err
-	}
-	count, err := result.RowsAffected()
-	if err == nil && count > 0 {
-		jobctx.RecordProgress(ctx)
-	}
 	return err
 }
