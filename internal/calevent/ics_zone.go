@@ -96,7 +96,7 @@ func eventICSZones(cal *ical.Calendar, event *ical.Component, calendarZone strin
 				if propZone != id {
 					continue
 				}
-				for _, value := range strings.Split(prop.Value, ",") {
+				for value := range strings.SplitSeq(prop.Value, ",") {
 					for _, part := range zone.Children {
 						if value < part.Props.Get("DTSTART").Value {
 							return nil, fmt.Errorf("unsupported VTIMEZONE %q: an observance starts after the event's date", id)
