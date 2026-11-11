@@ -79,13 +79,21 @@ func (b *daemonMCPOperations) executePersonBriefOperation(ctx context.Context, n
 	case "list_person_brief_versions":
 		result, err := readMCPOperationJSONWithClassifier[generated.PersonBriefVersionsResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/brief/versions", &generated.ListPersonBriefVersionsRequestOptions{PathParams: &generated.ListPersonBriefVersionsPath{ID: in.PersonID}, Query: &generated.ListPersonBriefVersionsQuery{Limit: in.Limit}}, briefRefusal, http.StatusOK)
 		if err == nil && !result.IsError {
-			result.Output = mcpserver.PersonBriefVersionsFromGenerated(result.Output.(generated.PersonBriefVersionsResponse).Versions)
+			output, valid := result.Output.(generated.PersonBriefVersionsResponse)
+			if !valid {
+				return operationFailure("invalid_operation_response", false), true, nil
+			}
+			result.Output = mcpserver.PersonBriefVersionsFromGenerated(output.Versions)
 		}
 		return result, true, err
 	case "reject_person_brief":
 		result, err := readMCPOperationJSONWithClassifier[generated.PersonBrief](ctx, b.client, http.MethodPost, "/api/v1/people/{id}/brief/reject", &generated.RejectPersonBriefRequestOptions{PathParams: &generated.RejectPersonBriefPath{ID: in.PersonID}, Body: &generated.RejectPersonBriefBody{Reason: in.Reason}}, briefRefusal, http.StatusOK)
 		if err == nil && !result.IsError {
-			result.Output = mcpserver.PersonBriefVersionFromGenerated(result.Output.(generated.PersonBrief))
+			output, valid := result.Output.(generated.PersonBrief)
+			if !valid {
+				return operationFailure("invalid_operation_response", true), true, nil
+			}
+			result.Output = mcpserver.PersonBriefVersionFromGenerated(output)
 		}
 		return result, true, err
 	}

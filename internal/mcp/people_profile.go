@@ -542,10 +542,10 @@ func PersonBriefVersionFromGenerated(row generated.PersonBrief) PersonBriefVersi
 }
 
 // PersonBriefVersionsFromGenerated projects native history onto the catalog schema.
-func PersonBriefVersionsFromGenerated(rows []generated.PersonBrief) personBriefVersions {
+func PersonBriefVersionsFromGenerated(rows []generated.PersonBrief) PersonBriefVersions {
 	versions := make([]PersonBriefVersion, 0, len(rows))
 	for _, row := range rows {
 		versions = append(versions, PersonBriefVersionFromGenerated(row))
 	}
-	return personBriefVersions{Versions: versions}
+	return PersonBriefVersions{Versions: versions}
 }
