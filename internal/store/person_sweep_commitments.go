@@ -423,7 +423,7 @@ func (s *Store) currentCommitmentSource(ctx context.Context, personID, messageID
 	var conversationID int64
 	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT m.conversation_id
 		FROM messages m JOIN sources src ON src.id = m.source_id
-		WHERE m.id = ? AND m.conversation_id IS NOT NULL AND `+s.loopLiveMessageSQL()), messageID).Scan(&conversationID)
+		WHERE m.id = ? AND m.conversation_id IS NOT NULL AND m.deleted_from_source_at IS NULL AND `+s.loopLiveMessageSQL()), messageID).Scan(&conversationID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return peoplesweep.CommitmentSource{}, false, nil
 	}
