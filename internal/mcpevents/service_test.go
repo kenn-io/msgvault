@@ -451,3 +451,36 @@ func TestCatalogFailureDoesNotPublishCredential(t *testing.T) {
 	require.Error(err)
 	assert.NoFileExists(t, filepath.Join(dir, "provider-credentials.json"))
 }
+
+func TestCredentialReadFailureDoesNotChangeCatalogOrPositions(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	now := time.Now().UTC()
+	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Now: func() time.Time { return now }}
+	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/one", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	first, err := service.Subscribe(t.Context(), in)
+	require.NoError(err)
+	beforeCatalog, err := st.LoadMCPEventsCatalog(t.Context())
+	require.NoError(err)
+	_, beforePosition, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(first.ID))
+	require.NoError(err)
+	var beforeCount int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM archive_metadata WHERE key LIKE ?`), "mcpevents:v1:pos:%").Scan(&beforeCount))
+	require.NoError(os.WriteFile(filepath.Join(service.TokensDir, "provider-credentials.json"), []byte("invalid credential store"), 0600))
+	now = now.Add(time.Hour)
+	for _, endpoint := range []string{"https://example.com/one", "https://example.com/two"} {
+		in.Delivery.URL = endpoint
+		_, err = service.Subscribe(t.Context(), in)
+		require.Error(err)
+		afterCatalog, err := st.LoadMCPEventsCatalog(t.Context())
+		require.NoError(err)
+		assert.Equal(beforeCatalog, afterCatalog)
+		_, afterPosition, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(first.ID))
+		require.NoError(err)
+		assert.Equal(beforePosition, afterPosition)
+		var afterCount int
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM archive_metadata WHERE key LIKE ?`), "mcpevents:v1:pos:%").Scan(&afterCount))
+		assert.Equal(beforeCount, afterCount)
+	}
+}
