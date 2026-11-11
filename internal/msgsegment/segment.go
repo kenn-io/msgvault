@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	Version      = "seg-v1"
+	Version      = "seg-v2"
 	MaxBodyBytes = 1 << 20
 )
 
@@ -36,17 +36,29 @@ type Result struct {
 var datedAttribution = regexp.MustCompile(`(?i)^On\s+(?:(?:Mon(?:day)?|Tue(?:sday)?|Wed(?:nesday)?|Thu(?:rsday)?|Fri(?:day)?|Sat(?:urday)?|Sun(?:day)?|Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\b|\d).*?(?:\b(?:19|20)\d{2}\b|\d{1,2}:\d{2}|\d{1,2}/\d{1,2})`)
 var wroteSuffix = regexp.MustCompile(`(?i)\bwrote:\s*$`)
 
-// Thunderbird's German and French dated reply forms, used only by Split.
+// Thunderbird's dated reply forms, used only by Split.
 // https://github.com/thunderbird/thunderbird-l10n/blob/main/de/mail/chrome/messenger/messengercompose/composeMsgs.properties#L174-L178
 // https://github.com/thunderbird/thunderbird-l10n/blob/main/fr/mail/chrome/messenger/messengercompose/composeMsgs.properties#L174-L178
+// https://github.com/thunderbird/thunderbird-l10n/blob/86b8c23e4e72ad2f8c7663afed8e0ac308f9213c/es-ES/mail/chrome/messenger/messengercompose/composeMsgs.properties#L175-L184
+// https://github.com/thunderbird/thunderbird-l10n/blob/86b8c23e4e72ad2f8c7663afed8e0ac308f9213c/it/mail/chrome/messenger/messengercompose/composeMsgs.properties#L175-L184
+// https://github.com/thunderbird/thunderbird-l10n/blob/86b8c23e4e72ad2f8c7663afed8e0ac308f9213c/pt-BR/mail/chrome/messenger/messengercompose/composeMsgs.properties#L175-L184
+// https://github.com/thunderbird/thunderbird-l10n/blob/86b8c23e4e72ad2f8c7663afed8e0ac308f9213c/pt-PT/mail/chrome/messenger/messengercompose/composeMsgs.properties#L175-L184
 var thunderbirdDatedAttribution = regexp.MustCompile(`(?i)^(?:` +
 	`Am\s+.+\s+um\s+\d{1,2}:\d{2}\s+schrieb\s+.+:` +
 	`|.+\s+schrieb\s+am\s+.+\s+um\s+\d{1,2}:\d{2}:` +
 	`|Le\s+.+\s+à\s+\d{1,2}:\d{2},\s+.+\s+a\s+écrit[\s\x{A0}]+:` +
 	`|.+\s+a\s+écrit\s+le\s+.+\s+à\s+\d{1,2}:\d{2}[\s\x{A0}]+:` +
+	`|El\s+.+\s+a\s+las\s+\d{1,2}:\d{2},\s+.+\s+escribió:` +
+	`|.+\s+escribió\s+el\s+.+\s+a\s+las\s+\d{1,2}:\d{2}:` +
+	`|Il\s+.+\s+\d{1,2}:\d{2},\s+.+\s+ha\s+scritto:` +
+	`|.+\s+ha\s+scritto\s+il\s+.+\s+alle\s+\d{1,2}:\d{2}:` +
+	`|Em\s+.+\s+\d{1,2}:\d{2},\s+.+\s+escreveu:` +
+	`|.+\s+escreveu\s+em\s+.+\s+\d{1,2}:\d{2}:` +
+	`|Às\s+\d{1,2}:\d{2}\s+de\s+.+,\s+.+\s+escreveu:` +
+	`|.+\s+escreveu\s+às\s+\d{1,2}:\d{2}\s+de\s+.+:` +
 	`)\s*$`)
 
-var relaySeparator = regexp.MustCompile(`(?i)^-{2,}\s*(original message|forwarded message|original-nachricht|weitergeleitete nachricht|message original|message transféré)\s*-{2,}$`)
+var relaySeparator = regexp.MustCompile(`(?i)^-{2,}\s*(?:(original message|original-nachricht|message original|mensaje original|messaggio originale|mensagem original)|forwarded message|weitergeleitete nachricht|message transféré|mensaje reenviado|messaggio inoltrato|mensagem encaminhada|mensagem reencaminhada)\s*-{2,}$`)
 var outlookDivider = regexp.MustCompile(`^_{10,}$`)
 
 // outlookHistory requires consecutive From and Sent lines and a Subject
@@ -138,8 +150,7 @@ func Split(body string) Result {
 			switch {
 			case m != nil:
 				kind, depth = Forwarded, 0
-				phrase := strings.ToLower(m[1])
-				if phrase == "original message" || phrase == "original-nachricht" || phrase == "message original" {
+				if m[1] != "" {
 					kind, depth = Quoted, 1
 				}
 				relay = true

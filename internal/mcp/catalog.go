@@ -669,7 +669,7 @@ func getMessageDefinition(_ *handlers) toolDefinition {
 			"sender_auth.verified covers only the sender domain; empty results mean the pinned receiver reported nothing. "+
 			"Returns plain text when available; HTML-only messages return a body_html slice with body_format=html. "+
 			"Set include_segments to return authored, quoted, forwarded, and signature byte ranges overlapping the body window, with absolute offsets and depth on quoted ranges. "+
-			"Authored means no relay marker was recognized; markers are recognized in English, plus Thunderbird's German and French separators and single-line dated reply headers, so other languages' history can appear authored. "+
+			"Authored means no relay marker was recognized; markers are recognized in English, plus Thunderbird's German, French, Spanish (Spain), Italian, and Portuguese (Brazil and Portugal) separators and single-line dated reply headers, so other languages' history can appear authored. "+
 			"Non-email messages get one authored range. "+
 			hiddenTextFlagDoc+
 			"Body paging mirrors search pagination: body_length=total bytes, offset=where this chunk starts, body_returned=bytes in this chunk, has_more=more body follows. "+

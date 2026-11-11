@@ -50,6 +50,14 @@ func TestSplitRanges(t *testing.T) {
 		{"Thunderbird French original", "New\n-------- Message original --------\nOld", []Segment{{Authored, 0, 4, 0}, {Quoted, 4, 42, 1}}},
 		// https://github.com/thunderbird/thunderbird-l10n/blob/main/fr/mail/chrome/messenger/messengercompose/composeMsgs.properties#L184
 		{"Thunderbird French forward", "New\n-------- Message transféré --------\nOld", []Segment{{Authored, 0, 4, 0}, {Forwarded, 4, 45, 0}}},
+		{"Thunderbird Spanish original", "Olá\r\n-------- Mensaje original --------\r\nOld", []Segment{{Authored, 0, 6, 0}, {Quoted, 6, 45, 1}}},
+		{"Thunderbird Italian original", "Olá\r\n-------- Messaggio originale --------\r\nOld", []Segment{{Authored, 0, 6, 0}, {Quoted, 6, 48, 1}}},
+		{"Thunderbird Portuguese original", "Olá\r\n-------- Mensagem original --------\r\nOld", []Segment{{Authored, 0, 6, 0}, {Quoted, 6, 46, 1}}},
+		{"Thunderbird Spanish forward", "Olá\r\n-------- Mensaje reenviado --------\r\nOld", []Segment{{Authored, 0, 6, 0}, {Forwarded, 6, 46, 0}}},
+		{"Thunderbird Italian forward", "Olá\r\n-------- Messaggio Inoltrato --------\r\nOld", []Segment{{Authored, 0, 6, 0}, {Forwarded, 6, 48, 0}}},
+		{"Thunderbird Brazilian Portuguese forward", "Olá\r\n-------- Mensagem encaminhada --------\r\nOld", []Segment{{Authored, 0, 6, 0}, {Forwarded, 6, 49, 0}}},
+		{"Thunderbird European Portuguese forward", "Olá\r\n-------- Mensagem reencaminhada --------\r\nOld", []Segment{{Authored, 0, 6, 0}, {Forwarded, 6, 51, 0}}},
+		{"Spanish forward suffix is prose", "-- Mensaje reenviado -- extra\nOld", []Segment{{Authored, 0, 33, 0}}},
 		{"German forward prose", "Weitergeleitete Nachricht von Max anbei.", []Segment{{Authored, 0, 40, 0}}},
 		{"French forward prose", "Voici le message transféré :", []Segment{{Authored, 0, 30, 0}}},
 		{"French forward needs closing dashes", "-- Message transféré", []Segment{{Authored, 0, 22, 0}}},
@@ -82,6 +90,14 @@ func TestSplitThunderbirdReplyHeaders(t *testing.T) {
 		{"German sender first", "Max <m@x.de> schrieb am 05.11.2026 um 10:00:"},
 		{"French date first", "Le 5 novembre 2026 à 10:00, Max <m@x.fr> a écrit\u00a0:"},
 		{"French sender first", "Max <m@x.fr> a écrit le 5 novembre 2026 à 10:00\u00a0:"},
+		{"Spanish date first", "El 5 de noviembre de 2026 a las 10:00, Alex <alex@example.com> escribió:"},
+		{"Spanish sender first", "Alex <alex@example.com> escribió el 5 de noviembre de 2026 a las 10:00:"},
+		{"Italian date first", "Il 5 novembre 2026 10:00, Alex <alex@example.com> ha scritto:"},
+		{"Italian sender first", "Alex <alex@example.com> ha scritto il 5 novembre 2026 alle 10:00:"},
+		{"Brazilian Portuguese date first", "Em 5 de novembro de 2026 10:00, Alex <alex@example.com> escreveu:"},
+		{"Brazilian Portuguese sender first", "Alex <alex@example.com> escreveu em 5 de novembro de 2026 10:00:"},
+		{"European Portuguese date first", "Às 10:00 de 5 de novembro de 2026, Alex <alex@example.com> escreveu:"},
+		{"European Portuguese sender first", "Alex <alex@example.com> escreveu às 10:00 de 5 de novembro de 2026:"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Run("quoted history", func(t *testing.T) {

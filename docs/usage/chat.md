@@ -502,7 +502,7 @@ slice of the body plus `body_length`, `body_returned`, `offset`, and
 being returned in a single response.
 
 On newer `main` builds, `get_message` with `include_segments: true` returns
-`segments_version: "seg-v1"` and `segments` with `kind`, `start`, and `end`.
+`segments_version: "seg-v2"` and `segments` with `kind`, `start`, and `end`.
 For plain-text email, kinds are `authored`, `quoted`, `forwarded`, and
 `signature`. Quoted ranges carry `depth`, the count of leading `>` markers,
 or 1 for an attribution line or unprefixed history block.
@@ -514,10 +514,14 @@ underscore divider of at least ten characters precedes the block. Recognized
 separators are English `Original Message`, `Forwarded message`, and
 `Begin forwarded message:`, plus Thunderbird's German `Original-Nachricht`
 and `Weitergeleitete Nachricht` and French `Message original` and
-`Message transféré` lines. A relay label, quoted or forwarded, runs from
+`Message transféré`; Spanish `Mensaje original` and `Mensaje reenviado`;
+Italian `Messaggio originale` and `Messaggio Inoltrato`; and Portuguese
+`Mensagem original`, `Mensagem encaminhada` (Brazil), and
+`Mensagem reencaminhada` (Portugal). A relay label, quoted or forwarded, runs from
 the separator or Outlook history block to the end of the body.
 Reply headers are recognized on one line in English and in Thunderbird's
-German and French dated forms. Wrapped headers and other localized headers
+German, French, Spanish (Spain), Italian, and Portuguese (Brazil and Portugal)
+dated forms. Wrapped headers and other localized headers
 stay authored; the quoted lines beneath them still get quoted ranges. A
 signature starts only at an exact `-- ` line, including the trailing space.
 

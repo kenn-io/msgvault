@@ -1952,7 +1952,7 @@ func TestGetMessage(t *testing.T) {
 					assert.Equal(t, "unsupported_format", got.SegmentsUnavailable)
 					assert.Empty(t, got.SegmentsVersion)
 				} else {
-					assert.Equal(t, "seg-v1", got.SegmentsVersion)
+					assert.Equal(t, "seg-v2", got.SegmentsVersion)
 					assert.Empty(t, got.SegmentsUnavailable)
 				}
 			})
@@ -1998,7 +1998,7 @@ func TestGetMessage(t *testing.T) {
 		require.NoError(err)
 		require.False(result.IsError)
 		got := task5StructuredAs[map[string]any](t, result)
-		assert.Equal("seg-v1", got["segments_version"])
+		assert.Equal("seg-v2", got["segments_version"])
 		assert.Equal([]any{
 			map[string]any{"kind": "authored", "start": float64(0), "end": float64(4)},
 			map[string]any{"kind": "quoted", "start": float64(4), "end": float64(10), "depth": float64(1)},
