@@ -2487,6 +2487,7 @@ layout are supported. HTML, ZIP and other layouts are rejected. See
 [Instagram imports](usage/text-messages.md#instagram-inbox-import) for coverage and
 identity limits. Run local file imports on the daemon host.
 Multipart ZIP containers are not assembled by this importer.
+The command can exit successfully with incomplete coverage; scripts should check the summary for `Incomplete coverage`.
 Instagram accepts `--format auto` or `--format json` and ignores `--me`, `--no-resume`, and `--checkpoint-interval`.
 
 ---
