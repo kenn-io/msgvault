@@ -277,6 +277,10 @@ func TestMeetingCatalogUsesClosedTypedSchemasAndStablePointers(t *testing.T) {
 
 type meetingBackendFixture struct{}
 
+func (meetingBackendFixture) MeetingRecord(context.Context, string) (store.MeetingRecord, error) {
+	return store.MeetingRecord{}, nil
+}
+
 func (meetingBackendFixture) GetMeetingContext(context.Context, generated.GetMeetingContextBody) (*meetingcontent.PacketResult, error) {
 	return &meetingcontent.PacketResult{}, nil
 }
