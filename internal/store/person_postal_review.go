@@ -40,8 +40,8 @@ func ResolvePostalInput(input postaladdress.Input, useOriginal bool) postaladdre
 	if raw == "" {
 		return input
 	}
-	parts, err := vcard.SplitStructuredText(raw)
-	if err == nil && (len(parts) >= 7 || len(parts) >= 4 && parts[1] == "" || strings.HasPrefix(raw, ";;")) && slices.ContainsFunc(parts, func(part string) bool { return strings.TrimSpace(part) != "" }) {
+	parts := postaladdress.LegacyADR(raw)
+	if len(parts) > 0 {
 		fields := []*string{&input.PostOfficeBox, &input.ExtendedAddress, &input.StreetAddress, &input.Locality, &input.Region, &input.PostalCode, &input.CountryName}
 		for i := range min(len(parts), len(fields)) {
 			*fields[i] = parts[i]
