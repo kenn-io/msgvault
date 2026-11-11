@@ -92,12 +92,11 @@
   let addressTargetInvalid = $state(false);
   let addressTargetSelect = $state<HTMLSelectElement>();
   let addressEdited = $state(false);
-  let editedAfterCapture = $state(false);
   let postOfficeBox = $state(seedAddress?.post_office_box ?? '');
   let extendedAddress = $state(seedAddress?.extended_address ?? '');
   let countryCode = $state(seedAddress?.country_code ?? '');
   let originalText = $state(untrack(() => originalInput ? originalInput.original_value ?? '' : seedAddress?.original_value ?? ''));
-  let currentText = $state(seedAddress?.free_text ?? (initialCandidate && !initialCandidate.input.extended_components && !postalAddressText({ ...initialCandidate.input, original_value: '', free_text: '', country_code: '' }) ? initialCandidate.input.original_value ?? '' : ''));
+  let currentText = $state(seedAddress?.free_text ?? (initialCandidate && !initialCandidate.input.extended_components && !postalAddressText({ ...initialCandidate.input, free_text: '', country_code: '' }) ? initialCandidate.input.original_value ?? '' : ''));
   let currentTextTouched = $state(false);
   let streetAddress = $state(seedAddress?.street_address ?? '');
   let locality = $state(seedAddress?.locality ?? '');
@@ -273,15 +272,15 @@
           },
         };
       case 'addresses': {
+        if (addressKind === 'postal') { initializeCurrentText(); captureOriginal(); }
         const input = addressDraft();
-        if (addressKind === 'postal') captureOriginal();
-        else if (streetAddress.trim()) {
+        if (addressKind !== 'postal' && streetAddress.trim()) {
           input.original_value = streetAddress.trim();
           if (currentAddress?.free_text) input.free_text = streetAddress.trim();
-        } else if (!input.original_value) {
+        } else if (addressKind !== 'postal' && !input.original_value) {
           input.original_value = [locality, region, postalCode, countryName].map(value => value.trim()).filter(Boolean).join(', ');
         }
-        return { addresses: { add: [{ ...copyPostalInput(input), ...(addressKind === 'postal' ? { original_input: originalInput, ...((currentTextTouched || initialCandidate || currentAddress || editedAfterCapture) && !currentText ? { free_text: '' } : {}) } : {}), envelope: envelope() }], supersede: initialCandidate ? (addressTarget.startsWith('supersede:') ? [Number(addressTarget.slice('supersede:'.length))] : []) : supersede } };
+        return { addresses: { add: [{ ...copyPostalInput(input), ...(addressKind === 'postal' ? { original_input: originalInput, free_text: currentText } : {}), envelope: envelope() }], supersede: initialCandidate ? (addressTarget.startsWith('supersede:') ? [Number(addressTarget.slice('supersede:'.length))] : []) : supersede } };
       }
       case 'dates': {
         const value = dateValue.trim();
@@ -330,19 +329,19 @@
       post_office_box: postOfficeBox, extended_address: extendedAddress, street_address: streetAddress,
       locality, region, postal_code: postalCode, country_name: countryName, country_code: countryCode, original_value: originalText, free_text: currentText };
   }
+  function initializeCurrentText(): void {
+    if (!originalInput && !currentTextTouched && !currentText && originalText && !addressDraft().extended_components && !postalAddressText({ ...addressDraft(), free_text: '', country_code: '' })) currentText = originalText;
+  }
   function captureOriginal(): void {
-    if (!originalInput) {
-      originalInput = copyPostalInput(addressDraft());
-      if (!currentTextTouched && !currentText && originalText && !addressDraft().extended_components && !postalAddressText({ ...addressDraft(), original_value: '', free_text: '', country_code: '' })) currentText = originalText;
-    }
+    if (!originalInput) originalInput = copyPostalInput(addressDraft());
   }
   function edited(): void {
     if (initialSection !== 'addresses') return;
-    if (originalInput) editedAfterCapture = true;
     addressEdited = true;
     review.invalidate();
   }
   async function checkAddress(external: boolean): Promise<void> {
+    initializeCurrentText();
     captureOriginal();
     await review.check(addressDraft(), external);
   }
@@ -473,7 +472,7 @@
         <label>Save address as<select bind:this={addressTargetSelect} bind:value={addressTarget} aria-required="true" aria-invalid={addressTargetInvalid && !addressTarget} disabled={submitting}>
           <option value="">Choose…</option><option value="add">Add a new address</option>
           {#each controller.structuredProfile?.addresses.filter(address => address.address_kind === 'postal') ?? [] as address (address.envelope.id)}
-            <option value={`supersede:${address.envelope.id}`}>Replace: {postalAddressText({ ...address, original_value: '' }, address.assessment?.proposed_extended_parts) || 'No current address'}</option>
+            <option value={`supersede:${address.envelope.id}`}>Replace: {postalAddressText(address, address.assessment?.proposed_extended_parts) || 'No current address'}</option>
           {/each}
         </select></label>
       {/if}

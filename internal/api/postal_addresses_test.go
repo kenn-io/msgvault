@@ -17,6 +17,8 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/postaladdress"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vcard"
+	"go.kenn.io/msgvault/internal/vcardmap"
 )
 
 type countingPostalValidator struct {
@@ -47,9 +49,9 @@ func TestPostalTextOnlyReplacementRetainsCurrentText(t *testing.T) {
 		{"preserved source", "Old address", "Old address"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			input := PersonAddressInputRequest{AddressKind: store.PersonAddressPostal, OriginalValue: tc.current, OriginalInput: &postaladdress.Input{AddressKind: "postal", OriginalValue: tc.original}}
+			input := PersonAddressInputRequest{AddressKind: store.PersonAddressPostal, OriginalValue: tc.current, FreeText: &tc.current, OriginalInput: &postaladdress.Input{AddressKind: "postal", OriginalValue: tc.original}}
 			request := PersonProfilePatchRequest{Addresses: &PersonAddressPatchRequest{Add: []PersonAddressInputRequest{input}, Supersede: []int64{1}}}
-			patch := store.PersonProfilePatch{Addresses: &store.PersonAddressPatch{Add: []store.PersonAddressInput{{AddressKind: store.PersonAddressPostal}}}}
+			patch := store.PersonProfilePatch{Addresses: &store.PersonAddressPatch{Add: []store.PersonAddressInput{{AddressKind: store.PersonAddressPostal, FreeText: &tc.current}}}}
 			require.NoError(t, capturePostalPatchOriginals(request, &patch))
 			require.NotNil(t, patch.Addresses.Add[0].FreeText)
 			assert.Equal(t, tc.current, *patch.Addresses.Add[0].FreeText)
@@ -319,39 +321,29 @@ func TestPostalAddressCurrentTextRoundTripsWithoutChangingProvenance(t *testing.
 func TestPostalAddressFallbackOriginalValuePreservesRawSnapshot(t *testing.T) {
 	literal := "msgvault:postal-input:v1\n" + `{"schema":1,"input":{"original_value":"literal raw text"}}`
 	for _, tc := range []struct {
-		name       string
-		fields     map[string]any
-		raw        postaladdress.Input
-		want       string
-		wantEdited string
+		name   string
+		fields map[string]any
+		raw    postaladdress.Input
 	}{
 		{
-			name:       "free text",
-			fields:     map[string]any{"free_text": "  Exampleville  "},
-			raw:        postaladdress.Input{AddressKind: "postal", FreeText: "  Exampleville  "},
-			want:       "Exampleville",
-			wantEdited: "Updated Exampleville",
+			name:   "free text",
+			fields: map[string]any{"free_text": "  Exampleville  "},
+			raw:    postaladdress.Input{AddressKind: "postal", FreeText: "  Exampleville  "},
 		},
 		{
-			name:       "components without a street",
-			fields:     map[string]any{"locality": "  Exampleville  ", "country_code": "ca"},
-			raw:        postaladdress.Input{AddressKind: "postal", Locality: "  Exampleville  ", CountryCode: "ca"},
-			want:       ";;;  Exampleville  ;;;",
-			wantEdited: ";;;  Exampleville  ;;;",
+			name:   "components without a street",
+			fields: map[string]any{"locality": "  Exampleville  ", "country_code": "ca"},
+			raw:    postaladdress.Input{AddressKind: "postal", Locality: "  Exampleville  ", CountryCode: "ca"},
 		},
 		{
-			name:       "explicit whitespace",
-			fields:     map[string]any{"free_text": "Exampleville", "original_value": " \t\n "},
-			raw:        postaladdress.Input{AddressKind: "postal", FreeText: "Exampleville", OriginalValue: " \t\n "},
-			want:       " \t\n ",
-			wantEdited: " \t\n ",
+			name:   "explicit whitespace",
+			fields: map[string]any{"free_text": "Exampleville", "original_value": " \t\n "},
+			raw:    postaladdress.Input{AddressKind: "postal", FreeText: "Exampleville", OriginalValue: " \t\n "},
 		},
 		{
-			name:       "literal snapshot text",
-			fields:     map[string]any{"free_text": "Exampleville", "original_value": literal},
-			raw:        postaladdress.Input{AddressKind: "postal", FreeText: "Exampleville", OriginalValue: literal},
-			want:       literal,
-			wantEdited: literal,
+			name:   "literal snapshot text",
+			fields: map[string]any{"free_text": "Exampleville", "original_value": literal},
+			raw:    postaladdress.Input{AddressKind: "postal", FreeText: "Exampleville", OriginalValue: literal},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -359,18 +351,18 @@ func TestPostalAddressFallbackOriginalValuePreservesRawSnapshot(t *testing.T) {
 			assert := assert.New(t)
 			srv, wrapped := newIdentityLinkTestServer(t)
 			id := seedAPIPerson(t, wrapped.Store)
-			checkAddress := func(address store.PersonAddress, want string) {
-				assert.Equal(want, address.OriginalValue)
+			checkAddress := func(address store.PersonAddress) {
+				assert.Equal(tc.raw.OriginalValue, address.OriginalValue)
 				require.NotNil(address.Assessment)
 				assert.Equal(tc.raw, address.Assessment.Original, "public fallback must not replace raw provenance")
 				assert.Nil(address.StreetAddress, "a display fallback must not invent a street")
 			}
-			checkProfile := func(response *httptest.ResponseRecorder, want string) store.PersonAddress {
+			checkProfile := func(response *httptest.ResponseRecorder) store.PersonAddress {
 				require.Equal(http.StatusOK, response.Code, response.Body.String())
 				var profile store.PersonProfile
 				require.NoError(json.Unmarshal(response.Body.Bytes(), &profile))
 				require.Len(profile.Addresses, 1)
-				checkAddress(profile.Addresses[0], want)
+				checkAddress(profile.Addresses[0])
 				return profile.Addresses[0]
 			}
 			fields := maps.Clone(tc.fields)
@@ -380,9 +372,9 @@ func TestPostalAddressFallbackOriginalValuePreservesRawSnapshot(t *testing.T) {
 			require.NoError(err)
 			before := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
 			created := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), body, map[string]string{"If-Match": before.Header().Get("ETag")})
-			original := checkProfile(created, tc.want)
+			original := checkProfile(created)
 			read := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
-			checkProfile(read, tc.want)
+			checkProfile(read)
 			stored, err := wrapped.ListPersonAddressesContext(t.Context(), id, true)
 			require.NoError(err)
 			require.Len(stored, 1)
@@ -397,9 +389,11 @@ func TestPostalAddressFallbackOriginalValuePreservesRawSnapshot(t *testing.T) {
 			body, err = json.Marshal(map[string]any{"addresses": map[string]any{"supersede": []int64{original.Envelope.ID}, "add": []any{fields}}})
 			require.NoError(err)
 			edited := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), body, map[string]string{"If-Match": read.Header().Get("ETag")})
-			current := checkProfile(edited, tc.wantEdited)
+			current := checkProfile(edited)
+			require.NotNil(current.FreeText)
+			assert.Equal("Updated Exampleville", *current.FreeText)
 			read = doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
-			checkProfile(read, tc.wantEdited)
+			checkProfile(read)
 
 			historyResponse := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id)+"/history", nil, nil)
 			require.Equal(http.StatusOK, historyResponse.Code, historyResponse.Body.String())
@@ -408,11 +402,11 @@ func TestPostalAddressFallbackOriginalValuePreservesRawSnapshot(t *testing.T) {
 			require.Len(history.Addresses, 2)
 			for _, address := range history.Addresses {
 				if address.Envelope.ID == original.Envelope.ID {
-					checkAddress(address, tc.want)
+					checkAddress(address)
 					assert.NotNil(address.Envelope.SupersededAt)
 				} else {
 					assert.Equal(current.Envelope.ID, address.Envelope.ID)
-					checkAddress(address, tc.wantEdited)
+					checkAddress(address)
 				}
 			}
 			stored, err = wrapped.ListPersonAddressesContext(t.Context(), id, false)
@@ -506,6 +500,8 @@ func TestPostalReplacementRequiresCurrentValue(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, profile.Addresses, 1)
 	assert.Equal(t, old.Envelope.ID, profile.Addresses[0].Envelope.ID)
+	after := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
+	assert.Equal(t, read.Header().Get("ETag"), after.Header().Get("ETag"))
 }
 
 func TestLegacyPostalAssessmentMatchesPublicAddress(t *testing.T) {
@@ -545,4 +541,21 @@ func TestPostalPatchExplainsInvalidOriginalInput(t *testing.T) {
 			assert.Contains(t, response.Body.String(), tc.explanation)
 		})
 	}
+}
+
+func TestPostalPatchStructuredOriginalWithLabelSurvivesExport(t *testing.T) {
+	srv, wrapped := newIdentityLinkTestServer(t)
+	id := seedAPIPerson(t, wrapped.Store)
+	read := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
+	body := []byte(`{"addresses":{"add":[{"address_kind":"postal","original_value":";;12 Example Street;Example City;;;Canada","label":"Mailing label","envelope":{"source":"user"}}]}}`)
+	saved := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), body, map[string]string{"If-Match": read.Header().Get("ETag")})
+	require.Equal(t, http.StatusOK, saved.Code, saved.Body.String())
+	profile, err := wrapped.GetPersonProfileContext(t.Context(), id)
+	require.NoError(t, err)
+	envelope, err := vcard.ParseResourceEnvelope([]byte("BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Example\r\nEND:VCARD\r\n"))
+	require.NoError(t, err)
+	projected, err := vcardmap.ProjectPersonEnvelope(store.PersonVCardSnapshot{Profile: *profile}, envelope)
+	require.NoError(t, err)
+	assert.Contains(t, string(projected.StoredBody), "12 Example Street;Example City")
+	assert.Contains(t, string(projected.StoredBody), "LABEL=Mailing label")
 }

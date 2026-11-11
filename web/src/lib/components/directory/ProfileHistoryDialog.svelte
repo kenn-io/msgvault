@@ -96,10 +96,10 @@
     return [
       { title: 'Names', rows: rows(history.names ?? [], (row) => row.formatted ?? row.original_value) },
       { title: 'Email and phone', rows: rows(history.contact_points ?? [], null, true) },
-      { title: 'Addresses', rows: rows(history.addresses ?? [], row => row.address_kind === 'postal' ? postalAddressText({ ...row, original_value: '' }, row.assessment?.proposed_extended_parts) || 'No current address' : row.original_value, false, row => {
+      { title: 'Addresses', rows: rows(history.addresses ?? [], row => row.address_kind === 'postal' ? postalAddressText(row, row.assessment?.proposed_extended_parts) || 'No current address' : row.original_value, false, row => {
         if (row.address_kind !== 'postal') return null;
-        const original = postalAddressText(row.assessment?.original ?? {}, row.assessment?.original_extended_parts);
-        const current = postalAddressText({ ...row, original_value: '' }, row.assessment?.proposed_extended_parts);
+        const original = postalAddressText(row.assessment?.original ?? {}, row.assessment?.original_extended_parts) || row.assessment?.original?.original_value;
+        const current = postalAddressText(row, row.assessment?.proposed_extended_parts);
         return original && original !== current ? `Original: ${original}` : null;
       }) },
       { title: 'Dates', rows: rows(history.dates ?? [], (row) => `${row.label ?? sentenceCase(row.date_kind ?? '')}: ${row.date_text ?? row.original_value}`) },

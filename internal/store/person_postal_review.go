@@ -7,6 +7,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -28,6 +29,46 @@ func (a PersonAddress) PostalInput() postaladdress.Input {
 	return postaladdress.Input{AddressKind: string(a.AddressKind), PostOfficeBox: value(a.PostOfficeBox), ExtendedAddress: value(a.ExtendedAddress), StreetAddress: value(a.StreetAddress), Locality: value(a.Locality), Region: value(a.Region), PostalCode: value(a.PostalCode), CountryName: value(a.CountryName), ExtendedComponents: value(a.ExtendedComponents), FreeText: value(a.FreeText), Label: value(a.Label), GeoURI: value(a.GeoURI), Timezone: value(a.Timezone), CountryCode: value(a.CountryCode), PlaceURI: value(a.PlaceURI), OriginalValue: a.OriginalValue}
 }
 
+// ResolvePostalInput materializes legacy original text as current address data.
+// Explicit current text, including a clear, disables the legacy fallback.
+func ResolvePostalInput(input postaladdress.Input, useOriginal bool) postaladdress.Input {
+	if !useOriginal || slices.ContainsFunc([]string{input.FreeText, input.PostOfficeBox, input.ExtendedAddress, input.StreetAddress, input.Locality, input.Region, input.PostalCode, input.CountryName, input.ExtendedComponents}, func(value string) bool { return strings.TrimSpace(value) != "" }) {
+		return input
+	}
+	raw := strings.TrimSpace(input.OriginalValue)
+	if raw == "" {
+		return input
+	}
+	parts, err := vcard.SplitStructuredText(raw)
+	if err == nil && len(parts) > 1 && slices.ContainsFunc(parts, func(part string) bool { return strings.TrimSpace(part) != "" }) {
+		fields := []*string{&input.PostOfficeBox, &input.ExtendedAddress, &input.StreetAddress, &input.Locality, &input.Region, &input.PostalCode, &input.CountryName}
+		for i := 0; i < min(len(parts), len(fields)); i++ {
+			*fields[i] = parts[i]
+		}
+		if len(parts) > 7 {
+			input.ExtendedComponents = vcard.JoinStructuredText(parts)
+		}
+	} else {
+		input.FreeText = raw
+	}
+	return input
+}
+
+// ResolvedPostalInput separates current data from the captured source.
+func (a PersonAddress) ResolvedPostalInput() (postaladdress.Input, postaladdress.Input, error) {
+	current := a.PostalInput()
+	original, snapshot, err := postaladdress.DecodeOriginalInput(a.OriginalValue)
+	if err != nil {
+		return current, original, err
+	}
+	if snapshot {
+		current.OriginalValue = ""
+		return current, original, nil
+	}
+	current = ResolvePostalInput(current, a.FreeText == nil)
+	return current, current, nil
+}
+
 type personFactPostalProjector struct {
 	store *Store
 	tx    *loggedTx
@@ -43,13 +84,9 @@ func (p *personFactPostalProjector) loadCurrent(ctx context.Context, personID in
 		if row.AddressKind != PersonAddressPostal {
 			continue
 		}
-		input := row.PostalInput()
-		raw, ok, err := postaladdress.DecodeOriginalInput(row.OriginalValue)
+		input, _, err := row.ResolvedPostalInput()
 		if err != nil {
 			return nil, err
-		}
-		if ok {
-			input.OriginalValue = raw.OriginalValue
 		}
 		v := personfacts.PostalAddressValue{PostOfficeBox: input.PostOfficeBox, ExtendedAddress: input.ExtendedAddress, StreetAddress: input.StreetAddress, Locality: input.Locality, Region: input.Region, PostalCode: input.PostalCode, CountryName: input.CountryName, CountryCode: input.CountryCode, ExtendedComponents: input.ExtendedComponents, FreeText: input.FreeText, SourceText: input.OriginalValue}
 		data, err := json.Marshal(v, json.Deterministic(true))
@@ -152,23 +189,9 @@ func (a PersonAddress) LocalPostalAssessment() (*postaladdress.Assessment, error
 	if a.AddressKind != PersonAddressPostal {
 		return nil, nil
 	}
-	current := a.PostalInput()
-	original := current
-	raw, ok, err := postaladdress.DecodeOriginalInput(a.OriginalValue)
+	current, original, err := a.ResolvedPostalInput()
 	if err != nil {
 		return nil, err
-	}
-	if ok {
-		original = raw
-		current.OriginalValue = raw.OriginalValue
-	} else {
-		a.Assessment = nil
-		public, err := a.PublicAddress()
-		if err != nil {
-			return nil, err
-		}
-		current = public.PostalInput()
-		original = current
 	}
 	assessment := postaladdress.Assess(current)
 	assessment.Original = original
@@ -176,47 +199,29 @@ func (a PersonAddress) LocalPostalAssessment() (*postaladdress.Assessment, error
 	return &assessment, nil
 }
 
-// PublicAddress retains the derived raw input while exposing plain original
-// text instead of the private storage envelope in profile and history reads.
+// PublicAddress exposes current fields and source text without the stored envelope.
 func (a PersonAddress) PublicAddress() (PersonAddress, error) {
 	if a.AddressKind != PersonAddressPostal {
 		return a, nil
 	}
-	raw, ok, err := postaladdress.DecodeOriginalInput(a.OriginalValue)
+	current, original, err := a.ResolvedPostalInput()
 	if err != nil {
 		return a, err
 	}
-	if ok {
-		a.OriginalValue = raw.OriginalValue
-		if a.OriginalValue == "" {
-			// Preserve the legacy display fallback without changing raw provenance.
-			a.OriginalValue = personAddressOriginalValue(PersonAddressInput{
-				PostOfficeBox: a.PostOfficeBox, ExtendedAddress: a.ExtendedAddress,
-				StreetAddress: a.StreetAddress, Locality: a.Locality,
-				Region: a.Region, PostalCode: a.PostalCode, CountryName: a.CountryName,
-				FreeText: a.FreeText, GeoURI: a.GeoURI, PlaceURI: a.PlaceURI,
-				ExtendedComponents: a.ExtendedComponents, Label: a.Label, CountryCode: a.CountryCode,
-			})
-		}
-	} else if a.FreeText == nil && a.StreetAddress == nil && a.PostOfficeBox == nil && a.ExtendedAddress == nil && a.Locality == nil && a.Region == nil && a.PostalCode == nil && a.CountryName == nil && a.ExtendedComponents == nil && strings.TrimSpace(a.OriginalValue) != "" {
-		// Legacy ADR text is current data. A tagged snapshot is provenance only.
-		parts, err := vcard.SplitStructuredText(a.OriginalValue)
-		if err == nil && len(parts) >= 7 {
-			fields := []**string{&a.PostOfficeBox, &a.ExtendedAddress, &a.StreetAddress, &a.Locality, &a.Region, &a.PostalCode, &a.CountryName}
-			for i, field := range fields {
-				if parts[i] != "" {
-					*field = new(parts[i])
-				}
-			}
-			if len(parts) > 7 {
-				a.ExtendedComponents = new(vcard.JoinStructuredText(parts))
-			}
-		} else {
-			a.FreeText = new(a.OriginalValue)
+	a.OriginalValue = original.OriginalValue
+	assign := func(target **string, value string) {
+		if (*target == nil || strings.TrimSpace(**target) == "") && value != "" {
+			*target = new(value)
 		}
 	}
-	if a.Assessment != nil {
-		a.Assessment.ProposedExtendedParts = postaladdress.ExtendedParts(a.PostalInput().ExtendedComponents)
-	}
+	assign(&a.PostOfficeBox, current.PostOfficeBox)
+	assign(&a.ExtendedAddress, current.ExtendedAddress)
+	assign(&a.StreetAddress, current.StreetAddress)
+	assign(&a.Locality, current.Locality)
+	assign(&a.Region, current.Region)
+	assign(&a.PostalCode, current.PostalCode)
+	assign(&a.CountryName, current.CountryName)
+	assign(&a.ExtendedComponents, current.ExtendedComponents)
+	assign(&a.FreeText, current.FreeText)
 	return a, nil
 }

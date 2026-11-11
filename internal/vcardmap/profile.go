@@ -624,73 +624,41 @@ func projectPostalAddress(address store.PersonAddress) (projectedProperty, bool,
 // means the row has nothing to render and its existing occurrence, if any, is
 // left as residue.
 func postalAddressValue(address store.PersonAddress) (string, *string, error) {
-	_, snapshot, err := postaladdress.DecodeOriginalInput(address.OriginalValue)
+	current, _, err := address.ResolvedPostalInput()
 	if err != nil {
 		return "", nil, err
 	}
-	components, err := postalComponents(address)
+	components, err := postalComponents(current)
 	if err != nil {
 		return "", nil, err
 	}
-	if !allBlank(components) {
-		label := address.Label
-		if !isBlank(address.FreeText) {
-			if !isBlank(label) && *label != *address.FreeText {
-				label = new(*label + "\n" + *address.FreeText)
-			} else {
-				label = address.FreeText
-			}
+	label := current.Label
+	if current.FreeText != "" && current.FreeText != label {
+		if label != "" {
+			label += "\n"
 		}
-		return vcard.JoinStructuredText(components), label, nil
+		label += current.FreeText
 	}
-	// A known postal snapshot is raw owner input, not an imported ADR wire
-	// value. Decode once and never parse its original text as another envelope
-	// or as semicolon-delimited vCard components.
-	if snapshot {
-		// Current free text is an explicit edit; the snapshot remains provenance.
-		if !isBlank(address.FreeText) {
-			if !isBlank(address.Label) && *address.Label != *address.FreeText {
-				return vcard.JoinStructuredText(components), new(*address.Label + "\n" + *address.FreeText), nil
-			}
-			return vcard.JoinStructuredText(components), address.FreeText, nil
-		}
-		if !isBlank(address.Label) {
-			return vcard.JoinStructuredText(components), address.Label, nil
-		}
-		if !isBlank(address.CountryCode) || !isBlank(address.GeoURI) || !isBlank(address.Timezone) {
-			return vcard.JoinStructuredText(components), nil, nil
-		}
-		// A snapshot records the source, not the current address. It cannot
-		// restore fields the owner has cleared.
+	if allBlank(components) && label == "" && current.CountryCode == "" && current.GeoURI == "" && current.Timezone == "" {
 		return "", nil, nil
 	}
-	// SplitStructuredText decodes each component, so re-joining escapes
-	// each exactly once and a wire-form original re-renders unchanged.
-	original := strings.TrimSpace(address.OriginalValue)
-	parsed, err := vcard.SplitStructuredText(original)
-	if err == nil && len(parsed) > 1 && !allBlank(parsed) {
-		return vcard.JoinStructuredText(parsed), address.Label, nil
+	if label != "" {
+		return vcard.JoinStructuredText(components), &label, nil
 	}
-	for _, text := range []*string{address.Label, address.FreeText, &original} {
-		if !isBlank(text) {
-			return vcard.JoinStructuredText(components), text, nil
-		}
-	}
-	return "", nil, nil
+	return vcard.JoinStructuredText(components), nil, nil
 }
 
 // postalComponents renders the seven typed ADR fields followed by any
 // components past them that ExtendedComponents carries.
-func postalComponents(address store.PersonAddress) ([]string, error) {
+func postalComponents(address postaladdress.Input) ([]string, error) {
 	components := []string{
-		deref(address.PostOfficeBox), deref(address.ExtendedAddress),
-		deref(address.StreetAddress), deref(address.Locality), deref(address.Region),
-		deref(address.PostalCode), deref(address.CountryName),
+		address.PostOfficeBox, address.ExtendedAddress, address.StreetAddress, address.Locality, address.Region,
+		address.PostalCode, address.CountryName,
 	}
-	if isBlank(address.ExtendedComponents) {
+	if strings.TrimSpace(address.ExtendedComponents) == "" {
 		return components, nil
 	}
-	parsed, err := vcard.SplitStructuredText(*address.ExtendedComponents)
+	parsed, err := vcard.SplitStructuredText(address.ExtendedComponents)
 	if err != nil {
 		return nil, fmt.Errorf("decode extended ADR components: %w", err)
 	}

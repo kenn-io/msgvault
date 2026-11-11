@@ -772,7 +772,9 @@ To save an owner-reviewed value, use the existing
 can include `original_input`, the complete raw input before correction. It
 accepts only address fields, not provider verdicts or assessment metadata.
 Use `free_text` for the current free-form address; `original_input` preserves
-the initial input separately.
+the initial input separately. When `original_input` is present, send the current
+components explicitly; `original_value` records source text. Without
+`original_input`, `original_value` may supply the current address.
 Current structured profile and address history reads include a derived local
 `assessment`; `assessment.original` preserves the raw components and text,
 while `original_value` remains plain text for clients. MCP's selected postal

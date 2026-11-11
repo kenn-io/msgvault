@@ -518,10 +518,22 @@ func capturePostalPatchOriginals(request PersonProfilePatchRequest, patch *store
 		if input.CountryCode != nil {
 			output.CountryCode = new(proposed.CountryCode)
 		}
-		// An omitted current value retains text-only input; an explicitly empty
-		// free_text represents a deliberate clear, including on replacement.
-		if input.FreeText == nil && current.Label == "" && current.OriginalValue != "" && current.PostOfficeBox == "" && current.ExtendedAddress == "" && current.StreetAddress == "" && current.Locality == "" && current.Region == "" && current.PostalCode == "" && current.CountryName == "" && current.ExtendedComponents == "" {
-			output.FreeText = new(current.OriginalValue)
+		if input.OriginalInput == nil {
+			resolved := store.ResolvePostalInput(current, input.FreeText == nil)
+			assign := func(target **string, value string) {
+				if (*target == nil || strings.TrimSpace(**target) == "") && value != "" {
+					*target = new(value)
+				}
+			}
+			assign(&output.PostOfficeBox, resolved.PostOfficeBox)
+			assign(&output.ExtendedAddress, resolved.ExtendedAddress)
+			assign(&output.StreetAddress, resolved.StreetAddress)
+			assign(&output.Locality, resolved.Locality)
+			assign(&output.Region, resolved.Region)
+			assign(&output.PostalCode, resolved.PostalCode)
+			assign(&output.CountryName, resolved.CountryName)
+			assign(&output.ExtendedComponents, resolved.ExtendedComponents)
+			assign(&output.FreeText, resolved.FreeText)
 		}
 		output.OriginalValue = encoded
 	}

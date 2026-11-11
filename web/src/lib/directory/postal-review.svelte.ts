@@ -96,7 +96,7 @@ export function postalAddressText(input: Partial<Input>, extendedParts: string[]
   const freeSegments = segments(input.free_text ?? '');
   const distinctFreeSegments = freeSegments.filter(part => !structuredSegments.has(part));
   const freeText = distinctFreeSegments.length === freeSegments.length ? input.free_text : distinctFreeSegments.join(', ');
-  return (freeText === components ? components : [freeText, components].filter(Boolean).join(', ')) || input.label || input.original_value || '';
+  return (freeText === components ? components : [freeText, components].filter(Boolean).join(', ')) || input.label || '';
 }
 
 export function postalReason(code: string): string | undefined {

@@ -53,6 +53,28 @@ func postalGeneration(t *testing.T, st *Store, personID int64, suffix string, cl
 	return input
 }
 
+func TestResolvePostalInputLegacyAndSnapshot(t *testing.T) {
+	for _, tc := range []struct {
+		name                             string
+		address                          PersonAddress
+		street, locality, text, extended string
+	}{
+		{"partial with label and parameters", PersonAddress{AddressKind: PersonAddressPostal, OriginalValue: ";;12 Example Street;Example City", Label: new("Mail"), CountryCode: new("CA"), GeoURI: new("geo:1,2")}, "12 Example Street", "Example City", "", ""},
+		{"text with label", PersonAddress{AddressKind: PersonAddressPostal, OriginalValue: "12 Example Street", Label: new("Mail")}, "", "", "12 Example Street", ""},
+		{"explicit clear", PersonAddress{AddressKind: PersonAddressPostal, OriginalValue: "12 Example Street", FreeText: new("")}, "", "", "", ""},
+		{"escaped extensions", PersonAddress{AddressKind: PersonAddressPostal, OriginalValue: `;;12 Example Street;Example City;;;;Room\;3;Floor 2`}, "12 Example Street", "Example City", "", `;;12 Example Street;Example City;;;;Room\;3;Floor 2`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			current, _, err := tc.address.ResolvedPostalInput()
+			require.NoError(t, err)
+			assert.Equal(t, tc.street, current.StreetAddress)
+			assert.Equal(t, tc.locality, current.Locality)
+			assert.Equal(t, tc.text, current.FreeText)
+			assert.Equal(t, tc.extended, current.ExtendedComponents)
+		})
+	}
+}
+
 func TestPostalAddressSweepExtractionRetainsWithoutProjection(t *testing.T) {
 	f := newPersonSweepApplyFixtureWithBudgetAndSensitive(t, "postal", true, personSweepApplyBudget(), true)
 	target := projectionTargetBySlug(t, f.store, "postal_address")
