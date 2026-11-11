@@ -200,6 +200,18 @@ func (b *daemonMCPOperations) executeRecordAttributeOperation(ctx context.Contex
 	return result, true, err
 }
 
+func attributeContextRefusal(result *mcpserver.OperationResult) *mcpserver.OperationRefusalError {
+	if result != nil && result.IsError && len(result.RefusalBody) > 0 {
+		var body struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(result.RefusalBody, &body) == nil && attributeRefusal(body.Error) {
+			return &mcpserver.OperationRefusalError{Code: body.Error}
+		}
+	}
+	return &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+}
+
 func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, name string, args map[string]any) (string, bool, error) {
 	switch name {
 	case "set_person_attribute", "clear_person_attribute", "create_attribute_definition", "patch_attribute_definition", "delete_attribute_definition":
@@ -217,7 +229,7 @@ func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, nam
 		}
 		result, _, err := b.executeRecordAttributeOperation(ctx, "list_person_attributes", map[string]any{"person_id": input.PersonID, "slug": *input.Slug})
 		if err != nil || result == nil || result.IsError {
-			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+			return "", true, attributeContextRefusal(result)
 		}
 		listed, ok := result.Output.(generated.PersonAttributesResponse)
 		if !ok {
@@ -236,7 +248,7 @@ func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, nam
 		}
 		result, _, err := b.executeRecordAttributeOperation(ctx, "get_attribute_definition", map[string]any{"definition_id": input.ID})
 		if err != nil || result == nil || result.IsError {
-			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+			return "", true, attributeContextRefusal(result)
 		}
 		receipt, ok := result.Output.(mcpserver.AttributeDefinitionReceipt)
 		if !ok {

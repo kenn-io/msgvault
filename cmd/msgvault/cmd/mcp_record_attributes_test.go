@@ -88,6 +88,9 @@ func TestMCPAttributeDefinitionCRUDAndNativeGuards(t *testing.T) {
 	assert.True(t, deleted.Deleted)
 	_, err = st.GetAttributeDefinitionContext(t.Context(), created.Definition.ID)
 	assert.ErrorIs(t, err, store.ErrAttributeDefinitionNotFound)
+	_, err = b.OperationDisclosure(t.Context(), "delete_attribute_definition", map[string]any{"definition_id": created.Definition.ID, "etag": patched.ETag})
+	require.ErrorAs(t, err, &refusal)
+	assert.Equal(t, "attribute_definition_not_found", refusal.Code)
 }
 
 func TestMCPPersonAttributeDryRunOrdinalAndCAS(t *testing.T) {
@@ -216,6 +219,9 @@ func TestMCPAttributeInvalidArgumentsDoNotReachNativeRoute(t *testing.T) {
 	var refusal *mcpserver.OperationRefusalError
 	require.ErrorAs(t, err, &refusal)
 	assert.Equal(t, "invalid_arguments", refusal.Code)
+	_, err = b.OperationDisclosure(t.Context(), "set_person_attribute", map[string]any{"person_id": int64(maxJSONSafeInteger), "slug": store.AttributeSlugPrimaryChannel, "value": map[string]any{"type": "text", "text": "x"}})
+	require.ErrorAs(t, err, &refusal)
+	assert.Equal(t, "person_profile_not_found", refusal.Code)
 }
 
 func TestMCPAttributeDaemonFlagIsIndependent(t *testing.T) {
