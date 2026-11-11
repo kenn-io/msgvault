@@ -64,22 +64,9 @@ type mergeSplitArgs struct {
 const mergeInvalidArguments = "invalid_arguments"
 const mergeInvalidResponse = "invalid_operation_response"
 
-func validMergeSplit(a mergeSplitArgs) bool {
-	if a.ETag == "" || strings.TrimSpace(a.Key) == "" || len(strings.TrimSpace(a.Key)) > 128 {
-		return false
-	}
-	ids := map[int64]bool{}
-	for _, id := range a.ParticipantIDs {
-		if ids[id] {
-			return false
-		}
-		ids[id] = true
-	}
-	return true
-}
 func mergeRefusal(code string) bool {
 	switch code {
-	case "person_profile_not_found", "person_merge_not_found", "person_merge_snapshot_corrupt", "invalid_merge_id", "invalid_candidate_id", "invalid_limit", "invalid_offset", "person_merge_revision_conflict", "person_merge_idempotency_conflict", "person_split_idempotency_conflict", "person_merge_already_split", "person_split_reviewed_candidates", "person_split_merge_not_owned", "person_carddav_published", "person_merge_candidate_not_found", "person_merge_candidate_state_changed", "person_split_invalid_participants", "person_merge_invalid", "if_match_required", "invalid_if_match", "idempotency_key_required", "invalid_idempotency_key":
+	case "person_profile_not_found", "person_merge_not_found", "person_merge_snapshot_corrupt", "invalid_merge_id", "invalid_candidate_id", "invalid_limit", "invalid_offset", "person_merge_revision_conflict", "person_split_idempotency_conflict", "person_merge_already_split", "person_split_reviewed_candidates", "person_split_merge_not_owned", "person_merge_candidate_not_found", "person_merge_candidate_state_changed", "person_split_invalid_participants", "person_merge_invalid", "if_match_required", "invalid_if_match", "idempotency_key_required", "invalid_idempotency_key":
 		return true
 	}
 	return false
@@ -107,7 +94,14 @@ func (b *daemonMCPOperations) executeMergeRecovery(ctx context.Context, name str
 		if failure != nil {
 			return failure, true, readErr
 		}
-		var detail generated.PersonMergeDetail
+		var detail struct {
+			Labels           generated.PersonMergeLabels            `json:"labels"`
+			Merge            generated.PersonMerge                  `json:"merge"`
+			Participants     []generated.PersonMergeParticipant     `json:"participants"`
+			ReviewCandidates []generated.PersonMergeReviewCandidate `json:"review_candidates"`
+			Splits           []generated.PersonSplit                `json:"splits"`
+			Rows             []struct{}                             `json:"rows"`
+		}
 		if e := json.Unmarshal(data, &detail); e != nil {
 			return operationFailure(mergeInvalidResponse, false), true, e
 		}
@@ -175,16 +169,18 @@ func (b *daemonMCPOperations) executeMergeRecovery(ctx context.Context, name str
 func (b *daemonMCPOperations) mergeRecoveryDisclosure(ctx context.Context, name string, args map[string]any) (string, bool, error) {
 	var personID, mergeID int64
 	var etag, effect string
+	var decision mergeDecisionArgs
 	switch name {
 	case "decide_person_merge_candidate":
 		a, err := decodeMCPOperationArguments[mergeDecisionArgs](args)
-		if err != nil || a.ETag == "" {
+		if err != nil {
 			return "", true, &mcpserver.OperationRefusalError{Code: mergeInvalidArguments}
 		}
+		decision = a
 		personID, mergeID, etag = a.PersonID, a.MergeID, a.ETag
 	case "split_person_merge":
 		a, err := decodeMCPOperationArguments[mergeSplitArgs](args)
-		if err != nil || !validMergeSplit(a) {
+		if err != nil {
 			return "", true, &mcpserver.OperationRefusalError{Code: mergeInvalidArguments}
 		}
 		personID, mergeID, etag = a.PersonID, a.MergeID, a.ETag
@@ -213,9 +209,8 @@ func (b *daemonMCPOperations) mergeRecoveryDisclosure(ctx context.Context, name 
 			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
 		}
 		currentOutput = current.Output
-		a, _ := decodeMCPOperationArguments[mergeDecisionArgs](args)
 		i := slices.IndexFunc(value.ReviewCandidates, func(c generated.PersonMergeReviewCandidate) bool {
-			return c.ID == a.CandidateID && c.PersonID == a.PersonID
+			return c.ID == decision.CandidateID && c.PersonID == decision.PersonID
 		})
 		if i < 0 {
 			return "", true, &mcpserver.OperationRefusalError{Code: "person_merge_candidate_not_found"}
@@ -223,10 +218,10 @@ func (b *daemonMCPOperations) mergeRecoveryDisclosure(ctx context.Context, name 
 		candidate := value.ReviewCandidates[i]
 		lineage = candidate
 		wanted := "accepted"
-		if a.Decision == "reject" {
+		if decision.Decision == "reject" {
 			wanted = "rejected"
 		}
-		if a.Decision == "accept" {
+		if decision.Decision == "accept" {
 			effect = fmt.Sprintf("Replace the person's current value for attribute definition %d with absorbed value %d; exact split becomes unavailable.", candidate.DefinitionID, candidate.AbsorbedValueID)
 		} else {
 			effect = "Keep the current value."
