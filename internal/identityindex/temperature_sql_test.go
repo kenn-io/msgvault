@@ -193,7 +193,7 @@ func TestHegelAnnualTemperatureRollups(t *testing.T) {
 		func() {
 			rows, err := db.QueryContext(t.Context(), query+` SELECT canonical_id, CAST(to_json(list_transform(annual_temperatures, lambda x: x.year)) AS VARCHAR) FROM annual_rollups`)
 			require.NoError(err)
-			defer rows.Close()
+			defer func() { require.NoError(rows.Close()) }()
 			for rows.Next() {
 				var id int64
 				var raw string
@@ -203,7 +203,6 @@ func TestHegelAnnualTemperatureRollups(t *testing.T) {
 				actual[id] = years
 			}
 			require.NoError(rows.Err())
-			require.NoError(rows.Close())
 		}()
 		want := map[int64][]int{}
 		for id, years := range expected {
@@ -217,7 +216,7 @@ func TestHegelAnnualTemperatureRollups(t *testing.T) {
 		func() {
 			rows, err := db.QueryContext(t.Context(), query+` SELECT canonical_id FROM current_ranked`)
 			require.NoError(err)
-			defer rows.Close()
+			defer func() { require.NoError(rows.Close()) }()
 			for rows.Next() {
 				var id int64
 				require.NoError(rows.Scan(&id))
@@ -225,7 +224,6 @@ func TestHegelAnnualTemperatureRollups(t *testing.T) {
 				current[id] = true
 			}
 			require.NoError(rows.Err())
-			require.NoError(rows.Close())
 		}()
 		wantCurrent := map[int64]bool{}
 		for _, id := range ids {
@@ -236,7 +234,7 @@ func TestHegelAnnualTemperatureRollups(t *testing.T) {
 		func() {
 			rows, err := db.QueryContext(t.Context(), query+` SELECT canonical_id, peak_year FROM peaks`)
 			require.NoError(err)
-			defer rows.Close()
+			defer func() { require.NoError(rows.Close()) }()
 			for rows.Next() {
 				var id int64
 				var year int
@@ -244,7 +242,6 @@ func TestHegelAnnualTemperatureRollups(t *testing.T) {
 				peaks[id] = year
 			}
 			require.NoError(rows.Err())
-			require.NoError(rows.Close())
 		}()
 		assert.Len(peaks, len(expected))
 		for id := range expected {
