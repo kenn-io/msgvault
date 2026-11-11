@@ -239,3 +239,15 @@ func (s *Store) SharedConversationCountContext(ctx context.Context, a, b int64) 
 	}
 	return len(shared), nil
 }
+
+// ParticipantUsernameSuggestionsContext finds existing username suggestions for a participant.
+func (s *Store) ParticipantUsernameSuggestionsContext(ctx context.Context, participantID int64) ([]IdentityMatchCandidate, error) {
+	return s.queryIdentityMatchCandidateRowsContext(ctx, identityMatchCandidateSelect+` WHERE c.id IN (
+			SELECT id FROM identity_match_candidates WHERE left_kind = ? AND left_id = ?
+			UNION SELECT id FROM identity_match_candidates WHERE right_kind = ? AND right_id = ?)
+		AND c.left_kind = ? AND c.right_kind = ? AND c.basis = ? AND c.state IN (?, ?)
+		ORDER BY c.id`,
+		IdentityMatchParticipant, participantID, IdentityMatchParticipant, participantID,
+		IdentityMatchParticipant, IdentityMatchParticipant, IdentityMatchServiceScopeUsername,
+		IdentityMatchStateCandidate, IdentityMatchStateAccepted)
+}

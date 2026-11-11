@@ -136,6 +136,22 @@ func (m *identityMatcher) match(
 	if err := m.matchServiceScopeUsername(ctx, participantID, observation, &outcome); err != nil {
 		return outcome, err
 	}
+	if observation.AddressKind == store.ContactAddressPhone || observation.AddressKind == store.ContactAddressEmail {
+		candidates, err := m.store.ParticipantUsernameSuggestionsContext(ctx, participantID)
+		if err != nil {
+			return outcome, err
+		}
+		for i := range candidates {
+			candidate := &candidates[i]
+			other := candidate.LeftID
+			if other == participantID {
+				other = candidate.RightID
+			}
+			if err := m.gatherEvidence(ctx, candidate, participantID, other, nil); err != nil {
+				return outcome, err
+			}
+		}
+	}
 	return outcome, nil
 }
 

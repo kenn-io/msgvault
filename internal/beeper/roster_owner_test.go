@@ -64,8 +64,17 @@ func testRosterEachChatKeepsItsOwnPhone(t *testing.T, messageFirst, sameRun, ver
 	}
 	detail, err := imp.client.GetChat(t.Context(), old.ID)
 	require.NoError(err)
-	if messageFirst {
-		state.Chats[old.ID].RosterWork = &rosterWork{MemberFirst: false, Verified: verified, Phase: "matching", Signature: rosterSignature(detail, "signal")}
+	if verified {
+		work := state.Chats[old.ID].RosterWork
+		require.NotNil(work)
+		require.True(work.Verified)
+		require.Equal("done", work.Phase)
+		require.NotEmpty(work.Signature)
+		require.NotEmpty(work.ListingSignature)
+		require.Equal(newOwner, participantForBeeperUser(t, st, "@signal_user:example.test"))
+		work.MemberFirst = false
+	} else if messageFirst {
+		state.Chats[old.ID].RosterWork = &rosterWork{MemberFirst: false, Phase: "matching", Signature: rosterSignature(detail, "signal")}
 	}
 	_, _, err = imp.syncChat(t.Context(), 0, sourceID, detail, opts, state, time.Now().Add(-time.Hour), false, false, &ImportSummary{})
 	require.NoError(err)
