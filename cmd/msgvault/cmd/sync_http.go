@@ -171,7 +171,7 @@ func runSyncHTTPWithOutcome(cmd *cobra.Command, req daemonclient.CLISyncRequest)
 		}
 		return nil
 	})
-	if err == nil && !interrupted {
+	if err == nil {
 		reportCLISyncFinished(cmd, st)
 	}
 	return interrupted, err
