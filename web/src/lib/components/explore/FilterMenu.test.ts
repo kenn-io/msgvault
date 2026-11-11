@@ -153,25 +153,13 @@ it.each([
   { name: 'accepts a start on the day of an offset afternoon end', zone: 'America/New_York', filters: [{ dimension: 'before', values: ['2024-05-20T15:30:00-04:00'] }], field: 'From', date: '2024-05-20', expected: [{ dimension: 'before', values: ['2024-05-20T15:30:00-04:00'] }, { dimension: 'after', values: ['2024-05-20T00:00:00-04:00'] }] },
   { name: 'ends a local date across daylight saving', zone: 'America/New_York', filters: [{ dimension: 'before', values: ['2024-04-01T00:00:00-04:00'] }], field: 'To', date: '2024-03-10', expected: [{ dimension: 'before', values: ['2024-03-11T00:00:00-04:00'] }] },
   { name: 'edits a zero-offset local bound in summer', zone: 'Europe/London', filters: [{ dimension: 'after', values: ['2026-01-01T00:00:00+00:00'] }], field: 'From', date: '2026-07-01', expected: [{ dimension: 'after', values: ['2026-07-01T00:00:00+01:00'] }] },
-  { name: 'uses the peer calendar for a new bound', zone: 'Europe/London', filters: [{ dimension: 'after', values: ['2026-01-01T00:00:00+00:00'] }], field: 'To', date: '2026-07-01', expected: [{ dimension: 'after', values: ['2026-01-01T00:00:00+00:00'] }, { dimension: 'before', values: ['2026-07-02T00:00:00+01:00'] }] }
+  { name: 'uses the peer calendar for a new bound', zone: 'Europe/London', filters: [{ dimension: 'after', values: ['2026-01-01T00:00:00+00:00'] }], field: 'To', date: '2026-07-01', expected: [{ dimension: 'after', values: ['2026-01-01T00:00:00+00:00'] }, { dimension: 'before', values: ['2026-07-02T00:00:00+01:00'] }] },
+  { zone: 'America/Asuncion', name: 'accepts a UTC start before a local skipped-midnight end', filters: [{ dimension: 'after', values: ['2023-09-01T00:00:00Z'] }, { dimension: 'before', values: ['2023-10-01T00:00:00-04:00'] }], field: 'From (UTC)', date: '2023-10-01', expected: [{ dimension: 'before', values: ['2023-10-01T00:00:00-04:00'] }, { dimension: 'after', values: ['2023-10-01T00:00:00.000Z'] }] },
+  { zone: 'America/Asuncion', name: 'accepts a local end after a UTC start', filters: [{ dimension: 'after', values: ['2023-10-01T00:00:00Z'] }, { dimension: 'before', values: ['2023-11-01T00:00:00-03:00'] }], field: 'To', date: '2023-09-30', expected: [{ dimension: 'after', values: ['2023-10-01T00:00:00Z'] }, { dimension: 'before', values: ['2023-10-01T00:00:00-04:00'] }] },
+  { zone: 'America/Asuncion', name: 'rejects equal instants with matching displayed dates', filters: [{ dimension: 'after', values: ['2023-09-01T00:00:00-04:00'] }, { dimension: 'before', values: ['2023-10-01T04:00:00Z'] }], field: 'From', date: '2023-10-01', expected: null },
+  { zone: 'America/Asuncion', name: 'rejects an inverted instant despite matching displayed dates', filters: [{ dimension: 'after', values: ['2023-09-01T00:00:00-04:00'] }, { dimension: 'before', values: ['2023-10-01T02:00:00Z'] }], field: 'From', date: '2023-10-01', expected: null },
 ] as const)('$name', async ({ zone, filters, field, date, expected }) => {
   vi.stubEnv('TZ', zone);
-  try {
-    const onChange = vi.fn();
-    render(FilterMenu, { client: createAPIClient(async () => Response.json({ rows: [], accounts: [] })), onChange, onClear: vi.fn(), filters: filters.map(({ dimension, values }) => ({ dimension, values: [...values] })) });
-    await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-    await fireEvent.change(screen.getByLabelText(field), { target: { value: date } });
-    expect(onChange).toHaveBeenLastCalledWith(expected);
-  } finally { vi.unstubAllEnvs(); }
-});
-
-it.each([
-  { name: 'accepts a UTC start before a local skipped-midnight end', filters: [{ dimension: 'after', values: ['2023-09-01T00:00:00Z'] }, { dimension: 'before', values: ['2023-10-01T00:00:00-04:00'] }], field: 'From (UTC)', date: '2023-10-01', expected: [{ dimension: 'before', values: ['2023-10-01T00:00:00-04:00'] }, { dimension: 'after', values: ['2023-10-01T00:00:00.000Z'] }] },
-  { name: 'accepts a local end after a UTC start', filters: [{ dimension: 'after', values: ['2023-10-01T00:00:00Z'] }, { dimension: 'before', values: ['2023-11-01T00:00:00-03:00'] }], field: 'To', date: '2023-09-30', expected: [{ dimension: 'after', values: ['2023-10-01T00:00:00Z'] }, { dimension: 'before', values: ['2023-10-01T00:00:00-04:00'] }] },
-  { name: 'rejects equal instants with matching displayed dates', filters: [{ dimension: 'after', values: ['2023-09-01T00:00:00-04:00'] }, { dimension: 'before', values: ['2023-10-01T04:00:00Z'] }], field: 'From', date: '2023-10-01', expected: null },
-  { name: 'rejects an inverted instant despite matching displayed dates', filters: [{ dimension: 'after', values: ['2023-09-01T00:00:00-04:00'] }, { dimension: 'before', values: ['2023-10-01T02:00:00Z'] }], field: 'From', date: '2023-10-01', expected: null },
-] as const)('$name', async ({ filters, field, date, expected }) => {
-  vi.stubEnv('TZ', 'America/Asuncion');
   try {
     const onChange = vi.fn();
     render(FilterMenu, { client: createAPIClient(async () => Response.json({ rows: [], accounts: [] })), onChange, onClear: vi.fn(), filters: filters.map(({ dimension, values }) => ({ dimension, values: [...values] })) });
