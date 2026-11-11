@@ -632,9 +632,11 @@ func TestCommitmentPersonMergeKeepsAmbiguousDetachedDecision(t *testing.T) {
 			request := kataissues.CreateInput{Title: "Send report and check venue", List: "commitments", PersonUID: absorbed.VCardUID, Evidence: []kataevidence.Reference{evidence[0].Reference}}
 			requestJSON, err := json.Marshal(request)
 			r.NoError(err)
-			stateBefore, uid, ref := CommitmentAgendaPending, "", ""
+			stateBefore := CommitmentAgendaPending
+			var uid, ref sql.NullString
 			if linked {
-				stateBefore, uid, ref = CommitmentAgendaLinked, "original-issue", "agenda#7"
+				stateBefore = CommitmentAgendaLinked
+				uid, ref = sql.NullString{String: "original-issue", Valid: true}, sql.NullString{String: "agenda#7", Valid: true}
 			}
 			_, err = st.db.ExecContext(ctx, st.Rebind(`INSERT INTO person_commitment_agenda
 		(commitment_id,target_key,idempotency_key,request_json,quote,state,attempted_at,issue_uid,issue_ref)
@@ -656,7 +658,7 @@ func TestCommitmentPersonMergeKeepsAmbiguousDetachedDecision(t *testing.T) {
 			a.Equal("broad-receipt", item.IdempotencyKey)
 			a.Equal(request, item.Request)
 			a.Equal(stateBefore, item.State)
-			a.Equal(uid, item.IssueUID)
+			a.Equal(uid.String, item.IssueUID)
 
 			for _, quote := range []string{first, second} {
 				r.NoError(st.db.QueryRowContext(ctx, st.Rebind(`SELECT owner_state FROM person_commitments WHERE person_id = ? AND quote = ?`), f.personID, quote).Scan(&state))
@@ -665,7 +667,6 @@ func TestCommitmentPersonMergeKeepsAmbiguousDetachedDecision(t *testing.T) {
 				r.NoError(st.db.QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM person_commitment_agenda WHERE commitment_id IN (
 			SELECT id FROM person_commitments WHERE person_id = ? AND quote = ?)`), f.personID, quote).Scan(&receipts))
 				a.Zero(receipts)
-
 			}
 			f = nextCommitmentTestAttempt(t, f, "-after-person-merge")
 			window, err = st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
@@ -688,7 +689,6 @@ func TestCommitmentPersonMergeKeepsAmbiguousDetachedDecision(t *testing.T) {
 				r.NoError(err)
 				a.Equal("recovered-issue", item.IssueUID, "the frozen key still accepts recovered create results")
 			}
-
 		})
 	}
 }

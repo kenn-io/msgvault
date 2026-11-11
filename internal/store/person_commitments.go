@@ -626,6 +626,7 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 		day := at.UTC().Format(time.DateOnly)
 		return day >= profile.SourceSince && (profile.SourceUntil == "" || day <= profile.SourceUntil)
 	}
+	backfillStart := window.BackfillMessageID
 	backfillEnd, err := s.loadCommitmentSources(ctx, &window, cfg, previous, backfillCap, inProfile)
 	if err != nil || len(window.Sources) == 0 {
 		return window, err
@@ -646,28 +647,46 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 	if err != nil {
 		return window, err
 	}
+	if backfillCap != nil {
+		// A continuation keeps its frozen end even if the endpoint was deleted.
+		backfillEnd = *backfillCap
+	}
 	window.AnchorBackfillID = backfillEnd
+	if err := fillCommitmentAnchors(&window, cfg.MaxOpenAnchors, open); err != nil {
+		return window, err
+	}
+	if window.AnchorAfterID > 0 {
+		// Every anchor page replays this bounded history page: start stays in
+		// the backfill cursor and its frozen end in AnchorBackfillID.
+		window.BackfillMessageID = backfillStart
+	}
+	return window, nil
+}
+
+// fillCommitmentAnchors admits as many anchors as the bounded input holds and
+// records where the next anchor page resumes.
+func fillCommitmentAnchors(window *peoplesweep.CommitmentWindow, maxAnchors int, open []PersonCommitment) error {
 	for index, c := range open {
-		if len(window.Anchors) == cfg.MaxOpenAnchors {
+		if len(window.Anchors) == maxAnchors {
 			window.AnchorAfterID = window.Anchors[len(window.Anchors)-1].ID
 			break
 		}
 		anchor := peoplesweep.CommitmentAnchor{ID: c.ID, TargetKey: c.TargetKey, Direction: c.Direction, Quote: c.Quote, PromisedAt: c.PromisedAt, ReopenedAt: c.ReopenedAt}
 		window.Anchors = append(window.Anchors, anchor)
-		fits, err := peoplesweep.CommitmentInputFits(window, false)
+		fits, err := peoplesweep.CommitmentInputFits(*window, false)
 		if err != nil {
-			return window, err
+			return err
 		}
 		if !fits {
 			window.Anchors = window.Anchors[:len(window.Anchors)-1]
 			if index == 0 {
-				return window, errors.New("commitment input cannot fit one bounded anchor")
+				return errors.New("commitment input cannot fit one bounded anchor")
 			}
 			window.AnchorAfterID = window.Anchors[len(window.Anchors)-1].ID
 			break
 		}
 	}
-	return window, nil
+	return nil
 }
 
 func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.CommitmentWindow, cfg peoplesweep.CommitmentConfig, previous int64, backfillCap *int64, inProfile func(time.Time) bool) (int64, error) {
