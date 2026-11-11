@@ -31,6 +31,7 @@ func TestClientRefreshAndSafeErrors(t *testing.T) {
 		tokenError, wantQuota bool
 	}{
 		{name: "quota takes precedence", status: http.StatusForbidden, response: `{"error":{"message":"fixture-secret","errors":[{"reason":"commentsDisabled"},{"reason":"quotaExceeded"}]}}`, want: "quota", wantQuota: true, wantTokens: 1},
+		{name: "insufficient permissions", status: http.StatusForbidden, response: `{"error":{"errors":[{"reason":"insufficientPermissions"}]}}`, want: "authorize", wantTokens: 1},
 		{name: "expired token", status: http.StatusBadRequest, response: `{"error":"invalid_grant","error_description":"fixture-secret"}`, want: "reauthorize", tokenError: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

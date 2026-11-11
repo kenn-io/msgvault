@@ -24,6 +24,9 @@ type APIError struct {
 }
 
 func (e *APIError) Error() string {
+	if e.Reason == "insufficientPermissions" {
+		return "YouTube API: insufficient permissions; reauthorize with the required scope"
+	}
 	return fmt.Sprintf("YouTube API HTTP %d (%s)", e.StatusCode, e.Reason)
 }
 func (e *APIError) Is(target error) bool {
@@ -75,7 +78,7 @@ func safeError(ctx context.Context, err error) error {
 		}
 		for _, item := range apiErr.Errors {
 			switch item.Reason {
-			case "commentsDisabled", "commentNotFound", "videoNotFound", "invalidPageToken", "forbidden":
+			case "commentsDisabled", "commentNotFound", "videoNotFound", "invalidPageToken", "forbidden", "insufficientPermissions":
 				reason = item.Reason
 			}
 			if reason != "unknown" {

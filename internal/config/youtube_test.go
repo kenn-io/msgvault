@@ -33,6 +33,11 @@ schedule="*/30 * * * *"
 			wantError: "youtube[0].token_env must name an environment variable",
 		},
 		{
+			name:      "several invalid environment names",
+			profile:   strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(validProfile, `token_env="FIXTURE_REFRESH"`, `token_env="bad value"`), `client_id_env="FIXTURE_CLIENT"`, `client_id_env="bad value"`), `client_secret_env="FIXTURE_SECRET"`, `client_secret_env="bad value"`),
+			wantError: "youtube[0].token_env must name an environment variable",
+		},
+		{
 			name:      "invalid channel ID",
 			profile:   strings.Replace(validProfile, `channel_id="UCfixture"`, `channel_id="https://example.test"`, 1),
 			wantError: "youtube[0].channel_id invalid or duplicate",

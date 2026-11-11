@@ -16,7 +16,7 @@ Enable YouTube Data API v3 in your own Google Cloud project. Authorize the
 channel with OAuth scope
 `https://www.googleapis.com/auth/youtube.force-ssl` and offline access to obtain
 a refresh token. msgvault consumes that token; it does not run an OAuth login
-server. Read-only scope is insufficient for the reply and caption extensions.
+server.
 
 An external OAuth app in **Testing** can have refresh tokens expire after seven
 days. Publishing changes that condition; Google's verification requirements

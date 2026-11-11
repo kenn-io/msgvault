@@ -56,9 +56,9 @@ func (c *Config) validateYouTubeSources() error {
 			return fmt.Errorf("youtube[%d].channel_id invalid or duplicate", i)
 		}
 		channels[src.ChannelID] = true
-		for key, value := range map[string]string{"token_env": src.TokenEnv, "client_id_env": src.ClientIDEnv, "client_secret_env": src.ClientSecretEnv} {
-			if !envutil.ValidName(value) {
-				return fmt.Errorf("youtube[%d].%s must name an environment variable", i, key)
+		for _, field := range []struct{ key, value string }{{"token_env", src.TokenEnv}, {"client_id_env", src.ClientIDEnv}, {"client_secret_env", src.ClientSecretEnv}} {
+			if !envutil.ValidName(field.value) {
+				return fmt.Errorf("youtube[%d].%s must name an environment variable", i, field.key)
 			}
 		}
 		if src.Schedule != "" {
