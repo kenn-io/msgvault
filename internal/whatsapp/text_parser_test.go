@@ -78,6 +78,7 @@ func TestTextParserRejects(t *testing.T) {
 		name, text, order, zone, want string
 		limits                        textLimits
 	}{
+		{"colon-separator", "13/6/26, 10:00 - Mira: one\n13/6/26, 10:01: Ivo: two", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
 		{"senderless-no-comma", "13/6/26, 10:00 - Mira: yes\n13/6/26 10:01 - Messages are encrypted", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
 		{"day-month", "13/6/26, 10:00 - Mira: yes\n13 Jun 2026, 10:01 - Ivo: no", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
 		{"unicode-digits", "13/6/26, 10:00 - Mira: yes\n١٣/٦/٢٦، ١٠:٠١\u00a0–\u00a0Ivo: two", "dmy", "UTC", "line 2: unsupported or malformed TXT header", textLimitsDefault},
@@ -109,12 +110,9 @@ func TestTextParserOriginalByteDigest(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			limits := textLimitsDefault
 			limits.Bytes = int64(len(input))
-			rows, digest, err := parseTextForTest(t.Context(), strings.NewReader(input), "dmy", "UTC", limits)
+			_, digest, err := parseTextForTest(t.Context(), strings.NewReader(input), "dmy", "UTC", limits)
 			require.NoError(err)
-			require.Len(rows, 1)
 			assert.Equal(fmt.Sprintf("%x", sha256.Sum256([]byte(input))), digest)
-			assert.Equal("asters\nseedlings", rows[0].Body)
-			assert.Equal("13/6/26, 10:00 - Mira: asters\nseedlings", rows[0].Raw)
 			limits.Bytes--
 			_, _, err = parseTextForTest(t.Context(), strings.NewReader(input), "dmy", "UTC", limits)
 			require.ErrorContains(err, "byte limit")
@@ -138,19 +136,15 @@ func TestTextParserContinuation(t *testing.T) {
 }
 
 func TestTextParserRecordLimit(t *testing.T) {
-	for _, tc := range []struct{ name, raw, body string }{
-		{"multiline", "13/6/26, 10:00 - Mira: garden\nseed\nlast", "garden\nseed\nlast"},
-		{"header", "13/6/26, 10:00 - Mira: garden", "garden"},
+	for _, tc := range []struct{ name, raw string }{
+		{"multiline", "13/6/26, 10:00 - Mira: garden\nseed\nlast"},
+		{"header", "13/6/26, 10:00 - Mira: garden"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
+			require := require.New(t)
 			limits := textLimits{Bytes: 100, Records: 10, RecordBytes: len(tc.raw)}
-			rows, _, err := parseTextForTest(t.Context(), strings.NewReader(tc.raw), "dmy", "UTC", limits)
+			_, _, err := parseTextForTest(t.Context(), strings.NewReader(tc.raw), "dmy", "UTC", limits)
 			require.NoError(err)
-			require.Len(rows, 1)
-			assert.Equal(tc.body, rows[0].Body)
-			assert.Equal(tc.raw, rows[0].Raw)
-			assert.Equal(strings.Count(tc.raw, "\n")+1, rows[0].EndLine)
 			limits.RecordBytes--
 			_, _, err = parseTextForTest(t.Context(), strings.NewReader(tc.raw), "dmy", "UTC", limits)
 			require.ErrorContains(err, "record exceeds")

@@ -86,6 +86,10 @@ func TestConversationWindowReturnsIndividualChatMessages(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, conversationID, ids := seedConversation(t, "imessage", 3)
+	st, ok := srv.store.(*store.Store)
+	require.True(ok)
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET is_from_me = NULL, source_is_from_me = NULL WHERE id = ?`), ids[2])
+	require.NoError(err)
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 		fmt.Sprintf("/api/v1/conversations/%d?anchor=%d&before=1&after=1", conversationID, ids[1]), nil)
 	w := httptest.NewRecorder()
@@ -94,34 +98,19 @@ func TestConversationWindowReturnsIndividualChatMessages(t *testing.T) {
 
 	require.Equal(http.StatusOK, w.Code, "body: %s", w.Body.String())
 	var response ConversationResponse
-	require.NoError(json.NewDecoder(w.Body).Decode(&response))
+	require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
 	require.Len(response.Messages, 3)
 	assert.Equal("imessage", response.Messages[0].MessageType)
 	require.NotNil(response.Messages[1].IsFromMe)
 	assert.True(*response.Messages[1].IsFromMe)
 	assert.Equal(ids[1], response.AnchorID)
-}
-
-func TestConversationWindowOmitsUnknownOwnership(t *testing.T) {
-	t.Parallel()
-	srv, conversationID, ids := seedConversation(t, "imessage", 3)
-	st, ok := srv.store.(*store.Store)
-	require.True(t, ok)
-	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET is_from_me = NULL, source_is_from_me = NULL WHERE id = ?`), ids[2])
-	require.NoError(t, err)
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
-		fmt.Sprintf("/api/v1/conversations/%d?anchor=%d&before=1&after=1", conversationID, ids[1]), nil)
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	var response struct {
+	var wire struct {
 		Messages []map[string]any `json:"messages"`
 	}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
-	require.Len(t, response.Messages, 3)
-	assert.Equal(t, false, response.Messages[0]["is_from_me"])
-	assert.Equal(t, true, response.Messages[1]["is_from_me"])
-	assert.NotContains(t, response.Messages[2], "is_from_me")
+	require.NoError(json.Unmarshal(w.Body.Bytes(), &wire))
+	require.Len(wire.Messages, 3)
+	assert.Equal(false, wire.Messages[0]["is_from_me"])
+	assert.NotContains(wire.Messages[2], "is_from_me")
 }
 
 func TestConversationWindowCapsInlineBodiesAndServesOmittedBodiesByID(t *testing.T) {

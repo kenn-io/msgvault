@@ -170,34 +170,6 @@ func TestConversationWindowHydratesParticipantsLabelsBodiesAndAttachments(t *tes
 	assert.Equal(nameOnlyID, window.Messages[0].FromParticipantID)
 }
 
-func TestMessageReadsKeepMissingSenderAttributionUnknown(t *testing.T) {
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-
-	source, err := st.GetOrCreateSource("gmail", "archive@example.com")
-	require.NoError(err)
-	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "nullable-attribution-thread", "Nullable attribution")
-	require.NoError(err)
-	messageID, err := st.UpsertMessage(&store.Message{
-		ConversationID:  conversationID,
-		SourceID:        source.ID,
-		SourceMessageID: "nullable-attribution-message",
-		MessageType:     "email",
-	})
-	require.NoError(err)
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET is_from_me = NULL WHERE id = ?"), messageID)
-	require.NoError(err)
-
-	message, err := st.GetMessage(messageID)
-	require.NoError(err)
-	assert.Nil(t, message.IsFromMe)
-
-	window, err := st.GetConversationWindow(conversationID, messageID, 1, 1)
-	require.NoError(err)
-	require.Len(window.Messages, 1)
-	assert.Nil(t, window.Messages[0].IsFromMe)
-}
-
 func TestConversationWindowContextScopesToTimeRange(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

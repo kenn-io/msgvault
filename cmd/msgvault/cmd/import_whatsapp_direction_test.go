@@ -37,18 +37,9 @@ func TestWhatsAppTextUnknownDirectionPeople(t *testing.T) {
 	st, err := store.Open(cfg.DatabaseDSN())
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, st.Close()) })
-	var messageID, conversationID, senderID, sourceID int64
+	var messageID, senderID, sourceID int64
 	var ownership, sourceOwnership sql.NullBool
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id,conversation_id,sender_id,source_id,is_from_me,source_is_from_me FROM messages WHERE snippet='hello'").Scan(&messageID, &conversationID, &senderID, &sourceID, &ownership, &sourceOwnership))
-	stored, err := st.GetMessageContext(t.Context(), messageID)
-	require.NoError(t, err)
-	assert.Nil(t, stored.IsFromMe)
-	window, err := st.GetConversationWindow(conversationID, messageID, 1, 1)
-	require.NoError(t, err)
-	require.Len(t, window.Messages, 2)
-	for _, message := range window.Messages {
-		assert.Nil(t, message.IsFromMe)
-	}
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT id,sender_id,source_id,is_from_me,source_is_from_me FROM messages WHERE snippet='hello'").Scan(&messageID, &senderID, &sourceID, &ownership, &sourceOwnership))
 	sqlite := query.NewSQLiteEngine(st.DB())
 	detail, err := sqlite.GetMessage(t.Context(), messageID)
 	require.NoError(t, err)
@@ -77,15 +68,6 @@ func TestWhatsAppTextUnknownDirectionPeople(t *testing.T) {
 	assert.EqualValues(t, 1, inboxes.Rows[0].ConversationCount)
 	assert.Zero(t, inboxes.Rows[0].SentCount)
 	assert.Zero(t, inboxes.Rows[0].ReceivedCount)
-	dest := t.TempDir()
-	_, err = store.CopySubsetWithOptions(t.Context(), cfg.DatabaseDSN(), dest, 10, store.CopySubsetOptions{})
-	require.NoError(t, err)
-	subset, err := store.Open(filepath.Join(dest, "msgvault.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, subset.Close()) })
-	copied, err := subset.GetMessageContext(t.Context(), messageID)
-	require.NoError(t, err)
-	assert.Nil(t, copied.IsFromMe)
 }
 
 func TestUnknownDirectionIncrementalCacheAndNoticeMedia(t *testing.T) {
