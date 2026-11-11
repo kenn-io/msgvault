@@ -72,6 +72,7 @@ func TestMCPCapabilitiesDescribeRealLoopRoutes(t *testing.T) {
 		routes[route.OperationID] = route
 	}
 	for _, tc := range []struct{ id, method, path string }{
+		{"listChangedMessages", http.MethodGet, "/api/v1/messages/changes"},
 		{"listLoops", http.MethodGet, "/api/v1/loops"},
 		{"markLoopDone", http.MethodPost, "/api/v1/loops/{message_id}/done"},
 		{"snoozeLoop", http.MethodPost, "/api/v1/loops/{message_id}/snooze"},
@@ -82,24 +83,10 @@ func TestMCPCapabilitiesDescribeRealLoopRoutes(t *testing.T) {
 		assertions.Equal(tc.path, routes[tc.id].Path)
 	}
 	assertions.ElementsMatch([]string{"limit", "person_id"}, routes["listLoops"].QueryParameters)
+	for _, param := range []string{"person_id", "source_id", "conversation_id", "incoming_only"} {
+		assertions.Contains(routes["listChangedMessages"].QueryParameters, param)
+	}
 	assertions.Contains(routes["snoozeLoop"].RequestProperties, "until")
 	assertions.Contains(routes["markLoopDone"].QueryParameters, "question_message_ids")
 	assertions.Contains(routes["snoozeLoop"].QueryParameters, "question_message_ids")
-}
-
-func TestMCPCapabilitiesDescribeFilteredChanges(t *testing.T) {
-	descriptors := mcpRouteDescriptors(OpenAPIDocument())
-	var found bool
-	for _, route := range descriptors {
-		if route.OperationID != "listChangedMessages" {
-			continue
-		}
-		found = true
-		assert.Equal(t, http.MethodGet, route.Method)
-		assert.Equal(t, "/api/v1/messages/changes", route.Path)
-		for _, param := range []string{"person_id", "source_id", "conversation_id", "incoming_only"} {
-			assert.Contains(t, route.QueryParameters, param)
-		}
-	}
-	assert.True(t, found)
 }

@@ -1489,7 +1489,8 @@ func (s *Store) GetMessageRecipientsContext(
 // MessagesContentColumns. Labels and recipients live in child tables the
 // watermark does not cover and are deliberately absent: a consumer handed them
 // here would cache them stale forever.
-// SenderID and IsFromMe are internal filter inputs, not public feed fields.
+// SenderID (with From-recipient fallback) and IsFromMe are internal filter
+// inputs, not public feed fields.
 // Direction is not tracked and may change without moving the watermark.
 type ChangedMessage struct {
 	SenderID            int64
@@ -1619,7 +1620,8 @@ func (c ChangedMessagesCursor) AfterID() (int64, bool) { return c.afterID, c.aft
 // because the clock says which instants have been REACHED and nothing about
 // which are still open for COMMITS. See ListChangedMessages.
 //
-// Single-table by design: no joins, no hydration. See ChangedMessage.
+// One ordered messages scan; a scalar lookup resolves a missing sender from
+// the first From recipient, as in the message list. No body hydration.
 //
 // No visibility filter (no LiveMessagesWhere): dedup-hidden and source-deleted
 // rows are returned with their timestamps set, because a consumer mirroring the
@@ -1631,7 +1633,9 @@ const changedMessagesSelect = `
 	       sent_at, received_at, internal_date, COALESCE(size_estimate,0),
 	       COALESCE(has_attachments,FALSE), COALESCE(attachment_count,0),
 	       deleted_at, deleted_from_source_at, content_changed_at,
-	       COALESCE(sender_id,0), COALESCE(is_from_me,FALSE)
+	       COALESCE(sender_id, (SELECT mr.participant_id FROM message_recipients mr
+	           WHERE mr.message_id = messages.id AND mr.recipient_type = 'from'
+	           ORDER BY mr.id LIMIT 1), 0), COALESCE(is_from_me,FALSE)
 	FROM messages
 	WHERE content_changed_at >= ?`
 

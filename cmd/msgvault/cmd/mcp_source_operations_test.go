@@ -701,7 +701,7 @@ func TestListChangesReturnsLargeArchivedSnippet(t *testing.T) {
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET content_changed_at = '2020-01-01 00:00:00.000' WHERE id = ?"), id)
 	require.NoError(t, err)
 	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}))
-	result, err := backend.ExecuteOperation(t.Context(), "list_changes", map[string]any{"limit": 1})
+	result, err := backend.ExecuteOperation(t.Context(), "list_changes", map[string]any{"limit": 1, "source_ids": []int64{source.ID}})
 	require.NoError(t, err)
 	page := operationOutput[generated.ChangesResponse](t, result)
 	require.Len(t, page.Messages, 1)

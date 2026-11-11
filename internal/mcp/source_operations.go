@@ -35,7 +35,7 @@ func sourceOperationalDefinitions() []operationalDefinition {
 			"person_id":        safeIDSchema("Durable person ID"),
 			"source_ids":       {Type: schemaTypeArray, Items: safeIDSchema("Source ID")},
 			"conversation_ids": {Type: schemaTypeArray, Items: safeIDSchema("Conversation ID")},
-			"incoming_only":    booleanSchema("Only incoming messages"),
+			"incoming_only":    booleanSchema("Best-effort incoming filter; direction corrections alone do not redeliver changes"),
 		}), outputSchemaFor[generated.ChangesResponse](), false),
 		newOperationalDefinition("list_source_status", "Read source synchronization capabilities, latest runs, and queued or pending scheduler work.", OperationFamilySources, closedObject(map[string]*jsonschema.Schema{"source_type": stringSchema("Optional exact source type")}), outputSchemaFor[generated.SourceStatusResponse](), false),
 		newOperationalDefinition("get_source_identities", "Read confirmed sender identities and confirmation signals for one source.", OperationFamilySources, closedObject(map[string]*jsonschema.Schema{"source_id": safeIDSchema("Exact archived source ID")}, "source_id"), outputSchemaFor[generated.SourceIdentitiesResponse](), false),

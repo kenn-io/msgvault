@@ -618,6 +618,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		http.StatusBadRequest,
 		http.StatusUnauthorized,
 		http.StatusNotFound,
+		http.StatusConflict,
 		http.StatusUnprocessableEntity,
 		http.StatusTooManyRequests,
 		http.StatusInternalServerError,
@@ -1251,7 +1252,7 @@ func changesParams() []*huma.Param {
 		queryIntegerParam("person_id", "Only messages sent by a linked identity of this person"),
 		queryIntegerArrayParam("source_id", "Source IDs; repeat for multiple sources (maximum 50)"),
 		queryIntegerArrayParam("conversation_id", "Conversation IDs; repeat for multiple conversations (maximum 50)"),
-		queryBooleanParam("incoming_only", "Only incoming messages"),
+		queryBooleanParam("incoming_only", "Best-effort incoming filter; direction corrections alone do not redeliver changes"),
 		queryStringParam("cursor",
 			"Opaque cursor from the next_cursor of the previous response, sent back "+
 				"verbatim. Do not parse, construct, compare, or order it; its contents may "+

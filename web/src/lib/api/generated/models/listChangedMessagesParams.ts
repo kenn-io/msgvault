@@ -16,7 +16,7 @@ export type ListChangedMessagesParams = {
    */
   conversation_id?: number[];
   /**
-   * Only incoming messages
+   * Best-effort incoming filter; direction corrections alone do not redeliver changes
    */
   incoming_only?: boolean;
   /**

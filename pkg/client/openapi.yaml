@@ -24767,7 +24767,7 @@ paths:
               format: int64
               type: integer
             type: array
-        - description: Only incoming messages
+        - description: Best-effort incoming filter; direction corrections alone do not redeliver changes
           in: query
           name: incoming_only
           schema:
@@ -24803,6 +24803,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
         "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
           content:
             application/json:
               schema:
