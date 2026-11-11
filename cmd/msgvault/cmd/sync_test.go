@@ -27,9 +27,9 @@ func TestSyncFullCancellationRetainsEarlierSourceError(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{HomeDir: dir, Data: config.DataConfig{DataDir: dir}}
 	s := testutil.NewSQLiteTestStoreAt(t, filepath.Join(dir, "msgvault.db"))
-	bad, err := s.GetOrCreateSource("imap", "bad@example.test")
+	_, err := s.GetOrCreateSource("imap", "bad@example.test")
 	require.NoError(t, err)
-	require.NoError(t, s.UpdateSourceSyncConfig(t.Context(), bad.ID, "{"))
+	require.NoError(t, imaplib.SaveCredentials(cfg.TokensDir(), "bad@example.test", "test"))
 	good, err := s.GetOrCreateSource("imap", "good@example.test")
 	require.NoError(t, err)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
