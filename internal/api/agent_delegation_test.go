@@ -116,6 +116,17 @@ func TestDelegatedFailsPrivilegedPredicate(t *testing.T) {
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
 	})
 
+	for _, route := range []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/people/1/appreciations"},
+		{http.MethodPost, "/api/v1/people/1/appreciations/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/dismiss"},
+	} {
+		t.Run("appreciation "+route.method+" is owner-only", func(t *testing.T) {
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, makeRequest(route.method, route.path))
+			assert.Equal(t, http.StatusUnauthorized, w.Code)
+		})
+	}
+
 	t.Run("issueAgentToken returns 401", func(t *testing.T) {
 		req := makeRequest(http.MethodPost, "/api/v1/agent-tokens")
 		req.Header.Set("Content-Type", "application/json")

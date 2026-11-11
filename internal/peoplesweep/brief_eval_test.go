@@ -206,7 +206,7 @@ func runBriefFixture(t *testing.T, fixture briefFixture) {
 
 	rendered, err := peoplesweep.RenderBrief(parsed, window)
 	require.NoError(t, err)
-	assert.Equal(t, peoplesweep.BriefRendererPolicyV2, rendered.Policy)
+	assert.Equal(t, peoplesweep.BriefRendererPolicyV3, rendered.Policy)
 	assert.Equal(t, fixture.Expected.RenderedText, rendered.Text)
 	assert.Len(t, rendered.Sentences, briefExpectedSentenceCount(fixture.Expected.Output),
 		"one rendered sentence per surviving structured item")
@@ -322,6 +322,7 @@ func briefProviderJSON(
 		"highlights":                  []any{},
 		"follow_ups":                  []any{},
 		"appreciations":               []any{},
+		"thanks_suggestions":          []any{},
 		"uncertainties":               []any{},
 		"possible_attributes":         []any{},
 	}

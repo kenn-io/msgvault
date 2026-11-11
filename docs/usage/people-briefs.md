@@ -11,8 +11,10 @@ message to remember what was going on and what you might ask about next.
 Briefs currently use the person's own messages from supported chat and text
 sources: Apple Messages/iMessage, Beeper, Discord, Facebook Messenger, Google
 Messages, Slack/Slackdump, SyncTech SMS, Teams, and WhatsApp. Email, meeting
-transcripts, documents, and your own replies are excluded. An email-only
-contact cannot receive a brief yet.
+transcripts, and documents are excluded. An email-only contact cannot receive a
+brief yet. In a direct conversation with a complete provider roster, a brief
+may also check your own messages for a specific earlier thank-you; those messages
+do not become facts about the other person.
 
 ## Generate your first brief
 
@@ -74,6 +76,16 @@ Every command accepts `--json` to print the daemon's response. MCP assistants
 can read the current brief with `get_person_profile`; MCP does not generate,
 reject, or enroll briefs. See [MCP brief text](/docs/usage/chat/#brief-text-is-data)
 and the [brief API](/docs/api-server/#get-apiv1peopleidbrief) for response details.
+
+## Review reasons to say thanks
+
+A brief may suggest up to three specific things the person did for you, with
+the exact contribution cited. A later specific thank-you can be shown as
+already thanked when the archive proves the direct conversation and sender.
+Otherwise the prior-thanks status is unknown. The owner API can list and dismiss
+these suggestions; see [appreciation suggestions](/docs/api-server/#person-appreciation-suggestions).
+Dismissal persists across later briefs. The current brief hides dismissed or
+unsupported suggestions, while its history remains an immutable snapshot.
 
 ## Follow up on temporary events
 

@@ -149,7 +149,7 @@ func (f *personBriefAPIFixture) seedBrief(t *testing.T, seed personBriefAPISeed)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+bind+`, `+bind+`, ?, ?, ?, ?)
 		RETURNING id`),
 		f.personID, version, f.generationID(t), store.PersonBriefStatusCurrent,
-		peoplesweep.BriefProgramID, peoplesweep.BriefProgramVersion,
+		peoplesweep.BriefProgramID, "v2",
 		peoplesweep.BriefProgramFingerprint(), "openai_chat", "provider-v1",
 		"gpt-test", "model-v1", "policy-fingerprint", seed.boundary, seed.structured,
 		seed.rendered, peoplesweep.BriefRendererPolicyV1, seed.dropped,
@@ -303,7 +303,7 @@ func TestPersonBriefHTTPReturnsCurrentVersionWithSentencesAndEvidence(t *testing
 	assertions.Equal(seed.rendered, brief.RenderedText)
 	assertions.Equal(2, brief.DroppedItemCount)
 	assertions.Equal(peoplesweep.BriefProgramID, brief.ProgramID)
-	assertions.Equal(peoplesweep.BriefProgramVersion, brief.ProgramVersion)
+	assertions.Equal("v2", brief.ProgramVersion)
 	assertions.Equal("openai_chat", brief.Provider)
 	assertions.Equal("gpt-test", brief.Model)
 	assertions.Nil(brief.RejectedAt)
@@ -775,6 +775,15 @@ func TestPersonBriefOpenAPIContract(t *testing.T) {
 	requirements.NotNil(enrollment.Put)
 	assertions.Equal("getPersonBriefEnrollment", enrollment.Get.OperationID)
 	assertions.Equal("setPersonBriefEnrollment", enrollment.Put.OperationID)
+
+	appreciations := document.Paths["/api/v1/people/{id}/appreciations"]
+	requirements.NotNil(appreciations)
+	requirements.NotNil(appreciations.Get)
+	assertions.Equal("listPersonAppreciations", appreciations.Get.OperationID)
+	dismiss := document.Paths["/api/v1/people/{id}/appreciations/{key}/dismiss"]
+	requirements.NotNil(dismiss)
+	requirements.NotNil(dismiss.Post)
+	assertions.Equal("dismissPersonAppreciation", dismiss.Post.OperationID)
 
 	// The handlers accept an absent reason and an absent track, so the schema
 	// generated clients are built from must not demand either.

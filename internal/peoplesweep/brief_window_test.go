@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,10 +28,58 @@ type briefFakeArchive struct {
 	// journal is the sequence at which the person's change journal first saw
 	// each message. A message absent from it has no journal row and is always
 	// visible, as in the store.
-	journal        map[int64]int64
-	candidateCalls []HistoricalCandidateRequest
-	searchCalls    []ContextRequest
-	hydrateCalls   []int64
+	journal                map[int64]int64
+	candidateCalls         []HistoricalCandidateRequest
+	searchCalls            []ContextRequest
+	hydrateCalls           []int64
+	appreciationPeers      []BriefAppreciationPeer
+	appreciationOwners     []BriefAppreciationOwner
+	dismissedAppreciations map[string]bool
+}
+
+func (a *briefFakeArchive) PersonSweepAppreciationPeers(_ context.Context, _ int64, _ []EvidenceItem, _ int64) ([]BriefAppreciationPeer, error) {
+	return a.appreciationPeers, nil
+}
+
+func (a *briefFakeArchive) PersonSweepAppreciationOwners(_ context.Context, _ int64, _ []BriefAppreciationPeer, _ ProviderProfile, _ int64, _ int) ([]BriefAppreciationOwner, error) {
+	return a.appreciationOwners, nil
+}
+
+func (a *briefFakeArchive) PersonSweepAppreciationDismissed(_ context.Context, _ []string) (map[string]bool, error) {
+	return a.dismissedAppreciations, nil
+}
+
+func TestBriefAppreciationReplayProtectsActiveEvidence(t *testing.T) {
+	old := briefWindowItem(11, SourceConversationText, 10, "I carried your boxes upstairs.")
+	newer := briefWindowItem(12, SourceConversationText, 14, "A later conversation")
+	key, hash := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	memory := BriefAppreciationMemory{Suggestion: BriefThanksSuggestion{Text: "carrying the boxes", Quote: "carried your boxes",
+		Key: key, State: "suggested", PriorThanks: "unknown"}, PeerRef: old.Ref, PeerRawSHA256: hash, ConversationID: 42}
+	archive := &briefFakeArchive{items: []EvidenceItem{old, newer},
+		appreciationPeers: []BriefAppreciationPeer{{Ref: old.Ref, ConversationID: 42, ContributionKey: key,
+			RawSHA256: hash, ExactExcerpt: old.Excerpt, EventTime: old.EventTime}},
+		lastContact: BriefLastContact{MessageID: newer.Ref.MessageID, SourceID: newer.Ref.SourceID}, hasLastContact: true}
+	request := briefWindowRequest(t)
+	request.Previous = &BriefBoundary{AppreciationMemory: []BriefAppreciationMemory{memory}}
+	request.MaxItems = 1
+	_, err := BuildBriefWindow(t.Context(), archive, request)
+	assert.ErrorIs(t, err, ErrEvidenceItemTooLarge)
+	assert.Equal(t, "suggested", request.Previous.AppreciationMemory[0].Suggestion.State)
+
+	request.MaxItems = 2
+	window, err := BuildBriefWindow(t.Context(), archive, request)
+	require.NoError(t, err)
+	parsed, err := ParseBrief(briefOutputJSON{}.raw(), window, request.Profile)
+	require.NoError(t, err)
+	require.Len(t, parsed.Output.ThanksSuggestions, 1)
+	assert.Equal(t, key, parsed.Output.ThanksSuggestions[0].Key, "a model omission preserves the original contribution")
+
+	archive.dismissedAppreciations = map[string]bool{key: true}
+	window, err = BuildBriefWindow(t.Context(), archive, request)
+	require.NoError(t, err)
+	parsed, err = ParseBrief(briefOutputJSON{}.raw(), window, request.Profile)
+	require.NoError(t, err)
+	assert.Empty(t, parsed.Output.ThanksSuggestions)
 }
 
 // visibleAt mirrors the store's journal bound: a positive sequence hides a

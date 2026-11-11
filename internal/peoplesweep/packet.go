@@ -23,6 +23,8 @@ const extractionMaxOutputTokens = 4096
 
 type EvidencePacket struct {
 	BriefContext *BriefEventContext
+	BriefPeers   []BriefAppreciationPeer
+	BriefOwners  []BriefAppreciationOwner
 
 	PersonID          int64
 	ProgramID         string
@@ -49,7 +51,9 @@ type ProjectedValue struct {
 }
 
 type packetWireEnvelope struct {
-	BriefContext *BriefEventContext `json:"brief_context,omitempty"`
+	BriefContext *BriefEventContext       `json:"brief_context,omitempty"`
+	BriefPeers   []BriefAppreciationPeer  `json:"appreciation_peers,omitempty"`
+	BriefOwners  []BriefAppreciationOwner `json:"appreciation_owners,omitempty"`
 
 	PersonID          int64                `json:"person_id"`
 	ProgramID         string               `json:"program_id"`
@@ -252,6 +256,11 @@ func canonicalPacket(packet EvidencePacket) (EvidencePacket, error) {
 		return EvidencePacket{}, errors.New("person sweep packet does not use a frozen program")
 	}
 	canonical := packet
+	if packet.ProgramID != BriefProgramID && (len(packet.BriefPeers) != 0 || len(packet.BriefOwners) != 0) {
+		return EvidencePacket{}, errors.New("appreciation context is restricted to briefs")
+	}
+	canonical.BriefPeers = slices.Clone(packet.BriefPeers)
+	canonical.BriefOwners = slices.Clone(packet.BriefOwners)
 	if packet.ProgramID == BriefProgramID && packet.BriefContext == nil {
 		return EvidencePacket{}, errors.New("person brief packet requires event context")
 	}
@@ -268,6 +277,13 @@ func canonicalPacket(packet EvidencePacket) (EvidencePacket, error) {
 			return EvidencePacket{}, err
 		}
 		if err := json.Unmarshal(raw, &context.Events); err != nil {
+			return EvidencePacket{}, err
+		}
+		raw, err = json.Marshal(context.Appreciations)
+		if err != nil {
+			return EvidencePacket{}, err
+		}
+		if err := json.Unmarshal(raw, &context.Appreciations); err != nil {
 			return EvidencePacket{}, err
 		}
 		canonical.BriefContext = &context
@@ -449,6 +465,7 @@ func marshalPacketEnvelope(packet EvidencePacket) ([]byte, error) {
 	encoded, err := json.Marshal(packetWireEnvelope{
 		PersonID: packet.PersonID, ProgramID: packet.ProgramID, ProgramVersion: packet.ProgramVersion,
 		Catalog: packet.Catalog, CurrentProjection: packet.CurrentProjection, BriefContext: packet.BriefContext,
+		BriefPeers: packet.BriefPeers, BriefOwners: packet.BriefOwners,
 		UnresolvedClaims: packet.UnresolvedClaims, Seeds: seeds, Context: context,
 	}, json.Deterministic(true))
 	if err != nil {

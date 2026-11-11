@@ -811,6 +811,37 @@ including people in tier 3. The body has the preview row's fields plus
 
 ---
 
+### Person brief enrollments {#get-apiv1peoplebrief-enrollments}
+
+**Endpoint:** `GET /api/v1/people/brief-enrollments`
+
+List enrolled people in ascending person ID order. Optional `after_id` and
+`limit` select the next page; the limit defaults to 20 and cannot exceed 1000.
+This owner-only route returns an `enrollments` array.
+
+---
+
+### Person appreciation suggestions {#person-appreciation-suggestions}
+
+**Endpoint:** `GET /api/v1/people/{id}/appreciations`
+
+List supported, undismissed suggestions from the current brief. Each item has
+the suggestion, its stable contribution key and exact peer quote, plus the
+peer source reference. When a later specific thank-you is supported, it also
+has the owner source reference and exact quote; otherwise `prior_thanks` is
+`unknown`. A missing current brief returns `404`. The current profile's source
+and date limits apply to both citations.
+
+**Endpoint:** `POST /api/v1/people/{id}/appreciations/{key}/dismiss`
+
+Dismiss a currently supported suggestion. A supported retry returns the first
+dismissal's actor and time. A key that is no longer eligible returns `404`;
+the saved dismissal remains in effect. Both endpoints require owner access.
+The current v3 brief filters the same suggestions and citations. History keeps
+the saved snapshot and reports current `appreciation_dismissal_keys` separately.
+
+---
+
 ### Person brief enrollment {#get-apiv1peopleidbrief-enrollment}
 
 **Endpoint:** `GET /api/v1/people/{id}/brief-enrollment`

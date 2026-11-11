@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -28,6 +29,67 @@ func mergeFixtureMessage(t *testing.T, st *store.Store, sourceID int64, chat, pr
 	require.NoError(st.UpsertMessageBody(message, sql.NullString{String: body, Valid: true}, sql.NullString{}))
 	require.NoError(st.UpsertMessageRaw(message, []byte("synthetic raw "+body)))
 	return message, conversation
+}
+
+func TestSourceMergeCopiesAppreciationDismissalToConfirmedSurvivor(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	from, err := st.GetOrCreateSource("beeper", "from-example")
+	require.NoError(t, err)
+	into, err := st.GetOrCreateSource("beeper", "into-example")
+	require.NoError(t, err)
+	mergeFixtureMessage(t, st, from.ID, "room", "original", "same text", 1)
+	mergeFixtureMessage(t, st, into.ID, "room", "survivor", "same text", 1)
+	oldKey, err := peoplesweep.AppreciationContributionKey("beeper", from.Identifier, "original")
+	require.NoError(t, err)
+	newKey, err := peoplesweep.AppreciationContributionKey("beeper", into.Identifier, "survivor")
+	require.NoError(t, err)
+	_, err = st.RecordPersonAppreciationDismissalContext(t.Context(), oldKey, "person-a", "owner", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+	result, err := st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), result.DuplicatesHidden)
+	states, err := st.GetPersonAppreciationStatesContext(t.Context(), []string{oldKey, newKey})
+	require.NoError(t, err)
+	require.Len(t, states, 2)
+	assert.NotNil(t, states[oldKey].DismissedAt)
+	assert.NotNil(t, states[newKey].DismissedAt)
+	assert.Nil(t, states[newKey].ThanksBriefID)
+}
+
+func TestSourceMergeAppreciationIdentityKeepsFirstNativeOrigin(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	first, err := st.GetOrCreateSourceContext(t.Context(), "beeper", "first-example")
+	require.NoError(t, err)
+	second, err := st.GetOrCreateSourceContext(t.Context(), "beeper", "second-example")
+	require.NoError(t, err)
+	third, err := st.GetOrCreateSourceContext(t.Context(), "beeper", "third-example")
+	require.NoError(t, err)
+	messageID, _ := mergeFixtureMessage(t, st, first.ID, "room", "original", "I helped with the move", 1)
+	var senderID int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE id = ?`), messageID).Scan(&senderID))
+	person, _, err := st.CreatePersonFromParticipant(senderID)
+	require.NoError(t, err)
+	want, err := peoplesweep.AppreciationContributionKey("beeper", first.Identifier, "original")
+	require.NoError(t, err)
+	_, err = st.RecordPersonAppreciationDismissalContext(t.Context(), want, person.VCardUID, "owner", time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+	for _, destination := range []*store.Source{second, third} {
+		fromID := first.ID
+		if destination.ID == third.ID {
+			fromID = second.ID
+		}
+		_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: fromID, IntoSourceID: destination.ID})
+		require.NoError(t, err)
+		items, err := st.HydratePersonSweepMessages(t.Context(), person.ID, []int64{messageID}, 0)
+		require.NoError(t, err)
+		peers, err := st.PersonSweepAppreciationPeers(t.Context(), person.ID, items, 0)
+		require.NoError(t, err)
+		require.Len(t, peers, 1)
+		assert.Equal(t, want, peers[0].ContributionKey)
+	}
+	states, err := st.GetPersonAppreciationStatesContext(t.Context(), []string{want})
+	require.NoError(t, err)
+	assert.NotNil(t, states[want].DismissedAt)
 }
 
 func emailMergeFixtureMessage(

@@ -55,7 +55,7 @@ func briefApplyResult(personID int64, refs ...string) *peoplesweep.BriefResult {
 		evidence = append(evidence, briefApplyEvidence(personID, ref))
 	}
 	structured := json.RawMessage(`{"last_meaningful_interaction":null,"highlights":[],` +
-		`"follow_ups":[],"appreciations":[],"uncertainties":[],"possible_attributes":[]}`)
+		`"follow_ups":[],"appreciations":[],"thanks_suggestions":[],"uncertainties":[],"possible_attributes":[]}`)
 	return &peoplesweep.BriefResult{
 		ProgramID: peoplesweep.BriefProgramID, ProgramVersion: peoplesweep.BriefProgramVersion,
 		ProgramFingerprint: peoplesweep.BriefProgramFingerprint(),
@@ -68,7 +68,7 @@ func briefApplyResult(personID int64, refs ...string) *peoplesweep.BriefResult {
 		},
 		Structured: structured,
 		Rendered: peoplesweep.RenderedBrief{
-			Policy: peoplesweep.BriefRendererPolicyV2,
+			Policy: peoplesweep.BriefRendererPolicyV3,
 			Text:   "Last time you talked (Aug 22): they start a new role.",
 			Sentences: []peoplesweep.RenderedSentence{{
 				Kind: "last_interaction", Index: 0,
@@ -135,7 +135,7 @@ func TestApplyPersonSweepStoresBriefWithExtractionBatches(t *testing.T) {
 	checks.Equal("fixture-model", stored.Model)
 	checks.Equal("model-v1", stored.ModelVersion)
 	checks.Equal(2, stored.DroppedItemCount)
-	checks.Equal(peoplesweep.BriefRendererPolicyV2, stored.RendererPolicy)
+	checks.Equal(peoplesweep.BriefRendererPolicyV3, stored.RendererPolicy)
 	checks.Equal(f.request.Generation.PersonID, stored.PersonID)
 
 	var boundary peoplesweep.BriefBoundary

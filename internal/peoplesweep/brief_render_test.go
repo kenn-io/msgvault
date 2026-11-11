@@ -54,7 +54,7 @@ func TestRenderBriefMatchesTheFrozenRenderedForm(t *testing.T) {
 
 	rendered, err := RenderBrief(parsed, window)
 	require.NoError(err)
-	assert.Equal(BriefRendererPolicyV2, rendered.Policy)
+	assert.Equal(BriefRendererPolicyV3, rendered.Policy)
 	assert.Equal(
 		"Last time you talked (Aug 29, chat): they were preparing for a role change and "+
 			"spending weekends learning to cook. "+

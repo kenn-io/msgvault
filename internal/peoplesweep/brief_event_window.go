@@ -163,7 +163,7 @@ func briefDropUnprotected(items []EvidenceItem, mandatory *EvidenceItem, protect
 }
 
 func briefEventContext(request BriefWindowRequest) *BriefEventContext {
-	context := &BriefEventContext{AsOf: request.AsOf.UTC(), Bootstrap: true, Events: request.retainedEvents}
+	context := &BriefEventContext{AsOf: request.AsOf.UTC(), Bootstrap: true, Events: request.retainedEvents, Appreciations: request.retainedAppreciations}
 	if request.Previous != nil && request.Previous.EventMemoryVersion > 0 {
 		context.Bootstrap = false
 		context.AdmissionThrough = request.Previous.AdmissionThroughEventTime

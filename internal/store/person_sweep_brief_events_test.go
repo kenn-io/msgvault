@@ -15,7 +15,7 @@ import (
 )
 
 func emptyEventBrief() json.RawMessage {
-	return json.RawMessage(`{"last_meaningful_interaction":null,"highlights":[],"follow_ups":[],"appreciations":[],"uncertainties":[],"possible_attributes":[]}`)
+	return json.RawMessage(`{"last_meaningful_interaction":null,"highlights":[],"follow_ups":[],"appreciations":[],"thanks_suggestions":[],"uncertainties":[],"possible_attributes":[]}`)
 }
 
 func storeEventCandidate(t *testing.T, packet map[string]any, announcement, date, text, question string) json.RawMessage {

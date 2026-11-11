@@ -15,6 +15,7 @@ import (
 // policy rather than a silent rewrite of what the owner already read.
 const BriefRendererPolicyV1 = "person-brief-render-v1"
 const BriefRendererPolicyV2 = "person-brief-render-v2"
+const BriefRendererPolicyV3 = "person-brief-render-v3"
 
 // briefDateFormat matches the design's rendered form ("Aug 29"). The structured
 // record keeps full timestamps; the paragraph stays short.
@@ -45,11 +46,12 @@ var ErrEmptyBrief = errors.New("person brief has no renderable content")
 type BriefSentenceKind string
 
 const (
-	BriefSentenceLastInteraction BriefSentenceKind = "last_interaction"
-	BriefSentenceHighlight       BriefSentenceKind = "highlight"
-	BriefSentenceFollowUp        BriefSentenceKind = "follow_up"
-	BriefSentenceAppreciation    BriefSentenceKind = "appreciation"
-	BriefSentenceUncertainty     BriefSentenceKind = "uncertainty"
+	BriefSentenceLastInteraction  BriefSentenceKind = "last_interaction"
+	BriefSentenceHighlight        BriefSentenceKind = "highlight"
+	BriefSentenceFollowUp         BriefSentenceKind = "follow_up"
+	BriefSentenceAppreciation     BriefSentenceKind = "appreciation"
+	BriefSentenceThanksSuggestion BriefSentenceKind = "thanks_suggestion"
+	BriefSentenceUncertainty      BriefSentenceKind = "uncertainty"
 )
 
 // RenderedSentence is one sentence and the structured item that produced it.
@@ -77,7 +79,7 @@ type RenderedBrief struct {
 // usable message the header falls back to the cited item's event time and
 // omits the excluded contact's channel.
 func RenderBrief(parsed ParsedBrief, window BriefWindow) (RenderedBrief, error) {
-	rendered := RenderedBrief{Policy: BriefRendererPolicyV2}
+	rendered := RenderedBrief{Policy: BriefRendererPolicyV3}
 
 	if interaction := parsed.Output.LastMeaningfulInteraction; interaction != nil {
 		header := "Last time you talked (" + briefHeaderDate(window, interaction.EvidenceID)
@@ -105,6 +107,15 @@ func RenderBrief(parsed ParsedBrief, window BriefWindow) (RenderedBrief, error) 
 		rendered.Sentences = append(rendered.Sentences, RenderedSentence{
 			Kind: BriefSentenceAppreciation, Index: index,
 			Text: briefSentence("You said you appreciated " + appreciation.Text),
+		})
+	}
+	for index, suggestion := range parsed.Output.ThanksSuggestions {
+		prefix := "You may want to thank them for "
+		if suggestion.State == "already_thanked" {
+			prefix = "You already thanked them for "
+		}
+		rendered.Sentences = append(rendered.Sentences, RenderedSentence{
+			Kind: BriefSentenceThanksSuggestion, Index: index, Text: briefSentence(prefix + suggestion.Text),
 		})
 	}
 	for index, uncertainty := range parsed.Output.Uncertainties {
@@ -251,6 +262,9 @@ func briefWalkCitations(output BriefOutput, visit func(key *BriefSentenceKey, id
 	for index, followUp := range output.FollowUps {
 		visit(&BriefSentenceKey{Kind: BriefSentenceFollowUp, Index: index}, followUp.EvidenceIDs)
 	}
+	for index, suggestion := range output.ThanksSuggestions {
+		visit(&BriefSentenceKey{Kind: BriefSentenceThanksSuggestion, Index: index}, []string{suggestion.AnchorID})
+	}
 	for index, uncertainty := range output.Uncertainties {
 		visit(&BriefSentenceKey{Kind: BriefSentenceUncertainty, Index: index}, uncertainty.EvidenceIDs)
 	}
@@ -277,11 +291,15 @@ func briefCitationOrder(output BriefOutput) []string {
 	return order
 }
 
+// BriefCitationOrder returns the distinct evidence identifiers in pointer
+// order, for projecting a filtered immutable brief without misattribution.
+func BriefCitationOrder(output BriefOutput) []string { return briefCitationOrder(output) }
+
 // briefSentenceCount is how many sentences a structure renders to. The trimmer
 // uses it to refuse a drop that would leave no paragraph at all.
 func briefSentenceCount(output BriefOutput) int {
 	count := len(output.Highlights) + len(output.FollowUps) +
-		len(output.Appreciations) + len(output.Uncertainties)
+		len(output.Appreciations) + len(output.ThanksSuggestions) + len(output.Uncertainties)
 	if output.LastMeaningfulInteraction != nil {
 		count++
 	}
@@ -376,6 +394,9 @@ func briefDropTrailingItem(output BriefOutput) (BriefOutput, int, bool) {
 		return output, 1, true
 	case len(output.FollowUps) > 0:
 		output.FollowUps = slices.Clone(output.FollowUps[:len(output.FollowUps)-1])
+		return output, 1, true
+	case len(output.ThanksSuggestions) > 0:
+		output.ThanksSuggestions = slices.Clone(output.ThanksSuggestions[:len(output.ThanksSuggestions)-1])
 		return output, 1, true
 	case len(output.Highlights) > 0:
 		for index := range slices.Backward(output.Highlights) {

@@ -254,7 +254,7 @@ func TestPersonSweepWorkerAppendsBriefAfterExtractionBatches(t *testing.T) {
 	require.NotNil(applied.Brief)
 	assert.Equal(BriefProgramID, applied.Brief.ProgramID)
 	assert.Equal(BriefProgramFingerprint(), applied.Brief.ProgramFingerprint)
-	assert.Equal(BriefRendererPolicyV2, applied.Brief.Rendered.Policy)
+	assert.Equal(BriefRendererPolicyV3, applied.Brief.Rendered.Policy)
 	assert.NotEmpty(applied.Brief.Rendered.Text)
 	assert.Equal(int64(90), applied.Brief.Boundary.ThroughSequence,
 		"the boundary records the archive high water the plan captured")

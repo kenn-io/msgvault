@@ -135,8 +135,11 @@ type BriefResult struct {
 	// longer current, so a concurrent owner rejection cannot restore its events.
 	EventMemorySourceVersion int
 	Boundary                 BriefBoundary
-	Structured               jsontext.Value
-	Rendered                 RenderedBrief
+	// ValidationProfile is the policy used for this in-flight call. It is not
+	// part of the immutable brief or an archive credential record.
+	ValidationProfile ProviderProfile
+	Structured        jsontext.Value
+	Rendered          RenderedBrief
 	// Evidence is the archive evidence the structure cites, in citation order.
 	// The store aligns each input and writes the surviving rows as the brief's
 	// evidence pointers.
@@ -202,9 +205,14 @@ func (w *Worker) planPersonBrief(
 		plan.retireVersion = eligibility.Version
 		plan.priorEventMemoryVersion = eligibility.Version
 	}
+	if eligibility.Status == BriefStatusCurrent && eligibility.Boundary != nil && len(eligibility.Boundary.AppreciationMemory) > 0 {
+		// Fence replay against concurrent rejection without enabling event retirement.
+		plan.priorEventMemoryVersion = eligibility.Version
+	}
 	if (eligibility.Status == BriefStatusSuperseded || eligibility.Status == BriefStatusRejected) && plan.previous != nil {
 		previous := *plan.previous
 		previous.EventMemory = nil
+		previous.AppreciationMemory = nil
 		previous.NextEventAt = nil
 		plan.previous = &previous
 	}
@@ -234,7 +242,7 @@ func (w *Worker) planPersonBrief(
 	if !fresh {
 		return plan, nil
 	}
-	if eligibility.Status == BriefStatusSuperseded || hasUnresolvedBriefEvent(eligibility.Boundary.EventMemory) {
+	if eligibility.Status == BriefStatusSuperseded || hasUnresolvedBriefEvent(eligibility.Boundary.EventMemory) || hasActiveAppreciation(eligibility.Boundary.AppreciationMemory) {
 		plan.run = true
 		return plan, nil
 	}
@@ -253,6 +261,15 @@ func (w *Worker) planPersonBrief(
 		plan.run = true
 	}
 	return plan, nil
+}
+
+func hasActiveAppreciation(memory []BriefAppreciationMemory) bool {
+	for _, item := range memory {
+		if item.Suggestion.State == "suggested" {
+			return true
+		}
+	}
+	return false
 }
 
 // Only unresolved events can gain a new outcome on fresh activity. All
@@ -302,11 +319,17 @@ func briefEvidenceInputs(parsed ParsedBrief) []personfacts.EvidenceInput {
 func renderBriefResult(
 	parsed ParsedBrief, window BriefWindow, generatedAt time.Time,
 ) (BriefResult, error) {
+	memory := freezeAppreciationMemory(parsed, window)
 	trimmed, rendered, err := trimRenderedBrief(parsed, window, window.Request.MaxRenderedRunes)
 	if err != nil {
 		return BriefResult{}, err
 	}
-	return newBriefResult(trimmed, rendered, window, generatedAt)
+	result, err := newBriefResult(trimmed, rendered, window, generatedAt)
+	if err != nil {
+		return BriefResult{}, err
+	}
+	result.Boundary.AppreciationMemory = memory
+	return result, nil
 }
 
 // newBriefResult freezes one validated, rendered brief into the durable shape
@@ -335,6 +358,7 @@ func newBriefResult(
 		ProgramID: BriefProgramID, ProgramVersion: BriefProgramVersion,
 		ProgramFingerprint:       BriefProgramFingerprint(),
 		EventMemorySourceVersion: window.Request.retainedEventMemoryVersion,
+		ValidationProfile:        window.Request.Profile,
 		Boundary:                 freezeBriefEventMemory(window, eventMemory, evidence), Structured: structured, Rendered: rendered,
 		Evidence: briefEvidenceInputs(parsed), DroppedItemCount: parsed.DroppedItemCount,
 		GeneratedAt: generatedAt.UTC(),
@@ -352,7 +376,7 @@ func ValidateBriefResult(personID int64, result *BriefResult) error {
 		result.ProgramFingerprint != BriefProgramFingerprint() {
 		return errors.New("person brief result does not use the frozen brief program")
 	}
-	if result.Rendered.Policy != BriefRendererPolicyV2 || result.Rendered.Text == "" ||
+	if result.Rendered.Policy != BriefRendererPolicyV3 || result.Rendered.Text == "" ||
 		len(result.Rendered.Sentences) == 0 {
 		return errors.New("person brief result has no rendered paragraph")
 	}
@@ -454,7 +478,7 @@ func (w *Worker) runBriefCall(
 		ProviderFingerprint: call.profile.Fingerprint,
 		UTCDate:             call.resolvedAt.UTC().Format(time.DateOnly),
 		InputHash:           prepared.WireSHA256(),
-		ItemCount:           len(window.Batch.Packet.Seeds) + len(window.Batch.Packet.Context),
+		ItemCount:           len(window.Batch.Packet.Seeds) + len(window.Batch.Packet.Context) + len(window.Batch.Packet.BriefOwners),
 		EstimatedRequests:   1, EstimatedInputTokens: estimate.InputTokens,
 		EstimatedOutputTokens: estimate.OutputTokens, EstimatedCostMicroUSD: estimatedCost,
 		Budget: w.Config.Budgets,
@@ -560,7 +584,7 @@ func (w *Worker) runBriefCall(
 			ProviderFingerprint: call.profile.Fingerprint,
 			UTCDate:             call.resolvedAt.UTC().Format(time.DateOnly),
 			InputHash:           repair.WireSHA256(),
-			ItemCount:           len(window.Batch.Packet.Seeds) + len(window.Batch.Packet.Context),
+			ItemCount:           len(window.Batch.Packet.Seeds) + len(window.Batch.Packet.Context) + len(window.Batch.Packet.BriefOwners),
 			EstimatedRequests:   1, EstimatedInputTokens: repairEstimate.InputTokens,
 			EstimatedOutputTokens: repairEstimate.OutputTokens,
 			EstimatedCostMicroUSD: repairCost, Budget: w.Config.Budgets,

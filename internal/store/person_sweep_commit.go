@@ -295,9 +295,26 @@ func (s *Store) applyPersonSweepWithAligner(
 	if err != nil {
 		return peoplesweep.ApplyResult{}, err
 	}
+	var sources []int64
+	if request.Brief != nil {
+		copyBrief := *request.Brief
+		request.Brief = &copyBrief
+		for _, memory := range copyBrief.Boundary.AppreciationMemory {
+			sources = append(sources, memory.PeerRef.SourceID)
+			if memory.OwnerRef != nil {
+				sources = append(sources, memory.OwnerRef.SourceID)
+			}
+		}
+	}
 
 	var result peoplesweep.ApplyResult
-	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+	withApplyTx := s.withTxContext
+	if len(sources) > 0 {
+		withApplyTx = func(ctx context.Context, fn func(*loggedTx) error) error {
+			return s.withAttributionTxContext(ctx, attributionLock{Sources: sources}, fn)
+		}
+	}
+	err = withApplyTx(ctx, func(tx *loggedTx) error {
 		attempt, err := s.lockPersonSweepBudgetAttempt(ctx, tx, request.AttemptID)
 		if err != nil {
 			return err
@@ -341,6 +358,30 @@ func (s *Store) applyPersonSweepWithAligner(
 				return err
 			}
 		}
+		if request.Brief != nil && len(request.Brief.Boundary.AppreciationMemory) > 0 {
+			current, validateErr := s.revalidateAppreciationMemoryTx(ctx, tx, request.Lease.PersonID, request.Brief, false)
+			if validateErr != nil {
+				return validateErr
+			}
+			if err := peoplesweep.FilterBriefAppreciations(request.Brief, current); err != nil {
+				return err
+			}
+			if request.Brief.Rendered.Text == "" {
+				return peoplesweep.ErrEmptyBrief
+			}
+			// Keep the aligned evidence in the filtered structure's citation order.
+			byRef := make(map[string]preparedBriefEvidence, len(briefEvidence))
+			for _, item := range briefEvidence {
+				byRef[item.input.SourceRef] = item
+			}
+			filtered := make([]preparedBriefEvidence, 0, len(request.Brief.Evidence))
+			for _, input := range request.Brief.Evidence {
+				if item, ok := byRef[input.SourceRef]; ok {
+					filtered = append(filtered, item)
+				}
+			}
+			briefEvidence = filtered
+		}
 
 		generation, facts, err := s.applyPreparedPersonFactGenerationDetailedTx(
 			ctx, tx, prepared, func(stage string) error { return personSweepApplyStage(ctx, stage) })
@@ -368,6 +409,9 @@ func (s *Store) applyPersonSweepWithAligner(
 				request, generation.GenerationID, briefIDs))
 			if briefErr != nil {
 				return briefErr
+			}
+			if err := recordAppreciationProofsTx(ctx, tx, brief.ID, request.Brief.Boundary.AppreciationMemory); err != nil {
+				return err
 			}
 			result.Mutations.BriefVersion = brief.Version
 			result.Mutations.BriefEvidenceRowsInserted = len(briefIDs)
@@ -574,6 +618,10 @@ func (s *Store) verifyPersonSweepAttemptBindingTx(
 	}
 	if allowSensitive != request.Generation.Policy.AllowSensitive {
 		return errors.New("person sweep generation policy does not match durable profile")
+	}
+	if request.Brief != nil && len(request.Brief.Boundary.AppreciationMemory) > 0 &&
+		(request.Brief.ValidationProfile.Fingerprint != attempt.providerFingerprint || request.Brief.ValidationProfile.AllowSensitive != allowSensitive) {
+		return errors.New("person brief appreciation policy does not match durable profile")
 	}
 	if len(request.Batches) > 0 {
 		if provider != request.Generation.Provider || model != request.Generation.Model ||
@@ -985,6 +1033,21 @@ func preparePersonSweepBriefEvidence(
 				return nil, err
 			}
 			mandatory[encoded] = true
+		}
+	}
+	// An appreciation that survived paragraph trimming must retain its cited
+	// peer evidence. Unrendered memory is independently checked by raw ref and
+	// hash inside the apply transaction.
+	for _, memory := range request.Brief.Boundary.AppreciationMemory {
+		encoded, err := peoplesweep.EncodePersonSweepEvidenceRef(memory.PeerRef)
+		if err != nil {
+			return nil, err
+		}
+		for _, input := range request.Brief.Evidence {
+			if input.SourceRef == encoded {
+				mandatory[encoded] = true
+				break
+			}
 		}
 	}
 	prepared := make([]preparedBriefEvidence, 0, len(request.Brief.Evidence))

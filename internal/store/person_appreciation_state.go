@@ -25,12 +25,12 @@ var (
 // PersonAppreciationState holds a durable dismissal and an optional exact brief
 // reference. A nil reference does not establish whether thanks were given.
 type PersonAppreciationState struct {
-	ContributionKey    string
-	DismissedPersonUID *string
-	DismissedBy        *string
-	DismissedAt        *time.Time
+	ContributionKey    string     `json:"contribution_key"`
+	DismissedPersonUID *string    `json:"dismissed_person_uid,omitempty"`
+	DismissedBy        *string    `json:"dismissed_by,omitempty"`
+	DismissedAt        *time.Time `json:"dismissed_at,omitempty"`
 	// ThanksBriefID is written only by the later validated brief-proof transaction.
-	ThanksBriefID *int64
+	ThanksBriefID *int64 `json:"thanks_brief_id,omitempty"`
 }
 
 func validAppreciationKey(key string) bool {
@@ -117,18 +117,22 @@ func (s *Store) RecordPersonAppreciationDismissalContext(ctx context.Context, ke
 	}
 	var state PersonAppreciationState
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		row := tx.QueryRowContext(ctx, `INSERT INTO person_appreciation_state (contribution_key, dismissed_person_uid, dismissed_by, dismissed_at)
- VALUES (?, ?, ?, ?) ON CONFLICT (contribution_key) DO UPDATE SET
- dismissed_person_uid = CASE WHEN person_appreciation_state.dismissed_at IS NULL THEN excluded.dismissed_person_uid ELSE person_appreciation_state.dismissed_person_uid END,
- dismissed_by = CASE WHEN person_appreciation_state.dismissed_at IS NULL THEN excluded.dismissed_by ELSE person_appreciation_state.dismissed_by END,
- dismissed_at = COALESCE(person_appreciation_state.dismissed_at, excluded.dismissed_at)
- RETURNING `+appreciationStateColumns, key, personUID, actor, at.UTC())
 		var err error
-		state, err = scanAppreciationState(row)
+		state, err = recordPersonAppreciationDismissalTx(ctx, tx, key, personUID, actor, at)
 		return err
 	})
 	if err != nil {
 		return PersonAppreciationState{}, fmt.Errorf("dismiss appreciation: %w", err)
 	}
 	return state, nil
+}
+
+func recordPersonAppreciationDismissalTx(ctx context.Context, tx *loggedTx, key, personUID, actor string, at time.Time) (PersonAppreciationState, error) {
+	row := tx.QueryRowContext(ctx, `INSERT INTO person_appreciation_state (contribution_key, dismissed_person_uid, dismissed_by, dismissed_at)
+ VALUES (?, ?, ?, ?) ON CONFLICT (contribution_key) DO UPDATE SET
+ dismissed_person_uid = CASE WHEN person_appreciation_state.dismissed_at IS NULL THEN excluded.dismissed_person_uid ELSE person_appreciation_state.dismissed_person_uid END,
+ dismissed_by = CASE WHEN person_appreciation_state.dismissed_at IS NULL THEN excluded.dismissed_by ELSE person_appreciation_state.dismissed_by END,
+ dismissed_at = COALESCE(person_appreciation_state.dismissed_at, excluded.dismissed_at)
+ RETURNING `+appreciationStateColumns, key, personUID, actor, at.UTC())
+	return scanAppreciationState(row)
 }

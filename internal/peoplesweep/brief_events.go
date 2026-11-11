@@ -44,10 +44,11 @@ type BriefEventMemory struct {
 // BriefEventContext is included only in canonical brief packets. AsOf freezes
 // the clock for a paid request; AdmissionThrough is the previous watermark.
 type BriefEventContext struct {
-	AsOf             time.Time        `json:"as_of"`
-	AdmissionThrough time.Time        `json:"admission_through"`
-	Bootstrap        bool             `json:"bootstrap,omitzero"`
-	Events           []BriefHighlight `json:"events"`
+	AsOf             time.Time               `json:"as_of"`
+	AdmissionThrough time.Time               `json:"admission_through"`
+	Bootstrap        bool                    `json:"bootstrap,omitzero"`
+	Events           []BriefHighlight        `json:"events"`
+	Appreciations    []BriefThanksSuggestion `json:"appreciations,omitempty"`
 }
 
 // ErrBriefEventEvidenceChanged lets the worker commit extraction while

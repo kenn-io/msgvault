@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,6 +33,43 @@ func briefParseWindow(t *testing.T) BriefWindow {
 	return window
 }
 
+func TestBriefAppreciationRequiresExactPeerAndLaterOwnerEvidence(t *testing.T) {
+	peer := briefWindowItem(10, SourceConversationText, 10, "I carried your boxes upstairs.")
+	archive := &briefFakeArchive{items: []EvidenceItem{peer}, appreciationPeers: []BriefAppreciationPeer{{
+		Ref: peer.Ref, ConversationID: 42, ContributionKey: strings.Repeat("a", 64),
+		RawSHA256: strings.Repeat("b", 64), ExactExcerpt: "I carried your boxes upstairs.", EventTime: peer.EventTime,
+	}}, appreciationOwners: []BriefAppreciationOwner{{
+		EvidenceID: "owner:test", Ref: EvidenceRef{SourceLane: SourceConversationText, SourceID: peer.Ref.SourceID, MessageID: 99},
+		ConversationID: 42, RawSHA256: strings.Repeat("c", 64), ExactExcerpt: "Thanks for carrying my boxes!", EventTime: peer.EventTime.Add(time.Hour),
+	}}}
+	request := briefWindowRequest(t)
+	request.MaxItems = 10
+	window, err := BuildBriefWindow(t.Context(), archive, request)
+	require.NoError(t, err)
+	anchor := briefEvidenceID(t, window, peer.Ref.MessageID)
+	for _, tc := range []struct {
+		name, quote, thanks string
+		wantCount           int
+		wantState           string
+	}{
+		{"supported later thanks", "carried your boxes", `{"evidence_id":"owner:test","quote":"Thanks for carrying my boxes!"}`, 1, "already_thanked"},
+		{"unknown owner", "carried your boxes", `{"evidence_id":"owner:other","quote":"Thanks"}`, 1, "suggested"},
+		{"changed peer quote", "moved your piano", `null`, 0, ""},
+		{"changed owner quote", "carried your boxes", `{"evidence_id":"owner:test","quote":"different words"}`, 1, "suggested"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			candidate := fmt.Sprintf(`{"text":"carrying the boxes","anchor_id":%q,"quote":%q,"thanked":%s}`, anchor, tc.quote, tc.thanks)
+			parsed, err := ParseBrief(briefOutputJSON{ThanksSuggestions: []string{candidate}}.raw(), window, request.Profile)
+			require.NoError(t, err)
+			require.Len(t, parsed.Output.ThanksSuggestions, tc.wantCount)
+			if tc.wantCount > 0 {
+				assert.Equal(t, tc.wantState, parsed.Output.ThanksSuggestions[0].State)
+				assert.Equal(t, strings.Repeat("a", 64), parsed.Output.ThanksSuggestions[0].Key)
+			}
+		})
+	}
+}
+
 func briefEvidenceID(t *testing.T, window BriefWindow, messageID int64) string {
 	t.Helper()
 	for _, item := range window.Items {
@@ -44,12 +82,13 @@ func briefEvidenceID(t *testing.T, window BriefWindow, messageID int64) string {
 }
 
 type briefOutputJSON struct {
-	LastInteraction string
-	Highlights      []string
-	FollowUps       []string
-	Appreciations   []string
-	Uncertainties   []string
-	Attributes      []string
+	LastInteraction   string
+	Highlights        []string
+	FollowUps         []string
+	Appreciations     []string
+	ThanksSuggestions []string
+	Uncertainties     []string
+	Attributes        []string
 }
 
 func (b briefOutputJSON) raw() json.RawMessage {
@@ -59,9 +98,9 @@ func (b briefOutputJSON) raw() json.RawMessage {
 	}
 	return json.RawMessage(fmt.Sprintf(
 		`{"last_meaningful_interaction":%s,"highlights":[%s],"follow_ups":[%s],`+
-			`"appreciations":[%s],"uncertainties":[%s],"possible_attributes":[%s]}`,
+			`"appreciations":[%s],"thanks_suggestions":[%s],"uncertainties":[%s],"possible_attributes":[%s]}`,
 		interaction, strings.Join(b.Highlights, ","), strings.Join(b.FollowUps, ","),
-		strings.Join(b.Appreciations, ","), strings.Join(b.Uncertainties, ","),
+		strings.Join(b.Appreciations, ","), strings.Join(b.ThanksSuggestions, ","), strings.Join(b.Uncertainties, ","),
 		strings.Join(b.Attributes, ",")))
 }
 
@@ -295,11 +334,11 @@ func TestParseBriefTreatsSchemaViolationsAsValidationFailures(t *testing.T) {
 	for name, output := range map[string]string{
 		"unknown speaker": `{"last_meaningful_interaction":null,"highlights":[{"text":"x",` +
 			`"speaker":"vendor","evidence_ids":["` + self + `"],"observed_at":null,` +
-			`"confidence_basis_points":0,"life_event":null}],"follow_ups":[],"appreciations":[],` +
+			`"confidence_basis_points":0,"life_event":null}],"follow_ups":[],"appreciations":[],"thanks_suggestions":[],` +
 			`"uncertainties":[],"possible_attributes":[]}`,
-		"missing key": `{"highlights":[],"follow_ups":[],"appreciations":[],"uncertainties":[],"possible_attributes":[]}`,
+		"missing key": `{"highlights":[],"follow_ups":[],"appreciations":[],"thanks_suggestions":[],"uncertainties":[],"possible_attributes":[]}`,
 		"trailing json": `{"last_meaningful_interaction":null,"highlights":[],"follow_ups":[],` +
-			`"appreciations":[],"uncertainties":[],"possible_attributes":[]} {}`,
+			`"appreciations":[],"thanks_suggestions":[],"uncertainties":[],"possible_attributes":[]} {}`,
 		"not json": `not json`,
 	} {
 		t.Run(name, func(t *testing.T) {
