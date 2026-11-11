@@ -70,6 +70,9 @@ func prepareICalendar(raw []byte, method string, fromEmail bool) ([]preparedICS,
 	}
 	out := make([]preparedICS, 0, len(components))
 	for _, c := range components {
+		if len(c.Raw) > maxMeetingRawBytes {
+			return nil, &icsInterpretationError{errMeetingRawTooLarge}
+		}
 		out = append(out, preparedICS{component: c, fromEmail: fromEmail, meta: calevent.ICSMetadata{Sequence: c.Sequence, Stamp: c.Stamp, Status: c.Event.Status, AllDay: c.Event.AllDay, Organizer: c.OrganizerEmail, Range: slices.Contains(c.Event.Recurrence, calevent.ICSRangeRecurrence)}})
 	}
 	return out, nil
