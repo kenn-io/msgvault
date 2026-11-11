@@ -325,7 +325,10 @@ func writeLoopCommitments(sb *strings.Builder, commitments []generated.LoopCommi
 				sb.WriteString(group.title + "\n")
 				printedHeading = true
 			}
-			fmt.Fprintf(sb, "  %s   person %d   %s", item.ID, item.PersonID, textutil.SanitizeTerminal(item.Summary))
+			fmt.Fprintf(sb, "  %s   person %d", item.ID, item.PersonID)
+			if item.Summary != item.Promise.Text {
+				fmt.Fprintf(sb, "   %s", textutil.SanitizeTerminal(item.Summary))
+			}
 			if state := string(item.State); state != "" && state != "open" {
 				fmt.Fprintf(sb, " (%s)", state)
 			}
