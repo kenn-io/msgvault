@@ -68,8 +68,8 @@ type vectorInitPersonStore struct{}
 
 func (vectorInitPersonStore) ResolvePersonSemanticCandidatesContext(
 	context.Context, []store.PersonSemanticCandidate, int64,
-) ([]store.Person, error) {
-	return nil, nil
+) ([]store.Person, bool, error) {
+	return nil, true, nil
 }
 
 type vectorInitPersonEmbedder struct{}

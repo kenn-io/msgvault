@@ -149,10 +149,12 @@ func (s *Store) ListPersonSemanticDocumentsContext(
 // counterpart text. Editing either linked record therefore suppresses stale
 // hits for affected people until the scheduled person worker republishes them.
 // Organization membership and revision validation share the same snapshot.
+// The boolean reports whether the scope can contain any candidates.
 func (s *Store) ResolvePersonSemanticCandidatesContext(
 	ctx context.Context, candidates []PersonSemanticCandidate, organizationID int64,
-) ([]Person, error) {
+) ([]Person, bool, error) {
 	people := make([]Person, 0, len(candidates))
+	scopeHasMembers := organizationID == 0
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		var members map[int64]struct{}
 		if organizationID > 0 {
@@ -169,6 +171,10 @@ func (s *Store) ResolvePersonSemanticCandidatesContext(
 			employments, err := s.listAllEmploymentsContext(ctx, tx, EmploymentFilter{OrganizationID: organizationID, CurrentOnly: true})
 			if err != nil {
 				return fmt.Errorf("load organization employments: %w", err)
+			}
+			scopeHasMembers = len(employments) > 0
+			if !scopeHasMembers {
+				return nil
 			}
 			members = make(map[int64]struct{}, len(employments))
 			for _, employment := range employments {
@@ -205,7 +211,7 @@ func (s *Store) ResolvePersonSemanticCandidatesContext(
 		}
 		return nil
 	})
-	return people, err
+	return people, scopeHasMembers, err
 }
 
 func (s *Store) loadPersonSemanticSnapshotTx(

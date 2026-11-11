@@ -68,7 +68,7 @@ type Backend interface {
 type Store interface {
 	ResolvePersonSemanticCandidatesContext(
 		ctx context.Context, candidates []store.PersonSemanticCandidate, organizationID int64,
-	) ([]store.Person, error)
+	) ([]store.Person, bool, error)
 }
 
 // QueryEmbedder embeds one free-text query.
@@ -189,7 +189,7 @@ func (e *Engine) Search(ctx context.Context, query string, limit int, organizati
 					finalCandidates = append(finalCandidates, candidate)
 				}
 			}
-			people, err := e.store.ResolvePersonSemanticCandidatesContext(ctx, finalCandidates, organizationID)
+			people, _, err := e.store.ResolvePersonSemanticCandidatesContext(ctx, finalCandidates, organizationID)
 			if err != nil {
 				return nil, fmt.Errorf("resolve final person search hits: %w", err)
 			}
@@ -198,9 +198,12 @@ func (e *Engine) Search(ctx context.Context, query string, limit int, organizati
 		hadValidCandidates := len(valid) > 0
 		var newlyResolved []store.Person
 		if len(newCandidates) > 0 {
-			people, err := e.store.ResolvePersonSemanticCandidatesContext(ctx, newCandidates, organizationID)
+			people, scopeHasMembers, err := e.store.ResolvePersonSemanticCandidatesContext(ctx, newCandidates, organizationID)
 			if err != nil {
 				return nil, fmt.Errorf("resolve current person search hits: %w", err)
+			}
+			if !scopeHasMembers {
+				return nil, nil
 			}
 			candidateByID := make(map[int64]store.PersonSemanticCandidate, len(newCandidates))
 			for _, candidate := range newCandidates {
@@ -225,9 +228,12 @@ func (e *Engine) Search(ctx context.Context, query string, limit int, organizati
 			if !hadValidCandidates {
 				return personResultsInHitOrder(hits, newlyResolved, limit), nil
 			}
-			people, err := e.store.ResolvePersonSemanticCandidatesContext(ctx, currentCandidates, organizationID)
+			people, scopeHasMembers, err := e.store.ResolvePersonSemanticCandidatesContext(ctx, currentCandidates, organizationID)
 			if err != nil {
 				return nil, fmt.Errorf("revalidate final person search hits: %w", err)
+			}
+			if !scopeHasMembers {
+				return nil, nil
 			}
 			results := personResultsInHitOrder(hits, people, limit)
 			if len(results) == limit {

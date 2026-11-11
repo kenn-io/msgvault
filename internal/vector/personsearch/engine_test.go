@@ -84,16 +84,16 @@ type testStore struct {
 
 func (s *testStore) ResolvePersonSemanticCandidatesContext(
 	_ context.Context, candidates []store.PersonSemanticCandidate, organizationID int64,
-) ([]store.Person, error) {
+) ([]store.Person, bool, error) {
 	if s.organizationID != organizationID {
-		return nil, fmt.Errorf("unexpected organization %d", organizationID)
+		return nil, false, fmt.Errorf("unexpected organization %d", organizationID)
 	}
 	s.calls++
 	if s.beforeResolve != nil {
 		s.beforeResolve(s.calls)
 	}
 	if s.resolveErr != nil {
-		return nil, s.resolveErr
+		return nil, false, s.resolveErr
 	}
 	s.resolvedCandidates += len(candidates)
 	people := make([]store.Person, 0, len(candidates))
@@ -107,7 +107,7 @@ func (s *testStore) ResolvePersonSemanticCandidatesContext(
 			people = append(people, person)
 		}
 	}
-	return people, nil
+	return people, organizationID == 0 || len(s.members) > 0, nil
 }
 
 func newTestEngine(
@@ -692,4 +692,34 @@ func TestEngineOrganizationScopePreservesConsentAndCoverageGate(t *testing.T) {
 		check.Empty(backend.personSearchLimits)
 		check.Zero(data.calls)
 	}
+}
+
+func TestEngineOrganizationScopeEmptyStopsWidening(t *testing.T) {
+	backend := &testBackend{active: &vector.Generation{ID: 7, Fingerprint: "test:3:rperson-semantic-v1"}}
+	for i := range 50 {
+		backend.personHits = append(backend.personHits, vector.PersonHit{PersonID: int64(i + 1), Revision: "revision"})
+	}
+	data := &testStore{organizationID: 42, members: map[int64]bool{}}
+	engine := NewEngine(backend, data, &testEmbedder{vec: []float32{1, 0, 0}}, Config{ExpectedFingerprint: "test:3:rperson-semantic-v1", Gate: vector.SemanticPersonEmbeddingGateFunc(func(context.Context) error { return nil })})
+	results, err := engine.Search(t.Context(), "synthetic", 5, 42)
+	require.NoError(t, err)
+	assert.Empty(t, results)
+	assert.Equal(t, []int{5}, backend.personSearchLimits)
+}
+
+func TestEngineOrganizationScopeStopsWhenMembershipDisappears(t *testing.T) {
+	backend := &testBackend{active: &vector.Generation{ID: 7, Fingerprint: "test:3:rperson-semantic-v1"}, personHits: []vector.PersonHit{
+		{PersonID: 1, Revision: "r1"}, {PersonID: 2, Revision: "r2"}, {PersonID: 3, Revision: "r3"}, {PersonID: 4, Revision: "r4"},
+	}}
+	data := &testStore{organizationID: 42, members: map[int64]bool{1: true}, documents: map[int64]*store.PersonSemanticDocument{1: {Revision: "r1"}}, people: map[int64]store.Person{1: {ID: 1}}}
+	data.beforeResolve = func(call int) {
+		if call == 2 {
+			delete(data.members, 1)
+		}
+	}
+	engine := NewEngine(backend, data, &testEmbedder{vec: []float32{1, 0, 0}}, Config{ExpectedFingerprint: "test:3:rperson-semantic-v1", Gate: vector.SemanticPersonEmbeddingGateFunc(func(context.Context) error { return nil })})
+	results, err := engine.Search(t.Context(), "synthetic", 2, 42)
+	require.NoError(t, err)
+	assert.Empty(t, results)
+	assert.Equal(t, []int{2, 4}, backend.personSearchLimits)
 }

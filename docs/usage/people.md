@@ -222,7 +222,7 @@ excluded. Resolve the active organization again after an organization merge.
 `--organization` matches the current canonical organization name instead of its
 ID. `--category`, `--contact-state active|inactive`, and the other directory
 filters intersect. Contact state describes archived contact activity, not
-employment status. `--limit` accepts 1–100. Follow every `next_cursor` with the
+employment status. Follow every `next_cursor` with the
 same filters to enumerate matching saved people. This is not a census of all
 employees: unpromoted identities and missing employment records are outside
 this directory. People with the same name keep separate IDs and vCard UIDs.
