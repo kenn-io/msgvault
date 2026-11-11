@@ -26,7 +26,8 @@ type instagramPending struct {
 }
 
 type instagramContent struct {
-	body, kind, photos  string
+	body, kind, media   string
+	extra               string
 	duration            int64
 	hasDuration, missed bool
 }
@@ -36,31 +37,65 @@ type instagramOccurrence struct {
 }
 
 func instagramEvidence(record rawJSONMessage) instagramOccurrence {
-	message := instagramJSONMessage(record)
-	sort.Slice(message.Reactions, func(i, j int) bool {
-		if message.Reactions[i].Actor != message.Reactions[j].Actor {
-			return message.Reactions[i].Actor < message.Reactions[j].Actor
-		}
-		return message.Reactions[i].Reaction < message.Reactions[j].Reaction
-	})
-	reactions, _ := json.Marshal(message.Reactions)
-	photos := append([]rawJSONPhoto(nil), record.Photos...)
-	for i := range photos {
-		photos[i].URI = path.Clean(DecodeMojibake(photos[i].URI))
+	keys := make([]string, len(record.Reactions))
+	for i, r := range record.Reactions {
+		keys[i] = instagramReactionKey(r)
 	}
-	sort.Slice(photos, func(i, j int) bool {
-		if photos[i].URI != photos[j].URI {
-			return photos[i].URI < photos[j].URI
-		}
-		return photos[i].CreationTimestamp < photos[j].CreationTimestamp
-	})
-	photoEvidence, _ := json.Marshal(photos)
+	sort.Strings(keys)
+	reactions, _ := json.Marshal(keys)
 	record.Reactions = nil
-	content := instagramContent{body: instagramJSONMessage(record).Body, kind: record.Type, photos: string(photoEvidence), missed: record.Missed}
+	content := instagramContent{body: instagramJSONMessage(record).Body, kind: record.Type, media: instagramMediaEvidence(record), extra: instagramExtraEvidence(record), missed: record.Missed}
 	if record.CallDuration != nil {
 		content.duration, content.hasDuration = *record.CallDuration, true
 	}
 	return instagramOccurrence{content, string(reactions)}
+}
+
+// instagramMediaEvidence keeps every media kind's path and timestamp.
+func instagramMediaEvidence(record rawJSONMessage) string {
+	kinds := [][]rawJSONPhoto{record.Photos, record.Videos, record.Audio, record.Files, record.Media, record.Gifs}
+	encodedKinds := make([][]string, len(kinds))
+	for k, entries := range kinds {
+		for _, entry := range entries {
+			entry.URI = path.Clean(DecodeMojibake(entry.URI))
+			encoded, _ := json.Marshal(entry)
+			encodedKinds[k] = append(encodedKinds[k], instagramCanonical(encoded))
+		}
+		sort.Strings(encodedKinds[k])
+	}
+	encoded, _ := json.Marshal(encodedKinds)
+	return string(encoded)
+}
+
+// instagramExtraEvidence is the fields the importer doesn't parse, in the
+// record, its share and its sticker.
+func instagramExtraEvidence(record rawJSONMessage) string {
+	extras := make([]string, 3)
+	extras[0] = instagramCanonical(record.Extra)
+	if record.Share != nil {
+		extras[1] = instagramCanonical(record.Share.Extra)
+	}
+	if record.Sticker != nil {
+		extras[2] = instagramCanonical(record.Sticker.Extra)
+	}
+	encoded, _ := json.Marshal(extras)
+	return string(encoded)
+}
+
+// instagramReactionKey identifies a reaction by its text, actor and unparsed fields.
+func instagramReactionKey(r rawJSONReaction) string {
+	encoded, _ := json.Marshal([]string{DecodeMojibake(r.Actor), DecodeMojibake(r.Reaction), instagramCanonical(r.Extra)}, jsontext.AllowInvalidUTF8(true))
+	return string(encoded)
+}
+
+// instagramCanonical is a JSON value with sorted keys, so key order never
+// separates two copies of one record.
+func instagramCanonical(value jsontext.Value) string {
+	canonical := append(jsontext.Value(nil), value...)
+	if canonical.Canonicalize(jsontext.CanonicalizeRawInts(false), jsontext.CanonicalizeRawFloats(false)) != nil {
+		return string(value)
+	}
+	return string(canonical)
 }
 
 func parseInstagramThread(ctx context.Context, st *store.Store, sourceID int64, root string, td ThreadDir, summary *ImportSummary, keys map[string]string, archivedGroups map[string][]string) (*Thread, map[string]store.StoredMessage, error) {
@@ -232,20 +267,20 @@ func addInstagramSurplus(items []*instagramPending, n int) {
 		return string(encoded)
 	}
 	sort.SliceStable(items, func(i, j int) bool { return bare(items[i]) < bare(items[j]) })
-	shared := map[rawJSONReaction]int{}
+	shared := map[string]int{}
 	for _, p := range items {
-		seen := map[rawJSONReaction]bool{}
+		seen := map[string]bool{}
 		for _, r := range p.record.Reactions {
-			if !seen[r] {
-				seen[r] = true
-				shared[r]++
+			if key := instagramReactionKey(r); !seen[key] {
+				seen[key] = true
+				shared[key]++
 			}
 		}
 	}
 	base := *items[0]
 	base.id, base.record.Reactions = "", nil
 	for _, r := range items[0].record.Reactions {
-		if shared[r] == len(items) {
+		if shared[instagramReactionKey(r)] == len(items) {
 			base.record.Reactions = append(base.record.Reactions, r)
 		}
 	}

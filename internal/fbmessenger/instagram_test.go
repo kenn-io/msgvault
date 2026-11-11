@@ -722,6 +722,96 @@ func TestInstagramSenderChangesRetainMessages(t *testing.T) {
 }
 
 func TestInstagramDuplicateOccurrences(t *testing.T) {
+	t.Run("nested key order", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		st, root := testutil.NewTestStore(t), t.TempDir()
+		record := instagramTestRecord("same")
+		record["photos"] = []map[string]any{{"uri": "photo.jpg", "extra_one": "a", "extra_two": "b"}}
+		filename := instagramTestShard(t, root, "circle", "message_1.json", record)
+		opts := ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example"}
+		_, err := ImportDYI(t.Context(), st, opts)
+		require.NoError(err)
+		data, err := os.ReadFile(filename)
+		require.NoError(err)
+		before := `"extra_one":"a","extra_two":"b"`
+		require.Contains(string(data), before)
+		require.NoError(os.WriteFile(filename, []byte(strings.Replace(string(data), before, `"extra_two":"b","extra_one":"a"`, 1)), 0600))
+		summary, err := ImportDYI(t.Context(), st, opts)
+		require.NoError(err)
+		assert.Zero(summary.MessagesAdded)
+		assert.Equal(1, countMessages(t, st, ""))
+	})
+	t.Run("changed reactions with extra fields", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		st, root := testutil.NewTestStore(t), t.TempDir()
+		a, b := instagramTestRecord("same"), instagramTestRecord("same")
+		a["extra_field"], b["extra_field"] = "first", "second"
+		a["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "a"}}
+		b["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "b"}}
+		instagramTestShard(t, root, "circle", "message_1.json", a, b)
+		opts := ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example"}
+		_, err := ImportDYI(t.Context(), st, opts)
+		require.NoError(err)
+		a["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "c"}}
+		b["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "d"}}
+		instagramTestShard(t, root, "circle", "message_1.json", b, a)
+		summary, err := ImportDYI(t.Context(), st, opts)
+		require.NoError(err)
+		assert.False(summary.Incomplete)
+		assert.Zero(summary.MessagesAdded)
+		_, reactions := instagramSnapshot(t, st)
+		assert.Contains(slices.Collect(maps.Values(reactions)), "c")
+		assert.Contains(slices.Collect(maps.Values(reactions)), "d")
+	})
+	for _, field := range []string{"video timestamp", "unknown field", "large identifier", "large media identifier", "nested field", "share field", "sticker field", "reaction field"} {
+		t.Run(field, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			root := t.TempDir()
+			a, b := instagramTestRecord("same"), instagramTestRecord("same")
+			if field == "video timestamp" {
+				a["videos"] = []map[string]any{{"uri": "video.mp4", "creation_timestamp": 100}}
+				b["videos"] = []map[string]any{{"uri": "video.mp4", "creation_timestamp": 200}}
+			} else if field == "nested field" {
+				a["photos"] = []map[string]any{{"uri": "photo.jpg", "extra_field": "first"}}
+				b["photos"] = []map[string]any{{"uri": "photo.jpg", "extra_field": "second"}}
+			} else if field == "share field" {
+				a["share"] = map[string]any{"link": "https://example.org", "extra_field": "first"}
+				b["share"] = map[string]any{"link": "https://example.org", "extra_field": "second"}
+			} else if field == "sticker field" {
+				a["sticker"] = map[string]any{"uri": "sticker.png", "extra_field": "first"}
+				b["sticker"] = map[string]any{"uri": "sticker.png", "extra_field": "second"}
+			} else if field == "reaction field" {
+				a["reactions"] = []map[string]any{{"actor": "Nova Example", "reaction": "a", "extra_field": "first"}}
+				b["reactions"] = []map[string]any{{"actor": "Nova Example", "reaction": "a", "extra_field": "second"}}
+			} else if field == "large identifier" {
+				a["extra_id"], b["extra_id"] = int64(9007199254740992), int64(9007199254740993)
+			} else if field == "large media identifier" {
+				a["photos"] = []map[string]any{{"uri": "photo.jpg", "extra_id": int64(9007199254740992)}}
+				b["photos"] = []map[string]any{{"uri": "photo.jpg", "extra_id": int64(9007199254740993)}}
+			} else {
+				a["extra_field"], b["extra_field"] = "first", "second"
+			}
+			instagramTestShard(t, root, "circle", "message_1.json", a, b)
+			opts := ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example"}
+			_, err := ImportDYI(t.Context(), st, opts)
+			require.NoError(err)
+			before, _ := instagramSnapshot(t, st)
+			instagramTestShard(t, root, "circle", "message_1.json", b, a)
+			_, err = ImportDYI(t.Context(), st, opts)
+			require.NoError(err)
+			after, _ := instagramSnapshot(t, st)
+			assert.Equal(before, after, "reordered replay")
+			instagramTestShard(t, root, "circle", "message_1.json", b)
+			_, err = ImportDYI(t.Context(), st, opts)
+			require.NoError(err)
+			after, _ = instagramSnapshot(t, st)
+			assert.Equal(before, after, "partial replay")
+		})
+	}
 	t.Run("reordered photos", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)

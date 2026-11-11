@@ -44,21 +44,29 @@ type instagramRaw struct {
 type rawJSONPhoto struct {
 	URI               string `json:"uri"`
 	CreationTimestamp int64  `json:"creation_timestamp"`
+
+	Extra jsontext.Value `json:",embed"`
 }
 
 type rawJSONSticker struct {
 	URI string `json:"uri"`
+
+	Extra jsontext.Value `json:",embed"`
 }
 
 type rawJSONShare struct {
 	Link                 string `json:"link"`
 	ShareText            string `json:"share_text"`
 	OriginalContentOwner string `json:"original_content_owner"`
+
+	Extra jsontext.Value `json:",embed"`
 }
 
 type rawJSONReaction struct {
 	Reaction string `json:"reaction"`
 	Actor    string `json:"actor"`
+
+	Extra jsontext.Value `json:",embed"`
 }
 
 type rawJSONMessage struct {
@@ -77,6 +85,7 @@ type rawJSONMessage struct {
 	CallDuration *int64            `json:"call_duration"`
 	Missed       bool              `json:"missed"`
 	Reactions    []rawJSONReaction `json:"reactions"`
+	Extra        jsontext.Value    `json:",embed"`
 }
 
 var reMessageFile = regexp.MustCompile(`^message_(\d+)\.json$`)
