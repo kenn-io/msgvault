@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -683,4 +684,40 @@ func TestListChangesPreservesActionableRefusals(t *testing.T) {
 			assert.JSONEq(t, `{"error":"`+tc.code+`","operation_may_have_completed":false}`, string(data))
 		})
 	}
+}
+
+func TestListChangesReturnsLargeArchivedSnippet(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "large@example.com")
+	require.NoError(t, err)
+	conversation, err := st.EnsureConversationWithType(source.ID, "large-thread", "email_thread", "Large thread")
+	require.NoError(t, err)
+	snippet := strings.Repeat("x", (1<<20)+1)
+	id, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, SourceMessageID: "large-message", ConversationID: conversation,
+		MessageType: "email", Snippet: sql.NullString{String: snippet, Valid: true},
+	})
+	require.NoError(t, err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET content_changed_at = '2020-01-01 00:00:00.000' WHERE id = ?"), id)
+	require.NoError(t, err)
+	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}))
+	result, err := backend.ExecuteOperation(t.Context(), "list_changes", map[string]any{"limit": 1})
+	require.NoError(t, err)
+	page := operationOutput[generated.ChangesResponse](t, result)
+	require.Len(t, page.Messages, 1)
+	assert.Equal(t, id, page.Messages[0].ID)
+	require.NotNil(t, page.Messages[0].Snippet)
+	assert.Equal(t, snippet, *page.Messages[0].Snippet)
+}
+
+func TestOtherMCPOperationsStillLimitResponseSize(t *testing.T) {
+	client := newMCPDaemonClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(strings.Repeat("x", (1<<20)+1)))
+	})
+	result, err := readMCPOperationJSON[generated.SourceStatusResponse](t.Context(), client, http.MethodGet, "/api/v1/sources/status", nil, http.StatusOK)
+	require.NoError(t, err)
+	require.True(t, result.IsError)
+	data, err := json.Marshal(result.Output)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"error":"operation_response_limit_exceeded","operation_may_have_completed":false}`, string(data))
 }
