@@ -75,6 +75,7 @@ duplicate messages receive every mailbox label where they appear.`,
 				CheckpointInterval: flags.checkpointInterval,
 				AttachmentsDir:     attachmentsDir,
 				RemoteImages:       configuredRemoteImageFetcher(cfg),
+				RelayedSenders:     cfg.RelayedSenders,
 				Logger:             logger,
 			})
 			if importErr != nil {

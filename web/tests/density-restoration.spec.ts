@@ -119,7 +119,7 @@ test.describe('phone width', () => {
           total_count: 1, cache_revision: 'phone', search_provenance: {}
         } }));
         await page.route('**/api/v1/files/search', route => route.fulfill({ json: {
-          files: [{ ...file(7), filename: 'Synthetic document with a very long filename.pdf', size_bytes: 2048, content_state: 'missing_blob' }],
+          files: [{ ...file(7), filename: 'Synthetic document with a very long filename.pdf', size_bytes: 2048, content_state: 'unverified', content_available: null }],
           total_count: 1, cache_revision: 'phone', search_provenance: {}
         } }));
         await page.route('**/api/v1/explore/groups', route => route.fulfill({ json: {
@@ -304,6 +304,6 @@ function file(index: number) {
     source_type: 'synthetic', source_identifier: 'archive@example.com',
     containing_title: `Containing item ${index}`, filename: `file-${index}.pdf`,
     mime_type: 'application/pdf', mime_family: 'pdf', size_bytes: index,
-    content_state: 'missing_blob', content_available: false
+    content_state: 'unverified', content_available: null
   };
 }
