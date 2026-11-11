@@ -81,6 +81,39 @@ func TestMCPOperationalSettingsRealRouteAndApproval(t *testing.T) {
 	encoded, err = json.Marshal(stale.Output)
 	require.NoError(err)
 	assert.Contains(string(encoded), "settings_conflict")
+	// The SDK validates the original request before rounding can reach approval.
+	for _, value := range []int64{9007199254740992, 9007199254740993, -9007199254740992} {
+		result, err = approved.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "update_operational_settings", Arguments: map[string]any{
+			"etag": updated.ETag, "updates": []any{map[string]any{"key": "analytics.builder_threads", "value": map[string]any{"integer": value}}},
+		}})
+		require.NoError(err)
+		assert.True(result.IsError)
+	}
+	for _, value := range []map[string]any{{"boolean": false, "string": ""}, {"integer": "3"}, {}} {
+		result, err = approved.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "update_operational_settings", Arguments: map[string]any{
+			"etag": updated.ETag, "updates": []any{map[string]any{"key": "analytics.builder_threads", "value": value}},
+		}})
+		require.NoError(err)
+		assert.True(result.IsError)
+	}
+	loaded, err = config.Load(path, dir)
+	require.NoError(err)
+	assert.Equal(3, loaded.Analytics.BuilderThreads)
+	result, err = approved.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "update_operational_settings", Arguments: map[string]any{
+		"etag": "stale", "updates": []any{map[string]any{"key": "analytics.builder_threads", "value": map[string]any{"integer": int64(9007199254740991)}}},
+	}})
+	require.NoError(err)
+	require.True(result.IsError)
+	encoded, err = json.Marshal(result.StructuredContent)
+	require.NoError(err)
+	assert.Contains(string(encoded), "settings_conflict")
+	require.NoError(os.WriteFile(path, []byte("[analytics]\nbuilder_threads = 9007199254740993\n"), 0600))
+	result, err = approved.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_operational_settings", Arguments: map[string]any{}})
+	require.NoError(err)
+	require.True(result.IsError)
+	encoded, err = json.Marshal(result.StructuredContent)
+	require.NoError(err)
+	assert.Contains(string(encoded), "settings_integer_out_of_range")
 }
 
 func TestOperationalSettingsCapabilitiesRequireExactRoutes(t *testing.T) {
@@ -132,7 +165,6 @@ func TestOperationalSettingsRejectInvalidValues(t *testing.T) {
 	}{
 		{[]any{map[string]any{"key": "vector.search.sqlite_accelerator", "value": map[string]any{"string": "invalid"}}}, "validation_failed", true},
 		{[]any{map[string]any{"key": "analytics.auto_build_cache", "value": map[string]any{"boolean": false}, "secret": map[string]any{"action": "clear"}}}, "invalid_arguments", false},
-		{[]any{map[string]any{"key": "analytics.auto_build_cache", "value": map[string]any{"boolean": false, "string": ""}}}, "invalid_arguments", false},
 		{[]any{map[string]any{"key": "vector.embeddings.endpoint", "value": map[string]any{"string": "https://other.example.com"}}}, "invalid_arguments", false},
 	} {
 		result, err := backend.ExecuteOperation(t.Context(), "update_operational_settings", map[string]any{"etag": policy.ETag, "updates": tc.updates})

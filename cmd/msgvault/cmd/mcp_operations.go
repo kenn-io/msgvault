@@ -151,11 +151,13 @@ func mcpSyncArguments(args map[string]any) (string, string, error) {
 	return account, sourceType, nil
 }
 
+type operationFailureOutput struct {
+	Error                     string `json:"error"`
+	OperationMayHaveCompleted bool   `json:"operation_may_have_completed"`
+}
+
 func operationFailure(code string, uncertain bool) *mcpserver.OperationResult {
-	return &mcpserver.OperationResult{IsError: true, Output: struct {
-		Error                     string `json:"error"`
-		OperationMayHaveCompleted bool   `json:"operation_may_have_completed"`
-	}{code, uncertain}}
+	return &mcpserver.OperationResult{IsError: true, Output: operationFailureOutput{code, uncertain}}
 }
 
 // The fixed route/request chosen by an adapter uses existing authentication and
@@ -194,7 +196,7 @@ func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daem
 		switch code {
 		case "unauthorized", "not_found", "scheduler_unavailable", "source_not_schedulable", "store_unavailable", "missing_account", "sync_error", "operation_in_progress", "settings_conflict", "settings_edit_rejected", "if_match_required", "person_revision_conflict", "person_profile_not_found", "person_enrichment_dispatch_in_progress", "persons_unavailable", "cache_build_not_found", "cache_build_unavailable", "bad_request", "invalid_participant_id", "participant_not_found", "analytical_cache_unavailable", "query_resource_exhausted", "engine_unavailable":
 			return operationFailure(code, false), nil
-		case "validation_failed", "settings_write_failed", "credential_conflict":
+		case "validation_failed", "settings_read_failed", "settings_write_failed", "credential_conflict", "credential_origin_mismatch", "credential_store_unavailable":
 			// Settings persistence or credential cleanup can fail after the config changes.
 			return operationFailure(code, writes), nil
 		default:

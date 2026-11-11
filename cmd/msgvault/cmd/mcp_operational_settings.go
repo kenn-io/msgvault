@@ -43,22 +43,8 @@ func operationalUpdates(args map[string]any) (operationalSettingArguments, []gen
 	}
 	updates := make([]generated.SettingUpdate, 0, len(input.Updates))
 	for _, update := range input.Updates {
-		if !slices.Contains(operationalSettingKeys, update.Key) || len(update.Value) != 1 {
+		if !slices.Contains(operationalSettingKeys, update.Key) {
 			return input, nil, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
-		}
-		for kind, value := range update.Value {
-			valid := false
-			switch kind {
-			case "boolean":
-				_, valid = value.(bool)
-			case "string":
-				_, valid = value.(string)
-			case "integer", "number":
-				_, valid = value.(float64)
-			}
-			if !valid {
-				return input, nil, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
-			}
 		}
 		value, err := mcpSettingValue(update.Value)
 		if err != nil {
@@ -96,7 +82,19 @@ func (b *daemonMCPOperations) executeOperationalSettings(ctx context.Context, na
 	}
 	projected := mcpserver.OperationalSettings{ETag: result.ETag, PendingRestart: settings.PendingRestart, Settings: []generated.Setting{}}
 	for _, setting := range settings.Settings {
-		if slices.Contains(operationalSettingKeys, setting.Key) && (setting.ReadOnly == nil || !*setting.ReadOnly) && setting.Secret == nil && setting.CredentialID == nil {
+		if slices.Contains(operationalSettingKeys, setting.Key) {
+			if setting.Value != nil {
+				var value struct {
+					Integer *int64 `json:"integer"`
+				}
+				data, marshalErr := json.Marshal(setting.Value)
+				if marshalErr != nil || json.Unmarshal(data, &value) != nil {
+					return operationFailure("invalid_operation_response", name == "update_operational_settings"), true, nil
+				}
+				if value.Integer != nil && (*value.Integer < -9007199254740991 || *value.Integer > 9007199254740991) {
+					return operationFailure("settings_integer_out_of_range", name == "update_operational_settings"), true, nil
+				}
+			}
 			projected.Settings = append(projected.Settings, setting)
 		}
 	}
@@ -117,6 +115,11 @@ func (b *daemonMCPOperations) operationalSettingsDisclosure(ctx context.Context,
 		return "", true, err
 	}
 	if current == nil || current.IsError {
+		if current != nil {
+			if failure, ok := current.Output.(operationFailureOutput); ok && (failure.Error == "settings_read_failed" || failure.Error == "settings_integer_out_of_range") {
+				return "", true, &mcpserver.OperationRefusalError{Code: failure.Error}
+			}
+		}
 		return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
 	}
 	if current.ETag != input.ETag {
