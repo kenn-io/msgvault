@@ -83,5 +83,4 @@ func TestCommitmentMigrationUpgradesVersion40(t *testing.T) {
 		(person_id, through_sequence, processed_at, backfill_message_id)
 		VALUES (?, ?, ?, -1)`), f.personID, sequence, sweepBudgetNow())
 	r.NoError(err)
-
 }
