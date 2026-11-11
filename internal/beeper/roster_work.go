@@ -13,6 +13,8 @@ import (
 type rosterMemberWork struct {
 	Inputs   string `json:"inputs"`
 	Enriched bool   `json:"enriched,omitzero"`
+	// Participant is the participant the member's matching was recorded for.
+	Participant int64 `json:"participant,omitzero"`
 }
 
 // rosterWork is one chat's roster progress in the sync state. Every sync run
@@ -32,6 +34,9 @@ type rosterWork struct {
 	// Routes digests how this roster's bridge prefixes map to services when
 	// its matching last started, so a catalog change matches every member again.
 	Routes string `json:"routes,omitempty"`
+	// Bindings digests which participant each member resolved to, so a settled
+	// roster whose members moved to other participants matches them again.
+	Bindings string `json:"bindings,omitempty"`
 }
 
 func (w *rosterWork) setSignature(signature string) {
@@ -57,12 +62,15 @@ func shortDigest(data []byte) string {
 	return hex.EncodeToString(sum[:16])
 }
 
-// rosterRoutes digests each member's bridge prefix with the service capture
-// resolves for it and that service's scope and normalization rules. Scope also
+// rosterDigests returns two digests for capture's completion check. The
+// routes digest covers each member's bridge prefix with the service capture
+// resolves for it and that service's scope and normalization rules; scope also
 // depends on the member and account IDs, which the roster signature covers.
-// It polls the cooperative stop between members and uses the run's resolver
-// cache, so it reads the catalog once per distinct prefix.
-func (imp *Importer) rosterRoutes(ctx context.Context, opts ImportOptions, roster *rosterObservations) (string, error) {
+// The bindings digest covers the participant each member resolved to after the
+// roster's final binding read. It polls the cooperative stop between members
+// and uses the run's resolver cache, so it reads the catalog once per
+// distinct prefix.
+func (imp *Importer) rosterDigests(ctx context.Context, opts ImportOptions, roster *rosterObservations) (routesDigest, bindingsDigest string, err error) {
 	type route struct {
 		Prefix               string
 		ServiceID            int64
@@ -74,13 +82,15 @@ func (imp *Importer) rosterRoutes(ctx context.Context, opts ImportOptions, roste
 	cc := captureContext{AccountID: opts.AccountID, Network: roster.detail.Network, BridgePrefix: roster.bridgePrefix}
 	seen := make(map[route]bool)
 	routes := make([]jsontext.Value, 0, 1)
+	participants := make(map[string]int64, len(roster.members))
 	for _, member := range roster.members {
 		if err := opts.rosterStop(ctx); err != nil {
-			return "", err
+			return "", "", err
 		}
+		participants[member.key] = member.participantID
 		service, prefix, err := imp.obs.memberRoute(ctx, member.user, cc)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		item := route{Prefix: prefix}
 		if service != nil {
@@ -93,16 +103,21 @@ func (imp *Importer) rosterRoutes(ctx context.Context, opts ImportOptions, roste
 		seen[item] = true
 		data, err := json.Marshal(item, json.Deterministic(true))
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		routes = append(routes, data)
 	}
 	slices.SortFunc(routes, func(a, b jsontext.Value) int { return bytes.Compare(a, b) })
-	data, err := json.Marshal(routes, json.Deterministic(true))
+	routeData, err := json.Marshal(routes, json.Deterministic(true))
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return shortDigest(data), nil
+	// Deterministic encoding sorts the map by member key.
+	bindingData, err := json.Marshal(participants, json.Deterministic(true))
+	if err != nil {
+		return "", "", err
+	}
+	return shortDigest(routeData), shortDigest(bindingData), nil
 }
 
 func (imp *Importer) completeRoster(ctx context.Context, convID int64, complete bool, members []resolvedMember, work *rosterWork) error {

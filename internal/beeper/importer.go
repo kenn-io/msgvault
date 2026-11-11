@@ -1294,8 +1294,9 @@ type rosterObservations struct {
 // A member already in flight may finish its own transactions before yielding.
 func (imp *Importer) captureRosterObservations(ctx context.Context, sourceID int64, opts ImportOptions, roster *rosterObservations, sum *ImportSummary) error {
 	// A service registered or changed after matching must reach unchanged
-	// members too, so a changed routing digest matches every member again.
-	routes, err := imp.rosterRoutes(ctx, opts, roster)
+	// members too, and so must a member that now resolves to another
+	// participant, as when another chat reports a changed phone.
+	routes, bindings, err := imp.rosterDigests(ctx, opts, roster)
 	if cerr := ctx.Err(); cerr != nil {
 		return cerr
 	}
@@ -1303,38 +1304,53 @@ func (imp *Importer) captureRosterObservations(ctx context.Context, sourceID int
 	case errors.Is(err, errBeeperBudgetExpired):
 		return err
 	case err != nil:
-		// The saved completion stands; the next visit checks the routes again.
+		// The saved completion stands; the next visit checks the digests again.
 		slog.Warn("beeper roster service routes unavailable", "chat_id", roster.detail.ID, "error", err)
-	case routes != roster.work.Routes:
-		roster.work.Routes = routes
-		roster.work.Settled = false
-		roster.work.MatchingPending = true
-		// Matched members are filled in below; the next visit's roster
-		// pass fills the inputs of any member still unmatched.
-		roster.work.Members = make(map[string]rosterMemberWork)
+	default:
+		// A settled roster keeps no per-member progress, so a moved member
+		// matches the whole roster again. A pending roster checks each member's
+		// participant below and keeps unaffected progress.
+		if routes != roster.work.Routes || (roster.work.Settled && bindings != roster.work.Bindings) {
+			roster.work.Settled = false
+			roster.work.MatchingPending = true
+			// Matched members are filled in below; the next visit's roster
+			// pass fills the inputs of any member still unmatched.
+			roster.work.Members = make(map[string]rosterMemberWork)
+		}
+		roster.work.Routes, roster.work.Bindings = routes, bindings
 	}
 	if roster.work.Settled {
 		return nil
+	}
+	matched := func(member resolvedMember) bool {
+		progress := roster.work.Members[member.key]
+		return progress.Enriched && progress.Participant == member.participantID
 	}
 	for _, member := range roster.members {
 		if err := opts.rosterStop(ctx); err != nil {
 			return err
 		}
+		if matched(member) {
+			continue
+		}
 		progress := roster.work.Members[member.key]
 		if progress.Enriched {
-			continue
+			// Matching was recorded for the member's previous participant.
+			progress.Enriched = false
+			roster.work.Members[member.key] = progress
+			roster.work.MatchingPending = true
 		}
 		if imp.captureObservations(ctx, member.participantID, member.user, roster.detail,
 			sourceID, opts.AccountID, roster.bridgePrefix, sum) {
 			if progress.Inputs == "" {
 				progress.Inputs = rosterMemberSignature(member.user, roster.detail, opts.AccountID, roster.bridgePrefix)
 			}
-			progress.Enriched = true
+			progress.Enriched, progress.Participant = true, member.participantID
 			roster.work.Members[member.key] = progress
 		}
 	}
 	for _, member := range roster.members {
-		if !roster.work.Members[member.key].Enriched {
+		if !matched(member) {
 			return ctx.Err()
 		}
 	}

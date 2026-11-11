@@ -706,3 +706,55 @@ func TestServiceRegistrationRematchesSettledRoster(t *testing.T) {
 	assert.True(state.RosterWork.Settled)
 	assert.NotEmpty(state.RosterWork.Routes, "the settled roster keeps its routing digest")
 }
+
+// When another chat rebinds a member to a new phone participant, a settled
+// roster that still lists the member must record its details for the new one.
+func TestReboundMemberRematchesSettledRoster(t *testing.T) {
+	t.Parallel()
+	assert, require := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	base := time.Now().Add(-48 * time.Hour)
+	// The phone chat is listed first, so each import rebinds ann before the
+	// username chat is visited.
+	phoneChat := budgetTestChat("!rebind-phone:example.test", 1, base)
+	phoneChat.Participants[1]["phoneNumber"] = "+12025550123"
+	usernameChat := budgetTestChat("!rebind-username:example.test", 1, base)
+	usernameChat.Participants[1]["username"] = "annhandle"
+	f.addChat(phoneChat)
+	f.addChat(usernameChat)
+	imp, st := newHandlerTestImporter(t, f)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+	require.NoError(err)
+	state := latestBeeperState(t, imp).Chats[usernameChat.ID]
+	require.NotNil(state)
+	require.NotNil(state.RosterWork)
+	require.True(state.RosterWork.Settled)
+	previous := participantForBeeperUser(t, st, "@signal_ann:beeper.local")
+	require.Equal("annhandle", observationValues(t, st, previous)[store.ContactAddressUsername])
+
+	f.mu.Lock()
+	phoneChat.Participants[1]["phoneNumber"] = "+12025550199"
+	f.mu.Unlock()
+	for _, chat := range []*fakeChat{phoneChat, usernameChat} {
+		f.appendMsg(chat.ID, fakeMsg{
+			ID: chat.ID + "-new", SortKey: 1, Timestamp: time.Now(), Text: "new", SenderID: "@signal_ann:beeper.local",
+		})
+	}
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+	require.NoError(err)
+
+	current := participantForBeeperUser(t, st, "@signal_ann:beeper.local")
+	require.NotEqual(previous, current, "the changed phone rebinds ann")
+	assert.Equal("annhandle", observationValues(t, st, current)[store.ContactAddressUsername],
+		"the username chat must record ann's username for the new participant")
+	var phone string
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT COALESCE(phone_number, '') FROM participants WHERE id = ?`), previous).Scan(&phone))
+	assert.Equal("+12025550123", phone, "the previous phone participant stays unmerged")
+	state = latestBeeperState(t, imp).Chats[usernameChat.ID]
+	require.NotNil(state)
+	require.NotNil(state.RosterWork)
+	assert.True(state.RosterWork.Settled)
+	assert.NotEmpty(state.RosterWork.Bindings)
+}
