@@ -44,12 +44,15 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 	if err != nil {
 		return nil, err
 	}
-	_, zone, err := validateRelationshipTimezone(request.Timezone)
-	if err != nil {
-		return nil, err
+	timeGroup := request.Dimension == timeGranularityDay || request.Dimension == "year" || request.Dimension == timeGranularityMonth
+	var zone string
+	if timeGroup || request.GroupKey != "" {
+		if _, zone, err = validateRelationshipTimezone(request.Timezone); err != nil {
+			return nil, err
+		}
 	}
 	var groupArgs []any
-	if request.Dimension == timeGranularityDay || request.Dimension == "year" || request.Dimension == timeGranularityMonth {
+	if timeGroup {
 		groupArgs = append(groupArgs, zone)
 	}
 	order, err := exploreGroupOrder(request.Sort)
