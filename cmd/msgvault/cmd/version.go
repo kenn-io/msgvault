@@ -21,9 +21,11 @@ var (
 )
 
 var versionCmd = &cobra.Command{
-	Use:   "version",
-	Short: "Print version information",
-	Args:  cobra.NoArgs,
+	Use:     "version",
+	Short:   "Print version information",
+	Long:    "Print the binary version and build information as text. Use this when checking which executable is installed or reporting a problem; daemon status reports the running daemon version separately.",
+	Example: "  msgvault version",
+	Args:    cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Printf("msgvault %s\n", Version)
 		fmt.Printf("  commit:  %s\n", Commit)

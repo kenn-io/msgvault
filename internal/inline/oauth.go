@@ -306,7 +306,7 @@ func (m *OAuthManager) exchange(ctx context.Context, endpoint string, form url.V
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("inline token endpoint returned HTTP %d; reauthorize with add-inline if the grant was revoked", resp.StatusCode)
+		return nil, nil, fmt.Errorf("inline token endpoint returned HTTP %d; reauthorize with source inline add if the grant was revoked", resp.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
 	if err != nil {
@@ -403,7 +403,7 @@ func (m *OAuthManager) TokenSource(ctx context.Context, identifier string) (oaut
 		return nil, errors.New("inline account identifier is required")
 	}
 	if err := m.withLock(ctx, identifier, func() error { _, err := m.load(identifier); return err }); err != nil {
-		return nil, fmt.Errorf("load Inline credentials; run add-inline to authorize: %w", err)
+		return nil, fmt.Errorf("load Inline credentials; run source inline add to authorize: %w", err)
 	}
 	return &inlineTokenSource{manager: m, identifier: identifier}, nil
 }

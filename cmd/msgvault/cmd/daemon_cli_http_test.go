@@ -3,10 +3,12 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -17,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/logging"
 )
 
 func markDaemonCLISubprocessForTest(t *testing.T) {
@@ -24,10 +27,23 @@ func markDaemonCLISubprocessForTest(t *testing.T) {
 	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
 }
 
-type daemonCLIRunTestRequest struct {
-	Args []string          `json:"args"`
-	Env  map[string]string `json:"env"`
-	Cwd  string            `json:"cwd"`
+type proxiedChildMetadataTestError struct {
+	code     int
+	reported bool
+}
+
+func (e proxiedChildMetadataTestError) Error() string       { return cliSubprocessExitSentinel }
+func (e proxiedChildMetadataTestError) ExitCode() int       { return e.code }
+func (e proxiedChildMetadataTestError) ErrorReported() bool { return e.reported }
+
+func TestProxiedChildFailurePreservesMetadata(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	proxy, ok := proxiedChildFailure(nil, proxiedChildMetadataTestError{code: 5, reported: true})
+	require.True(ok, "child sentinel is proxied")
+	assert.Equal(5, proxy.ExitCode(), "exit code")
+	assert.True(proxy.alreadyReported(), "child diagnostic was streamed")
 }
 
 type daemonCLIAddCalendarPlanTestRequest struct {
@@ -60,25 +76,6 @@ type daemonCLIDeduplicatePlanTestRequest struct {
 	Prefer                     string `json:"prefer"`
 	ContentHash                bool   `json:"content_hash"`
 	DeleteDupsFromSourceServer bool   `json:"delete_dups_from_source_server"`
-}
-
-func newDaemonCLIRunnerTestServer(
-	t *testing.T,
-	checkRequest func(daemonCLIRunTestRequest),
-	events ...string,
-) (*httptest.Server, *atomic.Int32) {
-	t.Helper()
-
-	requests := &atomic.Int32{}
-	mux := http.NewServeMux()
-	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
-		Service: daemonService,
-		Version: Version,
-	}))
-	mux.HandleFunc("/api/v1/cli/run", daemonCLIRunTestHandler(t, requests, checkRequest, events...))
-	server := httptest.NewServer(mux)
-	t.Cleanup(server.Close)
-	return server, requests
 }
 
 func newDaemonCLIAddCalendarTestServer(
@@ -124,6 +121,87 @@ func newDaemonCLIAddCalendarTestServer(
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	return server, runRequests, planRequests
+}
+
+// A daemon-proxied failure with debug logging must leave the child's streamed
+// diagnostic as the final stderr line: the parent neither renders a second
+// diagnostic nor appends its own exit record after it.
+func TestDaemonCLIProxiedJSONFailureKeepsFinalLineWithDebugLogging(t *testing.T) {
+	childDiagnostic := `{"error":{"code":"message_not_found","message":"missing","hint":"run 'msgvault search'","exit_code":4}}`
+	for _, tc := range []struct {
+		name        string
+		stream      bool
+		errorEvent  string
+		parentRends bool
+	}{
+		{
+			name:        "child reported diagnostic",
+			stream:      true,
+			errorEvent:  `{"type":"error","error":"msgvault: cli subprocess exited non-zero","exit_code":4,"error_reported":true}`,
+			parentRends: false,
+		},
+		{
+			name:        "child reported with cleanup failure",
+			stream:      true,
+			errorEvent:  `{"type":"error","error":"msgvault: cli subprocess exited non-zero\ncleanup failed","exit_code":4,"error_reported":true}`,
+			parentRends: false,
+		},
+		{
+			name:        "child silent",
+			stream:      false,
+			errorEvent:  `{"type":"error","error":"msgvault: cli subprocess exited non-zero","exit_code":4}`,
+			parentRends: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			capture := captureStderr(t)
+
+			events := []string{tc.errorEvent}
+			if tc.stream {
+				events = append([]string{`{"type":"stderr","data":"` + strconv.Quote(childDiagnostic)[1:len(strconv.Quote(childDiagnostic))-1] + `\n"}`}, events...)
+			}
+			server, _ := newDaemonCLIRunnerTestServer(t, nil, events...)
+			cfg := &config.Config{HomeDir: t.TempDir()}
+			cfg.Data.DataDir = t.TempDir()
+			cfg.Remote.URL = server.URL
+			cfg.Remote.AllowInsecure = true
+			root := newRootCommand()
+			root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+				inv := prepareInvocation(cmd)
+				inv.cfg = cfg
+				inv.logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+				inv.logResult = &logging.Result{Handler: inv.logger.Handler()}
+				return nil
+			}
+			group := &cobra.Command{Use: "probe"}
+			leaf := &cobra.Command{Use: "get <id>", Args: cobra.ExactArgs(1), RunE: runDaemonCLICommandHTTPFromCobra}
+			leaf.Flags().Bool("json", false, "")
+			group.AddCommand(leaf)
+			root.AddCommand(group)
+			args := []string{"probe", "get", "fixture", "--json", "--verbose"}
+			root.SetArgs(args)
+			err := executeRootContext(context.Background(), root, args)
+			require.Error(err)
+			assert.Equal(4, ExitCode(err), "child exit code reaches the caller")
+
+			stderr := capture()
+			if tc.parentRends {
+				assert.Contains(stderr, "msgvault exit", "parent logs its exit record")
+				assert.Less(strings.Index(stderr, "msgvault exit"), strings.LastIndex(stderr, `"error"`), "exit log precedes the final diagnostic")
+				lines := strings.Split(strings.TrimSpace(stderr), "\n")
+				finalLine := lines[len(lines)-1]
+				assert.Contains(finalLine, `"error"`, "parent renders the terminal JSON diagnostic last")
+				return
+			}
+			if tc.stream {
+				assert.Contains(stderr, childDiagnostic, "child diagnostic streamed")
+				assert.True(strings.HasSuffix(stderr, childDiagnostic+"\n"), "child diagnostic is the final stderr line")
+			}
+			assert.NotContains(stderr, "msgvault exit", "no parent record after the child's final line")
+		})
+	}
 }
 
 func newDaemonCLIEmbeddingsTestServer(
@@ -268,52 +346,6 @@ func newDaemonCLIDeduplicateTestServer(
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	return server, runRequests, planRequests
-}
-
-func daemonCLIRunTestHandler(
-	t *testing.T,
-	requests *atomic.Int32,
-	checkRequest func(daemonCLIRunTestRequest),
-	events ...string,
-) http.HandlerFunc {
-	t.Helper()
-
-	return func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method, "method")
-		requests.Add(1)
-
-		var req daemonCLIRunTestRequest
-		if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&req), "decode request") {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		if checkRequest != nil {
-			checkRequest(req)
-		}
-
-		w.Header().Set("Content-Type", "application/x-ndjson")
-		if len(events) == 0 {
-			_, _ = w.Write([]byte(`{"type":"complete"}` + "\n"))
-			return
-		}
-		for _, event := range events {
-			_, _ = w.Write([]byte(event + "\n"))
-		}
-	}
-}
-
-func configureRemoteDaemonForTest(t *testing.T, url string, configs ...*config.Config) context.Context {
-	t.Helper()
-	cfg := &config.Config{}
-	if len(configs) > 0 && configs[0] != nil {
-		cfg = configs[0]
-	}
-	if cfg.HomeDir == "" {
-		cfg.HomeDir = t.TempDir()
-	}
-	cfg.Remote.URL = url
-	cfg.Remote.AllowInsecure = true
-	return testInvocationContext(t.Context(), cfg, invocationOptions{})
 }
 
 func TestDaemonCLIArgsFromCobraForwardsCommandFlagsAndPositionals(t *testing.T) {
@@ -471,4 +503,18 @@ func TestDaemonCLIArgsFromCobraForwardsLoggingButSkipsOtherRootPersistentFlags(t
 	})
 
 	require.NoError(root.Execute(), "execute")
+}
+
+func TestCLIGrammarDaemonSerialization(t *testing.T) {
+	require := require.New(t)
+	root := &cobra.Command{Use: "msgvault"}
+	group := &cobra.Command{Use: "draft"}
+	cmd := newDraftReplyCommand()
+	cmd.Use = "reply <message-id>"
+	root.AddCommand(group)
+	group.AddCommand(cmd)
+	require.NoError(cmd.ParseFlags([]string{"--body", "source slack sync", "--json=false"}))
+	got, err := daemonCLIArgsFromCobra(cmd, []string{"42"})
+	require.NoError(err)
+	assert.Equal(t, []string{"draft-reply", "--body=source slack sync", "--json=false", "42"}, got)
 }

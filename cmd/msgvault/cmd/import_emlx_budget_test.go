@@ -22,6 +22,9 @@ import (
 // Both option literals must reach the real merge: losing either CLI value
 // prevents the operator from completing this previously archived message.
 func TestImportEmlxCommandBudgetRetry(t *testing.T) {
+	if helpTestSubprocess(t) {
+		return
+	}
 	for _, mode := range []string{"manual", "auto"} {
 		t.Run(mode, func(t *testing.T) {
 			r, a := require.New(t), assert.New(t)
@@ -71,6 +74,9 @@ func TestImportEmlxCommandBudgetRetry(t *testing.T) {
 }
 
 func TestImportEmlxCommandBudgetInvalidBeforeImport(t *testing.T) {
+	if helpTestSubprocess(t) {
+		return
+	}
 	for _, value := range []string{"0", "-1", "9223372036854775807"} {
 		t.Run(value, func(t *testing.T) {
 			r, a := require.New(t), assert.New(t)
@@ -91,12 +97,17 @@ func TestImportEmlxCommandBudgetInvalidBeforeImport(t *testing.T) {
 }
 
 func TestImportEmlxCommandBudgetForwarding(t *testing.T) {
+	if helpTestSubprocess(t) {
+		return
+	}
 	for _, value := range []string{"4096", "9223372036854775806"} {
 		t.Run(value, func(t *testing.T) {
 			r, a := require.New(t), assert.New(t)
 			_ = emlxBudgetCommand(t, t.TempDir())
-			r.NoError(importEmlxCmd.ParseFlags([]string{"--max-message-bytes", value}), "operator flag must be accepted")
-			args, err := daemonCLIArgsFromCobra(importEmlxCmd, []string{"Mail"})
+			command, _, err := rootCmd.Find([]string{"import", "emlx"})
+			r.NoError(err)
+			r.NoError(command.ParseFlags([]string{"--max-message-bytes", value}), "operator flag must be accepted")
+			args, err := daemonCLIArgsFromCobra(command, []string{"Mail"})
 			r.NoError(err)
 			a.Equal([]string{"import-emlx", "--max-message-bytes=" + value, "Mail"}, args)
 		})
@@ -104,6 +115,9 @@ func TestImportEmlxCommandBudgetForwarding(t *testing.T) {
 }
 
 func TestImportEmlxCommandBudgetInvalidBeforeForwarding(t *testing.T) {
+	if helpTestSubprocess(t) {
+		return
+	}
 	for _, value := range []string{"0", "-1", "9223372036854775807"} {
 		t.Run(value, func(t *testing.T) {
 			r, a := require.New(t), assert.New(t)
@@ -113,9 +127,12 @@ func TestImportEmlxCommandBudgetInvalidBeforeForwarding(t *testing.T) {
 			server, requests := newDaemonCLIRunnerTestServer(t, nil, `{"type":"complete"}`)
 			cfg := testConfigValue()
 			cfg.HomeDir = home
-			importEmlxCmd.SetContext(configureRemoteDaemonForTest(t, server.URL, cfg))
-			r.NoError(importEmlxCmd.ParseFlags([]string{"--max-message-bytes", value}), "operator flag must be accepted")
-			err := importEmlxCmd.RunE(importEmlxCmd, []string{"Mail"})
+			cfg.Data.DataDir = home
+			command, _, err := rootCmd.Find([]string{"import", "emlx"})
+			r.NoError(err)
+			command.SetContext(configureRemoteDaemonForTest(t, server.URL, cfg))
+			r.NoError(command.ParseFlags([]string{"--max-message-bytes", value}), "operator flag must be accepted")
+			err = command.RunE(command, []string{"Mail"})
 			r.ErrorContains(err, "--max-message-bytes")
 			if value == "9223372036854775807" {
 				r.ErrorContains(err, "9223372036854775806")
@@ -135,17 +152,20 @@ func emlxBudgetCommand(t *testing.T, home string) func(...string) (string, error
 	t.Helper()
 	r := require.New(t)
 	markDaemonCLISubprocessForTest(t)
+	ensureHelpLayout(rootCmd)
+	command, _, err := rootCmd.Find([]string{"import", "emlx"})
+	r.NoError(err)
 	oldOut, oldErr := rootCmd.OutOrStdout(), rootCmd.ErrOrStderr()
-	oldRootCtx, oldCmdCtx := rootCmd.Context(), importEmlxCmd.Context()
+	oldRootCtx, oldCmdCtx := rootCmd.Context(), command.Context()
 	t.Cleanup(func() {
 		rootCmd.SetOut(oldOut)
 		rootCmd.SetErr(oldErr)
 		rootCmd.SetArgs(nil)
 		rootCmd.SetContext(oldRootCtx)
-		importEmlxCmd.SetContext(oldCmdCtx)
+		command.SetContext(oldCmdCtx)
 	})
 	for _, name := range []string{"identifier", "source-type", "no-default-identity", "accounts-db", "full-reconcile", "no-resume", "max-message-bytes"} {
-		if flag := importEmlxCmd.Flags().Lookup(name); flag != nil {
+		if flag := command.Flags().Lookup(name); flag != nil {
 			previous, changed := flag.Value.String(), flag.Changed
 			t.Cleanup(func() { r.NoError(flag.Value.Set(previous)); flag.Changed = changed })
 			r.NoError(flag.Value.Set(flag.DefValue))
@@ -154,14 +174,14 @@ func emlxBudgetCommand(t *testing.T, home string) func(...string) (string, error
 	}
 	return func(args ...string) (string, error) {
 		for _, name := range []string{"identifier", "accounts-db", "full-reconcile", "no-resume", "max-message-bytes"} {
-			flag := importEmlxCmd.Flags().Lookup(name)
+			flag := command.Flags().Lookup(name)
 			r.NoError(flag.Value.Set(flag.DefValue))
 			flag.Changed = false
 		}
 		var output bytes.Buffer
 		rootCmd.SetOut(&output)
 		rootCmd.SetErr(&output)
-		rootCmd.SetArgs(append([]string{"--home", home, "--no-log-file", "import-emlx", "--no-default-identity"}, args...))
+		rootCmd.SetArgs(append([]string{"--home", home, "--no-log-file", "import", "emlx", "--no-default-identity"}, args...))
 		err := executeRootContext(t.Context(), rootCmd)
 		return output.String(), err
 	}

@@ -66,7 +66,7 @@ docker run --rm \
     -e "MSGVAULT_HOME=/data" \
     --entrypoint bash \
     "$IMAGE_NAME" \
-    -c 'MSGVAULT_DAEMON_BUILD_CACHE_PARENT_PID=$$ msgvault --local build-cache --full-rebuild; status=$?; exit "$status"'
+    -c 'MSGVAULT_DAEMON_BUILD_CACHE_PARENT_PID=$$ msgvault --local cache build --full-rebuild; status=$?; exit "$status"'
 echo ""
 
 # --- Step 4: Generate screenshots ---

@@ -105,14 +105,17 @@ default 131072). Meeting IDs come from the search in 'msgvault meetings'.`,
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			if err := validateMeetingIDs("--id", messageIDs, true); err != nil {
-				return usageErr(command, err)
+				if len(messageIDs) == 0 {
+					return withHint(usageErr(command, err), "find meeting IDs with 'msgvault search message_type:meeting_transcript --json', then repeat --id for up to 100 IDs")
+				}
+				return withHint(validationErr(command, err), "pass positive meeting message IDs from 'msgvault search message_type:meeting_transcript --json'; --id accepts at most 100 IDs")
 			}
 			format = strings.ToLower(strings.TrimSpace(format))
 			if format != "json" && format != "markdown" {
-				return usageErr(command, errors.New("--format must be json or markdown"))
+				return withHint(validationErr(command, errors.New("--format must be json or markdown")), "choose --format json or --format markdown")
 			}
 			if maxBytes < 4096 || maxBytes > 1048576 {
-				return usageErr(command, errors.New("--max-bytes must be between 4096 and 1048576"))
+				return withHint(validationErr(command, errors.New("--max-bytes must be between 4096 and 1048576")), "use --max-bytes 4096 through 1048576; default is 131072")
 			}
 			client, cleanup, err := openMeetingCommandClient(command.Context(), deps)
 			if err != nil {
@@ -128,7 +131,7 @@ default 131072). Meeting IDs come from the search in 'msgvault meetings'.`,
 				return meetingCommandError(err)
 			}
 			if result == nil {
-				return errors.New("meeting context response was empty")
+				return readDaemonResponseError(errors.New("meeting context response was empty"))
 			}
 			return writeMeetingContext(command, output, result.Content)
 		},
@@ -258,7 +261,7 @@ func parseMeetingCLIDate(value string) (*time.Time, error) {
 	}
 	parsed, err := time.Parse("2006-01-02", value)
 	if err != nil {
-		return nil, errors.New("expected YYYY-MM-DD")
+		return nil, withHint(validationErr(nil, errors.New("expected YYYY-MM-DD")), "pass a calendar date such as 2026-10-31")
 	}
 	return &parsed, nil
 }
@@ -275,18 +278,18 @@ func newMeetingActionsCommand(deps meetingCommandDeps) *cobra.Command {
 		RunE: func(command *cobra.Command, _ []string) error {
 			scope, err := scopeFlags.request(command)
 			if err != nil {
-				return usageErr(command, err)
+				return withHint(validationErr(command, err), "inspect 'msgvault meetings --help'; dates use YYYY-MM-DD, IDs come from meeting search, and --deletion accepts any, active, or deleted")
 			}
 			if limit < 1 || limit > 200 {
-				return usageErr(command, errors.New("--limit must be between 1 and 200"))
+				return withHint(validationErr(command, errors.New("--limit must be between 1 and 200")), "use --limit 1 through 200; default is 50, and next_cursor supplies the next --cursor")
 			}
 			status = strings.ToLower(strings.TrimSpace(status))
 			if status != "" && status != "pending" && status != "completed" && status != "cancelled" && status != "unknown" {
-				return usageErr(command, errors.New("--status must be pending, completed, cancelled, or unknown"))
+				return withHint(validationErr(command, errors.New("--status must be pending, completed, cancelled, or unknown")), "choose --status pending, completed, cancelled, or unknown")
 			}
 			queryText = strings.TrimSpace(queryText)
 			if utf8.RuneCountInString(queryText) > 256 {
-				return usageErr(command, errors.New("--query must be at most 256 characters"))
+				return withHint(validationErr(command, errors.New("--query must be at most 256 characters")), "shorten --query to at most 256 characters, or narrow the date/participant scope")
 			}
 			client, cleanup, err := openMeetingCommandClient(command.Context(), deps)
 			if err != nil {
@@ -312,7 +315,7 @@ func newMeetingActionsCommand(deps meetingCommandDeps) *cobra.Command {
 				return meetingCommandError(err)
 			}
 			if result == nil {
-				return errors.New("meeting actions response was empty")
+				return readDaemonResponseError(errors.New("meeting actions response was empty"))
 			}
 			if jsonOutput {
 				return writeMeetingJSON(command, result)
@@ -380,7 +383,7 @@ func newMeetingMetricsCommand(deps meetingCommandDeps) *cobra.Command {
 		RunE: func(command *cobra.Command, _ []string) error {
 			scope, err := scopeFlags.request(command)
 			if err != nil {
-				return usageErr(command, err)
+				return withHint(validationErr(command, err), "inspect 'msgvault meetings --help'; dates use YYYY-MM-DD, IDs come from meeting search, and --deletion accepts any, active, or deleted")
 			}
 			client, cleanup, err := openMeetingCommandClient(command.Context(), deps)
 			if err != nil {
@@ -392,7 +395,7 @@ func newMeetingMetricsCommand(deps meetingCommandDeps) *cobra.Command {
 				return meetingCommandError(err)
 			}
 			if result == nil {
-				return errors.New("meeting metrics response was empty")
+				return readDaemonResponseError(errors.New("meeting metrics response was empty"))
 			}
 			if jsonOutput {
 				return writeMeetingJSON(command, result)

@@ -57,7 +57,7 @@ func TestRepairMessageCommandValidatesModeAndSourceScope(t *testing.T) {
 			err := command.Execute()
 			require.ErrorContains(t, err, test.want)
 			assert.False(t, opened)
-			assert.False(t, command.SilenceUsage, "invocation errors keep usage visible")
+			assert.True(t, command.SilenceUsage, "the CLI renderer handles invocation guidance")
 		})
 	}
 }

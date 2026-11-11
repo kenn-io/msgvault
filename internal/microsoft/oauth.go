@@ -322,7 +322,7 @@ func (m *Manager) TokenSource(ctx context.Context, email string) (func(context.C
 				"tenant_id", tf.TenantID,
 			)
 			return nil, fmt.Errorf(
-				"token for %s has stale IMAP scope — run 'msgvault add-o365 %s' to re-authorize",
+				"token for %s has stale IMAP scope — run 'msgvault source o365 add %s' to re-authorize",
 				email, email,
 			)
 		}

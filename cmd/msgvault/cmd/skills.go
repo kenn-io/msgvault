@@ -12,16 +12,18 @@ import (
 )
 
 var skillsCmd = &cobra.Command{
-	Use:   "skills",
-	Short: "Manage agent skills for coding assistants",
+	Use:     "skills",
+	Short:   "Manage agent skills for coding assistants",
+	Example: "  msgvault skills install",
 	Long: `Manage msgvault agent skills (SKILL.md files, per the open
 agent-skills standard) that teach coding agents such as Claude Code
 and Codex the msgvault search, attachment, and analytics workflows.`,
 }
 
 var skillsInstallCmd = &cobra.Command{
-	Use:   "install",
-	Short: "Install msgvault agent skills",
+	Use:     "install",
+	Short:   "Install msgvault agent skills",
+	Example: "  msgvault skills install\n  msgvault skills install --force",
 	Long: `Install msgvault agent skills into detected agent skill
 directories (~/.claude/skills and ~/.codex/skills), or into an
 explicit directory with --dir.
@@ -48,8 +50,9 @@ unless --force is given.`,
 }
 
 var skillsUninstallCmd = &cobra.Command{
-	Use:   "uninstall",
-	Short: "Remove installed msgvault agent skills",
+	Use:     "uninstall",
+	Short:   "Remove installed msgvault agent skills",
+	Example: "  msgvault skills uninstall",
 	Long: `Remove msgvault-* skill directories previously written by
 'msgvault skills install'. Skill files without the msgvault generation
 marker are left untouched.`,

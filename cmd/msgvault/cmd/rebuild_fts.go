@@ -7,8 +7,9 @@ import (
 )
 
 var rebuildFTSCmd = &cobra.Command{
-	Use:   "rebuild-fts",
-	Short: "Rebuild the full-text search index from scratch",
+	Use:     "rebuild-fts",
+	Short:   "Rebuild the full-text search index from scratch",
+	Example: "  msgvault fts rebuild",
 	Long: `Drop and recreate the messages_fts virtual table, then repopulate it
 from messages / message_bodies / message_recipients / participants.
 

@@ -17,15 +17,15 @@ func newSchemaVersionCommand() *cobra.Command {
 With --database, read the configured local archive's version without migrating
 or starting a daemon. A missing archive is an error. Remote archives must be
 probed on their host; --local intentionally selects this machine's archive.`,
-		Example: `  msgvault schema-version
-  msgvault --home /path/to/archive-home schema-version --database`,
+		Example: `  msgvault database version
+  msgvault --home /path/to/archive-home database version --database`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) (runErr error) {
 			version := store.SchemaVersion
 			if database {
 				inv := invocationFromCommand(cmd)
 				if IsRemoteMode(inv) {
-					return errors.New("schema-version --database is local-only; run it on the archive host or pass --local")
+					return errors.New("database version --database is local-only; run it on the archive host or pass --local")
 				}
 				currentCfg, _ := invocationConfigLogger(inv)
 				if currentCfg == nil {

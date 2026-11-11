@@ -31,7 +31,7 @@ Create a dedicated application and bot in the
 
 Do not grant Administrator, Send Messages, Manage Messages, or moderation
 permissions. Archived private-thread coverage depends on what the bot can see.
-`add-discord` reports missing channel history, private-thread access, and likely
+`source discord add` reports missing channel history, private-thread access, and likely
 Message Content Intent problems without printing the token.
 
 ## Register guilds
@@ -39,7 +39,7 @@ Message Content Intent problems without printing the token.
 Run setup and paste the token at the masked prompt:
 
 ```bash
-msgvault add-discord
+msgvault source discord add
 ```
 
 The token is never accepted as a command-line flag. It is stored in an
@@ -51,7 +51,7 @@ selects it automatically and echoes its name and ID. If there are several,
 select one or more by repeating `--guild`:
 
 ```bash
-msgvault add-discord \
+msgvault source discord add \
   --guild 123456789012345678 \
   --guild 234567890123456789
 ```
@@ -70,9 +70,9 @@ Use `--oauth-app` as a Discord credential binding label when more than one bot
 is needed:
 
 ```bash
-msgvault add-discord --oauth-app archive-bot-a \
+msgvault source discord add --oauth-app archive-bot-a \
   --guild 123456789012345678
-msgvault add-discord --oauth-app archive-bot-b \
+msgvault source discord add --oauth-app archive-bot-b \
   --guild 345678901234567890
 ```
 
@@ -122,14 +122,14 @@ credential binding labels never belong in this config block.
 Sync one registered guild by ID or by an unambiguous display name:
 
 ```bash
-msgvault sync-discord 123456789012345678
+msgvault source discord sync 123456789012345678
 ```
 
 With no argument, every registered Discord source runs sequentially in stable
 source order:
 
 ```bash
-msgvault sync-discord
+msgvault source discord sync
 ```
 
 A failure in one guild does not stop later guilds, but the command exits
@@ -139,18 +139,18 @@ checkpoints.
 Use `--after` for an exclusive lower bound in `YYYY-MM-DD` or RFC3339 form:
 
 ```bash
-msgvault sync-discord 123456789012345678 --after 2025-01-01
+msgvault source discord sync 123456789012345678 --after 2025-01-01
 ```
 
 A bounded sync defers the full-source automatic metadata repair pass, so rows
-older than the bound remain untouched. Run `msgvault repair-derived --source-type discord` when historical metadata needs repair.
+older than the bound remain untouched. Run `msgvault repair derived --source-type discord` when historical metadata needs repair.
 
 Use `--full` to ignore normal completion cursors, re-fetch all available
 history, repair existing rows, and detect historical upstream deletions:
 
 ```bash
-msgvault sync-discord 123456789012345678 --full
-msgvault sync-discord 123456789012345678 --full \
+msgvault source discord sync 123456789012345678 --full
+msgvault source discord sync 123456789012345678 --full \
   --after 2025-01-01T00:00:00Z
 ```
 
@@ -172,7 +172,7 @@ enabled = true
 Run `msgvault serve` to activate schedules. Discord display names are neither
 stable nor unique, so scheduled entries must use the guild ID. Each guild is
 resolved and synced independently through the same importer as
-`sync-discord`; schedule multiple guilds with separate `[[accounts]]` blocks.
+`source discord sync`; schedule multiple guilds with separate `[[accounts]]` blocks.
 
 ## What gets archived
 
@@ -236,7 +236,7 @@ On a fresh import or after a successful repair, NULL
 metadata for that row. A row imported before this change can also have NULL metadata because
 the old mapper omitted the field. Missing or undecodable raw data can leave a
 historical row unresolved. NULL alone therefore doesn't prove that a
-historical message is non-voice. Run `msgvault repair-derived --source-type
+historical message is non-voice. Run `msgvault repair derived --source-type
 discord`, or inspect the archived `discord_json`, before interpreting that
 value. Repair reads the archive and changes derived message and attachment
 metadata only. It doesn't download or rewrite media.
@@ -254,7 +254,7 @@ New messages are collected incrementally. On each normal sync, every channel
 and thread independently re-fetches its trailing `edit_rescan_window` (seven
 days by default). Edits, reaction-count changes, and upstream deletions inside
 that window are refreshed. Changes older than the window require
-`sync-discord --full`.
+`source discord sync --full`.
 
 Deletion detection only runs after a complete, successful scan of the exact
 container and time range. A partial page, cancellation, API failure, or lost
@@ -273,7 +273,7 @@ Use the provider-neutral message export to read one registered guild from the
 archive without contacting Discord:
 
 ```bash
-msgvault export-messages \
+msgvault export messages \
   --start 2026-07-20T00:00:00Z \
   --end 2026-07-27T00:00:00Z \
   --message-type discord \
@@ -291,12 +291,12 @@ messages retain their content and carry `"deleted_from_source": true`; locally
 hidden duplicate rows are omitted. URLs remain in message text rather than
 being exported as a separate provider-specific field.
 
-The older `export-discord` command and `msgvault-discord-export/1` envelope
+The older `export discord` command and `msgvault-discord-export/1` envelope
 remain temporarily available as a compatibility surface. New integrations
-should use `export-messages`; the compatibility command will be removed after
+should use `export messages`; the compatibility command will be removed after
 its migration window closes.
 
-Like `sync-discord`, both export commands route through the running local or
+Like `source discord sync`, both export commands route through the running local or
 remote msgvault daemon. Export reads only the archive: it does not load Discord
 credentials or call the Discord API.
 
@@ -307,13 +307,13 @@ Retry attachment downloads after a transient failure or after raising
 
 ```bash
 # Scan all archived Discord messages that have attachments.
-msgvault backfill-discord-media 123456789012345678
+msgvault source discord backfill-media 123456789012345678
 
 # Select only messages with incomplete attachment rows.
-msgvault backfill-discord-media 123456789012345678 --only-incomplete
+msgvault source discord backfill-media 123456789012345678 --only-incomplete
 
 # Process every registered guild.
-msgvault backfill-discord-media --only-incomplete
+msgvault source discord backfill-media --only-incomplete
 ```
 
 The default scan counts already-complete messages but does no download work or
@@ -354,7 +354,7 @@ message endpoints use the same `message_type = discord` filter; see the
 Remove one guild source and its archived rows with its stable guild ID:
 
 ```bash
-msgvault remove-account 123456789012345678 --type discord
+msgvault account remove 123456789012345678 --type discord
 ```
 
 Removal does not modify Discord. A bot token shared by another registered

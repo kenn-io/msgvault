@@ -25,42 +25,42 @@ realtime endpoints.
 Authorize the account, check the connection, then sync:
 
 ```bash
-msgvault add-inline
-msgvault sync-inline --probe
-msgvault sync-inline
+msgvault source inline add
+msgvault source inline sync --probe
+msgvault source inline sync
 ```
 
 OAuth opens a browser and returns through a loopback callback. The connection
 requests `messages:read` and `offline_access`; it does not request message-write
 scopes. Access and refresh tokens are private files on the daemon host, separate
 from `config.toml`. Sync refreshes the authorization without opening a browser.
-Re-run `add-inline` if authorization is revoked or can no longer be refreshed.
+Re-run `source inline add` if authorization is revoked or can no longer be refreshed.
 
 With a configured remote daemon, OAuth consent runs in the browser on the
-machine invoking `add-inline`. The command hands the resulting credentials to
+machine invoking `source inline add`. The command hands the resulting credentials to
 that daemon, which verifies the account and stores them. You do not need a
 browser on the remote host. The CLI transport instead requires a separate
 Inline CLI installation and login on the daemon host.
 
-`add-inline` verifies the authenticated user and capture scope before
+`source inline add` verifies the authenticated user and capture scope before
 registering the source. The account identifier is derived from that user, for
 example `api.inline.chat:user:42`. It is not a label supplied by the caller.
 
 ### Limit capture to specific chats
 
 ```bash
-msgvault add-inline --chat-id 123 --chat-id 456
+msgvault source inline add --chat-id 123 --chat-id 456
 ```
 
 With a chat-ID filter, only the exact configured chats are captured. Selecting
 a parent does not implicitly select its children. Re-running with IDs merges them into
 an existing explicit filter; supplying IDs to an account in all-chat mode
-establishes a filter. Re-run `add-inline` without chat IDs to restore all-chat
+establishes a filter. Re-run `source inline add` without chat IDs to restore all-chat
 capture. Removing an ID while keeping `[[inline.accounts]].chat_ids` nonempty
 pauses its capture and keeps the messages already archived. An empty or omitted
 filter restores all accessible chats.
 
-To change transports, re-run `add-inline` with the same account and the desired
+To change transports, re-run `source inline add` with the same account and the desired
 transport. Each invocation defaults to the MCP transport. Repeat
 `--transport cli` when adding chats to an account you want to keep on the CLI
 transport. Setup normally confirms the signed-in account as this source's
@@ -96,9 +96,9 @@ explicitly:
 
 ```bash
 inline auth login
-msgvault add-inline --transport cli --cli-path inline
-msgvault sync-inline --probe
-msgvault sync-inline
+msgvault source inline add --transport cli --cli-path inline
+msgvault source inline sync --probe
+msgvault source inline sync
 ```
 
 `--cli-path` selects the executable the daemon runs; use an absolute path if it
@@ -125,20 +125,20 @@ Later runs capture new messages without repeating the completed history.
 
 ```bash
 # Sync every registered Inline account.
-msgvault sync-inline
+msgvault source inline sync
 
 # Sync one verified account.
-msgvault sync-inline 'api.inline.chat:user:42'
+msgvault source inline sync 'api.inline.chat:user:42'
 
 # Refresh existing messages, including older edits still served by Inline.
-msgvault sync-inline --full
+msgvault source inline sync --full
 
 # Archive messages now and defer their media.
-msgvault sync-inline --no-media
+msgvault source inline sync --no-media
 
 # Force or skip the normal analytics cache refresh.
-msgvault sync-inline --build-cache
-msgvault backfill-inline-media --no-build-cache
+msgvault source inline sync --build-cache
+msgvault source inline backfill-media --no-build-cache
 ```
 
 Incremental sync does not continuously revisit older messages for edits or
@@ -195,8 +195,8 @@ skips group media rather than assuming the group is small. Set
 captured chats without a participant-count cap.
 
 ```bash
-msgvault backfill-inline-media
-msgvault backfill-inline-media 'api.inline.chat:user:42'
+msgvault source inline backfill-media
+msgvault source inline backfill-media 'api.inline.chat:user:42'
 ```
 
 Backfill retries eligible pending media and refreshes signed download URLs

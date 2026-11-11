@@ -10,8 +10,9 @@ import (
 )
 
 var packAttachmentsCmd = &cobra.Command{
-	Use:   "pack-attachments",
-	Short: "Pack loose attachment files into sealed pack files",
+	Use:     "pack-attachments",
+	Short:   "Pack loose attachment files into sealed pack files",
+	Example: "  msgvault attachment pack",
 	Long: `Pack loose content-addressed attachment files into sealed pack files
 under the attachments directory.
 
@@ -23,7 +24,7 @@ When the background daemon is running, the operation runs under the
 daemon and is serialized against syncs and backups.
 
 To go back to loose files (e.g., before downgrading msgvault), run
-'msgvault unpack-attachments'.`,
+'msgvault attachment unpack'.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if isDaemonCLISubprocess() {

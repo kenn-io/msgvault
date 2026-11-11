@@ -39,11 +39,11 @@ other workspace, `Enter` opens Messages with your query and search mode.
 ## Start and discover the URL
 
 ```bash
-msgvault build-cache
+msgvault cache build
 msgvault serve
 ```
 
-`build-cache` prepares the analytical tables before you open the browser. You
+`cache build` prepares the analytical tables before you open the browser. You
 can also run `serve` directly and let the default startup maintenance build a
 missing or stale cache in the background.
 
@@ -185,7 +185,7 @@ The same request adds an **Attachments** block when attachment mirroring is enab
 ## Read messages
 
 Open a `/messages/<id>` link to open Messages with that message in the reader.
-CLI `search --json` and `show-message --json` responses include a `web_url`
+CLI `search --json` and `show --json` responses include a `web_url`
 when the selected daemon has an HTTP address. The link uses that daemon's
 address; the person opening it still needs access to the archive. Links to chat
 messages open a bounded part of the conversation around the selected message,
@@ -222,7 +222,7 @@ for selection limits, source coverage, unknown duration, and action filters.
 
 ## Cache states
 
-The web tables share one analytical cache across message types. In auto mode, Messages serves live archive rows during a full rebuild, with a notice naming operations that still need the cache. If no usable cache is produced, those rows stay available with recovery steps. Other cache-dependent views show the cache state and recovery steps. A live pagination cursor expires when the archive changes or the replacement cache publishes; reload the view to continue. Setting `analytics.auto_build_cache = false` skips automatic startup rebuilds and their live Messages path. Run `msgvault build-cache --full-rebuild` to rebuild explicitly, then restart a daemon that was already running. Leave `analytics.auto_build_cache =
+The web tables share one analytical cache across message types. In auto mode, Messages serves live archive rows during a full rebuild, with a notice naming operations that still need the cache. If no usable cache is produced, those rows stay available with recovery steps. Other cache-dependent views show the cache state and recovery steps. A live pagination cursor expires when the archive changes or the replacement cache publishes; reload the view to continue. Setting `analytics.auto_build_cache = false` skips automatic startup rebuilds and their live Messages path. Run `msgvault cache build --full-rebuild` to rebuild explicitly, then restart a daemon that was already running. Leave `analytics.auto_build_cache =
 true` for daemon startup to build a stale cache. With `analytics.engine =
 "duckdb"`, startup fails if no usable cache can be produced.
 
@@ -406,7 +406,7 @@ Old Operations links with a run, status, or history filter open Past runs over S
 
 Messages supports individual row selection and select-all-matching for the current query and filters. **Review deletion…** in the selection bar, or `d` and `D`, opens a review dialog over Messages. The daemon preflights the selection before enabling staging.
 
-The dialog shows the selected count and estimated size, eligible and skipped counts, exclusions, and review expiration. Semantic search reviews warn that they cover active messages only. **Dry run** reports matched, staged, and skipped counts without creating a batch. **Stage N messages** creates the batch and leaves a success summary with its ID. **Done** returns to Messages. Staging supports Gmail and Microsoft Graph mail; use `msgvault delete-staged` to execute deletion.
+The dialog shows the selected count and estimated size, eligible and skipped counts, exclusions, and review expiration. Semantic search reviews warn that they cover active messages only. **Dry run** reports matched, staged, and skipped counts without creating a batch. **Stage N messages** creates the batch and leaves a success summary with its ID. **Done** returns to Messages. Staging supports Gmail and Microsoft Graph mail; use `msgvault deletion execute` to execute deletion.
 
 The Staged deletions workspace lists batches by creation date, message count, and status. Select a row to see its account and inspect its description, summary, execution counts, and failed message IDs. If the account can't be read, the panel shows "Account unavailable". **Cancel batch** appears for staged or running batches and asks for confirmation before cancelling. **Show cancelled** includes cancelled batches in page history. With no batches, the workspace says "Nothing staged". The sidebar entry appears while a listed batch is pending, running, or failed. **Go to Staged deletions** in the command palette always opens the history.
 

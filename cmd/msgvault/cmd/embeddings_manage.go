@@ -359,8 +359,12 @@ func runEmbeddingsRetire(cmd *cobra.Command, args []string) error {
 
 	if !embeddingsRetireYes {
 		prompt := fmt.Sprintf("Retire generation %d (%s)? ", gen, row.Fingerprint)
-		if !confirmEmbed(cmd, prompt) {
-			return errors.New("aborted")
+		confirmed, confirmationErr := confirmEmbed(cmd, prompt)
+		if confirmationErr != nil {
+			return confirmationErr
+		}
+		if !confirmed {
+			return withHint(errors.New("aborted"), "review the generation plan before confirming; --yes confirms noninteractive embedding operations")
 		}
 	}
 
@@ -480,8 +484,12 @@ func runEmbeddingsActivate(cmd *cobra.Command, args []string) error {
 			prompt += fmt.Sprintf(" and retire active generation %d (%s)", active.ID, active.Fingerprint)
 		}
 		prompt += "? "
-		if !confirmEmbed(cmd, prompt) {
-			return errors.New("aborted")
+		confirmed, confirmationErr := confirmEmbed(cmd, prompt)
+		if confirmationErr != nil {
+			return confirmationErr
+		}
+		if !confirmed {
+			return withHint(errors.New("aborted"), "review the generation plan before confirming; --yes confirms noninteractive embedding operations")
 		}
 	}
 
@@ -544,8 +552,12 @@ func confirmEmbeddingsPlanHTTP(
 	if plan == nil || !plan.NeedsConfirmation {
 		return nil
 	}
-	if !confirmEmbed(cmd, plan.Prompt) {
-		return errors.New("aborted")
+	confirmed, confirmationErr := confirmEmbed(cmd, plan.Prompt)
+	if confirmationErr != nil {
+		return confirmationErr
+	}
+	if !confirmed {
+		return withHint(errors.New("aborted"), "review the generation plan before confirming; --yes confirms noninteractive embedding operations")
 	}
 	return nil
 }
@@ -918,7 +930,7 @@ func sqliteDSNWithBusyTimeout(path string) string {
 func parseGenerationID(s string) (vector.GenerationID, error) {
 	id, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
 	if err != nil || id <= 0 {
-		return 0, fmt.Errorf("invalid generation id %q", s)
+		return 0, &cliError{Kind: "validation", Code: "invalid_generation_id", Message: fmt.Sprintf("invalid generation id %q", s), ExitCode: 3, Hint: "find generation IDs with 'msgvault embeddings list'"}
 	}
 	return vector.GenerationID(id), nil
 }

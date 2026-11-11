@@ -186,6 +186,6 @@ func reportCacheTextRepairs(w io.Writer, repairs *cacheTextRepairs) {
 	if n := repairs.identities.Load(); n > 0 {
 		_, _ = fmt.Fprintf(w, "Warning: %d identity value(s) exported as unknown because of invalid UTF-8.\n", n)
 	}
-	_, _ = fmt.Fprintln(w, "Run 'msgvault repair-encoding' to repair supported archive fields and rebuild the cache. RFC 822 Message-IDs, source message IDs, source identifiers, recorded envelope addresses, account identity addresses, and participant identifiers require separate recovery if damaged.")
-	_, _ = fmt.Fprintln(w, "For damaged List-IDs, run 'msgvault repair-list-ids --apply' to re-derive them from stored raw MIME; recovery requires an intact original List-Id header.")
+	_, _ = fmt.Fprintln(w, "Run 'msgvault repair encoding' to repair supported archive fields and rebuild the cache. RFC 822 Message-IDs, source message IDs, source identifiers, recorded envelope addresses, account identity addresses, and participant identifiers require separate recovery if damaged.")
+	_, _ = fmt.Fprintln(w, "For damaged List-IDs, run 'msgvault repair list-ids --apply' to re-derive them from stored raw MIME; recovery requires an intact original List-Id header.")
 }

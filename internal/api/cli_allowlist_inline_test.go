@@ -17,9 +17,9 @@ func TestCLIRunCommandAllowedInlineCommands(t *testing.T) {
 		{"sync-inline", "api.inline.chat:user:42", "--full"},
 		{"backfill-inline-media"},
 	} {
-		assert.True(t, cliRunCommandAllowed(args), "%v must reach the daemon", args)
+		assert.True(t, CLIRunCommandAllowed(args), "%v must reach the daemon", args)
 	}
-	assert.False(t, cliRunCommandAllowed([]string{"inline"}))
+	assert.False(t, CLIRunCommandAllowed([]string{"inline"}))
 }
 
 func TestInlineSourceSchedulerClassification(t *testing.T) {

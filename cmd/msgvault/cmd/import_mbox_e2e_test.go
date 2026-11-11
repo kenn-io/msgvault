@@ -29,6 +29,7 @@ func TestImportMboxCmd_EndToEnd_MboxFile(t *testing.T) {
 	logger := testLoggerValue()
 	verbose := false
 
+	ensureCommandGrammar(rootCmd)
 	markDaemonCLISubprocessForTest(t)
 
 	require := require.New(t)
@@ -103,14 +104,14 @@ func TestImportMboxCmd_EndToEnd_MboxFile(t *testing.T) {
 	rootCmd.SetErr(io.Discard)
 	rootCmd.SetArgs([]string{
 		"--home", tmp,
-		"import-mbox",
+		"import", "mbox",
 		"me@hey.com", mboxPath,
 		"--source-type", "hey",
 		"--label", "hey",
 		"--no-resume",
 		"--checkpoint-interval", "1",
 	})
-	require.NoError(rootCmd.ExecuteContext(t.Context()), "import-mbox")
+	require.NoError(rootCmd.ExecuteContext(t.Context()), "import mbox")
 
 	st, err := store.Open(filepath.Join(tmp, "msgvault.db"))
 	require.NoError(err, "open store")
@@ -142,6 +143,7 @@ func TestImportMboxCmd_AttachmentFailureIsBestEffort(t *testing.T) {
 	logger := testLoggerValue()
 	verbose := false
 
+	ensureCommandGrammar(rootCmd)
 	markDaemonCLISubprocessForTest(t)
 
 	tmp := t.TempDir()
@@ -202,7 +204,7 @@ func TestImportMboxCmd_AttachmentFailureIsBestEffort(t *testing.T) {
 	rootCmd.SetErr(io.Discard)
 	rootCmd.SetArgs([]string{
 		"--home", tmp,
-		"import-mbox",
+		"import", "mbox",
 		"me@hey.com", mboxPath,
 		"--source-type", "hey",
 		"--no-resume",
@@ -221,6 +223,7 @@ func TestImportMboxCmd_ReturnsCanceledWhenContextCanceled(t *testing.T) {
 	logger := testLoggerValue()
 	verbose := false
 
+	ensureCommandGrammar(rootCmd)
 	markDaemonCLISubprocessForTest(t)
 
 	tmp := t.TempDir()
@@ -281,7 +284,7 @@ func TestImportMboxCmd_ReturnsCanceledWhenContextCanceled(t *testing.T) {
 	rootCmd.SetErr(io.Discard)
 	rootCmd.SetArgs([]string{
 		"--home", tmp,
-		"import-mbox",
+		"import", "mbox",
 		"me@hey.com", mboxPath,
 		"--source-type", "hey",
 		"--no-resume",
@@ -308,6 +311,7 @@ func TestImportMboxCmd_EndToEnd_ZipResumeAcrossFiles(t *testing.T) {
 	logger := testLoggerValue()
 	verbose := false
 
+	ensureCommandGrammar(rootCmd)
 	markDaemonCLISubprocessForTest(t)
 
 	require := require.New(t)
@@ -429,7 +433,7 @@ func TestImportMboxCmd_EndToEnd_ZipResumeAcrossFiles(t *testing.T) {
 
 	src, err := st.GetOrCreateSource("hey", "me@hey.com")
 	require.NoError(err, "get/create source")
-	syncID, err := st.StartSync(src.ID, "import-mbox")
+	syncID, err := st.StartSync(src.ID, "import mbox")
 	require.NoError(err, "start sync")
 	cpFile := extracted[0]
 	linkPath := filepath.Join(tmp, "checkpoint-link.mbox")
@@ -451,13 +455,13 @@ func TestImportMboxCmd_EndToEnd_ZipResumeAcrossFiles(t *testing.T) {
 	rootCmd.SetErr(io.Discard)
 	rootCmd.SetArgs([]string{
 		"--home", tmp,
-		"import-mbox",
+		"import", "mbox",
 		"me@hey.com", zipPath,
 		"--source-type", "hey",
 		"--checkpoint-interval", "1",
 		"--no-attachments",
 	})
-	require.NoError(rootCmd.ExecuteContext(t.Context()), "import-mbox resume")
+	require.NoError(rootCmd.ExecuteContext(t.Context()), "import mbox resume")
 
 	st2, err := store.Open(filepath.Join(tmp, "msgvault.db"))
 	require.NoError(err, "open store")
@@ -547,7 +551,7 @@ func TestImportMboxCmd_InterruptedConfirmsIdentityRunsMigrationAndPrintsSummary(
 	handler := &cancelOnLogMessageHandler{Handler: slog.DiscardHandler, message: "ignored implausible email Date header", cancel: cancel}
 	invocationFromContext(testCtx).logger = slog.New(handler)
 	var stdout bytes.Buffer
-	cmd := &cobra.Command{Use: "import-mbox"}
+	cmd := &cobra.Command{Use: "import mbox"}
 	cmd.SetContext(ctx)
 	cmd.SetOut(&stdout)
 	cmd.SetErr(io.Discard)
@@ -555,7 +559,7 @@ func TestImportMboxCmd_InterruptedConfirmsIdentityRunsMigrationAndPrintsSummary(
 	err := importMboxCmd.RunE(cmd, []string{"archive@example.com", mboxPath})
 	require.ErrorIs(ctx.Err(), context.Canceled, "the import must be interrupted")
 	assert.Contains(stdout.String(), "Import interrupted. Run again to resume.", "stdout")
-	require.ErrorIs(err, context.Canceled, "import-mbox")
+	require.ErrorIs(err, context.Canceled, "import mbox")
 
 	st, err := store.Open(testCfg.DatabaseDSN())
 	require.NoError(err, "open store after import")

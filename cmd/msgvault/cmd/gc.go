@@ -19,8 +19,9 @@ type gcOptions struct {
 func newGCCmd() *cobra.Command {
 	options := gcOptions{}
 	cmd := &cobra.Command{
-		Use:   "gc",
-		Short: "Purge source-deleted messages and compact the SQLite archive",
+		Use:     "gc",
+		Short:   "Purge source-deleted messages and compact the SQLite archive",
+		Example: "  msgvault stats\n  msgvault gc --yes",
 		Long: `Permanently delete local archive rows already marked deleted from their
 source, then compact the SQLite database and remove loose attachment blobs
 that no remaining message references. Active messages and rows hidden only
@@ -28,7 +29,8 @@ by deduplication are retained.
 
 GC creates a point-in-time SQLite backup before deletion by default and asks
 for confirmation. Use --yes for non-interactive confirmation or --no-backup to
-explicitly opt out of the backup. This command never deletes remote messages.`,
+explicitly opt out of the backup. This command never deletes remote messages.
+There is no dry-run mode; use msgvault stats for a read-only archive summary first.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !isDaemonCLISubprocess() {
@@ -129,7 +131,7 @@ func runGCLocal(cmd *cobra.Command, options gcOptions) error {
 	if plan.SourceDeleted > 0 {
 		if _, err := fmt.Fprintln(out,
 			"Derived caches may contain deleted rows; rebuild each enabled cache:",
-			"\n  msgvault build-cache --full-rebuild",
+			"\n  msgvault cache build --full-rebuild",
 			"\n  msgvault embeddings build --full-rebuild",
 		); err != nil {
 			return fmt.Errorf("write GC cache guidance: %w", err)

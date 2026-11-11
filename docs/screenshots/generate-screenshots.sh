@@ -293,10 +293,10 @@ wait_until "Database:"
 sleep 0.5
 capture "stats"
 
-# 9. list-senders
+# 9. sender list
 send "clear" Enter
 sleep 0.5
-send "msgvault list-senders --limit 15" Enter
+send "msgvault sender list --limit 15" Enter
 wait_until "SENDER"
 sleep 0.5
 capture "list-senders"

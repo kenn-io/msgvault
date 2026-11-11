@@ -52,6 +52,7 @@ func saveMessengerState(t *testing.T) func() {
 }
 
 func TestImportMessenger_JSON_EndToEnd(t *testing.T) {
+	ensureCommandGrammar(rootCmd)
 	markDaemonCLISubprocessForTest(t)
 
 	require := require.New(t)
@@ -67,11 +68,11 @@ func TestImportMessenger_JSON_EndToEnd(t *testing.T) {
 	rootCmd.SetErr(io.Discard)
 	rootCmd.SetArgs([]string{
 		"--home", tmp,
-		"import-messenger",
+		"import", "messenger",
 		"--me", "test.user@facebook.messenger",
 		fixture,
 	})
-	require.NoError(rootCmd.ExecuteContext(t.Context()), "import-messenger")
+	require.NoError(rootCmd.ExecuteContext(t.Context()), "import messenger")
 	assert.Contains(stdout.String(), "Import complete", "stdout missing Import complete")
 
 	st, err := store.Open(filepath.Join(tmp, "msgvault.db"))
@@ -86,6 +87,7 @@ func TestImportMessenger_JSON_EndToEnd(t *testing.T) {
 }
 
 func TestImportMessenger_HTML_EndToEnd(t *testing.T) {
+	ensureCommandGrammar(rootCmd)
 	markDaemonCLISubprocessForTest(t)
 
 	require := require.New(t)
@@ -101,11 +103,11 @@ func TestImportMessenger_HTML_EndToEnd(t *testing.T) {
 	rootCmd.SetErr(io.Discard)
 	rootCmd.SetArgs([]string{
 		"--home", tmp,
-		"import-messenger",
+		"import", "messenger",
 		"--me", "test.user@facebook.messenger",
 		fixture,
 	})
-	require.NoError(rootCmd.ExecuteContext(t.Context()), "import-messenger")
+	require.NoError(rootCmd.ExecuteContext(t.Context()), "import messenger")
 	assert.Contains(stdout.String(), "Import complete", "stdout missing Import complete")
 	st, err := store.Open(filepath.Join(tmp, "msgvault.db"))
 	require.NoError(err)
@@ -140,13 +142,13 @@ func TestImportMessengerRunsPostSourceMigrationWithoutMessengerIdentity(t *testi
 	importMessengerCheckpointEvery = 200
 
 	var stdout bytes.Buffer
-	cmd := &cobra.Command{Use: "import-messenger"}
+	cmd := &cobra.Command{Use: "import messenger"}
 	cmd.SetContext(testCtx)
 	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetErr(io.Discard)
 
-	require.NoError(runImportMessenger(cmd, fixture), "import-messenger")
+	require.NoError(runImportMessenger(cmd, fixture), "import messenger")
 	assert.Contains(stdout.String(), "Import complete", "stdout missing Import complete")
 
 	st, err = store.Open(testCfg.DatabaseDSN())
@@ -168,6 +170,7 @@ func TestImportMessengerRunsPostSourceMigrationWithoutMessengerIdentity(t *testi
 }
 
 func TestImportMessenger_MissingDir(t *testing.T) {
+	ensureCommandGrammar(rootCmd)
 	markDaemonCLISubprocessForTest(t)
 
 	tmp := t.TempDir()
@@ -177,7 +180,7 @@ func TestImportMessenger_MissingDir(t *testing.T) {
 	rootCmd.SetErr(io.Discard)
 	rootCmd.SetArgs([]string{
 		"--home", tmp,
-		"import-messenger",
+		"import", "messenger",
 		"--me", "test.user@facebook.messenger",
 		filepath.Join(tmp, "does", "not", "exist"),
 	})

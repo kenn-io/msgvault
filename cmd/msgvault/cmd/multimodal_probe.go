@@ -27,8 +27,9 @@ var (
 // It never goes through the daemon: the manifest is a local file the operator
 // reviews and then configures as vector.multimodal.capabilities_file.
 var multimodalProbeCmd = &cobra.Command{
-	Use:   "probe",
-	Short: "Probe Voyage capabilities and write the manifest",
+	Use:     "probe",
+	Short:   "Probe Voyage capabilities and write the manifest",
+	Example: "  msgvault multimodal probe --seeds /path/to/synthetic-seeds --out capabilities.json --yes",
 	Long: `Runs the authenticated docbank capability probe against Voyage using
 private synthetic fixtures, and writes the sanitized capability manifest.
 

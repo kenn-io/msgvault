@@ -93,8 +93,9 @@ func newPurgeExcludedMediaCmd() *cobra.Command {
 
 func newPurgeExcludedMediaLocalCmd(deps purgeExcludedMediaDeps) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   purgeExcludedMediaCommandName,
-		Short: "Reclaim locally stored media excluded by current policy",
+		Use:     purgeExcludedMediaCommandName,
+		Short:   "Reclaim locally stored media excluded by current policy",
+		Example: "  msgvault attachment purge-excluded --dry-run\n  msgvault attachment purge-excluded --yes",
 		Long: `Replace locally stored provider attachment occurrences that the current
 media policy excludes with typed skip markers. Shared blobs remain live while
 any retained occurrence references them. Packed dead bytes are reclaimed by

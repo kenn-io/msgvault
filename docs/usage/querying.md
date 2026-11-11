@@ -65,7 +65,7 @@ These map directly to the Parquet files in `~/.msgvault/analytics/`.
 | `sources` | id, source_type |
 
 `messages.rfc822_message_id` is NULL when the stored identifier contains invalid
-UTF-8. The archive retains the original bytes; `repair-encoding` reports these
+UTF-8. The archive retains the original bytes; `repair encoding` reports these
 IDs without rewriting them. See the [encoding repair limits](../cli-reference.md#repair-encoding).
 
 `message_recipients.email_address` is the recipient's address: the address
@@ -79,9 +79,9 @@ bytes are invalid UTF-8. A recorded envelope is authoritative even when
 damaged: the participant's current address is never substituted for it,
 so `email_address` stays NULL instead. Damaged addresses export as
 unknown rather than as a repaired value, so a broken byte sequence
-cannot be mistaken for a different real address. `msgvault repair-encoding`
+cannot be mistaken for a different real address. `msgvault repair encoding`
 does not repair recorded envelope addresses. They need separate recovery
-from verified original values before `msgvault build-cache --full-rebuild`
+from verified original values before `msgvault cache build --full-rebuild`
 can include them. See the [encoding repair limits](../cli-reference.md#repair-encoding).
 
 ### Convenience views

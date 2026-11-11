@@ -74,7 +74,7 @@ use 'person directory --query <name>' or '--address <address>'.`,
 			return err
 		}
 		if response.JSON200 == nil {
-			return errors.New("person search response was empty")
+			return readDaemonResponseError(errors.New("person search response was empty"))
 		}
 
 		output := personSearchCLIResponse{Results: make([]personSearchCLIResult, len(response.JSON200.Results))}

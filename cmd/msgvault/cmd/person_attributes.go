@@ -62,7 +62,7 @@ var personAttributesListCmd = &cobra.Command{
 			return err
 		}
 		if resp.JSON200 == nil {
-			return errors.New("person attributes response was empty")
+			return readDaemonResponseError(errors.New("person attributes response was empty"))
 		}
 		if personAttributesJSONOutput {
 			return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), resp.JSON200, json.Deterministic(true))
@@ -142,7 +142,7 @@ var personAttributesSetCmd = &cobra.Command{
 			}
 			if err := applyCLIScalarAttributeValue(
 				cmd, &body.Value, definition.ValueType, personAttributeValue); err != nil {
-				return err
+				return withHint(err, fmt.Sprintf("attribute %s has value type %s; inspect its definition with 'msgvault attribute-definition list --object-type person --json' and pass --value or --value-json accordingly", slug, definition.ValueType))
 			}
 		}
 		source := strings.TrimSpace(personAttributeSource)
@@ -273,14 +273,14 @@ func cliPersonAttributeDefinition(
 		return nil, err
 	}
 	if resp.JSON200 == nil {
-		return nil, errors.New("person attributes response was empty")
+		return nil, readDaemonResponseError(errors.New("person attributes response was empty"))
 	}
 	for i := range resp.JSON200.Attributes {
 		if resp.JSON200.Attributes[i].Definition.Slug == slug {
 			return &resp.JSON200.Attributes[i].Definition, nil
 		}
 	}
-	return nil, fmt.Errorf("no active attribute definition with slug %q", slug)
+	return nil, withHint(fmt.Errorf("no active attribute definition with slug %q", slug), "find active person slugs with 'msgvault attribute-definition list --object-type person --json'")
 }
 
 func applyCLIScalarAttributeValue(
@@ -294,36 +294,36 @@ func applyCLIScalarAttributeValue(
 	case "integer":
 		parsed, err := strconv.ParseInt(trimmed, 10, 64)
 		if err != nil {
-			return usageErr(cmd, fmt.Errorf("--value %q must be an integer", trimmed))
+			return validationErr(cmd, fmt.Errorf("--value %q must be an integer", trimmed))
 		}
 		value.Integer = &parsed
 	case "real":
 		parsed, err := strconv.ParseFloat(trimmed, 64)
 		if err != nil {
-			return usageErr(cmd, fmt.Errorf("--value %q must be a number", trimmed))
+			return validationErr(cmd, fmt.Errorf("--value %q must be a number", trimmed))
 		}
 		value.Real = &parsed
 	case "boolean":
 		parsed, err := strconv.ParseBool(trimmed)
 		if err != nil {
-			return usageErr(cmd, fmt.Errorf("--value %q must be a boolean", trimmed))
+			return validationErr(cmd, fmt.Errorf("--value %q must be a boolean", trimmed))
 		}
 		value.Boolean = &parsed
 	case "date":
 		if _, err := time.Parse("2006-01-02", trimmed); err != nil {
-			return usageErr(cmd, fmt.Errorf("--value %q must be a YYYY-MM-DD date", trimmed))
+			return validationErr(cmd, fmt.Errorf("--value %q must be a YYYY-MM-DD date", trimmed))
 		}
 		value.Date = &trimmed
 	case "timestamp":
 		parsed, err := time.Parse(time.RFC3339, trimmed)
 		if err != nil {
-			return usageErr(cmd, fmt.Errorf(
+			return validationErr(cmd, fmt.Errorf(
 				"--value %q must be an RFC3339 timestamp", trimmed))
 		}
 		utc := parsed.UTC()
 		value.Timestamp = &utc
 	default:
-		return usageErr(cmd, fmt.Errorf(
+		return validationErr(cmd, fmt.Errorf(
 			"value type %s needs a structured value; use --value-json", valueType))
 	}
 	return nil
@@ -363,7 +363,7 @@ func writeCLIPersonAttributeWrite(
 	cmd *cobra.Command, write *generated.PersonAttributeWrite,
 ) error {
 	if write == nil {
-		return errors.New("person attribute response was empty")
+		return readDaemonResponseError(errors.New("person attribute response was empty"))
 	}
 	if personAttributesJSONOutput {
 		return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), write, json.Deterministic(true))

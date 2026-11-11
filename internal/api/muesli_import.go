@@ -67,7 +67,7 @@ func (s *Server) handleMuesliImport(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, muesli.ErrRemoteValidation):
 			writeError(w, 422, "validation_failed", "Muesli transfer failed validation")
 		case errors.Is(err, store.ErrSourceNotFound):
-			writeError(w, 404, "source_not_found", "Muesli source is not registered; run msgvault add-muesli first")
+			writeError(w, 404, "source_not_found", "Muesli source is not registered; run msgvault source muesli add first")
 		default:
 			if s.logger != nil {
 				s.logger.Error("Muesli import failed", "error_class", "internal")

@@ -32,7 +32,7 @@ func TestTokensAreIsolatedPerWorkspaceUser(t *testing.T) {
 	require.NoError(err, "removing one user's token must not touch the other's")
 	assert.Equal("xoxp-me", mine)
 	_, err = LoadToken(dir, "T01", "UOTHER")
-	require.ErrorContains(err, "run 'add-slack' first")
+	require.ErrorContains(err, "run 'source slack add' first")
 }
 
 func TestLoadTokenRejectsIdentityMismatch(t *testing.T) {

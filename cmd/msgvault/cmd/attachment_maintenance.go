@@ -157,7 +157,7 @@ func (m *attachmentMaintenance) runAutomaticPack(ctx context.Context, emitWarnin
 		}
 
 		m.logAutomaticPackSummary("automatic attachment maintenance progress", stats, duration)
-		const retry = "run `msgvault pack-attachments` to retry"
+		const retry = "run `msgvault attachment pack` to retry"
 		m.log().Warn("automatic attachment maintenance failed",
 			"error", err,
 			"retry", retry)
@@ -217,7 +217,7 @@ func (m *attachmentMaintenance) runAutomaticRepack(ctx context.Context, emitWarn
 			return err
 		}
 		m.logAutomaticRepackSummary("automatic attachment repack progress", stats, duration)
-		const retry = "run `msgvault repack-attachments` to retry"
+		const retry = "run `msgvault attachment repack` to retry"
 		m.log().Warn("automatic attachment repack failed", "error", err, "retry", retry)
 		if emitWarning != nil {
 			warning := fmt.Sprintf("Automatic attachment repack failed: %v; %s.\n", err, retry)

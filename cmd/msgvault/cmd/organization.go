@@ -53,7 +53,7 @@ var organizationListCmd = &cobra.Command{Use: cmdUseList, Short: "List curated o
 		return err
 	}
 	if resp.JSON200 == nil {
-		return errors.New("organization list response was empty")
+		return readDaemonResponseError(errors.New("organization list response was empty"))
 	}
 	if organizationJSON {
 		return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), resp.JSON200, json.Deterministic(true))
@@ -73,7 +73,7 @@ var organizationListCmd = &cobra.Command{Use: cmdUseList, Short: "List curated o
 var organizationCreateCmd = &cobra.Command{Use: "create <name>", Short: "Create a curated organization", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 	name := strings.TrimSpace(args[0])
 	if name == "" {
-		return usageErr(cmd, errors.New("name must not be empty"))
+		return withHint(validationErr(cmd, errors.New("name must not be empty")), "create with 'msgvault organization create \"Example Corp\"'; updates use --name \"Example Corp\"")
 	}
 	client, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
@@ -118,7 +118,7 @@ var organizationShowCmd = &cobra.Command{Use: "show <id>", Short: "Show an organ
 			return getErr
 		}
 		if resp.JSON200 == nil {
-			return errors.New("organization history response was empty")
+			return readDaemonResponseError(errors.New("organization history response was empty"))
 		}
 		return writeCLIOrganizationHistory(cmd, resp.JSON200)
 	}
@@ -127,21 +127,21 @@ var organizationShowCmd = &cobra.Command{Use: "show <id>", Short: "Show an organ
 		return err
 	}
 	if resp.JSON200 == nil {
-		return errors.New("organization response was empty")
+		return readDaemonResponseError(errors.New("organization response was empty"))
 	}
 	return writeCLIOrganizationProfile(cmd, resp.JSON200)
 }}
 
 var organizationSetCmd = &cobra.Command{Use: "set <id>", Short: "Replace an organization's mutable fields", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 	if !cmd.Flags().Changed("name") {
-		return usageErr(cmd, errors.New("--name is required"))
+		return withHint(usageErr(cmd, errors.New("--name is required")), "pass --name 'Example Corp' when updating an organization")
 	}
 	id, err := positivePersonCLIArg(cmd, args[0], "organization")
 	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(organizationName) == "" {
-		return usageErr(cmd, errors.New("name must not be empty"))
+		return withHint(validationErr(cmd, errors.New("name must not be empty")), "create with 'msgvault organization create \"Example Corp\"'; updates use --name \"Example Corp\"")
 	}
 	client, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
@@ -153,7 +153,7 @@ var organizationSetCmd = &cobra.Command{Use: "set <id>", Short: "Replace an orga
 		return err
 	}
 	if current.JSON200 == nil {
-		return errors.New("organization response was empty")
+		return readDaemonResponseError(errors.New("organization response was empty"))
 	}
 	body := generated.PatchOrganizationBody{Name: organizationName}
 	if cmd.Flags().Changed("kind") {
@@ -200,7 +200,7 @@ func runOrganizationRetired(retired bool) func(*cobra.Command, []string) error {
 			return err
 		}
 		if current.JSON200 == nil {
-			return errors.New("organization response was empty")
+			return readDaemonResponseError(errors.New("organization response was empty"))
 		}
 		kind := generated.OrganizationBodyKind(current.JSON200.Organization.Kind)
 		body := generated.PatchOrganizationBody{
@@ -237,7 +237,7 @@ var organizationDeleteCmd = &cobra.Command{Use: "delete <id>", Short: "Permanent
 		return err
 	}
 	if current.JSON200 == nil {
-		return errors.New("organization response was empty")
+		return readDaemonResponseError(errors.New("organization response was empty"))
 	}
 	_, err = daemonclient.APIResponseWithStatuses(client, []int{http.StatusNoContent}, func(api *apiclient.Client) (*generated.DeleteOrganizationResp, error) {
 		return api.DeleteOrganizationWithResponse(cmd.Context(), &generated.DeleteOrganizationRequestOptions{PathParams: &generated.DeleteOrganizationPath{ID: id}, Header: &generated.DeleteOrganizationHeaders{IfMatch: organizationETag(id, current.JSON200.Organization.Revision)}})
@@ -275,7 +275,7 @@ var organizationMergeCmd = &cobra.Command{Use: "merge <survivor-id> <losing-id>"
 		return err
 	}
 	if current.JSON200 == nil || loser.JSON200 == nil {
-		return errors.New("organization response was empty")
+		return readDaemonResponseError(errors.New("organization response was empty"))
 	}
 	body := generated.MergeOrganizationBody{LosingOrganizationID: losing, LosingRevision: loser.JSON200.Organization.Revision}
 	resp, err := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.MergeOrganizationResp, error) {
@@ -312,7 +312,7 @@ var organizationAttributeListCmd = &cobra.Command{Use: "list <id>", Short: "List
 		return err
 	}
 	if resp.JSON200 == nil {
-		return errors.New("organization attributes response was empty")
+		return readDaemonResponseError(errors.New("organization attributes response was empty"))
 	}
 	if organizationJSON {
 		return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), resp.JSON200, json.Deterministic(true))
@@ -330,10 +330,10 @@ var organizationAttributeSetCmd = &cobra.Command{Use: "set <id>", Short: "Set a 
 		return err
 	}
 	if !cmd.Flags().Changed("definition") {
-		return usageErr(cmd, errors.New("--definition is required"))
+		return withHint(usageErr(cmd, errors.New("--definition is required")), "find slugs with 'msgvault attribute-definition list --object-type organization --json', then pass --definition <slug>")
 	}
 	if !cmd.Flags().Changed("text") {
-		return usageErr(cmd, errors.New("--text is required"))
+		return withHint(usageErr(cmd, errors.New("--text is required")), "pass a text value, for example --definition website --text https://example.com")
 	}
 	source := strings.TrimSpace(organizationSource)
 	if source == "" {
@@ -436,7 +436,7 @@ func cliString(v *string) string {
 }
 func writeCLIOrganization(cmd *cobra.Command, org *generated.Organization) error {
 	if org == nil {
-		return errors.New("organization response was empty")
+		return readDaemonResponseError(errors.New("organization response was empty"))
 	}
 	if organizationJSON {
 		return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), org, json.Deterministic(true))
@@ -450,7 +450,7 @@ func writeCLIOrganization(cmd *cobra.Command, org *generated.Organization) error
 }
 func writeCLIOrganizationProfile(cmd *cobra.Command, profile *generated.OrganizationProfile) error {
 	if profile == nil {
-		return errors.New("organization response was empty")
+		return readDaemonResponseError(errors.New("organization response was empty"))
 	}
 	if organizationJSON {
 		return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), profile, json.Deterministic(true))
@@ -500,7 +500,7 @@ func writeCLIOrganizationHistory(cmd *cobra.Command, profile *generated.Organiza
 }
 func writeCLIOrganizationAttribute(cmd *cobra.Command, write *generated.OrganizationAttributeWrite) error {
 	if write == nil {
-		return errors.New("organization attribute response was empty")
+		return readDaemonResponseError(errors.New("organization attribute response was empty"))
 	}
 	prefix := ""
 	if write.DryRun {

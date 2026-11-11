@@ -303,8 +303,8 @@ func TestGmailDraftCreateAndSendAsUseLocalBehavior(t *testing.T) {
 	assert.Equal(1, labelCount)
 
 	var sendAsEvents []api.CLIRunEvent
-	err = fixture.adapter.runCLIDraftSendAs(t.Context(), api.CLIRunRequest{
-		Args: []string{api.CLIRunDraftSendAsCommand, fixture.source.Identifier, "--json"},
+	err = fixture.adapter.RunCLICommand(t.Context(), api.CLIRunRequest{
+		Args: []string{"draft", "send-as", fixture.source.Identifier, "--json"},
 	}, func(event api.CLIRunEvent) error {
 		sendAsEvents = append(sendAsEvents, event)
 		return nil
@@ -422,7 +422,7 @@ func TestGmailDraftRejectsComposeAndCrossSourceReply(t *testing.T) {
 		Args: []string{"draft-compose", "--source-id", strconv.FormatInt(fixture.source.ID, 10), "--to", "recipient@example.test"},
 	}, nil)
 	requirements.ErrorContains(err, "draft_disabled")
-	requirements.EqualError(errors.Unwrap(err), "draft-compose requires an IMAP source")
+	requirements.EqualError(errors.Unwrap(err), "draft compose requires an IMAP source")
 	err = fixture.adapter.runCLIReplyDraft(t.Context(), api.CLIRunRequest{
 		Args: []string{"draft-reply", strconv.FormatInt(fixture.parentID, 10), "--source-id", strconv.FormatInt(other.ID, 10), "--body", "reply"},
 	}, nil)

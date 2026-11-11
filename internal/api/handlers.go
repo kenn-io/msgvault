@@ -178,6 +178,7 @@ type SchedulerStatusResponse struct {
 
 // ErrorResponse represents an API error.
 type ErrorResponse struct {
+	Hint    string `json:"hint,omitempty"`
 	Error   string `json:"error"`
 	Message string `json:"message,omitempty"`
 }
@@ -494,7 +495,12 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 
 // writeError writes an error response.
 func writeError(w http.ResponseWriter, status int, err string, message string) {
-	writeJSON(w, status, ErrorResponse{Error: err, Message: message})
+	writeErrorHint(w, status, err, message, "")
+}
+
+// writeErrorHint adds optional recovery guidance without changing error codes.
+func writeErrorHint(w http.ResponseWriter, status int, code, message, hint string) {
+	writeJSON(w, status, ErrorResponse{Error: code, Message: message, Hint: hint})
 }
 
 // writeIfContextError converts context and cache-unavailable errors into a
@@ -523,7 +529,7 @@ func (s *Server) writeIfContextError(w http.ResponseWriter, err error) bool {
 
 func writeAPIHTTPError(w http.ResponseWriter, err *apiHTTPError) {
 	resp := err.ErrorResponse
-	writeError(w, err.GetStatus(), resp.Error, resp.Message)
+	writeErrorHint(w, err.GetStatus(), resp.Error, resp.Message, resp.Hint)
 }
 
 func nullableTimePtr(value time.Time) *string {
@@ -3993,7 +3999,7 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 		if query.IsEncodingError(err) {
 			s.logger.Error("fast search hit invalid UTF-8 in the analytics cache", "error", err)
 			writeError(w, http.StatusInternalServerError, "cache_encoding_error",
-				"The analytics cache contains invalid UTF-8. Run 'msgvault build-cache --full-rebuild' and retry.")
+				"The analytics cache contains invalid UTF-8. Run 'msgvault cache build --full-rebuild' and retry.")
 			return
 		}
 		s.logger.Error("fast search failed", "query_shape", queryShapeForRequest(r), "error", err)

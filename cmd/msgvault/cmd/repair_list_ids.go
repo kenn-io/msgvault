@@ -11,8 +11,9 @@ import (
 func newRepairListIDsCmd() *cobra.Command {
 	var apply bool
 	cmd := &cobra.Command{
-		Use:   "repair-list-ids [--apply]",
-		Short: "Repair archived email List-Id values from raw MIME",
+		Use:     "repair-list-ids [--apply]",
+		Short:   "Repair archived email List-Id values from raw MIME",
+		Example: "  msgvault repair list-ids\n  msgvault repair list-ids --apply",
 		Long: `Re-derive List-Id values for archived email messages from their stored raw MIME.
 
 The default is a dry run: it reports the values that would change without

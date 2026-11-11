@@ -7,7 +7,7 @@
 """Generate a synthetic msgvault SQLite database for TUI demos.
 
 The Parquet analytics cache is built separately by running
-`msgvault build-cache --full-rebuild` against this database.
+`msgvault cache build --full-rebuild` against this database.
 """
 
 import datetime
@@ -791,7 +791,7 @@ def main() -> None:
 
     conn.close()
     print(f"Done! Database: {DB_PATH}")
-    print("Run 'msgvault build-cache --full-rebuild' to generate the Parquet analytics cache.")
+    print("Run 'msgvault cache build --full-rebuild' to generate the Parquet analytics cache.")
 
 
 if __name__ == "__main__":

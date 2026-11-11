@@ -99,7 +99,7 @@ type GraphManager struct {
 // slog.Default().
 func NewGraphManager(clientID, tenantID, redirectURI, tokensDir string, logger *slog.Logger) *GraphManager {
 	m := newGraphManager(clientID, tenantID, redirectURI, tokensDir, logger)
-	m.scopes, m.tokenPrefix, m.reauthCmd = GraphScopes(), "teams_", "msgvault add-teams %s"
+	m.scopes, m.tokenPrefix, m.reauthCmd = GraphScopes(), "teams_", "msgvault source teams add %s"
 	return m
 }
 
@@ -107,7 +107,7 @@ func NewGraphManager(clientID, tenantID, redirectURI, tokensDir string, logger *
 // tokens are saved under an "msmail_" prefix, apart from the Teams tokens.
 func NewGraphMailManager(clientID, tenantID, redirectURI, tokensDir string, logger *slog.Logger) *GraphManager {
 	m := newGraphManager(clientID, tenantID, redirectURI, tokensDir, logger)
-	m.scopes, m.tokenPrefix, m.reauthCmd = GraphMailScopes(), "msmail_", "msgvault add-o365 %s --graph"
+	m.scopes, m.tokenPrefix, m.reauthCmd = GraphMailScopes(), "msmail_", "msgvault source o365 add %s --graph"
 	return m
 }
 
@@ -124,7 +124,7 @@ func NewGraphContactsManager(clientID, tenantID, redirectURI, tokensDir string, 
 func NewGraphMailWriteManager(clientID, tenantID, redirectURI, tokensDir string, logger *slog.Logger) *GraphManager {
 	m := NewGraphMailManager(clientID, tenantID, redirectURI, tokensDir, logger)
 	m.scopes = GraphMailWriteScopes()
-	m.reauthCmd = "msgvault add-o365 %s --graph --mail-write"
+	m.reauthCmd = "msgvault source o365 add %s --graph --mail-write"
 	return m
 }
 

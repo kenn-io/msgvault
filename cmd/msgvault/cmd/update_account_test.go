@@ -16,6 +16,7 @@ import (
 )
 
 func TestUpdateAccountUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
+	ensureCommandGrammar(rootCmd)
 	cfg := testConfigValue()
 	useLocal := false
 
@@ -74,21 +75,24 @@ func TestUpdateAccountUsesLocalDaemonHTTPAndPreservesOutput(t *testing.T) {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
+	canonical, rest, err := rootCmd.Find([]string{"account", "update"})
+	require.NoError(err)
+	require.Empty(rest)
 	cmd := &cobra.Command{
-		Use:  updateAccountCmd.Use,
-		Args: updateAccountCmd.Args,
-		RunE: updateAccountCmd.RunE,
+		Use:  canonical.Use,
+		Args: canonical.Args,
+		RunE: canonical.RunE,
 	}
 	cmd.SetContext(testCtx)
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 	cmd.SetArgs([]string{"alice@example.com"})
 
-	err := cmd.Execute()
+	err = cmd.Execute()
 	require.NoError(err, "update-account")
 
 	assert.Equal(1, int(requests.Load()), "update account endpoint calls")
-	assert.Empty(stderr.String(), "stderr")
+	assert.Empty(stderr.String())
 	assert.Equal("Updated account alice@example.com: display name set to \"Work\"\n", stdout.String())
 }
 

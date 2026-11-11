@@ -14,10 +14,10 @@ func TestPlaudSchedulerJobName(t *testing.T) {
 
 func TestPlaudDaemonCLIAllowlist(t *testing.T) {
 	assert := assert.New(t)
-	assert.True(cliRunCommandAllowed([]string{"add-plaud", "work"}))
-	assert.True(cliRunCommandAllowed([]string{"sync-plaud", "work", "--limit", "5"}))
-	assert.True(cliRunCommandAllowed([]string{"sync-plaud", "--probe"}))
+	assert.True(CLIRunCommandAllowed([]string{"add-plaud", "work"}))
+	assert.True(CLIRunCommandAllowed([]string{"sync-plaud", "work", "--limit", "5"}))
+	assert.True(CLIRunCommandAllowed([]string{"sync-plaud", "--probe"}))
 	for _, args := range [][]string{{"add-twilio"}, {"add-twilio", "account"}, {"sync-twilio"}, {"sync-twilio", "account", "--full"}} {
-		assert.True(cliRunCommandAllowed(args), "Twilio command must be runnable via daemon: %v", args)
+		assert.True(CLIRunCommandAllowed(args), "Twilio command must be runnable via daemon: %v", args)
 	}
 }

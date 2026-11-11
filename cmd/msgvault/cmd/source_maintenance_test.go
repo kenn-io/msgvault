@@ -98,7 +98,7 @@ func TestSourceMaintenanceCLIRejectsInvalidUpdatesBeforeDaemon(t *testing.T) {
 			cmd.SetErr(&output)
 			cmd.SetArgs(append([]string{source.Identifier}, tc.flags...))
 			require.ErrorContains(cmd.Execute(), tc.want)
-			assert.False(cmd.SilenceUsage, "invalid flags must return a local usage error")
+			assert.True(cmd.SilenceUsage, "the CLI renderer handles local usage guidance")
 			assert.Zero(requests.Load(), "invalid flags must not contact the daemon")
 		})
 	}

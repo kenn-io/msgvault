@@ -8,6 +8,8 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Related CLI commands use grouped names, with hidden compatibility commands for older scripts. Help adds agent guidance, recovery hints, and structured error diagnostics; see [CLI reference](cli-reference.md#command-grammar-and-compatibility).
+
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).
 
 - `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.

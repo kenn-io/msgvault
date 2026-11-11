@@ -124,8 +124,9 @@ way. Compare runs only across the same topics file.
 
 Example:
   msgvault eval --qrels qrels.txt --topics topics.tsv --modes fts,vector,hybrid -n 100`,
-	Args: cobra.NoArgs,
-	RunE: runEval,
+	Example: "  msgvault eval --qrels ./qrels.txt --topics ./topics.tsv --modes fts --json",
+	Args:    cobra.NoArgs,
+	RunE:    runEval,
 }
 
 func init() {
@@ -624,7 +625,7 @@ func (e *evaluator) rankedVector(mode, qstr string, q *search.Query) ([]string, 
 // same malformed filter be dropped silently three times over.
 func (e *evaluator) ranked(mode, qstr string, q *search.Query) ([]string, error) {
 	switch mode {
-	case "fts":
+	case fullTextSearchMode:
 		return e.rankedFTS(q)
 	case "vector", "hybrid":
 		return e.rankedVector(mode, qstr, q)
@@ -963,7 +964,7 @@ func parseEvalModes(spec string) (modes []string, needVec bool, err error) {
 			continue
 		}
 		switch m {
-		case "fts":
+		case fullTextSearchMode:
 		case "vector", "hybrid":
 			needVec = true
 		default:

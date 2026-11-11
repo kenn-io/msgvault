@@ -10,14 +10,16 @@ import (
 )
 
 var deleteDedupedCmd = &cobra.Command{
-	Use:   "delete-deduped",
-	Short: "Permanently delete dedup-hidden messages locally",
+	Use:     "delete-deduped",
+	Short:   "Permanently delete dedup-hidden messages locally",
+	Example: "  msgvault deletion purge-deduped --batch batch-example --yes",
 	Long: `Permanently delete dedup-hidden messages from the local archive. This is
 the third rung of the safety progression: scan -> hide -> local hard
 delete -> remote delete. Each rung is a separate, explicit user action.
 
 Use --batch <id> to delete rows hidden by a specific dedup batch.
 Use --all-hidden to delete every dedup-hidden row regardless of batch.
+--all-hidden always requires typing y at the prompt; --yes cannot bypass it.
 
 Deleted rows cannot be recovered with --undo. Pending remote-deletion
 manifests still reference Gmail/IMAP message IDs and remain valid
@@ -25,7 +27,7 @@ after a local delete.
 
 Parquet analytics and the vector index may contain stale entries for
 deleted rows until maintained separately. Run
-'msgvault build-cache --full-rebuild' for parquet analytics and
+'msgvault cache build --full-rebuild' for parquet analytics and
 'msgvault embeddings prune' for the vector index.`,
 	RunE: runDeleteDeduped,
 }
@@ -55,7 +57,7 @@ func runDeleteDeduped(cmd *cobra.Command, _ []string) error {
 	}
 	plan, err := st.PlanCLIDeleteDeduped(cmd.Context(), req)
 	if err != nil {
-		return fmt.Errorf("plan delete-deduped: %w", err)
+		return fmt.Errorf("plan deletion purge-deduped: %w", err)
 	}
 
 	printDeleteDedupedPlan(cmd, plan)
@@ -65,8 +67,8 @@ func runDeleteDeduped(cmd *cobra.Command, _ []string) error {
 	}
 
 	// --all-hidden always prompts, even when --yes is set; spec rung 03 invariant.
-	// Mode picks how EOF is handled: AllHidden treats closed stdin as a contract
-	// violation (must not be silently bypassed), YesNo treats it as cancel.
+	// Both modes reject closed stdin with confirmation guidance. Explicit
+	// negative answers still cancel without an error.
 	if !deleteDedupedYes || deleteDedupedAllHidden {
 		mode := ConfirmModeYesNo
 		if deleteDedupedAllHidden {
@@ -102,7 +104,7 @@ func runDeleteDeduped(cmd *cobra.Command, _ []string) error {
 	}
 	_, _ = fmt.Fprintf(out, "\nDeleted %d message(s) from %d batch(es).\n\n", executed.Deleted, executed.BatchCount)
 	_, _ = fmt.Fprintln(out, "Caches may have stale entries; maintain each separately:")
-	_, _ = fmt.Fprintln(out, "  'msgvault build-cache --full-rebuild'        (parquet analytics)")
+	_, _ = fmt.Fprintln(out, "  'msgvault cache build --full-rebuild'        (parquet analytics)")
 	_, _ = fmt.Fprintln(out, "  'msgvault embeddings prune'                  (vector index, if enabled)")
 
 	return nil

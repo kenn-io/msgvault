@@ -48,7 +48,7 @@ func LoadCredentials(tokensDir, identifier string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Errorf("no credentials found for %s (run 'add-imap' first)", identifier)
+			return "", fmt.Errorf("no credentials found for %s (run 'source imap add' first)", identifier)
 		}
 		return "", fmt.Errorf("read credentials: %w", err)
 	}

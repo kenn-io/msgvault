@@ -47,7 +47,7 @@ func TestSyncCommandsEmptySourceGuidanceMatchesCapabilities(t *testing.T) {
 		{
 			name: "sync",
 			run:  runSyncIncrementalLocal,
-			want: []string{"add-o365", "file imports are not synced"},
+			want: []string{"source o365 add", "file imports are not synced"},
 		},
 		{
 			name:    "sync with only file imports",
@@ -58,8 +58,8 @@ func TestSyncCommandsEmptySourceGuidanceMatchesCapabilities(t *testing.T) {
 		{
 			name:     "sync-full",
 			run:      runSyncFullLocal,
-			want:     []string{"add-account <gmail>", "add-imap", "msgvault sync", "file imports are not synced"},
-			unwanted: []string{"add-o365"},
+			want:     []string{"source gmail add <gmail>", "source imap add", "msgvault sync", "file imports are not synced"},
+			unwanted: []string{"source o365 add"},
 		},
 		{
 			name:    "sync-full with only file imports and Graph mail",
@@ -190,7 +190,7 @@ func TestSyncCmd_DuplicateIdentifierRoutesCorrectly(t *testing.T) {
 	// (reaching getTokenSourceWithReauth), not from OAuth manager
 	// creation. "add-account" appears only in the token-missing
 	// error produced by getTokenSourceWithReauth.
-	assert.Contains(output, "add-account",
+	assert.Contains(output, "source gmail add",
 		"Gmail error should originate from runIncrementalSync; output:\n%s", output)
 }
 
@@ -348,8 +348,8 @@ func TestSyncExplicitAccountSkipsRetiredProviderWhenActiveMatchExists(t *testing
 	output := getOutput()
 	require.Error(execErr, "the active Gmail source should be attempted without a token")
 	require.NotErrorIs(execErr, store.ErrSourceRetired)
-	assert.Contains(execErr.Error(), "1 account(s) failed")
-	assert.Contains(output, "add-account", "the live Gmail source must be routed to sync")
+	assert.Contains(execErr.Error(), "1 account failed to sync")
+	assert.Contains(output, "source gmail add", "the live Gmail source must be routed to sync")
 	assert.NotContains(output, "retired", "the merged Microsoft source must be skipped")
 }
 

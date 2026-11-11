@@ -24,6 +24,6 @@ func TestCLIRunCommandAllowedRefusesPersonBrief(t *testing.T) {
 		{"person", "track", "7"},
 		{"person", "untrack", "7"},
 	} {
-		assert.False(t, cliRunCommandAllowed(args), args)
+		assert.False(t, CLIRunCommandAllowed(args), args)
 	}
 }

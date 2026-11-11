@@ -61,7 +61,7 @@ var relationshipTypeListCmd = &cobra.Command{
 			return err
 		}
 		if resp.JSON200 == nil {
-			return errors.New("relationship types response was empty")
+			return readDaemonResponseError(errors.New("relationship types response was empty"))
 		}
 		if personJSON {
 			return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), resp.JSON200.RelationshipTypes, json.Deterministic(true))
@@ -139,7 +139,7 @@ var relationshipTypeUpdateCmd = &cobra.Command{
 			return err
 		}
 		if current.JSON200 == nil {
-			return errors.New("relationship type response was empty")
+			return readDaemonResponseError(errors.New("relationship type response was empty"))
 		}
 		etag := fmt.Sprintf(`"relationship-type-%d-r%d"`, id, current.JSON200.Revision)
 		resp, err := daemonclient.APIResponse(client,
@@ -193,7 +193,7 @@ func relationshipTypeUpdateBody(cmd *cobra.Command) (*generated.PatchRelationshi
 	}
 	if body.ForwardLabel == nil && body.ReverseLabel == nil && body.VcardRelatedType == nil &&
 		body.Color == nil && body.Icon == nil && body.Description == nil {
-		return nil, usageErr(cmd, errors.New("at least one update flag is required"))
+		return nil, withHint(usageErr(cmd, errors.New("at least one update flag is required")), "pass --forward-label, --reverse-label, --vcard-related-type, --color, --icon, or --description")
 	}
 	return body, nil
 }
@@ -217,7 +217,7 @@ var relationshipTypeDeleteCmd = &cobra.Command{
 			return err
 		}
 		if current.JSON200 == nil {
-			return errors.New("relationship type response was empty")
+			return readDaemonResponseError(errors.New("relationship type response was empty"))
 		}
 		etag := fmt.Sprintf(`"relationship-type-%d-r%d"`, id, current.JSON200.Revision)
 		if _, err := daemonclient.APIResponseWithStatuses(client, []int{http.StatusNoContent},
@@ -269,7 +269,7 @@ var personRelationshipListCmd = &cobra.Command{
 			return err
 		}
 		if resp.JSON200 == nil {
-			return errors.New("person relationships response was empty")
+			return readDaemonResponseError(errors.New("person relationships response was empty"))
 		}
 		if personJSON {
 			return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), resp.JSON200.Relationships, json.Deterministic(true))
@@ -301,7 +301,7 @@ var personRelationshipAddCmd = &cobra.Command{
 		}
 		typeSlug := strings.TrimSpace(args[1])
 		if typeSlug == "" {
-			return usageErr(cmd, errors.New("relationship type slug is required"))
+			return withHint(usageErr(cmd, errors.New("relationship type slug is required")), "find relationship type slugs with 'msgvault relationship-type list --json'")
 		}
 		targetID, err := positivePersonCLIArg(cmd, args[2], "target person")
 		if err != nil {
@@ -343,7 +343,7 @@ var personRelationshipEndCmd = &cobra.Command{
 		}
 		until := strings.TrimSpace(args[1])
 		if until == "" {
-			return usageErr(cmd, errors.New("an end date is required"))
+			return withHint(usageErr(cmd, errors.New("an end date is required")), "use 'msgvault person relationship end <relationship-id> 2026-09-30'; dates accept YYYY, YYYY-MM, or YYYY-MM-DD")
 		}
 		client, _, err := OpenHTTPStore(cmd.Context())
 		if err != nil {
@@ -355,7 +355,7 @@ var personRelationshipEndCmd = &cobra.Command{
 			return err
 		}
 		if current.JSON200 == nil {
-			return errors.New("relationship response was empty")
+			return readDaemonResponseError(errors.New("relationship response was empty"))
 		}
 		etag := fmt.Sprintf(`"person-relationship-%d-r%d"`, id, current.JSON200.Revision)
 		body := generated.PatchPersonRelationshipBody{EndDate: &until}
@@ -393,7 +393,7 @@ var personRelationshipDeleteCmd = &cobra.Command{
 			return err
 		}
 		if current.JSON200 == nil {
-			return errors.New("relationship response was empty")
+			return readDaemonResponseError(errors.New("relationship response was empty"))
 		}
 		etag := fmt.Sprintf(`"person-relationship-%d-r%d"`, id, current.JSON200.Revision)
 		if _, err := daemonclient.APIResponseWithStatuses(client, []int{http.StatusNoContent},
@@ -441,7 +441,7 @@ var personRelationshipReviewsCmd = &cobra.Command{
 			return err
 		}
 		if resp.JSON200 == nil {
-			return errors.New("person relationship reviews response was empty")
+			return readDaemonResponseError(errors.New("person relationship reviews response was empty"))
 		}
 		if personJSON {
 			return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), resp.JSON200.Reviews, json.Deterministic(true))
@@ -482,7 +482,7 @@ func getCLIPersonRelationship(
 
 func writeCLIRelationshipType(cmd *cobra.Command, relationshipType *generated.RelationshipType) error {
 	if relationshipType == nil {
-		return errors.New("relationship type response was empty")
+		return readDaemonResponseError(errors.New("relationship type response was empty"))
 	}
 	if personJSON {
 		return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), relationshipType, json.Deterministic(true))
@@ -496,7 +496,7 @@ func writeCLIRelationshipType(cmd *cobra.Command, relationshipType *generated.Re
 
 func writeCLIPersonRelationship(cmd *cobra.Command, edge *generated.PersonRelationship) error {
 	if edge == nil {
-		return errors.New("relationship response was empty")
+		return readDaemonResponseError(errors.New("relationship response was empty"))
 	}
 	if personJSON {
 		return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), edge, json.Deterministic(true))

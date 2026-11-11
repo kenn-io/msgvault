@@ -14,9 +14,9 @@ sending messages, editing Teams content, or changing channel membership.
 ## Prerequisites
 
 Teams ingestion uses Microsoft Graph delegated OAuth, not IMAP. It requires the
-same `[microsoft]` `client_id` config block used by `add-o365`, but it stores a
+same `[microsoft]` `client_id` config block used by `source o365 add`, but it stores a
 separate Graph token under `tokens/teams_<email>.json`. An Outlook IMAP token
-created by `add-o365` does not authorize Teams sync.
+created by `source o365 add` does not authorize Teams sync.
 
 Register a Microsoft Entra app as described in
 [OAuth Setup](/docs/guides/oauth-setup/#microsoft-365-outlook-hotmail), with:
@@ -42,7 +42,7 @@ client_id = "your-azure-app-client-id"
 ## Authorize Teams
 
 ```bash
-msgvault add-teams user@example.com
+msgvault source teams add user@example.com
 ```
 
 The command opens a browser, requests the Graph scopes above, verifies the
@@ -58,21 +58,21 @@ returned identity, stores the token as `teams_user@example.com.json`, creates a
 
 ```bash
 # Full first run or incremental later runs are auto-detected.
-msgvault sync-teams user@example.com
+msgvault source teams sync user@example.com
 
 # Chats only
-msgvault sync-teams user@example.com --no-channels
+msgvault source teams sync user@example.com --no-channels
 
 # Test with a per-conversation limit
-msgvault sync-teams user@example.com --limit 100
+msgvault source teams sync user@example.com --limit 100
 
 # Re-fetch all messages and upsert them in place
-msgvault sync-teams user@example.com --full
+msgvault source teams sync user@example.com --full
 ```
 
 The first run walks chats, joined teams, channels, root channel messages, and
 replies. Later runs resume from stored cursors and checkpoints. If a run is
-interrupted, re-run `sync-teams`; completed conversations are skipped and
+interrupted, re-run `source teams sync`; completed conversations are skipped and
 incomplete ones continue.
 
 | Flag | Description |
@@ -108,8 +108,8 @@ If you imported Teams messages before inline hosted-content downloads were
 available, or a transient Graph error left some inline images missing, run:
 
 ```bash
-msgvault backfill-teams-media user@example.com
-msgvault backfill-teams-media user@example.com --only-incomplete
+msgvault source teams backfill-media user@example.com
+msgvault source teams backfill-media user@example.com --only-incomplete
 ```
 
 The backfill scans stored Teams HTML bodies for `hostedContents` URLs and
@@ -136,13 +136,13 @@ max_media_mb = 500
 ```
 
 See [Media policy](/docs/configuration/#media-policy) for the full vocabulary and
-`msgvault purge-excluded-media` for removing media a changed policy would no
+`msgvault attachment purge-excluded` for removing media a changed policy would no
 longer collect.
 
 ## Scheduled Sync
 
 `msgvault serve` can schedule Teams syncs through the normal `[[accounts]]`
-block after `add-teams` creates the source and token:
+block after `source teams add` creates the source and token:
 
 ```toml
 [[accounts]]
@@ -170,7 +170,7 @@ msgvault query --format table "
 "
 ```
 
-Manual `sync-teams` does not run the embedding worker immediately. If vector
+Manual `source teams sync` does not run the embedding worker immediately. If vector
 search is enabled and you want newly synced Teams messages in semantic/hybrid
 results, run `msgvault embeddings build` after the sync, or configure
 `[vector.embed.schedule].run_after_sync = true` for scheduled daemon syncs.

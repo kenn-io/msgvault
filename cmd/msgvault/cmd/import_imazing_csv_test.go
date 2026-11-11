@@ -23,7 +23,7 @@ func TestImportIMazingCSVRequiresMe(t *testing.T) {
 	command.SetArgs([]string{"import-imazing-csv", t.TempDir()})
 	err := command.Execute()
 	require.Error(t, err)
-	assert.ErrorContains(t, err, "required flag")
+	assert.ErrorContains(t, err, "--me is required: your phone number or email")
 }
 
 // The export directory and --contacts file live on the caller's machine, so a

@@ -21,8 +21,9 @@ var (
 
 func newRepairIdentityCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "repair-identity [identifier]",
-		Short: "Confirm account identities and recompute is_from_me",
+		Use:     "repair-identity [identifier]",
+		Short:   "Confirm account identities and recompute is_from_me",
+		Example: "  msgvault repair identity you@example.com",
 		Long: `Confirm each account's own address as its identity and recompute the
 is_from_me attribution on messages already in the archive.
 
@@ -42,9 +43,9 @@ a --type repair hint. If you supplied an identifier, reuse it.
 Activity and contacts update at the daemon's next refresh, or now with msgvault activity build.
 
 Examples:
-  msgvault repair-identity                       # all Gmail accounts missing an identity
-  msgvault repair-identity you@example.com       # one account
-  msgvault repair-identity --type imap`,
+  msgvault repair identity                       # all Gmail accounts missing an identity
+  msgvault repair identity you@example.com       # one account
+  msgvault repair identity --type imap`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)
@@ -74,7 +75,7 @@ Examples:
 			return cacheErr
 		},
 	}
-	cmd.Flags().StringVar(&repairIdentityType, "type", "gmail", "source type to repair")
+	cmd.Flags().StringVar(&repairIdentityType, "type", sourceTypeGmail, "source type to repair")
 	return cmd
 }
 

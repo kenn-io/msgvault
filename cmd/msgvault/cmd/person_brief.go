@@ -74,7 +74,7 @@ func newPersonBriefShowCommand() *cobra.Command {
 				return err
 			}
 			if response.JSON200 == nil {
-				return errors.New("person brief response was empty")
+				return readDaemonResponseError(errors.New("person brief response was empty"))
 			}
 			if jsonOutput {
 				return writePersonBriefRawJSON(cmd, response.Body)
@@ -120,7 +120,7 @@ func newPersonBriefHistoryCommand() *cobra.Command {
 				return err
 			}
 			if response.JSON200 == nil {
-				return errors.New("person brief history response was empty")
+				return readDaemonResponseError(errors.New("person brief history response was empty"))
 			}
 			if jsonOutput {
 				return writePersonBriefRawJSON(cmd, response.Body)
@@ -157,7 +157,7 @@ func newPersonBriefGenerateCommand() *cobra.Command {
 				return err
 			}
 			if response.JSON200 == nil {
-				return errors.New("person brief generation response was empty")
+				return readDaemonResponseError(errors.New("person brief generation response was empty"))
 			}
 			if jsonOutput {
 				return writePersonBriefRawJSON(cmd, response.Body)
@@ -199,7 +199,7 @@ func newPersonBriefRejectCommand() *cobra.Command {
 				return err
 			}
 			if response.JSON200 == nil {
-				return errors.New("person brief rejection response was empty")
+				return readDaemonResponseError(errors.New("person brief rejection response was empty"))
 			}
 			if jsonOutput {
 				return writePersonBriefRawJSON(cmd, response.Body)
@@ -248,7 +248,7 @@ func newPersonBriefEnrollmentCommand(action string, enrolled bool) *cobra.Comman
 				return err
 			}
 			if response.JSON200 == nil {
-				return errors.New("person brief enrollment response was empty")
+				return readDaemonResponseError(errors.New("person brief enrollment response was empty"))
 			}
 			if jsonOutput {
 				return writePersonBriefRawJSON(cmd, response.Body)

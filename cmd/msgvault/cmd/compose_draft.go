@@ -8,9 +8,11 @@ func init() {
 
 func newDraftComposeCommand() *cobra.Command {
 	command := &cobra.Command{
-		Use:   "draft-compose",
-		Short: "Create an email, native Beeper, or local chat draft",
-		Args:  cobra.NoArgs,
+		Use:     "draft-compose",
+		Short:   "Create an email, native Beeper, or local chat draft",
+		Long:    "Prepare a new draft for a configured email account, native Beeper chat, or local chat conversation. Email recipients use repeated --to flags; Beeper uses a chat ID. --conversation selects an archived chat for a local draft. Review the returned draft before sending through the provider client.",
+		Example: "  msgvault draft compose --account you@example.com --to reader@example.com --subject Review --body \"Please review.\" --json",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runDaemonCLICommandHTTPFromCobra(cmd, nil)
 		},

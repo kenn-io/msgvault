@@ -20,8 +20,9 @@ import (
 )
 
 var embeddingsOptimizeCmd = &cobra.Command{
-	Use:   "optimize [generation-id]",
-	Short: "Build or remove the SQLite search accelerator",
+	Use:     "optimize [generation-id]",
+	Short:   "Build or remove the SQLite search accelerator",
+	Example: "  msgvault embeddings optimize",
 	Long: "Build a restartable SQLite approximate-search index from embeddings already stored locally. " +
 		"No text or embedding-provider request is made. When omitted, generation-id defaults to the active generation. " +
 		"Preparation yields to other archive operations between committed batches; training and publication remain exclusive.",
@@ -49,6 +50,11 @@ var runAcceleratorWorkerSubprocess acceleratorWorkerRunner = func(
 }
 
 func runEmbeddingsOptimizeCommand(cmd *cobra.Command, args []string) error {
+	if len(args) == 1 {
+		if _, err := parseGenerationID(args[0]); err != nil {
+			return err
+		}
+	}
 	if !isDaemonCLISubprocess() {
 		return runDaemonCLICommandHTTPFromCobra(cmd, args)
 	}

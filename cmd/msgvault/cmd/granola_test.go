@@ -85,7 +85,7 @@ func TestAddGranolaIdentityConfirmsPrimaryWhenAliasExists(t *testing.T) {
 	assert.Equal("user-b@example.com", identities[0].Address)
 	assert.Equal("user-z@example.com", identities[1].Address)
 	assert.Contains(out.String(), "Confirmed identity user-z@example.com")
-	assert.Contains(out.String(), "sync-granola work --full")
+	assert.Contains(out.String(), "source granola sync work --full")
 }
 
 func TestConfiguredGranolaMissingRegisteredSourceStopsBeforeClient(t *testing.T) {
@@ -109,7 +109,7 @@ func TestConfiguredGranolaMissingRegisteredSourceStopsBeforeClient(t *testing.T)
 	})
 
 	require.Error(err)
-	assert.Contains(err.Error(), "run msgvault add-granola work")
+	assert.Contains(err.Error(), "run msgvault source granola add work")
 	assert.Zero(constructed, "missing registration must be rejected before client construction")
 	sources, listErr := st.ListSources(granola.SourceType)
 	require.NoError(listErr)

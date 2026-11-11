@@ -264,7 +264,7 @@ func TestPlaudScheduledMissingSourceStopsBeforeAuth(t *testing.T) {
 	cancel()
 	err := runConfiguredPlaudSync(ctx, st, config.PlaudSource{Identifier: "work", AccountEmail: "owner@example.com"})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "add-plaud work")
+	assert.Contains(t, err.Error(), "source plaud add work")
 }
 
 func retiredPlaudSyncSource(t *testing.T, st *store.Store) *store.Source {
@@ -424,7 +424,7 @@ func TestPlaudManualMissingSourceStopsBeforeAuth(t *testing.T) {
 	cmd.SetArgs([]string{"work"})
 	err := cmd.Execute()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "add-plaud work")
+	assert.Contains(t, err.Error(), "source plaud add work")
 }
 
 func TestPlaudManualCacheClassification(t *testing.T) {

@@ -14,8 +14,8 @@ Use this command to see which domains send you the most email. This is useful
 for identifying newsletter subscriptions, mailing lists, or high-volume senders.
 
 JSON rows have key, count, total_size, and attachment_size.`,
-	Example: `  msgvault list-domains --limit 20 --json
-  msgvault list-domains --after 2024-01-01`,
+	Example: `  msgvault domain list --limit 20 --json
+  msgvault domain list --after 2024-01-01`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runAggregateListCommand(cmd, query.ViewDomains, "No domains found.", "Domain", "domain")

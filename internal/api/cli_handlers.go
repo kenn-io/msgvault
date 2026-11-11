@@ -24,6 +24,7 @@ import (
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/cacheops"
+	"go.kenn.io/msgvault/internal/cligrammar"
 	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/collectionops"
 	"go.kenn.io/msgvault/internal/config"
@@ -483,9 +484,11 @@ type CLISyncRequest struct {
 }
 
 type CLISyncEvent struct {
-	Type  string `json:"type"`
-	Data  string `json:"data,omitempty"`
-	Error string `json:"error,omitempty"`
+	Type          string `json:"type"`
+	Data          string `json:"data,omitempty"`
+	Error         string `json:"error,omitempty"`
+	ErrorReported bool   `json:"error_reported,omitempty,omitzero"`
+	ExitCode      int    `json:"exit_code,omitempty,omitzero"`
 }
 
 type CLIVerifyRequest struct {
@@ -496,15 +499,19 @@ type CLIVerifyRequest struct {
 }
 
 type CLIVerifyEvent struct {
-	Type  string `json:"type"`
-	Data  string `json:"data,omitempty"`
-	Error string `json:"error,omitempty"`
+	Type          string `json:"type"`
+	Data          string `json:"data,omitempty"`
+	Error         string `json:"error,omitempty"`
+	ErrorReported bool   `json:"error_reported,omitempty,omitzero"`
+	ExitCode      int    `json:"exit_code,omitempty,omitzero"`
 }
 
 type CLIRepairEncodingEvent struct {
-	Type  string `json:"type"`
-	Data  string `json:"data,omitempty"`
-	Error string `json:"error,omitempty"`
+	Type          string `json:"type"`
+	Data          string `json:"data,omitempty"`
+	Error         string `json:"error,omitempty"`
+	ErrorReported bool   `json:"error_reported,omitempty,omitzero"`
+	ExitCode      int    `json:"exit_code,omitempty,omitzero"`
 }
 
 type CLIRepairMessageRequest struct {
@@ -515,9 +522,11 @@ type CLIRepairMessageRequest struct {
 }
 
 type CLIRepairMessageEvent struct {
-	Type  string `json:"type"`
-	Data  string `json:"data,omitempty"`
-	Error string `json:"error,omitempty"`
+	Type          string `json:"type"`
+	Data          string `json:"data,omitempty"`
+	Error         string `json:"error,omitempty"`
+	ErrorReported bool   `json:"error_reported,omitempty,omitzero"`
+	ExitCode      int    `json:"exit_code,omitempty,omitzero"`
 }
 
 type CLIRunRequest struct {
@@ -628,9 +637,12 @@ type CLIDeduplicatePlanItem struct {
 }
 
 type CLIRunEvent struct {
-	Type  string `json:"type"`
-	Data  string `json:"data,omitempty"`
-	Error string `json:"error,omitempty"`
+	Code          string `json:"code,omitempty"`
+	ErrorReported bool   `json:"error_reported,omitempty,omitzero"`
+	ExitCode      int    `json:"exit_code,omitempty,omitzero"`
+	Type          string `json:"type"`
+	Data          string `json:"data,omitempty"`
+	Error         string `json:"error,omitempty"`
 }
 
 type cliDeleteDedupedScopeRequest struct {
@@ -1043,7 +1055,7 @@ func (s *Server) handleCLIInitDB(w http.ResponseWriter, r *http.Request) {
 	case migration.Deferred:
 		s.logger.Info("legacy [identity] block in config detected (migration deferred until a source exists)",
 			"address_count", migration.AddressCount,
-			"hint", "run 'msgvault add-account ...' to create a source; the migration will retry on the next command")
+			"hint", "run 'msgvault source gmail add ...' to create a source; the migration will retry on the next command")
 	case migration.Applied:
 		s.logger.Info("legacy identity migrated",
 			"addresses", migration.AddressCount,
@@ -1118,6 +1130,24 @@ func (s *Server) handleCLISyncFull(w http.ResponseWriter, r *http.Request) {
 	s.handleCLISyncWithMode(w, r, true)
 }
 
+// cliChildExitMetadata copies a proxied child's exit status and diagnostic
+// reporting state onto a dedicated subprocess stream's error event.
+func cliChildExitMetadata(err error) (exitCode int, reported bool) {
+	if exit, ok := errors.AsType[interface {
+		error
+		ExitCode() int
+	}](err); ok {
+		exitCode = exit.ExitCode()
+	}
+	if exit, ok := errors.AsType[interface {
+		error
+		ErrorReported() bool
+	}](err); ok {
+		return exitCode, exit.ErrorReported()
+	}
+	return exitCode, false
+}
+
 func (s *Server) handleCLISyncWithMode(w http.ResponseWriter, r *http.Request, full bool) {
 	runner, ok := s.store.(CLISyncRunner)
 	if !ok {
@@ -1133,7 +1163,9 @@ func (s *Server) handleCLISyncWithMode(w http.ResponseWriter, r *http.Request, f
 	writeEvent := newCLINDJSONEventWriter[CLISyncEvent](w)
 	if err := runner.RunCLISync(r.Context(), req, writeEvent); err != nil {
 		s.logger.Error("failed to run CLI sync", "full", full, "error", err)
-		if writeErr := writeEvent(CLISyncEvent{Type: cliStreamEventTypeError, Error: err.Error()}); writeErr != nil {
+		event := CLISyncEvent{Type: cliStreamEventTypeError, Error: err.Error()}
+		event.ExitCode, event.ErrorReported = cliChildExitMetadata(err)
+		if writeErr := writeEvent(event); writeErr != nil {
 			s.logger.Error("failed to stream CLI sync error event", "error", writeErr)
 		}
 		return
@@ -1249,7 +1281,9 @@ func (s *Server) handleCLIVerify(w http.ResponseWriter, r *http.Request) {
 	writeEvent := newCLINDJSONEventWriter[CLIVerifyEvent](w)
 	if err := runner.RunCLIVerify(r.Context(), req, writeEvent); err != nil {
 		s.logger.Error("failed to run CLI verify", "email", req.Email, "error", err)
-		if writeErr := writeEvent(CLIVerifyEvent{Type: cliStreamEventTypeError, Error: err.Error()}); writeErr != nil {
+		event := CLIVerifyEvent{Type: cliStreamEventTypeError, Error: err.Error()}
+		event.ExitCode, event.ErrorReported = cliChildExitMetadata(err)
+		if writeErr := writeEvent(event); writeErr != nil {
 			s.logger.Error("failed to stream CLI verify error event", "error", writeErr)
 		}
 		return
@@ -1317,8 +1351,10 @@ func (s *Server) handleCLIRepairEncoding(w http.ResponseWriter, r *http.Request)
 
 	writeEvent := newCLINDJSONEventWriter[CLIRepairEncodingEvent](w)
 	if err := runner.RunCLIRepairEncoding(r.Context(), writeEvent); err != nil {
-		s.logger.Error("failed to run CLI repair-encoding", "error", err)
-		if writeErr := writeEvent(CLIRepairEncodingEvent{Type: cliStreamEventTypeError, Error: err.Error()}); writeErr != nil {
+		s.logger.Error("failed to run CLI repair encoding", "error", err)
+		event := CLIRepairEncodingEvent{Type: cliStreamEventTypeError, Error: err.Error()}
+		event.ExitCode, event.ErrorReported = cliChildExitMetadata(err)
+		if writeErr := writeEvent(event); writeErr != nil {
 			s.logger.Error("failed to stream CLI repair-encoding error event", "error", writeErr)
 		}
 		return
@@ -1364,8 +1400,10 @@ func (s *Server) handleCLIRepairMessage(w http.ResponseWriter, r *http.Request) 
 
 	writeEvent := newCLINDJSONEventWriter[CLIRepairMessageEvent](w)
 	if err := runner.RunCLIRepairMessage(r.Context(), req, writeEvent); err != nil {
-		s.logger.Error("failed to run CLI repair-message", "audit", req.Audit, "source_id", req.SourceID, "error", err)
-		if writeErr := writeEvent(CLIRepairMessageEvent{Type: cliStreamEventTypeError, Error: err.Error()}); writeErr != nil {
+		s.logger.Error("failed to run CLI repair message", "audit", req.Audit, "source_id", req.SourceID, "error", err)
+		event := CLIRepairMessageEvent{Type: cliStreamEventTypeError, Error: err.Error()}
+		event.ExitCode, event.ErrorReported = cliChildExitMetadata(err)
+		if writeErr := writeEvent(event); writeErr != nil {
 			s.logger.Error("failed to stream CLI repair-message error event", "error", writeErr)
 		}
 		return
@@ -1394,7 +1432,8 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_args", "args must not be empty")
 		return
 	}
-	if !cliRunCommandAllowed(req.Args) {
+	req.Args = cligrammar.Legacy(req.Args)
+	if !CLIRunCommandAllowed(req.Args) {
 		writeError(w, http.StatusBadRequest, "command_not_allowed", "command is not allowed through the daemon CLI runner")
 		return
 	}
@@ -1441,7 +1480,12 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 		} else {
 			s.logger.Error("failed to run CLI command", "args", req.Args, "error", err)
 		}
-		if writeErr := writeEvent(CLIRunEvent{Type: cliStreamEventTypeError, Error: err.Error()}); writeErr != nil {
+		event := CLIRunEvent{Type: cliStreamEventTypeError, Error: err.Error()}
+		event.ExitCode, event.ErrorReported = cliChildExitMetadata(err)
+		if coded, ok := errors.AsType[*CLIRunCodedError](err); ok {
+			event.Code = coded.Code
+		}
+		if writeErr := writeEvent(event); writeErr != nil {
 			s.logger.Error("failed to stream CLI run error event", "error", writeErr)
 		}
 		return
@@ -1452,6 +1496,7 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) cliRunEnvAllowedForCommand(args []string, name string) bool {
+	args = cligrammar.Legacy(args)
 	if name == clirun.EnvInlineOAuth {
 		return len(args) > 0 && args[0] == "add-inline"
 	}
@@ -1668,13 +1713,22 @@ func validateCLIDeletionManifest(manifest *deletion.Manifest) *apiHTTPError {
 
 const cliRunPersonCommand = "person"
 
-// cliRunCommandAllowed reports whether a proxied CLI command may run through
+// cliRunStatusSubcommand is the read-only status subcommand shared by the
+// document and document-vector command groups.
+const cliRunStatusSubcommand = "status"
+
+// CLIRunCommandAllowed reports whether a proxied CLI command may run through
 // the daemon CLI runner. Most commands are admitted by their leading word
 // alone; command groups whose subcommand matters are checked against their
-// nested command path. Backup admits only the frozen create path, and person
-// admits only the provider consent boundary and sweep operations.
+// nested command path. Backup admits only the frozen create path, documents
+// admits only mutations that must run under the daemon's writer lock, and
+// person admits only the provider consent boundary and sweep operations.
+func CLIRunCommandAllowed(args []string) bool {
+	return cliRunCommandAllowed(args)
+}
 
 func cliRunCommandAllowed(args []string) bool {
+	args = cligrammar.Legacy(args)
 	if len(args) == 0 {
 		return false
 	}
@@ -2102,14 +2156,14 @@ func (s *Server) executeCLIDeleteDeduped(
 		return cliDeleteDedupedExecuteResponse{}, newAPIHTTPError(
 			http.StatusConflict,
 			"dedup_delete_plan_changed",
-			"Dedup deletion plan changed; rerun delete-deduped",
+			"Dedup deletion plan changed; rerun deletion purge-deduped",
 		)
 	}
 	if *req.ExpectedBatchCount != plan.BatchCount {
 		return cliDeleteDedupedExecuteResponse{}, newAPIHTTPError(
 			http.StatusConflict,
 			"dedup_delete_plan_changed",
-			"Dedup deletion plan changed; rerun delete-deduped",
+			"Dedup deletion plan changed; rerun deletion purge-deduped",
 		)
 	}
 	if !req.AllHidden {
@@ -2244,7 +2298,7 @@ func dedupDeletePlanChangedError() *apiHTTPError {
 	return newAPIHTTPError(
 		http.StatusConflict,
 		"dedup_delete_plan_changed",
-		"Dedup deletion plan changed; rerun delete-deduped",
+		"Dedup deletion plan changed; rerun deletion purge-deduped",
 	)
 }
 
@@ -3414,7 +3468,17 @@ func (s *Server) operationError(
 	err error,
 	policy operationErrorPolicy,
 	internalMessage string,
-) *apiHTTPError {
+) (response *apiHTTPError) {
+	defer func() {
+		if response != nil && opserr.KindOf(err) != opserr.KindInternal {
+			if hinted, ok := errors.AsType[interface {
+				error
+				Hint() string
+			}](err); ok {
+				response.Hint = hinted.Hint()
+			}
+		}
+	}()
 	switch opserr.KindOf(err) {
 	case opserr.KindInvalid:
 		return newAPIHTTPError(http.StatusBadRequest, policy.InvalidCode, err.Error())

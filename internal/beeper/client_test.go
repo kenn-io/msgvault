@@ -77,7 +77,7 @@ func TestClientUnauthorizedMessage(t *testing.T) {
 	c := NewClient(srv.URL, testToken, 1000)
 	_, err := c.ListAccounts(t.Context())
 	require.Error(err)
-	assert.Contains(err.Error(), "add-beeper")
+	assert.Contains(err.Error(), "source beeper add")
 	assert.Contains(err.Error(), "Beeper Desktop")
 }
 

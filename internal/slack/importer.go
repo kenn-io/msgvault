@@ -1550,7 +1550,7 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (_ *
 			// the markers stay in place and discoverable — and fail the run
 			// as partial below instead of reporting a clean sweep.
 			imp.recordItem(ctx, syncID, item.SourceMessageID, "attachment", store.SyncRunItemStatusError, "slack_raw_invalid",
-				fmt.Errorf("archived raw JSON for %s is missing or malformed; run sync-slack --full to re-fetch it", item.SourceMessageID))
+				fmt.Errorf("archived raw JSON for %s is missing or malformed; run source slack sync --full to re-fetch it", item.SourceMessageID))
 			sum.Errors++
 			invalidRaw++
 			sum.AttachmentsPending += imp.pendingMarkerCount(ctx, item.MessageID)
@@ -1570,7 +1570,7 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (_ *
 	}
 	if invalidRaw > 0 {
 		sum.Duration = imp.now().Sub(start)
-		err = fmt.Errorf("partial Slack media backfill: %d message(s) with invalid archived raw JSON (run sync-slack --full to repair)", invalidRaw)
+		err = fmt.Errorf("partial Slack media backfill: %d message(s) with invalid archived raw JSON (run source slack sync --full to repair)", invalidRaw)
 		return sum, err
 	}
 	if err = imp.store.CompleteSyncContext(ctx, syncID, stateBlob); err != nil {

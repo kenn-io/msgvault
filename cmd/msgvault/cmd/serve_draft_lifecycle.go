@@ -128,7 +128,7 @@ func parseDraftLifecycleArgs(args []string) (draftLifecycleIntent, error) {
 			}
 			parsed, err := strconv.ParseInt(value, 10, 64)
 			if err != nil || parsed <= 0 || intent.ConversationID != 0 || intent.Operation != api.CLIRunDraftGetCommand {
-				return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("draft-get accepts one positive --conversation"))
+				return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("draft get accepts one positive --conversation"))
 			}
 			intent.ConversationID = parsed
 		case "json":
@@ -146,7 +146,7 @@ func parseDraftLifecycleArgs(args []string) (draftLifecycleIntent, error) {
 	}
 	if intent.ConversationID != 0 {
 		if positional != "" || revisionSet || bodySet {
-			return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("draft-get --conversation accepts only --json"))
+			return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("draft get --conversation accepts only --json"))
 		}
 		return intent, nil
 	}
@@ -157,19 +157,19 @@ func parseDraftLifecycleArgs(args []string) (draftLifecycleIntent, error) {
 	switch intent.Operation {
 	case api.CLIRunDraftGetCommand:
 		if revisionSet || bodySet {
-			return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("draft-get accepts only --json"))
+			return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("draft get accepts only --json"))
 		}
 	case api.CLIRunDraftEditCommand:
 		if !revisionSet || !bodySet {
-			return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("draft-edit requires --revision and --body"))
+			return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("draft edit requires --revision and --body"))
 		}
 	case api.CLIRunDraftDeleteCommand:
 		if !revisionSet || bodySet {
-			return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("draft-delete requires --revision and no body"))
+			return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("draft delete requires --revision and no body"))
 		}
 	case api.CLIRunDraftRecoverCommand:
 		if !revisionSet || bodySet {
-			return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("draft-recover requires --revision and no body"))
+			return draftLifecycleIntent{}, draftReplyError("invalid_args", errors.New("draft recover requires --revision and no body"))
 		}
 	}
 	return intent, nil

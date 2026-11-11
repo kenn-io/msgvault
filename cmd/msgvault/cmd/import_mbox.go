@@ -45,20 +45,17 @@ The importer stores raw MIME, bodies, recipients, and optional attachments.
 For Google Groups Takeout exports, use --source-type google-groups. Group
 labels, topic-state labels, and exported thread IDs are preserved. The identifier
 names the group or archive and is not automatically treated as your identity.
-Membership CSV files and group settings are not imported.
-
-Examples:
-  msgvault init-db
-  msgvault import-mbox you@example.com /path/to/export.mbox
-  msgvault import-mbox you@example.com /path/to/export.zip
+Membership CSV files and group settings are not imported.`,
+	Example: `  msgvault database init
+  msgvault import mbox you@example.com /path/to/export.mbox
+  msgvault import mbox you@example.com /path/to/export.zip
 
   # Google Groups Takeout (MBOX or ZIP)
-  msgvault import-mbox test-group@googlegroups.com takeout.zip --source-type google-groups
+  msgvault import mbox test-group@googlegroups.com takeout.zip --source-type google-groups
 
   # HEY.com export (still MBOX)
-  msgvault import-mbox you@hey.com hey-export.zip --source-type hey --label hey
-`,
-	Args: cobra.ExactArgs(2),
+  msgvault import mbox you@hey.com hey-export.zip --source-type hey --label hey`,
+	Args: sourceExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
 		if state == nil || state.cfg == nil {

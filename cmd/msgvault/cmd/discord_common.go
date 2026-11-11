@@ -113,7 +113,7 @@ func resolveDiscordSourcesContext(ctx context.Context, st *store.Store, selector
 	sort.Slice(sources, func(i, j int) bool { return sources[i].ID < sources[j].ID })
 	if selector == "" {
 		if len(sources) == 0 {
-			return nil, errors.New("no Discord guilds are registered; run 'msgvault add-discord' first")
+			return nil, sourceNotConfigured("discord", errors.New("no Discord guilds are registered; run 'msgvault source discord add' first"))
 		}
 		return sources, nil
 	}
@@ -150,7 +150,7 @@ func resolveDiscordSyncSources(st *store.Store, selector string) ([]*store.Sourc
 	sort.Slice(sources, func(i, j int) bool { return sources[i].ID < sources[j].ID })
 	if selector == "" {
 		if len(sources) == 0 {
-			return nil, errors.New("no Discord guilds are registered; run 'msgvault add-discord' first")
+			return nil, sourceNotConfigured("discord", errors.New("no Discord guilds are registered; run 'msgvault source discord add' first"))
 		}
 		active := activeSyncSources(sources)
 		if len(active) == 0 {

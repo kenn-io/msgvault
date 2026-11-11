@@ -4,6 +4,7 @@
 
 export interface ErrorResponse {
   error: string;
+  hint?: string;
   message?: string;
   [key: string]: unknown;
 }
