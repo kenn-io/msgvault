@@ -37,17 +37,13 @@ func (s *Server) handleMeetingDecision(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid_argument", err.Error())
 		return
 	}
-	if err := store.ValidateMeetingLinkDecision(left, right, request.Decision); err != nil {
-		writeError(w, 400, "invalid_argument", err.Error())
-		return
-	}
 	backend, ok := s.store.(MeetingDecisionStore)
 	if !ok {
 		writeError(w, 503, "meetings_unavailable", "Meeting decisions are unavailable")
 		return
 	}
 	result, err := backend.DecideMeetingLinkContext(r.Context(), left, right, request.Decision)
-	if errors.Is(err, store.ErrMeetingLinkSameCopy) {
+	if errors.Is(err, store.ErrMeetingLinkSameCopy) || errors.Is(err, store.ErrInvalidMeetingLinkDecision) {
 		writeError(w, 400, "invalid_argument", err.Error())
 		return
 	}

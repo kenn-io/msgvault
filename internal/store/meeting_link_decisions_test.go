@@ -216,7 +216,13 @@ func TestMeetingLinkDecisionSplitAppliesToEveryEventCopy(t *testing.T) {
 	assertions.Empty(record.Links)
 	assertions.Equal([]int64{note}, record.MessageIDs)
 	_, err = st.DecideMeetingLinkContext(t.Context(), member, MeetingLinkRef{Kind: "evt", MessageID: second}, "link")
-	requirements.ErrorIs(err, ErrMeetingLinkConflict)
+	requirements.NoError(err)
+	for _, ref := range []MeetingLinkRef{member, {Kind: "evt", MessageID: first}, {Kind: "evt", MessageID: second}} {
+		record, err := st.MeetingRecordContext(t.Context(), ref)
+		requirements.NoError(err)
+		assertions.Equal([]int64{note}, record.MessageIDs)
+		assertions.Len(record.Links, 2)
+	}
 }
 
 func TestMeetingLinkDecisionUndoKeepsDuplicateChoices(t *testing.T) {
