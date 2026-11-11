@@ -1655,7 +1655,7 @@ msgvault comment moderate <message-id> --hide|--unhide|--delete [--dry-run] [--y
 |---|---|---|
 | `--hide` | `false` | Hide the comment from public view |
 | `--unhide` | `false` | Make a hidden comment visible again |
-| `--delete` | `false` | Delete the comment from Meta; the archive keeps it, marked deleted |
+| `--delete` | `false` | Delete the comment from Meta; the archive keeps it and its replies, marked deleted |
 | `--dry-run` | `false` | Show the comment without calling Meta |
 | `--yes` | `false` | Confirm `--delete` |
 
