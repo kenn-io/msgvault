@@ -39,3 +39,9 @@ func TestWakeupValidationAndDefaults(t *testing.T) {
 	assert.Error(t, prepareWakeups([]WakeupConfig{base, base}))
 	assert.Error(t, prepareWakeups(make([]WakeupConfig, 33)))
 }
+
+func TestInlineWakeupSecretRejectedByConfigLoader(t *testing.T) {
+	path := writeDaemonSectionConfig(t, "[[wakeups]]\nname='inbox'\nurl='https://example.com/hook'\nsecret_env='WAKEUP_KEY'\nsecret='not-allowed'\n")
+	_, err := Load(path, "")
+	require.ErrorContains(t, err, "unknown wakeups config key")
+}

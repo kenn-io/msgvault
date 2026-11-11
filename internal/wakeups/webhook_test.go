@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -61,4 +62,23 @@ func TestWebhookRefusesMixedDNSWithoutDialing(t *testing.T) {
 	assert.Equal(t, "invalid_callback", client.send(t.Context(), "https://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
 	assert.False(t, dialed)
 	assert.Equal(t, "invalid_callback", client.send(t.Context(), "http://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
+}
+
+func TestWebhookUsesOnlyTrustedPinAndTimesOut(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	defer server.Close()
+	origin, err := url.Parse("https://example.com")
+	require.NoError(t, err)
+	var dialed []string
+	client := webhookClient{timeout: time.Second, resolver: staticResolver{netip.MustParseAddr("127.0.0.1")}, trustedOrigin: origin, trusted: []netip.Addr{netip.MustParseAddr("10.0.0.5")}, roots: server.Client().Transport.(*http.Transport).TLSClientConfig, dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+		dialed = append(dialed, address)
+		return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
+	}}
+	// The standard httptest certificate includes example.com.
+	client.roots = client.roots.Clone()
+	client.roots.ServerName = "example.com"
+	assert.Empty(t, client.send(t.Context(), "https://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
+	assert.Equal(t, []string{"10.0.0.5:443"}, dialed)
+	timeout := webhookClient{timeout: 50 * time.Millisecond, resolver: staticResolver{netip.MustParseAddr("203.0.113.1")}, dial: func(ctx context.Context, _, _ string) (net.Conn, error) { <-ctx.Done(); return nil, ctx.Err() }}
+	assert.Equal(t, "timeout", timeout.send(t.Context(), "https://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
 }

@@ -5,11 +5,9 @@ import (
 	"log/slog"
 	"net/netip"
 	"net/url"
-	"slices"
 	"time"
 
 	"go.kenn.io/msgvault/internal/api"
-	"go.kenn.io/msgvault/internal/changefeed"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/netguard"
 	"go.kenn.io/msgvault/internal/providercredentials"
@@ -63,22 +61,7 @@ func configureWakeupJob(ctx context.Context, sched *scheduler.Scheduler, gate ap
 				continue
 			}
 		}
-		sources := slices.Clone(entry.SourceIDs)
-		slices.Sort(sources)
-		sources = slices.Compact(sources)
-		if len(sources) == 0 {
-			sources = nil
-		}
-		conversations := slices.Clone(entry.ConversationIDs)
-		slices.Sort(conversations)
-		conversations = slices.Compact(conversations)
-		if len(conversations) == 0 {
-			conversations = nil
-		}
-		incoming := true
-		if entry.IncomingOnly != nil {
-			incoming = *entry.IncomingOnly
-		}
+
 		timeout := entry.Timeout
 		if timeout == 0 {
 			timeout = 10 * time.Second
@@ -87,7 +70,7 @@ func configureWakeupJob(ctx context.Context, sched *scheduler.Scheduler, gate ap
 		if age == 0 {
 			age = 72 * time.Hour
 		}
-		filter := changefeed.Filter{PersonID: entry.PersonID, SourceIDs: sources, ConversationIDs: conversations, IncomingOnly: incoming}
+		filter := wakeups.FilterFromConfig(entry)
 		subs = append(subs, wakeups.NewSubscription(entry.Name, entry.URL, key, filter, age, timeout, origin, addresses))
 	}
 	if err := withBeeperMediaGate(ctx, gate, "Wakeup state", func() error { return st.PruneWakeupStates(ctx, names) }); err != nil {

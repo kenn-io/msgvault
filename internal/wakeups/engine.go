@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/changefeed"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -24,9 +25,17 @@ type Subscription struct {
 	Client        webhookClient
 }
 
+// Store supplies the bounded feed and durable positions for a pass.
+type Store interface {
+	LoadWakeupState(context.Context, string) (store.WakeupState, []byte, error)
+	AdvanceWakeupState(context.Context, string, []byte, store.WakeupState) (bool, error)
+	ListChangedMessages(context.Context, store.ChangedMessagesCursor, int) (store.ChangedMessagePage, error)
+	ArchiveUIDContext(context.Context) (string, error)
+}
+
 // Engine holds no delivery state; the archive stores the position and backoff.
 type Engine struct {
-	Store         *store.Store
+	Store         Store
 	Subscriptions []Subscription
 	Gate          func(context.Context) (func(), bool)
 	Logger        *slog.Logger
@@ -250,4 +259,25 @@ func (e *Engine) RunPass(ctx context.Context) error {
 // NewSubscription builds the runtime-only endpoint and pinned destination policy.
 func NewSubscription(name, endpoint string, secret []byte, filter changefeed.Filter, maxAge, timeout time.Duration, trustedOrigin *url.URL, trusted []netip.Addr) Subscription {
 	return Subscription{Name: name, URL: endpoint, Secret: secret, Filter: filter, MaxMessageAge: maxAge, Client: webhookClient{timeout: timeout, trustedOrigin: trustedOrigin, trusted: trusted}}
+}
+
+// FilterFromConfig normalizes the configured selectors exactly as the feed does.
+func FilterFromConfig(entry config.WakeupConfig) changefeed.Filter {
+	sources := slices.Clone(entry.SourceIDs)
+	slices.Sort(sources)
+	sources = slices.Compact(sources)
+	if len(sources) == 0 {
+		sources = nil
+	}
+	conversations := slices.Clone(entry.ConversationIDs)
+	slices.Sort(conversations)
+	conversations = slices.Compact(conversations)
+	if len(conversations) == 0 {
+		conversations = nil
+	}
+	incoming := true
+	if entry.IncomingOnly != nil {
+		incoming = *entry.IncomingOnly
+	}
+	return changefeed.Filter{PersonID: entry.PersonID, SourceIDs: sources, ConversationIDs: conversations, IncomingOnly: incoming}
 }
