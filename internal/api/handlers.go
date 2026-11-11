@@ -3260,6 +3260,14 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 		s.rejectBadParam(w, err)
 		return
 	}
+	if grant != nil {
+		for _, id := range filter.SourceIDs {
+			if !slices.Contains(agentReadSourceIDs(r), id) {
+				writeAPIHTTPError(w, agentReadDenied(agentgrant.PermissionSearchRead))
+				return
+			}
+		}
+	}
 	limit, ok, err := queryInt(r, "limit")
 	if err != nil {
 		s.rejectBadParam(w, err)
@@ -3300,7 +3308,7 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if grant != nil {
-		filter.bindGrant(grant, agentReadSourceIDs(r))
+		filter.bindGrant(grant)
 	}
 	digest := filter.digest()
 	if position.filter != "" && position.filter != digest {
@@ -3350,7 +3358,7 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 				writeError(w, 503, "source_scope_unavailable", "Source authorization is unavailable")
 				return
 			}
-			found, err := checker.PersonInSources(r.Context(), filter.participants, filter.grantSourceIDs)
+			found, err := checker.PersonInSources(r.Context(), filter.participants, agentReadSourceIDs(r))
 			if err != nil {
 				if s.writeIfContextError(w, err) {
 					return

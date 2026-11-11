@@ -1059,7 +1059,6 @@ func (s *Store) PersonInSources(ctx context.Context, participantIDs, sourceIDs [
 	if len(participantIDs) == 0 || len(sourceIDs) == 0 {
 		return false, nil
 	}
-	placeholders := func(n int) string { return strings.TrimSuffix(strings.Repeat("?,", n), ",") }
 	ps, ss := placeholders(len(participantIDs)), placeholders(len(sourceIDs))
 	query := fmt.Sprintf(`SELECT EXISTS (SELECT 1 FROM messages m WHERE m.sender_id IN (%s) AND m.source_id IN (%s)) OR
  EXISTS (SELECT 1 FROM message_recipients r JOIN messages m ON m.id = r.message_id WHERE r.participant_id IN (%s) AND m.source_id IN (%s)) OR

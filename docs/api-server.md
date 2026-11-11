@@ -1255,14 +1255,13 @@ different source set, or the owner, receives `400 invalid_cursor` and must
 restart the walk. A replacement token with the same references can resume,
 including after a source is removed and re-added.
 
-
-A filtered request examines at most 2,000 changes and can return an empty page
-with `has_more=true`; keep following `next_cursor`. A first walk over 400,000
-non-matching changes therefore needs about 200 requests. Once the available
-range is exhausted, the cursor can advance through the empty tail to the commit
-bound. A filtered cursor is bound to its selectors: changing or removing them
-returns `invalid_cursor`. Start again with an unfiltered cursor or the original
-filter. Older servers reject filtered cursors because they do not understand
+A filtered request examines at most 2,000 changes in the authorized sources and
+can return an empty page with `has_more=true`; keep following `next_cursor`. A
+first walk over 400,000 non-matching changes therefore needs about 200 requests.
+Once the available range is exhausted, the cursor can advance through the empty
+tail to the commit bound. A filtered cursor is bound to its selectors: changing
+or removing them returns `invalid_cursor`. Start again with an unfiltered cursor
+or the original filter. Older servers reject filtered cursors because they do not understand
 their format.
 
 A filtered feed reports arrivals and in-scope edits. A row that leaves a
@@ -3371,8 +3370,9 @@ Agent requests use `X-Msgvault-Agent-Token` instead of the owner key. The
 daemon checks `search.read`, `message.read`, `attachment.read`, or `stats.read`
 and the live source identity before serving supported archive reads. Unscoped
 reads select only granted sources. Explicit accounts, collections, and source ID
-sets must fit entirely inside the grant. The message change feed requires `search.read` and applies the same source scope. A missing permission or an account
-selector outside the grant returns `403 permission_denied` and names the
+sets must fit entirely inside the grant. The message change feed requires
+`search.read` and applies the same source scope. A missing permission or an
+account selector outside the grant returns `403 permission_denied` and names the
 permission. A message, thread, or attachment outside the grant returns the same
 `404` as a missing one. At most two agent reads run at once; others wait, and a
 request that ends while waiting returns `503 agent_read_busy`. Unsupported routes remain

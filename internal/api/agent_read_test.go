@@ -966,6 +966,8 @@ func TestAgentChangeFeedScopeAndCursor(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, get(one, fmt.Sprintf("?source_id=%d&source_id=%d", a.ID, b.ID)).Code)
 	assert.Equal(t, http.StatusOK, get(one, fmt.Sprintf("?source_id=%d&source_id=%d", a.ID, a.ID)).Code)
 	assert.Equal(t, http.StatusBadRequest, get(one, "?source_id=invalid").Code)
+	assert.Equal(t, http.StatusBadRequest, get(one, "?source_id=0").Code)
+	assert.Equal(t, http.StatusBadRequest, get(one, "?source_id="+strings.TrimSuffix(strings.Repeat(strconv.FormatInt(b.ID, 10)+",", 51), ",")).Code)
 	outside := get(one, fmt.Sprintf("?person_id=%d", person.ID))
 	missing := get(one, "?person_id=999999999")
 	assert.Equal(t, http.StatusForbidden, outside.Code)
@@ -983,15 +985,87 @@ func TestChangeFeedGrantDigestUsesStableSourceReferences(t *testing.T) {
 	b := agentgrant.SourceRef{ID: 2, Type: "gmail", Identifier: "b@example.com"}
 	filter := func(refs ...agentgrant.SourceRef) changesFilter {
 		var f changesFilter
-		f.bindGrant(&agentgrant.Grant{Sources: refs}, []int64{-1})
+		f.bindGrant(&agentgrant.Grant{Sources: refs})
 		return f
 	}
 	original := filter(a, b)
 	a.ID = 99
 	a.SenderKeys = []string{"new"}
-	same := filter(b, a, a)
+	same := filter(b, a)
 	assert.NotEmpty(t, original.digest())
 	assert.Equal(t, original.digest(), same.digest())
 	assert.NotEqual(t, original.digest(), filter(a).digest())
 	assert.NotEqual(t, original.digest(), (changesFilter{}).digest())
+}
+
+func TestAgentChangeFeedDoesNotExposeOtherSourcePositions(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	outside, err := st.GetOrCreateSource("test", "outside-feed@example.test")
+	require.NoError(t, err)
+	conv, err := st.EnsureConversation(t.Context(), outside.ID, "outside", "Outside")
+	require.NoError(t, err)
+	tx, err := st.DB().BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	ids := make([]int64, 0, changesScanBudget+1)
+	for i := 0; i <= changesScanBudget; i++ {
+		var id int64
+		err := tx.QueryRowContext(t.Context(), st.Rebind(`INSERT INTO messages (source_id, conversation_id, source_message_id, message_type) VALUES (?, ?, ?, ?) RETURNING id`), outside.ID, conv, fmt.Sprintf("outside-%d", i), "email").Scan(&id)
+		require.NoError(t, err)
+		ids = append(ids, id)
+	}
+	_, err = tx.ExecContext(t.Context(), st.Rebind(`UPDATE messages SET content_changed_at = ? WHERE source_id = ?`), "2020-01-01 00:00:00.000", outside.ID)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+	allowed, id, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "allowed-feed@example.test", "allowed", "allowed", "")
+	require.NoError(t, err)
+	setChangesWatermark(t, st, "2020-01-02 00:00:00.000", id)
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Logger: testLogger()})
+	t.Cleanup(srv.agentGrants.Close)
+	relaxChangeFeedRateLimit(t, srv)
+	get := func(ref agentgrant.SourceRef, query string) ChangesResponse {
+		_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{ref}, time.Time{})
+		require.NoError(t, err)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/messages/changes"+query, nil)
+		req.Header.Set(apiprotocol.AgentTokenHeader, token)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		var page ChangesResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &page))
+		return page
+	}
+	ref := func(s *store.Source) agentgrant.SourceRef {
+		return agentgrant.SourceRef{ID: s.ID, Type: s.SourceType, Identifier: s.Identifier}
+	}
+	sparse := get(ref(allowed), "?limit=1")
+	require.Len(t, sparse.Messages, 1)
+	assert.Equal(t, 1, sparse.Count)
+	assert.Equal(t, id, sparse.Messages[0].ID)
+	assert.False(t, sparse.HasMore)
+	position, err := decodeChangesCursor(sparse.NextCursor)
+	require.NoError(t, err)
+	after, hasID := position.cursor.AfterID()
+	require.True(t, hasID)
+	assert.Equal(t, id, after)
+	empty := get(agentgrant.SourceRef{ID: 999999, Type: "test", Identifier: "gone@example.test"}, "")
+	assert.Empty(t, empty.Messages)
+	assert.Zero(t, empty.Count)
+	assert.False(t, empty.HasMore)
+	position, err = decodeChangesCursor(empty.NextCursor)
+	require.NoError(t, err)
+	_, hasID = position.cursor.AfterID()
+	assert.False(t, hasID)
+	boundary := get(ref(outside), "?conversation_id=999999")
+	assert.Empty(t, boundary.Messages)
+	assert.True(t, boundary.HasMore)
+	position, err = decodeChangesCursor(boundary.NextCursor)
+	require.NoError(t, err)
+	after, hasID = position.cursor.AfterID()
+	require.True(t, hasID)
+	assert.Equal(t, ids[changesScanBudget-1], after)
+	resumed := get(ref(outside), "?conversation_id=999999&cursor="+url.QueryEscape(boundary.NextCursor))
+	assert.Empty(t, resumed.Messages)
+	assert.Zero(t, resumed.Count)
+	assert.False(t, resumed.HasMore)
 }

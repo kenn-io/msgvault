@@ -335,7 +335,7 @@ func (b *daemonMCPOperations) sourceOperationDisclosure(ctx context.Context, nam
 
 func changesRefusal(code string) bool {
 	switch code {
-	case "invalid_cursor", "invalid_person_id", "invalid_source_id", "invalid_conversation_id", "invalid_incoming_only", "invalid_limit", "person_not_found", "person_scope_empty", "person_scope_unavailable", "person_scope_failed", "person_binding_conflict", "rate_limit_exceeded", "feature_unavailable", "query_timeout", "query_canceled":
+	case "permission_denied", "agent_read_busy", "source_scope_unavailable", "internal_error", "invalid_source", "invalid_cursor", "invalid_person_id", "invalid_source_id", "invalid_conversation_id", "invalid_incoming_only", "invalid_limit", "person_not_found", "person_scope_empty", "person_scope_unavailable", "person_scope_failed", "person_binding_conflict", "rate_limit_exceeded", "feature_unavailable", "query_timeout", "query_canceled":
 		return true
 	default:
 		return false

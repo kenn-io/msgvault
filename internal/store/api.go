@@ -1739,8 +1739,9 @@ func (s *Store) ListChangedMessages(
 	// remain invisible forever. Detect legacy or manually-corrupted rows before
 	// returning any page so consumers stop at a visible, repairable error.
 	var nullWatermarkID int64
+	scope, scopeArgs := sourceScopeClause(ctx, "source_id")
 	err = s.db.QueryRowContext(ctx,
-		`SELECT id FROM messages WHERE content_changed_at IS NULL LIMIT 1`,
+		`SELECT id FROM messages WHERE content_changed_at IS NULL`+scope+` LIMIT 1`, scopeArgs...,
 	).Scan(&nullWatermarkID)
 	if err == nil {
 		return ChangedMessagePage{}, fmt.Errorf(
@@ -1752,11 +1753,14 @@ func (s *Store) ListChangedMessages(
 
 	cursor := s.dialect.TimestampParam(since.At())
 	openInstant := s.dialect.TimestampParam(bounds.CommitBound)
-	query, args := changedMessagesFromInstantQuery, []any{cursor, openInstant, limit}
+	query, args := changedMessagesSelect, []any{cursor}
 	if sinceID, ok := since.AfterID(); ok {
-		query = changedMessagesQuery
-		args = []any{cursor, cursor, sinceID, openInstant, limit}
+		query += ` AND (content_changed_at > ? OR id > ?)`
+		args = append(args, cursor, sinceID)
 	}
+	query += scope + changedMessagesBounds
+	args = append(args, scopeArgs...)
+	args = append(args, openInstant, limit)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return ChangedMessagePage{}, fmt.Errorf("list changed messages: %w", err)

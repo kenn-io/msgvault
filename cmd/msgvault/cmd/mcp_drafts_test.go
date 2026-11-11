@@ -440,6 +440,42 @@ func TestMCPDelegatedChangeFeedDiscovery(t *testing.T) {
 			require.NoError(t, err)
 			assert.False(t, result.IsError)
 			assert.NotNil(t, result.StructuredContent)
+			denied, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_changes", Arguments: map[string]any{"source_ids": []int64{fixture.source.ID + 1000000}}})
+			require.NoError(t, err)
+			assert.True(t, denied.IsError)
+			body, ok := denied.StructuredContent.(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, "permission_denied", body["error"])
+		})
+	}
+}
+
+func TestMCPDelegatedChangeFeedUnavailableRefusals(t *testing.T) {
+	fixture := newDraftReplyFixture(t)
+	var refusal atomic.Value
+	refusal.Store("")
+	// Inject daemon refusals that depend on transient snapshot capacity or failure.
+	server := mcpDraftTestDaemon(t, fixture.grantedAdapter(), func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if code := refusal.Load().(string); r.URL.Path == "/api/v1/messages/changes" && code != "" {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": code, "message": "unavailable"})
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
+	session := mcpDraftTestSession(mcpDraftAgentContext(t, server, fixture.source.ID, []string{"search.read"}), t)
+	for _, code := range []string{"agent_read_busy", "source_scope_unavailable"} {
+		t.Run(code, func(t *testing.T) {
+			refusal.Store(code)
+			result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_changes", Arguments: map[string]any{}})
+			require.NoError(t, err)
+			assert.True(t, result.IsError)
+			body, ok := result.StructuredContent.(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, code, body["error"])
 		})
 	}
 }

@@ -17,7 +17,6 @@ type changesFilter struct {
 	SourceIDs, ConversationIDs []int64
 	IncomingOnly               bool
 	participants               []int64
-	grantSourceIDs             []int64
 	grantRefs                  []changeGrantRef
 }
 
@@ -62,8 +61,7 @@ func parseChangesFilter(r *http.Request) (changesFilter, error) {
 
 type changeGrantRef struct{ Type, Identifier string }
 
-func (f *changesFilter) bindGrant(grant *agentgrant.Grant, ids []int64) {
-	f.grantSourceIDs = ids
+func (f *changesFilter) bindGrant(grant *agentgrant.Grant) {
 	// A non-nil slice distinguishes even an empty grant from an owner.
 	f.grantRefs = make([]changeGrantRef, 0, len(grant.Sources))
 	for _, ref := range grant.Sources {
@@ -75,14 +73,13 @@ func (f *changesFilter) bindGrant(grant *agentgrant.Grant, ids []int64) {
 		}
 		return strings.Compare(a.Identifier, b.Identifier)
 	})
-	f.grantRefs = slices.Compact(f.grantRefs)
 }
 
 func (f changesFilter) digest() string {
 	if f.PersonID == 0 && len(f.SourceIDs) == 0 && len(f.ConversationIDs) == 0 && !f.IncomingOnly && f.grantRefs == nil {
 		return ""
 	}
-	// Keep the owner encoding unchanged; delegated digests use a domain marker.
+	// Keep the owner encoding unchanged; delegated digests include the grant references.
 	if f.grantRefs != nil {
 		data, err := json.Marshal(struct {
 			OwnerDigest string
@@ -107,8 +104,7 @@ func (f changesFilter) digest() string {
 }
 
 func (f changesFilter) matches(m store.ChangedMessage) bool {
-	return (f.grantSourceIDs == nil || slices.Contains(f.grantSourceIDs, m.SourceID)) &&
-		(f.PersonID == 0 || slices.Contains(f.participants, m.SenderID)) &&
+	return (f.PersonID == 0 || slices.Contains(f.participants, m.SenderID)) &&
 		(len(f.SourceIDs) == 0 || slices.Contains(f.SourceIDs, m.SourceID)) &&
 		(len(f.ConversationIDs) == 0 || slices.Contains(f.ConversationIDs, m.ConversationID)) &&
 		(!f.IncomingOnly || !m.IsFromMe)
