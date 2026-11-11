@@ -10,8 +10,8 @@ import (
 )
 
 type instagramCLIOptions struct {
-	Account, SelfName string
-	Limit             int
+	Account, SelfName, Format string
+	Limit                     int
 }
 
 func runImportInstagram(cmd *cobra.Command, exportDir string, opts instagramCLIOptions) error {
@@ -26,7 +26,7 @@ func runImportInstagram(cmd *cobra.Command, exportDir string, opts instagramCLIO
 	defer cleanup()
 	ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Re-run the export to continue.")
 	defer stop()
-	summary, importErr := fbmessenger.ImportDYI(ctx, st, fbmessenger.ImportOptions{Source: "instagram", RootDir: exportDir, Account: opts.Account, SelfName: opts.SelfName, Limit: opts.Limit, AttachmentsDir: state.cfg.AttachmentsDir()})
+	summary, importErr := fbmessenger.ImportDYI(ctx, st, fbmessenger.ImportOptions{Source: "instagram", RootDir: exportDir, Account: opts.Account, SelfName: opts.SelfName, Format: opts.Format, Limit: opts.Limit, AttachmentsDir: state.cfg.AttachmentsDir()})
 	// Source migrations and cache refresh must finish after a partial commit,
 	// even when cancellation interrupted the importer. No display-name identity
 	// is confirmed: --self-name describes direction only.

@@ -29,6 +29,9 @@ var importMessengerCmd = &cobra.Command{
 
 For Instagram, use --source instagram with --account and --self-name. Extract the
 JSON download first. The inbox layout is your_instagram_activity/messages/inbox.
+Instagram accepts --format auto or json and ignores --me, --no-resume, and
+--checkpoint-interval; every run rereads the export.
+Messenger ignores --account and --self-name.
 
 Messenger supports JSON and HTML DYI formats. When a thread contains both, the
 JSON form wins because it preserves timestamps at millisecond precision and
@@ -64,7 +67,7 @@ Examples:
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args)
 			}
-			return runImportInstagram(cmd, args[0], instagramCLIOptions{Account: importMessengerAccount, SelfName: importMessengerSelfName, Limit: importMessengerLimit})
+			return runImportInstagram(cmd, args[0], instagramCLIOptions{Account: importMessengerAccount, SelfName: importMessengerSelfName, Format: importMessengerFormat, Limit: importMessengerLimit})
 		case "messenger":
 			if importMessengerMe == "" {
 				return errors.New("--me is required for Messenger")

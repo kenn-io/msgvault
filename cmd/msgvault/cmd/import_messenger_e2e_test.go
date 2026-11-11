@@ -27,7 +27,7 @@ func saveMessengerState(t *testing.T) func() {
 	prevMe := importMessengerMe
 	prevSource, prevAccount, prevSelfName := importMessengerSource, importMessengerAccount, importMessengerSelfName
 	changed := make(map[string]bool)
-	for _, name := range []string{"source", "account", "self-name"} {
+	for _, name := range []string{"source", "account", "self-name", "format"} {
 		changed[name] = importMessengerCmd.Flags().Lookup(name).Changed
 	}
 	prevFormat := importMessengerFormat
@@ -206,7 +206,7 @@ func TestImportMessengerInstagramEndToEnd(t *testing.T) {
 	var stdout bytes.Buffer
 	rootCmd.SetOut(&stdout)
 	rootCmd.SetErr(io.Discard)
-	rootCmd.SetArgs([]string{"--home", tmp, "import-messenger", "--source", "instagram", "--account", "example", "--self-name", "Nova Example", fixture})
+	rootCmd.SetArgs([]string{"--home", tmp, "import-messenger", "--source", "instagram", "--format", "json", "--account", "example", "--self-name", "Nova Example", fixture})
 	require.NoError(t, rootCmd.ExecuteContext(t.Context()))
 	assert.Contains(t, stdout.String(), "Instagram:")
 	st, err := store.Open(filepath.Join(tmp, "msgvault.db"))

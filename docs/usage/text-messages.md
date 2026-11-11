@@ -377,6 +377,7 @@ identical display names merge, including
 across direct and group chats; distinct names remain distinct.
 
 Each run starts from the beginning. Messages use content fingerprints and occurrence counts within a thread. Reordered copies keep their IDs when their rendered content and reactions match, and a single changed copy keeps its ID when it is the only unmatched copy. Changed copies that cannot be told apart are skipped, their originals keep their reactions, and the run reports incomplete coverage. When an export has more changed copies than the archive holds, the surplus is added with only the reactions every copy shares. Missing media and interrupted ancillary writes retry on replay. Later exports never delete archived messages or stored media. Edited content or renamed thread keys cannot be reconciled without native message IDs.
+Instagram accepts `--format auto` or `--format json` and ignores `--me`, `--no-resume`, and `--checkpoint-interval`.
 Original records and shard provenance are retained with the title and members; timestamps preserve integer
 milliseconds, and missing sender evidence remains unknown. Records with missing
 or unsupported timestamps are skipped. Reaction times remain unknown.
@@ -387,6 +388,7 @@ Successive runs with the same limit progress through the export.
 ## import-messenger
 
 Import Facebook Messenger conversations from a Download Your Information export.
+Messenger ignores `--account` and `--self-name`.
 
 ```bash
 msgvault import-messenger --me <you@facebook.messenger> <dyi-export-dir>

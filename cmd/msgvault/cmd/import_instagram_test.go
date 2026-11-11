@@ -78,3 +78,23 @@ func TestImportInstagramRefreshesCache(t *testing.T) {
 		})
 	}
 }
+
+func TestImportMessengerInstagramRejectsUnsupportedFormat(t *testing.T) {
+	for _, format := range []string{"html", "both", "typo"} {
+		t.Run(format, func(t *testing.T) {
+			markDaemonCLISubprocessForTest(t)
+			t.Cleanup(saveMessengerState(t))
+			cmd := importMessengerCmd
+			previousContext := cmd.Context()
+			t.Cleanup(func() { cmd.SetContext(previousContext) })
+			cmd.SetContext(withStoreResolverConfig(t, lifecycleTestConfig(t.TempDir())))
+			flag := cmd.Flags().Lookup("format")
+			previousChanged := flag.Changed
+			t.Cleanup(func() { flag.Changed = previousChanged })
+			require.NoError(t, cmd.Flags().Set("format", format))
+			importMessengerSource, importMessengerAccount, importMessengerSelfName = "instagram", "example", "Nova Example"
+			fixture := filepath.Join("..", "..", "..", "internal", "fbmessenger", "testdata", "instagram")
+			require.ErrorContains(t, cmd.RunE(cmd, []string{fixture}), "valid: auto, json")
+		})
+	}
+}

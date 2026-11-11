@@ -2487,12 +2487,14 @@ layout are supported. HTML, ZIP and other layouts are rejected. See
 [Instagram imports](usage/text-messages.md#instagram-inbox-import) for coverage and
 identity limits. Run local file imports on the daemon host.
 Multipart ZIP containers are not assembled by this importer.
+Instagram accepts `--format auto` or `--format json` and ignores `--me`, `--no-resume`, and `--checkpoint-interval`.
 
 ---
 
 ## import-messenger
 
 Import Facebook Messenger conversations from a Download Your Information export.
+Messenger ignores `--account` and `--self-name`.
 
 ```bash
 msgvault import-messenger --me <you@facebook.messenger> <dyi-export-dir>
