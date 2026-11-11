@@ -1923,11 +1923,91 @@ type McpEventsListErrorResponse = ErrorResponse
 
 type McpEventsSubscribeResponse = MCPEventsSubscribeResult
 
-type McpEventsSubscribeErrorResponse = ErrorResponse
+type McpEventsSubscribeErrorResponse struct {
+	McpEventsSubscribe_ErrorResponse_AnyOf *McpEventsSubscribe_ErrorResponse_AnyOf `json:"-"`
+}
+
+func (r McpEventsSubscribeErrorResponse) Error() string {
+	return "unmapped client error"
+}
+
+func (m McpEventsSubscribeErrorResponse) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(m.McpEventsSubscribe_ErrorResponse_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("McpEventsSubscribe_ErrorResponse_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (m *McpEventsSubscribeErrorResponse) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if m.McpEventsSubscribe_ErrorResponse_AnyOf == nil {
+		m.McpEventsSubscribe_ErrorResponse_AnyOf = &McpEventsSubscribe_ErrorResponse_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, m.McpEventsSubscribe_ErrorResponse_AnyOf); err != nil {
+		return fmt.Errorf("McpEventsSubscribe_ErrorResponse_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
 
 type McpEventsUnsubscribeResponse = MCPEventsUnsubscribeResult
 
-type McpEventsUnsubscribeErrorResponse = ErrorResponse
+type McpEventsUnsubscribeErrorResponse struct {
+	McpEventsUnsubscribe_ErrorResponse_AnyOf *McpEventsUnsubscribe_ErrorResponse_AnyOf `json:"-"`
+}
+
+func (r McpEventsUnsubscribeErrorResponse) Error() string {
+	return "unmapped client error"
+}
+
+func (m McpEventsUnsubscribeErrorResponse) MarshalJSON() ([]byte, error) {
+	var parts []json.RawMessage
+
+	{
+		b, err := runtime.MarshalJSON(m.McpEventsUnsubscribe_ErrorResponse_AnyOf)
+		if err != nil {
+			return nil, fmt.Errorf("McpEventsUnsubscribe_ErrorResponse_AnyOf marshal: %w", err)
+		}
+		parts = append(parts, b)
+	}
+
+	return runtime.CoalesceOrMerge(parts...)
+}
+
+func (m *McpEventsUnsubscribeErrorResponse) UnmarshalJSON(data []byte) error {
+	trim := bytes.TrimSpace(data)
+	if bytes.Equal(trim, []byte("null")) {
+		return nil
+	}
+	if len(trim) == 0 {
+		return fmt.Errorf("empty JSON input")
+	}
+
+	if m.McpEventsUnsubscribe_ErrorResponse_AnyOf == nil {
+		m.McpEventsUnsubscribe_ErrorResponse_AnyOf = &McpEventsUnsubscribe_ErrorResponse_AnyOf{}
+	}
+
+	if err := runtime.UnmarshalJSON(data, m.McpEventsUnsubscribe_ErrorResponse_AnyOf); err != nil {
+		return fmt.Errorf("McpEventsUnsubscribe_ErrorResponse_AnyOf unmarshal: %w", err)
+	}
+
+	return nil
+}
 
 type GetMCPCapabilitiesResponse = MCPCapabilities
 

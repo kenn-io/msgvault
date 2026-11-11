@@ -4787,6 +4787,18 @@ components:
         - attachment_size
         - deleted_from_source
       type: object
+    Error:
+      additionalProperties: true
+      properties:
+        code:
+          format: int64
+          type: integer
+        reason:
+          type: string
+      required:
+        - code
+        - reason
+      type: object
     ErrorResponse:
       additionalProperties: true
       properties:
@@ -24785,7 +24797,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                anyOf:
+                  - $ref: "#/components/schemas/Error"
+                  - $ref: "#/components/schemas/ErrorResponse"
           description: Error
       security:
         - apiKey: []
@@ -24812,7 +24826,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                anyOf:
+                  - $ref: "#/components/schemas/Error"
+                  - $ref: "#/components/schemas/ErrorResponse"
           description: Error
       security:
         - apiKey: []

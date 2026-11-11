@@ -2,21 +2,23 @@ package api
 
 import (
 	"context"
-	"github.com/danielgtaylor/huma/v2"
-	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/agentgrant"
-	"go.kenn.io/msgvault/internal/apiprotocol"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/agentgrant"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/mcpevents"
 	"go.kenn.io/msgvault/internal/testutil"
 	pkgclient "go.kenn.io/msgvault/pkg/client"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 type countingEventsGate struct{ calls int }
@@ -122,28 +124,90 @@ func TestGeneratedEventsCatalogDecodes(t *testing.T) {
 	assertions.Equal("object", response.JSON200.Events[0].PayloadSchema["type"])
 }
 
-func TestEventsMutationErrorsAreDeclared(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	for _, doc := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
-		for path, statuses := range map[string][]string{
-			"/api/v1/mcp-events/subscribe":   {"400", "404", "429", "503"},
-			"/api/v1/mcp-events/unsubscribe": {"400", "404", "503"},
-		} {
-			operation := pathOperation(doc.Paths[path], http.MethodPost)
-			requirements.NotNil(operation, path)
-			for _, status := range statuses {
-				response := operation.Responses[status]
-				requirements.NotNil(response, "%s: %s", path, status)
-				media := response.Content[applicationJSONMediaType]
-				requirements.NotNil(media, "%s: %s", path, status)
-				requirements.NotNil(media.Schema, "%s: %s", path, status)
-				name := strings.TrimPrefix(media.Schema.Ref, "#/components/schemas/")
-				schema := doc.Components.Schemas.Map()[name]
-				requirements.NotNil(schema, "%s: %s", path, status)
-				assertions.Contains(schema.Properties, "code", "%s: %s", path, status)
-				assertions.Contains(schema.Properties, "reason", "%s: %s", path, status)
-			}
+// decodedEventsError inspects only the generated, decoded response field, not raw bytes.
+func decodedEventsError(t *testing.T, response any) map[string]any {
+	t.Helper()
+	value := reflect.ValueOf(response).Elem()
+	for i := 0; i < value.NumField(); i++ {
+		field := value.Field(i)
+		if strings.HasPrefix(value.Type().Field(i).Name, "JSON") && field.Kind() == reflect.Pointer && !field.IsNil() {
+			data, err := json.Marshal(field.Interface())
+			require.NoError(t, err)
+			var result map[string]any
+			require.NoError(t, json.Unmarshal(data, &result))
+			return result
 		}
 	}
+	require.FailNow(t, "missing decoded error response")
+	return nil
+}
+
+func TestGeneratedEventsMutationErrorsDecode(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	cfg := &config.Config{HomeDir: t.TempDir()}
+	events := &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir()}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, Logger: testLogger()})
+	server := httptest.NewServer(srv.Router())
+	defer server.Close()
+	client, err := pkgclient.New(server.URL)
+	requirements.NoError(err)
+	id := int64(1)
+	secret := "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"
+	arguments := generated.MCPEventsArguments{SourceID: &id}
+	delivery := generated.MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: &secret}
+	body := generated.MCPEventsSubscribeBody{Name: mcpevents.Name, Arguments: arguments, Delivery: delivery}
+	response, err := client.McpEventsSubscribeWithResponse(t.Context(), &generated.McpEventsSubscribeRequestOptions{Body: &body})
+	requirements.Error(err)
+	requirements.NotNil(response)
+	requirements.Equal(http.StatusServiceUnavailable, response.StatusCode)
+	assertions.Equal(map[string]any{"code": float64(mcpevents.Unavailable), "reason": "disabled"}, decodedEventsError(t, response))
+
+	// The same status can contain either an Events error or a middleware error.
+	source, err := st.GetOrCreateSource("imap", "capacity@example.test")
+	requirements.NoError(err)
+	id = source.ID
+	events.Enabled = true
+	events.ConfigTargets = 32
+	capacity, err := client.McpEventsSubscribeWithResponse(t.Context(), &generated.McpEventsSubscribeRequestOptions{Body: &body})
+	requirements.Error(err)
+	requirements.NotNil(capacity)
+	requirements.Equal(http.StatusTooManyRequests, capacity.StatusCode)
+	assertions.Equal(map[string]any{"code": float64(mcpevents.ResourceExhausted), "reason": "subscriptions"}, decodedEventsError(t, capacity))
+
+	badBody := body
+	badBody.Arguments.PersonID = &id
+	invalidSubscribe, err := client.McpEventsSubscribeWithResponse(t.Context(), &generated.McpEventsSubscribeRequestOptions{Body: &badBody})
+	requirements.Error(err)
+	requirements.NotNil(invalidSubscribe)
+	requirements.Equal(http.StatusBadRequest, invalidSubscribe.StatusCode)
+	assertions.Equal(map[string]any{"code": float64(mcpevents.InvalidParams), "reason": "invalid_arguments"}, decodedEventsError(t, invalidSubscribe))
+
+	missingBody := generated.MCPEventsUnsubscribeBody{Name: mcpevents.Name, Arguments: arguments, Delivery: delivery}
+	missing, err := client.McpEventsUnsubscribeWithResponse(t.Context(), &generated.McpEventsUnsubscribeRequestOptions{Body: &missingBody})
+	requirements.Error(err)
+	requirements.NotNil(missing)
+	requirements.Equal(http.StatusNotFound, missing.StatusCode)
+	assertions.Equal(map[string]any{"code": float64(mcpevents.NotFound), "reason": "subscription"}, decodedEventsError(t, missing))
+
+	invalid := generated.MCPEventsUnsubscribeBody{Name: "invalid", Arguments: arguments, Delivery: delivery}
+	unsub, err := client.McpEventsUnsubscribeWithResponse(t.Context(), &generated.McpEventsUnsubscribeRequestOptions{Body: &invalid})
+	requirements.Error(err)
+	requirements.NotNil(unsub)
+	requirements.Equal(http.StatusNotFound, unsub.StatusCode)
+	assertions.Equal(map[string]any{"code": float64(mcpevents.NotFound), "reason": "event"}, decodedEventsError(t, unsub))
+
+	limiter := NewRateLimiter(0, 1)
+	defer limiter.Close()
+	requirements.True(limiter.Allow("127.0.0.1"))
+	limitedServer := httptest.NewServer(RateLimitMiddleware(limiter, nil)(srv.Router()))
+	defer limitedServer.Close()
+	limitedClient, err := pkgclient.New(limitedServer.URL)
+	requirements.NoError(err)
+	limited, err := limitedClient.McpEventsSubscribeWithResponse(t.Context(), &generated.McpEventsSubscribeRequestOptions{Body: &body})
+	requirements.Error(err)
+	requirements.NotNil(limited)
+	requirements.Equal(http.StatusTooManyRequests, limited.StatusCode)
+	assertions.Equal(map[string]any{"error": "rate_limit_exceeded", "message": "Too many requests. Please slow down."}, decodedEventsError(t, limited))
 }

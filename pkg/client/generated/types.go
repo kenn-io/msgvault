@@ -4497,6 +4497,15 @@ func (e EntryRow) Validate() error {
 	return errors
 }
 
+type Error struct {
+	Code   int64  `json:"code"`
+	Reason string `json:"reason" validate:"required"`
+}
+
+func (e Error) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
 type ErrorResponse struct {
 	ErrorData string  `json:"error" validate:"required"`
 	Message   *string `json:"message,omitzero"`

@@ -12,8 +12,20 @@ import (
 
 func (s *Server) registerMCPEventsRoutes(api huma.API) {
 	registerAPIV1RawHumaJSONRoute[mcpevents.MCPEventsListResult](api, "mcpEventsList", http.MethodGet, "/mcp-events/list", "List owner MCP Events", s.handleMCPEventsList)
-	registerAPIV1RawHumaJSONRouteWithRequest[mcpevents.MCPEventsSubscribeRequest, mcpevents.MCPEventsSubscribeResult](api, "mcpEventsSubscribe", http.MethodPost, "/mcp-events/subscribe", "Subscribe to owner MCP Events", s.handleMCPEventsSubscribe)
-	registerAPIV1RawHumaJSONRouteWithRequest[mcpevents.MCPEventsUnsubscribeRequest, mcpevents.MCPEventsUnsubscribeResult](api, "mcpEventsUnsubscribe", http.MethodPost, "/mcp-events/unsubscribe", "Unsubscribe from owner MCP Events", s.handleMCPEventsUnsubscribe)
+	registerMCPEventsMutation[mcpevents.MCPEventsSubscribeRequest, mcpevents.MCPEventsSubscribeResult](api, "mcpEventsSubscribe", http.MethodPost, "/mcp-events/subscribe", "Subscribe to owner MCP Events", s.handleMCPEventsSubscribe)
+	registerMCPEventsMutation[mcpevents.MCPEventsUnsubscribeRequest, mcpevents.MCPEventsUnsubscribeResult](api, "mcpEventsUnsubscribe", http.MethodPost, "/mcp-events/unsubscribe", "Unsubscribe from owner MCP Events", s.handleMCPEventsUnsubscribe)
+}
+func registerMCPEventsMutation[Req any, Resp any](api huma.API, operationID, method, path, summary string, handler http.HandlerFunc) {
+	op := rawAPIV1Operation(operationID, method, path, summary)
+	op.RequestBody = jsonRequestBodyFor[Req](api)
+	op.Responses = jsonResponsesFor[Resp](api)
+	op.Responses["default"] = &huma.Response{
+		Description: "Error",
+		Content: map[string]*huma.MediaType{applicationJSONMediaType: {Schema: &huma.Schema{AnyOf: []*huma.Schema{
+			schemaFor[mcpevents.Error](api), schemaFor[ErrorResponse](api),
+		}}}},
+	}
+	registerRawHumaRoute(api, op, handler)
 }
 func eventsError(w http.ResponseWriter, err error) {
 	var e *mcpevents.Error

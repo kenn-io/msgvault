@@ -33,7 +33,9 @@ API schema 5.3 adds owner-only `GET /api/v1/mcp-events/list`,
 `POST /api/v1/mcp-events/subscribe` and `POST /api/v1/mcp-events/unsubscribe`.
 The list reports whether Events are enabled. The POST routes use the MCP
 Events subscription shape; they accept one person or source and a public HTTPS
-webhook. Agent-grant and remote-client credentials cannot use these routes.
+webhook. Mutation errors contain `code` and `reason`; middleware errors contain
+`error` and `message`, including rate-limit responses. Agent-grant and
+remote-client credentials cannot use these routes.
 See [MCP Events](usage/chat.md#mcp-events) for leases and delivery semantics.
 
 ### Filename suggestions
