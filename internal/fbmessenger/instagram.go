@@ -137,6 +137,10 @@ func parseInstagramThread(ctx context.Context, st *store.Store, sourceID int64, 
 		}
 		message := p.message
 		message.sourceID = p.id
+		message.rawData, err = instagramPreserveCandidates(message.rawData, archived[p.id])
+		if err != nil {
+			return nil, nil, err
+		}
 		parsed.Messages = append(parsed.Messages, message)
 	}
 	for _, id := range repairs {
@@ -150,6 +154,25 @@ func parseInstagramThread(ctx context.Context, st *store.Store, sourceID int64, 
 		parsed.Messages = append(parsed.Messages, message)
 	}
 	return parsed, archived, nil
+}
+
+// Retain the evidence carried by a surplus row after its identity is resolved.
+func instagramPreserveCandidates(raw []byte, stored store.StoredMessage) ([]byte, error) {
+	var prior, current instagramRaw
+	if len(stored.Raw) == 0 {
+		return raw, nil
+	}
+	if err := json.Unmarshal(stored.Raw, &prior); err != nil {
+		return nil, fmt.Errorf("decode archived Instagram record: %w", err)
+	}
+	if len(prior.Candidates) == 0 {
+		return raw, nil
+	}
+	if err := json.Unmarshal(raw, &current); err != nil {
+		return nil, fmt.Errorf("decode Instagram record: %w", err)
+	}
+	current.Candidates = prior.Candidates
+	return json.Marshal(current, jsontext.PreserveRawStrings(true))
 }
 
 func instagramArchivedRecord(stored store.StoredMessage) (rawJSONMessage, bool) {
@@ -334,6 +357,21 @@ func instagramIsSurplus(stored store.StoredMessage) bool {
 	return json.Unmarshal(stored.Raw, &wrapper) == nil && wrapper.DerivedReactions != nil
 }
 
+// A surplus without shared reactions can be resolved by a retained candidate.
+func instagramCanResolveSurplus(stored store.StoredMessage, record rawJSONMessage) bool {
+	var wrapper instagramRaw
+	if json.Unmarshal(stored.Raw, &wrapper) != nil || wrapper.DerivedReactions == nil || len(*wrapper.DerivedReactions) != 0 {
+		return false
+	}
+	for _, candidate := range wrapper.Candidates {
+		prior, ok := instagramArchivedRecord(store.StoredMessage{Raw: candidate})
+		if ok && instagramEvidence(prior) == instagramEvidence(record) {
+			return true
+		}
+	}
+	return false
+}
+
 // reconcileInstagramCopies settles changed copies that share content with
 // unmatched archived rows. One copy for one row keeps the row. When the export
 // can't prove any copy is new, the copies are skipped. Surplus copies are
@@ -344,7 +382,7 @@ func reconcileInstagramCopies(remaining map[instagramContent][]*instagramPending
 		old := unused[content]
 		switch {
 		case len(old) == 0:
-		case len(items) == 1 && len(old) == 1 && !instagramIsSurplus(archived[old[0]]):
+		case len(items) == 1 && len(old) == 1 && (!instagramIsSurplus(archived[old[0]]) || instagramCanResolveSurplus(archived[old[0]], items[0].record)):
 			items[0].id = old[0]
 			used[old[0]] = true
 		default:

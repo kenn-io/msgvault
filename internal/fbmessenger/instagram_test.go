@@ -773,7 +773,6 @@ func TestInstagramRejectsNewerFingerprintInAbsentThread(t *testing.T) {
 		checks.Equal(store.SyncStatusFailed, run.Status)
 		checks.Equal(1, countMessages(t, st, ""))
 	}
-
 }
 
 func TestInstagramRejectsConcurrentImport(t *testing.T) {
@@ -880,6 +879,56 @@ func TestInstagramAddsOnlySurplusCopiesWithSharedReactions(t *testing.T) {
 		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM reactions WHERE reaction_value = 'C'`).Scan(&extra))
 		assert.Zero(extra)
 	})
+}
+
+func TestInstagramSurplusBecomesIdentifiable(t *testing.T) {
+	st, root := testutil.NewTestStore(t), t.TempDir()
+	opts := ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example"}
+	instagramTestShard(t, root, "circle", "message_1.json", instagramCopy("old"))
+	_, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(t, err)
+	instagramTestShard(t, root, "circle", "message_1.json", instagramCopy("first"), instagramCopy("second"))
+	summary, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(t, err)
+	require.True(t, summary.Incomplete)
+	before, _ := instagramSnapshot(t, st)
+	require.Len(t, before, 2)
+	var surplusID string
+	var candidates []json.RawMessage
+	for id, raw := range before {
+		var envelope instagramRaw
+		require.NoError(t, json.Unmarshal([]byte(raw), &envelope))
+		if envelope.DerivedReactions != nil {
+			surplusID = id
+			candidates = append(candidates, envelope.Candidates...)
+		}
+	}
+	require.NotEmpty(t, surplusID)
+	require.Len(t, candidates, 2)
+	instagramTestShard(t, root, "circle", "message_1.json", instagramCopy("old"), instagramCopy("unmatched"))
+	summary, err = ImportDYI(t.Context(), st, opts)
+	require.NoError(t, err)
+	assert.True(t, summary.Incomplete)
+	assert.Zero(t, summary.MessagesAdded)
+	unchanged, _ := instagramSnapshot(t, st)
+	assert.Equal(t, before, unchanged)
+	instagramTestShard(t, root, "circle", "message_1.json", instagramCopy("old"), instagramCopy("second"))
+	for range 2 {
+		summary, err = ImportDYI(t.Context(), st, opts)
+		require.NoError(t, err)
+		assert.False(t, summary.Incomplete)
+		assert.Zero(t, summary.MessagesAdded)
+		raws, reactions := instagramSnapshot(t, st)
+		assert.Len(t, raws, 2)
+		assert.Equal(t, "second", reactions[surplusID])
+		var envelope instagramRaw
+		require.NoError(t, json.Unmarshal([]byte(raws[surplusID]), &envelope))
+		assert.Nil(t, envelope.DerivedReactions)
+		assert.Len(t, envelope.Candidates, 2)
+		for i, candidate := range envelope.Candidates {
+			assert.JSONEq(t, string(candidates[i]), string(candidate))
+		}
+	}
 }
 
 func TestInstagramReportsConversationStatsFailure(t *testing.T) {
