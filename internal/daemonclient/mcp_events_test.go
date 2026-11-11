@@ -65,11 +65,18 @@ func TestMCPEventsErrorReasonsAreWhitelisted(t *testing.T) {
 		reason, want string
 		code, status int
 	}{
+		{"disabled", "disabled", mcpevents.Unavailable, http.StatusServiceUnavailable},
+		{"credential_unavailable", "credential_unavailable", mcpevents.Unavailable, http.StatusServiceUnavailable},
+		{"head_unavailable", "head_unavailable", mcpevents.Unavailable, http.StatusServiceUnavailable},
+		{"store_unavailable", "store_unavailable", mcpevents.Unavailable, http.StatusServiceUnavailable},
+		{"verification_changed", "verification_changed", mcpevents.Unavailable, http.StatusServiceUnavailable},
+		{"source_scope_unavailable", "source_scope_unavailable", mcpevents.Unavailable, http.StatusServiceUnavailable},
+		{"invalid_scope", "invalid_scope", mcpevents.InvalidParams, http.StatusBadRequest},
+		{"subscriptions", "subscriptions", mcpevents.ResourceExhausted, http.StatusTooManyRequests},
 		{"verification_failed", "verification_failed", mcpevents.Forbidden, http.StatusForbidden},
 		{"permission_denied", "permission_denied", mcpevents.Forbidden, http.StatusForbidden},
 		{"person_scope_exceeds_grant", "person_scope_exceeds_grant", mcpevents.Forbidden, http.StatusForbidden},
 		{"private_daemon_detail", "request_rejected", mcpevents.Forbidden, http.StatusForbidden},
-		{"invalid_scope", "invalid_scope", mcpevents.InvalidParams, http.StatusBadRequest},
 		{"dns_error", "dns_error", mcpevents.CallbackEndpoint, http.StatusBadGateway},
 		{"private_callback_detail", "challenge_failed", mcpevents.CallbackEndpoint, http.StatusBadGateway},
 	} {
@@ -84,7 +91,7 @@ func TestMCPEventsErrorReasonsAreWhitelisted(t *testing.T) {
 			client, err := New(Config{URL: server.URL, AllowInsecure: true})
 			require.NoError(err)
 			defer func() { require.NoError(client.Close()) }()
-			_, err = client.MCPEventsList(t.Context())
+			_, err = client.MCPEventsSubscribe(t.Context(), mcpevents.MCPEventsSubscribeRequest{})
 			var eventErr *mcpevents.Error
 			require.ErrorAs(err, &eventErr)
 			assert.Equal(tc.code, eventErr.Code)
