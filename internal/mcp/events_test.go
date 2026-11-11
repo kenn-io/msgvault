@@ -53,7 +53,7 @@ func TestEventsListPropagatesBackendFailure(t *testing.T) {
 	requirements.Equal(http.StatusOK, recorder.Code)
 	var response rawRPCResponse
 	requirements.NoError(json.Unmarshal(recorder.Body.Bytes(), &response))
-	assertions.Equal(float64(mcpevents.Unavailable), response.Error["code"])
+	assertions.InDelta(float64(mcpevents.Unavailable), response.Error["code"], 0)
 }
 
 func (b *eventTestBackend) MCPEventsUnsubscribe(_ context.Context, in mcpevents.MCPEventsUnsubscribeRequest) error {

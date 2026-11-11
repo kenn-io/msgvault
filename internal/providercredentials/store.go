@@ -37,7 +37,7 @@ const (
 	StoredSuppressionEnvironment             = "MSGVAULT_STORED_PERSON_ENRICHMENT_SUPPRESSION_KEY"
 	personEnrichmentCredentialIDPrefix       = "people.enrichment/"
 	peopleProviderCredentialIDPrefix         = "people.provider/"
-	eventsCredentialIDPrefix                 = "mcp.events/"
+	eventsCredentialIDPrefix                 = "mcp.events/" // #nosec G101 -- record ID prefix, not a credential.
 	credentialStoreVersion                   = 1
 	maximumCredentialStoreBytes        int64 = 1 << 20
 )

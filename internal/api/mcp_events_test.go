@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
@@ -119,4 +120,30 @@ func TestGeneratedEventsCatalogDecodes(t *testing.T) {
 	requirements.Len(response.JSON200.Events, 1)
 	assertions.Equal("object", response.JSON200.Events[0].InputSchema["type"])
 	assertions.Equal("object", response.JSON200.Events[0].PayloadSchema["type"])
+}
+
+func TestEventsMutationErrorsAreDeclared(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	for _, doc := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
+		for path, statuses := range map[string][]string{
+			"/api/v1/mcp-events/subscribe":   {"400", "404", "429", "503"},
+			"/api/v1/mcp-events/unsubscribe": {"400", "404", "503"},
+		} {
+			operation := pathOperation(doc.Paths[path], http.MethodPost)
+			requirements.NotNil(operation, path)
+			for _, status := range statuses {
+				response := operation.Responses[status]
+				requirements.NotNil(response, "%s: %s", path, status)
+				media := response.Content[applicationJSONMediaType]
+				requirements.NotNil(media, "%s: %s", path, status)
+				requirements.NotNil(media.Schema, "%s: %s", path, status)
+				name := strings.TrimPrefix(media.Schema.Ref, "#/components/schemas/")
+				schema := doc.Components.Schemas.Map()[name]
+				requirements.NotNil(schema, "%s: %s", path, status)
+				assertions.Contains(schema.Properties, "code", "%s: %s", path, status)
+				assertions.Contains(schema.Properties, "reason", "%s: %s", path, status)
+			}
+		}
+	}
 }

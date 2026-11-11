@@ -61,7 +61,7 @@ func (s *Service) Available(_ context.Context) bool {
 func callbackOrigin(raw string) (string, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("parse callback URL: %w", err)
 	}
 	return providercredentials.EndpointOrigin(u.Scheme + "://" + u.Host)
 }
