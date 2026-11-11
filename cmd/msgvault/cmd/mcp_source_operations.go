@@ -152,7 +152,7 @@ func (b *daemonMCPOperations) executeSourceOperation(ctx context.Context, name s
 		if decodeErr != nil {
 			return invalid()
 		}
-		result, err = readMCPArchivePageJSON[generated.ChangesResponse](ctx, b.client, "/api/v1/messages/changes", &generated.ListChangedMessagesRequestOptions{Query: &generated.ListChangedMessagesQuery{Cursor: input.Cursor, Limit: input.Limit, PersonID: input.PersonID, SourceID: input.SourceIDs, ConversationID: input.ConversationIDs, IncomingOnly: input.IncomingOnly}}, changesRefusal)
+		result, err = readMCPArchivePageJSON[generated.ChangesResponse](ctx, b.client, "/api/v1/messages/changes", &generated.ListChangedMessagesRequestOptions{Query: &generated.ListChangedMessagesQuery{Cursor: input.Cursor, Limit: input.Limit, PersonID: input.PersonID, SourceID: input.SourceIDs, ConversationID: input.ConversationIDs, IncomingOnly: input.IncomingOnly}}, func(code string, _ []byte) (any, bool) { return nil, changesRefusal(code) })
 	case "list_source_status":
 		input, decodeErr := decodeMCPOperationArguments[sourceStatusArguments](args)
 		if decodeErr != nil {

@@ -46,7 +46,7 @@ func (b *daemonMCPOperations) executeImportJob(ctx context.Context, name string,
 		if !ok {
 			return operationFailure("invalid_arguments", false), true, nil
 		}
-		result, err := readMCPOperationJSONWithClassifier[generated.ImportJobResponse](ctx, b.client, http.MethodPost, "/api/v1/imports", &generated.CreateImportJobRequestOptions{Body: &input}, importJobRefusal, http.StatusAccepted)
+		result, err := readMCPOperationJSONWithClassifier[generated.ImportJobResponse](ctx, b.client, http.MethodPost, "/api/v1/imports", &generated.CreateImportJobRequestOptions{Body: &input}, func(code string, _ []byte) (any, bool) { return nil, importJobRefusal(code) }, http.StatusAccepted)
 		return result, true, err
 	case "get_import_job":
 		input, err := decodeMCPOperationArguments[struct {
