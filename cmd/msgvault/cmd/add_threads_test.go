@@ -231,6 +231,9 @@ func TestAddThreadsRegistrationFailureRecovery(t *testing.T) {
 			}
 			_, err := executeAddThreadsFixture(t, deps, "123")
 			require.ErrorContains(err, "rerun add-threads")
+			if stage == "setup" {
+				require.ErrorContains(err, "threads:123:20")
+			}
 			_, tokenErr := deps.tokenManager().Load("123", "20")
 			_, sourceErr := st.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeThreads, "threads:123:20")
 			if stage == "before source" {

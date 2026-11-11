@@ -10,8 +10,6 @@ import (
 	"go.kenn.io/msgvault/internal/threads"
 )
 
-const sourceTypeThreads = "threads"
-
 type threadsCommandDeps struct {
 	bind                 func(context.Context) threadsCommandDeps
 	openStore            func() (*store.Store, func(), error)

@@ -178,10 +178,6 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 			if err != nil {
 				return err
 			}
-			verified, err := threads.SourceIdentifier(record.AppID, record.OwnerID)
-			if err != nil || verified != identifier {
-				return threads.ErrReauthorizationRequired
-			}
 			_, priorErr := manager.Load(record.AppID, record.OwnerID)
 			if priorErr != nil && !errors.Is(priorErr, threads.ErrTokenNotFound) {
 				return fmt.Errorf("the Threads token for %s could not be read; rerun add-threads, or inspect its token file using the add-threads documentation", identifier)
@@ -225,7 +221,7 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 			if execution == nil {
 				execution, err = st.AcquireSyncExecutionContext(ctx, source.ID)
 				if err != nil {
-					return err
+					return fmt.Errorf("the Threads account %s and its token were saved, but finishing setup failed; rerun add-threads: %w", identifier, err)
 				}
 			}
 			logger := slog.New(slog.DiscardHandler)
@@ -237,14 +233,14 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 				return err
 			}
 			if err := setDefaultIdentityOptOut(ctx, cmd, st, source, optOut); err != nil {
-				return err
+				return fmt.Errorf("the Threads account %s and its token were saved, but finishing setup failed; rerun add-threads: %w", identifier, err)
 			}
 			if !optOut {
-				confirmDefaultIdentity(ctx, cmd.OutOrStdout(), st, source.ID, identifier, identifier, "threads_user_id", logger)
+				confirmDefaultIdentity(ctx, cmd.OutOrStdout(), st, source.ID, identifier, identifier, "account-identifier", logger)
 			}
 			if deps.postSourceMigrations != nil {
 				if err := deps.postSourceMigrations(st); err != nil {
-					return fmt.Errorf("the Threads token was saved, but finishing account setup failed; rerun add-threads: %w", err)
+					return fmt.Errorf("the Threads account %s and its token were saved, but finishing setup failed; rerun add-threads: %w", identifier, err)
 				}
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Connected Threads account: %s (token expires %s)\n", identifier, record.ExpiresAt.UTC().Format(time.RFC3339))
@@ -279,9 +275,6 @@ func registerThreadsSource(ctx context.Context, st *store.Store, record threads.
 		if err := updateSourceDisplayNameForRegistration(st, source.ID, label, nil); err != nil {
 			return nil, err
 		}
-	}
-	if _, err := st.EnsureParticipantByIdentifierContext(ctx, "threads_user_id", identifier, label); err != nil {
-		return nil, err
 	}
 	return st.GetSourceByIDContext(ctx, source.ID)
 }
