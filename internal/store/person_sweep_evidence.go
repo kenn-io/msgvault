@@ -949,8 +949,8 @@ func personSweepStatusEffect(effect peoplesweep.EvidenceChangeEffect) (bool, per
 	}
 }
 
-// Maintain cited commitment evidence only over this apply's consumed frontier.
-// The ordinary extraction cursor remains untouched without its own grant.
+// Maintain cited evidence only over this apply's consumed frontier. The ordinary
+// extraction cursor remains untouched without its own grant.
 func (s *Store) prepareCommitmentStatuses(ctx context.Context, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep, verified commitmentEvidenceAligner) error {
 	personID := request.Lease.PersonID
 	var previous int64
@@ -989,30 +989,55 @@ func (s *Store) prepareCommitmentStatuses(ctx context.Context, request peopleswe
 		return err
 	}
 	for _, stored := range evidence {
-		message, commitment := strings.CutPrefix(stored.Input.SourceRef, personfacts.CommitmentMessageRefPrefix)
-		if !commitment {
-			continue
-		}
-		change, changed := affected[stored.Key]
-		_, verifiedNow := verified[stored.Key]
-		if !changed && !verifiedNow {
-			continue
-		}
-		alignment, err := s.reactivatePersonSweepEvidence(ctx, stored.Input, true)
+		change, id, ok, err := s.maintainedStatus(ctx, stored, affected, verified)
 		if err != nil {
 			return err
 		}
-		if !changed || alignment.Accepted {
-			change = personfacts.EvidenceStatusChange{EvidenceKey: stored.Key, SourceVersion: stored.Input.SourceVersion, Supported: alignment.Accepted, Reason: personfacts.EvidenceStatusSourceReimported}
+		if ok {
+			prepared.statuses = append(prepared.statuses, change)
+			prepared.maintenanceIDs = append(prepared.maintenanceIDs, id)
 		}
-		// Current exact verification wins over an earlier edit in this range.
-		change.Supported = alignment.Accepted
-		prepared.statuses = append(prepared.statuses, change)
-		id, err := strconv.ParseInt(message, 10, 64)
-		if err != nil {
-			return fmt.Errorf("decode stored commitment evidence %s: %w", stored.Key, err)
-		}
-		prepared.maintenanceIDs = append(prepared.maintenanceIDs, id)
 	}
 	return nil
+}
+
+// maintainedStatus decides one stored evidence row's support over the consumed
+// range and returns the message it cites for the post-snapshot fence. Commitment
+// evidence is verified against the commitment admission path; ordinary evidence
+// keeps its own aligner, so re-extracted current evidence survives an older edit
+// in a lagging range. Rows the range does not touch report no status.
+func (s *Store) maintainedStatus(ctx context.Context, stored personfacts.Evidence, affected map[string]personfacts.EvidenceStatusChange, verified commitmentEvidenceAligner) (personfacts.EvidenceStatusChange, int64, bool, error) {
+	change, changed := affected[stored.Key]
+	_, verifiedNow := verified[stored.Key]
+	if !changed && !verifiedNow {
+		return change, 0, false, nil
+	}
+	message, commitment := strings.CutPrefix(stored.Input.SourceRef, personfacts.CommitmentMessageRefPrefix)
+	alignment, err := s.reactivatePersonSweepEvidence(ctx, stored.Input, commitment)
+	if errors.Is(err, peoplesweep.ErrSourceTextUnavailable) {
+		// Document and attachment text cannot be re-verified. The builder skips
+		// their supported changes, so an affected row here carries only an
+		// unsupported event, which the zero alignment below leaves unsupported.
+		err = nil
+	}
+	if err != nil {
+		return change, 0, false, err
+	}
+	if !changed || alignment.Accepted {
+		change = personfacts.EvidenceStatusChange{EvidenceKey: stored.Key, SourceVersion: stored.Input.SourceVersion, Supported: alignment.Accepted, Reason: personfacts.EvidenceStatusSourceReimported}
+	}
+	// Current exact verification wins over an earlier edit in this range.
+	change.Supported = alignment.Accepted
+	var id int64
+	if commitment {
+		id, err = strconv.ParseInt(message, 10, 64)
+	} else {
+		var ref peoplesweep.EvidenceRef
+		ref, err = peoplesweep.DecodePersonSweepEvidenceRef(stored.Input.SourceRef)
+		id = ref.MessageID
+	}
+	if err != nil {
+		return change, 0, false, fmt.Errorf("decode stored maintained evidence %s: %w", stored.Key, err)
+	}
+	return change, id, true, nil
 }
