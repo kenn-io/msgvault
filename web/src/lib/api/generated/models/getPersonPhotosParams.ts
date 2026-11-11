@@ -9,11 +9,7 @@ export type GetPersonPhotosParams = {
    */
   uid: string;
   /**
-   * @maxLength 4096
+   * @maxLength 8192
    */
   cursor?: string;
-  /**
-   * @maxLength 1024
-   */
-  occurrence_cursor?: string;
 };

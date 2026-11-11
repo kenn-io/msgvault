@@ -1,13 +1,13 @@
 package api
 
 import (
-	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json/v2"
 	"errors"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
@@ -15,10 +15,10 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-type photoOccurrenceCursor struct {
-	Version      int    `json:"version"`
-	VersionID    string `json:"v"`
-	AttachmentID int64  `json:"a"`
+type photoCursor struct {
+	AssertionCursor string `json:"c,omitempty"`
+	VersionID       string `json:"v,omitempty"`
+	AttachmentID    int64  `json:"a,omitempty"`
 }
 
 type PersonPhotoEvidence struct {
@@ -28,26 +28,23 @@ type PersonPhotoEvidence struct {
 	OccurrencesTruncated bool                    `json:"occurrences_truncated"`
 }
 type PersonPhotosResponse struct {
-	UID                  string                `json:"uid"`
-	LinkState            string                `json:"link_state"`
-	PersonID             string                `json:"person_id,omitempty"`
-	Photos               []PersonPhotoEvidence `json:"photos"`
-	NextCursor           string                `json:"next_cursor,omitempty"`
-	Truncated            bool                  `json:"truncated"`
-	NextOccurrenceCursor string                `json:"next_occurrence_cursor,omitempty"`
+	UID        string                `json:"uid"`
+	LinkState  string                `json:"link_state"`
+	PersonID   string                `json:"person_id,omitempty"`
+	Photos     []PersonPhotoEvidence `json:"photos"`
+	NextCursor string                `json:"next_cursor,omitempty"`
+	Truncated  bool                  `json:"truncated"`
 }
 type PersonPhotoLinkRequest struct {
-	UID       string `json:"uid" minLength:"1" maxLength:"256"`
-	PersonID  string `json:"person_id" format:"uuid"`
-	Revision  int64  `json:"revision" minimum:"1"`
-	State     string `json:"state" enum:"current,unlinked"`
-	LinkedUID string `json:"linked_uid,omitempty" maxLength:"256"`
+	UID      string `json:"uid" minLength:"1" maxLength:"256"`
+	PersonID string `json:"person_id" format:"uuid"`
+	Revision int64  `json:"revision" minimum:"1"`
+	State    string `json:"state" enum:"current,unlinked"`
 }
 type PersonPhotoLinkResponse struct {
-	UID       string `json:"uid"`
-	LinkedUID string `json:"linked_uid"`
-	State     string `json:"state"`
-	Revision  int64  `json:"revision"`
+	UID      string `json:"uid"`
+	State    string `json:"state"`
+	Revision int64  `json:"revision"`
 }
 
 func (s *Server) photoReader() (*DocbankAttachmentReader, error) {
@@ -58,6 +55,9 @@ func (s *Server) photoReader() (*DocbankAttachmentReader, error) {
 }
 func photoError(err error) error {
 	var remote *docbankmedia.HTTPError
+	if status, ok := errors.AsType[huma.StatusError](err); ok {
+		return status
+	}
 	switch {
 	case errors.Is(err, store.ErrPersonNotFound):
 		return huma.Error404NotFound("person not found")
@@ -67,6 +67,8 @@ func photoError(err error) error {
 		return huma.Error503ServiceUnavailable("Docbank person lookup unsupported")
 	case errors.As(err, &remote) && remote.Status == http.StatusNotFound:
 		return huma.Error404NotFound("Docbank person not found")
+	case errors.As(err, &remote) && remote.Status == http.StatusUnprocessableEntity:
+		return huma.Error422UnprocessableEntity("invalid Docbank request")
 	case errors.As(err, &remote) && remote.Status == http.StatusConflict:
 		return huma.Error409Conflict("Docbank identity conflict; review required")
 	case errors.As(err, &remote) && remote.Status == http.StatusPreconditionFailed:
@@ -91,76 +93,51 @@ func photoIdentity(ctx context.Context, r *DocbankAttachmentReader, uid string) 
 	return person, uids, archive, nil
 }
 
-// photoUnlinkUID selects an explicit UID or the unique active Docbank target.
-func photoUnlinkUID(ctx context.Context, r *DocbankAttachmentReader, archive string, uids []string, linked, requested, canonical string) (string, error) {
-	if linked != "" {
-		return linked, nil
-	}
-	id, first, err := photoRemotePerson(ctx, r, archive, uids)
-	if err != nil {
-		return "", err
-	}
-	if id != "" {
-		if first == "" || !slices.Contains(uids, first) {
-			return "", huma.Error409Conflict("multiple or external Docbank links; review required")
-		}
-		return first, nil
-	}
-	if slices.Contains(uids, requested) {
-		return requested, nil
-	}
-	return canonical, nil
-}
-
-func photoRemotePerson(ctx context.Context, r *DocbankAttachmentReader, archive string, uids []string) (id, first string, err error) {
-	multiple := false
+func photoRemotePerson(ctx context.Context, r *DocbankAttachmentReader, archive string, uids []string) (string, []string, error) {
+	var id string
+	var resolved []string
 	for _, uid := range uids {
 		found, err := r.Client.ResolveExternalPerson(ctx, archive, uid)
 		if remote, ok := errors.AsType[*docbankmedia.HTTPError](err); ok && remote.Status == http.StatusNotFound && remote.Reason == "not_found" {
 			continue
 		}
 		if err != nil {
-			return "", "", err
+			return "", nil, err
 		}
 		if id != "" && id != found.PersonID {
-			return "", "", huma.Error409Conflict("multiple Docbank people linked; review required")
+			return "", nil, huma.Error409Conflict("multiple Docbank people linked; review required")
 		}
-		if first != "" && first != found.ResolvedUID {
-			multiple = true
+		id = found.PersonID
+		if !slices.Contains(resolved, found.ResolvedUID) {
+			resolved = append(resolved, found.ResolvedUID)
 		}
-		id, first = found.PersonID, cmp.Or(first, found.ResolvedUID)
 	}
-	if multiple {
-		first = ""
-	}
-	return id, first, nil
-}
-func photoFailure(err error) error {
-	if status, ok := errors.AsType[huma.StatusError](err); ok {
-		return status
-	}
-	return photoError(err)
+	return id, resolved, nil
 }
 
 func (s *Server) registerPersonPhotoRoutes(api huma.API) {
 	get := rawAPIV1Operation("getPersonPhotos", http.MethodGet, "/people/by-uid/photos", "List confirmed person photo attachments")
 	get.Errors = append(get.Errors, http.StatusNotFound, http.StatusConflict, http.StatusServiceUnavailable)
 	huma.Register(api, get, func(ctx context.Context, in *struct {
-		UID              string `query:"uid" required:"true" minLength:"1" maxLength:"256"`
-		Cursor           string `query:"cursor" maxLength:"4096"`
-		OccurrenceCursor string `query:"occurrence_cursor" maxLength:"1024"`
+		UID    string `query:"uid" required:"true" minLength:"1" maxLength:"256"`
+		Cursor string `query:"cursor" maxLength:"8192"`
 	}) (*struct{ Body PersonPhotosResponse }, error) {
 		position := store.DocumentOccurrencePage{}
-		if in.OccurrenceCursor != "" {
-			data, err := base64.RawURLEncoding.DecodeString(in.OccurrenceCursor)
-			var token photoOccurrenceCursor
-			if err != nil || json.Unmarshal(data, &token) != nil || token.Version != 1 || token.AttachmentID <= 0 {
-				return nil, huma.Error400BadRequest("invalid occurrence cursor")
+		var cursor photoCursor
+		if in.Cursor != "" {
+			if !strings.HasPrefix(in.Cursor, "1.") {
+				return nil, huma.Error400BadRequest("invalid photo cursor")
 			}
-			if _, err := uuid.Parse(token.VersionID); err != nil {
-				return nil, huma.Error400BadRequest("invalid occurrence cursor")
+			data, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(in.Cursor, "1."))
+			if err != nil || json.Unmarshal(data, &cursor) != nil || len(cursor.AssertionCursor) > 4096 || (cursor.VersionID == "") != (cursor.AttachmentID == 0) || cursor.AttachmentID < 0 || (cursor.AssertionCursor == "" && cursor.VersionID == "") {
+				return nil, huma.Error400BadRequest("invalid photo cursor")
 			}
-			position = store.DocumentOccurrencePage{VersionID: token.VersionID, AttachmentID: token.AttachmentID}
+			if cursor.VersionID != "" {
+				if _, err := uuid.Parse(cursor.VersionID); err != nil {
+					return nil, huma.Error400BadRequest("invalid photo cursor")
+				}
+			}
+			position = store.DocumentOccurrencePage{VersionID: cursor.VersionID, AttachmentID: cursor.AttachmentID}
 		}
 		r, err := s.photoReader()
 		if err != nil {
@@ -168,22 +145,19 @@ func (s *Server) registerPersonPhotoRoutes(api huma.API) {
 		}
 		person, uids, archive, err := photoIdentity(ctx, r, in.UID)
 		if err != nil {
-			return nil, photoFailure(err)
+			return nil, photoError(err)
 		}
 		id, _, err := photoRemotePerson(ctx, r, archive, uids)
 		if err != nil {
-			return nil, photoFailure(err)
+			return nil, photoError(err)
 		}
 		response := PersonPhotosResponse{UID: person.VCardUID, LinkState: "unlinked", Photos: []PersonPhotoEvidence{}}
 		if id == "" {
 			return &struct{ Body PersonPhotosResponse }{response}, nil
 		}
-		page, err := r.Client.PersonAssertions(ctx, id, in.Cursor)
+		page, err := r.Client.PersonAssertions(ctx, id, cursor.AssertionCursor)
 		if err != nil {
-			if remote, ok := errors.AsType[*docbankmedia.HTTPError](err); ok && in.Cursor != "" && remote.Status == http.StatusUnprocessableEntity && (remote.Reason == "validation" || remote.Reason == "invalid_person") {
-				return nil, huma.Error422UnprocessableEntity("invalid assertion cursor")
-			}
-			return nil, photoFailure(err)
+			return nil, photoError(err)
 		}
 		if page.State != "curated" && page.State != "provisional" {
 			return nil, huma.Error409Conflict("Docbank person is not active")
@@ -196,18 +170,18 @@ func (s *Server) registerPersonPhotoRoutes(api huma.API) {
 		}
 		occurrences, err := r.Store.DocumentSearchOccurrences(ctx, r.Destination, nil, ids, 100, &position)
 		if err != nil {
-			return nil, photoFailure(err)
+			return nil, photoError(err)
 		}
 		byVersion := map[string][]MediaAttachmentResult{}
 		truncated := map[string]bool{}
 		if len(occurrences) > 100 {
 			last := occurrences[99]
 			truncated[last.VersionID] = occurrences[100].VersionID == last.VersionID
-			token, err := json.Marshal(photoOccurrenceCursor{Version: 1, VersionID: last.VersionID, AttachmentID: last.AttachmentID})
+			token, err := json.Marshal(photoCursor{AssertionCursor: cursor.AssertionCursor, VersionID: last.VersionID, AttachmentID: last.AttachmentID})
 			if err != nil {
-				return nil, photoFailure(err)
+				return nil, photoError(err)
 			}
-			response.NextOccurrenceCursor = base64.RawURLEncoding.EncodeToString(token)
+			response.NextCursor = "1." + base64.RawURLEncoding.EncodeToString(token)
 			occurrences = occurrences[:100]
 		}
 		for _, o := range occurrences {
@@ -220,8 +194,14 @@ func (s *Server) registerPersonPhotoRoutes(api huma.API) {
 		}
 		response.LinkState = "linked"
 		response.PersonID = id
-		response.NextCursor = page.NextCursor
-		response.Truncated = page.Truncated
+		if response.NextCursor == "" && page.NextCursor != "" {
+			token, err := json.Marshal(photoCursor{AssertionCursor: page.NextCursor})
+			if err != nil {
+				return nil, photoError(err)
+			}
+			response.NextCursor = "1." + base64.RawURLEncoding.EncodeToString(token)
+		}
+		response.Truncated = response.NextCursor != ""
 		return &struct{ Body PersonPhotosResponse }{response}, nil
 	})
 	put := rawAPIV1Operation("putPersonPhotoLink", http.MethodPut, "/people/by-uid/photo-link", "Link a person to Docbank")
@@ -233,34 +213,26 @@ func (s *Server) registerPersonPhotoRoutes(api huma.API) {
 		}
 		p, uids, archive, err := photoIdentity(ctx, r, in.Body.UID)
 		if err != nil {
-			return nil, photoFailure(err)
+			return nil, photoError(err)
 		}
-		uid := p.VCardUID
-		if in.Body.State == "unlinked" {
-			if uid, err = photoUnlinkUID(ctx, r, archive, uids, in.Body.LinkedUID, in.Body.UID, uid); err != nil {
-				return nil, photoFailure(err)
-			}
-		}
-		if !slices.Contains(uids, uid) {
-			return nil, huma.Error400BadRequest("linked UID does not belong to person")
-		}
-		if in.Body.State == "current" && in.Body.LinkedUID != "" && in.Body.LinkedUID != uid {
-			return nil, huma.Error400BadRequest("current link must use canonical UID")
-		}
-		if in.Body.State == "current" {
-			linked, _, err := photoRemotePerson(ctx, r, archive, uids)
-			if err != nil {
-				return nil, photoFailure(err)
-			}
-			if linked != "" && linked != in.Body.PersonID {
-				return nil, huma.Error409Conflict("person is linked elsewhere; review required")
-			}
-		}
-		identity := docbankmedia.ExternalPersonIdentity{System: "msgvault", ArchiveID: archive, UID: uid, UIDState: in.Body.State, LastSeenRevision: p.Revision}
-		_, revision, err := r.Client.SetExternalPersonIdentity(ctx, in.Body.PersonID, in.Body.Revision, identity)
+		linked, targets, err := photoRemotePerson(ctx, r, archive, uids)
 		if err != nil {
-			return nil, photoFailure(err)
+			return nil, photoError(err)
 		}
-		return &struct{ Body PersonPhotoLinkResponse }{PersonPhotoLinkResponse{UID: p.VCardUID, LinkedUID: uid, State: in.Body.State, Revision: revision}}, nil
+		if linked != "" && linked != in.Body.PersonID {
+			return nil, huma.Error409Conflict("person is linked elsewhere; review required")
+		}
+		if in.Body.State == "current" || len(targets) == 0 {
+			targets = []string{p.VCardUID}
+		}
+		revision := in.Body.Revision
+		for _, uid := range targets {
+			identity := docbankmedia.ExternalPersonIdentity{System: "msgvault", ArchiveID: archive, UID: uid, UIDState: in.Body.State, LastSeenRevision: p.Revision}
+			_, revision, err = r.Client.SetExternalPersonIdentity(ctx, in.Body.PersonID, revision, identity)
+			if err != nil {
+				return nil, photoError(err)
+			}
+		}
+		return &struct{ Body PersonPhotoLinkResponse }{PersonPhotoLinkResponse{UID: p.VCardUID, State: in.Body.State, Revision: revision}}, nil
 	})
 }

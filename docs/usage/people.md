@@ -62,15 +62,10 @@ service that supports external person identities. Names never establish a link.
 Send `PUT /api/v1/people/by-uid/photo-link` with JSON containing `uid` (a
 current, retired, or bound CardDAV UID), the selected Docbank `person_id`, its
 current `revision`, and `state` set to `current` or `unlinked`. A current link
-uses the profile's canonical vCard UID. Without `linked_uid`, an unlink
-targets the active UID to which Docbank resolves the profile, falling back
-to the supplied `uid` (if it belongs to the profile) and then the canonical UID.
-If those UIDs resolve to different active links or people, the request returns
-409 and writes nothing. To target a specific UID retained after a local merge,
-supply it as `linked_uid`; it must belong to that profile. The response
-returns the canonical `uid`, the `linked_uid`, the resulting `state`, and the
-new Docbank `revision`. A stale revision returns 412; conflicting links return
-409 for review.
+uses the profile's canonical vCard UID. An unlink clears every UID that Docbank
+resolves to that person. The response returns the canonical `uid`, the resulting
+`state`, and the new Docbank `revision`. A stale revision returns 412; conflicting
+links return 409 for review.
 
 `GET /api/v1/people/by-uid/photos?uid=<uid>` returns the canonical UID, a
 `link_state` of `linked` or `unlinked`, and confirmed photo assertions with
@@ -78,18 +73,10 @@ current visible attachment occurrences. Results include Docbank assertion and
 content version IDs. A retained original remains queryable after a Docbank
 node is replaced; an assertion on the replacement version cannot match the
 original attachment receipt. Results do not include unconfirmed face
-suggestions. Each assertion page returns up to 100 occurrences ordered by
-content version ID and attachment ID. When `next_occurrence_cursor` is
-present, repeat the same assertion `cursor` with `occurrence_cursor` set to
-that value. Once it is absent, follow `next_cursor` when `truncated` is true,
-and omit the occurrence cursor for the next assertion page. The cursor keeps
-its place when earlier attachments disappear; each page reflects current
-visible data. `occurrences_truncated` marks the last photo when more of its
-occurrences follow. Distinct Docbank people linked to the same profile's
-current and retired UIDs produce a 409 for review. A linked person with no
-visible photos returns an empty list. A Docbank service without person identity
-routes returns 503. Linking works regardless of the profile's display name
-length.
+suggestions. Each page returns up to 100 occurrences ordered by content version
+ID and attachment ID. Follow `next_cursor` while `truncated` is true. Each page
+reflects current visible data. A linked person with no visible photos returns
+an empty list. A Docbank service without person identity routes returns 503.
 
 If a link write has an uncertain outcome, read the selected Docbank person's
 current link and revision before retrying.

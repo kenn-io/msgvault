@@ -3,7 +3,6 @@
  */
 
 export interface PersonPhotoLinkResponse {
-  linked_uid: string;
   revision: number;
   state: string;
   uid: string;

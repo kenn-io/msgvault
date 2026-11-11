@@ -163,24 +163,16 @@ func (s *Store) DocumentSearchOccurrences(ctx context.Context, destination strin
 		versionArgs[i] = id
 	}
 	with, query, args := s.documentSearchRows(destination, scope, `d.version_id IN (?`+strings.Repeat(",?", len(versionIDs)-1)+`)`, versionArgs)
-	partition := "d.version_id, m.id"
-	if page != nil {
-		partition = "d.version_id, d.attachment_id"
-	}
-	query = with + `, duplicates AS (
- SELECT d.version_id, d.attachment_id, m.id AS message_id, cv.id AS conversation_id,
+	columns := ` d.version_id, d.attachment_id, m.id AS message_id, cv.id AS conversation_id,
  d.filename, ` + containingTitleMCVSQL + ` AS containing_title,
- COALESCE(m.sent_at,m.received_at,m.internal_date) AS occurred_at,
- ROW_NUMBER() OVER (PARTITION BY ` + partition + ` ORDER BY d.attachment_id) AS duplicate_rank` + query + `
- )`
+ COALESCE(m.sent_at,m.received_at,m.internal_date) AS occurred_at`
 	if page != nil {
-		query += ` SELECT version_id, attachment_id, message_id, conversation_id, filename, containing_title, occurred_at
- FROM duplicates WHERE duplicate_rank = 1 AND (version_id > ? OR (version_id = ? AND attachment_id > ?))
- ORDER BY version_id, attachment_id LIMIT ?`
+		query = with + ` SELECT ` + columns + query + ` AND (d.version_id > ? OR (d.version_id = ? AND d.attachment_id > ?)) ORDER BY d.version_id, d.attachment_id LIMIT ?`
 		args = append(args, page.VersionID, page.VersionID, page.AttachmentID, limit+1)
 	} else {
-		query += `, ranked AS (SELECT *,
- ROW_NUMBER() OVER (PARTITION BY version_id ORDER BY occurred_at DESC NULLS LAST, attachment_id) AS occurrence_rank FROM duplicates WHERE duplicate_rank = 1
+		query = with + `, duplicates AS (SELECT ` + columns + `,
+ ROW_NUMBER() OVER (PARTITION BY d.version_id, m.id ORDER BY d.attachment_id) AS duplicate_rank` + query + `
+ ), ranked AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY version_id ORDER BY occurred_at DESC NULLS LAST, attachment_id) AS occurrence_rank FROM duplicates WHERE duplicate_rank = 1
  ) SELECT version_id, attachment_id, message_id, conversation_id, filename, containing_title, occurred_at
  FROM ranked WHERE occurrence_rank <= ? ORDER BY occurred_at DESC NULLS LAST, attachment_id`
 		args = append(args, limit+1)

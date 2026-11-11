@@ -13242,20 +13242,14 @@ func (p PersonPhotoEvidence) Validate() error {
 }
 
 type PersonPhotoLinkRequest struct {
-	LinkedUID *string                     `json:"linked_uid,omitzero" validate:"omitempty,max=256"`
-	PersonID  uuid.UUID                   `json:"person_id" validate:"required"`
-	Revision  int64                       `json:"revision" validate:"gte=1"`
-	State     PersonPhotoLinkRequestState `json:"state" validate:"required"`
-	UID       string                      `json:"uid" validate:"required,max=256,min=1"`
+	PersonID uuid.UUID                   `json:"person_id" validate:"required"`
+	Revision int64                       `json:"revision" validate:"gte=1"`
+	State    PersonPhotoLinkRequestState `json:"state" validate:"required"`
+	UID      string                      `json:"uid" validate:"required,max=256,min=1"`
 }
 
 func (p PersonPhotoLinkRequest) Validate() error {
 	var errors runtime.ValidationErrors
-	if p.LinkedUID != nil {
-		if err := typesValidator.Var(p.LinkedUID, "omitempty,max=256"); err != nil {
-			errors = errors.Append("LinkedUID", err)
-		}
-	}
 	if v, ok := any(p.PersonID).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("PersonID", err)
@@ -13279,10 +13273,9 @@ func (p PersonPhotoLinkRequest) Validate() error {
 }
 
 type PersonPhotoLinkResponse struct {
-	LinkedUID string `json:"linked_uid" validate:"required"`
-	Revision  int64  `json:"revision"`
-	State     string `json:"state" validate:"required"`
-	UID       string `json:"uid" validate:"required"`
+	Revision int64  `json:"revision"`
+	State    string `json:"state" validate:"required"`
+	UID      string `json:"uid" validate:"required"`
 }
 
 func (p PersonPhotoLinkResponse) Validate() error {
@@ -13290,13 +13283,12 @@ func (p PersonPhotoLinkResponse) Validate() error {
 }
 
 type PersonPhotosResponse struct {
-	LinkState            string                `json:"link_state" validate:"required"`
-	NextCursor           *string               `json:"next_cursor,omitzero"`
-	NextOccurrenceCursor *string               `json:"next_occurrence_cursor,omitzero"`
-	PersonID             *string               `json:"person_id,omitzero"`
-	Photos               []PersonPhotoEvidence `json:"photos" validate:"required"`
-	Truncated            bool                  `json:"truncated"`
-	UID                  string                `json:"uid" validate:"required"`
+	LinkState  string                `json:"link_state" validate:"required"`
+	NextCursor *string               `json:"next_cursor,omitzero"`
+	PersonID   *string               `json:"person_id,omitzero"`
+	Photos     []PersonPhotoEvidence `json:"photos" validate:"required"`
+	Truncated  bool                  `json:"truncated"`
+	UID        string                `json:"uid" validate:"required"`
 }
 
 func (p PersonPhotosResponse) Validate() error {

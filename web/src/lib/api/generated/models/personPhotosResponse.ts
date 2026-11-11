@@ -6,7 +6,6 @@ import type { PersonPhotoEvidence } from "./personPhotoEvidence";
 export interface PersonPhotosResponse {
   link_state: string;
   next_cursor?: string;
-  next_occurrence_cursor?: string;
   person_id?: string;
   photos: PersonPhotoEvidence[];
   truncated: boolean;

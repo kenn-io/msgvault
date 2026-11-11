@@ -899,9 +899,8 @@ func (g GetPersonByUIDQuery) Validate() error {
 }
 
 type GetPersonPhotosQuery struct {
-	UID              string  `json:"uid" validate:"required,max=256,min=1"`
-	Cursor           *string `json:"cursor,omitempty" validate:"omitempty,max=4096"`
-	OccurrenceCursor *string `json:"occurrence_cursor,omitempty" validate:"omitempty,max=1024"`
+	UID    string  `json:"uid" validate:"required,max=256,min=1"`
+	Cursor *string `json:"cursor,omitempty" validate:"omitempty,max=8192"`
 }
 
 func (g GetPersonPhotosQuery) Validate() error {

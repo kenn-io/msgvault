@@ -779,7 +779,6 @@ func TestGeneratedPersonPhotoEvidenceAcceptsEmptyExcerpt(t *testing.T) {
 	encoded, err := json.Marshal(response)
 	requirements.NoError(err)
 	requirements.Contains(string(encoded), `"excerpt":""`, "the required excerpt key remains on the wire")
-
 }
 
 func TestGeneratedPersonFactEvidenceRequiresPresenceButAcceptsEmptyStrings(t *testing.T) {

@@ -20,13 +20,12 @@ type ExternalPersonResolution struct {
 }
 
 type ExternalPersonIdentity struct {
-	System              string `json:"system"`
-	ArchiveID           string `json:"archive_id"`
-	UID                 string `json:"uid"`
-	UIDState            string `json:"uid_state"`
-	UIDKind             string `json:"uid_kind,omitempty"`
-	DisplayNameSnapshot string `json:"display_name_snapshot,omitempty"`
-	LastSeenRevision    int64  `json:"last_seen_revision,omitempty"`
+	System           string `json:"system"`
+	ArchiveID        string `json:"archive_id"`
+	UID              string `json:"uid"`
+	UIDState         string `json:"uid_state"`
+	UIDKind          string `json:"uid_kind,omitempty"`
+	LastSeenRevision int64  `json:"last_seen_revision,omitempty"`
 }
 
 type PersonAssertion struct {
@@ -48,9 +47,6 @@ type PersonAssertions struct {
 
 func (c *Client) ResolveExternalPerson(ctx context.Context, archiveID, uid string) (ExternalPersonResolution, error) {
 	var out ExternalPersonResolution
-	if archiveID == "" || uid == "" {
-		return out, ErrInvalidRequest
-	}
 	query := url.Values{"system": {"msgvault"}, "archive_id": {archiveID}, "uid": {uid}}
 	if err := c.jsonRequest(ctx, http.MethodGet, "/api/v1/people/resolve-external?"+query.Encode(), nil, &out); err != nil {
 		return out, err

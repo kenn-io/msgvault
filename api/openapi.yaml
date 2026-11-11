@@ -13347,9 +13347,6 @@ components:
     PersonPhotoLinkRequest:
       additionalProperties: false
       properties:
-        linked_uid:
-          maxLength: 256
-          type: string
         person_id:
           format: uuid
           type: string
@@ -13375,8 +13372,6 @@ components:
     PersonPhotoLinkResponse:
       additionalProperties: true
       properties:
-        linked_uid:
-          type: string
         revision:
           format: int64
           type: integer
@@ -13386,7 +13381,6 @@ components:
           type: string
       required:
         - uid
-        - linked_uid
         - state
         - revision
       type: object
@@ -13396,8 +13390,6 @@ components:
         link_state:
           type: string
         next_cursor:
-          type: string
-        next_occurrence_cursor:
           type: string
         person_id:
           type: string
@@ -27518,13 +27510,7 @@ paths:
           in: query
           name: cursor
           schema:
-            maxLength: 4096
-            type: string
-        - explode: false
-          in: query
-          name: occurrence_cursor
-          schema:
-            maxLength: 1024
+            maxLength: 8192
             type: string
       responses:
         "200":
