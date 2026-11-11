@@ -1046,8 +1046,12 @@ func copyData(ctx context.Context, tx *sql.Tx, rowCount int, options CopySubsetO
 		if _, err := copyByName(ctx, tx, "meeting_link_decisions", `left_message_id IN (SELECT id FROM selected_messages) AND right_message_id IN (SELECT id FROM selected_messages)`); err != nil {
 			return nil, fmt.Errorf("copy meeting link decisions: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE meeting_link_decisions SET dedup_origin_message_id = NULL WHERE dedup_origin_message_id IS NOT NULL AND dedup_origin_message_id NOT IN (SELECT id FROM messages)`); err != nil {
-			return nil, fmt.Errorf("clear unavailable meeting decision origins: %w", err)
+		if present, err := sourceTableExists(ctx, tx, "meeting_link_decision_origins"); err != nil {
+			return nil, err
+		} else if present {
+			if _, err := copyByName(ctx, tx, "meeting_link_decision_origins", `decision_id IN (SELECT id FROM meeting_link_decisions) AND origin_message_id IN (SELECT id FROM messages)`); err != nil {
+				return nil, fmt.Errorf("copy meeting decision origins: %w", err)
+			}
 		}
 	}
 

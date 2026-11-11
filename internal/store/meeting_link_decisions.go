@@ -247,18 +247,18 @@ func copyMeetingLinkDecisionsTx(ctx context.Context, tx *loggedTx, from, into in
 	if from == into {
 		return nil
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT left_message_id,left_kind,left_key,left_anchor,right_message_id,right_kind,right_key,right_anchor,decision,dedup_origin_message_id FROM meeting_link_decisions WHERE left_message_id=? OR right_message_id=?`, from, from)
+	rows, err := tx.QueryContext(ctx, `SELECT id,left_message_id,left_kind,left_key,left_anchor,right_message_id,right_kind,right_key,right_anchor,decision FROM meeting_link_decisions WHERE left_message_id=? OR right_message_id=?`, from, from)
 	if err != nil {
 		return err
 	}
 	type copiedDecision struct {
 		meetingDecisionEdge
-		origin sql.NullInt64
+		id int64
 	}
 	var decisions []copiedDecision
 	for rows.Next() {
 		var d copiedDecision
-		if err := rows.Scan(&d.a.ID, &d.a.Kind, &d.a.Key, &d.a.Anchor, &d.b.ID, &d.b.Kind, &d.b.Key, &d.b.Anchor, &d.decision, &d.origin); err != nil {
+		if err := rows.Scan(&d.id, &d.a.ID, &d.a.Kind, &d.a.Key, &d.a.Anchor, &d.b.ID, &d.b.Kind, &d.b.Key, &d.b.Anchor, &d.decision); err != nil {
 			_ = rows.Close()
 			return err
 		}
@@ -280,15 +280,21 @@ func copyMeetingLinkDecisionsTx(ctx context.Context, tx *loggedTx, from, into in
 		if compareMeetingEndpoints(d.a, d.b) > 0 {
 			d.a, d.b = d.b, d.a
 		}
-		var origin any
-		if dedup {
-			origin = from
-		} else if d.origin.Valid {
-			origin = d.origin.Int64
+		var newID int64
+		err := tx.QueryRowContext(ctx, `INSERT INTO meeting_link_decisions(left_message_id,left_kind,left_key,left_anchor,right_message_id,right_kind,right_key,right_anchor,decision) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(left_message_id,left_kind,left_key,right_message_id,right_kind,right_key) DO NOTHING RETURNING id`, d.a.ID, d.a.Kind, d.a.Key, d.a.Anchor, d.b.ID, d.b.Kind, d.b.Key, d.b.Anchor, d.decision).Scan(&newID)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO meeting_link_decisions(left_message_id,left_kind,left_key,left_anchor,right_message_id,right_kind,right_key,right_anchor,decision,dedup_origin_message_id) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(left_message_id,left_kind,left_key,right_message_id,right_kind,right_key) DO NOTHING`, d.a.ID, d.a.Kind, d.a.Key, d.a.Anchor, d.b.ID, d.b.Kind, d.b.Key, d.b.Anchor, d.decision, origin)
 		if err != nil {
 			return fmt.Errorf("copy meeting link decision: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO meeting_link_decision_origins(decision_id,origin_message_id) SELECT ?,origin_message_id FROM meeting_link_decision_origins WHERE decision_id=? ON CONFLICT(decision_id,origin_message_id) DO NOTHING`, newID, d.id); err != nil {
+			return fmt.Errorf("copy meeting decision origins: %w", err)
+		}
+		if dedup {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO meeting_link_decision_origins(decision_id,origin_message_id) VALUES (?,?) ON CONFLICT(decision_id,origin_message_id) DO NOTHING`, newID, from); err != nil {
+				return fmt.Errorf("record meeting decision origin: %w", err)
+			}
 		}
 	}
 	return nil

@@ -739,7 +739,7 @@ func (s *Store) StreamMessageRawContext(ctx context.Context, messageIDs []int64,
 func (s *Store) UndoDedup(ctx context.Context, batchID string) (int64, error) {
 	var count int64
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE dedup_origin_message_id IN (SELECT id FROM messages WHERE delete_batch_id = ?)`, batchID); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE id IN (SELECT decision_id FROM meeting_link_decision_origins WHERE origin_message_id IN (SELECT id FROM messages WHERE delete_batch_id = ?))`, batchID); err != nil {
 			return err
 		}
 		result, err := tx.ExecContext(ctx, `
