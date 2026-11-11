@@ -21,6 +21,11 @@ const legacyPersonSweepBatchPurposeCheck = `CHECK (
 // already spent extraction calls.
 func installLegacyPersonSweepBatchPurpose(t *testing.T, st *store.Store) {
 	t.Helper()
+	installPersonSweepBatchPurpose(t, st, legacyPersonSweepBatchPurposeCheck)
+}
+
+func installPersonSweepBatchPurpose(t *testing.T, st *store.Store, check string) {
+	t.Helper()
 	requirements := require.New(t)
 	if st.IsPostgreSQL() {
 		_, err := st.DB().ExecContext(t.Context(), `
@@ -28,7 +33,7 @@ func installLegacyPersonSweepBatchPurpose(t *testing.T, st *store.Store) {
 				DROP CONSTRAINT IF EXISTS person_sweep_batches_call_coordinate_check;
 			ALTER TABLE person_sweep_batches
 				ADD CONSTRAINT person_sweep_batches_call_coordinate_check `+
-			legacyPersonSweepBatchPurposeCheck)
+			check)
 		requirements.NoError(err)
 		return
 	}
@@ -61,7 +66,7 @@ func installLegacyPersonSweepBatchPurpose(t *testing.T, st *store.Store) {
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			completed_at TEXT,
 			CONSTRAINT person_sweep_batches_call_coordinate_check `+
-		legacyPersonSweepBatchPurposeCheck+`,
+		check+`,
 			PRIMARY KEY (attempt_id, batch_ordinal, call_ordinal)
 		);
 		INSERT INTO person_sweep_batches_legacy SELECT * FROM person_sweep_batches;

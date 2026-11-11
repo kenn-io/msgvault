@@ -326,11 +326,14 @@ func (s *Store) loadCommitmentFulfilmentTx(ctx context.Context, tx *loggedTx, id
 
 func (s *Store) currentCommitmentCitation(ctx context.Context, personID int64, direction string, input personfacts.EvidenceInput) (CommitmentCitation, bool, error) {
 	message, found := strings.CutPrefix(input.SourceRef, personfacts.CommitmentMessageRefPrefix)
+	if !found {
+		return CommitmentCitation{}, false, nil
+	}
 	id, err := strconv.ParseInt(message, 10, 64)
 	if err != nil {
 		return CommitmentCitation{}, false, fmt.Errorf("parse commitment citation message: %w", err)
 	}
-	if !found || id <= 0 || input.SpanStart == nil || input.SpanEnd == nil {
+	if id <= 0 || input.SpanStart == nil || input.SpanEnd == nil {
 		return CommitmentCitation{}, false, nil
 	}
 	source, live, err := s.currentCommitmentSource(ctx, personID, id)
@@ -404,7 +407,7 @@ func (s *Store) DecidePersonCommitmentContext(ctx context.Context, id int64, sta
 	return result, err
 }
 
-func (s *Store) PersonCommitmentsDue(ctx context.Context, personID int64, now time.Time, interval, window time.Duration, scopes ...string) (bool, error) {
+func (s *Store) PersonCommitmentsDue(ctx context.Context, personID int64, now time.Time, interval, window time.Duration, scopeFingerprint string) (bool, error) {
 	var processed requiredTimestamp
 	var through, backfill int64
 	var anchorPagePending bool
@@ -419,7 +422,7 @@ func (s *Store) PersonCommitmentsDue(ctx context.Context, personID int64, now ti
 	if err != nil {
 		return false, err
 	}
-	if len(scopes) > 0 && scope != scopes[0] {
+	if scopeFingerprint != "" && scope != scopeFingerprint {
 		return true, nil
 	}
 	if now.Before(processed.Time.Add(interval)) {

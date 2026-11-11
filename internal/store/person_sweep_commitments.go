@@ -175,7 +175,13 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 	for index, match := range matches {
 		promise := match.promise
 		if match.existing.ID != 0 && preferred[match.existing.ID] != index {
-			continue
+			selected := matches[preferred[match.existing.ID]].promise
+			if promise.Start < selected.End && promise.End > selected.Start {
+				continue
+			}
+			// Distinct disjoint promises may split one older broad citation.
+			// Keep its decision on the preferred match and admit the other anew.
+			match.existing = PersonCommitment{}
 		}
 		if match.existing.ClaimID != nil {
 			promise.TargetKey = match.existing.TargetKey

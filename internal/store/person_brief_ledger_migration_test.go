@@ -72,13 +72,18 @@ func seedPersonFactClaimLedger(t *testing.T, st *store.Store, personID int64, cl
 // pre-brief shape with its rows intact.
 func installLegacyPersonFactClaimOrigin(t *testing.T, st *store.Store) {
 	t.Helper()
+	installPersonFactClaimOrigin(t, st, legacyPersonFactClaimOriginCheck)
+}
+
+func installPersonFactClaimOrigin(t *testing.T, st *store.Store, check string) {
+	t.Helper()
 	requirements := require.New(t)
 	if st.IsPostgreSQL() {
 		_, err := st.DB().ExecContext(t.Context(), `
 			ALTER TABLE person_fact_claims
 				DROP CONSTRAINT IF EXISTS person_fact_claims_origin_check;
 			ALTER TABLE person_fact_claims
-				ADD CONSTRAINT person_fact_claims_origin_check `+legacyPersonFactClaimOriginCheck)
+				ADD CONSTRAINT person_fact_claims_origin_check `+check)
 		requirements.NoError(err)
 		return
 	}
@@ -102,7 +107,7 @@ func installLegacyPersonFactClaimOrigin(t *testing.T, st *store.Store) {
 			value_fingerprint     TEXT,
 			valid_from            DATETIME,
 			valid_until           DATETIME,
-			origin                TEXT NOT NULL `+legacyPersonFactClaimOriginCheck+`,
+			origin                TEXT NOT NULL `+check+`,
 			confidence_json       JSON NOT NULL,
 			rejection_action      TEXT,
 			rejection_reason      TEXT,
