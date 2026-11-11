@@ -206,6 +206,7 @@ func TestSyncResumeCommandShellArguments(t *testing.T) {
 		{"posix-control", "sh", "linux", "--query=😀\n\x1b[31m\tend\n"},
 		{"powershell-ordinary", "pwsh", "windows", `--query=from:'a b' $HOME;echo`},
 		{"powershell-control", "pwsh", "windows", "--query=😀\n\x1b[31m\tend\n"},
+		{"powershell-smart-quotes", "pwsh", "windows", "--query=subject:\u2018one\u2019 \u201ctwo\u201d $HOME;echo"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.shell == "sh" && runtime.GOOS == "windows" {
