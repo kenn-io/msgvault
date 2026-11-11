@@ -96,6 +96,8 @@ func ToolSummaries() []ToolSummary {
 			case OperationFamilyRecords:
 				summary.Security = securityPolicyFor(toolSecurityProfileWrite, ServeOptions{}).name
 				summary.Flag = securityFlag(toolSecurityProfileWrite)
+			case OperationFamilyProviders:
+				summary.Security, summary.Flag = "provider_write", "--allow-provider-writes"
 			case OperationFamilySources:
 				summary.Security, summary.Flag = "source_write", "--allow-source-writes"
 			case OperationFamilyLoops:

@@ -86,3 +86,27 @@ func TestMCPCapabilitiesDescribeRealLoopRoutes(t *testing.T) {
 	assertions.Contains(routes["markLoopDone"].QueryParameters, "question_message_ids")
 	assertions.Contains(routes["snoozeLoop"].QueryParameters, "question_message_ids")
 }
+
+func TestMCPCapabilitiesDescribePeopleProviderContracts(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Logger: testLogger()})
+	response := httptest.NewRecorder()
+	server.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/mcp/capabilities", nil))
+	requirements.Equal(http.StatusOK, response.Code)
+	var capabilities MCPCapabilitiesResponse
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &capabilities))
+	routes := map[string]apiprotocol.MCPRouteDescriptor{}
+	for _, route := range capabilities.Routes {
+		routes[route.OperationID] = route
+	}
+	for _, tc := range []struct{ id, method, path string }{
+		{"getSettingsPeopleInference", http.MethodGet, "/api/v1/settings/people-inference"},
+		{"selectSettingsPeopleInference", http.MethodPost, "/api/v1/settings/people-inference/select"},
+		{"disableSettingsPeopleInference", http.MethodPost, "/api/v1/settings/people-inference/disable"},
+	} {
+		requirements.Contains(routes, tc.id)
+		assertions.Equal(tc.method, routes[tc.id].Method)
+		assertions.Equal(tc.path, routes[tc.id].Path)
+	}
+	assertions.Contains(routes["selectSettingsPeopleInference"].RequestProperties, "name")
+}
