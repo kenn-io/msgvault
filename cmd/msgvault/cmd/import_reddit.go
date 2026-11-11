@@ -68,7 +68,9 @@ func runImportReddit(cmd *cobra.Command, dir string, opts redditCLIOptions) erro
 	for _, name := range summary.Unsupported {
 		_, _ = fmt.Fprintf(out, "Unsupported: %s\n", name)
 	}
-	_, _ = fmt.Fprintf(out, "Total: %d added, %d already archived; %d malformed, %d missing IDs\n", summary.Added, summary.Unchanged, summary.Malformed, summary.MissingIDs)
+	if len(summary.Files) != 1 {
+		_, _ = fmt.Fprintf(out, "Total: %d added, %d already archived; %d malformed, %d missing IDs\n", summary.Added, summary.Unchanged, summary.Malformed, summary.MissingIDs)
+	}
 	if summary.SourceID != 0 {
 		// Refresh identities and cache for committed rows after an interrupted import.
 		finalize := context.WithoutCancel(ctx)

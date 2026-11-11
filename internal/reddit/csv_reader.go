@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/csv"
 	"errors"
+	"fmt"
 	"io"
 )
 
@@ -11,6 +12,7 @@ const maxCSVRecordBytes = 8 << 20
 
 type csvRecordReader struct {
 	*csv.Reader
+
 	input      *bufio.Reader
 	limit      *io.LimitedReader
 	blankLines int
@@ -28,12 +30,12 @@ func (r *csvRecordReader) Read() ([]string, error) {
 	for {
 		prefix, err := r.input.Peek(1)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("peek at CSV record start: %w", err)
 		}
 		if prefix[0] == '\r' {
 			prefix, err = r.input.Peek(2)
 			if err != nil && !errors.Is(err, io.EOF) {
-				return nil, err
+				return nil, fmt.Errorf("peek at CSV line ending: %w", err)
 			}
 		}
 		if prefix[len(prefix)-1] != '\n' {
