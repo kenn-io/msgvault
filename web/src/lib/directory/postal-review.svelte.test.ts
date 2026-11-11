@@ -73,7 +73,7 @@ describe('PostalReviewSession', () => {
     expect(state.pending).toBe(false);
   });
 
-  it.each(['success', 'error'] as const)('invalidates A → B → A including stale %s and loading', async outcome => {
+  it.each(['success', 'error'] as const)('invalidates a pending check with stale %s and loading', async outcome => {
     const reply = deferred<Assessment>();
     const check = vi.fn(async (_personID: number, _input: Input, _external: boolean, _signal: AbortSignal) => reply.promise);
     const state = new PostalReviewSession(7, check);

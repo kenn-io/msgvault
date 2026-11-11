@@ -413,7 +413,7 @@ describe('StructuredProfileEditor', () => {
         country_code: 'TS',
         place_uri: 'https://example.test/place',
         assessment: { original: rawPostal, proposed: rawPostal, status: 'needs_review', reason_codes: ['not_verified'], original_extended_parts: [], proposed_extended_parts: [] },
-        envelope: { id: 23, ordinal: 5, pref: 1, type_label: 'home', type_tokens: ['home'], source: 'vcard_import', source_ref: 'person-fact-claim:synthetic-claim', source_resource_uid: 'synthetic-resource', created_at: when, updated_at: when, vcard: {} },
+        envelope: { id: 23, ordinal: 5, pref: 1, type_label: 'home', type_tokens: ['home'], source: 'user', source_ref: 'person-fact-claim:synthetic-claim', created_at: when, updated_at: when, vcard: {} },
       },
       expected: {
         addresses: {

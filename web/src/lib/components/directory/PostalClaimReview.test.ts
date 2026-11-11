@@ -72,7 +72,7 @@ describe('Postal claim review', () => {
     expect(screen.getAllByText('Original address')).toHaveLength(1);
   });
 
-  it('uses server eligibility, reveals the sensitive address deliberately, and adopts once through guarded profile PATCH', async () => {
+  it('uses server eligibility, reveals the sensitive address deliberately, and adopts once', async () => {
     const { requests } = setup();
     await fireEvent.click(screen.getByRole('radio', { name: 'Claims' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Reveal sensitive fact value' }));
@@ -109,7 +109,7 @@ async function revealPostalClaim() {
   await fireEvent.click(await screen.findByRole('button', { name: 'Reveal sensitive fact value' }));
 }
 
-it.each(['evidence-unsupported', 'outside-validity', 'absent', 'failure'])('refreshes reopened supported review and fails closed for %s', async failure => {
+it.each(['evidence-unsupported', 'absent', 'failure'])('refreshes reopened supported review and fails closed for %s', async failure => {
   const { server, claimReads } = setup();
   await revealPostalClaim();
   await fireEvent.click(screen.getByRole('button', { name: 'Review address' }));

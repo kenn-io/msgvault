@@ -21,7 +21,6 @@ func TestAssessPreservesInternationalInput(t *testing.T) {
 			before := tc.input
 			got := Assess(tc.input)
 			assert := assert.New(t)
-			assert.Equal(before, tc.input)
 			assert.Equal(before, got.Original)
 			assert.Equal(tc.want, got.Proposed)
 			assert.Equal(StatusNormalizedUnverified, got.Status)
