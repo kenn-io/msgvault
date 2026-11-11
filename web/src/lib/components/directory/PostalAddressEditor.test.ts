@@ -72,16 +72,6 @@ describe('Postal address editor', () => {
     expect((await requests.find(request => request.method === 'PATCH')!.clone().json()).addresses.add[0].original_input.street_address).toBe('12 Example Street');
   });
 
-  it('saves raw input and unit/PO box/country without an implicit external check', async () => {
-    const { controller, requests } = setup();
-    render(StructuredProfileEditor, { controller, section: 'addresses' });
-    await enterRaw();
-    await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
-    await waitFor(() => expect(requests).toHaveLength(1));
-    const body = await requests[0]!.clone().json();
-    expect(body.addresses.add[0]).toMatchObject({ ...raw, original_input: raw, envelope: { source: 'user' } });
-  });
-
   it.each([['Check locally', false], ['Check with Google', true]] as const)('checks explicitly with %s and confirms a first-entry correction', async (button, external) => {
     const { controller, requests } = setup();
     render(StructuredProfileEditor, { controller, section: 'addresses' });
@@ -147,18 +137,6 @@ describe('Postal address editor', () => {
     expect(requests[1]!.headers.get('If-Match')).toBe('"person-7-r3"');
     expect(await screen.findByRole('alert')).toBeDefined();
     expect(requests.filter(request => request.method === 'PATCH')).toHaveLength(1);
-  });
-
-  it('preserves imported raw and untouched fields while declaring the edited row as user input', async () => {
-    const current: PersonAddress = { person_id: 7, address_kind: 'postal', street_address: 'Old Street', extended_address: 'Unit 7', post_office_box: 'Box 9', country_code: 'CA', extended_components: '["District"]', geo_uri: 'geo:0,0', timezone: 'Europe/Paris', place_uri: 'urn:example', label: 'Postal label', free_text: 'Free text', original_value: raw.original_value!, assessment: { original: raw, proposed: raw, status: 'needs_review', reason_codes: ['not_verified'], original_extended_parts: [], proposed_extended_parts: [] }, envelope: { id: 11, ordinal: 3, pref: 1, type_label: 'home', type_tokens: ['home'], source: 'vcard_import', source_resource_uid: 'synthetic-resource', source_ref: 'person-fact-claim:synthetic-claim', vcard: { property: 'ADR', pid: ['1.1'] }, created_at: when, updated_at: when } };
-    const { controller, requests } = setup({ current });
-    render(StructuredProfileEditor, { controller, section: 'addresses', current });
-    await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: 'Changed Street' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
-    await waitFor(() => expect(requests).toHaveLength(1));
-    const address = (await requests[0]!.clone().json()).addresses.add[0];
-    expect(address).toMatchObject({ extended_address: 'Unit 7', post_office_box: 'Box 9', extended_components: '["District"]', geo_uri: 'geo:0,0', timezone: 'Europe/Paris', place_uri: 'urn:example', label: 'Postal label', free_text: 'Free text', original_input: raw });
-    expect(address.envelope).toEqual({ source: 'user', ordinal: 3, pref: 1, type_label: 'home', type_tokens: ['home'], source_ref: 'person-fact-claim:synthetic-claim' });
   });
 
   it('requires an explicit add-or-supersede choice for a sweep draft and retains its origin', async () => {

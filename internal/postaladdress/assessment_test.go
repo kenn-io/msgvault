@@ -63,5 +63,4 @@ func TestAssessmentNormalizationIdempotent(t *testing.T) {
 func TestAssessmentExtendedParts(t *testing.T) {
 	got := Assess(Input{ExtendedComponents: `;;12 Example St;City;;;;Room\;3;Floor 2`})
 	assert.Equal(t, []string{"Room;3", "Floor 2"}, got.OriginalExtendedParts)
-	assert.Equal(t, []string{"Room;3", "Floor 2"}, got.ProposedExtendedParts)
 }

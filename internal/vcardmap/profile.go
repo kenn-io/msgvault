@@ -651,8 +651,8 @@ func postalAddressValue(address store.PersonAddress) (string, *string, error) {
 	// SplitStructuredText decodes each component, so re-joining escapes
 	// each exactly once and a wire-form original re-renders unchanged.
 	original := strings.TrimSpace(address.OriginalValue)
-	parsed := postaladdress.LegacyADR(original)
-	if len(parsed) > 0 {
+	parsed, err := vcard.SplitStructuredText(original)
+	if err == nil && (len(parsed) >= 7 || len(parsed) >= 4 && parsed[1] == "" || strings.HasPrefix(original, ";;")) && !allBlank(parsed) {
 		return vcard.JoinStructuredText(parsed), address.Label, nil
 	}
 	for _, text := range []*string{address.Label, address.FreeText, &original} {

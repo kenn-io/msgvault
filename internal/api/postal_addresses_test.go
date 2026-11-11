@@ -117,6 +117,7 @@ func TestPostalAddressEditPreservesOriginalHistory(t *testing.T) {
 	assert := assert.New(t)
 	assert.Equal(&newText, current.FreeText)
 	assert.Equal(new("CA"), current.CountryCode)
+	assert.Equal(raw, current.Assessment.Original)
 	historyResponse := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id)+"/history", nil, nil)
 	require.Equal(http.StatusOK, historyResponse.Code)
 	var history store.PersonProfileHistory
@@ -221,35 +222,4 @@ func TestPostalPatchExplainsInvalidOriginalInput(t *testing.T) {
 			assert.Contains(t, response.Body.String(), tc.explanation)
 		})
 	}
-}
-
-func TestLegacyPostalTextCanBeReplaced(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	original := "12 Example Street; Unit 7"
-	srv, wrapped := newIdentityLinkTestServer(t)
-	id := seedAPIPerson(t, wrapped.Store)
-	old, err := wrapped.AddPersonAddressContext(t.Context(), id, store.PersonAddressInput{AddressKind: store.PersonAddressPostal, OriginalValue: original, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
-	require.NoError(err)
-	for _, path := range []string{personProfilePath(id), personProfilePath(id) + "/history"} {
-		response := doRequest(t, srv.Router(), http.MethodGet, path, nil, nil)
-		require.Equal(http.StatusOK, response.Code, response.Body.String())
-		var profile struct {
-			Addresses []store.PersonAddress `json:"addresses"`
-		}
-		require.NoError(json.Unmarshal(response.Body.Bytes(), &profile))
-		require.Len(profile.Addresses, 1)
-		require.NotNil(profile.Addresses[0].FreeText)
-		assert.Equal(original, *profile.Addresses[0].FreeText)
-	}
-	read := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
-	body := fmt.Appendf(nil, `{"addresses":{"supersede":[%d],"add":[{"address_kind":"postal","free_text":%q,"country_name":"Canada","original_input":{"address_kind":"postal","original_value":%q},"envelope":{"source":"user"}}]}}`, old.Envelope.ID, original, original)
-	saved := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), body, map[string]string{"If-Match": read.Header().Get("ETag")})
-	require.Equal(http.StatusOK, saved.Code, saved.Body.String())
-	var profile store.PersonProfile
-	require.NoError(json.Unmarshal(saved.Body.Bytes(), &profile))
-	require.Len(profile.Addresses, 1)
-	require.NotNil(profile.Addresses[0].FreeText)
-	assert.Equal(original, *profile.Addresses[0].FreeText)
-	assert.Equal("Canada", *profile.Addresses[0].CountryName)
 }

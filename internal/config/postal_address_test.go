@@ -12,14 +12,14 @@ import (
 func TestPostalAddressConfigDisabledByDefaultAndExplicitProvider(t *testing.T) {
 	assert.False(t, NewDefaultConfig().People.AddressValidation.Enabled)
 	for _, tc := range []struct {
-		name, settings string
-		wantErr        bool
+		name, settings       string
+		wantEnabled, wantErr bool
 	}{
-		{"local", "", false},
-		{"configured but disabled", "provider = \"google\"", false},
-		{"enabled", "enabled = true\nprovider = \"google\"", false},
-		{"missing provider", "enabled = true", true},
-		{"unsupported provider", "provider = \"other\"", true},
+		{"local", "", false, false},
+		{"configured but disabled", "provider = \"google\"", false, false},
+		{"enabled", "enabled = true\nprovider = \"google\"", true, false},
+		{"missing provider", "enabled = true", false, true},
+		{"unsupported provider", "provider = \"other\"", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -32,7 +32,7 @@ func TestPostalAddressConfigDisabledByDefaultAndExplicitProvider(t *testing.T) {
 				return
 			}
 			require.NoError(err)
-			assert.Equal(t, tc.name == "enabled", cfg.People.AddressValidation.Enabled)
+			assert.Equal(t, tc.wantEnabled, cfg.People.AddressValidation.Enabled)
 		})
 	}
 }

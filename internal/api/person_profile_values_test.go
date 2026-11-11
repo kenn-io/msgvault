@@ -181,6 +181,8 @@ func TestPatchPersonProfileMapsValidationErrorsToBadRequest(t *testing.T) {
 		name string
 		body string
 	}{
+		{"missing suggestion", `{"addresses":{"add":[{"address_kind":"postal","street_address":"x","envelope":{"source":"user","source_ref":"person-fact-claim:missing"}}]}}`},
+		{"empty current postal value", `{"addresses":{"add":[{"address_kind":"postal","free_text":"","original_input":{"address_kind":"postal","street_address":"Old street"},"envelope":{"source":"user"}}]}}`},
 		{"client assessment", `{"addresses":{"add":[{"address_kind":"postal","street_address":"x","assessment":{"status":"validated"},"envelope":{"source":"user"}}]}}`},
 		{"unknown provenance", `{"categories":{"add":[{"original_value":"Friends","envelope":{"source":"beeper"}}]}}`},
 		{"scope required", `{"contact_points":{"add":[{"address_kind":"username","service_slug":"slack","original_value":"alice","envelope":{"source":"user"}}]}}`},

@@ -11,6 +11,7 @@ import { emptyProfile } from '../../directory/profile-fixtures.test-support';
 type PersonContactPoint = GeneratedPersonContactPoint;
 
 const when = '2026-08-01T00:00:00Z';
+const rawPostal = { address_kind: 'postal' as const, street_address: ' 12 Example St ', extended_address: ' Unit 7 ', post_office_box: ' Box 9 ', country_code: ' ca ', original_value: ' raw\n address ' };
 
 function person(revision = 3) {
   return {
@@ -53,7 +54,7 @@ function requestHarness(
 }
 
 describe('StructuredProfileEditor', () => {
-  it('saves a structured profile when the separate person read failed', async () => {
+  it('saves without a separate person read and blocks a changed person id', async () => {
     const requests: Request[] = [];
     const client = createAPIClient(async input => {
       requests.push(input instanceof Request ? input : new Request(input));
@@ -131,7 +132,7 @@ describe('StructuredProfileEditor', () => {
     {
       section: 'addresses' as const,
       label: 'Street address',
-      value: '1 Test Street',
+      value: rawPostal.street_address,
       save: 'Save address',
       expected: {
         addresses: {
@@ -139,8 +140,12 @@ describe('StructuredProfileEditor', () => {
             {
               address_kind: 'postal',
               free_text: '',
-              original_input: { address_kind: 'postal', street_address: '1 Test Street' },
-              street_address: '1 Test Street',
+              original_input: rawPostal,
+              street_address: rawPostal.street_address,
+              extended_address: rawPostal.extended_address,
+              post_office_box: rawPostal.post_office_box,
+              country_code: rawPostal.country_code,
+              original_value: rawPostal.original_value,
               envelope: { source: 'user' },
             },
           ],
@@ -199,6 +204,11 @@ describe('StructuredProfileEditor', () => {
     render(StructuredProfileEditor, { controller, section });
 
     await fireEvent.input(screen.getByLabelText(label), { target: { value } });
+    if (section === 'addresses') {
+      for (const [field, content] of [['Unit or apartment', rawPostal.extended_address], ['PO box', rawPostal.post_office_box], ['Country code', rawPostal.country_code], ['Original text', rawPostal.original_value]]) {
+        await fireEvent.input(screen.getByLabelText(field!), { target: { value: content } });
+      }
+    }
     await fireEvent.click(screen.getByRole('button', { name: save }));
 
     await waitFor(() => expect(requests).toHaveLength(1));
@@ -402,14 +412,16 @@ describe('StructuredProfileEditor', () => {
         timezone: 'Etc/UTC',
         country_code: 'TS',
         place_uri: 'https://example.test/place',
-        envelope: { id: 23, ordinal: 5, source: 'vcard_import', created_at: when, updated_at: when, vcard: {} },
+        assessment: { original: rawPostal, proposed: rawPostal, status: 'needs_review', reason_codes: ['not_verified'], original_extended_parts: [], proposed_extended_parts: [] },
+        envelope: { id: 23, ordinal: 5, pref: 1, type_label: 'home', type_tokens: ['home'], source: 'vcard_import', source_ref: 'person-fact-claim:synthetic-claim', source_resource_uid: 'synthetic-resource', created_at: when, updated_at: when, vcard: {} },
       },
       expected: {
         addresses: {
           add: [
             {
               address_kind: 'postal',
-              original_input: { address_kind: 'postal', post_office_box: 'PO 12', extended_address: 'Suite 3', street_address: '2 Updated Street', locality: 'Testville', region: 'TS', postal_code: '12345', country_name: 'Testland', extended_components: 'Building A', free_text: 'Deliver after noon', label: 'Home', geo_uri: 'geo:1,2', timezone: 'Etc/UTC', country_code: 'TS', place_uri: 'https://example.test/place' },
+              original_input: rawPostal,
+              original_value: rawPostal.original_value,
               post_office_box: 'PO 12',
               extended_address: 'Suite 3',
               street_address: '2 Updated Street',
@@ -424,7 +436,7 @@ describe('StructuredProfileEditor', () => {
               timezone: 'Etc/UTC',
               country_code: 'TS',
               place_uri: 'https://example.test/place',
-              envelope: { source: 'user', ordinal: 5 },
+              envelope: { source: 'user', ordinal: 5, pref: 1, type_label: 'home', type_tokens: ['home'], source_ref: 'person-fact-claim:synthetic-claim' },
             },
           ],
           supersede: [23],

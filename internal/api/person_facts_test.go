@@ -495,32 +495,5 @@ func TestPostalClaimResponseIncludesReview(t *testing.T) {
 	require.NotNil(profile.Addresses[0].StreetAddress)
 	assert.Equal("Corrected street", *profile.Addresses[0].StreetAddress)
 	assert.Equal(body.Claims[0].PostalReview.Assessment.Original, profile.Addresses[0].Assessment.Original)
-	edit, err := json.Marshal(map[string]any{"addresses": map[string]any{"supersede": []int64{profile.Addresses[0].Envelope.ID}, "add": []any{map[string]any{
-		"address_kind": "postal", "street_address": "New street", "original_input": body.Claims[0].PostalReview.Assessment.Original,
-		"envelope": map[string]any{"source": "user", "source_ref": "person-fact-claim:" + claims[0].ClaimKey},
-	}}}})
-	require.NoError(err)
-	edited := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), edit, map[string]string{"If-Match": saved.Header().Get("ETag")})
-	require.Equal(http.StatusOK, edited.Code, edited.Body.String())
-}
 
-func TestPostalClaimReferenceRejectsMissingAndNonPostalClaims(t *testing.T) {
-	require := require.New(t)
-	srv, st, id, targets := newPersonFactAPIFixtureWithoutClaims(t)
-	applyPersonFactAPIGeneration(t, st, id, targets[store.AttributeSlugPrimaryChannel], "nonpostal", `"chat"`)
-	claims, err := st.ListPersonFactClaimsContext(t.Context(), id, personfacts.ClaimFilter{Limit: 1})
-	require.NoError(err)
-	require.Len(claims, 1)
-	read := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
-	require.Equal(http.StatusOK, read.Code, read.Body.String())
-	for _, key := range []string{"missing", claims[0].ClaimKey} {
-		patch, err := json.Marshal(map[string]any{"addresses": map[string]any{"add": []any{map[string]any{
-			"address_kind": "postal", "street_address": "12 Example Street",
-			"envelope": map[string]any{"source": "user", "source_ref": "person-fact-claim:" + key},
-		}}}})
-		require.NoError(err)
-		response := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), patch, map[string]string{"If-Match": read.Header().Get("ETag")})
-		require.Equal(http.StatusBadRequest, response.Code, response.Body.String())
-		require.Contains(response.Body.String(), "cited postal suggestion does not exist or cannot be reviewed")
-	}
 }
