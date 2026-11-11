@@ -442,14 +442,15 @@ func TestCommitmentEditedSourceReconcilesPromiseLocators(t *testing.T) {
 	const first, second = "I will send the draft.", "I will book the venue."
 	for _, tc := range []struct {
 		name                        string
-		initial, edited             []string
+		initial, edited, output     []string
 		editedPrefix, decisionQuote string
 	}{
-		{"replaced", []string{first}, []string{second}, "", first},
-		{"moved", []string{first}, []string{second, first}, "", first},
-		{"swap", []string{first, second}, []string{second, first}, "", first},
-		{"move_into_omitted_row", []string{first, second}, []string{first}, strings.Repeat(" ", len(first)+1), first},
-		{"valid_move_over_stale_exact", []string{first, second}, []string{second}, "", second},
+		{"replaced", []string{first}, []string{second}, nil, "", first},
+		{"moved", []string{first}, []string{second, first}, nil, "", first},
+		{"swap", []string{first, second}, []string{second, first}, nil, "", first},
+		{"move_into_omitted_row", []string{first, second}, []string{first}, nil, strings.Repeat(" ", len(first)+1), first},
+		{"valid_move_over_stale_exact", []string{first, second}, []string{second}, nil, "", second},
+		{"replacement_omits_moved_original", []string{first}, []string{second, first}, []string{second}, "", first},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, a, ctx := require.New(t), assert.New(t), t.Context()
@@ -499,10 +500,14 @@ func TestCommitmentEditedSourceReconcilesPromiseLocators(t *testing.T) {
 			f = nextCommitmentTestAttempt(t, f, "-swap")
 			f.request.Generation.ResolvedAt = f.request.Generation.ResolvedAt.Add(time.Minute)
 			f.request.CompletedAt = f.request.Generation.ResolvedAt.Add(time.Minute)
-			apply(tc.edited, tc.editedPrefix)
+			extracted := tc.output
+			if extracted == nil {
+				extracted = tc.edited
+			}
+			apply(extracted, tc.editedPrefix)
 			items, err = st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
 			r.NoError(err)
-			r.Len(items, len(tc.edited))
+			r.Len(items, len(extracted))
 			for _, item := range items {
 				if item.Quote == tc.decisionQuote {
 					a.Equal(completedID, item.ID)
@@ -510,6 +515,13 @@ func TestCommitmentEditedSourceReconcilesPromiseLocators(t *testing.T) {
 				} else {
 					a.Equal(LoopStateOpen, item.State)
 				}
+			}
+			if tc.output != nil {
+				var retainedQuote, retainedState string
+				r.NoError(st.db.QueryRowContext(ctx, st.Rebind(`SELECT quote, owner_state FROM person_commitments WHERE id = ?`), completedID).
+					Scan(&retainedQuote, &retainedState))
+				a.Equal(tc.decisionQuote, retainedQuote)
+				a.Equal(LoopStateDone, retainedState)
 			}
 		})
 	}
