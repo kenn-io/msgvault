@@ -74,6 +74,7 @@ func finishICS(out []ICSComponent, skipped []error) ([]ICSComponent, error) {
 type ICSComponent struct {
 	Event                                          Event
 	UID                                            string
+	Method                                         string
 	Sequence                                       int64
 	Stamp                                          time.Time
 	Summary, Description, Location, OrganizerEmail string
@@ -183,7 +184,11 @@ func parseICS(raw []byte, method, calendarZone string, strict bool) (out []ICSCo
 		return nil, err
 	}
 	switch method {
-	case "REPLY", "ADD", "REFRESH", "COUNTER", "DECLINECOUNTER":
+	case "REPLY":
+		if !strict {
+			return nil, fmt.Errorf("unsupported calendar method %q", method)
+		}
+	case "ADD", "REFRESH", "COUNTER", "DECLINECOUNTER":
 		if !strict {
 			return nil, fmt.Errorf("unsupported calendar method %q", method)
 		}
@@ -339,7 +344,7 @@ func icsDuration(value string) (int, time.Duration, error) {
 
 func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICSComponent, error) {
 	p := comp.Props
-	c := ICSComponent{OrganizerEmail: icsEmail(p.Get("ORGANIZER"))}
+	c := ICSComponent{Method: method, OrganizerEmail: icsEmail(p.Get("ORGANIZER"))}
 	for name, target := range map[string]*string{"UID": &c.UID, "SUMMARY": &c.Summary, "DESCRIPTION": &c.Description, "LOCATION": &c.Location} {
 		text, err := propText(p, name)
 		if err != nil {
@@ -373,7 +378,7 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 	if err != nil {
 		return ICSComponent{}, fmt.Errorf("DTSTART: %w", err)
 	}
-	if start.IsZero() && e.Status != "cancelled" {
+	if start.IsZero() && e.Status != "cancelled" && method != "REPLY" {
 		return ICSComponent{}, errors.New("active event requires DTSTART")
 	}
 	end, endAllDay, err := icsTime(p.Get("DTEND"), loc)
@@ -531,6 +536,9 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 			rsvp = "needs_action"
 		}
 		e.Attendees = append(e.Attendees, Attendee{Email: email, DisplayName: textutil.ReplaceNUL(a.Params.Get("CN")), Role: role, RSVP: rsvp})
+	}
+	if method == "REPLY" && (c.OrganizerEmail == "" || len(e.Attendees) != 1 || e.Attendees[0].Email == "" || e.Attendees[0].RSVP == "unknown") {
+		return ICSComponent{}, errors.New("reply requires an organizer and an attendee with PARTSTAT")
 	}
 	if organizer := p.Get("ORGANIZER"); c.OrganizerEmail != "" && !organizerSeen {
 		e.Attendees = append(e.Attendees, Attendee{Email: c.OrganizerEmail, DisplayName: textutil.ReplaceNUL(organizer.Params.Get("CN")), Role: "organizer", RSVP: "unknown"})
