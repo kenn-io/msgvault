@@ -177,7 +177,7 @@ func parseJSONThread(ctx context.Context, rootDir, threadDir string, instagram *
 				key = strings.TrimPrefix(threadPath, path.Dir(instagramInbox)+"/")
 			}
 			if thread.instagramKey != "" && thread.instagramKey != key {
-				return nil, errors.New("conflicting thread_path across shards")
+				return nil, errors.New("conversation paths conflict between message files")
 			}
 			thread.instagramKey = key
 			if previous, ok := instagram.keys[key]; ok && previous != threadPath {

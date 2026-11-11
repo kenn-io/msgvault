@@ -291,7 +291,7 @@ func TestInstagramConflictingThreadPaths(t *testing.T) {
 	bytes = bytespkg.Replace(bytes, []byte(`"thread_path":"inbox/circle"`), []byte(`"thread_path":"inbox/other"`), 1)
 	require.NoError(os.WriteFile(filename, bytes, 0600))
 	_, err = ImportDYI(t.Context(), st, ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example"})
-	require.ErrorContains(err, "conflicting thread_path")
+	require.ErrorContains(err, "conversation paths conflict between message files")
 	assert.Zero(countMessages(t, st, ""))
 }
 
@@ -305,7 +305,7 @@ func TestInstagramRejectsBeforeSource(t *testing.T) {
 		{name: "blank normalized account", account: "@", selfName: "Nova Example", wantError: "account"},
 		{name: "blank self name", account: "example", selfName: "   ", wantError: "self-name"},
 		{name: "negative limit", account: "example", selfName: "Nova Example", limit: -1, wantError: "--limit must be non-negative"},
-		{name: "unsupported layout", account: "example", selfName: "Nova Example", wantError: "no supported inbox", unsupported: true},
+		{name: "unsupported layout", account: "example", selfName: "Nova Example", wantError: "no supported inbox message_<N>.json files", unsupported: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assert := assert.New(t)

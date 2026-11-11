@@ -46,7 +46,7 @@ func TestImportInstagramRefreshesCache(t *testing.T) {
 				require.NoError(os.MkdirAll(bad, 0700))
 				require.NoError(os.WriteFile(filepath.Join(bad, "message_1.json"), []byte(`{"thread_path":"inbox/fictional","messages":[{"timestamp_ms":1730500000123,"content":"first conflicting shard"}]}`), 0600))
 				require.NoError(os.WriteFile(filepath.Join(bad, "message_2.json"), []byte(`{"thread_path":"inbox/other","messages":[{"timestamp_ms":1730500001123,"content":"conflicting key"}]}`), 0600))
-				require.ErrorContains(runImportInstagram(command, root, opts), "conflicting thread_path")
+				require.ErrorContains(runImportInstagram(command, root, opts), "conversation paths conflict between message files")
 			} else {
 				require.NoError(os.MkdirAll(filepath.Dir(cfg.AnalyticsDir()), 0700))
 				require.NoError(os.WriteFile(cfg.AnalyticsDir(), []byte("obstruction"), 0600))

@@ -177,7 +177,7 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (summar
 		threads = filtered
 		summary.Incomplete = summary.FilesSkipped > 0
 		if len(threads) == 0 {
-			return summary, errors.New("instagram: no supported inbox message_<N>.json shards; HTML, ZIP and other layouts are unsupported")
+			return summary, errors.New("instagram: no supported inbox message_<N>.json files; HTML, ZIP and other layouts are unsupported")
 		}
 	}
 	sourceType, sourceName, command := "facebook_messenger", opts.Me, "import-messenger"
