@@ -57,10 +57,10 @@ func PhoneObservation(account, owner string, raw []byte, bindings map[string]int
 	if err := json.Unmarshal(raw, &row); err != nil || len(raw) > MaxRosterBytes || (!validNativeID(account) || !validNativeID(owner)) || row.ElementID == "" || row.CallID == "" || len(bindings) > 100 {
 		return o, errors.New("invalid Zoom Phone element, owner or bindings")
 	}
-	o = callhistory.Observation{
-		Evidence: callhistory.Evidence{Version: 1, Provider: "zoom_phone", Account: AccountNamespace(account, owner),
-			Outcome: "unknown", OwnerParticipation: "unknown", Direction: "unknown",
-			OccurredAt: row.Start, EndedAt: row.End.value}, RecordID: row.ElementID, Raw: jsontext.Value(raw)}
+	callEvidence := callhistory.Evidence{Version: 1, Provider: "zoom_phone", Account: AccountNamespace(account, owner),
+		Outcome: "unknown", OwnerParticipation: "unknown", Direction: "unknown",
+		OccurredAt: row.Start, EndedAt: row.End.value}
+	o = callhistory.Observation{Evidence: callEvidence, RecordID: row.ElementID, Raw: jsontext.Value(raw)}
 	peer, number, owned := "", "", false
 	switch row.Direction {
 	case "inbound":

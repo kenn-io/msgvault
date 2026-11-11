@@ -9,7 +9,7 @@ import (
 func addZoomPhoneCommand(root *cobra.Command, open callOpener, write callWriter) {
 	var o zoomOptions
 	var tokenCommand, from, to string
-	cmd := &cobra.Command{Use: "import-zoom-phone", Short: "Import the owner's licensed Zoom Phone call elements", Args: cobra.NoArgs}
+	cmd := &cobra.Command{Use: "import-zoom-phone", Short: "Import your licensed Zoom Phone history", Args: cobra.NoArgs}
 	zoomIdentityFlags(cmd, &o)
 	cmd.Flags().StringVar(&tokenCommand, "token-command", "", "Token command JSON argv; requires phone:read:list_call_logs")
 	cmd.Flags().StringVar(&from, "from", "", "Inclusive YYYY-MM-DD (required)")
