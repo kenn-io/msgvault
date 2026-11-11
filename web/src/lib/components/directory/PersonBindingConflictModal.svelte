@@ -265,7 +265,7 @@
   {#snippet footer()}
     <Button surface="soft" label="Cancel" disabled={busy || completed} onclick={requestClose} />
     {#if !completed}
-      {#if reloadRequired}
+      {#if reloadRequired && !pending}
         <Button
           surface="soft"
           label="Retry profile reload"
