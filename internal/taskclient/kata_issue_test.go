@@ -141,6 +141,17 @@ func TestOpenIssues(t *testing.T) {
 	closed, err := client.CreateTask(t.Context(), katatest.Project, "closed-budget", KataCreate{Title: "Review the budget"})
 	require.NoError(err)
 	native.Endpoint(server).CloseIssue(t, closed.UID)
+	byRef, refTruncated, err := client.SearchOpenIssues(t.Context(), katatest.Project, created.QualifiedRef, 25)
+	require.NoError(err)
+	assert.False(refTruncated)
+	require.Len(byRef, 1)
+	assert.Equal(created.UID, byRef[0].UID)
+	for _, ref := range []string{closed.QualifiedRef, "other#" + created.Ref} {
+		matches, truncated, err := client.SearchOpenIssues(t.Context(), katatest.Project, ref, 25)
+		require.NoError(err)
+		assert.False(truncated)
+		assert.Empty(matches)
+	}
 	searched, searchTruncated, err := client.SearchOpenIssues(t.Context(), katatest.Project, "budget", 25)
 	require.NoError(err)
 	assert.False(searchTruncated)

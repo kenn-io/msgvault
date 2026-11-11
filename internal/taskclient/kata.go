@@ -171,6 +171,22 @@ func (c *KataClient) OpenIssues(ctx context.Context, project string, limit int) 
 
 // SearchOpenIssues searches all open issues in a project.
 func (c *KataClient) SearchOpenIssues(ctx context.Context, project, query string, limit int) ([]KataTask, bool, error) {
+	if name, ref, ok := strings.Cut(query, "#"); ok && name != "" && ref != "" && !strings.ContainsAny(name+ref, " \t\r\n#") {
+		if name != project {
+			return nil, false, nil
+		}
+		issue, err := c.GetTask(ctx, project, ref)
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrInvalidRef) {
+			return nil, false, nil
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		if issue.Status != "open" {
+			return nil, false, nil
+		}
+		return []KataTask{issue}, false, nil
+	}
 	id, err := c.resolveProject(ctx, project)
 	if err != nil {
 		return nil, false, err
