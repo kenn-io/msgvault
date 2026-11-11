@@ -285,7 +285,7 @@ If `msgvault` is not on your PATH, use the full path to the binary. Restart Clau
 Connect directly to your running daemon at
 `http://127.0.0.1:8080/mcp` (substitute its configured address and port). Send
 `Authorization: Bearer <owner-api-key>` on every request. The endpoint is
-read-only except enabled Events methods.
+read-only except Events methods.
 
 To connect a trusted client to a separate write-capable catalog on that same
 listener, start:
