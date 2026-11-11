@@ -113,6 +113,11 @@ func (imp *Importer) matchRosterMembers(ctx context.Context, sourceID int64, pro
 		}
 		work.Next = i + 1
 	}
+	if !work.Verified {
+		work.Phase = "members"
+		work.Next = 0
+		return nil
+	}
 	for i := range items {
 		if receipts[imp.res.identifierForUser(items[i].ID)].Status == rosterMatchFailed {
 			work.Phase = "matching_retry"
@@ -120,11 +125,7 @@ func (imp *Importer) matchRosterMembers(ctx context.Context, sourceID int64, pro
 			return nil
 		}
 	}
-	if !work.Verified {
-		work.Phase = "members"
-	} else {
-		work.Phase = "done"
-	}
+	work.Phase = "done"
 	return nil
 }
 

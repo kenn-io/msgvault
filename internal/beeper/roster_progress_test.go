@@ -12,79 +12,105 @@ import (
 )
 
 func TestRosterMatchingRetriesFailedMember(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	f := newFakeBeeper(t)
-	chat := observationChat("telegram", "Telegram", "@telegram_first:example.test", map[string]any{"id": "@telegram_first:example.test", "username": "first"}, map[string]any{"id": "@telegram_second:example.test", "username": "second"}, map[string]any{"id": "@telegram_third:example.test", "username": "third"})
-	f.addChat(chat)
-	imp, st := newHandlerTestImporter(t, f)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	sourceID := newBeeperTestSource(t, st, "telegram")
-	imp.res.accountID = "telegram"
-	first, err := imp.res.resolveUser(t.Context(), &User{ID: "@telegram_first:example.test"})
-	require.NoError(err)
-	if st.IsPostgreSQL() {
-		_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_roster_observation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected failure'; END; $$`)
-		require.NoError(err)
-		_, err = st.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER fail_roster_observation BEFORE INSERT ON participant_contact_observations FOR EACH ROW WHEN (NEW.participant_id = %d) EXECUTE FUNCTION fail_roster_observation()`, first))
-	} else {
-		_, err = st.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER fail_roster_observation BEFORE INSERT ON participant_contact_observations WHEN NEW.participant_id = %d BEGIN SELECT RAISE(FAIL, 'injected failure'); END`, first))
-	}
-	require.NoError(err)
-	detail, err := imp.client.GetChat(t.Context(), chat.ID)
-	require.NoError(err)
-	work := &rosterWork{}
-	sum := &ImportSummary{}
-	_, complete, _, err := imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "telegram", rosterState: work, ShouldStop: func() bool { return work.Phase == "matching" && work.Next >= 2 }}, sum)
-	require.ErrorIs(err, errBeeperBudgetExpired)
-	assert.True(complete)
-	assert.Positive(sum.Errors)
-	receipts, err := st.BeeperRosterReceiptsContext(t.Context(), sourceID, rosterProvider(chat.ID))
-	require.NoError(err)
-	assert.Equal("failed", receipts[imp.res.identifierForUser("@telegram_first:example.test")].Status)
-	assert.Equal("resolved", receipts[imp.res.identifierForUser("@telegram_second:example.test")].Status)
-	assert.Equal("pending", receipts[imp.res.identifierForUser("@telegram_third:example.test")].Status)
-	second := participantForBeeperUser(t, st, "@telegram_second:example.test")
-	observations, err := st.ListParticipantObservationsContext(t.Context(), second, true)
-	require.NoError(err)
-	assert.NotEmpty(observations, "a failed member must not block later matching")
-	_, complete, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "telegram", rosterState: work}, &ImportSummary{})
-	require.NoError(err)
-	assert.True(complete)
-	assert.Equal("matching_retry", work.Phase)
-	runID, err := st.StartSync(sourceID, sourceTypeBeeper)
-	require.NoError(err)
-	cs := &ChatState{Done: true, RosterWork: work}
-	repairSummary := &ImportSummary{}
-	stopped, err := imp.repairQuietRoster(t.Context(), runID, sourceID, chat.ID, ImportOptions{AccountID: "telegram"}, cs, time.Now(), repairSummary)
-	require.NoError(err)
-	assert.False(stopped)
-	assert.NotEmpty(cs.RosterRetryAfter, "failed matching backs off without undoing membership")
-	assert.EqualValues(1, repairSummary.RosterRepairErrors)
-	require.NoError(st.CompleteSync(runID, ""))
-	if st.IsPostgreSQL() {
-		_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_roster_observation ON participant_contact_observations`)
-		require.NoError(err)
-		_, err = st.DB().ExecContext(t.Context(), `DROP FUNCTION fail_roster_observation()`)
-	} else {
-		_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_roster_observation`)
-	}
-	require.NoError(err)
-	imp = NewImporter(st, imp.client)
-	third := participantForBeeperUser(t, st, "@telegram_third:example.test")
-	observations, err = st.ListParticipantObservationsContext(t.Context(), third, true)
-	require.NoError(err)
-	assert.NotEmpty(observations, "later matching advances before retrying the failure")
-	_, complete, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "telegram", rosterState: work}, &ImportSummary{})
-	require.NoError(err)
-	assert.True(complete)
-	observations, err = st.ListParticipantObservationsContext(t.Context(), first, true)
-	require.NoError(err)
-	assert.NotEmpty(observations, "the failed member must be retried")
-	assert.Equal("done", work.Phase)
-	receipts, err = st.BeeperRosterReceiptsContext(t.Context(), sourceID, rosterProvider(chat.ID))
-	require.NoError(err)
-	for _, receipt := range receipts {
-		assert.Equal("resolved", receipt.Status)
+	for _, unverified := range []bool{false, true} {
+		t.Run(fmt.Sprintf("unverified=%t", unverified), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			f := newFakeBeeper(t)
+			chat := observationChat("telegram", "Telegram", "@telegram_first:example.test", map[string]any{"id": "@telegram_first:example.test", "username": "first"}, map[string]any{"id": "@telegram_second:example.test", "username": "second"}, map[string]any{"id": "@telegram_third:example.test", "username": "third"})
+			f.addChat(chat)
+			imp, st := newHandlerTestImporter(t, f)
+			t.Cleanup(func() { require.NoError(st.Close()) })
+			sourceID := newBeeperTestSource(t, st, "telegram")
+			imp.res.accountID = "telegram"
+			first, err := imp.res.resolveUser(t.Context(), &User{ID: "@telegram_first:example.test"})
+			require.NoError(err)
+			if st.IsPostgreSQL() {
+				_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_roster_observation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected failure'; END; $$`)
+				require.NoError(err)
+				_, err = st.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER fail_roster_observation BEFORE INSERT ON participant_contact_observations FOR EACH ROW WHEN (NEW.participant_id = %d) EXECUTE FUNCTION fail_roster_observation()`, first))
+			} else {
+				_, err = st.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER fail_roster_observation BEFORE INSERT ON participant_contact_observations WHEN NEW.participant_id = %d BEGIN SELECT RAISE(FAIL, 'injected failure'); END`, first))
+			}
+			require.NoError(err)
+			detail, err := imp.client.GetChat(t.Context(), chat.ID)
+			require.NoError(err)
+			if unverified {
+				f.setChatGetFailure(chat.ID, true)
+			}
+			work := &rosterWork{}
+			sum := &ImportSummary{}
+			_, complete, _, err := imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "telegram", rosterState: work, ShouldStop: func() bool { return work.Phase == "matching" && work.Next >= 2 }}, sum)
+			require.ErrorIs(err, errBeeperBudgetExpired)
+			assert.Equal(!unverified, complete)
+			assert.Positive(sum.Errors)
+			receipts, err := st.BeeperRosterReceiptsContext(t.Context(), sourceID, rosterProvider(chat.ID))
+			require.NoError(err)
+			assert.Equal("failed", receipts[imp.res.identifierForUser("@telegram_first:example.test")].Status)
+			secondStatus := "resolved"
+			if unverified {
+				secondStatus = "pending"
+			}
+			assert.Equal(secondStatus, receipts[imp.res.identifierForUser("@telegram_second:example.test")].Status)
+			assert.Equal("pending", receipts[imp.res.identifierForUser("@telegram_third:example.test")].Status)
+			second := participantForBeeperUser(t, st, "@telegram_second:example.test")
+			observations, err := st.ListParticipantObservationsContext(t.Context(), second, true)
+			require.NoError(err)
+			assert.NotEmpty(observations, "a failed member must not block later matching")
+			_, complete, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "telegram", rosterState: work}, &ImportSummary{})
+			require.NoError(err)
+			assert.Equal(!unverified, complete)
+			if unverified {
+				assert.False(work.Verified)
+				assert.Equal("members", work.Phase)
+				f.setChatGetFailure(chat.ID, false)
+				imp = NewImporter(st, imp.client)
+			} else {
+				assert.Equal("matching_retry", work.Phase)
+			}
+			runID, err := st.StartSync(sourceID, sourceTypeBeeper)
+			require.NoError(err)
+			cs := &ChatState{Done: true, RosterWork: work}
+			repairSummary := &ImportSummary{}
+			stopped, err := imp.repairQuietRoster(t.Context(), runID, sourceID, chat.ID, ImportOptions{AccountID: "telegram"}, cs, time.Now(), repairSummary)
+			require.NoError(err)
+			assert.False(stopped)
+			assert.True(work.Verified)
+			assert.Equal("matching_retry", work.Phase)
+			unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sourceID)
+			require.NoError(err)
+			assert.NotContains(unresolved, chat.ID)
+			receipts, err = st.BeeperRosterReceiptsContext(t.Context(), sourceID, rosterProvider(chat.ID))
+			require.NoError(err)
+			assert.Equal("failed", receipts[imp.res.identifierForUser("@telegram_first:example.test")].Status)
+			assert.NotEmpty(cs.RosterRetryAfter, "failed matching backs off without undoing membership")
+			assert.EqualValues(1, repairSummary.RosterRepairErrors)
+			require.NoError(st.CompleteSync(runID, ""))
+			if st.IsPostgreSQL() {
+				_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_roster_observation ON participant_contact_observations`)
+				require.NoError(err)
+				_, err = st.DB().ExecContext(t.Context(), `DROP FUNCTION fail_roster_observation()`)
+			} else {
+				_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_roster_observation`)
+			}
+			require.NoError(err)
+			imp = NewImporter(st, imp.client)
+			third := participantForBeeperUser(t, st, "@telegram_third:example.test")
+			observations, err = st.ListParticipantObservationsContext(t.Context(), third, true)
+			require.NoError(err)
+			assert.NotEmpty(observations, "later matching advances before retrying the failure")
+			_, complete, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "telegram", rosterState: work}, &ImportSummary{})
+			require.NoError(err)
+			assert.True(complete)
+			observations, err = st.ListParticipantObservationsContext(t.Context(), first, true)
+			require.NoError(err)
+			assert.NotEmpty(observations, "the failed member must be retried")
+			assert.Equal("done", work.Phase)
+			receipts, err = st.BeeperRosterReceiptsContext(t.Context(), sourceID, rosterProvider(chat.ID))
+			require.NoError(err)
+			for _, receipt := range receipts {
+				assert.Equal("resolved", receipt.Status)
+			}
+		})
 	}
 }
 

@@ -228,6 +228,9 @@ func (s *Store) SharedConversationsContext(
 		if raw != "" && json.Unmarshal([]byte(raw), &metadata) == nil && metadata.Route != nil && !metadata.Route.MembershipComplete {
 			continue
 		}
+		if metadata.Route == nil && decodeMembershipRecord(raw).repairPending {
+			continue
+		}
 		shared = append(shared, conversation)
 	}
 	if err := rows.Err(); err != nil {
