@@ -39,16 +39,16 @@ func operationalSettingsCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.M
 func operationalUpdates(args map[string]any) (operationalSettingArguments, []generated.SettingUpdate, error) {
 	input, err := decodeMCPOperationArguments[operationalSettingArguments](args)
 	if err != nil || input.ETag == "" || len(input.Updates) == 0 {
-		return input, nil, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+		return input, nil, &mcpserver.OperationRefusalError{Code: mcpInvalidArguments}
 	}
 	updates := make([]generated.SettingUpdate, 0, len(input.Updates))
 	for _, update := range input.Updates {
 		if !slices.Contains(operationalSettingKeys, update.Key) {
-			return input, nil, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+			return input, nil, &mcpserver.OperationRefusalError{Code: mcpInvalidArguments}
 		}
 		value, err := mcpSettingValue(update.Value)
 		if err != nil {
-			return input, nil, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+			return input, nil, &mcpserver.OperationRefusalError{Code: mcpInvalidArguments}
 		}
 		updates = append(updates, generated.SettingUpdate{Key: update.Key, Value: &value})
 	}
@@ -61,13 +61,13 @@ func (b *daemonMCPOperations) executeOperationalSettings(ctx context.Context, na
 	switch name {
 	case "get_operational_settings":
 		if _, err := decodeMCPOperationArguments[struct{}](args); err != nil {
-			return operationFailure("invalid_arguments", false), true, nil
+			return operationFailure(mcpInvalidArguments, false), true, nil //nolint:nilerr // Invalid arguments become a fixed structured tool refusal.
 		}
 		result, err = readMCPOperationJSON[generated.SettingsResponse](ctx, b.client, http.MethodGet, "/api/v1/settings", nil, http.StatusOK)
 	case "update_operational_settings":
 		input, updates, decodeErr := operationalUpdates(args)
 		if decodeErr != nil {
-			return operationFailure("invalid_arguments", false), true, nil
+			return operationFailure(mcpInvalidArguments, false), true, nil //nolint:nilerr // Invalid arguments become a fixed structured tool refusal.
 		}
 		result, err = readMCPOperationJSON[generated.SettingsResponse](ctx, b.client, http.MethodPatch, "/api/v1/settings", &generated.PatchSettingsRequestOptions{Header: &generated.PatchSettingsHeaders{IfMatch: input.ETag}, Body: &generated.PatchSettingsBody{Updates: updates}}, http.StatusOK)
 	default:
