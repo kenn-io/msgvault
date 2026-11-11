@@ -26,7 +26,7 @@ type instagramPending struct {
 }
 
 type instagramContent struct {
-	body, kind          string
+	body, kind, photos  string
 	duration            int64
 	hasDuration, missed bool
 }
@@ -44,8 +44,19 @@ func instagramEvidence(record rawJSONMessage) instagramOccurrence {
 		return message.Reactions[i].Reaction < message.Reactions[j].Reaction
 	})
 	reactions, _ := json.Marshal(message.Reactions)
+	photos := append([]rawJSONPhoto(nil), record.Photos...)
+	for i := range photos {
+		photos[i].URI = path.Clean(DecodeMojibake(photos[i].URI))
+	}
+	sort.Slice(photos, func(i, j int) bool {
+		if photos[i].URI != photos[j].URI {
+			return photos[i].URI < photos[j].URI
+		}
+		return photos[i].CreationTimestamp < photos[j].CreationTimestamp
+	})
+	photoEvidence, _ := json.Marshal(photos)
 	record.Reactions = nil
-	content := instagramContent{body: instagramJSONMessage(record).Body, kind: record.Type, missed: record.Missed}
+	content := instagramContent{body: instagramJSONMessage(record).Body, kind: record.Type, photos: string(photoEvidence), missed: record.Missed}
 	if record.CallDuration != nil {
 		content.duration, content.hasDuration = *record.CallDuration, true
 	}

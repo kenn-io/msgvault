@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -721,6 +722,54 @@ func TestInstagramSenderChangesRetainMessages(t *testing.T) {
 }
 
 func TestInstagramDuplicateOccurrences(t *testing.T) {
+	t.Run("reordered photos", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		st := testutil.NewTestStore(t)
+		root := t.TempDir()
+		record := instagramTestRecord("same")
+		first := map[string]any{"uri": "a.jpg", "creation_timestamp": 100}
+		second := map[string]any{"uri": "b.jpg", "creation_timestamp": 200}
+		record["photos"] = []map[string]any{first, second}
+		instagramTestShard(t, root, "circle", "message_1.json", record)
+		opts := ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example"}
+		_, err := ImportDYI(t.Context(), st, opts)
+		require.NoError(err)
+		record["photos"] = []map[string]any{second, first}
+		instagramTestShard(t, root, "circle", "message_1.json", record)
+		summary, err := ImportDYI(t.Context(), st, opts)
+		require.NoError(err)
+		assert.Zero(summary.MessagesAdded)
+		assert.Equal(1, countMessages(t, st, ""))
+	})
+	t.Run("photo timestamps", func(t *testing.T) {
+		for _, keep := range []int{0, 1} {
+			t.Run(fmt.Sprint(keep), func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				st := testutil.NewTestStore(t)
+				root := t.TempDir()
+				a, b := instagramTestRecord("same"), instagramTestRecord("same")
+				a["photos"] = []map[string]any{{"uri": "photo.jpg", "creation_timestamp": 100}}
+				b["photos"] = []map[string]any{{"uri": "photo.jpg", "creation_timestamp": 200}}
+				instagramTestShard(t, root, "circle", "message_1.json", a, b)
+				opts := ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example"}
+				_, err := ImportDYI(t.Context(), st, opts)
+				require.NoError(err)
+				before, _ := instagramSnapshot(t, st)
+				instagramTestShard(t, root, "circle", "message_1.json", b, a)
+				_, err = ImportDYI(t.Context(), st, opts)
+				require.NoError(err)
+				after, _ := instagramSnapshot(t, st)
+				assert.Equal(before, after)
+				instagramTestShard(t, root, "circle", "message_1.json", []map[string]any{a, b}[keep])
+				_, err = ImportDYI(t.Context(), st, opts)
+				require.NoError(err)
+				after, _ = instagramSnapshot(t, st)
+				assert.Equal(before, after)
+			})
+		}
+	})
 	t.Run("reordered", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
