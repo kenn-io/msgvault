@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -309,6 +310,70 @@ func TestLoopsCommitmentDecisionUsesItsDaemonSchema(t *testing.T) {
 			r.NoError(err)
 			a.Equal([]string{tc.path}, posts)
 			a.Equal(tc.output, output)
+		})
+	}
+}
+
+func TestLoopsAgendaUsesDaemonHTTPContract(t *testing.T) {
+	for _, tc := range []struct {
+		name, version string
+		json          bool
+		status        int
+	}{
+		{"old_daemon", "5.2.0", false, http.StatusOK},
+		{"issue_reference", "5.3.0", false, http.StatusOK},
+		{"issue_json", "5.3.0", true, http.StatusOK},
+		{"citation_conflict", "5.3.0", false, http.StatusConflict},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, a := require.New(t), assert.New(t)
+			posts := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if req.URL.Path == "/api/v1/health" {
+					a.NoError(json.NewEncoder(w).Encode(map[string]string{"status": "ok", "api_schema_version": tc.version}))
+					return
+				}
+				posts++
+				a.Equal(http.MethodPost, req.Method)
+				a.Equal("/api/v1/loops/commitments/c12/agenda", req.URL.Path)
+				a.Empty(req.URL.RawQuery)
+				w.WriteHeader(tc.status)
+				if tc.status == http.StatusConflict {
+					a.NoError(json.NewEncoder(w).Encode(map[string]string{"error": "kata_citation_changed", "message": "The saved citation changed."}))
+					return
+				}
+				a.NoError(json.NewEncoder(w).Encode(generated.CommitmentAgendaResponse{
+					CommitmentID: "c12", IssueRef: "synthetic#7", IssueUID: "synthetic-issue-uid",
+				}))
+			}))
+			t.Cleanup(server.Close)
+			ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+			args := []string{"agenda", "c12"}
+			if tc.json {
+				args = append(args, "--json")
+			}
+			output, err := runLoops(ctx, t, args...)
+			if tc.version == "5.2.0" {
+				r.ErrorContains(err, "require daemon API schema 5.3.0")
+				a.Zero(posts)
+				return
+			}
+			a.Equal(1, posts)
+			if tc.status == http.StatusConflict {
+				var apiErr *daemonclient.APIError
+				r.ErrorAs(err, &apiErr)
+				a.Equal(http.StatusConflict, apiErr.Status)
+				a.Equal("kata_citation_changed", apiErr.Code)
+				a.Equal("The saved citation changed.", apiErr.Message)
+				return
+			}
+			r.NoError(err)
+			if tc.json {
+				a.JSONEq(`{"commitment_id":"c12","issue_ref":"synthetic#7","issue_uid":"synthetic-issue-uid"}`, output)
+			} else {
+				a.Equal("synthetic#7\n", output)
+			}
 		})
 	}
 }
