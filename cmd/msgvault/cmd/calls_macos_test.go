@@ -35,7 +35,7 @@ func TestCallsImportMacOSThroughDaemon(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	emailSource, err := st.GetOrCreateSource("gmail", "synthetic@example.org")
 	require.NoError(err)
-	emailConversationID, err := st.EnsureConversation(emailSource.ID, "synthetic-email", "Synthetic Email")
+	emailConversationID, err := st.EnsureConversation(t.Context(), emailSource.ID, "synthetic-email", "Synthetic Email")
 	require.NoError(err)
 	_, err = st.UpsertMessage(&store.Message{
 		ConversationID:  emailConversationID,
@@ -82,7 +82,7 @@ func TestCallsImportMacOSThroughDaemon(t *testing.T) {
 	var raw map[string]any
 	require.NoError(json.UnmarshalRead(resp.Body, &raw))
 	assert.Equal("peer@example.com", raw["ZADDRESS"])
-	peer, err := st.EnsureParticipantByPhone("+12025550101", "Example", "manual")
+	peer, err := st.EnsureParticipantByPhone(t.Context(), "+12025550101", "Example", "manual")
 	require.NoError(err)
 	person, _, err := st.CreatePersonFromParticipant(peer)
 	require.NoError(err)
