@@ -2146,7 +2146,7 @@ byte-identical. Re-importing updates events: higher SEQUENCE wins, equal
 sequences use DTSTAMP, and a cancellation wins an exact tie. A component with an
 invalid value rejects the whole file. msgvault converts text in another charset to
 UTF-8, as it does for email. A series with unsupported recurrence stays archived and is reported as unexpandable by `calendar events`. The import command
-reports updated and unchanged counts. Floating times use UTC. The daemon
+reports how many events were updated and how many were not. Floating times use UTC. The daemon
 reads the file locally; importing files through a remote daemon is unavailable.
 
 A cancellation keeps the event's last accepted title, times, participants, and
