@@ -576,6 +576,28 @@ func TestPersonBriefEnrollmentHTTPGetsAndReplacesState(t *testing.T) {
 	assertions.Nil(state.EnabledAt)
 }
 
+func TestPersonBriefEnrollmentCollectionHTTP(t *testing.T) {
+	t.Parallel()
+	f := newPersonBriefAPIFixture(t)
+	path := "/api/v1/people/brief-enrollments"
+	response := doRequest(t, f.server.Router(), http.MethodGet, path+"?limit=1", nil, nil)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+	var page PersonBriefEnrollmentsResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &page))
+	require.Len(t, page.Enrollments, 1)
+	assert.Equal(t, f.personID, page.Enrollments[0].PersonID)
+	response = doRequest(t, f.server.Router(), http.MethodGet,
+		fmt.Sprintf("%s?after_id=%d", path, f.personID), nil, nil)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &page))
+	assert.Empty(t, page.Enrollments)
+	for _, query := range []string{"?limit=0", "?limit=1001", "?after_id=-1", "?after_id=1&after_id=2"} {
+		response = doRequest(t, f.server.Router(), http.MethodGet, path+query, nil, nil)
+		assert.Equal(t, http.StatusBadRequest, response.Code, query)
+	}
+}
+
 func TestPersonBriefEnrollmentHTTPValidatesRequests(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)

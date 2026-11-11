@@ -109,6 +109,13 @@ func TestDelegatedFailsPrivilegedPredicate(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, w.Code)
 	})
 
+	t.Run("brief enrollments are owner-only", func(t *testing.T) {
+		req := makeRequest(http.MethodGet, "/api/v1/people/brief-enrollments")
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
+
 	t.Run("issueAgentToken returns 401", func(t *testing.T) {
 		req := makeRequest(http.MethodPost, "/api/v1/agent-tokens")
 		req.Header.Set("Content-Type", "application/json")

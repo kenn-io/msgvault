@@ -44,6 +44,9 @@ type PersonBriefStore interface {
 	GetPersonBriefEnrollmentContext(
 		ctx context.Context, personID int64,
 	) (*store.PersonBriefEnrollment, error)
+	ListPersonBriefEnrollmentsContext(
+		ctx context.Context, afterID int64, limit int,
+	) ([]store.PersonBriefEnrollment, error)
 	SetPersonBriefEnrollmentContext(
 		ctx context.Context, personID int64, enabled bool, actor string, track bool,
 	) (*store.PersonBriefEnrollment, error)
@@ -121,7 +124,19 @@ type PutPersonBriefEnrollmentRequest struct {
 	Track    bool `json:"track" required:"false"`
 }
 
+// PersonBriefEnrollmentsResponse is one ascending page of enrolled people.
+type PersonBriefEnrollmentsResponse struct {
+	Enrollments []store.PersonBriefEnrollment `json:"enrollments"`
+}
+
 func (s *Server) registerPersonBriefRoutes(api huma.API) {
+	listEnrollment := rawAPIV1Operation("listPersonBriefEnrollments", http.MethodGet,
+		"/people/brief-enrollments", "List people enrolled in briefs")
+	listEnrollment.Parameters = []*huma.Param{contactIntegerParam("after_id", 0, 0), contactIntegerParam("limit", 1, 1000)}
+	listEnrollment.Responses = jsonResponsesFor[PersonBriefEnrollmentsResponse](api)
+	addErrorResponses(api, listEnrollment.Responses, http.StatusBadRequest, http.StatusServiceUnavailable)
+	registerRawHumaRoute(api, listEnrollment, s.handleListPersonBriefEnrollments)
+
 	current := rawAPIV1Operation("getPersonBrief", http.MethodGet,
 		"/people/{id}/brief", "Get a person's current brief version")
 	addPersonIDParameter(&current)
@@ -173,6 +188,34 @@ func (s *Server) registerPersonBriefRoutes(api huma.API) {
 	addErrorResponses(api, setEnrollment.Responses, http.StatusBadRequest,
 		http.StatusConflict, http.StatusNotFound, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, setEnrollment, s.handleSetPersonBriefEnrollment)
+}
+
+func (s *Server) handleListPersonBriefEnrollments(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	afterID, err := contactQueryInteger(r, "after_id", 0, 0)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "invalid after_id")
+		return
+	}
+	limit, err := contactQueryInteger(r, "limit", 1, 1000)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "invalid limit")
+		return
+	}
+	if limit == 0 {
+		limit = 20
+	}
+	briefs, ok := s.store.(PersonBriefStore)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "briefs_unavailable", "Person briefs are unavailable")
+		return
+	}
+	enrollments, err := briefs.ListPersonBriefEnrollmentsContext(r.Context(), afterID, int(limit))
+	if err != nil {
+		s.writePersonBriefError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, PersonBriefEnrollmentsResponse{Enrollments: enrollments})
 }
 
 func (s *Server) handleGetPersonBrief(w http.ResponseWriter, r *http.Request) {

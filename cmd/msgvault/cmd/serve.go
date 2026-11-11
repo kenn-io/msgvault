@@ -3323,6 +3323,12 @@ func (a *storeAPIAdapter) GetPersonBriefEnrollmentContext(
 	return a.store.GetPersonBriefEnrollmentContext(ctx, personID)
 }
 
+func (a *storeAPIAdapter) ListPersonBriefEnrollmentsContext(
+	ctx context.Context, afterID int64, limit int,
+) ([]store.PersonBriefEnrollment, error) {
+	return a.store.ListPersonBriefEnrollmentsContext(ctx, afterID, limit)
+}
+
 func (a *storeAPIAdapter) SetPersonBriefEnrollmentContext(
 	ctx context.Context, personID int64, enabled bool, actor string, track bool,
 ) (*store.PersonBriefEnrollment, error) {
