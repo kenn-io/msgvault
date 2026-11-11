@@ -2441,12 +2441,15 @@ for the user workflow and coverage meanings.
 | `POST /api/v1/meetings/actions` | Optional `scope` or `explore`, plus action filters; returns rows, coverage, count, and cursor |
 | `POST /api/v1/meetings/metrics` | Optional `scope` or `explore`; returns totals, duration bases, monthly rows, and undated count |
 
-Context accepts 1–100 meetings, `format: "json"` or `"markdown"`,
+Context accepts 1–100 meetings, `format: "json"`, `"markdown"`, `"srt"`, or `"vtt"`,
 `include_transcript` (default false), and `max_bytes` (default 131072, range
 4096–1048576). The budget applies to the UTF-8 bytes of `content`, not the HTTP
 envelope. Save `content` directly; `content_bytes`, `truncated`, and
 `omitted_message_ids` describe that exact download. Mixed selections fail with
 `selection_not_all_meetings`.
+
+SRT and VTT require one distinct meeting ID and API schema 5.1.0. See
+[subtitle export](usage/meetings.md#export-subtitles) for timing and format limits.
 
 A direct `scope` supports `message_ids`, `source_ids`, `participant_id` or
 `participant_ids`, `person_id`, `domains`, `after`, `before`, and `deletion`.
@@ -3448,5 +3451,3 @@ These heuristics can miss unfamiliar wording and layouts, lowercase letter-only 
 Search rows are masked in place, with membership and counts unchanged.
 
 Search can confirm a withheld value through exact or prefix queries, and draft output can include verification content. These known limits are covered by later slices for search confirmation and draft quotes. Add `verification.read` only when the delegated reader should receive verification content.
-
-Meeting context exports also support `srt` and `vtt` for one distinct meeting ID with retained timing. See [subtitle export](usage/meetings.md#export-subtitles) for limits and failure behavior. Subtitle formats require API schema 5.1.0.

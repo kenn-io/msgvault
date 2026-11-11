@@ -62,7 +62,7 @@ func renderSubtitles(segments []subtitleSegment, format string) (string, error) 
 		text = strings.Join(kept, "\n")
 		start, end := s.Start, s.End
 		if !validSubtitleSeconds(start) || !validSubtitleSeconds(end) || end <= start {
-			return "", fmt.Errorf("subtitle timing invalid at segment %d: negative, overflowing, or reversed interval", i+1)
+			return "", fmt.Errorf("subtitle timing invalid at segment %d: negative, overflowing, zero-length, or reversed interval", i+1)
 		}
 		startMS, endMS := int64(math.Round(start*1000)), int64(math.Round(end*1000))
 		if endMS <= startMS {
