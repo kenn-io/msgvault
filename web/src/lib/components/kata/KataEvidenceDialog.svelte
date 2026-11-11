@@ -152,7 +152,7 @@
       {#if error}<p role="alert">{error}</p>{/if}
     {:else}
       <form onsubmit={(event) => { event.preventDefault(); void submit(); }} aria-busy={busy}>
-        {#snippet issueMode()}<SegmentedControl ariaLabel="Issue" options={actionOptions} value={mode} disabled={busy} onchange={(value) => mode = value === 'link' ? 'link' : 'create'} />{/snippet}
+        {#snippet issueMode()}<SegmentedControl variant="borderless" ariaLabel="Issue" options={actionOptions} value={mode} disabled={busy} onchange={(value) => mode = value === 'link' ? 'link' : 'create'} />{/snippet}
         {#if modeLabel}<div class="issue-mode"><span>Issue</span>{@render issueMode()}</div>{:else}{@render issueMode()}{/if}
         {#if mode === 'create'}
           <label>Issue title<TextInput ariaLabel="Issue title" bind:value={title} disabled={busy} autocomplete="off" block /></label>

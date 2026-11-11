@@ -24,10 +24,10 @@
   ]);
 </script>
 
-<Dialog title={email ? 'Add to task' : 'Kata issue'} onclose={() => { if (!busy && !kataBusy) onclose(); }}>
+<Dialog title={provider === 'kata' ? 'Kata issue' : 'Add to task'} onclose={() => { if (!busy && !kataBusy) onclose(); }}>
   <div class="task-dialog">
     {#if options.length > 1 && !kataReceipt}
-      <div class="provider"><span>Send to</span><SegmentedControl ariaLabel="Send to" disabled={busy || kataBusy} {options} value={provider} onchange={(value) => { provider = value; if (value === 'kata') kataInitialized = true; }} /></div>
+      <div class="provider"><span>Send to</span><SegmentedControl variant="borderless" ariaLabel="Send to" disabled={busy || kataBusy} {options} value={provider} onchange={(value) => { provider = value; if (value === 'kata') kataInitialized = true; }} /></div>
     {/if}
     {#if email}<div hidden={provider !== 'tasks'}>
       <TaskLinks {client} {messageId} {title} {onsettings} mode="add" bind:busy oncancel={onclose} oncomplete={onclose} />

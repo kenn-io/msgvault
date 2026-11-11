@@ -37,7 +37,7 @@ describe('Add to task', () => {
       if (email) {
         await fireEvent.click(await screen.findByRole('radio', { name: 'Kata' }));
       }
-      expect(screen.getByRole('dialog', { name: email ? 'Add to task' : 'Kata issue' })).toBeTruthy();
+      expect(screen.getByRole('dialog', { name: 'Kata issue' })).toBeTruthy();
       expect(screen.getByRole('radiogroup', { name: 'Issue' })).toBeTruthy();
       expect(screen.queryByText('Issue')).toEqual(email ? expect.anything() : null);
       expect(await screen.findByRole('textbox', { name: 'Issue title' })).toHaveProperty('value', 'Follow up');
@@ -70,6 +70,7 @@ describe('Add to task', () => {
       expect(onclose).not.toHaveBeenCalled();
       finish(Response.json({ issue: { uid: 'one', ref: 'abcd', qualified_ref: 'example#abcd', project: 'example', title: 'Follow up', status: 'open', revision: '1' }, replayed: false }));
       await screen.findByRole('button', { name: 'Done' });
+      expect(screen.getByRole('dialog', { name: 'Kata issue' })).toBeTruthy();
       expect(screen.queryByRole('radio', { name: 'Tasks' })).toBeNull();
       await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
       expect(onclose).toHaveBeenCalledOnce();
