@@ -361,6 +361,8 @@ describe('TaskLinks', () => {
     render(TaskLinks, { client: createAPIClient(fetchFn), mode: 'add', messageId: 42, title: 'Synthetic', oncomplete });
     await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
     await fireEvent.click(await screen.findByRole('radio', { name: 'Synthetic result' }));
+    const search = requests.find(request => new URL(request.url).pathname.endsWith('/integrations/tasks/search'))!;
+    expect(new URL(search.url).searchParams.has('q')).toBe(false);
     await fireEvent.click(screen.getByRole('button', { name: 'Link task' }));
     await waitFor(() => expect(requests.some((request) => request.method === 'POST')).toBe(true));
     const post = requests.find((request) => request.method === 'POST')!;

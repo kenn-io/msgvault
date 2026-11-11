@@ -31,7 +31,7 @@ describe('TaskIssuePicker', () => {
     expect(screen.getByText('More tasks available.').style.visibility).toBe('hidden');
     await fireEvent.input(filter, { target: { value: 'missing' } });
     await screen.findByText('No tasks match "missing".');
-    expect(load.mock.calls[1][1].aborted).toBe(true);
+    expect(load.mock.calls[2][1].aborted).toBe(true);
     older({ items: [item], truncated: true });
     await tick();
     expect(screen.getByText('No tasks match "missing".')).toBeDefined();

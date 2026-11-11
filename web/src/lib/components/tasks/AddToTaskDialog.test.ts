@@ -61,7 +61,7 @@ describe('Add to task', () => {
       await screen.findByText('Quote');
       await fireEvent.click(screen.getByRole('button', { name: 'Create issue' }));
       await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-      await fireEvent.keyDown(window, { key: 'Escape' });
+      await fireEvent.keyDown(document, { key: 'Escape' });
       expect(onclose).not.toHaveBeenCalled();
       finish(Response.json({ issue: { uid: 'one', ref: 'abcd', qualified_ref: 'example#abcd', project: 'example', title: 'Follow up', status: 'open', revision: '1' }, replayed: false }));
       await screen.findByRole('button', { name: 'Done' });

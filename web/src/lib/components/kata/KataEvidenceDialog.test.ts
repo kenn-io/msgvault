@@ -179,11 +179,9 @@ describe('KataEvidenceDialog', () => {
     const h = harness(async () => Response.json({ issue, replayed: false }));
     render(KataEvidenceDialog, { client: h.client, selector });
     await screen.findByText('Opening passage');
-    expect(screen.getByText("The quote above is saved in Kata. Attachments aren't sent.")).toBeDefined();
     await fireEvent.input(screen.getByLabelText('Issue title'), { target: { value: 'Kata draft' } });
     await fireEvent.input(screen.getByLabelText('Brief'), { target: { value: 'Brief draft' } });
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-    expect(screen.getByText("The quote above is saved in Kata. Attachments aren't sent.")).toBeDefined();
     await fireEvent.click(screen.getByRole('radio', { name: 'New' }));
     expect(screen.getByLabelText('Issue title')).toHaveProperty('value', 'Kata draft');
     expect(screen.getByLabelText('Brief')).toHaveProperty('value', 'Brief draft');

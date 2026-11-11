@@ -16,7 +16,7 @@ test('Kata search guidance sits below the issue results', async ({ page }) => {
     if (url.pathname === '/api/v1/messages/42001') return route.fulfill({ json: message });
     if (url.pathname === '/api/v1/conversations/71') return route.fulfill({ json: { id: 71, anchor_id: 42001, messages: [message], has_before: false, has_after: false, total: 1 } });
     if (url.pathname === '/api/v1/integrations/kata/open-issues') return route.fulfill({ json: { issues: [{ uid: 'one', ref: 'abcd', qualified_ref: 'example#abcd', project: 'example', title: 'Budget review', status: 'open', revision: '1' }], truncated: false } });
-    if (url.pathname === '/api/v1/integrations/kata/evidence/prepare') return route.fulfill({ json: { evidence: [] } });
+    if (url.pathname === '/api/v1/integrations/kata/evidence/prepare') return route.fulfill({ json: { evidence: [{ id: 'one', passage: 'one', reference: { version: 1, kind: 'message', archive_uid: 'archive-example', message_id: 42001, source_type: 'email', source_identifier: 'example', source_message_id: 'source-message', message: { body_sha256: 'a'.repeat(64), start_rune: 0, end_rune: 24 } }, excerpt: 'Please review the budget', display: {}, content_trust: 'untrusted' }] } });
     return route.fulfill({ status: 404, json: { message: 'Unexpected archive request' } });
   });
   await page.goto('/messages/42001');
