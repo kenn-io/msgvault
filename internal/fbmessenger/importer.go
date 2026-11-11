@@ -1042,10 +1042,7 @@ func writeThreadToStore(
 	}
 	if instagram && len(thread.Messages) > 0 {
 		_, err := st.EnsureConversationWithTypeContext(ctx, sourceID, thread.instagramKey, thread.ConvType, thread.Title)
-		if err != nil {
-			return err
-		}
-		return indexInstagramConversation(ctx, st, sourceID, thread.instagramKey, thread.Title)
+		return err
 	}
 	return nil
 }
@@ -1067,25 +1064,6 @@ func keepInstagramTitle(ctx context.Context, st *store.Store, sourceID int64, th
 		return nil
 	}
 	return st.RetitleArchivedConversationContext(ctx, sourceID, thread.instagramKey, thread.ConvType, thread.Title, "instagram_json")
-}
-
-func indexInstagramConversation(ctx context.Context, st *store.Store, sourceID int64, key, title string) error {
-	var afterID int64
-	for {
-		messages, err := st.ScanArchivedRawMessagesForConversation(ctx, sourceID, key, "instagram_json", afterID, 200)
-		if err != nil {
-			return err
-		}
-		if len(messages) == 0 {
-			return nil
-		}
-		for _, message := range messages {
-			if err := st.IndexStoredMessageWithSubjectContext(ctx, message.MessageID, title); err != nil {
-				return err
-			}
-			afterID = message.MessageID
-		}
-	}
 }
 
 // saveFbmessengerCheckpoint marshals a fbmessengerCheckpoint JSON blob

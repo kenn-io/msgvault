@@ -3992,17 +3992,8 @@ func (s *Store) UpsertFTSContext(ctx context.Context, messageID int64, subject, 
 // IndexStoredMessageContext fills or refreshes a message's search entry from stored
 // rows. Unchanged entries are left alone, and unavailable FTS is a no-op.
 func (s *Store) IndexStoredMessageContext(ctx context.Context, messageID int64) error {
-	return s.indexStoredMessageContext(ctx, messageID, nil)
-}
-
-// IndexStoredMessageWithSubjectContext stores a message's subject and refreshes its search entry from it.
-func (s *Store) IndexStoredMessageWithSubjectContext(ctx context.Context, messageID int64, subject string) error {
-	return s.indexStoredMessageContext(ctx, messageID, &subject)
-}
-
-func (s *Store) indexStoredMessageContext(ctx context.Context, messageID int64, subject *string) error {
 	return s.withSyncMessageWriteContext(ctx, messageID, func(q querier) error {
-		return s.indexStoredMessage(q, messageID, subject)
+		return s.indexStoredMessage(q, messageID, nil)
 	})
 }
 

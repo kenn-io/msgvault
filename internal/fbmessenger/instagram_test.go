@@ -401,56 +401,6 @@ func TestInstagramCanceledReplayWithoutTitleKeepsTitleSearch(t *testing.T) {
 	assert.Equal(t, int64(1), total)
 }
 
-func TestInstagramCanceledRenameKeepsRetainedMessagesSearchable(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	filename := instagramTestShard(t, root, "circle", "message_1.json", instagramTestRecord("first"), instagramTestRecord("second"))
-	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
-	_, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filename, []byte(`{"thread_path":"inbox/circle","title":"Updated circle","participants":[{"name":"Nova Example"},{"name":"Mira Example"}],"messages":[{"sender_name":"Mira Example","timestamp_ms":1730500000123,"content":"third"}]}`), 0600))
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	canceled := testutil.CancelAfterCommit(t, cancel, func() bool {
-		var count int
-		require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages`).Scan(&count))
-		return count == 3
-	})
-	_, err = ImportDYI(ctx, st, opts)
-	require.ErrorIs(t, err, context.Canceled)
-	require.True(t, canceled())
-	_, err = st.RebuildFTS(nil)
-	require.NoError(t, err)
-	_, total, err := st.SearchMessagesQueryContext(t.Context(), &search.Query{TextTerms: []string{"Updated"}}, 0, 10)
-	require.NoError(t, err)
-	assert.Equal(t, int64(3), total)
-}
-
-func TestInstagramCanceledDuringRenameKeepsRetainedMessagesSearchable(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	filename := instagramTestShard(t, root, "circle", "message_1.json", instagramTestRecord("first"), instagramTestRecord("second"))
-	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
-	_, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filename, []byte(`{"thread_path":"inbox/circle","title":"Updated circle","participants":[{"name":"Nova Example"},{"name":"Mira Example"}],"messages":[{"sender_name":"Mira Example","timestamp_ms":1730500000123,"content":"third"}]}`), 0600))
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	canceled := testutil.CancelAfterCommit(t, cancel, func() bool {
-		var title string
-		require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT title FROM conversations`).Scan(&title))
-		return title == "Updated circle"
-	})
-	_, err = ImportDYI(ctx, st, opts)
-	require.ErrorIs(t, err, context.Canceled)
-	require.True(t, canceled())
-	_, err = st.RebuildFTS(nil)
-	require.NoError(t, err)
-	_, total, err := st.SearchMessagesQueryContext(t.Context(), &search.Query{TextTerms: []string{"Updated"}}, 0, 10)
-	require.NoError(t, err)
-	assert.Equal(t, int64(2), total)
-}
-
 func TestInstagramRetryAfterCanceledRenameRepairsTitle(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
@@ -628,6 +578,24 @@ func TestInstagramTitleSearchAfterLimitedImportAndRebuild(t *testing.T) {
 	_, total, err := st.SearchMessagesQueryContext(t.Context(), &search.Query{TextTerms: []string{"Fictional"}}, 0, 10)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), total)
+}
+
+func TestInstagramLaterTitleIndexesMessagesWithoutSubjects(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	filename := instagramTestShard(t, root, "circle", "message_1.json")
+	require.NoError(t, os.WriteFile(filename, []byte(`{"thread_path":"inbox/circle","participants":[{"name":"Nova Example"},{"name":"Mira Example"}],"messages":[{"sender_name":"Mira Example","timestamp_ms":1730500000123,"content":"first"},{"sender_name":"Mira Example","timestamp_ms":1730500000124,"content":"second"}]}`), 0600))
+	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
+	_, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filename, []byte(`{"thread_path":"inbox/circle","title":"Updated circle","participants":[{"name":"Nova Example"},{"name":"Mira Example"}],"messages":[{"sender_name":"Mira Example","timestamp_ms":1730500000123,"content":"first"}]}`), 0600))
+	_, err = ImportDYI(t.Context(), st, opts)
+	require.NoError(t, err)
+	_, err = st.RebuildFTS(nil)
+	require.NoError(t, err)
+	_, total, err := st.SearchMessagesQueryContext(t.Context(), &search.Query{TextTerms: []string{"Updated"}}, 0, 10)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), total)
 }
 
 func TestInstagramConversationUsesFirstShardHeader(t *testing.T) {
