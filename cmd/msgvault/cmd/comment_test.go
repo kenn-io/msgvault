@@ -134,3 +134,18 @@ func TestCommentReply(t *testing.T) {
 	assert.Equal(6, refused.ExitCode())
 	assert.Equal("change the text to post another reply", refused.Hint())
 }
+
+func TestCommentReplyPostedButNotArchived(t *testing.T) {
+	require := require.New(t)
+	cfg, st, messageID, runCommand := commentCommandFixture(t)
+	cfg.FacebookComments[0].Actions = []string{"reply"}
+	id := strconv.FormatInt(messageID, 10)
+	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER block_reply_archive BEFORE INSERT ON messages
+		WHEN NEW.source_message_id = '100_202' BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END`)
+	require.NoError(err)
+
+	output, err := runCommand(newCommentReplyCmd(), id, "--body", "Thanks")
+	require.NoError(err)
+	assert.Equal(t, "Replied to Facebook comment 100_201 by Example Customer (message "+id+"); reply 100_202\n"+
+		"Not archived yet; the next sync archives it: upsert message: synthetic failure\n", output)
+}

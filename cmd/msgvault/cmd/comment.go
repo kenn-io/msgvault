@@ -83,8 +83,8 @@ func newCommentReplyCmd() *cobra.Command {
 		Use:   "reply <message-id> --body <text>",
 		Short: "Post a public reply to an archived Facebook or Instagram comment",
 		Long: "Post a public reply to an archived Facebook Page or Instagram comment as the Page or account, then archive the reply. " +
-			"The comment's profile must list \"reply\" in actions. --dry-run shows the comment and reply without calling Meta. " +
-			"msgvault records each reply before sending it. If Meta's answer is lost, the same reply is refused until you check the comment on Meta and run the command again with --clear-unknown.",
+			"The comment's profile must list \"reply\" in actions. " +
+			"If Meta's answer is lost, the same reply is refused until you check the comment on Meta and run the command again with --clear-unknown.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if strings.TrimSpace(body) == "" {
@@ -108,7 +108,8 @@ func newCommentReplyCmd() *cobra.Command {
 				done := fmt.Sprintf("Replied to %s; reply %s", c.description, textutil.SanitizeTerminal(replyID))
 				switch {
 				case errors.Is(err, meta.ErrReplyNotArchived):
-					return done + "\nNot archived yet: " + textutil.SanitizeTerminal(err.Error()), nil
+					cause := strings.TrimPrefix(err.Error(), meta.ErrReplyNotArchived.Error()+": ")
+					return done + "\nNot archived yet; the next sync archives it: " + textutil.SanitizeTerminal(cause), nil
 				case errors.Is(err, meta.ErrReplySent):
 					return "", &sourceCommandError{err: err, code: 6, hint: "change the text to post another reply"}
 				case errors.Is(err, meta.ErrReplyUnknown):
