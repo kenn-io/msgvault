@@ -25,22 +25,22 @@ const (
 // CommitmentSource is a scoped, participant-verified source. Start is an
 // original-body rune coordinate, never an offset in a generated excerpt.
 type CommitmentSource struct {
-	SourceID      int64     `json:"source_id"`
-	RecordedTime  time.Time `json:"recorded_time"`
+	SourceID      int64     `json:"-"`
+	RecordedTime  time.Time `json:"-"`
 	ID            string    `json:"id"`
-	MessageID     int64     `json:"message_id"`
+	MessageID     int64     `json:"-"`
 	Direction     string    `json:"direction"`
 	Text          string    `json:"text"`
 	Start         int64     `json:"start"`
 	EventTime     time.Time `json:"event_time"`
-	SourceRef     string    `json:"source_ref"`
-	SourceVersion string    `json:"source_version"`
-	ContentSHA256 string    `json:"content_sha256"`
+	SourceRef     string    `json:"-"`
+	SourceVersion string    `json:"-"`
+	ContentSHA256 string    `json:"-"`
 }
 
 type CommitmentAnchor struct {
 	ID         int64     `json:"id"`
-	TargetKey  string    `json:"target_key"`
+	TargetKey  string    `json:"-"`
 	Direction  string    `json:"direction"`
 	Quote      string    `json:"quote"`
 	PromisedAt time.Time `json:"promised_at"`
@@ -50,7 +50,7 @@ type CommitmentAnchor struct {
 }
 
 type CommitmentWindow struct {
-	PersonID          int64              `json:"person_id"`
+	PersonID          int64              `json:"-"`
 	Sources           []CommitmentSource `json:"sources"`
 	Anchors           []CommitmentAnchor `json:"open_anchors"`
 	Now               time.Time          `json:"now"`
@@ -59,7 +59,7 @@ type CommitmentWindow struct {
 	AnchorAfterID     int64              `json:"-"`
 	AnchorBackfillID  int64              `json:"-"`
 	SnapshotSequence  int64              `json:"-"`
-	ThroughSequence   int64              `json:"through_sequence"`
+	ThroughSequence   int64              `json:"-"`
 }
 
 type CommitmentPromise struct {
