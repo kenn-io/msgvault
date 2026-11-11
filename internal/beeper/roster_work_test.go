@@ -476,7 +476,7 @@ func TestUnsupportedRosterVersionStopsImport(t *testing.T) {
 				require.NoError(st.CompleteSync(runID, blob))
 			}
 			_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-			const want = "saved Beeper roster progress uses unsupported version 2; update msgvault to resume it"
+			const want = "saved Beeper progress is incompatible with this version of msgvault. Update msgvault to resume"
 			require.ErrorContains(err, want)
 			_, err = imp.BackfillMedia(t.Context(), ImportOptions{AccountID: "signal", AttachmentsDir: t.TempDir()})
 			require.ErrorContains(err, want)

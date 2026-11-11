@@ -177,7 +177,7 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 		return stop || opts.budgetExpired(), err
 	}
 	if cs.RosterWork != nil && cs.RosterWork.MatchingPending {
-		return deferRoom("beeper_roster_repair_failed", store.SyncRunItemStatusError, errors.New("roster enrichment incomplete"))
+		return deferRoom("beeper_roster_repair_failed", store.SyncRunItemStatusError, errors.New("contact matching pending"))
 	}
 	cs.RosterRetryAfter = ""
 	return opts.stopRequested(), nil

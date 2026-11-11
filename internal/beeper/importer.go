@@ -1171,7 +1171,7 @@ func (imp *Importer) ensureConversation(
 		binding, ok := bindings[resolved[i].key]
 		if !ok {
 			work.MembershipApplied = false
-			return convID, false, chatMembership{}, nil, errors.New("participant binding disappeared during roster refresh")
+			return convID, false, chatMembership{}, nil, errors.New("could not refresh chat members")
 		}
 		resolved[i].participantID = binding.ID
 		imp.res.seedUser(resolved[i].user, binding)
