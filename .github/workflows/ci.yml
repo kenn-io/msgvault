@@ -67,7 +67,8 @@ jobs:
     container:
       # Build against the oldest runtime exercised below. Newer builders can
       # introduce glibc/libstdc++ requirements that stock bookworm cannot load.
-      image: debian:bookworm-slim
+      # Same image as the Dockerfile's runtime stage.
+      image: debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
     steps:
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
@@ -174,7 +175,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 5
     container:
-      image: debian:bookworm-slim
+      image: debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
     steps:
       - uses: actions/download-artifact@v8.0.2
         with:

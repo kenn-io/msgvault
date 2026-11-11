@@ -161,8 +161,9 @@ docker run --rm --network none --read-only --tmpfs /tmp:rw,exec \
 
 The Linux CI build uses Debian bookworm as its compiler baseline and transfers
 its AMD64 and ARM64 executables to separate stock bookworm runtime jobs. Those
-jobs install no build tools or DuckDB. They complement the Docker-image smoke above, which checks a
-different build and its packaged runtime. They do not publish release assets.
+jobs install no build tools or DuckDB. They complement the Docker-image smoke
+above, which checks a different build and its packaged runtime. They do not
+publish release assets.
 See [runtime requirements](setup.md#runtime-requirements) for the inspected
 v0.23.0 requirements; a passing check on one host does not certify other OS
 versions or architectures.
