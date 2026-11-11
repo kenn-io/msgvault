@@ -154,19 +154,19 @@ func TestICSStatus(t *testing.T) {
 		requirements.NoError(err)
 		requirements.Len(components, 1)
 		assertions.Equal("cancelled", components[0].Event.Status)
+		components, err = ParseICS([]byte(icsExample), "CANCEL", "")
+		requirements.NoError(err)
+		requirements.Len(components, 1)
+		assertions.Equal("confirmed", components[0].Event.Status)
 	})
 	t.Run("email method", func(t *testing.T) {
-		assertions, requirements := assert.New(t), require.New(t)
+		requirements := require.New(t)
 		cancel := strings.Replace(icsExample, "METHOD:REQUEST", "METHOD:CANCEL", 1)
 		_, err := ParseEmailICS([]byte(cancel), "REPLY", "")
 		requirements.ErrorContains(err, "conflicts")
 		components, err := ParseEmailICS([]byte(icsExample), " request", "")
 		requirements.NoError(err)
 		requirements.Len(components, 1)
-		components, err = ParseICS([]byte(icsExample), "CANCEL", "")
-		requirements.NoError(err)
-		requirements.Len(components, 1)
-		assertions.Equal("confirmed", components[0].Event.Status)
 	})
 }
 
@@ -240,6 +240,7 @@ func TestICSRejectMalformed(t *testing.T) {
 	const zone = "BEGIN:VCALENDAR\r\nBEGIN:VTIMEZONE\r\nTZID:Custom/Test\r\nBEGIN:STANDARD\r\nDTSTART:20270101T000000\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0500\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:test@example.com\r\nDTSTART;TZID=Custom/Test:20270302T120000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
 	const ruleZone = "BEGIN:VCALENDAR\r\nBEGIN:VTIMEZONE\r\nTZID:Custom/Test\r\nBEGIN:STANDARD\r\nDTSTART:20271107T020000\r\nTZOFFSETFROM:-0400\r\nTZOFFSETTO:-0500\r\nRRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU\r\nEND:STANDARD\r\nBEGIN:DAYLIGHT\r\nDTSTART:20270314T020000\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0400\r\nRRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU\r\nEND:DAYLIGHT\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:test@example.com\r\nDTSTART;TZID=Custom/Test:20270305T090000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
 	for _, tc := range []struct{ name, raw, want string }{
+		{"oversized event", strings.Replace(icsExample, "DESCRIPTION:", "DESCRIPTION:"+strings.Repeat("a", 64<<20), 1), "retained calendar exceeds"},
 		{"zone RDATE", strings.Replace(ruleZone, "END:DAYLIGHT", "RDATE:20270301T020000\r\nEND:DAYLIGHT", 1), "unsupported VTIMEZONE"},
 		{"zone EXDATE", strings.Replace(ruleZone, "END:DAYLIGHT", "EXDATE:20270314T020000\r\nEND:DAYLIGHT", 1), "unsupported VTIMEZONE"},
 		{"zone EXRULE", strings.Replace(ruleZone, "END:DAYLIGHT", "EXRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU\r\nEND:DAYLIGHT", 1), "unsupported VTIMEZONE"},

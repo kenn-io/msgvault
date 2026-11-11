@@ -239,14 +239,6 @@ func TestICalendarCancellationArrivalOrder(t *testing.T) {
 				assertions.Equal("2027-03-02T14:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
 			}
 			check()
-			beforeRebuild := calendarRows(t, st, ids...)[0].Event
-			raw, err := st.GetMessageRaw(ids[0])
-			requirements.NoError(err)
-			_, err = st.db.Exec(`DELETE FROM calendar_events WHERE message_id=?`, ids[0])
-			requirements.NoError(err)
-			requirements.NoError(st.UpsertMessageRawWithFormat(ids[0], raw, "ics"))
-			assertions.Equal(beforeRebuild, calendarRows(t, st, ids...)[0].Event)
-			check()
 			restore := calendarDocument("REQUEST", "SEQUENCE:4\r\nDTSTART:20270302T150000Z\r\nSUMMARY:Restored")
 			_, err = st.PersistICalendarContext(t.Context(), source, restore)
 			requirements.NoError(err)

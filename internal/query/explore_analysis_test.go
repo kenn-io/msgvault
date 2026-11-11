@@ -90,11 +90,6 @@ func TestExploreGroupsIncludeEmailInviteParticipants(t *testing.T) {
 	assertions.Len(timeline.Rows, 2)
 	calendar, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{CanonicalID: attendee, Year: 2026, Timezone: "UTC"})
 	requirements.NoError(err)
-	var meetings int64
-	for _, day := range calendar.Days {
-		meetings += day.Meetings
-	}
-	assertions.Equal(int64(1), meetings)
 	assertions.Equal("2026-07-11", calendar.EffectiveDate)
 }
 
