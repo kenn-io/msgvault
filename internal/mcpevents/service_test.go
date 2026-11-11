@@ -173,6 +173,39 @@ func TestSubscribeRefreshPreservesPosition(t *testing.T) {
 	assert.Equal(first.ID, entries[0].ID)
 }
 
+func TestResubscribeReusesIdentityAndStartsAtCurrentBound(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
+	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	first, err := service.Subscribe(t.Context(), in)
+	require.NoError(err)
+	key := store.MCPEventsPositionKey(first.ID)
+	_, raw, err := st.LoadWakeupStateKey(t.Context(), key)
+	require.NoError(err)
+	require.NotNil(raw)
+	old := store.WakeupState{At: time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC), Failures: 2}
+	ok, err := st.AdvanceWakeupStateKey(t.Context(), key, raw, old)
+	require.NoError(err)
+	require.True(ok)
+	require.NoError(service.Unsubscribe(t.Context(), MCPEventsUnsubscribeRequest{Name: in.Name, Arguments: in.Arguments, Delivery: in.Delivery}))
+	before, err := st.ListChangedMessages(t.Context(), store.ChangedMessagesCursor{}, 1)
+	require.NoError(err)
+	require.False(before.CompleteThrough.IsZero())
+	second, err := service.Subscribe(t.Context(), in)
+	require.NoError(err)
+	after, err := st.ListChangedMessages(t.Context(), store.ChangedMessagesCursor{}, 1)
+	require.NoError(err)
+	state, raw, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(second.ID))
+	require.NoError(err)
+	require.NotNil(raw)
+	assert.Equal(first.ID, second.ID)
+	assert.False(state.At.Before(before.CompleteThrough))
+	assert.False(state.At.After(after.CompleteThrough))
+	assert.Equal(store.WakeupState{At: state.At}, state)
+}
+
 func TestExpiredSubscriptionRemovedWithoutDelivery(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
