@@ -713,12 +713,6 @@ func (w *Worker) runPerson(
 		attemptStarted, attemptEnvelopeHash = true, hash
 		return nil
 	}
-	if !ordinaryAllowed && !commitmentPlanned {
-		if err := startAttempt(progress.CursorEnvelope); err != nil {
-			return PersonRunResult{}, err
-		}
-		return PersonRunResult{}, w.deferAttempt(ctx, lease, attemptID, resolvedAt)
-	}
 	// applyStatusOnly commits support changes under a renewed lease without
 	// advancing cursors, so the next packet reads the updated projection.
 	applyStatusOnly := func(envelope []GenerationCursor, changes []personfacts.EvidenceStatusChange) error {
@@ -750,6 +744,17 @@ func (w *Worker) runPerson(
 		}
 		lease = applied
 		return nil
+	}
+	if !ordinaryAllowed && !commitmentPlanned {
+		if err := startAttempt(progress.CursorEnvelope); err != nil {
+			return PersonRunResult{}, err
+		}
+		if len(progress.EvidenceStatusChanges) > 0 {
+			if err := applyStatusOnly(progress.CursorEnvelope, progress.EvidenceStatusChanges); err != nil {
+				return PersonRunResult{}, err
+			}
+		}
+		return PersonRunResult{}, w.deferAttempt(ctx, lease, attemptID, resolvedAt)
 	}
 	if !commitmentOnly && hasEvidenceRetraction(progress.EvidenceStatusChanges) && len(progress.Seeds) > 0 &&
 		len(catalog.Targets) > 0 {
