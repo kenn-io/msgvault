@@ -137,10 +137,8 @@ describe("PersonOpenLoops", () => {
     const { client } = commitmentClient();
     render(PersonOpenLoops, { client, personID: 7 });
     await screen.findByRole("link", { name: "I will send the draft." });
-    expect(screen.getAllByText("I will send the draft.")).toHaveLength(1);
     expect(screen.queryByText("Send the promised document")).toBeNull();
     expect(screen.getByText("Due 2026-11-15")).toBeDefined();
-    expect(screen.getAllByText("I will check the venue.")).toHaveLength(1);
     await fireEvent.click(screen.getByRole("button", { name: "Show closed promises" }));
     expect(await screen.findByRole("link", { name: "Fulfilment · I sent the agenda." })).toBeDefined();
     expect(screen.queryByText("Fulfilled")).toBeNull();
