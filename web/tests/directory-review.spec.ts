@@ -1,19 +1,61 @@
+import { person } from '../src/lib/directory/person-fixtures.test-support';
+import { emptyProfile } from '../src/lib/directory/profile-fixtures.test-support';
 import { expect, test } from '@playwright/test';
 import type { PersonContactPoint } from '../src/lib/api/generated/models';
 import { installDirectoryReviewArchive, installMixedArchive } from './e2e/fixtures/mixed-archive';
 const peopleURL = '/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships' }));
 const duplicatesURL = '/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', peopleDuplicates: true }));
 
-test('inline People fields use the shared field scale on a phone', async ({ page }) => {
+test('Person Details aligns desktop and phone content and uses shared phone editor sizes', async ({ page }) => {
   await installDirectoryReviewArchive(page);
-  await page.setViewportSize({ width: 390, height: 844 });
+  const profile = emptyProfile({ ...person(7, 4, [701, 702], 'Synthetic One'), created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-02T00:00:00Z' });
+  profile.names = [{ person_id: 7, name_kind: 'preferred', original_value: 'Synthetic One', formatted: 'Synthetic One', is_derived: false, envelope: { id: 1, ordinal: 0, source: 'user', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-02T00:00:00Z', vcard: {} } }];
+  await page.route('**/api/v1/people/7/profile', route => route.fulfill({ headers: { ETag: '"person-7-r4"' }, json: profile }));
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 })));
   await page.getByRole('radio', { name: 'Details', exact: true }).click();
+  const geometry = await page.evaluate(() => {
+    const box = (element: Element | null) => element!.getBoundingClientRect();
+    const person = document.querySelector('section.person-page')!;
+    const pane = person.querySelector<HTMLElement>('[data-scroll-pane]')!;
+    const style = getComputedStyle(pane);
+    const content = box(pane.firstElementChild);
+    return {
+      gutter: style.scrollbarGutter, left: content.left - box(pane).left, right: box(pane).right - content.right,
+      padding: [style.paddingTop, style.paddingBottom],
+    };
+  });
+  expect(geometry.gutter, 'the Details pane reserves its bar').toBe('stable');
+  expect(geometry.padding, 'Details has 16 above its sections and 32 after them').toEqual(['16px', '32px']);
+  expect(geometry.left, 'content is inset 16 at the left').toBe(16);
+  expect(geometry.right, 'and 16 at the right, counting the reserved bar').toBe(16);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  // The shell switches to its phone layout a frame after the resize, so wait for the pane to fit before measuring.
+  await expect.poll(() => page.evaluate(() => {
+    const pane = document.querySelector('section.person-page [data-scroll-pane]')!;
+    return pane.scrollWidth - pane.clientWidth;
+  }), { message: 'nothing is wider than the pane' }).toBe(0);
+  const phone = await page.evaluate(() => {
+    const person = document.querySelector('section.person-page')!;
+    const row = person.querySelector('.fields .detail-row:has(.actions)')!;
+    const label = row.querySelector('.label')!.getBoundingClientRect(), value = row.querySelector('.value')!.getBoundingClientRect();
+    return { label: label.width, sameLine: Math.abs(label.top - value.top), right: person.getBoundingClientRect().right - row.getBoundingClientRect().right };
+  });
+  expect(phone.label, 'the label column is 120 on a phone').toBe(120);
+  expect(phone.sameLine, 'the value stays beside its label').toBeLessThanOrEqual(2);
+  expect(phone.right, 'the phone keeps its 8px right gutter while the whole person pane scrolls').toBe(8);
+
   await page.getByRole('button', { name: 'Add phone', exact: true }).click();
   const form = page.getByRole('form', { name: 'Edit contact points' });
   for (const field of [form.locator('.kit-text-input').first(), form.locator('select')]) {
     expect(await field.evaluate(element => ({ height: element.getBoundingClientRect().height, font: getComputedStyle(element).fontSize }))).toEqual({ height: 32, font: '16px' });
   }
+  await form.getByRole('button', { name: 'Cancel', exact: true }).click();
+  const personPage = page.getByRole('group', { name: 'Person page', exact: true });
+  await page.mouse.move(200, 700);
+  await page.mouse.wheel(0, 500);
+  await expect.poll(() => personPage.evaluate(element => element.querySelector('header')!.getBoundingClientRect().bottom - element.getBoundingClientRect().top), { message: 'the person header scrolls out of the phone Details viewport' }).toBeLessThanOrEqual(0);
 });
 
 test('People Filter restores History on reload and To review on Back', async ({ page }) => {
