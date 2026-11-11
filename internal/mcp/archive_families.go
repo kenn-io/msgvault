@@ -23,7 +23,7 @@ func (f *ArchiveFamilies) allows(name string) bool {
 		return f.Slack
 	}
 	switch name {
-	case ToolGetMeetingRecord, "link_meeting", "unlink_meeting", "reset_meeting_link":
+	case ToolGetMeetingRecord, ToolLinkMeeting, ToolUnlinkMeeting, ToolResetMeetingLink:
 		return f.Meetings || f.Calendar
 	case ToolGetMeetingContext, ToolListMeetingActionItems, ToolGetMeetingMetrics:
 		return f.Meetings

@@ -28,7 +28,7 @@ func TestMeetingDecisionCLIOutputAndVersioned(t *testing.T) {
 	for _, tc := range []struct{ action, decision, output string }{
 		{"link", "link", "Saved link: msg:3 evt:7@20270314\n"},
 		{"unlink", "unlink", "Saved split: msg:3 evt:7@20270314\n"},
-		{"reset-link", "clear", "Cleared saved choice: msg:3 evt:7@20270314\n"},
+		{"reset-link", "clear", "No saved choice: msg:3 evt:7@20270314\n"},
 	} {
 		client := &meetingDecisionClient{version: "5.2.0"}
 		command := newMeetingsCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})

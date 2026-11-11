@@ -49,7 +49,7 @@ func newMeetingDecisionCommand(deps meetingCommandDeps, decision string) *cobra.
 			}
 			label := "Saved " + result.State + ":"
 			if result.State == "automatic" {
-				label = "Cleared saved choice:"
+				label = "No saved choice:"
 			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s\n", label, result.Left, result.Right)
 			if err != nil {
