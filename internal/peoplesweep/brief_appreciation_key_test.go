@@ -21,7 +21,7 @@ func TestAppreciationContributionKey(t *testing.T) {
 	}
 	for _, parts := range [][3]string{{"", "a", "b"}, {"a", "", "b"}, {"a", "b", ""}, {"a", "b", "\xff"}} {
 		_, err := AppreciationContributionKey(parts[0], parts[1], parts[2])
-		assert.Error(err)
+		require.Error(err)
 	}
 }
 

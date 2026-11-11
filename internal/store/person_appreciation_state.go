@@ -38,16 +38,14 @@ func validAppreciationKey(key string) bool {
 		return false
 	}
 	for _, c := range key {
-		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 			return false
 		}
 	}
 	return true
 }
 
-type appreciationScanner interface{ Scan(...any) error }
-
-func scanAppreciationState(row appreciationScanner) (PersonAppreciationState, error) {
+func scanAppreciationState(row scanner) (PersonAppreciationState, error) {
 	var state PersonAppreciationState
 	var uid, actor sql.NullString
 	var at sql.NullTime
@@ -91,7 +89,7 @@ func (s *Store) GetPersonAppreciationStatesContext(ctx context.Context, keys []s
 	if err != nil {
 		return nil, fmt.Errorf("read appreciation states: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		state, err := scanAppreciationState(rows)
 		if err != nil {
