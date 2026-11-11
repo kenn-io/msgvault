@@ -115,6 +115,69 @@ func TestImportCoverageRawUnknownsAndReruns(t *testing.T) {
 }
 
 func TestImportMedia(t *testing.T) {
+	for _, tc := range []struct{ name, attachments string }{
+		{"omitted attachments", ""},
+		{"empty attachments", `,"attachments":[]`},
+	} {
+		t.Run("recovers archived media with "+tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			root := t.TempDir()
+			path := filepath.Join(root, "message.json")
+			original := `[{"id":"one","group_id":"example","text":"original text","attachments":[{"type":"image","url":"https://images.example.invalid/800x600.png.example"},{"type":"file"}]}]`
+			require.NoError(os.WriteFile(path, []byte(original), 0600))
+			opts := ImportOptions{RootDir: root, Me: "owner", AttachmentsDir: t.TempDir()}
+			first, err := Import(t.Context(), st, opts)
+			require.NoError(err)
+			assert.Equal(1, first.AttachmentsMissing)
+			assert.Equal(1, first.AttachmentsUnsupported)
+			ids, err := st.MessageExistsBatchContext(t.Context(), first.SourceID, []string{messageKey("group:example", "one")})
+			require.NoError(err)
+			id := ids[messageKey("group:example", "one")]
+			require.NotZero(id)
+			body, raw, err := st.GetMessageBodyAndRawContext(t.Context(), id)
+			require.NoError(err)
+			require.NoError(os.WriteFile(path, []byte(`[{"id":"one","group_id":"example","text":"later text"`+tc.attachments+`}]`), 0600))
+			missing, err := Import(t.Context(), st, opts)
+			require.NoError(err)
+			assert.EqualValues(1, missing.MessagesSkipped)
+			assert.Equal(1, missing.AttachmentsMissing)
+			assert.Zero(missing.AttachmentsStored)
+			assert.Zero(missing.AttachmentsUnsupported)
+			gallery := filepath.Join(root, "gallery")
+			require.NoError(os.Mkdir(gallery, 0700))
+			mediaPath := filepath.Join(gallery, "one_800x600.example.png")
+			require.NoError(os.WriteFile(mediaPath, []byte("restored image bytes"), 0600))
+			recovered, err := Import(t.Context(), st, opts)
+			require.NoError(err)
+			assert.Zero(recovered.MessagesAdded)
+			assert.EqualValues(1, recovered.MessagesSkipped)
+			assert.Equal(1, recovered.AttachmentsStored)
+			assert.Zero(recovered.AttachmentsMissing)
+			refs, err := st.MessageMIMEAttachmentsContext(t.Context(), id)
+			require.NoError(err)
+			require.Len(refs, 1)
+			require.NotEmpty(refs[0].ContentHash)
+			hash := refs[0].ContentHash
+			data, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, refs[0].StoragePath))
+			require.NoError(err)
+			assert.Equal("restored image bytes", string(data))
+			require.NoError(os.WriteFile(mediaPath, []byte("later image bytes"), 0600))
+			complete, err := Import(t.Context(), st, opts)
+			require.NoError(err)
+			assert.Zero(complete.AttachmentsStored)
+			assert.Zero(complete.AttachmentsMissing)
+			refs, err = st.MessageMIMEAttachmentsContext(t.Context(), id)
+			require.NoError(err)
+			require.Len(refs, 1)
+			assert.Equal(hash, refs[0].ContentHash)
+			gotBody, gotRaw, err := st.GetMessageBodyAndRawContext(t.Context(), id)
+			require.NoError(err)
+			assert.Equal(body, gotBody)
+			assert.Equal(raw, gotRaw)
+		})
+	}
 	t.Run("fills missing bytes for a reordered attachment list", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)

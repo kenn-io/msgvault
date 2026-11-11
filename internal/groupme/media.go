@@ -53,31 +53,46 @@ func galleryName(id string, a Attachment) (string, bool) {
 }
 
 func mediaWrites(ctx context.Context, st *store.Store, root *os.Root, folder string, messageID int64, m *Message, opts ImportOptions, summary *ImportSummary) ([]store.AttachmentWrite, error) {
-	var existing map[string]store.AttachmentRef
-	var writes []store.AttachmentWrite
+	var candidates []Attachment
 	for _, a := range m.Attachments {
 		if a.Type == "reply" {
 			continue
 		}
-		name, supported := galleryName(m.ID, a)
+		_, supported := galleryName(m.ID, a)
 		if !supported {
 			summary.AttachmentsUnsupported++
 			continue
 		}
+		if messageID == 0 {
+			candidates = append(candidates, a)
+		}
+	}
+	if messageID != 0 {
+		refs, err := st.MessageMIMEAttachmentsContext(ctx, messageID)
+		if err != nil {
+			return nil, err
+		}
+		// Retry only archived empty slots for this selected message. Incoming
+		// omissions cannot erase them, and unsupported counts describe the input.
+		for _, ref := range refs {
+			if ref.ContentHash != "" {
+				continue
+			}
+			var a Attachment
+			if json.Unmarshal([]byte(ref.Metadata), &a) != nil {
+				continue
+			}
+			name, supported := galleryName(m.ID, a)
+			if !supported || ref.Filename != name || ref.SourcePartKey != a.Type+":"+name || ref.MediaType != a.Type {
+				continue
+			}
+			candidates = append(candidates, a)
+		}
+	}
+	var writes []store.AttachmentWrite
+	for _, a := range candidates {
+		name, _ := galleryName(m.ID, a)
 		key := a.Type + ":" + name
-		if messageID != 0 && existing == nil {
-			refs, err := st.MessageMIMEAttachmentsContext(ctx, messageID)
-			if err != nil {
-				return nil, err
-			}
-			existing = map[string]store.AttachmentRef{}
-			for _, ref := range refs {
-				existing[ref.SourcePartKey] = ref
-			}
-		}
-		if prior, ok := existing[key]; messageID != 0 && (!ok || prior.ContentHash != "") {
-			continue
-		}
 		metadata, err := json.Marshal(a)
 		if err != nil {
 			return nil, err
