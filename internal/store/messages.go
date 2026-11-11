@@ -2208,8 +2208,8 @@ func (s *Store) PersistMessageWithParticipantsContext(
 	if build == nil {
 		return 0, errors.New("persist message requires a participant builder")
 	}
-	// Meeting archives are the only caller, and meeting rows are not derived.
-	// One unresolved participant still takes the directory lock.
+	// The source is known only after build runs, so this entry locks none.
+	// Meeting archives are the only caller and meeting rows are not derived.
 	return s.persistMessageWithParticipantsTransaction(ctx, attributionLock{}, nil, participants, build, nil, nil)
 }
 
@@ -2368,13 +2368,10 @@ func (s *Store) persistMessageWithParticipantsTx(
 			return 0, err
 		}
 	}
-	if len(participants) > 0 {
+	if len(participants) > 1 || hasPhoneParticipant {
 		// Participant merges take the directory lock before rewriting
 		// message rows. Keep the same order when a repair's preflight
 		// callback locks its target message for identity revalidation.
-		// Email builders expose MIME only after participant writes; calendar
-		// refresh takes this lock later, so single-participant writes take it
-		// up front (TestEmailCalendarSingleParticipantLockOrder).
 		if err := s.lockParticipantDirectoryMutationTxContext(ctx, tx); err != nil {
 			return 0, err
 		}

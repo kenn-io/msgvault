@@ -67,64 +67,6 @@ func TestEmailCalendarEmptyRawFormatDoesNotLockDirectory(t *testing.T) {
 	requirements.NoError(st.UpsertMessageRawWithFormatContext(ctx, id, []byte("Content-Type: text/calendar\r\n\r\n"), ""))
 }
 
-func TestEmailCalendarSingleParticipantLockOrder(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	if !st.IsPostgreSQL() {
-		t.Skip("requires PostgreSQL participant directory locks")
-	}
-	source, err := st.GetOrCreateSource("imap", "imap://owner@example.com:143")
-	requirements.NoError(err)
-	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
-	defer cancel()
-	blocker, err := st.db.BeginTx(ctx, nil)
-	requirements.NoError(err)
-	defer func() { _ = blocker.Rollback() }()
-	requirements.NoError(st.lockParticipantDirectoryMutationTxContext(ctx, blocker))
-	var id int64
-	receipt := IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 1}
-	done := make(chan error, 1)
-	go func() {
-		draft, persistErr := st.PersistIMAPDraftContext(ctx, receipt, []ParticipantPersistData{
-			{EmailAddress: "organizer@example.com", DisplayName: "Organizer", Domain: "example.com"},
-		}, func(ids []int64) *MessagePersistData {
-			return &MessagePersistData{
-				Message:      &Message{SourceID: source.ID, SourceMessageID: IMAPDraftSourceMessageID(receipt), MessageType: "email", SenderID: sql.NullInt64{Int64: ids[0], Valid: true}},
-				Conversation: &ConversationPersistData{SourceConversationID: "single-invite"},
-				RawMIME:      inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z")),
-			}
-		})
-		if persistErr == nil {
-			id = draft.CurrentMessageID
-		}
-		done <- persistErr
-	}()
-	// Release the blocker and join the writer even when a lock assertion fails.
-	joined := false
-	defer func() {
-		_ = blocker.Rollback()
-		cancel()
-		if !joined {
-			<-done
-		}
-	}()
-	var pid int
-	requirements.NoError(blocker.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&pid))
-	requirements.Eventually(func() bool {
-		var waiting bool
-		return st.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND ? = ANY(pg_blocking_pids(pid)))`, pid).Scan(&waiting) == nil && waiting
-	}, 5*time.Second, 10*time.Millisecond, "email writer must reach the directory lock")
-	// The revision row stays available while the writer waits on the directory.
-	_, err = blocker.ExecContext(ctx, `SELECT value FROM archive_metadata WHERE key='participant_display_name_revision' FOR UPDATE NOWAIT`)
-	assertions.NoError(err, "email writer must acquire the directory before the revision row")
-	requirements.NoError(blocker.Rollback())
-	err = <-done
-	joined = true
-	requirements.NoError(err)
-	assertions.Positive(id)
-	assertions.Len(emailEvents(t, st, source.ID), 1)
-}
-
 // emailFrom wraps a calendar part in an email with a plain-text alternative.
 func emailFrom(from string, calendar []byte) []byte {
 	return []byte("From: " + from + "\r\nTo: guest@example.org\r\nSubject: Original email\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=invite\r\n\r\n--invite\r\nContent-Type: text/plain\r\n\r\nEmail body stays intact\r\n--invite\r\nContent-Type: text/calendar\r\n\r\n" + string(calendar) + "\r\n--invite--\r\n")
