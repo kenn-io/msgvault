@@ -239,3 +239,50 @@ func TestLoopsReopenClearsDecision(t *testing.T) {
 	}
 	assert.Contains(anchors, anchor)
 }
+
+func TestLoopsCommitmentDecisionUsesItsDaemonSchema(t *testing.T) {
+	for _, tc := range []struct {
+		name, version, id, path, output string
+		unsupported                     bool
+	}{
+		{"older_commitment_daemon", "5.1.0", "c12", "", "", true},
+		{"commitment", "5.2.0", "c12", "/api/v1/loops/commitments/c12/decision", "c12 is done.\n", false},
+		{"existing_reply_loop", "3.44.0", "42", "/api/v1/loops/42/done", "Marked 42 done.\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, a := require.New(t), assert.New(t)
+			var posts []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if req.URL.Path == "/api/v1/health" {
+					a.NoError(json.NewEncoder(w).Encode(map[string]string{"status": "ok", "api_schema_version": tc.version}))
+					return
+				}
+				if req.Method == http.MethodPost {
+					posts = append(posts, req.URL.Path)
+				}
+				if req.URL.Path != tc.path {
+					http.NotFound(w, req)
+					return
+				}
+				if tc.id == "c12" {
+					var body map[string]string
+					a.NoError(json.NewDecoder(req.Body).Decode(&body))
+					a.Equal("done", body["state"])
+				}
+				a.NoError(json.NewEncoder(w).Encode(map[string]any{"id": tc.id, "state": "done", "anchor_message_id": 42}))
+			}))
+			t.Cleanup(server.Close)
+			ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+			output, err := runLoops(ctx, t, "done", tc.id)
+			if tc.unsupported {
+				r.ErrorContains(err, "require daemon API schema 5.2.0")
+				a.Empty(posts)
+				return
+			}
+			r.NoError(err)
+			a.Equal([]string{tc.path}, posts)
+			a.Equal(tc.output, output)
+		})
+	}
+}
