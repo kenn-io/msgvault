@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 	"testing"
@@ -477,18 +478,19 @@ func testCommitmentConsumedCompletion(t *testing.T, detached bool) {
 	a.Equal(completed, items[0].Fulfilment.Quote)
 }
 
-func TestCommitmentRequoteSplitsBroadCitationWithoutLosingPromise(t *testing.T) {
+func TestCommitmentRequoteReconcilesLocators(t *testing.T) {
 	r, a, ctx := require.New(t), assert.New(t), t.Context()
 	f := newPersonSweepApplyFixture(t, "split-promise", false)
 	st := f.store
 	_, persist := newCommitmentTestConversation(t, f)
 	const first, second = "I will send the report.", "I will book the venue."
 	body := first + " " + second
-	persist("two-promises", body, -time.Hour)
+	messageID := persist("two-promises", body, -time.Hour)
 	cfg := peoplesweep.Config{}
 	cfg.ApplyDefaults()
 	cfg.Commitments.Enabled = true
-	window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}, cfg.Commitments, personFactLedgerNow, "UTC")
+	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+	window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
 	r.NoError(err)
 	r.Len(window.Sources, 1)
 	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: body, Summary: "Send report and book venue", End: int64(len(body))}}, Fulfilments: []peoplesweep.CommitmentFulfilment{}}))
@@ -514,6 +516,48 @@ func TestCommitmentRequoteSplitsBroadCitationWithoutLosingPromise(t *testing.T) 
 	a.NotEqual(originalID, items[1].ID)
 	a.Equal(LoopStateOpen, items[1].State)
 	a.Equal(second, items[1].Quote)
+
+	// Complete the frozen anchor replay before admitting the later edit.
+	f = nextCommitmentTestAttempt(t, f, "-finish-replay")
+	window, err = st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
+		Promises: []peoplesweep.CommitmentPromise{}, Fulfilments: []peoplesweep.CommitmentFulfilment{},
+	}))
+	r.NoError(err)
+	frontier := func() [5]int64 {
+		var values [5]int64
+		r.NoError(st.db.QueryRowContext(ctx, `SELECT through_sequence,backfill_message_id,anchor_after_id,anchor_through_sequence,anchor_backfill_id
+ FROM person_commitment_frontiers WHERE person_id = ?`, f.personID).Scan(&values[0], &values[1], &values[2], &values[3], &values[4]))
+		return values
+	}
+	previous := frontier()
+	const edited = "I will send the revised report after the meeting."
+	sequence, err := st.LatestPersonSweepChangeSequence(ctx)
+	r.NoError(err)
+	r.Equal(messageID, persist("two-promises", edited, -time.Hour))
+	journal, err := st.ScanPersonSweepChanges(ctx, f.personID, sequence, 100)
+	r.NoError(err)
+	r.NotEmpty(journal)
+	changes, err := st.BuildPersonSweepEvidenceStatusChanges(ctx, f.personID, journal)
+	r.NoError(err)
+	r.Len(changes, 3)
+	f.request.Generation.ResolvedAt = f.request.Generation.ResolvedAt.Add(time.Minute)
+	f.request.CompletedAt = f.request.Generation.ResolvedAt.Add(time.Minute)
+	f = nextCommitmentTestAttempt(t, f, "-edited")
+	window, err = st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
+		Promises: []peoplesweep.CommitmentPromise{{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo,
+			Quote: edited, Summary: "Send revised report", End: int64(len(edited))}},
+		Fulfilments: []peoplesweep.CommitmentFulfilment{},
+	})
+	request.Generation.EvidenceStatusChanges = changes
+	result, err := st.ApplyPersonSweep(ctx, request)
+	r.NoError(err)
+	a.Equal(peoplesweep.FailureInvalidOutput, result.CommitmentFailureClass)
+	a.Equal(previous, frontier(), "unrepresented ambiguous output cannot consume source or anchor progress")
 }
 
 func TestCommitmentCitationIgnoresOrdinaryReferenceBeforeParsing(t *testing.T) {
@@ -559,4 +603,52 @@ func TestCommitmentApplyRevokedConsentRetainsPaidAccounting(t *testing.T) {
 	a.Zero(frontiers)
 	a.Equal(1, requests)
 	a.Equal(string(peoplesweep.FailurePolicy), failure)
+}
+
+// A format-valid date must not leave an active promise that its public readers
+// cannot return or serialize. Rejection belongs to the optional lane.
+func TestCommitmentExpiryRemainsRepresentableToReaders(t *testing.T) {
+	for _, tc := range []struct {
+		date       string
+		wantStored int
+		wantClass  peoplesweep.FailureClass
+	}{
+		{"2026-12-01", 1, ""},
+		{"9999-12-31", 0, peoplesweep.FailureInvalidOutput},
+	} {
+		t.Run(tc.date, func(t *testing.T) {
+			r, a, ctx := require.New(t), assert.New(t), t.Context()
+			f := newPersonSweepApplyFixture(t, "commitment-expiry-range", false)
+			_, persist := newCommitmentTestConversation(t, f)
+			const quote = "I will send the draft."
+			persist("promise", quote, -time.Hour)
+			cfg := peoplesweep.Config{}
+			cfg.ApplyDefaults()
+			cfg.Commitments.Enabled = true
+			window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, peoplesweep.ProviderProfile{
+				AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
+			}, cfg.Commitments, personFactLedgerNow, "UTC")
+			r.NoError(err)
+			r.Len(window.Sources, 1)
+			due := tc.date
+			request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
+				Promises: []peoplesweep.CommitmentPromise{{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo,
+					Quote: quote, Summary: "Send the draft", End: int64(len(quote)), DueOn: &due}},
+				Fulfilments: []peoplesweep.CommitmentFulfilment{},
+			})
+			result, err := f.store.ApplyPersonSweep(ctx, request)
+			r.NoError(err)
+			var stored int
+			r.NoError(f.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM person_commitments").Scan(&stored))
+			a.Equal(tc.wantStored, stored)
+			a.Equal(tc.wantClass, result.CommitmentFailureClass)
+			if tc.wantStored > 0 {
+				items, err := f.store.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 10, true)
+				r.NoError(err)
+				r.Len(items, tc.wantStored)
+				_, err = json.Marshal(items)
+				a.NoError(err, "public time fields must remain JSON representable")
+			}
+		})
+	}
 }
