@@ -536,8 +536,8 @@ func (w *Worker) Run(ctx context.Context, request RunRequest) (RunResult, error)
 			}
 			continue
 		}
-		if person.commitmentOnly && request.PersonID == 0 {
-			// Preserve ordinary work without reclaiming this person in this run.
+		if (person.commitmentOnly || person.CommitmentFailureClass != "") && request.PersonID == 0 {
+			// Preserve ordinary work and leave optional failures for a later run.
 			deferredPeople = append(deferredPeople, lease.PersonID)
 		}
 		result.PeopleSucceeded++
