@@ -219,7 +219,7 @@
     color: var(--text-secondary);
     font-size: var(--font-size-sm);
   }
-  label :global(.kit-text-input__control), label :global(.kit-select-dropdown__trigger), textarea { font-size: 16px; }
+  label :global(.kit-text-input__control), label :global(.kit-select-dropdown__trigger) { font-size: 16px; }
   textarea {
     min-height: 6rem;
     resize: vertical;
