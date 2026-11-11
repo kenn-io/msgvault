@@ -70,7 +70,7 @@ func serveEventsMutation[Req, Resp any](w http.ResponseWriter, r *http.Request, 
 	}
 	release, err := s.beginMutation("MCP Events")(r.Context())
 	if err != nil {
-		eventsError(w, err)
+		writeOperationGateBusy(w, r, s.operationGate)
 		return
 	}
 	defer release()
