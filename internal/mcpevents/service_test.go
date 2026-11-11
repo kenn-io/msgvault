@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/wakeups"
@@ -414,4 +415,27 @@ func TestConcurrentRefreshRetainsOneUsableSecret(t *testing.T) {
 	require.NoError(err)
 	require.Len(targets, 1)
 	assert.Equal(t, first.ID, targets[0].Name)
+}
+
+func TestNativeSkipsOriginMismatchWithoutBlockingOtherEntries(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
+	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/one?token=x", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	first, err := service.Subscribe(t.Context(), in)
+	require.NoError(err)
+	in.Delivery.URL = "https://example.com/two"
+	second, err := service.Subscribe(t.Context(), in)
+	require.NoError(err)
+	snapshot, err := providercredentials.Read(service.TokensDir)
+	require.NoError(err)
+	id := providercredentials.EventsID(first.ID)
+	revision, err := snapshot.Revision(id)
+	require.NoError(err)
+	_, err = providercredentials.PutIfRevision(service.TokensDir, revision, id, "https://other.example.com", "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh")
+	require.NoError(err)
+	targets, err := service.Native(t.Context())
+	require.NoError(err)
+	require.Len(targets, 1)
+	assert.Equal(t, second.ID, targets[0].Name)
 }
