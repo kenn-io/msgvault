@@ -2,16 +2,13 @@ package cmd
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
-	"io"
 	"net/http"
 	"strings"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"go.kenn.io/msgvault/internal/apiprotocol"
-	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/vector/visual"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -66,16 +63,7 @@ func visualInput(name string, args map[string]any) (visualArguments, error) {
 		}
 	case "retry_visual_attachment_owner":
 		input.BlobHash = strings.ToLower(strings.TrimSpace(input.BlobHash))
-		if !validLoopID(input.MessageID) || len(input.BlobHash) != 64 {
-			return input, errors.New("invalid owner")
-		}
-		if _, err := hex.DecodeString(input.BlobHash); err != nil {
-			return input, errors.New("invalid owner")
-		}
 	case "retire_visual_attachment_generation":
-		if !validLoopID(input.GenerationID) {
-			return input, errors.New("invalid generation")
-		}
 	default:
 		return input, errors.New("unsupported operation")
 	}
@@ -93,10 +81,10 @@ func (b *daemonMCPOperations) visualOperationDisclosure(name string, args map[st
 		return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 	}
 	effects := map[string]string{
-		"start_visual_attachment_build":       "Grant consent to hosted processing and run a bounded pass; provider charges may apply",
-		"resume_visual_attachment_build":      "Run a bounded pass under existing hosted-processing consent; provider charges may apply",
-		"retry_visual_attachment_owner":       "Retry this exact message and attachment under existing consent; provider charges may apply",
-		"retire_visual_attachment_generation": "Retire the exact visual generation",
+		"start_visual_attachment_build":       "Grant consent and run a bounded pass: eligible attachment bytes and bounded message content are sent to the configured provider; provider charges may apply",
+		"resume_visual_attachment_build":      "Run a bounded pass under existing consent: eligible attachment bytes and bounded message content are sent to the configured provider; provider charges may apply",
+		"retry_visual_attachment_owner":       "Retry this exact message and attachment under existing consent: eligible attachment bytes and bounded message content are sent to the configured provider; provider charges may apply",
+		"retire_visual_attachment_generation": "Irreversibly retire the exact visual generation and delete its vectors",
 	}
 	data, err := json.Marshal(struct {
 		Operation string          `json:"operation"`
@@ -140,7 +128,10 @@ func (b *daemonMCPOperations) executeVisualOperation(ctx context.Context, name s
 		options = &generated.RetireVisualAttachmentGenerationRequestOptions{Body: &generated.RetireVisualAttachmentGenerationBody{GenerationID: input.GenerationID}}
 	}
 	if name == "retire_visual_attachment_generation" {
-		result, err := b.retireVisualGeneration(ctx, options)
+		result, err := readMCPOperationJSONWithClassifier[mcpserver.VisualRetireReceipt](ctx, b.client, method, path, options, visualRefusal, http.StatusNoContent)
+		if result != nil && !result.IsError {
+			result.Output = mcpserver.VisualRetireReceipt{Retired: true}
+		}
 		return result, true, err
 	}
 	result, err := readMCPOperationJSONWithClassifier[visual.Status](ctx, b.client, method, path, options, visualRefusal, http.StatusOK)
@@ -166,35 +157,6 @@ func (b *daemonMCPOperations) executeVisualOperation(ctx context.Context, name s
 		}
 	}
 	return result, true, err
-}
-
-func (b *daemonMCPOperations) retireVisualGeneration(ctx context.Context, options runtime.RequestOptions) (*mcpserver.OperationResult, error) {
-	response, err := b.client.DoGeneratedRequestWithContext(ctx, http.MethodPost, "/api/v1/multimodal/retire", options)
-	if err != nil {
-		if local, ok := errors.AsType[*daemonclient.LocalDaemonUnavailableError](err); ok {
-			return operationFailure(local.APIErrorCode(), false), err
-		}
-		return operationFailure("operation_failed", true), err
-	}
-	defer func() { _ = response.Body.Close() }()
-	if response.StatusCode == http.StatusNoContent {
-		return &mcpserver.OperationResult{Output: mcpserver.VisualRetireReceipt{Retired: true}}, nil
-	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
-	if err != nil {
-		return operationFailure("operation_response_failed", true), err
-	}
-	if len(data) > 1<<20 {
-		return operationFailure("operation_response_limit_exceeded", true), nil
-	}
-	var failure struct {
-		Error string `json:"error"`
-	}
-	_ = json.Unmarshal(data, &failure)
-	if visualRefusal(failure.Error) {
-		return operationFailure(failure.Error, false), nil
-	}
-	return operationFailure("operation_refused", true), nil
 }
 
 func visualRefusal(code string) bool {

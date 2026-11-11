@@ -90,8 +90,12 @@ func TestMCPVisualNativeOperationsAndApproval(t *testing.T) {
 	assert.NotContains(string(encoded), `"unavailable"`)
 	assert.NotContains(string(encoded), `"formats"`)
 	var prompt string
+	approved := true
 	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyVisual}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
 		prompt = request.Params.Message
+		if !approved {
+			return &sdkmcp.ElicitResult{Action: "decline"}, nil
+		}
 		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
 	}})
 	call := func(t *testing.T, name string, args map[string]any) *sdkmcp.CallToolResult {
@@ -104,8 +108,46 @@ func TestMCPVisualNativeOperationsAndApproval(t *testing.T) {
 		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: name, Arguments: args})
 		require.NoError(err)
 		assert.Equal(want, prompt)
+		if name == "retire_visual_attachment_generation" {
+			assert.Contains(prompt, "Irreversibly")
+			assert.Contains(prompt, "delete its vectors")
+		} else {
+			assert.Contains(prompt, "eligible attachment bytes and bounded message content")
+			assert.Contains(prompt, "configured provider")
+			assert.Contains(prompt, "consent")
+			assert.Contains(prompt, "charges may apply")
+		}
 		return result
 	}
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+		want string
+	}{
+		{"start_visual_attachment_build", map[string]any{"consent": false}, "invalid_arguments"},
+		{"retry_visual_attachment_owner", map[string]any{"message_id": 42, "blob_hash": strings.Repeat("z", 64)}, "validating"},
+		{"retire_visual_attachment_generation", map[string]any{"generation_id": 0}, "validating"},
+	} {
+		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: tc.name, Arguments: tc.args})
+		require.NoError(err)
+		require.NotNil(result)
+		assert.True(result.IsError)
+		data, err := json.Marshal(result)
+		require.NoError(err)
+		assert.Contains(string(data), tc.want)
+	}
+	assert.Zero(builds)
+	assert.Zero(retries)
+	assert.Zero(retires)
+	approved = false
+	declined, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "start_visual_attachment_build", Arguments: map[string]any{"consent": true}})
+	require.NoError(err)
+	require.True(declined.IsError)
+	declinedData, err := json.Marshal(declined.Content)
+	require.NoError(err)
+	assert.Contains(string(declinedData), "action cancelled")
+	assert.Zero(builds)
+	approved = true
 	t.Run("build", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
@@ -171,6 +213,32 @@ func TestMCPVisualMutationFailureIsUncertainAndRedacted(t *testing.T) {
 			result, err := backend.ExecuteOperation(t.Context(), name, args)
 			require.NoError(t, err)
 			require.True(t, result.IsError)
+			data, err := json.Marshal(result.Output)
+			require.NoError(t, err)
+			assert.Contains(t, string(data), `"operation_may_have_completed":true`)
+			assert.NotContains(t, string(data), "synthetic private diagnostic")
+		})
+	}
+	for _, name := range []string{"start_visual_attachment_build", "retry_visual_attachment_owner"} {
+		t.Run(name+"_status_failure", func(t *testing.T) {
+			cfg := config.NewDefaultConfig()
+			cfg.Data.DataDir = t.TempDir()
+			fixture := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Logger: slog.New(slog.DiscardHandler)})
+			calls := 0
+			fixture.SetVisualOperations(func(context.Context, operations.PassScope) error { calls++; return nil }, nil,
+				func(context.Context, operations.PassScope, int64, string) error { calls++; return nil },
+				func(context.Context, bool) (visual.Status, error) {
+					return visual.Status{}, errors.New("synthetic private diagnostic")
+				}, nil)
+			backend := sourceOperationFixture(t, fixture)
+			args := map[string]any{"consent": true}
+			if name == "retry_visual_attachment_owner" {
+				args = map[string]any{"message_id": 42, "blob_hash": strings.Repeat("ab", 32)}
+			}
+			result, err := backend.ExecuteOperation(t.Context(), name, args)
+			require.NoError(t, err)
+			require.True(t, result.IsError)
+			assert.Equal(t, 1, calls)
 			data, err := json.Marshal(result.Output)
 			require.NoError(t, err)
 			assert.Contains(t, string(data), `"operation_may_have_completed":true`)

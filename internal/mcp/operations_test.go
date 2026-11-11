@@ -142,6 +142,14 @@ func TestLoopCatalogGatesSchemasAndAnnotations(t *testing.T) {
 			catalog := operationalCatalog(opts, true)
 			again := operationalCatalog(opts, true)
 			require.Len(t, catalog, len(tc.names))
+			assert.Len(t, operationalCatalog(opts, false), 1)
+			other := OperationFamilyLoops
+			if tc.family == OperationFamilyLoops {
+				other = OperationFamilyVisual
+			}
+			opts.OperationWriteFamilies = []OperationFamily{other}
+			assert.Len(t, operationalCatalog(opts, true), 1)
+			opts.OperationWriteFamilies = []OperationFamily{tc.family}
 			tools := toolsByName(t, rawListTools(t, opts, true))
 			for i, definition := range catalog {
 				assert.Equal(t, tc.names[i], definition.definition.name)
@@ -149,7 +157,12 @@ func TestLoopCatalogGatesSchemasAndAnnotations(t *testing.T) {
 				assert.Same(t, definition.definition.outputSchema, again[i].definition.outputSchema)
 				require.NotNil(t, definition.definition.annotations.OpenWorldHint)
 				if i > 0 {
-					assert.Equal(t, tc.openWorld, *definition.definition.annotations.OpenWorldHint)
+					wantOpen := tc.openWorld && definition.definition.name != "retire_visual_attachment_generation"
+					assert.Equal(t, wantOpen, *definition.definition.annotations.OpenWorldHint)
+				}
+				if definition.definition.name == "retire_visual_attachment_generation" {
+					require.NotNil(t, definition.definition.annotations.DestructiveHint)
+					assert.True(t, *definition.definition.annotations.DestructiveHint)
 				}
 				tool, ok := tools[tc.names[i]]
 				require.True(t, ok)
@@ -157,6 +170,28 @@ func TestLoopCatalogGatesSchemasAndAnnotations(t *testing.T) {
 				require.True(t, ok)
 				assert.Equal(t, false, schema["additionalProperties"])
 			}
+			opts.DelegatedOnly = true
+			assert.Empty(t, operationalCatalog(opts, true))
 		})
+	}
+	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"sync_source"}, OperationWriteFamilies: []OperationFamily{OperationFamilySources}}
+	catalog := operationalCatalog(opts, true)
+	require.Len(t, catalog, 1)
+	require.NotNil(t, catalog[0].definition.annotations.OpenWorldHint)
+	assert.True(t, *catalog[0].definition.annotations.OpenWorldHint)
+	opts.OperationCapabilities = []string{"sync_source", "close_open_loop", "start_visual_attachment_build"}
+	for _, tc := range []struct {
+		family                    OperationFamily
+		present, absent1, absent2 string
+	}{
+		{OperationFamilySources, "sync_source", "close_open_loop", "start_visual_attachment_build"},
+		{OperationFamilyLoops, "close_open_loop", "sync_source", "start_visual_attachment_build"},
+		{OperationFamilyVisual, "start_visual_attachment_build", "sync_source", "close_open_loop"},
+	} {
+		opts.OperationWriteFamilies = []OperationFamily{tc.family}
+		tools := toolsByName(t, rawListTools(t, opts, true))
+		assert.Contains(t, tools, tc.present)
+		assert.NotContains(t, tools, tc.absent1)
+		assert.NotContains(t, tools, tc.absent2)
 	}
 }

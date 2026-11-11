@@ -46,12 +46,16 @@ type VisualRetireReceipt struct {
 func visualOperationalDefinitions() []operationalDefinition {
 	status := outputSchemaFor[VisualOperationStatus]()
 	hash := stringSchema("Exact attachment SHA-256 blob hash")
-	hash.MinLength, hash.MaxLength = new(64), new(64)
-	return []operationalDefinition{
+	hash.Pattern = "^[a-fA-F0-9]{64}$"
+	definitions := []operationalDefinition{
 		newOperationalDefinition("get_visual_attachment_status", "Read visual attachment indexing progress. Coverage performs an expensive archive-wide blob scan only when explicitly requested.", OperationFamilyVisual, closedObject(map[string]*jsonschema.Schema{"coverage": booleanSchema("Scan all candidate blobs for per-format coverage")}), status, false),
 		newOperationalDefinition("start_visual_attachment_build", "Grant hosted visual processing consent and run one bounded pass. Requires explicit consent and approval; provider charges may apply.", OperationFamilyVisual, closedObject(map[string]*jsonschema.Schema{"consent": booleanSchema("Explicit consent to hosted processing")}, "consent"), status, true),
 		newOperationalDefinition("resume_visual_attachment_build", "Resume one bounded visual indexing pass under existing consent. Requires approval; provider charges may apply.", OperationFamilyVisual, closedObject(nil), status, true),
 		newOperationalDefinition("retry_visual_attachment_owner", "Retry the exact message and blob owner under existing consent. Requires approval; provider charges may apply.", OperationFamilyVisual, closedObject(map[string]*jsonschema.Schema{"message_id": safeIDSchema("Exact message ID"), "blob_hash": hash}, "message_id", "blob_hash"), status, true),
 		newOperationalDefinition("retire_visual_attachment_generation", "Retire the exact current visual generation. Requires approval.", OperationFamilyVisual, closedObject(map[string]*jsonschema.Schema{"generation_id": safeIDSchema("Current generation ID from status")}, "generation_id"), outputSchemaFor[VisualRetireReceipt](), true),
 	}
+	retire := definitions[len(definitions)-1].definition.annotations
+	retire.OpenWorldHint = new(false)
+	retire.DestructiveHint = new(true)
+	return definitions
 }
