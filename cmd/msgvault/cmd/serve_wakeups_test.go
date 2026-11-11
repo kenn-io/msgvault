@@ -22,7 +22,7 @@ func TestWakeupJobOnlyForUsableEntries(t *testing.T) {
 
 	st := testutil.NewTestStore(t)
 	sched := scheduler.New(nil)
-	require.NoError(configureWakeupJob(t.Context(), sched, nil, st, nil, nil))
+	require.NoError(configureWakeupJob(t.Context(), sched, nil, st, &config.Config{}, nil))
 	assert.False(sched.IsJobScheduled("wakeups"))
 	t.Setenv("MSGVAULT_TEST_WAKEUP_KEY", "whsec_"+base64.StdEncoding.EncodeToString([]byte(strings.Repeat("a", 32))))
 	path := filepath.Join(t.TempDir(), "config.toml")
@@ -36,7 +36,7 @@ func TestWakeupJobOnlyForUsableEntries(t *testing.T) {
 		require.NoError(err)
 		require.True(ok)
 	}
-	require.NoError(configureWakeupJob(t.Context(), sched, nil, st, entries[:1], nil))
+	require.NoError(configureWakeupJob(t.Context(), sched, nil, st, &config.Config{Wakeups: entries[:1]}, nil))
 	assert.False(sched.IsJobScheduled("wakeups"))
 	_, raw, err := st.LoadWakeupState(t.Context(), "bad")
 	require.NoError(err)
@@ -44,6 +44,20 @@ func TestWakeupJobOnlyForUsableEntries(t *testing.T) {
 	_, raw, err = st.LoadWakeupState(t.Context(), "removed")
 	require.NoError(err)
 	assert.Nil(raw)
-	require.NoError(configureWakeupJob(t.Context(), sched, nil, st, entries, nil))
+	require.NoError(configureWakeupJob(t.Context(), sched, nil, st, cfg, nil))
 	assert.True(sched.IsJobScheduled("wakeups"))
+}
+
+func TestWakeupJobLoadsRelativeSecret(t *testing.T) {
+	require := Require.New(t)
+	dir := t.TempDir()
+	secret := "whsec_" + base64.StdEncoding.EncodeToString([]byte(strings.Repeat("a", 32)))
+	require.NoError(os.WriteFile(filepath.Join(dir, "secret"), []byte(secret), 0600))
+	path := filepath.Join(dir, "config.toml")
+	require.NoError(os.WriteFile(path, []byte("[[wakeups]]\nname='file'\nurl='https://example.com/'\nsecret_file='secret'\n"), 0600))
+	cfg, err := config.Load(path, "")
+	require.NoError(err)
+	sched := scheduler.New(nil)
+	require.NoError(configureWakeupJob(t.Context(), sched, nil, testutil.NewTestStore(t), cfg, nil))
+	Assert.True(t, sched.IsJobScheduled("wakeups"))
 }

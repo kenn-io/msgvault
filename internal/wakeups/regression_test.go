@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -78,8 +79,9 @@ func initializedWakeup(t *testing.T, st *store.Store, name string, start time.Ti
 	Require.NoError(t, err)
 	Require.True(t, ok)
 }
-func testSubscription(name string, server *httptest.Server, filter changefeed.Filter) Subscription {
-	return Subscription{Name: name, URL: "https://example.com/hook", Secret: []byte(strings.Repeat("k", 32)), Filter: filter, MaxMessageAge: 72 * time.Hour, Client: testWebhookClient(server)}
+func testSubscription(t *testing.T, name string, server *httptest.Server, filter changefeed.Filter) Subscription {
+	t.Helper()
+	return Subscription{Name: name, URL: "https://example.com/hook", Secret: []byte(strings.Repeat("k", 32)), Filter: filter, MaxMessageAge: 72 * time.Hour, Client: testWebhookClient(t, server)}
 }
 
 func TestZeroBoundDefersAndSharedPositionReadsOnce(t *testing.T) {
@@ -128,7 +130,7 @@ func TestPersonResolutionBackoffAndStoreErrors(t *testing.T) {
 	}{
 		{"missing", store.ErrPersonNotFound, nil, "person_unavailable", 1},
 		{"empty", nil, &store.Person{ID: 1}, "person_unavailable", 1},
-		{"store", fmt.Errorf("database unavailable"), nil, "store_error", 0},
+		{"store", errors.New("database unavailable"), nil, "store_error", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := Assert.New(t)
@@ -190,7 +192,7 @@ func TestConfigPersonAcrossSourcesAndLinkAfterStartup(t *testing.T) {
 	}))
 	defer server.Close()
 	observed := &observedStore{Store: st, fixedBound: now.Add(-30 * time.Second)}
-	engine := Engine{Store: observed, Subscriptions: []Subscription{testSubscription("person", server, filter)}, Now: func() time.Time { return now }}
+	engine := Engine{Store: observed, Subscriptions: []Subscription{testSubscription(t, "person", server, filter)}, Now: func() time.Time { return now }}
 	require.NoError(engine.RunPass(t.Context()))
 	require.NoError(decodeErr)
 	require.Len(deliveries, 1)
@@ -235,7 +237,7 @@ func TestLostCASRedelivers(t *testing.T) {
 	}))
 	defer server.Close()
 	var logs bytes.Buffer
-	engine := Engine{Store: st, Logger: slog.New(slog.NewTextHandler(&logs, nil)), Subscriptions: []Subscription{testSubscription("cas", server, changefeed.Filter{IncomingOnly: true})}, Now: func() time.Time { return now }}
+	engine := Engine{Store: st, Logger: slog.New(slog.NewTextHandler(&logs, nil)), Subscriptions: []Subscription{testSubscription(t, "cas", server, changefeed.Filter{IncomingOnly: true})}, Now: func() time.Time { return now }}
 	require.NoError(engine.RunPass(t.Context()))
 	require.NoError(mutateErr)
 	require.True(changed)
@@ -265,7 +267,7 @@ func TestEndpointFailuresAreIndependent(t *testing.T) {
 	second := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { succeeded++; w.WriteHeader(http.StatusNoContent) }))
 	defer second.Close()
 	filter := changefeed.Filter{IncomingOnly: true}
-	engine := Engine{Store: st, Subscriptions: []Subscription{testSubscription("a", first, filter), testSubscription("z", second, filter)}, Now: func() time.Time { return now }}
+	engine := Engine{Store: st, Subscriptions: []Subscription{testSubscription(t, "a", first, filter), testSubscription(t, "z", second, filter)}, Now: func() time.Time { return now }}
 	require.NoError(engine.RunPass(t.Context()))
 	assert.Equal(1, failed)
 	assert.Equal(1, succeeded)
@@ -294,7 +296,7 @@ func TestOwnerCursorReplaysDeliveredIDs(t *testing.T) {
 	}))
 	defer server.Close()
 	var logs bytes.Buffer
-	sub := testSubscription("replay", server, changefeed.Filter{IncomingOnly: true})
+	sub := testSubscription(t, "replay", server, changefeed.Filter{IncomingOnly: true})
 	sub.URL += "?token=private-query"
 	engine := Engine{Store: st, Subscriptions: []Subscription{sub}, Logger: slog.New(slog.NewTextHandler(&logs, nil)), Now: func() time.Time { return now }}
 	require.NoError(engine.RunPass(t.Context()))
@@ -310,5 +312,4 @@ func TestOwnerCursorReplaysDeliveredIDs(t *testing.T) {
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &feed))
 	require.NotEmpty(feed.Messages)
 	Assert.Equal(t, id, feed.Messages[0].ID)
-
 }

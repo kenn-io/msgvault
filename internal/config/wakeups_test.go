@@ -1,6 +1,11 @@
 package config
 
 import (
+	"encoding/base64"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,10 +42,16 @@ func TestWakeupValidationAndDefaults(t *testing.T) {
 		{"source", func(c *WakeupConfig) { c.SourceIDs = []int64{0} }},
 		{"conversation", func(c *WakeupConfig) { c.ConversationIDs = []int64{-1} }},
 	} {
-		t.Run(tc.name, func(t *testing.T) { c := base; tc.mutate(&c); Assert.Error(t, prepareWakeups([]WakeupConfig{c})) })
+		t.Run(tc.name, func(t *testing.T) { c := base; tc.mutate(&c); Require.Error(t, prepareWakeups([]WakeupConfig{c})) })
 	}
-	assert.Error(prepareWakeups([]WakeupConfig{base, base}))
-	assert.Error(prepareWakeups(make([]WakeupConfig, 33)))
+	require.Error(prepareWakeups([]WakeupConfig{base, base}))
+	entries := make([]WakeupConfig, 33)
+	for i := range entries {
+		entries[i] = base
+		entries[i].Name = fmt.Sprintf("inbox-%d", i)
+	}
+	require.NoError(prepareWakeups(entries[:32]))
+	require.Error(prepareWakeups(entries))
 }
 
 func TestInlineWakeupSecretRejectedByConfigLoader(t *testing.T) {
@@ -59,7 +70,31 @@ func TestWakeupPersonSelectorPresence(t *testing.T) {
 		if tc.valid {
 			Assert.NoError(t, err)
 		} else {
-			Assert.Error(t, err)
+			Require.Error(t, err)
 		}
 	}
+}
+
+func TestWakeupSecretFileResolutionPreservesConfig(t *testing.T) {
+	require := Require.New(t)
+	assert := Assert.New(t)
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	secret := "whsec_" + base64.StdEncoding.EncodeToString([]byte(strings.Repeat("a", 32)))
+	require.NoError(os.WriteFile(filepath.Join(dir, "secret"), []byte(secret), 0600))
+	path := filepath.Join(dir, "config.toml")
+	require.NoError(os.WriteFile(path, []byte("[[wakeups]]\nname='relative'\nurl='https://example.com'\nsecret_file='secret'\n[[wakeups]]\nname='home'\nurl='https://example.com'\nsecret_file='~/secret'\n"), 0600))
+	cfg, err := Load(path, "")
+	require.NoError(err)
+	for _, entry := range cfg.Wakeups {
+		got, err := cfg.ResolveWakeupSecret(entry)
+		require.NoError(err)
+		assert.Equal(secret, got)
+	}
+	require.NoError(cfg.Save())
+	saved, err := os.ReadFile(path)
+	require.NoError(err)
+	assert.Contains(string(saved), "secret_file = \"secret\"")
+	assert.Contains(string(saved), "secret_file = \"~/secret\"")
 }

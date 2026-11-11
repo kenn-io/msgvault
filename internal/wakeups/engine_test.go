@@ -75,7 +75,7 @@ func TestEngineRetriesFailedDeliveryAndAdvancesAfterSuccess(t *testing.T) {
 			w.WriteHeader(status)
 		}))
 		defer server.Close()
-		sub := Subscription{Name: "inbox", URL: "https://example.com/hook", Secret: []byte(strings.Repeat("a", 32)), Filter: changefeed.Filter{IncomingOnly: true}, MaxMessageAge: 72 * time.Hour, Client: testWebhookClient(server)}
+		sub := Subscription{Name: "inbox", URL: "https://example.com/hook", Secret: []byte(strings.Repeat("a", 32)), Filter: changefeed.Filter{IncomingOnly: true}, MaxMessageAge: 72 * time.Hour, Client: testWebhookClient(t, server)}
 		engine := Engine{Store: &observedStore{Store: st, fixedBound: now.Add(-time.Second)}, Subscriptions: []Subscription{sub}, Now: func() time.Time { return now }}
 		require.NoError(engine.RunPass(ctx))
 		require.Len(bodies, 1)
@@ -118,7 +118,7 @@ func TestEngineRetriesFailedDeliveryAndAdvancesAfterSuccess(t *testing.T) {
 			w.WriteHeader(status)
 		}))
 		defer server.Close()
-		engine := Engine{Store: st, Subscriptions: []Subscription{testSubscription("empty-retry", server, changefeed.Filter{IncomingOnly: true})}, Now: func() time.Time { return now }}
+		engine := Engine{Store: st, Subscriptions: []Subscription{testSubscription(t, "empty-retry", server, changefeed.Filter{IncomingOnly: true})}, Now: func() time.Time { return now }}
 		require.NoError(engine.RunPass(t.Context()))
 		require.Len(bodies, 1)
 		now = now.Add(73 * time.Hour)
@@ -176,7 +176,7 @@ func TestEngineTruncatesIDsWithoutLosingCount(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
-	engine := Engine{Store: st, Subscriptions: []Subscription{{Name: "bulk", URL: "https://example.com/hook", Secret: []byte(strings.Repeat("a", 32)), Filter: changefeed.Filter{IncomingOnly: true}, MaxMessageAge: 72 * time.Hour, Client: testWebhookClient(server)}}, Now: func() time.Time { return now }}
+	engine := Engine{Store: st, Subscriptions: []Subscription{{Name: "bulk", URL: "https://example.com/hook", Secret: []byte(strings.Repeat("a", 32)), Filter: changefeed.Filter{IncomingOnly: true}, MaxMessageAge: 72 * time.Hour, Client: testWebhookClient(t, server)}}, Now: func() time.Time { return now }}
 	require.NoError(engine.RunPass(ctx))
 	require.NoError(decodeErr)
 	assert.Equal(60, got.Matched.Count)

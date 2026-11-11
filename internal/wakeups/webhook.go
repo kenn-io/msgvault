@@ -93,9 +93,9 @@ func (c webhookClient) send(ctx context.Context, endpoint, id string, secret, bo
 	mac := hmac.New(sha256.New, secret)
 	_, _ = fmt.Fprintf(mac, "%s.%s.%s", id, stamp, body)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("webhook-id", id)
-	req.Header.Set("webhook-timestamp", stamp)
-	req.Header.Set("webhook-signature", "v1,"+base64.StdEncoding.EncodeToString(mac.Sum(nil)))
+	req.Header.Set("Webhook-Id", id)
+	req.Header.Set("Webhook-Timestamp", stamp)
+	req.Header.Set("Webhook-Signature", "v1,"+base64.StdEncoding.EncodeToString(mac.Sum(nil)))
 	req.Header.Set("User-Agent", "msgvault")
 	resp, err := client.Do(req)
 	if err != nil {
@@ -106,12 +106,10 @@ func (c webhookClient) send(ctx context.Context, endpoint, id string, secret, bo
 		if errors.As(err, &op) && op.Timeout() {
 			return "timeout"
 		}
-		var unknown tls.RecordHeaderError
-		if errors.As(err, &unknown) {
+		if _, ok := errors.AsType[tls.RecordHeaderError](err); ok {
 			return "tls_error"
 		}
-		var cert *tls.CertificateVerificationError
-		if errors.As(err, &cert) {
+		if _, ok := errors.AsType[*tls.CertificateVerificationError](err); ok {
 			return "tls_error"
 		}
 		return "connection_refused"

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"net/netip"
 	"net/url"
@@ -30,7 +31,7 @@ var wakeupName = regexp.MustCompile(`^[a-z0-9-]{1,48}$`)
 
 func prepareWakeups(entries []WakeupConfig) error {
 	if len(entries) > 32 {
-		return fmt.Errorf("wakeups: at most 32 entries")
+		return errors.New("wakeups: at most 32 entries")
 	}
 	seen := make(map[string]bool)
 	for i := range entries {

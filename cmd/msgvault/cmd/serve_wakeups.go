@@ -9,22 +9,21 @@ import (
 
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/wakeups"
 )
 
-func configureWakeupJob(ctx context.Context, sched *scheduler.Scheduler, gate api.LabeledOperationGate, st *store.Store, entries []config.WakeupConfig, logger *slog.Logger) error {
+func configureWakeupJob(ctx context.Context, sched *scheduler.Scheduler, gate api.LabeledOperationGate, st *store.Store, cfg *config.Config, logger *slog.Logger) error {
 	sched.RemoveJob("wakeups")
 	if logger == nil {
 		logger = slog.Default()
 	}
-	names := make([]string, 0, len(entries))
-	subs := make([]wakeups.Subscription, 0, len(entries))
-	for _, entry := range entries {
+	names := make([]string, 0, len(cfg.Wakeups))
+	subs := make([]wakeups.Subscription, 0, len(cfg.Wakeups))
+	for _, entry := range cfg.Wakeups {
 		names = append(names, entry.Name)
-		secret, err := providercredentials.ResolveSecret("", entry.SecretFile, entry.SecretEnv)
+		secret, err := cfg.ResolveWakeupSecret(entry)
 		if err != nil {
 			logger.Warn("wakeup unavailable", "name", entry.Name, "category", "invalid_secret")
 			continue

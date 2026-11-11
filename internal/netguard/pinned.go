@@ -14,7 +14,7 @@ import (
 var ErrUnsafeTarget = errors.New("unsafe destination")
 
 type Resolver interface {
-	LookupNetIP(context.Context, string, string) ([]netip.Addr, error)
+	LookupNetIP(ctx context.Context, network, host string) ([]netip.Addr, error)
 }
 type DialContext func(context.Context, string, string) (net.Conn, error)
 

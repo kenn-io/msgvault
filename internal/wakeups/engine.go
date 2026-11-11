@@ -27,10 +27,10 @@ type Subscription struct {
 
 // Store supplies the bounded feed and durable positions for a pass.
 type Store interface {
-	LoadWakeupState(context.Context, string) (store.WakeupState, []byte, error)
-	AdvanceWakeupState(context.Context, string, []byte, store.WakeupState) (bool, error)
-	ListChangedMessages(context.Context, store.ChangedMessagesCursor, int) (store.ChangedMessagePage, error)
-	ArchiveUIDContext(context.Context) (string, error)
+	LoadWakeupState(ctx context.Context, name string) (store.WakeupState, []byte, error)
+	AdvanceWakeupState(ctx context.Context, name string, before []byte, after store.WakeupState) (bool, error)
+	ListChangedMessages(ctx context.Context, cursor store.ChangedMessagesCursor, limit int) (store.ChangedMessagePage, error)
+	ArchiveUIDContext(ctx context.Context) (string, error)
 }
 
 // Engine holds no delivery state; the archive stores the position and backoff.
