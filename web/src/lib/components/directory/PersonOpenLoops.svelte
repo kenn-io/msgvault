@@ -149,8 +149,11 @@
           <h4>{group.label}</h4>
           <ul>
             {#each group.items as promise (promise.id)}
+              {@const summary = promise.summary === promise.promise.text ? '' : promise.summary}
               <li class="promise">
-                <span>{promise.summary}{promise.due_on ? ` · Due ${promise.due_on}` : ''}</span>
+                {#if summary || promise.due_on}
+                  <span>{summary}{promise.due_on ? `${summary ? ' · ' : ''}Due ${promise.due_on}` : ''}</span>
+                {/if}
                 <a href={`/messages/${promise.promise.message_id}`} title={promise.promise.text}>{promise.promise.text}</a>
                 {#if promise.proposed_fulfilment}
                   <a href={`/messages/${promise.proposed_fulfilment.message_id}`}>
@@ -159,7 +162,9 @@
                 {/if}
                 <div class="actions">
                   {#if promise.state !== 'open'}
-                    <span class="muted">{promise.state === 'done' ? 'Done' : promise.state === 'snoozed' ? 'Snoozed' : 'Fulfilled'}</span>
+                    {#if promise.state !== 'fulfilled' || !promise.proposed_fulfilment}
+                      <span class="muted">{promise.state === 'done' ? 'Done' : promise.state === 'snoozed' ? 'Snoozed' : 'Fulfilled'}</span>
+                    {/if}
                     <Button size="sm" label="Reopen" disabled={deciding !== null} onclick={() => decide(promise.id, 'open')} />
                   {:else}
                     <Button size="sm" label="Done" disabled={deciding !== null} onclick={() => decide(promise.id, 'done')} />
