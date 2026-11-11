@@ -14,25 +14,20 @@ import (
 )
 
 func TestImportICSMalformedFileLeavesNoSource(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	path := filepath.Join(t.TempDir(), "invalid.ics")
-	require.NoError(t, os.WriteFile(path, []byte("invalid calendar"), 0600))
-	_, err := ImportICS(t.Context(), st, path, "invalid-export")
-	require.Error(t, err)
-	_, err = st.GetSourceByTypeAndIdentifier(t.Context(), "ics", "invalid-export")
-	assert.ErrorIs(t, err, store.ErrSourceNotFound)
-}
-
-func TestImportICSUnsupportedMethodLeavesNoSource(t *testing.T) {
-	for _, method := range []string{"ADD", "REPLY", "REFRESH", "COUNTER", "DECLINECOUNTER"} {
-		t.Run(method, func(t *testing.T) {
+	for _, tc := range []struct{ name, raw string }{
+		{"malformed", "invalid calendar"},
+		{"unsupported method", "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:ADD\r\nBEGIN:VEVENT\r\nUID:event@example.com\r\nDTSTART:20270302T120000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			st := testutil.NewTestStore(t)
-			path := filepath.Join(t.TempDir(), "calendar.ics")
-			raw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:" + method + "\r\nBEGIN:VEVENT\r\nUID:event@example.com\r\nDTSTART:20270302T120000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
-			require.NoError(t, os.WriteFile(path, []byte(raw), 0600))
-			_, err := ImportICS(t.Context(), st, path, "unsupported-export")
-			require.ErrorContains(t, err, `unsupported calendar method "`+method+`"`)
-			_, err = st.GetSourceByTypeAndIdentifier(t.Context(), "ics", "unsupported-export")
+			path := filepath.Join(t.TempDir(), "invalid.ics")
+			require.NoError(t, os.WriteFile(path, []byte(tc.raw), 0600))
+			_, err := ImportICS(t.Context(), st, path, "invalid-export")
+			require.Error(t, err)
+			if tc.name == "unsupported method" {
+				require.ErrorContains(t, err, `unsupported calendar method "ADD"`)
+			}
+			_, err = st.GetSourceByTypeAndIdentifier(t.Context(), "ics", "invalid-export")
 			assert.ErrorIs(t, err, store.ErrSourceNotFound)
 		})
 	}

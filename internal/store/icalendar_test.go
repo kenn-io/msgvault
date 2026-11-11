@@ -62,30 +62,29 @@ func TestICalendarRangeKeepsSiblingsAndReportsSeries(t *testing.T) {
 			})
 		}
 	}
-}
-
-func TestICalendarRangeCancellationRetainsSeriesState(t *testing.T) {
-	st := newRFC822IDBackfillBackendStore(t)
-	source := icsSource(t, st)
-	for _, event := range [][]byte{
-		calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=10"),
-		calendarDocument("REQUEST", "RECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nDURATION:PT1H"),
-		calendarDocument("CANCEL", "SEQUENCE:1\r\nRECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z"),
-	} {
-		_, err := st.PersistICalendarContext(t.Context(), source, event)
+	t.Run("range cancellation", func(t *testing.T) {
+		st := newRFC822IDBackfillBackendStore(t)
+		source := icsSource(t, st)
+		for _, event := range [][]byte{
+			calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=10"),
+			calendarDocument("REQUEST", "RECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nDURATION:PT1H"),
+			calendarDocument("CANCEL", "SEQUENCE:1\r\nRECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z"),
+		} {
+			_, err := st.PersistICalendarContext(t.Context(), source, event)
+			require.NoError(t, err)
+		}
+		from := time.Date(2027, 3, 8, 0, 0, 0, 0, time.UTC)
+		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
 		require.NoError(t, err)
-	}
-	from := time.Date(2027, 3, 8, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-	require.NoError(t, err)
-	assert.Empty(t, page.Occurrences)
-	require.Len(t, page.Unexpandable, 1)
-	_, err = st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "SEQUENCE:2\r\nRECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nDURATION:PT1H"))
-	require.NoError(t, err)
-	page, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-	require.NoError(t, err)
-	require.Empty(t, page.Unexpandable)
-	require.Len(t, page.Occurrences, 1)
+		assert.Empty(t, page.Occurrences)
+		require.Len(t, page.Unexpandable, 1)
+		_, err = st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "SEQUENCE:2\r\nRECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nDURATION:PT1H"))
+		require.NoError(t, err)
+		page, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+		require.NoError(t, err)
+		require.Empty(t, page.Unexpandable)
+		require.Len(t, page.Occurrences, 1)
+	})
 }
 
 func TestICSFamilyLookupUsesIndexes(t *testing.T) {
@@ -109,7 +108,7 @@ func TestICSFamilyLookupUsesIndexes(t *testing.T) {
 }
 
 func TestICalendarPersistenceRevisions(t *testing.T) {
-	for _, behavior := range []string{"duplicate persist", "newer stamp", "cancellation"} {
+	for _, behavior := range []string{"equal revision", "newer stamp", "cancellation"} {
 		t.Run(behavior, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
@@ -124,8 +123,9 @@ func TestICalendarPersistenceRevisions(t *testing.T) {
 			id := ids[0]
 
 			switch behavior {
-			case "duplicate persist":
-				duplicate, err := st.PersistICalendarContext(t.Context(), source, raw)
+			case "equal revision":
+				changed := []byte(strings.Replace(string(raw), "SUMMARY:First", "SUMMARY:Changed", 1))
+				duplicate, err := st.PersistICalendarContext(t.Context(), source, changed)
 				requirements.NoError(err)
 				assertions.Zero(duplicate.Changed)
 				assertions.Equal(1, duplicate.Unchanged)
@@ -274,6 +274,17 @@ func TestICalendarRecurrenceAcrossClockChanges(t *testing.T) {
 		require.Len(t, page.Occurrences, 2)
 		assert.Equal(t, "2027-03-14T14:00:00Z", page.Occurrences[0].End.UTC().Format(time.RFC3339))
 	})
+	t.Run("explicit end", func(t *testing.T) {
+		st := newRFC822IDBackfillBackendStore(t)
+		raw := calendarDocument("REQUEST", "DTSTART;TZID=America/New_York:20270313T090000\r\nDTEND;TZID=America/New_York:20270314T090000\r\nRRULE:FREQ=DAILY;COUNT=2")
+		_, err := st.PersistICalendarContext(t.Context(), icsSource(t, st), raw)
+		require.NoError(t, err)
+		from := time.Date(2027, 3, 15, 0, 0, 0, 0, time.UTC)
+		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+		require.NoError(t, err)
+		require.Len(t, page.Occurrences, 1)
+		assert.Equal(t, "2027-03-15T12:00:00Z", page.Occurrences[0].End.UTC().Format(time.RFC3339))
+	})
 }
 
 func TestICalendarCancellationInheritsMissingEnd(t *testing.T) {
@@ -300,33 +311,20 @@ func TestICalendarCancellationInheritsMissingEnd(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestICalendarCancellationInheritsCalendarDayAcrossClockChange(t *testing.T) {
-	st := newRFC822IDBackfillBackendStore(t)
-	source := icsSource(t, st)
-	_, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "DTSTART;TZID=America/New_York:20271105T090000\r\nDURATION:P1D\r\nRRULE:FREQ=DAILY;COUNT=2"))
-	require.NoError(t, err)
-	_, err = st.PersistICalendarContext(t.Context(), source, calendarDocument("CANCEL", "RECURRENCE-ID;TZID=America/New_York:20271106T090000\r\nDTSTART;TZID=America/New_York:20271106T090000"))
-	require.NoError(t, err)
-	from := time.Date(2027, 11, 7, 13, 30, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.Add(15*time.Minute))
-	require.NoError(t, err)
-	require.Len(t, page.Occurrences, 1)
-	assert.Equal(t, "cancelled", page.Occurrences[0].Status)
-	assert.Equal(t, "2027-11-07T14:00:00Z", page.Occurrences[0].End.UTC().Format(time.RFC3339))
-}
-
-func TestICalendarRecurrenceExplicitEndUsesElapsedDuration(t *testing.T) {
-	st := newRFC822IDBackfillBackendStore(t)
-	raw := calendarDocument("REQUEST", "DTSTART;TZID=America/New_York:20270313T090000\r\nDTEND;TZID=America/New_York:20270314T090000\r\nRRULE:FREQ=DAILY;COUNT=2")
-	_, err := st.PersistICalendarContext(t.Context(), icsSource(t, st), raw)
-	require.NoError(t, err)
-	from := time.Date(2027, 3, 15, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-	require.NoError(t, err)
-	require.Len(t, page.Occurrences, 1)
-	assert.Equal(t, "2027-03-15T12:00:00Z", page.Occurrences[0].End.UTC().Format(time.RFC3339))
+	t.Run("calendar day across clock change", func(t *testing.T) {
+		st := newRFC822IDBackfillBackendStore(t)
+		source := icsSource(t, st)
+		_, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "DTSTART;TZID=America/New_York:20271105T090000\r\nDURATION:P1D\r\nRRULE:FREQ=DAILY;COUNT=2"))
+		require.NoError(t, err)
+		_, err = st.PersistICalendarContext(t.Context(), source, calendarDocument("CANCEL", "RECURRENCE-ID;TZID=America/New_York:20271106T090000\r\nDTSTART;TZID=America/New_York:20271106T090000"))
+		require.NoError(t, err)
+		from := time.Date(2027, 11, 7, 13, 30, 0, 0, time.UTC)
+		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.Add(15*time.Minute))
+		require.NoError(t, err)
+		require.Len(t, page.Occurrences, 1)
+		assert.Equal(t, "cancelled", page.Occurrences[0].Status)
+		assert.Equal(t, "2027-11-07T14:00:00Z", page.Occurrences[0].End.UTC().Format(time.RFC3339))
+	})
 }
 
 func TestICalendarRecurrenceProjectionUpgrade(t *testing.T) {

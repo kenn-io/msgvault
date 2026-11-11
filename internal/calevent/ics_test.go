@@ -283,7 +283,24 @@ func TestICSRejectMalformed(t *testing.T) {
 	}
 }
 
+func TestICSRejectsUnsupportedFileMethods(t *testing.T) {
+	for _, method := range []string{"ADD", "REPLY", "REFRESH", "COUNTER", "DECLINECOUNTER"} {
+		t.Run(method, func(t *testing.T) {
+			raw := strings.Replace(icsExample, "METHOD:REQUEST", "METHOD:"+method, 1)
+			_, err := ParseICS([]byte(raw), "", "")
+			require.ErrorContains(t, err, `unsupported calendar method "`+method+`"`)
+		})
+	}
+}
+
 func TestParseICSCustomizedZone(t *testing.T) {
+	t.Run("unused unsupported zone", func(t *testing.T) {
+		raw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTIMEZONE\r\nTZID:Custom/Test\r\nBEGIN:STANDARD\r\nDTSTART:20270101T000000\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0500\r\nRDATE:20270301T020000\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:valid@example.com\r\nDTSTART:20270302T120000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+		components, err := ParseICS([]byte(raw), "", "")
+		require.NoError(t, err)
+		require.Len(t, components, 1)
+		assert.Equal(t, "valid@example.com", components[0].UID)
+	})
 	t.Run("single era", func(t *testing.T) {
 		assertions, requirements := assert.New(t), require.New(t)
 		raw, err := os.ReadFile("testdata/customized.ics")
