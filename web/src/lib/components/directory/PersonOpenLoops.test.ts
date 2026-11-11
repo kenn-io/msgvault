@@ -39,7 +39,7 @@ function clientFor(
   return { client: createAPIClient(fetcher), fetcher };
 }
 
-function commitmentClient() {
+function commitmentClient(extraPromises = 0) {
   let state: "open" | "done" | "snoozed" = "open";
   const decisions: { path: string; state: string }[] = [];
   const promise = (id: number, direction: 'owed_by' | 'owed_to', text: string, current: "open" | "done" | "snoozed" | "fulfilled" = "open") => ({
@@ -62,18 +62,22 @@ function commitmentClient() {
       state = body.state;
       return Response.json({ id: "c12", state });
     }
+    const commitments = [
+      ...(state === "open" || url.searchParams.get("include_closed") === "true"
+        ? [promise(12, "owed_by", "I will send the draft.", state)] : []),
+      promise(13, "owed_to", "I will check the venue."),
+      ...Array.from({ length: extraPromises }, (_, index) =>
+        promise(15 + index, "owed_by", `I will send report ${index + 1}.`)),
+      ...(url.searchParams.get("include_closed") === "true" ? [{
+        ...promise(14, "owed_by", "I will send the agenda.", "fulfilled"),
+        proposed_fulfilment: { message_id: 55, text: "I sent the agenda.", start: 0, end: 18 },
+      }] : []),
+    ];
+    const limit = Number(url.searchParams.get("limit"));
     return Response.json({
       items: [],
-      commitments: [
-        ...(state === "open" || url.searchParams.get("include_closed") === "true"
-          ? [promise(12, "owed_by", "I will send the draft.", state)] : []),
-        promise(13, "owed_to", "I will check the venue."),
-        ...(url.searchParams.get("include_closed") === "true" ? [{
-          ...promise(14, "owed_by", "I will send the agenda.", "fulfilled"),
-          proposed_fulfilment: { message_id: 55, text: "I sent the agenda.", start: 0, end: 18 },
-        }] : []),
-      ],
-      truncated: false,
+      commitments: commitments.slice(0, limit),
+      truncated: commitments.length > limit,
       coverage_incomplete: false,
       skipped_unparseable: 0,
     });
@@ -131,6 +135,18 @@ describe("PersonOpenLoops", () => {
       { path: "/api/v1/loops/commitments/c12/decision", state: closeState },
       { path: "/api/v1/loops/commitments/c12/decision", state: "open" },
     ]);
+  });
+
+  it.each(["done", "snoozed"] as const)("refills the five-promise summary after a %s decision", async (closeState) => {
+    const { client } = commitmentClient(4);
+    render(PersonOpenLoops, { client, personID: 7 });
+    expect(await screen.findByText("5+ open")).toBeDefined();
+    expect(screen.queryByRole("link", { name: "I will send report 4." })).toBeNull();
+    await fireEvent.click(screen.getAllByRole("button", { name: closeState === "done" ? "Done" : "Snooze for 24h" })[0]);
+    expect(await screen.findByRole("link", { name: "I will send report 4." })).toBeDefined();
+    expect(screen.getByText("5 open")).toBeDefined();
+    expect(screen.getAllByRole("button", { name: "Done" })).toHaveLength(5);
+    expect(screen.queryByRole("link", { name: "I will send the draft." })).toBeNull();
   });
 
   it("shows exact promise text and labels fulfilment once", async () => {
