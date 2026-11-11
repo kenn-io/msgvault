@@ -874,6 +874,10 @@ func TestProjectPersonPropertiesCarriesUnstructuredPostalAddresses(t *testing.T)
 				Envelope:    store.ValueEnvelope{ID: 704, Source: store.ProvenanceUser},
 				AddressKind: store.PersonAddressPostal,
 			},
+			{
+				Envelope:    store.ValueEnvelope{ID: 705, Source: store.ProvenanceUser},
+				AddressKind: store.PersonAddressPostal, OriginalValue: "12 Example Street; Unit 7",
+			},
 		},
 	}}
 
@@ -886,6 +890,9 @@ func TestProjectPersonPropertiesCarriesUnstructuredPostalAddresses(t *testing.T)
 	assert.Equal(";;1 Main\\, St;Town;;;", structured.Property.RawValue,
 		"a structured original value is re-emitted with its escaping intact, not escaped again")
 	assert.Empty(projectedParameterValues(structured.Property, "LABEL"))
+	semicolonText := projectedByOwner(t, properties, "person_addresses", 705, fieldValue)
+	assert.Equal(";;;;;;", semicolonText.Property.RawValue)
+	assert.Equal([]string{"12 Example Street; Unit 7"}, projectedParameterValues(semicolonText.Property, "LABEL"))
 	fromFreeText := projectedByOwner(t, properties, "person_addresses", 702, fieldValue)
 	assert.Equal([]string{"Second Floor, 2 Side St"}, projectedParameterValues(fromFreeText.Property, "LABEL"))
 	components := projectedByOwner(t, properties, "person_addresses", 703, fieldValue)

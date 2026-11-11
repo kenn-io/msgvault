@@ -298,6 +298,7 @@ func TestLegacyPostalAssessmentMatchesPublicAddress(t *testing.T) {
 	}{
 		{"structured", `;;12 Example Street;Example City;;;;Room\;3;Floor 2`, true},
 		{"text", "12 Example Street", false},
+		{"semicolon text", "12 Example Street; Unit 7", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv, wrapped := newIdentityLinkTestServer(t)
@@ -322,19 +323,21 @@ func TestLegacyPostalAssessmentMatchesPublicAddress(t *testing.T) {
 					assert.Equal(t, []string{"Room;3", "Floor 2"}, address.Assessment.ProposedExtendedParts)
 				} else {
 					require.NotNil(t, address.FreeText)
-					assert.Equal(t, "12 Example Street", *address.FreeText)
+					assert.Equal(t, tc.original, *address.FreeText)
+					assert.Nil(t, address.PostOfficeBox)
+					assert.Nil(t, address.ExtendedAddress)
 				}
 			}
 			if !tc.structured {
 				read := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
-				body := fmt.Appendf(nil, `{"addresses":{"supersede":[%d],"add":[{"address_kind":"postal","free_text":"12 Example Street","country_name":"Canada","original_input":{"address_kind":"postal","original_value":"12 Example Street"},"envelope":{"source":"user"}}]}}`, old.Envelope.ID)
+				body := fmt.Appendf(nil, `{"addresses":{"supersede":[%d],"add":[{"address_kind":"postal","free_text":%q,"country_name":"Canada","original_input":{"address_kind":"postal","original_value":%q},"envelope":{"source":"user"}}]}}`, old.Envelope.ID, tc.original, tc.original)
 				saved := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), body, map[string]string{"If-Match": read.Header().Get("ETag")})
 				require.Equal(t, http.StatusOK, saved.Code, saved.Body.String())
 				var profile store.PersonProfile
 				require.NoError(t, json.Unmarshal(saved.Body.Bytes(), &profile))
 				require.Len(t, profile.Addresses, 1)
 				require.NotNil(t, profile.Addresses[0].FreeText)
-				assert.Equal(t, "12 Example Street", *profile.Addresses[0].FreeText)
+				assert.Equal(t, tc.original, *profile.Addresses[0].FreeText)
 				assert.Equal(t, "Canada", *profile.Addresses[0].CountryName)
 			}
 		})

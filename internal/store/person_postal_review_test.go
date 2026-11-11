@@ -16,6 +16,31 @@ import (
 
 const postalClaimJSON = `{"street_address":" 12 Example Street ","extended_address":" Unit 7 ","locality":"Example City","country_code":" ca ","extended_components":";;12 Example Street;Example City;;;;Room\\;3;Floor 2","source_text":"  My address is 12 Example Street, Unit 7.  "}`
 
+func TestLegacyPostalAddressShape(t *testing.T) {
+	for _, tc := range []struct {
+		name, original string
+		structured     bool
+	}{
+		{"six parts", ";;12 Example St;City;;", false},
+		{"seven parts", ";;12 Example St;City;;;", true},
+		{"geo text", "geo:1,2;u=35", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			address, err := (PersonAddress{AddressKind: PersonAddressPostal, OriginalValue: tc.original}).PublicAddress()
+			require.NoError(t, err)
+			if tc.structured {
+				require.NotNil(t, address.StreetAddress)
+				assert.Equal(t, "12 Example St", *address.StreetAddress)
+				assert.Nil(t, address.FreeText)
+			} else {
+				require.NotNil(t, address.FreeText)
+				assert.Equal(t, tc.original, *address.FreeText)
+				assert.Nil(t, address.PostOfficeBox)
+			}
+		})
+	}
+}
+
 func postalGeneration(t *testing.T, st *Store, personID int64, suffix string, claims []personfacts.ProposedClaim, statuses []personfacts.EvidenceStatusChange) personfacts.GenerationInput {
 	t.Helper()
 	input := personFactProjectionInput(personID, suffix, claims, statuses)
