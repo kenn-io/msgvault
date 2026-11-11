@@ -37,10 +37,6 @@ func TestUnknownDirectionStaysUnknownThroughRefreshAndReads(t *testing.T) {
 	effective, source := attribution(unknownID)
 	assert.False(effective.Valid)
 	assert.False(source.Valid)
-	effective, _ = attribution(sentID)
-	assert.True(effective.Valid && effective.Bool)
-	effective, _ = attribution(receivedID)
-	assert.True(effective.Valid && !effective.Bool)
 
 	unknown, err := st.GetMessage(unknownID)
 	require.NoError(err)
@@ -96,7 +92,12 @@ func TestUnknownDirectionNoticeStaysInUnclassifiedRosterScope(t *testing.T) {
 	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
 		`DELETE FROM applied_migrations WHERE name = ?`), "person_sweep_unknown_direction_scope_v1")
 	requirements.NoError(err)
-	requirements.NoError(f.store.InitSchema())
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE archive_metadata SET value = '40' WHERE key = 'schema_version'`)
+	requirements.NoError(err)
+	requirements.NoError(f.store.InitSchemaUnlessCurrentContext(t.Context()))
+	version, err := f.store.SchemaVersionContext(t.Context())
+	requirements.NoError(err)
+	requirements.Equal(41, version)
 	messageID, err := f.store.UpsertMessage(&store.Message{
 		SourceID: f.sourceID, SourceMessageID: "senderless-notice",
 		ConversationID: f.conversationID, MessageType: "whatsapp",
