@@ -607,9 +607,15 @@ func TestAgentIndexProbeHasFiniteLifetime(t *testing.T) {
 				}
 				if arrival == "gate refused" {
 					assertions.False(srv.ftsEnsureRunning.Load())
-					assertions.False(srv.ftsIndexComplete.Load())
-					assertions.Equal(cliSearchIndexStateAwaitingOwner, srv.ensureCLISearchIndexAsync(st, false))
-					assertions.Zero(st.repairs)
+					if st.IsPostgreSQL() {
+						assertions.True(srv.ftsIndexComplete.Load())
+						assertions.Empty(srv.ensureCLISearchIndexAsync(st, false))
+						assertions.Equal(1, st.repairs)
+					} else {
+						assertions.False(srv.ftsIndexComplete.Load())
+						assertions.Equal(cliSearchIndexStateAwaitingOwner, srv.ensureCLISearchIndexAsync(st, false))
+						assertions.Zero(st.repairs)
+					}
 					assertions.False(gate.HasRequestWaiters())
 					_, _, held := gate.Holder()
 					assertions.False(held)
