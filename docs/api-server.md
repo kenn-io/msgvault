@@ -3448,3 +3448,5 @@ These heuristics can miss unfamiliar wording and layouts, lowercase letter-only 
 Search rows are masked in place, with membership and counts unchanged.
 
 Search can confirm a withheld value through exact or prefix queries, and draft output can include verification content. These known limits are covered by later slices for search confirmation and draft quotes. Add `verification.read` only when the delegated reader should receive verification content.
+
+Meeting context exports also support `srt` and `vtt` for one distinct meeting ID with retained timing. See [subtitle export](usage/meetings.md#export-subtitles) for limits and failure behavior. Subtitle formats require API schema 5.1.0.

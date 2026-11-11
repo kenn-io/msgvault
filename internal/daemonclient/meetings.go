@@ -11,12 +11,28 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+type meetingSubtitlesUnsupportedError struct{}
+
+func (meetingSubtitlesUnsupportedError) Error() string {
+	return "meeting subtitles require daemon API schema 5.1.0 or newer; upgrade the daemon"
+}
+func (meetingSubtitlesUnsupportedError) APIErrorCode() string { return "meeting_subtitles_unsupported" }
+
 // GetMeetingContext renders a deterministic meeting context packet through
 // the daemon. The generated request retains omitted versus explicit-empty IDs.
 func (c *Client) GetMeetingContext(
 	ctx context.Context,
 	body generated.GetMeetingContextBody,
 ) (*meetingcontent.PacketResult, error) {
+	if body.Format != nil && (*body.Format == "srt" || *body.Format == "vtt") {
+		compatible, err := c.SupportsAPISchemaVersion(ctx, "5.1.0")
+		if err != nil {
+			return nil, fmt.Errorf("check meeting subtitles capability: %w", err)
+		}
+		if !compatible {
+			return nil, meetingSubtitlesUnsupportedError{}
+		}
+	}
 	response, err := APIResponse(c,
 		func(client *apiclient.Client) (*generated.GetMeetingContextResp, error) {
 			return client.GetMeetingContextWithResponse(ctx,

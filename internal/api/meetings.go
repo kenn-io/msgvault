@@ -68,7 +68,7 @@ type MeetingExploreScope struct {
 type MeetingContextRequest struct {
 	MessageIDs        *[]int64              `json:"message_ids,omitempty" maxItems:"100"`
 	Selection         *ExploreSelection     `json:"selection,omitempty"`
-	Format            meetingcontent.Format `json:"format,omitempty" enum:"json,markdown"`
+	Format            meetingcontent.Format `json:"format,omitempty" enum:"json,markdown,srt,vtt"`
 	IncludeTranscript bool                  `json:"include_transcript,omitempty"`
 	MaxBytes          int                   `json:"max_bytes,omitempty" minimum:"4096" maximum:"1048576"`
 }
@@ -147,8 +147,8 @@ func (s *Server) handleMeetingContext(w http.ResponseWriter, r *http.Request) {
 
 	format := request.Format
 	if _, present := fields["format"]; present {
-		if format != meetingcontent.FormatJSON && format != meetingcontent.FormatMarkdown {
-			writeError(w, http.StatusBadRequest, "invalid_meeting_format", "format must be json or markdown")
+		if format != meetingcontent.FormatJSON && format != meetingcontent.FormatMarkdown && format != meetingcontent.FormatSRT && format != meetingcontent.FormatVTT {
+			writeError(w, http.StatusBadRequest, "invalid_meeting_format", "format must be json, markdown, srt or vtt")
 			return
 		}
 	} else {
@@ -519,9 +519,11 @@ func (s *Server) writeMeetingError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrMeetingScopeChanged):
 		writeError(w, http.StatusConflict, "meeting_scope_changed",
 			"The selected meeting population changed; resolve the scope again")
+	case errors.Is(err, meetingcontent.ErrInvalidSubtitles):
+		writeError(w, http.StatusBadRequest, "invalid_meeting_subtitles", err.Error())
 	case errors.Is(err, meetingcontent.ErrBudgetTooSmall):
 		writeError(w, http.StatusBadRequest, "context_budget_too_small",
-			"The meeting context budget is too small for the required envelope")
+			"The meeting context budget is too small for the requested content")
 	default:
 		if s.logger != nil {
 			s.logger.Error("meeting intelligence failed", "error", err)

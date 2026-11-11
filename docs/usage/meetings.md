@@ -48,6 +48,36 @@ matches. Meetings mode does not offer selection or deletion.
 Unscoped search includes meetings and chats. Email-specific CLI and TUI
 aggregates remain email-only unless you choose another message type.
 
+## Export subtitles
+
+Export one archived meeting as SRT or WebVTT through the daemon:
+
+```bash
+msgvault meetings context --id 42 --format srt
+msgvault meetings context --id 42 --format vtt -o meeting.vtt
+```
+
+Subtitle formats require daemon API schema 5.1.0 or newer; the default context
+format remains Markdown. Output goes to stdout unless `-o FILE` is
+specified; `-o -` also uses stdout. Both formats show available speakers as
+`Speaker: text`. Nonblank line breaks survive. WebVTT escapes text and labels.
+SRT writes plain text, preserving literal ampersands and arrows. SRT refuses
+`<`, braces, and backslashes in text or labels because players can interpret
+them as markup or formatting controls. SRT also refuses complete timing headers
+at the start of a payload line, including signed timestamps, which players can
+treat as another cue. SRT also refuses leading or trailing ASCII whitespace on
+cue lines and lines over 4095 UTF-8 bytes, including the speaker prefix.
+VTT preserves indentation and longer lines. Use `--format vtt` for those transcripts.
+Ordinary numeric arrows such as `2025 --> 2026` remain literal.
+Interior blank cue lines, multiline speaker labels, and NUL characters cause an
+explicit error.
+The command validates and renders everything before replacing a file. Timing,
+formatting, and size errors leave an existing destination untouched.
+
+Export uses retained structured segments from Omi, Pocket, and Twenty. Every cue needs a start and end. Pocket's retained recording must match the archived transcript; pending or changed evidence can make timing unavailable. Twenty uses the recording start for absolute timestamps and preserves relative timestamps. Calendar and message dates do not supply a recording start. Other sources, missing bounds, and unknown recording starts produce an error. Overlaps and leading silence survive.
+
+Subtitle exports load transcript evidence automatically and require exactly one distinct meeting ID. `--max-bytes` limits subtitle output to 4096–1048576 UTF-8 bytes (default 131072). An export that exceeds the limit fails without partial cues or file replacement.
+
 ## Export context and read follow-ups
 
 In Messages, select meeting rows and choose **Meeting context…** in the

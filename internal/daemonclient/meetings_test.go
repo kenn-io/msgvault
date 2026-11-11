@@ -2,6 +2,7 @@ package daemonclient_test
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -207,4 +208,47 @@ func TestMeetingClientPropagatesDaemonErrorsAndRequestContext(t *testing.T) {
 		assertions.Nil(result)
 		requirements.ErrorIs(err, context.Canceled)
 	})
+}
+
+func TestMeetingSubtitleCapabilityGate(t *testing.T) {
+	for _, version := range []string{"5.0.0", "5.1.0"} {
+		t.Run(version, func(t *testing.T) {
+			posts := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/api/v1/health" {
+					_, err := fmt.Fprintf(w, `{"status":"ok","api_schema_version":%q}`, version)
+					assert.NoError(t, err)
+					return
+				}
+				posts++
+				if posts == 2 {
+					w.WriteHeader(http.StatusBadRequest)
+					_, err := w.Write([]byte(`{"error":"invalid_meeting_format","message":"specific daemon error"}`))
+					assert.NoError(t, err)
+					return
+				}
+				_, err := w.Write([]byte(`{"schema_version":1,"format":"json","content":"","content_bytes":0,"truncated":false,"omitted_message_ids":[]}`))
+				assert.NoError(t, err)
+			}))
+			t.Cleanup(server.Close)
+			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, HTTPClient: server.Client()})
+			require.NoError(t, err)
+			t.Cleanup(func() { assert.NoError(t, client.Close()) })
+			format := generated.MeetingContextRequestFormat("markdown")
+			_, err = client.GetMeetingContext(t.Context(), generated.GetMeetingContextBody{MessageIds: new([]int64{1}), Format: &format})
+			require.NoError(t, err)
+			format = generated.MeetingContextRequestFormat("vtt")
+			_, err = client.GetMeetingContext(t.Context(), generated.GetMeetingContextBody{MessageIds: new([]int64{1}), Format: &format})
+			if version == "5.0.0" {
+				require.ErrorContains(t, err, "5.1.0")
+				assert.Equal(t, 1, posts)
+			} else {
+				var apiErr *daemonclient.APIError
+				require.ErrorAs(t, err, &apiErr)
+				assert.Equal(t, "invalid_meeting_format", apiErr.Code)
+				assert.Equal(t, 2, posts)
+			}
+		})
+	}
 }

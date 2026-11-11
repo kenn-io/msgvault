@@ -150,7 +150,7 @@ Use these read tools for [archived meeting context and follow-ups](meetings.md):
 
 | Tool | Use |
 |---|---|
-| `get_meeting_context` | Export selected meeting IDs as JSON or Markdown; transcript opt-in and byte budget |
+| `get_meeting_context` | Export selected meetings as JSON/Markdown, or one meeting as SRT/VTT; byte budget |
 | `list_meeting_action_items` | Read source action status, explicit assignees, coverage, and source links |
 | `get_meeting_metrics` | Count scoped meetings and inspect known/unknown duration and monthly activity |
 
@@ -164,6 +164,12 @@ For example, call `list_meeting_action_items` with:
   "assignee_email": "alex@example.com"
 }
 ```
+
+For subtitles, call `get_meeting_context` with
+`{"message_ids":[42],"format":"vtt","max_bytes":4096}`. SRT/VTT require daemon
+API schema 5.1.0, include transcript evidence automatically, and apply the
+budget to complete subtitle output only. See [subtitle timing and format
+limits](meetings.md#export-subtitles).
 
 Call `get_meeting_context` with `{"message_ids":[42],"format":"json"}`;
 add `"include_transcript":true` only when needed. Call `get_meeting_metrics`

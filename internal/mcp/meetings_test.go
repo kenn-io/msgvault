@@ -14,14 +14,16 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-func newMeetingMCPBackend(t *testing.T) (*daemonclient.Client, []meetingimport.Result) {
+func newMeetingMCPBackend(t *testing.T) (*daemonclient.Client, []meetingimport.Result, *store.Store) {
 	t.Helper()
 	st := testutil.NewTestStore(t)
 	importer := meetingimport.NewImporter(st, meetingimport.Hooks{})
@@ -68,13 +70,13 @@ func newMeetingMCPBackend(t *testing.T) (*daemonclient.Client, []meetingimport.R
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, client.Close()) })
-	return client, results
+	return client, results, st
 }
 
 func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.T) {
 	checks := assert.New(t)
 	must := require.New(t)
-	backend, imported := newMeetingMCPBackend(t)
+	backend, imported, st := newMeetingMCPBackend(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
 
@@ -204,6 +206,17 @@ func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.
 	must.NoError(err)
 	must.NotNil(emptyMetrics)
 	checks.Nil(emptyMetrics.Totals.AverageKnownSeconds)
+	source, err := st.GetOrCreateSource("twenty", "owner@example.test")
+	must.NoError(err)
+	raw := []byte(`{"schema_version":1,"calendar_event":{"startsAt":"2025-01-01T00:00:00Z"},"recording":{"startedAt":"2026-01-01T00:00:00Z","transcript":[{"participant":{"name":"A"},"words":[{"text":"Hello","start_timestamp":{"absolute":"2026-01-01T00:00:10Z"},"end_timestamp":{"absolute":"2026-01-01T00:00:12Z"}}]}]}}`)
+	snapshot := meetingarchive.Snapshot{SourceID: source.ID, AccountEmail: "owner@example.test", SourceMessageID: "subtitle", SourceConversationID: "subtitle", Title: "Meeting", StartedAt: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), Raw: raw, RawFormat: "twenty_json", Organizer: &meetingarchive.Person{Name: "Owner", Email: "owner@example.test"}}
+	archived, err := meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
+	must.NoError(err)
+	subtitles, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolGetMeetingContext, Arguments: map[string]any{"message_ids": []any{float64(archived.MessageID)}, "format": "vtt"}})
+	must.NoError(err)
+	must.False(subtitles.IsError)
+	checks.Equal("WEBVTT\n\n1\n00:00:10.000 --> 00:00:12.000\nA: Hello\n\n", meetingStructuredContent(t, subtitles)["content"])
+
 }
 
 func meetingStructuredContent(t *testing.T, result *sdkmcp.CallToolResult) map[string]any {

@@ -74,6 +74,11 @@ func (s *Store) GetMeetingContextContext(
 	if scope.MessageIDs != nil {
 		ids = normalizedSignedIDs(*scope.MessageIDs)
 	}
+	subtitles := options.Format == meetingcontent.FormatSRT || options.Format == meetingcontent.FormatVTT
+	if subtitles && len(ids) != 1 {
+		return nil, fmt.Errorf("%w: exactly one distinct meeting ID is required", meetingcontent.ErrInvalidSubtitles)
+	}
+	var result *meetingcontent.PacketResult
 	var archiveUID string
 	entries := make([]meetingcontent.Entry, 0, len(ids))
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
@@ -84,6 +89,17 @@ func (s *Store) GetMeetingContextContext(
 		}
 		if err := s.validateMeetingContextIDs(ctx, tx, ids, scope.Deletion); err != nil {
 			return err
+		}
+		if subtitles {
+			format, raw, rawErr := s.loadMeetingRaw(ctx, tx, ids[0])
+			if errors.Is(rawErr, errMeetingRawTooLarge) || errors.Is(rawErr, errInvalidMeetingRaw) {
+				return fmt.Errorf("%w: transcript timing unavailable", meetingcontent.ErrInvalidSubtitles)
+			}
+			if rawErr != nil {
+				return rawErr
+			}
+			result, rawErr = meetingcontent.RenderSubtitles(format, raw, options)
+			return rawErr
 		}
 		for _, id := range ids {
 			row, loadErr := s.loadMeetingContextRow(ctx, tx, id, options.IncludeTranscript)
@@ -102,6 +118,9 @@ func (s *Store) GetMeetingContextContext(
 	})
 	if err != nil {
 		return nil, fmt.Errorf("get meeting context: %w", err)
+	}
+	if subtitles {
+		return result, nil
 	}
 	return meetingcontent.Render(archiveUID, entries, options)
 }
@@ -284,27 +303,40 @@ func (s *Store) loadMeetingContextRow(
 func (s *Store) loadMeetingTranscript(
 	ctx context.Context, tx *loggedTx, id int64, metadata sql.NullString,
 ) (meetingcontent.Transcript, error) {
+	format, raw, err := s.loadMeetingRaw(ctx, tx, id)
+	if errors.Is(err, errMeetingRawTooLarge) {
+		return meetingcontent.Transcript{State: meetingcontent.StateUnavailable, Reason: "raw_too_large"}, nil
+	}
+	if errors.Is(err, errInvalidMeetingRaw) {
+		return meetingcontent.Transcript{State: meetingcontent.StateUnavailable, Reason: "invalid_raw"}, nil
+	}
+	if err != nil {
+		return meetingcontent.Transcript{}, err
+	}
+	return meetingcontent.Decode(format, raw, []byte(metadata.String)).Transcript, nil
+}
+
+var errInvalidMeetingRaw = errors.New("invalid meeting raw")
+
+func (s *Store) loadMeetingRaw(ctx context.Context, tx *loggedTx, id int64) (string, []byte, error) {
 	var compressed []byte
 	var format string
 	var compression sql.NullString
-	err := tx.QueryRowContext(ctx, `
-		SELECT raw_data, raw_format, compression
-		FROM message_raw WHERE message_id = ?`, id).Scan(&compressed, &format, &compression)
+	err := tx.QueryRowContext(ctx, `SELECT raw_data, raw_format, compression FROM message_raw WHERE message_id = ?`, id).Scan(&compressed, &format, &compression)
 	if errors.Is(err, sql.ErrNoRows) {
-		return meetingcontent.Decode("", nil, []byte(metadata.String)).Transcript, nil
+		return "", nil, nil
 	}
 	if err != nil {
-		return meetingcontent.Transcript{}, fmt.Errorf("load meeting transcript %d: %w", id, err)
+		return "", nil, fmt.Errorf("load meeting transcript %d: %w", id, err)
 	}
 	raw, _, err := decodeMessageRawBounded(compressed, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
-	if err != nil {
-		reason := "invalid_raw"
-		if errors.Is(err, errMeetingRawTooLarge) {
-			reason = "raw_too_large"
-		}
-		return meetingcontent.Transcript{State: meetingcontent.StateUnavailable, Reason: reason}, nil
+	if errors.Is(err, errMeetingRawTooLarge) {
+		return "", nil, err
 	}
-	return meetingcontent.Decode(format, raw, []byte(metadata.String)).Transcript, nil
+	if err != nil {
+		return "", nil, errInvalidMeetingRaw
+	}
+	return format, raw, nil
 }
 
 func loadMeetingContextParticipants(
