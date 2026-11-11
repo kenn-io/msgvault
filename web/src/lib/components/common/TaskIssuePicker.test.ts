@@ -52,10 +52,10 @@ describe('TaskIssuePicker', () => {
   });
 
   it('shows the result limit alongside the search guidance', async () => {
-    render(TaskIssuePicker, { load: async (query: string) => ({ items: query ? [item] : Array.from({ length: 25 }, (_, i) => ({ id: String(i), label: `Issue ${i}` })), truncated: !query }), noun: 'open issues', empty: 'No open issues yet.', hint: 'Search by whole word or enter a ref.', moreNote: 'Showing 25 of 25+ issues.', showCount: true });
+    render(TaskIssuePicker, { load: async (query: string) => ({ items: query ? [item] : Array.from({ length: 25 }, (_, i) => ({ id: String(i), label: `Issue ${i}` })), truncated: !query }), noun: 'open issues', empty: 'No open issues yet.', hint: 'Search by whole word or enter a ref.', moreNote: 'More results available.', showCount: true });
     await screen.findByRole('radio', { name: 'Issue 0' });
     expect(screen.getByText('25 results')).toBeDefined();
-    expect(screen.getByText('Search by whole word or enter a ref. Showing 25 of 25+ issues.')).toBeDefined();
+    expect(screen.getByText('Search by whole word or enter a ref. More results available.')).toBeDefined();
     await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'budget' } });
     await screen.findByRole('radio', { name: item.label });
     expect(screen.getByText('Search by whole word or enter a ref.')).toBeDefined();
