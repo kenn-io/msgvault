@@ -41,19 +41,18 @@ type attributeListArgs struct {
 	Slug        *string `json:"slug,omitempty"`
 	UniversalID *string `json:"universal_id,omitempty"`
 }
-type attributeWriteArgs struct {
-	PersonID        int64                                      `json:"person_id"`
-	Slug            string                                     `json:"slug"`
-	Ordinal         *int64                                     `json:"ordinal,omitempty"`
-	ExpectedValueID *int64                                     `json:"expected_value_id,omitempty"`
-	DryRun          *bool                                      `json:"dry_run,omitempty"`
-	Value           *generated.AttributeValue                  `json:"value,omitempty"`
-	Source          *generated.SetPersonAttributeRequestSource `json:"source,omitempty"`
-	SourceRef       *string                                    `json:"source_ref,omitempty"`
-	Confidence      *float64                                   `json:"confidence,omitempty"`
-	Actor           *string                                    `json:"actor,omitempty"`
-	ActiveFrom      *string                                    `json:"active_from,omitempty"`
-	ActiveUntil     *string                                    `json:"active_until,omitempty"`
+type attributeSetArgs struct {
+	PersonID                         int64  `json:"person_id"`
+	Slug                             string `json:"slug"`
+	DryRun                           *bool  `json:"dry_run,omitempty"`
+	generated.SetPersonAttributeBody `json:",inline"`
+}
+type attributeClearArgs struct {
+	PersonID        int64  `json:"person_id"`
+	Slug            string `json:"slug"`
+	Ordinal         *int64 `json:"ordinal,omitempty"`
+	ExpectedValueID *int64 `json:"expected_value_id,omitempty"`
+	DryRun          *bool  `json:"dry_run,omitempty"`
 }
 type attributeDefinitionsArgs struct {
 	ObjectType    *string `json:"object_type,omitempty"`
@@ -87,41 +86,25 @@ func attributeRequest(name string, args map[string]any) (string, string, runtime
 	switch name {
 	case "list_person_attributes":
 		in, err := decodeMCPOperationArguments[attributeListArgs](args)
-		if err != nil || !validLoopID(in.PersonID) || in.Slug != nil && in.UniversalID != nil || in.Slug != nil && store.ValidateAttributeSlug(*in.Slug) != nil {
-			return "", "", nil, false
-		}
-		return http.MethodGet, "/api/v1/people/{id}/attributes", &generated.ListPersonAttributesRequestOptions{PathParams: &generated.ListPersonAttributesPath{ID: in.PersonID}, Query: &generated.ListPersonAttributesQuery{History: in.History, Slug: in.Slug, UniversalID: in.UniversalID}}, true
-	case "set_person_attribute", "clear_person_attribute":
-		in, err := decodeMCPOperationArguments[attributeWriteArgs](args)
-		if err != nil || !validLoopID(in.PersonID) || store.ValidateAttributeSlug(in.Slug) != nil || in.Ordinal != nil && *in.Ordinal < 0 || in.ExpectedValueID != nil && !validLoopID(*in.ExpectedValueID) {
-			return "", "", nil, false
-		}
-		if name == "clear_person_attribute" {
-			for _, k := range []string{"value", "source", "source_ref", "confidence", "actor", "active_from", "active_until"} {
-				if _, ok := args[k]; ok {
-					return "", "", nil, false
-				}
-			}
-			return http.MethodDelete, "/api/v1/people/{id}/attributes/{slug}", &generated.ClearPersonAttributeRequestOptions{PathParams: &generated.ClearPersonAttributePath{ID: in.PersonID, Slug: in.Slug}, Query: &generated.ClearPersonAttributeQuery{Ordinal: in.Ordinal, ExpectedValueID: in.ExpectedValueID, DryRun: in.DryRun}}, true
-		}
-		if in.Value == nil {
-			return "", "", nil, false
-		}
-		// Decode into the generated body to retain RFC3339 timestamps and typed values.
-		bodyArgs := map[string]any{}
-		for _, k := range []string{"value", "ordinal", "expected_value_id", "source", "source_ref", "confidence", "actor", "active_from", "active_until"} {
-			if v, ok := args[k]; ok {
-				bodyArgs[k] = v
-			}
-		}
-		body, err := decodeMCPOperationArguments[generated.SetPersonAttributeBody](bodyArgs)
 		if err != nil {
 			return "", "", nil, false
 		}
-		return http.MethodPut, "/api/v1/people/{id}/attributes/{slug}", &generated.SetPersonAttributeRequestOptions{PathParams: &generated.SetPersonAttributePath{ID: in.PersonID, Slug: in.Slug}, Query: &generated.SetPersonAttributeQuery{DryRun: in.DryRun}, Body: &body}, true
+		return http.MethodGet, "/api/v1/people/{id}/attributes", &generated.ListPersonAttributesRequestOptions{PathParams: &generated.ListPersonAttributesPath{ID: in.PersonID}, Query: &generated.ListPersonAttributesQuery{History: in.History, Slug: in.Slug, UniversalID: in.UniversalID}}, true
+	case "set_person_attribute":
+		in, err := decodeMCPOperationArguments[attributeSetArgs](args)
+		if err != nil || store.ValidateAttributeSlug(in.Slug) != nil {
+			return "", "", nil, false
+		}
+		return http.MethodPut, "/api/v1/people/{id}/attributes/{slug}", &generated.SetPersonAttributeRequestOptions{PathParams: &generated.SetPersonAttributePath{ID: in.PersonID, Slug: in.Slug}, Query: &generated.SetPersonAttributeQuery{DryRun: in.DryRun}, Body: &in.SetPersonAttributeBody}, true
+	case "clear_person_attribute":
+		in, err := decodeMCPOperationArguments[attributeClearArgs](args)
+		if err != nil || store.ValidateAttributeSlug(in.Slug) != nil {
+			return "", "", nil, false
+		}
+		return http.MethodDelete, "/api/v1/people/{id}/attributes/{slug}", &generated.ClearPersonAttributeRequestOptions{PathParams: &generated.ClearPersonAttributePath{ID: in.PersonID, Slug: in.Slug}, Query: &generated.ClearPersonAttributeQuery{Ordinal: in.Ordinal, ExpectedValueID: in.ExpectedValueID, DryRun: in.DryRun}}, true
 	case "list_attribute_definitions":
 		in, err := decodeMCPOperationArguments[attributeDefinitionsArgs](args)
-		if err != nil || in.ObjectType != nil && *in.ObjectType != "person" && *in.ObjectType != "organization" {
+		if err != nil {
 			return "", "", nil, false
 		}
 		return http.MethodGet, "/api/v1/attribute-definitions", &generated.ListAttributeDefinitionsRequestOptions{Query: &generated.ListAttributeDefinitionsQuery{ObjectType: in.ObjectType, IncludeHidden: in.IncludeHidden}}, true
@@ -132,36 +115,19 @@ func attributeRequest(name string, args map[string]any) (string, string, runtime
 		}
 		switch name {
 		case "create_attribute_definition":
-			if in.Definition == nil || len(args) != 1 {
-				return "", "", nil, false
-			}
 			return http.MethodPost, "/api/v1/attribute-definitions", &generated.CreateAttributeDefinitionRequestOptions{Body: in.Definition}, true
 		case "get_attribute_definition":
-			if !validLoopID(in.ID) || len(args) != 1 {
-				return "", "", nil, false
-			}
 			return http.MethodGet, "/api/v1/attribute-definitions/{id}", &generated.GetAttributeDefinitionRequestOptions{PathParams: &generated.GetAttributeDefinitionPath{ID: in.ID}}, true
 		case "patch_attribute_definition":
-			if !validLoopID(in.ID) || strings.TrimSpace(in.ETag) == "" || len(in.Changes) == 0 || len(args) != 3 {
+			if strings.TrimSpace(in.ETag) == "" || len(in.Changes) == 0 {
 				return "", "", nil, false
-			}
-			for k, v := range in.Changes {
-				switch k {
-				case "label", "display_order", "is_sensitive", "is_active":
-					if v == nil {
-						return "", "", nil, false
-					}
-				case "description":
-				default:
-					return "", "", nil, false
-				}
 			}
 			if _, err = decodeMCPOperationArguments[generated.PatchAttributeDefinitionBody](in.Changes); err != nil {
 				return "", "", nil, false
 			}
 			return http.MethodPatch, "/api/v1/attribute-definitions/{id}", &attributePatchOptions{PatchAttributeDefinitionRequestOptions: &generated.PatchAttributeDefinitionRequestOptions{PathParams: &generated.PatchAttributeDefinitionPath{ID: in.ID}, Header: &generated.PatchAttributeDefinitionHeaders{IfMatch: in.ETag}}, changes: in.Changes}, true
 		case "delete_attribute_definition":
-			if !validLoopID(in.ID) || strings.TrimSpace(in.ETag) == "" || len(args) != 2 {
+			if strings.TrimSpace(in.ETag) == "" {
 				return "", "", nil, false
 			}
 			return http.MethodDelete, "/api/v1/attribute-definitions/{id}", &generated.DeleteAttributeDefinitionRequestOptions{PathParams: &generated.DeleteAttributeDefinitionPath{ID: in.ID}, Header: &generated.DeleteAttributeDefinitionHeaders{IfMatch: in.ETag}}, true
@@ -191,6 +157,9 @@ func (b *daemonMCPOperations) executeRecordAttributeOperation(ctx context.Contex
 		result, err = readMCPOperationJSONWithClassifier[generated.AttributeDefinitionsResponse](ctx, b.client, method, path, options, attributeRefusal, http.StatusOK)
 	case "delete_attribute_definition":
 		result, err = readMCPOperationJSONWithClassifier[mcpserver.AttributeDefinitionDeleted](ctx, b.client, method, path, options, attributeRefusal, http.StatusNoContent)
+		if result != nil && !result.IsError {
+			result.Output = mcpserver.AttributeDefinitionDeleted{Deleted: true}
+		}
 	default:
 		result, err = readMCPOperationJSONWithClassifier[generated.AttributeDefinition](ctx, b.client, method, path, options, attributeRefusal, http.StatusOK, http.StatusCreated)
 		if result != nil && !result.IsError {
@@ -205,7 +174,7 @@ func (b *daemonMCPOperations) executeRecordAttributeOperation(ctx context.Contex
 	return result, true, err
 }
 
-func (b *daemonMCPOperations) recordAttributeDisclosure(name string, args map[string]any) (string, bool, error) {
+func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, name string, args map[string]any) (string, bool, error) {
 	switch name {
 	case "set_person_attribute", "clear_person_attribute", "create_attribute_definition", "patch_attribute_definition", "delete_attribute_definition":
 	default:
@@ -214,10 +183,34 @@ func (b *daemonMCPOperations) recordAttributeDisclosure(name string, args map[st
 	if _, _, _, ok := attributeRequest(name, args); !ok {
 		return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 	}
+	var current *mcpserver.AttributeDefinitionReceipt
+	if name == "patch_attribute_definition" || name == "delete_attribute_definition" {
+		input, err := decodeMCPOperationArguments[attributeDefinitionArgs](args)
+		if err != nil {
+			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+		}
+		result, _, err := b.executeRecordAttributeOperation(ctx, "get_attribute_definition", map[string]any{"definition_id": input.ID})
+		if err != nil || result == nil || result.IsError {
+			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+		}
+		receipt, ok := result.Output.(mcpserver.AttributeDefinitionReceipt)
+		if !ok {
+			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+		}
+		if receipt.ETag != input.ETag {
+			return "", true, &mcpserver.OperationRefusalError{Code: "attribute_definition_revision_conflict"}
+		}
+		current = &receipt
+	}
+	effect := "Apply the exact native attribute operation. Native revision and value guards apply."
+	if dryRun, _ := args["dry_run"].(bool); dryRun {
+		effect = "Preview only; nothing is written. Native value guards apply."
+	}
 	data, err := json.Marshal(struct {
-		Operation string         `json:"operation"`
-		Changes   map[string]any `json:"changes"`
-		Effect    string         `json:"effect"`
-	}{name, args, "Apply the exact native attribute operation; dry_run previews without writing. Native revision and value guards apply."}, json.Deterministic(true))
+		Operation string                                `json:"operation"`
+		Current   *mcpserver.AttributeDefinitionReceipt `json:"current,omitempty"`
+		Changes   map[string]any                        `json:"changes"`
+		Effect    string                                `json:"effect"`
+	}{name, current, args, effect}, json.Deterministic(true))
 	return string(data), true, err
 }

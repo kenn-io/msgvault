@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -38,6 +39,8 @@ func TestMCPOperationFailureCompletion(t *testing.T) {
 			`{"error":"settings_conflict","operation_may_have_completed":false}`, http.StatusPreconditionFailed},
 		{"read failure", http.MethodGet, `{"error":"credential_conflict"}`,
 			`{"error":"operation_refused","operation_may_have_completed":false}`, http.StatusPreconditionFailed},
+		{"oversized read", http.MethodGet, strings.Repeat("x", (1<<20)+1),
+			`{"error":"operation_response_limit_exceeded","operation_may_have_completed":false}`, http.StatusOK},
 		{"read validation failure", http.MethodGet, `{"error":"validation_failed"}`,
 			`{"error":"validation_failed","operation_may_have_completed":false}`, http.StatusUnprocessableEntity},
 	} {

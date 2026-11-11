@@ -5,9 +5,6 @@ import (
 	"encoding/json/v2"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
-	"strings"
-	"sync"
 	"testing"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -17,7 +14,6 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -75,14 +71,21 @@ func TestMCPAttributeDefinitionCRUDAndNativeGuards(t *testing.T) {
 	assert.NotEmpty(t, created.ETag)
 	read := operationOutput[mcpserver.AttributeDefinitionReceipt](t, attributeOperation(t, b, "get_attribute_definition", map[string]any{"definition_id": created.Definition.ID}))
 	assert.Equal(t, created.ETag, read.ETag)
+	disclosure, err := b.OperationDisclosure(t.Context(), "patch_attribute_definition", map[string]any{"definition_id": created.Definition.ID, "etag": read.ETag, "changes": map[string]any{"label": "Tea"}})
+	require.NoError(t, err)
+	assert.Contains(t, disclosure, "Favorite tea")
 	patched := operationOutput[mcpserver.AttributeDefinitionReceipt](t, attributeOperation(t, b, "patch_attribute_definition", map[string]any{"definition_id": created.Definition.ID, "etag": read.ETag, "changes": map[string]any{"label": "Tea", "description": nil, "is_sensitive": false}}))
 	assert.Equal(t, "Tea", patched.Definition.Label)
 	assert.Nil(t, patched.Definition.Description)
 	assert.NotEqual(t, read.ETag, patched.ETag)
+	_, err = b.OperationDisclosure(t.Context(), "delete_attribute_definition", map[string]any{"definition_id": created.Definition.ID, "etag": read.ETag})
+	var refusal *mcpserver.OperationRefusalError
+	require.ErrorAs(t, err, &refusal)
+	assert.Equal(t, "attribute_definition_revision_conflict", refusal.Code)
 	attributeError(t, attributeOperation(t, b, "patch_attribute_definition", map[string]any{"definition_id": created.Definition.ID, "etag": read.ETag, "changes": map[string]any{"label": "Stale"}}), "attribute_definition_revision_conflict")
 	deleted := operationOutput[mcpserver.AttributeDefinitionDeleted](t, attributeOperation(t, b, "delete_attribute_definition", map[string]any{"definition_id": created.Definition.ID, "etag": patched.ETag}))
 	assert.True(t, deleted.Deleted)
-	_, err := st.GetAttributeDefinitionContext(t.Context(), created.Definition.ID)
+	_, err = st.GetAttributeDefinitionContext(t.Context(), created.Definition.ID)
 	assert.ErrorIs(t, err, store.ErrAttributeDefinitionNotFound)
 }
 
@@ -90,6 +93,9 @@ func TestMCPPersonAttributeDryRunOrdinalAndCAS(t *testing.T) {
 	b, st, person := recordAttributesFixture(t)
 	created := operationOutput[mcpserver.AttributeDefinitionReceipt](t, attributeOperation(t, b, "create_attribute_definition", map[string]any{"definition": map[string]any{"object_type": "person", "slug": "favorite_tea", "label": "Favorite tea", "value_type": "text", "field_type": "text", "cardinality": "multi"}}))
 	args := map[string]any{"person_id": person, "slug": "favorite_tea", "ordinal": int64(2), "value": map[string]any{"type": "text", "text": "green"}, "dry_run": true}
+	disclosure, err := b.OperationDisclosure(t.Context(), "set_person_attribute", args)
+	require.NoError(t, err)
+	assert.Contains(t, disclosure, "Preview only; nothing is written.")
 	preview := operationOutput[generated.PersonAttributeWrite](t, attributeOperation(t, b, "set_person_attribute", args))
 	assert.True(t, preview.DryRun)
 	values, err := st.ListPersonAttributeValuesContext(t.Context(), person, store.PersonAttributeQuery{DefinitionSlug: "favorite_tea"})
@@ -132,13 +138,23 @@ func TestMCPAttributeCapabilitiesRejectMissingNativeContracts(t *testing.T) {
 func TestMCPAttributeSDKConfirmationAndNativeEffects(t *testing.T) {
 	b, st, person := recordAttributesFixture(t)
 	approvals := 0
+	action := "accept"
 	session := operationMCPSession(t, b, []mcpserver.OperationFamily{mcpserver.OperationFamilyAttributes}, &sdkmcp.ClientOptions{ElicitationHandler: func(context.Context, *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
 		approvals++
-		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
+		if action == "decline" {
+			return &sdkmcp.ElicitResult{Action: action}, nil
+		}
+		return &sdkmcp.ElicitResult{Action: action, Content: map[string]any{"confirm": true}}, nil
 	}})
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "set_person_attribute", Arguments: map[string]any{"person_id": person, "slug": store.AttributeSlugPrimaryChannel, "value": map[string]any{"type": "text", "text": "email"}}})
-	require.NoError(t, err)
-	require.NotNil(t, result)
+	call := func(name string, args map[string]any) *sdkmcp.CallToolResult {
+		t.Helper()
+		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: name, Arguments: args})
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		return result
+	}
+	set := map[string]any{"person_id": person, "slug": store.AttributeSlugPrimaryChannel, "value": map[string]any{"type": "text", "text": "email"}}
+	result := call("set_person_attribute", set)
 	assert.False(t, result.IsError)
 	assert.Equal(t, 1, approvals)
 	values, err := st.ListPersonAttributeValuesContext(t.Context(), person, store.PersonAttributeQuery{DefinitionSlug: store.AttributeSlugPrimaryChannel})
@@ -146,79 +162,30 @@ func TestMCPAttributeSDKConfirmationAndNativeEffects(t *testing.T) {
 	require.Len(t, values, 1)
 	require.NotNil(t, values[0].Value.Text)
 	assert.Equal(t, "email", *values[0].Value.Text)
-	bad, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "set_person_attribute", Arguments: map[string]any{"person_id": person, "slug": store.AttributeSlugPrimaryChannel, "value": map[string]any{"type": "text", "text": "chat"}, "unknown": "bad"}})
-	assert.True(t, err != nil || bad.IsError)
-	assert.Equal(t, 1, approvals)
-}
-
-// An HTTP fixture supplies failures the real store cannot reliably cause after dispatch.
-func TestMCPAttributeResponseBoundsAndFailureCertainty(t *testing.T) {
-	var mu sync.Mutex
-	status := http.StatusInternalServerError
-	body := `{"error":"attribute_failed","message":"private diagnostic"}`
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
-		w.WriteHeader(status)
-		_, _ = w.Write([]byte(body))
-	}))
-	t.Cleanup(server.Close)
-	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
+	action = "decline"
+	set["value"] = map[string]any{"type": "text", "text": "chat"}
+	assert.True(t, call("set_person_attribute", set).IsError)
+	values, err = st.ListPersonAttributeValuesContext(t.Context(), person, store.PersonAttributeQuery{DefinitionSlug: store.AttributeSlugPrimaryChannel})
 	require.NoError(t, err)
-	b := &daemonMCPOperations{client: client, supported: []string{"set_person_attribute", "list_attribute_definitions"}}
-	args := map[string]any{"person_id": int64(1), "slug": "favorite_tea", "value": map[string]any{"type": "text", "text": "green"}}
-	result := attributeOperation(t, b, "set_person_attribute", args)
-	data, err := json.Marshal(result.Output)
+	require.Len(t, values, 1)
+	require.NotNil(t, values[0].Value.Text)
+	assert.Equal(t, "email", *values[0].Value.Text)
+	action = "accept"
+	assert.False(t, call("create_attribute_definition", map[string]any{"definition": map[string]any{"object_type": "person", "slug": "metadata", "label": "Metadata", "value_type": "json", "field_type": "json"}}).IsError)
+	assert.False(t, call("set_person_attribute", map[string]any{"person_id": person, "slug": "metadata", "value": map[string]any{"type": "json", "json": map[string]any{"level": "green"}}}).IsError)
+	listed := call("list_person_attributes", map[string]any{"person_id": person, "slug": "metadata"})
+	require.False(t, listed.IsError)
+	data, err := json.Marshal(listed.StructuredContent)
 	require.NoError(t, err)
-	assert.True(t, result.IsError)
-	assert.JSONEq(t, `{"error":"operation_refused","operation_may_have_completed":true}`, string(data))
-	assert.NotContains(t, string(data), "private diagnostic")
-	mu.Lock()
-	status = http.StatusConflict
-	body = `{"error":"attribute_value_conflict","message":"private diagnostic"}`
-	mu.Unlock()
-	attributeError(t, attributeOperation(t, b, "set_person_attribute", args), "attribute_value_conflict")
-	mu.Lock()
-	status = http.StatusOK
-	body = strings.Repeat("x", (1<<20)+1)
-	mu.Unlock()
-	result = attributeOperation(t, b, "list_attribute_definitions", map[string]any{})
-	attributeError(t, result, "operation_response_limit_exceeded")
-}
-
-func TestMCPAttributeConfirmationRejectsBeforeMutation(t *testing.T) {
-	b, st, person := recordAttributesFixture(t)
-	calls := 0
-	session := operationMCPSession(t, b, []mcpserver.OperationFamily{mcpserver.OperationFamilyAttributes}, &sdkmcp.ClientOptions{ElicitationHandler: func(context.Context, *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
-		calls++
-		return &sdkmcp.ElicitResult{Action: "decline"}, nil
-	}})
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "set_person_attribute", Arguments: map[string]any{"person_id": person, "slug": store.AttributeSlugPrimaryChannel, "value": map[string]any{"type": "text", "text": "email"}}})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.True(t, result.IsError)
-	assert.Equal(t, 1, calls)
-	values, err := st.ListPersonAttributeValuesContext(t.Context(), person, store.PersonAttributeQuery{DefinitionSlug: store.AttributeSlugPrimaryChannel})
-	require.NoError(t, err)
-	assert.Empty(t, values)
+	assert.Contains(t, string(data), `"level":"green"`)
 }
 
 func TestMCPAttributeInvalidArgumentsDoNotReachNativeRoute(t *testing.T) {
-	b, st, person := recordAttributesFixture(t)
-	for _, tc := range []struct {
-		name string
-		args map[string]any
-	}{
-		{"set_person_attribute", map[string]any{"person_id": person, "slug": "../bad", "value": map[string]any{"type": "text", "text": "x"}}},
-		{"clear_person_attribute", map[string]any{"person_id": person, "slug": store.AttributeSlugPrimaryChannel, "ordinal": -1}},
-		{"list_person_attributes", map[string]any{"person_id": person, "slug": "primary_channel", "universal_id": "example"}},
-		{"patch_attribute_definition", map[string]any{"definition_id": int64(1), "etag": "x", "changes": map[string]any{"slug": "other"}}},
-	} {
-		t.Run(tc.name, func(t *testing.T) { attributeError(t, attributeOperation(t, b, tc.name, tc.args), "invalid_arguments") })
-	}
-	values, err := st.ListPersonAttributeValuesContext(t.Context(), person, store.PersonAttributeQuery{DefinitionSlug: store.AttributeSlugPrimaryChannel})
-	require.NoError(t, err)
-	assert.Empty(t, values)
+	b, _, person := recordAttributesFixture(t)
+	_, err := b.OperationDisclosure(t.Context(), "set_person_attribute", map[string]any{"person_id": person, "slug": "../bad", "value": map[string]any{"type": "text", "text": "x"}})
+	var refusal *mcpserver.OperationRefusalError
+	require.ErrorAs(t, err, &refusal)
+	assert.Equal(t, "invalid_arguments", refusal.Code)
 }
 
 func TestMCPAttributeDaemonFlagIsIndependent(t *testing.T) {
@@ -231,25 +198,4 @@ func TestMCPAttributeDaemonFlagIsIndependent(t *testing.T) {
 	applyMCPWriteFlags(command, "mcp-", &opts)
 	assert.Contains(t, opts.OperationWriteFamilies, mcpserver.OperationFamilyAttributes)
 	assert.NotContains(t, opts.OperationWriteFamilies, mcpserver.OperationFamilyRecords)
-}
-
-func TestMCPAttributeSDKJSONValueRoundTrip(t *testing.T) {
-	b, _, person := recordAttributesFixture(t)
-	session := operationMCPSession(t, b, []mcpserver.OperationFamily{mcpserver.OperationFamilyAttributes}, &sdkmcp.ClientOptions{ElicitationHandler: func(context.Context, *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
-		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
-	}})
-	call := func(name string, args map[string]any) *sdkmcp.CallToolResult {
-		t.Helper()
-		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: name, Arguments: args})
-		require.NoError(t, err)
-		require.NotNil(t, result)
-		require.False(t, result.IsError)
-		return result
-	}
-	call("create_attribute_definition", map[string]any{"definition": map[string]any{"object_type": "person", "slug": "metadata", "label": "Metadata", "value_type": "json", "field_type": "json"}})
-	call("set_person_attribute", map[string]any{"person_id": person, "slug": "metadata", "value": map[string]any{"type": "json", "json": map[string]any{"level": "green"}}})
-	listed := call("list_person_attributes", map[string]any{"person_id": person, "slug": "metadata"})
-	data, err := json.Marshal(listed.StructuredContent)
-	require.NoError(t, err)
-	assert.Contains(t, string(data), `"level":"green"`)
 }

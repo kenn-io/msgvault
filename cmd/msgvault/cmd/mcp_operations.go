@@ -86,7 +86,7 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 
 func (b *daemonMCPOperations) OperationDisclosure(ctx context.Context, name string, args map[string]any) (string, error) {
 	if slices.Contains(b.supported, name) {
-		if disclosure, handled, err := b.recordAttributeDisclosure(name, args); handled {
+		if disclosure, handled, err := b.recordAttributeDisclosure(ctx, name, args); handled {
 			return disclosure, err
 		}
 		if disclosure, handled, err := b.loopOperationDisclosure(name, args); handled {
@@ -202,7 +202,7 @@ func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daem
 		}
 	}
 	if response.StatusCode == http.StatusNoContent {
-		data = []byte(`{"deleted":true}`)
+		return &mcpserver.OperationResult{ETag: response.Header.Get("ETag")}, nil
 	}
 	var output T
 	if err := json.Unmarshal(data, &output); err != nil {

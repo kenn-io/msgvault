@@ -59,7 +59,7 @@ func mcpRouteDescriptors(doc *huma.OpenAPI) []apiprotocol.MCPRouteDescriptor {
 	return descriptors
 }
 
-// Advertise only routes consumed by the source, profile, search, and loop MCP
+// Advertise only routes consumed by the source, profile, search, loop, and attribute MCP
 // tools, and only when their real routes are registered.
 func mcpOperationDescribed(operationID string) bool {
 	switch operationID {
