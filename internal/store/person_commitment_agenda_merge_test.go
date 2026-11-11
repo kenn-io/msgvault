@@ -215,9 +215,9 @@ func insertAgendaMergeFixture(t *testing.T, st *Store, personID, messageID int64
 
 func TestCommitmentAgendaReattachesExactPersonMergeCitation(t *testing.T) {
 	for _, tc := range []struct {
-		name               string
-		requote, collision bool
-	}{{"exact", false, false}, {"requote", true, false}, {"exact_collision", false, true}} {
+		name                                           string
+		requote, collision, changedMessage, foreignUID bool
+	}{{name: "exact"}, {name: "requote", requote: true}, {name: "exact_collision", collision: true}, {name: "changed_message", collision: true, changedMessage: true}, {name: "foreign_uid", collision: true, foreignUID: true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			requote := tc.requote
 			r, a, ctx := require.New(t), assert.New(t), t.Context()
@@ -244,6 +244,18 @@ func TestCommitmentAgendaReattachesExactPersonMergeCitation(t *testing.T) {
 			id := insertAgendaMergeFixture(t, st, absorbed.ID, messageID, "frozen-before-merge", true, false)
 			frozen, err := st.GetCommitmentAgendaContext(ctx, id)
 			r.NoError(err)
+			if tc.changedMessage || tc.foreignUID {
+				// Frozen references still have to identify this exact message and person.
+				if tc.changedMessage {
+					frozen.Request.Evidence[0].MessageID = persist("other-promise", original, -2*time.Hour)
+				} else {
+					frozen.Request.PersonUID = "unrelated-person-uid"
+				}
+				requestJSON, err := json.Marshal(frozen.Request)
+				r.NoError(err)
+				_, err = st.db.ExecContext(ctx, st.Rebind(`UPDATE person_commitment_agenda SET request_json = ? WHERE commitment_id = ?`), string(requestJSON), id)
+				r.NoError(err)
+			}
 			person, err := st.GetPersonContext(ctx, f.personID)
 			r.NoError(err)
 			_, err = st.MergePersonsContext(ctx, PersonMergeRequest{SurvivorID: person.ID, AbsorbedID: absorbed.ID, ExpectedSurvivorRevision: person.Revision, ExpectedAbsorbedRevision: absorbed.Revision, IdempotencyKey: "reattach", Actor: "test"})
@@ -257,19 +269,25 @@ func TestCommitmentAgendaReattachesExactPersonMergeCitation(t *testing.T) {
 			cfg.Commitments.Enabled = true
 			window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}, cfg.Commitments, personFactLedgerNow, "UTC")
 			r.NoError(err)
-			r.Len(window.Sources, 1)
+			r.NotEmpty(window.Sources)
+			var sourceID string
+			for _, source := range window.Sources {
+				if source.MessageID == messageID {
+					sourceID = source.ID
+				}
+			}
+			r.NotEmpty(sourceID)
 			quote := original
 			if requote {
 				quote = strings.TrimSuffix(quote, ".")
 			}
-			_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Summary: "Send report", End: int64(len(quote))}}, Fulfilments: []peoplesweep.CommitmentFulfilment{}}))
+			_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{{SourceID: sourceID, Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Summary: "Send report", End: int64(len(quote))}}, Fulfilments: []peoplesweep.CommitmentFulfilment{}}))
 			r.NoError(err)
 			current, err := st.GetCommitmentAgendaContext(ctx, survivorID)
 			r.NoError(err)
 			a.Equal(frozen.IdempotencyKey, current.IdempotencyKey)
 			a.Equal(frozen.Request, current.Request)
-			if requote || tc.collision {
-				// The approved old-target guard also retains a colliding winner.
+			if requote || tc.changedMessage || tc.foreignUID {
 				a.Equal(CommitmentAgendaRetired, current.State)
 				a.Equal(frozen.TargetKey, current.TargetKey)
 			} else {

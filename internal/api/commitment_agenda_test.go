@@ -71,7 +71,9 @@ func (f *agendaArchiveFixture) MarkCommitmentAgendaAttemptContext(context.Contex
 }
 
 func (f *agendaArchiveFixture) RetireCommitmentAgendaContext(context.Context, string) error {
-	f.item.State = store.CommitmentAgendaRetired
+	if f.item.State == store.CommitmentAgendaPending {
+		f.item.State = store.CommitmentAgendaRetired
+	}
 	return nil
 }
 
@@ -341,5 +343,36 @@ func TestCommitmentAgendaChangedCitationRecoversOrConflicts(t *testing.T) {
 				a.Equal(expectedCalls, calls, "citation changes cannot authorize another create with refreshed evidence")
 			})
 		}
+	}
+}
+
+func TestCommitmentAgendaRetireObservesConcurrentLink(t *testing.T) {
+	for _, changed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("citation_changed=%t", changed), func(t *testing.T) {
+			r, a := require.New(t), assert.New(t)
+			agenda, archive, issues := newCommitmentAgendaFixture()
+			calls := 0
+			issues.create = func(string, kataissues.CreateInput) (kataissues.Result, error) {
+				calls++
+				return kataissues.Result{}, io.ErrUnexpectedEOF
+			}
+			_, err := agenda.Manual(t.Context(), 12, time.Now())
+			r.ErrorIs(err, io.ErrUnexpectedEOF)
+			archive.closed = true
+			if changed {
+				archive.source.Text = strings.Replace(archive.source.Text, "draft", "notes", 1)
+			}
+			issues.lookup = func(string, kataissues.CreateInput) {
+				// Another in-flight create links after this lookup observed no marker.
+				archive.item.State = store.CommitmentAgendaLinked
+				archive.item.IssueUID, archive.item.IssueRef = "created-issue", "agenda#12"
+			}
+			item, err := agenda.Manual(t.Context(), 12, time.Now())
+			r.NoError(err)
+			a.Equal(store.CommitmentAgendaLinked, item.State)
+			a.Equal("created-issue", item.IssueUID)
+			a.Equal("agenda#12", item.IssueRef)
+			a.Equal(1, calls)
+		})
 	}
 }
