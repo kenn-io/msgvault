@@ -245,6 +245,9 @@ func TestPG_BackfillFTSKeepsMergedRecipientAlias(t *testing.T) {
 			require.NoError(err)
 			require.NoError(f.Store.MergeParticipantsContext(t.Context(), alias, kept))
 			assert.Equal(t, kept, f.GetSingleRecipientID(id, "to"))
+			ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"old"}}, 10)
+			require.NoError(err)
+			assert.Equal(t, []int64{id}, ids, "old alias must match before backfill")
 
 			_, err = f.Store.BackfillFTS(nil)
 			require.NoError(err)

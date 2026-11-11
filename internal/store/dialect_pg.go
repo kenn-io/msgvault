@@ -569,14 +569,14 @@ func (d *PostgreSQLDialect) SchemaFTS() string {
 // as the SQLite path covers a malformed shadow table.
 //
 // Runs on the querier so RebuildFTS can route it through the maintenance
-// transaction: the full-table `UPDATE messages SET search_fts = NULL` and
+// transaction: the full-table reset of search fields and
 // GIN rebuild over a populated table can exceed the pool-wide 30s
 // statement_timeout on a large archive (finding S1).
 func (d *PostgreSQLDialect) FTSRebuildSchema(ctx context.Context, q contextQuerier) error {
 	if _, err := q.ExecContext(ctx, "DROP INDEX IF EXISTS messages_search_fts_idx"); err != nil {
 		return fmt.Errorf("drop messages_search_fts_idx: %w", err)
 	}
-	if _, err := q.ExecContext(ctx, "UPDATE messages SET search_fts = NULL"); err != nil {
+	if _, err := q.ExecContext(ctx, "UPDATE messages SET search_fts = NULL, search_fts_fields = NULL"); err != nil {
 		return fmt.Errorf("clear search_fts: %w", err)
 	}
 	if _, err := q.ExecContext(ctx,
