@@ -91,11 +91,30 @@ func (s *Store) CreateChatDraftContext(
 		return ChatDraft{}, fmt.Errorf("generate chat draft ID: %w", err)
 	}
 	draftID := ChatDraftIDPrefix + hex.EncodeToString(raw[:])
+	var sourceID int64
+	var sourceType string
+	err := s.db.QueryRowContext(ctx, `SELECT c.source_id, s.source_type FROM conversations c JOIN sources s ON s.id = c.source_id WHERE c.id = ?`, conversationID).Scan(&sourceID, &sourceType)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ChatDraft{}, fmt.Errorf("conversation %d: %w", conversationID, ErrChatDraftInvalidDestination)
+	}
+	if err != nil {
+		return ChatDraft{}, fmt.Errorf("read chat draft conversation: %w", err)
+	}
 	var draft ChatDraft
-	err := s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
+	create := func(tx *loggedTx) error {
+		var lockedConversation int64
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM conversations WHERE id = ?`+s.dialect.SelectForUpdate(), conversationID).Scan(&lockedConversation); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("conversation %d: %w", conversationID, ErrChatDraftInvalidDestination)
+			}
+			return fmt.Errorf("lock chat draft conversation: %w", err)
+		}
 		dest, err := loadChatDraftDestination(ctx, tx, conversationID, authorize)
 		if err != nil {
 			return err
+		}
+		if dest.sourceID != sourceID || dest.sourceType != sourceType {
+			return fmt.Errorf("conversation %d changed source: %w", conversationID, ErrChatDraftInvalidDestination)
 		}
 		if strings.TrimSpace(dest.nativeID.String) == "" || strings.TrimSpace(dest.conversationType.String) == "" {
 			return fmt.Errorf("conversation %d has no source key: %w", conversationID, ErrChatDraftInvalidDestination)
@@ -137,7 +156,12 @@ func (s *Store) CreateChatDraftContext(
 		}
 		draft, err = loadChatDraft(ctx, tx, draftID)
 		return err
-	})
+	}
+	if sourceType == "x" {
+		err = s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, create)
+	} else {
+		err = s.withTxContext(ctx, create)
+	}
 	return draft, err
 }
 
