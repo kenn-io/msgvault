@@ -3926,6 +3926,9 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     end_date TEXT NOT NULL DEFAULT '',
     event_time_zone TEXT NOT NULL DEFAULT '',
     calendar_time_zone TEXT NOT NULL DEFAULT '',
+    start_local TEXT NOT NULL DEFAULT '',
+    duration_days INTEGER NOT NULL DEFAULT 0,
+    duration_elapsed_ns BIGINT NOT NULL DEFAULT 0,
     recurrence_json TEXT NOT NULL DEFAULT '[]',
     recurrence_end_at TIMESTAMPTZ
 );

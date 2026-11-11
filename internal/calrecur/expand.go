@@ -31,12 +31,28 @@ type Occurrence struct {
 	HasException       bool
 }
 
+// AddNominalDuration advances calendar days in the event's zone, then elapsed time.
+func AddNominalDuration(start time.Time, days int, elapsed time.Duration) (time.Time, error) {
+	wall := time.Date(start.Year(), start.Month(), start.Day()+days, start.Hour(), start.Minute(), start.Second(), 0, time.UTC)
+	end, err := ParseLocalDateTime("20060102T150405", wall.Format("20060102T150405"), start.Location())
+	if err != nil {
+		return time.Time{}, err
+	}
+	return end.Add(elapsed), nil
+}
+
 func nominal(s Set, id Identity, duration time.Duration, durationDays int) (Occurrence, error) {
 	start, err := s.identityStart(id)
 	if err != nil {
 		return Occurrence{}, unsupported("original identity", err)
 	}
 	o := Occurrence{Original: id, Start: start, End: start.Add(duration), AllDay: s.AllDay}
+	if !s.AllDay && durationDays > 0 {
+		o.End, err = AddNominalDuration(start, durationDays, duration)
+		if err != nil {
+			return Occurrence{}, unsupported("duration", err)
+		}
+	}
 	if s.AllDay {
 		o.Start, _, err = s.instanceStart(start)
 		if err != nil {
@@ -124,6 +140,12 @@ func EffectiveException(s Set, e Exception, duration time.Duration, durationDays
 		} else {
 			o.Start = start
 			o.End = start.Add(duration)
+			if durationDays > 0 {
+				o.End, err = AddNominalDuration(start, durationDays, duration)
+				if err != nil {
+					return Occurrence{}, unsupported("exception duration", err)
+				}
+			}
 		}
 		if e.Start != nil {
 			o.Start = *e.Start
@@ -227,6 +249,13 @@ func conservativeEnd(ctx context.Context, s Set, duration time.Duration, duratio
 			return false
 		}
 		candidate := start.Add(duration)
+		if !s.AllDay && durationDays > 0 {
+			var err error
+			candidate, err = AddNominalDuration(start.In(s.location()), durationDays, duration)
+			if err != nil {
+				return false
+			}
+		}
 		if s.AllDay {
 			endDate, err := addCivilDays(start.UTC().Format(dateLayout), durationDays)
 			if err != nil {

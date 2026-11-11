@@ -21,6 +21,7 @@ type Set struct {
 	DTStart         time.Time
 	AllDay          bool
 	StartDate       string
+	StartLocal      string
 	Zone            *time.Location
 	rules           []rrule.ROption
 	RDates, ExDates []Identity
