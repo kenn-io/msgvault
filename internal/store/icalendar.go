@@ -128,18 +128,6 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 			slog.Warn("calendar invite ignored: organizer differs", "event_message_id", id, "organizer", item.component.OrganizerEmail)
 		}
 		apply := !foreign && (!exists || icsRevisionNewer(item.component, old))
-		// Keep the newest available details beneath the winning cancellation.
-		fill := false
-		if !foreign && !apply && exists && old.Status == SyncStatusCancelled && e.Status != SyncStatusCancelled {
-			var err error
-			fill, err = icsDetailsNewer(q, id, item.component)
-			if err != nil {
-				return err
-			}
-		}
-		if fill {
-			item.meta.Sequence, item.meta.Stamp, item.meta.Status = old.Sequence, old.Stamp, SyncStatusCancelled
-		}
 		if apply && exists && e.Status == SyncStatusCancelled {
 			// Like a provider cancellation, keep the accepted details.
 			old.Sequence, old.Stamp, old.Status = item.meta.Sequence, item.meta.Stamp, SyncStatusCancelled
@@ -149,12 +137,12 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 			if err := s.setICSMetadataWith(ctx, tx, id, old); err != nil {
 				return err
 			}
-		} else if apply || fill {
+		} else if apply {
 			if err := s.persistICSDetailsWith(ctx, tx, sourceID, sourceMessageID, familyKey, item); err != nil {
 				return err
 			}
 		}
-		if apply || fill {
+		if apply {
 			if exists {
 				if err := s.bumpDerivedDataRevisionContext(ctx, tx); err != nil {
 					return err
@@ -189,27 +177,6 @@ func (s *Store) icsFamily(ctx context.Context, tx *loggedTx, sourceID, retainedI
 		return "", "", fmt.Errorf("read ICS family organizer: %w", err)
 	}
 	return familyKey, organizer, nil
-}
-
-func icsDetailsNewer(q boundQuerier, id int64, incoming calevent.ICSComponent) (bool, error) {
-	var stored []byte
-	var compression sql.NullString
-	if err := q.QueryRow(`SELECT raw_data,compression FROM message_raw WHERE message_id=?`, id).Scan(&stored, &compression); err != nil {
-		return false, fmt.Errorf("read retained ICS details: %w", err)
-	}
-	raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
-	if err != nil {
-		return false, fmt.Errorf("decode retained ICS details: %w", err)
-	}
-	components, err := calevent.ParseICS(raw, "CANCEL", "")
-	if err != nil {
-		return false, fmt.Errorf("parse retained ICS details: %w", err)
-	}
-	if len(components) != 1 {
-		return false, errors.New("retained ICS requires one event")
-	}
-	retained := components[0]
-	return retained.Event.Start == nil || icsRevisionNewer(incoming, calevent.ICSMetadata{Sequence: retained.Sequence, Stamp: retained.Stamp, Status: SyncStatusCancelled}), nil
 }
 
 func (s *Store) setICSMetadataWith(ctx context.Context, tx *loggedTx, id int64, meta calevent.ICSMetadata) error {
