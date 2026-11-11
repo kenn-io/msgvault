@@ -1,7 +1,6 @@
 package sync
 
 import (
-	"cmp"
 	"context"
 	"slices"
 
@@ -23,7 +22,6 @@ type AcquisitionDiagnosticItem struct {
 	Phase           string `json:"phase"`
 	ErrorKind       string `json:"error_kind"`
 	State           string `json:"state"`
-	id              int64
 }
 
 type acquisitionOperation int
@@ -36,7 +34,7 @@ const (
 
 func acquisitionOperationOf(item store.SyncRunItem) acquisitionOperation {
 	switch {
-	case !IsAcquisitionReplayCandidate(item):
+	case !isAcquisitionReplayCandidate(item):
 		return acquisitionUnknown
 	case materializationFromKind(item.ErrorKind) != 0:
 		return acquisitionFiles
@@ -79,7 +77,7 @@ func DiagnoseAcquisitionContext(ctx context.Context, st *store.Store, sourceID i
 		op := acquisitionOperationOf(outcome)
 		var state string
 		switch {
-		case outcome.ErrorMessage == store.SyncRunItemFilesPendingMessage && next.resolved:
+		case outcome.ErrorMessage == store.SyncRunItemFilesPendingMessage && materializationFromKind(outcome.ErrorKind) != 0 && next.resolved:
 		case outcome.Status != store.SyncRunItemStatusError && outcome.Status != store.SyncRunItemStatusSkipped:
 		case op == acquisitionDownload && next.skipped:
 			state = AcquisitionHistorical
@@ -108,9 +106,9 @@ func DiagnoseAcquisitionContext(ctx context.Context, st *store.Store, sourceID i
 			continue
 		}
 		representatives[key] = true
-		items = append(items, AcquisitionDiagnosticItem{outcome.SourceMessageID, outcome.Phase, outcome.ErrorKind, state, outcome.ID})
+		items = append(items, AcquisitionDiagnosticItem{outcome.SourceMessageID, outcome.Phase, outcome.ErrorKind, state})
 	}
-	slices.SortFunc(items, func(a, b AcquisitionDiagnosticItem) int { return cmp.Compare(a.id, b.id) })
+	slices.Reverse(items)
 	return items, nil
 }
 
