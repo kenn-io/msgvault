@@ -193,7 +193,7 @@ MCP lists calendar, meeting, chat, Slack, and draft tools when the archive has a
 
 Delegated sessions select tools from the grant's sources and permissions. They require daemon API schema 3.9.0 or newer; upgrade the daemon when the bridge requests it.
 
-The complete default stdio `tools/list` response, including output schemas, measures 174,931 bytes for an mbox-only archive and 227,581 bytes with every family available. Tests cap these at 191,000 and 249,000 bytes, respectively, based on earlier measurements rounded up with 10% headroom. Optional write flags are off in both measurements.
+The complete default stdio `tools/list` response, including output schemas, measures 174,915 bytes for an mbox-only archive and 227,565 bytes with every family available. Tests cap these at 191,000 and 249,000 bytes, respectively, based on earlier measurements rounded up with 10% headroom. Optional write flags are off in both measurements.
 
 ### Claude Desktop Configuration
 

@@ -42,7 +42,7 @@ var stableToolDiscoveryDefinition = readDefinition(
 	ToolSearchTools,
 	"Find available MCP tools for a task using tool names, descriptions, and input metadata. Does not search archive content or run the matched tools. Use tools/list for complete input schemas.",
 	closedObject(map[string]*jsonschema.Schema{
-		"query": {Type: "string", MinLength: new(1), MaxLength: new(maxToolDiscoveryQueryBytes), Description: "Task description or tool/input name; 1-512 UTF-8 bytes, with non-whitespace text"},
+		"query": {Type: "string", MinLength: new(1), Description: "Task description or tool/input name; 1-512 UTF-8 bytes, with non-whitespace text"},
 		"limit": boundedIntegerSchema("Maximum results (default 5, max 20)", 1, maxToolDiscoveryResults),
 	}, "query"),
 	outputSchemaFor[toolDiscoveryResponse](),
@@ -67,8 +67,8 @@ func (h *handlers) searchTools(ctx context.Context, req toolRequest) (*toolResul
 		return nil, err
 	}
 	args := req.GetArguments()
-	query, ok := args["query"].(string)
-	if !ok || !utf8.ValidString(query) || len(query) > maxToolDiscoveryQueryBytes || strings.TrimSpace(query) == "" {
+	query, _ := args["query"].(string)
+	if !utf8.ValidString(query) || len(query) > maxToolDiscoveryQueryBytes || strings.TrimSpace(query) == "" {
 		return toolErrorResult("query must contain 1-512 UTF-8 bytes of non-whitespace text"), nil
 	}
 	limit := limitArg(args, "limit", 5)
