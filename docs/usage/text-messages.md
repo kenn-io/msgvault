@@ -503,6 +503,8 @@ Messages include senders, replies, edit markers, and available media. Service me
 
 A later or overlapping export adds new messages and fills media slots that still lack bytes. Archived messages keep their original text, sender, timestamp, and edit flag. Media already stored stays unchanged. Replies link when their parent arrives in a later export. Telegram export users link to Beeper users with the same numeric Telegram user ID; for Beeper users already archived, the link appears when a sync revisits their chat (`sync-beeper --full` covers quiet chats).
 
+If you also sync Telegram through Beeper, [choose which copy of each chat to search](searching.md#search-one-copy-of-overlapping-chats).
+
 Every exported chat becomes a conversation, even one with no messages. Each import replaces the conversation title with the export's chat name when that name is non-empty.
 
 An interrupted import resumes after the last completed chat when `result.json` in the same directory has the same size and modification time. Use `--no-resume` to scan every chat again, or `--limit N` to cap the messages added in one run.

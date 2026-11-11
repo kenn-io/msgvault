@@ -234,6 +234,51 @@ msgvault search "conversation_id:123 budget"
 metadata, not the provider's thread or room ID. It works with keyword, vector,
 and hybrid search. Vector and hybrid queries still need free text.
 
+### Search one copy of overlapping chats
+
+If you imported a Telegram Desktop export and also synced those chats through
+Beeper, search can return both archived copies. To search one copy of each
+selected chat:
+
+1. Find candidates by title or participant name:
+
+   ```bash
+   msgvault find-chat "Example Group" --json
+   ```
+
+2. Inspect each result's `source_type`, `source_identifier`, `source_id`, and
+   `source_conversation_id` to identify its source. A title is a clue, not proof
+   that two results are the same chat; inspect their messages if needed. A
+   linked Telegram participant can also help identify a direct chat. Select the
+   local `conversation_id` of the copy you want. Repeat for each chat.
+   If `has_more` is true, increase `--limit` up to 100, narrow the name, or
+   restrict discovery to a known source with `--source-id`. If there are no
+   results, try another name; discovery only returns chats with a visible message.
+3. Search the selected ID, replacing the example ID with your own:
+
+   ```bash
+   msgvault search 'conversation_id:41 budget' --mode fts --json
+   ```
+
+   For two chats, suppose you choose export conversation 41 over its Beeper
+   counterpart 42, and Beeper conversation 52 over export counterpart 51:
+
+   ```bash
+   msgvault search 'conversation_id:41 conversation_id:52 budget' --mode fts --json
+   ```
+
+   Repeated IDs match either selected conversation, and `budget` applies to
+   both. Reuse the chosen `conversation_id:` prefix with other search terms.
+
+Only the selected conversations are searched. An empty result means no match
+was returned in that scope; it does not rule out a match in an unselected copy.
+History unique to an unselected copy is omitted. This choice sets no persistent
+preference, does not change unrestricted search, and does not merge or delete
+messages. `--account` selects a whole source, while `account:` is an email
+address filter; `message_type:beeper` includes every Beeper network and cannot
+select individual chats. For other modes, see the
+[vector and hybrid search scope contract](vector-search.md#search).
+
 ## Repairing Existing Archives
 
 Fresh email ingest indexes `List-Id` automatically. For messages archived by
