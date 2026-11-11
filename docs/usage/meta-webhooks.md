@@ -97,7 +97,9 @@ the configured account; otherwise the change is logged and skipped.
 The daemon applies a delivery one change at a time. When a change cannot be
 applied, for example while a polling sync of the same Page is running, the
 daemon retries it with increasing waits. Later changes and deliveries wait
-until it succeeds. Changes that already succeeded are not applied again.
+until it succeeds. Changes that already succeeded are not applied again,
+unless the daemon restarts during the delivery. It then applies the whole
+delivery again, which is safe to repeat.
 
 Each delivery gets one hour of retries. After that the daemon logs the failing
 change and skips it, then tries each remaining change of the delivery once.
