@@ -198,7 +198,7 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 		}
 		if len(sources) == 0 {
 			if len(syncErrors) > 0 {
-				return fmt.Errorf("%s", syncErrors[0])
+				return errors.Join(errors.New(syncErrors[0]), cmd.Context().Err())
 			}
 			return errors.New("no accounts are ready to sync")
 		}
