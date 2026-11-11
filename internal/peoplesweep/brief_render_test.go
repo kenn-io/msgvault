@@ -304,6 +304,8 @@ func TestBriefCitationOrdinalsFailsClosedOnAPointerCountMismatch(t *testing.T) {
 }
 
 func TestBriefDropHighlightReindexesFollowUps(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	output := BriefOutput{
 		Highlights: []BriefHighlight{{Text: "first"}, {Text: "middle"}, {Text: "last"}},
 		FollowUps: []BriefFollowUp{
@@ -313,12 +315,12 @@ func TestBriefDropHighlightReindexesFollowUps(t *testing.T) {
 		},
 	}
 	trimmed, dropped := briefDropHighlight(output, 1)
-	assert.Equal(t, 2, dropped)
-	require.Len(t, trimmed.Highlights, 2)
-	assert.Equal(t, "last", trimmed.Highlights[1].Text)
-	require.Len(t, trimmed.FollowUps, 2)
-	assert.Equal(t, "first question", trimmed.FollowUps[0].Question)
-	assert.Equal(t, 0, trimmed.FollowUps[0].HighlightIndex)
-	assert.Equal(t, "last question", trimmed.FollowUps[1].Question)
-	assert.Equal(t, 1, trimmed.FollowUps[1].HighlightIndex)
+	assert.Equal(2, dropped)
+	require.Len(trimmed.Highlights, 2)
+	assert.Equal("last", trimmed.Highlights[1].Text)
+	require.Len(trimmed.FollowUps, 2)
+	assert.Equal("first question", trimmed.FollowUps[0].Question)
+	assert.Equal(0, trimmed.FollowUps[0].HighlightIndex)
+	assert.Equal("last question", trimmed.FollowUps[1].Question)
+	assert.Equal(1, trimmed.FollowUps[1].HighlightIndex)
 }

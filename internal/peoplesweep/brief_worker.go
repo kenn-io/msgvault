@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"go.kenn.io/msgvault/internal/personfacts"
@@ -308,7 +309,7 @@ func newBriefResult(
 		eventMemory = append(eventMemory, parsed.Output.Highlights[index])
 	}
 	before := briefCitationOrder(parsed.Output)
-	for index := len(parsed.Output.Highlights) - 1; index >= 0; index-- {
+	for index := range slices.Backward(parsed.Output.Highlights) {
 		event := parsed.Output.Highlights[index].LifeEvent
 		if event == nil || retained[index] {
 			continue

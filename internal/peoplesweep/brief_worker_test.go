@@ -461,6 +461,8 @@ func TestPersonSweepWorkerRecordsBriefFailureAndStillAppliesExtraction(t *testin
 }
 
 func TestPersonSweepWorkerClassifiesCapacityEmptyBrief(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	anchor := briefWindowItem(10, SourceConversationText, 10, "I move on September 15.")
 	outcome := runBriefWorkerCase(t, briefWorkerCase{
 		mode:        BriefModeAuto,
@@ -472,11 +474,11 @@ func TestPersonSweepWorkerClassifiesCapacityEmptyBrief(t *testing.T) {
 			briefDriverResponse(eventCandidate(t, eventHighlight(anchor, "2026-09-15")), "request-brief"),
 		},
 	})
-	require.NoError(t, outcome.err)
-	require.Len(t, outcome.sink.requests, 1)
-	assert.Nil(t, outcome.sink.requests[0].Brief)
-	assert.Equal(t, FailureInternal, outcome.sink.requests[0].BriefFailureClass)
-	assert.Equal(t, 2, outcome.driver.calls)
+	require.NoError(outcome.err)
+	require.Len(outcome.sink.requests, 1)
+	assert.Nil(outcome.sink.requests[0].Brief)
+	assert.Equal(FailureInternal, outcome.sink.requests[0].BriefFailureClass)
+	assert.Equal(2, outcome.driver.calls)
 }
 
 type briefBlockingDriver struct {

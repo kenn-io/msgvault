@@ -324,19 +324,20 @@ func briefWindowRetiresResolvedEventUnderPressure(t *testing.T) {
 
 func eventCapacityItem(t *testing.T) {
 	t.Helper()
+	assert := assert.New(t)
+	require := require.New(t)
 	anchor := briefWindowItem(10, SourceConversationText, 10, "I move on August 15.")
 	window := eventWindow(t, &briefFakeArchive{items: []EvidenceItem{anchor}}, nil, "2026-08-14T00:00:00Z")
 	parsed, err := ParseBrief(eventCandidate(t, eventHighlight(anchor, "2026-08-15")), window, window.Request.Profile)
-	require.NoError(t, err)
+	require.NoError(err)
 	parsed.Output.LastMeaningfulInteraction = &BriefInteraction{EvidenceID: packetEvidenceID(anchor), Summary: "they discussed a move"}
 	window.Request.MaxItems = 1
 	result, err := renderBriefResult(parsed, window, window.Request.AsOf)
-	require.NoError(t, err)
-	assert.Empty(t, result.Boundary.EventMemory)
-	assert.Nil(t, result.Boundary.NextEventAt)
-	assert.NotContains(t, result.Rendered.Text, "Upcoming:")
-	assert.NotContains(t, string(result.Structured), "life_event")
-
+	require.NoError(err)
+	assert.Empty(result.Boundary.EventMemory)
+	assert.Nil(result.Boundary.NextEventAt)
+	assert.NotContains(result.Rendered.Text, "Upcoming:")
+	assert.NotContains(string(result.Structured), "life_event")
 }
 
 func TestBriefEventCapacityRejectsEmptyParagraph(t *testing.T) {
@@ -414,23 +415,25 @@ func TestBriefEventMemoryCapacityTrimsOrdinaryEvidenceBeforeRejecting(t *testing
 
 func eventCapacityUpcomingByte(t *testing.T) {
 	t.Helper()
+	assert := assert.New(t)
+	require := require.New(t)
 	anchor := briefWindowItem(10, SourceConversationText, 10, "I move on August 15.")
 	window := eventWindow(t, &briefFakeArchive{items: []EvidenceItem{anchor}}, nil, "2026-08-14T00:00:00Z")
 	parsed, err := ParseBrief(eventCandidate(t, eventHighlight(anchor, "2026-08-15")), window, window.Request.Profile)
-	require.NoError(t, err)
+	require.NoError(err)
 	parsed.Output.LastMeaningfulInteraction = &BriefInteraction{EvidenceID: packetEvidenceID(anchor), Summary: "they discussed a move"}
 	future := window.Request
 	future.AsOf = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
 	future.Previous = &BriefBoundary{EventMemoryVersion: 1, AdmissionThroughEventTime: future.AsOf}
 	future.retainedEvents = nil
 	_, empty, err := briefBatch(future, briefWindowLanes(future.Profile.AllowedSources), window.Items)
-	require.NoError(t, err)
+	require.NoError(err)
 	window.Request.MaxBytes = empty.InputBytes
 	result, err := renderBriefResult(parsed, window, window.Request.AsOf)
-	require.NoError(t, err)
-	assert.Empty(t, result.Boundary.EventMemory)
-	assert.Nil(t, result.Boundary.NextEventAt)
-	assert.NotContains(t, result.Rendered.Text, "Upcoming:")
+	require.NoError(err)
+	assert.Empty(result.Boundary.EventMemory)
+	assert.Nil(result.Boundary.NextEventAt)
+	assert.NotContains(result.Rendered.Text, "Upcoming:")
 }
 
 func eventCapacityResolvedByte(t *testing.T) {
