@@ -84,9 +84,13 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 	assert.Equal(t, "person_merge_candidate_not_found", refusal.Code)
 	var disclosure string
 	approvals := 0
+	confirm := true
 	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyMergeRecovery}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
 		approvals++
 		disclosure = request.Params.Message
+		if !confirm {
+			return &sdkmcp.ElicitResult{Action: "decline"}, nil
+		}
 		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
 	}})
 	listed, err := session.ListTools(ctx, nil)
@@ -121,28 +125,86 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 	_, err = backend.OperationDisclosure(ctx, "decide_person_merge_candidate", opposite)
 	require.ErrorAs(t, err, &refusal)
 	assert.Equal(t, "person_merge_candidate_state_changed", refusal.Code)
-	result, err = backend.ExecuteOperation(ctx, "split_person_merge", map[string]any{"person_id": survivor.ID, "merge_id": merged.Merge.ID, "participant_ids": []int64{b}, "etag": etag, "idempotency_key": "synthetic-split"})
+	staleSplit := map[string]any{"person_id": survivor.ID, "merge_id": merged.Merge.ID, "participant_ids": []int64{b}, "etag": etag, "idempotency_key": "stale-split"}
+	sdkResult, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "split_person_merge", Arguments: staleSplit})
 	require.NoError(t, err)
-	assert.True(t, result.IsError)
-	failure, err := json.Marshal(result.Output)
-	require.NoError(t, err)
-	assert.Contains(t, string(failure), "person_merge_revision_conflict")
-	assert.Contains(t, string(failure), `"operation_may_have_completed":false`)
+	staleFailure := loopToolFailure(t, sdkResult)
+	assert.Equal(t, "person_merge_revision_conflict", staleFailure["error"])
+	assert.Equal(t, false, staleFailure["operation_may_have_completed"])
 	current, err := st.GetPersonContext(ctx, survivor.ID)
 	require.NoError(t, err)
 	splitArgs := map[string]any{"person_id": survivor.ID, "merge_id": merged.Merge.ID, "participant_ids": []int64{b}, "etag": fmt.Sprintf(`"person-%d-r%d"`, current.ID, current.Revision), "idempotency_key": "synthetic-split"}
-	result, err = backend.ExecuteOperation(ctx, "split_person_merge", splitArgs)
+	confirm = false
+	sdkResult, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "split_person_merge", Arguments: splitArgs})
 	require.NoError(t, err)
-	split := operationOutput[generated.PersonSplitResult](t, result)
+	assert.True(t, sdkResult.IsError)
+	result, err = backend.ExecuteOperation(ctx, "get_person_merge", map[string]any{"merge_id": merged.Merge.ID})
+	require.NoError(t, err)
+	assert.Empty(t, operationOutput[mcpserver.MergeDetail](t, result).Splits)
+	confirm = true
+	sdkResult, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "split_person_merge", Arguments: splitArgs})
+	require.NoError(t, err)
+	split := loopToolOutput[generated.PersonSplitResult](t, sdkResult)
 	assert.Equal(t, merged.Merge.ID, split.Split.MergeID)
 	assert.True(t, split.ExactReversal)
-	disclosure, err = backend.OperationDisclosure(ctx, "split_person_merge", splitArgs)
+	thirdParticipant, err := st.EnsureParticipant("third@example.test", "Third", "example.test")
 	require.NoError(t, err)
-	assert.Contains(t, disclosure, "idempotent replay")
-	result, err = backend.ExecuteOperation(ctx, "split_person_merge", splitArgs)
+	third, _, err := st.CreatePersonFromParticipant(thirdParticipant)
 	require.NoError(t, err)
-	replay := operationOutput[generated.PersonSplitResult](t, result)
-	assert.Equal(t, split.Split.ID, replay.Split.ID)
+	current, err = st.GetPersonContext(ctx, survivor.ID)
+	require.NoError(t, err)
+	_, err = st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: third.ID, AbsorbedID: current.ID, ExpectedSurvivorRevision: third.Revision, ExpectedAbsorbedRevision: current.Revision, IdempotencyKey: "absorb-split-source", Actor: "test"})
+	require.NoError(t, err)
+	previousApprovals := approvals
+	sdkResult, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "split_person_merge", Arguments: splitArgs})
+	require.NoError(t, err)
+	replay := loopToolOutput[generated.PersonSplitResult](t, sdkResult)
+	assert.Greater(t, approvals, previousApprovals)
+	assert.Equal(t, split.Split, replay.Split)
+	assert.Equal(t, split.IdentityRevision, replay.IdentityRevision)
+	assert.Equal(t, split.NewPerson, replay.NewPerson)
+	assert.Equal(t, split.SourcePerson, replay.SourcePerson)
+	assert.Equal(t, split.ExactReversal, replay.ExactReversal)
+	assert.Equal(t, split.UIDAliasDisposition, replay.UIDAliasDisposition)
+	assert.Equal(t, split.AmbiguousRows, replay.AmbiguousRows)
+	assert.Equal(t, split.UnrestoredRows, replay.UnrestoredRows)
+	var splitDisclosure struct {
+		Current any                   `json:"current"`
+		Lineage mcpserver.MergeDetail `json:"lineage"`
+		Changes struct {
+			PersonID       int64   `json:"person_id"`
+			MergeID        int64   `json:"merge_id"`
+			ParticipantIDs []int64 `json:"participant_ids"`
+			ETag           string  `json:"etag"`
+			Key            string  `json:"idempotency_key"`
+		} `json:"changes"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(disclosure), &splitDisclosure))
+	assert.Empty(t, splitDisclosure.Current)
+	assert.Equal(t, merged.Merge.ID, splitDisclosure.Lineage.Merge.ID)
+	assert.Contains(t, splitDisclosure.Lineage.Labels.ParticipantIds, b)
+	require.Len(t, splitDisclosure.Lineage.Splits, 1)
+	assert.Equal(t, split.Split.ID, splitDisclosure.Lineage.Splits[0].ID)
+	assert.Equal(t, survivor.ID, splitDisclosure.Changes.PersonID)
+	assert.Equal(t, merged.Merge.ID, splitDisclosure.Changes.MergeID)
+	assert.Equal(t, []int64{b}, splitDisclosure.Changes.ParticipantIDs)
+	assert.Equal(t, splitArgs["etag"], splitDisclosure.Changes.ETag)
+	assert.Equal(t, "synthetic-split", splitDisclosure.Changes.Key)
+	assert.Contains(t, disclosure, "identical completed request returns its saved result")
+	assert.Contains(t, disclosure, "Lineage labels are historical")
+	differentKey := map[string]any{"person_id": survivor.ID, "merge_id": merged.Merge.ID, "participant_ids": []int64{b}, "etag": splitArgs["etag"], "idempotency_key": "different-split"}
+	sdkResult, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "split_person_merge", Arguments: differentKey})
+	require.NoError(t, err)
+	assert.Equal(t, "person_profile_not_found", loopToolFailure(t, sdkResult)["error"])
+	differentPayload := map[string]any{"person_id": survivor.ID, "merge_id": merged.Merge.ID, "participant_ids": []int64{}, "etag": splitArgs["etag"], "idempotency_key": "synthetic-split"}
+	sdkResult, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "split_person_merge", Arguments: differentPayload})
+	require.NoError(t, err)
+	assert.Equal(t, "person_split_idempotency_conflict", loopToolFailure(t, sdkResult)["error"])
+	result, err = backend.ExecuteOperation(ctx, "get_person_merge", map[string]any{"merge_id": merged.Merge.ID})
+	require.NoError(t, err)
+	detail = operationOutput[mcpserver.MergeDetail](t, result)
+	require.Len(t, detail.Splits, 1)
+	assert.Equal(t, split.Split.ID, detail.Splits[0].ID)
 	c, err := st.EnsureParticipant("c@example.test", "C", "example.test")
 	require.NoError(t, err)
 	d, err := st.EnsureParticipant("d@example.test", "D", "example.test")

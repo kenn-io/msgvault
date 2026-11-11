@@ -174,18 +174,11 @@ func (b *daemonMCPOperations) mergeRecoveryDisclosure(ctx context.Context, name 
 			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 		}
 		personID, mergeID, etag = a.PersonID, a.MergeID, a.ETag
-		effect = "Split the selected absorbed participant lineage into a new person; native lineage and review restrictions apply."
+		effect = "Split the selected absorbed participant lineage into a new person. Lineage labels are historical. The daemon checks the supplied revision, lineage and review restrictions for a new split. An identical completed request returns its saved result."
 	default:
 		return "", false, nil
 	}
-	current, _, err := b.executeSourceOperation(ctx, "get_person_edit_context", map[string]any{"person_id": personID})
-	if err != nil {
-		return "", true, err
-	}
-	if current == nil || current.IsError {
-		return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
-	}
-	var lineage any
+	var currentOutput, lineage any
 	detail, _, err := b.executeMergeRecovery(ctx, "get_person_merge", map[string]any{"merge_id": mergeID})
 	if err != nil {
 		return "", true, err
@@ -198,6 +191,14 @@ func (b *daemonMCPOperations) mergeRecoveryDisclosure(ctx context.Context, name 
 		return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
 	}
 	if name == "decide_person_merge_candidate" {
+		current, _, err := b.executeSourceOperation(ctx, "get_person_edit_context", map[string]any{"person_id": personID})
+		if err != nil {
+			return "", true, err
+		}
+		if current == nil || current.IsError {
+			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+		}
+		currentOutput = current.Output
 		a, _ := decodeMCPOperationArguments[mergeDecisionArgs](args)
 		i := slices.IndexFunc(value.ReviewCandidates, func(c generated.PersonMergeReviewCandidate) bool {
 			return c.ID == a.CandidateID && c.PersonID == a.PersonID
@@ -225,16 +226,13 @@ func (b *daemonMCPOperations) mergeRecoveryDisclosure(ctx context.Context, name 
 		}
 	} else {
 		lineage = value
-		if current.ETag != etag {
-			effect += " The supplied revision differs from current; the daemon will only allow a valid idempotent replay."
-		}
 	}
 	data, err := json.Marshal(struct {
 		Operation string         `json:"operation"`
-		Current   any            `json:"current"`
+		Current   any            `json:"current,omitempty"`
 		Lineage   any            `json:"lineage,omitempty"`
 		Changes   map[string]any `json:"changes"`
 		Effect    string         `json:"effect"`
-	}{name, current.Output, lineage, args, effect}, json.Deterministic(true))
+	}{name, currentOutput, lineage, args, effect}, json.Deterministic(true))
 	return string(data), true, err
 }
