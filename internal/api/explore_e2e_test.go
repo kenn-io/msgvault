@@ -1114,11 +1114,15 @@ func TestExploreGroupOverviewSerialization(t *testing.T) {
 	srv := newTestServerWithEngine(t, engine)
 	keyed := postExploreJSON(t, srv, "/api/v1/explore/groups", `{"grouping":["month"],"group_key":"2024-05"}`)
 	require.Equal(http.StatusOK, keyed.Code, keyed.Body.String())
-	var detail ExploreGroupsHTTPResponse
+	var detail struct {
+		Rows     []map[string]any `json:"rows"`
+		Overview map[string]any   `json:"overview"`
+	}
 	require.NoError(json.Unmarshal(keyed.Body.Bytes(), &detail))
 	require.NotNil(detail.Overview)
-	assert.Equal(now, detail.Overview.FirstAt)
-	assert.Equal([]query.ExploreGroupActivity{{Bucket: "2024-05-01", Count: 2}}, detail.Overview.Activity)
+	assert.Equal("2024-05-01T12:00:00Z", detail.Overview["first_at"])
+	assert.Equal([]any{map[string]any{"bucket": "2024-05-01", "count": float64(2)}}, detail.Overview["activity"])
+	assert.Equal([]any{}, detail.Overview["co_participants"])
 	require.Len(detail.Rows, 1)
-	assert.Equal(int64(4), detail.Rows[0].TotalItems)
+	assert.Equal(float64(4), detail.Rows[0]["total_items"])
 }

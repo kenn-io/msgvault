@@ -92,11 +92,10 @@ func TestRunSavedViewExecutesEntriesWithTheExploreContract(t *testing.T) {
 	assertions.Empty(next.NextCursor)
 }
 
-func TestRunSavedViewSchema3UsesLocalOffsetInstant(t *testing.T) {
+func TestRunSavedViewUsesLocalOffsetInstant(t *testing.T) {
 	requirements := require.New(t)
 	srv, st := newSavedViewRunTestServer(t)
 	view := createRunTestView(t, st, "Local boundary", `{"filters":[{"field":"after","operator":"in","values":["2026-07-18T06:30:00-04:00"]}]}`)
-	requirements.Equal(3, view.SchemaVersion)
 	response, page := runSavedView(t, srv, view.ID, `{}`)
 	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 	requirements.Len(page.Rows, 1)

@@ -20,8 +20,10 @@ it('shows what a saved view holds in its tooltip', () => {
   ]);
 });
 
-it('keeps a view with invalid state disabled and deletable', async () => {
-  const incompatible = { schema_version: 2, incompatibility_reason: 'invalid saved view canonical state: semantic and hybrid exploration require free text', canonical_state: { presentation: 'files', search_mode: 'semantic', filters: [] } };
+it.each([
+  { name: 'invalid state', incompatible: { schema_version: 2, incompatibility_reason: 'invalid saved view canonical state: semantic and hybrid exploration require free text', canonical_state: { presentation: 'files', search_mode: 'semantic', filters: [] } }, deletable: true },
+  { name: 'newer schema', incompatible: { schema_version: 4 }, deletable: false }
+])('keeps a view with $name disabled', async ({ incompatible, deletable }) => {
   const onOpenView = vi.fn();
   const onDeleteView = vi.fn();
   renderRow({ ...view(1, 'Old view'), ...incompatible }, { onOpen: onOpenView, onDelete: onDeleteView });
@@ -29,19 +31,12 @@ it('keeps a view with invalid state disabled and deletable', async () => {
   expect(saved.getAttribute('aria-disabled')).toBe('true');
   await fireEvent.click(saved);
   expect(onOpenView).not.toHaveBeenCalled();
-  await fireEvent.click(screen.getByRole('button', { name: 'Old view actions' }));
-  expect(screen.queryByRole('menuitem', { name: 'Rename' })).toBeNull();
-  await fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
-  expect(onDeleteView).toHaveBeenCalledOnce();
-});
-
-it('disables a view from a newer schema', async () => {
-  const onOpen = vi.fn();
-  renderRow({ ...view(1, 'Future view'), schema_version: 4 }, { onOpen });
-  const button = screen.getByRole('button', { name: 'Future view' });
-  expect(button.getAttribute('aria-disabled')).toBe('true');
-  await fireEvent.click(button);
-  expect(onOpen).not.toHaveBeenCalled();
+  if (deletable) {
+    await fireEvent.click(screen.getByRole('button', { name: 'Old view actions' }));
+    expect(screen.queryByRole('menuitem', { name: 'Rename' })).toBeNull();
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    expect(onDeleteView).toHaveBeenCalledOnce();
+  }
 });
 
 it.each(['save', 'move'])('locks a pending rename and preserves focus through %s', async ending => {

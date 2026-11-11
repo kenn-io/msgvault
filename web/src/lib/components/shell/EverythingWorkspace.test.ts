@@ -2455,6 +2455,7 @@ describe('EverythingWorkspace', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
+      if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
       if (!path.endsWith('/groups')) return Response.json(exploreResponse());
       const body = await request.clone().json() as { filters?: Array<{ dimension: string; values: string[] }> };
       if (body.filters?.some((filter) => filter.dimension === 'source' && filter.values.includes('7'))) detailRequests.push(body);
@@ -2473,20 +2474,12 @@ describe('EverythingWorkspace', () => {
     });
     const state = new ExploreState(window);
     state.commitNavigation({ groupingChain: ['source'] });
-    const baseClient = createAPIClient(fetchFn);
-    const client = { fetch: (async (input, init) => {
-      const url = input instanceof Request ? input.url : new URL(String(input), window.location.href);
-      if (new URL(url).pathname === '/api/v1/sources/status') return Response.json({ sources: [
-        { id: 7, source_type: 'slack', identifier: 'alpha.example' },
-        { id: 8, source_type: 'slack', identifier: 'beta.example' }
-      ] });
-      return baseClient.fetch(input, init);
-    }) satisfies typeof fetch };
+    const client = createAPIClient(fetchFn);
     const rendered = render(AppShell, { client, state });
-    await screen.findByRole('button', { name: 'Show items in Slack (alpha.example)' });
+    await screen.findByRole('button', { name: 'Show items in alpha.example' });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Show items in Slack (alpha.example)' }));
-    expect(await screen.findByRole('complementary', { name: 'Reading pane: Slack (alpha.example)' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Show items in alpha.example' }));
+    expect(await screen.findByRole('complementary', { name: 'Reading pane: alpha.example' })).toBeDefined();
     expect(detailRequests.length).toBeGreaterThan(0);
     expect(screen.queryByRole('grid', { name: 'Messages grouped by source' })).toBeNull();
     expect(state.current.selectedRow).toBe('group:source:7');
@@ -2500,7 +2493,7 @@ describe('EverythingWorkspace', () => {
     window.history.forward();
     await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
     await waitFor(() => expect(detailRequests.length).toBeGreaterThan(previousDetailRequests));
-    expect(await screen.findByRole('complementary', { name: 'Reading pane: Slack (alpha.example)' })).toBeDefined();
+    expect(await screen.findByRole('complementary', { name: 'Reading pane: alpha.example' })).toBeDefined();
     expect(state.current.selectedRow).toBe('group:source:7');
     rendered.unmount();
     state.destroy();

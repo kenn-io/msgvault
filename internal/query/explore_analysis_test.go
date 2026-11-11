@@ -34,20 +34,28 @@ func TestExploreGroupsAggregatesCompleteLogicalPopulation(t *testing.T) {
 	assertions.NotEmpty(result.CacheRevision)
 }
 
-func TestExploreGroupsSourceIgnoresInvalidTimezone(t *testing.T) {
+func TestExploreGroupTimezoneValidation(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
 	source := b.AddSourceWithType("archive@example.com", "gmail")
 	b.AddMessage(MessageOpt{SourceID: source})
 
-	result, err := b.BuildEngine().ExploreGroups(t.Context(), ExploreGroupRequest{
+	engine := b.BuildEngine()
+	result, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{
 		Dimension: "source", Timezone: "Invalid/Zone",
 	})
 	requirements.NoError(err)
 	requirements.Len(result.Rows, 1)
 	assertions.Equal(strconv.FormatInt(source, 10), result.Rows[0].Key)
 	assertions.Equal(int64(1), result.Rows[0].Count)
+	for _, dimension := range []string{"day", "month", "year"} {
+		for _, timezone := range []string{"Invalid/Zone", "Local"} {
+			_, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Dimension: dimension, Timezone: timezone})
+			requirements.ErrorContains(err, "invalid timezone")
+			assertions.ErrorIs(err, ErrInvalidExploreRequest)
+		}
+	}
 }
 
 func TestPersonGroupLabelAvoidsParticipantPageProduct(t *testing.T) {
@@ -788,13 +796,46 @@ func TestExploreDayGroupsCountSentMessagesBeforeChatCollapse(t *testing.T) {
 	require.NoError(err)
 	require.Len(local.Rows, 3)
 	assert.Equal("2023-12-31", local.Rows[0].Key)
-	for _, dimension := range []string{"day", "month", "year"} {
-		for _, timezone := range []string{"Invalid/Zone", "Local"} {
-			_, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Dimension: dimension, Timezone: timezone})
-			require.ErrorContains(err, "invalid timezone")
-			assert.ErrorIs(err, ErrInvalidExploreRequest)
+	groupBuilder := NewTestDataBuilder(t)
+	groupSource := groupBuilder.AddSourceWithType("archive@example.org", "gmail")
+	for _, instant := range []string{"2024-05-30T02:00:00Z", "2024-05-31T02:00:00Z", "2024-06-01T02:00:00Z", "2024-07-01T02:00:00Z"} {
+		at, err := time.Parse(time.RFC3339, instant)
+		require.NoError(err)
+		groupBuilder.AddMessage(MessageOpt{SourceID: groupSource, SentAt: at})
+	}
+	groupEngine := groupBuilder.BuildEngine()
+	month := ExploreGroupRequest{Dimension: "month", Timezone: "America/New_York", Sort: SortSpec{Field: "key", Direction: "desc"}, Page: PageSpec{Limit: 1}}
+	var total int64
+	for offset := range 2 {
+		month.Page.Offset = offset
+		page, err := groupEngine.ExploreGroups(t.Context(), month)
+		require.NoError(err)
+		require.Len(page.Rows, 1)
+		assert.Equal(int64(4), page.Rows[0].TotalItems)
+		total += page.Rows[0].Count
+		if offset == 1 {
+			assert.Equal("2024-05", page.Rows[0].Key)
+			assert.Equal(int64(3), page.Rows[0].Count)
 		}
 	}
+	assert.Equal(int64(4), total)
+
+	yearBuilder := NewTestDataBuilder(t)
+	yearSource := yearBuilder.AddSourceWithType("archive@example.org", "gmail")
+	yearOwner := yearBuilder.AddParticipant("owner@example.org", "example.org", "Owner")
+	yearBuilder.AddOwnerParticipant(yearSource, yearOwner)
+	yearMessage := yearBuilder.AddMessage(MessageOpt{
+		SourceID: yearSource,
+		SentAt:   time.Date(2025, 1, 1, 2, 0, 0, 0, time.UTC),
+	})
+	yearBuilder.AddFrom(yearMessage, yearOwner, "Owner")
+	yearEngine := yearBuilder.BuildEngine()
+	localYear, err := yearEngine.ExploreGroups(t.Context(), ExploreGroupRequest{
+		Dimension: "year", Timezone: "America/New_York", Page: PageSpec{Limit: 10},
+	})
+	require.NoError(err)
+	require.Len(localYear.Rows, 1)
+	assert.Equal("2024", localYear.Rows[0].Key)
 }
 
 func TestExploreGroupOverviewMembershipAndTimeBuckets(t *testing.T) {
@@ -828,6 +869,7 @@ func TestExploreGroupOverviewMembershipAndTimeBuckets(t *testing.T) {
 	sourceDetail, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Dimension: "source", GroupKey: strconv.FormatInt(source, 10)})
 	requirements.NoError(err)
 	requirements.NotNil(sourceDetail.Overview)
+	assertions.Equal(at.Add(-48*time.Hour), sourceDetail.Overview.FirstAt)
 	assertions.Equal([]ExploreGroupCoParticipant{{Key: strconv.FormatInt(person, 10), Label: "Person Example", Count: 3}, {Key: strconv.FormatInt(silent, 10), Label: "Silent Example", Count: 1}}, sourceDetail.Overview.CoParticipants)
 	for _, dimension := range []string{"participant", "domain", "source", "kind", "message_type", "mailing_list", "year", "month"} {
 		t.Run(dimension, func(t *testing.T) {
@@ -851,6 +893,7 @@ func TestExploreGroupOverviewMembershipAndTimeBuckets(t *testing.T) {
 					count += bucket.Count
 				}
 				assert.Equal(row.Count, count)
+				assert.False(detail.Overview.FirstAt.IsZero())
 				assert.False(detail.Overview.FirstAt.After(row.LatestAt))
 				if dimension == "month" && row.Key == "2024-05" {
 					assert.Equal(at.Add(-48*time.Hour), detail.Overview.FirstAt)
@@ -864,41 +907,8 @@ func TestExploreGroupOverviewMembershipAndTimeBuckets(t *testing.T) {
 			}
 		})
 	}
-	month := ExploreGroupRequest{Dimension: "month", Timezone: "America/New_York", Sort: SortSpec{Field: "key", Direction: "desc"}, Page: PageSpec{Limit: 1}}
-	var total int64
-	for offset := range 2 {
-		month.Page.Offset = offset
-		page, err := engine.ExploreGroups(t.Context(), month)
-		requirements.NoError(err)
-		requirements.Len(page.Rows, 1)
-		assertions.Equal(int64(4), page.Rows[0].TotalItems)
-		total += page.Rows[0].Count
-		if offset == 1 {
-			assertions.Equal("2024-05", page.Rows[0].Key)
-			assertions.Equal(int64(3), page.Rows[0].Count)
-		}
-	}
-	assertions.Equal(int64(4), total)
 
-	yearBuilder := NewTestDataBuilder(t)
-	yearSource := yearBuilder.AddSourceWithType("archive@example.org", "gmail")
-	yearOwner := yearBuilder.AddParticipant("owner@example.org", "example.org", "Owner")
-	yearBuilder.AddOwnerParticipant(yearSource, yearOwner)
-	yearMessage := yearBuilder.AddMessage(MessageOpt{
-		SourceID: yearSource,
-		SentAt:   time.Date(2025, 1, 1, 2, 0, 0, 0, time.UTC),
-	})
-	yearBuilder.AddFrom(yearMessage, yearOwner, "Owner")
-	yearEngine := yearBuilder.BuildEngine()
-	localYear, err := yearEngine.ExploreGroups(t.Context(), ExploreGroupRequest{
-		Dimension: "year", Timezone: "America/New_York", Page: PageSpec{Limit: 10},
-	})
-	requirements.NoError(err)
-	requirements.Len(localYear.Rows, 1)
-	assertions.Equal("2024", localYear.Rows[0].Key)
-
-	month.Page.Offset = 0
-	month.GroupKey = "2024-05"
+	month := ExploreGroupRequest{Dimension: "month", Timezone: "America/New_York", GroupKey: "2024-05"}
 	detail, err := engine.ExploreGroups(t.Context(), month)
 	requirements.NoError(err)
 	assertions.Equal([]ExploreGroupActivity{{Bucket: "2024-05-29", Count: 1}, {Bucket: "2024-05-30", Count: 1}, {Bucket: "2024-05-31", Count: 1}}, detail.Overview.Activity)
