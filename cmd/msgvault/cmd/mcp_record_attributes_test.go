@@ -89,7 +89,7 @@ func TestMCPAttributeDefinitionCRUDAndNativeGuards(t *testing.T) {
 	deleted := operationOutput[mcpserver.AttributeDefinitionDeleted](t, attributeOperation(t, b, "delete_attribute_definition", map[string]any{"definition_id": created.Definition.ID, "etag": patched.ETag}))
 	assertions.True(deleted.Deleted)
 	_, err = st.GetAttributeDefinitionContext(t.Context(), created.Definition.ID)
-	assertions.ErrorIs(err, store.ErrAttributeDefinitionNotFound)
+	requirements.ErrorIs(err, store.ErrAttributeDefinitionNotFound)
 	_, err = b.OperationDisclosure(t.Context(), "delete_attribute_definition", map[string]any{"definition_id": created.Definition.ID, "etag": patched.ETag})
 	requirements.ErrorAs(err, &refusal)
 	assertions.Equal("attribute_definition_not_found", refusal.Code)
@@ -124,23 +124,23 @@ func TestMCPPersonAttributeDryRunOrdinalAndCAS(t *testing.T) {
 	requirements.NoError(json.Unmarshal(conflictData, &snapshot))
 	assertions.Equal(written.Value.ID, snapshot.CurrentValueID)
 	attributeError(t, attributeOperation(t, b, "delete_attribute_definition", map[string]any{"definition_id": created.Definition.ID, "etag": created.ETag}), "attribute_definition_has_values")
-	clear := map[string]any{"person_id": person, "slug": "favorite_tea", "ordinal": int64(2), "expected_value_id": written.Value.ID, "dry_run": true}
-	disclosure, err = b.OperationDisclosure(t.Context(), "clear_person_attribute", clear)
+	clearArgs := map[string]any{"person_id": person, "slug": "favorite_tea", "ordinal": int64(2), "expected_value_id": written.Value.ID, "dry_run": true}
+	disclosure, err = b.OperationDisclosure(t.Context(), "clear_person_attribute", clearArgs)
 	requirements.NoError(err)
 	assertions.Contains(disclosure, "green")
-	dry := operationOutput[generated.PersonAttributeWrite](t, attributeOperation(t, b, "clear_person_attribute", clear))
+	dry := operationOutput[generated.PersonAttributeWrite](t, attributeOperation(t, b, "clear_person_attribute", clearArgs))
 	assertions.True(dry.DryRun)
 	listed := operationOutput[generated.PersonAttributesResponse](t, attributeOperation(t, b, "list_person_attributes", map[string]any{"person_id": person, "slug": "favorite_tea", "history": true}))
 	requirements.Len(listed.Attributes, 1)
 	requirements.Len(listed.Attributes[0].Current, 1)
-	clear["dry_run"] = false
-	result := operationOutput[generated.PersonAttributeWrite](t, attributeOperation(t, b, "clear_person_attribute", clear))
+	clearArgs["dry_run"] = false
+	result := operationOutput[generated.PersonAttributeWrite](t, attributeOperation(t, b, "clear_person_attribute", clearArgs))
 	requirements.NotNil(result.Superseded)
 	listed = operationOutput[generated.PersonAttributesResponse](t, attributeOperation(t, b, "list_person_attributes", map[string]any{"person_id": person, "slug": "favorite_tea", "history": true}))
 	requirements.Len(listed.Attributes, 1)
 	assertions.Empty(listed.Attributes[0].Current)
 	assertions.NotEmpty(listed.Attributes[0].History)
-	attributeError(t, attributeOperation(t, b, "clear_person_attribute", clear), "attribute_value_not_found")
+	attributeError(t, attributeOperation(t, b, "clear_person_attribute", clearArgs), "attribute_value_not_found")
 }
 
 func TestMCPAttributeCapabilitiesRejectMissingNativeContracts(t *testing.T) {
