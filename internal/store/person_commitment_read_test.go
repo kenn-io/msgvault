@@ -1,7 +1,6 @@
 package store
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -72,6 +71,6 @@ func TestCommitmentListRechecksEachCitationInSharedFulfilmentSource(t *testing.T
 		if item.ID == promises[0].ID {
 			want = LoopStateOpen
 		}
-		a.Equal(want, item.State, fmt.Sprintf("citation for c%d must be checked independently", item.ID))
+		a.Equal(want, item.State, "citation for c%d must be checked independently", item.ID)
 	}
 }
