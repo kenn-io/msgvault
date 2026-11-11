@@ -331,9 +331,18 @@ func TestSparseNormalizedActivityRetainsEmailInviteEdges(t *testing.T) {
 	assertions.Equal([]int64{1, 2, 3, 4}, got)
 	assertions.Equal([]int64{1}, invitations)
 	expanded := ExpandedActivityRelation("("+sql+")", readParquetRelation([]string{path("conversation_participants")}, false), readParquetRelation([]string{path("participants")}, false), readParquetRelation([]string{path("participant_clusters")}, false), readParquetRelation([]string{path("owner_participants")}, false))
-	var logicalCount, inviteCount int
+	var logicalCount int
 	requirements.NoError(db.QueryRowContext(t.Context(), logicalActivitySQL(expanded, "true")+" SELECT count(*) FROM logical_units").Scan(&logicalCount))
-	requirements.NoError(db.QueryRowContext(t.Context(), "SELECT count(*) FROM ("+RelationshipTemperatureFactsSQL(expanded, time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC))+") WHERE message_id = 1").Scan(&inviteCount))
+	facts, err := db.QueryContext(t.Context(), "SELECT DISTINCT message_id FROM ("+RelationshipTemperatureFactsSQL(expanded, time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC))+") ORDER BY message_id")
+	requirements.NoError(err)
+	defer func() { requirements.NoError(facts.Close()) }()
+	var factIDs []int64
+	for facts.Next() {
+		var id int64
+		requirements.NoError(facts.Scan(&id))
+		factIDs = append(factIDs, id)
+	}
+	requirements.NoError(facts.Err())
 	assertions.Equal(3, logicalCount)
-	assertions.Zero(inviteCount)
+	assertions.Equal([]int64{2, 3, 4}, factIDs)
 }

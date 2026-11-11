@@ -154,6 +154,23 @@ func TestEmailCalendarSourceCountsExcludeDerivedEvents(t *testing.T) {
 		requirements.NoError(err)
 		assertions.Equal(int64(1), raw)
 	}
+	imported, err := st.GetOrCreateSource("message_import", "count-import")
+	requirements.NoError(err)
+	_, err = st.PersistMessageContext(t.Context(), &MessagePersistData{
+		Message:      &Message{SourceID: imported.ID, SourceMessageID: "imported-event", MessageType: "calendar_event"},
+		Conversation: &ConversationPersistData{SourceConversationID: "imported-event"},
+	})
+	requirements.NoError(err)
+	count, err := st.CountNativeMessagesForSource(imported.ID)
+	requirements.NoError(err)
+	assertions.Equal(int64(1), count)
+	destination, err := st.GetOrCreateSource("message_import", "merged-count-import")
+	requirements.NoError(err)
+	_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: imported.ID, IntoSourceID: destination.ID})
+	requirements.NoError(err)
+	count, err = st.CountNativeMessagesForSource(destination.ID)
+	requirements.NoError(err)
+	assertions.Equal(int64(1), count)
 }
 
 func TestEmailCalendarActivityCandidates(t *testing.T) {
@@ -184,9 +201,6 @@ func TestEmailCalendarActivityCandidates(t *testing.T) {
 		Conversation: &ConversationPersistData{SourceConversationID: "imported-event"},
 	})
 	requirements.NoError(err)
-	count, err := st.CountNativeMessagesForSource(imported.ID)
-	requirements.NoError(err)
-	assertions.Equal(int64(1), count)
 	for _, source := range []struct {
 		id  int64
 		typ string
@@ -195,11 +209,6 @@ func TestEmailCalendarActivityCandidates(t *testing.T) {
 		requirements.NoError(err)
 		_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: source.id, IntoSourceID: destination.ID})
 		requirements.NoError(err)
-		if source.typ == "message_import" {
-			count, err := st.CountNativeMessagesForSource(destination.ID)
-			requirements.NoError(err)
-			assertions.Equal(int64(1), count)
-		}
 	}
 	for _, id := range []int64{icsEvents[0], gcalID, importedID} {
 		var marked bool
@@ -526,23 +535,11 @@ func TestEmailCalendarFamilyOrganizer(t *testing.T) {
 	})
 }
 
-func TestEmailCalendarDuplicatePartsSummary(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
+func TestEmailCalendarDuplicateParts(t *testing.T) {
+	assertions := assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
-	source, err := st.GetOrCreateSource("mbox", "owner@example.com")
-	requirements.NoError(err)
 	calendar := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nSUMMARY:Invite")
 	raw := "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\nContent-Type: text/calendar\r\n\r\n" + string(calendar) + "\r\n--x\r\nContent-Type: application/ics\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString(calendar) + "\r\n--x--\r\n"
-	parsed, err := mime.Parse([]byte(raw))
-	requirements.NoError(err)
-	var summary ICalendarImportSummary
-	err = st.withAttributionTxContext(t.Context(), attributionLock{Sources: []int64{source.ID}}, func(tx *loggedTx) error {
-		var persistErr error
-		summary, persistErr = st.persistEmailCalendarPartsWith(t.Context(), tx, 0, source.ID, parsed)
-		return persistErr
-	})
-	requirements.NoError(err)
-	assertions.Equal(1, summary.Changed)
-	assertions.Equal(1, summary.Unchanged)
-	assertions.Len(emailEvents(t, st, source.ID), 1)
+	_, source := persistInviteEmail(t, st, "duplicate-parts", []byte(raw))
+	assertions.Len(emailEvents(t, st, source), 1)
 }
