@@ -172,6 +172,51 @@ func TestPostalAddressSweepExtractionAndAdoption(t *testing.T) {
 	})
 }
 
+func TestPostalSuggestionsMatchOnlyCurrentAddressComponents(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, id, _ := newPersonFactProjectionStore(t)
+	target := projectionTargetBySlug(t, st, "postal_address")
+	_, err := st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, StreetAddress: new(" 12 Example Street "), ExtendedAddress: new(" Unit 7 "), CountryCode: new(" ca "), Label: new("home"), OriginalValue: "Entered by hand", Envelope: ValueEnvelopeInput{Source: ProvenanceUser}})
+	require.NoError(err)
+	old, err := st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, StreetAddress: new("Old Street"), CountryCode: new("CA"), Envelope: ValueEnvelopeInput{Source: ProvenanceUser}})
+	require.NoError(err)
+	require.NoError(st.SupersedePersonAddressContext(t.Context(), id, old.Envelope.ID, nil))
+	original, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "postal", StreetAddress: "Original draft", CountryCode: "CA"})
+	require.NoError(err)
+	_, err = st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, StreetAddress: new("Current street"), CountryCode: new("CA"), OriginalValue: original, Envelope: ValueEnvelopeInput{Source: ProvenanceUser}})
+	require.NoError(err)
+	for _, tc := range []struct{ suffix, value string }{
+		{"first", `{"street_address":"12 Example Street","extended_address":"Unit 7","country_code":"CA","source_text":"first evidence"}`},
+		{"second", `{"street_address":"12 Example Street","extended_address":"Unit 7","country_code":"CA","source_text":"second evidence"}`},
+		{"different unit", `{"street_address":"12 Example Street","extended_address":"Unit 8","country_code":"CA","source_text":"other unit"}`},
+		{"history", `{"street_address":"Old Street","country_code":"CA","source_text":"former home"}`},
+		{"different extended components", `{"street_address":"12 Example Street","extended_address":"Unit 7","country_code":"CA","extended_components":";;;;;;;Floor 2","source_text":"other floor"}`},
+		{"original draft", `{"street_address":"Original draft","country_code":"CA","source_text":"earlier draft"}`},
+	} {
+		claim := personFactProjectionClaim(id, target, tc.value, tc.suffix)
+		_, err := st.ApplyPersonFactGenerationContext(t.Context(), postalGeneration(t, st, id, tc.suffix, []personfacts.ProposedClaim{claim}, nil), nil)
+		require.NoError(err)
+	}
+	claims, err := st.ListPersonFactClaimsContext(t.Context(), id, personfacts.ClaimFilter{Limit: 10})
+	require.NoError(err)
+	require.Len(claims, 6)
+	for _, claim := range claims {
+		require.NotNil(claim.PostalReview)
+		if claim.PostalReview.Assessment.Original.StreetAddress == "12 Example Street" && claim.PostalReview.Assessment.Original.ExtendedAddress == "Unit 7" && claim.PostalReview.Assessment.Original.ExtendedComponents == "" {
+			assert.False(claim.PostalReview.Eligible)
+			assert.Contains(claim.PostalReview.ReasonCodes, "already_adopted")
+			snapshot, err := postaladdress.EncodeOriginalInput(claim.PostalReview.Assessment.Original)
+			require.NoError(err)
+			ref := "person-fact-claim:" + claim.ClaimKey
+			_, err = st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, StreetAddress: new("12 Example Street"), OriginalValue: snapshot, Envelope: ValueEnvelopeInput{Source: ProvenanceUser, SourceRef: &ref}})
+			assert.ErrorIs(err, ErrPostalSuggestionInvalid)
+		} else {
+			assert.True(claim.PostalReview.Eligible)
+		}
+	}
+}
+
 func TestPostalClaimReferenceCannotHideDifferentSuggestion(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

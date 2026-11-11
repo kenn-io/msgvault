@@ -116,6 +116,12 @@ func (p *personFactPostalProjector) project(context.Context, personfacts.Project
 	return nil, false, errors.New("postal addresses require explicit owner review")
 }
 
+func postalReviewComponents(input postaladdress.Input) postaladdress.Input {
+	input = postaladdress.Assess(input).Proposed
+	input.OriginalValue, input.Label, input.GeoURI, input.Timezone, input.PlaceURI = "", "", "", "", ""
+	return input
+}
+
 // attachPostalReviewsTx calculates eligibility against all claims and current
 // support in this read snapshot, regardless of the requested claim page.
 func (s *Store) attachPostalReviewsTx(ctx context.Context, tx *loggedTx, personID int64, page []personfacts.Claim) error {
@@ -155,9 +161,20 @@ func (s *Store) attachPostalReviewsTx(ctx context.Context, tx *loggedTx, personI
 		return err
 	}
 	adopted := map[string]bool{}
+	current := map[postaladdress.Input]bool{}
 	for _, row := range addresses {
-		if row.AddressKind == PersonAddressPostal && row.Envelope.SourceRef != nil {
+		if row.AddressKind != PersonAddressPostal {
+			continue
+		}
+		if row.Envelope.SourceRef != nil {
 			adopted[*row.Envelope.SourceRef] = true
+		}
+		if row.Envelope.ActiveUntil == nil && row.Envelope.SupersededAt == nil {
+			input, _, err := row.ResolvedPostalInput()
+			if err != nil {
+				return err
+			}
+			current[postalReviewComponents(input)] = true
 		}
 	}
 	for i := range page {
@@ -183,6 +200,10 @@ func (s *Store) attachPostalReviewsTx(ctx context.Context, tx *loggedTx, personI
 					assessment.Proposed = proposed.Input()
 					assessment.ProposedExtendedParts = postaladdress.ExtendedParts(assessment.Proposed.ExtendedComponents)
 				}
+			}
+			if review.Eligible && current[postalReviewComponents(assessment.Proposed)] {
+				review.Eligible = false
+				review.ReasonCodes = append(review.ReasonCodes, "already_adopted")
 			}
 			review.Assessment = &assessment
 		}
