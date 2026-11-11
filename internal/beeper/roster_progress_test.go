@@ -129,7 +129,7 @@ func TestRosterMatchingFailureRetriesAcrossChats(t *testing.T) {
 		for i, chat := range []*fakeChat{first, second} {
 			detail, err := imp.client.GetChat(t.Context(), chat.ID)
 			require.NoError(err)
-			_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: works[i]}, &ImportSummary{}) //nolint:dogsled // Receipt status is the observable.
+			_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: works[i]}, &ImportSummary{})
 			require.NoError(err)
 			receipts, err := st.BeeperRosterReceiptsContext(t.Context(), sourceID, rosterProvider(chat.ID))
 			require.NoError(err)
@@ -148,7 +148,7 @@ func TestRosterMatchingFailureRetriesAcrossChats(t *testing.T) {
 	for i, chat := range []*fakeChat{first, second} {
 		detail, err := imp.client.GetChat(t.Context(), chat.ID)
 		require.NoError(err)
-		_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: works[i]}, &ImportSummary{}) //nolint:dogsled // Receipt status is the observable.
+		_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: works[i]}, &ImportSummary{})
 		require.NoError(err)
 		receipts, err := st.BeeperRosterReceiptsContext(t.Context(), sourceID, rosterProvider(chat.ID))
 		require.NoError(err)
@@ -389,9 +389,9 @@ func TestRosterVerificationRechecksChangedSnapshot(t *testing.T) {
 	f.mu.Lock()
 	chat.Participants = all[:1]
 	f.mu.Unlock()
-	_, complete, _, err := imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
+	_, _, _, err = imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{}) //nolint:dogsled // The first call only establishes the saved work.
 	require.NoError(err)
-	_, complete, _, err = imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
+	_, complete, _, err := imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
 	require.NoError(err)
 	assert.True(complete)
 	assert.Len(rosterMembers(t, st, sum.SourceID, chat.ID), 1)

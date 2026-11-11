@@ -2,8 +2,8 @@ package beeper
 
 import (
 	"database/sql"
-	"fmt"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
@@ -604,7 +604,7 @@ func TestSharedEmailMergeKeepsSenderCacheCurrent(t *testing.T) {
 				require.NoError(err)
 				receipts, err := st.BeeperRosterReceiptsContext(t.Context(), source.ID, rosterProvider(chat.ID))
 				require.NoError(err)
-				assert.Equal(fmt.Sprint(phone), receipts[imp.res.identifierForUser(tc.other)].Name)
+				assert.Equal(strconv.FormatInt(phone, 10), receipts[imp.res.identifierForUser(tc.other)].Name)
 				f.mu.Lock()
 				chat.ParticipantsTruncated = true
 				f.mu.Unlock()
