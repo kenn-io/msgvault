@@ -3,6 +3,7 @@ package beeper
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"os"
@@ -940,57 +941,73 @@ func TestMediaPolicyArchivesAuthoritativeParticipantTotal(t *testing.T) {
 // sync and backfill fail closed until a detail fetch reads it, and then the
 // real size decides.
 func TestMediaPolicyFailsClosedWithoutParticipantTotal(t *testing.T) {
-	t.Parallel()
-	require := require.New(t)
-	assert := assert.New(t)
-	f := newFakeBeeper(t)
-	chat := mediaGroupChat(4)
-	chat.ParticipantsTotalUnknown = true
-	f.addChat(chat)
-	f.setChatGetFailure(chat.ID, true)
-	f.setAsset("mxc://beeper.local/photo1", []byte("group photo"))
-	imp, st, done := newTestImporter(t, f)
-	defer done()
-	opts := mediaImportOptions(t)
-	opts.MediaPolicy = attachmentpolicy.Policy{MaxParticipants: 5}
-	attachmentState := func() string {
-		var state string
-		require.NoError(st.DB().QueryRowContext(t.Context(), `
+	for _, known := range []bool{false, true} {
+		t.Run(fmt.Sprintf("known=%t", known), func(t *testing.T) {
+			t.Parallel()
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newFakeBeeper(t)
+			chat := mediaGroupChat(4)
+			chat.ParticipantsTotalUnknown = !known
+			f.addChat(chat)
+			f.setChatGetFailure(chat.ID, true)
+			f.setAsset("mxc://beeper.local/photo1", []byte("group photo"))
+			imp, st, done := newTestImporter(t, f)
+			defer done()
+			opts := mediaImportOptions(t)
+			opts.MediaPolicy = attachmentpolicy.Policy{MaxParticipants: 5}
+			attachmentState := func() string {
+				var state string
+				require.NoError(st.DB().QueryRowContext(t.Context(), `
 			SELECT attachment_state FROM attachments WHERE source_attachment_id = 'beeper:mxc://beeper.local/photo1'
 		`).Scan(&state))
-		return state
+				return state
+			}
+
+			_, err := imp.Import(t.Context(), opts)
+			var partial *PartialSyncError
+			require.ErrorAs(err, &partial)
+			require.Positive(partial.FetchErrors)
+			if known {
+				assert.Len(assetRequests(f), 1)
+				assert.Equal(string(attachmentpolicy.StateStored), attachmentState())
+				var messageID int64
+				require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT message_id FROM attachments`).Scan(&messageID))
+				membership, err := st.AttachmentConversationMembership(messageID)
+				require.NoError(err)
+				assert.False(membership.RosterArchived)
+				return
+			}
+			assert.Empty(assetRequests(f), "an unresolved roster must not read as a chat under the limit")
+			assert.Equal(string(attachmentpolicy.StateSkipped), attachmentState())
+			var messageID int64
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT message_id FROM attachments`).Scan(&messageID))
+			membership, err := st.AttachmentConversationMembership(messageID)
+			require.NoError(err)
+			assert.False(membership.RosterArchived, "no total and no complete list leaves the roster unresolved")
+
+			f.resetRequests()
+			summary, err := imp.BackfillMedia(t.Context(), opts)
+			require.NoError(err)
+			assert.Zero(summary.AttachmentsDownloaded)
+			assert.Empty(assetRequests(f), "the backfill stays closed while the roster is unresolved")
+
+			// A detail fetch that succeeds reads the whole roster; the chat is under
+			// the limit, so the run that resolves it releases the deferred download.
+			f.setChatGetFailure(chat.ID, false)
+			f.resetRequests()
+			_, err = imp.Import(t.Context(), ImportOptions{
+				AccountID: opts.AccountID, AttachmentsDir: opts.AttachmentsDir, MediaPolicy: opts.MediaPolicy, Full: true,
+			})
+			require.NoError(err)
+			membership, err = st.AttachmentConversationMembership(messageID)
+			require.NoError(err)
+			assert.True(membership.RosterArchived)
+			assert.Equal(4, membership.Conversation.ParticipantCount)
+			assert.Len(assetRequests(f), 1)
+			assert.Equal(string(attachmentpolicy.StateStored), attachmentState())
+		})
 	}
-
-	_, err := imp.Import(t.Context(), opts)
-	require.Error(err, "the failed detail fetch leaves the run partial")
-	assert.Empty(assetRequests(f), "an unresolved roster must not read as a chat under the limit")
-	assert.Equal(string(attachmentpolicy.StateSkipped), attachmentState())
-	var messageID int64
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT message_id FROM attachments`).Scan(&messageID))
-	membership, err := st.AttachmentConversationMembership(messageID)
-	require.NoError(err)
-	assert.False(membership.RosterArchived, "no total and no complete list leaves the roster unresolved")
-
-	f.resetRequests()
-	summary, err := imp.BackfillMedia(t.Context(), opts)
-	require.NoError(err)
-	assert.Zero(summary.AttachmentsDownloaded)
-	assert.Empty(assetRequests(f), "the backfill stays closed while the roster is unresolved")
-
-	// A detail fetch that succeeds reads the whole roster; the chat is under
-	// the limit, so the run that resolves it releases the deferred download.
-	f.setChatGetFailure(chat.ID, false)
-	f.resetRequests()
-	_, err = imp.Import(t.Context(), ImportOptions{
-		AccountID: opts.AccountID, AttachmentsDir: opts.AttachmentsDir, MediaPolicy: opts.MediaPolicy, Full: true,
-	})
-	require.NoError(err)
-	membership, err = st.AttachmentConversationMembership(messageID)
-	require.NoError(err)
-	assert.True(membership.RosterArchived)
-	assert.Equal(4, membership.Conversation.ParticipantCount)
-	assert.Len(assetRequests(f), 1)
-	assert.Equal(string(attachmentpolicy.StateStored), attachmentState())
 }
 
 // TestBackfillMediaFailsClosedOnConversationWithoutArchivedRoster covers a
@@ -1750,20 +1767,4 @@ func TestIsConfirmedAssetNotFound(t *testing.T) {
 			assert.Equal(t, tt.want, isConfirmedAssetNotFound(tt.previous, tt.timestamp, now))
 		})
 	}
-}
-
-func TestMediaPolicyUsesKnownTotalWithIncompleteRoster(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	f := newFakeBeeper(t)
-	chat := mediaGroupChat(4)
-	f.addChat(chat)
-	f.setChatGetFailure(chat.ID, true)
-	f.setAsset("mxc://beeper.local/photo1", []byte("group photo"))
-	imp, _, done := newTestImporter(t, f)
-	defer done()
-	opts := mediaImportOptions(t)
-	opts.MediaPolicy = attachmentpolicy.Policy{MaxParticipants: 5}
-	_, err := imp.Import(t.Context(), opts)
-	require.Error(err)
-	assert.Len(assetRequests(f), 1)
 }

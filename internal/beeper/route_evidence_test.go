@@ -85,7 +85,7 @@ func TestImportMessagingRouteBridgeProof(t *testing.T) {
 			}
 			requirements.NoError(json.Unmarshal([]byte(raw), &metadata))
 			requirements.NotNil(metadata.Route)
-			self := participantForBeeperUser(t, st, "@me:beeper.local")
+			self := participantForBeeperUser(t, st, "@self:example.test")
 			assertions.ElementsMatch([]int64{peer, self}, metadata.Route.ParticipantIDs)
 			assertions.Equal([]int64{self}, metadata.Route.SelfParticipantIDs)
 		})

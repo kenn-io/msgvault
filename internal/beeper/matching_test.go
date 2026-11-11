@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1780,35 +1779,19 @@ func TestLateSharedEmailExplainsExistingSuggestion(t *testing.T) {
 	for _, recorded := range []bool{false, true} {
 		t.Run(strconv.FormatBool(recorded), func(t *testing.T) {
 			require := require.New(t)
-			f := newFakeBeeper(t)
-			chat := func(id, account, user string, member map[string]any) *fakeChat {
-				member["id"] = user
-				c := budgetTestChat(id, 1, time.Now().Add(-48*time.Hour))
-				c.AccountID, c.Network, c.Type = account, "Slack", "group"
-				c.Participants = []map[string]any{{"id": "@me:beeper.local", "fullName": "Test User", "isSelf": true}, member}
-				c.Msgs[0].SenderID = user
-				return c
-			}
-			f.addChat(chat("!first:example.test", "slack", "@slack_sam:beeper.local", map[string]any{"username": "sam", "phoneNumber": "+12025550141"}))
-			f.addChat(chat("!second:example.test", "slack2", "@slack2_sam:beeper.local", map[string]any{"username": "sam", "phoneNumber": "+12025550142", "email": "sam@example.test"}))
-			imp, st := newHandlerTestImporter(t, f)
-			t.Cleanup(func() { require.NoError(st.Close()) })
-			var sourceID int64
-			for _, account := range []string{"slack", "slack2"} {
-				sum, err := imp.Import(t.Context(), ImportOptions{AccountID: account, NoMedia: true})
-				require.NoError(err)
-				if account == "slack" {
-					sourceID = sum.SourceID
-				}
-			}
-			first := participantForBeeperUser(t, st, "@slack_sam:beeper.local")
-			second := participantForBeeperUser(t, st, "@slack2_sam:beeper.local")
-			require.NotEqual(first, second)
-			candidates, err := st.ListIdentityMatchCandidatesContext(t.Context(), nil, 10, 0)
+			st := testutil.NewTestStore(t)
+			first, err := st.EnsureParticipantByPhone(t.Context(), "+12025550141", "", "beeper")
 			require.NoError(err)
-			require.Len(candidates, 1)
-			id := candidates[0].ID
-			require.Equal(store.IdentityMatchServiceScopeUsername, candidates[0].Basis)
+			second, err := st.EnsureParticipantByPhone(t.Context(), "+12025550142", "", "beeper")
+			require.NoError(err)
+			require.NotEqual(first, second)
+			firstScope := captureContext{SourceID: newBeeperTestSource(t, st, "slack"), AccountID: "slack", Network: "Slack"}
+			secondScope := captureContext{SourceID: newBeeperTestSource(t, st, "slack2"), AccountID: "slack2", Network: "Slack"}
+			matcher := newIdentityMatcher(st)
+			captureAndMatch(t, newObservationRecorder(st), matcher, first, &User{ID: "@slack_sam:beeper.local", Username: "sam", PhoneNumber: "+12025550141"}, firstScope)
+			outcome := captureAndMatch(t, newObservationRecorder(st), matcher, second, &User{ID: "@slack2_sam:beeper.local", Username: "sam", PhoneNumber: "+12025550142", Email: "sam@example.test"}, secondScope)
+			require.Len(outcome.Suggested, 1)
+			id := outcome.Suggested[0]
 			evidence := func() []store.IdentityMatchEvidence {
 				candidate, err := st.GetIdentityMatchCandidateContext(t.Context(), id)
 				require.NoError(err)
@@ -1824,17 +1807,14 @@ func TestLateSharedEmailExplainsExistingSuggestion(t *testing.T) {
 			require.Empty(evidence())
 			user := &User{ID: "@slack_sam:beeper.local", PhoneNumber: "+12025550141", Email: "sam@example.test"}
 			if recorded {
-				_, err = newObservationRecorder(st).capture(t.Context(), first, user, captureContext{SourceID: sourceID, AccountID: "slack", Network: "Slack"})
+				_, err = newObservationRecorder(st).capture(t.Context(), first, user, firstScope)
 				require.NoError(err)
 			}
-			f.addChat(chat("!email:example.test", "slack", user.ID, map[string]any{"phoneNumber": user.PhoneNumber, "email": user.Email}))
-			_, err = imp.Import(t.Context(), ImportOptions{AccountID: "slack", NoMedia: true})
-			require.NoError(err)
+			captureAndMatch(t, newObservationRecorder(st), matcher, first, user, firstScope)
 			require.Equal("sam@example.test", observationValues(t, st, first)[store.ContactAddressEmail])
 			rows := evidence()
 			require.Len(rows, 1)
-			_, err = imp.Import(t.Context(), ImportOptions{AccountID: "slack", NoMedia: true})
-			require.NoError(err)
+			captureAndMatch(t, newObservationRecorder(st), matcher, first, user, firstScope)
 			again := evidence()
 			require.Len(again, 1)
 			require.Equal(rows[0].ID, again[0].ID)

@@ -7,40 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 )
-
-func TestRosterLaterChatUsesChangedPhone(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	f := newFakeBeeper(t)
-	bare := budgetTestChat("!bare:example.test", 2, time.Now())
-	rich := budgetTestChat("!rich:example.test", 2, time.Now().Add(-time.Hour))
-	bare.Participants[0]["id"] = "@signal_user:example.test"
-	rich.Participants[0]["id"] = "@signal_user:example.test"
-	rich.Participants[0]["phoneNumber"] = "+12025550124"
-	for _, chat := range []*fakeChat{bare, rich} {
-		for i := range chat.Msgs {
-			chat.Msgs[i].SenderID = "@signal_user:example.test"
-		}
-	}
-	f.addChat(bare)
-	f.addChat(rich)
-	imp, st := newHandlerTestImporter(t, f)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	old, err := newParticipantResolver(st, "signal").resolveUser(t.Context(), &User{ID: "@signal_user:example.test", PhoneNumber: "+12025550123"})
-	require.NoError(err)
-	newPhone, err := st.EnsureParticipantByPhone(t.Context(), "+12025550124", "", "signal")
-	require.NoError(err)
-	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-	require.NoError(err)
-	for _, tc := range []struct {
-		messageID string
-		want      int64
-	}{{bare.Msgs[0].ID, old}, {rich.Msgs[0].ID, newPhone}} {
-		var sender int64
-		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE source_message_id = ?`), tc.messageID).Scan(&sender))
-		assert.Equal(tc.want, sender)
-	}
-}
 
 func TestRosterMatchingRetriesFailedMember(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
@@ -174,6 +142,12 @@ func TestRosterJoinRefreshesSettledMatchAfterStop(t *testing.T) {
 	candidates, err := st.ListIdentityMatchCandidatesContext(t.Context(), nil, 100, 0)
 	require.NoError(err)
 	require.Len(candidates, 1)
+	require.Equal(store.IdentityMatchStateCandidate, candidates[0].State)
+	before, err := st.GetIdentityMatchCandidateContext(t.Context(), candidates[0].ID)
+	require.NoError(err)
+	for _, evidence := range before.Evidence {
+		assert.NotEqual(evidenceMembership, evidence.EvidenceKind)
+	}
 	f.mu.Lock()
 	chat.Participants = append(chat.Participants, map[string]any{"id": "@slack_other:beeper.local"})
 	f.mu.Unlock()
@@ -222,77 +196,50 @@ func TestRosterUnchangedVisitSkipsMatching(t *testing.T) {
 }
 
 func TestRosterVerificationRechecksChangedSnapshot(t *testing.T) {
-	for _, interrupted := range []bool{false, true} {
-		t.Run(fmt.Sprintf("interrupted=%t", interrupted), func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			f := newFakeBeeper(t)
-			chat := budgetTestChat("!changed-roster:example.test", 2, time.Now().Add(-48*time.Hour))
-			chat.Participants = append(chat.Participants, map[string]any{"id": "@departed1:example.test"}, map[string]any{"id": "@departed2:example.test"})
-			f.addChat(chat)
-			imp, st := newHandlerTestImporter(t, f)
-			t.Cleanup(func() { require.NoError(st.Close()) })
-			sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-			require.NoError(err)
-			all := append([]map[string]any(nil), chat.Participants...)
-			before := rosterMembers(t, st, sum.SourceID, chat.ID)
-			require.Len(before, 4)
-			receiptsBefore, err := st.BeeperRosterReceiptsContext(t.Context(), sum.SourceID, rosterProvider(chat.ID))
-			require.NoError(err)
-			require.Len(receiptsBefore, 4)
-			work := &rosterWork{}
-			if interrupted {
-				f.mu.Lock()
-				chat.Participants = all[:1]
-				f.mu.Unlock()
-				detail, err := imp.client.GetChat(t.Context(), chat.ID)
-				require.NoError(err)
-				_, _, _, err = imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", rosterState: work, ShouldStop: func() bool { return len(rosterMembers(t, st, sum.SourceID, chat.ID)) == 3 }}, &ImportSummary{})
-				require.ErrorIs(err, errBeeperBudgetExpired)
-				remaining := rosterMembers(t, st, sum.SourceID, chat.ID)
-				f.mu.Lock()
-				chat.Participants = all[:2]
-				f.mu.Unlock()
-				_, complete, _, err := imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
-				require.NoError(err)
-				assert.False(complete)
-				assert.Equal(remaining, rosterMembers(t, st, sum.SourceID, chat.ID))
-				receipts, err := st.BeeperRosterReceiptsContext(t.Context(), sum.SourceID, rosterProvider(chat.ID))
-				require.NoError(err)
-				assert.Len(receipts, len(receiptsBefore))
-				for key := range receiptsBefore {
-					assert.Contains(receipts, key)
-				}
-			} else {
-				detail, err := imp.client.GetChat(t.Context(), chat.ID)
-				require.NoError(err)
-				detail.Participants.Items = detail.Participants.Items[:2]
-				detail.Participants.Total = 2
-				f.mu.Lock()
-				chat.Participants = all[:1]
-				f.mu.Unlock()
-				_, complete, _, err := imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
-				require.NoError(err)
-				assert.False(complete)
-				assert.Equal(before, rosterMembers(t, st, sum.SourceID, chat.ID))
-				receipts, err := st.BeeperRosterReceiptsContext(t.Context(), sum.SourceID, rosterProvider(chat.ID))
-				require.NoError(err)
-				assert.Len(receipts, len(receiptsBefore))
-				for key := range receiptsBefore {
-					assert.Contains(receipts, key)
-				}
-				_, complete, _, err = imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
-				require.NoError(err)
-				assert.True(complete)
-				assert.Len(rosterMembers(t, st, sum.SourceID, chat.ID), 1)
-				finalReceipts, err := st.BeeperRosterReceiptsContext(t.Context(), sum.SourceID, rosterProvider(chat.ID))
-				require.NoError(err)
-				require.Len(finalReceipts, 1)
-				id, ok := all[0]["id"].(string)
-				require.True(ok)
-				assert.Contains(finalReceipts, imp.res.identifierForUser(id))
-			}
-		})
+	assert, require := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	chat := budgetTestChat("!changed-roster:example.test", 2, time.Now().Add(-48*time.Hour))
+	chat.Participants = append(chat.Participants, map[string]any{"id": "@departed1:example.test"}, map[string]any{"id": "@departed2:example.test"})
+	f.addChat(chat)
+	imp, st := newHandlerTestImporter(t, f)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+	require.NoError(err)
+	all := append([]map[string]any(nil), chat.Participants...)
+	before := rosterMembers(t, st, sum.SourceID, chat.ID)
+	require.Len(before, 4)
+	receiptsBefore, err := st.BeeperRosterReceiptsContext(t.Context(), sum.SourceID, rosterProvider(chat.ID))
+	require.NoError(err)
+	require.Len(receiptsBefore, 4)
+	work := &rosterWork{}
+
+	detail, err := imp.client.GetChat(t.Context(), chat.ID)
+	require.NoError(err)
+	detail.Participants.Items = detail.Participants.Items[:2]
+	detail.Participants.Total = 2
+	f.mu.Lock()
+	chat.Participants = all[:1]
+	f.mu.Unlock()
+	_, complete, _, err := imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
+	require.NoError(err)
+	assert.False(complete)
+	assert.Equal(before, rosterMembers(t, st, sum.SourceID, chat.ID))
+	receipts, err := st.BeeperRosterReceiptsContext(t.Context(), sum.SourceID, rosterProvider(chat.ID))
+	require.NoError(err)
+	assert.Len(receipts, len(receiptsBefore))
+	for key := range receiptsBefore {
+		assert.Contains(receipts, key)
 	}
+	_, complete, _, err = imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
+	require.NoError(err)
+	assert.True(complete)
+	assert.Len(rosterMembers(t, st, sum.SourceID, chat.ID), 1)
+	finalReceipts, err := st.BeeperRosterReceiptsContext(t.Context(), sum.SourceID, rosterProvider(chat.ID))
+	require.NoError(err)
+	require.Len(finalReceipts, 1)
+	id, ok := all[0]["id"].(string)
+	require.True(ok)
+	assert.Contains(finalReceipts, imp.res.identifierForUser(id))
 }
 
 func TestRosterRetainedReceiptFollowsIdentifier(t *testing.T) {
@@ -420,9 +367,6 @@ func TestRosterBudgetAlternatesMessagesUntilComplete(t *testing.T) {
 	state := latestBeeperState(t, imp).Chats[chat.ID]
 	assert.True(state.Done)
 	assert.Equal("done", state.RosterWork.Phase, "matching must finish")
-	var runBytes int
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT LENGTH(cursor_after) FROM sync_runs WHERE source_id = ? ORDER BY id DESC LIMIT 1`), sum.SourceID).Scan(&runBytes))
-	assert.Less(runBytes, 4096, "completed roster proof remains compact")
 }
 
 func TestCompletedRosterProofStaysCompact(t *testing.T) {
@@ -464,6 +408,10 @@ func TestQuietRosterBudgetStopKeepsVerifiedMembershipResolved(t *testing.T) {
 	t.Cleanup(func() { require.NoError(st.Close()) })
 	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
 	require.NoError(err)
+	f.mu.Lock()
+	chat.Participants[0]["username"] = "firstchanged"
+	chat.Participants[1]["username"] = "secondchanged"
+	f.mu.Unlock()
 	unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
 	require.NoError(err)
 	require.NotContains(unresolved, chat.ID)

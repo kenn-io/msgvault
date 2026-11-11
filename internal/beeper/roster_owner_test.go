@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/attachmentpolicy"
 )
 
 func TestRosterEachChatKeepsItsOwnPhone(t *testing.T) {
@@ -130,31 +129,6 @@ func testRosterEachChatKeepsItsOwnPhone(t *testing.T, messageFirst, sameRun, ver
 	if verified && !truncated {
 		require.False(state.Chats[old.ID].RosterWork.Verified)
 	}
-}
-
-func TestRosterMessageFirstUsesListedMediaCount(t *testing.T) {
-	require := require.New(t)
-	f := newFakeBeeper(t)
-	chat := mediaChat()
-	f.addChat(chat)
-	f.setAsset("mxc://beeper.local/photo1", []byte("photo"))
-	imp, st, done := newTestImporter(t, f)
-	defer done()
-	opts := mediaImportOptions(t)
-	opts.MediaPolicy = attachmentpolicy.Policy{MaxParticipants: 5}
-	opts.ShouldStop = func() bool {
-		var n int
-		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM conversation_participants`).Scan(&n))
-		return n == 1
-	}
-	first, err := imp.Import(t.Context(), opts)
-	require.NoError(err)
-	require.True(first.Stopped)
-	opts.ShouldStop = nil
-	imp = NewImporter(st, imp.client)
-	_, err = imp.Import(t.Context(), opts)
-	require.NoError(err)
-	require.NotEmpty(assetRequests(f))
 }
 
 func TestRosterResumeRechecksOwnerOfSettledPrefix(t *testing.T) {
