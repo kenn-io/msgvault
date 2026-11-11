@@ -64,16 +64,18 @@ func TestMCPOperationReadsDiscoverNativeRoutes(t *testing.T) {
 	require.NoError(err)
 	require.True(result.IsError)
 	assert.Equal(operationFailure("invalid_limit", false).Output, result.Output)
-	for _, id := range []string{"../status", ".", ".."} {
+	for _, id := range []string{"", ".", ".."} {
 		result, err = backend.ExecuteOperation(t.Context(), "get_operation_run", map[string]any{"id": id})
 		require.NoError(err)
 		require.True(result.IsError)
 		assert.Equal(operationFailure("invalid_arguments", false).Output, result.Output)
 	}
-	result, err = backend.ExecuteOperation(t.Context(), "get_operation_run", map[string]any{"id": "op2~bad"})
-	require.NoError(err)
-	require.True(result.IsError)
-	assert.Equal(operationFailure("invalid_operation_run_id", false).Output, result.Output)
+	for _, id := range []string{"op2~bad", "../status", "a/b", "a?b", "a%b"} {
+		result, err = backend.ExecuteOperation(t.Context(), "get_operation_run", map[string]any{"id": id})
+		require.NoError(err)
+		require.True(result.IsError)
+		assert.Equal(operationFailure("invalid_operation_run_id", false).Output, result.Output)
+	}
 	for _, field := range []string{"started_from", "started_before"} {
 		for _, value := range []string{"2026-01-02T03:04:05.000Z", "2026-01-02T03:04:05+00:00"} {
 			result, err = backend.ExecuteOperation(t.Context(), "list_operation_runs", map[string]any{field: value})

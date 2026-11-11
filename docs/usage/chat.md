@@ -833,7 +833,9 @@ operational tools.
 | `get_cache_build_status` | Follow an accepted analytics refresh job. | Required `job_id` from a fresh query response |
 
 Operation history defaults to 25 runs per page (maximum 100). Timestamps must
-be canonical UTC RFC 3339 with `Z`, such as `2026-01-02T03:04:05Z`.
+be canonical UTC RFC 3339 with `Z` and the shortest fractional seconds (no
+trailing fractional zeros), such as `2026-01-02T03:04:05Z` or
+`2026-01-02T03:04:05.12Z`.
 On `invalid_cursor` or `operation_history_conflict`, restart from the first
 page. `supported_actions` and `related_status` name daemon capabilities; these
 read tools do not invoke them.

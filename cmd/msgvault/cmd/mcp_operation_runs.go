@@ -89,10 +89,10 @@ func (b *daemonMCPOperations) executeOperationRunRead(ctx context.Context, name 
 			ID string `json:"id"`
 		}](args)
 		// The generated client substitutes this value without escaping it.
-		if e != nil || input.ID == "" || input.ID == "." || input.ID == ".." || url.PathEscape(input.ID) != input.ID {
+		if e != nil || input.ID == "" || input.ID == "." || input.ID == ".." {
 			return invalid()
 		}
-		result, err = readMCPOperationJSONWithClassifier[generated.OperationRunDetail](ctx, b.client, http.MethodGet, "/api/v1/operations/runs/{id}", &generated.GetOperationRunRequestOptions{PathParams: &generated.GetOperationRunPath{ID: input.ID}}, operationRunRefusal, http.StatusOK)
+		result, err = readMCPOperationJSONWithClassifier[generated.OperationRunDetail](ctx, b.client, http.MethodGet, "/api/v1/operations/runs/{id}", &generated.GetOperationRunRequestOptions{PathParams: &generated.GetOperationRunPath{ID: url.PathEscape(input.ID)}}, operationRunRefusal, http.StatusOK)
 	default:
 		return nil, false, nil
 	}
