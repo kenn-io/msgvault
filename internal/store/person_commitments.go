@@ -246,8 +246,7 @@ func (s *Store) hydrateCommitmentCandidate(ctx context.Context, candidate commit
 	if err != nil || !live || promise.MessageID != c.AnchorMessageID || promise.Quote != c.Quote || promise.Start != c.Start || promise.End != c.End {
 		return c, false, err
 	}
-	if evidence := candidate.fulfilment; evidence != nil && evidence.Supported &&
-		(c.ReopenedAt == nil || evidence.Input.EventTime.After(*c.ReopenedAt)) {
+	if evidence := candidate.fulfilment; evidence != nil && commitmentFulfilmentCurrent(*evidence, c.PromisedAt, c.ReopenedAt) {
 		fulfilment, live, err := s.currentCommitmentCitation(ctx, c.PersonID, c.Direction, evidence.Input, lookup)
 		if err != nil {
 			return c, false, err
@@ -267,6 +266,13 @@ func (s *Store) hydrateCommitmentCandidate(ctx context.Context, candidate commit
 		c.FulfilmentConfirmed = false
 	}
 	return c, true, nil
+}
+
+// A retained fulfilment counts only while supported and strictly newer than the
+// current promise time and any owner reopening, the rule the apply SQL enforces.
+func commitmentFulfilmentCurrent(evidence personfacts.Evidence, promisedAt time.Time, reopenedAt *time.Time) bool {
+	at := evidence.Input.EventTime
+	return evidence.Supported && at.After(promisedAt) && (reopenedAt == nil || at.After(*reopenedAt))
 }
 
 func (s *Store) loadCommitmentFulfilmentTx(ctx context.Context, tx *loggedTx, id int64) (personfacts.Evidence, error) {
