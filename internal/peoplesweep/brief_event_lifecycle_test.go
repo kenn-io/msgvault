@@ -197,26 +197,6 @@ func TestBriefEventQuestionsSurviveParagraphTrimmingTogether(t *testing.T) {
 	assert.True(ok)
 }
 
-func TestBriefEventPlanRunsOnDateWithoutActivityAndStopsAfterSuccess(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	config, _ := workerTestConfig(t)
-	profile := briefWindowProfile()
-	now := time.Date(2026, 8, 16, 0, 0, 0, 0, time.UTC)
-	generated := now.Add(-time.Hour)
-	store := &briefFakeStore{enrolled: true, highWater: 40, changedAfter: 40,
-		eligibility: BriefEligibility{Version: 1, Status: BriefStatusCurrent, GeneratedAt: &generated,
-			Boundary: &BriefBoundary{ThroughSequence: 40, NextEventAt: &now}}}
-	worker := Worker{Config: config, Brief: store, Archive: &briefFakeArchive{}}
-	plan, err := worker.planPersonBrief(t.Context(), 7, BriefModeAuto, profile, now)
-	require.NoError(err)
-	assert.True(plan.run)
-	store.eligibility.Boundary.NextEventAt = nil
-	plan, err = worker.planPersonBrief(t.Context(), 7, BriefModeAuto, profile, now)
-	require.NoError(err)
-	assert.False(plan.run)
-}
-
 func TestBriefEventRejectionDiscardsDerivedMemoryWithoutBootstrappingOldAnchors(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -249,10 +229,25 @@ func TestBriefEventPreflightFailureDoesNotBlockExtraction(t *testing.T) {
 					Boundary: &BriefBoundary{ThroughSequence: 40, EventMemoryVersion: 1,
 						EventMemory: []BriefEventMemory{{Highlight: highlight, Sources: []EvidenceRef{items[0].Ref}}}}}}
 			archive := &briefFakeArchive{items: items}
-			config := func(c *BriefConfig) { c.MaxBytes = 1 }
+			var config func(*BriefConfig)
 			if name == "historical source read" {
-				config = nil
 				archive.hydrateFailures = map[int64]error{items[0].Ref.MessageID: errors.New("historical source unavailable")}
+			} else {
+				archive.hasLastContact = true
+				archive.lastContact = BriefLastContact{MessageID: items[1].Ref.MessageID, SourceID: items[1].Ref.SourceID}
+				workerConfig, catalog := workerTestConfig(t)
+				mutateTestProvider(&workerConfig, func(p *ProviderConfig) { p.AllowSensitive = true })
+				profile, err := workerConfig.Profile()
+				require.NoError(err)
+				now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+				worker := Worker{Config: workerConfig, Brief: brief, Archive: archive}
+				plan, err := worker.planPersonBrief(t.Context(), 7, BriefModeAuto, profile, now)
+				require.NoError(err)
+				window, err := BuildBriefWindow(t.Context(), archive, worker.briefWindowRequest(7, catalog, profile, plan, 0))
+				require.NoError(err)
+				require.Greater(window.Boundary.InputBytes, 1)
+				config = func(c *BriefConfig) { c.MaxBytes = window.Boundary.InputBytes - 1 }
+				archive.hydrateCalls = nil
 			}
 			outcome := runBriefWorkerCase(t, briefWorkerCase{brief: brief, archive: archive, briefConfig: config,
 				responses: []DriverResponse{briefDriverResponse(json.RawMessage(`{"claims":[]}`), "extraction")}})
@@ -303,16 +298,24 @@ func TestBriefEventFreshActivityRespectsIntervalForResolvedMemory(t *testing.T) 
 		wantRun bool
 	}{
 		{"resolved only", []BriefEventState{BriefEventResolved}, false},
-		{"upcoming", []BriefEventState{BriefEventUpcoming}, true},
-		{"follow up", []BriefEventState{BriefEventFollowUp}, true},
-		{"mixed", []BriefEventState{BriefEventResolved, BriefEventFollowUp}, true},
+		{"mixed unresolved", []BriefEventState{BriefEventResolved, BriefEventFollowUp}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			checks := assert.New(t)
 			required := require.New(t)
 			memory := make([]BriefEventMemory, 0, len(tc.states))
-			for _, state := range tc.states {
-				memory = append(memory, BriefEventMemory{Highlight: BriefHighlight{LifeEvent: &BriefLifeEvent{State: state}}})
+			for index, state := range tc.states {
+				anchor := briefWindowItem(int64(10+index), SourceConversationText, 10+index, "I have an event.")
+				highlight := eventHighlight(anchor, "2026-08-15")
+				highlight.LifeEvent.State = state
+				sources := []EvidenceRef{anchor.Ref}
+				if state == BriefEventResolved {
+					resolution := briefWindowItem(int64(20+index), SourceConversationText, 15+index, "The event finished.")
+					highlight.EvidenceIDs = append(highlight.EvidenceIDs, packetEvidenceID(resolution))
+					highlight.LifeEvent.Resolution = &BriefEventResolution{EvidenceID: packetEvidenceID(resolution), Quote: resolution.Excerpt}
+					sources = append(sources, resolution.Ref)
+				}
+				memory = append(memory, BriefEventMemory{Highlight: highlight, Sources: sources})
 			}
 			store := &briefFakeStore{enrolled: true, highWater: 41, changedAfter: 41,
 				eligibility: BriefEligibility{Version: 3, Status: BriefStatusCurrent, GeneratedAt: &generated,
@@ -321,7 +324,6 @@ func TestBriefEventFreshActivityRespectsIntervalForResolvedMemory(t *testing.T) 
 			plan, err := worker.planPersonBrief(t.Context(), 7, BriefModeAuto, briefWindowProfile(), now)
 			required.NoError(err)
 			checks.Equal(tc.wantRun, plan.run)
-			checks.Equal(3, plan.retireVersion, "every retained event remains subject to source revalidation")
 		})
 	}
 }

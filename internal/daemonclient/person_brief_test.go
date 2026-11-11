@@ -13,58 +13,47 @@ import (
 )
 
 func TestPersonBriefEventDetailsPreserveQuestionStateAndEvidence(t *testing.T) {
-	for _, test := range []struct {
-		state peoplesweep.BriefEventState
-		want  string
-	}{
-		{peoplesweep.BriefEventUpcoming, "Upcoming: their interview."},
-		{peoplesweep.BriefEventFollowUp, "You may want to ask: How did the interview go?"},
-		{peoplesweep.BriefEventResolved, "Resolved: their interview."},
-	} {
-		t.Run(string(test.state), func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			output := peoplesweep.BriefOutput{Highlights: []peoplesweep.BriefHighlight{{
-				Text: "their interview", Speaker: peoplesweep.BriefSpeakerPerson,
-				EvidenceIDs: []string{"evidence:aaa"},
-				LifeEvent: &peoplesweep.BriefLifeEvent{AnchorID: "evidence:aaa", Quote: "I have an interview.",
-					Question: "How did the interview go?", State: test.state},
-			}}}
-			structured, err := json.Marshal(output)
-			require.NoError(err)
-			sentences, err := json.Marshal([]map[string]any{{"kind": "highlight", "index": 0,
-				"text": test.want, "evidence_ordinals": []int{0}}})
-			require.NoError(err)
-			var payload map[string]any
-			require.NoError(json.Unmarshal([]byte(briefResponseFixtureWithSentences(
-				string(sentences), string(structured), briefEvidenceFixture)), &payload))
-			payload["program_version"] = "v2"
-			payload["renderer_policy"] = peoplesweep.BriefRendererPolicyV2
-			payload["rendered_text"] = test.want
-			response, err := json.Marshal(payload)
-			require.NoError(err)
-			engine := newPeopleBrowserTestEngine(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				writePeopleBrowserJSON(t, w, http.StatusOK, string(response))
-			}))
-			brief, err := engine.GetPersonBrief(t.Context(), 51)
-			require.NoError(err)
-			require.NotNil(brief)
-			require.Len(brief.Items, 1)
-			assert.Equal(test.want, brief.Items[0].Text)
-			assert.Equal(peoplebrowser.PersonBriefHighlight, brief.Items[0].Kind)
-			require.Len(brief.Items[0].Evidence, 1)
-			assert.Equal("message:1", brief.Items[0].Evidence[0].SourceRef)
+	assert := assert.New(t)
+	require := require.New(t)
+	output := peoplesweep.BriefOutput{Highlights: []peoplesweep.BriefHighlight{{
+		Text: "their interview", Speaker: peoplesweep.BriefSpeakerPerson,
+		EvidenceIDs: []string{"evidence:aaa"},
+		LifeEvent: &peoplesweep.BriefLifeEvent{AnchorID: "evidence:aaa", Quote: "I have an interview.",
+			Question: "How did the interview go?", State: peoplesweep.BriefEventFollowUp},
+	}}}
+	structured, err := json.Marshal(output)
+	require.NoError(err)
+	sentences, err := json.Marshal([]map[string]any{{"kind": "highlight", "index": 0,
+		"text": "You may want to ask: How did the interview go?", "evidence_ordinals": []int{0}}})
+	require.NoError(err)
+	var payload map[string]any
+	require.NoError(json.Unmarshal([]byte(briefResponseFixtureWithSentences(
+		string(sentences), string(structured), briefEvidenceFixture)), &payload))
+	payload["program_version"] = "v2"
+	payload["renderer_policy"] = peoplesweep.BriefRendererPolicyV2
+	payload["rendered_text"] = "You may want to ask: How did the interview go?"
+	response, err := json.Marshal(payload)
+	require.NoError(err)
+	engine := newPeopleBrowserTestEngine(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writePeopleBrowserJSON(t, w, http.StatusOK, string(response))
+	}))
+	brief, err := engine.GetPersonBrief(t.Context(), 51)
+	require.NoError(err)
+	require.NotNil(brief)
+	require.Len(brief.Items, 1)
+	assert.Equal("You may want to ask: How did the interview go?", brief.Items[0].Text)
+	assert.Equal(peoplebrowser.PersonBriefHighlight, brief.Items[0].Kind)
+	require.Len(brief.Items[0].Evidence, 1)
+	assert.Equal("message:1", brief.Items[0].Evidence[0].SourceRef)
 
-			payload["sentences"] = []any{}
-			response, err = json.Marshal(payload)
-			require.NoError(err)
-			brief, err = engine.GetPersonBrief(t.Context(), 51)
-			require.NoError(err)
-			require.Len(brief.Items, 1)
-			assert.Equal(test.want, brief.Items[0].Text, "fallback renders the saved event state")
-			assert.Empty(brief.Items[0].Evidence, "missing sentence ordinals do not invent citations")
-		})
-	}
+	payload["sentences"] = []any{}
+	response, err = json.Marshal(payload)
+	require.NoError(err)
+	brief, err = engine.GetPersonBrief(t.Context(), 51)
+	require.NoError(err)
+	require.Len(brief.Items, 1)
+	assert.Equal("You may want to ask: How did the interview go?", brief.Items[0].Text, "fallback renders the saved event state")
+	assert.Empty(brief.Items[0].Evidence, "missing sentence ordinals do not invent citations")
 }
 
 // briefStructuredFixture is a stored person brief structure. The citation

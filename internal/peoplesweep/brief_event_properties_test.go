@@ -15,7 +15,13 @@ import (
 	"go.kenn.io/msgvault/internal/personfacts"
 )
 
-func TestBriefEventCapacityPreservesActiveEventsAndRetiresEvictedAnchors(t *testing.T) {
+func TestBriefEventCapacityAtEightSlots(t *testing.T) {
+	t.Run("new event and resolution", testBriefEventCapacityPreservesActiveEventsAndRetiresEvictedAnchors)
+	t.Run("ordinary highlight", testBriefEventCapacityProtectsEightActiveHighlights)
+}
+
+func testBriefEventCapacityPreservesActiveEventsAndRetiresEvictedAnchors(t *testing.T) {
+	t.Helper()
 	for _, resolveFirst := range []bool{false, true} {
 		t.Run(strconv.FormatBool(resolveFirst), func(t *testing.T) {
 			assert := assert.New(t)
@@ -62,7 +68,8 @@ func TestBriefEventCapacityPreservesActiveEventsAndRetiresEvictedAnchors(t *test
 	}
 }
 
-func TestBriefEventCapacityProtectsEightActiveHighlights(t *testing.T) {
+func testBriefEventCapacityProtectsEightActiveHighlights(t *testing.T) {
+	t.Helper()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	context := &BriefEventContext{AsOf: time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC),
@@ -108,15 +115,9 @@ func TestBriefEventCapacityProtectsEightActiveHighlights(t *testing.T) {
 }
 
 func TestBriefWindowRetiresEventsWhenCapsShrink(t *testing.T) {
-	for _, test := range []struct {
-		name string
-		run  func(*testing.T)
-	}{
-		{"unresolved", briefWindowPreservesUnresolvedEventsWhenCapsShrink},
-		{"resolved", briefWindowRetiresResolvedEventUnderPressure},
-	} {
-		t.Run(test.name, test.run)
-	}
+	t.Run("active events", briefWindowPreservesUnresolvedEventsWhenCapsShrink)
+	t.Run("resolved event", briefWindowRetiresResolvedEventUnderPressure)
+	t.Run("new event saved before replay", briefEventCapacitySavesMemoryBeforeActualReplay)
 }
 
 func briefWindowPreservesUnresolvedEventsWhenCapsShrink(t *testing.T) {
@@ -151,14 +152,7 @@ func briefWindowPreservesUnresolvedEventsWhenCapsShrink(t *testing.T) {
 			} else {
 				baseline, err := BuildBriefWindow(t.Context(), archive, request)
 				requirements.NoError(err)
-				nextRequest := baseline.Request
-				nextRequest.retainedEvents = []BriefHighlight{newerHighlight}
-				nextItems := []EvidenceItem{newer, lastContact}
-				sortBriefItemsNewestFirst(nextItems)
-				_, nextBoundary, err := briefBatch(nextRequest,
-					briefWindowLanes(nextRequest.Profile.AllowedSources), nextItems)
-				requirements.NoError(err)
-				request.MaxBytes = nextBoundary.InputBytes
+				request.MaxBytes = baseline.Boundary.InputBytes - 1
 			}
 
 			_, err := BuildBriefWindow(t.Context(), archive, request)
@@ -169,7 +163,8 @@ func briefWindowPreservesUnresolvedEventsWhenCapsShrink(t *testing.T) {
 	}
 }
 
-func TestBriefEventCapacitySavesMemoryBeforeActualReplay(t *testing.T) {
+func briefEventCapacitySavesMemoryBeforeActualReplay(t *testing.T) {
+	t.Helper()
 	require := require.New(t)
 	anchor := briefWindowItem(10, SourceConversationText, 10, "I move on August 15.")
 	archive := &briefFakeArchive{items: []EvidenceItem{anchor}}

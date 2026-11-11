@@ -1083,8 +1083,8 @@ func personBriefInsertFromResult(
 func personBriefBoundaryJSON(boundary peoplesweep.BriefBoundary) jsontext.Value {
 	encoded, err := json.Marshal(boundary.Canonical(), json.Deterministic(true))
 	if err != nil {
-		// BriefBoundary holds only strings, integers, and times, so marshalling
-		// cannot fail; an empty object keeps the column valid JSON if it ever does.
+		// BriefBoundary and its nested event fields contain JSON-safe values, so
+		// an empty object keeps the column valid if marshalling ever fails.
 		return jsontext.Value(`{}`)
 	}
 	return encoded

@@ -102,15 +102,6 @@ func briefRetireCapacityEvent(
 	if retired < 0 {
 		return events, false
 	}
-	return briefRetireEventAt(events, protected, retired)
-}
-
-func briefRetireEventAt(
-	events []BriefHighlight, protected map[string]bool, retired int,
-) ([]BriefHighlight, bool) {
-	if retired < 0 || retired >= len(events) {
-		return events, false
-	}
 	events = append(slices.Clone(events[:retired]), events[retired+1:]...)
 	for id := range protected {
 		delete(protected, id)
@@ -224,11 +215,5 @@ func freezeBriefEventMemory(window BriefWindow, events []BriefHighlight) BriefBo
 // A current event can lose support through policy changes without a new
 // journal row. Revalidation is local; only a changed memory needs inference.
 func briefEventMemoryChanged(plan briefPlan, window BriefWindow) bool {
-	if plan.previous == nil {
-		return false
-	}
-	if len(plan.previous.EventMemory) != len(window.Request.retainedEvents) {
-		return true
-	}
-	return false
+	return plan.previous != nil && len(plan.previous.EventMemory) != len(window.Request.retainedEvents)
 }

@@ -124,6 +124,9 @@ func TestPersonSweepEventLifecyclePersistsDateOnlyRefreshAndResolution(t *testin
 	require.NoError(err)
 	require.Len(pointers, 1)
 	assert.True(pointers[0].Supported)
+	before := f.runner.briefRequests
+	runStoreEvent(t, f, peoplesweep.BriefModeAuto)
+	assert.Equal(before, f.runner.briefRequests, "the date-only transition does not repeat after success")
 
 	resolution := f.journal.insertMessage(t, "event-resolution", "chat", f.journal.aliceID, now.Add(time.Hour))
 	addSweepBody(t, f.journal, resolution, "I cancelled the interview.")

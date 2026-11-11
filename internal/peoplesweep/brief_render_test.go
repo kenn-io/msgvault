@@ -323,4 +323,11 @@ func TestBriefDropHighlightReindexesFollowUps(t *testing.T) {
 	assert.Equal(0, trimmed.FollowUps[0].HighlightIndex)
 	assert.Equal("last question", trimmed.FollowUps[1].Question)
 	assert.Equal(1, trimmed.FollowUps[1].HighlightIndex)
+
+	sole := BriefOutput{Highlights: []BriefHighlight{{Text: "only"}},
+		FollowUps: []BriefFollowUp{{Question: "only question", HighlightIndex: 0}}}
+	trimmed, dropped = briefDropHighlight(sole, 0)
+	assert.Equal(2, dropped)
+	assert.Empty(trimmed.Highlights)
+	assert.Empty(trimmed.FollowUps)
 }

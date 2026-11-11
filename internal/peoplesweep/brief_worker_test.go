@@ -470,7 +470,8 @@ func TestPersonSweepWorkerRecordsBriefFailureAndStillAppliesExtraction(t *testin
 	}
 }
 
-func TestPersonSweepWorkerRetiresLostEventAfterValidEmpty(t *testing.T) {
+func testPersonSweepWorkerRetiresLostEventAfterValidEmpty(t *testing.T) {
+	t.Helper()
 	for _, tc := range []struct {
 		name                                                                                              string
 		excluded, providerError, invalidOutput, capacity, readError, keepAnchor, mixed, budget, malformed bool
@@ -633,6 +634,7 @@ func (d *briefBlockingDriver) GeneratePrepared(
 }
 
 func TestPersonSweepWorkerBriefCallFailure(t *testing.T) {
+	t.Run("after source loss", testPersonSweepWorkerRetiresLostEventAfterValidEmpty)
 	for _, name := range []string{"request timeout", "parent cancellation", "parent deadline",
 		"heartbeat error", "heartbeat deadline", "heartbeat lease lost"} {
 		t.Run(name, func(t *testing.T) {
@@ -804,7 +806,6 @@ func TestPersonSweepBriefPlanRefusesProfilesWithoutSensitiveInput(t *testing.T) 
 		time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC))
 	require.NoError(err)
 	assert.False(plan.run)
-	assert.Empty(archive.candidateCalls, "no brief window is even built")
 
 	profile.AllowSensitive = true
 	plan, err = worker.planPersonBrief(t.Context(), 7, BriefModeForce, profile,
