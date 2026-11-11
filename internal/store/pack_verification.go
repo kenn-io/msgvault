@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 
 	"go.kenn.io/kit/packstore"
 )
@@ -63,47 +62,35 @@ func (s *Store) BeginPackVerification(
 // listPackVerificationWindow fixes candidate hashes on the first listing and
 // rereads their current mappings on the second, under the maintenance lease.
 func (s *Store) listPackVerificationWindow(ctx context.Context, pass *PackVerificationPass, root string) ([]PackIndexEntry, error) {
+	if pass.selected {
+		if len(pass.hashes) == 0 {
+			return nil, nil
+		}
+		return s.listPackVerificationCandidates(ctx, pass.hashes)
+	}
+	hashes, err := s.packVerificationCandidates(ctx, root)
+	if err != nil {
+		return nil, err
+	}
 	var entries []PackIndexEntry
-	if !pass.selected {
-		hashes, err := s.packVerificationCandidates(ctx, root)
+	var bytes int64
+	for start := sort.Search(len(hashes), func(i int) bool { return hashes[i] > pass.start }); start < len(hashes) && !pass.more; start += 256 {
+		batch, err := s.listPackVerificationCandidates(ctx, hashes[start:min(start+256, len(hashes))])
 		if err != nil {
 			return nil, err
 		}
-		var bytes int64
-		start := sort.Search(len(hashes), func(i int) bool { return hashes[i] > pass.start })
-		for start < len(hashes) {
-			end := min(start+256, len(hashes))
-			batch, err := s.listPackVerificationCandidates(ctx, hashes[start:end])
-			if err != nil {
-				return nil, err
-			}
-			for _, entry := range batch {
-				if len(entries) >= pass.maxEntries || (len(entries) > 0 && entry.RawLen > pass.maxBytes-bytes) {
-					pass.more = true
-					break
-				}
-				entries = append(entries, entry)
-				pass.hashes = append(pass.hashes, entry.BlobHash)
-				pass.end = entry.BlobHash
-				bytes += entry.RawLen
-			}
-			if pass.more {
+		for _, entry := range batch {
+			if len(entries) >= pass.maxEntries || (len(entries) > 0 && entry.RawLen > pass.maxBytes-bytes) {
+				pass.more = true
 				break
 			}
-			start = end
-		}
-		pass.selected = true
-		return entries, nil
-	}
-	for _, hash := range pass.hashes {
-		entry, err := s.GetAttachmentPackEntry(ctx, hash)
-		if err != nil {
-			return nil, err
-		}
-		if entry != nil {
-			entries = append(entries, *entry)
+			entries = append(entries, entry)
+			pass.hashes = append(pass.hashes, entry.BlobHash)
+			pass.end = entry.BlobHash
+			bytes += entry.RawLen
 		}
 	}
+	pass.selected = true
 	return entries, nil
 }
 
@@ -114,7 +101,7 @@ func (s *Store) listPackVerificationCandidates(ctx context.Context, hashes []str
 		args[i] = hash
 	}
 	query := `SELECT blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c
-		FROM attachment_pack_index WHERE blob_hash IN (` + strings.TrimSuffix(strings.Repeat("?,", len(hashes)), ",") + `) ORDER BY blob_hash`
+		FROM attachment_pack_index WHERE blob_hash IN (` + placeholders(len(hashes)) + `) ORDER BY blob_hash`
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list pack verification candidates: %w", err)
