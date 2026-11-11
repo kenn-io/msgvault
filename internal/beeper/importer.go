@@ -205,7 +205,7 @@ func resumeState(prev, cp *store.SyncRun, full bool) (*SyncState, error) {
 	load := func(blob string) (*SyncState, error) {
 		state, err := LoadSyncState(blob)
 		if err != nil && full {
-			return NewSyncState(), nil //nolint:nilerr // A full sync rebuilds unreadable progress.
+			return NewSyncState(), nil
 		}
 		if err != nil {
 			return nil, fmt.Errorf("unreadable Beeper sync progress; run msgvault sync-beeper --full: %w", err)

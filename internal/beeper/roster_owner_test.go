@@ -175,11 +175,12 @@ func TestRosterResumeRechecksOwnerOfSettledPrefix(t *testing.T) {
 	detail, err := imp.client.GetChat(t.Context(), chat.ID)
 	require.NoError(err)
 	work := &rosterWork{}
+	//nolint:dogsled // Only the interruption matters.
 	_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work, ShouldStop: func() bool {
 		var count int
 		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM source_import_items WHERE source_id = ? AND provider = ?`), sourceID, rosterProvider(chat.ID)).Scan(&count))
 		return count >= 1
-	}}, &ImportSummary{}) //nolint:dogsled // Only the interruption matters.
+	}}, &ImportSummary{})
 	require.ErrorIs(err, errBeeperBudgetExpired)
 	_, err = newParticipantResolver(st, "signal").resolveUser(t.Context(), &User{ID: "@signal_a:example.test", PhoneNumber: "+12025550124"})
 	require.NoError(err)
