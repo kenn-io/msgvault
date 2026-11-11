@@ -20,7 +20,7 @@ func newImportSignalExportCmd() *cobra.Command {
 		Long: `Import standard messages and available local media from a native Signal
 readable directory (metadata.json version 1, main.jsonl, optional files/).
 
-The export does not provide an owner phone or ACI.
+No owner phone or account ID is included.
 Re-running adds missing history and retries missing media. First archived
 text and raw messages remain unchanged, including after edits. Unsupported
 items, nested features and missing media are counted. No history completeness

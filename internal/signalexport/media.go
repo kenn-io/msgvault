@@ -31,20 +31,20 @@ func verifiedMedia(ctx context.Context, r *reader, p *filePointer, limit int64, 
 	rel := "files/" + hash[:2] + "/" + name
 	info, err := r.root.Lstat(rel)
 	if err != nil || !info.Mode().IsRegular() {
-		return nil, nil, "unsafe_or_nonregular", nil
+		return nil, nil, "unsafe_or_nonregular", nil //nolint:nilerr // Unavailable export media is counted and retried instead of failing the import.
 	}
 	if info.Size() > limit {
 		return nil, nil, "oversized", nil
 	}
 	f, err := r.root.Open(rel)
 	if err != nil {
-		return nil, nil, "missing_or_unsafe", nil
+		return nil, nil, "missing_or_unsafe", nil //nolint:nilerr // Unavailable export media is counted and retried instead of failing the import.
 	}
 	if !long {
 		src, err := contentverify.NewReadCloser(f, hash)
 		if err != nil {
 			_ = f.Close()
-			return nil, nil, "invalid_hash", nil
+			return nil, nil, "invalid_hash", nil //nolint:nilerr // Invalid export media is counted and retried instead of failing the import.
 		}
 		return src, nil, "", nil
 	}
@@ -57,7 +57,7 @@ func verifiedMedia(ctx context.Context, r *reader, p *filePointer, limit int64, 
 		return nil, nil, "oversized", nil
 	}
 	if err := contentverify.VerifyBytes(data, hash); err != nil {
-		return nil, nil, "hash_mismatch", nil
+		return nil, nil, "hash_mismatch", nil //nolint:nilerr // Corrupt export media is counted and retried instead of failing the import.
 	}
 	return io.NopCloser(bytes.NewReader(data)), data, "", nil
 }
@@ -97,11 +97,11 @@ func mediaWrites(ctx context.Context, st *store.Store, r *reader, messageID int6
 	if needRaw {
 		raw, err := st.GetMessageRawContext(ctx, messageID)
 		if err != nil {
-			return "", nil, false, fmt.Errorf("read archived Signal media pointers: %w", err)
+			return "", nil, false, fmt.Errorf("read saved attachment details: %w", err)
 		}
 		var old chatItem
 		if err := json.Unmarshal(raw, &old); err != nil {
-			return "", nil, false, fmt.Errorf("decode archived Signal media pointers: %w", err)
+			return "", nil, false, fmt.Errorf("read saved attachment details: %w", err)
 		}
 		if old.Standard != nil {
 			for i, a := range old.Standard.Attachments {

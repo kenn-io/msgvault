@@ -290,18 +290,19 @@ func TestIntegration(t *testing.T) {
 }
 
 func TestSignalExportTextConsumers(t *testing.T) {
+	require := require.New(t)
 	ctx := t.Context()
 	dbPath := filepath.Join(t.TempDir(), "signal.db")
 	st, err := store.Open(dbPath)
-	require.NoError(t, err)
+	require.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(t, st.InitSchema())
+	require.NoError(st.InitSchema())
 	_, err = signalexport.Import(ctx, st, signalexport.ImportOptions{RootDir: "../signalexport/testdata/native-v1", Account: "fictional", AttachmentsDir: t.TempDir()})
-	require.NoError(t, err)
+	require.NoError(err)
 	engine := query.NewSQLiteEngine(st.DB())
 	conversations, err := engine.ListConversations(ctx, query.TextFilter{})
-	require.NoError(t, err)
-	require.Len(t, conversations, 3)
+	require.NoError(err)
+	require.Len(conversations, 3)
 	for _, conversation := range conversations {
 		assert.EqualValues(t, 1, conversation.MessageCount)
 	}

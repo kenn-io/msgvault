@@ -217,7 +217,7 @@ func (r *reader) frame(b []byte, visit func(*chatItem, []byte, int) error) error
 			}
 			if rec.Self != nil {
 				if p.key != "self" {
-					return errors.New("Self recipient has conflicting destinations")
+					return errors.New("self recipient has conflicting destinations")
 				}
 				if r.self != "" && r.self != rec.ID {
 					return errors.New("multiple Self recipients")
@@ -290,7 +290,7 @@ func (r *reader) mediaName(ctx context.Context, hash string) (string, string, er
 	if err != nil {
 		return "", "missing_or_unsafe", nil
 	}
-	defer d.Close()
+	defer func() { _ = d.Close() }()
 	m := map[string]string{}
 	match := ""
 	found := false

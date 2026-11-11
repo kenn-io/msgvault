@@ -26,3 +26,6 @@ internal/vector/sqlitevec/vec1/vec1.c -text whitespace=-blank-at-eol,-blank-at-e
 
 # The MCP server embeds and declares these exact image bytes.
 internal/mcp/assets/*.png binary
+
+# Signal media fixtures use the plaintext hash of the exact archived bytes.
+internal/signalexport/testdata/native-v1/files/** -text
