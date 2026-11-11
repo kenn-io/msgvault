@@ -30,7 +30,7 @@ func (b *daemonMCPOperations) executeDeletionReviewOperation(ctx context.Context
 			Status *string `json:"status,omitempty"`
 		}](args)
 		if err != nil {
-			return operationFailure("invalid_arguments", false), true, nil
+			return operationFailure("invalid_arguments", false), true, nil //nolint:nilerr // Invalid arguments become a fixed structured tool refusal.
 		}
 		result, err := readMCPOperationJSONWithClassifier[generated.ListDeletionsResponse](ctx, b.client, http.MethodGet, "/api/v1/deletions", &generated.ListDeletionsRequestOptions{Query: &generated.ListDeletionsQuery{Status: input.Status}}, classify, http.StatusOK)
 		return result, true, err
@@ -39,10 +39,10 @@ func (b *daemonMCPOperations) executeDeletionReviewOperation(ctx context.Context
 			BatchID string `json:"batch_id"`
 		}](args)
 		if err != nil {
-			return operationFailure("invalid_arguments", false), true, nil
+			return operationFailure("invalid_arguments", false), true, nil //nolint:nilerr // Invalid arguments become a fixed structured tool refusal.
 		}
 		if deletion.ValidateManifestID(input.BatchID) != nil {
-			return operationFailure("invalid_manifest_id", false), true, nil
+			return operationFailure("invalid_manifest_id", false), true, nil //nolint:nilerr // Invalid IDs become a fixed structured tool refusal.
 		}
 		result, err := readMCPOperationJSONWithClassifier[generated.DeletionManifestDetail](ctx, b.client, http.MethodGet, "/api/v1/deletions/{id}", &generated.GetDeletionRequestOptions{PathParams: &generated.GetDeletionPath{ID: input.BatchID}}, classify, http.StatusOK)
 		return result, true, err
