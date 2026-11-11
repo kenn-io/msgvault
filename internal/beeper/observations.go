@@ -96,7 +96,8 @@ func (r *observationRecorder) capture(
 	if bridgePrefix == "" {
 		bridgePrefix = cc.BridgePrefix
 	}
-	service, _, err := r.services.resolveBridge(ctx, cc.AccountID, cc.Network, bridgePrefix)
+	service, _, err := r.services.resolveBridge(
+		ctx, cc.AccountID, cc.Network, bridgePrefix)
 	if err != nil {
 		return nil, err
 	}

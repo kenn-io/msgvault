@@ -528,7 +528,7 @@ func TestRosterCleanupResumesAgainstChangedSnapshot(t *testing.T) {
 		require.NoError(err)
 		return count <= 48
 	}}
-	_, _, _, err = imp.ensureRosterWork(t.Context(), 0, sum.SourceID, detail, opts, &ImportSummary{}) //nolint:dogsled // Only the stop error is needed.
+	_, _, _, err = imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, opts, &ImportSummary{}) //nolint:dogsled // Only the stop error is needed.
 	require.ErrorIs(err, errBeeperBudgetExpired)
 	assert.Len(rosterMembers(t, st, sum.SourceID, chat.ID), 48)
 	unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
@@ -540,7 +540,7 @@ func TestRosterCleanupResumesAgainstChangedSnapshot(t *testing.T) {
 	detail, err = imp.client.GetChat(t.Context(), chat.ID)
 	require.NoError(err)
 	imp = NewImporter(st, imp.client)
-	_, complete, _, err := imp.ensureRosterWork(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
+	_, complete, _, err := imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
 	require.NoError(err)
 	assert.True(complete)
 	members := rosterMembers(t, st, sum.SourceID, chat.ID)
@@ -578,7 +578,7 @@ func TestRosterResumeUsesArchivedBindingsAfterCheckpointLossAndJoin(t *testing.T
 	t.Cleanup(func() { slog.SetDefault(previous) })
 	imp = NewImporter(st, imp.client)
 	opts := ImportOptions{AccountID: "signal", ShouldStop: func() bool { return handler.begins >= 20 }}
-	_, complete, _, err := imp.ensureRosterWork(t.Context(), 0, sum.SourceID, detail, opts, &ImportSummary{})
+	_, complete, _, err := imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, opts, &ImportSummary{})
 	require.ErrorIs(err, errBeeperBudgetExpired)
 	assert.True(complete)
 	assert.Len(rosterMembers(t, st, sum.SourceID, chat.ID), 65)

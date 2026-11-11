@@ -6154,12 +6154,15 @@ func replaceConversationParticipantsTx(
 		WHERE conversation_id = ? AND participant_id IN (%s)`); err != nil {
 		return err
 	}
-	upserts := make([]ConversationParticipantRef, 0, len(ids))
-	for _, id := range ids {
-		upserts = append(upserts, ConversationParticipantRef{ParticipantID: id, Role: desired[id]})
-	}
-	if err := mergeConversationParticipantsWith(q, dialect, conversationID, upserts); err != nil {
-		return err
+	for _, participantID := range ids {
+		if _, err := q.Exec(fmt.Sprintf(`
+			INSERT INTO conversation_participants (conversation_id, participant_id, role, joined_at)
+			VALUES (?, ?, ?, %s)
+			ON CONFLICT (conversation_id, participant_id) DO UPDATE SET role = excluded.role
+			WHERE conversation_participants.role IS DISTINCT FROM excluded.role`, dialect.Now()),
+			conversationID, participantID, desired[participantID]); err != nil {
+			return err
+		}
 	}
 	return consolidateConversationParticipantJournal(q, dialect, conversationID, journalBefore)
 }

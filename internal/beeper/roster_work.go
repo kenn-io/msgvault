@@ -103,10 +103,10 @@ func (imp *Importer) matchRosterMembers(ctx context.Context, sourceID int64, pro
 			status = rosterMatchFailed
 		}
 		if receipt.Status != status {
-			if err := imp.store.SetBeeperRosterMatchFailureContext(ctx, sourceID, provider, key, receipt.Checksum, status); err != nil {
+			receipt.Status = status
+			if err := imp.store.UpsertSourceImportItem(ctx, receipt); err != nil {
 				return err
 			}
-			receipt.Status = status
 			receipts[key] = receipt
 		}
 		work.Next = i + 1
@@ -297,7 +297,11 @@ func (imp *Importer) publishRosterEvidence(ctx context.Context, convID int64, ev
 	return imp.store.SetConversationMessagingRouteEvidence(ctx, convID, evidence)
 }
 
-func (imp *Importer) rosterOwnersSettled(ctx context.Context, sourceID int64, provider string, detail *Chat, items []Participant, keys []string, owners map[string]int64, accountID string) (bool, error) {
+func (imp *Importer) refreshRosterProof(ctx context.Context, sourceID, convID int64, provider string, detail *Chat, items []Participant, keys []string, accountID string, evidence store.MessagingRouteEvidence, membership chatMembership) (bool, error) {
+	owners, err := imp.store.BeeperRosterOwnersContext(ctx, keys)
+	if err != nil {
+		return false, err
+	}
 	receipts, err := imp.store.BeeperRosterReceiptsContext(ctx, sourceID, provider)
 	if err != nil {
 		return false, err
@@ -311,18 +315,6 @@ func (imp *Importer) rosterOwnersSettled(ctx context.Context, sourceID int64, pr
 		if owners[key] == 0 || receipts[key].Checksum != store.BeeperRosterReceiptChecksum(inputs, owners[key]) {
 			return false, nil
 		}
-	}
-	return true, nil
-}
-
-func (imp *Importer) refreshRosterProof(ctx context.Context, sourceID, convID int64, provider string, detail *Chat, items []Participant, keys []string, accountID string, evidence store.MessagingRouteEvidence, membership chatMembership) (bool, error) {
-	owners, err := imp.store.BeeperRosterOwnersContext(ctx, keys)
-	if err != nil {
-		return false, err
-	}
-	settled, err := imp.rosterOwnersSettled(ctx, sourceID, provider, detail, items, keys, owners, accountID)
-	if err != nil || !settled {
-		return false, err
 	}
 	return true, imp.publishRosterEvidence(ctx, convID, evidence, items, keys, owners, membership)
 }

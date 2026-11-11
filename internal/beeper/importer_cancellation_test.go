@@ -149,7 +149,7 @@ func TestEnsureConversationCancellation(t *testing.T) {
 				return work.Phase == "matching" && when(record)
 			})
 			sum := &ImportSummary{}
-			_, complete, _, err := imp.ensureRosterWork(
+			_, complete, _, err := imp.ensureConversation(
 				ctx, 0, sourceID, detail, ImportOptions{AccountID: "telegram", rosterState: work}, sum,
 			)
 			require.ErrorIs(ctx.Err(), context.Canceled, "the classification boundary must be reached")
@@ -221,7 +221,7 @@ func TestEnsureConversationCancellationDuringMembership(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			handler := installCancelOnLog(t, cancel, at, logMessage("sql tx begin"))
-			_, complete, _, err := imp.ensureRosterWork(ctx, 0, sourceID, &Chat{
+			_, complete, _, err := imp.ensureConversation(ctx, 0, sourceID, &Chat{
 				ID: "!cancel:example.com", Type: "group", Title: "Members", Network: "Telegram",
 				Participants: ChatParticipants{Items: participants},
 			}, ImportOptions{AccountID: "telegram"}, &ImportSummary{})
@@ -261,7 +261,7 @@ func TestEnsureConversationCancellationDuringPartialRoster(t *testing.T) {
 	defer cancel()
 	handler := installCancelOnLog(t, cancel, 4, logMessage("sql tx commit"))
 	sum := &ImportSummary{}
-	_, complete, _, err := imp.ensureRosterWork(ctx, syncID, sourceID, &Chat{
+	_, complete, _, err := imp.ensureConversation(ctx, syncID, sourceID, &Chat{
 		ID: chatID, Type: "group", Title: "Partial", Network: "Telegram",
 		Participants: ChatParticipants{Items: participants, HasMore: true},
 	}, ImportOptions{AccountID: "telegram"}, sum)
@@ -285,7 +285,7 @@ func TestEnsureConversationCancellationAtEntry(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	handler := installCancelOnLog(t, cancel, 0, logMessage(""))
-	_, complete, _, err := imp.ensureRosterWork(ctx, 0, sourceID, &Chat{
+	_, complete, _, err := imp.ensureConversation(ctx, 0, sourceID, &Chat{
 		ID: "!cancel:example.com", Type: "group", Title: "Members",
 		Participants: ChatParticipants{HasMore: true},
 	}, ImportOptions{AccountID: "telegram"}, &ImportSummary{})

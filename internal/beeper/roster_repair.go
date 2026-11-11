@@ -130,7 +130,7 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 	}
 	opts.rosterState = cs.RosterWork
 	opts.rosterDetailFetched = true
-	conversationID, complete, _, err := imp.ensureRosterWork(ctx, syncID, sourceID, detail, opts, &ImportSummary{})
+	conversationID, complete, _, err := imp.ensureConversation(ctx, syncID, sourceID, detail, opts, &ImportSummary{})
 	err = imp.finishQuietRosterStep(ctx, opts, conversationID, complete, err)
 	if errors.Is(err, errBeeperBudgetExpired) {
 		return true, nil

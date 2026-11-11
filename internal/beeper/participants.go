@@ -175,14 +175,9 @@ func (r *participantResolver) forgetUser(userID string) {
 	delete(r.fallback, key)
 }
 
+// rememberRosterOwner skips owners merged away during this run.
 func (r *participantResolver) rememberRosterOwner(userID string, owner int64) {
 	r.forgetUser(userID)
-	r.cacheRosterOwner(userID, owner)
-}
-
-// cacheRosterOwner skips an owner merged away this run. The next lookup then
-// reads the identifier's current owner, so a reused row ID is never translated.
-func (r *participantResolver) cacheRosterOwner(userID string, owner int64) {
 	if !r.mergedAway[owner] {
 		r.fallback[r.identifierForUser(userID)] = owner
 	}

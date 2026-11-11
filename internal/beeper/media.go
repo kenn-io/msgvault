@@ -516,7 +516,7 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 	// Import loads its cursor_after as the resume baseline — so carry the
 	// existing sync state forward verbatim or the next sync would restart
 	// from scratch.
-	state, err := imp.loadResumeState(ctx, src.ID)
+	state, err := imp.loadResumeState(ctx, src.ID, false)
 	if err != nil {
 		return nil, err
 	}

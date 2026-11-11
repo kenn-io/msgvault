@@ -317,7 +317,7 @@ func TestFullImportRecoversUnreadableProgressAndVerifiesArchive(t *testing.T) {
 			defer done()
 			sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
 			require.NoError(err)
-			state, err := imp.loadResumeState(t.Context(), sum.SourceID)
+			state, err := imp.loadResumeState(t.Context(), sum.SourceID, false)
 			require.NoError(err)
 			require.NotEmpty(state.Anchors)
 			const blob = "{"

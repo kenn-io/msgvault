@@ -104,7 +104,7 @@ func TestMergeSourcesRestartsBeeperRepairForMovedHistory(t *testing.T) {
 			applied, err = st.IsMigrationAppliedContext(t.Context(), ledgerKey, 1)
 			require.NoError(err)
 			assert.False(applied, "committed merge invalidates completed repairs")
-			progress, err := NewImporter(st, nil).loadResumeState(t.Context(), live.ID)
+			progress, err := NewImporter(st, nil).loadResumeState(t.Context(), live.ID, false)
 			require.NoError(err)
 			require.Contains(progress.Chats, "!live:example.test")
 			assert.Equal("provider-checkpoint", progress.Chats["!live:example.test"].Newest)

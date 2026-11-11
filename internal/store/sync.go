@@ -467,14 +467,6 @@ func (s *Store) DeleteBeeperRosterReceiptsContext(ctx context.Context, sourceID 
 	})
 }
 
-// SetBeeperRosterMatchFailureContext records retryable matching failures.
-func (s *Store) SetBeeperRosterMatchFailureContext(ctx context.Context, sourceID int64, provider, identifier, checksum, status string) error {
-	return s.withSyncSourceWriteContext(ctx, sourceID, func(q querier) error {
-		_, err := q.Exec(`UPDATE source_import_items SET status = ? WHERE source_id = ? AND provider = ? AND provider_id = ? AND checksum = ? AND status <> ?`, status, sourceID, provider, identifier, checksum, status)
-		return err
-	})
-}
-
 // StartSync creates a new sync run record and returns its ID. It first takes a
 // non-blocking execution lock for the source and holds that lock until the run
 // completes or fails. SQLite uses an OS file lock; PostgreSQL uses a session

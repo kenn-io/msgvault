@@ -194,16 +194,10 @@ func (imp *Importer) scopedToSync(sourceID, syncID int64) *Importer {
 // loadResumeState rebuilds the sync state for a source: the last successful
 // run's cursor blob (baseline) merged with the latest interrupted checkpoint,
 // so a resumed run skips already-covered work.
-func (imp *Importer) loadResumeState(ctx context.Context, sourceID int64) (*SyncState, error) {
+func (imp *Importer) loadResumeState(ctx context.Context, sourceID int64, full bool) (*SyncState, error) {
 	prev, _ := imp.store.GetLastSuccessfulSyncContext(ctx, sourceID)
 	cp, _ := imp.store.GetLatestCheckpointedSync(sourceID)
-	return resumeState(prev, cp, false)
-}
-
-func (imp *Importer) loadFullResumeState(ctx context.Context, sourceID int64) (*SyncState, error) {
-	prev, _ := imp.store.GetLastSuccessfulSyncContext(ctx, sourceID)
-	cp, _ := imp.store.GetLatestCheckpointedSync(sourceID)
-	return resumeState(prev, cp, true)
+	return resumeState(prev, cp, full)
 }
 
 func resumeState(prev, cp *store.SyncRun, full bool) (*SyncState, error) {
@@ -245,8 +239,12 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		return nil, errors.New("beeper account ID required")
 	}
 	// The CLI and scheduler reuse one Importer across Beeper accounts. These
-	// Caches cannot cross accounts without hiding source-specific work.
-	// The selected account is authoritative for Beeper fallback identifiers.
+	// caches only suppress repeated work inside one account import; carrying
+	// them into the next account can hide source-specific observations and
+	// matching work.
+	// The selected import account is authoritative for all Beeper user-ID
+	// fallback identifiers, including message senders, mentions, and
+	// reactions. Do not use the account field echoed in a remote chat payload.
 	imp.res = newParticipantResolver(imp.store, opts.AccountID)
 	imp.obs = newObservationRecorder(imp.store)
 	imp.matcher = newIdentityMatcher(imp.store)
@@ -256,11 +254,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	}
 	sum = &ImportSummary{SourceID: src.ID}
 
-	load := imp.loadResumeState
-	if opts.Full {
-		load = imp.loadFullResumeState
-	}
-	state, err := load(ctx, src.ID)
+	state, err := imp.loadResumeState(ctx, src.ID, opts.Full)
 	if err != nil {
 		return nil, err
 	}
@@ -839,7 +833,7 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 	opts.skipRoster = !cs.RosterWork.MemberFirst
 	cs.RosterWork.MemberFirst = !cs.RosterWork.MemberFirst
 	before := sum.MessagesProcessed
-	convID, membershipComplete, membership, err := imp.ensureRosterWork(
+	convID, membershipComplete, membership, err := imp.ensureConversation(
 		ctx, syncID, sourceID, ch, opts, sum,
 	)
 	defer func() {
@@ -1008,7 +1002,7 @@ func (m chatMembership) policyCount(policy attachmentpolicy.Policy) int {
 // when there is none and the list is incomplete — so backfill and purge
 // evaluate the same membership rather than the participant rows, which a
 // truncated listing undercounts.
-func (imp *Importer) ensureRosterWork(
+func (imp *Importer) ensureConversation(
 	ctx context.Context, syncID, sourceID int64, ch *Chat, opts ImportOptions, sum *ImportSummary,
 ) (int64, bool, chatMembership, error) {
 	listingSignature := rosterSignature(ch, opts.AccountID)
@@ -1053,10 +1047,13 @@ func (imp *Importer) ensureRosterWork(
 	if err != nil {
 		return 0, false, chatMembership{}, err
 	}
+	// Keep the resolver tied to the import option, not to any account value
+	// echoed by the remote chat payload. This also covers direct callers of
+	// ensureConversation that do not go through Import's cache reset.
 	imp.res.accountID = opts.AccountID
 	imp.res.useMessageRoster(detail.Participants.Items, opts.skipRoster)
 	routeEvidence := routeEvidenceFor(detail, opts)
-	if ch.AccountID != opts.AccountID || detail.AccountID != opts.AccountID {
+	if ch.AccountID != opts.AccountID {
 		routeEvidence.Failure = "account_binding_mismatch"
 	}
 	routeEvidence.ChatID = ch.ID
@@ -1130,12 +1127,7 @@ func (imp *Importer) ensureRosterWork(
 		if err != nil {
 			return convID, false, membership, err
 		}
-		if settled {
-			work.Phase = "matching"
-			work.Next = 0
-			imp.obs = newObservationRecorder(imp.store)
-			imp.matcher = newIdentityMatcher(imp.store)
-		} else {
+		if !settled {
 			work.Phase = "members"
 			work.Next = 0
 			work.Verified = false
@@ -1204,6 +1196,8 @@ func (imp *Importer) ensureRosterWork(
 		work.Phase = "matching"
 		work.Next = 0
 	}
+	// Membership must be visible before matching. The roster supplies contact
+	// details used to gather shared-conversation evidence for new candidates.
 	if work.Phase == "matching" || work.Phase == "matching_retry" {
 		if err := imp.matchRosterMembers(ctx, sourceID, provider, detail, items, opts, bridgePrefix, work, sum); err != nil {
 			return convID, work.Verified, membership, err

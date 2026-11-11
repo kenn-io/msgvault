@@ -62,7 +62,7 @@ func TestRosterReceiptCleanupResumes(t *testing.T) {
 		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM source_import_items WHERE source_id = ? AND provider = ?`), sourceID, rosterProvider(chat.ID)).Scan(&n))
 		return n
 	}
-	_, complete, _, err := imp.ensureRosterWork(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
+	_, complete, _, err := imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
 	require.NoError(err)
 	assert.True(complete)
 	assert.Equal(22, count())
@@ -72,7 +72,7 @@ func TestRosterReceiptCleanupResumes(t *testing.T) {
 	detail, err = imp.client.GetChat(t.Context(), chat.ID)
 	require.NoError(err)
 	work = &rosterWork{}
-	_, complete, _, err = imp.ensureRosterWork(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work, ShouldStop: func() bool {
+	_, complete, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work, ShouldStop: func() bool {
 		return work.Phase == "cleanup" && count() <= 6
 	}}, &ImportSummary{})
 	require.ErrorIs(err, errBeeperBudgetExpired)
@@ -82,7 +82,7 @@ func TestRosterReceiptCleanupResumes(t *testing.T) {
 	require.NoError(err)
 	imp = NewImporter(st, imp.client)
 	sum := &ImportSummary{}
-	_, complete, _, err = imp.ensureRosterWork(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, sum)
+	_, complete, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, sum)
 	require.NoError(err)
 	assert.True(complete)
 	assert.Equal(4, count())
@@ -112,7 +112,7 @@ func TestRosterMatchingRetriesFailedMember(t *testing.T) {
 	require.NoError(err)
 	work := &rosterWork{}
 	sum := &ImportSummary{}
-	_, complete, _, err := imp.ensureRosterWork(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "telegram", rosterState: work, ShouldStop: func() bool { return work.Phase == "matching" && work.Next >= 2 }}, sum)
+	_, complete, _, err := imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "telegram", rosterState: work, ShouldStop: func() bool { return work.Phase == "matching" && work.Next >= 2 }}, sum)
 	require.ErrorIs(err, errBeeperBudgetExpired)
 	assert.True(complete)
 	assert.Positive(sum.Errors)
@@ -120,7 +120,7 @@ func TestRosterMatchingRetriesFailedMember(t *testing.T) {
 	observations, err := st.ListParticipantObservationsContext(t.Context(), second, true)
 	require.NoError(err)
 	assert.NotEmpty(observations, "a failed member must not block later matching")
-	_, complete, _, err = imp.ensureRosterWork(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "telegram", rosterState: work}, &ImportSummary{})
+	_, complete, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "telegram", rosterState: work}, &ImportSummary{})
 	require.NoError(err)
 	assert.True(complete)
 	assert.Equal("matching_retry", work.Phase)
@@ -147,7 +147,7 @@ func TestRosterMatchingRetriesFailedMember(t *testing.T) {
 	observations, err = st.ListParticipantObservationsContext(t.Context(), third, true)
 	require.NoError(err)
 	assert.NotEmpty(observations, "later matching advances before retrying the failure")
-	_, complete, _, err = imp.ensureRosterWork(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "telegram", rosterState: work}, &ImportSummary{})
+	_, complete, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "telegram", rosterState: work}, &ImportSummary{})
 	require.NoError(err)
 	assert.True(complete)
 	observations, err = st.ListParticipantObservationsContext(t.Context(), first, true)
@@ -168,7 +168,7 @@ func TestRosterResumeRevisitsChangedMember(t *testing.T) {
 	require.NoError(err)
 	work := &rosterWork{}
 	//nolint:dogsled // Only the stop matters here.
-	_, _, _, err = imp.ensureRosterWork(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work, ShouldStop: func() bool {
+	_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work, ShouldStop: func() bool {
 		return len(rosterMembers(t, st, sourceID, chat.ID)) == 1
 	}}, &ImportSummary{})
 	require.ErrorIs(err, errBeeperBudgetExpired)
@@ -181,7 +181,7 @@ func TestRosterResumeRevisitsChangedMember(t *testing.T) {
 	detail, err = imp.client.GetChat(t.Context(), chat.ID)
 	require.NoError(err)
 	imp = NewImporter(st, imp.client)
-	_, complete, _, err := imp.ensureRosterWork(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
+	_, complete, _, err := imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
 	require.NoError(err)
 	assert.True(complete)
 	assert.Contains(rosterMembers(t, st, sourceID, chat.ID), winner)
@@ -204,7 +204,7 @@ func TestRosterJoinRefreshesSettledMatchAfterStop(t *testing.T) {
 	require.NoError(err)
 	work := &rosterWork{}
 	//nolint:dogsled // Only the stop matters here.
-	_, _, _, err = imp.ensureRosterWork(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: work, ShouldStop: func() bool {
+	_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: work, ShouldStop: func() bool {
 		return (work.Phase == "matching" || work.Phase == "cleanup") && work.Next >= 1
 	}}, &ImportSummary{})
 	require.ErrorIs(err, errBeeperBudgetExpired)
@@ -217,7 +217,7 @@ func TestRosterJoinRefreshesSettledMatchAfterStop(t *testing.T) {
 	detail, err = imp.client.GetChat(t.Context(), chat.ID)
 	require.NoError(err)
 	imp = NewImporter(st, imp.client)
-	_, _, _, err = imp.ensureRosterWork(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: work}, &ImportSummary{}) //nolint:dogsled // Only matching evidence matters here.
+	_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: work}, &ImportSummary{}) //nolint:dogsled // Only matching evidence matters here.
 	require.NoError(err)
 	candidate, err := st.GetIdentityMatchCandidateContext(t.Context(), candidates[0].ID)
 	require.NoError(err)
@@ -228,7 +228,7 @@ func TestRosterJoinRefreshesSettledMatchAfterStop(t *testing.T) {
 	assert.True(found, "a settled candidate gains evidence when a member joins")
 }
 
-func TestRosterUnchangedVisitRestoresObservationsWithoutReceiptWrites(t *testing.T) {
+func TestRosterUnchangedVisitSkipsMatching(t *testing.T) {
 	require := require.New(t)
 	f := newFakeBeeper(t)
 	chat := observationChat("telegram", "Telegram", "@telegram_alice:example.test", map[string]any{"id": "@self:example.test", "isSelf": true}, map[string]any{"id": "@telegram_alice:example.test", "username": "alice", "phoneNumber": "+12025550123"})
@@ -250,10 +250,12 @@ func TestRosterUnchangedVisitRestoresObservationsWithoutReceiptWrites(t *testing
 		}
 	}
 	require.NoError(err)
+	f.appendMsg(chat.ID, fakeMsg{ID: "unchanged-visit", SortKey: 99, Timestamp: time.Now(), Text: "new", SenderID: "@telegram_alice:example.test"})
 	imp = NewImporter(st, imp.client)
 	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "telegram", NoMedia: true})
 	require.NoError(err)
-	require.Positive(sum.ObservationsRecorded, "a later visit restores deleted observations")
+	require.Positive(sum.MessagesAdded, "the unchanged roster was revisited")
+	require.Zero(sum.ObservationsRecorded, "an unchanged roster skips matching")
 }
 
 func TestRosterVerificationRechecksChangedSnapshot(t *testing.T) {
@@ -278,13 +280,13 @@ func TestRosterVerificationRechecksChangedSnapshot(t *testing.T) {
 				f.mu.Unlock()
 				detail, err := imp.client.GetChat(t.Context(), chat.ID)
 				require.NoError(err)
-				_, _, _, err = imp.ensureRosterWork(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", rosterState: work, ShouldStop: func() bool { return len(rosterMembers(t, st, sum.SourceID, chat.ID)) == 3 }}, &ImportSummary{})
+				_, _, _, err = imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", rosterState: work, ShouldStop: func() bool { return len(rosterMembers(t, st, sum.SourceID, chat.ID)) == 3 }}, &ImportSummary{})
 				require.ErrorIs(err, errBeeperBudgetExpired)
 				remaining := rosterMembers(t, st, sum.SourceID, chat.ID)
 				f.mu.Lock()
 				chat.Participants = all[:2]
 				f.mu.Unlock()
-				_, complete, _, err := imp.ensureRosterWork(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
+				_, complete, _, err := imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
 				require.NoError(err)
 				assert.False(complete)
 				assert.Equal(remaining, rosterMembers(t, st, sum.SourceID, chat.ID))
@@ -296,11 +298,11 @@ func TestRosterVerificationRechecksChangedSnapshot(t *testing.T) {
 				f.mu.Lock()
 				chat.Participants = all[:1]
 				f.mu.Unlock()
-				_, complete, _, err := imp.ensureRosterWork(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
+				_, complete, _, err := imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
 				require.NoError(err)
 				assert.False(complete)
 				assert.Equal(before, rosterMembers(t, st, sum.SourceID, chat.ID))
-				_, complete, _, err = imp.ensureRosterWork(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
+				_, complete, _, err = imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
 				require.NoError(err)
 				assert.True(complete)
 				assert.Len(rosterMembers(t, st, sum.SourceID, chat.ID), 1)

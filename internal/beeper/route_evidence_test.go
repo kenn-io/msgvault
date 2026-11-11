@@ -780,7 +780,7 @@ func TestMessagingRouteRefreshInvalidatesIncompleteRoster(t *testing.T) {
 	ch.Participants.Total = 2
 	fake := &fakeChat{ID: ch.ID, AccountID: ch.AccountID, Type: ch.Type, Participants: []map[string]any{{"id": "@self:example.test", "isSelf": true}, {"id": "@avery:example.test", "fullName": "Avery Example"}}}
 	f.addChat(fake)
-	conv, _, _, err := imp.ensureRosterWork(t.Context(), 0, source.ID, ch, opts, &ImportSummary{})
+	conv, _, _, err := imp.ensureConversation(t.Context(), 0, source.ID, ch, opts, &ImportSummary{})
 	requirements.NoError(err)
 	peer, _, err := st.ParticipantByIdentifierContext(t.Context(), participantIdentifierType, imp.res.identifierForUser("@avery:example.test"))
 	requirements.NoError(err)
@@ -797,7 +797,7 @@ func TestMessagingRouteRefreshInvalidatesIncompleteRoster(t *testing.T) {
 	ch.Participants.HasMore = true
 	ch.Participants.Items = ch.Participants.Items[:1]
 	f.setChatGetFailure(ch.ID, true)
-	refreshed, _, _, err := imp.ensureRosterWork(t.Context(), 0, source.ID, ch, opts, &ImportSummary{})
+	refreshed, _, _, err := imp.ensureConversation(t.Context(), 0, source.ID, ch, opts, &ImportSummary{})
 	requirements.NoError(err)
 	assertions.Equal(conv, refreshed)
 	incomplete, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
@@ -812,7 +812,7 @@ func TestMessagingRouteRefreshInvalidatesIncompleteRoster(t *testing.T) {
 	f.mu.Lock()
 	fake.Participants = fake.Participants[:1]
 	f.mu.Unlock()
-	refreshed, _, _, err = imp.ensureRosterWork(t.Context(), 0, source.ID, ch, opts, &ImportSummary{})
+	refreshed, _, _, err = imp.ensureConversation(t.Context(), 0, source.ID, ch, opts, &ImportSummary{})
 	requirements.NoError(err)
 	assertions.Equal(conv, refreshed)
 	removed, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
@@ -860,7 +860,7 @@ func TestUnfinishedChatRosterFetchInterruptionInvalidatesMessagingRoute(t *testi
 					{ID: "@avery:example.test", FullName: "Avery Example"},
 				}
 				ch.Participants.Total = 2
-				_, _, _, err = imp.ensureRosterWork(t.Context(), 0, source.ID, ch, opts, &ImportSummary{})
+				_, _, _, err = imp.ensureConversation(t.Context(), 0, source.ID, ch, opts, &ImportSummary{})
 				requirements.NoError(err)
 				participantID := participantForBeeperUser(t, st, "@avery:example.test")
 				person, _, err := st.CreatePersonFromParticipant(participantID)
@@ -886,7 +886,7 @@ func TestUnfinishedChatRosterFetchInterruptionInvalidatesMessagingRoute(t *testi
 				} else {
 					opts.StopAt = time.Now().Add(500 * time.Millisecond)
 				}
-				_, _, _, err = imp.ensureRosterWork(ctx, 0, source.ID, ch, opts, &ImportSummary{})
+				_, _, _, err = imp.ensureConversation(ctx, 0, source.ID, ch, opts, &ImportSummary{})
 				if test.cancelContext {
 					requirements.ErrorIs(err, context.Canceled)
 				} else {
@@ -1059,7 +1059,7 @@ func TestResumedTailScanSkipsChatsAlreadyConfirmedGone(t *testing.T) {
 	mu.Unlock()
 	requirements.Len(confirmed, 1, "exactly one chat was confirmed gone before the budget expired")
 
-	state, err = imp.loadResumeState(t.Context(), source.ID)
+	state, err = imp.loadResumeState(t.Context(), source.ID, false)
 	requirements.NoError(err)
 	chats, second := enumerate(time.Minute)
 	assertions.False(second.Stopped)
