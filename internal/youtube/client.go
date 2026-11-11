@@ -100,9 +100,6 @@ type ownershipResult struct {
 
 func (c *Client) ownedChannel(ctx context.Context, channelID, cursor string, budget int) (ownershipResult, error) {
 	var found ownershipResult
-	if !validID(channelID) {
-		return found, errors.New("invalid YouTube channel ID")
-	}
 	for budget == 0 || found.requests < budget {
 		result, err := c.service.Channels.List([]string{"id", "snippet", "contentDetails"}).Mine(true).MaxResults(50).PageToken(cursor).Context(ctx).Do()
 		found.requests++
