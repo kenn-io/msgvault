@@ -573,7 +573,7 @@ func TestSearchMessageBodies_PostgreSQLSaturatedEditAndRebuild(t *testing.T) {
 	check("new@example.test", nil)
 	check("short@example.test", []int64{id})
 	var cleared bool
-	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), `SELECT search_fts_body IS NULL FROM messages WHERE id = $1`, id).Scan(&cleared))
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), `SELECT search_fts_fields IS NULL FROM messages WHERE id = $1`, id).Scan(&cleared))
 	assert.True(t, cleared)
 }
 
@@ -676,4 +676,26 @@ func createSearchScopeMessage(
 			messageID, "to", []int64{recipientID}, []string{"Recipient Needle"}), "ReplaceMessageRecipients(to)")
 	}
 	return messageID
+}
+
+func TestSearchPostgreSQLSaturatedSubjectPhrase(t *testing.T) {
+	f := storetest.New(t)
+	if !f.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL indexing")
+	}
+	id := createSearchScopeMessage(t, f, "saturated-subject-address", strings.Repeat("alice ", 300)+"alice@example.com", "", "ordinary body", 0, 0)
+	createSearchScopeMessage(t, f, "saturated-subject-separated", strings.Repeat("alice ", 300)+"alice extra example com", "", "ordinary body", 0, 0)
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(t, err)
+	engine := query.NewEngine(f.Store.DB(), true)
+	q := &search.Query{TextTerms: []string{"alice@example.com"}}
+	messages, err := engine.Search(t.Context(), q, 1, 0)
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	assert.Equal(t, id, messages[0].ID)
+	bodySearcher, ok := engine.(query.MessageBodySearcher)
+	require.True(t, ok)
+	result, err := bodySearcher.SearchMessageBodies(t.Context(), q, 10, 0)
+	require.NoError(t, err)
+	assert.Empty(t, result.Messages)
 }

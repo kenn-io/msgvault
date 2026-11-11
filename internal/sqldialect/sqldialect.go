@@ -66,31 +66,29 @@ func PostgreSQLSearchPredicate(arg string, terms []string) string {
 		if len(EscapeTSQueryTerm(term)) < 2 {
 			continue
 		}
-		// TSQuery contains only letters and digits, so it is safe to inline.
-		var metadata []string
-		for _, weight := range []string{"A", "B", "C"} {
-			metadata = append(metadata, TSQuery([]string{term}, weight))
+		var weighted []string
+		for _, weight := range []string{"A", "B", "C", "D"} {
+			weighted = append(weighted, TSQuery([]string{term}, weight))
 		}
-		body := TSQuery([]string{term}, "D")
 		canonical := CanonicalFTSText(term)
-		clauses = append(clauses, "(m.search_fts @@ to_tsquery('simple', '"+strings.Join(metadata, " | ")+"') OR (m.search_fts_body IS NULL AND m.search_fts @@ to_tsquery('simple', '"+body+"')) OR (m.search_fts_body IS NOT NULL AND strpos(' ' || m.search_fts_body, ' "+canonical+"') > 0))")
+		clauses = append(clauses, "((m.search_fts_fields IS NULL AND m.search_fts @@ to_tsquery('simple', '"+strings.Join(weighted, " | ")+"')) OR (m.search_fts_fields IS NOT NULL AND EXISTS (SELECT 1 FROM unnest(m.search_fts_fields) AS f(value) WHERE strpos(' ' || f.value, ' "+canonical+"') > 0)))")
 	}
 	return strings.Join(clauses, " AND ")
 }
 
-// PostgreSQLBodyPredicate confirms every term against a saturated body copy.
+// PostgreSQLBodyPredicate confirms every term against the body field.
 func PostgreSQLBodyPredicate(arg string, terms []string) string {
 	checks := []string{}
 	for _, term := range terms {
 		canonical := CanonicalFTSText(term)
 		if canonical != "" {
-			checks = append(checks, "strpos(' ' || m.search_fts_body, ' "+canonical+"') > 0")
+			checks = append(checks, "strpos(' ' || m.search_fts_fields[5], ' "+canonical+"') > 0")
 		}
 	}
 	if len(checks) == 0 {
 		return "FALSE"
 	}
-	return "(m.search_fts @@ to_tsquery('simple', " + arg + ") AND ((m.search_fts_body IS NULL AND m.search_fts @@ to_tsquery('simple', '" + TSQuery(terms, "D") + "')) OR (m.search_fts_body IS NOT NULL AND " + strings.Join(checks, " AND ") + ")))"
+	return "(m.search_fts @@ to_tsquery('simple', " + arg + ") AND ((m.search_fts_fields IS NULL AND m.search_fts @@ to_tsquery('simple', '" + TSQuery(terms, "D") + "')) OR (m.search_fts_fields IS NOT NULL AND " + strings.Join(checks, " AND ") + ")))"
 }
 
 // tokenSpans returns byte offsets of Unicode letter and digit runs.

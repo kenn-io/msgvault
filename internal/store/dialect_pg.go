@@ -413,7 +413,7 @@ func truncateBytesRuneSafe(s string) string {
 func (d *PostgreSQLDialect) FTSUpsert(q querier, doc FTSDoc) error {
 	vector, args := pgFTSVector(doc)
 	_, err := q.Exec(
-		`UPDATE messages SET search_fts = `+pgFTSMarked("v.vector")+`, search_fts_body = `+pgFTSBody("v.vector", "$7")+`,
+		`UPDATE messages SET search_fts = v.vector, search_fts_fields = `+pgFTSFields("v.vector", "ARRAY[$7, $8, $9, $10, $11]")+`,
 			indexing_version = `+strconv.Itoa(CurrentFTSIndexingVersion)+`
 		FROM (SELECT `+vector+` AS vector) v WHERE id = $1`,
 		args...,
@@ -426,8 +426,8 @@ func (d *PostgreSQLDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
 	vector, args := pgFTSVector(doc)
 	var matches bool
 	err := q.QueryRow(
-		`SELECT COALESCE(search_fts = `+pgFTSMarked("v.vector")+`
-			AND search_fts_body IS NOT DISTINCT FROM `+pgFTSBody("v.vector", "$7")+`
+		`SELECT COALESCE(search_fts = v.vector
+			AND search_fts_fields IS NOT DISTINCT FROM `+pgFTSFields("v.vector", "ARRAY[$7, $8, $9, $10, $11]")+`
 			AND indexing_version = `+strconv.Itoa(CurrentFTSIndexingVersion)+`, FALSE)
 		FROM messages, (SELECT `+vector+` AS vector) v WHERE id = $1`,
 		args...,
@@ -444,37 +444,38 @@ func pgFTSIsSaturated(vector string) string {
 	return `((` + vector + `)::text ~ '(^|[ ,:])16383(A|B|C|D)?([, ]|$)' OR (` + vector + `)::text ~ ':[0-9]+[A-D]?(,[0-9]+[A-D]?){254}([, ]|$)')`
 }
 
-func pgFTSBody(vector, body string) string {
-	return `CASE WHEN ` + pgFTSIsSaturated(vector) + ` THEN ` + body + ` ELSE NULL END`
-}
-
-func pgFTSMarked(vector string) string {
-	return vector + ` || CASE WHEN ` + pgFTSIsSaturated(vector) + ` THEN '''!!'':1'::tsvector ELSE ''::tsvector END`
+func pgFTSFields(vector, fields string) string {
+	return `CASE WHEN ` + pgFTSIsSaturated(vector) + ` THEN ` + fields + ` ELSE NULL END`
 }
 
 // pgFTSVector returns the bounded tsvector expression for doc and its
 // arguments, with $1 bound to doc.MessageID. The punctuation lexeme inserts
 // a position between fields and cannot appear in a normalized search term.
 func pgFTSVector(doc FTSDoc) (string, []any) {
-	doc, canonicalBody := preparePostgresFTSDoc(doc)
+	doc, fields := preparePostgresFTSDoc(doc)
 	vector := pgFTSVectorFields("$2", "$3", "$4", "$5", "$6")
-	return vector, []any{
-		doc.MessageID,
-		doc.Subject, doc.Body, doc.FromAddr, doc.ToAddrs, doc.CcAddrs, canonicalBody,
-	}
+	return vector, []any{doc.MessageID, doc.Subject, doc.Body, doc.FromAddr, doc.ToAddrs, doc.CcAddrs, fields[0], fields[1], fields[2], fields[3], fields[4]}
 }
 
-func preparePostgresFTSDoc(doc FTSDoc) (FTSDoc, string) {
-	canonicalBody := truncateBytesRuneSafe(sqldialect.CanonicalFTSText(truncateBytesRuneSafe(doc.Body)))
+func preparePostgresFTSDoc(doc FTSDoc) (FTSDoc, []string) {
 	prepare := func(s string) string {
-		return truncateBytesRuneSafe(strings.ToLower(sqldialect.NormalizeFTSText(truncateBytesRuneSafe(s))))
+		s = truncateBytesRuneSafe(strings.ToLower(sqldialect.NormalizeFTSText(truncateBytesRuneSafe(s))))
+		runes := []rune(s)
+		if len(runes) > maxFTSBodyChars {
+			s = string(runes[:maxFTSBodyChars])
+		}
+		return s
 	}
 	doc.Subject = prepare(doc.Subject)
 	doc.Body = prepare(doc.Body)
 	doc.FromAddr = prepare(doc.FromAddr)
 	doc.ToAddrs = prepare(doc.ToAddrs)
 	doc.CcAddrs = prepare(doc.CcAddrs)
-	return doc, canonicalBody
+	fields := []string{doc.Subject, doc.FromAddr, doc.ToAddrs, doc.CcAddrs, doc.Body}
+	for i := range fields {
+		fields[i] = sqldialect.CanonicalFTSText(fields[i])
+	}
+	return doc, fields
 }
 
 func pgFTSVectorFields(subject, body, sender, to, cc string) string {
@@ -505,12 +506,12 @@ func (d *PostgreSQLDialect) FTSSearchClause(rowIDs bool, terms []string) (join, 
 
 // FTSDeleteSQL returns the SQL to clear tsvector data for messages belonging to a source.
 func (d *PostgreSQLDialect) FTSDeleteSQL() string {
-	return `UPDATE messages SET search_fts = NULL, search_fts_body = NULL WHERE source_id = $1`
+	return `UPDATE messages SET search_fts = NULL, search_fts_fields = NULL WHERE source_id = $1`
 }
 
 func (d *PostgreSQLDialect) InvalidateFTSForMessage(q querier, messageID int64) error {
 	_, err := q.Exec(
-		"UPDATE messages SET search_fts = NULL, search_fts_body = NULL, indexing_version = NULL WHERE id = $1",
+		"UPDATE messages SET search_fts = NULL, search_fts_fields = NULL, indexing_version = NULL WHERE id = $1",
 		messageID,
 	)
 	return err
@@ -604,7 +605,7 @@ func (d *PostgreSQLDialect) FTSRebuildSchema(ctx context.Context, q contextQueri
 	if _, err := q.ExecContext(ctx, "DROP INDEX IF EXISTS messages_search_fts_idx"); err != nil {
 		return fmt.Errorf("drop messages_search_fts_idx: %w", err)
 	}
-	if _, err := q.ExecContext(ctx, "UPDATE messages SET search_fts = NULL, search_fts_body = NULL"); err != nil {
+	if _, err := q.ExecContext(ctx, "UPDATE messages SET search_fts = NULL, search_fts_fields = NULL"); err != nil {
 		return fmt.Errorf("clear search_fts: %w", err)
 	}
 	if _, err := q.ExecContext(ctx,
@@ -694,7 +695,7 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		// column and FTS stays unavailable. Its GIN index is created
 		// separately by EnsureFTSIndex AFTER this migration runs. [cr2-10]
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_fts TSVECTOR`, "search_fts"},
-		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_fts_body TEXT`, "search_fts_body"},
+		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_fts_fields TEXT[]`, "search_fts_fields"},
 		// embed_gen: per-message vector-embedding watermark. NULL default
 		// means every legacy row reads as "needs embedding", which is
 		// correct — the scan-and-fill worker (and backstop) will embed and

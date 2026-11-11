@@ -354,3 +354,22 @@ func TestStore_NeedsFTSBackfill_HoleAtLowestID(t *testing.T) {
 	assert.True(t, f.Store.NeedsFTSBackfill(),
 		"NeedsFTSBackfill must be true when a LOW id is unindexed even if later ids are indexed")
 }
+
+func TestPG_BackfillFTSLegacyPositionBreaks(t *testing.T) {
+	skipUnlessPostgres(t)
+	f := storetest.New(t)
+	for i, vector := range []string{
+		`'alpha':1B 'beta':3B`,
+		`'alpha':1B 'other':1B 'beta':2B`,
+		`'alpha':16382B 'beta':16383B`,
+	} {
+		id := f.NewMessage().WithSourceMessageID(fmt.Sprintf("legacy-position-%d", i)).Create(t, f.Store)
+		_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = $2::tsvector, indexing_version = 2 WHERE id = $1`, id, vector)
+		require.NoError(t, err)
+	}
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(t, err)
+	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alpha beta"}}, 10)
+	require.NoError(t, err)
+	assert.Empty(t, ids)
+}

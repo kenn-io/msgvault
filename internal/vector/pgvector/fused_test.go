@@ -33,7 +33,7 @@ func newFusedFixture(t *testing.T) *fusedFixture {
 	// The shared minimal test schema lacks the inline search_fts column
 	// the fused query reads, so add it here. In production this column
 	// lives on the messages table from the main store schema.
-	_, err := db.ExecContext(t.Context(), `ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_fts TSVECTOR, ADD COLUMN IF NOT EXISTS search_fts_body TEXT`)
+	_, err := db.ExecContext(t.Context(), `ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_fts TSVECTOR, ADD COLUMN IF NOT EXISTS search_fts_fields TEXT[]`)
 	require.NoError(t, err, "add search_fts")
 	_, err = db.ExecContext(t.Context(), `CREATE TABLE IF NOT EXISTS attachments (
         id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -358,17 +358,19 @@ func TestFusedSearchRejectsSaturatedSeparatedPhrase(t *testing.T) {
 		f.seedMsg(t, id, subject, body, 10, base, false)
 		require.NoError(t, (&store.PostgreSQLDialect{}).FTSUpsert(f.db, store.FTSDoc{MessageID: id, Subject: subject, Body: body}))
 	}
+	f.seedMsg(t, 6, "", "", 10, base, false)
+	require.NoError(t, (&store.PostgreSQLDialect{}).FTSUpsert(f.db, store.FTSDoc{MessageID: 6, Subject: strings.Repeat("both ", 300) + "both@example.com"}))
 	var higherRank bool
 	require.NoError(t, f.db.QueryRowContext(f.ctx, `SELECT (SELECT ts_rank_cd(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], search_fts, to_tsquery('simple', 'both & example & com:*'), 32) FROM messages WHERE id = 4) > (SELECT ts_rank_cd(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], search_fts, to_tsquery('simple', 'both & example & com:*'), 32) FROM messages WHERE id = 5)`).Scan(&higherRank))
 	require.True(t, higherRank)
 	hits, _, err := f.b.FusedSearch(f.ctx, vector.FusedRequest{FTSTerms: []string{"both@example.com"}, Generation: f.gen, KPerSignal: 10, Limit: 10, RRFK: 60})
 	require.NoError(t, err)
-	require.Len(t, hits, 1)
-	assert.Equal(t, int64(5), hits[0].MessageID)
+	require.Len(t, hits, 2)
+	assert.ElementsMatch(t, []int64{5, 6}, []int64{hits[0].MessageID, hits[1].MessageID})
 	hits, _, err = f.b.FusedSearch(f.ctx, vector.FusedRequest{FTSTerms: []string{"both@example.com"}, Generation: f.gen, KPerSignal: 1, Limit: 1, RRFK: 60})
 	require.NoError(t, err)
 	require.Len(t, hits, 1)
-	assert.Equal(t, int64(5), hits[0].MessageID)
+	assert.Contains(t, []int64{5, 6}, hits[0].MessageID)
 }
 
 func TestFusedSearchFiltersPhrasesBeforePoolLimit(t *testing.T) {

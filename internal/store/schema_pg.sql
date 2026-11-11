@@ -1376,7 +1376,7 @@ CREATE TABLE IF NOT EXISTS messages (
 
     -- Full-text search column
     search_fts TSVECTOR,
-    search_fts_body TEXT,
+    search_fts_fields TEXT[],
 
     -- Vector-embedding watermark: the index generation this message's
     -- embeddings were last written for. NULL means "needs embedding"

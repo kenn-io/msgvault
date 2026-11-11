@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"database/sql"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -352,3 +353,40 @@ func TestUpsertAttachment_Concurrent(t *testing.T) {
 // silenceUnused references the imports the test would otherwise drop on
 // builds where some helpers are tag-gated.
 var _ = store.Source{}
+
+func TestPostgresFTSSaturatedMetadataPhrases(t *testing.T) {
+	f := storetest.New(t)
+	if !f.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL indexing")
+	}
+	var want []int64
+	for i := range 5 {
+		id := f.NewMessage().WithSourceMessageID(fmt.Sprintf("saturated-field-%d", i)).Create(t, f.Store)
+		fields := make([]string, 5)
+		fields[i] = strings.Repeat("alice ", 300) + "alice@example.com"
+		require.NoError(t, f.Store.UpsertFTS(id, fields[0], fields[4], fields[1], fields[2], fields[3]))
+		want = append(want, id)
+	}
+	separated := f.NewMessage().WithSourceMessageID("metadata-separated").Create(t, f.Store)
+	require.NoError(t, f.Store.UpsertFTS(separated, strings.Repeat("alice ", 300)+"alice extra example com", "", "", "", ""))
+	crossField := f.NewMessage().WithSourceMessageID("metadata-cross-field").Create(t, f.Store)
+	require.NoError(t, f.Store.UpsertFTS(crossField, strings.Repeat("alice ", 300), "", "example.com", "", ""))
+	for _, tc := range []struct {
+		term string
+		want []int64
+	}{
+		{"alice@example.com", want},
+		{"alice@exam", want},
+		{"example@alice", nil},
+	} {
+		ids, count, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{tc.term}}, 10)
+		require.NoError(t, err)
+		assert.ElementsMatch(t, tc.want, ids, tc.term)
+		assert.Equal(t, int64(len(tc.want)), count, tc.term)
+	}
+	ids, count, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alice@example.com"}}, 1)
+	require.NoError(t, err)
+	require.Len(t, ids, 1)
+	assert.Contains(t, want, ids[0])
+	assert.Equal(t, int64(len(want)), count)
+}
