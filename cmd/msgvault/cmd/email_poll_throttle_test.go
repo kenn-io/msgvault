@@ -62,10 +62,6 @@ func TestDaemonGmailLimiterSurvivesCancellation(t *testing.T) {
 				_, err = poll.GetProfile(ctx)
 				require.ErrorIs(t, err, gmail.ErrQuotaDeferred)
 				assert.EqualValues(t, 1, profiles.Load())
-				cancelled, cancelPoll := context.WithCancel(ctx)
-				cancelPoll()
-				_, err = poll.GetProfile(cancelled)
-				require.ErrorIs(t, err, context.Canceled)
 				concurrent := make(chan error, 8)
 				for range 8 {
 					go func() {

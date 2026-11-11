@@ -33,6 +33,18 @@ func TestCronRegistrationPreservesPolling(t *testing.T) {
 		time.Sleep(15 * time.Second)
 		synctest.Wait()
 		checks.EqualValues(2, calls.Load())
+		s.RemoveAccount("a@example.test")
+		time.Sleep(15 * time.Second)
+		synctest.Wait()
+		checks.EqualValues(2, calls.Load())
+		cfg.Accounts = cfg.Accounts[:1]
+		_, errs = s.AddAccountsFromConfig(cfg)
+		requirements.Empty(errs)
+		cfg.Accounts[0].PollInterval = 14 * time.Second
+		count, errs := s.AddAccountsFromConfig(cfg)
+		requirements.Equal(1, count)
+		requirements.NotEmpty(errs)
+		checks.Empty(s.Status()[0].PollInterval)
 		<-s.Stop().Done()
 	})
 }
@@ -62,35 +74,6 @@ func TestPollingAllowsLongAcquisition(t *testing.T) {
 		default:
 			requirements.FailNow("long poll did not complete")
 		}
-	})
-}
-
-func TestIncompletePollingPreservesCompletion(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		checks := assert.New(t)
-		requirements := require.New(t)
-		var calls atomic.Int32
-		s := New(func(context.Context, string) error { return nil }).WithAccountPoll(func(context.Context, string) error {
-			if calls.Add(1) == 2 {
-				return ErrAcquisitionIncomplete
-			}
-			return nil
-		})
-		_, errs := s.AddAccountsFromConfig(&config.Config{Accounts: []config.AccountSchedule{{Email: "a@example.com", Enabled: true, Schedule: "0 * * * *", PollInterval: 15 * time.Second}}})
-		requirements.Empty(errs)
-		s.Start()
-		synctest.Wait()
-		first := s.Status()[0].LastCompleted
-		time.Sleep(15 * time.Second)
-		synctest.Wait()
-		checks.EqualValues(2, calls.Load())
-		checks.Equal(first, s.Status()[0].LastCompleted)
-		checks.Empty(s.Status()[0].LastError)
-		s.RemoveAccount("a@example.com")
-		time.Sleep(15 * time.Second)
-		synctest.Wait()
-		checks.EqualValues(2, calls.Load())
-		<-s.Stop().Done()
 	})
 }
 
@@ -135,17 +118,20 @@ func TestAccountCompletionDistinguishesPartialAndFailures(t *testing.T) {
 		checks := assert.New(t)
 		requirements := require.New(t)
 		var result error
-		s := New(func(context.Context, string) error { return result })
+		s := New(func(context.Context, string) error { return result }).WithAccountPoll(func(context.Context, string) error { return result })
 		requirements.NoError(s.AddAccount("a@example.com", "0 * * * *"))
 		s.onAccountTick("a@example.com")
 		first := s.Status()[0].LastCompleted
 		time.Sleep(time.Second)
 		result = ErrAcquisitionIncomplete
-		s.onAccountTick("a@example.com")
+		s.onAccountTrigger("a@example.com", true)
 		status := s.Status()[0]
 		checks.Equal(first, status.LastCompleted)
 		checks.True(status.LastRun.After(first))
 		checks.Empty(status.LastError)
+		s.onAccountTick("a@example.com")
+		checks.Equal(first, s.Status()[0].LastCompleted)
+		checks.Empty(s.Status()[0].LastError)
 		result = errors.Join(ErrAcquisitionIncomplete, errors.New("provider failed"))
 		s.onAccountTick("a@example.com")
 		checks.Contains(s.Status()[0].LastError, "provider failed")
@@ -156,6 +142,10 @@ func TestAccountCompletionDistinguishesPartialAndFailures(t *testing.T) {
 		result = nil
 		s.onAccountTick("a@example.com")
 		checks.True(s.Status()[0].LastCompleted.After(first))
+		s.RemoveAccount("a@example.com")
+		requirements.NoError(s.AddAccount("a@example.com", "0 * * * *"))
+		checks.True(s.Status()[0].LastAttempted.IsZero())
+		checks.True(s.Status()[0].LastCompleted.IsZero())
 		<-s.Stop().Done()
 	})
 }
@@ -179,37 +169,6 @@ func TestPollingErrorPreservesCronError(t *testing.T) {
 		checks.NotContains(s.Status()[0].LastError, "source unavailable")
 		<-s.Stop().Done()
 	})
-}
-
-func TestRemoveAccountClearsPollingTimes(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		requirements := require.New(t)
-		checks := assert.New(t)
-		s := New(func(context.Context, string) error { return nil })
-		requirements.NoError(s.AddAccount("a@example.com", "0 * * * *"))
-		s.onAccountTick("a@example.com")
-		requirements.False(s.Status()[0].LastCompleted.IsZero())
-		s.RemoveAccount("a@example.com")
-		requirements.NoError(s.AddAccount("a@example.com", "0 * * * *"))
-		checks.True(s.Status()[0].LastAttempted.IsZero())
-		checks.True(s.Status()[0].LastCompleted.IsZero())
-		<-s.Stop().Done()
-	})
-}
-
-func TestInvalidIntervalReplacesEarlierPollingSchedule(t *testing.T) {
-	requirements := require.New(t)
-	sched := New(func(context.Context, string) error { return nil }).WithAccountPoll(func(context.Context, string) error { return nil })
-	cfg := &config.Config{Accounts: []config.AccountSchedule{{Email: "a@example.com", Enabled: true, Schedule: "0 * * * *", PollInterval: 15 * time.Second}}}
-	count, errs := sched.AddAccountsFromConfig(cfg)
-	requirements.Equal(1, count)
-	requirements.Empty(errs)
-	cfg.Accounts[0].PollInterval = 14 * time.Second
-	count, errs = sched.AddAccountsFromConfig(cfg)
-	requirements.Equal(1, count)
-	requirements.NotEmpty(errs)
-	requirements.Empty(sched.Status()[0].PollInterval)
-	<-sched.Stop().Done()
 }
 
 func TestYieldedAccountPreservesScheduledContinuation(t *testing.T) {

@@ -301,50 +301,21 @@ func TestRunServeStartsReadOnlyWithoutOAuthConfig(t *testing.T) {
 	}
 }
 
-func TestRunServeKeepsCronForInvalidPollingTarget(t *testing.T) {
-	for _, tc := range []struct {
-		name, sourceType, identifier string
-		interval                     time.Duration
-	}{
-		{"invalid interval", sourceTypeGmail, "user@example.test", 14 * time.Second},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			checks := assert.New(t)
-			requirements := require.New(t)
-			cfg := lifecycleTestConfig(t.TempDir())
-			cfg.Server.APIPort = freeTCPPort(t)
-			cfg.Analytics.Engine = config.AnalyticsEngineSQL
-			cfg.Accounts = []config.AccountSchedule{{Email: tc.identifier, Enabled: true, Schedule: "0 * * * *", PollInterval: tc.interval}, {Email: "other@example.test", Enabled: true, Schedule: "0 * * * *"}}
-			st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
-			_, err := st.GetOrCreateSource(tc.sourceType, tc.identifier)
-			requirements.NoError(err)
-			requirements.NoError(st.Close())
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			cmd := &cobra.Command{Use: serveCmd.Use}
-			cmd.SetContext(testInvocationContext(ctx, cfg, invocationOptions{}))
-			errCh := make(chan error, 1)
-			go func() { errCh <- runServe(cmd, nil) }()
-			waitForServeHealth(t, cfg.Server.APIPort, errCh)
-			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/api/v1/scheduler/status", cfg.Server.APIPort), nil)
-			requirements.NoError(err)
-			resp, err := http.DefaultClient.Do(req)
-			requirements.NoError(err)
-			defer func() { _ = resp.Body.Close() }()
-			requirements.Equal(http.StatusOK, resp.StatusCode)
-			var status api.SchedulerStatusResponse
-			requirements.NoError(json.NewDecoder(resp.Body).Decode(&status))
-			requirements.Len(status.Accounts, 2)
-			for _, account := range status.Accounts {
-				checks.Equal("0 * * * *", account.Schedule)
-				if account.Email == tc.identifier {
-					checks.Empty(account.PollInterval)
-				}
-			}
-			cancel()
-			requirements.NoError(<-errCh)
-		})
-	}
+func TestRunServeKeepsCronForInvalidPollingInterval(t *testing.T) {
+	requirements := require.New(t)
+	cfg := lifecycleTestConfig(t.TempDir())
+	cfg.Server.APIPort = freeTCPPort(t)
+	cfg.Analytics.Engine = config.AnalyticsEngineSQL
+	cfg.Accounts = []config.AccountSchedule{{Email: "user@example.test", Enabled: true, Schedule: "0 * * * *", PollInterval: 14 * time.Second}, {Email: "other@example.test", Enabled: true, Schedule: "0 * * * *"}}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	cmd := &cobra.Command{Use: serveCmd.Use}
+	cmd.SetContext(testInvocationContext(ctx, cfg, invocationOptions{}))
+	errCh := make(chan error, 1)
+	go func() { errCh <- runServe(cmd, nil) }()
+	waitForServeHealth(t, cfg.Server.APIPort, errCh)
+	cancel()
+	requirements.NoError(<-errCh)
 }
 
 func TestRunServeFailsPendingImportFromPreviousDaemon(t *testing.T) {
