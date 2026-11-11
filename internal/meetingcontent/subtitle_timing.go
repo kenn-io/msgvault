@@ -34,9 +34,6 @@ func subtitleTiming(format string, raw []byte) ([]subtitleSegment, error) {
 		}
 		cursor := 0
 		for _, item := range items {
-			if item.Text == nil {
-				return nil, errors.New("invalid transcript")
-			}
 			if strings.TrimSpace(*item.Text) == "" {
 				continue
 			}
