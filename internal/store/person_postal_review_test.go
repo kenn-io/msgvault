@@ -247,6 +247,16 @@ func TestPostalAddressPacketBoundsBacklogAndExcludesAdoptedHistory(t *testing.T)
 	state, err := st.LoadPersonFactState(t.Context(), id, catalog)
 	require.NoError(err)
 	require.Len(state.Unresolved, 100)
+	for _, remaining := range []int{0, 1, 99, 100} {
+		err = st.withReadSnapshotContext(t.Context(), func(tx *loggedTx) error {
+			claims, err := st.loadPersonSweepUnresolvedClaimsTx(t.Context(), tx, id, target, remaining)
+			if err == nil {
+				assert.Len(t, claims, remaining)
+			}
+			return err
+		})
+		require.NoError(err, "remaining budget %d", remaining)
+	}
 	assert := assert.New(t)
 	selectedKey := state.Unresolved[0].ClaimKey
 	ref := "person-fact-claim:" + selectedKey
