@@ -448,7 +448,7 @@ func TestEventsCredentialsSeparated(t *testing.T) {
 	assertions := assert.New(t)
 	dir := filepath.Join(t.TempDir(), "tokens")
 	id := EventsID("0123456789abcdef0123456789abcdef")
-	assertions.Error(ValidateID(id))
+	requirements.Error(ValidateID(id))
 	empty, err := Read(dir)
 	requirements.NoError(err)
 	_, err = Put(dir, empty.ETag, VectorEmbeddingsID, "https://example.test", "vector")
@@ -460,16 +460,15 @@ func TestEventsCredentialsSeparated(t *testing.T) {
 	_, err = PutIfRevision(dir, revision, id, "https://example.test", "event")
 	requirements.NoError(err)
 	_, err = PutIfRevision(dir, revision, id, "https://example.test", "stale")
-	assertions.ErrorIs(err, ErrConflict)
+	requirements.ErrorIs(err, ErrConflict)
 	shared, err := Read(dir)
 	requirements.NoError(err)
 	for _, metadata := range shared.Metadata() {
-		assertions.NoError(ValidateID(metadata.ID))
+		requirements.NoError(ValidateID(metadata.ID))
 	}
 	events, err = ReadEvents(dir)
 	requirements.NoError(err)
 	value, _, err := events.Resolve(id, "https://example.test", "", nil)
 	requirements.NoError(err)
 	assertions.Equal("event", value)
-
 }

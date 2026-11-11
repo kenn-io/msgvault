@@ -141,7 +141,7 @@ func TestGeneratedEventsMutationErrorsDecode(t *testing.T) {
 	secret := "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"
 	arguments := generated.MCPEventsArguments{SourceID: &id}
 	delivery := generated.MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: &secret}
-	body := generated.MCPEventsSubscribeBody{Name: mcpevents.Name, Arguments: arguments, Delivery: delivery}
+	body := generated.McpEventsSubscribeBody{Name: mcpevents.Name, Arguments: arguments, Delivery: delivery}
 	response, err := client.McpEventsSubscribeWithResponse(t.Context(), &generated.McpEventsSubscribeRequestOptions{Body: &body})
 	requirements.Error(err)
 	requirements.NotNil(response)
@@ -168,14 +168,14 @@ func TestGeneratedEventsMutationErrorsDecode(t *testing.T) {
 	requirements.Equal(http.StatusBadRequest, invalidSubscribe.StatusCode)
 	assertions.Equal(map[string]any{"code": float64(mcpevents.InvalidParams), "reason": "invalid_arguments"}, decodedEventsError(t, invalidSubscribe))
 
-	missingBody := generated.MCPEventsUnsubscribeBody{Name: mcpevents.Name, Arguments: arguments, Delivery: delivery}
+	missingBody := generated.McpEventsUnsubscribeBody{Name: mcpevents.Name, Arguments: arguments, Delivery: delivery}
 	missing, err := client.McpEventsUnsubscribeWithResponse(t.Context(), &generated.McpEventsUnsubscribeRequestOptions{Body: &missingBody})
 	requirements.Error(err)
 	requirements.NotNil(missing)
 	requirements.Equal(http.StatusNotFound, missing.StatusCode)
 	assertions.Equal(map[string]any{"code": float64(mcpevents.NotFound), "reason": "subscription"}, decodedEventsError(t, missing))
 
-	invalid := generated.MCPEventsUnsubscribeBody{Name: "invalid", Arguments: arguments, Delivery: delivery}
+	invalid := generated.McpEventsUnsubscribeBody{Name: "invalid", Arguments: arguments, Delivery: delivery}
 	unsub, err := client.McpEventsUnsubscribeWithResponse(t.Context(), &generated.McpEventsUnsubscribeRequestOptions{Body: &invalid})
 	requirements.Error(err)
 	requirements.NotNil(unsub)

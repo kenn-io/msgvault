@@ -32,6 +32,7 @@ func TestSubscribeClassifiesScopeFailures(t *testing.T) {
 		run  func(*testing.T)
 	}{
 		{"source", func(t *testing.T) {
+			t.Helper()
 			requirements := require.New(t)
 			assertions := assert.New(t)
 			st := testutil.NewTestStore(t)
@@ -66,6 +67,7 @@ func TestSubscribeClassifiesScopeFailures(t *testing.T) {
 			assertions.Equal("store_unavailable", eventErr.Reason)
 		}},
 		{"person", func(t *testing.T) {
+			t.Helper()
 			requirements := require.New(t)
 			assertions := assert.New(t)
 			st := testutil.NewTestStore(t)
