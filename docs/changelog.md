@@ -8,6 +8,8 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Open loops can show cited promises owed by or to you, with due dates, proposed fulfilment, and owner decisions. Enable the commitment lane and grant separate consent to analyze both sides of direct conversations.
+
 - The CLI and HTTP API show person fact claim kinds and whether supporting evidence is fresh, stale, or expired.
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).
 

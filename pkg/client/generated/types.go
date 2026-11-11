@@ -2925,6 +2925,57 @@ func (c CodexModel) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
+type CommitmentDecisionRequest struct {
+	State CommitmentDecisionRequestState `json:"state" validate:"required"`
+	Until *time.Time                     `json:"until,omitempty"`
+}
+
+func (c CommitmentDecisionRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(c.State).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("State", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CommitmentDecisionResponse struct {
+	ID           string                          `json:"id" validate:"required"`
+	SnoozedUntil *time.Time                      `json:"snoozed_until,omitempty"`
+	State        CommitmentDecisionResponseState `json:"state" validate:"required"`
+}
+
+func (c CommitmentDecisionResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.ID, "required"); err != nil {
+		errors = errors.Append("ID", err)
+	}
+	if v, ok := any(c.State).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("State", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CommitmentQuote struct {
+	End       int64  `json:"end"`
+	MessageID int64  `json:"message_id"`
+	Start     int64  `json:"start"`
+	Text      string `json:"text" validate:"required"`
+}
+
+func (c CommitmentQuote) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
 type CommunicationService struct {
 	Aliases              []string  `json:"aliases" validate:"required"`
 	CreatedAt            time.Time `json:"created_at" validate:"required"`
@@ -7068,6 +7119,59 @@ func (l LocalEmbeddingsStatus) Validate() error {
 	return errors
 }
 
+type LoopCommitment struct {
+	ClaimID            int64                   `json:"claim_id"`
+	Direction          LoopCommitmentDirection `json:"direction" validate:"required"`
+	DueOn              *runtime.Date           `json:"due_on,omitempty"`
+	ID                 string                  `json:"id" validate:"required"`
+	PersonID           int64                   `json:"person_id"`
+	Promise            CommitmentQuote         `json:"promise"`
+	PromisedAt         time.Time               `json:"promised_at" validate:"required"`
+	ProposedFulfilment *CommitmentQuote        `json:"proposed_fulfilment,omitempty"`
+	Summary            string                  `json:"summary" validate:"required"`
+}
+
+func (l LoopCommitment) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(l.Direction).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Direction", err)
+		}
+	}
+	if l.DueOn != nil {
+		if v, ok := any(l.DueOn).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("DueOn", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(l.ID, "required"); err != nil {
+		errors = errors.Append("ID", err)
+	}
+	if v, ok := any(l.Promise).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Promise", err)
+		}
+	}
+	if err := typesValidator.Var(l.PromisedAt, "required"); err != nil {
+		errors = errors.Append("PromisedAt", err)
+	}
+	if l.ProposedFulfilment != nil {
+		if v, ok := any(l.ProposedFulfilment).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ProposedFulfilment", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(l.Summary, "required"); err != nil {
+		errors = errors.Append("Summary", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type LoopCounterparty struct {
 	Address       string `json:"address"`
 	DisplayName   string `json:"display_name"`
@@ -7151,6 +7255,8 @@ func (l LoopItem) Validate() error {
 }
 
 type LoopListResponse struct {
+	Commitments []LoopCommitment `json:"commitments,omitempty"`
+
 	// CoverageIncomplete True when more history remains after checking 1,000 uncached messages; another request reuses saved evidence to continue
 	CoverageIncomplete bool       `json:"coverage_incomplete"`
 	Items              []LoopItem `json:"items" validate:"required"`
@@ -7164,6 +7270,13 @@ type LoopListResponse struct {
 
 func (l LoopListResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	for i, item := range l.Commitments {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Commitments[%d]", i), err)
+			}
+		}
+	}
 	if err := typesValidator.Var(l.Items, "required"); err != nil {
 		errors = errors.Append("Items", err)
 	}

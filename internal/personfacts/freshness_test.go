@@ -20,6 +20,7 @@ func TestClaimFreshness(t *testing.T) {
 		days   int
 	}{
 		{"fact", TargetRef{Kind: TargetEmployment}, nil, KindFact, 365},
+		{"commitment", TargetRef{Kind: TargetCommitment}, &until, KindCommitment, 90},
 		{"finite employment", TargetRef{Kind: TargetEmployment}, &until, KindFact, 365},
 		{"event", TargetRef{Kind: TargetAttribute, Key: "custom-event"}, &until, KindEvent, 7},
 		{"custom", TargetRef{Kind: TargetAttribute, Key: "custom-favorites-food"}, nil, KindFact, 365},

@@ -7,8 +7,7 @@ description: See which conversations still wait on your reply, and which replies
 Open loops show who is waiting on a reply from you, and who you are waiting
 on, across email and direct chats. msgvault works them out from your archive
 each time you ask, so a reply that just synced clears its loop on the next
-list. There is nothing to turn on. No model is called, and nothing changes at
-your email provider.
+list. Reply loops are available immediately. They use local wording rules and leave your email provider unchanged.
 
 Open loops are on unreleased `main`. They need a daemon with HTTP API schema
 3.44.0 or newer.
@@ -151,3 +150,35 @@ Only the owner can use loops. Delegated agent tokens and remote clients can't.
   something starts a loop. Mark it done.
 - **Email threads and direct chats only.** Group chats, channels, and meetings
   are skipped.
+
+## See cited commitments
+
+Commitments are optional and require daemon API schema 5.2.0 or newer.
+Enable `[people.sweep.commitments]` in [configuration](../configuration.md#commitment-extraction).
+Use `msgvault person provider consent --commitments` to see the provider,
+source dates, and what the request discloses. Repeat with `--yes` to consent
+to sending conversation text from both sides of verified direct chats and
+email. The profile must allow sensitive `conversation_text` sources.
+
+Cited promises appear under **Promises you made** and **Promises to you**.
+Each row links to the quoted message. The JSON response also gives the claim
+ID and original-body rune range. See the [person facts CLI reference](../cli-reference.md#person-facts) for claim kinds and freshness. A due date is a calendar date in the
+configured activity timezone. A promise expires after the due date and
+configured grace period, or after the maximum duration if it has no due
+date. Expired and unsupported claims leave the list.
+
+Use the commitment ID for actions on a promise. This ID starts with `c`.
+The same message can anchor multiple promises and a reply loop.
+
+```bash
+msgvault loops done c12
+msgvault loops snooze c12 --until 48h
+msgvault loops reopen c12
+```
+
+The list may show a proposed fulfilment with a quote from a newer message by
+the person who made the promise. Review the quote and mark it done if the
+promise was kept. With `auto_fulfil = true`, an explicit fulfilment supported
+by newer evidence can close it automatically. Reopen keeps older evidence
+from closing it again. If the supporting fulfilment is withdrawn, the
+promise can appear again.

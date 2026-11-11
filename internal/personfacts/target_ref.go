@@ -64,7 +64,7 @@ func validateTargetRef(target TargetRef) error {
 func decodeTargetKind(value string) (TargetKind, error) {
 	kind := TargetKind(value)
 	switch kind {
-	case TargetAttribute, TargetEmployment:
+	case TargetAttribute, TargetEmployment, TargetCommitment:
 		return kind, nil
 	default:
 		return "", fmt.Errorf("unknown person fact target kind %q", value)

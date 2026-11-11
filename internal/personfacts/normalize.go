@@ -40,7 +40,7 @@ func NormalizeClaimValue(
 	switch {
 	case target.Kind == TargetEmployment && target.ValueType == ValueEmployment:
 		canonical, err = normalizeEmploymentValue(submitted)
-	case target.Kind == TargetAttribute && supportedGenericValueType(target.ValueType):
+	case (target.Kind == TargetAttribute || target.Kind == TargetCommitment) && supportedGenericValueType(target.ValueType):
 		canonical, err = normalizeGenericValue(target.ValueType, submitted)
 	default:
 		return unsupported(fmt.Sprintf(

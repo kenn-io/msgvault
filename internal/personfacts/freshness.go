@@ -10,6 +10,7 @@ type FreshnessStatus string
 const (
 	KindFact       FactKind        = "fact"
 	KindEvent      FactKind        = "event"
+	KindCommitment FactKind        = "commitment"
 	KindPreference FactKind        = "preference"
 	StatusFresh    FreshnessStatus = "fresh"
 	StatusStale    FreshnessStatus = "stale"
@@ -29,6 +30,8 @@ func DescribeFreshness(target TargetRef, validUntil, latestSupported *time.Time,
 	kind := KindFact
 	days := 365
 	switch {
+	case target.Kind == TargetCommitment:
+		kind, days = KindCommitment, 90
 	case target.Kind == TargetAttribute && seededPreference(target.Key):
 		kind, days = KindPreference, 90
 	case validUntil != nil && target.Kind != TargetEmployment:

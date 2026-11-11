@@ -74,7 +74,11 @@ type ApplyRequest struct {
 	DeferredCursorWork bool
 	// Brief is the version this attempt generated, or nil when the attempt ran
 	// no brief call or the call produced nothing storable.
-	Brief *BriefResult
+	Commitment             *CommitmentResult
+	CommitmentFailureClass FailureClass
+	CommitmentRetryAt      time.Time
+	CommitmentOnly         bool
+	Brief                  *BriefResult
 	// BriefFailureClass records why a brief call produced no version while the
 	// attempt itself succeeded. It is empty when no brief was attempted or the
 	// brief succeeded, and it licenses the apply to reconcile a brief
@@ -379,6 +383,7 @@ type RunResult struct {
 	People []PersonRunResult
 }
 type PersonRunResult struct {
+	commitmentOnly  bool
 	PersonID        int64
 	AttemptID       string
 	ProjectedWrites int
@@ -393,13 +398,14 @@ type PersonRunResult struct {
 }
 
 type Worker struct {
-	Config  Config
-	Store   WorkStore
-	Source  AssemblySource
-	Context ContextRetriever
-	Sink    ClaimSink
-	Runner  StructuredRunner
-	Catalog CatalogSource
+	Timezone string
+	Config   Config
+	Store    WorkStore
+	Source   AssemblySource
+	Context  ContextRetriever
+	Sink     ClaimSink
+	Runner   StructuredRunner
+	Catalog  CatalogSource
 	// Brief and Archive carry the person brief step. Both nil turns the step
 	// off entirely, which is what a caller that predates the brief gets.
 	Brief    BriefStore
@@ -528,6 +534,11 @@ func (w *Worker) Run(ctx context.Context, request RunRequest) (RunResult, error)
 			}
 			continue
 		}
+		if person.commitmentOnly {
+			// Ordinary cursors remain pending when this attempt was authorized
+			// solely for commitments. Leave them for the next run.
+			deferredPeople = append(deferredPeople, lease.PersonID)
+		}
 		result.PeopleSucceeded++
 		result.People = append(result.People, person)
 		result.ProjectedWrites += person.ProjectedWrites
@@ -584,6 +595,23 @@ func (w *Worker) runPerson(
 	catalog personfacts.Catalog,
 	resolvedAt time.Time,
 ) (PersonRunResult, error) {
+	commitmentPlanned, err := w.commitmentDue(ctx, lease.PersonID, profile, resolvedAt)
+	if err != nil {
+		return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
+	}
+	ordinaryAllowed := true
+	if authority, ok := w.Runner.(interface {
+		OrdinaryInferenceAllowed(context.Context) (bool, error)
+	}); ok && commitmentPlanned {
+		allowed, err := authority.OrdinaryInferenceAllowed(ctx)
+		if err != nil {
+			return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
+		}
+		ordinaryAllowed = allowed
+	}
+	if !ordinaryAllowed {
+		briefMode = BriefModeSkip
+	}
 	plan, err := w.planPersonBrief(ctx, lease.PersonID, briefMode, profile, resolvedAt)
 	if err != nil {
 		return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
@@ -637,9 +665,10 @@ func (w *Worker) runPerson(
 	}
 	// forcedBackstop records that the assembly below came from the brief's
 	// fallback, so the batch-narrowing loop rebuilds it the same way.
+	commitmentOnly := !ordinaryAllowed || (commitmentPlanned && !plan.run && len(progress.CursorEnvelope) == 0)
 	forcedBackstop := false
 	discoveryLimit := 0
-	if len(progress.CursorEnvelope) == 0 && plan.run {
+	if len(progress.CursorEnvelope) == 0 && (plan.run || commitmentPlanned) {
 		// A person whose sweep is fully caught up has no cursor progress to
 		// bind a generation to, and every generation must name a source range.
 		// Re-reading one bounded backstop page gives the attempt a real range
@@ -712,7 +741,7 @@ func (w *Worker) runPerson(
 		lease = applied
 		return nil
 	}
-	if hasEvidenceRetraction(progress.EvidenceStatusChanges) && len(progress.Seeds) > 0 &&
+	if !commitmentOnly && hasEvidenceRetraction(progress.EvidenceStatusChanges) && len(progress.Seeds) > 0 &&
 		len(catalog.Targets) > 0 {
 		statusesAlreadyApplied, err = w.Sink.PersonSweepEvidenceStatusesApplied(
 			ctx, lease.PersonID, progress.EvidenceStatusChanges)
@@ -744,7 +773,7 @@ func (w *Worker) runPerson(
 			statusesAlreadyApplied = true
 		}
 	}
-	if !statusOnlyBeforePacket {
+	if !commitmentOnly && !statusOnlyBeforePacket {
 		assembly, err = buildPacket(cursors, progress, forcedBackstop)
 		if err != nil && !errors.Is(err, ErrNoChangedSeed) {
 			return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
@@ -815,7 +844,7 @@ func (w *Worker) runPerson(
 		}
 	}
 	if len(assembly.CursorEnvelope) == 0 {
-		if !plan.run {
+		if !plan.run && !commitmentPlanned {
 			// A queued brief can become ineligible while waiting to retry. With
 			// extraction caught up, finish the idle claim without an inference
 			// attempt. The store preserves work that arrived during assembly.
@@ -1063,6 +1092,23 @@ func (w *Worker) runPerson(
 		}
 	}
 
+	var commitment *CommitmentResult
+	var commitmentFailure FailureClass
+	if commitmentPlanned {
+		ordinal := len(assembly.Batches)
+		for _, reservation := range reservations {
+			ordinal = max(ordinal, reservation.Request.BatchOrdinal+1)
+		}
+		var fatal error
+		commitment, commitmentFailure, lease, fatal = w.runCommitmentCall(ctx, briefCall{
+			runID: runID, attemptID: attemptID, lease: lease, profile: profile,
+			catalog: catalog, resolvedAt: resolvedAt, batchOrdinal: ordinal,
+		}, accounting, &reservations)
+		if fatal != nil {
+			return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations, accounting.completedUsage, fatal, resolvedAt)
+		}
+	}
+
 	provider, model := string(profile.Protocol), profile.Model
 	providerVersion, modelVersion := accounting.providerVersion, accounting.modelVersion
 	if len(accounting.completedBatches) == 0 {
@@ -1094,18 +1140,22 @@ func (w *Worker) runPerson(
 		briefRetryAt = completedAt.Add(personSweepRetryDelay(attemptID, lease.AttemptCount, 0,
 			w.Config.RetryBase, w.Config.RetryMax))
 	}
+	var commitmentRetryAt time.Time
+	if commitmentFailure != "" {
+		commitmentRetryAt = completedAt.Add(personSweepRetryDelay(attemptID, lease.AttemptCount, 0, w.Config.RetryBase, w.Config.RetryMax))
+	}
 	apply, applyErr := w.Sink.ApplyPersonSweep(ctx, ApplyRequest{Lease: lease, RunID: runID,
 		AttemptID: attemptID, Generation: generation, CursorEnvelope: assembly.CursorEnvelope,
 		Batches: accounting.completedBatches, Usage: accounting.totalUsage,
 		Budget: w.Config.Budgets, CursorAdvances: advances,
-		DeferredCursorWork: deferredCursorWork, Brief: brief, BriefFailureClass: briefFailure,
+		DeferredCursorWork: deferredCursorWork, Commitment: commitment, CommitmentFailureClass: commitmentFailure, CommitmentRetryAt: commitmentRetryAt, CommitmentOnly: commitmentOnly, Brief: brief, BriefFailureClass: briefFailure,
 		BriefRetryAt: briefRetryAt, CompletedAt: completedAt})
 	if applyErr != nil {
 		return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
 			accounting.completedUsage, applyErr, resolvedAt)
 	}
 	return PersonRunResult{PersonID: lease.PersonID, AttemptID: attemptID,
-		ProjectedWrites: apply.AttemptProjectedWrites, BriefVersion: apply.Mutations.BriefVersion,
+		commitmentOnly: commitmentOnly, ProjectedWrites: apply.AttemptProjectedWrites, BriefVersion: apply.Mutations.BriefVersion,
 		BriefFailureClass: briefFailure,
 		CursorAdvances:    advances, Usage: accounting.totalUsage}, nil
 }
@@ -1244,6 +1294,22 @@ func (w *Worker) reconcile(ctx context.Context, profile ProviderProfile,
 					// for everyone else in the run.
 					if _, err := w.Brief.EnsurePersonSweepWork(ctx, personID, false); err != nil {
 						return fmt.Errorf("publish person %d brief work: %w", personID, err)
+					}
+				}
+			}
+		}
+		if store, ok := w.Store.(CommitmentStore); ok && w.Config.Commitments.Enabled {
+			for _, personID := range page.PersonIDs {
+				if request.PersonID > 0 && personID != request.PersonID {
+					continue
+				}
+				due, err := w.commitmentDue(ctx, personID, profile, now)
+				if err != nil {
+					return err
+				}
+				if due {
+					if _, err := store.EnsurePersonSweepWork(ctx, personID, false); err != nil {
+						return err
 					}
 				}
 			}

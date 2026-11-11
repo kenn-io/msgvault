@@ -295,6 +295,13 @@ func (s *Store) applyPersonSweepWithAligner(
 	if err != nil {
 		return peoplesweep.ApplyResult{}, err
 	}
+	commitment, err := s.prepareCommitmentSweep(ctx, request)
+	if errors.Is(err, errCommitmentWindowChanged) {
+		request.CommitmentFailureClass = peoplesweep.FailureArchiveGap
+		request.CommitmentRetryAt = request.CompletedAt.Add(time.Minute)
+	} else if err != nil {
+		return peoplesweep.ApplyResult{}, err
+	}
 
 	var result peoplesweep.ApplyResult
 	err = s.withTxContext(ctx, func(tx *loggedTx) error {
@@ -328,7 +335,10 @@ func (s *Store) applyPersonSweepWithAligner(
 			return err
 		}
 
-		if len(request.Batches) > 0 {
+		hasOrdinaryCalls := slices.ContainsFunc(request.Batches, func(batch peoplesweep.CompletedBatch) bool {
+			return !personSweepCommitmentPurpose(batch.Purpose)
+		})
+		if hasOrdinaryCalls {
 			active, err := s.hasActivePersonInferenceConsentTx(
 				ctx, tx, request.Generation.Policy.ProviderPolicyFingerprint)
 			if err != nil {
@@ -376,6 +386,34 @@ func (s *Store) applyPersonSweepWithAligner(
 			}
 		}
 
+		if commitment != nil {
+			active, err := lockActiveConsentTx(ctx, tx, s.dialect, ConsentPeopleCommitments,
+				request.Generation.Policy.ProviderPolicyFingerprint)
+			if err != nil {
+				return err
+			}
+			switch {
+			case !active:
+				request.CommitmentFailureClass = peoplesweep.FailurePolicy
+			default:
+				current, err := s.commitmentWindowCurrentTx(ctx, tx, request, commitment)
+				if err != nil {
+					return err
+				}
+				if !current {
+					request.CommitmentFailureClass = peoplesweep.FailureArchiveGap
+					request.CommitmentRetryAt = request.CompletedAt.Add(time.Minute)
+				} else {
+					if err := s.applyCommitmentSweepTx(ctx, tx, request, commitment); err != nil {
+						return err
+					}
+					if err := personSweepApplyStage(ctx, "commitment"); err != nil {
+						return err
+					}
+				}
+			}
+		}
+
 		batchCount, err := s.reconcilePersonSweepSuccessBatchesTx(ctx, tx, request)
 		if err != nil {
 			return err
@@ -395,11 +433,11 @@ func (s *Store) applyPersonSweepWithAligner(
 		}
 
 		attemptResult, err := tx.ExecContext(ctx, `UPDATE person_sweep_attempts SET
-			status = 'succeeded', failure_class = '', brief_failure_class = ?,
+			status = 'succeeded', failure_class = '', brief_failure_class = ?, commitment_failure_class = ?,
 			generation_id = ?, generation_key = ?,
 			claim_count = ?, decision_count = decision_count + ?,
 			projected_write_count = projected_write_count + ?, completed_at = ?
-			WHERE id = ? AND status = 'running'`, request.BriefFailureClass,
+			WHERE id = ? AND status = 'running'`, request.BriefFailureClass, request.CommitmentFailureClass,
 			generation.GenerationID,
 			generation.GenerationKey, len(request.Generation.Claims), len(generation.Decisions),
 			result.Mutations.ProjectionRowsWritten, s.dialect.TimestampParam(request.CompletedAt),
@@ -423,7 +461,8 @@ func (s *Store) applyPersonSweepWithAligner(
 			Lease: request.Lease, ProgramFingerprint: request.Generation.ProgramFingerprint,
 			CatalogFingerprint: request.Generation.CatalogFingerprint,
 			DeferredCursorWork: request.DeferredCursorWork, BriefFailureClass: request.BriefFailureClass,
-			BriefRetryAt: request.BriefRetryAt,
+			BriefRetryAt:           request.BriefRetryAt,
+			CommitmentFailureClass: request.CommitmentFailureClass, CommitmentRetryAt: request.CommitmentRetryAt,
 		})
 		if err != nil {
 			return err
@@ -449,6 +488,9 @@ func validatePersonSweepApplyRequest(request peoplesweep.ApplyRequest) error {
 		return errors.New("apply person sweep usage must not be negative")
 	}
 	if err := validatePersonSweepApplyBrief(request); err != nil {
+		return err
+	}
+	if err := validatePersonSweepApplyCommitment(request); err != nil {
 		return err
 	}
 	statusOnly := len(request.Batches) == 0
@@ -503,8 +545,12 @@ func validatePersonSweepApplyRequest(request peoplesweep.ApplyRequest) error {
 		}
 		return a.callOrdinal - b.callOrdinal
 	})
-	if err := validatePersonSweepCallCoordinateSet(coordinates); err != nil {
-		return fmt.Errorf("apply person sweep: %w", err)
+	// A failed optional call can leave a gap in the completed subset.
+	// Its full sequence is validated against the durable reservations.
+	if request.BriefFailureClass == "" && request.CommitmentFailureClass == "" {
+		if err := validatePersonSweepCallCoordinateSet(coordinates); err != nil {
+			return fmt.Errorf("apply person sweep: %w", err)
+		}
 	}
 	return nil
 }
@@ -591,6 +637,9 @@ func (s *Store) personSweepApplyBatchCoordinatesTx(
 	if err != nil {
 		return nil, err
 	}
+	if err := validatePersonSweepCallCoordinateSet(coordinates); err != nil {
+		return nil, err
+	}
 	if err := verifyPersonSweepApplyCoverage(request, coordinates); err != nil {
 		return nil, err
 	}
@@ -616,7 +665,7 @@ func verifyPersonSweepApplyCoverage(
 			covered++
 			continue
 		}
-		if !personSweepBriefPurpose(coordinate.purpose) || request.BriefFailureClass == "" {
+		if personSweepOptionalFailure(request, coordinate.purpose) == "" {
 			return errors.New("apply person sweep batches do not exactly cover durable reservations")
 		}
 	}
@@ -629,6 +678,22 @@ func verifyPersonSweepApplyCoverage(
 func personSweepBriefPurpose(purpose string) bool {
 	return purpose == peoplesweep.ProviderCallPurposeBrief ||
 		purpose == peoplesweep.ProviderCallPurposeBriefRepair
+}
+
+func personSweepCommitmentPurpose(purpose string) bool {
+	return purpose == peoplesweep.ProviderCallPurposeCommitment ||
+		purpose == peoplesweep.ProviderCallPurposeCommitmentRepair
+}
+
+func personSweepOptionalFailure(request peoplesweep.ApplyRequest, purpose string) peoplesweep.FailureClass {
+	switch {
+	case personSweepBriefPurpose(purpose):
+		return request.BriefFailureClass
+	case personSweepCommitmentPurpose(purpose):
+		return request.CommitmentFailureClass
+	default:
+		return ""
+	}
 }
 
 func completedBatchCoordinate(batch peoplesweep.CompletedBatch) peoplesweep.ProviderCallCoordinate {
@@ -784,6 +849,9 @@ func (s *Store) reconcilePersonSweepSuccessBatchesTx(
 func (s *Store) advanceBoundPersonSweepCursorsTx(
 	ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest,
 ) (int, error) {
+	if request.CommitmentOnly {
+		return 0, nil
+	}
 	advances := append([]peoplesweep.CursorAdvance(nil), request.CursorAdvances...)
 	slices.SortFunc(advances, func(a, b peoplesweep.CursorAdvance) int {
 		if a.Key.SourceLane != b.Key.SourceLane {
@@ -893,12 +961,14 @@ func personSweepCursorApplyOrder(mode peoplesweep.GenerationCursorMode) int {
 // personSweepWorkCompletion releases a claim independently of whether it
 // produced an inference generation.
 type personSweepWorkCompletion struct {
-	Lease              peoplesweep.Lease
-	ProgramFingerprint string
-	CatalogFingerprint string
-	DeferredCursorWork bool
-	BriefFailureClass  peoplesweep.FailureClass
-	BriefRetryAt       time.Time
+	Lease                  peoplesweep.Lease
+	ProgramFingerprint     string
+	CatalogFingerprint     string
+	DeferredCursorWork     bool
+	BriefFailureClass      peoplesweep.FailureClass
+	BriefRetryAt           time.Time
+	CommitmentFailureClass peoplesweep.FailureClass
+	CommitmentRetryAt      time.Time
 }
 
 func (s *Store) finishPersonSweepWorkTx(
@@ -920,8 +990,12 @@ func (s *Store) finishPersonSweepWorkTx(
 	if err != nil {
 		return 0, fmt.Errorf("check remaining person sweep work: %w", err)
 	}
+	failure, retryAt := request.BriefFailureClass, request.BriefRetryAt
+	if failure == "" && !request.CommitmentRetryAt.IsZero() {
+		failure, retryAt = request.CommitmentFailureClass, request.CommitmentRetryAt
+	}
 	var result sql.Result
-	if request.BriefFailureClass != "" {
+	if failure != "" {
 		// Extraction has committed, but the brief still needs a retry. Keep its
 		// delay and failure count on the existing work row so reconciliation
 		// cannot immediately publish the same brief again.
@@ -930,7 +1004,7 @@ func (s *Store) finishPersonSweepWorkTx(
 			last_failure_class = ?, lease_owner = '', lease_until = NULL,
 			updated_at = `+s.dialect.Now()+`
 			WHERE person_id = ? AND lease_owner = ? AND lease_fence = ?`,
-			s.dialect.TimestampParam(request.BriefRetryAt), request.BriefFailureClass,
+			s.dialect.TimestampParam(retryAt), failure,
 			request.Lease.PersonID, request.Lease.WorkerID, request.Lease.Fence)
 	} else if remaining {
 		result, err = tx.ExecContext(ctx, `UPDATE person_sweep_work SET available_at = `+s.dialect.Now()+`,
@@ -1088,7 +1162,7 @@ func (s *Store) failPersonSweepBriefBatchTx(
 		actual_cost_micro_usd = ?, failure_class = ?, completed_at = ?
 		WHERE attempt_id = ? AND batch_ordinal = ? AND call_ordinal = ? AND status = ?`,
 		status, actual.Requests, actual.InputTokens, actual.OutputTokens,
-		actual.EstimatedCostMicroUSD, request.BriefFailureClass,
+		actual.EstimatedCostMicroUSD, personSweepOptionalFailure(request, coordinate.purpose),
 		s.dialect.TimestampParam(request.CompletedAt), request.AttemptID,
 		coordinate.ordinal, coordinate.callOrdinal, batch.status)
 	if err != nil {

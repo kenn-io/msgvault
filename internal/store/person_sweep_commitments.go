@@ -1,0 +1,386 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json/v2"
+	"errors"
+	"fmt"
+	"slices"
+	"time"
+
+	"go.kenn.io/msgvault/internal/peoplesweep"
+	"go.kenn.io/msgvault/internal/personfacts"
+)
+
+var errCommitmentWindowChanged = errors.New("commitment sources changed before apply")
+
+type preparedCommitmentPromise struct {
+	promise peoplesweep.CommitmentPromise
+	source  peoplesweep.CommitmentSource
+	expires time.Time
+}
+
+type preparedCommitmentFulfilment struct {
+	change            peoplesweep.CommitmentFulfilment
+	anchor            peoplesweep.CommitmentAnchor
+	input             personfacts.EvidenceInput
+	replaceEvidenceID int64
+}
+
+type preparedCommitmentSweep struct {
+	generation  personfacts.PreparedGeneration
+	promises    []preparedCommitmentPromise
+	fulfilments []preparedCommitmentFulfilment
+	through     int64
+	snapshot    int64
+	autoFulfil  bool
+}
+
+func commitmentEvidence(personID int64, source peoplesweep.CommitmentSource, role, quote string, start, end int64) personfacts.EvidenceInput {
+	return personfacts.EvidenceInput{
+		PersonID: personID, SubjectPersonID: &personID, SubjectRef: role,
+		SourceClass: personfacts.EvidenceArchive, Directness: personfacts.DirectSelf,
+		Authority: personfacts.AuthorityAuthoritative, SourceRef: source.SourceRef,
+		SourceVersion: source.SourceVersion, ContentSHA256: source.ContentSHA256,
+		EventTime: personFactPortableTime(source.EventTime), RecordedTime: personFactPortableTime(source.RecordedTime),
+		Excerpt: quote, SpanStart: &start, SpanEnd: &end,
+	}
+}
+
+// The only commitment aligner is backed by sources verified against the local
+// archive during preparation of a fenced sweep application.
+type commitmentEvidenceAligner map[string]personfacts.EvidenceInput
+
+func (a commitmentEvidenceAligner) Align(_ context.Context, input personfacts.EvidenceInput) (personfacts.AlignmentResult, error) {
+	key, err := personfacts.EvidenceKey(input)
+	if err != nil {
+		return personfacts.AlignmentResult{}, err
+	}
+	if _, ok := a[key]; !ok {
+		return personfacts.AlignmentResult{}, errors.New("commitment evidence was not verified")
+	}
+	return personfacts.AlignmentResult{Accepted: true, SourceVersion: input.SourceVersion, ContentSHA256: input.ContentSHA256}, nil
+}
+
+func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.ApplyRequest) (*preparedCommitmentSweep, error) {
+	result := request.Commitment
+	if result == nil {
+		return nil, nil
+	}
+	window := result.Window
+	output, err := json.Marshal(result.Output)
+	if err != nil {
+		return nil, err
+	}
+	parsed, err := peoplesweep.ParseCommitments(output, window)
+	if err != nil {
+		return nil, err
+	}
+	location, err := time.LoadLocation(window.Timezone)
+	if err != nil {
+		return nil, err
+	}
+	sources := make(map[string]peoplesweep.CommitmentSource, len(window.Sources))
+	for _, source := range window.Sources {
+		sources[source.ID] = source
+	}
+	anchors := make(map[int64]peoplesweep.CommitmentAnchor, len(window.Anchors))
+	for _, anchor := range window.Anchors {
+		anchors[anchor.ID] = anchor
+	}
+	personID := request.Lease.PersonID
+	verify := func(sourceID string) (peoplesweep.CommitmentSource, error) {
+		expected := sources[sourceID]
+		source, ok, err := s.currentCommitmentSource(ctx, personID, expected.MessageID)
+		if err != nil {
+			return peoplesweep.CommitmentSource{}, err
+		}
+		if !ok || source != expected {
+			return peoplesweep.CommitmentSource{}, errCommitmentWindowChanged
+		}
+		return source, nil
+	}
+	prepared := &preparedCommitmentSweep{through: window.ThroughSequence, snapshot: window.SnapshotSequence, autoFulfil: result.Config.AutoFulfil}
+	generation := request.Generation
+	generation.ProgramID = peoplesweep.CommitmentProgramID
+	generation.ProgramVersion = peoplesweep.CommitmentProgramVersion
+	generation.ProgramFingerprint = peoplesweep.CommitmentProgramFingerprint()
+	generation.Claims = nil
+	generation.EvidenceStatusChanges = nil
+	aligner := make(commitmentEvidenceAligner)
+	for _, promise := range parsed.Promises {
+		source, err := verify(promise.SourceID)
+		if err != nil {
+			return nil, err
+		}
+		expires := source.EventTime.Add(result.Config.MaxDuration)
+		if promise.DueOn != nil {
+			day, err := time.ParseInLocation(time.DateOnly, *promise.DueOn, location)
+			if err != nil {
+				return nil, err
+			}
+			expires = day.AddDate(0, 0, 1).Add(result.Config.ExpireAfterDue).UTC()
+		}
+		descriptor := personfacts.TargetDescriptor{Kind: personfacts.TargetCommitment,
+			Key: promise.TargetKey, Slug: "commitment", ValueType: personfacts.ValueText,
+			Cardinality: personfacts.CardinalitySingle, Sensitive: true, MaxLength: 240}
+		descriptor.Revision, err = personfacts.DescriptorRevision(descriptor)
+		if err != nil {
+			return nil, err
+		}
+		value, err := json.Marshal(promise.Summary)
+		if err != nil {
+			return nil, err
+		}
+		evidence := commitmentEvidence(personID, source, "commitment-promise", promise.Quote, promise.Start, promise.End)
+		key, err := personfacts.EvidenceKey(evidence)
+		if err != nil {
+			return nil, err
+		}
+		aligner[key] = evidence
+		generation.Claims = append(generation.Claims, personfacts.ProposedClaim{
+			Target: descriptor, Relation: personfacts.RelationSupport, Origin: personfacts.OriginCommitment,
+			SubmittedValue: value, ValidUntil: &expires, Evidence: []personfacts.EvidenceInput{evidence},
+		})
+		prepared.promises = append(prepared.promises, preparedCommitmentPromise{promise: promise, source: source, expires: expires})
+	}
+	for _, fulfilment := range parsed.Fulfilments {
+		source, err := verify(fulfilment.SourceID)
+		if err != nil {
+			return nil, err
+		}
+		input := commitmentEvidence(personID, source, "commitment-fulfilment", fulfilment.Quote, fulfilment.Start, fulfilment.End)
+		anchor := anchors[fulfilment.CommitmentID]
+		replace, err := s.withdrawnCommitmentFulfilment(ctx, personID, anchor)
+		if err != nil {
+			return nil, err
+		}
+		prepared.fulfilments = append(prepared.fulfilments, preparedCommitmentFulfilment{
+			change: fulfilment, anchor: anchor, input: input, replaceEvidenceID: replace,
+		})
+	}
+	if len(generation.Claims) != 0 {
+		prepared.generation, err = personfacts.PreparePersonFactGeneration(ctx, generation, aligner)
+		if err != nil {
+			return nil, err
+		}
+		for _, claim := range prepared.generation.Claims() {
+			if claim.Failure != nil {
+				return nil, fmt.Errorf("invalid prepared commitment: %s", claim.Failure.Reason)
+			}
+		}
+	}
+	return prepared, nil
+}
+
+// A newer proof may replace a withdrawn or pre-reopen fulfilment. The
+// transaction only replaces the exact ID inspected here.
+func (s *Store) withdrawnCommitmentFulfilment(ctx context.Context, personID int64, anchor peoplesweep.CommitmentAnchor) (int64, error) {
+	var evidence personfacts.Evidence
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		var id sql.NullInt64
+		err := tx.QueryRowContext(ctx, `SELECT fulfilment_evidence_id FROM person_commitments
+			WHERE id = ? AND person_id = ? AND target_key = ?`, anchor.ID, personID, anchor.TargetKey).Scan(&id)
+		if err != nil || !id.Valid {
+			return err
+		}
+		evidence, err = s.loadCommitmentFulfilmentTx(ctx, tx, id.Int64)
+		return err
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, errCommitmentWindowChanged
+	}
+	if err != nil || evidence.ID == 0 {
+		return 0, err
+	}
+	if !evidence.Supported || anchor.ReopenedAt != nil && !evidence.Input.EventTime.After(*anchor.ReopenedAt) {
+		return evidence.ID, nil
+	}
+	citation, err := s.currentCommitmentCitation(ctx, personID, anchor.Direction, evidence.Input)
+	if err == nil && citation == nil {
+		return evidence.ID, nil
+	}
+	return 0, err
+}
+
+func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep) error {
+	personID := request.Lease.PersonID
+	if len(prepared.promises) > 0 {
+		generation, err := s.applyPreparedPersonFactGenerationTx(ctx, tx, prepared.generation)
+		if err != nil {
+			return err
+		}
+		for _, p := range prepared.promises {
+			var claimID int64
+			if err := tx.QueryRowContext(ctx, `SELECT id FROM person_fact_claims
+				WHERE generation_id = ? AND target_key = ? AND rejection_action IS NULL`,
+				generation.GenerationID, p.promise.TargetKey).Scan(&claimID); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, `INSERT INTO person_commitments
+				(person_id, current_claim_id, target_key, anchor_message_id, direction, quote, quote_start,
+				 quote_end, summary, due_on, promised_at, expires_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				ON CONFLICT (person_id, anchor_message_id, direction, quote_start, quote_end) DO UPDATE SET
+				 current_claim_id = excluded.current_claim_id, target_key = excluded.target_key,
+				 quote = excluded.quote, summary = excluded.summary, due_on = excluded.due_on,
+				 promised_at = excluded.promised_at, expires_at = excluded.expires_at`,
+				personID, claimID, p.promise.TargetKey, p.source.MessageID, p.promise.Direction,
+				p.promise.Quote, p.promise.Start, p.promise.End, p.promise.Summary, p.promise.DueOn,
+				s.dialect.TimestampParam(p.source.EventTime), s.dialect.TimestampParam(p.expires))
+			if err != nil {
+				return fmt.Errorf("persist commitment lifecycle: %w", err)
+			}
+		}
+	}
+	for _, f := range prepared.fulfilments {
+		key, err := personfacts.EvidenceKey(f.input)
+		if err != nil {
+			return err
+		}
+		evidence, err := s.insertPersonFactEvidenceTx(ctx, tx, personID, key, f.input)
+		if err != nil {
+			return err
+		}
+		confirmed := 0
+		if prepared.autoFulfil && f.change.Confirmed {
+			confirmed = 1
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE person_commitments SET
+			fulfilment_evidence_id = ?, fulfilment_confirmed = ?
+			WHERE id = ? AND person_id = ? AND target_key = ? AND current_claim_id IS NOT NULL
+			AND promised_at < ? AND (reopened_at IS NULL OR reopened_at < ?)
+			AND (fulfilment_evidence_id IS NULL OR fulfilment_evidence_id = ? OR (fulfilment_confirmed = 0 AND EXISTS (
+			  SELECT 1 FROM person_fact_evidence e WHERE e.id = person_commitments.fulfilment_evidence_id
+			  AND e.event_time <= ?)))`, evidence.ID, confirmed, f.anchor.ID, personID, f.anchor.TargetKey,
+			s.dialect.TimestampParam(f.input.EventTime), s.dialect.TimestampParam(f.input.EventTime), f.replaceEvidenceID, s.dialect.TimestampParam(f.input.EventTime))
+		if err != nil {
+			return fmt.Errorf("persist commitment fulfilment: %w", err)
+		}
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO person_commitment_frontiers (person_id, through_sequence, processed_at)
+		VALUES (?, ?, ?) ON CONFLICT (person_id) DO UPDATE SET
+		through_sequence = excluded.through_sequence, processed_at = excluded.processed_at
+		WHERE person_commitment_frontiers.through_sequence <= excluded.through_sequence`,
+		personID, prepared.through, s.dialect.TimestampParam(request.CompletedAt))
+	return err
+}
+
+func (s *Store) currentCommitmentSource(ctx context.Context, personID, messageID int64) (peoplesweep.CommitmentSource, bool, error) {
+	var conversationID int64
+	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT m.conversation_id
+		FROM messages m JOIN sources src ON src.id = m.source_id
+		WHERE m.id = ? AND m.conversation_id IS NOT NULL AND `+s.loopLiveMessageSQL("m", "src")), messageID).Scan(&conversationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return peoplesweep.CommitmentSource{}, false, nil
+	}
+	if err != nil {
+		return peoplesweep.CommitmentSource{}, false, err
+	}
+	for conversation, err := range s.LoopConversationsContext(ctx, LoopQuery{PersonID: personID, ConversationID: conversationID}) {
+		if err != nil {
+			return peoplesweep.CommitmentSource{}, false, err
+		}
+		owners, err := s.loopOwnerIdentities(ctx)
+		if err != nil {
+			return peoplesweep.CommitmentSource{}, false, err
+		}
+		messages, err := s.loopMessages(ctx, []int64{messageID}, owners)
+		if err != nil {
+			return peoplesweep.CommitmentSource{}, false, err
+		}
+		if len(messages) == 1 {
+			return s.commitmentMessage(ctx, personID, conversation, messages[0])
+		}
+	}
+	return peoplesweep.CommitmentSource{}, false, nil
+}
+
+func validatePersonSweepApplyCommitment(request peoplesweep.ApplyRequest) error {
+	for _, claim := range request.Generation.Claims {
+		if claim.Origin == personfacts.OriginCommitment || claim.Target.Kind == personfacts.TargetCommitment {
+			return errors.New("ordinary sweep claims cannot carry commitments")
+		}
+	}
+	hasCall := false
+	for _, batch := range request.Batches {
+		if request.CommitmentOnly && !personSweepCommitmentPurpose(batch.Purpose) {
+			return errors.New("commitment-only sweep cannot apply ordinary provider calls")
+		}
+		hasCall = hasCall || batch.Purpose == peoplesweep.ProviderCallPurposeCommitment
+	}
+	if request.CommitmentOnly && (request.Brief != nil || len(request.Generation.Claims) != 0) {
+		return errors.New("commitment-only sweep cannot apply ordinary provider output")
+	}
+	if request.CommitmentFailureClass != "" {
+		if !validPersonSweepFailureClass(request.CommitmentFailureClass) ||
+			!request.CommitmentRetryAt.After(request.CompletedAt) || request.Commitment != nil {
+			return errors.New("invalid failed commitment result")
+		}
+	} else if !request.CommitmentRetryAt.IsZero() {
+		return errors.New("commitment retry requires a failure")
+	}
+	result := request.Commitment
+	if result == nil {
+		if hasCall && request.CommitmentFailureClass == "" {
+			return errors.New("completed commitment call requires a result or failure")
+		}
+		return nil
+	}
+	window := result.Window
+	if !hasCall || !request.Generation.Policy.AllowSensitive || !result.Config.Enabled ||
+		window.PersonID != request.Lease.PersonID || !window.Now.Equal(request.Generation.ResolvedAt) ||
+		window.ThroughSequence < 0 || window.SnapshotSequence < window.ThroughSequence || len(window.Sources) == 0 ||
+		len(window.Sources) > result.Config.MaxItems || len(window.Anchors) > result.Config.MaxOpenAnchors {
+		return errors.New("commitment result does not match the attempt")
+	}
+	if err := result.Config.Validate(request.Budget); err != nil {
+		return err
+	}
+	size := 0
+	for _, source := range window.Sources {
+		size += len(source.Text)
+		if size > result.Config.MaxBytes {
+			return errors.New("commitment window exceeds its byte limit")
+		}
+	}
+	return nil
+}
+
+// The change journal covers message content and person identity changes between
+// source alignment and the fenced apply. A stale window can be retried without
+// committing its frontier or discarding the ordinary result.
+func (s *Store) commitmentWindowCurrentTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep) (bool, error) {
+	var latest int64
+	var changed bool
+	err := tx.QueryRowContext(ctx, `SELECT sequence, EXISTS (
+		SELECT 1 FROM person_sweep_changes WHERE person_id = ? AND sequence > ?
+	) FROM person_sweep_change_clock WHERE singleton = TRUE`,
+		request.Lease.PersonID, prepared.snapshot).Scan(&latest, &changed)
+	if err != nil || changed || prepared.snapshot > latest {
+		return false, err
+	}
+	var sourceSince, sourceJSON string
+	var sourceUntil sql.NullString
+	err = tx.QueryRowContext(ctx, `SELECT source_since, source_until, CAST(allowed_sources AS TEXT)
+		FROM person_inference_profiles WHERE fingerprint = ?`,
+		request.Generation.Policy.ProviderPolicyFingerprint).Scan(&sourceSince, &sourceUntil, &sourceJSON)
+	if err != nil {
+		return false, err
+	}
+	var lanes []peoplesweep.SourceClass
+	if err := json.Unmarshal([]byte(sourceJSON), &lanes); err != nil {
+		return false, err
+	}
+	if !slices.Contains(lanes, peoplesweep.SourceConversationText) {
+		return false, nil
+	}
+	for _, source := range request.Commitment.Window.Sources {
+		day := source.EventTime.Format(time.DateOnly)
+		if day < sourceSince || (sourceUntil.Valid && day > sourceUntil.String) {
+			return false, nil
+		}
+	}
+	return true, nil
+}

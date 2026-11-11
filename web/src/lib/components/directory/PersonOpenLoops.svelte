@@ -4,14 +4,20 @@
   import { Button } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
   import { formatContactDate } from '../../directory/labels';
-  import { listLoops } from '../../api/generated/api/api';
-  import type { LoopItem } from '../../api/generated/models';
+  import { listLoops, setCommitmentDecision } from '../../api/generated/api/api';
+  import type { LoopCommitment, LoopItem } from '../../api/generated/models';
 
   // refreshKey changes when the person's identities change, so the list reloads.
   interface Props { client: APIClient; personID: number; refreshKey?: string }
   let { client, personID, refreshKey }: Props = $props();
   const limit = 5;
   let items = $state<LoopItem[]>([]);
+  let commitments = $state<LoopCommitment[]>([]);
+  let decisions = $state<Record<string, 'done' | 'snoozed'>>({});
+  let deciding = $state<string | null>(null);
+  let decisionFailed = $state(false);
+  let decide = $state<(id: string, state: 'done' | 'snoozed' | 'open') => void>(() => {});
+  const openCount = $derived(items.length + commitments.filter((item) => !decisions[item.id]).length);
   let loading = $state(true);
   let checkingMore = $state(false);
   let checkMoreFailed = $state(false);
@@ -28,6 +34,28 @@
     const controller = new AbortController();
     checkMoreFailed = false;
     checkingMore = false;
+    decisions = {};
+    deciding = null;
+    decisionFailed = false;
+    decide = async (id, state) => {
+      deciding = id;
+      decisionFailed = false;
+      try {
+        const result = await setCommitmentDecision(
+          { commitmentId: id },
+          state === 'snoozed' ? { state, until: new Date(Date.now() + 86400000).toISOString() } : { state },
+          { ...selectedClient, signal: controller.signal },
+        );
+        if (controller.signal.aborted) return;
+        if (!result.data) throw new Error('Commitment decision was refused.');
+        if (state === 'open') delete decisions[id];
+        else decisions[id] = state;
+      } catch {
+        if (!controller.signal.aborted) decisionFailed = true;
+      } finally {
+        if (!controller.signal.aborted) deciding = null;
+      }
+    };
     async function load(more = false) {
       if (more) {
         checkingMore = true;
@@ -35,6 +63,7 @@
       } else {
         loading = true;
         items = [];
+        commitments = [];
         truncated = false;
         coverageIncomplete = false;
         unreadable = 0;
@@ -48,6 +77,11 @@
         if (controller.signal.aborted) return;
         if (!result.data) throw new Error('Open loops are unavailable.');
         items = result.data.items ?? [];
+        const refreshed = result.data.commitments ?? [];
+        commitments = [
+          ...refreshed,
+          ...commitments.filter((item) => decisions[item.id] && !refreshed.some((next) => next.id === item.id)),
+        ];
         truncated = Boolean(result.data.truncated);
         coverageIncomplete = Boolean(result.data.coverage_incomplete);
         unreadable = result.data.skipped_unparseable ?? 0;
@@ -72,6 +106,11 @@
     { kind: 'awaiting_reply', label: 'Waiting on them', items: items.filter((loop) => loop.kind !== 'reply_owed') },
   ]);
 
+  const promiseGroups = $derived([
+    { direction: 'owed_by', label: 'Promises you made', items: commitments.filter((item) => item.direction === 'owed_by') },
+    { direction: 'owed_to', label: 'Promises to you', items: commitments.filter((item) => item.direction === 'owed_to') },
+  ]);
+
   function ageLabel(since: string): string {
     const seconds = Math.max(0, (Date.now() - Date.parse(since)) / 1000);
     if (seconds >= 86400) return `${Math.floor(seconds / 86400)}d`;
@@ -81,12 +120,12 @@
 </script>
 
 <DetailSection title="Open loops">
-  {#snippet control()}{#if !loading && !failed && items.length > 0}<span class="muted">{items.length}{truncated ? '+' : ''} open</span>{/if}{/snippet}
+  {#snippet control()}{#if !loading && !failed && openCount > 0}<span class="muted">{openCount}{truncated ? '+' : ''} open</span>{/if}{/snippet}
   <div class="open-loops">
   {#if loading}<p class="muted" role="status">Loading…</p>
   {:else if failed}<InlineNotice message="Couldn't load open loops." />
-  {:else if items.length === 0 && coverageIncomplete}<p class="muted">No loops found in the messages checked.</p>
-  {:else if items.length === 0}<p class="muted">Nothing open with this person.</p>
+  {:else if items.length === 0 && commitments.length === 0 && coverageIncomplete}<p class="muted">No loops found in the messages checked.</p>
+  {:else if items.length === 0 && commitments.length === 0}<p class="muted">Nothing open with this person.</p>
   {:else}
     {#each groups as group (group.kind)}
       {#if group.items.length > 0}
@@ -103,6 +142,36 @@
         </div>
       {/if}
     {/each}
+    {#each promiseGroups as group (group.direction)}
+      {#if group.items.length > 0}
+        <div class="group">
+          <h4>{group.label}</h4>
+          <ul>
+            {#each group.items as promise (promise.id)}
+              <li class="promise">
+                <span>{promise.summary}{promise.due_on ? ` · Due ${promise.due_on}` : ''}</span>
+                <a href={`/messages/${promise.promise.message_id}`} title={promise.promise.text}>{promise.promise.text}</a>
+                {#if promise.proposed_fulfilment}
+                  <a href={`/messages/${promise.proposed_fulfilment.message_id}`}>
+                    Proposed fulfilment · {promise.proposed_fulfilment.text}
+                  </a>
+                {/if}
+                <div class="actions">
+                  {#if decisions[promise.id]}
+                    <span class="muted">{decisions[promise.id] === 'done' ? 'Done' : 'Snoozed'}</span>
+                    <Button size="sm" label="Reopen" disabled={deciding !== null} onclick={() => decide(promise.id, 'open')} />
+                  {:else}
+                    <Button size="sm" label="Done" disabled={deciding !== null} onclick={() => decide(promise.id, 'done')} />
+                    <Button size="sm" label="Snooze for 24h" disabled={deciding !== null} onclick={() => decide(promise.id, 'snoozed')} />
+                  {/if}
+                </div>
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+    {/each}
+    {#if decisionFailed}<p role="alert">Couldn't save the commitment decision.</p>{/if}
   {/if}
   {#if !loading && !failed && unreadable > 0}
     <p class="muted">
@@ -126,6 +195,8 @@
   a { min-width: 0; overflow: hidden; color: var(--link-ink); text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
   a:hover { text-decoration: underline; }
   li > span { flex: none; }
+  .promise { display: grid; justify-content: stretch; gap: var(--space-1); }
+  .actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1); }
   .muted { color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
   [role="alert"] { color: var(--text-danger); }
 </style>

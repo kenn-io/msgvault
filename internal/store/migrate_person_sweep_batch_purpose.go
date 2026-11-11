@@ -23,8 +23,8 @@ func (s *Store) migratePersonSweepBatchPurposeV2(ctx context.Context) error {
 // personSweepBatchPurposeCheck is the widened coupling constraint, written once
 // so the migration and the rebuilt table cannot drift from each other.
 const personSweepBatchPurposeCheck = `CHECK (
-				(call_ordinal = 0 AND purpose IN ('primary', 'brief')) OR
-				(call_ordinal = 1 AND purpose IN ('repair', 'brief_repair'))
+				(call_ordinal = 0 AND purpose IN ('primary', 'brief', 'commitment')) OR
+				(call_ordinal = 1 AND purpose IN ('repair', 'brief_repair', 'commitment_repair'))
 			)`
 
 func migratePersonSweepBatchPurposeV2SQLite(ctx context.Context, tx *loggedTx) error {
@@ -36,7 +36,7 @@ func migratePersonSweepBatchPurposeV2SQLite(ctx context.Context, tx *loggedTx) e
 	if err := validatePersonSweepBatchPurposeRows(ctx, tx); err != nil {
 		return err
 	}
-	if strings.Contains(definition, "'brief_repair'") {
+	if strings.Contains(definition, "'commitment_repair'") {
 		return nil
 	}
 	statements := []string{
@@ -118,8 +118,8 @@ func migratePersonSweepBatchPurposeV2PostgreSQL(ctx context.Context, tx *loggedT
 func validatePersonSweepBatchPurposeRows(ctx context.Context, tx *loggedTx) error {
 	var invalid int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_sweep_batches
-		WHERE NOT ((call_ordinal = 0 AND purpose IN ('primary', 'brief')) OR
-		           (call_ordinal = 1 AND purpose IN ('repair', 'brief_repair')))`,
+		WHERE NOT ((call_ordinal = 0 AND purpose IN ('primary', 'brief', 'commitment')) OR
+		           (call_ordinal = 1 AND purpose IN ('repair', 'brief_repair', 'commitment_repair')))`,
 	).Scan(&invalid); err != nil {
 		return fmt.Errorf("validate person sweep call journal purposes: %w", err)
 	}

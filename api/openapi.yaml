@@ -2995,6 +2995,59 @@ components:
         - default_reasoning_effort
         - supported_efforts
       type: object
+    CommitmentDecisionRequest:
+      additionalProperties: false
+      properties:
+        state:
+          enum:
+            - open
+            - done
+            - snoozed
+          type: string
+        until:
+          format: date-time
+          type: string
+      required:
+        - state
+      type: object
+    CommitmentDecisionResponse:
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        snoozed_until:
+          format: date-time
+          type: string
+        state:
+          enum:
+            - open
+            - done
+            - snoozed
+          type: string
+      required:
+        - id
+        - state
+      type: object
+    CommitmentQuote:
+      additionalProperties: true
+      properties:
+        end:
+          format: int64
+          type: integer
+        message_id:
+          format: int64
+          type: integer
+        start:
+          format: int64
+          type: integer
+        text:
+          type: string
+      required:
+        - message_id
+        - text
+        - start
+        - end
+      type: object
     CommunicationService:
       additionalProperties: true
       properties:
@@ -7187,6 +7240,43 @@ components:
         - done_bytes
         - total_bytes
       type: object
+    LoopCommitment:
+      additionalProperties: true
+      properties:
+        claim_id:
+          format: int64
+          type: integer
+        direction:
+          enum:
+            - owed_by
+            - owed_to
+          type: string
+        due_on:
+          format: date
+          type: string
+        id:
+          type: string
+        person_id:
+          format: int64
+          type: integer
+        promise:
+          $ref: "#/components/schemas/CommitmentQuote"
+        promised_at:
+          format: date-time
+          type: string
+        proposed_fulfilment:
+          $ref: "#/components/schemas/CommitmentQuote"
+        summary:
+          type: string
+      required:
+        - id
+        - person_id
+        - claim_id
+        - direction
+        - summary
+        - promise
+        - promised_at
+      type: object
     LoopCounterparty:
       additionalProperties: true
       properties:
@@ -7280,6 +7370,10 @@ components:
     LoopListResponse:
       additionalProperties: true
       properties:
+        commitments:
+          items:
+            $ref: "#/components/schemas/LoopCommitment"
+          type: array
         coverage_incomplete:
           description: True when more history remains after checking 1,000 uncached messages; another request reuses saved evidence to continue
           type: boolean
@@ -11810,6 +11904,7 @@ components:
             - fact
             - event
             - preference
+            - commitment
           type: string
         latest_supported_at:
           format: date-time
@@ -17158,7 +17253,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 5.1.0
+  version: 5.2.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -24295,6 +24390,88 @@ paths:
       security:
         - apiKey: []
       summary: List conversations waiting on a reply
+      tags:
+        - API
+  /api/v1/loops/commitments/{commitment_id}/decision:
+    post:
+      operationId: setCommitmentDecision
+      parameters:
+        - description: The commitment ID, for example c12
+          in: path
+          name: commitment_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommitmentDecisionRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommitmentDecisionResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Set an owner decision on a cited promise
       tags:
         - API
   /api/v1/loops/{message_id}/done:

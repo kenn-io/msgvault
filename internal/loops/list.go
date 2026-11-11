@@ -27,6 +27,7 @@ type Options struct {
 // uncached messages; the loops come from the conversations read in full.
 type Result struct {
 	Loops              []Loop
+	Commitments        []store.PersonCommitment
 	Truncated          bool
 	SkippedUnparseable int
 	CoverageIncomplete bool
@@ -69,6 +70,15 @@ type Store interface {
 	MarkLoopDoneContext(ctx context.Context, anchorID int64, questions []store.LoopMessage) (store.LoopDecision, error)
 	SnoozeLoopContext(ctx context.Context, anchorID int64, until time.Time, questions []store.LoopMessage) (store.LoopDecision, error)
 	ClearLoopDecisionContext(ctx context.Context, messageID int64) (bool, error)
+}
+
+// CommitmentReader is the optional cited-promise lane on an archive.
+type CommitmentReader interface {
+	ListPersonCommitmentsContext(ctx context.Context, personID int64, now time.Time, limit int) ([]store.PersonCommitment, error)
+}
+
+type CommitmentDecider interface {
+	DecidePersonCommitmentContext(ctx context.Context, id int64, state string, until *time.Time, now time.Time) (store.PersonCommitment, error)
 }
 
 type storeReader struct {
@@ -187,6 +197,17 @@ func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, e
 	result := Result{Loops: kept, SkippedUnparseable: unparsed, CoverageIncomplete: incomplete}
 	if len(kept) > opts.Limit {
 		result.Loops, result.Truncated = kept[:opts.Limit], true
+	}
+	if reader, ok := st.(CommitmentReader); ok && ctx.Err() == nil {
+		commitments, err := reader.ListPersonCommitmentsContext(ctx, opts.PersonID, now, min(opts.Limit, MaxLimit)+1)
+		if err != nil {
+			return Result{}, err
+		}
+		if len(commitments) > opts.Limit {
+			commitments = commitments[:opts.Limit]
+			result.Truncated = true
+		}
+		result.Commitments = commitments
 	}
 	return result, nil
 }

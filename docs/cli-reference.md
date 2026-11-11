@@ -62,6 +62,12 @@ when more history remains. Run it again to continue; JSON sets
 a message that doesn't start an open loop, such as one you already answered,
 fails with `<id> isn't an open loop.`
 
+For cited commitments, use the displayed `c<ID>` with `done`, `snooze`, or
+`reopen`. `list --json` includes exact citations in `commitments` when
+promises are open. `--questions` selects reply-loop question IDs.
+Commitment extraction and decisions require API schema 5.2.0 or newer.
+See [cited commitments](usage/open-loops.md#see-cited-commitments).
+
 ## meetings
 
 Read archived meeting evidence through the selected daemon. Requires API schema
@@ -3337,7 +3343,7 @@ grant consent to a provider or enroll a person in briefs.
 | `person provider list` | List configured model profiles |
 | `person provider use <name>` | Select a checked profile and enable sweeps |
 | `person provider check [name]` | Run fixed synthetic input without granting consent |
-| `person provider consent [name] --yes` | Grant consent to the exact checked policy |
+| `person provider consent [name] [--commitments] --yes` | Grant consent to the exact checked policy. `--commitments` grants the two-sided commitment lane. |
 | `person provider revoke [name]` | Revoke that policy's consent; `--all` revokes all stored sweep policies |
 | `person provider remove <name>` | Remove a configured profile and its stored key. For a profile no longer in the config, delete its leftover stored key and revoke consent for the policies that used it |
 | `person provider history [name] [--person <id>]` | Inspect redacted runs and attempts |
@@ -3353,7 +3359,7 @@ grant consent to a provider or enroll a person in briefs.
 | `person facts pin <person-id> <kind> <key>` | Protect a field's current or empty value |
 | `person facts unpin <person-id> <kind> <key>` | Allow automatic resolution for the field again |
 
-On unreleased main, claim reads include `kind` (`fact`, `event`, `preference`)
+On unreleased main, claim reads include `kind` (`fact`, `event`, `preference`, `commitment`)
 and `status` (`fresh`, `stale`, or `expired`). Kind comes from the claim's saved
 identity. The shipped primary channel, “ask me about,” interest, and favorites
 categories are preferences even if renamed. Custom attributes without an end
@@ -3361,7 +3367,7 @@ date are facts. Other time-bounded claims are events, and employment claims
 remain facts regardless of an end date. Preference identity takes precedence.
 
 Freshness uses the newest currently supported evidence: facts stay fresh for
-365 days, events for 7 days, and preferences for 90 days. A claim
+365 days, events for 7 days, and preferences and commitments for 90 days. A claim
 without supported evidence is stale. A claim expires exactly at `valid_until`,
 regardless of evidence freshness. `latest_supported_at` reports the evidence
 time when available. These read fields do not change inference packets.
