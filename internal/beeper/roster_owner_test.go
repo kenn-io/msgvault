@@ -50,7 +50,7 @@ func testRosterEachChatKeepsItsOwnPhone(t *testing.T, messageFirst, sameRun, ver
 	newOwner, err := st.EnsureParticipantByPhone(t.Context(), "+12025550124", "", "signal")
 	require.NoError(err)
 	state := NewSyncState()
-	opts := ImportOptions{AccountID: "signal", NoMedia: true}
+	opts := ImportOptions{AccountID: "signal", NoMedia: true, ShouldStop: func() bool { return false }}
 	for _, chat := range []*fakeChat{old, newer} {
 		if !sameRun {
 			imp = NewImporter(st, imp.client)

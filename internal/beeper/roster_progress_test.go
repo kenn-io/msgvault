@@ -487,3 +487,49 @@ func TestQuietRosterBudgetStopKeepsVerifiedMembershipResolved(t *testing.T) {
 	assert.NotContains(unresolved, chat.ID, "verified membership stays resolved while quiet matching is deferred")
 	require.NoError(st.CompleteSync(runID, ""))
 }
+
+func TestManualImportRefreshesRosterAfterScheduledStop(t *testing.T) {
+	require := require.New(t)
+	f := newFakeBeeper(t)
+	chat := budgetTestChat("!manual-refresh:example.test", 2, time.Now().Add(-time.Hour))
+	f.addChat(chat)
+	imp, st := newHandlerTestImporter(t, f)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	initial, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+	require.NoError(err)
+	departed := participantForBeeperUser(t, st, "@signal_ann:beeper.local")
+	require.Contains(rosterMembers(t, st, initial.SourceID, chat.ID), departed)
+	f.mu.Lock()
+	chat.Participants = append(chat.Participants, map[string]any{"id": "@temp:example.test"})
+	chat.LastActivity = time.Now().Add(time.Hour)
+	f.mu.Unlock()
+	imp = NewImporter(st, imp.client)
+	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool {
+		var count int
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM conversation_participants`).Scan(&count))
+		return count >= 3
+	}})
+	require.NoError(err)
+	require.True(sum.Stopped)
+	state := latestBeeperState(t, imp).Chats[chat.ID]
+	require.NotNil(state)
+	require.NotNil(state.RosterWork)
+	require.False(state.RosterWork.MemberFirst)
+	f.mu.Lock()
+	chat.Participants = []map[string]any{{"id": "@new:example.test", "isAdmin": true}, {"id": "@me:beeper.local", "isSelf": true}}
+	chat.LastActivity = time.Now().Add(time.Hour)
+	f.mu.Unlock()
+	imp = NewImporter(st, imp.client)
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+	require.NoError(err)
+	newID := participantForBeeperUser(t, st, "@new:example.test")
+	selfID := participantForBeeperUser(t, st, "@me:beeper.local")
+	require.ElementsMatch([]int64{newID, selfID}, rosterMembers(t, st, sum.SourceID, chat.ID))
+	require.NotContains(rosterMembers(t, st, sum.SourceID, chat.ID), departed)
+	var role string
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT role FROM conversation_participants WHERE participant_id = ? AND conversation_id = (SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?)`), newID, sum.SourceID, chat.ID).Scan(&role))
+	require.Equal("admin", role)
+	state = latestBeeperState(t, imp).Chats[chat.ID]
+	require.NotNil(state.RosterWork)
+	require.True(state.RosterWork.Verified)
+}

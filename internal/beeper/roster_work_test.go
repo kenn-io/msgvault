@@ -205,7 +205,7 @@ func TestRosterSettledPrefixExceedsBudget(t *testing.T) {
 		}
 		require.ErrorIs(err, errBeeperBudgetExpired)
 	}
-	t.Fatal("repeated visits never finished the settled roster")
+	require.FailNow("repeated visits never finished the settled roster")
 }
 
 func TestRosterWorkCheckpointClear(t *testing.T) {

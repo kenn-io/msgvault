@@ -1479,7 +1479,7 @@ func TestAppliedRosterRefreshesRouteAccountAndMerge(t *testing.T) {
 			requirements.NoError(err)
 			requirements.Len(listing.Items, 1)
 			detail := &listing.Items[0]
-			opts := ImportOptions{AccountID: "signal", NoMedia: true, routeAccount: &Account{AccountID: "signal", Bridge: &AccountBridge{Type: "signal"}, Status: "connected"}}
+			opts := ImportOptions{AccountID: "signal", NoMedia: true, ShouldStop: func() bool { return false }, routeAccount: &Account{AccountID: "signal", Bridge: &AccountBridge{Type: "signal"}, Status: "connected"}}
 			state := NewSyncState()
 			_, _, err = imp.syncChat(t.Context(), 0, source.ID, detail, opts, state, time.Time{}, false, false, &ImportSummary{})
 			requirements.NoError(err)

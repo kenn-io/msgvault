@@ -830,7 +830,7 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 		cs.RosterWork = &rosterWork{MemberFirst: true}
 	}
 	opts.rosterState = cs.RosterWork
-	opts.skipRoster = !cs.RosterWork.MemberFirst
+	opts.skipRoster = !cs.RosterWork.MemberFirst && (opts.Scheduled || !opts.StopAt.IsZero() || opts.ShouldStop != nil)
 	cs.RosterWork.MemberFirst = !cs.RosterWork.MemberFirst
 	before := sum.MessagesProcessed
 	convID, membershipComplete, membership, err := imp.ensureConversation(
