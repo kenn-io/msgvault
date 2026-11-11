@@ -2,9 +2,10 @@
   import { debounce, RadioGroup, SearchInput } from '@kenn-io/kit-ui';
   import { onMount } from 'svelte';
 
-  let { load, noun, empty, disabled = false, moreNote = '', selected = $bindable('') }: {
+  let { load, noun, empty, disabled = false, moreNote = '', noMatchHint = '', selected = $bindable('') }: {
     load: (query: string, signal: AbortSignal) => Promise<{ items: { id: string; label: string; detail?: string }[]; truncated: boolean }>;
     moreNote?: string;
+    noMatchHint?: string;
     noun: string;
     empty: string;
     disabled?: boolean;
@@ -48,6 +49,7 @@
     {/if}
   </div>
   {#if moreNote && !error && truncated && !loading && query.trim() === listedQuery}<p>{moreNote}</p>{/if}
+  {#if noMatchHint && listedQuery && !items.length && !error && !truncated && !loading && query.trim() === listedQuery}<p>{noMatchHint}</p>{/if}
 </div>
 
 <style>

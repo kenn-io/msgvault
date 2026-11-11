@@ -354,7 +354,7 @@ describe('TaskLinks', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input); requests.push(request);
       if (request.url.endsWith('/integrations/tasks/status')) return Response.json({ state: 'ready', project: 'project', message: 'Ready' });
-      if (request.url.includes('/integrations/tasks/search')) return Response.json({ tasks: [{ id: 'task-1', title: 'Synthetic result', revision: 'r1' }], truncated: false });
+      if (request.url.includes('/integrations/tasks/search')) return Response.json({ tasks: [{ id: 'task-1', title: 'Synthetic result', revision: 'r1' }, { id: 'task-2', title: 'Synthetic result', revision: 'r2' }], truncated: false });
       if (request.method === 'POST') return Response.json({ task: { id: 'task-1', project: 'project', title: 'Linked', revision: 'r1' } }, { status: 201 });
       return Response.json({ state: 'ready', complete: true, last_scan: '2026-07-19T01:00:00Z', tasks: [], outbound_metadata: {
         archive_uid: 'archive-a', message_id: 42, conversation_id: 7, source_type: 'gmail', source_identifier: 'archive@example.com', source_message_id: 'source-42', subject: 'Synthetic', from: 'sender@example.com', sent_at: '2026-07-18T12:00:00Z'
@@ -362,13 +362,14 @@ describe('TaskLinks', () => {
     });
     render(TaskLinks, { client: createAPIClient(fetchFn), mode: 'add', messageId: 42, title: 'Synthetic', oncomplete });
     await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
-    await fireEvent.click(await screen.findByRole('radio', { name: 'Synthetic result' }));
+    expect(await screen.findByRole('radio', { name: 'Synthetic result · task-1' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic result · task-2' }));
     const search = requests.find(request => new URL(request.url).pathname.endsWith('/integrations/tasks/search'))!;
     expect(new URL(search.url).searchParams.has('q')).toBe(false);
     await fireEvent.click(screen.getByRole('button', { name: 'Link task' }));
     await waitFor(() => expect(requests.some((request) => request.method === 'POST')).toBe(true));
     const post = requests.find((request) => request.method === 'POST')!;
-    await expect(post.clone().json()).resolves.toMatchObject({ task_id: 'task-1' });
+    await expect(post.clone().json()).resolves.toMatchObject({ task_id: 'task-2' });
     expect(post.headers.get('X-Request-Id')).toBeTruthy();
     const body = await post.clone().json() as { added_at?: string };
     expect(body.added_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
@@ -394,7 +395,7 @@ describe('TaskLinks', () => {
     });
 
     await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
-    await fireEvent.click(await screen.findByRole('radio', { name: 'Synthetic result' }));
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Synthetic result · task-1' }));
     const link = screen.getByRole('button', { name: 'Link task' });
     await fireEvent.click(link);
     await screen.findByRole('alert');

@@ -187,6 +187,20 @@ describe('KataEvidenceDialog', () => {
     expect(await screen.findByText('Search by whole word. The list is capped at 25.')).toBeTruthy();
   });
 
+  it('explains whole-word search when no issues match', async () => {
+    const client = createAPIClient(async input => {
+      const url = new URL((input as Request).url);
+      if (url.pathname.endsWith('/open-issues')) return Response.json({ issues: [], truncated: false });
+      return Response.json({ evidence: [passages[0]] });
+    });
+    render(KataEvidenceDialog, { client, selector });
+    await screen.findByText('Opening passage');
+    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'budg' } });
+    await screen.findByText('No open issues match "budg".');
+    expect(screen.getByText('Search by whole word.')).toBeDefined();
+  });
+
   it('keeps a new issue draft across modes', async () => {
     const h = harness(async () => Response.json({ issue, replayed: false }));
     render(KataEvidenceDialog, { client: h.client, selector });

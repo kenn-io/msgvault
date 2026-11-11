@@ -142,7 +142,7 @@
   async function loadTasks(query: string, signal: AbortSignal) {
     const { data, error } = await generatedSearchIntegrationTasks(query ? { q: query } : {}, { ...client, signal });
     if (!data) throw new Error(messageFor(error, 'Unable to search tasks.'));
-    return { items: (data.tasks ?? []).map(task => ({ id: task.id, label: task.title })), truncated: data.truncated };
+    return { items: (data.tasks ?? []).map(task => ({ id: task.id, label: task.title, detail: task.id })), truncated: data.truncated };
   }
   async function linkExisting(taskID: string): Promise<void> {
     if (!taskID || mutating || !mutationReady) return;
