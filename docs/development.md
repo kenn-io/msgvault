@@ -575,7 +575,7 @@ need an explicit version bump when they change the API contract.
 Add the change to the version-history comment above `APISchemaVersion`. The test
 compares markers with `origin/main` when available. To reproduce the CI history
 check against a specific commit, set `MSGVAULT_API_CONTRACT_BASE` to its SHA or
-ref. The test requires that explicit base to exist locally.
+ref.
 
 ## Archive schema version maintenance
 

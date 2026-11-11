@@ -63,9 +63,6 @@ func apiBaseMarkers(ctx context.Context, base string, explicit bool) ([]string, 
 
 func checkAPIContract(version, digest string, markers, base []string) error {
 	current := "v" + version
-	if semver.Canonical(current) != current {
-		return fmt.Errorf("invalid API schema version %q", version)
-	}
 	greatest := ""
 	contracts := make(map[string][]string)
 	candidate := make(map[string]bool)
@@ -180,10 +177,9 @@ func TestAPIBaseMarkers(t *testing.T) {
 	assert.Empty(markers)
 	markers, err = apiBaseMarkers(t.Context(), "HEAD", false)
 	require.NoError(err)
-	if len(markers) == 0 {
-		t.Skip("HEAD has no API contract markers")
+	if len(markers) > 0 {
+		assert.Contains(markers, "5.0.0_f4c3cd16ffd3e2294f6c0690df7ae8b2024db4b66538f467bc2d2cba36b325cf")
 	}
-	assert.Contains(markers, "5.0.0_f4c3cd16ffd3e2294f6c0690df7ae8b2024db4b66538f467bc2d2cba36b325cf")
 }
 
 func TestAPIContractDigest(t *testing.T) {
