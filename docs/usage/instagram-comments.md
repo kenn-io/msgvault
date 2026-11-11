@@ -84,31 +84,36 @@ Use the decimal ad account ID without the `act_` prefix. The ad token needs the
 `ads_read` permission for that ad account. Restart the daemon so it sees the
 new variable.
 
-Each sync then also reads the ad account's creatives with the ad token and
-looks up the Instagram media each creative uses with the Page token. msgvault
-archives that media and its comments only when the media's owner is the
-configured `instagram_account_id`. Media that is also in the account's media
-list stays one conversation, and its comments are marked as ad comments in
-their metadata.
+Each sync then also reads the ad account's ad creatives, Meta's name for the
+content of each ad, with the ad token. It looks up the Instagram media each one
+uses with the Page token. msgvault archives that media and its comments only
+when the media's owner is the configured `instagram_account_id`. Media that is
+also in the account's media list stays one conversation, and its comments are
+marked as ad comments in their metadata.
 
-msgvault skips media owned by another account, media with no owner, and media
-that Meta reports as missing or that the Page token cannot read. When a sync
-skips any, its summary line ends with the number of ad media skipped. The
-daemon log gives the reason for each item it could not read or that has no
-owner. Media owned by another account is logged only at debug level.
+msgvault skips ad media in three cases:
+
+- Meta reports the media as missing, or the Page token cannot read it.
+- Meta returns no owner for the media.
+- The media's owner is another account.
+
+All three count in the number of ad media skipped at the end of the sync
+summary line. The daemon log records the first two as warnings and the third
+at debug level. Meta may leave out the owner for media that another account
+created, so another account's media can appear as any of the three.
 
 Other failed media lookups are not skipped. If Meta rejects the lookup as a
 malformed request, or returns any other error, such as a server error, a rate
-limit, or an expired token, the sync fails with Meta's error code. The next
-sync tries that media again.
+limit, or an expired token, the sync fails with Meta's error code or HTTP
+status. The next sync tries that media again.
 
 If the ad token cannot read the ad account, or Meta rate limits the ad account,
-that sync fails and reports Meta's error code. The rest of the run still
-archives comments on the account's own media while it has requests left. With
-a small `--max-requests`, the failed creative read can use the run's last
-request; the account's own media then continues on a later sync. The next sync
-also continues reading creatives where it stopped.
+that sync fails and reports Meta's error code or HTTP status. The rest of the
+run still archives comments on the account's own media while it has requests
+left. With a small `--max-requests`, the failed ad account read can use the
+run's last request; the account's own media then continues on a later sync. The
+next sync also continues reading the ad account where it stopped.
 
-Creative pages and media lookups count toward the same request budget. Adding,
+Ad account reads and media lookups count toward the same request budget. Adding,
 changing, or removing `ad_account_id` restarts that profile's sync cycle from
 the beginning; archived rows are kept.

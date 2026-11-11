@@ -1,12 +1,15 @@
 package meta
 
 import (
+	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -103,15 +106,17 @@ func TestInstagramAdMediaArchivesOnlyOwnedMedia(t *testing.T) {
 	imp := NewImporter(st, page)
 	src, err := imp.RegisterInstagram(t.Context(), "9", "100", "200")
 	require.NoError(err)
-	runs := 0
+	runs, skipped := 0, 0
 	for ; runs < 20; runs++ {
 		sum, err := imp.ImportInstagramAds(t.Context(), "9", "100", "200", "700", ads, ImportOptions{MaxRequests: 4})
 		require.NoError(err)
+		skipped += sum.AdMediaSkipped
 		if !sum.Partial {
 			break
 		}
 	}
 	require.Less(runs, 20, "bounded runs must resume to completion")
+	assert.Equal(4, skipped, "901, 902, 903 and 904 are each skipped once across the resumed runs")
 	assert.Positive(runs, "the budget forces at least one resume from a saved ad checkpoint")
 	assert.Equal(int32(1), f.adReads.Load(), "a media ID repeated on one creative page is read once")
 	assert.Equal(int32(1), f.ownedReads.Load())
@@ -169,6 +174,55 @@ func TestInstagramAdMediaSkippedCount(t *testing.T) {
 			assert.ElementsMatch(tt.archived, slices.Collect(maps.Keys(stored)))
 		})
 	}
+}
+
+// skipCountHandler records the count attribute of every Info record.
+type skipCountHandler struct {
+	mu     sync.Mutex
+	counts []slog.Value
+}
+
+func (*skipCountHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *skipCountHandler) WithAttrs([]slog.Attr) slog.Handler     { return h }
+func (h *skipCountHandler) WithGroup(string) slog.Handler          { return h }
+
+func (h *skipCountHandler) Handle(_ context.Context, record slog.Record) error {
+	if record.Level != slog.LevelInfo {
+		return nil
+	}
+	record.Attrs(func(attr slog.Attr) bool {
+		if attr.Key == "count" {
+			h.mu.Lock()
+			h.counts = append(h.counts, attr.Value)
+			h.mu.Unlock()
+		}
+		return true
+	})
+	return nil
+}
+
+// Scheduled syncs discard the summary, so the Info record is their only trace
+// of skipped ad media.
+func TestInstagramAdMediaSkippedCountIsLogged(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	handler := &skipCountHandler{}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(handler))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	st := testutil.NewSQLiteTestStore(t)
+	_, page, ads := newAdFixture(t)
+	imp := NewImporter(st, page)
+	_, err := imp.RegisterInstagram(t.Context(), "9", "100", "200")
+	require.NoError(err)
+	sum, err := imp.ImportInstagramAds(t.Context(), "9", "100", "200", "700", ads, ImportOptions{})
+	require.NoError(err)
+	require.Equal(4, sum.AdMediaSkipped)
+
+	handler.mu.Lock()
+	defer handler.mu.Unlock()
+	require.Len(handler.counts, 1, "one Info record per run carries the skipped count")
+	assert.Equal(int64(sum.AdMediaSkipped), handler.counts[0].Int64())
 }
 
 func TestInstagramAdMediaMissingIsSkipped(t *testing.T) {
@@ -229,6 +283,7 @@ func TestInstagramAdMediaRetryableFailureFailsSync(t *testing.T) {
 			require.Error(err, "a retryable media failure is not skipped")
 			assert.Contains(err.Error(), tt.wantCode)
 			assert.True(sum.Partial)
+			assert.Zero(sum.AdMediaSkipped, "a media lookup that fails the run is not a skip")
 			exists, err := st.MessageExistsBatch(src.ID, []string{"900"})
 			require.NoError(err)
 			assert.Empty(exists)

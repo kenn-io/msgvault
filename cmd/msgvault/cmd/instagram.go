@@ -133,7 +133,7 @@ func newSyncInstagramCommentsCmd() *cobra.Command {
 	options := meta.ImportOptions{MaxRequests: meta.DefaultMaxRequests}
 	cmd := &cobra.Command{
 		Use: "sync [identifier]", Short: "Archive Instagram comments and replies",
-		Long: "Sync Instagram professional account comments for registered [[instagram_comments]] profiles. Read available media, comments and replies with resumable progress; profiles with ad_account_id also visit media used by that ad account's creatives when the configured account owns it. Tokens come from the daemon environment. Partial writes stay searchable; missing or inaccessible objects never delete archived history.",
+		Long: "Sync Instagram professional account comments for registered [[instagram_comments]] profiles. Read available media, comments and replies with resumable progress; profiles set up to include ads also archive ad media that their Instagram account owns. Tokens come from the daemon environment. Partial writes stay searchable; missing or inaccessible objects never delete archived history.",
 		Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			if options.MaxRequests <= 0 {
 				return opserr.Invalid(errors.New("--max-requests must be positive"))
