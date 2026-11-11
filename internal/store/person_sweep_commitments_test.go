@@ -1184,7 +1184,7 @@ func TestCommitmentReopenSuppressesExistingFutureDatedFulfilment(t *testing.T) {
 	applyCommitmentTestSources(t, f, cfg.Commitments)
 	f = nextCommitmentTestAttempt(t, f, "-finish-initial")
 	applyCommitmentTestSources(t, f, cfg.Commitments)
-	completion := persist("future-completion", reply, time.Hour)
+	completion := persist("future-completion", reply, time.Hour+123456*time.Microsecond)
 	f = nextCommitmentTestAttempt(t, f, "-complete")
 	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
 	window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
