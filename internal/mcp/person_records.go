@@ -15,6 +15,7 @@ type StructuredPersonRecord struct {
 }
 type PersonMediaContent struct {
 	byteChunk
+
 	MediaType string `json:"media_type"`
 }
 

@@ -124,6 +124,7 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 	}
 	type mediaAdd struct {
 		generated.PersonMediaInputRequest
+
 		DataSize   *int    `json:"data_size,omitzero"`
 		DataSHA256 *string `json:"data_sha256,omitzero"`
 	}
@@ -133,6 +134,7 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 	}
 	patch := struct {
 		generated.PersonProfilePatchRequest
+
 		Media *mediaPatch `json:"media,omitempty"`
 	}{PersonProfilePatchRequest: *input.Patch}
 	if input.Patch.Media != nil {
