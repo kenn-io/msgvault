@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"math"
 	"regexp"
 	"slices"
@@ -51,24 +50,6 @@ type ICSMetadata struct {
 type ICSRevision struct {
 	Sequence int64     `json:"sequence"`
 	Stamp    time.Time `json:"stamp"`
-}
-
-// SkippedEventsError reports events left out of a calendar whose other events were read.
-type SkippedEventsError struct{ Errs []error }
-
-func (e *SkippedEventsError) Error() string   { return errors.Join(e.Errs...).Error() }
-func (e *SkippedEventsError) Unwrap() []error { return e.Errs }
-
-func finishICS(out []ICSComponent, skipped []error) ([]ICSComponent, error) {
-	switch {
-	case len(out) > 0 && len(skipped) > 0:
-		return out, &SkippedEventsError{skipped}
-	case len(skipped) > 0:
-		return nil, errors.Join(skipped...)
-	case len(out) == 0:
-		return nil, errors.New("calendar has no VEVENT")
-	}
-	return out, nil
 }
 
 type ICSComponent struct {
@@ -115,29 +96,18 @@ func DecodeICS(raw, metadata []byte, calendarZone string) (Event, bool, error) {
 	return e, true, nil
 }
 
-// withProdID supplies the PRODID the encoder requires when a producer omitted it.
-func withProdID(props ical.Props) ical.Props {
-	if props.Get(ical.PropProductID) == nil {
-		props = maps.Clone(props)
-		props.SetText(ical.PropProductID, "-//msgvault//ICS import//EN")
-	}
-	return props
-}
-
-// withStamp supplies the DTSTAMP the encoder requires without changing the parsed event.
-func withStamp(event *ical.Component) *ical.Component {
-	if event.Props.Get(ical.PropDateTimeStamp) != nil {
-		return event
-	}
-	props := maps.Clone(event.Props)
-	props.SetText(ical.PropDateTimeStamp, "19700101T000000Z")
-	return &ical.Component{Name: event.Name, Props: props, Children: event.Children}
+// icsEventZoneComponents keeps only the VTIMEZONE definitions an event references.
+func icsEventZoneComponents(cal *ical.Calendar, event *ical.Component) []*ical.Component {
+	used := icsEventZones(event)
+	return slices.DeleteFunc(slices.Clone(cal.Children), func(comp *ical.Component) bool {
+		return comp.Name != ical.CompTimezone || !used[normalizeICSZone(comp.Props.Get("TZID").Value)]
+	})
 }
 
 func encodeICSEvent(cal *ical.Calendar, zones []*ical.Component, event *ical.Component) ([]byte, error) {
 	retained := ical.NewCalendar()
-	retained.Props = withProdID(cal.Props)
-	retained.Children = append(slices.Clone(zones), withStamp(event))
+	retained.Props = cal.Props
+	retained.Children = append(slices.Clone(zones), event)
 	var buf bytes.Buffer
 	err := ical.NewEncoder(&buf).Encode(retained)
 	return buf.Bytes(), err
@@ -145,8 +115,7 @@ func encodeICSEvent(cal *ical.Calendar, zones []*ical.Component, event *ical.Com
 
 // ParseICS accepts one complete VCALENDAR. A single-event file is retained
 // byte for byte; each event of a larger file keeps its own VEVENT and the
-// shared calendar lines. An event whose zone is unsupported is skipped and
-// reported in SkippedEventsError when other events are read.
+// shared calendar lines. An unsupported zone rejects the calendar.
 func ParseICS(raw []byte, method, calendarZone string) ([]ICSComponent, error) {
 	return parseICS(raw, method, calendarZone, false)
 }
@@ -194,19 +163,19 @@ func parseICS(raw []byte, method, calendarZone string, strict bool) (out []ICSCo
 	if err != nil {
 		return nil, fmt.Errorf("calendar time zone: %w", err)
 	}
-	var skipped []error
-	zoneComponents := slices.DeleteFunc(slices.Clone(cal.Children), func(comp *ical.Component) bool { return comp.Name != ical.CompTimezone })
 	events := cal.Events()
+	if len(events) == 0 {
+		return nil, errors.New("calendar has no VEVENT")
+	}
 	for index, event := range events {
 		comp := event.Component
-		zones, err := customICSZones(cal, icsEventZones(comp))
+		zones, err := eventICSZones(cal, comp)
 		if err != nil {
-			skipped = append(skipped, fmt.Errorf("VEVENT %d: %w", index+1, err))
-			continue
+			return nil, fmt.Errorf("VEVENT %d: %w", index+1, err)
 		}
 		retained := raw
 		if len(events) > 1 {
-			retained, err = encodeICSEvent(cal, zoneComponents, comp)
+			retained, err = encodeICSEvent(cal, icsEventZoneComponents(cal, comp), comp)
 			if err != nil {
 				return nil, fmt.Errorf("retain VEVENT %d: %w", index+1, err)
 			}
@@ -222,7 +191,7 @@ func parseICS(raw []byte, method, calendarZone string, strict bool) (out []ICSCo
 		result.Raw = bytes.Clone(retained)
 		out = append(out, result)
 	}
-	return finishICS(out, skipped)
+	return out, nil
 }
 
 func icsMethod(cal *ical.Calendar, method string, strict bool) (string, error) {

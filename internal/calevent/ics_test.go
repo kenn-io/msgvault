@@ -189,7 +189,11 @@ func TestICSRetainsEachEventWithItsTimeZones(t *testing.T) {
 	requirements.Len(components, 3)
 	for i, uid := range []string{"first@example.test", "second@example.test", "third@example.test"} {
 		retained := string(components[i].Raw)
-		assertions.Contains(retained, "BEGIN:VTIMEZONE")
+		if i == 0 {
+			assertions.Contains(retained, "BEGIN:VTIMEZONE")
+		} else {
+			assertions.NotContains(retained, "BEGIN:VTIMEZONE")
+		}
 		assertions.NotContains(retained, "private-task@example.test")
 		event, err := ParseICS(components[i].Raw, "", "UTC")
 		requirements.NoError(err)
