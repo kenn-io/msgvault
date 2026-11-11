@@ -62,9 +62,10 @@ request_timeout = "45s"
 	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: st}, Logger: slog.New(slog.DiscardHandler)}))
 	approved := 0
 	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyProviders}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, req *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
-		if approved == 0 {
+		switch approved {
+		case 0:
 			a.Contains(req.Params.Message, "Enable people inference with the selected provider")
-		} else if approved == 1 {
+		case 1:
 			a.Contains(req.Params.Message, "revoke active consent for both configured and running providers")
 			a.Contains(req.Params.Message, "re-consent")
 		}

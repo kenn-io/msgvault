@@ -47,7 +47,7 @@ func (b *daemonMCPOperations) executePeopleProviderOperation(ctx context.Context
 	switch name {
 	case "get_people_provider_settings":
 		if _, e := decodeMCPOperationArguments[struct{}](args); e != nil {
-			return operationFailure("invalid_arguments", false), true, nil
+			return operationFailure("invalid_arguments", false), true, nil //nolint:nilerr // Invalid arguments become a fixed structured tool refusal.
 		}
 		result, err = readMCPOperationJSON[generated.PeopleInferenceSettingsResponse](ctx, b.client, http.MethodGet, "/api/v1/settings/people-inference", nil, http.StatusOK)
 	case "select_people_provider", "disable_people_inference":
