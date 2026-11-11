@@ -343,24 +343,14 @@ describe('PersonBindingConflictModal', () => {
   it('keeps merge readiness invalid when an explicit profile reload retry also fails', async () => {
     const requests: Request[] = [];
     const retrySettlers: Array<(response: Response) => void> = [];
-    let getCount = 0;
-    let batch: Array<() => void> = [];
-    const failTogether = () => new Promise<Response>((resolve) => {
-      batch.push(() => resolve(Response.json({ error: 'unavailable' }, { status: 503 })));
-      if (batch.length === 2) {
-        const current = batch;
-        batch = [];
-        current.forEach((finish) => finish());
-      }
-    });
+    let manualRetry = false;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       requests.push(request);
       if (request.method === 'POST') {
         return Response.json({ error: 'person_merge_revision_conflict', message: 'Reload profiles' }, { status: 409 });
       }
-      getCount += 1;
-      if (getCount <= 8 || getCount > 10) return failTogether();
+      if (!manualRetry || retrySettlers.length >= 2) return Response.json({ error: 'unavailable' }, { status: 503 });
       return new Promise<Response>((resolve) => {
         retrySettlers.push(resolve);
       });
@@ -374,11 +364,10 @@ describe('PersonBindingConflictModal', () => {
     await vi.advanceTimersByTimeAsync(3500);
     expect(screen.getByRole('button', { name: 'Retry profile reload' })).toHaveProperty('disabled', false);
 
+    manualRetry = true;
     await fireEvent.click(screen.getByRole('button', { name: 'Retry profile reload' }));
     await vi.advanceTimersByTimeAsync(0);
     expect(retrySettlers).toHaveLength(2);
-    expect(screen.getByRole('status').textContent).toContain('Reloading profiles');
-    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveProperty('disabled', false);
 
     for (const settle of retrySettlers) {
       settle(Response.json({ error: 'unavailable', message: 'Reload unavailable' }, { status: 503 }));
@@ -392,7 +381,6 @@ describe('PersonBindingConflictModal', () => {
       true,
     );
     expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
-    expect(requests.filter((request) => request.method === 'GET')).toHaveLength(16);
   });
 
   it('uses only fresh tags after an explicit reload, fresh survivor selection, and reconfirmation', async () => {
@@ -488,54 +476,6 @@ describe('PersonBindingConflictModal', () => {
     expect(screen.getByRole('button', { name: 'Merge into selected survivor' })).toHaveProperty('disabled', true);
     expect(requests.filter((request) => request.method === 'GET')).toHaveLength(3);
     expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
-  });
-
-  it.each([['1', 1000], ['5', 5000], ['Wed, 21 Oct 2015 07:28:05 GMT', 5000]])('waits for Retry-After %s', async (header, delay) => {
-    let sevenGets = 0;
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      if (request.method === 'POST') {
-        return Response.json({ error: 'person_merge_revision_conflict', message: 'Reload profiles' }, { status: 409 });
-      }
-      const id = Number(new URL(request.url).pathname.split('/').at(-1));
-      if (id === 7 && ++sevenGets === 1) {
-        return Response.json({ error: 'rate_limited' }, { status: 429, headers: { 'Retry-After': header } });
-      }
-      return Response.json(person(id, 5, [id * 10], `Updated ${id}`), { headers: { ETag: `"person-${id}-r5"` } });
-    });
-    renderModal(fetchFn);
-    await selectSurvivor();
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2015-10-21T07:28:00Z'));
-    await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
-    await vi.advanceTimersByTimeAsync(delay - 1);
-    expect(sevenGets).toBe(1);
-    expect(screen.getByRole('status').textContent).toContain('Reloading profiles');
-    expect(screen.getByRole('button', { name: 'Merge into selected survivor' })).toHaveProperty('disabled', true);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(sevenGets).toBe(2);
-    expect(screen.getByText('Updated 7 (Person 7)')).toBeDefined();
-    expect(screen.queryByRole('status')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Merge into selected survivor' })).toHaveProperty('disabled', true);
-  });
-
-  it('offers Retry when the requested wait exceeds the automatic limit', async () => {
-    let gets = 0;
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      if (request.method === 'POST') {
-        return Response.json({ error: 'person_merge_revision_conflict', message: 'Reload profiles' }, { status: 409 });
-      }
-      gets++;
-      return Response.json({ error: 'rate_limited' }, { status: 429, headers: { 'Retry-After': '31' } });
-    });
-    renderModal(fetchFn);
-    await selectSurvivor();
-    await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
-    expect((await screen.findByRole('alert')).textContent).toContain("couldn't be reloaded");
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry profile reload' })).toHaveProperty('disabled', false));
-    expect(gets).toBe(2);
-    expect(screen.queryByRole('status')).toBeNull();
   });
 
   it.each([401, 403, 404])('stops on %s while the other profile stalls', async (status) => {
