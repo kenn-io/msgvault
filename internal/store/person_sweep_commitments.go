@@ -96,11 +96,7 @@ func (a commitmentEvidenceAligner) Align(_ context.Context, input personfacts.Ev
 // Match an exact locator first. A unique overlapping re-quote is another
 // description of the existing promise. A span covering several promises is
 // ambiguous and cannot replace one of their owner decisions.
-type commitmentLocatorReader interface {
-	QueryContext(ctx context.Context, query string, args ...any) (*loggedRows, error)
-}
-
-func (s *Store) matchCommitmentLocator(ctx context.Context, reader commitmentLocatorReader, personID, messageID int64, promise peoplesweep.CommitmentPromise, source peoplesweep.CommitmentSource, replacements bool) (PersonCommitment, bool, error) {
+func (s *Store) matchCommitmentLocator(ctx context.Context, reader contextRowsQuerier, personID, messageID int64, promise peoplesweep.CommitmentPromise, source peoplesweep.CommitmentSource, replacements bool) (PersonCommitment, bool, error) {
 	rows, err := reader.QueryContext(ctx, `SELECT `+commitmentColumns+` FROM person_commitments
 		WHERE person_id = ? AND anchor_message_id = ? AND direction = ? ORDER BY id`, personID, messageID, promise.Direction)
 	if err != nil {
@@ -126,18 +122,12 @@ func (s *Store) matchCommitmentLocator(ctx context.Context, reader commitmentLoc
 	if err := rows.Err(); err != nil || len(matches) == 0 {
 		return PersonCommitment{}, false, err
 	}
-	slices.SortStableFunc(matches, func(a, b PersonCommitment) int {
-		exactA, exactB := a.Start == promise.Start && a.End == promise.End, b.Start == promise.Start && b.End == promise.End
-		if exactA == exactB {
-			return 0
+	for _, match := range matches {
+		if match.Start == promise.Start && match.End == promise.End {
+			return match, false, nil
 		}
-		if exactA {
-			return -1
-		}
-		return 1
-	})
-	first := matches[0]
-	return first, (first.Start != promise.Start || first.End != promise.End) && len(matches) > 1, nil
+	}
+	return matches[0], len(matches) > 1, nil
 }
 
 func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.ApplyRequest) (*preparedCommitmentSweep, error) {
