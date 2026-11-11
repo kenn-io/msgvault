@@ -2898,7 +2898,7 @@ export const findContactCandidates = (
   );
 };
 /**
- * Creates a durable profile with a new vCard UID and user-curated contact data. Refuses contacts already present on a person or observed participant cluster. A title requires an organization. Does not publish to CardDAV.
+ * Creates a durable profile with a new vCard UID and user-curated contact data. With if_exists=return, returns a single matching person without updating it; otherwise refuses existing contacts. A title requires an organization. Does not publish to CardDAV.
  * @summary Create a person without message participants
  */
 export const createStandalonePerson = (
