@@ -669,7 +669,7 @@ func (w *Worker) runPerson(
 	}
 	// forcedBackstop records that the assembly below came from the brief's
 	// fallback, so the batch-narrowing loop rebuilds it the same way.
-	commitmentOnly := !ordinaryAllowed || (commitmentPlanned && !plan.run && len(progress.CursorEnvelope) == 0)
+	commitmentOnly := (!ordinaryAllowed && len(progress.Seeds) > 0) || (commitmentPlanned && !plan.run && len(progress.CursorEnvelope) == 0)
 	forcedBackstop := false
 	discoveryLimit := 0
 	if len(progress.CursorEnvelope) == 0 && (plan.run || commitmentPlanned) {
@@ -751,7 +751,7 @@ func (w *Worker) runPerson(
 		}
 		return PersonRunResult{PersonID: lease.PersonID}, nil
 	}
-	if !ordinaryAllowed && !commitmentPlanned {
+	if commitmentOnly && !commitmentPlanned {
 		if err := startAttempt(progress.CursorEnvelope); err != nil {
 			return PersonRunResult{}, err
 		}
