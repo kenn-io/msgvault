@@ -15,6 +15,8 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+const attributeSourceField = "source"
+
 func recordAttributeMCPCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MCPCapabilities) []string {
 	var names []string
 	for _, r := range []struct {
@@ -22,7 +24,7 @@ func recordAttributeMCPCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MC
 		query, properties             []string
 	}{
 		{"list_person_attributes", "listPersonAttributes", http.MethodGet, "/api/v1/people/{id}/attributes", "", []string{"history", "slug", "universal_id"}, nil},
-		{"set_person_attribute", "setPersonAttribute", http.MethodPut, "/api/v1/people/{id}/attributes/{slug}", "", []string{"dry_run"}, []string{"value", "ordinal", "expected_value_id", "source", "source_ref", "confidence", "actor", "active_from", "active_until"}},
+		{"set_person_attribute", "setPersonAttribute", http.MethodPut, "/api/v1/people/{id}/attributes/{slug}", "", []string{"dry_run"}, []string{"value", "ordinal", "expected_value_id", attributeSourceField, "source_ref", "confidence", "actor", "active_from", "active_until"}},
 		{"clear_person_attribute", "clearPersonAttribute", http.MethodDelete, "/api/v1/people/{id}/attributes/{slug}", "", []string{"ordinal", "expected_value_id", "dry_run"}, nil},
 		{"list_attribute_definitions", "listAttributeDefinitions", http.MethodGet, "/api/v1/attribute-definitions", "", []string{"object_type", "include_hidden"}, nil},
 		{"get_attribute_definition", "getAttributeDefinition", http.MethodGet, "/api/v1/attribute-definitions/{id}", "", nil, nil},
@@ -251,7 +253,7 @@ func (b *daemonMCPOperations) recordAttributeDisclosure(ctx context.Context, nam
 		if preview.Superseded != nil {
 			v := preview.Superseded
 			ordinal = v.Ordinal
-			superseded = map[string]any{"id": v.ID, "ordinal": v.Ordinal, "value": v.Value, "source": v.Source, "source_ref": v.SourceRef, "actor": v.Actor, "confidence": v.Confidence, "active_from": v.ActiveFrom, "created_at": v.CreatedAt}
+			superseded = map[string]any{"id": v.ID, "ordinal": v.Ordinal, "value": v.Value, attributeSourceField: v.Source, "source_ref": v.SourceRef, "actor": v.Actor, "confidence": v.Confidence, "active_from": v.ActiveFrom, "created_at": v.CreatedAt}
 		}
 		if preview.Value != nil {
 			ordinal = preview.Value.Ordinal
