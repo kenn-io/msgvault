@@ -73,32 +73,85 @@ func TestCommitmentAgendaReceiptFollowsSurvivor(t *testing.T) {
 }
 
 func TestCommitmentAgendaTransferredReceiptPurgesWithOriginalCitation(t *testing.T) {
-	r, a, ctx := require.New(t), assert.New(t), t.Context()
-	f := newPersonSweepApplyFixture(t, "agenda-delete-original", false)
-	st := f.store
-	_, persist := newCommitmentTestConversation(t, f)
-	const quote = "I will send the report."
-	survivorMessage := persist("survivor", quote, -time.Hour)
-	absorbedMessage := persist("absorbed", quote, -time.Hour)
-	survivor := insertAgendaMergeFixture(t, st, f.personID, survivorMessage, "survivor-key", false, false)
-	absorbed := insertAgendaMergeFixture(t, st, f.personID, absorbedMessage, "absorbed-key", true, false)
-	frozen, err := st.GetCommitmentAgendaContext(ctx, absorbed)
-	r.NoError(err)
-	_, err = st.MergeDuplicates(ctx, survivorMessage, []int64{absorbedMessage}, "agenda-delete-original")
-	r.NoError(err)
-	transferred, err := st.GetCommitmentAgendaContext(ctx, survivor)
-	r.NoError(err)
-	r.Equal(frozen.IdempotencyKey, transferred.IdempotencyKey)
-	r.Equal(frozen.Request, transferred.Request)
-	deleted, err := st.DeleteDedupedBatchesContext(ctx, []string{"agenda-delete-original"})
-	r.NoError(err)
-	r.Equal(int64(1), deleted)
-	var survivorRows int
-	r.NoError(st.db.QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM person_commitments
-		WHERE id = ? AND anchor_message_id = ?`), survivor, survivorMessage).Scan(&survivorRows))
-	a.Equal(1, survivorRows, "permanent deletion retains the survivor obligation")
-	_, err = st.GetCommitmentAgendaContext(ctx, survivor)
-	a.ErrorIs(err, sql.ErrNoRows, "the frozen request still cites the permanently deleted original")
+	for _, mode := range []string{"dedup", "gc", "remove_source", "remove_source_serialized", "migrate_source_message_id"} {
+		t.Run(mode, func(t *testing.T) {
+			r, a, ctx := require.New(t), assert.New(t), t.Context()
+			f := newPersonSweepApplyFixture(t, "agenda-delete-original", false)
+			st := f.store
+			if mode == "gc" && st.IsPostgreSQL() {
+				t.Skip("archive GC is SQLite-only")
+			}
+			const quote = "I will send the report."
+			owner, err := st.EnsureParticipant("owner@example.test", "Owner", "example.test")
+			r.NoError(err)
+			alice, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
+			r.NoError(err)
+			persist := func(account, key string) (int64, int64, int64) {
+				t.Helper()
+				source, err := st.GetOrCreateSource("teams", account)
+				r.NoError(err)
+				r.NoError(st.AddAccountIdentity(source.ID, "owner@example.test", "manual"))
+				conversation, err := st.EnsureConversationWithType(source.ID, "19:receipt@thread.v2", "direct_chat", "Planning")
+				r.NoError(err)
+				r.NoError(st.EnsureConversationParticipant(conversation, owner, "member"))
+				r.NoError(st.EnsureConversationParticipant(conversation, alice, "member"))
+				id, err := st.PersistMessageContext(ctx, &MessagePersistData{
+					Message: &Message{SourceID: source.ID, ConversationID: conversation, MessageType: "teams", SourceMessageID: key,
+						SenderID: sql.NullInt64{Int64: alice, Valid: true}, SentAt: sql.NullTime{Time: personFactLedgerNow.Add(-time.Hour), Valid: true}},
+					BodyText: sql.NullString{String: quote, Valid: true},
+				})
+				r.NoError(err)
+				return id, source.ID, conversation
+			}
+			survivorMessage, _, _ := persist("survivor@example.test", "chat:19:receipt@thread.v2:original")
+			account := "survivor@example.test"
+			if mode == "remove_source" || mode == "remove_source_serialized" {
+				account = "original@example.test"
+			}
+			absorbedMessage, sourceID, conversationID := persist(account, "original")
+			survivor := insertAgendaMergeFixture(t, st, f.personID, survivorMessage, "survivor-key", false, false)
+			absorbed := insertAgendaMergeFixture(t, st, f.personID, absorbedMessage, "absorbed-key", true, false)
+			frozen, err := st.GetCommitmentAgendaContext(ctx, absorbed)
+			r.NoError(err)
+			if mode == "migrate_source_message_id" {
+				r.NoError(st.MigrateSourceMessageID(ctx, sourceID, conversationID, "original", "chat:19:receipt@thread.v2:original"))
+			} else {
+				_, err = st.MergeDuplicates(ctx, survivorMessage, []int64{absorbedMessage}, "agenda-delete-original")
+				r.NoError(err)
+				transferred, err := st.GetCommitmentAgendaContext(ctx, survivor)
+				r.NoError(err)
+				r.Equal(frozen.IdempotencyKey, transferred.IdempotencyKey)
+				r.Equal(frozen.Request, transferred.Request)
+				switch mode {
+				case "dedup":
+					deleted, err := st.DeleteDedupedBatchesContext(ctx, []string{"agenda-delete-original"})
+					r.NoError(err)
+					r.Equal(int64(1), deleted)
+				case "gc":
+					r.NoError(st.MarkMessageDeleted(sourceID, "original"))
+					plan, err := st.PlanGCContext(ctx)
+					r.NoError(err)
+					r.Equal([]int64{absorbedMessage}, plan.SourceDeletedIDs)
+					deleted, err := st.ExecuteGCContext(ctx, plan)
+					r.NoError(err)
+					r.Equal(int64(1), deleted)
+				case "remove_source":
+					r.NoError(st.RemoveSource(sourceID))
+				case "remove_source_serialized":
+					_, _, err := st.RemoveSourceSerialized(ctx, sourceID)
+					r.NoError(err)
+				}
+			}
+			var survivorRows, originalRows int
+			r.NoError(st.db.QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM person_commitments
+				WHERE id = ? AND anchor_message_id = ?`), survivor, survivorMessage).Scan(&survivorRows))
+			a.Equal(1, survivorRows, "permanent deletion retains the survivor obligation")
+			r.NoError(st.db.QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM messages WHERE id = ?`), absorbedMessage).Scan(&originalRows))
+			a.Zero(originalRows, "the production deletion path removed the original citation")
+			_, err = st.GetCommitmentAgendaContext(ctx, survivor)
+			a.ErrorIs(err, sql.ErrNoRows, "the frozen request still cites the permanently deleted original")
+		})
+	}
 }
 
 func TestCommitmentAgendaReceiptPurgesWithPerson(t *testing.T) {
