@@ -72,6 +72,9 @@ func TestEngineRetriesFailedDeliveryAndAdvancesAfterSuccess(t *testing.T) {
 			var p payload
 			decodeErr = json.NewDecoder(r.Body).Decode(&p)
 			bodies = append(bodies, p)
+			if len(bodies) == 1 {
+				now = now.Add(5 * time.Second)
+			}
 			w.WriteHeader(status)
 		}))
 		defer server.Close()
@@ -85,6 +88,7 @@ func TestEngineRetriesFailedDeliveryAndAdvancesAfterSuccess(t *testing.T) {
 		require.NoError(err)
 		assert.Equal(start, state.At)
 		assert.Equal(1, state.Failures)
+		assert.Equal(now.Add(30*time.Second), state.NextAttemptAt)
 		require.NoError(engine.RunPass(ctx))
 		assert.Len(bodies, 1)
 		status = http.StatusNoContent

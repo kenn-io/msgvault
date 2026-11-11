@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -29,11 +30,12 @@ import (
 type observedStore struct {
 	*store.Store
 
-	reads      []int
-	zeroBound  bool
-	fixedBound time.Time
-	personErr  error
-	person     *store.Person
+	reads         []int
+	zeroBound     bool
+	fixedBound    time.Time
+	personErr     error
+	person        *store.Person
+	rejectAdvance bool
 }
 
 func (s *observedStore) ListChangedMessages(ctx context.Context, cursor store.ChangedMessagesCursor, limit int) (store.ChangedMessagePage, error) {
@@ -47,6 +49,12 @@ func (s *observedStore) ListChangedMessages(ctx context.Context, cursor store.Ch
 		page.CompleteThrough = s.fixedBound
 	}
 	return page, err
+}
+func (s *observedStore) AdvanceWakeupState(ctx context.Context, name string, before []byte, after store.WakeupState) (bool, error) {
+	if s.rejectAdvance {
+		return false, nil
+	}
+	return s.Store.AdvanceWakeupState(ctx, name, before, after)
 }
 func (s *observedStore) GetPersonContext(ctx context.Context, id int64) (*store.Person, error) {
 	if s.personErr != nil {
@@ -229,7 +237,7 @@ func TestLostCASRedelivers(t *testing.T) {
 			var raw []byte
 			state, raw, mutateErr = st.LoadWakeupState(r.Context(), "cas")
 			if mutateErr == nil {
-				state.Failures = 1
+				state.Failures++
 				changed, mutateErr = st.AdvanceWakeupState(r.Context(), "cas", raw, state)
 			}
 		}
@@ -245,6 +253,7 @@ func TestLostCASRedelivers(t *testing.T) {
 	state, _, err := st.LoadWakeupState(t.Context(), "cas")
 	require.NoError(err)
 	assert.Equal(start, state.At)
+	now = now.Add(31 * time.Second)
 	require.NoError(engine.RunPass(t.Context()))
 	assert.Equal(2, count)
 	state, _, err = st.LoadWakeupState(t.Context(), "cas")
@@ -312,4 +321,81 @@ func TestOwnerCursorReplaysDeliveredIDs(t *testing.T) {
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &feed))
 	require.NotEmpty(feed.Messages)
 	Assert.Equal(t, id, feed.Messages[0].ID)
+}
+
+func TestCancelledAttemptSurvivesRestartAndEmptyRescan(t *testing.T) {
+	require := Require.New(t)
+	assert := Assert.New(t)
+	st := testutil.NewTestStore(t)
+	now := time.Now().UTC()
+	start := now.Add(-time.Hour)
+	seedWakeup(t, st, "cancel@example.com", 0, 1, now)
+	initializedWakeup(t, st, "cancel", start)
+	var bodies []payload
+	status := http.StatusInternalServerError
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body payload
+		if json.NewDecoder(r.Body).Decode(&body) == nil {
+			bodies = append(bodies, body)
+		}
+		w.WriteHeader(status)
+	}))
+	defer server.Close()
+	filter := changefeed.Filter{IncomingOnly: true}
+	sub := testSubscription(t, "cancel", server, filter)
+	ctx, cancel := context.WithCancel(t.Context())
+	sub.Client.dial = func(context.Context, string, string) (net.Conn, error) { cancel(); return nil, context.Canceled }
+	engine := Engine{Store: st, Subscriptions: []Subscription{sub}, Now: func() time.Time { return now }}
+	require.ErrorIs(engine.RunPass(ctx), context.Canceled)
+	state, _, err := st.LoadWakeupState(t.Context(), "cancel")
+	require.NoError(err)
+	assert.Equal(start, state.At)
+	assert.Equal(1, state.Failures)
+	assert.Equal(now.Add(30*time.Second), state.NextAttemptAt)
+	assert.Empty(bodies)
+	uid, err := st.ArchiveUIDContext(t.Context())
+	require.NoError(err)
+	from := changefeed.EncodeCursor(uid, store.ChangedMessagesFrom(start), filter.Digest())
+	now = now.Add(73 * time.Hour)
+	engine = Engine{Store: st, Subscriptions: []Subscription{testSubscription(t, "cancel", server, filter)}, Now: func() time.Time { return now }}
+	require.NoError(engine.RunPass(t.Context()))
+	require.Len(bodies, 1)
+	assert.Equal(from, bodies[0].CursorFrom)
+	assert.Zero(bodies[0].Matched.Count)
+	state, _, err = st.LoadWakeupState(t.Context(), "cancel")
+	require.NoError(err)
+	assert.Equal(start, state.At)
+	assert.Equal(2, state.Failures)
+	assert.Equal(now.Add(time.Minute), state.NextAttemptAt)
+	status = http.StatusNoContent
+	now = now.Add(61 * time.Second)
+	require.NoError(engine.RunPass(t.Context()))
+	require.Len(bodies, 2)
+	state, _, err = st.LoadWakeupState(t.Context(), "cancel")
+	require.NoError(err)
+	assert.True(state.At.After(start))
+	assert.Zero(state.Failures)
+}
+
+func TestPreSendConflictDoesNotDeliver(t *testing.T) {
+	require := Require.New(t)
+	assert := Assert.New(t)
+	base := testutil.NewTestStore(t)
+	now := time.Now().UTC()
+	start := now.Add(-time.Hour)
+	seedWakeup(t, base, "conflict@example.com", 0, 1, now)
+	initializedWakeup(t, base, "conflict", start)
+	st := &observedStore{Store: base, rejectAdvance: true}
+	hits := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { hits++; w.WriteHeader(http.StatusNoContent) }))
+	defer server.Close()
+	var logs bytes.Buffer
+	engine := Engine{Store: st, Logger: slog.New(slog.NewTextHandler(&logs, nil)), Subscriptions: []Subscription{testSubscription(t, "conflict", server, changefeed.Filter{IncomingOnly: true})}, Now: func() time.Time { return now }}
+	require.NoError(engine.RunPass(t.Context()))
+	assert.Zero(hits)
+	assert.Contains(logs.String(), "state_conflict")
+	state, _, err := base.LoadWakeupState(t.Context(), "conflict")
+	require.NoError(err)
+	assert.Equal(start, state.At)
+	assert.Zero(state.Failures)
 }

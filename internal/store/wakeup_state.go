@@ -37,8 +37,11 @@ func (s *Store) LoadWakeupState(ctx context.Context, name string) (WakeupState, 
 	return state, []byte(raw), nil
 }
 
+// EncodeWakeupState returns the exact bytes used by the state CAS.
+func EncodeWakeupState(state WakeupState) ([]byte, error) { return json.Marshal(state) }
+
 func (s *Store) AdvanceWakeupState(ctx context.Context, name string, before []byte, after WakeupState) (bool, error) {
-	value, err := json.Marshal(after)
+	value, err := EncodeWakeupState(after)
 	if err != nil {
 		return false, err
 	}

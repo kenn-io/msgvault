@@ -187,7 +187,6 @@ func (e *Engine) RunPass(ctx context.Context) error {
 				}
 				pages[since] = page
 			}
-			ready = true
 			rows, position, _ := changefeed.Scan(page, since, filter, changefeed.ScanBudget)
 			next = position
 			for _, row := range rows {
@@ -195,13 +194,32 @@ func (e *Engine) RunPass(ctx context.Context) error {
 					matches = append(matches, row)
 				}
 			}
-			if len(matches) == 0 && state.Failures == 0 && len(page.Messages) > 0 {
-				state.At = next.At()
-				state.AfterID, state.AfterRow = next.AfterID()
-				state.NextAttemptAt = time.Time{}
-				err = advance(raw)
+			if len(matches) == 0 && state.Failures == 0 {
+				if len(page.Messages) > 0 {
+					state.At = next.At()
+					state.AfterID, state.AfterRow = next.AfterID()
+					state.NextAttemptAt = time.Time{}
+					return advance(raw)
+				}
+				return nil
 			}
-			return err
+			state.Failures++
+			state.NextAttemptAt = now.Add(retryDelay(state.Failures))
+			nextRaw, err := store.EncodeWakeupState(state)
+			if err != nil {
+				return err
+			}
+			swapped, err := e.Store.AdvanceWakeupState(ctx, sub.Name, raw, state)
+			if err != nil {
+				return err
+			}
+			if !swapped {
+				logger.Warn("wakeup state conflict", "name", sub.Name, "category", "state_conflict")
+				return nil
+			}
+			raw = nextRaw
+			ready = true
+			return nil
 		})
 		if err != nil {
 			if ctx.Err() != nil {
@@ -210,7 +228,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 			logger.Warn("wakeup store step failed", "name", sub.Name, "category", "store_error")
 			continue
 		}
-		if !ready || (len(matches) == 0 && state.Failures == 0) {
+		if !ready {
 			continue
 		}
 		from := changefeed.EncodeCursor(uid, since, sub.Filter.Digest())
@@ -236,7 +254,6 @@ func (e *Engine) RunPass(ctx context.Context) error {
 			state.Failures = 0
 			state.NextAttemptAt = time.Time{}
 		} else {
-			state.Failures++
 			state.NextAttemptAt = e.now().Add(retryDelay(state.Failures))
 			logger.Warn("wakeup failed", "name", sub.Name, "category", category, "failures", state.Failures)
 		}
