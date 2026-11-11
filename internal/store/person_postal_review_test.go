@@ -18,13 +18,13 @@ const postalClaimJSON = `{"street_address":" 12 Example Street ","extended_addre
 
 func TestLegacyPostalAddressShape(t *testing.T) {
 	for _, tc := range []struct {
-		name, original string
-		structured     bool
+		name, original       string
+		structured, extended bool
 	}{
-		{"six parts", ";;12 Example St;City;;", true},
-		{"seven parts", ";;12 Example St;City;;;", true},
-		{"extended parts", `;;12 Example St;City;;;;Room\;3;Floor 2`, true},
-		{"geo text", "geo:1,2;u=35", false},
+		{"six parts", ";;12 Example St;City;;", true, false},
+		{"seven parts", "Box 1;;12 Example St;City;;;", true, false},
+		{"extended parts", `;;12 Example St;City;;;;Room\;3;Floor 2`, true, true},
+		{"geo text", "geo:1,2;u=35", false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			address, err := (PersonAddress{AddressKind: PersonAddressPostal, OriginalValue: tc.original}).PublicAddress()
@@ -33,7 +33,7 @@ func TestLegacyPostalAddressShape(t *testing.T) {
 				require.NotNil(t, address.StreetAddress)
 				assert.Equal(t, "12 Example St", *address.StreetAddress)
 				assert.Nil(t, address.FreeText)
-				if tc.name == "extended parts" {
+				if tc.extended {
 					require.NotNil(t, address.ExtendedComponents)
 					assert.Equal(t, tc.original, *address.ExtendedComponents)
 				}
@@ -153,13 +153,13 @@ func TestPostalClaimReferenceCannotHideDifferentSuggestion(t *testing.T) {
 	original, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "postal", StreetAddress: "99 Other Road", OriginalValue: "99 Other Road"})
 	require.NoError(t, err)
 	_, err = st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, StreetAddress: new("99 Other Road"), OriginalValue: original, Envelope: ValueEnvelopeInput{Source: ProvenanceUser, SourceRef: &ref}})
-	require.Error(t, err, "a different address must not consume this suggestion")
+	require.ErrorIs(t, err, ErrPostalSuggestionMismatch, "a different address must not consume this suggestion")
 	claims, err = st.ListPersonFactClaimsContext(t.Context(), id, personfacts.ClaimFilter{Limit: 1})
 	require.NoError(t, err)
 	require.Len(t, claims, 1)
 	assert.True(t, claims[0].PostalReview.Eligible, "a different address must not consume this suggestion")
 	_, err = st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, StreetAddress: new("99 Other Road"), Envelope: ValueEnvelopeInput{Source: ProvenanceUser, SourceRef: &ref}})
-	require.Error(t, err, "a different address without a snapshot must not consume this suggestion")
+	require.ErrorIs(t, err, ErrPostalSuggestionMismatch, "a different address without a snapshot must not consume this suggestion")
 	claims, err = st.ListPersonFactClaimsContext(t.Context(), id, personfacts.ClaimFilter{Limit: 1})
 	require.NoError(t, err)
 	require.Len(t, claims, 1)
@@ -317,7 +317,7 @@ func TestPostalAddressSnapshotReadAndWriteBoundaries(t *testing.T) {
 	_, err = st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, OriginalValue: empty, Envelope: ValueEnvelopeInput{Source: ProvenanceUser}})
 	require.ErrorIs(t, err, ErrPersonAddressValueMissing)
 	_, err = st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, OriginalValue: "msgvault:postal-input:v2\n{}", StreetAddress: new("12 Example Street"), Envelope: ValueEnvelopeInput{Source: ProvenanceUser}})
-	require.Error(t, err)
+	require.ErrorIs(t, err, postaladdress.ErrUnsupportedEnvelope)
 	public, err := (PersonAddress{AddressKind: PersonAddressPostal, StreetAddress: new("12 Example Street"), OriginalValue: "msgvault:postal-input:v2\n{}"}).PublicAddress()
 	require.NoError(t, err)
 	assert.Equal(t, "12 Example Street", *public.StreetAddress)

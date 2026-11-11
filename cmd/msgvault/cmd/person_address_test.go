@@ -104,13 +104,14 @@ func TestPostalAddressCLIApplyRequiresExplicitRevisionAndTarget(t *testing.T) {
 }
 
 func TestPostalAddressCLIListCarriesAssessment(t *testing.T) {
-	daemon := newPersonBriefTestDaemon(t, `{"person":{"id":7,"vcard_uid":"person-7","participant_ids":[],"revision":5},"addresses":[{"person_id":7,"address_kind":"postal","street_address":"12 Example Street","original_value":"raw","assessment":{"original":{"address_kind":"postal","original_value":"raw"},"proposed":{"address_kind":"postal","street_address":"12 Example Street"},"status":"needs_review","reason_codes":["not_verified","country_missing"],"original_extended_parts":[],"proposed_extended_parts":[]},"envelope":{"id":1,"source":"user","ordinal":0,"created_at":"2026-08-20T12:30:00Z","updated_at":"2026-08-20T12:30:00Z"}}],"contact_points":[],"names":[],"dates":[],"categories":[],"media":[]}`)
+	daemon := newPersonBriefTestDaemon(t, `{"person":{"id":7,"vcard_uid":"person-7","participant_ids":[],"revision":5},"addresses":[{"person_id":7,"address_kind":"postal","street_address":"12 Example Street","original_value":"raw","assessment":{"original":{"address_kind":"postal","original_value":"raw"},"proposed":{"address_kind":"postal","street_address":"12 Example Street"},"status":"needs_review","reason_codes":["not_verified","country_missing"],"original_extended_parts":[],"proposed_extended_parts":[]},"envelope":{"id":1,"source":"user","ordinal":0,"created_at":"2026-08-20T12:30:00Z","updated_at":"2026-08-20T12:30:00Z"}},{"person_id":7,"address_kind":"birth_place","original_value":"Hidden birthplace","envelope":{"id":2,"source":"user","ordinal":0,"created_at":"2026-08-20T12:30:00Z","updated_at":"2026-08-20T12:30:00Z"}}],"contact_points":[],"names":[],"dates":[],"categories":[],"media":[]}`)
 	output, err := runPostalCLI(daemon.ctx, t, "list", "7")
 	require.NoError(t, err, output)
 	assert := assert.New(t)
 	assert.Equal("GET", daemon.method)
 	assert.Equal("/api/v1/people/7/profile", daemon.path)
 	assert.Contains(output, `"status":"needs_review"`)
+	assert.NotContains(output, "Hidden birthplace")
 }
 
 func TestPostalAddressCLIValidatesInputFile(t *testing.T) {

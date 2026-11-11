@@ -10,7 +10,7 @@ for (const width of [1280, 420] as const) {
     await page.route('**/api/v1/people/42/profile', route => route.fulfill({ json: { person, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [] }, headers: { ETag: '"person-42-r1"' } }));
     await page.route('**/api/v1/people/42/addresses/assess', async route => {
       const body = route.request().postDataJSON() as { address: Input };
-      await route.fulfill({ json: { original: body.address, proposed: { ...body.address, street_address: '12 Example Street', country_code: 'CA' }, status: 'validated', reason_codes: [], provider: 'google', checked_at: when, original_extended_parts: [], proposed_extended_parts: [] } });
+      await route.fulfill({ json: { original: body.address, proposed: { ...body.address, street_address: '12 Example Street', country_code: 'CA' }, status: 'validated', reason_codes: ['provider_confirmed'], provider: 'google', checked_at: when, original_extended_parts: [], proposed_extended_parts: [] } });
     });
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true, directoryPersonID: 42 }))}`);

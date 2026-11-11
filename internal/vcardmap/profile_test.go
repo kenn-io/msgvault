@@ -858,7 +858,7 @@ func TestProjectPersonPropertiesCarriesUnstructuredPostalAddresses(t *testing.T)
 			},
 			{
 				Envelope:    store.ValueEnvelope{ID: 701, Source: store.ProvenanceUser},
-				AddressKind: store.PersonAddressPostal, OriginalValue: ";;1 Main\\, St;Town;;;",
+				AddressKind: store.PersonAddressPostal, OriginalValue: "Box 1;;1 Main\\, St;Town;;;",
 			},
 			{
 				Envelope:    store.ValueEnvelope{ID: 702, Source: store.ProvenanceUser},
@@ -891,7 +891,7 @@ func TestProjectPersonPropertiesCarriesUnstructuredPostalAddresses(t *testing.T)
 	assert.Equal(";;;;;;", freeText.Property.RawValue)
 	assert.Equal([]string{"1 Main St, Town"}, projectedParameterValues(freeText.Property, "LABEL"))
 	structured := projectedByOwner(t, properties, "person_addresses", 701, fieldValue)
-	assert.Equal(";;1 Main\\, St;Town;;;", structured.Property.RawValue,
+	assert.Equal("Box 1;;1 Main\\, St;Town;;;", structured.Property.RawValue,
 		"a structured original value is re-emitted with its escaping intact, not escaped again")
 	assert.Empty(projectedParameterValues(structured.Property, "LABEL"))
 	semicolonText := projectedByOwner(t, properties, "person_addresses", 705, fieldValue)
@@ -1299,53 +1299,34 @@ func mappedOccurrence(
 	return projectOccurrenceByIdentity(t, envelope, mapping.Identity)
 }
 
-func TestPostalAddressSnapshotDoesNotRestoreClearedValues(t *testing.T) {
-	for _, tc := range []struct {
-		name         string
-		original     postaladdress.Input
-		country, geo *string
-		want         string
-	}{
-		{"country code", postaladdress.Input{AddressKind: "postal", StreetAddress: "Old street"}, new("CA"), nil, ";;;;;;"},
-		{"geo", postaladdress.Input{AddressKind: "postal", OriginalValue: "Old street"}, nil, new("geo:1,2"), ";;;;;;"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			encoded, err := postaladdress.EncodeOriginalInput(tc.original)
-			require.NoError(t, err)
-			got, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: encoded, CountryCode: tc.country, GeoURI: tc.geo})
-			require.NoError(t, err)
-			assert.Equal(t, tc.want, got)
-			assert.Nil(t, label)
-		})
-	}
-}
-
-func TestPostalSnapshotExportsCurrentLabel(t *testing.T) {
+func TestPostalSnapshotExport(t *testing.T) {
 	encoded, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "postal", OriginalValue: "Old street"})
 	require.NoError(t, err)
+	encodedStreet, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "postal", StreetAddress: "Old street"})
+	require.NoError(t, err)
 	for _, tc := range []struct {
-		name                 string
-		label, text, country *string
-		value, want          string
+		name    string
+		address store.PersonAddress
+		value   string
+		label   *string
 	}{
-		{"free text", nil, new("  Current address\nUnit 8  "), nil, ";;;;;;", "  Current address\nUnit 8  "},
-		{"label", new("Corrected label"), nil, nil, ";;;;;;", "Corrected label"},
-		{"label and free text", new("Delivery instructions"), new("12 Example Street"), nil, ";;;;;;", "Delivery instructions\n12 Example Street"},
-		{"partial components", nil, new("12 Example Street"), new("Canada"), ";;;;;;Canada", "12 Example Street"},
+		{"country code", store.PersonAddress{OriginalValue: encodedStreet, CountryCode: new("CA")}, ";;;;;;", nil},
+		{"geo", store.PersonAddress{GeoURI: new("geo:1,2")}, ";;;;;;", nil},
+		{"free text", store.PersonAddress{FreeText: new("  Current address\nUnit 8  ")}, ";;;;;;", new("  Current address\nUnit 8  ")},
+		{"label", store.PersonAddress{Label: new("Corrected label")}, ";;;;;;", new("Corrected label")},
+		{"label and free text", store.PersonAddress{Label: new("Delivery instructions"), FreeText: new("12 Example Street")}, ";;;;;;", new("Delivery instructions\n12 Example Street")},
+		{"partial components", store.PersonAddress{FreeText: new("12 Example Street"), CountryName: new("Canada")}, ";;;;;;Canada", new("12 Example Street")},
+		{"unsupported", store.PersonAddress{OriginalValue: "msgvault:postal-input:v2\n{}"}, "", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: encoded, Label: tc.label, FreeText: tc.text, CountryName: tc.country})
+			tc.address.AddressKind = store.PersonAddressPostal
+			if tc.address.OriginalValue == "" {
+				tc.address.OriginalValue = encoded
+			}
+			value, label, err := postalAddressValue(tc.address)
 			require.NoError(t, err)
-			require.NotNil(t, label)
-			assert.Equal(t, tc.value, got)
-			assert.Equal(t, tc.want, *label)
+			assert.Equal(t, tc.value, value)
+			assert.Equal(t, tc.label, label)
 		})
 	}
-}
-
-func TestPostalAddressExportHidesUnsupportedSnapshot(t *testing.T) {
-	value, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: "msgvault:postal-input:v2\n{}"})
-	require.NoError(t, err)
-	assert.Empty(t, value)
-	assert.Nil(t, label)
 }

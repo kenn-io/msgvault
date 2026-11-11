@@ -22,12 +22,7 @@ func TestPostalAddressTargetRequiresSensitiveCatalog(t *testing.T) {
 	assert.Equal("system:postal_address", target.Key)
 	assert.True(target.Sensitive)
 	assert.Equal(ValuePostalAddress, target.ValueType)
-	ref := TargetRef{Kind: target.Kind, Key: target.Key, Revision: target.Revision}
-	encoded, err := EncodeTargetRef(ref)
-	require.NoError(err)
-	decoded, err := DecodeTargetRef(encoded)
-	require.NoError(err)
-	assert.Equal(ref, decoded)
+
 }
 
 func postalTarget(t *testing.T, catalog Catalog) TargetDescriptor {

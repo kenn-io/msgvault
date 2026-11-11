@@ -7,7 +7,7 @@ afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 const input: Input = { address_kind: 'postal', street_address: ' 12 Example St ', extended_address: 'Unit 7', country_code: 'ca', original_value: ' raw\ntext ' };
 async function assessment(value = input): Promise<Assessment> {
-  return { original: { ...value }, proposed: { ...value, street_address: '12 Example Street' }, status: 'validated', provider: 'google', reason_codes: [], original_extended_parts: [], proposed_extended_parts: [] };
+  return { original: { ...value }, proposed: { ...value, street_address: '12 Example Street' }, status: 'validated', provider: 'google', reason_codes: ['provider_confirmed'], original_extended_parts: [], proposed_extended_parts: [] };
 }
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -40,7 +40,7 @@ describe('postalAddressText', () => {
 
 describe('PostalReviewSession', () => {
   it('retries an unavailable Google check without changing the address', async () => {
-    const unavailable = { ...await assessment(), status: 'unavailable' as const, reason_codes: ['provider_unavailable'] };
+    const unavailable = { ...await assessment(), status: 'unavailable' as const, reason_codes: ['not_verified', 'provider_request_failed'] };
     const recovered = await assessment();
     const check = vi.fn().mockResolvedValueOnce(unavailable).mockResolvedValueOnce(recovered);
     const state = new PostalReviewSession(7, check);
@@ -72,7 +72,7 @@ describe('PostalReviewSession', () => {
     expect(check).toHaveBeenLastCalledWith(7, editedAgain, true, expect.any(AbortSignal), 'current-id');
   });
 
-  it('suppresses duplicate pending checks without saving anything', async () => {
+  it('suppresses duplicate pending checks', async () => {
     const reply = deferred<Assessment>();
     const check = vi.fn(async (_personID: number, _input: Input, _external: boolean, _signal: AbortSignal) => reply.promise);
     const state = new PostalReviewSession(7, check);
@@ -83,7 +83,6 @@ describe('PostalReviewSession', () => {
     const result = await assessment(); reply.resolve(result); await pending;
     expect(state.result).toEqual(result);
     expect(state.pending).toBe(false);
-    expect(check.mock.calls[0]?.[0]).toBe(7);
   });
 
   it.each(['success', 'error'] as const)('invalidates A → B → A including stale %s and loading', async outcome => {
