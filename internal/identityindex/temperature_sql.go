@@ -48,7 +48,7 @@ WITH message_owner AS (
 	          AND (f.is_conversation_member OR f.is_direct)
 	          AND (f.is_from_me OR f.is_author))
 	      OR (f.is_chat AND lower(f.conversation_type) <> 'direct_chat'
-	          AND ((f.is_from_me IS NOT TRUE AND f.is_author)
+	          AND ((f.is_from_me IS FALSE AND f.is_author)
 	               OR (f.is_from_me IS TRUE AND f.is_direct)))
 	      OR (NOT f.is_chat AND f.entry_kind = 'email'
 	          AND f.is_direct AND (f.is_from_me OR f.is_author))
@@ -64,7 +64,7 @@ WITH message_owner AS (
 	               AND (is_from_me OR is_author)
 	           WHEN is_chat THEN
 	               owner_present AND (
-	                   (is_from_me IS NOT TRUE AND is_author)
+	                   (is_from_me IS FALSE AND is_author)
 	                   OR (is_from_me IS TRUE AND is_direct)
 	               )
 	           WHEN entry_kind = 'email' THEN

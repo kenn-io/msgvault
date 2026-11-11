@@ -23,7 +23,7 @@ var textHeader = regexp.MustCompile(`^(\[?)([0-9]{1,4}[/.-][0-9]{1,2}[/.-][0-9]{
 
 // A date, clock, and separator may mark an unfamiliar header.
 var textDateStart = regexp.MustCompile(`^[\s\p{Z}]*\[?[\s\p{Z}]*(?:\p{Nd}{1,4}[/.-]\p{Nd}{1,2}[/.-]\p{Nd}{1,4}|\p{Nd}{1,2}\.? \p{L}+\.? \p{Nd}{2,4}|\p{L}+\.? \p{Nd}{1,2},? \p{Nd}{4})[,،]?[\s\p{Z}]+\p{Nd}{1,2}[:.]\p{Nd}{2}(?:[:.]\p{Nd}{2})?(?:[\s\p{Z}]+(?:[AaPp][Mm]|[AaPp]\. ?[Mm]\.))?(?:[\s\p{Z}]+[-\p{Pd}][\s\p{Z}]+|\][\s\p{Z}]*|:[\s\p{Z}]+)`)
-var textNotice = regexp.MustCompile(`^(?:Messages and calls are end-to-end encrypted$|Messages to this chat and calls are now secured with end-to-end encryption$|.+ changed (?:the group (?:description|name|icon)|the subject)(?:$| )|.+ created group "|You created (?:group|this group)(?:$| ))`)
+var textNotice = regexp.MustCompile(`^(?:Messages and calls are end-to-end encrypted$|Messages to this chat and calls are now secured with end-to-end encryption$|.+ changed (?:the group (?:description|name|icon)|the subject)(?:$| )|.+ changed their phone number to a new number\. Tap to message or add the new number$|.+ cambió la descripción del grupo$|.+ hat den Gruppenbetreff geändert$|.+ created group "|You created (?:group|this group)(?:$| ))`)
 
 func textLocation(order, zone string) (*time.Location, error) {
 	if order != "dmy" && order != "mdy" && order != "ymd" {

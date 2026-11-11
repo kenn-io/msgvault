@@ -55,7 +55,10 @@ func TestTextParserNotices(t *testing.T) {
 		{`Mira created group "Garden: seeds"`, "", `Mira created group "Garden: seeds"`},
 		{"You Smith: hello", "You Smith", "hello"},
 		{"You: fictional garden note", "You", "fictional garden note"},
-		{"Mira cambió la descripción del grupo: flores", "Mira cambió la descripción del grupo", "flores"},
+		{"Mira cambió la descripción del grupo: flores", "", "Mira cambió la descripción del grupo: flores"},
+		{"Ann hat den Gruppenbetreff geändert: Foo", "", "Ann hat den Gruppenbetreff geändert: Foo"},
+		{"Ann changed their phone number to a new number. Tap to message or add the new number: x", "", "Ann changed their phone number to a new number. Tap to message or add the new number: x"},
+		{"Ann Smith: hi", "Ann Smith", "hi"},
 	} {
 		t.Run(tc.payload, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -69,6 +72,7 @@ func TestTextParserNotices(t *testing.T) {
 			assert.Equal(tc.sender, rows[0].Sender)
 			assert.Equal(kind, rows[0].Kind)
 			assert.Equal(tc.body, rows[0].Body)
+			assert.Equal("13/6/26, 10:00 - "+tc.payload, rows[0].Raw)
 		})
 	}
 }

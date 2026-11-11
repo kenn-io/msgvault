@@ -81,8 +81,9 @@ within this account and chat. They are never inferred phone numbers or “me”
 identities. Source provenance records direction as unknown, so people inboxes
 and relationship scores count TXT messages as neither sent nor received.
 Their text, sender label, conversation, and search results remain available.
-Senderless notices have no author. Only English notices are recognized; other notices
-with colons keep their prefix as a scoped label.
+Senderless notices have no author. The importer recognizes a limited set of notice
+phrases in English, Spanish, and German. Other notices with colons can be mistaken
+for messages, and a sender label matching a recognized phrase can be mistaken for a notice.
 
 Supported headers are `date, time - payload` (Android style) and
 `[date, time] payload` (iOS style). Dates are numeric, with a consistent `/`,
