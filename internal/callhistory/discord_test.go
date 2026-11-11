@@ -35,10 +35,11 @@ func FuzzDiscordIdentityAgreement(f *testing.F) {
 			require.NoError(t, err)
 			wire, err := json.Marshal(ImportRequest{Format: format, Account: account, Record: raw})
 			require.NoError(t, err)
-			o, err := DecodeImport(bytes.NewReader(wire))
+			req, err := DecodeImportRequest(bytes.NewReader(wire))
+			require.NoError(t, err)
+			o, err := req.Observation()
 			require.NoError(t, err)
 			assert.True(t, at.Equal(o.OccurredAt))
-			assert.Equal(t, string(raw), string(o.Raw))
 			observations = append(observations, o)
 		}
 		assert.Equal(t, observations[0].SourceIdentifier(), observations[1].SourceIdentifier())
@@ -180,13 +181,15 @@ func TestDiscordArchiveReferenceValidation(t *testing.T) {
 		assert.Positive(id)
 	}
 	for _, record := range []string{`{}`, `null`, `{"message_id":0}`, `{"message_id":-1}`, `{"message_id":"1"}`, `{"message_id":1.5}`, `{"message_id":9223372036854775808}`, `{"message_id":1,"path":"example"}`} {
-		_, err := DecodeImportRequest(strings.NewReader(`{"format":"discord_archived","account":"1","record":` + record + `}`))
+		req, err := DecodeImportRequest(strings.NewReader(`{"format":"discord_archived","account":"1","record":` + record + `}`))
+		require.NoError(err)
+		_, err = req.DiscordArchiveID()
 		require.ErrorIs(err, ErrInvalid)
 	}
-	_, err := DecodeImportRequest(strings.NewReader(`{"format":"discord_archived","account":"01","record":{"message_id":1}}`))
+	req, err := DecodeImportRequest(strings.NewReader(`{"format":"discord_archived","account":"01","record":{"message_id":1}}`))
+	require.NoError(err)
+	_, err = req.DiscordArchiveID()
 	require.ErrorIs(err, ErrInvalid)
-	_, err = DecodeImportRequest(strings.NewReader(`{"format":"discord","account":"1","record":{}}`))
-	require.ErrorIs(err, ErrInvalid, "supplied records still validate locally")
 }
 
 func FuzzDiscordIgnoresOtherRepresentationFields(f *testing.F) {

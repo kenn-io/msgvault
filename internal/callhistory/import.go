@@ -22,16 +22,7 @@ type ImportRequest struct {
 	Bindings map[string]int64 `json:"bindings,omitempty"`
 }
 
-func DecodeImport(r io.Reader) (Observation, error) {
-	req, err := DecodeImportRequest(r)
-	if err != nil {
-		return Observation{}, err
-	}
-	return req.Observation()
-}
-
-// DecodeImportRequest validates supplied observations before transport while
-// leaving exact archived-message references for the daemon to resolve.
+// DecodeImportRequest reads one bounded import envelope.
 func DecodeImportRequest(r io.Reader) (ImportRequest, error) {
 	data, err := io.ReadAll(io.LimitReader(r, MaxRequestBytes+1))
 	if err != nil {
@@ -43,14 +34,6 @@ func DecodeImportRequest(r io.Reader) (ImportRequest, error) {
 	var req ImportRequest
 	if err := json.Unmarshal(data, &req, json.RejectUnknownMembers(true)); err != nil {
 		return ImportRequest{}, fmt.Errorf("%w: %w: %w", ErrInvalid, ErrMalformedImport, err)
-	}
-	if req.Format == "discord_archived" {
-		_, err = req.DiscordArchiveID()
-	} else {
-		_, err = req.Observation()
-	}
-	if err != nil {
-		return ImportRequest{}, err
 	}
 	return req, nil
 }

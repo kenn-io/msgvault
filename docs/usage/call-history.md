@@ -111,6 +111,7 @@ Alternatively, wrap one supplied native message in a `discord` request:
 
 All IDs above are synthetic. Discord IDs must be nonzero decimal strings with
 no leading zeros. Bindings name existing **participant IDs**, not person IDs.
+Bind only users in the call roster. A peer who did not join cannot be bound.
 Only the call roster proves joined attendance; authors, mentions and channel
 membership do not. Owner absence stays unknown. Direction, outcome and talk
 duration remain unknown even when the call has an end timestamp. A bound peer
@@ -125,7 +126,8 @@ msgvault calls import discord-call.json
 
 Exporter messages appear in `calls list`, but lack a participant roster and
 produce no per-person summary row. Native and exporter representations retain
-separate original evidence under stable representation IDs.
+separate original evidence under stable representation IDs. Importing both
+representations of one call produces two observations in `calls list`.
 Reimporting an archived/native record replaces that native observation; it does
 not create another call. Later changes to the original archived message do not
 automatically update or withdraw its separately imported call evidence.

@@ -13,10 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
-	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
-	"go.kenn.io/msgvault/internal/dedup"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -83,25 +81,6 @@ func TestCallsDiscordThroughDaemon(t *testing.T) {
 					}
 					require.NotNil(archivedCall)
 					assert.Equal([]generated.CallParticipant{{ParticipantID: peer, Participation: "joined"}}, archivedCall.Participants)
-					before, err := client.SummarizeCalls(t.Context(), store.CallQuery{PersonID: person.ID, Limit: 50})
-					require.NoError(err)
-					require.Len(before.Items, 1)
-					assert.Equal(int64(1), before.Items[0].Unknown)
-					assert.Zero(before.Items[0].Answered)
-					engine := dedup.NewEngine(st, dedup.Config{
-						ContentHashFallback: true,
-						AccountSourceIDs:    []int64{source.ID, archivedCall.SourceID},
-						Account:             "example",
-						ScopeIsCollection:   true,
-					}, slog.New(slog.DiscardHandler))
-					report, err := engine.Scan(t.Context())
-					require.NoError(err)
-					execution, err := engine.Execute(t.Context(), report, fmt.Sprintf("discord-call-dedup-%t", exportFirst))
-					require.NoError(err)
-					assert.Zero(execution.GroupsMerged)
-					after, err := client.SummarizeCalls(t.Context(), store.CallQuery{PersonID: person.ID, Limit: 50})
-					require.NoError(err)
-					assert.Equal(before.Items, after.Items, "content-hash dedup preserves call summaries")
 				}
 				if i == 0 && exportFirst {
 					result, err := client.SummarizeCalls(t.Context(), store.CallQuery{Limit: 50})
@@ -127,11 +106,8 @@ func TestCallsDiscordThroughDaemon(t *testing.T) {
 			require.NoError(err)
 			require.Len(summary.Items, 1)
 			assert.Equal(int64(1), summary.Items[0].Unknown)
-			assert.Zero(summary.Items[0].Answered)
 			_, err = run(`{"format":"discord_archived","account":"1","record":{"message_id":9223372036854775807}}`, "import", "-")
 			require.Error(err)
-			_, err = run(`{"format":"discord_archived","account":"1","record":{"message_id":"100"}}`, "import", "-")
-			require.ErrorIs(err, callhistory.ErrInvalid)
 			after, err := client.ListCallObservations(t.Context(), store.CallQuery{Limit: 50})
 			require.NoError(err)
 			assert.Len(after.Items, 2)

@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"errors"
-	"mime"
 	"net/http"
 	"reflect"
 	"time"
@@ -16,6 +15,7 @@ import (
 const callImportPath = "/api/v1/import/calls"
 
 type CallHistoryStore interface {
+	GetDiscordCallRecordContext(ctx context.Context, messageID int64) ([]byte, error)
 	GetOrCreateSourceContext(ctx context.Context, sourceType, identifier string) (*store.Source, error)
 	PutCallObservationContext(ctx context.Context, sourceID int64, observation callhistory.Observation) (int64, error)
 	ListCallObservationsContext(ctx context.Context, q store.CallQuery) ([]store.CallObservationView, error)
@@ -89,11 +89,6 @@ func (s *Server) writeCallError(w http.ResponseWriter, err error) {
 }
 
 func (s *Server) handleCallImport(w http.ResponseWriter, r *http.Request) {
-	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil || media != applicationJSONMediaType {
-		writeError(w, 415, "unsupported_media_type", "Content-Type must be application/json")
-		return
-	}
 	request, err := callhistory.DecodeImportRequest(r.Body)
 	if err != nil {
 		s.writeCallError(w, err)
@@ -113,19 +108,12 @@ func (s *Server) handleCallImport(w http.ResponseWriter, r *http.Request) {
 	}
 	defer done()
 	if request.Format == "discord_archived" {
-		reader, ok := s.store.(interface {
-			GetDiscordCallRecordContext(ctx context.Context, messageID int64) ([]byte, error)
-		})
-		if !ok {
-			writeError(w, 503, "service_unavailable", "Archived Discord call import is unavailable")
-			return
-		}
 		messageID, err := request.DiscordArchiveID()
 		if err != nil {
 			s.writeCallError(w, err)
 			return
 		}
-		raw, err := reader.GetDiscordCallRecordContext(r.Context(), messageID)
+		raw, err := st.GetDiscordCallRecordContext(r.Context(), messageID)
 		if err != nil {
 			s.writeCallError(w, err)
 			return
