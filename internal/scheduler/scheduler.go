@@ -502,7 +502,10 @@ func (s *Scheduler) RemoveJob(name string) {
 func (s *Scheduler) RemoveAccount(email string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.clearAccountHistory(email)
+	delete(s.manual, email)
+	delete(s.lastPollErr, email)
+	delete(s.lastAttempted, email)
+	delete(s.lastCompleted, email)
 
 	if entryID, exists := s.jobs[email]; exists {
 		s.cron.Remove(entryID)
@@ -517,15 +520,6 @@ func (s *Scheduler) RemoveAccount(email string) {
 		delete(s.pollJobs, email)
 		delete(s.pollIntervals, email)
 	}
-}
-
-func (s *Scheduler) clearAccountHistory(email string) {
-	delete(s.lastPollErr, email)
-	delete(s.lastErr, email)
-	delete(s.lastRun, email)
-	delete(s.lastAttempted, email)
-	delete(s.lastCompleted, email)
-	delete(s.manual, email)
 }
 
 // Indexing job names, shared by registration, status reporting, and the

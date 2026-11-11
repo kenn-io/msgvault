@@ -88,7 +88,7 @@ func TestPollingTargetsRejectDuplicateSource(t *testing.T) {
 	duplicate := cfg.Accounts[1]
 	duplicate.Email = strings.ToUpper(duplicate.Email)
 	cfg.Accounts = append(cfg.Accounts, duplicate)
-	requirements.ErrorContains(validatePollingTargets(t.Context(), cfg.Accounts, st, state)[3].err, "duplicate polling account")
+	requirements.ErrorContains(validatePollingTargets(t.Context(), cfg.Accounts, st, state)[3].err, "already has a polling account")
 }
 
 func TestPollingSourceArchiveAlias(t *testing.T) {

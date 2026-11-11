@@ -22,15 +22,9 @@ type pollingTarget struct {
 
 func validatePollingTargets(ctx context.Context, accounts []config.AccountSchedule, s *store.Store, state *invocation) map[int]pollingTarget {
 	targets := make(map[int]pollingTarget)
-	seen, names := make(map[int64]bool), make(map[string]bool)
+	seen := make(map[int64]bool)
 	catalog := pollingCatalog(ctx, accounts, s, state)
 	for i, account := range accounts {
-		key := strings.ToLower(account.Email)
-		if names[key] {
-			targets[i] = pollingTarget{err: fmt.Errorf("duplicate polling account %q", account.Email)}
-			continue
-		}
-		names[key] = true
 		source, err := catalog[i].source, catalog[i].err
 		if err != nil {
 			targets[i] = pollingTarget{err: err}
