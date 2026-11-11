@@ -62,10 +62,9 @@ func TestTargetedCommitmentOnlySweepSucceedsAndDefersImmediateRerun(t *testing.T
 	mutateTestProvider(&cfg, func(provider *ProviderConfig) { provider.AllowSensitive = true })
 	cfg.Commitments.Enabled = true
 	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
-	st := &commitmentWorkerFixture{due: true, workerFailureStore: {
-		cursor: Cursor{ReconciliationComplete: true, LastBackstopAt: &now},
-		lease:  &Lease{PersonID: 7, WorkerID: "commitment-worker", Fence: 1, ExpiresAt: now.Add(time.Hour)},
-	}}
+	st := &commitmentWorkerFixture{due: true}
+	st.cursor = Cursor{ReconciliationComplete: true, LastBackstopAt: &now}
+	st.lease = &Lease{PersonID: 7, WorkerID: "commitment-worker", Fence: 1, ExpiresAt: now.Add(time.Hour)}
 	seed := packetTestEvidence(71, SourceConversationText, "pending ordinary evidence")
 	source := &workerProductionSource{windows: map[GenerationCursorMode]PersonWindow{
 		GenerationCursorOptimistic: {Seeds: []EvidenceItem{seed}, Changes: []ArchiveChange{{Sequence: 1, PersonID: 7, SourceLane: SourceConversationText}}, NextSequence: 1},
