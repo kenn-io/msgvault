@@ -53,12 +53,14 @@ type ContextWorkerHooks struct {
 // ContextWorkerDeps bundles contextual source, assembly, embedding, and
 // publication collaborators.
 type ContextWorkerDeps struct {
-	Backend    vector.Backend
-	Publisher  vector.DocumentPublisher
-	Store      ContextWorkStore
-	Assembler  Assembler
-	Client     SemanticClient
-	BuildScope vector.BuildScope
+	// ContentReadGuard holds the source-content fence through publication.
+	ContentReadGuard func(context.Context) (func(), error)
+	Backend          vector.Backend
+	Publisher        vector.DocumentPublisher
+	Store            ContextWorkStore
+	Assembler        Assembler
+	Client           SemanticClient
+	BuildScope       vector.BuildScope
 
 	ChangeBatchSize         int
 	ReconcileBatchSize      int
@@ -150,6 +152,13 @@ func (w *ContextWorker) RunBackstop(
 func (w *ContextWorker) runOperationPass(
 	ctx context.Context, gen vector.GenerationID, scope operations.PassScope, backstop bool,
 ) (result RunResult, retErr error) {
+	if w.deps.ContentReadGuard != nil {
+		release, err := w.deps.ContentReadGuard(ctx)
+		if err != nil {
+			return result, err
+		}
+		defer release()
+	}
 	pass, terminal, err := beginOperationPass(
 		ctx, w.deps.Recorder, operations.KindMessageEmbedding, scope, w.deps.Log,
 	)

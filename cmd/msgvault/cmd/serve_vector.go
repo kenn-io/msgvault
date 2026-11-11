@@ -41,6 +41,7 @@ type embeddingRuntime struct {
 }
 
 type embeddingRuntimeDeps struct {
+	ContentReadGuard func(context.Context) (func(), error)
 	Backend          vector.Backend
 	VectorsDB        *sql.DB
 	MainDB           *sql.DB
@@ -251,7 +252,8 @@ func newEmbeddingRuntime(vectorCfg vector.Config, deps embeddingRuntimeDeps) (*e
 		clientConfig.BeforeRequest = personGate.Check
 		personClient := embed.NewClient(clientConfig)
 		messageWorker := embed.NewWorker(embed.WorkerDeps{
-			Backend: deps.Backend, VectorsDB: deps.VectorsDB, MainDB: deps.MainDB,
+			ContentReadGuard: deps.ContentReadGuard,
+			Backend:          deps.Backend, VectorsDB: deps.VectorsDB, MainDB: deps.MainDB,
 			Store: deps.Store, Client: messageClient, Preprocess: embeddingPreprocessConfig(vectorCfg),
 			MaxInputChars: vectorCfg.Embeddings.MaxInputChars,
 			BatchSize:     vectorCfg.Embeddings.BatchSize, BuildScope: vectorCfg.Embed.Scope.BuildScope(),
@@ -292,7 +294,8 @@ func newEmbeddingRuntime(vectorCfg vector.Config, deps embeddingRuntimeDeps) (*e
 		}
 		assembler := embed.CompositeAssembler{Policy: policy, Chat: embed.ChatWindowAssembler{Policy: policy}}
 		messageWorker := embed.NewContextWorker(embed.ContextWorkerDeps{
-			Backend: deps.Backend, Publisher: publisher, Store: deps.Store,
+			ContentReadGuard: deps.ContentReadGuard,
+			Backend:          deps.Backend, Publisher: publisher, Store: deps.Store,
 			Assembler: assembler, Client: messageClient, BuildScope: vectorCfg.Embed.Scope.BuildScope(),
 			ChangeBatchSize:         vectorCfg.Embeddings.BatchSize,
 			ReconcileBatchSize:      vectorCfg.Embeddings.BatchSize,
@@ -607,7 +610,8 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 				vecCfg, currentSemanticPersonVectorConfigSource(state), mainStore,
 			)
 			runtime, err := newEmbeddingRuntime(vecCfg, embeddingRuntimeDeps{
-				Backend: backend, VectorsDB: vectorsDB, MainDB: mainDB, Store: mainStore,
+				ContentReadGuard: NewXContentCleanup(mainStore, state.cfg, nil).AcquireRead,
+				Backend:          backend, VectorsDB: vectorsDB, MainDB: mainDB, Store: mainStore,
 				Rebind: dialect.Rebind, LastModifiedExpr: lastModifiedExpr, Log: logger,
 				PersonGate: personGate,
 				APIKey:     embeddingAPIKey,

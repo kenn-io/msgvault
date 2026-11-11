@@ -56,7 +56,10 @@ type WorkStore interface {
 // sensible defaults when zero: BatchSize defaults to 32,
 // MaxConsecutiveFailures defaults to 5, Log defaults to slog.Default().
 type WorkerDeps struct {
-	Backend vector.Backend
+	// ContentReadGuard fences source reads, provider responses and publication
+	// against destructive X content cleanup.
+	ContentReadGuard func(context.Context) (func(), error)
+	Backend          vector.Backend
 	// VectorsDB is the generation-side DB handle (vectors.db on SQLite,
 	// the shared main DB on PG). Used for embed_runs and the watermark.
 	VectorsDB *sql.DB
@@ -338,6 +341,13 @@ func (w *Worker) RunBackstop(
 func (w *Worker) runOperationPass(
 	ctx context.Context, gen vector.GenerationID, scope operations.PassScope, backstop bool,
 ) (res RunResult, retErr error) {
+	if w.deps.ContentReadGuard != nil {
+		release, err := w.deps.ContentReadGuard(ctx)
+		if err != nil {
+			return res, err
+		}
+		defer release()
+	}
 	pass, terminal, err := beginOperationPass(
 		ctx, w.deps.Recorder, operations.KindMessageEmbedding, scope, w.deps.Log,
 	)

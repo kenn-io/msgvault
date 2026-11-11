@@ -2779,3 +2779,32 @@ func TestContextWorker_StoppedPassReusesCompletedRequest(t *testing.T) {
 		})
 	}
 }
+
+func TestContextWorkerContentGuardCoversProviderResponse(t *testing.T) {
+	checks := assert.New(t)
+	needs := require.New(t)
+	var fence sync.RWMutex
+	guard := func(context.Context) (func(), error) {
+		fence.RLock()
+		return fence.RUnlock, nil
+	}
+	f := newContextWorkerFixture(t, func(deps *ContextWorkerDeps) { deps.ContentReadGuard = guard })
+	f.seed("x", f.chatID, time.Now().UTC(), "synthetic X post")
+	called := false
+	f.client.before = func() {
+		called = true
+		acquired := fence.TryLock()
+		if acquired {
+			fence.Unlock()
+		}
+		checks.False(acquired, "cleanup must wait for the contextual response")
+	}
+	_, err := f.worker.RunOnce(t.Context(), f.gen, testEmbeddingPassScope())
+	needs.NoError(err)
+	checks.True(called)
+	acquired := fence.TryLock()
+	checks.True(acquired)
+	if acquired {
+		fence.Unlock()
+	}
+}

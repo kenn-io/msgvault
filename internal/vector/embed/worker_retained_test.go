@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -351,5 +352,44 @@ func TestWorkerResolvedSourceReleasesUnpublishedCheckpoint(t *testing.T) {
 			require.NoError(t, f.backend.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_checkpoints WHERE owner = ?`, fmt.Sprintf("message:%d", id)).Scan(&saved))
 			assert.Zero(t, saved, "a completed scan releases resolved output")
 		})
+	}
+}
+
+// The response save is cancellation-detached, so the content fence must outlive it.
+func TestWorkerContentGuardCoversDetachedCheckpointSave(t *testing.T) {
+	checks := assert.New(t)
+	needs := require.New(t)
+	f := newWorkerFixture(t, 1)
+	var fence sync.RWMutex
+	var savedAtRelease int
+	var releaseErr error
+	guard := func(context.Context) (func(), error) {
+		fence.RLock()
+		return func() {
+			releaseErr = f.VectorsDB.QueryRowContext(context.WithoutCancel(t.Context()), `SELECT count(*) FROM embedding_checkpoints WHERE owner = 'message:1'`).Scan(&savedAtRelease)
+			fence.RUnlock()
+		}, nil
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	f.FakeClient.OnEmbed = func(inputs []string) ([][]float32, error) {
+		acquired := fence.TryLock()
+		if acquired {
+			fence.Unlock()
+		}
+		checks.False(acquired, "cleanup must wait for an in-flight response")
+		cancel()
+		return fakeVectors(inputs), nil
+	}
+	w := newRetainingWorker(f, f.Backend, 1)
+	w.deps.ContentReadGuard = guard
+	_, err := w.RunOnce(ctx, f.BuildingGen, testEmbeddingPassScope())
+	needs.Error(err)
+	needs.NoError(releaseErr)
+	checks.Positive(savedAtRelease, "the detached response was saved before the lease was released")
+	acquired := fence.TryLock()
+	checks.True(acquired)
+	if acquired {
+		fence.Unlock()
 	}
 }

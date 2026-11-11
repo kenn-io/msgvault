@@ -202,7 +202,8 @@ func runEmbedWithOptions(cmd *cobra.Command, opts managedEmbedOptions) error {
 	}
 
 	runtime, err := newEmbeddingRuntime(cfg.Vector, embeddingRuntimeDeps{
-		Backend: backend, VectorsDB: vectorsDB, MainDB: s.DB(), Store: s,
+		ContentReadGuard: NewXContentCleanup(s, cfg, nil).AcquireRead,
+		Backend:          backend, VectorsDB: vectorsDB, MainDB: s.DB(), Store: s,
 		Rebind: rebind, LastModifiedExpr: lastModifiedExpr,
 		TotalPending: totalPending,
 		Progress:     newProgressPrinter(errOut, totalPending, cfg.Vector.Embeddings.ETAWindow),

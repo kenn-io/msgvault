@@ -298,7 +298,15 @@ func (c *XContentCleanup) removeXContentsBatch(ctx context.Context, groups []sto
 			if err != nil {
 				return work, err
 			}
+			owners := make([]string, 0, 2*len(work.MessageIDs))
+			for _, id := range work.MessageIDs {
+				owner := fmt.Sprintf("message:%d", id)
+				owners = append(owners, owner, "context:"+owner)
+			}
 			for _, gen := range generations {
+				if err := backend.EmbeddingCheckpoints().Delete(ctx, gen, owners); err != nil {
+					return work, fmt.Errorf("delete X embedding checkpoints generation %d: %w", gen, err)
+				}
 				if err := backend.Delete(ctx, gen, work.MessageIDs); err != nil {
 					return work, fmt.Errorf("delete X vectors generation %d: %w", gen, err)
 				}

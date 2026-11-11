@@ -1114,3 +1114,67 @@ func TestXRemovalInvalidatesOldMaterializedSearch(t *testing.T) {
 		_testAssert.NotContains(string(encoded), "Erased Label")
 	}
 }
+
+func TestXRemovalErasesEmbeddingCheckpointsAcrossGenerations(t *testing.T) {
+	checks := assert.New(t)
+	needs := require.New(t)
+	f := newXCleanupFixture(t)
+	checkpoints := f.backend.EmbeddingCheckpoints()
+	target := fmt.Sprintf("message:%d", f.message)
+	unrelated := fmt.Sprintf("message:%d", f.message+100000)
+	owners := []string{target, "context:" + target, unrelated, "context:" + unrelated}
+	// Seed a legacy retired generation as well as the active and unpublished
+	// generations: normal checkpoint writes reject retired generations.
+	for _, gen := range f.generations {
+		for _, owner := range owners {
+			_, err := checkpoints.DB.ExecContext(t.Context(), checkpoints.Rebind(`INSERT INTO embedding_checkpoints (generation_id,owner,revision,input_key,vectors) VALUES (?,?,?,?,?)`), int64(gen), owner, "revision", "input", `[[1,2,3]]`)
+			needs.NoError(err)
+		}
+	}
+	cleaner := NewXContentCleanup(f.st, f.cfg, f.backend)
+	work, err := cleaner.RemovePost(t.Context(), f.source, "100", "removed")
+	needs.NoError(err)
+	checks.False(work.Pending)
+	for _, gen := range f.generations {
+		for _, owner := range owners {
+			saved, err := checkpoints.Load(t.Context(), gen, owner, "revision")
+			needs.NoError(err)
+			if owner == target || owner == "context:"+target {
+				checks.Empty(saved, "generation %d owner %s", gen, owner)
+			} else {
+				checks.Contains(saved, "input", "generation %d owner %s", gen, owner)
+			}
+		}
+	}
+}
+
+func TestXCheckpointCleanupFailureRemainsPending(t *testing.T) {
+	checks := assert.New(t)
+	needs := require.New(t)
+	f := newXCleanupFixture(t)
+	if f.st.IsPostgreSQL() {
+		t.Skip("SQLite trigger exercises the failure boundary")
+	}
+	checkpoints := f.backend.EmbeddingCheckpoints()
+	owner := fmt.Sprintf("message:%d", f.message)
+	needs.NoError(checkpoints.Save(t.Context(), f.generations[1], []vector.EmbeddingCheckpoint{{Owner: owner, Revision: "revision", Key: "input", Vectors: [][]float32{{1, 2, 3}}}}))
+	_, err := checkpoints.DB.ExecContext(t.Context(), `CREATE TRIGGER fail_x_checkpoint_delete BEFORE DELETE ON embedding_checkpoints BEGIN SELECT RAISE(ABORT, 'synthetic checkpoint delete failure'); END`)
+	needs.NoError(err)
+	cleaner := NewXContentCleanup(f.st, f.cfg, f.backend)
+	_, err = cleaner.RemovePost(t.Context(), f.source, "100", "removed")
+	needs.ErrorContains(err, "synthetic checkpoint delete failure")
+	pending, err := f.st.XCleanupPendingContext(t.Context())
+	needs.NoError(err)
+	checks.True(pending)
+	_, err = cleaner.AcquireRead(t.Context())
+	needs.ErrorContains(err, "cleanup pending")
+	_, err = checkpoints.DB.ExecContext(t.Context(), `DROP TRIGGER fail_x_checkpoint_delete`)
+	needs.NoError(err)
+	needs.NoError(cleaner.Resume(t.Context()))
+	pending, err = f.st.XCleanupPendingContext(t.Context())
+	needs.NoError(err)
+	checks.False(pending)
+	saved, err := checkpoints.Load(t.Context(), f.generations[1], owner, "revision")
+	needs.NoError(err)
+	checks.Empty(saved)
+}
