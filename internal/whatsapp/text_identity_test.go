@@ -90,6 +90,14 @@ func TestTextSubsetSenderSearch(t *testing.T) {
 	st := testutil.NewSQLiteTestStoreAt(t, srcPath)
 	_, err := importTextForTest(t.Context(), NewImporter(st, nil), textFile(t, "13/6/26, 10:00 - Mira: asters\n"), textOptions())
 	require.NoError(err)
+	var senderID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT sender_id FROM messages").Scan(&senderID))
+	phoneID, err := st.EnsureParticipantByPhone(t.Context(), "+12025550124", "Phone Contact", "whatsapp")
+	require.NoError(err)
+	_, err = st.LinkParticipants(senderID, phoneID)
+	require.NoError(err)
+	_, err = st.RebuildFTS(nil)
+	require.NoError(err)
 	var count int
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'from_addr:Mira'").Scan(&count))
 	require.Equal(1, count)

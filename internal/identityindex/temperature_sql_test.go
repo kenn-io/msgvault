@@ -92,12 +92,14 @@ func TestRelationshipTemperatureUnknownDirectionDoesNotScore(t *testing.T) {
 	_, err := db.ExecContext(t.Context(), `CREATE TEMP TABLE unknown_direction_activity AS
 		SELECT *, false AS unsent FROM (VALUES
 			(1::BIGINT, 1::BIGINT, TIMESTAMP '2026-01-02 12:00:00', true, 'item'::VARCHAR, 'group_chat'::VARCHAR, NULL::BOOLEAN, false, true, false, true),
-			(1::BIGINT, 2::BIGINT, TIMESTAMP '2026-01-02 12:00:00', true, 'item'::VARCHAR, 'group_chat'::VARCHAR, NULL::BOOLEAN, true, true, true, false)
+			(1::BIGINT, 2::BIGINT, TIMESTAMP '2026-01-02 12:00:00', true, 'item'::VARCHAR, 'group_chat'::VARCHAR, NULL::BOOLEAN, true, true, true, false),
+			(2::BIGINT, 1::BIGINT, TIMESTAMP '2026-01-02 13:00:00', true, 'item'::VARCHAR, 'direct_chat'::VARCHAR, NULL::BOOLEAN, false, true, false, true),
+			(2::BIGINT, 3::BIGINT, TIMESTAMP '2026-01-02 13:00:00', true, 'item'::VARCHAR, 'direct_chat'::VARCHAR, NULL::BOOLEAN, true, true, true, false)
 		) AS t(message_id, canonical_id, occurred_at, is_chat, entry_kind, conversation_type, is_from_me, is_direct, is_conversation_member, is_author, is_owner)`)
 	require.NoError(err)
 	var count int
 	query := RelationshipTemperatureFactsSQL("unknown_direction_activity", time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC))
-	require.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FROM (`+query+`) WHERE canonical_id = 2`).Scan(&count))
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FROM (`+query+`) WHERE canonical_id IN (2, 3)`).Scan(&count))
 	assert.Zero(count)
 }
 
