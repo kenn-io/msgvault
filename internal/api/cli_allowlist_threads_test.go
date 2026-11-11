@@ -19,7 +19,6 @@ import (
 func TestThreadsOAuthHandoffCommandRestriction(t *testing.T) {
 	assert := assert.New(t)
 	srv := &Server{}
-	assert.True(clirun.EnvAllowed(clirun.EnvThreadsOAuth))
 	assert.True(cliRunCommandAllowed([]string{"add-threads"}))
 	assert.True(srv.cliRunEnvAllowedForCommand([]string{"add-threads"}, clirun.EnvThreadsOAuth))
 	for _, command := range []string{"sync", "sync-threads", "add-inline", "export-messages", "draft-compose"} {

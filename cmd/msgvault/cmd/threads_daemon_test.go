@@ -122,10 +122,26 @@ func TestAddThreadsWorkstationCallbackThroughDaemon(t *testing.T) {
 func TestAddThreadsRequiresMaskedPromptOrExplicitSecretEnvironment(t *testing.T) {
 	t.Setenv("MSGVAULT_THREADS_APP_SECRET", "")
 	t.Setenv(daemonCLISubprocessEnv, "")
+	server, _ := newDaemonCLIRunnerTestServer(t, nil)
 	cmd := newAddThreadsCmd(threadsCommandDeps{})
+	cmd.SetContext(configureRemoteDaemonForTest(t, server.URL))
 	cmd.SetIn(strings.NewReader("unmasked-secret\n"))
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
 	cmd.SetArgs([]string{"--app-id", "123", "--redirect-uri", "https://example.com/threads-callback"})
 	require.ErrorContains(t, cmd.Execute(), "MSGVAULT_THREADS_APP_SECRET")
+}
+
+func TestAddThreadsRejectsUnsafeDaemonBeforeAuthorization(t *testing.T) {
+	t.Setenv("MSGVAULT_THREADS_APP_SECRET", "")
+	t.Setenv(daemonCLISubprocessEnv, "")
+	cmd := newAddThreadsCmd(threadsCommandDeps{})
+	cmd.SetContext(configureRemoteDaemonForTest(t, "http://localhost:1234"))
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+	cmd.SetIn(strings.NewReader("unused\n"))
+	cmd.SetArgs([]string{"--app-id", "123", "--redirect-uri", "https://example.com/callback"})
+	require.ErrorContains(t, cmd.Execute(), "literal loopback HTTP or authenticated HTTPS")
+	assert.NotContains(t, out.String(), "authorization URL")
 }

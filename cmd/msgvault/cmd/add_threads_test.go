@@ -120,7 +120,7 @@ func TestAddThreadsReauthorizationCannotRecreateRemovedSource(t *testing.T) {
 	require.NoError(err)
 	select {
 	case err := <-done:
-		require.ErrorContains(err, "source changed")
+		require.ErrorContains(err, "changed while connecting")
 	case <-time.After(5 * time.Second):
 		require.FailNow("reauthorization did not finish after removal")
 	}
@@ -128,21 +128,15 @@ func TestAddThreadsReauthorizationCannotRecreateRemovedSource(t *testing.T) {
 	require.ErrorIs(err, store.ErrSourceNotFound)
 	after, err := deps.tokenManager().Load("123", "20")
 	require.NoError(err)
-	assert.Equal(before.Generation, after.Generation)
+	assert.Equal(before.AccessToken(), after.AccessToken())
 }
 func (f *threadsConnectFixture) clock() time.Time { f.mu.Lock(); defer f.mu.Unlock(); return f.now }
-func (f *threadsConnectFixture) wait(ctx context.Context, d time.Duration) error {
-	f.mu.Lock()
-	f.now = f.now.Add(d)
-	f.mu.Unlock()
-	return ctx.Err()
-}
 func (f *threadsConnectFixture) deps(st *store.Store, dir string) threadsCommandDeps {
 	manager := threads.NewTokenManager(dir)
 	return threadsCommandDeps{
-		openStore: func() (*store.Store, func(), error) { return st, func() {}, nil }, tokenManager: func() *threads.TokenManager { return manager }, now: f.clock, wait: f.wait,
-		oauthOptions: func(b *threads.RequestBudget) threads.OAuthClientOptions {
-			return threads.OAuthClientOptions{HTTPClient: threads.NewBudgetedHTTPClient(f.server.Client(), b), OAuthBaseURL: f.server.URL, Now: f.clock}
+		openStore: func() (*store.Store, func(), error) { return st, func() {}, nil }, tokenManager: func() *threads.TokenManager { return manager },
+		oauthOptions: func() threads.OAuthClientOptions {
+			return threads.OAuthClientOptions{HTTPClient: f.server.Client(), OAuthBaseURL: f.server.URL, Now: f.clock}
 		},
 		registerSource: registerThreadsSource, postSourceMigrations: func(*store.Store) error { return nil },
 	}
@@ -182,6 +176,7 @@ func TestAddThreadsDaemonExchange(t *testing.T) {
 	require.NoError(err)
 	const identifier = "threads:123:9007199254740993123"
 	assert.Contains(out, identifier)
+	assert.Contains(out, f.clock().Add(60*24*time.Hour).Format(time.RFC3339))
 	assert.NotContains(out, "synthetic-app-secret")
 	assert.NotContains(out, "synthetic-code")
 	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeThreads, identifier)
@@ -193,13 +188,13 @@ func TestAddThreadsDaemonExchange(t *testing.T) {
 	assert.Equal(identifier, identities[0].Address)
 	originalConfig := source.SyncConfig
 	assert.False(originalConfig.Valid)
-	require.NoError(st.UpdateSourceSyncCursor(source.ID, "preserved-cursor"))
+	require.NoError(st.UpdateSourceDisplayName(source.ID, "Chosen name"))
 	out, err = executeAddThreadsFixture(t, deps, "123")
 	require.NoError(err)
 	again, err := st.GetSourceByID(source.ID)
 	require.NoError(err)
 	assert.Equal(originalConfig, again.SyncConfig)
-	assert.Equal("preserved-cursor", again.SyncCursor.String)
+	assert.Equal("Chosen name", again.DisplayName.String)
 	assert.Contains(out, identifier)
 	_, err = executeAddThreadsFixture(t, deps, "124")
 	require.NoError(err)
@@ -208,51 +203,58 @@ func TestAddThreadsDaemonExchange(t *testing.T) {
 	assert.NotEqual(source.ID, other.ID)
 }
 
-func TestAddThreadsRejectsUngrantAndPreservesPartialRegistration(t *testing.T) {
-	t.Run("partial registration", func(t *testing.T) {
-		assert, require := assert.New(t), require.New(t)
-		st := testutil.NewTestStore(t)
-		f := newThreadsConnectFixture(t, "20")
-		deps := f.deps(st, t.TempDir())
-		deps.registerSource = func(ctx context.Context, s *store.Store, r threads.TokenRecord) (*store.Source, error) {
-			_, err := registerThreadsSource(ctx, s, r)
-			if err != nil {
-				return nil, err
+func TestAddThreadsRegistrationFailureRecovery(t *testing.T) {
+	for _, stage := range []string{"before source", "prior token", "after source", "setup"} {
+		t.Run(stage, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			provider := newThreadsConnectFixture(t, "20")
+			deps := provider.deps(st, t.TempDir())
+			if stage == "prior token" {
+				_, err := executeAddThreadsFixture(t, deps, "123")
+				require.NoError(err)
+				source, err := st.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeThreads, "threads:123:20")
+				require.NoError(err)
+				_, _, err = st.RemoveSourceSerialized(t.Context(), source.ID)
+				require.NoError(err)
 			}
-			return nil, errors.New("synthetic registration failure")
-		}
-		_, err := executeAddThreadsFixture(t, deps, "123")
-		require.ErrorContains(err, "token was saved")
-		_, err = deps.tokenManager().Load("123", "20")
-		require.NoError(err)
-		deps.registerSource = registerThreadsSource
-		_, err = executeAddThreadsFixture(t, deps, "123")
-		require.NoError(err)
-		sources, err := st.ListSourcesContext(t.Context(), sourceTypeThreads)
-		require.NoError(err)
-		assert.Len(sources, 1)
-	})
-}
-
-func TestAddThreadsRegistrationFailureBeforeSourceCanReconnect(t *testing.T) {
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	provider := newThreadsConnectFixture(t, "20")
-	deps := provider.deps(st, t.TempDir())
-	deps.registerSource = func(context.Context, *store.Store, threads.TokenRecord) (*store.Source, error) {
-		return nil, errors.New("synthetic source creation failure")
+			if stage == "setup" {
+				deps.postSourceMigrations = func(*store.Store) error { return errors.New("synthetic setup failure") }
+			} else {
+				deps.registerSource = func(ctx context.Context, st *store.Store, record threads.TokenRecord) (*store.Source, error) {
+					if stage == "after source" {
+						if _, err := registerThreadsSource(ctx, st, record); err != nil {
+							return nil, err
+						}
+					}
+					return nil, errors.New("synthetic registration failure")
+				}
+			}
+			_, err := executeAddThreadsFixture(t, deps, "123")
+			require.ErrorContains(err, "rerun add-threads")
+			_, tokenErr := deps.tokenManager().Load("123", "20")
+			_, sourceErr := st.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeThreads, "threads:123:20")
+			if stage == "before source" {
+				require.ErrorIs(tokenErr, threads.ErrTokenNotFound)
+				require.ErrorIs(sourceErr, store.ErrSourceNotFound)
+			} else {
+				require.NoError(tokenErr)
+				if stage == "prior token" {
+					require.ErrorIs(sourceErr, store.ErrSourceNotFound)
+				} else {
+					require.NoError(sourceErr)
+				}
+			}
+			deps.registerSource = registerThreadsSource
+			deps.postSourceMigrations = func(*store.Store) error { return nil }
+			_, err = executeAddThreadsFixture(t, deps, "123")
+			require.NoError(err)
+			sources, err := st.ListSourcesContext(t.Context(), sourceTypeThreads)
+			require.NoError(err)
+			assert.Len(sources, 1)
+		})
 	}
-	_, err := executeAddThreadsFixture(t, deps, "123")
-	require.ErrorContains(err, "rerun add-threads")
-	_, err = deps.tokenManager().Load("123", "20")
-	require.NoError(err)
-	_, err = st.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeThreads, "threads:123:20")
-	require.ErrorIs(err, store.ErrSourceNotFound)
-	deps.registerSource = registerThreadsSource
-	_, err = executeAddThreadsFixture(t, deps, "123")
-	require.NoError(err)
-	_, err = st.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeThreads, "threads:123:20")
-	require.NoError(err)
 }
 
 func TestAddThreadsRespectsDefaultIdentityOptOut(t *testing.T) {
@@ -268,13 +270,4 @@ func TestAddThreadsRespectsDefaultIdentityOptOut(t *testing.T) {
 	identities, err := st.ListAccountIdentitiesContext(t.Context(), source.ID)
 	require.NoError(err)
 	assert.Empty(t, identities)
-}
-
-func TestAddThreadsAccountSetupFailureGuidesReconnect(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	provider := newThreadsConnectFixture(t, "20")
-	deps := provider.deps(st, t.TempDir())
-	deps.postSourceMigrations = func(*store.Store) error { return errors.New("synthetic setup failure") }
-	_, err := executeAddThreadsFixture(t, deps, "123")
-	require.ErrorContains(t, err, "Threads token was saved, but finishing account setup failed; rerun add-threads")
 }

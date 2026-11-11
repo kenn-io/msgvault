@@ -20,8 +20,6 @@ import (
 var requiredReadScopes = []string{"threads_basic", "threads_read_replies"}
 
 // OAuthClientOptions is a constructor dependency, never runtime configuration.
-// HTTPClient must carry the operation's shared budget transport, including for
-// exchange before owner discovery. Binding the owner must not reset that budget.
 type OAuthClientOptions struct {
 	// WithOwnerLock binds discovered ownership before long-lived exchange.
 	WithOwnerLock func(context.Context, string, func() (TokenRecord, error)) (TokenRecord, error)
@@ -82,7 +80,7 @@ func ParseOAuthCallback(registeredURI, returnedURL, expectedState string) (strin
 			return "", bad
 		}
 		switch key {
-		case "state", "code":
+		case "state", "code", "error", "error_reason", "error_description":
 			continue
 		default:
 			expected, ok := fixed[key]
@@ -97,7 +95,13 @@ func ParseOAuthCallback(registeredURI, returnedURL, expectedState string) (strin
 		}
 	}
 	state := query.Get("state")
-	if state == "" || subtle.ConstantTimeCompare([]byte(state), []byte(expectedState)) != 1 || query.Get("code") == "" {
+	if state == "" || subtle.ConstantTimeCompare([]byte(state), []byte(expectedState)) != 1 {
+		return "", bad
+	}
+	if query.Get("error") == "access_denied" && query.Get("code") == "" {
+		return "", errors.New("Threads authorization was denied")
+	}
+	if query.Get("code") == "" || query.Has("error") || query.Has("error_reason") || query.Has("error_description") {
 		return "", bad
 	}
 	return query.Get("code"), nil
@@ -234,7 +238,7 @@ func newOAuthHTTP(opts OAuthClientOptions) (*oauthHTTP, error) {
 	if opts.HTTPClient != nil {
 		client = *opts.HTTPClient
 	}
-	// Preserve the injected transport (and its budget) but deny every redirect,
+	// Preserve the injected transport but deny every redirect,
 	// including same-origin 307/308 replays of authorization material.
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return errors.New("threads OAuth redirect refused") }
 	now := opts.Now
@@ -275,15 +279,6 @@ func (c *oauthHTTP) request(ctx context.Context, method, path string, values url
 	}
 	resp, err := c.client.Do(req)
 	if err != nil {
-		if pause := workloadPause(ctx); pause != nil {
-			return pause
-		}
-		// A shared transport cap is a normal pause, including when exchange
-		// or refresh consumed the remaining attempts. Preserve only this
-		// known-safe type, never a credential-bearing transport diagnostic.
-		if pause, ok := errors.AsType[*PauseError](err); ok {
-			return pause
-		}
 		// Never wrap url.Error or an arbitrary transport error: either may carry
 		// credentials or a response body. Preserve only safe cancellation identity.
 		if errors.Is(err, context.Canceled) {
@@ -298,9 +293,6 @@ func (c *oauthHTTP) request(ctx context.Context, method, path string, values url
 	const maxBody = 1 << 20
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 	if err != nil || len(data) > maxBody {
-		if pause := workloadPause(ctx); pause != nil {
-			return pause
-		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}

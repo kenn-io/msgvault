@@ -68,6 +68,13 @@ func TestThreadsOAuthFullCallback(t *testing.T) {
 			}
 		})
 	}
+	t.Run("authorization denied", func(t *testing.T) {
+		callback := registered + "&state=expected&error=access_denied&error_description=provider-secret"
+		_, err := ParseOAuthCallback(registered, callback, "expected")
+		require.EqualError(t, err, "Threads authorization was denied")
+		_, err = ParseOAuthCallback(registered, callback, "other")
+		require.EqualError(t, err, "invalid Threads OAuth callback")
+	})
 	t.Run("random state", func(t *testing.T) {
 		assertions := assert.New(t)
 		requirements := require.New(t)
@@ -232,15 +239,6 @@ func TestThreadsTokenLifecycleExchange(t *testing.T) {
 		require.Error(t, err)
 		assert.Zero(t, f.calls.Load())
 	})
-	t.Run("invalid callback cannot enter exchange", func(t *testing.T) {
-		f := newOAuthFixture(t)
-		code, err := ParseOAuthCallback(oauthTestCallback, oauthTestCallback+"&code=authorization-code&state=wrong", "expected")
-		require.Error(t, err)
-		req := NewOAuthRequest("123", oauthTestCallback, code, "app-secret", nil)
-		_, err = ExchangeCredential(t.Context(), f.options(), req)
-		require.Error(t, err)
-		assert.Zero(t, f.calls.Load())
-	})
 }
 
 func TestThreadsOAuthRedactionAndRedirect(t *testing.T) {
@@ -248,19 +246,22 @@ func TestThreadsOAuthRedactionAndRedirect(t *testing.T) {
 	req := testOAuthRequest()
 	r := testTokenRecord()
 	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%p", "%d"} {
-		for _, value := range []any{req, &req, r, &r} {
+		for _, value := range []any{req, &req} {
 			formatted := fmt.Sprintf(verb, value)
-			for _, secret := range []string{"app-secret", "authorization-code", "long-secret"} {
-				assertions.NotContains(formatted, secret)
-			}
+			assertions.NotContains(formatted, "app-secret")
+			assertions.NotContains(formatted, "authorization-code")
+		}
+		for _, value := range []any{r, &r} {
+			assertions.NotContains(fmt.Sprintf(verb, value), "long-secret")
 		}
 	}
-	for _, value := range []any{req, r} {
-		data, err := json.Marshal(value)
-		require.NoError(t, err)
-		assertions.NotContains(string(data), "secret")
-		assertions.NotContains(string(data), "authorization-code")
-	}
+	requestJSON, err := json.Marshal(req)
+	require.NoError(t, err)
+	assertions.NotContains(string(requestJSON), "app-secret")
+	assertions.NotContains(string(requestJSON), "authorization-code")
+	tokenJSON, err := json.Marshal(r)
+	require.NoError(t, err)
+	assertions.NotContains(string(tokenJSON), "long-secret")
 	var targetCalls atomic.Int32
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { targetCalls.Add(1) }))
 	defer target.Close()

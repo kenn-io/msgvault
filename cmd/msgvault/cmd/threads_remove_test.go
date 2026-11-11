@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
@@ -12,7 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/threads"
 )
 
-func TestThreadsOAuthAdmissionAndRemoval(t *testing.T) {
+func TestThreadsRemovalDeletesOnlyMatchingToken(t *testing.T) {
 	require := require.New(t)
 	directory := t.TempDir()
 	cfg := &config.Config{HomeDir: directory, Data: config.DataConfig{DataDir: directory}}
@@ -41,4 +42,50 @@ func TestThreadsOAuthAdmissionAndRemoval(t *testing.T) {
 	defer func() { require.NoError(reopened.Close()) }()
 	_, err = reopened.GetSourceByID(source.ID)
 	require.ErrorIs(err, store.ErrSourceNotFound)
+}
+
+func TestThreadsRemovalKeepsResolvedSourceWhenDisplayNameMoves(t *testing.T) {
+	for _, removeOriginal := range []bool{false, true} {
+		t.Run(strconv.FormatBool(removeOriginal), func(t *testing.T) {
+			require := require.New(t)
+			directory := t.TempDir()
+			cfg := &config.Config{HomeDir: directory, Data: config.DataConfig{DataDir: directory}}
+			path := filepath.Join(directory, "msgvault.db")
+			st := testutil.NewSQLiteTestStoreAt(t, path)
+			first, err := st.GetOrCreateSource(sourceTypeThreads, "threads:123:20")
+			require.NoError(err)
+			second, err := st.GetOrCreateSource(sourceTypeThreads, "threads:124:21")
+			require.NoError(err)
+			require.NoError(st.UpdateSourceDisplayName(first.ID, "Shared"))
+			// Model the selector moving after resolution and before the locked continuation.
+			require.NoError(st.UpdateSourceDisplayName(first.ID, "Original"))
+			require.NoError(st.UpdateSourceDisplayName(second.ID, "Shared"))
+			if removeOriginal {
+				_, _, err = st.RemoveSourceSerialized(t.Context(), first.ID)
+				require.NoError(err)
+			}
+			require.NoError(st.Close())
+			root := newTestRootCmd()
+			root.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+			cmd := newRemoveAccountLocalTestCmd()
+			cmd.RunE = func(cmd *cobra.Command, args []string) error {
+				return runRemoveAccountLocalWithLifecycleLock(cmd, args, true, first)
+			}
+			root.AddCommand(cmd)
+			root.SetArgs([]string{"remove-account", "Shared", "--yes"})
+			err = root.Execute()
+			if removeOriginal {
+				require.ErrorIs(err, store.ErrSourceNotFound)
+			} else {
+				require.NoError(err)
+			}
+			reopened, err := store.Open(path)
+			require.NoError(err)
+			defer func() { require.NoError(reopened.Close()) }()
+			_, err = reopened.GetSourceByID(first.ID)
+			require.ErrorIs(err, store.ErrSourceNotFound)
+			_, err = reopened.GetSourceByID(second.ID)
+			require.NoError(err)
+		})
+	}
 }

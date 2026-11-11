@@ -50,6 +50,15 @@ func newAddThreadsCmd(deps threadsCommandDeps) *cobra.Command {
 		if err != nil {
 			return usageErr(cmd, err)
 		}
+		daemon, _, err := OpenHTTPStore(cmd.Context())
+		if err != nil {
+			return err
+		}
+		err = daemon.ValidateThreadsOAuthHandoff()
+		_ = daemon.Close()
+		if err != nil {
+			return err
+		}
 		reader := bufio.NewReader(cmd.InOrStdin())
 		secret := os.Getenv("MSGVAULT_THREADS_APP_SECRET")
 		if secret == "" {
@@ -129,15 +138,9 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 	for _, source := range sources {
 		initial[source.Identifier] = source.ID
 	}
-	now := time.Now
-	if deps.now != nil {
-		now = deps.now
-	}
-	budget := threads.NewRequestBudget(threads.BudgetOptions{MaxAttempts: threads.ManualRequestLimit, Now: now, Wait: deps.wait})
-	ctx, cancel := budget.RunContext(cmd.Context())
-	defer cancel()
+	ctx := cmd.Context()
 	manager := deps.tokenManager()
-	options := deps.oauthOptions(budget)
+	options := deps.oauthOptions()
 	options.WithOwnerLock = func(ctx context.Context, identifier string, exchange func() (threads.TokenRecord, error)) (record threads.TokenRecord, retErr error) {
 		retErr = manager.WithSourceLock(ctx, identifier, func() (retErr error) {
 			var execution *store.SyncExecution
@@ -169,9 +172,6 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 					return err
 				}
 			}
-			if deps.limiter != nil {
-				budget.BindLimiter(deps.limiter(identifier))
-			}
 			record, err = exchange()
 			if err != nil {
 				return err
@@ -179,6 +179,10 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 			verified, err := threads.SourceIdentifier(record.AppID, record.OwnerID)
 			if err != nil || verified != identifier {
 				return threads.ErrReauthorizationRequired
+			}
+			_, priorErr := manager.Load(record.AppID, record.OwnerID)
+			if priorErr != nil && !errors.Is(priorErr, threads.ErrTokenNotFound) {
+				return priorErr
 			}
 			if err := manager.Save(ctx, record); err != nil {
 				return err
@@ -189,6 +193,19 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 			}
 			source, err := deps.registerSource(ctx, st, saved)
 			if err != nil {
+				if current == nil && errors.Is(priorErr, threads.ErrTokenNotFound) {
+					// Cleanup must complete under the lifecycle lock even if the request was cancelled.
+					cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+					_, lookupErr := st.GetSourceByTypeAndIdentifier(cleanupCtx, sourceTypeThreads, identifier)
+					if errors.Is(lookupErr, store.ErrSourceNotFound) {
+						lookupErr = manager.Delete(cleanupCtx, record.AppID, record.OwnerID)
+						if lookupErr == nil {
+							cancel()
+							return fmt.Errorf("adding the Threads account failed; rerun add-threads: %w", err)
+						}
+					}
+					cancel()
+				}
 				return fmt.Errorf("Threads token was saved for %s, but adding the account failed; rerun add-threads, or delete that account's token file from the tokens directory (see docs: add-threads): %w", identifier, err)
 			}
 			if execution == nil {
@@ -207,7 +224,7 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 					return fmt.Errorf("Threads token was saved, but finishing account setup failed; rerun add-threads: %w", err)
 				}
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Connected Threads account: %s\n", identifier)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Connected Threads account: %s (token expires %s)\n", identifier, record.ExpiresAt.UTC().Format(time.RFC3339))
 			return nil
 		})
 		return record, retErr
@@ -235,8 +252,10 @@ func registerThreadsSource(ctx context.Context, st *store.Store, record threads.
 	if label == "" {
 		label = "Threads account " + record.OwnerID
 	}
-	if err := updateSourceDisplayNameForRegistration(st, source.ID, label, nil); err != nil {
-		return nil, err
+	if !source.DisplayName.Valid || strings.TrimSpace(source.DisplayName.String) == "" {
+		if err := updateSourceDisplayNameForRegistration(st, source.ID, label, nil); err != nil {
+			return nil, err
+		}
 	}
 	if _, err := st.EnsureParticipantByIdentifierContext(ctx, "threads_user_id", identifier, label); err != nil {
 		return nil, err

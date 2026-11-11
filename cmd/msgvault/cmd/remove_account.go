@@ -145,10 +145,10 @@ func confirmRemoveAccount(r io.Reader, w io.Writer) (bool, error) {
 }
 
 func runRemoveAccountLocal(cmd *cobra.Command, args []string) error {
-	return runRemoveAccountLocalWithMatrixLock(cmd, args, false)
+	return runRemoveAccountLocalWithLifecycleLock(cmd, args, false, nil)
 }
 
-func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matrixLockHeld bool) (retErr error) {
+func runRemoveAccountLocalWithLifecycleLock(cmd *cobra.Command, args []string, lifecycleLockHeld bool, pinned *store.Source) (retErr error) {
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
@@ -173,7 +173,15 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 		return err
 	}
 
-	source, err := sourceops.ResolveExactOne(s, selector)
+	var source *store.Source
+	if pinned != nil {
+		source, err = s.GetSourceByIDContext(cmd.Context(), pinned.ID)
+		if err == nil && (source.Identifier != pinned.Identifier || source.SourceType != sourceTypeThreads) {
+			err = errors.New("threads source changed while waiting for removal")
+		}
+	} else {
+		source, err = sourceops.ResolveExactOne(s, selector)
+	}
 	if err != nil {
 		cleanup()
 		return err
@@ -198,31 +206,18 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 		}
 		return nil
 	}
-	if source.SourceType == sourceTypeMatrix && !matrixLockHeld {
+	if source.SourceType == sourceTypeMatrix && !lifecycleLockHeld {
 		cleanup()
 		return matrixsource.WithCredentialLifecycleLock(cfg.TokensDir(), func() error {
-			return runRemoveAccountLocalWithMatrixLock(cmd, args, true)
+			return runRemoveAccountLocalWithLifecycleLock(cmd, args, true, nil)
 		})
 	}
-	if source.SourceType == sourceTypeThreads && !matrixLockHeld {
+	if source.SourceType == sourceTypeThreads && !lifecycleLockHeld {
 		cleanup()
 		manager := threads.NewTokenManager(cfg.TokensDir())
 		return manager.WithSourceLock(cmd.Context(), source.Identifier, func() error {
-			// The source may have been removed or replaced while this request
-			// waited. Bind removal to the original row, before taking cache locks.
-			check, closeCheck, err := openWritableStoreAndInitForInvocation(cmd.Context(), state)
-			if err != nil {
-				return err
-			}
-			current, lookupErr := check.GetSourceByIDContext(cmd.Context(), source.ID)
-			closeCheck()
-			if lookupErr != nil {
-				return lookupErr
-			}
-			if current.Identifier != source.Identifier || current.SourceType != sourceTypeThreads {
-				return errors.New("threads source changed while waiting for removal")
-			}
-			return runRemoveAccountLocalWithMatrixLock(cmd, args, true)
+			// Continue with the exact row resolved before taking its lifecycle lock.
+			return runRemoveAccountLocalWithLifecycleLock(cmd, args, true, source)
 		})
 	}
 	defer cleanup()

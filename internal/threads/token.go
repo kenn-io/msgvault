@@ -34,7 +34,6 @@ type TokenRecord struct {
 	ExpiresAt           time.Time `json:"expires_at"`
 	DataAccessExpiresAt time.Time `json:"data_access_expires_at"`
 	RedirectURI         string    `json:"redirect_uri"`
-	Generation          uint64    `json:"generation"`
 	secret              *credentialSecret
 }
 type credentialSecret struct{ value string }
@@ -187,7 +186,7 @@ func (m *TokenManager) withFileLock(ctx context.Context, name string, fn func() 
 }
 
 // WithSourceLock is the context-aware cross-process outer lifecycle lock for
-// reconnect, removal, sync and send. Callers recheck source existence/generation
+// reconnect and removal. Callers recheck source existence and identity
 // after acquisition. Order: source lock -> execution lease -> short transaction.
 // Release both outer owners before cache refresh or any long throttle wait.
 func (m *TokenManager) WithSourceLock(ctx context.Context, source string, fn func() error) error {
@@ -256,32 +255,23 @@ func (m *TokenManager) Load(appID, ownerID string) (TokenRecord, error) {
 	if err = validateThreadsToken(r); err != nil {
 		return TokenRecord{}, err
 	}
-	if r.AppID != appID || r.OwnerID != ownerID || r.Generation == 0 {
+	if r.AppID != appID || r.OwnerID != ownerID {
 		return TokenRecord{}, errors.New("threads credential file binding mismatch")
 	}
 	return r, nil
 }
 
-// Save atomically creates a verified generation. A zero-generation record is a
-// fresh exchange; a nonzero record must match the durable, usable generation.
-// Call under WithSourceLock whenever source state is involved. This method uses
-// only the distinct inner store lock and never reacquires the lifecycle lock.
+// Save atomically writes a verified credential. Call under WithSourceLock
+// whenever source state is involved; this takes only the inner store lock.
 func (m *TokenManager) Save(ctx context.Context, record TokenRecord) error {
 	if err := validateThreadsToken(record); err != nil {
 		return err
 	}
 	return m.withFileLock(ctx, ".threads-token.lock", func() error {
-		current, err := m.Load(record.AppID, record.OwnerID)
+		_, err := m.Load(record.AppID, record.OwnerID)
 		if err != nil && !errors.Is(err, ErrTokenNotFound) {
 			return err
 		}
-		if record.Generation != 0 && (err != nil || record.Generation != current.Generation) {
-			return errors.New("stale Threads credential generation")
-		}
-		if current.Generation == ^uint64(0) {
-			return errors.New("threads credential generation exhausted")
-		}
-		record.Generation = current.Generation + 1
 		return m.writeToken(record)
 	})
 }
