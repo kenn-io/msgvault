@@ -1,6 +1,7 @@
 package gmail
 
 import (
+	"net/http"
 	"slices"
 	"testing"
 
@@ -20,11 +21,23 @@ func TestArchiveMessageDeltaPreviewAndRetry(t *testing.T) {
 		}
 		writes++
 	})
+	catalogReads := 0
+	transport := c.httpClient.Transport
+	c.httpClient.Transport = draftRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path == "/gmail/v1/users/me/labels" {
+			catalogReads++
+		}
+		return transport.RoundTrip(req)
+	})
 	preview, err := c.ArchiveMessage(t.Context(), "message-1", true, true)
 	require.NoError(t, err)
 	assert.True(t, preview.DryRun)
-	assert.NotContains(t, preview.Tags, "INBOX")
+	assert.False(t, preview.Verified)
+	assert.ElementsMatch(t, []string{"INBOX", "UNREAD", "Label_keep"}, preview.Before)
+	assert.ElementsMatch(t, []string{"UNREAD", "Label_keep"}, preview.Tags)
+	assert.Zero(t, catalogReads, "preview must not fetch the account label catalog")
 	assert.Zero(t, writes)
+	readsBeforeWrites := catalogReads
 	for _, archived := range []bool{true, true, false, false} {
 		result, err := c.ArchiveMessage(t.Context(), "message-1", archived, false)
 		require.NoError(t, err)
@@ -33,5 +46,6 @@ func TestArchiveMessageDeltaPreviewAndRetry(t *testing.T) {
 		assert.Contains(t, result.Tags, "UNREAD")
 		assert.Contains(t, result.Tags, "Label_keep")
 	}
+	assert.Equal(t, 4, catalogReads-readsBeforeWrites, "writes and satisfied retries need the label catalog")
 	assert.Equal(t, 2, writes)
 }

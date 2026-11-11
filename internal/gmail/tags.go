@@ -115,6 +115,9 @@ func (c *Client) ArchiveMessage(ctx context.Context, id string, archived, dryRun
 	} else {
 		change.Add = []string{"INBOX"}
 	}
+	if dryRun {
+		return c.applyMessageTagChange(ctx, id, &change, &emailtags.MessageTagResult{Provider: "gmail"})
+	}
 	result, err := c.userTagResult(ctx)
 	if err != nil {
 		return nil, err
