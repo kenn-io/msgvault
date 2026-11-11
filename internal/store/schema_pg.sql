@@ -4017,6 +4017,7 @@ CREATE TABLE IF NOT EXISTS meeting_link_decisions (
     is_explicit BOOLEAN NOT NULL DEFAULT TRUE
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_link_decisions_explicit ON meeting_link_decisions(left_message_id, left_kind, left_key, right_message_id, right_kind, right_key) WHERE is_explicit;
+CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_left ON meeting_link_decisions(left_message_id);
 CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_right ON meeting_link_decisions(right_message_id);
 CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_choice ON meeting_link_decisions(choice_key);
 CREATE TABLE IF NOT EXISTS meeting_link_decision_dependencies (
