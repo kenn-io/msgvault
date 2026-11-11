@@ -878,10 +878,6 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 	if err != nil {
 		return 0, false, err
 	}
-	if convID == 0 {
-		cs.RosterWork.MemberFirst = false
-		return 0, false, nil
-	}
 	if membership.known {
 		cs.RosterRetryAfter = ""
 	}
@@ -1020,7 +1016,7 @@ func (imp *Importer) ensureConversation(
 		d, gerr := imp.client.GetChat(requestCtx, ch.ID)
 		cancel()
 		gerr = opts.budgetError(ctx, gerr)
-		if gerr == nil && opts.skipRoster && (d == nil || d.Participants.HasMore) {
+		if gerr == nil && (d == nil || d.Participants.HasMore) {
 			gerr = errors.New("beeper chat detail has an incomplete roster")
 		}
 		if errors.Is(gerr, errBeeperBudgetExpired) {
@@ -1035,9 +1031,6 @@ func (imp *Importer) ensureConversation(
 				sum.failChat(ch.ID, false, gerr)
 				sum.FetchErrors++
 				sum.Errors++
-				if opts.skipRoster {
-					return 0, false, chatMembership{}, nil
-				}
 			} else {
 				imp.recordItem(syncID, ch.ID, "membership", store.SyncRunItemStatusSkipped, "beeper_roster_verification_deferred", gerr)
 			}
@@ -1061,7 +1054,9 @@ func (imp *Importer) ensureConversation(
 	// echoed by the remote chat payload. This also covers direct callers of
 	// ensureConversation that do not go through Import's cache reset.
 	imp.res.accountID = opts.AccountID
-	imp.res.useMessageRoster(detail.Participants.Items, opts.skipRoster)
+	if err := imp.res.useMessageRoster(ctx, sourceID, detail, opts.skipRoster || !membershipComplete); err != nil {
+		return 0, false, chatMembership{}, err
+	}
 	routeEvidence := routeEvidenceFor(detail, opts)
 	if ch.AccountID != opts.AccountID {
 		routeEvidence.Failure = "account_binding_mismatch"

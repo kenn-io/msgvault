@@ -4997,6 +4997,9 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 		if _, err := tx.ExecContext(ctx, `UPDATE participant_identifiers SET participant_id = ? WHERE participant_id = ?`, newID, oldID); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `UPDATE source_import_items SET name = ? WHERE provider LIKE 'beeper-roster:%' AND name = ?`, strconv.FormatInt(newID, 10), strconv.FormatInt(oldID, 10)); err != nil {
+			return err
+		}
 		if err := s.rewriteObservationsForMergeTx(
 			ctx, tx, oldID, newID,
 		); err != nil {
@@ -6042,7 +6045,7 @@ func (s *Store) writeBeeperRosterReceipt(q querier, sourceID int64, provider, id
 	if checksum == "" {
 		return nil
 	}
-	_, err := q.Exec(fmt.Sprintf(`INSERT INTO source_import_items (source_id, provider, provider_id, name, checksum, status, created_at, updated_at) VALUES (?, ?, ?, '', ?, 'pending', %s, %s) ON CONFLICT(source_id, provider, provider_id) DO UPDATE SET checksum = excluded.checksum, status = excluded.status, updated_at = %s`, s.dialect.Now(), s.dialect.Now(), s.dialect.Now()), sourceID, provider, identifier, BeeperRosterReceiptChecksum(checksum, owner))
+	_, err := q.Exec(fmt.Sprintf(`INSERT INTO source_import_items (source_id, provider, provider_id, name, checksum, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', %s, %s) ON CONFLICT(source_id, provider, provider_id) DO UPDATE SET name = excluded.name, checksum = excluded.checksum, status = excluded.status, updated_at = %s`, s.dialect.Now(), s.dialect.Now(), s.dialect.Now()), sourceID, provider, identifier, strconv.FormatInt(owner, 10), BeeperRosterReceiptChecksum(checksum, owner))
 	return err
 }
 

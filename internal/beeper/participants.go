@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strconv"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/beeperidentity"
@@ -50,6 +51,7 @@ type participantResolver struct {
 	fallback     map[string]int64     // bare-ID fallbacks; upgraded when metadata appears
 	mergedAway   map[int64]bool       // participants merged away this run; made on first merge
 	messageUsers map[string]User
+	roomOwners   map[string]bool
 }
 
 func newParticipantResolver(s *store.Store, accountIDs ...string) *participantResolver {
@@ -238,19 +240,44 @@ func (r *participantResolver) resolveIDFallback(ctx context.Context, userID, dis
 	return pid, nil
 }
 
-func (r *participantResolver) useMessageRoster(items []Participant, enabled bool) {
+func (r *participantResolver) useMessageRoster(ctx context.Context, sourceID int64, ch *Chat, enabled bool) error {
 	r.messageUsers = nil
-	if !enabled {
-		return
+	for key := range r.roomOwners {
+		delete(r.fallback, key)
 	}
-	for _, item := range items {
+	r.roomOwners = nil
+	if !enabled {
+		return nil
+	}
+	receipts, err := r.store.BeeperRosterReceiptsContext(ctx, sourceID, rosterProvider(ch.ID))
+	if err != nil {
+		return err
+	}
+	r.roomOwners = make(map[string]bool, len(receipts))
+	for key, receipt := range receipts {
+		owner, err := strconv.ParseInt(receipt.Name, 10, 64)
+		if err == nil && owner > 0 && !r.mergedAway[owner] {
+			delete(r.rich, key)
+			r.fallback[key] = owner
+			r.roomOwners[key] = true
+		}
+	}
+	bridgePrefix := participantBridgePrefix(ch.Participants.Items)
+	for _, item := range ch.Participants.Items {
 		if strings.HasPrefix(item.PhoneNumber, "+") || strings.Contains(item.Email, "@") {
+			key := r.identifierForUser(item.ID)
+			receipt := receipts[key]
+			owner := r.fallback[key]
+			if owner != 0 && receipt.Checksum == store.BeeperRosterReceiptChecksum(rosterMemberInputs(&item, ch, r.accountID, bridgePrefix), owner) {
+				continue
+			}
 			if r.messageUsers == nil {
 				r.messageUsers = make(map[string]User)
 			}
 			r.messageUsers[item.ID] = item.User
 		}
 	}
+	return nil
 }
 
 // adoptLegacyIdentifier upgrades an existing unscoped Beeper identifier in

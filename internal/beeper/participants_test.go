@@ -2,6 +2,7 @@ package beeper
 
 import (
 	"database/sql"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -594,6 +595,24 @@ func TestSharedEmailMergeKeepsSenderCacheCurrent(t *testing.T) {
 			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 				`SELECT sender_id FROM messages WHERE source_message_id = ?`), chat.ID+"-other").Scan(&sender))
 			assert.Equal(phone, sender, "the other ID's new message belongs to the merged participant")
+			if !tc.deferVerification {
+				source, err := st.GetOrCreateSource("beeper", "signal")
+				require.NoError(err)
+				receipts, err := st.BeeperRosterReceiptsContext(t.Context(), source.ID, rosterProvider(chat.ID))
+				require.NoError(err)
+				assert.Equal(fmt.Sprint(phone), receipts[imp.res.identifierForUser(tc.other)].Name)
+				f.mu.Lock()
+				chat.ParticipantsTruncated = true
+				f.mu.Unlock()
+				f.setChatGetFailure(chat.ID, true)
+				f.appendMsg(chat.ID, fakeMsg{ID: chat.ID + "-after-restart", SortKey: 100, Timestamp: time.Now().Add(time.Second), Text: "after restart", SenderID: tc.other})
+				imp = NewImporter(st, imp.client)
+				_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true})
+				var partial *PartialSyncError
+				require.ErrorAs(err, &partial)
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE source_id = ? AND source_message_id = ?`), source.ID, chat.ID+"-after-restart").Scan(&sender))
+				assert.Equal(phone, sender)
+			}
 		})
 	}
 }

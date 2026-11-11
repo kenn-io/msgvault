@@ -451,7 +451,7 @@ func (s *Store) DeleteBeeperRosterReceiptsContext(ctx context.Context, sourceID 
 
 // BeeperRosterReceiptsContext reads the active member receipts for one room.
 func (s *Store) BeeperRosterReceiptsContext(ctx context.Context, sourceID int64, provider string) (map[string]SourceImportItem, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT provider_id, COALESCE(checksum, ''), status FROM source_import_items WHERE source_id = ? AND provider = ?`, sourceID, provider)
+	rows, err := s.db.QueryContext(ctx, `SELECT provider_id, COALESCE(name, ''), COALESCE(checksum, ''), status FROM source_import_items WHERE source_id = ? AND provider = ?`, sourceID, provider)
 	if err != nil {
 		return nil, err
 	}
@@ -459,7 +459,7 @@ func (s *Store) BeeperRosterReceiptsContext(ctx context.Context, sourceID int64,
 	items := make(map[string]SourceImportItem)
 	for rows.Next() {
 		item := SourceImportItem{SourceID: sourceID, Provider: provider}
-		if err := rows.Scan(&item.ProviderID, &item.Checksum, &item.Status); err != nil {
+		if err := rows.Scan(&item.ProviderID, &item.Name, &item.Checksum, &item.Status); err != nil {
 			return nil, err
 		}
 		items[item.ProviderID] = item
