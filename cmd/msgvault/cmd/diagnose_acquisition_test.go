@@ -199,6 +199,9 @@ func TestDiagnoseAcquisition(t *testing.T) {
 		output, err := a.diagnose("")
 		require.NoError(err)
 		assert.Equal("No pending acquisition failures.\n", output)
+		output, err = a.diagnose("", "--all")
+		require.NoError(err)
+		assert.Equal("unfinished\tretired\tattachment saving failed\ncleaned\tretired\tattachment saving failed\ngone\tunknown\tmessage download failed\nfiles\tunknown\tattachment saving failed\n", output)
 		assert.Equal([]map[string]string{
 			acquisitionJSON("unfinished", "ingest", "attachment_error", "historical"),
 			acquisitionJSON("cleaned", "ingest", "attachment_error", "historical"),
@@ -273,7 +276,6 @@ func TestDiagnoseAcquisition(t *testing.T) {
 		assert := assert.New(t)
 		a := newAcquisitionArchive(t, "gmail", false)
 		a.record(a.source, false,
-			acquisitionOutcome("deleted", "delete", "error", "delete_error"),
 			acquisitionOutcome("download", "fetch", "error", "fetch_error"),
 			acquisitionOutcome("download", "delete", "error", "delete_error"),
 		)
@@ -288,8 +290,9 @@ func TestDiagnoseAcquisition(t *testing.T) {
 		remote := "[remote]\nurl = 'https://example.com'\n"
 		_, err := a.diagnose(remote)
 		require.ErrorContains(err, "use --local")
-		_, err = a.diagnose(remote, "--local")
+		output, err := a.diagnose(remote, "--local", "--all")
 		require.NoError(err)
+		assert.Equal(t, "No recorded acquisition failures.\n", output)
 	})
 
 	t.Run("merged source", func(t *testing.T) {
