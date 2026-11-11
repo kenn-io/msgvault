@@ -29,15 +29,11 @@ func (g *countingEventsGate) BeginWorkContext(context.Context) (func(), bool) {
 	return func() {}, true
 }
 
-func TestEventsMutationsUseOperationGate(t *testing.T) {
+func TestEventsListDoesNotUseOperationGate(t *testing.T) {
 	gate := &countingEventsGate{}
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir()}, MCPEvents: &mcpevents.Service{}, OperationGate: gate, Logger: testLogger()})
-	body := `{"name":"msgvault.messages.changed","arguments":{"source_id":1},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`
 	srv.handleMCPEventsList(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
 	assert.Zero(t, gate.calls)
-	srv.handleMCPEventsSubscribe(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", strings.NewReader(body)))
-	srv.handleMCPEventsUnsubscribe(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", strings.NewReader(body)))
-	assert.Equal(t, 2, gate.calls)
 }
 
 func TestMCPEventsRejectsDelegatedGrant(t *testing.T) {
@@ -71,7 +67,8 @@ func TestEventsRouterSerialGate(t *testing.T) {
 	requirements.Equal(int64(1), source.ID)
 	cfg := &config.Config{HomeDir: t.TempDir()}
 	events := &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir(), Enabled: true}
-	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, OperationGate: NewSerialOperationGate(), Logger: testLogger()})
+	gate := NewSerialOperationGate()
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, OperationGate: gate, Logger: testLogger()})
 	body := `{"name":"msgvault.messages.changed","arguments":{"source_id":1},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`
 	for _, path := range []string{"/api/v1/mcp-events/subscribe", "/api/v1/mcp-events/unsubscribe"} {
 		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(body))
@@ -81,20 +78,10 @@ func TestEventsRouterSerialGate(t *testing.T) {
 		srv.Router().ServeHTTP(w, r)
 		requirements.Equal(http.StatusOK, w.Code, w.Body.String())
 	}
-}
-
-func TestEventsRouterReportsDrainingGate(t *testing.T) {
-	requirements := require.New(t)
 	assertions := assert.New(t)
-	st := testutil.NewTestStore(t)
-	cfg := &config.Config{HomeDir: t.TempDir()}
-	gate := NewSerialOperationGate()
 	requirements.NoError(gate.Drain(t.Context()))
-	events := &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir(), Enabled: true}
-	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, OperationGate: gate, Logger: testLogger()})
 	before, err := st.LoadMCPEventsCatalog(t.Context())
 	requirements.NoError(err)
-	body := `{"name":"msgvault.messages.changed","arguments":{"source_id":1},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`
 	for _, path := range []string{"/api/v1/mcp-events/subscribe", "/api/v1/mcp-events/unsubscribe"} {
 		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(body))
 		r.RemoteAddr = "127.0.0.1:12345"

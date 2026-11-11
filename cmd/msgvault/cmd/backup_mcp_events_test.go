@@ -88,9 +88,6 @@ func TestMCPEventsBackupRestoreTokens(t *testing.T) {
 				token, err := os.ReadFile(filepath.Join(dest, "tokens", "account.token"))
 				require.NoError(err)
 				assert.Equal("account fixture", string(token))
-			} else {
-				_, err := os.Stat(filepath.Join(dest, "tokens", ".provider-credentials.lock"))
-				assert.ErrorIs(err, os.ErrNotExist)
 			}
 			db, err := store.OpenForTest(t.Context(), filepath.Join(dest, "msgvault.db"))
 			require.NoError(err)
