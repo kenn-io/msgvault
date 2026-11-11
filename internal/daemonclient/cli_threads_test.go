@@ -109,10 +109,11 @@ func testThreadsOAuthRejectsRemotePlaintextBeforeTransmission(t *testing.T) {
 	defer server.Close()
 	u, err := url.Parse(server.URL)
 	require.NoError(err)
+	address := u.Host
 	// Dial the real test endpoint while retaining a remote host in the URL.
 	// This proves client admission precedes transmission, without requiring DNS.
 	transport := &http.Transport{DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, network, u.Host)
+		return (&net.Dialer{}).DialContext(ctx, network, address)
 	}}
 	defer transport.CloseIdleConnections()
 	u.Host = "daemon.example:" + u.Port()

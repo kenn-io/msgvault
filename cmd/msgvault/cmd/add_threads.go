@@ -162,7 +162,7 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 				}
 			}
 			if oldID, existed := initial[identifier]; existed && (current == nil || current.ID != oldID) {
-				return errors.New("Threads account changed while connecting; rerun add-threads")
+				return errors.New("the Threads account changed while connecting; rerun add-threads")
 			}
 			if current != nil {
 				if current.HistoryOnly || current.MergedIntoSourceID != 0 {
@@ -183,7 +183,7 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 			}
 			_, priorErr := manager.Load(record.AppID, record.OwnerID)
 			if priorErr != nil && !errors.Is(priorErr, threads.ErrTokenNotFound) {
-				return fmt.Errorf("Threads token for %s could not be read; rerun add-threads, or inspect its token file using the add-threads documentation", identifier)
+				return fmt.Errorf("the Threads token for %s could not be read; rerun add-threads, or inspect its token file using the add-threads documentation", identifier)
 			}
 			save := deps.saveToken
 			if save == nil {
@@ -193,9 +193,9 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 			}
 			if err := save(ctx, manager, record); err != nil {
 				if errors.Is(err, atomicfile.ErrPublished) {
-					return fmt.Errorf("Threads token may have been saved for %s; rerun add-threads, or locate its token file using the add-threads documentation: %w", identifier, atomicfile.ErrPublished)
+					return fmt.Errorf("the Threads token may have been saved for %s; rerun add-threads, or locate its token file using the add-threads documentation: %w", identifier, atomicfile.ErrPublished)
 				}
-				message := fmt.Sprintf("Threads token for %s could not be saved; rerun add-threads, or inspect its token file using the add-threads documentation", identifier)
+				message := fmt.Sprintf("the Threads token for %s could not be saved; rerun add-threads, or inspect its token file using the add-threads documentation", identifier)
 				if errors.Is(err, context.Canceled) {
 					return fmt.Errorf("%s: %w", message, context.Canceled)
 				}
@@ -219,7 +219,7 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 					}
 					cancel()
 				}
-				return fmt.Errorf("Threads token was saved for %s, but adding the account failed; rerun add-threads, or delete that account's token file from the tokens directory (see docs: add-threads): %w", identifier, err)
+				return fmt.Errorf("the Threads token was saved for %s, but adding the account failed; rerun add-threads, or delete that account's token file from the tokens directory (see docs: add-threads): %w", identifier, err)
 			}
 			if execution == nil {
 				execution, err = st.AcquireSyncExecutionContext(ctx, source.ID)
@@ -234,7 +234,7 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 			confirmDefaultIdentity(ctx, cmd.OutOrStdout(), st, source.ID, identifier, identifier, "threads_user_id", logger)
 			if deps.postSourceMigrations != nil {
 				if err := deps.postSourceMigrations(st); err != nil {
-					return fmt.Errorf("Threads token was saved, but finishing account setup failed; rerun add-threads: %w", err)
+					return fmt.Errorf("the Threads token was saved, but finishing account setup failed; rerun add-threads: %w", err)
 				}
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Connected Threads account: %s (token expires %s)\n", identifier, record.ExpiresAt.UTC().Format(time.RFC3339))

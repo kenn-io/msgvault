@@ -202,19 +202,22 @@ func TestThreadsTokenRejectsNewerFormat(t *testing.T) {
 }
 
 func TestThreadsCredentialWriteErrorRedactsPublishedCause(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	cause := fmt.Errorf("private/path and secret: %w", atomicfile.ErrPublished)
 	err := credentialWriteError(cause)
-	require.ErrorIs(t, err, atomicfile.ErrPublished)
-	assert.NotContains(t, err.Error(), "private/path")
-	assert.NotContains(t, err.Error(), "secret")
+	require.ErrorIs(err, atomicfile.ErrPublished)
+	assert.NotContains(err.Error(), "private/path")
+	assert.NotContains(err.Error(), "secret")
 	ordinary := credentialWriteError(errors.New("private/path and secret"))
-	assert.NotContains(t, ordinary.Error(), "private/path")
-	assert.NotContains(t, ordinary.Error(), "secret")
+	assert.NotContains(ordinary.Error(), "private/path")
+	assert.NotContains(ordinary.Error(), "secret")
 }
 
 // lockWaitContext signals after flock has failed to acquire the held lock.
 type lockWaitContext struct {
 	context.Context
+
 	waiting chan struct{}
 	once    sync.Once
 }

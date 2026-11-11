@@ -57,6 +57,7 @@ const tokenFormatVersion = 1
 
 type threadsTokenFile struct {
 	tokenMetadata
+
 	Version int `json:"version"`
 
 	AccessToken string `json:"access_token"`
