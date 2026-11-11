@@ -58,19 +58,33 @@ msgvault meetings context --id 42 --format vtt -o meeting.vtt
 ```
 
 Subtitle formats require daemon API schema 5.1.0 or newer; the default context
-format remains Markdown. Output goes to stdout unless `-o FILE` is
-specified; `-o -` also uses stdout. Both formats show available speakers as
-`Speaker: text`. Nonblank line breaks survive. WebVTT escapes text and labels.
-SRT trims whitespace from each line and refuses timing lines, tags, and subtitle
-override syntax that players interpret as formatting. Use WebVTT for literal control
-text; it preserves retained indentation and escapes text and labels.
-Interior blank lines become a single line break within the cue. Multiline speaker labels and NUL characters cause an explicit error.
-The command validates and renders everything before replacing a file. Timing,
-formatting, and size errors leave an existing destination untouched.
+format remains Markdown. Output goes to stdout unless `-o FILE` is specified;
+`-o -` also uses stdout. Cues show `Speaker: text`; an unnamed Omi or Twenty
+speaker appears as `Unknown speaker`. Nonblank line breaks survive, and
+interior blank lines collapse to one line break.
 
-Export uses retained structured segments from Omi, Pocket, and Twenty. Every cue needs a start and end, and the recording start must be known. Omi uses `started_at`; Pocket uses the retained `recorded_at` or `recording.recording_at`; Twenty uses `recording.startedAt`. Pocket's current transcript must have matching timing; pending evidence can make timing unavailable. Twenty uses both relative bounds when available; otherwise both absolute bounds must be available. Calendar, creation, and message dates do not supply a recording start. Other sources, including Granola, Circleback, and Muesli, return an error, as do missing bounds and unknown recording starts. Overlaps and leading silence survive.
+WebVTT preserves indentation and escapes text and labels. SRT trims each line
+and refuses timing lines, tags, and subtitle override syntax that players
+interpret as formatting. Use WebVTT for literal control text. Multiline speaker
+labels and NUL characters cause an error. The command validates and renders
+before replacing a file, so timing, formatting, and size errors leave an
+existing destination untouched.
 
-Subtitle exports load transcript evidence automatically and require exactly one distinct meeting ID. `--max-bytes` limits subtitle output to 4096–1048576 UTF-8 bytes (default 131072). An export that exceeds the limit fails without partial cues or file replacement.
+Export uses retained structured segments from Omi, Pocket, and Twenty. Every cue
+needs a start and end, and the recording start must be known: Omi uses
+`started_at`; Pocket uses `recorded_at` or `recording.recording_at`; and Twenty
+uses `recording.startedAt`. Calendar, creation, and message dates cannot supply
+it. Missing bounds and other sources return an error. Overlaps and leading
+silence survive.
+
+Pocket's current transcript must have matching timing; pending evidence can make
+timing unavailable. Twenty uses both relative bounds when available; otherwise
+both absolute bounds must be available.
+
+Subtitle exports load transcript evidence automatically and require exactly one
+distinct meeting ID. `--max-bytes` limits complete output to 4096–1048576 UTF-8
+bytes (default 131072). An export over the limit fails without partial cues or
+file replacement.
 
 ## Export context and read follow-ups
 
