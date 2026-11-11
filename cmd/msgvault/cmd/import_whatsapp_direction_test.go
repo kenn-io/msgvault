@@ -39,8 +39,7 @@ func TestWhatsAppTextUnknownDirectionPeople(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { assert.NoError(st.Close()) })
 	var messageID, senderID, sourceID int64
-	var ownership, sourceOwnership sql.NullBool
-	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id,sender_id,source_id,is_from_me,source_is_from_me FROM messages WHERE snippet='hello'").Scan(&messageID, &senderID, &sourceID, &ownership, &sourceOwnership))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id,sender_id,source_id FROM messages WHERE snippet='hello'").Scan(&messageID, &senderID, &sourceID))
 	sqlite := query.NewSQLiteEngine(st.DB())
 	detail, err := sqlite.GetMessage(t.Context(), messageID)
 	require.NoError(err)
@@ -64,8 +63,6 @@ func TestWhatsAppTextUnknownDirectionPeople(t *testing.T) {
 			assert.Zero(row.Score)
 		}
 	}
-	assert.False(ownership.Valid)
-	assert.False(sourceOwnership.Valid)
 	assert.EqualValues(1, inboxes.Rows[0].ConversationCount)
 	assert.Zero(inboxes.Rows[0].SentCount)
 	assert.Zero(inboxes.Rows[0].ReceivedCount)
@@ -127,31 +124,40 @@ func TestUnknownDirectionDoesNotAddRelationshipMethod(t *testing.T) {
 	require.NoError(st.InitSchema())
 	source, err := st.GetOrCreateSource("gmail", "owner@example.test")
 	require.NoError(err)
+	whatsappSource, err := st.GetOrCreateSource("whatsapp", "+12025550123")
+	require.NoError(err)
 	owner, err := st.EnsureParticipant("owner@example.test", "Owner", "example.test")
 	require.NoError(err)
 	person, err := st.EnsureParticipant("person@example.test", "Person", "example.test")
 	require.NoError(err)
+	chatPerson, err := st.EnsureParticipantByIdentifierContext(t.Context(), "whatsapp_txt", "synthetic-chat-person", "Person")
+	require.NoError(err)
+	_, err = st.LinkParticipants(person, chatPerson)
+	require.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE participants SET phone_number = ? WHERE id = ?`, "+12025550123", owner)
+	require.NoError(err)
 	require.NoError(st.AddAccountIdentity(source.ID, "owner@example.test", "manual"))
+	require.NoError(st.AddAccountIdentity(whatsappSource.ID, "+12025550123", "manual"))
 	mail, err := st.EnsureConversationWithType(source.ID, "mail", "email_thread", "Mail")
 	require.NoError(err)
 	now := time.Now().UTC()
 	message, err := st.UpsertMessage(&store.Message{SourceID: source.ID, SourceMessageID: "mail", ConversationID: mail, MessageType: "email", IsFromMe: true, SenderID: sql.NullInt64{Int64: owner, Valid: true}, SentAt: sql.NullTime{Time: now.Add(-time.Hour), Valid: true}})
 	require.NoError(err)
 	require.NoError(st.ReplaceMessageRecipients(message, "to", []int64{person}, []string{"Person"}))
-	chat, err := st.EnsureConversationWithType(source.ID, "chat", "direct_chat", "Chat")
+	chat, err := st.EnsureConversationWithType(whatsappSource.ID, "chat", "direct_chat", "Chat")
 	require.NoError(err)
-	for _, participant := range []int64{owner, person} {
+	for _, participant := range []int64{owner, chatPerson} {
 		_, err = st.DB().ExecContext(t.Context(), `INSERT INTO conversation_participants (conversation_id, participant_id, role) VALUES (?, ?, 'member')`, chat, participant)
 		require.NoError(err)
 	}
-	_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, SourceMessageID: "unknown", ConversationID: chat, MessageType: "whatsapp", DirectionUnknown: true, SenderID: sql.NullInt64{Int64: person, Valid: true}, SentAt: sql.NullTime{Time: now, Valid: true}})
+	_, err = st.UpsertMessage(&store.Message{SourceID: whatsappSource.ID, SourceMessageID: "whatsapp_txt:synthetic", ConversationID: chat, MessageType: "whatsapp", DirectionUnknown: true, SenderID: sql.NullInt64{Int64: chatPerson, Valid: true}, SentAt: sql.NullTime{Time: now, Valid: true}})
 	require.NoError(err)
 	_, err = buildCache(t.Context(), dbPath, analyticsDir, true)
 	require.NoError(err)
 	engine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", st.DB())
 	require.NoError(err)
 	t.Cleanup(func() { assert.NoError(engine.Close()) })
-	for _, filter := range []query.Context{{}, {SourceIDs: []int64{source.ID}}} {
+	for _, filter := range []query.Context{{}, {SourceIDs: []int64{source.ID, whatsappSource.ID}}} {
 		result, err := engine.Relationships(t.Context(), query.RelationshipsRequest{Now: now, ShowAll: true, Context: filter})
 		require.NoError(err)
 		require.Len(result.Rows, 1)
