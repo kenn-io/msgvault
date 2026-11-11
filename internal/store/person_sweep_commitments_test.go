@@ -197,13 +197,20 @@ func testNinthCommitmentPage(t *testing.T, deleted bool) {
 	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, initial, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: promises, Fulfilments: []peoplesweep.CommitmentFulfilment{}}))
 	r.NoError(err)
 
+	// Complete the initial promise-discovery replay before importing later replies.
+	f = nextCommitmentTestAttempt(t, f, "-initial-replay")
+	replay, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, replay, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{}, Fulfilments: []peoplesweep.CommitmentFulfilment{}}))
+	r.NoError(err)
+
 	const completed = "I sent report 9."
 	completionID := persist("ninth-fulfilment", completed, -time.Hour)
 	otherID := persist("other-source", "Another update.", -time.Hour)
 	first, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
 	r.NoError(err)
 	r.Len(first.Anchors, 8)
-	r.Len(first.Sources, 3)
+	r.Len(first.Sources, 2)
 	a.NotEmpty(commitmentSourceID(first, completionID))
 	a.Equal(first.Anchors[7].ID, first.AnchorAfterID)
 	f = nextCommitmentTestAttempt(t, f, "-first")
@@ -215,7 +222,7 @@ func testNinthCommitmentPage(t *testing.T, deleted bool) {
 	due, err := st.PersonCommitmentsDue(ctx, f.personID, f.request.CompletedAt.Add(cfg.Commitments.MinInterval), cfg.Commitments.MinInterval, cfg.Commitments.Window)
 	r.NoError(err)
 	a.True(due)
-	persist("new-activity", "A newer message.", -30*time.Minute)
+	newPromiseID := persist("new-activity", "I will send tomorrow's report.", 24*time.Hour)
 	if deleted {
 		_, err := st.db.ExecContext(ctx, st.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), otherID)
 		r.NoError(err)
@@ -225,10 +232,11 @@ func testNinthCommitmentPage(t *testing.T, deleted bool) {
 	r.NoError(err)
 	r.Len(second.Anchors, 1)
 	if deleted {
-		r.Len(second.Sources, 2)
+		r.Len(second.Sources, 1)
 	} else {
-		r.Len(second.Sources, 3)
+		r.Len(second.Sources, 2)
 	}
+	a.Empty(commitmentSourceID(second, newPromiseID), "a newer promise cannot restart the pending ninth-anchor page")
 	a.Equal(promises[8].Quote, second.Anchors[0].Quote)
 	a.NotEmpty(commitmentSourceID(second, completionID))
 	a.Equal(first.SelectionAt, second.SelectionAt)
@@ -244,6 +252,13 @@ func testNinthCommitmentPage(t *testing.T, deleted bool) {
 		}},
 	}))
 	r.NoError(err)
+	var selection nullableTimestamp
+	r.NoError(st.db.QueryRowContext(ctx, st.Rebind(`SELECT selection_at FROM person_commitment_frontiers WHERE person_id = ?`), f.personID).Scan(&selection))
+	a.False(selection.Valid, "completed bounded cycles release their cutoff")
+	next, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, later, "UTC")
+	r.NoError(err)
+	a.NotEmpty(commitmentSourceID(next, newPromiseID), "the next cycle admits newer promise evidence")
+	a.Equal(later, next.SelectionAt)
 	items, err := st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 9, false)
 	r.NoError(err)
 	r.Len(items, 9)
