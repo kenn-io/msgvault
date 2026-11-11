@@ -521,7 +521,7 @@ func TestPersonSweepWorkerClassifiesCapacityEmptyBrief(t *testing.T) {
 				window, err := BuildBriefWindow(t.Context(), archive, request)
 				if tc.untaggedLimit {
 					required.ErrorIs(err, ErrEvidenceItemTooLarge)
-					checks.NotErrorIs(err, errBriefCapacityEmpty)
+					required.NotErrorIs(err, errBriefCapacityEmpty)
 				} else {
 					required.NoError(err)
 					checks.True(window.capacityRetiredEvents)

@@ -540,9 +540,9 @@ func (w *Worker) runBriefCall(
 						}
 					}
 					if errors.Is(buildErr, ErrEvidenceItemTooLarge) {
-						return nil, briefFailureClass(buildErr), lease, nil //nolint:nilerr // Capacity is a recorded brief outcome.
+						return nil, briefFailureClass(buildErr), lease, nil
 					}
-					return nil, FailureInvalidOutput, lease, nil //nolint:nilerr // An empty brief is a recorded outcome, not an attempt failure.
+					return nil, FailureInvalidOutput, lease, nil
 				}
 				// Brief text and citations do not independently establish a profile
 				// fact. Keep possible attributes in the saved structure as suggestions.

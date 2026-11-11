@@ -371,7 +371,7 @@ func TestPersonSweepEventCapacityEmptyRetiresCurrent(t *testing.T) {
 			required.Equal(1, result.PeopleSucceeded)
 			checks.Equal(briefBefore+1, f.runner.briefRequests)
 			_, err = st.GetPersonBriefContext(t.Context(), person, 0)
-			checks.ErrorIs(err, store.ErrPersonBriefNotFound)
+			required.ErrorIs(err, store.ErrPersonBriefNotFound)
 			history, err := st.ListPersonBriefVersionsContext(t.Context(), person, 10)
 			required.NoError(err)
 			required.Len(history, 1)

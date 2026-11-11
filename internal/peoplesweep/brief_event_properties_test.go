@@ -169,8 +169,14 @@ func TestBriefEventCapacityOmitsUnretainedOutput(t *testing.T) {
 		run  func(*testing.T)
 	}{
 		{"undated byte limit", eventCapacityUndatedByte},
-		{"upcoming item limit", func(t *testing.T) { eventCapacityItem(t, true) }},
-		{"item limit, nothing else renderable", func(t *testing.T) { eventCapacityItem(t, false) }},
+		{"upcoming item limit", func(t *testing.T) {
+			t.Helper()
+			eventCapacityItem(t, true)
+		}},
+		{"item limit, nothing else renderable", func(t *testing.T) {
+			t.Helper()
+			eventCapacityItem(t, false)
+		}},
 		{"upcoming byte limit", eventCapacityUpcomingByte},
 		{"resolved byte limit", eventCapacityResolvedByte},
 	} {
@@ -325,8 +331,8 @@ func eventCapacityItem(t *testing.T, withInteraction bool) {
 	window.Request.MaxItems = 1
 	result, err := renderBriefResult(parsed, window, window.Request.AsOf)
 	if !withInteraction {
-		assert.ErrorIs(err, ErrEvidenceItemTooLarge)
-		assert.ErrorIs(err, errBriefCapacityEmpty)
+		require.ErrorIs(err, ErrEvidenceItemTooLarge)
+		require.ErrorIs(err, errBriefCapacityEmpty)
 		return
 	}
 	require.NoError(err)
