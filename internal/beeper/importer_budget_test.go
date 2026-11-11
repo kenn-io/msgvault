@@ -567,11 +567,19 @@ func TestImportBudgetCancelsBlockedMessagePageAndResumes(t *testing.T) {
 		require.FailNow("scheduled import did not enter the blocked provider request")
 	}
 	assert.Equal(2, countBeeperMessages(t, imp), "the interrupted page must not advance its cursor")
+	work := latestBeeperState(t, imp).Chats[chat.ID].RosterWork
+	require.NotNil(work, "finished roster work waits for the message turn")
+	assert.Equal("done", work.Phase)
+	assert.False(work.MemberFirst, "the next visit is the message turn")
+	_, err = imp.store.DB().ExecContext(t.Context(), `DELETE FROM participant_contact_observations`)
+	require.NoError(err)
 
 	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 	assert.False(sum.Stopped)
 	assert.Equal(3, countBeeperMessages(t, imp), "the next run resumes the interrupted page")
+	assert.Zero(sum.ObservationsRecorded, "the message turn does not match members again")
+	assert.Nil(latestBeeperState(t, imp).Chats[chat.ID].RosterWork, "roster work finishes once messages advance")
 }
 
 func TestImportStopsAfterReconcilePage(t *testing.T) {
