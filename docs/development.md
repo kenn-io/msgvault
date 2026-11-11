@@ -5,7 +5,7 @@ description: Build, test, lint, and code conventions.
 
 ## Build
 
-The macOS and Linux builds require Go 1.27.3+, Bun 1.4.4+, Node.js (22.23.4+ on
+The macOS and Linux builds require Go 1.27.4+, Bun 1.4.4+, Node.js (22.23.4+ on
 22.x, 24.22.1+ on 24.x, or 26.12.1+), and a C/C++ compiler. The Make targets install
 the pinned browser dependencies when `web/package.json` or `web/bun.lock`
 changes, then embed the production UI in the Go binary; Node runs the embed
