@@ -258,6 +258,7 @@
       }}
     />
 
+    {#if reloadRequired && pending}<p role="status">Reloading profiles…</p>{/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     {#if completed}<p role="status">People merged.</p>{/if}
   </div>
