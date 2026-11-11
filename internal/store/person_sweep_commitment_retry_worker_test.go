@@ -43,6 +43,15 @@ func TestPersonSweepWorkerDefersCommitmentPrepareFailureForTheRestOfRun(t *testi
 	f.config.ChangeBatchSize = 1
 	f.config.HistoricalMessageCap = 1
 	f.config.WorkBatchSize = 4
+	// Keep admission budgets above the entire bounded multi-person run: the
+	// regression is same-run retry spending, not the separate budget fence.
+	f.config.Budgets.MaxRequestsPerPerson = 40
+	f.config.Budgets.MaxInputTokensPerPerson = 2_000_000
+	f.config.Budgets.MaxOutputTokensPerPerson = 200_000
+	f.config.Budgets.MaxInputTokensPerRun = 4_000_000
+	f.config.Budgets.MaxOutputTokensPerRun = 1_000_000
+	f.config.Budgets.MaxInputTokensPerDay = 8_000_000
+	f.config.Budgets.MaxOutputTokensPerDay = 2_000_000
 	f.config.Commitments.Enabled = true
 	f.config.Commitments.MaxItems = 1
 	profile, err := f.config.Profile()
