@@ -147,6 +147,14 @@ func importChat(ctx context.Context, st *store.Store, root *os.Root, absolute st
 		if err != nil {
 			return err
 		}
+		existingIDs := make([]int64, 0, len(existing))
+		for _, id := range existing {
+			existingIDs = append(existingIDs, id)
+		}
+		mediaMetadata, err := st.GetSearchMetadata(ctx, existingIDs, nil, false)
+		if err != nil {
+			return err
+		}
 		for i, record := range batch {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -154,6 +162,11 @@ func importChat(ctx context.Context, st *store.Store, root *os.Root, absolute st
 			m, raw, key := &record.message, record.raw, keys[i]
 			id := existing[key]
 			if err := func() error {
+				mediaInfo, known := mediaMetadata[id]
+				if id != 0 && known && mediaInfo.AttachmentCount == 0 && len(mediaInfo.AttachmentNames) == 0 && len(m.Attachments) == 0 {
+					summary.MessagesSkipped++
+					return nil
+				}
 				writes, err := mediaWrites(ctx, st, root, c.folder, id, m, opts, summary)
 				if err != nil {
 					return err
@@ -163,6 +176,10 @@ func importChat(ctx context.Context, st *store.Store, root *os.Root, absolute st
 						if err := st.UpsertAttachmentRecordWithStats(ctx, id, write, true); err != nil {
 							return err
 						}
+					}
+					if len(writes) > 0 {
+						// Later duplicates in this batch must see newly added slots.
+						delete(mediaMetadata, id)
 					}
 					summary.MessagesSkipped++
 					return nil

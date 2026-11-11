@@ -53,28 +53,21 @@ func galleryName(id string, a Attachment) (string, bool) {
 }
 
 func mediaWrites(ctx context.Context, st *store.Store, root *os.Root, folder string, messageID int64, m *Message, opts ImportOptions, summary *ImportSummary) ([]store.AttachmentWrite, error) {
-	var candidates []Attachment
-	for _, a := range m.Attachments {
-		if a.Type == "reply" {
-			continue
-		}
-		_, supported := galleryName(m.ID, a)
-		if !supported {
-			summary.AttachmentsUnsupported++
-			continue
-		}
-		if messageID == 0 {
-			candidates = append(candidates, a)
-		}
+	type mediaCandidate struct {
+		attachment Attachment
+		persisted  bool
 	}
+	var candidates []mediaCandidate
+	knownKeys := make(map[string]bool)
 	if messageID != 0 {
 		refs, err := st.MessageMIMEAttachmentsContext(ctx, messageID)
 		if err != nil {
 			return nil, err
 		}
-		// Retry only archived empty slots for this selected message. Incoming
-		// omissions cannot erase them, and unsupported counts describe the input.
+		// Archived keys reserve their identity, including completed slots.
+		// Their original descriptors take precedence over later input.
 		for _, ref := range refs {
+			knownKeys[ref.SourcePartKey] = true
 			if ref.ContentHash != "" {
 				continue
 			}
@@ -86,11 +79,28 @@ func mediaWrites(ctx context.Context, st *store.Store, root *os.Root, folder str
 			if !supported || ref.Filename != name || ref.SourcePartKey != a.Type+":"+name || ref.MediaType != a.Type {
 				continue
 			}
-			candidates = append(candidates, a)
+			candidates = append(candidates, mediaCandidate{attachment: a, persisted: true})
 		}
 	}
+	for _, a := range m.Attachments {
+		if a.Type == "reply" {
+			continue
+		}
+		name, supported := galleryName(m.ID, a)
+		if !supported {
+			summary.AttachmentsUnsupported++
+			continue
+		}
+		key := a.Type + ":" + name
+		if knownKeys[key] {
+			continue
+		}
+		knownKeys[key] = true
+		candidates = append(candidates, mediaCandidate{attachment: a})
+	}
 	var writes []store.AttachmentWrite
-	for _, a := range candidates {
+	for _, candidate := range candidates {
+		a := candidate.attachment
 		name, _ := galleryName(m.ID, a)
 		key := a.Type + ":" + name
 		metadata, err := json.Marshal(a)
@@ -137,7 +147,7 @@ func mediaWrites(ctx context.Context, st *store.Store, root *os.Root, folder str
 			} else {
 				summary.AttachmentsMissing++
 			}
-			if messageID != 0 {
+			if candidate.persisted {
 				continue
 			}
 		} else {

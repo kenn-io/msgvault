@@ -66,7 +66,7 @@ func TestImportCoverageRawUnknownsAndReruns(t *testing.T) {
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT title,conversation_type FROM conversations WHERE source_conversation_id='dm:fictional-direct'").Scan(&directTitle, &directType))
 	assert.Equal("Example Direct Peer", directTitle)
 	assert.Equal("direct_chat", directType)
-	key := messageKey("group:fictional-garden", "fictional-one")
+	key := `["group:fictional-garden","fictional-one"]`
 	ids, err := st.MessageExistsBatchContext(t.Context(), summary.SourceID, []string{key})
 	require.NoError(err)
 	require.Contains(ids, key)
@@ -115,6 +115,77 @@ func TestImportCoverageRawUnknownsAndReruns(t *testing.T) {
 }
 
 func TestImportMedia(t *testing.T) {
+	for _, available := range []bool{true, false} {
+		t.Run(fmt.Sprintf("adds later attachment evidence with bytes available %t", available), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			root := t.TempDir()
+			path := filepath.Join(root, "message.json")
+			original := `[{"id":"one","group_id":"example","text":"original text"}]`
+			require.NoError(os.WriteFile(path, []byte(original), 0600))
+			opts := ImportOptions{RootDir: root, Me: "owner", AttachmentsDir: t.TempDir()}
+			first, err := Import(t.Context(), st, opts)
+			require.NoError(err)
+			ids, err := st.MessageExistsBatchContext(t.Context(), first.SourceID, []string{messageKey("group:example", "one")})
+			require.NoError(err)
+			id := ids[messageKey("group:example", "one")]
+			require.NotZero(id)
+			body, raw, err := st.GetMessageBodyAndRawContext(t.Context(), id)
+			require.NoError(err)
+			gallery := filepath.Join(root, "gallery")
+			require.NoError(os.Mkdir(gallery, 0700))
+			mediaPath := filepath.Join(gallery, "one_800x600.example.png")
+			if available {
+				require.NoError(os.WriteFile(mediaPath, []byte("later image bytes"), 0600))
+			}
+			attachment := `{"type":"image","url":"https://images.example.invalid/800x600.png.example"}`
+			require.NoError(os.WriteFile(path, []byte(`[{"id":"one","group_id":"example","text":"later text","attachments":[`+attachment+`,`+attachment+`]}]`), 0600))
+			later, err := Import(t.Context(), st, opts)
+			require.NoError(err)
+			assert.Zero(later.MessagesAdded)
+			assert.EqualValues(1, later.MessagesSkipped)
+			refs, err := st.MessageMIMEAttachmentsContext(t.Context(), id)
+			require.NoError(err)
+			require.Len(refs, 1)
+			assert.Equal("image:one_800x600.example.png", refs[0].SourcePartKey)
+			if available {
+				assert.Equal(1, later.AttachmentsStored)
+				assert.Zero(later.AttachmentsMissing)
+			} else {
+				assert.Equal(1, later.AttachmentsMissing)
+				assert.Zero(later.AttachmentsStored)
+				assert.Empty(refs[0].ContentHash)
+				require.NoError(os.WriteFile(path, []byte(original), 0600))
+				require.NoError(os.WriteFile(mediaPath, []byte("later image bytes"), 0600))
+				recovered, err := Import(t.Context(), st, opts)
+				require.NoError(err)
+				assert.Equal(1, recovered.AttachmentsStored)
+				assert.Zero(recovered.AttachmentsMissing)
+				refs, err = st.MessageMIMEAttachmentsContext(t.Context(), id)
+				require.NoError(err)
+				require.Len(refs, 1)
+			}
+			require.NotEmpty(refs[0].ContentHash)
+			hash := refs[0].ContentHash
+			data, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, refs[0].StoragePath))
+			require.NoError(err)
+			assert.Equal("later image bytes", string(data))
+			require.NoError(os.WriteFile(mediaPath, []byte("replacement bytes"), 0600))
+			complete, err := Import(t.Context(), st, opts)
+			require.NoError(err)
+			assert.Zero(complete.AttachmentsStored)
+			assert.Zero(complete.AttachmentsMissing)
+			refs, err = st.MessageMIMEAttachmentsContext(t.Context(), id)
+			require.NoError(err)
+			require.Len(refs, 1)
+			assert.Equal(hash, refs[0].ContentHash)
+			gotBody, gotRaw, err := st.GetMessageBodyAndRawContext(t.Context(), id)
+			require.NoError(err)
+			assert.Equal(body, gotBody)
+			assert.Equal(raw, gotRaw)
+		})
+	}
 	for _, tc := range []struct{ name, attachments string }{
 		{"omitted attachments", ""},
 		{"empty attachments", `,"attachments":[]`},
@@ -190,7 +261,9 @@ func TestImportMedia(t *testing.T) {
 		path := filepath.Join(root, "group", "message.json")
 		original, err := os.ReadFile(path)
 		require.NoError(err)
-		require.NoError(os.WriteFile(path, []byte(strings.Replace(string(original), `"attachments":[{"type":"image"`, `"attachments":[{"type":"reply","reply_id":"fictional-two"},{"type":"image"`, 1)), 0600))
+		reordered := strings.Replace(string(original), `"attachments":[{"type":"image"`, `"attachments":[{"type":"reply","reply_id":"fictional-two"},{"type":"image"`, 1)
+		reordered = strings.ReplaceAll(reordered, "https://images.example.invalid", "https://changed.example.invalid")
+		require.NoError(os.WriteFile(path, []byte(reordered), 0600))
 		gallery := filepath.Join(root, "group", "gallery")
 		require.NoError(os.Mkdir(gallery, 0700))
 		for name, content := range map[string]string{"fictional-one_800x600.fictional-image.png": "fictional image bytes", "fictional-two_fictional-video.720p.mp4": "fictional video bytes"} {
@@ -205,6 +278,9 @@ func TestImportMedia(t *testing.T) {
 		refs, err := st.MessageMIMEAttachmentsContext(t.Context(), ids[messageKey("group:fictional-garden", "fictional-one")])
 		require.NoError(err)
 		require.Len(refs, 1)
+		var archived Attachment
+		require.NoError(json.Unmarshal([]byte(refs[0].Metadata), &archived))
+		assert.Equal("https://images.example.invalid/800x600.png.fictional-image", archived.URL)
 		data, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, refs[0].StoragePath))
 		require.NoError(err)
 		assert.Equal("fictional image bytes", string(data))
