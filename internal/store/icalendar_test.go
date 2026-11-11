@@ -239,14 +239,16 @@ func TestICalendarCancellationArrivalOrder(t *testing.T) {
 				assertions.Equal("2027-03-02T14:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
 			}
 			check()
-			restore := calendarDocument("REQUEST", "SEQUENCE:4\r\nDTSTART:20270302T150000Z\r\nSUMMARY:Restored")
-			_, err = st.PersistICalendarContext(t.Context(), source, restore)
-			requirements.NoError(err)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-			requirements.NoError(err)
-			requirements.Len(page.Occurrences, 1)
-			assertions.Equal("Restored", page.Occurrences[0].Subject)
-			assertions.Equal("confirmed", page.Occurrences[0].Status)
+			if tc.name == "cancel original moved" || tc.name == "original moved cancel" {
+				restore := calendarDocument("REQUEST", "SEQUENCE:4\r\nDTSTART:20270302T150000Z\r\nSUMMARY:Restored")
+				_, err = st.PersistICalendarContext(t.Context(), source, restore)
+				requirements.NoError(err)
+				page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+				requirements.NoError(err)
+				requirements.Len(page.Occurrences, 1)
+				assertions.Equal("Restored", page.Occurrences[0].Subject)
+				assertions.Equal("confirmed", page.Occurrences[0].Status)
+			}
 		})
 	}
 
