@@ -12,7 +12,7 @@ import (
 	"go.kenn.io/msgvault/internal/calrecur"
 )
 
-func TestReviewCancelledOccurrenceWithoutMaster(t *testing.T) {
+func TestMeetingRecordCancelledOccurrenceWithoutMaster(t *testing.T) {
 	for _, tc := range []struct{ name, original, eventID, master, identity string }{
 		{"timed", `{"dateTime":"2027-03-14T10:00:00Z"}`, "series_20270314T100000Z", `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, "20270314T100000Z"},
 		{"all-day", `{"date":"2027-03-14"}`, "series_20270314", `{"id":"series","start":{"date":"2027-03-14"},"end":{"date":"2027-03-15"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, "20270314"},
@@ -53,17 +53,18 @@ func TestMeetingRecordPartialBoundsAndAliases(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, partial := calendarFixture(t, st, "partial", `{"id":"series_20270314T100000Z","recurringEventId":"series","iCalUID":"uid@example.org","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T12:00:00Z"}}`, "owner@example.com")
-	_, other := projectionFixture(t, st, "other-week", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-21T10:00:00Z"}}`)
 	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: partial})
 	require.NoError(err)
 	require.Len(record.Links, 1)
 	require.NotNil(record.Links[0].Start)
 	assert.Equal(time.Date(2027, 3, 15, 12, 0, 0, 0, time.UTC), *record.Links[0].Start)
 	assert.Nil(record.Links[0].End)
-	assert.NotContains(record.MessageIDs, other)
 	assert.Equal([]CalendarUnexpandable{{MessageID: partial, Reason: "missing series master and event bounds"}}, record.Unexpandable)
-	keys := occurrenceKeys(CalendarOccurrence{row: CalendarEventRow{ICalUID: "uid@example.org"}})
-	assert.Empty(keys)
+	_, sparse := calendarFixture(t, st, "no-start", `{"id":"no-start","recurringEventId":"absent","iCalUID":"zero@example.org","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"}}`, "owner@example.com")
+	_, zero := projectionFixture(t, st, "zero-note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"zero@example.org","startsAt":"0001-01-01T00:00:00Z"}}`)
+	record, err = st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: sparse})
+	require.NoError(err)
+	assert.NotContains(record.MessageIDs, zero)
 }
 
 func TestMeetingRecordOrphanAllDayDoesNotGuessOriginalZone(t *testing.T) {

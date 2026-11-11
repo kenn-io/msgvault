@@ -89,6 +89,10 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 		if o.Cancelled {
 			status = "cancelled"
 		}
+		attendees := e.Attendees
+		if attendees == nil {
+			attendees = []calevent.Attendee{}
+		}
 		ref := OccurrenceRef{MessageID: row.MessageID}
 		if seriesID != 0 && o.Original != (calrecur.Identity{}) {
 			ref = OccurrenceRef{MessageID: seriesID, Identity: o.Original}
@@ -97,7 +101,7 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 		if original == (calrecur.Identity{}) && e.Kind == "exception" && e.Original != nil {
 			original = *e.Original
 		}
-		page.Occurrences = append(page.Occurrences, CalendarOccurrence{row: row, original: original, originalStart: originalStart, Ref: formatMeetingOccurrence(ref), MessageID: row.MessageID, SeriesMessageID: seriesID, SourceID: row.SourceID, Subject: row.Subject, Start: o.Start, End: o.End, AllDay: o.AllDay, StartDate: o.StartDate, EndDate: o.EndDate, Status: status, DeletedFromSource: row.DeletedFromSource, Attendees: calendarAttendees(e)})
+		page.Occurrences = append(page.Occurrences, CalendarOccurrence{row: row, original: original, originalStart: originalStart, Ref: formatMeetingOccurrence(ref), MessageID: row.MessageID, SeriesMessageID: seriesID, SourceID: row.SourceID, Subject: row.Subject, Start: o.Start, End: o.End, AllDay: o.AllDay, StartDate: o.StartDate, EndDate: o.EndDate, Status: status, DeletedFromSource: row.DeletedFromSource, Attendees: attendees})
 	}
 	addSeriesOccurrence := func(row CalendarEventRow, o calrecur.Occurrence) (err error) {
 		effective := row
@@ -186,7 +190,7 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 		}
 	}
 	slices.SortFunc(page.Occurrences, func(a, b CalendarOccurrence) int {
-		if c := compareMeetingStart(a.Start, b.Start); c != 0 {
+		if c := a.Start.Compare(b.Start); c != 0 {
 			return c
 		}
 		return cmp.Compare(a.MessageID, b.MessageID)
@@ -208,13 +212,6 @@ func calendarReportMismatchedExceptions(master calevent.Event, exceptions []Cale
 			report(exception.MessageID, "exception original type differs from series and event bounds are missing")
 		}
 	}
-}
-
-func calendarAttendees(e calevent.Event) []calevent.Attendee {
-	if e.Attendees == nil {
-		return []calevent.Attendee{}
-	}
-	return e.Attendees
 }
 
 // calendarEventOccurrence keeps each known bound and leaves unavailable ones zero.
