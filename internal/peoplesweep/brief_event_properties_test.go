@@ -215,7 +215,6 @@ func TestBriefEventAdmissionSurvivesRegressingWindowAndJSONRestart(t *testing.T)
 }
 
 func TestBriefEventPacketBindingCoversEveryContextCoordinate(t *testing.T) {
-	assert := assert.New(t)
 	anchor := briefWindowItem(10, SourceConversationText, 10, "I move on August 15.")
 	for name, mutate := range map[string]func(*BriefEventContext){
 		"clock":     func(c *BriefEventContext) { c.AsOf = c.AsOf.Add(time.Hour) },
@@ -224,6 +223,7 @@ func TestBriefEventPacketBindingCoversEveryContextCoordinate(t *testing.T) {
 		"memory":    func(c *BriefEventContext) { c.Events = []BriefHighlight{eventHighlight(anchor, "2026-08-15")} },
 	} {
 		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
 			window := eventWindow(t, &briefFakeArchive{items: []EvidenceItem{anchor}}, nil, "2026-08-14T00:00:00Z")
 			mutate(window.Batch.Packet.BriefContext)
 			_, err := ParseBrief(eventCandidate(t, eventHighlight(anchor, "2026-08-15")), window, window.Request.Profile)

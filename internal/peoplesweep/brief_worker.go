@@ -304,6 +304,9 @@ func renderBriefResult(
 	return newBriefResult(trimmed, rendered, window, generatedAt)
 }
 
+// errBriefCapacityEmpty distinguishes retired output from generic packet limits.
+var errBriefCapacityEmpty = errors.New("event memory capacity leaves no renderable brief")
+
 // newBriefResult freezes one validated, rendered brief into the durable shape
 // the apply transaction stores.
 func newBriefResult(
@@ -332,7 +335,7 @@ func newBriefResult(
 	parsed.Evidence = briefKeptEvidence(before, parsed.Evidence, parsed.Output)
 	rendered, err = RenderBrief(parsed, window)
 	if errors.Is(err, ErrEmptyBrief) {
-		return BriefResult{}, fmt.Errorf("event memory capacity leaves no renderable brief: %w", ErrEvidenceItemTooLarge)
+		return BriefResult{}, fmt.Errorf("%w: %w", errBriefCapacityEmpty, ErrEvidenceItemTooLarge)
 	}
 	if err != nil {
 		return BriefResult{}, err
@@ -388,14 +391,15 @@ func ValidateBriefResult(personID int64, result *BriefResult) error {
 
 // briefCall is everything the brief step needs from the attempt that owns it.
 type briefCall struct {
-	runID        string
-	attemptID    string
-	lease        Lease
-	profile      ProviderProfile
-	catalog      personfacts.Catalog
-	resolvedAt   time.Time
-	plan         briefPlan
-	batchOrdinal int
+	runID         string
+	attemptID     string
+	lease         Lease
+	profile       ProviderProfile
+	catalog       personfacts.Catalog
+	resolvedAt    time.Time
+	plan          briefPlan
+	batchOrdinal  int
+	capacityEmpty *bool
 }
 
 // runBriefCall appends the person brief to an attempt whose extraction batches
@@ -528,6 +532,14 @@ func (w *Worker) runBriefCall(
 				// The paid call is still reconciled and its failure is recorded.
 				result, buildErr := renderBriefResult(parsed, window, w.now())
 				if buildErr != nil {
+					preflightCapacityEmpty := window.capacityRetiredEvents &&
+						errors.Is(buildErr, ErrEmptyBrief) && parsed.DroppedItemCount == 0
+					if call.capacityEmpty != nil && (errors.Is(buildErr, errBriefCapacityEmpty) || preflightCapacityEmpty) {
+						*call.capacityEmpty = true
+					}
+					if preflightCapacityEmpty {
+						return nil, briefFailureClass(ErrEvidenceItemTooLarge), lease, nil
+					}
 					if errors.Is(buildErr, ErrEvidenceItemTooLarge) {
 						return nil, briefFailureClass(buildErr), lease, nil //nolint:nilerr // Capacity is a recorded brief outcome.
 					}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/activity"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -318,6 +319,83 @@ func TestPersonSweepEventPolicyRefusalRetiresCurrentOnceWithoutInference(t *test
 			assert.Equal(retiredAt, *history[0].SupersededAt)
 			assert.Equal(beforeBrief, f.runner.briefRequests)
 			assert.Equal(beforeExtraction, f.runner.extractionRequests)
+		})
+	}
+}
+
+// A capacity-retired event must not leave an obsolete current paragraph when
+// the paid replacement has no renderable content. History keeps the watermark.
+func TestPersonSweepEventCapacityEmptyRetiresCurrent(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		preflight bool
+		invalid   bool
+	}{
+		{"projection", false, false},
+		{"preflight", true, false},
+		{"preflight_invalid_output", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checks := assert.New(t)
+			required := require.New(t)
+			f, now, _ := newStoreEventFixture(t, "capacity-empty-"+tc.name)
+			st, person := f.journal.store, f.journal.alicePersonID
+			runStoreEvent(t, f, peoplesweep.BriefModeForce)
+			prior, err := st.GetPersonBriefContext(t.Context(), person, 0)
+			required.NoError(err)
+			var boundary peoplesweep.BriefBoundary
+			required.NoError(json.Unmarshal(prior.Boundary, &boundary))
+			required.Len(boundary.EventMemory, 1)
+			f.worker.Config.Brief.MaxItems = 1
+			f.worker.Config.Brief.OverlapItems = 0
+			*now = time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC)
+			if tc.preflight {
+				owner, err := st.EnsureParticipant("owner@example.test", "Owner", "example.test")
+				required.NoError(err)
+				required.NoError(st.AddAccountIdentity(f.journal.sourceID, "owner@example.test", "manual"))
+				for _, participant := range []int64{owner, f.journal.aliceID} {
+					required.NoError(st.EnsureConversationParticipant(f.journal.conversationID, participant, "member"))
+				}
+				message := f.journal.insertMessage(t, "capacity-new-contact", "chat", f.journal.aliceID, now.Add(-time.Hour))
+				addSweepBody(t, f.journal, message, "An ordinary update.")
+				projector, err := activity.NewProjector(st, activity.Options{})
+				required.NoError(err)
+				_, err = projector.RunOnce(t.Context())
+				required.NoError(err)
+				last, present, err := st.PersonSweepLastContact(t.Context(), person)
+				required.NoError(err)
+				required.True(present)
+				required.Equal(message, last.MessageID)
+			}
+			f.runner.candidate = func(map[string]any) json.RawMessage {
+				if tc.invalid {
+					return json.RawMessage(`{"last_meaningful_interaction":null,"highlights":[{"text":"unsupported","speaker":"person","evidence_ids":["missing"],"observed_at":null,"confidence_basis_points":900,"life_event":null}],"follow_ups":[],"appreciations":[],"uncertainties":[],"possible_attributes":[]}`)
+				}
+				return emptyEventBrief()
+			}
+			before := f.runner.briefRequests
+			result := runStoreEvent(t, f, peoplesweep.BriefModeAuto)
+			required.Equal(1, result.PeopleSucceeded)
+			checks.Equal(before+1, f.runner.briefRequests)
+			current, err := st.GetPersonBriefContext(t.Context(), person, 0)
+			if tc.invalid {
+				required.NoError(err)
+				checks.Equal(prior.Version, current.Version, "ordinary invalid output must not retire the current brief")
+			} else {
+				checks.ErrorIs(err, store.ErrPersonBriefNotFound)
+			}
+			history, err := st.ListPersonBriefVersionsContext(t.Context(), person, 10)
+			required.NoError(err)
+			required.Len(history, 1)
+			if tc.invalid {
+				checks.Equal(store.PersonBriefStatusCurrent, history[0].Status)
+			} else {
+				checks.Equal(store.PersonBriefStatusSuperseded, history[0].Status)
+				checks.NotNil(history[0].SupersededAt)
+			}
+			checks.Equal(prior.Boundary, history[0].Boundary)
+			required.Len(result.People, 1)
+			checks.GreaterOrEqual(result.People[0].Usage.Requests, 1, "paid inference remains accounted for")
 		})
 	}
 }
