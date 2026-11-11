@@ -50,6 +50,11 @@ func TestMeetingLinkDecisionReadsOnlyRequestedOccurrence(t *testing.T) {
 	r.Equal([]int64{notes[0]}, record.MessageIDs)
 	r.True(sawRequested)
 	r.Empty(unrelated)
+	budget := 20
+	loader := meetingDecisionLoader{store: st}
+	edges, err := loader.edges(t.Context(), endpointFromRef(occurrence), nil, &budget)
+	r.NoError(err)
+	r.Len(edges, 1)
 }
 
 func TestMeetingLinkDecisionLargeGroupsLinkAndSplit(t *testing.T) {

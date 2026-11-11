@@ -57,9 +57,8 @@ func (l *meetingDecisionLoader) edges(ctx context.Context, endpoint meetingDecis
 	return l.loaded[endpoint], nil
 }
 
-func (l *meetingDecisionLoader) load(ctx context.Context, endpoints []meetingDecisionEndpoint, budget *int) error {
-	leftScope, leftArgs := sourceScopeClause(ctx, "l.source_id")
-	rightScope, rightArgs := sourceScopeClause(ctx, "r.source_id")
+// meetingDecisionEndpointClause filters occurrence keys before the read budget applies.
+func meetingDecisionEndpointClause(endpoints []meetingDecisionEndpoint) (string, []any) {
 	var clauses []string
 	var args []any
 	for _, endpoint := range endpoints {
@@ -77,10 +76,17 @@ func (l *meetingDecisionLoader) load(ctx context.Context, endpoints []meetingDec
 			clauses = append(clauses, "("+clause+")")
 		}
 	}
+	return strings.Join(clauses, " OR "), args
+}
+
+func (l *meetingDecisionLoader) load(ctx context.Context, endpoints []meetingDecisionEndpoint, budget *int) error {
+	leftScope, leftArgs := sourceScopeClause(ctx, "l.source_id")
+	rightScope, rightArgs := sourceScopeClause(ctx, "r.source_id")
+	where, args := meetingDecisionEndpointClause(endpoints)
 	args = append(args, leftArgs...)
 	args = append(args, rightArgs...)
 	args = append(args, *budget+1)
-	rows, err := l.store.db.QueryContext(ctx, `SELECT d.id,d.is_explicit,d.left_message_id,d.left_kind,d.left_key,d.left_anchor,d.right_message_id,d.right_kind,d.right_key,d.right_anchor,d.decision FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE (`+strings.Join(clauses, " OR ")+`) AND l.deleted_at IS NULL AND r.deleted_at IS NULL`+leftScope+rightScope+` LIMIT ?`, args...)
+	rows, err := l.store.db.QueryContext(ctx, `SELECT d.id,d.is_explicit,d.left_message_id,d.left_kind,d.left_key,d.left_anchor,d.right_message_id,d.right_kind,d.right_key,d.right_anchor,d.decision FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE (`+where+`) AND l.deleted_at IS NULL AND r.deleted_at IS NULL`+leftScope+rightScope+` LIMIT ?`, args...)
 	if err != nil {
 		return err
 	}

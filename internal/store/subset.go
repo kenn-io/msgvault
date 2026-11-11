@@ -367,6 +367,7 @@ func verifyForeignKeys(ctx context.Context, db *sql.DB) error {
 // copyData executes INSERT INTO ... SELECT in dependency order.
 func copyData(ctx context.Context, tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult, error) {
 	result := &CopyResult{}
+
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		CREATE TEMP TABLE selected_messages AS
 		SELECT id FROM src.messages
