@@ -198,24 +198,26 @@ func TestImportMessenger_MissingDir(t *testing.T) {
 }
 
 func TestImportMessengerInstagramEndToEnd(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	markDaemonCLISubprocessForTest(t)
 	t.Cleanup(saveMessengerState(t))
 	tmp := t.TempDir()
 	fixture, err := filepath.Abs("../../../internal/fbmessenger/testdata/instagram")
-	require.NoError(t, err)
+	require.NoError(err)
 	var stdout bytes.Buffer
 	rootCmd.SetOut(&stdout)
 	rootCmd.SetErr(io.Discard)
 	rootCmd.SetArgs([]string{"--home", tmp, "import-messenger", "--source", "instagram", "--format", "json", "--account", "example", "--self-name", "Nova Example", fixture})
-	require.NoError(t, rootCmd.ExecuteContext(t.Context()))
-	assert.Contains(t, stdout.String(), "Instagram:")
+	require.NoError(rootCmd.ExecuteContext(t.Context()))
+	assert.Contains(stdout.String(), "Instagram:")
 	st, err := store.Open(filepath.Join(tmp, "msgvault.db"))
-	require.NoError(t, err)
+	require.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
 	source, err := st.GetSourceByIdentifier(t.Context(), "example")
-	require.NoError(t, err)
-	assert.Equal(t, "instagram_messages", source.SourceType)
+	require.NoError(err)
+	assert.Equal("instagram_messages", source.SourceType)
 	var count int
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE message_type='instagram'").Scan(&count))
-	assert.Equal(t, 6, count)
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE message_type='instagram'").Scan(&count))
+	assert.Equal(6, count)
 }
