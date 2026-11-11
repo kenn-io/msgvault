@@ -139,7 +139,7 @@ func parseDraftComposeArgs(args []string) (draftComposeIntent, error) {
 	}
 	if intent.ConversationID != 0 {
 		if fromSet || accountSet || sourceIDSet || subjectSet || len(intent.To)+len(intent.Cc)+len(intent.Bcc) > 0 {
-			return invalidDraftComposeArgs("--conversation accepts only --body, --reply-to, and --json")
+			return invalidDraftComposeArgs("--conversation cannot be combined with --from, --account, --source-id, --subject, --to, --cc, or --bcc")
 		}
 		return intent, nil
 	}

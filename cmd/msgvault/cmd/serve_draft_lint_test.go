@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strconv"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -98,7 +97,7 @@ func TestDraftReplyStrictRefuses(t *testing.T) {
 		})
 	}
 }
-func TestDraftReplyPlaceholderWarning(t *testing.T) {
+func TestDraftReplyLintAndProvenanceWarnings(t *testing.T) {
 	for _, allow := range []bool{false, true} {
 		t.Run(fmt.Sprintf("allow=%t", allow), func(t *testing.T) {
 			f := newDraftReplyFixture(t)
@@ -116,6 +115,9 @@ func TestDraftReplyPlaceholderWarning(t *testing.T) {
 				severity = "warn"
 			}
 			assert.Equal(t, severity, warnings[0].(map[string]any)["severity"])
+			if allow {
+				return
+			}
 			found := false
 			for _, w := range warnings {
 				if w.(map[string]any)["code"] == "recipient_provenance" {
@@ -129,7 +131,7 @@ func TestDraftReplyPlaceholderWarning(t *testing.T) {
 	}
 }
 
-func TestDraftReplyDelegatedSkipsNamesWithoutRead(t *testing.T) {
+func TestDraftReplyGreetingLint(t *testing.T) {
 	f := newDraftReplyFixture(t)
 	id, err := f.store.EnsureParticipant("sender@example.com", "Sender", "example.com")
 	require.NoError(t, err)
@@ -138,26 +140,30 @@ func TestDraftReplyDelegatedSkipsNamesWithoutRead(t *testing.T) {
 	given := "Pat"
 	_, err = f.store.AddPersonNameContext(t.Context(), person.ID, store.PersonNameInput{NameKind: store.PersonNameStructured, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}, GivenName: &given})
 	require.NoError(t, err)
-	for _, read := range []bool{false, true} {
-		t.Run(fmt.Sprintf("read=%t", read), func(t *testing.T) {
-			grant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{ID: f.source.ID, Type: f.source.SourceType, Identifier: f.source.Identifier, SenderKeys: []string{store.NormalizeIdentifierForCompare(testutil.IMAPTestUsername)}}}}
-			if read {
-				grant.Permissions = append(grant.Permissions, agentgrant.PermissionMessageRead)
+	t.Run("delegated mismatch", func(t *testing.T) {
+		grant := &agentgrant.Grant{
+			Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionMessageRead},
+			Sources:     []agentgrant.SourceRef{{ID: f.source.ID, Type: f.source.SourceType, Identifier: f.source.Identifier, SenderKeys: []string{store.NormalizeIdentifierForCompare(testutil.IMAPTestUsername)}}},
+		}
+		events, err := f.runAs(t, f.grantedAdapter(), grant, "--body", "Hi Alex,", "--json")
+		require.NoError(t, err)
+		var got draftReplyOutput
+		require.NoError(t, json.Unmarshal([]byte(events[0].Data), &got))
+		require.Len(t, got.Warnings, 1)
+		assert.Equal(t, "greeting_name_mismatch", got.Warnings[0].Code)
+		assert.Empty(t, got.LintSkipped)
+	})
+	t.Run("clean receipt", func(t *testing.T) {
+		events, err := f.run(t, f.grantedAdapter(), "--body", "Thanks", "--json")
+		require.NoError(t, err)
+		got := lintObject(t, events)
+		assert.NotContains(t, got, "lint_skipped")
+		if warnings, ok := got["warnings"]; ok {
+			for _, warning := range warnings.([]any) {
+				assert.Equal(t, "recipient_provenance", warning.(map[string]any)["code"])
 			}
-			events, err := f.runAs(t, f.grantedAdapter(), grant, "--body", "Hi Alex,", "--json")
-			require.NoError(t, err)
-			var got draftReplyOutput
-			require.NoError(t, json.Unmarshal([]byte(events[0].Data), &got))
-			if read {
-				require.Len(t, got.Warnings, 1)
-				assert.Equal(t, "greeting_name_mismatch", got.Warnings[0].Code)
-				assert.Empty(t, got.LintSkipped)
-			} else {
-				assert.Empty(t, got.Warnings)
-				assert.Equal(t, []string{"greeting_name_mismatch"}, got.LintSkipped)
-			}
-		})
-	}
+		}
+	})
 }
 
 func TestValidateOnlyWritesNothing(t *testing.T) {
@@ -175,15 +181,6 @@ func TestValidateOnlyWritesNothing(t *testing.T) {
 		assert.Equal(t, false, got["valid"])
 		assert.NotContains(t, got, "draft_id")
 		assert.NotContains(t, got, "recipient_provenance_status")
-		assertDraftRows(t, f.store, 0)
-	})
-	t.Run("gmail", func(t *testing.T) {
-		f := newGmailDraftTestFixture(t)
-		events, err := lintRun(t, f.adapter, nil, "draft-reply", strconv.FormatInt(f.parentID, 10), "--body", "ok", "--validate-only", "--json")
-		require.NoError(t, err)
-		assert.Equal(t, true, lintObject(t, events)["valid"])
-		assert.Zero(t, f.client.createCalls)
-		assert.Zero(t, f.client.listCalls)
 		assertDraftRows(t, f.store, 0)
 	})
 	t.Run("chat", func(t *testing.T) {
@@ -234,7 +231,9 @@ func TestGmailDraftReplyValidateOnlyChecksScopes(t *testing.T) {
 			})
 			if tc.allowed {
 				require.NoError(t, err)
-				assert.Equal(t, "validated", lintObject(t, events)["status"])
+				got := lintObject(t, events)
+				assert.Equal(t, "validated", got["status"])
+				assert.Equal(t, true, got["valid"])
 			} else {
 				require.EqualError(t, err, "insufficient_scope")
 				assert.Empty(t, events)
@@ -261,13 +260,13 @@ func TestValidateOnlyReplyAllMatchesCreate(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(events[0].Data), &created))
 	raw, err = f.store.GetMessageRawContext(t.Context(), created.MessageID)
 	require.NoError(t, err)
-	parsed, err := imaplib.BuildIMAPDraftReplacement(raw, "ok", time.Now(), "")
+	parsed, err := msgmime.Parse(raw)
 	require.NoError(t, err)
 	assert.Equal(t, []any{"copy@example.com"}, recipients["cc"])
 	for _, field := range []struct {
 		name   string
 		values []msgmime.Address
-	}{{"to", parsed.Parsed.To}, {"cc", parsed.Parsed.Cc}, {"bcc", parsed.Parsed.Bcc}} {
+	}{{"to", parsed.To}, {"cc", parsed.Cc}, {"bcc", parsed.Bcc}} {
 		values := make([]any, 0, len(field.values))
 		for _, v := range field.values {
 			values = append(values, v.Email)

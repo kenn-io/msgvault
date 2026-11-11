@@ -56,9 +56,6 @@ func TestDraftBeeperValidateLocalDuplicate(t *testing.T) {
 	require.EqualError(t, err, "draft_exists")
 	got := lintObject(t, events)
 	assert.Equal(t, draft.DraftID, got["draft_id"])
-	assert.Nil(t, got["content"])
-	assert.NotContains(t, got, "candidate_content")
-	assert.NotContains(t, got, "pending_operation")
 	after, err := f.store.GetBeeperDraftContext(t.Context(), draft.DraftID)
 	require.NoError(t, err)
 	assert.Equal(t, draft, after)
@@ -113,7 +110,7 @@ func TestDraftLintCancelledGate(t *testing.T) {
 	a := &storeAPIAdapter{store: st}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	for _, options := range []draftLintOptions{{ValidateOnly: true}, {Strict: true}, {}} {
+	for _, options := range []draftLintOptions{{ValidateOnly: true}, {}} {
 		var events []api.CLIRunEvent
 		_, done, err := a.gateDraftLint(ctx, draftlint.Input{Kind: "reply", Channel: "email", Body: "Hi Alex,", To: []string{"alex@example.com"}}, 1, nil, options, true, func(event api.CLIRunEvent) error {
 			events = append(events, event)

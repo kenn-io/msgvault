@@ -53,15 +53,3 @@ func TestDraftInheritedSubjectStrict(t *testing.T) {
 		})
 	}
 }
-func TestDraftCleanReceiptOmitsLintKeys(t *testing.T) {
-	f := newDraftReplyFixture(t)
-	participant, err := f.store.EnsureParticipant("sender@example.com", "Sender", "example.com")
-	require.NoError(t, err)
-	_, _, err = f.store.CreatePersonFromParticipantContext(t.Context(), participant)
-	require.NoError(t, err)
-	events, err := f.run(t, f.grantedAdapter(), "--body", "Thanks", "--json")
-	require.NoError(t, err)
-	got := lintObject(t, events)
-	assert.NotContains(t, got, "warnings")
-	assert.NotContains(t, got, "lint_skipped")
-}

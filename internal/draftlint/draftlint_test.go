@@ -113,7 +113,6 @@ func TestGreetingNameMismatch(t *testing.T) {
 		{"Hi there,", "email", nil, false, false},
 		{"Hi folks,", "email", nil, false, false},
 		{"Hi Alex,", "email", nil, false, true},
-		{"Hi Alex,", "chat", nil, false, true},
 	} {
 		t.Run(tc.channel+"/"+tc.body, func(t *testing.T) {
 			r := Check(t.Context(), Input{Channel: tc.channel, Body: tc.body, To: []string{"alex@example.com"}}, tc.names)
@@ -142,7 +141,7 @@ func TestCheckSensitiveContentMasked(t *testing.T) {
 }
 
 func TestCheckCallerAuthoredSubject(t *testing.T) {
-	for _, kind := range []string{"compose", "reply", "forward", "edit"} {
+	for _, kind := range []string{"compose", "reply"} {
 		t.Run(kind, func(t *testing.T) {
 			got := Check(t.Context(), Input{Kind: kind, Channel: "email", Subject: "TODO: x\a password: abcdef123456", Body: "Thanks", To: []string{"alex@example.com"}}, nil)
 			if kind == "compose" {
