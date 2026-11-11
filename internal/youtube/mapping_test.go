@@ -284,6 +284,12 @@ func TestCommentRetainsKnownAuthor(t *testing.T) {
 	require.NoError(err)
 	require.Len(summaries, 1)
 	assert.Equal("Owner", summaries[0].FromName)
+	c.Snippet.AuthorDisplayName = "Owner Renamed"
+	_, _, err = persistComment(t.Context(), st, src.ID, v, c)
+	require.NoError(err)
+	summaries, err = st.GetMessagesSummariesByIDsContext(t.Context(), []int64{id})
+	require.NoError(err)
+	assert.Equal("Owner Renamed", summaries[0].FromName)
 }
 
 func persistCommentForTest(ctx context.Context, st *store.Store, sourceID int64, v yt.Video, c yt.Comment, _ string) (int64, error) {
@@ -305,4 +311,53 @@ func persistComment(ctx context.Context, st *store.Store, sourceID int64, v yt.V
 		c.Snippet = &yt.CommentSnippet{}
 	}
 	return persistCommentSDK(ctx, st, sourceID, "UCfixture", v.Id, &c)
+}
+
+func TestCommentWithoutChannelIDPreservesDistinctAuthorNames(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource(SourceType, SourceIdentifier("UCfixture"))
+	require.NoError(err)
+	v := yt.Video{Id: "videoone", Snippet: &yt.VideoSnippet{ChannelId: "UCfixture"}}
+	_, _, err = persistVideo(t.Context(), st, src.ID, v)
+	require.NoError(err)
+	ids := []int64{}
+	for _, commentID := range []string{"comment-a", "comment-b"} {
+		c := yt.Comment{Id: commentID, Snippet: &yt.CommentSnippet{AuthorDisplayName: "Alice", TextDisplay: "hello"}}
+		id, _, err := persistComment(t.Context(), st, src.ID, v, c)
+		require.NoError(err)
+		ids = append(ids, id)
+	}
+	summaries, err := st.GetMessagesSummariesByIDsContext(t.Context(), ids)
+	require.NoError(err)
+	require.Len(summaries, 2)
+	for _, summary := range summaries {
+		require.Equal("Alice", summary.FromName)
+	}
+	saved, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{"comment-a", "comment-b"})
+	require.NoError(err)
+	require.True(saved["comment-a"].SenderID.Valid)
+	require.True(saved["comment-b"].SenderID.Valid)
+	require.NotEqual(saved["comment-a"].SenderID.Int64, saved["comment-b"].SenderID.Int64)
+	replay := yt.Comment{Id: "comment-a", Snippet: &yt.CommentSnippet{AuthorDisplayName: "Alice", TextDisplay: "hello"}}
+	_, change, err := persistComment(t.Context(), st, src.ID, v, replay)
+	require.NoError(err)
+	require.Equal(messageUnchanged, change)
+	c := yt.Comment{Id: "comment-a", Snippet: &yt.CommentSnippet{TextDisplay: "edited"}}
+	_, _, err = persistComment(t.Context(), st, src.ID, v, c)
+	require.NoError(err)
+	summaries, err = st.GetMessagesSummariesByIDsContext(t.Context(), ids[:1])
+	require.NoError(err)
+	require.Len(summaries, 1)
+	require.Equal("Alice", summaries[0].FromName)
+	c.Snippet.AuthorChannelId = &yt.CommentSnippetAuthorChannelId{Value: "UCnew"}
+	c.Snippet.AuthorDisplayName = "Alice Updated"
+	_, _, err = persistComment(t.Context(), st, src.ID, v, c)
+	require.NoError(err)
+	updated, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{"comment-a"})
+	require.NoError(err)
+	require.NotEqual(saved["comment-a"].SenderID.Int64, updated["comment-a"].SenderID.Int64)
+	summaries, err = st.GetMessagesSummariesByIDsContext(t.Context(), ids[:1])
+	require.NoError(err)
+	require.Equal("Alice Updated", summaries[0].FromName)
 }

@@ -25,26 +25,27 @@ func fixtureClient(t *testing.T, handler http.HandlerFunc) *Client {
 }
 
 func TestClientRefreshAndSafeErrors(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	_, err := NewClient(t.Context(), "", "x", "y")
-	require.Error(t, err)
+	require.Error(err)
 	tokens := 0
 	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/token" {
 			tokens++
 			w.Header().Set("Content-Type", "application/json")
-			assert.NoError(t, r.ParseForm())
-			assert.Equal(t, "fixture-refresh", r.Form.Get("refresh_token"))
+			assert.NoError(r.ParseForm())
+			assert.Equal("fixture-refresh", r.Form.Get("refresh_token"))
 			_, _ = fmt.Fprint(w, `{"access_token":"fixture-access","expires_in":3600,"token_type":"Bearer"}`)
 			return
 		}
-		assert.Equal(t, "Bearer fixture-access", r.Header.Get("Authorization"))
+		assert.Equal("Bearer fixture-access", r.Header.Get("Authorization"))
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = fmt.Fprint(w, `{"error":{"message":"fixture-secret","errors":[{"reason":"commentsDisabled"},{"reason":"quotaExceeded"}]}}`)
 	})
 	_, err = c.ownedChannel(t.Context(), "UCfixture", "", 0)
-	require.ErrorIs(t, err, ErrQuota)
-	assert.NotContains(t, err.Error(), "fixture-secret")
-	assert.Equal(t, 1, tokens)
+	require.ErrorIs(err, ErrQuota)
+	assert.NotContains(err.Error(), "fixture-secret")
+	assert.Equal(1, tokens)
 }
 
 func TestExpiredRefreshTokenSuggestsReauthorization(t *testing.T) {
@@ -56,5 +57,17 @@ func TestExpiredRefreshTokenSuggestsReauthorization(t *testing.T) {
 	_, err := c.ownedChannel(t.Context(), "UCfixture", "", 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "reauthorize")
+	assert.NotContains(t, err.Error(), "fixture-secret")
+}
+
+func TestInvalidClientReportsCredentialsWithoutProviderDetails(t *testing.T) {
+	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = fmt.Fprint(w, `{"error":"invalid_client","error_description":"fixture-secret"}`)
+	})
+	_, err := c.ownedChannel(t.Context(), "UCfixture", "", 0)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "client ID and secret")
 	assert.NotContains(t, err.Error(), "fixture-secret")
 }

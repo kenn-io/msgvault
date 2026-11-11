@@ -264,35 +264,47 @@ func persistCommentSDK(ctx context.Context, st *store.Store, sourceID int64, cha
 		authorID = c.Snippet.AuthorChannelId.Value
 	}
 	var pid int64
+	fromName := c.Snippet.AuthorDisplayName
+	self := authorID == channelID
 	if authorID != "" {
 		key := SourceIdentifier(authorID)
 		if key == "" {
 			return 0, messageUnchanged, errors.New("invalid YouTube author identity")
 		}
-		pid, err = st.EnsureParticipantByIdentifierContext(ctx, SourceType, key, c.Snippet.AuthorDisplayName)
+		pid, err = st.EnsureParticipantByIdentifierContext(ctx, SourceType, key, fromName)
 		if err != nil {
 			return 0, messageUnchanged, err
 		}
 	}
-	fromName := c.Snippet.AuthorDisplayName
-	self := authorID == channelID
 	if prior, ok := storedMessages[c.Id]; ok && prior.SenderID.Valid && (pid == 0 || pid == prior.SenderID.Int64 && fromName == "") {
 		pid = prior.SenderID.Int64
 		self = prior.SourceIsFromMe.Valid && prior.SourceIsFromMe.Bool
-		emptyName, err := st.MessageRecipientsMatchContext(ctx, prior.ID, []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{pid}, DisplayNames: []string{""}}})
-		if err != nil {
-			return 0, messageUnchanged, err
-		}
-		if !emptyName {
-			summaries, err := st.GetMessagesSummariesByIDsContext(ctx, []int64{prior.ID})
+		if fromName == "" {
+			emptyName, err := st.MessageRecipientsMatchContext(ctx, prior.ID, []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{pid}, DisplayNames: []string{""}}})
 			if err != nil {
 				return 0, messageUnchanged, err
 			}
-			if len(summaries) > 0 {
-				fromName = summaries[0].FromName
+			if !emptyName {
+				summaries, err := st.GetMessagesSummariesByIDsContext(ctx, []int64{prior.ID})
+				if err != nil {
+					return 0, messageUnchanged, err
+				}
+				if len(summaries) > 0 {
+					fromName = summaries[0].FromName
+				}
 			}
 		}
 	}
+	if pid == 0 && fromName != "" {
+		// A comment-scoped participant keeps the displayed name without linking
+		// separate comments whose authors have no channel ID.
+		key := SourceIdentifier(channelID) + "/comment/" + c.Id
+		pid, err = st.EnsureParticipantByIdentifierContext(ctx, "youtube_comment_author", key, fromName)
+		if err != nil {
+			return 0, messageUnchanged, err
+		}
+	}
+
 	text := c.Snippet.TextOriginal
 	if text == "" {
 		text = c.Snippet.TextDisplay

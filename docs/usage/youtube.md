@@ -60,7 +60,7 @@ fetches remaining reply pages when an inline thread response is incomplete.
 Each comment's explicit moderation status supplies its current label; the
 filter that found its thread does not. Missing status preserves an earlier
 observation. Commenters with equal names remain separate people when their
-channel IDs differ. A previously known author is retained when a later response omits the channel ID or name. A comment first seen without a channel ID remains unidentified.
+channel IDs differ. A previously known author is retained when a later response omits the channel ID or name. When a comment has a name but no channel ID, its author name is shown without linking it to other comments.
 
 The default request budget is 1,000 Data API calls, including channel
 verification. Every ownership page counts toward the budget. The minimum is 2. A partial run saves page-level progress and
