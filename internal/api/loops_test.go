@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"iter"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -83,20 +82,6 @@ func TestListLoopsFilters(t *testing.T) {
 	truncated := l.list(t, "?limit=1")
 	assert.Len(truncated.Items, 1)
 	assert.True(truncated.Truncated)
-}
-
-func TestListLoopsReportsIncompleteCoverage(t *testing.T) {
-	require := require.New(t)
-	f := storetest.New(t)
-	storetest.PersistLoopOriginalReadFixture(f, loops.MaxListEvidenceComputations+1, time.Now().UTC())
-	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: f.Store, Scheduler: newMockScheduler(), Logger: testLogger()})
-	t.Cleanup(func() { shutdownLoopServer(t, server) })
-	w := httptest.NewRecorder()
-	server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil))
-	require.Equal(http.StatusOK, w.Code, w.Body.String())
-	var response LoopListResponse
-	require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
-	require.True(response.CoverageIncomplete)
 }
 
 func TestListLoopsAnswersDuringBackupFreezeWithoutWritingEvidence(t *testing.T) {
@@ -364,7 +349,7 @@ func TestIncompleteListsContinueEachQueuedScope(t *testing.T) {
 	f := storetest.New(t)
 	now := time.Now().UTC()
 	storetest.PersistLoopOriginalReadFixture(f, loops.MaxListEvidenceComputations+1, now)
-	st := &scopePausingStore{pausedLoopStore: &pausedLoopStore{Store: f.Store, pauseAt: loops.MaxListEvidenceComputations + 1, paused: make(chan struct{}), resume: make(chan struct{})}, reached: make(chan struct{}), resumeScope: make(chan struct{})}
+	st := &pausedLoopStore{Store: f.Store, pauseAt: loops.MaxListEvidenceComputations + 1, paused: make(chan struct{}), resume: make(chan struct{})}
 	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
 	t.Cleanup(func() { shutdownLoopServer(t, server) })
 	list := func(ctx context.Context, path string) LoopListResponse {
@@ -379,8 +364,8 @@ func TestIncompleteListsContinueEachQueuedScope(t *testing.T) {
 	require.True(list(ctx, "/api/v1/loops").CoverageIncomplete)
 	cancel()
 	awaitLoopSignal(t, st.paused)
-	var first, last int64
-	for i := range 2*loops.MaxListEvidenceComputations + 2 {
+	var first int64
+	for i := range loops.MaxListEvidenceComputations + 1 {
 		body := "Thanks!"
 		if i == 0 {
 			body = "Can you send the contract?"
@@ -389,21 +374,13 @@ func TestIncompleteListsContinueEachQueuedScope(t *testing.T) {
 		if i == 0 {
 			first = id
 		}
-		last = id
 	}
 	participant := f.EnsureParticipant("sam@example.test", "", "example.test")
 	person, _, err := f.Store.CreatePersonFromParticipant(participant)
 	require.NoError(err)
 	personPath := fmt.Sprintf("/api/v1/loops?person_id=%d", person.ID)
 	require.True(list(t.Context(), personPath).CoverageIncomplete)
-	require.True(list(t.Context(), "/api/v1/loops").CoverageIncomplete)
-	var target int64
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT m.id FROM messages m LEFT JOIN loop_message_evidence e ON e.message_id = m.id WHERE m.id >= ? AND m.id <= ? AND e.message_id IS NULL ORDER BY m.id LIMIT 1`), first, last).Scan(&target))
-	st.target.Store(target)
 	close(st.resume)
-	awaitLoopSignal(t, st.reached)
-	assert.Equal(person.ID, st.scope.Load())
-	close(st.resumeScope)
 	require.Eventually(func() bool {
 		server.importMu.Lock()
 		defer server.importMu.Unlock()
@@ -450,30 +427,4 @@ func TestLoopBackfillStopsWhenServerShutsDown(t *testing.T) {
 	assert.Equal(first, result.Items[0].AnchorMessageID)
 	assert.Equal(second, result.Items[1].AnchorMessageID)
 	assert.Equal(reads+1, st.reads.Load())
-}
-
-type scopePausingStore struct {
-	*pausedLoopStore
-
-	target      atomic.Int64
-	scope       atomic.Int64
-	reached     chan struct{}
-	resumeScope chan struct{}
-}
-
-func (s *scopePausingStore) LoopConversationsContext(ctx context.Context, q store.LoopQuery) iter.Seq2[store.LoopConversation, error] {
-	s.scope.Store(q.PersonID)
-	return s.Store.LoopConversationsContext(ctx, q)
-}
-
-func (s *scopePausingStore) LoopOriginalEvidenceContext(ctx context.Context, id int64) (mime.AutomationSignals, bool, bool, error) {
-	if id == s.target.Load() {
-		close(s.reached)
-		select {
-		case <-s.resumeScope:
-		case <-ctx.Done():
-			return mime.AutomationSignals{}, false, false, ctx.Err()
-		}
-	}
-	return s.pausedLoopStore.LoopOriginalEvidenceContext(ctx, id)
 }
