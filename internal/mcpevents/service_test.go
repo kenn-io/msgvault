@@ -439,3 +439,15 @@ func TestNativeSkipsOriginMismatchWithoutBlockingOtherEntries(t *testing.T) {
 	require.Len(targets, 1)
 	assert.Equal(t, second.ID, targets[0].Name)
 }
+
+func TestCatalogFailureDoesNotPublishCredential(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	dir := t.TempDir()
+	service := Service{Store: st, TokensDir: dir, Enabled: true}
+	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	require.NoError(st.Close())
+	_, err := service.Subscribe(t.Context(), in)
+	require.Error(err)
+	assert.NoFileExists(t, filepath.Join(dir, "provider-credentials.json"))
+}
