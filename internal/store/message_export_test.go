@@ -441,6 +441,52 @@ func TestExportMessagesPrefersDiscordMessageAuthorName(t *testing.T) {
 	assertions.Equal("user@example.test", sink.messages[0].Author.Address)
 }
 
+func TestRelayedFromAddressSurvivesContactLink(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "reader@example.test")
+	requirements.NoError(err)
+	conversation := insertMessageExportConversation(t, st, source.ID, "thread", "", "email_thread", `{}`)
+	author, err := st.EnsureParticipantByIdentifier("github", "alice", "Alice")
+	requirements.NoError(err)
+	start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	id := insertMessageExportMessage(t, st, source.ID, conversation, "message", "email", start, "body", "subject", author, false, false)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name, email_address, is_relayed) VALUES (?, ?, 'from', ?, ?, TRUE)`), id, author, "Alice", "notifications@github.com")
+	requirements.NoError(err)
+	alias, err := st.EnsureParticipant("old@example.test", "Alice", "example.test")
+	requirements.NoError(err)
+	ordinary := insertMessageExportMessage(t, st, source.ID, conversation, "ordinary", "email", start, "body", "subject", alias, false, false)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO message_recipients (message_id, participant_id, recipient_type, email_address) VALUES (?, ?, 'from', ?)`), ordinary, alias, "old@example.test")
+	requirements.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO message_recipients (message_id, participant_id, recipient_type, email_address) VALUES (?, ?, 'to', ?)`), ordinary, alias, "old@example.test")
+	requirements.NoError(err)
+	contact, err := st.EnsureParticipant("alice@example.test", "Alice", "example.test")
+	requirements.NoError(err)
+	requirements.NoError(st.MergeParticipants(author, contact))
+	requirements.NoError(st.MergeParticipants(alias, contact))
+	sink := &collectingMessageExportSink{}
+	_, err = st.ExportMessages(t.Context(), store.MessageExportFilter{Start: start, End: start.Add(time.Hour)}, sink)
+	requirements.NoError(err)
+	addresses := make(map[string]string)
+	for _, message := range sink.messages {
+		requirements.NotNil(message.Author)
+		addresses[message.ID] = message.Author.Address
+	}
+	assertions.Equal(map[string]string{"message": "notifications@github.com", "ordinary": "alice@example.test"}, addresses)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET size_estimate = 0`)
+	requirements.NoError(err)
+	for messageID, address := range map[int64]string{id: "notifications@github.com", ordinary: "alice@example.test"} {
+		message, err := st.GetMessage(messageID)
+		requirements.NoError(err)
+		assertions.Equal("Alice <"+address+">", message.From)
+		assertions.Equal(address, message.FromEmail)
+		if messageID == ordinary {
+			assertions.Equal([]string{"Alice <alice@example.test>"}, message.To)
+		}
+	}
+}
+
 func TestExportMessagesUsesLegacyFromRecipientAuthor(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

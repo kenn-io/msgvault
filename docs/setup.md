@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-23"
+last_edited: "2026-11-07"
 title: Setup Guide
 description: Install msgvault, choose a source, and explore your first archived messages.
 ---
@@ -38,6 +38,39 @@ Verify the installation:
 ```bash
 msgvault --help
 ```
+
+### Runtime requirements
+
+Direct release downloads include DuckDB, SQLite with FTS5, sqlite-vec, and
+the Web UI in the executable. You do not need to install DuckDB, Go, a C/C++
+compiler, Bun, or Node.js to run them. Build tools are required only when
+[building from source](#build-from-source).
+
+Including DuckDB does not make the whole executable statically linked. The
+v0.23.0 direct archives have these native runtime requirements on both AMD64
+and ARM64:
+
+| Platform | Runtime requirements |
+| --- | --- |
+| macOS | The executables declare macOS 26.0 as their minimum deployment target and load Apple system libraries, including libc++. |
+| Linux | glibc with `GLIBC_2.34`, plus system `libstdc++.so.6` with `GLIBCXX_3.4.30` and `CXXABI_1.3.13`, `libgcc_s.so.1`, and `libm.so.6`. Debian 12 (bookworm) supplies these. Alpine/musl does not supply the required glibc loader. |
+| Windows | Windows system DLLs and the Universal C Runtime supplied by current Windows installations. The executables do not import separate DuckDB, MinGW, or MSVC C++ runtime DLLs. |
+
+These are inspected loader requirements, not a claim that every OS version
+has been tested. v0.23.0 was also exercised with a fresh home on macOS ARM64
+and in stock Debian 12 ARM64 with networking disabled: one synthetic email
+was imported, exported to Parquet, and queried through DuckDB. Windows and
+native Intel macOS execution were not part of that check. Use the release
+archive that matches your host; the presence of an archive alone does not
+establish compatibility with an older OS.
+
+DuckDB may try to download its optional SQLite scanner extension. When it is
+unavailable, including offline, msgvault uses its built-in SQLite/CSV fallback.
+The Parquet cache and DuckDB queries do not require that download.
+
+Homebrew and Conda builds have their own dependency management. In particular,
+`make homebrew` intentionally links Homebrew's DuckDB; the direct-download
+runtime contract above applies to the ordinary release archives.
 
 ## Vendor a pinned binary
 
