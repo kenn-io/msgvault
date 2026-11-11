@@ -187,6 +187,44 @@ func TestPersonSweepEventRetiresCurrentParagraphOnceWhenAllTextIsGone(t *testing
 	assert.True(refreshed.AdmissionThroughEventTime.After(boundary.AdmissionThroughEventTime))
 }
 
+func TestPersonSweepEventRetiresLostSourceWithOtherEligibleTextAndEmptyOutput(t *testing.T) {
+	checks := assert.New(t)
+	required := require.New(t)
+	f, now, anchor := newStoreEventFixture(t, "lost-source")
+	st, person := f.journal.store, f.journal.alicePersonID
+	ordinary := f.journal.insertMessage(t, "event-ordinary", "chat", f.journal.aliceID, now.Add(-time.Hour))
+	addSweepBody(t, f.journal, ordinary, "An ordinary update.")
+	runStoreEvent(t, f, peoplesweep.BriefModeForce)
+	prior, err := st.GetPersonBriefContext(t.Context(), person, 0)
+	required.NoError(err)
+	pointers, err := st.ListPersonBriefEvidenceContext(t.Context(), prior.ID)
+	required.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM messages WHERE id = ?`), anchor)
+	required.NoError(err)
+	*now = now.Add(2 * time.Hour)
+	f.runner.candidate = func(map[string]any) json.RawMessage { return emptyEventBrief() }
+	before := f.runner.briefRequests
+	result := runStoreEvent(t, f, peoplesweep.BriefModeAuto)
+	checks.Equal(before+1, f.runner.briefRequests)
+	required.Len(result.People, 1)
+	checks.Equal(peoplesweep.FailureInvalidOutput, result.People[0].BriefFailureClass)
+	checks.GreaterOrEqual(result.People[0].Usage.Requests, 1)
+	_, err = st.GetPersonBriefContext(t.Context(), person, 0)
+	required.ErrorIs(err, store.ErrPersonBriefNotFound)
+	history, err := st.ListPersonBriefVersionsContext(t.Context(), person, 10)
+	required.NoError(err)
+	required.Len(history, 1)
+	checks.Equal(store.PersonBriefStatusSuperseded, history[0].Status)
+	checks.Equal(prior.Boundary, history[0].Boundary)
+	after, err := st.ListPersonBriefEvidenceContext(t.Context(), prior.ID)
+	required.NoError(err)
+	required.Len(after, len(pointers))
+	for i := range pointers {
+		checks.Equal(pointers[i].EvidenceID, after[i].EvidenceID)
+		checks.Equal(pointers[i].SourceRef, after[i].SourceRef)
+	}
+}
+
 func TestPersonSweepEventAlignmentRaceKeepsExtractionAndRetriesBrief(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -323,15 +361,16 @@ func TestPersonSweepEventPolicyRefusalRetiresCurrentOnceWithoutInference(t *test
 	}
 }
 
-// A capacity-retired event must not leave an obsolete current paragraph when
-// the paid replacement has no renderable content. History keeps the watermark.
-func TestPersonSweepEventCapacityEmptyRetiresCurrent(t *testing.T) {
+// A real replay must preserve active memory when its evidence cannot fit.
+func TestPersonSweepEventCapacityPreservesCurrent(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		preflight bool
+		byteLimit bool
 	}{
-		{"projection", false},
-		{"preflight", true},
+		{"single item", false, false},
+		{"item preflight", true, false},
+		{"byte preflight", true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			checks := assert.New(t)
@@ -347,7 +386,7 @@ func TestPersonSweepEventCapacityEmptyRetiresCurrent(t *testing.T) {
 			f.worker.Config.Brief.MaxItems = 1
 			f.worker.Config.Brief.OverlapItems = 0
 			*now = time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC)
-			if tc.preflight {
+			if tc.preflight && !tc.byteLimit {
 				owner, err := st.EnsureParticipant("owner@example.test", "Owner", "example.test")
 				required.NoError(err)
 				required.NoError(st.AddAccountIdentity(f.journal.sourceID, "owner@example.test", "manual"))
@@ -365,23 +404,43 @@ func TestPersonSweepEventCapacityEmptyRetiresCurrent(t *testing.T) {
 				required.True(present)
 				required.Equal(message, last.MessageID)
 			}
+			if tc.byteLimit {
+				required.Greater(boundary.InputBytes, 1)
+				f.worker.Config.Brief.MaxBytes = boundary.InputBytes - 1
+			}
 			f.runner.candidate = func(map[string]any) json.RawMessage { return emptyEventBrief() }
 			briefBefore, extractionBefore := f.runner.briefRequests, f.runner.extractionRequests
 			result := runStoreEvent(t, f, peoplesweep.BriefModeAuto)
 			required.Equal(1, result.PeopleSucceeded)
-			checks.Equal(briefBefore+1, f.runner.briefRequests)
-			_, err = st.GetPersonBriefContext(t.Context(), person, 0)
-			required.ErrorIs(err, store.ErrPersonBriefNotFound)
-			history, err := st.ListPersonBriefVersionsContext(t.Context(), person, 10)
+			current, err := st.GetPersonBriefContext(t.Context(), person, 0)
 			required.NoError(err)
-			required.Len(history, 1)
-			checks.Equal(store.PersonBriefStatusSuperseded, history[0].Status)
-			checks.NotNil(history[0].SupersededAt)
-			checks.Equal(prior.Boundary, history[0].Boundary)
 			required.Len(result.People, 1)
-			checks.Equal(peoplesweep.FailureInternal, result.People[0].BriefFailureClass)
+			if tc.preflight {
+				checks.Equal(briefBefore, f.runner.briefRequests)
+				checks.Equal(prior.Version, current.Version)
+				checks.Equal(prior.Boundary, current.Boundary)
+				checks.Equal(peoplesweep.FailureInternal, result.People[0].BriefFailureClass)
+			} else {
+				checks.Equal(briefBefore+1, f.runner.briefRequests)
+				checks.Equal(prior.Version+1, current.Version)
+				var saved peoplesweep.BriefBoundary
+				required.NoError(json.Unmarshal(current.Boundary, &saved))
+				checks.Len(saved.EventMemory, 1)
+				checks.Equal(boundary.AdmissionThroughEventTime, saved.AdmissionThroughEventTime)
+			}
 			checks.Equal((f.runner.briefRequests-briefBefore)+(f.runner.extractionRequests-extractionBefore),
 				result.People[0].Usage.Requests, "paid inference remains accounted for")
+			if tc.preflight {
+				f.worker.Config.Brief.MaxItems = 40
+				f.worker.Config.Brief.MaxBytes = 65536
+				runStoreEvent(t, f, peoplesweep.BriefModeForce)
+				refreshed, err := st.GetPersonBriefContext(t.Context(), person, 0)
+				required.NoError(err)
+				checks.Equal(prior.Version+1, refreshed.Version)
+				var saved peoplesweep.BriefBoundary
+				required.NoError(json.Unmarshal(refreshed.Boundary, &saved))
+				checks.Len(saved.EventMemory, 1)
+			}
 		})
 	}
 }

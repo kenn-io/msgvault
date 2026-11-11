@@ -48,8 +48,9 @@ Running `person brief generate` again bypasses that delay.
 ## Read and manage briefs
 
 In the Web UI, open the person's **Details** tab in **People**, and find **Last time we
-talked**. Enroll or generate there, expand a sentence to see
-its sources, and use the history to inspect version dates and status. To read
+talked**. Enroll or generate there, expand a sentence to see its details and
+sources, and use the history to inspect version dates and status. Event details
+show the saved event sentence. To read
 earlier paragraphs and sources, run `msgvault person brief history 7 --json`.
 If a source cannot be tied to an individual sentence, the card labels it as a source for the whole
 brief. Turning enrollment off hides the brief and history in this card; saved
@@ -101,10 +102,11 @@ resolved slot can be reused.
 The sweep re-reads their sources even after they leave the ordinary overlap
 window. Supported prior events survive a provider omission, and a supported
 resolution cannot be reopened by omitting its outcome. Unresolved events remain
-eligible for refresh until an outcome, source loss, or eviction. When evidence
-window capacity is needed, the oldest unresolved event may be retired; retirement
-does not mean it resolved. The paragraph limit is soft when needed to keep
-retained event summaries and questions visible; ordinary items are still trimmed.
+eligible for refresh until an outcome or source loss. Resolved entries can make
+room under evidence-window limits. If supported active memory and its sources
+cannot fit, the refresh defers and preserves the current brief; rejecting the
+brief clears its derived event memory. The paragraph limit is soft when needed
+to keep retained event summaries and questions visible; ordinary items are still trimmed.
 All retained event sentences keep their source links.
 
 The evidence window is bounded, so this is not a complete event ledger. A burst
@@ -123,8 +125,10 @@ free-form model follow-ups on ordinary highlights.
 
 If sources change or fall outside the provider's allowed dates, the next sweep
 revalidates the event before reusing it. When no admissible evidence remains,
-it retires the current event-aware paragraph while preserving its history.
-An operational read failure leaves the current version intact for retry.
+it retires the current event-aware paragraph while preserving its history. If
+some evidence remains, a validated empty replacement after memory loss also
+retires the current paragraph. Provider, parse, budget, and operational read
+failures leave the current version intact for retry.
 Rejecting a brief clears that version's carried event memory and requests
 regeneration. The admission date stays in place, so replaying an old
 announcement cannot restore it. There is no individual event dismissal command.

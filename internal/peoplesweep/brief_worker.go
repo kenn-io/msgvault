@@ -6,7 +6,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"slices"
 	"time"
 
 	"go.kenn.io/msgvault/internal/personfacts"
@@ -299,49 +298,21 @@ func renderBriefResult(
 ) (BriefResult, error) {
 	trimmed, rendered, err := trimRenderedBrief(parsed, window, window.Request.MaxRenderedRunes)
 	if err != nil {
-		if window.capacityRetiredEvents && errors.Is(err, ErrEmptyBrief) && parsed.DroppedItemCount == 0 {
-			return BriefResult{}, fmt.Errorf("%w: %w", errBriefCapacityEmpty, ErrEvidenceItemTooLarge)
-		}
 		return BriefResult{}, err
 	}
 	return newBriefResult(trimmed, rendered, window, generatedAt)
 }
-
-// errBriefCapacityEmpty distinguishes retired output from generic packet limits.
-var errBriefCapacityEmpty = errors.New("event memory capacity leaves no renderable brief")
 
 // newBriefResult freezes one validated, rendered brief into the durable shape
 // the apply transaction stores.
 func newBriefResult(
 	parsed ParsedBrief, rendered RenderedBrief, window BriefWindow, generatedAt time.Time,
 ) (BriefResult, error) {
-	retainedIndexes, err := validateBriefEventMemoryCapacity(parsed, window)
-	if err != nil {
-		return BriefResult{}, err
-	}
-	retained := make(map[int]bool, len(retainedIndexes))
-	eventMemory := make([]BriefHighlight, 0, len(retainedIndexes))
-	for _, index := range retainedIndexes {
-		retained[index] = true
-		eventMemory = append(eventMemory, parsed.Output.Highlights[index])
-	}
-	before := briefCitationOrder(parsed.Output)
-	for index := range slices.Backward(parsed.Output.Highlights) {
-		event := parsed.Output.Highlights[index].LifeEvent
-		if event == nil || retained[index] {
-			continue
+	eventMemory := make([]BriefHighlight, 0, len(parsed.Output.Highlights))
+	for _, highlight := range parsed.Output.Highlights {
+		if highlight.LifeEvent != nil {
+			eventMemory = append(eventMemory, highlight)
 		}
-		var dropped int
-		parsed.Output, dropped = briefDropHighlight(parsed.Output, index)
-		parsed.DroppedItemCount += dropped
-	}
-	parsed.Evidence = briefKeptEvidence(before, parsed.Evidence, parsed.Output)
-	rendered, err = RenderBrief(parsed, window)
-	if errors.Is(err, ErrEmptyBrief) {
-		return BriefResult{}, fmt.Errorf("%w: %w", errBriefCapacityEmpty, ErrEvidenceItemTooLarge)
-	}
-	if err != nil {
-		return BriefResult{}, err
 	}
 	structured, err := json.Marshal(parsed.Output, json.Deterministic(true))
 	if err != nil {
@@ -530,11 +501,12 @@ func (w *Worker) runBriefCall(
 		} else {
 			parsed, parseErr := ParseBrief(response.Output, window, call.profile)
 			if parseErr == nil {
-				// A result may be empty after validation or event-capacity retirement.
+				// A valid empty result may follow loss of previously supported memory.
 				// The paid call is still reconciled and its failure is recorded.
 				result, buildErr := renderBriefResult(parsed, window, w.now())
 				if buildErr != nil {
-					if errors.Is(buildErr, errBriefCapacityEmpty) && call.plan.retireVersion > 0 {
+					if errors.Is(buildErr, ErrEmptyBrief) && parsed.DroppedItemCount == 0 &&
+						call.plan.retireVersion > 0 && briefEventMemoryChanged(call.plan, window) {
 						if err := w.Brief.RetirePersonSweepBrief(ctx, lease, call.plan.retireVersion, call.resolvedAt); err != nil {
 							return nil, briefFailureClass(err), lease, briefFatalError(ctx, err)
 						}

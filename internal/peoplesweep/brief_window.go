@@ -150,12 +150,11 @@ func (b BriefBoundary) Canonical() BriefBoundary {
 // its provider request, the boundary that describes it, and the items it holds
 // in newest-first order.
 type BriefWindow struct {
-	capacityRetiredEvents bool
-	Request               BriefWindowRequest
-	Batch                 PacketBatch
-	Boundary              BriefBoundary
-	Items                 []EvidenceItem
-	LastContact           BriefWindowLastContact
+	Request     BriefWindowRequest
+	Batch       PacketBatch
+	Boundary    BriefBoundary
+	Items       []EvidenceItem
+	LastContact BriefWindowLastContact
 }
 
 // BuildBriefWindow retrieves the most recent stretch of communication with one
@@ -255,7 +254,6 @@ func BuildBriefWindow(
 		return BriefWindow{}, err
 	}
 	request.retainedEvents = events
-	supportedEventCount := len(events)
 	for _, item := range retained {
 		if _, err := appendEligible(item); err != nil {
 			return BriefWindow{}, err
@@ -311,7 +309,6 @@ func BuildBriefWindow(
 			if request.priorEventMemoryVersion > 0 {
 				request.retainedEventMemoryVersion = request.priorEventMemoryVersion
 			}
-			window.capacityRetiredEvents = len(request.retainedEvents) < supportedEventCount
 			window.Request = request
 			window.Batch = batch
 			window.Boundary = boundary
@@ -320,8 +317,7 @@ func BuildBriefWindow(
 		}
 		trimmed, ok := briefDropUnprotected(selected, mandatory, protected)
 		if !ok {
-			request.retainedEvents, _, ok = briefRetireCapacityEvent(
-				request.retainedEvents, protected, briefEventEvidenceByID(selected))
+			request.retainedEvents, _, ok = briefRetireCapacityEvent(request.retainedEvents, protected)
 			if !ok {
 				return BriefWindow{}, ErrEvidenceItemTooLarge
 			}

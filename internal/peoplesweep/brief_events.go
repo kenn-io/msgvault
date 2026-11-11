@@ -122,9 +122,7 @@ func briefEventQuoteSupported(item EvidenceItem, quote string, personID int64) b
 }
 
 // mergeBriefEvents carries supported memory even when the model omits it.
-// Existing events take priority, but an ordinary highlight can displace one
-// oldest event when all eight slots are occupied so retained memory cannot
-// starve new conversation content. Resolved entries are evicted first.
+// Existing active events take priority. Resolved entries can make room.
 // Mapping preserves the model's original highlight indexes for follow-ups.
 func mergeBriefEvents(
 	candidates []BriefHighlight, context *BriefEventContext, evidence map[string]EvidenceItem,
@@ -241,18 +239,14 @@ func mergeBriefEvents(
 			}
 		}
 		if len(kept) == 8 {
-			// Keep one provider slot available even when prior memory already
-			// fills the highlight list. Only the first ordinary candidate may
-			// displace an event; additional candidates still respect the limit.
+			// An ordinary candidate can reuse a resolved slot, but never
+			// displaces a supported active event.
 			if h.LifeEvent == nil && !slices.ContainsFunc(kept, func(item BriefHighlight) bool {
 				return item.LifeEvent == nil
 			}) {
 				index := slices.IndexFunc(kept, func(item BriefHighlight) bool {
 					return item.LifeEvent != nil && item.LifeEvent.State == BriefEventResolved
 				})
-				if index < 0 {
-					index = briefOldestEventIndex(kept, evidence)
-				}
 				if index >= 0 {
 					delete(byAnchor, kept[index].LifeEvent.AnchorID)
 					forgetCandidateAt(index)
@@ -268,38 +262,4 @@ func mergeBriefEvents(
 		kept = append(kept, h)
 	}
 	return kept, indexes, dropped
-}
-
-func briefOldestEventIndex(events []BriefHighlight, evidence map[string]EvidenceItem) int {
-	return briefOldestMatchingEventIndex(events, evidence, false)
-}
-
-func briefOldestUnresolvedEventIndex(events []BriefHighlight, evidence map[string]EvidenceItem) int {
-	return briefOldestMatchingEventIndex(events, evidence, true)
-}
-
-func briefOldestMatchingEventIndex(
-	events []BriefHighlight, evidence map[string]EvidenceItem, unresolvedOnly bool,
-) int {
-	oldestIndex := -1
-	var oldest time.Time
-	for index, highlight := range events {
-		if highlight.LifeEvent == nil || unresolvedOnly && highlight.LifeEvent.Resolution != nil {
-			continue
-		}
-		anchor, ok := evidence[highlight.LifeEvent.AnchorID]
-		if !ok {
-			continue
-		}
-		if oldestIndex < 0 || anchor.EventTime.Before(oldest) {
-			oldestIndex = index
-			oldest = anchor.EventTime
-		}
-	}
-	if oldestIndex >= 0 {
-		return oldestIndex
-	}
-	return slices.IndexFunc(events, func(highlight BriefHighlight) bool {
-		return highlight.LifeEvent != nil && (!unresolvedOnly || highlight.LifeEvent.Resolution == nil)
-	})
 }

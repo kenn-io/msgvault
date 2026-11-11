@@ -62,7 +62,7 @@ func TestBriefEventCapacityPreservesActiveEventsAndRetiresEvictedAnchors(t *test
 	}
 }
 
-func TestBriefEventCapacityKeepsAnOrdinaryHighlightWithEightRetainedEvents(t *testing.T) {
+func TestBriefEventCapacityProtectsEightActiveHighlights(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	context := &BriefEventContext{AsOf: time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC),
@@ -84,10 +84,24 @@ func TestBriefEventCapacityKeepsAnOrdinaryHighlightWithEightRetainedEvents(t *te
 		briefTestPersonID, context.AsOf)
 
 	requirements.Len(kept, 8)
+	assertions.Equal(1, dropped)
+	assertions.NotContains(indexes, 0)
+	for _, event := range context.Events {
+		assertions.Contains(kept, event)
+	}
+	outcome := briefWindowItem(31, SourceConversationText, 18, "I cancelled event zero.")
+	outcomeID := packetEvidenceID(outcome)
+	evidence[outcomeID] = outcome
+	resolved := context.Events[0]
+	resolved.EvidenceIDs = append(resolved.EvidenceIDs, outcomeID)
+	resolvedEvent := *resolved.LifeEvent
+	resolvedEvent.Resolution = &BriefEventResolution{EvidenceID: outcomeID, Quote: outcome.Excerpt}
+	resolved.LifeEvent = &resolvedEvent
+	context.Events[0] = resolved
+	kept, indexes, dropped = mergeBriefEvents([]BriefHighlight{ordinary}, context, evidence, briefTestPersonID, context.AsOf)
+	requirements.Len(kept, 8)
 	assertions.Zero(dropped)
 	assertions.Equal(ordinary.Text, kept[indexes[0]].Text)
-	assertions.Nil(kept[indexes[0]].LifeEvent)
-	assertions.NotContains(kept, context.Events[0], "the oldest event gives way to new provider content")
 	for _, event := range context.Events[1:] {
 		assertions.Contains(kept, event)
 	}
@@ -98,14 +112,14 @@ func TestBriefWindowRetiresEventsWhenCapsShrink(t *testing.T) {
 		name string
 		run  func(*testing.T)
 	}{
-		{"unresolved", briefWindowRetiresOldestUnresolvedEventWhenCapsShrink},
+		{"unresolved", briefWindowPreservesUnresolvedEventsWhenCapsShrink},
 		{"resolved", briefWindowRetiresResolvedEventUnderPressure},
 	} {
 		t.Run(test.name, test.run)
 	}
 }
 
-func briefWindowRetiresOldestUnresolvedEventWhenCapsShrink(t *testing.T) {
+func briefWindowPreservesUnresolvedEventsWhenCapsShrink(t *testing.T) {
 	t.Helper()
 	for _, capName := range []string{"items", "bytes"} {
 		t.Run(capName, func(t *testing.T) {
@@ -147,58 +161,35 @@ func briefWindowRetiresOldestUnresolvedEventWhenCapsShrink(t *testing.T) {
 				request.MaxBytes = nextBoundary.InputBytes
 			}
 
-			window, err := BuildBriefWindow(t.Context(), archive, request)
-
-			requirements.NoError(err)
-			requirements.Len(window.Request.retainedEvents, 1)
-			assertions.Equal(packetEvidenceID(newer),
-				window.Request.retainedEvents[0].LifeEvent.AnchorID)
-			assertions.LessOrEqual(window.Boundary.InputBytes, request.MaxBytes)
-			assertions.Equal(request.priorEventMemoryVersion,
-				window.Request.retainedEventMemoryVersion,
-				"retirement still fences apply against the source brief")
-			assertions.Equal(admission, window.Batch.Packet.BriefContext.AdmissionThrough,
-				"capacity retirement preserves the admission watermark")
+			_, err := BuildBriefWindow(t.Context(), archive, request)
+			requirements.ErrorIs(err, ErrEvidenceItemTooLarge)
+			assertions.Len(previous.EventMemory, 2)
+			assertions.Equal(admission, previous.AdmissionThroughEventTime)
 		})
 	}
 }
 
-func TestBriefEventCapacityOmitsUnretainedOutput(t *testing.T) {
-	for _, test := range []struct {
-		name string
-		run  func(*testing.T)
-	}{
-		{"undated byte limit", eventCapacityUndatedByte},
-		{"upcoming item limit", func(t *testing.T) {
-			t.Helper()
-			eventCapacityItem(t, true)
-		}},
-		{"item limit, nothing else renderable", func(t *testing.T) {
-			t.Helper()
-			eventCapacityItem(t, false)
-		}},
-		{"upcoming byte limit", eventCapacityUpcomingByte},
-		{"resolved byte limit", eventCapacityResolvedByte},
-	} {
-		t.Run(test.name, test.run)
-	}
-}
-
-func eventCapacityUndatedByte(t *testing.T) {
-	t.Helper()
-	assertions := assert.New(t)
-	requirements := require.New(t)
+func TestBriefEventCapacitySavesMemoryBeforeActualReplay(t *testing.T) {
+	require := require.New(t)
 	anchor := briefWindowItem(10, SourceConversationText, 10, "I move on August 15.")
-	window := eventWindow(t, &briefFakeArchive{items: []EvidenceItem{anchor}}, nil, "2026-08-14T12:00:00Z")
-	window.Request.MaxBytes = window.Boundary.InputBytes
-	highlight := eventHighlight(anchor, "")
-	parsed, err := ParseBrief(eventCandidate(t, highlight), window, window.Request.Profile)
-	requirements.NoError(err)
-	parsed.Output.LastMeaningfulInteraction = &BriefInteraction{EvidenceID: packetEvidenceID(anchor), Summary: "they discussed a move"}
+	archive := &briefFakeArchive{items: []EvidenceItem{anchor}}
+	window := eventWindow(t, archive, nil, "2026-08-14T00:00:00Z")
+	window.Request.MaxItems = 1
+	parsed, err := ParseBrief(eventCandidate(t, eventHighlight(anchor, "2026-08-15")), window, window.Request.Profile)
+	require.NoError(err)
 	result, err := renderBriefResult(parsed, window, window.Request.AsOf)
-	requirements.NoError(err)
-	assertions.Empty(result.Boundary.EventMemory, "future memory retires when the lowered cap cannot preserve it")
-	assertions.NotContains(result.Rendered.Text, highlight.LifeEvent.Question)
+	require.NoError(err)
+	require.Len(result.Boundary.EventMemory, 1)
+	require.Contains(result.Rendered.Text, "Upcoming:")
+	last := briefWindowItem(11, SourceConversationText, 20, "A later update.")
+	archive.items = append(archive.items, last)
+	archive.hasLastContact = true
+	archive.lastContact = BriefLastContact{MessageID: last.Ref.MessageID, SourceID: last.Ref.SourceID}
+	request := window.Request
+	request.Previous, request.OverlapItems = &result.Boundary, 0
+	_, err = BuildBriefWindow(t.Context(), archive, request)
+	require.ErrorIs(err, ErrEvidenceItemTooLarge)
+	require.Len(result.Boundary.EventMemory, 1)
 }
 
 func TestBriefEventAdmissionSurvivesRegressingWindowAndJSONRestart(t *testing.T) {
@@ -317,31 +308,6 @@ func briefWindowRetiresResolvedEventUnderPressure(t *testing.T) {
 		"retiring resolved memory must keep the admission watermark")
 }
 
-func eventCapacityItem(t *testing.T, withInteraction bool) {
-	t.Helper()
-	assert := assert.New(t)
-	require := require.New(t)
-	anchor := briefWindowItem(10, SourceConversationText, 10, "I move on August 15.")
-	window := eventWindow(t, &briefFakeArchive{items: []EvidenceItem{anchor}}, nil, "2026-08-14T00:00:00Z")
-	parsed, err := ParseBrief(eventCandidate(t, eventHighlight(anchor, "2026-08-15")), window, window.Request.Profile)
-	require.NoError(err)
-	if withInteraction {
-		parsed.Output.LastMeaningfulInteraction = &BriefInteraction{EvidenceID: packetEvidenceID(anchor), Summary: "they discussed a move"}
-	}
-	window.Request.MaxItems = 1
-	result, err := renderBriefResult(parsed, window, window.Request.AsOf)
-	if !withInteraction {
-		require.ErrorIs(err, ErrEvidenceItemTooLarge)
-		require.ErrorIs(err, errBriefCapacityEmpty)
-		return
-	}
-	require.NoError(err)
-	assert.Empty(result.Boundary.EventMemory)
-	assert.Nil(result.Boundary.NextEventAt)
-	assert.NotContains(result.Rendered.Text, "Upcoming:")
-	assert.NotContains(string(result.Structured), "life_event")
-}
-
 func TestBriefEventResolutionFitsTheReservedPacketItem(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -372,96 +338,6 @@ func TestBriefEventResolutionFitsTheReservedPacketItem(t *testing.T) {
 	result, err := renderBriefResult(secondParsed, secondWindow, request.AsOf)
 	require.NoError(err)
 	assert.Equal(BriefEventResolved, result.Boundary.EventMemory[0].Highlight.LifeEvent.State)
-}
-
-func TestBriefEventMemoryCapacityTrimsOrdinaryEvidenceBeforeRejecting(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	anchor := briefWindowItem(10, SourceConversationText, 10, "I move on August 15.")
-	ordinary := briefWindowItem(11, SourceConversationText, 11, "An ordinary update without an event.")
-	window := eventWindow(t, &briefFakeArchive{items: []EvidenceItem{anchor, ordinary}}, nil,
-		"2026-08-14T00:00:00Z")
-	parsed, err := ParseBrief(eventCandidate(t, eventHighlight(anchor, "2026-08-15")), window, window.Request.Profile)
-	require.NoError(err)
-
-	futureAsOf := time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
-	event := parsed.Output.Highlights[0]
-	evidence := map[string]EvidenceItem{packetEvidenceID(anchor): anchor}
-	projected, ok := normalizeBriefEvent(event, evidence, window.Request.PersonID, futureAsOf)
-	require.True(ok)
-	projectedRequest := window.Request
-	projectedRequest.AsOf = futureAsOf
-	projectedRequest.retainedEvents = []BriefHighlight{projected}
-	projectedRequest.Previous = &BriefBoundary{EventMemoryVersion: 1, AdmissionThroughEventTime: futureAsOf}
-	lanes := briefWindowLanes(projectedRequest.Profile.AllowedSources)
-	_, retainedOnlyBoundary, err := briefBatch(projectedRequest, lanes, []EvidenceItem{anchor})
-	require.NoError(err)
-	_, withOrdinaryBoundary, err := briefBatch(projectedRequest, lanes, window.Items)
-	require.NoError(err)
-	assert.Greater(withOrdinaryBoundary.InputBytes, retainedOnlyBoundary.InputBytes)
-
-	window.Request.MaxBytes = retainedOnlyBoundary.InputBytes
-	_, err = renderBriefResult(parsed, window, window.Request.AsOf)
-	require.NoError(err, "ordinary evidence can be trimmed while retaining event sources")
-}
-
-func eventCapacityUpcomingByte(t *testing.T) {
-	t.Helper()
-	assert := assert.New(t)
-	require := require.New(t)
-	anchor := briefWindowItem(10, SourceConversationText, 10, "I move on August 15.")
-	window := eventWindow(t, &briefFakeArchive{items: []EvidenceItem{anchor}}, nil, "2026-08-14T00:00:00Z")
-	parsed, err := ParseBrief(eventCandidate(t, eventHighlight(anchor, "2026-08-15")), window, window.Request.Profile)
-	require.NoError(err)
-	parsed.Output.LastMeaningfulInteraction = &BriefInteraction{EvidenceID: packetEvidenceID(anchor), Summary: "they discussed a move"}
-	future := window.Request
-	future.AsOf = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
-	future.Previous = &BriefBoundary{EventMemoryVersion: 1, AdmissionThroughEventTime: future.AsOf}
-	future.retainedEvents = nil
-	_, empty, err := briefBatch(future, briefWindowLanes(future.Profile.AllowedSources), window.Items)
-	require.NoError(err)
-	window.Request.MaxBytes = empty.InputBytes
-	result, err := renderBriefResult(parsed, window, window.Request.AsOf)
-	require.NoError(err)
-	assert.Empty(result.Boundary.EventMemory)
-	assert.Nil(result.Boundary.NextEventAt)
-	assert.NotContains(result.Rendered.Text, "Upcoming:")
-}
-
-func eventCapacityResolvedByte(t *testing.T) {
-	t.Helper()
-	assert := assert.New(t)
-	require := require.New(t)
-	anchor := briefWindowItem(10, SourceConversationText, 10, "I move on August 15.")
-	resolutionText := strings.Repeat("I cancelled the move after plans changed. ", 5)
-	resolution := briefWindowItem(11, SourceConversationText, 17, resolutionText)
-	archive := &briefFakeArchive{items: []EvidenceItem{anchor}}
-	first := eventResult(t, eventWindow(t, archive, nil, "2026-08-14T00:00:00Z"),
-		eventCandidate(t, eventHighlight(anchor, "2026-08-15")))
-
-	archive.items = append(archive.items, resolution)
-	request := briefWindowRequest(t)
-	request.Previous, request.OverlapItems = &first.Boundary, 0
-	request.AsOf = time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC)
-	window, err := BuildBriefWindow(t.Context(), archive, request)
-	require.NoError(err)
-	resolved := eventHighlight(anchor, "2026-08-15")
-	resolutionID := packetEvidenceID(resolution)
-	resolved.EvidenceIDs = append(resolved.EvidenceIDs, resolutionID)
-	resolved.LifeEvent.Resolution = &BriefEventResolution{
-		EvidenceID: resolutionID, Quote: resolution.Excerpt,
-	}
-	parsed, err := ParseBrief(eventCandidate(t, resolved), window, request.Profile)
-	require.NoError(err)
-	require.Equal(BriefEventResolved, parsed.Output.Highlights[0].LifeEvent.State)
-
-	parsed.Output.LastMeaningfulInteraction = &BriefInteraction{EvidenceID: resolutionID, Summary: "they discussed their plans"}
-	window.Request.MaxBytes = window.Boundary.InputBytes
-	result, err := renderBriefResult(parsed, window, window.Request.AsOf)
-	require.NoError(err)
-	assert.NotContains(result.Rendered.Text, "Resolved:")
-	assert.Empty(result.Boundary.EventMemory)
-	assert.Empty(ParsedBriefOutput(t, result).Highlights)
 }
 
 func TestBriefEventChangedSourceCannotInheritMemoryEvenWithTheSameWords(t *testing.T) {

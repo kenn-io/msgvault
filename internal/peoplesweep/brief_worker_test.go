@@ -470,23 +470,26 @@ func TestPersonSweepWorkerRecordsBriefFailureAndStillAppliesExtraction(t *testin
 	}
 }
 
-func TestPersonSweepWorkerClassifiesCapacityEmptyBrief(t *testing.T) {
+func TestPersonSweepWorkerRetiresLostEventAfterValidEmpty(t *testing.T) {
 	for _, tc := range []struct {
-		name              string
-		retireErr         error
-		preflightEviction bool
-		untaggedLimit     bool
-		providerError     bool
-		invalidOutput     bool
-		wantClass         FailureClass
-		wantRetire        bool
+		name                                                                                              string
+		excluded, providerError, invalidOutput, capacity, readError, keepAnchor, mixed, budget, malformed bool
+		retireErr                                                                                         error
+		wantClass                                                                                         FailureClass
+		wantRetire                                                                                        bool
 	}{
-		{name: "capacity", wantClass: FailureInternal, wantRetire: true},
-		{name: "retire fatal", retireErr: ErrLeaseLost, wantRetire: true},
-		{name: "retire nonfatal", retireErr: ErrPersonSweepConsentRevoked, wantClass: FailurePolicy, wantRetire: true},
-		{name: "provider failure after eviction", preflightEviction: true, providerError: true, wantClass: FailureInternal},
-		{name: "invalid output after eviction", preflightEviction: true, invalidOutput: true, wantClass: FailureInvalidOutput},
-		{name: "untagged packet limit", untaggedLimit: true, wantClass: FailureInternal},
+		{name: "deleted source", wantClass: FailureInvalidOutput, wantRetire: true},
+		{name: "date excluded", excluded: true, wantClass: FailureInvalidOutput, wantRetire: true},
+		{name: "retire lease lost", retireErr: ErrLeaseLost, wantRetire: true},
+		{name: "retire database error", retireErr: errors.New("retire person brief: database is locked"), wantClass: FailureInternal, wantRetire: true},
+		{name: "provider failure", providerError: true, wantClass: FailureInternal},
+		{name: "invalid output", invalidOutput: true, wantClass: FailureInvalidOutput},
+		{name: "malformed output", malformed: true, wantClass: FailureInvalidOutput},
+		{name: "budget denied", budget: true, wantClass: FailureBudget},
+		{name: "capacity failure", capacity: true, keepAnchor: true, wantClass: FailureInternal},
+		{name: "source read failure", readError: true, keepAnchor: true, wantClass: FailureInternal},
+		{name: "supported event carried", keepAnchor: true},
+		{name: "resolved eviction keeps active event", keepAnchor: true, mixed: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			checks := assert.New(t)
@@ -494,49 +497,82 @@ func TestPersonSweepWorkerClassifiesCapacityEmptyBrief(t *testing.T) {
 			now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 			renewedExpiry := now.Add(2 * time.Hour)
 			anchor := briefWindowItem(10, SourceConversationText, 10, "I move on September 15.")
+			ordinary := briefWindowItem(11, SourceConversationText, 20, "An ordinary update.")
 			highlight := eventHighlight(anchor, "2026-09-15")
 			boundary := &BriefBoundary{ThroughSequence: 40, ThroughEventTime: anchor.EventTime, EventMemoryVersion: 1,
 				EventMemory: []BriefEventMemory{{Highlight: highlight, Sources: []EvidenceRef{anchor.Ref}}}}
 			brief := &briefFakeStore{enrolled: true, highWater: 90, changedAfter: 90, retireErr: tc.retireErr,
 				eligibility: BriefEligibility{Version: 7, Status: BriefStatusCurrent, Boundary: boundary}}
-			archive := &briefFakeArchive{items: []EvidenceItem{anchor}}
-			if tc.preflightEviction {
-				last := briefWindowItem(11, SourceConversationText, 20, "An ordinary update.")
-				archive.items = append(archive.items, last)
+			archive := &briefFakeArchive{items: []EvidenceItem{ordinary}}
+			if tc.keepAnchor || tc.excluded {
+				archive.items = append(archive.items, anchor)
+			}
+			if tc.mixed {
+				old := briefWindowItem(12, SourceConversationText, 8, "I had an interview.")
+				outcome := briefWindowItem(13, SourceConversationText, 9, "I cancelled the interview.")
+				resolved := eventHighlight(old, "2026-08-09")
+				resolved.EvidenceIDs = append(resolved.EvidenceIDs, packetEvidenceID(outcome))
+				resolved.LifeEvent.Resolution = &BriefEventResolution{EvidenceID: packetEvidenceID(outcome), Quote: outcome.Excerpt}
+				boundary.EventMemory = append(boundary.EventMemory, BriefEventMemory{Highlight: resolved, Sources: []EvidenceRef{old.Ref, outcome.Ref}})
+				archive.items = append(archive.items, old, outcome)
+			}
+			if tc.readError {
+				archive.hydrateFailures = map[int64]error{anchor.Ref.MessageID: errors.New("source database unavailable")}
+			}
+			if tc.capacity {
 				archive.hasLastContact = true
-				archive.lastContact = BriefLastContact{MessageID: last.Ref.MessageID, SourceID: last.Ref.SourceID}
+				archive.lastContact = BriefLastContact{MessageID: ordinary.Ref.MessageID, SourceID: ordinary.Ref.SourceID}
 			}
 			config := func(c *BriefConfig) {
-				c.MaxItems, c.OverlapItems = 1, 0
-				if tc.untaggedLimit {
-					c.MaxBytes = 1
+				if tc.capacity {
+					c.MaxItems, c.OverlapItems = 1, 0
+				} else if tc.mixed {
+					c.MaxItems, c.OverlapItems = 2, 0
 				}
 			}
-			if tc.preflightEviction || tc.untaggedLimit {
+			provider := func(p *ProviderConfig) {
+				if tc.excluded {
+					p.SourceSince = "2026-08-11"
+				}
+			}
+			if tc.wantRetire || tc.mixed {
 				request := briefWindowRequest(t)
-				request.Previous, request.MaxItems, request.OverlapItems, request.AsOf = boundary, 1, 0, now
-				if tc.untaggedLimit {
-					request.MaxBytes = 1
+				request.Previous, request.AsOf, request.OverlapItems = boundary, now, 0
+				if tc.excluded {
+					request.Profile.SourceSince = "2026-08-11"
+				}
+				if tc.mixed {
+					request.MaxItems = 2
 				}
 				window, err := BuildBriefWindow(t.Context(), archive, request)
-				if tc.untaggedLimit {
-					required.ErrorIs(err, ErrEvidenceItemTooLarge)
-					required.NotErrorIs(err, errBriefCapacityEmpty)
+				required.NoError(err)
+				required.NotEmpty(window.Items)
+				if tc.mixed {
+					required.Len(window.Request.retainedEvents, 1)
 				} else {
-					required.NoError(err)
-					checks.True(window.capacityRetiredEvents)
+					required.Empty(window.Request.retainedEvents)
 				}
 			}
 			responses := []DriverResponse{briefDriverResponse(json.RawMessage(`{"claims":[]}`), "request-extraction")}
 			if !tc.providerError {
-				candidate := eventCandidate(t, highlight)
+				candidate := briefOutputJSON{}.raw()
+				if tc.malformed {
+					candidate = json.RawMessage(`{"highlights":"invalid"}`)
+				}
 				if tc.invalidOutput {
 					candidate = briefOutputJSON{Highlights: []string{briefHighlightJSON("unsupported", BriefSpeakerPerson, "", "evidence:missing")}}.raw()
 				}
 				responses = append(responses, briefDriverResponse(candidate, "request-brief"))
+				if tc.malformed {
+					responses = append(responses, briefDriverResponse(candidate, "request-repair"))
+				}
+			}
+			denyReservation := 0
+			if tc.budget {
+				denyReservation = 2
 			}
 			outcome := runBriefWorkerCase(t, briefWorkerCase{mode: BriefModeAuto, brief: brief, archive: archive,
-				briefConfig: config, responses: responses, renewExpiry: &renewedExpiry})
+				briefConfig: config, provider: provider, responses: responses, renewExpiry: &renewedExpiry, denyReservation: denyReservation})
 			if tc.wantRetire {
 				required.Len(brief.retireCalls, 1)
 				call := brief.retireCalls[0]
@@ -560,8 +596,19 @@ func TestPersonSweepWorkerClassifiesCapacityEmptyBrief(t *testing.T) {
 			}
 			required.NoError(outcome.err)
 			required.Len(outcome.sink.requests, 1)
-			checks.Nil(outcome.sink.requests[0].Brief)
-			checks.Equal(tc.wantClass, outcome.sink.requests[0].BriefFailureClass)
+			applied := outcome.sink.requests[0]
+			if tc.keepAnchor && !tc.capacity && !tc.readError {
+				required.NotNil(applied.Brief)
+				required.Len(applied.Brief.Boundary.EventMemory, 1)
+			} else {
+				checks.Nil(applied.Brief)
+			}
+			checks.Equal(tc.wantClass, applied.BriefFailureClass)
+			checks.Contains(briefCallCoordinates(applied), ProviderCallCoordinate{BatchOrdinal: 0, CallOrdinal: 0, Purpose: ProviderCallPurposePrimary})
+			if tc.wantRetire {
+				checks.Equal(2, applied.Usage.Requests)
+				checks.Contains(briefCallCoordinates(applied), ProviderCallCoordinate{BatchOrdinal: 1, CallOrdinal: 0, Purpose: ProviderCallPurposeBrief})
+			}
 		})
 	}
 }

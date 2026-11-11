@@ -92,16 +92,13 @@ func briefRetainedEvents(
 }
 
 // briefRetireCapacityEvent removes one event and refreshes protected sources.
-// Resolved events retire first; otherwise capacity retires the oldest event.
+// Only resolved events may be retired under capacity pressure.
 func briefRetireCapacityEvent(
-	events []BriefHighlight, protected map[string]bool, evidence map[string]EvidenceItem,
+	events []BriefHighlight, protected map[string]bool,
 ) ([]BriefHighlight, int, bool) {
 	retired := slices.IndexFunc(events, func(event BriefHighlight) bool {
 		return event.LifeEvent != nil && event.LifeEvent.State == BriefEventResolved
 	})
-	if retired < 0 {
-		retired = briefOldestEventIndex(events, evidence)
-	}
 	if retired < 0 {
 		return events, -1, false
 	}
@@ -135,22 +132,9 @@ func briefEventEvidenceByID(items []EvidenceItem) map[string]EvidenceItem {
 	return evidence
 }
 
-func briefUnresolvedEventEvidenceCount(events []BriefHighlight) int {
-	ids := make(map[string]struct{})
-	for _, event := range events {
-		if event.LifeEvent == nil || event.LifeEvent.Resolution != nil {
-			continue
-		}
-		for _, id := range event.EvidenceIDs {
-			ids[id] = struct{}{}
-		}
-	}
-	return len(ids)
-}
-
 // briefReserveEventItems protects supported event sources while preserving the
-// mandatory contact item. Under changed caps, resolved memory retires first;
-// the oldest remaining event retires only when its sources still cannot fit.
+// mandatory contact item. Resolved memory may retire under changed caps;
+// supported active memory must fit in full.
 func briefReserveEventItems(
 	selected, retained []EvidenceItem, events []BriefHighlight, mandatory *EvidenceItem,
 	protected map[string]bool, maxItems int,
@@ -170,8 +154,7 @@ func briefReserveEventItems(
 			continue
 		}
 		var retired bool
-		events, _, retired = briefRetireCapacityEvent(
-			events, protected, briefEventEvidenceByID(selected))
+		events, _, retired = briefRetireCapacityEvent(events, protected)
 		if !retired {
 			return nil, nil, ErrEvidenceItemTooLarge
 		}
@@ -204,109 +187,6 @@ func briefEventContext(request BriefWindowRequest) *BriefEventContext {
 		context.AdmissionThrough = request.Previous.AdmissionThroughEventTime
 	}
 	return context
-}
-
-// validateBriefEventMemoryCapacity makes sure the memory saved with this
-// result can fit in a later paid packet and leaves one item for new mandatory
-// evidence such as a last-contact message or an explicit outcome. Capacity
-// pressure may retire event memory. The caller removes retired events from
-// the current output.
-func validateBriefEventMemoryCapacity(parsed ParsedBrief, window BriefWindow) ([]int, error) {
-	eventHighlights := make([]BriefHighlight, 0, len(parsed.Output.Highlights))
-	for _, highlight := range parsed.Output.Highlights {
-		if highlight.LifeEvent == nil {
-			continue
-		}
-		eventHighlights = append(eventHighlights, highlight)
-	}
-	if len(eventHighlights) == 0 {
-		return nil, nil
-	}
-
-	evidence := briefEventEvidenceByID(window.Items)
-	// A maximal whole-second timestamp projects upcoming events to the longer
-	// follow_up state without adding fractional-second bytes to either clock.
-	futureAsOf := time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
-	projectedEvents := make([]BriefHighlight, 0, len(eventHighlights))
-	projectedSourceIndexes := make([]int, 0, len(eventHighlights))
-	for index, highlight := range parsed.Output.Highlights {
-		if highlight.LifeEvent == nil {
-			continue
-		}
-		projected, ok := normalizeBriefEvent(highlight, evidence, window.Request.PersonID, futureAsOf)
-		if !ok || projected.LifeEvent == nil {
-			return nil, errors.New("person brief event memory could not be projected")
-		}
-		projectedEvents = append(projectedEvents, projected)
-		projectedSourceIndexes = append(projectedSourceIndexes, index)
-	}
-	protectedIDs := make(map[string]bool)
-	for _, event := range projectedEvents {
-		for _, id := range event.EvidenceIDs {
-			protectedIDs[id] = true
-		}
-	}
-	for briefUnresolvedEventEvidenceCount(projectedEvents) >= window.Request.MaxItems {
-		retiredIndex := briefOldestUnresolvedEventIndex(projectedEvents, evidence)
-		if retiredIndex < 0 {
-			return nil, ErrEvidenceItemTooLarge
-		}
-		var ok bool
-		projectedEvents, ok = briefRetireEventAt(projectedEvents, protectedIDs, retiredIndex)
-		if !ok {
-			return nil, ErrEvidenceItemTooLarge
-		}
-		projectedSourceIndexes = append(projectedSourceIndexes[:retiredIndex],
-			projectedSourceIndexes[retiredIndex+1:]...)
-	}
-	projectedRequest := window.Request
-	projectedRequest.AsOf = futureAsOf
-	projectedRequest.retainedEvents = projectedEvents
-	projectedRequest.Previous = &BriefBoundary{
-		EventMemoryVersion: 1, AdmissionThroughEventTime: futureAsOf,
-	}
-	projectedItems := slices.Clone(window.Items)
-	var mandatory *EvidenceItem
-	if window.LastContact.Included {
-		for _, item := range projectedItems {
-			if item.Ref.MessageID == window.LastContact.MessageID && item.Ref.SourceID == window.LastContact.SourceID {
-				mandatoryCopy := item
-				mandatory = &mandatoryCopy
-				break
-			}
-		}
-		if mandatory == nil {
-			return nil, errors.New("person brief last-contact item is missing from the event capacity projection")
-		}
-	}
-	projectionProtectedIDs := make(map[string]bool, len(protectedIDs))
-	for id := range protectedIDs {
-		projectionProtectedIDs[id] = true
-	}
-	lanes := briefWindowLanes(projectedRequest.Profile.AllowedSources)
-	for {
-		_, boundary, err := briefBatch(projectedRequest, lanes, projectedItems)
-		if err != nil {
-			return nil, fmt.Errorf("project next person brief event packet: %w", err)
-		}
-		if boundary.InputBytes <= window.Request.MaxBytes {
-			return projectedSourceIndexes, nil
-		}
-		trimmed, ok := briefDropUnprotected(projectedItems, mandatory, projectionProtectedIDs)
-		if ok {
-			projectedItems = trimmed
-			continue
-		}
-		var retiredIndex int
-		projectedEvents, retiredIndex, ok = briefRetireCapacityEvent(
-			projectedEvents, projectionProtectedIDs, briefEventEvidenceByID(projectedItems))
-		if !ok {
-			return nil, ErrEvidenceItemTooLarge
-		}
-		projectedRequest.retainedEvents = projectedEvents
-		projectedSourceIndexes = append(projectedSourceIndexes[:retiredIndex],
-			projectedSourceIndexes[retiredIndex+1:]...)
-	}
 }
 
 func freezeBriefEventMemory(window BriefWindow, events []BriefHighlight) BriefBoundary {
