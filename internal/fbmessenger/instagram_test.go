@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -765,16 +764,16 @@ func TestInstagramDuplicateOccurrences(t *testing.T) {
 		assert.Contains(slices.Collect(maps.Values(reactions)), "c")
 		assert.Contains(slices.Collect(maps.Values(reactions)), "d")
 	})
-	for _, field := range []string{"video timestamp", "unknown field", "large identifier", "large media identifier", "nested field", "share field", "sticker field", "reaction field"} {
+	for _, field := range []string{"photo timestamp", "video timestamp", "unknown field", "large identifier", "large media identifier", "nested field", "share field", "sticker field", "reaction field"} {
 		t.Run(field, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			st := testutil.NewTestStore(t)
 			root := t.TempDir()
 			a, b := instagramTestRecord("same"), instagramTestRecord("same")
-			if field == "video timestamp" {
-				a["videos"] = []map[string]any{{"uri": "video.mp4", "creation_timestamp": 100}}
-				b["videos"] = []map[string]any{{"uri": "video.mp4", "creation_timestamp": 200}}
+			if kind, ok := strings.CutSuffix(field, " timestamp"); ok {
+				a[kind+"s"] = []map[string]any{{"uri": "media", "creation_timestamp": 100}}
+				b[kind+"s"] = []map[string]any{{"uri": "media", "creation_timestamp": 200}}
 			} else if field == "nested field" {
 				a["photos"] = []map[string]any{{"uri": "photo.jpg", "extra_field": "first"}}
 				b["photos"] = []map[string]any{{"uri": "photo.jpg", "extra_field": "second"}}
@@ -805,11 +804,13 @@ func TestInstagramDuplicateOccurrences(t *testing.T) {
 			require.NoError(err)
 			after, _ := instagramSnapshot(t, st)
 			assert.Equal(before, after, "reordered replay")
-			instagramTestShard(t, root, "circle", "message_1.json", b)
-			_, err = ImportDYI(t.Context(), st, opts)
-			require.NoError(err)
-			after, _ = instagramSnapshot(t, st)
-			assert.Equal(before, after, "partial replay")
+			for _, record := range []map[string]any{b, a} {
+				instagramTestShard(t, root, "circle", "message_1.json", record)
+				_, err = ImportDYI(t.Context(), st, opts)
+				require.NoError(err)
+				after, _ = instagramSnapshot(t, st)
+				assert.Equal(before, after, "partial replay")
+			}
 		})
 	}
 	t.Run("reordered photos", func(t *testing.T) {
@@ -831,34 +832,6 @@ func TestInstagramDuplicateOccurrences(t *testing.T) {
 		require.NoError(err)
 		assert.Zero(summary.MessagesAdded)
 		assert.Equal(1, countMessages(t, st, ""))
-	})
-	t.Run("photo timestamps", func(t *testing.T) {
-		for _, keep := range []int{0, 1} {
-			t.Run(fmt.Sprint(keep), func(t *testing.T) {
-				assert := assert.New(t)
-				require := require.New(t)
-				st := testutil.NewTestStore(t)
-				root := t.TempDir()
-				a, b := instagramTestRecord("same"), instagramTestRecord("same")
-				a["photos"] = []map[string]any{{"uri": "photo.jpg", "creation_timestamp": 100}}
-				b["photos"] = []map[string]any{{"uri": "photo.jpg", "creation_timestamp": 200}}
-				instagramTestShard(t, root, "circle", "message_1.json", a, b)
-				opts := ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example"}
-				_, err := ImportDYI(t.Context(), st, opts)
-				require.NoError(err)
-				before, _ := instagramSnapshot(t, st)
-				instagramTestShard(t, root, "circle", "message_1.json", b, a)
-				_, err = ImportDYI(t.Context(), st, opts)
-				require.NoError(err)
-				after, _ := instagramSnapshot(t, st)
-				assert.Equal(before, after)
-				instagramTestShard(t, root, "circle", "message_1.json", []map[string]any{a, b}[keep])
-				_, err = ImportDYI(t.Context(), st, opts)
-				require.NoError(err)
-				after, _ = instagramSnapshot(t, st)
-				assert.Equal(before, after)
-			})
-		}
 	})
 	t.Run("reordered", func(t *testing.T) {
 		assert := assert.New(t)
