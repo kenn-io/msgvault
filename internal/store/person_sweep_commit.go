@@ -298,7 +298,7 @@ func (s *Store) applyPersonSweepWithAligner(
 	var commitment *preparedCommitmentSweep
 	if request.Commitment != nil {
 		commitment, err = s.prepareCommitmentSweep(ctx, request)
-		if failure, ok := errors.AsType[commitmentPrepareFailure](err); ok {
+		if failure, ok := errors.AsType[commitmentPrepareError](err); ok {
 			request.CommitmentFailureClass = peoplesweep.FailureClass(failure)
 			request.CommitmentRetryAt = request.CompletedAt.Add(time.Minute)
 		} else if err != nil {

@@ -606,7 +606,7 @@ func (w *Worker) runPerson(
 	ordinaryAllowed := true
 	if authority, ok := w.Runner.(interface {
 		OrdinaryInferenceAllowed(ctx context.Context) (bool, error)
-	}); ok {
+	}); ok && w.Config.Commitments.Enabled {
 		allowed, err := authority.OrdinaryInferenceAllowed(ctx)
 		if err != nil {
 			return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
