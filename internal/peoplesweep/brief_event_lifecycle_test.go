@@ -258,7 +258,13 @@ func TestBriefEventPreflightFailureDoesNotBlockExtraction(t *testing.T) {
 			assert.NotEmpty(applied.BriefFailureClass)
 			assert.False(applied.BriefRetryAt.IsZero())
 			assert.NotEmpty(applied.CursorAdvances)
-			assert.Len(outcome.archive.hydrateCalls, 1, "the failed preflight read is not repeated in this attempt")
+			wantReads := []int64{90}
+			if name == "packet size" {
+				// The retained source and the distinct last-contact item each
+				// need hydration before the byte limit can be evaluated.
+				wantReads = append(wantReads, 90)
+			}
+			assert.Equal(wantReads, outcome.archive.hydrateCalls, "the failed preflight is not repeated")
 		})
 	}
 }

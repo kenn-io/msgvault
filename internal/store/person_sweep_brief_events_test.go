@@ -408,8 +408,30 @@ func TestPersonSweepEventCapacityPreservesCurrent(t *testing.T) {
 				required.Equal(message, last.MessageID)
 			}
 			if tc.byteLimit {
-				required.Greater(boundary.InputBytes, 1)
-				f.worker.Config.Brief.MaxBytes = boundary.InputBytes - 1
+				profile, err := f.worker.Config.Profile()
+				required.NoError(err)
+				catalog, err := st.BuildPersonFactCatalogContext(t.Context(), profile.AllowSensitive)
+				required.NoError(err)
+				through, err := st.LatestPersonSweepChangeSequence(t.Context())
+				required.NoError(err)
+				request := peoplesweep.BriefWindowRequest{
+					PersonID: person, Catalog: catalog, Profile: profile, AsOf: *now,
+					MaxItems: f.worker.Config.Brief.MaxItems, MaxBytes: f.worker.Config.Brief.MaxBytes,
+					OverlapItems:     f.worker.Config.Brief.OverlapItems,
+					MaxOutputTokens:  f.worker.Config.Brief.MaxOutputTokens,
+					MaxRenderedRunes: f.worker.Config.Brief.MaxRenderedRunes,
+					ThroughSequence:  through, Previous: &boundary,
+				}
+				// The saved boundary describes the earlier, larger packet. Measure
+				// the actual one-item replay, including its retained event context.
+				window, err := peoplesweep.BuildBriefWindow(t.Context(), st, request)
+				required.NoError(err)
+				required.Len(window.Items, 1)
+				required.Greater(window.Boundary.InputBytes, 1)
+				f.worker.Config.Brief.MaxBytes = window.Boundary.InputBytes - 1
+				request.MaxBytes = f.worker.Config.Brief.MaxBytes
+				_, err = peoplesweep.BuildBriefWindow(t.Context(), st, request)
+				required.ErrorIs(err, peoplesweep.ErrEvidenceItemTooLarge)
 			}
 			f.runner.candidate = func(map[string]any) json.RawMessage { return emptyEventBrief() }
 			briefBefore, extractionBefore := f.runner.briefRequests, f.runner.extractionRequests

@@ -305,12 +305,13 @@ func TestPersonSweepWorkerReportsBriefSchedulingEligibilityFailure(t *testing.T)
 	}
 
 	t.Run("lost lease remains fatal", func(t *testing.T) {
+		brief := &briefFakeStore{enrolled: true, highWaterErr: ErrLeaseLost}
 		worker := Worker{Config: mustDefaultedBriefConfig(t),
-			Brief:   &briefFakeStore{enrolled: true, highWaterErr: ErrLeaseLost},
+			Brief:   brief,
 			Archive: &briefFakeArchive{}}
 		_, err := worker.planPersonBrief(t.Context(), 7, BriefModeAuto, briefWindowProfile(), time.Now())
 		require.ErrorIs(t, err, ErrLeaseLost)
-		worker.Brief.(*briefFakeStore).highWaterErr = errors.New("read failed")
+		brief.highWaterErr = errors.New("read failed")
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		_, err = worker.planPersonBrief(ctx, 7, BriefModeAuto, briefWindowProfile(), time.Now())
