@@ -259,23 +259,31 @@ func TestGrantSenderKeysAreFrozenAndDeepCopied(t *testing.T) {
 	assertions := assert.New(t)
 	r := NewRegistry()
 	senders := []string{"alice@example.com", "alias@example.com"}
-	source := SourceRef{ID: 5, Type: "imap", Identifier: "imap://alice@example.com", SenderKeys: senders}
+	incoming := []string{"codes@example.test"}
+	source := SourceRef{ID: 5, Type: "imap", Identifier: "imap://alice@example.com", SenderKeys: senders, IncomingSenderKeys: incoming}
 	id, secret, issued, err := r.Issue("sender-test", []Permission{PermissionDraftCreate}, []SourceRef{source}, time.Time{})
 	requirements.NoError(err)
 	senders[0] = "changed@example.com"
 	issued.Sources[0].SenderKeys[0] = "mutated@example.com"
+	incoming[0] = "changed@example.test"
+	issued.Sources[0].IncomingSenderKeys[0] = "returned@example.test"
 
 	lookup, ok := r.Lookup(secret)
 	requirements.True(ok)
 	assertions.Equal("alice@example.com", lookup.Sources[0].SenderKeys[0])
+	assertions.Equal([]string{"codes@example.test"}, lookup.Sources[0].IncomingSenderKeys)
+	lookup.Sources[0].IncomingSenderKeys[0] = "lookup@example.test"
 	assertions.True(lookup.AllowsSender(PermissionDraftCreate, SourceRef{Type: source.Type, Identifier: source.Identifier}, "alice@example.com"))
 	assertions.False(lookup.AllowsSender(PermissionDraftCreate, source, "changed@example.com"))
 
 	listed := r.List()
+	assertions.Equal([]string{"codes@example.test"}, listed[0].Sources[0].IncomingSenderKeys)
+	listed[0].Sources[0].IncomingSenderKeys[0] = "listed@example.test"
 	listed[0].Sources[0].SenderKeys[0] = "list-mutated@example.com"
 	again, ok := r.Lookup(secret)
 	requirements.True(ok)
 	assertions.Equal("alice@example.com", again.Sources[0].SenderKeys[0])
+	assertions.Equal([]string{"codes@example.test"}, again.Sources[0].IncomingSenderKeys)
 	assertions.Equal(id, again.ID)
 }
 
@@ -285,47 +293,4 @@ func TestGrantWithNoSenderKeysHasNoSenderAuthority(t *testing.T) {
 		Sources:     []SourceRef{{Type: "imap", Identifier: "imap://alice@example.com"}},
 	}
 	assert.False(t, g.AllowsSender(PermissionDraftCreate, SourceRef{Type: "imap", Identifier: "imap://alice@example.com"}, "alice@example.com"))
-}
-
-func TestArchiveSenderAuthorityRemainsIndependent(t *testing.T) {
-	source := SourceRef{ID: 1, Type: "gmail", Identifier: "account@example.test"}
-	permission, ok := KnownPermission("message.archive")
-	require.True(t, ok)
-	assert.Equal(t, PermissionMessageArchive, permission)
-	_, _, grant, err := NewRegistry().Issue("archive", []Permission{permission}, []SourceRef{source}, time.Time{})
-	require.NoError(t, err)
-	assert.True(t, grant.Allows(permission, source))
-	assert.True(t, grant.AllowsArchiveSender(source, ""))
-	assert.True(t, grant.AllowsArchiveSender(source, "any@example.test"))
-	assert.False(t, grant.AllowsArchiveSender(SourceRef{Type: "gmail", Identifier: "other@example.test"}, "codes@example.test"))
-	assert.False(t, (Grant{Sources: []SourceRef{source}}).AllowsArchiveSender(source, "codes@example.test"))
-	source.SenderKeys = []string{"owner@example.test"}
-	source.ArchiveSenderKeys = []string{"codes@example.test"}
-	grant.Sources = []SourceRef{source}
-	grant.Permissions = append(grant.Permissions, PermissionDraftCreate)
-	assert.True(t, grant.AllowsSender(PermissionDraftCreate, source, "owner@example.test"))
-	assert.True(t, grant.AllowsArchiveSender(source, "codes@example.test"))
-	assert.False(t, grant.AllowsArchiveSender(source, ""))
-	assert.False(t, grant.AllowsArchiveSender(source, "owner@example.test"))
-	assert.False(t, grant.AllowsSender(PermissionDraftCreate, source, "codes@example.test"))
-}
-
-func TestArchiveSenderKeysRemainIndependentSnapshots(t *testing.T) {
-	source := SourceRef{ID: 1, Type: "gmail", Identifier: "account@example.test", SenderKeys: []string{"owner@example.test"}}
-	source.ArchiveSenderKeys = []string{"codes@example.test"}
-	registry := NewRegistry()
-	_, secret, issued, err := registry.Issue("mixed", []Permission{PermissionDraftCreate, PermissionMessageArchive}, []SourceRef{source}, time.Time{})
-	require.NoError(t, err)
-	source.ArchiveSenderKeys[0] = "changed@example.test"
-	issued.Sources[0].ArchiveSenderKeys[0] = "returned@example.test"
-	loaded, ok := registry.Lookup(secret)
-	require.True(t, ok)
-	assert.Equal(t, []string{"codes@example.test"}, loaded.Sources[0].ArchiveSenderKeys)
-	loaded.Sources[0].ArchiveSenderKeys[0] = "lookup@example.test"
-	listed := registry.List()
-	assert.Equal(t, []string{"codes@example.test"}, listed[0].Sources[0].ArchiveSenderKeys)
-	listed[0].Sources[0].ArchiveSenderKeys[0] = "listed@example.test"
-	again, ok := registry.Lookup(secret)
-	require.True(t, ok)
-	assert.Equal(t, []string{"codes@example.test"}, again.Sources[0].ArchiveSenderKeys)
 }

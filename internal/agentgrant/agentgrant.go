@@ -57,8 +57,8 @@ type SourceRef struct {
 	Type       string
 	Identifier string
 	SenderKeys []string
-	// ArchiveSenderKeys limits incoming From envelopes; empty permits all senders.
-	ArchiveSenderKeys []string
+	// IncomingSenderKeys limits incoming From envelopes; empty permits all senders.
+	IncomingSenderKeys []string
 }
 
 type Grant struct {
@@ -79,8 +79,8 @@ func (g Grant) Allows(p Permission, src SourceRef) bool {
 	return g.HasPermission(p) && g.MatchesSource(src)
 }
 
-// Source finds the grant entry for a source by its type and identifier.
-func (g Grant) Source(src SourceRef) (SourceRef, bool) {
+// MatchingSource returns the granted source with the same type and identifier.
+func (g Grant) MatchingSource(src SourceRef) (SourceRef, bool) {
 	for _, source := range g.Sources {
 		if source.Type == src.Type && source.Identifier == src.Identifier {
 			return source, true
@@ -90,7 +90,7 @@ func (g Grant) Source(src SourceRef) (SourceRef, bool) {
 }
 
 func (g Grant) MatchesSource(src SourceRef) bool {
-	_, ok := g.Source(src)
+	_, ok := g.MatchingSource(src)
 	return ok
 }
 
@@ -100,18 +100,8 @@ func (g Grant) AllowsSender(p Permission, src SourceRef, senderKey string) bool 
 	if senderKey == "" || !g.HasPermission(p) {
 		return false
 	}
-	source, ok := g.Source(src)
+	source, ok := g.MatchingSource(src)
 	return ok && slices.Contains(source.SenderKeys, senderKey)
-}
-
-// AllowsArchiveSender checks archive authority independently of outgoing senders.
-// An empty key is allowed only when the matching source has no sender restriction.
-func (g Grant) AllowsArchiveSender(src SourceRef, senderKey string) bool {
-	if !g.HasPermission(PermissionMessageArchive) {
-		return false
-	}
-	source, ok := g.matchingSource(src)
-	return ok && (len(source.ArchiveSenderKeys) == 0 || (senderKey != "" && slices.Contains(source.ArchiveSenderKeys, senderKey)))
 }
 
 func cloneGrant(g Grant) Grant {
@@ -129,7 +119,7 @@ func cloneGrant(g Grant) Grant {
 			Type:              source.Type,
 			Identifier:        source.Identifier,
 			SenderKeys:        append([]string(nil), source.SenderKeys...),
-			ArchiveSenderKeys: append([]string(nil), source.ArchiveSenderKeys...),
+			IncomingSenderKeys: append([]string(nil), source.IncomingSenderKeys...),
 		}
 	}
 	return clone

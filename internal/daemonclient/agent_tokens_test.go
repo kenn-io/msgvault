@@ -71,7 +71,7 @@ func TestIssueAgentTokenRoundTripReadsIDForRevoke(t *testing.T) {
 	c, err := New(Config{URL: srv.URL, APIKey: "owner-key", AllowInsecure: true})
 	require.NoError(err)
 
-	result, err := c.IssueAgentToken(t.Context(), "round-trip-test", []string{"draft.create"}, []int64{1}, map[int64][]string{1: {"alice@example.com"}}, time.Time{})
+	result, err := c.IssueAgentToken(t.Context(), "round-trip-test", []string{"draft.create"}, []int64{1}, map[int64][]string{1: {"alice@example.com"}}, nil, time.Time{})
 	require.NoError(err)
 	require.NotNil(result)
 	assert.Equal("application/json", issueContentType, "issue requests must identify their JSON body")
@@ -175,7 +175,7 @@ func TestIssueAgentTokenExpiryRefusesOldDaemon(t *testing.T) {
 	client, err := New(Config{URL: server.URL, APIKey: "owner", AllowInsecure: true})
 	require.NoError(err)
 	t.Cleanup(func() { _ = client.Close() })
-	_, err = client.IssueAgentToken(t.Context(), "reader", []string{"stats.read"}, []int64{1}, nil, time.Now().Add(time.Hour))
+	_, err = client.IssueAgentToken(t.Context(), "reader", []string{"stats.read"}, []int64{1}, nil, nil, time.Now().Add(time.Hour))
 	require.Error(err)
 	assert.Contains(err.Error(), "requires daemon API schema 3.9.0")
 	assert.Zero(posts)
