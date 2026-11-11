@@ -130,7 +130,7 @@ func (c *PackCatalog) ListIndexed(ctx context.Context) ([]packstore.IndexEntry, 
 		return nil, err
 	}
 	if pass, ok := ctx.Value(packVerificationKey{}).(*PackVerificationPass); ok {
-		entries, err := c.store.listPackVerificationWindow(ctx, pass)
+		entries, err := c.store.listPackVerificationWindow(ctx, pass, c.attachmentsDir)
 		if err != nil {
 			return nil, err
 		}
