@@ -2,8 +2,9 @@ package cmd
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"net/http"
-	"strings"
+	"net/url"
 
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -25,21 +26,25 @@ func operationRunMCPCapabilities(hasRoute mcpRouteCheck) []string {
 
 type operationRunsArguments struct {
 	generated.ListOperationRunsQuery
-	StartedFrom   *string `json:"started_from,omitempty"`
-	StartedBefore *string `json:"started_before,omitempty"`
+	Limit         *jsontext.Value `json:"limit,omitempty"`
+	StartedFrom   *string         `json:"started_from,omitempty"`
+	StartedBefore *string         `json:"started_before,omitempty"`
 }
 
-// The generated query uses time.Time, which normalizes noncanonical input.
-// Preserve the caller's text so the daemon applies its own timestamp rules.
+// Preserve raw limits and timestamp text so the daemon owns validation.
 type operationRunsRequestOptions struct {
 	*generated.ListOperationRunsRequestOptions
 	startedFrom, startedBefore *string
+	limit                      *jsontext.Value
 }
 
 func (o operationRunsRequestOptions) GetQuery() (map[string]any, error) {
 	query, err := o.ListOperationRunsRequestOptions.GetQuery()
 	if err != nil {
 		return nil, err
+	}
+	if o.limit != nil {
+		query["limit"] = string(*o.limit)
 	}
 	if o.startedFrom != nil {
 		query["started_from"] = *o.startedFrom
@@ -75,15 +80,14 @@ func (b *daemonMCPOperations) executeOperationRunRead(ctx context.Context, name 
 		if e != nil {
 			return invalid()
 		}
-		options := operationRunsRequestOptions{ListOperationRunsRequestOptions: &generated.ListOperationRunsRequestOptions{Query: &input.ListOperationRunsQuery}, startedFrom: input.StartedFrom, startedBefore: input.StartedBefore}
+		options := operationRunsRequestOptions{ListOperationRunsRequestOptions: &generated.ListOperationRunsRequestOptions{Query: &input.ListOperationRunsQuery}, startedFrom: input.StartedFrom, startedBefore: input.StartedBefore, limit: input.Limit}
 		result, err = readMCPOperationJSONWithClassifier[generated.OperationRunsResponse](ctx, b.client, http.MethodGet, "/api/v1/operations/runs", options, operationRunRefusal, http.StatusOK)
 	case "get_operation_run":
 		input, e := decodeMCPOperationArguments[struct {
 			ID string `json:"id"`
 		}](args)
-		// Native tokens use URL-safe base64 and dot-separated key IDs. Reject path
-		// metacharacters before the generated client substitutes the raw value.
-		if e != nil || input.ID == "" || input.ID == "." || input.ID == ".." || strings.Trim(input.ID, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.") != "" {
+		// The generated client substitutes this value without escaping it.
+		if e != nil || input.ID == "" || input.ID == "." || input.ID == ".." || url.PathEscape(input.ID) != input.ID {
 			return invalid()
 		}
 		result, err = readMCPOperationJSONWithClassifier[generated.OperationRunDetail](ctx, b.client, http.MethodGet, "/api/v1/operations/runs/{id}", &generated.GetOperationRunRequestOptions{PathParams: &generated.GetOperationRunPath{ID: input.ID}}, operationRunRefusal, http.StatusOK)

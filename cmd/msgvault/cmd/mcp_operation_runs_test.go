@@ -1,9 +1,9 @@
 package cmd
 
 import (
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"log/slog"
-	"strings"
 	"testing"
 	"time"
 
@@ -60,13 +60,17 @@ func TestMCPOperationReadsDiscoverNativeRoutes(t *testing.T) {
 	require.NoError(err)
 	require.True(result.IsError)
 	assert.Equal(operationFailure("invalid_cursor", false).Output, result.Output)
+	result, err = backend.ExecuteOperation(t.Context(), "list_operation_runs", map[string]any{"limit": jsontext.Value("9223372036854775808")})
+	require.NoError(err)
+	require.True(result.IsError)
+	assert.Equal(operationFailure("invalid_limit", false).Output, result.Output)
 	for _, id := range []string{"../status", ".", ".."} {
 		result, err = backend.ExecuteOperation(t.Context(), "get_operation_run", map[string]any{"id": id})
 		require.NoError(err)
 		require.True(result.IsError)
 		assert.Equal(operationFailure("invalid_arguments", false).Output, result.Output)
 	}
-	result, err = backend.ExecuteOperation(t.Context(), "get_operation_run", map[string]any{"id": "op2." + strings.Repeat("1", 32) + ".bad"})
+	result, err = backend.ExecuteOperation(t.Context(), "get_operation_run", map[string]any{"id": "op2~bad"})
 	require.NoError(err)
 	require.True(result.IsError)
 	assert.Equal(operationFailure("invalid_operation_run_id", false).Output, result.Output)
@@ -136,6 +140,12 @@ func TestMCPOperationStatusSDKStructuredResult(t *testing.T) {
 	require.NoError(err)
 	require.True(result.IsError)
 	limitData, err := json.Marshal(result.StructuredContent)
+	require.NoError(err)
+	assert.JSONEq(`{"error":"invalid_limit","operation_may_have_completed":false}`, string(limitData))
+	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_operation_runs", Arguments: map[string]any{"limit": jsontext.Value("9223372036854775808")}})
+	require.NoError(err)
+	require.True(result.IsError)
+	limitData, err = json.Marshal(result.StructuredContent)
 	require.NoError(err)
 	assert.JSONEq(`{"error":"invalid_limit","operation_may_have_completed":false}`, string(limitData))
 	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_operation_runs", Arguments: map[string]any{"started_from": "2026-01-02T03:04:05.000Z"}})
