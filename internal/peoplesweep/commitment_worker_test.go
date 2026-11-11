@@ -229,7 +229,7 @@ func TestCommitmentConsentIdleDeferralDoesNotStartEmptyAttempt(t *testing.T) {
 	worker.Source, worker.Context = source, NewContextRetriever(source)
 	result, err := worker.Run(t.Context(), RunRequest{Kind: RunManual, Mode: RunIncremental, PersonID: 7})
 	r.NoError(err)
-	a.Zero(result.PeopleSucceeded)
+	a.Equal(1, result.PeopleSucceeded, "idle claim completion succeeds without inference")
 	a.Empty(st.started, "caught-up unauthorized work has no source envelope for a durable attempt")
 	a.Empty(st.finalized)
 	a.Empty(st.failed)
