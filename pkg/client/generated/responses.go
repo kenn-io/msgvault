@@ -2635,6 +2635,18 @@ type FindContactCandidatesErrorResponseJSON503 = ErrorResponse
 
 type FindContactCandidatesErrorResponseJSONDefault = ErrorResponse
 
+type CreateStandalonePersonResponse = Person
+
+type CreateStandalonePersonResponseJSON = Person
+
+type CreateStandalonePersonErrorResponse = ErrorResponse
+
+type CreateStandalonePersonErrorResponseJSON = PersonCreateErrorResponse
+
+type CreateStandalonePersonErrorResponseJSON503 = ErrorResponse
+
+type CreateStandalonePersonErrorResponseJSONDefault = ErrorResponse
+
 type ListDirectoryPeopleResponse = DirectoryPeopleResponse
 
 type ListDirectoryPeopleErrorResponse = ErrorResponse
@@ -6417,6 +6429,28 @@ type FindContactCandidatesResp struct {
 	JSON403      *FindContactCandidatesErrorResponseJSON403
 	JSON503      *FindContactCandidatesErrorResponseJSON503
 	JSONDefault  *FindContactCandidatesErrorResponseJSONDefault
+}
+
+type CreateStandalonePersonResp200Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type CreateStandalonePersonResp201Headers struct {
+	ETag string `header:"ETag"`
+}
+
+type CreateStandalonePersonResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *CreateStandalonePersonResponse
+	Headers200   *CreateStandalonePersonResp200Headers
+	JSON201      *CreateStandalonePersonResponseJSON
+	Headers201   *CreateStandalonePersonResp201Headers
+	JSON400      *CreateStandalonePersonErrorResponse
+	JSON409      *CreateStandalonePersonErrorResponseJSON
+	JSON503      *CreateStandalonePersonErrorResponseJSON503
+	JSONDefault  *CreateStandalonePersonErrorResponseJSONDefault
 }
 
 type ListDirectoryPeopleResp struct {

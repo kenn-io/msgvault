@@ -226,6 +226,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `reopen_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
 | `snooze_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
 | `merge_person` | person_merge | `--allow-person-merges` | owner-only |
+| `create_person` | profile_write | `--allow-profile-writes` | owner-only |
 | `promote_person` | profile_write | `--allow-profile-writes` | owner-only |
 | `set_person_display_name` | profile_write | `--allow-profile-writes` | owner-only |
 | `update_person_notes` | profile_write | `--allow-profile-writes` | owner-only |

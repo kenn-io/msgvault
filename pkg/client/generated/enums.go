@@ -2243,6 +2243,41 @@ func (p PeopleInferencePresetCreateRequestPresetID) Validate() error {
 	}
 }
 
+type PersonCreateInputIfExists string
+
+const (
+	PersonCreateInputIfExistsError PersonCreateInputIfExists = "error"
+	Return                         PersonCreateInputIfExists = "return"
+)
+
+// Validate checks if the PersonCreateInputIfExists value is valid
+func (p PersonCreateInputIfExists) Validate() error {
+	switch p {
+	case PersonCreateInputIfExistsError, Return:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonCreateInputIfExists value, got: %v", p))
+	}
+}
+
+// PersonCreateInputSource Provenance of every created value; defaults to user
+type PersonCreateInputSource string
+
+const (
+	PersonCreateInputSourceEnrichment PersonCreateInputSource = "enrichment"
+	PersonCreateInputSourceUser       PersonCreateInputSource = "user"
+)
+
+// Validate checks if the PersonCreateInputSource value is valid
+func (p PersonCreateInputSource) Validate() error {
+	switch p {
+	case PersonCreateInputSourceEnrichment, PersonCreateInputSourceUser:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonCreateInputSource value, got: %v", p))
+	}
+}
+
 type PersonEnrichmentProviderSettingKind string
 
 const (
@@ -2274,6 +2309,23 @@ func (p PersonEnrichmentProviderUpdateKind) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonEnrichmentProviderUpdateKind value, got: %v", p))
+	}
+}
+
+type PersonEnsureInfoStatus string
+
+const (
+	MatchedExisting               PersonEnsureInfoStatus = "matched_existing"
+	PersonEnsureInfoStatusCreated PersonEnsureInfoStatus = "created"
+)
+
+// Validate checks if the PersonEnsureInfoStatus value is valid
+func (p PersonEnsureInfoStatus) Validate() error {
+	switch p {
+	case MatchedExisting, PersonEnsureInfoStatusCreated:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonEnsureInfoStatus value, got: %v", p))
 	}
 }
 
@@ -2454,6 +2506,25 @@ func (p PersonFileSuggestionRowMimeFamily) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonFileSuggestionRowMimeFamily value, got: %v", p))
+	}
+}
+
+type PersonMatchBasisMatched string
+
+const (
+	ContactPoint PersonMatchBasisMatched = "contact_point"
+	Identifier   PersonMatchBasisMatched = "identifier"
+	Observation  PersonMatchBasisMatched = "observation"
+	Participant  PersonMatchBasisMatched = "participant"
+)
+
+// Validate checks if the PersonMatchBasisMatched value is valid
+func (p PersonMatchBasisMatched) Validate() error {
+	switch p {
+	case ContactPoint, Identifier, Observation, Participant:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonMatchBasisMatched value, got: %v", p))
 	}
 }
 

@@ -2,6 +2,7 @@ package daemonclient
 
 import (
 	"bytes"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -19,13 +20,15 @@ import (
 )
 
 type apiErrorBody struct {
-	Error   string `json:"error"`
-	Message string `json:"message"`
+	Details jsontext.Value `json:"details,omitempty"`
+	Error   string         `json:"error"`
+	Message string         `json:"message"`
 }
 
 // APIError preserves the daemon's non-CLI HTTP status, stable machine code,
 // and sanitized message. Error retains the historical client-facing text.
 type APIError struct {
+	Details jsontext.Value
 	Status  int
 	Code    string
 	Message string
@@ -113,7 +116,9 @@ func handleErrorBody(status int, body []byte) error {
 		return err
 	}
 	message, code, _ := apiErrorMessage(body)
-	return &APIError{Status: status, Code: code, Message: message}
+	var decoded apiErrorBody
+	_ = json.Unmarshal(body, &decoded)
+	return &APIError{Status: status, Code: code, Message: message, Details: decoded.Details}
 }
 
 func handleCLIErrorBody(status int, body []byte) error {

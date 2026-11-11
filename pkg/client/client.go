@@ -383,6 +383,29 @@ func (c *Client) CreatePerson(
 	return nil, fmt.Errorf("create person: %w", err)
 }
 
+// CreateStandalonePerson accepts both documented creation successes: 201 for
+// a new person and 200 for an unchanged match with if_exists=return.
+func (c *Client) CreateStandalonePerson(
+	ctx context.Context,
+	options *generated.CreateStandalonePersonRequestOptions,
+	reqEditors ...runtime.RequestEditorFn,
+) (*generated.CreateStandalonePersonResponseJSON, error) {
+	resp, err := c.CreateStandalonePersonWithResponse(ctx, options, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	if resp.JSON201 != nil {
+		return resp.JSON201, nil
+	}
+	if resp.JSON200 != nil {
+		return resp.JSON200, nil
+	}
+	err = runtime.NewClientAPIError(
+		fmt.Errorf("unexpected status code: %d", resp.StatusCode),
+		runtime.WithStatusCode(resp.StatusCode))
+	return nil, fmt.Errorf("create standalone person: %w", err)
+}
+
 type httpClientDoer struct {
 	client *http.Client
 }

@@ -10615,6 +10615,8 @@ components:
           type: string
         display_name:
           type: string
+        ensure:
+          $ref: "#/components/schemas/PersonEnsureInfo"
         id:
           format: int64
           type: integer
@@ -11309,6 +11311,74 @@ components:
             type: integer
           type: array
       type: object
+    PersonCreateContact:
+      additionalProperties: false
+      properties:
+        type:
+          pattern: ^[A-Za-z0-9-]{1,64}$
+          type: string
+        value:
+          type: string
+      required:
+        - value
+      type: object
+    PersonCreateErrorResponse:
+      properties:
+        details:
+          x-go-type: jsontext.Value
+          x-go-type-import:
+            path: encoding/json/jsontext
+        error:
+          type: string
+        message:
+          type: string
+      required:
+        - error
+      type: object
+    PersonCreateInput:
+      additionalProperties: false
+      properties:
+        address:
+          maxLength: 1000
+          type: string
+        emails:
+          items:
+            $ref: "#/components/schemas/PersonCreateContact"
+          maxItems: 200
+          type: array
+        if_exists:
+          enum:
+            - error
+            - return
+          type: string
+        name:
+          maxLength: 256
+          minLength: 1
+          type: string
+        note:
+          maxLength: 10000
+          type: string
+        org:
+          maxLength: 256
+          type: string
+        phones:
+          items:
+            $ref: "#/components/schemas/PersonCreateContact"
+          maxItems: 200
+          type: array
+        source:
+          description: Provenance of every created value; defaults to user
+          enum:
+            - user
+            - enrichment
+          type: string
+        title:
+          description: Job title at org; requires org
+          maxLength: 280
+          type: string
+      required:
+        - name
+      type: object
     PersonDate:
       properties:
         calendar_scale:
@@ -11576,6 +11646,26 @@ components:
         - max_retries
         - max_requests_per_run
         - max_requests_per_day
+      type: object
+    PersonEnsureInfo:
+      properties:
+        match_basis:
+          items:
+            $ref: "#/components/schemas/PersonMatchBasis"
+          type: array
+        status:
+          enum:
+            - created
+            - matched_existing
+          type: string
+        unapplied_contacts:
+          items:
+            $ref: "#/components/schemas/PersonUnappliedContact"
+          type: array
+      required:
+        - status
+        - match_basis
+        - unapplied_contacts
       type: object
     PersonFactClaim:
       properties:
@@ -12379,6 +12469,32 @@ components:
         - received_count
         - sent_count
         - latest_at
+      type: object
+    PersonMatchBasis:
+      properties:
+        kind:
+          type: string
+        matched:
+          enum:
+            - contact_point
+            - participant
+            - identifier
+            - observation
+          type: string
+        participant_id:
+          format: int64
+          nullable: true
+          type: integer
+        person_id:
+          format: int64
+          nullable: true
+          type: integer
+        value:
+          type: string
+      required:
+        - kind
+        - value
+        - matched
       type: object
     PersonMatchBatchError:
       properties:
@@ -13671,6 +13787,18 @@ components:
         - person_id
         - tracked
         - tracked_at
+      type: object
+    PersonUnappliedContact:
+      properties:
+        kind:
+          type: string
+        type:
+          type: string
+        value:
+          type: string
+      required:
+        - kind
+        - value
       type: object
     PinState:
       properties:
@@ -16851,7 +16979,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 5.0.0
+  version: 5.2.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -27141,6 +27269,68 @@ paths:
       security:
         - apiKey: []
       summary: Find durable people by saved or observed names without selecting a duplicate
+      tags:
+        - API
+  /api/v1/people/create:
+    post:
+      description: Creates a durable profile with a new vCard UID and user-curated contact data. With if_exists=return, returns a single matching person without updating it; otherwise refuses existing contacts. A title requires an organization. Does not publish to CardDAV.
+      operationId: createStandalonePerson
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PersonCreateInput"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Person"
+          description: OK
+          headers:
+            ETag:
+              description: Strong person profile revision tag for optimistic concurrency
+              schema:
+                type: string
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Person"
+          description: Created
+          headers:
+            ETag:
+              description: Strong person profile revision tag for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonCreateErrorResponse"
+          description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Create a person without message participants
       tags:
         - API
   /api/v1/people/directory:

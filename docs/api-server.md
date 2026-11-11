@@ -166,7 +166,17 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.0.0**.
+it is separate from the binary release version. The current schema is **5.2.0**.
+
+Schema 5.2.0 adds `if_exists: "return"` to `POST /api/v1/people/create`.
+It returns a single matching saved person unchanged with HTTP 200 and
+`ensure.status: matched_existing`, or creates a new person with HTTP 201 and
+`ensure.status: created`. Return-mode HTTP 409 conflicts include `details` with all
+ambiguous candidates or explicit participant-promotion guidance. The MCP
+`create_person` argument requires this schema version or newer.
+
+Schema 5.1.0 adds `POST /api/v1/people/create` for standalone curated
+profiles. The MCP `create_person` tool requires this schema version or newer.
 
 Schema 5.0.0 changes `content_available` in file lists and suggestions from a
 boolean to a nullable boolean. A null value means storage has not been checked;
@@ -731,6 +741,41 @@ are disabled. Both endpoints require daemon owner authentication; the original
 engine returns `503` without falling back to the privileged engine.
 
 ---
+
+### Person creation conflicts {#person-creation-conflicts}
+
+`ensure` belongs to the shared `Person` response schema, but is emitted only
+by person creation with `if_exists: "return"`. Other `Person` responses omit it.
+
+With `if_exists: "return"`, `POST /api/v1/people/create` returns HTTP 409
+when contacts identify multiple targets or a single unbound participant cluster.
+The response has `error`, `message`, and `details` fields:
+
+| `error` | `details` fields |
+| --- | --- |
+| `person_ambiguous` | `candidates`: array of `{person_id, participant_id, name}`; `match_basis`: array of matching evidence. Each candidate identifies a saved person or an unbound cluster; its other ID is null. |
+| `person_matches_participant` | `participant_id`: the unbound cluster's representative ID; `match_basis`: array of matching evidence; `next`: explicit promotion guidance. |
+
+Each `match_basis` entry contains `kind` (`email` or `phone`), normalized
+`value`, `matched` (`contact_point`, `participant`, `identifier`, or
+`observation`), and nullable `person_id` and `participant_id` fields.
+
+`details.next.cli` is an argv array, and `details.next.mcp` identifies a tool
+and its arguments. For example, promotion guidance for participant 9 is:
+
+```json
+{
+  "cli": ["msgvault", "person", "promote", "9", "--json"],
+  "mcp": {
+    "tool": "promote_person",
+    "arguments": {"participant_id": 9}
+  }
+}
+```
+
+Resolve ambiguity or promote the participant explicitly before retrying.
+Omitting `if_exists` or using `"error"` retains the original
+`person_contact_exists` conflict without `details`.
 
 ### Curated person network {#get-apiv1peopleidnetwork}
 

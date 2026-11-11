@@ -97,6 +97,8 @@ func daemonProxyMemoryOptions() ServeOptions {
 		ArchiveSQLQuerier:    struct{ ArchiveSQLQuerier }{},
 		IdentityReview:       struct{ IdentityReviewBackend }{},
 		PersonCardDAV:        struct{ PersonCardDAVBackend }{},
+		PersonCreator:        struct{ PersonCreator }{},
+		PersonCreateIfExists: true,
 		IdentityScoring:      struct{ IdentityScoringBackend }{},
 		Drafts:               struct{ DraftRunner }{},
 		DraftCommands:        slices.Sorted(maps.Keys(stableDraftDefinitions)),

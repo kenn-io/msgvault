@@ -85,18 +85,7 @@ func operationalOutputSchema(output *jsonschema.Schema) *jsonschema.Schema {
 		"error":                        stringSchema("Fixed public refusal code"),
 		"operation_may_have_completed": {Type: "boolean"},
 	}, "error")
-	failure.Schema = ""
-	success := *output
-	success.Schema = ""
-	success.Defs = nil
-	success.Definitions = nil
-	return &jsonschema.Schema{
-		Schema:      schema202012,
-		Type:        "object",
-		Defs:        output.Defs,
-		Definitions: output.Definitions,
-		AnyOf:       []*jsonschema.Schema{&success, failure},
-	}
+	return successOrFailureOutputSchema(output, failure)
 }
 
 func (d operationalDefinition) bind(backend OperationBackend) func(context.Context, toolRequest) (*toolResult, error) {

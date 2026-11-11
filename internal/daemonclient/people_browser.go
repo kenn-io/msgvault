@@ -696,6 +696,7 @@ func personFromGenerated(person *generated.Person) *store.Person {
 		ParticipantIDs: append([]int64(nil), person.ParticipantIds...),
 		CreatedAt:      person.CreatedAt, UpdatedAt: person.UpdatedAt,
 		CardDAVBindings: cardDAVBindings,
+		Ensure:          personEnsureFromGenerated(person.Ensure),
 	}
 }
 
@@ -873,4 +874,25 @@ func copyBool(value *bool) *bool {
 	}
 	copied := *value
 	return &copied
+}
+
+func personEnsureFromGenerated(info *generated.PersonEnsureInfo) *store.PersonEnsureInfo {
+	if info == nil {
+		return nil
+	}
+	result := &store.PersonEnsureInfo{Status: store.PersonEnsureStatus(info.Status),
+		MatchBasis:        make([]store.PersonMatchBasis, len(info.MatchBasis)),
+		UnappliedContacts: make([]store.PersonUnappliedContact, len(info.UnappliedContacts))}
+	for i, match := range info.MatchBasis {
+		result.MatchBasis[i] = store.PersonMatchBasis{Kind: store.ContactAddressKind(match.Kind), Value: match.Value,
+			Matched: string(match.Matched), PersonID: match.PersonID, ParticipantID: match.ParticipantID}
+	}
+	for i, contact := range info.UnappliedContacts {
+		value := store.PersonUnappliedContact{Kind: store.ContactAddressKind(contact.Kind), Value: contact.Value}
+		if contact.Type != nil {
+			value.Type = *contact.Type
+		}
+		result.UnappliedContacts[i] = value
+	}
+	return result
 }

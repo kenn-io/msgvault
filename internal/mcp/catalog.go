@@ -40,27 +40,29 @@ const (
 )
 
 type catalogCapabilities struct {
-	sqlQuery        bool
-	semanticSearch  bool
-	vectorInMessage bool
-	similarMessages bool
-	mediaSearch     bool
-	people          bool
-	directoryPeople bool
-	chatDiscovery   bool
-	visualSearch    bool
-	embeddingStatus bool
-	savedViews      bool
-	meetings        bool
-	personAgenda    bool
-	personTier      bool
-	kata            bool
-	kataLookup      bool
-	kataDocbank     bool
-	contactRoutes   bool
-	identityReview  bool
-	personCardDAV   bool
-	messageTags     bool
+	sqlQuery             bool
+	semanticSearch       bool
+	vectorInMessage      bool
+	similarMessages      bool
+	mediaSearch          bool
+	people               bool
+	directoryPeople      bool
+	chatDiscovery        bool
+	visualSearch         bool
+	embeddingStatus      bool
+	savedViews           bool
+	meetings             bool
+	personAgenda         bool
+	personTier           bool
+	kata                 bool
+	kataLookup           bool
+	kataDocbank          bool
+	contactRoutes        bool
+	identityReview       bool
+	personCardDAV        bool
+	messageTags          bool
+	personCreate         bool
+	personCreateIfExists bool
 }
 
 func visualSearchAvailable(capabilities catalogCapabilities) bool {
@@ -130,27 +132,29 @@ func (d toolDefinition) bind(h *handlers) func(context.Context, toolRequest) (*t
 
 func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 	return catalogCapabilities{
-		sqlQuery:        opts.ArchiveSQLQuerier != nil,
-		semanticSearch:  opts.HybridEngine != nil || opts.HybridSearcher != nil,
-		vectorInMessage: opts.HybridEngine != nil && opts.Backend != nil,
-		similarMessages: opts.Backend != nil || opts.SimilarSearcher != nil,
-		mediaSearch:     opts.MediaSearcher != nil,
-		people:          opts.PeopleBackend != nil,
-		directoryPeople: opts.DirectoryBackend != nil,
-		chatDiscovery:   opts.ChatDiscoveryBackend != nil,
-		visualSearch:    opts.VisualSearcher != nil,
-		embeddingStatus: opts.EmbeddingStatus != nil,
-		savedViews:      opts.SavedViews != nil,
-		meetings:        opts.Meetings != nil,
-		personAgenda:    opts.PersonAgendaBackend != nil,
-		personTier:      opts.PersonTierBackend != nil,
-		kata:            opts.Kata != nil,
-		kataLookup:      opts.Kata != nil && opts.KataLookup,
-		kataDocbank:     opts.Kata != nil && opts.KataDocbank,
-		contactRoutes:   opts.ContactRoutesBackend != nil,
-		identityReview:  opts.IdentityReview != nil,
-		personCardDAV:   opts.PersonCardDAV != nil,
-		messageTags:     opts.MessageTags != nil,
+		sqlQuery:             opts.ArchiveSQLQuerier != nil,
+		semanticSearch:       opts.HybridEngine != nil || opts.HybridSearcher != nil,
+		vectorInMessage:      opts.HybridEngine != nil && opts.Backend != nil,
+		similarMessages:      opts.Backend != nil || opts.SimilarSearcher != nil,
+		mediaSearch:          opts.MediaSearcher != nil,
+		people:               opts.PeopleBackend != nil,
+		directoryPeople:      opts.DirectoryBackend != nil,
+		chatDiscovery:        opts.ChatDiscoveryBackend != nil,
+		visualSearch:         opts.VisualSearcher != nil,
+		embeddingStatus:      opts.EmbeddingStatus != nil,
+		savedViews:           opts.SavedViews != nil,
+		meetings:             opts.Meetings != nil,
+		personAgenda:         opts.PersonAgendaBackend != nil,
+		personTier:           opts.PersonTierBackend != nil,
+		kata:                 opts.Kata != nil,
+		kataLookup:           opts.Kata != nil && opts.KataLookup,
+		kataDocbank:          opts.Kata != nil && opts.KataDocbank,
+		contactRoutes:        opts.ContactRoutesBackend != nil,
+		identityReview:       opts.IdentityReview != nil,
+		personCardDAV:        opts.PersonCardDAV != nil,
+		messageTags:          opts.MessageTags != nil,
+		personCreate:         opts.PersonCreator != nil,
+		personCreateIfExists: opts.PersonCreateIfExists,
 	}
 }
 
@@ -280,6 +284,7 @@ func operationDefinitions(capabilities catalogCapabilities) []toolDefinition {
 		semanticSearchMessagesDefinition(nil, capabilities.semanticSearch),
 		stageDeletionDefinition(nil),
 		promotePersonDefinition(nil),
+		createPersonDefinition(capabilities.personCreateIfExists),
 		acceptIdentityMatchDefinition(),
 		mergePersonDefinition(),
 		approveCardDAVPublicationDefinition(),
@@ -481,6 +486,24 @@ func outputSchemaFor[T any]() *jsonschema.Schema {
 	}
 	schema.Schema = schema202012
 	return schema
+}
+
+// successOrFailureOutputSchema keeps success references relative to the root
+// without modifying either reusable input schema.
+func successOrFailureOutputSchema(output, failure *jsonschema.Schema) *jsonschema.Schema {
+	success := *output
+	success.Schema = ""
+	success.Defs = nil
+	success.Definitions = nil
+	refusal := *failure
+	refusal.Schema = ""
+	return &jsonschema.Schema{
+		Schema:      schema202012,
+		Type:        "object",
+		Defs:        output.Defs,
+		Definitions: output.Definitions,
+		AnyOf:       []*jsonschema.Schema{&success, &refusal},
+	}
 }
 
 func searchMessagesOutputSchema() *jsonschema.Schema {

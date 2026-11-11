@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-01"
+last_edited: "2026-11-08"
 title: People and Profiles
 description: Find people across your archive, keep their details together, and understand your contact history.
 ---
@@ -14,7 +14,8 @@ Google resource addresses not linked to a person are excluded from observed peop
 
 | I want to… | Start here |
 |---|---|
-| Save someone's name, details, or notes | [Create a profile](#promote-a-durable-person) |
+| Save someone you have never messaged | [Create a person](#create-a-person) |
+| Save an observed contact's details or notes | [Promote a profile](#promote-a-durable-person) |
 | See which conversations still need an answer | [Open loops](open-loops.md) |
 | Remember what they recently shared | [Person briefs](/docs/usage/people-briefs/) |
 | Review meeting time and recorded follow-ups | [Meeting activity](meetings.md#export-context-and-read-follow-ups) |
@@ -40,8 +41,104 @@ need separate provider configuration and consent. You can edit saved profiles wi
 
 Observed contacts use **participant IDs**. Saved profiles use **person IDs**.
 Commands name the ID they require; the two are not interchangeable. Promotion
-creates a profile from an observed person. Subscribed CardDAV contacts can also
-create profiles when imported.
+creates a profile from an observed person. You can create a profile directly,
+or import one from a subscribed CardDAV address book.
+
+## Create a person
+
+Create someone you have never messaged from the CLI. This command is available
+on `main` after the latest release.
+
+```bash
+msgvault person create --name "Alex Example" \
+  --email alex@example.com:work --phone '+12025550123:cell' \
+  --org "Example Company" --title "Engineer" \
+  --address "123 Example Street" --note "Met at a conference" --json
+```
+
+Only `--name` is required. Repeat `--email` and `--phone` for multiple contact
+methods; append `:type` to label a method, such as `work`, `home`, or `cell`.
+A type uses 1-64 letters, digits, or hyphens. Creation accepts up to 200 emails
+and 200 phones. Phones must normalize to the international
+`+<country-code><number>` format (E.164).
+
+`--org` creates a current, primary employment record. It reuses the company
+that employment facts would match by name or alias, and creates a company when
+none matches. If the name matches several companies, creation stops; create the
+person without `--org`, then add the employment with
+`msgvault employment add --person <id> --organization <id>`. `--title` requires
+`--org` and becomes that employment's title.
+
+Text limits are 256 characters for the name and organization, 280 for the
+title, 1,000 for the address, and 10,000 for the note.
+The person receives a stable ID and a new vCard UID,
+with no message participants. All supplied details are user-curated data.
+
+Creation refuses an email or phone already on a current person profile or an
+observed participant cluster. The error identifies the match. Use that saved
+person, or run `msgvault person promote <participant-id>` for an observed
+contact. Use [explicit identity linking](#review-identity-matches) to combine
+observed identities; creation never links them silently.
+
+For retry-safe intake, supply an email or phone and add `--if-exists return`
+(the default is `error`):
+
+```bash
+msgvault person create --name "Alex Example" --email alex@example.test --if-exists return --json
+```
+
+Name-only calls create a new person each time.
+
+`--if-exists return` requires a daemon with API schema 5.2.0 or newer.
+The CLI checks this version before creation and asks you to upgrade an older
+daemon. Direct API requests to older daemons reject the unknown `if_exists`
+field.
+
+When all matching contacts identify one saved person, the command returns that
+person without changing its saved profile. Supplied `name`, `org`, `title`,
+`note`, and `address` are ignored on a match. The JSON `ensure` field reports
+`status: matched_existing`; `unapplied_contacts` lists only supplied contacts
+that did not match and were not added, not other ignored fields. A new person
+reports `status: created`. With `--publish`, only a newly created person is
+published.
+Current curated contacts take precedence over unbound observations of that
+same value. A match bound to another saved person or an unbound cluster on an
+uncurated contact still counts toward ambiguity.
+
+An unbound participant cluster returns `person_matches_participant` with a
+CLI argv array and an MCP tool-and-arguments call in `details.next`. Multiple
+saved people or separate clusters return `person_ambiguous` with `details.candidates`; resolve them explicitly.
+Both conflicts exit with an error. Text-mode ambiguity errors give a summary;
+`--json` includes candidate IDs and other structured resolution details. See
+[person creation conflict details](../api-server.md#person-creation-conflicts)
+for both response shapes.
+
+Without `--publish`, creation stays in your archive. Add `--publish` to send
+the new person to your configured [CardDAV write target](people-carddav.md#sync-and-publish-selected-people).
+If publication fails, the person remains saved. The command prints its ID and
+reports how to retry publication or review its preview.
+
+API clients use `POST /api/v1/people/create` with `name`, optional `emails` and
+`phones` arrays of `{ "value": "...", "type": "work" }`, and optional `org`,
+`title`, `address`, and `note`. Optional `source` is `user` (the default) or
+`enrichment`. CardDAV publishes an enrichment-created person only after
+[publication review](people-carddav.md#review-inferred-changes-before-they-are-exported). Success returns the person with HTTP 201 and its
+ETag; invalid input returns 400 and an existing contact returns 409. The endpoint
+does not publish. With `if_exists: "return"`, success adds `ensure` and uses
+HTTP 201 for `created` or HTTP 200 for `matched_existing`. Return-mode conflicts
+use HTTP 409 with `person_ambiguous` or `person_matches_participant` and a
+`details` object. Omitting `if_exists` preserves the original response.
+Publish separately through the CardDAV publication API.
+`POST /api/v1/people` continues to promote observed participants.
+
+The MCP `create_person` tool accepts the same creation fields except `source`.
+It requires both MCP writes and profile writes to be enabled, like
+`promote_person`, and is absent from the read-only catalog and from daemons
+older than API schema 5.1.0. It records every value with enrichment
+provenance, like other MCP profile writes, so CardDAV publication requires
+review. It never publishes. The `if_exists` argument appears against daemons
+with API schema 5.2.0 or newer; return-mode conflicts are structured tool errors
+with the same resolution details.
 
 Each saved profile also has a vCard UID. A new profile imported from a subscribed
 CardDAV book adopts the card's UID when it is a UUID that no other profile uses

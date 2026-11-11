@@ -411,7 +411,9 @@ import (
 // registered service labels to current contact points, and identity keys to observations.
 // 4.2.0 adds attachment retrieval modes, coverage, and degradations to media search.
 // 5.0.0 makes file list and suggestion content availability nullable when storage has not been checked.
-const APISchemaVersion = "5.0.0"
+// 5.1.0 adds standalone person creation at POST /api/v1/people/create.
+// 5.2.0 adds if_exists=return and structured match details to person creation.
+const APISchemaVersion = "5.2.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1248,6 +1250,17 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		}
 		for _, propertyName := range []string{"rejected_at", "superseded_at"} {
 			nullableSchemaProperty(brief, propertyName)
+		}
+	}
+	// Creation conflicts carry either ambiguity or participant-promotion data.
+	// Keep that JSON intact instead of generating an empty details struct.
+	if response := schemas["PersonCreateErrorResponse"]; response != nil {
+		if details := response.Properties["details"]; details != nil {
+			if details.Extensions == nil {
+				details.Extensions = map[string]any{}
+			}
+			details.Extensions["x-go-type"] = "jsontext.Value"
+			details.Extensions["x-go-type-import"] = map[string]any{pathKey: "encoding/json/jsontext"}
 		}
 	}
 	nullableSchemaProperty(schemas["PersonBriefEnrollment"], "enabled_at")
