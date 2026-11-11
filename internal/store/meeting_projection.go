@@ -9,12 +9,11 @@ import (
 	"errors"
 	"fmt"
 
-	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/meetingcontent"
 )
 
 const meetingProjectionVersion = 1
-const maxMeetingRawBytes = calevent.MaxRawBytes
+const maxMeetingRawBytes = 64 << 20
 
 var errMeetingRawTooLarge = errors.New("meeting raw exceeds decode limit")
 

@@ -22,9 +22,6 @@ import (
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
-// MaxRawBytes bounds the uncompressed raw event used by calendar readers.
-const MaxRawBytes = 64 << 20
-
 const ICSRangeRecurrence = "RECURRENCE-ID;RANGE=THISANDFUTURE"
 
 // EmailInviteSQL identifies email-derived events; source merges preserve source types.
@@ -116,16 +113,7 @@ func encodeICSEvent(cal *ical.Calendar, zones []*ical.Component, event *ical.Com
 // ParseICS accepts one complete VCALENDAR. A single-event file is retained
 // byte for byte; each event of a larger file keeps its own VEVENT and the
 // shared calendar lines. An unsupported zone rejects the calendar.
-func ParseICS(raw []byte, method, calendarZone string) ([]ICSComponent, error) {
-	return parseICS(raw, method, calendarZone, false)
-}
-
-// ParseEmailICS requires the MIME method to agree with the calendar's METHOD.
-func ParseEmailICS(raw []byte, mimeMethod, calendarZone string) ([]ICSComponent, error) {
-	return parseICS(raw, mimeMethod, calendarZone, true)
-}
-
-func parseICS(raw []byte, method, calendarZone string, strict bool) (out []ICSComponent, err error) {
+func ParseICS(raw []byte, method, calendarZone string) (out []ICSComponent, err error) {
 	defer func() {
 		if recover() != nil {
 			out = nil
@@ -147,15 +135,12 @@ func parseICS(raw []byte, method, calendarZone string, strict bool) (out []ICSCo
 	if _, err := decoder.Decode(); !errors.Is(err, io.EOF) {
 		return nil, errors.New("calendar has trailing content")
 	}
-	method, err = icsMethod(cal, method, strict)
+	method, err = icsMethod(cal, method)
 	if err != nil {
 		return nil, err
 	}
 	switch method {
 	case "REPLY", "ADD", "REFRESH", "COUNTER", "DECLINECOUNTER":
-		if !strict {
-			return nil, fmt.Errorf("unsupported calendar method %q", method)
-		}
 		return nil, nil
 	}
 	calendarZone = cmp.Or(calendarZone, "UTC")
@@ -180,9 +165,6 @@ func parseICS(raw []byte, method, calendarZone string, strict bool) (out []ICSCo
 				return nil, fmt.Errorf("retain VEVENT %d: %w", index+1, err)
 			}
 		}
-		if len(retained) > MaxRawBytes {
-			return nil, fmt.Errorf("VEVENT %d: retained calendar exceeds %d bytes", index+1, MaxRawBytes)
-		}
 		if err := normalizeICSParams(comp.Props, zones); err != nil {
 			return nil, fmt.Errorf("VEVENT %d: %w", index+1, err)
 		}
@@ -196,16 +178,13 @@ func parseICS(raw []byte, method, calendarZone string, strict bool) (out []ICSCo
 	return out, nil
 }
 
-func icsMethod(cal *ical.Calendar, method string, strict bool) (string, error) {
+func icsMethod(cal *ical.Calendar, method string) (string, error) {
 	declared, err := propText(cal.Props, "METHOD")
 	if err != nil {
 		return "", err
 	}
 	declared = strings.ToUpper(strings.TrimSpace(declared))
 	method = strings.ToUpper(strings.TrimSpace(method))
-	if strict && declared != "" && method != "" && declared != method {
-		return "", fmt.Errorf("calendar METHOD %q conflicts with MIME method %q", declared, method)
-	}
 	if declared != "" {
 		method = declared
 	}
@@ -375,12 +354,6 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 		days = 1
 	}
 	if !start.IsZero() {
-		if prop := p.Get("DTSTART"); !allDay && prop != nil && !strings.HasSuffix(prop.Value, "Z") {
-			e.StartLocal = prop.Value
-		}
-		if !allDay && days > 0 {
-			e.DurationDays, e.DurationElapsedNS = days, int64(elapsed)
-		}
 		hasEnd := !end.IsZero() || p.Get("DURATION") != nil || e.Status != "cancelled"
 		if allDay {
 			e.AllDay = true

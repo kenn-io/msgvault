@@ -32,7 +32,7 @@ var calendarEventSelect = `SELECT e.message_id, m.source_id, COALESCE(m.subject,
  m.deleted_from_source_at IS NOT NULL,
  e.provider_event_id, e.series_provider_id, e.kind, e.original_start_at, e.original_start_date,
  e.status, e.all_day, e.start_at, e.end_at, e.start_date, e.end_date,
- e.event_time_zone, e.calendar_time_zone, e.start_local, e.duration_days, e.duration_elapsed_ns, e.recurrence_json
+ e.event_time_zone, e.calendar_time_zone, e.recurrence_json
  ` + calendarEventFrom
 
 var calendarEventFrom = `FROM calendar_events e JOIN messages m ON m.id = e.message_id
@@ -94,7 +94,7 @@ func queryCalendarEventRows(ctx context.Context, r *loggedDB, predicate string, 
 		var originalDate, recurrence string
 		err := result.Scan(&row.MessageID, &row.SourceID, &row.Subject, &row.DeletedFromSource,
 			&e.ProviderEventID, &e.SeriesProviderID, &e.Kind, &original, &originalDate, &e.Status, &e.AllDay,
-			&start, &end, &e.StartDate, &e.EndDate, &e.EventTimeZone, &e.CalendarTimeZone, &e.StartLocal, &e.DurationDays, &e.DurationElapsedNS, &recurrence)
+			&start, &end, &e.StartDate, &e.EndDate, &e.EventTimeZone, &e.CalendarTimeZone, &recurrence)
 		if err != nil {
 			_ = result.Close()
 			return nil, fmt.Errorf("scan calendar event: %w", err)
@@ -257,10 +257,10 @@ func queryCalendarExceptionsInWindow(ctx context.Context, r *loggedDB, dialect D
 	// unrelated series or charging them against the series budget.
 	// Resolve source visibility by message ID so PostgreSQL can use the provider
 	// index first instead of scanning the source's messages for every exception.
-	timedEnd := `julianday(e.original_start_at) + CASE WHEN p.duration_days > 0 THEN p.duration_days * 2 + p.duration_elapsed_ns / 86400000000000.0 ELSE julianday(p.end_at) - julianday(p.start_at) END >= julianday(?)`
+	timedEnd := `julianday(e.original_start_at) + (julianday(p.end_at) - julianday(p.start_at)) >= julianday(?)`
 	dateEnd := `julianday(e.original_start_date) + (julianday(p.end_date) - julianday(p.start_date)) >= julianday(?)`
 	if dialect.DriverName() == postgresDriverName {
-		timedEnd = `e.original_start_at + CASE WHEN p.duration_days > 0 THEN p.duration_days * INTERVAL '2 days' + (p.duration_elapsed_ns / 1000.0) * INTERVAL '1 microsecond' ELSE p.end_at - p.start_at END >= ?`
+		timedEnd = `e.original_start_at + (p.end_at - p.start_at) >= ?`
 		dateEnd = `NULLIF(e.original_start_date, '')::date + (NULLIF(p.end_date, '')::date - NULLIF(p.start_date, '')::date) >= ?::date`
 	}
 	predicate := `e.kind = 'exception' AND (e.recurrence_json LIKE '%RECURRENCE-ID;RANGE=THISANDFUTURE%' OR (e.start_at < ? AND e.end_at >= ?) OR

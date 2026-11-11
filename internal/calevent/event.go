@@ -37,9 +37,6 @@ type Event struct {
 	Start, End                              *time.Time
 	StartDate, EndDate                      string
 	EventTimeZone, CalendarTimeZone         string
-	StartLocal                              string
-	DurationDays                            int
-	DurationElapsedNS                       int64
 	Recurrence                              []string
 	Attendees                               []Attendee
 }

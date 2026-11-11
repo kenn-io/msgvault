@@ -324,7 +324,6 @@ func prepareCalendarRecurrence(e calevent.Event) (calrecur.Set, time.Duration, i
 	if err != nil {
 		return set, 0, 0, err
 	}
-	set.StartLocal = e.StartLocal
 	days := 0
 	if e.AllDay {
 		first, err := time.Parse(time.DateOnly, e.StartDate)
@@ -336,9 +335,6 @@ func prepareCalendarRecurrence(e calevent.Event) (calrecur.Set, time.Duration, i
 			return set, 0, 0, fmt.Errorf("calendar end date: %w", err)
 		}
 		days = int(last.Sub(first) / (24 * time.Hour))
-	}
-	if !e.AllDay && e.DurationDays > 0 {
-		return set, time.Duration(e.DurationElapsedNS), e.DurationDays, nil
 	}
 	return set, e.End.Sub(*e.Start), days, nil
 }

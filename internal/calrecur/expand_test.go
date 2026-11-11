@@ -65,35 +65,6 @@ func TestExpandAllDayCalendarDurationAcrossDST(t *testing.T) {
 	assertions.Equal(instant(t, "2027-03-15T07:00:00Z"), got[0].End.UTC())
 }
 
-func TestExpandTimedCalendarDurationAcrossDST(t *testing.T) {
-	zone, err := time.LoadLocation("America/New_York")
-	require.NoError(t, err)
-	for _, tc := range []struct {
-		name, start, end string
-		duration         time.Duration
-		days             int
-	}{
-		{"spring day", "2027-03-13T14:00:00Z", "2027-03-14T13:00:00Z", 0, 1},
-		{"spring elapsed", "2027-03-13T14:00:00Z", "2027-03-14T14:00:00Z", 24 * time.Hour, 0},
-		{"fall day", "2027-11-06T13:00:00Z", "2027-11-07T14:00:00Z", 0, 1},
-		{"fall elapsed", "2027-11-06T13:00:00Z", "2027-11-07T13:00:00Z", 24 * time.Hour, 0},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			start := instant(t, tc.start)
-			s, err := ParseSet(start, false, "", zone, []string{"RRULE:FREQ=DAILY;COUNT=1"})
-			requirements.NoError(err)
-			got, _, err := Expand(t.Context(), s, tc.duration, tc.days, start.Add(-time.Hour), start.Add(48*time.Hour), 100)
-			requirements.NoError(err)
-			requirements.Len(got, 1)
-			assertions.Equal(instant(t, tc.end), got[0].End.UTC())
-			end, bounded := ConservativeEnd(t.Context(), s, tc.duration, tc.days, 100)
-			requirements.True(bounded)
-			assertions.Equal(instant(t, tc.end), end.UTC())
-		})
-	}
-}
-
 func TestExpandAllDayWindowIncludesFirstMidnightBeforeRollback(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
