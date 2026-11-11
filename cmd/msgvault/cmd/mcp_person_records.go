@@ -130,7 +130,7 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 	if err := json.Unmarshal(encoded, &changes); err != nil {
 		return "", true, err
 	}
-	if input.Patch.Media != nil {
+	if input.Patch.Media != nil && len(input.Patch.Media.Add) > 0 {
 		patch := changes["patch"].(map[string]any)
 		media := patch["media"].(map[string]any)
 		adds, _ := media["add"].([]any)

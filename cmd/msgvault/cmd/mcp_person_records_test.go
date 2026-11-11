@@ -138,6 +138,9 @@ func TestPersonRecordCapabilitiesAndRefusals(t *testing.T) {
 	result, err := backend.ExecuteOperation(t.Context(), "get_person_record", map[string]any{"person_id": id})
 	require.NoError(t, err)
 	record := operationOutput[mcpserver.StructuredPersonRecord](t, result)
+	disclosure, err := backend.OperationDisclosure(t.Context(), "patch_person_record", map[string]any{"person_id": id, "etag": record.ETag, "patch": map[string]any{"media": map[string]any{}}})
+	require.NoError(t, err)
+	assert.NotEmpty(t, disclosure)
 	invalid := map[string]any{"person_id": id, "etag": record.ETag, "patch": map[string]any{
 		"names":      map[string]any{"add": []any{map[string]any{"name_kind": "formatted", "formatted": "Valid Name", "envelope": map[string]any{"source": "user"}}}},
 		"categories": map[string]any{"add": []any{map[string]any{"original_value": "Friends", "envelope": map[string]any{"source": "invalid"}}}},
