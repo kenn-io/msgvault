@@ -5618,14 +5618,14 @@ outgoing draft identities:
 
 ```bash
 msgvault agent-token issue --label code-reader \
-  --permissions message.read,verification.read,message.archive --source-ids 1 \
+  --permissions search.read,message.read,verification.read,message.archive --source-ids 1 \
   --incoming-sender 1=codes@example.test --expires 24h
 ```
 
 Repeat `--incoming-sender SOURCE_ID=ADDRESS` for additional allowed addresses.
-Requires daemon API schema 5.1.0; older daemons reject issuance with restrictions.
+Requires daemon API schema 5.1.0. The bundled client rejects issuance with restrictions against older daemons; older daemons ignore the field in raw API requests.
 Omitting the flag allows reads and archiving from any sender on the selected sources.
-The restriction applies to reads, reply parents, and archive writes. The separate `--sender` flag still selects
+The restriction matches recorded From addresses and does not authenticate the sender. It applies to reads, reply parents, and archive writes. The separate `--sender` flag still selects
 confirmed outgoing draft identities. See the [archive API](api-server.md#message-archiving)
 for validation and missing From-envelope behavior.
 

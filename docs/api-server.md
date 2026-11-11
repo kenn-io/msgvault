@@ -460,6 +460,8 @@ or invalid From targets return `404 message_not_found`, matching wrong-source
 targets. A token without `message.archive` receives `403 permission_denied`
 before the message lookup.
 
+Raw API callers must check that `/api/v1/health` reports `api_schema_version` 5.1.0 or newer before issuing `incoming_senders`: older daemons ignore this field and issue an unrestricted grant.
+
 Gmail writes require `gmail.modify` or `mail.google.com`. Missing consent returns
 403 `insufficient_scope`; reauthorize with `msgvault add-account <account> --force`.
 Readback failures return `remote_unknown`, mismatches return

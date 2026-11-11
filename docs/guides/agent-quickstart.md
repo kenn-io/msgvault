@@ -45,6 +45,7 @@ Choose the connection the owner has authorized:
   require daemon API schema 3.9.0 or newer. The owner can set an expiry and
   select permissions and sources when [issuing a grant](../cli-reference.md#agent-token-issue).
   Withholding detected verification content from delegated reads requires daemon API schema 3.49.0 or newer. The `verification.read` modifier allows that content and grants no reads alone. See [detection rules and limits](../api-server.md#verification-content).
+  Incoming-sender restrictions match recorded From addresses; they do not authenticate senders. See [message archiving](../api-server.md#message-archiving) for the schema requirement.
 
 Use the client's MCP `tools/list` capability to discover the tools and input
 schemas available in this session. Availability depends on the daemon version,

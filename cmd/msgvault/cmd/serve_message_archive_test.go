@@ -471,12 +471,13 @@ func TestArchivePreviewAuthorizesResolvedSourceDuringMerge(t *testing.T) {
 func TestArchiveCodeReaderGrant(t *testing.T) {
 	st, source, id, _, serverURL, owner, _ := newArchiveDaemon(t)
 	require.NoError(t, st.UpsertMessageBodyContext(t.Context(), id, sql.NullString{String: "Your code is 482913", Valid: true}, sql.NullString{}))
+	require.NoError(t, st.UpsertFTSContext(t.Context(), id, "", "Your code is 482913", "codes@example.test", "", ""))
 	for _, tc := range []struct {
 		name        string
 		permissions []string
 		wantCode    bool
 	}{
-		{"documented grant", []string{"message.read", "verification.read", "message.archive"}, true},
+		{"documented grant", []string{"search.read", "message.read", "verification.read", "message.archive"}, true},
 		{"masked", []string{"message.read", "message.archive"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -484,6 +485,18 @@ func TestArchiveCodeReaderGrant(t *testing.T) {
 			requirementsForTest := require.New(t)
 			token, err := owner.IssueAgentToken(t.Context(), tc.name, tc.permissions, []int64{source.ID}, nil, map[int64][]string{source.ID: {"codes@example.test"}}, time.Time{})
 			requirementsForTest.NoError(err)
+			if tc.name == "documented grant" {
+				searchRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, serverURL+"/api/v1/cli/search?q=code", nil)
+				requirementsForTest.NoError(err)
+				searchRequest.Header.Set(apiprotocol.AgentTokenHeader, token.Secret)
+				searchResponse, err := http.DefaultClient.Do(searchRequest)
+				requirementsForTest.NoError(err)
+				defer func() { _ = searchResponse.Body.Close() }()
+				searchBody, err := io.ReadAll(searchResponse.Body)
+				requirementsForTest.NoError(err)
+				requirementsForTest.Equal(http.StatusOK, searchResponse.StatusCode, string(searchBody))
+				assertionsForTest.Contains(string(searchBody), fmt.Sprintf(`"id":%d`, id))
+			}
 			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("%s/api/v1/messages/%d", serverURL, id), nil)
 			requirementsForTest.NoError(err)
 			req.Header.Set(apiprotocol.AgentTokenHeader, token.Secret)
