@@ -860,3 +860,18 @@ func TestXSyncSummaryUsesCanonicalRefreshHint(t *testing.T) {
 	_testAssert.Contains(summary, "Resume this job with --job-id and an explicit --max-spend")
 	_testAssert.NotContains(summary, "Resolve the reported provider, credential or coverage error")
 }
+
+func TestXArchiveSummaryUsesHumanProgress(t *testing.T) {
+	checks := assert.New(t)
+	summary := xSyncSummaryText(&xapi.ImportSummary{
+		Mode: "archive", SourceID: 42, Code: "page_batch_limit",
+		OwnComplete: true, MentionsComplete: false, OwnWatermark: "private-own-cursor", MentionsWatermark: "private-mention-cursor",
+		Archive: &xapi.ArchiveSummary{JobID: "job-1"},
+	})
+	checks.Contains(summary, "Live posts complete: true")
+	checks.Contains(summary, "Live mentions complete: false")
+	checks.Contains(summary, "Page batch limit reached; run again to continue.")
+	checks.NotContains(summary, "Live own")
+	checks.NotContains(summary, "private-own-cursor")
+	checks.NotContains(summary, "private-mention-cursor")
+}

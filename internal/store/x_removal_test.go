@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"database/sql"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -247,6 +248,15 @@ func TestMarkXRemovalPendingPreservesContentAndRecovery(t *testing.T) {
 	profile := store.XAuthorProfileRemovalWork{SourceID: source, ObservationID: observation, AuthorID: "1002"}
 	needs.NoError(st.MarkXRemovalPendingContext(t.Context(), posts, []store.XAuthorProfileRemovalWork{profile}))
 	needs.NoError(st.MarkXRemovalPendingContext(t.Context(), posts, []store.XAuthorProfileRemovalWork{profile}))
+	var tokens string
+	needs.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT type_tokens FROM participant_contact_observations WHERE id=?`), observation).Scan(&tokens))
+	var pendingTokens int
+	for _, token := range strings.Split(tokens, ",") {
+		if token == "x_author_profile_cleanup_pending" {
+			pendingTokens++
+		}
+	}
+	checks.Equal(1, pendingTokens)
 	var pending int
 	var suppressed sql.NullTime
 	var reason string
@@ -283,4 +293,32 @@ func TestMarkXRemovalPendingPreservesContentAndRecovery(t *testing.T) {
 	checks.True(blocked)
 	scoped := st.ScopedToSync(source+1, 1)
 	needs.Error(scoped.MarkXRemovalPendingContext(t.Context(), posts, nil))
+}
+
+func TestMarkXRemovalPendingReplacesCompletedReasonForRecovery(t *testing.T) {
+	needs := require.New(t)
+	checks := assert.New(t)
+	st, source := xPostFixture(t)
+	_, err := st.PersistXPostContext(t.Context(), xPostInput(source, "100", "100", "synthetic post"))
+	needs.NoError(err)
+	execution, err := st.AcquireSyncExecutionContext(t.Context(), source)
+	needs.NoError(err)
+	defer func() { assert.NoError(t, execution.Release()) }()
+	work, err := st.RemoveXPostContentContext(t.Context(), source, "100", "deleted")
+	needs.NoError(err)
+	work.DerivedComplete = true
+	needs.NoError(st.FinishXRemovalContext(t.Context(), source, work))
+	needs.NoError(st.MarkXRemovalPendingContext(t.Context(), []store.XRemovalWork{{SourceID: source, CanonicalID: "100", Reason: "removed"}}, nil))
+	pending, err := st.PendingXRemovalsContext(t.Context(), source)
+	needs.NoError(err)
+	needs.Len(pending, 1)
+	checks.Equal("removed", pending[0].Reason)
+	// Resume replays the reason durably admitted before waiting for cleanup.
+	work, err = st.RemoveXPostContentContext(t.Context(), source, pending[0].CanonicalID, pending[0].Reason)
+	needs.NoError(err)
+	work.DerivedComplete = true
+	needs.NoError(st.FinishXRemovalContext(t.Context(), source, work))
+	target, err := st.ResolveXPostContext(t.Context(), source, "100")
+	needs.NoError(err)
+	checks.Equal("removed", target.Availability)
 }

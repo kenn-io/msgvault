@@ -105,6 +105,6 @@ func (s *Store) markXAuthorProfileCleanupTx(ctx context.Context, tx *loggedTx, o
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(type_tokens,'') FROM participant_contact_observations WHERE id=?`, observationID).Scan(&tokens); err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE participant_contact_observations SET type_tokens=? WHERE id=?`, joinTypeTokens(append(strings.Split(tokens, ","), xAuthorProfilePending)), observationID)
+	_, err = tx.ExecContext(ctx, `UPDATE participant_contact_observations SET type_tokens=? WHERE id=?`, joinTypeTokens(appendXAuthorProfilePendingToken(strings.Split(tokens, ","))), observationID)
 	return err
 }

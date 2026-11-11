@@ -1,4 +1,4 @@
-Add and sync provider sources. Provider setup and collection commands live under source <provider>.
+Add and sync provider sources.
 
 Usage:
   msgvault source [command]

@@ -298,7 +298,7 @@ func xSyncSummaryText(s *xapi.ImportSummary) string {
 	if s.Archive == nil {
 		fmt.Fprintf(&out, "  own_complete: %t\n  own_watermark: %s\n  mentions_complete: %t\n  mentions_watermark: %s\n  history_gap_possible: %t\n", s.OwnComplete, s.OwnWatermark, s.MentionsComplete, s.MentionsWatermark, s.HistoryGapPossible)
 	} else {
-		fmt.Fprintf(&out, "  Live own complete: %t\n  Live own watermark: %s\n  Live mentions complete: %t\n  Live mentions watermark: %s\n", s.OwnComplete, s.OwnWatermark, s.MentionsComplete, s.MentionsWatermark)
+		fmt.Fprintf(&out, "  Live posts complete: %t\n  Live mentions complete: %t\n", s.OwnComplete, s.MentionsComplete)
 	}
 	fmt.Fprintf(&out, "  Run estimated: USD %s\n  Run unsettled reserved: USD %s\n", xUSDMicros(s.RunEstimatedMicros), xUSDMicros(s.RunReservedMicros))
 	fmt.Fprintf(&out, "  Month-to-date estimated: USD %s\n  Month-to-date unsettled reserved: USD %s\n", xUSDMicros(s.EstimatedMicros), xUSDMicros(s.ReservedMicros))
@@ -349,7 +349,7 @@ func writeXArchiveSummary(out *strings.Builder, a *xapi.ArchiveSummary, code str
 		if code == "budget_exhausted" {
 			fmt.Fprintln(out, "Budget stop: review the monthly budget or explicitly raise this job's lifetime cap before retrying.")
 		} else if code == "page_batch_limit" {
-			fmt.Fprintln(out, "Page batch limit reached; the next run continues from the saved cursor.")
+			fmt.Fprintln(out, "Page batch limit reached; run again to continue.")
 		} else if code != "refresh_required" {
 			fmt.Fprintln(out, "Resolve the reported provider, credential or coverage error before retrying; unsettled requests remain reserved.")
 		}

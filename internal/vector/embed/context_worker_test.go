@@ -2822,22 +2822,36 @@ func TestContextWorkerContentGuardCoversProviderResponse(t *testing.T) {
 }
 
 func TestContextWorkerRecordsContentGuardReleaseFailure(t *testing.T) {
-	needs := require.New(t)
-	checks := assert.New(t)
-	sentinel := errors.New("synthetic lease release failure")
-	recorder := newTestOperationRecorder()
-	f := newContextWorkerFixture(t, func(deps *ContextWorkerDeps) {
-		deps.Recorder = recorder
-		deps.ContentReadGuard = func(ctx context.Context) (context.Context, func() error, error) {
-			return ctx, func() error { return sentinel }, nil
-		}
-	})
-	scope := testEmbeddingPassScope()
-	_, err := f.worker.RunOnce(t.Context(), f.gen, scope)
-	needs.ErrorIs(err, sentinel)
-	invocation, found := recorder.invocation(scope.Key)
-	needs.True(found)
-	needs.NotNil(invocation.run)
-	checks.Equal(operations.StateFailed, invocation.run.State)
-	checks.NotNil(invocation.run.Error)
+	for _, cause := range []string{"cancel", "retire"} {
+		t.Run(cause, func(t *testing.T) {
+			needs := require.New(t)
+			checks := assert.New(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			t.Cleanup(cancel)
+			sentinel := errors.New("synthetic lease release failure")
+			f := newContextWorkerFixture(t, func(deps *ContextWorkerDeps) {
+				deps.ContentReadGuard = func(ctx context.Context) (context.Context, func() error, error) {
+					return ctx, func() error { return sentinel }, nil
+				}
+			})
+			f.deps.Recorder = f.store
+			f.restartWorker()
+			f.client.before = func() {
+				if cause == "cancel" {
+					cancel()
+				} else {
+					needs.NoError(f.backend.RetireGeneration(t.Context(), f.gen, false))
+				}
+			}
+			f.seed("x", f.chatID, time.Now().UTC(), "synthetic X post")
+			_, err := f.worker.RunOnce(ctx, f.gen, testEmbeddingPassScope())
+			needs.ErrorIs(err, sentinel)
+			checks.ErrorIs(err, context.Canceled)
+			runs := messageEmbeddingOperationRuns(t, f.store)
+			needs.Len(runs, 1)
+			needs.NotNil(runs[0].Error)
+			checks.NotEqual(operations.StateCancelled, runs[0].State)
+			checks.Equal(operations.PublicErrorInvocationUpstreamFailed, runs[0].Error.Code)
+		})
+	}
 }

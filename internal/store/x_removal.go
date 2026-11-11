@@ -64,7 +64,9 @@ func (s *Store) MarkXRemovalPendingContext(ctx context.Context, posts []XRemoval
 			if err := requireSourceWritableWith(boundQuerier{ctx: ctx, q: tx}, post.SourceID); err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE x_post_versions SET cleanup_pending=1, suppression_reason=COALESCE(suppression_reason,?) WHERE source_id=? AND canonical_id=?`, post.Reason, post.SourceID, post.CanonicalID); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE x_post_versions SET cleanup_pending=1,
+ suppression_reason=CASE WHEN cleanup_pending=1 THEN COALESCE(suppression_reason,?) ELSE ? END
+ WHERE source_id=? AND canonical_id=?`, post.Reason, post.Reason, post.SourceID, post.CanonicalID); err != nil {
 				return err
 			}
 		}

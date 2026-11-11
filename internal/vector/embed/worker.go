@@ -368,15 +368,23 @@ func (w *Worker) runOperationPass(
 	diagnostics := passDiagnostics(ctx, w.deps.Diagnostics, w.deps.Log, gen, w.deps.Backend, pass)
 	ctx = withEmbeddingDiagnostics(ctx, diagnostics)
 	defer func() {
+		retErr = operationRunError(retErr)
+		statusErr := retErr
+		statusCtx := ctx
 		if releaseGuard != nil {
-			retErr = errors.Join(retErr, releaseGuard())
+			releaseErr := releaseGuard()
+			retErr = errors.Join(retErr, releaseErr)
+			if releaseErr != nil {
+				statusErr = releaseErr
+				// Record the release failure even if the caller cancelled the pass.
+				statusCtx = context.WithoutCancel(ctx)
+			}
 			releaseGuard = nil
 		}
-		retErr = operationRunError(retErr)
 		// Finish the snapshot while the run is still active, so status never
 		// sees a closed run with an unfinished snapshot.
 		diagnostics.finish(retErr)
-		pass.finish(ctx, outcomes.counters(true), retErr)
+		pass.finish(statusCtx, outcomes.counters(true), statusErr)
 	}()
 	return w.run(ctx, gen, backstop, outcomes)
 }

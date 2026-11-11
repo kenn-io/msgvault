@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/operations"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -27,22 +28,37 @@ type upsertFailingBackend struct {
 }
 
 func TestWorkerRecordsContentGuardReleaseFailure(t *testing.T) {
-	needs := require.New(t)
-	checks := assert.New(t)
-	f := newWorkerFixture(t, 0)
-	w := newRetainingWorker(f, f.Backend, 1)
-	sentinel := errors.New("synthetic lease release failure")
-	w.deps.ContentReadGuard = func(ctx context.Context) (context.Context, func() error, error) {
-		return ctx, func() error { return sentinel }, nil
+	for _, cause := range []string{"cancel", "retire"} {
+		t.Run(cause, func(t *testing.T) {
+			needs := require.New(t)
+			checks := assert.New(t)
+			f := newWorkerFixture(t, 1)
+			w := newRetainingWorker(f, f.Backend, 1)
+			recorder := testutil.NewTestStore(t)
+			w.deps.Recorder = recorder
+			ctx, cancel := context.WithCancel(t.Context())
+			t.Cleanup(cancel)
+			sentinel := errors.New("synthetic lease release failure")
+			f.FakeClient.preReturn = func() {
+				if cause == "cancel" {
+					cancel()
+				} else {
+					needs.NoError(f.Backend.RetireGeneration(t.Context(), f.BuildingGen, false))
+				}
+			}
+			w.deps.ContentReadGuard = func(ctx context.Context) (context.Context, func() error, error) {
+				return ctx, func() error { return sentinel }, nil
+			}
+			_, err := w.RunOnce(ctx, f.BuildingGen, testEmbeddingPassScope())
+			needs.ErrorIs(err, sentinel)
+			checks.ErrorIs(err, context.Canceled)
+			runs := messageEmbeddingOperationRuns(t, recorder)
+			needs.Len(runs, 1)
+			needs.NotNil(runs[0].Error)
+			checks.NotEqual(operations.StateCancelled, runs[0].State)
+			checks.Equal(operations.PublicErrorInvocationUpstreamFailed, runs[0].Error.Code)
+		})
 	}
-	scope := testEmbeddingPassScope()
-	_, err := w.RunOnce(t.Context(), f.BuildingGen, scope)
-	needs.ErrorIs(err, sentinel)
-	invocation, found := f.Recorder.invocation(scope.Key)
-	needs.True(found)
-	needs.NotNil(invocation.run)
-	checks.Equal(operations.StateFailed, invocation.run.State)
-	checks.NotNil(invocation.run.Error)
 }
 
 func (b *upsertFailingBackend) Upsert(ctx context.Context, gen vector.GenerationID, chunks []vector.Chunk) error {

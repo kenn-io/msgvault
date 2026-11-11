@@ -22,7 +22,7 @@ func ensureXCLICommandGroups(root *cobra.Command) {
 	xSource := ensureCLIGroup(source, "x", "Authorize and sync X archive sources")
 	draft := ensureCLIGroup(root, "draft", "Create and manage provider drafts")
 	message := ensureCLIGroup(root, "message", "Manage archived messages")
-	setCLIGroupHelp(source, `Add and sync provider sources. Provider setup and collection commands live under source <provider>.`, "  msgvault source x --help")
+	setCLIGroupHelp(source, `Add and sync provider sources.`, "  msgvault source x --help")
 	setCLIGroupHelp(xSource, `Authorize an X account, collect its own posts and returned public replies, and run local X maintenance. Ordinary sync performs due content refresh before collection; local removal and removal-record export are options on source x sync. Snapshot recovery uses the generic msgvault backup restore command with the current X removal record and head. Collection and sends use the selected daemon's X source.`, `  msgvault source x add --help
   msgvault source x sync --source-id 42
   msgvault source x sync --source-id 42 --remove-post 123

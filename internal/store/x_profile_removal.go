@@ -36,6 +36,13 @@ type XAuthorProfileRemovalWork struct {
 	DerivedComplete         bool
 }
 
+func appendXAuthorProfilePendingToken(tokens []string) []string {
+	if slices.Contains(tokens, xAuthorProfilePending) {
+		return tokens
+	}
+	return append(tokens, xAuthorProfilePending)
+}
+
 func (s *Store) addXAuthorProfilePendingTokenTx(ctx context.Context, tx *loggedTx, input XAuthorProfileRemovalWork) error {
 	anchor := beeperidentity.ProviderIdentityKey("x", "service", "", input.AuthorID)
 	var tokens string
@@ -43,10 +50,7 @@ func (s *Store) addXAuthorProfilePendingTokenTx(ctx context.Context, tx *loggedT
  WHERE id=? AND source_id=? AND provider_user_id=? AND address_kind='provider_identity' AND source='archive_observation'`, input.ObservationID, input.SourceID, anchor).Scan(&tokens); err != nil {
 		return err
 	}
-	values := strings.Split(tokens, ",")
-	if !slices.Contains(values, xAuthorProfilePending) {
-		values = append(values, xAuthorProfilePending)
-	}
+	values := appendXAuthorProfilePendingToken(strings.Split(tokens, ","))
 	_, err := tx.ExecContext(ctx, `UPDATE participant_contact_observations SET type_tokens=? WHERE id=?`, joinTypeTokens(values), input.ObservationID)
 	return err
 }
