@@ -362,7 +362,7 @@ func (w *Worker) runBriefCall(
 		}
 		rendered, err := renderBriefResult(parsed, window, w.now())
 		if err != nil {
-			return FailureInvalidOutput, nil
+			return FailureInvalidOutput, nil //nolint:nilerr // An empty brief is a recorded outcome, not an attempt failure.
 		}
 		result = &rendered
 		return "", nil
