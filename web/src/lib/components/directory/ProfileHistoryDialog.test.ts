@@ -86,6 +86,25 @@ describe('ProfileHistoryDialog', () => {
     expect(screen.getByText(/Original: Old street, Room;3/)).toBeDefined();
   });
 
+  it('shows distinct source text for earlier addresses without repeating legacy ADR text', async () => {
+    const client = createAPIClient(async input => {
+      const path = new URL((input instanceof Request ? input : new Request(input)).url).pathname;
+      if (path.endsWith('/merges')) return Response.json({ merges: [] });
+      return Response.json({ ...emptyProfile(person()), observations: [], addresses: [
+        { person_id: 7, address_kind: 'postal', original_value: '12 Main St Apt 4B, Town', street_address: '14 Oak Ave', envelope: { ...currentEnvelope, id: 41, superseded_at: when }, assessment: { original: { address_kind: 'postal', street_address: '12 Main St', locality: 'Town', original_value: '12 Main St Apt 4B, Town' }, original_extended_parts: [], proposed_extended_parts: [] } },
+        { person_id: 7, address_kind: 'postal', original_value: ';;12 Main St;Town;;;', street_address: '12 Main St', locality: 'Town', envelope: { ...currentEnvelope, id: 42, superseded_at: when }, assessment: { original: { address_kind: 'postal', street_address: '12 Main St', locality: 'Town', original_value: ';;12 Main St;Town;;;' }, original_extended_parts: [], proposed_extended_parts: [] } },
+        { person_id: 7, address_kind: 'postal', original_value: 'Unit 1', street_address: 'Unit 12', envelope: { ...currentEnvelope, id: 43, superseded_at: when }, assessment: { original: { address_kind: 'postal', street_address: 'Unit 12', original_value: 'Unit 1' }, original_extended_parts: [], proposed_extended_parts: [] } },
+      ] });
+    });
+    render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn() });
+    const corrected = (await screen.findByText('14 Oak Ave')).closest('.detail-row')!;
+    expect(within(corrected).getByText(/12 Main St Apt 4B, Town/)).toBeDefined();
+    const legacy = screen.getByText('12 Main St, Town').closest('.detail-row')!;
+    expect(legacy.textContent).not.toContain('Original:');
+    const unit = screen.getByText('Unit 12').closest('.detail-row')!;
+    expect(within(unit).getByText(/Original: Unit 1/)).toBeDefined();
+  });
+
   it('preserves structured provenance and classifies every closed value as earlier', async () => {
     const requests: Request[] = [];
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
