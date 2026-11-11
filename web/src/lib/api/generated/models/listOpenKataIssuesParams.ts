@@ -4,7 +4,7 @@
 
 export type ListOpenKataIssuesParams = {
   /**
-   * Search open issues by whole word or resolve a ref, up to 256 bytes
+   * Search open issues by whole word, up to 256 bytes
    */
   q?: string;
 };

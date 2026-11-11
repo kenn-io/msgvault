@@ -282,31 +282,6 @@ func (s *Service) Citing(ctx context.Context, keys []string, limit int) ([]taskc
 	return issues, incomplete, nil
 }
 
-// Lookup searches for an exact reference only within the configured project.
-func (s *Service) Lookup(ctx context.Context, ref string) (taskclient.KataTask, bool, error) {
-	project, id, err := s.splitRef(ref)
-	if err != nil || project != s.Project || !validIssueRef(id) {
-		return taskclient.KataTask{}, false, nil //nolint:nilerr // Invalid references are search misses.
-	}
-	issue, err := s.Kata.GetTask(ctx, project, id)
-	if errors.Is(err, taskclient.ErrNotFound) || errors.Is(err, taskclient.ErrInvalidRef) || errors.Is(err, taskclient.ErrWrongProject) {
-		return taskclient.KataTask{}, false, nil
-	}
-	return issue, err == nil, err
-}
-
-func validIssueRef(id string) bool {
-	if len(id) < 4 || len(id) > 26 {
-		return false
-	}
-	for _, c := range strings.ToLower(id) {
-		if !strings.ContainsRune("0123456789abcdefghjkmnpqrstvwxyz", c) {
-			return false
-		}
-	}
-	return true
-}
-
 // splitRef returns the project and issue a ref names. A qualified ref names
 // its project, such as an issue moved after filing; Kata decides whether the
 // caller may reach it.

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -109,7 +108,7 @@ func (s *Server) registerKataIssueRoutes(api huma.API) {
 	registerRawHumaRoute(api, create, s.handleCreateKataIssue)
 
 	search := rawAPIV1Operation("listOpenKataIssues", http.MethodGet, "/integrations/kata/open-issues", "List or search Kata issues in the configured project")
-	search.Parameters = append(search.Parameters, queryStringParam("q", "Search open issues by whole word or resolve a ref, up to 256 bytes", false))
+	search.Parameters = append(search.Parameters, queryStringParam("q", "Search open issues by whole word, up to 256 bytes", false))
 	search.Responses = jsonResponsesFor[KataIssueListResponse](api)
 	addErrorResponses(api, search.Responses, http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound, http.StatusUnprocessableEntity, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, search, s.handleListOpenKataIssues)
@@ -431,16 +430,5 @@ func (b *kataIssueBackend) Open(ctx context.Context, query string) ([]taskclient
 	if query == "" {
 		return client.OpenIssues(ctx, project, 25)
 	}
-	service := &kataissues.Service{Kata: client, Project: project}
-	issue, found, err := service.Lookup(ctx, query)
-	if err != nil {
-		return nil, false, err
-	}
-	matches, truncated, err := client.SearchOpenIssues(ctx, project, query, 25)
-	if err != nil || !found {
-		return matches, truncated, err
-	}
-	matches = slices.DeleteFunc(matches, func(match taskclient.KataTask) bool { return match.UID == issue.UID })
-	matches = append([]taskclient.KataTask{issue}, matches...)
-	return matches[:min(len(matches), 25)], truncated || len(matches) > 25, nil
+	return client.SearchOpenIssues(ctx, project, query, 25)
 }

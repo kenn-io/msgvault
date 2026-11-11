@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -264,7 +263,7 @@ func TestListOpenKataIssues(t *testing.T) {
 	assert.Contains(recorder.Body.String(), "kata_unavailable")
 }
 
-func TestKataIssueBackendOpenCombinesRefAndTitle(t *testing.T) {
+func TestKataIssueBackendOpenListsAndSearches(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
@@ -274,42 +273,19 @@ func TestKataIssueBackendOpenCombinesRefAndTitle(t *testing.T) {
 	cfg := config.TaskIntegrationConfig{Enabled: true, Endpoint: server.URL, APIKey: katatest.Token, DefaultProject: katatest.Project}
 	client, err := connectKata(t.Context(), cfg)
 	require.NoError(err)
-	exact, err := client.CreateTask(t.Context(), katatest.Project, "exact", taskclient.KataCreate{Title: "First issue"})
+	older, err := client.CreateTask(t.Context(), katatest.Project, "older", taskclient.KataCreate{Title: "Review winter budget"})
 	require.NoError(err)
-	matching, err := client.CreateTask(t.Context(), katatest.Project, "matching", taskclient.KataCreate{Title: "Review " + exact.Ref})
+	newer, err := client.CreateTask(t.Context(), katatest.Project, "newer", taskclient.KataCreate{Title: "Plan spring"})
 	require.NoError(err)
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodPatch, fmt.Sprintf("%s/api/v1/projects/%d/issues/%s", server.URL, native.ProjectID, exact.UID), strings.NewReader(`{"actor":"msgvault","title":"Review `+exact.Ref+`"}`))
-	require.NoError(err)
-	request.Header.Set("Authorization", "Bearer "+katatest.Token)
-	request.Header.Set("Content-Type", "application/json")
-	response, err := server.Client().Do(request)
-	require.NoError(err)
-	body, err := io.ReadAll(response.Body)
-	require.NoError(err)
-	require.NoError(response.Body.Close())
-	require.Equal(http.StatusOK, response.StatusCode, string(body))
-	matches, _, err := client.SearchOpenIssues(t.Context(), katatest.Project, exact.Ref, 25)
-	require.NoError(err)
-	require.Len(matches, 2)
-	assert.ElementsMatch([]string{exact.UID, matching.UID}, []string{matches[0].UID, matches[1].UID})
 	backend := &kataIssueBackend{config: cfg}
-	issues, truncated, err := backend.Open(t.Context(), exact.Ref)
+	issues, truncated, err := backend.Open(t.Context(), "")
 	require.NoError(err)
 	assert.False(truncated)
 	require.Len(issues, 2)
-	assert.Equal(exact.UID, issues[0].UID)
-	assert.Equal(matching.UID, issues[1].UID)
-	native.Endpoint(server).CloseIssue(t, exact.UID)
-	for i := range 24 {
-		_, err = client.CreateTask(t.Context(), katatest.Project, fmt.Sprintf("match-%d", i), taskclient.KataCreate{Title: "Review " + exact.Ref})
-		require.NoError(err)
-	}
-	issues, truncated, err = backend.Open(t.Context(), exact.Ref)
+	assert.Equal(newer.UID, issues[0].UID)
+	issues, truncated, err = backend.Open(t.Context(), "winter")
 	require.NoError(err)
-	assert.True(truncated)
-	require.Len(issues, 25)
-	assert.Equal(exact.UID, issues[0].UID)
-	for _, match := range issues[1:] {
-		assert.NotEqual(exact.UID, match.UID)
-	}
+	assert.False(truncated)
+	require.Len(issues, 1)
+	assert.Equal(older.UID, issues[0].UID)
 }

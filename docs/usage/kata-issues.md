@@ -38,7 +38,7 @@ handle a person:
 3. If Kata's own MCP server is connected, use its `kata.search` tool for
    person or topic searches. Search closed issues too: a completed task may
    hold the answer. Configuring `[integrations.kata]` in msgvault does not
-   connect that separate MCP server. The Web UI searches open issues by whole word and resolves issue refs.
+   connect that separate MCP server. The Web UI searches open issues by whole word.
 4. If the available context does not answer the question, ask the owner once.
    With explicit user intent, record the answer in a Kata issue or comment
    through Kata itself. Msgvault's Kata write tools create issues from
@@ -77,8 +77,8 @@ preview is exactly what the issue quotes. To quote less, select part of the
 passage and choose **Quote selection**; **Whole passage** goes back.
 
 Choose **Existing** to list the 25 most recently updated open issues in the configured project.
-Search by whole word or enter a ref, pick an issue, and choose **Add quote**.
-Refs can also find closed issues. The passage appears there as a comment that quotes it.
+Search by whole word, pick an issue, and choose **Add quote**.
+The passage appears there as a comment that quotes it.
 
 ## From the CLI or an agent
 
