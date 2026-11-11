@@ -35,7 +35,8 @@ func TestOperationalCatalogUsesFixedNamesAndWriteGates(t *testing.T) {
 	assertions.NotContains(toolsByName(t, rawListTools(t, opts, false)), "sync_source")
 	opts.DelegatedOnly = true
 	delegatedTools := toolsByName(t, rawListTools(t, opts, true))
-	assertions.NotContains(delegatedTools, "sync_source")
+	assertions.Len(delegatedTools, 1)
+	assertions.Contains(delegatedTools, ToolSearchTools)
 }
 
 func TestOperationalCatalogSchemaRootsAreStable(t *testing.T) {

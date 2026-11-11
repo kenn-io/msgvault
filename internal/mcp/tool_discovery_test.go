@@ -198,14 +198,7 @@ func TestToolDiscoveryInputLimits(t *testing.T) {
 		response := searchToolsResponse(t, ServeOptions{}, false, query, 1)
 		assertions.Equal(query, response.Query)
 	}
-	response := searchToolsResponse(t, ServeOptions{}, false, "zzzzzzunmatched", 0)
-	assertions.Empty(response.Results)
-	assertions.NotNil(response.Results)
-	assertions.False(response.Truncated)
-	response = searchToolsResponse(t, ServeOptions{}, false, "message", 1)
-	assertions.Len(response.Results, 1)
-	assertions.True(response.Truncated)
-	response = searchToolsResponse(t, ServeOptions{}, false, "message", 0)
+	response := searchToolsResponse(t, ServeOptions{}, false, "message", 0)
 	assertions.Len(response.Results, 5)
 }
 
@@ -238,6 +231,21 @@ func TestToolDiscoveryFullMetadataAndStableOrdering(t *testing.T) {
 	again, err := discoverTools(definitions, "fixture", 20)
 	must.NoError(err)
 	assertions.JSONEq(string(result.structuredContent), string(again.structuredContent))
+	for _, tc := range []struct {
+		query        string
+		limit, count int
+		truncated    bool
+	}{
+		{"zzzzzzunmatched", 20, 0, false}, {"fixture", 1, 1, true},
+	} {
+		result, err := discoverTools(definitions, tc.query, tc.limit)
+		must.NoError(err)
+		var response toolDiscoveryResponse
+		must.NoError(json.Unmarshal(result.structuredContent, &response))
+		assertions.NotNil(response.Results)
+		assertions.Len(response.Results, tc.count)
+		assertions.Equal(tc.truncated, response.Truncated)
+	}
 }
 
 func TestToolDiscoveryUnionTypes(t *testing.T) {

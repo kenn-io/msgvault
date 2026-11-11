@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 
@@ -265,8 +267,7 @@ func TestDraftToolCatalogFollowsCommandsAndWriteClass(t *testing.T) {
 	opts.DelegatedOnly = true
 	opts.DraftCommands = []string{"draft-reply", "draft-compose", "draft-get", "draft-edit", "draft-delete", "draft-recover"}
 	tools := rawListTools(t, opts, true)
-	assert.Len(tools, 7)
-	assert.NotContains(toolsByName(t, tools), ToolGetStats)
+	assert.Equal([]string{"draft_compose", "draft_delete", "draft_edit", "draft_get", "draft_recover", "draft_reply", ToolSearchTools}, slices.Sorted(maps.Keys(toolsByName(t, tools))))
 	response := rawModernCall(t, opts, HTTPOptions{AllowWrites: true}, "resources/templates/list", nil)
 	assert.Empty(response.Result["resourceTemplates"])
 }
