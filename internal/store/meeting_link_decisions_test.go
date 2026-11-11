@@ -1,15 +1,52 @@
 package store
 
 import (
+	"context"
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMeetingLinkDecisionReadsOnlyRequestedOccurrence(t *testing.T) {
+	r := require.New(t)
+	base := newRFC822IDBackfillBackendStore(t)
+	_, event := calendarFixture(t, base, "separate-series", `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=52"]}`)
+	var notes []int64
+	for i := range 52 {
+		_, note := projectionFixture(t, base, fmt.Sprintf("separate-note-%d", i), "meeting_json", `{}`)
+		notes = append(notes, note)
+		date := time.Date(2027, 3, 14+7*i, 10, 0, 0, 0, time.UTC).Format("20060102T150405Z")
+		occurrence, err := ParseMeetingLinkRef(fmt.Sprintf("evt:%d@%s", event, date))
+		r.NoError(err)
+		_, err = base.DecideMeetingLinkContext(t.Context(), occurrence, MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: note}}, "link")
+		r.NoError(err)
+	}
+	var unrelated []int64
+	gate := &meetingProjectionGate{before: func(_ context.Context, query string, args []driver.NamedValue) error {
+		if strings.Contains(query, "SELECT k.key FROM messages m") && len(args) > 0 {
+			if id, ok := args[0].Value.(int64); ok && id != notes[0] {
+				unrelated = append(unrelated, id)
+			}
+		}
+		return nil
+	}}
+	st := gatedMeetingProjectionStore(t, base, gate)
+	occurrence, err := ParseMeetingLinkRef(fmt.Sprintf("evt:%d@20270314T100000Z", event))
+	r.NoError(err)
+	start := time.Now()
+	record, err := st.MeetingRecordContext(t.Context(), occurrence)
+	t.Logf("read one occurrence from 52 decisions in %s", time.Since(start))
+	r.NoError(err)
+	r.Equal([]int64{notes[0]}, record.MessageIDs)
+	r.Empty(unrelated)
+}
 
 func TestMeetingLinkDecisionLargeAutomaticGroup(t *testing.T) {
 	requirements := require.New(t)
@@ -953,7 +990,7 @@ func TestMeetingLinkDecisionSurvivesPermanentDuplicateDeletion(t *testing.T) {
 				r.NoError(err)
 				record, err = st.MeetingRecordContext(t.Context(), ref(ids[3]))
 				r.NoError(err)
-				r.Equal([]int64{ids[0], ids[2], ids[3]}, record.MessageIDs)
+				r.Equal([]int64{ids[0], ids[3]}, record.MessageIDs)
 			}
 		})
 	}

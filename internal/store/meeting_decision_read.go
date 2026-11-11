@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"slices"
+	"strings"
 
 	"go.kenn.io/msgvault/internal/calrecur"
 )
@@ -23,65 +24,78 @@ type meetingDecisionConflict struct {
 
 func (s *Store) meetingDecisionsForMessage(ctx context.Context, id int64, budget *int) ([]meetingDecisionEdge, error) {
 	loader := meetingDecisionLoader{store: s}
-	return loader.edges(ctx, id, nil, budget)
+	return loader.edges(ctx, meetingDecisionEndpoint{ID: id}, nil, budget)
 }
 
 // meetingDecisionLoader reads the choices of every waiting message in one query, so a
 // large group costs one lookup per batch instead of one per message.
 type meetingDecisionLoader struct {
 	store  *Store
-	loaded map[int64][]meetingDecisionEdge
+	loaded map[meetingDecisionEndpoint][]meetingDecisionEdge
 }
 
 const meetingDecisionBatch = 400
 
-// edges returns the choices touching id. Messages in waiting that are not loaded yet
-// are read in the same query, up to one batch.
-func (l *meetingDecisionLoader) edges(ctx context.Context, id int64, waiting []meetingDecisionEndpoint, budget *int) ([]meetingDecisionEdge, error) {
-	if edges, ok := l.loaded[id]; ok {
+// edges batches waiting endpoints while keeping recurring occurrences separate.
+func (l *meetingDecisionLoader) edges(ctx context.Context, endpoint meetingDecisionEndpoint, waiting []meetingDecisionEndpoint, budget *int) ([]meetingDecisionEdge, error) {
+	if edges, ok := l.loaded[endpoint]; ok {
 		return edges, nil
 	}
-	ids := []int64{id}
-	for _, endpoint := range waiting {
-		_, done := l.loaded[endpoint.ID]
-		if len(ids) < meetingDecisionBatch && !done && !slices.Contains(ids, endpoint.ID) {
-			ids = append(ids, endpoint.ID)
+	endpoints := []meetingDecisionEndpoint{endpoint}
+	for _, next := range waiting {
+		_, done := l.loaded[next]
+		if len(endpoints) < meetingDecisionBatch && !done && !slices.Contains(endpoints, next) {
+			endpoints = append(endpoints, next)
 		}
 	}
 	if l.loaded == nil {
-		l.loaded = map[int64][]meetingDecisionEdge{}
+		l.loaded = map[meetingDecisionEndpoint][]meetingDecisionEdge{}
 	}
-	if err := l.load(ctx, ids, budget); err != nil {
+	if err := l.load(ctx, endpoints, budget); err != nil {
 		return nil, err
 	}
-	return l.loaded[id], nil
+	return l.loaded[endpoint], nil
 }
 
-func (l *meetingDecisionLoader) load(ctx context.Context, ids []int64, budget *int) error {
+func (l *meetingDecisionLoader) load(ctx context.Context, endpoints []meetingDecisionEndpoint, budget *int) error {
 	leftScope, leftArgs := sourceScopeClause(ctx, "l.source_id")
 	rightScope, rightArgs := sourceScopeClause(ctx, "r.source_id")
-	in, idArgs := messageExportInClause("d.left_message_id", ids)
-	inRight, _ := messageExportInClause("d.right_message_id", ids)
-	args := append(slices.Clone(idArgs), idArgs...)
+	var clauses []string
+	var args []any
+	for _, endpoint := range endpoints {
+		for _, side := range []string{"left", "right"} {
+			clause := "d." + side + "_message_id=?"
+			args = append(args, endpoint.ID)
+			if endpoint.Kind != "" {
+				clause += " AND d." + side + "_kind=?"
+				args = append(args, endpoint.Kind)
+				if endpoint.Kind == "evt" {
+					clause += " AND (d." + side + "_key=? OR (d." + side + "_key='' AND d." + side + "_anchor=?))"
+					args = append(args, endpoint.Key, endpoint.Key)
+				}
+			}
+			clauses = append(clauses, "("+clause+")")
+		}
+	}
 	args = append(args, leftArgs...)
 	args = append(args, rightArgs...)
 	args = append(args, *budget+1)
-	rows, err := l.store.db.QueryContext(ctx, `SELECT d.id,d.is_explicit,d.left_message_id,d.left_kind,d.left_key,d.left_anchor,d.right_message_id,d.right_kind,d.right_key,d.right_anchor,d.decision FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE (`+in+` OR `+inRight+`) AND l.deleted_at IS NULL AND r.deleted_at IS NULL`+leftScope+rightScope+` LIMIT ?`, args...)
+	rows, err := l.store.db.QueryContext(ctx, `SELECT d.id,d.is_explicit,d.left_message_id,d.left_kind,d.left_key,d.left_anchor,d.right_message_id,d.right_kind,d.right_key,d.right_anchor,d.decision FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE (`+strings.Join(clauses, " OR ")+`) AND l.deleted_at IS NULL AND r.deleted_at IS NULL`+leftScope+rightScope+` LIMIT ?`, args...)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = rows.Close() }()
-	for _, id := range ids {
-		l.loaded[id] = nil
+	for _, endpoint := range endpoints {
+		l.loaded[endpoint] = nil
 	}
 	for rows.Next() {
 		var edge meetingDecisionEdge
 		if err := rows.Scan(&edge.id, &edge.isExplicit, &edge.a.ID, &edge.a.Kind, &edge.a.Key, &edge.a.Anchor, &edge.b.ID, &edge.b.Kind, &edge.b.Key, &edge.b.Anchor, &edge.decision); err != nil {
 			return err
 		}
-		for _, side := range []int64{edge.a.ID, edge.b.ID} {
-			if slices.Contains(ids, side) && (side == edge.a.ID || edge.a.ID != edge.b.ID) {
-				l.loaded[side] = append(l.loaded[side], edge)
+		for _, endpoint := range endpoints {
+			if meetingDecisionEndpointMatches(endpoint, edge.a) || meetingDecisionEndpointMatches(endpoint, edge.b) {
+				l.loaded[endpoint] = append(l.loaded[endpoint], edge)
 			}
 		}
 		*budget--
@@ -93,6 +107,10 @@ func (l *meetingDecisionLoader) load(ctx context.Context, ids []int64, budget *i
 		return calendarRecurrenceBudgetError()
 	}
 	return nil
+}
+
+func meetingDecisionEndpointMatches(query, stored meetingDecisionEndpoint) bool {
+	return query.ID == stored.ID && (query.Kind == "" || query.Kind == stored.Kind && (query.Kind != "evt" || query.Key == stored.Key || stored.Key == "" && stored.Anchor == query.Key))
 }
 
 // MeetingRecordContext follows automatic evidence and owner choices in one snapshot.
@@ -202,7 +220,7 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 			}
 			groups = append(groups, members)
 		}
-		choices, err := decisions.edges(ctx, endpoint.ID, queue, &budget)
+		choices, err := decisions.edges(ctx, endpoint, queue, &budget)
 		if err != nil {
 			return result, err
 		}

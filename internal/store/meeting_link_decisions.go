@@ -336,14 +336,28 @@ func undoMeetingLinkDecisionsTx(ctx context.Context, tx *loggedTx, batchID strin
 	return err
 }
 
-// preserveMeetingDecisionCopies detaches surviving copies from history being deleted.
+// preserveMeetingDecisionCopies keeps earlier undo dependencies when pruning history.
 func (s *Store) preserveMeetingDecisionCopies(ctx context.Context, tx contextStatementQuerier, filter string, args ...any) error {
+	for {
+		result, err := tx.ExecContext(ctx, s.Rebind(`WITH removed AS (SELECT id FROM messages WHERE `+filter+`)
+			UPDATE meeting_link_decisions AS d SET
+			parent_decision_id=(SELECT p.parent_decision_id FROM meeting_link_decisions p WHERE p.id=d.parent_decision_id),
+			via_message_id=CASE WHEN d.via_message_id IN (SELECT id FROM removed)
+				THEN (SELECT p.via_message_id FROM meeting_link_decisions p WHERE p.id=d.parent_decision_id) ELSE d.via_message_id END
+			WHERE d.parent_decision_id IN (SELECT id FROM meeting_link_decisions WHERE left_message_id IN (SELECT id FROM removed) OR right_message_id IN (SELECT id FROM removed))`), args...)
+		if err != nil {
+			return err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			break
+		}
+	}
 	_, err := tx.ExecContext(ctx, s.Rebind(`WITH removed AS (SELECT id FROM messages WHERE `+filter+`)
-		UPDATE meeting_link_decisions SET parent_decision_id=NULL,
-		via_message_id=CASE WHEN via_message_id IN (SELECT id FROM removed) THEN NULL ELSE via_message_id END
-		WHERE via_message_id IN (SELECT id FROM removed) OR parent_decision_id IN (
-			SELECT id FROM meeting_link_decisions WHERE left_message_id IN (SELECT id FROM removed) OR right_message_id IN (SELECT id FROM removed)
-		)`), args...)
+		UPDATE meeting_link_decisions SET via_message_id=NULL WHERE via_message_id IN (SELECT id FROM removed)`), args...)
 	return err
 }
 
