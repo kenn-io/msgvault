@@ -50,7 +50,7 @@ msgvault loops reopen 4521
 
 | Command | What it does |
 |---|---|
-| `list` | Lists loops. `--limit` from 1 to 200 (default 50), `--person <id>` for one saved person, `--json` for machine-readable output. |
+| `list` | Lists loops and cited promises. `--limit` applies separately to each collection (1 to 200, default 50), `--person <id>` for one saved person, `--json` for machine-readable output. |
 | `done <message-id>` | Marks the loop done. `--questions <ids>` marks only those questions: the item's `question_message_ids` from `list --json`. |
 | `snooze <message-id> --until <when>` | Hides the loop until a duration such as `48h`, a date (`YYYY-MM-DD`, midnight local time), or an RFC3339 time. Takes `--questions` like `done`. |
 | `reopen <message-id>` | Clears the done or snooze decision on one question. |
