@@ -252,8 +252,8 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_cache_build_status` | read | — | owner-only |
 | `get_carddav_publication` | read | — | owner-only |
 | `get_carddav_sync_status` | read | — | owner-only |
-| `get_embeddings_status` | read | — | owner-only |
 | `get_docbank_attachment_status` | read | — | owner-only |
+| `get_embeddings_status` | read | — | owner-only |
 | `get_identity_match` | read | — | owner-only |
 | `get_identity_scoring_status` | read | — | owner-only |
 | `get_kata_issue_context` | read | — | owner-only |

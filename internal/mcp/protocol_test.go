@@ -399,8 +399,8 @@ func TestMCPHTTPConfirmationWritesRequireModernProtocol(t *testing.T) {
 		AllowPersonMerges: true, AllowCardDAVWrites: true, AllowIdentityScoring: true,
 		Calendar: calendar, AllowCalendarWrites: true,
 		Operations:             operationalTestBackend{},
-		OperationCapabilities:  []string{"get_source_scheduler_status", "sync_source", "update_slack_sync_policy", "set_person_display_name", "list_open_loops", "close_open_loop", "snooze_open_loop", "reopen_open_loop"},
-		OperationWriteFamilies: []OperationFamily{OperationFamilySources, OperationFamilyRecords, OperationFamilyLoops},
+		OperationCapabilities:  []string{"get_source_scheduler_status", "sync_source", "update_slack_sync_policy", "set_person_display_name", "list_open_loops", "close_open_loop", "snooze_open_loop", "reopen_open_loop", "retry_docbank_attachment_mirror"},
+		OperationWriteFamilies: []OperationFamily{OperationFamilySources, OperationFamilyRecords, OperationFamilyLoops, OperationFamilyDocuments},
 		PeopleBackend:          &namedPromotionTestBackend{recordingPeopleBackend: &recordingPeopleBackend{}}, AllowProfileWrites: true,
 	}
 	handler := newMCPHTTPServer(opts, HTTPOptions{AllowWrites: true}).Handler
@@ -448,7 +448,7 @@ func TestMCPHTTPConfirmationWritesRequireModernProtocol(t *testing.T) {
 					}
 				}
 			}
-			for _, name := range []string{ToolAcceptIdentityMatch, ToolRejectIdentityMatch, ToolScoreIdentityMatches, ToolMergePerson, ToolApproveCardDAVPublication, ToolSyncCardDAV, "calendar_create", "calendar_update", "calendar_delete", "calendar_move", "calendar_respond", "sync_source", "update_slack_sync_policy", "set_person_display_name", "close_open_loop", "snooze_open_loop", "reopen_open_loop"} {
+			for _, name := range []string{ToolAcceptIdentityMatch, ToolRejectIdentityMatch, ToolScoreIdentityMatches, ToolMergePerson, ToolApproveCardDAVPublication, ToolSyncCardDAV, "calendar_create", "calendar_update", "calendar_delete", "calendar_move", "calendar_respond", "sync_source", "update_slack_sync_policy", "set_person_display_name", "close_open_loop", "snooze_open_loop", "reopen_open_loop", "retry_docbank_attachment_mirror"} {
 				if version == task3ModernProtocolVersion {
 					assert.Contains(names, name)
 				} else {

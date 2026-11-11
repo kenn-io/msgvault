@@ -893,8 +893,9 @@ retries a write by itself. If a write reports
 ## Attachment mirror
 
 On unreleased `main`, owner clients can use `get_docbank_attachment_status` to
-inspect the configured Docbank attachment mirror and aggregate counts. Status
-omits paths and errors. `retry_docbank_attachment_mirror` retries failed
+inspect the configured Docbank attachment mirror and aggregate counts. Processing
+`other` totals outcomes outside waiting, requested, and extracted without labels.
+Status omits paths and errors. `retry_docbank_attachment_mirror` retries failed
 uploads, re-requests recoverable document processing, and restarts full discovery
 even when no uploads have failed. Existing native upload and processing consent
 apply. It requires `--allow-document-writes`
@@ -1002,7 +1003,7 @@ msgvault mcp --http 8080
 | `--http-token-env` | — | Name the variable holding the inbound bearer key; file takes priority. Requires `--http`. |
 | `--http-allow-writes` | `false` | Expose write-class tools over HTTP. Identity review, scoring, person merges, CardDAV writes, profile writes, and other write tools still need their separate flags. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
-| `--allow-document-writes` | `false` | On unreleased `main`, expose approved Docbank attachment mirror retries. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
+| `--allow-document-writes` | `false` | On unreleased `main`, expose approved Docbank attachment upload retries, recoverable processing re-requests, and full rediscovery. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-loop-writes` | `false` | On unreleased `main`, expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |

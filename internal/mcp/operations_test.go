@@ -47,6 +47,7 @@ func TestOperationalCatalogUsesFixedNamesAndWriteGates(t *testing.T) {
 	requirements.NotNil(retry)
 	requirements.NotNil(retry.definition.annotations.OpenWorldHint)
 	assertions.True(*retry.definition.annotations.OpenWorldHint)
+	assertions.Contains(toolsByName(t, rawListTools(t, opts, false)), "get_docbank_attachment_status")
 	assertions.NotContains(toolsByName(t, rawListTools(t, opts, false)), "retry_docbank_attachment_mirror")
 	opts.DelegatedOnly = true
 	assertions.Empty(rawListTools(t, opts, true))

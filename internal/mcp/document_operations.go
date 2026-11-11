@@ -19,6 +19,7 @@ type DocumentProcessingCounts struct {
 	Waiting   int64 `json:"waiting"`
 	Requested int64 `json:"requested"`
 	Extracted int64 `json:"extracted"`
+	Other     int64 `json:"other"`
 }
 
 func documentOperationalDefinitions() []operationalDefinition {

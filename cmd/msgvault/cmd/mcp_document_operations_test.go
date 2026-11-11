@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -86,17 +87,37 @@ func TestMCPDocumentMirrorNativeRetryAndProjection(t *testing.T) {
 		requirements.True(ok)
 		assertions.NotContains(processing, "outcomes")
 
-		// A newer daemon can return an enum value this client does not know.
-		future := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			_, _ = w.Write([]byte(`{"state":"future_state","upload_consent":true,"folder":"/private"}`))
+		// A newer daemon may add states or return an unfamiliar retry receipt.
+		var statusBody, receiptBody atomic.Value
+		statusBody.Store(`{"state":"running","upload_consent":true,"folder":"/private","processing":{"waiting":1,"requested":2,"extracted":3,"outcomes":{"operator_required":4,"other_reason":5}}}`)
+		receiptBody.Store(`{"status":"scheduled"}`)
+		future := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost {
+				w.WriteHeader(http.StatusAccepted)
+				_, _ = w.Write([]byte(receiptBody.Load().(string)))
+				return
+			}
+			_, _ = w.Write([]byte(statusBody.Load().(string)))
 		}))
 		t.Cleanup(future.Close)
 		client, err := daemonclient.New(daemonclient.Config{URL: future.URL, AllowInsecure: true})
 		requirements.NoError(err)
-		newer := &daemonMCPOperations{client: client, supported: []string{"get_docbank_attachment_status"}}
+		newer := &daemonMCPOperations{client: client, supported: []string{"get_docbank_attachment_status", "retry_docbank_attachment_mirror"}}
 		result, err := newer.ExecuteOperation(t.Context(), "get_docbank_attachment_status", nil)
 		requirements.NoError(err)
+		projected := operationOutput[mcpserver.DocumentMirrorStatus](t, result)
+		requirements.NotNil(projected.Processing)
+		assertions.Equal(mcpserver.DocumentProcessingCounts{Waiting: 1, Requested: 2, Extracted: 3, Other: 9}, *projected.Processing)
+		statusBody.Store(`{"state":"future_state","upload_consent":true,"folder":"/private"}`)
+		result, err = newer.ExecuteOperation(t.Context(), "get_docbank_attachment_status", nil)
+		requirements.NoError(err)
 		assertLoopRefusal(t, result, "invalid_operation_response", false)
+		for _, body := range []string{`{"status":"future_status"}`, `{}`} {
+			receiptBody.Store(body)
+			result, err = newer.ExecuteOperation(t.Context(), "retry_docbank_attachment_mirror", nil)
+			requirements.NoError(err)
+			assertLoopRefusal(t, result, "invalid_operation_response", true)
+		}
 	})
 	t.Run("retry and failure", func(t *testing.T) {
 		requirements, assertions := require.New(t), assert.New(t)

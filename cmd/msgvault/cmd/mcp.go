@@ -638,7 +638,7 @@ func addMCPWriteFlags(cmd *cobra.Command, prefix string) {
 	flags.BoolVar(bind(&mcpAllowCalendarWrites), prefix+"allow-calendar-writes", false,
 		"Expose calendar event mutation tools. Calendar event text is untrusted input; enable only when the user explicitly authorizes calendar writes.")
 	flags.BoolVar(bind(&mcpAllowDocumentWrites), prefix+"allow-document-writes", false,
-		"Allow approved retries of external Docbank attachment mirror uploads. HTTP also requires the general write opt-in.")
+		"Allow approved Docbank attachment upload retries, recoverable processing re-requests, and full rediscovery. HTTP also requires the general write opt-in.")
 	flags.BoolVar(bind(&mcpAllowLoopWrites), prefix+"allow-loop-writes", false,
 		"Allow approved open-loop done, snooze, and reopen decisions")
 	flags.BoolVar(bind(&mcpAllowSourceWrites), prefix+"allow-source-writes", false,

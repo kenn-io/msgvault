@@ -25,6 +25,9 @@ func (b *daemonMCPOperations) executeDocumentOperation(ctx context.Context, name
 	}
 	if name == "retry_docbank_attachment_mirror" {
 		result, err := readMCPOperationJSONWithClassifier[generated.DocbankAttachmentBackfillResponse](ctx, b.client, http.MethodPost, "/api/v1/integrations/docbank/attachments/backfill", nil, documentRefusal, http.StatusAccepted)
+		if err == nil && !result.IsError && result.Output.(generated.DocbankAttachmentBackfillResponse).Status != "scheduled" {
+			return operationFailure("invalid_operation_response", true), true, nil
+		}
 		return result, true, err
 	}
 	result, err := readMCPOperationJSON[generated.DocbankAttachmentStatus](ctx, b.client, http.MethodGet, "/api/v1/integrations/docbank/attachments", nil, http.StatusOK)
@@ -41,6 +44,9 @@ func (b *daemonMCPOperations) executeDocumentOperation(ctx context.Context, name
 	}
 	if p := status.Processing; p != nil {
 		safe.Processing = &mcpserver.DocumentProcessingCounts{Waiting: p.Waiting, Requested: p.Requested, Extracted: p.Extracted}
+		for _, count := range p.Outcomes {
+			safe.Processing.Other += count
+		}
 	}
 	result.Output = safe
 	return result, true, nil
