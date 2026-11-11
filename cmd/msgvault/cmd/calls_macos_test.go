@@ -103,7 +103,7 @@ func TestCallsImportMacOSThroughDaemon(t *testing.T) {
 	summary, err := client.SummarizeCalls(t.Context(), store.CallQuery{PersonID: person.ID})
 	require.NoError(err)
 	require.Len(summary.Items, 1)
-	assert.Equal(1, summary.Items[0].Answered)
+	assert.Equal(int64(1), summary.Items[0].Answered)
 
 	defer resetSearchFlags()
 	searchCfg := &config.Config{Remote: config.RemoteConfig{
