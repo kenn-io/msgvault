@@ -134,7 +134,6 @@ func EffectiveException(s Set, e Exception, duration time.Duration, durationDays
 		} else {
 			o.Start = start
 			o.End = start.Add(duration)
-
 		}
 		if e.Start != nil {
 			o.Start = *e.Start
