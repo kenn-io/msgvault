@@ -8,6 +8,7 @@
     selection: Extract<ReadingPaneSelection, { kind: 'group' }>;
   } = $props();
   const series = $derived(bucketSeries(selection.overview?.activity ?? []));
+  const chartWidth = $derived(Math.max(320, series.length * 8 - 2));
   const first = $derived(series[0]);
   const last = $derived(series.at(-1));
   const busiest = $derived(series.reduce((best, month) => month.count > best.count ? month : best, { bucket: '', count: 0 }));
@@ -34,10 +35,11 @@
   {/if}
   {#if series.length > 0 && first && last}
     <div class="activity">
-      <svg role="img" aria-label={stripLabel} viewBox={`0 0 ${series.length * 8 - 2} 32`} preserveAspectRatio="none">
+      <svg role="img" aria-label={stripLabel} viewBox={`0 0 ${chartWidth} 32`} preserveAspectRatio="none">
+        <line x1="0" y1="31.5" x2={chartWidth} y2="31.5" />
         {#each series as month, index (month.bucket)}
           {@const height = busiest.count ? month.count / busiest.count * 32 : 0}
-          <rect x={index * 8} y={32 - height} width="6" {height} />
+          <rect x={series.length > 1 ? index * (chartWidth - 6) / (series.length - 1) : 0} y={32 - height} width="6" {height} />
         {/each}
       </svg>
       <div class="month-labels"><span>{monthName(first.bucket)}</span>{#if series.length > 1}<span>{monthName(last.bucket)}</span>{/if}</div>
@@ -60,6 +62,8 @@
   .count-line span, p { color: var(--text-muted); font-size: var(--font-size-sm); }
   p, h2 { margin: 0; }
   svg { display: block; width: 100%; height: 32px; fill: var(--accent-blue); }
+  svg line { stroke: var(--border-muted); stroke-width: 1px; vector-effect: non-scaling-stroke; }
+  .activity { width: min(100%, 320px); }
   .activity, .people { display: grid; gap: var(--space-2); }
   .people { padding-top: var(--space-4); border-top: 1px solid var(--border-muted); }
   .month-labels, h2 { color: var(--text-muted); font-size: var(--font-size-2xs); }

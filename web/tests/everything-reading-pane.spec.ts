@@ -608,6 +608,10 @@ test('aligns group actions and activity in wide and inspected views', async ({ p
     return countRange.getBoundingClientRect().left - row.getBoundingClientRect().left;
   });
   expect.soft(personSpacing, 'inspected Person count stays beside the capped name column').toBeLessThanOrEqual(560);
+  const activity = page.getByRole('img', { name: /Activity by month/ });
+  expect((await activity.boundingBox())!.width).toBeLessThanOrEqual(320);
+  await expect(activity.locator('line')).toHaveCount(1);
+  expect((await activity.locator('rect').first().boundingBox())!.width).toBeLessThanOrEqual(8);
   const personActivityGap = await page.getByRole('img', { name: /Activity by month/ }).evaluate(svg => {
     const lastBar = svg.querySelector('rect:last-child')!;
     return svg.getBoundingClientRect().right - lastBar.getBoundingClientRect().right;
