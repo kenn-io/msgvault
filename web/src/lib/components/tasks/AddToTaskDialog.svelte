@@ -15,6 +15,7 @@
   } = $props();
   const kata = kataReadiness();
   const taskStatus = getContext<ConversationTaskStatus | undefined>(conversationTaskStatusKey);
+  const tasksUnavailable = $derived(!!taskStatus?.latest && !['ready', 'loading'].includes(taskStatus.latest.state));
   let provider = $state(untrack(() => email ? 'tasks' : 'kata'));
   let destinationChosen = false;
   let kataInitialized = $state(untrack(() => !email));
@@ -29,12 +30,12 @@
     else if (kata?.absent) destinationChosen = true;
   });
   const options = $derived([
-    ...(email ? [{ value: 'tasks', label: 'Tasks' }] : []),
+    ...(email ? [{ value: 'tasks', label: 'Tasks', disabled: tasksUnavailable, title: tasksUnavailable ? 'Tasks integration is unavailable.' : undefined }] : []),
     ...(kata?.ready ? [{ value: 'kata', label: 'Kata' }] : []),
   ]);
 </script>
 
-<Dialog title={provider === 'tasks' ? 'Add to task' : 'Kata issue'} onclose={() => { if (!busy && !kataBusy) onclose(); }}>
+<Dialog title={email ? 'Add to task' : 'Kata issue'} onclose={() => { if (!busy && !kataBusy) onclose(); }}>
   <div class="task-dialog">
     {#if options.length > 1 && !kataReceipt}
       <div class="provider"><span>Send to</span><SegmentedControl ariaLabel="Send to" disabled={busy || kataBusy} {options} value={provider} onchange={(value) => { destinationChosen = true; provider = value; if (value === 'kata') kataInitialized = true; }} /></div>

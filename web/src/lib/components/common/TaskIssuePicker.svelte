@@ -2,10 +2,11 @@
   import { debounce, RadioGroup, SearchInput } from '@kenn-io/kit-ui';
   import { onMount } from 'svelte';
 
-  let { load, noun, empty, disabled = false, moreNote = '', hint = '', searchLabel = `Filter ${noun}`, selected = $bindable('') }: {
+  let { load, noun, empty, disabled = false, moreNote = '', hint = '', showCount = false, searchLabel = `Filter ${noun}`, selected = $bindable('') }: {
     load: (query: string, signal: AbortSignal) => Promise<{ items: { id: string; label: string; detail?: string }[]; truncated: boolean }>;
     moreNote?: string;
     hint?: string;
+    showCount?: boolean;
     searchLabel?: string;
     noun: string;
     empty: string;
@@ -46,7 +47,7 @@
     {#if loading || query.trim() !== listedQuery}<p role="status">Loading…</p>
     {:else}
       {#if error}<p role="alert">{error}</p>{/if}
-      {#if items.length}<RadioGroup legend={noun[0].toUpperCase() + noun.slice(1)} options={items.map(item => ({ value: item.id, label: item.detail ? `${item.label} · ${item.detail}` : item.label }))} value={selected} {disabled} onchange={(value) => selected = value ?? ''} />
+      {#if items.length}{#if showCount}<p>{items.length} {items.length === 1 ? 'result' : 'results'}</p>{/if}<RadioGroup legend={noun[0].toUpperCase() + noun.slice(1)} options={items.map(item => ({ value: item.id, label: item.detail ? `${item.label} · ${item.detail}` : item.label }))} value={selected} {disabled} onchange={(value) => selected = value ?? ''} />
       {:else if !error}<p>{listedQuery ? `No ${noun} match "${listedQuery}".` : empty}</p>{/if}
     {/if}
   </div>

@@ -39,6 +39,11 @@ describe('Add to task', () => {
       await waitFor(() => expect(screen.getByRole('radio', { name: state === 'ready' ? 'Tasks' : 'Kata' }).getAttribute('aria-checked')).toBe('true'));
       expect(load).toHaveBeenCalledOnce();
       if (state === 'disabled') {
+        expect(screen.getByRole('radio', { name: 'Tasks' })).toHaveProperty('disabled', true);
+        expect(screen.getByRole('radio', { name: 'Tasks' }).getAttribute('title')).toBe('Tasks integration is unavailable.');
+      } else {
+        expect(screen.getByRole('radio', { name: 'Tasks' })).toHaveProperty('disabled', false);
+        await fireEvent.click(screen.getByRole('radio', { name: 'Kata' }));
         await fireEvent.click(screen.getByRole('radio', { name: 'Tasks' }));
         expect(screen.getByRole('radio', { name: 'Tasks' }).getAttribute('aria-checked')).toBe('true');
       }
@@ -61,7 +66,7 @@ describe('Add to task', () => {
         expect(screen.getByRole('dialog', { name: 'Add to task' })).toBeTruthy();
         await fireEvent.click(await screen.findByRole('radio', { name: 'Kata' }));
       }
-      expect(screen.getByRole('dialog', { name: 'Kata issue' })).toBeTruthy();
+      expect(screen.getByRole('dialog', { name: email ? 'Add to task' : 'Kata issue' })).toBeTruthy();
       expect(await screen.findByRole('textbox', { name: 'Issue title' })).toHaveProperty('value', 'Follow up');
       expect(screen.getByLabelText('Brief')).toHaveProperty('value', `${location.origin}/messages/42`);
       if (email) {
