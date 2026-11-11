@@ -29,8 +29,8 @@ var personCmd = &cobra.Command{
 	Short: "Find contacts and manage durable person profiles",
 	Long: `A participant is one address or handle seen in messages. A person is a
 durable profile that groups participants and carries notes, attributes,
-relationships, and briefs. People come from 'person promote' or from
-imported CardDAV contacts.
+relationships, and briefs. People come from 'person create', 'person promote',
+or imported CardDAV contacts.
 
 Find saved people without semantic search (read-only):
   msgvault person directory --query "Alex Example"
@@ -156,8 +156,9 @@ var personListCmd = &cobra.Command{
 	Long: `List durable people as id, participant_ids, revision, vcard_uid,
 created_at, updated_at, and display_name (when known). Addresses
 are not included: use 'person identities <id>'. Filter saved people with
-'person directory --query <name>' or '--address <address>'. Empty until a participant is
-promoted with 'person promote' or a CardDAV contact is imported.`,
+'person directory --query <name>' or '--address <address>'. Empty until a person is
+created with 'person create', a participant is promoted with 'person promote',
+or a CardDAV contact is imported.`,
 	Example: `  msgvault person list --json`,
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
