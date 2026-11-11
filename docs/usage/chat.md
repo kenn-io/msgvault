@@ -910,8 +910,8 @@ before retrying.
 
 Owner merge recovery reads include merge history, detail with a row count, and
 verified snapshot lineage. Detail and snapshot reads accept up to 16 MiB from
-the daemon; the other recovery reads accept up to 1 MiB. Candidate approval
-identifies attribute values by ID.
+the daemon; the other recovery reads accept up to 1 MiB. Candidate records
+identify attribute values by ID.
 
 Enable only the writes intended for the assistant's session:
 
