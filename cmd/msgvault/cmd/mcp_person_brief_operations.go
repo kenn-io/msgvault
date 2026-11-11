@@ -6,7 +6,6 @@ import (
 	"net/http"
 
 	"go.kenn.io/msgvault/internal/apiprotocol"
-	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -40,20 +39,7 @@ type briefArgs struct {
 
 func parseBriefArgs(name string, args map[string]any) (briefArgs, bool) {
 	input, err := decodeMCPOperationArguments[briefArgs](args)
-	if err != nil || !validLoopID(input.PersonID) {
-		return input, false
-	}
-	switch name {
-	case "list_person_brief_versions":
-		return input, input.Enrolled == nil && input.Track == nil && input.Reason == nil && (input.Limit == nil || *input.Limit >= 1 && *input.Limit <= 200)
-	case "get_person_brief_enrollment", "generate_person_brief":
-		return input, input.Limit == nil && input.Enrolled == nil && input.Track == nil && input.Reason == nil
-	case "set_person_brief_enrollment":
-		return input, input.Limit == nil && input.Enrolled != nil && input.Track != nil && input.Reason == nil
-	case "reject_person_brief":
-		return input, input.Limit == nil && input.Enrolled == nil && input.Track == nil
-	}
-	return input, false
+	return input, err == nil && (name != "set_person_brief_enrollment" || input.Enrolled != nil && input.Track != nil)
 }
 
 func isBriefOperation(name string) bool {
@@ -66,7 +52,7 @@ func isBriefOperation(name string) bool {
 
 func briefRefusal(code string) bool {
 	switch code {
-	case "person_brief_not_found", "person_brief_not_tracked", "person_brief_not_enrolled", "person_brief_lane_disabled", "person_brief_policy_refused", "person_brief_no_supported_lane", "person_brief_busy", "brief_generation_unavailable", "briefs_unavailable":
+	case "server_busy", "invalid_request", "person_brief_not_found", "person_brief_not_tracked", "person_brief_not_enrolled", "person_brief_lane_disabled", "person_brief_policy_refused", "person_brief_no_supported_lane", "person_brief_busy", "brief_generation_unavailable", "briefs_unavailable":
 		return true
 	}
 	return false
@@ -93,28 +79,17 @@ func (b *daemonMCPOperations) executePersonBriefOperation(ctx context.Context, n
 	case "list_person_brief_versions":
 		result, err := readMCPOperationJSONWithClassifier[generated.PersonBriefVersionsResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/brief/versions", &generated.ListPersonBriefVersionsRequestOptions{PathParams: &generated.ListPersonBriefVersionsPath{ID: in.PersonID}, Query: &generated.ListPersonBriefVersionsQuery{Limit: in.Limit}}, briefRefusal, http.StatusOK)
 		if err == nil && !result.IsError {
-			rows := result.Output.(generated.PersonBriefVersionsResponse)
-			versions := make([]mcpserver.PersonBriefVersion, 0, len(rows.Versions))
-			for _, row := range rows.Versions {
-				versions = append(versions, briefVersion(row))
-			}
-			result.Output = struct {
-				Versions []mcpserver.PersonBriefVersion `json:"versions"`
-			}{versions}
+			result.Output = mcpserver.PersonBriefVersionsFromGenerated(result.Output.(generated.PersonBriefVersionsResponse).Versions)
 		}
 		return result, true, err
 	case "reject_person_brief":
 		result, err := readMCPOperationJSONWithClassifier[generated.PersonBrief](ctx, b.client, http.MethodPost, "/api/v1/people/{id}/brief/reject", &generated.RejectPersonBriefRequestOptions{PathParams: &generated.RejectPersonBriefPath{ID: in.PersonID}, Body: &generated.RejectPersonBriefBody{Reason: in.Reason}}, briefRefusal, http.StatusOK)
 		if err == nil && !result.IsError {
-			result.Output = briefVersion(result.Output.(generated.PersonBrief))
+			result.Output = mcpserver.PersonBriefVersionFromGenerated(result.Output.(generated.PersonBrief))
 		}
 		return result, true, err
 	}
 	return nil, false, nil
-}
-
-func briefVersion(row generated.PersonBrief) mcpserver.PersonBriefVersion {
-	return mcpserver.PersonBriefVersion{Brief: mcpserver.PersonBriefProjection(daemonclient.PersonBriefFromGenerated(row)), Status: row.Status, RejectedAt: row.RejectedAt, SupersededAt: row.SupersededAt}
 }
 
 func (b *daemonMCPOperations) personBriefDisclosure(name string, args map[string]any) (string, bool, error) {
@@ -125,7 +100,7 @@ func (b *daemonMCPOperations) personBriefDisclosure(name string, args map[string
 	if !ok {
 		return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 	}
-	effect := map[string]string{"set_person_brief_enrollment": "replace enrollment; track=true also tracks this person", "generate_person_brief": "generate now; provider budget may be spent", "reject_person_brief": "reject the version current at execution; no version precondition is available"}[name]
+	effect := map[string]string{"set_person_brief_enrollment": "replace enrollment; when enrolling an untracked person, track=true also tracks them and track=false refuses; enrollment lets scheduled sweeps generate briefs under existing consent and provider budget", "generate_person_brief": "run one person sweep now: may extract and save profile facts and spend provider budget, even if brief generation fails", "reject_person_brief": "reject the version current at execution (no version precondition); the next eligible scheduled sweep may generate a replacement"}[name]
 	data, err := json.Marshal(struct {
 		Operation string    `json:"operation"`
 		Arguments briefArgs `json:"arguments"`

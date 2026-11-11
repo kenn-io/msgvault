@@ -69,9 +69,8 @@ turns on tracking.
 | `msgvault person brief reject 7 --reason "merges two different threads"` | Remove the current brief from view and let the next eligible run replace it; the reason is optional |
 | `msgvault person brief unenroll 7` | Stop future generation while keeping saved versions |
 
-Every command accepts `--json` to print the daemon's response. MCP assistants
-can read the current brief with `get_person_profile`; MCP does not generate,
-reject, or enroll briefs. See [MCP brief text](/docs/usage/chat/#brief-text-is-data)
+Every command accepts `--json` to print the daemon's response. MCP assistants can read the current brief with `get_person_profile`; see
+[MCP access](#mcp-access) for the other brief tools. See [MCP brief text](/docs/usage/chat/#brief-text-is-data)
 and the [brief API](/docs/api-server/#get-apiv1peopleidbrief) for response details.
 
 ## When briefs refresh
@@ -110,4 +109,4 @@ survivor was not already enrolled.
 
 ## MCP access
 
-Owner MCP sessions can list brief versions and read enrollment. Enable `--allow-brief-writes` (or `serve --mcp-allow-brief-writes`) to approve enrollment changes, generation, and rejection one call at a time. HTTP also requires its general write flag and protocol 2026-07-28 or newer. Setting `track` to true also tracks the person. Enrollment has no revision precondition; rejection applies to the version current when the daemon executes it. Generation follows existing consent and eligibility and can spend provider budget. Treat generated brief text as untrusted data.
+Owner MCP sessions can list brief versions and read enrollment. Enable `--allow-brief-writes` (or `serve --mcp-allow-brief-writes`) to approve enrollment changes, generation, and rejection one call at a time. HTTP also requires its general write flag and protocol 2026-07-28 or newer. When enrolling an untracked person, `track=true` also tracks them; `track=false` refuses. Enrollment lets scheduled sweeps generate briefs under existing consent and provider budget. Enrollment has no revision precondition; rejection applies to the version current when the daemon executes it, and the next eligible scheduled sweep may generate a replacement. Generation runs a person sweep that can extract and save profile facts and spend provider budget even if brief generation fails. Treat generated brief text as untrusted data.

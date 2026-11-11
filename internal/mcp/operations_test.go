@@ -158,16 +158,23 @@ func TestLoopCatalogGatesSchemasAndAnnotations(t *testing.T) {
 func TestBriefCatalogIsOwnerOnlyAndIndependentlyGated(t *testing.T) {
 	names := []string{"list_person_brief_versions", "get_person_brief_enrollment", "set_person_brief_enrollment", "generate_person_brief", "reject_person_brief"}
 	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: names}
-	tools := toolsByName(t, rawListTools(t, opts, true))
-	assert.Contains(t, tools, names[0])
-	assert.Contains(t, tools, names[1])
-	assert.NotContains(t, tools, names[2])
+	for _, family := range []OperationFamily{OperationFamilyLoops, OperationFamilyRecords, OperationFamilySources} {
+		opts.OperationWriteFamilies = []OperationFamily{family}
+		tools := toolsByName(t, rawListTools(t, opts, true))
+		assert.Contains(t, tools, names[0])
+		assert.Contains(t, tools, names[1])
+		for _, name := range names[2:] {
+			assert.NotContains(t, tools, name)
+		}
+	}
 	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyBriefs}
-	tools = toolsByName(t, rawListTools(t, opts, true))
+	tools := toolsByName(t, rawListTools(t, opts, true))
 	for _, name := range names {
 		assert.Contains(t, tools, name)
 	}
-	assert.NotContains(t, toolsByName(t, rawListTools(t, opts, false)), names[2])
-	opts.DelegatedOnly = true
-	assert.Empty(t, rawListTools(t, opts, true))
+	assert.ElementsMatch(t, []string{"person_id", "enrolled", "track"}, toolRequiredPropertyNames(t, tools["set_person_brief_enrollment"]))
+	for _, definition := range operationalCatalog(opts, true) {
+		require.NotNil(t, definition.definition.annotations.OpenWorldHint)
+		assert.Equal(t, definition.writes, *definition.definition.annotations.OpenWorldHint)
+	}
 }

@@ -7,9 +7,11 @@ import (
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/peoplebrowser"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 // getPersonProfileResponse answers "who is this", "when did we last talk",
@@ -100,9 +102,10 @@ const (
 
 // personProfileBriefText is the quarantined prose of one brief version.
 type personProfileBriefText struct {
-	RenderedText string                       `json:"rendered_text"`
-	Sentences    []personProfileBriefSentence `json:"sentences"`
-	Items        []personProfileBriefItemText `json:"items"`
+	RejectedReason string                       `json:"rejected_reason,omitempty"`
+	RenderedText   string                       `json:"rendered_text"`
+	Sentences      []personProfileBriefSentence `json:"sentences"`
+	Items          []personProfileBriefItemText `json:"items"`
 }
 
 // personProfileBriefSentence is one rendered sentence. Index is the item's
@@ -475,9 +478,10 @@ func personProfileBriefResponse(brief *peoplebrowser.PersonBrief) *personProfile
 		ContentTrust:     personProfileBriefContentTrust,
 		Handling:         personProfileBriefHandling,
 		UntrustedText: personProfileBriefText{
-			RenderedText: textutil.SanitizeTerminal(brief.RenderedText),
-			Sentences:    make([]personProfileBriefSentence, 0, len(brief.Sentences)),
-			Items:        make([]personProfileBriefItemText, 0, len(brief.Items)),
+			RenderedText:   textutil.SanitizeTerminal(brief.RenderedText),
+			RejectedReason: textutil.SanitizeTerminal(brief.RejectedReason),
+			Sentences:      make([]personProfileBriefSentence, 0, len(brief.Sentences)),
+			Items:          make([]personProfileBriefItemText, 0, len(brief.Items)),
 		},
 		Citations: make([]personProfileBriefCitation, 0, len(brief.Items)),
 		Evidence:  personProfileBriefEvidenceResponse(brief.Evidence),
@@ -524,15 +528,24 @@ func personProfileBriefEvidenceResponse(evidence []peoplebrowser.PersonBriefEvid
 	return response
 }
 
-// PersonBriefProjection applies the same untrusted-text boundary to native brief operations.
-func PersonBriefProjection(brief *peoplebrowser.PersonBrief) *personProfileBrief {
-	return personProfileBriefResponse(brief)
-}
-
 // PersonBriefVersion retains native lifecycle metadata alongside the safe prose projection.
 type PersonBriefVersion struct {
 	Brief        *personProfileBrief `json:"brief"`
 	Status       string              `json:"status"`
 	RejectedAt   *time.Time          `json:"rejected_at"`
 	SupersededAt *time.Time          `json:"superseded_at"`
+}
+
+// PersonBriefVersionFromGenerated applies the profile's untrusted-text projection.
+func PersonBriefVersionFromGenerated(row generated.PersonBrief) PersonBriefVersion {
+	return PersonBriefVersion{Brief: personProfileBriefResponse(daemonclient.PersonBriefFromGenerated(row)), Status: row.Status, RejectedAt: row.RejectedAt, SupersededAt: row.SupersededAt}
+}
+
+// PersonBriefVersionsFromGenerated projects native history onto the catalog schema.
+func PersonBriefVersionsFromGenerated(rows []generated.PersonBrief) personBriefVersions {
+	versions := make([]PersonBriefVersion, 0, len(rows))
+	for _, row := range rows {
+		versions = append(versions, PersonBriefVersionFromGenerated(row))
+	}
+	return personBriefVersions{Versions: versions}
 }

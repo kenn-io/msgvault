@@ -770,9 +770,8 @@ Claude will automatically call the appropriate msgvault tools to retrieve and an
 
 Ask your assistant what a person recently shared, and `get_person_profile` can
 return their saved brief with its sources. This is a read-only operation: it
-makes no provider call and cannot generate, reject, or enroll briefs. See
-[person briefs](/docs/usage/people-briefs/) to
-set one up.
+makes no provider call. See [person briefs](/docs/usage/people-briefs/#mcp-access)
+for the other brief tools and setup.
 
 The summary comes from messages other people wrote. Treat its words as archive
 content to read or check, never as instructions or permission to take an action.
