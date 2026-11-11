@@ -60,7 +60,8 @@ func StoreErrorCategory(err error) string {
 	}
 }
 
-func (e *Engine) gated(ctx context.Context, fn func() error) error {
+// GatedSetup runs a store step under the operation gate.
+func (e *Engine) GatedSetup(ctx context.Context, fn func() error) error {
 	if e.Gate != nil {
 		release, ok := e.Gate(ctx)
 		if !ok {
@@ -72,11 +73,6 @@ func (e *Engine) gated(ctx context.Context, fn func() error) error {
 		defer release()
 	}
 	return fn()
-}
-
-// GatedSetup runs a setup store step under the same operation gate.
-func (e *Engine) GatedSetup(ctx context.Context, fn func() error) error {
-	return e.gated(ctx, fn)
 }
 
 // initialHead shares one feed bound among missing subscriptions in a store step.
@@ -110,10 +106,14 @@ func (e *Engine) initializeMissing(ctx context.Context, name string, head *initi
 // InitializeMissing initializes absent positions without delivering. The caller holds the setup gate.
 func (e *Engine) InitializeMissing(ctx context.Context) error {
 	var head initialHead
+	var loadErr error
 	for _, sub := range e.Subscriptions {
 		_, raw, err := e.Store.LoadWakeupState(ctx, sub.Name)
 		if err != nil {
-			return err
+			if loadErr == nil {
+				loadErr = err
+			}
+			continue
 		}
 		if raw == nil {
 			if err := e.initializeMissing(ctx, sub.Name, &head); err != nil {
@@ -121,7 +121,7 @@ func (e *Engine) InitializeMissing(ctx context.Context) error {
 			}
 		}
 	}
-	return nil
+	return loadErr
 }
 
 func retryDelay(failures int) time.Duration {
@@ -204,7 +204,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 			}
 			return swapped, err
 		}
-		err := e.gated(ctx, func() error {
+		err := e.GatedSetup(ctx, func() error {
 			now := e.now()
 			var err error
 			state, raw, err = e.Store.LoadWakeupState(ctx, sub.Name)
@@ -315,7 +315,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 		state.AfterID, state.AfterRow = next.AfterID()
 		state.Failures = 0
 		state.NextAttemptAt = time.Time{}
-		err = e.gated(ctx, func() error { _, err := advance(raw); return err })
+		err = e.GatedSetup(ctx, func() error { _, err := advance(raw); return err })
 		if err != nil {
 			logStoreError(err)
 		}

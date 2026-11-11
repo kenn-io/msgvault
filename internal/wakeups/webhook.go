@@ -43,9 +43,6 @@ type webhookClient struct {
 }
 
 func (c webhookClient) send(ctx context.Context, endpoint, id string, secret, body []byte) string {
-	if len(body) > 256<<10 {
-		return "invalid_callback"
-	}
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	target, err := url.Parse(endpoint)

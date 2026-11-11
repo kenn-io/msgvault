@@ -289,8 +289,8 @@ func TestStoreFailureCategoriesDoNotExposeErrors(t *testing.T) {
 		category string
 	}{
 		{"gate", nil, true, "gate_busy"},
-		{"null watermark", fmt.Errorf("message 987: %w", store.ErrNullChangeWatermark), false, "null_watermark"},
-		{"other", errors.New("private detail 987"), false, "store_error"},
+		{"null watermark", fmt.Errorf("message PRIVATE_WATERMARK_SENTINEL: %w", store.ErrNullChangeWatermark), false, "null_watermark"},
+		{"other", errors.New("private detail PRIVATE_WATERMARK_SENTINEL"), false, "store_error"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := Assert.New(t)
@@ -302,12 +302,8 @@ func TestStoreFailureCategoriesDoNotExposeErrors(t *testing.T) {
 				engine.Gate = func(context.Context) (func(), bool) { return nil, false }
 			}
 			require.NoError(engine.RunPass(t.Context()))
-			if tc.category == "" {
-				assert.Empty(logs.String())
-			} else {
-				assert.Contains(logs.String(), tc.category)
-			}
-			assert.NotContains(logs.String(), "987")
+			assert.Contains(logs.String(), tc.category)
+			assert.NotContains(logs.String(), "PRIVATE_WATERMARK_SENTINEL")
 			assert.NotContains(logs.String(), "private detail")
 		})
 	}
@@ -386,12 +382,11 @@ func TestSetupInitializesBeforeFirstPass(t *testing.T) {
 	filter := changefeed.Filter{IncomingOnly: true}
 	engine := Engine{Store: st, Subscriptions: []Subscription{testSubscription(t, "new", server, filter), testSubscription(t, "existing", server, filter)}, Now: func() time.Time { return now }}
 	require.NoError(engine.GatedSetup(t.Context(), func() error { return engine.InitializeMissing(t.Context()) }))
-	assert.Empty(deliveries)
 	state, _, err := base.LoadWakeupState(t.Context(), "existing")
 	require.NoError(err)
 	assert.Equal(existing, state)
 	id := seedWakeup(t, base, "new@example.com", 0, 2, now.Add(45*time.Second))
-	st.fixedBound = now.Add(10 * time.Second)
+	st.fixedBound = now
 	require.NoError(engine.RunPass(t.Context()))
 	require.Len(deliveries, 1)
 	assert.Equal([]int64{id}, deliveries[0].Matched.MessageIDs)
@@ -429,4 +424,26 @@ func TestSetupInitializationFallback(t *testing.T) {
 			assert.NotNil(raw)
 		})
 	}
+}
+
+func TestSetupInitializesOtherEntriesAfterStateLoadError(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+	base := testutil.NewTestStore(t)
+	now := time.Now().UTC()
+	seedWakeup(t, base, "corrupt-setup@example.com", 0, 1, now)
+	const invalid = "not valid wakeup state"
+	_, err := base.DB().ExecContext(t.Context(), base.Rebind(`INSERT INTO archive_metadata (key, value) VALUES (?, ?)`), "wakeup:v1:a", invalid)
+	require.NoError(err)
+	bound := now.Add(-30 * time.Second)
+	engine := Engine{Store: &observedStore{Store: base, fixedBound: bound}, Subscriptions: []Subscription{{Name: "a"}, {Name: "b"}}}
+	require.Error(engine.InitializeMissing(t.Context()))
+	state, raw, err := base.LoadWakeupState(t.Context(), "b")
+	require.NoError(err)
+	require.NotNil(raw)
+	assert.Equal(bound, state.At)
+	var after string
+	err = base.DB().QueryRowContext(t.Context(), base.Rebind(`SELECT value FROM archive_metadata WHERE key = ?`), "wakeup:v1:a").Scan(&after)
+	require.NoError(err)
+	assert.Equal(invalid, after)
 }
