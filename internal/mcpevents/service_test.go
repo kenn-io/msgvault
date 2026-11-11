@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -61,6 +62,53 @@ func TestSubscribeRequiresExistingSource(t *testing.T) {
 	requirements.ErrorAs(err, &eventErr)
 	assertions.Equal(Unavailable, eventErr.Code)
 	assertions.Equal("store_unavailable", eventErr.Reason)
+}
+
+func TestSubscribeClassifiesPersonScopeFailures(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
+	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{PersonID: 999999}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	_, err := service.Subscribe(t.Context(), in)
+	var eventErr *Error
+	requirements.ErrorAs(err, &eventErr)
+	assertions.Equal(InvalidParams, eventErr.Code)
+	assertions.Equal("invalid_scope", eventErr.Reason)
+	assertions.Equal(http.StatusBadRequest, eventErr.Status())
+	var emptyID int64
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO persons(vcard_uid,display_name) VALUES('empty-person','Empty') RETURNING id`).Scan(&emptyID))
+	in.Arguments.PersonID = emptyID
+	_, err = service.Subscribe(t.Context(), in)
+	requirements.ErrorAs(err, &eventErr)
+	assertions.Equal(InvalidParams, eventErr.Code)
+	assertions.Equal("invalid_scope", eventErr.Reason)
+	assertions.Equal(http.StatusBadRequest, eventErr.Status())
+	catalog, err := st.LoadMCPEventsCatalog(t.Context())
+	requirements.NoError(err)
+	assertions.Nil(catalog)
+	var count int
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM archive_metadata WHERE key LIKE ?`), "mcpevents:v1:pos:%").Scan(&count))
+	assertions.Zero(count)
+	participant, err := st.EnsureParticipant("person@example.test", "Person", "example.test")
+	requirements.NoError(err)
+	person, _, err := st.CreatePersonFromParticipant(participant)
+	requirements.NoError(err)
+	in.Arguments.PersonID = person.ID
+	_, err = service.Subscribe(t.Context(), in)
+	requirements.NoError(err)
+	before, err := st.LoadMCPEventsCatalog(t.Context())
+	requirements.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), "ALTER TABLE persons RENAME TO unavailable_persons")
+	requirements.NoError(err)
+	_, err = service.Subscribe(t.Context(), in)
+	requirements.ErrorAs(err, &eventErr)
+	assertions.Equal(Unavailable, eventErr.Code)
+	assertions.Equal("store_unavailable", eventErr.Reason)
+	assertions.Equal(http.StatusServiceUnavailable, eventErr.Status())
+	after, err := st.LoadMCPEventsCatalog(t.Context())
+	requirements.NoError(err)
+	assertions.Equal(before, after)
 }
 
 func TestNativeSkipsMissingCredentialAndRefreshRecovers(t *testing.T) {

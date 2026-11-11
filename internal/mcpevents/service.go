@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/changefeed"
+	"go.kenn.io/msgvault/internal/personscope/resolver"
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/wakeups"
@@ -110,7 +111,10 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest) (
 	}
 	filter := in.Arguments.filter()
 	if _, err := changefeed.ResolveFilter(ctx, s.Store, filter); err != nil {
-		return out, failure(InvalidParams, "invalid_scope")
+		if errors.Is(err, store.ErrPersonNotFound) || errors.Is(err, resolver.ErrEmptyPopulation) {
+			return out, failure(InvalidParams, "invalid_scope")
+		}
+		return out, failure(Unavailable, "store_unavailable")
 	}
 	if in.Arguments.SourceID != 0 {
 		if _, err := s.Store.GetSourceByIDContext(ctx, in.Arguments.SourceID); err != nil {
