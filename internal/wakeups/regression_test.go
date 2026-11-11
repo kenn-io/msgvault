@@ -293,20 +293,22 @@ func TestStoreFailureCategoriesDoNotExposeErrors(t *testing.T) {
 		{"other", errors.New("private detail 987"), false, "store_error"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := Assert.New(t)
+			require := Require.New(t)
 			base := testutil.NewTestStore(t)
 			var logs bytes.Buffer
 			engine := Engine{Store: &observedStore{Store: base, listErr: tc.err}, Logger: slog.New(slog.NewTextHandler(&logs, nil)), Subscriptions: []Subscription{{Name: "fixture"}}}
 			if tc.gate {
 				engine.Gate = func(context.Context) (func(), bool) { return nil, false }
 			}
-			Require.NoError(t, engine.RunPass(t.Context()))
+			require.NoError(engine.RunPass(t.Context()))
 			if tc.category == "" {
-				Assert.Empty(t, logs.String())
+				assert.Empty(logs.String())
 			} else {
-				Assert.Contains(t, logs.String(), tc.category)
+				assert.Contains(logs.String(), tc.category)
 			}
-			Assert.NotContains(t, logs.String(), "987")
-			Assert.NotContains(t, logs.String(), "private detail")
+			assert.NotContains(logs.String(), "987")
+			assert.NotContains(logs.String(), "private detail")
 		})
 	}
 }
