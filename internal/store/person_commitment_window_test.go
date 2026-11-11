@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/peoplesweep"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -20,6 +21,23 @@ func TestCommitmentWindowScopesBothSidesOfDirectConversations(t *testing.T) {
 		{fromOwner: true, body: "I will send the agenda."},
 		{body: "I will check the venue."},
 	})
+	owner := f.EnsureParticipant(loopOwner, "", "example.com")
+	sam := f.EnsureParticipant("sam@example.test", "", "example.test")
+	explicitOnly := persistLoopDirectChat(t, f, "explicit-only", []loopChatMessage{
+		{body: "I will prepare the meeting."},
+	})[0]
+	r.NoError(f.Store.ReplaceMessageRecipientsContext(t.Context(), explicitOnly, "to", []int64{owner}, nil))
+	r.NoError(f.Store.ReplaceConversationParticipants(conversationOf(t, f, explicitOnly), nil))
+	thirdPartyChat := persistLoopDirectChat(t, f, "third-party", []loopChatMessage{
+		{body: "I will circulate the minutes."},
+	})[0]
+	// The message names the owner, while the imported membership includes
+	// another person. The general loop group heuristic sees only two peers.
+	r.NoError(f.Store.ReplaceMessageRecipientsContext(t.Context(), thirdPartyChat, "to", []int64{owner}, nil))
+	r.NoError(f.Store.ReplaceConversationParticipants(conversationOf(t, f, thirdPartyChat), []store.ConversationParticipantRef{
+		{ParticipantID: alex, Role: "member"},
+		{ParticipantID: sam, Role: "member"},
+	}))
 	ownerEmail := f.PersistEmail(storetest.EmailSpec{From: loopOwner, To: []string{loopAlex},
 		Body: "I will send the budget.", SentAt: loopAgo(loopDay)})
 	const quoted = "Je transmettrai le résumé."
@@ -49,6 +67,7 @@ func TestCommitmentWindowScopesBothSidesOfDirectConversations(t *testing.T) {
 	a.Equal(map[int64]string{
 		chat[0]: peoplesweep.CommitmentOwedBy, chat[1]: peoplesweep.CommitmentOwedTo,
 		ownerEmail: peoplesweep.CommitmentOwedBy, otherEmail: peoplesweep.CommitmentOwedTo,
+		explicitOnly: peoplesweep.CommitmentOwedTo,
 	}, got)
 
 	profile.AllowSensitive = false
