@@ -6998,7 +6998,7 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 	if query == s.dialect.FTSBackfillBatchSQL() {
 		stale = "TRUE"
 	}
-	selectSQL := `SELECT m.id, LEFT(` + env.subject + `, ` + charCap + `), LEFT(COALESCE(b.body_text, ''), ` + charCap + `), LEFT(` + env.fromAddr + `, ` + charCap + `), LEFT(` + env.toAddrs + `, ` + charCap + `), LEFT(` + env.ccAddrs + `, ` + charCap + `)
+	selectSQL := `SELECT m.id, LEFT(` + env.subject + `, ` + charCap + `), LEFT(COALESCE(b.body_text, ''), ` + charCap + `), LEFT(` + env.fromAddr + `, ` + charCap + `), LEFT(` + env.toAddrs + `, ` + charCap + `), LEFT(` + env.ccAddrs + `, ` + charCap + `), m.indexing_version
 		FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id WHERE m.id = ANY(?::bigint[]) AND (` + stale + `) ORDER BY m.id`
 	metadata := pgFTSMetadataFields("u.subject", "u.sender", "u.to_addrs", "u.cc_addrs")
 	bodyVector := pgFTSBodyField("u.body")
@@ -7039,9 +7039,14 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 		bytes := 0
 		for rows.Next() {
 			var doc FTSDoc
-			if err := rows.Scan(&doc.MessageID, &doc.Subject, &doc.Body, &doc.FromAddr, &doc.ToAddrs, &doc.CcAddrs); err != nil {
+			var version sql.NullInt64
+			if err := rows.Scan(&doc.MessageID, &doc.Subject, &doc.Body, &doc.FromAddr, &doc.ToAddrs, &doc.CcAddrs, &version); err != nil {
 				_ = rows.Close()
 				return 0, err
+			}
+			if version.Valid && version.Int64 > CurrentFTSIndexingVersion {
+				_ = rows.Close()
+				return 0, fmt.Errorf("message %d search index version %d is newer than supported version %d", doc.MessageID, version.Int64, CurrentFTSIndexingVersion)
 			}
 			doc, fields := preparePostgresFTSDoc(doc)
 			encoded, err := json.Marshal(fields, json.FormatNilSliceAsNull(true))

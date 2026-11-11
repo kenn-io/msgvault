@@ -349,3 +349,22 @@ func TestPG_BackfillFTS_ConcurrentRebuild(t *testing.T) {
 	require.NoError(err)
 	assert.False(t, needs)
 }
+
+func TestPG_BackfillFTSRejectsFutureIndexVersion(t *testing.T) {
+	skipUnlessPostgres(t)
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	id := f.CreateMessage("future-index")
+	future := store.CurrentFTSIndexingVersion + 1
+	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = to_tsvector('simple', 'future sentinel'), search_fts_fields = ARRAY['future sentinel'], indexing_version = $2 WHERE id = $1`, id, future)
+	require.NoError(err)
+	_, err = f.Store.BackfillFTSContext(t.Context(), nil)
+	require.ErrorContains(err, "newer than supported")
+	var version int
+	var vector, fields string
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT indexing_version, search_fts::text, array_to_string(search_fts_fields, ' ') FROM messages WHERE id = $1`, id).Scan(&version, &vector, &fields))
+	assert.Equal(future, version)
+	assert.Equal("'future':1 'sentinel':2", vector)
+	assert.Equal("future sentinel", fields)
+}
