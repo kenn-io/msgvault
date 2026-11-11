@@ -50,4 +50,10 @@ describe('TaskIssuePicker', () => {
     render(TaskIssuePicker, { load: async () => ({ items: [], truncated: false }), noun: 'open issues', empty: 'No open issues yet.' });
     expect(await screen.findByText('No open issues yet.')).toBeDefined();
   });
+
+  it('shows the result limit alongside the search guidance', async () => {
+    render(TaskIssuePicker, { load: async () => ({ items: [item], truncated: true }), noun: 'open issues', empty: 'No open issues yet.', hint: 'Search by whole word or enter a ref.', moreNote: 'More issues match.' });
+    await screen.findByRole('radio', { name: item.label });
+    expect(screen.getByText('Search by whole word or enter a ref. More issues match.')).toBeDefined();
+  });
 });

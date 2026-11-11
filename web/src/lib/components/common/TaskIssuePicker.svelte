@@ -18,6 +18,7 @@
   let truncated = $state(false);
   let loading = $state(true);
   let error = $state('');
+  let showMore = $derived(!!moreNote && !error && truncated && !loading && query.trim() === listedQuery);
   let controller: AbortController | undefined;
   async function reload() {
     controller?.abort();
@@ -49,8 +50,7 @@
       {:else if !error}<p>{listedQuery ? `No ${noun} match "${listedQuery}".` : empty}</p>{/if}
     {/if}
   </div>
-  {#if hint}<p>{hint}</p>{/if}
-  {#if moreNote && !error && truncated && !loading && query.trim() === listedQuery}<p>{moreNote}</p>{/if}
+  {#if hint || showMore}<p>{hint}{hint && showMore ? ' ' : ''}{showMore ? moreNote : ''}</p>{/if}
 </div>
 
 <style>
