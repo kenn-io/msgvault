@@ -71,6 +71,10 @@ func (s *briefFakeStore) EnsurePersonSweepWork(_ context.Context, personID int64
 	return s.trackedWork, nil
 }
 
+func (s *briefFakeStore) RetirePersonSweepBrief(_ context.Context, _ Lease, _ int, _ time.Time) error {
+	return nil
+}
+
 // briefWorkerArchiveItems is the recent stretch of conversation every brief
 // worker case summarizes.
 func briefWorkerArchiveItems() []EvidenceItem {
@@ -1109,8 +1113,4 @@ func TestPersonSweepWorkerCapsTheRenderedBrief(t *testing.T) {
 	assert.Empty(stored.FollowUps)
 	assert.NotNil(stored.LastMeaningfulInteraction)
 	assert.Len(trimmed.Evidence, 1, "the pointers cover only the kept item")
-}
-
-func (s *briefFakeStore) RetirePersonSweepBrief(_ context.Context, _ Lease, _ int, _ time.Time) error {
-	return nil
 }

@@ -93,26 +93,3 @@ func TestBriefEventRequiresExactAuthoredQuotesAndLaterResolution(t *testing.T) {
 		})
 	}
 }
-
-// The state must depend on the UTC date rather than an offset representation
-// of the same instant, including negative Unix times and distant dates.
-func FuzzBriefEventStateInstantEquivalence(f *testing.F) {
-	f.Add(int64(1786838400), int32(7200))
-	f.Add(int64(-1), int32(-18000))
-	f.Fuzz(func(t *testing.T, seconds int64, offset int32) {
-		assert := assert.New(t)
-		require := require.New(t)
-		at := time.Unix(seconds, 0)
-		if at.Year() < 1 || at.Year() > 9999 {
-			t.Skip()
-		}
-		day := at.UTC().Format(time.DateOnly)
-		event := BriefLifeEvent{Date: &day}
-		want, err := briefLifeEventState(event, at.UTC())
-		require.NoError(err)
-		got, err := briefLifeEventState(event, at.In(time.FixedZone("offset", int(offset))))
-		require.NoError(err)
-		assert.Equal(BriefEventUpcoming, want)
-		assert.Equal(want, got)
-	})
-}

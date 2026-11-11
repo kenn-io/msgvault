@@ -302,3 +302,23 @@ func TestBriefCitationOrdinalsFailsClosedOnAPointerCountMismatch(t *testing.T) {
 	assert.True(ok, "a brief that cites nothing maps nothing and still aligns")
 	assert.Empty(ordinals)
 }
+
+func TestBriefDropHighlightReindexesFollowUps(t *testing.T) {
+	output := BriefOutput{
+		Highlights: []BriefHighlight{{Text: "first"}, {Text: "middle"}, {Text: "last"}},
+		FollowUps: []BriefFollowUp{
+			{Question: "first question", HighlightIndex: 0},
+			{Question: "middle question", HighlightIndex: 1},
+			{Question: "last question", HighlightIndex: 2},
+		},
+	}
+	trimmed, dropped := briefDropHighlight(output, 1)
+	assert.Equal(t, 2, dropped)
+	require.Len(t, trimmed.Highlights, 2)
+	assert.Equal(t, "last", trimmed.Highlights[1].Text)
+	require.Len(t, trimmed.FollowUps, 2)
+	assert.Equal(t, "first question", trimmed.FollowUps[0].Question)
+	assert.Equal(t, 0, trimmed.FollowUps[0].HighlightIndex)
+	assert.Equal(t, "last question", trimmed.FollowUps[1].Question)
+	assert.Equal(t, 1, trimmed.FollowUps[1].HighlightIndex)
+}

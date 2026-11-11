@@ -54,6 +54,15 @@ func TestPersonBriefEventDetailsPreserveQuestionStateAndEvidence(t *testing.T) {
 			assert.Equal(peoplebrowser.PersonBriefHighlight, brief.Items[0].Kind)
 			require.Len(brief.Items[0].Evidence, 1)
 			assert.Equal("message:1", brief.Items[0].Evidence[0].SourceRef)
+
+			payload["sentences"] = []any{}
+			response, err = json.Marshal(payload)
+			require.NoError(err)
+			brief, err = engine.GetPersonBrief(t.Context(), 51)
+			require.NoError(err)
+			require.Len(brief.Items, 1)
+			assert.Equal(test.want, brief.Items[0].Text, "fallback renders the saved event state")
+			assert.Empty(brief.Items[0].Evidence, "missing sentence ordinals do not invent citations")
 		})
 	}
 }

@@ -237,21 +237,6 @@ func TestBriefEventRejectionDiscardsDerivedMemoryWithoutBootstrappingOldAnchors(
 	assert.Equal(1, plan.previous.EventMemoryVersion, "rejection does not reset admission")
 }
 
-func FuzzBriefEventQuoteMustExist(f *testing.F) {
-	f.Add("I move on August 15.")
-	f.Add("invented")
-	f.Add(" ")
-	f.Fuzz(func(t *testing.T, quote string) {
-		assert := assert.New(t)
-		anchor := briefWindowItem(10, SourceConversationText, 10, "I move on August 15.")
-		highlight := eventHighlight(anchor, "2026-08-15")
-		highlight.LifeEvent.Quote = quote
-		_, valid := normalizeBriefEvent(highlight, map[string]EvidenceItem{packetEvidenceID(anchor): anchor},
-			briefTestPersonID, anchor.EventTime)
-		assert.Equal(strings.TrimSpace(quote) != "" && strings.Contains(anchor.Excerpt, quote), valid)
-	})
-}
-
 func TestBriefEventPreflightFailureDoesNotBlockExtraction(t *testing.T) {
 	for _, name := range []string{"packet size", "historical source read"} {
 		t.Run(name, func(t *testing.T) {

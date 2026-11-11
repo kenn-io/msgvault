@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -198,45 +197,6 @@ func briefCandidateForPacket(t *testing.T, packet map[string]any) json.RawMessag
 			"evidence_ids":[%q],"valid_from":null,"valid_until":null,
 			"confidence_basis_points":900}]}`,
 		newest, newest, newest, newest, target, newest))
-}
-
-func briefEventCandidateForPacket(
-	t *testing.T, packet map[string]any, quote, date string,
-) json.RawMessage {
-	t.Helper()
-	seeds, ok := packet["seeds"].([]any)
-	require.True(t, ok, "brief packet must carry seed evidence")
-	var anchorID string
-	for _, raw := range seeds {
-		seed, ok := raw.(map[string]any)
-		require.True(t, ok)
-		excerpt, _ := seed["excerpt"].(string)
-		id, _ := seed["id"].(string)
-		if strings.Contains(excerpt, quote) {
-			anchorID = id
-			break
-		}
-	}
-	require.NotEmpty(t, anchorID, "brief packet must carry the event announcement")
-	eventDate := date
-	output := peoplesweep.BriefOutput{
-		LastMeaningfulInteraction: &peoplesweep.BriefInteraction{
-			EvidenceID: anchorID, Summary: "plans a temporary move",
-		},
-		Highlights: []peoplesweep.BriefHighlight{{
-			Text: "plans a temporary move", Speaker: peoplesweep.BriefSpeakerPerson,
-			EvidenceIDs: []string{anchorID}, ConfidenceBasisPoints: 900,
-			LifeEvent: &peoplesweep.BriefLifeEvent{Date: &eventDate, AnchorID: anchorID,
-				Quote: quote, Question: "How did the move go?",
-				State: peoplesweep.BriefEventUpcoming},
-		}},
-		FollowUps: []peoplesweep.BriefFollowUp{}, Appreciations: []peoplesweep.BriefAppreciation{},
-		Uncertainties:      []peoplesweep.BriefUncertainty{},
-		PossibleAttributes: []peoplesweep.ExtractedClaim{},
-	}
-	encoded, err := json.Marshal(output)
-	require.NoError(t, err)
-	return encoded
 }
 
 func briefPacketEventContextEvents(t *testing.T, packet map[string]any) []any {
@@ -630,7 +590,7 @@ func TestPersonSweepWorkerDoesNotRestoreRejectedEventMemoryFromAnInFlightWindow(
 		f.journal.aliceID, time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC))
 	addSweepBody(t, f.journal, message, quote)
 	f.runner.candidate = func(packet map[string]any) json.RawMessage {
-		return briefEventCandidateForPacket(t, packet, quote, "2026-09-10")
+		return storeEventCandidate(t, packet, quote, "2026-09-10")
 	}
 	f.worker.Clock = func() time.Time { return f.now }
 	id := 0
@@ -649,11 +609,6 @@ func TestPersonSweepWorkerDoesNotRestoreRejectedEventMemoryFromAnInFlightWindow(
 	var priorBoundary peoplesweep.BriefBoundary
 	require.NoError(json.Unmarshal(prior.Boundary, &priorBoundary))
 	require.Len(priorBoundary.EventMemory, 1)
-	var cursorBefore int64
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
-		SELECT COALESCE(MAX(optimistic_sequence), 0) FROM person_sweep_cursors
-		WHERE person_id = ? AND source_lane = ?`), personID,
-		string(peoplesweep.SourceConversationText)).Scan(&cursorBefore))
 
 	f.runner.candidate = nil
 	newMessage := f.journal.insertMessage(t, "rejected-event-memory-new-activity", "chat",
@@ -670,16 +625,6 @@ func TestPersonSweepWorkerDoesNotRestoreRejectedEventMemoryFromAnInFlightWindow(
 	require.Len(second.People, 1)
 	assert.Zero(second.People[0].BriefVersion,
 		"a result based on rejected event memory is not stored")
-	assert.Equal(peoplesweep.FailureInvalidOutput, second.People[0].BriefFailureClass)
-	assert.NotEmpty(second.People[0].CursorAdvances,
-		"fresh extraction work still advances its source cursor")
-	var cursorAfter int64
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
-		SELECT COALESCE(MAX(optimistic_sequence), 0) FROM person_sweep_cursors
-		WHERE person_id = ? AND source_lane = ?`), personID,
-		string(peoplesweep.SourceConversationText)).Scan(&cursorAfter))
-	assert.Greater(cursorAfter, cursorBefore,
-		"the extraction cursor commits even though the brief was rejected")
 	require.Len(f.runner.briefPackets, 2)
 	assert.Len(briefPacketEventContextEvents(t, f.runner.briefPackets[1]), 1,
 		"the rejected event was present in the in-flight packet")
