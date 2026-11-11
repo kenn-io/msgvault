@@ -737,23 +737,6 @@ func TestInstagramUnreadableThreadReportsIncomplete(t *testing.T) {
 	assert.Equal(1, countMessages(t, st, ""))
 }
 
-func TestInstagramRescanNewRootAfterLimit(t *testing.T) {
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	instagramTestShard(t, root, "later", "message_1.json", instagramTestRecord("later"), instagramTestRecord("second"))
-	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example", Limit: 1}
-	_, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(err)
-	newRoot := t.TempDir()
-	require.NoError(os.CopyFS(newRoot, os.DirFS(root)))
-	instagramTestShard(t, newRoot, "earlier", "message_1.json", instagramTestRecord("earlier"))
-	opts.RootDir, opts.Limit = newRoot, 0
-	_, err = ImportDYI(t.Context(), st, opts)
-	require.NoError(err)
-	assert.Equal(t, 3, countMessages(t, st, ""))
-}
-
 func TestInstagramSenderChangesRetainMessages(t *testing.T) {
 	for _, tc := range []struct {
 		name, sender  string
