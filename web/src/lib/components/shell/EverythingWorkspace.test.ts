@@ -45,6 +45,17 @@ function exploreResponse(overrides: Record<string, unknown> = {}) {
   };
 }
 
+async function snapshotFixture(request: Request, rows: Array<{ key: string; label: string; count: number }>, coParticipants: Array<{ key: string; label: string; count: number }> = []) {
+  const path = new URL(request.url).pathname;
+  if (path.endsWith('/coverage')) return Response.json({ status: 'ready', eligible_count: rows.length, embedded_count: rows.length, percentage: 100, vector_generation: 7, cache_revision: 'cache-1', actions: [] });
+  if (path.endsWith('/explore/files')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache-1' });
+  if (path.endsWith('/explore/groups')) {
+    const body = await request.clone().json();
+    const selected = rows.find(row => row.key === body.group_key);
+    return Response.json({ rows: body.group_key ? rows.filter(row => row.key === body.group_key) : rows, ...(selected ? { overview: { first_at: '2026-07-01T12:00:00Z', activity: [{ bucket: '2026-07', count: selected.count }], co_participants: coParticipants } } : {}), total_count: body.group_key ? 1 : rows.length, cache_revision: 'cache-1', search_provenance: { vector_generation: 7 }, candidate_snapshot_id: 'table-snapshot' });
+  }
+}
+
 describe('EverythingWorkspace', () => {
   it('opens scoped Action items after choosing the canonical Meeting kind', async () => {
     window.history.replaceState(null, '', '/');
@@ -341,20 +352,13 @@ describe('EverythingWorkspace', () => {
     window.history.replaceState(null, '', '/');
     let snapshot = 0;
     let expire = true;
+    const rows = [{ key, label, count: 8, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }];
     const meetingRequests: Array<{ path: string; body: { explore?: { predicate?: { filters?: Array<{ dimension: string; values: string[] }> }; candidate_snapshot_id?: string; cache_revision?: string } } }> = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input as Request;
       const path = new URL(request.url).pathname;
-      if (path.endsWith('/coverage')) return Response.json({ status: 'ready', eligible_count: 1, embedded_count: 1, percentage: 100, vector_generation: 7, cache_revision: 'cache-1', actions: [] });
-      if (path.endsWith('/explore/files')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache-1' });
-      if (path.endsWith('/explore/groups')) {
-        const body = await request.clone().json();
-        return Response.json({
-          rows: [{ key, label, count: 8, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
-          ...(body.group_key ? { overview: { activity: [{ bucket: '2026-07', count: 8 }], co_participants: [{ key: '1', label: 'Overview Person', count: 1 }] } } : {}),
-          total_count: 1, cache_revision: 'cache-1', search_provenance: { vector_generation: 7 }, candidate_snapshot_id: 'table-snapshot'
-        });
-      }
+      const fixture = await snapshotFixture(request, rows, [{ key: '1', label: 'Overview Person', count: 1 }]);
+      if (fixture) return fixture;
       if (path === '/api/v1/explore') {
         const body = await request.clone().json();
         expect(body).toMatchObject({ query: 'planning', search_mode: searchMode, filters: [{ dimension, values: [key] }], limit: 1 });
@@ -400,17 +404,12 @@ describe('EverythingWorkspace', () => {
     let firstSignal: AbortSignal | undefined;
     let resolveFirst: ((response: Response) => void) | undefined;
     const meetingSnapshots: string[] = [];
+    const rows = [{ key: '1', label: 'First Person', count: 1 }, { key: '2', label: 'Second Person', count: 2 }];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input as Request;
       const path = new URL(request.url).pathname;
-      if (path.endsWith('/coverage')) return Response.json({ status: 'ready', eligible_count: 2, embedded_count: 2, percentage: 100, vector_generation: 7, cache_revision: 'cache-1', actions: [] });
-      if (path.endsWith('/explore/files')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache-1' });
-      if (path.endsWith('/explore/groups')) {
-        const body = await request.clone().json();
-        const rows = [{ key: '1', label: 'First Person', count: 1 }, { key: '2', label: 'Second Person', count: 2 }];
-        const selected = rows.find(row => row.key === body.group_key);
-        return Response.json({ rows: body.group_key ? rows.filter(row => row.key === body.group_key) : rows, ...(selected ? { overview: { first_at: '2026-07-01T12:00:00Z', activity: [{ bucket: '2026-07', count: selected.count }], co_participants: [] } } : {}), total_count: body.group_key ? 1 : 2, cache_revision: 'cache-1', search_provenance: { vector_generation: 7 }, candidate_snapshot_id: 'table-snapshot' });
-      }
+      const fixture = await snapshotFixture(request, rows);
+      if (fixture) return fixture;
       if (path === '/api/v1/explore') {
         const body = await request.clone().json();
         if (body.filters[0].values[0] === '1') {
