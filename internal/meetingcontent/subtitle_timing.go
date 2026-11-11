@@ -9,18 +9,31 @@ import (
 )
 
 func subtitleTiming(format string, raw []byte) ([]subtitleSegment, error) {
-	content := Decode(format, raw, nil)
-	if content.Transcript.State != StateAvailable || content.Transcript.Reason != "" || len(content.Transcript.Segments) == 0 {
-		return nil, errors.New("a complete timed transcript is unavailable")
-	}
 	var fields map[string]jsontext.Value
-	if json.Unmarshal(raw, &fields) != nil {
+	if len(raw) > maxRawBytes || json.Unmarshal(raw, &fields) != nil || fields == nil {
 		return nil, errors.New("invalid raw transcript")
 	}
-	cues := make([]subtitleSegment, 0, len(content.Transcript.Segments))
+	var transcript Transcript
 	switch format {
-	case "twilio_call_json":
-		return twilioSubtitleTiming(fields, content.Transcript.Segments)
+	case "omi_json":
+		transcript, _ = decodeOmiTranscript(fields)
+	case "pocket_json":
+		transcript = decodePocket(fields).Transcript
+	case "twenty_json":
+		version, ok := rawInteger(fields["schema_version"])
+		var recording map[string]jsontext.Value
+		if !ok || version != 1 || json.Unmarshal(fields["recording"], &recording) != nil || recording == nil {
+			return nil, errors.New("invalid recording")
+		}
+		transcript = decodeTwentyTranscript(recording["transcript"])
+	default:
+		return nil, fmt.Errorf("recording start is unknown or timing is unavailable for %s", format)
+	}
+	if transcript.State != StateAvailable || transcript.Reason != "" || len(transcript.Segments) == 0 {
+		return nil, errors.New("a complete timed transcript is unavailable")
+	}
+	cues := make([]subtitleSegment, 0, len(transcript.Segments))
+	switch format {
 	case "omi_json":
 		origin, ok := rawTime(fields["started_at"], false)
 		if !ok || origin.IsZero() {
@@ -44,10 +57,7 @@ func subtitleTiming(format string, raw []byte) ([]subtitleSegment, error) {
 				return nil, errors.New("transcript needs start and end times")
 			}
 			i := len(cues)
-			if i >= len(content.Transcript.Segments) {
-				return nil, errors.New("transcript changed")
-			}
-			seg := content.Transcript.Segments[i]
+			seg := transcript.Segments[i]
 			speaker := seg.Speaker
 			if strings.TrimSpace(item.Name) == "" && item.SpeakerID == nil {
 				speaker = ""
@@ -77,11 +87,11 @@ func subtitleTiming(format string, raw []byte) ([]subtitleSegment, error) {
 				} `json:"segments"`
 			} `json:"transcript"`
 		}
-		if json.Unmarshal(fields["recording"], &recording) != nil || strings.TrimSpace(recording.TranscriptError) != "" || len(recording.Transcript.Segments) != len(content.Transcript.Segments) {
+		if json.Unmarshal(fields["recording"], &recording) != nil || strings.TrimSpace(recording.TranscriptError) != "" || len(recording.Transcript.Segments) != len(transcript.Segments) {
 			return nil, errors.New("retained transcript timing is unavailable")
 		}
 		for i, item := range recording.Transcript.Segments {
-			seg := content.Transcript.Segments[i]
+			seg := transcript.Segments[i]
 			text := item.OriginalText
 			if strings.TrimSpace(text) == "" {
 				text = item.Text
@@ -120,14 +130,11 @@ func subtitleTiming(format string, raw []byte) ([]subtitleSegment, error) {
 				}
 				start, end = startTime.Sub(origin).Seconds(), endTime.Sub(origin).Seconds()
 			}
-			seg := content.Transcript.Segments[i]
+			seg := transcript.Segments[i]
 			cues = append(cues, subtitleSegment{entry.speaker, seg.Text, start, end})
 		}
 	default:
 		return nil, fmt.Errorf("recording start is unknown or timing is unavailable for %s", format)
-	}
-	if len(cues) != len(content.Transcript.Segments) {
-		return nil, errors.New("transcript timing is incomplete")
 	}
 	return cues, nil
 }

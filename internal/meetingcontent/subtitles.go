@@ -4,22 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"regexp"
 	"sort"
 	"strings"
 )
-
-// Each decimal conversion permits leading C whitespace and a sign. Match a
-// complete timing prefix: readers accept trailing coordinates or other data.
-const subtitleInteger = `[ \t\r\n\f\x0b]*[+-]?[0-9]+`
-const subtitleClock = subtitleInteger + ":" + subtitleInteger + ":" + subtitleInteger + "[,.]" + subtitleInteger
-
-var srtFormatting = regexp.MustCompile(`(?:\{\\[^}\r\n]*\}|\\[Nnh])`)
-var subtitleBlankLines = regexp.MustCompile(`\n(?:[\t \f\v\x{0085}\p{Z}]*\n)+`)
-
-var srtTag = regexp.MustCompile(`<[^ \t\r\n][^>\r\n]*>`)
-
-var srtTimingHeader = regexp.MustCompile("^" + subtitleClock + `[ \t\r\n\f\x0b]*-->` + subtitleClock)
 
 type subtitleSegment struct {
 	Speaker, Text string
@@ -29,11 +16,11 @@ type subtitleSegment struct {
 func RenderSubtitles(rawFormat string, raw []byte, options PacketOptions) (*PacketResult, error) {
 	segments, err := subtitleTiming(rawFormat, raw)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidSubtitles, err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidSubtitles, err)
 	}
 	content, err := renderSubtitles(segments, string(options.Format))
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidSubtitles, err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidSubtitles, err)
 	}
 	if len(content) > options.MaxBytes {
 		return nil, ErrBudgetTooSmall
@@ -56,10 +43,17 @@ func renderSubtitles(segments []subtitleSegment, format string) (string, error) 
 		}
 		s.Speaker = strings.TrimSpace(s.Speaker)
 		text := strings.ReplaceAll(strings.ReplaceAll(s.Text, "\r\n", "\n"), "\r", "\n")
-		text = strings.Trim(subtitleBlankLines.ReplaceAllString(text, "\n"), "\n")
-		if format == "srt" {
-			text = strings.TrimSpace(text)
+		lines := strings.Split(text, "\n")
+		kept := lines[:0]
+		for _, line := range lines {
+			if format == "srt" {
+				line = strings.TrimSpace(line)
+			}
+			if strings.TrimSpace(line) != "" {
+				kept = append(kept, line)
+			}
 		}
+		text = strings.Join(kept, "\n")
 		start, end := s.Start, s.End
 		if !validSubtitleSeconds(start) || !validSubtitleSeconds(end) || end <= start {
 			return "", fmt.Errorf("subtitle timing invalid at segment %d: negative, overflowing, or reversed interval", i+1)
@@ -68,24 +62,11 @@ func renderSubtitles(segments []subtitleSegment, format string) (string, error) 
 		if endMS <= startMS {
 			return "", fmt.Errorf("subtitle timing insufficient at segment %d: zero millisecond interval", i+1)
 		}
-		sourceText := text
 		if s.Speaker != "" {
 			text = s.Speaker + ": " + text
 		}
 		if format == "vtt" {
 			text = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(text)
-		} else {
-			unsafe := srtFormatting.MatchString(text) || srtTag.MatchString(text)
-			for line := range strings.SplitSeq(sourceText, "\n") {
-				unsafe = unsafe || strings.Trim(line, " \t\r\f\v") != line
-			}
-			for line := range strings.SplitSeq(text, "\n") {
-				// FFmpeg splits SRT input after 4095 UTF-8 bytes, exposing new headers.
-				unsafe = unsafe || len(line) > 4095 || srtTimingHeader.MatchString(line) || strings.Trim(line, " \t\r\f\v") != line
-			}
-			if unsafe {
-				return "", fmt.Errorf("subtitle format error at segment %d: SRT cannot preserve markup, timing syntax, leading/trailing whitespace, or lines over 4095 UTF-8 bytes; use --format vtt", i+1)
-			}
 		}
 		cues = append(cues, cue{startMS, endMS, text})
 	}

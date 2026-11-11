@@ -217,6 +217,15 @@ func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.
 	must.NoError(err)
 	must.False(subtitles.IsError)
 	checks.Equal("WEBVTT\n\n1\n00:00:10.000 --> 00:00:12.000\nA: Hello\n\n", meetingStructuredContent(t, subtitles)["content"])
+	omiSource, err := st.GetOrCreateSource("omi", "owner@example.test")
+	must.NoError(err)
+	omi := meetingarchive.Snapshot{SourceID: omiSource.ID, AccountEmail: "owner@example.test", SourceMessageID: "omi-subtitle", SourceConversationID: "omi-subtitle", StartedAt: snapshot.StartedAt, RawFormat: "omi_json", Raw: []byte(`{"started_at":"2026-01-01T00:00:00Z","structured":{},"transcript_segments":[{"text":"Hello\n  ordinary speech","start":1,"end":2}]}`)}
+	omiArchived, err := meetingarchive.New(st).Upsert(t.Context(), omi, meetingarchive.UpsertOptions{})
+	must.NoError(err)
+	omiSubtitles, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolGetMeetingContext, Arguments: map[string]any{"message_ids": []any{float64(omiArchived.MessageID)}, "format": "srt"}})
+	must.NoError(err)
+	must.False(omiSubtitles.IsError)
+	checks.Equal("1\n00:00:01,000 --> 00:00:02,000\nHello\nordinary speech\n\n", meetingStructuredContent(t, omiSubtitles)["content"])
 	snapshot.Raw = []byte(strings.Replace(string(raw), `"startedAt":"2026-01-01T00:00:00Z",`, "", 1))
 	_, err = meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
 	must.NoError(err)
@@ -239,7 +248,6 @@ func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.
 	checks.Contains(message.Text, "context_budget_too_small")
 	checks.Contains(message.Text, "max_bytes")
 	checks.Contains(message.Text, "1048576")
-
 }
 
 func meetingStructuredContent(t *testing.T, result *sdkmcp.CallToolResult) map[string]any {

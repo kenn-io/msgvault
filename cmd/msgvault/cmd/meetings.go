@@ -466,9 +466,6 @@ func meetingCommandError(err error) error {
 	if !errors.As(err, &apiErr) {
 		return err
 	}
-	if apiErr.APIErrorCode() == "context_budget_too_small" {
-		return fmt.Errorf("increase --max-bytes up to 1048576: %w", err)
-	}
 	switch apiErr.Status {
 	case http.StatusNotFound:
 		if apiErr.APIErrorCode() != "not_found" {
