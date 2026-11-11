@@ -66,28 +66,18 @@ func (s *Store) transferCommitmentDecisionTx(ctx context.Context, tx *loggedTx, 
 		return err
 	}
 	if ambiguous {
-		// No unique survivor owns this decision. Duplicate-message merge retains
-		// its hidden source for undo; person merge follows its existing deletion policy.
-		return nil
+		// A duplicate-message merge retains its hidden source for undo. A person
+		// merge keeps the decision detached at its own span: neither narrower
+		// live promise owns it, and a later extraction may reattach it.
+		if from.AnchorMessageID != messageID {
+			return nil
+		}
+		current = PersonCommitment{}
 	}
 	// No live survivor matched. A stale row at the same unique locator is
 	// a replacement, so it receives only the revalidated incoming decision.
 	if current.ID == 0 {
-		_, err = tx.ExecContext(ctx, `INSERT INTO person_commitments
-			(person_id, anchor_message_id, current_claim_id, target_key, direction,
-			quote, quote_start, quote_end, summary, due_on, promised_at, expires_at,
-			owner_state, snoozed_until, reopened_at, fulfilment_evidence_id, fulfilment_confirmed)
-			SELECT ?, ?, NULL, target_key, direction,
-			quote, ?, ?, summary, due_on, promised_at, expires_at,
-			?, ?, ?, NULL, 0
-			FROM person_commitments WHERE id = ?
-			ON CONFLICT (person_id, anchor_message_id, direction, quote_start, quote_end) DO UPDATE SET
-				current_claim_id = NULL, target_key = excluded.target_key, quote = excluded.quote,
-				summary = excluded.summary, due_on = excluded.due_on,
-				promised_at = excluded.promised_at, expires_at = excluded.expires_at,
-				owner_state = excluded.owner_state, snoozed_until = excluded.snoozed_until,
-				reopened_at = excluded.reopened_at, fulfilment_evidence_id = NULL, fulfilment_confirmed = 0`, personID, messageID, from.Start, from.End, from.State,
-			s.commitmentTimestamp(from.SnoozedUntil), s.commitmentTimestamp(from.ReopenedAt), from.ID)
+		err = s.insertDetachedCommitmentTx(ctx, tx, from, personID, messageID)
 	} else if err == nil {
 		state, snooze := current.State, laterCommitmentTime(current.SnoozedUntil, from.SnoozedUntil)
 		if from.State == LoopStateDone || current.State == LoopStateDone {
@@ -102,6 +92,27 @@ func (s *Store) transferCommitmentDecisionTx(ctx context.Context, tx *loggedTx, 
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `DELETE FROM person_commitment_frontiers WHERE person_id = ?`, personID)
+	return err
+}
+
+// insertDetachedCommitmentTx stores the decision at its own span on the
+// survivor, with no current claim, until a later sweep revalidates it.
+func (s *Store) insertDetachedCommitmentTx(ctx context.Context, tx *loggedTx, from PersonCommitment, personID, messageID int64) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO person_commitments
+		(person_id, anchor_message_id, current_claim_id, target_key, direction,
+		quote, quote_start, quote_end, summary, due_on, promised_at, expires_at,
+		owner_state, snoozed_until, reopened_at, fulfilment_evidence_id, fulfilment_confirmed)
+		SELECT ?, ?, NULL, target_key, direction,
+		quote, ?, ?, summary, due_on, promised_at, expires_at,
+		?, ?, ?, NULL, 0
+		FROM person_commitments WHERE id = ?
+		ON CONFLICT (person_id, anchor_message_id, direction, quote_start, quote_end) DO UPDATE SET
+			current_claim_id = NULL, target_key = excluded.target_key, quote = excluded.quote,
+			summary = excluded.summary, due_on = excluded.due_on,
+			promised_at = excluded.promised_at, expires_at = excluded.expires_at,
+			owner_state = excluded.owner_state, snoozed_until = excluded.snoozed_until,
+			reopened_at = excluded.reopened_at, fulfilment_evidence_id = NULL, fulfilment_confirmed = 0`, personID, messageID, from.Start, from.End, from.State,
+		s.commitmentTimestamp(from.SnoozedUntil), s.commitmentTimestamp(from.ReopenedAt), from.ID)
 	return err
 }
 
