@@ -52,7 +52,8 @@
         commitments = commitments.map((item) => item.id === decision.id
           ? { ...item, state: decision.state, snoozed_until: decision.snoozed_until,
               proposed_fulfilment: decision.state === 'open' ? undefined : item.proposed_fulfilment }
-          : item);
+          : item)
+          .filter((item) => includeClosed || item.state === 'open');
       } catch {
         if (!controller.signal.aborted) decisionFailed = true;
       } finally {

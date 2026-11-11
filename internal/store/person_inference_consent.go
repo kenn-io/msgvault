@@ -389,3 +389,14 @@ func (s *Store) GrantPersonCommitmentConsent(ctx context.Context, fingerprint, a
 func (s *Store) HasActivePersonCommitmentConsent(ctx context.Context, fingerprint string) (bool, error) {
 	return s.hasActiveConsent(ctx, ConsentPeopleCommitments, fingerprint)
 }
+
+// RevokePersonCommitmentConsent stops the separately authorized two-sided lane.
+func (s *Store) RevokePersonCommitmentConsent(ctx context.Context, fingerprint, actor string) (bool, error) {
+	var revoked bool
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		var err error
+		revoked, err = revokeConsent(ctx, tx, ConsentPeopleCommitments, fingerprint, actor)
+		return err
+	})
+	return revoked, err
+}

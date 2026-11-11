@@ -1236,7 +1236,7 @@ func runPersonCommitmentConsent(command *cobra.Command, deps personProviderComma
 func newPersonProviderRevokeCommand(deps personProviderCommandDeps) *cobra.Command {
 	var all bool
 	var jsonOutput bool
-	var semanticEmbeddings bool
+	var semanticEmbeddings, commitments bool
 	var ifFingerprint string
 	var fingerprint string
 	command := &cobra.Command{
@@ -1245,6 +1245,9 @@ func newPersonProviderRevokeCommand(deps personProviderCommandDeps) *cobra.Comma
 		Args:  optionalPersonProviderNameArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			deps := personProviderDepsForContext(command.Context(), deps)
+			if commitments && (all || semanticEmbeddings || fingerprint != "" || ifFingerprint != "") {
+				return errors.New("--commitments selects one provider's commitment grant and cannot be combined with other revoke selectors")
+			}
 			if fingerprint != "" {
 				if err := validatePersonProviderFingerprint(fingerprint); err != nil {
 					return err
@@ -1292,6 +1295,9 @@ func newPersonProviderRevokeCommand(deps personProviderCommandDeps) *cobra.Comma
 			if fingerprint != "" {
 				return errors.New("--fingerprint requires one named people provider revoke")
 			}
+			if commitments {
+				return runPersonCommitmentRevoke(command, runDeps, jsonOutput)
+			}
 			return runPersonProviderRevoke(command, runDeps, all, jsonOutput, semanticEmbeddings, ifFingerprint != "")
 		},
 	}
@@ -1299,6 +1305,7 @@ func newPersonProviderRevokeCommand(deps personProviderCommandDeps) *cobra.Comma
 	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output structured JSON")
 	command.Flags().BoolVar(&semanticEmbeddings, "semantic-embeddings", false,
 		"Select the curated-person semantic embedding policy")
+	command.Flags().BoolVar(&commitments, "commitments", false, "Revoke the two-sided commitment policy")
 	command.Flags().StringVar(&ifFingerprint, personProviderIfFingerprintFlag, "",
 		"Require an exact provider fingerprint")
 	_ = command.Flags().MarkHidden(personProviderIfFingerprintFlag)
@@ -1623,6 +1630,29 @@ func runPersonProviderRevoke(
 	}
 	_, _ = fmt.Fprintf(command.OutOrStdout(), "Consent revoked for %s\n", profile.Fingerprint)
 	return nil
+}
+
+func runPersonCommitmentRevoke(command *cobra.Command, deps personProviderCommandDeps, jsonOutput bool) error {
+	profile, st, cleanup, err := openPersonProviderProfile(deps)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	revoker, ok := st.(interface {
+		RevokePersonCommitmentConsent(context.Context, string, string) (bool, error)
+	})
+	if !ok {
+		return errors.New("commitment consent is unavailable")
+	}
+	revoked, err := revoker.RevokePersonCommitmentConsent(command.Context(), profile.Fingerprint, personProviderConsentActor)
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		return writeJSONOutput(command, map[string]any{"purpose": "people_commitments", "fingerprint": profile.Fingerprint, "revoked": revoked})
+	}
+	_, err = fmt.Fprintf(command.OutOrStdout(), "Commitment consent revoked (%s).\n", profile.Fingerprint)
+	return err
 }
 
 func runPersonProviderRevokeFingerprint(
