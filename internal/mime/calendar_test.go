@@ -28,7 +28,7 @@ func TestCalendarMIMEParts(t *testing.T) {
 	assertions.Equal(calendar, string(msg.CalendarParts[0].Content))
 
 	t.Run("percent encoded", func(t *testing.T) {
-		raw := "Content-Type: application/octet-stream\r\nContent-Disposition: attachment; filename*=UTF-8''R%C3%A9union%2Eics\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString([]byte(calendar))
+		raw := "Content-Type: application/octet-stream\r\nContent-Disposition: attachment;\r\n filename*=UTF-8''R%C3%A9union%2Eics\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString([]byte(calendar))
 		msg, err := Parse([]byte(raw))
 		require.NoError(t, err)
 		require.Len(t, msg.CalendarParts, 1)
