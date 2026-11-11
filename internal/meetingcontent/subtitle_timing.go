@@ -115,7 +115,11 @@ func subtitleTiming(format string, raw []byte) ([]subtitleSegment, error) {
 				}
 				words = append(words, word.text)
 			}
-			cues = append(cues, subtitleSegment{entry.speaker, strings.Join(words, " "), start, end})
+			speaker := entry.speaker
+			if speaker == "" {
+				speaker = "Unknown speaker"
+			}
+			cues = append(cues, subtitleSegment{speaker, strings.Join(words, " "), start, end})
 		}
 	default:
 		return nil, fmt.Errorf("recording start is unknown or timing is unavailable for %s", format)
