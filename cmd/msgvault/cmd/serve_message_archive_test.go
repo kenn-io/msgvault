@@ -185,10 +185,22 @@ func TestArchiveMessageDaemonGrantEnforcement(t *testing.T) {
 }
 
 func TestArchiveMessageDaemonAgentCLI(t *testing.T) {
-	requirementsForTest := require.New(t)
-	_, source, id, _, serverURL, owner, _ := newArchiveDaemon(t) //nolint:dogsled // This case needs the token and daemon only.
-	cliGrant, err := owner.IssueAgentToken(t.Context(), "cli archive", []string{"message.archive"}, []int64{source.ID}, nil, map[int64][]string{source.ID: {"codes@example.test"}}, time.Time{})
+	assertionsForTest, requirementsForTest := assert.New(t), require.New(t)
+	st, source, id, _, serverURL, owner, _ := newArchiveDaemon(t)
+	requirementsForTest.NoError(st.UpsertMessageBodyContext(t.Context(), id, sql.NullString{String: "Your code is 482913", Valid: true}, sql.NullString{}))
+	cliGrant, err := owner.IssueAgentToken(t.Context(), "code reader", []string{"message.read", "verification.read", "message.archive"}, []int64{source.ID}, nil, map[int64][]string{source.ID: {"codes@example.test"}}, time.Time{})
 	requirementsForTest.NoError(err)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("%s/api/v1/messages/%d", serverURL, id), nil)
+	requirementsForTest.NoError(err)
+	req.Header.Set(apiprotocol.AgentTokenHeader, cliGrant.Secret)
+	resp, err := http.DefaultClient.Do(req)
+	requirementsForTest.NoError(err)
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	requirementsForTest.NoError(err)
+	requirementsForTest.Equal(http.StatusOK, resp.StatusCode, string(body))
+	assertionsForTest.Contains(string(body), "482913")
+
 	tokenFile := filepath.Join(t.TempDir(), "agent.token")
 	requirementsForTest.NoError(os.WriteFile(tokenFile, []byte(cliGrant.Secret), 0o600))
 	cliConfig := config.NewDefaultConfig()
@@ -196,14 +208,16 @@ func TestArchiveMessageDaemonAgentCLI(t *testing.T) {
 	cliConfig.Data.DataDir = cliConfig.HomeDir
 	cliContext := testInvocationContext(t.Context(), cliConfig, invocationOptions{agentURL: serverURL, agentTokenFile: tokenFile, agentAllowInsecure: true, agentURLChanged: true, agentTokenChanged: true})
 	root := newTestRootCmd()
-	command := newMessageArchiveCommand(true, nil)
-	root.AddCommand(command)
-	root.SetArgs([]string{command.Name(), "--message", strconv.FormatInt(id, 10), "--dry-run", "--json"})
+	root.AddCommand(newMessageArchiveCommand(true, nil))
+	root.SetArgs([]string{"archive", "--message", strconv.FormatInt(id, 10), "--dry-run", "--json"})
 	var output bytes.Buffer
 	root.SetOut(&output)
 	root.SetErr(&bytes.Buffer{})
 	requirementsForTest.NoError(root.ExecuteContext(cliContext))
-	assert.Contains(t, output.String(), `"dry_run":true`)
+	var result emailtags.ArchiveResult
+	requirementsForTest.NoError(json.Unmarshal(output.Bytes(), &result))
+	assertionsForTest.True(result.Archived)
+	assertionsForTest.True(result.DryRun)
 }
 
 func TestArchiveMessageDaemonPreviewDuringSync(t *testing.T) {
