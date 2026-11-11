@@ -129,6 +129,79 @@ func TestRelationshipTemperatureCurrentHalfLifeKeepsOlderSignalsInWholeGraph(t *
 	require.NoError(rows.Err())
 }
 
+func TestRelationshipTemperatureAnnualRollupsStartAtFirstYear(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	_, db := writeRelationshipBaseFixture(t, true)
+	_, err := db.ExecContext(t.Context(), `
+		CREATE TEMP TABLE `+temperatureBuildRelation+` (
+			canonical_id BIGINT, event_date DATE, sent_count BIGINT,
+			received_count BIGINT, meeting_count BIGINT, email_count BIGINT,
+			chat_count BIGINT, total_count BIGINT, modality_mask UTINYINT,
+			last_at TIMESTAMP
+		);
+		INSERT INTO `+temperatureBuildRelation+` VALUES
+			(2, DATE '1969-12-31', 1, 0, 0, 1, 0, 1, 1, TIMESTAMP '1969-12-31 23:59:59'),
+			(2, DATE '1970-01-01', 1, 0, 0, 1, 0, 1, 1, TIMESTAMP '1970-01-01 00:00:00'),
+			(3, DATE '1904-01-04', 0, 1, 0, 1, 0, 1, 1, TIMESTAMP '1904-01-04 09:00:00')
+	`)
+	require.NoError(err)
+
+	query := `WITH anchor AS (SELECT 1)` + relationshipTemperatureCTEs(
+		time.Date(1970, time.January, 2, 0, 0, 0, 0, time.UTC),
+	)
+
+	func() {
+		rows, err := db.QueryContext(t.Context(), query+` SELECT canonical_id,
+			CAST(to_json(list_transform(annual_temperatures, lambda x: x.year)) AS VARCHAR)
+			FROM annual_rollups ORDER BY canonical_id`)
+		require.NoError(err)
+		defer func() { require.NoError(rows.Close()) }()
+		require.True(rows.Next())
+		var canonicalID int64
+		var years string
+		require.NoError(rows.Scan(&canonicalID, &years))
+		assert.Equal(int64(2), canonicalID)
+		assert.JSONEq(`[1970]`, years)
+		assert.False(rows.Next())
+		require.NoError(rows.Err())
+	}()
+
+	func() {
+		rows, err := db.QueryContext(t.Context(), query+` SELECT canonical_id, peak_year
+			FROM peaks ORDER BY canonical_id`)
+		require.NoError(err)
+		defer func() { require.NoError(rows.Close()) }()
+		require.True(rows.Next())
+		var canonicalID, peakYear int64
+		require.NoError(rows.Scan(&canonicalID, &peakYear))
+		assert.Equal(int64(2), canonicalID)
+		assert.Equal(int64(1970), peakYear)
+		assert.False(rows.Next())
+		require.NoError(rows.Err())
+	}()
+
+	func() {
+		rows, err := db.QueryContext(t.Context(), query+` SELECT canonical_id, population, raw_score
+			FROM current_ranked ORDER BY canonical_id`)
+		require.NoError(err)
+		defer func() { require.NoError(rows.Close()) }()
+		require.True(rows.Next())
+		var canonicalID, population int64
+		var rawScore float64
+		require.NoError(rows.Scan(&canonicalID, &population, &rawScore))
+		assert.Equal(int64(2), canonicalID)
+		assert.Equal(int64(2), population)
+		assert.InDelta(2*(RelationshipDayWeight(2)+RelationshipDayWeight(1))*math.Log(2), rawScore, 1e-9)
+		require.True(rows.Next())
+		require.NoError(rows.Scan(&canonicalID, &population, &rawScore))
+		assert.Equal(int64(3), canonicalID)
+		assert.Equal(int64(2), population)
+		assert.False(rows.Next())
+		require.NoError(rows.Err())
+	}()
+}
+
 func TestHegelAnnualTemperatureRollups(t *testing.T) {
 	_, db := writeRelationshipBaseFixture(t, true)
 	_, err := db.ExecContext(t.Context(), `CREATE TEMP TABLE `+temperatureBuildRelation+` (
@@ -143,16 +216,12 @@ func TestHegelAnnualTemperatureRollups(t *testing.T) {
 		assert := assert.New(ht)
 		_, err := db.ExecContext(t.Context(), `DELETE FROM `+temperatureBuildRelation)
 		require.NoError(err)
-		// The fixed facts cover an old-only contact, a mixed contact and tied peaks.
+		// One contact has equal temperatures in two years to exercise peak tie-breaking.
 		dates := []time.Time{
-			time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC),
-			time.Date(1904, 1, 4, 0, 0, 0, 0, time.UTC),
-			time.Date(1969, 12, 31, 0, 0, 0, 0, time.UTC),
-			time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC),
 			time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC),
 			time.Date(2000, 2, 29, 0, 0, 0, 0, time.UTC),
 		}
-		ids := []int64{2, 2, 3, 3, 4, 4}
+		ids := []int64{4, 4}
 		for n := hegel.Draw(ht, hegel.Integers(1, 6)); n > 0; n-- {
 			var date time.Time
 			if hegel.Draw(ht, hegel.Booleans()) {
@@ -243,7 +312,6 @@ func TestHegelAnnualTemperatureRollups(t *testing.T) {
 		for id := range expected {
 			assert.Contains(peaks, id)
 		}
-		assert.Equal([]int{1970}, actual[3])
 		assert.Equal(2000, peaks[4])
 	})
 }
