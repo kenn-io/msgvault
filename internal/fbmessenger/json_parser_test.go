@@ -148,7 +148,7 @@ func TestParseJSONThread_NonTextBodies(t *testing.T) {
 	// Ordered chronologically ascending: unsubscribe, share, missed call, call, photo, sticker.
 	wantBodies := []string{
 		"[system] Sam left the chat",
-		"[shared link] https://example.com/article\nExample share text",
+		"[shared link] https://example.com/café\nExample share text",
 		"[call: missed, 0s]",
 		"[call: 3m 12s]",
 		"[photo]",

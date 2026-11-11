@@ -36,7 +36,7 @@
       "timestamp_ms": 1600000200000,
       "type": "Share",
       "share": {
-        "link": "https://example.com/article",
+        "link": "https://example.com/cafÃ©",
         "share_text": "Example share text"
       }
     },

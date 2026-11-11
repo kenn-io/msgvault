@@ -131,6 +131,41 @@ func TestDiscover_UnnumberedJSONSiblingCountsAndFormat(t *testing.T) {
 			}
 		})
 	}
+	t.Run("unknown section", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		root := t.TempDir()
+		messages := filepath.Join(root, "your_activity_across_facebook", "messages")
+		thread := filepath.Join(messages, "spam", "thread")
+		require.NoError(os.MkdirAll(thread, 0700))
+		for _, name := range []string{"message_1.json", "message_2.json", "message_1.html", "notes.txt"} {
+			require.NoError(os.WriteFile(filepath.Join(thread, name), []byte(`{}`), 0600))
+		}
+		media := filepath.Join(messages, "media", "photos")
+		require.NoError(os.MkdirAll(media, 0700))
+		require.NoError(os.WriteFile(filepath.Join(media, "photo.jpg"), []byte("photo"), 0600))
+		dirs, skipped, err := Discover(root)
+		require.NoError(err)
+		assert.Empty(dirs)
+		assert.Equal(3, skipped)
+	})
+	t.Run("unreadable thread", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		root := t.TempDir()
+		thread := filepath.Join(root, "your_activity_across_facebook", "messages", "inbox", "unreadable")
+		require.NoError(os.MkdirAll(thread, 0700))
+		require.NoError(os.WriteFile(filepath.Join(thread, "message_1.json"), []byte(`{}`), 0600))
+		require.NoError(os.Chmod(thread, 0))
+		t.Cleanup(func() { require.NoError(os.Chmod(thread, 0700)) })
+		if _, err := os.ReadDir(thread); err == nil {
+			t.Skip("process can read a directory without permissions")
+		}
+		dirs, skipped, err := Discover(root)
+		require.NoError(err)
+		assert.Empty(dirs)
+		assert.Equal(1, skipped)
+	})
 }
 
 func TestDiscover_IgnoresDSStore(t *testing.T) {
