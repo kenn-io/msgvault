@@ -4,30 +4,13 @@ import (
 	"bytes"
 	"errors"
 	"io"
-	"strconv"
 	"testing"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/testutil"
 )
-
-func TestRepairAutomationFlagsPrintsSummary(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	dir := t.TempDir()
-	cfg := &config.Config{HomeDir: dir, Data: config.DataConfig{DataDir: dir}}
-	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
-	require.NoError(st.Close())
-	var out bytes.Buffer
-	cmd := &cobra.Command{}
-	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
-	cmd.SetOut(&out)
-	require.NoError(runRepairAutomationFlagsLocal(cmd, false, 1))
-	assert.Regexp(`Automation flag repair dry run: scanned=[0-9]+ would_write=[0-9]+ bulk=[0-9]+ automated=[0-9]+ unreadable=[0-9]+ remaining=[0-9]+\n`, out.String())
-}
 
 func TestRepairAutomationFlagsRoutesThroughDaemon(t *testing.T) {
 	server, requests := newDaemonCLIRunnerTestServer(t, func(req daemonCLIRunTestRequest) {
@@ -45,30 +28,58 @@ func TestRepairAutomationFlagsRoutesThroughDaemon(t *testing.T) {
 	assert.Equal(t, "repair complete\n", out.String())
 }
 
-func TestRepairAutomationFlagsRefreshAndOutputFailure(t *testing.T) {
-	for _, outputFailure := range []bool{false, true} {
-		t.Run(strconv.FormatBool(outputFailure), func(t *testing.T) {
+func TestRepairAutomationFlagsSummaryAndFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		apply        bool
+		refreshFails bool
+		outputFails  bool
+		output       string
+	}{
+		{
+			name: "dry run",
+			output: "Automation flag repair dry run: scanned=3 would_write=2 bulk=1 automated=1 unreadable=1 remaining=3\n" +
+				"Dry run: no rows were modified. Re-run with --apply to write repairs.\n",
+		},
+		{
+			name:   "apply",
+			apply:  true,
+			output: "Automation flag repair applied: scanned=3 written=2 bulk=1 automated=1 unreadable=1 remaining=1\n",
+		},
+		{name: "refresh failure", apply: true, refreshFails: true},
+		{name: "refresh and output failures", apply: true, refreshFails: true, outputFails: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
 			require := require.New(t)
 			dir := t.TempDir()
 			cfg := &config.Config{HomeDir: dir, Data: config.DataConfig{DataDir: dir}}
 			newListIDRepairArchive(t, cfg)
-			_, err := buildCache(t.Context(), cfg.DatabaseDSN(), cfg.AnalyticsDir(), true)
-			require.NoError(err)
-			sentinel := errors.New("automation cache export failed")
-			buildCacheBeforeMessagesExportHook = func() error { return sentinel }
-			t.Cleanup(func() { buildCacheBeforeMessagesExportHook = nil })
+			var refreshErr error
+			if tc.refreshFails {
+				_, err := buildCache(t.Context(), cfg.DatabaseDSN(), cfg.AnalyticsDir(), true)
+				require.NoError(err)
+				refreshErr = errors.New("automation cache export failed")
+				buildCacheBeforeMessagesExportHook = func() error { return refreshErr }
+				t.Cleanup(func() { buildCacheBeforeMessagesExportHook = nil })
+			}
 			cmd := &cobra.Command{}
 			cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 			var out bytes.Buffer
 			cmd.SetOut(&out)
-			if outputFailure {
+			if tc.outputFails {
 				cmd.SetOut(failingSearchWriter{})
 			}
-			err = runRepairAutomationFlagsLocal(cmd, true, 1)
-			require.ErrorIs(err, sentinel)
-			if outputFailure {
-				require.ErrorIs(err, io.ErrClosedPipe)
+			err := runRepairAutomationFlagsLocal(cmd, tc.apply, 1)
+			if tc.refreshFails {
+				require.ErrorIs(err, refreshErr)
+				if tc.outputFails {
+					require.ErrorIs(err, io.ErrClosedPipe)
+				}
+				return
 			}
+			require.NoError(err)
+			assert.Equal(tc.output, out.String())
 		})
 	}
 }

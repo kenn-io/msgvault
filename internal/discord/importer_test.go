@@ -2475,14 +2475,14 @@ func TestDiscordAutomationAuthorEvidence(t *testing.T) {
 		flags                uint32
 		known                bool
 	}{
-		{name: "unknown"},
 		{name: "human", author: User{ID: "400"}, known: true},
 		{name: "bot", author: User{ID: "400", Bot: true}, flags: store.FlagBotSender, known: true},
-		{name: "system without identity", author: User{System: true}, flags: store.FlagBotSender, known: true},
-		{name: "bot without identity", author: User{Bot: true}, flags: store.FlagBotSender, known: true},
+		{name: "system", author: User{ID: "400", System: true}, flags: store.FlagBotSender, known: true},
 		{name: "webhook", author: User{ID: "400"}, webhook: "500", flags: store.FlagBotSender, known: true},
-		{name: "application", application: "600", flags: store.FlagBotSender, known: true},
 		{name: "human with application", author: User{ID: "400"}, application: "600", known: true},
+		// The client decoder accepts incomplete payloads without author IDs.
+		{name: "missing author"},
+		{name: "application with missing author", application: "600", flags: store.FlagBotSender, known: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)

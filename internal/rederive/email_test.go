@@ -118,7 +118,7 @@ func TestEmailRetriesFailedRowsAndResumesAfterCancellation(t *testing.T) {
 	assert.Equal(int64(3), sum.MessagesScanned, "manual repair still inspects the whole archive")
 }
 
-func archiveCurrentEmail(t *testing.T, st *store.Store, src *store.Source, key string) {
+func archiveCurrentEmail(t *testing.T, st *store.Store, src *store.Source, key string) int64 {
 	t.Helper()
 	id := archiveEmail(t, st, src, key, "Heizkörper")
 	require.NoError(t, st.UpsertMessageBody(id, sql.NullString{String: "Heizkörper", Valid: true}, sql.NullString{String: "<p>Heizkörper</p>", Valid: true}))
@@ -129,6 +129,7 @@ func archiveCurrentEmail(t *testing.T, st *store.Store, src *store.Source, key s
 	flags := parsed.AutomationFlags()
 	require.NotNil(t, flags)
 	require.NoError(t, st.PutMessageAutomationContext(t.Context(), id, *flags))
+	return id
 }
 
 func TestEmailFirstSyncBoundsReadQueries(t *testing.T) {
@@ -286,19 +287,6 @@ func TestEmailUnchangedRetryPublishesPendingRevisionWithRowErrors(t *testing.T) 
 	assert.False(t, applied, "unresolved row failures keep the pass retryable")
 }
 
-func TestRederiveRefreshesAutomationFlags(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st, src, id := archiveEmailSource(t, "imap", "stale")
-	require.NoError(st.UpsertMessageRaw(id, []byte("From: original@example.test\r\nList-Id: <news.example.test>\r\n\r\nhello")))
-	_, err := Run(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
-	require.NoError(err)
-	flags, current, err := st.MessageAutomationContext(t.Context(), id)
-	require.NoError(err)
-	assert.True(current)
-	assert.Equal(uint32(4), flags)
-}
-
 func TestRederiveAutomationIncompleteSuccessfulParseRemainsUnknown(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -322,13 +310,16 @@ func TestEmailFlagsOnlyBackfillPublishesRevisionOnce(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("outlook", "archive@example.test")
 	require.NoError(err)
-	archiveCurrentEmail(t, st, src, "current")
-	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET automation_flags = NULL, automation_rule_version = NULL`)
-	require.NoError(err)
+	id := archiveCurrentEmail(t, st, src, "current")
+	require.NoError(st.UpsertMessageRaw(id, []byte("List-Id: <news.example.test>\r\n"+emailRaw)))
 	before := derivedDataRevision(t, st)
 	sum, err := Run(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.NoError(err)
 	assert.Zero(sum.BodiesRewritten)
+	flags, current, err := st.MessageAutomationContext(t.Context(), id)
+	require.NoError(err)
+	assert.True(current)
+	assert.Equal(uint32(4), flags)
 	assert.Equal(before+1, derivedDataRevision(t, st))
 	sum, err = Run(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	require.NoError(err)
