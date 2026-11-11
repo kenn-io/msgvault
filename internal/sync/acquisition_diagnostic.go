@@ -92,7 +92,7 @@ func DiagnoseAcquisitionContext(ctx context.Context, st *store.Store, sourceID i
 		case op != acquisitionUnknown && resolved:
 			state = AcquisitionResolved
 		case outcome.Status == store.SyncRunItemStatusSkipped:
-		case source.MergedIntoSourceID == 0 && op != acquisitionUnknown && covers(retries[outcome.SourceMessageID], outcome, op):
+		case source.MergedIntoSourceID == 0 && op != acquisitionUnknown && acquisitionOperationOf(retries[outcome.SourceMessageID]) == op:
 			state = AcquisitionActive
 		default:
 			state = AcquisitionIndeterminate
@@ -109,10 +109,4 @@ func DiagnoseAcquisitionContext(ctx context.Context, st *store.Store, sourceID i
 	}
 	slices.Reverse(items)
 	return items, nil
-}
-
-// covers reports whether the retry candidate stands for an error of the same
-// operation recorded no later than the candidate.
-func covers(retry, outcome store.SyncRunItem, op acquisitionOperation) bool {
-	return retry.ID >= outcome.ID && acquisitionOperationOf(retry) == op
 }

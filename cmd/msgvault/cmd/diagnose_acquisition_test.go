@@ -112,6 +112,7 @@ func TestDiagnoseAcquisition(t *testing.T) {
 		pending.ErrorMessage = store.SyncRunItemFilesPendingMessage
 		a.record(a.source, false,
 			acquisitionOutcome("download", "fetch", "error", "fetch_error"),
+			acquisitionOutcome("changed-operation", "fetch", "error", "fetch_error"),
 		)
 		a.record(a.source, false,
 			acquisitionOutcome("download", "fetch", "error", "batch_fetch_error"),
@@ -120,6 +121,7 @@ func TestDiagnoseAcquisition(t *testing.T) {
 			acquisitionOutcome("image", "ingest", "error", "remote_image_error"),
 			acquisitionOutcome("both", "ingest", "error", "attachment_remote_image_error"),
 			pending,
+			acquisitionOutcome("changed-operation", "ingest", "error", "attachment_error"),
 		)
 		output, err := a.diagnose("")
 		require.NoError(err)
@@ -128,7 +130,8 @@ func TestDiagnoseAcquisition(t *testing.T) {
 			"attachment\tstill failing\tattachment saving failed\n"+
 			"image\tstill failing\tremote image saving failed\n"+
 			"both\tstill failing\tattachment and remote image saving failed\n"+
-			"pending\tstill failing\tattachment saving failed\n", output)
+			"pending\tstill failing\tattachment saving failed\n"+
+			"changed-operation\tstill failing\tattachment saving failed\n", output)
 		assert.Equal([]map[string]string{
 			acquisitionJSON("download", "fetch", "batch_fetch_error", "active"),
 			acquisitionJSON("ingest", "ingest", "ingest_error", "active"),
@@ -136,7 +139,10 @@ func TestDiagnoseAcquisition(t *testing.T) {
 			acquisitionJSON("image", "ingest", "remote_image_error", "active"),
 			acquisitionJSON("both", "ingest", "attachment_remote_image_error", "active"),
 			acquisitionJSON("pending", "ingest", "attachment_error", "active"),
+			acquisitionJSON("changed-operation", "ingest", "attachment_error", "active"),
 		}, a.diagnoseJSON())
+		all := a.diagnoseJSON("--all")
+		assert.Contains(all, acquisitionJSON("changed-operation", "fetch", "fetch_error", "indeterminate"))
 	})
 
 	t.Run("fixed", func(t *testing.T) {
@@ -314,6 +320,11 @@ func TestDiagnoseAcquisition(t *testing.T) {
 		require.NoError(err)
 		other, err := a.st.GetOrCreateSource("imap", "other@example.com")
 		require.NoError(err)
+		legacy, err := a.st.GetOrCreateSource("gmail", "legacy@example.com")
+		require.NoError(err)
+		_, err = a.st.DB().ExecContext(t.Context(), a.st.Rebind("UPDATE sources SET source_type = ? WHERE id = ?"), "", legacy.ID)
+		require.NoError(err)
+		a.record(legacy.ID, false, acquisitionOutcome("legacy", "fetch", "error", "fetch_error"))
 		_, err = a.st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: a.source, IntoSourceID: into.ID})
 		require.NoError(err)
 		output, err := a.diagnose("")
@@ -328,5 +339,7 @@ func TestDiagnoseAcquisition(t *testing.T) {
 		a.source = other.ID
 		_, err = a.diagnose("")
 		require.ErrorContains(err, "requires a Gmail source")
+		a.source = legacy.ID
+		assert.Equal([]map[string]string{acquisitionJSON("legacy", "fetch", "fetch_error", "active")}, a.diagnoseJSON())
 	})
 }
