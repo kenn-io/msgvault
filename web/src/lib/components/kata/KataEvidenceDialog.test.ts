@@ -164,7 +164,7 @@ describe('KataEvidenceDialog', () => {
     await screen.findByText('Opening passage');
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
     await screen.findByRole('radio', { name: 'Follow up · example#abcd' });
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search open issues' }), { target: { value: 'budget' } });
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'budget' } });
     const older = await screen.findByRole('radio', { name: 'Older budget · example#k3f9' });
     expect(screen.getByRole('button', { name: 'Add quote' })).toHaveProperty('disabled', true);
     await fireEvent.click(older);

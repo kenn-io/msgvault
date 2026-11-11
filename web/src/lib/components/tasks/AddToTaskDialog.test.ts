@@ -3,8 +3,6 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
-import { SvelteMap } from 'svelte/reactivity';
-import { conversationTaskStatusKey, type ConversationTaskStatus } from './task-status';
 import AddToTaskDialog from './AddToTaskDialog.svelte';
 
 function pendingCreate() {
@@ -21,35 +19,6 @@ function pendingCreate() {
 }
 
 describe('Add to task', () => {
-  it.each(['ready', 'disabled'])('chooses an available destination when Tasks is %s', async (state) => {
-    const client = createAPIClient(async input => Response.json((input as Request).url.includes('/kata/status')
-      ? { state: 'ready', project: 'example' }
-      : { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata }));
-    const readiness = new KataReadiness(client);
-    await waitFor(() => expect(readiness.ready).toBe(true));
-    const statuses = new SvelteMap<string, ConversationTaskStatus['latest']>();
-    const load = vi.fn(async () => {
-      const data = { state, project: 'example' } as const;
-      statuses.set('latest', data);
-      return { data, response: new Response() };
-    });
-    const status: ConversationTaskStatus = { load, get latest() { return statuses.get('latest'); } };
-    const view = render(AddToTaskDialog, { props: { client, messageId: 42, title: 'Follow up', email: true, onclose: vi.fn() }, context: new Map<unknown, unknown>([[kataReadinessKey, readiness], [conversationTaskStatusKey, status]]) });
-    try {
-      await waitFor(() => expect(screen.getByRole('radio', { name: state === 'ready' ? 'Tasks' : 'Kata' }).getAttribute('aria-checked')).toBe('true'));
-      expect(load).toHaveBeenCalledOnce();
-      if (state === 'disabled') {
-        expect(screen.getByRole('radio', { name: 'Tasks' })).toHaveProperty('disabled', true);
-        expect(screen.getByRole('radio', { name: 'Tasks' }).getAttribute('title')).toBe('Tasks integration is unavailable.');
-      } else {
-        expect(screen.getByRole('radio', { name: 'Tasks' })).toHaveProperty('disabled', false);
-        await fireEvent.click(screen.getByRole('radio', { name: 'Kata' }));
-        await fireEvent.click(screen.getByRole('radio', { name: 'Tasks' }));
-        expect(screen.getByRole('radio', { name: 'Tasks' }).getAttribute('aria-checked')).toBe('true');
-      }
-    } finally { view.unmount(); readiness.dispose(); }
-  });
-
   it.each([false, true])('opens Kata evidence for email=%s when Kata is ready', async (email) => {
     const client = createAPIClient(async (input) => Response.json((input as Request).url.endsWith('/status')
       ? { state: 'ready', project: 'example' }

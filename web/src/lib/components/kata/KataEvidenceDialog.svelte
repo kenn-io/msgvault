@@ -156,7 +156,7 @@
           <label>Issue title<TextInput ariaLabel="Issue title" bind:value={title} disabled={busy} autocomplete="off" block /></label>
           <label>Brief<textarea aria-label="Brief" bind:value={brief} disabled={busy} rows="3" maxlength="2000"></textarea></label>
         {:else}
-          <TaskIssuePicker load={loadIssues} noun="open issues" searchLabel="Search open issues" hint="Search by whole word or enter a ref." moreNote="The list is capped at 25." showCount empty="No open issues yet." disabled={busy} bind:selected />
+          <TaskIssuePicker load={loadIssues} noun="open issues" moreNote="Search by whole word or enter a ref. The list is capped at 25." empty="No open issues yet." disabled={busy} bind:selected />
         {/if}
         <section aria-label="Quoted passage">
           <p class="disclosure">Quote saved in Kata</p>

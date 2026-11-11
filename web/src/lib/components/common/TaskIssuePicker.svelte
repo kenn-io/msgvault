@@ -2,12 +2,9 @@
   import { debounce, RadioGroup, SearchInput } from '@kenn-io/kit-ui';
   import { onMount } from 'svelte';
 
-  let { load, noun, empty, disabled = false, moreNote = '', hint = '', showCount = false, searchLabel = `Filter ${noun}`, selected = $bindable('') }: {
+  let { load, noun, empty, disabled = false, moreNote = '', selected = $bindable('') }: {
     load: (query: string, signal: AbortSignal) => Promise<{ items: { id: string; label: string; detail?: string }[]; truncated: boolean }>;
     moreNote?: string;
-    hint?: string;
-    showCount?: boolean;
-    searchLabel?: string;
     noun: string;
     empty: string;
     disabled?: boolean;
@@ -19,7 +16,6 @@
   let truncated = $state(false);
   let loading = $state(true);
   let error = $state('');
-  let showMore = $derived(!!moreNote && !error && truncated && !loading && query.trim() === listedQuery);
   let controller: AbortController | undefined;
   async function reload() {
     controller?.abort();
@@ -42,16 +38,16 @@
 </script>
 
 <div class="picker">
-  <SearchInput block value={query} ariaLabel={searchLabel} placeholder={searchLabel} {disabled} oninput={(value) => { selected = ''; query = value; schedule(); }} />
+  <SearchInput block value={query} ariaLabel={`Filter ${noun}`} placeholder={`Filter ${noun}`} {disabled} oninput={(value) => { selected = ''; query = value; schedule(); }} />
   <div class="results">
     {#if loading || query.trim() !== listedQuery}<p role="status">Loading…</p>
     {:else}
       {#if error}<p role="alert">{error}</p>{/if}
-      {#if items.length}{#if showCount}<p class="result-count">{items.length} {items.length === 1 ? 'result' : 'results'}</p>{/if}<RadioGroup legend={noun[0].toUpperCase() + noun.slice(1)} options={items.map(item => ({ value: item.id, label: item.detail ? `${item.label} · ${item.detail}` : item.label }))} value={selected} {disabled} onchange={(value) => selected = value ?? ''} />
+      {#if items.length}<RadioGroup legend={noun[0].toUpperCase() + noun.slice(1)} options={items.map(item => ({ value: item.id, label: item.detail ? `${item.label} · ${item.detail}` : item.label }))} value={selected} {disabled} onchange={(value) => selected = value ?? ''} />
       {:else if !error}<p>{listedQuery ? `No ${noun} match "${listedQuery}".` : empty}</p>{/if}
     {/if}
   </div>
-  {#if hint || showMore}<p>{hint}{hint && showMore ? ' ' : ''}{showMore ? moreNote : ''}</p>{/if}
+  {#if moreNote && !error && truncated && !loading && query.trim() === listedQuery}<p>{moreNote}</p>{/if}
 </div>
 
 <style>
@@ -61,5 +57,4 @@
   /* kit-ui-check-ignore: RadioGroup does not expose a legend class. */
   .results :global(.kit-radio-group__legend) { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
   p { margin: 0; color: var(--text-secondary); font-size: 12px; }
-  .result-count { margin-bottom: var(--space-2); }
 </style>

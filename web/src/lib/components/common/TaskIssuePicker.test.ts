@@ -48,15 +48,4 @@ describe('TaskIssuePicker', () => {
     render(TaskIssuePicker, { load: async () => ({ items: [], truncated: false }), noun: 'open issues', empty: 'No open issues yet.' });
     expect(await screen.findByText('No open issues yet.')).toBeDefined();
   });
-
-  it('shows the result limit alongside the search guidance', async () => {
-    render(TaskIssuePicker, { load: async (query: string) => ({ items: query ? [item] : Array.from({ length: 25 }, (_, i) => ({ id: String(i), label: `Issue ${i}` })), truncated: !query }), noun: 'open issues', empty: 'No open issues yet.', hint: 'Search by whole word or enter a ref.', moreNote: 'The list is capped at 25.', showCount: true });
-    await screen.findByRole('radio', { name: 'Issue 0' });
-    expect(screen.getByText('25 results')).toBeDefined();
-    expect(screen.getByText('Search by whole word or enter a ref. The list is capped at 25.')).toBeDefined();
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'budget' } });
-    await screen.findByRole('radio', { name: item.label });
-    expect(screen.getByText('Search by whole word or enter a ref.')).toBeDefined();
-    expect(screen.getByText('1 result')).toBeDefined();
-  });
 });
