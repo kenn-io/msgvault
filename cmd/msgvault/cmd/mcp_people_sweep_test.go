@@ -145,16 +145,30 @@ func TestPeopleSweepFixedArgumentsAndSafeErrors(t *testing.T) {
 	require.NoError(err)
 	assert.JSONEq(`{"error":"operation_in_progress","operation_may_have_completed":false}`, string(data))
 	for _, tc := range []struct {
-		stderr, want string
-		uncertain    bool
+		name, stderr, body, want string
+		status                   int
+		uncertain                bool
 	}{
-		{"Error: --limit must be between 1 and 25", "invalid_limit", false},
-		{"Error: person 42 is not tracked", "person_not_tracked", false},
-		{"Error: person 42 is not tracked elsewhere", "operation_refused", true},
+		{name: "limit", stderr: "Error: --limit must be between 1 and 25", want: "invalid_limit"},
+		{name: "untracked", stderr: "Error: person 42 is not tracked", want: "person_not_tracked"},
+		{name: "multiline", stderr: "time=2026-01-01 level=info msg=starting\nError: person 42 is not tracked\nWarning: invalid daemon config: example", want: "person_not_tracked"},
+		{name: "last error", stderr: "Error: person 42 is not tracked\nError: other failure", want: "operation_refused", uncertain: true},
+		{name: "near match", stderr: "Error: person 42 is not tracked elsewhere", want: "operation_refused", uncertain: true},
+		{name: "server busy", status: 503, body: `{"error":"server_busy"}`, want: "server_busy"},
+		{name: "rate limit", status: 429, body: `{"error":"rate_limit_exceeded"}`, want: "rate_limit_exceeded"},
+		{name: "store unavailable", status: 503, body: `{"error":"cli_store_unavailable"}`, want: "cli_store_unavailable"},
+		{name: "invalid request", status: 400, body: `{"error":"invalid_request"}`, want: "invalid_request"},
+		{name: "internal error", status: 500, body: `{"error":"internal_error"}`, want: "operation_refused", uncertain: true},
+		{name: "proxy failure", status: 502, body: "proxy error", want: "operation_refused", uncertain: true},
 	} {
-		t.Run(tc.want+tc.stderr, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if tc.status != 0 {
+					w.WriteHeader(tc.status)
+					_, _ = w.Write([]byte(tc.body))
+					return
+				}
 				_, _ = fmt.Fprintf(w, "{\"type\":\"stderr\",\"data\":%q}\n{\"type\":\"error\",\"error\":%q}\n", tc.stderr, cliSubprocessExitSentinel)
 			})
 			backend := newDaemonMCPOperations(client, nil)

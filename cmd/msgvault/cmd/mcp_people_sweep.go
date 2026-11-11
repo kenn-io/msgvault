@@ -139,7 +139,8 @@ func (b *daemonMCPOperations) executePeopleSweep(ctx context.Context, name strin
 		}
 		_ = json.Unmarshal(data, &failure)
 		switch failure.Error {
-		case "operation_in_progress", "command_not_allowed", "unauthorized", "forbidden":
+		case "operation_in_progress", "command_not_allowed", "unauthorized", "forbidden",
+			"server_busy", "rate_limit_exceeded", "cli_store_unavailable", "invalid_request":
 			return operationFailure(failure.Error, false), true, nil
 		}
 		return operationFailure("operation_refused", writes), true, nil
@@ -162,10 +163,15 @@ func (b *daemonMCPOperations) executePeopleSweep(ctx context.Context, name strin
 			stderr.WriteString(event.Data)
 		case "error":
 			code, uncertain := "operation_refused", writes
-			diagnostic := strings.TrimSpace(stderr.String())
+			diagnostic := ""
+			for _, line := range strings.Split(stderr.String(), "\n") {
+				if strings.HasPrefix(line, "Error: ") {
+					diagnostic = strings.TrimSuffix(line, "\r")
+				}
+			}
 			if event.Error == cliSubprocessExitSentinel {
 				switch {
-				case diagnostic == "Error: people sweep is disabled" || diagnostic == "people sweep is disabled":
+				case diagnostic == "Error: people sweep is disabled":
 					code, uncertain = "people_sweep_disabled", false
 				case writes && strings.HasPrefix(diagnostic, "Error: --limit must be between 1 and "):
 					code, uncertain = "invalid_limit", false
