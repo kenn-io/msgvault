@@ -158,15 +158,53 @@ func (c *KataClient) ListPersonTasks(ctx context.Context, project, personUID str
 		return nil, ErrRequestRejected
 	}
 	query := url.Values{"meta": {"msgvault.person=" + personUID}, "status": {"open"}, "limit": {strconv.Itoa(limit)}}
+	tasks, _, err := c.listProjectIssues(ctx, project, query)
+	return tasks, err
+}
+
+// OpenIssues lists the project's most recently updated open issues. Every
+// Kata API msgvault accepts orders an unsorted list this way, while
+// sort=created needs a newer one.
+func (c *KataClient) OpenIssues(ctx context.Context, project string, limit int) ([]KataTask, bool, error) {
+	return c.listProjectIssues(ctx, project, url.Values{"status": {"open"}, "limit": {strconv.Itoa(limit)}})
+}
+
+// SearchOpenIssues searches all open issues in a project.
+func (c *KataClient) SearchOpenIssues(ctx context.Context, project, query string, limit int) ([]KataTask, bool, error) {
+	id, err := c.resolveProject(ctx, project)
+	if err != nil {
+		return nil, false, err
+	}
+	values := url.Values{"q": {query}, "status": {"open"}, "mode": {"lexical"}, "limit": {strconv.Itoa(limit + 1)}}
+	path := "/api/v1/projects/" + strconv.FormatInt(id, 10) + "/search?" + values.Encode()
+	transport := *c.transport
+	transport.maxResponseBytes = max(transport.maxResponseBytes, issueListMaxResponseBytes)
+	var response kata.SearchResponseBody
+	if err := transport.doJSON(ctx, http.MethodGet, path, nil, nil, &response, http.StatusOK); err != nil {
+		return nil, false, err
+	}
+	truncated := len(response.Results) > limit
+	if truncated {
+		response.Results = response.Results[:limit]
+	}
+	tasks := make([]KataTask, 0, len(response.Results))
+	for _, hit := range response.Results {
+		issue := hit.Issue
+		tasks = append(tasks, taskFromKataIssue(project, kata.ShowIssueOut{UID: issue.UID, ShortID: issue.ShortID, Title: issue.Title, Body: issue.Body, Revision: issue.Revision, Metadata: issue.Metadata, Status: issue.Status, Priority: issue.Priority, Owner: issue.Owner}, nil, hit.WebURL))
+	}
+	return tasks, truncated, nil
+}
+
+func (c *KataClient) listProjectIssues(ctx context.Context, project string, query url.Values) ([]KataTask, bool, error) {
 	path, err := c.issuePath(ctx, project, "?"+query.Encode())
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	transport := *c.transport
 	transport.maxResponseBytes = max(transport.maxResponseBytes, issueListMaxResponseBytes)
 	var response kata.ListIssuesResponseBody
 	if err := transport.doJSON(ctx, http.MethodGet, path, nil, nil, &response, http.StatusOK); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	result := make([]KataTask, 0, len(response.Issues))
 	for _, issue := range response.Issues {
@@ -174,7 +212,7 @@ func (c *KataClient) ListPersonTasks(ctx context.Context, project, personUID str
 		task.QualifiedRef = issue.QualifiedID
 		result = append(result, task)
 	}
-	return result, nil
+	return result, response.Truncated, nil
 }
 
 func (c *KataClient) CreateTask(ctx context.Context, project, idempotencyKey string, create KataCreate) (KataTask, error) {

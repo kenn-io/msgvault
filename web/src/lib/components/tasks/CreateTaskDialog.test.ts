@@ -24,7 +24,9 @@ describe('CreateTaskDialog', () => {
     for (const value of ['archive-a', '42', '7', 'gmail', 'archive@example.com', 'source-42', 'Synthetic subject', 'sender@example.com', '2026-07-18T12:00:00Z']) {
       expect(screen.getByText(value)).toBeDefined();
     }
-    expect(screen.getByText(/Bodies and attachments are never sent/i)).toBeDefined();
+    expect(screen.getByLabelText('Description')).toHaveProperty('value', `${location.origin}/messages/42`);
+    expect(screen.getByText(/Bodies and attachments are never sent/i).closest('details')).toBeNull();
+    expect(document.querySelector('details')).toHaveProperty('open', false);
     await fireEvent.input(screen.getByLabelText('Task title'), { target: { value: 'Edited' } });
     await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Notes' } });
     await chooseSelectOption(screen.getByLabelText('Priority'), 'High');

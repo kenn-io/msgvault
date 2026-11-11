@@ -3,6 +3,7 @@ package kataissues_test
 import (
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -878,4 +879,39 @@ func TestCitingFindsEveryCitedSource(t *testing.T) {
 	f.kata.Close()
 	_, _, err = service.Citing(t.Context(), kataevidence.SourceKeys(message), 10)
 	require.ErrorIs(err, taskclient.ErrUnreachable)
+}
+
+func TestLookupIssue(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	created, _, err := f.service.Kata.CreateTaskReused(t.Context(), katatest.Project, "lookup-issue", taskclient.KataCreate{Title: "Older budget"})
+	require.NoError(t, err)
+	f.kata.endpoint().CloseIssue(t, created.UID)
+	for _, ref := range []string{created.Ref, created.QualifiedRef, created.UID} {
+		issue, found, err := f.service.Lookup(t.Context(), ref)
+		require.NoError(t, err)
+		require.True(t, found)
+		assert.Equal(t, created.UID, issue.UID)
+		assert.Equal(t, "closed", issue.Status)
+	}
+	for _, ref := range []string{"other#abcd", "not a ref", "0000"} {
+		_, found, err := f.service.Lookup(t.Context(), ref)
+		require.NoError(t, err)
+		assert.False(t, found)
+	}
+}
+
+type failedLookup struct{ kataissues.Kata }
+
+func (f failedLookup) GetTask(context.Context, string, string) (taskclient.KataTask, error) {
+	return taskclient.KataTask{}, taskclient.ErrUnreachable
+}
+
+func TestLookupIssueError(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.service.Kata = failedLookup{f.service.Kata}
+	_, found, err := f.service.Lookup(t.Context(), "abcd")
+	assert.False(t, found)
+	assert.True(t, errors.Is(err, taskclient.ErrUnreachable))
 }

@@ -5,7 +5,7 @@ import type { KataIssueReceipt } from "./kataIssueReceipt";
 
 export interface KataIssueListResponse {
   issues: KataIssueReceipt[];
-  /** The list may omit issues that cite this source: more matched than were returned, or some issues could not be checked */
+  /** The list may omit matching issues: more matched than were returned, or some citations could not be checked */
   truncated: boolean;
   [key: string]: unknown;
 }

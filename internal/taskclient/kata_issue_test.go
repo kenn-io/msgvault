@@ -1,6 +1,8 @@
 package taskclient
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -90,5 +92,72 @@ func TestFindActionTask(t *testing.T) {
 			require.NoError(err)
 			assert.Empty(citing)
 		})
+	}
+}
+
+func TestOpenIssues(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	require := require.New(t)
+	native := katatest.New(t)
+	handler := native.Service.Handler()
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/issues") && r.Method == http.MethodGet {
+			assert.False(r.URL.Query().Has("sort"))
+		}
+		if strings.HasSuffix(r.URL.Path, "/search") {
+			assert.Equal("open", r.URL.Query().Get("status"))
+			assert.Equal("lexical", r.URL.Query().Get("mode"))
+			assert.Equal("26", r.URL.Query().Get("limit"))
+			recorder := httptest.NewRecorder()
+			r.Header.Del("Accept-Encoding")
+			handler.ServeHTTP(recorder, r)
+			var body map[string]any
+			require.NoError(json.Unmarshal(recorder.Body.Bytes(), &body))
+			delete(body, "truncated") // Kata v0.18.0 omits this field.
+			require.NoError(json.NewEncoder(w).Encode(body))
+			return
+		}
+		handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	client, err := ConnectKata(t.Context(), IntegrationConfig{Enabled: true, Endpoint: server.URL, APIKey: katatest.Token, HTTPClient: server.Client(), DefaultProject: katatest.Project, MaxResponseBytes: 4 << 20})
+	require.NoError(err)
+	created, err := client.CreateTask(t.Context(), katatest.Project, "older-api-issue", KataCreate{Title: "Review the budget"})
+	require.NoError(err)
+	initial, initialTruncated, err := client.OpenIssues(t.Context(), katatest.Project, 25)
+	require.NoError(err)
+	require.Len(initial, 1)
+	assert.Equal(created.UID, initial[0].UID)
+	assert.False(initialTruncated)
+	open, err := client.CreateTask(t.Context(), katatest.Project, "open-budget", KataCreate{Title: "Send the budget"})
+	require.NoError(err)
+	for i := range 30 {
+		_, err := client.CreateTask(t.Context(), katatest.Project, fmt.Sprintf("other-%d", i), KataCreate{Title: fmt.Sprintf("Other issue %d", i)})
+		require.NoError(err)
+	}
+	closed, err := client.CreateTask(t.Context(), katatest.Project, "closed-budget", KataCreate{Title: "Review the budget"})
+	require.NoError(err)
+	native.Endpoint(server).CloseIssue(t, closed.UID)
+	searched, searchTruncated, err := client.SearchOpenIssues(t.Context(), katatest.Project, "budget", 25)
+	require.NoError(err)
+	assert.False(searchTruncated)
+	require.Len(searched, 2)
+	assert.Equal(created.QualifiedRef, searched[0].QualifiedRef)
+	for _, result := range searched {
+		assert.Equal("open", result.Status)
+	}
+	many, manyTruncated, err := client.SearchOpenIssues(t.Context(), katatest.Project, "issue", 25)
+	require.NoError(err)
+	assert.Len(many, 25)
+	assert.True(manyTruncated)
+	issues, truncated, err := client.OpenIssues(t.Context(), katatest.Project, 25)
+	require.NoError(err)
+	assert.Len(issues, 25)
+	assert.True(truncated)
+	assert.Equal("Other issue 29", issues[0].Title)
+	for _, issue := range issues {
+		assert.Equal("open", issue.Status)
+		assert.NotEqual(open.UID, issue.UID)
 	}
 }

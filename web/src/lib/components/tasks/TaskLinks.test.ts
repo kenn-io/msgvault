@@ -16,6 +16,24 @@ function expectOneInitialTaskRead(requests: Request[]): void {
 }
 
 describe('TaskLinks', () => {
+  it('clears a picked task when returning to Existing', async () => {
+    let lists = 0;
+    const client = createAPIClient(async input => {
+      const request = input as Request;
+      if (request.url.includes('/search')) return Response.json({ tasks: ++lists < 2 ? [{ id: 'task-1', title: 'Send the budget' }] : [], truncated: lists === 1 });
+      return Response.json(request.url.endsWith('/status') ? { state: 'ready', project: 'example' } : { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
+    });
+    render(TaskLinks, { client, mode: 'add', messageId: 42, title: 'Follow up' });
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Send the budget' }));
+    expect(screen.getByText('Showing the first 25 tasks. Type to search the rest.')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Link task' })).toHaveProperty('disabled', false);
+    await fireEvent.click(screen.getByRole('radio', { name: 'New' }));
+    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
+    await screen.findByText('No tasks in example yet.');
+    expect(screen.getByRole('button', { name: 'Link task' })).toHaveProperty('disabled', true);
+  });
+
   it("preserves an open creation draft and retry identity across another message's failed status refresh", async () => {
     const requests: Request[] = [];
     let statusCalls = 0;
@@ -71,6 +89,22 @@ describe('TaskLinks', () => {
     expect(requests).toHaveLength(2);
     expect(requests[1]!.headers.get('X-Request-Id')).toBe(requests[0]!.headers.get('X-Request-Id'));
     await expect(requests[1]!.clone().text()).resolves.toBe(await requests[0]!.clone().text());
+  });
+
+  it('preserves a creation draft when switching between New and Existing', async () => {
+    const client = createAPIClient(async input => {
+      const url = (input as Request).url;
+      return Response.json(url.endsWith('/status') ? { state: 'ready', project: 'example' }
+        : url.includes('/tasks/search') ? { tasks: [], truncated: false }
+        : { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
+    });
+    render(TaskLinks, { client, mode: 'add', messageId: 42, title: 'Follow up' });
+    await fireEvent.input(await screen.findByLabelText('Task title'), { target: { value: 'Draft title' } });
+    await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Draft notes' } });
+    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
+    await fireEvent.click(screen.getByRole('radio', { name: 'New' }));
+    expect(screen.getByLabelText('Task title')).toHaveProperty('value', 'Draft title');
+    expect(screen.getByLabelText('Description')).toHaveProperty('value', 'Draft notes');
   });
 
   it('completes creation without refreshing the closing add surface', async () => {
@@ -330,13 +364,13 @@ describe('TaskLinks', () => {
     expect(requests.filter((request) => request.method === 'GET' && request.url.includes('/messages/42/tasks'))).toHaveLength(1);
   });
 
-  it('searches the configured project and links a selected result through the typed route', async () => {
+  it('links a selected task through the typed route', async () => {
     const requests: Request[] = [];
     const oncomplete = vi.fn();
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input); requests.push(request);
       if (request.url.endsWith('/integrations/tasks/status')) return Response.json({ state: 'ready', project: 'project', message: 'Ready' });
-      if (request.url.includes('/integrations/tasks/search')) return Response.json({ tasks: [{ id: 'task-1', title: 'Synthetic result', revision: 'r1' }] });
+      if (request.url.includes('/integrations/tasks/search')) return Response.json({ tasks: [{ id: 'task-1', title: 'Synthetic result', revision: 'r1' }], truncated: false });
       if (request.method === 'POST') return Response.json({ task: { id: 'task-1', project: 'project', title: 'Linked', revision: 'r1' } }, { status: 201 });
       return Response.json({ state: 'ready', complete: true, last_scan: '2026-07-19T01:00:00Z', tasks: [], outbound_metadata: {
         archive_uid: 'archive-a', message_id: 42, conversation_id: 7, source_type: 'gmail', source_identifier: 'archive@example.com', source_message_id: 'source-42', subject: 'Synthetic', from: 'sender@example.com', sent_at: '2026-07-18T12:00:00Z'
@@ -344,9 +378,8 @@ describe('TaskLinks', () => {
     });
     render(TaskLinks, { client: createAPIClient(fetchFn), mode: 'add', messageId: 42, title: 'Synthetic', oncomplete });
     await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
-    await fireEvent.input(screen.getByLabelText('Search tasks'), { target: { value: 'Synthetic' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Link Synthetic result' }));
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Synthetic result' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Link task' }));
     await waitFor(() => expect(requests.some((request) => request.method === 'POST')).toBe(true));
     const post = requests.find((request) => request.method === 'POST')!;
     await expect(post.clone().json()).resolves.toMatchObject({ task_id: 'task-1' });
@@ -362,7 +395,7 @@ describe('TaskLinks', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       if (request.url.endsWith('/integrations/tasks/status')) return Response.json({ state: 'ready', project: 'project', message: 'Ready' });
-      if (request.url.includes('/integrations/tasks/search')) return Response.json({ tasks: [{ id: 'task-1', title: 'Synthetic result', revision: 'r1' }] });
+      if (request.url.includes('/integrations/tasks/search')) return Response.json({ tasks: [{ id: 'task-1', title: 'Synthetic result', revision: 'r1' }], truncated: false });
       if (request.method === 'POST') {
         posts.push(request);
         if (posts.length === 1) return Response.json({ message: 'Unavailable' }, { status: 503 });
@@ -375,9 +408,8 @@ describe('TaskLinks', () => {
     });
 
     await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
-    await fireEvent.input(screen.getByLabelText('Search tasks'), { target: { value: 'Synthetic' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
-    const link = await screen.findByRole('button', { name: 'Link Synthetic result' });
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Synthetic result' }));
+    const link = screen.getByRole('button', { name: 'Link task' });
     await fireEvent.click(link);
     await screen.findByRole('alert');
     await fireEvent.click(link);
