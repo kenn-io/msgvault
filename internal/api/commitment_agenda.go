@@ -181,7 +181,19 @@ func (a *CommitmentAgenda) submit(ctx context.Context, item store.CommitmentAgen
 	}
 	commitment, err := a.archive.GetOpenPersonCommitmentContext(ctx, item.CommitmentID, now)
 	if errors.Is(err, sql.ErrNoRows) {
-		return a.retire(ctx, item)
+		retired, retireErr := a.retire(ctx, item)
+		if !errors.Is(retireErr, sql.ErrNoRows) || !item.Attempted {
+			return retired, retireErr
+		}
+		// A valid citation can belong to an owner-closed promise. A changed
+		// citation instead needs the same conflict as other attempted retries.
+		if _, citationErr := a.refreshCitation(ctx, item); citationErr != nil {
+			if permanentCommitmentCitationError(citationErr) {
+				citationErr = errCommitmentAgendaCitation
+			}
+			return retired, citationErr
+		}
+		return retired, retireErr
 	}
 	if err != nil {
 		return item, err
@@ -222,7 +234,7 @@ func (a *CommitmentAgenda) submit(ctx context.Context, item store.CommitmentAgen
 	if errors.Is(err, kataevidence.ErrChanged) {
 		request, refreshErr := a.refreshCitation(ctx, item)
 		if refreshErr != nil {
-			if errors.Is(refreshErr, kataevidence.ErrChanged) || errors.Is(refreshErr, kataevidence.ErrUnavailable) || errors.Is(refreshErr, kataevidence.ErrUnsupported) || errors.Is(refreshErr, kataevidence.ErrInvalidReference) {
+			if permanentCommitmentCitationError(refreshErr) {
 				return a.citationChanged(ctx, item)
 			}
 			return item, refreshErr
@@ -267,6 +279,11 @@ func (a *CommitmentAgenda) refreshCitation(ctx context.Context, item store.Commi
 		return item.Request, kataevidence.ErrChanged
 	}
 	return request, nil
+}
+
+func permanentCommitmentCitationError(err error) bool {
+	return errors.Is(err, kataevidence.ErrChanged) || errors.Is(err, kataevidence.ErrUnavailable) ||
+		errors.Is(err, kataevidence.ErrUnsupported) || errors.Is(err, kataevidence.ErrInvalidReference)
 }
 
 func (a *CommitmentAgenda) citationChanged(ctx context.Context, item store.CommitmentAgendaSuggestion) (store.CommitmentAgendaSuggestion, error) {
