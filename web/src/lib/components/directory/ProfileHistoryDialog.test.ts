@@ -76,9 +76,9 @@ describe('ProfileHistoryDialog', () => {
       const path = new URL((input instanceof Request ? input : new Request(input)).url).pathname;
       if (path.endsWith('/merges')) return Response.json({ merges: [] });
       return Response.json({ ...emptyProfile(person()), observations: [], addresses: [{
-        person_id: 7, address_kind: 'postal', original_value: 'Old street', street_address: 'New street', extended_components: ';;;;;;;Floor 2',
+        person_id: 7, address_kind: 'postal', original_value: 'Old street', street_address: 'New street', locality: 'Town', country_code: 'CA', extended_components: ';;;;;;;Floor 2',
         envelope: { ...currentEnvelope, id: 31 },
-        assessment: { original: { address_kind: 'postal', street_address: 'Old street', original_value: 'Old street', extended_components: ';;;;;;;Room\\;3' }, proposed: { address_kind: 'postal', street_address: 'New street', extended_components: ';;;;;;;Floor 2' }, original_extended_parts: ['Room;3'], proposed_extended_parts: ['Floor 2'], status: 'needs_review', reason_codes: ['not_verified'] },
+        assessment: { original: { address_kind: 'postal', street_address: 'Old street', locality: 'Town', country_code: 'CA', original_value: 'Old street', extended_components: ';;;;;;;Room\\;3' }, proposed: { address_kind: 'postal', street_address: 'New street', locality: 'Town', country_code: 'CA', extended_components: ';;;;;;;Floor 2' }, original_extended_parts: ['Room;3'], proposed_extended_parts: ['Floor 2'], status: 'needs_review', reason_codes: ['not_verified'] },
       },
         { person_id: 7, address_kind: 'postal', original_value: '12 Main St Apt 4B, Town', street_address: '14 Oak Ave', envelope: { ...currentEnvelope, id: 41, superseded_at: when }, assessment: { original: { address_kind: 'postal', street_address: '12 Main St', locality: 'Town', original_value: '12 Main St Apt 4B, Town' }, proposed: { address_kind: 'postal', street_address: '14 Oak Ave' }, status: 'needs_review', reason_codes: ['not_verified'], original_extended_parts: [], proposed_extended_parts: [] } },
         { person_id: 7, address_kind: 'postal', original_value: ';;12 Main St;Town;;;', street_address: '12 Main St', locality: 'Town', envelope: { ...currentEnvelope, id: 42, superseded_at: when }, assessment: { original: { address_kind: 'postal', street_address: '12 Main St', locality: 'Town', original_value: ';;12 Main St;Town;;;' }, proposed: { address_kind: 'postal', street_address: '12 Main St', locality: 'Town' }, status: 'needs_review', reason_codes: ['not_verified'], original_extended_parts: [], proposed_extended_parts: [] } },
@@ -86,8 +86,8 @@ describe('ProfileHistoryDialog', () => {
       ] });
     });
     render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn() });
-    expect(await screen.findByText('New street, Floor 2')).toBeDefined();
-    expect(screen.getByText(/Original: Old street, Room;3/)).toBeDefined();
+    expect(await screen.findByText('New street, Town, CA, Floor 2')).toBeDefined();
+    expect(screen.getByText(/Original: Old street, Room;3 · You/)).toBeDefined();
     const corrected = (await screen.findByText('14 Oak Ave')).closest('.detail-row') as HTMLElement;
     expect(within(corrected).getByText(/Original: 12 Main St Apt 4B, Town · You/)).toBeDefined();
     const legacy = screen.getByText('12 Main St, Town').closest('.detail-row')!;
