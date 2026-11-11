@@ -3,11 +3,14 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -15,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/testutil"
 	extOAuth2 "golang.org/x/oauth2"
 )
 
@@ -60,6 +64,83 @@ func TestSyncUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 	assert.Equal(int32(1), requests.Load(), "HTTP requests")
 	assert.Equal("Starting incremental sync for alice@example.com\n", stdout.String())
 	assert.Equal("sync warning\n", stderr.String())
+}
+
+func TestSyncFullInterruptionHint(t *testing.T) {
+	for _, mode := range []string{"client", "child", "error"} {
+		t.Run(mode, func(t *testing.T) {
+			var cancel context.CancelFunc
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if mode == "client" {
+					cancel()
+					return
+				}
+				w.Header().Set("Content-Type", "application/x-ndjson")
+				if mode == "child" {
+					waitErr := helperProcessCommand(r.Context(), "interrupted").Run()
+					err := classifyDaemonCLIWaitErr(waitErr, []string{"sync-full"}, func(stream, data string) error {
+						return json.NewEncoder(w).Encode(map[string]string{"type": stream, "data": data})
+					})
+					assert.NoError(t, err)
+					_, _ = w.Write([]byte("{\"type\":\"complete\"}\n"))
+				} else {
+					_, _ = w.Write([]byte("{\"type\":\"error\",\"error\":\"provider failed\"}\n"))
+				}
+			}))
+			t.Cleanup(server.Close)
+			ctx := configureRemoteSyncTest(t, server.URL)
+			ctx, cancel = context.WithCancel(ctx)
+			defer cancel()
+			resetSyncFullFlagsForTest(t)
+			var stderr bytes.Buffer
+			command := &cobra.Command{Use: syncFullCmd.Use, Args: syncFullCmd.Args, RunE: syncFullCmd.RunE}
+			command.SetContext(ctx)
+			command.SetErr(&stderr)
+			command.SetArgs([]string{"reader@example.test"})
+			err := command.Execute()
+			switch mode {
+			case "client":
+				require.ErrorIs(t, err, context.Canceled)
+			case "child":
+				require.ErrorIs(t, err, ErrSyncInterrupted)
+			default:
+				require.Error(t, err)
+			}
+			if mode == "error" {
+				assert.NotContains(t, stderr.String(), "To run it again")
+			} else {
+				assert.Equal(t, 1, strings.Count(stderr.String(), "Sync interrupted."))
+				assert.Contains(t, stderr.String(), "reader@example.test")
+			}
+		})
+	}
+}
+
+func TestSyncResumeCommandNativeArguments(t *testing.T) {
+	resetSyncFullFlagsForTest(t)
+	oldResolver := daemonCLIExecutableResolver
+	daemonCLIExecutableResolver = func() (string, error) { return "msgvault", nil }
+	t.Cleanup(func() { daemonCLIExecutableResolver = oldResolver })
+	inv := newInvocation()
+	inv.options = invocationOptions{cfgFile: "config file", homeDir: "home dir", useLocal: true}
+	command := &cobra.Command{Use: "sync-full"}
+	command.SetContext(withInvocation(t.Context(), inv))
+	command.Flags().String("query", "", "")
+	command.Flags().StringArray("folder", nil, "")
+	command.Flags().Bool("noresume", false, "")
+	command.Flags().Bool("build-cache", true, "")
+	command.Flags().String("sync-operation-id", "", "")
+	query := `from:"a b" $HOME;echo`
+	require.NoError(t, command.ParseFlags([]string{"--query", query, "--folder", "A B", "--folder", "C", "--noresume", "--build-cache=false", "--sync-operation-id", "internal", "--", "reader@example.test"}))
+	line, err := syncResumeCommand(command, command.Flags().Args())
+	require.NoError(t, err)
+	shell := "sh"
+	if runtime.GOOS == "windows" {
+		shell = "pwsh"
+		line = strings.TrimPrefix(line, "& ")
+	}
+	got := headlessNativeArgs(t, shell, testutil.SecretCommand(t, "argv")[0], line)
+	assert.Equal(t, []string{"--config", "config file", "--home", "home dir", "--local", "sync-full", "--build-cache=false", "--folder=A B", "--folder=C", "--noresume", "--query=" + query, "--", "reader@example.test"}, got)
 }
 
 func TestSyncSourceIDUsesConfiguredRemoteHTTP(t *testing.T) {

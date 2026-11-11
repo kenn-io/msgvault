@@ -2405,13 +2405,20 @@ func (a *storeAPIAdapter) runCLISyncOperationWithRunner(
 	emit func(api.CLISyncEvent) error,
 	run cliSyncSubprocessRunner,
 ) error {
-	err := a.runCLISyncWithRunner(ctx, req, emit, run)
+	interrupted := false
+	err := a.runCLISyncWithRunner(ctx, req, func(event api.CLISyncEvent) error {
+		interrupted = interrupted || (event.Type == "outcome" && event.Data == "interrupted")
+		if emit != nil {
+			return emit(event)
+		}
+		return nil
+	}, run)
 	if err == nil && ctx.Err() != nil {
 		err = ctx.Err()
 	}
 	if req.OperationID != "" {
 		status := "done"
-		if err != nil {
+		if err != nil || interrupted {
 			status = "failed"
 		}
 		// A canceled run still records its terminal state.

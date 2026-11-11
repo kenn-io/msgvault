@@ -211,10 +211,14 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 	// Handle Ctrl+C gracefully
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
 	go func() {
-		<-sigChan
-		fmt.Println("\nInterrupted. Saving checkpoint...")
-		cancel()
+		select {
+		case <-sigChan:
+			fmt.Println("\nInterrupted. Saving checkpoint...")
+			cancel()
+		case <-ctx.Done():
+		}
 	}()
 
 	// Embedding is no longer driven by sync: newly-ingested messages
@@ -238,10 +242,15 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		if err := runFullSync(ctx, s, getOAuthMgr, src, state); err != nil {
+		if err := runFullSync(ctx, s, getOAuthMgr, src, state, false); err != nil {
 			syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", src.Identifier, err))
 			continue
 		}
+	}
+
+	if err := ctx.Err(); err != nil {
+		cmd.SilenceErrors = true
+		return err
 	}
 
 	// Rebuild analytics cache.
@@ -603,7 +612,7 @@ func saveIMAPFolderStates(
 	return nil
 }
 
-func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx context.Context, _ string) (*oauth.Manager, error), src *store.Source, state *invocation) error {
+func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx context.Context, _ string) (*oauth.Manager, error), src *store.Source, state *invocation, reportInterrupt bool) error {
 	if state == nil {
 		state = invocationFromContext(ctx)
 	}
@@ -706,10 +715,12 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx conte
 	)
 	if err != nil {
 		if ctx.Err() != nil {
-			if opts.NoResume {
-				fmt.Println("\nSync interrupted. Run again to restart (already-imported messages will be skipped).")
-			} else {
-				fmt.Println("\nSync interrupted. Run again to resume.")
+			if reportInterrupt {
+				if opts.NoResume {
+					fmt.Println("\nSync interrupted. Run again to restart (already-imported messages will be skipped).")
+				} else {
+					fmt.Println("\nSync interrupted. Run again to resume.")
+				}
 			}
 			return nil
 		}

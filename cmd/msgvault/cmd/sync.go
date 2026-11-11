@@ -214,7 +214,7 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 			break
 		}
 		fmt.Printf("Note: IMAP account %s uses folder-based sync. Unchanged folders are skipped when high water marks are available.\n\n", src.Identifier)
-		if err := runFullSync(ctx, s, getOAuthMgr, src, state); err != nil {
+		if err := runFullSync(ctx, s, getOAuthMgr, src, state, true); err != nil {
 			syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", src.Identifier, err))
 		}
 	}

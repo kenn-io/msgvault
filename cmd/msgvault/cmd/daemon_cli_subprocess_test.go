@@ -25,6 +25,8 @@ func TestHelperProcess(t *testing.T) {
 	switch os.Getenv("GO_HELPER_MODE") {
 	case "paused":
 		os.Exit(ExitCodeSyncPaused)
+	case "interrupted":
+		os.Exit(130)
 	case "exit3":
 		os.Exit(3)
 	case "stdout-stderr-ok":
@@ -57,19 +59,19 @@ func helperProcessCommand(ctx context.Context, mode string) *exec.Cmd {
 }
 
 func TestClassifyDaemonCLIWaitErrExitStatus(t *testing.T) {
-	for _, mode := range []string{"exit3", "paused"} {
+	for _, mode := range []string{"exit3", "paused", "interrupted"} {
 		t.Run(mode, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
 			waitErr := helperProcessCommand(t.Context(), mode).Run()
 			require.Error(waitErr)
 			var events []string
-			got := classifyDaemonCLIWaitErr(waitErr, []string{"sync-omi"}, func(stream, data string) error {
+			got := classifyDaemonCLIWaitErr(waitErr, []string{"sync-full"}, func(stream, data string) error {
 				events = append(events, stream+"="+data)
 				return nil
 			})
-			if mode == "paused" {
+			if mode == "paused" || mode == "interrupted" {
 				require.NoError(got)
-				assert.Equal([]string{"outcome=paused"}, events)
+				assert.Equal([]string{"outcome=" + mode}, events)
 			} else {
 				require.EqualError(got, cliSubprocessExitSentinel)
 				assert.Empty(events)

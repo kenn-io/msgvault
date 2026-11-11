@@ -2198,6 +2198,25 @@ func TestStoreAPIAdapterCanceledSyncOperationIsFailed(t *testing.T) {
 	assert.Empty(op.Runs)
 }
 
+func TestStoreAPIAdapterInterruptedSyncOperationIsFailed(t *testing.T) {
+	f := storetest.New(t)
+	_, err := f.Store.CreateSyncOperation(f.Source.ID, "operation-1")
+	require.NoError(t, err)
+	adapter := &storeAPIAdapter{store: f.Store}
+	var events []api.CLISyncEvent
+	err = adapter.runCLISyncOperationWithRunner(t.Context(), api.CLISyncRequest{Full: true, OperationID: "operation-1"}, func(event api.CLISyncEvent) error {
+		events = append(events, event)
+		return nil
+	}, func(_ context.Context, _ []string, emit func(string, string) error) error {
+		return emit("outcome", "interrupted")
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []api.CLISyncEvent{{Type: "outcome", Data: "interrupted"}}, events)
+	op, err := f.Store.GetSyncOperation("operation-1")
+	require.NoError(t, err)
+	assert.Equal(t, "failed", op.Status)
+}
+
 func TestStoreAPIAdapterFinalizesSyncOperationAfterRunnerReturns(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

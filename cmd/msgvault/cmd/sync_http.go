@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
+	"go.kenn.io/kit/agenthook"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"golang.org/x/oauth2"
@@ -63,10 +65,53 @@ func runSyncFullHTTP(cmd *cobra.Command, args []string) error {
 	if len(args) == 1 {
 		req.Email = selector.Account
 	}
-	return runSyncHTTP(cmd, req)
+	resume, err := syncResumeCommand(cmd, args)
+	if err != nil {
+		return err
+	}
+	return runSyncHTTPWithResume(cmd, req, resume)
+}
+
+func syncResumeCommand(cmd *cobra.Command, args []string) (string, error) {
+	runArgs, err := daemonCLIArgsFromCobra(cmd, args)
+	if err != nil {
+		return "", err
+	}
+	for i, arg := range runArgs {
+		if arg == "--" {
+			break
+		}
+		if strings.HasPrefix(arg, "--sync-operation-id=") {
+			runArgs = append(runArgs[:i], runArgs[i+1:]...)
+			break
+		}
+	}
+	options := optionsFromContext(cmd.Context())
+	global := invocationGlobalArgs(invocationOptions{cfgFile: options.cfgFile, homeDir: options.homeDir})
+	if options.useLocal {
+		global = append(global, "--local")
+	} else if options.useLocalChanged {
+		global = append(global, "--local=false")
+	}
+	executable, err := daemonCLIExecutableResolver()
+	if err != nil {
+		executable = os.Args[0]
+	}
+	commands, err := agenthook.BuildCommand(executable, append(global, runArgs...)...)
+	if err != nil {
+		return "", err
+	}
+	if runtime.GOOS == "windows" {
+		return commands.PowerShell, nil
+	}
+	return commands.POSIX, nil
 }
 
 func runSyncHTTP(cmd *cobra.Command, req daemonclient.CLISyncRequest) error {
+	return runSyncHTTPWithResume(cmd, req, "")
+}
+
+func runSyncHTTPWithResume(cmd *cobra.Command, req daemonclient.CLISyncRequest, resume string) error {
 	st, info, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return err
@@ -77,8 +122,11 @@ func runSyncHTTP(cmd *cobra.Command, req daemonclient.CLISyncRequest) error {
 		return err
 	}
 
+	interrupted := false
 	err = st.RunCLISync(cmd.Context(), req, func(stream, data string) error {
 		switch stream {
+		case "outcome":
+			interrupted = interrupted || data == "interrupted"
 		case cliStreamStdout:
 			if _, err := fmt.Fprint(cmd.OutOrStdout(), data); err != nil {
 				return fmt.Errorf("write sync stdout: %w", err)
@@ -90,6 +138,16 @@ func runSyncHTTP(cmd *cobra.Command, req daemonclient.CLISyncRequest) error {
 		}
 		return nil
 	})
+	if resume != "" && (cmd.Context().Err() != nil || interrupted) {
+		cmd.SilenceErrors = true
+		if _, writeErr := fmt.Fprintf(cmd.ErrOrStderr(), "Sync interrupted. To run it again, run:\n  %s\n", resume); writeErr != nil {
+			return fmt.Errorf("write sync instruction: %w", writeErr)
+		}
+		if interrupted && cmd.Context().Err() == nil {
+			return ErrSyncInterrupted
+		}
+		return cmd.Context().Err()
+	}
 	if err == nil {
 		reportCLISyncFinished(cmd, st)
 	}

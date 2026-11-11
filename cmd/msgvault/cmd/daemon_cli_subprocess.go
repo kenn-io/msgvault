@@ -21,6 +21,9 @@ const daemonCLISubprocessEnv = "MSGVAULT_DAEMON_CLI_PARENT_PID"
 // ErrSyncPaused signals a sync that paused until a later run.
 var ErrSyncPaused = errors.New("sync paused")
 
+// ErrSyncInterrupted identifies a child sync interrupted while its client is connected.
+var ErrSyncInterrupted = errors.New("sync interrupted")
+
 // ExitCodeSyncPaused carries a paused outcome from the CLI child to the daemon.
 const ExitCodeSyncPaused = 75
 
@@ -105,6 +108,12 @@ func classifyDaemonCLIWaitErr(waitErr error, args []string, emit func(string, st
 	}
 	var exitErr *exec.ExitError
 	if errors.As(waitErr, &exitErr) && exitErr.Exited() {
+		if exitErr.ExitCode() == 130 && len(args) > 0 && args[0] == "sync-full" {
+			if emit != nil {
+				return emit("outcome", "interrupted")
+			}
+			return nil
+		}
 		if exitErr.ExitCode() == ExitCodeSyncPaused {
 			if emit != nil {
 				return emit("outcome", "paused")

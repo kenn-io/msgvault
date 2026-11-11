@@ -32,7 +32,7 @@ func run() int {
 		if errors.Is(err, cmd.ErrSyncPaused) {
 			return cmd.ExitCodeSyncPaused
 		}
-		if isSignalCanceled(ctx, err) {
+		if errors.Is(err, cmd.ErrSyncInterrupted) || isSignalCanceled(ctx, err) {
 			return exitCodeInterrupted
 		}
 		return exitCodeError
