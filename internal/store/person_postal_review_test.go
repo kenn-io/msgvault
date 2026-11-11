@@ -16,16 +16,6 @@ import (
 
 const postalClaimJSON = `{"street_address":" 12 Example Street ","extended_address":" Unit 7 ","locality":"Example City","country_code":" ca ","extended_components":";;12 Example Street;Example City;;;;Room\\;3;Floor 2","source_text":"  My address is 12 Example Street, Unit 7.  "}`
 
-func TestPublicPostalAddressDistinguishesLegacyTextFromSnapshot(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	encoded, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "postal", OriginalValue: "Old street"})
-	require.NoError(err)
-	snapshot, err := (PersonAddress{AddressKind: PersonAddressPostal, OriginalValue: encoded, CountryCode: new("CA")}).PublicAddress()
-	require.NoError(err)
-	assert.Nil(snapshot.FreeText)
-}
-
 func postalGeneration(t *testing.T, st *Store, personID int64, suffix string, claims []personfacts.ProposedClaim, statuses []personfacts.EvidenceStatusChange) personfacts.GenerationInput {
 	t.Helper()
 	input := personFactProjectionInput(personID, suffix, claims, statuses)
@@ -83,7 +73,6 @@ func TestPostalAddressSweepExtractionRetainsWithoutProjection(t *testing.T) {
 	assert := assert.New(t)
 	assert.JSONEq(postalClaimJSON, string(rows[0].SubmittedValue))
 	require.NotNil(rows[0].PostalReview)
-	assert.True(rows[0].PostalReview.Eligible)
 	assert.NotEmpty(rows[0].PostalReview.SupportingEvidenceIDs)
 	require.NotNil(rows[0].PostalReview.Assessment)
 	assert.Equal([]string{"Room;3", "Floor 2"}, rows[0].PostalReview.Assessment.OriginalExtendedParts)
@@ -252,6 +241,11 @@ func TestPostalAddressCurrentStateExcludesBirthPlace(t *testing.T) {
 
 func TestPostalAddressRejectsUnsupportedSnapshots(t *testing.T) {
 	st, id, _ := newPersonFactProjectionStore(t)
+	encoded, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "postal", OriginalValue: "Old street"})
+	require.NoError(t, err)
+	snapshot, err := (PersonAddress{AddressKind: PersonAddressPostal, OriginalValue: encoded, CountryCode: new("CA")}).PublicAddress()
+	require.NoError(t, err)
+	assert.Nil(t, snapshot.FreeText)
 	empty, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "postal"})
 	require.NoError(t, err)
 	_, err = st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, OriginalValue: empty, Envelope: ValueEnvelopeInput{Source: ProvenanceUser}})

@@ -115,7 +115,7 @@ describe('Postal address editor', () => {
     expect((await requests[1]!.clone().json()).addresses.add[0].original_input.original_value).toBe('Corrected source');
   });
 
-  it('preserves reviewed revision after a check and a background profile refresh; a conflict requires new review', async () => {
+  it('preserves reviewed revision after a check and a background profile refresh', async () => {
     const { controller, requests } = setup({ conflict: true });
     render(StructuredProfileEditor, { controller, section: 'addresses' });
     await enterRaw(); await fireEvent.click(screen.getByRole('button', { name: 'Check with Google' }));

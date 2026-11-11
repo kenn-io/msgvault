@@ -26,7 +26,7 @@ func EncodeOriginalInput(input Input) (string, error) {
 		}
 	}
 	data, err := json.Marshal(originalSnapshot{Schema: 1, Input: &input})
-	if errors.Is(err, ErrUnsupportedEnvelope) {
+	if err != nil {
 		return "", err
 	}
 	return originalPrefix + string(data), nil

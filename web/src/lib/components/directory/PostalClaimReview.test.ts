@@ -16,6 +16,7 @@ function setup(reason?: string, evidenceResponse?: Promise<Response>) {
   let adopted = false;
   const server = { reason, absent: false, fail: false, raw, personRevision: 3, readClaims: undefined as (() => Promise<Response>) | undefined };
   let claimReads = 0;
+  const claim = () => ({ id: 1, claim_key: 'synthetic-claim', generation_id: 1, target: { kind: 'postal_address', key: 'system:postal_address', revision }, submitted_value: JSON.stringify(raw), relation: 'support', origin: 'observed', confidence: { reported_score: 99 }, evidence_ids: [5], created_at: when, postal_review: { eligible: !server.reason && !adopted, person_revision: server.personRevision, reason_codes: adopted ? ['already_adopted'] : server.reason ? [server.reason] : [], supporting_evidence_ids: [5], assessment: { original: server.raw, proposed: server.raw, status: 'normalized_unverified', reason_codes: ['not_verified'], original_extended_parts: ['Room;3', 'Floor 2'], proposed_extended_parts: ['Room;3', 'Floor 2'] } } });
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input); requests.push(request);
     const path = new URL(request.url).pathname;
@@ -25,7 +26,7 @@ function setup(reason?: string, evidenceResponse?: Promise<Response>) {
       if (server.readClaims) return server.readClaims();
       if (server.fail) return Response.json({ message: 'Synthetic failure' }, { status: 503 });
       if (server.absent) return Response.json({ claims: [] });
-      return Response.json({ claims: [{ id: 1, claim_key: 'synthetic-claim', generation_id: 1, target: { kind: 'postal_address', key: 'system:postal_address', revision }, submitted_value: JSON.stringify(raw), relation: 'support', origin: 'observed', confidence: { reported_score: 99 }, evidence_ids: [5], created_at: when, postal_review: { eligible: !server.reason && !adopted, person_revision: server.personRevision, reason_codes: adopted ? ['already_adopted'] : server.reason ? [server.reason] : [], supporting_evidence_ids: [5], assessment: { original: server.raw, proposed: server.raw, status: 'normalized_unverified', reason_codes: ['not_verified'], original_extended_parts: ['Room;3', 'Floor 2'], proposed_extended_parts: ['Room;3', 'Floor 2'] } } }] });
+      return Response.json({ claims: [claim()] });
     }
     if (path.endsWith('/fact-evidence')) return evidenceResponse ?? Response.json({ evidence: [] });
     if (path.endsWith('/fact-decisions')) return Response.json({ decisions: [] });
@@ -37,7 +38,7 @@ function setup(reason?: string, evidenceResponse?: Promise<Response>) {
   const profileController = new DirectoryProfileController(client, 7, { person, structuredProfile: emptyProfile(person), etags: { person: '"person-7-r3"', structuredProfile: '"person-7-r3"' }, errors: {} });
   ledger.applyContext(true, 7);
   const view = render(FactLedger, { controller: ledger, profileController });
-  return { ledger, profileController, requests, server, view, claimReads: () => claimReads };
+  return { ledger, profileController, requests, server, view, claim, claimReads: () => claimReads };
 }
 
 describe('Postal claim review', () => {
@@ -187,7 +188,7 @@ it.each(['history restoration', 'section change', 'profile replacement', 'person
 });
 
 it('refuses an opening result if the viewed profile revision changes while the read is pending', async () => {
-  const { server, profileController } = setup();
+  const { server, profileController, claim } = setup();
   await revealPostalClaim();
   let release!: (response: Response) => void;
   server.readClaims = () => new Promise<Response>(resolve => { release = resolve; });
@@ -196,7 +197,7 @@ it('refuses an opening result if the viewed profile revision changes while the r
   server.readClaims = undefined;
   profileController.person = { ...person, revision: 4 };
   // The old response still describes revision 3, which cannot open against revision 4.
-  release(Response.json({ claims: [{ claim_key: 'synthetic-claim', target: { kind: 'postal_address', key: 'system:postal_address', revision }, postal_review: { eligible: true, person_revision: 3, reason_codes: [], supporting_evidence_ids: [], assessment: { original: raw } } }] }));
+  release(Response.json({ claims: [claim()] }));
   await screen.findByRole('alert');
   expect(screen.queryByLabelText('Street address')).toBeNull();
 });

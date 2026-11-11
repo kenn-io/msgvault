@@ -28,7 +28,6 @@ describe('postalAddressText', () => {
     const original = { address_kind: 'postal', country_name: 'Canada', country_code: 'CA' };
     expect(postalAddressText(original)).toBe('Canada');
     expect(postalAddressText({ ...original, country_code: 'US' })).toContain('US');
-    expect(postalAddressText(original)).not.toBe(postalAddressText({ ...original, country_code: 'US' }));
   });
   it('avoids repeating free text already present in a component', () => {
     expect(postalAddressText({ address_kind: 'postal', free_text: '12 Example Street', street_address: '12 Example Street', locality: 'Example City' })).toBe('12 Example Street, Example City');

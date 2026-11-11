@@ -229,17 +229,19 @@ func TestGoogleTimeoutAndRedirectDoNotLeakKey(t *testing.T) {
 
 func TestGoogleRetainedComponentsNeedReview(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		input Input
-		body  string
+		name                 string
+		input                Input
+		body                 string
+		field                func(Input) string
+		want, street, reason string
 	}{
-		{"unit only", Input{StreetAddress: "12 Example St", ExtendedAddress: "Unit 7", CountryCode: "CA"}, strings.ReplaceAll(strings.ReplaceAll(googleClean, "PREMISE", "SUB_PREMISE"), "12 Example Street", "Unit 7")},
-		{"street and box", Input{StreetAddress: "12 Example St", PostOfficeBox: "PO Box 9", CountryCode: "CA"}, strings.ReplaceAll(strings.ReplaceAll(googleClean, "PREMISE", "SUB_PREMISE"), "12 Example Street", "PO Box 9")},
-		{"box only", Input{PostOfficeBox: "PO Box 9", CountryCode: "CA"}, googleClean},
-		{"postal code", Input{StreetAddress: "12 Example Street", CountryCode: "CA", PostalCode: "V0A 0A0"}, strings.ReplaceAll(googleClean, `"postalCode":"V0A 0A0",`, ``)},
-		{"locality", Input{StreetAddress: "12 Example Street", CountryCode: "CA", Locality: "Example City"}, strings.ReplaceAll(googleClean, `"locality":"Example City",`, ``)},
-		{"region", Input{StreetAddress: "12 Example Street", CountryCode: "CA", Region: "BC"}, googleClean},
-		{"country name", Input{StreetAddress: "12 Example Street", CountryCode: "CA", CountryName: "United States"}, googleClean},
+		{"unit only", Input{StreetAddress: "12 Example St", ExtendedAddress: "Unit 7", CountryCode: "CA"}, strings.ReplaceAll(strings.ReplaceAll(googleClean, "PREMISE", "SUB_PREMISE"), "12 Example Street", "Unit 7"), func(in Input) string { return in.ExtendedAddress }, "Unit 7", "12 Example St", "provider_component_not_confirmed"},
+		{"street and box", Input{StreetAddress: "12 Example St", PostOfficeBox: "PO Box 9", CountryCode: "CA"}, strings.ReplaceAll(strings.ReplaceAll(googleClean, "PREMISE", "SUB_PREMISE"), "12 Example Street", "PO Box 9"), func(in Input) string { return in.PostOfficeBox }, "PO Box 9", "12 Example St", "provider_component_not_confirmed"},
+		{"box only", Input{PostOfficeBox: "PO Box 9", CountryCode: "CA"}, googleClean, func(in Input) string { return in.PostOfficeBox }, "PO Box 9", "", ""},
+		{"postal code", Input{StreetAddress: "12 Example Street", CountryCode: "CA", PostalCode: "V0A 0A0"}, strings.ReplaceAll(googleClean, `"postalCode":"V0A 0A0",`, ``), func(in Input) string { return in.PostalCode }, "V0A 0A0", "", ""},
+		{"locality", Input{StreetAddress: "12 Example Street", CountryCode: "CA", Locality: "Example City"}, strings.ReplaceAll(googleClean, `"locality":"Example City",`, ``), func(in Input) string { return in.Locality }, "Example City", "", ""},
+		{"region", Input{StreetAddress: "12 Example Street", CountryCode: "CA", Region: "BC"}, googleClean, func(in Input) string { return in.Region }, "BC", "", ""},
+		{"country name", Input{StreetAddress: "12 Example Street", CountryCode: "CA", CountryName: "United States"}, googleClean, func(in Input) string { return in.CountryName }, "United States", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			v, calls := googleTestValidator(t, 200, tc.body)
@@ -247,22 +249,12 @@ func TestGoogleRetainedComponentsNeedReview(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, StatusNeedsReview, got.Status)
 			assert.Equal(t, int32(1), calls.Load())
-			switch tc.name {
-			case "unit only", "street and box":
-				assert.Contains(t, got.ReasonCodes, "provider_component_not_confirmed")
-				assert.Equal(t, tc.input.StreetAddress, got.Proposed.StreetAddress)
-				assert.Equal(t, tc.input.ExtendedAddress, got.Proposed.ExtendedAddress)
-				assert.Equal(t, tc.input.PostOfficeBox, got.Proposed.PostOfficeBox)
-			case "box only":
-				assert.Equal(t, tc.input.PostOfficeBox, got.Proposed.PostOfficeBox)
-			case "postal code":
-				assert.Equal(t, tc.input.PostalCode, got.Proposed.PostalCode)
-			case "locality":
-				assert.Equal(t, tc.input.Locality, got.Proposed.Locality)
-			case "region":
-				assert.Equal(t, tc.input.Region, got.Proposed.Region)
-			case "country name":
-				assert.Equal(t, tc.input.CountryName, got.Proposed.CountryName)
+			assert.Equal(t, tc.want, tc.field(got.Proposed))
+			if tc.street != "" {
+				assert.Equal(t, tc.street, got.Proposed.StreetAddress)
+			}
+			if tc.reason != "" {
+				assert.Contains(t, got.ReasonCodes, tc.reason)
 			}
 		})
 	}

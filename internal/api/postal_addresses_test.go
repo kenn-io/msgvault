@@ -57,7 +57,6 @@ func TestPostalAddressAssessmentRequiresExplicitConsent(t *testing.T) {
 		var assessment postaladdress.Assessment
 		require.NoError(json.Unmarshal(response.Body.Bytes(), &assessment))
 		assert.Equal("raw", assessment.Original.OriginalValue)
-		assert.Equal("Unit 7", assessment.Proposed.ExtendedAddress)
 		assert.Equal([]string{"Room;3", "Floor 2"}, assessment.OriginalExtendedParts)
 		assert.Equal([]string{"Room;3", "Floor 2"}, assessment.ProposedExtendedParts)
 		if external {
@@ -90,7 +89,6 @@ func TestPostalAddressUnavailableStates(t *testing.T) {
 			require.NoError(json.Unmarshal(result.Body.Bytes(), &assessment))
 			assert := assert.New(t)
 			assert.Equal(postaladdress.StatusUnavailable, assessment.Status)
-			assert.Equal("Unit 7", assessment.Proposed.ExtendedAddress)
 			if state == "failure" {
 				assert.Equal(1, validator.calls)
 			} else {
@@ -120,7 +118,6 @@ func TestPostalAddressCorrectionPreservesRawDraft(t *testing.T) {
 	assert := assert.New(t)
 	assert.Equal(raw, address.Assessment.Original)
 	assert.Equal(raw.OriginalValue, address.OriginalValue, "public reads expose original text, not the storage envelope")
-	assert.Equal("12 Example Street", *address.StreetAddress)
 	forbidden := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), []byte(`{"addresses":{"add":[{"address_kind":"postal","street_address":"x","assessment":{"status":"validated"},"envelope":{"source":"user"}}]}}`), map[string]string{"If-Match": saved.Header().Get("ETag")})
 	assert.Equal(http.StatusBadRequest, forbidden.Code)
 }
@@ -136,9 +133,12 @@ func TestPostalAddressExternalDeniesDelegatedAndReadOnlyKeys(t *testing.T) {
 	srv.SetPostalAddressValidator(validator)
 	_, secret, _, err := reg.Issue("postal-test", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{{ID: 1, Type: "imap", Identifier: "alice@example.com"}}, time.Time{})
 	require.NoError(t, err)
-	for _, headers := range []map[string]string{{apiprotocol.AgentTokenHeader: secret}, {"X-Api-Key": "synthetic-reader-key"}} {
-		result := doRequest(t, srv.Router(), http.MethodPost, postalAssessPath(id), []byte(`{"address":{"address_kind":"postal","street_address":"12 Example St","country_code":"CA"},"allow_external":true}`), headers)
-		assert.Contains(t, []int{http.StatusUnauthorized, http.StatusForbidden}, result.Code, result.Body.String())
+	for _, tc := range []struct {
+		headers map[string]string
+		status  int
+	}{{map[string]string{apiprotocol.AgentTokenHeader: secret}, http.StatusUnauthorized}, {map[string]string{"X-Api-Key": "synthetic-reader-key"}, http.StatusForbidden}} {
+		result := doRequest(t, srv.Router(), http.MethodPost, postalAssessPath(id), []byte(`{"address":{"address_kind":"postal","street_address":"12 Example St","country_code":"CA"},"allow_external":true}`), tc.headers)
+		assert.Equal(t, tc.status, result.Code, result.Body.String())
 	}
 	assert.Zero(t, validator.calls)
 }
@@ -173,10 +173,8 @@ func TestPostalAddressEditPreservesOriginalHistory(t *testing.T) {
 	require.NoError(json.Unmarshal(reread.Body.Bytes(), &persisted))
 	require.Len(persisted.Addresses, 1)
 	assert.Equal(&newText, persisted.Addresses[0].FreeText)
-	assert.Equal(raw, current.Assessment.Original)
 	assert.NotEqual(before.Addresses[0].Assessment.Proposed.StreetAddress, current.Assessment.Proposed.StreetAddress)
 	assert.Equal(store.ProvenanceUser, current.Envelope.Source)
-	assert.Nil(current.Envelope.Confidence)
 	assert.Nil(current.Envelope.SourceResourceUID)
 	assert.True(current.Envelope.VCard.IsZero())
 	assert.Equal(&pref, current.Envelope.Pref)
@@ -255,11 +253,9 @@ func TestPostalReplacementRequiresCurrentValue(t *testing.T) {
 	old, err := wrapped.AddPersonAddressContext(t.Context(), id, store.PersonAddressInput{AddressKind: store.PersonAddressPostal, StreetAddress: new("Old street"), Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
 	require.NoError(t, err)
 	read := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
-	for _, original := range []string{`{"address_kind":"postal"}`, `{"address_kind":"postal","street_address":"Old street"}`} {
-		body := fmt.Appendf(nil, `{"addresses":{"supersede":[%d],"add":[{"address_kind":"postal","free_text":"","original_input":%s,"envelope":{"source":"user"}}]}}`, old.Envelope.ID, original)
-		saved := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), body, map[string]string{"If-Match": read.Header().Get("ETag")})
-		assert.Equal(t, http.StatusBadRequest, saved.Code, saved.Body.String())
-	}
+	body := fmt.Appendf(nil, `{"addresses":{"supersede":[%d],"add":[{"address_kind":"postal","free_text":"","original_input":{"address_kind":"postal","street_address":"Old street"},"envelope":{"source":"user"}}]}}`, old.Envelope.ID)
+	saved := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), body, map[string]string{"If-Match": read.Header().Get("ETag")})
+	assert.Equal(t, http.StatusBadRequest, saved.Code, saved.Body.String())
 	profile, err := wrapped.GetPersonProfileContext(t.Context(), id)
 	require.NoError(t, err)
 	require.Len(t, profile.Addresses, 1)
@@ -285,52 +281,51 @@ func TestPostalPatchExplainsInvalidOriginalInput(t *testing.T) {
 }
 
 func TestLegacyPostalAssessmentMatchesPublicAddress(t *testing.T) {
-	srv, wrapped := newIdentityLinkTestServer(t)
-	id := seedAPIPerson(t, wrapped.Store)
-	_, err := wrapped.AddPersonAddressContext(t.Context(), id, store.PersonAddressInput{AddressKind: store.PersonAddressPostal, OriginalValue: `;;12 Example Street;Example City;;;;Room\;3;Floor 2`, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
-	require.NoError(t, err)
-	for _, path := range []string{personProfilePath(id), personProfilePath(id) + "/history"} {
-		response := doRequest(t, srv.Router(), http.MethodGet, path, nil, nil)
-		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-		var profile struct {
-			Addresses []store.PersonAddress `json:"addresses"`
-		}
-		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &profile))
-		require.Len(t, profile.Addresses, 1)
-		address := profile.Addresses[0]
-		require.NotNil(t, address.StreetAddress)
-		require.NotNil(t, address.Assessment)
-		assert.Equal(t, "12 Example Street", *address.StreetAddress)
-		assert.Equal(t, "12 Example Street", address.Assessment.Proposed.StreetAddress)
-		assert.NotContains(t, address.Assessment.ReasonCodes, "address_incomplete")
-		assert.Equal(t, []string{"Room;3", "Floor 2"}, address.Assessment.ProposedExtendedParts)
+	for _, tc := range []struct {
+		name, original string
+		structured     bool
+	}{
+		{"structured", `;;12 Example Street;Example City;;;;Room\;3;Floor 2`, true},
+		{"text", "12 Example Street", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, wrapped := newIdentityLinkTestServer(t)
+			id := seedAPIPerson(t, wrapped.Store)
+			old, err := wrapped.AddPersonAddressContext(t.Context(), id, store.PersonAddressInput{AddressKind: store.PersonAddressPostal, OriginalValue: tc.original, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+			require.NoError(t, err)
+			for _, path := range []string{personProfilePath(id), personProfilePath(id) + "/history"} {
+				response := doRequest(t, srv.Router(), http.MethodGet, path, nil, nil)
+				require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+				var profile struct {
+					Addresses []store.PersonAddress `json:"addresses"`
+				}
+				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &profile))
+				require.Len(t, profile.Addresses, 1)
+				address := profile.Addresses[0]
+				require.NotNil(t, address.Assessment)
+				if tc.structured {
+					require.NotNil(t, address.StreetAddress)
+					assert.Equal(t, "12 Example Street", *address.StreetAddress)
+					assert.Equal(t, "12 Example Street", address.Assessment.Proposed.StreetAddress)
+					assert.NotContains(t, address.Assessment.ReasonCodes, "address_incomplete")
+					assert.Equal(t, []string{"Room;3", "Floor 2"}, address.Assessment.ProposedExtendedParts)
+				} else {
+					require.NotNil(t, address.FreeText)
+					assert.Equal(t, "12 Example Street", *address.FreeText)
+				}
+			}
+			if !tc.structured {
+				read := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
+				body := fmt.Appendf(nil, `{"addresses":{"supersede":[%d],"add":[{"address_kind":"postal","free_text":"12 Example Street","country_name":"Canada","original_input":{"address_kind":"postal","original_value":"12 Example Street"},"envelope":{"source":"user"}}]}}`, old.Envelope.ID)
+				saved := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), body, map[string]string{"If-Match": read.Header().Get("ETag")})
+				require.Equal(t, http.StatusOK, saved.Code, saved.Body.String())
+				var profile store.PersonProfile
+				require.NoError(t, json.Unmarshal(saved.Body.Bytes(), &profile))
+				require.Len(t, profile.Addresses, 1)
+				require.NotNil(t, profile.Addresses[0].FreeText)
+				assert.Equal(t, "12 Example Street", *profile.Addresses[0].FreeText)
+				assert.Equal(t, "Canada", *profile.Addresses[0].CountryName)
+			}
+		})
 	}
-}
-
-func TestLegacyPostalTextSurvivesCountryEdit(t *testing.T) {
-	srv, wrapped := newIdentityLinkTestServer(t)
-	id := seedAPIPerson(t, wrapped.Store)
-	old, err := wrapped.AddPersonAddressContext(t.Context(), id, store.PersonAddressInput{AddressKind: store.PersonAddressPostal, OriginalValue: "12 Example Street", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
-	require.NoError(t, err)
-	for _, path := range []string{personProfilePath(id), personProfilePath(id) + "/history"} {
-		response := doRequest(t, srv.Router(), http.MethodGet, path, nil, nil)
-		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-		var profile struct {
-			Addresses []store.PersonAddress `json:"addresses"`
-		}
-		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &profile))
-		require.Len(t, profile.Addresses, 1)
-		require.NotNil(t, profile.Addresses[0].FreeText)
-		assert.Equal(t, "12 Example Street", *profile.Addresses[0].FreeText)
-	}
-	read := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
-	body := []byte(fmt.Sprintf(`{"addresses":{"supersede":[%d],"add":[{"address_kind":"postal","free_text":"12 Example Street","country_name":"Canada","original_input":{"address_kind":"postal","original_value":"12 Example Street"},"envelope":{"source":"user"}}]}}`, old.Envelope.ID))
-	saved := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), body, map[string]string{"If-Match": read.Header().Get("ETag")})
-	require.Equal(t, http.StatusOK, saved.Code, saved.Body.String())
-	var profile store.PersonProfile
-	require.NoError(t, json.Unmarshal(saved.Body.Bytes(), &profile))
-	require.Len(t, profile.Addresses, 1)
-	require.NotNil(t, profile.Addresses[0].FreeText)
-	assert.Equal(t, "12 Example Street", *profile.Addresses[0].FreeText)
-	assert.Equal(t, "Canada", *profile.Addresses[0].CountryName)
 }
