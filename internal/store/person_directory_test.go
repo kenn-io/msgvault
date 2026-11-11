@@ -469,6 +469,11 @@ func TestDirectoryOrganizationScopeExcludesInactiveMembership(t *testing.T) {
 		}
 		employment, err := st.AddEmploymentContext(ctx, input)
 		must.NoError(err)
+		if action == "current" {
+			input.Title = new("Second role")
+			_, err = st.AddEmploymentContext(ctx, input)
+			must.NoError(err)
+		}
 		switch action {
 		case "ended":
 			_, err = st.EndEmploymentContext(ctx, employment.ID, employment.Revision, store.PartialDate{Year: new(2025)})

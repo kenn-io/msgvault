@@ -24,19 +24,25 @@ type discoveryPeopleBackend struct {
 
 func (b *discoveryPeopleBackend) SearchSemanticPeople(_ context.Context, request peoplebrowser.SemanticPeopleRequest) (*peoplebrowser.SemanticPeoplePage, error) {
 	b.request = request
-	return &peoplebrowser.SemanticPeoplePage{Results: []peoplebrowser.SemanticPersonMatch{{PersonID: 7, DisplayName: new("Alex Example"), VCardUID: "person-7", Score: .9}}}, b.err
+	if b.err != nil {
+		return nil, b.err
+	}
+	return &peoplebrowser.SemanticPeoplePage{Results: []peoplebrowser.SemanticPersonMatch{{PersonID: 7, DisplayName: new("Alex Example"), VCardUID: "person-7", Score: .9}}}, nil
 }
 
 func (b *discoveryPeopleBackend) ListOrganizations(_ context.Context, query string, limit, offset int) (*peoplebrowser.OrganizationPage, error) {
 	b.organizationQuery, b.organizationLimit, b.organizationOffset = query, limit, offset
-	return &peoplebrowser.OrganizationPage{Organizations: []peoplebrowser.OrganizationSummary{{ID: 13, Name: "Example Cooperative"}}, Total: 2, Limit: 1, Offset: 0, HasMore: true}, b.err
+	if b.err != nil {
+		return nil, b.err
+	}
+	return &peoplebrowser.OrganizationPage{Organizations: []peoplebrowser.OrganizationSummary{{ID: 13, Name: "Example Cooperative"}}, Total: 2, Limit: 1, Offset: 0, HasMore: true}, nil
 }
 
 func discoveryToolOptions(b *discoveryPeopleBackend) ServeOptions {
 	return ServeOptions{Engine: &querytest.MockEngine{}, SemanticPeopleBackend: b, OrganizationBackend: b}
 }
 
-func TestPersonDiscoveryMCPCatalogAndDelegatedBoundary(t *testing.T) {
+func TestPersonDiscoveryMCPCatalogGatesOnBackends(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	backend := &discoveryPeopleBackend{}

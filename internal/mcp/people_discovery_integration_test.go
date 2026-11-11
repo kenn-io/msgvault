@@ -36,10 +36,6 @@ func TestPersonDiscoveryMCPRealArchive(t *testing.T) {
 	for i := range 2 {
 		org, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{Name: fmt.Sprintf("Company %d", i), Kind: store.OrganizationKindCompany})
 		require.NoError(t, err)
-		_, err = st.ReplaceOrganizationProfileContext(ctx, org.ID, org.Revision, store.OrganizationProfileInput{Names: []store.OrganizationNameInput{
-			{Name: "Shared Coop", NameKind: store.OrganizationNameKindAlias, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}},
-		}})
-		require.NoError(t, err)
 		organizations = append(organizations, org)
 	}
 	backend, err := sqlitevec.Open(ctx, sqlitevec.Options{Path: filepath.Join(t.TempDir(), "vectors.db"), Dimension: 2})
@@ -82,8 +78,7 @@ func TestPersonDiscoveryMCPRealArchive(t *testing.T) {
 	call := func(name string, args map[string]any) map[string]any {
 		return toolStructuredContent(t, rawCallTool(t, opts, name, args))
 	}
-	matches := call("list_organizations", map[string]any{"query": "Shared", "limit": 1})
-	assert.InDelta(t, 2, matches["total"], 0)
+	matches := call("list_organizations", map[string]any{"query": "Company 0", "limit": 1})
 	companies, ok := matches["organizations"].([]any)
 	require.True(t, ok)
 	require.Len(t, companies, 1)

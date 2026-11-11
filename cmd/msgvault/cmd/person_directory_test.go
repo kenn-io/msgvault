@@ -24,13 +24,17 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 )
 
-func personDirectoryTestResponse(t *testing.T, status int, payload string) (<-chan *http.Request, context.Context) {
+func personDirectoryTestResponse(t *testing.T, status int, payload string, versions ...string) (<-chan *http.Request, context.Context) {
 	t.Helper()
+	version := "3.29.0"
+	if len(versions) > 0 {
+		version = versions[0]
+	}
 	requests := make(chan *http.Request, 8)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/health" {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"status":"ok","api_schema_version":"3.29.0"}`)
+			_, _ = io.WriteString(w, `{"status":"ok","api_schema_version":"`+version+`"}`)
 			return
 		}
 		requests <- r
@@ -81,6 +85,7 @@ func TestPersonDirectoryCommandMapsDirectoryQueryParameters(t *testing.T) {
 		want url.Values
 	}{
 		{name: "default recent ordering", want: url.Values{"sort": {"last_contact_desc"}}},
+		{name: "organization scope and page size", args: []string{"--organization-id", "13", "--organization", "Example Cooperative", "--category", "colleague", "--contact-state", "active", "--limit", "2"}, want: url.Values{"organization_id": {"13"}, "organization": {"Example Cooperative"}, "category": {"colleague"}, "contact_state": {"active"}, "limit": {"2"}, "sort": {"last_contact_desc"}}},
 		{
 			name: "saved name and literal address",
 			args: []string{"--query", "Curated École", "--address", `ÉCOLE+%_\&@example.test`},
@@ -117,7 +122,7 @@ func TestPersonDirectoryCommandMapsDirectoryQueryParameters(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			requests, testCtx := personDirectoryTestResponse(t, http.StatusOK, `{"people":[]}`)
+			requests, testCtx := personDirectoryTestResponse(t, http.StatusOK, `{"people":[]}`, "5.1.0")
 			output, err := runPersonDirectoryCommand(testCtx, t, append(tc.args, "--json")...)
 			require.NoError(err)
 			require.Len(requests, 1)
@@ -125,7 +130,6 @@ func TestPersonDirectoryCommandMapsDirectoryQueryParameters(t *testing.T) {
 			assert.Equal(http.MethodGet, request.Method)
 			assert.Equal("/api/v1/people/directory", request.URL.Path)
 			assert.Equal(tc.want, request.URL.Query())
-			assert.False(request.URL.Query().Has("limit"))
 			assert.JSONEq(`{"people":[]}`, output)
 		})
 	}
@@ -164,6 +168,10 @@ func TestPersonDirectoryAddressRequiresCurrentDaemonSchema(t *testing.T) {
 	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
 	output, err := runPersonDirectoryCommand(ctx, t, "--address", "alex@example.test", "--json")
 	require.ErrorContains(err, "requires daemon API schema 3.29.0 or newer; upgrade the daemon")
+	assert.Empty(output)
+	assert.Zero(lookups.Load())
+	output, err = runPersonDirectoryCommand(ctx, t, "--organization-id", "13", "--json")
+	require.ErrorContains(err, "5.1.0")
 	assert.Empty(output)
 	assert.Zero(lookups.Load())
 }

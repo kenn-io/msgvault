@@ -60,10 +60,10 @@ func (h *handlers) searchSemanticPeople(ctx context.Context, req toolRequest) (*
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
 	}
-	if h.semanticPeopleBackend == nil {
+	if h.semanticPeople == nil {
 		return nil, newInternalError("search semantic people", errors.New("backend unavailable"))
 	}
-	page, err := h.semanticPeopleBackend.SearchSemanticPeople(ctx, peoplebrowser.SemanticPeopleRequest{
+	page, err := h.semanticPeople.SearchSemanticPeople(ctx, peoplebrowser.SemanticPeopleRequest{
 		Query: query, Limit: limit, OrganizationID: organizationID,
 	})
 	if err != nil {

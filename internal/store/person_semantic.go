@@ -161,7 +161,7 @@ func (s *Store) ResolvePersonSemanticCandidatesContext(
 		for _, candidate := range candidates {
 			if organizationID > 0 {
 				var member bool
-				if err := tx.QueryRowContext(ctx, `SELECT `+s.currentOrganizationMembershipSQL("?"), candidate.PersonID, organizationID).Scan(&member); err != nil {
+				if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 `+s.currentOrganizationMembershipSQL()+` AND employment.person_id = ?)`, organizationID, candidate.PersonID).Scan(&member); err != nil {
 					return fmt.Errorf("check organization membership: %w", err)
 				}
 				if !member {
@@ -194,7 +194,7 @@ func (s *Store) ResolvePersonSemanticCandidatesContext(
 // CurrentOrganizationMemberIDsContext returns the saved people with current
 // employment at the active canonical organization.
 func (s *Store) CurrentOrganizationMemberIDsContext(ctx context.Context, organizationID int64) ([]int64, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT person.id FROM persons person WHERE `+s.currentOrganizationMembershipSQL("person.id")+` ORDER BY person.id`, organizationID)
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT employment.person_id `+s.currentOrganizationMembershipSQL()+` ORDER BY employment.person_id`, organizationID)
 	if err != nil {
 		return nil, fmt.Errorf("list organization members: %w", err)
 	}
