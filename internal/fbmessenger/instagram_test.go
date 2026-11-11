@@ -548,6 +548,55 @@ func TestInstagramReplayChangedUnknownMetadata(t *testing.T) {
 	}
 }
 
+func TestInstagramReplayChangedMediaTimestamp(t *testing.T) {
+	for _, kind := range []string{"photos", "videos"} {
+		t.Run(kind, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st, root := testutil.NewTestStore(t), t.TempDir()
+			record := instagramTestRecord("same")
+			record[kind] = []map[string]any{{"uri": "media.jpg", "creation_timestamp": 100}}
+			instagramTestShard(t, root, "circle", "message_1.json", record)
+			opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
+			_, err := ImportDYI(t.Context(), st, opts)
+			require.NoError(err)
+			ids := instagramIDs(t, st)
+			require.Len(ids, 1)
+			record[kind] = []map[string]any{{"uri": "media.jpg", "creation_timestamp": 200}}
+			instagramTestShard(t, root, "circle", "message_1.json", record)
+			summary, err := ImportDYI(t.Context(), st, opts)
+			require.NoError(err)
+			assert.Zero(summary.MessagesAdded)
+			assert.Equal(ids, instagramIDs(t, st))
+			raws, _ := instagramSnapshot(t, st)
+			assert.Contains(raws[ids[0]], `"creation_timestamp":200`)
+		})
+	}
+}
+
+func TestInstagramPartialReplayPreservesMediaTimestamps(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, root := testutil.NewTestStore(t), t.TempDir()
+	a, b := instagramTestRecord("same"), instagramTestRecord("same")
+	a["photos"] = []map[string]any{{"uri": "photo.jpg", "creation_timestamp": 100}}
+	b["photos"] = []map[string]any{{"uri": "photo.jpg", "creation_timestamp": 200}}
+	instagramTestShard(t, root, "circle", "message_1.json", a, b)
+	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
+	_, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	before, _ := instagramSnapshot(t, st)
+	require.Len(before, 2)
+	a["photos"] = []map[string]any{{"uri": "photo.jpg", "creation_timestamp": 300}}
+	instagramTestShard(t, root, "circle", "message_1.json", a)
+	summary, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	assert.True(summary.Incomplete)
+	assert.Zero(summary.MessagesAdded)
+	after, _ := instagramSnapshot(t, st)
+	assert.Equal(before, after)
+}
+
 func TestInstagramPartialReplayPreservesDistinctMetadata(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

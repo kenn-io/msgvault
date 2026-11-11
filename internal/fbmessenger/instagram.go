@@ -51,13 +51,14 @@ func instagramEvidence(record rawJSONMessage) instagramOccurrence {
 	return instagramOccurrence{content, string(reactions)}
 }
 
-// instagramMediaEvidence keeps every media kind's path and timestamp.
+// instagramMediaEvidence keeps every media kind's path for loose matching.
 func instagramMediaEvidence(record rawJSONMessage) string {
 	kinds := [][]rawJSONPhoto{record.Photos, record.Videos, record.Audio, record.Files, record.Media, record.Gifs}
 	encodedKinds := make([][]string, len(kinds))
 	for k, entries := range kinds {
 		for _, entry := range entries {
 			entry.URI = path.Clean(DecodeMojibake(entry.URI))
+			entry.CreationTimestamp = 0
 			entry.Extra = nil
 			encoded, _ := json.Marshal(entry)
 			encodedKinds[k] = append(encodedKinds[k], instagramCanonical(encoded))
