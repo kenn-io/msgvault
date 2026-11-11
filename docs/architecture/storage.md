@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-08"
+last_edited: "2026-11-11"
 title: Data Storage
 description: Database schema, Parquet analytics cache, content-addressed attachments, and token storage.
 ---
@@ -229,6 +229,10 @@ successful work from the same run. Actionable item failures are recorded with
 an `error_kind`/`error_message`. Expected churn, such as a Gmail message that
 disappears before raw fetch, is recorded as `status = 'skipped'`.
 
+Gmail also uses fetch/ingest outcomes as durable acquisition and file work.
+The [Gmail durability protocol](#gmail-durability-protocol) owns selection and
+settlement rules, which differ from the per-run error display.
+
 `source_import_items.checksum` is nullable because some providers or legacy rows
 may not have a stable checksum. msgvault treats a null checksum as an empty
 string when checking already-imported source items.
@@ -395,6 +399,162 @@ software requires stable individual attachment files. It prevents new packs,
 rejects pack and repack commands, and restores backup content loose, but does
 not convert existing packs automatically. Stop the daemon and run
 `unpack-attachments` once if the existing archive must become fully loose.
+
+### Loose publication policies
+
+The writers in [`internal/export/store_attachment.go`](https://github.com/kenn-io/msgvault/blob/main/internal/export/store_attachment.go)
+choose different `packstore` policies:
+
+| Entry point | Successful publication |
+|---|---|
+| `StoreAttachmentFile` / `StoreAttachmentFileIncludingEmpty` | `AtomicPublication`: publishes complete bytes atomically, without requiring file or directory fsync |
+| `StoreAttachmentFileDurable` | `DurablePublication`: verifies deduplicated content and fsyncs file content and directory entries before success |
+
+Atomic publication prevents partial-file visibility; it does not promise the
+same crash durability. Gmail MIME sync, remote-image archival, and maintenance
+use the durable entry point. It can return a receipt with an error after bytes
+become visible but before directory sync finishes. Check the error before
+recording success. `Created` distinguishes a new blob for reference-checked
+cleanup; a receipt alone is not proof of durability. Retrying a readable loose
+file through durable deduplication repeats verification and the required syncs.
+Neither writer records a SQL attachment occurrence.
+
+## Gmail durability protocol
+
+Gmail preserves RAW before publishing derived files. Its durable work record
+in `sync_run_items` keeps unfinished materialization reachable by sync. This
+is a protocol across SQL and the content-addressed store (CAS), not a global
+transaction spanning them. The contract below belongs to the Gmail Syncer;
+an empty `Options.SourceType` selects its legacy Gmail mode. IMAP retains
+best-effort attachment handling, and other importers have their own completion
+policies.
+
+### Who owns each transition?
+
+1. **The Syncer determines required work.** `requiredMaterialization` combines
+   pending work with nonempty MIME attachments or incomplete parsing when an
+   attachment directory is configured, plus enabled remote-image archival for
+   email HTML. MIME and images are independent requirements. In-memory maps
+   track them during a run; the ledger supplies durability.
+2. **The Store commits the message and obligation together.** The Syncer's
+   `persistMessage` supplies RAW, projections, a search document, and an
+   `ingest/error` outcome naming MIME, images, or both. `PersistMessageContext`
+   writes the supplied data in one SQL transaction, using the search document
+   when indexing is available. A rejected obligation rolls back the message.
+   FTS follows `upsertFTSOrUnsearchable`: recognized PostgreSQL size
+   overflow can commit an unsearchable result; other FTS errors roll back.
+3. **Export/CAS publishes bytes; the Store records occurrences.** After that
+   commit, `storeAttachment` uses `StoreAttachmentFileDurable`, then
+   `UpsertAttachmentRecord`. `remoteimage.ArchiveWithOptions` similarly publishes
+   downloaded bytes before `UpsertRemoteImageAttachment`. A published blob can
+   outlive a failed row write. Shared hashes identify bytes, not occurrences:
+   MIME part keys and `remote-image:` URL identities remain distinct.
+4. **The Syncer settles only after every required operation succeeds.**
+   `repairPendingAttachments` attempts images even when MIME repair fails.
+   `settleAcquisition` writes `fetch/resolved` with kind `acquired` before
+   clearing either pending map. A failed settlement retains the work. Later
+   fetch failures or a provider 404 must not supersede file work for an already
+   committed message.
+
+The production paths are [`sync.go`](https://github.com/kenn-io/msgvault/blob/main/internal/sync/sync.go)
+(`persistMessage`, `storeAttachment`),
+[`materialization.go`](https://github.com/kenn-io/msgvault/blob/main/internal/sync/materialization.go),
+[`messages.go`](https://github.com/kenn-io/msgvault/blob/main/internal/store/messages.go)
+(`PersistMessageContext`, `persistMessageWith`), and
+[`remoteimage/archive.go`](https://github.com/kenn-io/msgvault/blob/main/internal/remoteimage/archive.go).
+
+Occurrence writes and statistics are separate SQL work after the message
+commit. Under the message lock, `RecomputeRemoteImageAttachmentStatsContext`
+preserves expected MIME counts while the latest active outcome requires MIME;
+image-only debt does not preserve that expectation. A count is not an inventory
+of saved occurrences. See [`remote_images.go`](https://github.com/kenn-io/msgvault/blob/main/internal/store/remote_images.go).
+
+### Which guards and cancellation boundaries apply?
+
+Full and incremental sync use `Store.ScopedToSync(sourceID, runID)`. Mutating
+transactions fence that running generation, and message writes check source
+ownership. The Syncer must align `acquisitionSyncID` and its embedded
+`MessagePersistData.SyncRunItem.SyncRunID` with this view: the transaction inserts
+that outcome through the private helper, not the public ledger API.
+`RecordSyncRunItemContext` additionally rejects a different run ID on a scoped
+view; an unscoped Store remains a separate generic API. The generation fence
+guards SQL mutations, not files already published. See [`store/sync.go`](https://github.com/kenn-io/msgvault/blob/main/internal/store/sync.go)
+and [`store.go`](https://github.com/kenn-io/msgvault/blob/main/internal/store/store.go).
+
+Local MIME repair checks the saved message's ID, source ID, and source message
+ID again under the message lock before restoring occurrences. It preserves
+existing metadata and provider-owned rows, and rejects conflicting evidence.
+See [`RestoreMIMEAttachmentRecordsContext`](https://github.com/kenn-io/msgvault/blob/main/internal/store/attachment_restore.go).
+
+After the message commit, `persistMessage` uses `context.WithoutCancel` to finish
+local MIME writes and statistics. Image downloads and their publication retain
+the cancellable context; durable debt allows another attempt. The image
+archiver finishes statistics for already committed image rows with
+`WithoutCancel`. Removing cancellation does not bypass generation or identity
+guards and does not guarantee that a local write succeeds.
+
+### What permits progress, and what remains retryable?
+
+[`item_errors.go`](https://github.com/kenn-io/msgvault/blob/main/internal/sync/item_errors.go)
+separates mandatory `recordAcquisitionFailure` from warning-only `recordSyncItem`.
+Gmail must stop if required acquisition debt cannot be recorded before a
+checkpoint or completion could hide it. Best-effort events cannot replace this
+write. Existing-message History labels and deletions have no acquisition retry
+substitute: their persistence errors retain History. Recovery still refreshes
+labels when file work fails, and its request fingerprint prevents resuming an
+older unsafe enumeration prefix. See [`incremental.go`](https://github.com/kenn-io/msgvault/blob/main/internal/sync/incremental.go)
+and [`gmail_recovery.go`](https://github.com/kenn-io/msgvault/blob/main/internal/sync/gmail_recovery.go).
+
+`ListUnresolvedSyncItemErrors` chooses each source message's greatest item ID in
+fetch/ingest phases, within runs whose ID is at least the latest completed
+incremental run's ID (chosen by `completed_at`, then run ID). Only then does it
+keep errors; the Syncer filters recognized phase/kind pairs and usable message
+IDs. An incremental run must re-record still-failing work before completion
+moves that boundary. Free-form diagnostics do not select replay candidates.
+
+Full sync replays local file obligations before enumeration, even for messages
+absent from the provider listing; it still contacts the provider for profile
+and labels first. MIME repair reads retained RAW; image retries can require
+network access and enabled archival. The local
+[`repair-derived --attachment-message`](../cli-reference.md#repair-derived)
+entry point repairs selected Gmail MIME occurrences without Gmail access; it
+does not automatically drain the acquisition ledger.
+
+A `committedMessageError` means the message exists despite failed post-commit
+work. Full, MessagesAdded, LabelsAdded, and replay retain that identity for
+counts, discovery, and later label events. Page `acknowledged` is distinct from
+materialization settlement. A run marked `completed` may contain errors and
+retryable work. Some ordinary full-sync checkpoint failures are warnings;
+pinned recovery checkpoints have stricter stop-on-error rules.
+
+`ListSyncRunItemsContext(status="error")` is a display projection, not the active
+retry selector. Before applying its limit, it hides settled synthetic file
+markers identified by the persisted `SyncRunItemFilesPendingMessage` text;
+genuine historical failures remain. Preserve that exact marker separately from
+free-form diagnostics. The unfiltered ledger remains readable. SQLite archive
+GC can instead retire fetch/ingest errors as `skipped` for identities actually
+purged in the same transaction, preserving kind and diagnostic text
+([`gc.go`](https://github.com/kenn-io/msgvault/blob/main/internal/store/gc.go)).
+
+Commit, page acknowledgement, settlement, GC retirement, and run completion
+describe different units. None of these states, nor an empty retry selection,
+proves archive completeness or continued physical integrity. Remote-image
+reference reuse is not a fresh read of the saved bytes.
+
+### Existing behavioral coverage
+
+These tests exercise the boundaries above; their presence is not a claim that
+every backend or a real power-loss scenario is covered.
+
+| Boundary | Existing tests |
+|---|---|
+| RAW/obligation rollback, process exit, settlement failure, stale worker | [Transaction and settlement cases](https://github.com/kenn-io/msgvault/blob/main/internal/sync/attachment_revision_test.go) |
+| Durable retry after directory-sync failure | [Directory-sync retry](https://github.com/kenn-io/msgvault/blob/main/internal/sync/attachment_stability_test.go) |
+| Replay outside listing, mandatory debt, four committed-message routes | [Full replay and committed-message cases](https://github.com/kenn-io/msgvault/blob/main/internal/sync/attachment_completion_test.go) |
+| Expected MIME counts, recovery labels, SQLite GC | [Materialization interaction cases](https://github.com/kenn-io/msgvault/blob/main/internal/sync/attachment_review_test.go) |
+| Latest outcome and completed-incremental replay boundary | [Store replay selection](https://github.com/kenn-io/msgvault/blob/main/internal/store/sync_test.go) |
+| Committed image statistics after cancellation | [Image archival cancellation](https://github.com/kenn-io/msgvault/blob/main/internal/remoteimage/archive_test.go) |
+| Synthetic marker projection before the display limit | [Sync-run status hydration](https://github.com/kenn-io/msgvault/blob/main/internal/api/attachment_status_test.go) |
 
 ## Token Storage
 

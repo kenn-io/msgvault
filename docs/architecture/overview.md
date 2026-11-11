@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-01"
+last_edited: "2026-11-11"
 title: Architecture Overview
 description: How msgvault captures communications, preserves the archive, and serves people, search, and automation.
 ---
@@ -63,6 +63,11 @@ Sync stores source identifiers, checkpoints, and raw evidence alongside parsed
 records. Attachments are addressed by their SHA-256 content hash so occurrences
 can share the same stored bytes. Repeated imports and syncs use source identity
 to update or skip records according to that provider's rules.
+
+Gmail commits required file work with the message's RAW, then publishes files
+and records their occurrences before settling that work. SQL and filesystem
+publication have separate boundaries. See the [Gmail durability protocol](storage.md#gmail-durability-protocol)
+for ownership, retry selection, cancellation, and completion limits.
 
 Meeting providers use the shared meeting archiver to write messages, raw
 evidence, search text, and meeting projections. Pocket discovers and reconciles

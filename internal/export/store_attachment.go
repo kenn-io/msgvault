@@ -147,20 +147,24 @@ func attachmentLooseStore(baseDir string, staging packstore.StagingMode) (*packs
 	return store, nil
 }
 
-// DurableAttachmentReceipt identifies one durable loose publication. Created
+// DurableAttachmentReceipt describes a loose publication attempt. Created
 // distinguishes a blob introduced by this call from a verified deduplication.
+// A receipt returned with an error does not certify completed durability.
 type DurableAttachmentReceipt struct {
 	StoragePath string
 	ContentHash string
 	Created     bool
 }
 
-// StoreAttachmentFileDurable stores attachment content, including an empty
-// blob, through the content-addressed atomic write path. Unlike ordinary
-// ingest, this entry point is reserved for maintenance that will discard an
-// existing authoritative copy after the loose file is durable. Its receipt is
-// populated even when publication succeeded but a later durability step
-// failed, so callers can roll back a newly created blob.
+// StoreAttachmentFileDurable publishes attachment content, including an empty
+// blob, with packstore.DurablePublication when attachmentsDir is configured.
+// It verifies deduplicated bytes and syncs file content and directory entries
+// before success. Gmail sync, remote-image archival, and maintenance use this
+// path when a stored reference or follow-up action requires durable bytes.
+//
+// A receipt can accompany an error after publication but before durability
+// completes. Callers must check the error before recording success; Created
+// identifies a new blob eligible for cleanup after checking its references.
 func StoreAttachmentFileDurable(ctx context.Context, attachmentsDir string, att *mime.Attachment) (DurableAttachmentReceipt, error) {
 	if attachmentsDir == "" {
 		return DurableAttachmentReceipt{}, nil
