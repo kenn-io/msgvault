@@ -146,7 +146,7 @@ func TestBackupRestorePreservesSavedViews(t *testing.T) {
 	reader, err := repository.OpenSnapshot(ctx, manifest.SnapshotID, app.PackFileExtension())
 	requirements.NoError(err)
 	_, err = reader.Extra("mcp-events.key")
-	assertions.ErrorIs(err, fs.ErrNotExist)
+	requirements.ErrorIs(err, fs.ErrNotExist)
 	requirements.NoError(reader.Close())
 
 	restoreResult, err := backup.Restore(ctx, repository, app, backup.RestoreOptions{
