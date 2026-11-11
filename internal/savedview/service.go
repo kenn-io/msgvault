@@ -8,7 +8,6 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"strings"
-	"time"
 
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
@@ -103,19 +102,6 @@ func ExecutableState(view store.SavedView) (store.SavedViewStateEnvelope, error)
 	}
 	if err := store.ValidateSavedViewState(state); err != nil {
 		return store.SavedViewStateEnvelope{}, fmt.Errorf("saved view %d: %w", view.ID, err)
-	}
-	if view.SchemaVersion < 3 {
-		for i := range state.Filters {
-			filter := &state.Filters[i]
-			if filter.Field != "after" && filter.Field != "before" {
-				continue
-			}
-			for j, value := range filter.Values {
-				if instant, err := time.Parse(time.RFC3339Nano, value); err == nil {
-					filter.Values[j] = instant.UTC().Format(time.RFC3339Nano)
-				}
-			}
-		}
 	}
 	if view.SchemaVersion == 1 && (state.SearchMode == "" || state.SearchMode == "full_text") {
 		state.Query = quoteLegacyPipes(state.Query)

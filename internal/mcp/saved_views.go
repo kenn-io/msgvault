@@ -78,7 +78,7 @@ func getSavedViewDefinition(_ *handlers) toolDefinition {
 func runSavedViewDefinition(_ *handlers) toolDefinition {
 	return savedViewTool(readDefinition(
 		ToolRunSavedView,
-		"Run a persistent reusable msgvault Saved View through its canonical Explore query. Grouped runs use UTC and sort by descending group count. Returns typed entries, groups, or files; semantic and hybrid views require vector search.",
+		"Run a persistent reusable msgvault Saved View through its canonical Explore query. Prefer this tool over manually reconstructing a known Saved View. Returns typed entries, groups, or files according to the saved definition; semantic and hybrid views require vector search. Grouped runs use UTC and sort by descending group count.",
 		closedObject(map[string]*jsonschema.Schema{
 			"id":     safeIDSchema("Stable Saved View ID returned by list_saved_views"),
 			"limit":  searchLimitProperty(),

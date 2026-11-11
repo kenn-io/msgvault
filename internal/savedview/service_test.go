@@ -117,22 +117,6 @@ func TestExecutableStatePreservesLegacyPipes(t *testing.T) {
 	}
 }
 
-func TestExecutableStateLocalDateSchema(t *testing.T) {
-	for _, tc := range []struct {
-		version int
-		want    string
-	}{
-		{1, "2026-07-01T04:00:00Z"}, {2, "2026-07-01T04:00:00Z"}, {3, "2026-07-01T00:00:00-04:00"},
-	} {
-		t.Run(strconv.Itoa(tc.version), func(t *testing.T) {
-			state, err := ExecutableState(store.SavedView{SchemaVersion: tc.version, CanonicalState: json.RawMessage(`{"filters":[{"field":"after","operator":"in","values":["2026-07-01T00:00:00-04:00"]}]}`)})
-			require.NoError(t, err)
-			require.Len(t, state.Filters, 1)
-			assert.Equal(t, []string{tc.want}, state.Filters[0].Values)
-		})
-	}
-}
-
 func TestRunPageReturnedCountsTheTypedArray(t *testing.T) {
 	assertions := assert.New(t)
 	assertions.Equal(0, (&RunPage{}).Returned())
