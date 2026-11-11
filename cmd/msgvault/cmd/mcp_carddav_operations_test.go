@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/store"
@@ -84,7 +85,7 @@ func TestCardDAVRoleApprovalUsesRealStore(t *testing.T) {
 func TestCardDAVSelectorProofUsesNativeDiscovery(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	backend, bookID, _ := cardDAVOperationFixture(t)
+	backend, bookID, st := cardDAVOperationFixture(t)
 	for _, name := range []string{"list_carddav_connections", "list_carddav_books", "list_carddav_runs", "list_carddav_conflicts", "get_carddav_conflict", "update_carddav_book_roles", "resolve_carddav_conflict", "unpublish_carddav_person"} {
 		assert.Contains(backend.capabilities(), name)
 	}
@@ -178,6 +179,33 @@ func TestCardDAVSelectorProofUsesNativeDiscovery(t *testing.T) {
 		}
 	}
 	assert.False(newDaemonMCPCardDAV(backend.client, caps).SupportsCardDAVSelector())
+	orphanCfg := config.NewDefaultConfig()
+	orphanCfg.HomeDir = t.TempDir()
+	orphanCfg.Data.DataDir = orphanCfg.HomeDir
+	orphanController, err := api.NewCardDAVController(orphanCfg, st, slog.New(slog.DiscardHandler))
+	require.NoError(err)
+	orphanBackend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: orphanCfg, Store: st, CardDAV: orphanController, Logger: slog.New(slog.DiscardHandler)}))
+	orphanCaps, err := orphanBackend.client.MCPCapabilities(t.Context())
+	require.NoError(err)
+	for _, tc := range []struct {
+		listSupported bool
+		want          string
+	}{
+		{true, "No configured connections were found."},
+		{false, "Connection list unavailable."},
+	} {
+		orphanNamed := newDaemonMCPCardDAV(orphanBackend.client, orphanCaps)
+		orphanNamed.connectionList = tc.listSupported
+		var prompt string
+		orphanSession := operationMCPSession(t, orphanBackend, []mcpserver.OperationFamily{mcpserver.OperationFamilyCardDAV}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, req *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+			prompt = req.Params.Message
+			return &sdkmcp.ElicitResult{Action: "decline"}, nil
+		}}, orphanNamed)
+		_, err = orphanSession.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "sync_carddav", Arguments: map[string]any{}})
+		require.NoError(err)
+		assert.Contains(prompt, tc.want)
+		assert.NotContains(prompt, `"work"`)
+	}
 	for i := range caps.Routes {
 		if caps.Routes[i].OperationID == "listCardDAVRuns" {
 			caps.Routes[i].QueryParameters = []string{"limit", "before_id"}
@@ -190,6 +218,22 @@ func TestCardDAVSelectorProofUsesNativeDiscovery(t *testing.T) {
 	assert.NotContains(limited.capabilities(), "list_carddav_runs")
 	assert.NotContains(limited.capabilities(), "update_carddav_book_roles")
 	assert.Contains(limited.capabilities(), "list_carddav_books")
+	for _, tc := range []struct {
+		missing string
+		dropped []string
+	}{
+		{"listCardDAVBooks", []string{"list_carddav_books", "update_carddav_book_roles", "resolve_carddav_conflict", "unpublish_carddav_person"}},
+		{"getCardDAVConflict", []string{"get_carddav_conflict", "resolve_carddav_conflict"}},
+		{"getCardDAVPublication", []string{"unpublish_carddav_person"}},
+	} {
+		copyCaps := *orphanCaps
+		copyCaps.Routes = slices.DeleteFunc(slices.Clone(orphanCaps.Routes), func(r apiprotocol.MCPRouteDescriptor) bool { return r.OperationID == tc.missing })
+		pruned := newDaemonMCPOperations(backend.client, &copyCaps).capabilities()
+		for _, name := range tc.dropped {
+			assert.NotContains(pruned, name, tc.missing)
+		}
+		assert.Contains(pruned, "list_carddav_connections")
+	}
 
 	// A fixed daemon error is an external contract: exercise the adapter's
 	// classification without needing a race after a native commit.
@@ -258,6 +302,11 @@ func TestCardDAVConflictReadsKeepDurableIdentity(t *testing.T) {
 	disclosure, err := backend.OperationDisclosure(t.Context(), "resolve_carddav_conflict", map[string]any{"conflict_id": conflict.ID, "choice": "keep_remote"})
 	require.NoError(err)
 	assert.Contains(disclosure, `"choice":"keep_remote"`)
+	assert.Contains(disclosure, "keeping the remote version; this can change the local person")
+	assert.NotContains(disclosure, "remove a remote contact")
+	localDisclosure, err := backend.OperationDisclosure(t.Context(), "resolve_carddav_conflict", map[string]any{"conflict_id": conflict.ID, "choice": "keep_local"})
+	require.NoError(err)
+	assert.Contains(localDisclosure, "keeping the local version; this can create, update or remove a remote contact")
 	result, err := backend.ExecuteOperation(t.Context(), "resolve_carddav_conflict", map[string]any{"conflict_id": conflict.ID, "choice": "keep_remote"})
 	require.NoError(err)
 	assertLoopRefusal(t, result, "carddav_unavailable", false)

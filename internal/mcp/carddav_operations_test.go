@@ -38,6 +38,11 @@ func TestCardDAVOperationalCatalogWriteGate(t *testing.T) {
 	for _, name := range names[5:] {
 		assert.NotContains(toolsByName(t, rawListTools(t, opts, false)), name)
 	}
+	opts.DelegatedOnly = true
+	delegated := toolsByName(t, rawListTools(t, opts, true))
+	for _, name := range names {
+		assert.NotContains(delegated, name)
+	}
 }
 
 func TestCardDAVSelectorRefusesLegacyBackend(t *testing.T) {

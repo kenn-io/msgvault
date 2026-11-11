@@ -173,14 +173,10 @@ func readMCPOperationJSON[T any](ctx context.Context, client *daemonclient.Clien
 }
 
 func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string) bool, success ...int) (*mcpserver.OperationResult, error) {
-	return readMCPOperationJSONWithCertainty[T](ctx, client, method, path, options, classify, false, success...)
+	return readMCPOperationJSONWithUncertainCodes[T](ctx, client, method, path, options, classify, nil, success...)
 }
 
-func readMCPOperationJSONWithCertainty[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string) bool, uncertainNotFound bool, success ...int) (*mcpserver.OperationResult, error) {
-	return readMCPOperationJSONWithUncertainCodes[T](ctx, client, method, path, options, classify, uncertainNotFound, nil, success...)
-}
-
-func readMCPOperationJSONWithUncertainCodes[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string) bool, uncertainNotFound bool, uncertainCodes []string, success ...int) (*mcpserver.OperationResult, error) {
+func readMCPOperationJSONWithUncertainCodes[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string) bool, uncertainCodes []string, success ...int) (*mcpserver.OperationResult, error) {
 	writes := method != http.MethodGet
 	response, err := client.DoGeneratedRequestWithContext(ctx, method, path, options)
 	if err != nil {
@@ -203,9 +199,6 @@ func readMCPOperationJSONWithUncertainCodes[T any](ctx context.Context, client *
 		}
 		_ = json.Unmarshal(data, &failure)
 		code := failure.Error
-		if uncertainNotFound && code == "not_found" {
-			return operationFailure(code, true), nil
-		}
 		if slices.Contains(uncertainCodes, code) {
 			return operationFailure(code, true), nil
 		}

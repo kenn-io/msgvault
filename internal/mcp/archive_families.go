@@ -29,7 +29,7 @@ func (f *ArchiveFamilies) allows(name string) bool {
 		return f.Meetings
 	case ToolFindChat:
 		return f.Chat
-	case ToolGetCardDAVPublication, ToolPreviewCardDAVPublication, ToolApproveCardDAVPublication, ToolSyncCardDAV, ToolGetCardDAVSyncStatus:
+	case ToolSyncCardDAV:
 		return f.CardDAV
 	}
 	return true
