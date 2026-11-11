@@ -2784,7 +2784,10 @@ func TestContextWorkerContentGuardCoversProviderResponse(t *testing.T) {
 	checks := assert.New(t)
 	needs := require.New(t)
 	var fence sync.RWMutex
-	guard := func(context.Context) (func(), error) {
+	guard := func(ctx context.Context) (func(), error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		fence.RLock()
 		return fence.RUnlock, nil
 	}
