@@ -83,6 +83,34 @@ func TestEventsRouterSerialGate(t *testing.T) {
 	}
 }
 
+func TestEventsRouterReportsDrainingGate(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	cfg := &config.Config{HomeDir: t.TempDir()}
+	gate := NewSerialOperationGate()
+	requirements.NoError(gate.Drain(t.Context()))
+	events := &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir(), Enabled: true}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, OperationGate: gate, Logger: testLogger()})
+	before, err := st.LoadMCPEventsCatalog(t.Context())
+	requirements.NoError(err)
+	body := `{"name":"msgvault.messages.changed","arguments":{"source_id":1},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`
+	for _, path := range []string{"/api/v1/mcp-events/subscribe", "/api/v1/mcp-events/unsubscribe"} {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(body))
+		r.RemoteAddr = "127.0.0.1:12345"
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, r)
+		requirements.Equal(http.StatusServiceUnavailable, w.Code, path)
+		var response ErrorResponse
+		requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+		assertions.Equal("server_busy", response.Error, path)
+	}
+	after, err := st.LoadMCPEventsCatalog(t.Context())
+	requirements.NoError(err)
+	assertions.Equal(before, after)
+}
+
 func TestGeneratedEventsCatalogDecodes(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

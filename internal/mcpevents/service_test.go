@@ -466,25 +466,66 @@ func TestCredentialCleanupFailureRetainsLiveButExpiresOldEntry(t *testing.T) {
 
 func TestNativeSkipsMissingCredentialWithoutBlockingOtherEntries(t *testing.T) {
 	require := require.New(t)
+	assertions := assert.New(t)
 	st := newEventsTestStore(t)
-	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
+	var logs bytes.Buffer
+	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Logger: slog.New(slog.NewTextHandler(&logs, nil))}
 	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/one?token=x", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
 	first, err := service.Subscribe(t.Context(), in)
 	require.NoError(err)
 	in.Delivery.URL = "https://example.com/two"
 	second, err := service.Subscribe(t.Context(), in)
 	require.NoError(err)
-	snapshot, err := providercredentials.ReadEvents(service.TokensDir)
+	require.NoError(os.Remove(filepath.Join(service.TokensDir, providercredentials.EventsFilename)))
+	_, err = service.Subscribe(t.Context(), in)
 	require.NoError(err)
-	id := providercredentials.EventsID(first.ID)
-	revision, err := snapshot.Revision(id)
+	for range 3 {
+		targets, err := service.Native(t.Context())
+		require.NoError(err)
+		require.Len(targets, 1)
+		assertions.Equal(second.ID, targets[0].Name)
+	}
+	assertions.NotContains(logs.String(), "secret_unavailable")
+	in.Delivery.URL = "https://example.com/one?token=x"
+	refreshed, err := service.Subscribe(t.Context(), in)
 	require.NoError(err)
-	_, err = providercredentials.DeleteIfRevision(service.TokensDir, revision, id, func() error { return nil })
-	require.NoError(err)
+	assertions.Equal(first.ID, refreshed.ID)
+	assertions.Equal("secret_unavailable", refreshed.DeliveryStatus.LastError)
+}
+
+func TestNativeContinuesAfterExpiredCredentialCleanupFails(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := newEventsTestStore(t)
+	now := time.Now().UTC()
+	var logs bytes.Buffer
+	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Now: func() time.Time { return now }, Logger: slog.New(slog.NewTextHandler(&logs, nil))}
+	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/expired?sensitive-marker", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	expired, err := service.Subscribe(t.Context(), in)
+	requirements.NoError(err)
+	now = now.Add(23 * time.Hour)
+	in.Delivery.URL = "https://example.com/live"
+	live, err := service.Subscribe(t.Context(), in)
+	requirements.NoError(err)
+	now = now.Add(2 * time.Hour)
+	lock := filepath.Join(service.TokensDir, ".provider-credentials.lock")
+	requirements.NoError(os.Remove(lock))
+	requirements.NoError(os.Mkdir(lock, 0700))
 	targets, err := service.Native(t.Context())
-	require.NoError(err)
-	require.Len(targets, 1)
-	assert.Equal(t, second.ID, targets[0].Name)
+	requirements.NoError(err)
+	requirements.Len(targets, 1)
+	assertions.Equal(live.ID, targets[0].Name)
+	entries, _, err := service.catalog(t.Context())
+	requirements.NoError(err)
+	requirements.Len(entries, 1)
+	assertions.Equal(live.ID, entries[0].ID)
+	_, raw, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(expired.ID))
+	requirements.NoError(err)
+	assertions.Nil(raw)
+	assertions.Contains(logs.String(), "credential_unavailable")
+	assertions.NotContains(logs.String(), "sensitive-marker")
+	assertions.NotContains(logs.String(), in.Delivery.Secret)
+	assertions.NotContains(logs.String(), service.TokensDir)
 }
 
 func TestCredentialReadFailureDoesNotChangeCatalogOrPositions(t *testing.T) {
