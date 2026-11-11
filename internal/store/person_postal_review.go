@@ -33,11 +33,18 @@ func (a PersonAddress) PostalInput() postaladdress.Input {
 // ResolvePostalInput parses legacy text with an ADR shape or an empty second field;
 // otherwise it keeps the text intact. Explicit current text disables the fallback.
 func ResolvePostalInput(input postaladdress.Input, useOriginal bool) postaladdress.Input {
-	if !useOriginal || slices.ContainsFunc([]string{input.FreeText, input.PostOfficeBox, input.ExtendedAddress, input.StreetAddress, input.Locality, input.Region, input.PostalCode, input.CountryName, input.ExtendedComponents}, func(value string) bool { return strings.TrimSpace(value) != "" }) {
+	if !useOriginal {
 		return input
 	}
 	raw := strings.TrimSpace(input.OriginalValue)
-	if raw == "" {
+	if raw == "" || strings.TrimSpace(input.FreeText) != "" {
+		return input
+	}
+	fields := []string{input.PostOfficeBox, input.ExtendedAddress, input.StreetAddress, input.Locality, input.Region, input.PostalCode, input.CountryName}
+	if slices.ContainsFunc(fields, func(value string) bool { return strings.TrimSpace(value) != "" }) || strings.TrimSpace(input.ExtendedComponents) != "" {
+		if !postalTextCovered(raw, fields, input.ExtendedComponents) {
+			input.FreeText = raw
+		}
 		return input
 	}
 	parts, err := vcard.SplitStructuredText(raw)
@@ -53,6 +60,26 @@ func ResolvePostalInput(input postaladdress.Input, useOriginal bool) postaladdre
 		input.FreeText = raw
 	}
 	return input
+}
+
+func postalTextCovered(raw string, fields []string, extended string) bool {
+	if slices.ContainsFunc(fields, func(value string) bool { return strings.TrimSpace(value) == raw }) {
+		return true
+	}
+	parts, err := vcard.SplitStructuredText(raw)
+	if err != nil || len(parts) < len(fields) {
+		return false
+	}
+	for i, field := range fields {
+		if strings.TrimSpace(parts[i]) != strings.TrimSpace(field) {
+			return false
+		}
+	}
+	if len(parts) > len(fields) {
+		extendedParts, err := vcard.SplitStructuredText(extended)
+		return err == nil && slices.Equal(parts, extendedParts)
+	}
+	return true
 }
 
 // SetPostalFields stores each non-empty component and free text of current.

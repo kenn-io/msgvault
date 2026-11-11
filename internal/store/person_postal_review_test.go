@@ -449,3 +449,51 @@ func TestPostalAddressSnapshotReadAndWriteBoundaries(t *testing.T) {
 	assert.Equal("12 Example Street", *public.StreetAddress)
 	assert.Empty(public.OriginalValue)
 }
+
+func TestLegacyPostalPartialEditRetainsDeliveryText(t *testing.T) {
+	st, id, _ := newPersonFactProjectionStore(t)
+	require := require.New(t)
+	assert := assert.New(t)
+	old, err := st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, OriginalValue: "12 Main St", PostalCode: new("10001"), Envelope: ValueEnvelopeInput{Source: ProvenanceUser}})
+	require.NoError(err)
+	profile, err := st.GetPersonProfileContext(t.Context(), id)
+	require.NoError(err)
+	current, err := profile.Addresses[0].PublicAddress()
+	require.NoError(err)
+	require.NotNil(current.FreeText)
+	assert.Equal("12 Main St", *current.FreeText)
+	draft := postaladdress.Input{AddressKind: "postal", PostalCode: "10002", FreeText: *current.FreeText}
+	snapshot, err := postaladdress.EncodeOriginalInput(draft)
+	require.NoError(err)
+	updated, err := st.ApplyPersonProfilePatchContext(t.Context(), id, profile.Person.Revision, PersonProfilePatch{Addresses: &PersonAddressPatch{Supersede: []int64{old.Envelope.ID}, Add: []PersonAddressInput{{AddressKind: PersonAddressPostal, PostalCode: new("10002"), FreeText: current.FreeText, OriginalValue: snapshot, Envelope: ValueEnvelopeInput{Source: ProvenanceUser}}}}})
+	require.NoError(err)
+	require.Len(updated.Addresses, 1)
+	require.NotNil(updated.Addresses[0].FreeText)
+	assert.Equal("12 Main St", *updated.Addresses[0].FreeText)
+	assert.Equal(draft, updated.Addresses[0].Assessment.Original)
+}
+
+func TestLegacyPostalTextCoveredByComponents(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		row  PersonAddress
+	}{
+		{"street", PersonAddress{OriginalValue: "12 Main St", StreetAddress: new("12 Main St"), PostalCode: new("10001")}},
+		{"structured", PersonAddress{OriginalValue: ";;12 Main St;Town;;10001;", StreetAddress: new("12 Main St"), Locality: new("Town"), PostalCode: new("10001")}},
+		{"extended", PersonAddress{OriginalValue: `;;12 Main St;Town;;10001;;Room\;3`, StreetAddress: new("12 Main St"), Locality: new("Town"), PostalCode: new("10001"), ExtendedComponents: new(`;;12 Main St;Town;;10001;;Room\;3`)}},
+		{"cleared", PersonAddress{OriginalValue: "12 Main St", PostalCode: new("10001"), FreeText: new("")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			tc.row.AddressKind = PersonAddressPostal
+			got, err := tc.row.PublicAddress()
+			require.NoError(err)
+			if tc.row.FreeText != nil {
+				require.NotNil(got.FreeText)
+				require.Empty(*got.FreeText)
+			} else {
+				require.Nil(got.FreeText)
+			}
+		})
+	}
+}
