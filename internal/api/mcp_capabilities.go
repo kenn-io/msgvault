@@ -66,7 +66,9 @@ func mcpOperationDescribed(operationID string) bool {
 	case "listSourceStatus", "listSourceIdentities", "getSchedulerStatus", "triggerSync",
 		"getSettings", "patchSettings", "getParticipant", "getCacheBuildStatus",
 		"getPersonProfile", "patchPerson", "createPerson", "enableLocalEmbeddings",
-		"listLoops", "markLoopDone", "snoozeLoop", "reopenLoop":
+		"listLoops", "markLoopDone", "snoozeLoop", "reopenLoop",
+		"listRelationshipTypes", "getRelationshipType", "getPersonRelationship",
+		"listPersonRelationships", "listPersonRelationshipReviews", "getPersonNetwork":
 		return true
 	default:
 		return false
