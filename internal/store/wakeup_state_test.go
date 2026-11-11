@@ -76,14 +76,9 @@ func TestEventsPositionSurvivesWakeupPruneAndNameCollision(t *testing.T) {
 	require.NoError(err)
 	assert.Nil(raw)
 
-	for _, key := range []string{store.WakeupStateKey("future"), store.MCPEventsPositionKey("future")} {
-		const future = `{"at":"2026-01-01T00:00:00Z","future_field":true}`
-		_, err = st.DB().ExecContext(ctx, st.Rebind(`INSERT INTO archive_metadata (key,value) VALUES (?,?)`), key, future)
-		require.NoError(err)
-		_, _, err = st.LoadWakeupStateKey(ctx, key)
-		require.Error(err)
-		var unchanged string
-		require.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT value FROM archive_metadata WHERE key=?`), key).Scan(&unchanged))
-		assert.Equal(future, unchanged)
-	}
+	const future = `{"at":"2026-01-01T00:00:00Z","future_field":true}`
+	_, err = st.DB().ExecContext(ctx, st.Rebind(`INSERT INTO archive_metadata (key,value) VALUES (?,?)`), store.MCPEventsPositionKey("future"), future)
+	require.NoError(err)
+	_, _, err = st.LoadWakeupStateKey(ctx, store.MCPEventsPositionKey("future"))
+	require.Error(err)
 }

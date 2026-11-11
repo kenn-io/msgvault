@@ -250,40 +250,6 @@ func TestWindowsReadSecretFileACL(t *testing.T) {
 			assert.Equal(uint32(windows.FILE_GENERIC_READ), uint32(ace.Mask))
 		})
 	}
-	t.Run("restore Events credential and read-only secret", func(t *testing.T) {
-		requirements := require.New(t)
-		assertions := assert.New(t)
-		dir := filepath.Join(t.TempDir(), "tokens")
-		id := EventsID("0123456789abcdef0123456789abcdef")
-		empty, err := ReadEvents(dir)
-		requirements.NoError(err)
-		revision, err := empty.Revision(id)
-		requirements.NoError(err)
-		_, err = PutIfRevision(dir, revision, id, "https://example.test", "synthetic-secret")
-		requirements.NoError(err)
-		requirements.NoError(os.Remove(filepath.Join(dir, ".provider-credentials.lock")))
-		eventsPath := filepath.Join(dir, EventsFilename)
-		secretPath := filepath.Join(dir, "ordinary-secret")
-		requirements.NoError(os.WriteFile(secretPath, []byte("ordinary-secret"), 0600))
-		access := []windows.EXPLICIT_ACCESS{providerCredentialTestAccess(user, windows.GENERIC_READ, windows.TRUSTEE_IS_USER)}
-		setProviderCredentialTestACL(t, eventsPath, access, true)
-		secretHandle := setProviderCredentialTestACL(t, secretPath, access, true)
-		_, err = ReadEvents(dir)
-		requirements.Error(err)
-		requirements.NoError(SecureRestored(dir, []string{EventsFilename, "ordinary-secret"}))
-		restored, err := ReadEvents(dir)
-		requirements.NoError(err)
-		value, _, err := restored.Resolve(id, "https://example.test", "", nil)
-		requirements.NoError(err)
-		assertions.Equal("synthetic-secret", value)
-		secret, err := ReadSecretFile(secretPath)
-		requirements.NoError(err)
-		assertions.Equal("ordinary-secret", secret)
-		dacl, _ := readProviderCredentialTestACL(t, secretHandle)
-		var ace *windows.ACCESS_ALLOWED_ACE
-		requirements.NoError(windows.GetAce(dacl, 0, &ace))
-		assertions.Equal(uint32(windows.FILE_GENERIC_READ), uint32(ace.Mask))
-	})
 }
 
 func TestWindowsCredentialWritesRepairReadOnlyDirectory(t *testing.T) {
@@ -479,6 +445,42 @@ func TestRestorePreflightAllowsOmittedFileWithoutInheritedAccess(t *testing.T) {
 	after, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	requirements.NoError(err)
 	assertions.Equal(before.String(), after.String())
+}
+
+func TestSecureRestoredEventsCredentialAndReadOnlySecret(t *testing.T) {
+	user := currentWindowsProviderCredentialSID(t)
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	dir := filepath.Join(t.TempDir(), "tokens")
+	id := EventsID("0123456789abcdef0123456789abcdef")
+	empty, err := ReadEvents(dir)
+	requirements.NoError(err)
+	revision, err := empty.Revision(id)
+	requirements.NoError(err)
+	_, err = PutIfRevision(dir, revision, id, "https://example.test", "synthetic-secret")
+	requirements.NoError(err)
+	requirements.NoError(os.Remove(filepath.Join(dir, ".provider-credentials.lock")))
+	eventsPath := filepath.Join(dir, EventsFilename)
+	secretPath := filepath.Join(dir, "ordinary-secret")
+	requirements.NoError(os.WriteFile(secretPath, []byte("ordinary-secret"), 0600))
+	access := []windows.EXPLICIT_ACCESS{providerCredentialTestAccess(user, windows.GENERIC_READ, windows.TRUSTEE_IS_USER)}
+	setProviderCredentialTestACL(t, eventsPath, access, true)
+	secretHandle := setProviderCredentialTestACL(t, secretPath, access, true)
+	_, err = ReadEvents(dir)
+	requirements.Error(err)
+	requirements.NoError(SecureRestored(dir, []string{EventsFilename, "ordinary-secret"}))
+	restored, err := ReadEvents(dir)
+	requirements.NoError(err)
+	value, _, err := restored.Resolve(id, "https://example.test", "", nil)
+	requirements.NoError(err)
+	assertions.Equal("synthetic-secret", value)
+	secret, err := ReadSecretFile(secretPath)
+	requirements.NoError(err)
+	assertions.Equal("ordinary-secret", secret)
+	dacl, _ := readProviderCredentialTestACL(t, secretHandle)
+	var ace *windows.ACCESS_ALLOWED_ACE
+	requirements.NoError(windows.GetAce(dacl, 0, &ace))
+	assertions.Equal(uint32(windows.FILE_GENERIC_READ), uint32(ace.Mask))
 }
 
 func TestSecureRestoredRefusesInheritedOmittedACLBeforeChanges(t *testing.T) {

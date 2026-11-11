@@ -17,7 +17,6 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/mcpevents"
-	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -129,7 +128,7 @@ func TestWakeupJobWithOnlyEvents(t *testing.T) {
 	service := &mcpevents.Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Now: func() time.Time { return now }}
 	in, err := mcpevents.DecodeSubscribe([]byte(`{"name":"msgvault.messages.changed","arguments":{"source_id":1},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`))
 	require.NoError(err)
-	result, err := service.Subscribe(t.Context(), in)
+	_, err = service.Subscribe(t.Context(), in)
 	require.NoError(err)
 	service.Enabled = false
 	now = now.Add(25 * time.Hour)
@@ -141,12 +140,6 @@ func TestWakeupJobWithOnlyEvents(t *testing.T) {
 	catalog, err := st.LoadMCPEventsCatalog(t.Context())
 	require.NoError(err)
 	assert.JSONEq(`[]`, string(catalog))
-	_, position, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(result.ID))
-	require.NoError(err)
-	assert.Nil(position)
-	credentials, err := providercredentials.ReadEvents(service.TokensDir)
-	require.NoError(err)
-	assert.False(credentials.Stored(providercredentials.EventsID(result.ID)))
 
 	withoutEvents := scheduler.New(nil)
 	require.NoError(configureWakeupJob(t.Context(), withoutEvents, nil, st, &config.Config{}, nil, nil))

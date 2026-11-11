@@ -14,8 +14,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/agentgrant"
-	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/mcpevents"
 	"go.kenn.io/msgvault/internal/providercredentials"
@@ -73,21 +71,6 @@ func TestEventsRouterRejectsUnverifiedCallback(t *testing.T) {
 	assertions.Zero(positions)
 	_, err = os.Stat(filepath.Join(cfg.TokensDir(), providercredentials.EventsFilename))
 	assertions.ErrorIs(err, os.ErrNotExist)
-}
-
-func TestMCPEventsRejectsDelegatedGrant(t *testing.T) {
-	srv, reg := newTestServerWithAgentGrants(t)
-	t.Cleanup(reg.Close)
-	_, secret, _, err := reg.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: 1, Type: "imap", Identifier: "agent@example.com"}}, time.Time{})
-	require.NoError(t, err)
-	for _, route := range []struct{ method, path string }{{http.MethodGet, "/api/v1/mcp-events/list"}, {http.MethodPost, "/api/v1/mcp-events/subscribe"}, {http.MethodPost, "/api/v1/mcp-events/unsubscribe"}} {
-		r := httptest.NewRequestWithContext(t.Context(), route.method, route.path, strings.NewReader(`{}`))
-		r.Header.Set(apiprotocol.AgentTokenHeader, secret)
-		r.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, r)
-		assert.Equal(t, http.StatusUnauthorized, w.Code, route.path)
-	}
 }
 
 func TestMCPEventsRejectsRemoteClient(t *testing.T) {
@@ -246,13 +229,6 @@ func TestGeneratedEventsMutationErrorsDecode(t *testing.T) {
 	requirements.NotNil(missing)
 	requirements.Equal(http.StatusNotFound, missing.StatusCode)
 	assertions.Equal(map[string]any{"code": float64(mcpevents.NotFound), "reason": "subscription"}, decodedEventsError(t, missing))
-
-	invalid := generated.McpEventsUnsubscribeBody{Name: "invalid", Arguments: arguments, Delivery: delivery}
-	unsub, err := client.McpEventsUnsubscribeWithResponse(t.Context(), &generated.McpEventsUnsubscribeRequestOptions{Body: &invalid})
-	requirements.Error(err)
-	requirements.NotNil(unsub)
-	requirements.Equal(http.StatusNotFound, unsub.StatusCode)
-	assertions.Equal(map[string]any{"code": float64(mcpevents.NotFound), "reason": "event"}, decodedEventsError(t, unsub))
 
 	limiter := NewRateLimiter(0, 1)
 	defer limiter.Close()

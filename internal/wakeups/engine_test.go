@@ -228,10 +228,9 @@ func TestNativeInterruptedFinalAttempt(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		failures int
-		wantHits int
 	}{
-		{"fifth reservation", 5, 1},
-		{"sixth reservation", 6, 1},
+		{"fifth reservation", 5},
+		{"sixth reservation", 6},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := Require.New(t)
@@ -254,7 +253,7 @@ func TestNativeInterruptedFinalAttempt(t *testing.T) {
 			sub.StateKey, sub.Native = key, true
 			engine := Engine{Store: st, Subscriptions: []Subscription{sub}, Now: func() time.Time { return now }}
 			require.NoError(engine.RunPass(t.Context()))
-			assert.Equal(tc.wantHits, hits)
+			assert.Equal(1, hits)
 			state, _, err := st.LoadWakeupStateKey(t.Context(), key)
 			require.NoError(err)
 			assert.True(state.At.After(start))

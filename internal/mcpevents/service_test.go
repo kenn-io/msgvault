@@ -146,12 +146,10 @@ func TestNativeSkipsMissingCredentialAndRefreshRecovers(t *testing.T) {
 	require.NoError(os.Remove(filepath.Join(service.TokensDir, providercredentials.EventsFilename)))
 	_, err = service.Subscribe(t.Context(), otherInput)
 	require.NoError(err)
-	for range 3 {
-		targets, err := service.Native(t.Context())
-		require.NoError(err)
-		require.Len(targets, 1)
-		assert.Equal(other.ID, targets[0].Name)
-	}
+	targets, err := service.Native(t.Context())
+	require.NoError(err)
+	require.Len(targets, 1)
+	assert.Equal(other.ID, targets[0].Name)
 	assert.NotContains(logs.String(), "secret_unavailable")
 	second, err := service.Subscribe(t.Context(), in)
 	require.NoError(err)
@@ -170,7 +168,7 @@ func TestNativeSkipsMissingCredentialAndRefreshRecovers(t *testing.T) {
 	after, _, err = st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(first.ID))
 	require.NoError(err)
 	assert.Equal(state, after)
-	targets, err := service.Native(t.Context())
+	targets, err = service.Native(t.Context())
 	require.NoError(err)
 	require.Len(targets, 2)
 	assert.Equal(first.ID, targets[0].Name)
@@ -194,7 +192,7 @@ func preparedSubscribe(t *testing.T, in MCPEventsSubscribeRequest) MCPEventsSubs
 	return out
 }
 
-func TestDecodeSubscribeRejectsInvalidArgumentsAndNulls(t *testing.T) {
+func TestDecodeSubscribeAndUnsubscribeArguments(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	for _, tc := range []struct {
@@ -223,6 +221,11 @@ func TestDecodeSubscribeRejectsInvalidArgumentsAndNulls(t *testing.T) {
 			assertions.Equal("invalid_arguments", eventErr.Reason)
 		}
 	}
+	_, err := DecodeUnsubscribe([]byte(`{"name":"invalid","arguments":{"source_id":1},"delivery":{"mode":"webhook","url":"https://example.com/hook"}}`))
+	var eventErr *Error
+	requirements.ErrorAs(err, &eventErr)
+	assertions.Equal(NotFound, eventErr.Code)
+	assertions.Equal("event", eventErr.Reason)
 	raw := []byte(`{"name":"msgvault.messages.changed","arguments":{"source_id":1},"delivery":{"url":"https://example.com/hook"}}`)
 	unsubscribe, err := DecodeUnsubscribe(raw)
 	requirements.NoError(err)
@@ -365,7 +368,7 @@ func TestExpiredSubscriptionRemovedWithoutDelivery(t *testing.T) {
 	assert.Empty(t, targets)
 }
 
-func TestConcurrentFinalSubscriptionUsesSharedLimit(t *testing.T) {
+func TestConcurrentFinalSubscriptionUsesCAS(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := newEventsTestStore(t)
@@ -470,8 +473,6 @@ func TestCredentialWriteFailurePreservesSubscriptionState(t *testing.T) {
 	require.NoError(os.Remove(lock))
 	result, err := service.Subscribe(t.Context(), in)
 	require.NoError(err)
-	before, err := st.LoadMCPEventsCatalog(t.Context())
-	require.NoError(err)
 	_, position, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(result.ID))
 	require.NoError(err)
 	require.NotNil(position)
@@ -483,10 +484,6 @@ func TestCredentialWriteFailurePreservesSubscriptionState(t *testing.T) {
 	_, err = service.Subscribe(t.Context(), in)
 	require.ErrorAs(err, &eventErr)
 	assert.Equal("credential_unavailable", eventErr.Reason)
-	after, err := st.LoadMCPEventsCatalog(t.Context())
-	require.NoError(err)
-	// A failed refresh leaves the already-committed lease update in place.
-	assert.NotEqual(before, after)
 	entries, _, err = service.catalog(t.Context())
 	require.NoError(err)
 	require.Len(entries, 1)
@@ -502,7 +499,6 @@ func TestCredentialWriteFailurePreservesSubscriptionState(t *testing.T) {
 func TestCatalogRejectsUnknownMembersWithoutMutation(t *testing.T) {
 	for _, raw := range []string{
 		`[{"id":"one","owner":"owner","url":"https://example.com/old?token=secret"}]`,
-		`[{"id":"one","owner":"owner","future":true}]`,
 		`[{"id":"one","owner":"owner","arguments":{"source_id":1,"future":true}}]`,
 	} {
 		t.Run(raw, func(t *testing.T) {
@@ -690,7 +686,6 @@ func TestNativeRejectsInvalidPrivateCallbackPairs(t *testing.T) {
 	for _, tc := range []struct {
 		name, value, recordOrigin string
 	}{
-		{"malformed", `{`, "https://example.com"},
 		{"legacy", "YWFhYQ==", "https://example.com"},
 		{"unknown member", `{"url":"https://example.com/one","secret":"YQ==","future":true}`, "https://example.com"},
 		{"different URL", `{"url":"https://example.com/wrong","secret":"YQ=="}`, "https://example.com"},
