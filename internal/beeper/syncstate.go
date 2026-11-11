@@ -110,7 +110,7 @@ func LoadSyncState(blob string) (*SyncState, error) {
 	}
 	for _, chat := range s.Chats {
 		if chat != nil && chat.RosterWork != nil && chat.RosterWork.Version != 1 {
-			return nil, fmt.Errorf("unsupported roster work version %d", chat.RosterWork.Version)
+			return nil, fmt.Errorf("saved Beeper roster progress uses unsupported version %d; update msgvault to resume it", chat.RosterWork.Version)
 		}
 	}
 	return s, nil

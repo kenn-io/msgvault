@@ -410,9 +410,10 @@ func TestUnsupportedRosterVersionStopsImport(t *testing.T) {
 				require.NoError(st.CompleteSync(runID, blob))
 			}
 			_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-			require.ErrorContains(err, "unsupported roster work version")
+			const want = "saved Beeper roster progress uses unsupported version 2; update msgvault to resume it"
+			require.ErrorContains(err, want)
 			_, err = imp.BackfillMedia(t.Context(), ImportOptions{AccountID: "signal", AttachmentsDir: t.TempDir()})
-			require.ErrorContains(err, "unsupported roster work version")
+			require.ErrorContains(err, want)
 			var runs int
 			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM sync_runs WHERE source_id = ?`), sourceID).Scan(&runs))
 			assert.Equal(1, runs)
