@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 )
 
 // Each decimal conversion permits leading C whitespace and a sign. Match a
@@ -49,18 +48,18 @@ func renderSubtitles(segments []subtitleSegment, format string) (string, error) 
 	}
 	cues := make([]cue, 0, len(segments))
 	for i, s := range segments {
-		if strings.ContainsRune(s.Text, 0) || strings.ContainsRune(s.Speaker, 0) {
-			return "", fmt.Errorf("subtitle format error at segment %d: NUL text or speaker label", i+1)
+		if strings.ContainsRune(s.Text, 0) || strings.ContainsRune(s.Speaker, 0) || strings.ContainsAny(strings.TrimSpace(s.Speaker), "\r\n") {
+			return "", fmt.Errorf("subtitle format error at segment %d: NUL text or invalid speaker label", i+1)
 		}
 		if strings.TrimSpace(s.Text) == "" {
 			continue
 		}
 		s.Speaker = strings.TrimSpace(s.Speaker)
 		text := strings.ReplaceAll(strings.ReplaceAll(s.Text, "\r\n", "\n"), "\r", "\n")
-		if strings.ContainsAny(s.Speaker, "\r\n") {
-			return "", fmt.Errorf("subtitle format error at segment %d: multiline speaker label", i+1)
-		}
 		text = strings.Trim(subtitleBlankLines.ReplaceAllString(text, "\n"), "\n")
+		if format == "srt" {
+			text = strings.TrimSpace(text)
+		}
 		start, end := s.Start, s.End
 		if !validSubtitleSeconds(start) || !validSubtitleSeconds(end) || end <= start {
 			return "", fmt.Errorf("subtitle timing invalid at segment %d: negative, overflowing, or reversed interval", i+1)
@@ -104,14 +103,6 @@ func renderSubtitles(segments []subtitleSegment, format string) (string, error) 
 		fmt.Fprintf(&out, "%d\n%s --> %s\n%s\n\n", i+1, subtitleTimestamp(c.start, separator), subtitleTimestamp(c.end, separator), c.text)
 	}
 	return out.String(), nil
-}
-
-func subtitleSeconds(start, end time.Time) (float64, error) {
-	delta := end.Sub(start)
-	if !start.Add(delta).Equal(end) {
-		return 0, errors.New("interval overflows supported timing range")
-	}
-	return delta.Seconds(), nil
 }
 
 func validSubtitleSeconds(seconds float64) bool {

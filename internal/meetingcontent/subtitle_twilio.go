@@ -48,20 +48,10 @@ func twilioSubtitleTiming(fields map[string]jsontext.Value, archived []Segment) 
 	}
 	starts := make(map[string]time.Time, len(recordings))
 	for _, rec := range recordings {
-		_, duplicate := starts[rec.SID]
-		if rec.SID == "" || duplicate {
-			return nil, errors.New("ambiguous recording timing")
-		}
 		starts[rec.SID] = twilioSubtitleTime(rec.Start)
 	}
 	selected := map[string]twilioSubtitleTranscript{}
-	seenTranscripts := map[string]bool{}
 	for _, tr := range evidence.Transcripts {
-		identity := tr.Kind + ":" + tr.ID
-		if seenTranscripts[identity] {
-			return nil, errors.New("ambiguous transcript evidence")
-		}
-		seenTranscripts[identity] = true
 		if !tr.Usable {
 			continue
 		}
@@ -98,14 +88,6 @@ func twilioSubtitleTiming(fields map[string]jsontext.Value, archived []Segment) 
 		tr := selected[key]
 		var raw struct {
 			Sentences []jsontext.Value `json:"sentences"`
-			Metadata  struct {
-				Channel struct {
-					Participants []struct {
-						Channel int    `json:"channel_participant"`
-						Role    string `json:"role"`
-					} `json:"participants"`
-				} `json:"channel"`
-			} `json:"metadata"`
 		}
 		if tr.Kind != "classic" || json.Unmarshal(tr.Raw, &raw) != nil || raw.Sentences == nil {
 			return nil, errors.New("retained sentence timing unavailable")
@@ -130,25 +112,10 @@ func twilioSubtitleTiming(fields map[string]jsontext.Value, archived []Segment) 
 		seen := map[string]bool{}
 		index := 0
 		for _, item := range sentences {
-			channel := 0
-			speakerFromRaw := ""
-			if len(item.Channel) > 0 && !isNull(item.Channel) {
-				value, ok := rawFiniteFloat(item.Channel)
-				if !ok || value < 0 || value > 2 || value != float64(int(value)) {
-					return nil, errors.New("invalid sentence channel")
-				}
-				channel = int(value)
-				speakerFromRaw = fmt.Sprintf("channel %d", channel)
-				for _, participant := range raw.Metadata.Channel.Participants {
-					if participant.Channel == channel && participant.Role != "" {
-						speakerFromRaw = participant.Role
-						break
-					}
-				}
-			}
 			identity := item.SID
 			if identity == "" {
-				identity = fmt.Sprintf("%d:%d", item.Index, channel)
+				channel, _ := rawFiniteFloat(item.Channel)
+				identity = fmt.Sprintf("%d:%d", item.Index, int(channel))
 			}
 			if seen[identity] {
 				continue
@@ -164,7 +131,7 @@ func twilioSubtitleTiming(fields map[string]jsontext.Value, archived []Segment) 
 			index++
 			start, okStart := rawFiniteFloat(item.Start)
 			end, okEnd := rawFiniteFloat(item.End)
-			if !okStart || !okEnd || seg.Start == nil || *seg.Start != start || seg.Text != *item.Text || seg.Scope != key || seg.Speaker != speakerFromRaw {
+			if !okStart || !okEnd || seg.Start == nil || *seg.Start != start || seg.Text != *item.Text || seg.Scope != key {
 				return nil, errors.New("retained transcript timing does not match archived transcript")
 			}
 			speaker := seg.Speaker
@@ -184,7 +151,7 @@ func twilioSubtitleTiming(fields map[string]jsontext.Value, archived []Segment) 
 			return nil, errors.New("retained transcript timing is incomplete")
 		}
 	}
-	if len(cues) == 0 || len(cues) != len(archived) {
+	if len(cues) != len(archived) {
 		return nil, errors.New("retained transcript timing is incomplete")
 	}
 	return cues, nil

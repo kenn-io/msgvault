@@ -529,8 +529,6 @@ func translateDaemonRequestError(err error) *toolResult {
 	case "permission_denied", "unsupported_agent_scope", "invalid_meeting_subtitles", "context_budget_too_small":
 		// These known public diagnostics explain how the caller can repair the request.
 		message = coded.APIErrorCode() + ": " + daemonErrorMessage(err)
-	case "meeting_subtitles_unsupported":
-		message = "meeting_subtitles_unsupported: meeting subtitles require daemon API schema 5.1.0 or newer; upgrade the daemon"
 	case "unauthorized":
 		message = "unauthorized: Archive authentication failed"
 	case "visual_search_not_ready":

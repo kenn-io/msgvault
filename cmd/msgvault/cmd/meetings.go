@@ -113,9 +113,6 @@ and require daemon API schema 5.1.0; --max-bytes caps the requested content
 			if format != "json" && format != "markdown" && format != "srt" && format != "vtt" {
 				return usageErr(command, errors.New("--format must be json, markdown, srt or vtt"))
 			}
-			if format == "srt" || format == "vtt" {
-				includeTranscript = true
-			}
 			if maxBytes < 4096 || maxBytes > 1048576 {
 				return usageErr(command, errors.New("--max-bytes must be between 4096 and 1048576"))
 			}

@@ -52,7 +52,7 @@ func subtitleTiming(format string, raw []byte) ([]subtitleSegment, error) {
 			if strings.TrimSpace(item.Name) == "" && item.SpeakerID == nil {
 				speaker = ""
 			}
-			cues = append(cues, subtitleSegment{speaker, seg.Text, *item.Start, *item.End})
+			cues = append(cues, subtitleSegment{speaker, item.Text, *item.Start, *item.End})
 		}
 	case "pocket_json":
 		origin, ok := rawTime(fields["recorded_at"], false)
@@ -118,15 +118,7 @@ func subtitleTiming(format string, raw []byte) ([]subtitleSegment, error) {
 				if !startOK || !endOK {
 					return nil, errors.New("transcript needs matching start and end times")
 				}
-				var err error
-				start, err = subtitleSeconds(origin, startTime)
-				if err != nil {
-					return nil, err
-				}
-				end, err = subtitleSeconds(origin, endTime)
-				if err != nil {
-					return nil, err
-				}
+				start, end = startTime.Sub(origin).Seconds(), endTime.Sub(origin).Seconds()
 			}
 			seg := content.Transcript.Segments[i]
 			cues = append(cues, subtitleSegment{entry.speaker, seg.Text, start, end})
