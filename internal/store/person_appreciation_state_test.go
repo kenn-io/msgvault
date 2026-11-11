@@ -75,6 +75,10 @@ func TestAppreciationStateValidation(t *testing.T) {
 	assert.ErrorContains(t, err, "500")
 	_, err = f.Store.RecordPersonAppreciationDismissalContext(ctx, strings.Repeat("a", 64), "person", " ", time.Now())
 	assert.ErrorIs(t, err, store.ErrInvalidPersonAppreciationAudit)
+	for _, tc := range []struct{ uid, actor string }{{"person\x00uid", "owner"}, {"person", "owner\x00actor"}} {
+		_, err = f.Store.RecordPersonAppreciationDismissalContext(ctx, strings.Repeat("a", 64), tc.uid, tc.actor, time.Now())
+		assert.ErrorIs(t, err, store.ErrInvalidPersonAppreciationAudit)
+	}
 }
 
 func TestAppreciationStateMigration(t *testing.T) {
