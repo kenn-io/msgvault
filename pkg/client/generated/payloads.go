@@ -142,9 +142,9 @@ type LinkKataEvidenceBody = KataEvidenceLinkRequest
 
 type SnoozeLoopBody = SnoozeLoopRequest
 
-type McpEventsSubscribeBody = SubscribeRequest
+type McpEventsSubscribeBody = MCPEventsSubscribeRequest
 
-type McpEventsUnsubscribeBody = UnsubscribeRequest
+type McpEventsUnsubscribeBody = MCPEventsUnsubscribeRequest
 
 type ListMeetingActionItemsBody = MeetingActionsRequest
 

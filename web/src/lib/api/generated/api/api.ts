@@ -268,7 +268,6 @@ import type {
   ListPersonRelationshipReviewsParams,
   ListPersonRelationshipsParams,
   ListPersonRelationshipsPathParameters,
-  ListResult,
   ListSourceIdentitiesPathParameters,
   ListSourceStatusParams,
   ListTextConversationMessagesParams,
@@ -278,6 +277,11 @@ import type {
   LoopDecisionResponse,
   LoopListResponse,
   MCPCapabilities,
+  MCPEventsListResult,
+  MCPEventsSubscribeRequest,
+  MCPEventsSubscribeResult,
+  MCPEventsUnsubscribeRequest,
+  MCPEventsUnsubscribeResult,
   Manifest,
   MarkLoopDoneParams,
   MarkLoopDonePathParameters,
@@ -452,8 +456,6 @@ import type {
   Status,
   StatusMessageResponse,
   StructuredPersonProfile,
-  SubscribeRequest,
-  SubscribeResult,
   SyncCLIParams,
   SyncFullCLIParams,
   SyncResult,
@@ -476,8 +478,6 @@ import type {
   UnlinkMessageTaskPathParameters,
   UnlinkPersonAgendaItemPathParameters,
   UnpublishCardDAVPersonPathParameters,
-  UnsubscribeRequest,
-  UnsubscribeResult,
   UpdateCardDAVBookRolesPathParameters,
   UpdateMessageTagsPathParameters,
   UpdatePersonAgendaItemPathParameters,
@@ -2278,9 +2278,9 @@ export const snoozeLoop = (
  * @summary List owner MCP Events
  */
 export const mcpEventsList = (
-  options?: SecondParameter<typeof orvalFetch<ListResult>>,
+  options?: SecondParameter<typeof orvalFetch<MCPEventsListResult>>,
 ) => {
-  return orvalFetch<ListResult>(
+  return orvalFetch<MCPEventsListResult>(
     { url: `/api/v1/mcp-events/list`, method: "GET" },
     options,
   );
@@ -2289,15 +2289,15 @@ export const mcpEventsList = (
  * @summary Subscribe to owner MCP Events
  */
 export const mcpEventsSubscribe = (
-  subscribeRequest: SubscribeRequest,
-  options?: SecondParameter<typeof orvalFetch<SubscribeResult>>,
+  mCPEventsSubscribeRequest: MCPEventsSubscribeRequest,
+  options?: SecondParameter<typeof orvalFetch<MCPEventsSubscribeResult>>,
 ) => {
-  return orvalFetch<SubscribeResult>(
+  return orvalFetch<MCPEventsSubscribeResult>(
     {
       url: `/api/v1/mcp-events/subscribe`,
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      data: subscribeRequest,
+      data: mCPEventsSubscribeRequest,
     },
     options,
   );
@@ -2306,15 +2306,15 @@ export const mcpEventsSubscribe = (
  * @summary Unsubscribe from owner MCP Events
  */
 export const mcpEventsUnsubscribe = (
-  unsubscribeRequest: UnsubscribeRequest,
-  options?: SecondParameter<typeof orvalFetch<UnsubscribeResult>>,
+  mCPEventsUnsubscribeRequest: MCPEventsUnsubscribeRequest,
+  options?: SecondParameter<typeof orvalFetch<MCPEventsUnsubscribeResult>>,
 ) => {
-  return orvalFetch<UnsubscribeResult>(
+  return orvalFetch<MCPEventsUnsubscribeResult>(
     {
       url: `/api/v1/mcp-events/unsubscribe`,
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      data: unsubscribeRequest,
+      data: mCPEventsUnsubscribeRequest,
     },
     options,
   );

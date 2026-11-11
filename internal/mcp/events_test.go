@@ -15,30 +15,30 @@ import (
 
 type eventTestBackend struct {
 	calls        int
-	subscribe    mcpevents.SubscribeRequest
-	unsubscribe  mcpevents.UnsubscribeRequest
+	subscribe    mcpevents.MCPEventsSubscribeRequest
+	unsubscribe  mcpevents.MCPEventsUnsubscribeRequest
 	listErr      error
 	subscribeErr error
 	disabled     bool
 }
 
-func (b *eventTestBackend) MCPEventsList(context.Context) (mcpevents.ListResult, error) {
+func (b *eventTestBackend) MCPEventsList(context.Context) (mcpevents.MCPEventsListResult, error) {
 	b.calls++
 	if b.listErr != nil {
-		return mcpevents.ListResult{}, b.listErr
+		return mcpevents.MCPEventsListResult{}, b.listErr
 	}
 	if b.disabled {
-		return mcpevents.ListResult{Events: []mcpevents.Definition{}}, nil
+		return mcpevents.MCPEventsListResult{Events: []mcpevents.MCPEventsDefinition{}}, nil
 	}
-	return mcpevents.ListResult{Enabled: true, Events: mcpevents.Definitions()}, nil
+	return mcpevents.MCPEventsListResult{Enabled: true, Events: mcpevents.Definitions()}, nil
 }
-func (b *eventTestBackend) MCPEventsSubscribe(_ context.Context, in mcpevents.SubscribeRequest) (mcpevents.SubscribeResult, error) {
+func (b *eventTestBackend) MCPEventsSubscribe(_ context.Context, in mcpevents.MCPEventsSubscribeRequest) (mcpevents.MCPEventsSubscribeResult, error) {
 	b.calls++
 	b.subscribe = in
 	if b.subscribeErr != nil {
-		return mcpevents.SubscribeResult{}, b.subscribeErr
+		return mcpevents.MCPEventsSubscribeResult{}, b.subscribeErr
 	}
-	return mcpevents.SubscribeResult{ID: "fixture", RefreshBefore: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC), DeliveryStatus: mcpevents.DeliveryStatus{Active: true}}, nil
+	return mcpevents.MCPEventsSubscribeResult{ID: "fixture", RefreshBefore: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC), DeliveryStatus: mcpevents.MCPEventsDeliveryStatus{Active: true}}, nil
 }
 
 func TestEventsUnavailableStillListsEmpty(t *testing.T) {
@@ -49,7 +49,7 @@ func TestEventsUnavailableStillListsEmpty(t *testing.T) {
 	response = rawModernCall(t, ServeOptions{Events: backend}, HTTPOptions{}, "events/list", nil)
 	assert.Empty(t, response.Result["events"])
 }
-func (b *eventTestBackend) MCPEventsUnsubscribe(_ context.Context, in mcpevents.UnsubscribeRequest) error {
+func (b *eventTestBackend) MCPEventsUnsubscribe(_ context.Context, in mcpevents.MCPEventsUnsubscribeRequest) error {
 	b.calls++
 	b.unsubscribe = in
 	return nil
@@ -59,14 +59,14 @@ type eventListParams struct{ sdkmcp.ParamsBase }
 type eventListResult struct {
 	sdkmcp.ResultBase
 
-	Events []mcpevents.Definition `json:"events"`
+	Events []mcpevents.MCPEventsDefinition `json:"events"`
 }
 type eventSubscribeParams struct {
 	sdkmcp.ParamsBase
 
-	Name      string              `json:"name"`
-	Arguments mcpevents.Arguments `json:"arguments"`
-	Delivery  mcpevents.Delivery  `json:"delivery"`
+	Name      string                       `json:"name"`
+	Arguments mcpevents.MCPEventsArguments `json:"arguments"`
+	Delivery  mcpevents.MCPEventsDelivery  `json:"delivery"`
 }
 type eventSubscribeResult struct {
 	sdkmcp.ResultBase
@@ -78,7 +78,7 @@ func TestEventsStdioAndModernHTTP(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	backend := &eventTestBackend{}
-	delivery := mcpevents.Delivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}
+	delivery := mcpevents.MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}
 	opts := ServeOptions{Events: backend}
 	for _, tc := range []struct {
 		method string
@@ -119,7 +119,7 @@ func TestEventsStdioAndModernHTTP(t *testing.T) {
 	require.NoError(err)
 	require.Len(list.Events, 1)
 	assert.Equal(mcpevents.Name, list.Events[0].Name)
-	params := &eventSubscribeParams{Name: mcpevents.Name, Arguments: mcpevents.Arguments{SourceID: 1}, Delivery: delivery}
+	params := &eventSubscribeParams{Name: mcpevents.Name, Arguments: mcpevents.MCPEventsArguments{SourceID: 1}, Delivery: delivery}
 	result, err := sdkmcp.CallCustomMethod[*eventSubscribeParams, *eventSubscribeResult](t.Context(), session, "events/subscribe", params)
 	require.NoError(err)
 	assert.Equal("fixture", result.ID)
@@ -151,6 +151,19 @@ func TestEventsLegacyAndDelegatedDoNotReachBackend(t *testing.T) {
 			require.ErrorAs(err, &rpcErr)
 			assert.Equal(t, int64(-32601), rpcErr.Code)
 			assert.Zero(t, backend.calls)
+		})
+	}
+}
+
+func TestEventsUnavailableReasonReachesRPC(t *testing.T) {
+	for _, reason := range []string{"disabled", "key_unavailable", "head_unavailable", "store_unavailable"} {
+		t.Run(reason, func(t *testing.T) {
+			err := rpcEventError(&mcpevents.Error{Code: mcpevents.Unavailable, Reason: reason})
+			var rpcErr *jsonrpc.Error
+			require.ErrorAs(t, err, &rpcErr)
+			assert.Equal(t, int64(mcpevents.Unavailable), rpcErr.Code)
+			assert.Equal(t, "Unavailable", rpcErr.Message)
+			assert.JSONEq(t, `{"reason":"`+reason+`"}`, string(rpcErr.Data))
 		})
 	}
 }

@@ -2,7 +2,9 @@ package mcpevents
 
 import (
 	"bytes"
+	"context"
 	"encoding/json/v2"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -13,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/wakeups"
 )
 
 func TestNativeSkipsUnreadableSubscription(t *testing.T) {
@@ -21,7 +24,7 @@ func TestNativeSkipsUnreadableSubscription(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	var logs bytes.Buffer
 	service := Service{Store: st, Home: t.TempDir(), Enabled: true, Logger: slog.New(slog.NewTextHandler(&logs, nil))}
-	in := preparedSubscribe(t, SubscribeRequest{Name: Name, Arguments: Arguments{SourceID: 1}, Delivery: Delivery{Mode: "webhook", URL: "https://example.com/one", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/one", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
 	first, err := service.Subscribe(t.Context(), in)
 	require.NoError(err)
 	in.Delivery.URL = "https://example.com/two"
@@ -43,7 +46,7 @@ func TestNativeSkipsUnreadableSubscription(t *testing.T) {
 	assert.Contains(logs.String(), "secret_unavailable")
 }
 
-func preparedSubscribe(t *testing.T, in SubscribeRequest) SubscribeRequest {
+func preparedSubscribe(t *testing.T, in MCPEventsSubscribeRequest) MCPEventsSubscribeRequest {
 	t.Helper()
 	raw, err := json.Marshal(in)
 	require.NoError(t, err)
@@ -114,7 +117,7 @@ func TestTTLClampAndDefaults(t *testing.T) {
 		raw  string
 		want time.Duration
 	}{{`{}`, 24 * time.Hour}, {`{"ttlMs":null}`, 30 * 24 * time.Hour}, {`{"ttlMs":1}`, time.Minute}, {`{"ttlMs":999999999999}`, 30 * 24 * time.Hour}} {
-		var request SubscribeRequest
+		var request MCPEventsSubscribeRequest
 		require.NoError(t, json.Unmarshal([]byte(tc.raw), &request))
 		assert.Equal(t, tc.want, request.TTL.Duration())
 	}
@@ -125,7 +128,7 @@ func TestSubscribeRefreshPreservesPosition(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	service := Service{Store: st, Home: t.TempDir(), Enabled: true}
-	input := SubscribeRequest{Name: Name, Arguments: Arguments{SourceID: 1}, Delivery: Delivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}
+	input := MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}
 	input = preparedSubscribe(t, input)
 	first, err := service.Subscribe(t.Context(), input)
 	require.NoError(err)
@@ -157,7 +160,7 @@ func TestExpiredSubscriptionRemovedWithoutDelivery(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	now := time.Now().UTC()
 	service := Service{Store: st, Home: t.TempDir(), Enabled: true, Now: func() time.Time { return now }}
-	in := SubscribeRequest{Name: Name, Arguments: Arguments{SourceID: 1}, Delivery: Delivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}
+	in := MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}
 	in = preparedSubscribe(t, in)
 	result, err := service.Subscribe(t.Context(), in)
 	require.NoError(err)
@@ -174,8 +177,8 @@ func TestExpiredSubscriptionRemovedWithoutDelivery(t *testing.T) {
 func TestConcurrentFinalSubscriptionUsesSharedLimit(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	service := Service{Store: st, Home: t.TempDir(), Enabled: true, ConfigTargets: 31}
-	makeRequest := func(url string) SubscribeRequest {
-		return preparedSubscribe(t, SubscribeRequest{Name: Name, Arguments: Arguments{SourceID: 1}, Delivery: Delivery{Mode: "webhook", URL: url, Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	makeRequest := func(url string) MCPEventsSubscribeRequest {
+		return preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: url, Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
 	}
 	results := make(chan error, 2)
 	for _, url := range []string{"https://example.com/one", "https://example.com/two"} {
@@ -197,4 +200,63 @@ func TestConcurrentFinalSubscriptionUsesSharedLimit(t *testing.T) {
 	}
 	assert.Equal(t, 1, success)
 	assert.Equal(t, 1, exhausted)
+}
+
+type countingWakeupStore struct {
+	*store.Store
+
+	loaded []string
+}
+
+func (s *countingWakeupStore) LoadWakeupStateKey(ctx context.Context, key string) (store.WakeupState, []byte, error) {
+	s.loaded = append(s.loaded, key)
+	return s.Store.LoadWakeupStateKey(ctx, key)
+}
+
+func TestNativeRespectsConfiguredTargetLimitAfterRestart(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	var logs bytes.Buffer
+	service := Service{Store: st, Home: t.TempDir(), Enabled: true, Logger: slog.New(slog.NewTextHandler(&logs, nil))}
+	var ids []string
+	for i := range 32 {
+		in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: fmt.Sprintf("https://example.com/%d", i), Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+		result, err := service.Subscribe(t.Context(), in)
+		require.NoError(err)
+		ids = append(ids, result.ID)
+	}
+	service.ConfigTargets = 30
+	targets, err := service.Native(t.Context())
+	require.NoError(err)
+	require.Len(targets, 2)
+	assert.Equal(ids[0], targets[0].Name)
+	assert.Equal(ids[1], targets[1].Name)
+	assert.Contains(logs.String(), ids[2])
+	assert.Contains(logs.String(), "over_limit")
+	counted := &countingWakeupStore{Store: st}
+	engine := wakeups.Engine{Store: counted, Native: service.Native}
+	require.NoError(engine.RunPass(t.Context()))
+	assert.Equal([]string{store.MCPEventsPositionKey(ids[0]), store.MCPEventsPositionKey(ids[1])}, counted.loaded)
+	entries, _, err := service.catalog(t.Context())
+	require.NoError(err)
+	assert.Len(entries, 32)
+}
+
+func TestUnsubscribeWhileDisabledRemovesPosition(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	service := Service{Store: st, Home: t.TempDir(), Enabled: true}
+	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	result, err := service.Subscribe(t.Context(), in)
+	require.NoError(err)
+	service.Enabled = false
+	require.NoError(service.Unsubscribe(t.Context(), MCPEventsUnsubscribeRequest{Name: in.Name, Arguments: in.Arguments, Delivery: in.Delivery}))
+	entries, _, err := service.catalog(t.Context())
+	require.NoError(err)
+	assert.Empty(entries)
+	_, raw, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(result.ID))
+	require.NoError(err)
+	assert.Nil(raw)
 }

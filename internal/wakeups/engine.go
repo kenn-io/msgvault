@@ -231,6 +231,12 @@ func (e *Engine) RunPass(ctx context.Context) error {
 			}
 			return swapped, err
 		}
+		skipTo := func(next store.ChangedMessagesCursor) {
+			state.At = next.At()
+			state.AfterID, state.AfterRow = next.AfterID()
+			state.Failures = 0
+			state.NextAttemptAt = time.Time{}
+		}
 		err := e.GatedSetup(ctx, func() error {
 			now := e.now()
 			var err error
@@ -285,17 +291,12 @@ func (e *Engine) RunPass(ctx context.Context) error {
 				}
 			}
 			if sub.Native && state.Failures >= 5 {
-				state.At = next.At()
-				state.AfterID, state.AfterRow = next.AfterID()
-				state.Failures = 0
-				state.NextAttemptAt = time.Time{}
+				skipTo(next)
 				return advance(raw)
 			}
 			if len(matches) == 0 && state.Failures == 0 {
 				if len(page.Messages) > 0 || (!page.CompleteThrough.IsZero() && since.At().After(page.ServerTime)) {
-					state.At = next.At()
-					state.AfterID, state.AfterRow = next.AfterID()
-					state.NextAttemptAt = time.Time{}
+					skipTo(next)
 					_, err = advance(raw)
 					return err
 				}
@@ -370,10 +371,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 		}
 		recordFailure(category)
 		if category == "" || sub.Native && (status == 410 || status == 413 || state.Failures >= 5) {
-			state.At = next.At()
-			state.AfterID, state.AfterRow = next.AfterID()
-			state.Failures = 0
-			state.NextAttemptAt = time.Time{}
+			skipTo(next)
 			if sub.Native {
 				if category == "" {
 					state.LastError = ""

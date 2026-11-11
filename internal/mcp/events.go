@@ -12,9 +12,9 @@ import (
 )
 
 type EventsBackend interface {
-	MCPEventsList(context.Context) (mcpevents.ListResult, error)
-	MCPEventsSubscribe(context.Context, mcpevents.SubscribeRequest) (mcpevents.SubscribeResult, error)
-	MCPEventsUnsubscribe(context.Context, mcpevents.UnsubscribeRequest) error
+	MCPEventsList(context.Context) (mcpevents.MCPEventsListResult, error)
+	MCPEventsSubscribe(context.Context, mcpevents.MCPEventsSubscribeRequest) (mcpevents.MCPEventsSubscribeResult, error)
+	MCPEventsUnsubscribe(context.Context, mcpevents.MCPEventsUnsubscribeRequest) error
 }
 type nativeEventParams struct {
 	sdkmcp.ParamsBase
@@ -43,10 +43,10 @@ func (p *nativeEventParams) clean() ([]byte, error) {
 	delete(fields, "_meta")
 	return json.Marshal(fields)
 }
-func (p *nativeEventParams) subscribe() (mcpevents.SubscribeRequest, error) {
+func (p *nativeEventParams) subscribe() (mcpevents.MCPEventsSubscribeRequest, error) {
 	b, err := p.clean()
 	if err != nil {
-		return mcpevents.SubscribeRequest{}, err
+		return mcpevents.MCPEventsSubscribeRequest{}, err
 	}
 	v, err := mcpevents.DecodeSubscribe(b)
 	if err != nil {
@@ -106,12 +106,11 @@ func rpcEventError(err error) error {
 		name = "InvalidParams"
 	case mcpevents.NotFound:
 		name = "NotFound"
-	case mcpevents.Forbidden:
-		name = "Forbidden"
 	case mcpevents.ResourceExhausted:
 		name = "ResourceExhausted"
 	case mcpevents.Unsupported:
 		name = "Unsupported"
+	case mcpevents.Unavailable:
 	default:
 		e.Code = mcpevents.Unavailable
 		e.Reason = "daemon_unavailable"
@@ -131,7 +130,7 @@ func registerNativeEvents(server *sdkmcp.Server, backend EventsBackend) {
 		}
 		out, err := backend.MCPEventsList(ctx)
 		if err != nil {
-			out = mcpevents.ListResult{Events: []mcpevents.Definition{}}
+			out = mcpevents.MCPEventsListResult{Events: []mcpevents.MCPEventsDefinition{}}
 		}
 		return &nativeEventResult{value: map[string]any{"events": out.Events}, complete: true}, nil
 	})

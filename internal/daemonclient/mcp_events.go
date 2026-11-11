@@ -38,12 +38,17 @@ func (c *Client) mcpEventsRequest(ctx context.Context, method, path string, body
 		var e mcpevents.Error
 		if json.Unmarshal(raw, &e) == nil {
 			switch e.Code {
-			case mcpevents.InvalidParams, mcpevents.NotFound, mcpevents.Forbidden, mcpevents.ResourceExhausted, mcpevents.Unsupported:
+			case mcpevents.InvalidParams, mcpevents.NotFound, mcpevents.ResourceExhausted, mcpevents.Unsupported:
 				reason := "request_rejected"
 				if e.Reason == "invalid_scope" {
 					reason = e.Reason
 				}
 				return &mcpevents.Error{Code: e.Code, Reason: reason}
+			case mcpevents.Unavailable:
+				switch e.Reason {
+				case "disabled", "key_unavailable", "head_unavailable", "store_unavailable":
+					return &e
+				}
 			}
 		}
 		return errors.New("events daemon unavailable")
@@ -53,17 +58,17 @@ func (c *Client) mcpEventsRequest(ctx context.Context, method, path string, body
 	}
 	return nil
 }
-func (c *Client) MCPEventsList(ctx context.Context) (mcpevents.ListResult, error) {
-	var out mcpevents.ListResult
+func (c *Client) MCPEventsList(ctx context.Context) (mcpevents.MCPEventsListResult, error) {
+	var out mcpevents.MCPEventsListResult
 	err := c.mcpEventsRequest(ctx, http.MethodGet, "/api/v1/mcp-events/list", nil, &out)
 	return out, err
 }
-func (c *Client) MCPEventsSubscribe(ctx context.Context, in mcpevents.SubscribeRequest) (mcpevents.SubscribeResult, error) {
-	var out mcpevents.SubscribeResult
+func (c *Client) MCPEventsSubscribe(ctx context.Context, in mcpevents.MCPEventsSubscribeRequest) (mcpevents.MCPEventsSubscribeResult, error) {
+	var out mcpevents.MCPEventsSubscribeResult
 	err := c.mcpEventsRequest(ctx, http.MethodPost, "/api/v1/mcp-events/subscribe", in, &out)
 	return out, err
 }
-func (c *Client) MCPEventsUnsubscribe(ctx context.Context, in mcpevents.UnsubscribeRequest) error {
+func (c *Client) MCPEventsUnsubscribe(ctx context.Context, in mcpevents.MCPEventsUnsubscribeRequest) error {
 	var out struct{}
 	return c.mcpEventsRequest(ctx, http.MethodPost, "/api/v1/mcp-events/unsubscribe", in, &out)
 }

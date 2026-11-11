@@ -1917,15 +1917,15 @@ type SnoozeLoopErrorResponseJSON503 = ErrorResponse
 
 type SnoozeLoopErrorResponseJSONDefault = ErrorResponse
 
-type McpEventsListResponse = ListResult
+type McpEventsListResponse = MCPEventsListResult
 
 type McpEventsListErrorResponse = ErrorResponse
 
-type McpEventsSubscribeResponse = SubscribeResult
+type McpEventsSubscribeResponse = MCPEventsSubscribeResult
 
 type McpEventsSubscribeErrorResponse = ErrorResponse
 
-type McpEventsUnsubscribeResponse = UnsubscribeResult
+type McpEventsUnsubscribeResponse = MCPEventsUnsubscribeResult
 
 type McpEventsUnsubscribeErrorResponse = ErrorResponse
 

@@ -16,12 +16,12 @@ import (
 )
 
 type entry struct {
-	ID        string    `json:"id"`
-	Owner     string    `json:"owner"`
-	Arguments Arguments `json:"arguments"`
-	URL       string    `json:"url"`
-	Secret    []byte    `json:"sealed_secret"`
-	Expires   time.Time `json:"expires_at"`
+	ID        string             `json:"id"`
+	Owner     string             `json:"owner"`
+	Arguments MCPEventsArguments `json:"arguments"`
+	URL       string             `json:"url"`
+	Secret    []byte             `json:"sealed_secret"`
+	Expires   time.Time          `json:"expires_at"`
 }
 type Service struct {
 	Store         *store.Store
@@ -70,10 +70,10 @@ func (s *Service) Available(ctx context.Context) bool {
 	_, _, err = s.key(ctx, entries, false)
 	return err == nil || len(entries) == 0 && errors.Is(err, os.ErrNotExist)
 }
-func same(a, b Arguments) bool {
+func same(a, b MCPEventsArguments) bool {
 	return a.IncomingOnly != nil && b.IncomingOnly != nil && a.PersonID == b.PersonID && a.SourceID == b.SourceID && *a.IncomingOnly == *b.IncomingOnly
 }
-func find(entries []entry, args Arguments, url string) int {
+func find(entries []entry, args MCPEventsArguments, url string) int {
 	for i, e := range entries {
 		if e.Owner == "owner" && same(e.Arguments, args) && e.URL == url {
 			return i
@@ -83,18 +83,15 @@ func find(entries []entry, args Arguments, url string) int {
 }
 
 // Subscribe requires a request returned by DecodeSubscribe.
-func (s *Service) Subscribe(ctx context.Context, in SubscribeRequest) (SubscribeResult, error) {
-	var out SubscribeResult
+func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest) (MCPEventsSubscribeResult, error) {
+	var out MCPEventsSubscribeResult
 	if !s.Enabled || s.Store == nil {
 		return out, failure(Unavailable, "disabled")
 	}
 	if err := s.purgeExpired(ctx); err != nil {
 		return out, failure(Unavailable, "store_unavailable")
 	}
-	filter := changefeed.Filter{PersonID: in.Arguments.PersonID, IncomingOnly: *in.Arguments.IncomingOnly}
-	if in.Arguments.SourceID != 0 {
-		filter.SourceIDs = []int64{in.Arguments.SourceID}
-	}
+	filter := in.Arguments.filter()
 	if _, err := changefeed.ResolveFilter(ctx, s.Store, filter); err != nil {
 		return out, failure(InvalidParams, "invalid_scope")
 	}
@@ -153,7 +150,7 @@ func (s *Service) Subscribe(ctx context.Context, in SubscribeRequest) (Subscribe
 		if !ok {
 			continue
 		}
-		status := DeliveryStatus{Active: true}
+		status := MCPEventsDeliveryStatus{Active: true}
 		state, _, loadErr := s.Store.LoadWakeupStateKey(ctx, store.MCPEventsPositionKey(id))
 		if loadErr != nil {
 			return out, failure(Unavailable, "store_unavailable")
@@ -161,14 +158,14 @@ func (s *Service) Subscribe(ctx context.Context, in SubscribeRequest) (Subscribe
 		status.LastDeliveryAt = state.LastDeliveryAt
 		status.LastError = state.LastError
 		status.FailedSince = state.FailedSince
-		return SubscribeResult{ID: id, RefreshBefore: expires, DeliveryStatus: status}, nil
+		return MCPEventsSubscribeResult{ID: id, RefreshBefore: expires, DeliveryStatus: status}, nil
 	}
 }
 
 // Unsubscribe requires a request returned by DecodeUnsubscribe.
-func (s *Service) Unsubscribe(ctx context.Context, in UnsubscribeRequest) error {
-	if !s.Enabled || s.Store == nil {
-		return failure(Unavailable, "disabled")
+func (s *Service) Unsubscribe(ctx context.Context, in MCPEventsUnsubscribeRequest) error {
+	if s.Store == nil {
+		return failure(Unavailable, "store_unavailable")
 	}
 	for {
 		entries, raw, err := s.catalog(ctx)
@@ -243,6 +240,14 @@ func (s *Service) Native(ctx context.Context) ([]wakeups.Subscription, error) {
 		if e.Owner != "owner" {
 			continue
 		}
+		if len(out) >= max(0, 32-s.ConfigTargets) {
+			logger := s.Logger
+			if logger == nil {
+				logger = slog.Default()
+			}
+			logger.Warn("native wakeup unavailable", "id", e.ID, "category", "over_limit")
+			continue
+		}
 		secret, err := key.Open(uid, e.ID, e.Secret)
 		if err != nil {
 			logger := s.Logger
@@ -255,10 +260,7 @@ func (s *Service) Native(ctx context.Context) ([]wakeups.Subscription, error) {
 		if e.Arguments.IncomingOnly == nil {
 			return nil, errors.New("invalid events catalog")
 		}
-		f := changefeed.Filter{PersonID: e.Arguments.PersonID, IncomingOnly: *e.Arguments.IncomingOnly}
-		if e.Arguments.SourceID != 0 {
-			f.SourceIDs = []int64{e.Arguments.SourceID}
-		}
+		f := e.Arguments.filter()
 		sub := wakeups.NewSubscription(e.ID, e.URL, secret, f, 72*time.Hour, 15*time.Second, nil, nil)
 		sub.Native = true
 		sub.StateKey = store.MCPEventsPositionKey(e.ID)

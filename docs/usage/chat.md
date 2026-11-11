@@ -56,7 +56,7 @@ Each signed ping contains only a subscription ID and a null cursor. Verify the
 Standard Webhooks signature and deduplicate by `webhook-id`, then read
 `list_changes` through its cursor. Pings may coalesce and are not replayed;
 the daemon retries temporary failures up to five attempts, and drops a range
-on HTTP 410 or 413. A lost ping costs latency, so retain your own feed cursor.
+on HTTP 410 or 413. Old messages outside `max_message_age` and deleted messages never trigger a ping. A lost ping costs latency, so retain your own feed cursor.
 
 ## Calendar control
 

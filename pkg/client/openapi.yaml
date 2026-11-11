@@ -517,18 +517,6 @@ components:
       required:
         - text
       type: object
-    Arguments:
-      additionalProperties: false
-      properties:
-        incoming_only:
-          type: boolean
-        person_id:
-          format: int64
-          type: integer
-        source_id:
-          format: int64
-          type: integer
-      type: object
     AttachmentInfo:
       properties:
         content_hash:
@@ -3690,29 +3678,6 @@ components:
         - offset
         - limit
       type: object
-    Definition:
-      properties:
-        delivery:
-          items:
-            type: string
-          type: array
-        description:
-          type: string
-        inputSchema:
-          additionalProperties: {}
-          type: object
-        name:
-          type: string
-        payloadSchema:
-          additionalProperties: {}
-          type: object
-      required:
-        - name
-        - description
-        - delivery
-        - inputSchema
-        - payloadSchema
-      type: object
     DeletionManifestDetail:
       properties:
         account:
@@ -3791,34 +3756,6 @@ components:
         - source_type
         - source_identifier
         - source_message_id
-      type: object
-    Delivery:
-      additionalProperties: false
-      properties:
-        mode:
-          type: string
-        secret:
-          type: string
-        url:
-          type: string
-      required:
-        - mode
-        - url
-      type: object
-    DeliveryStatus:
-      properties:
-        active:
-          type: boolean
-        failedSince:
-          format: date-time
-          type: string
-        lastDeliveryAt:
-          format: date-time
-          type: string
-        lastError:
-          type: string
-      required:
-        - active
       type: object
     DirectoryPeopleResponse:
       properties:
@@ -7235,18 +7172,6 @@ components:
       required:
         - manifests
       type: object
-    ListResult:
-      properties:
-        enabled:
-          type: boolean
-        events:
-          items:
-            $ref: "#/components/schemas/Definition"
-          type: array
-      required:
-        - enabled
-        - events
-      type: object
     LocalEmbeddingsStatus:
       properties:
         done_bytes:
@@ -7404,6 +7329,140 @@ components:
       required:
         - version
         - routes
+      type: object
+    MCPEventsArguments:
+      additionalProperties: false
+      properties:
+        incoming_only:
+          type: boolean
+        person_id:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+      type: object
+    MCPEventsDefinition:
+      properties:
+        delivery:
+          items:
+            type: string
+          type: array
+        description:
+          type: string
+        inputSchema:
+          additionalProperties: {}
+          type: object
+        name:
+          type: string
+        payloadSchema:
+          additionalProperties: {}
+          type: object
+      required:
+        - name
+        - description
+        - delivery
+        - inputSchema
+        - payloadSchema
+      type: object
+    MCPEventsDelivery:
+      additionalProperties: false
+      properties:
+        mode:
+          type: string
+        secret:
+          type: string
+        url:
+          type: string
+      required:
+        - mode
+        - url
+      type: object
+    MCPEventsDeliveryStatus:
+      properties:
+        active:
+          type: boolean
+        failedSince:
+          format: date-time
+          type: string
+        lastDeliveryAt:
+          format: date-time
+          type: string
+        lastError:
+          type: string
+      required:
+        - active
+      type: object
+    MCPEventsListResult:
+      properties:
+        enabled:
+          type: boolean
+        events:
+          items:
+            $ref: "#/components/schemas/MCPEventsDefinition"
+          type: array
+      required:
+        - enabled
+        - events
+      type: object
+    MCPEventsSubscribeRequest:
+      additionalProperties: false
+      properties:
+        arguments:
+          $ref: "#/components/schemas/MCPEventsArguments"
+        cursor:
+          type: string
+        delivery:
+          $ref: "#/components/schemas/MCPEventsDelivery"
+        maxAgeMs:
+          format: int64
+          type: integer
+        name:
+          type: string
+        ttlMs:
+          nullable: true
+          type: integer
+      required:
+        - name
+        - arguments
+        - delivery
+      type: object
+    MCPEventsSubscribeResult:
+      properties:
+        cursor:
+          nullable: true
+          type: string
+        deliveryStatus:
+          $ref: "#/components/schemas/MCPEventsDeliveryStatus"
+        id:
+          type: string
+        refreshBefore:
+          format: date-time
+          type: string
+        truncated:
+          type: boolean
+      required:
+        - id
+        - refreshBefore
+        - cursor
+        - truncated
+        - deliveryStatus
+      type: object
+    MCPEventsUnsubscribeRequest:
+      additionalProperties: false
+      properties:
+        arguments:
+          $ref: "#/components/schemas/MCPEventsArguments"
+        delivery:
+          $ref: "#/components/schemas/MCPEventsDelivery"
+        name:
+          type: string
+      required:
+        - name
+        - arguments
+        - delivery
+      type: object
+    MCPEventsUnsubscribeResult:
       type: object
     MCPRouteDescriptor:
       properties:
@@ -15927,49 +15986,6 @@ components:
         - categories
         - media
       type: object
-    SubscribeRequest:
-      additionalProperties: false
-      properties:
-        arguments:
-          $ref: "#/components/schemas/Arguments"
-        cursor:
-          type: string
-        delivery:
-          $ref: "#/components/schemas/Delivery"
-        maxAgeMs:
-          format: int64
-          type: integer
-        name:
-          type: string
-        ttlMs:
-          nullable: true
-          type: integer
-      required:
-        - name
-        - arguments
-        - delivery
-      type: object
-    SubscribeResult:
-      properties:
-        cursor:
-          nullable: true
-          type: string
-        deliveryStatus:
-          $ref: "#/components/schemas/DeliveryStatus"
-        id:
-          type: string
-        refreshBefore:
-          format: date-time
-          type: string
-        truncated:
-          type: boolean
-      required:
-        - id
-        - refreshBefore
-        - cursor
-        - truncated
-        - deliveryStatus
-      type: object
     Summary:
       additionalProperties: false
       properties:
@@ -16719,22 +16735,6 @@ components:
       required:
         - status
         - message
-      type: object
-    UnsubscribeRequest:
-      additionalProperties: false
-      properties:
-        arguments:
-          $ref: "#/components/schemas/Arguments"
-        delivery:
-          $ref: "#/components/schemas/Delivery"
-        name:
-          type: string
-      required:
-        - name
-        - arguments
-        - delivery
-      type: object
-    UnsubscribeResult:
       type: object
     UpdateRequest:
       additionalProperties: false
@@ -24476,7 +24476,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ListResult"
+                $ref: "#/components/schemas/MCPEventsListResult"
           description: OK
         default:
           content:
@@ -24496,14 +24496,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SubscribeRequest"
+              $ref: "#/components/schemas/MCPEventsSubscribeRequest"
         required: true
       responses:
         "200":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SubscribeResult"
+                $ref: "#/components/schemas/MCPEventsSubscribeResult"
           description: OK
         default:
           content:
@@ -24523,14 +24523,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/UnsubscribeRequest"
+              $ref: "#/components/schemas/MCPEventsUnsubscribeRequest"
         required: true
       responses:
         "200":
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/UnsubscribeResult"
+                $ref: "#/components/schemas/MCPEventsUnsubscribeResult"
           description: OK
         default:
           content:

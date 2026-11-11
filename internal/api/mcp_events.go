@@ -11,40 +11,27 @@ import (
 )
 
 func (s *Server) registerMCPEventsRoutes(api huma.API) {
-	registerAPIV1RawHumaJSONRoute[mcpevents.ListResult](api, "mcpEventsList", http.MethodGet, "/mcp-events/list", "List owner MCP Events", s.handleMCPEventsList)
-	registerAPIV1RawHumaJSONRouteWithRequest[mcpevents.SubscribeRequest, mcpevents.SubscribeResult](api, "mcpEventsSubscribe", http.MethodPost, "/mcp-events/subscribe", "Subscribe to owner MCP Events", s.handleMCPEventsSubscribe)
-	registerAPIV1RawHumaJSONRouteWithRequest[mcpevents.UnsubscribeRequest, mcpevents.UnsubscribeResult](api, "mcpEventsUnsubscribe", http.MethodPost, "/mcp-events/unsubscribe", "Unsubscribe from owner MCP Events", s.handleMCPEventsUnsubscribe)
+	registerAPIV1RawHumaJSONRoute[mcpevents.MCPEventsListResult](api, "mcpEventsList", http.MethodGet, "/mcp-events/list", "List owner MCP Events", s.handleMCPEventsList)
+	registerAPIV1RawHumaJSONRouteWithRequest[mcpevents.MCPEventsSubscribeRequest, mcpevents.MCPEventsSubscribeResult](api, "mcpEventsSubscribe", http.MethodPost, "/mcp-events/subscribe", "Subscribe to owner MCP Events", s.handleMCPEventsSubscribe)
+	registerAPIV1RawHumaJSONRouteWithRequest[mcpevents.MCPEventsUnsubscribeRequest, mcpevents.MCPEventsUnsubscribeResult](api, "mcpEventsUnsubscribe", http.MethodPost, "/mcp-events/unsubscribe", "Unsubscribe from owner MCP Events", s.handleMCPEventsUnsubscribe)
 }
 func eventsError(w http.ResponseWriter, err error) {
 	var e *mcpevents.Error
 	if !errors.As(err, &e) {
 		e = &mcpevents.Error{Code: mcpevents.Unavailable, Reason: "unavailable"}
 	}
-	status := http.StatusServiceUnavailable
-	switch e.Code {
-	case mcpevents.InvalidParams:
-		status = http.StatusBadRequest
-	case mcpevents.NotFound:
-		status = http.StatusNotFound
-	case mcpevents.Forbidden:
-		status = http.StatusForbidden
-	case mcpevents.Unsupported:
-		status = http.StatusBadRequest
-	case mcpevents.ResourceExhausted:
-		status = http.StatusTooManyRequests
-	}
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
+	w.WriteHeader(e.Status())
 	_ = json.MarshalWrite(w, e)
 }
 func (s *Server) handleMCPEventsList(w http.ResponseWriter, r *http.Request) {
 	enabled := s.mcpEvents.Available(r.Context())
-	events := []mcpevents.Definition{}
+	events := []mcpevents.MCPEventsDefinition{}
 	if enabled {
 		events = mcpevents.Definitions()
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.MarshalWrite(w, mcpevents.ListResult{Enabled: enabled, Events: events})
+	_ = json.MarshalWrite(w, mcpevents.MCPEventsListResult{Enabled: enabled, Events: events})
 }
 func readEventsBody(r *http.Request) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(r.Body, 64<<10+1))
