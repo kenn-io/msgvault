@@ -131,10 +131,23 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 		return "", true, err
 	}
 	if input.Patch.Media != nil && len(input.Patch.Media.Add) > 0 {
-		patch := changes["patch"].(map[string]any)
-		media := patch["media"].(map[string]any)
-		adds, _ := media["add"].([]any)
+		patch, ok := changes["patch"].(map[string]any)
+		if !ok {
+			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+		}
+		media, ok := patch["media"].(map[string]any)
+		if !ok {
+			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+		}
+		adds, ok := media["add"].([]any)
+		if !ok || len(adds) != len(input.Patch.Media.Add) {
+			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+		}
 		for i, item := range input.Patch.Media.Add {
+			add, ok := adds[i].(map[string]any)
+			if !ok {
+				return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+			}
 			if item.Data == nil {
 				continue
 			}
@@ -143,7 +156,6 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 				return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 			}
 			sum := sha256.Sum256(data)
-			add := adds[i].(map[string]any)
 			delete(add, "data")
 			add["data_size"], add["data_sha256"] = len(data), hex.EncodeToString(sum[:])
 		}

@@ -14,8 +14,8 @@ type StructuredPersonRecord struct {
 	Profile generated.StructuredPersonProfile `json:"profile"`
 }
 type PersonMediaContent struct {
-	MediaType string `json:"media_type"`
 	byteChunk
+	MediaType string `json:"media_type"`
 }
 
 // PersonMediaChunk applies the shared download contract to one bounded native media object.

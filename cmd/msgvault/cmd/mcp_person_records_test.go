@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -179,10 +180,10 @@ func TestPersonRecordLargeInlineMedia(t *testing.T) {
 	sum := sha256.Sum256(data)
 	assertions.Equal(int64(1<<20), media.Length)
 	assertions.Equal(int64(8<<20), media.Size)
-	assertions.Equal(fmt.Sprintf("%x", sum), media.SHA256)
+	assertions.Equal(hex.EncodeToString(sum[:]), media.SHA256)
 	assertions.False(media.Complete)
 	var assembled bytes.Buffer
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		assertions.Equal(int64(i<<20), media.Offset)
 		decoded, err := base64.StdEncoding.DecodeString(media.DataBase64)
 		requirements.NoError(err)
