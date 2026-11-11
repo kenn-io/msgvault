@@ -43,6 +43,20 @@ async function enterRaw() {
 }
 
 describe('Postal address editor', () => {
+  it.each(['user', 'vcard_import'] as const)('captures the new draft when editing a %s address', async source => {
+    const original: Input = { address_kind: 'postal', street_address: '12 Main St', original_value: '12 Main St' };
+    const current: PersonAddress = { person_id: 7, ...original, original_value: '12 Main St', assessment: { original, proposed: original, status: 'needs_review', reason_codes: [], original_extended_parts: [], proposed_extended_parts: [] }, envelope: { id: 11, ordinal: 0, source, created_at: when, updated_at: when, vcard: {} } };
+    const { controller, requests } = setup({ current });
+    render(StructuredProfileEditor, { controller, section: 'addresses', current });
+    await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: '99 Oak Ave' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
+    await waitFor(() => expect(requests).toHaveLength(1));
+    const saved = (await requests[0]!.clone().json()).addresses;
+    expect(saved.supersede).toEqual([11]);
+    expect(saved.add[0].original_input.street_address).toBe('99 Oak Ave');
+    expect(saved.add[0].original_input.original_value ?? '').not.toContain('12 Main St');
+  });
+
   it.each(['Save address', 'Check locally'])('captures the address entered after an empty %s', async action => {
     const { controller, requests } = setup();
     render(StructuredProfileEditor, { controller, section: 'addresses' });
@@ -208,7 +222,7 @@ describe('Postal address editor', () => {
     const saved = await requests.find(request => request.method === 'PATCH')!.clone().json();
     expect(saved.addresses.add[0].free_text).toBe('');
     if (structured) expect(saved.addresses.add[0]).not.toHaveProperty('original_value');
-    if (scenario === 'existing clear') expect(saved.addresses.add[0].original_input).toEqual(original);
+    if (scenario === 'existing clear') expect(saved.addresses.add[0].original_input).toEqual({ address_kind: 'postal', country_code: 'CA', street_address: 'Old street', free_text: 'Old delivery text' });
   });
 
   it('keeps a text-only draft current after checking and changing its country', async () => {
@@ -266,7 +280,7 @@ it('drops a pending result if the component receives a different person controll
 
 it.each(['existing', 'after check'])('keeps captured provenance read-only and saves current text (%s)', async scenario => {
   const original: Input = { address_kind: 'postal', original_value: '  First raw text\nUnit 7  ' };
-  const current: PersonAddress | undefined = scenario === 'existing' ? { person_id: 7, address_kind: 'postal', original_value: original.original_value!, assessment: { original, proposed: original, status: 'needs_review', reason_codes: ['not_verified'], original_extended_parts: [], proposed_extended_parts: [] }, envelope: { id: 11, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } } : undefined;
+  const current: PersonAddress | undefined = scenario === 'existing' ? { person_id: 7, address_kind: 'postal', original_value: original.original_value!, assessment: { original, proposed: original, status: 'needs_review', reason_codes: ['not_verified'], original_extended_parts: [], proposed_extended_parts: [] }, envelope: { id: 11, ordinal: 0, source: 'user', source_ref: 'person-fact-claim:synthetic-claim', created_at: when, updated_at: when, vcard: {} } } : undefined;
   const { controller, requests } = setup({ current });
   render(StructuredProfileEditor, { controller, section: 'addresses', current });
   if (!current) {

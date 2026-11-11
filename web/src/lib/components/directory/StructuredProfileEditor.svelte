@@ -85,7 +85,7 @@
   let scopeValue = $state(currentContact?.scope_value ?? '');
   let addressKind = $state(initialCandidate ? 'postal' : currentAddress?.address_kind ?? 'postal');
   const seedAddress = initialCandidate?.input ?? currentAddress;
-  let originalInput = $state<Input | undefined>(initialCandidate?.input ?? (currentAddress?.address_kind === 'postal' ? currentAddress.assessment?.original ?? copyPostalInput(currentAddress) : undefined));
+  let originalInput = $state<Input | undefined>(initialCandidate?.input ?? (currentAddress?.address_kind === 'postal' && currentAddress.envelope.source_ref?.startsWith('person-fact-claim:') ? currentAddress.assessment?.original ?? copyPostalInput(currentAddress) : undefined));
   let addressTarget = $state('');
   let addressTargetInvalid = $state(false);
   let addressTargetSelect = $state<HTMLSelectElement>();
@@ -93,7 +93,7 @@
   let postOfficeBox = $state(seedAddress?.post_office_box ?? '');
   let extendedAddress = $state(seedAddress?.extended_address ?? '');
   let countryCode = $state(seedAddress?.country_code ?? '');
-  let originalText = $state(untrack(() => originalInput ? originalInput.original_value ?? '' : seedAddress?.original_value ?? ''));
+  let originalText = $state(untrack(() => originalInput ? originalInput.original_value ?? '' : currentAddress?.address_kind === 'postal' ? '' : seedAddress?.original_value ?? ''));
   let currentText = $state(seedAddress?.free_text ?? (initialCandidate && !initialCandidate.input.extended_components && !postalAddressText({ ...initialCandidate.input, free_text: '', country_code: '' }) ? initialCandidate.input.original_value ?? '' : ''));
   let currentTextTouched = $state(false);
   let streetAddress = $state(seedAddress?.street_address ?? '');

@@ -409,8 +409,7 @@ describe('StructuredProfileEditor', () => {
           add: [
             {
               address_kind: 'postal',
-              original_value: 'original-vcard-value',
-              original_input: { address_kind: 'postal', original_value: 'original-vcard-value', post_office_box: 'PO 12', extended_address: 'Suite 3', street_address: '1 Test Street', locality: 'Testville', region: 'TS', postal_code: '12345', country_name: 'Testland', extended_components: 'Building A', free_text: 'Deliver after noon', label: 'Home', geo_uri: 'geo:1,2', timezone: 'Etc/UTC', country_code: 'TS', place_uri: 'https://example.test/place' },
+              original_input: { address_kind: 'postal', post_office_box: 'PO 12', extended_address: 'Suite 3', street_address: '2 Updated Street', locality: 'Testville', region: 'TS', postal_code: '12345', country_name: 'Testland', extended_components: 'Building A', free_text: 'Deliver after noon', label: 'Home', geo_uri: 'geo:1,2', timezone: 'Etc/UTC', country_code: 'TS', place_uri: 'https://example.test/place' },
               post_office_box: 'PO 12',
               extended_address: 'Suite 3',
               street_address: '2 Updated Street',
