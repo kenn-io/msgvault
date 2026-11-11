@@ -173,20 +173,6 @@ func (w *Worker) planPersonBrief(
 		mode.normalized() == BriefModeSkip {
 		return briefPlan{}, nil
 	}
-	// A brief packet always carries verbatim archive text, so a profile without
-	// allow_sensitive refuses it exactly as it refuses real extraction. Deciding
-	// that here keeps the refusal free instead of paying for a window first.
-	if !profile.AllowSensitive {
-		return briefPlan{}, nil
-	}
-	// The window reads only the brief lanes. A profile whose allowed_sources
-	// miss all of them, such as meeting_text alone, would plan a brief that
-	// BuildBriefWindow then refuses, so the attempt would record an internal
-	// failure for a condition that is plain configuration. Decide it here, for
-	// free, and let a scheduled run skip the step cleanly.
-	if len(briefWindowLanes(profile.AllowedSources)) == 0 {
-		return briefPlan{}, nil
-	}
 	eligibility, enrolled, err := w.Brief.PersonSweepBriefEligibility(ctx, personID)
 	if err != nil {
 		return briefPlan{}, err
@@ -194,6 +180,7 @@ func (w *Worker) planPersonBrief(
 	if !enrolled {
 		return briefPlan{}, nil
 	}
+	// Refused profiles skip generation, but must still retire existing event memory.
 	profileAllowed := profile.AllowSensitive && len(briefWindowLanes(profile.AllowedSources)) > 0
 	if !profileAllowed {
 		if eligibility.Status != BriefStatusCurrent || eligibility.Boundary == nil || len(eligibility.Boundary.EventMemory) == 0 {
