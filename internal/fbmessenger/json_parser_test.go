@@ -75,8 +75,6 @@ func TestParseJSONThread_Corrupt(t *testing.T) {
 }
 
 func TestParseJSONThread_AttachmentsAndUnresolvedMedia(t *testing.T) {
-	req := require.New(t)
-	checks := assert.New(t)
 	for _, test := range []struct{ name, field, extension, kind, mime string }{
 		{"photo", "photos", ".png", "photo", "image/png"},
 		{"generic media", "media", ".png", "file", "image/png"},
@@ -110,12 +108,16 @@ func TestParseJSONThread_AttachmentsAndUnresolvedMedia(t *testing.T) {
 			assert.Equal(test.mime, m.Attachments[0].MimeType)
 		})
 	}
-	uri := filepath.Join("testdata", "json_with_media", "your_activity_across_facebook", "messages", "inbox", "bob_XYZ789", "photos", "tiny.png")
-	req.FileExists(uri)
-	attachments := resolveAttachments("", rawJSONMessage{Photos: []rawJSONPhoto{{URI: uri}}})
-	req.Len(attachments, 1)
-	checks.Empty(attachments[0].AbsPath)
-	checks.Equal(uri, attachments[0].URI)
+	t.Run("no media root", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		uri := filepath.Join("testdata", "json_with_media", "your_activity_across_facebook", "messages", "inbox", "bob_XYZ789", "photos", "tiny.png")
+		require.FileExists(uri)
+		attachments := resolveAttachments("", rawJSONMessage{Photos: []rawJSONPhoto{{URI: uri}}})
+		require.Len(attachments, 1)
+		assert.Empty(attachments[0].AbsPath)
+		assert.Equal(uri, attachments[0].URI)
+	})
 }
 
 func TestParseJSONThread_Attachments_AltLayout(t *testing.T) {

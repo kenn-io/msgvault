@@ -179,20 +179,26 @@ func TestInstagramMediaRecoveryAndContainment(t *testing.T) {
 	root := t.TempDir()
 	media := "your_instagram_activity/messages/inbox/circle/photos/fiction.txt"
 	record := instagramTestRecord("media")
-	record["photos"] = []map[string]string{{"uri": media}, {"uri": "../escape.txt"}, {"uri": "/absolute.txt"}, {"uri": "directory"}}
+	photos := []map[string]string{{"uri": media}, {"uri": "../escape.txt"}, {"uri": "/absolute.txt"}, {"uri": "directory"}}
 	require.NoError(os.Mkdir(filepath.Join(root, "directory"), 0700))
 	require.NoError(os.WriteFile(filepath.Join(root, "voice.ogg"), []byte("invented audio payload"), 0600))
+	rejected, attachmentCount := 3, 5
+	if os.Symlink(filepath.Join(root, "voice.ogg"), filepath.Join(root, "linked.jpg")) == nil {
+		photos = append(photos, map[string]string{"uri": "linked.jpg"})
+		rejected, attachmentCount = rejected+1, attachmentCount+1
+	}
+	record["photos"] = photos
 	record["audio_files"] = []map[string]string{{"uri": "voice.ogg"}}
 	instagramTestShard(t, root, "circle", "message_1.json", record, instagramTestRecord("later"))
 	opts := ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example", AttachmentsDir: t.TempDir()}
 	summary, err := ImportDYI(t.Context(), st, opts)
 	require.NoError(err)
 	assert.Equal(1, summary.MediaMissing)
-	assert.Equal(3, summary.MediaRejected)
+	assert.Equal(rejected, summary.MediaRejected)
 	assert.Equal(2, countMessages(t, st, ""))
 	var n int
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM attachments`).Scan(&n))
-	assert.Equal(5, n)
+	assert.Equal(attachmentCount, n)
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM attachments WHERE COALESCE(content_hash, '') <> ''`).Scan(&n))
 	assert.Equal(1, n)
 	full := filepath.Join(root, filepath.FromSlash(media))
@@ -201,6 +207,7 @@ func TestInstagramMediaRecoveryAndContainment(t *testing.T) {
 	summary, err = ImportDYI(t.Context(), st, opts)
 	require.NoError(err)
 	assert.Zero(summary.MessagesAdded)
+	assert.Equal(rejected, summary.MediaRejected)
 	assert.Equal(2, summary.AttachmentsStored)
 	require.NoError(os.Remove(full))
 	_, err = ImportDYI(t.Context(), st, opts)
@@ -208,33 +215,7 @@ func TestInstagramMediaRecoveryAndContainment(t *testing.T) {
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM attachments WHERE storage_path <> ''`).Scan(&n))
 	assert.Equal(2, n)
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM attachments`).Scan(&n))
-	assert.Equal(5, n)
-}
-
-func TestInstagramSymlinkMediaDoesNotStopImport(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	target := filepath.Join(root, "target.jpg")
-	require.NoError(os.WriteFile(target, []byte("invented image"), 0600))
-	if err := os.Symlink(target, filepath.Join(root, "linked.jpg")); err != nil {
-		t.Skipf("symlink unavailable: %v", err)
-	}
-	record := instagramTestRecord("linked media")
-	record["photos"] = []map[string]string{{"uri": "linked.jpg"}}
-	instagramTestShard(t, root, "circle", "message_1.json", record, instagramTestRecord("later"))
-	opts := ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example", AttachmentsDir: t.TempDir()}
-	for i := range 2 {
-		summary, err := ImportDYI(t.Context(), st, opts)
-		require.NoError(err)
-		assert.Equal(1, summary.MediaRejected)
-		assert.Zero(summary.AttachmentsStored)
-		assert.Equal(2, countMessages(t, st, ""))
-		if i == 1 {
-			assert.Zero(summary.MessagesAdded)
-		}
-	}
+	assert.Equal(attachmentCount, n)
 }
 
 func TestInstagramConflictingThreadPaths(t *testing.T) {
@@ -408,6 +389,7 @@ func TestInstagramConversationUsesFirstShardHeader(t *testing.T) {
 			assert.Equal(2, recipients)
 		}
 		var oldID int64
+		ids := instagramIDs(t, st)
 		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE snippet='old'`).Scan(&oldID))
 		raw, err := st.GetMessageRawContext(t.Context(), oldID)
 		require.NoError(err)
@@ -415,6 +397,7 @@ func TestInstagramConversationUsesFirstShardHeader(t *testing.T) {
 		require.NoError(os.WriteFile(first, []byte(`{"thread_path":"inbox/circle","title":"Latest title","participants":[{"name":"Nova Example"},{"name":"Mira Example"}],"messages":[]}`), 0600))
 		_, err = ImportDYI(t.Context(), st, opts)
 		require.NoError(err)
+		assert.Equal(ids, instagramIDs(t, st))
 		var title, kind string
 		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT title, conversation_type FROM conversations`).Scan(&title, &kind))
 		assert.Equal("Latest title", title)
