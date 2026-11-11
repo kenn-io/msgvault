@@ -495,52 +495,6 @@ func TestLargeRosterCheckpointStaysCompact(t *testing.T) {
 	assert.Less(runBytes, 4096)
 }
 
-func TestRosterBudgetAlternatesMessagesUntilComplete(t *testing.T) {
-	size := 64
-	assert, require := assert.New(t), require.New(t)
-	f := newFakeBeeper(t)
-	chat := budgetTestChat("!roster-budget:example.test", 2, time.Now().Add(-48*time.Hour))
-	chat.Type = "group"
-	for i := 2; i < size; i++ {
-		chat.Participants = append(chat.Participants, map[string]any{"id": fmt.Sprintf("@signal_member%05d:example.test", i)})
-	}
-	f.addChat(chat)
-	imp, st := newHandlerTestImporter(t, f)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	polls := 0
-	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { polls++; return polls >= 25 }})
-	require.NoError(err)
-	require.True(sum.Stopped)
-	var receipts int
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM source_import_items WHERE source_id = ? AND provider = ?`), sum.SourceID, rosterProvider(chat.ID)).Scan(&receipts))
-	assert.Positive(receipts)
-	assert.Less(receipts, 25)
-	assert.Less(len(rosterMembers(t, st, sum.SourceID, chat.ID)), size)
-
-	var messagesBeforeRosterComplete bool
-	for range 30 {
-		polls = 0
-		imp = NewImporter(st, imp.client)
-		next, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { polls++; return polls >= 25 }})
-		require.NoError(err)
-		require.Zero(next.Errors)
-		state := latestBeeperState(t, imp).Chats[chat.ID]
-		members := len(rosterMembers(t, st, sum.SourceID, chat.ID))
-		if countBeeperMessages(t, imp) == 2 && members < size {
-			messagesBeforeRosterComplete = true
-		}
-		if countBeeperMessages(t, imp) == 2 && members == size && state != nil && state.RosterWork != nil && state.RosterWork.Phase == "done" {
-			break
-		}
-	}
-	assert.True(messagesBeforeRosterComplete, "messages arrive before the roster completes")
-	assert.Equal(2, countBeeperMessages(t, imp))
-	assert.Len(rosterMembers(t, st, sum.SourceID, chat.ID), size)
-	state := latestBeeperState(t, imp).Chats[chat.ID]
-	assert.True(state.Done)
-	assert.Equal("done", state.RosterWork.Phase, "matching must finish")
-}
-
 func TestCompletedRosterProofStaysCompact(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	f := newFakeBeeper(t)

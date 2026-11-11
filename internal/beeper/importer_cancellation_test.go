@@ -259,13 +259,15 @@ func TestEnsureConversationCancellationDuringPartialRoster(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	handler := installCancelOnLog(t, cancel, 4, logMessage("sql tx commit"))
+	// The fifth commit atomically writes the first member and its receipt.
+	handler := installCancelOnLog(t, cancel, 5, logMessage("sql tx commit"))
 	sum := &ImportSummary{}
 	_, complete, _, err := imp.ensureConversation(ctx, syncID, sourceID, &Chat{
 		ID: chatID, Type: "group", Title: "Partial", Network: "Telegram",
 		Participants: ChatParticipants{Items: participants, HasMore: true},
 	}, ImportOptions{AccountID: "telegram"}, sum)
 	require.ErrorIs(err, context.Canceled)
+	require.True(handler.canceled, "the selected commit must cancel the import")
 	assert.False(complete)
 	assert.Empty(handler.warnings, "no member write may run with the canceled context")
 	assert.Equal(int64(1), sum.FetchErrors)

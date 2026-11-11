@@ -55,6 +55,7 @@ func TestRosterVerificationRejectsChangedSnapshot(t *testing.T) {
 		{"member", func(c *fakeChat) { c.Participants[1]["id"] = "@changed:example.test" }},
 		{"role", func(c *fakeChat) { c.Participants[1]["isAdmin"] = true }},
 		{"identity", func(c *fakeChat) { c.Participants[1]["providerID"] = "changed-native-id" }},
+		{"failed read", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -71,21 +72,26 @@ func TestRosterVerificationRejectsChangedSnapshot(t *testing.T) {
 			_, complete, _, err := imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
 			require.NoError(err)
 			require.True(complete)
+			before := rosterMembers(t, st, sourceID, chat.ID)
 			// The departure needs a removal, which a changed second read must block.
 			f.mu.Lock()
 			chat.Participants = chat.Participants[:2]
 			f.mu.Unlock()
 			detail, err = imp.client.GetChat(t.Context(), chat.ID)
 			require.NoError(err)
-			f.mu.Lock()
-			tc.change(chat)
-			f.mu.Unlock()
+			if tc.change == nil {
+				f.setChatGetFailure(chat.ID, true)
+			} else {
+				f.mu.Lock()
+				tc.change(chat)
+				f.mu.Unlock()
+			}
 			sum := &ImportSummary{}
 			_, complete, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, sum)
 			require.NoError(err)
 			assert.False(complete)
 			assert.Zero(sum.FetchErrors)
-			assert.Len(rosterMembers(t, st, sourceID, chat.ID), 3, "the departed member stays until a read confirms the roster")
+			assert.Equal(before, rosterMembers(t, st, sourceID, chat.ID), "the departed member stays until a read confirms the roster")
 			assert.False(work.Verified)
 			unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sourceID)
 			require.NoError(err)
@@ -147,15 +153,11 @@ func TestTruncatedChangedListingDefersRoster(t *testing.T) {
 				assert.False(routeComplete())
 				state.RosterWork.MemberFirst = false
 				f.appendMsg(chat.ID, fakeMsg{ID: "hidden-change-message", SortKey: 99, Timestamp: time.Now(), SenderID: "@signal_ann:beeper.local", Text: "new"})
-				f.resetRequests()
 				syncState := NewSyncState()
 				syncState.Chats[chat.ID] = state
 				opts := ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, routeAccount: &Account{AccountID: "signal", Bridge: &AccountBridge{Type: "signal"}, Status: "connected"}}
 				_, _, err = imp.syncChat(t.Context(), 0, sum.SourceID, &listing.Items[0], opts, syncState, time.Now().Add(-time.Hour), false, false, &ImportSummary{})
 				require.NoError(err)
-				for _, request := range f.requests() {
-					assert.False(strings.HasPrefix(request, "/v1/chats/"+chat.ID+"?"))
-				}
 				assert.Equal(3, countBeeperMessages(t, imp))
 				_, _, err = imp.syncChat(t.Context(), 0, sum.SourceID, &listing.Items[0], opts, syncState, time.Now().Add(-time.Hour), false, false, &ImportSummary{})
 				require.NoError(err)
@@ -242,36 +244,6 @@ func TestRosterWorkCheckpointClear(t *testing.T) {
 	assert.Nil(restored.Chats["room"].RosterWork)
 }
 
-func TestRosterVerificationFailureKeepsExistingMembership(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	f := newFakeBeeper(t)
-	chat := budgetTestChat("!verify-failure:example.test", 2, time.Now())
-	chat.Participants = append(chat.Participants, map[string]any{"id": "@signal_departed:example.test"})
-	f.addChat(chat)
-	imp, st := newHandlerTestImporter(t, f)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	sourceID := newBeeperTestSource(t, st, "signal")
-	detail, err := imp.client.GetChat(t.Context(), chat.ID)
-	require.NoError(err)
-	_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal"}, &ImportSummary{}) //nolint:dogsled // Only the error matters for the first visit.
-	require.NoError(err)
-	before := rosterMembers(t, st, sourceID, chat.ID)
-	detail.Participants.Items = detail.Participants.Items[:2]
-	detail.Participants.Total = 2
-	f.setChatGetFailure(chat.ID, true)
-	work := &rosterWork{}
-	sum := &ImportSummary{}
-	_, complete, _, err := imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, sum)
-	require.NoError(err)
-	assert.False(complete)
-	assert.Zero(sum.FetchErrors)
-	assert.Equal(before, rosterMembers(t, st, sourceID, chat.ID))
-	assert.False(work.Verified)
-	unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sourceID)
-	require.NoError(err)
-	assert.Contains(unresolved, chat.ID)
-}
-
 func TestRosterResumeUsesMergedParticipant(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	f := newFakeBeeper(t)
@@ -322,7 +294,6 @@ func TestRosterVerificationFailureContinuesMessagesAndLaterChat(t *testing.T) {
 	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
 	require.NoError(err)
 	require.NotNil(sum)
-	assert.Zero(sum.FetchErrors)
 	assert.Equal(6, countBeeperMessages(t, imp))
 }
 

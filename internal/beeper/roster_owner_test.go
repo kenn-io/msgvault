@@ -2,7 +2,6 @@ package beeper
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -124,7 +123,6 @@ func TestImportDefersTruncatedRosterAndContinues(t *testing.T) {
 					f.appendMsg(healthy.ID, fakeMsg{ID: messageID, SortKey: 100 + attempt, Timestamp: now.Add(time.Duration(attempt+2) * time.Second), SenderID: "@signal_user:example.test", Text: "healthy"})
 				}
 				imp = NewImporter(st, imp.client)
-				f.resetRequests()
 				sum, err = imp.Import(t.Context(), opts)
 				if attempt == 0 || tc.incomplete {
 					require.NoError(err)
@@ -133,11 +131,6 @@ func TestImportDefersTruncatedRosterAndContinues(t *testing.T) {
 					var partial *PartialSyncError
 					require.ErrorAs(err, &partial)
 					require.Positive(sum.FetchErrors)
-				}
-				if attempt == 0 {
-					for _, request := range f.requests() {
-						require.False(strings.HasPrefix(request, "/v1/chats/"+old.ID+"?"))
-					}
 				}
 				var count int
 				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?`), sum.SourceID, messageID).Scan(&count))

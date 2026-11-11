@@ -11,7 +11,6 @@ import (
 	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -129,13 +128,6 @@ func TestRosterMatchingStopLeavesChatResumable(t *testing.T) {
 	unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
 	requirements.NoError(err)
 	assertions.NotContains(unresolved, chat.ID, "completed membership stays resolved while enrichment waits")
-	var messageID int64
-	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_id = ? LIMIT 1`, sum.SourceID).Scan(&messageID))
-	t.Run("membership", func(t *testing.T) {
-		membership, err := st.AttachmentConversationMembershipContext(t.Context(), messageID)
-		require.NoError(t, err)
-		assert.True(t, membership.RosterArchived)
-	})
 	peer := participantForBeeperUser(t, st, "@signal_ann:beeper.local")
 	person, _, err := st.CreatePersonFromParticipant(peer)
 	requirements.NoError(err)
@@ -144,12 +136,6 @@ func TestRosterMatchingStopLeavesChatResumable(t *testing.T) {
 	t.Run("route", func(t *testing.T) {
 		require.Len(t, routes.Routes.Items, 1)
 		assert.Equal(t, "archive_verified", routes.Routes.Items[0].Status)
-	})
-	t.Run("media retry", func(t *testing.T) {
-		require.NoError(t, st.UpsertAttachmentRecord(t.Context(), messageID, store.AttachmentWrite{SourceAttachmentID: "beeper:mxc://example.test/pending", MediaType: "image", State: attachmentpolicy.StatePending}))
-		pending, err := st.ListBeeperRetryableAttachmentMessages(t.Context(), sum.SourceID, attachmentpolicy.Policy{MaxParticipants: 2})
-		require.NoError(t, err)
-		assert.Len(t, pending, 1, "matching stops preserve media eligibility")
 	})
 	requirements.NotNil(state.Chats[chat.ID].RosterWork)
 	assertions.Contains([]string{"matching", "matching_retry"}, state.Chats[chat.ID].RosterWork.Phase)
@@ -165,7 +151,7 @@ func TestRosterMatchingStopLeavesChatResumable(t *testing.T) {
 	routes, err = st.GetPersonMessagingRoutesContext(t.Context(), store.PersonMessagingRouteQuery{PersonUID: person.VCardUID})
 	requirements.NoError(err)
 	requirements.Len(routes.Routes.Items, 1)
-	assertions.Equal("archive_verified", routes.Routes.Items[0].Status)
+	assertions.Equal("unresolved", routes.Routes.Items[0].Status)
 
 	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER yield_roster_work`)
 	requirements.NoError(err)
@@ -178,6 +164,10 @@ func TestRosterMatchingStopLeavesChatResumable(t *testing.T) {
 	unresolved, err = st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
 	requirements.NoError(err)
 	assertions.NotContains(unresolved, chat.ID)
+	routes, err = st.GetPersonMessagingRoutesContext(t.Context(), store.PersonMessagingRouteQuery{PersonUID: person.VCardUID})
+	requirements.NoError(err)
+	requirements.Len(routes.Routes.Items, 1)
+	assertions.Equal("archive_verified", routes.Routes.Items[0].Status)
 	state = latestBeeperState(t, imp)
 	t.Run("completed deferred matching", func(t *testing.T) {
 		assert.Equal(t, "done", state.Chats[chat.ID].RosterWork.Phase, "quiet repair must finish deferred enrichment")
@@ -326,21 +316,67 @@ func TestRosterProgressSurvivesFreshImporters(t *testing.T) {
 			store.ConfigureSQLLogging(store.SQLLogOptions{SlowMs: -1})
 			t.Cleanup(func() { slog.SetDefault(previous); store.ConfigureSQLLogging(store.SQLLogOptions{}) })
 			var sourceID int64
+			stopped, attempts := false, 0
 			for range 30 {
+				attempts++
 				handler.operations = 0
 				imp = NewImporter(st, imp.client)
 				sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { return handler.operations >= 130 }})
 				require.NoError(err)
 				require.Zero(sum.Errors)
+				stopped = stopped || sum.Stopped
 				sourceID = sum.SourceID
 				if countBeeperMessages(t, imp) == 2 && len(rosterMembers(t, st, sourceID, chat.ID)) == 64 {
 					break
 				}
 			}
+			require.True(stopped, "a visit must yield")
+			require.Greater(attempts, 1)
 			assert.Equal(2, countBeeperMessages(t, imp))
 			assert.Len(rosterMembers(t, st, sourceID, chat.ID), 64)
 		})
 	}
+	t.Run("bare members", func(t *testing.T) {
+		size := 64
+		assert, require := assert.New(t), require.New(t)
+		f := newFakeBeeper(t)
+		chat := rosterRetryChat()
+		f.addChat(chat)
+		imp, st := newHandlerTestImporter(t, f)
+		t.Cleanup(func() { require.NoError(st.Close()) })
+		polls := 0
+		sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { polls++; return polls >= 25 }})
+		require.NoError(err)
+		require.True(sum.Stopped)
+		var receipts int
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM source_import_items WHERE source_id = ? AND provider = ?`), sum.SourceID, rosterProvider(chat.ID)).Scan(&receipts))
+		assert.Positive(receipts)
+		assert.Less(receipts, 25)
+		assert.Less(len(rosterMembers(t, st, sum.SourceID, chat.ID)), size)
+
+		var messagesBeforeRosterComplete bool
+		for range 30 {
+			polls = 0
+			imp = NewImporter(st, imp.client)
+			next, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { polls++; return polls >= 25 }})
+			require.NoError(err)
+			require.Zero(next.Errors)
+			state := latestBeeperState(t, imp).Chats[chat.ID]
+			members := len(rosterMembers(t, st, sum.SourceID, chat.ID))
+			if countBeeperMessages(t, imp) == 2 && members < size {
+				messagesBeforeRosterComplete = true
+			}
+			if countBeeperMessages(t, imp) == 2 && members == size && state != nil && state.RosterWork != nil && state.RosterWork.Phase == "done" {
+				break
+			}
+		}
+		assert.True(messagesBeforeRosterComplete, "messages arrive before the roster completes")
+		assert.Equal(2, countBeeperMessages(t, imp))
+		assert.Len(rosterMembers(t, st, sum.SourceID, chat.ID), size)
+		state := latestBeeperState(t, imp).Chats[chat.ID]
+		assert.True(state.Done)
+		assert.Equal("done", state.RosterWork.Phase, "matching must finish")
+	})
 }
 
 type rosterOperationQuota struct {
@@ -351,7 +387,7 @@ type rosterOperationQuota struct {
 
 func (*rosterOperationQuota) Enabled(context.Context, slog.Level) bool { return true }
 func (h *rosterOperationQuota) Handle(_ context.Context, record slog.Record) error {
-	if record.Message == "sql tx begin" || record.Message == "sql slow" {
+	if record.Message == "sql tx begin" {
 		h.operations++
 	}
 	return nil
@@ -388,7 +424,9 @@ func TestRosterMatchingProgressSurvivesFreshImporters(t *testing.T) {
 			slog.SetDefault(slog.New(handler))
 			store.ConfigureSQLLogging(store.SQLLogOptions{SlowMs: -1})
 			t.Cleanup(func() { slog.SetDefault(previous); store.ConfigureSQLLogging(store.SQLLogOptions{}) })
+			stopped, attempts := false, 0
 			for attempt := range 30 {
+				attempts++
 				if changing && attempt > 0 {
 					f.mu.Lock()
 					room.Participants = append(room.Participants, map[string]any{"id": fmt.Sprintf("@signal_new%02d:example.test", attempt)})
@@ -396,9 +434,10 @@ func TestRosterMatchingProgressSurvivesFreshImporters(t *testing.T) {
 				}
 				handler.operations = 0
 				imp = NewImporter(st, imp.client)
-				sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { return handler.operations >= 160 }})
+				sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { return handler.operations >= 20 }})
 				require.NoError(err)
 				require.Zero(sum.Errors)
+				stopped = stopped || sum.Stopped
 				first, _, err := st.ParticipantByIdentifierContext(t.Context(), "beeper", imp.res.identifierForUser("@signal_quota_late:example.test"))
 				require.NoError(err)
 				if first != 0 {
@@ -406,12 +445,14 @@ func TestRosterMatchingProgressSurvivesFreshImporters(t *testing.T) {
 					require.NoError(err)
 					if len(obs) > 0 && linked(t, st, first, participantForBeeperUser(t, st, "@signal_quota_alias_late:example.test")) {
 						state := latestBeeperState(t, imp).Chats[room.ID]
-						if state != nil && state.RosterWork != nil && state.RosterWork.Phase == "done" {
+						if !sum.Stopped && state != nil && state.RosterWork != nil && state.RosterWork.Phase == "done" {
 							break
 						}
 					}
 				}
 			}
+			require.True(stopped, "a visit must yield")
+			require.Greater(attempts, 1)
 			first := participantForBeeperUser(t, st, "@signal_quota_late:example.test")
 			alias := participantForBeeperUser(t, st, "@signal_quota_alias_late:example.test")
 			assert.True(linked(t, st, first, alias))

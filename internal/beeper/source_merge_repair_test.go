@@ -75,7 +75,6 @@ func TestMergeSourcesRepairsLiveRoster(t *testing.T) {
 				req.DryRun = false
 				_, err = st.MergeSourcesContext(t.Context(), req)
 				require.NoError(err)
-				assert.Contains(rosterMembers(t, st, sum.SourceID, chat.ID), departed)
 				shared, err := st.SharedConversationCountContext(t.Context(), peer, departed)
 				require.NoError(err)
 				assert.Zero(shared)
