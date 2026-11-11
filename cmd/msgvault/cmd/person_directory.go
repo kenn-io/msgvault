@@ -74,7 +74,7 @@ Filters combine to narrow the existing Directory page.`,
 			return writePersonDirectoryPage(cmd, response.JSON200, jsonOutput)
 		},
 	}
-	command.Flags().Int64Var(&limit, "limit", 50, "Maximum rows per page (daemon default 50, maximum 100)")
+	command.Flags().Int64Var(&limit, "limit", 50, "Rows per page, maximum 100")
 	command.Flags().Int64Var(&organizationID, "organization-id", 0, "Exact canonical organization ID; current employment only")
 	command.Flags().StringVar(&organization, "organization", "", "Current canonical organization name")
 	command.Flags().StringVar(&category, "category", "", "Current person category")
