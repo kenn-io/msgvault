@@ -233,15 +233,18 @@ func TestRosterResumeResolvesRicherIdentityAndName(t *testing.T) {
 	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
 	require.NoError(err)
 	state := latestBeeperState(t, imp).Chats[chat.ID]
-	for _, update := range []map[string]string{
-		{"fullName": "Updated Name"},
-		{"email": "updated@example.test"},
-		{"phoneNumber": "+12025550123"},
+	saved := func() (name, email string) {
+		id := participantForBeeperUser(t, st, "@signal_ann:beeper.local")
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COALESCE(display_name, ''), COALESCE(email_address, '') FROM participants WHERE id = ?`), id).Scan(&name, &email))
+		return name, email
+	}
+	for _, update := range []struct{ key, value string }{
+		{"fullName", "Updated Name"},
+		{"email", "updated@example.test"},
+		{"phoneNumber", "+12025550123"},
 	} {
 		f.mu.Lock()
-		for key, value := range update {
-			chat.Participants[1][key] = value
-		}
+		chat.Participants[1][update.key] = update.value
 		f.mu.Unlock()
 		detail, err := imp.client.GetChat(t.Context(), chat.ID)
 		require.NoError(err)
@@ -249,6 +252,14 @@ func TestRosterResumeResolvesRicherIdentityAndName(t *testing.T) {
 		_, complete, _, _, err := imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal"}, &ImportSummary{}, state)
 		require.NoError(err)
 		require.True(complete)
+		name, email := saved()
+		switch update.key {
+		case "fullName":
+			assert.Equal("Updated Name", name, "the name refresh is saved before any richer identity arrives")
+		case "email":
+			assert.Equal("updated@example.test", email, "the email refresh rebinds the user to its email participant")
+			assert.Equal("Updated Name", name)
+		}
 	}
 	id := participantForBeeperUser(t, st, "@signal_ann:beeper.local")
 	var name, phone string
@@ -496,4 +507,64 @@ func TestQuietMatchingRepairInvalidatesGoneRoute(t *testing.T) {
 	require.NoError(err)
 	require.Len(after.Routes.Items, 1)
 	assert.Equal("unresolved", after.Routes.Items[0].Status)
+}
+
+func slackRosterChat(id, account, userID string, activity time.Time, member map[string]any) *fakeChat {
+	member["id"] = userID
+	chat := budgetTestChat(id, 1, activity)
+	chat.AccountID, chat.Network, chat.Type = account, "Slack", "group"
+	chat.Participants = []map[string]any{{"id": "@me:beeper.local", "fullName": "Test User", "isSelf": true}, member}
+	chat.Msgs[0].SenderID = userID
+	return chat
+}
+
+// A shared email that reaches one side of an existing suggestion through a
+// separate chat must still explain the suggestion after matching completed.
+func TestLateSharedEmailExplainsExistingSuggestion(t *testing.T) {
+	t.Parallel()
+	assert, require := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	base := time.Now().Add(-48 * time.Hour)
+	first := slackRosterChat("!sam-first:example.test", "slack", "@slack_sam:beeper.local", base, map[string]any{
+		"fullName": "Sam Example", "username": "sam", "phoneNumber": "+12025550141",
+	})
+	f.addChat(first)
+	f.addChat(slackRosterChat("!sam-second:example.test", "slack2", "@slack2_sam:beeper.local", base, map[string]any{
+		"fullName": "Sam Example", "username": "sam",
+		"phoneNumber": "+12025550142", "email": "sam@example.test",
+	}))
+	imp, st := newHandlerTestImporter(t, f)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	for _, account := range []string{"slack", "slack2"} {
+		_, err := imp.Import(t.Context(), ImportOptions{AccountID: account, NoMedia: true})
+		require.NoError(err)
+	}
+	candidates, err := st.ListIdentityMatchCandidatesContext(t.Context(), nil, 10, 0)
+	require.NoError(err)
+	require.Len(candidates, 1)
+	require.Equal(store.IdentityMatchServiceScopeUsername, candidates[0].Basis)
+	sharedEmail := func() bool {
+		candidate, err := st.GetIdentityMatchCandidateContext(t.Context(), candidates[0].ID)
+		require.NoError(err)
+		for _, evidence := range candidate.Evidence {
+			if evidence.EvidenceKind == evidenceEmail && evidence.Detail != nil && *evidence.Detail == "sam@example.test" {
+				return true
+			}
+		}
+		return false
+	}
+	require.False(sharedEmail(), "the first account has not reported the email yet")
+
+	// The email arrives in a separate chat without a username, while the
+	// username chat is revisited with unchanged membership.
+	f.addChat(slackRosterChat("!sam-email:example.test", "slack", "@slack_sam:beeper.local", time.Now(), map[string]any{
+		"fullName":    "Sam Example",
+		"phoneNumber": "+12025550141", "email": "sam@example.test",
+	}))
+	f.appendMsg(first.ID, fakeMsg{
+		ID: first.ID + "-new", SortKey: 1, Timestamp: time.Now(), Text: "new", SenderID: "@slack_sam:beeper.local",
+	})
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "slack", NoMedia: true})
+	require.NoError(err)
+	assert.True(sharedEmail(), "the newly shared email must explain the existing suggestion")
 }
