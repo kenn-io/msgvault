@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -570,6 +571,35 @@ func TestInstagramPartialReplayPreservesDistinctMetadata(t *testing.T) {
 	}
 }
 
+func TestInstagramEqualCopiesWithChangedMetadata(t *testing.T) {
+	for _, distinct := range []bool{false, true} {
+		t.Run(fmt.Sprintf("distinct old metadata %t", distinct), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st, root := testutil.NewTestStore(t), t.TempDir()
+			a, b := instagramTestRecord("same"), instagramTestRecord("same")
+			if distinct {
+				a["extra_field"], b["extra_field"] = "old a", "old b"
+			}
+			instagramTestShard(t, root, "circle", "message_1.json", a, b)
+			opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
+			_, err := ImportDYI(t.Context(), st, opts)
+			require.NoError(err)
+			before, _ := instagramSnapshot(t, st)
+			a["extra_field"], b["extra_field"] = "new a", "new b"
+			instagramTestShard(t, root, "circle", "message_1.json", b, a)
+			for range 2 {
+				summary, err := ImportDYI(t.Context(), st, opts)
+				require.NoError(err)
+				assert.True(summary.Incomplete)
+				assert.Zero(summary.MessagesAdded)
+				after, _ := instagramSnapshot(t, st)
+				assert.Equal(before, after)
+			}
+		})
+	}
+}
+
 func TestInstagramReplayAddsSurplusWithChangedMetadata(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -682,9 +712,20 @@ func TestInstagramLaterTitleIndexesMessagesWithoutSubjects(t *testing.T) {
 	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
 	_, err := ImportDYI(t.Context(), st, opts)
 	require.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET embed_gen = 7`)
+	require.NoError(err)
 	require.NoError(os.WriteFile(filename, []byte(`{"thread_path":"inbox/circle","title":"Updated circle","participants":[{"name":"Nova Example"},{"name":"Mira Example"}],"messages":[{"sender_name":"Mira Example","timestamp_ms":1730500000123,"content":"first"}]}`), 0600))
 	_, err = ImportDYI(t.Context(), st, opts)
 	require.NoError(err)
+	var stale int
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE embed_gen IS NULL`).Scan(&stale))
+	assert.Equal(2, stale)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET embed_gen = 7`)
+	require.NoError(err)
+	_, err = ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE embed_gen = 7`).Scan(&stale))
+	assert.Equal(2, stale)
 	_, err = st.RebuildFTS(nil)
 	require.NoError(err)
 	_, total, err := st.SearchMessagesQueryContext(t.Context(), &search.Query{TextTerms: []string{"Updated"}}, 0, 10)

@@ -297,10 +297,8 @@ func reconcileInstagramExtraSurplus(remaining map[instagramContent][]*instagramP
 	}
 }
 
-// Unmatched copies reuse the rows of one earlier content when only unknown
-// fields changed and every copy and row is interchangeable: one content on each
-// side, no more copies than rows, and rows with the same reactions. Rows with
-// distinct reactions or unknown fields can't be told apart, so they are kept.
+// Unmatched copies reuse interchangeable rows when only unknown fields changed.
+// Otherwise preserve the old rows and reconcile any provable surplus.
 func matchInstagramExtraChanges(remaining map[instagramContent][]*instagramPending, unused map[instagramContent][]string, used map[string]bool, archived map[string]store.StoredMessage, summary *ImportSummary, repairs *[]string) {
 	loose := func(c instagramContent) instagramContent { c.extra = ""; return c }
 	items, rows, kinds := map[instagramContent][]*instagramPending{}, map[instagramContent][]string{}, map[instagramContent]int{}
@@ -319,6 +317,8 @@ func matchInstagramExtraChanges(remaining map[instagramContent][]*instagramPendi
 	for key, list := range items {
 		if kinds[key] == 1 && len(list) <= len(rows[key]) {
 			reuseInstagramRows(list, rows[key], used, summary, repairs, archived)
+		} else if len(rows[key]) > 0 {
+			reconcileInstagramCopies(map[instagramContent][]*instagramPending{key: list}, map[instagramContent][]string{key: rows[key]}, used, summary, repairs, archived)
 		}
 	}
 }

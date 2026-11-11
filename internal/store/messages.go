@@ -4030,7 +4030,7 @@ func (s *Store) RetitleArchivedConversationContext(ctx context.Context, sourceID
 			return err
 		}
 		// The search entry, including one rebuilt by RebuildFTS, derives from messages.subject.
-		if _, err := tx.ExecContext(ctx, `UPDATE messages SET subject = NULLIF(?, '') WHERE conversation_id = ?
+		if _, err := tx.ExecContext(ctx, `UPDATE messages SET subject = NULLIF(?, ''), embed_gen = NULL WHERE conversation_id = ?
 			AND id IN (SELECT message_id FROM message_raw WHERE raw_format = ?) AND COALESCE(subject, '') <> ?`, title, id, rawFormat, title); err != nil {
 			return fmt.Errorf("store message subjects: %w", err)
 		}
