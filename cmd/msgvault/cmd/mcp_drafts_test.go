@@ -79,16 +79,19 @@ func mcpDraftTestSession(ctx context.Context, t *testing.T) *sdkmcp.ClientSessio
 	cmd := &cobra.Command{Use: "mcp"}
 	cmd.SetContext(ctx)
 	done := make(chan error, 1)
-	go func() { done <- mcpCmd.RunE(cmd, nil) }()
+	go func() {
+		runErr := mcpCmd.RunE(cmd, nil)
+		// Unblock client initialization if startup exits before serving.
+		conn, err := serverTransport.Connect(ctx)
+		if err == nil {
+			_ = conn.Close()
+		}
+		done <- runErr
+	}()
 	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "draft-routing-test", Version: "1"}, &sdkmcp.ClientOptions{MultiRoundTrip: &sdkmcp.MultiRoundTripOptions{Disabled: true}})
 	session, err := client.Connect(ctx, clientTransport, nil)
 	if err != nil {
 		cancel()
-		select {
-		case runErr := <-done:
-			t.Logf("MCP startup: %v", runErr)
-		case <-time.After(time.Second):
-		}
 	}
 	t.Cleanup(func() {
 		if session != nil {
@@ -96,7 +99,10 @@ func mcpDraftTestSession(ctx context.Context, t *testing.T) *sdkmcp.ClientSessio
 		}
 		cancel()
 		select {
-		case <-done:
+		case runErr := <-done:
+			if runErr != nil {
+				t.Logf("MCP startup: %v", runErr)
+			}
 		case <-time.After(5 * time.Second):
 			require.Fail("MCP server did not stop after cancellation")
 		}
@@ -353,6 +359,7 @@ func runMCPCapabilityGate(t *testing.T, delegated bool) {
 							_, _ = w.Write([]byte(`{"error":"unavailable","message":"probe unavailable"}`))
 							return
 						}
+						acknowledgeMCPVerification(w, r)
 						body := map[string]any{"status": "ok"}
 						if version != "missing" {
 							body["api_schema_version"] = version
@@ -370,8 +377,7 @@ func runMCPCapabilityGate(t *testing.T, delegated bool) {
 				ctx = withStoreResolverConfig(t, &config.Config{HomeDir: t.TempDir(), Remote: config.RemoteConfig{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true}})
 			}
 			probing.Store(true)
-			if delegated {
-				// Delegated tool selection needs the grant source inventory.
+			if delegated || version == "failed" {
 				served := false
 				previousServe := serveMCPStdioWithOptions
 				serveMCPStdioWithOptions = func(context.Context, mcpserver.ServeOptions) error { served = true; return nil }
@@ -379,7 +385,10 @@ func runMCPCapabilityGate(t *testing.T, delegated bool) {
 				cmd := &cobra.Command{Use: "mcp"}
 				cmd.SetContext(ctx)
 				err := mcpCmd.RunE(cmd, nil)
-				if version == "failed" {
+				if !delegated {
+					require.ErrorContains(err, "verify daemon withholding support")
+					require.ErrorContains(err, "probe unavailable")
+				} else if version == "failed" {
 					require.ErrorContains(err, "check daemon compatibility")
 					require.ErrorContains(err, "probe unavailable")
 				} else {
@@ -387,7 +396,7 @@ func runMCPCapabilityGate(t *testing.T, delegated bool) {
 					require.ErrorContains(err, "upgrade the daemon")
 				}
 				assert.False(served)
-				assert.Equal(int64(2), healthCalls.Load(), "startup compatibility and delegated source inventory probes")
+				assert.Equal(int64(2), healthCalls.Load(), "startup compatibility and capability probes")
 				return
 			}
 			session := mcpDraftTestSession(ctx, t)
