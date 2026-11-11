@@ -909,9 +909,10 @@ If its result says the operation may have completed, read the record again
 before retrying.
 
 Owner merge recovery reads include merge history, detail with a row count, and
-verified snapshot lineage. Detail reads accept up to 16 MiB from the daemon;
-the other recovery reads accept up to 1 MiB. Candidate approval identifies
-attribute values by ID, so inspect the person's attributes before deciding.
+verified snapshot lineage. Detail and snapshot reads accept up to 16 MiB from
+the daemon; the other recovery reads accept up to 1 MiB. Candidate approval
+identifies attribute values by ID, so inspect the person's attributes before
+deciding.
 
 Enable only the writes intended for the assistant's session:
 

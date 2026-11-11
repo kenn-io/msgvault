@@ -60,6 +60,14 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 	snapshot := operationOutput[mcpserver.MergeSnapshot](t, result)
 	assert.Equal(t, merged.Merge.SnapshotSHA256, snapshot.SHA256)
 	assert.Positive(t, snapshot.RowCount)
+	require.Len(t, snapshot.Persons, 2)
+	assert.ElementsMatch(t, []int64{survivor.ID, absorbed.ID}, []int64{snapshot.Persons[0].ID, snapshot.Persons[1].ID})
+	for _, person := range snapshot.Persons {
+		assert.Positive(t, person.Revision)
+		if person.ID == absorbed.ID {
+			assert.Contains(t, person.ParticipantIDs, b)
+		}
+	}
 	projected, err := json.Marshal(result.Output)
 	require.NoError(t, err)
 	assert.NotContains(t, string(projected), "columns")
@@ -109,6 +117,10 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 	require.NoError(t, json.Unmarshal(encoded, &receipt))
 	assert.Equal(t, "rejected", receipt.Candidate.State)
 	assert.NotEmpty(t, receipt.ETag)
+	opposite := map[string]any{"person_id": survivor.ID, "candidate_id": merged.ReviewCandidates[0].ID, "merge_id": merged.Merge.ID, "decision": "accept", "etag": receipt.ETag}
+	_, err = backend.OperationDisclosure(ctx, "decide_person_merge_candidate", opposite)
+	require.ErrorAs(t, err, &refusal)
+	assert.Equal(t, "person_merge_candidate_state_changed", refusal.Code)
 	result, err = backend.ExecuteOperation(ctx, "split_person_merge", map[string]any{"person_id": survivor.ID, "merge_id": merged.Merge.ID, "participant_ids": []int64{b}, "etag": etag, "idempotency_key": "synthetic-split"})
 	require.NoError(t, err)
 	assert.True(t, result.IsError)

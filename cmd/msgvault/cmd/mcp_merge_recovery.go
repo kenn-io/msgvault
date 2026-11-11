@@ -117,21 +117,22 @@ func (b *daemonMCPOperations) executeMergeRecovery(ctx context.Context, name str
 		if e != nil || a.MergeID <= 0 {
 			return invalid()
 		}
-		result, err = readMCPOperationJSONWithClassifier[generated.PersonMergeSnapshotResponse](ctx, b.client, http.MethodGet, "/api/v1/person-merges/{merge_id}/snapshot", &generated.GetPersonMergeSnapshotRequestOptions{PathParams: &generated.GetPersonMergeSnapshotPath{MergeID: a.MergeID}}, mergeRefusal, http.StatusOK)
-		if result != nil && !result.IsError {
-			raw, ok := result.Output.(generated.PersonMergeSnapshotResponse)
-			if !ok {
-				return operationFailure("invalid_operation_response", false), true, nil
-			}
-			var snapshot struct {
-				Persons []mcpserver.MergeSnapshotPerson `json:"persons"`
-				Rows    []struct{}                      `json:"rows"`
-			}
-			if raw.Version != 1 || json.Unmarshal(raw.Snapshot, &snapshot) != nil || len(snapshot.Persons) > 2 {
-				return operationFailure("invalid_operation_response", false), true, nil
-			}
-			result.Output = mcpserver.MergeSnapshot{Version: raw.Version, SHA256: raw.Sha256, Persons: snapshot.Persons, RowCount: len(snapshot.Rows)}
+		data, _, failure, readErr := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/person-merges/{merge_id}/snapshot", &generated.GetPersonMergeSnapshotRequestOptions{PathParams: &generated.GetPersonMergeSnapshotPath{MergeID: a.MergeID}}, 16<<20, mergeRefusal, http.StatusOK)
+		if failure != nil {
+			return failure, true, readErr
 		}
+		var raw generated.PersonMergeSnapshotResponse
+		if e := json.Unmarshal(data, &raw); e != nil {
+			return operationFailure("invalid_operation_response", false), true, e
+		}
+		var snapshot struct {
+			Persons []mcpserver.MergeSnapshotPerson `json:"persons"`
+			Rows    []struct{}                      `json:"rows"`
+		}
+		if raw.Version != 1 || json.Unmarshal(raw.Snapshot, &snapshot) != nil || len(snapshot.Persons) > 2 {
+			return operationFailure("invalid_operation_response", false), true, nil
+		}
+		result = &mcpserver.OperationResult{Output: mcpserver.MergeSnapshot{Version: raw.Version, SHA256: raw.Sha256, Persons: snapshot.Persons, RowCount: len(snapshot.Rows)}}
 	case "decide_person_merge_candidate":
 		a, e := decodeMCPOperationArguments[mergeDecisionArgs](args)
 		if e != nil {
@@ -150,7 +151,7 @@ func (b *daemonMCPOperations) executeMergeRecovery(ctx context.Context, name str
 		if e != nil {
 			return invalid()
 		}
-		result, err = readMCPOperationJSONWithClassifier[generated.PersonSplitResult](ctx, b.client, http.MethodPost, "/api/v1/people/{id}/split", &generated.SplitPersonMergeRequestOptions{PathParams: &generated.SplitPersonMergePath{ID: a.PersonID}, Header: &generated.SplitPersonMergeHeaders{IfMatch: a.ETag, IdempotencyKey: a.Key}, Body: &generated.SplitPersonMergeBody{MergeID: a.MergeID, ParticipantIds: a.ParticipantIDs}}, mergeRefusal, http.StatusOK)
+		result, err = readMCPOperationJSONWithClassifier[generated.PersonSplitResult](ctx, b.client, http.MethodPost, "/api/v1/people/{id}/split", &generated.SplitPersonMergeRequestOptions{PathParams: &generated.SplitPersonMergePath{ID: a.PersonID}, Header: &generated.SplitPersonMergeHeaders{IfMatch: a.ETag, IdempotencyKey: strings.TrimSpace(a.Key)}, Body: &generated.SplitPersonMergeBody{MergeID: a.MergeID, ParticipantIds: a.ParticipantIDs}}, mergeRefusal, http.StatusOK)
 	default:
 		return nil, false, nil
 	}
@@ -218,7 +219,9 @@ func (b *daemonMCPOperations) mergeRecoveryDisclosure(ctx context.Context, name 
 		}
 		if candidate.State == wanted {
 			effect += " This decision has already been recorded; the daemon will replay it."
-		} else if candidate.State == "pending" && current.ETag != etag {
+		} else if candidate.State != "pending" {
+			return "", true, &mcpserver.OperationRefusalError{Code: "person_merge_candidate_state_changed"}
+		} else if current.ETag != etag {
 			return "", true, &mcpserver.OperationRefusalError{Code: "person_merge_revision_conflict"}
 		}
 	} else {
