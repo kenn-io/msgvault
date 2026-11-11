@@ -295,12 +295,15 @@ func (s *Store) applyPersonSweepWithAligner(
 	if err != nil {
 		return peoplesweep.ApplyResult{}, err
 	}
-	commitment, err := s.prepareCommitmentSweep(ctx, request)
-	if errors.Is(err, errCommitmentWindowChanged) {
-		request.CommitmentFailureClass = peoplesweep.FailureArchiveGap
-		request.CommitmentRetryAt = request.CompletedAt.Add(time.Minute)
-	} else if err != nil {
-		return peoplesweep.ApplyResult{}, err
+	var commitment *preparedCommitmentSweep
+	if request.Commitment != nil {
+		commitment, err = s.prepareCommitmentSweep(ctx, request)
+		if errors.Is(err, errCommitmentWindowChanged) {
+			request.CommitmentFailureClass = peoplesweep.FailureArchiveGap
+			request.CommitmentRetryAt = request.CompletedAt.Add(time.Minute)
+		} else if err != nil {
+			return peoplesweep.ApplyResult{}, err
+		}
 	}
 
 	var result peoplesweep.ApplyResult

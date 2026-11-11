@@ -608,7 +608,7 @@ func validatePersonSweepCallPredecessorTx(
 	if err != nil {
 		return err
 	}
-	if !found || (previous.purpose != peoplesweep.ProviderCallPurposePrimary && !(input.Purpose == peoplesweep.ProviderCallPurposeCommitment && previous.purpose == peoplesweep.ProviderCallPurposeBrief)) {
+	if !found || (previous.purpose != peoplesweep.ProviderCallPurposePrimary && (input.Purpose != peoplesweep.ProviderCallPurposeCommitment || previous.purpose != peoplesweep.ProviderCallPurposeBrief)) {
 		return errors.New("reserve person sweep budget: primary batch ordinal has a gap")
 	}
 	return nil

@@ -573,7 +573,7 @@ func (r *Runner) requireProgramConsent(ctx context.Context, fingerprint, program
 		return r.requireVerifiedAndConsented(ctx, fingerprint)
 	}
 	authority, ok := r.authority.(interface {
-		HasActivePersonCommitmentConsent(context.Context, string) (bool, error)
+		HasActivePersonCommitmentConsent(ctx context.Context, fingerprint string) (bool, error)
 	})
 	if !ok {
 		return ErrPersonSweepConsentRevoked

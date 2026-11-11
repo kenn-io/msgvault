@@ -4451,7 +4451,7 @@ CREATE INDEX IF NOT EXISTS idx_meeting_copy_survivors_survivor ON meeting_copy_s
 -- Separately consented promise lifecycle. Owner state outlives an invalidated
 -- current claim (including absorbed person history during a person merge).
 CREATE TABLE IF NOT EXISTS person_commitments (
- id INTEGER PRIMARY KEY,
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
  person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
  current_claim_id INTEGER REFERENCES person_fact_claims(id) ON DELETE SET NULL,
  target_key TEXT NOT NULL,
