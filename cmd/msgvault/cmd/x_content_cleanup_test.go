@@ -1199,15 +1199,31 @@ func TestPostgresXContentLeaseCrossStoreAndDetachedSave(t *testing.T) {
 	leaseCtx, release, err := reader.AcquireEmbeddingRead(readCtx)
 	needs.NoError(err)
 	defer func() { _ = release() }()
+	sourceLocked := func() bool {
+		var locked bool
+		err := f.st.DB().QueryRowContext(t.Context(), `SELECT EXISTS (
+ SELECT 1 FROM pg_locks WHERE locktype='advisory' AND granted AND mode='ExclusiveLock'
+ AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND objsubid=1
+ AND classid=((hashtextextended(current_schema() || ':msgvault-sync:' || CAST(CAST($1 AS BIGINT) AS TEXT),0) >> 32) & 4294967295)::oid
+ AND objid=(hashtextextended(current_schema() || ':msgvault-sync:' || CAST(CAST($1 AS BIGINT) AS TEXT),0) & 4294967295)::oid
+)`, f.source).Scan(&locked)
+		return err == nil && locked
+	}
 	owner := fmt.Sprintf("message:%d", f.message)
 	entries := []vector.EmbeddingCheckpoint{{Owner: owner, Revision: "r", Key: "k", Vectors: [][]float32{{1, 2, 3}}}, {Owner: "context:" + owner, Revision: "r", Key: "k", Vectors: [][]float32{{1, 2, 3}}}}
 	// A cancelled caller's completed provider response still saves under the lease.
 	cancel()
 	needs.NoError(f.backend.EmbeddingCheckpoints().Save(leaseCtx, f.generations[1], entries))
-	ctx, stop := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	ctx, stop := context.WithCancel(t.Context())
 	defer stop()
-	_, err = remover.RemovePost(ctx, f.source, "100", "removed")
-	needs.ErrorIs(err, context.DeadlineExceeded)
+	firstResult := make(chan error, 1)
+	go func() {
+		_, err := remover.RemovePost(ctx, f.source, "100", "removed")
+		firstResult <- err
+	}()
+	needs.Eventually(sourceLocked, 10*time.Second, 20*time.Millisecond)
+	stop()
+	needs.ErrorIs(<-firstResult, context.Canceled)
 	var suppressed bool
 	needs.NoError(peer.DB().QueryRowContext(t.Context(), `SELECT suppressed_at IS NOT NULL FROM x_post_versions WHERE source_id=$1 AND post_id='102'`, f.source).Scan(&suppressed))
 	checks.False(suppressed)
@@ -1225,16 +1241,10 @@ func TestPostgresXContentLeaseCrossStoreAndDetachedSave(t *testing.T) {
 		work, err := remover.RemovePost(t.Context(), f.source, "100", "removed")
 		result <- removalResult{work, err}
 	}()
-	needs.Eventually(func() bool {
-		execution, err := f.st.AcquireSyncExecutionContext(t.Context(), f.source)
-		if err == nil {
-			_ = execution.Release()
-			return false
-		}
-		return errors.Is(err, store.ErrSyncAlreadyActive)
-	}, 10*time.Second, 20*time.Millisecond)
+	needs.Eventually(sourceLocked, 10*time.Second, 20*time.Millisecond)
 	needs.NoError(f.backend.EmbeddingCheckpoints().Save(leaseCtx, f.generations[1], entries))
-	publisher := f.backend.(vector.DocumentPublisher)
+	publisher, ok := f.backend.(vector.DocumentPublisher)
+	needs.True(ok)
 	needs.NoError(publisher.PublishScopes(context.WithoutCancel(leaseCtx), f.generations[1], []vector.DocumentScopePublication{{ScopeKey: "unrelated-scope", SourceSequence: 1, FenceOnly: true}}))
 	needs.NoError(release())
 	select {
@@ -1279,7 +1289,8 @@ func TestPostgresXLostContentLeaseRejectsWrites(t *testing.T) {
 	needs.ErrorIs(err, vector.ErrContentLeaseLost)
 	err = f.backend.Upsert(leaseCtx, f.generations[1], []vector.Chunk{{MessageID: f.message, Vector: []float32{1, 2, 3}}})
 	needs.ErrorIs(err, vector.ErrContentLeaseLost)
-	publisher := f.backend.(vector.DocumentPublisher)
+	publisher, ok := f.backend.(vector.DocumentPublisher)
+	needs.True(ok)
 	err = publisher.PublishScopes(leaseCtx, f.generations[1], []vector.DocumentScopePublication{{ScopeKey: owner, SourceSequence: 1}})
 	needs.ErrorIs(err, vector.ErrContentLeaseLost)
 	needs.Error(release())
@@ -1297,10 +1308,21 @@ func TestPostgresXCancelledContentLeaseDoesNotLeak(t *testing.T) {
 	writer, _, err := f.st.AcquireXContentLeaseContext(t.Context(), true)
 	needs.NoError(err)
 	defer func() { _ = writer() }()
-	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	var initialSessions int
+	needs.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND usename=current_user`).Scan(&initialSessions))
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	_, _, err = f.st.AcquireXContentLeaseContext(ctx, false)
-	needs.ErrorIs(err, context.DeadlineExceeded)
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := f.st.AcquireXContentLeaseContext(ctx, false)
+		result <- err
+	}()
+	needs.Eventually(func() bool {
+		var sessions int
+		return f.st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND usename=current_user`).Scan(&sessions) == nil && sessions > initialSessions
+	}, 10*time.Second, 20*time.Millisecond)
+	cancel()
+	needs.ErrorIs(<-result, context.Canceled)
 	needs.NoError(writer())
 	exclusive, _, err := f.st.AcquireXContentLeaseContext(t.Context(), true)
 	needs.NoError(err)

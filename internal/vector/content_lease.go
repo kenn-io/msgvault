@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-var ErrContentLeaseLost = errors.New("X content lease lost")
+var ErrContentLeaseLost = errors.New("x content lease lost")
 
 type contentLeaseKey struct{}
 type contentLeaseIdentity struct {

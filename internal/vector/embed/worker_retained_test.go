@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/jobctx"
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -23,6 +24,25 @@ type upsertFailingBackend struct {
 	vector.Backend
 
 	fail bool
+}
+
+func TestWorkerRecordsContentGuardReleaseFailure(t *testing.T) {
+	needs := require.New(t)
+	checks := assert.New(t)
+	f := newWorkerFixture(t, 0)
+	w := newRetainingWorker(f, f.Backend, 1)
+	sentinel := errors.New("synthetic lease release failure")
+	w.deps.ContentReadGuard = func(ctx context.Context) (context.Context, func() error, error) {
+		return ctx, func() error { return sentinel }, nil
+	}
+	scope := testEmbeddingPassScope()
+	_, err := w.RunOnce(t.Context(), f.BuildingGen, scope)
+	needs.ErrorIs(err, sentinel)
+	invocation, found := f.Recorder.invocation(scope.Key)
+	needs.True(found)
+	needs.NotNil(invocation.run)
+	checks.Equal(operations.StateFailed, invocation.run.State)
+	checks.NotNil(invocation.run.Error)
 }
 
 func (b *upsertFailingBackend) Upsert(ctx context.Context, gen vector.GenerationID, chunks []vector.Chunk) error {

@@ -2811,3 +2811,24 @@ func TestContextWorkerContentGuardCoversProviderResponse(t *testing.T) {
 		fence.Unlock()
 	}
 }
+
+func TestContextWorkerRecordsContentGuardReleaseFailure(t *testing.T) {
+	needs := require.New(t)
+	checks := assert.New(t)
+	sentinel := errors.New("synthetic lease release failure")
+	recorder := newTestOperationRecorder()
+	f := newContextWorkerFixture(t, func(deps *ContextWorkerDeps) {
+		deps.Recorder = recorder
+		deps.ContentReadGuard = func(ctx context.Context) (context.Context, func() error, error) {
+			return ctx, func() error { return sentinel }, nil
+		}
+	})
+	scope := testEmbeddingPassScope()
+	_, err := f.worker.RunOnce(t.Context(), f.gen, scope)
+	needs.ErrorIs(err, sentinel)
+	invocation, found := recorder.invocation(scope.Key)
+	needs.True(found)
+	needs.NotNil(invocation.run)
+	checks.Equal(operations.StateFailed, invocation.run.State)
+	checks.NotNil(invocation.run.Error)
+}

@@ -152,12 +152,18 @@ func (w *ContextWorker) RunBackstop(
 func (w *ContextWorker) runOperationPass(
 	ctx context.Context, gen vector.GenerationID, scope operations.PassScope, backstop bool,
 ) (result RunResult, retErr error) {
+	var releaseGuard func() error
+	defer func() {
+		if releaseGuard != nil {
+			retErr = errors.Join(retErr, releaseGuard())
+		}
+	}()
 	if w.deps.ContentReadGuard != nil {
 		leaseCtx, release, err := w.deps.ContentReadGuard(ctx)
 		if err != nil {
 			return result, err
 		}
-		defer func() { retErr = errors.Join(retErr, release()) }()
+		releaseGuard = release
 		ctx = leaseCtx
 	}
 	pass, terminal, err := beginOperationPass(
@@ -172,6 +178,10 @@ func (w *ContextWorker) runOperationPass(
 	diagnostics := passDiagnostics(ctx, w.deps.Diagnostics, w.deps.Log, gen, w.deps.Backend, pass)
 	ctx = withEmbeddingDiagnostics(ctx, diagnostics)
 	defer func() {
+		if releaseGuard != nil {
+			retErr = errors.Join(retErr, releaseGuard())
+			releaseGuard = nil
+		}
 		retErr = operationRunError(retErr)
 		counters := finalRunCounters(result)
 		// Finish the snapshot while the run is still active, so status never

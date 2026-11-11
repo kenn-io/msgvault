@@ -36,7 +36,7 @@ func (s *Store) retryPendingXContentLeases() error {
 			delete(state.contentPending, lock)
 			state.mu.Unlock()
 		} else if err == nil {
-			err = errors.New("X content lease cleanup incomplete")
+			err = errors.New("x content lease cleanup incomplete")
 		}
 		result = errors.Join(result, err)
 	}
@@ -78,7 +78,7 @@ func (s *Store) AcquireXContentLeaseContext(ctx context.Context, exclusive bool)
 			state.contentPending[lock] = struct{}{}
 			state.mu.Unlock()
 			if err == nil {
-				err = errors.New("X content lease cleanup incomplete")
+				err = errors.New("x content lease cleanup incomplete")
 			}
 			return err
 		}
