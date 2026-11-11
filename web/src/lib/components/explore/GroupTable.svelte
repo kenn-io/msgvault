@@ -343,6 +343,7 @@
           {#each renderedRows as row, offset (row.key)}
             {@const index = slice.start + offset}
             {@const display = groupRowName(dimension, row.key, row.label, dimension === 'source' ? sources : undefined)}
+            <!-- svelte-ignore a11y_click_events_have_key_events: the grid handles keyboard navigation and drilling -->
             <div
               class="group-row"
               class:group-row--active={index === activeIndex}
@@ -352,12 +353,12 @@
               aria-rowindex={index + 2}
               aria-current={inspectedKey === stableKey(row) ? 'true' : undefined}
               tabindex="-1"
-              onpointerdown={(event) => {
+              onpointerdown={() => {
                 activeKey = stableKey(row);
                 onActiveKey?.(activeKey);
                 gridElement?.focus();
-                if (!(event.target as Element).closest('button')) onInspect?.(row);
               }}
+              onclick={(event) => { if (!(event.target as Element).closest('button')) onInspect?.(row); }}
               ondblclick={() => { if (drillable) onDrill(row); }}
             >
               <div role="gridcell" class="group-name" title={display.title}>

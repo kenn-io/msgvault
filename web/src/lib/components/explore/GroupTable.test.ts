@@ -268,15 +268,23 @@ describe('GroupTable', () => {
     expect(onDrill).not.toHaveBeenCalled();
   });
 
-  it('opens aggregate inspection from a focused pointer row without drilling', async () => {
+  it('inspects row clicks once and drills only through the button', async () => {
     const onInspect = vi.fn();
     const onDrill = vi.fn();
     render(GroupTable, { rows, dimension: 'source', onDrill, onInspect });
 
-    await fireEvent.pointerDown(screen.getByRole('row', { name: /Example source/ }));
-
+    const row = screen.getByRole('row', { name: /Example source/ });
+    await fireEvent.click(row);
     expect(onInspect).toHaveBeenCalledWith(rows[0]);
-    expect(onDrill).not.toHaveBeenCalled();
+    expect(onInspect).toHaveBeenCalledTimes(1);
+    await fireEvent.pointerDown(row);
+    await fireEvent.click(row);
+    expect(onInspect).toHaveBeenCalledTimes(2);
+    const button = screen.getByRole('button', { name: 'Show items in Example source' });
+    await fireEvent.pointerDown(button);
+    await fireEvent.click(button);
+    expect(onInspect).toHaveBeenCalledTimes(2);
+    expect(onDrill).toHaveBeenCalledExactlyOnceWith(rows[0]);
   });
 
   it('marks the inspected aggregate independently from keyboard focus', () => {

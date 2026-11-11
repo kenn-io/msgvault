@@ -147,3 +147,16 @@ it('disambiguates source labels using the full inventory', () => {
   expect(groupRowName('source', '10', sources.get('10')!.identifier, sources).name).toBe('person@example.com (mail.example.com:993 · 10)');
   expect(groupRowName('source', '11', sources.get('11')!.identifier, sources).name).toBe('person@example.com (mail.example.com:143)');
 });
+
+it('uses friendly Chatwoot inbox names and distinguishes repeated or missing names', () => {
+  const sources = new Map([
+    ['1', { type: 'chatwoot', identifier: 'https://example.org/inbox/1', displayName: 'Support' }],
+    ['2', { type: 'chatwoot', identifier: 'https://example.org/inbox/2', displayName: 'Sales' }],
+    ['3', { type: 'chatwoot', identifier: 'https://example.org/inbox/3', displayName: 'Support' }],
+    ['4', { type: 'chatwoot', identifier: 'https://example.org/inbox/4', displayName: null }],
+    ['5', { type: 'chatwoot', identifier: 'https://example.org/inbox/5', displayName: '' }],
+  ]);
+  expect([...sources].map(([key, source]) => groupRowName('source', key, source.identifier, sources).name)).toEqual([
+    'Chatwoot (Support · 1)', 'Chatwoot (Sales)', 'Chatwoot (Support · 3)', 'Chatwoot (4)', 'Chatwoot (5)'
+  ]);
+});

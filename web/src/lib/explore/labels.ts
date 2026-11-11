@@ -205,7 +205,7 @@ export function entryKindPresentation(kind: string, messageType = ''): EntryKind
   return kindPresentation('◇', 'Archive item');
 }
 
-export type SourceInventory = ReadonlyMap<string, { type: string; identifier: string }>;
+export type SourceInventory = ReadonlyMap<string, { type: string; identifier: string; displayName?: string | null }>;
 
 export function groupRowName(dimension: ExploreGroupDimension, key: string, label: string, sources?: SourceInventory) {
   if (dimension === 'month' && /^\d{4}-\d{2}$/.test(key)) {
@@ -216,12 +216,13 @@ export function groupRowName(dimension: ExploreGroupDimension, key: string, labe
     const source = sources?.get(key);
     const base = sourceDisplayName(source?.type, source?.identifier ?? label);
     const collisions = [...(sources ?? [])].filter(([, item]) => sourceDisplayName(item.type, item.identifier) === base);
-    const displaySuffix = (item: { type: string; identifier: string }) =>
+    const displaySuffix = (item: { type: string; identifier: string; displayName?: string | null }) =>
+      item.displayName?.trim() || (item.type === 'chatwoot' ? '' :
       item.type === 'imap' && item.identifier.includes('://') && item.identifier.lastIndexOf('@') > item.identifier.indexOf('://') + 3
-        ? item.identifier.slice(item.identifier.lastIndexOf('@') + 1) : item.identifier;
+        ? item.identifier.slice(item.identifier.lastIndexOf('@') + 1) : item.identifier);
     const suffixValue = source && displaySuffix(source);
     const sameSuffix = collisions.filter(([, item]) => displaySuffix(item) === suffixValue).length > 1;
-    const suffix = source?.identifier === base ? key : `${suffixValue}${sameSuffix ? ` · ${key}` : ''}`;
+    const suffix = !suffixValue || suffixValue === base ? key : `${suffixValue}${sameSuffix ? ` · ${key}` : ''}`;
     const name = source && collisions.length > 1 ? `${base} (${suffix})` : base;
     return { name, icon: source?.type ? sourceIcon(source.type) : undefined, title: label };
   }
