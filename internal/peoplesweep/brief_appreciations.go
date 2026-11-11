@@ -129,7 +129,7 @@ func retainedAppreciations(ctx context.Context, archive BriefArchive, request Br
 		return nil, nil, nil
 	}
 	if !ValidBriefAppreciationMemory(request.Previous.AppreciationMemory) {
-		return nil, nil, errors.New("person brief appreciation memory exceeds three items")
+		return nil, nil, errors.New("person brief appreciation memory exceeds supported state bounds")
 	}
 	keys := make([]string, 0, len(request.Previous.AppreciationMemory))
 	for _, memory := range request.Previous.AppreciationMemory {
@@ -137,14 +137,14 @@ func retainedAppreciations(ctx context.Context, archive BriefArchive, request Br
 			keys = append(keys, memory.Suggestion.Key)
 		}
 	}
-	dismissed, err := archive.PersonSweepAppreciationRetired(ctx, request.PersonID, keys, request.Profile)
+	retired, err := archive.PersonSweepAppreciationRetired(ctx, request.PersonID, keys, request.Profile)
 	if err != nil {
-		return nil, nil, fmt.Errorf("read retained appreciation dismissals: %w", err)
+		return nil, nil, fmt.Errorf("read retained appreciation retirement: %w", err)
 	}
 	var retained []EvidenceItem
 	var suggestions []BriefThanksSuggestion
 	for _, memory := range request.Previous.AppreciationMemory {
-		if memory.Suggestion.State != "suggested" || dismissed[memory.Suggestion.Key] {
+		if memory.Suggestion.State != "suggested" || retired[memory.Suggestion.Key] {
 			continue
 		}
 		items, err := archive.HydratePersonSweepMessages(ctx, request.PersonID, []int64{memory.PeerRef.MessageID}, request.ThroughSequence)

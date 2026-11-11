@@ -351,11 +351,11 @@ func BuildBriefWindow(
 	for _, peer := range peers {
 		keys = append(keys, peer.ContributionKey)
 	}
-	dismissed, err := archive.PersonSweepAppreciationRetired(ctx, request.PersonID, keys, request.Profile)
+	retired, err := archive.PersonSweepAppreciationRetired(ctx, request.PersonID, keys, request.Profile)
 	if err != nil {
-		return BriefWindow{}, fmt.Errorf("load appreciation dismissals: %w", err)
+		return BriefWindow{}, fmt.Errorf("load appreciation retirement: %w", err)
 	}
-	peers = slices.DeleteFunc(peers, func(peer BriefAppreciationPeer) bool { return dismissed[peer.ContributionKey] })
+	peers = slices.DeleteFunc(peers, func(peer BriefAppreciationPeer) bool { return retired[peer.ContributionKey] })
 	owners, err := archive.PersonSweepAppreciationOwners(ctx, request.PersonID, peers, request.Profile, request.ThroughSequence, request.MaxItems)
 	if err != nil {
 		return BriefWindow{}, fmt.Errorf("load appreciation owner context: %w", err)
