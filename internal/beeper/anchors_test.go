@@ -329,7 +329,6 @@ func TestFullImportRecoversUnreadableProgressAndVerifiesArchive(t *testing.T) {
 				} else {
 					require.NoError(st.CompleteSync(runID, blob))
 				}
-				require.NoError(st.UpdateSourceSyncState(t.Context(), sum.SourceID, blob))
 			}
 			save()
 			_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})

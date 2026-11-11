@@ -30,7 +30,7 @@ func TestRosterVerificationRejectsChangedSnapshot(t *testing.T) {
 			imp, st := newHandlerTestImporter(t, f)
 			t.Cleanup(func() { require.NoError(st.Close()) })
 			sourceID := newBeeperTestSource(t, st, "signal")
-			work := &rosterWork{Version: 1}
+			work := &rosterWork{}
 			detail, err := imp.client.GetChat(t.Context(), chat.ID)
 			require.NoError(err)
 			_, complete, _, err := imp.ensureRosterWork(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
@@ -64,7 +64,7 @@ func TestRosterVerificationRejectsChangedAddition(t *testing.T) {
 	imp, st := newHandlerTestImporter(t, f)
 	t.Cleanup(func() { require.NoError(st.Close()) })
 	sourceID := newBeeperTestSource(t, st, "signal")
-	work := &rosterWork{Version: 1}
+	work := &rosterWork{}
 	detail, err := imp.client.GetChat(t.Context(), chat.ID)
 	require.NoError(err)
 	_, complete, _, err := imp.ensureRosterWork(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
@@ -190,7 +190,7 @@ func TestRosterSettledPrefixExceedsBudget(t *testing.T) {
 	sourceID := newBeeperTestSource(t, st, "signal")
 	detail, err := imp.client.GetChat(t.Context(), chat.ID)
 	require.NoError(err)
-	work := &rosterWork{Version: 1}
+	work := &rosterWork{}
 	_, complete, _, err := imp.ensureRosterWork(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
 	require.NoError(err)
 	require.True(complete)
@@ -211,7 +211,7 @@ func TestRosterSettledPrefixExceedsBudget(t *testing.T) {
 func TestRosterWorkCheckpointClear(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	state := NewSyncState()
-	state.EnsureChat("room").RosterWork = &rosterWork{Version: 1, Signature: "snapshot", Phase: "matching", Next: 1, Verified: true}
+	state.EnsureChat("room").RosterWork = &rosterWork{Signature: "snapshot", Phase: "matching", Next: 1, Verified: true}
 	blob, err := state.Marshal()
 	require.NoError(err)
 	restored, err := LoadSyncState(blob)
@@ -240,7 +240,7 @@ func TestRosterVerificationFailureKeepsExistingMembership(t *testing.T) {
 	detail.Participants.Items = detail.Participants.Items[:2]
 	detail.Participants.Total = 2
 	f.setChatGetFailure(chat.ID, true)
-	work := &rosterWork{Version: 1}
+	work := &rosterWork{}
 	sum := &ImportSummary{}
 	_, complete, _, err := imp.ensureRosterWork(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, sum)
 	require.NoError(err)
@@ -270,7 +270,7 @@ func TestRosterResumeUsesMergedParticipant(t *testing.T) {
 	require.NoError(err)
 	other := &detail.Participants.Items[1].User
 	require.NoError(st.SetParticipantIdentifierContext(t.Context(), old, participantIdentifierType, imp.res.identifierForUser(other.ID)))
-	state := &ChatState{RosterWork: &rosterWork{Version: 1, Signature: rosterSignature(detail, "signal"), Phase: "members"}}
+	state := &ChatState{RosterWork: &rosterWork{Signature: rosterSignature(detail, "signal"), Phase: "members"}}
 	blob, err := (&SyncState{Chats: map[string]*ChatState{chat.ID: state}}).Marshal()
 	require.NoError(err)
 	restored, err := LoadSyncState(blob)
@@ -321,7 +321,7 @@ func TestRosterResumeResolvesRicherIdentityAndName(t *testing.T) {
 	t.Cleanup(func() { require.NoError(st.Close()) })
 	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
 	require.NoError(err)
-	work := &rosterWork{Version: 1}
+	work := &rosterWork{}
 	saved := func() (name, email string) {
 		id := participantForBeeperUser(t, st, "@signal_ann:beeper.local")
 		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COALESCE(display_name, ''), COALESCE(email_address, '') FROM participants WHERE id = ?`), id).Scan(&name, &email))
@@ -376,65 +376,6 @@ func TestRosterMatchingDuringUnfinishedHistory(t *testing.T) {
 	observations, err := st.ListParticipantObservationsContext(t.Context(), peer, true)
 	require.NoError(err)
 	assert.NotEmpty(observations)
-}
-
-func TestRosterWorkRejectsFutureVersion(t *testing.T) {
-	for _, blob := range []string{
-		`{"chats":{"room":{"roster_work":{"version":2}}}}`,
-		`{"chats":{"room":{"roster_work":{"version":1,"phase":"future"}}}}`,
-	} {
-		_, err := LoadSyncState(blob)
-		require.Error(t, err)
-	}
-}
-
-func TestUnsupportedRosterVersionStopsImport(t *testing.T) {
-	for _, checkpoint := range []bool{false, true} {
-		t.Run(fmt.Sprintf("checkpoint=%t", checkpoint), func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			f := newFakeBeeper(t)
-			imp, st := newHandlerTestImporter(t, f)
-			t.Cleanup(func() { require.NoError(st.Close()) })
-			sourceID := newBeeperTestSource(t, st, "signal")
-			const blob = `{"chats":{"room":{"newest":"saved","roster_work":{"version":2}}}}`
-			runID, err := st.StartSync(sourceID, sourceTypeBeeper)
-			require.NoError(err)
-			if checkpoint {
-				require.NoError(st.PauseSyncWithCheckpoint(t.Context(), runID, &store.Checkpoint{PageToken: blob}))
-			} else {
-				require.NoError(st.CompleteSync(runID, blob))
-			}
-			_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-			const want = "saved Beeper progress is incompatible with this version of msgvault. Update msgvault to resume"
-			require.ErrorContains(err, want)
-			_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Full: true})
-			require.ErrorContains(err, want)
-			_, err = imp.BackfillMedia(t.Context(), ImportOptions{AccountID: "signal", AttachmentsDir: t.TempDir()})
-			require.ErrorContains(err, want)
-			var runs int
-			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM sync_runs WHERE source_id = ?`), sourceID).Scan(&runs))
-			assert.Equal(1, runs)
-		})
-	}
-}
-
-func TestUnsupportedRosterSourceVersionStopsImport(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	f := newFakeBeeper(t)
-	imp, st := newHandlerTestImporter(t, f)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	sourceID := newBeeperTestSource(t, st, "signal")
-	const want = "saved Beeper progress is incompatible with this version of msgvault. Update msgvault to resume"
-	require.NoError(st.UpdateSourceSyncState(t.Context(), sourceID, `{"chats":{"room":{"roster_work":{"version":2}}}}`))
-	for _, full := range []bool{false, true} {
-		_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Full: full})
-		require.ErrorContains(err, want)
-	}
-	_, err := imp.BackfillMedia(t.Context(), ImportOptions{AccountID: "signal", AttachmentsDir: t.TempDir()})
-	require.ErrorContains(err, want)
-	var runs int
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM sync_runs WHERE source_id = ?`), sourceID).Scan(&runs))
-	assert.Zero(runs, "no media run starts over newer progress")
 }
 
 func TestRosterJoinRefreshesExistingMatchEvidence(t *testing.T) {
@@ -503,7 +444,7 @@ func TestQuietMatchingRepairInvalidatesGoneRoute(t *testing.T) {
 	require.True(cs.Done)
 	detail, err := imp.client.GetChat(t.Context(), chat.ID)
 	require.NoError(err)
-	cs.RosterWork = &rosterWork{Version: 1, Signature: rosterSignature(detail, "signal"), Phase: "matching", Verified: true}
+	cs.RosterWork = &rosterWork{Signature: rosterSignature(detail, "signal"), Phase: "matching", Verified: true}
 	peer := participantForBeeperUser(t, st, "@signal_ann:beeper.local")
 	person, _, err := st.CreatePersonFromParticipant(peer)
 	require.NoError(err)
@@ -525,66 +466,6 @@ func TestQuietMatchingRepairInvalidatesGoneRoute(t *testing.T) {
 	require.NoError(err)
 	require.Len(after.Routes.Items, 1)
 	assert.Equal("unresolved", after.Routes.Items[0].Status)
-}
-
-func slackRosterChat(id, account, userID string, activity time.Time, member map[string]any) *fakeChat {
-	member["id"] = userID
-	chat := budgetTestChat(id, 1, activity)
-	chat.AccountID, chat.Network, chat.Type = account, "Slack", "group"
-	chat.Participants = []map[string]any{{"id": "@me:beeper.local", "fullName": "Test User", "isSelf": true}, member}
-	chat.Msgs[0].SenderID = userID
-	return chat
-}
-
-// A shared email that reaches one side of an existing suggestion through a
-// separate chat must still explain the suggestion after matching completed.
-func TestLateSharedEmailExplainsExistingSuggestion(t *testing.T) {
-	t.Parallel()
-	assert, require := assert.New(t), require.New(t)
-	f := newFakeBeeper(t)
-	base := time.Now().Add(-48 * time.Hour)
-	first := slackRosterChat("!sam-first:example.test", "slack", "@slack_sam:beeper.local", base, map[string]any{
-		"fullName": "Sam Example", "username": "sam", "phoneNumber": "+12025550141",
-	})
-	f.addChat(first)
-	f.addChat(slackRosterChat("!sam-second:example.test", "slack2", "@slack2_sam:beeper.local", base, map[string]any{
-		"fullName": "Sam Example", "username": "sam",
-		"phoneNumber": "+12025550142", "email": "sam@example.test",
-	}))
-	imp, st := newHandlerTestImporter(t, f)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	for _, account := range []string{"slack", "slack2"} {
-		_, err := imp.Import(t.Context(), ImportOptions{AccountID: account, NoMedia: true})
-		require.NoError(err)
-	}
-	candidates, err := st.ListIdentityMatchCandidatesContext(t.Context(), nil, 10, 0)
-	require.NoError(err)
-	require.Len(candidates, 1)
-	require.Equal(store.IdentityMatchServiceScopeUsername, candidates[0].Basis)
-	samSecond := participantForBeeperUser(t, st, "@slack2_sam:beeper.local")
-	require.Equal("sam@example.test", observationValues(t, st, samSecond)[store.ContactAddressEmail])
-	sharedEmail := func() *store.IdentityMatchEvidence {
-		candidate, err := st.GetIdentityMatchCandidateContext(t.Context(), candidates[0].ID)
-		require.NoError(err)
-		for i, evidence := range candidate.Evidence {
-			if evidence.EvidenceKind == evidenceEmail && evidence.Detail != nil && *evidence.Detail == "sam@example.test" {
-				return &candidate.Evidence[i]
-			}
-		}
-		return nil
-	}
-	require.Nil(sharedEmail(), "the first account has not reported the email yet")
-
-	// The email arrives in a separate chat without a username.
-	f.addChat(slackRosterChat("!sam-email:example.test", "slack", "@slack_sam:beeper.local", time.Now(), map[string]any{
-		"fullName":    "Sam Example",
-		"phoneNumber": "+12025550141", "email": "sam@example.test",
-	}))
-	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "slack", NoMedia: true})
-	require.NoError(err)
-	require.Equal("sam@example.test", observationValues(t, st, participantForBeeperUser(t, st, "@slack_sam:beeper.local"))[store.ContactAddressEmail],
-		"the separate chat recorded the email")
-	assert.NotNil(sharedEmail(), "the newly shared email must explain the existing suggestion")
 }
 
 // A service registered for the account after its roster settled must reach

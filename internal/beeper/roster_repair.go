@@ -126,7 +126,7 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 		return failed(fmt.Errorf("mark roster repair pending: %w", err))
 	}
 	if cs.RosterWork == nil {
-		cs.RosterWork = &rosterWork{Version: 1, MemberFirst: true}
+		cs.RosterWork = &rosterWork{MemberFirst: true}
 	}
 	opts.rosterState = cs.RosterWork
 	opts.rosterDetailFetched = true
@@ -142,15 +142,16 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 		stop, err := deferRoom("beeper_roster_repair_deferred", store.SyncRunItemStatusSkipped, nil)
 		return stop || opts.budgetExpired(), err
 	}
-	if cs.RosterWork != nil && cs.RosterWork.Phase == "matching_retry" {
+	if cs.RosterWork.Phase == "matching_retry" {
 		return deferRoom("beeper_roster_repair_failed", store.SyncRunItemStatusError, errors.New("contact matching pending"))
 	}
 	cs.RosterRetryAfter = ""
 	return opts.stopRequested(), nil
 }
 
-// finishQuietRosterStep refreshes the room's stats, then settles its pending
-// marker for the roster step's outcome.
+// finishQuietRosterStep refreshes the room's stats, then clears the pending
+// marker of a room whose membership is verified, and returns the roster step's
+// error. During a stop the write uses the finalize window.
 func (imp *Importer) finishQuietRosterStep(ctx context.Context, opts ImportOptions, conversationID int64, verified bool, rosterErr error) error {
 	if conversationID == 0 {
 		return rosterErr
@@ -160,13 +161,6 @@ func (imp *Importer) finishQuietRosterStep(ctx context.Context, opts ImportOptio
 	if err := imp.store.RecomputeConversationStatsForConversationContext(statsCtx, conversationID); err != nil {
 		return fmt.Errorf("recompute conversation stats after roster repair: %w", err)
 	}
-	return imp.clearQuietRosterPending(ctx, opts, conversationID, verified, rosterErr)
-}
-
-// clearQuietRosterPending clears the pending marker of a room whose membership
-// is verified, once its stats are fresh, and returns the roster step's error.
-// During a stop the write uses the finalize window.
-func (imp *Importer) clearQuietRosterPending(ctx context.Context, opts ImportOptions, conversationID int64, verified bool, rosterErr error) error {
 	if !verified {
 		return rosterErr
 	}

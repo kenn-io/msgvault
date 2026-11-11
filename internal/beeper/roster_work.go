@@ -21,7 +21,6 @@ type rosterWork struct {
 	Next             int    `json:"next,omitzero"`
 	MemberFirst      bool   `json:"member_first,omitzero"`
 	Verified         bool   `json:"verified,omitzero"`
-	Version          int    `json:"version"`
 	Signature        string `json:"signature"`
 	ListingSignature string `json:"listing_signature,omitempty"`
 	DetailBacked     bool   `json:"detail_backed,omitzero"`

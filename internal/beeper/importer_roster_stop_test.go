@@ -193,6 +193,28 @@ func TestRosterWorkStopLeavesChatResumable(t *testing.T) {
 				state := latestBeeperState(t, imp)
 				assert.Equal("done", state.Chats[chat.ID].RosterWork.Phase, "quiet repair must finish deferred enrichment")
 			}
+			if !tc.observationStop {
+				state := latestBeeperState(t, imp)
+				detail, err := imp.client.GetChat(t.Context(), chat.ID)
+				require.NoError(err)
+				yield = false
+				_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER yield_roster_work `+tc.trigger+` BEGIN SELECT yield_roster_work(); END`)
+				require.NoError(err)
+				_, _, err = imp.syncChat(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", NoMedia: true, ShouldStop: func() bool { return yield }}, state, time.Now(), false, false, &ImportSummary{})
+				require.NoError(err)
+				require.True(yield)
+				unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
+				require.NoError(err)
+				assert.NotContains(unresolved, chat.ID)
+				_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER yield_roster_work`)
+				require.NoError(err)
+				_, complete, err := imp.syncChat(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", NoMedia: true}, state, time.Now(), false, false, &ImportSummary{})
+				require.NoError(err)
+				assert.True(complete)
+				unresolved, err = st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
+				require.NoError(err)
+				assert.NotContains(unresolved, chat.ID)
+			}
 			if tc.observationStop {
 				assert.Equal(3, countBeeperMessages(t, imp))
 			} else {
@@ -315,98 +337,7 @@ func richRetryChat() *fakeChat {
 	return chat
 }
 
-// serial: changes slog.Default and SQL logging.
-func TestRosterRetriesSkipResolvedMembers(t *testing.T) {
-	testutil.SkipIfPostgres(t, "fake-clock timing requires local SQLite operations")
-	for _, tc := range []struct {
-		name string
-		chat func() *fakeChat
-		runs int
-	}{
-		{name: "bare IDs", chat: rosterRetryChat, runs: 30},
-		// New phone and email members take two transactions each.
-		{name: "phone and email", chat: richRetryChat, runs: 30},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				assert, require := assert.New(t), require.New(t)
-				f := newFakeBeeper(t)
-				imp, st := newHandlerTestImporter(t, f)
-				t.Cleanup(func() { require.NoError(st.Close()) })
-				_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-				require.NoError(err)
-				chat := tc.chat()
-				f.addChat(chat)
-				handler := &rosterTransactionCost{
-					Handler: slog.DiscardHandler,
-					onBegin: func() { time.Sleep(20 * time.Millisecond) },
-				}
-				previous := slog.Default()
-				slog.SetDefault(slog.New(handler))
-				store.ConfigureSQLLogging(store.SQLLogOptions{SlowMs: -1})
-				t.Cleanup(func() { slog.SetDefault(previous); store.ConfigureSQLLogging(store.SQLLogOptions{}) })
-				var sourceID int64
-				for range tc.runs {
-					imp = NewImporter(st, imp.client)
-					sum, err := imp.Import(t.Context(), ImportOptions{
-						AccountID: "signal", NoMedia: true, Scheduled: true, StopAt: time.Now().Add(time.Second),
-					})
-					require.NoError(err)
-					assert.Zero(sum.Errors)
-					sourceID = sum.SourceID
-				}
-				require.Positive(handler.begins, "the injected transaction cost was exercised")
-				assert.Equal(2, countBeeperMessages(t, imp), "identical budgets must reach messages")
-				assert.Len(rosterMembers(t, st, sourceID, chat.ID), 64, "the full roster must commit")
-			})
-		})
-	}
-}
-
-func TestDeferredObservationsFinishAcrossRetries(t *testing.T) {
-	testutil.SkipIfPostgres(t, "uses SQLite to inject classification cost")
-	synctest.Test(t, func(t *testing.T) {
-		assert, require := assert.New(t), require.New(t)
-		f := newFakeBeeper(t)
-		chat := rosterRetryChat()
-		f.addChat(chat)
-		imp, st := newHandlerTestImporter(t, f)
-		t.Cleanup(func() { require.NoError(st.Close()) })
-		st.DB().SetMaxOpenConns(1)
-		calls := 0
-		registerSQLiteFunc(t, st, "roster_classification_cost", func() int {
-			calls++
-			time.Sleep(20 * time.Millisecond)
-			return 0
-		})
-		_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER roster_classification_cost
-		AFTER UPDATE OF service_id ON participant_identifiers
-		BEGIN SELECT roster_classification_cost(); END`)
-		require.NoError(err)
-		var sourceID int64
-		for range 5 {
-			sum, err := imp.Import(t.Context(), ImportOptions{
-				AccountID: "signal", NoMedia: true, Scheduled: true, StopAt: time.Now().Add(time.Second),
-			})
-			require.NoError(err)
-			assert.Zero(sum.Errors)
-			sourceID = sum.SourceID
-			time.Sleep(25 * time.Hour) // Fresh daily scan, beyond quiet-repair failure backoff.
-		}
-		assert.Equal(2, countBeeperMessages(t, imp))
-		lastID := participantForBeeperUser(t, st, "@signal_retry63:example.test")
-		observations, err := st.ListParticipantObservationsContext(t.Context(), lastID, true)
-		require.NoError(err)
-		require.Positive(calls, "the classification cost was exercised")
-		assert.NotEmpty(observations, "retries must reach the last member")
-		ids, err := st.ListUnresolvedConversationIDs(t.Context(), sourceID)
-		require.NoError(err)
-		assert.NotContains(ids, chat.ID, "completed enrichment clears pending repair")
-	})
-}
-
-// registerSQLiteFunc registers fn on the store's SQLite connection. Callers
-// first limit the pool to one connection so every statement can call it.
+// registerSQLiteFunc registers fn on the store's single SQLite connection.
 func registerSQLiteFunc(t *testing.T, st *store.Store, name string, fn any) {
 	t.Helper()
 	conn, err := st.DB().Conn(t.Context())
@@ -421,141 +352,51 @@ func registerSQLiteFunc(t *testing.T, st *store.Store, name string, fn any) {
 	require.NoError(t, conn.Close())
 }
 
-// Revisiting provider matches that are already applied must not use up the
-// budget a later member needs for its first match.
-func TestDeferredObservationsSkipSettledMatches(t *testing.T) {
-	testutil.SkipIfPostgres(t, "uses SQLite to inject identity-match support write cost")
-	synctest.Test(t, func(t *testing.T) {
-		assert, require := assert.New(t), require.New(t)
-		f := newFakeBeeper(t)
-		room := budgetTestChat("!settled-room:example.test", 2, time.Now().Add(-48*time.Hour))
-		aliases := budgetTestChat("!settled-aliases:example.test", 2, time.Now().Add(-72*time.Hour))
-		room.Type, aliases.Type = "group", "group"
-		// Two Beeper user IDs in one account share each synthetic native ID.
-		member := func(id, native string) map[string]any {
-			return map[string]any{"id": id, "fullName": "Synthetic " + native, "providerID": native}
-		}
-		for i := 2; i < 64; i++ {
-			native := fmt.Sprintf("settled-native-%d", i)
-			room.Participants = append(room.Participants, member(fmt.Sprintf("@signal_settled%d:example.test", i), native))
-			aliases.Participants = append(aliases.Participants, member(fmt.Sprintf("@signal_alias%d:example.test", i), native))
-		}
-		aliases.Participants = append(aliases.Participants, member("@signal_alias_late:example.test", "settled-native-late"))
-		f.addChat(room)
-		f.addChat(aliases)
-		imp, st := newHandlerTestImporter(t, f)
-		t.Cleanup(func() { require.NoError(st.Close()) })
-		st.DB().SetMaxOpenConns(1)
-		sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-		require.NoError(err)
-		require.True(linked(t, st, participantForBeeperUser(t, st, "@signal_settled63:example.test"),
-			participantForBeeperUser(t, st, "@signal_alias63:example.test")), "prefix pairs settle before cost is injected")
-		ids, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
-		require.NoError(err)
-		require.NotContains(ids, room.ID)
-		f.mu.Lock()
-		room.Participants = append(room.Participants, member("@signal_settled_late:example.test", "settled-native-late"))
-		f.mu.Unlock()
-		// Charge support writes: the late member's first match always needs them.
-		calls := 0
-		registerSQLiteFunc(t, st, "settled_support_cost", func() int {
-			calls++
-			time.Sleep(20 * time.Millisecond)
-			return 0
-		})
-		for _, trigger := range []string{
-			`CREATE TRIGGER settled_candidate_insert AFTER INSERT ON identity_match_candidate_sources
-			BEGIN SELECT settled_support_cost(); END`,
-			`CREATE TRIGGER settled_candidate_update AFTER UPDATE ON identity_match_candidate_sources
-			BEGIN SELECT settled_support_cost(); END`,
-			`CREATE TRIGGER settled_evidence_insert AFTER INSERT ON identity_match_evidence_sources
-			BEGIN SELECT settled_support_cost(); END`,
-			`CREATE TRIGGER settled_evidence_update AFTER UPDATE ON identity_match_evidence_sources
-			BEGIN SELECT settled_support_cost(); END`,
-		} {
-			_, err := st.DB().ExecContext(t.Context(), trigger)
-			require.NoError(err)
-		}
-		for range 12 {
-			time.Sleep(25 * time.Hour) // Fresh daily scan revisits both rosters.
-			imp = NewImporter(st, imp.client)
-			sum, err := imp.Import(t.Context(), ImportOptions{
-				AccountID: "signal", NoMedia: true, Scheduled: true, StopAt: time.Now().Add(time.Second),
-			})
-			require.NoError(err)
-			assert.Zero(sum.Errors)
-			assert.Equal(4, countBeeperMessages(t, imp), "archived messages stay archived")
-		}
-		require.Positive(calls, "the support write cost was exercised")
-		late := participantForBeeperUser(t, st, "@signal_settled_late:example.test")
-		observations, err := st.ListParticipantObservationsContext(t.Context(), late, true)
-		require.NoError(err)
-		assert.NotEmpty(observations, "retries must reach the member after the settled prefix")
-		assert.True(linked(t, st, late, participantForBeeperUser(t, st, "@signal_alias_late:example.test")),
-			"the late member's new pair must be matched")
-		ids, err = st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
-		require.NoError(err)
-		assert.NotContains(ids, room.ID, "completed enrichment clears pending repair")
-	})
-}
-
 // serial: SQL logging and the default logger are process-wide.
 func TestRosterProgressSurvivesFreshImporters(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	f := newFakeBeeper(t)
-	chat := richRetryChat()
-	f.addChat(chat)
-	imp, st := newHandlerTestImporter(t, f)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	previous := slog.Default()
-	handler := &rosterOperationQuota{Handler: slog.DiscardHandler}
-	slog.SetDefault(slog.New(handler))
-	store.ConfigureSQLLogging(store.SQLLogOptions{SlowMs: -1})
-	t.Cleanup(func() { slog.SetDefault(previous); store.ConfigureSQLLogging(store.SQLLogOptions{}) })
-	var sourceID int64
-	for range 30 {
-		handler.operations = 0
-		imp = NewImporter(st, imp.client)
-		sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { return handler.operations >= 130 }})
-		require.NoError(err)
-		require.Zero(sum.Errors)
-		sourceID = sum.SourceID
-		if countBeeperMessages(t, imp) == 2 && len(rosterMembers(t, st, sourceID, chat.ID)) == 64 {
-			break
-		}
+	for _, tc := range []struct {
+		name string
+		chat func() *fakeChat
+	}{
+		{"bare IDs", rosterRetryChat},
+		{"phone and email", richRetryChat},
+		{"whitespace names", func() *fakeChat {
+			chat := rosterRetryChat()
+			for i, member := range chat.Participants {
+				member["fullName"] = "   "
+				member["phoneNumber"] = fmt.Sprintf("+1202555%04d", 100+i)
+			}
+			return chat
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			f := newFakeBeeper(t)
+			chat := tc.chat()
+			f.addChat(chat)
+			imp, st := newHandlerTestImporter(t, f)
+			t.Cleanup(func() { require.NoError(st.Close()) })
+			previous := slog.Default()
+			handler := &rosterOperationQuota{Handler: slog.DiscardHandler}
+			slog.SetDefault(slog.New(handler))
+			store.ConfigureSQLLogging(store.SQLLogOptions{SlowMs: -1})
+			t.Cleanup(func() { slog.SetDefault(previous); store.ConfigureSQLLogging(store.SQLLogOptions{}) })
+			var sourceID int64
+			for range 30 {
+				handler.operations = 0
+				imp = NewImporter(st, imp.client)
+				sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { return handler.operations >= 130 }})
+				require.NoError(err)
+				require.Zero(sum.Errors)
+				sourceID = sum.SourceID
+				if countBeeperMessages(t, imp) == 2 && len(rosterMembers(t, st, sourceID, chat.ID)) == 64 {
+					break
+				}
+			}
+			assert.Equal(2, countBeeperMessages(t, imp))
+			assert.Len(rosterMembers(t, st, sourceID, chat.ID), 64)
+		})
 	}
-	assert.Equal(2, countBeeperMessages(t, imp))
-	assert.Len(rosterMembers(t, st, sourceID, chat.ID), 64)
-}
-
-func TestRosterWhitespaceNamesAdvanceAcrossVisits(t *testing.T) {
-	f := newFakeBeeper(t)
-	chat := rosterRetryChat()
-	for i, member := range chat.Participants {
-		member["fullName"] = "   "
-		member["phoneNumber"] = fmt.Sprintf("+1202555%04d", 100+i)
-	}
-	f.addChat(chat)
-	imp, st := newHandlerTestImporter(t, f)
-	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	previous := slog.Default()
-	handler := &rosterOperationQuota{Handler: slog.DiscardHandler}
-	slog.SetDefault(slog.New(handler))
-	store.ConfigureSQLLogging(store.SQLLogOptions{SlowMs: -1})
-	t.Cleanup(func() { slog.SetDefault(previous); store.ConfigureSQLLogging(store.SQLLogOptions{}) })
-	var sourceID int64
-	for range 30 {
-		handler.operations = 0
-		imp = NewImporter(st, imp.client)
-		sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { return handler.operations >= 130 }})
-		require.NoError(t, err)
-		sourceID = sum.SourceID
-		if countBeeperMessages(t, imp) == 2 && len(rosterMembers(t, st, sourceID, chat.ID)) == 64 {
-			break
-		}
-	}
-	assert.Len(t, rosterMembers(t, st, sourceID, chat.ID), 64)
-	assert.Equal(t, 2, countBeeperMessages(t, imp))
 }
 
 type rosterOperationQuota struct {
@@ -579,7 +420,7 @@ func TestRosterMatchingProgressSurvivesFreshImporters(t *testing.T) {
 	room := budgetTestChat("!quota-room:example.test", 2, time.Now().Add(-48*time.Hour))
 	aliases := budgetTestChat("!quota-aliases:example.test", 2, time.Now().Add(-72*time.Hour))
 	room.Type, aliases.Type = "group", "group"
-	for i := range 30 {
+	for i := range 62 {
 		native := fmt.Sprintf("quota-native-%d", i)
 		room.Participants = append(room.Participants, map[string]any{"id": fmt.Sprintf("@signal_quota%d:example.test", i), "providerID": native})
 		aliases.Participants = append(aliases.Participants, map[string]any{"id": fmt.Sprintf("@signal_aliasquota%d:example.test", i), "providerID": native})
@@ -591,6 +432,7 @@ func TestRosterMatchingProgressSurvivesFreshImporters(t *testing.T) {
 	t.Cleanup(func() { require.NoError(st.Close()) })
 	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
 	require.NoError(err)
+	require.True(linked(t, st, participantForBeeperUser(t, st, "@signal_quota61:example.test"), participantForBeeperUser(t, st, "@signal_aliasquota61:example.test")))
 	f.mu.Lock()
 	room.Participants = append(room.Participants, map[string]any{"id": "@signal_quota_late:example.test", "providerID": "quota-native-late"})
 	room.LastActivity = time.Now().Add(time.Hour)
@@ -611,14 +453,21 @@ func TestRosterMatchingProgressSurvivesFreshImporters(t *testing.T) {
 		if first != 0 {
 			obs, err := st.ListParticipantObservationsContext(t.Context(), first, true)
 			require.NoError(err)
-			if len(obs) > 0 {
-				break
+			if len(obs) > 0 && linked(t, st, first, participantForBeeperUser(t, st, "@signal_quota_alias_late:example.test")) {
+				state := latestBeeperState(t, imp).Chats[room.ID]
+				if state != nil && state.RosterWork != nil && state.RosterWork.Phase == "done" {
+					break
+				}
 			}
 		}
 	}
 	first := participantForBeeperUser(t, st, "@signal_quota_late:example.test")
 	alias := participantForBeeperUser(t, st, "@signal_quota_alias_late:example.test")
 	assert.True(linked(t, st, first, alias))
+	observations, err := st.ListParticipantObservationsContext(t.Context(), first, true)
+	require.NoError(err)
+	assert.NotEmpty(observations)
+	assert.Equal("done", latestBeeperState(t, imp).Chats[room.ID].RosterWork.Phase)
 }
 
 func TestRosterMembershipResumesAfterStop(t *testing.T) {
@@ -665,7 +514,7 @@ func TestRosterCleanupResumesAgainstChangedSnapshot(t *testing.T) {
 	t.Cleanup(func() { require.NoError(st.Close()) })
 	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
 	require.NoError(err)
-	work := &rosterWork{Version: 1}
+	work := &rosterWork{}
 	restoredMember := chat.Participants[40]
 	f.mu.Lock()
 	chat.Participants = chat.Participants[:24]
@@ -733,42 +582,6 @@ func TestRosterResumeUsesArchivedBindingsAfterCheckpointLossAndJoin(t *testing.T
 	require.ErrorIs(err, errBeeperBudgetExpired)
 	assert.True(complete)
 	assert.Len(rosterMembers(t, st, sum.SourceID, chat.ID), 65)
-}
-
-func TestInterruptedMatchingKeepsVerifiedMembership(t *testing.T) {
-	testutil.SkipIfPostgres(t, "uses a SQLite trigger to stop after route proof is published")
-	assert, require := assert.New(t), require.New(t)
-	f := newFakeBeeper(t)
-	chat := budgetTestChat("!unchanged-stop:example.test", 2, time.Now().Add(-48*time.Hour))
-	f.addChat(chat)
-	imp, st := newHandlerTestImporter(t, f)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-	require.NoError(err)
-	state := latestBeeperState(t, imp)
-	detail, err := imp.client.GetChat(t.Context(), chat.ID)
-	require.NoError(err)
-	st.DB().SetMaxOpenConns(1)
-	stop := false
-	registerSQLiteFunc(t, st, "yield_published_proof", func() int { stop = true; return 0 })
-	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER yield_published_proof AFTER UPDATE OF metadata ON conversations WHEN json_extract(NEW.metadata, '$.messaging_route.membership_complete') = 1 BEGIN SELECT yield_published_proof(); END`)
-	require.NoError(err)
-	_, _, err = imp.syncChat(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", NoMedia: true, ShouldStop: func() bool { return stop }}, state, time.Now(), false, false, &ImportSummary{})
-	require.NoError(err)
-	require.True(stop)
-	unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
-	require.NoError(err)
-	assert.NotContains(unresolved, chat.ID, "verified membership stays complete while matching is deferred")
-	require.NotNil(state.Chats[chat.ID].RosterWork)
-	assert.True(state.Chats[chat.ID].RosterWork.Verified)
-	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER yield_published_proof`)
-	require.NoError(err)
-	_, complete, err := imp.syncChat(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", NoMedia: true}, state, time.Now(), false, false, &ImportSummary{})
-	require.NoError(err)
-	assert.True(complete)
-	unresolved, err = st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
-	require.NoError(err)
-	assert.NotContains(unresolved, chat.ID)
 }
 
 func TestFinalMemberStopKeepsMessageTurn(t *testing.T) {

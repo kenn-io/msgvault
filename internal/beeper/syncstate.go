@@ -2,7 +2,6 @@ package beeper
 
 import (
 	"encoding/json/v2"
-	"errors"
 	"time"
 )
 
@@ -104,35 +103,6 @@ func NewSyncState() *SyncState {
 }
 
 func LoadSyncState(blob string) (*SyncState, error) {
-	s, err := decodeSyncState(blob)
-	if err != nil {
-		return nil, err
-	}
-	return validateRosterProgress(s)
-}
-
-func validateRosterProgress(s *SyncState) (*SyncState, error) {
-	for _, chat := range s.Chats {
-		if chat == nil || chat.RosterWork == nil {
-			continue
-		}
-		work := chat.RosterWork
-		if work.Version != 1 {
-			return nil, errors.New("saved Beeper progress is incompatible with this version of msgvault. Update msgvault to resume")
-		}
-		if work.Next < 0 {
-			return nil, errors.New("saved Beeper progress is incompatible with this version of msgvault. Update msgvault to resume")
-		}
-		switch work.Phase {
-		case "", "members", "matching", "matching_retry", "cleanup", "done":
-		default:
-			return nil, errors.New("saved Beeper progress is incompatible with this version of msgvault. Update msgvault to resume")
-		}
-	}
-	return s, nil
-}
-
-func decodeSyncState(blob string) (*SyncState, error) {
 	s := NewSyncState()
 	if blob == "" {
 		return s, nil

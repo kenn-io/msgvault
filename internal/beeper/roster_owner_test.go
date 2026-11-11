@@ -65,7 +65,7 @@ func testRosterEachChatKeepsItsOwnPhone(t *testing.T, messageFirst, sameRun, ver
 	detail, err := imp.client.GetChat(t.Context(), old.ID)
 	require.NoError(err)
 	if messageFirst {
-		state.Chats[old.ID].RosterWork = &rosterWork{Version: 1, MemberFirst: false, Verified: verified, Phase: "matching", Signature: rosterSignature(detail, "signal")}
+		state.Chats[old.ID].RosterWork = &rosterWork{MemberFirst: false, Verified: verified, Phase: "matching", Signature: rosterSignature(detail, "signal")}
 	}
 	_, _, err = imp.syncChat(t.Context(), 0, sourceID, detail, opts, state, time.Now().Add(-time.Hour), false, false, &ImportSummary{})
 	require.NoError(err)
@@ -120,7 +120,7 @@ func TestRosterResumeRechecksOwnerOfSettledPrefix(t *testing.T) {
 	require.NoError(err)
 	detail, err := imp.client.GetChat(t.Context(), chat.ID)
 	require.NoError(err)
-	work := &rosterWork{Version: 1}
+	work := &rosterWork{}
 	_, _, _, err = imp.ensureRosterWork(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work, ShouldStop: func() bool { return work.Next >= 1 }}, &ImportSummary{}) //nolint:dogsled // Only the interruption matters.
 	require.ErrorIs(err, errBeeperBudgetExpired)
 	_, err = newParticipantResolver(st, "signal").resolveUser(t.Context(), &User{ID: "@signal_a:example.test", PhoneNumber: "+12025550124"})

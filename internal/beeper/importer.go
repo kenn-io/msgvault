@@ -206,54 +206,17 @@ func (imp *Importer) loadFullResumeState(ctx context.Context, sourceID int64) (*
 	return resumeState(prev, cp, true)
 }
 
-// loadSourceState reads run history, then applies roster progress saved on the
-// source row, which can be newer after an interrupted checkpoint. Only a full
-// import tolerates undecodable progress; newer progress always stops the run.
-func (imp *Importer) loadSourceState(ctx context.Context, src *store.Source, full bool) (*SyncState, error) {
-	load := imp.loadResumeState
-	if full {
-		load = imp.loadFullResumeState
-	}
-	state, err := load(ctx, src.ID)
-	if err != nil || !src.SyncCursor.Valid || src.SyncCursor.String == "" {
-		return state, err
-	}
-	current, err := loadSavedSyncState(src.SyncCursor.String, full)
-	if err != nil {
-		return nil, fmt.Errorf("load Beeper source progress: %w", err)
-	}
-	for id, room := range current.Chats {
-		if room != nil {
-			state.EnsureChat(id).RosterWork = room.RosterWork
-		}
-	}
-	return state, nil
-}
-
-// loadSavedSyncState reads saved Beeper progress. A full sync ignores
-// undecodable progress because it rebuilds it, but progress from a newer
-// msgvault still stops the run.
-func loadSavedSyncState(blob string, full bool) (*SyncState, error) {
-	state, err := decodeSyncState(blob)
-	if err != nil {
-		if full {
-			return NewSyncState(), nil //nolint:nilerr // Full sync verifies the archive when no cursor can be decoded.
-		}
-		return nil, fmt.Errorf("unreadable progress; run msgvault sync-beeper --full: %w", err)
-	}
-	return validateRosterProgress(state)
-}
-
 func resumeState(prev, cp *store.SyncRun, full bool) (*SyncState, error) {
+	// A full sync rebuilds unreadable progress; any other run stops on it.
 	load := func(blob string) (*SyncState, error) {
-		state, err := loadSavedSyncState(blob, false)
+		state, err := LoadSyncState(blob)
+		if err != nil && full {
+			return NewSyncState(), nil //nolint:nilerr // A full sync rebuilds unreadable progress.
+		}
 		if err != nil {
-			return nil, fmt.Errorf("read saved Beeper sync progress: %w", err)
+			return nil, fmt.Errorf("unreadable Beeper sync progress; run msgvault sync-beeper --full: %w", err)
 		}
 		return state, nil
-	}
-	if full {
-		load = func(blob string) (*SyncState, error) { return loadSavedSyncState(blob, true) }
 	}
 	state := NewSyncState()
 	if prev != nil && prev.CursorAfter.Valid {
@@ -293,7 +256,11 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	}
 	sum = &ImportSummary{SourceID: src.ID}
 
-	state, err := imp.loadSourceState(ctx, src, opts.Full)
+	load := imp.loadResumeState
+	if opts.Full {
+		load = imp.loadFullResumeState
+	}
+	state, err := load(ctx, src.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -866,7 +833,7 @@ func chatActivityCutoff(opts ImportOptions, state *SyncState, reconcileCutoff ti
 func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *Chat, opts ImportOptions, state *SyncState, reconcileCutoff time.Time, tailScan, tailOnly bool, sum *ImportSummary) (_ int64, chatComplete bool, err error) {
 	cs := state.EnsureChat(ch.ID)
 	if cs.RosterWork == nil {
-		cs.RosterWork = &rosterWork{Version: 1, MemberFirst: true}
+		cs.RosterWork = &rosterWork{MemberFirst: true}
 	}
 	opts.rosterState = cs.RosterWork
 	opts.skipRoster = !cs.RosterWork.MemberFirst
@@ -1097,8 +1064,11 @@ func (imp *Importer) ensureRosterWork(
 		routeEvidence.Failure = "chat_binding_mismatch"
 	}
 	if opts.skipRoster {
-		if opts.rosterState != nil && opts.rosterState.Verified && opts.rosterState.ListingSignature == listingSignature && routeEvidence.Failure == "" {
+		if opts.rosterState != nil && opts.rosterState.Verified && opts.rosterState.ListingSignature == listingSignature {
 			if ch.Participants.HasMore {
+				if routeEvidence.Failure != "" {
+					return convID, true, membership, imp.store.InvalidateConversationMessagingRouteEvidence(ctx, convID)
+				}
 				return convID, true, membership, nil
 			}
 			keys := imp.rosterKeys(detail.Participants.Items)
@@ -1397,31 +1367,24 @@ func (imp *Importer) captureObservations(
 	bridgePrefix string,
 	sum *ImportSummary,
 ) {
-	success := true
 	results, err := imp.obs.capture(ctx, participantID, u, captureContext{
 		SourceID: sourceID, AccountID: accountID, Network: ch.Network,
 		BridgePrefix: bridgePrefix,
 	})
-	if err != nil {
-		success = false
-	}
 	if err != nil && ctx.Err() == nil {
 		slog.Warn("beeper observation capture failed",
 			"participant_id", participantID, "beeper_user_id", u.ID, "error", err)
 		sum.Errors++
 	}
-	recorded := false
 	for _, result := range results {
 		if ctx.Err() != nil {
 			return
 		}
 		if result.Created {
-			recorded = true
 			sum.ObservationsRecorded++
 		}
 		outcome, merr := imp.matcher.match(ctx, participantID, result)
 		if merr != nil {
-			success = false
 			if ctx.Err() == nil {
 				slog.Warn("beeper identity matching failed",
 					"participant_id", participantID, "beeper_user_id", u.ID, "error", merr)
@@ -1432,15 +1395,6 @@ func (imp *Importer) captureObservations(
 		sum.IdentityAutoResolved += int64(len(outcome.AutoResolved))
 		sum.IdentityCandidates += int64(len(outcome.Suggested))
 		sum.IdentityConflicts += int64(len(outcome.Conflicts))
-	}
-	if success && ctx.Err() == nil {
-		if rerr := imp.matcher.refreshSuggestionEvidence(ctx, participantID, recorded); rerr != nil {
-			if ctx.Err() == nil {
-				slog.Warn("beeper identity evidence refresh failed",
-					"participant_id", participantID, "beeper_user_id", u.ID, "error", rerr)
-				sum.Errors++
-			}
-		}
 	}
 }
 
@@ -2105,9 +2059,6 @@ func (imp *Importer) checkpointNow(ctx context.Context, syncID int64, state *Syn
 func (imp *Importer) checkpointNowContext(ctx context.Context, syncID int64, state *SyncState, sum *ImportSummary) error {
 	blob, err := state.Marshal()
 	if err != nil {
-		return err
-	}
-	if err := imp.store.UpdateSourceSyncState(ctx, sum.SourceID, blob); err != nil {
 		return err
 	}
 	err = imp.store.UpdateSyncCheckpointContext(ctx, syncID, &store.Checkpoint{

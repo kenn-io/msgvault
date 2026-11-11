@@ -1030,9 +1030,10 @@ func copyData(ctx context.Context, tx *sql.Tx, rowCount int, options CopySubsetO
 		}
 	}
 
-	// These cursors can carry progress for rooms outside the subset.
-	if _, err := tx.ExecContext(ctx, `UPDATE sources SET sync_cursor = NULL WHERE source_type IN ('matrix', 'beeper')`); err != nil {
-		return nil, fmt.Errorf("clear subset cursors: %w", err)
+	// A Matrix cursor can carry pending relation events from rooms outside
+	// the subset, so exports start Matrix sync over.
+	if _, err := tx.ExecContext(ctx, `UPDATE sources SET sync_cursor = NULL WHERE source_type = 'matrix'`); err != nil {
+		return nil, fmt.Errorf("clear Matrix subset cursors: %w", err)
 	}
 
 	if _, err := tx.ExecContext(
