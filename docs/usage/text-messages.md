@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-04"
+last_edited: "2026-11-11"
 title: Text Messages
 description: Import chats and texts from common exports, and browse synchronized Teams and Discord conversations in msgvault.
 ---
