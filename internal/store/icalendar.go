@@ -156,9 +156,19 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 	return nil
 }
 
+const icsFamilyQuery = `SELECT COALESCE(
+ (SELECT c.source_conversation_id FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE m.id=? AND m.source_id=?),
+ (SELECT source_conversation_id FROM conversations WHERE source_id=? AND source_conversation_id=?),
+ (SELECT c.source_conversation_id FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE m.id=(
+  SELECT id FROM (
+   SELECT id FROM (SELECT a.message_id AS id FROM source_merge_archive_only_messages a JOIN messages m ON m.id=a.message_id WHERE a.original_source_message_id=? AND m.source_id=? ORDER BY a.message_id LIMIT 1) original
+   UNION ALL
+   SELECT id FROM (SELECT e.message_id AS id FROM calendar_events e JOIN source_merge_archive_only_messages a ON a.message_id=e.message_id JOIN messages m ON m.id=e.message_id WHERE e.series_provider_id=? AND m.source_id=? ORDER BY e.message_id LIMIT 1) exception
+  ) candidates ORDER BY id LIMIT 1)), ?)`
+
 func (s *Store) icsFamily(ctx context.Context, tx *loggedTx, sourceID, retainedID int64, familyKey string, needOrganizer bool) (string, string, error) {
 	q := boundQuerier{ctx: ctx, q: tx}
-	if err := q.QueryRow(`SELECT COALESCE((SELECT c.source_conversation_id FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE m.id=? AND m.source_id=?), (SELECT source_conversation_id FROM conversations WHERE source_id=? AND source_conversation_id=?), (SELECT c.source_conversation_id FROM source_merge_archive_only_messages a JOIN messages m ON m.id=a.message_id JOIN conversations c ON c.id=m.conversation_id LEFT JOIN calendar_events e ON e.message_id=m.id WHERE m.source_id=? AND (a.original_source_message_id=? OR e.series_provider_id=?) ORDER BY m.id LIMIT 1), ?)`, retainedID, sourceID, sourceID, familyKey, sourceID, familyKey, familyKey, familyKey).Scan(&familyKey); err != nil {
+	if err := q.QueryRow(icsFamilyQuery, retainedID, sourceID, sourceID, familyKey, familyKey, sourceID, familyKey, sourceID, familyKey).Scan(&familyKey); err != nil {
 		return "", "", fmt.Errorf("resolve ICS family conversation: %w", err)
 	}
 	if !needOrganizer {
