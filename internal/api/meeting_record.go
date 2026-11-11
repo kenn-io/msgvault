@@ -5,11 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
-	"strconv"
-	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
-	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/verification"
 )
@@ -29,24 +26,14 @@ func (s *Server) registerMeetingRecordRoute(api huma.API) {
 }
 
 func parseMeetingLinkRef(value string) (store.MeetingLinkRef, error) {
-	kind, value, ok := strings.Cut(value, ":")
-	if !ok || kind != "evt" && kind != "msg" {
-		return store.MeetingLinkRef{}, errors.New("use msg:<id> or evt:<id>[@occurrence key]")
+	ref, err := store.ParseMeetingLinkRef(value)
+	if err != nil {
+		return ref, err
 	}
-	message, key, hasKey := strings.Cut(value, "@")
-	id, err := strconv.ParseInt(message, 10, 64)
-	if err != nil || id <= 0 || id > maxPublicMeetingID || hasKey && (kind != "evt" || key == "") {
+	if ref.MessageID > maxPublicMeetingID {
 		return store.MeetingLinkRef{}, errors.New("invalid meeting reference")
 	}
-	var identity calrecur.Identity
-	if hasKey {
-		var base string
-		base, identity, ok = calrecur.ParseInstanceID("event_" + key)
-		if !ok || base != "event" {
-			return store.MeetingLinkRef{}, errors.New("invalid occurrence key")
-		}
-	}
-	return store.MeetingLinkRef{Kind: kind, MessageID: id, Identity: identity}, nil
+	return ref, nil
 }
 
 func (s *Server) writeMeetingLinkError(w http.ResponseWriter, err error) {

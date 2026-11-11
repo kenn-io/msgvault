@@ -5,10 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"slices"
-	"strconv"
-	"strings"
 
 	"go.kenn.io/msgvault/internal/calrecur"
 )
@@ -20,19 +17,6 @@ type meetingDecisionEdge struct {
 
 type meetingDecisionConflict struct {
 	link, split meetingDecisionEdge
-}
-
-func parseStoredMeetingRef(value string) (meetingDecisionEndpoint, error) {
-	kind, rest, ok := strings.Cut(value, ":")
-	if !ok {
-		return meetingDecisionEndpoint{}, fmt.Errorf("invalid meeting ref %q", value)
-	}
-	idText, key, _ := strings.Cut(rest, "@")
-	id, err := strconv.ParseInt(idText, 10, 64)
-	if err != nil {
-		return meetingDecisionEndpoint{}, err
-	}
-	return meetingDecisionEndpoint{ID: id, Kind: kind, Key: key}, nil
 }
 
 func (s *Store) meetingDecisionsForMessage(ctx context.Context, id int64, budget *int) ([]meetingDecisionEdge, error) {
@@ -98,57 +82,72 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 	}
 	seed := endpointFromRef(ref)
 	add(seed, nil)
-	var automatic, explicit, splits []meetingDecisionEdge
+	var groups [][]meetingDecisionEndpoint
+	var explicit, splits []meetingDecisionEdge
 	seenDecisions := map[string]bool{}
+	resolved := map[string]bool{}
+	loadedDecisions := map[int64]bool{}
 	for len(queue) > 0 {
 		endpoint := queue[0]
 		queue = queue[1:]
-		itemRef, err := endpoint.meetingRef()
-		if err != nil {
-			return result, err
-		}
-		record, err := s.meetingAutomaticRecordContext(ctx, itemRef, &budget)
-		if errors.Is(err, ErrMeetingOccurrenceRequired) && endpoint.Anchor != "" {
-			anchored := endpoint
-			anchored.Key = anchored.Anchor
-			itemRef, err = anchored.meetingRef()
-			if err == nil {
-				record, err = s.meetingAutomaticRecordContext(ctx, itemRef, &budget)
-			}
-		}
-		if errors.Is(err, sql.ErrNoRows) && endpoint != seed {
-			continue
-		}
-		if err != nil {
-			return result, err
-		}
-		result.Unexpandable = append(result.Unexpandable, record.Unexpandable...)
-		var members []meetingDecisionEndpoint
-		for _, id := range record.MessageIDs {
-			member := meetingDecisionEndpoint{ID: id, Kind: "msg"}
-			add(member, nil)
-			members = append(members, member)
-		}
-		for _, link := range record.Links {
-			member, err := parseStoredMeetingRef(link.Ref)
+		if !resolved[endpoint.ref()] {
+			itemRef, err := endpoint.meetingRef()
 			if err != nil {
 				return result, err
 			}
-			copy := link
-			add(member, &copy)
-			members = append(members, member)
-			if link.MessageID != member.ID {
-				alias := meetingDecisionEndpoint{ID: link.MessageID, Kind: "evt"}
-				add(alias, nil)
-				automatic = append(automatic, meetingDecisionEdge{a: alias, b: member})
+			record, err := s.meetingAutomaticRecordContext(ctx, itemRef, &budget)
+			if errors.Is(err, ErrMeetingOccurrenceRequired) && endpoint.Anchor != "" {
+				anchored := endpoint
+				anchored.Key = anchored.Anchor
+				itemRef, err = anchored.meetingRef()
+				if err == nil {
+					record, err = s.meetingAutomaticRecordContext(ctx, itemRef, &budget)
+				}
 			}
-			if endpoint.Kind == "evt" && link.MessageID == endpoint.ID {
-				automatic = append(automatic, meetingDecisionEdge{a: endpoint, b: member})
+			if errors.Is(err, sql.ErrNoRows) && endpoint != seed {
+				continue
 			}
+			if err != nil {
+				return result, err
+			}
+			result.Unexpandable = append(result.Unexpandable, record.Unexpandable...)
+			members := []meetingDecisionEndpoint{endpoint}
+			memberSet := map[string]bool{endpoint.ref(): true}
+			addMember := func(member meetingDecisionEndpoint) {
+				if !memberSet[member.ref()] {
+					members = append(members, member)
+					memberSet[member.ref()] = true
+				}
+			}
+			for _, id := range record.MessageIDs {
+				member := meetingDecisionEndpoint{ID: id, Kind: "msg"}
+				add(member, nil)
+				addMember(member)
+			}
+			for _, link := range record.Links {
+				ref, err := ParseMeetingLinkRef(link.Ref)
+				if err != nil {
+					return result, err
+				}
+				member := endpointFromRef(ref)
+				copy := link
+				add(member, &copy)
+				addMember(member)
+				if link.MessageID != member.ID {
+					alias := meetingDecisionEndpoint{ID: link.MessageID, Kind: "evt"}
+					add(alias, nil)
+					addMember(alias)
+				}
+			}
+			for _, member := range members {
+				resolved[member.ref()] = true
+			}
+			groups = append(groups, members)
 		}
-		for _, member := range members {
-			automatic = append(automatic, meetingDecisionEdge{a: endpoint, b: member})
+		if loadedDecisions[endpoint.ID] {
+			continue
 		}
+		loadedDecisions[endpoint.ID] = true
 		choices, err := s.meetingDecisionsForMessage(ctx, endpoint.ID, &budget)
 		if err != nil {
 			return result, err
@@ -179,6 +178,17 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 		}
 		return parent[key]
 	}
+	groupByMember := map[string][][]meetingDecisionEndpoint{}
+	var vertices []meetingDecisionEndpoint
+	for _, group := range groups {
+		for _, member := range group {
+			key := member.ref()
+			if len(groupByMember[key]) == 0 {
+				vertices = append(vertices, member)
+			}
+			groupByMember[key] = append(groupByMember[key], group)
+		}
+	}
 	// A note/event split applies to all automatic event copies of that occurrence.
 	for _, split := range slices.Clone(splits) {
 		note, event := split.a, split.b
@@ -188,12 +198,11 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 		if note.Kind != "msg" || event.Kind != "evt" {
 			continue
 		}
-		for _, edge := range automatic {
-			if edge.a.ref() == event.ref() && edge.b.Kind == "evt" {
-				splits = append(splits, meetingDecisionEdge{a: note, b: edge.b})
-			}
-			if edge.b.ref() == event.ref() && edge.a.Kind == "evt" {
-				splits = append(splits, meetingDecisionEdge{a: note, b: edge.a})
+		for _, group := range groupByMember[event.ref()] {
+			for _, member := range group {
+				if member.Kind == "evt" && member.ref() != event.ref() {
+					splits = append(splits, meetingDecisionEdge{a: note, b: member})
+				}
 			}
 		}
 	}
@@ -212,11 +221,10 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 		})
 	}
 	order(explicit)
-	order(automatic)
-	for _, edge := range append(explicit, automatic...) {
+	join := func(edge meetingDecisionEdge) {
 		a, b := root(edge.a.ref()), root(edge.b.ref())
 		if a == b {
-			continue
+			return
 		}
 		blocked := false
 		for _, split := range splits {
@@ -231,6 +239,24 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 		}
 		if !blocked {
 			parent[b] = a
+		}
+	}
+	for _, edge := range explicit {
+		join(edge)
+	}
+	slices.SortFunc(vertices, compareMeetingEndpoints)
+	for _, member := range vertices {
+		var others []meetingDecisionEndpoint
+		for _, group := range groupByMember[member.ref()] {
+			for _, other := range group {
+				if compareMeetingEndpoints(member, other) < 0 {
+					others = append(others, other)
+				}
+			}
+		}
+		slices.SortFunc(others, compareMeetingEndpoints)
+		for _, other := range others {
+			join(meetingDecisionEdge{a: member, b: other})
 		}
 	}
 	seedRoot := root(seed.ref())

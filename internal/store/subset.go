@@ -367,6 +367,17 @@ func verifyForeignKeys(ctx context.Context, db *sql.DB) error {
 // copyData executes INSERT INTO ... SELECT in dependency order.
 func copyData(ctx context.Context, tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult, error) {
 	result := &CopyResult{}
+	if present, err := sourceTableExists(ctx, tx, "archive_metadata"); err != nil {
+		return nil, err
+	} else if present {
+		version, err := readSchemaVersion(ctx, tx, "src.archive_metadata")
+		if err != nil {
+			return nil, fmt.Errorf("read source archive schema version: %w", err)
+		}
+		if version > SchemaVersion {
+			return nil, fmt.Errorf("source archive schema version %d is newer than supported version %d", version, SchemaVersion)
+		}
+	}
 
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		CREATE TEMP TABLE selected_messages AS
@@ -1034,6 +1045,9 @@ func copyData(ctx context.Context, tx *sql.Tx, rowCount int, options CopySubsetO
 	} else if present {
 		if _, err := copyByName(ctx, tx, "meeting_link_decisions", `left_message_id IN (SELECT id FROM selected_messages) AND right_message_id IN (SELECT id FROM selected_messages)`); err != nil {
 			return nil, fmt.Errorf("copy meeting link decisions: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE meeting_link_decisions SET dedup_origin_message_id = NULL WHERE dedup_origin_message_id IS NOT NULL AND dedup_origin_message_id NOT IN (SELECT id FROM messages)`); err != nil {
+			return nil, fmt.Errorf("clear unavailable meeting decision origins: %w", err)
 		}
 	}
 

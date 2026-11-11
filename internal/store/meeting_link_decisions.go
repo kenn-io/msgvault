@@ -26,11 +26,13 @@ type meetingDecisionEndpoint struct {
 }
 
 func (e meetingDecisionEndpoint) ref() string {
-	ref := fmt.Sprintf("%s:%d", e.Kind, e.ID)
-	if e.Key != "" {
-		ref += "@" + e.Key
+	if e.Kind == "evt" {
+		ref, err := e.meetingRef()
+		if err == nil {
+			return formatMeetingOccurrence(ref.OccurrenceRef)
+		}
 	}
-	return ref
+	return fmt.Sprintf("%s:%d", e.Kind, e.ID)
 }
 
 func endpointFromRef(ref MeetingLinkRef) meetingDecisionEndpoint {
@@ -228,8 +230,8 @@ func (s *Store) materializedMeetingEndpoint(ctx context.Context, endpoint meetin
 	}
 	for _, link := range record.Links {
 		if link.Ref == endpoint.ref() || link.MessageID == endpoint.ID {
-			resolved, err := parseStoredMeetingRef(link.Ref)
-			return resolved, []int64{endpoint.ID, link.MessageID}, err
+			resolved, err := ParseMeetingLinkRef(link.Ref)
+			return endpointFromRef(resolved), []int64{endpoint.ID, link.MessageID}, err
 		}
 	}
 	return endpoint, nil, sql.ErrNoRows

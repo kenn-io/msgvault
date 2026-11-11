@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -10,6 +11,57 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMeetingLinkDecisionLargeAutomaticGroup(t *testing.T) {
+	requirements := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"large_20270314T100000Z"}}`
+	ids := make([]int64, 0, 720)
+	for i := range 720 {
+		_, id := projectionFixture(t, st, fmt.Sprintf("large-%d", i), "granola_json", raw)
+		ids = append(ids, id)
+	}
+	for _, id := range []int64{ids[0], ids[len(ids)-1]} {
+		record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: id}})
+		requirements.NoError(err)
+		requirements.Equal(ids, record.MessageIDs)
+	}
+}
+
+func TestMeetingLinkDecisionLargeGroupsLinkAndSplit(t *testing.T) {
+	requirements := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	groups := [2][]int64{}
+	for group := range 2 {
+		raw := fmt.Sprintf(`{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"group%d_20270314T100000Z"}}`, group)
+		for i := range 510 {
+			_, id := projectionFixture(t, st, fmt.Sprintf("group-%d-%d", group, i), "granola_json", raw)
+			groups[group] = append(groups[group], id)
+		}
+	}
+	ref := func(id int64) MeetingLinkRef {
+		return MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: id}}
+	}
+	_, err := st.DecideMeetingLinkContext(t.Context(), ref(groups[0][0]), ref(groups[1][0]), "link")
+	requirements.NoError(err)
+	all := append(append([]int64{}, groups[0]...), groups[1]...)
+	for _, id := range []int64{groups[0][0], groups[0][1], groups[1][0], groups[1][509]} {
+		record, err := st.MeetingRecordContext(t.Context(), ref(id))
+		requirements.NoError(err)
+		requirements.Equal(all, record.MessageIDs)
+	}
+	_, err = st.DecideMeetingLinkContext(t.Context(), ref(groups[0][0]), ref(groups[0][1]), "unlink")
+	requirements.NoError(err)
+	joined := append(append([]int64{groups[0][0]}, groups[0][2:]...), groups[1]...)
+	for _, id := range []int64{groups[0][0], groups[0][2], groups[1][0]} {
+		record, err := st.MeetingRecordContext(t.Context(), ref(id))
+		requirements.NoError(err)
+		requirements.Equal(joined, record.MessageIDs)
+	}
+	record, err := st.MeetingRecordContext(t.Context(), ref(groups[0][1]))
+	requirements.NoError(err)
+	requirements.Equal([]int64{groups[0][1]}, record.MessageIDs)
+}
 
 func TestMeetingLinkDecisionJoinsUnscheduledNotesAndUndoes(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
@@ -226,6 +278,89 @@ func TestMeetingLinkDecisionSubsetRetainsSelectedPairs(t *testing.T) {
 		requirements.NoError(dst.db.QueryRow(`SELECT COUNT(*) FROM meeting_link_decisions`).Scan(&count))
 		assertions.Equal(limit-1, count)
 		requirements.NoError(dst.Close())
+	}
+}
+
+func TestMeetingLinkDecisionSubsetOmitsHiddenOrigin(t *testing.T) {
+	for _, action := range []string{"link", "unlink"} {
+		t.Run(action, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			path := filepath.Join(t.TempDir(), "source.db")
+			st, err := OpenForTest(t.Context(), path)
+			requirements.NoError(err)
+			t.Cleanup(func() { assertions.NoError(st.Close()) })
+			requirements.NoError(st.InitSchemaContext(t.Context()))
+			format, raw := "meeting_json", `{}`
+			if action == "unlink" {
+				format, raw = "granola_json", `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"subset_20270314T100000Z"}}`
+			}
+			_, survivor := projectionFixture(t, st, "subset-survivor", format, raw)
+			_, other := projectionFixture(t, st, "subset-other", format, raw)
+			_, duplicate := projectionFixture(t, st, "subset-hidden", format, raw)
+			dupRef := MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: duplicate}}
+			otherRef := MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: other}}
+			_, err = st.DecideMeetingLinkContext(t.Context(), dupRef, otherRef, action)
+			requirements.NoError(err)
+			_, err = st.MergeDuplicates(t.Context(), survivor, []int64{duplicate}, "subset-undo")
+			requirements.NoError(err)
+			dir := t.TempDir()
+			_, err = CopySubset(t.Context(), path, dir, 2, false)
+			requirements.NoError(err)
+			dst, err := OpenForTest(t.Context(), filepath.Join(dir, "msgvault.db"))
+			requirements.NoError(err)
+			t.Cleanup(func() { assertions.NoError(dst.Close()) })
+			record, err := dst.MeetingRecordContext(t.Context(), otherRef)
+			requirements.NoError(err)
+			if action == "link" {
+				assertions.Equal([]int64{survivor, other}, record.MessageIDs)
+			} else {
+				assertions.Equal([]int64{other}, record.MessageIDs)
+			}
+			_, err = st.UndoDedup(t.Context(), "subset-undo")
+			requirements.NoError(err)
+			record, err = st.MeetingRecordContext(t.Context(), otherRef)
+			requirements.NoError(err)
+			if action == "link" {
+				assertions.Equal([]int64{other, duplicate}, record.MessageIDs)
+			} else {
+				assertions.Equal([]int64{survivor, other}, record.MessageIDs)
+			}
+		})
+	}
+}
+
+func TestMeetingLinkDecisionSubsetSourceVersion(t *testing.T) {
+	for _, tc := range []struct {
+		marker   string
+		accepted bool
+	}{{fmt.Sprint(SchemaVersion), true}, {"41", true}, {fmt.Sprint(SchemaVersion + 1), false}, {"broken", false}} {
+		t.Run(tc.marker, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			path := filepath.Join(t.TempDir(), "source.db")
+			st, err := OpenForTest(t.Context(), path)
+			requirements.NoError(err)
+			t.Cleanup(func() { assertions.NoError(st.Close()) })
+			requirements.NoError(st.InitSchemaContext(t.Context()))
+			_, _ = projectionFixture(t, st, "version-note", "meeting_json", `{}`)
+			if tc.marker == "41" {
+				_, err = st.db.ExecContext(t.Context(), `DROP TABLE meeting_link_decisions`)
+				requirements.NoError(err)
+			}
+			_, err = st.db.ExecContext(t.Context(), `UPDATE archive_metadata SET value=? WHERE key='schema_version'`, tc.marker)
+			requirements.NoError(err)
+			dir := t.TempDir()
+			_, err = CopySubset(t.Context(), path, dir, 1, false)
+			if tc.accepted {
+				requirements.NoError(err)
+			} else {
+				requirements.Error(err)
+				_, err = os.Stat(filepath.Join(dir, "msgvault.db"))
+				assertions.True(os.IsNotExist(err))
+			}
+			var marker string
+			requirements.NoError(st.db.QueryRowContext(t.Context(), `SELECT value FROM archive_metadata WHERE key='schema_version'`).Scan(&marker))
+			assertions.Equal(tc.marker, marker)
+		})
 	}
 }
 
