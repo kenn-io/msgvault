@@ -10,7 +10,7 @@ type ImportOptions struct {
 type FileSummary struct {
 	Filename                                      string
 	Rows, Added, Unchanged, Malformed, MissingIDs int
-	UnknownDates, UnknownSenders                  int
+	UnknownDates, UnknownSenders, MissingMedia    int
 }
 type ImportSummary struct {
 	SourceID                                int64

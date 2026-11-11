@@ -18,7 +18,12 @@ func TestImportRedditRefreshesCacheAfterPartialFailure(t *testing.T) {
 	require := require.New(t)
 	cfg := lifecycleTestConfig(t.TempDir())
 	root := t.TempDir()
-	require.NoError(os.WriteFile(filepath.Join(root, "posts.csv"), []byte("id,title,date\na,lantern,2026-05-24 03:19:35 UTC\nb,\"unterminated\n"), 0600))
+	require.NoError(os.WriteFile(filepath.Join(root, "comments.csv"), []byte("id,body,date,media,permalink\n"+
+		"one,lantern comment,2026-05-24 03:19:35 UTC,https://example.com/media.png,/r/example/comments/a/lantern/one\n"+
+		"one,retained duplicate,2026-05-24 03:19:35 UTC,https://example.com/media.png,\n"+
+		"one,blank media cell,2026-05-24 03:19:35 UTC,   ,\n"), 0600))
+	require.NoError(os.WriteFile(filepath.Join(root, "posts.csv"), []byte("id,title,date,url\n"+
+		"a,lantern,2026-05-24 03:19:35 UTC,https://example.com/lantern\nb,\"unterminated\n"), 0600))
 	require.NoError(os.WriteFile(filepath.Join(root, "votes.csv"), []byte("id,vote\none,up\n"), 0600))
 	cmd := &cobra.Command{Use: "import-reddit"}
 	cmd.SetContext(withStoreResolverConfig(t, cfg))
@@ -26,12 +31,14 @@ func TestImportRedditRefreshesCacheAfterPartialFailure(t *testing.T) {
 	cmd.SetOut(&out)
 	require.ErrorContains(runImportReddit(cmd, root, redditCLIOptions{Me: "fictional_owner"}), "posts.csv")
 	assert.Contains(out.String(), "Unsupported: votes.csv")
+	assert.Regexp(`(?m)^comments\.csv: 3 rows, 1 added, 2 already archived[^\n]*; 2 missing media references$`, out.String())
+	assert.Regexp(`(?m)^posts\.csv:[^\n]*; 0 missing media references$`, out.String())
 	db, err := sql.Open("duckdb", "")
 	require.NoError(err)
 	t.Cleanup(func() { _ = db.Close() })
 	var n int
 	require.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FROM read_parquet(?, hive_partitioning=true)`, filepath.Join(cfg.AnalyticsDir(), "messages", "**", "*.parquet")).Scan(&n))
-	assert.Equal(1, n)
+	assert.Equal(2, n)
 }
 
 func TestImportRedditRejectsClientFilesOnRemote(t *testing.T) {

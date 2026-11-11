@@ -101,11 +101,19 @@ func TestImportQuotedBOMHeaderAndRaggedRows(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	root := t.TempDir()
-	require.NoError(os.WriteFile(filepath.Join(root, "posts.csv"), []byte("\ufeff\"title\",id,extra\n\"first\nline\",a,original\nmissing\n,no-id,\n"), 0600))
-	summary, err := Import(t.Context(), testutil.NewTestStore(t), ImportOptions{RootDir: root, Me: "/u/Fictional_Owner"})
+	require.NoError(os.WriteFile(filepath.Join(root, "posts.csv"), []byte("\ufeff\r\n\"title\",id,extra\r\n\r\n\"first\r\n\r\nline\",a,original\r\nmissing\r\n,no-id,\r\n"), 0600))
+	st := testutil.NewTestStore(t)
+	summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "/u/Fictional_Owner"})
 	require.NoError(err)
 	assert.Equal(2, summary.Added)
 	assert.Equal(1, summary.Malformed)
+	var messageID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages WHERE source_message_id='post:a'").Scan(&messageID))
+	raw, err := st.GetMessageRawContext(t.Context(), messageID)
+	require.NoError(err)
+	var evidence csvRow
+	require.NoError(json.Unmarshal(raw, &evidence))
+	assert.Equal("first\n\nline", evidence.Columns["title"])
 }
 
 func TestImportSymlinks(t *testing.T) {
@@ -335,12 +343,17 @@ func TestImportChatGrouping(t *testing.T) {
 }
 
 func TestImportFailureRetainsCompletedRows(t *testing.T) {
+	// The 8 MiB limit applies to the logical record, even when every physical line is short.
+	overlong := "\xef\xbb\xbfid,body\r\ntwo,lantern\r\nfour,\"" +
+		strings.Repeat(strings.Repeat("x", 8<<10)+"\r\n\r\n", 1<<10) + "end\"\r\n"
 	for _, tc := range []struct {
 		name, invalid, fixed              string
 		firstAdded, retryAdded, unchanged int
 	}{
 		{"schema", "renamed\ninvalid\n", "id,body\ntwo,recovered\n", 1, 2, 1},
 		{"quoting", "id,body\ntwo,lantern\nfour,\"unterminated\n", "id,body\ntwo,lantern\nfour,recovered\n", 2, 2, 2},
+		{"overlong_record", overlong, "id,body\ntwo,lantern\nfour,recovered\n", 2, 2, 2},
+		{"overlong_unquoted_record", "id,body\ntwo,lantern\nfour," + strings.Repeat("x", 8<<20), "id,body\ntwo,lantern\nfour,recovered\n", 2, 2, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -352,6 +365,10 @@ func TestImportFailureRetainsCompletedRows(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			summary, err := Import(t.Context(), st, ImportOptions{RootDir: root, Me: "fictional_owner"})
 			require.ErrorContains(err, "comments.csv")
+			if strings.HasPrefix(tc.name, "overlong_") {
+				assert.ErrorContains(err, "record 2")
+				assert.ErrorContains(err, "8 MiB")
+			}
 			assert.Equal(tc.firstAdded, summary.Added)
 			var n int
 			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&n))

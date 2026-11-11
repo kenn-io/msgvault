@@ -133,7 +133,7 @@ func (r *exportReader) rows(ctx context.Context, file csvFile, summary *FileSumm
 			retErr = fmt.Errorf("reddit: %s: %w", file.name, retErr)
 		}
 	}()
-	reader := csv.NewReader(textutil.WithoutUTF8BOM(&export.ContextReader{Context: ctx, Reader: f}))
+	reader := newCSVRecordReader(textutil.WithoutUTF8BOM(&export.ContextReader{Context: ctx, Reader: f}))
 	headers, err := reader.Read()
 	if errors.Is(err, io.EOF) {
 		return nil

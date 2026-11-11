@@ -532,8 +532,8 @@ The importer reads top-level regular `chat_history.csv`, `messages.csv`,
 numbered splits. Extract ZIPs first. Unsupported files and skipped rows appear in the
 summary. Content files are processed in name order. Schema errors (empty or
 duplicate headers or missing essential columns), invalid UTF-8, read/quoting
-errors stop the run with the filename. A read or parse failure while streaming
-may leave completed rows. Essential columns
+errors, and CSV records over 8 MiB stop the run with the filename. The record
+limit includes line breaks inside quoted fields. Essential columns
 are `message_id` and `message` for Chat and `id` for PMs, posts, and comments.
 Complete rows before the error are retained; later
 files are not read. Empty and header-only CSVs are valid. Fix or move the
@@ -570,7 +570,9 @@ Dated cache-backed lists and totals omit them. Set
 [`[analytics].engine = "sql"`](../configuration.md#analytics) for live browsing;
 no date is invented to place records in the cache.
 
-Links are preserved; no media is downloaded.
+The per-file summary counts one missing media reference per eligible input row
+with a nonblank exported comment media cell, including repeats. Links are
+preserved without downloading media.
 Coverage depends on what Reddit supplied: no complete lifetime-history or
 removed-chat recovery guarantee. The separate legacy-PM archive UI's 1,000-PM
 cap does not establish an account-export limit. Format support follows the

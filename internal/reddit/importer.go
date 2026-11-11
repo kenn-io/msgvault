@@ -103,6 +103,16 @@ func rowKey(kind string, row csvRow) string {
 	return kind + ":" + row.Columns[field]
 }
 
+func appendBodyLink(body, link string) string {
+	if link == "" {
+		return body
+	}
+	if body == "" {
+		return link
+	}
+	return body + "\n" + link
+}
+
 func importBatch(ctx context.Context, st *store.Store, sourceID int64, owner, kind string, rows []csvRow, stats *FileSummary) error {
 	keys := make([]string, len(rows))
 	for i, row := range rows {
@@ -150,17 +160,13 @@ func importBatch(ctx context.Context, st *store.Store, sourceID int64, owner, ki
 			}
 			if kind == "post" {
 				subject = c["title"]
-				if c["url"] != "" {
-					if body != "" {
-						body += "\n"
-					}
-					body += c["url"]
+				body = appendBodyLink(body, c["url"])
+			} else {
+				media := c["media"]
+				if strings.TrimSpace(media) != "" {
+					stats.MissingMedia++
 				}
-			} else if c["media"] != "" {
-				if body != "" {
-					body += "\n"
-				}
-				body += c["media"]
+				body = appendBodyLink(body, media)
 			}
 		}
 		if link := c["permalink"]; kind != "chat" && link != "" {
@@ -168,10 +174,7 @@ func importBatch(ctx context.Context, st *store.Store, sourceID int64, owner, ki
 				link = "https://www.reddit.com" + link
 			}
 			if !slices.Contains(strings.Fields(body), link) {
-				if body != "" {
-					body += "\n"
-				}
-				body += link
+				body = appendBodyLink(body, link)
 			}
 		}
 		sent, err := time.Parse("2006-01-02 15:04:05 MST", date)
