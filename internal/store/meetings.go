@@ -322,7 +322,9 @@ func (s *Store) loadMeetingRaw(ctx context.Context, tx *loggedTx, id int64) (str
 	var compressed []byte
 	var format string
 	var compression sql.NullString
-	err := tx.QueryRowContext(ctx, `SELECT raw_data, raw_format, compression FROM message_raw WHERE message_id = ?`, id).Scan(&compressed, &format, &compression)
+	err := tx.QueryRowContext(ctx, `
+		SELECT raw_data, raw_format, compression
+		FROM message_raw WHERE message_id = ?`, id).Scan(&compressed, &format, &compression)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil, nil
 	}

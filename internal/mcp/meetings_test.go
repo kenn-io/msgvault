@@ -324,6 +324,7 @@ func TestMeetingMCPSubtitleOldDaemon(t *testing.T) {
 	must.NotEmpty(result.Content)
 	message, ok := result.Content[0].(*sdkmcp.TextContent)
 	must.True(ok)
+	must.Contains(message.Text, "invalid_meeting_format")
 	must.Contains(message.Text, "5.1.0")
 	must.Contains(message.Text, "upgrade")
 }

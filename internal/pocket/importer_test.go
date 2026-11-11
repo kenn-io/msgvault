@@ -647,6 +647,7 @@ func TestPocketSubtitleRejectsUnavailableRefresh(t *testing.T) {
 			must.NoError(err)
 			_, err = meetingcontent.RenderSubtitles("pocket_json", raw, meetingcontent.PacketOptions{Format: meetingcontent.FormatSRT, MaxBytes: 4096})
 			must.ErrorIs(err, meetingcontent.ErrInvalidSubtitles)
+			must.ErrorContains(err, "retained transcript timing is unavailable")
 		})
 	}
 }

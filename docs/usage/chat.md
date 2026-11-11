@@ -173,10 +173,7 @@ For example, call `list_meeting_action_items` with:
 ```
 
 For subtitles, call `get_meeting_context` with
-`{"message_ids":[42],"format":"vtt","max_bytes":4096}`. SRT/VTT require daemon
-API schema 5.1.0, include transcript evidence automatically, and apply the
-budget to complete subtitle output only. See [subtitle timing and format
-limits](meetings.md#export-subtitles).
+`{"message_ids":[42],"format":"vtt"}`; see [subtitle export](meetings.md#export-subtitles).
 
 Call `get_meeting_context` with `{"message_ids":[42],"format":"json"}`;
 add `"include_transcript":true` only when needed. Call `get_meeting_metrics`

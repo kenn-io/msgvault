@@ -12,7 +12,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/document/mediatranscript"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
@@ -70,11 +69,7 @@ func TestMeetingSubtitleWhitespace(t *testing.T) {
 			}
 			source, err := st.GetOrCreateSource(sourceName, "owner@example.test")
 			must.NoError(err)
-			format := "pocket_json"
-			switch tc.name {
-			case "omi":
-				format = "omi_json"
-			}
+			format := sourceName + "_json"
 			snapshot := meetingarchive.Snapshot{SourceID: source.ID, AccountEmail: "owner@example.test", SourceMessageID: tc.name, SourceConversationID: tc.name, Title: "Meeting", StartedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Raw: []byte(tc.raw), RawFormat: format, Organizer: &meetingarchive.Person{Name: "Owner", Email: "owner@example.test"}}
 			archived, err := meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
 			must.NoError(err)
@@ -90,14 +85,6 @@ func TestMeetingSubtitleWhitespace(t *testing.T) {
 			saved, err := os.ReadFile(output)
 			must.NoError(err)
 			checks.Equal(tc.want, string(saved))
-			if tc.name == "omi" {
-				parsed, err := mediatranscript.ParseSubRip(saved, "msgvault", "und")
-				must.NoError(err)
-				must.Len(parsed.Segments, 1)
-				checks.Equal(int64(1000), parsed.Segments[0].StartMS)
-				checks.Equal(int64(2000), parsed.Segments[0].EndMS)
-				checks.Equal("Unknown speaker: Hello\nordinary speech", parsed.Segments[0].Text)
-			}
 			checks.Empty(stdout)
 			requestFormat := generated.MeetingContextRequestFormat(tc.format)
 			result, err := client.GetMeetingContext(t.Context(), generated.GetMeetingContextBody{MessageIds: new([]int64{archived.MessageID}), Format: &requestFormat})

@@ -84,7 +84,7 @@ msgvault meetings metrics --domain example.com --after 2026-01-01 --json
 | `--max-bytes` | UTF-8 content budget, default 131072; range 4096–1048576 |
 | `--output`, `-o` | Output file; omitted or `-` writes the exact packet content to stdout |
 
-SRT and VTT require one distinct meeting ID and load the transcript. See [subtitle export](usage/meetings.md#export-subtitles) for timing and format limits.
+See [subtitle export](usage/meetings.md#export-subtitles) for SRT and VTT limits.
 
 Mixed or invalid selections fail. Truncated packets identify omitted content
 and meetings.

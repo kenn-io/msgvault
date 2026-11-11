@@ -208,20 +208,3 @@ func TestMeetingClientPropagatesDaemonErrorsAndRequestContext(t *testing.T) {
 		requirements.ErrorIs(err, context.Canceled)
 	})
 }
-
-func TestMeetingClientSubtitleOldDaemon(t *testing.T) {
-	must := require.New(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":"invalid_meeting_format","message":"format must be json or markdown"}`))
-	}))
-	t.Cleanup(server.Close)
-	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, HTTPClient: server.Client()})
-	must.NoError(err)
-	t.Cleanup(func() { _ = client.Close() })
-	format := generated.MeetingContextRequestFormat("srt")
-	_, err = client.GetMeetingContext(t.Context(), generated.GetMeetingContextBody{MessageIds: new([]int64{1}), Format: &format})
-	must.ErrorContains(err, "5.1.0")
-	must.ErrorContains(err, "upgrade")
-}

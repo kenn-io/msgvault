@@ -57,11 +57,10 @@ msgvault meetings context --id 42 --format srt
 msgvault meetings context --id 42 --format vtt -o meeting.vtt
 ```
 
-Subtitle formats require daemon API schema 5.1.0 or newer; the default context
-format remains Markdown. Output goes to stdout unless `-o FILE` is specified;
-`-o -` also uses stdout. Cues show `Speaker: text`; an unnamed Omi or Twenty
-speaker appears as `Unknown speaker`. Nonblank line breaks survive, and
-interior blank lines collapse to one line break.
+Subtitle formats require daemon API schema 5.1.0 or newer. Cues show
+`Speaker: text`; an unnamed Omi or Twenty speaker appears as `Unknown speaker`.
+Nonblank line breaks survive, and interior blank lines collapse to one line
+break.
 
 WebVTT preserves indentation and escapes text and labels. SRT trims each line
 and refuses timing lines, tags, and subtitle override syntax that players
@@ -82,9 +81,7 @@ timing unavailable. Twenty uses both relative bounds when available; otherwise
 both absolute bounds must be available.
 
 Subtitle exports load transcript evidence automatically and require exactly one
-distinct meeting ID. `--max-bytes` limits complete output to 4096–1048576 UTF-8
-bytes (default 131072). An export over the limit fails without partial cues or
-file replacement.
+distinct meeting ID. `--max-bytes` limits the complete output.
 
 ## Export context and read follow-ups
 

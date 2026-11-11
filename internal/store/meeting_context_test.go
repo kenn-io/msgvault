@@ -126,8 +126,10 @@ func TestMeetingContextSubtitleSelectionAndTiming(t *testing.T) {
 	checks := assert.New(t)
 	must := require.New(t)
 	fixture := newMeetingQueryFixture(t)
-	id := fixture.meetingIDs[0]
+	source, err := fixture.store.GetOrCreateSource("twenty", "owner@example.test")
+	must.NoError(err)
 	raw := []byte(`{"schema_version":1,"recording":{"startedAt":"2026-01-01T00:00:00Z","transcript":[{"participant":{"name":"A"},"words":[{"text":"Hello","start_timestamp":{"absolute":"2026-01-01T00:00:10Z"},"end_timestamp":{"absolute":"2026-01-01T00:00:12Z"}}]}]}}`)
+	id := fixture.persistMeeting(t, source.ID, "twenty", "Twenty meeting", nil, "")
 	must.NoError(fixture.store.UpsertMessageRawWithFormat(id, raw, "twenty_json"))
 	options := meetingcontent.PacketOptions{Format: meetingcontent.FormatVTT, MaxBytes: 4096}
 	result, err := fixture.store.GetMeetingContextContext(t.Context(), MeetingQueryScope{MessageIDs: new([]int64{id, id})}, options)
