@@ -296,16 +296,52 @@ func TestAddThreadsPublishedTokenFailureExplainsRecovery(t *testing.T) {
 }
 
 func TestAddThreadsRespectsDefaultIdentityOptOut(t *testing.T) {
+	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource(sourceTypeThreads, "threads:123:20")
-	require.NoError(err)
-	require.NoError(st.UpdateSourceSyncConfig(t.Context(), source.ID, `{"no_default_identity":true}`))
 	provider := newThreadsConnectFixture(t, "20")
 	deps := provider.deps(st, t.TempDir())
-	_, err = executeAddThreadsFixture(t, deps, "123")
+	connect := func(flag string) {
+		frontend := newAddThreadsCmd(deps)
+		args := []string{"--app-id", "123", "--redirect-uri", "https://example.com/threads-callback"}
+		if flag != "" {
+			args = append(args, flag)
+		}
+		require.NoError(frontend.ParseFlags(args))
+		daemonArgs, err := daemonCLIArgsFromCobra(frontend, nil)
+		require.NoError(err)
+		payload, err := json.Marshal(threadsOAuthPayload{AppID: "123", RedirectURI: "https://example.com/threads-callback", Code: "synthetic-code", AppSecret: "synthetic-app-secret"})
+		require.NoError(err)
+		deps.oauthPayload = func() string { return string(payload) }
+		cmd := newAddThreadsLocalCmd(deps)
+		cmd.SetOut(io.Discard)
+		cmd.SetErr(io.Discard)
+		cmd.SetArgs(daemonArgs[1:])
+		require.NoError(cmd.ExecuteContext(t.Context()))
+	}
+	connect("--no-default-identity")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeThreads, "threads:123:20")
 	require.NoError(err)
 	identities, err := st.ListAccountIdentitiesContext(t.Context(), source.ID)
 	require.NoError(err)
-	assert.Empty(t, identities)
+	assert.Empty(identities)
+	connect("")
+	identities, err = st.ListAccountIdentitiesContext(t.Context(), source.ID)
+	require.NoError(err)
+	assert.Empty(identities)
+	connect("--no-default-identity=false")
+	identities, err = st.ListAccountIdentitiesContext(t.Context(), source.ID)
+	require.NoError(err)
+	require.Len(identities, 1)
+	removed, err := st.RemoveAccountIdentity(source.ID, source.Identifier)
+	require.NoError(err)
+	require.True(removed)
+	connect("")
+	identities, err = st.ListAccountIdentitiesContext(t.Context(), source.ID)
+	require.NoError(err)
+	assert.Empty(identities)
+	connect("--no-default-identity=false")
+	identities, err = st.ListAccountIdentitiesContext(t.Context(), source.ID)
+	require.NoError(err)
+	assert.Len(identities, 1)
 }

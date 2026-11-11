@@ -261,7 +261,7 @@ If `[oauth].service_account_key` or `[oauth.apps.<name>].service_account_key` is
 ### Saved default identity choice
 
 `add-account` (including service accounts), `add-imap`, `add-o365` (IMAP and
-`--graph`), and `add-teams` save `--no-default-identity` for later syncs.
+`--graph`), `add-teams`, and `add-threads` save `--no-default-identity` for later syncs.
 Omitting the flag when adding or re-authorizing an existing account keeps its
 saved choice. Use `--no-default-identity=false` to re-enable automatic defaults.
 New accounts confirm their default identity unless the flag is set.
@@ -798,11 +798,15 @@ HTTPS callback. Set `MSGVAULT_THREADS_APP_SECRET` or enter the secret at the
 masked terminal prompt, open the displayed authorization URL, and paste the
 complete returned callback URL. The daemon verifies the account and stores its
 token in an owner-only JSON file (mode 0600); the file is not encrypted.
-This connection does not yet import or sync Threads content. The success
+Connecting does not import or sync Threads content. The success
 message shows the provider-reported token expiry; rerun `add-threads` to
 reconnect when it expires. Reconnecting with a different app ID creates a
 separate source. Remove the old source explicitly with `remove-account` when
 it is no longer needed.
+
+Use `--no-default-identity` to skip automatic confirmation of the account's
+identity. The choice is saved; use `--no-default-identity=false` to restore
+automatic confirmation. See [saved identity choice](#saved-default-identity-choice).
 
 If connection or account registration fails, retry the connection. An error
 identifies the account if its token cannot be read or saved, or if a new token

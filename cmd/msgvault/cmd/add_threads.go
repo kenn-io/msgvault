@@ -108,6 +108,7 @@ func newAddThreadsLocalCmd(deps threadsCommandDeps) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&appID, "app-id", "", "Threads app ID")
 	cmd.Flags().StringVar(&redirectURI, "redirect-uri", "", "Registered HTTPS callback")
+	cmd.Flags().Bool("no-default-identity", false, savedDefaultIdentityHelp)
 	return cmd
 }
 
@@ -231,7 +232,16 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 			if state := invocationFromCommand(cmd); state != nil && state.logger != nil {
 				logger = state.logger
 			}
-			confirmDefaultIdentity(ctx, cmd.OutOrStdout(), st, source.ID, identifier, identifier, "threads_user_id", logger)
+			optOut, err := cmd.Flags().GetBool("no-default-identity")
+			if err != nil {
+				return err
+			}
+			if err := setDefaultIdentityOptOut(ctx, cmd, st, source, optOut); err != nil {
+				return err
+			}
+			if !optOut {
+				confirmDefaultIdentity(ctx, cmd.OutOrStdout(), st, source.ID, identifier, identifier, "threads_user_id", logger)
+			}
 			if deps.postSourceMigrations != nil {
 				if err := deps.postSourceMigrations(st); err != nil {
 					return fmt.Errorf("the Threads token was saved, but finishing account setup failed; rerun add-threads: %w", err)
