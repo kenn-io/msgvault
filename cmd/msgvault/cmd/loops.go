@@ -49,6 +49,7 @@ func newLoopsListCommand() *cobra.Command {
   msgvault loops list --person 42`,
 	}
 	command.Flags().IntVar(&opts.Limit, "limit", loops.DefaultLimit, "Maximum loops (1 through 200)")
+	command.Flags().BoolVar(&opts.IncludeClosed, "include-closed", false, "Include done, snoozed, and fulfilled commitments")
 	command.Flags().Int64Var(&opts.PersonID, "person", 0, "Show loops with this person ID")
 	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output as JSON")
 	command.RunE = func(cmd *cobra.Command, _ []string) error {
@@ -322,6 +323,9 @@ func writeLoopCommitments(sb *strings.Builder, commitments []generated.LoopCommi
 				printedHeading = true
 			}
 			fmt.Fprintf(sb, "  %s   person %d   %s", item.ID, item.PersonID, textutil.SanitizeTerminal(item.Summary))
+			if state := string(item.State); state != "" && state != "open" {
+				fmt.Fprintf(sb, " (%s)", state)
+			}
 			if item.DueOn != nil {
 				fmt.Fprintf(sb, "   due %s", item.DueOn.Format(time.DateOnly))
 			}

@@ -529,6 +529,7 @@ export * from "./localEmbeddingsStatus";
 export * from "./localEmbeddingsStatusPhase";
 export * from "./loopCommitment";
 export * from "./loopCommitmentDirection";
+export * from "./loopCommitmentState";
 export * from "./loopCounterparty";
 export * from "./loopDecisionResponse";
 export * from "./loopDecisionResponseState";

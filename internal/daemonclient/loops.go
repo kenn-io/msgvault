@@ -18,13 +18,17 @@ const LoopDecisionNotFoundCode = "loop_decision_not_found"
 
 // LoopListOptions selects loops. Zero values use the daemon's defaults.
 type LoopListOptions struct {
-	PersonID int64
-	Limit    int
+	PersonID      int64
+	Limit         int
+	IncludeClosed bool
 }
 
 // ListLoops returns the open loops, oldest first.
 func (c *Client) ListLoops(ctx context.Context, opts LoopListOptions) (generated.LoopListResponse, error) {
 	query := &generated.ListLoopsQuery{}
+	if opts.IncludeClosed {
+		query.IncludeClosed = &opts.IncludeClosed
+	}
 	if opts.PersonID != 0 {
 		query.PersonID = &opts.PersonID
 	}

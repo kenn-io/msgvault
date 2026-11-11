@@ -559,6 +559,9 @@ type ListLoopsQuery struct {
 	// PersonID Only loops with this person
 	PersonID *int64 `json:"person_id,omitempty"`
 
+	// IncludeClosed Include done, snoozed and fulfilled commitments
+	IncludeClosed *bool `json:"include_closed,omitempty"`
+
 	// Limit Maximum loops to return
 	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=200"`
 }

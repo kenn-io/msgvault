@@ -4022,5 +4022,7 @@ CREATE TABLE IF NOT EXISTS person_commitments (
 CREATE TABLE IF NOT EXISTS person_commitment_frontiers (
  person_id BIGINT PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
  through_sequence INTEGER NOT NULL,
- processed_at TIMESTAMPTZ NOT NULL
+ processed_at TIMESTAMPTZ NOT NULL,
+ observed_sequence BIGINT,
+ backfill_message_id BIGINT NOT NULL DEFAULT 0
 );

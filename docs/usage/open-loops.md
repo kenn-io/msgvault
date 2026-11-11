@@ -158,7 +158,9 @@ Enable `[people.sweep.commitments]` in [configuration](../configuration.md#commi
 Use `msgvault person provider consent --commitments` to see the provider,
 source dates, and what the request discloses. Repeat with `--yes` to consent
 to sending conversation text from both sides of verified direct chats and
-email. The profile must allow sensitive `conversation_text` sources.
+email. The profile must allow sensitive `conversation_text` sources. Check the grant
+with `msgvault person provider status`. Use `msgvault person provider revoke`
+to revoke both the ordinary inference and commitment grants for the profile.
 
 Cited promises appear under **Promises you made** and **Promises to you**.
 Each row links to the quoted message. The JSON response also gives the claim
@@ -168,7 +170,10 @@ configured grace period, or after the maximum duration if it has no due
 date. Expired and unsupported claims leave the list.
 
 Use the commitment ID for actions on a promise. This ID starts with `c`.
-The same message can anchor multiple promises and a reply loop.
+The same message can anchor multiple promises and a reply loop. Choose
+**Show closed promises** in People Details or run
+`msgvault loops list --include-closed` to find done, snoozed, or fulfilled promises
+that you can reopen.
 
 ```bash
 msgvault loops done c12

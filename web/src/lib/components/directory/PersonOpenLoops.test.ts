@@ -69,7 +69,9 @@ describe("PersonOpenLoops", () => {
   });
 
   it("labels cited commitments by direction and reopens an owner decision", async () => {
-    const promise = (id: number, direction: 'owed_by' | 'owed_to', text: string) => ({
+    let state: "open" | "done" = "open";
+    const decisions: { path: string; state: string }[] = [];
+    const promise = (id: number, direction: 'owed_by' | 'owed_to', text: string, current: "open" | "done" = "open") => ({
       id: `c${id}`,
       person_id: 7,
       claim_id: id + 100,
@@ -78,29 +80,47 @@ describe("PersonOpenLoops", () => {
       promise: { message_id: id + 40, text, start: 0, end: text.length },
       promised_at: "2026-10-12T12:00:00Z",
       due_on: "2026-11-15",
+      expires_at: "2026-12-15T00:00:00Z",
+      state: current,
     });
     const fetcher = vi.fn<typeof fetch>(async (request, init) => {
-      const path = new URL(request instanceof Request ? request.url : String(request), "http://localhost").pathname;
-      if (path.endsWith("/decision")) {
+      const url = new URL(request instanceof Request ? request.url : String(request), "http://localhost");
+      if (url.pathname.endsWith("/decision")) {
         const body = request instanceof Request ? await request.json() : JSON.parse(String(init?.body));
-        return Response.json({ id: "c12", state: body.state });
+        decisions.push({ path: url.pathname, state: body.state });
+        state = body.state;
+        return Response.json({ id: "c12", state });
       }
       return Response.json({
         items: [],
         commitments: [
-          promise(12, "owed_by", "I will send the draft."),
+          ...(state === "open" || url.searchParams.get("include_closed") === "true"
+            ? [promise(12, "owed_by", "I will send the draft.", state)] : []),
           promise(13, "owed_to", "I will check the venue."),
         ],
+        truncated: false,
+        coverage_incomplete: false,
+        skipped_unparseable: 0,
       });
     });
-    render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
+    const client = createAPIClient(fetcher);
+    const view = render(PersonOpenLoops, { client, personID: 7 });
     const cite = await screen.findByRole("link", { name: "I will send the draft." });
     expect(cite.getAttribute("href")).toBe("/messages/52");
     expect(screen.getByRole("heading", { name: "Promises you made" })).toBeDefined();
     expect(screen.getByRole("heading", { name: "Promises to you" })).toBeDefined();
     await fireEvent.click(screen.getAllByRole("button", { name: "Done" })[0]);
+    await screen.findByRole("button", { name: "Reopen" });
+    view.unmount();
+    render(PersonOpenLoops, { client, personID: 7 });
+    expect(await screen.findByText("1 open")).toBeDefined();
+    await fireEvent.click(screen.getByRole("button", { name: "Show closed promises" }));
     await fireEvent.click(await screen.findByRole("button", { name: "Reopen" }));
     expect(await screen.findByText("2 open")).toBeDefined();
+    expect(decisions).toEqual([
+      { path: "/api/v1/loops/commitments/c12/decision", state: "done" },
+      { path: "/api/v1/loops/commitments/c12/decision", state: "open" },
+    ]);
   });
 
   it("shows a plus when more loops are open than the card lists", async () => {

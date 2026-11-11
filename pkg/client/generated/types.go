@@ -7123,11 +7123,14 @@ type LoopCommitment struct {
 	ClaimID            int64                   `json:"claim_id"`
 	Direction          LoopCommitmentDirection `json:"direction" validate:"required"`
 	DueOn              *runtime.Date           `json:"due_on,omitempty"`
+	ExpiresAt          time.Time               `json:"expires_at" validate:"required"`
 	ID                 string                  `json:"id" validate:"required"`
 	PersonID           int64                   `json:"person_id"`
 	Promise            CommitmentQuote         `json:"promise"`
 	PromisedAt         time.Time               `json:"promised_at" validate:"required"`
 	ProposedFulfilment *CommitmentQuote        `json:"proposed_fulfilment,omitempty"`
+	SnoozedUntil       *time.Time              `json:"snoozed_until,omitempty"`
+	State              LoopCommitmentState     `json:"state" validate:"required"`
 	Summary            string                  `json:"summary" validate:"required"`
 }
 
@@ -7145,6 +7148,9 @@ func (l LoopCommitment) Validate() error {
 			}
 		}
 	}
+	if err := typesValidator.Var(l.ExpiresAt, "required"); err != nil {
+		errors = errors.Append("ExpiresAt", err)
+	}
 	if err := typesValidator.Var(l.ID, "required"); err != nil {
 		errors = errors.Append("ID", err)
 	}
@@ -7161,6 +7167,11 @@ func (l LoopCommitment) Validate() error {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("ProposedFulfilment", err)
 			}
+		}
+	}
+	if v, ok := any(l.State).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("State", err)
 		}
 	}
 	if err := typesValidator.Var(l.Summary, "required"); err != nil {

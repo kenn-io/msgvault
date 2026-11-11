@@ -13,11 +13,11 @@
   const limit = 5;
   let items = $state<LoopItem[]>([]);
   let commitments = $state<LoopCommitment[]>([]);
-  let decisions = $state<Record<string, 'done' | 'snoozed'>>({});
+  let showClosed = $state(false);
   let deciding = $state<string | null>(null);
   let decisionFailed = $state(false);
   let decide = $state<(id: string, state: 'done' | 'snoozed' | 'open') => void>(() => {});
-  const openCount = $derived(items.length + commitments.filter((item) => !decisions[item.id]).length);
+  const openCount = $derived(items.length + commitments.filter((item) => item.state === 'open').length);
   let loading = $state(true);
   let checkingMore = $state(false);
   let checkMoreFailed = $state(false);
@@ -30,11 +30,11 @@
   $effect(() => {
     const selectedID = personID;
     const selectedClient = client;
+    const includeClosed = showClosed;
     void refreshKey;
     const controller = new AbortController();
     checkMoreFailed = false;
     checkingMore = false;
-    decisions = {};
     deciding = null;
     decisionFailed = false;
     decide = async (id, state) => {
@@ -48,8 +48,11 @@
         );
         if (controller.signal.aborted) return;
         if (!result.data) throw new Error('Commitment decision was refused.');
-        if (state === 'open') delete decisions[id];
-        else decisions[id] = state;
+        const decision = result.data;
+        commitments = commitments.map((item) => item.id === decision.id
+          ? { ...item, state: decision.state, snoozed_until: decision.snoozed_until,
+              proposed_fulfilment: decision.state === 'open' ? undefined : item.proposed_fulfilment }
+          : item);
       } catch {
         if (!controller.signal.aborted) decisionFailed = true;
       } finally {
@@ -71,17 +74,13 @@
       }
       try {
         const result = await listLoops(
-          { person_id: selectedID, limit },
+          { person_id: selectedID, limit, ...(includeClosed ? { include_closed: true } : {}) },
           { ...selectedClient, signal: controller.signal },
         );
         if (controller.signal.aborted) return;
         if (!result.data) throw new Error('Open loops are unavailable.');
         items = result.data.items ?? [];
-        const refreshed = result.data.commitments ?? [];
-        commitments = [
-          ...refreshed,
-          ...commitments.filter((item) => decisions[item.id] && !refreshed.some((next) => next.id === item.id)),
-        ];
+        commitments = result.data.commitments ?? [];
         truncated = Boolean(result.data.truncated);
         coverageIncomplete = Boolean(result.data.coverage_incomplete);
         unreadable = result.data.skipped_unparseable ?? 0;
@@ -122,6 +121,7 @@
 <DetailSection title="Open loops">
   {#snippet control()}{#if !loading && !failed && openCount > 0}<span class="muted">{openCount}{truncated ? '+' : ''} open</span>{/if}{/snippet}
   <div class="open-loops">
+  <div><Button size="sm" label={showClosed ? 'Hide closed promises' : 'Show closed promises'} onclick={() => { showClosed = !showClosed; }} /></div>
   {#if loading}<p class="muted" role="status">Loading…</p>
   {:else if failed}<InlineNotice message="Couldn't load open loops." />
   {:else if items.length === 0 && commitments.length === 0 && coverageIncomplete}<p class="muted">No loops found in the messages checked.</p>
@@ -153,12 +153,12 @@
                 <a href={`/messages/${promise.promise.message_id}`} title={promise.promise.text}>{promise.promise.text}</a>
                 {#if promise.proposed_fulfilment}
                   <a href={`/messages/${promise.proposed_fulfilment.message_id}`}>
-                    Proposed fulfilment · {promise.proposed_fulfilment.text}
+                    {promise.state === 'fulfilled' ? 'Fulfilment' : 'Proposed fulfilment'} · {promise.proposed_fulfilment.text}
                   </a>
                 {/if}
                 <div class="actions">
-                  {#if decisions[promise.id]}
-                    <span class="muted">{decisions[promise.id] === 'done' ? 'Done' : 'Snoozed'}</span>
+                  {#if promise.state !== 'open'}
+                    <span class="muted">{promise.state === 'done' ? 'Done' : promise.state === 'snoozed' ? 'Snoozed' : 'Fulfilled'}</span>
                     <Button size="sm" label="Reopen" disabled={deciding !== null} onclick={() => decide(promise.id, 'open')} />
                   {:else}
                     <Button size="sm" label="Done" disabled={deciding !== null} onclick={() => decide(promise.id, 'done')} />
