@@ -200,10 +200,14 @@ func (s *Store) transferCommitmentAgendaTx(ctx context.Context, tx *loggedTx, fr
 			CASE WHEN commitment_id = ? THEN 0 ELSE 1 END LIMIT 1`
 	var winner int64
 	err := tx.QueryRowContext(ctx, query, from, into, into).Scan(&winner)
-	if errors.Is(err, sql.ErrNoRows) || err == nil && winner == into {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
+		return err
+	}
+	if winner == into {
+		_, err = tx.ExecContext(ctx, `DELETE FROM person_commitment_agenda WHERE commitment_id = ?`, from)
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM person_commitment_agenda WHERE commitment_id = ?`, into); err != nil {
