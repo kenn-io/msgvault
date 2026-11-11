@@ -74,7 +74,7 @@ func TestParseJSONThread_Corrupt(t *testing.T) {
 	assert.ErrorIs(t, err, ErrCorruptJSON)
 }
 
-func TestParseJSONThread_Attachments(t *testing.T) {
+func TestParseJSONThread_AttachmentsAndUnresolvedMedia(t *testing.T) {
 	req := require.New(t)
 	checks := assert.New(t)
 	for _, test := range []struct{ name, field, extension, kind, mime string }{
