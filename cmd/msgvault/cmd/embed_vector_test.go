@@ -24,7 +24,6 @@ import (
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/scheduler"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
@@ -350,8 +349,6 @@ func setupVectorFeaturesFixture(
 	c.Vector.Embeddings.Model = "text-embedding-test"
 	c.Vector.Embeddings.Dimension = 4
 	c.Vector.Embeddings.APIFormat = apiFormat
-	c.Attachments.Documents.Index.Embeddings.Enabled = true
-	c.Attachments.Documents.Index.Embeddings.Profile = "vector.embeddings"
 	if apiFormat == vector.APIFormatVoyageContextual {
 		c.Vector.Embeddings.Model = "voyage-context-4"
 	}
@@ -373,28 +370,6 @@ func setupVectorFeaturesFixture(
 		)
 		require.NoError(t, err)
 	}
-	fingerprint := strings.Repeat("d", 64)
-	profile := store.DocumentExtractionProfile{
-		ID: "profile-" + fingerprint, Fingerprint: fingerprint, Provider: "synthetic",
-		Endpoint: "https://documents.example.test/v1", Region: localValue, Model: "extract-test",
-		RetentionPosture: "standard", TrainingPosture: "opted-out",
-		AllowedMediaTypes: []string{"application/pdf"}, PolicyJSON: []byte(`{"policy":1}`),
-	}
-	_, err := s.EnsureDocumentExtractionProfile(testCtx, profile)
-	require.NoError(t, err)
-	_, err = s.DB().ExecContext(t.Context(), s.Rebind(`UPDATE document_index_state SET target_profile_id = ? WHERE singleton = 1`), profile.ID)
-	require.NoError(t, err)
-	spec, err := configuredDocumentVectorSpec(testCtx, s)
-	require.NoError(t, err)
-	documentConsent, err := configuredDocumentVectorConsentSpec(t.Context(), spec, invocationFromContext(testCtx), "document_embedding")
-	require.NoError(t, err)
-	queryConsent, err := configuredDocumentVectorConsentSpec(t.Context(), spec, invocationFromContext(testCtx), "query_embedding")
-	require.NoError(t, err)
-	for _, consentSpec := range []store.DocumentVectorConsentSpec{documentConsent, queryConsent} {
-		_, _, err = s.RecordDocumentVectorConsent(testCtx, consentSpec, time.Now())
-		require.NoError(t, err)
-	}
-
 	vf, err := setupVectorFeatures(testCtx, s, mainPath, readOnly)
 	require.NoError(t, err)
 	require.NotNil(t, vf)
@@ -402,39 +377,9 @@ func setupVectorFeaturesFixture(
 	return vf
 }
 
-func TestSetupVectorFeaturesDocumentClientRejectsCrossOriginRedirects(t *testing.T) {
-	for _, apiFormat := range []vector.EmbeddingAPIFormat{vector.APIFormatOpenAI, vector.APIFormatVoyageContextual} {
-		t.Run(string(apiFormat), func(t *testing.T) {
-			var targetRequests atomic.Int32
-			target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-				targetRequests.Add(1)
-			}))
-			t.Cleanup(target.Close)
-			origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("Location", target.URL+"/outside-consent")
-				w.WriteHeader(http.StatusTemporaryRedirect)
-			}))
-			t.Cleanup(origin.Close)
-
-			vf := setupVectorFeaturesFixture(t, apiFormat, false, func(c *config.Config) {
-				c.Vector.Embeddings.Endpoint = origin.URL
-			})
-			_, err := vf.SemanticClient.EmbedDocuments(t.Context(), []vector.DocumentInput{{
-				Chunks: []string{"private attachment text"},
-			}})
-
-			require.ErrorIs(t, err, embed.ErrEmbeddingProviderRedirect)
-			_, err = vf.DocumentQueryClient.EmbedQuery(t.Context(), "private query text")
-			require.ErrorIs(t, err, embed.ErrEmbeddingProviderRedirect)
-			assert.Zero(t, targetRequests.Load(), "attachment text must not reach the redirect target")
-		})
-	}
-}
-
 func TestSetupVectorFeatures_AppliesOpenAIEmbeddingPrefixes(t *testing.T) {
 	check := assert.New(t)
 	must := require.New(t)
-	maxChunk := strings.Repeat("x", 2000)
 	var calls [][]string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
@@ -456,45 +401,26 @@ func TestSetupVectorFeatures_AppliesOpenAIEmbeddingPrefixes(t *testing.T) {
 	t.Cleanup(server.Close)
 	vf := setupVectorFeaturesFixture(t, vector.APIFormatOpenAI, false, func(c *config.Config) {
 		c.Vector.Embeddings.Endpoint = server.URL
-		c.Vector.Embeddings.MaxInputChars = len(maxChunk)
-		c.Vector.Embeddings.DocumentPrefix = "search_document: "
 		c.Vector.Embeddings.QueryPrefix = "search_query: "
 		c.Vector.People = vector.PeopleConfig{
 			Enabled: true, RetentionPosture: "zero_data_retention", TrainingPosture: "no_training",
 		}
 	})
 
-	_, err := vf.SemanticClient.EmbedDocuments(t.Context(), []vector.DocumentInput{
-		{Chunks: []string{"first chunk", "second chunk"}},
-	})
-	must.NoError(err)
-	_, err = vf.DocumentQueryClient.EmbedQuery(t.Context(), "document query")
-	must.NoError(err)
-	_, err = vf.HybridEngine.EmbedQuery(t.Context(), "message query")
+	_, err := vf.HybridEngine.EmbedQuery(t.Context(), "message query")
 	must.NoError(err)
 	_, err = vf.PersonQueryClient.EmbedQuery(t.Context(), "person query")
 	must.NoError(err)
-	_, err = vf.SemanticClient.EmbedDocuments(t.Context(), []vector.DocumentInput{
-		{Chunks: []string{maxChunk}},
-	})
-	must.NoError(err)
 
 	check.Equal([][]string{
-		{"search_document: first chunk", "search_document: second chunk"},
-		{"search_query: document query"},
 		{"search_query: message query"},
 		{"search_query: person query"},
-		{"search_document: " + maxChunk},
 	}, calls)
-	must.Len(calls, 5)
-	must.Len(calls[4], 1)
-	check.Len(calls[4][0], len(maxChunk)+len("search_document: "))
 }
 
 func TestSetupVectorFeatures_AppliesVoyageEmbeddingPrefixes(t *testing.T) {
 	check := assert.New(t)
 	must := require.New(t)
-	maxChunk := strings.Repeat("x", 2000)
 	type voyageCall struct {
 		Inputs    [][]string `json:"inputs"`
 		InputType string     `json:"input_type"`
@@ -522,40 +448,21 @@ func TestSetupVectorFeatures_AppliesVoyageEmbeddingPrefixes(t *testing.T) {
 	t.Cleanup(server.Close)
 	vf := setupVectorFeaturesFixture(t, vector.APIFormatVoyageContextual, false, func(c *config.Config) {
 		c.Vector.Embeddings.Endpoint = server.URL
-		c.Vector.Embeddings.MaxInputChars = len(maxChunk)
-		c.Vector.Embeddings.DocumentPrefix = "search_document: "
 		c.Vector.Embeddings.QueryPrefix = "search_query: "
 		c.Vector.People = vector.PeopleConfig{
 			Enabled: true, RetentionPosture: "zero_data_retention", TrainingPosture: "no_training",
 		}
 	})
 
-	_, err := vf.SemanticClient.EmbedDocuments(t.Context(), []vector.DocumentInput{
-		{Chunks: []string{"first chunk", "second chunk"}},
-	})
-	must.NoError(err)
-	_, err = vf.DocumentQueryClient.EmbedQuery(t.Context(), "document query")
-	must.NoError(err)
-	_, err = vf.HybridEngine.EmbedQuery(t.Context(), "message query")
+	_, err := vf.HybridEngine.EmbedQuery(t.Context(), "message query")
 	must.NoError(err)
 	_, err = vf.PersonQueryClient.EmbedQuery(t.Context(), "person query")
 	must.NoError(err)
-	_, err = vf.SemanticClient.EmbedDocuments(t.Context(), []vector.DocumentInput{
-		{Chunks: []string{maxChunk}},
-	})
-	must.NoError(err)
 
 	check.Equal([]voyageCall{
-		{InputType: "document", Inputs: [][]string{{"search_document: first chunk", "search_document: second chunk"}}},
-		{InputType: "query", Inputs: [][]string{{"search_query: document query"}}},
 		{InputType: "query", Inputs: [][]string{{"search_query: message query"}}},
 		{InputType: "query", Inputs: [][]string{{"search_query: person query"}}},
-		{InputType: "document", Inputs: [][]string{{"search_document: " + maxChunk}}},
 	}, calls)
-	must.Len(calls, 5)
-	must.Len(calls[4].Inputs, 1)
-	must.Len(calls[4].Inputs[0], 1)
-	check.Len(calls[4].Inputs[0][0], len(maxChunk)+len("search_document: "))
 }
 
 func TestSetupVectorFeaturesUsesStoredCredentialSnapshotWithoutEnvironment(t *testing.T) {
@@ -587,7 +494,7 @@ func TestSetupVectorFeaturesUsesStoredCredentialSnapshotWithoutEnvironment(t *te
 		providercredentials.VectorEmbeddingsID, provider.URL, "stored-after-startup")
 	require.NoError(t, err)
 
-	_, err = vf.DocumentQueryClient.EmbedQuery(t.Context(), "private query")
+	_, err = vf.HybridEngine.EmbedQuery(t.Context(), "private query")
 	require.NoError(t, err)
 	assert.Equal(t, "Bearer stored-at-startup", authorization)
 }
@@ -623,7 +530,7 @@ func assertConfiguredPersonSearchEngine(t *testing.T, vf *vectorFeatures) {
 	t.Helper()
 	require.NotNil(t, vf.PersonSearchEngine,
 		"every embedding API format must install semantic person search")
-	_, err := vf.PersonSearchEngine.Search(t.Context(), "synthetic person", 1)
+	_, err := vf.PersonSearchEngine.Search(t.Context(), "synthetic person", 1, 0)
 	require.ErrorIs(t, err, vector.ErrSemanticPersonEmbeddingsDisabled,
 		"the person engine must enforce the default-off curated-person policy")
 }

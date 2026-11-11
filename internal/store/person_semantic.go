@@ -148,16 +148,8 @@ func (s *Store) ListPersonSemanticDocumentsContext(
 // Revisions intentionally include rendered organization and relationship
 // counterpart text. Editing either linked record therefore suppresses stale
 // hits for affected people until the scheduled person worker republishes them.
+// Organization membership and revision validation share the same snapshot.
 func (s *Store) ResolvePersonSemanticCandidatesContext(
-	ctx context.Context, candidates []PersonSemanticCandidate,
-) ([]Person, error) {
-	return s.ResolvePersonSemanticCandidatesInOrganizationContext(ctx, candidates, 0)
-}
-
-// ResolvePersonSemanticCandidatesInOrganizationContext applies exact current
-// membership in an active canonical organization in the same snapshot as
-// revision validation and root hydration. Zero leaves membership unrestricted.
-func (s *Store) ResolvePersonSemanticCandidatesInOrganizationContext(
 	ctx context.Context, candidates []PersonSemanticCandidate, organizationID int64,
 ) ([]Person, error) {
 	if organizationID < 0 {

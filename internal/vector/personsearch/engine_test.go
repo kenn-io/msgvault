@@ -74,13 +74,24 @@ type testStore struct {
 	documents          map[int64]*store.PersonSemanticDocument
 	people             map[int64]store.Person
 	afterDocumentLoad  func(personID int64)
+	organizationID     int64
+	members            map[int64]bool
+	calls              int
+	beforeResolve      func(int)
 	resolvedCandidates int
 	resolveErr         error
 }
 
 func (s *testStore) ResolvePersonSemanticCandidatesContext(
-	_ context.Context, candidates []store.PersonSemanticCandidate,
+	_ context.Context, candidates []store.PersonSemanticCandidate, organizationID int64,
 ) ([]store.Person, error) {
+	if s.organizationID != organizationID {
+		return nil, fmt.Errorf("unexpected organization %d", organizationID)
+	}
+	s.calls++
+	if s.beforeResolve != nil {
+		s.beforeResolve(s.calls)
+	}
 	if s.resolveErr != nil {
 		return nil, s.resolveErr
 	}
@@ -92,7 +103,7 @@ func (s *testStore) ResolvePersonSemanticCandidatesContext(
 		if s.afterDocumentLoad != nil {
 			s.afterDocumentLoad(candidate.PersonID)
 		}
-		if documentOK && personOK && document.Revision == candidate.Revision {
+		if documentOK && personOK && document.Revision == candidate.Revision && (organizationID == 0 || s.members[candidate.PersonID]) {
 			people = append(people, person)
 		}
 	}
@@ -123,22 +134,22 @@ func TestEngineSearchGateBlocksDisabledUnconsentedAndRevokedQueryCalls(t *testin
 		Gate:                vector.SemanticPersonEmbeddingGateFunc(func(context.Context) error { return gateErr }),
 	})
 
-	_, err := engine.Search(t.Context(), "synthetic query", 5)
+	_, err := engine.Search(t.Context(), "synthetic query", 5, 0)
 	must.ErrorIs(err, vector.ErrSemanticPersonEmbeddingsDisabled)
 	check.Empty(embedder.calls)
 
 	gateErr = vector.ErrSemanticPersonEmbeddingConsentRequired
-	_, err = engine.Search(t.Context(), "synthetic query", 5)
+	_, err = engine.Search(t.Context(), "synthetic query", 5, 0)
 	must.ErrorIs(err, vector.ErrSemanticPersonEmbeddingConsentRequired)
 	check.Empty(embedder.calls)
 
 	gateErr = nil
-	_, err = engine.Search(t.Context(), "synthetic query", 5)
+	_, err = engine.Search(t.Context(), "synthetic query", 5, 0)
 	must.NoError(err)
 	must.Len(embedder.calls, 1)
 
 	gateErr = vector.ErrSemanticPersonEmbeddingConsentRequired
-	_, err = engine.Search(t.Context(), "synthetic query", 5)
+	_, err = engine.Search(t.Context(), "synthetic query", 5, 0)
 	must.ErrorIs(err, vector.ErrSemanticPersonEmbeddingConsentRequired)
 	check.Len(embedder.calls, 1, "revocation must apply without an engine restart")
 }
@@ -180,12 +191,12 @@ func TestEngineSearchRejectsConsentThatPredatesQueryEgressDisclosure(t *testing.
 		},
 	)
 
-	_, err = engine.Search(t.Context(), "caller supplied search text", 5)
+	_, err = engine.Search(t.Context(), "caller supplied search text", 5, 0)
 	must.ErrorIs(err, vector.ErrSemanticPersonEmbeddingConsentRequired)
 	check.Empty(embedder.calls)
 
 	consents[currentProfile.Fingerprint] = true
-	results, err := engine.Search(t.Context(), "caller supplied search text", 5)
+	results, err := engine.Search(t.Context(), "caller supplied search text", 5, 0)
 	must.NoError(err)
 	check.Empty(results)
 	check.Equal([]string{"caller supplied search text"}, embedder.calls)
@@ -216,7 +227,7 @@ func TestEngineSearchEmbedsOnceAndHydratesPersonHitsInRankOrder(t *testing.T) {
 	embedder := &testEmbedder{vec: []float32{1, 0, 0}}
 	engine := newTestEngine(backend, data, embedder)
 
-	results, err := engine.Search(t.Context(), "  synthetic architect  ", 8)
+	results, err := engine.Search(t.Context(), "  synthetic architect  ", 8, 0)
 	require.NoError(err)
 	require.Len(results, 2)
 	assert.Equal([]string{"synthetic architect"}, embedder.calls)
@@ -249,7 +260,7 @@ func TestEngineSearchStopsAtLimitWithoutDuplicateResolution(t *testing.T) {
 	}
 	engine := newTestEngine(backend, data, &testEmbedder{vec: []float32{1, 0, 0}})
 
-	results, err := engine.Search(t.Context(), "synthetic", 2)
+	results, err := engine.Search(t.Context(), "synthetic", 2, 0)
 	must.NoError(err)
 	must.Len(results, 2)
 	check.Equal([]int64{1, 2}, []int64{results[0].Person.ID, results[1].Person.ID})
@@ -283,7 +294,7 @@ func TestEngineSearchDoesNotPairOldScoreWithPostValidationRootMutation(t *testin
 	}
 	engine := newTestEngine(backend, data, &testEmbedder{vec: []float32{1, 0, 0}})
 
-	results, err := engine.Search(t.Context(), "synthetic query", 5)
+	results, err := engine.Search(t.Context(), "synthetic query", 5, 0)
 	require.NoError(err)
 	require.Len(results, 1)
 	require.NotNil(results[0].Person.DisplayName)
@@ -319,7 +330,7 @@ func TestEngineSearchDropsStaleDeletedAndPostValidationDeletedHits(t *testing.T)
 	}
 	engine := newTestEngine(backend, data, &testEmbedder{vec: []float32{1, 0, 0}})
 
-	results, err := engine.Search(t.Context(), "synthetic query", 10)
+	results, err := engine.Search(t.Context(), "synthetic query", 10, 0)
 	require.NoError(err)
 	require.Len(results, 1)
 	assert.Equal(int64(30), results[0].Person.ID)
@@ -353,7 +364,7 @@ func TestEngineSearchWidensPastInvalidTopHits(t *testing.T) {
 	embedder := &testEmbedder{vec: []float32{1, 0, 0}}
 	engine := newTestEngine(backend, data, embedder)
 
-	results, err := engine.Search(t.Context(), "synthetic query", 1)
+	results, err := engine.Search(t.Context(), "synthetic query", 1, 0)
 	must.NoError(err)
 	must.Len(results, 1)
 	check.Equal(int64(20), results[0].Person.ID)
@@ -401,7 +412,7 @@ func TestEngineSearchContinuesAfterWidenedRevalidationUnderfills(t *testing.T) {
 	}
 	engine := newTestEngine(backend, data, &testEmbedder{vec: []float32{1, 0, 0}})
 
-	results, err := engine.Search(t.Context(), "synthetic", 2)
+	results, err := engine.Search(t.Context(), "synthetic", 2, 0)
 	must.NoError(err)
 	must.Len(results, 2)
 	check.Equal([]int64{3, 5}, []int64{results[0].Person.ID, results[1].Person.ID})
@@ -429,7 +440,7 @@ func TestEngineSearchDoesNotRevalidateRejectedPrefixes(t *testing.T) {
 	}
 	engine := newTestEngine(backend, data, &testEmbedder{vec: []float32{1, 0, 0}})
 
-	results, err := engine.Search(t.Context(), "synthetic", 2)
+	results, err := engine.Search(t.Context(), "synthetic", 2, 0)
 	must.NoError(err)
 	must.Len(results, 2)
 	check.Equal([]int64{7, 8}, []int64{results[0].Person.ID, results[1].Person.ID})
@@ -446,7 +457,7 @@ func TestEngineSearchUsesPersonCorpusWithoutMessageFallback(t *testing.T) {
 	}
 	engine := newTestEngine(backend, &testStore{}, &testEmbedder{vec: []float32{1, 0, 0}})
 
-	results, err := engine.Search(t.Context(), "no person match", 5)
+	results, err := engine.Search(t.Context(), "no person match", 5, 0)
 	require.NoError(t, err)
 	assert.Empty(t, results)
 }
@@ -474,7 +485,7 @@ func TestEngineSearchRevalidatesMutablePersonCoverageBeforeProviderCall(t *testi
 		},
 	})
 
-	results, err := engine.Search(t.Context(), "synthetic query", 5)
+	results, err := engine.Search(t.Context(), "synthetic query", 5, 0)
 	must.ErrorIs(err, ErrPersonCoverageIncomplete)
 	must.ErrorIs(err, vector.ErrIndexBuilding)
 	check.Nil(results)
@@ -483,11 +494,11 @@ func TestEngineSearchRevalidatesMutablePersonCoverageBeforeProviderCall(t *testi
 	check.Empty(backend.personSearchLimits)
 
 	coverageReady = true
-	results, err = engine.Search(t.Context(), "synthetic query", 5)
+	results, err = engine.Search(t.Context(), "synthetic query", 5, 0)
 	must.NoError(err)
 	check.Empty(results)
 	coverageReady = false
-	results, err = engine.Search(t.Context(), "synthetic query", 5)
+	results, err = engine.Search(t.Context(), "synthetic query", 5, 0)
 	must.ErrorIs(err, ErrPersonCoverageIncomplete)
 	check.Nil(results)
 	check.Equal(3, coverageChecks,
@@ -496,7 +507,7 @@ func TestEngineSearchRevalidatesMutablePersonCoverageBeforeProviderCall(t *testi
 
 	backend.active = &vector.Generation{ID: 18, Fingerprint: "test:3:rperson-semantic-v1"}
 	coverageReady = false
-	results, err = engine.Search(t.Context(), "synthetic query", 5)
+	results, err = engine.Search(t.Context(), "synthetic query", 5, 0)
 	must.ErrorIs(err, ErrPersonCoverageIncomplete)
 	check.Nil(results)
 	check.Equal(4, coverageChecks, "a newly active generation needs its own coverage proof")
@@ -522,7 +533,7 @@ func TestEngineSearchPropagatesPersonCoverageError(t *testing.T) {
 		},
 	)
 
-	results, err := engine.Search(t.Context(), "synthetic query", 5)
+	results, err := engine.Search(t.Context(), "synthetic query", 5, 0)
 	must.ErrorIs(err, wantErr)
 	must.ErrorContains(err, "check person corpus coverage")
 	check.Nil(results)
@@ -554,7 +565,7 @@ func TestEngineSearchReusesVectorGenerationErrors(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			engine := newTestEngine(test.backend, &testStore{}, &testEmbedder{vec: []float32{1, 0, 0}})
-			_, err := engine.Search(t.Context(), "synthetic query", 5)
+			_, err := engine.Search(t.Context(), "synthetic query", 5, 0)
 			require.ErrorIs(t, err, test.wantErr)
 		})
 	}
@@ -566,7 +577,7 @@ func TestEngineSearchMapsEmbeddingDeadline(t *testing.T) {
 	}}
 	engine := newTestEngine(backend, &testStore{}, &testEmbedder{err: context.DeadlineExceeded})
 
-	_, err := engine.Search(t.Context(), "synthetic query", 5)
+	_, err := engine.Search(t.Context(), "synthetic query", 5, 0)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, vector.ErrEmbeddingTimeout)
 }
@@ -579,7 +590,7 @@ func TestEngineSearchPropagatesPersonBackendError(t *testing.T) {
 	}
 	engine := newTestEngine(backend, &testStore{}, &testEmbedder{vec: []float32{1, 0, 0}})
 
-	results, err := engine.Search(t.Context(), "synthetic query", 5)
+	results, err := engine.Search(t.Context(), "synthetic query", 5, 0)
 	require.ErrorIs(t, err, wantErr)
 	require.ErrorContains(t, err, "search person corpus")
 	assert.Nil(t, results)
@@ -595,45 +606,10 @@ func TestEngineSearchPropagatesPersonStoreError(t *testing.T) {
 	}
 	engine := newTestEngine(backend, &testStore{resolveErr: wantErr}, &testEmbedder{vec: []float32{1, 0, 0}})
 
-	results, err := engine.Search(t.Context(), "synthetic query", 5)
+	results, err := engine.Search(t.Context(), "synthetic query", 5, 0)
 	require.ErrorIs(t, err, wantErr)
 	require.ErrorContains(t, err, "resolve final person search hits")
 	assert.Nil(t, results)
-}
-
-// This implements the optional scoped capability independently: any accidental
-// unscoped call during widening or final revalidation fails immediately.
-type scopedTestStore struct {
-	base           *testStore
-	organizationID int64
-	members        map[int64]bool
-	calls          int
-	beforeResolve  func(int)
-}
-
-func (s *scopedTestStore) ResolvePersonSemanticCandidatesContext(context.Context, []store.PersonSemanticCandidate) ([]store.Person, error) {
-	panic("scoped search must never use the unscoped resolver")
-}
-
-func (s *scopedTestStore) ResolvePersonSemanticCandidatesInOrganizationContext(ctx context.Context, candidates []store.PersonSemanticCandidate, organizationID int64) ([]store.Person, error) {
-	if organizationID != s.organizationID {
-		return nil, fmt.Errorf("unexpected organization %d", organizationID)
-	}
-	s.calls++
-	if s.beforeResolve != nil {
-		s.beforeResolve(s.calls)
-	}
-	people, err := s.base.ResolvePersonSemanticCandidatesContext(ctx, candidates)
-	if err != nil {
-		return nil, err
-	}
-	var scoped []store.Person
-	for _, person := range people {
-		if s.members[person.ID] {
-			scoped = append(scoped, person)
-		}
-	}
-	return scoped, nil
 }
 
 func TestEngineOrganizationScopeWidensAndRevalidatesEveryPath(t *testing.T) {
@@ -654,15 +630,15 @@ func TestEngineOrganizationScopeWidensAndRevalidatesEveryPath(t *testing.T) {
 			must := require.New(t)
 
 			backend := &testBackend{active: &vector.Generation{ID: 7, Fingerprint: "test:3:rperson-semantic-v1"}}
-			data := &scopedTestStore{base: &testStore{documents: map[int64]*store.PersonSemanticDocument{}, people: map[int64]store.Person{}}, organizationID: 42, members: map[int64]bool{2: true, 4: true, 6: true}}
+			data := &testStore{documents: map[int64]*store.PersonSemanticDocument{}, people: map[int64]store.Person{}, organizationID: 42, members: map[int64]bool{2: true, 4: true, 6: true}}
 			if tc.name == "initial full page" {
 				data.members[1] = true
 			}
 			for i := int64(1); i <= int64(tc.hits); i++ {
 				revision := fmt.Sprintf("revision-%d", i)
 				backend.personHits = append(backend.personHits, vector.PersonHit{PersonID: i, Revision: revision, Score: 1 - float64(i)/10, Rank: int(i)})
-				data.base.documents[i] = &store.PersonSemanticDocument{PersonID: i, Revision: revision}
-				data.base.people[i] = store.Person{ID: i, VCardUID: fmt.Sprintf("uid-%d", i)}
+				data.documents[i] = &store.PersonSemanticDocument{PersonID: i, Revision: revision}
+				data.people[i] = store.Person{ID: i, VCardUID: fmt.Sprintf("uid-%d", i)}
 			}
 			data.beforeResolve = func(call int) {
 				if call == tc.removeOnCall {
@@ -675,7 +651,7 @@ func TestEngineOrganizationScopeWidensAndRevalidatesEveryPath(t *testing.T) {
 			if tc.name == "exhausted final page" || tc.name == "membership changes at exhaustion" {
 				limit = 3
 			}
-			results, err := engine.SearchInOrganization(t.Context(), "synthetic", limit, 42)
+			results, err := engine.Search(t.Context(), "synthetic", limit, 42)
 			must.NoError(err)
 			var got []int64
 			for _, result := range results {
@@ -693,35 +669,20 @@ func TestEngineOrganizationScopeWidensAndRevalidatesEveryPath(t *testing.T) {
 	}
 }
 
-func TestEngineOrganizationScopeUnsupportedAndNegativeFailBeforeEgress(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
-
-	for _, id := range []int64{-1, 42} {
-		embedder := &testEmbedder{}
-		backend := &testBackend{active: &vector.Generation{ID: 7, Fingerprint: "test:3:rperson-semantic-v1"}}
-		engine := newTestEngine(backend, &testStore{}, embedder)
-		_, err := engine.SearchInOrganization(t.Context(), "synthetic", 2, id)
-		must.Error(err)
-		check.Empty(embedder.calls)
-		check.Empty(backend.personSearchLimits)
-	}
-}
-
 func TestEngineOrganizationScopePreservesConsentAndCoverageGate(t *testing.T) {
 	check := assert.New(t)
 	must := require.New(t)
 
 	for _, gateErr := range []error{vector.ErrSemanticPersonEmbeddingsDisabled, vector.ErrSemanticPersonEmbeddingConsentRequired, nil} {
 		backend := &testBackend{active: &vector.Generation{ID: 7, Fingerprint: "test:3:rperson-semantic-v1"}}
-		data := &scopedTestStore{organizationID: 42}
+		data := &testStore{organizationID: 42}
 		embedder := &testEmbedder{}
 		engine := NewEngine(backend, data, embedder, Config{
 			ExpectedFingerprint: "test:3:rperson-semantic-v1",
 			Gate:                vector.SemanticPersonEmbeddingGateFunc(func(context.Context) error { return gateErr }),
 			PersonCoverage:      func(context.Context, vector.GenerationID) (Coverage, error) { return Coverage{Mismatched: 1}, nil },
 		})
-		_, err := engine.SearchInOrganization(t.Context(), "synthetic", 2, 42)
+		_, err := engine.Search(t.Context(), "synthetic", 2, 42)
 		if gateErr != nil {
 			must.ErrorIs(err, gateErr)
 		} else {

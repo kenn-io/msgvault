@@ -175,7 +175,7 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.D
 			where = " WHERE false"
 		}
 		path := filepath.ToSlash(filepath.Join(dir, table.file))
-		projection := "*"
+		projection := identityFixtureProjection(table.dir)
 		if strings.HasPrefix(table.dir, "messages/") {
 			projection += ", false AS archive_only"
 		}

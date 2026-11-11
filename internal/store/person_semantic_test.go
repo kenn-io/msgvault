@@ -384,7 +384,7 @@ func TestResolvePersonSemanticCandidatesReturnsOnlyCurrentRootsInCandidateOrder(
 		{PersonID: firstID, Revision: firstDocument.Revision},
 		{PersonID: deletedID, Revision: deletedDocument.Revision},
 		{PersonID: 999999, Revision: "missing"},
-	})
+	}, 0)
 	require.NoError(err)
 	require.Len(people, 2)
 	assert.Equal([]int64{lastID, secondID}, []int64{people[0].ID, people[1].ID})
@@ -425,7 +425,7 @@ func TestPersonSemanticScanFailsButResolverSkipsOneUnrenderablePerson(t *testing
 	people, err := f.Store.ResolvePersonSemanticCandidatesContext(ctx, []store.PersonSemanticCandidate{
 		{PersonID: badID, Revision: "unrenderable"},
 		{PersonID: goodID, Revision: goodDocument.Revision},
-	})
+	}, 0)
 	require.NoError(err)
 	require.Len(people, 1)
 	assert.Equal(goodID, people[0].ID)
@@ -525,7 +525,7 @@ func TestResolvePersonSemanticCandidatesInOrganizationRevalidatesMembershipAndRe
 		}
 		must.NoError(err)
 	}
-	people, err := st.ResolvePersonSemanticCandidatesInOrganizationContext(ctx, candidates, org.ID)
+	people, err := st.ResolvePersonSemanticCandidatesContext(ctx, candidates, org.ID)
 	must.NoError(err)
 	var got []int64
 	for _, person := range people {
@@ -533,10 +533,10 @@ func TestResolvePersonSemanticCandidatesInOrganizationRevalidatesMembershipAndRe
 		check.NotEmpty(person.VCardUID)
 	}
 	check.Equal(want, got)
-	_, err = st.ResolvePersonSemanticCandidatesInOrganizationContext(ctx, candidates, -1)
+	_, err = st.ResolvePersonSemanticCandidatesContext(ctx, candidates, -1)
 	must.Error(err)
 	for _, id := range []int64{999999} {
-		people, err = st.ResolvePersonSemanticCandidatesInOrganizationContext(ctx, candidates, id)
+		people, err = st.ResolvePersonSemanticCandidatesContext(ctx, candidates, id)
 		must.NoError(err)
 		check.Empty(people)
 	}
@@ -553,7 +553,7 @@ func TestResolvePersonSemanticCandidatesInOrganizationRevalidatesMembershipAndRe
 		must.NoError(err)
 		candidates[i].Revision = doc.Revision
 	}
-	people, err = st.ResolvePersonSemanticCandidatesInOrganizationContext(ctx, candidates, org.ID)
+	people, err = st.ResolvePersonSemanticCandidatesContext(ctx, candidates, org.ID)
 	must.NoError(err)
 	check.Empty(people)
 }
@@ -580,10 +580,10 @@ func TestResolvePersonSemanticCandidatesInOrganizationIgnoresIdenticalRenderedCo
 	must.NoError(err)
 	must.Equal(doc.Revision, current.Revision, "membership changed without a text change")
 	candidates := []store.PersonSemanticCandidate{{PersonID: id, Revision: doc.Revision}}
-	people, err := st.ResolvePersonSemanticCandidatesInOrganizationContext(ctx, candidates, first.ID)
+	people, err := st.ResolvePersonSemanticCandidatesContext(ctx, candidates, first.ID)
 	must.NoError(err)
 	check.Empty(people)
-	people, err = st.ResolvePersonSemanticCandidatesInOrganizationContext(ctx, candidates, second.ID)
+	people, err = st.ResolvePersonSemanticCandidatesContext(ctx, candidates, second.ID)
 	must.NoError(err)
 	must.Len(people, 1)
 	check.Equal(id, people[0].ID)
@@ -596,10 +596,10 @@ func TestResolvePersonSemanticCandidatesInOrganizationIgnoresIdenticalRenderedCo
 	current, err = st.LoadPersonSemanticDocumentContext(ctx, id)
 	must.NoError(err)
 	candidates[0].Revision = current.Revision
-	people, err = st.ResolvePersonSemanticCandidatesInOrganizationContext(ctx, candidates, second.ID)
+	people, err = st.ResolvePersonSemanticCandidatesContext(ctx, candidates, second.ID)
 	must.NoError(err)
 	check.Empty(people, "a merged numeric scope must never redirect")
-	people, err = st.ResolvePersonSemanticCandidatesInOrganizationContext(ctx, candidates, first.ID)
+	people, err = st.ResolvePersonSemanticCandidatesContext(ctx, candidates, first.ID)
 	must.NoError(err)
 	must.Len(people, 1)
 	check.Equal(id, people[0].ID)

@@ -54,9 +54,6 @@ use 'person directory --query <name>' or '--address <address>'.`,
 		if query == "" {
 			return usageErr(cmd, errors.New("query must contain non-whitespace text"))
 		}
-		if personSearchOrganizationID < 0 {
-			return usageErr(cmd, errors.New("--organization-id must not be negative"))
-		}
 		if personSearchLimit < 1 || personSearchLimit > maximumPersonSearchLimit {
 			return usageErr(cmd, fmt.Errorf("--limit must be between 1 and 100, got %d", personSearchLimit))
 		}
@@ -72,7 +69,7 @@ use 'person directory --query <name>' or '--address <address>'.`,
 		}
 		limit := int64(personSearchLimit)
 		body := generated.SearchPeopleBody{Query: query, Limit: &limit}
-		if personSearchOrganizationID > 0 {
+		if personSearchOrganizationID != 0 {
 			body.OrganizationID = &personSearchOrganizationID
 		}
 		response, err := daemonclient.APIResponse(client,

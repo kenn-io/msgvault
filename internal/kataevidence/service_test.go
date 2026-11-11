@@ -116,12 +116,13 @@ func TestPrepareMessageSelectors(t *testing.T) {
 	}
 }
 
-func TestReferencesLongerThanMaxCharsAreRejected(t *testing.T) {
+func TestInvalidReferencesAreRejected(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	svc := kataevidence.New(storetest.New(t).Store)
 	for _, selectors := range [][]kataevidence.Selector{
 		nil,
+		{{Kind: "document_chunk", MessageID: 42, AttachmentID: 7, MaxChars: new(12)}},
 		make([]kataevidence.Selector, kataevidence.MaxReferences+1),
 		{{Kind: "message", MessageID: 1, MaxChars: new(kataevidence.MaxChars + 1)}},
 		{{Kind: "message", MessageID: 1, StartRune: new(5), EndRune: new(kataevidence.MaxChars + 6)}},

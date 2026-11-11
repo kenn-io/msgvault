@@ -40,6 +40,7 @@ describe('explore labels', () => {
 
   it('names file types from the MIME type, then the family', () => {
     expect(fileTypeLabel('application/pdf', 'pdf')).toBe('PDF');
+    expect(fileTypeLabel('text/tab-separated-values', 'text')).toBe('TSV');
     expect(fileTypeLabel('image/png', 'image')).toBe('PNG image');
     expect(fileTypeLabel('image/webp', 'image')).toBe('WEBP image');
     expect(
@@ -86,9 +87,12 @@ describe('entryKindPresentation', () => {
     ['slack', 'Conversation'],
     ['inline', 'Conversation'],
     ['chatwoot', 'Conversation'],
+    ['facebook_comments', 'Conversation'],
+    ['instagram_comments', 'Conversation'],
     ['fbmessenger', 'Conversation'],
     ['matrix', 'Conversation'],
     ['telegram', 'Conversation'],
+    ['x_dm', 'Conversation'],
     ['chat', 'Conversation'],
     ['meeting_transcript', 'Meeting'],
     ['meeting_note', 'Meeting'],

@@ -12,7 +12,7 @@ import (
 )
 
 func TestPersonDiscoveryClientRejectsUnsupportedScopeBeforeRequests(t *testing.T) {
-	for _, version := range []string{"", "3.48.0"} {
+	for _, version := range []string{"", "3.48.0", "3.49.0", "4.2.0", "5.0.0"} {
 		t.Run(version, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -26,11 +26,11 @@ func TestPersonDiscoveryClientRejectsUnsupportedScopeBeforeRequests(t *testing.T
 				writePeopleBrowserJSON(t, w, http.StatusOK, `{"results":[],"people":[],"organizations":[]}`)
 			}))
 			_, err := people.ListDirectoryPeople(t.Context(), store.DirectoryPeopleQuery{OrganizationID: 13})
-			require.ErrorContains(err, "3.49.0")
+			require.ErrorContains(err, "5.1.0")
 			_, err = people.SearchSemanticPeople(t.Context(), peoplebrowser.SemanticPeopleRequest{Query: "equipment", OrganizationID: 13})
-			require.ErrorContains(err, "3.49.0")
+			require.ErrorContains(err, "5.1.0")
 			_, err = people.ListOrganizations(t.Context(), "Example", 2, 0)
-			require.ErrorContains(err, "3.49.0")
+			require.ErrorContains(err, "5.1.0")
 			assert.Zero(requests, "an old daemon must never receive a possibly ignored organization scope")
 		})
 	}
@@ -42,7 +42,10 @@ func TestPersonDiscoveryClientProjectsIdentitiesAndPreservesScope(t *testing.T) 
 	people := newPeopleBrowserTestEngine(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/health":
-			writePeopleBrowserJSON(t, w, http.StatusOK, `{"status":"ok","api_schema_version":"3.49.0"}`)
+			writePeopleBrowserJSON(t, w, http.StatusOK, `{"status":"ok","api_schema_version":"5.1.0"}`)
+		case "/api/v1/people/directory":
+			assert.Equal("13", r.URL.Query().Get("organization_id"))
+			writePeopleBrowserJSON(t, w, http.StatusOK, `{"people":[]}`)
 		case "/api/v1/people/search":
 			var body map[string]any
 			if !assert.NoError(json.NewDecoder(r.Body).Decode(&body)) {
@@ -59,6 +62,8 @@ func TestPersonDiscoveryClientProjectsIdentitiesAndPreservesScope(t *testing.T) 
 			assert.Fail("unexpected request", "%s", r.URL.Path)
 		}
 	}))
+	_, err := people.ListDirectoryPeople(t.Context(), store.DirectoryPeopleQuery{OrganizationID: 13})
+	require.NoError(err)
 	page, err := people.SearchSemanticPeople(t.Context(), peoplebrowser.SemanticPeopleRequest{Query: "equipment", OrganizationID: 13, Limit: 2})
 	require.NoError(err)
 	require.Len(page.Results, 1)

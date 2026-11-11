@@ -99,60 +99,49 @@ func (s *Store) documentSearchRows(destination string, scope *personscope.Scope,
 	return with, query, args
 }
 
-// DocumentSearchVersions returns up to 4096 delivered document versions.
-// A larger scope returns no versions and reports that the scope limit was exceeded.
-func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, scope *personscope.Scope) ([]string, bool, error) {
-	// Docbank detects document formats from bytes, including generic or absent
-	// MIME types. Keep images and recordings outside the document fence.
-	delivers := `SELECT d.content_hash, d.version_id FROM docbank_attachment_deliveries d
- WHERE d.destination_key = ? AND d.state = 'delivered'
- AND d.mime_type NOT LIKE 'image/%'
- AND d.mime_type NOT LIKE 'audio/%'
+// Docbank detects document formats from bytes, including generic or absent
+// MIME types. Include image OCR and interpretation renditions, but exclude recordings.
+const documentSearchFormats = `d.mime_type NOT LIKE 'audio/%'
  AND d.mime_type NOT LIKE 'video/%'`
-	distinct := "DISTINCT"
-	if s.IsPostgreSQL() {
-		// Sort receipts before checking visibility. DISTINCT ON then streams unique
-		// versions, so LIMIT stops attachment lookups at the 4097th visible version.
-		// OFFSET prevents PostgreSQL from moving visibility ahead of the sort.
-		delivers += ` ORDER BY d.version_id OFFSET 0`
-		distinct = "DISTINCT ON (d.version_id)"
-	}
-	args := []any{destination}
-	messageWhere, scopeArgs := documentSearchMessageWhere(scope)
-	// Resolve eligible receipt matches before joining messages. Otherwise the
-	// planner can scan every attachment of a message again for each receipt.
+
+// Processing remains document-only; search can also read existing image renditions.
+const documentSearchDelivered = `d.state = 'delivered' AND d.mime_type NOT LIKE 'image/%' AND ` + documentSearchFormats
+
+func (s *Store) documentSearchVisible() string {
+	// Materialize eligible receipt matches before applying message visibility.
+	// Otherwise PostgreSQL can scan every attachment of a message for each receipt.
 	visible := `WITH matching_attachments AS MATERIALIZED (
  SELECT a.message_id FROM attachments a
  WHERE ` + s.documentSearchAttachmentMatch() + ` AND ` + docbankAttachmentEligibleWhere() + `)
  SELECT 1 FROM matching_attachments a
  JOIN messages m ON m.id = a.message_id
  JOIN conversations cv ON cv.id = m.conversation_id
- WHERE ` + messageWhere
-	args = append(args, scopeArgs...)
-	// EXISTS checks one visible occurrence per receipt instead of materializing
-	// every occurrence. OFFSET keeps PostgreSQL's lookup correlated to the receipt.
-	query := `SELECT ` + distinct + ` d.version_id FROM (` + delivers + `) d
- WHERE EXISTS (` + visible + ` LIMIT 1 OFFSET 0) LIMIT 4097`
+	 WHERE ` + LiveMessagesWhere("m", true)
+	// OFFSET keeps PostgreSQL's visibility check correlated to each receipt.
+	return `EXISTS (` + visible + ` LIMIT 1 OFFSET 0)`
+}
+
+// DocumentSearchVersions returns visible delivered document versions, newest message first.
+func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, scope *personscope.Scope) ([]string, error) {
+	with, query, args := s.documentSearchRows(destination, scope, documentSearchFormats, nil)
+	query = with + ` SELECT d.version_id` + query + ` GROUP BY d.version_id ORDER BY MAX(` + s.loopTimeKey("COALESCE(m.sent_at,m.received_at,m.internal_date)") + `) DESC NULLS LAST, d.version_id`
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {
-		return nil, false, fmt.Errorf("list document search versions: %w", err)
+		return nil, fmt.Errorf("list document search versions: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	var versions []string
 	for rows.Next() {
 		var version string
 		if err := rows.Scan(&version); err != nil {
-			return nil, false, fmt.Errorf("scan document search version: %w", err)
+			return nil, fmt.Errorf("scan document search version: %w", err)
 		}
 		versions = append(versions, version)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	if len(versions) > 4096 {
-		return nil, true, nil
-	}
-	return versions, false, nil
+	return versions, nil
 }
 
 // DocumentSearchOccurrences maps hit versions to their current visible attachments.

@@ -5,10 +5,8 @@ import type { SelectorKind } from "./selectorKind";
 
 export interface Selector {
   attachment_id?: number;
-  chunk_key?: string;
   /** @nullable */
   end_rune?: number | null;
-  extraction_id?: string;
   kind: SelectorKind;
   /** @nullable */
   max_chars?: number | null;

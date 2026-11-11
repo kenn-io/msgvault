@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -34,7 +35,7 @@ func listDirectoryPeopleDefinition(_ *handlers) toolDefinition {
 			"contact_state":       stringSchema("Current contact state", "active", "inactive"),
 			"category":            stringSchema("Current person category"),
 			"organization":        stringSchema("Current canonical organization name"),
-			"organization_id":     boundedIntegerSchema("Exact active canonical organization ID; current employment only; requires daemon schema 3.49.0", 0, maxJSONSafeInteger),
+			"organization_id":     boundedIntegerSchema("Exact active canonical organization ID; current employment only; requires daemon schema "+daemonclient.PersonDiscoveryMinAPISchemaVersion, 0, maxJSONSafeInteger),
 			"primary_channel":     stringSchema("Curated primary communication channel"),
 		}),
 		outputSchemaFor[store.DirectoryPeoplePage](),
@@ -130,7 +131,7 @@ func directoryDaemonError(err error) *toolResult {
 	}
 	switch coded.APIErrorCode() {
 	case "person_discovery_scope_unsupported":
-		return toolErrorResult("person_discovery_scope_unsupported: exact organization scope requires daemon API schema 3.49.0 or newer; upgrade the daemon")
+		return toolErrorResult("person_discovery_scope_unsupported: exact organization scope requires daemon API schema " + daemonclient.PersonDiscoveryMinAPISchemaVersion + " or newer; upgrade the daemon")
 	case "directory_address_unsupported":
 		return toolErrorResult("directory_address_unsupported: person directory address filtering requires daemon API schema 3.29.0 or newer; upgrade the daemon")
 	case "invalid_cursor":

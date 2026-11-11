@@ -13,7 +13,7 @@ import (
 
 // PersonDiscoveryMinAPISchemaVersion guarantees exact organization scope and
 // current organization alias lookup. Older daemons can ignore unknown filters.
-const PersonDiscoveryMinAPISchemaVersion = "3.49.0"
+const PersonDiscoveryMinAPISchemaVersion = "5.1.0"
 
 var _ peoplebrowser.SemanticPeopleSearcher = (*PeopleBrowser)(nil)
 var _ peoplebrowser.OrganizationLister = (*PeopleBrowser)(nil)
@@ -24,7 +24,7 @@ func (c *Client) requirePersonDiscovery(ctx context.Context) error {
 		return fmt.Errorf("check person discovery capability: %w", err)
 	}
 	if !supported {
-		return &APIError{Status: 503, Code: "person_discovery_scope_unsupported", Message: "Person discovery requires daemon API schema 3.49.0 or newer; upgrade the daemon"}
+		return &APIError{Status: 503, Code: "person_discovery_scope_unsupported", Message: fmt.Sprintf("Person discovery requires daemon API schema %s or newer; upgrade the daemon", PersonDiscoveryMinAPISchemaVersion)}
 	}
 	return nil
 }
@@ -32,9 +32,6 @@ func (c *Client) requirePersonDiscovery(ctx context.Context) error {
 // RequirePersonDiscoveryScope fails closed before sending a possibly ignored
 // scope. Unscoped calls preserve compatibility with existing daemon versions.
 func (c *Client) RequirePersonDiscoveryScope(ctx context.Context, organizationID int64) error {
-	if organizationID < 0 {
-		return errors.New("organization_id must not be negative")
-	}
 	if organizationID == 0 {
 		return nil
 	}
@@ -57,7 +54,7 @@ func (b *PeopleBrowser) SearchSemanticPeople(ctx context.Context, request people
 		return nil, errors.New("limit must be between 1 and 100")
 	}
 	body := generated.SearchPeopleBody{Query: query, Limit: new(int64(limit))}
-	if request.OrganizationID > 0 {
+	if request.OrganizationID != 0 {
 		body.OrganizationID = &request.OrganizationID
 	}
 	response, err := APIResponse(b.engine.store, func(client *apiclient.Client) (*generated.SearchPeopleResp, error) {

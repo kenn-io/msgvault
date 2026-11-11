@@ -340,7 +340,7 @@ func TestDefaultVectorConfigBlocksCuratedPeopleButKeepsMessageEmbedding(t *testi
 		"default vector config must not send curated person data")
 
 	requirements.NoError(features.Backend.ActivateGeneration(testCtx, generation, false))
-	_, err = features.PersonSearchEngine.Search(testCtx, "synthetic person", 5)
+	_, err = features.PersonSearchEngine.Search(testCtx, "synthetic person", 5, 0)
 	requirements.ErrorContains(err, "[vector.people] enabled = true")
 	providerMu.Lock()
 	assertions.Equal(inputsAfterWorker, providerInputs,
@@ -354,7 +354,7 @@ func TestDefaultVectorConfigBlocksCuratedPeopleButKeepsMessageEmbedding(t *testi
 	result, err = features.Runner.RunOnce(testCtx, generation, testCLIEmbeddingPassScope())
 	requirements.NoError(err)
 	assertions.Zero(result.Succeeded, "unconsented people must be skipped without blocking messages")
-	_, err = features.PersonSearchEngine.Search(testCtx, "synthetic person", 5)
+	_, err = features.PersonSearchEngine.Search(testCtx, "synthetic person", 5, 0)
 	requirements.ErrorIs(err, vector.ErrSemanticPersonEmbeddingConsentRequired)
 	providerMu.Lock()
 	assertions.Equal(inputsAfterWorker, providerInputs,
@@ -372,7 +372,7 @@ func TestDefaultVectorConfigBlocksCuratedPeopleButKeepsMessageEmbedding(t *testi
 	result, err = features.Runner.RunOnce(testCtx, generation, testCLIEmbeddingPassScope())
 	requirements.NoError(err)
 	assertions.Equal(1, result.Succeeded, "consented exact policy must run the person worker")
-	results, err := features.PersonSearchEngine.Search(testCtx, "synthetic person", 5)
+	results, err := features.PersonSearchEngine.Search(testCtx, "synthetic person", 5, 0)
 	requirements.NoError(err)
 	requirements.Len(results, 1)
 	assertions.Equal(person.ID, results[0].Person.ID)
@@ -391,7 +391,7 @@ func TestDefaultVectorConfigBlocksCuratedPeopleButKeepsMessageEmbedding(t *testi
 	requirements.NoError(err)
 	_, err = features.Runner.RunOnce(testCtx, generation, testCLIEmbeddingPassScope())
 	requirements.NoError(err)
-	_, err = features.PersonSearchEngine.Search(testCtx, "updated person", 5)
+	_, err = features.PersonSearchEngine.Search(testCtx, "updated person", 5, 0)
 	requirements.ErrorIs(err, vector.ErrSemanticPersonEmbeddingConsentRequired)
 	providerMu.Lock()
 	assertions.Len(providerInputs, providerCallsAfterConsent,
@@ -804,6 +804,6 @@ func TestPersonDiscoverySemanticCLIRejectsOldDaemonBeforeSearch(t *testing.T) {
 	command.SetArgs([]string{"--organization-id", "13", "equipment", "--json"})
 	err := command.Execute()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "3.49.0")
+	assert.Contains(t, err.Error(), "5.1.0")
 	assert.Zero(t, searches.Load())
 }

@@ -133,7 +133,7 @@ func TestPersonReadsIncludeCardDAVBindings(t *testing.T) {
 	require.NoError(err)
 	people, err := f.Store.ResolvePersonSemanticCandidatesContext(ctx, []store.PersonSemanticCandidate{
 		{PersonID: boundID, Revision: document.Revision},
-	})
+	}, 0)
 	require.NoError(err)
 	require.Len(people, 1)
 	require.Len(people[0].CardDAVBindings, 1)

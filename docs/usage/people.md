@@ -208,12 +208,12 @@ Resolve the company first, then use its numeric organization ID:
 
 ```bash
 msgvault organization list --query "Example Cooperative" --json
-msgvault person directory --organization-id 3 --category colleague --limit 25 --json
+msgvault person directory --organization-id 3 --category colleague --json
 msgvault person directory --organization-id 3 --query "Alex Example" --json
 ```
 
-Organization lookup matches canonical names and current saved name aliases by
-prefix. Multiple organizations can share an alias; select the intended ID
+The organization list matches canonical names and current saved name aliases by
+prefix, including searches in the browser. Multiple organizations can share an alias; select the intended ID
 rather than the first result. `--organization-id` selects only saved people
 with current curated employment at that active organization. An unknown,
 retired, or merged organization ID returns no members. Ended employment is
@@ -227,7 +227,7 @@ same filters to enumerate matching saved people. This is not a census of all
 employees: unpromoted identities and missing employment records are outside
 this directory. People with the same name keep separate IDs and vCard UIDs.
 
-Exact organization-ID filters require daemon API schema 3.49.0 or newer. The
+Exact organization-ID filters require daemon API schema 5.1.0 or newer. The
 CLI refuses an older or unknown schema before sending a scoped request.
 
 In MCP, call `list_organizations` with `query`, then `list_directory_people`
@@ -337,7 +337,7 @@ Use a saved person ID to find attachments across their linked identities:
 ```bash
 msgvault person files 7 --direction from_person --filename proposal
 msgvault person files 7 --mime-family pdf --after 2026-01-01
-msgvault person files 7 --lane documents --query "project proposal"
+msgvault media search "project proposal" --person 7 --direction from_person
 msgvault person files 7 --lane visual --query "garden plan"
 msgvault person files 7 --lane all --query "project proposal" --json
 ```
@@ -348,12 +348,8 @@ The `metadata` lane lists only attachments on sent or received mail.
 `--filename` matches a case-insensitive substring. MIME families are `image`,
 `pdf`, `audio`, `video`, `text`, `document`, `archive`, and `other`.
 
-The `documents` and `visual` lanes need their respective indexes; see
-[document search](/docs/usage/document-indexing/) and
-[visual search](/docs/usage/vector-search/). Both require `--query`, as does
-`all`. The `all` result reports each lane separately, including unavailable
-lanes; its metadata results do not use the semantic query. Document search
-cannot apply filename or MIME-family filters.
+The `visual` lane needs [visual search](/docs/usage/vector-search/). It requires `--query`, as does `all`. The `all` result reports each lane separately, including unavailable
+lanes; its metadata results do not use the semantic query. Search document text through Docbank with `media search --person <id>`.
 
 Each lane has its own cursor. Use `--cursor` with one lane to continue a result;
 `all` cannot take a cursor. `--limit` is per lane, defaults to 100, and accepts

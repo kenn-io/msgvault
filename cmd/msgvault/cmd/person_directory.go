@@ -21,7 +21,6 @@ func newPersonDirectoryCommand() *cobra.Command {
 	var jsonOutput bool
 	var organization, category, contactState string
 	var organizationID int64
-	var limit int
 	command := &cobra.Command{
 		Use:   "directory",
 		Short: "Find saved people by name, address, or last contact",
@@ -39,19 +38,7 @@ Filters combine to narrow the existing Directory page.`,
 			if err != nil {
 				return err
 			}
-			if organizationID < 0 {
-				return usageErr(cmd, errors.New("--organization-id must not be negative"))
-			}
-			if limit < 1 || limit > 100 {
-				return usageErr(cmd, errors.New("--limit must be between 1 and 100"))
-			}
-			if contactState != "" && contactState != accountStateActive && contactState != "inactive" {
-				return usageErr(cmd, errors.New("--contact-state must be active or inactive"))
-			}
-			if cmd.Flags().Changed("limit") {
-				query.Limit = new(int64(limit))
-			}
-			if organizationID > 0 {
+			if organizationID != 0 {
 				query.OrganizationID = &organizationID
 			}
 			if organization != "" {
@@ -88,7 +75,6 @@ Filters combine to narrow the existing Directory page.`,
 	command.Flags().StringVar(&organization, "organization", "", "Current canonical organization name")
 	command.Flags().StringVar(&category, "category", "", "Current person category")
 	command.Flags().StringVar(&contactState, "contact-state", "", "Archived contact state: active or inactive")
-	command.Flags().IntVar(&limit, "limit", 50, "Maximum rows per page (1–100)")
 	command.Flags().StringVar(&queryText, "query", "", "Lexical query over current curated names, contact points, and organizations")
 	command.Flags().StringVar(&address, "address", "", "Literal case-insensitive address or identifier substring (saved people only)")
 	command.Flags().StringVar(&after, "last-contact-after", "", "Contacted at or after this inclusive date (YYYY-MM-DD or RFC3339)")
@@ -100,11 +86,11 @@ Filters combine to narrow the existing Directory page.`,
 }
 
 func personDirectoryQuery(cmd *cobra.Command, after, before, sort, cursor, queryText, address string) (*generated.ListDirectoryPeopleQuery, error) {
-	lower, err := parseDocumentSearchDate(after)
+	lower, err := parsePersonSearchDate(after)
 	if err != nil {
 		return nil, usageErr(cmd, fmt.Errorf("--last-contact-after: %w", err))
 	}
-	upper, err := parseDocumentSearchDate(before)
+	upper, err := parsePersonSearchDate(before)
 	if err != nil {
 		return nil, usageErr(cmd, fmt.Errorf("--last-contact-before: %w", err))
 	}
@@ -156,4 +142,19 @@ func personDirectoryLastContact(value *time.Time) string {
 		return "-"
 	}
 	return value.UTC().Format(time.RFC3339)
+}
+
+func parsePersonSearchDate(value string) (*time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil //nolint:nilnil // An omitted optional date has no value and no error.
+	}
+	for _, layout := range []string{"2006-01-02", time.RFC3339} {
+		parsed, err := time.Parse(layout, value)
+		if err == nil {
+			parsed = parsed.UTC()
+			return &parsed, nil
+		}
+	}
+	return nil, errors.New("must be YYYY-MM-DD or RFC3339")
 }

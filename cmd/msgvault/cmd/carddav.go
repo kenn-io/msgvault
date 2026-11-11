@@ -25,10 +25,10 @@ import (
 
 func newAddCardDAVCmd() *cobra.Command {
 	var schedule, connection string
-	var disabled, google, msContacts, headless bool
+	var disabled, google, msContacts, icloud, headless bool
 	var oauthApp string
-	cmd := &cobra.Command{Use: "add-carddav <base-url> <username> | --google <email> | --microsoft <email>", Short: "Discover and configure a CardDAV account", Args: func(cmd *cobra.Command, args []string) error {
-		if google || msContacts {
+	cmd := &cobra.Command{Use: "add-carddav <base-url> <username> | --google <email> | --microsoft <email> | --icloud <apple-id>", Short: "Discover and configure a CardDAV account", Args: func(cmd *cobra.Command, args []string) error {
+		if google || msContacts || icloud {
 			return cobra.ExactArgs(1)(cmd, args)
 		}
 		return cobra.ExactArgs(2)(cmd, args)
@@ -43,6 +43,9 @@ func newAddCardDAVCmd() *cobra.Command {
 		}
 		if google && msContacts {
 			return usageErr(cmd, errors.New("--google and --microsoft cannot be combined"))
+		}
+		if icloud && (google || msContacts) {
+			return usageErr(cmd, errors.New("--icloud cannot be combined with --google or --microsoft"))
 		}
 		if headless && !msContacts {
 			return usageErr(cmd, errors.New("--headless requires --microsoft"))
@@ -64,6 +67,8 @@ func newAddCardDAVCmd() *cobra.Command {
 		baseURL, username := carddav.GoogleDiscoveryURL, args[0]
 		if msContacts {
 			baseURL = mscontacts.GraphBaseURL
+		} else if icloud {
+			baseURL = carddav.ICloudDiscoveryURL
 		} else if !google {
 			baseURL, username = args[0], args[1]
 		}
@@ -99,6 +104,7 @@ func newAddCardDAVCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&connection, "connection", "", "Connection name (default when omitted)")
 	cmd.Flags().BoolVar(&google, "google", false, "Use Google Contacts with an authorized OAuth token")
+	cmd.Flags().BoolVar(&icloud, "icloud", false, "Use iCloud Contacts with an Apple app-specific password")
 	cmd.Flags().StringVar(&oauthApp, "oauth-app", "", "Named Google OAuth application")
 	cmd.Flags().BoolVar(&msContacts, "microsoft", false, "Use Microsoft 365 or Outlook.com contacts through Microsoft Graph")
 	cmd.Flags().BoolVar(&headless, "headless", false, "Sign in to Microsoft with a device code instead of a browser")

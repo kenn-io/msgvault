@@ -445,10 +445,7 @@ func (s *Scheduler) RemoveAccount(email string) {
 
 // Indexing job names, shared by registration, status reporting, and the
 // operation gate's holder label.
-const (
-	embedJobName          = jobctx.ScheduledEmbeddingLabel
-	documentVectorJobName = "scheduled document indexing"
-)
+const embedJobName = jobctx.ScheduledEmbeddingLabel
 
 // indexingPassRuntime bounds each automatic indexing pass. A pass that saved
 // progress, or newly kept provider output for an unfinished unit, queues one
@@ -466,23 +463,6 @@ func (s *Scheduler) SetEmbedJob(job *EmbedJob, schedule string, runAfterSync boo
 		run = job.Run
 	}
 	return s.setIndexingJob(embedJobName, "embed", run, schedule, runAfterSync)
-}
-
-// SetDocumentVectorJob installs the bounded document-vector convergence job
-// on the same cron/post-sync policy used by message embeddings. The job
-// returns ErrReschedule when its bounded pass leaves committed work.
-func (s *Scheduler) SetDocumentVectorJob(job func(context.Context) error, schedule string, runAfterSync bool) error {
-	var run func(context.Context) error
-	if job != nil {
-		run = func(ctx context.Context) error {
-			err := job(ctx)
-			if failure := jobctx.ErrorAfterYield(ctx, err, ErrReschedule); failure != nil {
-				s.logger.Error("scheduled document vector reconciliation failed", "error", failure)
-			}
-			return err
-		}
-	}
-	return s.setIndexingJob(documentVectorJobName, "document vector", run, schedule, runAfterSync)
 }
 
 // setIndexingJob registers an indexing job as a preemptible background job
@@ -628,7 +608,7 @@ func (s *Scheduler) runSync(email string) {
 	if (err != nil && err != ErrDeferUntilNextTrigger) || yielded { //nolint:errorlint // Only a bare deferral is a clean no-work run.
 		return
 	}
-	for _, name := range []string{embedJobName, documentVectorJobName} {
+	for _, name := range []string{embedJobName} {
 		s.mu.RLock()
 		afterSync := s.genericAfterSync[name]
 		s.mu.RUnlock()
@@ -1035,8 +1015,19 @@ var preemptAfter = time.Minute
 // jobctx.ErrRunBudgetExceeded. Other jobs keep their own runtime budgets. The
 // returned stop function must be called when the job finishes.
 func (s *Scheduler) jobContext(label string, preemptible, cooperative bool, maxRuntime time.Duration) (context.Context, func()) {
+	return s.cooperativeJobContext(s.ctx, label, preemptible, cooperative, maxRuntime)
+}
+
+// CooperativeJobContext gives daemon-owned work the same yield policy as scheduled jobs.
+func (s *Scheduler) CooperativeJobContext(ctx context.Context, label string) (context.Context, func()) {
+	return s.cooperativeJobContext(ctx, label, true, true, 0)
+}
+
+func (s *Scheduler) cooperativeJobContext(parent context.Context, label string, preemptible, cooperative bool, maxRuntime time.Duration) (context.Context, func()) {
 	started := time.Now()
-	baseCtx := jobctx.WithProgress(s.ctx)
+	baseCtx, cancelShutdown := context.WithCancel(parent)
+	stopShutdown := context.AfterFunc(s.ctx, cancelShutdown)
+	baseCtx = jobctx.WithProgress(baseCtx)
 	stopBudget := func() {}
 	if maxRuntime > 0 {
 		baseCtx, stopBudget = context.WithTimeoutCause(baseCtx, maxRuntime, jobctx.ErrRunBudgetExceeded)
@@ -1044,7 +1035,7 @@ func (s *Scheduler) jobContext(label string, preemptible, cooperative bool, maxR
 	preemptCtx, requestPreemption := jobctx.WithPreemption(baseCtx)
 	yc, canYield := s.work.(YieldChecker)
 	if s.work == nil {
-		return preemptCtx, stopBudget
+		return preemptCtx, func() { stopBudget(); stopShutdown(); cancelShutdown() }
 	}
 	ctx, cancel := context.WithCancelCause(preemptCtx)
 	go func() {
@@ -1074,7 +1065,7 @@ func (s *Scheduler) jobContext(label string, preemptible, cooperative bool, maxR
 			}
 		}
 	}()
-	return ctx, func() { cancel(nil); stopBudget() }
+	return ctx, func() { cancel(nil); stopBudget(); stopShutdown(); cancelShutdown() }
 }
 
 func (s *Scheduler) hasQueuedRuns() bool {

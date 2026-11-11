@@ -2,11 +2,15 @@ package cmd
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -152,19 +156,27 @@ func TestStartDaemonAnalyticsInitializerAutoInstallsDuckDB(t *testing.T) {
 	require.NoError(closeDaemonAnalyticsEngines(srv, initial, h))
 }
 
-func TestStartDaemonAnalyticsInitializerTracksAutoInitializationIndependently(t *testing.T) {
+func TestStartDaemonAnalyticsInitializerInstallsSwapsAndClosesLiveEngine(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	c, s := openTestDaemonAnalyticsStore(t)
 	c.Analytics.Engine = config.AnalyticsEngineAuto
 	c.Analytics.AutoBuildCache = true
+	_, err := buildCache(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(), true)
+	requirements.NoError(err)
+	state, err := query.ReadCacheSyncState(c.AnalyticsDir())
+	requirements.NoError(err)
+	state.SchemaVersion--
+	encoded, err := json.Marshal(state)
+	requirements.NoError(err)
+	requirements.NoError(os.WriteFile(query.CacheStatePath(c.AnalyticsDir()), encoded, 0o600))
 	started := make(chan struct{})
 	release := make(chan struct{})
-	stubBuildCacheSubprocess(t, func(ctx context.Context, _ bool) error {
+	stubBuildCacheSubprocess(t, func(ctx context.Context, full bool) error {
 		close(started)
 		select {
 		case <-release:
-			_, err := buildCache(ctx, c.DatabaseDSN(), c.AnalyticsDir(), false)
+			_, err := buildCache(ctx, c.DatabaseDSN(), c.AnalyticsDir(), full)
 			return err
 		case <-ctx.Done():
 			return ctx.Err()
@@ -180,12 +192,25 @@ func TestStartDaemonAnalyticsInitializerTracksAutoInitializationIndependently(t 
 	)
 	<-started
 	assertions.True(srv.AnalyticsInitializationActive())
+	live, ok := srv.QueryEngine().(*query.LiveExploreEngine)
+	requirements.True(ok)
+	snapshot, releaseSnapshot, _, err := live.BeginExploreSnapshot(t.Context())
+	requirements.NoError(err)
+	defer releaseSnapshot()
 
 	close(release)
-	requirements.True(h.WaitContext(t.Context()))
+	waitCtx, cancel := context.WithTimeout(t.Context(), serveLifecycleTestTimeout)
+	defer cancel()
+	requirements.True(h.WaitContext(waitCtx), "cache installation must let in-flight live reads finish")
 	requirements.NoError(h.Err())
 	assertions.False(srv.AnalyticsInitializationActive())
+	assertions.IsType(&query.DuckDBEngine{}, srv.QueryEngine())
+	_, err = live.Explore(snapshot, query.ExploreRequest{})
+	requirements.NoError(err, "an in-flight live request survives the swap")
+	releaseSnapshot()
 	requirements.NoError(closeDaemonAnalyticsEngines(srv, initial, h))
+	_, err = live.Explore(t.Context(), query.ExploreRequest{})
+	assertions.ErrorIs(err, sql.ErrConnDone)
 }
 
 func TestStartDaemonAnalyticsInitializerDuckDBFailureDoesNotInstallSQLFallback(t *testing.T) {
@@ -325,4 +350,120 @@ func TestCloseDaemonStoreAfterAnalyticsInitSkipsRunningVectorWorker(t *testing.T
 	close(vector.done)
 	require.NoError(closeDaemonStoreAfterInitializers(s, analytics, vector))
 	assert.Error(s.DB().PingContext(t.Context()), "store must close after both workers join")
+}
+
+func TestStartDaemonAnalyticsInitializerValidCacheWaitsForDuckDB(t *testing.T) {
+	require := require.New(t)
+	c, st := openTestDaemonAnalyticsStore(t)
+	c.Analytics.Engine = config.AnalyticsEngineAuto
+	c.Analytics.AutoBuildCache = true
+	_, err := buildCache(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(), true)
+	require.NoError(err)
+	started, release := make(chan struct{}), make(chan struct{})
+	oldOpen := openDaemonDuckDBEngineForRun
+	openDaemonDuckDBEngineForRun = func(ctx context.Context, c *config.Config, st *store.Store) (*query.DuckDBEngine, error) {
+		close(started)
+		select {
+		case <-release:
+			return oldOpen(ctx, c, st)
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	t.Cleanup(func() { openDaemonDuckDBEngineForRun = oldOpen })
+	initial, mode, _, _, err := prepareDaemonAnalyticsEngine(t.Context(), c, st, startupCacheBuildIntentNone)
+	require.NoError(err)
+	srv := api.NewServerWithOptions(api.ServerOptions{Config: c, Engine: initial, AnalyticsMode: mode, Logger: slog.Default()})
+	h := startDaemonAnalyticsInitializer(t.Context(), c, st, startupCacheBuildIntentNone, srv, nil, nil)
+	select {
+	case <-started:
+	case <-time.After(serveLifecycleTestTimeout):
+		require.FailNow("cache open did not start")
+	}
+	assert.IsType(t, &query.SQLiteEngine{}, srv.QueryEngine())
+	close(release)
+	require.True(h.WaitContext(t.Context()))
+	require.NoError(h.Err())
+	assert.IsType(t, &query.DuckDBEngine{}, srv.QueryEngine())
+	require.NoError(closeDaemonAnalyticsEngines(srv, initial, h))
+}
+
+func TestStartDaemonAnalyticsInitializerFullRebuildFailure(t *testing.T) {
+	for _, scenario := range []string{"absent", "partial publication"} {
+		t.Run(scenario, func(t *testing.T) {
+			require := require.New(t)
+			assertions := assert.New(t)
+			c, st := openTestDaemonAnalyticsStore(t)
+			c.Analytics.Engine = config.AnalyticsEngineAuto
+			c.Analytics.AutoBuildCache = true
+			if scenario != "absent" {
+				publishStaleTestCache(t, c, st)
+				state, err := query.ReadCacheSyncState(c.AnalyticsDir())
+				require.NoError(err)
+				state.FullRebuildRequired = true
+				encoded, err := json.Marshal(state)
+				require.NoError(err)
+				require.NoError(os.WriteFile(query.CacheStatePath(c.AnalyticsDir()), encoded, 0o600))
+			}
+			initial := query.NewEngine(st.DB(), false)
+			srv := api.NewServerWithOptions(api.ServerOptions{Config: c, Engine: initial, AnalyticsMode: api.AnalyticsModeSQLFallback, Logger: slog.Default()})
+			stubBuildCacheSubprocess(t, func(_ context.Context, full bool) error {
+				assertions.True(full)
+				return errors.New("simulated build failure")
+			})
+			h := startDaemonAnalyticsInitializer(t.Context(), c, st, startupCacheBuildIntentNone, srv, nil, nil)
+			require.True(h.WaitContext(t.Context()))
+			require.NoError(h.Err())
+			assertions.False(srv.AnalyticsInitializationActive())
+			if scenario == "partial publication" {
+				assertions.IsType(&query.DuckDBEngine{}, srv.QueryEngine())
+			} else {
+				assertions.IsType(&query.LiveExploreEngine{}, srv.QueryEngine())
+				req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/explore", strings.NewReader(`{"limit":1}`))
+				req.Header.Set("Content-Type", "application/json")
+				response := httptest.NewRecorder()
+				srv.Router().ServeHTTP(response, req)
+				assertions.Equal(http.StatusOK, response.Code, response.Body.String())
+			}
+			require.NoError(closeDaemonAnalyticsEngines(srv, initial, h))
+		})
+	}
+}
+
+func TestOpenDaemonAnalyticsEngineFullRebuildHook(t *testing.T) {
+	for _, mode := range []string{config.AnalyticsEngineAuto, config.AnalyticsEngineDuckDB} {
+		for _, intent := range []startupCacheBuildIntent{startupCacheBuildIntentNone, startupCacheBuildIntentFull} {
+			if mode == config.AnalyticsEngineDuckDB && intent == startupCacheBuildIntentNone {
+				continue
+			}
+			t.Run(fmt.Sprintf("%s/%s", mode, intent), func(t *testing.T) {
+				require := require.New(t)
+				c, st := openTestDaemonAnalyticsStore(t)
+				c.Analytics.Engine = mode
+				c.Analytics.AutoBuildCache = true
+				publishStaleTestCache(t, c, st)
+				fired := false
+				calls := 0
+				build := func(ctx context.Context, full bool) error {
+					calls++
+					assert.Equal(t, intent == startupCacheBuildIntentFull, full)
+					assert.Equal(t, mode == config.AnalyticsEngineAuto && full, fired)
+					_, err := buildCache(ctx, c.DatabaseDSN(), c.AnalyticsDir(), full)
+					return err
+				}
+				if intent == startupCacheBuildIntentNone {
+					stubBuildCacheSubprocess(t, build)
+				} else {
+					stubStartupCacheBuild(t, func(ctx context.Context, got startupCacheBuildIntent) error {
+						assert.Equal(t, intent, got)
+						return build(ctx, true)
+					})
+				}
+				engine, _, _, err := openDaemonAnalyticsEngineWithRebuild(t.Context(), c, st, intent, func() { fired = true })
+				require.NoError(err)
+				assert.Equal(t, 1, calls)
+				require.NoError(engine.Close())
+			})
+		}
+	}
 }

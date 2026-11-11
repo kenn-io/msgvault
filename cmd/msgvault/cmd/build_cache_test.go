@@ -144,7 +144,7 @@ func setupTestSQLite(t *testing.T) string {
 			participant_id INTEGER NOT NULL REFERENCES participants(id),
 			recipient_type TEXT NOT NULL,
 			display_name TEXT,
-			email_address TEXT
+			email_address TEXT, is_relayed BOOLEAN NOT NULL DEFAULT FALSE
 		);
 
 		CREATE TABLE labels (
@@ -1569,6 +1569,7 @@ func TestBuildCache_PublishesSnapshotWhenTerminalAdditionLandsDuringExport(t *te
 				);
 				CREATE TABLE sync_runs (
 					id INTEGER PRIMARY KEY,
+					sync_type TEXT NOT NULL DEFAULT '',
 					source_id INTEGER,
 					started_at DATETIME,
 					completed_at DATETIME,
@@ -1686,6 +1687,7 @@ func TestBuildCache_PublishesSnapshotWhenZeroCounterRunInterruptedDuringExport(t
 			_, err = db.ExecContext(t.Context(), `
 				CREATE TABLE sync_runs (
 					id INTEGER PRIMARY KEY,
+					sync_type TEXT NOT NULL DEFAULT '',
 					source_id INTEGER,
 					started_at DATETIME,
 					completed_at DATETIME,
@@ -1746,6 +1748,7 @@ func TestCacheNeedsBuild_DetectsOlderRunFailingAfterNewerFailure(t *testing.T) {
 	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE sync_runs (
 			id INTEGER PRIMARY KEY,
+			sync_type TEXT NOT NULL DEFAULT '',
 			source_id INTEGER,
 			started_at DATETIME,
 			completed_at DATETIME,
@@ -1796,6 +1799,7 @@ func TestBuildCache_PublishesSnapshotWhenOlderRunFailsDuringExport(t *testing.T)
 	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE sync_runs (
 			id INTEGER PRIMARY KEY,
+			sync_type TEXT NOT NULL DEFAULT '',
 			source_id INTEGER,
 			started_at DATETIME,
 			completed_at DATETIME,
@@ -1860,6 +1864,7 @@ func TestCacheNeedsBuild_AddOnlySyncUsesIncrementalBuild(t *testing.T) {
 	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE sync_runs (
 			id INTEGER PRIMARY KEY,
+			sync_type TEXT NOT NULL DEFAULT '',
 			source_id INTEGER,
 			started_at DATETIME,
 			completed_at DATETIME,
@@ -3056,7 +3061,7 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, rfc822_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, hidden_text_present BOOLEAN NOT NULL DEFAULT FALSE, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, list_id TEXT, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', is_from_me BOOLEAN DEFAULT FALSE, is_sent BOOLEAN DEFAULT TRUE, metadata TEXT, deleted_at DATETIME);
 		CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT, domain TEXT, display_name TEXT, phone_number TEXT);
 		CREATE TABLE participant_identifiers (participant_id INTEGER, identifier_type TEXT, identifier_value TEXT, display_value TEXT, is_primary BOOLEAN);
-		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT);
+		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT, email_address TEXT, is_relayed BOOLEAN NOT NULL DEFAULT FALSE);
 		CREATE TABLE labels (id INTEGER PRIMARY KEY, source_id INTEGER, source_label_id TEXT, system_role TEXT, name TEXT);
 		CREATE TABLE message_labels (message_id INTEGER, label_id INTEGER);
 		CREATE INDEX idx_message_labels_label ON message_labels(label_id);
@@ -3256,7 +3261,7 @@ func BenchmarkBuildCache(b *testing.B) {
 		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, rfc822_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, hidden_text_present BOOLEAN NOT NULL DEFAULT FALSE, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, list_id TEXT, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', deleted_at DATETIME);
 		CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT UNIQUE, domain TEXT, display_name TEXT, phone_number TEXT);
 		CREATE TABLE participant_identifiers (participant_id INTEGER, identifier_type TEXT, identifier_value TEXT, display_value TEXT, is_primary BOOLEAN);
-		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT);
+		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT, email_address TEXT, is_relayed BOOLEAN NOT NULL DEFAULT FALSE);
 		CREATE TABLE labels (id INTEGER PRIMARY KEY, name TEXT);
 		CREATE TABLE message_labels (message_id INTEGER, label_id INTEGER);
 		CREATE TABLE attachments (message_id INTEGER, size INTEGER, filename TEXT);
@@ -3372,7 +3377,7 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 			participant_id INTEGER NOT NULL REFERENCES participants(id),
 			recipient_type TEXT NOT NULL,
 			display_name TEXT,
-			email_address TEXT
+			email_address TEXT, is_relayed BOOLEAN NOT NULL DEFAULT FALSE
 		);
 		CREATE TABLE labels (
 			id INTEGER PRIMARY KEY,
@@ -4223,6 +4228,7 @@ func TestCacheNeedsBuild_LabelOnlySyncRequiresFullRebuild(t *testing.T) {
 	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE sync_runs (
 			id INTEGER PRIMARY KEY,
+			sync_type TEXT NOT NULL DEFAULT '',
 			source_id INTEGER,
 			started_at DATETIME,
 			completed_at DATETIME,
@@ -4270,6 +4276,7 @@ func TestCacheNeedsBuild_CalendarUpdateRebuildsModalityNeutralCache(t *testing.T
 		INSERT INTO sources (id, source_type, identifier) VALUES (2, 'gcal', 'user@example.com/primary');
 		CREATE TABLE sync_runs (
 			id INTEGER PRIMARY KEY,
+			sync_type TEXT NOT NULL DEFAULT '',
 			source_id INTEGER,
 			started_at DATETIME,
 			completed_at DATETIME,
@@ -4338,6 +4345,7 @@ func TestCacheNeedsBuild_UpdatedSyncCompletionOrderAndFailure(t *testing.T) {
 			_, err = db.ExecContext(t.Context(), `
 				CREATE TABLE sync_runs (
 					id INTEGER PRIMARY KEY,
+					sync_type TEXT NOT NULL DEFAULT '',
 					source_id INTEGER,
 					started_at DATETIME,
 					completed_at DATETIME,
@@ -4386,6 +4394,7 @@ func TestCacheNeedsBuild_UpdateCounterDecreaseRequiresRebuild(t *testing.T) {
 	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE sync_runs (
 			id INTEGER PRIMARY KEY,
+			sync_type TEXT NOT NULL DEFAULT '',
 			source_id INTEGER,
 			started_at DATETIME,
 			completed_at DATETIME,
@@ -4438,6 +4447,7 @@ func TestCacheNeedsBuild_IgnoresAlreadyProcessedUpdatedSyncRun(t *testing.T) {
 	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE sync_runs (
 			id INTEGER PRIMARY KEY,
+			sync_type TEXT NOT NULL DEFAULT '',
 			source_id INTEGER,
 			started_at DATETIME,
 			completed_at DATETIME,
@@ -4581,6 +4591,7 @@ func TestBuildCache_RecordsLastCompletedSyncRunID(t *testing.T) {
 	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE sync_runs (
 			id INTEGER PRIMARY KEY,
+			sync_type TEXT NOT NULL DEFAULT '',
 			source_id INTEGER,
 			started_at DATETIME,
 			completed_at DATETIME,
@@ -4651,7 +4662,7 @@ func BenchmarkBuildCacheIncremental(b *testing.B) {
 		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, rfc822_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, hidden_text_present BOOLEAN NOT NULL DEFAULT FALSE, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, list_id TEXT, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', deleted_at DATETIME);
 		CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT UNIQUE, domain TEXT, display_name TEXT, phone_number TEXT);
 		CREATE TABLE participant_identifiers (participant_id INTEGER, identifier_type TEXT, identifier_value TEXT, display_value TEXT, is_primary BOOLEAN);
-		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT);
+		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT, email_address TEXT, is_relayed BOOLEAN NOT NULL DEFAULT FALSE);
 		CREATE TABLE labels (id INTEGER PRIMARY KEY, name TEXT);
 		CREATE TABLE message_labels (message_id INTEGER, label_id INTEGER);
 		CREATE TABLE attachments (message_id INTEGER, size INTEGER, filename TEXT);

@@ -17,7 +17,7 @@ func TestPersonDiscoveryDirectoryCLIForwardsFilters(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/api/v1/health" {
-			_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"3.49.0"}`))
+			_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"5.1.0"}`))
 			assert.NoError(err)
 			return
 		}
@@ -26,13 +26,12 @@ func TestPersonDiscoveryDirectoryCLIForwardsFilters(t *testing.T) {
 		assert.Equal("Example Cooperative", r.URL.Query().Get("organization"))
 		assert.Equal("colleague", r.URL.Query().Get("category"))
 		assert.Equal("active", r.URL.Query().Get("contact_state"))
-		assert.Equal("2", r.URL.Query().Get("limit"))
 		_, err := w.Write([]byte(`{"people":[],"next_cursor":"next-page"}`))
 		assert.NoError(err)
 	}))
 	t.Cleanup(server.Close)
 	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	output, err := runPersonDirectoryCommand(ctx, t, "--organization-id", "13", "--organization", "Example Cooperative", "--category", "colleague", "--contact-state", "active", "--limit", "2", "--json")
+	output, err := runPersonDirectoryCommand(ctx, t, "--organization-id", "13", "--organization", "Example Cooperative", "--category", "colleague", "--contact-state", "active", "--json")
 	require.NoError(err)
 	assert.Equal("/api/v1/people/directory", gotPath)
 	assert.Contains(output, "next-page")
@@ -44,6 +43,6 @@ func TestPersonDiscoveryDirectoryCLIRefusesOldDaemonBeforeListing(t *testing.T) 
 	requests, ctx := personDirectoryTestResponse(t, http.StatusOK, `{"people":[]}`)
 	_, err := runPersonDirectoryCommand(ctx, t, "--organization-id", "13", "--json")
 	require.Error(err)
-	assert.Contains(err.Error(), "3.49.0")
+	assert.Contains(err.Error(), "5.1.0")
 	assert.Empty(requests)
 }

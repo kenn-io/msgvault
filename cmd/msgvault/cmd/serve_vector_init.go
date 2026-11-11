@@ -153,11 +153,6 @@ func startVectorInit(
 			}
 		}
 		publishVisualVectorFeatures(s, apiServer, sched, vf, state)
-		if !cfg.Vector.Enabled {
-			if err := registerDocumentVectorJob(sched, vf, s, state); err != nil {
-				logger.Error("register document vector job failed", "error", err)
-			}
-		}
 		logger.Info("daemon startup step complete", "step", "init_vector_backend")
 	}()
 	return h
@@ -543,36 +538,6 @@ type embedJobRegistrar interface {
 	SetEmbedJob(job *scheduler.EmbedJob, schedule string, runAfterSync bool) error
 }
 
-type documentVectorJobRegistrar interface {
-	SetDocumentVectorJob(job func(context.Context) error, schedule string, runAfterSync bool) error
-}
-
-func registerDocumentVectorJob(sched documentVectorJobRegistrar, vf *vectorFeatures, st *store.Store, state *invocation) error {
-	if state == nil || state.cfg == nil {
-		return errors.New("configuration is unavailable")
-	}
-	cfg := state.cfg
-	if !cfg.Attachments.Documents.Index.Embeddings.Enabled || vf == nil || vf.DocumentBackend == nil {
-		return nil
-	}
-	limit := vf.Cfg.Embeddings.BatchSize
-	if limit < 1 {
-		limit = defaultDocumentVectorOperationLimit
-	}
-	if limit > 1000 {
-		limit = 1000
-	}
-	job := invocationBoundJobRun(state, func(ctx context.Context) error {
-		return runScheduledDocumentVectorGeneration(ctx, st, vf, limit)
-	})
-	if err := sched.SetDocumentVectorJob(job, cfg.Vector.Embed.Schedule.Cron, cfg.Vector.Embed.Schedule.RunAfterSync); err != nil {
-		return fmt.Errorf("register document vector job: %w", err)
-	}
-	repairLogger(state.logger).Info("document vectors scheduled", "cron", cfg.Vector.Embed.Schedule.Cron,
-		"run_after_sync", cfg.Vector.Embed.Schedule.RunAfterSync)
-	return nil
-}
-
 func registerEmbedJob(sched embedJobRegistrar, vf *vectorFeatures, s *store.Store, apiServer *api.Server, cfg *config.Config, logger *slog.Logger) error {
 	if cfg == nil {
 		return errors.New("configuration is unavailable")
@@ -623,7 +588,6 @@ func publishTextVectorFeatures(ctx context.Context, s *store.Store, apiServer *a
 	apiServer.SetVectorFeatures(
 		vf.HybridEngine, vf.PersonSearchEngine, vf.Backend, vf.Cfg,
 	)
-	apiServer.SetDocumentSearchService(vf.DocumentSearch)
 	// Preflight drift detection: vector-search requests re-resolve the
 	// durable account scope (throttled) so drift latches index_stale
 	// even on daemons whose embed job never runs (empty cron,
@@ -632,8 +596,5 @@ func publishTextVectorFeatures(ctx context.Context, s *store.Store, apiServer *a
 	apiServer.SetVectorScopeCheck(embedScopeDriftCheck(s, vf.Cfg.Embed.Scope.BuildScope(), state))
 	apiServer.SetVectorRestartFingerprint(restartVectorFingerprint(s, state))
 	checkVectorIndexFreshness(ctx, apiServer, vf, logger)
-	return errors.Join(
-		registerDocumentVectorJob(sched, vf, s, state),
-		registerEmbedJob(sched, vf, s, apiServer, state.cfg, logger),
-	)
+	return registerEmbedJob(sched, vf, s, apiServer, state.cfg, logger)
 }

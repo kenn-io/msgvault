@@ -77,7 +77,7 @@ type DirectoryPeopleResponse struct {
 // route. Production installs the concrete personsearch engine with the vector
 // subsystem; tests can supply a focused service double.
 type PersonSearchEngine interface {
-	Search(ctx context.Context, query string, limit int) ([]personsearch.Result, error)
+	Search(ctx context.Context, query string, limit int, organizationID int64) ([]personsearch.Result, error)
 }
 
 type PersonSearchRequest struct {
@@ -210,20 +210,7 @@ func (s *Server) handleSemanticPersonSearch(w http.ResponseWriter, r *http.Reque
 			"Semantic person search is not configured on this server")
 		return
 	}
-	var results []personsearch.Result
-	var err error
-	if request.OrganizationID > 0 {
-		scoped, ok := engine.(interface {
-			SearchInOrganization(ctx context.Context, query string, limit int, organizationID int64) ([]personsearch.Result, error)
-		})
-		if !ok {
-			writeError(w, http.StatusServiceUnavailable, "person_discovery_scope_unsupported", "Organization-scoped person search is not supported by this server")
-			return
-		}
-		results, err = scoped.SearchInOrganization(r.Context(), request.Query, request.Limit, request.OrganizationID)
-	} else {
-		results, err = engine.Search(r.Context(), request.Query, request.Limit)
-	}
+	results, err := engine.Search(r.Context(), request.Query, request.Limit, request.OrganizationID)
 	if err != nil {
 		s.writePersonSearchError(r.Context(), w, err)
 		return

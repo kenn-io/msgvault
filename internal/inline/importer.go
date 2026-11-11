@@ -165,6 +165,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			if chat.RepairActive {
 				continue
 			}
+			state.PassDone = slices.DeleteFunc(state.PassDone, func(done int64) bool { return done == id })
 			chat.RepairActive = true
 			chat.RepairBefore = 0
 			chat.RepairHead = 0
@@ -182,6 +183,11 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	scoped := &Importer{store: imp.store.ScopedToSync(source.ID, runID), client: imp.client, mediaTransport: imp.mediaTransport}
 	defer func() {
 		if err != nil {
+			// Only an interruption keeps the pass: after a failure, the next
+			// attempt revisits every chat so one failing chat cannot starve the rest.
+			if ctx.Err() == nil {
+				state.PassDone = nil
+			}
 			checkpoint, cpErr := checkpointFor(state, sum)
 			if cpErr == nil {
 				err = errors.Join(err, scoped.store.InterruptSyncWithCheckpoint(ctx, runID, err, checkpoint))
@@ -205,6 +211,12 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 		if opts.Limit > 0 && sum.MessagesProcessed >= opts.Limit {
 			break
+		}
+		// Chats finished by an interrupted run stay done, so a pass that the
+		// scheduler cuts short every time still reaches completion. A limited
+		// run completes without visiting every chat, so it does not track passes.
+		if opts.Limit == 0 && slices.Contains(state.PassDone, chatID) {
+			continue
 		}
 		// Per-message and failure checkpoints retain this rotation while each
 		// chat's existing history, scan and repair cursors retain its debt.
@@ -253,6 +265,12 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			return sum, err
 		}
 		sum.ConversationsProcessed++
+		if opts.Limit == 0 {
+			state.PassDone = append(state.PassDone, chatID)
+			if err = scoped.checkpoint(ctx, runID, state, sum); err != nil {
+				return sum, err
+			}
+		}
 		if opts.Progress != nil {
 			opts.Progress(fmt.Sprintf("chat:%d: %d messages archived", chatID, sum.MessagesProcessed))
 		}
@@ -275,8 +293,14 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if err = scoped.checkpoint(ctx, runID, state, sum); err != nil {
 		return sum, err
 	}
+	// Recovery checkpoints keep the finished chats; only the completed cursor
+	// starts the next pass.
+	completed := *state
+	if opts.Limit == 0 {
+		completed.PassDone = nil
+	}
 	var blob string
-	blob, err = state.Marshal()
+	blob, err = completed.Marshal()
 	if err != nil {
 		return sum, err
 	}

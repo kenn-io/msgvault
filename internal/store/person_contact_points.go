@@ -10,10 +10,12 @@ import (
 )
 
 type PersonContactPoint struct {
+	IdentityKey          string             `json:"identity_key"`
 	Envelope             ValueEnvelope      `json:"envelope"`
 	PersonID             int64              `json:"person_id"`
 	AddressKind          ContactAddressKind `json:"address_kind"`
 	ServiceSlug          *string            `json:"service_slug,omitzero" nullable:"false"`
+	ServiceLabel         *string            `json:"service_label,omitzero" nullable:"false"`
 	ScopeKind            *string            `json:"scope_kind,omitzero" nullable:"false"`
 	ScopeValue           *string            `json:"scope_value,omitzero" nullable:"false"`
 	OriginalValue        string             `json:"original_value"`
@@ -290,7 +292,7 @@ func resolveCommunicationServiceTx(
 }
 
 const personContactPointSelect = `SELECT
-	p.id, p.person_id, p.address_kind, cs.slug, p.scope_kind, p.scope_value,
+	p.id, p.person_id, p.address_kind, cs.slug, cs.display_label, p.scope_kind, p.scope_value,
 	p.original_value, p.normalized_value, p.normalization,
 	p.normalization_version, p.uri,
 	p.pref, p.ordinal, p.type_label, p.type_tokens, p.vcard_property,
@@ -318,10 +320,10 @@ func getPersonContactPointTx(
 
 func scanPersonContactPoint(row scanner) (*PersonContactPoint, error) {
 	var point PersonContactPoint
-	var serviceSlug, scopeKind, scopeValue, uri sql.NullString
+	var serviceSlug, serviceLabel, scopeKind, scopeValue, uri sql.NullString
 	var env profileEnvelopeScanValues
 	dest := []any{
-		&point.Envelope.ID, &point.PersonID, &point.AddressKind, &serviceSlug,
+		&point.Envelope.ID, &point.PersonID, &point.AddressKind, &serviceSlug, &serviceLabel,
 		&scopeKind, &scopeValue, &point.OriginalValue, &point.NormalizedValue,
 		&point.Normalization, &point.NormalizationVersion, &uri,
 	}
@@ -330,11 +332,27 @@ func scanPersonContactPoint(row scanner) (*PersonContactPoint, error) {
 		return nil, err
 	}
 	point.ServiceSlug = nullStringPtr(serviceSlug)
+	point.ServiceLabel = nullStringPtr(serviceLabel)
 	point.ScopeKind = nullStringPtr(scopeKind)
 	point.ScopeValue = nullStringPtr(scopeValue)
+	point.IdentityKey = contactPointIdentityKey(point.AddressKind, point.ServiceSlug, point.ScopeKind, point.ScopeValue, point.NormalizedValue)
 	point.URI = nullStringPtr(uri)
 	if err := env.apply(&point.Envelope); err != nil {
 		return nil, err
 	}
 	return &point, nil
+}
+
+func contactPointIdentityKey(kind ContactAddressKind, service, scopeKind, scopeValue *string, normalized string) string {
+	slug := string(kind)
+	if service != nil && *service != "" {
+		slug = *service
+	}
+	text := func(value *string) string {
+		if value == nil {
+			return ""
+		}
+		return *value
+	}
+	return addressIdentityKey(slug, text(scopeKind), text(scopeValue), normalized)
 }

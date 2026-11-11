@@ -32,9 +32,7 @@ const briefMaxCandidates = 2000
 // transcripts carry speaker attribution: the meeting importers do not
 // authenticate who said what, so a meeting utterance can never be evidence the
 // person is the subject of under the current contract, and a lane that admits
-// no item would only advertise evidence the window cannot hold. document_text
-// has no event-time listing path: person sweep document retrieval is a lexical
-// search that requires a query, and the brief window has none.
+// no item would only advertise evidence the window cannot hold.
 var briefLanes = []SourceClass{SourceConversationText}
 
 // BriefArchive is the archive access one brief window needs. It extends the

@@ -28,6 +28,11 @@ provide different ways to use the same archive.
 - Pull requests must have a user-facing benefit or improve the developer
   experience, and the body must say which one.
 - Write issues and pull requests in English.
+- End every commit message with a `Co-authored-by:` trailer naming the agent
+  that wrote the change.
+- End the pull request description with a `Model used:` line naming the model,
+  such as `Model used: Opus 5.5` or `Model used: GPT-6.1 Sol`. Squash-merge
+  keeps only the description, so put the `Co-authored-by:` trailer there too.
 - Keep PR descriptions focused on the problem, resulting behavior, and review
   boundaries. Do not add `Validation`, `Test plan`, or equivalent command-run
   sections; CI carries routine check results.
@@ -143,9 +148,9 @@ Use these as reasoning checkpoints, not a requirement to create a design doc.
 
 ## CI runners
 
-CI jobs use GitHub-hosted runners. The `CI gate` job in `ci-pr.yml` only checks
-the CI run's result and runs on the Namespace profile
-`namespace-profile-linux-1cpu`, so it does not wait in the GitHub-hosted queue.
+CI jobs use GitHub-hosted runners. The `CI gate`, `changes`, and
+`Sibling pins on main` jobs take seconds and run on the Namespace profile
+`namespace-profile-linux-1cpu`, so they do not wait in the GitHub-hosted queue.
 That profile uses Namespace's
 [Restricted access level](https://namespace.so/docs/solutions/github-actions/runner-controls/access-levels),
 which disables workload access to Namespace features and APIs. GitHub fork

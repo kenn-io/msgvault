@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"go.kenn.io/kit/embedconfig"
 )
 
 const (
@@ -58,15 +60,17 @@ type EndpointKind string
 const (
 	EndpointHTTPS        EndpointKind = "https"
 	EndpointLoopbackHTTP EndpointKind = "loopback_http"
+	EndpointPrivateHTTP  EndpointKind = "private_http"
 	EndpointUnix         EndpointKind = "unix"
 )
 
 type ClientOptions struct {
-	Endpoint         string
-	APIKey           string
-	Timeout          time.Duration
-	MaxResponseBytes int64
-	HTTPClient       *http.Client
+	TrustPrivateNetwork bool
+	Endpoint            string
+	APIKey              string
+	Timeout             time.Duration
+	MaxResponseBytes    int64
+	HTTPClient          *http.Client
 }
 
 // Client is a bounded protocol client. Credentials remain private to this
@@ -136,13 +140,13 @@ type metadataMutation struct {
 
 func New(options ClientOptions) (*Client, error) {
 	endpoint := strings.TrimSpace(options.Endpoint)
-	parsed, err := parseEndpoint(endpoint)
+	parsed, err := parseEndpoint(endpoint, options.TrustPrivateNetwork)
 	if err != nil {
 		return nil, err
 	}
 	u, kind, socketPath := parsed.url, parsed.kind, parsed.socketPath
 	key := strings.TrimSpace(options.APIKey)
-	if kind == EndpointLoopbackHTTP && key == "" {
+	if (kind == EndpointLoopbackHTTP || kind == EndpointPrivateHTTP) && key == "" {
 		return nil, ErrAuthenticationRequired
 	}
 
@@ -469,13 +473,14 @@ func readBounded(reader io.Reader, maximum int64) ([]byte, error) {
 
 // ValidateEndpoint checks that an endpoint has one of the shapes the runtime
 // client accepts: https://host, loopback http (http://localhost or a loopback
-// IP), or unix:///absolute/socket/path with no host. URLs carrying userinfo, a
+// IP), or unix:///absolute/socket/path with no host. trustPrivateNetwork also
+// permits HTTP on a trusted private network. URLs carrying userinfo, a
 // query string, or a fragment are rejected for every scheme. Runtime-only
 // requirements (API keys, socket existence and ownership) are checked by New,
 // not here, so configuration validation can share this without touching the
 // filesystem or credentials.
-func ValidateEndpoint(endpoint string) error {
-	_, err := parseEndpoint(endpoint)
+func ValidateEndpoint(endpoint string, trustPrivateNetwork bool) error {
+	_, err := parseEndpoint(endpoint, trustPrivateNetwork)
 	return err
 }
 
@@ -487,7 +492,7 @@ type parsedEndpoint struct {
 	socketPath string
 }
 
-func parseEndpoint(endpoint string) (parsedEndpoint, error) {
+func parseEndpoint(endpoint string, trustPrivateNetwork bool) (parsedEndpoint, error) {
 	if endpoint == "" {
 		return parsedEndpoint{}, fmt.Errorf("%w: endpoint is empty", ErrInsecureEndpoint)
 	}
@@ -511,12 +516,26 @@ func parseEndpoint(endpoint string) (parsedEndpoint, error) {
 		}
 		return parsedEndpoint{url: u, kind: EndpointHTTPS}, nil
 	case "http":
-		if u.Host == "" || !isLoopbackHost(u.Hostname()) {
+		if u.Host != "" && isLoopbackHost(u.Hostname()) {
+			return parsedEndpoint{url: u, kind: EndpointLoopbackHTTP}, nil
+		}
+		if !trustPrivateNetwork {
 			return parsedEndpoint{}, fmt.Errorf(
 				"%w: remote plaintext HTTP is not allowed; use https:// or a loopback host like http://localhost",
 				ErrInsecureEndpoint)
 		}
-		return parsedEndpoint{url: u, kind: EndpointLoopbackHTTP}, nil
+		// Keep the existing URL; kit supplies only the destination trust policy.
+		origin := &url.URL{Scheme: "http", Host: u.Host}
+		if _, err := embedconfig.CanonicalEndpoint(origin.String(), true); err != nil {
+			return parsedEndpoint{}, fmt.Errorf("%w: HTTP requires loopback or trust_private_network = true for a trusted private network", ErrInsecureEndpoint)
+		}
+		kind := EndpointPrivateHTTP
+		// Zoned loopback is accepted only by explicit consent, but remains local.
+		host, _, _ := strings.Cut(u.Hostname(), "%")
+		if isLoopbackHost(host) {
+			kind = EndpointLoopbackHTTP
+		}
+		return parsedEndpoint{url: u, kind: kind}, nil
 	case "unix":
 		if u.Host != "" || !strings.HasPrefix(u.Path, "/") {
 			return parsedEndpoint{}, fmt.Errorf(
