@@ -31,7 +31,8 @@ type ChatDraft struct {
 	Revision               int64
 }
 
-// ChatDraftAuthorizer vets a source and returns its incoming sender restriction.
+// ChatDraftAuthorizer vets a conversation's source before its drafts are
+// written or listed and returns the incoming sender restriction for replies.
 type ChatDraftAuthorizer func(sourceType, identifier string) ([]string, error)
 
 var (
@@ -105,15 +106,16 @@ func (s *Store) CreateChatDraftContext(
 		}
 		var reply sql.NullString
 		if replyToMessageID != 0 {
-			query := `SELECT m.source_message_id FROM messages m WHERE m.id = ? AND m.conversation_id = ?`
+			var scope string
 			args := []any{replyToMessageID, conversationID}
 			if len(dest.incomingSenders) > 0 {
-				scope := sourcescope.WithIncomingSenders(ctx, map[int64][]string{dest.sourceID: dest.incomingSenders})
-				predicate, values := sourcescope.IncomingPredicate(scope, "m.id", "m.source_id", s.dialect.UnicodeLowerExpression)
-				query += " AND " + predicate
-				args = append(args, values...)
+				replyCtx := sourcescope.WithIncomingSenders(ctx, map[int64][]string{dest.sourceID: dest.incomingSenders})
+				clause, senderArgs := s.incomingScopeClause(replyCtx, "m.id", "m.source_id")
+				scope, args = clause, append(args, senderArgs...)
 			}
-			err := tx.QueryRowContext(ctx, query, args...).Scan(&reply)
+			err := tx.QueryRowContext(ctx, `
+				SELECT m.source_message_id FROM messages m WHERE m.id = ? AND m.conversation_id = ?
+			`+scope, args...).Scan(&reply)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("read chat draft reply target: %w", err)
 			}

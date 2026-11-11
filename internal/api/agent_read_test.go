@@ -22,6 +22,8 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	msgexport "go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
@@ -991,6 +993,41 @@ func TestAgentIncomingSenderScopesReads(t *testing.T) {
 			assert.NotContains(t, w.Body.String(), tc.excludes)
 		})
 	}
+	ctx := sourcescope.WithIncomingSenders(t.Context(), map[int64][]string{src.ID: {"codes@example.test"}})
+	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
+	term := &search.Query{TextTerms: []string{"code"}}
+	for _, searchWithStats := range []func() (*query.SearchFastResult, error){
+		func() (*query.SearchFastResult, error) {
+			return engine.SearchDeepWithStats(ctx, term, query.MessageFilter{}, 50, 0)
+		},
+		func() (*query.SearchFastResult, error) {
+			return engine.SearchFastWithStats(ctx, term, "code", query.MessageFilter{}, query.ViewSenders, 50, 0)
+		},
+	} {
+		result, err := searchWithStats()
+		requirementsForTest.NoError(err)
+		requirementsForTest.Len(result.Messages, 1)
+		requirementsForTest.Equal(allowed, result.Messages[0].ID)
+		requirementsForTest.Equal("private code", result.Messages[0].ConversationTitle)
+		requirementsForTest.Equal(int64(1), result.TotalCount)
+		requirementsForTest.NotNil(result.Stats)
+		requirementsForTest.Equal(int64(1), result.Stats.MessageCount)
+	}
+	detail, err := st.GetMessageContext(ctx, allowed)
+	requirementsForTest.NoError(err)
+	requirementsForTest.Equal("private code", detail.ConversationTitle)
+	message, err := engine.GetMessageBySourceID(ctx, "allowed", []int64{src.ID})
+	requirementsForTest.NoError(err)
+	requirementsForTest.Equal("allowed code", message.Subject)
+	requirementsForTest.Equal("private code", message.ConversationTitle)
+	batch, err := engine.GetMessageSummariesByIDs(ctx, []int64{allowed})
+	requirementsForTest.NoError(err)
+	requirementsForTest.Len(batch, 1)
+	requirementsForTest.Equal("private code", batch[0].ConversationTitle)
+	owner, err := st.GetMessageContext(t.Context(), allowed)
+	requirementsForTest.NoError(err)
+	requirementsForTest.Equal("private code", owner.ConversationTitle)
+
 	other, err := st.GetOrCreateSource("test", "other-account@example.test")
 	requirementsForTest.NoError(err)
 	_, err = st.EnsureConversation(t.Context(), other.ID, "thread", "other account title")
@@ -1088,4 +1125,41 @@ func TestAgentIncomingSenderScopesReads(t *testing.T) {
 	masked := readAllowed()
 	requirementsForTest.Contains(masked, verification.Masked)
 	requirementsForTest.NotContains(masked, "987654")
+}
+
+func TestAgentRelatedMessageIncomingScope(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, allowed, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", "allowed", "allowed", "")
+	requirements.NoError(err)
+	_, target, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", "target", "target", "")
+	requirements.NoError(err)
+	for _, tc := range []struct {
+		id      int64
+		address string
+	}{{allowed, "codes@example.test"}, {target, "other@example.test"}} {
+		participant, err := st.EnsureParticipant(tc.address, "", "example.test")
+		requirements.NoError(err)
+		requirements.NoError(st.ReplaceMessageRecipients(tc.id, "from", []int64{participant}, nil))
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = ? WHERE message_id = ?"), tc.address, tc.id)
+		requirements.NoError(err)
+	}
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET message_type = ?, metadata = ? WHERE id = ?"), "chatwoot", fmt.Sprintf(`{"meeting_message_id":%d}`, target), allowed)
+	requirements.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET message_type = ? WHERE id = ?"), "meeting_transcript", target)
+	requirements.NoError(err)
+	ctx := sourcescope.WithIncomingSenders(t.Context(), map[int64][]string{source.ID: {"codes@example.test"}})
+	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
+	checkRelated := func(want *int64) {
+		message, err := engine.GetMessage(ctx, allowed)
+		requirements.NoError(err)
+		requirements.Equal(want, message.RelatedMessageID)
+		storeMessage, err := st.GetMessageContext(ctx, allowed)
+		requirements.NoError(err)
+		requirements.Equal(want, storeMessage.RelatedMessageID)
+	}
+	checkRelated(nil)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = ? WHERE message_id = ?"), "codes@example.test", target)
+	requirements.NoError(err)
+	checkRelated(&target)
 }

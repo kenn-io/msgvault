@@ -24,7 +24,7 @@ func (a *storeAPIAdapter) ArchiveMessage(ctx context.Context, id int64, change e
 		if grant != nil {
 			ref := agentgrant.SourceRef{Type: source.SourceType, Identifier: source.Identifier}
 			selected, ok := grant.MatchingSource(ref)
-			if !ok || !grant.HasPermission(agentgrant.PermissionMessageArchive) {
+			if !ok {
 				return emailtags.Failure("message_not_found", "Message not found", nil, nil)
 			}
 			ctx = sourcescope.WithIncomingSenders(ctx, map[int64][]string{source.ID: selected.IncomingSenderKeys})

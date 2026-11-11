@@ -2328,32 +2328,37 @@ func TestStore_GetStatsForScope_ExcludesSourceDeleted(t *testing.T) {
 func TestIncomingSenderScopedCountsUseMessageIDs(t *testing.T) {
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
+	const allowed, denied = "codes@example.test", "other@example.test"
+	participants := make(map[string]int64)
+	for _, address := range []string{allowed, denied} {
+		id, err := st.EnsureParticipant(address, "", "example.test")
+		requirements.NoError(err)
+		participants[address] = id
+	}
 	var source *store.Source
 	for _, message := range []struct {
-		provider, sender string
-		deleted          bool
+		provider, from, to string
+		deleted            bool
 	}{
-		{"allowed-live", "codes@example.test", false},
-		{"denied-live", "other@example.test", false},
-		{"allowed-deleted", "codes@example.test", true},
-		{"denied-deleted", "other@example.test", true},
+		{"allowed-live", allowed, denied, false},
+		{"denied-live", denied, allowed, false},
+		{"allowed-deleted", allowed, denied, true},
+		{"denied-deleted", denied, allowed, true},
 	} {
 		var id int64
 		var err error
 		source, id, err = testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", message.provider, message.provider, "")
 		requirements.NoError(err)
-		participant, err := st.EnsureParticipant(message.sender, "", "example.test")
-		requirements.NoError(err)
-		requirements.NoError(st.ReplaceMessageRecipients(id, "to", []int64{participant}, nil))
-		requirements.NoError(st.ReplaceMessageRecipients(id, "from", []int64{participant}, nil))
-		_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = ? WHERE message_id = ? AND recipient_type = 'from'"), message.sender, id)
+		requirements.NoError(st.ReplaceMessageRecipients(id, "to", []int64{participants[message.to]}, nil))
+		requirements.NoError(st.ReplaceMessageRecipients(id, "from", []int64{participants[message.from]}, nil))
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = CASE recipient_type WHEN 'from' THEN ? ELSE ? END WHERE message_id = ?"), message.from, message.to, id)
 		requirements.NoError(err)
 		if message.deleted {
 			_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?"), id)
 			requirements.NoError(err)
 		}
 	}
-	ctx := sourcescope.WithIncomingSenders(t.Context(), map[int64][]string{source.ID: {"codes@example.test"}})
+	ctx := sourcescope.WithIncomingSenders(t.Context(), map[int64][]string{source.ID: {allowed}})
 	stats, err := st.GetStatsForScopeContext(ctx, []int64{source.ID})
 	requirements.NoError(err)
 	requirements.Equal(int64(1), stats.MessageCount)
