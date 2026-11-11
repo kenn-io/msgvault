@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"log/slog"
 	"net/http"
+	"slices"
 	"testing"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -133,6 +134,15 @@ func TestMCPAttributeCapabilitiesRejectMissingNativeContracts(t *testing.T) {
 	partial := newDaemonMCPOperations(b.client, caps)
 	assert.NotContains(t, partial.capabilities(), "clear_person_attribute")
 	attributeError(t, attributeOperation(t, partial, "clear_person_attribute", map[string]any{}), "operation_not_supported")
+	capabilities, err := b.client.MCPCapabilities(t.Context())
+	require.NoError(t, err)
+	capabilities.Routes = slices.DeleteFunc(capabilities.Routes, func(route apiprotocol.MCPRouteDescriptor) bool {
+		return route.OperationID == "getAttributeDefinition"
+	})
+	withoutRead := newDaemonMCPOperations(b.client, capabilities)
+	assert.NotContains(t, withoutRead.capabilities(), "patch_attribute_definition")
+	assert.NotContains(t, withoutRead.capabilities(), "delete_attribute_definition")
+	assert.Contains(t, withoutRead.capabilities(), "create_attribute_definition")
 }
 
 func TestMCPAttributeSDKConfirmationAndNativeEffects(t *testing.T) {

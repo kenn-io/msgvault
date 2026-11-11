@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"net/http"
-	"strings"
+	"slices"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"go.kenn.io/msgvault/internal/apiprotocol"
@@ -28,7 +28,8 @@ func recordAttributeMCPCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MC
 		{"patch_attribute_definition", "patchAttributeDefinition", http.MethodPatch, "/api/v1/attribute-definitions/{id}", nil, []string{"label", "description", "display_order", "is_sensitive", "is_active"}},
 		{"delete_attribute_definition", "deleteAttributeDefinition", http.MethodDelete, "/api/v1/attribute-definitions/{id}", nil, nil},
 	} {
-		if hasRoute(r.id, r.method, r.path, r.query...) && mcpRequestPropertiesPresent(caps, r.id, r.properties...) {
+		if hasRoute(r.id, r.method, r.path, r.query...) && mcpRequestPropertiesPresent(caps, r.id, r.properties...) &&
+			(r.id != "patchAttributeDefinition" && r.id != "deleteAttributeDefinition" || slices.Contains(names, "get_attribute_definition")) {
 			names = append(names, r.name)
 		}
 	}
@@ -119,17 +120,8 @@ func attributeRequest(name string, args map[string]any) (string, string, runtime
 		case "get_attribute_definition":
 			return http.MethodGet, "/api/v1/attribute-definitions/{id}", &generated.GetAttributeDefinitionRequestOptions{PathParams: &generated.GetAttributeDefinitionPath{ID: in.ID}}, true
 		case "patch_attribute_definition":
-			if strings.TrimSpace(in.ETag) == "" || len(in.Changes) == 0 {
-				return "", "", nil, false
-			}
-			if _, err = decodeMCPOperationArguments[generated.PatchAttributeDefinitionBody](in.Changes); err != nil {
-				return "", "", nil, false
-			}
 			return http.MethodPatch, "/api/v1/attribute-definitions/{id}", &attributePatchOptions{PatchAttributeDefinitionRequestOptions: &generated.PatchAttributeDefinitionRequestOptions{PathParams: &generated.PatchAttributeDefinitionPath{ID: in.ID}, Header: &generated.PatchAttributeDefinitionHeaders{IfMatch: in.ETag}}, changes: in.Changes}, true
 		case "delete_attribute_definition":
-			if strings.TrimSpace(in.ETag) == "" {
-				return "", "", nil, false
-			}
 			return http.MethodDelete, "/api/v1/attribute-definitions/{id}", &generated.DeleteAttributeDefinitionRequestOptions{PathParams: &generated.DeleteAttributeDefinitionPath{ID: in.ID}, Header: &generated.DeleteAttributeDefinitionHeaders{IfMatch: in.ETag}}, true
 		}
 	}
