@@ -283,7 +283,7 @@ func (s *Store) ReopenCommitmentAgendaContext(ctx context.Context, key string) (
 // Revalidation may replace a detached person's target while preserving its exact
 // message citation. Retain the attempted request and key through that change.
 func (s *Store) reattachCommitmentAgendaTx(ctx context.Context, tx *loggedTx, personID int64, p preparedCommitmentPromise) error {
-	item, err := scanCommitmentAgenda(tx.QueryRowContext(ctx, commitmentAgendaByID+` AND target_key = (SELECT target_key FROM person_commitments WHERE id = ?)`, p.existingID, p.existingID))
+	item, err := scanCommitmentAgenda(tx.QueryRowContext(ctx, commitmentAgendaByID, p.existingID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}

@@ -308,7 +308,20 @@ func (a *CommitmentAgenda) retire(ctx context.Context, item store.CommitmentAgen
 			return a.link(ctx, item, result.Issue)
 		}
 	}
+	return a.retireReceipt(ctx, item)
+}
+
+// retireReceipt reports a link that landed after the empty lookup, under the
+// same frozen key, instead of calling a created issue missing.
+func (a *CommitmentAgenda) retireReceipt(ctx context.Context, item store.CommitmentAgendaSuggestion) (store.CommitmentAgendaSuggestion, error) {
 	if err := a.archive.RetireCommitmentAgendaContext(ctx, item.IdempotencyKey); err != nil {
+		return item, err
+	}
+	current, err := a.archive.GetCommitmentAgendaContext(ctx, item.CommitmentID)
+	if err == nil && current.State == store.CommitmentAgendaLinked && current.IdempotencyKey == item.IdempotencyKey {
+		return current, nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return item, err
 	}
 	return item, sql.ErrNoRows
