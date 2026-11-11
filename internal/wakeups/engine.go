@@ -345,12 +345,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 		if sub.Native {
 			id = "evt_" + id[3:]
 		}
-		ids := make([]int64, 0, min(50, len(matches)))
-		start := max(0, len(matches)-50)
-		for _, m := range matches[start:] {
-			ids = append(ids, m.ID)
-		}
-		body, err := json.Marshal(payload{1, "msgvault.wakeup", id, sub.Name, filterJSON{sub.Filter.PersonID, sub.Filter.SourceIDs, sub.Filter.ConversationIDs, sub.Filter.IncomingOnly}, from, to, matchedJSON{len(matches), ids, len(matches) > 50}, page.ServerTime})
+		var body []byte
 		if sub.Native {
 			body, err = json.Marshal(struct {
 				EventID   string            `json:"eventId"`
@@ -359,6 +354,13 @@ func (e *Engine) RunPass(ctx context.Context) error {
 				Data      map[string]string `json:"data"`
 				Cursor    *string           `json:"cursor"`
 			}{id, "msgvault.messages.changed", page.ServerTime, map[string]string{"subscription_id": sub.Name}, nil})
+		} else {
+			ids := make([]int64, 0, min(50, len(matches)))
+			start := max(0, len(matches)-50)
+			for _, m := range matches[start:] {
+				ids = append(ids, m.ID)
+			}
+			body, err = json.Marshal(payload{1, "msgvault.wakeup", id, sub.Name, filterJSON{sub.Filter.PersonID, sub.Filter.SourceIDs, sub.Filter.ConversationIDs, sub.Filter.IncomingOnly}, from, to, matchedJSON{len(matches), ids, len(matches) > 50}, page.ServerTime})
 		}
 		if err != nil {
 			logger.Warn("wakeup failed", "name", sub.Name, "category", "invalid_callback")
