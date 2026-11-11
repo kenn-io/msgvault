@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json/jsontext"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -26,7 +27,7 @@ func apiContractDigest(docs ...*huma.OpenAPI) (string, error) {
 		doc.Info.Version = ""
 		raw, err := doc.MarshalJSON()
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("marshal API document: %w", err)
 		}
 		value := jsontext.Value(raw)
 		if err := value.Format(jsontext.ReorderRawObjects(true)); err != nil {
@@ -40,7 +41,8 @@ func apiContractDigest(docs ...*huma.OpenAPI) (string, error) {
 func apiBaseMarkers(ctx context.Context, base string, explicit bool) ([]string, error) {
 	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--quiet", base+"^{commit}")
 	if err := cmd.Run(); err != nil {
-		if _, ok := err.(*exec.ExitError); ok && !explicit && ctx.Err() == nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && !explicit && ctx.Err() == nil {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("resolve API contract base %q: %w", base, err)
@@ -51,7 +53,7 @@ func apiBaseMarkers(ctx context.Context, base string, explicit bool) ([]string, 
 		return nil, fmt.Errorf("read API contract markers at %q: %w", base, err)
 	}
 	var markers []string
-	for _, path := range strings.Split(string(out), "\x00") {
+	for path := range strings.SplitSeq(string(out), "\x00") {
 		if path != "" {
 			markers = append(markers, strings.TrimPrefix(path, "internal/api/"+apiContractsDir+"/"))
 		}
@@ -98,7 +100,7 @@ func checkAPIContract(version, digest string, markers, base []string) error {
 	problem := ""
 	for _, marker := range base {
 		if !strings.HasPrefix(marker, ".") && !candidate[marker] {
-			problem = fmt.Sprintf("restore removed API contract marker %s", marker)
+			problem = "restore removed API contract marker " + marker
 			break
 		}
 	}
@@ -109,7 +111,7 @@ func checkAPIContract(version, digest string, markers, base []string) error {
 		return fmt.Errorf("record the API contract with an empty marker at %s", filepath.Join(apiContractsDir, version+"_"+digest))
 	}
 	if problem == "" && (len(contracts[current]) != 1 || contracts[current][0] != digest) {
-		problem = fmt.Sprintf("API contract changed or has multiple markers for %s", version)
+		problem = "API contract changed or has multiple markers for " + version
 	}
 	if problem != "" {
 		version, err := next()
