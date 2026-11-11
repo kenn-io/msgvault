@@ -12,7 +12,7 @@ import (
 const meetingDecisionsMinAPISchemaVersion = "5.2.0"
 
 type meetingDecisionClientBackend interface {
-	DecideMeetingLink(context.Context, string, string, string) (store.MeetingLinkDecisionResult, error)
+	DecideMeetingLink(ctx context.Context, left, right, decision string) (store.MeetingLinkDecisionResult, error)
 }
 
 func newMeetingDecisionCommand(deps meetingCommandDeps, decision string) *cobra.Command {
@@ -52,7 +52,10 @@ func newMeetingDecisionCommand(deps meetingCommandDeps, decision string) *cobra.
 				label = "Cleared saved choice:"
 			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s\n", label, result.Left, result.Right)
-			return err
+			if err != nil {
+				return fmt.Errorf("write meeting choice: %w", err)
+			}
+			return nil
 		},
 	}
 }

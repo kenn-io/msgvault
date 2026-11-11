@@ -348,7 +348,7 @@ func getMeetingRecordDefinition() toolDefinition {
 }
 
 type meetingDecisionBackend interface {
-	DecideMeetingLink(context.Context, string, string, string) (store.MeetingLinkDecisionResult, error)
+	DecideMeetingLink(ctx context.Context, left, right, decision string) (store.MeetingLinkDecisionResult, error)
 }
 
 func (h *handlers) decideMeetingLink(ctx context.Context, req toolRequest, decision string) (*toolResult, error) {

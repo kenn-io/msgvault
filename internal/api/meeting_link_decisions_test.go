@@ -41,7 +41,7 @@ func TestMeetingDecisionOwnerHTTP(t *testing.T) {
 	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
 	assertions.JSONEq(fmt.Sprintf(`{"left":"msg:%d","right":"msg:%d","state":"link"}`, ids[0], ids[1]), w.Body.String())
 	ref := func(id int64) store.MeetingLinkRef {
-		return store.MeetingLinkRef{Kind: "msg", OccurrenceRef: store.OccurrenceRef{MessageID: id}}
+		return store.MeetingLinkRef{Kind: "msg", MessageID: id}
 	}
 	_, err = st.DecideMeetingLinkContext(t.Context(), ref(ids[1]), ref(ids[2]), "link")
 	requirements.NoError(err)
@@ -91,7 +91,7 @@ func TestMeetingDecisionScopedReadHidesOtherSource(t *testing.T) {
 		requirements.NoError(err)
 		ids = append(ids, id)
 	}
-	refs := []store.MeetingLinkRef{{Kind: "msg", OccurrenceRef: store.OccurrenceRef{MessageID: ids[0]}}, {Kind: "msg", OccurrenceRef: store.OccurrenceRef{MessageID: ids[1]}}}
+	refs := []store.MeetingLinkRef{{Kind: "msg", MessageID: ids[0]}, {Kind: "msg", MessageID: ids[1]}}
 	_, err = st.DecideMeetingLinkContext(t.Context(), refs[0], refs[1], "link")
 	requirements.NoError(err)
 	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}

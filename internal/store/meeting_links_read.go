@@ -313,7 +313,7 @@ func (s *Store) meetingAutomaticRecordContext(ctx context.Context, ref MeetingLi
 	defer release()
 	var keys []meetingLinkKey
 	var seed CalendarOccurrence
-	if ref.Kind == "msg" {
+	if ref.Kind == meetingRefMessage {
 		var raw sql.NullString
 		scope, args := sourceScopeClause(ctx, "m.source_id")
 		err = s.db.QueryRowContext(ctx, `SELECT k.link_key FROM messages m LEFT JOIN meeting_details k ON k.message_id=m.id WHERE m.id=? AND m.message_type='meeting_transcript' AND m.deleted_at IS NULL`+scope, append([]any{ref.MessageID}, args...)...).Scan(&raw)
@@ -434,7 +434,7 @@ func (s *Store) meetingAutomaticRecordContext(ctx context.Context, ref MeetingLi
 			allowNotes := key[0] != "google_event_id" || instance || len(identities) == 1 || len(identities) == 0 && len(matched) > 0
 			if len(identities) > 1 {
 				// Notes with exact keys remain peers even if calendar matches are ambiguous.
-				if allowNotes && ref.Kind == "msg" && len(copies) == 0 {
+				if allowNotes && ref.Kind == meetingRefMessage && len(copies) == 0 {
 					record.MessageIDs = append(record.MessageIDs, notes[key.text()]...)
 				}
 				continue

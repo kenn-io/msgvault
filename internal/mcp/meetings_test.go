@@ -295,6 +295,7 @@ func (meetingBackendFixture) GetMeetingMetrics(context.Context, generated.GetMee
 
 type recordingMeetingDecisionBackend struct {
 	meetingBackendFixture
+
 	calls [][3]string
 }
 

@@ -27,7 +27,7 @@ type meetingDecisionEndpoint struct {
 }
 
 func (e meetingDecisionEndpoint) ref() string {
-	if e.Kind == "evt" {
+	if e.Kind == meetingRefEvent {
 		ref, err := e.meetingRef()
 		if err == nil {
 			return formatMeetingOccurrence(ref.OccurrenceRef)
@@ -71,7 +71,7 @@ func ValidateMeetingLinkDecision(left, right MeetingLinkRef, decision string) er
 		return errors.New("decision must be link, unlink, or clear")
 	}
 	a, b := endpointFromRef(left), endpointFromRef(right)
-	if a.ID <= 0 || b.ID <= 0 || (a.Kind != "msg" && a.Kind != "evt") || (b.Kind != "msg" && b.Kind != "evt") || compareMeetingEndpoints(a, b) == 0 {
+	if a.ID <= 0 || b.ID <= 0 || (a.Kind != meetingRefMessage && a.Kind != meetingRefEvent) || (b.Kind != meetingRefMessage && b.Kind != meetingRefEvent) || compareMeetingEndpoints(a, b) == 0 {
 		return errors.New("invalid meeting decision endpoints")
 	}
 	return nil
@@ -121,7 +121,7 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 		}
 		budget := calrecur.RequestReadBudget
 		for _, endpoint := range []*meetingDecisionEndpoint{&a, &b} {
-			if endpoint.Kind == "evt" && endpoint.Key == "" {
+			if endpoint.Kind == meetingRefEvent && endpoint.Key == "" {
 				rows, err := s.meetingEventRows(ctx, `e.message_id = ?`, []any{endpoint.ID}, &budget)
 				if err != nil {
 					return err
@@ -207,10 +207,10 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 			}
 			found := false
 			for _, id := range record.MessageIDs {
-				found = found || b.Kind == "msg" && id == b.ID
+				found = found || b.Kind == meetingRefMessage && id == b.ID
 			}
 			for _, link := range record.Links {
-				found = found || b.Kind == "evt" && (link.Ref == b.ref() || b.Key == "" && link.MessageID == b.ID)
+				found = found || b.Kind == meetingRefEvent && (link.Ref == b.ref() || b.Key == "" && link.MessageID == b.ID)
 			}
 			if conflict.link.decision != "" {
 				return fmt.Errorf("%w: link %s %s conflicts with split %s %s", ErrMeetingLinkConflict, conflict.link.a.ref(), conflict.link.b.ref(), conflict.split.a.ref(), conflict.split.b.ref())
@@ -252,7 +252,7 @@ func (s *Store) materializedMeetingEndpointRecord(ctx context.Context, endpoint 
 	if err != nil {
 		return endpoint, nil, MeetingRecord{}, err
 	}
-	if endpoint.Kind == "msg" {
+	if endpoint.Kind == meetingRefMessage {
 		return endpoint, []int64{endpoint.ID}, record, nil
 	}
 	for _, link := range record.Links {
@@ -275,6 +275,7 @@ func copyMeetingLinkDecisionsTx(ctx context.Context, tx *loggedTx, from, into in
 	}
 	type copiedDecision struct {
 		meetingDecisionEdge
+
 		choiceKey string
 	}
 	var decisions []copiedDecision
@@ -326,8 +327,8 @@ func undoMeetingLinkDecisionsTx(ctx context.Context, tx *loggedTx, batchID strin
 }
 
 // deleteMeetingDecisionTx clears source choices or replaces a direct choice.
-func deleteMeetingDecisionTx(ctx context.Context, tx *loggedTx, d meetingDecisionEdge, clear bool) error {
-	if clear || d.isExplicit {
+func deleteMeetingDecisionTx(ctx context.Context, tx *loggedTx, d meetingDecisionEdge, clearing bool) error {
+	if clearing || d.isExplicit {
 		_, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE choice_key=(SELECT choice_key FROM meeting_link_decisions WHERE id=?)`, d.id)
 		return err
 	}

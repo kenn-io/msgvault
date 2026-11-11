@@ -12,6 +12,7 @@ import (
 
 type meetingDecisionClient struct {
 	meetingRecordClient
+
 	args []string
 }
 
@@ -29,7 +30,7 @@ func TestMeetingDecisionCLIOutputAndVersioned(t *testing.T) {
 		{"unlink", "unlink", "Saved split: msg:3 evt:7@20270314\n"},
 		{"reset-link", "clear", "Cleared saved choice: msg:3 evt:7@20270314\n"},
 	} {
-		client := &meetingDecisionClient{meetingRecordClient: meetingRecordClient{version: "5.2.0"}}
+		client := &meetingDecisionClient{version: "5.2.0"}
 		command := newMeetingsCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
 		var out bytes.Buffer
 		command.SetOut(&out)
@@ -38,7 +39,7 @@ func TestMeetingDecisionCLIOutputAndVersioned(t *testing.T) {
 		assert.Equal(tc.output, out.String())
 		assert.Equal([]string{"msg:3", "evt:7@20270314", tc.decision}, client.args)
 	}
-	client := &meetingDecisionClient{meetingRecordClient: meetingRecordClient{version: "5.1.0"}}
+	client := &meetingDecisionClient{version: "5.1.0"}
 	command := newMeetingsCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
 	command.SetArgs([]string{"link", "msg:3", "msg:4"})
 	require.ErrorContains(command.Execute(), "5.2.0")

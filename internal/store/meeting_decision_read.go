@@ -59,7 +59,7 @@ func meetingDecisionSideClause(endpoint meetingDecisionEndpoint, side string) (s
 	if endpoint.Kind != "" {
 		clause += " AND d." + side + "_kind=?"
 		args = append(args, endpoint.Kind)
-		if endpoint.Kind == "evt" {
+		if endpoint.Kind == meetingRefEvent {
 			clause += " AND (d." + side + "_key=? OR (d." + side + "_key='' AND d." + side + "_anchor=?))"
 			args = append(args, endpoint.Key, endpoint.Key)
 		}
@@ -117,7 +117,7 @@ func (l *meetingDecisionLoader) load(ctx context.Context, endpoints []meetingDec
 }
 
 func meetingDecisionEndpointMatches(query, stored meetingDecisionEndpoint) bool {
-	return query.ID == stored.ID && (query.Kind == "" || query.Kind == stored.Kind && (query.Kind != "evt" || query.Key == stored.Key || stored.Key == "" && stored.Anchor == query.Key))
+	return query.ID == stored.ID && (query.Kind == "" || query.Kind == stored.Kind && (query.Kind != meetingRefEvent || query.Key == stored.Key || stored.Key == "" && stored.Anchor == query.Key))
 }
 
 // MeetingRecordContext follows automatic evidence and owner choices in one snapshot.
@@ -196,7 +196,7 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 				}
 			}
 			for _, id := range record.MessageIDs {
-				member := meetingDecisionEndpoint{ID: id, Kind: "msg"}
+				member := meetingDecisionEndpoint{ID: id, Kind: meetingRefMessage}
 				add(member, nil)
 				addMember(member)
 			}
@@ -206,11 +206,11 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 					return result, err
 				}
 				member := endpointFromRef(ref)
-				copy := link
-				add(member, &copy)
+				linkCopy := link
+				add(member, &linkCopy)
 				addMember(member)
 				if link.MessageID != member.ID {
-					alias := meetingDecisionEndpoint{ID: link.MessageID, Kind: "evt"}
+					alias := meetingDecisionEndpoint{ID: link.MessageID, Kind: meetingRefEvent}
 					add(alias, nil)
 					addMember(alias)
 				}
@@ -293,15 +293,15 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 	// A note/event split applies to all automatic event copies of that occurrence.
 	for _, split := range slices.Clone(splits) {
 		note, event := split.a, split.b
-		if note.Kind == "evt" {
+		if note.Kind == meetingRefEvent {
 			note, event = event, note
 		}
-		if note.Kind != "msg" || event.Kind != "evt" {
+		if note.Kind != meetingRefMessage || event.Kind != meetingRefEvent {
 			continue
 		}
 		for _, group := range groupByMember[event.ref()] {
 			for _, member := range group {
-				if member.Kind == "evt" && member.ref() != event.ref() {
+				if member.Kind == meetingRefEvent && member.ref() != event.ref() {
 					splits = append(splits, meetingDecisionEdge{a: note, b: member})
 				}
 			}
@@ -362,7 +362,7 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 	seedRoot := root(seed.ref())
 	visibleEvents := map[int64]bool{}
 	for key, n := range nodes {
-		if n.endpoint.Kind == "evt" {
+		if n.endpoint.Kind == meetingRefEvent {
 			visibleEvents[n.endpoint.ID] = visibleEvents[n.endpoint.ID] || root(key) == seedRoot
 		}
 	}
@@ -377,7 +377,7 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 		if root(key) != seedRoot {
 			continue
 		}
-		if n.endpoint.Kind == "msg" {
+		if n.endpoint.Kind == meetingRefMessage {
 			result.MessageIDs = append(result.MessageIDs, n.endpoint.ID)
 		} else if n.link != nil {
 			result.Links = append(result.Links, *n.link)

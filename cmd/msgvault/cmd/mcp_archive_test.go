@@ -52,7 +52,7 @@ func TestMCPArchiveFamilies(t *testing.T) {
 		source, tool string
 		noDrafts     bool
 	}{
-		{"mbox", "", false},
+		{"mbox", "", false}, {"gcal", "get_meeting_record", false},
 		{"granola", "get_meeting_context", false}, {"chatwoot", "get_meeting_context", false},
 		{"circleback", "get_meeting_context", false}, {"pocket", "get_meeting_context", false},
 		{"muesli", "get_meeting_context", false}, {"notion_meetings", "get_meeting_context", false},
@@ -97,7 +97,12 @@ func TestMCPArchiveFamilies(t *testing.T) {
 				assert.Contains(names, tc.tool)
 			}
 			if tc.noDrafts {
-				assert.NotContains(names, "draft_compose")
+			assert.NotContains(names, "draft_compose")
+			}
+			if tc.tool == "get_meeting_record" || tc.tool == "get_meeting_context" {
+				for _, name := range []string{"link_meeting", "unlink_meeting", "reset_meeting_link"} {
+					assert.Contains(names, name)
+				}
 			}
 			if tc.source == "mbox" {
 				assert.Contains(names, "get_stats")

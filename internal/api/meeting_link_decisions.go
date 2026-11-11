@@ -9,7 +9,7 @@ import (
 )
 
 type MeetingDecisionStore interface {
-	DecideMeetingLinkContext(context.Context, store.MeetingLinkRef, store.MeetingLinkRef, string) (store.MeetingLinkDecisionResult, error)
+	DecideMeetingLinkContext(ctx context.Context, left, right store.MeetingLinkRef, decision string) (store.MeetingLinkDecisionResult, error)
 }
 
 type MeetingDecisionRequest struct {
