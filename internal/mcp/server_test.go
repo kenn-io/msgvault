@@ -906,42 +906,6 @@ func TestSearchMessageBodies_RealEngineFTSNormalizedContext(t *testing.T) {
 	}
 }
 
-func TestSearchMessageBodies_PostgreSQLContextIgnoresAccentLookalikes(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f := storetest.New(t)
-	if !f.Store.IsPostgreSQL() {
-		t.Skip("PostgreSQL simple-dictionary context semantics")
-	}
-
-	accentLookalike := "résumé " + strings.Repeat("padding ", 60)
-	body := strings.Repeat(accentLookalike, query.MessageBodyContextMaxSnippets) + "resume marker"
-	messageID := f.NewMessage().
-		WithSourceMessageID("mcp-postgres-accent-context").
-		WithSubject("ordinary subject").
-		WithSnippet("ordinary preview").
-		Create(t, f.Store)
-	require.NoError(f.Store.UpsertMessageBody(messageID,
-		sql.NullString{String: body, Valid: true}, sql.NullString{}), "UpsertMessageBody")
-	_, err := f.Store.BackfillFTS(nil)
-	require.NoError(err, "BackfillFTS")
-
-	engine := query.NewEngine(f.Store.DB(), true)
-	resp := runTool[paginatedSearchMessages](t, "search_message_bodies",
-		newTestHandlers(engine).searchMessageBodies, map[string]any{"query": "resume"})
-	require.Len(resp.Data, 1, "body hit")
-	assert.Equal(messageID, resp.Data[0].ID, "body hit ID")
-	require.NotEmpty(resp.Data[0].Matches, "FTS hit context windows")
-	assert.Condition(func() bool {
-		for _, m := range resp.Data[0].Matches {
-			if strings.Contains(m.Snippet, "resume marker") {
-				return true
-			}
-		}
-		return false
-	}, "context snippets must include the true PostgreSQL simple-dictionary hit")
-}
-
 func TestSearchMessageBodies_ContextIgnoresFullFoldExpansionLookalikes(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

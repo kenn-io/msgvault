@@ -93,10 +93,11 @@ func TestStore_BackfillFTS_ResumesCommittedBatch(t *testing.T) {
 	assertFTSContains(t, f.Store, "orchard", 2)
 }
 
-func TestPG_BackfillFTS_RefreshesOutdatedEntries(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
+// TestPG_BackfillFTSUpgradesLegacyEntries rebuilds version-2 entries from
+// stored data and keeps only subject, sender, and recipient text it lacks.
+func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 	skipUnlessPostgres(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	ids := f.CreateMessages(2)
 	_, err := f.Store.BackfillFTS(nil)
@@ -108,16 +109,8 @@ func TestPG_BackfillFTS_RefreshesOutdatedEntries(t *testing.T) {
 
 	n, err := f.Store.BackfillFTS(nil)
 	require.NoError(err)
-	assert.Equal(int64(1), n, "only the outdated entry needs backfill")
+	assert.Equal(t, int64(1), n, "only the outdated entry needs backfill")
 	assertFTSContains(t, f.Store, "obsolete", 0)
-}
-
-// TestPG_BackfillFTSUpgradesLegacyEntries rebuilds version-2 entries from
-// stored data and keeps only subject, sender, and recipient text it lacks.
-func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
-	skipUnlessPostgres(t)
-	require := require.New(t)
-	f := storetest.New(t)
 	db := f.Store.DB()
 	legacy := func(id int64, vector string, args ...any) {
 		t.Helper()
@@ -143,7 +136,7 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 	legacy(recipients, `setweight(to_tsvector('simple', 'alice example.com'), 'C')`)
 	legacy(withBody(f.CreateMessage("unsearchable"), "hidden terminal@example.test"), `''::tsvector`)
 	gapped := f.CreateMessage("gapped")
-	_, err := db.ExecContext(t.Context(), `UPDATE messages SET subject = 'different stored subject' WHERE id = $1`, gapped)
+	_, err = db.ExecContext(t.Context(), `UPDATE messages SET subject = 'different stored subject' WHERE id = $1`, gapped)
 	require.NoError(err)
 	legacy(gapped, `setweight(to_tsvector('simple', $2), 'A')`, strings.Repeat("filler ", 256)+"alpha filler beta")
 	legacy(f.CreateMessage("compound-gap"), `setweight(to_tsvector('simple', $2), 'A')`, strings.Repeat("filler ", 256)+"alpha filler foo-bar")
@@ -176,7 +169,7 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 		require.NoError(err, term)
 		assert.ElementsMatch(t, want, ids, term)
 	}
-	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"stored phrase", "lantern unique"}}, 10)
+	ids, _, err = f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"stored phrase", "lantern unique"}}, 10)
 	require.NoError(err)
 	require.Equal([]int64{partial}, ids)
 	bodySearcher, ok := query.NewEngine(db, true).(query.MessageBodySearcher)

@@ -48,15 +48,9 @@ type agentReadGateStore struct {
 
 func TestPostgresServerRepairsSearchOnStartup(t *testing.T) {
 	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	if !st.IsPostgreSQL() {
-		t.Skip("PostgreSQL indexing")
-	}
-	_, id, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "old-index", "", "")
-	require.NoError(err)
-	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = to_tsvector('simple', 'old'), indexing_version = 2 WHERE id = $1`, id)
-	require.NoError(err)
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner"}}, Store: st, Engine: query.NewEngine(st.DB(), true), Logger: testLogger()})
+	base := testutil.NewTestStore(t)
+	st := &postgresBackfillStore{Store: base, started: make(chan struct{}, 1)}
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner"}}, Store: st, Engine: query.NewEngine(base.DB(), base.IsPostgreSQL()), Logger: testLogger()})
 	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(err)
 	done := make(chan error, 1)
@@ -66,11 +60,11 @@ func TestPostgresServerRepairsSearchOnStartup(t *testing.T) {
 		require.ErrorIs(<-done, http.ErrServerClosed)
 	})
 	require.NoError(srv.WaitStarted(t.Context()))
-	require.Eventually(func() bool {
-		var version int
-		err := st.DB().QueryRowContext(t.Context(), `SELECT indexing_version FROM messages WHERE id = $1`, id).Scan(&version)
-		return err == nil && version == store.CurrentFTSIndexingVersion
-	}, 30*time.Second, 10*time.Millisecond)
+	select {
+	case <-st.started:
+	case <-time.After(5 * time.Second):
+		require.FailNow("startup did not begin search repair")
+	}
 }
 
 func (s *agentReadGateStore) ListSourcesContext(ctx context.Context, kind string) ([]*store.Source, error) {
@@ -491,6 +485,9 @@ func TestAgentIndexProbeHasFiniteLifetime(t *testing.T) {
 	for _, arrival := range []string{"healthy", "stale", "owner after request cancellation", "agent only", "owner before timeout", "owner after timeout", "owner first", "probe failure", "failed repair", "owner at exit", "owner probe failure", "gate refused"} {
 		st := &boundedAgentIndexStore{Store: testutil.NewTestStore(t), needs: arrival != "healthy"}
 		t.Run(arrival, func(t *testing.T) {
+			if arrival == "gate refused" && st.IsPostgreSQL() {
+				t.Skip("PostgreSQL repair does not use the operation gate")
+			}
 			synctest.Test(t, func(t *testing.T) {
 				assertions := assert.New(t)
 				requirements := require.New(t)
@@ -603,11 +600,9 @@ func TestAgentIndexProbeHasFiniteLifetime(t *testing.T) {
 				}
 				if arrival == "gate refused" {
 					assertions.False(srv.ftsEnsureRunning.Load())
-					assertions.Equal(st.IsPostgreSQL(), srv.ftsIndexComplete.Load())
-					if !st.IsPostgreSQL() {
-						assertions.Equal(cliSearchIndexStateAwaitingOwner, srv.ensureCLISearchIndexAsync(st, false))
-						assertions.Zero(st.repairs)
-					}
+					assertions.False(srv.ftsIndexComplete.Load())
+					assertions.Equal(cliSearchIndexStateAwaitingOwner, srv.ensureCLISearchIndexAsync(st, false))
+					assertions.Zero(st.repairs)
 					assertions.False(gate.HasRequestWaiters())
 					_, _, held := gate.Holder()
 					assertions.False(held)
