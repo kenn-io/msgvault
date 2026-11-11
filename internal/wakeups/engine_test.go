@@ -163,3 +163,53 @@ func TestEngineTruncatesIDsWithoutLosingCount(t *testing.T) {
 	assert.True(got.Matched.Truncated)
 	assert.Equal(ids[10:], got.Matched.MessageIDs)
 }
+
+func TestNativeDeliveryDropsPermanentAndEventuallyAdvances(t *testing.T) {
+	for _, status := range []int{http.StatusGone, http.StatusRequestEntityTooLarge, http.StatusInternalServerError} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			ctx := t.Context()
+			now := time.Now().UTC()
+			start := now.Add(-time.Hour)
+			src, err := st.GetOrCreateSource("gmail", "events@example.com")
+			require.NoError(t, err)
+			conv, err := st.EnsureConversationWithType(src.ID, "events-conversation", "email_thread", "Events")
+			require.NoError(t, err)
+			_, err = st.UpsertMessage(&store.Message{SourceID: src.ID, SourceMessageID: "events-1", ConversationID: conv, MessageType: "email", SentAt: sql.NullTime{Time: now, Valid: true}})
+			require.NoError(t, err)
+			key := store.MCPEventsPositionKey("sub-x")
+			ok, err := st.AdvanceWakeupStateKey(ctx, key, nil, store.WakeupState{At: start})
+			require.NoError(t, err)
+			require.True(t, ok)
+			var bodies []map[string]any
+			var ids []string
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]any
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				bodies = append(bodies, body)
+				ids = append(ids, r.Header.Get("webhook-id"))
+				assert.Equal(t, "sub-x", r.Header.Get("X-MCP-Subscription-Id"))
+				w.WriteHeader(status)
+			}))
+			defer server.Close()
+			sub := Subscription{Name: "sub-x", StateKey: key, Native: true, URL: "https://example.com/hook", Secret: []byte(strings.Repeat("a", 32)), Filter: changefeed.Filter{SourceIDs: []int64{src.ID}, IncomingOnly: true}, MaxMessageAge: 72 * time.Hour, Client: testWebhookClient(server)}
+			engine := Engine{Store: st, Subscriptions: []Subscription{sub}, Now: func() time.Time { return now }}
+			attempts := 1
+			if status == 500 {
+				attempts = 5
+			}
+			for range attempts {
+				require.NoError(t, engine.RunPass(ctx))
+				now = now.Add(time.Hour)
+			}
+			require.Len(t, bodies, attempts)
+			assert.Equal(t, "msgvault.messages.changed", bodies[0]["name"])
+			assert.Nil(t, bodies[0]["cursor"])
+			assert.Equal(t, ids[0], bodies[0]["eventId"])
+			state, _, err := st.LoadWakeupStateKey(ctx, key)
+			require.NoError(t, err)
+			assert.True(t, state.At.After(start))
+			assert.Zero(t, state.Failures)
+		})
+	}
+}

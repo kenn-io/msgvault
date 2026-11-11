@@ -43,11 +43,16 @@ type webhookClient struct {
 }
 
 func (c webhookClient) send(ctx context.Context, endpoint, id string, secret, body []byte) string {
+	category, _ := c.sendEvent(ctx, endpoint, id, "", secret, body)
+	return category
+}
+
+func (c webhookClient) sendEvent(ctx context.Context, endpoint, id, subscriptionID string, secret, body []byte) (string, int) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	target, err := url.Parse(endpoint)
 	if err != nil {
-		return "invalid_callback"
+		return "invalid_callback", 0
 	}
 	resolver := c.resolver
 	if resolver == nil {
@@ -60,15 +65,15 @@ func (c webhookClient) send(ctx context.Context, endpoint, id string, secret, bo
 	pinned, err := netguard.PinnedAddresses(ctx, resolver, target, c.trustedOrigin, c.trusted, false)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return "timeout"
+			return "timeout", 0
 		}
 		if _, ok := errors.AsType[*net.DNSError](err); ok {
-			return "dns_error"
+			return "dns_error", 0
 		}
 		if errors.Is(err, netguard.ErrUnsafeTarget) {
-			return "invalid_callback"
+			return "invalid_callback", 0
 		}
-		return "connection_refused"
+		return "connection_refused", 0
 	}
 	tlsConfig := c.roots
 	if tlsConfig == nil {
@@ -87,7 +92,7 @@ func (c webhookClient) send(ctx context.Context, endpoint, id string, secret, bo
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return "invalid_callback"
+		return "invalid_callback", 0
 	}
 	stamp := strconv.FormatInt(time.Now().Unix(), 10)
 	mac := hmac.New(sha256.New, secret)
@@ -97,33 +102,37 @@ func (c webhookClient) send(ctx context.Context, endpoint, id string, secret, bo
 	req.Header.Set("Webhook-Timestamp", stamp)
 	req.Header.Set("Webhook-Signature", "v1,"+base64.StdEncoding.EncodeToString(mac.Sum(nil)))
 	req.Header.Set("User-Agent", "msgvault")
+	if subscriptionID != "" {
+		req.Header.Set("X-MCP-Subscription-Id", subscriptionID)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return "timeout"
+			return "timeout", 0
 		}
 		var op *net.OpError
 		if errors.As(err, &op) && op.Timeout() {
-			return "timeout"
+			return "timeout", 0
 		}
 		if _, ok := errors.AsType[tls.RecordHeaderError](err); ok {
-			return "tls_error"
+			return "tls_error", 0
 		}
 		if _, ok := errors.AsType[*tls.CertificateVerificationError](err); ok {
-			return "tls_error"
+			return "tls_error", 0
 		}
-		return "connection_refused"
+		return "connection_refused", 0
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	_ = resp.Body.Close()
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
-		return ""
+		return "", resp.StatusCode
 	case resp.StatusCode >= 300 && resp.StatusCode < 400:
-		return "http_3xx"
+		return "http_3xx", resp.StatusCode
+
 	case resp.StatusCode >= 400 && resp.StatusCode < 500:
-		return "http_4xx"
+		return "http_4xx", resp.StatusCode
 	default:
-		return "http_5xx"
+		return "http_5xx", resp.StatusCode
 	}
 }

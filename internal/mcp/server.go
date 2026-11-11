@@ -111,6 +111,7 @@ const ToolGetEmbeddingStatus = "get_embeddings_status"
 // the search_message_bodies tool, and Backend additionally enables the
 // find_similar_messages tool.
 type ServeOptions struct {
+	Events EventsBackend
 	// DiscoverFamilies reads current archive inventory when a catalog is requested.
 	DiscoverFamilies func(context.Context) *ArchiveFamilies
 	Families         *ArchiveFamilies
@@ -438,6 +439,9 @@ func newMCPServerWithPolicy(
 		sdkmcp.AddTool[map[string]any, any](s, definition.definition.tool(), officialToolHandler(definition.bind(opts.Operations), confirmation))
 	}
 
+	if opts.Events != nil && !opts.DelegatedOnly && !opts.legacyHTTP {
+		registerNativeEvents(s, opts.Events)
+	}
 	return s
 }
 
@@ -579,7 +583,18 @@ func newHTTPHandlerWithPolicy(opts ServeOptions, httpOpts HTTPOptions, policy *i
 			MaxRequestBodyBytes: (visual.MaxQueryImageBytes*4)/3 + 2<<20,
 		},
 	)
-	protected := http.NewCrossOriginProtection().Handler(bearerAuthHandler(httpOpts.APIKey, httpServer))
+	var transport http.Handler = httpServer
+	if opts.Events != nil && !opts.DelegatedOnly {
+		guarded := eventsNameHeaderHandler(transport)
+		transport = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Mcp-Protocol-Version") >= "2026-07-28" {
+				guarded.ServeHTTP(w, r)
+			} else {
+				httpServer.ServeHTTP(w, r)
+			}
+		})
+	}
+	protected := http.NewCrossOriginProtection().Handler(bearerAuthHandler(httpOpts.APIKey, transport))
 	return noStoreHandler(protected), closeHandler
 }
 

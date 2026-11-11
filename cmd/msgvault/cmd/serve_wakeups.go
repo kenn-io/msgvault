@@ -9,12 +9,13 @@ import (
 
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/mcpevents"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/wakeups"
 )
 
-func configureWakeupJob(ctx context.Context, sched *scheduler.Scheduler, gate api.LabeledOperationGate, st *store.Store, cfg *config.Config, logger *slog.Logger) error {
+func configureWakeupJob(ctx context.Context, sched *scheduler.Scheduler, gate api.LabeledOperationGate, st *store.Store, cfg *config.Config, logger *slog.Logger, events ...*mcpevents.Service) error {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -56,8 +57,11 @@ func configureWakeupJob(ctx context.Context, sched *scheduler.Scheduler, gate ap
 			logger.Warn("wakeup setup unavailable", "category", category)
 		}
 	}
-	if len(subs) == 0 {
+	if len(subs) == 0 && (len(events) == 0 || events[0] == nil || !events[0].Enabled) {
 		return nil
+	}
+	if len(events) > 0 && events[0] != nil && events[0].Enabled {
+		engine.Native = events[0].Native
 	}
 	return sched.AddJob(scheduler.Job{Name: "wakeups", Interval: 15 * time.Second, Background: true, Run: engine.RunPass})
 }

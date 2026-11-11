@@ -304,6 +304,7 @@ func writeHumaError(ctx huma.Context, status int, code string, message string) {
 
 func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerMCPCapabilitiesRoute(api, apiV1)
+	s.registerMCPEventsRoutes(apiV1)
 	s.registerSessionRoutes(api)
 	s.registerDocbankAttachmentRoutes(apiV1)
 	registerRawHumaJSONRoute[HealthResponse](api, huma.Operation{

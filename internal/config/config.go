@@ -604,6 +604,7 @@ func (c SenderAuthConfig) Pins() map[int64][]string {
 
 type Config struct {
 	Wakeups            []WakeupConfig            `toml:"wakeups"`
+	MCPEvents          MCPEventsConfig           `toml:"mcp_events"`
 	RelayedSenders     []mime.RelayedSenderRule  `toml:"relayed_senders"`
 	SenderAuth         SenderAuthConfig          `toml:"sender_auth"`
 	ConversationPolicy ConversationPolicyConfig  `toml:"conversation_policy"`

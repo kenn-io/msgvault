@@ -281,6 +281,11 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	}
 	// Turn on can enable text search after this server starts.
 	activatable := mcpRequestPropertiesPresent(capabilities, "enableLocalEmbeddings")
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, "5.4.0") {
+		if events, err := st.MCPEventsList(ctx); err == nil && events.Enabled {
+			opts.Events = st
+		}
+	}
 	lanes := capabilityErr == nil && health != nil && health.Vector != nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, vectorLaneHealthMinAPISchemaVersion)
 	if activatable || lanes && health.Vector.TextEnabled != nil && *health.Vector.TextEnabled {
 		opts.HybridSearcher = daemonMCPHybridSearcher{client: st}

@@ -40,16 +40,8 @@ func prepareWakeups(entries []WakeupConfig) error {
 			return fmt.Errorf("wakeups: invalid or duplicate name %q", c.Name)
 		}
 		seen[c.Name] = true
-		target, err := url.Parse(c.URL)
-		if err != nil || target.Scheme != "https" || target.Hostname() == "" || target.User != nil || target.Fragment != "" || target.Opaque != "" || strings.Contains(c.URL, "#") || (target.Port() != "" && target.Port() != "443" && target.Port() != "8443") {
-			return fmt.Errorf("wakeups %s: invalid callback", c.Name)
-		}
-		if ip, e := netip.ParseAddr(target.Hostname()); e == nil {
-			if netguard.ProhibitedIP(ip) {
-				return fmt.Errorf("wakeups %s: prohibited callback", c.Name)
-			}
-		} else if netguard.ProhibitedHostname(target.Hostname()) {
-			return fmt.Errorf("wakeups %s: prohibited callback", c.Name)
+		if err := ValidateWakeupDestination(c.URL, nil); err != nil {
+			return fmt.Errorf("wakeups %s: %w", c.Name, err)
 		}
 		if _, _, err := c.TrustedDestination(); err != nil {
 			return err
@@ -116,4 +108,22 @@ func (c WakeupConfig) TrustedDestination() (*url.URL, []netip.Addr, error) {
 		return nil, nil, fmt.Errorf("wakeups %s: %w", c.Name, err)
 	}
 	return origin, addresses, nil
+}
+
+// ValidateWakeupDestination applies the shared callback rule. Native targets pass no trusted addresses.
+func ValidateWakeupDestination(endpoint string, trusted []string) error {
+	target, err := url.Parse(endpoint)
+	if err != nil || target.Scheme != "https" || target.Hostname() == "" || target.User != nil || target.Fragment != "" || target.Opaque != "" || strings.Contains(endpoint, "#") || (target.Port() != "" && target.Port() != "443" && target.Port() != "8443") {
+		return fmt.Errorf("invalid callback")
+	}
+	if ip, e := netip.ParseAddr(target.Hostname()); e == nil {
+		if netguard.ProhibitedIP(ip) {
+			return fmt.Errorf("prohibited callback")
+		}
+	} else if netguard.ProhibitedHostname(target.Hostname()) {
+		return fmt.Errorf("prohibited callback")
+	}
+	c := WakeupConfig{URL: endpoint, TrustedAddresses: trusted}
+	_, _, err = c.TrustedDestination()
+	return err
 }

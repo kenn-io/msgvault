@@ -20,6 +20,8 @@ import (
 
 type Subscription struct {
 	Name, URL     string
+	StateKey      string
+	Native        bool
 	Secret        []byte
 	Filter        changefeed.Filter
 	MaxMessageAge time.Duration
@@ -38,6 +40,7 @@ type Store interface {
 type Engine struct {
 	Store         Store
 	Subscriptions []Subscription
+	Native        func(context.Context) ([]Subscription, error)
 	Gate          func(context.Context) (func(), bool)
 	Logger        *slog.Logger
 	Now           func() time.Time
@@ -179,9 +182,23 @@ func (e *Engine) RunPass(ctx context.Context) error {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	subscriptions := slices.Clone(e.Subscriptions)
+	if e.Native != nil {
+		err := e.GatedSetup(ctx, func() error {
+			native, err := e.Native(ctx)
+			if err == nil {
+				subscriptions = append(subscriptions, native...)
+			}
+			return err
+		})
+		if err != nil {
+			logger.Warn("native wakeups unavailable", "category", "store_error")
+		}
+	}
+
 	pages := make(map[store.ChangedMessagesCursor]store.ChangedMessagePage)
 	var head initialHead
-	for _, sub := range e.Subscriptions {
+	for _, sub := range subscriptions {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -198,7 +215,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 		var uid string
 		var ready bool
 		advance := func(before []byte) (bool, error) {
-			swapped, err := e.Store.AdvanceWakeupState(ctx, sub.Name, before, state)
+			swapped, err := e.advanceState(ctx, sub, before, state)
 			if err == nil && !swapped {
 				logger.Warn("wakeup state conflict", "name", sub.Name, "category", "state_conflict")
 			}
@@ -207,7 +224,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 		err := e.GatedSetup(ctx, func() error {
 			now := e.now()
 			var err error
-			state, raw, err = e.Store.LoadWakeupState(ctx, sub.Name)
+			state, raw, err = e.loadState(ctx, sub)
 			if err != nil {
 				return err
 			}
@@ -219,6 +236,9 @@ func (e *Engine) RunPass(ctx context.Context) error {
 				since = store.ChangedMessagesAfter(state.At, state.AfterID)
 			}
 			if raw == nil {
+				if sub.Native {
+					return nil
+				}
 				return e.initializeMissing(ctx, sub.Name, &head)
 			}
 			uid, err = e.Store.ArchiveUIDContext(ctx)
@@ -293,28 +313,52 @@ func (e *Engine) RunPass(ctx context.Context) error {
 		from := changefeed.EncodeCursor(uid, since, sub.Filter.Digest())
 		to := changefeed.EncodeCursor(uid, next, sub.Filter.Digest())
 		id := deliveryID(sub.Name, from, to)
+		if sub.Native {
+			id = "evt_" + id[3:]
+		}
 		ids := make([]int64, 0, min(50, len(matches)))
 		start := max(0, len(matches)-50)
 		for _, m := range matches[start:] {
 			ids = append(ids, m.ID)
 		}
 		body, err := json.Marshal(payload{1, "msgvault.wakeup", id, sub.Name, filterJSON{sub.Filter.PersonID, sub.Filter.SourceIDs, sub.Filter.ConversationIDs, sub.Filter.IncomingOnly}, from, to, matchedJSON{len(matches), ids, len(matches) > 50}, page.ServerTime})
+		if sub.Native {
+			body, err = json.Marshal(struct {
+				EventID   string            `json:"eventId"`
+				Name      string            `json:"name"`
+				Timestamp time.Time         `json:"timestamp"`
+				Data      map[string]string `json:"data"`
+				Cursor    *string           `json:"cursor"`
+			}{id, "msgvault.messages.changed", page.ServerTime, map[string]string{"subscription_id": sub.Name}, nil})
+		}
 		if err != nil {
 			logger.Warn("wakeup failed", "name", sub.Name, "category", "invalid_callback")
 			continue
 		}
-		category := sub.Client.send(ctx, sub.URL, id, sub.Secret, body)
+		subscriptionID := ""
+		if sub.Native {
+			subscriptionID = sub.Name
+		}
+		category, status := sub.Client.sendEvent(ctx, sub.URL, id, subscriptionID, sub.Secret, body)
+
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		if category != "" {
 			logger.Warn("wakeup failed", "name", sub.Name, "category", category, "failures", state.Failures)
-			continue
+			if !sub.Native {
+				continue
+			}
 		}
-		state.At = next.At()
-		state.AfterID, state.AfterRow = next.AfterID()
-		state.Failures = 0
-		state.NextAttemptAt = time.Time{}
+		if category == "" || sub.Native && (status == 410 || status == 413 || state.Failures >= 5) {
+			state.At = next.At()
+			state.AfterID, state.AfterRow = next.AfterID()
+			state.Failures = 0
+			state.NextAttemptAt = time.Time{}
+		} else {
+			delays := []time.Duration{30 * time.Second, time.Minute, 3 * time.Minute, 8 * time.Minute}
+			state.NextAttemptAt = e.now().Add(delays[min(state.Failures-1, len(delays)-1)])
+		}
 		err = e.GatedSetup(ctx, func() error { _, err := advance(raw); return err })
 		if err != nil {
 			logStoreError(err)
@@ -335,4 +379,30 @@ func FilterFromConfig(entry config.WakeupConfig) changefeed.Filter {
 		personID = *entry.PersonID
 	}
 	return changefeed.Filter{PersonID: personID, SourceIDs: entry.SourceIDs, ConversationIDs: entry.ConversationIDs, IncomingOnly: *entry.IncomingOnly}
+}
+
+type keyedStateStore interface {
+	LoadWakeupStateKey(context.Context, string) (store.WakeupState, []byte, error)
+	AdvanceWakeupStateKey(context.Context, string, []byte, store.WakeupState) (bool, error)
+}
+
+func (e *Engine) loadState(ctx context.Context, sub Subscription) (store.WakeupState, []byte, error) {
+	if sub.StateKey == "" {
+		return e.Store.LoadWakeupState(ctx, sub.Name)
+	}
+	s, ok := e.Store.(keyedStateStore)
+	if !ok {
+		return store.WakeupState{}, nil, errors.New("events positions unavailable")
+	}
+	return s.LoadWakeupStateKey(ctx, sub.StateKey)
+}
+func (e *Engine) advanceState(ctx context.Context, sub Subscription, raw []byte, state store.WakeupState) (bool, error) {
+	if sub.StateKey == "" {
+		return e.advanceState(ctx, sub, raw, state)
+	}
+	s, ok := e.Store.(keyedStateStore)
+	if !ok {
+		return false, errors.New("events positions unavailable")
+	}
+	return s.AdvanceWakeupStateKey(ctx, sub.StateKey, raw, state)
 }

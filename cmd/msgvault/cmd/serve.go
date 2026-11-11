@@ -37,6 +37,7 @@ import (
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/kataevidence"
+	"go.kenn.io/msgvault/internal/mcpevents"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/messageimport"
 	"go.kenn.io/msgvault/internal/msmail"
@@ -590,7 +591,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err := configureRecordingReferenceJob(ctx, mediaSched, operationGate, s, cfg.Integrations.Docbank, logger); err != nil {
 		logger.Warn("Recording reference submission unavailable", "error", err)
 	}
-	if err := configureWakeupJob(ctx, mediaSched, operationGate, s, cfg, logger); err != nil {
+	if err := configureWakeupJob(ctx, mediaSched, operationGate, s, cfg, logger, &mcpevents.Service{Store: s, Home: cfg.HomeDir, Enabled: cfg.MCPEvents.Enabled, ConfigTargets: len(cfg.Wakeups)}); err != nil {
 		logger.Warn("Wakeup scheduling unavailable", "category", "scheduler_error")
 	}
 	if err := registerActivityProjectionJob(
