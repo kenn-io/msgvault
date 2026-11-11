@@ -33,6 +33,24 @@ func TestOperationalCatalogUsesFixedNamesAndWriteGates(t *testing.T) {
 	opts.OperationWriteFamilies = []OperationFamily{OperationFamilySources}
 	assertions.Contains(toolsByName(t, rawListTools(t, opts, true)), "sync_source")
 	assertions.NotContains(toolsByName(t, rawListTools(t, opts, false)), "sync_source")
+
+	sweepNames := []string{"get_people_sweep_status", "list_people_sweep_history", "run_people_sweep"}
+	opts.OperationCapabilities = sweepNames
+	opts.OperationWriteFamilies = nil
+	sweep := operationalCatalog(opts, true)
+	for _, definition := range sweep {
+		assertions.Contains(sweepNames[:2], definition.definition.name)
+		assertions.False(*definition.definition.annotations.OpenWorldHint)
+	}
+	assertions.Len(sweep, 2)
+	opts.OperationWriteFamilies = []OperationFamily{OperationFamilySweep}
+	sweep = operationalCatalog(opts, true)
+	assertions.Len(sweep, 3)
+	for _, definition := range sweep {
+		if definition.definition.name == "run_people_sweep" {
+			assertions.True(*definition.definition.annotations.OpenWorldHint)
+		}
+	}
 	opts.DelegatedOnly = true
 	assertions.Empty(rawListTools(t, opts, true))
 }

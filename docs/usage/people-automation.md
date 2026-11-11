@@ -9,6 +9,8 @@ for supported facts, and updates eligible profile fields. Each update retains
 its evidence and decision history. Use it to keep locations, interests,
 employment, and other profile details current for people you choose to track.
 
+An owner assistant can inspect and run sweeps using the [MCP guide](chat.md#people-sweep).
+
 Two other features have separate controls:
 
 - [Person briefs](/docs/usage/people-briefs/) summarize recent conversations.

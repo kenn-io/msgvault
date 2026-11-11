@@ -8,6 +8,11 @@ import (
 	"io"
 )
 
+// DecodeCLIStream decodes a daemon CLI event stream without issuing or retrying a request.
+func DecodeCLIStream[T any](body io.Reader, operation string, handle func(T) (bool, error)) error {
+	return decodeCLIStream(body, operation, handle)
+}
+
 func decodeCLIStream[T any](
 	body io.Reader,
 	operation string,

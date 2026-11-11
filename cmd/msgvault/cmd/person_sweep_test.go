@@ -185,7 +185,7 @@ func TestPersonSweepStatusReportsRedactedOperationalState(t *testing.T) {
 	checks.True(status.Enabled)
 	checks.Equal("15 2 * * *", status.Schedule)
 	checks.Zero(status.DirtyCount)
-	checks.Equal(peoplesweep.FailureInvalidOutput, status.LastFailure)
+	checks.Equal(string(peoplesweep.FailureInvalidOutput), status.LastFailure)
 	checks.NotEmpty(status.ProgramFingerprint)
 	checks.NotEmpty(status.CatalogFingerprint)
 	checks.NotEmpty(status.ProviderFingerprint)

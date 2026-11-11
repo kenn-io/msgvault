@@ -894,7 +894,7 @@ retries a write by itself. If a write reports
 
 On unreleased `main`, owner sessions can read `get_people_sweep_status` and `list_people_sweep_history` without enabling writes. History accepts an optional configured `provider`, `person_id`, and `limit` from 1 to 200. Maintenance can refuse either read with `operation_in_progress`; retry later.
 
-Enable `--allow-sweep-writes` for `run_people_sweep`; each call requires approval and uses the daemon’s configured provider and existing consent. Its optional `person_id`, `limit`, and `backstop` select the run. The daemon enforces its configured batch limit. HTTP also requires general write access and protocol `2026-07-28` or newer. A response with `operation_may_have_completed: true` leaves the outcome uncertain.
+Enable `--allow-sweep-writes` for `run_people_sweep`; each call requires approval and uses the daemon’s configured provider and existing consent. Its optional `person_id`, `limit`, and `backstop` select the run. The daemon enforces its configured batch limit. HTTP also requires general write access and protocol `2026-07-28` or newer. The daemon uses its own environment for provider credentials; MCP does not forward credentials. `invalid_limit` and `person_not_tracked` mean the run did not start. A response with `operation_may_have_completed: true` leaves the outcome uncertain.
 
 ## Write controls
 

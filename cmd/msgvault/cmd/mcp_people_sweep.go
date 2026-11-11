@@ -3,19 +3,22 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
+
+var sweepUntrackedDiagnostic = regexp.MustCompile(`^Error: person [0-9]+ is not tracked$`)
 
 type mcpSweepArgs struct {
 	PersonID *int64 `json:"person_id,omitempty"`
@@ -29,17 +32,8 @@ func sweepCommand(name string, args map[string]any) (*cobra.Command, []string, m
 	if err != nil {
 		return nil, nil, input, err
 	}
-	if (name == "get_people_sweep_status" && len(args) != 0) || (name != "run_people_sweep" && input.Backstop) || (name != "list_people_sweep_history" && input.Provider != "") {
-		return nil, nil, input, errors.New("invalid arguments")
-	}
 	if _, provided := args["provider"]; provided && input.Provider == "" {
 		return nil, nil, input, errors.New("invalid provider")
-	}
-	if input.PersonID != nil && *input.PersonID <= 0 {
-		return nil, nil, input, errors.New("invalid person")
-	}
-	if input.Limit != nil && (*input.Limit < 1 || (name == "list_people_sweep_history" && *input.Limit > 200)) {
-		return nil, nil, input, errors.New("invalid limit")
 	}
 	var cmd *cobra.Command
 	var positional []string
@@ -150,44 +144,47 @@ func (b *daemonMCPOperations) executePeopleSweep(ctx context.Context, name strin
 		}
 		return operationFailure("operation_refused", writes), true, nil
 	}
-	decoder := jsontext.NewDecoder(io.LimitReader(response.Body, (1<<20)+1))
 	var stdout, stderr strings.Builder
-	complete := false
-	for {
-		var event api.CLIRunEvent
-		err = json.UnmarshalDecode(decoder, &event)
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return operationFailure("operation_response_failed", writes), true, nil //nolint:nilerr // Stream failure becomes a safe structured refusal.
-		}
+	var failure *mcpserver.OperationResult
+	err = daemonclient.DecodeCLIStream(io.LimitReader(response.Body, (1<<20)+1), "people sweep", func(event api.CLIRunEvent) (bool, error) {
 		switch event.Type {
 		case "stdout":
 			if stdout.Len()+len(event.Data) > 1<<20 {
-				return operationFailure("operation_response_limit_exceeded", writes), true, nil
+				failure = operationFailure("operation_response_limit_exceeded", writes)
+				return false, errors.New("response limit")
 			}
 			stdout.WriteString(event.Data)
 		case "stderr":
 			if stderr.Len()+len(event.Data) > 65536 {
-				return operationFailure("operation_response_limit_exceeded", writes), true, nil
+				failure = operationFailure("operation_response_limit_exceeded", writes)
+				return false, errors.New("response limit")
 			}
 			stderr.WriteString(event.Data)
 		case "error":
+			code, uncertain := "operation_refused", writes
 			diagnostic := strings.TrimSpace(stderr.String())
-			if event.Error == "people sweep is disabled" || (event.Error == cliSubprocessExitSentinel && (diagnostic == "people sweep is disabled" || diagnostic == "Error: people sweep is disabled")) {
-				return operationFailure("people_sweep_disabled", false), true, nil
+			if event.Error == cliSubprocessExitSentinel {
+				switch {
+				case diagnostic == "Error: people sweep is disabled" || diagnostic == "people sweep is disabled":
+					code, uncertain = "people_sweep_disabled", false
+				case writes && strings.HasPrefix(diagnostic, "Error: --limit must be between 1 and "):
+					code, uncertain = "invalid_limit", false
+				case writes && sweepUntrackedDiagnostic.MatchString(diagnostic):
+					code, uncertain = "person_not_tracked", false
+				}
 			}
-			return operationFailure("operation_refused", writes), true, nil
+			failure = operationFailure(code, uncertain)
+			return false, errors.New("CLI refused")
 		case "complete":
-			complete = true
+			return true, nil
 		}
-		if complete {
-			break
-		}
+		return false, nil
+	})
+	if failure != nil {
+		return failure, true, nil
 	}
-	if !complete {
-		return operationFailure("operation_response_failed", writes), true, nil
+	if err != nil {
+		return operationFailure("operation_response_failed", writes), true, nil //nolint:nilerr // Stream failure becomes a safe structured refusal.
 	}
 	var output any
 	switch name {
