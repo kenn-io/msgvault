@@ -206,6 +206,20 @@ func (imp *Importer) loadFullResumeState(ctx context.Context, sourceID int64) (*
 	return resumeState(prev, cp, true)
 }
 
+// loadSavedSyncState reads saved Beeper progress. A full sync ignores
+// undecodable progress because it rebuilds it, but progress from a newer
+// msgvault still stops the run.
+func loadSavedSyncState(blob string, full bool) (*SyncState, error) {
+	if !full {
+		return LoadSyncState(blob)
+	}
+	state, err := decodeSyncState(blob)
+	if err != nil {
+		return NewSyncState(), nil //nolint:nilerr // Full sync verifies the archive when no cursor can be decoded.
+	}
+	return validateRosterProgress(state)
+}
+
 func resumeState(prev, cp *store.SyncRun, full bool) (*SyncState, error) {
 	load := func(blob string) (*SyncState, error) {
 		state, err := LoadSyncState(blob)
@@ -215,13 +229,7 @@ func resumeState(prev, cp *store.SyncRun, full bool) (*SyncState, error) {
 		return state, nil
 	}
 	if full {
-		load = func(blob string) (*SyncState, error) {
-			state, err := decodeSyncState(blob)
-			if err != nil {
-				return NewSyncState(), nil //nolint:nilerr // Full sync verifies the archive when no cursor can be decoded.
-			}
-			return validateRosterProgress(state)
-		}
+		load = func(blob string) (*SyncState, error) { return loadSavedSyncState(blob, true) }
 	}
 	state := NewSyncState()
 	if prev != nil && prev.CursorAfter.Valid {
@@ -270,7 +278,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		return nil, err
 	}
 	if src.SyncCursor.Valid && src.SyncCursor.String != "" {
-		current, err := LoadSyncState(src.SyncCursor.String)
+		current, err := loadSavedSyncState(src.SyncCursor.String, opts.Full)
 		if err != nil {
 			return nil, fmt.Errorf("load Beeper source progress: %w", err)
 		}
