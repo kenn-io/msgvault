@@ -102,10 +102,12 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 			}
 			leftScope, leftArgs := sourceScopeClause(ctx, "l.source_id")
 			rightScope, rightArgs := sourceScopeClause(ctx, "r.source_id")
-			args := []any{a.ID, a.Kind, a.Key, a.Key, b.ID, b.Kind, b.Key, b.Key}
+			left, args := meetingDecisionSideClause(a, "left", true)
+			right, rightValues := meetingDecisionSideClause(b, "right", true)
+			args = append(args, rightValues...)
 			args = append(args, leftArgs...)
 			args = append(args, rightArgs...)
-			rows, err := tx.QueryContext(ctx, `SELECT d.id FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE d.left_message_id=? AND d.left_kind=? AND (d.left_key=? OR (d.left_key='' AND d.left_anchor=?)) AND d.right_message_id=? AND d.right_kind=? AND (d.right_key=? OR (d.right_key='' AND d.right_anchor=?))`+leftScope+rightScope, args...)
+			rows, err := tx.QueryContext(ctx, `SELECT d.id FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE `+left+` AND `+right+leftScope+rightScope, args...)
 			if err != nil {
 				return err
 			}
@@ -257,20 +259,24 @@ func (s *Store) materializedMeetingEndpoint(ctx context.Context, endpoint meetin
 	return resolved, aliases, err
 }
 
-func (s *Store) materializedMeetingEndpointRecord(ctx context.Context, endpoint meetingDecisionEndpoint, budget *int) (meetingDecisionEndpoint, []int64, MeetingRecord, error) {
+func (s *Store) meetingAutomaticRecordForEndpoint(ctx context.Context, endpoint meetingDecisionEndpoint, budget *int) (MeetingRecord, error) {
 	ref, err := endpoint.meetingRef()
 	if err != nil {
-		return endpoint, nil, MeetingRecord{}, err
+		return MeetingRecord{}, err
 	}
 	record, err := s.meetingAutomaticRecordContext(ctx, ref, budget)
 	if errors.Is(err, ErrMeetingOccurrenceRequired) && endpoint.Anchor != "" {
-		anchored := endpoint
-		anchored.Key = anchored.Anchor
-		ref, err = anchored.meetingRef()
+		endpoint.Key = endpoint.Anchor
+		ref, err = endpoint.meetingRef()
 		if err == nil {
 			record, err = s.meetingAutomaticRecordContext(ctx, ref, budget)
 		}
 	}
+	return record, err
+}
+
+func (s *Store) materializedMeetingEndpointRecord(ctx context.Context, endpoint meetingDecisionEndpoint, budget *int) (meetingDecisionEndpoint, []int64, MeetingRecord, error) {
+	record, err := s.meetingAutomaticRecordForEndpoint(ctx, endpoint, budget)
 	if err != nil {
 		return endpoint, nil, MeetingRecord{}, err
 	}

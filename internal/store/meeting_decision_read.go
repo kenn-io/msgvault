@@ -57,23 +57,29 @@ func (l *meetingDecisionLoader) edges(ctx context.Context, endpoint meetingDecis
 	return l.loaded[endpoint], nil
 }
 
-// meetingDecisionEndpointClause filters occurrence keys before the read budget applies.
+// meetingDecisionSideClause filters one stored endpoint before the read budget applies.
+func meetingDecisionSideClause(endpoint meetingDecisionEndpoint, side string, exact bool) (string, []any) {
+	clause := "d." + side + "_message_id=?"
+	args := []any{endpoint.ID}
+	if endpoint.Kind != "" {
+		clause += " AND d." + side + "_kind=?"
+		args = append(args, endpoint.Kind)
+		if endpoint.Kind == "evt" || exact {
+			clause += " AND (d." + side + "_key=? OR (d." + side + "_key='' AND d." + side + "_anchor=?))"
+			args = append(args, endpoint.Key, endpoint.Key)
+		}
+	}
+	return "(" + clause + ")", args
+}
+
 func meetingDecisionEndpointClause(endpoints []meetingDecisionEndpoint) (string, []any) {
 	var clauses []string
 	var args []any
 	for _, endpoint := range endpoints {
 		for _, side := range []string{"left", "right"} {
-			clause := "d." + side + "_message_id=?"
-			args = append(args, endpoint.ID)
-			if endpoint.Kind != "" {
-				clause += " AND d." + side + "_kind=?"
-				args = append(args, endpoint.Kind)
-				if endpoint.Kind == "evt" {
-					clause += " AND (d." + side + "_key=? OR (d." + side + "_key='' AND d." + side + "_anchor=?))"
-					args = append(args, endpoint.Key, endpoint.Key)
-				}
-			}
-			clauses = append(clauses, "("+clause+")")
+			clause, values := meetingDecisionSideClause(endpoint, side, false)
+			clauses = append(clauses, clause)
+			args = append(args, values...)
 		}
 	}
 	return strings.Join(clauses, " OR "), args
@@ -172,19 +178,7 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 			record, cached := materialized[endpoint.ref()]
 			var err error
 			if !cached {
-				itemRef, refErr := endpoint.meetingRef()
-				if refErr != nil {
-					return result, refErr
-				}
-				record, err = s.meetingAutomaticRecordContext(ctx, itemRef, &budget)
-				if errors.Is(err, ErrMeetingOccurrenceRequired) && endpoint.Anchor != "" {
-					anchored := endpoint
-					anchored.Key = anchored.Anchor
-					itemRef, err = anchored.meetingRef()
-					if err == nil {
-						record, err = s.meetingAutomaticRecordContext(ctx, itemRef, &budget)
-					}
-				}
+				record, err = s.meetingAutomaticRecordForEndpoint(ctx, endpoint, &budget)
 			}
 			if errors.Is(err, sql.ErrNoRows) && endpoint != seed {
 				continue
