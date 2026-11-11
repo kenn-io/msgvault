@@ -499,7 +499,7 @@ func TestInstagramRejectsNewerFingerprintInAbsentThread(t *testing.T) {
 	root := t.TempDir()
 	old := instagramTestShard(t, root, "old", "message_1.json", instagramTestRecord("original"))
 	opts := ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example"}
-	_, err := ImportDYI(t.Context(), st, opts)
+	summary, err := ImportDYI(t.Context(), st, opts)
 	require.NoError(err)
 	require.NoError(os.Remove(old))
 	instagramTestShard(t, root, "new", "message_1.json", instagramTestRecord("new"))
@@ -508,8 +508,29 @@ func TestInstagramRejectsNewerFingerprintInAbsentThread(t *testing.T) {
 		require.NoError(err)
 		_, err = ImportDYI(t.Context(), st, opts)
 		require.ErrorContains(err, "this archive uses an unsupported import format; upgrade msgvault")
+		run, err := st.GetLatestSyncContext(t.Context(), summary.SourceID, 0)
+		require.NoError(err)
+		assert.Equal(store.SyncStatusFailed, run.Status)
 		assert.Equal(1, countMessages(t, st, ""))
 	}
+}
+
+func TestInstagramRejectsConcurrentSourceBeforeReadingArchive(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	instagramTestShard(t, root, "circle", "message_1.json", instagramTestRecord("original"))
+	opts := ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example"}
+	summary, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	syncID, err := st.StartSyncContext(t.Context(), summary.SourceID, "import-instagram")
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(st.FailSyncContext(context.Background(), syncID, "test cleanup")) })
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET source_message_id = 'ig:v2:' || substr(source_message_id, 7)`)
+	require.NoError(err)
+	_, err = ImportDYI(t.Context(), st, opts)
+	assert.ErrorIs(err, store.ErrSyncAlreadyActive)
 }
 
 func TestInstagramAddsOnlySurplusCopiesWithSharedReactions(t *testing.T) {

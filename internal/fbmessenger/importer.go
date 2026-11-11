@@ -189,22 +189,6 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (summar
 		return summary, fmt.Errorf("fbmessenger: source: %w", err)
 	}
 	summary.SourceID = source.ID
-	var archivedGroups map[string][]string
-	if instagram {
-		metadata, err := st.SourceMessageMetadata(ctx, source.ID)
-		if err != nil {
-			return summary, err
-		}
-		archivedGroups = make(map[string][]string)
-		for id := range metadata {
-			if strings.HasPrefix(id, "ig:v") && !strings.HasPrefix(id, "ig:v1:") {
-				return summary, errors.New("instagram: this archive uses an unsupported import format; upgrade msgvault")
-			}
-			if i := strings.LastIndexByte(id, ':'); i >= 0 {
-				archivedGroups[id[:i+1]] = append(archivedGroups[id[:i+1]], id)
-			}
-		}
-	}
 
 	// Resume only a checkpoint whose worker has stopped. StartSync rejects a
 	// running sync, so a live worker cannot be replaced by this import.
@@ -274,6 +258,23 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (summar
 			_ = st.CompleteSync(syncID, "")
 		}
 	}()
+
+	var archivedGroups map[string][]string
+	if instagram {
+		metadata, err := st.SourceMessageMetadata(ctx, source.ID)
+		if err != nil {
+			return summary, err
+		}
+		archivedGroups = make(map[string][]string)
+		for id := range metadata {
+			if strings.HasPrefix(id, "ig:v") && !strings.HasPrefix(id, "ig:v1:") {
+				return summary, errors.New("instagram: this archive uses an unsupported import format; upgrade msgvault")
+			}
+			if i := strings.LastIndexByte(id, ':'); i >= 0 {
+				archivedGroups[id[:i+1]] = append(archivedGroups[id[:i+1]], id)
+			}
+		}
+	}
 
 	// Pre-create label taxonomy.
 	labelIDs := make(map[string]int64)
