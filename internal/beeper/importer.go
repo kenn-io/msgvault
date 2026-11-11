@@ -1469,11 +1469,13 @@ func (imp *Importer) captureObservations(
 			"participant_id", participantID, "beeper_user_id", u.ID, "error", err)
 		sum.Errors++
 	}
+	recorded := false
 	for _, result := range results {
 		if ctx.Err() != nil {
 			return false
 		}
 		if result.Created {
+			recorded = true
 			sum.ObservationsRecorded++
 		}
 		outcome, merr := imp.matcher.match(ctx, participantID, result)
@@ -1489,6 +1491,16 @@ func (imp *Importer) captureObservations(
 		sum.IdentityAutoResolved += int64(len(outcome.AutoResolved))
 		sum.IdentityCandidates += int64(len(outcome.Suggested))
 		sum.IdentityConflicts += int64(len(outcome.Conflicts))
+	}
+	if success && ctx.Err() == nil {
+		if rerr := imp.matcher.refreshSuggestionEvidence(ctx, participantID, recorded); rerr != nil {
+			success = false
+			if ctx.Err() == nil {
+				slog.Warn("beeper identity evidence refresh failed",
+					"participant_id", participantID, "beeper_user_id", u.ID, "error", rerr)
+				sum.Errors++
+			}
+		}
 	}
 	return success && ctx.Err() == nil
 }

@@ -95,13 +95,45 @@ type identityMatcher struct {
 	store *store.Store
 	// resolved memoizes candidate identities already handled this run.
 	resolved map[identityMatchMemoKey]struct{}
+	// refreshed memoizes participants whose suggestions were re-explained
+	// successfully this run.
+	refreshed map[int64]struct{}
 }
 
 func newIdentityMatcher(s *store.Store) *identityMatcher {
 	return &identityMatcher{
-		store:    s,
-		resolved: map[identityMatchMemoKey]struct{}{},
+		store:     s,
+		resolved:  map[identityMatchMemoKey]struct{}{},
+		refreshed: map[int64]struct{}{},
 	}
+}
+
+// refreshSuggestionEvidence re-runs rung 3 for a participant's live
+// cross-scope username suggestions. Contact details can arrive through a chat
+// that carries no username, which the username rung never revisits. Evidence
+// keeps only its supporting observation sources. A failed refresh is not
+// memoized, so the member's next capture repeats it.
+func (m *identityMatcher) refreshSuggestionEvidence(
+	ctx context.Context, participantID int64, recorded bool,
+) error {
+	if _, done := m.refreshed[participantID]; done && !recorded {
+		return nil
+	}
+	suggestions, err := m.store.ParticipantUsernameSuggestionsContext(ctx, participantID)
+	if err != nil {
+		return err
+	}
+	for i := range suggestions {
+		other := suggestions[i].LeftID
+		if other == participantID {
+			other = suggestions[i].RightID
+		}
+		if err := m.gatherEvidence(ctx, &suggestions[i], participantID, other, nil); err != nil {
+			return err
+		}
+	}
+	m.refreshed[participantID] = struct{}{}
+	return nil
 }
 
 // match evaluates one recorded observation against the ladder.

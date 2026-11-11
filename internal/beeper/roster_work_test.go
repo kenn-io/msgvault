@@ -543,17 +543,19 @@ func TestLateSharedEmailExplainsExistingSuggestion(t *testing.T) {
 	require.NoError(err)
 	require.Len(candidates, 1)
 	require.Equal(store.IdentityMatchServiceScopeUsername, candidates[0].Basis)
-	sharedEmail := func() bool {
+	samSecond := participantForBeeperUser(t, st, "@slack2_sam:beeper.local")
+	require.Equal("sam@example.test", observationValues(t, st, samSecond)[store.ContactAddressEmail])
+	sharedEmail := func() *store.IdentityMatchEvidence {
 		candidate, err := st.GetIdentityMatchCandidateContext(t.Context(), candidates[0].ID)
 		require.NoError(err)
-		for _, evidence := range candidate.Evidence {
+		for i, evidence := range candidate.Evidence {
 			if evidence.EvidenceKind == evidenceEmail && evidence.Detail != nil && *evidence.Detail == "sam@example.test" {
-				return true
+				return &candidate.Evidence[i]
 			}
 		}
-		return false
+		return nil
 	}
-	require.False(sharedEmail(), "the first account has not reported the email yet")
+	require.Nil(sharedEmail(), "the first account has not reported the email yet")
 
 	// The email arrives in a separate chat without a username, while the
 	// username chat is revisited with unchanged membership.
@@ -564,7 +566,19 @@ func TestLateSharedEmailExplainsExistingSuggestion(t *testing.T) {
 	f.appendMsg(first.ID, fakeMsg{
 		ID: first.ID + "-new", SortKey: 1, Timestamp: time.Now(), Text: "new", SenderID: "@slack_sam:beeper.local",
 	})
-	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "slack", NoMedia: true})
+	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "slack", NoMedia: true})
 	require.NoError(err)
-	assert.True(sharedEmail(), "the newly shared email must explain the existing suggestion")
+	require.Equal("sam@example.test", observationValues(t, st, participantForBeeperUser(t, st, "@slack_sam:beeper.local"))[store.ContactAddressEmail],
+		"the separate chat recorded the email")
+	evidence := sharedEmail()
+	require.NotNil(evidence, "the newly shared email must explain the existing suggestion")
+	second, err := st.GetOrCreateSource(sourceTypeBeeper, "slack2")
+	require.NoError(err)
+	var total, observed int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT COUNT(*), COALESCE(SUM(CASE WHEN source_id IN (?, ?) THEN 1 ELSE 0 END), 0)
+		FROM identity_match_evidence_sources WHERE evidence_id = ?`),
+		sum.SourceID, second.ID, evidence.ID).Scan(&total, &observed))
+	assert.Equal(2, total, "only the two email observations support it")
+	assert.Equal(2, observed, "both email observations support it")
 }
