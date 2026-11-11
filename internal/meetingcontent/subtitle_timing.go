@@ -4,7 +4,6 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 )
@@ -113,7 +112,7 @@ func subtitleTiming(format string, raw []byte) ([]subtitleSegment, error) {
 			cues = append(cues, subtitleSegment{seg.Speaker, seg.Text, start, end})
 		}
 	default:
-		return nil, fmt.Errorf("recording start is unknown or timing is unavailable for %s", format)
+		return nil, errors.New("recording start or timing is unavailable for this source")
 	}
 	return cues, nil
 }
