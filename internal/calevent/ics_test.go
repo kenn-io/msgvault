@@ -33,6 +33,7 @@ func TestICSRejectsHostLocalZone(t *testing.T) {
 	for _, tc := range []struct{ name, raw, sourceZone string }{
 		{"event zone", strings.ReplaceAll(icsExample, "America/New_York", "Local"), ""},
 		{"source zone", icsExample, "Local"},
+		{"declared zone", strings.Replace(icsExample, "BEGIN:VEVENT", "X-WR-TIMEZONE:Local\r\nBEGIN:VEVENT", 1), ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := ParseICS([]byte(tc.raw), "", tc.sourceZone)
@@ -89,7 +90,6 @@ func TestICSCalendarTimeZone(t *testing.T) {
 		{"UTC wins", "America/New_York", "", "DTSTART:20270115T090000Z", "2027-01-15T09:00:00Z"},
 		{"fallback", "", "", "DTSTART:20270115T090000", "2027-01-15T09:00:00Z"},
 		{"invalid", "Unknown/Zone", "", "DTSTART:20270115T090000", ""},
-		{"local", "Local", "", "DTSTART:20270115T090000", ""},
 		{"context ignores invalid declaration", "Unknown/Zone", "America/New_York", "DTSTART:20270115T090000", "2027-01-15T14:00:00Z"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

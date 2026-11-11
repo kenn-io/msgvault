@@ -151,9 +151,6 @@ func ParseICS(raw []byte, method, calendarZone string) (out []ICSComponent, err 
 		return nil, err
 	}
 	calendarZone = normalizeICSZone(cmp.Or(calendarZone, strings.TrimSpace(declaredZone), "UTC"))
-	if calendarZone == "Local" {
-		return nil, fmt.Errorf("calendar time zone %q: host-dependent", calendarZone)
-	}
 	events := cal.Events()
 	if len(events) == 0 {
 		return nil, errors.New("calendar has no VEVENT")
