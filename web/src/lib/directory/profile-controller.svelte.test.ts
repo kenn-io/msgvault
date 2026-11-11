@@ -799,16 +799,17 @@ describe('DirectoryProfileController', () => {
     await expect(create.clone().json()).resolves.toEqual({ label: 'Preferred channel', field_type: 'choice', value_type: 'text', object_type: 'person', cardinality: 'single', is_sensitive: true });
   });
 
-  it('keeps the first create draft authoritative across a rapid direct second call', async () => {
+  it.each([false, true])('keeps the first creation authoritative during POST and registry recovery (refresh fails=%s)', async refreshFails => {
     const created = { id: 4, universal_id: 'field-4', slug: 'preferred-channel', label: 'Preferred channel', field_type: 'choice', value_type: 'text', cardinality: 'single', object_type: 'person', ownership: 'user', api_mutable: true, history_exempt: false, display_order: 0, is_active: true, is_audited: false, is_deletable: true, is_required: false, is_searchable: true, is_sensitive: true, ui_creatable: true, ui_editable: true, revision: 1, created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' };
     const firstBody = { label: 'Preferred channel', field_type: 'choice', value_type: 'text', object_type: 'person', cardinality: 'single', is_sensitive: true } as const;
     const laterBody = { label: 'Later field', field_type: 'text', value_type: 'text', object_type: 'person', cardinality: 'single', is_sensitive: false } as const;
+    let registryReady = !refreshFails;
     let resolvePost: ((response: Response) => void) | undefined;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       return request.method === 'POST'
         ? new Promise<Response>((resolve) => { resolvePost = resolve; })
-        : Response.json({ definitions: [created] });
+        : registryReady ? Response.json({ definitions: [created] }) : Response.json({ message: 'Registry unavailable' }, { status: 503 });
     });
     const controller = new DirectoryProfileController(createAPIClient(fetchFn), 7, bundle());
 
@@ -826,6 +827,15 @@ describe('DirectoryProfileController', () => {
     await first;
 
     expect(requests(fetchFn).map((request) => request.method)).toEqual(['POST', 'GET']);
+    if (refreshFails) {
+      expect(controller.definitionCreationCommit).toEqual({ kind: 'target', universalID: 'field-4', slug: 'preferred-channel' });
+      expect(controller.createdDefinition).toBeNull();
+      await expect(controller.createDefinition(laterBody)).resolves.toEqual({ ok: false, code: 'conflict_unresolved' });
+      expect(requests(fetchFn).filter((request) => request.method === 'POST')).toHaveLength(1);
+      expect(controller.draft).toBe(retainedDraft);
+      registryReady = true;
+      await controller.reloadDefinitions();
+    }
     expect(controller.createdDefinition).toBe(controller.definitions[0]);
     expect(controller.definitionCreationCommit).toBeNull();
     expect(controller.draft).toBeNull();

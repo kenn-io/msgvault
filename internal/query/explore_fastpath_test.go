@@ -373,6 +373,24 @@ func TestExploreFastPathBoundsParticipantEnrichment(t *testing.T) {
 
 // A participant filter matches the participant as sender, as recipient, and
 // as a conversation roster member, and nothing else.
+func TestExploreRelayedSenderDomain(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("owner@example.test")
+	author := b.AddParticipant("alice@work.test", "work.test", "Alice")
+	id := b.AddMessage(MessageOpt{Subject: "Relay", SenderID: &author})
+	b.AddRecipientWithEnvelope(id, author, "from", "Alice", "notifications@github.com")
+	b.recipients[len(b.recipients)-1].IsRelayed = true
+	engine := b.BuildEngine()
+	for _, tc := range []struct {
+		domain string
+		want   int64
+	}{{"github.com", 1}, {"work.test", 0}} {
+		result, err := engine.Explore(t.Context(), ExploreRequest{Context: Context{Domains: []string{tc.domain}}, Page: PageSpec{Limit: 50}})
+		require.NoError(t, err)
+		assert.Equal(t, tc.want, result.TotalCount, tc.domain)
+	}
+}
+
 func TestExploreParticipantFilterMatchesSenderRecipientAndRoster(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)

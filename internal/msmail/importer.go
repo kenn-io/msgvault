@@ -55,6 +55,7 @@ var systemFolders = map[string]string{
 type Options struct {
 	Email          string
 	AttachmentsDir string
+	RelayedSenders []mime.RelayedSenderRule
 	Progress       func(string)
 }
 
@@ -644,7 +645,7 @@ func (s *syncer) download(ctx context.Context, folderID string, msgs []DeltaMess
 			}
 		}
 		if err := importer.IngestRawMessage(ctx, s.st, s.sourceID, s.opts.Email, s.opts.AttachmentsDir,
-			labelIDs, r.msg.ID, hex.EncodeToString(sum[:]), r.raw, r.msg.ReceivedDateTime, s.log); err != nil {
+			labelIDs, r.msg.ID, hex.EncodeToString(sum[:]), r.raw, r.msg.ReceivedDateTime, s.log, s.opts.RelayedSenders); err != nil {
 			storeErr = fmt.Errorf("store message %s: %w", r.msg.ID, err)
 			s.sum.Errors++
 			cancel()

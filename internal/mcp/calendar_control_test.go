@@ -500,11 +500,29 @@ func TestCalendarToolsDelegatedBridgeExcludesArchiveAccess(t *testing.T) {
 	t.Cleanup(func() { assert.NoError(t, session.Close()) })
 	listed, err := session.ListTools(t.Context(), nil)
 	requirements.NoError(err)
+	wantHints := map[string]struct{ readOnly, destructive bool }{
+		"calendar_create":    {false, false},
+		"calendar_update":    {false, true},
+		"calendar_delete":    {false, true},
+		"calendar_move":      {false, true},
+		"calendar_respond":   {false, true},
+		"calendar_freebusy":  {true, false},
+		"calendar_conflicts": {true, false},
+	}
+	wantNames := make([]string, 0, len(wantHints))
+	for name := range wantHints {
+		wantNames = append(wantNames, name)
+	}
 	names := make([]string, 0, len(listed.Tools))
 	for _, tool := range listed.Tools {
 		names = append(names, tool.Name)
+		want := wantHints[tool.Name]
+		requirements.NotNil(tool.Annotations, tool.Name)
+		assertions.Equal(new(true), tool.Annotations.OpenWorldHint, tool.Name)
+		assertions.Equal(want.readOnly, tool.Annotations.ReadOnlyHint, tool.Name)
+		assertions.Equal(new(want.destructive), tool.Annotations.DestructiveHint, tool.Name)
 	}
-	assertions.ElementsMatch([]string{"calendar_create", "calendar_update", "calendar_delete", "calendar_move", "calendar_respond", "calendar_freebusy", "calendar_conflicts"}, names)
+	assertions.ElementsMatch(wantNames, names)
 }
 
 func TestCalendarMutationToolsRequireExplicitOptIn(t *testing.T) {

@@ -1,0 +1,2 @@
+/* The app owns the chosen color scheme, including native controls. */
+@import 'pdfjs-dist/web/pdf_viewer.css' layer(pdfjs);

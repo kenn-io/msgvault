@@ -644,7 +644,7 @@ func TestImportEmlxDir_CheckpointBlockedOnIngestFailure(t *testing.T) {
 			ctx, s, sourceID, identifier, attachmentsDir,
 			labelIDs, sourceMsgID, rawHash,
 			raw, fallbackDate, log,
-		)
+			nil)
 	}
 
 	summary, err := ImportEmlxDir(

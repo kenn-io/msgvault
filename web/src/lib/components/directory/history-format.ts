@@ -28,18 +28,24 @@ export function actorName(actor: string): string {
   return ACTOR[actor] ?? actor;
 }
 
-const WHO: Record<string, string> = {
-  carddav_import: 'From CardDAV contacts',
-  vcard_import: 'From a contact file',
-  archive_observation: 'From your messages',
-  extraction: 'From a message',
-  enrichment: 'From a lookup',
-  brief: 'From a brief',
+// Where an importer's values came from: "From CardDAV contacts".
+const FROM: Record<string, string> = {
+  carddav_import: 'CardDAV contacts',
+  vcard_import: 'a contact file',
+  archive_observation: 'your messages',
+  extraction: 'a message',
+  enrichment: 'a lookup',
+  brief: 'a brief',
 };
 
-function sourceWho(source: string): string {
+export function sourceWho(source: string): string {
   const actor = ACTOR[source];
-  return WHO[source] ?? (actor ? (actor === 'msgvault' ? actor : actor[0].toUpperCase() + actor.slice(1)) : sentenceCase(source));
+  return FROM[source] ? `From ${FROM[source]}` : actor ? (actor === 'msgvault' ? actor : actor[0].toUpperCase() + actor.slice(1)) : sentenceCase(source);
+}
+
+/** Who wrote a value, to follow a verb: "from CardDAV contacts", "by msgvault", "by Custom", or nothing for the owner. */
+export function sourcePhrase(source: string): string {
+  return FROM[source] ? `from ${FROM[source]}` : ACTOR[source] === 'you' ? '' : `by ${ACTOR[source] ?? sentenceCase(source)}`;
 }
 
 function dayOf(at: string): string {
