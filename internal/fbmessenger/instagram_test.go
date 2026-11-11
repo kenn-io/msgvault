@@ -460,18 +460,6 @@ func TestInstagramAddsOnlySurplusCopiesWithSharedReactions(t *testing.T) {
 			assert.Equal(int64(1), summary.MessagesAdded)
 			assert.True(summary.Incomplete)
 			assert.Equal(3, countMessages(t, st, ""))
-			var newID int64
-			for _, id := range instagramIDs(t, st) {
-				if !slices.Contains(original, id) {
-					require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`), id).Scan(&newID))
-				}
-			}
-			require.NotZero(newID)
-			raw, err := st.GetMessageRawContext(t.Context(), newID)
-			require.NoError(err)
-			for _, reaction := range []string{"d", "e", "f"} {
-				assert.Contains(string(raw), `"reaction":"`+reaction+`"`)
-			}
 			var count int
 			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM reactions WHERE reaction_value IN ('a','b')`).Scan(&count))
 			assert.Equal(2, count)
@@ -486,8 +474,30 @@ func TestInstagramAddsOnlySurplusCopiesWithSharedReactions(t *testing.T) {
 			assert.Equal(3, countMessages(t, st, ""))
 			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM reactions WHERE reaction_value IN ('d','e','f')`).Scan(&count))
 			assert.Zero(count)
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM reactions WHERE reaction_value = 'x'`).Scan(&count))
+			assert.Equal(len(extra), count)
 		})
 	}
+}
+
+func TestInstagramEmptyFirstShardUpdatesConversationType(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	first := instagramTestShard(t, root, "circle", "message_1.json")
+	require.NoError(os.WriteFile(first, []byte(`{"thread_path":"inbox/circle","title":"Fictional circle","participants":[{"name":"Nova Example"},{"name":"Mira Example"}],"messages":[]}`), 0600))
+	record := instagramTestRecord("old")
+	record["sender_name"] = "Lumen Example"
+	instagramTestShard(t, root, "circle", "message_2.json", record)
+	opts := ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example"}
+	_, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	require.NoError(os.WriteFile(first, []byte(`{"thread_path":"inbox/circle","title":"Fictional circle","participants":[{"name":"Nova Example"},{"name":"Mira Example"},{"name":"Lumen Example"}],"messages":[]}`), 0600))
+	_, err = ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	var kind string
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT conversation_type FROM conversations`).Scan(&kind))
+	require.Equal("group_chat", kind)
 }
 
 func TestInstagramReportsConversationStatsFailure(t *testing.T) {

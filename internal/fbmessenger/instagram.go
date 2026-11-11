@@ -96,13 +96,9 @@ func parseInstagramThread(ctx context.Context, st *store.Store, sourceID int64, 
 }
 
 func instagramArchivedRecord(stored store.StoredMessage) (rawJSONMessage, bool) {
-	return instagramDecodeRecord(stored.Raw)
-}
-
-func instagramDecodeRecord(raw []byte) (rawJSONMessage, bool) {
 	var wrapper instagramRaw
 	var record rawJSONMessage
-	if json.Unmarshal(raw, &wrapper) != nil || json.Unmarshal(wrapper.Record, &record) != nil {
+	if json.Unmarshal(stored.Raw, &wrapper) != nil || json.Unmarshal(wrapper.Record, &record) != nil {
 		return record, false
 	}
 	if wrapper.DerivedReactions != nil {
