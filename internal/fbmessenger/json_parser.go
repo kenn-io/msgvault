@@ -216,7 +216,7 @@ func parseJSONThread(ctx context.Context, rootDir, threadDir string, instagram *
 					instagram.summary.Incomplete = true
 					continue
 				}
-				message := instagramJSONMessage(record)
+				message := instagramMessageWithMediaReport(record, instagram.summary)
 				message.SentAt = time.UnixMilli(*stamp.Timestamp).UTC()
 				if message.Body == "" && len(message.Attachments) == 0 {
 					instagram.summary.MessagesSkipped++
@@ -305,6 +305,22 @@ func parseJSONThread(ctx context.Context, rootDir, threadDir string, instagram *
 		thread.Messages = append(thread.Messages, msg)
 	}
 	return &thread, nil
+}
+
+func instagramMessageWithMediaReport(record rawJSONMessage, summary *ImportSummary) Message {
+	for _, items := range [][]rawJSONPhoto{record.Photos, record.Videos, record.Audio, record.Files, record.Media, record.Gifs} {
+		for _, item := range items {
+			if item.URI == "" {
+				summary.MediaRejected++
+				summary.Incomplete = true
+			}
+		}
+	}
+	if record.Sticker != nil && record.Sticker.URI == "" {
+		summary.MediaRejected++
+		summary.Incomplete = true
+	}
+	return instagramJSONMessage(record)
 }
 
 // renderJSONBody computes the body string for one DYI message, following

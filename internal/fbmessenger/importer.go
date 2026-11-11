@@ -876,6 +876,7 @@ func writeThreadToStore(
 		}
 
 		// Attachments.
+		var existing map[string]store.AttachmentRef
 		for ai := range m.Attachments {
 			att := m.Attachments[ai]
 			summary.AttachmentsFound++
@@ -888,9 +889,11 @@ func writeThreadToStore(
 			if instagram {
 				slot := "instagram:media:" + instagramHash(att.Kind+":"+path.Clean(att.URI))
 				write := store.AttachmentWrite{Filename: path.Base(att.URI), MIMEType: att.MimeType, SourcePartKey: slot, SourceAttachmentID: slot, MediaType: att.Kind, Role: role, RoleSource: roleSource}
-				existing, err := st.MessageProviderAttachments(ctx, messageID, "instagram:media:")
-				if err != nil {
-					return err
+				if existing == nil {
+					existing, err = st.MessageProviderAttachments(ctx, messageID, "instagram:media:")
+					if err != nil {
+						return err
+					}
 				}
 				prev, found := existing[slot]
 				if found && prev.StoragePath != "" {
@@ -923,6 +926,7 @@ func writeThreadToStore(
 				if err := st.UpsertAttachmentRecordWithStats(ctx, messageID, write, true); err != nil {
 					return err
 				}
+				existing[slot] = store.AttachmentRef{Filename: write.Filename, MimeType: write.MIMEType, StoragePath: write.StoragePath, ContentHash: write.ContentHash, Size: int(write.Size), MediaType: write.MediaType, Role: write.Role, RoleSource: write.RoleSource, SourcePartKey: write.SourcePartKey}
 				continue
 			}
 			storagePath, contentHash, size := handleAttachment(ctx, att, opts.AttachmentsDir)
