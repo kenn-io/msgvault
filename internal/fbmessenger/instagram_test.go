@@ -276,6 +276,14 @@ func TestInstagramReplayPreservesReplacedMedia(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, filepath.FromSlash(storedPath)))
 	require.NoError(err)
 	assert.Equal("first image", string(data))
+	require.NoError(os.Remove(media))
+	summary, err = ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	assert.Zero(summary.MediaMissing)
+	assert.False(summary.Incomplete)
+	data, err = os.ReadFile(filepath.Join(opts.AttachmentsDir, filepath.FromSlash(storedPath)))
+	require.NoError(err)
+	assert.Equal("first image", string(data))
 }
 
 func TestInstagramConflictingThreadPaths(t *testing.T) {

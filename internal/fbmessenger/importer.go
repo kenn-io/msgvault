@@ -901,14 +901,13 @@ func writeThreadToStore(
 				}
 				filename := resolveAttachmentURI(absRoot, att.URI)
 				if filename == "" {
-					summary.MediaRejected++
-					summary.Incomplete = true
+					summary.MediaRejected, summary.Incomplete = summary.MediaRejected+1, true
 				} else if info, err := os.Lstat(filename); errors.Is(err, os.ErrNotExist) {
-					summary.MediaMissing++
-					summary.Incomplete = true
+					if write.StoragePath == "" {
+						summary.MediaMissing, summary.Incomplete = summary.MediaMissing+1, true
+					}
 				} else if err != nil || !info.Mode().IsRegular() {
-					summary.MediaRejected++
-					summary.Incomplete = true
+					summary.MediaRejected, summary.Incomplete = summary.MediaRejected+1, true
 				} else if opts.AttachmentsDir != "" && write.StoragePath == "" {
 					var err error
 					write.StoragePath, write.ContentHash, write.Size, err = export.StoreAttachmentFromPath(ctx, opts.AttachmentsDir, filename, 0)
