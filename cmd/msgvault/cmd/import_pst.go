@@ -122,6 +122,7 @@ Examples:
 			CheckpointInterval: importPstCheckpointInterval,
 			AttachmentsDir:     attachmentsDir,
 			RemoteImages:       configuredRemoteImageFetcher(cfg),
+			RelayedSenders:     cfg.RelayedSenders,
 			Logger:             logger,
 		})
 		if err != nil {
