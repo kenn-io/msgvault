@@ -913,7 +913,7 @@ func TestSearchMessageBodies_PostgreSQLContextTokens(t *testing.T) {
 	}
 	cases := []struct{ name, query, body, want string }{
 		{"accent lookalikes", "resume", strings.Repeat("résumé "+strings.Repeat("padding ", 60), query.MessageBodyContextMaxSnippets) + "resume marker", "resume marker"},
-		{"decomposed phrase", `"cafe teria"`, "cafe\u0301teria marker", "cafe\u0301teria"},
+		{"decomposed phrase", "cafe teria", "cafe\u0301teria marker", "cafe\u0301teria"},
 		{"punctuated phrase", `"foo bar"`, "foo.bar marker", "foo.bar"},
 	}
 	for _, tc := range cases {
