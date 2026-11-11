@@ -84,8 +84,9 @@ func TestCommitmentWindowBoundsEscapedEmailInput(t *testing.T) {
 	participant := f.EnsureParticipant(loopAlex, "", "example.test")
 	person, _, err := f.Store.CreatePersonFromParticipant(participant)
 	r.NoError(err)
+	var lastID int64
 	for i := range 12 {
-		f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner},
+		lastID = f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner},
 			Body: "I will send the draft.\n> " + strings.Repeat("quoted history ", 150), SentAt: loopAgo(time.Duration(i+1) * time.Hour)})
 	}
 	cfg := peoplesweep.CommitmentConfig{Enabled: true, Window: 30 * loopDay, MaxItems: 60, MaxBytes: 65536, MaxOpenAnchors: 8}
@@ -97,5 +98,6 @@ func TestCommitmentWindowBoundsEscapedEmailInput(t *testing.T) {
 	fits, err := peoplesweep.CommitmentInputFits(window, true)
 	r.NoError(err)
 	a.True(fits)
-	a.Less(window.ThroughSequence, window.SnapshotSequence)
+	a.Greater(window.BackfillMessageID, int64(0))
+	a.Less(window.BackfillMessageID, lastID)
 }

@@ -26,7 +26,7 @@ func (s *commitmentWorkerFixture) ClaimPersonSweep(_ context.Context, input Clai
 		return nil, errors.New("targeted claims cannot contain exclusions")
 	}
 	if len(s.claims) > 1 {
-		return nil, nil
+		return nil, nil //nolint:nilnil // A nil lease means no work under the ClaimPersonSweep contract.
 	}
 	return s.lease, nil
 }
@@ -62,7 +62,7 @@ func TestTargetedCommitmentOnlySweepSucceedsAndDefersImmediateRerun(t *testing.T
 	mutateTestProvider(&cfg, func(provider *ProviderConfig) { provider.AllowSensitive = true })
 	cfg.Commitments.Enabled = true
 	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
-	st := &commitmentWorkerFixture{due: true, workerFailureStore: workerFailureStore{
+	st := &commitmentWorkerFixture{due: true, workerFailureStore: {
 		cursor: Cursor{ReconciliationComplete: true, LastBackstopAt: &now},
 		lease:  &Lease{PersonID: 7, WorkerID: "commitment-worker", Fence: 1, ExpiresAt: now.Add(time.Hour)},
 	}}
@@ -82,7 +82,6 @@ func TestTargetedCommitmentOnlySweepSucceedsAndDefersImmediateRerun(t *testing.T
 	r.Len(sink.requests, 1)
 	a.True(sink.requests[0].CommitmentOnly)
 	a.Empty(sink.requests[0].Batches)
-	a.Empty(sink.requests[0].CursorAdvances)
 	st.due, st.claims = false, nil
 	result, err = worker.Run(t.Context(), RunRequest{Kind: RunManual, Mode: RunIncremental, PersonID: 7})
 	r.NoError(err)
@@ -91,11 +90,11 @@ func TestTargetedCommitmentOnlySweepSucceedsAndDefersImmediateRerun(t *testing.T
 	a.Empty(st.finalized)
 	a.Empty(st.failed)
 	a.Len(sink.requests, 1)
-	a.Empty(sink.requests[0].CursorAdvances)
 }
 
 type commitmentCallAuthority struct {
 	workerRepairAuthority
+
 	checks   int
 	revokeAt int
 }

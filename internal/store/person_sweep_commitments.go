@@ -13,19 +13,19 @@ import (
 	"go.kenn.io/msgvault/internal/personfacts"
 )
 
-// commitmentPrepareFailure is a preparation outcome that fails only the
+// commitmentPrepareError is a preparation outcome that fails only the
 // optional commitment lane. The apply keeps ordinary work and retries the lane.
-type commitmentPrepareFailure peoplesweep.FailureClass
+type commitmentPrepareError peoplesweep.FailureClass
 
-func (f commitmentPrepareFailure) Error() string { return "commitment lane failed: " + string(f) }
+func (f commitmentPrepareError) Error() string { return "commitment lane failed: " + string(f) }
 
 const (
 	// The archive changed between the provider window and the fenced apply.
-	errCommitmentWindowChanged = commitmentPrepareFailure(peoplesweep.FailureArchiveGap)
+	errCommitmentWindowChanged = commitmentPrepareError(peoplesweep.FailureArchiveGap)
 	// The provider output cannot be stored or read back faithfully: an ambiguous
 	// edited locator, or an expiry beyond the four-digit years of stored and
 	// public timestamps.
-	errCommitmentInvalidOutput = commitmentPrepareFailure(peoplesweep.FailureInvalidOutput)
+	errCommitmentInvalidOutput = commitmentPrepareError(peoplesweep.FailureInvalidOutput)
 )
 
 type preparedCommitmentPromise struct {
@@ -423,7 +423,7 @@ func (s *Store) currentCommitmentSource(ctx context.Context, personID, messageID
 	var conversationID int64
 	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT m.conversation_id
 		FROM messages m JOIN sources src ON src.id = m.source_id
-		WHERE m.id = ? AND m.conversation_id IS NOT NULL AND `+s.loopLiveMessageSQL("src")), messageID).Scan(&conversationID)
+		WHERE m.id = ? AND m.conversation_id IS NOT NULL AND `+s.loopLiveMessageSQL()), messageID).Scan(&conversationID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return peoplesweep.CommitmentSource{}, false, nil
 	}

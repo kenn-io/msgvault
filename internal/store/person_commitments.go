@@ -741,7 +741,7 @@ func (s *Store) commitmentBackfillMessages(ctx context.Context, personID, after 
 	query := `WITH scoped AS (` + scoped + `)
 		SELECT m.id FROM messages m JOIN scoped c ON c.conversation_id = m.conversation_id
 		JOIN sources src ON src.id = m.source_id
-		WHERE m.id > ? AND ` + s.loopLiveMessageSQL("src") + `
+		WHERE m.id > ? AND ` + s.loopLiveMessageSQL() + `
 		AND ((` + s.loopTimeKey("m.sent_at") + ` >= ` + s.loopTimeKey("?") + `
 			OR ` + s.loopTimeKey("m.archived_at") + ` >= ` + s.loopTimeKey("?") + `)
 			OR EXISTS (SELECT 1 FROM person_commitments detached

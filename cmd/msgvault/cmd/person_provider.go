@@ -2207,7 +2207,7 @@ func writePersonProviderStatus(
 	if output.CommitmentsConsent != nil {
 		state := "inactive"
 		if *output.CommitmentsConsent {
-			state = "active"
+			state = accountStateActive
 		}
 		_, _ = fmt.Fprintf(w, "Commitment consent: %s\n", state)
 	}
