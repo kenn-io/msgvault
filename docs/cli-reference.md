@@ -2658,8 +2658,9 @@ finishes its current blob before stopping for that byte limit. Scheduled packing
 and daily attachment maintenance also stop after one minute, which lets queued
 scheduled work run. Each scheduled pack pass verifies at most 128
 indexed blobs with canonical loose copies or missing packs, up to 32 MiB of
-their raw content, allowing one oversized blob. Its durable hash cursor resumes
-verification after a restart, while new loose blobs are packed by sync-requested
+their raw content, allowing one oversized blob. Automatic passes do not reread
+packs without a loose copy. A durable hash cursor resumes verification after a
+restart, while new loose blobs are packed by sync-requested
 passes and the daily job when nothing is queued; verification-only follow-ups
 skip them. Manual unpacking reads the full catalog. Cancellation preserves
 committed packs. A pass with committed progress resumes behind waiting work;

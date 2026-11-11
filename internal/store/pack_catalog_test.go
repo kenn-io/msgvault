@@ -309,6 +309,7 @@ func TestPackVerificationWindowListsRowsAsKitReadsThem(t *testing.T) {
 	// row; repair must see the new location, or it deletes a live mapping.
 	require.NoError(st.AdoptPackedBlobs(store.PackRecord{PackID: newPack, EntryCount: 1, StoredBytes: 64, CreatedAt: created},
 		[]store.PackIndexEntry{{BlobHash: hash, PackID: newPack, Offset: 6, StoredLen: 64, RawLen: 64}}))
+	// The missing physical pack makes this mapping a verification candidate.
 	indexed, err := store.NewMaintenancePackCatalog(st, t.TempDir()).ListIndexed(ctx)
 	require.NoError(err)
 	require.Len(indexed, 1)
@@ -332,6 +333,7 @@ func TestPackVerificationWindowKeepsItsRangeAcrossListings(t *testing.T) {
 	record(inWindow)
 	ctx, pass, err := st.BeginPackVerification(t.Context(), 128, 32<<20)
 	require.NoError(err)
+	// Missing physical packs make these mappings verification candidates.
 	catalog := store.NewMaintenancePackCatalog(st, t.TempDir())
 	repair, err := catalog.ListIndexed(ctx)
 	require.NoError(err)
@@ -432,9 +434,6 @@ func TestPackVerificationSelectsLooseAndMissingPackMappings(t *testing.T) {
 	more, err = st.FinishPackVerification(t.Context(), pass)
 	require.NoError(err)
 	assert.False(more)
-	all, err := catalog.ListIndexed(t.Context())
-	require.NoError(err)
-	assert.Len(all, 4)
 }
 
 func TestPackVerificationCanceledCheckpointReplaysWindow(t *testing.T) {
@@ -461,7 +460,7 @@ func TestPackVerificationCanceledCheckpointReplaysWindow(t *testing.T) {
 	assert.Equal(t, first, replayed)
 }
 
-func TestPackVerificationWindowSkipsUnindexedLooseBatches(t *testing.T) {
+func TestPackVerificationWindowFindsIndexedHashAfterUnindexedFiles(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
 	for i := range 300 {
