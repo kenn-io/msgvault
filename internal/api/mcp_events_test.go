@@ -46,7 +46,7 @@ func TestEventsRouterRejectsUnverifiedCallback(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	_, err := st.GetOrCreateSource("imap", "events@example.test")
 	requirements.NoError(err)
-	cfg := &config.Config{HomeDir: t.TempDir()}
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}}
 	events := &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir(), Enabled: true}
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, Logger: testLogger()})
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
@@ -104,7 +104,7 @@ func TestEventsRouterSerialGate(t *testing.T) {
 	source, err := st.GetOrCreateSource("imap", "events@example.test")
 	requirements.NoError(err)
 	requirements.Equal(int64(1), source.ID)
-	cfg := &config.Config{HomeDir: t.TempDir()}
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}}
 	events := &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir(), Enabled: true}
 	gate := NewSerialOperationGate()
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, OperationGate: gate, Logger: testLogger()})
@@ -160,7 +160,7 @@ func TestGeneratedEventsCatalogDecodes(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
-	cfg := &config.Config{HomeDir: t.TempDir()}
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}}
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir(), Enabled: true}, Logger: testLogger()})
 	server := httptest.NewServer(srv.Router())
 	defer server.Close()
@@ -202,7 +202,7 @@ func TestGeneratedEventsMutationErrorsDecode(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st := testutil.NewTestStore(t)
-	cfg := &config.Config{HomeDir: t.TempDir()}
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}}
 	events := &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir()}
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, Logger: testLogger()})
 	server := httptest.NewServer(srv.Router())
