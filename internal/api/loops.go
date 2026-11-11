@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -188,32 +189,43 @@ func (s *Server) startLoopEvidence(st loops.Store, personID int64) {
 		return
 	}
 	s.loopEvidenceRunning = true
+	s.loopEvidencePending = append(s.loopEvidencePending, personID)
 	s.importWG.Add(1)
 	s.importMu.Unlock()
 	go func() {
 		defer s.importWG.Done()
 		defer finishIdle()
-		s.fillLoopEvidence(st, personID)
+		s.fillLoopEvidence(st)
 	}()
 }
 
-func (s *Server) fillLoopEvidence(st loops.Store, personID int64) {
+func (s *Server) fillLoopEvidence(st loops.Store) {
 	for {
-		ctx, cancel := context.WithTimeout(s.importContext, 2*time.Minute)
+		s.importMu.Lock()
+		personID := s.loopEvidencePending[0]
+		s.importMu.Unlock()
+		ctx, cancel := context.WithTimeout(jobctx.WithProgress(s.importContext), 2*time.Minute)
 		_, err := loops.Warm(ctx, &gatedLoopEvidence{Store: st, gate: s.operationGate, background: true}, personID, s.clockNow().UTC())
-		if err != nil && ctx.Err() == nil && !errors.Is(err, errMutationGateBusy) {
+		expired := errors.Is(ctx.Err(), context.DeadlineExceeded)
+		progress := jobctx.HasProgress(ctx)
+		if expired && !progress {
+			s.logger.Warn("fill loop evidence stopped without progress")
+		} else if err != nil && ctx.Err() == nil && !errors.Is(err, errMutationGateBusy) {
 			s.logger.Error("fill loop evidence", "error", err)
 		}
 		cancel()
 		s.importMu.Lock()
-		if s.importsClosed || len(s.loopEvidencePending) == 0 {
+		if !s.importsClosed && expired && progress {
+			s.importMu.Unlock()
+			continue
+		}
+		s.loopEvidencePending = s.loopEvidencePending[1:]
+		if s.importsClosed || errors.Is(err, errMutationGateBusy) || len(s.loopEvidencePending) == 0 {
 			s.loopEvidenceRunning = false
 			s.loopEvidencePending = nil
 			s.importMu.Unlock()
 			return
 		}
-		personID = s.loopEvidencePending[0]
-		s.loopEvidencePending = s.loopEvidencePending[1:]
 		s.importMu.Unlock()
 	}
 }

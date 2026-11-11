@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 )
@@ -815,7 +816,14 @@ func (s *Store) SaveLoopMessageEvidenceContext(ctx context.Context, id int64, ve
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE loop_message_evidence SET facts = ?
+	result, err := s.db.ExecContext(ctx, `UPDATE loop_message_evidence SET facts = ?
  WHERE message_id = ? AND rule_version = ? AND token = ?`, string(facts), id, version, token)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err == nil && count > 0 {
+		jobctx.RecordProgress(ctx)
+	}
 	return err
 }
