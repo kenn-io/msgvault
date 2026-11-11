@@ -11,7 +11,6 @@
 package sqldialect
 
 import (
-	"encoding/json/v2"
 	"fmt"
 	"strings"
 	"unicode"
@@ -41,28 +40,17 @@ func RebindPostgreSQL(query string) string {
 	return b.String()
 }
 
-// PostgreSQLSearchArg carries both index queries and exact field patterns.
-func PostgreSQLSearchArg(terms []string, weight string) string {
-	phrase := TSQuery(terms, weight)
-	if phrase == "" {
-		return ""
-	}
-	var candidates, patterns []string
+// PostgreSQLSearchArg builds the unordered candidate query for the index.
+func PostgreSQLSearchArg(terms []string) string {
+	var groups []string
 	for _, term := range terms {
 		parts := EscapeTSQueryTerm(term)
-		if len(parts) == 0 {
-			continue
+		if len(parts) > 0 {
+			parts[len(parts)-1] += ":*"
 		}
-		patterns = append(patterns, PostgreSQLPhrasePattern(term))
-		parts[len(parts)-1] += ":*"
-		candidates = append(candidates, strings.Join(parts, " & "))
+		groups = append(groups, parts...)
 	}
-	data, _ := json.Marshal(struct {
-		Phrase    string   `json:"phrase"`
-		Candidate string   `json:"candidate"`
-		Patterns  []string `json:"patterns"`
-	}{phrase, strings.Join(candidates, " & "), patterns})
-	return string(data)
+	return strings.Join(groups, " & ")
 }
 
 // PostgreSQLPhrasePattern matches adjacent normalized pieces with a final prefix.
@@ -74,23 +62,18 @@ func PostgreSQLPhrasePattern(term string) string {
 	return "(^| )" + strings.Join(parts, " +")
 }
 
-// PostgreSQLSearchPredicate binds one search argument and checks each term in a field.
-func PostgreSQLSearchPredicate(arg, fields string) string {
-	fields = strings.ReplaceAll(fields, "m.", "indexed.")
-	return `m.id IN (WITH fts AS MATERIALIZED (SELECT * FROM jsonb_to_record(` + arg + `::jsonb) AS payload(phrase text, candidate text, patterns text[]))
-		SELECT indexed.id FROM fts CROSS JOIN messages indexed WHERE
-		(indexed.search_fts_fields IS NULL AND indexed.search_fts @@ to_tsquery('simple', fts.phrase)) OR ` + compactFTSMatch(fields) + ` OR
-		(cardinality(indexed.search_fts_fields) > 3 AND indexed.search_fts @@ to_tsquery('simple', fts.candidate) AND
-		 NOT EXISTS (SELECT 1 FROM unnest(fts.patterns) AS pattern WHERE NOT EXISTS
-		 (SELECT 1 FROM unnest(` + fields + `) AS field WHERE field ~* pattern))))`
-}
-
-// Three fields hold legacy text; primary fields still have complete positions.
-// TSQuery joins one phrase per term with " & "; normalized terms cannot contain it.
-func compactFTSMatch(fields string) string {
-	return `(cardinality(indexed.search_fts_fields) = 3 AND indexed.search_fts @@ to_tsquery('simple', fts.candidate) AND
-		NOT EXISTS (SELECT 1 FROM unnest(fts.patterns, string_to_array(fts.phrase, ' & ')) AS term(pattern, phrase)
-		WHERE NOT (indexed.search_fts @@ to_tsquery('simple', term.phrase) OR EXISTS (SELECT 1 FROM unnest(` + fields + `) AS field WHERE field ~* term.pattern))))`
+// PostgreSQLSearchPredicate refines an indexed candidate by field and phrase.
+func PostgreSQLSearchPredicate(arg, fields string, terms []string, weight string) string {
+	clauses := []string{"m.search_fts @@ to_tsquery('simple', " + arg + ")"}
+	for _, term := range terms {
+		phrase := TSQuery([]string{term}, weight)
+		if phrase == "" {
+			continue
+		}
+		pattern := PostgreSQLPhrasePattern(term)
+		clauses = append(clauses, "((m.search_fts_fields[1] IS NULL AND m.search_fts @@ to_tsquery('simple', '"+phrase+"')) OR EXISTS (SELECT 1 FROM unnest("+fields+") AS field WHERE field ~* '"+pattern+"'))")
+	}
+	return strings.Join(clauses, " AND ")
 }
 
 // tokenSpans returns byte offsets of Unicode letter and digit runs.

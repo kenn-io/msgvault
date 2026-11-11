@@ -92,7 +92,7 @@ func TestPostgreSQLDialect_InsertOrIgnore(t *testing.T) {
 func TestPostgreSQLDialect_FTSSearchClause(t *testing.T) {
 	assert := assert.New(t)
 	d := &PostgreSQLDialect{}
-	join, _, _, orderArgCount := d.FTSSearchClause(false)
+	join, _, _, orderArgCount := d.FTSSearchClause(false, []string{"search"})
 	assert.Empty(join, "join (PostgreSQL needs no JOIN)")
 	assert.Equal(1, orderArgCount, "orderArgCount (ts_rank needs query a second time)")
 }

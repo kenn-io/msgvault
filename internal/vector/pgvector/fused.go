@@ -143,8 +143,8 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 			// Use the shared phrase predicate before applying the pool limit.
 			_, tsArg := query.PostgreSQLQueryDialect{}.BuildFTSTerm(req.FTSTerms)
 			ftsArg := bind(tsArg)
-			ftsRank := postgresFTSRankExpression("m.search_fts", "("+ftsArg+"::jsonb)->>'candidate'")
-			ftsPredicate := sqldialect.PostgreSQLSearchPredicate(ftsArg, "m.search_fts_fields")
+			ftsRank := postgresFTSRankExpression("m.search_fts", ftsArg)
+			ftsPredicate := sqldialect.PostgreSQLSearchPredicate(ftsArg, "m.search_fts_fields", req.FTSTerms, "")
 			kp1Arg := bind(kPlus1)
 			kArg := bind(req.KPerSignal)
 			// Empty filter: scan messages directly with an inline liveness

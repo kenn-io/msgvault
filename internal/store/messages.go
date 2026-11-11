@@ -7016,10 +7016,10 @@ func legacyFTSVector(field, stored string) string {
 // tokens that duplicate their parts.
 func legacyFTSOldJoinSQL(legacy string) string {
 	return `LEFT JOIN LATERAL (SELECT
-			string_agg(CASE WHEN p.pos > p.previous + 1 THEN '! ' ELSE '' END || p.lexeme, ' ' ORDER BY p.pos) FILTER (WHERE p.weight = 'A') AS subject,
-			string_agg(CASE WHEN p.pos > p.previous + 1 THEN '! ' ELSE '' END || p.lexeme, ' ' ORDER BY p.pos) FILTER (WHERE p.weight = 'B') AS sender,
-			string_agg(CASE WHEN p.pos > p.previous + 1 THEN '! ' ELSE '' END || p.lexeme, ' ' ORDER BY p.pos) FILTER (WHERE p.weight = 'C') AS recipient
-			FROM (SELECT lexeme, pos - skipped AS pos, weight, lag(pos - skipped) OVER (PARTITION BY weight ORDER BY pos) AS previous FROM
+			string_agg(CASE WHEN p.pos <> p.previous + 1 OR p.raw_pos >= 16383 THEN '! ' ELSE '' END || p.lexeme, ' ' ORDER BY p.pos) FILTER (WHERE p.weight = 'A') AS subject,
+			string_agg(CASE WHEN p.pos <> p.previous + 1 OR p.raw_pos >= 16383 THEN '! ' ELSE '' END || p.lexeme, ' ' ORDER BY p.pos) FILTER (WHERE p.weight = 'B') AS sender,
+			string_agg(CASE WHEN p.pos <> p.previous + 1 OR p.raw_pos >= 16383 THEN '! ' ELSE '' END || p.lexeme, ' ' ORDER BY p.pos) FILTER (WHERE p.weight = 'C') AS recipient
+			FROM (SELECT lexeme, pos AS raw_pos, pos - skipped AS pos, weight, lag(pos - skipped) OVER (PARTITION BY weight ORDER BY pos) AS previous FROM
 				(SELECT *, count(*) FILTER (WHERE compound) OVER (PARTITION BY weight ORDER BY pos ROWS UNBOUNDED PRECEDING) AS skipped FROM
 					(SELECT e.lexeme, pos, weight, strpos(e.lexeme, '-') > 0 AND EXISTS (SELECT 1 FROM ts_debug('simple', e.lexeme) d WHERE d.token = e.lexeme AND d.alias IN ('asciihword', 'hword', 'numhword')) AS compound FROM unnest(m.search_fts) e CROSS JOIN LATERAL unnest(e.positions, e.weights) p(pos, weight) WHERE ` + legacy + ` AND weight IN ('A', 'B', 'C')) tokens) marked WHERE NOT compound) p) old ON TRUE`
 }
@@ -7044,7 +7044,7 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 	hasOld := `u.old_subject <> '' OR u.old_sender <> '' OR u.old_recipient <> ''`
 	vector += ` || CASE WHEN ` + hasOld + ` THEN '''!'':1'::tsvector || setweight(` + legacyFTSVector("u.old_subject", "u.subject") + `, 'A') || '''!'':1'::tsvector || setweight(` + legacyFTSVector("u.old_sender", "u.sender") + `, 'B') || '''!'':1'::tsvector || setweight(` + legacyFTSVector("u.old_recipient", "u.to_addrs") + `, 'C') ELSE ''::tsvector END`
 	overflow := replace.Replace(pgFTSOverflowFields("u.vector"))
-	fields := `CASE WHEN ` + hasOld + ` THEN COALESCE(` + overflow + `, ARRAY[]::text[]) || ARRAY[u.old_subject, u.old_sender, u.old_recipient] ELSE ` + overflow + ` END`
+	fields := `CASE WHEN ` + hasOld + ` THEN COALESCE(` + overflow + `, ARRAY[NULL::text, NULL::text, NULL::text, NULL::text, NULL::text]) || ARRAY[u.old_subject, u.old_sender, u.old_recipient] ELSE ` + overflow + ` END`
 	updateSQL := `WITH u AS (SELECT * FROM unnest(?::bigint[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[], ?::boolean[], ?::text[], ?::text[], ?::text[]) AS x(id, subject, body, sender, to_addrs, cc_addrs, terminal, old_subject, old_sender, old_recipient)), v AS (SELECT u.*, CASE WHEN u.terminal THEN ''::tsvector ELSE ` + vector + ` END AS vector FROM u) UPDATE messages m SET search_fts = u.vector, search_fts_fields = ` + fields + `, indexing_version = ` + strconv.Itoa(CurrentFTSIndexingVersion) + ` FROM v u WHERE m.id = u.id`
 	var affected int64
 	for fromID < toID {

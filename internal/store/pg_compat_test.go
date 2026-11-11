@@ -105,17 +105,19 @@ func TestSearchMessagesQuery_ToFilterCaseInsensitive(t *testing.T) {
 }
 
 func TestSearchFTSPunctuation(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	id := f.NewMessage().WithSourceMessageID("m1").WithSubject("Release 1.2.0 notes").Create(t, f.Store)
-	require.NoError(t, f.Store.UpsertFTS(id, "Release 1.2.0 notes", "Write to both@example.com or see changelog.example.net.", "+15550100777", "", ""))
+	require.NoError(f.Store.UpsertFTS(id, "Release 1.2.0 notes", "Write to both@example.com or see changelog.example.net.", "+15550100777", "", ""))
 	for _, term := range []string{"---", "...", "foo-bar", "user@example.com", "a.b.c", "foo ---", "v1.2.3-rc.1"} {
 		_, _, err := f.Store.SearchMessages(term, 0, 50)
-		require.NoError(t, err, term)
+		require.NoError(err, term)
 	}
 	for term, want := range map[string][]int64{"notes": {id}, "both@example.com": {id}, "both@exam": {id}, "changelog.example.net": {id}, "1.2.0": {id}, "+15550100777": {id}, "15550100777": {id}, "example@both": nil} {
 		ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
-		require.NoError(t, err, term)
-		assert.ElementsMatch(t, want, ids, term)
+		require.NoError(err, term)
+		assert.ElementsMatch(want, ids, term)
 	}
 }
 

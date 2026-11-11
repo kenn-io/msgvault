@@ -204,7 +204,7 @@ type Dialect interface {
 	// final query before execution.
 	// The order expression sorts ascending and has no direction suffix.
 	// rowIDs uses a self-contained predicate so MATCH can appear inside OR.
-	FTSSearchClause(rowIDs bool) (join, where, orderBy string, orderArgCount int)
+	FTSSearchClause(rowIDs bool, terms []string) (join, where, orderBy string, orderArgCount int)
 
 	// FTSDeleteSQL returns the SQL to remove FTS entries for messages belonging to
 	// a given source. Takes one parameter: source_id.
@@ -439,7 +439,7 @@ type Dialect interface {
 	// arguments and drop terms that contain no usable tokens:
 	//   SQLite:     `"term"*` per term, space-joined (FTS5 reads space as
 	//               implicit AND).
-	//   PostgreSQL: JSON of phrase and candidate tsqueries and field patterns.
+	//   PostgreSQL: unordered candidate tsquery; phrases are checked separately.
 	// Shapes match the query package's equivalent helpers so API search
 	// and engine deep-search return the same hits for the same input.
 	// Returns "" when every term reduces to nothing usable — the caller

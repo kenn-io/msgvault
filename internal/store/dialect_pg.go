@@ -331,7 +331,7 @@ func (d *PostgreSQLDialect) JSONIsDistinctExpr(col string) string {
 
 // BuildFTSArg builds ordered phrases whose final pieces match prefixes.
 func (d *PostgreSQLDialect) BuildFTSArg(terms []string) string {
-	return sqldialect.PostgreSQLSearchArg(terms, "")
+	return sqldialect.PostgreSQLSearchArg(terms)
 }
 
 // InsertOrIgnore rewrites INSERT OR IGNORE INTO to INSERT INTO and appends
@@ -442,7 +442,7 @@ func (d *PostgreSQLDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
 // Inspect the completed vector so concatenated fields share the same limit.
 func pgFTSOverflowFields(vector string) string {
 	charCap := strconv.Itoa(maxFTSBodyChars)
-	return `CASE WHEN ` + vector + `::text ~ '(^|[ ,:])16383(A|B|C|D)?([, ]|$)' OR ` + vector + `::text ~ ':[0-9]+[A-D]?(,[0-9]+[A-D]?){254}([, ]|$)' THEN ARRAY[LEFT($2, ` + charCap + `), LEFT($4, ` + charCap + `), LEFT($5, ` + charCap + `), LEFT($6, ` + charCap + `), LEFT($3, ` + charCap + `)] ELSE NULL END`
+	return `CASE WHEN ` + vector + `::text ~ '(^|[ ,:])16383(A|B|C|D)?([, ]|$)' OR ` + vector + `::text ~ ':[0-9]+[A-D]?(,[0-9]+[A-D]?){254}([, ]|$)' THEN ARRAY[LEFT(COALESCE($2, ''), ` + charCap + `), LEFT(COALESCE($4, ''), ` + charCap + `), LEFT(COALESCE($5, ''), ` + charCap + `), LEFT(COALESCE($6, ''), ` + charCap + `), LEFT(COALESCE($3, ''), ` + charCap + `)] ELSE NULL END`
 }
 
 // pgFTSVector returns the bounded tsvector expression for doc and its
@@ -468,10 +468,10 @@ func pgFTSVector(doc FTSDoc) (string, []any) {
 // FTSSearchClause returns SQL fragments for tsvector full-text search.
 // PostgreSQL stores the tsvector on the messages table — no JOIN needed.
 // Rank uses BuildFTSArg's candidate query, binding the argument a second time.
-func (d *PostgreSQLDialect) FTSSearchClause(rowIDs bool) (join, where, orderBy string, orderArgCount int) {
+func (d *PostgreSQLDialect) FTSSearchClause(rowIDs bool, terms []string) (join, where, orderBy string, orderArgCount int) {
 	return "",
-		sqldialect.PostgreSQLSearchPredicate("?", "m.search_fts_fields"),
-		"-ts_rank(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], m.search_fts, to_tsquery('simple', (?::jsonb)->>'candidate'))",
+		sqldialect.PostgreSQLSearchPredicate("?", "m.search_fts_fields", terms, ""),
+		"-ts_rank(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], m.search_fts, to_tsquery('simple', ?))",
 		1
 }
 

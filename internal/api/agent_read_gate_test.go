@@ -67,6 +67,41 @@ func TestPostgresServerRepairsSearchOnStartup(t *testing.T) {
 	}
 }
 
+func TestPostgresStartupSearchProbeStopsOnShutdown(t *testing.T) {
+	require := require.New(t)
+	base := testutil.NewTestStore(t)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	defer close(release)
+	st := &postgresBackfillStore{Store: base, quick: func(ctx context.Context) bool {
+		close(started)
+		select {
+		case <-ctx.Done():
+		case <-release:
+		}
+		return false
+	}}
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner"}}, Store: st, Logger: testLogger()})
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(err)
+	done := make(chan error, 1)
+	go func() { done <- srv.StartOnListener(listener) }()
+	t.Cleanup(func() {
+		_ = srv.Shutdown(context.Background())
+		require.ErrorIs(<-done, http.ErrServerClosed)
+	})
+	require.NoError(srv.WaitStarted(t.Context()))
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		require.FailNow("startup did not begin the search probe")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	err = srv.Shutdown(ctx)
+	require.NoError(err)
+}
+
 func (s *agentReadGateStore) ListSourcesContext(ctx context.Context, kind string) ([]*store.Source, error) {
 	s.sourceLists.Add(1)
 	s.sourceContextMu.Lock()

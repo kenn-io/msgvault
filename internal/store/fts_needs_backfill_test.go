@@ -98,6 +98,7 @@ func TestStore_BackfillFTS_ResumesCommittedBatch(t *testing.T) {
 func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 	skipUnlessPostgres(t)
 	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	ids := f.CreateMessages(2)
 	_, err := f.Store.BackfillFTS(nil)
@@ -109,7 +110,7 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 
 	n, err := f.Store.BackfillFTS(nil)
 	require.NoError(err)
-	assert.Equal(t, int64(1), n, "only the outdated entry needs backfill")
+	assert.Equal(int64(1), n, "only the outdated entry needs backfill")
 	assertFTSContains(t, f.Store, "obsolete", 0)
 	db := f.Store.DB()
 	legacy := func(id int64, vector string, args ...any) {
@@ -133,13 +134,15 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 	recipients := f.CreateMessage("recipients")
 	require.NoError(f.Store.ReplaceMessageRecipients(recipients, "to", []int64{f.EnsureParticipant("alice", "", "")}, nil))
 	require.NoError(f.Store.ReplaceMessageRecipients(recipients, "cc", []int64{f.EnsureParticipant("example.com", "", "")}, nil))
-	legacy(recipients, `setweight(to_tsvector('simple', 'alice example.com'), 'C')`)
+	legacy(recipients, `setweight(to_tsvector('simple', 'alice example.com zed'), 'C')`)
 	legacy(withBody(f.CreateMessage("unsearchable"), "hidden terminal@example.test"), `''::tsvector`)
 	gapped := f.CreateMessage("gapped")
 	_, err = db.ExecContext(t.Context(), `UPDATE messages SET subject = 'different stored subject' WHERE id = $1`, gapped)
 	require.NoError(err)
 	legacy(gapped, `setweight(to_tsvector('simple', $2), 'A')`, strings.Repeat("filler ", 256)+"alpha filler beta")
 	legacy(f.CreateMessage("compound-gap"), `setweight(to_tsvector('simple', $2), 'A')`, strings.Repeat("filler ", 256)+"alpha filler foo-bar")
+	tied := f.CreateMessage("tied-positions")
+	legacy(tied, `setweight(to_tsvector('simple', $2), 'A')`, strings.Repeat("padding ", 16384)+"cobalt xenon")
 	fresh, retained, partial := f.CreateMessage("fresh"), f.CreateMessage("retained"), f.CreateMessage("partial")
 	_, err = db.ExecContext(t.Context(), `UPDATE messages SET subject = 'lantern' WHERE id IN ($1, $2, $3)`, fresh, retained, partial)
 	require.NoError(err)
@@ -150,6 +153,9 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 
 	_, err = f.Store.BackfillFTS(nil)
 	require.NoError(err)
+	var compact bool
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT search_fts_fields[1] IS NULL AND search_fts_fields[5] IS NULL AND array_length(search_fts_fields, 1) = 8 FROM messages WHERE id = $1`, partial).Scan(&compact))
+	assert.True(compact, "legacy fields must not copy unsaturated stored text")
 	for term, want := range map[string][]int64{
 		"before foo-bar after":      {compound},
 		"bar foo":                   nil,
@@ -161,13 +167,17 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 		"terminal@example.test":     nil,
 		"alpha beta":                nil,
 		"alpha foo":                 nil,
+		"cobalt xenon":              nil,
+		"xenon cobalt":              nil,
+		"cobalt":                    {tied},
+		"xenon":                     {tied},
 		"unique":                    {partial},
 		"lantern unique":            {partial},
 		"stored phrase":             {partial},
 	} {
 		ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
 		require.NoError(err, term)
-		assert.ElementsMatch(t, want, ids, term)
+		assert.ElementsMatch(want, ids, term)
 	}
 	ids, _, err = f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"stored phrase", "lantern unique"}}, 10)
 	require.NoError(err)
@@ -181,7 +191,7 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 		for _, message := range result.Messages {
 			got = append(got, message.ID)
 		}
-		assert.ElementsMatch(t, want, got, term)
+		assert.ElementsMatch(want, got, term)
 	}
 	rank := func(id int64) float64 {
 		t.Helper()
@@ -190,7 +200,7 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 		return value
 	}
 	for _, id := range []int64{retained, partial} {
-		assert.InDelta(t, rank(fresh), rank(id), 0.000001)
+		assert.InDelta(rank(fresh), rank(id), 0.000001)
 	}
 }
 
@@ -205,6 +215,30 @@ func TestPG_BackfillFTS_ContinuesAcrossLargeMessagePages(t *testing.T) {
 	require.NoError(t, err)
 	assert.EqualValues(t, 8, count)
 	assertFTSContains(t, f.Store, "alice@example.com", 8)
+}
+
+func TestPG_FTSSearchUsesIndex(t *testing.T) {
+	skipUnlessPostgres(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	tx, err := f.Store.DB().BeginTx(t.Context(), nil)
+	require.NoError(err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+	_, err = tx.ExecContext(t.Context(), `SET LOCAL enable_seqscan = off`)
+	require.NoError(err)
+	dialect := &store.PostgreSQLDialect{}
+	_, predicate, _, _ := dialect.FTSSearchClause(false, []string{"lantern unique"})
+	rows, err := tx.QueryContext(t.Context(), f.Store.Rebind(`EXPLAIN SELECT m.id FROM messages m WHERE `+predicate), dialect.BuildFTSArg([]string{"lantern unique"}))
+	require.NoError(err)
+	defer rows.Close()
+	var plan []string
+	for rows.Next() {
+		var line string
+		require.NoError(rows.Scan(&line))
+		plan = append(plan, line)
+	}
+	require.NoError(rows.Err())
+	assert.Contains(t, strings.Join(plan, "\n"), "Bitmap Index Scan on messages_search_fts_idx")
 }
 
 func TestPG_BackfillFTS_SeesConcurrentBodyUpdate(t *testing.T) {

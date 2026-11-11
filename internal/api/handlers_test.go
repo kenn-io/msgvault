@@ -2585,10 +2585,19 @@ type postgresBackfillStore struct {
 	*store.Store
 
 	started chan struct{}
+	quick   func(context.Context) bool
 }
 
-func (*postgresBackfillStore) IsPostgreSQL() bool                                { return true }
-func (*postgresBackfillStore) NeedsFTSBackfillQuickContext(context.Context) bool { return true }
+func (*postgresBackfillStore) IsPostgreSQL() bool { return true }
+func (s *postgresBackfillStore) NeedsFTSBackfillQuick() bool {
+	return s.NeedsFTSBackfillQuickContext(context.Background())
+}
+func (s *postgresBackfillStore) NeedsFTSBackfillQuickContext(ctx context.Context) bool {
+	if s.quick != nil {
+		return s.quick(ctx)
+	}
+	return true
+}
 func (*postgresBackfillStore) NeedsFTSBackfillContext(context.Context) (bool, error) {
 	return true, nil
 }

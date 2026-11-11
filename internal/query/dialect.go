@@ -270,9 +270,9 @@ func (PostgreSQLQueryDialect) TimeTruncExpression(column string, granularity str
 	}
 }
 
-// FTSSearchExpression uses the same bound search payload as the store dialect.
+// FTSSearchExpression returns the indexed candidate predicate.
 func (PostgreSQLQueryDialect) FTSSearchExpression() string {
-	return sqldialect.PostgreSQLSearchPredicate("?", "m.search_fts_fields")
+	return sqldialect.PostgreSQLSearchPredicate("?", "m.search_fts_fields", nil, "")
 }
 
 func (PostgreSQLQueryDialect) HasFTSTableSQL() string {
@@ -297,19 +297,19 @@ func (PostgreSQLQueryDialect) FTSJoin() string { return "" }
 
 // BuildFTSTerm matches each term's pieces in order, with a final prefix.
 func (PostgreSQLQueryDialect) BuildFTSTerm(terms []string) (expr string, arg string) {
-	arg = sqldialect.PostgreSQLSearchArg(terms, "")
+	arg = sqldialect.PostgreSQLSearchArg(terms)
 	if arg == "" {
 		return "FALSE", ""
 	}
-	return sqldialect.PostgreSQLSearchPredicate("?", "m.search_fts_fields"), arg
+	return sqldialect.PostgreSQLSearchPredicate("?", "m.search_fts_fields", terms, ""), arg
 }
 
 func (PostgreSQLQueryDialect) BuildFTSBodyTerm(terms []string) (expr string, arg string) {
-	arg = sqldialect.PostgreSQLSearchArg(terms, "D")
+	arg = sqldialect.PostgreSQLSearchArg(terms)
 	if arg == "" {
 		return "FALSE", ""
 	}
-	return sqldialect.PostgreSQLSearchPredicate("?", "m.search_fts_fields[5:5]"), arg
+	return sqldialect.PostgreSQLSearchPredicate("?", "m.search_fts_fields[5:5]", terms, "D"), arg
 }
 
 func (PostgreSQLQueryDialect) FTSBodySearchReadinessSQL() string {
@@ -321,7 +321,7 @@ func (PostgreSQLQueryDialect) FTSBodySearchReadinessSQL() string {
 
 // SanitizeFTSQuery builds a safe search argument for one term.
 func (PostgreSQLQueryDialect) SanitizeFTSQuery(query string) string {
-	return sqldialect.PostgreSQLSearchArg([]string{query}, "")
+	return sqldialect.PostgreSQLSearchArg([]string{query})
 }
 
 func (SQLiteQueryDialect) DateOrderExpression(column string) string {

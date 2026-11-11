@@ -476,12 +476,13 @@ func TestSearchMessageBodies_PostgreSQLPhraseContexts(t *testing.T) {
 	createSearchScopeMessage(t, f, "saturated-body", "ordinary", "ordinary", strings.Repeat("alice ", 300)+"alice@example.com appears here", 0, 0)
 	createSearchScopeMessage(t, f, "combining-body", "ordinary", "ordinary", "cafe\u0301teria marker foo.bar", 0, 0)
 	createSearchScopeMessage(t, f, "accent-body", "ordinary", "ordinary", strings.Repeat("résumé "+strings.Repeat("padding ", 60), query.MessageBodyContextMaxSnippets)+"resume marker", 0, 0)
+	createSearchScopeMessage(t, f, "saturated-subject", strings.Repeat("shared ", 300), "ordinary", "shared body marker", 0, 0)
 	_, err := f.Store.BackfillFTS(nil)
 	require.NoError(err)
 	searcher, ok := query.NewEngine(f.Store.DB(), true).(query.MessageBodySearcher)
 	require.True(ok)
 	// Each excerpt appears in only one body, so it also identifies the hit.
-	for term, excerpt := range map[string]string{"alice@exam": "alice@exam", `"cafe teria"`: "cafe\u0301teria", "cafe\u0301teria": "cafe\u0301teria", "cafe\u0301": "cafe\u0301", "foo.bar": "foo.bar", "resume": "resume marker"} {
+	for term, excerpt := range map[string]string{"alice@exam": "alice@exam", `"cafe teria"`: "cafe\u0301teria", "cafe\u0301teria": "cafe\u0301teria", "cafe\u0301": "cafe\u0301", "foo.bar": "foo.bar", "resume": "resume marker", "shared": "shared body marker"} {
 		result, err := searcher.SearchMessageBodies(t.Context(), search.Parse(term), 10, 0)
 		require.NoError(err, term)
 		require.Len(result.Messages, 1, term)

@@ -943,7 +943,7 @@ func (s *Server) StartOnListener(ln net.Listener) error {
 			s.importMu.Lock()
 			if !s.importsClosed {
 				s.importWG.Go(func() {
-					s.ensureCLISearchIndexAsync(cliStore, true)
+					s.ensureCLISearchIndexAsync(bindCLIStoreContext(s.importContext, cliStore), true)
 				})
 			}
 			s.importMu.Unlock()
