@@ -251,3 +251,43 @@ func TestSetEmbedGenIfUnchanged(t *testing.T) {
 	assert.Empty(missed, "an already covered row is not a CAS miss")
 	assert.Zero(covered, "an already covered row is not newly covered")
 }
+
+// A subject-only message's first body row can be empty. That leaves the
+// embedding input unchanged, so it must keep the message's revision and the
+// coverage stamp of its existing subject-only vector.
+func TestEmptyFirstBodyKeepsSubjectOnlyEmbedding(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "empty-body@example.test")
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "subject-only", "email_thread", "Subject only")
+	requirements.NoError(err)
+	id, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, SourceMessageID: "subject-only", ConversationID: conversationID, MessageType: "email",
+		Subject: sql.NullString{String: "Subject only", Valid: true},
+	})
+	requirements.NoError(err)
+	requirements.NoError(st.SetEmbedGen(t.Context(), []int64{id}, 7))
+	state := func() (int64, sql.NullInt64) {
+		t.Helper()
+		var revision int64
+		var gen sql.NullInt64
+		requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+			`SELECT embedding_revision, embed_gen FROM messages WHERE id = ?`), id).Scan(&revision, &gen))
+		return revision, gen
+	}
+	revision, gen := state()
+	requirements.True(gen.Valid)
+
+	requirements.NoError(st.UpsertMessageBodyContext(t.Context(), id, sql.NullString{String: "", Valid: true}, sql.NullString{}))
+	afterRevision, afterGen := state()
+	assertions.Equal(revision, afterRevision, "an empty first body leaves the embedding input unchanged")
+	assertions.Equal(gen, afterGen, "the subject-only vector stays covered")
+
+	requirements.NoError(st.UpsertMessageBodyContext(t.Context(), id, sql.NullString{String: "Real text", Valid: true}, sql.NullString{}))
+	changedRevision, changedGen := state()
+	assertions.NotEqual(revision, changedRevision, "a real body still invalidates the vector")
+	assertions.False(changedGen.Valid)
+}
