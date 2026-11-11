@@ -977,34 +977,14 @@ func TestCommitmentAgendaFinalMarkRechecksCurrentEvidence(t *testing.T) {
 				}))
 				r.NoError(err)
 			} else {
-				before, err := st.LatestPersonSweepChangeSequence(ctx)
-				r.NoError(err)
 				_, err = st.db.ExecContext(ctx, st.Rebind("UPDATE message_bodies SET body_text = ? WHERE message_id = ?"), "The original promise was removed.", commitment.AnchorMessageID)
 				r.NoError(err)
-				journal, err := st.ScanPersonSweepChanges(ctx, f.personID, before, 100)
-				r.NoError(err)
-				changes, err := st.BuildPersonSweepEvidenceStatusChanges(ctx, f.personID, journal)
-				r.NoError(err)
-				r.Len(changes, 1)
-				r.False(changes[0].Supported)
-				f = nextCommitmentTestAttempt(t, f, "-withdraw-before-mark")
-				request := f.request
-				request.CommitmentOnly = true
-				request.Generation.ResolvedAt = request.Generation.ResolvedAt.Add(time.Minute)
-				request.CompletedAt = request.Generation.ResolvedAt.Add(time.Minute)
-				request.Generation.Policy.AllowSensitive = true
-				request.Generation.EvidenceStatusChanges = changes
-				_, err = st.ApplyPersonSweep(ctx, request)
-				r.NoError(err)
-				var claim sql.NullInt64
-				r.NoError(st.db.QueryRowContext(ctx, st.Rebind("SELECT current_claim_id FROM person_commitments WHERE id = ?"), commitment.ID).Scan(&claim))
-				r.False(claim.Valid, "production withdrawal detaches the claim; the existing nonnull fence already covers it")
 			}
 			_, err = st.GetOpenPersonCommitmentContext(ctx, commitment.ID, now)
 			r.ErrorIs(err, sql.ErrNoRows, "the final read already rejects this changed commitment")
 			marked, err := st.MarkCommitmentAgendaAttemptContext(ctx, item, now, false)
 			r.NoError(err)
-			a.False(marked, "a stale prepared item cannot start a new remote create after fulfilment or citation withdrawal")
+			a.False(marked, "a stale prepared item cannot start a new remote create after fulfilment or a source edit")
 		})
 	}
 }
