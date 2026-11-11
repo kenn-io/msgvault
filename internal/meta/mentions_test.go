@@ -1,6 +1,8 @@
 package meta
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"testing"
@@ -90,6 +92,112 @@ func TestImportTagsResumesAndArchivesOtherAccountsMedia(t *testing.T) {
 	_, err = imp.ImportTags(t.Context(), "9", "100", "200", ImportOptions{Full: true})
 	require.Error(err)
 	unavailable = false
+	afters = nil
+	_, err = imp.ImportTags(t.Context(), "9", "100", "200", ImportOptions{})
+	require.NoError(err)
+	assert.Equal([]string{"", "p2", "p3"}, afters)
+}
+
+// tagsFixture serves the two-page tags fixture and calls onTags with each
+// requested cursor before it answers.
+func tagsFixture(t *testing.T, onTags func(after string)) *Client {
+	t.Helper()
+	return fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v26.0/me":
+			_, _ = fmt.Fprint(w, `{"id":"100","name":"Example Page","category":"Community"}`)
+		case "/v26.0/100":
+			_, _ = fmt.Fprint(w, `{"id":"100","instagram_business_account":{"id":"200","username":"example_business"}}`)
+		case "/v26.0/200/tags":
+			after := r.URL.Query().Get("after")
+			onTags(after)
+			switch after {
+			case "":
+				_, _ = fmt.Fprint(w, `{"data":[{"id":"700","username":"example_visitor"}],"paging":{"cursors":{"after":"p2"}}}`)
+			case "p2":
+				_, _ = fmt.Fprint(w, `{"data":[{"id":"702","username":"example_friend"}],"paging":{"cursors":{"after":"p3"}}}`)
+			case "p3":
+				_, _ = fmt.Fprint(w, `{"data":[]}`)
+			default:
+				assert.Fail(t, "unexpected tags cursor", after)
+			}
+		default:
+			assert.Fail(t, "unexpected fixture request", r.URL.Path)
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+}
+
+// A --full run publishes its reset before its first request, so a crash
+// before the first page cannot leave the next sync on an older cursor.
+func TestImportTagsFullResetIsSavedBeforeFirstRequest(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	full := false
+	var sourceID int64
+	var resumeFrom []string
+	var lookupErr error
+	c := tagsFixture(t, func(after string) {
+		if !full {
+			return
+		}
+		// The handler runs off the test goroutine, so the error is checked
+		// after the run.
+		blob, err := savedCheckpoint(t.Context(), st, sourceID)
+		lookupErr = errors.Join(lookupErr, err)
+		resumeFrom = append(resumeFrom, blob)
+	})
+	imp := NewMentionImporter(st, c)
+	src, err := imp.Register(t.Context(), "9", "100", "200")
+	require.NoError(err)
+	sourceID = src.ID
+	_, err = imp.ImportTags(t.Context(), "9", "100", "200", ImportOptions{MaxRequests: 1})
+	require.NoError(err)
+
+	full = true
+	_, err = imp.ImportTags(t.Context(), "9", "100", "200", ImportOptions{Full: true, MaxRequests: 1})
+	require.NoError(err)
+	require.NoError(lookupErr)
+	require.Len(resumeFrom, 1)
+	assert.JSONEq(`{"after":""}`, resumeFrom[0], "the next sync would start from the top")
+}
+
+// cancelOnLastPage cancels the run as it returns the final tags page.
+type cancelOnLastPage struct {
+	MentionAPI
+
+	cancel context.CancelFunc
+}
+
+func (c cancelOnLastPage) Tags(ctx context.Context, accountID, after string) (IGMediaPage, error) {
+	page, err := c.MentionAPI.Tags(ctx, accountID, after)
+	if err == nil && page.After == "" {
+		c.cancel()
+	}
+	return page, err
+}
+
+// A run that reached the last page but could not finish still sends the
+// next sync to the newest tags instead of an older saved cursor.
+func TestImportTagsUnfinishedFullScanStartsNextSyncFromTop(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	var afters []string
+	c := tagsFixture(t, func(after string) { afters = append(afters, after) })
+	imp := NewMentionImporter(st, c)
+	_, err := imp.Register(t.Context(), "9", "100", "200")
+	require.NoError(err)
+	_, err = imp.ImportTags(t.Context(), "9", "100", "200", ImportOptions{MaxRequests: 1})
+	require.NoError(err)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	afters = nil
+	_, err = NewMentionImporter(st, cancelOnLastPage{MentionAPI: c, cancel: cancel}).
+		ImportTags(ctx, "9", "100", "200", ImportOptions{Full: true})
+	require.Error(err)
+	require.Equal([]string{"", "p2", "p3"}, afters, "the run reached the last page")
+
 	afters = nil
 	_, err = imp.ImportTags(t.Context(), "9", "100", "200", ImportOptions{})
 	require.NoError(err)
