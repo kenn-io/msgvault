@@ -1,7 +1,9 @@
 package store
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -338,6 +340,8 @@ func TestCommitmentEditedSourceDoesNotTransferDoneToReplacement(t *testing.T) {
 	cfg.ApplyDefaults()
 	cfg.Commitments.Enabled = true
 	applyCommitmentTestSources(t, f, cfg.Commitments)
+	f = nextCommitmentTestAttempt(t, f, "-finish-initial")
+	applyCommitmentTestSources(t, f, cfg.Commitments)
 	items, err := st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
 	r.NoError(err)
 	r.Len(items, 1)
@@ -373,6 +377,8 @@ func TestCommitmentRestoredEditRevalidatesEvidenceDuringExtraction(t *testing.T)
 	cfg := peoplesweep.Config{}
 	cfg.ApplyDefaults()
 	cfg.Commitments.Enabled = true
+	applyCommitmentTestSources(t, f, cfg.Commitments)
+	f = nextCommitmentTestAttempt(t, f, "-finish-initial")
 	applyCommitmentTestSources(t, f, cfg.Commitments)
 	before, err := st.LatestPersonSweepChangeSequence(ctx)
 	r.NoError(err)
@@ -413,4 +419,80 @@ func TestCommitmentRestoredEditRevalidatesEvidenceDuringExtraction(t *testing.T)
 	r.NoError(err)
 	r.Len(evidence, 1)
 	a.True(evidence[0].Supported)
+}
+
+// No provider method is admissible while both extraction lanes defer. Embedding
+// the interface keeps the real worker/store integration focused on maintenance.
+type commitmentMaintenanceDeniedRunner struct {
+	peoplesweep.StructuredRunner
+
+	calls int
+}
+
+func (*commitmentMaintenanceDeniedRunner) OrdinaryInferenceAllowed(context.Context) (bool, error) {
+	return false, nil
+}
+
+func (r *commitmentMaintenanceDeniedRunner) PrepareStructured(context.Context, peoplesweep.StructuredRequest) (peoplesweep.PreparedStructuredRequest, error) {
+	r.calls++
+	return peoplesweep.PreparedStructuredRequest{}, errors.New("maintenance must not prepare provider work")
+}
+
+func TestCommitmentOnlyMaintenanceInvalidatesEvidenceBeyondFirstBatch(t *testing.T) {
+	r, a, ctx := require.New(t), assert.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "commitment-maintenance-pages", false)
+	st := f.store
+	_, persist := newCommitmentTestConversation(t, f)
+	for n := range 3 {
+		persist(fmt.Sprintf("promise-%d", n), fmt.Sprintf("I will send report %d.", n), -time.Hour)
+	}
+	cfg := peoplesweep.Config{Enabled: true, Provider: peoplesweep.ProviderSelection{Name: "test"},
+		Providers: map[string]peoplesweep.ProviderConfig{"test": {
+			Protocol: peoplesweep.ProtocolOpenAIChat, Endpoint: "https://api.example.test/v1", Model: "test-model",
+			Auth: peoplesweep.AuthBearer, Credential: peoplesweep.CredentialEnv, CredentialEnv: "TEST_KEY",
+			OutputMode: peoplesweep.OutputModeNativeJSONSchema, TokenLimitParameter: "max_completion_tokens",
+			RetentionPosture: "none", TrainingPosture: "none", AllowSensitive: true,
+			AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}, SourceSince: "2026-01-01", RequestTimeout: time.Second,
+		}}}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	cfg.ChangeBatchSize = 1
+	r.NoError(cfg.Validate())
+	applyCommitmentTestSources(t, f, cfg.Commitments)
+	f = nextCommitmentTestAttempt(t, f, "-finish-initial")
+	applyCommitmentTestSources(t, f, cfg.Commitments)
+	profile, err := cfg.Profile()
+	r.NoError(err)
+	_, err = st.EnsurePersonInferenceProfile(ctx, profile)
+	r.NoError(err)
+	_, _, err = st.GrantPersonCommitmentConsent(ctx, profile.Fingerprint, "test")
+	r.NoError(err)
+	active, err := st.HasActivePersonInferenceConsent(ctx, profile.Fingerprint)
+	r.NoError(err)
+	r.False(active)
+	for n := range 3 {
+		persist(fmt.Sprintf("promise-%d", n), "The old promise was removed.", -time.Hour)
+	}
+	runner := &commitmentMaintenanceDeniedRunner{}
+	serial := 0
+	worker := peoplesweep.Worker{Config: cfg, Store: st, Source: st, Sink: st, Catalog: st,
+		Context: peoplesweep.NewContextRetriever(st), Runner: runner, WorkerID: "maintenance-worker",
+		Clock: func() time.Time { return personFactLedgerNow }, NewID: func() string { serial++; return fmt.Sprintf("maintenance-%d", serial) }}
+	for range 8 {
+		_, err = worker.Run(ctx, peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental, PersonID: f.personID})
+		r.NoError(err)
+	}
+	a.Zero(runner.calls)
+	evidence, err := st.ListPersonFactEvidenceContext(ctx, f.personID, personfacts.EvidenceFilter{Limit: 10})
+	r.NoError(err)
+	r.Len(evidence, 3)
+	for _, item := range evidence {
+		a.False(item.Supported, "bounded local maintenance must eventually reach every edited message")
+	}
+	catalog, err := st.BuildPersonFactCatalogContext(ctx, true)
+	r.NoError(err)
+	cursors, err := st.EnsurePersonSweepCursors(ctx, []peoplesweep.CursorKey{{PersonID: f.personID, SourceLane: peoplesweep.SourceConversationText, ProgramFingerprint: peoplesweep.ProgramFingerprint(), CatalogFingerprint: catalog.Fingerprint}})
+	r.NoError(err)
+	r.Len(cursors, 1)
+	a.Zero(cursors[0].OptimisticSequence, "local invalidation must retain pending provider extraction")
 }
