@@ -148,7 +148,7 @@ func TestICSStatus(t *testing.T) {
 		assertions := assert.New(t)
 		requirements := require.New(t)
 		raw := strings.Replace(icsExample, "METHOD:REQUEST\r\n", "", 1)
-		components, err := ParseEmailICS([]byte(raw), "REPLY", "")
+		components, err := ParseICS([]byte(raw), "REPLY", "")
 		requirements.NoError(err)
 		assertions.Empty(components)
 		components, err = ParseICS([]byte(raw), "CANCEL", "")
@@ -160,15 +160,7 @@ func TestICSStatus(t *testing.T) {
 		requirements.Len(components, 1)
 		assertions.Equal("confirmed", components[0].Event.Status)
 	})
-	t.Run("email method", func(t *testing.T) {
-		requirements := require.New(t)
-		cancel := strings.Replace(icsExample, "METHOD:REQUEST", "METHOD:CANCEL", 1)
-		_, err := ParseEmailICS([]byte(cancel), "REPLY", "")
-		requirements.ErrorContains(err, "conflicts")
-		components, err := ParseEmailICS([]byte(icsExample), " request", "")
-		requirements.NoError(err)
-		requirements.Len(components, 1)
-	})
+
 }
 
 func TestICSRetainsEachEventWithItsTimeZones(t *testing.T) {
@@ -253,7 +245,6 @@ func TestICSRejectMalformed(t *testing.T) {
 	const zone = "BEGIN:VCALENDAR\r\nBEGIN:VTIMEZONE\r\nTZID:Custom/Test\r\nBEGIN:STANDARD\r\nDTSTART:20270101T000000\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0500\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:test@example.com\r\nDTSTART;TZID=Custom/Test:20270302T120000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
 	const ruleZone = "BEGIN:VCALENDAR\r\nBEGIN:VTIMEZONE\r\nTZID:Custom/Test\r\nBEGIN:STANDARD\r\nDTSTART:20271107T020000\r\nTZOFFSETFROM:-0400\r\nTZOFFSETTO:-0500\r\nRRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU\r\nEND:STANDARD\r\nBEGIN:DAYLIGHT\r\nDTSTART:20270314T020000\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0400\r\nRRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU\r\nEND:DAYLIGHT\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:test@example.com\r\nDTSTART;TZID=Custom/Test:20270305T090000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
 	for _, tc := range []struct{ name, raw, want string }{
-		{"oversized event", strings.Replace(icsExample, "DESCRIPTION:", "DESCRIPTION:"+strings.Repeat("a", 64<<20), 1), "retained calendar exceeds"},
 		{"zone RDATE", strings.Replace(ruleZone, "END:DAYLIGHT", "RDATE:20270301T020000\r\nEND:DAYLIGHT", 1), `unsupported VTIMEZONE "Custom/Test" observance`},
 		{"zone EXDATE", strings.Replace(ruleZone, "END:DAYLIGHT", "EXDATE:20270314T020000\r\nEND:DAYLIGHT", 1), `unsupported VTIMEZONE "Custom/Test" observance`},
 		{"zone EXRULE", strings.Replace(ruleZone, "END:DAYLIGHT", "EXRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU\r\nEND:DAYLIGHT", 1), `unsupported VTIMEZONE "Custom/Test" observance`},
@@ -262,7 +253,6 @@ func TestICSRejectMalformed(t *testing.T) {
 		{"zone changing offset without rule", strings.Replace(zone, "TZOFFSETFROM:-0500", "TZOFFSETFROM:-0400", 1), `unsupported VTIMEZONE "Custom/Test" offset or start`},
 		{"cancel zone date before observance", strings.NewReplacer("BEGIN:VCALENDAR", "BEGIN:VCALENDAR\r\nMETHOD:CANCEL", "DTSTART;TZID=Custom/Test:20270302T120000", "RDATE;TZID=Custom/Test:20270302T120000,20260101T120000").Replace(zone), "an observance starts after"},
 		{"unknown excluded date zone", strings.Replace(icsExample, "SUMMARY:", "EXDATE;TZID=Unknown/Zone:20270315T090000\r\nSUMMARY:", 1), `load time zone "Unknown/Zone"`},
-		{"unknown method", strings.Replace(icsExample, "METHOD:REQUEST", "METHOD:X-UNKNOWN", 1), `unsupported calendar method "X-UNKNOWN"`},
 		{"unknown zone", strings.ReplaceAll(icsExample, "America/New_York", "Unknown/Zone"), `load time zone "Unknown/Zone"`},
 		{"negative sequence", strings.Replace(icsExample, "SEQUENCE:2", "SEQUENCE:-1", 1), "invalid SEQUENCE"},
 		{"missing UID", strings.Replace(icsExample, "UID:invite@example.com\r\n", "", 1), "event has no UID"},
@@ -284,16 +274,6 @@ func TestICSRejectMalformed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, err := Decode("ics", []byte(tc.raw), []byte(`{}`), "")
 			require.ErrorContains(t, err, tc.want)
-		})
-	}
-}
-
-func TestICSRejectsUnsupportedFileMethods(t *testing.T) {
-	for _, method := range []string{"ADD", "REPLY", "REFRESH", "COUNTER", "DECLINECOUNTER"} {
-		t.Run(method, func(t *testing.T) {
-			raw := strings.Replace(icsExample, "METHOD:REQUEST", "METHOD:"+method, 1)
-			_, err := ParseICS([]byte(raw), "", "")
-			require.ErrorContains(t, err, `unsupported calendar method "`+method+`"`)
 		})
 	}
 }

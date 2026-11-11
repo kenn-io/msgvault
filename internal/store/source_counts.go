@@ -55,10 +55,3 @@ func (s *Store) CountNativeMessagesForSource(sourceID int64) (int64, error) {
 	err := s.db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND %s AND %s`, LiveMessagesWhere("", true), SourceNativeMessagesWhere("messages", "sources")), sourceID).Scan(&count)
 	return count, err
 }
-
-// CountAllMessagesForSourceContext counts every row removed with a source.
-func (s *Store) CountAllMessagesForSourceContext(ctx context.Context, sourceID int64) (int64, error) {
-	var count int64
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages WHERE source_id = ?`, sourceID).Scan(&count)
-	return count, err
-}

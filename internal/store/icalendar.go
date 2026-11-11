@@ -56,11 +56,7 @@ func (s *Store) PersistICalendarContext(ctx context.Context, sourceID int64, raw
 }
 
 func parseICalendar(raw []byte, method string, fromEmail bool) ([]calevent.ICSComponent, error) {
-	parse := calevent.ParseICS
-	if fromEmail {
-		parse = calevent.ParseEmailICS
-	}
-	components, err := parse(raw, method, "")
+	components, err := calevent.ParseICS(raw, method, "")
 	if err != nil {
 		return nil, &icsInterpretationError{err}
 	}

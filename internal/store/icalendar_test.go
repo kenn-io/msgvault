@@ -248,34 +248,6 @@ func TestICalendarCancelledExceptionOccurrences(t *testing.T) {
 	}
 }
 
-func TestICalendarRecurrenceAcrossClockChanges(t *testing.T) {
-	t.Run("file", func(t *testing.T) {
-		assertions, requirements := assert.New(t), require.New(t)
-		st := newRFC822IDBackfillBackendStore(t)
-		raw := calendarDocument("REQUEST", "DTSTART;TZID=America/New_York:20270314T023000\r\nDURATION:P1D\r\nRRULE:FREQ=DAILY;COUNT=2")
-		_, err := st.PersistICalendarContext(t.Context(), icsSource(t, st), raw)
-		requirements.NoError(err)
-		from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
-		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 3))
-		requirements.NoError(err)
-		requirements.Len(page.Occurrences, 2)
-		assertions.Equal("2027-03-15T07:30:00Z", page.Occurrences[0].End.UTC().Format(time.RFC3339))
-		assertions.Equal("2027-03-16T06:30:00Z", page.Occurrences[1].End.UTC().Format(time.RFC3339))
-	})
-	t.Run("explicit end", func(t *testing.T) {
-		requirements := require.New(t)
-		st := newRFC822IDBackfillBackendStore(t)
-		raw := calendarDocument("REQUEST", "DTSTART;TZID=America/New_York:20270313T090000\r\nDTEND;TZID=America/New_York:20270314T090000\r\nRRULE:FREQ=DAILY;COUNT=2")
-		_, err := st.PersistICalendarContext(t.Context(), icsSource(t, st), raw)
-		requirements.NoError(err)
-		from := time.Date(2027, 3, 15, 0, 0, 0, 0, time.UTC)
-		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-		requirements.NoError(err)
-		requirements.Len(page.Occurrences, 1)
-		assert.Equal(t, "2027-03-15T12:00:00Z", page.Occurrences[0].End.UTC().Format(time.RFC3339))
-	})
-}
-
 func TestICalendarCancellationInheritsMissingEnd(t *testing.T) {
 	for _, tc := range []struct {
 		name, duration string
@@ -301,60 +273,7 @@ func TestICalendarCancellationInheritsMissingEnd(t *testing.T) {
 			}
 		})
 	}
-	t.Run("calendar day across clock change", func(t *testing.T) {
-		assertions, requirements := assert.New(t), require.New(t)
-		st := newRFC822IDBackfillBackendStore(t)
-		source := icsSource(t, st)
-		_, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "DTSTART;TZID=America/New_York:20271105T090000\r\nDURATION:P1D\r\nRRULE:FREQ=DAILY;COUNT=2"))
-		requirements.NoError(err)
-		_, err = st.PersistICalendarContext(t.Context(), source, calendarDocument("CANCEL", "RECURRENCE-ID;TZID=America/New_York:20271106T090000\r\nDTSTART;TZID=America/New_York:20271106T090000"))
-		requirements.NoError(err)
-		from := time.Date(2027, 11, 7, 13, 30, 0, 0, time.UTC)
-		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.Add(15*time.Minute))
-		requirements.NoError(err)
-		requirements.Len(page.Occurrences, 1)
-		assertions.Equal("cancelled", page.Occurrences[0].Status)
-		assertions.Equal("2027-11-07T14:00:00Z", page.Occurrences[0].End.UTC().Format(time.RFC3339))
-	})
-}
 
-func TestICalendarRecurrenceProjectionUpgrade(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	source := icsSource(t, st)
-	raw := calendarDocument("REQUEST", "DTSTART;TZID=America/New_York:20270302T090000\r\nDURATION:P1DT1H")
-	_, err := st.PersistICalendarContext(t.Context(), source, raw)
-	requirements.NoError(err)
-	ids := emailEvents(t, st, source)
-	requirements.Len(ids, 1)
-	_, err = st.db.ExecContext(t.Context(), `UPDATE calendar_events SET projection_version=? WHERE message_id=?`, calendarEventProjectionVersion-1, ids[0])
-	requirements.NoError(err)
-	_, err = st.db.ExecContext(t.Context(), `UPDATE applied_migrations SET version=? WHERE name='calendar_event_projection_v1'`, calendarEventProjectionVersion-1)
-	requirements.NoError(err)
-	for _, query := range []string{
-		`ALTER TABLE calendar_events DROP COLUMN start_local`,
-		`ALTER TABLE calendar_events DROP COLUMN duration_days`,
-		`ALTER TABLE calendar_events DROP COLUMN duration_elapsed_ns`,
-		`DROP INDEX idx_calendar_events_series_id`,
-		`UPDATE archive_metadata SET value='40' WHERE key='schema_version'`,
-	} {
-		_, err = st.db.ExecContext(t.Context(), query)
-		requirements.NoError(err)
-	}
-	requirements.NoError(st.InitSchemaContext(t.Context()))
-	requirements.NoError(st.ValidateSchemaContext(t.Context()))
-	rows := calendarRows(t, st, ids[0])
-	requirements.Len(rows, 1)
-	assertions.NotEmpty(rows[0].Event.StartLocal)
-	assertions.Equal(1, rows[0].Event.DurationDays)
-	assertions.Equal(int64(time.Hour), rows[0].Event.DurationElapsedNS)
-	query := `SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_calendar_events_series_id'`
-	if st.IsPostgreSQL() {
-		query = `SELECT count(*) FROM pg_indexes WHERE schemaname=current_schema() AND indexname='idx_calendar_events_series_id'`
-	}
-	var count int
-	requirements.NoError(st.db.QueryRowContext(t.Context(), query).Scan(&count))
-	assertions.Equal(1, count)
 }
 
 func TestICalendarRoomAttendeesAreNotParticipants(t *testing.T) {

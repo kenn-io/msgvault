@@ -2148,8 +2148,6 @@ UTF-8, as it does for email. A series with unsupported recurrence stays archived
 reports how many events were updated and how many were not. Floating times use UTC. The daemon
 reads the file locally; importing files through a remote daemon is unavailable.
 
-Recurring events preserve their local start time and calendar-day duration across clock changes.
-
 A cancellation keeps the event's last accepted title, times, participants, and
 raw iCalendar data, and only marks it cancelled.
 

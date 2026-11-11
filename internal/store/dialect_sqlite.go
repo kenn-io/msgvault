@@ -1962,9 +1962,6 @@ func (d *SQLiteDialect) contentChangedAtDefaultStamps(q querier) (bool, error) {
 // silences these when the column already exists (idempotent migrations).
 func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 	return []ColumnMigration{
-		{`ALTER TABLE calendar_events ADD COLUMN start_local TEXT NOT NULL DEFAULT ''`, "calendar_events.start_local"},
-		{`ALTER TABLE calendar_events ADD COLUMN duration_days INTEGER NOT NULL DEFAULT 0`, "calendar_events.duration_days"},
-		{`ALTER TABLE calendar_events ADD COLUMN duration_elapsed_ns INTEGER NOT NULL DEFAULT 0`, "calendar_events.duration_elapsed_ns"},
 		{`ALTER TABLE carddav_resources ADD COLUMN owns_display_name BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_resources.owns_display_name"},
 		{`ALTER TABLE carddav_resources ADD COLUMN locally_published BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_resources.locally_published"},
 		{`ALTER TABLE person_match_judgment_cursor ADD COLUMN started_at_zero BOOLEAN NOT NULL DEFAULT FALSE`, "person_match_judgment_cursor.started_at_zero"},
