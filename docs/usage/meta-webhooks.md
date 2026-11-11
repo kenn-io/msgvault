@@ -54,7 +54,9 @@ arrived and deleted once applied.
 
 A new or edited comment is read from Meta with the Page token rather than
 taken from the delivery, so a late or repeated delivery cannot bring back older
-text. A post or parent comment that is not archived yet is read too.
+text. A post or parent comment that is not archived yet is read too. For a hide
+or unhide, the daemon reads whether Meta hides the comment now and records
+that, so a repeated hide cannot hide a visible comment.
 
 The daemon applies a delivery one change at a time. When a change cannot be
 applied, for example while a polling sync of the same Page is running, the
@@ -71,5 +73,6 @@ skipped at once.
 
 - Only comment changes from the Page `feed` field are applied. Reactions,
   other feed changes and other fields are logged and ignored.
-- A hide or unhide for a comment that is not archived yet is ignored.
+- A hide or unhide for a comment that is not archived yet is ignored. Polling
+  sync does not read hidden state, so that comment is not marked hidden.
 - Deliveries larger than 8 MiB are refused.
