@@ -52,11 +52,12 @@ with the same event, arguments and URL replaces the secret and lease while
 keeping the saved position. After a default restore, refresh the secret to resume; a backup with `--include-tokens` restores it. `events/unsubscribe` uses the same identity.
 
 After subscribing, read `list_changes` once from your own cursor to catch up.
-Each signed ping contains only a subscription ID and a null cursor. Verify the
-Standard Webhooks signature and deduplicate by `webhook-id`, then read
+Each signed ping names the subscription in its data and has a null cursor. Verify
+the Standard Webhooks signature and deduplicate by `webhook-id`, then read
 `list_changes` through its cursor. Pings may coalesce and are not replayed;
-the daemon retries temporary failures up to five attempts, and drops a range
-on HTTP 410 or 413. Messages older than 72 hours and deleted messages never trigger a ping. A lost ping costs latency, so retain your own feed cursor.
+five failed attempts or HTTP 410 or 413 drop the ping. Messages older than 72
+hours and deleted messages are excluded from matches. A lost ping costs latency,
+so retain your own feed cursor.
 
 ## Calendar control
 
