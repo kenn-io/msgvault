@@ -164,7 +164,8 @@ to revoke both the ordinary inference and commitment grants for the profile.
 
 Cited promises appear under **Promises you made** and **Promises to you**.
 Each row links to the quoted message. The JSON response also gives the claim
-ID and original-body rune range. See the [person facts CLI reference](../cli-reference.md#person-facts) for claim kinds and freshness. A due date is a calendar date in the
+ID and original-body rune range. See the [person facts CLI reference](../cli-reference.md#person-track-tiers-provider-sweep-and-facts) for claim kinds
+and freshness. A due date is a calendar date in the
 configured activity timezone. A promise expires after the due date and
 configured grace period, or after the maximum duration if it has no due
 date. Expired and unsupported claims leave the list.
