@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
+import { filtersForGroup } from '../../explore/group-context';
 import FilterMenu from './FilterMenu.svelte';
 
 it("offers the server's Conversation kind for an empty message type in a group chat", async () => {
@@ -123,6 +124,32 @@ it('displays local dates with UTC peers', async () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
     expect((screen.getByLabelText('From') as HTMLInputElement).value).toBe('2026-07-01');
     expect((screen.getByLabelText('To (UTC)') as HTMLInputElement).value).toBe('2026-07-31');
+  } finally { vi.unstubAllEnvs(); }
+});
+
+it('preserves a September drill end when midnight is skipped', async () => {
+  vi.stubEnv('TZ', 'America/Asuncion');
+  try {
+    const filters = filtersForGroup([], 'month', '2023-09')!;
+    expect(filters).toEqual([
+      { dimension: 'after', values: ['2023-09-01T00:00:00-04:00'] },
+      { dimension: 'before', values: ['2023-10-01T01:00:00-03:00'] }
+    ]);
+    const onChange = vi.fn();
+    const props = { client: createAPIClient(async () => Response.json({ rows: [], accounts: [] })), onChange, onClear: vi.fn() };
+    const view = render(FilterMenu, { ...props, filters });
+    await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+    const to = screen.getByLabelText('To') as HTMLInputElement;
+    expect(to.value).toBe('2023-09-30');
+    await fireEvent.change(to, { target: { value: to.value } });
+    expect(onChange).toHaveBeenLastCalledWith([
+      { dimension: 'after', values: ['2023-09-01T00:00:00-04:00'] },
+      { dimension: 'before', values: ['2023-10-01T01:00:00-03:00'] }
+    ]);
+    await view.rerender({ ...props, filters: onChange.mock.lastCall![0] });
+    await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+    expect((screen.getByLabelText('To') as HTMLInputElement).value).toBe('2023-09-30');
   } finally { vi.unstubAllEnvs(); }
 });
 

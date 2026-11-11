@@ -12,7 +12,10 @@ export function localBoundary(date: Date): string {
 export function boundaryDate(value: string, before: boolean): string {
   const date = isLocalBound(value) ? new Date(value.replace(/[+-]\d\d:\d\d$/, 'Z')) : new Date(value);
   if (Number.isNaN(date.getTime())) return '';
-  if (before) date.setUTCMilliseconds(date.getUTCMilliseconds() - 1);
+  if (before) {
+    if (isLocalBound(value)) date.setUTCHours(0, 0, 0, 0);
+    date.setUTCMilliseconds(date.getUTCMilliseconds() - 1);
+  }
   return date.toISOString().slice(0, 10);
 }
 
