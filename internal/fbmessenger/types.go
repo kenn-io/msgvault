@@ -83,11 +83,9 @@ type Reaction struct {
 
 // Message is one message in a parsed DYI thread.
 type Message struct {
-	sourceID     string
-	rawData      []byte
-	jsonShard    *rawJSONExport
-	jsonFilename string
-	jsonRecord   *rawJSONMessage
+	sourceID   string
+	rawData    []byte
+	jsonRecord *rawJSONMessage
 	// Index is a monotonic per-thread index (0-based) used to construct
 	// a stable source_message_id.
 	Index int

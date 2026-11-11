@@ -29,6 +29,16 @@ type rawJSONParticipant struct {
 	Name string `json:"name"`
 }
 
+type instagramRaw struct {
+	Shard      string `json:"shard"`
+	ThreadPath string `json:"thread_path"`
+	Header     struct {
+		Title        string               `json:"title"`
+		Participants []rawJSONParticipant `json:"participants"`
+	} `json:"header"`
+	Record jsontext.Value `json:"record"`
+}
+
 type rawJSONPhoto struct {
 	URI               string `json:"uri"`
 	CreationTimestamp int64  `json:"creation_timestamp"`
@@ -177,7 +187,10 @@ func parseJSONThread(ctx context.Context, rootDir, threadDir string, instagram *
 				names := map[string]bool{}
 				for _, participant := range decoded.Participants {
 					if name := DecodeMojibake(participant.Name); name != "" {
-						names[name] = true
+						if !names[name] {
+							thread.Participants = append(thread.Participants, Participant{Name: name})
+							names[name] = true
+						}
 					}
 				}
 				thread.ConvType = "direct_chat"
@@ -209,7 +222,16 @@ func parseJSONThread(ctx context.Context, rootDir, threadDir string, instagram *
 					instagram.summary.Incomplete = true
 					continue
 				}
-				message.rawData, message.jsonShard, message.jsonFilename = raw, &decoded, full
+				relative, err := filepath.Rel(rootDir, full)
+				if err != nil {
+					return nil, err
+				}
+				envelope := instagramRaw{Shard: filepath.ToSlash(relative), ThreadPath: decoded.ThreadPath, Record: raw}
+				envelope.Header.Title, envelope.Header.Participants = decoded.Title, decoded.Participants
+				message.rawData, err = json.Marshal(envelope, jsontext.PreserveRawStrings(true))
+				if err != nil {
+					return nil, err
+				}
 				message.jsonRecord = &record
 				thread.Messages = append(thread.Messages, message)
 			}
@@ -391,7 +413,10 @@ func resolveAttachments(absRoot string, m rawJSONMessage) []Attachment {
 			if it.URI == "" {
 				continue
 			}
-			abs := resolveAttachmentURI(absRoot, it.URI)
+			var abs string
+			if absRoot != "" {
+				abs = resolveAttachmentURI(absRoot, it.URI)
+			}
 			out = append(out, Attachment{
 				URI:      it.URI,
 				AbsPath:  abs,
@@ -408,7 +433,10 @@ func resolveAttachments(absRoot string, m rawJSONMessage) []Attachment {
 	add("gif", m.Gifs)
 	add("file", m.Media)
 	if m.Sticker != nil && m.Sticker.URI != "" {
-		abs := resolveAttachmentURI(absRoot, m.Sticker.URI)
+		var abs string
+		if absRoot != "" {
+			abs = resolveAttachmentURI(absRoot, m.Sticker.URI)
+		}
 		out = append(out, Attachment{
 			URI:      m.Sticker.URI,
 			AbsPath:  abs,

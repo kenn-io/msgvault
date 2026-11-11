@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
@@ -19,12 +20,10 @@ import (
 const instagramInbox = "your_instagram_activity/messages/inbox"
 
 type instagramPending struct {
-	id, filename string
-	shard        *rawJSONExport
-	raw          jsontext.Value
-	record       rawJSONMessage
-	message      Message
-	skip         bool
+	id      string
+	record  rawJSONMessage
+	message Message
+	skip    bool
 }
 
 type instagramOccurrence struct{ content, reactions string }
@@ -42,15 +41,15 @@ func instagramEvidence(record rawJSONMessage) instagramOccurrence {
 	return instagramOccurrence{instagramJSONMessage(record).Body, string(reactions)}
 }
 
-func parseInstagramThread(ctx context.Context, st *store.Store, sourceID int64, td ThreadDir, summary *ImportSummary, keys map[string]string, archivedGroups map[string][]string) (*Thread, map[string]store.StoredMessage, error) {
-	parsed, err := parseJSONThread(ctx, "", td.Path, &instagramJSONOptions{td: td, summary: summary, keys: keys})
+func parseInstagramThread(ctx context.Context, st *store.Store, sourceID int64, root string, td ThreadDir, summary *ImportSummary, keys map[string]string, archivedGroups map[string][]string) (*Thread, map[string]store.StoredMessage, error) {
+	parsed, err := parseJSONThread(ctx, root, td.Path, &instagramJSONOptions{td: td, summary: summary, keys: keys})
 	if err != nil {
 		return nil, nil, err
 	}
 	key := parsed.instagramKey
 	var pending []*instagramPending
 	for _, message := range parsed.Messages {
-		pending = append(pending, &instagramPending{filename: message.jsonFilename, shard: message.jsonShard, raw: message.rawData, record: *message.jsonRecord, message: message})
+		pending = append(pending, &instagramPending{record: *message.jsonRecord, message: message})
 	}
 	groups := map[string][]*instagramPending{}
 	for _, p := range pending {
@@ -66,8 +65,9 @@ func parseInstagramThread(ctx context.Context, st *store.Store, sourceID int64, 
 		return nil, nil, err
 	}
 	used := map[string]bool{}
+	var repairs []string
 	for prefix, group := range groups {
-		matchInstagramGroup(group, archivedGroups[prefix], archived, used, summary)
+		matchInstagramGroup(group, archivedGroups[prefix], archived, used, summary, &repairs)
 	}
 	for prefix, group := range groups {
 		numberInstagramGroup(prefix, group, archivedGroups[prefix])
@@ -79,24 +79,31 @@ func parseInstagramThread(ctx context.Context, st *store.Store, sourceID int64, 
 			continue
 		}
 		message := p.message
-		message.sourceID, message.rawData = p.id, p.raw
-		message.jsonShard, message.jsonFilename = p.shard, p.filename
+		message.sourceID = p.id
+		parsed.Messages = append(parsed.Messages, message)
+	}
+	for _, id := range repairs {
+		record, ok := instagramArchivedRecord(archived[id])
+		if !ok {
+			continue
+		}
+		message := instagramJSONMessage(record)
+		message.sourceID, message.rawData, message.jsonRecord = id, archived[id].Raw, &record
+		message.SentAt = time.UnixMilli(record.TimestampMs).UTC()
 		parsed.Messages = append(parsed.Messages, message)
 	}
 	return parsed, archived, nil
 }
 
 func instagramArchivedRecord(stored store.StoredMessage) (rawJSONMessage, bool) {
-	var wrapper struct {
-		Record jsontext.Value `json:"record"`
-	}
+	var wrapper instagramRaw
 	var record rawJSONMessage
 	return record, json.Unmarshal(stored.Raw, &wrapper) == nil && json.Unmarshal(wrapper.Record, &record) == nil
 }
 
 // matchInstagramGroup assigns archived IDs sharing a fingerprint prefix: first
 // by exact content and reactions, then by content when one copy remains.
-func matchInstagramGroup(group []*instagramPending, old []string, archived map[string]store.StoredMessage, used map[string]bool, summary *ImportSummary) {
+func matchInstagramGroup(group []*instagramPending, old []string, archived map[string]store.StoredMessage, used map[string]bool, summary *ImportSummary, repairs *[]string) {
 	ordinal := func(id string) int {
 		n, _ := strconv.Atoi(id[strings.LastIndexByte(id, ':')+1:])
 		return n
@@ -124,11 +131,13 @@ func matchInstagramGroup(group []*instagramPending, old []string, archived map[s
 	}
 	remaining := map[string][]*instagramPending{}
 	unused := map[string][]string{}
+	uncertain := map[string]bool{}
 	for _, p := range group {
 		if p.id == "" {
 			if unreadable {
 				p.skip = true
 				summary.Incomplete = true
+				uncertain[instagramEvidence(p.record).content] = true
 				continue
 			}
 			key := instagramEvidence(p.record).content
@@ -137,10 +146,15 @@ func matchInstagramGroup(group []*instagramPending, old []string, archived map[s
 	}
 	for _, id := range old {
 		if key, ok := evidence[id]; ok && !used[id] {
-			unused[key.content] = append(unused[key.content], id)
+			if uncertain[key.content] {
+				*repairs = append(*repairs, id)
+			} else {
+				unused[key.content] = append(unused[key.content], id)
+			}
 		}
 	}
-	reconcileInstagramCopies(remaining, unused, used, summary)
+	summary.Errors += len(uncertain)
+	reconcileInstagramCopies(remaining, unused, used, summary, repairs)
 }
 
 // reconcileInstagramCopies settles changed copies that share content with
@@ -148,7 +162,7 @@ func matchInstagramGroup(group []*instagramPending, old []string, archived map[s
 // can't prove any copy is new, the copies are skipped. Surplus copies are
 // added with only the reactions every copy has. Either way the run is
 // incomplete, since which copy is which can't be told.
-func reconcileInstagramCopies(remaining map[string][]*instagramPending, unused map[string][]string, used map[string]bool, summary *ImportSummary) {
+func reconcileInstagramCopies(remaining map[string][]*instagramPending, unused map[string][]string, used map[string]bool, summary *ImportSummary, repairs *[]string) {
 	for content, items := range remaining {
 		old := unused[content]
 		switch {
@@ -158,6 +172,8 @@ func reconcileInstagramCopies(remaining map[string][]*instagramPending, unused m
 			used[old[0]] = true
 		default:
 			summary.Incomplete = true
+			summary.Errors++
+			*repairs = append(*repairs, old...)
 			surplus := len(items) - len(old)
 			if surplus > 0 {
 				addInstagramSurplus(items, surplus)
@@ -197,11 +213,15 @@ func addInstagramSurplus(items []*instagramPending, n int) {
 			base.record.Reactions = append(base.record.Reactions, r)
 		}
 	}
+	var envelope instagramRaw
+	_ = json.Unmarshal(base.message.rawData, &envelope)
 	var fields map[string]jsontext.Value
-	_ = json.Unmarshal(base.raw, &fields)
+	_ = json.Unmarshal(envelope.Record, &fields)
 	fields["reactions"], _ = json.Marshal(base.record.Reactions)
-	base.raw, _ = json.Marshal(fields, json.Deterministic(true), jsontext.PreserveRawStrings(true))
+	envelope.Record, _ = json.Marshal(fields, json.Deterministic(true), jsontext.PreserveRawStrings(true))
+	raw, _ := json.Marshal(envelope, jsontext.PreserveRawStrings(true))
 	base.message = instagramJSONMessage(base.record)
+	base.message.rawData = raw
 	base.message.SentAt = items[0].message.SentAt
 	for _, p := range items[:n] {
 		*p = base

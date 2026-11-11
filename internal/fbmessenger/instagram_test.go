@@ -385,14 +385,28 @@ func TestInstagramConversationUsesFirstShardHeader(t *testing.T) {
 		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT title, conversation_type FROM conversations`).Scan(&title, &kind))
 		assert.Equal("New title", title)
 		assert.Equal("group_chat", kind)
+		_, total, err := st.SearchMessagesQueryContext(t.Context(), &search.Query{TextTerms: []string{"New"}}, 0, 10)
+		require.NoError(err)
+		assert.Equal(int64(2), total)
+		var recipients int
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(DISTINCT mr.message_id) FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE p.display_name='Lumen Example'`).Scan(&recipients))
+		assert.Equal(2, recipients)
 	}
+	var oldID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE snippet='old'`).Scan(&oldID))
+	raw, err := st.GetMessageRawContext(t.Context(), oldID)
+	require.NoError(err)
+	assert.Contains(string(raw), "Old title")
 	require.NoError(os.WriteFile(first, []byte(`{"thread_path":"inbox/circle","title":"Latest title","participants":[{"name":"Nova Example"},{"name":"Mira Example"}],"messages":[]}`), 0600))
-	_, err := ImportDYI(t.Context(), st, opts)
+	_, err = ImportDYI(t.Context(), st, opts)
 	require.NoError(err)
 	var title, kind string
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT title, conversation_type FROM conversations`).Scan(&title, &kind))
 	assert.Equal("Latest title", title)
 	assert.Equal("direct_chat", kind)
+	_, total, err := st.SearchMessagesQueryContext(t.Context(), &search.Query{TextTerms: []string{"Latest"}}, 0, 10)
+	require.NoError(err)
+	assert.Equal(int64(1), total)
 }
 
 func TestInstagramRejectsNewerFingerprintInAbsentThread(t *testing.T) {
@@ -718,6 +732,56 @@ func TestInstagramDuplicateOccurrences(t *testing.T) {
 		assert.Zero(summary.MessagesAdded)
 	})
 
+	t.Run("ambiguous direction repair", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		st := testutil.NewTestStore(t)
+		root := t.TempDir()
+		a, b := instagramTestRecord("same"), instagramTestRecord("same")
+		a["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "a"}}
+		b["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "b"}}
+		instagramTestShard(t, root, "circle", "message_1.json", a, b)
+		opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "wrong"}
+		_, err := ImportDYI(t.Context(), st, opts)
+		require.NoError(err)
+		ids := instagramIDs(t, st)
+		snapshot := func() (map[string][]byte, map[string]string) {
+			rows, err := st.DB().QueryContext(t.Context(), `SELECT m.id, m.source_message_id, r.reaction_value FROM messages m JOIN reactions r ON r.message_id = m.id`)
+			require.NoError(err)
+			defer func() { require.NoError(rows.Close()) }()
+			raws, reactions := map[string][]byte{}, map[string]string{}
+			for rows.Next() {
+				var id int64
+				var sourceID, reaction string
+				require.NoError(rows.Scan(&id, &sourceID, &reaction))
+				raws[sourceID], err = st.GetMessageRawContext(t.Context(), id)
+				require.NoError(err)
+				reactions[sourceID] = reaction
+			}
+			require.NoError(rows.Err())
+			return raws, reactions
+		}
+		raws, reactions := snapshot()
+		a["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "c"}}
+		b["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "d"}}
+		instagramTestShard(t, root, "circle", "message_1.json", a, b)
+		opts.SelfName = "Mira Example"
+		for range 2 {
+			summary, err := ImportDYI(t.Context(), st, opts)
+			require.NoError(err)
+			assert.True(summary.Incomplete)
+			assert.Zero(summary.MessagesAdded)
+			assert.Equal(ids, instagramIDs(t, st))
+			assert.Equal(2, countMessages(t, st, "is_from_me = TRUE"))
+			run, err := st.GetLatestSyncContext(t.Context(), summary.SourceID, 0)
+			require.NoError(err)
+			assert.Positive(run.ErrorsCount)
+			afterRaw, afterReactions := snapshot()
+			assert.Equal(reactions, afterReactions)
+			assert.Equal(raws, afterRaw)
+		}
+	})
+
 	t.Run("unreadable evidence", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
@@ -736,11 +800,17 @@ func TestInstagramDuplicateOccurrences(t *testing.T) {
 		assert.Zero(summary.MessagesAdded)
 		assert.True(summary.Incomplete)
 		assert.Equal(1, countMessages(t, st, ""))
+		run, err := st.GetLatestSyncContext(t.Context(), summary.SourceID, 0)
+		require.NoError(err)
+		assert.Positive(run.ErrorsCount)
 		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE message_raw SET raw_data = ?`), raw)
 		require.NoError(err)
 		summary, err = ImportDYI(t.Context(), st, opts)
 		require.NoError(err)
 		assert.Zero(summary.MessagesAdded)
 		assert.False(summary.Incomplete)
+		run, err = st.GetLatestSyncContext(t.Context(), summary.SourceID, 0)
+		require.NoError(err)
+		assert.Zero(run.ErrorsCount)
 	})
 }

@@ -108,6 +108,12 @@ func TestParseJSONThread_Attachments(t *testing.T) {
 			assert.Equal(test.mime, m.Attachments[0].MimeType)
 		})
 	}
+	uri := filepath.Join("testdata", "json_with_media", "your_activity_across_facebook", "messages", "inbox", "bob_XYZ789", "photos", "tiny.png")
+	require.FileExists(t, uri)
+	attachments := resolveAttachments("", rawJSONMessage{Photos: []rawJSONPhoto{{URI: uri}}})
+	require.Len(t, attachments, 1)
+	assert.Empty(t, attachments[0].AbsPath)
+	assert.Equal(t, uri, attachments[0].URI)
 }
 
 func TestParseJSONThread_Attachments_AltLayout(t *testing.T) {

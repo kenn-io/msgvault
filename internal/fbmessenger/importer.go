@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -260,7 +259,7 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (summar
 	defer func() {
 		if instagram {
 			cleanup := context.WithoutCancel(ctx) // Record partial work even after cancellation.
-			checkpoint := &store.Checkpoint{MessagesProcessed: summary.MessagesProcessed, MessagesAdded: summary.MessagesAdded, ErrorsCount: summary.FilesSkipped + summary.RecordsUnsupported + int64(summary.MediaRejected+summary.MediaMissing)}
+			checkpoint := &store.Checkpoint{MessagesProcessed: summary.MessagesProcessed, MessagesAdded: summary.MessagesAdded, ErrorsCount: summary.FilesSkipped + summary.RecordsUnsupported + int64(summary.Errors+summary.MediaRejected+summary.MediaMissing)}
 			retErr = errors.Join(retErr, st.UpdateSyncCheckpointContext(cleanup, syncID, checkpoint))
 			if retErr != nil {
 				retErr = errors.Join(retErr, st.FailSyncContext(cleanup, syncID, retErr.Error()))
@@ -370,7 +369,7 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (summar
 		if instagram {
 			var parsed *Thread
 			var archived map[string]store.StoredMessage
-			parsed, archived, err = parseInstagramThread(ctx, st, source.ID, td, summary, keys, archivedGroups)
+			parsed, archived, err = parseInstagramThread(ctx, st, source.ID, absRoot, td, summary, keys, archivedGroups)
 			if err == nil {
 				err = writeThreadToStore(ctx, st, source.ID, td, parsed, "", opts, labelIDs, meLocal, logger, summary, syncID, absRoot, threadIdx, &cp, archived)
 			}
@@ -610,6 +609,21 @@ func writeThreadToStore(
 		// Determine label IDs for this thread.
 		parentLabelID = labelIDs["Messenger"]
 		sectionLabelID = labelIDs[sectionLabelName(td.Section)]
+	} else {
+		nameToID, nameToEmail = map[string]int64{}, map[string]string{}
+		var addrs []mime.Address
+		for _, p := range thread.Participants {
+			addr := address(p.Name)
+			nameToEmail[p.Name] = addr.Email
+			addrs = append(addrs, addr)
+		}
+		participants, err := st.EnsureParticipantsBatch(ctx, addrs)
+		if err != nil {
+			return err
+		}
+		for name, email := range nameToEmail {
+			nameToID[name] = participants[email]
+		}
 	}
 	rawFormat := "fbmessenger_" + thread.Format
 
@@ -622,24 +636,7 @@ func writeThreadToStore(
 		if opts.Limit > 0 && summary.MessagesAdded >= int64(opts.Limit) && (!instagram || stored.ID == 0) {
 			return errLimitReached
 		}
-		if instagram {
-			nameToID, nameToEmail = map[string]int64{}, map[string]string{}
-			var addrs []mime.Address
-			for _, p := range m.jsonShard.Participants {
-				if name := DecodeMojibake(p.Name); name != "" && nameToEmail[name] == "" {
-					addr := address(name)
-					nameToEmail[name] = addr.Email
-					addrs = append(addrs, addr)
-				}
-			}
-			participants, err := st.EnsureParticipantsBatch(ctx, addrs)
-			if err != nil {
-				return err
-			}
-			for name, email := range nameToEmail {
-				nameToID[name] = participants[email]
-			}
-		} else {
+		if !instagram {
 			summary.MessagesProcessed++
 		}
 
@@ -661,9 +658,9 @@ func writeThreadToStore(
 				if err == nil {
 					if id, ok := m2[addr.Email]; ok {
 						senderID = sql.NullInt64{Int64: id, Valid: true}
-						nameToID[senderName] = id
 						nameToEmail[senderName] = addr.Email
 						if !instagram {
+							nameToID[senderName] = id
 							_ = st.EnsureConversationParticipantContext(ctx, convID, id, "member")
 						}
 					}
@@ -759,22 +756,7 @@ func writeThreadToStore(
 			msgRow.ConversationID, msgRow.MessageType = stored.ConversationID, "instagram"
 			msgRow.SentAt.Valid, msgRow.ReceivedAt.Valid = true, true
 			msgRow.PreserveAttachmentStats = true
-			relative, err := filepath.Rel(absRoot, m.jsonFilename)
-			if err != nil {
-				return err
-			}
-			rawData, err := json.Marshal(struct {
-				Shard      string         `json:"shard"`
-				ThreadPath string         `json:"thread_path"`
-				Header     any            `json:"header"`
-				Record     jsontext.Value `json:"record"`
-			}{filepath.ToSlash(relative), m.jsonShard.ThreadPath, struct {
-				Title        string               `json:"title"`
-				Participants []rawJSONParticipant `json:"participants"`
-			}{m.jsonShard.Title, m.jsonShard.Participants}, m.rawData}, jsontext.PreserveRawStrings(true))
-			if err != nil {
-				return err
-			}
+			rawData := m.rawData
 			var names []string
 			for name := range nameToID {
 				names = append(names, name)
@@ -789,18 +771,27 @@ func writeThreadToStore(
 					toIDs, toNames, toAddresses = append(toIDs, nameToID[name]), append(toNames, name), append(toAddresses, nameToEmail[name])
 				}
 			}
+			if senderID.Valid && nameToID[senderName] == 0 {
+				members = append(members, store.ConversationParticipantRef{ParticipantID: senderID.Int64, Role: "member"})
+			}
 			recipients := []store.RecipientSet{{Type: "to", ParticipantIDs: toIDs, DisplayNames: toNames}}
 			if senderID.Valid {
 				recipients = append(recipients, store.RecipientSet{Type: "from", ParticipantIDs: []int64{senderID.Int64}, DisplayNames: []string{senderName}})
 			}
-			title := DecodeMojibake(m.jsonShard.Title)
 			data := &store.MessagePersistData{
 				Message: msgRow, Conversation: &store.ConversationPersistData{SourceConversationID: thread.instagramKey, ConversationType: thread.ConvType, Title: thread.Title, Participants: members, PreserveExistingParticipants: true},
 				BodyText: sql.NullString{String: m.Body, Valid: m.Body != ""}, RawMIME: rawData, RawFormat: "instagram_json", Recipients: recipients, PreserveLabels: true,
-				FTS: &store.FTSDoc{Subject: title, Body: m.Body, FromAddr: nameToEmail[senderName], ToAddrs: strings.Join(toAddresses, " ")},
+				FTS: &store.FTSDoc{Subject: thread.Title, Body: m.Body, FromAddr: nameToEmail[senderName], ToAddrs: strings.Join(toAddresses, " ")},
 			}
 			messageID = stored.ID
-			if stored.ID == 0 || !stored.Matches(msgRow, rawData) {
+			matches := stored.ID != 0 && stored.Matches(msgRow, rawData)
+			if matches {
+				matches, err = st.MessageContentMatchesContext(ctx, stored.ID, data.BodyText, *data.FTS)
+				if err != nil {
+					return err
+				}
+			}
+			if !matches {
 				messageID, err = st.PersistMessageContext(ctx, data)
 				if err != nil {
 					return err
