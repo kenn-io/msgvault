@@ -48,12 +48,7 @@
         );
         if (controller.signal.aborted) return;
         if (!result.data) throw new Error('Commitment decision was refused.');
-        const decision = result.data;
-        commitments = commitments.map((item) => item.id === decision.id
-          ? { ...item, state: decision.state, snoozed_until: decision.snoozed_until,
-              proposed_fulfilment: decision.state === 'open' ? undefined : item.proposed_fulfilment }
-          : item)
-          .filter((item) => includeClosed || item.state === 'open');
+        await load(true);
       } catch {
         if (!controller.signal.aborted) decisionFailed = true;
       } finally {
