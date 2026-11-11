@@ -37,10 +37,13 @@ func TestEmploymentCatalogGatesAndClosedInput(t *testing.T) {
 	assert.Error(t, resolved.Validate(bad))
 	opts.DelegatedOnly = true
 	assert.Empty(t, operationalCatalog(opts, true))
+	found := false
 	for _, summary := range ToolSummaries() {
 		if summary.Name == "create_employment" {
+			found = true
 			assert.Equal(t, "--allow-employment-writes", summary.Flag)
 			assert.Equal(t, "owner-only", summary.GrantPermission)
 		}
 	}
+	require.True(t, found)
 }

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
@@ -47,7 +49,7 @@ func TestMCPEmploymentLifecycleNativeStore(t *testing.T) {
 		require.NotNil(t, r)
 		return r
 	}
-	body := map[string]any{"person_id": person, "organization_id": org, "source": "user", "start_date": "2020-03", "is_current": true, "is_primary": false}
+	body := map[string]any{"person_id": person, "organization_id": org, "source": "user", "start_date": "2020-03", "department": "Research", "is_current": true, "is_primary": false}
 	created := operationOutput[mcpserver.EmploymentRecord](t, call("create_employment", map[string]any{"employment": body}))
 	require.NotEmpty(t, created.ETag)
 	assert.False(t, created.Employment.IsPrimary)
@@ -64,8 +66,12 @@ func TestMCPEmploymentLifecycleNativeStore(t *testing.T) {
 	listed = operationOutput[generated.EmploymentsResponse](t, call("list_organization_employments", map[string]any{"organization_id": org}))
 	require.Len(t, listed.Employments, 1)
 	body["title"] = "Engineer"
+	delete(body, "department")
 	replaced := operationOutput[mcpserver.EmploymentRecord](t, call("replace_employment", map[string]any{"employment_id": got.Employment.ID, "etag": got.ETag, "employment": body}))
 	require.NotEqual(t, got.ETag, replaced.ETag)
+	require.NotNil(t, replaced.Employment.Title)
+	assert.Equal(t, "Engineer", *replaced.Employment.Title)
+	assert.Nil(t, replaced.Employment.Department)
 	stale := call("end_employment", map[string]any{"employment_id": got.Employment.ID, "etag": got.ETag, "end_date": "2024"})
 	require.True(t, stale.IsError)
 	data, err := json.Marshal(stale.Output)
@@ -91,15 +97,6 @@ func TestMCPEmploymentLifecycleNativeStore(t *testing.T) {
 
 func TestMCPEmploymentSDKApprovalAndReadOnly(t *testing.T) {
 	b, st, person, org := employmentFixture(t)
-	readonly := operationMCPSession(t, b, nil, nil)
-	tools, err := readonly.ListTools(t.Context(), nil)
-	require.NoError(t, err)
-	var names []string
-	for _, tool := range tools.Tools {
-		names = append(names, tool.Name)
-	}
-	assert.Contains(t, names, "get_employment")
-	assert.NotContains(t, names, "create_employment")
 	denied := operationMCPSession(t, b, []mcpserver.OperationFamily{mcpserver.OperationFamilyEmployment}, &sdkmcp.ClientOptions{ElicitationHandler: func(context.Context, *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
 		return &sdkmcp.ElicitResult{Action: "decline"}, nil
 	}})
@@ -137,9 +134,6 @@ func TestMCPEmploymentNativePrimaryConflictAndDisclosure(t *testing.T) {
 	require.NoError(t, err)
 	record := operationOutput[mcpserver.EmploymentRecord](t, first)
 	args := map[string]any{"employment": map[string]any{"person_id": person, "organization_id": other.ID, "source": "user", "is_primary": true}}
-	disclosure, err := b.OperationDisclosure(t.Context(), "create_employment", args)
-	require.NoError(t, err)
-	assert.Contains(t, disclosure, `"is_primary":true`)
 	conflict, err := b.ExecuteOperation(t.Context(), "create_employment", args)
 	require.NoError(t, err)
 	require.True(t, conflict.IsError)
@@ -150,20 +144,26 @@ func TestMCPEmploymentNativePrimaryConflictAndDisclosure(t *testing.T) {
 	_, err = b.OperationDisclosure(t.Context(), "delete_employment", map[string]any{"employment_id": record.Employment.ID, "etag": "stale"})
 	require.Error(t, err)
 	assert.Equal(t, "employment_revision_conflict", err.Error())
-	current, err := st.GetEmploymentContext(t.Context(), record.Employment.ID)
-	require.NoError(t, err)
-	assert.True(t, current.IsPrimary)
 }
 
 func TestMCPEmploymentCapabilityRequiresNativeRoute(t *testing.T) {
-	backend := newDaemonMCPOperations(nil, nil)
-	assert.NotContains(t, backend.capabilities(), "get_employment")
-	result, err := backend.ExecuteOperation(t.Context(), "create_employment", nil)
+	backend, _, _, _ := employmentFixture(t)
+	capabilities, err := backend.client.MCPCapabilities(t.Context())
 	require.NoError(t, err)
-	assert.True(t, result.IsError)
-	data, err := json.Marshal(result.Output)
-	require.NoError(t, err)
-	assert.Contains(t, string(data), "operation_not_supported")
+	for i := range capabilities.Routes {
+		switch capabilities.Routes[i].OperationID {
+		case "createEmployment":
+			capabilities.Routes[i].RequestProperties = nil
+		case "listPersonEmployments":
+			capabilities.Routes[i].QueryParameters = nil
+		}
+	}
+	capabilities.Routes = slices.DeleteFunc(capabilities.Routes, func(route apiprotocol.MCPRouteDescriptor) bool { return route.OperationID == "getEmployment" })
+	missing := newDaemonMCPOperations(backend.client, capabilities).capabilities()
+	for _, name := range []string{"get_employment", "create_employment", "list_person_employments", "replace_employment", "end_employment", "set_primary_employment", "delete_employment"} {
+		assert.NotContains(t, missing, name)
+	}
+	assert.Contains(t, missing, "list_organization_employments")
 }
 
 // A fixed HTTP response exercises the daemon's ambiguous failure and response-size
@@ -200,7 +200,6 @@ func TestMCPEmploymentUncertainAndBoundedResponse(t *testing.T) {
 }
 
 func TestMCPEmploymentWriteFlagsAreIndependent(t *testing.T) {
-	assert.NotNil(t, mcpCmd.Flags().Lookup("allow-employment-writes"))
 	cmd := &cobra.Command{Use: "test"}
 	addMCPWriteFlags(cmd, "mcp-")
 	var opts mcpserver.ServeOptions

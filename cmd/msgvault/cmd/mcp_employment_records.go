@@ -67,7 +67,7 @@ type employmentListArgs struct {
 
 func employmentDefiniteRefusal(code string) bool {
 	switch code {
-	case "employment_not_found", "employment_revision_conflict", "employment_primary_conflict", "employment_duplicate_active", "invalid_employment", "invalid_partial_date", "invalid_source", "invalid_person_id", "invalid_organization_id", "invalid_organization", "invalid_if_match", "if_match_required", "employments_unavailable", "bad_request", "operation_in_progress":
+	case "employment_not_found", "employment_revision_conflict", "employment_primary_conflict", "employment_duplicate_active", "invalid_employment", "invalid_partial_date", "invalid_source", "invalid_person_id", "invalid_organization_id", "invalid_organization", "organization_not_found", "organizations_unavailable", "invalid_if_match", "if_match_required", "employments_unavailable", "bad_request", "operation_in_progress":
 		return true
 	}
 	return false
@@ -82,7 +82,7 @@ func (b *daemonMCPOperations) executeEmploymentOperation(ctx context.Context, na
 	switch name {
 	case "get_employment", "set_primary_employment", "delete_employment":
 		a, e := decodeMCPOperationArguments[employmentIDArgs](args)
-		if e != nil || a.EmploymentID <= 0 || (name != "get_employment" && a.ETag == "") || (name == "get_employment" && a.ETag != "") {
+		if e != nil {
 			return invalid()
 		}
 		switch name {
@@ -91,11 +91,15 @@ func (b *daemonMCPOperations) executeEmploymentOperation(ctx context.Context, na
 		case "set_primary_employment":
 			result, err = readMCPOperationJSONWithClassifier[generated.Employment](ctx, b.client, http.MethodPost, "/api/v1/employments/{id}/primary", &generated.SetPrimaryEmploymentRequestOptions{PathParams: &generated.SetPrimaryEmploymentPath{ID: a.EmploymentID}, Header: &generated.SetPrimaryEmploymentHeaders{IfMatch: a.ETag}}, employmentDefiniteRefusal, http.StatusOK)
 		case "delete_employment":
-			result, err = readMCPOperationJSONWithClassifier[struct{}](ctx, b.client, http.MethodDelete, "/api/v1/employments/{id}", &generated.DeleteEmploymentRequestOptions{PathParams: &generated.DeleteEmploymentPath{ID: a.EmploymentID}, Header: &generated.DeleteEmploymentHeaders{IfMatch: a.ETag}}, employmentDefiniteRefusal, http.StatusNoContent)
+			_, _, failure, readErr := readMCPOperationBytes(ctx, b.client, http.MethodDelete, "/api/v1/employments/{id}", &generated.DeleteEmploymentRequestOptions{PathParams: &generated.DeleteEmploymentPath{ID: a.EmploymentID}, Header: &generated.DeleteEmploymentHeaders{IfMatch: a.ETag}}, 1<<20, employmentDefiniteRefusal, http.StatusNoContent)
+			if failure != nil {
+				return failure, true, readErr
+			}
+			result = &mcpserver.OperationResult{Output: struct{}{}}
 		}
 	case "create_employment", "replace_employment":
 		a, e := decodeMCPOperationArguments[employmentBodyArgs](args)
-		if e != nil || a.Employment == nil || a.Employment.PersonID <= 0 || a.Employment.OrganizationID <= 0 || a.Employment.Source == "" || (name == "replace_employment" && (a.EmploymentID <= 0 || a.ETag == "")) || (name == "create_employment" && (a.EmploymentID != 0 || a.ETag != "")) {
+		if e != nil {
 			return invalid()
 		}
 		if name == "create_employment" {
@@ -105,13 +109,13 @@ func (b *daemonMCPOperations) executeEmploymentOperation(ctx context.Context, na
 		}
 	case "end_employment":
 		a, e := decodeMCPOperationArguments[employmentEndArgs](args)
-		if e != nil || a.EmploymentID <= 0 || a.ETag == "" || a.EndDate == "" {
+		if e != nil {
 			return invalid()
 		}
 		result, err = readMCPOperationJSONWithClassifier[generated.Employment](ctx, b.client, http.MethodPost, "/api/v1/employments/{id}/end", &generated.EndEmploymentRequestOptions{PathParams: &generated.EndEmploymentPath{ID: a.EmploymentID}, Header: &generated.EndEmploymentHeaders{IfMatch: a.ETag}, Body: &generated.EndEmploymentBody{EndDate: a.EndDate}}, employmentDefiniteRefusal, http.StatusOK)
 	case "list_person_employments", "list_organization_employments":
 		a, e := decodeMCPOperationArguments[employmentListArgs](args)
-		if e != nil || (name == "list_person_employments" && (a.PersonID <= 0 || a.OrganizationID != 0)) || (name == "list_organization_employments" && (a.OrganizationID <= 0 || a.PersonID != 0)) || (a.Limit != nil && (*a.Limit < 0 || *a.Limit > 200)) || (a.Offset != nil && *a.Offset < 0) {
+		if e != nil {
 			return invalid()
 		}
 		if a.Limit == nil || *a.Limit == 0 {
@@ -150,13 +154,13 @@ func (b *daemonMCPOperations) employmentOperationDisclosure(ctx context.Context,
 	switch name {
 	case "create_employment", "replace_employment":
 		a, e := decodeMCPOperationArguments[employmentBodyArgs](args)
-		if e != nil || a.Employment == nil || a.Employment.PersonID <= 0 || a.Employment.OrganizationID <= 0 || a.Employment.Source == "" || (name == "create_employment" && (a.EmploymentID != 0 || a.ETag != "")) {
+		if e != nil {
 			return invalid()
 		}
 		id, etag = a.EmploymentID, a.ETag
 	case "end_employment":
 		a, e := decodeMCPOperationArguments[employmentEndArgs](args)
-		if e != nil || a.EndDate == "" {
+		if e != nil {
 			return invalid()
 		}
 		id, etag = a.EmploymentID, a.ETag
@@ -169,9 +173,6 @@ func (b *daemonMCPOperations) employmentOperationDisclosure(ctx context.Context,
 	}
 	var current any
 	if name != "create_employment" {
-		if id <= 0 || etag == "" {
-			return invalid()
-		}
 		result, _, err := b.executeEmploymentOperation(ctx, "get_employment", map[string]any{"employment_id": id})
 		if err != nil {
 			return "", true, err
