@@ -149,7 +149,7 @@ func TestCardDAVSelectorProofUsesNativeDiscovery(t *testing.T) {
 	_, err = named.SyncCardDAVConnection(t.Context(), false, nil)
 	require.NoError(err)
 	_, err = named.SyncCardDAVConnection(t.Context(), false, new("work"))
-	assert.Error(err)
+	require.Error(err)
 	for i := range caps.Routes {
 		if caps.Routes[i].OperationID == "syncCardDAV" {
 			caps.Routes[i].RequestProperties = slices.DeleteFunc(caps.Routes[i].RequestProperties, func(s string) bool { return s == "connection" })
@@ -245,6 +245,7 @@ func TestCardDAVConflictReadsKeepDurableIdentity(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	backend, bookID, st := cardDAVOperationFixture(t)
+	require.NoError(st.SetCardDAVBookRolesContext(t.Context(), bookID, store.CardDAVBookRoles{IsSubscribed: true, IsLookupSource: true}))
 	account, err := st.GetCardDAVAccountByNameContext(t.Context(), "work")
 	require.NoError(err)
 	require.NotNil(account)

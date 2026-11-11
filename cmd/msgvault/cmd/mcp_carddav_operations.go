@@ -14,6 +14,7 @@ import (
 
 type daemonMCPCardDAV struct {
 	*daemonclient.Client
+
 	selector bool
 }
 
@@ -108,9 +109,12 @@ func (b *daemonMCPOperations) executeCardDAVOperation(ctx context.Context, name 
 	if !slices.Contains([]string{"list_carddav_connections", "list_carddav_books", "list_carddav_runs", "list_carddav_conflicts", "get_carddav_conflict", "update_carddav_book_roles", "resolve_carddav_conflict", "unpublish_carddav_person"}, name) {
 		return nil, false, nil
 	}
+	invalid := func() (*mcpserver.OperationResult, bool, error) {
+		return operationFailure("invalid_arguments", false), true, nil
+	}
 	a, err := decodeMCPOperationArguments[cardDAVArguments](args)
 	if err != nil || !validCardDAVArguments(name, a) {
-		return operationFailure("invalid_arguments", false), true, nil
+		return invalid()
 	}
 	var result *mcpserver.OperationResult
 	switch name {

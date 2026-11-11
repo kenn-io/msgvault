@@ -27,8 +27,8 @@ type PersonCardDAVBackend interface {
 
 type namedCardDAVBackend interface {
 	SupportsCardDAVSelector() bool
-	SyncCardDAVConnection(context.Context, bool, *string) (*generated.SyncResult, error)
-	GetCardDAVConnectionStatus(context.Context, *string) (*generated.CardDAVStatusResponse, error)
+	SyncCardDAVConnection(ctx context.Context, full bool, connection *string) (*generated.SyncResult, error)
+	GetCardDAVConnectionStatus(ctx context.Context, connection *string) (*generated.CardDAVStatusResponse, error)
 }
 
 func cardDAVSelector(args map[string]any, backend PersonCardDAVBackend) (*string, namedCardDAVBackend, error) {
