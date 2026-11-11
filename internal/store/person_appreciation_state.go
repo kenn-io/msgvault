@@ -13,6 +13,15 @@ import (
 // MaxPersonAppreciationStateKeys bounds one explicit-key lookup.
 const MaxPersonAppreciationStateKeys = 500
 
+var (
+	// ErrInvalidPersonAppreciationKey identifies malformed source keys.
+	ErrInvalidPersonAppreciationKey = errors.New("invalid appreciation key")
+	// ErrTooManyPersonAppreciationKeys identifies a lookup exceeding the bound.
+	ErrTooManyPersonAppreciationKeys = errors.New("too many appreciation keys")
+	// ErrInvalidPersonAppreciationAudit identifies incomplete dismissal audit fields.
+	ErrInvalidPersonAppreciationAudit = errors.New("invalid appreciation dismissal audit")
+)
+
 // PersonAppreciationState holds a durable dismissal and an optional exact brief
 // reference. A nil reference does not establish whether thanks were given.
 type PersonAppreciationState struct {
@@ -20,7 +29,8 @@ type PersonAppreciationState struct {
 	DismissedPersonUID *string
 	DismissedBy        *string
 	DismissedAt        *time.Time
-	ThanksBriefID      *int64
+	// ThanksBriefID is written only by the later validated brief-proof transaction.
+	ThanksBriefID *int64
 }
 
 func validAppreciationKey(key string) bool {
@@ -65,7 +75,7 @@ const appreciationStateColumns = `contribution_key, dismissed_person_uid, dismis
 func (s *Store) GetPersonAppreciationStatesContext(ctx context.Context, keys []string) (map[string]PersonAppreciationState, error) {
 	result := make(map[string]PersonAppreciationState)
 	if len(keys) > MaxPersonAppreciationStateKeys {
-		return nil, errors.New("too many appreciation keys")
+		return nil, fmt.Errorf("%w: maximum %d", ErrTooManyPersonAppreciationKeys, MaxPersonAppreciationStateKeys)
 	}
 	if len(keys) == 0 {
 		return result, nil
@@ -73,7 +83,7 @@ func (s *Store) GetPersonAppreciationStatesContext(ctx context.Context, keys []s
 	args := make([]any, len(keys))
 	for i, key := range keys {
 		if !validAppreciationKey(key) {
-			return nil, errors.New("invalid appreciation key")
+			return nil, fmt.Errorf("%w at index %d", ErrInvalidPersonAppreciationKey, i)
 		}
 		args[i] = key
 	}
@@ -98,8 +108,11 @@ func (s *Store) GetPersonAppreciationStatesContext(ctx context.Context, keys []s
 // RecordPersonAppreciationDismissalContext preserves the first audit, including
 // when another caller has already inserted a proof-only row.
 func (s *Store) RecordPersonAppreciationDismissalContext(ctx context.Context, key, personUID, actor string, at time.Time) (PersonAppreciationState, error) {
-	if !validAppreciationKey(key) || strings.TrimSpace(personUID) == "" || strings.TrimSpace(actor) == "" || !utf8.ValidString(personUID) || !utf8.ValidString(actor) || at.IsZero() {
-		return PersonAppreciationState{}, errors.New("dismiss appreciation: invalid key or audit fields")
+	if !validAppreciationKey(key) {
+		return PersonAppreciationState{}, fmt.Errorf("dismiss appreciation: %w", ErrInvalidPersonAppreciationKey)
+	}
+	if strings.TrimSpace(personUID) == "" || strings.TrimSpace(actor) == "" || !utf8.ValidString(personUID) || !utf8.ValidString(actor) || at.IsZero() {
+		return PersonAppreciationState{}, fmt.Errorf("dismiss appreciation: %w", ErrInvalidPersonAppreciationAudit)
 	}
 	var state PersonAppreciationState
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
