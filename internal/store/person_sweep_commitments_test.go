@@ -834,3 +834,74 @@ func TestCommitmentExpiryRemainsRepresentableToReaders(t *testing.T) {
 		})
 	}
 }
+
+func TestCommitmentRefreshedPromiseReplaysSameBatchCompletion(t *testing.T) {
+	r, a, ctx := require.New(t), assert.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "refreshed-promise-replay", false)
+	st := f.store
+	_, persist := newCommitmentTestConversation(t, f)
+	const original, revised, reply = "I will send the report.", "I will send the revised report.", "I sent the revised report."
+	id := persist("promise", original, -2*time.Hour)
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	applyCommitmentTestSources(t, f, cfg.Commitments)
+	// Finish initial replay, so only the refresh can schedule matching again.
+	f = nextCommitmentTestAttempt(t, f, "-finish-initial")
+	applyCommitmentTestSources(t, f, cfg.Commitments)
+	r.Equal(id, persist("promise", revised, -2*time.Hour))
+	completion := persist("completion", reply, -time.Hour)
+	f = nextCommitmentTestAttempt(t, f, "-refresh")
+	f.request.Generation.ResolvedAt = f.request.Generation.ResolvedAt.Add(time.Minute)
+	f.request.CompletedAt = f.request.Generation.ResolvedAt.Add(time.Minute)
+	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+	window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
+	r.NoError(err)
+	r.Empty(window.Anchors, "the edited old citation is not an admissible matching anchor")
+	r.NotEmpty(commitmentSourceID(window, completion))
+	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
+		Promises:    []peoplesweep.CommitmentPromise{{SourceID: commitmentSourceID(window, id), Direction: peoplesweep.CommitmentOwedTo, Quote: revised, Summary: "Send revised report", End: int64(len(revised))}},
+		Fulfilments: []peoplesweep.CommitmentFulfilment{},
+	}))
+	r.NoError(err)
+	next, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
+	r.NoError(err)
+	a.Len(next.Anchors, 1, "the refreshed obligation must be matched before its completion batch is consumed")
+	a.NotEmpty(commitmentSourceID(next, completion))
+}
+
+func TestCommitmentReopenSuppressesExistingFutureDatedFulfilment(t *testing.T) {
+	r, a, ctx := require.New(t), assert.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "future-fulfilment-reopen", false)
+	st := f.store
+	_, persist := newCommitmentTestConversation(t, f)
+	const promise, reply = "I will send the report.", "I sent the report."
+	persist("promise", promise, -2*time.Hour)
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled, cfg.Commitments.AutoFulfil = true, true
+	applyCommitmentTestSources(t, f, cfg.Commitments)
+	f = nextCommitmentTestAttempt(t, f, "-finish-initial")
+	applyCommitmentTestSources(t, f, cfg.Commitments)
+	completion := persist("future-completion", reply, time.Hour)
+	f = nextCommitmentTestAttempt(t, f, "-complete")
+	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+	window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
+	r.NoError(err)
+	r.Len(window.Anchors, 1)
+	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
+		Promises:    []peoplesweep.CommitmentPromise{},
+		Fulfilments: []peoplesweep.CommitmentFulfilment{{CommitmentID: window.Anchors[0].ID, SourceID: commitmentSourceID(window, completion), Quote: reply, End: int64(len(reply)), Confirmed: true}},
+	}))
+	r.NoError(err)
+	items, err := st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
+	r.NoError(err)
+	r.Len(items, 1)
+	r.Equal("fulfilled", items[0].State)
+	_, err = st.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateOpen, nil, f.request.CompletedAt)
+	r.NoError(err)
+	items, err = st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
+	r.NoError(err)
+	r.Len(items, 1)
+	a.Equal(LoopStateOpen, items[0].State, "the same retained proof cannot undo an owner reopen even with sender clock skew")
+}
