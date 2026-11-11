@@ -201,15 +201,16 @@ func TestICalendarCancellationArrivalOrder(t *testing.T) {
 	moved := calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTART:20270302T140000Z\r\nSUMMARY:Moved")
 	cancel := calendarDocument("CANCEL", "SEQUENCE:3\r\nSTATUS:CANCELLED")
 	orders := []struct {
-		name      string
-		revisions [][]byte
+		name                  string
+		revisions             [][]byte
+		checkOriginalAccepted bool
 	}{
-		{"cancel original moved", [][]byte{cancel, original, moved}},
-		{"cancel moved original", [][]byte{cancel, moved, original}},
-		{"original cancel moved", [][]byte{original, cancel, moved}},
-		{"original moved cancel", [][]byte{original, moved, cancel}},
-		{"moved cancel original", [][]byte{moved, cancel, original}},
-		{"moved original cancel", [][]byte{moved, original, cancel}},
+		{"cancel original moved", [][]byte{cancel, original, moved}, true},
+		{"cancel moved original", [][]byte{cancel, moved, original}, false},
+		{"original cancel moved", [][]byte{original, cancel, moved}, false},
+		{"original moved cancel", [][]byte{original, moved, cancel}, false},
+		{"moved cancel original", [][]byte{moved, cancel, original}, false},
+		{"moved original cancel", [][]byte{moved, original, cancel}, false},
 	}
 	for _, tc := range orders {
 		t.Run(tc.name, func(t *testing.T) {
@@ -219,7 +220,7 @@ func TestICalendarCancellationArrivalOrder(t *testing.T) {
 			for i, revision := range tc.revisions {
 				summary, err := st.PersistICalendarContext(t.Context(), source, revision)
 				requirements.NoError(err)
-				if tc.name == "cancel original moved" && i == 1 {
+				if tc.checkOriginalAccepted && i == 1 {
 					assertions.Equal(1, summary.Changed)
 				}
 			}

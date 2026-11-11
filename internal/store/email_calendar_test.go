@@ -177,6 +177,20 @@ func TestEmailCalendarActivityCandidates(t *testing.T) {
 	gcalData.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 2, 12, 0, 0, 0, time.UTC), Valid: true}
 	_, err = st.PersistMessageContext(t.Context(), gcalData)
 	requirements.NoError(err)
+	for _, source := range []struct {
+		id  int64
+		typ string
+	}{{icsSource, "ics"}, {gcalData.Message.SourceID, "gcal"}} {
+		destination, err := st.GetOrCreateSource(source.typ, "merged-"+source.typ)
+		requirements.NoError(err)
+		_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: source.id, IntoSourceID: destination.ID})
+		requirements.NoError(err)
+	}
+	for _, id := range []int64{icsEvents[0], gcalID} {
+		var marked bool
+		requirements.NoError(st.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM source_merge_archive_only_messages WHERE message_id=?)`, id).Scan(&marked))
+		requirements.True(marked)
+	}
 
 	candidates, err := st.LoadQueuedActivityCandidatesContext(t.Context(), 100)
 	requirements.NoError(err)

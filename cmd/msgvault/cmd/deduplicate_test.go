@@ -801,25 +801,24 @@ func newDeduplicateRoutingTestCommand() *cobra.Command {
 }
 
 func TestDeduplicateAccountResolutionExcludesCalendarSources(t *testing.T) {
-	for _, sourceType := range []string{sourceTypeCalendar, sourceTypeICS} {
-		t.Run(sourceType, func(t *testing.T) {
+	for _, tc := range []struct {
+		sourceType, suffix string
+		sharedDisplayName  bool
+	}{
+		{sourceTypeCalendar, "/primary", true},
+		{sourceTypeICS, "", false},
+	} {
+		t.Run(tc.sourceType, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			f, accountID, _ := setupScopeFixture(t)
-			identifier := accountID
-			if sourceType == sourceTypeCalendar {
-				identifier += "/primary"
-			}
-			calendar, err := f.Store.GetOrCreateSource(sourceType, identifier)
+			calendar, err := f.Store.GetOrCreateSource(tc.sourceType, accountID+tc.suffix)
 			require.NoError(err)
 			selector := accountID
-			if sourceType == sourceTypeCalendar {
+			if tc.sharedDisplayName {
 				selector = "Shared"
 				require.NoError(f.Store.UpdateSourceDisplayName(f.Source.ID, selector))
 				require.NoError(f.Store.UpdateSourceDisplayName(calendar.ID, selector))
-				cfg, err := json.Marshal(map[string]string{"account_email": accountID, "calendar_id": "primary"})
-				require.NoError(err)
-				require.NoError(f.Store.UpdateSourceSyncConfig(t.Context(), calendar.ID, string(cfg)))
 			}
 			scope, err := ResolveEmailAccountFlag(t.Context(), f.Store, selector)
 			require.NoError(err)

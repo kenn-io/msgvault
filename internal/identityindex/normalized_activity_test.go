@@ -310,7 +310,7 @@ func TestSparseNormalizedActivityExcludesEmailInviteEvents(t *testing.T) {
 	replaceRelationshipParquet(t, db, root, "sources", `SELECT i::BIGINT AS id, 'owner@example.test' AS account_email,
   CASE i WHEN 1 THEN 'gmail' WHEN 2 THEN 'gcal' WHEN 3 THEN 'ics' ELSE 'message_import' END AS source_type FROM range(1, 5) t(i)`)
 	path := func(dataset string) string { return parquetDatasetGlob(root, dataset) }
-	messages := "(SELECT * REPLACE (id::BIGINT AS source_id, id = 1 AS archive_only) FROM " + readParquetRelation([]string{path("messages")}, true) + ")"
+	messages := "(SELECT * REPLACE (id::BIGINT AS source_id, id <= 3 AS archive_only) FROM " + readParquetRelation([]string{path("messages")}, true) + ")"
 	sql := buildSparseRelationshipActivitySQL(path, messages, readParquetRelation([]string{path("message_recipients")}, false), 2026, "")
 	rows, err := db.QueryContext(t.Context(), "SELECT DISTINCT message_id FROM ("+sql+") ORDER BY message_id")
 	requirements.NoError(err)
