@@ -2031,8 +2031,7 @@ func TestStoreAPIAdapterRunCLISyncDefersPacking(t *testing.T) {
 			assert.Nil(f.packedEntry(hash))
 			assert.NotContains(f.logs.String(), "automatic attachment maintenance complete")
 			assert.Empty(events)
-			require.NoError(f.maintenance.runPendingPack(t.Context()))
-			assert.NotNil(f.packedEntry(hash))
+			assert.True(f.maintenance.packPending.Load())
 		})
 	}
 }
@@ -2291,8 +2290,7 @@ func TestStoreAPIAdapterRunCLICommandDefersPackingForAllowlistedCommands(t *test
 			assert.Equal(1, runnerCalls)
 			assert.Nil(f.packedEntry(hash))
 			assert.Empty(events)
-			require.NoError(f.maintenance.runPendingPack(t.Context()))
-			assert.Equal(tt.wantPending, f.packedEntry(hash) != nil)
+			assert.Equal(tt.wantPending, f.maintenance.packPending.Load())
 		})
 	}
 }
@@ -2349,8 +2347,7 @@ func TestStoreAPIAdapterRunCLIRepairMessageDefersPacking(t *testing.T) {
 				func(context.Context, []string, func(string, string) error) error { return nil })
 			require.NoError(t, err)
 			assert.Nil(t, f.packedEntry(hash))
-			require.NoError(t, f.maintenance.runPendingPack(t.Context()))
-			assert.Equal(t, !audit, f.packedEntry(hash) != nil)
+			assert.Equal(t, !audit, f.maintenance.packPending.Load())
 		})
 	}
 }

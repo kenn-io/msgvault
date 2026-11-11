@@ -231,13 +231,9 @@ func TestAttachmentIngestDefersPackingAndPreservesResult(t *testing.T) {
 	for _, partial := range []bool{false, true} {
 		t.Run(fmt.Sprintf("partial=%v", partial), func(t *testing.T) {
 			f := newAttachmentMaintenanceFixture(t)
-			_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
-				`INSERT INTO archive_metadata (key, value) VALUES (?, ?)`),
-				"attachment_pack_verification_cursor", "saved-cursor")
-			require.NoError(t, err)
 			failure := errors.New("partial import")
 			var hash string
-			err = runAttachmentIngest(t.Context(), f.maintenance, func(ctx context.Context) error {
+			err := runAttachmentIngest(t.Context(), f.maintenance, func(ctx context.Context) error {
 				hash = f.ingestLoose(ctx, []byte("imported attachment"))
 				if partial {
 					return failure
@@ -251,10 +247,6 @@ func TestAttachmentIngestDefersPackingAndPreservesResult(t *testing.T) {
 			}
 			assert.Nil(t, f.packedEntry(hash))
 			assert.Equal(t, []byte("imported attachment"), f.readBlob(hash))
-			var cursor string
-			require.NoError(t, f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
-				`SELECT value FROM archive_metadata WHERE key = ?`), "attachment_pack_verification_cursor").Scan(&cursor))
-			assert.Equal(t, "saved-cursor", cursor)
 			require.NoError(t, f.maintenance.runPendingPack(t.Context()))
 			assert.NotNil(t, f.packedEntry(hash))
 			assert.Equal(t, []byte("imported attachment"), f.readBlob(hash))

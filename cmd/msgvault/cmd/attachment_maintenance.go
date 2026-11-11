@@ -44,8 +44,8 @@ type attachmentMaintenance struct {
 	logger              *slog.Logger
 	packCreationEnabled bool
 	attachmentsDir      string
-	// packPending records that a scheduled sync wrote loose blobs that no
-	// pack pass has drained yet. Startup requests one scan of existing blobs.
+	// packPending requests a loose-blob scan after ingestion, an unfinished or
+	// failed pack pass, or startup.
 	packPending atomic.Bool
 	// verifyPending records that the indexed-blob verification window has
 	// more slices to walk. It is deliberately separate from packPending: a
