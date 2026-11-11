@@ -123,3 +123,14 @@ func TestPostalAddressCLIRejectsOversizedInput(t *testing.T) {
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, daemon.requests.Load())
 }
+
+func TestPostalAddressCLIRejectsNullInput(t *testing.T) {
+	daemon := newPersonBriefTestDaemon(t, `{}`)
+	path := filepath.Join(t.TempDir(), "postal.json")
+	require.NoError(t, os.WriteFile(path, []byte(" \nnull \n"), 0o600))
+	for _, args := range [][]string{{"assess", "7", "--input", path}, {"apply", "7", "--input", path, "--revision", "4", "--add"}} {
+		_, err := runPostalCLI(daemon.ctx, t, args...)
+		require.ErrorContains(t, err, "address input must be a JSON object")
+	}
+	assert.Zero(t, daemon.requests.Load())
+}

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -156,6 +157,9 @@ func readPostalCLIInput(path string, value any) error {
 	}
 	if len(data) > 1<<20 {
 		return errors.New("address input exceeds 1 MiB")
+	}
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		return errors.New("address input must be a JSON object")
 	}
 	if err := json.Unmarshal(data, value, json.RejectUnknownMembers(true)); err != nil {
 		return fmt.Errorf("decode address input: %w", err)
