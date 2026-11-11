@@ -357,6 +357,8 @@ func awaitLoopSignal(t *testing.T, ch <-chan struct{}) {
 }
 
 func TestIncompleteListContinuesEvidenceInBackground(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	now := time.Now().UTC()
 	storetest.PersistLoopOriginalReadFixture(f, loops.MaxListEvidenceComputations+1, now)
@@ -367,22 +369,22 @@ func TestIncompleteListContinuesEvidenceInBackground(t *testing.T) {
 	w := httptest.NewRecorder()
 	server.Router().ServeHTTP(w, httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/loops", nil))
 	cancel()
-	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(http.StatusOK, w.Code)
 	var first LoopListResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &first))
-	require.True(t, first.CoverageIncomplete)
+	require.NoError(json.Unmarshal(w.Body.Bytes(), &first))
+	require.True(first.CoverageIncomplete)
 	awaitLoopSignal(t, st.paused)
 	for i := range loops.MaxListEvidenceComputations + 2 {
 		f.PersistEmail(storetest.EmailSpec{Thread: fmt.Sprintf("older-%d", i), From: "sam@example.test", To: []string{storetest.OwnerAddress}, Body: "Thanks!", SentAt: now.Add(-30 * 24 * time.Hour)})
 	}
 	w = httptest.NewRecorder()
 	server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil))
-	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(http.StatusOK, w.Code)
 	var repeated LoopListResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &repeated))
-	require.True(t, repeated.CoverageIncomplete)
+	require.NoError(json.Unmarshal(w.Body.Bytes(), &repeated))
+	require.True(repeated.CoverageIncomplete)
 	close(st.resume)
-	require.Eventually(t, func() bool {
+	require.Eventually(func() bool {
 		server.importMu.Lock()
 		defer server.importMu.Unlock()
 		return !server.loopEvidenceRunning
@@ -390,15 +392,17 @@ func TestIncompleteListContinuesEvidenceInBackground(t *testing.T) {
 	reads := st.reads.Load()
 	w = httptest.NewRecorder()
 	server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil))
-	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(http.StatusOK, w.Code)
 	var result LoopListResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
-	assert.False(t, result.CoverageIncomplete)
-	assert.Greater(t, reads, int64(2*loops.MaxListEvidenceComputations))
-	assert.Equal(t, reads, st.reads.Load())
+	require.NoError(json.Unmarshal(w.Body.Bytes(), &result))
+	assert.False(result.CoverageIncomplete)
+	assert.Greater(reads, int64(2*loops.MaxListEvidenceComputations))
+	assert.Equal(reads, st.reads.Load())
 }
 
 func TestLoopBackfillStopsWhenServerShutsDown(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	now := time.Now().UTC()
 	first := f.PersistEmail(storetest.EmailSpec{Thread: "first", From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you send it?", SentAt: now.Add(-5 * 24 * time.Hour)})
@@ -410,7 +414,7 @@ func TestLoopBackfillStopsWhenServerShutsDown(t *testing.T) {
 	server.startLoopEvidence(st, 0)
 	awaitLoopSignal(t, st.paused)
 	release, ok := gate.BeginWorkContext(t.Context())
-	require.True(t, ok)
+	require.True(ok)
 	close(st.resume)
 	awaitLoopSignal(t, st.completed)
 	shutdownLoopServer(t, server)
@@ -420,13 +424,13 @@ func TestLoopBackfillStopsWhenServerShutsDown(t *testing.T) {
 	t.Cleanup(func() { shutdownLoopServer(t, next) })
 	w := httptest.NewRecorder()
 	next.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil))
-	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(http.StatusOK, w.Code)
 	var result LoopListResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
-	require.Len(t, result.Items, 2)
-	assert.Equal(t, first, result.Items[0].AnchorMessageID)
-	assert.Equal(t, second, result.Items[1].AnchorMessageID)
-	assert.Equal(t, reads+1, st.reads.Load())
+	require.NoError(json.Unmarshal(w.Body.Bytes(), &result))
+	require.Len(result.Items, 2)
+	assert.Equal(first, result.Items[0].AnchorMessageID)
+	assert.Equal(second, result.Items[1].AnchorMessageID)
+	assert.Equal(reads+1, st.reads.Load())
 }
 
 type scopePausingStore struct {
@@ -449,6 +453,8 @@ func (s *scopePausingStore) LoopOriginalEvidenceContext(ctx context.Context, id 
 }
 
 func TestOverlappingIncompleteLoopListsContinueEachScope(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	now := time.Now().UTC()
 	ids := make(map[string][]int64)
@@ -464,7 +470,7 @@ func TestOverlappingIncompleteLoopListsContinueEachScope(t *testing.T) {
 		}
 		participant := f.EnsureParticipant(address, "", "example.test")
 		person, _, err := f.Store.CreatePersonFromParticipant(participant)
-		require.NoError(t, err)
+		require.NoError(err)
 		people[address] = person.ID
 	}
 	st := &scopePausingStore{pausedLoopStore: &pausedLoopStore{Store: f.Store, pauseAt: loops.MaxListEvidenceComputations + 1, paused: make(chan struct{}), resume: make(chan struct{})}, reached: make(chan struct{}), resumeScope: make(chan struct{})}
@@ -473,39 +479,39 @@ func TestOverlappingIncompleteLoopListsContinueEachScope(t *testing.T) {
 	list := func(path string) LoopListResponse {
 		w := httptest.NewRecorder()
 		server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
-		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		require.Equal(http.StatusOK, w.Code, w.Body.String())
 		var result LoopListResponse
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		require.NoError(json.Unmarshal(w.Body.Bytes(), &result))
 		return result
 	}
 	personPath := func(address string) string { return fmt.Sprintf("/api/v1/loops?person_id=%d", people[address]) }
-	require.True(t, list(personPath("alex@example.test")).CoverageIncomplete)
+	require.True(list(personPath("alex@example.test")).CoverageIncomplete)
 	awaitLoopSignal(t, st.paused)
-	require.True(t, list(personPath("sam@example.test")).CoverageIncomplete)
-	require.True(t, list("/api/v1/loops").CoverageIncomplete)
+	require.True(list(personPath("sam@example.test")).CoverageIncomplete)
+	require.True(list("/api/v1/loops").CoverageIncomplete)
 	var target int64
 	samIDs := ids["sam@example.test"]
-	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT m.id FROM messages m LEFT JOIN loop_message_evidence e ON e.message_id = m.id WHERE m.id >= ? AND m.id <= ? AND e.message_id IS NULL ORDER BY m.id LIMIT 1`), samIDs[0], samIDs[len(samIDs)-1]).Scan(&target))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT m.id FROM messages m LEFT JOIN loop_message_evidence e ON e.message_id = m.id WHERE m.id >= ? AND m.id <= ? AND e.message_id IS NULL ORDER BY m.id LIMIT 1`), samIDs[0], samIDs[len(samIDs)-1]).Scan(&target))
 	st.target.Store(target)
 	close(st.resume)
 	awaitLoopSignal(t, st.reached)
 	var leePending int
 	leeIDs := ids["lee@example.test"]
-	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM messages m LEFT JOIN loop_message_evidence e ON e.message_id = m.id WHERE m.id >= ? AND m.id <= ? AND e.message_id IS NULL`), leeIDs[0], leeIDs[len(leeIDs)-1]).Scan(&leePending))
-	assert.Positive(t, leePending, "the later global pass has not started")
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM messages m LEFT JOIN loop_message_evidence e ON e.message_id = m.id WHERE m.id >= ? AND m.id <= ? AND e.message_id IS NULL`), leeIDs[0], leeIDs[len(leeIDs)-1]).Scan(&leePending))
+	assert.Positive(leePending, "the later global pass has not started")
 	close(st.resumeScope)
-	require.Eventually(t, func() bool {
+	require.Eventually(func() bool {
 		server.importMu.Lock()
 		defer server.importMu.Unlock()
 		return !server.loopEvidenceRunning
 	}, 20*time.Second, 10*time.Millisecond)
 	reads := st.reads.Load()
 	sam := list(personPath("sam@example.test"))
-	assert.False(t, sam.CoverageIncomplete)
-	require.Len(t, sam.Items, 1)
-	assert.Equal(t, samIDs[0], sam.Items[0].AnchorMessageID)
+	assert.False(sam.CoverageIncomplete)
+	require.Len(sam.Items, 1)
+	assert.Equal(samIDs[0], sam.Items[0].AnchorMessageID)
 	all := list("/api/v1/loops")
-	assert.False(t, all.CoverageIncomplete)
-	require.Len(t, all.Items, 3)
-	assert.Equal(t, reads, st.reads.Load(), "both pending scopes completed")
+	assert.False(all.CoverageIncomplete)
+	require.Len(all.Items, 3)
+	assert.Equal(reads, st.reads.Load(), "both pending scopes completed")
 }
