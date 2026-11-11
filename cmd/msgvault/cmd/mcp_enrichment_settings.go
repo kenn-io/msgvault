@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"net/http"
+	"slices"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/apiprotocol"
@@ -36,8 +37,14 @@ type enrichmentProvider struct {
 	Credential            *generated.SecretSettingState `json:"credential"`
 }
 type enrichmentSettings struct {
-	Providers      []enrichmentProvider `json:"person_enrichment_providers"`
-	PendingRestart bool                 `json:"pending_restart"`
+	Providers []enrichmentProvider `json:"person_enrichment_providers"`
+	Settings  []struct {
+		Key   string `json:"key"`
+		Value *struct {
+			Boolean *bool `json:"boolean"`
+		} `json:"value"`
+	} `json:"settings"`
+	PendingRestart bool `json:"pending_restart"`
 }
 type enrichmentArguments struct {
 	Name              string `json:"name"`
@@ -54,21 +61,34 @@ func enrichmentMCPCapabilities(hasRoute mcpRouteCheck, capabilities *apiprotocol
 		return nil
 	}
 	names := []string{"get_enrichment_policy"}
-	if hasRoute("putSettingsPersonEnrichmentProvider", http.MethodPut, "/api/v1/settings/person-enrichment/providers/{name}") && mcpRequestPropertiesPresent(capabilities, "putSettingsPersonEnrichmentProvider", "kind", "enabled", "endpoint", "poll_endpoint", "mode", "tier", "num_results", "allowed_identifiers", "target_keys", "allow_sensitive_targets", "retention_posture", "training_posture", "refresh_interval", "request_timeout", "poll_interval", "max_job_age", "max_retries", "max_requests_per_run", "max_requests_per_day") {
+	if hasRoute("putSettingsPersonEnrichmentProvider", http.MethodPut, "/api/v1/settings/person-enrichment/providers/{name}") && mcpEnrichmentPropertiesExact(capabilities, "kind", "enabled", "endpoint", "poll_endpoint", "mode", "tier", "num_results", "allowed_identifiers", "target_keys", "allow_sensitive_targets", "retention_posture", "training_posture", "refresh_interval", "request_timeout", "poll_interval", "max_job_age", "max_retries", "max_requests_per_run", "max_requests_per_day") {
 		names = append(names, "update_enrichment_policy")
 	}
 	return names
 }
 
+// Full replacement is safe only for the exact request property set we reconstruct.
+func mcpEnrichmentPropertiesExact(capabilities *apiprotocol.MCPCapabilities, properties ...string) bool {
+	if !mcpRequestPropertiesPresent(capabilities, "putSettingsPersonEnrichmentProvider", properties...) {
+		return false
+	}
+	for _, route := range capabilities.Routes {
+		if route.OperationID == "putSettingsPersonEnrichmentProvider" {
+			return len(route.RequestProperties) == len(properties)
+		}
+	}
+	return false
+}
+
 func enrichmentReplacement(p enrichmentProvider) (*generated.PersonEnrichmentProviderUpdate, bool) {
 	// A missing or empty primary endpoint may be redacted and cannot be reconstructed safely.
-	if p.Kind == nil || p.Enabled == nil || p.Endpoint == nil || *p.Endpoint == "" || p.AllowedIdentifiers == nil || p.TargetKeys == nil || p.AllowSensitiveTargets == nil || p.RetentionPosture == nil || p.TrainingPosture == nil || p.RefreshInterval == nil || p.RequestTimeout == nil || p.PollInterval == nil || p.MaxJobAge == nil || p.MaxRetries == nil || p.MaxRequestsPerRun == nil || p.MaxRequestsPerDay == nil {
+	if p.Credential == nil || p.Kind == nil || p.Enabled == nil || p.Endpoint == nil || *p.Endpoint == "" || p.AllowedIdentifiers == nil || p.TargetKeys == nil || p.AllowSensitiveTargets == nil || p.RetentionPosture == nil || p.TrainingPosture == nil || p.RefreshInterval == nil || p.RequestTimeout == nil || p.PollInterval == nil || p.MaxJobAge == nil || p.MaxRetries == nil || p.MaxRequestsPerRun == nil || p.MaxRequestsPerDay == nil {
 		return nil, false
 	}
 	pollEndpoint := p.PollEndpoint
 	if *p.Kind == string(generated.PersonEnrichmentProviderUpdateKindExa) {
 		// Successful native GETs omit Exa poll_endpoint; nonnil credential metadata proves CredentialEndpoint accepted its required empty value.
-		if p.Credential == nil || (pollEndpoint != nil && *pollEndpoint != "") {
+		if pollEndpoint != nil && *pollEndpoint != "" {
 			return nil, false
 		}
 		empty := ""
@@ -125,6 +145,31 @@ func (b *daemonMCPOperations) enrichmentContext(ctx context.Context, a enrichmen
 		return result, nil, "settings_conflict", nil
 	}
 	settings := result.Output.(enrichmentSettings)
+	if a.Enabled != nil && !*a.Enabled {
+		var enabled *bool
+		for _, setting := range settings.Settings {
+			if setting.Key == "people.enrichment.enabled" && setting.Value != nil {
+				enabled = setting.Value.Boolean
+			}
+		}
+		if enabled == nil {
+			return result, nil, "provider_policy_unreconstructable", nil
+		}
+		if *enabled {
+			others := false
+			for _, provider := range settings.Providers {
+				if provider.Enabled == nil {
+					return result, nil, "provider_policy_unreconstructable", nil
+				}
+				if provider.Name != a.Name && *provider.Enabled {
+					others = true
+				}
+			}
+			if !others {
+				return result, nil, "provider_policy_requires_enabled_provider", nil
+			}
+		}
+	}
 	for _, p := range settings.Providers {
 		if p.Name != a.Name {
 			continue
@@ -132,6 +177,9 @@ func (b *daemonMCPOperations) enrichmentContext(ctx context.Context, a enrichmen
 		replacement, ok := enrichmentReplacement(p)
 		if !ok {
 			return result, nil, "provider_policy_unreconstructable", nil
+		}
+		if (a.MaxRetries != nil && *a.MaxRetries == 0) || (a.NumResults != nil && *a.NumResults == 0 && *p.Kind == "exa") {
+			return result, nil, "provider_policy_zero_uses_default", nil
 		}
 		if a.Enabled != nil {
 			replacement.Enabled = *a.Enabled
@@ -195,6 +243,35 @@ func (b *daemonMCPOperations) enrichmentOperationDisclosure(ctx context.Context,
 	if refusal != "" {
 		return "", true, &mcpserver.OperationRefusalError{Code: refusal}
 	}
+	var enabling any
+	if a.Enabled != nil && *a.Enabled {
+		for _, provider := range current.Output.(enrichmentSettings).Providers {
+			if provider.Name == a.Name {
+				classes := []string{}
+				for _, class := range *provider.AllowedIdentifiers {
+					if !slices.Contains([]string{"name", "email", "phone", "current_company", "public_profile_url"}, class) {
+						return "", true, &mcpserver.OperationRefusalError{Code: "provider_policy_unreconstructable"}
+					}
+					classes = append(classes, class)
+				}
+				// Postures and target keys are operator-supplied free text. Keep unknown
+				// text private while showing the approver that host review is needed.
+				posture := func(value string) string {
+					if value == "zero_retention" || value == "no_training" {
+						return value
+					}
+					return "custom; inspect on host"
+				}
+				enabling = struct {
+					AllowedIdentifiers    []string `json:"allowed_identifiers"`
+					TargetCount           int      `json:"target_count"`
+					AllowSensitiveTargets bool     `json:"allow_sensitive_targets"`
+					RetentionPosture      string   `json:"retention_posture"`
+					TrainingPosture       string   `json:"training_posture"`
+				}{classes, len(*provider.TargetKeys), *provider.AllowSensitiveTargets, posture(*provider.RetentionPosture), posture(*provider.TrainingPosture)}
+			}
+		}
+	}
 	current = enrichmentProjection(current, false)
 	if current.IsError {
 		return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
@@ -204,6 +281,7 @@ func (b *daemonMCPOperations) enrichmentOperationDisclosure(ctx context.Context,
 		Current   any                 `json:"current"`
 		Changes   enrichmentArguments `json:"changes"`
 		Effect    string              `json:"effect"`
-	}{name, current.Output, a, "Update the configured provider policy; consent remains separate, restart may be required, and native settings cleanup may remove a stored credential already bound to a different origin."}, json.Deterministic(true))
+		Enabling  any                 `json:"enabling,omitempty"`
+	}{name, current.Output, a, "Update the configured provider policy; consent remains separate, restart may be required, and native settings cleanup may remove a stored credential already bound to a different origin.", enabling}, json.Deterministic(true))
 	return string(data), true, err
 }

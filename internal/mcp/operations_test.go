@@ -33,6 +33,14 @@ func TestOperationalCatalogUsesFixedNamesAndWriteGates(t *testing.T) {
 	opts.OperationWriteFamilies = []OperationFamily{OperationFamilySources}
 	assertions.Contains(toolsByName(t, rawListTools(t, opts, true)), "sync_source")
 	assertions.NotContains(toolsByName(t, rawListTools(t, opts, false)), "sync_source")
+	opts = ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"get_enrichment_policy", "update_enrichment_policy"}}
+	assertions.Contains(toolsByName(t, rawListTools(t, opts, true)), "get_enrichment_policy")
+	assertions.NotContains(toolsByName(t, rawListTools(t, opts, true)), "update_enrichment_policy")
+	opts.OperationWriteFamilies = []OperationFamily{OperationFamilySources}
+	assertions.NotContains(toolsByName(t, rawListTools(t, opts, true)), "update_enrichment_policy")
+	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyEnrichmentSettings}
+	assertions.Contains(toolsByName(t, rawListTools(t, opts, true)), "update_enrichment_policy")
+	assertions.NotContains(toolsByName(t, rawListTools(t, opts, false)), "update_enrichment_policy")
 	opts.DelegatedOnly = true
 	assertions.Empty(rawListTools(t, opts, true))
 }

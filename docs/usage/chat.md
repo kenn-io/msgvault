@@ -24,7 +24,8 @@ By default, stdio clients can also edit native email tags, manage Saved Views,
 export attachments, and stage deletion manifests. Actual message deletion still
 requires the CLI [deletion workflow](/docs/usage/deletion/). Person promotion,
 display-name edits, and Notes writes need `--allow-profile-writes`. Source sync
-and Slack selection changes need `--allow-source-writes`. HTTP clients get read
+and Slack selection changes need `--allow-source-writes`. Enrichment policy edits need
+`--allow-enrichment-settings-writes`. HTTP clients get read
 tools by default and need
 `--http-allow-writes` for general write tools. Calendar event mutations also
 require `--allow-calendar-writes`; HTTP needs both flags. Each non-dry-run
@@ -826,6 +827,8 @@ source, cache, or person-edit tools.
 | `sync_source` | Request a configured source sync; requires confirmation. | Required `account`, `source_type` from `list_source_status` |
 | `get_slack_sync_policy` | Read channel and direct-message selection, the settings ETag, and restart state. | — |
 | `update_slack_sync_policy` | Change Slack selection; requires confirmation. | Required `etag`; at least one of `dms`, `group_dms`, `channels`, `exclude_channels` |
+| `get_enrichment_policy` | Read provider policy, settings ETag, and restart state. | — |
+| `update_enrichment_policy` | Edit an existing provider policy; requires confirmation. | Required `name`, `etag`; at least one of `enabled`, `num_results`, `max_retries`, `max_requests_per_run`, `max_requests_per_day` |
 | `get_participant_identity` | Read observed identifiers, service and scope context, cluster members, and link evidence. | Required `participant_id` |
 | `get_cache_build_status` | Follow an accepted analytics refresh job. | Required `job_id` from a fresh query response |
 
@@ -833,6 +836,13 @@ source, cache, or person-edit tools.
 configured shared scheduler job. The response preserves `disposition` when the
 daemon supplies it, such as `started`, `pending`, or `coalesced`; check source and
 scheduler status for progress.
+
+Enrichment edits refuse to disable the last provider while enrichment is enabled.
+For Exa, `num_results: 0` reloads as 1; `max_retries: 0` reloads as 5 for
+all providers. These ineffective edits are refused before approval. Enabling
+shows the provider's permitted data classes and retention and training posture
+for approval. Custom postures and target keys require host inspection. Consent
+remains separate, and the daemon may need a restart.
 
 For Slack changes, read `get_slack_sync_policy` first and pass its exact `etag`.
 Omitted fields are preserved; `false` and empty arrays are explicit changes.

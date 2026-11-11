@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -22,6 +23,21 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+const enrichmentExaFixture = `[[people.enrichment.providers]]
+name = "example"
+kind = "exa"
+enabled = false
+endpoint = "https://provider.example/search"
+mode = "people"
+allowed_identifiers = ["name"]
+target_keys = ["attribute:bio"]
+retention_posture = "zero_retention"
+training_posture = "no_training"
+refresh_interval = "24h"
+max_requests_per_run = 5
+max_requests_per_day = 50
+`
+
 func TestEnrichmentReplacementRequiresReconstructablePolicy(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -30,7 +46,7 @@ func TestEnrichmentReplacementRequiresReconstructablePolicy(t *testing.T) {
 	ids, keys := []string{"name"}, []string{"attribute:bio"}
 	sensitive := false
 	retries, run, day := int64(2), int64(10), int64(20)
-	provider := enrichmentProvider{Name: "example", Kind: &kind, Enabled: &enabled, Endpoint: &endpoint, PollEndpoint: &poll, AllowedIdentifiers: &ids, TargetKeys: &keys, AllowSensitiveTargets: &sensitive, RetentionPosture: &retention, TrainingPosture: &training, RefreshInterval: &refresh, RequestTimeout: &timeout, PollInterval: &interval, MaxJobAge: &age, MaxRetries: &retries, MaxRequestsPerRun: &run, MaxRequestsPerDay: &day}
+	provider := enrichmentProvider{Credential: &generated.SecretSettingState{}, Name: "example", Kind: &kind, Enabled: &enabled, Endpoint: &endpoint, PollEndpoint: &poll, AllowedIdentifiers: &ids, TargetKeys: &keys, AllowSensitiveTargets: &sensitive, RetentionPosture: &retention, TrainingPosture: &training, RefreshInterval: &refresh, RequestTimeout: &timeout, PollInterval: &interval, MaxJobAge: &age, MaxRetries: &retries, MaxRequestsPerRun: &run, MaxRequestsPerDay: &day}
 	replacement, ok := enrichmentReplacement(provider)
 	require.True(ok)
 	assert.Equal(endpoint, replacement.Endpoint)
@@ -52,6 +68,9 @@ func TestEnrichmentReplacementRequiresReconstructablePolicy(t *testing.T) {
 	assert.False(ok)
 	provider.PollEndpoint = &poll
 	provider.Kind = new("sixtyfour")
+	_, ok = enrichmentReplacement(provider)
+	assert.False(ok)
+	provider.Credential = &generated.SecretSettingState{}
 	provider.Endpoint = nil
 	_, ok = enrichmentReplacement(provider)
 	assert.False(ok)
@@ -62,20 +81,7 @@ func TestEnrichmentPolicyNativeReplacement(t *testing.T) {
 	assert := assert.New(t)
 	directory := t.TempDir()
 	path := filepath.Join(directory, "config.toml")
-	require.NoError(os.WriteFile(path, []byte(`[[people.enrichment.providers]]
-name = "example"
-kind = "exa"
-enabled = false
-endpoint = "https://provider.example/search"
-mode = "people"
-allowed_identifiers = ["name"]
-target_keys = ["attribute:bio"]
-retention_posture = "zero_retention"
-training_posture = "no_training"
-refresh_interval = "24h"
-max_requests_per_run = 5
-max_requests_per_day = 50
-`), 0o600))
+	require.NoError(os.WriteFile(path, []byte(enrichmentExaFixture), 0o600))
 	cfg, err := config.Load(path, directory)
 	require.NoError(err)
 	cfg.Data.DataDir = directory
@@ -89,7 +95,12 @@ max_requests_per_day = 50
 	data, err := json.Marshal(policy)
 	require.NoError(err)
 	assert.NotContains(string(data), "provider.example")
-	args := map[string]any{"name": "example", "etag": policy.ETag, "max_requests_per_day": 25}
+	for _, field := range []string{"num_results", "max_retries"} {
+		_, _, err = backend.enrichmentOperationDisclosure(t.Context(), "update_enrichment_policy", map[string]any{"name": "example", "etag": policy.ETag, field: 0})
+		require.Error(err)
+		assert.Contains(err.Error(), "provider_policy_zero_uses_default")
+	}
+	args := map[string]any{"name": "example", "etag": policy.ETag, "max_requests_per_day": 25, "max_requests_per_run": 7, "num_results": 3, "max_retries": 2}
 	disclosure, handled, err := backend.enrichmentOperationDisclosure(t.Context(), "update_enrichment_policy", args)
 	require.NoError(err)
 	require.True(handled)
@@ -99,6 +110,9 @@ max_requests_per_day = 50
 	require.True(handled)
 	updated := operationOutput[mcpserver.EnrichmentPolicy](t, result)
 	assert.Equal(int64(25), updated.Providers[0].MaxRequestsPerDay)
+	require.NotNil(updated.Providers[0].NumResults)
+	assert.Equal(int64(3), *updated.Providers[0].NumResults)
+	assert.Equal(int64(2), updated.Providers[0].MaxRetries)
 	reloaded, err := config.Load(path, directory)
 	require.NoError(err)
 	require.Len(reloaded.People.Enrichment.Providers, 1)
@@ -106,13 +120,48 @@ max_requests_per_day = 50
 	assert.Equal("https://provider.example/search", native.Endpoint)
 	assert.Empty(native.PollEndpoint)
 	assert.Equal([]string{"attribute:bio"}, native.TargetKeys)
-	assert.Equal(int64(5), native.MaxRequestsPerRun)
+	assert.Equal(int64(7), native.MaxRequestsPerRun)
+	assert.Equal("zero_retention", native.RetentionPosture)
+	assert.Equal("no_training", native.TrainingPosture)
+	assert.Equal("name", string(native.AllowedIdentifiers[0]))
 	result, _, err = backend.executeEnrichmentOperation(t.Context(), "update_enrichment_policy", args)
 	require.NoError(err)
 	require.True(result.IsError)
 	encoded, err := json.Marshal(result.Output)
 	require.NoError(err)
 	assert.Contains(string(encoded), "settings_conflict")
+	enable := map[string]any{"name": "example", "etag": updated.ETag, "enabled": true, "num_results": 1}
+	disclosure, _, err = backend.enrichmentOperationDisclosure(t.Context(), "update_enrichment_policy", enable)
+	require.NoError(err)
+	assert.Contains(disclosure, "allowed_identifiers")
+	assert.Contains(disclosure, "zero_retention")
+	result, _, err = backend.executeEnrichmentOperation(t.Context(), "update_enrichment_policy", enable)
+	require.NoError(err)
+	enabledPolicy := operationOutput[mcpserver.EnrichmentPolicy](t, result)
+	assert.True(enabledPolicy.Providers[0].Enabled)
+
+	// A real settings snapshot with enrichment enabled cannot lose its last provider.
+	secondDir := t.TempDir()
+	secondPath := filepath.Join(secondDir, "config.toml")
+	initial := "[people.enrichment]\nenabled = true\nsuppression_key_env = \"TEST_SUPPRESSION_KEY\"\n" + strings.Replace(enrichmentExaFixture, "enabled = false", "enabled = true", 1)
+	require.NoError(os.WriteFile(secondPath, []byte(initial), 0o600))
+	secondCfg, err := config.Load(secondPath, secondDir)
+	require.NoError(err)
+	secondCfg.Data.DataDir = secondDir
+	second := sourceOperationFixture(t, api.NewServer(secondCfg, nil, nil, slog.New(slog.DiscardHandler)))
+	result, _, err = second.executeEnrichmentOperation(t.Context(), "get_enrichment_policy", nil)
+	require.NoError(err)
+	current := operationOutput[mcpserver.EnrichmentPolicy](t, result)
+	disable := map[string]any{"name": "example", "etag": current.ETag, "enabled": false}
+	_, _, err = second.enrichmentOperationDisclosure(t.Context(), "update_enrichment_policy", disable)
+	require.Error(err)
+	assert.Contains(err.Error(), "provider_policy_requires_enabled_provider")
+	result, _, err = second.executeEnrichmentOperation(t.Context(), "update_enrichment_policy", disable)
+	require.NoError(err)
+	assert.True(result.IsError)
+	after, err := os.ReadFile(secondPath)
+	require.NoError(err)
+	assert.Equal(initial, string(after))
 }
 
 func TestEnrichmentCapabilityRequiresExactRouteAndProperties(t *testing.T) {
@@ -123,22 +172,30 @@ func TestEnrichmentCapabilityRequiresExactRouteAndProperties(t *testing.T) {
 		return (id == "getSettings" && method == http.MethodGet && path == "/api/v1/settings") || (id == "putSettingsPersonEnrichmentProvider" && method == http.MethodPut && path == "/api/v1/settings/person-enrichment/providers/{name}")
 	}
 	assert.Equal([]string{"get_enrichment_policy", "update_enrichment_policy"}, enrichmentMCPCapabilities(hasRoute, caps))
-	caps.Routes[0].RequestProperties = props[:len(props)-1]
+	for i := range props {
+		caps.Routes[0].RequestProperties = append(append([]string{}, props[:i]...), props[i+1:]...)
+		assert.Equal([]string{"get_enrichment_policy"}, enrichmentMCPCapabilities(hasRoute, caps), props[i])
+	}
+	caps.Routes[0].RequestProperties = append(append([]string{}, props...), "future_field")
 	assert.Equal([]string{"get_enrichment_policy"}, enrichmentMCPCapabilities(hasRoute, caps))
 	assert.Empty(enrichmentMCPCapabilities(func(string, string, string, ...string) bool { return false }, caps))
 }
 
 func TestEnrichmentProjectionRejectsMissingPolicyFields(t *testing.T) {
+	require := require.New(t)
 	assert := assert.New(t)
-	enabled := false
-	retries, run, day := int64(1), int64(2), int64(3)
-	result := enrichmentProjection(&mcpserver.OperationResult{ETag: `"revision"`, Output: enrichmentSettings{Providers: []enrichmentProvider{{Name: "example", Enabled: &enabled, MaxRetries: &retries, MaxRequestsPerRun: &run, MaxRequestsPerDay: &day}}}}, false)
-	assert.False(result.IsError)
-	policy := result.Output.(mcpserver.EnrichmentPolicy)
-	assert.Equal(`"revision"`, policy.ETag)
-	assert.False(policy.Providers[0].Enabled)
-	broken := enrichmentProjection(&mcpserver.OperationResult{ETag: `"revision"`, Output: enrichmentSettings{Providers: []enrichmentProvider{{Name: "example"}}}}, false)
-	assert.True(broken.IsError)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("ETag", `"revision"`)
+		_, _ = w.Write([]byte(`{"person_enrichment_providers":[{"name":"example"}]}`))
+	}))
+	t.Cleanup(server.Close)
+	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
+	require.NoError(err)
+	backend := &daemonMCPOperations{client: client}
+	result, _, err := backend.executeEnrichmentOperation(t.Context(), "get_enrichment_policy", nil)
+	require.NoError(err)
+	assert.True(result.IsError)
 }
 
 func TestEnrichmentPolicySDKRequiresApproval(t *testing.T) {
@@ -146,20 +203,7 @@ func TestEnrichmentPolicySDKRequiresApproval(t *testing.T) {
 	assert := assert.New(t)
 	directory := t.TempDir()
 	path := filepath.Join(directory, "config.toml")
-	require.NoError(os.WriteFile(path, []byte(`[[people.enrichment.providers]]
-name = "example"
-kind = "exa"
-enabled = false
-endpoint = "https://provider.example/search"
-mode = "people"
-allowed_identifiers = ["name"]
-target_keys = ["attribute:bio"]
-retention_posture = "zero_retention"
-training_posture = "no_training"
-refresh_interval = "24h"
-max_requests_per_run = 5
-max_requests_per_day = 50
-`), 0o600))
+	require.NoError(os.WriteFile(path, []byte(enrichmentExaFixture), 0o600))
 	cfg, err := config.Load(path, directory)
 	require.NoError(err)
 	cfg.Data.DataDir = directory
@@ -182,9 +226,6 @@ max_requests_per_day = 50
 	require.NoError(err)
 	require.False(result.IsError)
 	assert.Equal(1, approvals)
-	reloaded, err := config.Load(path, directory)
-	require.NoError(err)
-	assert.Equal(int64(25), reloaded.People.Enrichment.Providers[0].MaxRequestsPerDay)
 }
 
 func TestEnrichmentRefusesUnreconstructableAndUnknownProviders(t *testing.T) {
@@ -192,19 +233,7 @@ func TestEnrichmentRefusesUnreconstructableAndUnknownProviders(t *testing.T) {
 	assert := assert.New(t)
 	directory := t.TempDir()
 	path := filepath.Join(directory, "config.toml")
-	require.NoError(os.WriteFile(path, []byte(`[[people.enrichment.providers]]
-name = "example"
-kind = "exa"
-enabled = false
-poll_endpoint = "https://provider.example/poll"
-allowed_identifiers = ["name"]
-target_keys = ["attribute:bio"]
-retention_posture = "zero_retention"
-training_posture = "no_training"
-refresh_interval = "24h"
-max_requests_per_run = 5
-max_requests_per_day = 50
-`), 0o600))
+	require.NoError(os.WriteFile(path, []byte(enrichmentExaFixture), 0o600))
 	cfg, err := config.Load(path, directory)
 	require.NoError(err)
 	cfg.Data.DataDir = directory
@@ -213,7 +242,7 @@ max_requests_per_day = 50
 	require.NoError(err)
 	policy := operationOutput[mcpserver.EnrichmentPolicy](t, result)
 	require.Len(policy.Providers, 1)
-	for name, code := range map[string]string{"example": "provider_policy_unreconstructable", "missing": "provider_not_found"} {
+	for name, code := range map[string]string{"missing": "provider_not_found"} {
 		result, err = backend.ExecuteOperation(t.Context(), "update_enrichment_policy", map[string]any{"name": name, "etag": policy.ETag, "enabled": true})
 		require.NoError(err)
 		require.True(result.IsError)
@@ -228,8 +257,11 @@ max_requests_per_day = 50
 }
 
 func TestEnrichmentWritePreservesUncertainty(t *testing.T) {
-	for _, status := range []int{http.StatusUnprocessableEntity, http.StatusInternalServerError} {
-		t.Run(http.StatusText(status), func(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		code   string
+	}{{http.StatusUnprocessableEntity, "validation_failed"}, {http.StatusInternalServerError, "settings_write_failed"}} {
+		t.Run(http.StatusText(tc.status), func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			sent := ""
@@ -237,12 +269,12 @@ func TestEnrichmentWritePreservesUncertainty(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				if r.Method == http.MethodGet {
 					w.Header().Set("ETag", `"revision"`)
-					_, _ = w.Write([]byte(`{"person_enrichment_providers":[{"name":"example","kind":"sixtyfour","enabled":false,"endpoint":"https://provider.example/search","poll_endpoint":"https://provider.example/poll","allowed_identifiers":["name"],"target_keys":["attribute:bio"],"allow_sensitive_targets":false,"retention_posture":"zero_retention","training_posture":"no_training","refresh_interval":"24h","request_timeout":"1m","poll_interval":"1s","max_job_age":"1h","max_retries":1,"max_requests_per_run":5,"max_requests_per_day":50}]}`))
+					_, _ = w.Write([]byte(`{"person_enrichment_providers":[{"name":"example","kind":"sixtyfour","enabled":false,"endpoint":"https://provider.example/search","poll_endpoint":"https://provider.example/poll","allowed_identifiers":["name"],"target_keys":["attribute:bio"],"allow_sensitive_targets":false,"retention_posture":"zero_retention","training_posture":"no_training","refresh_interval":"24h","request_timeout":"1m","poll_interval":"1s","max_job_age":"1h","max_retries":1,"max_requests_per_run":5,"max_requests_per_day":50,"credential":{"configured":false,"source":"none"}}]}`))
 					return
 				}
 				sent = r.Header.Get("If-Match")
-				w.WriteHeader(status)
-				_, _ = w.Write([]byte(`{"error":"validation_failed"}`))
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(`{"error":"` + tc.code + `"}`))
 			}))
 			t.Cleanup(server.Close)
 			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})

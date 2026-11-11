@@ -21,17 +21,15 @@ type EnrichmentProviderPolicy struct {
 const OperationFamilyEnrichmentSettings OperationFamily = "enrichment_settings"
 
 func enrichmentSettingsDefinitions() []operationalDefinition {
-	definitions := []operationalDefinition{
+	return []operationalDefinition{
 		newOperationalDefinition("get_enrichment_policy", "Read existing provider enabled state and numeric limits with the exact settings ETag. Provider setup and credentials are omitted.", OperationFamilyEnrichmentSettings, closedObject(nil), outputSchemaFor[EnrichmentPolicy](), false),
 		newOperationalDefinition("update_enrichment_policy", "Change enabled state or numeric limits for an existing provider using the exact settings ETag. Requires approval; consent is managed separately and a restart may be required.", OperationFamilyEnrichmentSettings, closedObject(map[string]*jsonschema.Schema{
 			"name": stringSchema("Exact existing provider name"), "etag": stringSchema("Exact ETag from get_enrichment_policy"),
 			"enabled":              booleanSchema("Enable or disable this configured provider"),
-			"num_results":          {Type: "integer", Minimum: new(float64)},
-			"max_retries":          {Type: "integer", Minimum: new(float64)},
-			"max_requests_per_run": {Type: "integer", Minimum: new(float64)},
-			"max_requests_per_day": {Type: "integer", Minimum: new(float64)},
+			"num_results":          boundedIntegerSchema("Number of results; Exa uses 1 when configured as zero", 0, maxJSONSafeInteger),
+			"max_retries":          boundedIntegerSchema("Maximum retries; zero uses the native default of 5", 0, maxJSONSafeInteger),
+			"max_requests_per_run": boundedIntegerSchema("Maximum requests per run", 0, maxJSONSafeInteger),
+			"max_requests_per_day": boundedIntegerSchema("Maximum requests per day", 0, maxJSONSafeInteger),
 		}, "name", "etag"), outputSchemaFor[EnrichmentPolicy](), true),
 	}
-	definitions[1].definition.annotations.OpenWorldHint = new(true)
-	return definitions
 }
