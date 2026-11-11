@@ -105,12 +105,7 @@ func TestLegacyMessageIDSourceValidation(t *testing.T) {
 func TestHegelMessageIDContract(t *testing.T) {
 	hegel.Test(t, func(ht *hegel.T) {
 		atom := func(alphabet string) string {
-			n := hegel.Draw(ht, hegel.Integers(1, 8))
-			value := make([]byte, n)
-			for i := range value {
-				value[i] = alphabet[hegel.Draw(ht, hegel.Integers(0, len(alphabet)-1))]
-			}
-			return string(value)
+			return hegel.Draw(ht, hegel.Text().MinSize(1).MaxSize(8).Alphabet(alphabet))
 		}
 		local := atom("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_+-")
 		if hegel.Draw(ht, hegel.Booleans()) {
