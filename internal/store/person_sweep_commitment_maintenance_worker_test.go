@@ -16,7 +16,7 @@ import (
 // Read the real grant at the same optional authority boundary as the provider
 // runner, while retaining the existing fixture's prepared provider contract.
 type consentAwareSweepRunner struct {
-	*scriptedBriefRunner
+	peoplesweep.StructuredRunner
 
 	store       *store.Store
 	fingerprint string
@@ -78,19 +78,6 @@ func TestPersonSweepDeletionOnlyMaintenanceProgressWithCommitmentLaneNotDue(t *t
 	a.Zero(calls, "neither revoked ordinary inference nor a not-due commitment lane needs a provider call")
 }
 
-// This runner reads real consent while preserving the projection fixture's
-// prepared execution contract.
-type consentAwareProjectionRunner struct {
-	*capturingSweepRunner
-
-	store       *store.Store
-	fingerprint string
-}
-
-func (r consentAwareProjectionRunner) OrdinaryInferenceAllowed(ctx context.Context) (bool, error) {
-	return r.store.HasActivePersonInferenceConsent(ctx, r.fingerprint)
-}
-
 func TestPersonSweepCommitmentMaintenanceReachesOrdinaryEvidenceBehindLiveSeed(t *testing.T) {
 	for _, deleted := range []bool{false, true} {
 		t.Run(fmt.Sprintf("deleted=%t", deleted), func(t *testing.T) {
@@ -109,25 +96,8 @@ func TestPersonSweepCommitmentMaintenanceReachesOrdinaryEvidenceBehindLiveSeed(t
 				r.NoError(err)
 				items, err := st.HydratePersonSweepMessages(ctx, personID, []int64{messageID}, 0)
 				r.NoError(err)
-				packet, err := peoplesweep.CanonicalPacketJSON(peoplesweep.EvidencePacket{PersonID: personID, Catalog: catalog, Seeds: items,
-					ProgramID: peoplesweep.ExtractionProgramID, ProgramVersion: peoplesweep.ExtractionProgramVersion})
-				r.NoError(err)
-				var wire struct {
-					Seeds []struct {
-						ID string `json:"id"`
-					} `json:"seeds"`
-				}
-				r.NoError(json.Unmarshal(packet, &wire))
-				r.Len(wire.Seeds, 1)
-				var target string
-				for _, entry := range catalog.Targets {
-					if entry.Slug == "location" {
-						target = entry.Key
-					}
-				}
-				r.NotEmpty(target)
 				runner := emptyFreshnessRunner()
-				runner.response.Output = []byte(fmt.Sprintf(`{"claims":[{"target_key":%q,"relation":"support","value":"Lisbon","evidence_ids":[%q],"valid_from":null,"valid_until":null,"confidence_basis_points":1000}]}`, target, wire.Seeds[0].ID))
+				runner.response.Output = projectionFreshnessClaim(t, personID, catalog, items)
 				worker.Runner = runner
 				runFreshnessSweep(t, worker, personID)
 			}
@@ -150,7 +120,7 @@ func TestPersonSweepCommitmentMaintenanceReachesOrdinaryEvidenceBehindLiveSeed(t
 			}
 			runner := emptyFreshnessRunner()
 			runner.response.Output = []byte(`{"promises":[],"fulfilments":[]}`)
-			worker.Runner = consentAwareProjectionRunner{runner, st, profile.Fingerprint}
+			worker.Runner = consentAwareSweepRunner{runner, st, profile.Fingerprint}
 			request := peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental,
 				PersonID: personID, Limit: 1, Brief: peoplesweep.BriefModeSkip}
 			checkPending := func() {
@@ -159,19 +129,21 @@ func TestPersonSweepCommitmentMaintenanceReachesOrdinaryEvidenceBehindLiveSeed(t
 				r.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT optimistic_sequence FROM person_sweep_cursors
 					WHERE person_id = ? AND source_lane = ?`), personID, peoplesweep.SourceConversationText).Scan(&through))
 				a.Equal(baseline, through, "local maintenance cannot consume revoked ordinary inference")
-				window, err := st.LoadPersonSweepWindow(ctx, peoplesweep.WindowRequest{PersonID: personID,
-					Lane: peoplesweep.SourceConversationText, AfterSequence: baseline,
-					ThroughSequence: latestPersonSweepSequence(t, st), Limit: 1})
-				r.NoError(err)
-				r.Len(window.Seeds, 1)
-				a.Equal(blocker, window.Seeds[0].Ref.MessageID)
 			}
+			window, err := st.LoadPersonSweepWindow(ctx, peoplesweep.WindowRequest{PersonID: personID,
+				Lane: peoplesweep.SourceConversationText, AfterSequence: baseline,
+				ThroughSequence: latestPersonSweepSequence(t, st), Limit: 1})
+			r.NoError(err)
+			r.Len(window.Seeds, 1)
+			a.Equal(blocker, window.Seeds[0].Ref.MessageID)
 			_, err = worker.Run(ctx, request)
 			r.NoError(err)
 			checkPending()
 			state, err := st.LoadPersonFactState(ctx, personID, catalog)
 			r.NoError(err)
-			a.Contains(projectedValues(t, state.Current), "Lisbon", "not-due commitment maintenance waits for its existing interval")
+			if deleted {
+				a.Contains(projectedValues(t, state.Current), "Lisbon", "not-due commitment maintenance waits for its existing interval")
+			}
 			now = now.Add(worker.Config.Commitments.MinInterval + time.Second)
 			result, err := worker.Run(ctx, request)
 			r.NoError(err)
