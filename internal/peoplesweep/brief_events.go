@@ -216,6 +216,17 @@ func mergeBriefEvents(
 					if !newEvidence {
 						h.LifeEvent.Date = old.Date
 					}
+					ids := slices.Clone(oldIDs)
+					for _, id := range h.EvidenceIDs {
+						if !slices.Contains(ids, id) {
+							ids = append(ids, id)
+						}
+					}
+					if len(ids) > 200 {
+						dropped++
+						continue
+					}
+					h.EvidenceIDs = ids
 					h.LifeEvent.State, _ = briefLifeEventState(*h.LifeEvent, asOf)
 					kept[index] = h
 				}
