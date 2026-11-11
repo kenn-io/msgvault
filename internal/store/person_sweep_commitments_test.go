@@ -219,7 +219,7 @@ func testNinthCommitmentPage(t *testing.T, deleted bool) {
 	}))
 	r.NoError(err)
 
-	due, err := st.PersonCommitmentsDue(ctx, f.personID, f.request.CompletedAt.Add(cfg.Commitments.MinInterval), cfg.Commitments.MinInterval, cfg.Commitments.Window)
+	due, err := st.PersonCommitmentsDue(ctx, f.personID, f.request.CompletedAt.Add(cfg.Commitments.MinInterval), cfg.Commitments.MinInterval, cfg.Commitments.Window, "")
 	r.NoError(err)
 	a.True(due)
 	newPromiseID := persist("new-activity", "I will send tomorrow's report.", 24*time.Hour)
@@ -400,10 +400,10 @@ func TestEmptyCommitmentScanKeepsProviderFrontierAndWaitsForNewWork(t *testing.T
 	r.NoError(err)
 	a.Zero(through)
 	a.Equal(window.ThroughSequence, observed)
-	due, err := st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt.Add(cfg.Commitments.MinInterval), cfg.Commitments.MinInterval, cfg.Commitments.Window)
+	due, err := st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt.Add(cfg.Commitments.MinInterval), cfg.Commitments.MinInterval, cfg.Commitments.Window, "")
 	r.NoError(err)
 	a.False(due)
-	due, err = st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt.Add(cfg.Commitments.Window), cfg.Commitments.MinInterval, cfg.Commitments.Window)
+	due, err = st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt.Add(cfg.Commitments.Window), cfg.Commitments.MinInterval, cfg.Commitments.Window, "")
 	r.NoError(err)
 	a.True(due)
 }
@@ -475,4 +475,88 @@ func testCommitmentConsumedCompletion(t *testing.T, detached bool) {
 	r.Len(items, 1)
 	r.NotNil(items[0].Fulfilment)
 	a.Equal(completed, items[0].Fulfilment.Quote)
+}
+
+func TestCommitmentRequoteSplitsBroadCitationWithoutLosingPromise(t *testing.T) {
+	r, a, ctx := require.New(t), assert.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "split-promise", false)
+	st := f.store
+	_, persist := newCommitmentTestConversation(t, f)
+	const first, second = "I will send the report.", "I will book the venue."
+	body := first + " " + second
+	persist("two-promises", body, -time.Hour)
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: body, Summary: "Send report and book venue", End: int64(len(body))}}, Fulfilments: []peoplesweep.CommitmentFulfilment{}}))
+	r.NoError(err)
+	items, err := st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 5, false)
+	r.NoError(err)
+	r.Len(items, 1)
+	originalID := items[0].ID
+	_, err = st.DecidePersonCommitmentContext(ctx, originalID, LoopStateDone, nil, f.request.CompletedAt)
+	r.NoError(err)
+	f = nextCommitmentTestAttempt(t, f, "-split")
+	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{
+		{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: first, Summary: "Send report", End: int64(len(first))},
+		{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: second, Summary: "Book venue", Start: int64(len(first) + 1), End: int64(len(body))},
+	}, Fulfilments: []peoplesweep.CommitmentFulfilment{}}))
+	r.NoError(err)
+	items, err = st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 5, true)
+	r.NoError(err)
+	r.Len(items, 2)
+	a.Equal(originalID, items[0].ID)
+	a.Equal(LoopStateDone, items[0].State)
+	a.Equal(first, items[0].Quote)
+	a.NotEqual(originalID, items[1].ID)
+	a.Equal(LoopStateOpen, items[1].State)
+	a.Equal(second, items[1].Quote)
+}
+
+func TestCommitmentCitationIgnoresOrdinaryReferenceBeforeParsing(t *testing.T) {
+	r, a := require.New(t), assert.New(t)
+	f := newPersonSweepApplyFixture(t, "ordinary-citation", false)
+	_, live, err := f.store.currentCommitmentCitation(t.Context(), f.personID, peoplesweep.CommitmentOwedTo, personfacts.EvidenceInput{SourceRef: "message:42"})
+	r.NoError(err)
+	a.False(live)
+}
+
+// A paid optional result is discarded after revocation without losing its accounting.
+func TestCommitmentApplyRevokedConsentRetainsPaidAccounting(t *testing.T) {
+	r, a, ctx := require.New(t), assert.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "commitment-revoked", false)
+	_, persist := newCommitmentTestConversation(t, f)
+	const quote = "I will send the draft."
+	persist("promise", quote, -time.Hour)
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	window, err := f.store.LoadPersonCommitmentWindow(ctx, f.personID, peoplesweep.ProviderProfile{
+		AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
+	}, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
+		Promises:    []peoplesweep.CommitmentPromise{{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Summary: "Send the draft", End: int64(len(quote))}},
+		Fulfilments: []peoplesweep.CommitmentFulfilment{},
+	})
+	revoked, err := f.store.RevokePersonCommitmentConsent(ctx, request.Generation.Policy.ProviderPolicyFingerprint, "test")
+	r.NoError(err)
+	r.True(revoked)
+	result, err := f.store.ApplyPersonSweep(ctx, request)
+	r.NoError(err)
+	a.Equal(1, result.Mutations.BatchRowsReconciled)
+	var commitments, frontiers, requests int
+	var failure string
+	r.NoError(f.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM person_commitments").Scan(&commitments))
+	r.NoError(f.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM person_commitment_frontiers").Scan(&frontiers))
+	r.NoError(f.store.db.QueryRowContext(ctx, "SELECT actual_requests FROM person_sweep_batches WHERE attempt_id = ?", f.attemptID).Scan(&requests))
+	r.NoError(f.store.db.QueryRowContext(ctx, "SELECT commitment_failure_class FROM person_sweep_attempts WHERE id = ?", f.attemptID).Scan(&failure))
+	a.Zero(commitments)
+	a.Zero(frontiers)
+	a.Equal(1, requests)
+	a.Equal(string(peoplesweep.FailurePolicy), failure)
 }
