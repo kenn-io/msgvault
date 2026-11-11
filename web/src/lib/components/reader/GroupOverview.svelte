@@ -18,7 +18,7 @@
     : groupRowName('month', bucket, bucket).name;
   const stripLabel = $derived(first && last
     ? series.length === 1
-      ? `Activity by ${daily ? 'day' : 'month'}: ${monthName(first.bucket)}, ${first.count.toLocaleString()} ${first.count === 1 ? 'item' : 'items'}`
+      ? `Activity by ${daily ? 'day' : 'month'}: ${monthName(first.bucket)}${selection.count === undefined ? `, ${first.count.toLocaleString()} ${first.count === 1 ? 'item' : 'items'}` : ''}`
       : `Activity by ${daily ? 'day' : 'month'}, ${monthName(first.bucket)} to ${monthName(last.bucket)}, busiest ${monthName(busiest.bucket)} with ${busiest.count.toLocaleString()} ${busiest.count === 1 ? 'item' : 'items'}`
     : 'Activity');
 </script>
@@ -42,7 +42,7 @@
           <rect x={series.length > 1 ? index * (chartWidth - 6) / (series.length - 1) : 0} y={32 - height} width="6" {height} />
         {/each}
       </svg>
-      <div class="month-labels"><span>{monthName(first.bucket)}</span>{#if series.length > 1}<span>{monthName(last.bucket)}</span>{/if}</div>
+      <div class="month-labels" aria-hidden="true"><span>{monthName(first.bucket)}</span>{#if series.length > 1}<span>{monthName(last.bucket)}</span>{/if}</div>
     </div>
   {/if}
   {#if selection.overview?.co_participants?.length}
