@@ -75,6 +75,7 @@ Add and sync sources:
   add-slack              Add a Slack workspace as an archive source
   add-synctech-sms-drive Configure a Google Drive SMS Backup & Restore source
   add-teams              Authorize Microsoft Teams (delegated Graph) for an account
+  add-threads            Connect your Threads account
   add-twenty             Register and validate a Twenty Call Recorder source
   add-twilio             Register and validate a Twilio call source
   archive-remote-images  Download remote images in archived email (needs consent)

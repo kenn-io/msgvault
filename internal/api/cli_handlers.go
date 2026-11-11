@@ -1452,6 +1452,9 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) cliRunEnvAllowedForCommand(args []string, name string) bool {
+	if name == clirun.EnvThreadsOAuth {
+		return len(args) > 0 && args[0] == "add-threads"
+	}
 	if name == clirun.EnvInlineOAuth {
 		return len(args) > 0 && args[0] == "add-inline"
 	}
@@ -1734,6 +1737,7 @@ func cliRunCommandAllowed(args []string) bool {
 		"add-twenty",
 		"add-pocket",
 		"add-discord",
+		"add-threads",
 		"add-granola",
 		"add-omi",
 		"add-imap",

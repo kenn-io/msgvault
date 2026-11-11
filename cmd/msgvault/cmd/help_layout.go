@@ -50,6 +50,7 @@ var topLevelCommandGroups = map[string]string{
 	"add-plaud":               helpGroupSources,
 	"add-slack":               helpGroupSources,
 	"add-synctech-sms-drive":  helpGroupSources,
+	"add-threads":             helpGroupSources,
 	"add-teams":               helpGroupSources,
 	"add-twenty":              helpGroupSources,
 	"add-twilio":              helpGroupSources,

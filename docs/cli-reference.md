@@ -787,6 +787,20 @@ After adding the account, sync it with `msgvault sync-teams`.
 
 ---
 
+## add-threads
+
+```bash
+msgvault add-threads --app-id <app-id> --redirect-uri <https-callback>
+```
+
+On unreleased `main`, connect an owner-operated Threads app using its registered
+HTTPS callback. Set `MSGVAULT_THREADS_APP_SECRET` or enter the secret at the
+masked terminal prompt, open the displayed authorization URL, and paste the
+complete returned callback URL. The daemon verifies the account and stores its
+token in an owner-only JSON file (mode 0600); the file is not encrypted.
+This connection does not yet import or sync Threads content. Remove a connection
+with `remove-account` to delete its saved token.
+
 ## add-discord
 
 Validate a Discord bot token and register one or more guilds as `discord`
