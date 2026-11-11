@@ -169,15 +169,15 @@ func (importer *Importer) ImportPath(ctx context.Context, path string) (summary 
 		}
 		return Summary{}, err
 	}
-	if err := recordParticipantEmailObservations(ctx, syncStore, source.ID, owner.key(), chats); err != nil {
-		return Summary{}, fmt.Errorf("record iMazing CSV participant email evidence: %w", err)
-	}
 	// Denormalized conversation statistics must reflect the committed
 	// messages even when a later stage of the run fails, so recompute them
-	// immediately after persistence and before reply, attachment, and
-	// contact processing.
+	// immediately after persistence and before email evidence, reply,
+	// attachment, and contact processing.
 	if err := syncStore.RecomputeConversationStatsContext(statsCtx, source.ID); err != nil {
 		return Summary{}, fmt.Errorf("recompute iMazing CSV conversation statistics: %w", err)
+	}
+	if err := recordParticipantEmailObservations(ctx, syncStore, source.ID, owner.key(), chats); err != nil {
+		return Summary{}, fmt.Errorf("record iMazing CSV participant email evidence: %w", err)
 	}
 	repliesLinked, repliesUnresolved, err := resolveReplies(
 		ctx, syncStore, source.ID, source.Identifier, importer.opts.Timezone, owner,

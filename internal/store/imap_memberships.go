@@ -283,6 +283,12 @@ func (s *Store) applyIMAPMailboxDeltas(
 		return errors.New("apply IMAP mailbox deltas: nil authoritative topology")
 	}
 	return s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{sourceID}}, func(tx *loggedTx) error {
+		// Restoring or tombstoning mail updates message rows and invalidates
+		// shared participant context. Recipient replacement takes this lock
+		// before those rows, so take it first to keep one lock order.
+		if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		if syncRunID > 0 {
 			if err := s.validateCurrentSyncGeneration(
 				ctx, tx, sourceID, syncRunID, SyncStatusCompleted,

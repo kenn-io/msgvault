@@ -310,6 +310,11 @@ func (s *Store) deletePersonOnce(ctx context.Context, input DeletePersonEnrichme
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
+		// Recipient replacement takes this lock before message and person rows,
+		// which contact changes invalidate below.
+		if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		var revision int64
 		err := tx.QueryRowContext(ctx,
 			`SELECT revision FROM persons WHERE id = ?`+s.dialect.SelectForUpdate(),

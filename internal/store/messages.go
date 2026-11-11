@@ -1490,8 +1490,17 @@ func (s *Store) UpsertMessageContext(ctx context.Context, msg *Message) (int64, 
 	if err := s.requireSyncSource(msg.SourceID); err != nil {
 		return 0, err
 	}
+	lock := attributionLockForMessage(msg.SourceID, msg.MessageType)
+	id, err := s.upsertMessageLockedContext(ctx, lock, msg)
+	if errors.Is(err, errMovedMessageNeedsExclusive) {
+		id, err = s.upsertMessageLockedContext(ctx, attributionLock{Exclusive: true}, msg)
+	}
+	return id, err
+}
+
+func (s *Store) upsertMessageLockedContext(ctx context.Context, lock attributionLock, msg *Message) (int64, error) {
 	var id int64
-	err := s.withAttributionTxContext(ctx, attributionLockForMessage(msg.SourceID, msg.MessageType), func(tx *loggedTx) error {
+	err := s.withAttributionTxContext(ctx, lock, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		if s.dialect.DriverName() != postgresDriverName {
 			// Reserve the writer before upsertMessageWith reads prior journal state.
@@ -1500,8 +1509,12 @@ func (s *Store) UpsertMessageContext(ctx context.Context, msg *Message) (int64, 
 			}
 		}
 		var err error
-		id, err = upsertMessageWith(q, s.dialect, msg)
+		var movedFrom sql.NullInt64
+		id, movedFrom, err = upsertMessageWith(q, s.dialect, msg)
 		if err != nil {
+			return err
+		}
+		if err := s.reconcileMovedMessagePeopleTx(ctx, tx, movedFrom, msg.ConversationID); err != nil {
 			return err
 		}
 		if err := s.refreshMeetingProjectionWith(ctx, tx, id); err != nil {
@@ -1534,7 +1547,9 @@ type bodylessMessageJournalState struct {
 	deleted        bool
 }
 
-func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
+// upsertMessageWith returns the prior room when the upsert moved an existing
+// message, so the caller can reconcile people features that cited it.
+func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, sql.NullInt64, error) {
 	journalCandidate := isBodylessMessageJournalCandidate(msg)
 	var prior bodylessMessageJournalState
 	if journalCandidate {
@@ -1553,21 +1568,21 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 			prior.found = true
 		case errors.Is(err, sql.ErrNoRows):
 		default:
-			return 0, fmt.Errorf("read bodyless message journal state: %w", err)
+			return 0, sql.NullInt64{}, fmt.Errorf("read bodyless message journal state: %w", err)
 		}
 	}
 	if !journalCandidate {
 		err := q.QueryRow(`SELECT conversation_id FROM messages WHERE source_id=? AND source_message_id=?`, msg.SourceID, msg.SourceMessageID).Scan(&prior.conversationID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return 0, err
+			return 0, sql.NullInt64{}, err
 		}
 	}
 	if prior.conversationID.Valid && prior.conversationID.Int64 != msg.ConversationID {
 		if err := invalidateEnvelopeContextWith(q, "support.source_id=? AND support.source_message_id=?", msg.SourceID, msg.SourceMessageID); err != nil {
-			return 0, err
+			return 0, sql.NullInt64{}, err
 		}
 	}
-	sql := upsertMessageSQL(d.Now())
+	upsertSQL := upsertMessageSQL(d.Now())
 	sourceIsFromMe := msg.IsFromMe && !msg.IdentityDerivedIsFromMe
 	identityIsFromMe := msg.IsFromMe && msg.IdentityDerivedIsFromMe
 	args := []any{
@@ -1585,31 +1600,31 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 
 	// Use RETURNING to avoid an extra SELECT per message when supported.
 	var id int64
-	err := q.QueryRow(sql+"\n\t\tRETURNING id\n\t", args...).Scan(&id)
+	err := q.QueryRow(upsertSQL+"\n\t\tRETURNING id\n\t", args...).Scan(&id)
 
 	if err != nil {
 		// SQLite < 3.35 does not support RETURNING. Fall back to an Exec + SELECT.
 		if !d.IsReturningError(err) {
-			return 0, err
+			return 0, sql.NullInt64{}, err
 		}
 
-		if _, execErr := q.Exec(sql, args...); execErr != nil {
-			return 0, execErr
+		if _, execErr := q.Exec(upsertSQL, args...); execErr != nil {
+			return 0, sql.NullInt64{}, execErr
 		}
 
 		if err := q.QueryRow(
 			`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`,
 			msg.SourceID, msg.SourceMessageID,
 		).Scan(&id); err != nil {
-			return 0, err
+			return 0, sql.NullInt64{}, err
 		}
 	}
 	if journalCandidate && needsBodylessMessageJournal(prior, msg) {
 		if err := appendBodylessMessageChange(q, d, id, prior, msg); err != nil {
-			return 0, err
+			return 0, sql.NullInt64{}, err
 		}
 		if err := coalesceLatestMessageChanges(q, d, id); err != nil {
-			return 0, err
+			return 0, sql.NullInt64{}, err
 		}
 	}
 	// Fresh SQLite message inserts intentionally have no activity INSERT
@@ -1619,23 +1634,27 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 	// (which has already advanced an existing row) and with archives that still
 	// carry the old INSERT trigger during migration.
 	if err := enqueueActivityProjectionMessage(q, d, id); err != nil {
-		return 0, err
+		return 0, sql.NullInt64{}, err
 	}
 	if err := enqueueChatMembers(q, msg.ConversationID); err != nil {
-		return 0, err
+		return 0, sql.NullInt64{}, err
 	}
 	if journalCandidate && !prior.found && d.DriverName() != postgresDriverName {
 		if err := appendPersonSweepMessageInsert(q, d, id); err != nil {
-			return 0, err
+			return 0, sql.NullInt64{}, err
 		}
 	}
 	if err := markConversationPolicyActivitiesDirtyWith(q, []int64{prior.conversationID.Int64, msg.ConversationID}); err != nil {
-		return 0, err
+		return 0, sql.NullInt64{}, err
 	}
 	if err := scheduleConversationPolicyMoveCleanupWith(q, prior.conversationID, msg.ConversationID); err != nil {
-		return 0, err
+		return 0, sql.NullInt64{}, err
 	}
-	return id, nil
+	var movedFrom sql.NullInt64
+	if prior.conversationID.Valid && prior.conversationID.Int64 != msg.ConversationID {
+		movedFrom = prior.conversationID
+	}
+	return id, movedFrom, nil
 }
 
 func needsBodylessMessageJournal(prior bodylessMessageJournalState, msg *Message) bool {
@@ -2367,14 +2386,23 @@ func (s *Store) persistMessageWithParticipantsTransaction(
 			break
 		}
 	}
-	var messageID int64
-	err := s.withAttributionTxContext(ctx, lock, func(tx *loggedTx) error {
-		var err error
-		messageID, err = s.persistMessageWithParticipantsTx(
-			ctx, tx, beforeParticipants, participants, build, prepare, afterPersist,
-		)
-		return err
-	})
+	persist := func(lock attributionLock) (int64, error) {
+		var messageID int64
+		err := s.withAttributionTxContext(ctx, lock, func(tx *loggedTx) error {
+			var err error
+			messageID, err = s.persistMessageWithParticipantsTx(
+				ctx, tx, beforeParticipants, participants, build, prepare, afterPersist,
+			)
+			return err
+		})
+		return messageID, err
+	}
+	messageID, err := persist(lock)
+	if errors.Is(err, errMovedMessageNeedsExclusive) && !lock.Exclusive {
+		// A move that changes whether the message counts as Full reconciles
+		// people facts, which needs the exclusive identity lock.
+		messageID, err = persist(attributionLock{Exclusive: true})
+	}
 	return messageID, err
 }
 
@@ -2543,7 +2571,7 @@ func (s *Store) persistMessageWith(
 		message = &messageCopy
 	}
 
-	messageID, err := upsertMessageWith(q, s.dialect, message)
+	messageID, movedFrom, err := upsertMessageWith(q, s.dialect, message)
 	if err != nil {
 		return 0, fmt.Errorf("upsert message: %w", err)
 	}
@@ -2589,6 +2617,11 @@ func (s *Store) persistMessageWith(
 		if err := replaceMessageRecipientsTx(q, s.dialect, messageID, rs); err != nil {
 			return 0, fmt.Errorf("store %s recipients: %w", rs.Type, err)
 		}
+	}
+	// Reconcile after the envelope lands, so the moved message's current
+	// participants are the ones checked.
+	if err := s.reconcileMovedMessagePeopleTx(ctx, tx, movedFrom, message.ConversationID); err != nil {
+		return 0, err
 	}
 
 	// Unconditional, not gated on data.Recipients carrying a 'from' set: even

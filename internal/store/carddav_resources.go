@@ -138,6 +138,11 @@ func (s *Store) ApplyCardDAVSyncPlanContext(
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
+		// Recipient replacement takes this lock before message and person rows,
+		// which contact changes invalidate below.
+		if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
+			return err
+		}
 
 		type preparedUpsert struct {
 			input    CardDAVRemoteResource
