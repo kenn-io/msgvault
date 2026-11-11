@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -320,4 +322,18 @@ func TestMCPOperationsLocalRecoveryFailure(t *testing.T) {
 			assert.JSONEq(`{"error":"daemon_unavailable","operation_may_have_completed":false}`, string(data))
 		})
 	}
+}
+
+func TestMCPOperationReadRejectsMalformedResponse(t *testing.T) {
+	client := newMCPDaemonClient(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("{")) })
+	result, err := readMCPOperationJSON[generated.ListDeletionsResponse](t.Context(), client, http.MethodGet, "/api/v1/deletions", nil, http.StatusOK)
+	require.Error(t, err)
+	assertLoopRefusal(t, result, "invalid_operation_response", false)
+}
+
+func TestMCPOperationReadRejectsOversizedResponse(t *testing.T) {
+	client := newMCPDaemonClient(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, strings.Repeat("x", (1<<20)+1)) })
+	result, err := readMCPOperationJSON[generated.ListDeletionsResponse](t.Context(), client, http.MethodGet, "/api/v1/deletions", nil, http.StatusOK)
+	require.NoError(t, err)
+	assertLoopRefusal(t, result, "operation_response_limit_exceeded", false)
 }

@@ -12,7 +12,7 @@ func deletionReviewOperationalDefinitions() []operationalDefinition {
 		status.Enum = append(status.Enum, string(value))
 	}
 	return []operationalDefinition{
-		newOperationalDefinition("list_deletions", "List staged deletion batches, newest first, optionally filtered by status.", OperationFamilyDeletions, closedObject(map[string]*jsonschema.Schema{"status": status}), outputSchemaFor[generated.ListDeletionsResponse](), false),
-		newOperationalDefinition("get_deletion", "Read a staged deletion batch lifecycle receipt; the complete selected message ID set is not included.", OperationFamilyDeletions, closedObject(map[string]*jsonschema.Schema{"manifest_id": stringSchema("Exact deletion manifest ID")}, "manifest_id"), outputSchemaFor[generated.DeletionManifestDetail](), false),
+		newOperationalDefinition("list_deletions", "List staged deletion batches, newest first, optionally filtered by status.", OperationFamilyRecords, closedObject(map[string]*jsonschema.Schema{"status": status}), outputSchemaFor[generated.ListDeletionsResponse](), false),
+		newOperationalDefinition("get_deletion", "Read a staged deletion batch lifecycle receipt, which may include failed or checkpoint IDs and is not a selection preview.", OperationFamilyRecords, closedObject(map[string]*jsonschema.Schema{"batch_id": stringSchema("Batch ID from stage_deletion or id from list_deletions")}, "batch_id"), outputSchemaFor[generated.DeletionManifestDetail](), false),
 	}
 }

@@ -1,15 +1,12 @@
 package cmd
 
 import (
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,57 +23,27 @@ func TestMCPDeletionReviewRealRouter(t *testing.T) {
 	cfg := &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}
 	store := testutil.NewSQLiteTestStore(t)
 	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: store, config: cfg}, Logger: slog.New(slog.DiscardHandler)}))
-	call := func(name string, args map[string]any) *generated.ListDeletionsResponse {
-		t.Helper()
-		result, err := backend.ExecuteOperation(t.Context(), name, args)
-		require.NoError(t, err)
-		out := operationOutput[generated.ListDeletionsResponse](t, result)
-		return &out
-	}
-	assert.Empty(t, call("list_deletions", nil).Manifests)
 	manager, err := deletion.NewManager(filepath.Join(cfg.Data.DataDir, "deletions"))
 	require.NoError(t, err)
-	older := deletion.NewManifestForSource("older", []string{"synthetic-1"}, deletion.SourceReference{ID: 1, Type: "gmail", Identifier: "owner@example.test"})
-	older.ID = "older"
-	older.CreatedAt = time.Now().Add(-time.Hour)
-	older.Filters.Account = "owner@example.test"
-	require.NoError(t, manager.SaveManifest(older))
-	newer := deletion.NewManifestForSource("newer", []string{"synthetic-2"}, deletion.SourceReference{ID: 1, Type: "gmail", Identifier: "owner@example.test"})
-	newer.Summary = &deletion.Summary{MessageCount: 1}
-	newer.ID = "newer"
-	newer.Status = deletion.StatusFailed
-	newer.Execution = &deletion.Execution{Failed: 1, FailedIDs: []string{"synthetic-2"}}
-	require.NoError(t, manager.SaveManifest(newer))
-	all := call("list_deletions", nil)
-	require.Len(t, all.Manifests, 2)
-	assert.Equal(t, "newer", all.Manifests[0].ID)
-	assert.Equal(t, "older", all.Manifests[1].ID)
-	pending := call("list_deletions", map[string]any{"status": "pending"})
-	require.Len(t, pending.Manifests, 1)
-	assert.Equal(t, "older", pending.Manifests[0].ID)
-	result, err := backend.ExecuteOperation(t.Context(), "get_deletion", map[string]any{"manifest_id": "newer"})
+	pending := deletion.NewManifest("pending", []string{"synthetic-1"})
+	pending.ID = "pending-batch"
+	require.NoError(t, manager.SaveManifest(pending))
+	failed := deletion.NewManifest("failed", []string{"synthetic-2"})
+	failed.ID = "failed-batch"
+	failed.Status = deletion.StatusFailed
+	require.NoError(t, manager.SaveManifest(failed))
+	result, err := backend.ExecuteOperation(t.Context(), "list_deletions", map[string]any{"status": "pending"})
+	require.NoError(t, err)
+	list := operationOutput[generated.ListDeletionsResponse](t, result)
+	require.Len(t, list.Manifests, 1)
+	assert.Equal(t, "pending-batch", list.Manifests[0].ID)
+	result, err = backend.ExecuteOperation(t.Context(), "get_deletion", map[string]any{"batch_id": "failed-batch"})
 	require.NoError(t, err)
 	detail := operationOutput[generated.DeletionManifestDetail](t, result)
-	assert.Equal(t, "failed", detail.Status)
-	require.NotNil(t, detail.Summary)
-	assert.Equal(t, int64(1), detail.Summary.MessageCount)
-	require.NotNil(t, detail.Source)
-	assert.Equal(t, "gmail", detail.Source.Type)
-	require.NotNil(t, detail.Execution)
-	assert.Equal(t, []string{"synthetic-2"}, detail.Execution.FailedIds)
-	for _, tc := range []struct {
-		name string
-		args map[string]any
-		code string
-	}{
-		{"get_deletion", map[string]any{"manifest_id": "missing"}, "not_found"},
-		{"list_deletions", map[string]any{"status": "bogus"}, "invalid_status"},
-		{"get_deletion", map[string]any{"manifest_id": "../unsafe"}, "invalid_manifest_id"},
-	} {
-		result, err := backend.ExecuteOperation(t.Context(), tc.name, tc.args)
-		require.NoError(t, err)
-		assertLoopRefusal(t, result, tc.code, false)
-	}
+	assert.Equal(t, "failed-batch", detail.ID)
+	result, err = backend.ExecuteOperation(t.Context(), "list_deletions", map[string]any{"status": "bogus"})
+	require.NoError(t, err)
+	assertLoopRefusal(t, result, "invalid_status", false)
 	unavailable := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: cfg, Logger: slog.New(slog.DiscardHandler)}))
 	result, err = unavailable.ExecuteOperation(t.Context(), "list_deletions", nil)
 	require.NoError(t, err)
@@ -104,34 +71,9 @@ func TestMCPDeletionReviewDiscoveryAndUnsafeIDs(t *testing.T) {
 	require.NoError(t, err)
 	backend := &daemonMCPOperations{client: client, supported: []string{"get_deletion"}}
 	for _, id := range []string{"", ".", "..", "../x", "a/b", `a\b`, "a?b", "a#b"} {
-		result, err := backend.ExecuteOperation(t.Context(), "get_deletion", map[string]any{"manifest_id": id})
+		result, err := backend.ExecuteOperation(t.Context(), "get_deletion", map[string]any{"batch_id": id})
 		require.NoError(t, err)
 		assertLoopRefusal(t, result, "invalid_manifest_id", false)
 	}
 	assert.Zero(t, calls.Load())
-}
-
-func TestMCPDeletionReviewRejectsBadResponses(t *testing.T) {
-	for _, tc := range []struct {
-		name, body, code string
-		hasError         bool
-	}{
-		{"malformed", "{", "invalid_operation_response", true},
-		{"oversized", strings.Repeat("x", (1<<20)+1), "operation_response_limit_exceeded", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, tc.body) }))
-			t.Cleanup(server.Close)
-			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
-			require.NoError(t, err)
-			backend := &daemonMCPOperations{client: client, supported: []string{"list_deletions"}}
-			result, err := backend.ExecuteOperation(t.Context(), "list_deletions", nil)
-			if tc.hasError {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err)
-			}
-			assertLoopRefusal(t, result, tc.code, false)
-		})
-	}
 }

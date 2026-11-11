@@ -32,22 +32,19 @@ func (b *daemonMCPOperations) executeDeletionReviewOperation(ctx context.Context
 		if err != nil {
 			return operationFailure("invalid_arguments", false), true, nil
 		}
-		if input.Status != nil && !deletion.IsValidStatus(deletion.Status(*input.Status)) {
-			return operationFailure("invalid_status", false), true, nil
-		}
 		result, err := readMCPOperationJSONWithClassifier[generated.ListDeletionsResponse](ctx, b.client, http.MethodGet, "/api/v1/deletions", &generated.ListDeletionsRequestOptions{Query: &generated.ListDeletionsQuery{Status: input.Status}}, classify, http.StatusOK)
 		return result, true, err
 	case "get_deletion":
 		input, err := decodeMCPOperationArguments[struct {
-			ManifestID string `json:"manifest_id"`
+			BatchID string `json:"batch_id"`
 		}](args)
 		if err != nil {
 			return operationFailure("invalid_arguments", false), true, nil
 		}
-		if deletion.ValidateManifestID(input.ManifestID) != nil {
+		if deletion.ValidateManifestID(input.BatchID) != nil {
 			return operationFailure("invalid_manifest_id", false), true, nil
 		}
-		result, err := readMCPOperationJSONWithClassifier[generated.DeletionManifestDetail](ctx, b.client, http.MethodGet, "/api/v1/deletions/{id}", &generated.GetDeletionRequestOptions{PathParams: &generated.GetDeletionPath{ID: input.ManifestID}}, classify, http.StatusOK)
+		result, err := readMCPOperationJSONWithClassifier[generated.DeletionManifestDetail](ctx, b.client, http.MethodGet, "/api/v1/deletions/{id}", &generated.GetDeletionRequestOptions{PathParams: &generated.GetDeletionPath{ID: input.BatchID}}, classify, http.StatusOK)
 		return result, true, err
 	default:
 		return nil, false, nil
