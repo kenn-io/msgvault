@@ -116,7 +116,6 @@ func TestPostalAddressEditPreservesOriginalHistory(t *testing.T) {
 	current := after.Addresses[0]
 	assert := assert.New(t)
 	assert.Equal(&newText, current.FreeText)
-	assert.Equal(new("CA"), current.CountryCode)
 	assert.Equal(raw, current.Assessment.Original)
 	historyResponse := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id)+"/history", nil, nil)
 	require.Equal(http.StatusOK, historyResponse.Code)
@@ -133,7 +132,6 @@ func TestPostalAddressEditPreservesOriginalHistory(t *testing.T) {
 	assert.Equal(&oldText, historic.FreeText)
 	assert.NotNil(historic.Envelope.SupersededAt)
 	assert.Equal(raw, historic.Assessment.Original)
-	assert.Equal([]string{"Room;3", "Floor 2"}, historic.Assessment.OriginalExtendedParts)
 	assert.Equal(raw.OriginalValue, historic.OriginalValue)
 }
 

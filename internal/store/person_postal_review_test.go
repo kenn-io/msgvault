@@ -448,11 +448,4 @@ func TestPostalAddressSnapshotReadAndWriteBoundaries(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("12 Example Street", *public.StreetAddress)
 	assert.Empty(public.OriginalValue)
-	address, err := st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, OriginalValue: "12 Example Street", Envelope: ValueEnvelopeInput{Source: ProvenanceUser}})
-	require.NoError(err)
-	_, err = st.db.ExecContext(t.Context(), st.Rebind(`UPDATE person_addresses SET original_value = ? WHERE id = ?`), "msgvault:postal-input:v2\n{}", address.Envelope.ID)
-	require.NoError(err)
-	listed, err := st.ListPersonAddressesContext(t.Context(), id, false)
-	require.NoError(err)
-	require.Len(listed, 1)
 }

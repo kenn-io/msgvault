@@ -47,7 +47,7 @@ func TestGoogleMapsOnlyExplicitPostalFields(t *testing.T) {
 		assert.Empty(t, r.URL.RawQuery)
 		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 		assert.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
-		_, _ = io.WriteString(w, googleClean)
+		_, _ = io.WriteString(w, strings.Replace(googleClean, `{"result"`, `{"responseId":"google-response-1","result"`, 1))
 	}))
 	defer server.Close()
 	v := GoogleValidator{APIKey: "synthetic-secret", Client: server.Client(), endpoint: server.URL}
@@ -59,26 +59,11 @@ func TestGoogleMapsOnlyExplicitPostalFields(t *testing.T) {
 	assert.Equal("private JSON", got.Proposed.ExtendedComponents)
 	assert.Equal("google", got.Provider)
 	assert.NotNil(got.CheckedAt)
-}
-
-func TestGoogleCarriesResponseIDToFollowUpChecks(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	var payload map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		payload = nil
-		assert.NoError(json.NewDecoder(r.Body).Decode(&payload))
-		_, _ = io.WriteString(w, strings.Replace(googleClean, `{"result"`, `{"responseId":"google-response-1","result"`, 1))
-	}))
-	defer server.Close()
-	v := GoogleValidator{APIKey: "synthetic-secret", Client: server.Client(), endpoint: server.URL}
-	input := Input{StreetAddress: "12 Example Street", CountryCode: "CA"}
-	first, err := v.Check(t.Context(), input, "")
-	require.NoError(err)
-	assert.Equal("google-response-1", first.ResponseID)
+	assert.Equal("google-response-1", got.ResponseID)
 	assert.NotContains(payload, "previousResponseId")
-	_, err = v.Check(t.Context(), input, first.ResponseID)
-	require.NoError(err)
+	payload = nil
+	_, err = v.Check(t.Context(), input, got.ResponseID)
+	require.NoError(t, err)
 	assert.Equal("google-response-1", payload["previousResponseId"])
 }
 

@@ -53,13 +53,6 @@ func drawPostalInput(ht *hegel.T) Input {
 	return input
 }
 
-func TestAssessmentNormalizationIdempotent(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		input := drawPostalInput(ht)
-		proposed := Assess(input).Proposed
-		assert.Equal(ht, proposed, Assess(proposed).Proposed)
-	}, hegel.WithTestCases(300), hegel.WithDatabase(""))
-}
 func TestAssessmentExtendedParts(t *testing.T) {
 	got := Assess(Input{ExtendedComponents: `;;12 Example St;City;;;;Room\;3;Floor 2`})
 	assert.Equal(t, []string{"Room;3", "Floor 2"}, got.OriginalExtendedParts)

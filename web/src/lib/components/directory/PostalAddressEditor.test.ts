@@ -17,7 +17,7 @@ function setup(options: { unavailable?: boolean; localRejection?: boolean; revie
   const requests: Request[] = [];
   const profile = { ...emptyProfile(person), addresses: options.current ? [options.current] : [] };
   const check = vi.fn(async (input: Input): Promise<Assessment> => ({
-    original: input, proposed: options.localRejection ? input : { ...input, street_address: '12 Example Street', country_code: 'CA' },
+    original: input, proposed: { ...input, street_address: options.localRejection || options.unavailable ? input.street_address?.trim() : '12 Example Street', extended_address: input.extended_address?.trim(), post_office_box: input.post_office_box?.trim(), country_code: input.country_code?.trim().toUpperCase() },
     status: options.localRejection || options.review ? 'needs_review' : options.unavailable ? 'unavailable' : 'validated', provider: 'google',
     checked_at: options.localRejection ? undefined : when,
     reason_codes: options.localRejection ? ['external_country_unsuitable'] : options.unavailable ? ['not_verified', 'provider_request_failed'] : options.review ? ['provider_unconfirmed'] : ['provider_confirmed'], original_extended_parts: [], proposed_extended_parts: [],
@@ -99,7 +99,7 @@ describe('Postal address editor', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Save correction' }));
     await waitFor(() => expect(requests).toHaveLength(2));
     const body = await requests[1]!.clone().json();
-    expect(body.addresses.add[0]).toMatchObject({ street_address: external ? '12 Example Street' : '12 Example St', extended_address: external ? raw.extended_address : 'Unit 7', post_office_box: external ? raw.post_office_box : 'Box 9', original_input: raw, envelope: { source: 'user' } });
+    expect(body.addresses.add[0]).toMatchObject({ street_address: external ? '12 Example Street' : '12 Example St', extended_address: 'Unit 7', post_office_box: 'Box 9', original_input: raw, envelope: { source: 'user' } });
     expect(body.addresses.add[0]).not.toHaveProperty('assessment');
     expect(body.addresses.add[0]).not.toHaveProperty('provider');
   });

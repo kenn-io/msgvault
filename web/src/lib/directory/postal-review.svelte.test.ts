@@ -39,18 +39,6 @@ describe('postalAddressText', () => {
 });
 
 describe('PostalReviewSession', () => {
-  it('retries an unavailable Google check without changing the address', async () => {
-    const unavailable = { ...await assessment(), status: 'unavailable' as const, reason_codes: ['not_verified', 'provider_request_failed'] };
-    const recovered = await assessment();
-    const check = vi.fn().mockResolvedValueOnce(unavailable).mockResolvedValueOnce(recovered);
-    const state = new PostalReviewSession(7, check);
-    await state.check(input, true);
-    expect(state.result?.status).toBe('unavailable');
-    await state.check(input, true);
-    expect(check).toHaveBeenCalledTimes(2);
-    expect(state.result).toEqual(recovered);
-  });
-
   it('ignores the response ID from an invalidated check', async () => {
     const first = deferred<Assessment>(), second = deferred<Assessment>();
     const check = vi.fn().mockImplementationOnce(() => first.promise).mockImplementationOnce(() => second.promise).mockImplementation(async (_id: number, draft: Input) => ({ ...await assessment(draft), response_id: 'third' }));
@@ -100,16 +88,19 @@ describe('PostalReviewSession', () => {
 
   it('checks locally and externally', async () => {
     const result = await assessment();
+    const unavailable = { ...result, status: 'unavailable' as const, reason_codes: ['not_verified', 'provider_request_failed'] };
     const check = vi.fn(async (_personID: number, _input: Input, external: boolean, _signal: AbortSignal): Promise<Assessment> =>
-      external ? result : { ...result, status: 'normalized_unverified', provider: undefined });
+      external ? unavailable : { ...result, status: 'normalized_unverified', provider: undefined }).mockResolvedValueOnce({ ...result, status: 'normalized_unverified', provider: undefined }).mockResolvedValueOnce(unavailable).mockResolvedValueOnce(result);
     const state = new PostalReviewSession(7, check);
     await state.check(input, false);
     expect(state.result?.status).toBe('normalized_unverified');
     expect(state.error).toBeNull();
     await state.check(input, true);
+    expect(state.result?.status).toBe('unavailable');
+    await state.check(input, true);
     expect(state.result).toEqual(result);
     expect(state.error).toBeNull(); expect(state.pending).toBe(false);
-    expect(check.mock.calls.map(call => call.slice(0, 3))).toEqual([[7, input, false], [7, input, true]]);
+    expect(check.mock.calls.map(call => call.slice(0, 3))).toEqual([[7, input, false], [7, input, true], [7, input, true]]);
   });
 
   it('rejects a mismatched echoed input', async () => {

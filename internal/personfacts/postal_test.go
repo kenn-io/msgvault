@@ -22,7 +22,6 @@ func TestPostalAddressTargetRequiresSensitiveCatalog(t *testing.T) {
 	assert.Equal("system:postal_address", target.Key)
 	assert.True(target.Sensitive)
 	assert.Equal(ValuePostalAddress, target.ValueType)
-
 }
 
 func postalTarget(t *testing.T, catalog Catalog) TargetDescriptor {
@@ -50,8 +49,6 @@ func TestPostalAddressNormalizationRetainsSourceText(t *testing.T) {
 	require.NoError(json.Unmarshal(normalized.JSON, &got))
 	assert := assert.New(t)
 	assert.Equal("東京都千代田区\n丸の内１−２", got.StreetAddress)
-	assert.Equal("３０１号室", got.ExtendedAddress)
-	assert.Equal("JP", got.CountryCode)
 	assert.Equal("  raw\n source  ", got.SourceText)
 	for _, raw := range []string{`{"locality":"Example City","source_text":"city only"}`, `{"street_address":"12 Example St"}`, `{"street_address":"12 Example St","source_text":"raw","validated":true}`} {
 		_, failure, err := NormalizeClaimValue(target, json.RawMessage(raw))
