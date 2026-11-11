@@ -164,3 +164,28 @@ it.each([
     expect(onChange).toHaveBeenLastCalledWith(expected);
   } finally { vi.unstubAllEnvs(); }
 });
+
+it.each([
+  { name: 'accepts a UTC start before a local skipped-midnight end', filters: [{ dimension: 'after', values: ['2023-09-01T00:00:00Z'] }, { dimension: 'before', values: ['2023-10-01T00:00:00-04:00'] }], field: 'From (UTC)', date: '2023-10-01', expected: [{ dimension: 'before', values: ['2023-10-01T00:00:00-04:00'] }, { dimension: 'after', values: ['2023-10-01T00:00:00.000Z'] }] },
+  { name: 'accepts a local end after a UTC start', filters: [{ dimension: 'after', values: ['2023-10-01T00:00:00Z'] }, { dimension: 'before', values: ['2023-11-01T00:00:00-03:00'] }], field: 'To', date: '2023-09-30', expected: [{ dimension: 'after', values: ['2023-10-01T00:00:00Z'] }, { dimension: 'before', values: ['2023-10-01T00:00:00-04:00'] }] },
+  { name: 'rejects equal instants with matching displayed dates', filters: [{ dimension: 'after', values: ['2023-09-01T00:00:00-04:00'] }, { dimension: 'before', values: ['2023-10-01T04:00:00Z'] }], field: 'From', date: '2023-10-01', expected: null },
+  { name: 'rejects an inverted instant despite matching displayed dates', filters: [{ dimension: 'after', values: ['2023-09-01T00:00:00-04:00'] }, { dimension: 'before', values: ['2023-10-01T02:00:00Z'] }], field: 'From', date: '2023-10-01', expected: null },
+] as const)('$name', async ({ filters, field, date, expected }) => {
+  vi.stubEnv('TZ', 'America/Asuncion');
+  try {
+    const onChange = vi.fn();
+    render(FilterMenu, { client: createAPIClient(async () => Response.json({ rows: [], accounts: [] })), onChange, onClear: vi.fn(), filters: filters.map(({ dimension, values }) => ({ dimension, values: [...values] })) });
+    await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+    const input = screen.getByLabelText(field) as HTMLInputElement;
+    const original = input.value;
+    await fireEvent.change(input, { target: { value: date } });
+    if (expected) {
+      expect(onChange).toHaveBeenLastCalledWith(expected);
+      expect(screen.queryByRole('alert')).toBeNull();
+    } else {
+      expect(onChange).not.toHaveBeenCalled();
+      expect(screen.getByRole('alert').textContent).toBe('From must be on or before To.');
+      expect(input.value).toBe(original);
+    }
+  } finally { vi.unstubAllEnvs(); }
+});

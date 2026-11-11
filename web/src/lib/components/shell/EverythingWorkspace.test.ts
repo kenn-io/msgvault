@@ -332,6 +332,115 @@ describe('EverythingWorkspace', () => {
     }
   });
 
+  it.each([
+    ['participant', '42', 'Person Example', 'semantic'],
+    ['participant', '42', 'Person Example', 'hybrid'],
+    ['domain', 'example.net', 'example.net', 'semantic'],
+    ['domain', 'example.net', 'example.net', 'hybrid'],
+  ] as const)('uses the selected %s snapshot for %s (%s) in %s search', async (dimension, key, label, searchMode) => {
+    window.history.replaceState(null, '', '/');
+    let snapshot = 0;
+    let expire = true;
+    const meetingRequests: Array<{ path: string; body: { explore?: { predicate?: { filters?: Array<{ dimension: string; values: string[] }> }; candidate_snapshot_id?: string; cache_revision?: string } } }> = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input as Request;
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/coverage')) return Response.json({ status: 'ready', eligible_count: 1, embedded_count: 1, percentage: 100, vector_generation: 7, cache_revision: 'cache-1', actions: [] });
+      if (path.endsWith('/explore/files')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache-1' });
+      if (path.endsWith('/explore/groups')) return Response.json({
+        rows: [{ key, label, count: 8, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
+        overview: { activity: [{ bucket: '2026-07', count: 8 }], co_participants: [{ key: '1', label: 'Overview Person', count: 1 }] },
+        total_count: 1, cache_revision: 'cache-1', search_provenance: { vector_generation: 7 }, candidate_snapshot_id: 'table-snapshot'
+      });
+      if (path === '/api/v1/explore') {
+        const body = await request.clone().json();
+        expect(body).toMatchObject({ query: 'planning', search_mode: searchMode, filters: [{ dimension, values: [key] }], limit: 1 });
+        expect(body.candidate_snapshot_id).toBeUndefined();
+        expect(body.cursor).toBeUndefined();
+        snapshot += 1;
+        return Response.json(exploreResponse({ cache_revision: `cache-${snapshot + 1}`, search_provenance: { vector_generation: 7 }, candidate_snapshot_id: `group-${snapshot}` }));
+      }
+      if (path.startsWith('/api/v1/meetings/')) {
+        const body = await request.clone().json() as typeof meetingRequests[number]['body'];
+        meetingRequests.push({ path, body });
+        const valid = body.explore?.predicate?.filters?.some((filter) => filter.dimension === dimension && filter.values[0] === key) && body.explore?.candidate_snapshot_id === `group-${snapshot}` && body.explore?.cache_revision === `cache-${snapshot + 1}` && snapshot > 0;
+        if (!valid) return Response.json({ error: 'snapshot_mismatch', message: 'Search snapshot does not match filters' }, { status: 409 });
+        if (expire) return Response.json({ error: 'meeting_scope_changed', message: 'Meetings changed' }, { status: 409 });
+        if (path.endsWith('/actions')) return Response.json(meetingActions({ rows: [meetingAction()], total_count: 1 }));
+        return meetingFixtureResponse(path)!;
+      }
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    state.replaceTransient({ query: 'planning', searchMode, groupingChain: [dimension] });
+    const view = render(AppShell, { client: createAPIClient(fetchFn), state });
+    try {
+      const grid = await screen.findByRole('grid', { name: `Messages grouped by ${dimension}` });
+      await fireEvent.pointerDown(await within(grid).findByText(label));
+      const pane = await screen.findByRole('complementary', { name: `Reading pane: ${label}` });
+      expect(await within(pane).findByText('Overview Person')).toBeDefined();
+      const reload = await within(pane).findByRole('button', { name: 'Reload meeting activity' });
+      expect(snapshot).toBe(1);
+      expire = false;
+      await fireEvent.click(reload);
+      expect(await within(pane).findByText(/4 meetings/)).toBeDefined();
+      expect(await within(pane).findByText('Prepare review')).toBeDefined();
+      expect(snapshot).toBe(2);
+      for (const path of ['/api/v1/meetings/metrics', '/api/v1/meetings/actions']) {
+        expect(meetingRequests).toContainEqual({ path, body: expect.objectContaining({ explore: expect.objectContaining({ candidate_snapshot_id: 'group-2', cache_revision: 'cache-3' }) }) });
+      }
+    } finally { view.unmount(); state.destroy(); }
+  });
+
+  it('discards a superseded group snapshot request', async () => {
+    window.history.replaceState(null, '', '/');
+    let firstSignal: AbortSignal | undefined;
+    let resolveFirst: ((response: Response) => void) | undefined;
+    const meetingSnapshots: string[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input as Request;
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/coverage')) return Response.json({ status: 'ready', eligible_count: 2, embedded_count: 2, percentage: 100, vector_generation: 7, cache_revision: 'cache-1', actions: [] });
+      if (path.endsWith('/explore/files')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache-1' });
+      if (path.endsWith('/explore/groups')) {
+        const body = await request.clone().json();
+        const rows = [{ key: '1', label: 'First Person', count: 1 }, { key: '2', label: 'Second Person', count: 2 }];
+        return Response.json({ rows: body.group_key ? rows.filter(row => row.key === body.group_key) : rows, total_count: 2, cache_revision: 'cache-1', search_provenance: { vector_generation: 7 }, candidate_snapshot_id: 'table-snapshot' });
+      }
+      if (path === '/api/v1/explore') {
+        const body = await request.clone().json();
+        if (body.filters[0].values[0] === '1') {
+          firstSignal = request.signal;
+          return new Promise<Response>(resolve => { resolveFirst = resolve; });
+        }
+        return Response.json(exploreResponse({ candidate_snapshot_id: 'second-snapshot', search_provenance: { vector_generation: 7 } }));
+      }
+      if (path.startsWith('/api/v1/meetings/')) {
+        const body = await request.clone().json();
+        meetingSnapshots.push(body.explore.candidate_snapshot_id);
+        return meetingFixtureResponse(path)!;
+      }
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    state.replaceTransient({ query: 'planning', searchMode: 'semantic', groupingChain: ['participant'] });
+    const view = render(AppShell, { client: createAPIClient(fetchFn), state });
+    try {
+      const grid = await screen.findByRole('grid', { name: 'Messages grouped by participant' });
+      await fireEvent.pointerDown(await within(grid).findByText('First Person'));
+      await waitFor(() => expect(resolveFirst).toBeDefined());
+      await fireEvent.pointerDown(within(grid).getByText('Second Person'));
+      await waitFor(() => expect(firstSignal?.aborted).toBe(true));
+      const pane = await screen.findByRole('complementary', { name: 'Reading pane: Second Person' });
+      await within(pane).findByText(/4 meetings/);
+      resolveFirst!(Response.json(exploreResponse({ candidate_snapshot_id: 'first-snapshot', search_provenance: { vector_generation: 7 } })));
+      await tick();
+      expect(meetingSnapshots).toContain('second-snapshot');
+      expect(meetingSnapshots).not.toContain('first-snapshot');
+      expect(screen.getByRole('complementary', { name: 'Reading pane: Second Person' })).toBeDefined();
+    } finally { view.unmount(); state.destroy(); }
+  });
+
   function entry(index: number) {
     return {
       key: `message:${index}`,

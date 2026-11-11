@@ -104,18 +104,19 @@
   function changeDate(dimension: 'after' | 'before', input: HTMLInputElement): void {
     const value = input.value;
     dateError = '';
-    const from = dimension === 'after' ? value : dateValue('after');
-    const to = dimension === 'before' ? value : dateValue('before');
-    if (from && to && from > to) {
-      dateError = 'From must be on or before To.';
-      input.value = dateValue(dimension);
-      return;
-    }
     const rest = filters.filter((filter) => filter.dimension !== dimension);
     if (!value) return onChange(rest);
     const current = filters.find((filter) => filter.dimension === dimension)?.values[0];
     const peer = filters.find((filter) => filter.dimension === (dimension === 'after' ? 'before' : 'after'))?.values[0];
-    onChange([...rest, { dimension, values: [editedBoundary(value, dimension === 'before', isLocalBound(current ?? peer))] }]);
+    const edited = editedBoundary(value, dimension === 'before', isLocalBound(current ?? peer));
+    const from = dimension === 'after' ? edited : peer;
+    const to = dimension === 'before' ? edited : peer;
+    if (from && to && Date.parse(from) >= Date.parse(to)) {
+      dateError = 'From must be on or before To.';
+      input.value = dateValue(dimension);
+      return;
+    }
+    onChange([...rest, { dimension, values: [edited] }]);
   }
 
   function clear(): void {

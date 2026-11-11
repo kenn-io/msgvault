@@ -372,7 +372,7 @@
     // co-participant/co-domain of the matching entries forms a group too, so
     // findGroupDetail resolves the exact key server-side via group_key.
     void findGroupDetail(api, detailPredicate, target.dimension, target.key, controller.signal)
-      .then((lookup) => {
+      .then(async (lookup) => {
         if (generation !== session.readingDetailGeneration || controller.signal.aborted) return;
         if (lookup.status === 'unavailable') {
           readingDetailUnavailable = lookup.unavailable;
@@ -381,6 +381,16 @@
         if (lookup.status === 'missing') {
           readingDetailError = 'The selected group is no longer available in this context.';
           return;
+        }
+        let authority = lookup.authority;
+        if (authority.candidateSnapshotId && canonicalFingerprint(filters) !== canonicalFingerprint(predicate.filters ?? [])) {
+          const narrowed = await api.explore({ ...detailPredicate, filters, limit: 1 }, controller.signal);
+          if (generation !== session.readingDetailGeneration || controller.signal.aborted) return;
+          if (narrowed.status === 'unavailable') {
+            readingDetailUnavailable = narrowed.unavailable;
+            return;
+          }
+          authority = narrowed.result;
         }
         session.readingGroupDetail = {
           kind: 'group',
@@ -391,7 +401,7 @@
           estimatedBytes: lookup.row.estimated_bytes,
           latestAt: lookup.row.latest_at,
           overview: lookup.overview,
-          meetingScope: exploreMeetingScope({ ...detailPredicate, filters }, lookup.authority).explore,
+          meetingScope: exploreMeetingScope({ ...detailPredicate, filters }, authority).explore,
         };
         session.readingDetailFingerprint = loadedKey;
       })
