@@ -1145,14 +1145,47 @@ func TestAgentChangeFeedRateLimitBeforeSnapshot(t *testing.T) {
 	t.Cleanup(func() { srv.changesRateLimiter.Close(); srv.rateLimiter.Close(); srv.mediaSearchRateLimiter.Close() })
 	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 	require.NoError(t, err)
-	get := func() *httptest.ResponseRecorder {
+	_, denied, _, err := srv.agentGrants.Issue("denied", []agentgrant.Permission{agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+	require.NoError(t, err)
+	get := func(secret string) *httptest.ResponseRecorder {
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/messages/changes", nil)
-		req.Header.Set(apiprotocol.AgentTokenHeader, token)
+		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
 		return w
 	}
-	require.Equal(t, http.StatusOK, get().Code)
-	assert.Equal(t, http.StatusTooManyRequests, get().Code)
+	require.Equal(t, http.StatusForbidden, get(denied).Code)
+	assert.Zero(t, wrapped.probes.Load())
+	require.Equal(t, http.StatusOK, get(token).Code)
+	assert.Equal(t, http.StatusTooManyRequests, get(token).Code)
 	assert.Equal(t, int32(1), wrapped.probes.Load())
+}
+
+func TestAgentChangeFeedCancellationReleasesSnapshotSlot(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("test", "cancel-feed@example.test")
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	ready := make(chan struct{})
+	wrapped := &agentReadGateStore{Store: st, onSources: func() { close(ready); <-ctx.Done() }}
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: wrapped, Logger: testLogger()})
+	t.Cleanup(func() {
+		srv.agentGrants.Close()
+		srv.rateLimiter.Close()
+		srv.changesRateLimiter.Close()
+		srv.mediaSearchRateLimiter.Close()
+	})
+	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+	require.NoError(t, err)
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/messages/changes", nil)
+	req.Header.Set(apiprotocol.AgentTokenHeader, token)
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { w := httptest.NewRecorder(); srv.Router().ServeHTTP(w, req); done <- w }()
+	<-ready
+	require.Len(t, srv.readSnapshotSlots, 1)
+	cancel()
+	response := <-done
+	assert.NotEqual(t, http.StatusOK, response.Code)
+	assert.Empty(t, srv.readSnapshotSlots)
 }

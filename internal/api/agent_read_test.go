@@ -971,6 +971,11 @@ func TestAgentChangeFeedScopeAndCursor(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, outside.Code)
 	assert.Equal(t, outside.Body.String(), missing.Body.String())
 	assert.Equal(t, http.StatusBadRequest, get(one, cursor+"&incoming_only=true").Code)
+	_, _, err = st.RemoveSourceSerialized(t.Context(), a.ID)
+	require.NoError(t, err)
+	_, err = st.GetOrCreateSource(a.SourceType, a.Identifier)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, get(one, cursor).Code)
 }
 
 func TestChangeFeedGrantDigestUsesStableSourceReferences(t *testing.T) {
