@@ -7889,23 +7889,25 @@ type MessageDetail struct {
 	FromName          *string `json:"from_name,omitzero"`
 
 	// FromParticipantID Sender participant ID, populated for conversation windows.
-	FromParticipantID *int64             `json:"from_participant_id,omitempty"`
-	FromPhone         *string            `json:"from_phone,omitzero"`
-	HasAttachments    bool               `json:"has_attachments"`
-	HiddenTextPresent bool               `json:"hidden_text_present"`
-	ID                int64              `json:"id"`
-	IsFromMe          *bool              `json:"is_from_me,omitempty"`
-	Labels            []string           `json:"labels" validate:"required"`
-	MessageType       *string            `json:"message_type,omitzero"`
-	RelatedMessageID  *int64             `json:"related_message_id,omitempty"`
-	SenderAuth        *SenderAuthVerdict `json:"sender_auth,omitempty"`
-	SentAt            string             `json:"sent_at" validate:"required"`
-	SizeBytes         int64              `json:"size_bytes"`
-	Snippet           string             `json:"snippet" validate:"required"`
-	SourceID          *int64             `json:"source_id,omitempty"`
-	SourceMessageID   *string            `json:"source_message_id,omitzero"`
-	Subject           string             `json:"subject" validate:"required"`
-	To                []string           `json:"to" validate:"required"`
+	FromParticipantID *int64  `json:"from_participant_id,omitempty"`
+	FromPhone         *string `json:"from_phone,omitzero"`
+	HasAttachments    bool    `json:"has_attachments"`
+	HiddenTextPresent bool    `json:"hidden_text_present"`
+	ID                int64   `json:"id"`
+
+	// IsFromMe Whether the account owner sent the message. Omitted when the source does not say who sent it.
+	IsFromMe         *bool              `json:"is_from_me,omitempty"`
+	Labels           []string           `json:"labels" validate:"required"`
+	MessageType      *string            `json:"message_type,omitzero"`
+	RelatedMessageID *int64             `json:"related_message_id,omitempty"`
+	SenderAuth       *SenderAuthVerdict `json:"sender_auth,omitempty"`
+	SentAt           string             `json:"sent_at" validate:"required"`
+	SizeBytes        int64              `json:"size_bytes"`
+	Snippet          string             `json:"snippet" validate:"required"`
+	SourceID         *int64             `json:"source_id,omitempty"`
+	SourceMessageID  *string            `json:"source_message_id,omitzero"`
+	Subject          string             `json:"subject" validate:"required"`
+	To               []string           `json:"to" validate:"required"`
 
 	// ToParticipants Recipient participants, populated for conversation windows.
 	ToParticipants []ConversationParticipant `json:"to_participants,omitempty"`

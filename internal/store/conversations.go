@@ -327,7 +327,7 @@ func (s *Store) GetConversationWindowContext(
 			message.FromParticipantID = 0
 		}
 		message.RelatedMessageID = RelatedMessageCandidate(message.ID, message.MessageType, metadata.String)
-		message.IsFromMe = isFromMe.Bool
+		message.IsFromMe = nullBoolPtr(isFromMe)
 		if sentAt.Valid {
 			message.SentAt = sentAt.Time
 		}

@@ -89,7 +89,7 @@ SELECT m.message_id, m.conversation_id, m.source_id, m.source_type,
        m.deleted_from_source, m.unsent, d.canonical_id, d.participant_domain,
        true AS is_direct, false AS is_conversation_member,
        d.is_sender, d.is_author,
-       (o.canonical_id IS NOT NULL OR (m.is_from_me AND d.is_owner_sender)) AS is_owner,
+       (o.canonical_id IS NOT NULL OR (m.is_from_me IS TRUE AND d.is_owner_sender)) AS is_owner,
        m.occurred_year
 FROM message_facts m JOIN direct_agg d USING (message_id)
 LEFT JOIN owner_canon o ON o.canonical_id = d.canonical_id

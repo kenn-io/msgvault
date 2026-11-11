@@ -57,7 +57,7 @@ func NewImporter(st *store.Store, opts Options) *Importer {
 	return &Importer{store: st, opts: opts}
 }
 
-// validateTimezone rejects timezone names that cannot give offset-free CSV
+// ValidateTimezone rejects timezone names that cannot give offset-free
 // timestamps a stable meaning. Go resolves exactly the spelling "Local" to
 // the host's time.Local (case variants do not fall back to it; they simply
 // fail to load), so accepting it would decode the same export differently on
@@ -65,21 +65,21 @@ func NewImporter(st *store.Store, opts Options) *Importer {
 // LoadLocation returns time.Local itself for that spelling, so pointer
 // identity rejects every host-dependent name without denying concrete IANA
 // zones or the stable UTC alias.
-func validateTimezone(name string) error {
+func ValidateTimezone(name string) (*time.Location, error) {
 	if strings.TrimSpace(name) == "" {
-		return errors.New("iMazing CSV import timezone is required")
+		return nil, errors.New("timezone is required")
 	}
 	loc, err := time.LoadLocation(name)
 	if err != nil {
-		return fmt.Errorf("load timezone %q: %w", name, err)
+		return nil, fmt.Errorf("load timezone %q: %w", name, err)
 	}
 	if loc == time.Local {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"timezone %q is the host-dependent Local zone; pass a concrete IANA timezone name such as Europe/Berlin or UTC",
 			name,
 		)
 	}
-	return nil
+	return loc, nil
 }
 
 type chatPlan struct {
@@ -113,7 +113,7 @@ func (importer *Importer) ImportPath(ctx context.Context, path string) (summary 
 	if err != nil {
 		return Summary{}, fmt.Errorf("normalize owner: %w", err)
 	}
-	if err := validateTimezone(importer.opts.Timezone); err != nil {
+	if _, err := ValidateTimezone(importer.opts.Timezone); err != nil {
 		return Summary{}, err
 	}
 	layout, err := Discover(path)
@@ -421,7 +421,7 @@ func assignMessageIDs(
 }
 
 func duplicateOccurrenceID(base string, occurrence int) string {
-	return "imazing_csv:" + stableHash(base, strconv.Itoa(occurrence))
+	return "imazing_csv:" + StableHash(base, strconv.Itoa(occurrence))
 }
 
 // rowEvidenceFingerprint carries the exported fields that messages within one

@@ -50,8 +50,8 @@ WITH filtered_facts AS (
 	           struct_pack(occurred_at := f.occurred_at, message_id := f.message_id))::VARCHAR
 	           AS message_type,
 	       'conversation'::VARCHAR AS entry_kind,
-	       arg_max(f.is_from_me,
-	           struct_pack(occurred_at := f.occurred_at, message_id := f.message_id))::BOOLEAN
+	       (arg_max(struct_pack(v := f.is_from_me),
+	           struct_pack(occurred_at := f.occurred_at, message_id := f.message_id))).v::BOOLEAN
 	           AS is_from_me,
 	       coalesce(sum(f.attachment_count), 0)::BIGINT AS attachment_count
 	FROM filtered_facts f

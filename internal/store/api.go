@@ -92,7 +92,7 @@ type APIMessage struct {
 	BodyText             string
 	BodyHTML             string
 	BodyOmitted          bool
-	IsFromMe             bool
+	IsFromMe             *bool // nil when the source does not say who sent the message
 	Headers              map[string]string
 	Attachments          []APIAttachment
 }
@@ -332,7 +332,7 @@ func (s *Store) GetMessageContext(ctx context.Context, id int64) (*APIMessage, e
 		return nil, err
 	}
 	m.RelatedMessageID = messages[0].RelatedMessageID
-	m.IsFromMe = isFromMe.Bool
+	m.IsFromMe = nullBoolPtr(isFromMe)
 	if sentAt.Valid {
 		m.SentAt = sentAt.Time
 	}
@@ -1829,4 +1829,12 @@ func (s *Store) getLabels(ctx context.Context, messageID int64) ([]string, error
 		return nil, fmt.Errorf("iterate labels: %w", err)
 	}
 	return labels, nil
+}
+
+// nullBoolPtr returns nil for SQL NULL so callers can tell unknown from false.
+func nullBoolPtr(v sql.NullBool) *bool {
+	if !v.Valid {
+		return nil
+	}
+	return &v.Bool
 }

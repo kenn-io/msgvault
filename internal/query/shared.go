@@ -545,7 +545,7 @@ func getMessageByQueryShared(ctx context.Context, db store.SQLReader, rebind reb
 			COALESCE(m.size_estimate, 0),
 			m.has_attachments,
 			m.hidden_text_present,
-			COALESCE(m.is_from_me, FALSE),
+			m.is_from_me,
 			m.deleted_from_source_at,
 			CASE WHEN m.message_type IN ('chatwoot', 'meeting_transcript', 'calendar_event') THEN m.metadata ELSE NULL END
 		FROM %smessages m

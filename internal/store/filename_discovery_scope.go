@@ -322,7 +322,7 @@ func (s *Store) filenamePersonProvenanceContext(ctx context.Context, messageIDs 
 		personValues[i] = "(CAST(? AS BIGINT))"
 		args = append(args, id)
 	}
-	evidence := `(m.is_from_me=TRUE OR m.sender_id IS NOT NULL OR EXISTS(SELECT 1 FROM message_recipients known_from WHERE known_from.message_id=m.id AND LOWER(known_from.recipient_type)='from' LIMIT 1 OFFSET 0))`
+	evidence := `(m.is_from_me IS TRUE OR m.sender_id IS NOT NULL OR EXISTS(SELECT 1 FROM message_recipients known_from WHERE known_from.message_id=m.id AND LOWER(known_from.recipient_type)='from' LIMIT 1 OFFSET 0))`
 	roster := `LOWER(COALESCE(c.conversation_type,'')) IN ('group_chat','channel')`
 	if scope.IncludeUnclassifiedRosterRows {
 		roster = `(LOWER(COALESCE(c.conversation_type,''))<>'direct_chat' OR NOT ` + evidence + `)`

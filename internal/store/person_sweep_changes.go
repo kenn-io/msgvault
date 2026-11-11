@@ -444,7 +444,7 @@ func personSweepRecipientRoleChangeEffectSQL(oldType, newType string) string {
 }
 
 func personSweepDirectionEvidenceValuesSQL(messageID, isFromMe, senderID string) string {
-	return fmt.Sprintf(`(%s = TRUE OR %s IS NOT NULL OR EXISTS (
+	return fmt.Sprintf(`(%s IS TRUE OR %s IS NOT NULL OR EXISTS (
 		SELECT 1 FROM message_recipients known_from
 		WHERE known_from.message_id = %s
 		  AND LOWER(known_from.recipient_type) = 'from'))`, isFromMe, senderID, messageID)

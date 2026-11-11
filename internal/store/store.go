@@ -2038,6 +2038,9 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("ensure person sweep change triggers: %w", err)
 	}
+	if err := s.runOnceMigration(ctx, migrationPersonSweepUnknownDirectionScope, 1, false, s.migratePersonSweepUnknownDirectionScope); err != nil {
+		return fmt.Errorf("migrate person sweep unknown-direction scope: %w", err)
+	}
 	// Replace callers before dropping the document helper they used. Each
 	// committed migration boundary must leave message writes usable.
 	if err := s.runOnceMigration(ctx, "drop_document_index_v1", 1, false, s.dropDocumentIndex); err != nil {

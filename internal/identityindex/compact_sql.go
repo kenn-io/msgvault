@@ -157,8 +157,8 @@ WITH logical_people AS (
 	            THEN 1::BIGINT ELSE 0::BIGINT END AS meeting_units,
 	       CASE
 	           WHEN p.entry_kind IN ('event','meeting') AND p.with_owner THEN %d::UTINYINT
-	           WHEN p.entry_kind = 'conversation' THEN %d::UTINYINT
-	           WHEN p.entry_kind IN ('email','item') THEN %d::UTINYINT
+	           WHEN p.entry_kind = 'conversation' AND p.is_from_me IS NOT NULL THEN %d::UTINYINT
+	           WHEN p.entry_kind IN ('email','item') AND p.is_from_me IS NOT NULL THEN %d::UTINYINT
 	           ELSE 0::UTINYINT
 	       END AS modality_mask
 	FROM logical_people p

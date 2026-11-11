@@ -46,10 +46,10 @@ WITH message_owner AS (
 	      (f.entry_kind IN ('event', 'meeting'))
 	      OR (f.is_chat AND lower(f.conversation_type) = 'direct_chat'
 	          AND (f.is_conversation_member OR f.is_direct)
-	          AND (f.is_from_me OR f.is_author))
+	          AND f.is_from_me IS NOT NULL AND (f.is_from_me OR f.is_author))
 	      OR (f.is_chat AND lower(f.conversation_type) <> 'direct_chat'
-	          AND ((NOT f.is_from_me AND f.is_author)
-	               OR (f.is_from_me AND f.is_direct)))
+	          AND ((f.is_from_me IS FALSE AND f.is_author)
+	               OR (f.is_from_me IS TRUE AND f.is_direct)))
 	      OR (NOT f.is_chat AND f.entry_kind = 'email'
 	          AND f.is_direct AND (f.is_from_me OR f.is_author))
 	  )
@@ -61,11 +61,11 @@ WITH message_owner AS (
 	           WHEN entry_kind IN ('event', 'meeting') THEN owner_present
 	           WHEN is_chat AND lower(conversation_type) = 'direct_chat' THEN
 	               owner_present AND (is_conversation_member OR is_direct)
-	               AND (is_from_me OR is_author)
+	               AND is_from_me IS NOT NULL AND (is_from_me OR is_author)
 	           WHEN is_chat THEN
 	               owner_present AND (
-	                   (NOT is_from_me AND is_author)
-	                   OR (is_from_me AND is_direct)
+	                   (is_from_me IS FALSE AND is_author)
+	                   OR (is_from_me IS TRUE AND is_direct)
 	               )
 	           WHEN entry_kind = 'email' THEN
 	               owner_present AND is_direct AND (is_from_me OR is_author)
@@ -75,12 +75,12 @@ WITH message_owner AS (
 	WHERE NOT person_is_owner
 ), qualifying AS (
 	SELECT *,
-	       (NOT is_meeting AND is_from_me) AS sent,
-	       (NOT is_meeting AND NOT is_from_me AND is_author) AS received,
+	       (NOT is_meeting AND is_from_me IS TRUE) AS sent,
+	       (NOT is_meeting AND is_from_me IS FALSE AND is_author) AS received,
 	       CASE
 	           WHEN is_meeting THEN %[3]d::UTINYINT
-	           WHEN is_chat THEN %[4]d::UTINYINT
-	           ELSE %[5]d::UTINYINT
+	           WHEN is_chat AND is_from_me IS NOT NULL THEN %[4]d::UTINYINT
+	           WHEN is_from_me IS NOT NULL THEN %[5]d::UTINYINT ELSE 0::UTINYINT
 	       END AS modality_mask
 	FROM classified
 	WHERE qualifies

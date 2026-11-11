@@ -435,6 +435,8 @@ type Message struct {
 	SenderID         sql.NullInt64
 	ReplyToMessageID sql.NullInt64
 	IsFromMe         bool
+	// DirectionUnknown stores NULL source attribution: the importer cannot tell who sent it.
+	DirectionUnknown bool
 	// IsSent is whether the message left the sender; invalid keeps the stored value.
 	IsSent sql.NullBool
 	// IdentityDerivedIsFromMe reports that IsFromMe came from a confirmed
@@ -527,6 +529,11 @@ func (s *Store) MessageExistsBatchContext(ctx context.Context, sourceID int64, s
 	return result, nil
 }
 
+// sourceIsFromMe is the source-native attribution to store; NULL when the direction is unknown.
+func (m *Message) sourceIsFromMe() sql.NullBool {
+	return sql.NullBool{Bool: m.IsFromMe && !m.IdentityDerivedIsFromMe, Valid: !m.DirectionUnknown}
+}
+
 // StoredMessage is the stored output of one message, for importers that
 // compare a freshly derived message before rewriting it.
 type StoredMessage struct {
@@ -551,7 +558,7 @@ type StoredMessage struct {
 func (stored StoredMessage) Matches(message *Message, raw []byte) bool {
 	return stored.ConversationID == message.ConversationID &&
 		stored.SenderID == message.SenderID &&
-		stored.SourceIsFromMe.Valid && stored.SourceIsFromMe.Bool == message.IsFromMe &&
+		stored.SourceIsFromMe == sql.NullBool{Bool: message.IsFromMe && !message.DirectionUnknown, Valid: !message.DirectionUnknown} &&
 		stored.MessageType == message.MessageType &&
 		sameAppleInstant(stored.SentAt, message.SentAt) &&
 		sameAppleInstant(stored.InternalDate, message.InternalDate) &&
@@ -1553,10 +1560,9 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 		}
 	}
 	sql := upsertMessageSQL(d.Now())
-	sourceIsFromMe := msg.IsFromMe && !msg.IdentityDerivedIsFromMe
 	identityIsFromMe := msg.IsFromMe && msg.IdentityDerivedIsFromMe
 	args := []any{
-		sourceIsFromMe, identityIsFromMe,
+		msg.sourceIsFromMe(), identityIsFromMe,
 		msg.SenderID, msg.SourceID,
 		msg.SenderID, msg.SourceID,
 		msg.ConversationID, msg.SourceID, msg.SourceMessageID,
@@ -2020,7 +2026,7 @@ var messageIdentityAttributionMatch = fmt.Sprintf(`(
 	)
 )`, ownerEmailMatch("mr.email_address", "ai.address"), senderOwnerFallback("messages.sender_id", "messages.source_id"))
 
-const messageSourceAttribution = `COALESCE(source_is_from_me, FALSE)`
+const messageSourceAttribution = `source_is_from_me`
 
 // The scope predicate selects the rows; every refresh applies the same ownership rules.
 var messageAttributionUpdate = fmt.Sprintf(`
@@ -2030,8 +2036,7 @@ var messageAttributionUpdate = fmt.Sprintf(`
 	WHERE %%s
 	  AND (
 	    identity_is_from_me <> %[2]s
-	    OR is_from_me IS NULL
-	    OR is_from_me <> (%[1]s OR %[2]s)
+	    OR is_from_me IS DISTINCT FROM (%[1]s OR %[2]s)
 	  )
 `, messageSourceAttribution, messageIdentityAttributionMatch)
 

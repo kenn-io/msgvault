@@ -1,0 +1,313 @@
+package whatsapp
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
+)
+
+func importTextForTest(ctx context.Context, imp *Importer, path string, opts TextOptions) (TextSummary, error) {
+	input, err := LoadText(ctx, path, opts)
+	if err != nil {
+		return TextSummary{}, err
+	}
+	return imp.ImportText(ctx, input)
+}
+
+func textFile(t *testing.T, text string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "chat.txt")
+	require.NoError(t, os.WriteFile(p, []byte(text), 0600))
+	return p
+}
+func textOptions() TextOptions {
+	return TextOptions{Phone: "+12025550123", ChatID: "garden", ChatType: "group", DateOrder: "dmy", Timezone: "UTC"}
+}
+func textCount(t *testing.T, st *store.Store, table string) int {
+	t.Helper()
+	var n int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM "+table).Scan(&n))
+	return n
+}
+
+func TestTextImportRepeatOverlap(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	imp := NewImporter(st, nil)
+	opts := textOptions()
+	a := "13/6/26, 10:00 - Mira: asters\n13/6/26, 10:01 - Ivo: water\n13/6/26, 10:02 - You changed the group description: flowers\n"
+	s, err := importTextForTest(t.Context(), imp, textFile(t, a), opts)
+	require.NoError(err)
+	assert.Equal(3, s.Added)
+	assert.Equal(1, s.Notices)
+	var sourceID, labeledID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT source_id,id FROM messages WHERE snippet = 'asters'").Scan(&sourceID, &labeledID))
+	labelID, err := st.EnsureLabel(t.Context(), sourceID, "saved", "Saved", "user")
+	require.NoError(err)
+	require.NoError(st.AddMessageLabels(t.Context(), labeledID, []int64{labelID}))
+	s, err = importTextForTest(t.Context(), imp, textFile(t, a), opts)
+	require.NoError(err)
+	assert.Equal(0, s.Added)
+	assert.Equal(3, s.Unchanged)
+	var labels int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM message_labels WHERE message_id = ? AND label_id = ?"), labeledID, labelID).Scan(&labels))
+	assert.Equal(1, labels, "re-import must not rewrite existing rows")
+	s, err = importTextForTest(t.Context(), imp, textFile(t, "13/6/26, 10:03 - Mira: seedlings\n13/6/26, 10:01 - Ivo: water\n"), opts)
+	require.NoError(err)
+	assert.Equal(1, s.Added)
+	assert.Equal(4, textCount(t, st, "messages"))
+	assert.Equal(2, textCount(t, st, "participants"))
+}
+
+func TestTextImportUpdatesSourceFreshness(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	imp := NewImporter(st, nil)
+	path, opts := textFile(t, "13/6/26, 10:00 - Mira: asters\n"), textOptions()
+	summary, err := importTextForTest(t.Context(), imp, path, opts)
+	require.NoError(err)
+	source, err := st.GetSourceByID(summary.SourceID)
+	require.NoError(err)
+	assert.True(source.LastSyncAt.Valid)
+	assert.False(source.SyncCursor.Valid)
+
+	old := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sources SET last_sync_at = ?, sync_cursor = ? WHERE id = ?`), old, "existing-cursor", summary.SourceID)
+	require.NoError(err)
+	_, err = importTextForTest(t.Context(), imp, path, opts)
+	require.NoError(err)
+	source, err = st.GetSourceByID(summary.SourceID)
+	require.NoError(err)
+	require.True(source.LastSyncAt.Valid)
+	assert.True(source.LastSyncAt.Time.After(old))
+	assert.Equal("existing-cursor", source.SyncCursor.String)
+	assert.True(source.SyncCursor.Valid)
+}
+
+func TestTextImportRefreshesOnlyTouchedChat(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	imp := NewImporter(st, nil)
+	opts := textOptions()
+	path := textFile(t, "13/6/26, 10:00 - Mira: one\n")
+	_, err := importTextForTest(t.Context(), imp, path, opts)
+	require.NoError(err)
+	opts.ChatID = "other"
+	_, err = importTextForTest(t.Context(), imp, path, opts)
+	require.NoError(err)
+	var sourceID, otherID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT source_id, id FROM conversations WHERE source_conversation_id = ?"), textChatKey("other")).Scan(&sourceID, &otherID))
+	_, err = st.UpsertMessageContext(t.Context(), &store.Message{SourceID: sourceID, ConversationID: otherID, SourceMessageID: "pending", MessageType: "whatsapp"})
+	require.NoError(err)
+	opts.ChatID = "garden"
+	_, err = importTextForTest(t.Context(), imp, textFile(t, "13/6/26, 10:01 - Mira: two\n"), opts)
+	require.NoError(err)
+	var touched, other int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT message_count FROM conversations WHERE source_conversation_id = ?"), textChatKey("garden")).Scan(&touched))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT message_count FROM conversations WHERE source_conversation_id = ?"), textChatKey("other")).Scan(&other))
+	assert.Equal(2, touched)
+	assert.Equal(1, other)
+}
+
+func TestTextImportMultiplicityAndEdits(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	imp := NewImporter(st, nil)
+	opts := textOptions()
+	row := "13/6/26, 10:00 - Mira: same\n"
+	s, err := importTextForTest(t.Context(), imp, textFile(t, strings.Repeat(row, 3)), opts)
+	require.NoError(err)
+	assert.Equal(3, s.Added)
+	assert.Equal(2, s.DuplicateAmbiguity)
+	s, err = importTextForTest(t.Context(), imp, textFile(t, row), opts)
+	require.NoError(err)
+	assert.Equal(1, s.Unchanged)
+	assert.Equal(3, textCount(t, st, "messages"))
+	_, err = importTextForTest(t.Context(), imp, textFile(t, "13/6/26, 10:00 - Mira: edited\n"), opts)
+	require.NoError(err)
+	assert.Equal(4, textCount(t, st, "messages"))
+}
+
+func TestTextImportScopes(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	imp := NewImporter(st, nil)
+	opts := textOptions()
+	p := textFile(t, "3/6/26, 10:00 - Mira: same\n")
+	_, err := importTextForTest(t.Context(), imp, p, opts)
+	require.NoError(err)
+	opts.ChatID = "other"
+	_, err = importTextForTest(t.Context(), imp, p, opts)
+	require.NoError(err)
+	opts.Phone = "+12025550124"
+	_, err = importTextForTest(t.Context(), imp, p, opts)
+	require.NoError(err)
+	assert.Equal(3, textCount(t, st, "messages"))
+	assert.Equal(3, textCount(t, st, "participants"))
+}
+
+func TestTextImportPreflight(t *testing.T) {
+	path := textFile(t, "13/6/26, 10:00 - Mira: one\n")
+	mediaFile := textFile(t, "fictional")
+	for _, tc := range []struct {
+		name, want string
+		change     func(*TextOptions)
+	}{
+		{"chat", "--chat-id is required", func(o *TextOptions) { o.ChatID = "" }},
+		{"type", "--chat-type must be", func(o *TextOptions) { o.ChatType = "unknown" }},
+		{"phone", "--phone must be", func(o *TextOptions) { o.Phone = "Mira" }},
+		{"order", "--date-order must be", func(o *TextOptions) { o.DateOrder = "" }},
+		{"media-missing", "open media directory", func(o *TextOptions) {
+			o.MediaDir = filepath.Join(t.TempDir(), "missing")
+			o.AttachmentsDir = t.TempDir()
+		}},
+		{"media-file", "open media directory", func(o *TextOptions) { o.MediaDir = mediaFile; o.AttachmentsDir = t.TempDir() }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := textOptions()
+			tc.change(&opts)
+			_, err := LoadText(t.Context(), path, opts)
+			require.ErrorContains(t, err, tc.want)
+		})
+	}
+}
+
+func TestTextImportMediaCompletion(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	imp := NewImporter(st, nil)
+	opts := textOptions()
+	opts.AttachmentsDir = t.TempDir()
+	p := textFile(t, "13/6/26, 10:00 - Mira: <attached: flower.txt>\ncaption\n")
+	s, err := importTextForTest(t.Context(), imp, p, opts)
+	require.NoError(err)
+	assert.Equal(1, s.MediaMissing)
+	assert.Zero(textCount(t, st, "attachments"))
+	opts.MediaDir = t.TempDir()
+	require.NoError(os.WriteFile(filepath.Join(opts.MediaDir, "flower.txt"), []byte("fictional pressed flower"), 0600))
+	s, err = importTextForTest(t.Context(), imp, p, opts)
+	require.NoError(err)
+	assert.Equal(1, s.MediaStored)
+	assert.Equal(1, s.Unchanged)
+	assert.Equal(1, textCount(t, st, "attachments"))
+	var originalHash, originalPath string
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT content_hash,storage_path FROM attachments").Scan(&originalHash, &originalPath))
+	before, err := st.DerivedDataRevisionContext(t.Context())
+	require.NoError(err)
+	s, err = importTextForTest(t.Context(), imp, p, opts)
+	require.NoError(err)
+	assert.Equal(1, s.MediaStored, "repeat imports still count the stored reference")
+	after, err := st.DerivedDataRevisionContext(t.Context())
+	require.NoError(err)
+	assert.Equal(before, after, "an unchanged attachment must not invalidate the archive cache")
+	require.NoError(os.WriteFile(filepath.Join(opts.MediaDir, "flower.txt"), []byte("fictional updated flower"), 0600))
+	s, err = importTextForTest(t.Context(), imp, p, opts)
+	require.NoError(err)
+	assert.Equal(1, s.MediaStored)
+	assert.Equal(1, textCount(t, st, "attachments"))
+	var hash, storagePath string
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT content_hash,storage_path FROM attachments").Scan(&hash, &storagePath))
+	assert.Equal(originalHash, hash)
+	assert.Equal(originalPath, storagePath)
+	stored, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, storagePath))
+	require.NoError(err)
+	assert.Equal("fictional pressed flower", string(stored))
+	opts.MediaDir = ""
+	s, err = importTextForTest(t.Context(), imp, p, opts)
+	require.NoError(err)
+	assert.Equal(1, s.MediaStored)
+}
+
+func TestTextImportMediaContainment(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	imp := NewImporter(st, nil)
+	opts := textOptions()
+	opts.AttachmentsDir = t.TempDir()
+	opts.MediaDir = t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	require.NoError(os.WriteFile(outside, []byte("fictional"), 0600))
+	require.NoError(os.Symlink(outside, filepath.Join(opts.MediaDir, "escape.txt")))
+	require.NoError(os.Mkdir(filepath.Join(opts.MediaDir, "directory"), 0700))
+	text := "13/6/26, 10:00 - Mira: <attached: ../outside.txt>\n13/6/26, 10:01 - Mira: <attached: dir\\outside.txt>\n13/6/26, 10:02 - Mira: <attached: escape.txt>\n13/6/26, 10:03 - Mira: <attached: directory>\n"
+	s, err := importTextForTest(t.Context(), imp, textFile(t, text), opts)
+	require.NoError(err)
+	assert.Equal(4, s.MediaSkipped)
+	assert.Zero(textCount(t, st, "attachments"))
+	large, err := os.Create(filepath.Join(opts.MediaDir, "large.txt"))
+	require.NoError(err)
+	require.NoError(large.Truncate((100 << 20) + 1))
+	require.NoError(large.Close())
+	s, err = importTextForTest(t.Context(), imp, textFile(t, "13/6/26, 10:04 - Mira: large.txt (file attached)"), opts)
+	require.NoError(err)
+	assert.Equal(1, s.MediaOversized)
+}
+
+func TestTextImportPartialCancelAndRetry(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	imp := NewImporter(st, nil)
+	opts := textOptions()
+	p := textFile(t, "13/6/26, 10:00 - Mira: first\n13/6/26, 10:01 - Ivo: second\n")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	queryCtx := context.WithoutCancel(t.Context())
+	canceled := testutil.CancelAfterCommit(t, cancel, func() bool {
+		var count int
+		require.NoError(st.DB().QueryRowContext(queryCtx, "SELECT COUNT(*) FROM messages").Scan(&count))
+		return count == 1
+	})
+	summary, err := importTextForTest(ctx, imp, p, opts)
+	require.ErrorIs(err, context.Canceled)
+	require.True(canceled())
+	assert.Equal(1, summary.Records)
+	assert.Equal(1, summary.Added)
+	assert.Equal(1, textCount(t, st, "messages"))
+	var status string
+	var processed, added int
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT status,messages_processed,messages_added FROM sync_runs ORDER BY id DESC LIMIT 1").Scan(&status, &processed, &added))
+	assert.Equal("failed", status)
+	assert.Equal(1, processed)
+	assert.Equal(1, added)
+	var counted int
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT SUM(message_count) FROM conversations").Scan(&counted))
+	assert.Equal(1, counted)
+	s, err := importTextForTest(t.Context(), imp, p, opts)
+	require.NoError(err)
+	assert.Equal(1, s.Added)
+	assert.Equal(1, s.Unchanged)
+	assert.Equal(2, textCount(t, st, "messages"))
+	assert.Equal(2, textCount(t, st, "conversation_participants"))
+}
+
+func TestTextImportPartialAttachmentFailureAndRetry(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	imp := NewImporter(st, nil)
+	opts := textOptions()
+	opts.MediaDir = t.TempDir()
+	opts.AttachmentsDir = t.TempDir()
+	require.NoError(os.WriteFile(filepath.Join(opts.MediaDir, "note.txt"), []byte("fictional"), 0600))
+	_, err := st.DB().ExecContext(t.Context(), "CREATE TRIGGER reject_text_attachment BEFORE INSERT ON attachments BEGIN SELECT RAISE(FAIL, 'synthetic attachment failure'); END")
+	require.NoError(err)
+	p := textFile(t, "13/6/26, 10:00 - Mira: <attached: note.txt>")
+	_, err = importTextForTest(t.Context(), imp, p, opts)
+	require.ErrorContains(err, "synthetic attachment failure")
+	assert.Equal(1, textCount(t, st, "messages"))
+	assert.Zero(textCount(t, st, "attachments"))
+	_, err = st.DB().ExecContext(t.Context(), "DROP TRIGGER reject_text_attachment")
+	require.NoError(err)
+	s, err := importTextForTest(t.Context(), imp, p, opts)
+	require.NoError(err)
+	assert.Equal(1, s.Unchanged)
+	assert.Equal(1, s.MediaStored)
+	assert.Equal(1, textCount(t, st, "attachments"))
+}

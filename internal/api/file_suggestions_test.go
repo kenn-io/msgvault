@@ -259,6 +259,31 @@ func TestPersonFileSuggestionsHTTP(t *testing.T) {
 	assert.NotContains(suggestionBody(t, w), "suggestions")
 }
 
+func TestPersonFileSuggestionsSenderlessUnknownDirection(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	srv, f, _ := suggestionFixture(t, nil, true)
+	member, err := f.Store.EnsureParticipant("member@example.test", "Member", "example.test")
+	require.NoError(err)
+	person, _, err := f.Store.CreatePersonFromParticipant(member)
+	require.NoError(err)
+	conversation, err := f.Store.EnsureConversationWithType(f.Source.ID, "notice-chat", "direct_chat", "Chat")
+	require.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO conversation_participants (conversation_id, participant_id, role) VALUES (?, ?, 'member')`), conversation, member)
+	require.NoError(err)
+	message, err := f.Store.UpsertMessage(&store.Message{SourceID: f.Source.ID, SourceMessageID: "notice", ConversationID: conversation, MessageType: "whatsapp", DirectionUnknown: true})
+	require.NoError(err)
+	require.NoError(f.Store.UpsertAttachment(t.Context(), message, "notice.pdf", "application/pdf", "", "", 5))
+	drainSuggestionProjection(t, f.Store)
+	w := suggestionPost(t, srv, fmt.Sprintf("/api/v1/people/%d/files/suggest", person.ID), `{"filename_query":"notice.pdf"}`)
+	require.Equal(http.StatusOK, w.Code, w.Body.String())
+	rows := suggestionRows(t, suggestionBody(t, w))
+	require.Len(rows, 1)
+	assert.Equal("notice.pdf", rows[0]["filename"])
+	provenance, ok := rows[0]["person_provenance"].(map[string]any)
+	require.True(ok)
+	assert.Equal([]any{"conversation_member"}, provenance["roles"])
+}
+
 func TestFileSuggestionsHTTPOperationGate(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

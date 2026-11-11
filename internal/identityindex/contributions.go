@@ -131,7 +131,7 @@ WITH new_rows AS (
 	       max(c.occurred_at)::TIMESTAMP AS occurred_at,
 	       arg_max(c.message_type, struct_pack(at := c.occurred_at, id := c.anchor_message_id)) AS message_type,
 	       arg_max(c.entry_kind, struct_pack(at := c.occurred_at, id := c.anchor_message_id)) AS entry_kind,
-	       arg_max(c.is_from_me, struct_pack(at := c.occurred_at, id := c.anchor_message_id)) AS is_from_me,
+	       (arg_max(struct_pack(v := c.is_from_me), struct_pack(at := c.occurred_at, id := c.anchor_message_id))).v AS is_from_me,
 	       max(p.attachment_count)::BIGINT AS attachment_count,
 	       bool_or(c.is_owner) AS with_owner
 	FROM combined c

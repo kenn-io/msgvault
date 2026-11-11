@@ -148,7 +148,8 @@ func TestConversationWindowHydratesParticipantsLabelsBodiesAndAttachments(t *tes
 	require.NoError(err)
 	require.Len(window.Messages, 1)
 	message := window.Messages[0]
-	assert.True(message.IsFromMe)
+	require.NotNil(message.IsFromMe)
+	assert.True(*message.IsFromMe)
 	assert.Equal("Alice <alice@example.com>", message.From)
 	assert.Equal(senderID, message.FromParticipantID)
 	assert.ElementsMatch([]store.ParticipantDisplay{{ParticipantID: toID, Display: "Bob <bob@example.com>"}, {ParticipantID: duplicateID, Display: "Bob <Bob@example.com>"}, {ParticipantID: nameOnlyID, Display: "Bob"}}, message.ToParticipants)
@@ -167,34 +168,6 @@ func TestConversationWindowHydratesParticipantsLabelsBodiesAndAttachments(t *tes
 	require.Len(window.Messages, 1)
 	assert.Equal("Bob", window.Messages[0].From)
 	assert.Equal(nameOnlyID, window.Messages[0].FromParticipantID)
-}
-
-func TestMessageReadsTreatMissingSenderAttributionAsNotFromMe(t *testing.T) {
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-
-	source, err := st.GetOrCreateSource("gmail", "archive@example.com")
-	require.NoError(err)
-	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "nullable-attribution-thread", "Nullable attribution")
-	require.NoError(err)
-	messageID, err := st.UpsertMessage(&store.Message{
-		ConversationID:  conversationID,
-		SourceID:        source.ID,
-		SourceMessageID: "nullable-attribution-message",
-		MessageType:     "email",
-	})
-	require.NoError(err)
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET is_from_me = NULL WHERE id = ?"), messageID)
-	require.NoError(err)
-
-	message, err := st.GetMessage(messageID)
-	require.NoError(err)
-	assert.False(t, message.IsFromMe)
-
-	window, err := st.GetConversationWindow(conversationID, messageID, 1, 1)
-	require.NoError(err)
-	require.Len(window.Messages, 1)
-	assert.False(t, window.Messages[0].IsFromMe)
 }
 
 func TestConversationWindowContextScopesToTimeRange(t *testing.T) {

@@ -8030,6 +8030,7 @@ components:
           format: int64
           type: integer
         is_from_me:
+          description: Whether the account owner sent the message. Omitted when the source does not say who sent it.
           type: boolean
         labels:
           items:
@@ -17139,7 +17140,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 5.0.0
+  version: 6.0.0
 openapi: 3.1.0
 paths:
   /api/ping:

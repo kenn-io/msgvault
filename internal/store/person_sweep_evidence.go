@@ -367,7 +367,7 @@ func (s *Store) hydratePersonSweepMessageSet(
 	args = append(args, scopeArgs...)
 	args = append(args, boundArgs...)
 	rows, err := s.db.QueryContext(ctx, s.Rebind(fmt.Sprintf(`
-		SELECT m.id, m.source_id, s.source_type, COALESCE(m.source_message_id, ''),
+		SELECT m.id, m.source_id, s.source_type, COALESCE(m.source_message_id, ''), EXISTS (SELECT 1 FROM message_raw mr WHERE mr.message_id = m.id AND mr.raw_format = 'whatsapp_txt'),
 		       COALESCE(m.subject, ''), COALESCE(mb.body_text, ''), COALESCE(m.snippet, ''),
 		       COALESCE(m.sent_at, m.received_at, m.internal_date, m.archived_at), m.archived_at
 		FROM messages m JOIN conversations c ON c.id = m.conversation_id
@@ -384,13 +384,14 @@ func (s *Store) hydratePersonSweepMessageSet(
 		id, sourceID                                        int64
 		sourceType, sourceMessageID, subject, body, snippet string
 		event, recorded                                     time.Time
+		textExport                                          bool
 	}
 	messageRowsByID := make(map[int64]messageRow, len(queryIDs))
 	messageIDs := make([]int64, 0, len(queryIDs))
 	for rows.Next() {
 		var row messageRow
 		var event, recorded requiredTimestamp
-		if err := rows.Scan(&row.id, &row.sourceID, &row.sourceType, &row.sourceMessageID, &row.subject, &row.body, &row.snippet, &event, &recorded); err != nil {
+		if err := rows.Scan(&row.id, &row.sourceID, &row.sourceType, &row.sourceMessageID, &row.textExport, &row.subject, &row.body, &row.snippet, &event, &recorded); err != nil {
 			return nil, nil, fmt.Errorf("scan person sweep message: %w", err)
 		}
 		row.event, row.recorded = event.Time.UTC(), recorded.Time.UTC()
@@ -416,7 +417,7 @@ func (s *Store) hydratePersonSweepMessageSet(
 		}
 		subjectPersonID, directness := personSweepAuthorship(
 			personID, prov, lane == peoplesweep.SourceConversationText,
-			personSweepSourceAuthenticatesSender(row.sourceType))
+			personSweepSourceAuthenticatesSender(row.sourceType) && !row.textExport)
 		text := canonicalSweepMessageText(row.subject, row.body, row.snippet)
 		if slices.Contains(prov.Roles, personscope.RoleFrom) {
 			body, _ := preprocess.Preprocess("", row.body, 0, preprocess.Config{
@@ -531,7 +532,7 @@ func (s *Store) personSweepHistoricalCandidatesQuery(
 			SELECT 1 FROM sources authored_src
 			WHERE authored_src.id = m.source_id
 			  AND LOWER(TRIM(authored_src.source_type)) IN (` +
-			strings.TrimSuffix(strings.Repeat("?,", len(sourceTypes)), ",") + `))`
+			strings.TrimSuffix(strings.Repeat("?,", len(sourceTypes)), ",") + `)) AND NOT EXISTS (SELECT 1 FROM message_raw mr WHERE mr.message_id = m.id AND mr.raw_format = 'whatsapp_txt')`
 		for _, sourceType := range sourceTypes {
 			args = append(args, sourceType)
 		}

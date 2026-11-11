@@ -336,9 +336,9 @@ relationship_interactions AS (
 	       CASE
 	           WHEN p.entry_kind IN ('event','meeting') AND p.with_owner
 	               THEN ` + strconv.FormatUint(uint64(identityindex.ModalityMeeting), 10) + `::UTINYINT
-	           WHEN p.entry_kind = 'conversation'
+	           WHEN p.entry_kind = 'conversation' AND p.is_from_me IS NOT NULL
 	               THEN ` + strconv.FormatUint(uint64(identityindex.ModalityChat), 10) + `::UTINYINT
-	           WHEN p.entry_kind IN ('email','item')
+	           WHEN p.entry_kind IN ('email','item') AND p.is_from_me IS NOT NULL
 	               THEN ` + strconv.FormatUint(uint64(identityindex.ModalityEmail), 10) + `::UTINYINT
 	           ELSE 0::UTINYINT
 	       END AS modality_mask,

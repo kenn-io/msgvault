@@ -163,12 +163,12 @@ func (tdb *TestDB) SeedStandardDataSet() {
 			(1, 1, 'thread1', 'email_thread', 'Test Thread');
 
 		-- Messages (3 from Alice, 2 from Bob)
-		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, subject, snippet, size_estimate, has_attachments, attachment_count) VALUES
-			(1, 1, 1, 'msg1', 'email', '2024-01-15 10:00:00', 'Hello World', 'Preview 1', 1000, 0, 0),
-			(2, 1, 1, 'msg2', 'email', '2024-01-16 11:00:00', 'Re: Hello', 'Preview 2', 2000, 1, 2),
-			(3, 1, 1, 'msg3', 'email', '2024-02-01 09:00:00', 'Follow up', 'Preview 3', 1500, 0, 0),
-			(4, 1, 1, 'msg4', 'email', '2024-02-15 14:00:00', 'Question', 'Preview 4', 3000, 1, 1),
-			(5, 1, 1, 'msg5', 'email', '2024-03-01 16:00:00', 'Final', 'Preview 5', 500, 0, 0);
+		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, subject, snippet, size_estimate, has_attachments, attachment_count, source_is_from_me) VALUES
+			(1, 1, 1, 'msg1', 'email', '2024-01-15 10:00:00', 'Hello World', 'Preview 1', 1000, 0, 0, FALSE),
+			(2, 1, 1, 'msg2', 'email', '2024-01-16 11:00:00', 'Re: Hello', 'Preview 2', 2000, 1, 2, FALSE),
+			(3, 1, 1, 'msg3', 'email', '2024-02-01 09:00:00', 'Follow up', 'Preview 3', 1500, 0, 0, FALSE),
+			(4, 1, 1, 'msg4', 'email', '2024-02-15 14:00:00', 'Question', 'Preview 4', 3000, 1, 1, FALSE),
+			(5, 1, 1, 'msg5', 'email', '2024-03-01 16:00:00', 'Final', 'Preview 5', 500, 0, 0, FALSE);
 
 		-- Message bodies
 		INSERT INTO message_bodies (message_id, body_text) VALUES
@@ -437,7 +437,7 @@ func (tdb *TestDB) AddMessage(opts MessageOpts) int64 {
 
 	_, err := tdb.DB.ExecContext(
 		tdb.T.Context(),
-		`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, subject, snippet, size_estimate, has_attachments) VALUES (?, ?, ?, ?, ?, ?, ?, 'test', ?, ?)`,
+		`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, subject, snippet, size_estimate, has_attachments, source_is_from_me) VALUES (?, ?, ?, ?, ?, ?, ?, 'test', ?, ?, FALSE)`,
 		id, convID, srcID, sourceMessageID, messageType, sentAt, opts.Subject, size, opts.HasAttachments,
 	)
 	require.NoError(tdb.T, err, "AddMessage")
