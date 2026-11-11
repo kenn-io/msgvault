@@ -30,6 +30,11 @@ In the Web UI, open a saved person in **People** and choose **Details**. The
 **Open loops** section lists that person's loops. Select one to open its
 message.
 
+When a list says more history remains, the daemon continues filling the cache
+in the background. Later requests reuse completed work. If the daemon stops or
+the background pass reaches its time limit, a later incomplete request starts
+another pass.
+
 ## What counts as a loop
 
 A loop starts with a message that asks something and has no answer yet:
@@ -81,17 +86,6 @@ These messages neither start nor answer a loop:
 - Drafts.
 
 A message deleted at the provider stays in your archive and still counts.
-
-## Reuse automation evidence
-
-New email keeps automation flags from ingest. To fill flags for older email,
-run [`msgvault repair-automation-flags --apply`](../cli-reference.md#repair-automation-flags).
-The command reads stored originals and can resume after an interruption.
-
-Loops reuse current flags when the archive also confirms a file attachment.
-When attachment evidence is missing, loops skip the flags lookup and parse the original so an
-unrecorded file cannot disappear from the result. This also preserves checks
-for unreadable originals. Bot and sender flag bits do not change loop rules.
 
 ## Mark a loop done or snooze it
 

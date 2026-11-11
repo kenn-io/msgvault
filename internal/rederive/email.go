@@ -264,18 +264,6 @@ func (w *emailWalk) repairRow(ctx context.Context, item *store.ArchivedRawMessag
 	if changed && item.BodyText != body {
 		sum.BodiesRewritten++
 	}
-	var automationChanged bool
-	if flags := parsed.AutomationFlags(); flags != nil {
-		automationChanged, err = w.s.UpdateArchivedEmailAutomationContext(ctx, item, *flags)
-		if err != nil {
-			if ctx.Err() != nil {
-				return false, ctx.Err()
-			}
-			sum.Errors++
-			return true, nil
-		}
-	}
-	sum.unchanged = sum.unchanged && !automationChanged
 	if w.progress != nil {
 		w.progress(fmt.Sprintf("%d scanned, %d bodies rewritten", sum.MessagesScanned, sum.BodiesRewritten))
 	}

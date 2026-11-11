@@ -1321,7 +1321,7 @@ func draftLifecyclePersistData(
 		}
 		data := &store.MessagePersistData{
 			Message: message, BodyText: sql.NullString{String: parsed.BodyText, Valid: true},
-			RawMIME: replacement.Raw, RawFormat: "mime", Automation: parsed.AutomationFlags(),
+			RawMIME: replacement.Raw, RawFormat: "mime",
 			Recipients: []store.RecipientSet{
 				{Type: "from", ParticipantIDs: fromIDs, EmailAddresses: fromAddresses},
 				{Type: "to", ParticipantIDs: toIDs, EmailAddresses: toAddresses},

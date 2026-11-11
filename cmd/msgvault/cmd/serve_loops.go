@@ -57,7 +57,3 @@ func (a *storeAPIAdapter) SaveLoopMessageEvidenceContext(ctx context.Context, id
 func (a *storeAPIAdapter) CachedLoopMessageEvidenceContext(ctx context.Context, id int64, version int) (store.LoopMessageEvidence, bool, error) {
 	return a.store.CachedLoopMessageEvidenceContext(ctx, id, version)
 }
-
-func (a *storeAPIAdapter) LoopFileAutomationContext(ctx context.Context, id int64) (uint32, bool, error) {
-	return a.store.LoopFileAutomationContext(ctx, id)
-}

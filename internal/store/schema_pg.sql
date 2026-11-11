@@ -1324,8 +1324,6 @@ CREATE TABLE IF NOT EXISTS messages (
     source_message_id TEXT,
     rfc822_message_id TEXT,
     list_id TEXT,
-    automation_flags INTEGER CHECK (automation_flags IS NULL OR automation_flags >= 0),
-    automation_rule_version INTEGER,
     hidden_text_present BOOLEAN NOT NULL DEFAULT FALSE,
 
     message_type TEXT NOT NULL DEFAULT 'email',

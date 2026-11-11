@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"iter"
+	"math"
 	"slices"
 	"time"
 
@@ -58,7 +59,6 @@ var ErrEvidenceIncomplete = &EvidenceIncompleteError{}
 // Store is what List, Done, and Snooze read and write; *store.Store
 // implements it.
 type Store interface {
-	LoopFileAutomationContext(ctx context.Context, id int64) (uint32, bool, error)
 	LoopConversationsContext(ctx context.Context, q store.LoopQuery) iter.Seq2[store.LoopConversation, error]
 	LoopMarksContext(ctx context.Context) (map[int64]store.LoopMark, error)
 	GetMessageBodyText(ctx context.Context, messageID int64) (string, error)
@@ -73,20 +73,15 @@ type Store interface {
 }
 
 type storeReader struct {
-	ctx         context.Context
-	st          Store
-	left        int
-	chat        bool
-	attachments map[int64]bool
+	ctx  context.Context
+	st   Store
+	left int
+	chat bool
 }
 
 // in points the reader at one conversation's messages.
 func (r *storeReader) in(conv store.LoopConversation) *storeReader {
 	r.chat = conv.ConversationType == "direct_chat"
-	r.attachments = make(map[int64]bool, len(conv.Messages))
-	for _, m := range conv.Messages {
-		r.attachments[m.ID] = m.HasFileAttachment
-	}
 	return r
 }
 
@@ -96,21 +91,7 @@ func (r *storeReader) original(id int64) (mime.AutomationSignals, bool, bool, er
 	if r.chat {
 		return mime.AutomationSignals{}, false, false, nil
 	}
-	// Only a positive archive attachment fact can avoid the original read.
-	// Ordinary messages keep the existing path without an extra flags query.
-	if !r.attachments[id] {
-		return r.st.LoopOriginalEvidenceContext(r.ctx, id)
-	}
-	// This read follows reservation; later file changes discard its token.
-	flags, current, err := r.st.LoopFileAutomationContext(r.ctx, id)
-	if err != nil {
-		return mime.AutomationSignals{}, false, false, err
-	}
-	if !current {
-		return r.st.LoopOriginalEvidenceContext(r.ctx, id)
-	}
-	signals := mime.SignalsFromFlags(flags)
-	return signals, true, false, nil
+	return r.st.LoopOriginalEvidenceContext(r.ctx, id)
 }
 
 func (r *storeReader) Evidence(id int64) (store.LoopMessageEvidence, error) {
@@ -137,8 +118,8 @@ func (r *storeReader) Evidence(id int64) (store.LoopMessageEvidence, error) {
 // find derives loops only from conversations whose detection completed. It
 // reads conversations oldest activity first, so a request that stops at
 // MaxListEvidenceComputations has reached the oldest ones.
-func find(ctx context.Context, st Store, q store.LoopQuery, now time.Time, marks map[int64]store.LoopMark, found func(Loop) error) (int, error) {
-	reader := &storeReader{ctx: ctx, st: st, left: listEvidenceBudget}
+func find(ctx context.Context, st Store, q store.LoopQuery, now time.Time, marks map[int64]store.LoopMark, budget int, found func(Loop) error) (int, error) {
+	reader := &storeReader{ctx: ctx, st: st, left: budget}
 	var unparsed int
 	for conv, err := range st.LoopConversationsContext(ctx, q) {
 		if err != nil {
@@ -158,6 +139,11 @@ func find(ctx context.Context, st Store, q store.LoopQuery, now time.Time, marks
 		}
 	}
 	return unparsed, nil
+}
+
+// Warm prepares evidence for a person, or all conversations when personID is zero.
+func Warm(ctx context.Context, st Store, personID int64, now time.Time) (int, error) {
+	return find(ctx, st, store.LoopQuery{PersonID: personID}, now, nil, math.MaxInt, func(Loop) error { return nil })
 }
 
 // graceElapsed is whether a question has waited long enough to list: a reply
@@ -180,7 +166,7 @@ func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, e
 		return Result{}, err
 	}
 	var kept []Loop
-	unparsed, err := find(ctx, st, store.LoopQuery{PersonID: opts.PersonID}, now, marks,
+	unparsed, err := find(ctx, st, store.LoopQuery{PersonID: opts.PersonID}, now, marks, listEvidenceBudget,
 		func(l Loop) error {
 			if opts.PersonID != 0 && l.Counterparty.PersonID != opts.PersonID {
 				return nil
@@ -287,7 +273,7 @@ func requireAnchor(ctx context.Context, st Store, messageID int64, questions []i
 		return Loop{}, err
 	}
 	var anchored Loop
-	_, err = find(ctx, st, store.LoopQuery{ConversationID: ref.ConversationID}, now, marks,
+	_, err = find(ctx, st, store.LoopQuery{ConversationID: ref.ConversationID}, now, marks, listEvidenceBudget,
 		func(l Loop) error {
 			if l.Anchor.ID == messageID {
 				anchored = l

@@ -1372,8 +1372,6 @@ CREATE TABLE IF NOT EXISTS messages (
 
     -- RFC 2919 List-Id for email list membership
     list_id TEXT,
-    automation_flags INTEGER CHECK (automation_flags IS NULL OR automation_flags >= 0),
-    automation_rule_version INTEGER,
     hidden_text_present BOOLEAN NOT NULL DEFAULT 0,
 
     -- Message classification

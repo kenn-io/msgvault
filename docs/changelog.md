@@ -8,9 +8,8 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- `repair-automation-flags` recovers automation evidence from archived email,
-  with a dry run by default. Open loops can reuse current evidence for messages
-  with archived attachments.
+- Incomplete open-loop lists continue checking history in the background.
+
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).
 
 - `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.

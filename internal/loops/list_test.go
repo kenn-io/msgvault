@@ -563,14 +563,8 @@ func TestListCountsUnreadableOriginals(t *testing.T) {
 type countingStore struct {
 	*store.Store
 
-	originals       int
-	bodies          int
-	automationReads int
-}
-
-func (c *countingStore) LoopFileAutomationContext(ctx context.Context, id int64) (uint32, bool, error) {
-	c.automationReads++
-	return c.Store.LoopFileAutomationContext(ctx, id)
+	originals int
+	bodies    int
 }
 
 func (c *countingStore) GetMessageBodyText(ctx context.Context, messageID int64) (string, error) {

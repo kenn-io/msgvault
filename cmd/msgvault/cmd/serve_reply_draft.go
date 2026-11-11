@@ -706,7 +706,7 @@ func draftReplyPersistData(
 			ConversationType:     "email_thread", Title: parsed.Subject,
 		},
 		BodyText: sql.NullString{String: parsed.BodyText, Valid: true},
-		RawMIME:  reply.Raw, RawFormat: "mime", Automation: parsed.AutomationFlags(),
+		RawMIME:  reply.Raw, RawFormat: "mime",
 		Recipients: []store.RecipientSet{
 			{Type: "from", ParticipantIDs: fromIDs, EmailAddresses: fromAddresses},
 			{Type: "to", ParticipantIDs: toIDs, EmailAddresses: toAddresses},

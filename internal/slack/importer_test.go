@@ -3723,36 +3723,3 @@ func dropReactionsTable(ctx context.Context, db *sql.DB) error {
 	_, err := db.ExecContext(ctx, `DROP TABLE reactions`)
 	return err
 }
-
-func TestSlackAutomationUnknownAuthors(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := testWorkspace(t)
-	f.users = append(f.users,
-		map[string]any{"id": "USLACKBOT", "is_bot": false, "name": "slackbot"},
-		map[string]any{"id": "USLACK", "is_bot": false, "name": "slack"},
-		map[string]any{"id": "UBOT", "is_bot": true, "name": "testbot"})
-	f.convs[0].Msgs = append(f.convs[0].Msgs,
-		fakeMsg{TS: ts(44), User: "UUNKNOWN", Text: "unknown user"},
-		fakeMsg{TS: ts(45), Text: "absent author"},
-		fakeMsg{TS: ts(46), BotID: "BUNKNOWN", Text: "explicit bot"},
-		fakeMsg{TS: ts(47), User: "USLACKBOT", Text: "system notice"},
-		fakeMsg{TS: ts(48), User: "USLACK", Text: "system notice"},
-		fakeMsg{TS: ts(49), User: "UME", Text: "hello <@USLACKBOT>"},
-		fakeMsg{TS: ts(50), User: "UBOT", Text: "automated notice"})
-	imp, opts := testImporter(t, f)
-	_, err := imp.Import(t.Context(), opts)
-	require.NoError(err)
-	var unknown int
-	require.NoError(imp.store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE automation_flags IS NULL AND automation_rule_version IS NULL`).Scan(&unknown))
-	assert.Equal(2, unknown)
-	var humanFlags sql.NullInt64
-	require.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(`SELECT automation_flags FROM messages WHERE source_message_id = ?`), sourceMessageID(f.convs[0].ID, ts(49))).Scan(&humanFlags))
-	assert.Equal(sql.NullInt64{Valid: true}, humanFlags)
-	for _, stamp := range []string{ts(46), ts(47), ts(48), ts(50)} {
-		var flags, version sql.NullInt64
-		require.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(`SELECT automation_flags, automation_rule_version FROM messages WHERE source_message_id = ?`), sourceMessageID(f.convs[0].ID, stamp)).Scan(&flags, &version))
-		assert.Equal(sql.NullInt64{Int64: int64(store.FlagBotSender), Valid: true}, flags)
-		assert.Equal(sql.NullInt64{Int64: store.AutomationRuleVersion, Valid: true}, version)
-	}
-}

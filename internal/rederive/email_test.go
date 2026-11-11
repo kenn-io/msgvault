@@ -13,7 +13,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -118,18 +117,12 @@ func TestEmailRetriesFailedRowsAndResumesAfterCancellation(t *testing.T) {
 	assert.Equal(int64(3), sum.MessagesScanned, "manual repair still inspects the whole archive")
 }
 
-func archiveCurrentEmail(t *testing.T, st *store.Store, src *store.Source, key string) int64 {
+func archiveCurrentEmail(t *testing.T, st *store.Store, src *store.Source, key string) {
 	t.Helper()
 	id := archiveEmail(t, st, src, key, "Heizkörper")
 	require.NoError(t, st.UpsertMessageBody(id, sql.NullString{String: "Heizkörper", Valid: true}, sql.NullString{String: "<p>Heizkörper</p>", Valid: true}))
 	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET snippet = ? WHERE id = ?`), "Heizkörper", id)
 	require.NoError(t, err)
-	parsed, err := mime.Parse([]byte(emailRaw))
-	require.NoError(t, err)
-	flags := parsed.AutomationFlags()
-	require.NotNil(t, flags)
-	require.NoError(t, st.PutMessageAutomationContext(t.Context(), id, *flags))
-	return id
 }
 
 func TestEmailFirstSyncBoundsReadQueries(t *testing.T) {
@@ -285,87 +278,4 @@ func TestEmailUnchangedRetryPublishesPendingRevisionWithRowErrors(t *testing.T) 
 	applied, err := st.IsMigrationApplied(LedgerKey(src.SourceType, src.Identifier, emailVersion))
 	require.NoError(err)
 	assert.False(t, applied, "unresolved row failures keep the pass retryable")
-}
-
-func TestRederiveAutomationIncompleteSuccessfulParseRemainsUnknown(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st, src, id := archiveEmailSource(t, "gmail", "keep text")
-	raw := []byte("From: alex@example.test\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: text/plain\r\n\r\nCan you send it?\r\n--b\r\nContent-Type: application/pdf\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: attachment; filename=report.pdf\r\n\r\nAAAAA\r\n--b--\r\n")
-	parsed, err := mime.Parse(raw)
-	require.NoError(err)
-	require.True(parsed.Incomplete)
-	require.NoError(st.UpsertMessageRaw(id, raw))
-	sum, err := Run(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
-	require.NoError(err)
-	assert.Equal(int64(1), sum.MessagesScanned)
-	_, current, err := st.MessageAutomationContext(t.Context(), id)
-	require.NoError(err)
-	assert.False(current)
-}
-
-func TestEmailFlagsOnlyBackfillPublishesRevisionOnce(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	src, err := st.GetOrCreateSource("outlook", "archive@example.test")
-	require.NoError(err)
-	id := archiveCurrentEmail(t, st, src, "current")
-	require.NoError(st.UpsertMessageRaw(id, []byte("List-Id: <news.example.test>\r\n"+emailRaw)))
-	before := derivedDataRevision(t, st)
-	sum, err := Run(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
-	require.NoError(err)
-	assert.Zero(sum.BodiesRewritten)
-	flags, current, err := st.MessageAutomationContext(t.Context(), id)
-	require.NoError(err)
-	assert.True(current)
-	assert.Equal(uint32(4), flags)
-	assert.Equal(before+1, derivedDataRevision(t, st))
-	sum, err = Run(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
-	require.NoError(err)
-	assert.Zero(sum.BodiesRewritten)
-	assert.Equal(before+1, derivedDataRevision(t, st))
-}
-
-// cancelAfterEmailTextCommit cancels after the single-row repair's first
-// committed transaction. The initial ledger cleanup and MIME scan do not open
-// transactions, so that commit belongs to the stale text repair.
-type cancelAfterEmailTextCommit struct {
-	cancel    context.CancelFunc
-	committed bool
-}
-
-func (w *cancelAfterEmailTextCommit) Write(data []byte) (int, error) {
-	if !w.committed && bytes.Contains(data, []byte(`"msg":"sql tx commit"`)) {
-		w.committed = true
-		w.cancel()
-	}
-	return len(data), nil
-}
-
-func TestEmailCommittedTextPublishesRevisionWhenAutomationCanceled(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st, src, id := archiveEmailSource(t, "outlook", "stale")
-	before := derivedDataRevision(t, st)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	writer := &cancelAfterEmailTextCommit{cancel: cancel}
-	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(writer, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	store.ConfigureSQLLogging(store.SQLLogOptions{FullTrace: true, SlowMs: -1})
-	t.Cleanup(func() {
-		slog.SetDefault(previous)
-		store.ConfigureSQLLogging(store.SQLLogOptions{})
-	})
-	sum, err := Run(ctx, st, src.SourceType, src.Identifier, src.ID, nil)
-	require.ErrorIs(err, context.Canceled)
-	assert.Equal(int64(1), sum.BodiesRewritten)
-	body, err := st.GetMessageBodyText(t.Context(), id)
-	require.NoError(err)
-	assert.Equal("Heizkörper", body)
-	_, current, err := st.MessageAutomationContext(t.Context(), id)
-	require.NoError(err)
-	assert.False(current, "cancellation occurs before automation publication")
-	assert.Equal(before+1, derivedDataRevision(t, st))
 }

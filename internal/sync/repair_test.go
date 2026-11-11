@@ -548,20 +548,3 @@ func repairRaw(id, threadID, subject, body string, attachment []byte) *gmail.Raw
 	}
 	return &gmail.RawMessage{ID: id, ThreadID: threadID, LabelIDs: []string{"INBOX"}, Raw: builder.Bytes()}
 }
-
-func TestRepairMessagePublishesAutomation(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	env := newTestEnv(t)
-	source := env.CreateSource(t)
-	id := seedRepairRow(t, env.Store, source.ID, "automation-repair", "thread", "old")
-	raw := repairRaw("automation-repair", "thread", "repaired", "body", nil)
-	raw.Raw = append([]byte("List-Unsubscribe: <mailto:leave@example.test>\r\n"), raw.Raw...)
-	env.Mock.Messages["automation-repair"] = raw
-	_, err := env.Syncer.RepairMessage(t.Context(), RepairRequest{Reference: "automation-repair", SourceID: source.ID})
-	require.NoError(err)
-	flags, current, err := env.Store.MessageAutomationContext(t.Context(), id)
-	require.NoError(err)
-	assert.True(current)
-	assert.Equal(store.FlagListUnsubscribe, flags)
-}

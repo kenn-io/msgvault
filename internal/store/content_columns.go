@@ -63,13 +63,11 @@ var MessagesContentColumns = []string{
 // one does not move content_changed_at. Each carries its reason: the cost of a
 // wrong call here is a consumer that silently misses updates.
 var MessagesNonContentColumns = []string{
-	"automation_flags",        // derived header flags; the raw write tracks content
-	"automation_rule_version", // derived header flags; the raw write tracks content
-	"id",                      // immutable identity
-	"rfc822_message_id",       // not reported by the feed (dedup.go rewrites it)
-	"read_at",                 // local read state, not archive content
-	"delivered_at",            // platform delivery receipt
-	"is_from_me",              // not reported by the feed
+	"id",                // immutable identity
+	"rfc822_message_id", // not reported by the feed (dedup.go rewrites it)
+	"read_at",           // local read state, not archive content
+	"delivered_at",      // platform delivery receipt
+	"is_from_me",        // not reported by the feed
 	// The two provenance inputs behind is_from_me: source-native ownership as
 	// the provider stated it, and ownership derived from the account's own
 	// identities. The feed reports neither, and it does not report the

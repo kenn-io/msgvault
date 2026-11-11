@@ -319,6 +319,8 @@ type Server struct {
 	cancelImports             context.CancelFunc
 	importMu                  sync.Mutex
 	importsClosed             bool
+	loopEvidenceRunning       bool
+	loopEvidencePending       []int64
 	importWG                  sync.WaitGroup
 	localEmbeddings           LocalEmbeddingsController
 	localSetup                LocalEmbeddingsStatus

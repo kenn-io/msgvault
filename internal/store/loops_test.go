@@ -2,7 +2,6 @@ package store_test
 
 import (
 	"bytes"
-	"compress/zlib"
 	"context"
 	"database/sql"
 	"encoding/binary"
@@ -685,84 +684,6 @@ func BenchmarkListLoops(b *testing.B) {
 				result, err := loops.List(b.Context(), st, loops.Options{}, loopNow)
 				require.NoError(b, err)
 				require.Len(b, result.Loops, tt.wantLoops)
-			}
-		})
-	}
-}
-
-// BenchmarkListLoopsAutomation measures current automation flags with cold
-// evidence, ordinary mail, and warm controls using truthful attachment rows.
-func BenchmarkListLoopsAutomation(b *testing.B) {
-	attachment := make([]byte, 96<<10)
-	_, err := rand.NewChaCha8([32]byte{1}).Read(attachment)
-	require.NoError(b, err)
-	for _, tc := range []struct {
-		name       string
-		file, warm bool
-	}{
-		{"cold_files", true, false},
-		{"cold_plain", false, false},
-		{"warm_files", true, true},
-	} {
-		b.Run(tc.name, func(b *testing.B) {
-			st, err := store.Open(filepath.Join(b.TempDir(), "loops.db"))
-			require.NoError(b, err)
-			b.Cleanup(func() { require.NoError(b, st.Close()) })
-			require.NoError(b, st.InitSchema())
-			source, err := st.GetOrCreateSource("gmail", loopOwner)
-			require.NoError(b, err)
-			ages := make([]time.Duration, 3000)
-			for i := range ages {
-				ages[i] = loopDay + time.Duration(i+1)*time.Minute
-			}
-			ids := bulkThreads(b, st, source.ID, ages, false)
-			tx, err := st.DB().BeginTx(b.Context(), nil)
-			require.NoError(b, err)
-			defer func() { _ = tx.Rollback() }()
-			for i, id := range ids {
-				var payload []byte
-				if tc.file {
-					payload = attachment
-				}
-				// Match the archive's zlib representation, but batch fixture writes
-				// rather than paying one durable transaction per original.
-				var compressed bytes.Buffer
-				writer := zlib.NewWriter(&compressed)
-				_, err := writer.Write(realisticMail(i, "Can you review it?", payload))
-				require.NoError(b, err)
-				require.NoError(b, writer.Close())
-				_, err = tx.ExecContext(b.Context(), `INSERT INTO message_raw (message_id,raw_data,raw_format,compression) VALUES (?, ?, 'mime', 'zlib')`, id, compressed.Bytes())
-				require.NoError(b, err)
-				if tc.file {
-					_, err := tx.ExecContext(b.Context(), `INSERT INTO attachments (message_id,filename,storage_path,attachment_role) VALUES (?, 'contract.pdf', 'ab/contract.pdf', 'standalone')`, id)
-					require.NoError(b, err)
-				}
-			}
-			_, err = tx.ExecContext(b.Context(), `UPDATE messages SET automation_flags=0, automation_rule_version=?`, store.AutomationRuleVersion)
-			require.NoError(b, err)
-			require.NoError(b, tx.Commit())
-			if tc.warm {
-				for {
-					result, err := loops.List(b.Context(), st, loops.Options{}, loopNow)
-					require.NoError(b, err)
-					require.Len(b, result.Loops, loops.DefaultLimit)
-					if !result.CoverageIncomplete {
-						break
-					}
-				}
-			}
-			b.ReportAllocs()
-			b.ResetTimer()
-			for b.Loop() {
-				if !tc.warm {
-					b.StopTimer()
-					_, err := st.DB().ExecContext(b.Context(), `DELETE FROM loop_message_evidence`)
-					require.NoError(b, err)
-					b.StartTimer()
-				}
-				result, err := loops.List(b.Context(), st, loops.Options{}, loopNow)
-				require.NoError(b, err)
-				require.Len(b, result.Loops, loops.DefaultLimit)
 			}
 		})
 	}

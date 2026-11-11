@@ -163,6 +163,59 @@ func (s *Server) handleListLoops(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, response)
+	if result.CoverageIncomplete {
+		s.startLoopEvidence(loopStore, opts.PersonID)
+	}
+}
+
+// startLoopEvidence continues an incomplete request under the server lifetime.
+func (s *Server) startLoopEvidence(st loops.Store, personID int64) {
+	s.importMu.Lock()
+	if s.importsClosed {
+		s.importMu.Unlock()
+		return
+	}
+	if s.loopEvidenceRunning {
+		if !slices.Contains(s.loopEvidencePending, personID) {
+			s.loopEvidencePending = append(s.loopEvidencePending, personID)
+		}
+		s.importMu.Unlock()
+		return
+	}
+	finishIdle, ok := s.idleTracker.BeginMaintenanceWorkContext(s.importContext)
+	if !ok {
+		s.importMu.Unlock()
+		return
+	}
+	s.loopEvidenceRunning = true
+	s.importWG.Add(1)
+	s.importMu.Unlock()
+	go func() {
+		defer s.importWG.Done()
+		defer finishIdle()
+		s.fillLoopEvidence(st, personID)
+	}()
+}
+
+func (s *Server) fillLoopEvidence(st loops.Store, personID int64) {
+	for {
+		ctx, cancel := context.WithTimeout(s.importContext, 2*time.Minute)
+		_, err := loops.Warm(ctx, &gatedLoopEvidence{Store: st, gate: s.operationGate, background: true}, personID, s.clockNow().UTC())
+		if err != nil && ctx.Err() == nil && !errors.Is(err, errMutationGateBusy) {
+			s.logger.Error("fill loop evidence", "error", err)
+		}
+		cancel()
+		s.importMu.Lock()
+		if s.importsClosed || len(s.loopEvidencePending) == 0 {
+			s.loopEvidenceRunning = false
+			s.loopEvidencePending = nil
+			s.importMu.Unlock()
+			return
+		}
+		personID = s.loopEvidencePending[0]
+		s.loopEvidencePending = s.loopEvidencePending[1:]
+		s.importMu.Unlock()
+	}
 }
 
 func loopListResponse(result loops.Result) LoopListResponse {
@@ -274,8 +327,9 @@ const loopEvidenceGateWait = 50 * time.Millisecond
 type gatedLoopEvidence struct {
 	loops.Store
 
-	gate     OperationGate
-	readOnly bool
+	gate       OperationGate
+	readOnly   bool
+	background bool
 }
 
 // begin takes the gate for one write, or marks the request read-only.
@@ -285,6 +339,9 @@ func (g *gatedLoopEvidence) begin(ctx context.Context) (func(), bool) {
 	}
 	if g.gate == nil {
 		return func() {}, true
+	}
+	if g.background {
+		return g.gate.BeginWorkContext(ctx)
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, loopEvidenceGateWait)
 	defer cancel()
@@ -298,6 +355,9 @@ func (g *gatedLoopEvidence) begin(ctx context.Context) (func(), bool) {
 func (g *gatedLoopEvidence) LoopMessageEvidenceContext(ctx context.Context, id int64, version int) (store.LoopMessageEvidence, string, bool, error) {
 	release, ok := g.begin(ctx)
 	if !ok {
+		if g.background {
+			return store.LoopMessageEvidence{}, "", false, errMutationGateBusy
+		}
 		e, hit, err := g.CachedLoopMessageEvidenceContext(ctx, id, version)
 		return e, "", hit, err
 	}
@@ -311,6 +371,9 @@ func (g *gatedLoopEvidence) SaveLoopMessageEvidenceContext(ctx context.Context, 
 	}
 	release, ok := g.begin(ctx)
 	if !ok {
+		if g.background {
+			return errMutationGateBusy
+		}
 		return nil
 	}
 	defer release()
