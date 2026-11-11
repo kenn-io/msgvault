@@ -401,7 +401,7 @@
     <div class="editor-actions"><Button label="Cancel" type="button" onclick={onCancel} /></div>
   </div>
 {:else}
-  <form class="profile-editor" bind:this={formElement} onsubmit={save} oninput={edited} onchange={edited} aria-label={`Edit ${section.replace('_', ' ')}`}>
+  <form class="profile-editor" bind:this={formElement} onsubmit={save} oninput={() => { if (!initialCandidate && !currentAddress && (review.pending || review.error || review.result?.status === 'unavailable' || review.result?.reason_codes.some(code => code.startsWith('external_')))) originalInput = undefined; edited(); }} onchange={edited} aria-label={`Edit ${section.replace('_', ' ')}`}>
     {#if section === 'names'}
       <label
         >Name kind
@@ -497,7 +497,7 @@
         <label>PO box<TextInput bind:value={postOfficeBox} ariaLabel="PO box" block disabled={submitting} /></label>
         <label>Country code<TextInput bind:value={countryCode} ariaLabel="Country code" block disabled={submitting} /></label>
         <label>Current address text<textarea aria-label="Current address text" bind:value={currentText} oninput={() => { currentTextTouched = true; }} disabled={submitting}></textarea></label>
-        <label>Original text<textarea aria-label="Original text" bind:value={originalText} readonly={addressKind === 'postal' && !!originalInput} disabled={submitting}></textarea></label>
+        <label>Original text<textarea aria-label="Original text" bind:value={originalText} oninput={() => { originalInput = undefined; }} readonly={addressKind === 'postal' && !!originalInput && (!!initialCandidate || !!currentAddress || (!review.error && review.result?.status !== 'unavailable' && !review.result?.reason_codes.some(code => code.startsWith('external_'))))} disabled={submitting}></textarea></label>
       {/if}
       <label>Locality<TextInput bind:value={locality} ariaLabel="Locality" block disabled={submitting} /></label>
       <label>Region<TextInput bind:value={region} ariaLabel="Region" block disabled={submitting} /></label>

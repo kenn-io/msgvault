@@ -406,9 +406,11 @@ import (
 // 3.50.0 adds provider-neutral message import.
 // 3.51.0 adds attachment processing outcomes and worker errors.
 // 4.0.0 removes local document commands, search, status, and operation lanes.
-// 4.1.0 adds recorded names, saved contacts, and reconciled addresses to merge responses.
+// Docbank owns document processing.
+// 4.1.0 adds recorded names, saved contacts, and reconciled addresses to merge-list and detail responses,
+// registered service labels to current contact points, and identity keys to observations.
 // 4.2.0 adds attachment retrieval modes, coverage, and degradations to media search.
-// 5.0.0 makes file content availability nullable when storage has not been checked.
+// 5.0.0 makes file list and suggestion content availability nullable when storage has not been checked.
 // 5.1.0 adds postal assessment and review-only postal sweep claims.
 const APISchemaVersion = "5.1.0"
 

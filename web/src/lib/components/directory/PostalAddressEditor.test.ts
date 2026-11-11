@@ -95,6 +95,20 @@ describe('Postal address editor', () => {
     expect(requests[0]!.method).toBe('POST');
   });
 
+  it.each([{ unavailable: true }, { localRejection: true }])('lets the owner correct source text after an unsuccessful check (%o)', async options => {
+    const { controller, requests } = setup(options);
+    render(StructuredProfileEditor, { controller, section: 'addresses' });
+    await enterRaw();
+    await fireEvent.click(screen.getByRole('button', { name: 'Check with Google' }));
+    await screen.findByText(options.unavailable ? 'The provider is unavailable' : 'Enter a supported country code');
+    await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: 'Changed street' } });
+    expect(screen.getByLabelText('Original text')).toHaveProperty('readOnly', false);
+    await fireEvent.input(screen.getByLabelText('Original text'), { target: { value: 'Corrected source' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect((await requests[1]!.clone().json()).addresses.add[0].original_input.original_value).toBe('Corrected source');
+  });
+
   it('keeps the entered address and allows entry when the provider is unavailable', async () => {
     const { controller, requests } = setup({ unavailable: true });
     render(StructuredProfileEditor, { controller, section: 'addresses' });
