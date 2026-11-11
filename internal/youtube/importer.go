@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/store"
@@ -123,25 +124,13 @@ func (imp *Importer) resume(ctx context.Context, sourceID int64) (*syncState, er
 	return state, nil
 }
 
-type workIdentity struct {
-	kind, videoID, videoIDs, parent, pass string
-}
-
-func identity(job work) workIdentity {
-	return workIdentity{job.Kind, job.VideoID, strings.Join(job.VideoIDs, ","), job.Parent, job.Pass}
-}
-
 // Preserve the already pending job and page token when discovery repeats it.
 func appendUniqueWork(queue []work, jobs ...work) []work {
-	known := make(map[workIdentity]bool, len(queue)+len(jobs))
-	for _, job := range queue {
-		known[identity(job)] = true
-	}
 	for _, job := range jobs {
-		key := identity(job)
-		if !known[key] {
+		if !slices.ContainsFunc(queue, func(pending work) bool {
+			return pending.Kind == job.Kind && pending.VideoID == job.VideoID && slices.Equal(pending.VideoIDs, job.VideoIDs) && pending.Parent == job.Parent && pending.Pass == job.Pass
+		}) {
 			queue = append(queue, job)
-			known[key] = true
 		}
 	}
 	return queue

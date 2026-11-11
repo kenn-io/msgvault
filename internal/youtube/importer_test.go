@@ -523,6 +523,13 @@ func TestUnavailableResourceKeepsArchivedRowsAndDoesNotBlockOtherVideos(t *testi
 	}
 }
 
+func TestAppendUniqueWorkKeepsPendingPage(t *testing.T) {
+	pending := work{Kind: "replies", VideoID: "video", Parent: "comment", Token: "next"}
+	batch := work{Kind: "videos", VideoIDs: []string{"a", "b"}}
+	jobs := appendUniqueWork([]work{pending}, work{Kind: "replies", VideoID: "video", Parent: "comment"}, batch, batch)
+	require.Equal(t, []work{pending, batch}, jobs)
+}
+
 func TestInvalidPageTokenRestartsListing(t *testing.T) {
 	t.Run("expired markers", func(t *testing.T) {
 		assert, require := assert.New(t), require.New(t)
