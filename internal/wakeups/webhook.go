@@ -124,7 +124,6 @@ func (c webhookClient) sendEvent(ctx context.Context, endpoint, id, subscription
 		return "", resp.StatusCode
 	case resp.StatusCode >= 300 && resp.StatusCode < 400:
 		return "http_3xx", resp.StatusCode
-
 	case resp.StatusCode >= 400 && resp.StatusCode < 500:
 		return "http_4xx", resp.StatusCode
 	default:

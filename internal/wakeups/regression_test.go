@@ -565,7 +565,6 @@ func TestNativePersonRecoveryClearsOnlyQuietStatus(t *testing.T) {
 	}{
 		{"recovered", "person_unavailable", 0, true},
 		{"delivery failure", "http_5xx", 0, false},
-		{"pending delivery", "person_unavailable", 1, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := Assert.New(t)

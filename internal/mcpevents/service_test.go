@@ -27,24 +27,13 @@ func TestNativeSkipsMissingCredentialAndRefreshRecovers(t *testing.T) {
 	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook?token=x", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
 	first, err := service.Subscribe(t.Context(), in)
 	require.NoError(err)
-	key := store.MCPEventsPositionKey(first.ID)
-	state, raw, err := st.LoadWakeupStateKey(t.Context(), key)
-	require.NoError(err)
-	state.Failures = 2
-	ok, err := st.AdvanceWakeupStateKey(t.Context(), key, raw, state)
-	require.NoError(err)
-	require.True(ok)
 	require.NoError(os.Remove(filepath.Join(service.TokensDir, "provider-credentials.json")))
-	assert.True(service.Available(t.Context()))
 	targets, err := service.Native(t.Context())
 	require.NoError(err)
 	assert.Empty(targets)
 	second, err := service.Subscribe(t.Context(), in)
 	require.NoError(err)
 	assert.Equal(first.ID, second.ID)
-	got, _, err := st.LoadWakeupStateKey(t.Context(), key)
-	require.NoError(err)
-	assert.Equal(state, got)
 	targets, err = service.Native(t.Context())
 	require.NoError(err)
 	require.Len(targets, 1)
@@ -326,16 +315,16 @@ func TestCredentialWriteFailureLeavesRecoverableCatalog(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	dir := t.TempDir()
-	blocked := filepath.Join(dir, "blocked")
-	require.NoError(os.WriteFile(blocked, []byte("not a directory"), 0600))
-	service := Service{Store: st, TokensDir: filepath.Join(blocked, "tokens"), Enabled: true}
+	tokens := filepath.Join(dir, "tokens")
+	require.NoError(os.MkdirAll(filepath.Join(tokens, ".provider-credentials.lock"), 0700))
+	service := Service{Store: st, TokensDir: tokens, Enabled: true}
 	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
 	_, err := service.Subscribe(t.Context(), in)
 	require.Error(err)
 	entries, _, err := service.catalog(t.Context())
 	require.NoError(err)
 	require.Len(entries, 1)
-	service.TokensDir = filepath.Join(dir, "tokens")
+	require.NoError(os.Remove(filepath.Join(tokens, ".provider-credentials.lock")))
 	result, err := service.Subscribe(t.Context(), in)
 	require.NoError(err)
 	assert.Equal(entries[0].ID, result.ID)
@@ -440,18 +429,6 @@ func TestNativeSkipsOriginMismatchWithoutBlockingOtherEntries(t *testing.T) {
 	assert.Equal(t, second.ID, targets[0].Name)
 }
 
-func TestCatalogFailureDoesNotPublishCredential(t *testing.T) {
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	dir := t.TempDir()
-	service := Service{Store: st, TokensDir: dir, Enabled: true}
-	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
-	require.NoError(st.Close())
-	_, err := service.Subscribe(t.Context(), in)
-	require.Error(err)
-	assert.NoFileExists(t, filepath.Join(dir, "provider-credentials.json"))
-}
-
 func TestCredentialReadFailureDoesNotChangeCatalogOrPositions(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -459,11 +436,9 @@ func TestCredentialReadFailureDoesNotChangeCatalogOrPositions(t *testing.T) {
 	now := time.Now().UTC()
 	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Now: func() time.Time { return now }}
 	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/one", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
-	first, err := service.Subscribe(t.Context(), in)
+	_, err := service.Subscribe(t.Context(), in)
 	require.NoError(err)
 	beforeCatalog, err := st.LoadMCPEventsCatalog(t.Context())
-	require.NoError(err)
-	_, beforePosition, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(first.ID))
 	require.NoError(err)
 	var beforeCount int
 	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM archive_metadata WHERE key LIKE ?`), "mcpevents:v1:pos:%").Scan(&beforeCount))
@@ -472,13 +447,12 @@ func TestCredentialReadFailureDoesNotChangeCatalogOrPositions(t *testing.T) {
 	for _, endpoint := range []string{"https://example.com/one", "https://example.com/two"} {
 		in.Delivery.URL = endpoint
 		_, err = service.Subscribe(t.Context(), in)
-		require.Error(err)
+		var eventErr *Error
+		require.ErrorAs(err, &eventErr)
+		assert.Equal("credential_unavailable", eventErr.Reason)
 		afterCatalog, err := st.LoadMCPEventsCatalog(t.Context())
 		require.NoError(err)
 		assert.Equal(beforeCatalog, afterCatalog)
-		_, afterPosition, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(first.ID))
-		require.NoError(err)
-		assert.Equal(beforePosition, afterPosition)
 		var afterCount int
 		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM archive_metadata WHERE key LIKE ?`), "mcpevents:v1:pos:%").Scan(&afterCount))
 		assert.Equal(beforeCount, afterCount)

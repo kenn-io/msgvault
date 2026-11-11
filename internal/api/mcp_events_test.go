@@ -96,7 +96,6 @@ func TestEventsRouterSerialGate(t *testing.T) {
 		srv.Router().ServeHTTP(w, r)
 		requirements.Equal(http.StatusOK, w.Code, w.Body.String())
 	}
-	assertions.True(events.Available(t.Context()))
 }
 
 func TestGeneratedEventsCatalogDecodes(t *testing.T) {

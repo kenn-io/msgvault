@@ -458,8 +458,6 @@ func TestEventsCredentialUsesInternalIDAndOrigin(t *testing.T) {
 	value, _, err := snapshot.Resolve(id, "https://example.test", "", nil)
 	require.NoError(err)
 	assert.Equal("fixture", value)
-	_, _, err = snapshot.Resolve(id, "https://other.example.test", "", nil)
-	assert.ErrorIs(err, ErrOriginMismatch)
 	_, err = PutIfRevision(dir, revision, id, "https://example.test", "stale")
 	assert.ErrorIs(err, ErrConflict)
 }

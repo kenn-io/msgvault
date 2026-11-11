@@ -1,7 +1,6 @@
 package wakeups
 
 import (
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -177,10 +176,7 @@ func TestNativeDeliveryDropsPermanentAndEventuallyAdvances(t *testing.T) {
 			start := now.Add(-time.Hour)
 			src, err := st.GetOrCreateSource("gmail", "events@example.com")
 			require.NoError(err)
-			conv, err := st.EnsureConversationWithType(src.ID, "events-conversation", "email_thread", "Events")
-			require.NoError(err)
-			_, err = st.UpsertMessage(&store.Message{SourceID: src.ID, SourceMessageID: "events-1", ConversationID: conv, MessageType: "email", SentAt: sql.NullTime{Time: now, Valid: true}})
-			require.NoError(err)
+			seedWakeup(t, st, "events@example.com", 0, 1, now)
 			key := store.MCPEventsPositionKey("sub-x")
 			ok, err := st.AdvanceWakeupStateKey(ctx, key, nil, store.WakeupState{At: start})
 			require.NoError(err)
@@ -259,21 +255,11 @@ func TestNativeSuccessfulDeliveryClearsFailureStatus(t *testing.T) {
 	start := now.Add(-time.Hour)
 	src, err := st.GetOrCreateSource("gmail", "downtime@example.com")
 	require.NoError(err)
-	conv, err := st.EnsureConversationWithType(src.ID, "downtime", "email_thread", "Fixture")
-	require.NoError(err)
 	key := store.MCPEventsPositionKey("restart")
 	ok, err := st.AdvanceWakeupStateKey(ctx, key, nil, store.WakeupState{At: start, LastError: "http_5xx", FailedSince: &start})
 	require.NoError(err)
 	require.True(ok)
-	id, err := st.UpsertMessage(&store.Message{SourceID: src.ID, SourceMessageID: "while-down", ConversationID: conv, MessageType: "email", SentAt: sql.NullTime{Time: now, Valid: true}})
-	require.NoError(err)
-	stamp := now.Add(-time.Minute)
-	var value any = stamp
-	if !st.IsPostgreSQL() {
-		value = stamp.Format(store.SQLiteTimestampLayout)
-	}
-	_, err = st.DB().ExecContext(ctx, st.Rebind(`UPDATE messages SET content_changed_at=? WHERE id=?`), value, id)
-	require.NoError(err)
+	seedWakeup(t, st, "downtime@example.com", 0, 1, now)
 	var bodies []map[string]any
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var b map[string]any

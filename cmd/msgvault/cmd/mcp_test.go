@@ -280,9 +280,7 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 
 	requests := make(chan string, 8)
 	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/mcp-events/list" {
-			requests <- r.URL.Path
-		}
+		requests <- r.URL.Path
 		if r.URL.Path == "/api/v1/media/search/status" {
 			_ = json.NewEncoder(w).Encode(map[string]any{"configured": false})
 			return
@@ -339,6 +337,8 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		wantCardDAV       bool
 		wantMessageTags   bool
 		wantContacts      bool
+		wantEvents        bool
+		healthUnavailable bool
 	}{
 		{name: "people schema", schemaVersion: "2.10.0", wantPeople: true},
 		{name: "directory predecessor", schemaVersion: "2.12.9", wantPeople: true},
@@ -357,7 +357,10 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		{name: "identity review and scoring predecessor", schemaVersion: "2.35.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true},
 		{name: "identity review and scoring schema", schemaVersion: "3.0.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
 		{name: "native message tags schema", schemaVersion: "3.15.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true},
-		{name: "current schema", schemaVersion: api.APISchemaVersion, wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
+		{name: "events predecessor", schemaVersion: "5.2.0", wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
+		{name: "events schema", schemaVersion: "5.3.0", wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true, wantEvents: true},
+		{name: "health unavailable", healthUnavailable: true, wantEvents: true},
+		{name: "current schema", wantEvents: true, schemaVersion: api.APISchemaVersion, wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
 		{name: "tags predecessor 3.14.0", schemaVersion: "3.14.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
 		{name: "before contact schema", schemaVersion: "3.19.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true},
 		{name: "contact schema", schemaVersion: "3.20.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantContacts: true, wantMessageTags: true},
@@ -372,6 +375,10 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/v1/health":
+					if tt.healthUnavailable {
+						http.Error(w, "unavailable", http.StatusServiceUnavailable)
+						return
+					}
 					body := map[string]any{"status": "ok"}
 					if tt.schemaVersion != "" {
 						body["api_schema_version"] = tt.schemaVersion
@@ -403,6 +410,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 			assert.Equal(tt.wantCardDAV, opts.PersonCardDAV != nil)
 			assert.Equal(tt.wantScoring, opts.IdentityScoring != nil)
 			assert.Equal(tt.wantMessageTags, opts.MessageTags != nil)
+			assert.Equal(tt.wantEvents, opts.Events != nil)
 		})
 	}
 }
@@ -649,33 +657,4 @@ func TestDaemonMCPDocbankProbeFailureIsLogged(t *testing.T) {
 	assert.False(opts.KataDocbank)
 	assert.Contains(logs.String(), "Kata transcript citations hidden because the Docbank status probe failed")
 	assert.Contains(logs.String(), "503")
-}
-
-func TestDaemonMCPEventsRequireCurrentDaemon(t *testing.T) {
-	for _, tc := range []struct {
-		name, version string
-		want          bool
-	}{{"old", "5.2.0", false}, {"current", api.APISchemaVersion, true}, {"health unavailable", "", true}} {
-		t.Run(tc.name, func(t *testing.T) {
-			eventsCalls := 0
-			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
-				switch r.URL.Path {
-				case "/api/v1/health":
-					if tc.version == "" {
-						http.Error(w, "unavailable", http.StatusServiceUnavailable)
-						return
-					}
-					_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": tc.version})
-				case "/api/v1/mcp-events/list":
-					eventsCalls++
-					_ = json.NewEncoder(w).Encode(map[string]any{"enabled": true, "events": []any{}})
-				default:
-					http.NotFound(w, r)
-				}
-			})
-			opts := daemonMCPServeOptions(t.Context(), client, nil)
-			assert.Equal(t, tc.want, opts.Events != nil)
-			assert.Zero(t, eventsCalls)
-		})
-	}
 }

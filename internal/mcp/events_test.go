@@ -1,8 +1,12 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -37,29 +41,25 @@ func (b *eventTestBackend) MCPEventsSubscribe(_ context.Context, in mcpevents.MC
 	return mcpevents.MCPEventsSubscribeResult{ID: "fixture", RefreshBefore: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC), DeliveryStatus: mcpevents.MCPEventsDeliveryStatus{Active: true}}, nil
 }
 
-func TestEventsDisabledListsEmptyAndUnavailableReturnsError(t *testing.T) {
-	assertions := assert.New(t)
+func TestEventsListPropagatesBackendFailure(t *testing.T) {
 	requirements := require.New(t)
-	backend := &eventTestBackend{disabled: true}
-	response := rawModernCall(t, ServeOptions{Events: backend}, HTTPOptions{}, "events/list", nil)
-	assertions.Empty(response.Result["events"])
-	backend.listErr = errors.New("daemon offline")
-	response = rawModernCall(t, ServeOptions{Events: backend}, HTTPOptions{}, "events/list", nil)
+	assertions := assert.New(t)
+	backend := &eventTestBackend{listErr: errors.New("daemon offline")}
+	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "events/list", "params": map[string]any{"_meta": modernRequestMeta()}})
+	requirements.NoError(err)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Mcp-Protocol-Version", modernProtocolVersion)
+	req.Header.Set("Mcp-Method", "events/list")
+	recorder := httptest.NewRecorder()
+	newMCPHTTPServer(ServeOptions{Events: backend}, HTTPOptions{}).Handler.ServeHTTP(recorder, req)
+	requirements.Equal(http.StatusOK, recorder.Code)
+	var response rawRPCResponse
+	requirements.NoError(json.Unmarshal(recorder.Body.Bytes(), &response))
 	assertions.Equal(float64(mcpevents.Unavailable), response.Error["code"])
-	ct, st := sdkmcp.NewInMemoryTransports()
-	server, err := newMCPServer(ServeOptions{Events: backend}, false).Connect(t.Context(), st, nil)
-	requirements.NoError(err)
-	t.Cleanup(func() { _ = server.Close() })
-	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "test", Version: "1"}, nil)
-	requirements.NoError(sdkmcp.AddSendingCustomMethod[*eventListParams, *eventListResult](client, "events/list"))
-	session, err := client.Connect(t.Context(), ct, nil)
-	requirements.NoError(err)
-	t.Cleanup(func() { _ = session.Close() })
-	_, err = sdkmcp.CallCustomMethod[*eventListParams, *eventListResult](t.Context(), session, "events/list", &eventListParams{})
-	var rpcErr *jsonrpc.Error
-	requirements.ErrorAs(err, &rpcErr)
-	assertions.Equal(int64(mcpevents.Unavailable), rpcErr.Code)
 }
+
 func (b *eventTestBackend) MCPEventsUnsubscribe(_ context.Context, in mcpevents.MCPEventsUnsubscribeRequest) error {
 	b.calls++
 	b.unsubscribe = in

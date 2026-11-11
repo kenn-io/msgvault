@@ -7,25 +7,21 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
+
 	"go.kenn.io/msgvault/internal/mcpevents"
 )
 
 func (c *Client) mcpEventsRequest(ctx context.Context, method, path string, body any, out any) error {
-	var options *muesliRequestOptions
+	var options runtime.RequestOptions
 	if body != nil {
 		raw, err := json.Marshal(body)
 		if err != nil {
 			return err
 		}
-		options = &muesliRequestOptions{body: raw}
+		options = muesliRequestOptions{body: raw}
 	}
-	var resp *http.Response
-	var err error
-	if options == nil {
-		resp, err = c.DoGeneratedRequestWithContext(ctx, method, path, nil)
-	} else {
-		resp, err = c.DoGeneratedRequestWithContext(ctx, method, path, options)
-	}
+	resp, err := c.DoGeneratedRequestWithContext(ctx, method, path, options)
 	if err != nil {
 		return errors.New("events daemon unavailable")
 	}
@@ -46,7 +42,7 @@ func (c *Client) mcpEventsRequest(ctx context.Context, method, path string, body
 				return &mcpevents.Error{Code: e.Code, Reason: reason}
 			case mcpevents.Unavailable:
 				switch e.Reason {
-				case "disabled", "key_unavailable", "head_unavailable", "store_unavailable":
+				case "disabled", "head_unavailable", "store_unavailable":
 					return &e
 				}
 			}

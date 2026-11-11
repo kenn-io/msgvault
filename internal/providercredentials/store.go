@@ -111,7 +111,7 @@ func EventsID(id string) string { return eventsCredentialIDPrefix + id }
 
 func validateRecordID(id string) error {
 	if name, ok := strings.CutPrefix(id, eventsCredentialIDPrefix); ok {
-		if len(name) != 32 || !eventsIDRE.MatchString(name) {
+		if !eventsIDRE.MatchString(name) {
 			return errors.New("invalid events credential ID")
 		}
 		return nil
