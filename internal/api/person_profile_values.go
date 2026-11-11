@@ -496,16 +496,16 @@ func capturePostalPatchOriginals(request PersonProfilePatchRequest, patch *store
 			}
 			continue
 		}
+		if input.OriginalInput == nil {
+			continue
+		}
 		current := postalRequestInput(input)
-		raw := current
-		if input.OriginalInput != nil {
-			raw = *input.OriginalInput
-			if raw.AddressKind == "" {
-				raw.AddressKind = "postal"
-			}
-			if raw.AddressKind != "postal" {
-				return errors.New("original_input must be postal")
-			}
+		raw := *input.OriginalInput
+		if raw.AddressKind == "" {
+			raw.AddressKind = "postal"
+		}
+		if raw.AddressKind != "postal" {
+			return errors.New("original_input must be postal")
 		}
 		encoded, err := postaladdress.EncodeOriginalInput(raw)
 		if err != nil {
@@ -517,9 +517,6 @@ func capturePostalPatchOriginals(request PersonProfilePatchRequest, patch *store
 		// adds only the shared two-letter country-code casing to its whitespace trim.
 		if input.CountryCode != nil {
 			output.CountryCode = new(proposed.CountryCode)
-		}
-		if input.OriginalInput == nil {
-			store.SetPostalFields(store.ResolvePostalInput(current, input.FreeText == nil), [9]**string{&output.PostOfficeBox, &output.ExtendedAddress, &output.StreetAddress, &output.Locality, &output.Region, &output.PostalCode, &output.CountryName, &output.ExtendedComponents, &output.FreeText})
 		}
 		output.OriginalValue = encoded
 	}

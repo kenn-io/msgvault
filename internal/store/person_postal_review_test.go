@@ -24,18 +24,6 @@ func TestPublicPostalAddressDistinguishesLegacyTextFromSnapshot(t *testing.T) {
 	snapshot, err := (PersonAddress{AddressKind: PersonAddressPostal, OriginalValue: encoded, CountryCode: new("CA")}).PublicAddress()
 	require.NoError(err)
 	assert.Nil(snapshot.FreeText)
-	legacyStructured := PersonAddress{AddressKind: PersonAddressPostal, OriginalValue: ";;12 Example Street;Example City;;;Canada;Room 3;Floor 2", CountryCode: new("CA")}
-	legacyStructured.Assessment, err = legacyStructured.LocalPostalAssessment()
-	require.NoError(err)
-	structured, err := legacyStructured.PublicAddress()
-	require.NoError(err)
-	require.NotNil(structured.StreetAddress)
-	require.NotNil(structured.Locality)
-	assert.Equal("12 Example Street", *structured.StreetAddress)
-	assert.Equal("Example City", *structured.Locality)
-	require.NotNil(structured.ExtendedComponents)
-	assert.Equal(";;12 Example Street;Example City;;;Canada;Room 3;Floor 2", *structured.ExtendedComponents)
-	assert.NotContains(structured.Assessment.ReasonCodes, "address_incomplete")
 }
 
 func postalGeneration(t *testing.T, st *Store, personID int64, suffix string, claims []personfacts.ProposedClaim, statuses []personfacts.EvidenceStatusChange) personfacts.GenerationInput {
@@ -46,34 +34,6 @@ func postalGeneration(t *testing.T, st *Store, personID int64, suffix string, cl
 	require.NoError(t, err)
 	input.CatalogFingerprint = catalog.Fingerprint
 	return input
-}
-
-func TestResolvePostalInputLegacyAndSnapshot(t *testing.T) {
-	encoded, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "postal", OriginalValue: "Old street"})
-	require.NoError(t, err)
-	for _, tc := range []struct {
-		name                             string
-		address                          PersonAddress
-		street, locality, text, extended string
-	}{
-		{"partial with label and parameters", PersonAddress{AddressKind: PersonAddressPostal, OriginalValue: ";;12 Example Street;Example City", Label: new("Mail"), CountryCode: new("CA"), GeoURI: new("geo:1,2")}, "12 Example Street", "Example City", "", ""},
-		{"text with label", PersonAddress{AddressKind: PersonAddressPostal, OriginalValue: "12 Example Street", Label: new("Mail")}, "", "", "12 Example Street", ""},
-		{"snapshot retains clear", PersonAddress{AddressKind: PersonAddressPostal, OriginalValue: encoded, CountryCode: new("CA")}, "", "", "", ""},
-		{"explicit clear", PersonAddress{AddressKind: PersonAddressPostal, OriginalValue: "12 Example Street", FreeText: new("")}, "", "", "", ""},
-		{"escaped extensions", PersonAddress{AddressKind: PersonAddressPostal, OriginalValue: `;;12 Example Street;Example City;;;;Room\;3;Floor 2`}, "12 Example Street", "Example City", "", `;;12 Example Street;Example City;;;;Room\;3;Floor 2`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			current, original, err := tc.address.ResolvedPostalInput()
-			require.NoError(t, err)
-			if tc.name == "snapshot retains clear" {
-				assert.Equal(t, "Old street", original.OriginalValue)
-			}
-			assert.Equal(t, tc.street, current.StreetAddress)
-			assert.Equal(t, tc.locality, current.Locality)
-			assert.Equal(t, tc.text, current.FreeText)
-			assert.Equal(t, tc.extended, current.ExtendedComponents)
-		})
-	}
 }
 
 func TestPostalAddressSweepExtractionRetainsWithoutProjection(t *testing.T) {
@@ -269,7 +229,6 @@ func TestPostalAddressPacketBoundsBacklogAndExcludesAdoptedHistory(t *testing.T)
 	for _, claim := range state.Unresolved {
 		assert.NotEqual(selectedKey, claim.ClaimKey)
 	}
-
 }
 
 func TestPostalAddressCurrentStateExcludesBirthPlace(t *testing.T) {

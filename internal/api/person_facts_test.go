@@ -463,7 +463,7 @@ func TestPostalClaimResponseIncludesDecodedComponents(t *testing.T) {
 	var body struct {
 		Claims []personfacts.Claim `json:"claims"`
 	}
-	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body)) //nolint:musttag // The response embeds the existing claim type.
 	require.Len(t, body.Claims, 1)
 	require.NotNil(t, body.Claims[0].PostalReview)
 	require.NotNil(t, body.Claims[0].PostalReview.Assessment)

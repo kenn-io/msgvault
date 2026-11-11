@@ -624,57 +624,47 @@ func projectPostalAddress(address store.PersonAddress) (projectedProperty, bool,
 // means the row has nothing to render and its existing occurrence, if any, is
 // left as residue.
 func postalAddressValue(address store.PersonAddress) (string, *string, error) {
-	current, _, err := address.ResolvedPostalInput()
+	_, snapshot, err := postaladdress.DecodeOriginalInput(address.OriginalValue)
 	if err != nil {
 		return "", nil, err
 	}
-	components, err := postalComponents(current)
+	components, err := postalComponents(address)
 	if err != nil {
 		return "", nil, err
 	}
-	label := postalLabel(address, current, components)
-	if allBlank(components) && label == "" && current.CountryCode == "" && current.GeoURI == "" && current.Timezone == "" {
-		return "", nil, nil
+	if !allBlank(components) {
+		return vcard.JoinStructuredText(components), address.Label, nil
 	}
-	if label != "" {
-		return vcard.JoinStructuredText(components), &label, nil
+	// SplitStructuredText decodes each component, so re-joining escapes
+	// each exactly once and a wire-form original re-renders unchanged.
+	original := strings.TrimSpace(address.OriginalValue)
+	if snapshot {
+		original = ""
 	}
-	return vcard.JoinStructuredText(components), nil, nil
-}
-
-// postalLabel returns the LABEL text. A captured snapshot appends the current
-// free text to the label. A legacy row keeps the earlier export: the label
-// wins, and free text stands in for it only when no components render.
-func postalLabel(address store.PersonAddress, current postaladdress.Input, components []string) string {
-	label, text := current.Label, current.FreeText
-	// ResolvedPostalInput clears OriginalValue on a snapshot and keeps it on a
-	// legacy row, so a difference marks a snapshot without decoding it again.
-	if current.OriginalValue == address.OriginalValue {
-		if label != "" || !allBlank(components) {
-			return label
+	parsed, err := vcard.SplitStructuredText(original)
+	if err == nil && len(parsed) > 1 && !allBlank(parsed) {
+		return vcard.JoinStructuredText(parsed), address.Label, nil
+	}
+	for _, text := range []*string{address.Label, address.FreeText, &original} {
+		if !isBlank(text) {
+			return vcard.JoinStructuredText(components), text, nil
 		}
-		return text
 	}
-	if text == "" || text == label {
-		return label
-	}
-	if label == "" {
-		return text
-	}
-	return label + "\n" + text
+	return "", nil, nil
 }
 
 // postalComponents renders the seven typed ADR fields followed by any
 // components past them that ExtendedComponents carries.
-func postalComponents(address postaladdress.Input) ([]string, error) {
+func postalComponents(address store.PersonAddress) ([]string, error) {
 	components := []string{
-		address.PostOfficeBox, address.ExtendedAddress, address.StreetAddress, address.Locality, address.Region,
-		address.PostalCode, address.CountryName,
+		deref(address.PostOfficeBox), deref(address.ExtendedAddress),
+		deref(address.StreetAddress), deref(address.Locality), deref(address.Region),
+		deref(address.PostalCode), deref(address.CountryName),
 	}
-	if strings.TrimSpace(address.ExtendedComponents) == "" {
+	if isBlank(address.ExtendedComponents) {
 		return components, nil
 	}
-	parsed, err := vcard.SplitStructuredText(address.ExtendedComponents)
+	parsed, err := vcard.SplitStructuredText(*address.ExtendedComponents)
 	if err != nil {
 		return nil, fmt.Errorf("decode extended ADR components: %w", err)
 	}

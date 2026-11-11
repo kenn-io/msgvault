@@ -1294,8 +1294,8 @@ func TestPostalAddressSnapshotDoesNotRestoreClearedValues(t *testing.T) {
 	}{
 		{"raw text", postaladdress.Input{AddressKind: "postal", OriginalValue: "12 Example; Unit 7\nRaw text"}, nil, nil, ""},
 		{"components", postaladdress.Input{AddressKind: "postal", ExtendedAddress: "Unit 7", StreetAddress: "12 Example Street", Locality: "Example City", CountryName: "Canada"}, nil, nil, ""},
-		{"country code", postaladdress.Input{AddressKind: "postal", StreetAddress: "Old street"}, new("CA"), nil, ";;;;;;"},
-		{"geo", postaladdress.Input{AddressKind: "postal", OriginalValue: "Old street"}, nil, new("geo:1,2"), ";;;;;;"},
+		{"country code", postaladdress.Input{AddressKind: "postal", StreetAddress: "Old street"}, new("CA"), nil, ""},
+		{"geo", postaladdress.Input{AddressKind: "postal", OriginalValue: "Old street"}, nil, new("geo:1,2"), ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			encoded, err := postaladdress.EncodeOriginalInput(tc.original)
@@ -1318,7 +1318,6 @@ func TestNonPostalAddressSnapshotLikeTextRemainsLiteral(t *testing.T) {
 		assert.Equal(vcard.EscapeText(encoded), got)
 		assert.False(uri)
 	}
-
 }
 
 func TestPostalSnapshotExportsCurrentLabel(t *testing.T) {
@@ -1327,49 +1326,21 @@ func TestPostalSnapshotExportsCurrentLabel(t *testing.T) {
 	for _, tc := range []struct {
 		name                 string
 		label, text, country *string
-		value, want          string
+		value                string
+		want                 *string
 	}{
-		{"free text", nil, new("  Current address\nUnit 8  "), nil, ";;;;;;", "  Current address\nUnit 8  "},
-		{"label", new("Corrected label"), nil, nil, ";;;;;;", "Corrected label"},
-		{"label and free text", new("Delivery instructions"), new("12 Example Street"), nil, ";;;;;;", "Delivery instructions\n12 Example Street"},
-		{"partial components", nil, new("12 Example Street"), new("Canada"), ";;;;;;Canada", "12 Example Street"},
+		{"free text", nil, new("  Current address\nUnit 8  "), nil, ";;;;;;", new("  Current address\nUnit 8  ")},
+		{"label", new("Corrected label"), nil, nil, ";;;;;;", new("Corrected label")},
+		{"label and free text", new("Delivery instructions"), new("12 Example Street"), nil, ";;;;;;", new("Delivery instructions")},
+		{"partial components", nil, new("12 Example Street"), new("Canada"), ";;;;;;Canada", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: encoded, Label: tc.label, FreeText: tc.text, CountryName: tc.country})
 			require.NoError(t, err)
-			require.NotNil(t, label)
 			assert.Equal(t, tc.value, got)
-			assert.Equal(t, tc.want, *label)
+			assert.Equal(t, tc.want, label)
 		})
 	}
-}
-
-func TestLegacyPostalExportKeepsLabel(t *testing.T) {
-	for _, tc := range []struct {
-		name, original string
-		label          *string
-	}{
-		{"empty source", "", nil},
-		{"source without label", "legacy source", nil},
-		{"source with label", "legacy source", new("Home")},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: tc.original, StreetAddress: new("1 Main"), Label: tc.label, FreeText: new("gate code 42")})
-			require.NoError(t, err)
-			assert.Equal(t, ";;1 Main;;;;", got)
-			assert.Equal(t, tc.label, label)
-		})
-	}
-}
-
-func TestLegacyExtendedAddressSurvivesPublicReadAndExport(t *testing.T) {
-	require := require.New(t)
-	value := ";;12 Example Street;Example City;;;Canada;Room 3;Floor 2"
-	address, err := (store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: value, CountryCode: new("CA")}).PublicAddress()
-	require.NoError(err)
-	got, _, err := postalAddressValue(address)
-	require.NoError(err)
-	assert.Equal(t, value, got)
 }
 
 func TestPostalAddressExportRejectsUnsupportedSnapshot(t *testing.T) {

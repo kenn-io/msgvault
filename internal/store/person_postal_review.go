@@ -7,13 +7,10 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
-	"slices"
-	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/postaladdress"
-	"go.kenn.io/msgvault/internal/vcard"
 )
 
 // PostalInput exposes the address components independently of storage pointers.
@@ -29,40 +26,6 @@ func (a PersonAddress) PostalInput() postaladdress.Input {
 	return postaladdress.Input{AddressKind: string(a.AddressKind), PostOfficeBox: value(a.PostOfficeBox), ExtendedAddress: value(a.ExtendedAddress), StreetAddress: value(a.StreetAddress), Locality: value(a.Locality), Region: value(a.Region), PostalCode: value(a.PostalCode), CountryName: value(a.CountryName), ExtendedComponents: value(a.ExtendedComponents), FreeText: value(a.FreeText), Label: value(a.Label), GeoURI: value(a.GeoURI), Timezone: value(a.Timezone), CountryCode: value(a.CountryCode), PlaceURI: value(a.PlaceURI), OriginalValue: a.OriginalValue}
 }
 
-// ResolvePostalInput materializes legacy original text as current address data.
-// Explicit current text, including a clear, disables the legacy fallback.
-func ResolvePostalInput(input postaladdress.Input, useOriginal bool) postaladdress.Input {
-	if !useOriginal || slices.ContainsFunc([]string{input.FreeText, input.PostOfficeBox, input.ExtendedAddress, input.StreetAddress, input.Locality, input.Region, input.PostalCode, input.CountryName, input.ExtendedComponents}, func(value string) bool { return strings.TrimSpace(value) != "" }) {
-		return input
-	}
-	raw := strings.TrimSpace(input.OriginalValue)
-	if raw == "" {
-		return input
-	}
-	parts, err := vcard.SplitStructuredText(raw)
-	if err == nil && len(parts) > 1 && slices.ContainsFunc(parts, func(part string) bool { return strings.TrimSpace(part) != "" }) {
-		fields := []*string{&input.PostOfficeBox, &input.ExtendedAddress, &input.StreetAddress, &input.Locality, &input.Region, &input.PostalCode, &input.CountryName}
-		for i := 0; i < min(len(parts), len(fields)); i++ {
-			*fields[i] = parts[i]
-		}
-		if len(parts) > 7 {
-			input.ExtendedComponents = vcard.JoinStructuredText(parts)
-		}
-	} else {
-		input.FreeText = raw
-	}
-	return input
-}
-
-// SetPostalFields stores each non-empty component and free text of current.
-func SetPostalFields(current postaladdress.Input, fields [9]**string) {
-	for i, value := range [9]string{current.PostOfficeBox, current.ExtendedAddress, current.StreetAddress, current.Locality, current.Region, current.PostalCode, current.CountryName, current.ExtendedComponents, current.FreeText} {
-		if value != "" {
-			*fields[i] = new(value)
-		}
-	}
-}
-
 // ResolvedPostalInput separates current data from the captured source.
 func (a PersonAddress) ResolvedPostalInput() (postaladdress.Input, postaladdress.Input, error) {
 	current := a.PostalInput()
@@ -74,7 +37,6 @@ func (a PersonAddress) ResolvedPostalInput() (postaladdress.Input, postaladdress
 		current.OriginalValue = ""
 		return current, original, nil
 	}
-	current = ResolvePostalInput(current, a.FreeText == nil)
 	return current, current, nil
 }
 
@@ -194,6 +156,8 @@ func (s *Store) attachPostalReviewsTx(ctx context.Context, tx *loggedTx, personI
 }
 
 // LocalPostalAssessment is derived on read; no external verdict is stored.
+//
+//nolint:nilnil // Non-postal addresses have no postal assessment.
 func (a PersonAddress) LocalPostalAssessment() (*postaladdress.Assessment, error) {
 	if a.AddressKind != PersonAddressPostal {
 		return nil, nil
@@ -213,11 +177,12 @@ func (a PersonAddress) PublicAddress() (PersonAddress, error) {
 	if a.AddressKind != PersonAddressPostal {
 		return a, nil
 	}
-	current, original, err := a.ResolvedPostalInput()
+	original, snapshot, err := postaladdress.DecodeOriginalInput(a.OriginalValue)
 	if err != nil {
 		return a, err
 	}
-	a.OriginalValue = original.OriginalValue
-	SetPostalFields(current, [9]**string{&a.PostOfficeBox, &a.ExtendedAddress, &a.StreetAddress, &a.Locality, &a.Region, &a.PostalCode, &a.CountryName, &a.ExtendedComponents, &a.FreeText})
+	if snapshot {
+		a.OriginalValue = original.OriginalValue
+	}
 	return a, nil
 }
