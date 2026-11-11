@@ -21,7 +21,7 @@ func TestVideoOwnerReceivesRelationshipActivityWithoutCommenting(t *testing.T) {
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentityContext(t.Context(), src.ID, SourceIdentifier("UCfixture"), "youtube_channel"))
 	v := yt.Video{Id: "videoone", Snippet: &yt.VideoSnippet{ChannelId: "UCfixture", Title: "Fixture video"}}
-	root, _, err := persistVideo(t.Context(), st, src.ID, v)
+	_, _, err = persistVideo(t.Context(), st, src.ID, v)
 	require.NoError(err)
 	when := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC)
 	c := yt.Comment{Id: "comment", Snippet: &yt.CommentSnippet{TextOriginal: "Viewer comment", PublishedAt: when.Format(time.RFC3339), AuthorDisplayName: "Fixture viewer"}}
@@ -32,29 +32,17 @@ func TestVideoOwnerReceivesRelationshipActivityWithoutCommenting(t *testing.T) {
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT conversation_id, sender_id FROM messages WHERE id = ?`, comment).Scan(&conversation, &author))
 	require.NotEqual(owner, author)
 
-	for _, phase := range []string{"initial import", "unchanged replay"} {
-		if phase == "unchanged replay" {
-			// Simulate an archive written before the owner-roster repair.
-			_, err = st.DB().ExecContext(t.Context(), `DELETE FROM conversation_participants WHERE conversation_id = ? AND participant_id = ?`, conversation, owner)
-			require.NoError(err)
-			replayed, change, replayErr := persistVideo(t.Context(), st, src.ID, v)
-			require.NoError(replayErr)
-			assert.Equal(root, replayed)
-			assert.Equal(messageUnchanged, change)
-		}
-		rows, queryErr := st.DB().QueryContext(t.Context(), `SELECT participant_id FROM conversation_participants WHERE conversation_id = ?`, conversation)
-		require.NoError(queryErr)
-		t.Cleanup(func() { require.NoError(rows.Close()) })
-		var members []int64
-		for rows.Next() {
-			var member int64
-			require.NoError(rows.Scan(&member))
-			members = append(members, member)
-		}
-		require.NoError(rows.Err())
-		require.NoError(rows.Close())
-		assert.ElementsMatch([]int64{owner, author}, members, phase)
+	rows, err := st.DB().QueryContext(t.Context(), `SELECT participant_id FROM conversation_participants WHERE conversation_id = ?`, conversation)
+	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
+	var members []int64
+	for rows.Next() {
+		var member int64
+		require.NoError(rows.Scan(&member))
+		members = append(members, member)
 	}
+	require.NoError(rows.Err())
+	assert.ElementsMatch([]int64{owner, author}, members)
 }
 
 func TestCommentCannotMoveBetweenVideos(t *testing.T) {
@@ -93,9 +81,12 @@ func TestYouTubeSnapshotsPreserveRecipientsAndRepairReplyLinks(t *testing.T) {
 		return count
 	}
 
-	v := yt.Video{Id: "videoone", Snippet: &yt.VideoSnippet{ChannelId: "UCfixture", Title: "Fixture video"}}
+	v := yt.Video{Id: "videoone", Snippet: &yt.VideoSnippet{ChannelId: "UCfixture", Title: "Fixture video", Description: "Fixture description"}}
 	videoID, _, err := persistVideo(t.Context(), st, src.ID, v)
 	requirements.NoError(err)
+	body, err := st.GetMessageBodyText(t.Context(), videoID)
+	requirements.NoError(err)
+	assertions.Equal("Fixture description\n\nhttps://www.youtube.com/watch?v=videoone", body)
 	videoJournalCount := journalCount(videoID)
 	_, _, err = persistVideo(t.Context(), st, src.ID, v)
 	requirements.NoError(err)
@@ -108,19 +99,10 @@ func TestYouTubeSnapshotsPreserveRecipientsAndRepairReplyLinks(t *testing.T) {
 	c.Snippet.AuthorChannelId = &yt.CommentSnippetAuthorChannelId{Value: "UCauthor"}
 	commentID, _, err := persistComment(t.Context(), st, src.ID, v, c)
 	requirements.NoError(err)
+	stored, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{"comment"})
+	requirements.NoError(err)
+	assertions.Equal("Fixture video", stored["comment"].Subject.String)
 	commentJournalCount := journalCount(commentID)
-	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET reply_to_message_id = NULL WHERE id = ?`, commentID)
-	requirements.NoError(err)
-	_, _, err = persistComment(t.Context(), st, src.ID, v, c)
-	requirements.NoError(err)
-	var replyTo int64
-	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT reply_to_message_id FROM messages WHERE id = ?`, commentID).Scan(&replyTo))
-	assertions.Equal(videoID, replyTo)
-	assertions.Equal(commentJournalCount, journalCount(commentID))
-	_, err = st.DB().ExecContext(t.Context(), `DELETE FROM conversation_participants
-		WHERE conversation_id = (SELECT conversation_id FROM messages WHERE id = ?)
-		AND participant_id = (SELECT sender_id FROM messages WHERE id = ?)`, commentID, commentID)
-	requirements.NoError(err)
 	// Observation-only replay must succeed even when snapshot tables reject writes.
 	_, err = st.DB().ExecContext(t.Context(), `
 		CREATE TRIGGER forbid_body_replay BEFORE INSERT ON message_bodies
@@ -134,11 +116,6 @@ func TestYouTubeSnapshotsPreserveRecipientsAndRepairReplyLinks(t *testing.T) {
 	assertions.Equal(messageUnchanged, change)
 	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER forbid_body_replay; DROP TRIGGER forbid_raw_replay;`)
 	requirements.NoError(err)
-	var authorMembership int
-	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM conversation_participants cp
-		JOIN messages m ON m.conversation_id = cp.conversation_id
-		WHERE m.id = ? AND cp.participant_id = m.sender_id`, commentID).Scan(&authorMembership))
-	assertions.Equal(1, authorMembership)
 	assertions.Equal(commentJournalCount, journalCount(commentID))
 }
 

@@ -11,7 +11,7 @@ func TestConfiguredYouTubeCredentialsMissingWithoutLeak(t *testing.T) {
 	t.Setenv("FIXTURE_YT_CLIENT", "fixture-value")
 	t.Setenv("FIXTURE_YT_SECRET", "")
 	_, err := configuredYouTubeClient(t.Context(), config.YouTubeSource{Identifier: "fixture", ClientIDEnv: "FIXTURE_YT_CLIENT", ClientSecretEnv: "FIXTURE_YT_SECRET", TokenEnv: "FIXTURE_YT_REFRESH"})
-	require.Error(t, err)
+	require.ErrorContains(t, err, "FIXTURE_YT_SECRET")
 	assert.NotContains(t, err.Error(), "fixture-value")
 }
 

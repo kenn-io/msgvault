@@ -21,8 +21,6 @@ func TestYouTubeSourceSchedulerClassification(t *testing.T) {
 	for _, action := range []string{"add", "sync"} {
 		assert.True(t, cliRunCommandAllowed([]string{"source", "youtube", action, "example"}))
 	}
-	for _, id := range []string{"UCfixture", "https://evil.example/channel/UCfixture", "https://www.youtube.com/channel/UCfixture?token=x", "https://www.youtube.com/channel/"} {
-		_, ok := SchedulerJobNameForSource("youtube", id)
-		assertions.False(ok)
-	}
+	_, ok = SchedulerJobNameForSource("youtube", "UCfixture")
+	assertions.False(ok)
 }

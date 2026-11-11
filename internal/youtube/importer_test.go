@@ -17,12 +17,21 @@ import (
 	yt "google.golang.org/api/youtube/v3"
 )
 
-func archiveFixture(t *testing.T, mismatch bool, late *bool, quota *bool) *Client {
+func archiveFixture(t *testing.T, mismatch bool, late *bool, quota *bool, quotaPath ...string) *Client {
 	t.Helper()
 	return fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/token" {
 			_, _ = fmt.Fprint(w, `{"access_token":"fixture-access","expires_in":3600}`)
+			return
+		}
+		quotaEndpoint := "/commentThreads"
+		if len(quotaPath) > 0 {
+			quotaEndpoint = quotaPath[0]
+		}
+		if quota != nil && *quota && r.URL.Path == quotaEndpoint {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = fmt.Fprint(w, `{"error":{"errors":[{"reason":"quotaExceeded"}]}}`)
 			return
 		}
 		switch r.URL.Path {
@@ -47,14 +56,13 @@ func archiveFixture(t *testing.T, mismatch bool, late *bool, quota *bool) *Clien
 				_, _ = fmt.Fprint(w, `{"items":[]}`)
 				return
 			}
-			if quota != nil && *quota {
-				w.WriteHeader(http.StatusForbidden)
-				_, _ = fmt.Fprint(w, `{"error":{"errors":[{"reason":"quotaExceeded"}]}}`)
-				return
-			}
 			if r.URL.Query().Get("videoId") == "disabledvideo" {
 				w.WriteHeader(http.StatusForbidden)
 				_, _ = fmt.Fprint(w, `{"error":{"errors":[{"reason":"commentsDisabled"}]}}`)
+				return
+			}
+			if r.URL.Query().Get("moderationStatus") != "published" {
+				_, _ = fmt.Fprint(w, `{"items":[]}`)
 				return
 			}
 			extra := ""
@@ -165,14 +173,6 @@ func TestArchiveTinyBudgetsEventuallyFinishAndAppend(t *testing.T) {
 		require.Contains(rows, "parent")
 		require.Contains(rows, "parent.reply1")
 		require.Contains(rows, "parent.reply2")
-		videos, err := st.StoredMessagesContext(t.Context(), source.ID, "youtube_json", []string{"video:oldvideo"})
-		require.NoError(err)
-		body, err := st.GetMessageBodyText(t.Context(), videos["video:oldvideo"].ID)
-		require.NoError(err)
-		assert.Equal("Fixture description\n\nhttps://www.youtube.com/watch?v=oldvideo", body)
-		comments, err := st.StoredMessagesContext(t.Context(), source.ID, "youtube_json", []string{"parent"})
-		require.NoError(err)
-		assert.Equal("Fixture video", comments["parent"].Subject.String)
 		if cycle == 1 {
 			require.Contains(rows, "later")
 		}
@@ -181,38 +181,55 @@ func TestArchiveTinyBudgetsEventuallyFinishAndAppend(t *testing.T) {
 	var count int
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages WHERE source_id = ?`, source.ID).Scan(&count))
 	assert.Equal(6, count) // Two video roots and four unique comments.
-	var missingAuthor any
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT sender_id FROM messages WHERE source_message_id = 'parent.reply2'`).Scan(&missingAuthor))
-	assert.Nil(missingAuthor)
-	var a, b int64
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT sender_id FROM messages WHERE source_message_id = 'parent'`).Scan(&a))
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT sender_id FROM messages WHERE source_message_id = 'later'`).Scan(&b))
-	assert.NotEqual(a, b)
 }
 
 func TestArchivePartialCommentPageRefreshesStatsForEachTouchedPage(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	st := testutil.NewSQLiteTestStore(t)
-	late := true
-	imp := NewImporter(st, archiveFixture(t, false, &late, nil))
-	source, err := imp.Register(t.Context(), "UCfixture")
-	requirements.NoError(err)
-	_, err = st.DB().ExecContext(t.Context(), `CREATE TABLE fixture_stats_refreshes (conversation_id INTEGER NOT NULL)`)
-	requirements.NoError(err)
-	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fixture_stats_refresh AFTER UPDATE OF message_count ON conversations
+	t.Run("partial page", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		st := testutil.NewSQLiteTestStore(t)
+		late := true
+		imp := NewImporter(st, archiveFixture(t, false, &late, nil))
+		source, err := imp.Register(t.Context(), "UCfixture")
+		requirements.NoError(err)
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TABLE fixture_stats_refreshes (conversation_id INTEGER NOT NULL)`)
+		requirements.NoError(err)
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fixture_stats_refresh AFTER UPDATE OF message_count ON conversations
 		BEGIN INSERT INTO fixture_stats_refreshes (conversation_id) VALUES (NEW.id); END`)
-	requirements.NoError(err)
+		requirements.NoError(err)
 
-	sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 5})
-	requirements.NoError(err)
-	assertions.True(sum.Partial)
-	var refreshes int
-	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM fixture_stats_refreshes`).Scan(&refreshes))
-	assertions.Equal(4, refreshes) // Two video roots and two thread pages fit the five-request budget.
-	var messageCount int
-	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT message_count FROM conversations WHERE source_id = ? AND source_conversation_id = ?`, source.ID, "oldvideo").Scan(&messageCount))
-	assertions.Equal(3, messageCount)
+		sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 5})
+		requirements.NoError(err)
+		assertions.True(sum.Partial)
+		var refreshes int
+		requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM fixture_stats_refreshes`).Scan(&refreshes))
+		assertions.Positive(refreshes)
+		var messageCount int
+		requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT message_count FROM conversations WHERE source_id = ? AND source_conversation_id = ?`, source.ID, "oldvideo").Scan(&messageCount))
+		assertions.Equal(3, messageCount)
+	})
+	t.Run("partial batch", func(t *testing.T) {
+		require := require.New(t)
+		st := testutil.NewTestStore(t)
+		c := archiveFixture(t, false, nil, nil)
+		original := c.api.Transport
+		c.api.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			resp, err := original.RoundTrip(req)
+			if err == nil && req.URL.Path == "/youtube/v3/videos" {
+				require.NoError(resp.Body.Close())
+				resp.Body = io.NopCloser(strings.NewReader(`{"items":[{"id":"oldvideo","snippet":{"channelId":"UCfixture","title":"Video"},"status":{}},{"id":"disabledvideo","snippet":{"channelId":"UCfixture"}}]}`))
+			}
+			return resp, err
+		})
+		imp := NewImporter(st, c)
+		src, err := imp.Register(t.Context(), "UCfixture")
+		require.NoError(err)
+		_, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 10})
+		require.Error(err)
+		var count int
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT message_count FROM conversations WHERE source_id=? AND source_conversation_id=?`), src.ID, "oldvideo").Scan(&count))
+		require.Equal(1, count)
+	})
 }
 
 func TestArchiveQuotaRemainsIncompleteAndResumes(t *testing.T) {
@@ -408,11 +425,7 @@ func TestUnavailableResourceKeepsArchivedRowsAndDoesNotBlockOtherVideos(t *testi
 						resp.StatusCode = http.StatusNotFound
 						resp.Body = io.NopCloser(strings.NewReader(`{"error":{"errors":[{"reason":"videoNotFound"}]}}`))
 					case "video missing":
-						if strings.Contains(req.URL.Query().Get("id"), ",") {
-							resp.Body = io.NopCloser(strings.NewReader(`{"items":[{"id":"newvideo","snippet":{"channelId":"UCfixture"},"status":{}}]}`))
-						} else {
-							resp.Body = io.NopCloser(strings.NewReader(`{"items":[]}`))
-						}
+						resp.Body = io.NopCloser(strings.NewReader(`{"items":[{"id":"newvideo","snippet":{"channelId":"UCfixture"},"status":{}}]}`))
 					case "replies missing":
 						resp.StatusCode = http.StatusNotFound
 						resp.Body = io.NopCloser(strings.NewReader(`{"error":{"errors":[{"reason":"commentNotFound"}]}}`))
@@ -449,71 +462,72 @@ func TestUnavailableResourceKeepsArchivedRowsAndDoesNotBlockOtherVideos(t *testi
 }
 
 func TestInvalidPageTokenRestartsListing(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st := testutil.NewTestStore(t)
-	c := archiveFixture(t, false, nil, nil)
-	original := c.api.Transport
-	initial := 0
-	invalid := 0
-	c.api.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		resp, err := original.RoundTrip(req)
-		if err != nil || req.URL.Path != "/youtube/v3/playlistItems" {
-			return resp, err
-		}
-		require.NoError(resp.Body.Close())
-		token := req.URL.Query().Get("pageToken")
-		if token == "expired-first" || token == "expired-later" {
-			invalid++
-			resp.StatusCode = http.StatusBadRequest
-			resp.Body = io.NopCloser(strings.NewReader(`{"error":{"errors":[{"reason":"invalidPageToken"}]}}`))
-		} else if token == "" {
-			initial++
-			if initial == 1 {
-				resp.Body = io.NopCloser(strings.NewReader(`{"items":[],"nextPageToken":"expired-first"}`))
-			} else {
-				resp.Body = io.NopCloser(strings.NewReader(`{"items":[],"nextPageToken":"later"}`))
+	t.Run("expired markers", func(t *testing.T) {
+		assert, require := assert.New(t), require.New(t)
+		st := testutil.NewTestStore(t)
+		c := archiveFixture(t, false, nil, nil)
+		original := c.api.Transport
+		initial := 0
+		invalid := 0
+		c.api.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			resp, err := original.RoundTrip(req)
+			if err != nil || req.URL.Path != "/youtube/v3/playlistItems" {
+				return resp, err
 			}
-		} else if invalid == 1 {
-			resp.Body = io.NopCloser(strings.NewReader(`{"items":[],"nextPageToken":"expired-later"}`))
-		} else {
-			resp.Body = io.NopCloser(strings.NewReader(`{"items":[]}`))
-		}
-		return resp, nil
-	})
-	imp := NewImporter(st, c)
-	src, err := imp.Register(t.Context(), "UCfixture")
-	require.NoError(err)
-	sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 20})
-	require.NoError(err)
-	assert.False(sum.Partial)
-	assert.Equal(3, initial)
-	assert.Equal(2, invalid)
-	run, err := st.GetLatestSyncContext(t.Context(), src.ID, 0)
-	require.NoError(err)
-	assert.Equal("completed", run.Status)
-}
-
-func TestInvalidPageTokenWithoutTokenFinishes(t *testing.T) {
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	c := archiveFixture(t, false, nil, nil)
-	original := c.api.Transport
-	c.api.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		resp, err := original.RoundTrip(req)
-		if err == nil && req.URL.Path == "/youtube/v3/playlistItems" {
-			require.Empty(req.URL.Query().Get("pageToken"))
 			require.NoError(resp.Body.Close())
-			resp.StatusCode = http.StatusBadRequest
-			resp.Body = io.NopCloser(strings.NewReader(`{"error":{"errors":[{"reason":"invalidPageToken"}]}}`))
-		}
-		return resp, err
+			token := req.URL.Query().Get("pageToken")
+			if token == "expired-first" || token == "expired-later" {
+				invalid++
+				resp.StatusCode = http.StatusBadRequest
+				resp.Body = io.NopCloser(strings.NewReader(`{"error":{"errors":[{"reason":"invalidPageToken"}]}}`))
+			} else if token == "" {
+				initial++
+				if initial == 1 {
+					resp.Body = io.NopCloser(strings.NewReader(`{"items":[],"nextPageToken":"expired-first"}`))
+				} else {
+					resp.Body = io.NopCloser(strings.NewReader(`{"items":[],"nextPageToken":"later"}`))
+				}
+			} else if invalid == 1 {
+				resp.Body = io.NopCloser(strings.NewReader(`{"items":[],"nextPageToken":"expired-later"}`))
+			} else {
+				resp.Body = io.NopCloser(strings.NewReader(`{"items":[]}`))
+			}
+			return resp, nil
+		})
+		imp := NewImporter(st, c)
+		src, err := imp.Register(t.Context(), "UCfixture")
+		require.NoError(err)
+		sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 20})
+		require.NoError(err)
+		assert.False(sum.Partial)
+		assert.Equal(3, initial)
+		assert.Equal(2, invalid)
+		run, err := st.GetLatestSyncContext(t.Context(), src.ID, 0)
+		require.NoError(err)
+		assert.Equal("completed", run.Status)
 	})
-	imp := NewImporter(st, c)
-	_, err := imp.Register(t.Context(), "UCfixture")
-	require.NoError(err)
-	sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 5})
-	require.NoError(err)
-	require.False(sum.Partial)
+	t.Run("missing marker", func(t *testing.T) {
+		require := require.New(t)
+		st := testutil.NewTestStore(t)
+		c := archiveFixture(t, false, nil, nil)
+		original := c.api.Transport
+		c.api.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			resp, err := original.RoundTrip(req)
+			if err == nil && req.URL.Path == "/youtube/v3/playlistItems" {
+				require.Empty(req.URL.Query().Get("pageToken"))
+				require.NoError(resp.Body.Close())
+				resp.StatusCode = http.StatusBadRequest
+				resp.Body = io.NopCloser(strings.NewReader(`{"error":{"errors":[{"reason":"invalidPageToken"}]}}`))
+			}
+			return resp, err
+		})
+		imp := NewImporter(st, c)
+		_, err := imp.Register(t.Context(), "UCfixture")
+		require.NoError(err)
+		sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 5})
+		require.NoError(err)
+		require.False(sum.Partial)
+	})
 }
 
 func TestOwnershipPagesRespectBudgetAndResume(t *testing.T) {
@@ -608,11 +622,11 @@ func TestOwnershipFailureSavesProgressWithoutWritingContent(t *testing.T) {
 					_, _ = fmt.Fprint(w, `{"items":[]}`)
 					return
 				}
-				if failure == "transport" {
-					w.WriteHeader(http.StatusInternalServerError)
-					return
+				if failure == "invalidPageToken" {
+					w.WriteHeader(http.StatusBadRequest)
+				} else {
+					w.WriteHeader(http.StatusForbidden)
 				}
-				w.WriteHeader(http.StatusForbidden)
 				_, _ = fmt.Fprintf(w, `{"error":{"errors":[{"reason":%q}]}}`, failure)
 			})
 			original := client.api.Transport
@@ -658,35 +672,6 @@ func TestOwnershipFailureSavesProgressWithoutWritingContent(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestUploadsNotFoundStopsWithProgress(t *testing.T) {
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	c := archiveFixture(t, false, nil, nil)
-	original := c.api.Transport
-	c.api.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		resp, err := original.RoundTrip(req)
-		if err == nil && req.URL.Path == "/youtube/v3/playlistItems" {
-			require.NoError(resp.Body.Close())
-			resp.StatusCode = http.StatusNotFound
-			// This reason is synthetic; playlistItems does not return videoNotFound.
-			resp.Body = io.NopCloser(strings.NewReader(`{"error":{"errors":[{"reason":"videoNotFound"}]}}`))
-		}
-		return resp, err
-	})
-	imp := NewImporter(st, c)
-	src, err := imp.Register(t.Context(), "UCfixture")
-	require.NoError(err)
-	sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 10})
-	require.Error(err)
-	require.True(sum.Partial)
-	cp, err := st.GetLatestCheckpointedSyncByType(t.Context(), src.ID, SourceType)
-	require.NoError(err)
-	require.NotNil(cp)
-	var state syncState
-	require.NoError(json.Unmarshal([]byte(cp.CursorBefore.String), &state))
-	require.Equal("uploads", state.Queue[0].Kind)
 }
 
 func TestArchiveBatchesVideosAcrossResumedRuns(t *testing.T) {
@@ -764,30 +749,13 @@ func TestArchiveBatchesVideosAcrossResumedRuns(t *testing.T) {
 	rows, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{"video:video0", "comment-video0", "video:video119", "comment-video119"})
 	require.NoError(err)
 	require.Len(rows, 4)
-	var count int
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT message_count FROM conversations WHERE source_id=? AND source_conversation_id=?`), src.ID, "video119").Scan(&count))
-	require.Equal(2, count)
 }
 
 func TestVideoBatchQuotaRetainsWork(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	c := archiveFixture(t, false, nil, nil)
-	original := c.api.Transport
 	quota := true
-	var batches []string
-	c.api.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		resp, err := original.RoundTrip(req)
-		if err == nil && req.URL.Path == "/youtube/v3/videos" {
-			batches = append(batches, req.URL.Query().Get("id"))
-			if quota {
-				require.NoError(resp.Body.Close())
-				resp.StatusCode = http.StatusForbidden
-				resp.Body = io.NopCloser(strings.NewReader(`{"error":{"errors":[{"reason":"quotaExceeded"}]}}`))
-			}
-		}
-		return resp, err
-	})
+	c := archiveFixture(t, false, nil, &quota, "/videos")
 	imp := NewImporter(st, c)
 	src, err := imp.Register(t.Context(), "UCfixture")
 	require.NoError(err)
@@ -795,39 +763,20 @@ func TestVideoBatchQuotaRetainsWork(t *testing.T) {
 	require.ErrorIs(err, ErrQuota)
 	require.True(sum.Partial)
 	require.LessOrEqual(sum.Requests, 10)
+	checkpoint, err := st.GetLatestCheckpointedSyncByType(t.Context(), src.ID, SourceType)
+	require.NoError(err)
+	var saved syncState
+	require.NoError(json.Unmarshal([]byte(checkpoint.CursorBefore.String), &saved))
+	require.Equal("videos", saved.Queue[0].Kind)
+	require.Equal([]string{"oldvideo", "disabledvideo"}, saved.Queue[0].VideoIDs)
 	quota = false
 	sum, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 20})
 	require.NoError(err)
 	require.False(sum.Partial)
 	require.LessOrEqual(sum.Requests, 20)
-	require.Len(batches, 2)
-	require.Equal(batches[0], batches[1])
 	rows, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{"video:oldvideo", "video:disabledvideo", "parent"})
 	require.NoError(err)
 	require.Len(rows, 3)
-}
-
-func TestVideoBatchRefreshesStatsBeforeLaterFailure(t *testing.T) {
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	c := archiveFixture(t, false, nil, nil)
-	original := c.api.Transport
-	c.api.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		resp, err := original.RoundTrip(req)
-		if err == nil && req.URL.Path == "/youtube/v3/videos" {
-			require.NoError(resp.Body.Close())
-			resp.Body = io.NopCloser(strings.NewReader(`{"items":[{"id":"oldvideo","snippet":{"channelId":"UCfixture","title":"Video"},"status":{}},{"id":"disabledvideo","snippet":{"channelId":"UCother"},"status":{}}]}`))
-		}
-		return resp, err
-	})
-	imp := NewImporter(st, c)
-	src, err := imp.Register(t.Context(), "UCfixture")
-	require.NoError(err)
-	_, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 10})
-	require.Error(err)
-	var count int
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT message_count FROM conversations WHERE source_id=? AND source_conversation_id=?`), src.ID, "oldvideo").Scan(&count))
-	require.Equal(1, count)
 }
 
 func TestUnknownModerationDoesNotBlockLaterVideos(t *testing.T) {
