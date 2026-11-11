@@ -55,7 +55,7 @@
 <style>
   .picker { display: grid; gap: var(--space-2); min-width: 0; }
   .picker :global(.kit-text-input__control) { font-size: 16px; }
-  .results { min-height: 3rem; max-height: 13.875rem; box-sizing: border-box; overflow: auto; border: 1px solid var(--border-muted); border-radius: var(--radius-sm); padding: var(--space-3) 12px; }
+  .results { height: 13.875rem; box-sizing: border-box; overflow: auto; border: 1px solid var(--border-muted); border-radius: var(--radius-sm); padding: var(--space-3) 12px; }
   /* kit-ui-check-ignore: RadioGroup does not expose a legend class. */
   .results :global(.kit-radio-group__legend) { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
   p { margin: 0; color: var(--text-secondary); font-size: 12px; }
