@@ -5534,6 +5534,7 @@ components:
         content_hash:
           type: string
         content_state:
+          description: File details check whether content can be opened; read or integrity errors can still occur.
           enum:
             - metadata_only
             - url_only
@@ -5647,13 +5648,21 @@ components:
         containing_title:
           type: string
         content_available:
+          description: Null means availability has not been checked.
+          nullable: true
           type: boolean
+          x-go-type: "*bool"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
         content_state:
+          description: List availability is based on metadata; file details check whether storage can be opened.
           enum:
             - metadata_only
             - url_only
             - missing_blob
             - local_content
+            - unverified
           type: string
         conversation_id:
           format: int64
@@ -5806,19 +5815,28 @@ components:
     FileSuggestionRow:
       properties:
         content_available:
+          description: Null means availability has not been checked.
+          nullable: true
           type: boolean
+          x-go-type: "*bool"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
         content_state:
+          description: Suggestion availability is based on metadata; file details check whether storage can be opened.
           enum:
             - metadata_only
             - url_only
             - missing_blob
             - local_content
+            - unverified
           type: string
           x-enum-names:
             - FileSuggestionRowContentStateMetadataOnly
             - FileSuggestionRowContentStateUrlOnly
             - FileSuggestionRowContentStateMissingBlob
             - FileSuggestionRowContentStateLocalContent
+            - FileSuggestionRowContentStateUnverified
         conversation_id:
           format: int64
           type: integer
@@ -7404,6 +7422,9 @@ components:
           type: integer
         excerpt:
           type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
         filename:
           type: string
           x-oapi-codegen-extra-tags:
@@ -7425,8 +7446,21 @@ components:
       type: object
     MediaAttachmentSearch:
       properties:
+        actual_mode:
+          type: string
+        coverage:
+          $ref: "#/components/schemas/SearchCoverage"
+          description: Coverage of delivered mirrored versions, excluding files awaiting upload
+        degradations:
+          items:
+            type: string
+          type: array
         error:
           $ref: "#/components/schemas/ErrorResponse"
+        partial:
+          type: boolean
+        requested_mode:
+          type: string
         results:
           items:
             $ref: "#/components/schemas/MediaAttachmentResult"
@@ -7434,6 +7468,11 @@ components:
         truncated:
           type: boolean
       required:
+        - requested_mode
+        - actual_mode
+        - coverage
+        - partial
+        - degradations
         - results
         - truncated
       type: object
@@ -12009,13 +12048,21 @@ components:
         containing_title:
           type: string
         content_available:
+          description: Null means availability has not been checked.
+          nullable: true
           type: boolean
+          x-go-type: "*bool"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
         content_state:
+          description: List availability is based on metadata; file details check whether storage can be opened.
           enum:
             - metadata_only
             - url_only
             - missing_blob
             - local_content
+            - unverified
           type: string
         conversation_id:
           format: int64
@@ -12172,19 +12219,28 @@ components:
     PersonFileSuggestionRow:
       properties:
         content_available:
+          description: Null means availability has not been checked.
+          nullable: true
           type: boolean
+          x-go-type: "*bool"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
         content_state:
+          description: Suggestion availability is based on metadata; file details check whether storage can be opened.
           enum:
             - metadata_only
             - url_only
             - missing_blob
             - local_content
+            - unverified
           type: string
           x-enum-names:
             - PersonFileSuggestionRowContentStateMetadataOnly
             - PersonFileSuggestionRowContentStateUrlOnly
             - PersonFileSuggestionRowContentStateMissingBlob
             - PersonFileSuggestionRowContentStateLocalContent
+            - PersonFileSuggestionRowContentStateUnverified
         conversation_id:
           format: int64
           type: integer
@@ -16843,7 +16899,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 4.2.0
+  version: 5.1.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -24306,7 +24362,7 @@ paths:
           required: true
           schema:
             type: string
-        - description: Lexical mode; semantic and hybrid are unavailable
+        - description: "Attachment mode: lexical (default), semantic, or hybrid; recordings support lexical only"
           in: query
           name: mode
           schema:

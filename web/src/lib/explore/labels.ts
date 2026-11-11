@@ -81,6 +81,7 @@ const KNOWN_MIME: Record<string, string> = {
   'text/plain': 'Text',
   'text/html': 'HTML',
   'text/csv': 'CSV',
+  'text/tab-separated-values': 'TSV',
   'text/calendar': 'Calendar invite',
   'message/rfc822': 'Email message'
 };
@@ -179,7 +180,7 @@ function kindPresentation(icon: string, label: string): EntryKindPresentation {
 // (internal/identityindex/schema.go).
 export const CHAT_MESSAGE_TYPES = new Set([
   'chat', 'text', 'google_chat', 'whatsapp', 'imessage', 'sms', 'mms', 'rcs',
-  'google_voice_text', 'teams', 'discord', 'beeper', 'slack', 'inline', 'fbmessenger', 'matrix', 'chatwoot', 'telegram',
+  'google_voice_text', 'teams', 'discord', 'beeper', 'slack', 'inline', 'fbmessenger', 'matrix', 'chatwoot', 'telegram', 'x_dm',
   'facebook_comments',
   'instagram_comments'
 ]);
