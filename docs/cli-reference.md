@@ -5554,8 +5554,6 @@ not inspect every previously archived attachment. `repair-message --audit` compa
 MIME occurrences but does not check file contents. The normal `repair-derived` and
 automatic `Heal` text passes do not reconstruct files.
 
-<a id="repair-attachment-roles"></a>
-
 ## repair attachment-roles
 
 Classify email attachments archived before msgvault recorded attachment roles,
