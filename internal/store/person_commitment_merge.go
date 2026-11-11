@@ -126,7 +126,7 @@ func (s *Store) commitmentTimestamp(at *time.Time) any {
 	if at == nil {
 		return nil
 	}
-	return s.dialect.TimestampParam(*at)
+	return personFactPortableTime(*at)
 }
 
 func laterCommitmentTime(a, b *time.Time) *time.Time {
