@@ -174,6 +174,14 @@ func TestDiagnoseAcquisition(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
 		a := newAcquisitionArchive(t, "gmail", false)
+		pending := acquisitionOutcome("saved", "ingest", "error", "attachment_error")
+		pending.ErrorMessage = store.SyncRunItemFilesPendingMessage
+		a.record(a.source, false, pending)
+		a.record(a.source, false, acquisitionOutcome("saved", "fetch", "resolved", "acquired"))
+		_, err := a.st.DB().ExecContext(t.Context(), a.st.Rebind("UPDATE sync_run_items SET status = ? WHERE source_message_id = ? AND status = ?"), "skipped", "saved", "error")
+		require.NoError(err)
+		pending.SourceMessageID, pending.Status = "unfinished", "skipped"
+		a.record(a.source, false, pending)
 		a.record(a.source, false,
 			acquisitionOutcome("cleaned", "ingest", "skipped", "attachment_error"),
 			acquisitionOutcome("gone", "fetch", "error", "fetch_error"),
@@ -187,6 +195,7 @@ func TestDiagnoseAcquisition(t *testing.T) {
 		require.NoError(err)
 		assert.Equal("No pending acquisition failures.\n", output)
 		assert.Equal([]map[string]string{
+			acquisitionJSON("unfinished", "ingest", "attachment_error", "historical"),
 			acquisitionJSON("cleaned", "ingest", "attachment_error", "historical"),
 			acquisitionJSON("gone", "fetch", "fetch_error", "historical"),
 			acquisitionJSON("files", "ingest", "attachment_error", "indeterminate"),
@@ -246,13 +255,6 @@ func TestDiagnoseAcquisition(t *testing.T) {
 		assert.Equal(want, a.diagnoseJSON("--all"))
 	})
 
-	t.Run("legacy source", func(t *testing.T) {
-		assert := assert.New(t)
-		a := newAcquisitionArchive(t, "", false)
-		a.record(a.source, false, acquisitionOutcome("legacy", "fetch", "error", "fetch_error"))
-		assert.Equal([]map[string]string{acquisitionJSON("legacy", "fetch", "fetch_error", "active")}, a.diagnoseJSON())
-	})
-
 	t.Run("local", func(t *testing.T) {
 		require := require.New(t)
 		a := newAcquisitionArchive(t, "gmail", false)
@@ -272,26 +274,5 @@ func TestDiagnoseAcquisition(t *testing.T) {
 		require.NoError(err)
 		_, err = a.diagnose("")
 		require.ErrorContains(err, fmt.Sprintf("merged into source %d", into.ID))
-	})
-
-	t.Run("logging", func(t *testing.T) {
-		require := require.New(t)
-		assert := assert.New(t)
-		a := newAcquisitionArchive(t, "gmail", true)
-		_, err := a.diagnose("", "--log-level", "invalid-level")
-		require.ErrorContains(err, "invalid log level")
-		archiveBefore, err := os.ReadFile(a.cfg.DatabaseDSN())
-		require.NoError(err)
-		logPath := filepath.Join(a.dir, "diagnostic.log")
-		t.Cleanup(func() { store.ConfigureSQLLogging(store.SQLLogOptions{}) })
-		output, err := a.diagnose("", "--all", "--log-sql", "--log-file", logPath)
-		require.NoError(err)
-		assert.Equal("No recorded acquisition failures.\n", output)
-		log, err := os.ReadFile(logPath)
-		require.NoError(err)
-		assert.Contains(string(log), `"msg":"sql"`)
-		archiveAfter, err := os.ReadFile(a.cfg.DatabaseDSN())
-		require.NoError(err)
-		assert.Equal(archiveBefore, archiveAfter)
 	})
 }

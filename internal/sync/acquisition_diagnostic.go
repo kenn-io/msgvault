@@ -79,15 +79,14 @@ func DiagnoseAcquisitionContext(ctx context.Context, st *store.Store, sourceID i
 		op := acquisitionOperationOf(outcome)
 		var state string
 		switch {
+		case outcome.ErrorMessage == store.SyncRunItemFilesPendingMessage && next.resolved:
 		case outcome.Status == store.SyncRunItemStatusSkipped && op != acquisitionUnknown:
 			state = AcquisitionHistorical
 		case outcome.Status != store.SyncRunItemStatusError:
 		case op == acquisitionDownload && next.skipped:
 			state = AcquisitionHistorical
 		case op != acquisitionUnknown && next.resolved:
-			if outcome.ErrorMessage != store.SyncRunItemFilesPendingMessage {
-				state = AcquisitionResolved
-			}
+			state = AcquisitionResolved
 		case op != acquisitionUnknown && covers(retries[outcome.SourceMessageID], outcome, op):
 			state = AcquisitionActive
 		default:
