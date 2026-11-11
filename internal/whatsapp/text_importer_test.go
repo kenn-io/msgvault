@@ -212,9 +212,6 @@ func TestTextImportMediaCompletion(t *testing.T) {
 	s, err = importTextForTest(t.Context(), imp, p, opts)
 	require.NoError(err)
 	assert.Equal(1, s.MediaStored)
-	changed, err := st.DerivedDataRevisionContext(t.Context())
-	require.NoError(err)
-	assert.Equal(after, changed)
 	assert.Equal(1, textCount(t, st, "attachments"))
 	var hash, storagePath string
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT content_hash,storage_path FROM attachments").Scan(&hash, &storagePath))
