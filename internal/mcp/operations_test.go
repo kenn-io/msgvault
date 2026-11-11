@@ -136,7 +136,9 @@ func TestLoopCatalogGatesSchemasAndAnnotations(t *testing.T) {
 	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyLoops}
 	first := operationalCatalog(opts, true)
 	requirements.Len(first, 4)
-	commitments := first[0].definition.outputSchema.Properties["commitments"]
+	listOutput := first[0].definition.outputSchema
+	requirements.Len(listOutput.AnyOf, 2)
+	commitments := listOutput.AnyOf[0].Properties["commitments"]
 	requirements.NotNil(commitments)
 	dueOn := commitments.Items.Properties["due_on"]
 	requirements.NotNil(dueOn)
