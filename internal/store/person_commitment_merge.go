@@ -14,7 +14,7 @@ import (
 func (s *Store) transferCommitmentDecisionsTx(ctx context.Context, tx *loggedTx, from, into int64, personMerge bool) error {
 	column := "anchor_message_id"
 	if personMerge {
-		column = "person_id"
+		column = personMergePersonIDColumn
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT `+commitmentColumns+` FROM person_commitments WHERE `+column+` = ? ORDER BY id`, from)
 	if err != nil {

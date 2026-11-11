@@ -6,6 +6,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -32,13 +33,16 @@ func validateCommitmentOutput(output jsontext.Value) error {
 	}
 	resolved, err := schema.Resolve(nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("resolve commitment output schema: %w", err)
 	}
 	var decoded any
 	if err := decodeJSONSchemaInstance(output, &decoded); err != nil {
 		return err
 	}
-	return resolved.Validate(decoded)
+	if err := resolved.Validate(decoded); err != nil {
+		return fmt.Errorf("validate commitment output: %w", err)
+	}
+	return nil
 }
 
 func commitmentRequest(window CommitmentWindow, maxOutputTokens int64) (StructuredRequest, error) {
@@ -81,7 +85,7 @@ func (c *CommitmentConfig) applyDefaults() {
 	setDefaultDuration(&c.ExpireAfterDue, 30*24*time.Hour)
 	setDefaultDuration(&c.MaxDuration, 90*24*time.Hour)
 }
-func (c CommitmentConfig) Validate(budget BudgetConfig) error {
+func (c *CommitmentConfig) Validate(budget BudgetConfig) error {
 	if !c.Enabled {
 		return nil
 	}

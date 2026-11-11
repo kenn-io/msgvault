@@ -246,7 +246,10 @@ func runCommitmentDecision(cmd *cobra.Command, id, state string, until *time.Tim
 			return err
 		}
 		_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s is %s.\n", id, decision.State)
-		return err
+		if err != nil {
+			return fmt.Errorf("write commitment decision: %w", err)
+		}
+		return nil
 	})
 }
 
@@ -328,9 +331,9 @@ func writeLoops(w io.Writer, result generated.LoopListResponse, limit int, now t
 	var notes strings.Builder
 	if result.Truncated {
 		if limit < loops.MaxLimit {
-			fmt.Fprintf(&notes, "Showing the oldest %d. Use --limit up to %d to see more.\n", limit, loops.MaxLimit)
+			fmt.Fprintf(&notes, "Showing up to %d reply loops and %d cited promises. Use --limit up to %d to see more.\n", limit, limit, loops.MaxLimit)
 		} else {
-			fmt.Fprintf(&notes, "Showing the oldest %d; more loops remain.\n", limit)
+			fmt.Fprintf(&notes, "Showing up to %d reply loops and %d cited promises; more remain.\n", limit, limit)
 		}
 	}
 	writeLoopWarnings(&notes, result.SkippedUnparseable, result.CoverageIncomplete)

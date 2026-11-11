@@ -66,7 +66,10 @@ func TestApplyCommitmentOnlySweepPreservesDecisionAcrossRequote(t *testing.T) {
 		SourceLane: peoplesweep.SourceConversationText, EvidenceEffect: peoplesweep.EvidenceEffectSourceEdited}
 	changes, err := st.BuildPersonSweepEvidenceStatusChanges(ctx, f.personID, []peoplesweep.ArchiveChange{change})
 	r.NoError(err)
-	a.Empty(changes)
+	r.Len(changes, 2)
+	for _, change := range changes {
+		a.False(change.Supported)
+	}
 	tombstones, err := st.personSweepTombstones(ctx, f.personID, change)
 	r.NoError(err)
 	a.Empty(tombstones)
@@ -334,7 +337,6 @@ func commitmentApplyRequest(t *testing.T, f personSweepApplyFixture, window peop
 	request.CommitmentOnly = true
 	request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg, Output: parsed}
 	return request
-
 }
 
 func TestEmptyCommitmentScanKeepsProviderFrontierAndWaitsForNewWork(t *testing.T) {

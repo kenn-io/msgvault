@@ -817,22 +817,39 @@ func (s *Store) BuildPersonSweepEvidenceStatusChanges(ctx context.Context, perso
 	}
 	terminal := map[evidenceVersion]personfacts.EvidenceStatusChange{}
 	for _, stored := range evidence {
-		if stored.Input.SourceClass != personfacts.EvidenceArchive || strings.HasPrefix(stored.Input.SourceRef, personfacts.CommitmentMessageRefPrefix) {
+		if stored.Input.SourceClass != personfacts.EvidenceArchive {
 			continue
 		}
-		ref, err := peoplesweep.DecodePersonSweepEvidenceRef(stored.Input.SourceRef)
-		if err != nil {
-			return nil, fmt.Errorf("decode stored person sweep evidence %s: %w", stored.Key, err)
+		var ref peoplesweep.EvidenceRef
+		message, commitment := strings.CutPrefix(stored.Input.SourceRef, personfacts.CommitmentMessageRefPrefix)
+		if commitment {
+			id, err := strconv.ParseInt(message, 10, 64)
+			if err != nil || id <= 0 || strconv.FormatInt(id, 10) != message {
+				continue
+			}
+			ref = peoplesweep.EvidenceRef{SourceLane: peoplesweep.SourceConversationText, MessageID: id}
+		} else {
+			var err error
+			ref, err = peoplesweep.DecodePersonSweepEvidenceRef(stored.Input.SourceRef)
+			if err != nil {
+				return nil, fmt.Errorf("decode stored person sweep evidence %s: %w", stored.Key, err)
+			}
 		}
 		for _, change := range changes {
-			if !personSweepChangeMatchesRef(personID, change, ref) {
+			matchedRef := ref
+			if commitment {
+				// A hard deletion removes the message's source lookup. The
+				// journal's person and globally unique message ID bind this citation.
+				matchedRef.SourceID = change.SourceID
+			}
+			if !personSweepChangeMatchesRef(personID, change, matchedRef) {
 				continue
 			}
 			supported, reason, ok := personSweepStatusEffect(change.EvidenceEffect)
 			if ok {
 				key := evidenceVersion{stored.Key, stored.Input.SourceVersion}
 				if supported {
-					alignment, alignErr := (PersonSweepEvidenceAligner{Store: s}).Align(ctx, stored.Input)
+					alignment, alignErr := s.reactivatePersonSweepEvidence(ctx, stored.Input, commitment)
 					if errors.Is(alignErr, peoplesweep.ErrSourceTextUnavailable) {
 						continue
 					}
@@ -867,6 +884,22 @@ func (s *Store) BuildPersonSweepEvidenceStatusChanges(ctx context.Context, perso
 		return out[i].Reason < out[j].Reason
 	})
 	return out, nil
+}
+
+// Reserved owner evidence is checked only against the commitment admission
+// path. Ordinary evidence continues through its existing subject aligner.
+func (s *Store) reactivatePersonSweepEvidence(ctx context.Context, input personfacts.EvidenceInput, commitment bool) (personfacts.AlignmentResult, error) {
+	if !commitment {
+		return (PersonSweepEvidenceAligner{Store: s}).Align(ctx, input)
+	}
+	direction := peoplesweep.CommitmentOwedTo
+	if input.SubjectPersonID == nil && input.SubjectRef == personfacts.CommitmentOwnerSubjectRef {
+		direction = peoplesweep.CommitmentOwedBy
+	} else if input.SubjectPersonID == nil || *input.SubjectPersonID != input.PersonID {
+		return personfacts.AlignmentResult{}, nil
+	}
+	_, live, err := s.currentCommitmentCitation(ctx, input.PersonID, direction, input)
+	return personfacts.AlignmentResult{Accepted: live}, err
 }
 
 func (s *Store) personSweepStoredEvidence(ctx context.Context, personID int64) ([]personfacts.Evidence, error) {

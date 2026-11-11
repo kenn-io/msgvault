@@ -162,14 +162,14 @@ func TestWriteLoopsLayout(t *testing.T) {
 Waiting on them
   5d   Sam Rivera                         Lunch Friday?    4380
 
-Showing the oldest 50. Use --limit up to 200 to see more.
+Showing up to 50 reply loops and 50 cited promises. Use --limit up to 200 to see more.
 `, out.String(), "a truncated page does not claim totals")
 
 	out.Reset()
 	require.NoError(writeLoops(&out, generated.LoopListResponse{Truncated: true, Items: []generated.LoopItem{
 		item("awaiting_reply", "email", "Lunch Friday?", 120*time.Hour, "Sam Rivera", "", 4380),
 	}}, loops.MaxLimit, now))
-	assert.Contains(out.String(), "Showing the oldest 200; more loops remain.\n")
+	assert.Contains(out.String(), "Showing up to 200 reply loops and 200 cited promises; more remain.\n")
 
 	out.Reset()
 	require.NoError(writeLoops(&out, generated.LoopListResponse{SkippedUnparseable: 2, Items: []generated.LoopItem{

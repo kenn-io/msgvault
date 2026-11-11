@@ -287,15 +287,18 @@ func (s *Store) hydrateCommitmentCandidate(ctx context.Context, candidate commit
 	if candidate.promise.ID == 0 || !c.ExpiresAt.After(now) {
 		return c, false, nil
 	}
-	promise, err := s.currentCommitmentCitation(ctx, c.PersonID, c.Direction, candidate.promise.Input)
-	if err != nil || promise == nil || promise.MessageID != c.AnchorMessageID || promise.Quote != c.Quote || promise.Start != c.Start || promise.End != c.End {
+	promise, live, err := s.currentCommitmentCitation(ctx, c.PersonID, c.Direction, candidate.promise.Input)
+	if err != nil || !live || promise.MessageID != c.AnchorMessageID || promise.Quote != c.Quote || promise.Start != c.Start || promise.End != c.End {
 		return c, false, err
 	}
 	if evidence := candidate.fulfilment; evidence != nil && evidence.Supported &&
 		(c.ReopenedAt == nil || evidence.Input.EventTime.After(*c.ReopenedAt)) {
-		c.Fulfilment, err = s.currentCommitmentCitation(ctx, c.PersonID, c.Direction, evidence.Input)
+		fulfilment, live, err := s.currentCommitmentCitation(ctx, c.PersonID, c.Direction, evidence.Input)
 		if err != nil {
 			return c, false, err
+		}
+		if live {
+			c.Fulfilment = &fulfilment
 		}
 	}
 	if c.State == LoopStateSnoozed && c.SnoozedUntil != nil && !c.SnoozedUntil.After(now) {
@@ -321,21 +324,26 @@ func (s *Store) loadCommitmentFulfilmentTx(ctx context.Context, tx *loggedTx, id
 	return page[0], err
 }
 
-func (s *Store) currentCommitmentCitation(ctx context.Context, personID int64, direction string, input personfacts.EvidenceInput) (*CommitmentCitation, error) {
+func (s *Store) currentCommitmentCitation(ctx context.Context, personID int64, direction string, input personfacts.EvidenceInput) (CommitmentCitation, bool, error) {
 	message, found := strings.CutPrefix(input.SourceRef, personfacts.CommitmentMessageRefPrefix)
 	id, err := strconv.ParseInt(message, 10, 64)
-	if !found || err != nil || id <= 0 || input.SpanStart == nil || input.SpanEnd == nil {
-		return nil, nil
+	if err != nil {
+		return CommitmentCitation{}, false, fmt.Errorf("parse commitment citation message: %w", err)
+	}
+	if !found || id <= 0 || input.SpanStart == nil || input.SpanEnd == nil {
+		return CommitmentCitation{}, false, nil
 	}
 	source, live, err := s.currentCommitmentSource(ctx, personID, id)
 	if err != nil || !live || source.Direction != direction || source.SourceVersion != input.SourceVersion ||
-		source.ContentSHA256 != input.ContentSHA256 {
-		return nil, err
+		source.ContentSHA256 != input.ContentSHA256 ||
+		!personFactPortableTime(source.EventTime).Equal(input.EventTime) ||
+		!personFactPortableTime(source.RecordedTime).Equal(input.RecordedTime) {
+		return CommitmentCitation{}, false, err
 	}
 	if !source.MatchesQuote(input.Excerpt, *input.SpanStart, *input.SpanEnd) {
-		return nil, nil
+		return CommitmentCitation{}, false, nil
 	}
-	return &CommitmentCitation{MessageID: id, Quote: input.Excerpt, Start: *input.SpanStart, End: *input.SpanEnd}, nil
+	return CommitmentCitation{MessageID: id, Quote: input.Excerpt, Start: *input.SpanStart, End: *input.SpanEnd}, true, nil
 }
 
 func (s *Store) DecidePersonCommitmentContext(ctx context.Context, id int64, state string, until *time.Time, now time.Time) (PersonCommitment, error) {
@@ -429,10 +437,10 @@ func (s *Store) PersonCommitmentsDue(ctx context.Context, personID int64, now ti
 // direct owner/person exchange. Email without verified owner participation,
 // third-party recipients, bulk mail and List-Id are refused.
 func (s *Store) commitmentMessage(ctx context.Context, personID int64, conv LoopConversation, m LoopMessage) (peoplesweep.CommitmentSource, bool, error) {
-	if conv.GroupChat || (conv.ConversationType != "direct_chat" && conv.ConversationType != "email_thread") || m.ListID != "" {
+	if conv.GroupChat || (conv.ConversationType != string(MessageExportConversationDirectChat) && conv.ConversationType != "email_thread") || m.ListID != "" {
 		return peoplesweep.CommitmentSource{}, false, nil
 	}
-	direction := ""
+	var direction string
 	if m.Sender.IsOwner && m.Direction == DirectionOutbound {
 		direction = peoplesweep.CommitmentOwedBy
 	} else if m.Sender.PersonID == personID && !m.Sender.IsOwner && m.Direction == DirectionInbound {
@@ -448,7 +456,7 @@ func (s *Store) commitmentMessage(ctx context.Context, personID int64, conv Loop
 		owner = owner || r.IsOwner
 		person = person || r.PersonID == personID
 	}
-	if conv.ConversationType == "direct_chat" {
+	if conv.ConversationType == string(MessageExportConversationDirectChat) {
 		var err error
 		owner, person, err = s.commitmentChatMembers(ctx, conv.ConversationID, personID, owner, person)
 		if err != nil {
@@ -726,7 +734,12 @@ func (s *Store) resolvePersonCommitmentTargetTx(ctx context.Context, tx *loggedT
 		}
 		decisions = append(decisions, personfacts.Decision{ClaimKey: c.ClaimKey, Action: action, Reason: reason})
 	}
-	encoded, err := json.Marshal(decisions, json.Deterministic(true))
+	// Identical support decisions can recur after withdrawal and restoration.
+	// Bind their ledger identity to the immutable generation being resolved.
+	encoded, err := json.Marshal(struct {
+		GenerationKey string                 `json:"generation_key"`
+		Decisions     []personfacts.Decision `json:"decisions"`
+	}{generation.GenerationKey, decisions}, json.Deterministic(true))
 	if err != nil {
 		return false, err
 	}
@@ -757,7 +770,7 @@ func (s *Store) commitmentBackfillMessages(ctx context.Context, personID, after 
 	query := `WITH scoped AS (` + scoped + `)
 		SELECT m.id FROM messages m JOIN scoped c ON c.conversation_id = m.conversation_id
 		JOIN sources src ON src.id = m.source_id
-		WHERE m.id > ? AND ` + s.loopLiveMessageSQL("m", "src") + `
+		WHERE m.id > ? AND ` + s.loopLiveMessageSQL("src") + `
 		AND ((` + s.loopTimeKey("m.sent_at") + ` >= ` + s.loopTimeKey("?") + `
 			OR ` + s.loopTimeKey("m.archived_at") + ` >= ` + s.loopTimeKey("?") + `)
 			AND NOT EXISTS (SELECT 1 FROM person_sweep_changes changes
