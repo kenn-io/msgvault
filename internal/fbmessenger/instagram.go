@@ -50,11 +50,7 @@ func parseInstagramThread(ctx context.Context, st *store.Store, sourceID int64, 
 	key := parsed.instagramKey
 	var pending []*instagramPending
 	for _, message := range parsed.Messages {
-		var record rawJSONMessage
-		if err := json.Unmarshal(message.rawData, &record); err != nil {
-			return nil, nil, err
-		}
-		pending = append(pending, &instagramPending{filename: message.jsonFilename, shard: message.jsonShard, raw: message.rawData, record: record, message: message})
+		pending = append(pending, &instagramPending{filename: message.jsonFilename, shard: message.jsonShard, raw: message.rawData, record: *message.jsonRecord, message: message})
 	}
 	groups := map[string][]*instagramPending{}
 	for _, p := range pending {
@@ -108,11 +104,14 @@ func matchInstagramGroup(group []*instagramPending, old []string, archived map[s
 	sort.Slice(old, func(i, j int) bool { return ordinal(old[i]) < ordinal(old[j]) })
 	exact := map[instagramOccurrence][]string{}
 	evidence := map[string]instagramOccurrence{}
+	unreadable := false
 	for _, id := range old {
 		if record, ok := instagramArchivedRecord(archived[id]); ok {
 			key := instagramEvidence(record)
 			evidence[id] = key
 			exact[key] = append(exact[key], id)
+		} else {
+			unreadable = true
 		}
 	}
 	for _, p := range group {
@@ -127,6 +126,11 @@ func matchInstagramGroup(group []*instagramPending, old []string, archived map[s
 	unused := map[string][]string{}
 	for _, p := range group {
 		if p.id == "" {
+			if unreadable {
+				p.skip = true
+				summary.Incomplete = true
+				continue
+			}
 			key := instagramEvidence(p.record).content
 			remaining[key] = append(remaining[key], p)
 		}

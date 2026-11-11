@@ -87,6 +87,7 @@ type Message struct {
 	rawData      []byte
 	jsonShard    *rawJSONExport
 	jsonFilename string
+	jsonRecord   *rawJSONMessage
 	// Index is a monotonic per-thread index (0-based) used to construct
 	// a stable source_message_id.
 	Index int

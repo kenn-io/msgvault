@@ -137,6 +137,7 @@ func parseJSONThread(ctx context.Context, rootDir, threadDir string, instagram *
 	var title string
 	var participants []Participant
 	var shards []string
+	var instagramHeader bool
 
 	for i, f := range files {
 		if instagram != nil {
@@ -171,6 +172,20 @@ func parseJSONThread(ctx context.Context, rootDir, threadDir string, instagram *
 				return nil, errors.New("conflicting thread_path across directories")
 			}
 			instagram.keys[key] = threadPath
+			if !instagramHeader {
+				thread.Title = DecodeMojibake(decoded.Title)
+				names := map[string]bool{}
+				for _, participant := range decoded.Participants {
+					if name := DecodeMojibake(participant.Name); name != "" {
+						names[name] = true
+					}
+				}
+				thread.ConvType = "direct_chat"
+				if len(names) > 2 {
+					thread.ConvType = "group_chat"
+				}
+				instagramHeader = true
+			}
 			for _, raw := range decoded.Messages {
 				if err := ctx.Err(); err != nil {
 					return nil, err
@@ -195,6 +210,7 @@ func parseJSONThread(ctx context.Context, rootDir, threadDir string, instagram *
 					continue
 				}
 				message.rawData, message.jsonShard, message.jsonFilename = raw, &decoded, full
+				message.jsonRecord = &record
 				thread.Messages = append(thread.Messages, message)
 			}
 			continue

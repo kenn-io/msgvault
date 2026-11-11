@@ -358,6 +358,43 @@ func TestInstagramSharedLinkDecoded(t *testing.T) {
 	})
 }
 
+func TestInstagramConversationUsesFirstShardHeader(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	first := instagramTestShard(t, root, "circle", "message_1.json", instagramTestRecord("new"))
+	second := instagramTestShard(t, root, "circle", "message_2.json", instagramTestRecord("old"))
+	writeHeader := func(filename, title string, participants []map[string]string) {
+		data, err := os.ReadFile(filename)
+		require.NoError(err)
+		var shard map[string]any
+		require.NoError(json.Unmarshal(data, &shard))
+		shard["title"], shard["participants"] = title, participants
+		data, err = json.Marshal(shard)
+		require.NoError(err)
+		require.NoError(os.WriteFile(filename, data, 0600))
+	}
+	writeHeader(first, "New title", []map[string]string{{"name": "Nova Example"}, {"name": "Mira Example"}, {"name": "Lumen Example"}})
+	writeHeader(second, "Old title", []map[string]string{{"name": "Nova Example"}, {"name": "Mira Example"}})
+	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
+	for range 2 {
+		_, err := ImportDYI(t.Context(), st, opts)
+		require.NoError(err)
+		var title, kind string
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT title, conversation_type FROM conversations`).Scan(&title, &kind))
+		assert.Equal("New title", title)
+		assert.Equal("group_chat", kind)
+	}
+	require.NoError(os.WriteFile(first, []byte(`{"thread_path":"inbox/circle","title":"Latest title","participants":[{"name":"Nova Example"},{"name":"Mira Example"}],"messages":[]}`), 0600))
+	_, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	var title, kind string
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT title, conversation_type FROM conversations`).Scan(&title, &kind))
+	assert.Equal("Latest title", title)
+	assert.Equal("direct_chat", kind)
+}
+
 func TestInstagramRejectsNewerFingerprintInAbsentThread(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -520,6 +557,26 @@ func TestInstagramExcludedCandidates(t *testing.T) {
 	assert.Equal(t, int64(2), summary.FilesSkipped)
 }
 
+func TestInstagramUnreadableThreadReportsIncomplete(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	instagramTestShard(t, root, "readable", "message_1.json", instagramTestRecord("hello"))
+	filename := instagramTestShard(t, root, "unreadable", "message_1.json", instagramTestRecord("hidden"))
+	dir := filepath.Dir(filename)
+	require.NoError(os.Chmod(dir, 0))
+	t.Cleanup(func() { require.NoError(os.Chmod(dir, 0700)) })
+	if _, err := os.ReadDir(dir); err == nil {
+		t.Skip("process can read a directory without permissions")
+	}
+	summary, err := ImportDYI(t.Context(), st, ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"})
+	require.NoError(err)
+	assert.True(summary.Incomplete)
+	assert.Equal(int64(1), summary.FilesSkipped)
+	assert.Equal(1, countMessages(t, st, ""))
+}
+
 func TestInstagramRescanNewRootAfterLimit(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -670,11 +727,20 @@ func TestInstagramDuplicateOccurrences(t *testing.T) {
 		opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
 		_, err := ImportDYI(t.Context(), st, opts)
 		require.NoError(err)
+		var raw []byte
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT raw_data FROM message_raw`).Scan(&raw))
 		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE message_raw SET raw_data = ?`), []byte("not-zlib"))
 		require.NoError(err)
 		summary, err := ImportDYI(t.Context(), st, opts)
 		require.NoError(err)
-		assert.Equal(int64(1), summary.MessagesAdded)
-		assert.Equal(2, countMessages(t, st, ""))
+		assert.Zero(summary.MessagesAdded)
+		assert.True(summary.Incomplete)
+		assert.Equal(1, countMessages(t, st, ""))
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE message_raw SET raw_data = ?`), raw)
+		require.NoError(err)
+		summary, err = ImportDYI(t.Context(), st, opts)
+		require.NoError(err)
+		assert.Zero(summary.MessagesAdded)
+		assert.False(summary.Incomplete)
 	})
 }

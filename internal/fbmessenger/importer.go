@@ -622,7 +622,6 @@ func writeThreadToStore(
 		if opts.Limit > 0 && summary.MessagesAdded >= int64(opts.Limit) && (!instagram || stored.ID == 0) {
 			return errLimitReached
 		}
-		declaredCount := 0
 		if instagram {
 			nameToID, nameToEmail = map[string]int64{}, map[string]string{}
 			var addrs []mime.Address
@@ -640,7 +639,6 @@ func writeThreadToStore(
 			for name, email := range nameToEmail {
 				nameToID[name] = participants[email]
 			}
-			declaredCount = len(nameToID)
 		} else {
 			summary.MessagesProcessed++
 		}
@@ -795,13 +793,9 @@ func writeThreadToStore(
 			if senderID.Valid {
 				recipients = append(recipients, store.RecipientSet{Type: "from", ParticipantIDs: []int64{senderID.Int64}, DisplayNames: []string{senderName}})
 			}
-			convType := "direct_chat"
-			if declaredCount > 2 {
-				convType = "group_chat"
-			}
 			title := DecodeMojibake(m.jsonShard.Title)
 			data := &store.MessagePersistData{
-				Message: msgRow, Conversation: &store.ConversationPersistData{SourceConversationID: thread.instagramKey, ConversationType: convType, Title: title, Participants: members, PreserveExistingParticipants: true},
+				Message: msgRow, Conversation: &store.ConversationPersistData{SourceConversationID: thread.instagramKey, ConversationType: thread.ConvType, Title: thread.Title, Participants: members, PreserveExistingParticipants: true},
 				BodyText: sql.NullString{String: m.Body, Valid: m.Body != ""}, RawMIME: rawData, RawFormat: "instagram_json", Recipients: recipients, PreserveLabels: true,
 				FTS: &store.FTSDoc{Subject: title, Body: m.Body, FromAddr: nameToEmail[senderName], ToAddrs: strings.Join(toAddresses, " ")},
 			}
@@ -1050,7 +1044,14 @@ func writeThreadToStore(
 	}
 	// The writes above log and skip failures, so a cancellation may have
 	// skipped one; report it so ImportDYI does not checkpoint past this thread.
-	return ctx.Err()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if instagram && len(thread.Messages) > 0 {
+		_, err := st.EnsureConversationWithTypeContext(ctx, sourceID, thread.instagramKey, thread.ConvType, thread.Title)
+		return err
+	}
+	return nil
 }
 
 // saveFbmessengerCheckpoint marshals a fbmessengerCheckpoint JSON blob

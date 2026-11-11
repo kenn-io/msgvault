@@ -71,6 +71,9 @@ func Discover(root string) ([]ThreadDir, int, error) {
 	for _, candidate := range messagesRootCandidates(absRoot) {
 		info, err := os.Stat(candidate)
 		if err != nil || !info.IsDir() {
+			if err != nil && !os.IsNotExist(err) {
+				skipped++
+			}
 			continue
 		}
 		// Check for DYI section subdirectories.
@@ -78,6 +81,9 @@ func Discover(root string) ([]ThreadDir, int, error) {
 			sectionDir := filepath.Join(candidate, section)
 			entries, err := os.ReadDir(sectionDir)
 			if err != nil {
+				if !os.IsNotExist(err) {
+					skipped++
+				}
 				continue
 			}
 			for _, entry := range entries {
@@ -276,7 +282,7 @@ func isKnownMetadataFile(name string) bool {
 func detectFormat(threadPath string) (string, bool, int) {
 	entries, err := os.ReadDir(threadPath)
 	if err != nil {
-		return "", false, 0
+		return "", false, 1
 	}
 	hasJSON := false
 	html, badJSON, other := 0, 0, 0
