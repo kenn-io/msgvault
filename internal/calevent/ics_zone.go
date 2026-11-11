@@ -12,14 +12,26 @@ import (
 
 var customZonePattern = regexp.MustCompile(`^STD[+-]\d{2}:\d{2}(DST[+-]\d{2}:\d{2},M\d{1,2}\.[1-5]\.[0-6]/\d{2}:\d{2}:\d{2},M\d{1,2}\.[1-5]\.[0-6]/\d{2}:\d{2}:\d{2})?$`)
 
-func customICSZones(cal *ical.Calendar) (map[string]string, error) {
+// icsEventZones names the zones an event's properties reference.
+func icsEventZones(event *ical.Component) map[string]bool {
+	used := make(map[string]bool)
+	for _, values := range event.Props {
+		for _, prop := range values {
+			used[normalizeICSZone(prop.Params.Get("TZID"))] = true
+		}
+	}
+	return used
+}
+
+// customICSZones resolves only the definitions in used.
+func customICSZones(cal *ical.Calendar, used map[string]bool) (map[string]string, error) {
 	zones := make(map[string]string)
 	for _, zone := range cal.Children {
 		if zone.Name != "VTIMEZONE" {
 			continue
 		}
 		id := normalizeICSZone(zone.Props.Get("TZID").Value)
-		if _, err := time.LoadLocation(id); err == nil {
+		if _, err := time.LoadLocation(id); err == nil || !used[id] {
 			continue
 		}
 		offsets, rules := make(map[string]string), make(map[string]string)

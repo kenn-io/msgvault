@@ -21,6 +21,16 @@ const rawFormatICS = "ics"
 // ICalendarImportSummary counts revision decisions, not generated occurrences.
 type ICalendarImportSummary struct {
 	Changed, Unchanged int
+	Skipped            []error
+}
+
+// SkippedLines reports events left out of the import, one per line.
+func (s ICalendarImportSummary) SkippedLines() string {
+	var b strings.Builder
+	for _, err := range s.Skipped {
+		fmt.Fprintf(&b, "\nSkipped %v", err)
+	}
+	return b.String()
 }
 
 // icsInterpretationError distinguishes unreadable calendars from archive failures.
@@ -55,18 +65,31 @@ func (s *Store) PersistICalendarContext(ctx context.Context, sourceID int64, raw
 	return summary, nil
 }
 
+func parseICalendar(raw []byte, method, zone string, fromEmail bool) ([]calevent.ICSComponent, error) {
+	parse := calevent.ParseICS
+	if fromEmail {
+		parse = calevent.ParseEmailICS
+	}
+	components, err := parse(raw, method, zone)
+	var skipped *calevent.SkippedEvents
+	if errors.As(err, &skipped) {
+		slog.Warn("calendar events ignored", "error", skipped)
+		return components, nil
+	}
+	if err != nil {
+		return nil, &icsInterpretationError{err}
+	}
+	return components, nil
+}
+
 func (s *Store) prepareICalendarWith(ctx context.Context, tx *loggedTx, sourceID int64, raw []byte, method string, fromEmail bool) ([]preparedICS, error) {
 	var config sql.NullString
 	if err := tx.QueryRowContext(ctx, `SELECT sync_config FROM sources WHERE id=?`, sourceID).Scan(&config); err != nil {
 		return nil, fmt.Errorf("read ICS source: %w", err)
 	}
-	parse := calevent.ParseICS
-	if fromEmail {
-		parse = calevent.ParseEmailICS
-	}
-	components, err := parse(raw, method, calendarConfigZone(config))
+	components, err := parseICalendar(raw, method, calendarConfigZone(config), fromEmail)
 	if err != nil {
-		return nil, &icsInterpretationError{err}
+		return nil, err
 	}
 	out := make([]preparedICS, 0, len(components))
 	for _, c := range components {
