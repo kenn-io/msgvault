@@ -105,8 +105,10 @@ func TestCommitmentAmbiguousEditedPromiseDoesNotConsumeFrontier(t *testing.T) {
 	changes, err := st.BuildPersonSweepEvidenceStatusChanges(ctx, f.personID, journal)
 	r.NoError(err)
 	r.Len(changes, 2)
+	f.request.Generation.ResolvedAt = f.request.Generation.ResolvedAt.Add(time.Minute)
+	f.request.CompletedAt = f.request.Generation.ResolvedAt.Add(time.Minute)
 	f = nextCommitmentTestAttempt(t, f, "-edited")
-	window, err = st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+	window, err = st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
 	r.NoError(err)
 	r.Len(window.Sources, 1)
 	request := commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
@@ -114,7 +116,6 @@ func TestCommitmentAmbiguousEditedPromiseDoesNotConsumeFrontier(t *testing.T) {
 			Quote: edited, Summary: "Send revised report", End: int64(len(edited))}},
 		Fulfilments: []peoplesweep.CommitmentFulfilment{},
 	})
-	request.Generation.ResolvedAt = request.Generation.ResolvedAt.Add(time.Minute)
 	request.Generation.EvidenceStatusChanges = changes
 	result, err := st.ApplyPersonSweep(ctx, request)
 	r.NoError(err)
