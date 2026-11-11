@@ -189,3 +189,32 @@ func TestCommitmentAgendaReattachesExactPersonMergeCitation(t *testing.T) {
 		})
 	}
 }
+
+func TestCommitmentAgendaAutomaticAttemptRequiresTracking(t *testing.T) {
+	r, a, ctx := require.New(t), assert.New(t), t.Context()
+	f, commitment := newCommitmentAgendaReceiptFixture(t)
+	st, now := f.store, f.request.CompletedAt
+	start, end := int(commitment.Start), int(commitment.End)
+	evidence, err := kataevidence.New(st).Prepare(ctx, []kataevidence.Selector{{
+		Kind: "message", MessageID: commitment.AnchorMessageID, StartRune: &start, EndRune: &end,
+	}})
+	r.NoError(err)
+	r.Len(evidence, 1)
+	item, err := st.EnqueueCommitmentAgendaContext(ctx, CommitmentAgendaSuggestion{
+		CommitmentID: commitment.ID, TargetKey: commitment.TargetKey, Quote: commitment.Quote,
+		Request: kataissues.CreateInput{Title: commitment.Summary, List: "commitments", PersonUID: "synthetic-uid",
+			Evidence: []kataevidence.Reference{evidence[0].Reference}},
+	})
+	r.NoError(err)
+	marked, err := st.MarkCommitmentAgendaAttemptContext(ctx, item, now, true)
+	r.NoError(err)
+	r.True(marked, "tracked promises remain eligible for automatic filing")
+	_, err = st.SetPersonTrackingContext(ctx, f.personID, false)
+	r.NoError(err)
+	marked, err = st.MarkCommitmentAgendaAttemptContext(ctx, item, now, true)
+	r.NoError(err)
+	a.False(marked, "automatic retries must recheck enrollment before external creation")
+	marked, err = st.MarkCommitmentAgendaAttemptContext(ctx, item, now, false)
+	r.NoError(err)
+	a.True(marked, "an explicit manual filing remains available after untracking")
+}
