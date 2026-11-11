@@ -58,5 +58,7 @@
   .results { height: 13.875rem; box-sizing: border-box; overflow: auto; border: 1px solid var(--border-muted); border-radius: var(--radius-sm); padding: var(--space-3) 12px; }
   /* kit-ui-check-ignore: RadioGroup does not expose a legend class. */
   .results :global(.kit-radio-group__legend) { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+  /* kit-ui-check-ignore: RadioGroup does not expose its mark color. */
+  :global(:root.dark) .results :global(.kit-radio-group__input:not(:checked) + .kit-radio-group__mark) { border-color: var(--text-muted); }
   p { margin: 0; color: var(--text-secondary); font-size: 12px; }
 </style>
