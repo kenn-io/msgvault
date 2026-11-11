@@ -103,10 +103,12 @@ func TestTelegramNumericIDSyncPreservesUnlink(t *testing.T) {
 		participant, err := st.EnsureParticipantByIdentifier(participantIdentifierType, account+"-user", "Alice Example")
 		require.NoError(err)
 		cc := captureContext{SourceID: newBeeperTestSource(t, st, account), AccountID: account, Network: "Telegram"}
+		// Chat evidence supports matches only from a Full room.
+		cc.ConversationID = fullBeeperObservationRoom(t, st, cc.SourceID)
 		oldKey := "provider:8:telegram:7:account:9:" + account + ":6:482111"
 		result, err := st.RecordContactObservationContext(ctx, participant, store.ParticipantContactObservationInput{
 			AddressKind: store.ContactAddressUsername, ServiceSlug: new("telegram"),
-			OriginalValue: "alice", ProviderUserID: &oldKey, SourceID: &cc.SourceID,
+			OriginalValue: "alice", ProviderUserID: &oldKey, SourceID: &cc.SourceID, ConversationID: &cc.ConversationID,
 			Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
 		})
 		require.NoError(err)

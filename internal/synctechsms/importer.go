@@ -183,14 +183,12 @@ func (i *Importer) importSMS(ctx context.Context, sourceID int64, sms SMS) (int6
 		return 0, err
 	}
 	msgID := stableID("sms", sms.Address, sms.Timestamp.String(), fmt.Sprint(sms.Type), sms.Body)
-	messageID, err := i.upsertTextMessage(ctx, sourceID, convID, msgID, "sms", senderID, recipientIDs, fromMe, !SMSUnsent(sms.Type), sms.Timestamp, sms.Body, sms.Body, 0, sms)
-	if err != nil {
-		return messageID, err
-	}
+	// Record the name before the message, so a cancellation after the
+	// message commits cannot leave the name unrecorded.
 	if err := i.recordNativeContactName(ctx, sourceID, convID, remoteID, sms.ContactName.String); err != nil {
-		return messageID, err
+		return 0, err
 	}
-	return messageID, nil
+	return i.upsertTextMessage(ctx, sourceID, convID, msgID, "sms", senderID, recipientIDs, fromMe, !SMSUnsent(sms.Type), sms.Timestamp, sms.Body, sms.Body, 0, sms)
 }
 
 func (i *Importer) importMMS(ctx context.Context, sourceID int64, mms MMS) (int64, int, error) {
@@ -260,6 +258,9 @@ func (i *Importer) importCall(ctx context.Context, sourceID int64, call Call) (i
 	}
 	body := fmt.Sprintf("Call %s, %d seconds", callTypeLabel(call.Type), call.DurationSeconds)
 	msgID := stableID("call", remoteAddress, call.Timestamp.String(), fmt.Sprint(call.Type), strconv.Itoa(call.DurationSeconds))
+	if err := i.recordNativeContactName(ctx, sourceID, convID, remoteID, call.ContactName.String); err != nil {
+		return 0, err
+	}
 	messageID, err := i.upsertTextMessage(ctx, sourceID, convID, msgID, store.MessageTypeSynctechCall, senderID, recipientIDs, fromMe, true, call.Timestamp, body, body, 0, call)
 	if err != nil {
 		return messageID, err
@@ -272,9 +273,6 @@ func (i *Importer) importCall(ctx context.Context, sourceID int64, call Call) (i
 	}
 	if err := i.store.SetMessageMetadataContext(ctx, messageID, store.CallConnectedMetadata(connected)); err != nil {
 		return messageID, fmt.Errorf("record call length: %w", err)
-	}
-	if err := i.recordNativeContactName(ctx, sourceID, convID, remoteID, call.ContactName.String); err != nil {
-		return messageID, err
 	}
 	return messageID, nil
 }

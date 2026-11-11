@@ -9,9 +9,22 @@ type personSweepPolicyStore interface {
 	CheckPersonSweepPolicyWork(ctx context.Context) error
 }
 
+type personSweepPolicyRefresher interface {
+	RefreshPersonSweepPolicyWork(ctx context.Context, personID int64) (context.Context, error)
+}
+
 func (w *Worker) capturePolicyWork(ctx context.Context, personID int64) (context.Context, error) {
 	if policy, ok := w.Store.(personSweepPolicyStore); ok {
 		return policy.CapturePersonSweepPolicyWork(ctx, personID)
+	}
+	return ctx, nil
+}
+
+// refreshPolicyWork rebinds the person revision after the attempt's own status
+// phase, before the packet is assembled again.
+func (w *Worker) refreshPolicyWork(ctx context.Context, personID int64) (context.Context, error) {
+	if policy, ok := w.Store.(personSweepPolicyRefresher); ok {
+		return policy.RefreshPersonSweepPolicyWork(ctx, personID)
 	}
 	return ctx, nil
 }
