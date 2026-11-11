@@ -193,7 +193,9 @@ func (e *Engine) RunPass(ctx context.Context) error {
 			return err
 		})
 		if err != nil {
-			logger.Warn("native wakeups unavailable", "category", "store_error")
+			if category := StoreErrorCategory(err); category != "" {
+				logger.Warn("native wakeups unavailable", "category", category)
+			}
 		}
 	}
 
@@ -292,7 +294,8 @@ func (e *Engine) RunPass(ctx context.Context) error {
 			}
 			if sub.Native && state.Failures >= 5 {
 				skipTo(next)
-				return advance(raw)
+				_, err = advance(raw)
+				return err
 			}
 			if len(matches) == 0 && state.Failures == 0 {
 				if len(page.Messages) > 0 || (!page.CompleteThrough.IsZero() && since.At().After(page.ServerTime)) {
@@ -381,7 +384,6 @@ func (e *Engine) RunPass(ctx context.Context) error {
 				}
 			}
 		} else {
-
 			failureTime := e.now()
 			state.NextAttemptAt = failureTime.Add(retryDelay(state.Failures))
 		}

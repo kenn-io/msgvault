@@ -174,6 +174,36 @@ func TestExpiredSubscriptionRemovedWithoutDelivery(t *testing.T) {
 	assert.Nil(position)
 }
 
+func TestExpiredGrantEntryPurgedByOwnerService(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	now := time.Now().UTC()
+	service := Service{Store: st, Home: t.TempDir(), Enabled: true, Now: func() time.Time { return now }}
+	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	result, err := service.Subscribe(t.Context(), in)
+	require.NoError(err)
+	entries, raw, err := service.catalog(t.Context())
+	require.NoError(err)
+	require.Len(entries, 1)
+	entries[0].Owner = "grant:expired"
+	entries[0].Expires = now.Add(-time.Second)
+	next, err := json.Marshal(entries)
+	require.NoError(err)
+	ok, err := st.SwapMCPEventsCatalog(t.Context(), raw, next, "", nil, "")
+	require.NoError(err)
+	require.True(ok)
+	targets, err := service.Native(t.Context())
+	require.NoError(err)
+	assert.Empty(targets)
+	entries, _, err = service.catalog(t.Context())
+	require.NoError(err)
+	assert.Empty(entries)
+	_, position, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(result.ID))
+	require.NoError(err)
+	assert.Nil(position)
+}
+
 func TestConcurrentFinalSubscriptionUsesSharedLimit(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	service := Service{Store: st, Home: t.TempDir(), Enabled: true, ConfigTargets: 31}

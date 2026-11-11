@@ -196,7 +196,7 @@ func (s *Service) removeEntry(ctx context.Context, entries []entry, raw []byte, 
 	return s.Store.SwapMCPEventsCatalog(ctx, raw, next, "", nil, id)
 }
 
-// purgeExpired removes owner entries and positions without needing the key.
+// purgeExpired removes expired entries and positions without needing the key.
 func (s *Service) purgeExpired(ctx context.Context) error {
 	for {
 		entries, raw, err := s.catalog(ctx)
@@ -205,7 +205,7 @@ func (s *Service) purgeExpired(ctx context.Context) error {
 		}
 		index := -1
 		for i, e := range entries {
-			if e.Owner == "owner" && !s.now().Before(e.Expires) {
+			if !s.now().Before(e.Expires) {
 				index = i
 				break
 			}
@@ -236,24 +236,20 @@ func (s *Service) Native(ctx context.Context) ([]wakeups.Subscription, error) {
 		return nil, err
 	}
 	var out []wakeups.Subscription
+	logger := s.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	for _, e := range entries {
 		if e.Owner != "owner" {
 			continue
 		}
 		if len(out) >= max(0, 32-s.ConfigTargets) {
-			logger := s.Logger
-			if logger == nil {
-				logger = slog.Default()
-			}
 			logger.Warn("native wakeup unavailable", "id", e.ID, "category", "over_limit")
 			continue
 		}
 		secret, err := key.Open(uid, e.ID, e.Secret)
 		if err != nil {
-			logger := s.Logger
-			if logger == nil {
-				logger = slog.Default()
-			}
 			logger.Warn("native wakeup unavailable", "id", e.ID, "category", "secret_unavailable")
 			continue
 		}

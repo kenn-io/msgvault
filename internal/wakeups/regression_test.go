@@ -307,7 +307,7 @@ func TestStoreFailureCategoriesDoNotExposeErrors(t *testing.T) {
 			require := Require.New(t)
 			base := testutil.NewTestStore(t)
 			var logs bytes.Buffer
-			engine := Engine{Store: &observedStore{Store: base, listErr: tc.err}, Logger: slog.New(slog.NewTextHandler(&logs, nil)), Subscriptions: []Subscription{{Name: "fixture"}}}
+			engine := Engine{Store: &observedStore{Store: base, listErr: tc.err}, Logger: slog.New(slog.NewTextHandler(&logs, nil)), Subscriptions: []Subscription{{Name: "fixture", StateKey: store.WakeupStateKey("fixture")}}}
 			if tc.gate {
 				engine.Gate = func(context.Context) (func(), bool) { return nil, false }
 			}
