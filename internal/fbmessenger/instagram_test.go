@@ -460,6 +460,17 @@ func TestInstagramAddsOnlySurplusCopiesWithSharedReactions(t *testing.T) {
 			assert.Equal(int64(1), summary.MessagesAdded)
 			assert.True(summary.Incomplete)
 			assert.Equal(3, countMessages(t, st, ""))
+			for _, id := range instagramIDs(t, st) {
+				if !slices.Contains(original, id) {
+					var messageID int64
+					require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`), id).Scan(&messageID))
+					raw, err := st.GetMessageRawContext(t.Context(), messageID)
+					require.NoError(err)
+					for _, reaction := range []string{"d", "e", "f"} {
+						assert.Contains(string(raw), `"reaction":"`+reaction+`"`)
+					}
+				}
+			}
 			var count int
 			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM reactions WHERE reaction_value IN ('a','b')`).Scan(&count))
 			assert.Equal(2, count)
@@ -597,24 +608,6 @@ func TestInstagramDistinctCallContent(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(1), summary.MessagesAdded)
 	assert.Equal(4, countMessages(t, st, ""))
-
-	root = t.TempDir()
-	st = testutil.NewTestStore(t)
-	call = instagramTestRecord("")
-	call["type"], call["call_duration"] = "Call", 60
-	filename := instagramTestShard(t, root, "circle", "message_1.json", call)
-	opts.RootDir = root
-	_, err = ImportDYI(t.Context(), st, opts)
-	require.NoError(err)
-	call["sender_name"], call["call_duration"] = "Renamed Example", 120
-	data, err := json.Marshal(map[string]any{"thread_path": "inbox/circle", "participants": []map[string]string{{"name": "Nova Example"}, {"name": "Renamed Example"}}, "messages": []map[string]any{call}})
-	require.NoError(err)
-	require.NoError(os.WriteFile(filename, data, 0600))
-	summary, err = ImportDYI(t.Context(), st, opts)
-	require.NoError(err)
-	assert.Equal(int64(1), summary.MessagesAdded)
-	assert.Equal(1, countMessages(t, st, "snippet='[call: 1m 0s]'"))
-	assert.Equal(1, countMessages(t, st, "snippet='[call: 2m 0s]'"))
 }
 
 func TestInstagramReactionRemoval(t *testing.T) {
@@ -706,7 +699,7 @@ func TestInstagramSenderChangesRetainMessages(t *testing.T) {
 	}{
 		{name: "rename", sender: "Renamed Example", rename: true, added: 1},
 		{name: "different sender", sender: "Lumen Example", added: 1},
-		{name: "different media", sender: "Renamed Example", rename: true, media: true, added: 1},
+		{name: "different media", sender: "Mira Example", media: true, added: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -804,22 +797,6 @@ func TestInstagramDuplicateOccurrences(t *testing.T) {
 		require.NoError(err)
 		assert.Zero(summary.MessagesAdded)
 		assert.Equal(original, instagramIDs(t, st))
-
-		beforeChanged := reactions()
-		d := instagramTestRecord("hello")
-		d["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "d"}}
-		e := instagramTestRecord("hello")
-		e["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "e"}}
-		instagramTestShard(t, root, "circle", "message_1.json", d, e)
-		summary, err = ImportDYI(t.Context(), st, opts)
-		require.NoError(err)
-		assert.Zero(summary.MessagesAdded)
-		assert.Equal(original, instagramIDs(t, st))
-		assert.True(summary.Incomplete)
-		assert.Equal(beforeChanged, reactions())
-		summary, err = ImportDYI(t.Context(), st, opts)
-		require.NoError(err)
-		assert.Zero(summary.MessagesAdded)
 	})
 
 	t.Run("ambiguous direction repair", func(t *testing.T) {

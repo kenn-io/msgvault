@@ -101,13 +101,13 @@ func TestDiscover_AlternateLayouts(t *testing.T) {
 	}
 }
 
-// TestDiscover_UnnumberedJSONSiblingNotMisclassified guards against a thread
+// TestDiscover_UnnumberedJSONSiblingCountsAndFormat guards against a thread
 // directory that contains valid HTML plus only an unnumbered JSON sibling
 // (e.g. message_final.json) being classified as JSON or "both". ParseJSONThread
 // only accepts numbered message_<N>.json files, so misclassifying as JSON
 // would cause the thread to fail in auto/json mode and the valid HTML to
-// be skipped.
-func TestDiscover_UnnumberedJSONSiblingNotMisclassified(t *testing.T) {
+// be skipped. It also counts unsupported sibling files.
+func TestDiscover_UnnumberedJSONSiblingCountsAndFormat(t *testing.T) {
 	require := require.New(t)
 	tmp := t.TempDir()
 	threadDir := filepath.Join(tmp, "your_activity_across_facebook", "messages", "inbox", "foo_1")
