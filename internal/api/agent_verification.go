@@ -25,6 +25,8 @@ type MessageBodyLoader interface {
 	PopulateMessageBodiesContext(ctx context.Context, messages []store.APIMessage) error
 }
 
+const verificationClassificationBatchSize = 32
+
 // verificationWithheld classifies complete messages in the authorized snapshot.
 // A nil map means the caller has authority to read verification content.
 func (s *Server) verificationWithheld(w http.ResponseWriter, r *http.Request, ids []int64) (map[int64]bool, bool) {
@@ -33,9 +35,9 @@ func (s *Server) verificationWithheld(w http.ResponseWriter, r *http.Request, id
 	}
 	loader, ok := s.store.(MessageBodyLoader)
 	withheld := make(map[int64]bool, len(ids))
-	// Only one page of bodies is held at a time; verdicts outlive their batch.
-	for start := 0; start < len(ids); start += maxPageSize {
-		messages := make([]store.APIMessage, min(maxPageSize, len(ids)-start))
+	// Only one batch of bodies is held at a time; verdicts outlive their batch.
+	for start := 0; start < len(ids); start += verificationClassificationBatchSize {
+		messages := make([]store.APIMessage, min(verificationClassificationBatchSize, len(ids)-start))
 		for i := range messages {
 			messages[i].ID = ids[start+i]
 		}

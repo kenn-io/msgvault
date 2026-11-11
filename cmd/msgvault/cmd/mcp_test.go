@@ -251,6 +251,7 @@ func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
+			require := require.New(t)
 			var healthRequests atomic.Int32
 			var discoveryRequests atomic.Int32
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -275,9 +276,9 @@ func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 
 			opts, err := daemonMCPServeOptions(t.Context(), client, invocationFromContext(t.Context()))
 			if tt.health == "" {
-				assert.Error(err)
+				require.Error(err)
 			} else {
-				assert.NoError(err)
+				require.NoError(err)
 			}
 			assert.Equal(tt.wantText, opts.HybridSearcher != nil, "semantic search")
 			assert.Equal(tt.wantText, opts.SimilarSearcher != nil, "similar messages")
@@ -459,6 +460,7 @@ func TestDaemonMCPServeOptionsUsesOneCapabilityProbe(t *testing.T) {
 	logger := testLoggerValue()
 
 	assert := assert.New(t)
+	require := require.New(t)
 	testCtx := withStoreResolverConfig(t, &config.Config{
 		Data: config.DataConfig{DataDir: t.TempDir()},
 	})
@@ -489,7 +491,7 @@ func TestDaemonMCPServeOptionsUsesOneCapabilityProbe(t *testing.T) {
 	})
 
 	opts, err := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
-	assert.NoError(err)
+	require.NoError(err)
 	assert.NotNil(opts.PeopleBackend)
 	assert.NotNil(opts.DirectoryBackend)
 	assert.NotNil(opts.SavedViews)

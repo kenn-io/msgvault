@@ -594,12 +594,16 @@ func TestGeneratedResponseErrorRejectsMissingJSON200Payload(t *testing.T) {
 }
 
 func TestGeneratedCLIResponseErrorReturnsBareServerMessage(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	err := CLIResponseError(&generated.CreateCLICollectionResp{
 		StatusCode: http.StatusBadRequest,
 		Body:       []byte(`{"error":"invalid_collection","message":"bad account"}`),
 	}, nil)
 
-	require.EqualError(t, err, "bad account", "CLI error")
+	require.EqualError(err, "bad account", "CLI error")
+	var apiErr *APIError
+	assert.NotErrorAs(err, &apiErr)
 }
 
 func TestRunCLICommandTypesDaemonReportedFailures(t *testing.T) {

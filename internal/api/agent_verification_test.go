@@ -490,8 +490,8 @@ func TestAgentVerificationSharedAttachmentBatches(t *testing.T) {
 	requirements.NoError(os.WriteFile(path, []byte(body), 0600))
 	requirements.NoError(st.UpsertAttachment(t.Context(), id, "note.txt", "text/plain", "", hash, len(body)))
 
-	// Cross a body-loading page boundary; only the last parent is withheld.
-	const total = maxPageSize + 1
+	// Cross a body-loading batch boundary; only the last parent is withheld.
+	const total = verificationClassificationBatchSize + 1
 	for _, statement := range []string{
 		`WITH RECURSIVE copies(n) AS (VALUES(2) UNION ALL SELECT n + 1 FROM copies WHERE n < ?)
 		INSERT INTO messages (source_id, conversation_id, source_message_id, message_type, subject, snippet)
@@ -516,7 +516,7 @@ func TestAgentVerificationSharedAttachmentBatches(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 	requireErrorCode(t, w, http.StatusForbidden, "verification_masked")
-	assertions.Equal((total+maxPageSize-1)/maxPageSize, counter.calls, "bodies load one page of parents at a time")
+	assertions.Equal(2, counter.calls, "bodies load one batch of parents at a time")
 }
 
 func TestOwnerVerificationRefusesOriginalAndSQL(t *testing.T) {

@@ -128,7 +128,10 @@ func handleCLIErrorBody(status int, body []byte) error {
 	}
 	message, code, decoded := apiErrorMessage(body)
 	if decoded {
-		return &cliAPIError{APIError: &APIError{Status: status, Code: code, Message: message}}
+		if code == "verification_masked" {
+			return &cliAPIError{APIError: &APIError{Status: status, Code: code, Message: message}}
+		}
+		return errors.New(message)
 	}
 
 	return fmt.Errorf("API error (%d): %s", status, message)
