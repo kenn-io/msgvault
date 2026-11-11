@@ -142,8 +142,18 @@ func TestSyncResumeCommandNativeArguments(t *testing.T) {
 		shell = "pwsh"
 		line = strings.TrimPrefix(line, "& ")
 	}
-	got := headlessNativeArgs(t, shell, testutil.SecretCommand(t, "argv")[0], line)
-	assert.Equal(t, []string{"--config=config file", "--home=home dir", "--local=false", "--log-file=", "--verbose=false", "sync-full", "--build-cache=false", "--folder=A B", "--folder=C", "--noresume", "--query=" + query, "--", "reader@example.test"}, got)
+	fixture := testutil.SecretCommand(t, "argv")[0]
+	want := []string{"--config=config file", "--home=home dir", "--local=false", "--log-file=", "--verbose=false", "sync-full", "--build-cache=false", "--folder=A B", "--folder=C", "--noresume", "--query=" + query, "--sync-operation-id=internal", "--", "reader@example.test"}
+	assert.Equal(t, want, headlessNativeArgs(t, shell, fixture, line))
+	if runtime.GOOS != "windows" {
+		t.Run("powershell", func(t *testing.T) {
+			args, err := cobraCommandArgs(command, command.Flags().Args(), true)
+			require.NoError(t, err)
+			line, err := formatCommand("msgvault", args, "windows")
+			require.NoError(t, err)
+			assert.Equal(t, want, headlessNativeArgs(t, "pwsh", fixture, strings.TrimPrefix(line, "& ")))
+		})
+	}
 }
 
 func TestSyncFullHintCancellationPhases(t *testing.T) {
@@ -182,10 +192,10 @@ func TestSyncFullHintCancellationPhases(t *testing.T) {
 func TestSyncFullHintWriteFailurePreservesInterruption(t *testing.T) {
 	want := errors.New("write failed")
 	command := &cobra.Command{}
-	command.SetErr(evalRerankFailingWriter{err: want})
+	command.SetErr(credentialsTestErrorWriter{err: want})
 	err := runSyncFullWithHint(command, "msgvault sync-full", func() (bool, error) { return true, nil })
-	assert.ErrorIs(t, err, ErrSyncInterrupted)
-	assert.ErrorIs(t, err, want)
+	require.ErrorIs(t, err, ErrSyncInterrupted)
+	require.ErrorIs(t, err, want)
 }
 
 func TestSyncResumeCommandShellArguments(t *testing.T) {

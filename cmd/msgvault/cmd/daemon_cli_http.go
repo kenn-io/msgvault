@@ -190,7 +190,7 @@ func cobraCommandArgs(cmd *cobra.Command, args []string, includeRoot bool) ([]st
 		if flag.Name == addAccountGrantDecidedFlag {
 			return
 		}
-		if includeRoot && (isRootPersistentFlag(cmd, flag) || flag.Name == "sync-operation-id") {
+		if includeRoot && isRootPersistentFlag(cmd, flag) {
 			return
 		}
 		// Forwarding strips root persistent flags except the logging flags,
