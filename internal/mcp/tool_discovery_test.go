@@ -135,7 +135,7 @@ func TestToolDiscoveryVisibilityMatchesToolsList(t *testing.T) {
 			}
 			// Every advertised operation is discoverable by its exact tool name.
 			for name := range listed {
-				response, _ := searchToolsResponse(t, mode.opts, mode.writes, name, 20)
+				response, _ := searchToolsResponse(t, mode.opts, mode.writes, name, 0)
 				names := make([]string, 0, len(response.Results))
 				for _, result := range response.Results {
 					names = append(names, result.Name)
@@ -341,4 +341,18 @@ func TestToolDiscoveryServeTransportSnapshotsOnce(t *testing.T) {
 	assertions.Contains(names, "calendar_create")
 	assertions.Equal(1, probes)
 	assertions.NoError(client.Close())
+}
+
+func TestToolDiscoveryDirectNamesAtDefaultLimit(t *testing.T) {
+	opts := ServeOptions{SavedViews: &savedViewServiceFixture{}}
+	listed := toolsByName(t, rawListTools(t, opts, true))
+	require.Contains(t, listed, ToolListSavedViews)
+	for _, query := range []string{"list saved views", ToolListSavedViews} {
+		response, _ := searchToolsResponse(t, opts, true, query, 0)
+		names := make([]string, 0, len(response.Results))
+		for _, result := range response.Results {
+			names = append(names, result.Name)
+		}
+		assert.Contains(t, names, ToolListSavedViews, "query %q", query)
+	}
 }

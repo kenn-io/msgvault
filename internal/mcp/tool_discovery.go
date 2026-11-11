@@ -85,7 +85,7 @@ func discoverTools(definitions []toolDefinition, query string, limit int) (*tool
 		// Kit's shipped ranker accepts Cobra metadata. These private descriptors
 		// are never executed and have no links to the CLI or its lifecycle hooks.
 		command := &cobra.Command{Use: definition.name, Short: definition.description, Run: func(*cobra.Command, []string) {}}
-		var keywords []string
+		keywords := []string{definition.name}
 		for name, input := range definition.inputSchema.Properties {
 			keywords = append(keywords, name+" "+input.Description)
 		}
