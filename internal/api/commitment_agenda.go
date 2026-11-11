@@ -304,7 +304,14 @@ func (a *CommitmentAgenda) link(ctx context.Context, item store.CommitmentAgenda
 	// disconnected after Kata committed it.
 	save, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	return a.archive.LinkCommitmentAgendaContext(save, item.IdempotencyKey, issue.UID, issue.QualifiedRef)
+	linked, err := a.archive.LinkCommitmentAgendaContext(save, item.IdempotencyKey, issue.UID, issue.QualifiedRef)
+	if errors.Is(err, sql.ErrNoRows) {
+		// A concurrent purge or losing merge may remove the receipt after Kata
+		// succeeds. Return the created issue without recreating archive state.
+		item.State, item.IssueUID, item.IssueRef = "linked", issue.UID, issue.QualifiedRef
+		return item, nil
+	}
+	return linked, err
 }
 
 type CommitmentAgendaResponse struct {

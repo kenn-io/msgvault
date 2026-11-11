@@ -213,3 +213,7 @@ sweep file open commitments in batches of up to eight. This includes promises
 already open when you enable the setting. Automatic creation is off by default.
 The manual command works without that setting and requires daemon API schema
 5.3.0 or newer.
+
+Copying a subset archive copies owner decisions for revalidation, but does not
+copy frozen Kata filing receipts or their recovery keys. Enabling automatic
+filing in that separate archive can create separate issues.
