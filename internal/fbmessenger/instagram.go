@@ -220,34 +220,70 @@ func matchInstagramGroup(group []*instagramPending, old []string, archived map[s
 	}
 	summary.Errors += len(uncertain)
 	reconcileInstagramCopies(remaining, unused, used, summary, repairs, archived)
-	matchInstagramExtraChanges(remaining, unused, used, archived)
+	matchInstagramExtraChanges(remaining, unused, used, archived, summary, repairs)
 }
 
-// A single unmatched copy can reuse a single row when only unknown fields changed.
-func matchInstagramExtraChanges(remaining map[instagramContent][]*instagramPending, unused map[instagramContent][]string, used map[string]bool, archived map[string]store.StoredMessage) {
+// Unmatched copies reuse the rows of one earlier content when only unknown
+// fields changed and every copy and row is interchangeable: one content on each
+// side, no more copies than rows, and rows with the same reactions. Rows with distinct
+// reactions can't be told apart by copies that omit them, so they are kept.
+func matchInstagramExtraChanges(remaining map[instagramContent][]*instagramPending, unused map[instagramContent][]string, used map[string]bool, archived map[string]store.StoredMessage, summary *ImportSummary, repairs *[]string) {
 	loose := func(c instagramContent) instagramContent { c.extra = ""; return c }
-	items, rows := map[instagramContent][]*instagramPending{}, map[instagramContent][]string{}
+	items, rows, kinds := map[instagramContent][]*instagramPending{}, map[instagramContent][]string{}, map[instagramContent]int{}
 	for content, list := range remaining {
 		if len(unused[content]) == 0 {
 			items[loose(content)] = append(items[loose(content)], list...)
+			kinds[loose(content)]++
 		}
 	}
 	for content, ids := range unused {
-		if len(remaining[content]) != 0 {
-			continue
-		}
-		for _, id := range ids {
-			if !used[id] && !instagramIsSurplus(archived[id]) {
-				rows[loose(content)] = append(rows[loose(content)], id)
-			}
+		if free := instagramFreeRows(ids, used, archived); len(remaining[content]) == 0 && len(free) > 0 {
+			rows[loose(content)] = append(rows[loose(content)], free...)
+			kinds[loose(content)]++
 		}
 	}
 	for key, list := range items {
-		if len(list) == 1 && len(rows[key]) == 1 {
-			list[0].id = rows[key][0]
-			used[list[0].id] = true
+		if kinds[key] == 2 && len(list) <= len(rows[key]) {
+			reuseInstagramRows(list, rows[key], used, summary, repairs, archived)
 		}
 	}
+}
+
+// reuseInstagramRows gives copies the rows in order, or settles them as
+// ambiguous when the rows differ by reactions the copies omit.
+func reuseInstagramRows(list []*instagramPending, rows []string, used map[string]bool, summary *ImportSummary, repairs *[]string, archived map[string]store.StoredMessage) {
+	if !instagramSameReactions(rows, archived) {
+		key := instagramContent{}
+		reconcileInstagramCopies(map[instagramContent][]*instagramPending{key: list}, map[instagramContent][]string{key: rows}, used, summary, repairs, archived)
+		return
+	}
+	for i, p := range list {
+		p.id = rows[i]
+		used[p.id] = true
+	}
+}
+
+// instagramSameReactions is whether no row differs from the others by reactions.
+func instagramSameReactions(ids []string, archived map[string]store.StoredMessage) bool {
+	for _, id := range ids {
+		first, _ := instagramArchivedRecord(archived[ids[0]])
+		record, _ := instagramArchivedRecord(archived[id])
+		if instagramEvidence(record).reactions != instagramEvidence(first).reactions {
+			return false
+		}
+	}
+	return true
+}
+
+// instagramFreeRows is the ids no copy has claimed and no surplus copy made.
+func instagramFreeRows(ids []string, used map[string]bool, archived map[string]store.StoredMessage) []string {
+	var free []string
+	for _, id := range ids {
+		if !used[id] && !instagramIsSurplus(archived[id]) {
+			free = append(free, id)
+		}
+	}
+	return free
 }
 
 // A shared reaction set on a surplus row is not evidence of its identity.

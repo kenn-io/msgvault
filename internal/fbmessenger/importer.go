@@ -617,6 +617,9 @@ func writeThreadToStore(
 			addrs = append(addrs, addr)
 		}
 		participants, err := st.EnsureParticipantsBatch(ctx, addrs)
+		if err == nil {
+			err = keepInstagramTitle(ctx, st, sourceID, thread)
+		}
 		if err != nil {
 			return err
 		}
@@ -754,6 +757,7 @@ func writeThreadToStore(
 		if instagram {
 			msgRow.ConversationID, msgRow.MessageType = stored.ConversationID, "instagram"
 			msgRow.SentAt.Valid, msgRow.ReceivedAt.Valid = true, true
+			msgRow.Subject = sql.NullString{String: thread.Title, Valid: thread.Title != ""}
 			msgRow.PreserveAttachmentStats = true
 			rawData := m.rawData
 			var names []string
@@ -1041,16 +1045,28 @@ func writeThreadToStore(
 		if err != nil {
 			return err
 		}
-		if thread.Title == "" {
-			titles, err := st.ConversationTitlesBatchContext(ctx, sourceID, []string{thread.instagramKey})
-			if err != nil {
-				return err
-			}
-			thread.Title = titles[thread.instagramKey]
-		}
 		return indexInstagramConversation(ctx, st, sourceID, thread.instagramKey, thread.Title)
 	}
 	return nil
+}
+
+// keepInstagramTitle fills an omitted thread title from the stored conversation.
+// A changed title is stored with the retained messages' subjects and search
+// entries in one transaction, so a partial exit leaves the old title everywhere.
+func keepInstagramTitle(ctx context.Context, st *store.Store, sourceID int64, thread *Thread) error {
+	titles, err := st.ConversationTitlesBatchContext(ctx, sourceID, []string{thread.instagramKey})
+	if err != nil {
+		return err
+	}
+	stored, exists := titles[thread.instagramKey]
+	if thread.Title == "" {
+		thread.Title = stored
+		return nil
+	}
+	if !exists || stored == thread.Title {
+		return nil
+	}
+	return st.RetitleArchivedConversationContext(ctx, sourceID, thread.instagramKey, thread.ConvType, thread.Title, "instagram_json")
 }
 
 func indexInstagramConversation(ctx context.Context, st *store.Store, sourceID int64, key, title string) error {

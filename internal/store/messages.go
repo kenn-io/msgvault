@@ -3995,33 +3995,94 @@ func (s *Store) IndexStoredMessageContext(ctx context.Context, messageID int64) 
 	return s.indexStoredMessageContext(ctx, messageID, nil)
 }
 
-// IndexStoredMessageWithSubjectContext refreshes a stored message with a supplied search subject.
+// IndexStoredMessageWithSubjectContext stores a message's subject and refreshes its search entry from it.
 func (s *Store) IndexStoredMessageWithSubjectContext(ctx context.Context, messageID int64, subject string) error {
 	return s.indexStoredMessageContext(ctx, messageID, &subject)
 }
 
 func (s *Store) indexStoredMessageContext(ctx context.Context, messageID int64, subject *string) error {
 	return s.withSyncMessageWriteContext(ctx, messageID, func(q querier) error {
-		if !s.fts5Available {
-			return nil
-		}
-		row, err := s.loadDerivedEmailText(q, messageID)
-		if err != nil {
-			return fmt.Errorf("load stored message for search: %w", err)
-		}
-		if subject != nil {
-			row.fts.Subject = *subject
-		}
-		row.fts.Body = row.body
-		matches, err := s.dialect.FTSMatches(q, row.fts)
-		if err != nil {
-			return fmt.Errorf("compare stored search entry: %w", err)
-		}
-		if matches {
-			return nil
-		}
-		return s.dialect.FTSUpsert(q, row.fts)
+		return s.indexStoredMessage(q, messageID, subject)
 	})
+}
+
+func (s *Store) indexStoredMessage(q querier, messageID int64, subject *string) error {
+	if err := setMessageSubject(q, messageID, subject); err != nil {
+		return err
+	}
+	if !s.fts5Available {
+		return nil
+	}
+	row, err := s.loadDerivedEmailText(q, messageID)
+	if err != nil {
+		return fmt.Errorf("load stored message for search: %w", err)
+	}
+	row.fts.Body = row.body
+	matches, err := s.dialect.FTSMatches(q, row.fts)
+	if err != nil {
+		return fmt.Errorf("compare stored search entry: %w", err)
+	}
+	if matches {
+		return nil
+	}
+	return s.dialect.FTSUpsert(q, row.fts)
+}
+
+// RetitleArchivedConversationContext stores a conversation's title together
+// with the subject and search entry of each of its messages with the given raw
+// format, in one transaction. Cancellation leaves the old title and subjects.
+func (s *Store) RetitleArchivedConversationContext(ctx context.Context, sourceID int64, sourceConversationID, conversationType, title, rawFormat string) error {
+	if err := s.requireSyncSource(sourceID); err != nil {
+		return err
+	}
+	return s.withSourceMaintenanceGateContext(ctx, func(tx *loggedTx) error {
+		q := boundQuerier{ctx: ctx, q: tx}
+		id, err := ensureConversationWithType(q, s.dialect, sourceID, sourceConversationID, conversationType, title)
+		if err != nil {
+			return err
+		}
+		ids, err := archivedRawMessageIDs(ctx, tx, id, rawFormat)
+		if err != nil {
+			return err
+		}
+		for _, messageID := range ids {
+			if err := s.indexStoredMessage(q, messageID, &title); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func archivedRawMessageIDs(ctx context.Context, tx *loggedTx, conversationID int64, rawFormat string) ([]int64, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT m.id FROM messages m JOIN message_raw r ON r.message_id = m.id
+		WHERE m.conversation_id = ? AND r.raw_format = ? ORDER BY m.id`, conversationID, rawFormat)
+	if err != nil {
+		return nil, fmt.Errorf("list archived raw messages: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// setMessageSubject stores a supplied subject, so the search entry derived from
+// messages.subject (including by RebuildFTS) matches it. Nil leaves it alone.
+func setMessageSubject(q querier, messageID int64, subject *string) error {
+	if subject == nil {
+		return nil
+	}
+	_, err := q.Exec(`UPDATE messages SET subject = NULLIF(?, '') WHERE id = ? AND COALESCE(subject, '') <> ?`, *subject, messageID, *subject)
+	if err != nil {
+		return fmt.Errorf("store message subject: %w", err)
+	}
+	return nil
 }
 
 // BackfillFTS fills missing search entries from existing message data on SQLite.
