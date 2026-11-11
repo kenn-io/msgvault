@@ -2,10 +2,10 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
-	"strconv"
 	"time"
 
 	"go.kenn.io/msgvault/internal/kataissues"
@@ -52,7 +52,7 @@ func (s *Store) GetCommitmentAgendaContext(ctx context.Context, id int64) (Commi
 }
 
 func (s *Store) EnqueueCommitmentAgendaContext(ctx context.Context, item CommitmentAgendaSuggestion) (CommitmentAgendaSuggestion, error) {
-	if item.CommitmentID <= 0 || item.TargetKey == "" || item.IdempotencyKey == "" || item.DestinationKey == "" ||
+	if item.CommitmentID <= 0 || item.TargetKey == "" || item.DestinationKey == "" ||
 		item.Request.PersonUID == "" || len(item.Request.Evidence) == 0 || item.Quote == "" {
 		return CommitmentAgendaSuggestion{}, ErrInvalidActivityRequest
 	}
@@ -70,7 +70,7 @@ func (s *Store) EnqueueCommitmentAgendaContext(ctx context.Context, item Commitm
 				destination_key = excluded.destination_key, request_json = excluded.request_json,
 				quote = excluded.quote, state = 'pending', deferred_at = NULL
 			WHERE person_commitment_agenda.attempted_at IS NULL AND person_commitment_agenda.state <> 'linked'`,
-			item.CommitmentID, item.TargetKey, item.IdempotencyKey, item.DestinationKey,
+			item.CommitmentID, item.TargetKey, newCommitmentAgendaKey(), item.DestinationKey,
 			string(request), item.Quote, item.CommitmentID, item.TargetKey, item.Quote)
 		if err != nil {
 			return err
@@ -79,6 +79,12 @@ func (s *Store) EnqueueCommitmentAgendaContext(ctx context.Context, item Commitm
 		return err
 	})
 	return queued, err
+}
+
+// New rows receive an independent key before any Kata I/O. The receipt keeps
+// that key through retries and merges, even when SQLite reuses a commitment ID.
+func newCommitmentAgendaKey() string {
+	return "commitment-agenda:" + rand.Text()
 }
 
 // DeferCommitmentAgendaContext moves an unpreparable item out of the next
@@ -91,7 +97,7 @@ func (s *Store) DeferCommitmentAgendaContext(ctx context.Context, item PersonCom
 				WHERE id = ? AND target_key = ? AND quote = ? AND current_claim_id IS NOT NULL AND owner_state <> 'done')
 			ON CONFLICT (commitment_id) DO UPDATE SET deferred_at = excluded.deferred_at
 			WHERE person_commitment_agenda.attempted_at IS NULL AND person_commitment_agenda.state <> 'linked'`,
-			item.ID, item.TargetKey, "commitment-agenda:c"+strconv.FormatInt(item.ID, 10), destination, "{}", item.Quote,
+			item.ID, item.TargetKey, newCommitmentAgendaKey(), destination, "{}", item.Quote,
 			s.dialect.TimestampParam(now), item.ID, item.TargetKey, item.Quote)
 		return err
 	})
@@ -205,8 +211,7 @@ func (s *Store) transferCommitmentAgendaTx(ctx context.Context, tx *loggedTx, fr
 	return err
 }
 
-func (s *Store) ReopenCommitmentAgendaContext(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, s.Rebind(`UPDATE person_commitment_agenda SET state = 'pending'
-		WHERE commitment_id = ? AND state = 'retired'`), id)
-	return err
+func (s *Store) ReopenCommitmentAgendaContext(ctx context.Context, key string) (CommitmentAgendaSuggestion, error) {
+	return scanCommitmentAgenda(s.db.QueryRowContext(ctx, s.Rebind(`UPDATE person_commitment_agenda SET state = 'pending'
+		WHERE idempotency_key = ? AND state = 'retired' RETURNING `+commitmentAgendaColumns), key))
 }

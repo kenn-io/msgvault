@@ -55,6 +55,7 @@ func (f *agendaArchiveFixture) ListPendingCommitmentAgendaContext(context.Contex
 
 func (f *agendaArchiveFixture) EnqueueCommitmentAgendaContext(_ context.Context, item store.CommitmentAgendaSuggestion) (store.CommitmentAgendaSuggestion, error) {
 	item.State = store.CommitmentAgendaPending
+	item.IdempotencyKey = "commitment-agenda:fixture"
 	f.item = item
 	return item, nil
 }
@@ -138,7 +139,7 @@ func TestCommitmentAgendaSettlesSavedIntent(t *testing.T) {
 		calls := 0
 		issues.create = func(key string, input kataissues.CreateInput) (kataissues.Result, error) {
 			calls++
-			a.Equal("commitment-agenda:c12", key)
+			a.Equal(archive.item.IdempotencyKey, key)
 			a.Equal("person-vcard-uid", input.PersonUID)
 			r.Len(input.Evidence, 1)
 			a.Equal(11, input.Evidence[0].Message.StartRune)

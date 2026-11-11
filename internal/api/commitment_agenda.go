@@ -38,7 +38,7 @@ type commitmentAgendaArchive interface {
 	RetireCommitmentAgendaContext(context.Context, string) error
 	DeferCommitmentAgendaContext(context.Context, store.PersonCommitment, string, time.Time) error
 	LinkCommitmentAgendaContext(context.Context, string, string, string) (store.CommitmentAgendaSuggestion, error)
-	ReopenCommitmentAgendaContext(context.Context, int64) error
+	ReopenCommitmentAgendaContext(context.Context, string) (store.CommitmentAgendaSuggestion, error)
 }
 
 type commitmentAgendaIssues interface {
@@ -102,10 +102,8 @@ func (a *CommitmentAgenda) enqueue(ctx context.Context, commitment store.PersonC
 	if origin := apiprotocol.BrowserOrigin(ctx, a.origin); origin != "" {
 		brief = fmt.Sprintf("[Open the original message](%s/messages/%d)", strings.TrimRight(origin, "/"), commitment.AnchorMessageID)
 	}
-	id := commitment.ID
 	return a.archive.EnqueueCommitmentAgendaContext(ctx, store.CommitmentAgendaSuggestion{
-		CommitmentID: id, TargetKey: commitment.TargetKey,
-		IdempotencyKey: "commitment-agenda:" + loops.FormatCommitmentID(id),
+		CommitmentID: commitment.ID, TargetKey: commitment.TargetKey,
 		DestinationKey: a.destination,
 		Request: kataissues.CreateInput{
 			Title: textutil.TruncateRunes(commitment.Summary, 120), List: "commitments", PersonUID: uids[0],
@@ -179,10 +177,7 @@ func (a *CommitmentAgenda) refresh(ctx context.Context, commitment store.PersonC
 		return a.retire(ctx, item)
 	}
 	if item.State == store.CommitmentAgendaRetired {
-		if err := a.archive.ReopenCommitmentAgendaContext(ctx, item.CommitmentID); err != nil {
-			return item, err
-		}
-		return a.archive.GetCommitmentAgendaContext(ctx, item.CommitmentID)
+		return a.archive.ReopenCommitmentAgendaContext(ctx, item.IdempotencyKey)
 	}
 	return item, nil
 }
@@ -228,8 +223,14 @@ func (a *CommitmentAgenda) submit(ctx context.Context, item store.CommitmentAgen
 	}
 	if !started {
 		current, err := a.archive.GetCommitmentAgendaContext(ctx, item.CommitmentID)
-		if err != nil || current.State == store.CommitmentAgendaLinked {
+		if err != nil {
 			return current, err
+		}
+		if current.IdempotencyKey != item.IdempotencyKey {
+			return item, kataevidence.ErrChanged
+		}
+		if current.State == store.CommitmentAgendaLinked {
+			return current, nil
 		}
 		if _, err := a.archive.GetOpenPersonCommitmentContext(ctx, current.CommitmentID, now); errors.Is(err, sql.ErrNoRows) {
 			return a.retire(ctx, current)

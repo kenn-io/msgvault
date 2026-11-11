@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"fmt"
-	"strings"
 )
 
 func (s *Store) migratePersonCommitmentFailure(ctx context.Context) error {
@@ -19,38 +18,6 @@ func (s *Store) migratePersonCommitmentFailure(ctx context.Context) error {
 		_, err = tx.ExecContext(ctx, `ALTER TABLE person_sweep_attempts ADD COLUMN commitment_failure_class TEXT NOT NULL DEFAULT ''`)
 		if err != nil {
 			return fmt.Errorf("add commitment failure class: %w", err)
-		}
-		return nil
-	})
-}
-
-// Kata retains the create key after a local promise is purged. Ensure
-// SQLite never reuses its c<ID> for another promise.
-func (s *Store) migratePersonCommitmentAgendaIDs(ctx context.Context) error {
-	if s.IsPostgreSQL() {
-		return nil
-	}
-	return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
-		var definition string
-		if err := tx.QueryRowContext(ctx, `SELECT sql FROM sqlite_master
-			WHERE type = 'table' AND name = 'person_commitments'`).Scan(&definition); err != nil {
-			return err
-		}
-		if strings.Contains(definition, "AUTOINCREMENT") {
-			return nil
-		}
-		rebuild := strings.Replace(definition, "person_commitments", "person_commitments_new", 1)
-		rebuild = strings.Replace(rebuild, "INTEGER PRIMARY KEY,", "INTEGER PRIMARY KEY AUTOINCREMENT,", 1)
-		for _, statement := range []string{
-			rebuild,
-			`INSERT INTO person_commitments_new (` + commitmentColumns + `)
-			  SELECT ` + commitmentColumns + ` FROM person_commitments`,
-			`DROP TABLE person_commitments`,
-			`ALTER TABLE person_commitments_new RENAME TO person_commitments`,
-		} {
-			if _, err := tx.ExecContext(ctx, statement); err != nil {
-				return err
-			}
 		}
 		return nil
 	})

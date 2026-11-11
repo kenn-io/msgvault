@@ -387,7 +387,7 @@ func testCommitmentAgendaReceipt(t *testing.T, st *Store, commitment PersonCommi
 	r.NoError(err)
 	r.Len(evidence, 1)
 	item := CommitmentAgendaSuggestion{
-		CommitmentID: commitment.ID, TargetKey: commitment.TargetKey, IdempotencyKey: "commitment-agenda:test",
+		CommitmentID: commitment.ID, TargetKey: commitment.TargetKey,
 		DestinationKey: "first", Quote: evidence[0].Excerpt,
 		Request: kataissues.CreateInput{Title: commitment.Summary, List: "commitments", PersonUID: "synthetic-uid",
 			Evidence: []kataevidence.Reference{evidence[0].Reference}},
@@ -395,10 +395,13 @@ func testCommitmentAgendaReceipt(t *testing.T, st *Store, commitment PersonCommi
 	pending, err := st.EnqueueCommitmentAgendaContext(ctx, item)
 	r.NoError(err)
 	a.Equal(CommitmentAgendaPending, pending.State)
+	key := pending.IdempotencyKey
+	a.NotEmpty(key)
 	item.DestinationKey = "second"
 	pending, err = st.EnqueueCommitmentAgendaContext(ctx, item)
 	r.NoError(err)
 	a.Equal(item.DestinationKey, pending.DestinationKey)
+	a.Equal(key, pending.IdempotencyKey)
 	until := now.Add(time.Hour)
 	_, err = st.DecidePersonCommitmentContext(ctx, commitment.ID, LoopStateSnoozed, &until, now)
 	r.NoError(err)
@@ -412,13 +415,19 @@ func testCommitmentAgendaReceipt(t *testing.T, st *Store, commitment PersonCommi
 	frozen, err := st.EnqueueCommitmentAgendaContext(ctx, item)
 	r.NoError(err)
 	a.Equal("second", frozen.DestinationKey)
+	a.Equal(key, frozen.IdempotencyKey)
 	batch, err = st.ListPendingCommitmentAgendaContext(ctx, "third", until, 8)
 	r.NoError(err)
 	a.Empty(batch)
 	_, err = st.DecidePersonCommitmentContext(ctx, commitment.ID, LoopStateDone, nil, now)
 	r.NoError(err)
-	r.NoError(st.RetireCommitmentAgendaContext(ctx, pending.IdempotencyKey))
-	linked, err := st.LinkCommitmentAgendaContext(ctx, pending.IdempotencyKey, "issue-uid", "synthetic#7")
+	r.NoError(st.RetireCommitmentAgendaContext(ctx, key))
+	reopened, err := st.ReopenCommitmentAgendaContext(ctx, key)
+	r.NoError(err)
+	a.Equal(key, reopened.IdempotencyKey)
+	a.Equal(CommitmentAgendaPending, reopened.State)
+	r.NoError(st.RetireCommitmentAgendaContext(ctx, key))
+	linked, err := st.LinkCommitmentAgendaContext(ctx, key, "issue-uid", "synthetic#7")
 	r.NoError(err)
 	a.Equal(CommitmentAgendaLinked, linked.State)
 	a.Equal("synthetic#7", linked.IssueRef)
