@@ -175,7 +175,9 @@ func TestRosterMatchingFailureRetriesAcrossChats(t *testing.T) {
 	otherSource := newBeeperTestSource(t, st, "slack2")
 	other, err := newParticipantResolver(st, "slack2").resolveUser(t.Context(), &User{ID: "@slack_other:beeper.local"})
 	require.NoError(err)
-	_, err = newObservationRecorder(st).capture(t.Context(), other, &User{ID: "@slack_other:beeper.local", Username: "alice"}, captureContext{SourceID: otherSource, AccountID: "slack2", Network: "Slack"})
+	// Chat evidence supports matches only from a Full room.
+	otherRoom := fullBeeperObservationRoom(t, st, otherSource)
+	_, err = newObservationRecorder(st).capture(t.Context(), other, &User{ID: "@slack_other:beeper.local", Username: "alice"}, captureContext{SourceID: otherSource, ConversationID: otherRoom, AccountID: "slack2", Network: "Slack"})
 	require.NoError(err)
 	if st.IsPostgreSQL() {
 		_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_roster_match() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected failure'; END; $$`)

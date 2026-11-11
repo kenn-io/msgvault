@@ -25,6 +25,9 @@ import (
 const (
 	migrationPersonFactOutcomes               = "person_fact_outcomes_v1"
 	migrationCalendarEventProjectionV1        = "calendar_event_projection_v1"
+	migrationAppleWhatsAppNameProvenance      = "apple_whatsapp_name_provenance_v1"
+	migrationNativeEmailObservationProvenance = "native_email_observation_provenance_v1"
+	migrationParticipantObservationIdentity   = "participant_contact_observation_identity_v2"
 	migrationMeetingProjectionV1              = "meeting_projection_v1"
 	migrationAttachmentsContentHashUnique     = "attachments_content_hash_unique_index"
 	migrationAttachmentOccurrenceUnique       = "attachment_occurrence_unique_indexes_v1"
@@ -115,9 +118,10 @@ const (
 	// contact points, and postal addresses, which v1 did not see.
 	migrationCardDAVInferenceExportStateV2 = "carddav_inference_export_state_v2"
 	// V2 missed resolved keep-local cards without a desired publication.
-	migrationCardDAVInferenceExportStateV3 = "carddav_inference_export_state_v3"
-	migrationAttachmentBytesHash           = "attachment_bytes_hash_v1"
-	migrationConversationPolicyBootstrap   = "conversation_policy_bootstrap_v1"
+	migrationCardDAVInferenceExportStateV3      = "carddav_inference_export_state_v3"
+	migrationAttachmentBytesHash                = "attachment_bytes_hash_v1"
+	migrationConversationPolicyBootstrap        = "conversation_policy_bootstrap_v1"
+	migrationPersonFactConversationPolicyStatus = "person_fact_conversation_policy_status_v1"
 )
 
 // hiddenTextBackfillCursorKey is the archive_metadata key holding the last

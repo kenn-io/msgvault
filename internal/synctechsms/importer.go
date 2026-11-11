@@ -183,7 +183,14 @@ func (i *Importer) importSMS(ctx context.Context, sourceID int64, sms SMS) (int6
 		return 0, err
 	}
 	msgID := stableID("sms", sms.Address, sms.Timestamp.String(), fmt.Sprint(sms.Type), sms.Body)
-	return i.upsertTextMessage(ctx, sourceID, convID, msgID, "sms", senderID, recipientIDs, fromMe, !SMSUnsent(sms.Type), sms.Timestamp, sms.Body, sms.Body, 0, sms)
+	messageID, err := i.upsertTextMessage(ctx, sourceID, convID, msgID, "sms", senderID, recipientIDs, fromMe, !SMSUnsent(sms.Type), sms.Timestamp, sms.Body, sms.Body, 0, sms)
+	if err != nil {
+		return messageID, err
+	}
+	if err := i.recordNativeContactName(ctx, sourceID, convID, remoteID, sms.ContactName.String); err != nil {
+		return messageID, err
+	}
+	return messageID, nil
 }
 
 func (i *Importer) importMMS(ctx context.Context, sourceID int64, mms MMS) (int64, int, error) {
@@ -266,7 +273,27 @@ func (i *Importer) importCall(ctx context.Context, sourceID int64, call Call) (i
 	if err := i.store.SetMessageMetadataContext(ctx, messageID, store.CallConnectedMetadata(connected)); err != nil {
 		return messageID, fmt.Errorf("record call length: %w", err)
 	}
+	if err := i.recordNativeContactName(ctx, sourceID, convID, remoteID, call.ContactName.String); err != nil {
+		return messageID, err
+	}
 	return messageID, nil
+}
+
+func (i *Importer) recordNativeContactName(ctx context.Context, sourceID, conversationID, participantID int64, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	_, err := i.store.RecordContactObservationContext(ctx, participantID, store.ParticipantContactObservationInput{
+		SourceID:       &sourceID,
+		ConversationID: &conversationID,
+		AddressKind:    store.ContactAddressDisplayName,
+		OriginalValue:  value,
+		Envelope:       store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+	})
+	if err != nil {
+		return fmt.Errorf("record native contact name: %w", err)
+	}
+	return nil
 }
 
 func (i *Importer) upsertTextMessage(ctx context.Context, sourceID, convID int64, sourceMessageID, messageType string, senderID int64, recipientIDs []int64, fromMe, sent bool, sentAt time.Time, body, subject string, attachmentCount int, raw any) (int64, error) {

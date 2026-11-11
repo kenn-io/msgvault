@@ -71,7 +71,7 @@ func rosterProvider(chatID string) string {
 }
 
 // matchRosterMembers records failures separately from the resumable scan.
-func (imp *Importer) matchRosterMembers(ctx context.Context, sourceID int64, provider string, detail *Chat, items []Participant, opts ImportOptions, bridgePrefix string, work *rosterWork, sum *ImportSummary) error {
+func (imp *Importer) matchRosterMembers(ctx context.Context, sourceID, convID int64, provider string, detail *Chat, items []Participant, opts ImportOptions, bridgePrefix string, work *rosterWork, sum *ImportSummary) error {
 	receipts, err := imp.store.BeeperRosterReceiptsContext(ctx, sourceID, provider)
 	if err != nil {
 		return err
@@ -95,7 +95,7 @@ func (imp *Importer) matchRosterMembers(ctx context.Context, sourceID int64, pro
 			return err
 		}
 		before := sum.Errors
-		imp.captureObservations(ctx, owners[key], &p.User, detail, sourceID, opts.AccountID, bridgePrefix, sum)
+		imp.captureObservations(ctx, owners[key], &p.User, detail, sourceID, convID, opts.AccountID, bridgePrefix, sum)
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -153,7 +153,7 @@ func (imp *Importer) replaceRosterMembership(ctx context.Context, sourceID, conv
 			return nil, errBeeperBudgetExpired
 		}
 		if id == 0 {
-			id, err = imp.res.resolveUser(ctx, &items[i].User)
+			id, err = imp.res.resolveUserForPolicy(ctx, &items[i].User, convID)
 			if err != nil {
 				return nil, err
 			}
@@ -222,7 +222,7 @@ func (imp *Importer) cleanRosterReceipts(ctx context.Context, sourceID int64, pr
 	return nil
 }
 
-func (imp *Importer) resolveRosterMembers(ctx context.Context, sourceID, convID int64, provider string, detail *Chat, items []Participant, keys []string, opts ImportOptions, bridgePrefix string) error {
+func (imp *Importer) resolveRosterMembers(ctx context.Context, sourceID, convID int64, provider string, detail *Chat, items []Participant, keys []string, opts ImportOptions, bridgePrefix string, full bool) error {
 	receipts, err := imp.store.BeeperRosterReceiptsContext(ctx, sourceID, provider)
 	if err != nil {
 		return err
@@ -238,7 +238,7 @@ func (imp *Importer) resolveRosterMembers(ctx context.Context, sourceID, convID 
 		if p.IsAdmin {
 			role = "admin"
 		}
-		checksum := rosterMemberInputs(p, detail, opts.AccountID, bridgePrefix)
+		checksum := rosterMemberInputs(p, detail, opts.AccountID, bridgePrefix, !full)
 		if receipt, ok := receipts[key]; !opts.Full && ok && owners[key] != 0 && receipt.Checksum == store.BeeperRosterReceiptChecksum(checksum, owners[key]) {
 			imp.res.rememberRosterOwner(p.ID, owners[key])
 			continue
@@ -250,7 +250,7 @@ func (imp *Importer) resolveRosterMembers(ctx context.Context, sourceID, convID 
 			return errBeeperBudgetExpired
 		}
 		imp.res.forgetUser(p.ID)
-		pid, err := imp.res.resolveUser(ctx, &p.User)
+		pid, err := imp.res.resolveUserForPolicy(ctx, &p.User, convID)
 		if err != nil {
 			return err
 		}
@@ -316,8 +316,12 @@ func (imp *Importer) refreshRosterProof(ctx context.Context, sourceID, convID in
 	if !detail.Participants.HasMore {
 		bridgePrefix = participantBridgePrefix(detail.Participants.Items)
 	}
+	full, err := imp.store.ConversationFullEligibleContext(ctx, convID)
+	if err != nil {
+		return false, err
+	}
 	for i, key := range keys {
-		inputs := rosterMemberInputs(&items[i], detail, accountID, bridgePrefix)
+		inputs := rosterMemberInputs(&items[i], detail, accountID, bridgePrefix, !full)
 		if owners[key] == 0 || receipts[key].Checksum != store.BeeperRosterReceiptChecksum(inputs, owners[key]) {
 			return false, nil
 		}
@@ -354,7 +358,10 @@ func (imp *Importer) refreshRosterProof(ctx context.Context, sourceID, convID in
 	return true, imp.publishRosterEvidence(ctx, convID, evidence, items, keys, owners, membership)
 }
 
-func rosterMemberInputs(p *Participant, detail *Chat, accountID, bridgePrefix string) string {
+// rosterMemberInputs names what one member's resolution consumed. A cold room
+// resolves members without their phone or email, so its receipts differ from
+// a Full room's, and a tier change resolves each member again.
+func rosterMemberInputs(p *Participant, detail *Chat, accountID, bridgePrefix string, cold bool) string {
 	role := "member"
 	if p.IsAdmin {
 		role = "admin"
@@ -363,5 +370,9 @@ func rosterMemberInputs(p *Participant, detail *Chat, accountID, bridgePrefix st
 	if strings.HasPrefix(p.PhoneNumber, "+") || strings.Contains(p.Email, "@") {
 		prefix = store.BeeperRosterRichPrefix
 	}
-	return prefix + rosterMemberSignature(&p.User, detail, accountID, bridgePrefix) + ":" + role
+	inputs := prefix + rosterMemberSignature(&p.User, detail, accountID, bridgePrefix) + ":" + role
+	if cold {
+		inputs += ":cold"
+	}
+	return inputs
 }

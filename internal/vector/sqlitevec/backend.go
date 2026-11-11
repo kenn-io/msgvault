@@ -1590,12 +1590,12 @@ func (b *Backend) filteredMessageIDsLimit(ctx context.Context, f vector.Filter, 
 		clauses = append(clauses, "("+strings.Join(messageTypeClauses, " OR ")+")")
 	}
 	for _, term := range f.SenderTerms {
-		predicate, _, senderArgs := search.SenderLookup(term, (&store.SQLiteDialect{}).UnicodeLowerExpression, "messages", "message_recipients", "participants", "m")
+		predicate, _, senderArgs := search.SenderLookup(term, (&store.SQLiteDialect{}).UnicodeLowerExpression, "messages", "message_recipients", "participants", "m", store.SenderEligibility)
 		clauses = append(clauses, predicate)
 		args = append(args, senderArgs...)
 	}
 	if f.SenderDomain != "" {
-		clauses = append(clauses, search.SenderDomainCondition("?"))
+		clauses = append(clauses, search.SenderDomainCondition("?", store.SenderEligibility))
 		args = append(args, f.SenderDomain)
 	}
 	for _, group := range f.SenderGroups {

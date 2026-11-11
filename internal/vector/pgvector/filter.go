@@ -64,14 +64,14 @@ func buildPGFilterClauses(f vector.Filter, bind func(any) string) []string {
 		clauses = append(clauses, "("+strings.Join(parts, " OR ")+")")
 	}
 	for _, term := range f.SenderTerms {
-		predicate, _, senderArgs := search.SenderLookup(term, (&store.PostgreSQLDialect{}).UnicodeLowerExpression, "messages", "message_recipients", "participants", "m")
+		predicate, _, senderArgs := search.SenderLookup(term, (&store.PostgreSQLDialect{}).UnicodeLowerExpression, "messages", "message_recipients", "participants", "m", store.SenderEligibility)
 		for _, arg := range senderArgs {
 			predicate = strings.Replace(predicate, "?", bind(arg), 1)
 		}
 		clauses = append(clauses, predicate)
 	}
 	if f.SenderDomain != "" {
-		clauses = append(clauses, search.SenderDomainCondition(bind(f.SenderDomain)))
+		clauses = append(clauses, search.SenderDomainCondition(bind(f.SenderDomain), store.SenderEligibility))
 	}
 	for _, group := range f.SenderGroups {
 		if len(group) == 0 {

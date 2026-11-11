@@ -344,13 +344,12 @@ func (s *Store) embedGenMetadataDigest(
 	}
 	rows, err := conn.QueryContext(ctx, s.dialect.Rebind(fmt.Sprintf(`
 		SELECT cp.participant_id, COALESCE(cp.role, ''),
-		       COALESCE(NULLIF(TRIM(p.display_name), ''),
-		                NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), ''),
+		       %s,
 		       %s
 		FROM conversation_participants cp
 		JOIN participants p ON p.id = cp.participant_id
 		WHERE cp.conversation_id = ?
-		ORDER BY cp.participant_id`+lockClause, participantRevision)), conversationID)
+		ORDER BY cp.participant_id`+lockClause, FullParticipantDisplaySQL("p"), participantRevision)), conversationID)
 	if err != nil {
 		return "", false, fmt.Errorf("lock embedding conversation participants %d: %w", conversationID, err)
 	}

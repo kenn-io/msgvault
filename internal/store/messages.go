@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/emailattribution"
 	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
@@ -1225,6 +1226,11 @@ func (s *Store) MigrateSourceMessageID(ctx context.Context, sourceID, conversati
 		return err
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		// Take the recipient lock before any message row, as recipient
+		// replacement and sweep admission do, to keep one lock order.
+		if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		var newID int64
 		err := tx.QueryRowContext(
 			ctx,
@@ -1269,6 +1275,9 @@ func (s *Store) MigrateSourceMessageID(ctx context.Context, sourceID, conversati
 
 			if err := s.preservePurgedMeetingDecisions(ctx, tx, `source_id = ? AND conversation_id = ? AND source_message_id = ?`, sourceID, conversationID, legacySourceMessageID); err != nil {
 				return fmt.Errorf("preserve meeting decisions: %w", err)
+			}
+			if err := invalidateEnvelopeContextWith(boundQuerier{ctx: ctx, q: tx}, "support.source_id=? AND support.conversation_id=? AND support.source_message_id=?", sourceID, conversationID, legacySourceMessageID); err != nil {
+				return err
 			}
 			_, err = tx.ExecContext(
 				ctx,
@@ -1583,6 +1592,11 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 	if !journalCandidate {
 		err := q.QueryRow(`SELECT conversation_id FROM messages WHERE source_id=? AND source_message_id=?`, msg.SourceID, msg.SourceMessageID).Scan(&prior.conversationID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return 0, err
+		}
+	}
+	if prior.conversationID.Valid && prior.conversationID.Int64 != msg.ConversationID {
+		if err := invalidateEnvelopeContextWith(q, "support.source_id=? AND support.source_message_id=?", msg.SourceID, msg.SourceMessageID); err != nil {
 			return 0, err
 		}
 	}
@@ -2448,6 +2462,9 @@ func (s *Store) persistMessageWithParticipantsTx(
 	afterPersist messagePersistAfter,
 ) (int64, error) {
 	var messageID int64
+	if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
+		return 0, err
+	}
 	if s.dialect.DriverName() != postgresDriverName {
 		// Reserve SQLite's writer slot before any prior-state or related
 		// snapshot reads. Otherwise a concurrent commit can leave this
@@ -2640,7 +2657,7 @@ func (s *Store) persistMessageWith(
 	}
 
 	for _, rs := range data.Recipients {
-		if err := replaceMessageRecipientsTx(q, messageID, rs); err != nil {
+		if err := replaceMessageRecipientsTx(q, s.dialect, messageID, rs); err != nil {
 			return 0, fmt.Errorf("store %s recipients: %w", rs.Type, err)
 		}
 	}
@@ -2873,21 +2890,34 @@ func (s *Store) ReplaceMessageRecipients(messageID int64, recipientType string, 
 
 // ReplaceMessageRecipientsContext honors cancellation during ReplaceMessageRecipients.
 func (s *Store) ReplaceMessageRecipientsContext(ctx context.Context, messageID int64, recipientType string, participantIDs []int64, displayNames []string) error {
+	return s.ReplaceMessageRecipientSetContext(ctx, messageID, RecipientSet{
+		Type: recipientType, ParticipantIDs: participantIDs, DisplayNames: displayNames,
+	})
+}
+
+// ReplaceMessageRecipientSetContext replaces one recipient type while
+// retaining the envelope addresses supplied by the source.
+func (s *Store) ReplaceMessageRecipientSetContext(ctx context.Context, messageID int64, recipients RecipientSet) error {
 	return s.withMessageAttributionTxContext(ctx, messageID, func(tx *loggedTx) error {
+		if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		// Contextual coverage takes this clock before locking message rows. The
+		// recipient invalidation below also updates messages, so acquire the same
+		// lock first to preserve that order.
+		if err := s.lockEmbeddingChangeClockSharedTxContext(ctx, tx); err != nil {
+			return err
+		}
 		if err := s.lockMessageForRecipientWrite(boundQuerier{ctx: ctx, q: tx}, messageID); err != nil {
 			return err
 		}
 		if err := s.requireSyncMessageSourceTx(boundQuerier{ctx: ctx, q: tx}, messageID); err != nil {
 			return err
 		}
-		if err := replaceMessageRecipientsTx(boundQuerier{ctx: ctx, q: tx}, messageID, RecipientSet{
-			Type:           recipientType,
-			ParticipantIDs: participantIDs,
-			DisplayNames:   displayNames,
-		}); err != nil {
+		if err := replaceMessageRecipientsTx(boundQuerier{ctx: ctx, q: tx}, s.dialect, messageID, recipients); err != nil {
 			return err
 		}
-		if recipientType == recipientTypeFrom {
+		if recipients.Type == recipientTypeFrom {
 			// 'from' rows are attribution input: the message upsert's CTE could not
 			// see the envelope rows this call just replaced, and importers on this
 			// granular path never reach persistMessageWith's final recompute.
@@ -2917,8 +2947,45 @@ func (s *Store) lockMessageForRecipientWrite(q querier, messageID int64) error {
 	return nil
 }
 
-func replaceMessageRecipientsTx(tx querier, messageID int64, rs RecipientSet) error {
-	_, err := tx.Exec(`
+func (s *Store) lockEmbeddingChangeClockSharedTxContext(ctx context.Context, tx *loggedTx) error {
+	if !s.IsPostgreSQL() {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock_shared(
+		hashtextextended('msgvault.embedding_change_clock', 0))`); err != nil {
+		return fmt.Errorf("lock embedding-change clock for recipient write: %w", err)
+	}
+	return nil
+}
+
+// lockRecipientContextInvalidationTxContext serializes recipient writers that
+// invalidate overlapping contextual messages before they lock their own
+// message rows. The shared embedding clock protects publication, but cannot
+// order two independent recipient replacements.
+func (s *Store) lockRecipientContextInvalidationTxContext(ctx context.Context, tx *loggedTx) error {
+	if !s.IsPostgreSQL() {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(
+		hashtextextended('msgvault.recipient_context_invalidation', 0))`); err != nil {
+		return fmt.Errorf("lock recipient context invalidation: %w", err)
+	}
+	return nil
+}
+
+func replaceMessageRecipientsTx(tx querier, dialect Dialect, messageID int64, rs RecipientSet) error {
+	unchanged, err := messageRecipientEnvelopeUnchangedWith(tx, messageID, rs)
+	if err != nil {
+		return err
+	}
+	if !unchanged {
+		if err := invalidateEnvelopeContextWithIncomingParticipants(
+			tx, dialect, "support.id=? AND mr.recipient_type=?", []any{messageID, rs.Type}, messageID, rs.ParticipantIDs,
+		); err != nil {
+			return err
+		}
+	}
+	_, err = tx.Exec(`
 		DELETE FROM message_recipients WHERE message_id = ? AND recipient_type = ?
 	`, messageID, rs.Type)
 	if err != nil {
@@ -3797,18 +3864,9 @@ func (s *Store) MarkMessageDeletedContext(ctx context.Context, sourceID int64, s
 	if err := s.requireSyncSource(sourceID); err != nil {
 		return err
 	}
-	write := func(q querier) error {
-		_, err := q.Exec(fmt.Sprintf(`
-			UPDATE messages
-			SET deleted_from_source_at = %s
-			WHERE source_id = ? AND source_message_id = ? AND deleted_from_source_at IS NULL
-		`, s.dialect.Now()), sourceID, sourceMessageID)
-		return err
-	}
-	if s.syncGeneration == nil {
-		return write(boundQuerier{ctx: ctx, q: s.db})
-	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error { return write(boundQuerier{ctx: ctx, q: tx}) })
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		return tombstoneEnvelopeMessagesWith(boundQuerier{ctx: ctx, q: tx}, s.dialect.Now(), "support.source_id=? AND support.source_message_id=? AND support.deleted_from_source_at IS NULL", sourceID, sourceMessageID)
+	})
 }
 
 // MarkMessageThreadDeletedContext marks a source message and every archived
@@ -3863,19 +3921,32 @@ func (s *Store) ClearMessageDeletedFromSourceContext(ctx context.Context, source
 		return err
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		// Take the recipient lock before the message row, as recipient
+		// replacement does, so restoring cannot deadlock with it.
+		if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		return s.clearMessageDeletedFromSourceTx(ctx, tx, `source_id = ? AND source_message_id = ?`, sourceID, sourceMessageID)
 	})
 }
 
-// clearMessageDeletedFromSourceTx clears one matching mark and invalidates cached facts.
+// clearMessageDeletedFromSourceTx clears one matching mark and invalidates
+// cached facts and the participant context the restored envelope supports.
 func (s *Store) clearMessageDeletedFromSourceTx(ctx context.Context, tx *loggedTx, condition string, args ...any) error {
 	var messageID int64
 	err := tx.QueryRowContext(ctx, `UPDATE messages SET deleted_from_source_at = NULL WHERE deleted_from_source_at IS NOT NULL AND `+condition+` RETURNING id`, args...).Scan(&messageID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
-	if err != nil || s.IsPostgreSQL() {
+	if err != nil {
 		return err
+	}
+	// The restored envelope supports shared participant values again.
+	if err := invalidateEnvelopeContextOnlyWith(boundQuerier{ctx: ctx, q: tx}, "support.id=?", messageID); err != nil {
+		return err
+	}
+	if s.IsPostgreSQL() {
+		return nil
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('message_facts', ?)`, messageID)
 	return err
@@ -3889,14 +3960,9 @@ func (s *Store) MarkMessagesDeletedBatch(ctx context.Context, sourceID int64, so
 	if err := s.requireSyncSource(sourceID); err != nil {
 		return err
 	}
-	write := func(q chunkQuerier) error {
-		return execInChunksContext(ctx, q, sourceMessageIDs, []any{sourceID},
-			fmt.Sprintf(`UPDATE messages SET deleted_from_source_at = %s WHERE source_id = ? AND source_message_id IN (%%s) AND deleted_from_source_at IS NULL`, s.dialect.Now()))
-	}
-	if s.syncGeneration == nil {
-		return write(s.db)
-	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error { return write(tx) })
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		return tombstoneSourceEnvelopesWith(boundQuerier{ctx: ctx, q: tx}, s.dialect.Now(), sourceID, sourceMessageIDs)
+	})
 }
 
 // ReconcileSourceMessageSnapshot tombstones locally live messages that are
@@ -3948,8 +4014,7 @@ func (s *Store) ReconcileSourceMessageSnapshot(
 		if len(missing) == 0 {
 			return nil
 		}
-		if err := execInChunksContext(ctx, tx, missing, []any{sourceID},
-			fmt.Sprintf(`UPDATE messages SET deleted_from_source_at = %s WHERE source_id = ? AND source_message_id IN (%%s) AND deleted_from_source_at IS NULL`, s.dialect.Now())); err != nil {
+		if err := tombstoneSourceEnvelopesWith(boundQuerier{ctx: ctx, q: tx}, s.dialect.Now(), sourceID, missing); err != nil {
 			return fmt.Errorf("reconcile source message snapshot: mark missing messages: %w", err)
 		}
 		return nil
@@ -3984,8 +4049,7 @@ func (s *Store) MarkMessagesDeletedFromReaderContext(ctx context.Context, source
 			if len(batch) == 0 {
 				return nil
 			}
-			if err := execInChunksContext(ctx, tx, batch, []any{sourceID},
-				fmt.Sprintf(`UPDATE messages SET deleted_from_source_at = %s WHERE source_id = ? AND source_message_id IN (%%s) AND deleted_from_source_at IS NULL`, s.dialect.Now())); err != nil {
+			if err := tombstoneSourceEnvelopesWith(boundQuerier{ctx: ctx, q: tx}, s.dialect.Now(), sourceID, batch); err != nil {
 				return err
 			}
 			batch = batch[:0]
@@ -4034,15 +4098,12 @@ func (s *Store) MarkMessageDeletedBySourceMessageID(ctx context.Context, sourceI
 	sourceClause := ""
 	args := []any{gmailID}
 	if sourceID > 0 {
-		sourceClause = " AND source_id = ?"
+		sourceClause = " AND support.source_id = ?"
 		args = append(args, sourceID)
 	}
-	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`
-		UPDATE messages
-		SET deleted_from_source_at = %s
-		WHERE source_message_id = ?%s AND deleted_from_source_at IS NULL
-	`, s.dialect.Now(), sourceClause), args...)
-	return err
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		return tombstoneEnvelopeMessagesWith(boundQuerier{ctx: ctx, q: tx}, s.dialect.Now(), "support.source_message_id = ?"+sourceClause+" AND support.deleted_from_source_at IS NULL", args...)
+	})
 }
 
 // MarkMessagesDeletedByGmailIDBatch marks multiple messages as deleted by their Gmail IDs
@@ -4081,15 +4142,14 @@ func (s *Store) MarkMessagesDeletedBySourceMessageIDBatch(ctx context.Context, s
 		}
 		sourceClause := ""
 		if sourceID > 0 {
-			sourceClause = " AND source_id = ?"
+			sourceClause = " AND support.source_id = ?"
 			args = append(args, sourceID)
 		}
 
-		query := fmt.Sprintf(
-			`UPDATE messages SET deleted_from_source_at = %s WHERE source_message_id IN (%s)%s AND deleted_from_source_at IS NULL`,
-			s.dialect.Now(), strings.Join(placeholders, ","), sourceClause)
-
-		if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
+		err := s.withTxContext(ctx, func(tx *loggedTx) error {
+			return tombstoneEnvelopeMessagesWith(boundQuerier{ctx: ctx, q: tx}, s.dialect.Now(), "support.source_message_id IN ("+strings.Join(placeholders, ",")+")"+sourceClause+" AND support.deleted_from_source_at IS NULL", args...)
+		})
+		if err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -5218,218 +5278,233 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 	if oldID == newID || oldID == 0 || newID == 0 {
 		return nil
 	}
-	// The exclusive attribution entry takes the identity row before the sync
-	// fence, serializing the curated binding check with promotion and
-	// link/unlink mutations before this transaction repoints any references.
-	return s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
-		if err := s.lockParticipantDirectoryMutationTxContext(
-			ctx, tx,
-		); err != nil {
-			return err
-		}
-		if err := s.lockParticipantObservationMergeTx(
-			ctx, tx, oldID, newID,
-		); err != nil {
-			return err
-		}
-		if err := s.verifyParticipantsExistTxContext(ctx, tx, oldID, newID); err != nil {
-			return err
-		}
-		edges, err := s.loadComponentEdgesTxContext(ctx, tx, oldID, newID)
+	return s.withPolicyAttributionTxContext(ctx, func(tx *loggedTx) error {
+		state, err := s.captureParticipantConversationPolicyTx(ctx, tx, oldID, newID)
 		if err != nil {
 			return err
 		}
-		personID, unionMembers, err := s.personForClusterUnionTx(
-			ctx, tx, oldID, newID, edges,
-		)
-		if err != nil {
+		if err = s.mergeParticipantsTx(ctx, tx, oldID, newID); err != nil {
 			return err
 		}
-		personRevisionBumped := false
-		if personID != 0 {
-			changed, err := s.mergePersonBindingsTx(
-				ctx, tx, personID, oldID, unionMembers)
-			if err != nil {
-				return err
-			}
-			if changed {
-				if err := s.advanceCardDAVAutomaticBindingBaselineTx(ctx, tx, personID); err != nil {
-					return err
-				}
+		return s.finishConversationPolicyLifecycleTx(ctx, tx, state)
+	})
+}
 
-				if err := s.bumpPersonRevisionsTx(
-					ctx, tx, personID); err != nil {
-					return err
-				}
-				personRevisionBumped = true
-			}
-		}
-
-		// The merge must not lose contact metadata: fill gaps on the survivor
-		// from the absorbed row, carrying the email's analytics domain with it.
-		// Email and phone are UNIQUE, so the absorbed row must release each
-		// value before the survivor can take it.
-		var oldEmail, oldDomain, oldPhone sql.NullString
-		if err := tx.QueryRowContext(ctx, `SELECT NULLIF(email_address, ''), NULLIF(domain, ''), NULLIF(phone_number, '') FROM participants WHERE id = ?`, oldID).
-			Scan(&oldEmail, &oldDomain, &oldPhone); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE participants SET email_address = NULL, phone_number = NULL WHERE id = ?`, oldID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE participants SET
-				email_address = COALESCE(NULLIF(email_address, ''), ?),
-				domain        = COALESCE(NULLIF(domain, ''), ?),
-				phone_number  = COALESCE(NULLIF(phone_number, ''), ?)
-			WHERE id = ?`, oldEmail, oldDomain, oldPhone, newID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE messages SET sender_id = ? WHERE sender_id = ?`, newID, oldID); err != nil {
-			return err
-		}
-		// Drop old rows that would collide with an existing row of the new
-		// participant, then repoint the remainder.
-		if err := repointReactionSourceEvents(ctx, tx, oldID, newID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `
-			DELETE FROM reactions WHERE participant_id = ? AND EXISTS (
-				SELECT 1 FROM reactions r2 WHERE r2.message_id = reactions.message_id
-				  AND r2.participant_id = ? AND r2.reaction_type = reactions.reaction_type
-				  AND r2.reaction_value = reactions.reaction_value)`, oldID, newID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE reactions SET participant_id = ? WHERE participant_id = ?`, newID, oldID); err != nil {
-			return err
-		}
-		// Collide on the full unique key including the normalized envelope
-		// address (idx_message_recipients_envelope), not just (message_id,
-		// recipient_type): a row of the absorbed participant whose envelope
-		// snapshot differs from every surviving row's must survive the
-		// repoint, or the merge would destroy the immutable alias evidence
-		// identity discovery classifies from.
-		if _, err := tx.ExecContext(ctx, `
-			DELETE FROM message_recipients WHERE participant_id = ? AND EXISTS (
-				SELECT 1 FROM message_recipients m2 WHERE m2.message_id = message_recipients.message_id
-				  AND m2.participant_id = ? AND m2.recipient_type = message_recipients.recipient_type
-				  AND LOWER(COALESCE(m2.email_address, '')) = LOWER(COALESCE(message_recipients.email_address, '')))`, oldID, newID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE message_recipients SET participant_id = ? WHERE participant_id = ?`, newID, oldID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `
-			DELETE FROM conversation_participants WHERE participant_id = ? AND EXISTS (
-				SELECT 1 FROM conversation_participants c2 WHERE c2.conversation_id = conversation_participants.conversation_id
-				  AND c2.participant_id = ?)`, oldID, newID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE conversation_participants SET participant_id = ? WHERE participant_id = ?`, newID, oldID); err != nil {
-			return err
-		}
-		// Identifier values are globally unique, so a plain repoint suffices.
-		if _, err := tx.ExecContext(ctx, `UPDATE participant_identifiers SET participant_id = ? WHERE participant_id = ?`, newID, oldID); err != nil {
-			return err
-		}
-		if oldEmail.Valid {
-			// Preserve the absorbed primary email as an unscoped identifier. A
-			// survivor with its own primary address cannot store this value in
-			// email_address, and CardDAV reconciliation needs the alias to support
-			// transferred bindings.
-			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO participant_identifiers (
-					participant_id, identifier_type, identifier_value, is_primary
-				) SELECT ?, 'email', ?, FALSE
-				WHERE NOT EXISTS (SELECT 1 FROM participants WHERE id = ? AND LOWER(email_address) = LOWER(?))
-				ON CONFLICT (identifier_type, identifier_value) DO NOTHING
-			`, newID, oldEmail.String, newID, oldEmail.String); err != nil {
-				return fmt.Errorf("preserve absorbed participant email: %w", err)
-			}
-			var retained bool
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM participants WHERE id = ? AND LOWER(email_address) = LOWER(?)) OR EXISTS (SELECT 1 FROM participant_identifiers WHERE participant_id = ? AND identifier_type = 'email' AND identifier_value = ?)`, newID, oldEmail.String, newID, oldEmail.String).Scan(&retained); err != nil {
-				return err
-			}
-			if !retained {
-				return fmt.Errorf("absorbed participant email belongs to another identity: %w: %w", ErrIdentifierAddressConflict, ErrPersonBindingConflict)
-			}
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE source_import_items SET name = ? WHERE provider LIKE 'beeper-roster:%' AND name = ?`, strconv.FormatInt(newID, 10), strconv.FormatInt(oldID, 10)); err != nil {
-			return err
-		}
-		if err := s.rewriteObservationsForMergeTx(
-			ctx, tx, oldID, newID,
-		); err != nil {
-			return err
-		}
-		if err := s.rewriteIdentityMatchCandidatesForMergeTx(
-			ctx, tx, oldID, newID, edges,
-		); err != nil {
-			return err
-		}
-		// Sender and identifier repoints can add or remove identity evidence.
-		// Repair the primary-store provenance before committing the merge.
-		if err := refreshParticipantMessageAttributionContext(
-			ctx, tx, newID,
-		); err != nil {
-			return err
-		}
-		if err := s.refreshAccountAttributionForParticipantsTx(ctx, tx, []int64{oldID, newID}); err != nil {
-			return err
-		}
-		// Repoint (and, if needed, restructure) any link edges referencing
-		// oldID before the delete below drops them via ON DELETE CASCADE.
-		if err := s.rewriteLinksForMergeContext(ctx, tx, oldID, newID); err != nil {
-			return err
-		}
-		// Candidate and link endpoints must both reference the survivor before
-		// unsupported generated matches are withdrawn. Otherwise an owned link
-		// can evade cleanup because it still names the absorbed participant.
-		if err := s.reconcileObservationIdentityMatchesForParticipantTxContext(
-			ctx, tx, newID,
-		); err != nil {
-			return err
-		}
-		// Bump unconditionally, even when the merge touched no link edges:
-		// absorbing a participant whose email matches a confirmed account
-		// identity changes owner_participants' content (the baked dataset
-		// still lists the deleted oldID), and the refresh this triggers is
-		// cheap and idempotent, so it is not worth tracking that case
-		// separately from the link-touching one.
-		if _, err := s.bumpIdentityRevisionContext(ctx, tx); err != nil {
-			return err
-		}
-		// Also bump the account-identity revision: the primary rows were
-		// repaired above, but existing message Parquet shards still bake the
-		// pre-merge attribution and require a full rebuild.
-		if err := s.bumpAccountIdentityRevisionContext(ctx, tx); err != nil {
-			return err
-		}
-		if err := s.bumpParticipantIdentifierRevision(ctx, tx); err != nil {
-			return err
-		}
-		if err := rewritePersonMergeParticipantLineageTx(
-			ctx, tx, oldID, newID,
-		); err != nil {
-			return err
-		}
-		_, err = tx.ExecContext(ctx, `DELETE FROM participants WHERE id = ?`, oldID)
+// mergeParticipantsTx retains the caller's policy and exclusive attribution
+// ownership while repairing the complete participant identity and history.
+func (s *Store) mergeParticipantsTx(ctx context.Context, tx *loggedTx, oldID, newID int64) error {
+	if err := s.lockParticipantDirectoryMutationTxContext(
+		ctx, tx,
+	); err != nil {
+		return err
+	}
+	if err := s.lockParticipantObservationMergeTx(
+		ctx, tx, oldID, newID,
+	); err != nil {
+		return err
+	}
+	if err := s.verifyParticipantsExistTxContext(ctx, tx, oldID, newID); err != nil {
+		return err
+	}
+	edges, err := s.loadComponentEdgesTxContext(ctx, tx, oldID, newID)
+	if err != nil {
+		return err
+	}
+	personID, unionMembers, err := s.personForClusterUnionTx(
+		ctx, tx, oldID, newID, edges,
+	)
+	if err != nil {
+		return err
+	}
+	personRevisionBumped := false
+	if personID != 0 {
+		changed, err := s.mergePersonBindingsTx(
+			ctx, tx, personID, oldID, unionMembers)
 		if err != nil {
 			return err
 		}
-		if personID != 0 {
-			if err := s.publishPersonIdentityScopeChangesTx(ctx, tx, []int64{personID}); err != nil {
+		if changed {
+			if err := s.advanceCardDAVAutomaticBindingBaselineTx(ctx, tx, personID); err != nil {
 				return err
 			}
-			if personRevisionBumped {
-				return s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(
-					ctx, tx, personID)
+
+			if err := s.bumpPersonRevisionsTx(
+				ctx, tx, personID); err != nil {
+				return err
 			}
-			return s.invalidatePersonEnrichmentIdentitiesTx(
+			personRevisionBumped = true
+		}
+	}
+
+	// The merge must not lose contact metadata: fill gaps on the survivor
+	// from the absorbed row, carrying the email's analytics domain with it.
+	// Email and phone are UNIQUE, so the absorbed row must release each
+	// value before the survivor can take it.
+	var oldEmail, oldDomain, oldPhone sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT NULLIF(email_address, ''), NULLIF(domain, ''), NULLIF(phone_number, '') FROM participants WHERE id = ?`, oldID).
+		Scan(&oldEmail, &oldDomain, &oldPhone); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE participants SET email_address = NULL, phone_number = NULL WHERE id = ?`, oldID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE participants SET
+			email_address = COALESCE(NULLIF(email_address, ''), ?),
+			domain        = COALESCE(NULLIF(domain, ''), ?),
+			phone_number  = COALESCE(NULLIF(phone_number, ''), ?)
+		WHERE id = ?`, oldEmail, oldDomain, oldPhone, newID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE messages SET sender_id = ? WHERE sender_id = ?`, newID, oldID); err != nil {
+		return err
+	}
+	// Drop old rows that would collide with an existing row of the new
+	// participant, then repoint the remainder.
+	if err := repointReactionSourceEvents(ctx, tx, oldID, newID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM reactions WHERE participant_id = ? AND EXISTS (
+			SELECT 1 FROM reactions r2 WHERE r2.message_id = reactions.message_id
+			  AND r2.participant_id = ? AND r2.reaction_type = reactions.reaction_type
+			  AND r2.reaction_value = reactions.reaction_value)`, oldID, newID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE reactions SET participant_id = ? WHERE participant_id = ?`, newID, oldID); err != nil {
+		return err
+	}
+	// Collide on the full unique key including the normalized envelope
+	// address (idx_message_recipients_envelope), not just (message_id,
+	// recipient_type): a row of the absorbed participant whose envelope
+	// snapshot differs from every surviving row's must survive the
+	// repoint, or the merge would destroy the immutable alias evidence
+	// identity discovery classifies from.
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM message_recipients WHERE participant_id = ? AND EXISTS (
+			SELECT 1 FROM message_recipients m2 WHERE m2.message_id = message_recipients.message_id
+			  AND m2.participant_id = ? AND m2.recipient_type = message_recipients.recipient_type
+			  AND LOWER(COALESCE(m2.email_address, '')) = LOWER(COALESCE(message_recipients.email_address, '')))`, oldID, newID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE message_recipients SET participant_id = ? WHERE participant_id = ?`, newID, oldID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM conversation_participants WHERE participant_id = ? AND EXISTS (
+			SELECT 1 FROM conversation_participants c2 WHERE c2.conversation_id = conversation_participants.conversation_id
+			  AND c2.participant_id = ?)`, oldID, newID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE conversation_participants SET participant_id = ? WHERE participant_id = ?`, newID, oldID); err != nil {
+		return err
+	}
+	if err := s.repointMessagingRouteParticipantsTx(ctx, tx, oldID, newID); err != nil {
+		return err
+	}
+	// Identifier values are globally unique, so a plain repoint suffices.
+	if _, err := tx.ExecContext(ctx, `UPDATE participant_identifiers SET participant_id = ? WHERE participant_id = ?`, newID, oldID); err != nil {
+		return err
+	}
+	if oldEmail.Valid {
+		// Preserve the absorbed primary email as an unscoped identifier. A
+		// survivor with its own primary address cannot store this value in
+		// email_address, and CardDAV reconciliation needs the alias to support
+		// transferred bindings.
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO participant_identifiers (
+				participant_id, identifier_type, identifier_value, is_primary
+			) SELECT ?, 'email', ?, FALSE
+			WHERE NOT EXISTS (SELECT 1 FROM participants WHERE id = ? AND LOWER(email_address) = LOWER(?))
+			ON CONFLICT (identifier_type, identifier_value) DO NOTHING
+		`, newID, oldEmail.String, newID, oldEmail.String); err != nil {
+			return fmt.Errorf("preserve absorbed participant email: %w", err)
+		}
+		var retained bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM participants WHERE id = ? AND LOWER(email_address) = LOWER(?)) OR EXISTS (SELECT 1 FROM participant_identifiers WHERE participant_id = ? AND identifier_type = 'email' AND identifier_value = ?)`, newID, oldEmail.String, newID, oldEmail.String).Scan(&retained); err != nil {
+			return err
+		}
+		if !retained {
+			return fmt.Errorf("absorbed participant email belongs to another identity: %w: %w", ErrIdentifierAddressConflict, ErrPersonBindingConflict)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE source_import_items SET name = ? WHERE provider LIKE 'beeper-roster:%' AND name = ?`, strconv.FormatInt(newID, 10), strconv.FormatInt(oldID, 10)); err != nil {
+		return err
+	}
+	if err := s.rewriteObservationsForMergeTx(
+		ctx, tx, oldID, newID,
+	); err != nil {
+		return err
+	}
+	if err := s.rewriteIdentityMatchCandidatesForMergeTx(
+		ctx, tx, oldID, newID, edges,
+	); err != nil {
+		return err
+	}
+	// Sender and identifier repoints can add or remove identity evidence.
+	// Repair the primary-store provenance before committing the merge.
+	if err := refreshParticipantMessageAttributionContext(
+		ctx, tx, newID,
+	); err != nil {
+		return err
+	}
+	if err := s.refreshAccountAttributionForParticipantsTx(ctx, tx, []int64{oldID, newID}); err != nil {
+		return err
+	}
+	// Repoint (and, if needed, restructure) any link edges referencing
+	// oldID before the delete below drops them via ON DELETE CASCADE.
+	if err := s.rewriteLinksForMergeContext(ctx, tx, oldID, newID); err != nil {
+		return err
+	}
+	// Candidate and link endpoints must both reference the survivor before
+	// unsupported generated matches are withdrawn. Otherwise an owned link
+	// can evade cleanup because it still names the absorbed participant.
+	if err := s.reconcileObservationIdentityMatchesForParticipantTxContext(
+		ctx, tx, newID,
+	); err != nil {
+		return err
+	}
+	// Bump unconditionally, even when the merge touched no link edges:
+	// absorbing a participant whose email matches a confirmed account
+	// identity changes owner_participants' content (the baked dataset
+	// still lists the deleted oldID), and the refresh this triggers is
+	// cheap and idempotent, so it is not worth tracking that case
+	// separately from the link-touching one.
+	if _, err := s.bumpIdentityRevisionContext(ctx, tx); err != nil {
+		return err
+	}
+	// Also bump the account-identity revision: the primary rows were
+	// repaired above, but existing message Parquet shards still bake the
+	// pre-merge attribution and require a full rebuild.
+	if err := s.bumpAccountIdentityRevisionContext(ctx, tx); err != nil {
+		return err
+	}
+	if err := s.bumpParticipantIdentifierRevision(ctx, tx); err != nil {
+		return err
+	}
+	if err := rewritePersonMergeParticipantLineageTx(
+		ctx, tx, oldID, newID,
+	); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `DELETE FROM participants WHERE id = ?`, oldID)
+	if err != nil {
+		return err
+	}
+	if personID != 0 {
+		if err := s.publishPersonIdentityScopeChangesTx(
+			ctx, tx, []int64{personID},
+			peoplesweep.EvidenceEffectIdentityReassigned); err != nil {
+			return err
+		}
+		if personRevisionBumped {
+			return s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(
 				ctx, tx, personID)
 		}
-		return nil
-	})
+		return s.invalidatePersonEnrichmentIdentitiesTx(
+			ctx, tx, personID)
+	}
+	return nil
 }
 
 // ParticipantByIdentifier returns the participant an identifier points at,
@@ -5615,76 +5690,80 @@ func (s *Store) SetParticipantIdentifierContext(ctx context.Context, participant
 	// no-op case under the lock: a concurrent call may have set the same
 	// mapping while we waited.
 	return s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
-		existingParticipantID, exists, err := participantIdentifierTargetTx(
-			ctx, tx, identifierType, identifierValue,
-		)
-		if err != nil || (exists && existingParticipantID == participantID) {
-			return err
-		}
-		serviceSlug, scopeKind, scopeValue := participantIdentifierClassificationValues(
-			identifierType, identifierValue,
-		)
-		classificationColumns, err := s.participantIdentifierClassificationColumnsTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		var setErr error
-		if classificationColumns {
-			_, setErr = tx.ExecContext(ctx, `
-				INSERT INTO participant_identifiers (
-					participant_id, identifier_type, identifier_value, is_primary,
-					service_id, scope_kind, scope_value
-				) VALUES (?, ?, ?, FALSE,
-					(SELECT id FROM communication_services WHERE slug = ?), ?, ?)
-				ON CONFLICT (identifier_type, identifier_value) DO UPDATE SET
-					participant_id = excluded.participant_id,
-					service_id = COALESCE(excluded.service_id, participant_identifiers.service_id),
-					scope_kind = CASE WHEN excluded.service_id IS NOT NULL
-						THEN excluded.scope_kind ELSE participant_identifiers.scope_kind END,
-					scope_value = CASE WHEN excluded.service_id IS NOT NULL
-						THEN excluded.scope_value ELSE participant_identifiers.scope_value END
-			`, participantID, identifierType, identifierValue,
-				serviceSlug, scopeKind, scopeValue)
-		} else {
-			// Cache inspection can open a legacy archive before InitSchema adds
-			// service metadata. Preserve that read/repair workflow; the v2
-			// migration classifies this row when the schema is initialized.
-			_, setErr = tx.ExecContext(ctx, `
-				INSERT INTO participant_identifiers (
-					participant_id, identifier_type, identifier_value, is_primary
-				) VALUES (?, ?, ?, FALSE)
-				ON CONFLICT (identifier_type, identifier_value) DO UPDATE SET
-					participant_id = excluded.participant_id
-			`, participantID, identifierType, identifierValue)
-		}
-		if setErr != nil {
-			return fmt.Errorf("set participant identifier: %w", setErr)
-		}
-		if err := s.bumpParticipantIdentifierRevision(ctx, tx); err != nil {
-			return err
-		}
-		var ownerEvidence bool
-		if err := tx.QueryRowContext(ctx, `
-			SELECT EXISTS (SELECT 1 FROM account_identities ai WHERE `+ownerIdentifierMatch("?", "?", "ai.address", "")+`)
-		`, identifierType, identifierValue, identifierType, identifierValue).Scan(&ownerEvidence); err != nil {
-			return fmt.Errorf("check identifier owner evidence: %w", err)
-		}
-		if !ownerEvidence {
-			return nil
-		}
-		if err := refreshParticipantMessageAttributionContext(
-			ctx, tx, existingParticipantID, participantID,
-		); err != nil {
-			return err
-		}
-		if err := s.refreshAccountAttributionForParticipantsTx(ctx, tx, []int64{existingParticipantID, participantID}); err != nil {
-			return err
-		}
-		if _, err := s.bumpIdentityRevisionContext(ctx, tx); err != nil {
-			return err
-		}
-		return s.bumpAccountIdentityRevisionContext(ctx, tx)
+		return s.setParticipantIdentifierTx(ctx, tx, participantID, identifierType, identifierValue)
 	})
+}
+
+func (s *Store) setParticipantIdentifierTx(ctx context.Context, tx *loggedTx, participantID int64, identifierType, identifierValue string) error {
+	existingParticipantID, exists, err := participantIdentifierTargetTx(
+		ctx, tx, identifierType, identifierValue,
+	)
+	if err != nil || (exists && existingParticipantID == participantID) {
+		return err
+	}
+	serviceSlug, scopeKind, scopeValue := participantIdentifierClassificationValues(
+		identifierType, identifierValue,
+	)
+	classificationColumns, err := s.participantIdentifierClassificationColumnsTx(ctx, tx)
+	if err != nil {
+		return err
+	}
+	var setErr error
+	if classificationColumns {
+		_, setErr = tx.ExecContext(ctx, `
+			INSERT INTO participant_identifiers (
+				participant_id, identifier_type, identifier_value, is_primary,
+				service_id, scope_kind, scope_value
+			) VALUES (?, ?, ?, FALSE,
+				(SELECT id FROM communication_services WHERE slug = ?), ?, ?)
+			ON CONFLICT (identifier_type, identifier_value) DO UPDATE SET
+				participant_id = excluded.participant_id,
+				service_id = COALESCE(excluded.service_id, participant_identifiers.service_id),
+				scope_kind = CASE WHEN excluded.service_id IS NOT NULL
+					THEN excluded.scope_kind ELSE participant_identifiers.scope_kind END,
+				scope_value = CASE WHEN excluded.service_id IS NOT NULL
+					THEN excluded.scope_value ELSE participant_identifiers.scope_value END
+		`, participantID, identifierType, identifierValue,
+			serviceSlug, scopeKind, scopeValue)
+	} else {
+		// Cache inspection can open a legacy archive before InitSchema adds
+		// service metadata. Preserve that read/repair workflow; the v2
+		// migration classifies this row when the schema is initialized.
+		_, setErr = tx.ExecContext(ctx, `
+			INSERT INTO participant_identifiers (
+				participant_id, identifier_type, identifier_value, is_primary
+			) VALUES (?, ?, ?, FALSE)
+			ON CONFLICT (identifier_type, identifier_value) DO UPDATE SET
+				participant_id = excluded.participant_id
+		`, participantID, identifierType, identifierValue)
+	}
+	if setErr != nil {
+		return fmt.Errorf("set participant identifier: %w", setErr)
+	}
+	if err := s.bumpParticipantIdentifierRevision(ctx, tx); err != nil {
+		return err
+	}
+	var ownerEvidence bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM account_identities ai WHERE `+ownerIdentifierMatch("?", "?", "ai.address", "")+`)
+	`, identifierType, identifierValue, identifierType, identifierValue).Scan(&ownerEvidence); err != nil {
+		return fmt.Errorf("check identifier owner evidence: %w", err)
+	}
+	if !ownerEvidence {
+		return nil
+	}
+	if err := refreshParticipantMessageAttributionContext(
+		ctx, tx, existingParticipantID, participantID,
+	); err != nil {
+		return err
+	}
+	if err := s.refreshAccountAttributionForParticipantsTx(ctx, tx, []int64{existingParticipantID, participantID}); err != nil {
+		return err
+	}
+	if _, err := s.bumpIdentityRevisionContext(ctx, tx); err != nil {
+		return err
+	}
+	return s.bumpAccountIdentityRevisionContext(ctx, tx)
 }
 
 // ParticipantEmailRepair is one maintenance rewrite of a participant's
@@ -5940,6 +6019,7 @@ func (s *Store) UpdateParticipantDisplayNameByPhone(ctx context.Context, phone, 
 	}
 
 	var updated bool
+	var namedParticipantIDs []int64
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
@@ -5958,13 +6038,24 @@ func (s *Store) UpdateParticipantDisplayNameByPhone(ctx context.Context, phone, 
 			return err
 		}
 		updated, err = s.bumpParticipantDisplayNameRevisionIfChangedContext(ctx, tx, result)
-		if err != nil || !updated {
+		if err != nil {
 			return err
 		}
-		return s.invalidateParticipantPersonEnrichmentTx(
-			ctx, tx, participantIDs...)
+		if updated {
+			if err := s.invalidateParticipantPersonEnrichmentTx(
+				ctx, tx, participantIDs...,
+			); err != nil {
+				return err
+			}
+		}
+		namedParticipantIDs, err = s.participantIdentityUpdateIDsTx(ctx, tx,
+			`SELECT id FROM participants WHERE phone_number = ? AND display_name = ?`, phone, displayName)
+		return err
 	})
 	if err != nil {
+		return false, err
+	}
+	if err := s.recordVCardParticipantDisplayNameObservations(namedParticipantIDs, displayName); err != nil {
 		return false, err
 	}
 	return updated, nil
@@ -5986,6 +6077,7 @@ func (s *Store) UpdateImessageParticipantDisplayNameByPhone(ctx context.Context,
 	}
 
 	var updated bool
+	var namedParticipantIDs []int64
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
@@ -6017,13 +6109,26 @@ func (s *Store) UpdateImessageParticipantDisplayNameByPhone(ctx context.Context,
 			return err
 		}
 		updated, err = s.bumpParticipantDisplayNameRevisionIfChangedContext(ctx, tx, result)
-		if err != nil || !updated {
+		if err != nil {
 			return err
 		}
-		return s.invalidateParticipantPersonEnrichmentTx(
-			ctx, tx, participantIDs...)
+		if updated {
+			if err := s.invalidateParticipantPersonEnrichmentTx(
+				ctx, tx, participantIDs...,
+			); err != nil {
+				return err
+			}
+		}
+		namedParticipantIDs, err = s.participantIdentityUpdateIDsTx(ctx, tx, `SELECT id FROM participants
+			WHERE phone_number = ? AND display_name = ?
+			  AND EXISTS (SELECT 1 FROM participant_identifiers pi
+			    WHERE pi.participant_id = participants.id AND pi.identifier_type = 'imessage')`, phone, displayName)
+		return err
 	})
 	if err != nil {
+		return false, err
+	}
+	if err := s.recordVCardParticipantDisplayNameObservations(namedParticipantIDs, displayName); err != nil {
 		return false, err
 	}
 	return updated, nil
@@ -6288,6 +6393,7 @@ func (s *Store) UpdateParticipantDisplayNameByEmail(ctx context.Context, email, 
 	}
 
 	var updated bool
+	var namedParticipantIDs []int64
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
@@ -6307,13 +6413,25 @@ func (s *Store) UpdateParticipantDisplayNameByEmail(ctx context.Context, email, 
 			return err
 		}
 		updated, err = s.bumpParticipantDisplayNameRevisionIfChangedContext(ctx, tx, result)
-		if err != nil || !updated {
+		if err != nil {
 			return err
 		}
-		return s.invalidateParticipantPersonEnrichmentTx(
-			ctx, tx, participantIDs...)
+		if updated {
+			if err := s.invalidateParticipantPersonEnrichmentTx(
+				ctx, tx, participantIDs...,
+			); err != nil {
+				return err
+			}
+		}
+		namedParticipantIDs, err = s.participantIdentityUpdateIDsTx(ctx, tx,
+			`SELECT id FROM participants
+			 WHERE LOWER(email_address) = LOWER(?) AND display_name = ?`, email, displayName)
+		return err
 	})
 	if err != nil {
+		return false, err
+	}
+	if err := s.recordVCardParticipantDisplayNameObservations(namedParticipantIDs, displayName); err != nil {
 		return false, err
 	}
 	return updated, nil
@@ -6340,6 +6458,20 @@ func (s *Store) participantIdentityUpdateIDsTx(
 		return nil, fmt.Errorf("iterate participant identity updates: %w", err)
 	}
 	return participantIDs, nil
+}
+
+func (s *Store) recordVCardParticipantDisplayNameObservations(participantIDs []int64, displayName string) error {
+	for _, participantID := range participantIDs {
+		_, err := s.RecordContactObservationContext(context.Background(), participantID, ParticipantContactObservationInput{
+			AddressKind:   ContactAddressDisplayName,
+			OriginalValue: displayName,
+			Envelope:      ValueEnvelopeInput{Source: ProvenanceVCardImport},
+		})
+		if err != nil {
+			return fmt.Errorf("record vCard display name for participant %d: %w", participantID, err)
+		}
+	}
+	return nil
 }
 
 // EnsureConversationParticipant adds a participant to a conversation.

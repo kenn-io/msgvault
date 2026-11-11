@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+
+	"go.kenn.io/msgvault/internal/peoplesweep"
 )
 
 // ErrAlreadyLinked is returned by LinkParticipants when the requested edge
@@ -377,7 +379,7 @@ func (s *Store) restoreConfirmedMembershipsTx(ctx context.Context, tx *loggedTx,
 	if err := s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(ctx, tx, personID); err != nil {
 		return false, err
 	}
-	if err := s.publishPersonIdentityScopeChangesTx(ctx, tx, []int64{personID}); err != nil {
+	if err := s.publishPersonIdentityScopeChangesTx(ctx, tx, []int64{personID}, peoplesweep.EvidenceEffectIdentityReassigned); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -400,7 +402,11 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 	}
 	lo, hi := normalizeEdge(a, b)
 
-	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+	writeTx := s.withTxContext
+	if ownerCandidateID != 0 {
+		writeTx = s.withConversationPolicyIdentityTx
+	}
+	err = writeTx(ctx, func(tx *loggedTx) error {
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
@@ -565,7 +571,7 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 		if err == nil {
 			linked = true
 			if personID != 0 {
-				err = s.publishPersonIdentityScopeChangesTx(ctx, tx, []int64{personID})
+				err = s.publishPersonIdentityScopeChangesTx(ctx, tx, []int64{personID}, peoplesweep.EvidenceEffectIdentityReassigned)
 			}
 		}
 		if err == nil && afterLink != nil {
@@ -788,7 +794,7 @@ func (s *Store) UnlinkParticipants(a, b int64) (int64, error) {
 		if err != nil {
 			return err
 		}
-		if err := s.publishPersonIdentityScopeChangesTx(context.Background(), tx, trackedPeople); err != nil {
+		if err := s.publishPersonIdentityScopeChangesTx(context.Background(), tx, trackedPeople, peoplesweep.EvidenceEffectIdentityReassigned); err != nil {
 			return err
 		}
 		return s.invalidatePersonEnrichmentIdentitiesTx(

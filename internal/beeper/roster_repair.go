@@ -132,7 +132,7 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 	}
 	opts.rosterState = cs.RosterWork
 	opts.rosterDetailFetched = true
-	conversationID, complete, _, err := imp.ensureConversation(ctx, syncID, sourceID, detail, opts, &ImportSummary{})
+	conversationID, complete, membership, err := imp.ensureConversation(ctx, syncID, sourceID, detail, opts, &ImportSummary{})
 	if conversationID != 0 {
 		statsCtx, cancel := opts.conversationStatsContext(ctx)
 		statsErr := imp.store.RecomputeConversationStatsForConversationContext(statsCtx, conversationID)
@@ -164,7 +164,7 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 		refreshCtx, cancelRefresh = opts.finalizeContext(ctx)
 		defer cancelRefresh()
 	}
-	if _, err := imp.store.RefreshConversationPolicy(refreshCtx, []int64{conversationID}, time.Now()); err != nil {
+	if err := imp.refreshConversationPolicyAndRoster(refreshCtx, sourceID, conversationID, membership, opts, cs.RosterWork, &ImportSummary{}); err != nil {
 		return failed(fmt.Errorf("refresh repaired roster policy: %w", err))
 	}
 	if !complete {

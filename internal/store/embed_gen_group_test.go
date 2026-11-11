@@ -409,7 +409,7 @@ func TestEmbedGenMetadataVersion_MatchesAssemblerCanonicalDigest(t *testing.T) {
 		"2030-01-02 03:04:05", f.aliceID, f.bobID)
 	versions, metadata := f.snapshot()
 
-	assert.Equal(t, "008696efed0969c656a9fef5057430881961388f760d2286213b606605837a3d", metadata.Digest)
+	assert.Equal(t, "cc468ecaeb9ceb0ae12c56dd56dc07d9c5952626b5dd3170178bdf52d68a161b", metadata.Digest)
 	stamped, _, err := f.store.SetEmbedGenGroupIfUnchanged(t.Context(), versions, metadata, 11)
 	require.NoError(t, err)
 	assert.True(t, stamped, "store recomputation must accept Task 5's exact canonical digest")

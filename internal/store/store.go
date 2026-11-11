@@ -1735,6 +1735,9 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("register Matrix placeholders: %w", err)
 	}
+	if err := s.runOnceMigration(ctx, migrationPersonFactConversationPolicyStatus, 1, false, s.migratePersonFactConversationPolicyStatus); err != nil {
+		return fmt.Errorf("migrate fact policy statuses: %w", err)
+	}
 	if err := s.ensureDirectoryProjectionInfrastructure(ctx); err != nil {
 		return err
 	}
@@ -1851,6 +1854,12 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 	}
 	if err := s.runOnceMigration(ctx, migrationPersonFactOutcomes, 1, false, s.backfillPersonFactOutcomes); err != nil {
 		return fmt.Errorf("backfill person fact outcomes: %w", err)
+	}
+	if err := s.runOnceMigration(
+		ctx, migrationParticipantObservationIdentity, 1, false,
+		s.ensureParticipantObservationIdentityIndex,
+	); err != nil {
+		return fmt.Errorf("upgrade participant observation identity index: %w", err)
 	}
 	// account: and received: filter on the account columns, and each sync
 	// looks up pending rows; created here because the columns arrive through
@@ -2668,6 +2677,16 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 		},
 	); err != nil {
 		return fmt.Errorf("enforce attachment bytes hash: %w", err)
+	}
+
+	if err := s.runOnceMigration(ctx, migrationAppleWhatsAppNameProvenance, 1, false, s.backfillAppleParticipantNamesContext); err != nil {
+		return fmt.Errorf("backfill Apple WhatsApp name provenance: %w", err)
+	}
+	if err := s.runOnceMigration(
+		ctx, migrationNativeEmailObservationProvenance, 1, false,
+		s.backfillNativeEmailObservationProvenanceContext,
+	); err != nil {
+		return fmt.Errorf("backfill native email observation provenance: %w", err)
 	}
 
 	// Reconcile the system relationship type catalog on every open: insert

@@ -355,9 +355,9 @@ func (e *SQLiteEngine) sqliteTextSnapshotQuery(scope TextSnapshotScope) (string,
 				COALESCE(c.source_conversation_id, ''),
 				COALESCE(m.subject, ''),
 				COALESCE(m.snippet, ''),
-				COALESCE(p_sender.email_address, ''),
-				`+directSenderNameExpr("p_sender", "")+`,
-				COALESCE(p_sender.phone_number, ''),
+				%s,
+				%s,
+				%s,
 				m.sent_at,
 				COALESCE(m.size_estimate, 0),
 				COALESCE(m.has_attachments, 0),
@@ -371,7 +371,7 @@ func (e *SQLiteEngine) sqliteTextSnapshotQuery(scope TextSnapshotScope) (string,
 			LEFT JOIN conversations c ON c.id = m.conversation_id
 			WHERE %s
 			ORDER BY m.sent_at %s, m.id %s
-		`, where, direction, direction), args
+		`, eligibleParticipantEmailExpr("p_sender"), eligibleDirectSenderNameExpr("p_sender"), eligibleParticipantPhoneExpr("p_sender"), where, direction, direction), args
 	}
 
 	var orderBy string
@@ -516,10 +516,7 @@ func buildSQLiteTextFilterConditions(d Dialect, filter TextFilter) (string, []an
 				(SELECT mr_fb.participant_id FROM message_recipients mr_fb
 				 WHERE mr_fb.message_id = m.id AND mr_fb.recipient_type = 'from'
 				 LIMIT 1))
-			  AND COALESCE(
-				NULLIF(p_cp.phone_number, ''),
-				p_cp.email_address
-			  ) = ?
+			  AND `+eligibleTextContactExpr("p_cp")+` = ?
 		)`)
 		args = append(args, filter.ContactPhone)
 	}
@@ -530,7 +527,7 @@ func buildSQLiteTextFilterConditions(d Dialect, filter TextFilter) (string, []an
 				(SELECT mr_fb.participant_id FROM message_recipients mr_fb
 				 WHERE mr_fb.message_id = m.id AND mr_fb.recipient_type = 'from'
 				 LIMIT 1))
-			  AND `+participantNameExpr("p_cn")+` = ?
+			  AND `+eligibleParticipantNameExpr("p_cn")+` = ?
 		)`)
 		args = append(args, filter.ContactName)
 	}
@@ -635,13 +632,19 @@ func (e *SQLiteEngine) ListConversations(
 	return results, rows.Err()
 }
 
+// eligibleTextContactExpr keeps contact grouping and filtering on the same
+// eligible phone-first address.
+func eligibleTextContactExpr(alias string) string {
+	return "COALESCE(NULLIF(" + eligibleParticipantPhoneExpr(alias) + ", ''), NULLIF(" + eligibleParticipantEmailExpr(alias) + ", ''))"
+}
+
 // textAggSQLiteDimension returns the dimension definition for a text aggregate view.
 func textAggSQLiteDimension(
 	view TextViewType, granularity TimeGranularity,
 ) (aggDimension, error) {
 	switch view {
 	case TextViewContacts:
-		keyExpr := "COALESCE(NULLIF(p_agg.phone_number, ''), p_agg.email_address)"
+		keyExpr := eligibleTextContactExpr("p_agg")
 		senderJoin := `JOIN participants p_agg ON p_agg.id = COALESCE(m.sender_id,
 			(SELECT mr_fb.participant_id FROM message_recipients mr_fb
 			 WHERE mr_fb.message_id = m.id AND mr_fb.recipient_type = 'from'
@@ -652,7 +655,7 @@ func textAggSQLiteDimension(
 			whereExpr: keyExpr + " IS NOT NULL",
 		}, nil
 	case TextViewContactNames:
-		nameExpr := participantNameExpr("p_agg")
+		nameExpr := "NULLIF(" + eligibleParticipantNameExpr("p_agg") + ", '')"
 		senderJoin := `JOIN participants p_agg ON p_agg.id = COALESCE(m.sender_id,
 			(SELECT mr_fb.participant_id FROM message_recipients mr_fb
 			 WHERE mr_fb.message_id = m.id AND mr_fb.recipient_type = 'from'
@@ -785,9 +788,9 @@ func (e *SQLiteEngine) sqliteConversationMessagesQuery(convID int64, filter Text
 			COALESCE(c.source_conversation_id, '') AS source_conversation_id,
 			COALESCE(m.subject, '') AS subject,
 			COALESCE(m.snippet, '') AS snippet,
-			COALESCE(p_sender.email_address, '') AS from_email,
-			`+directSenderNameExpr("p_sender", "")+` AS from_name,
-			COALESCE(p_sender.phone_number, '') AS from_phone,
+			%s AS from_email,
+			%s AS from_name,
+			%s AS from_phone,
 			m.sent_at,
 			COALESCE(m.size_estimate, 0) AS size_estimate,
 			COALESCE(m.has_attachments, 0) AS has_attachments,
@@ -802,7 +805,7 @@ func (e *SQLiteEngine) sqliteConversationMessagesQuery(convID int64, filter Text
 		WHERE %s
 		ORDER BY m.sent_at %s, m.id %s
 		LIMIT ? OFFSET ?
-	`, where, sqliteDirection(filter.SortDirection), sqliteDirection(filter.SortDirection))
+	`, eligibleParticipantEmailExpr("p_sender"), eligibleDirectSenderNameExpr("p_sender"), eligibleParticipantPhoneExpr("p_sender"), where, sqliteDirection(filter.SortDirection), sqliteDirection(filter.SortDirection))
 
 	args = append(args, limit, filter.Pagination.Offset)
 
@@ -842,9 +845,9 @@ func sqliteFTSTextSearch(
 			'' AS source_conversation_id,
 			COALESCE(m.subject, '') AS subject,
 			COALESCE(m.snippet, '') AS snippet,
-			COALESCE(p.email_address, '') AS from_email,
-			`+directSenderNameExpr("p", "")+` AS from_name,
-			COALESCE(p.phone_number, '') AS from_phone,
+			%s AS from_email,
+			%s AS from_name,
+			%s AS from_phone,
 			m.sent_at,
 			COALESCE(m.size_estimate, 0) AS size_estimate,
 			COALESCE(m.has_attachments, 0) AS has_attachments,
@@ -860,7 +863,7 @@ func sqliteFTSTextSearch(
 		WHERE %s
 		ORDER BY m.sent_at DESC
 		LIMIT ? OFFSET ?
-	`, strings.Join(conditions, " AND "))
+	`, eligibleParticipantEmailExpr("p"), eligibleDirectSenderNameExpr("p"), eligibleParticipantPhoneExpr("p"), strings.Join(conditions, " AND "))
 
 	rows, err := db.QueryContext(ctx, sqlQuery, append(args, limit, offset)...)
 	if err != nil {

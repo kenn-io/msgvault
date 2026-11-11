@@ -115,8 +115,9 @@ func TestEnsureConversationCancellation(t *testing.T) {
 			participants := make([]map[string]any, 0, count)
 			for i := range count {
 				participants = append(participants, map[string]any{
-					"id":       fmt.Sprintf("@telegram_member%d:beeper.local", i),
-					"fullName": fmt.Sprintf("Member %d", i),
+					"id":          fmt.Sprintf("@telegram_member%d:beeper.local", i),
+					"fullName":    fmt.Sprintf("Member %d", i),
+					"phoneNumber": fmt.Sprintf("+1202555%04d", i),
 				})
 			}
 			chat := observationChat(
@@ -169,7 +170,8 @@ func TestEnsureConversationCancellation(t *testing.T) {
 				pid := participantForBeeperUser(t, st, participant.ID)
 				observations, err := st.ListParticipantObservationsContext(t.Context(), pid, true)
 				require.NoError(err)
-				if len(observations) > 0 {
+				if len(observationsOfKinds(observations,
+					store.ContactAddressEmail, store.ContactAddressPhone, store.ContactAddressUsername)) > 0 {
 					observed++
 				}
 			}
@@ -186,7 +188,10 @@ func TestEnsureConversationCancellation(t *testing.T) {
 				pid := participantForBeeperUser(t, st, participant.ID)
 				observations, err := st.ListParticipantObservationsContext(t.Context(), pid, true)
 				require.NoError(err)
-				assert.NotEmpty(observations, "a resumed import must enrich every member")
+				// Display names are observed before cancellation, so only the
+				// phone observation proves the resumed import enriched the member.
+				assert.NotEmpty(observationsOfKinds(observations, store.ContactAddressPhone),
+					"a resumed import must enrich every member")
 			}
 		})
 	}
@@ -195,8 +200,8 @@ func TestEnsureConversationCancellation(t *testing.T) {
 // serial: changes slog.Default and SQL logging.
 func TestEnsureConversationCancellationDuringMembership(t *testing.T) {
 	// Each member's resolution and membership commit are separate transactions.
-	// Room policy setup commits before the first member is written.
-	for _, at := range []int{1, 2, 3, 4, 5, 6, 7, 8} {
+	// Room policy is refreshed before the first member is resolved.
+	for _, at := range []int{1, 2, 3, 4, 5, 6, 7} {
 		t.Run(fmt.Sprintf("begin %d", at), func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			st := testutil.NewTestStore(t)
@@ -231,7 +236,7 @@ func TestEnsureConversationCancellationDuringMembership(t *testing.T) {
 			assert.Zero(handler.afterCancel, "no later member or roster write may attempt BeginTx")
 			assert.Empty(handler.warnings)
 			want := []int64{oldID}
-			if at >= 8 {
+			if at >= 7 {
 				want = append(want, firstID)
 			}
 			assert.Equal(want, rosterMembers(t, st, sourceID, "!cancel:example.com"))
@@ -260,9 +265,9 @@ func TestEnsureConversationCancellationDuringPartialRoster(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	// The eighth commit atomically writes the first member and its receipt.
-	// Room policy setup commits first.
-	handler := installCancelOnLog(t, cancel, 8, logMessage("sql tx commit"))
+	// The seventh commit atomically writes the first member and its receipt.
+	// Room policy and the member's policy-aware resolution commit first.
+	handler := installCancelOnLog(t, cancel, 7, logMessage("sql tx commit"))
 	sum := &ImportSummary{}
 	_, complete, _, err := imp.ensureConversation(ctx, syncID, sourceID, &Chat{
 		ID: chatID, Type: "group", Title: "Partial", Network: "Telegram",
