@@ -439,7 +439,7 @@ func newMCPServerWithPolicy(
 		sdkmcp.AddTool[map[string]any, any](s, definition.definition.tool(), officialToolHandler(definition.bind(opts.Operations), confirmation))
 	}
 
-	if opts.Events != nil && !opts.DelegatedOnly && !opts.legacyHTTP {
+	if opts.Events != nil && !opts.legacyHTTP {
 		registerNativeEvents(s, opts.Events, allowWrites)
 	}
 	return s
@@ -541,7 +541,7 @@ func NewHTTPHandler(opts ServeOptions, httpOpts HTTPOptions) (http.Handler, func
 }
 
 func newHTTPHandlerWithPolicy(opts ServeOptions, httpOpts HTTPOptions, policy *invocationPolicy, daemonAuthenticated bool) (http.Handler, func()) {
-	if !daemonAuthenticated && httpOpts.APIKey == "" {
+	if opts.DelegatedOnly || (!daemonAuthenticated && httpOpts.APIKey == "") {
 		opts.Events = nil
 	}
 	if opts.downloads == nil {

@@ -34,9 +34,9 @@ func (c *Client) mcpEventsRequest(ctx context.Context, method, path string, body
 		var e mcpevents.Error
 		if json.Unmarshal(raw, &e) == nil {
 			switch e.Code {
-			case mcpevents.InvalidParams, mcpevents.NotFound, mcpevents.ResourceExhausted, mcpevents.Unsupported:
+			case mcpevents.InvalidParams, mcpevents.Forbidden, mcpevents.NotFound, mcpevents.ResourceExhausted, mcpevents.Unsupported:
 				reason := "request_rejected"
-				if e.Reason == "invalid_scope" || e.Reason == "subscriptions" || e.Reason == "subscription" {
+				if e.Reason == "invalid_scope" || e.Reason == "subscriptions" || e.Reason == "subscription" || e.Reason == "person_scope_exceeds_grant" || e.Reason == "verification_failed" || e.Reason == "permission_denied" {
 					reason = e.Reason
 				}
 				return &mcpevents.Error{Code: e.Code, Reason: reason}
@@ -44,7 +44,7 @@ func (c *Client) mcpEventsRequest(ctx context.Context, method, path string, body
 				return &mcpevents.Error{Code: e.Code, Reason: mcpevents.CallbackReason(e.Reason)}
 			case mcpevents.Unavailable:
 				switch e.Reason {
-				case "disabled", "head_unavailable", "store_unavailable", "credential_unavailable":
+				case "disabled", "credential_unavailable", "head_unavailable", "store_unavailable", "verification_changed", "source_scope_unavailable":
 					return &e
 				}
 			}

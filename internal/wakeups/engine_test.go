@@ -2,6 +2,7 @@ package wakeups
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 
 	Assert "github.com/stretchr/testify/assert"   //nolint:importas // Keep constructors available in nested test scopes.
 	Require "github.com/stretchr/testify/require" //nolint:importas // Keep constructors available in nested test scopes.
+	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/changefeed"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
@@ -294,4 +296,99 @@ func TestNativeSuccessfulDeliveryClearsFailureStatus(t *testing.T) {
 	assert.NotNil(state.LastDeliveryAt)
 	assert.Empty(state.LastError)
 	assert.Nil(state.FailedSince)
+}
+
+// An empty scoped page advances before a later permitted message arrives.
+func TestGrantEmptyPageAdvancesBeforeNewSourceMessage(t *testing.T) {
+	require := Require.New(t)
+	assert := Assert.New(t)
+	ctx := t.Context()
+	st := testutil.NewTestStore(t)
+	now := time.Now().UTC()
+	allowed, err := st.GetOrCreateSource("gmail", "allowed@example.test")
+	require.NoError(err)
+	outside, err := st.GetOrCreateSource("gmail", "outside@example.test")
+	require.NoError(err)
+	participant, err := st.EnsureParticipant("person@example.test", "Person", "example.test")
+	require.NoError(err)
+	person, _, err := st.CreatePersonFromParticipant(participant)
+	require.NoError(err)
+	conv, err := st.EnsureConversationWithType(outside.ID, "outside", "email_thread", "Outside")
+	require.NoError(err)
+	id, err := st.UpsertMessage(&store.Message{SourceID: outside.ID, SourceMessageID: "outside", ConversationID: conv, MessageType: "email", SenderID: sql.NullInt64{Int64: participant, Valid: true}, SentAt: sql.NullTime{Time: now, Valid: true}})
+	require.NoError(err)
+	stamp := now.Add(-time.Minute)
+	var value any = stamp
+	if !st.IsPostgreSQL() {
+		value = stamp.Format(store.SQLiteTimestampLayout)
+	}
+	_, err = st.DB().ExecContext(ctx, st.Rebind(`UPDATE messages SET content_changed_at=? WHERE id=?`), value, id)
+	require.NoError(err)
+	start := now.Add(-time.Hour)
+	for _, name := range []string{"owner", "grant"} {
+		ok, err := st.AdvanceWakeupStateKey(ctx, store.MCPEventsPositionKey(name), nil, store.WakeupState{At: start})
+		require.NoError(err)
+		require.True(ok)
+	}
+	registry := agentgrant.NewRegistry()
+	grantID, _, _, err := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: allowed.ID, Type: allowed.SourceType, Identifier: allowed.Identifier}}, time.Time{})
+	require.NoError(err)
+	var deliveries []string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deliveries = append(deliveries, r.Header.Get("X-Mcp-Subscription-Id"))
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	makeSub := func(name string) Subscription {
+		return Subscription{Name: name, StateKey: store.MCPEventsPositionKey(name), Native: true, URL: "https://example.com/hook", Secret: []byte(strings.Repeat("a", 32)), Filter: changefeed.Filter{PersonID: person.ID}, MaxMessageAge: 72 * time.Hour, Client: testWebhookClient(t, server)}
+	}
+	owner, delegated := makeSub("owner"), makeSub("grant")
+	delegated.GrantID, delegated.Grants = grantID, registry
+	engine := Engine{Store: st, Subscriptions: []Subscription{owner, delegated}, Now: func() time.Time { return now }}
+	require.NoError(engine.RunPass(ctx))
+	assert.Equal([]string{"owner"}, deliveries)
+	state, _, err := st.LoadWakeupStateKey(ctx, store.MCPEventsPositionKey("grant"))
+	require.NoError(err)
+	assert.True(state.At.After(start))
+	conv, err = st.EnsureConversationWithType(allowed.ID, "allowed", "email_thread", "Allowed")
+	require.NoError(err)
+	_, err = st.UpsertMessage(&store.Message{SourceID: allowed.ID, SourceMessageID: "allowed", ConversationID: conv, MessageType: "email", SenderID: sql.NullInt64{Int64: participant, Valid: true}, SentAt: sql.NullTime{Time: now, Valid: true}})
+	require.NoError(err)
+	require.NoError(engine.RunPass(ctx))
+	assert.Contains(deliveries, "grant")
+}
+
+func TestGrantRevokedAfterScanDoesNotSend(t *testing.T) {
+	require := Require.New(t)
+	assert := Assert.New(t)
+	ctx := t.Context()
+	st := testutil.NewTestStore(t)
+	now := time.Now().UTC()
+	src, err := st.GetOrCreateSource("gmail", "revoked@example.test")
+	require.NoError(err)
+	conv, err := st.EnsureConversationWithType(src.ID, "revoked", "email_thread", "Fixture")
+	require.NoError(err)
+	id, err := st.UpsertMessage(&store.Message{SourceID: src.ID, SourceMessageID: "message", ConversationID: conv, MessageType: "email", SentAt: sql.NullTime{Time: now, Valid: true}})
+	require.NoError(err)
+	stamp := now.Add(-time.Minute)
+	var value any = stamp
+	if !st.IsPostgreSQL() {
+		value = stamp.Format(store.SQLiteTimestampLayout)
+	}
+	_, err = st.DB().ExecContext(ctx, st.Rebind(`UPDATE messages SET content_changed_at=? WHERE id=?`), value, id)
+	require.NoError(err)
+	key := store.MCPEventsPositionKey("grant")
+	ok, err := st.AdvanceWakeupStateKey(ctx, key, nil, store.WakeupState{At: now.Add(-time.Hour)})
+	require.NoError(err)
+	require.True(ok)
+	registry := agentgrant.NewRegistry()
+	grantID, _, _, err := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
+	require.NoError(err)
+	var sends int
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { sends++; w.WriteHeader(http.StatusNoContent) }))
+	defer server.Close()
+	sub := Subscription{Name: "grant", StateKey: key, Native: true, GrantID: grantID, Grants: registry, URL: "https://example.com/hook", Secret: []byte(strings.Repeat("a", 32)), Filter: changefeed.Filter{SourceIDs: []int64{src.ID}}, MaxMessageAge: 72 * time.Hour, Client: testWebhookClient(t, server)}
+	engine := Engine{Store: st, Subscriptions: []Subscription{sub}, Now: func() time.Time { return now }, Gate: func(context.Context) (func(), bool) { return func() { registry.Revoke(grantID) }, true }}
+	require.NoError(engine.RunPass(ctx))
+	assert.Zero(sends)
 }

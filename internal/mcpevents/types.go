@@ -17,6 +17,7 @@ const Name = "msgvault.messages.changed"
 const (
 	InvalidParams     = -32602
 	NotFound          = -32023
+	Forbidden         = -32024
 	ResourceExhausted = -32025
 	Unsupported       = -32026
 	CallbackEndpoint  = -32027
@@ -35,10 +36,14 @@ func (e *Error) Status() int {
 		return http.StatusBadRequest
 	case CallbackEndpoint:
 		return http.StatusBadGateway
+	case Forbidden:
+		return http.StatusForbidden
 	case NotFound:
 		return http.StatusNotFound
 	case ResourceExhausted:
 		return http.StatusTooManyRequests
+	case CallbackEndpoint:
+		return http.StatusBadGateway
 	default:
 		return http.StatusServiceUnavailable
 	}

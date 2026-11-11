@@ -97,6 +97,11 @@ func rpcEventError(err error) error {
 		name = "InvalidParams"
 	case mcpevents.NotFound:
 		name = "NotFound"
+	case mcpevents.Forbidden:
+		name = "Forbidden"
+	case mcpevents.CallbackEndpoint:
+		name = "CallbackEndpointError"
+		e = &mcpevents.Error{Code: e.Code, Reason: mcpevents.CallbackReason(e.Reason)}
 	case mcpevents.ResourceExhausted:
 		name = "ResourceExhausted"
 	case mcpevents.Unsupported:

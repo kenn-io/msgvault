@@ -23,7 +23,8 @@ var agentReadPermissions = map[string]agentgrant.Permission{
 	"filterMessages": agentgrant.PermissionSearchRead, "listMessages": agentgrant.PermissionSearchRead,
 	"searchMessagesByDomains": agentgrant.PermissionSearchRead,
 	"listChangedMessages":     agentgrant.PermissionSearchRead,
-	"getStats":                agentgrant.PermissionStatsRead, "getCLIStats": agentgrant.PermissionStatsRead, "getTotalStats": agentgrant.PermissionStatsRead,
+	"mcpEventsList":           agentgrant.PermissionSearchRead, "mcpEventsSubscribe": agentgrant.PermissionSearchRead, "mcpEventsUnsubscribe": agentgrant.PermissionSearchRead,
+	"getStats": agentgrant.PermissionStatsRead, "getCLIStats": agentgrant.PermissionStatsRead, "getTotalStats": agentgrant.PermissionStatsRead,
 	"getCLIMessageThread": agentgrant.PermissionMessageRead,
 	"getMessage":          agentgrant.PermissionMessageRead, "getCLIMessage": agentgrant.PermissionMessageRead,
 	"getAttachment": agentgrant.PermissionAttachmentRead, "getAttachmentContent": agentgrant.PermissionAttachmentRead,
@@ -156,12 +157,15 @@ func (s *Server) authorizeAgentRead(r *http.Request, operation string, grant *ag
 	if err != nil {
 		return newAPIHTTPError(503, "source_scope_unavailable", "Source authorization is unavailable")
 	}
-	allowed := make([]int64, 0)
+	refs := make([]agentgrant.SourceRef, 0, len(sources))
+	for _, src := range sources {
+		refs = append(refs, agentgrant.SourceRef{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier})
+	}
+	allowed := grant.SourceIDs(refs)
 	account := r.URL.Query().Get("account")
 	accountGranted := false
-	for _, src := range sources {
-		if grant.MatchesSource(agentgrant.SourceRef{Type: src.SourceType, Identifier: src.Identifier}) {
-			allowed = append(allowed, src.ID)
+	for _, src := range refs {
+		if slices.Contains(allowed, src.ID) {
 			accountGranted = accountGranted || src.Identifier == account
 		}
 	}

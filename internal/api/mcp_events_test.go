@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +16,8 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/agentgrant"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/mcpevents"
 	"go.kenn.io/msgvault/internal/providercredentials"
@@ -284,5 +287,69 @@ func TestMCPEventsInputSchemasValidate(t *testing.T) {
 				assert.Equal(t, tc.valid, len(result.Errors) == 0, "%s: %v", tc.path, result.Errors)
 			}
 		})
+	}
+}
+
+func TestOwnerEventsDisabledAndInvalidSubscription(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	cfg := &config.Config{HomeDir: t.TempDir()}
+	events := &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir()}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, Logger: testLogger()})
+	request := func(body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/mcp-events/subscribe", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, r)
+		return w
+	}
+	w := request(`{"name":"msgvault.messages.changed","arguments":{"source_id":1},"delivery":{"mode":"webhook","url":"https://example.com","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	events.Enabled = true
+	w = request(`{"name":"msgvault.messages.changed","arguments":{"source_id":1,"source_id":2},"delivery":{"mode":"webhook","url":"https://example.com","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "-32602")
+}
+
+
+func TestDelegatedSourceScopeAdmission(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	st := testutil.NewTestStore(t)
+	allowed, _, err := testutil.CreateIndexedSourceMessage(ctx, st, "allowed@example.test", "allowed", "allowed", "")
+	require.NoError(err)
+	outside, _, err := testutil.CreateIndexedSourceMessage(ctx, st, "outside@example.test", "outside", "outside", "")
+	require.NoError(err)
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner-key", AgentAccess: true}}
+	cfg.MCPEvents.Enabled = true
+	events := &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir(), Enabled: true}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, Logger: testLogger()})
+	events.Grants = srv.agentGrants
+	t.Cleanup(srv.agentGrants.Close)
+	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: allowed.ID, Type: allowed.SourceType, Identifier: allowed.Identifier}}, time.Time{})
+	require.NoError(err)
+	body := fmt.Sprintf(`{"name":"msgvault.messages.changed","arguments":{"source_id":%d},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, outside.ID)
+	r := httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/v1/mcp-events/subscribe", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set(apiprotocol.AgentTokenHeader, token)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, r)
+	assert.Equal(http.StatusForbidden, w.Code)
+	assert.Contains(w.Body.String(), "permission_denied")
+}
+
+
+func TestMCPEventsRequireSearchPermission(t *testing.T) {
+	srv, reg := newTestServerWithAgentGrants(t)
+	t.Cleanup(reg.Close)
+	_, secret, _, err := reg.Issue("reader", []agentgrant.Permission{agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{{ID: 1, Type: "imap", Identifier: "agent@example.com"}}, time.Time{})
+	require.NoError(t, err)
+	for _, route := range []struct{ method, path string }{{http.MethodGet, "/api/v1/mcp-events/list"}, {http.MethodPost, "/api/v1/mcp-events/subscribe"}, {http.MethodPost, "/api/v1/mcp-events/unsubscribe"}} {
+		r := httptest.NewRequestWithContext(t.Context(), route.method, route.path, strings.NewReader(`{}`))
+		r.Header.Set(apiprotocol.AgentTokenHeader, secret)
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, r)
+		assert.Equal(t, http.StatusForbidden, w.Code, route.path)
 	}
 }

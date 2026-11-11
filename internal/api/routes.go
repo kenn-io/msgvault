@@ -260,7 +260,7 @@ func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 				writeHumaError(ctx, err.status, err.ErrorResponse.Error, err.Message)
 				return
 			}
-			if permission != "" && op.OperationID != "listChangedMessages" {
+			if permission != "" && op.OperationID != "listChangedMessages" && op.OperationID != "mcpEventsList" && op.OperationID != "mcpEventsSubscribe" && op.OperationID != "mcpEventsUnsubscribe" {
 				release, err := s.beginAgentRead(req, op.OperationID, auth.Grant, permission)
 				if err != nil {
 					writeHumaError(ctx, err.status, err.ErrorResponse.Error, err.Message)

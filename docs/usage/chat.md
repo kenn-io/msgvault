@@ -43,7 +43,12 @@ On unreleased `main`, owner clients can subscribe to
 reads; subscribe and unsubscribe require `/mcp/writes` with `--mcp-allow-writes`.
 Standalone `msgvault mcp --http` requires `--http-allow-writes` for those
 mutations. Stdio Events methods are protocol methods and do not use tool
-elicitation. Delegated agent tokens cannot subscribe. HTTP clients send
+elicitation. Delegated agents with `search.read` can subscribe over stdio within
+their grant. A source must be granted; a person must have no sent or received
+messages outside the grant at subscription time. Each grant may hold up to four
+active subscriptions, within the shared limit of 32 configured wake-ups and
+subscriptions. Subscriptions end when the grant expires, is revoked, or the
+daemon restarts. Later reads stay within granted sources. HTTP clients send
 `Mcp-Method` and, for subscribe and unsubscribe, `Mcp-Name` equal to the event
 name.
 

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -82,6 +83,17 @@ func (g Grant) MatchesSource(src SourceRef) bool {
 		}
 	}
 	return false
+}
+
+// SourceIDs resolves the grant against the current source identities.
+func (g Grant) SourceIDs(sources []SourceRef) []int64 {
+	ids := make([]int64, 0)
+	for _, source := range sources {
+		if g.MatchesSource(source) {
+			ids = append(ids, source.ID)
+		}
+	}
+	return ids
 }
 
 // AllowsSender reports whether the grant permits one canonical sender on a
@@ -221,6 +233,26 @@ func (r *Registry) Lookup(secret string) (Grant, bool) {
 		}
 	}
 	return Grant{}, false
+}
+
+// Owner identifies the catalog principal for a grant.
+func Owner(id string) string { return "grant:" + id }
+
+// OwnerID extracts a grant identifier from a catalog principal.
+func OwnerID(owner string) (string, bool) { return strings.CutPrefix(owner, "grant:") }
+
+// LookupID returns a live grant with the requested permission.
+func (r *Registry) LookupID(id string, permission Permission) (Grant, bool) {
+	if r == nil {
+		return Grant{}, false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e, ok := r.entries[id]
+	if !ok || (!e.grant.ExpiresAt.IsZero() && !time.Now().Before(e.grant.ExpiresAt)) || !e.grant.HasPermission(permission) {
+		return Grant{}, false
+	}
+	return cloneGrant(e.grant), true
 }
 
 // List returns every grant, including expired ones so the owner can revoke them.

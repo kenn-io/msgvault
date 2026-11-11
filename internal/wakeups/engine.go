@@ -12,10 +12,12 @@ import (
 	"slices"
 	"time"
 
+	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/changefeed"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/httpretry"
 	"go.kenn.io/msgvault/internal/personscope/resolver"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -23,6 +25,8 @@ type Subscription struct {
 	Name, URL     string
 	StateKey      string
 	Native        bool
+	GrantID       string
+	Grants        *agentgrant.Registry
 	Expires       time.Time
 	Secret        []byte
 	Filter        changefeed.Filter
@@ -36,6 +40,8 @@ type Store interface {
 	AdvanceWakeupStateKey(ctx context.Context, key string, before []byte, after store.WakeupState) (bool, error)
 	ListChangedMessages(ctx context.Context, cursor store.ChangedMessagesCursor, limit int) (store.ChangedMessagePage, error)
 	ArchiveUIDContext(ctx context.Context) (string, error)
+	BeginChangedMessagesReadSnapshotContext(ctx context.Context) (context.Context, func(), error)
+	ListSourcesContext(ctx context.Context, sourceType string) ([]*store.Source, error)
 }
 
 // Engine holds no delivery state; the archive stores the position and backoff.
@@ -263,21 +269,48 @@ func (e *Engine) RunPass(ctx context.Context) error {
 				}
 				return e.initializeMissing(ctx, sub.Name, &head)
 			}
+			readCtx := ctx
+			releaseRead := func() {}
+			if sub.GrantID != "" {
+				grant, ok := sub.Grants.LookupID(sub.GrantID, agentgrant.PermissionSearchRead)
+				if !ok {
+					return nil
+				}
+				readCtx, releaseRead, err = e.Store.BeginChangedMessagesReadSnapshotContext(ctx)
+				if err != nil {
+					return err
+				}
+				defer releaseRead()
+				sources, err := e.Store.ListSourcesContext(readCtx, "")
+				if err != nil {
+					return err
+				}
+				refs := make([]agentgrant.SourceRef, 0, len(sources))
+				for _, source := range sources {
+					refs = append(refs, agentgrant.SourceRef{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier})
+				}
+				readCtx = sourcescope.WithSourceIDs(readCtx, grant.SourceIDs(refs))
+			}
 			uid, err = e.Store.ArchiveUIDContext(ctx)
 			if err != nil {
 				return err
 			}
 			var ok bool
-			page, ok = pages[since]
+			if sub.GrantID == "" {
+				page, ok = pages[since]
+			}
 			if !ok {
-				page, err = e.Store.ListChangedMessages(ctx, since, changefeed.ScanBudget+1)
+				page, err = e.Store.ListChangedMessages(readCtx, since, changefeed.ScanBudget+1)
 				if err != nil {
 					return err
 				}
-				pages[since] = page
+				if sub.GrantID == "" {
+					pages[since] = page
+				}
 			}
-			filter, err := changefeed.ResolveFilter(ctx, e.Store, sub.Filter)
+			filter, err := changefeed.ResolveFilter(readCtx, e.Store, sub.Filter)
 			if err != nil {
+				releaseRead()
 				if !errors.Is(err, store.ErrPersonNotFound) && !errors.Is(err, resolver.ErrEmptyPopulation) {
 					return err
 				}
@@ -294,6 +327,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 				state.LastError = ""
 				state.FailedSince = nil
 			}
+			releaseRead()
 			rows, position, _ := changefeed.Scan(page, since, filter, changefeed.ScanBudget)
 			next = position
 			for _, row := range rows {
@@ -302,7 +336,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 				}
 			}
 			if len(matches) == 0 && state.Failures == 0 {
-				moved := len(page.Messages) > 0 || (!page.CompleteThrough.IsZero() && since.At().After(page.ServerTime))
+				moved := len(page.Messages) > 0 || (!page.CompleteThrough.IsZero() && since.At().After(page.ServerTime)) || (sub.GrantID != "" && next != since)
 				if moved {
 					skipTo(next)
 				}
@@ -363,7 +397,13 @@ func (e *Engine) RunPass(ctx context.Context) error {
 			logger.Warn("wakeup failed", "name", sub.Name, "category", "invalid_callback")
 			continue
 		}
+		if sub.GrantID != "" {
+			if _, ok := sub.Grants.LookupID(sub.GrantID, agentgrant.PermissionSearchRead); !ok {
+				continue
+			}
+		}
 		category, status, _ := sub.Client.request(ctx, sub.URL, id, subscriptionID, sub.Secret, body, false)
+
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}

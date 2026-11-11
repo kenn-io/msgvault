@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -227,11 +228,11 @@ func TestEventsHTTPWriteAdmission(t *testing.T) {
 	}
 }
 
-func TestEventsLegacyAndDelegatedDoNotReachBackend(t *testing.T) {
+func TestEventsLegacyDoNotReachBackend(t *testing.T) {
 	for _, tc := range []struct {
 		name              string
 		legacy, delegated bool
-	}{{"legacy", true, false}, {"delegated", false, true}} {
+	}{{"legacy", true, false}} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			backend := &eventTestBackend{}

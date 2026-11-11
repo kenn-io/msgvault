@@ -300,7 +300,12 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 		"listCLIAccounts":         {"/api/v1/cli/accounts", src.Identifier},
 		"listCLICollections":      {"/api/v1/cli/collections", `"name":"Selected"`},
 	}
-	allowed := make(map[string]bool, len(allowedDelegatedOps))
+	// Events operations require search.read, checked separately in TestMCPEventsRequireSearchPermission.
+	allowedEvents := map[string]bool{"mcpEventsList": true, "mcpEventsSubscribe": true, "mcpEventsUnsubscribe": true}
+	allowed := make(map[string]bool, len(allowedDelegatedOps)+len(allowedEvents))
+	for op := range allowedEvents {
+		allowed[op] = true
+	}
 	for _, op := range allowedDelegatedOps {
 		allowed[op] = true
 	}

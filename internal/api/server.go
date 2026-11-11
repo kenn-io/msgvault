@@ -540,8 +540,9 @@ const (
 
 // ServerOptions configures the API server.
 type ServerOptions struct {
-	Config *config.Config
-	Store  MessageStore
+	AgentGrants *agentgrant.Registry
+	Config      *config.Config
+	Store       MessageStore
 	// MCPEvents is shared with the daemon's wakeup engine. Nil disables Events.
 	MCPEvents *mcpevents.Service
 	// SavedViewStore owns durable analytical view definitions. It is separate
@@ -704,6 +705,9 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		sessions:           newSessionStore(defaultSessionTTL),
 		agentGrants: func() *agentgrant.Registry {
 			if opts.Config != nil && opts.Config.Server.AgentAccess {
+				if opts.AgentGrants != nil {
+					return opts.AgentGrants
+				}
 				return agentgrant.NewRegistry()
 			}
 			return nil

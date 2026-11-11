@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -205,6 +206,9 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 	if daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.AgentChangeFeedMinAPISchemaVersion) {
 		opts.OperationCapabilities = []string{mcpserver.ToolListChanges}
 		opts.Operations = &daemonMCPOperations{client: st, now: time.Now, supported: opts.OperationCapabilities, delegated: true}
+	}
+	if slices.Contains(grant.Permissions, "search.read") && daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.AgentEventsMinAPISchemaVersion) {
+		opts.Events = st
 	}
 	return opts, nil
 }

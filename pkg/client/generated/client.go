@@ -643,15 +643,15 @@ type ClientInterface interface {
 	SnoozeLoop(ctx context.Context, options *SnoozeLoopRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SnoozeLoopResponse, error)
 	SnoozeLoopWithResponse(ctx context.Context, options *SnoozeLoopRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SnoozeLoopResp, error)
 
-	// McpEventsList List owner MCP Events
+	// McpEventsList List MCP Events
 	McpEventsList(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*McpEventsListResponse, error)
 	McpEventsListWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*McpEventsListResp, error)
 
-	// McpEventsSubscribe Subscribe to owner MCP Events
+	// McpEventsSubscribe Subscribe to MCP Events
 	McpEventsSubscribe(ctx context.Context, options *McpEventsSubscribeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*McpEventsSubscribeResponse, error)
 	McpEventsSubscribeWithResponse(ctx context.Context, options *McpEventsSubscribeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*McpEventsSubscribeResp, error)
 
-	// McpEventsUnsubscribe Unsubscribe from owner MCP Events
+	// McpEventsUnsubscribe Unsubscribe from MCP Events
 	McpEventsUnsubscribe(ctx context.Context, options *McpEventsUnsubscribeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*McpEventsUnsubscribeResponse, error)
 	McpEventsUnsubscribeWithResponse(ctx context.Context, options *McpEventsUnsubscribeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*McpEventsUnsubscribeResp, error)
 
@@ -10670,7 +10670,7 @@ func (c *Client) SnoozeLoop(ctx context.Context, options *SnoozeLoopRequestOptio
 	return responseParser(ctx, resp)
 }
 
-// McpEventsList List owner MCP Events
+// McpEventsList List MCP Events
 func (c *Client) McpEventsList(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*McpEventsListResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -10732,7 +10732,7 @@ func (c *Client) McpEventsList(ctx context.Context, reqEditors ...runtime.Reques
 	return responseParser(ctx, resp)
 }
 
-// McpEventsSubscribe Subscribe to owner MCP Events
+// McpEventsSubscribe Subscribe to MCP Events
 func (c *Client) McpEventsSubscribe(ctx context.Context, options *McpEventsSubscribeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*McpEventsSubscribeResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -10796,7 +10796,7 @@ func (c *Client) McpEventsSubscribe(ctx context.Context, options *McpEventsSubsc
 	return responseParser(ctx, resp)
 }
 
-// McpEventsUnsubscribe Unsubscribe from owner MCP Events
+// McpEventsUnsubscribe Unsubscribe from MCP Events
 func (c *Client) McpEventsUnsubscribe(ctx context.Context, options *McpEventsUnsubscribeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*McpEventsUnsubscribeResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{

@@ -1054,17 +1054,18 @@ func scanPersonBinding(row scanner) (*Person, sql.NullInt64, error) {
 	return &person, participantID, nil
 }
 
-// PersonInSources reports whether any participant appears in a granted source.
-func (s *Store) PersonInSources(ctx context.Context, participantIDs, sourceIDs []int64) (bool, error) {
-	if len(participantIDs) == 0 || len(sourceIDs) == 0 {
-		return false, nil
-	}
+// personEvidence builds the shared source membership probes and arguments.
+func personEvidence(participantIDs, sourceIDs []int64, op string, roster bool) (string, []any) {
 	ps, ss := placeholders(len(participantIDs)), placeholders(len(sourceIDs))
-	query := fmt.Sprintf(`SELECT EXISTS (SELECT 1 FROM messages m WHERE m.sender_id IN (%s) AND m.source_id IN (%s)) OR
- EXISTS (SELECT 1 FROM message_recipients r JOIN messages m ON m.id = r.message_id WHERE r.participant_id IN (%s) AND m.source_id IN (%s)) OR
- EXISTS (SELECT 1 FROM conversation_participants cp JOIN conversations c ON c.id = cp.conversation_id WHERE cp.participant_id IN (%s) AND c.source_id IN (%s))`, ps, ss, ps, ss, ps, ss)
-	args := make([]any, 0, 3*(len(participantIDs)+len(sourceIDs)))
-	for range 3 {
+	query := fmt.Sprintf(`EXISTS (SELECT 1 FROM messages m WHERE m.sender_id IN (%s) AND m.source_id %s (%s)) OR
+ EXISTS (SELECT 1 FROM message_recipients r JOIN messages m ON m.id = r.message_id WHERE r.participant_id IN (%s) AND m.source_id %s (%s))`, ps, op, ss, ps, op, ss)
+	count := 2
+	if roster {
+		query += fmt.Sprintf(` OR EXISTS (SELECT 1 FROM conversation_participants cp JOIN conversations c ON c.id = cp.conversation_id WHERE cp.participant_id IN (%s) AND c.source_id %s (%s))`, ps, op, ss)
+		count++
+	}
+	args := make([]any, 0, count*(len(participantIDs)+len(sourceIDs)))
+	for range count {
 		for _, id := range participantIDs {
 			args = append(args, id)
 		}
@@ -1072,9 +1073,37 @@ func (s *Store) PersonInSources(ctx context.Context, participantIDs, sourceIDs [
 			args = append(args, id)
 		}
 	}
+	return query, args
+}
+
+// PersonInSources reports whether any participant appears in a granted source.
+func (s *Store) PersonInSources(ctx context.Context, participantIDs, sourceIDs []int64) (bool, error) {
+	if len(participantIDs) == 0 || len(sourceIDs) == 0 {
+		return false, nil
+	}
+	query, args := personEvidence(participantIDs, sourceIDs, "IN", true)
 	var found bool
-	if err := s.db.QueryRowContext(ctx, s.Rebind(query), args...).Scan(&found); err != nil {
-		return false, fmt.Errorf("check person in sources: %w", err)
+	if err := s.db.QueryRowContext(ctx, "SELECT "+query, args...).Scan(&found); err != nil {
+		return false, fmt.Errorf("check person source evidence: %w", err)
 	}
 	return found, nil
+}
+
+// PersonSourceEvidence reports participant evidence inside and outside the grant.
+func (s *Store) PersonSourceEvidence(ctx context.Context, participantIDs, sourceIDs []int64) (bool, bool, error) {
+	if len(participantIDs) == 0 {
+		return false, false, nil
+	}
+	empty := len(sourceIDs) == 0
+	if empty {
+		sourceIDs = []int64{-1}
+	}
+	insideQuery, args := personEvidence(participantIDs, sourceIDs, "IN", true)
+	outsideQuery, outsideArgs := personEvidence(participantIDs, sourceIDs, "NOT IN", false)
+	args = append(args, outsideArgs...)
+	var inside, outside bool
+	if err := s.db.QueryRowContext(ctx, "SELECT ("+insideQuery+"), ("+outsideQuery+")", args...).Scan(&inside, &outside); err != nil {
+		return false, false, fmt.Errorf("check person source evidence: %w", err)
+	}
+	return !empty && inside, outside, nil
 }

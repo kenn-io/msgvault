@@ -2275,7 +2275,7 @@ export const snoozeLoop = (
   );
 };
 /**
- * @summary List owner MCP Events
+ * @summary List MCP Events
  */
 export const mcpEventsList = (
   options?: SecondParameter<typeof orvalFetch<MCPEventsListResult>>,
@@ -2286,7 +2286,7 @@ export const mcpEventsList = (
   );
 };
 /**
- * @summary Subscribe to owner MCP Events
+ * @summary Subscribe to MCP Events
  */
 export const mcpEventsSubscribe = (
   mCPEventsSubscribeRequest: MCPEventsSubscribeRequest,
@@ -2303,7 +2303,7 @@ export const mcpEventsSubscribe = (
   );
 };
 /**
- * @summary Unsubscribe from owner MCP Events
+ * @summary Unsubscribe from MCP Events
  */
 export const mcpEventsUnsubscribe = (
   mcpEventsUnsubscribeBody: McpEventsUnsubscribeBody,

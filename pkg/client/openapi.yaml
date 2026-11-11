@@ -24539,7 +24539,7 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: List owner MCP Events
+      summary: List MCP Events
       tags:
         - API
   /api/v1/mcp-events/subscribe:
@@ -24568,7 +24568,7 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: Subscribe to owner MCP Events
+      summary: Subscribe to MCP Events
       tags:
         - API
   /api/v1/mcp-events/unsubscribe:
@@ -24597,7 +24597,7 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: Unsubscribe from owner MCP Events
+      summary: Unsubscribe from MCP Events
       tags:
         - API
   /api/v1/mcp/capabilities:

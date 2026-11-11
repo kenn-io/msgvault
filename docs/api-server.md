@@ -27,17 +27,15 @@ browser login, secure remote deployment, search states, and keyboard controls.
 
 Connect AI assistants through the [native MCP endpoints](usage/chat.md#native-daemon-endpoints).
 
-### Owner MCP Events
+### MCP Events
 
-API schema 5.3 adds owner-only `GET /api/v1/mcp-events/list`,
+API schema 5.3 adds `GET /api/v1/mcp-events/list`,
 `POST /api/v1/mcp-events/subscribe` and `POST /api/v1/mcp-events/unsubscribe`.
 The list reports whether Events are enabled. The POST routes use the MCP
 Events subscription shape; they accept one person or source and a public HTTPS
 webhook. Mutation errors contain `code` and `reason`; middleware errors contain
-`error` and `message`, including rate-limit responses. Agent-grant and
-remote-client credentials cannot use these routes. For MCP over HTTP, `/mcp`
-provides discovery and reads; Events mutations require `/mcp/writes` with
-`--mcp-allow-writes`, or `--http-allow-writes` on standalone MCP HTTP.
+`error` and `message`, including rate-limit responses. Schema 5.4 admits
+agent grants with `search.read` within their sources; remote-client credentials cannot use these routes. For MCP over HTTP, `/mcp` provides discovery and reads; Events mutations require `/mcp/writes` with `--mcp-allow-writes`, or `--http-allow-writes` on standalone MCP HTTP.
 See [MCP Events](usage/chat.md#mcp-events) for leases and delivery semantics.
 
 ### Filename suggestions
@@ -3504,6 +3502,8 @@ Delegated HTTP, CLI, and MCP message reads without `verification.read` replace d
 Detection considers subject, snippet, conversation title, attachment filenames, and both body formats together. It folds fullwidth digits to ASCII and looks for 4–10 digits, including spaced digits, or 6–10-character codes containing at least three digits tied to a code cue. Codes of 5–10 characters mixing ASCII letters and digits, or 6–10 uppercase letters only except `INVALID` and `DISABLED`, also count directly after a verification, security, login, sign-in, authentication, or one-time code, PIN, or password cue, or an OTP, passcode, or 2FA cue. Confirmation cues keep the three-digit rule. A cue in one field can describe a value in another. Years from 1900 through 2099 count only after a cue in the same field. Sign-in links need an opaque token or UUID and a sign-in cue or credential query key, such as `token` or `oobCode`. Unsubscribe and preferences paths are excluded. A sign-in cue anywhere in the message applies to every link with an opaque token, including click-tracked links, so newsletters that mention signing in and carry tracked links are withheld. Fields of 1 MiB or more are withheld.
 
 Without `verification.read`, downloads declared `message/*` or named `.eml` on any authorized record of the hash return 403 `verification_masked`. Other text-class downloads, declared `text/*` or sniffed as text, check their bytes and every authorized parent message of the hash. They return 403 if any parent is withheld, the bytes contain a NUL, invalid UTF-8, or a `Content-Transfer-Encoding:` header line in any letter case, or the detector withholds the text or filenames. Text of 1 MiB or more is withheld. Allowed text and binary files download unchanged. Withheld parents mask filenames in metadata and download headers. Parent bodies and attachment metadata are loaded in batches, so a shared hash can be checked across more than 32,766 messages.
+
+Delegated MCP Events subscriptions require `search.read` and a verified HTTPS callback. The signed verification POST includes `{"type":"verification","challenge":"<value>"}` and the usual `webhook-*` headers; reply within 10 seconds with a 2xx status and at most 4 KiB of JSON, `{"challenge":"<same value>"}`. A grant may hold up to four active subscriptions within the shared limit of 32 configured wake-ups and subscriptions. A source must be granted; a person must appear in the grant and have no sent or received messages outside it when subscribing. Later scans remain limited to the grant, even if that person gains another source. Revoking or expiring the grant, or restarting the daemon, ends its subscriptions.
 
 Agent grants are held in daemon memory, so tokens issued before an upgrade stop working when the daemon restarts. Replacement tokens with the same permissions see masked verification messages and the attachment refusals above unless the grant includes `verification.read`.
 

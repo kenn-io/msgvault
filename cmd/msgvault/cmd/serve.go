@@ -23,6 +23,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/kit/embedlocal"
 	"go.kenn.io/kit/telemetry/posthog"
+	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/carddav"
@@ -591,7 +592,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err := configureRecordingReferenceJob(ctx, mediaSched, operationGate, s, cfg.Integrations.Docbank, logger); err != nil {
 		logger.Warn("Recording reference submission unavailable", "error", err)
 	}
-	eventsService := &mcpevents.Service{Store: s, TokensDir: cfg.TokensDir(), Enabled: cfg.MCPEvents.Enabled, ConfigTargets: len(cfg.Wakeups), Logger: logger}
+	var eventGrants *agentgrant.Registry
+	if cfg.Server.AgentAccess {
+		eventGrants = agentgrant.NewRegistry()
+	}
+	eventsService := &mcpevents.Service{Store: s, TokensDir: cfg.TokensDir(), Enabled: cfg.MCPEvents.Enabled, ConfigTargets: len(cfg.Wakeups), Logger: logger, Grants: eventGrants}
 	if err := configureWakeupJob(ctx, mediaSched, operationGate, s, cfg, logger, eventsService); err != nil {
 		logger.Warn("Wakeup scheduling unavailable", "category", "scheduler_error")
 	}
@@ -1015,6 +1020,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Create and start API server
 	var apiServer *api.Server
 	apiOpts := api.ServerOptions{
+		AgentGrants:    eventGrants,
 		Config:         cfg,
 		Store:          storeAdapter,
 		MCPEvents:      eventsService,

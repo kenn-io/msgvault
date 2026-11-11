@@ -20,6 +20,9 @@ const AgentReadMinAPISchemaVersion = "3.9.0"
 // AgentChangeFeedMinAPISchemaVersion admits delegated change feed reads.
 const AgentChangeFeedMinAPISchemaVersion = "5.3.0"
 
+// AgentEventsMinAPISchemaVersion admits delegated Events.
+const AgentEventsMinAPISchemaVersion = "5.4.0"
+
 // IssueAgentToken creates a restricted agent grant and returns its one-time secret.
 func (c *Client) IssueAgentToken(
 	ctx context.Context,
