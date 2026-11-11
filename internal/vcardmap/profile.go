@@ -632,15 +632,28 @@ func postalAddressValue(address store.PersonAddress) (string, *string, error) {
 	if err != nil {
 		return "", nil, err
 	}
+	if snapshot {
+		label, text := deref(address.Label), deref(address.FreeText)
+		if text != "" && text != label {
+			if label != "" {
+				label += "\n"
+			}
+			label += text
+		}
+		if allBlank(components) && label == "" && isBlank(address.CountryCode) && isBlank(address.GeoURI) && isBlank(address.Timezone) {
+			return "", nil, nil
+		}
+		if label != "" {
+			return vcard.JoinStructuredText(components), &label, nil
+		}
+		return vcard.JoinStructuredText(components), nil, nil
+	}
 	if !allBlank(components) {
 		return vcard.JoinStructuredText(components), address.Label, nil
 	}
 	// SplitStructuredText decodes each component, so re-joining escapes
 	// each exactly once and a wire-form original re-renders unchanged.
 	original := strings.TrimSpace(address.OriginalValue)
-	if snapshot {
-		original = ""
-	}
 	parsed, err := vcard.SplitStructuredText(original)
 	if err == nil && len(parsed) > 1 && !allBlank(parsed) {
 		return vcard.JoinStructuredText(parsed), address.Label, nil

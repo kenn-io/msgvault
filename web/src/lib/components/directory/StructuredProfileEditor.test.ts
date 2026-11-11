@@ -231,6 +231,22 @@ describe('StructuredProfileEditor', () => {
     });
   });
 
+  it('keeps an existing postal text address when adding a country', async () => {
+    const { controller, requests } = requestHarness();
+    const current = {
+      person_id: 7,
+      address_kind: 'postal',
+      original_value: '12 Example Street',
+      free_text: '12 Example Street',
+      envelope: { id: 26, ordinal: 8, source: 'vcard_import', created_at: when, updated_at: when, vcard: {} },
+    };
+    render(StructuredProfileEditor, { controller, section: 'addresses', current });
+    await fireEvent.input(screen.getByLabelText('Country'), { target: { value: 'Canada' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
+    await waitFor(() => expect(requests).toHaveLength(1));
+    expect(await requests[0]!.clone().json()).toMatchObject({ addresses: { add: [{ free_text: '12 Example Street', country_name: 'Canada' }], supersede: [26] } });
+  });
+
   it('edits an address represented by free text and geo without inventing a street', async () => {
     const { controller, requests } = requestHarness();
     const current = {
