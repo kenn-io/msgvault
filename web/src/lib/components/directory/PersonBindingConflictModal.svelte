@@ -9,6 +9,7 @@
     Checkbox,
     Modal,
     SegmentedControl,
+    Spinner,
     type SegmentedControlOption,
   } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, untrack } from 'svelte';
@@ -258,7 +259,7 @@
       }}
     />
 
-    {#if reloadRequired && pending}<p role="status">Reloading profiles…</p>{/if}
+    {#if reloadRequired && pending}<p class="loading" role="status"><span aria-hidden="true"><Spinner size={12} /></span> Reloading profiles…</p>{/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     {#if completed}<p role="status">People merged.</p>{/if}
   </div>
@@ -311,6 +312,12 @@
   article span {
     color: var(--text-muted);
     font-size: var(--font-size-sm);
+  }
+  .loading {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--text-muted);
   }
   .error {
     color: var(--text-danger);
