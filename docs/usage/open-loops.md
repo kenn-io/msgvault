@@ -198,7 +198,10 @@ With [Kata integration](../configuration.md#integrationskata) configured, run
 `msgvault loops agenda c12` to create an issue on the person's agenda. The
 issue quotes and links to the original message. Retrying a successful filing
 returns the same issue, including after it is closed in Kata. A promise must
-still have a current citation when it is first filed.
+still have a current citation when it is first filed. Filing and recovery use
+the currently configured Kata project. If the original citation changes before
+filing completes, msgvault recovers an existing issue or returns
+`kata_citation_changed`. Use `msgvault kata create` to file current evidence.
 
 Manual filing uses the daemon's trusted request origin for the message link.
 Scheduled filing uses the daemon's local origin. The issue includes the exact

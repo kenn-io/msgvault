@@ -4037,7 +4037,6 @@ CREATE TABLE IF NOT EXISTS person_commitment_agenda (
  commitment_id BIGINT PRIMARY KEY REFERENCES person_commitments(id) ON DELETE CASCADE,
  target_key TEXT NOT NULL,
  idempotency_key TEXT NOT NULL UNIQUE,
- destination_key TEXT NOT NULL,
  request_json JSONB NOT NULL,
  quote TEXT NOT NULL,
  state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','linked','retired')),

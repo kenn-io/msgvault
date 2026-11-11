@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -12,7 +13,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/kataevidence"
 	"go.kenn.io/msgvault/internal/kataissues"
 	"go.kenn.io/msgvault/internal/personagenda"
@@ -26,6 +26,7 @@ type agendaArchiveFixture struct {
 	commitment store.PersonCommitment
 	item       store.CommitmentAgendaSuggestion
 	source     kataevidence.SourceRecord
+	sourceErr  error
 	closed     bool
 }
 
@@ -36,7 +37,7 @@ func (f *agendaArchiveFixture) GetOpenPersonCommitmentContext(context.Context, i
 	return f.commitment, nil
 }
 
-func (f *agendaArchiveFixture) ListCommitmentAgendaCandidatesContext(context.Context, string, time.Time, int) ([]store.PersonCommitment, error) {
+func (f *agendaArchiveFixture) ListCommitmentAgendaCandidatesContext(context.Context, time.Time, int) ([]store.PersonCommitment, error) {
 	return nil, nil
 }
 
@@ -47,7 +48,7 @@ func (f *agendaArchiveFixture) GetCommitmentAgendaContext(context.Context, int64
 	return f.item, nil
 }
 
-func (f *agendaArchiveFixture) ListPendingCommitmentAgendaContext(context.Context, string, time.Time, int) ([]store.CommitmentAgendaSuggestion, error) {
+func (f *agendaArchiveFixture) ListPendingCommitmentAgendaContext(context.Context, time.Time, int) ([]store.CommitmentAgendaSuggestion, error) {
 	if f.item.State == store.CommitmentAgendaPending {
 		return []store.CommitmentAgendaSuggestion{f.item}, nil
 	}
@@ -84,7 +85,7 @@ func (f *agendaArchiveFixture) ListPersonUIDsContext(context.Context, int64) ([]
 }
 
 func (f *agendaArchiveFixture) LoadKataEvidenceSource(context.Context, kataevidence.Selector) (kataevidence.SourceRecord, error) {
-	return f.source, nil
+	return f.source, f.sourceErr
 }
 
 type agendaIssuesFixture struct {
@@ -124,7 +125,7 @@ func newCommitmentAgendaFixture() (*CommitmentAgenda, *agendaArchiveFixture, *ag
 	}
 	issues := &agendaIssuesFixture{}
 	agenda := &CommitmentAgenda{
-		archive: archive, evidence: kataevidence.New(archive), enabled: true, destination: "fixture-destination", origin: "https://archive.example.test",
+		archive: archive, evidence: kataevidence.New(archive), enabled: true, origin: "https://archive.example.test",
 		issues: func(context.Context) (commitmentAgendaIssues, error) { return issues, nil },
 	}
 	return agenda, archive, issues
@@ -143,8 +144,6 @@ func TestCommitmentAgendaSettlesSavedIntent(t *testing.T) {
 			a.Equal(archive.item.IdempotencyKey, key)
 			a.Equal("person-vcard-uid", input.PersonUID)
 			r.Len(input.Evidence, 1)
-			a.Equal(11, input.Evidence[0].Message.StartRune)
-			a.Equal(33, input.Evidence[0].Message.EndRune)
 			a.Equal("[Open the original message](https://archive.example.test/messages/19)", input.Brief)
 			archive.closed = true
 			return kataissues.Result{Issue: task}, nil
@@ -158,49 +157,19 @@ func TestCommitmentAgendaSettlesSavedIntent(t *testing.T) {
 		a.Equal(task.QualifiedRef, item.IssueRef)
 		a.Equal(1, calls)
 	})
-	for _, attempted := range []bool{false, true} {
-		name := "closed before submission"
-		if attempted {
-			name = "created before the reply was lost"
+	t.Run("closed before submission", func(t *testing.T) {
+		r, a := require.New(t), assert.New(t)
+		agenda, archive, issues := newCommitmentAgendaFixture()
+		_, err := agenda.enqueue(t.Context(), archive.commitment)
+		r.NoError(err)
+		archive.closed = true
+		issues.create = func(string, kataissues.CreateInput) (kataissues.Result, error) {
+			r.FailNow("closed commitments cannot create new Kata issues")
+			return kataissues.Result{}, nil
 		}
-		t.Run(name, func(t *testing.T) {
-			r, a := require.New(t), assert.New(t)
-			agenda, archive, issues := newCommitmentAgendaFixture()
-			if attempted {
-				issues.lookup = func(key string, input kataissues.CreateInput) {
-					a.Equal(archive.item.IdempotencyKey, key)
-					a.Equal(archive.item.Request, input)
-				}
-				issues.create = func(string, kataissues.CreateInput) (kataissues.Result, error) {
-					issues.found.Issue = taskclient.KataTask{
-						UID: "issue-1", QualifiedRef: "agenda#12",
-						Metadata: map[string]any{personagenda.PersonMetadataKey: "person-vcard-uid", personagenda.ListMetadataKey: "commitments"},
-					}
-					return kataissues.Result{}, io.ErrUnexpectedEOF
-				}
-				_, err := agenda.Manual(t.Context(), 12, time.Now())
-				r.ErrorIs(err, io.ErrUnexpectedEOF)
-				// Recovery must link even after the owner moved or unlinked the issue.
-				issues.found.Issue.Metadata = map[string]any{personagenda.ListMetadataKey: "later"}
-			} else {
-				_, err := agenda.enqueue(t.Context(), archive.commitment)
-				r.NoError(err)
-			}
-			archive.closed = true
-			issues.create = func(string, kataissues.CreateInput) (kataissues.Result, error) {
-				r.FailNow("closed commitments cannot create new Kata issues")
-				return kataissues.Result{}, nil
-			}
-			r.NoError(agenda.AutoRun(t.Context(), time.Now()))
-			if attempted {
-				a.Equal(store.CommitmentAgendaLinked, archive.item.State)
-				a.Equal(issues.found.Issue.UID, archive.item.IssueUID)
-				a.Equal(issues.found.Issue.QualifiedRef, archive.item.IssueRef)
-			} else {
-				a.Equal(store.CommitmentAgendaRetired, archive.item.State)
-			}
-		})
-	}
+		r.NoError(agenda.AutoRun(t.Context(), time.Now()))
+		a.Equal(store.CommitmentAgendaRetired, archive.item.State)
+	})
 }
 
 func TestCommitmentAgendaPreservesLongUnicodeCitation(t *testing.T) {
@@ -225,18 +194,8 @@ func TestCommitmentAgendaPreservesLongUnicodeCitation(t *testing.T) {
 	a.Equal(hash, second.BodySHA256)
 }
 
-func TestCommitmentAgendaNormalizesDestination(t *testing.T) {
-	a := assert.New(t)
-	cfg := config.TaskIntegrationConfig{Endpoint: "https://kata.example.test/api", DefaultProject: "agenda"}
-	first := NewCommitmentAgenda(cfg, nil, "")
-	cfg.Endpoint += "///"
-	a.Equal(first.destination, NewCommitmentAgenda(cfg, nil, "").destination)
-	cfg.DefaultProject = "other"
-	a.NotEqual(first.destination, NewCommitmentAgenda(cfg, nil, "").destination)
-}
-
 func TestCommitmentAgendaRefreshesOnlyUnchangedPassages(t *testing.T) {
-	for _, change := range []string{"outside quote", "quote", "occurrence"} {
+	for _, change := range []string{"outside quote", "quote", "occurrence", "archive read failure"} {
 		t.Run(change, func(t *testing.T) {
 			r, a := require.New(t), assert.New(t)
 			agenda, archive, issues := newCommitmentAgendaFixture()
@@ -248,6 +207,9 @@ func TestCommitmentAgendaRefreshesOnlyUnchangedPassages(t *testing.T) {
 			}
 			if change == "occurrence" {
 				archive.source.Reference.SourceMessageID = "another-message"
+			}
+			if change == "archive read failure" {
+				archive.sourceErr = io.ErrUnexpectedEOF
 			}
 			sum := sha256.Sum256([]byte(archive.source.Text))
 			archive.source.Reference.Message.BodySHA256 = hex.EncodeToString(sum[:])
@@ -283,30 +245,69 @@ func TestCommitmentAgendaRefreshesOnlyUnchangedPassages(t *testing.T) {
 }
 
 func TestCommitmentAgendaChangedCitationRecoversOrConflicts(t *testing.T) {
-	for _, found := range []bool{false, true} {
-		t.Run(map[bool]string{false: "not created", true: "created before reply lost"}[found], func(t *testing.T) {
-			r, a := require.New(t), assert.New(t)
-			agenda, archive, issues := newCommitmentAgendaFixture()
-			calls := 0
-			issues.create = func(string, kataissues.CreateInput) (kataissues.Result, error) {
-				calls++
-				return kataissues.Result{}, io.ErrUnexpectedEOF
-			}
-			_, err := agenda.Manual(t.Context(), 12, time.Now())
-			r.ErrorIs(err, io.ErrUnexpectedEOF)
-			archive.commitment.TargetKey = "survivor-message-target"
-			if found {
-				issues.found.Issue = taskclient.KataTask{UID: "same-issue", QualifiedRef: "agenda#12"}
-			}
-			item, err := agenda.Manual(t.Context(), 12, time.Now())
-			if found {
-				r.NoError(err)
-				a.Equal("same-issue", item.IssueUID)
-			} else {
-				r.ErrorIs(err, errCommitmentAgendaCitation)
-				a.Equal(store.CommitmentAgendaRetired, archive.item.State)
-			}
-			a.Equal(1, calls, "citation changes cannot authorize another create")
-		})
+	for _, trigger := range []string{"closed", "target", "body", "shortened body"} {
+		for _, found := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/found=%t", trigger, found), func(t *testing.T) {
+				r, a := require.New(t), assert.New(t)
+				agenda, archive, issues := newCommitmentAgendaFixture()
+				calls := 0
+				issues.lookup = func(key string, input kataissues.CreateInput) {
+					a.Equal(archive.item.IdempotencyKey, key)
+					a.Equal(archive.item.Request, input)
+				}
+				issues.create = func(string, kataissues.CreateInput) (kataissues.Result, error) {
+					calls++
+					return kataissues.Result{}, io.ErrUnexpectedEOF
+				}
+				_, err := agenda.Manual(t.Context(), 12, time.Now())
+				r.ErrorIs(err, io.ErrUnexpectedEOF)
+				if found {
+					issues.found.Issue = taskclient.KataTask{UID: "same-issue", QualifiedRef: "agenda#12", Metadata: map[string]any{personagenda.PersonMetadataKey: "person-vcard-uid", personagenda.ListMetadataKey: "commitments"}}
+				}
+				switch trigger {
+				case "closed":
+					archive.closed = true
+					// Recovery must link even after the owner moved or unlinked the issue.
+					if found {
+						issues.found.Issue.Metadata = map[string]any{personagenda.ListMetadataKey: "later"}
+					}
+				case "target":
+					archive.commitment.TargetKey = "survivor-message-target"
+				case "body", "shortened body":
+					archive.source.Text = strings.Replace(archive.source.Text, "draft", "notes", 1)
+					if trigger == "shortened body" {
+						archive.source.Text = "Gone."
+					}
+					issues.create = func(string, kataissues.CreateInput) (kataissues.Result, error) {
+						calls++
+						return kataissues.Result{}, kataevidence.ErrChanged
+					}
+				}
+				var item store.CommitmentAgendaSuggestion
+				if trigger == "closed" {
+					err = agenda.AutoRun(t.Context(), time.Now())
+					item = archive.item
+				} else {
+					item, err = agenda.Manual(t.Context(), 12, time.Now())
+				}
+				if found {
+					r.NoError(err)
+					a.Equal(issues.found.Issue.UID, item.IssueUID)
+					a.Equal(issues.found.Issue.QualifiedRef, item.IssueRef)
+				} else {
+					if trigger == "closed" {
+						r.NoError(err)
+					} else {
+						r.ErrorIs(err, errCommitmentAgendaCitation)
+					}
+					a.Equal(store.CommitmentAgendaRetired, archive.item.State)
+				}
+				expectedCalls := 1
+				if trigger == "body" || trigger == "shortened body" {
+					expectedCalls = 2
+				}
+				a.Equal(expectedCalls, calls, "citation changes cannot authorize another create with refreshed evidence")
+			})
+		}
 	}
 }

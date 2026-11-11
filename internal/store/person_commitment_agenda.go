@@ -23,7 +23,6 @@ type CommitmentAgendaSuggestion struct {
 	CommitmentID   int64
 	TargetKey      string
 	IdempotencyKey string
-	DestinationKey string
 	Request        kataissues.CreateInput
 	Quote          string
 	State          string
@@ -32,14 +31,14 @@ type CommitmentAgendaSuggestion struct {
 	IssueRef       string
 }
 
-const commitmentAgendaColumns = `commitment_id, target_key, idempotency_key, destination_key, CAST(request_json AS TEXT),
+const commitmentAgendaColumns = `commitment_id, target_key, idempotency_key, CAST(request_json AS TEXT),
 	quote, state, attempted_at IS NOT NULL, COALESCE(issue_uid, ''), COALESCE(issue_ref, '')`
 const commitmentAgendaByID = `SELECT ` + commitmentAgendaColumns + ` FROM person_commitment_agenda WHERE commitment_id = ?`
 
 func scanCommitmentAgenda(row scanner) (CommitmentAgendaSuggestion, error) {
 	var item CommitmentAgendaSuggestion
 	var request string
-	err := row.Scan(&item.CommitmentID, &item.TargetKey, &item.IdempotencyKey, &item.DestinationKey, &request, &item.Quote,
+	err := row.Scan(&item.CommitmentID, &item.TargetKey, &item.IdempotencyKey, &request, &item.Quote,
 		&item.State, &item.Attempted, &item.IssueUID, &item.IssueRef)
 	if err == nil {
 		err = json.Unmarshal([]byte(request), &item.Request)
@@ -52,7 +51,7 @@ func (s *Store) GetCommitmentAgendaContext(ctx context.Context, id int64) (Commi
 }
 
 func (s *Store) EnqueueCommitmentAgendaContext(ctx context.Context, item CommitmentAgendaSuggestion) (CommitmentAgendaSuggestion, error) {
-	if item.CommitmentID <= 0 || item.TargetKey == "" || item.DestinationKey == "" ||
+	if item.CommitmentID <= 0 || item.TargetKey == "" ||
 		item.Request.PersonUID == "" || len(item.Request.Evidence) == 0 || item.Quote == "" {
 		return CommitmentAgendaSuggestion{}, ErrInvalidActivityRequest
 	}
@@ -63,14 +62,14 @@ func (s *Store) EnqueueCommitmentAgendaContext(ctx context.Context, item Commitm
 	var queued CommitmentAgendaSuggestion
 	err = s.withSourceMaintenanceGateContext(ctx, func(tx *loggedTx) error {
 		_, err := tx.ExecContext(ctx, `INSERT INTO person_commitment_agenda
-			(commitment_id, target_key, idempotency_key, destination_key, request_json, quote)
-			SELECT ?, ?, ?, ?, `+s.dialect.JSONBindExpr()+`, ? WHERE EXISTS (SELECT 1 FROM person_commitments
+			(commitment_id, target_key, idempotency_key, request_json, quote)
+			SELECT ?, ?, ?, `+s.dialect.JSONBindExpr()+`, ? WHERE EXISTS (SELECT 1 FROM person_commitments
 				WHERE id = ? AND target_key = ? AND quote = ? AND current_claim_id IS NOT NULL AND owner_state <> 'done')
 			ON CONFLICT (commitment_id) DO UPDATE SET target_key = excluded.target_key,
-				destination_key = excluded.destination_key, request_json = excluded.request_json,
+				request_json = excluded.request_json,
 				quote = excluded.quote, state = 'pending', deferred_at = NULL
 			WHERE person_commitment_agenda.attempted_at IS NULL AND person_commitment_agenda.state <> 'linked'`,
-			item.CommitmentID, item.TargetKey, newCommitmentAgendaKey(), item.DestinationKey,
+			item.CommitmentID, item.TargetKey, newCommitmentAgendaKey(),
 			string(request), item.Quote, item.CommitmentID, item.TargetKey, item.Quote)
 		if err != nil {
 			return err
@@ -82,38 +81,38 @@ func (s *Store) EnqueueCommitmentAgendaContext(ctx context.Context, item Commitm
 }
 
 // New rows receive an independent key before any Kata I/O. The receipt keeps
-// that key through retries and merges, even when SQLite reuses a commitment ID.
+// that key through retries and merges.
 func newCommitmentAgendaKey() string {
 	return "commitment-agenda:" + rand.Text()
 }
 
 // DeferCommitmentAgendaContext moves an unpreparable item out of the next
 // automatic batch. It records no attempted remote create.
-func (s *Store) DeferCommitmentAgendaContext(ctx context.Context, item PersonCommitment, destination string, now time.Time) error {
+func (s *Store) DeferCommitmentAgendaContext(ctx context.Context, item PersonCommitment, now time.Time) error {
 	return s.withSourceMaintenanceGateContext(ctx, func(tx *loggedTx) error {
 		_, err := tx.ExecContext(ctx, `INSERT INTO person_commitment_agenda
-			(commitment_id, target_key, idempotency_key, destination_key, request_json, quote, state, deferred_at)
-			SELECT ?, ?, ?, ?, `+s.dialect.JSONBindExpr()+`, ?, 'retired', ? WHERE EXISTS (SELECT 1 FROM person_commitments
+			(commitment_id, target_key, idempotency_key, request_json, quote, state, deferred_at)
+			SELECT ?, ?, ?, `+s.dialect.JSONBindExpr()+`, ?, 'retired', ? WHERE EXISTS (SELECT 1 FROM person_commitments
 				WHERE id = ? AND target_key = ? AND quote = ? AND current_claim_id IS NOT NULL AND owner_state <> 'done')
 			ON CONFLICT (commitment_id) DO UPDATE SET deferred_at = excluded.deferred_at
 			WHERE person_commitment_agenda.attempted_at IS NULL AND person_commitment_agenda.state <> 'linked'`,
-			item.ID, item.TargetKey, newCommitmentAgendaKey(), destination, "{}", item.Quote,
+			item.ID, item.TargetKey, newCommitmentAgendaKey(), "{}", item.Quote,
 			s.dialect.TimestampParam(now), item.ID, item.TargetKey, item.Quote)
 		return err
 	})
 }
 
-func (s *Store) ListPendingCommitmentAgendaContext(ctx context.Context, destination string, now time.Time, limit int) ([]CommitmentAgendaSuggestion, error) {
+func (s *Store) ListPendingCommitmentAgendaContext(ctx context.Context, now time.Time, limit int) ([]CommitmentAgendaSuggestion, error) {
 	if limit < 1 || limit > 20 {
 		return nil, ErrInvalidActivityRequest
 	}
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT `+commitmentAgendaColumns+
-		` FROM person_commitment_agenda WHERE state = 'pending' AND (destination_key = ? OR attempted_at IS NULL)
+		` FROM person_commitment_agenda WHERE state = 'pending'
 		AND (deferred_at IS NULL OR `+s.loopTimeKey("deferred_at")+` <= `+s.loopTimeKey("?")+`)
 		AND NOT EXISTS (SELECT 1 FROM person_commitments c WHERE c.id = commitment_id
 			AND c.owner_state = 'snoozed' AND `+s.loopTimeKey("c.snoozed_until")+` > `+s.loopTimeKey("?")+`)
 		ORDER BY deferred_at IS NOT NULL, deferred_at, attempted_at IS NOT NULL, attempted_at, commitment_id LIMIT ?`),
-		destination, s.dialect.TimestampParam(now.Add(-commitmentAgendaDeferFor)), s.dialect.TimestampParam(now), limit)
+		s.dialect.TimestampParam(now.Add(-commitmentAgendaDeferFor)), s.dialect.TimestampParam(now), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -131,12 +130,12 @@ func (s *Store) ListPendingCommitmentAgendaContext(ctx context.Context, destinat
 
 func (s *Store) MarkCommitmentAgendaAttemptContext(ctx context.Context, item CommitmentAgendaSuggestion, now time.Time, automatic bool) (bool, error) {
 	query := `UPDATE person_commitment_agenda SET attempted_at = ?, deferred_at = NULL
-		WHERE commitment_id = ? AND idempotency_key = ? AND state = 'pending' AND target_key = ? AND quote = ? AND destination_key = ?
+		WHERE commitment_id = ? AND idempotency_key = ? AND state = 'pending' AND target_key = ? AND quote = ?
 		AND EXISTS (SELECT 1 FROM person_commitments c WHERE c.id = commitment_id
 			AND c.target_key = person_commitment_agenda.target_key AND c.quote = person_commitment_agenda.quote
 			AND c.current_claim_id IS NOT NULL AND c.owner_state <> 'done'
 			AND ` + s.loopTimeKey("c.expires_at") + ` > ` + s.loopTimeKey("?")
-	args := []any{s.dialect.TimestampParam(now), item.CommitmentID, item.IdempotencyKey, item.TargetKey, item.Quote, item.DestinationKey, s.dialect.TimestampParam(now)}
+	args := []any{s.dialect.TimestampParam(now), item.CommitmentID, item.IdempotencyKey, item.TargetKey, item.Quote, s.dialect.TimestampParam(now)}
 	if automatic {
 		query += ` AND (c.owner_state <> 'snoozed' OR ` + s.loopTimeKey("c.snoozed_until") + ` <= ` + s.loopTimeKey("?") + `)`
 		args = append(args, s.dialect.TimestampParam(now))

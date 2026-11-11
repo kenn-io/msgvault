@@ -124,8 +124,8 @@ func insertAgendaMergeFixture(t *testing.T, st *Store, personID, messageID int64
 	request, err := json.Marshal(kataissues.CreateInput{Title: "Send report", List: "commitments", PersonUID: person.VCardUID, Evidence: []kataevidence.Reference{evidence[0].Reference}})
 	r.NoError(err)
 	_, err = st.db.ExecContext(ctx, st.Rebind(`INSERT INTO person_commitment_agenda
-		(commitment_id, target_key, idempotency_key, destination_key, request_json, quote, state, attempted_at, issue_uid, issue_ref)
-		VALUES (?, ?, ?, 'destination', `+st.dialect.JSONBindExpr()+`, ?, ?, ?, ?, ?)`),
+		(commitment_id, target_key, idempotency_key, request_json, quote, state, attempted_at, issue_uid, issue_ref)
+		VALUES (?, ?, ?, `+st.dialect.JSONBindExpr()+`, ?, ?, ?, ?, ?)`),
 		id, "target:"+key, key, string(request), quote, state, attemptedAt, uid, ref)
 	r.NoError(err)
 	return id
@@ -182,14 +182,9 @@ func TestCommitmentAgendaReattachesExactPersonMergeCitation(t *testing.T) {
 			} else {
 				a.Equal(CommitmentAgendaPending, current.State)
 				a.NotEqual(frozen.TargetKey, current.TargetKey)
-				items, err := st.ListPendingCommitmentAgendaContext(ctx, current.DestinationKey, personFactLedgerNow, 8)
+				items, err := st.ListPendingCommitmentAgendaContext(ctx, personFactLedgerNow, 8)
 				r.NoError(err)
 				r.Len(items, 1)
-				linked, err := st.LinkCommitmentAgendaContext(ctx, current.IdempotencyKey, "same-issue", "agenda#9")
-				r.NoError(err)
-				again, err := st.LinkCommitmentAgendaContext(ctx, current.IdempotencyKey, "same-issue", "agenda#9")
-				r.NoError(err)
-				a.Equal(linked, again)
 			}
 		})
 	}

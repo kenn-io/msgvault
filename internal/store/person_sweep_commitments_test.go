@@ -98,7 +98,6 @@ func TestApplyCommitmentOnlySweepPreservesDecisionAcrossRequote(t *testing.T) {
 
 	_, err = st.DecidePersonCommitmentContext(ctx, decision.ID, LoopStateSnoozed, nil, request.CompletedAt)
 	a.ErrorIs(err, ErrInvalidActivityRequest)
-
 }
 
 func newCommitmentTestConversation(t *testing.T, f personSweepApplyFixture) (int64, func(string, string, time.Duration) int64) {
@@ -424,7 +423,7 @@ func TestCommitmentAgendaReceiptLifecycle(t *testing.T) {
 	r.Len(evidence, 1)
 	item := CommitmentAgendaSuggestion{
 		CommitmentID: commitment.ID, TargetKey: commitment.TargetKey,
-		DestinationKey: "first", Quote: evidence[0].Excerpt,
+		Quote: evidence[0].Excerpt,
 		Request: kataissues.CreateInput{Title: commitment.Summary, List: "commitments", PersonUID: "synthetic-uid",
 			Evidence: []kataevidence.Reference{evidence[0].Reference}},
 	}
@@ -433,28 +432,28 @@ func TestCommitmentAgendaReceiptLifecycle(t *testing.T) {
 	a.Equal(CommitmentAgendaPending, pending.State)
 	key := pending.IdempotencyKey
 	a.NotEmpty(key)
-	item.DestinationKey = "second"
+	item.Request.Title = "Updated before attempt"
 	pending, err = st.EnqueueCommitmentAgendaContext(ctx, item)
 	r.NoError(err)
-	a.Equal(item.DestinationKey, pending.DestinationKey)
+	a.Equal(item.Request.Title, pending.Request.Title)
 	a.Equal(key, pending.IdempotencyKey)
 	until := now.Add(time.Hour)
 	_, err = st.DecidePersonCommitmentContext(ctx, commitment.ID, LoopStateSnoozed, &until, now)
 	r.NoError(err)
-	batch, err := st.ListPendingCommitmentAgendaContext(ctx, "second", now, 8)
+	batch, err := st.ListPendingCommitmentAgendaContext(ctx, now, 8)
 	r.NoError(err)
 	a.Empty(batch)
 	marked, err := st.MarkCommitmentAgendaAttemptContext(ctx, pending, now, false)
 	r.NoError(err)
 	r.True(marked)
-	item.DestinationKey = "third"
+	item.Request.Title = "Changed after attempt"
 	frozen, err := st.EnqueueCommitmentAgendaContext(ctx, item)
 	r.NoError(err)
-	a.Equal("second", frozen.DestinationKey)
+	a.Equal(pending.Request.Title, frozen.Request.Title)
 	a.Equal(key, frozen.IdempotencyKey)
-	batch, err = st.ListPendingCommitmentAgendaContext(ctx, "third", until, 8)
+	batch, err = st.ListPendingCommitmentAgendaContext(ctx, until, 8)
 	r.NoError(err)
-	a.Empty(batch)
+	r.Len(batch, 1)
 	_, err = st.DecidePersonCommitmentContext(ctx, commitment.ID, LoopStateDone, nil, now)
 	r.NoError(err)
 	r.NoError(st.RetireCommitmentAgendaContext(ctx, key))
@@ -471,6 +470,9 @@ func TestCommitmentAgendaReceiptLifecycle(t *testing.T) {
 	r.NoError(err)
 	a.Equal(CommitmentAgendaLinked, linked.State)
 	a.Equal("synthetic#7", linked.IssueRef)
+	again, err := st.LinkCommitmentAgendaContext(ctx, key, "issue-uid", "synthetic#7")
+	r.NoError(err)
+	a.Equal(linked, again)
 }
 
 func commitmentSourceID(window peoplesweep.CommitmentWindow, id int64) string {

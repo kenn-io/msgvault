@@ -99,7 +99,7 @@ func (s *Store) ListPersonCommitmentsContext(ctx context.Context, personID int64
 type commitmentListFilter struct {
 	personID, id                  int64
 	includeSnoozed, includeClosed bool
-	agendaDestination             string
+	agendaCandidates              bool
 	agendaDeferred                bool
 	afterID                       *int64
 	eligible                      func(PersonCommitment) bool
@@ -120,8 +120,8 @@ func (s *Store) GetOpenPersonCommitmentContext(ctx context.Context, id int64, no
 	return items[0], nil
 }
 
-func (s *Store) ListCommitmentAgendaCandidatesContext(ctx context.Context, destination string, now time.Time, limit int) ([]PersonCommitment, error) {
-	filter := commitmentListFilter{agendaDestination: destination}
+func (s *Store) ListCommitmentAgendaCandidatesContext(ctx context.Context, now time.Time, limit int) ([]PersonCommitment, error) {
+	filter := commitmentListFilter{agendaCandidates: true}
 	items, err := s.listPersonCommitments(ctx, filter, now, limit)
 	if err != nil || len(items) == limit {
 		return items, err
@@ -192,11 +192,10 @@ func (s *Store) loadCommitmentCandidates(ctx context.Context, filter commitmentL
 			query += ` AND id = ?`
 			args = append(args, filter.id)
 		}
-		if filter.agendaDestination != "" {
+		if filter.agendaCandidates {
 			query += ` AND NOT EXISTS (SELECT 1 FROM person_commitment_agenda a
 				WHERE a.commitment_id = person_commitments.id AND (a.state <> 'retired'
-					OR (a.attempted_at IS NOT NULL AND (a.destination_key <> ? OR a.target_key <> person_commitments.target_key OR a.quote <> person_commitments.quote))))`
-			args = append(args, filter.agendaDestination)
+					OR (a.attempted_at IS NOT NULL AND (a.target_key <> person_commitments.target_key OR a.quote <> person_commitments.quote))))`
 			const deferred = ` (SELECT 1 FROM person_commitment_agenda a
 				WHERE a.commitment_id = person_commitments.id AND a.deferred_at IS NOT NULL`
 			if filter.agendaDeferred {

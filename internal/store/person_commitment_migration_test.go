@@ -20,6 +20,7 @@ func TestCommitmentMigrationUpgradesVersion40(t *testing.T) {
 	installPersonFactClaimOrigin(t, st, `CHECK (origin IN ('extraction', 'enrichment', 'brief', 'system', 'invalid'))`)
 	installPersonSweepBatchPurpose(t, st, `CHECK ((call_ordinal = 0 AND purpose IN ('primary', 'brief')) OR (call_ordinal = 1 AND purpose IN ('repair', 'brief_repair')))`)
 	for _, query := range []string{
+		`DROP TABLE person_commitment_agenda`,
 		`DROP TABLE person_commitment_frontiers`,
 		`DROP TABLE person_commitments`,
 		`ALTER TABLE person_sweep_attempts DROP COLUMN commitment_failure_class`,
