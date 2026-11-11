@@ -28,8 +28,8 @@ type objectMetadata struct {
 	// Hidden records a hide made through msgvault. Sync keeps it because it
 	// starts from the stored metadata and Graph reads do not return it.
 	Hidden bool `json:"hidden,omitempty"`
-	// Outbound marks a reply msgvault posted. Meta does not say which
-	// Instagram commenter is the account, so sync keeps this instead.
+	// Outbound marks a reply msgvault posted. Meta may omit or not identify
+	// its author, so sync keeps this instead.
 	Outbound bool `json:"outbound,omitempty"`
 }
 
@@ -155,7 +155,7 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 			fromName = previous[0].FromName
 		}
 	}
-	if r.imp.instagram != "" && !self {
+	if !self {
 		if !meta.Outbound && !exists {
 			sent, err := r.imp.store.SentMetaCommentReplyContext(ctx, r.source.ID, obj.ID)
 			if err != nil {

@@ -106,43 +106,46 @@ func TestReplyToCommentOutcomes(t *testing.T) {
 	}
 
 	t.Run("lost answer blocks a resend until cleared", func(t *testing.T) {
+		assert, require := assert.New(t), require.New(t)
 		st, target, f, client := setup(t)
 		f.postStatus = http.StatusBadGateway
 		_, err := ReplyToComment(t.Context(), st, client, target, "Thanks")
-		require.ErrorIs(t, err, ErrReplyUnknown)
+		require.ErrorIs(err, ErrReplyUnknown)
 		f.postStatus = http.StatusOK
 		_, err = ReplyToComment(t.Context(), st, client, target, "Thanks")
-		require.ErrorIs(t, err, ErrReplyUnknown)
-		assert.Equal(t, 1, posts(f), "the unknown reply blocks an identical send")
+		require.ErrorIs(err, ErrReplyUnknown)
+		assert.Equal(1, posts(f), "the unknown reply blocks an identical send")
 		_, err = ReplyToComment(t.Context(), st, client, target, "Thanks, again")
-		require.NoError(t, err, "a different reply is not blocked")
+		require.NoError(err, "a different reply is not blocked")
 
-		require.NoError(t, ClearUnknownReply(t.Context(), st, target, "Thanks"))
+		require.NoError(ClearUnknownReply(t.Context(), st, target, "Thanks"))
 		_, err = ReplyToComment(t.Context(), st, client, target, "Thanks")
-		require.NoError(t, err)
-		assert.Equal(t, 3, posts(f))
-		require.Error(t, ClearUnknownReply(t.Context(), st, target, "Thanks"), "a sent reply cannot be cleared")
+		require.NoError(err)
+		assert.Equal(3, posts(f))
+		require.Error(ClearUnknownReply(t.Context(), st, target, "Thanks"), "a sent reply cannot be cleared")
 	})
 	t.Run("refused reply can be sent again", func(t *testing.T) {
+		require := require.New(t)
 		st, target, f, client := setup(t)
 		f.postStatus = http.StatusBadRequest
 		_, err := ReplyToComment(t.Context(), st, client, target, "Thanks")
-		require.ErrorAs(t, err, new(*APIError))
-		require.NotErrorIs(t, err, ErrReplyUnknown)
+		require.ErrorAs(err, new(*APIError))
+		require.NotErrorIs(err, ErrReplyUnknown)
 		f.postStatus = http.StatusOK
 		_, err = ReplyToComment(t.Context(), st, client, target, "Thanks")
-		require.NoError(t, err)
+		require.NoError(err)
 		assert.Equal(t, 2, posts(f))
 	})
 	t.Run("refusal in an HTTP 200 body can be sent again", func(t *testing.T) {
+		require := require.New(t)
 		st, target, f, client := setup(t)
 		f.posted = `{"error":{"code":368,"message":"synthetic"}}`
 		_, err := ReplyToComment(t.Context(), st, client, target, "Thanks")
-		require.ErrorAs(t, err, new(*APIError))
-		require.NotErrorIs(t, err, ErrReplyUnknown)
+		require.ErrorAs(err, new(*APIError))
+		require.NotErrorIs(err, ErrReplyUnknown)
 		f.posted = posted
 		_, err = ReplyToComment(t.Context(), st, client, target, "Thanks")
-		require.NoError(t, err)
+		require.NoError(err)
 		assert.Equal(t, 2, posts(f))
 	})
 	t.Run("top-level target is the parent when Meta omits it", func(t *testing.T) {
@@ -153,50 +156,76 @@ func TestReplyToCommentOutcomes(t *testing.T) {
 		assert.Equal(t, target.MessageID, message(t, st, target.SourceID, "100_202").ReplyToMessageID.Int64)
 	})
 	t.Run("posted reply that cannot be recorded says so", func(t *testing.T) {
+		assert, require := assert.New(t), require.New(t)
 		st, target, f, client := setup(t)
 		_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER block_reply_finish BEFORE UPDATE ON meta_comment_replies
 			BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END`)
-		require.NoError(t, err)
+		require.NoError(err)
 		replyID, err := ReplyToComment(t.Context(), st, client, target, "Thanks")
-		require.ErrorContains(t, err, "reply 100_202 was posted")
-		require.ErrorContains(t, err, "check the comment on Facebook before sending it again")
-		assert.Equal(t, "100_202", replyID)
+		require.ErrorContains(err, "reply 100_202 was posted")
+		require.ErrorContains(err, "check the comment on Facebook before sending it again")
+		assert.Equal("100_202", replyID)
 		_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER block_reply_finish`)
-		require.NoError(t, err)
+		require.NoError(err)
 		_, err = ReplyToComment(t.Context(), st, client, target, "Thanks")
-		require.ErrorIs(t, err, ErrReplyUnknown, "the unrecorded reply still blocks a resend")
-		assert.Equal(t, 1, posts(f))
+		require.ErrorIs(err, ErrReplyUnknown, "the unrecorded reply still blocks a resend")
+		assert.Equal(1, posts(f))
 	})
 	t.Run("posted reply that cannot be read back still counts as sent", func(t *testing.T) {
+		assert, require := assert.New(t), require.New(t)
 		st, target, f, client := setup(t)
 		f.getStatus = http.StatusInternalServerError
 		replyID, err := ReplyToComment(t.Context(), st, client, target, "Thanks")
-		require.ErrorContains(t, err, "not archived")
-		assert.Equal(t, "100_202", replyID)
+		require.ErrorContains(err, "not archived")
+		assert.Equal("100_202", replyID)
 		_, err = ReplyToComment(t.Context(), st, client, target, "Thanks")
-		require.ErrorIs(t, err, ErrReplySent)
-		assert.Equal(t, 1, posts(f))
+		require.ErrorIs(err, ErrReplySent)
+		assert.Equal(1, posts(f))
 	})
 }
 
 func TestReplyArchiveMatchesLaterSync(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st, f, imp, src := setupImport(t)
-	f.comments["100_200"] = []Object{*comment("100_201", "100_200", "Example comment")}
-	_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
-	require.NoError(err)
-	target, err := ResolveCommentTarget(t.Context(), st, message(t, st, src.ID, "100_201").ID)
-	require.NoError(err)
-	_, client := newReplyFixture(t, `{"id":"100_202"}`,
-		`{"id":"100_202","message":"Thanks","created_time":"2026-10-02T12:00:00+0000","from":{"id":"100","name":"Example Page"},"parent":{"id":"100_201"}}`)
-	_, err = ReplyToComment(t.Context(), st, client, target, "Thanks")
-	require.NoError(err)
+	for _, tt := range []struct {
+		name, readFrom string
+		syncFrom       *Actor
+	}{
+		{"with author", `"from":{"id":"100","name":"Example Page"},`, &Actor{ID: "100", Name: "Example Page"}},
+		{"without author", "", nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st, f, imp, src := setupImport(t)
+			f.comments["100_200"] = []Object{*comment("100_201", "100_200", "Example comment")}
+			_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+			require.NoError(err)
+			target, err := ResolveCommentTarget(t.Context(), st, message(t, st, src.ID, "100_201").ID)
+			require.NoError(err)
+			_, client := newReplyFixture(t, `{"id":"100_202"}`,
+				`{"id":"100_202","message":"Thanks","created_time":"2026-10-02T12:00:00+0000",`+tt.readFrom+`"parent":{"id":"100_201"}}`)
+			_, err = ReplyToComment(t.Context(), st, client, target, "Thanks")
+			require.NoError(err)
+			ownership := func(id string) (bool, bool) {
+				stored, err := st.StoredMessagesContext(t.Context(), src.ID, rawFormat, []string{id})
+				require.NoError(err)
+				return message(t, st, src.ID, id).IsFromMe, stored[id].SourceIsFromMe.Valid && stored[id].SourceIsFromMe.Bool
+			}
+			isFromMe, sourceIsFromMe := ownership("100_202")
+			assert.True(isFromMe, "the reply msgvault posted is the owner's")
+			assert.True(sourceIsFromMe)
 
-	f.comments["100_201"] = []Object{{ID: "100_202", Message: "Thanks", CreatedTime: "2026-10-02T12:00:00+0000", From: &Actor{ID: "100", Name: "Example Page"}, Parent: &Actor{ID: "100_201"}}}
-	sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
-	require.NoError(err, "sync accepts the reply msgvault archived")
-	assert.Zero(sum.MessagesAdded)
-	assert.True(message(t, st, src.ID, "100_202").IsFromMe)
+			f.comments["100_200"] = append(f.comments["100_200"], Object{ID: "100_203", Message: "Unrelated", CreatedTime: "2026-10-02T13:00:00+0000", Parent: &Actor{ID: "100_200"}})
+			f.comments["100_201"] = []Object{{ID: "100_202", Message: "Thanks", CreatedTime: "2026-10-02T12:00:00+0000", From: tt.syncFrom, Parent: &Actor{ID: "100_201"}}}
+			sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+			require.NoError(err, "sync accepts the reply msgvault archived")
+			assert.Equal(1, sum.MessagesAdded, "only the unrelated comment is new")
+			isFromMe, sourceIsFromMe = ownership("100_202")
+			assert.True(isFromMe, "sync keeps the reply the owner's")
+			assert.True(sourceIsFromMe)
+			isFromMe, sourceIsFromMe = ownership("100_203")
+			assert.False(isFromMe, "a comment msgvault did not post is not proven the owner's")
+			assert.False(sourceIsFromMe)
+		})
+	}
 }
 
 func TestReplyToNestedFacebookCommentWaitsForSync(t *testing.T) {
