@@ -170,7 +170,9 @@ Sometimes msgvault cannot tell whether Meta posted a reply, for example when
 the connection drops. Then the same reply is refused until you check:
 
 1. Open the comment on Facebook or Instagram.
-2. If the reply is there, do nothing. The next sync archives it.
+2. If the reply is there, do nothing. The next sync archives it, but
+   msgvault cannot prove you sent it. On Instagram it is not marked as sent
+   by you; on Facebook it is only when Meta names the Page as its author.
 3. If it is not there, clear the record, then send the reply again:
 
    ```bash
