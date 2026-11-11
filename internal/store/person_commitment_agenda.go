@@ -129,19 +129,28 @@ func (s *Store) DeferCommitmentAgendaContext(ctx context.Context, item PersonCom
 	})
 }
 
+// pendingCommitmentAgendaSQL ranks eligible receipts inside their class, then
+// interleaves fresh and attempted work in scheduled batches.
+// Each class keeps its deferral and attempt rotation.
+func (s *Store) pendingCommitmentAgendaSQL() string {
+	return `SELECT ` + commitmentAgendaColumns + ` FROM (
+		SELECT *, ROW_NUMBER() OVER (PARTITION BY attempted_at IS NOT NULL
+			ORDER BY deferred_at IS NOT NULL, deferred_at, attempted_at, commitment_id) AS class_rank
+		FROM person_commitment_agenda WHERE state = 'pending'
+		AND EXISTS (SELECT 1 FROM person_commitments c WHERE c.id = commitment_id
+			AND EXISTS (SELECT 1 FROM person_tracking pt WHERE pt.person_id = c.person_id)
+			AND (attempted_at IS NOT NULL OR ` + commitmentAgendaMatchingCompleteSQL("c.person_id") + `))
+		AND (deferred_at IS NULL OR ` + s.loopTimeKey("deferred_at") + ` <= ` + s.loopTimeKey("?") + `)
+		AND NOT EXISTS (SELECT 1 FROM person_commitments c WHERE c.id = commitment_id
+			AND c.owner_state = 'snoozed' AND ` + s.loopTimeKey("c.snoozed_until") + ` > ` + s.loopTimeKey("?") + `)
+	) AS pending ORDER BY class_rank, attempted_at IS NULL LIMIT ?`
+}
+
 func (s *Store) ListPendingCommitmentAgendaContext(ctx context.Context, now time.Time, limit int) ([]CommitmentAgendaSuggestion, error) {
 	if limit < 1 || limit > 20 {
 		return nil, ErrInvalidActivityRequest
 	}
-	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT `+commitmentAgendaColumns+
-		` FROM person_commitment_agenda WHERE state = 'pending'
-		AND EXISTS (SELECT 1 FROM person_commitments c WHERE c.id = commitment_id
-			AND EXISTS (SELECT 1 FROM person_tracking pt WHERE pt.person_id = c.person_id)
-			AND (attempted_at IS NOT NULL OR `+commitmentAgendaMatchingCompleteSQL("c.person_id")+`))
-		AND (deferred_at IS NULL OR `+s.loopTimeKey("deferred_at")+` <= `+s.loopTimeKey("?")+`)
-		AND NOT EXISTS (SELECT 1 FROM person_commitments c WHERE c.id = commitment_id
-			AND c.owner_state = 'snoozed' AND `+s.loopTimeKey("c.snoozed_until")+` > `+s.loopTimeKey("?")+`)
-		ORDER BY deferred_at IS NOT NULL, deferred_at, attempted_at IS NOT NULL, attempted_at, commitment_id LIMIT ?`),
+	rows, err := s.db.QueryContext(ctx, s.Rebind(s.pendingCommitmentAgendaSQL()),
 		s.dialect.TimestampParam(now.Add(-commitmentAgendaDeferFor)), s.dialect.TimestampParam(now), limit)
 	if err != nil {
 		return nil, err
