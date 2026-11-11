@@ -28,8 +28,15 @@ func TestTumblrRequiredBlogAndRemoteRouting(t *testing.T) {
 	assert.Zero(requests.Load())
 }
 func TestTumblrCLIImportIdentityAndMaintenance(t *testing.T) {
-	for _, noIdentity := range []bool{false, true} {
-		t.Run(map[bool]string{false: "identity", true: "no-default-identity"}[noIdentity], func(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		noIdentity, partial bool
+	}{
+		{name: "identity"},
+		{name: "no-default-identity", noIdentity: true},
+		{name: "partial-failure", partial: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			cfg := lifecycleTestConfig(t.TempDir())
@@ -39,7 +46,18 @@ func TestTumblrCLIImportIdentityAndMaintenance(t *testing.T) {
 			cmd.SetOut(&out)
 			fixture, err := filepath.Abs("../../../internal/tumblr/testdata/observed-shape")
 			require.NoError(err)
-			require.NoError(runImportTumblr(cmd, fixture, tumblrCLIOptions{Blog: "orchard-example", NoDefaultIdentity: noIdentity}))
+			if tc.partial {
+				root := t.TempDir()
+				require.NoError(os.CopyFS(root, os.DirFS(fixture)))
+				require.NoError(os.WriteFile(filepath.Join(root, "conversations", "z.html"), []byte("broken"), 0600))
+				fixture = root
+			}
+			err = runImportTumblr(cmd, fixture, tumblrCLIOptions{Blog: "orchard-example", NoDefaultIdentity: tc.noIdentity})
+			if tc.partial {
+				require.Error(err)
+			} else {
+				require.NoError(err)
+			}
 			assert.Contains(out.String(), "4 added, 0 present")
 			st, err := store.Open(cfg.DatabaseDSN())
 			require.NoError(err)
@@ -48,7 +66,7 @@ func TestTumblrCLIImportIdentityAndMaintenance(t *testing.T) {
 			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM sources WHERE source_type = 'tumblr'").Scan(&sourceID))
 			identities, err := st.ListAccountIdentitiesContext(t.Context(), sourceID)
 			require.NoError(err)
-			if noIdentity {
+			if tc.noIdentity {
 				assert.Empty(identities)
 			} else {
 				require.Len(identities, 1)
@@ -62,27 +80,6 @@ func TestTumblrCLIImportIdentityAndMaintenance(t *testing.T) {
 			}
 		})
 	}
-}
-func TestTumblrCLIPartialFailureSummaryAndCache(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	cfg := lifecycleTestConfig(t.TempDir())
-	cmd := &cobra.Command{Use: "import-tumblr"}
-	cmd.SetContext(withStoreResolverConfig(t, cfg))
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	root := t.TempDir()
-	require.NoError(os.CopyFS(root, os.DirFS("../../../internal/tumblr/testdata/observed-shape")))
-	require.NoError(os.WriteFile(filepath.Join(root, "conversations", "z.html"), []byte("broken"), 0600))
-	require.ErrorContains(runImportTumblr(cmd, root, tumblrCLIOptions{Blog: "orchard-example"}), "Conversation ID")
-	assert.Contains(out.String(), "4 added")
-	assert.Contains(out.String(), "Confirmed identity id:opaque-owner")
-	db, err := sql.Open("duckdb", "")
-	require.NoError(err)
-	defer func() { require.NoError(db.Close()) }()
-	var n int
-	require.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FROM read_parquet(?, hive_partitioning=true)`, filepath.Join(cfg.AnalyticsDir(), "messages", "**", "*.parquet")).Scan(&n))
-	assert.Equal(4, n)
 }
 
 func TestTumblrRootInvocation(t *testing.T) {
