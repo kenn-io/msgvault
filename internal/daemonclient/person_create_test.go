@@ -14,12 +14,17 @@ import (
 func TestCreatePersonIfExistsDaemonRoundTrip(t *testing.T) {
 	for _, status := range []string{"created", "matched_existing"} {
 		t.Run(status, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			engine := newPeopleBrowserTestEngine(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, "/api/v1/people/create", r.URL.Path)
+				assert.Equal("/api/v1/people/create", r.URL.Path)
 				var body store.PersonCreateInput
-				require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-				assert.Equal(t, store.PersonIfExistsReturn, body.IfExists)
-				assert.Equal(t, store.ProvenanceEnrichment, body.Source)
+				if !assert.NoError(json.NewDecoder(r.Body).Decode(&body)) {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				assert.Equal(store.PersonIfExistsReturn, body.IfExists)
+				assert.Equal(store.ProvenanceEnrichment, body.Source)
 				code, basis, unapplied := http.StatusCreated, `[]`, `[]`
 				if status == "matched_existing" {
 					code = http.StatusOK
@@ -29,15 +34,15 @@ func TestCreatePersonIfExistsDaemonRoundTrip(t *testing.T) {
 				writePeopleBrowserJSON(t, w, code, fmt.Sprintf(`{"id":12,"display_name":"Alex Example","vcard_uid":"person-12","revision":1,"participant_ids":[],"created_at":"2026-10-08T12:00:00Z","updated_at":"2026-10-08T12:00:00Z","ensure":{"status":%q,"match_basis":%s,"unapplied_contacts":%s}}`, status, basis, unapplied))
 			}))
 			person, err := engine.CreatePerson(t.Context(), store.PersonCreateInput{Name: "Alex Example", IfExists: store.PersonIfExistsReturn, Source: store.ProvenanceEnrichment, Emails: []store.PersonCreateContact{{Value: "alex@example.test"}}, Phones: []store.PersonCreateContact{{Value: "+12025550123"}}})
-			require.NoError(t, err)
-			require.NotNil(t, person.Ensure)
-			assert.Equal(t, store.PersonEnsureStatus(status), person.Ensure.Status)
+			require.NoError(err)
+			require.NotNil(person.Ensure)
+			assert.Equal(store.PersonEnsureStatus(status), person.Ensure.Status)
 			if status == "created" {
-				assert.Empty(t, person.Ensure.MatchBasis)
-				assert.Empty(t, person.Ensure.UnappliedContacts)
+				assert.Empty(person.Ensure.MatchBasis)
+				assert.Empty(person.Ensure.UnappliedContacts)
 			} else {
-				assert.Equal(t, []store.PersonMatchBasis{{Kind: store.ContactAddressEmail, Value: "alex@example.test", Matched: "contact_point", PersonID: new(int64(12))}}, person.Ensure.MatchBasis)
-				assert.Equal(t, []store.PersonUnappliedContact{{Kind: store.ContactAddressPhone, Value: "+12025550123", Type: "cell"}}, person.Ensure.UnappliedContacts)
+				assert.Equal([]store.PersonMatchBasis{{Kind: store.ContactAddressEmail, Value: "alex@example.test", Matched: "contact_point", PersonID: new(int64(12))}}, person.Ensure.MatchBasis)
+				assert.Equal([]store.PersonUnappliedContact{{Kind: store.ContactAddressPhone, Value: "+12025550123", Type: "cell"}}, person.Ensure.UnappliedContacts)
 			}
 		})
 	}

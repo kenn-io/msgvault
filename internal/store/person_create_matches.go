@@ -227,16 +227,17 @@ func (s *Store) resolvePersonCreateMatchesTx(ctx context.Context, tx *loggedTx, 
 	}
 	if len(people) == 0 && len(participants) == 1 {
 		id := participants[0]
-		return nil, &PersonMatchesParticipantError{ParticipantID: id, MatchBasis: matches.basis, Next: &PersonCreateNext{CLI: []string{"msgvault", "person", "promote", strconv.FormatInt(id, 10), "--json"}, MCP: PersonCreateMCPNext{Tool: "promote_person", Arguments: map[string]int64{"participant_id": id}}}}
+		return nil, &PersonMatchesParticipantError{ParticipantID: id, MatchBasis: matches.basis, Next: &PersonCreateNext{CLI: []string{"msgvault", string(AttributeObjectPerson), "promote", strconv.FormatInt(id, 10), "--json"}, MCP: PersonCreateMCPNext{Tool: "promote_person", Arguments: map[string]int64{"participant_id": id}}}}
 	}
 	candidates := []PersonCreateCandidate{}
+	const personTable = "persons"
 	for _, group := range []struct {
 		ids   []int64
 		table string
-	}{{people, "persons"}, {participants, "participants"}} {
+	}{{people, personTable}, {participants, "participants"}} {
 		for _, id := range group.ids {
 			candidate := PersonCreateCandidate{}
-			if group.table == "persons" {
+			if group.table == personTable {
 				candidate.PersonID = new(id)
 			} else {
 				candidate.ParticipantID = new(id)

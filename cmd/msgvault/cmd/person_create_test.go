@@ -128,6 +128,8 @@ func TestPersonCreateCLIRejectsTitleWithoutOrg(t *testing.T) {
 func TestPersonCreateCLIIfExistsPublishBoundary(t *testing.T) {
 	for _, status := range []string{"created", "matched_existing"} {
 		t.Run(status, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			var publishes int
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
@@ -136,8 +138,11 @@ func TestPersonCreateCLIIfExistsPublishBoundary(t *testing.T) {
 					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"5.2.0"}`))
 				case "/api/v1/people/create":
 					var input map[string]any
-					require.NoError(t, json.NewDecoder(r.Body).Decode(&input))
-					assert.Equal(t, "return", input["if_exists"])
+					if !assert.NoError(json.NewDecoder(r.Body).Decode(&input)) {
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					assert.Equal("return", input["if_exists"])
 					code, basis := http.StatusCreated, `[]`
 					if status == "matched_existing" {
 						code = http.StatusOK
@@ -150,7 +155,7 @@ func TestPersonCreateCLIIfExistsPublishBoundary(t *testing.T) {
 					w.WriteHeader(http.StatusConflict)
 					_, _ = w.Write([]byte(`{"error":"carddav_inference_review_required","message":"Preview and approve publication"}`))
 				default:
-					assert.Fail(t, "unexpected path", r.URL.Path)
+					assert.Fail("unexpected path", r.URL.Path)
 				}
 			}))
 			t.Cleanup(server.Close)
@@ -165,18 +170,20 @@ func TestPersonCreateCLIIfExistsPublishBoundary(t *testing.T) {
 			cmd.SetArgs([]string{"--name", "Ignored Name", "--email", "alex@example.test", "--if-exists", "return", "--publish"})
 			err := cmd.Execute()
 			if status == "created" {
-				require.ErrorContains(t, err, "publication failed")
-				assert.Equal(t, 1, publishes)
+				require.ErrorContains(err, "publication failed")
+				assert.Equal(1, publishes)
 			} else {
-				require.NoError(t, err)
-				assert.Equal(t, "Matched person 12 (Alex Example) by email alex@example.test\n", out.String())
-				assert.Zero(t, publishes)
+				require.NoError(err)
+				assert.Equal("Matched person 12 (Alex Example) by email alex@example.test\n", out.String())
+				assert.Zero(publishes)
 			}
 		})
 	}
 }
 
 func TestPersonCreateCLIIfExistsProduction(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	srv := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "test-key"}}, Store: &storeAPIAdapter{store: st}, Logger: slog.New(slog.DiscardHandler)})
 	server := httptest.NewServer(srv.Router())
@@ -193,22 +200,29 @@ func TestPersonCreateCLIIfExistsProduction(t *testing.T) {
 		command.SetArgs([]string{"--name", "Alex Example", "--email", email, "--if-exists", "return", "--json"})
 		err := command.Execute()
 		var body map[string]any
-		require.NoError(t, json.Unmarshal(out.Bytes(), &body))
-		return body, err
+		require.NoError(json.Unmarshal(out.Bytes(), &body))
+		if err != nil {
+			return body, fmt.Errorf("execute person create: %w", err)
+		}
+		return body, nil
 	}
 	first, err := run("alex@example.test")
-	require.NoError(t, err)
-	assert.Equal(t, "created", first["ensure"].(map[string]any)["status"])
+	require.NoError(err)
+	firstEnsure, ok := first["ensure"].(map[string]any)
+	require.True(ok)
+	assert.Equal("created", firstEnsure["status"])
 	second, err := run("alex@example.test")
-	require.NoError(t, err)
-	assert.Equal(t, first["id"], second["id"])
-	assert.Equal(t, "matched_existing", second["ensure"].(map[string]any)["status"])
+	require.NoError(err)
+	assert.Equal(first["id"], second["id"])
+	secondEnsure, ok := second["ensure"].(map[string]any)
+	require.True(ok)
+	assert.Equal("matched_existing", secondEnsure["status"])
 	_, err = st.EnsureParticipant("observed@example.test", "Observed Example", "example.test")
-	require.NoError(t, err)
+	require.NoError(err)
 	conflict, err := run("observed@example.test")
-	require.ErrorContains(t, err, "person_matches_participant")
-	assert.Equal(t, "person_matches_participant", conflict["error"])
-	assert.Contains(t, conflict["details"], "next")
+	require.ErrorContains(err, "person_matches_participant")
+	assert.Equal("person_matches_participant", conflict["error"])
+	assert.Contains(conflict["details"], "next")
 }
 
 func TestPersonCreateCLIIfExistsRejectsInvalid(t *testing.T) {
@@ -241,7 +255,7 @@ func TestPersonCreateCLIIfExistsRejectsInvalid(t *testing.T) {
 		cmd.SetArgs([]string{"--name", "Alex Example", "--if-exists", "return"})
 		err := cmd.Execute()
 		require.ErrorContains(t, err, "upgrade msgvault")
-		assert.ErrorContains(t, err, "does not support person create --if-exists return")
+		require.ErrorContains(t, err, "does not support person create --if-exists return")
 		assert.Zero(t, creates)
 	})
 }

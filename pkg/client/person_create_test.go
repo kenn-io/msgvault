@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,29 +15,31 @@ import (
 
 func TestCreateStandalonePersonAcceptsBothSuccessStatuses(t *testing.T) {
 	for _, status := range []int{http.StatusCreated, http.StatusOK} {
-		t.Run(fmt.Sprint(status), func(t *testing.T) {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			ensureStatus := "created"
 			if status == http.StatusOK {
 				ensureStatus = "matched_existing"
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, http.MethodPost, r.Method)
-				assert.Equal(t, "/api/v1/people/create", r.URL.Path)
+				assert.Equal(http.MethodPost, r.Method)
+				assert.Equal("/api/v1/people/create", r.URL.Path)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(status)
 				_, _ = fmt.Fprintf(w, `{"id":7,"vcard_uid":"person-7","revision":2,"participant_ids":[],"created_at":"2026-11-10T12:00:00Z","updated_at":"2026-11-10T12:00:00Z","ensure":{"status":%q,"match_basis":[],"unapplied_contacts":[]}}`, ensureStatus)
 			}))
 			t.Cleanup(server.Close)
 			c, err := New(server.URL)
-			require.NoError(t, err)
+			require.NoError(err)
 			got, err := c.CreateStandalonePerson(t.Context(), &generated.CreateStandalonePersonRequestOptions{
 				Body: &generated.CreateStandalonePersonBody{Name: "Alex Example", IfExists: new(generated.PersonCreateInputIfExists("return"))},
 			})
-			require.NoError(t, err)
-			require.NotNil(t, got)
-			assert.Equal(t, int64(7), got.ID)
-			require.NotNil(t, got.Ensure)
-			assert.Equal(t, ensureStatus, string(got.Ensure.Status))
+			require.NoError(err)
+			require.NotNil(got)
+			assert.Equal(int64(7), got.ID)
+			require.NotNil(got.Ensure)
+			assert.Equal(ensureStatus, string(got.Ensure.Status))
 		})
 	}
 }
@@ -47,6 +50,8 @@ func TestCreateStandalonePersonPreservesConflictDetails(t *testing.T) {
 		{"person_matches_participant", `{"participant_id":9,"match_basis":[{"kind":"email","value":"alex@example.test","matched":"participant","person_id":null,"participant_id":9}],"next":{"cli":["msgvault","person","promote","9","--json"],"mcp":{"tool":"promote_person","arguments":{"participant_id":9}}}}`},
 	} {
 		t.Run(test.code, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusConflict)
@@ -54,18 +59,18 @@ func TestCreateStandalonePersonPreservesConflictDetails(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 			c, err := New(server.URL)
-			require.NoError(t, err)
+			require.NoError(err)
 			response, err := c.CreateStandalonePersonWithResponse(t.Context(), &generated.CreateStandalonePersonRequestOptions{
 				Body: &generated.CreateStandalonePersonBody{Name: "Alex Example", IfExists: new(generated.PersonCreateInputIfExists("return"))},
 			})
-			require.Error(t, err)
-			require.NotNil(t, response)
-			assert.Equal(t, http.StatusConflict, response.StatusCode)
-			require.NotNil(t, response.JSON409)
-			assert.Equal(t, test.code, response.JSON409.ErrorData)
+			require.Error(err)
+			require.NotNil(response)
+			assert.Equal(http.StatusConflict, response.StatusCode)
+			require.NotNil(response.JSON409)
+			assert.Equal(test.code, response.JSON409.ErrorData)
 			got, err := json.Marshal(response.JSON409.Details)
-			require.NoError(t, err)
-			assert.JSONEq(t, test.details, string(got))
+			require.NoError(err)
+			assert.JSONEq(test.details, string(got))
 		})
 	}
 }

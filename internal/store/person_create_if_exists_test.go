@@ -2,7 +2,7 @@ package store_test
 
 import (
 	"encoding/json/v2"
-	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -33,57 +33,63 @@ func personCreateCounts(t *testing.T, st *store.Store) []int {
 }
 
 func TestCreateIfExistsReturnIsIdempotent(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	input := returnPersonInput("alex@example.test")
 	first, err := f.Store.CreateStandalonePersonContext(t.Context(), input)
-	require.NoError(t, err)
-	require.NotNil(t, first.Ensure)
-	assert.Equal(t, store.PersonEnsureCreated, first.Ensure.Status)
-	assert.Empty(t, first.Ensure.MatchBasis)
+	require.NoError(err)
+	require.NotNil(first.Ensure)
+	assert.Equal(store.PersonEnsureCreated, first.Ensure.Status)
+	assert.Empty(first.Ensure.MatchBasis)
 	counts := personCreateCounts(t, f.Store)
 	input.Name, input.Org, input.Title, input.Note = "Ignored Name", "Ignored Company", "Ignored Title", "Ignored Note"
 	input.Phones = []store.PersonCreateContact{{Value: "+12025550123", Type: "cell"}}
 	second, err := f.Store.CreateStandalonePersonContext(t.Context(), input)
-	require.NoError(t, err)
-	require.NotNil(t, second.Ensure)
-	assert.Equal(t, first.ID, second.ID)
-	assert.Equal(t, first.DisplayName, second.DisplayName)
-	assert.Equal(t, first.Revision, second.Revision)
-	assert.Equal(t, first.UpdatedAt, second.UpdatedAt)
-	assert.Equal(t, store.PersonEnsureMatchedExisting, second.Ensure.Status)
-	assert.Equal(t, []store.PersonUnappliedContact{{Kind: store.ContactAddressPhone, Value: "+12025550123", Type: "cell"}}, second.Ensure.UnappliedContacts)
-	assert.Equal(t, counts, personCreateCounts(t, f.Store))
+	require.NoError(err)
+	require.NotNil(second.Ensure)
+	assert.Equal(first.ID, second.ID)
+	assert.Equal(first.DisplayName, second.DisplayName)
+	assert.Equal(first.Revision, second.Revision)
+	assert.Equal(first.UpdatedAt, second.UpdatedAt)
+	assert.Equal(store.PersonEnsureMatchedExisting, second.Ensure.Status)
+	assert.Equal([]store.PersonUnappliedContact{{Kind: store.ContactAddressPhone, Value: "+12025550123", Type: "cell"}}, second.Ensure.UnappliedContacts)
+	assert.Equal(counts, personCreateCounts(t, f.Store))
 }
 
 func TestCreateIfExistsDefaultCompatibility(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	for _, mode := range []store.PersonIfExists{"", store.PersonIfExistsError} {
 		input := store.PersonCreateInput{Name: "Alex Example", IfExists: mode}
 		person, err := f.Store.CreateStandalonePersonContext(t.Context(), input)
-		require.NoError(t, err)
-		require.Nil(t, person.Ensure)
+		require.NoError(err)
+		require.Nil(person.Ensure)
 		saved, err := f.Store.GetPersonContext(t.Context(), person.ID)
-		require.NoError(t, err)
+		require.NoError(err)
 		got, err := json.Marshal(person)
-		require.NoError(t, err)
+		require.NoError(err)
 		want, err := json.Marshal(saved)
-		require.NoError(t, err)
-		assert.Equal(t, string(want), string(got))
-		assert.NotContains(t, string(got), "ensure")
+		require.NoError(err)
+		assert.Equal(string(want), string(got))
+		assert.NotContains(string(got), "ensure")
 	}
 	id := curatedContact(f, store.ContactAddressEmail, "existing@example.test")
 	input := returnPersonInput("existing@example.test")
 	input.IfExists = store.PersonIfExistsError
 	_, err := f.Store.CreateStandalonePersonContext(t.Context(), input)
 	var conflict *store.PersonContactExistsError
-	require.ErrorAs(t, err, &conflict)
-	assert.Equal(t, id, conflict.PersonID)
-	assert.Equal(t, `email "existing@example.test" matches person `+fmt.Sprint(id)+` (Existing Example); use msgvault person get `+fmt.Sprint(id)+`; link observed participants explicitly through POST /api/v1/identity/links`, err.Error())
+	require.ErrorAs(err, &conflict)
+	assert.Equal(id, conflict.PersonID)
+	assert.Equal(`email "existing@example.test" matches person `+strconv.FormatInt(id, 10)+` (Existing Example); use msgvault person get `+strconv.FormatInt(id, 10)+`; link observed participants explicitly through POST /api/v1/identity/links`, err.Error())
 	_, err = f.Store.CreateStandalonePersonContext(t.Context(), store.PersonCreateInput{Name: "Alex", IfExists: "merge"})
-	assert.ErrorIs(t, err, store.ErrPersonCreateInvalid)
+	assert.ErrorIs(err, store.ErrPersonCreateInvalid)
 }
 
 func TestCreateIfExistsReturnConcurrent(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	var wg sync.WaitGroup
 	type result struct {
@@ -104,19 +110,21 @@ func TestCreateIfExistsReturnConcurrent(t *testing.T) {
 	close(results)
 	statuses := map[store.PersonEnsureStatus]int{}
 	for result := range results {
-		require.NoError(t, result.err)
-		require.NotNil(t, result.person.Ensure)
+		require.NoError(result.err)
+		require.NotNil(result.person.Ensure)
 		statuses[result.person.Ensure.Status]++
 	}
-	assert.Equal(t, map[store.PersonEnsureStatus]int{store.PersonEnsureCreated: 1, store.PersonEnsureMatchedExisting: 1}, statuses)
+	assert.Equal(map[store.PersonEnsureStatus]int{store.PersonEnsureCreated: 1, store.PersonEnsureMatchedExisting: 1}, statuses)
 	counts := personCreateCounts(t, f.Store)
-	assert.Equal(t, []int{1, 1, 0, 0, 0}, counts)
+	assert.Equal([]int{1, 1, 0, 0, 0}, counts)
 }
 
 func TestCreateIfExistsAllContactRepresentations(t *testing.T) {
 	for _, representation := range []string{"contact_point", "participant", "identifier", "observation"} {
 		for _, kind := range []store.ContactAddressKind{store.ContactAddressEmail, store.ContactAddressPhone} {
 			t.Run(representation+"/"+string(kind), func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
 				f := storetest.New(t)
 				value := "alex@example.test"
 				if kind == store.ContactAddressPhone {
@@ -130,16 +138,16 @@ func TestCreateIfExistsAllContactRepresentations(t *testing.T) {
 					} else {
 						var err error
 						participantID, err = f.Store.EnsurePhoneParticipantContext(t.Context(), value, "Alex Example")
-						require.NoError(t, err)
+						require.NoError(err)
 					}
 				case "identifier":
 					var err error
 					participantID, err = f.Store.EnsureParticipantByIdentifier("beeper", value, "Alex Example")
-					require.NoError(t, err)
+					require.NoError(err)
 				case "observation":
 					participantID = f.EnsureParticipant("primary@example.test", "Alex Example", "example.test")
 					_, err := f.Store.RecordContactObservationContext(t.Context(), participantID, store.ParticipantContactObservationInput{AddressKind: kind, OriginalValue: value, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation}})
-					require.NoError(t, err)
+					require.NoError(err)
 				}
 				input := returnPersonInput()
 				if kind == store.ContactAddressEmail {
@@ -154,27 +162,27 @@ func TestCreateIfExistsAllContactRepresentations(t *testing.T) {
 					counts := personCreateCounts(t, f.Store)
 					_, err := f.Store.CreateStandalonePersonContext(t.Context(), input)
 					var conflict *store.PersonMatchesParticipantError
-					require.ErrorAs(t, err, &conflict)
-					assert.Equal(t, participantID, conflict.ParticipantID)
-					assert.Equal(t, counts, personCreateCounts(t, f.Store))
+					require.ErrorAs(err, &conflict)
+					assert.Equal(participantID, conflict.ParticipantID)
+					assert.Equal(counts, personCreateCounts(t, f.Store))
 					person, _, err := f.Store.CreatePersonFromParticipantContext(t.Context(), participantID)
-					require.NoError(t, err)
+					require.NoError(err)
 					personID = person.ID
 				}
 				counts := personCreateCounts(t, f.Store)
 				person, err := f.Store.CreateStandalonePersonContext(t.Context(), input)
-				require.NoError(t, err)
-				assert.Equal(t, personID, person.ID)
-				require.NotNil(t, person.Ensure)
+				require.NoError(err)
+				assert.Equal(personID, person.ID)
+				require.NotNil(person.Ensure)
 				basisFound := false
 				for _, basis := range person.Ensure.MatchBasis {
 					if basis.Matched == representation {
 						basisFound = true
 					}
-					assert.Equal(t, personID, *basis.PersonID)
+					assert.Equal(personID, *basis.PersonID)
 				}
-				assert.True(t, basisFound)
-				assert.Equal(t, counts, personCreateCounts(t, f.Store))
+				assert.True(basisFound)
+				assert.Equal(counts, personCreateCounts(t, f.Store))
 			})
 		}
 	}
@@ -203,48 +211,50 @@ func TestCreateIfExistsReturnClustersAndAmbiguity(t *testing.T) {
 		t.Run(group.name, func(t *testing.T) {
 			for _, scenario := range group.cases {
 				t.Run(scenario.name, func(t *testing.T) {
+					assert := assert.New(t)
+					require := require.New(t)
 					f := storetest.New(t)
 					a := f.EnsureParticipant("a@example.test", "Alex Example", "example.test")
 					b := f.EnsureParticipant("b@example.test", "Blair Example", "example.test")
 					if scenario.linked {
 						_, err := f.Store.LinkParticipants(a, b)
-						require.NoError(t, err)
+						require.NoError(err)
 					}
 					var existing *store.Person
 					if scenario.people > 0 {
 						var err error
 						existing, _, err = f.Store.CreatePersonFromParticipantContext(t.Context(), a)
-						require.NoError(t, err)
+						require.NoError(err)
 					}
 					if scenario.people == 2 {
 						_, _, err := f.Store.CreatePersonFromParticipantContext(t.Context(), b)
-						require.NoError(t, err)
+						require.NoError(err)
 					}
 					counts := personCreateCounts(t, f.Store)
 					person, err := f.Store.CreateStandalonePersonContext(t.Context(), returnPersonInput("a@example.test", "b@example.test"))
 					switch {
 					case group.matched:
-						require.NoError(t, err)
-						assert.Equal(t, existing.ID, person.ID)
+						require.NoError(err)
+						assert.Equal(existing.ID, person.ID)
 					case scenario.unbound:
 						var conflict *store.PersonMatchesParticipantError
-						require.ErrorAs(t, err, &conflict)
-						assert.Equal(t, a, conflict.ParticipantID)
-						assert.GreaterOrEqual(t, len(conflict.MatchBasis), 2)
+						require.ErrorAs(err, &conflict)
+						assert.Equal(a, conflict.ParticipantID)
+						assert.GreaterOrEqual(len(conflict.MatchBasis), 2)
 						matchedParticipants := map[int64]bool{}
 						for _, match := range conflict.MatchBasis {
 							matchedParticipants[*match.ParticipantID] = true
 						}
-						assert.Equal(t, map[int64]bool{a: true, b: true}, matchedParticipants)
-						assert.Equal(t, store.PersonCreateMCPNext{Tool: "promote_person", Arguments: map[string]int64{"participant_id": a}}, conflict.Next.MCP)
-						assert.Equal(t, []string{"msgvault", "person", "promote", fmt.Sprint(a), "--json"}, conflict.Next.CLI)
+						assert.Equal(map[int64]bool{a: true, b: true}, matchedParticipants)
+						assert.Equal(store.PersonCreateMCPNext{Tool: "promote_person", Arguments: map[string]int64{"participant_id": a}}, conflict.Next.MCP)
+						assert.Equal([]string{"msgvault", "person", "promote", strconv.FormatInt(a, 10), "--json"}, conflict.Next.CLI)
 					default:
 						var conflict *store.PersonAmbiguousError
-						require.ErrorAs(t, err, &conflict)
-						assert.Len(t, conflict.Candidates, 2)
-						assert.GreaterOrEqual(t, len(conflict.MatchBasis), 2)
+						require.ErrorAs(err, &conflict)
+						assert.Len(conflict.Candidates, 2)
+						assert.GreaterOrEqual(len(conflict.MatchBasis), 2)
 					}
-					assert.Equal(t, counts, personCreateCounts(t, f.Store))
+					assert.Equal(counts, personCreateCounts(t, f.Store))
 				})
 			}
 		})
@@ -252,6 +262,8 @@ func TestCreateIfExistsReturnClustersAndAmbiguity(t *testing.T) {
 }
 
 func TestCreateIfExistsReturnEmailAndPhoneAmbiguous(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	emailPerson := curatedContact(f, store.ContactAddressEmail, "alex@example.test")
 	phonePerson := curatedContact(f, store.ContactAddressPhone, "+12025550123")
@@ -260,31 +272,33 @@ func TestCreateIfExistsReturnEmailAndPhoneAmbiguous(t *testing.T) {
 	input.Phones = []store.PersonCreateContact{{Value: "+1 (202) 555-0123"}}
 	_, err := f.Store.CreateStandalonePersonContext(t.Context(), input)
 	var conflict *store.PersonAmbiguousError
-	require.ErrorAs(t, err, &conflict)
-	require.Len(t, conflict.Candidates, 2)
-	assert.Equal(t, emailPerson, *conflict.Candidates[0].PersonID)
-	assert.Equal(t, phonePerson, *conflict.Candidates[1].PersonID)
-	assert.Equal(t, counts, personCreateCounts(t, f.Store))
+	require.ErrorAs(err, &conflict)
+	require.Len(conflict.Candidates, 2)
+	assert.Equal(emailPerson, *conflict.Candidates[0].PersonID)
+	assert.Equal(phonePerson, *conflict.Candidates[1].PersonID)
+	assert.Equal(counts, personCreateCounts(t, f.Store))
 }
 
 func TestCreateIfExistsCuratedObservedOverlap(t *testing.T) {
 	for _, scenario := range []string{"redundant unbound email", "bound to another person", "same cluster on uncurated phone"} {
 		t.Run(scenario, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			f := storetest.New(t)
 			input := returnPersonInput("alex@example.test")
 			saved, err := f.Store.CreateStandalonePersonContext(t.Context(), input)
-			require.NoError(t, err)
+			require.NoError(err)
 			var participantID, otherPersonID int64
 			participantID, err = f.Store.EnsureParticipant("alex@example.test", "Alex Example", "example.test")
-			require.NoError(t, err)
+			require.NoError(err)
 			if scenario == "bound to another person" {
 				other, _, err := f.Store.CreatePersonFromParticipantContext(t.Context(), participantID)
-				require.NoError(t, err)
+				require.NoError(err)
 				otherPersonID = other.ID
 			}
 			if scenario == "same cluster on uncurated phone" {
 				_, err := f.Store.RecordContactObservationContext(t.Context(), participantID, store.ParticipantContactObservationInput{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550123", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation}})
-				require.NoError(t, err)
+				require.NoError(err)
 			}
 			if scenario == "same cluster on uncurated phone" {
 				input.Phones = []store.PersonCreateContact{{Value: "+12025550123"}}
@@ -293,43 +307,43 @@ func TestCreateIfExistsCuratedObservedOverlap(t *testing.T) {
 			got, err := f.Store.CreateStandalonePersonContext(t.Context(), input)
 			var basis []store.PersonMatchBasis
 			if scenario == "redundant unbound email" {
-				require.NoError(t, err)
-				require.NotNil(t, got.Ensure)
-				assert.Equal(t, saved.ID, got.ID)
-				assert.Equal(t, store.PersonEnsureMatchedExisting, got.Ensure.Status)
-				require.Len(t, got.Ensure.MatchBasis, 1)
-				assert.Equal(t, "contact_point", got.Ensure.MatchBasis[0].Matched)
-				assert.Empty(t, got.Ensure.UnappliedContacts)
+				require.NoError(err)
+				require.NotNil(got.Ensure)
+				assert.Equal(saved.ID, got.ID)
+				assert.Equal(store.PersonEnsureMatchedExisting, got.Ensure.Status)
+				require.Len(got.Ensure.MatchBasis, 1)
+				assert.Equal("contact_point", got.Ensure.MatchBasis[0].Matched)
+				assert.Empty(got.Ensure.UnappliedContacts)
 				basis = got.Ensure.MatchBasis
 			} else {
 				var conflict *store.PersonAmbiguousError
-				require.ErrorAs(t, err, &conflict)
-				require.Len(t, conflict.Candidates, 2)
-				assert.Equal(t, new(saved.ID), conflict.Candidates[0].PersonID)
+				require.ErrorAs(err, &conflict)
+				require.Len(conflict.Candidates, 2)
+				assert.Equal(new(saved.ID), conflict.Candidates[0].PersonID)
 				if otherPersonID != 0 {
-					assert.Equal(t, new(otherPersonID), conflict.Candidates[1].PersonID)
+					assert.Equal(new(otherPersonID), conflict.Candidates[1].PersonID)
 				} else {
-					assert.Equal(t, new(participantID), conflict.Candidates[1].ParticipantID)
-					assert.Contains(t, conflict.MatchBasis, store.PersonMatchBasis{Kind: store.ContactAddressPhone, Value: "+12025550123", Matched: "observation", ParticipantID: new(participantID)})
+					assert.Equal(new(participantID), conflict.Candidates[1].ParticipantID)
+					assert.Contains(conflict.MatchBasis, store.PersonMatchBasis{Kind: store.ContactAddressPhone, Value: "+12025550123", Matched: "observation", ParticipantID: new(participantID)})
 				}
 				basis = conflict.MatchBasis
 			}
 			for _, match := range basis {
 				if match.Kind == store.ContactAddressEmail && match.ParticipantID != nil {
-					assert.NotNil(t, match.PersonID, "curated email must not retain redundant unbound evidence")
+					assert.NotNil(match.PersonID, "curated email must not retain redundant unbound evidence")
 				}
 			}
 			unchanged, err := f.Store.GetPersonContext(t.Context(), saved.ID)
-			require.NoError(t, err)
-			assert.Empty(t, unchanged.ParticipantIDs)
-			assert.Equal(t, saved.Revision, unchanged.Revision)
-			assert.Equal(t, saved.UpdatedAt, unchanged.UpdatedAt)
-			assert.Equal(t, counts, personCreateCounts(t, f.Store))
+			require.NoError(err)
+			assert.Empty(unchanged.ParticipantIDs)
+			assert.Equal(saved.Revision, unchanged.Revision)
+			assert.Equal(saved.UpdatedAt, unchanged.UpdatedAt)
+			assert.Equal(counts, personCreateCounts(t, f.Store))
 			input.IfExists = ""
 			_, err = f.Store.CreateStandalonePersonContext(t.Context(), input)
 			var refusal *store.PersonContactExistsError
-			require.ErrorAs(t, err, &refusal)
-			assert.Equal(t, saved.ID, refusal.PersonID)
+			require.ErrorAs(err, &refusal)
+			assert.Equal(saved.ID, refusal.PersonID)
 		})
 	}
 }
