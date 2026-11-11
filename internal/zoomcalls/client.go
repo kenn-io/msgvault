@@ -160,7 +160,7 @@ func (c *Client) pages(ctx context.Context, path, key string, q url.Values, limi
 		}
 		records += len(items)
 		if records > limit {
-			return nil, errors.New("zoom record limit exceeded; narrow the date window")
+			return nil, fmt.Errorf("Zoom response exceeds %d entries", limit)
 		}
 		pages = append(pages, jsontext.Value(body))
 		var next string
@@ -207,7 +207,7 @@ func (c *Client) Meeting(ctx context.Context, uuid string) ([]byte, error) {
 		return nil, err
 	}
 	if len(raw) > MaxRosterBytes {
-		return nil, errors.New("zoom roster exceeds archive raw limit")
+		return nil, errors.New("Zoom roster exceeds 496 KiB")
 	}
 	return raw, nil
 }
