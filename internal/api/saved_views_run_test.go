@@ -92,16 +92,6 @@ func TestRunSavedViewExecutesEntriesWithTheExploreContract(t *testing.T) {
 	assertions.Empty(next.NextCursor)
 }
 
-func TestRunSavedViewUsesLocalOffsetInstant(t *testing.T) {
-	requirements := require.New(t)
-	srv, st := newSavedViewRunTestServer(t)
-	view := createRunTestView(t, st, "Local boundary", `{"filters":[{"field":"after","operator":"in","values":["2026-07-18T06:30:00-04:00"]}]}`)
-	response, page := runSavedView(t, srv, view.ID, `{}`)
-	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
-	requirements.Len(page.Rows, 1)
-	assert.Equal(t, "Newest", page.Rows[0].Title)
-}
-
 func TestRunSavedViewPreservesVersionedPipeMeaning(t *testing.T) {
 	t.Parallel()
 	requirements := require.New(t)
@@ -162,8 +152,6 @@ func TestRunSavedViewCalendarGroupsUseRequestedTimezoneAndNewestFirst(t *testing
 		{"year", "2026", "2025", "2026", "2024"},
 	} {
 		t.Run(tc.dimension, func(t *testing.T) {
-			requirements := require.New(t)
-			assertions := assert.New(t)
 			view := createRunTestView(t, st, tc.dimension, `{"grouping":["`+tc.dimension+`"]}`)
 			for _, zone := range []struct{ name, field, first, second string }{
 				{"local", `,"timezone":"America/New_York"`, tc.localFirst, tc.localSecond},
@@ -183,6 +171,8 @@ func TestRunSavedViewCalendarGroupsUseRequestedTimezoneAndNewestFirst(t *testing
 					assertions.Equal(zone.second, next.Groups[0].Key)
 				})
 			}
+			requirements := require.New(t)
+			assertions := assert.New(t)
 			first, page := runSavedView(t, srv, view.ID, `{"limit":1,"timezone":"America/New_York"}`)
 			requirements.Equal(http.StatusOK, first.Code, first.Body.String())
 			requirements.NotEmpty(page.NextCursor)

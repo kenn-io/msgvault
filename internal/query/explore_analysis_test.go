@@ -56,6 +56,43 @@ func TestExploreGroupTimezoneValidation(t *testing.T) {
 			assertions.ErrorIs(err, ErrInvalidExploreRequest)
 		}
 	}
+	groupBuilder := NewTestDataBuilder(t)
+	groupSource := groupBuilder.AddSourceWithType("archive@example.org", "gmail")
+	for _, instant := range []string{"2024-05-30T02:00:00Z", "2024-05-31T02:00:00Z", "2024-06-01T02:00:00Z", "2024-07-01T02:00:00Z"} {
+		at, err := time.Parse(time.RFC3339, instant)
+		requirements.NoError(err)
+		groupBuilder.AddMessage(MessageOpt{SourceID: groupSource, SentAt: at})
+	}
+	groupEngine := groupBuilder.BuildEngine()
+	month := ExploreGroupRequest{Dimension: "month", Timezone: "America/New_York", Sort: SortSpec{Field: "key", Direction: "desc"}, Page: PageSpec{Limit: 1}}
+	var total int64
+	for offset := range 2 {
+		month.Page.Offset = offset
+		page, err := groupEngine.ExploreGroups(t.Context(), month)
+		requirements.NoError(err)
+		requirements.Len(page.Rows, 1)
+		assertions.Equal(int64(4), page.Rows[0].TotalItems)
+		total += page.Rows[0].Count
+		if offset == 1 {
+			assertions.Equal("2024-05", page.Rows[0].Key)
+			assertions.Equal(int64(3), page.Rows[0].Count)
+		}
+	}
+	assertions.Equal(int64(4), total)
+
+	yearBuilder := NewTestDataBuilder(t)
+	yearSource := yearBuilder.AddSourceWithType("archive@example.org", "gmail")
+	yearBuilder.AddMessage(MessageOpt{
+		SourceID: yearSource,
+		SentAt:   time.Date(2025, 1, 1, 2, 0, 0, 0, time.UTC),
+	})
+	yearEngine := yearBuilder.BuildEngine()
+	localYear, err := yearEngine.ExploreGroups(t.Context(), ExploreGroupRequest{
+		Dimension: "year", Timezone: "America/New_York", Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	requirements.Len(localYear.Rows, 1)
+	assertions.Equal("2024", localYear.Rows[0].Key)
 }
 
 func TestPersonGroupLabelAvoidsParticipantPageProduct(t *testing.T) {
@@ -813,46 +850,7 @@ func TestExploreDayGroupsCountSentMessagesBeforeChatCollapse(t *testing.T) {
 	require.NoError(err)
 	require.Len(local.Rows, 3)
 	assert.Equal("2023-12-31", local.Rows[0].Key)
-	groupBuilder := NewTestDataBuilder(t)
-	groupSource := groupBuilder.AddSourceWithType("archive@example.org", "gmail")
-	for _, instant := range []string{"2024-05-30T02:00:00Z", "2024-05-31T02:00:00Z", "2024-06-01T02:00:00Z", "2024-07-01T02:00:00Z"} {
-		at, err := time.Parse(time.RFC3339, instant)
-		require.NoError(err)
-		groupBuilder.AddMessage(MessageOpt{SourceID: groupSource, SentAt: at})
-	}
-	groupEngine := groupBuilder.BuildEngine()
-	month := ExploreGroupRequest{Dimension: "month", Timezone: "America/New_York", Sort: SortSpec{Field: "key", Direction: "desc"}, Page: PageSpec{Limit: 1}}
-	var total int64
-	for offset := range 2 {
-		month.Page.Offset = offset
-		page, err := groupEngine.ExploreGroups(t.Context(), month)
-		require.NoError(err)
-		require.Len(page.Rows, 1)
-		assert.Equal(int64(4), page.Rows[0].TotalItems)
-		total += page.Rows[0].Count
-		if offset == 1 {
-			assert.Equal("2024-05", page.Rows[0].Key)
-			assert.Equal(int64(3), page.Rows[0].Count)
-		}
-	}
-	assert.Equal(int64(4), total)
 
-	yearBuilder := NewTestDataBuilder(t)
-	yearSource := yearBuilder.AddSourceWithType("archive@example.org", "gmail")
-	yearOwner := yearBuilder.AddParticipant("owner@example.org", "example.org", "Owner")
-	yearBuilder.AddOwnerParticipant(yearSource, yearOwner)
-	yearMessage := yearBuilder.AddMessage(MessageOpt{
-		SourceID: yearSource,
-		SentAt:   time.Date(2025, 1, 1, 2, 0, 0, 0, time.UTC),
-	})
-	yearBuilder.AddFrom(yearMessage, yearOwner, "Owner")
-	yearEngine := yearBuilder.BuildEngine()
-	localYear, err := yearEngine.ExploreGroups(t.Context(), ExploreGroupRequest{
-		Dimension: "year", Timezone: "America/New_York", Page: PageSpec{Limit: 10},
-	})
-	require.NoError(err)
-	require.Len(localYear.Rows, 1)
-	assert.Equal("2024", localYear.Rows[0].Key)
 }
 
 func TestExploreGroupOverviewMembershipAndTimeBuckets(t *testing.T) {

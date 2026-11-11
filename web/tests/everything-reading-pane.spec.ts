@@ -551,7 +551,7 @@ test('right preview resizes, restores its width, and falls back below on narrow 
     .toBeCloseTo((await page.locator('.results-split').boundingBox())!.width, 0);
 });
 
-test('keeps group actions at the grid edge in wide and inspected views', async ({ page }) => {
+test('aligns group actions and activity in wide and inspected views', async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 900 });
   await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
   await page.route('**/api/v1/explore/groups', route => {

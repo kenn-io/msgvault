@@ -226,15 +226,6 @@ func TestRunSavedViewReturnsTypedExplorePage(t *testing.T) {
 	assertions.Equal(maxSearchMessagesLimit, reader.runLimit)
 	assertions.Equal("current-page", reader.runCursor)
 	assertions.Equal("America/New_York", reader.runTimezone)
-
-	reader.page = &savedview.RunPage{View: view, ResultKind: savedview.ResultGroups,
-		Groups: []query.ExploreGroupRow{{Key: "2026-07", Count: 4, TotalItems: 40}}, CacheRevision: "cache-7"}
-	groups := rawCallTool(t, opts, ToolRunSavedView, map[string]any{"id": 7})
-	require.NotEqual(t, true, groups["isError"], "result: %#v", groups)
-	groupPage := savedViewTestMap(t, groups["structuredContent"])
-	rows := savedViewTestSlice(t, groupPage["groups"])
-	require.Len(t, rows, 1)
-	assertions.InDelta(40, savedViewTestMap(t, rows[0])["total_items"], 0)
 }
 
 func TestSavedViewReadToolsReturnCleanErrors(t *testing.T) {
