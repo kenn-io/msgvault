@@ -351,6 +351,41 @@ describe('EverythingWorkspace', () => {
     } finally { view.unmount(); state.destroy(); }
   });
 
+  it.each([
+    { dimension: 'kind', key: 'meeting', label: 'Meeting', narrowedRequests: 0, unavailable: false },
+    { dimension: 'participant', key: '42', label: 'Person Example', narrowedRequests: 1, unavailable: false },
+    { dimension: 'domain', key: 'example.net', label: 'example.net', narrowedRequests: 1, unavailable: true },
+  ] as const)('keeps the $dimension overview when meeting authority cannot load', async ({ dimension, key, label, narrowedRequests, unavailable }) => {
+    window.history.replaceState(null, '', '/');
+    const rows = [{ key, label, count: 8 }];
+    let requests = 0;
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      const request = input as Request;
+      const path = new URL(request.url).pathname;
+      const fixture = await snapshotFixture(request, rows, [{ key: '1', label: 'Overview Person', count: 1 }]);
+      if (fixture) return fixture;
+      if (path === '/api/v1/explore') {
+        requests += 1;
+        return unavailable
+          ? Response.json({ error: 'cache_unavailable', message: 'Cache unavailable', readiness: 'building', recovery_action: '' }, { status: 503 })
+          : Response.json({ error: 'search_failed', message: 'Search failed' }, { status: 500 });
+      }
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    state.replaceTransient({ query: 'planning', searchMode: 'semantic', groupingChain: [dimension] });
+    const view = render(AppShell, { client: createAPIClient(fetchFn), state });
+    try {
+      const grid = await screen.findByRole('grid', { name: `Messages grouped by ${dimension}` });
+      await fireEvent.click(await within(grid).findByText(label));
+      const pane = await screen.findByRole('complementary', { name: `Reading pane: ${label}` });
+      await waitFor(() => expect(requests).toBe(narrowedRequests));
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(await within(pane).findByText('Overview Person')).toBeDefined();
+      if (dimension !== 'kind') expect(within(pane).getByText(/Reload this group to load meeting activity/)).toBeDefined();
+    } finally { view.unmount(); state.destroy(); }
+  });
+
   it('discards a superseded group snapshot request', async () => {
     window.history.replaceState(null, '', '/');
     let firstSignal: AbortSignal | undefined;

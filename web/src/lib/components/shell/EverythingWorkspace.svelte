@@ -382,16 +382,8 @@
           readingDetailError = 'The selected group is no longer available in this context.';
           return;
         }
-        let authority = lookup.authority;
-        if (authority.candidateSnapshotId && canonicalFingerprint(filters) !== canonicalFingerprint(predicate.filters ?? [])) {
-          const narrowed = await api.explore({ ...detailPredicate, filters, limit: 1 }, controller.signal);
-          if (generation !== session.readingDetailGeneration || controller.signal.aborted) return;
-          if (narrowed.status === 'unavailable') {
-            readingDetailUnavailable = narrowed.unavailable;
-            return;
-          }
-          authority = narrowed.result;
-        }
+        const hasMeetings = target.dimension === 'participant' || target.dimension === 'domain';
+        const needsSnapshot = hasMeetings && lookup.authority.candidateSnapshotId && canonicalFingerprint(filters) !== canonicalFingerprint(predicate.filters ?? []);
         session.readingGroupDetail = {
           kind: 'group',
           dimension: target.dimension,
@@ -401,9 +393,17 @@
           estimatedBytes: lookup.row.estimated_bytes,
           latestAt: lookup.row.latest_at,
           overview: lookup.overview,
-          meetingScope: exploreMeetingScope({ ...detailPredicate, filters }, authority).explore,
+          meetingScope: hasMeetings && !needsSnapshot ? exploreMeetingScope({ ...detailPredicate, filters }, lookup.authority).explore : undefined,
         };
         session.readingDetailFingerprint = loadedKey;
+        if (!needsSnapshot) return;
+        try {
+          const narrowed = await api.explore({ ...detailPredicate, filters, limit: 1 }, controller.signal);
+          if (generation !== session.readingDetailGeneration || controller.signal.aborted || narrowed.status === 'unavailable') return;
+          session.readingGroupDetail = { ...session.readingGroupDetail, meetingScope: exploreMeetingScope({ ...detailPredicate, filters }, narrowed.result).explore };
+        } catch {
+          // The group overview is still available without meeting authority.
+        }
       })
       .catch((cause: unknown) => {
         if (generation !== session.readingDetailGeneration || controller.signal.aborted) return;
