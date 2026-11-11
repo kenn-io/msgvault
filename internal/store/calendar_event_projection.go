@@ -16,7 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
 )
 
-const calendarEventProjectionVersion = 2
+const calendarEventProjectionVersion = 3
 
 // Decode failures have no provider status. Keep a marker while retaining the
 // single kind so unknown bounds remain candidates for the occurrence reader.

@@ -254,9 +254,9 @@ func TestICSRejectMalformed(t *testing.T) {
 	const ruleZone = "BEGIN:VCALENDAR\r\nBEGIN:VTIMEZONE\r\nTZID:Custom/Test\r\nBEGIN:STANDARD\r\nDTSTART:20271107T020000\r\nTZOFFSETFROM:-0400\r\nTZOFFSETTO:-0500\r\nRRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU\r\nEND:STANDARD\r\nBEGIN:DAYLIGHT\r\nDTSTART:20270314T020000\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0400\r\nRRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU\r\nEND:DAYLIGHT\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:test@example.com\r\nDTSTART;TZID=Custom/Test:20270305T090000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
 	for _, tc := range []struct{ name, raw, want string }{
 		{"oversized event", strings.Replace(icsExample, "DESCRIPTION:", "DESCRIPTION:"+strings.Repeat("a", 64<<20), 1), "retained calendar exceeds"},
-		{"zone RDATE", strings.Replace(ruleZone, "END:DAYLIGHT", "RDATE:20270301T020000\r\nEND:DAYLIGHT", 1), "unsupported VTIMEZONE"},
-		{"zone EXDATE", strings.Replace(ruleZone, "END:DAYLIGHT", "EXDATE:20270314T020000\r\nEND:DAYLIGHT", 1), "unsupported VTIMEZONE"},
-		{"zone EXRULE", strings.Replace(ruleZone, "END:DAYLIGHT", "EXRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU\r\nEND:DAYLIGHT", 1), "unsupported VTIMEZONE"},
+		{"zone RDATE", strings.Replace(ruleZone, "END:DAYLIGHT", "RDATE:20270301T020000\r\nEND:DAYLIGHT", 1), `unsupported VTIMEZONE "Custom/Test" observance`},
+		{"zone EXDATE", strings.Replace(ruleZone, "END:DAYLIGHT", "EXDATE:20270314T020000\r\nEND:DAYLIGHT", 1), `unsupported VTIMEZONE "Custom/Test" observance`},
+		{"zone EXRULE", strings.Replace(ruleZone, "END:DAYLIGHT", "EXRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU\r\nEND:DAYLIGHT", 1), `unsupported VTIMEZONE "Custom/Test" observance`},
 		{"duplicate zone observance", strings.Replace(zone, "END:VTIMEZONE", "BEGIN:STANDARD\r\nDTSTART:20280101T000000\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0500\r\nEND:STANDARD\r\nEND:VTIMEZONE", 1), `VTIMEZONE "Custom/Test" requires distinct STANDARD or DAYLIGHT observances`},
 		{"zone rule until", strings.Replace(zone, "END:STANDARD", "RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU;UNTIL=20300101T000000Z\r\nEND:STANDARD", 1), `unsupported VTIMEZONE "Custom/Test" rule`},
 		{"zone changing offset without rule", strings.Replace(zone, "TZOFFSETFROM:-0500", "TZOFFSETFROM:-0400", 1), `unsupported VTIMEZONE "Custom/Test" offset or start`},
