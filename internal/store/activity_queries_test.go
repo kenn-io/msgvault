@@ -1292,36 +1292,3 @@ func seedProjectedMeetingActivity(
 	require.NoError(t, err)
 	return messageID
 }
-
-func TestActivityCandidatesExcludeEmailInvites(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	f, personID := activityProjectionFixture(t)
-	var participantID int64
-	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT participant_id FROM person_participants WHERE person_id = ?`), personID).Scan(&participantID))
-	ids := make(map[string]int64)
-	for _, typ := range []string{"gmail", "gcal", "ics"} {
-		source, err := f.Store.GetOrCreateSource(typ, typ+"@example.test")
-		requirements.NoError(err)
-		conversation, err := f.Store.EnsureConversationWithType(source.ID, typ+"-thread", "meeting", "Meeting")
-		requirements.NoError(err)
-		msg := storetest.NewMessage(source.ID, conversation).WithSourceMessageID(typ + "-event").WithSentAt(time.Date(2026, 3, 20, 14, 0, 0, 0, time.UTC)).Build()
-		msg.MessageType = "calendar_event"
-		ids[typ], err = f.Store.UpsertMessage(msg)
-		requirements.NoError(err)
-		requirements.NoError(f.Store.ReplaceMessageRecipients(ids[typ], "to", []int64{participantID}, []string{"Activity Contact"}))
-	}
-	for _, typ := range []string{"gmail", "gcal", "ics"} {
-		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO source_merge_archive_only_messages (message_id) VALUES (?)`), ids[typ])
-		requirements.NoError(err)
-	}
-	candidates, err := f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 100)
-	requirements.NoError(err)
-	eligible := map[int64]bool{}
-	for _, c := range candidates {
-		eligible[c.MessageID] = c.Eligible
-	}
-	assertions.Contains(eligible, ids["gmail"])
-	assertions.False(eligible[ids["gmail"]])
-	assertions.True(eligible[ids["gcal"]])
-	assertions.True(eligible[ids["ics"]])
-}

@@ -975,9 +975,6 @@ func writeRelationshipParquet(
 	root, dataset, query string,
 ) {
 	tb.Helper()
-	if dataset == "messages" && !strings.Contains(query, "archive_only") {
-		query = "SELECT *, false AS archive_only FROM (" + query + ")"
-	}
 	if dataset == "message_recipients" {
 		query = "SELECT *, NULL::VARCHAR AS email_address, FALSE AS is_relayed FROM (" + query + ")"
 	}
