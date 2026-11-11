@@ -160,11 +160,12 @@ func TestParseMeetingLinkRef(t *testing.T) {
 }
 
 func TestMeetingRecordRequiresSeriesOccurrence(t *testing.T) {
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gcal", "calendar@example.test")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	notes, err := st.GetOrCreateSource("meeting_import", "notes@example.test")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Logger: testLogger()})
 	for _, tc := range []struct {
 		name, raw    string
@@ -174,14 +175,15 @@ func TestMeetingRecordRequiresSeriesOccurrence(t *testing.T) {
 		{"all-day", `{"id":"all-day","iCalUID":"all-day@example.test","start":{"date":"2027-03-14"},"end":{"date":"2027-03-15"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, []string{"20270314", "20270321"}, []string{"2027-03-14T00:00:00Z", "2027-03-21T00:00:00Z"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
 			id, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source.ID, SourceMessageID: tc.name, MessageType: "calendar_event"}, Conversation: &store.ConversationPersistData{SourceConversationID: tc.name, ConversationType: "calendar"}, RawMIME: []byte(tc.raw), RawFormat: "gcal_json"})
-			require.NoError(t, err)
+			requirements.NoError(err)
 			var noteIDs []int64
 			for i, start := range tc.starts {
 				key := fmt.Sprintf("%s-%d", tc.name, i)
 				raw := fmt.Sprintf(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"%s@example.test","startsAt":"%s"}}`, tc.name, start)
 				note, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: notes.ID, SourceMessageID: key, MessageType: "meeting_transcript"}, Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: "meeting"}, RawMIME: []byte(raw), RawFormat: "twenty_json"})
-				require.NoError(t, err)
+				requirements.NoError(err)
 				noteIDs = append(noteIDs, note)
 			}
 			request := func(ref string) *httptest.ResponseRecorder {
@@ -191,17 +193,17 @@ func TestMeetingRecordRequiresSeriesOccurrence(t *testing.T) {
 				return w
 			}
 			bare := request(fmt.Sprintf("evt:%d", id))
-			require.Equal(t, http.StatusBadRequest, bare.Code, bare.Body.String())
-			assert.Contains(t, bare.Body.String(), "invalid_argument")
-			assert.Contains(t, bare.Body.String(), "calendar events")
+			requirements.Equal(http.StatusBadRequest, bare.Code, bare.Body.String())
+			assertions.Contains(bare.Body.String(), "invalid_argument")
+			assertions.Contains(bare.Body.String(), "calendar events")
 			for i, key := range tc.keys {
 				explicit := request(fmt.Sprintf("evt:%d@%s", id, key))
-				require.Equal(t, http.StatusOK, explicit.Code, explicit.Body.String())
+				requirements.Equal(http.StatusOK, explicit.Code, explicit.Body.String())
 				var record store.MeetingRecord
-				require.NoError(t, json.Unmarshal(explicit.Body.Bytes(), &record))
-				require.Len(t, record.Links, 1)
-				assert.Equal(t, fmt.Sprintf("evt:%d@%s", id, key), record.Links[0].Ref)
-				assert.Equal(t, []int64{noteIDs[i]}, record.MessageIDs)
+				requirements.NoError(json.Unmarshal(explicit.Body.Bytes(), &record))
+				requirements.Len(record.Links, 1)
+				assertions.Equal(fmt.Sprintf("evt:%d@%s", id, key), record.Links[0].Ref)
+				assertions.Equal([]int64{noteIDs[i]}, record.MessageIDs)
 			}
 		})
 	}

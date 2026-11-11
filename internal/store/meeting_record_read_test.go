@@ -147,7 +147,7 @@ func TestMeetingRecordAllDayOccurrence(t *testing.T) {
 }
 
 func TestMeetingRecordRetainsExceptionForUnsupportedSeries(t *testing.T) {
-	require := require.New(t)
+	assertions, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, series := calendarFixture(t, st, "series", `{"id":"series","iCalUID":"uid@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=YEARLY;BYWEEKNO=20"]}`)
 	_, exception := calendarFixture(t, st, "exception", `{"id":"exception","recurringEventId":"series","iCalUID":"uid@example.org","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T12:00:00Z"},"end":{"dateTime":"2027-03-15T13:00:00Z"}}`)
@@ -156,21 +156,21 @@ func TestMeetingRecordRetainsExceptionForUnsupportedSeries(t *testing.T) {
 		record, err := st.MeetingRecordContext(t.Context(), seed)
 		require.NoError(err)
 		require.Len(record.Links, 1)
-		assert.Equal(t, fmt.Sprintf("evt:%d", exception), record.Links[0].Ref)
-		assert.Equal(t, time.Date(2027, 3, 15, 12, 0, 0, 0, time.UTC), record.Links[0].Start)
-		assert.Equal(t, []int64{note}, record.MessageIDs)
-		assert.Equal(t, []CalendarUnexpandable{{MessageID: series, Reason: "unsupported recurrence"}}, record.Unexpandable)
+		assertions.Equal(fmt.Sprintf("evt:%d", exception), record.Links[0].Ref)
+		assertions.Equal(time.Date(2027, 3, 15, 12, 0, 0, 0, time.UTC), record.Links[0].Start)
+		assertions.Equal([]int64{note}, record.MessageIDs)
+		assertions.Equal([]CalendarUnexpandable{{MessageID: series, Reason: "unsupported recurrence"}}, record.Unexpandable)
 	}
 
 	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: series, Identity: occurrenceIdentity(t, "20270321T100000Z")})
 	require.NoError(err)
-	assert.Empty(t, record.Links)
-	assert.Empty(t, record.MessageIDs)
-	assert.Equal(t, []CalendarUnexpandable{{MessageID: series, Reason: "unsupported recurrence"}}, record.Unexpandable)
+	assertions.Empty(record.Links)
+	assertions.Empty(record.MessageIDs)
+	assertions.Equal([]CalendarUnexpandable{{MessageID: series, Reason: "unsupported recurrence"}}, record.Unexpandable)
 }
 
 func TestMeetingRecordUnsupportedAllDayEditOriginalZone(t *testing.T) {
-	require := require.New(t)
+	assertions, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	data, series := calendarFixture(t, st, "zone-series", `{"id":"zone-series","iCalUID":"zone@example.org","start":{"date":"2027-03-14","timeZone":"America/New_York"},"end":{"date":"2027-03-15","timeZone":"America/New_York"},"recurrence":["RRULE:FREQ=YEARLY;BYWEEKNO=20"]}`, "owner@example.com")
 	require.NoError(st.UpdateSourceSyncConfig(t.Context(), data.Message.SourceID, `{"calendar_id":"owner@example.com","time_zone":"America/New_York"}`))
@@ -180,10 +180,10 @@ func TestMeetingRecordUnsupportedAllDayEditOriginalZone(t *testing.T) {
 		record, err := st.MeetingRecordContext(t.Context(), seed)
 		require.NoError(err)
 		require.Len(record.Links, 1)
-		assert.Equal(t, fmt.Sprintf("evt:%d", edit), record.Links[0].Ref)
-		assert.Equal(t, "2027-03-14T15:00:00Z", record.Links[0].Start.UTC().Format(time.RFC3339))
-		assert.Equal(t, []int64{note}, record.MessageIDs)
-		assert.Equal(t, []CalendarUnexpandable{{MessageID: series, Reason: "unsupported recurrence"}}, record.Unexpandable)
+		assertions.Equal(fmt.Sprintf("evt:%d", edit), record.Links[0].Ref)
+		assertions.Equal("2027-03-14T15:00:00Z", record.Links[0].Start.UTC().Format(time.RFC3339))
+		assertions.Equal([]int64{note}, record.MessageIDs)
+		assertions.Equal([]CalendarUnexpandable{{MessageID: series, Reason: "unsupported recurrence"}}, record.Unexpandable)
 	}
 }
 

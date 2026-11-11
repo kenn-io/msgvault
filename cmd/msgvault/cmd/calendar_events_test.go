@@ -315,14 +315,15 @@ func TestCalendarEventsSkippedDateWindow(t *testing.T) {
 }
 
 func TestCalendarEventsTableMeetingHandoff(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	st := testutil.NewTestStore(t)
 	calendar, err := st.GetOrCreateSource("gcal", "calendar@example.test")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	notes, err := st.GetOrCreateSource("meeting_import", "notes@example.test")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	persist := func(source int64, key, kind, conv, format, raw string) int64 {
 		id, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source, SourceMessageID: key, MessageType: kind}, Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: conv}, RawMIME: []byte(raw), RawFormat: format})
-		require.NoError(t, err)
+		requirements.NoError(err)
 		return id
 	}
 	series := persist(calendar.ID, "series", "calendar_event", "calendar", "gcal_json", `{"id":"series","iCalUID":"uid@example.test","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
@@ -332,27 +333,27 @@ func TestCalendarEventsTableMeetingHandoff(t *testing.T) {
 	daemon := httptest.NewServer(api.NewServer(cfg, &storeAPIAdapter{store: st, config: cfg, logger: logger}, nil, logger).Router())
 	t.Cleanup(daemon.Close)
 	client, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, APIKey: cfg.Server.APIKey, AllowInsecure: true, HTTPClient: daemon.Client()})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, client.Close()) })
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(client.Close()) })
 	cmd := newCalendarEventsCommand(func(context.Context) (calendarEventsClient, func(), error) { return client, func() {}, nil })
 	var table bytes.Buffer
 	cmd.SetOut(&table)
 	cmd.SetArgs([]string{"--from", "2027-03-14T00:00:00Z", "--to", "2027-03-22T00:00:00Z"})
-	require.NoError(t, cmd.Execute())
+	requirements.NoError(cmd.Execute())
 	ref := fmt.Sprintf("evt:%d@20270321T100000Z", series)
-	require.Contains(t, table.String(), " "+ref+" ")
+	requirements.Contains(table.String(), " "+ref+" ")
 	bare := newMeetingLinksCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
 	bare.SetArgs([]string{fmt.Sprintf("evt:%d", series)})
-	require.ErrorContains(t, bare.Execute(), "copy the full occurrence reference from calendar events")
+	requirements.ErrorContains(bare.Execute(), "copy the full occurrence reference from calendar events")
 	links := newMeetingLinksCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
 	var out bytes.Buffer
 	links.SetOut(&out)
 	links.SetArgs([]string{ref, "--json"})
-	require.NoError(t, links.Execute())
+	requirements.NoError(links.Execute())
 	var record store.MeetingRecord
-	require.NoError(t, json.Unmarshal(out.Bytes(), &record))
-	require.Len(t, record.Links, 1)
-	assert.Equal(t, ref, record.Links[0].Ref)
-	assert.Equal(t, "2027-03-21T10:00:00Z", record.Links[0].Start.UTC().Format(time.RFC3339))
-	assert.Equal(t, []int64{note}, record.MessageIDs)
+	requirements.NoError(json.Unmarshal(out.Bytes(), &record))
+	requirements.Len(record.Links, 1)
+	assertions.Equal(ref, record.Links[0].Ref)
+	assertions.Equal("2027-03-21T10:00:00Z", record.Links[0].Start.UTC().Format(time.RFC3339))
+	assertions.Equal([]int64{note}, record.MessageIDs)
 }

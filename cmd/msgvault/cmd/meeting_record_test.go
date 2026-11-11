@@ -63,6 +63,7 @@ func TestMeetingLinksCLIPartialRecord(t *testing.T) {
 			assert.Contains(out.String(), "confirmed")
 			assert.Contains(out.String(), "cancelled")
 			assert.Contains(out.String(), "deleted")
+			assert.Contains(out.String(), "Notes: 42\n")
 			assert.Contains(stderr.String(), "message 7 (unsupported recurrence)")
 		}
 	}
@@ -89,4 +90,14 @@ func TestMeetingLinksCLIEventRecord(t *testing.T) {
 		require.ErrorContains(t, command.Execute(), "daemon API schema 5.1.0 or newer")
 		assert.Empty(t, client.refs)
 	})
+}
+
+func TestMeetingLinksCLIWithoutNotes(t *testing.T) {
+	client := &meetingRecordClient{version: "5.1.0", record: &store.MeetingRecord{Links: []store.MeetingLink{{Ref: "evt:23", Start: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), End: time.Date(2027, 3, 14, 11, 0, 0, 0, time.UTC)}}}}
+	command := newMeetingLinksCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
+	var out bytes.Buffer
+	command.SetOut(&out)
+	command.SetArgs([]string{"evt:23"})
+	require.NoError(t, command.Execute())
+	assert.Contains(t, out.String(), "Notes: none\n")
 }
