@@ -272,7 +272,7 @@ func TestCommitmentAgendaRefreshesOnlyUnchangedPassages(t *testing.T) {
 }
 
 func TestCommitmentAgendaChangedCitationRecoversOrConflicts(t *testing.T) {
-	for _, trigger := range []string{"closed", "target", "body", "shortened body"} {
+	for _, trigger := range []string{"closed", "source changed", "target", "body", "shortened body"} {
 		for _, found := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/found=%t", trigger, found), func(t *testing.T) {
 				r, a := require.New(t), assert.New(t)
@@ -298,6 +298,11 @@ func TestCommitmentAgendaChangedCitationRecoversOrConflicts(t *testing.T) {
 					if found {
 						issues.found.Issue.Metadata = map[string]any{personagenda.ListMetadataKey: "later"}
 					}
+				case "source changed":
+					// The real Store hides a commitment whose citation no longer
+					// verifies, just as it hides an owner-closed commitment.
+					archive.closed = true
+					archive.source.Text = strings.Replace(archive.source.Text, "draft", "notes", 1)
 				case "target":
 					archive.commitment.TargetKey = "survivor-message-target"
 				case "body", "shortened body":
