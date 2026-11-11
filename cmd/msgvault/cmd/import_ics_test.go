@@ -12,6 +12,18 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+func TestImportICSCommandRequiresIdentifier(t *testing.T) {
+	root := newRootCommand()
+	root.AddCommand(newImportICSCommand())
+	var output bytes.Buffer
+	root.SetOut(&output)
+	root.SetErr(&output)
+	root.SetArgs([]string{"--home", t.TempDir(), "--no-log-file", "import-ics", "example.ics"})
+	err := executeRootContext(t.Context(), root)
+	require.ErrorContains(t, err, "--identifier is required")
+	assert.Contains(t, output.String(), "Usage:")
+}
+
 func TestImportICSCommandImportsFile(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

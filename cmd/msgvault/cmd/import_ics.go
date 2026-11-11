@@ -16,7 +16,7 @@ func newImportICSCommand() *cobra.Command {
 		Use: "import-ics <file>", Short: "Import local ICS events", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if strings.TrimSpace(identifier) == "" {
-				return errors.New("--identifier is required")
+				return usageErr(cmd, errors.New("--identifier is required"))
 			}
 			state := invocationFromCommand(cmd)
 			if state == nil || state.cfg == nil {
@@ -43,7 +43,9 @@ func newImportICSCommand() *cobra.Command {
 	cmd.Flags().StringVar(&identifier, "identifier", "", "Stable name for this calendar export (required)")
 	return cmd
 }
-func init() { rootCmd.AddCommand(newImportICSCommand()) }
+func init() {
+	rootCmd.AddCommand(newImportICSCommand())
+}
 
 func printICSImportSummary(cmd *cobra.Command, summary *store.ICalendarImportSummary) {
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Events: %d updated, %d not updated\n", summary.Changed, summary.Unchanged)
