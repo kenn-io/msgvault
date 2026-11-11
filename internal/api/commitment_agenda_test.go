@@ -76,6 +76,9 @@ func (f *agendaArchiveFixture) RetireCommitmentAgendaContext(context.Context, st
 }
 
 func (f *agendaArchiveFixture) LinkCommitmentAgendaContext(_ context.Context, _ string, uid, ref string) (store.CommitmentAgendaSuggestion, error) {
+	if f.item.CommitmentID == 0 {
+		return store.CommitmentAgendaSuggestion{}, sql.ErrNoRows
+	}
 	f.item.State, f.item.IssueUID, f.item.IssueRef = store.CommitmentAgendaLinked, uid, ref
 	return f.item, nil
 }
@@ -156,6 +159,22 @@ func TestCommitmentAgendaSettlesSavedIntent(t *testing.T) {
 		r.NoError(err)
 		a.Equal(task.QualifiedRef, item.IssueRef)
 		a.Equal(1, calls)
+	})
+	t.Run("receipt removed while remote create succeeds", func(t *testing.T) {
+		r, a := require.New(t), assert.New(t)
+		agenda, archive, issues := newCommitmentAgendaFixture()
+		task := taskclient.KataTask{UID: "created-then-receipt-removed", QualifiedRef: "agenda#19"}
+		issues.create = func(string, kataissues.CreateInput) (kataissues.Result, error) {
+			// A losing receipt can disappear during a merge while this create
+			// is in flight. The accepted single-receipt policy keeps the winner.
+			archive.item = store.CommitmentAgendaSuggestion{}
+			return kataissues.Result{Issue: task}, nil
+		}
+		item, err := agenda.Manual(t.Context(), 12, time.Now())
+		r.NoError(err, "a successfully created remote issue must be returned even when its local receipt was removed")
+		a.Equal(task.UID, item.IssueUID)
+		a.Equal(task.QualifiedRef, item.IssueRef)
+		a.Zero(archive.item.CommitmentID, "the response must not recreate the losing receipt")
 	})
 	t.Run("closed before submission", func(t *testing.T) {
 		r, a := require.New(t), assert.New(t)
