@@ -892,7 +892,7 @@ retries a write by itself. If a write reports
 
 ## Write controls
 
-Person attributes and their definitions are available to owner sessions on unreleased `main`. Reads include typed values and optional history. Writes require `--allow-attribute-writes` and confirmation for each call; native value IDs, ordinals, dry runs, definition ETags and seeded-definition guards remain in effect. Native daemon endpoints use `--mcp-allow-attribute-writes` alongside `--mcp-allow-writes`.
+Person attributes and their definitions are available to owner sessions on unreleased `main`. Reads include typed values and optional history. History is returned only when the entire listing fits the 1 MiB response limit; an oversized listing is refused. Use `slug` to narrow the listing or `history: false` for current values. If a write returns `operation_receipt_unavailable`, its receipt could not be read; read the current state before retrying because the operation may have completed. Writes require `--allow-attribute-writes` and confirmation for each call; native value IDs, ordinals, dry runs, definition ETags and seeded-definition guards remain in effect. Native daemon endpoints use `--mcp-allow-attribute-writes` alongside `--mcp-allow-writes`.
 
 Enable only the writes intended for the assistant's session:
 

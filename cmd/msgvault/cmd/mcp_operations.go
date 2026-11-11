@@ -177,9 +177,15 @@ func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daem
 	defer func() { _ = response.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
 	if err != nil {
+		if writes && slices.Contains(success, response.StatusCode) {
+			return operationFailure("operation_receipt_unavailable", true), err
+		}
 		return operationFailure("operation_response_failed", writes), err
 	}
 	if len(data) > 1<<20 {
+		if writes && slices.Contains(success, response.StatusCode) {
+			return operationFailure("operation_receipt_unavailable", true), nil
+		}
 		return operationFailure("operation_response_limit_exceeded", writes), nil
 	}
 	if !slices.Contains(success, response.StatusCode) {
