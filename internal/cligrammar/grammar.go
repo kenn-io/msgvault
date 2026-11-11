@@ -144,8 +144,8 @@ var paths = func() []pathMove {
 // Canonical converts stable operation names to executable public command paths.
 // Only complete leading command tokens match; argument and flag data is untouched.
 func Canonical(args []string) []string {
-	// Preserve the stable daemon operation identifier for existing clients.
-	// The CLI no longer registers this name as a command.
+	// Preserve the stable daemon operation identifier for existing clients while
+	// dispatching it to the canonical command in subprocesses.
 	if len(args) > 0 && args[0] == "build-embeddings" {
 		return append([]string{"embeddings", "build"}, args[1:]...)
 	}

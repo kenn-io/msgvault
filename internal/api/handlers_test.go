@@ -952,7 +952,7 @@ func TestHandleCLISyncPreservesSubprocessErrorMetadata(t *testing.T) {
 		return cliSyncMetadataTestError{}
 	}}
 	srv := newCLIHandlerTestServer(st)
-	resp := servePOSTTestRequest(srv, "/api/v1/cli/sync?email=alice@example.com")
+	resp := servePOSTTestRequest(t.Context(), srv, "/api/v1/cli/sync?email=alice@example.com")
 	requireNDJSONResponse(t, resp)
 
 	events := decodeNDJSONEvents[CLISyncEvent](t, resp.Body)

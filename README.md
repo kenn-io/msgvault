@@ -28,9 +28,7 @@ Use the browser, terminal, CLI, HTTP API, or an AI assistant through MCP.
 > your data. This README follows current `main`; see the
 > [0.23.0 changelog](docs/changelog.md#0230) for features and upgrade steps.
 > The [grouped CLI names](docs/cli-reference.md#command-grammar-and-compatibility)
-> are unreleased. On `main`, use `msgvault database init` and
-> `msgvault source gmail add` for the first two steps below. Use your binary's
-> `--help` to check its command names.
+> are unreleased. Use your binary's `--help` to check its command names.
 
 ## What you can do
 

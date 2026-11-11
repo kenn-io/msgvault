@@ -107,7 +107,7 @@ func TestManagedEmbeddingsBuildWithoutConfirmationAborts(t *testing.T) {
 	}()
 	select {
 	case err := <-result:
-		require.ErrorContains(t, err, "aborted")
+		require.ErrorContains(t, err, "no confirmation input (stdin closed); pass --yes after reviewing the operation")
 	case <-time.After(5 * time.Second):
 		require.FailNow(t, "build waited on daemon stdin")
 	}

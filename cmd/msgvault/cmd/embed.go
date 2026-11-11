@@ -212,6 +212,7 @@ func runEmbeddingsListCommand(cmd *cobra.Command, args []string) error {
 
 func init() {
 	markLegacyCommand(embedCmd, "embeddings build")
+	rootCmd.AddCommand(embedCmd)
 	registerEmbeddingBuildFlags(embeddingsResumeCmd, nil, nil, &embedBackstop, &embedAccounts, &embedCollections)
 	embeddingsRetireCmd.Flags().BoolVar(&embeddingsRetireYes, "yes", false, "Skip confirmation prompt")
 	embeddingsRetireCmd.Flags().BoolVar(&embeddingsRetireForceActive, "force-active", false, "Allow retiring the active generation")

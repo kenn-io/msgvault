@@ -257,7 +257,7 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 	}{
 		{"o365", newAddO365LocalCmd, nil, "msgvault sync-full -- user@example.com"},
 		{"graph", newAddO365LocalCmd, []string{"--graph"}, "msgvault sync -- user@example.com"},
-		{"teams", newAddTeamsLocalCmd, nil, "msgvault sync-teams user@example.com"},
+		{"teams", newAddTeamsLocalCmd, nil, "msgvault source teams sync user@example.com"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
