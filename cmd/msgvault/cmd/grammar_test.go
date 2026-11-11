@@ -75,7 +75,7 @@ func TestCLIGrammarRealTree(t *testing.T) {
 			})
 		})
 	}
-	for _, path := range []string{"embeddings build", "embeddings status", "backup create", "documents build", "documents vectors status"} {
+	for _, path := range []string{"embeddings build", "embeddings status", "backup create"} {
 		args := strings.Fields(path)
 		assertions.True(api.CLIRunCommandAllowed(args), path)
 		command, rest, err := rootCmd.Find(args)

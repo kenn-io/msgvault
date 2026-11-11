@@ -91,6 +91,7 @@ var moves = []Move{
 	{"rebuild-fts", "fts rebuild"},
 	{"remove-account", "account remove"},
 	{"repack-attachments", "attachment repack"},
+	{"repair-attachment-roles", "repair attachment-roles"},
 	{"repair-dates", "repair dates"},
 	{"repair-derived", "repair derived"},
 	{"repair-encoding", "repair encoding"},

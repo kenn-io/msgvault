@@ -27,7 +27,7 @@ appear in full under Inherited Flags.
 | Export | [export-messages](#export-messages), [export-eml](#export-eml), [export-attachments](#export-attachments), [create-subset](#create-subset) |
 | Review and remove mail | [stage-delete](#stage-delete), [delete-staged](#delete-staged), [deduplicate](#deduplicate), [gc](#gc) |
 | Back up and manage attachment storage | [backup](#backup), [pack-attachments](#pack-attachments), [purge-excluded-media](#purge-excluded-media) |
-| Repair older records | [repair-identity](#repair-identity), [repair-senders](#repair-senders), [repair-message](#repair-message), [repair-derived](#repair-derived), [repair-attachment-roles](#repair-attachment-roles), [repair-labels](#repair-labels), [repair-list-ids](#repair-list-ids), [repair-dates](#repair-dates) |
+| Repair older records | [repair-identity](#repair-identity), [repair-senders](#repair-senders), [repair-message](#repair-message), [repair-derived](#repair-derived), [repair attachment-roles](#repair-attachment-roles), [repair-labels](#repair-labels), [repair-list-ids](#repair-list-ids), [repair-dates](#repair-dates) |
 | Operate or integrate | [setup](#setup), [credentials](#credentials), [daemon](#daemon), [serve](#serve), [activity](#activity), [mcp](#mcp), [query](#query), [openapi](#openapi), [agent-token](#agent-token) |
 
 ## loops
@@ -5554,14 +5554,16 @@ not inspect every previously archived attachment. `repair-message --audit` compa
 MIME occurrences but does not check file contents. The normal `repair-derived` and
 automatic `Heal` text passes do not reconstruct files.
 
-## repair-attachment-roles
+<a id="repair-attachment-roles"></a>
+
+## repair attachment-roles
 
 Classify email attachments archived before msgvault recorded attachment roles,
 from the raw MIME stored with each message. The command does not contact a
 provider.
 
 ```bash
-msgvault repair-attachment-roles
+msgvault repair attachment-roles
 ```
 
 Older email attachments have the role `unknown`, so a filter cannot tell an

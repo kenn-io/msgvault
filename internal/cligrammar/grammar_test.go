@@ -17,6 +17,7 @@ func TestGrammarKnownPaths(t *testing.T) {
 		{"add-synctech-sms-drive", "source synctech-sms add"},
 		{"migrate", "database migrate"},
 		{"delete-deduped", "deletion purge-deduped"},
+		{"repair-attachment-roles", "repair attachment-roles"},
 		{"show-message", "show"},
 		{"schema-version", "database version"},
 		{"sync-full", "sync-full"},

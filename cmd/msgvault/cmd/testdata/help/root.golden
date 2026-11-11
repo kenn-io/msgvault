@@ -108,12 +108,11 @@ Indexes, embeddings, and analytics cache:
   multimodal  Manage and search visual attachment embeddings
 
 Maintenance and repair:
-  attachment              Pack, restore, and maintain archived attachments
-  backup                  Back up the archive to a snapshot repository
-  database                Initialize, migrate, and inspect the archive schema
-  policy                  Show room tiers and overrides
-  repair                  Repair archived messages and metadata
-  repair-attachment-roles Classify older email attachments
+  attachment  Pack, restore, and maintain archived attachments
+  backup      Back up the archive to a snapshot repository
+  database    Initialize, migrate, and inspect the archive schema
+  policy      Show room tiers and overrides
+  repair      Repair archived messages and metadata
 
 Setup, daemon, and integrations:
   agent-token Manage restricted agent grant tokens
