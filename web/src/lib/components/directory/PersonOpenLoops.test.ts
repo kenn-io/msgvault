@@ -47,7 +47,7 @@ function commitmentClient() {
     person_id: 7,
     claim_id: id + 100,
     direction,
-    summary: text,
+    summary: "Send the promised document",
     promise: { message_id: id + 40, text, start: 0, end: text.length },
     promised_at: "2026-10-12T12:00:00Z",
     due_on: id === 12 ? "2026-11-15" : null,
@@ -138,6 +138,7 @@ describe("PersonOpenLoops", () => {
     render(PersonOpenLoops, { client, personID: 7 });
     await screen.findByRole("link", { name: "I will send the draft." });
     expect(screen.getAllByText("I will send the draft.")).toHaveLength(1);
+    expect(screen.queryByText("Send the promised document")).toBeNull();
     expect(screen.getByText("Due 2026-11-15")).toBeDefined();
     expect(screen.getAllByText("I will check the venue.")).toHaveLength(1);
     await fireEvent.click(screen.getByRole("button", { name: "Show closed promises" }));

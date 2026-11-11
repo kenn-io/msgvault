@@ -954,3 +954,71 @@ func personSweepStatusEffect(effect peoplesweep.EvidenceChangeEffect) (bool, per
 		return false, "", false
 	}
 }
+
+// Maintain cited commitment evidence only over this apply's consumed frontier.
+// The ordinary extraction cursor remains untouched without its own grant.
+func (s *Store) prepareCommitmentStatuses(ctx context.Context, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep, verified commitmentEvidenceAligner) error {
+	personID := request.Lease.PersonID
+	var previous int64
+	var scope string
+	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT CASE WHEN observed_sequence > through_sequence THEN observed_sequence ELSE through_sequence END, scope_fingerprint
+		FROM person_commitment_frontiers WHERE person_id = ?`), personID).Scan(&previous, &scope)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if scope != prepared.scope {
+		previous = 0
+	}
+	prepared.maintenanceFrom = previous
+	consuming := prepared.observedOnly || prepared.anchorAfterID == 0 && !slices.ContainsFunc(prepared.promises, func(p preparedCommitmentPromise) bool { return p.replay })
+	affected := map[string]personfacts.EvidenceStatusChange{}
+	for consuming && previous < prepared.through {
+		page, err := s.ScanPersonSweepChanges(ctx, personID, previous, maxPersonSweepChangeScan)
+		if err != nil {
+			return err
+		}
+		page = slices.DeleteFunc(page, func(c peoplesweep.ArchiveChange) bool { return c.Sequence > prepared.through })
+		if len(page) == 0 {
+			break
+		}
+		changes, err := s.BuildPersonSweepEvidenceStatusChanges(ctx, personID, page)
+		if err != nil {
+			return err
+		}
+		for _, change := range changes {
+			affected[change.EvidenceKey] = change
+		}
+		previous = page[len(page)-1].Sequence
+	}
+	evidence, err := s.personSweepStoredEvidence(ctx, personID)
+	if err != nil {
+		return err
+	}
+	for _, stored := range evidence {
+		message, commitment := strings.CutPrefix(stored.Input.SourceRef, personfacts.CommitmentMessageRefPrefix)
+		if !commitment {
+			continue
+		}
+		change, changed := affected[stored.Key]
+		_, verifiedNow := verified[stored.Key]
+		if !changed && !verifiedNow {
+			continue
+		}
+		alignment, err := s.reactivatePersonSweepEvidence(ctx, stored.Input, true)
+		if err != nil {
+			return err
+		}
+		if !changed || alignment.Accepted {
+			change = personfacts.EvidenceStatusChange{EvidenceKey: stored.Key, SourceVersion: stored.Input.SourceVersion, Supported: alignment.Accepted, Reason: personfacts.EvidenceStatusSourceReimported}
+		}
+		// Current exact verification wins over an earlier edit in this range.
+		change.Supported = alignment.Accepted
+		prepared.statuses = append(prepared.statuses, change)
+		id, err := strconv.ParseInt(message, 10, 64)
+		if err != nil {
+			return err
+		}
+		prepared.maintenanceIDs = append(prepared.maintenanceIDs, id)
+	}
+	return nil
+}
