@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -278,6 +279,20 @@ func TestOpenHTTPStoreDisabledAutoStartDoesNotStartDaemon(t *testing.T) {
 	require.ErrorIs(err, errLocalDaemonAutoStartDisabled)
 	assert.Contains(err.Error(), dataDir)
 	assert.Contains(err.Error(), "msgvault daemon start")
+	assert.Equal(t, 7, ExitCode(err))
+	diagnostic := classifyCLIError(nil, err)
+	assert.Equal(t, "unavailable", diagnostic.Code)
+	var human, machine bytes.Buffer
+	renderCLIError(&human, diagnostic, false)
+	renderCLIError(&machine, diagnostic, true)
+	assert.Contains(t, human.String(), "msgvault daemon start")
+	var payload struct {
+		Error cliErrorRecord `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(machine.Bytes(), &payload))
+	assert.Equal(t, "unavailable", payload.Error.Code)
+	assert.Equal(t, 7, payload.Error.ExitCode)
+	assert.Contains(t, payload.Error.Message, "msgvault daemon start")
 
 	held, err := daemonOwnerLockHeld(dataDir)
 	require.NoError(err, "check daemon ownership")

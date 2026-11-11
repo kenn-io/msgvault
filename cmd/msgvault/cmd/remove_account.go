@@ -144,7 +144,7 @@ func confirmRemoveAccount(r io.Reader, w io.Writer) (bool, error) {
 func accountRemovalConfirmationEOF() error {
 	return &cliError{
 		Kind: "usage", Code: "confirmation_required", ExitCode: 2, Err: io.EOF,
-		Message: "no confirmation input (stdin closed); use --yes to confirm, or --dry-run to preview (msgvault account remove you@example.com --dry-run)",
+		Message: "no confirmation input (stdin closed)",
 		Hint:    "preview with 'msgvault account remove <account> --dry-run', then pass --yes after reviewing the removal",
 	}
 }

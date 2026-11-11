@@ -35,7 +35,7 @@ var grammarGroups = map[string]struct{ short, group string }{
 	"repair":           {"Repair archived messages and metadata", helpGroupMaintenance},
 	"sender":           {"List message senders", helpGroupRead},
 	"show":             {"Show an archived message", helpGroupRead},
-	"source":           {"Add and sync provider sources", helpGroupSources},
+	cmdUseSource:       {"Add and sync provider sources", helpGroupSources},
 	"thread":           {"Show archived threads", helpGroupRead},
 }
 

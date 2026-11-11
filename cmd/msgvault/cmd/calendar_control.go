@@ -201,7 +201,7 @@ func newCalendarControlCmd(run calendarRunner) *cobra.Command {
 			}
 			for _, receipt := range result.Writes {
 				if !receipt.Archived {
-					return withHint(fmt.Errorf("google change completed for %s; archive write failed: %s; run 'msgvault source calendar sync %s' to reconcile, do not repeat the mutation", receipt.Event.ID, receipt.ArchiveError, account), "reconcile with 'msgvault source calendar sync <account>'; do not repeat the completed calendar mutation")
+					return fmt.Errorf("google change completed for %s; archive write failed: %s; run 'msgvault source calendar sync %s' to reconcile, do not repeat the mutation", receipt.Event.ID, receipt.ArchiveError, account)
 				}
 			}
 			return nil

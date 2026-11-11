@@ -49,7 +49,7 @@ source-deleted message counts.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		format := strings.ToLower(strings.TrimSpace(queryFormat))
 		if format != outputFormatJSON && format != "csv" && format != "table" {
-			return withHint(validationErr(cmd, fmt.Errorf("unknown format %q (use json, csv, or table)", format)), "choose --format json, --format csv, or --format table")
+			return validationErr(cmd, fmt.Errorf("unknown format %q (use json, csv, or table)", format))
 		}
 		return runHTTPQuery(cmd, args[0])
 	},
@@ -104,7 +104,7 @@ func writeQueryResult(w io.Writer, result *query.QueryResult, format string) err
 	case "table":
 		return writeTable(w, result.Columns, result.Rows)
 	default:
-		return withHint(validationErr(nil, fmt.Errorf("unknown format %q (use json, csv, or table)", format)), "choose --format json, --format csv, or --format table")
+		return validationErr(nil, fmt.Errorf("unknown format %q (use json, csv, or table)", format))
 	}
 }
 

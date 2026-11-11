@@ -52,6 +52,12 @@ const flagJSON = "json"
 // cmdUseList is the shared Cobra use/name for list subcommands.
 const cmdUseList = "list"
 
+// cmdUseSource is the shared Cobra name for provider source commands.
+const cmdUseSource = "source"
+
+// exportRecordTypeSource identifies source records in an export stream.
+const exportRecordTypeSource = "source"
+
 // cmdUseAccount is the shared Cobra use/name for account commands.
 const cmdUseAccount = "account"
 

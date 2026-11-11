@@ -109,7 +109,7 @@ type exportMessagesJSONLSink struct {
 
 func (s exportMessagesJSONLSink) Source(source store.MessageExportSource) error {
 	return json.MarshalEncode(s.encoder, exportMessagesSourceRecord{
-		RecordType:           "source",
+		RecordType:           exportRecordTypeSource,
 		SourceType:           source.SourceType,
 		Identifier:           source.Identifier,
 		DisplayName:          source.DisplayName,
@@ -219,7 +219,7 @@ func runExportMessages(
 		return err
 	}
 	if opts.Format != "jsonl" {
-		return withHint(validationErr(cmd, fmt.Errorf("unsupported --format %q (expected jsonl)", opts.Format)), "use --format jsonl; export messages writes JSON Lines to stdout")
+		return withHint(validationErr(cmd, fmt.Errorf("unsupported --format %q (expected jsonl)", opts.Format)), "output goes to stdout")
 	}
 	messageTypes, err := normalizeMessageExportTypes(opts.MessageTypes)
 	if err != nil {

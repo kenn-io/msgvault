@@ -86,11 +86,10 @@ func confirmDestructive(r io.Reader, w io.Writer, mode ConfirmMode) (bool, error
 }
 
 func confirmationEOF(mode ConfirmMode) error {
-	message := "no confirmation input (stdin closed); pass --yes after reviewing the operation"
+	message := "no confirmation input (stdin closed)"
 	hint := "review the operation first, then pass --yes to confirm without a prompt"
 	switch mode {
 	case ConfirmModePermanent:
-		message = `no confirmation input (stdin closed); type "delete" to confirm permanent deletion`
 		hint = `run in a terminal and type "delete"; --yes never skips permanent-deletion confirmation`
 	case ConfirmModeAllHidden:
 		message = "--all-hidden requires interactive confirmation; stdin is closed"

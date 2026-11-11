@@ -658,7 +658,7 @@ func personCLIIdempotencyKey(cmd *cobra.Command, value string) (string, error) {
 		return "", withHint(usageErr(cmd, errors.New("idempotency key is required")), "pass --idempotency-key with a unique retry key, for example --idempotency-key merge-1-2-a; reuse it only for the same request")
 	}
 	if len(value) > 128 {
-		return "", withHint(validationErr(cmd, errors.New("idempotency key must be at most 128 bytes")), "choose --idempotency-key as a unique string of at most 128 bytes and reuse it for retries")
+		return "", withHint(validationErr(cmd, errors.New("idempotency key must be at most 128 bytes")), "reuse a unique --idempotency-key for retries of the same request")
 	}
 	return value, nil
 }

@@ -64,7 +64,7 @@ var backupRestoreAfterDaemonPreflight func()
 var backupCmd = &cobra.Command{
 	Use:     "backup",
 	Short:   "Back up the archive to a snapshot repository",
-	Long:    "Store archive snapshots in a configured backup repository or one selected with --repo. Initialize once, create snapshots, list and verify them, then restore a chosen snapshot to a separate target directory. Restore refuses a non-empty target unless --overwrite is explicitly passed.",
+	Long:    "Store archive snapshots in a configured backup repository or one selected with --repo. Initialize the repository before its first backup and restore to a separate target directory. Restore refuses a non-empty target unless --overwrite is explicitly passed.",
 	Example: "  msgvault backup init --repo /path/to/backups\n  msgvault backup create --repo /path/to/backups",
 }
 

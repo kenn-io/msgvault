@@ -40,7 +40,7 @@ Exit codes:
   75 sync paused; 130 interrupted. A daemon may report paused as a sync outcome.
 
 Environment:
-  MSGVAULT_HOME selects the local home. MSGVAULT_IMAP_PASSWORD supplies an IMAP
+  MSGVAULT_IMAP_PASSWORD supplies an IMAP
   password. MSGVAULT_REMOTE_URL and MSGVAULT_REMOTE_API_KEY are used by account
   export-token. VOYAGE_API_KEY / OPENAI_API_KEY supply configured embeddings.
   MSGVAULT_ENABLE_REMOTE_DELETE is owner opt-in for remote deletion.

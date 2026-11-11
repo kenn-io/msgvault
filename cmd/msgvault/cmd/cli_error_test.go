@@ -44,7 +44,7 @@ func TestCLIErrorRendering(t *testing.T) {
 					args = append(args, "--json")
 				}
 				root.SetArgs(args)
-				err := executeRootContext(context.Background(), root, args)
+				err := executeRootContext(t.Context(), root, args)
 				require.Error(err)
 				assert.Equal(tc.code, ExitCode(err))
 				assert.Empty(out.String())

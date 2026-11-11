@@ -21,7 +21,7 @@ func TestOpsPromptEOFIsAnError(t *testing.T) {
 		assert.False(ok)
 		assert.Equal(2, ExitCode(err))
 		require.ErrorIs(err, io.EOF)
-		require.ErrorContains(err, "--yes")
+		assert.Contains(recoveryHint(err), "--yes")
 	})
 	for _, mode := range []string{deleteStagedConfirmModePermanent, deleteStagedConfirmModeTrash} {
 		t.Run(mode, func(t *testing.T) {
@@ -55,7 +55,7 @@ func TestGCClosedInputDoesNotReportSuccess(t *testing.T) {
 	require.Error(t, err)
 	assert := assert.New(t)
 	assert.Equal(2, ExitCode(err))
-	require.ErrorContains(t, err, "--yes")
+	assert.Contains(t, recoveryHint(err), "--yes")
 	assert.NotContains(out.String(), "Aborted.")
 }
 
@@ -88,7 +88,7 @@ func TestConfirmDestructive_Permanent_StdinClosed(t *testing.T) {
 	ok, err := confirmDestructive(strings.NewReader(""), &out, ConfirmModePermanent)
 	require.Error(t, err)
 	assert.False(t, ok, "want false on closed stdin")
-	assert.ErrorContains(t, err, `type "delete"`)
+	assert.Contains(t, recoveryHint(err), `type "delete"`)
 }
 
 func TestConfirmDestructive_AllHidden_YesAccepted(t *testing.T) {
@@ -130,7 +130,7 @@ func TestConfirmDestructive_YesNo_StdinClosed(t *testing.T) {
 	var out bytes.Buffer
 	ok, err := confirmDestructive(strings.NewReader(""), &out, ConfirmModeYesNo)
 	require.Error(t, err, "closed stdin must not report a successful cancellation")
-	require.ErrorContains(t, err, "--yes")
+	assert.Contains(t, recoveryHint(err), "--yes")
 	assert.False(t, ok, "want false on closed stdin")
 }
 

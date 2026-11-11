@@ -20,7 +20,7 @@ import (
 func newKataCmd() *cobra.Command {
 	var jsonOutput bool
 	root := &cobra.Command{Use: "kata", Short: "Create Kata issues that quote archived evidence",
-		Long:    "Create issues with exact archive citations. Prepare evidence first, then create an issue with a stable idempotency key or link evidence to an existing issue. Use issues to find existing citations and context to read their current archive state.",
+		Long:    "Create issues with exact archive citations. Prepare evidence first and reuse the same idempotency key when retrying issue creation.",
 		Example: "  msgvault kata issues --message 1234 --json"}
 	root.PersistentFlags().BoolVar(&jsonOutput, flagJSON, false, "Output the full JSON response")
 

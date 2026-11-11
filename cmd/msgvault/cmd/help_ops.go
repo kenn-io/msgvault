@@ -7,7 +7,7 @@ import "github.com/spf13/cobra"
 func applyOpsHelp(root *cobra.Command) {
 	groups := map[string]struct{ long, example string }{
 		"attachment": {
-			"Maintain archived attachment storage. Pack combines loose blobs, unpack restores loose files with the daemon stopped, and repack reclaims dead bytes. purge-excluded previews policy exclusions with --dry-run before applying them. archive-remote-images separately requires consent to sender-controlled requests.",
+			"Maintain archived attachment storage. Stop the daemon before unpacking. Preview policy exclusions with --dry-run; requests to sender-controlled servers require consent.",
 			"  msgvault attachment pack\n  msgvault attachment purge-excluded --dry-run",
 		},
 		"cache": {

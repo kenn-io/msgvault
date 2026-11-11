@@ -77,7 +77,7 @@ func runExportDiscord(
 		return err
 	}
 	if opts.Format != flagJSON {
-		return withHint(validationErr(cmd, fmt.Errorf("unsupported --format %q (expected json)", opts.Format)), "use --format json; export discord writes JSON to stdout")
+		return withHint(validationErr(cmd, fmt.Errorf("unsupported --format %q (expected json)", opts.Format)), "output goes to stdout")
 	}
 
 	st, cleanup, err := deps.openReadOnlyStore()

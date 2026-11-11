@@ -112,10 +112,10 @@ default 131072). Meeting IDs come from the search in 'msgvault meetings'.`,
 			}
 			format = strings.ToLower(strings.TrimSpace(format))
 			if format != "json" && format != "markdown" {
-				return withHint(validationErr(command, errors.New("--format must be json or markdown")), "choose --format json or --format markdown")
+				return validationErr(command, errors.New("--format must be json or markdown"))
 			}
 			if maxBytes < 4096 || maxBytes > 1048576 {
-				return withHint(validationErr(command, errors.New("--max-bytes must be between 4096 and 1048576")), "use --max-bytes 4096 through 1048576; default is 131072")
+				return withHint(validationErr(command, errors.New("--max-bytes must be between 4096 and 1048576")), "default is 131072")
 			}
 			client, cleanup, err := openMeetingCommandClient(command.Context(), deps)
 			if err != nil {
@@ -281,15 +281,15 @@ func newMeetingActionsCommand(deps meetingCommandDeps) *cobra.Command {
 				return withHint(validationErr(command, err), "inspect 'msgvault meetings --help'; dates use YYYY-MM-DD, IDs come from meeting search, and --deletion accepts any, active, or deleted")
 			}
 			if limit < 1 || limit > 200 {
-				return withHint(validationErr(command, errors.New("--limit must be between 1 and 200")), "use --limit 1 through 200; default is 50, and next_cursor supplies the next --cursor")
+				return withHint(validationErr(command, errors.New("--limit must be between 1 and 200")), "default is 50; use next_cursor as the next --cursor")
 			}
 			status = strings.ToLower(strings.TrimSpace(status))
 			if status != "" && status != "pending" && status != "completed" && status != "cancelled" && status != "unknown" {
-				return withHint(validationErr(command, errors.New("--status must be pending, completed, cancelled, or unknown")), "choose --status pending, completed, cancelled, or unknown")
+				return validationErr(command, errors.New("--status must be pending, completed, cancelled, or unknown"))
 			}
 			queryText = strings.TrimSpace(queryText)
 			if utf8.RuneCountInString(queryText) > 256 {
-				return withHint(validationErr(command, errors.New("--query must be at most 256 characters")), "shorten --query to at most 256 characters, or narrow the date/participant scope")
+				return withHint(validationErr(command, errors.New("--query must be at most 256 characters")), "narrow the date/participant scope")
 			}
 			client, cleanup, err := openMeetingCommandClient(command.Context(), deps)
 			if err != nil {

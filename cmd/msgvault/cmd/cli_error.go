@@ -102,6 +102,11 @@ func classifyCLIError(cmd *cobra.Command, err error) *cliError {
 			}
 			result.Kind = kindForExit(result.ExitCode)
 			result.Code = result.Kind
+		} else if errors.Is(err, errLocalDaemonAutoStartDisabled) {
+			result.Kind = "unavailable"
+			result.Code = "unavailable"
+			result.ExitCode = 7
+			result.Hint = "check 'msgvault daemon status' before retrying"
 		} else if _, ok := errors.AsType[net.Error](err); ok {
 			result.Kind = "unavailable"
 			result.Code = "unavailable"

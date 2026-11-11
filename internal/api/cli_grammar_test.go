@@ -53,7 +53,7 @@ func TestCLIGrammarGate(t *testing.T) {
 			assert := assert.New(t)
 			body, err := json.Marshal(CLIRunRequest{Args: append(strings.Fields(tc.path), "42")})
 			require.NoError(t, err)
-			r := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(string(body)))
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", strings.NewReader(string(body)))
 			label, skip, err := cliRunGateDecision(r, requestAuthentication{})
 			require.NoError(t, err)
 			assert.Equal(tc.skip, skip)
@@ -74,20 +74,28 @@ func TestCLIGrammarCredentialBoundaries(t *testing.T) {
 func TestCLIGrammarGatePreservesEmbeddingSlotKind(t *testing.T) {
 	for _, tc := range []struct {
 		old, canonical, kind string
+		selfGated            bool
 	}{
-		{"sync-slack", "source slack sync", "sync"},
-		{"sync-calendar", "source calendar sync", "sync"},
-		{"import-mbox", "import mbox", "other"},
-		{"build-embeddings", "embeddings build", "embeddings"},
+		{"sync-slack", "source slack sync", "sync", false},
+		{"sync-calendar", "source calendar sync", "sync", false},
+		{"import-mbox", "import mbox", "other", false},
+		{"build-embeddings", "embeddings build", "embeddings", true},
 	} {
 		for _, path := range []string{tc.old, tc.canonical} {
 			t.Run(path, func(t *testing.T) {
 				require := require.New(t)
 				body, err := json.Marshal(CLIRunRequest{Args: strings.Fields(path)})
 				require.NoError(err)
-				request := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(string(body)))
+				request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", strings.NewReader(string(body)))
 				label, skip, err := cliRunGateDecision(request, requestAuthentication{})
 				require.NoError(err)
+				if tc.selfGated {
+					assert.True(t, skip)
+					assert.Empty(t, label)
+					assert.True(t, IsCLIRunEmbeddingsBuild(strings.Fields(path)))
+					assert.Equal(t, tc.kind, embeddingSlotKind("msgvault "+path, true))
+					return
+				}
 				require.False(skip)
 				assert.Equal(t, tc.kind, embeddingSlotKind(label, true))
 			})
@@ -111,7 +119,7 @@ func TestCLIGrammarRuntimeProof(t *testing.T) {
 			})
 			body, err := json.Marshal(CLIRunRequest{Args: append(path, "user@example.com", "--readonly")})
 			require.NoError(err)
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(string(body)))
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", strings.NewReader(string(body)))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set(apiprotocol.DaemonRuntimeTokenHeader, "synthetic-runtime-secret")
 			resp := httptest.NewRecorder()

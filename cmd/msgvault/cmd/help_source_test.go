@@ -115,9 +115,9 @@ func TestSourceRemoveEOFExplainsPreview(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(2, ExitCode(err))
 	require.ErrorIs(t, err, io.EOF)
-	assert.Contains(err.Error(), "--yes")
-	assert.Contains(err.Error(), "--dry-run")
-	assert.Contains(err.Error(), "msgvault account remove")
+	assert.Contains(recoveryHint(err), "--yes")
+	assert.Contains(recoveryHint(err), "--dry-run")
+	assert.Contains(recoveryHint(err), "msgvault account remove")
 }
 
 func TestSourceCardDAVIDsExplainListCommand(t *testing.T) {

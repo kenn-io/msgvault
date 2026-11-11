@@ -135,7 +135,7 @@ func credentialsCommandConfig(cmd *cobra.Command) (*config.Config, error) {
 		return nil, errors.New("configuration is unavailable")
 	}
 	if isRemoteModeFor(state) {
-		return nil, withHint(usageErr(cmd, errors.New("credentials are stored on the daemon host; run there or pass --local")), "inspect 'msgvault daemon status'; run credentials on the archive host or pass --local to select this machine")
+		return nil, withHint(usageErr(cmd, errors.New("credentials are stored on the daemon host; run there or pass --local")), "inspect 'msgvault daemon status'")
 	}
 	return state.cfg, nil
 }

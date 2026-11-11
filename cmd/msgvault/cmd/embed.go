@@ -37,7 +37,7 @@ const (
 var embeddingsCmd = &cobra.Command{
 	Use:     embeddingsCommandName,
 	Short:   "Manage message vector embeddings",
-	Long:    "Manage the generations used for semantic and hybrid message search. Inspect status, build or resume missing vectors, then inspect generations with list. Build completion normally activates the new generation; activate allows an explicit switch. Retire and prune remove vectors.",
+	Long:    "Manage the generations used for semantic and hybrid message search. Build completion normally activates the new generation; activate allows an explicit switch. Retire and prune remove vectors.",
 	Example: "  msgvault embeddings status\n  msgvault embeddings build --yes",
 }
 

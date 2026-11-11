@@ -20,5 +20,5 @@ func TestUpdateClosedConfirmationRequiresYes(t *testing.T) {
 	command.SetIn(strings.NewReader(""))
 	err := runUpdate(command, nil)
 	require.Error(t, err)
-	assert.ErrorContains(t, err, "--yes")
+	assert.Contains(t, recoveryHint(err), "--yes")
 }

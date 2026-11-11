@@ -1713,10 +1713,6 @@ func validateCLIDeletionManifest(manifest *deletion.Manifest) *apiHTTPError {
 
 const cliRunPersonCommand = "person"
 
-// cliRunStatusSubcommand is the read-only status subcommand shared by the
-// document and document-vector command groups.
-const cliRunStatusSubcommand = "status"
-
 // CLIRunCommandAllowed reports whether a proxied CLI command may run through
 // the daemon CLI runner. Most commands are admitted by their leading word
 // alone; command groups whose subcommand matters are checked against their

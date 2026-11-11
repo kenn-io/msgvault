@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -182,7 +181,7 @@ func TestDaemonCLIProxiedJSONFailureKeepsFinalLineWithDebugLogging(t *testing.T)
 			root.AddCommand(group)
 			args := []string{"probe", "get", "fixture", "--json", "--verbose"}
 			root.SetArgs(args)
-			err := executeRootContext(context.Background(), root, args)
+			err := executeRootContext(t.Context(), root, args)
 			require.Error(err)
 			assert.Equal(4, ExitCode(err), "child exit code reaches the caller")
 

@@ -163,7 +163,7 @@ var multimodalSearchCmd = &cobra.Command{
 
 var multimodalStatusCmd = &cobra.Command{
 	Use: multimodalStatusSubcommand, Short: "Show visual attachment embedding status",
-	Long:    "Inspect the visual generation, coverage, retries, and reconciliation journal lag. This reports existing work without starting provider uploads.",
+	Long:    "Inspect visual indexing progress and pending retries without starting uploads.",
 	Example: "  msgvault multimodal status --json", Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		client, _, err := OpenHTTPStore(cmd.Context())
