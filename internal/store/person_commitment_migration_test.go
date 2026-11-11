@@ -62,9 +62,17 @@ func TestCommitmentMigrationUpgradesVersion40(t *testing.T) {
 			r.NoError(st.MarkPersonSweepBudgetStarted(ctx, reservation, sweepAttemptLease(f)))
 		}
 	}
+	source, err := st.GetOrCreateSource("slack", "commitment-v40")
+	r.NoError(err)
+	conversation, err := st.EnsureConversationWithType(source.ID, "commitment-v40", "direct_chat", "Synthetic upgrade")
+	r.NoError(err)
+	anchor, err := st.PersistMessageContext(ctx, &store.MessagePersistData{Message: &store.Message{
+		SourceID: source.ID, ConversationID: conversation, MessageType: "slack", SourceMessageID: "commitment-v40-anchor",
+	}})
+	r.NoError(err)
 	var id int64
 	r.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`INSERT INTO person_commitments
  (person_id,target_key,anchor_message_id,direction,quote,quote_start,quote_end,summary,promised_at,expires_at)
- SELECT ?, 'promise', MIN(id), 'owed_to', 'I will send it.', 0, 15, 'Send it', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP FROM messages RETURNING id`), f.personID).Scan(&id))
+ VALUES (?, 'promise', ?, 'owed_to', 'I will send it.', 0, 15, 'Send it', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING id`), f.personID, anchor).Scan(&id))
 	a.Positive(id)
 }
