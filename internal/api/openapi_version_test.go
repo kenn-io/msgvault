@@ -83,17 +83,14 @@ func checkAPIContract(version, digest string, markers, base []string) error {
 			break
 		}
 	}
-	if problem == "" {
-		switch semver.Compare(current, greatest) {
-		case -1:
-			problem = fmt.Sprintf("API schema version %s is older than recorded version %s", version, strings.TrimPrefix(greatest, "v"))
-		case 1:
-			return fmt.Errorf("record the API contract with an empty marker at %s", filepath.Join(apiContractsDir, version+"_"+digest))
-		default:
-			if len(contracts[current]) != 1 || contracts[current][0] != digest {
-				problem = "API contract changed or has multiple markers for " + version
-			}
-		}
+	if problem == "" && semver.Compare(current, greatest) < 0 {
+		problem = fmt.Sprintf("API schema version %s is older than recorded version %s", version, strings.TrimPrefix(greatest, "v"))
+	}
+	if problem == "" && semver.Compare(current, greatest) > 0 {
+		return fmt.Errorf("record the API contract with an empty marker at %s", filepath.Join(apiContractsDir, version+"_"+digest))
+	}
+	if problem == "" && (len(contracts[current]) != 1 || contracts[current][0] != digest) {
+		problem = "API contract changed or has multiple markers for " + version
 	}
 	if problem != "" {
 		major, minor, _ := strings.Cut(strings.TrimPrefix(semver.MajorMinor(greatest), "v"), ".")
