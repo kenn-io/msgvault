@@ -19,8 +19,10 @@ func operationalSettingsDefinitions() []operationalDefinition {
 	// The SDK validates and re-encodes inputs through float64 before the handler.
 	value.OneOf[2].Properties["integer"] = boundedIntegerSchema("", -maxJSONSafeInteger, maxJSONSafeInteger)
 	update := closedObject(map[string]*jsonschema.Schema{"key": stringSchema("Exact key returned by get_operational_settings"), "value": value}, "key", "value")
+	write := newOperationalDefinition("update_operational_settings", "Update allowlisted operational settings using the exact ETag. Omitted settings stay unchanged; false and empty strings are explicit. May delete stale stored provider credentials. Requires approval and may require restart.", OperationFamilySettings, closedObject(map[string]*jsonschema.Schema{"etag": stringSchema("Exact ETag from get_operational_settings"), "updates": {Type: schemaTypeArray, Items: update}}, "etag", "updates"), output, true)
+	write.definition.annotations.DestructiveHint = new(true)
 	return []operationalDefinition{
 		newOperationalDefinition("get_operational_settings", "Read allowlisted operational settings, the exact settings ETag and pending restart state. Endpoints, credentials, paths and operator setup are excluded.", OperationFamilySettings, closedObject(nil), output, false),
-		newOperationalDefinition("update_operational_settings", "Update allowlisted operational settings using the exact ETag. Omitted settings stay unchanged; false and empty strings are explicit. Requires approval and may require restart.", OperationFamilySettings, closedObject(map[string]*jsonschema.Schema{"etag": stringSchema("Exact ETag from get_operational_settings"), "updates": {Type: schemaTypeArray, Items: update}}, "etag", "updates"), output, true),
+		write,
 	}
 }
