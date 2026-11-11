@@ -137,8 +137,6 @@ type BriefResult struct {
 	Boundary                 BriefBoundary
 	Structured               jsontext.Value
 	Rendered                 RenderedBrief
-	// CurrentEventEvidenceRefs remain mandatory at final source alignment.
-	CurrentEventEvidenceRefs []EvidenceRef
 	// Evidence is the archive evidence the structure cites, in citation order.
 	// The store aligns each input and writes the surviving rows as the brief's
 	// evidence pointers.
@@ -178,9 +176,6 @@ func (w *Worker) planPersonBrief(
 	}
 	if !enrolled {
 		return briefPlan{}, nil
-	}
-	if err := ValidateBriefEventMemoryVersion(eligibility.Boundary); err != nil {
-		return briefPlan{}, err
 	}
 	// Refused profiles skip generation, but must still retire existing event memory.
 	profileAllowed := profile.AllowSensitive && len(briefWindowLanes(profile.AllowedSources)) > 0
@@ -282,38 +277,6 @@ func briefEvidenceInputs(parsed ParsedBrief) []personfacts.EvidenceInput {
 	return inputs
 }
 
-// briefCurrentEventEvidenceRefs captures the source refs behind event
-// highlights that remain in the current structure so their sources are
-// revalidated before storage.
-func briefCurrentEventEvidenceRefs(parsed ParsedBrief, window BriefWindow) ([]EvidenceRef, error) {
-	itemsByID := make(map[string]EvidenceItem, len(window.Items))
-	for _, item := range window.Items {
-		id := packetEvidenceID(item)
-		if id != "" {
-			itemsByID[id] = item
-		}
-	}
-	refs := make([]EvidenceRef, 0)
-	seen := make(map[EvidenceRef]struct{})
-	for _, highlight := range parsed.Output.Highlights {
-		if highlight.LifeEvent == nil {
-			continue
-		}
-		for _, id := range highlight.EvidenceIDs {
-			item, ok := itemsByID[id]
-			if !ok {
-				return nil, fmt.Errorf("person brief event evidence %q is missing from its window", id)
-			}
-			if _, exists := seen[item.Ref]; exists {
-				continue
-			}
-			seen[item.Ref] = struct{}{}
-			refs = append(refs, item.Ref)
-		}
-	}
-	return refs, nil
-}
-
 // renderBriefResult renders, trims, and freezes one validated brief. The
 // paragraph is capped at the configured rune count by dropping structured items
 // from the tail, and the trimmed structure is what gets stored. It reports
@@ -356,10 +319,9 @@ func newBriefResult(
 	}
 	parsed.Evidence = briefKeptEvidence(before, parsed.Evidence, parsed.Output)
 	rendered, err = RenderBrief(parsed, window)
-	if err != nil {
-		return BriefResult{}, err
+	if errors.Is(err, ErrEmptyBrief) {
+		return BriefResult{}, fmt.Errorf("event memory capacity leaves no renderable brief: %w", ErrEvidenceItemTooLarge)
 	}
-	currentEventEvidenceRefs, err := briefCurrentEventEvidenceRefs(parsed, window)
 	if err != nil {
 		return BriefResult{}, err
 	}
@@ -375,8 +337,7 @@ func newBriefResult(
 		ProgramFingerprint:       BriefProgramFingerprint(),
 		EventMemorySourceVersion: window.Request.retainedEventMemoryVersion,
 		Boundary:                 freezeBriefEventMemory(window, eventMemory), Structured: structured, Rendered: rendered,
-		CurrentEventEvidenceRefs: currentEventEvidenceRefs,
-		Evidence:                 briefEvidenceInputs(parsed), DroppedItemCount: parsed.DroppedItemCount,
+		Evidence: briefEvidenceInputs(parsed), DroppedItemCount: parsed.DroppedItemCount,
 		GeneratedAt: generatedAt.UTC(),
 	}, nil
 }
@@ -405,26 +366,10 @@ func ValidateBriefResult(personID int64, result *BriefResult) error {
 	if result.Boundary.PacketSHA256 == "" || result.Boundary.ItemCount <= 0 {
 		return errors.New("person brief result has an incomplete input boundary")
 	}
-	evidenceRefs := make(map[string]struct{}, len(result.Evidence))
 	for _, evidence := range result.Evidence {
 		if evidence.PersonID != personID {
 			return errors.New("person brief evidence belongs to another person")
 		}
-		evidenceRefs[evidence.SourceRef] = struct{}{}
-	}
-	seenEventRefs := make(map[string]struct{}, len(result.CurrentEventEvidenceRefs))
-	for _, ref := range result.CurrentEventEvidenceRefs {
-		encoded, err := EncodePersonSweepEvidenceRef(ref)
-		if err != nil {
-			return fmt.Errorf("person brief current event evidence ref: %w", err)
-		}
-		if _, exists := evidenceRefs[encoded]; !exists {
-			return errors.New("person brief current event source is absent from its evidence")
-		}
-		if _, duplicate := seenEventRefs[encoded]; duplicate {
-			return errors.New("person brief current event evidence ref is duplicated")
-		}
-		seenEventRefs[encoded] = struct{}{}
 	}
 	return nil
 }
@@ -567,11 +512,13 @@ func (w *Worker) runBriefCall(
 		} else {
 			parsed, parseErr := ParseBrief(response.Output, window, call.profile)
 			if parseErr == nil {
-				// Every item may have been dropped, leaving nothing to store.
-				// The call is still paid for and reconciled; the attempt records
-				// invalid_output so the empty result is visible in history.
+				// A result may be empty after validation or event-capacity retirement.
+				// The paid call is still reconciled and its failure is recorded.
 				result, buildErr := renderBriefResult(parsed, window, w.now())
 				if buildErr != nil {
+					if errors.Is(buildErr, ErrEvidenceItemTooLarge) {
+						return nil, briefFailureClass(buildErr), lease, nil //nolint:nilerr // Capacity is a recorded brief outcome.
+					}
 					return nil, FailureInvalidOutput, lease, nil //nolint:nilerr // An empty brief is a recorded outcome, not an attempt failure.
 				}
 				// Brief text and citations do not independently establish a profile

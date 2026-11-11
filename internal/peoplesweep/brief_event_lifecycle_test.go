@@ -307,25 +307,3 @@ func TestBriefEventPlannedRefreshBuildsItsArchiveWindowOnce(t *testing.T) {
 	assert.Len(outcome.archive.candidateCalls, 1, "one refresh must not repeat archive listing")
 	assert.Len(outcome.archive.hydrateCalls, 1, "retained sources are read once for the paid packet")
 }
-
-func TestBriefEventUnknownMemoryVersionCannotPlanOrBuild(t *testing.T) {
-	config, _ := workerTestConfig(t)
-	now := time.Date(2026, 8, 16, 0, 0, 0, 0, time.UTC)
-	for _, status := range []string{BriefStatusCurrent, BriefStatusRejected, BriefStatusSuperseded} {
-		for _, mode := range []BriefMode{BriefModeAuto, BriefModeForce} {
-			t.Run(status+string(mode), func(t *testing.T) {
-				boundary := &BriefBoundary{EventMemoryVersion: 2, EventMemory: []BriefEventMemory{{}}}
-				store := &briefFakeStore{enrolled: true, eligibility: BriefEligibility{Version: 1, Status: status, Boundary: boundary}}
-				worker := Worker{Config: config, Brief: store, Archive: &briefFakeArchive{}}
-				profile := briefWindowProfile()
-				profile.AllowSensitive = false
-				_, err := worker.planPersonBrief(t.Context(), 7, mode, profile, now)
-				assert.Error(t, err)
-			})
-		}
-	}
-	request := briefWindowRequest(t)
-	request.Previous = &BriefBoundary{EventMemoryVersion: 2}
-	_, err := BuildBriefWindow(t.Context(), &briefFakeArchive{}, request)
-	assert.Error(t, err)
-}

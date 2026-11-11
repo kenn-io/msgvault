@@ -174,7 +174,6 @@ func TestCurrentEventMemoryRetiresWhenTheNextPacketCannotFit(t *testing.T) {
 			assertions.Empty(result.Boundary.EventMemory,
 				"future memory retires when the lowered cap cannot preserve it")
 			assertions.NotContains(result.Rendered.Text, highlight.LifeEvent.Question)
-			assertions.Empty(result.CurrentEventEvidenceRefs)
 		})
 	}
 }
@@ -314,7 +313,6 @@ func TestBriefEventCapacityDoesNotDisplayUnscheduledUpcoming(t *testing.T) {
 	assert.Nil(t, result.Boundary.NextEventAt)
 	assert.NotContains(t, result.Rendered.Text, "Upcoming:")
 	assert.NotContains(t, string(result.Structured), "life_event")
-	assert.Empty(t, result.CurrentEventEvidenceRefs)
 	config, _ := workerTestConfig(t)
 	store := &briefFakeStore{enrolled: true, highWater: result.Boundary.ThroughSequence,
 		changedAfter: result.Boundary.ThroughSequence, eligibility: BriefEligibility{
@@ -333,7 +331,7 @@ func TestBriefEventCapacityRejectsEmptyParagraph(t *testing.T) {
 	require.NoError(t, err)
 	window.Request.MaxItems = 1
 	_, err = renderBriefResult(parsed, window, window.Request.AsOf)
-	assert.ErrorIs(t, err, ErrEmptyBrief)
+	assert.ErrorIs(t, err, ErrEvidenceItemTooLarge)
 }
 
 func TestBriefEventResolutionFitsTheReservedPacketItem(t *testing.T) {
@@ -471,7 +469,6 @@ func TestResolvedEventMemoryRetiresWhenItsExpandedFuturePacketExceedsBudget(t *t
 	require.NoError(err)
 	assert.NotContains(result.Rendered.Text, "Resolved:")
 	assert.Empty(result.Boundary.EventMemory)
-	assert.Empty(result.CurrentEventEvidenceRefs)
 	assert.Empty(ParsedBriefOutput(t, result).Highlights)
 	assert.True(result.Boundary.AdmissionThroughEventTime.After(first.Boundary.AdmissionThroughEventTime),
 		"retiring resolved memory must retain and advance the admission watermark")

@@ -987,13 +987,6 @@ func preparePersonSweepBriefEvidence(
 			mandatory[encoded] = true
 		}
 	}
-	for _, ref := range request.Brief.CurrentEventEvidenceRefs {
-		encoded, err := peoplesweep.EncodePersonSweepEvidenceRef(ref)
-		if err != nil {
-			return nil, err
-		}
-		mandatory[encoded] = true
-	}
 	prepared := make([]preparedBriefEvidence, 0, len(request.Brief.Evidence))
 	seen := make(map[string]struct{}, len(request.Brief.Evidence))
 	for _, input := range request.Brief.Evidence {

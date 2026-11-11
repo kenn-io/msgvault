@@ -456,6 +456,25 @@ func TestPersonSweepWorkerRecordsBriefFailureAndStillAppliesExtraction(t *testin
 	}
 }
 
+func TestPersonSweepWorkerClassifiesCapacityEmptyBrief(t *testing.T) {
+	anchor := briefWindowItem(10, SourceConversationText, 10, "I move on September 15.")
+	outcome := runBriefWorkerCase(t, briefWorkerCase{
+		mode:        BriefModeAuto,
+		brief:       &briefFakeStore{enrolled: true, highWater: 90, changedAfter: 90},
+		archive:     &briefFakeArchive{items: []EvidenceItem{anchor}},
+		briefConfig: func(config *BriefConfig) { config.MaxItems, config.OverlapItems = 1, 0 },
+		responses: []DriverResponse{
+			briefDriverResponse(json.RawMessage(`{"claims":[]}`), "request-extraction"),
+			briefDriverResponse(eventCandidate(t, eventHighlight(anchor, "2026-09-15")), "request-brief"),
+		},
+	})
+	require.NoError(t, outcome.err)
+	require.Len(t, outcome.sink.requests, 1)
+	assert.Nil(t, outcome.sink.requests[0].Brief)
+	assert.Equal(t, FailureInternal, outcome.sink.requests[0].BriefFailureClass)
+	assert.Equal(t, 2, outcome.driver.calls)
+}
+
 type briefBlockingDriver struct {
 	workerRepairDriver
 
