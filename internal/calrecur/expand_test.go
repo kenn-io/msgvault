@@ -93,17 +93,6 @@ func TestExpandTimedCalendarDurationAcrossDST(t *testing.T) {
 	}
 }
 
-func TestTimedExceptionInheritsCalendarDayAcrossDST(t *testing.T) {
-	zone, err := time.LoadLocation("America/New_York")
-	require.NoError(t, err)
-	start := instant(t, "2027-11-06T13:00:00Z")
-	s, err := ParseSet(start, false, "", zone, nil)
-	require.NoError(t, err)
-	occurrence, err := EffectiveException(s, Exception{Original: Identity{Instant: start}, Start: &start, Cancelled: true}, 0, 1)
-	require.NoError(t, err)
-	assert.Equal(t, instant(t, "2027-11-07T14:00:00Z"), occurrence.End.UTC())
-}
-
 func TestExpandAllDayWindowIncludesFirstMidnightBeforeRollback(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

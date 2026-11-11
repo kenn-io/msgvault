@@ -348,6 +348,12 @@ func TestICalendarRecurrenceProjectionUpgrade(t *testing.T) {
 	rows := calendarRows(t, st, id)
 	require.Len(t, rows, 1)
 	assert.Equal(t, "event-example", rows[0].Event.ProviderEventID)
+	assert.Empty(t, rows[0].Event.StartLocal)
+	assert.Zero(t, rows[0].Event.DurationDays)
+	assert.Zero(t, rows[0].Event.DurationElapsedNS)
+	var version int
+	require.NoError(t, st.db.QueryRowContext(t.Context(), `SELECT projection_version FROM calendar_events WHERE message_id=?`, id).Scan(&version))
+	assert.Equal(t, calendarEventProjectionVersion, version)
 }
 
 func TestICalendarRoomAttendeesAreNotParticipants(t *testing.T) {
