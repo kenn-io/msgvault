@@ -793,13 +793,13 @@ After adding the account, sync it with `msgvault sync-teams`.
 msgvault add-threads --app-id <app-id> --redirect-uri <https-callback>
 ```
 
-Create a Threads app in [Meta for Developers](https://developers.facebook.com/docs/threads/),
+On unreleased `main`, create a Threads app in [Meta for Developers](https://developers.facebook.com/docs/threads/),
 add your account as a tester when required, and obtain the Threads app ID and
 Threads app secret.
 Configure a registered HTTPS callback and request the `threads_basic` and
 `threads_read_replies` permissions.
 
-On unreleased `main`, connect an owner-operated Threads app using its registered
+Connect the owner-operated Threads app using its registered
 HTTPS callback. Set `MSGVAULT_THREADS_APP_SECRET` or enter the secret at the
 masked terminal prompt, open the displayed authorization URL, and paste the
 complete returned callback URL. The daemon verifies the account and stores its
