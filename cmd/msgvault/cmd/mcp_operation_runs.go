@@ -26,6 +26,7 @@ func operationRunMCPCapabilities(hasRoute mcpRouteCheck) []string {
 
 type operationRunsArguments struct {
 	generated.ListOperationRunsQuery
+
 	Limit         *jsontext.Value `json:"limit,omitempty"`
 	StartedFrom   *string         `json:"started_from,omitempty"`
 	StartedBefore *string         `json:"started_before,omitempty"`
@@ -34,6 +35,7 @@ type operationRunsArguments struct {
 // Preserve raw limits and timestamp text so the daemon owns validation.
 type operationRunsRequestOptions struct {
 	*generated.ListOperationRunsRequestOptions
+
 	startedFrom, startedBefore *string
 	limit                      *jsontext.Value
 }
