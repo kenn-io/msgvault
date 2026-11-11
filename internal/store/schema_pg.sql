@@ -4018,7 +4018,8 @@ CREATE TABLE IF NOT EXISTS meeting_link_decisions (
 CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_right ON meeting_link_decisions(right_message_id);
 CREATE TABLE IF NOT EXISTS meeting_link_decision_origins (
     decision_id BIGINT NOT NULL REFERENCES meeting_link_decisions(id) ON DELETE CASCADE,
+    path BIGINT NOT NULL,
     origin_message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-    PRIMARY KEY (decision_id, origin_message_id)
+    PRIMARY KEY (decision_id, path, origin_message_id)
 );
 CREATE INDEX IF NOT EXISTS idx_meeting_link_decision_origins_message ON meeting_link_decision_origins(origin_message_id);

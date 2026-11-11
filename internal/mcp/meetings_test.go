@@ -315,6 +315,10 @@ func TestMeetingDecisionMCPWritesAndDiscovery(t *testing.T) {
 	assertions.True(names["link_meeting"])
 	assertions.True(names["unlink_meeting"])
 	assertions.True(names["reset_meeting_link"])
+	delegated := toolsByName(t, rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}, Meetings: backend, MeetingRecords: true, MeetingDecisions: true, DelegatedOnly: true}, true))
+	for _, name := range []string{"link_meeting", "unlink_meeting", "reset_meeting_link"} {
+		assertions.NotContains(delegated, name)
+	}
 	left, right := fmt.Sprintf("msg:%d", imported[0].MessageID), fmt.Sprintf("msg:%d", imported[1].MessageID)
 	result, err := session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "link_meeting", Arguments: map[string]any{"left": left, "right": right}})
 	requirements.NoError(err)

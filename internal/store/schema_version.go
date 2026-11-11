@@ -29,12 +29,8 @@ func (s *Store) SchemaVersionContext(ctx context.Context) (int, error) {
 	if !exists {
 		return 0, nil
 	}
-	return readSchemaVersion(ctx, s.db, "archive_metadata")
-}
-
-func readSchemaVersion(ctx context.Context, q contextRowQuerier, table string) (int, error) {
 	var value string
-	err := q.QueryRowContext(ctx, "SELECT value FROM "+table+" WHERE key = 'schema_version'").Scan(&value)
+	err := s.db.QueryRowContext(ctx, "SELECT value FROM archive_metadata WHERE key = 'schema_version'").Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}

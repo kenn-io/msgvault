@@ -367,18 +367,6 @@ func verifyForeignKeys(ctx context.Context, db *sql.DB) error {
 // copyData executes INSERT INTO ... SELECT in dependency order.
 func copyData(ctx context.Context, tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult, error) {
 	result := &CopyResult{}
-	if present, err := sourceTableExists(ctx, tx, "archive_metadata"); err != nil {
-		return nil, err
-	} else if present {
-		version, err := readSchemaVersion(ctx, tx, "src.archive_metadata")
-		if err != nil {
-			return nil, fmt.Errorf("read source archive schema version: %w", err)
-		}
-		if version > SchemaVersion {
-			return nil, fmt.Errorf("source archive schema version %d is newer than supported version %d", version, SchemaVersion)
-		}
-	}
-
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		CREATE TEMP TABLE selected_messages AS
 		SELECT id FROM src.messages

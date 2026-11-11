@@ -89,6 +89,9 @@ previous choice. `msgvault meetings reset-link <ref> <ref>` clears the choice
 and restores automatic matching. These commands require
 daemon API schema 5.2.0 or newer.
 
+When an automatic group has three or more notes, unlinking two keeps the
+remaining notes with the note that has the lowest message ID.
+
 ### meetings context
 
 | Flag | Contract |
