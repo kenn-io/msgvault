@@ -7,7 +7,7 @@ import (
 
 func personFactOperationalDefinitions() []operationalDefinition {
 	page := func(status bool, maximum float64) *jsonschema.Schema {
-		p := map[string]*jsonschema.Schema{"person_id": safeIDSchema("Durable person ID"), "limit": boundedIntegerSchema("Maximum rows", 1, maximum), "offset": nonNegativeIntegerSchema("Zero-based row offset", 0)}
+		p := map[string]*jsonschema.Schema{"person_id": safeIDSchema("Durable person ID"), "limit": boundedIntegerSchema("Maximum rows (default 50)", 1, maximum), "offset": nonNegativeIntegerSchema("Zero-based row offset", 0)}
 		if status {
 			p["evidence_key"] = stringSchema("Exact evidence key")
 			p["supported"] = booleanSchema("Filter by support state")

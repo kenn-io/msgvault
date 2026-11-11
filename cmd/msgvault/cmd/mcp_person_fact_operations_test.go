@@ -123,7 +123,7 @@ func TestPersonFactNativeDiagnosticsAndPin(t *testing.T) {
 }
 
 func TestPersonFactTrackingAndRefusals(t *testing.T) {
-	backend, st, id, _ := factFixture(t)
+	backend, st, id, target := factFixture(t)
 	disclosure, err := backend.OperationDisclosure(t.Context(), "set_person_tracking", map[string]any{"person_id": id, "tracked": false})
 	require.NoError(t, err)
 	assert.Contains(t, disclosure, `"tracked":false`)
@@ -153,10 +153,16 @@ func TestPersonFactTrackingAndRefusals(t *testing.T) {
 		require.NoError(t, err)
 		assert.JSONEq(t, `{"error":"`+tc.code+`","operation_may_have_completed":false}`, string(data))
 	}
-	result, err = backend.ExecuteOperation(t.Context(), "set_person_fact_pin", map[string]any{"person_id": id, "kind": "attribute", "key": "not-active", "pinned": true})
+	result, err = backend.ExecuteOperation(t.Context(), "set_person_fact_pin", map[string]any{"person_id": id, "kind": string(target.Kind), "key": target.Key, "pinned": true})
 	require.NoError(t, err)
 	require.True(t, result.IsError)
 	data, err := json.Marshal(result.Output)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"error":"person_fact_conflict","operation_may_have_completed":false}`, string(data))
+	result, err = backend.ExecuteOperation(t.Context(), "set_person_fact_pin", map[string]any{"person_id": id, "kind": "attribute", "key": "not-active", "pinned": true})
+	require.NoError(t, err)
+	require.True(t, result.IsError)
+	data, err = json.Marshal(result.Output)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"error":"invalid_fact_target","operation_may_have_completed":false}`, string(data))
 	result, err = backend.ExecuteOperation(t.Context(), "get_person_tracking", map[string]any{"person_id": 999999})

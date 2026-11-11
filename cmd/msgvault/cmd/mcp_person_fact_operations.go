@@ -63,9 +63,6 @@ type factTrackingArgs struct {
 	Tracked  *bool `json:"tracked"`
 }
 
-func factPinValid(a factPinArgs) bool {
-	return validLoopID(a.PersonID) && (a.Kind == "attribute" || a.Kind == "employment") && a.Key != "" && a.Key == strings.TrimSpace(a.Key) && a.Pinned != nil
-}
 func factClassify(code string) bool {
 	switch code {
 	case "invalid_target", "invalid_limit", "invalid_offset", "invalid_target_kind", "invalid_target_key", "invalid_fact_target", "person_fact_conflict", "person_facts_unavailable", "tracking_unavailable":
@@ -144,13 +141,13 @@ func (b *daemonMCPOperations) personFactOperationDisclosure(name string, args ma
 	switch name {
 	case "set_person_fact_pin":
 		a, e := decodeMCPOperationArguments[factPinArgs](args)
-		if e != nil || !factPinValid(a) {
+		if e != nil || a.Key == "" || a.Key != strings.TrimSpace(a.Key) {
 			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 		}
 		effect = "Re-resolves the effective value and may change profile and vCard projections; the person must be tracked. The native operation has no revision guard."
 	case "set_person_tracking":
 		a, e := decodeMCPOperationArguments[factTrackingArgs](args)
-		if e != nil || !validLoopID(a.PersonID) || a.Tracked == nil {
+		if e != nil {
 			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 		}
 		if *a.Tracked {
