@@ -1320,6 +1320,7 @@ func TestActivityCandidatesExcludeEmailInvites(t *testing.T) {
 	for _, c := range candidates {
 		eligible[c.MessageID] = c.Eligible
 	}
+	assertions.Contains(eligible, ids["gmail"])
 	assertions.False(eligible[ids["gmail"]])
 	assertions.True(eligible[ids["gcal"]])
 	assertions.True(eligible[ids["ics"]])

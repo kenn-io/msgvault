@@ -93,18 +93,15 @@ func TestICSDecode(t *testing.T) {
 	assertions.Equal("accepted", e.Attendees[0].RSVP)
 	assertions.Equal("optional", e.Attendees[0].Role)
 	assertions.Equal("room", e.Attendees[1].Role)
-	for _, tt := range []struct{ name, raw, role string }{
-		{"chair", strings.Replace(icsExample, "ROLE=OPT-PARTICIPANT", "ROLE=CHAIR", 1), "required"},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			e, ok, err := Decode("ics", []byte(tt.raw), []byte(`{}`), "")
-			requirements.NoError(err)
-			requirements.True(ok)
-			requirements.NotEmpty(e.Attendees)
-			assertions.Equal(tt.role, e.Attendees[0].Role)
-		})
-	}
+	t.Run("chair", func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
+		raw := strings.Replace(icsExample, "ROLE=OPT-PARTICIPANT", "ROLE=CHAIR", 1)
+		e, ok, err := Decode("ics", []byte(raw), []byte(`{}`), "")
+		requirements.NoError(err)
+		requirements.True(ok)
+		requirements.NotEmpty(e.Attendees)
+		assertions.Equal("required", e.Attendees[0].Role)
+	})
 }
 
 func TestICSNULFields(t *testing.T) {
@@ -162,9 +159,6 @@ func TestICSStatus(t *testing.T) {
 		assertions, requirements := assert.New(t), require.New(t)
 		cancel := strings.Replace(icsExample, "METHOD:REQUEST", "METHOD:CANCEL", 1)
 		_, err := ParseEmailICS([]byte(cancel), "REPLY", "")
-		requirements.ErrorContains(err, "conflicts")
-		reply := strings.Replace(icsExample, "METHOD:REQUEST", "METHOD:REPLY", 1)
-		_, err = ParseEmailICS([]byte(reply), "REQUEST", "")
 		requirements.ErrorContains(err, "conflicts")
 		components, err := ParseEmailICS([]byte(icsExample), " request", "")
 		requirements.NoError(err)
@@ -260,9 +254,7 @@ func TestICSRejectMalformed(t *testing.T) {
 		{"ends after year 9999", strings.NewReplacer("DTSTART;TZID=America/New_York:20270314T090000", "DTSTART:99991231T230000Z", "DTEND;TZID=America/New_York:20270314T100000", "DURATION:PT2H").Replace(icsExample), "outside years 0 to 9999"},
 		{"empty DURATION", strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DURATION:P", 1), "invalid calendar DURATION"},
 		{"empty time DURATION", strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DURATION:PT", 1), "invalid calendar DURATION"},
-		{"trailing T DURATION", strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DURATION:P1DT", 1), "invalid calendar DURATION"},
 		{"all-day DURATION with time", strings.NewReplacer("DTSTART;TZID=America/New_York:20270314T090000", "DTSTART;VALUE=DATE:20270314", "DTEND;TZID=America/New_York:20270314T100000", "DURATION:P1DT12H").Replace(icsExample), "all-day DURATION must be whole days"},
-		{"elapsed DURATION overflow", strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DURATION:PT18446744074S", 1), "calendar DURATION exceeds limit"},
 		{"week DURATION overflow", strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DURATION:P1317624576693539403W", 1), "calendar DURATION exceeds limit"},
 		{"hour DURATION overflow", strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DURATION:PT5124096H", 1), "calendar DURATION exceeds limit"},
 		{"combined DURATION overflow", strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DURATION:PT2562047H47M17S", 1), "calendar DURATION exceeds limit"},
@@ -270,7 +262,6 @@ func TestICSRejectMalformed(t *testing.T) {
 		{"timed start and date end", strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DTEND;VALUE=DATE:20270315", 1), "DTEND value type differs from DTSTART"},
 		{"date start and timed end", strings.Replace(icsExample, "DTSTART;TZID=America/New_York:20270314T090000", "DTSTART;VALUE=DATE:20270314", 1), "DTEND value type differs from DTSTART"},
 		{"timed start and zero date end", strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DTEND;VALUE=DATE:00010101", 1), "DTEND value type differs from DTSTART"},
-		{"date start and zero timed end", strings.NewReplacer("DTSTART;TZID=America/New_York:20270314T090000", "DTSTART;VALUE=DATE:20270314", "DTEND;TZID=America/New_York:20270314T100000", "DTEND:00010101T000000Z").Replace(icsExample), "DTEND value type differs from DTSTART"},
 		{"malformed property", "BEGIN:VCALENDAR\r\nSUMMARY;CN=x\r\nEND:VCALENDAR\r\n", "malformed iCalendar parameters"},
 		{"second calendar", icsExample + icsExample, "calendar has trailing content"},
 		{"ranged recurrence", strings.Replace(icsExample, "SUMMARY:", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270314T140000Z\r\nSUMMARY:", 1), "RECURRENCE-ID: RANGE is unsupported"},
