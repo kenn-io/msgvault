@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/daemonclient"
 )
 
 func TestCLIErrorRendering(t *testing.T) {
@@ -138,4 +140,41 @@ func TestInvalidLogLevelIsValidation(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, 3, ExitCode(err))
 	assert.Contains(t, diagnostic.String(), "msgvault search --help")
+}
+
+func TestDraftAPICodeClassificationAndRendering(t *testing.T) {
+	for _, tc := range []struct {
+		code, kind, hint string
+		exit             int
+	}{
+		{"insufficient_scope", "unavailable", "authorization", 7},
+		{"draft_exists", "conflict", "existing provider draft", 6},
+		{"draft_conflict", "conflict", "existing provider draft", 6},
+	} {
+		t.Run(tc.code, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			cause := &daemonclient.APIError{Code: tc.code, Message: "draft operation failed"}
+			err := fmt.Errorf("draft request: %w", cause)
+			diagnostic := classifyCLIError(nil, err)
+			assertions.Equal(tc.exit, ExitCode(err))
+			assertions.Equal(tc.kind, diagnostic.Kind)
+			assertions.Equal(tc.code, diagnostic.Code)
+			assertions.Contains(diagnostic.Hint, tc.hint)
+			diagnostic.Details = jsontext.Value(`{"draft_id":"draft-example","revision":2}`)
+			var human, machine bytes.Buffer
+			renderCLIError(&human, diagnostic, false)
+			renderCLIError(&machine, diagnostic, true)
+			assertions.Contains(human.String(), tc.hint)
+			assertions.Contains(human.String(), "draft-example")
+			var got struct {
+				Error cliErrorRecord `json:"error"`
+			}
+			requirements.NoError(json.Unmarshal(machine.Bytes(), &got))
+			assertions.Equal(tc.code, got.Error.Code)
+			assertions.Equal(tc.exit, got.Error.ExitCode)
+			assertions.Contains(got.Error.Hint, tc.hint)
+			assertions.JSONEq(string(diagnostic.Details), string(got.Error.Details))
+		})
+	}
 }

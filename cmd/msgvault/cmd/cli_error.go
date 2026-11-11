@@ -188,8 +188,8 @@ var apiExitCodes = map[string]int{
 	"invalid_from": 3, "invalid_source": 3, "invalid_parent": 3, "invalid_mailbox": 3, "index_scope_mismatch": 3,
 	"message_not_found": 4, "draft_not_found": 4, "source_not_found": 4, "collection_not_found": 4,
 	"vector_not_enabled": 5, "draft_disabled": 5,
-	"index_stale": 6, "index_building": 6, "revision_mismatch": 6, "sync_active": 6, "agent_read_busy": 6,
-	"not_permitted": 7, "permission_denied": 7, "embedding_timeout": 7, "engine_unavailable": 7, "source_scope_unavailable": 7,
+	"index_stale": 6, "index_building": 6, "revision_mismatch": 6, "draft_exists": 6, "draft_conflict": 6, "sync_active": 6, "agent_read_busy": 6,
+	"not_permitted": 7, "permission_denied": 7, "insufficient_scope": 7, "embedding_timeout": 7, "engine_unavailable": 7, "source_scope_unavailable": 7,
 }
 
 func exitForHTTPStatus(status int) int {
@@ -238,6 +238,10 @@ func hintForAPICode(code string) string {
 		return "reload the current draft and its revision with 'msgvault draft get <draft-id> --json' before retrying"
 	case "invalid_from", "from_ambiguous":
 		return "list confirmed senders with 'msgvault identity list --json' and select one with --from"
+	case "draft_exists", "draft_conflict":
+		return "inspect the existing provider draft before retrying"
+	case "insufficient_scope":
+		return "check the provider account authorization and required permissions"
 	case "not_permitted":
 		return "ask the archive owner to check the source and sender permissions with 'msgvault agent-token list'"
 	case "remote_delete_disabled":
