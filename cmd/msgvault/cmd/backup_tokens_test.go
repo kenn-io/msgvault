@@ -2,11 +2,11 @@ package cmd
 
 import (
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/backup"
@@ -55,19 +55,30 @@ func TestBackupRestoreIncludedTokensRemainReadable(t *testing.T) {
 	oldRepo, oldTarget, oldOverwrite := backupRestoreRepo, backupRestoreTarget, backupRestoreOverwrite
 	oldForce, oldJobs := backupRestoreForceUnlock, backupRestoreJobs
 	oldLoose, oldIntegrity := backupRestoreLooseAttachments, backupRestoreIntegrityCheck
+	oldOut, oldErr, oldLogger := rootCmd.OutOrStdout(), rootCmd.ErrOrStderr(), slog.Default()
+	changed := make(map[string]bool)
+	for _, name := range []string{"repo", "target", "jobs"} {
+		changed[name] = backupRestoreCmd.Flags().Lookup(name).Changed
+	}
 	t.Cleanup(func() {
 		backupRestoreRepo, backupRestoreTarget, backupRestoreOverwrite = oldRepo, oldTarget, oldOverwrite
 		backupRestoreForceUnlock, backupRestoreJobs = oldForce, oldJobs
 		backupRestoreLooseAttachments, backupRestoreIntegrityCheck = oldLoose, oldIntegrity
+		for name, wasChanged := range changed {
+			backupRestoreCmd.Flags().Lookup(name).Changed = wasChanged
+		}
+		rootCmd.SetOut(oldOut)
+		rootCmd.SetErr(oldErr)
+		rootCmd.SetArgs(nil)
+		slog.SetDefault(oldLogger)
 	})
 	target := filepath.Join(t.TempDir(), "restored")
-	backupRestoreRepo, backupRestoreTarget, backupRestoreOverwrite = repo.Root(), target, false
-	backupRestoreForceUnlock, backupRestoreJobs = false, 1
+	backupRestoreOverwrite, backupRestoreForceUnlock = false, false
 	backupRestoreLooseAttachments, backupRestoreIntegrityCheck = false, false
-	command := &cobra.Command{Use: "restore"}
-	command.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
-	command.SetOut(io.Discard)
-	require.NoError(runBackupRestore(command, nil))
+	rootCmd.SetOut(io.Discard)
+	rootCmd.SetErr(io.Discard)
+	rootCmd.SetArgs([]string{"--home", cfg.HomeDir, "--no-log-file", "backup", "restore", "--repo", repo.Root(), "--target", target, "--jobs", "1"})
+	require.NoError(executeRootContext(t.Context(), rootCmd))
 
 	tokens := filepath.Join(target, "tokens")
 	restored, err := providercredentials.Read(tokens)
