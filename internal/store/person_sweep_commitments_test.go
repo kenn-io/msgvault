@@ -157,6 +157,13 @@ func nextCommitmentTestAttempt(t *testing.T, f personSweepApplyFixture, suffix s
 }
 
 func TestCommitmentWindowReplaysNewEvidenceForNinthOpenPromise(t *testing.T) {
+	for _, deleted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("deleted=%t", deleted), func(t *testing.T) { testNinthCommitmentPage(t, deleted) })
+	}
+}
+
+func testNinthCommitmentPage(t *testing.T, deleted bool) {
+	t.Helper()
 	r, a, ctx := require.New(t), assert.New(t), t.Context()
 	f := newPersonSweepApplyFixture(t, "commitment-anchor-pages", false)
 	st := f.store
@@ -166,6 +173,7 @@ func TestCommitmentWindowReplaysNewEvidenceForNinthOpenPromise(t *testing.T) {
 	cfg := peoplesweep.Config{}
 	cfg.ApplyDefaults()
 	cfg.Commitments.Enabled = true
+	cfg.Commitments.Window = 24 * time.Hour
 	var body strings.Builder
 	var promises []peoplesweep.CommitmentPromise
 	for i := range 9 {
@@ -190,12 +198,13 @@ func TestCommitmentWindowReplaysNewEvidenceForNinthOpenPromise(t *testing.T) {
 	r.NoError(err)
 
 	const completed = "I sent report 9."
-	persist("ninth-fulfilment", completed, -time.Hour)
+	completionID := persist("ninth-fulfilment", completed, -time.Hour)
+	otherID := persist("other-source", "Another update.", -time.Hour)
 	first, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
 	r.NoError(err)
 	r.Len(first.Anchors, 8)
-	r.Len(first.Sources, 1)
-	a.Equal(completed, first.Sources[0].Text)
+	r.Len(first.Sources, 3)
+	a.NotEmpty(commitmentSourceID(first, completionID))
 	a.Equal(first.Anchors[7].ID, first.AnchorAfterID)
 	f = nextCommitmentTestAttempt(t, f, "-first")
 	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, first, cfg.Commitments, peoplesweep.ParsedCommitments{
@@ -207,19 +216,31 @@ func TestCommitmentWindowReplaysNewEvidenceForNinthOpenPromise(t *testing.T) {
 	r.NoError(err)
 	a.True(due)
 	persist("new-activity", "A newer message.", -30*time.Minute)
-	second, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+	if deleted {
+		_, err := st.db.ExecContext(ctx, st.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), otherID)
+		r.NoError(err)
+	}
+	later := personFactLedgerNow.Add(25 * time.Hour)
+	second, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, later, "UTC")
 	r.NoError(err)
 	r.Len(second.Anchors, 1)
-	r.Len(second.Sources, 1)
+	if deleted {
+		r.Len(second.Sources, 2)
+	} else {
+		r.Len(second.Sources, 3)
+	}
 	a.Equal(promises[8].Quote, second.Anchors[0].Quote)
-	a.Equal(first.Sources[0].MessageID, second.Sources[0].MessageID)
+	a.NotEmpty(commitmentSourceID(second, completionID))
+	a.Equal(first.SelectionAt, second.SelectionAt)
 	a.Equal(first.ThroughSequence, second.ThroughSequence)
 	a.Zero(second.AnchorAfterID)
 	f = nextCommitmentTestAttempt(t, f, "-second")
+	f.request.Generation.ResolvedAt = later
+	f.request.CompletedAt = later.Add(time.Minute)
 	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, second, cfg.Commitments, peoplesweep.ParsedCommitments{
 		Promises: []peoplesweep.CommitmentPromise{},
 		Fulfilments: []peoplesweep.CommitmentFulfilment{{
-			CommitmentID: second.Anchors[0].ID, SourceID: second.Sources[0].ID, Quote: completed, End: int64(len(completed)),
+			CommitmentID: second.Anchors[0].ID, SourceID: commitmentSourceID(second, completionID), Quote: completed, End: int64(len(completed)),
 		}},
 	}))
 	r.NoError(err)
@@ -370,4 +391,73 @@ func TestEmptyCommitmentScanKeepsProviderFrontierAndWaitsForNewWork(t *testing.T
 	due, err = st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt.Add(cfg.Commitments.Window), cfg.Commitments.MinInterval, cfg.Commitments.Window)
 	r.NoError(err)
 	a.True(due)
+}
+
+func commitmentSourceID(window peoplesweep.CommitmentWindow, id int64) string {
+	for _, source := range window.Sources {
+		if source.MessageID == id {
+			return source.ID
+		}
+	}
+	return ""
+}
+
+func TestCommitmentWindowReplaysEarlierConsumedCompletion(t *testing.T) {
+	for _, detached := range []bool{false, true} {
+		t.Run(fmt.Sprintf("detached=%t", detached), func(t *testing.T) {
+			testCommitmentConsumedCompletion(t, detached)
+		})
+	}
+}
+
+func testCommitmentConsumedCompletion(t *testing.T, detached bool) {
+	t.Helper()
+	r, a, ctx := require.New(t), assert.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "late-promise", false)
+	st := f.store
+	_, persist := newCommitmentTestConversation(t, f)
+	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	const quote, completed = "I will send the report.", "I sent the report."
+	completion := persist("completion-first", completed, -time.Hour)
+	first, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, first, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{}, Fulfilments: []peoplesweep.CommitmentFulfilment{}}))
+	r.NoError(err)
+	promise := persist("older-promise-later", quote, -2*time.Hour)
+	f = nextCommitmentTestAttempt(t, f, "-promise")
+	window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
+		Promises: []peoplesweep.CommitmentPromise{{SourceID: commitmentSourceID(window, promise), Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Summary: "Send report", End: int64(len(quote))}}, Fulfilments: []peoplesweep.CommitmentFulfilment{},
+	}))
+	r.NoError(err)
+	if detached {
+		// This is the detached lifecycle state left by an absorbed identity.
+		_, err := st.db.ExecContext(ctx, st.Rebind(`UPDATE person_commitments SET current_claim_id = NULL WHERE person_id = ?`), f.personID)
+		r.NoError(err)
+		f = nextCommitmentTestAttempt(t, f, "-reattach")
+		window, err = st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+		r.NoError(err)
+		_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
+			Promises: []peoplesweep.CommitmentPromise{{SourceID: commitmentSourceID(window, promise), Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Summary: "Send report", End: int64(len(quote))}}, Fulfilments: []peoplesweep.CommitmentFulfilment{},
+		}))
+		r.NoError(err)
+	}
+	f = nextCommitmentTestAttempt(t, f, fmt.Sprintf("-complete-%t", detached))
+	window, err = st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	r.Len(window.Anchors, 1)
+	r.NotEmpty(commitmentSourceID(window, completion))
+	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
+		Promises: []peoplesweep.CommitmentPromise{}, Fulfilments: []peoplesweep.CommitmentFulfilment{{CommitmentID: window.Anchors[0].ID, SourceID: commitmentSourceID(window, completion), Quote: completed, End: int64(len(completed))}},
+	}))
+	r.NoError(err)
+	items, err := st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 5, true)
+	r.NoError(err)
+	r.Len(items, 1)
+	r.NotNil(items[0].Fulfilment)
+	a.Equal(completed, items[0].Fulfilment.Quote)
 }

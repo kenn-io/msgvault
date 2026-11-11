@@ -341,19 +341,23 @@ func (s *Store) DecidePersonCommitmentContext(ctx context.Context, id int64, sta
 	return result, err
 }
 
-func (s *Store) PersonCommitmentsDue(ctx context.Context, personID int64, now time.Time, interval, window time.Duration) (bool, error) {
+func (s *Store) PersonCommitmentsDue(ctx context.Context, personID int64, now time.Time, interval, window time.Duration, scopes ...string) (bool, error) {
 	var processed requiredTimestamp
 	var through, backfill int64
 	var anchorPagePending bool
+	var scope string
 	var observed sql.NullInt64
 	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT processed_at, through_sequence, observed_sequence, backfill_message_id,
-		(anchor_after_id > 0 OR anchor_through_sequence > 0 OR anchor_backfill_id > 0)
-		FROM person_commitment_frontiers WHERE person_id = ?`), personID).Scan(&processed, &through, &observed, &backfill, &anchorPagePending)
+		(anchor_after_id > 0 OR anchor_through_sequence > 0 OR anchor_backfill_id > 0), scope_fingerprint
+		FROM person_commitment_frontiers WHERE person_id = ?`), personID).Scan(&processed, &through, &observed, &backfill, &anchorPagePending, &scope)
 	if errors.Is(err, sql.ErrNoRows) {
 		return true, nil
 	}
 	if err != nil {
 		return false, err
+	}
+	if len(scopes) > 0 && scope != scopes[0] {
+		return true, nil
 	}
 	if now.Before(processed.Time.Add(interval)) {
 		return false, nil
@@ -492,7 +496,7 @@ func (s *Store) commitmentChatMembers(ctx context.Context, conversationID, perso
 }
 
 func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, profile peoplesweep.ProviderProfile, cfg peoplesweep.CommitmentConfig, now time.Time, timezone string) (peoplesweep.CommitmentWindow, error) {
-	window := peoplesweep.CommitmentWindow{PersonID: personID, Now: now, Timezone: timezone, Sources: []peoplesweep.CommitmentSource{}, Anchors: []peoplesweep.CommitmentAnchor{}}
+	window := peoplesweep.CommitmentWindow{PersonID: personID, ScopeFingerprint: peoplesweep.CommitmentScopeFingerprint(profile, cfg), SelectionAt: now, Now: now, Timezone: timezone, Sources: []peoplesweep.CommitmentSource{}, Anchors: []peoplesweep.CommitmentAnchor{}}
 	if !profile.AllowSensitive || !slices.Contains(profile.AllowedSources, peoplesweep.SourceConversationText) {
 		return window, nil
 	}
@@ -502,16 +506,24 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 	}
 	window.SnapshotSequence = through
 	var previous, anchorAfter, anchorThrough, anchorBackfill int64
+	var scope string
+	var selection nullableTimestamp
 	err = s.db.QueryRowContext(ctx, s.Rebind(`SELECT CASE WHEN observed_sequence > through_sequence THEN observed_sequence ELSE through_sequence END,
-		backfill_message_id, anchor_after_id, anchor_through_sequence, anchor_backfill_id FROM person_commitment_frontiers WHERE person_id = ?`), personID).
-		Scan(&previous, &window.BackfillMessageID, &anchorAfter, &anchorThrough, &anchorBackfill)
+		backfill_message_id, anchor_after_id, anchor_through_sequence, anchor_backfill_id, scope_fingerprint, selection_at FROM person_commitment_frontiers WHERE person_id = ?`), personID).
+		Scan(&previous, &window.BackfillMessageID, &anchorAfter, &anchorThrough, &anchorBackfill, &scope, &selection)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return window, err
+	}
+	if scope != window.ScopeFingerprint {
+		previous, window.BackfillMessageID, anchorAfter, anchorThrough, anchorBackfill = 0, 0, 0, 0, 0
+	} else if selection.Valid && (window.BackfillMessageID >= 0 || anchorAfter > 0 || anchorThrough > 0 || anchorBackfill > 0) {
+		window.SelectionAt = selection.Time
 	}
 	var backfillCap *int64
 	if anchorAfter > 0 || anchorThrough > 0 || anchorBackfill > 0 {
 		through = min(through, anchorThrough)
 		backfillCap = &anchorBackfill
+		window.SnapshotSequence = through
 	}
 	window.ThroughSequence = through
 	inProfile := func(at time.Time) bool {
@@ -538,12 +550,25 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 		return window, err
 	}
 	window.AnchorBackfillID = backfillEnd
-	if len(open) > cfg.MaxOpenAnchors {
-		open = open[:cfg.MaxOpenAnchors]
-		window.AnchorAfterID = open[len(open)-1].ID
-	}
-	for _, c := range open {
-		window.Anchors = append(window.Anchors, peoplesweep.CommitmentAnchor{ID: c.ID, TargetKey: c.TargetKey, Direction: c.Direction, Quote: c.Quote, PromisedAt: c.PromisedAt, ReopenedAt: c.ReopenedAt})
+	for index, c := range open {
+		if len(window.Anchors) == cfg.MaxOpenAnchors {
+			window.AnchorAfterID = window.Anchors[len(window.Anchors)-1].ID
+			break
+		}
+		anchor := peoplesweep.CommitmentAnchor{ID: c.ID, TargetKey: c.TargetKey, Direction: c.Direction, Quote: c.Quote, PromisedAt: c.PromisedAt, ReopenedAt: c.ReopenedAt}
+		window.Anchors = append(window.Anchors, anchor)
+		fits, err := peoplesweep.CommitmentInputFits(window, false)
+		if err != nil {
+			return window, err
+		}
+		if !fits {
+			window.Anchors = window.Anchors[:len(window.Anchors)-1]
+			if index == 0 {
+				return window, errors.New("commitment input cannot fit one bounded anchor")
+			}
+			window.AnchorAfterID = window.Anchors[len(window.Anchors)-1].ID
+			break
+		}
 	}
 	return window, nil
 }
@@ -567,9 +592,14 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 			// A newer journal entry will bring this source back in a later batch.
 			return true, nil
 		}
+		window.Sources = append(window.Sources, source)
+		fits, err := peoplesweep.CommitmentInputFits(*window, true)
+		if err != nil || !fits {
+			window.Sources = window.Sources[:len(window.Sources)-1]
+			return false, err
+		}
 		seen[source.MessageID] = true
 		used += len(source.Text)
-		window.Sources = append(window.Sources, source)
 		return true, nil
 	}
 	changes, err := s.ScanPersonSweepChanges(ctx, personID, previous, maxPersonSweepChangeScan)
@@ -579,7 +609,7 @@ func (s *Store) loadCommitmentSources(ctx context.Context, window *peoplesweep.C
 	if len(changes) == maxPersonSweepChangeScan {
 		window.ThroughSequence = min(through, changes[len(changes)-1].Sequence)
 	}
-	cutoff := window.Now.Add(-cfg.Window)
+	cutoff := window.SelectionAt.Add(-cfg.Window)
 	for _, change := range changes {
 		if change.Sequence > through {
 			break
@@ -702,15 +732,13 @@ func (s *Store) resolvePersonCommitmentTargetTx(ctx context.Context, tx *loggedT
 func (s *Store) commitmentBackfillMessages(ctx context.Context, personID, after int64, cutoff time.Time, limit int) ([]int64, error) {
 	scoped, args := s.loopConversationQuery(LoopQuery{PersonID: personID})
 	at := s.dialect.TimestampParam(cutoff)
-	args = append(args, after, at, at, personID, personID, limit)
+	args = append(args, after, at, at, personID, limit)
 	query := `WITH scoped AS (` + scoped + `)
 		SELECT m.id FROM messages m JOIN scoped c ON c.conversation_id = m.conversation_id
 		JOIN sources src ON src.id = m.source_id
 		WHERE m.id > ? AND ` + s.loopLiveMessageSQL("src") + `
 		AND ((` + s.loopTimeKey("m.sent_at") + ` >= ` + s.loopTimeKey("?") + `
 			OR ` + s.loopTimeKey("m.archived_at") + ` >= ` + s.loopTimeKey("?") + `)
-			AND NOT EXISTS (SELECT 1 FROM person_sweep_changes changes
-				WHERE changes.person_id = ? AND changes.message_id = m.id AND changes.source_lane = 'conversation_text')
 			OR EXISTS (SELECT 1 FROM person_commitments detached
 				WHERE detached.person_id = ? AND detached.anchor_message_id = m.id AND detached.current_claim_id IS NULL))
 		ORDER BY m.id LIMIT ?`

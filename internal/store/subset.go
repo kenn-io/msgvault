@@ -816,6 +816,11 @@ func copyData(ctx context.Context, db *sql.DB, tx *sql.Tx, rowCount int, options
 	if err := copyMessages(ctx, tx); err != nil {
 		return nil, err
 	}
+	if options.IncludeProfiles {
+		if err := copySubsetCommitmentDecisions(ctx, tx); err != nil {
+			return nil, fmt.Errorf("copy commitment decisions: %w", err)
+		}
+	}
 	// Merge-protection markers are portable owning-row state. Copy them from
 	// the selected messages directly so they remain useful even when a subset
 	// omits the detailed merge provenance that originally justified them.
@@ -2386,9 +2391,6 @@ func copyStructuredProfiles(ctx context.Context, tx *sql.Tx) (int64, error) {
 	}
 	if !hasProfiles {
 		return 0, nil
-	}
-	if err := copySubsetCommitmentDecisions(ctx, tx); err != nil {
-		return 0, fmt.Errorf("copy commitment decisions: %w", err)
 	}
 
 	// Observations keep their source foreign key, even when that source had no

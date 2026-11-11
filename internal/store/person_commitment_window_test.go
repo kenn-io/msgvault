@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -74,4 +75,27 @@ func TestCommitmentWindowScopesBothSidesOfDirectConversations(t *testing.T) {
 	window, err = f.Store.LoadPersonCommitmentWindow(t.Context(), person.ID, profile, cfg, loopNow.Add(time.Hour), "UTC")
 	r.NoError(err)
 	a.Empty(window.Sources)
+}
+
+func TestCommitmentWindowBoundsEscapedEmailInput(t *testing.T) {
+	r, a := require.New(t), assert.New(t)
+	f := storetest.New(t)
+	r.NoError(f.Store.AddAccountIdentity(f.Source.ID, loopOwner, "manual"))
+	participant := f.EnsureParticipant(loopAlex, "", "example.test")
+	person, _, err := f.Store.CreatePersonFromParticipant(participant)
+	r.NoError(err)
+	for i := range 12 {
+		f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner},
+			Body: "I will send the draft.\n> " + strings.Repeat("quoted history ", 150), SentAt: loopAgo(time.Duration(i+1) * time.Hour)})
+	}
+	cfg := peoplesweep.CommitmentConfig{Enabled: true, Window: 30 * loopDay, MaxItems: 60, MaxBytes: 65536, MaxOpenAnchors: 8}
+	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+	window, err := f.Store.LoadPersonCommitmentWindow(t.Context(), person.ID, profile, cfg, loopNow, "UTC")
+	r.NoError(err)
+	r.NotEmpty(window.Sources)
+	a.Less(len(window.Sources), 12, "escaped history must leave a bounded prefix for the next pass")
+	fits, err := peoplesweep.CommitmentInputFits(window, true)
+	r.NoError(err)
+	a.True(fits)
+	a.Less(window.ThroughSequence, window.SnapshotSequence)
 }
