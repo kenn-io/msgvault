@@ -86,6 +86,15 @@ func photoIdentity(ctx context.Context, r *DocbankAttachmentReader, uid string) 
 	if err != nil {
 		return nil, nil, "", err
 	}
+	for _, candidate := range uids {
+		resolved, err := r.Store.GetPersonByUIDContext(ctx, candidate)
+		if err != nil {
+			return nil, nil, "", err
+		}
+		if resolved.ID != person.ID {
+			return nil, nil, "", store.ErrPersonUIDAmbiguous
+		}
+	}
 	archive, err := r.Store.ArchiveUIDContext(ctx)
 	if err != nil {
 		return nil, nil, "", err

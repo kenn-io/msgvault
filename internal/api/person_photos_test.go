@@ -88,6 +88,17 @@ func TestPersonPhotosResolvesRetiredUIDAndDetectsConflict(t *testing.T) {
 	require.Contains(response.Body.String(), `"uid":"canonical"`)
 	conflict = true
 	require.Equal(http.StatusConflict, get("retired").Code)
+	conflict = false
+	var otherID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid) VALUES ('other') RETURNING id`).Scan(&otherID))
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO carddav_resources (address_book_id, href, remote_uid, remote_etag, remote_body, remote_semantic_hash, local_hash, mapping_status, governance, person_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'mapped', 'remote', ?)`), books[0].ID, "https://contacts.example.test/books/one/other.vcf", "retired", `"two"`, []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:retired\r\nFN:Other\r\nEND:VCARD\r\n"), "remote", "local", otherID)
+	require.NoError(err)
+	require.Equal(http.StatusConflict, get("canonical").Code)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPut, "/api/v1/people/by-uid/photo-link", strings.NewReader(`{"uid":"canonical","person_id":"00000000-0000-4000-8000-000000000001","revision":1,"state":"unlinked"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	require.Equal(http.StatusConflict, response.Code)
 }
 
 func TestPersonPhotosOnlyVisibleConfirmedAttachments(t *testing.T) {

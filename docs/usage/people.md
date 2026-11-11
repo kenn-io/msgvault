@@ -73,10 +73,10 @@ current visible attachment occurrences. Results include Docbank assertion and
 content version IDs. A retained original remains queryable after a Docbank
 node is replaced; an assertion on the replacement version cannot match the
 original attachment receipt. Results do not include unconfirmed face
-suggestions. Each page returns up to 100 occurrences ordered by content version
-ID and attachment ID. Follow `next_cursor` while `truncated` is true. Each page
-reflects current visible data. A linked person with no visible photos returns
-an empty list. A Docbank service without person identity routes returns 503.
+suggestions. Each page returns up to 100 occurrences. Follow `next_cursor` while
+`truncated` is true. Each page reflects current visible data. A linked person
+with no visible photos returns an empty list. A Docbank service without person
+identity routes returns 503.
 
 If a link write has an uncertain outcome, read the selected Docbank person's
 current link and revision before retrying.
