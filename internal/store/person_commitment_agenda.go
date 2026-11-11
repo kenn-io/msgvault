@@ -140,13 +140,18 @@ func (s *Store) ListPendingCommitmentAgendaContext(ctx context.Context, now time
 }
 
 func (s *Store) MarkCommitmentAgendaAttemptContext(ctx context.Context, item CommitmentAgendaSuggestion, now time.Time, automatic bool) (bool, error) {
+	request, err := json.Marshal(item.Request, json.Deterministic(true))
+	if err != nil {
+		return false, err
+	}
 	query := `UPDATE person_commitment_agenda SET attempted_at = ?, deferred_at = NULL
 		WHERE commitment_id = ? AND idempotency_key = ? AND state = 'pending' AND target_key = ? AND quote = ?
+		AND request_json = ` + s.dialect.JSONBindExpr() + `
 		AND EXISTS (SELECT 1 FROM person_commitments c WHERE c.id = commitment_id
 			AND c.target_key = person_commitment_agenda.target_key AND c.quote = person_commitment_agenda.quote
 			AND c.current_claim_id IS NOT NULL AND c.owner_state <> 'done'
 			AND ` + s.loopTimeKey("c.expires_at") + ` > ` + s.loopTimeKey("?")
-	args := []any{s.dialect.TimestampParam(now), item.CommitmentID, item.IdempotencyKey, item.TargetKey, item.Quote, s.dialect.TimestampParam(now)}
+	args := []any{s.dialect.TimestampParam(now), item.CommitmentID, item.IdempotencyKey, item.TargetKey, item.Quote, string(request), s.dialect.TimestampParam(now)}
 	if automatic {
 		query += ` AND EXISTS (SELECT 1 FROM person_tracking pt WHERE pt.person_id = c.person_id)
 			AND (person_commitment_agenda.attempted_at IS NOT NULL OR ` + commitmentAgendaMatchingCompleteSQL("c.person_id") + `)
