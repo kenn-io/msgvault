@@ -434,7 +434,7 @@ direct conversations within the active provider's source and date scope.
 | `min_interval` | `24h` | Minimum time between successful passes for a person. |
 | `window` | `720h` | Recent message or archive-arrival window. |
 | `max_items` | `60` | Maximum messages in a call, up to 2000. |
-| `max_bytes` | `65536` | Maximum UTF-8 message-text bytes in a call. |
+| `max_bytes` | `65536` | Maximum UTF-8 message-text bytes in a call. A longer message waits until you raise this limit. |
 | `max_output_tokens` | `2048` | Output cap within the shared per-person budget. |
 | `max_open_anchors` | `8` | Older open promises a call may revisit, up to 8. |
 | `expire_after_due` | `720h` | Time after the due date ends in the activity timezone; expiry is stored at extraction or refresh. |

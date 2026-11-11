@@ -66,7 +66,9 @@ func (s *Store) transferCommitmentDecisionTx(ctx context.Context, tx *loggedTx, 
 		return err
 	}
 	if ambiguous {
-		return nil // Retain the source decision for undo; no unique survivor owns it.
+		// No unique survivor owns this decision. Duplicate-message merge retains
+		// its hidden source for undo; person merge follows its existing deletion policy.
+		return nil
 	}
 	// No live survivor matched. A stale row at the same unique locator is
 	// a replacement, so it receives only the revalidated incoming decision.
