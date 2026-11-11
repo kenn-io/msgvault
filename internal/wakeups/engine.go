@@ -297,7 +297,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 					matches = append(matches, row)
 				}
 			}
-			if sub.Native && state.Failures >= 5 {
+			if sub.Native && state.Failures > 5 {
 				skipTo(next)
 				_, err = advance(raw)
 				return err

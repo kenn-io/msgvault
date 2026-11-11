@@ -224,32 +224,43 @@ func TestNativeDeliveryDropsPermanentAndEventuallyAdvances(t *testing.T) {
 	}
 }
 
-func TestNativeExhaustedAttemptIsNotSentAgain(t *testing.T) {
-	require := Require.New(t)
-	assert := Assert.New(t)
-	st := testutil.NewTestStore(t)
-	now := time.Now().UTC()
-	start := now.Add(-time.Hour)
-	seedWakeup(t, st, "exhausted@example.com", 0, 1, now)
-	key := store.MCPEventsPositionKey("exhausted")
-	ok, err := st.AdvanceWakeupStateKey(t.Context(), key, nil, store.WakeupState{At: start, Failures: 5})
-	require.NoError(err)
-	require.True(ok)
-	hits := 0
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		hits++
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer server.Close()
-	sub := testSubscription(t, "exhausted", server, changefeed.Filter{IncomingOnly: true})
-	sub.StateKey, sub.Native = key, true
-	engine := Engine{Store: st, Subscriptions: []Subscription{sub}, Now: func() time.Time { return now }}
-	require.NoError(engine.RunPass(t.Context()))
-	assert.Zero(hits)
-	state, _, err := st.LoadWakeupStateKey(t.Context(), key)
-	require.NoError(err)
-	assert.True(state.At.After(start))
-	assert.Zero(state.Failures)
+func TestNativeInterruptedFinalAttempt(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		failures int
+		wantHits int
+	}{
+		{"fifth reservation", 5, 1},
+		{"sixth reservation", 6, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := Require.New(t)
+			assert := Assert.New(t)
+			st := testutil.NewTestStore(t)
+			now := time.Now().UTC()
+			start := now.Add(-time.Hour)
+			seedWakeup(t, st, "exhausted@example.com", 0, 1, now)
+			key := store.MCPEventsPositionKey("exhausted")
+			ok, err := st.AdvanceWakeupStateKey(t.Context(), key, nil, store.WakeupState{At: start, Failures: tc.failures})
+			require.NoError(err)
+			require.True(ok)
+			hits := 0
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				hits++
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
+			defer server.Close()
+			sub := testSubscription(t, "exhausted", server, changefeed.Filter{IncomingOnly: true})
+			sub.StateKey, sub.Native = key, true
+			engine := Engine{Store: st, Subscriptions: []Subscription{sub}, Now: func() time.Time { return now }}
+			require.NoError(engine.RunPass(t.Context()))
+			assert.Equal(tc.wantHits, hits)
+			state, _, err := st.LoadWakeupStateKey(t.Context(), key)
+			require.NoError(err)
+			assert.True(state.At.After(start))
+			assert.Zero(state.Failures)
+		})
+	}
 }
 
 func TestNativeSuccessfulDeliveryClearsFailureStatus(t *testing.T) {
