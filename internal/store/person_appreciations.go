@@ -42,6 +42,14 @@ func (s *Store) currentAppreciationsTx(ctx context.Context, tx *loggedTx, person
 	if err != nil {
 		return PersonAppreciationProjection{}, err
 	}
+	keys := make([]string, 0, len(result.Boundary.AppreciationMemory))
+	for _, memory := range result.Boundary.AppreciationMemory {
+		keys = append(keys, memory.Suggestion.Key)
+	}
+	states, err := getPersonAppreciationStates(ctx, tx, keys)
+	if err != nil {
+		return PersonAppreciationProjection{}, err
+	}
 	for _, memory := range result.Boundary.AppreciationMemory {
 		// Only the immutable pointer proves prior thanks. A null or deleted
 		// pointer is unknown even if the current snapshot once carried text.
@@ -49,13 +57,8 @@ func (s *Store) currentAppreciationsTx(ctx context.Context, tx *loggedTx, person
 		memory.Suggestion.Thanked, memory.OwnerRef, memory.OwnerRawSHA256 = nil, nil, ""
 		// The sparse ledger names exactly one immutable brief. Never search a
 		// recent version window, and never transfer proof across source keys.
-		var proofID sql.NullInt64
-		err := tx.QueryRowContext(ctx, `SELECT thanks_brief_id FROM person_appreciation_state WHERE contribution_key = ?`, memory.Suggestion.Key).Scan(&proofID)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return PersonAppreciationProjection{}, err
-		}
-		if proofID.Valid {
-			proof, ok, err := s.validAppreciationProofTx(ctx, tx, personID, memory.Suggestion.Key, proofID.Int64, profile, lock)
+		if proofID := states[memory.Suggestion.Key].ThanksBriefID; proofID != nil {
+			proof, ok, err := s.validAppreciationProofTx(ctx, tx, personID, memory.Suggestion.Key, *proofID, profile, lock)
 			if err != nil {
 				return PersonAppreciationProjection{}, err
 			}

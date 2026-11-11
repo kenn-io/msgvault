@@ -26,43 +26,19 @@ func (s *Store) PersonSweepAppreciationRetired(ctx context.Context, personID int
 // any exact proof in that same snapshot. No nested store transaction is opened.
 func (s *Store) appreciationRetiredTx(ctx context.Context, tx *loggedTx, personID int64, keys []string, profile peoplesweep.ProviderProfile, lock bool) (map[string]bool, error) {
 	retired := make(map[string]bool)
-	if len(keys) > MaxPersonAppreciationStateKeys {
-		return nil, ErrTooManyPersonAppreciationKeys
-	}
-	if len(keys) == 0 {
-		return retired, nil
-	}
-	args := make([]any, len(keys))
-	for i, key := range keys {
-		if !validAppreciationKey(key) {
-			return nil, ErrInvalidPersonAppreciationKey
-		}
-		args[i] = key
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT contribution_key, dismissed_at, thanks_brief_id FROM person_appreciation_state WHERE contribution_key IN (`+placeholders(len(keys))+`)`, args...)
+	states, err := getPersonAppreciationStates(ctx, tx, keys)
 	if err != nil {
-		return nil, fmt.Errorf("read appreciation retirement: %w", err)
-	}
-	proofs := make(map[string]int64)
-	for rows.Next() {
-		var key string
-		var dismissed sql.NullTime
-		var proof sql.NullInt64
-		if err := rows.Scan(&key, &dismissed, &proof); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		if dismissed.Valid {
-			retired[key] = true
-		} else if proof.Valid {
-			proofs[key] = proof.Int64
-		}
-	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return nil, err
 	}
-	for key, proofID := range proofs {
-		_, valid, err := s.validAppreciationProofTx(ctx, tx, personID, key, proofID, profile, lock)
+	for key, state := range states {
+		if state.DismissedAt != nil {
+			retired[key] = true
+			continue
+		}
+		if state.ThanksBriefID == nil {
+			continue
+		}
+		_, valid, err := s.validAppreciationProofTx(ctx, tx, personID, key, *state.ThanksBriefID, profile, lock)
 		if err != nil {
 			return nil, err
 		}

@@ -363,6 +363,14 @@ func (s *Store) applyPersonSweepWithAligner(
 			if validateErr != nil {
 				return validateErr
 			}
+			keys := make([]string, 0, len(current))
+			for key := range current {
+				keys = append(keys, key)
+			}
+			states, err := getPersonAppreciationStates(ctx, tx, keys)
+			if err != nil {
+				return err
+			}
 			resolved := 0
 			for _, memory := range request.Brief.Boundary.AppreciationMemory {
 				if memory.Suggestion.State == "already_thanked" {
@@ -373,15 +381,11 @@ func (s *Store) applyPersonSweepWithAligner(
 				if memory.Suggestion.State != "suggested" {
 					continue
 				}
-				var proofID sql.NullInt64
-				err := tx.QueryRowContext(ctx, `SELECT thanks_brief_id FROM person_appreciation_state WHERE contribution_key = ?`, memory.Suggestion.Key).Scan(&proofID)
-				if err != nil && !errors.Is(err, sql.ErrNoRows) {
-					return err
-				}
-				if !proofID.Valid {
+				proofID := states[memory.Suggestion.Key].ThanksBriefID
+				if proofID == nil {
 					continue
 				}
-				proof, valid, err := s.validAppreciationProofTx(ctx, tx, request.Lease.PersonID, memory.Suggestion.Key, proofID.Int64, request.Brief.ValidationProfile, true)
+				proof, valid, err := s.validAppreciationProofTx(ctx, tx, request.Lease.PersonID, memory.Suggestion.Key, *proofID, request.Brief.ValidationProfile, true)
 				if err != nil {
 					return err
 				}
@@ -448,7 +452,7 @@ func (s *Store) applyPersonSweepWithAligner(
 			if briefErr != nil {
 				return briefErr
 			}
-			if err := s.recordAppreciationProofsTx(ctx, tx, request.Lease.PersonID, brief.ID, request.Brief.ValidationProfile, request.Brief.Boundary.AppreciationMemory); err != nil {
+			if err := recordAppreciationProofsTx(ctx, tx, brief.ID, request.Brief.Boundary.AppreciationMemory); err != nil {
 				return err
 			}
 			result.Mutations.BriefVersion = brief.Version

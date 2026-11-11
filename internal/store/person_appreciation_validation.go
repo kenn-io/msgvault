@@ -33,6 +33,14 @@ func (s *Store) revalidateAppreciationMemoryTx(ctx context.Context, tx *loggedTx
 			}
 		}
 	}
+	keys := make([]string, 0, len(brief.Boundary.AppreciationMemory))
+	for _, memory := range brief.Boundary.AppreciationMemory {
+		keys = append(keys, memory.Suggestion.Key)
+	}
+	states, err := getPersonAppreciationStates(ctx, tx, keys)
+	if err != nil {
+		return nil, err
+	}
 	current := make(map[string]peoplesweep.BriefAppreciationMemory, len(brief.Boundary.AppreciationMemory))
 	kept := make([]peoplesweep.BriefAppreciationMemory, 0, len(brief.Boundary.AppreciationMemory))
 	for _, memory := range brief.Boundary.AppreciationMemory {
@@ -42,12 +50,7 @@ func (s *Store) revalidateAppreciationMemoryTx(ctx context.Context, tx *loggedTx
 		if _, duplicate := current[memory.Suggestion.Key]; duplicate {
 			return nil, errors.New("duplicate appreciation contribution in brief")
 		}
-		var dismissed sql.NullTime
-		err := tx.QueryRowContext(ctx, `SELECT dismissed_at FROM person_appreciation_state WHERE contribution_key = ?`, memory.Suggestion.Key).Scan(&dismissed)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("read appreciation dismissal: %w", err)
-		}
-		if dismissed.Valid && !includeDismissed {
+		if states[memory.Suggestion.Key].DismissedAt != nil && !includeDismissed {
 			continue
 		}
 		peerTime, valid, err := s.appreciationPeerCurrentTx(ctx, tx, personID, memory, brief.ValidationProfile)
@@ -77,26 +80,12 @@ func (s *Store) revalidateAppreciationMemoryTx(ctx context.Context, tx *loggedTx
 	return current, nil
 }
 
-func (s *Store) recordAppreciationProofsTx(ctx context.Context, tx *loggedTx, personID, briefID int64, profile peoplesweep.ProviderProfile, memories []peoplesweep.BriefAppreciationMemory) error {
+func recordAppreciationProofsTx(ctx context.Context, tx *loggedTx, briefID int64, memories []peoplesweep.BriefAppreciationMemory) error {
 	for _, memory := range memories {
 		if memory.Suggestion.State != "already_thanked" || memory.OwnerRef == nil || memory.Suggestion.Thanked == nil {
 			continue
 		}
-		var previous sql.NullInt64
-		err := tx.QueryRowContext(ctx, `SELECT thanks_brief_id FROM person_appreciation_state WHERE contribution_key = ?`, memory.Suggestion.Key).Scan(&previous)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("read appreciation proof: %w", err)
-		}
-		if previous.Valid {
-			_, valid, err := s.validAppreciationProofTx(ctx, tx, personID, memory.Suggestion.Key, previous.Int64, profile, true)
-			if err != nil {
-				return err
-			}
-			if valid {
-				continue
-			}
-		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO person_appreciation_state (contribution_key, thanks_brief_id)
+		_, err := tx.ExecContext(ctx, `INSERT INTO person_appreciation_state (contribution_key, thanks_brief_id)
  VALUES (?, ?) ON CONFLICT (contribution_key) DO UPDATE SET thanks_brief_id = excluded.thanks_brief_id`, memory.Suggestion.Key, briefID)
 		if err != nil {
 			return fmt.Errorf("record appreciation proof: %w", err)

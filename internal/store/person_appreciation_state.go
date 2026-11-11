@@ -73,6 +73,10 @@ const appreciationStateColumns = `contribution_key, dismissed_person_uid, dismis
 // Map presence does not imply dismissal: only a non-nil DismissedAt does. A
 // proof-only row may remain with all optional fields nil after brief deletion.
 func (s *Store) GetPersonAppreciationStatesContext(ctx context.Context, keys []string) (map[string]PersonAppreciationState, error) {
+	return getPersonAppreciationStates(ctx, s.db, keys)
+}
+
+func getPersonAppreciationStates(ctx context.Context, db chunkQuerier, keys []string) (map[string]PersonAppreciationState, error) {
 	result := make(map[string]PersonAppreciationState)
 	if len(keys) > MaxPersonAppreciationStateKeys {
 		return nil, fmt.Errorf("%w: maximum %d", ErrTooManyPersonAppreciationKeys, MaxPersonAppreciationStateKeys)
@@ -87,7 +91,7 @@ func (s *Store) GetPersonAppreciationStatesContext(ctx context.Context, keys []s
 		}
 		args[i] = key
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT `+appreciationStateColumns+` FROM person_appreciation_state WHERE contribution_key IN (`+placeholders(len(keys))+`)`, args...)
+	rows, err := db.QueryContext(ctx, `SELECT `+appreciationStateColumns+` FROM person_appreciation_state WHERE contribution_key IN (`+placeholders(len(keys))+`)`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("read appreciation states: %w", err)
 	}
