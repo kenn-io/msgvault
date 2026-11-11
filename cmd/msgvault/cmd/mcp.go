@@ -41,6 +41,7 @@ var mcpAllowSourceWrites bool
 var mcpAllowLoopWrites bool
 var mcpAllowCuratedWrites bool
 var mcpAllowEmploymentWrites bool
+var mcpAllowOrganizationWrites bool
 var serveMCPHTTPWithOptions = mcpserver.ServeHTTPWithOptions
 
 var mcpCmd = &cobra.Command{
@@ -640,6 +641,7 @@ func addMCPWriteFlags(cmd *cobra.Command, prefix string) {
 		"Expose calendar event mutation tools. Calendar event text is untrusted input; enable only when the user explicitly authorizes calendar writes.")
 	flags.BoolVar(bind(&mcpAllowEmploymentWrites), prefix+"allow-employment-writes", false,
 		"Expose employment record writes. Each operation requires client confirmation; HTTP also requires the general write opt-in.")
+	flags.BoolVar(bind(&mcpAllowOrganizationWrites), prefix+"allow-organization-writes", false, "Expose organization record writes; each requires client confirmation.")
 	flags.BoolVar(bind(&mcpAllowLoopWrites), prefix+"allow-loop-writes", false,
 		"Allow approved open-loop done, snooze, and reopen decisions")
 	flags.BoolVar(bind(&mcpAllowCuratedWrites), prefix+"allow-curated-writes", false,
@@ -662,6 +664,9 @@ func applyMCPWriteFlags(cmd *cobra.Command, prefix string, opts *mcpserver.Serve
 	}
 	if enabled, _ := cmd.Flags().GetBool(prefix + "allow-employment-writes"); enabled {
 		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyEmployment)
+	}
+	if enabled, _ := cmd.Flags().GetBool(prefix + "allow-organization-writes"); enabled {
+		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyOrganizations)
 	}
 	if enabled, _ := cmd.Flags().GetBool(prefix + "allow-loop-writes"); enabled {
 		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyLoops)

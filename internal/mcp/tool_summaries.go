@@ -100,6 +100,8 @@ func ToolSummaries() []ToolSummary {
 				summary.Security, summary.Flag = "source_write", "--allow-source-writes"
 			case OperationFamilyEmployment:
 				summary.Security, summary.Flag = "employment_write", "--allow-employment-writes"
+			case OperationFamilyOrganizations:
+				summary.Security, summary.Flag = "organization_write", "--allow-organization-writes"
 			case OperationFamilyLoops:
 				summary.Security, summary.Flag = "loop_write", "--allow-loop-writes"
 			case OperationFamilyCurated:

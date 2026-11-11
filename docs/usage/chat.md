@@ -950,6 +950,11 @@ existing record require the exact ETag from a fresh read. Creating or promoting
 a primary shows the current primary and refuses if it changes before the write;
 creating a primary also refuses while one exists. If a mutation may have
 completed, list the person's employments before retrying.
+## Organization records
+
+On unreleased `main`, owner sessions can read an organization by ID, its profile history, typed attributes, and stored inline media. Media uses base64 chunks: start at offset zero and pass the returned SHA-256 with subsequent offsets. URI-only media cannot be downloaded and msgvault does not fetch its URI.
+
+Enable `--allow-organization-writes` for confirmed create, update, delete, merge, profile replacement, and attribute operations. HTTP also requires the general write opt-in. Updates, deletes, merges, and profile replacement use the exact ETag from a read; merges also require the losing revision. Profile replacement clears omitted collections. Deletion refuses organizations with employment records. If a mutation reports an uncertain outcome, read the record before retrying.
 
 ## Write controls
 
@@ -983,6 +988,7 @@ Enable only the writes intended for the assistant's session:
 | Person promotion, display names, and Notes | `--allow-profile-writes` | `--http-allow-writes --allow-profile-writes` |
 | Structured person profile patches | `--allow-curated-writes` | `--http-allow-writes --allow-curated-writes` |
 | Employment record writes | `--allow-employment-writes` | `--http-allow-writes --allow-employment-writes` |
+| Organization records | `--allow-organization-writes` | `--http-allow-writes --allow-organization-writes` |
 | Open-loop done, snooze, and reopen | `--allow-loop-writes` | `--http-allow-writes --allow-loop-writes` |
 | Source sync and Slack selection | `--allow-source-writes` | `--http-allow-writes --allow-source-writes` |
 | Calendar events | `--allow-calendar-writes` | `--http-allow-writes --allow-calendar-writes` |
@@ -1076,6 +1082,7 @@ msgvault mcp --http 8080
 | `--allow-curated-writes` | `false` | On unreleased `main`, expose atomic structured person profile patches. Each call requires explicit client confirmation; the client is responsible for obtaining user approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-loop-writes` | `false` | Expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-employment-writes` | `false` | On unreleased `main`, expose confirmed employment record writes. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
+| `--allow-organization-writes` | `false` | On unreleased `main`, expose confirmed organization record writes. HTTP also requires `--http-allow-writes`. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |
 | `--allow-identity-scoring` | `false` | Expose consented manual identity scoring, which sends bounded raw identity data to the fixed provider. Each run needs client confirmation; HTTP also requires `--http-allow-writes`. |

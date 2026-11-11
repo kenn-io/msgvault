@@ -4681,6 +4681,7 @@ msgvault mcp [flags]
 | `--allow-loop-writes` | `false` | Expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--confirm-sensitive-drafts` | `false` | Require client confirmation before creating or editing drafts with detected sensitive content. Grants no tools; HTTP writes still require `--http-allow-writes`. |
 | `--allow-employment-writes` | `false` | On unreleased `main`, expose employment record writes with confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
+| `--allow-organization-writes` | `false` | On unreleased `main`, expose confirmed organization record writes. HTTP also requires `--http-allow-writes`. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-calendar-writes` | `false` | Expose calendar event mutation tools. HTTP also requires `--http-allow-writes`; only enable for sessions where the user explicitly authorizes calendar writes. |
 | `--allow-kata-writes` | `false` | Expose `create_kata_issue` and `link_kata_evidence`; `find_kata_issues` and `get_kata_issue_context` need no flag. HTTP also requires `--http-allow-writes`; archive text is untrusted input, so only enable for sessions where the user explicitly authorizes Kata issue writes. See [Kata issues](usage/kata-issues.md). |
@@ -4807,6 +4808,7 @@ with the configured owner bearer key. Native MCP never permits keyless access.
 | `--mcp-allow-loop-writes` | `false` | Enable approved open-loop done, snooze, and reopen decisions. |
 | `--mcp-confirm-sensitive-drafts` | `false` | Require client confirmation before creating or editing drafts with detected sensitive content. Writes still require `--mcp-allow-writes`. |
 | `--mcp-allow-employment-writes` | `false` | On unreleased `main`, enable confirmed employment record writes. |
+| `--mcp-allow-organization-writes` | `false` | On unreleased `main`, enable confirmed organization record writes. |
 | `--mcp-allow-source-writes` | `false` | Enable confirmed source synchronization and policy writes. |
 
 Every family flag also requires `--mcp-allow-writes`. These are process flags;
