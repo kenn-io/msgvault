@@ -60,9 +60,6 @@ func (s *Store) LoadWakeupStateKey(ctx context.Context, key string) (WakeupState
 // EncodeWakeupState returns the exact bytes used by the state CAS.
 func EncodeWakeupState(state WakeupState) ([]byte, error) { return json.Marshal(state) }
 
-func (s *Store) AdvanceWakeupState(ctx context.Context, name string, before []byte, after WakeupState) (bool, error) {
-	return s.AdvanceWakeupStateKey(ctx, wakeupStatePrefix+name, before, after)
-}
 func (s *Store) AdvanceWakeupStateKey(ctx context.Context, key string, before []byte, after WakeupState) (bool, error) {
 	value, err := EncodeWakeupState(after)
 	if err != nil {

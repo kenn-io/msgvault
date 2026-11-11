@@ -212,6 +212,9 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 // messageTagsMinAPISchemaVersion adds native email tag reads and edits.
 const messageTagsMinAPISchemaVersion = "3.15.0"
 
+// ownerEventsMinAPISchemaVersion adds owner MCP Events subscriptions.
+const ownerEventsMinAPISchemaVersion = "5.4.0"
+
 // personAgendaMinAPISchemaVersion adds live task-backed person agendas.
 const personAgendaMinAPISchemaVersion = "2.30.0"
 
@@ -281,7 +284,7 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	}
 	// Turn on can enable text search after this server starts.
 	activatable := mcpRequestPropertiesPresent(capabilities, "enableLocalEmbeddings")
-	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, "5.4.0") {
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, ownerEventsMinAPISchemaVersion) {
 		opts.Events = st
 	}
 	lanes := capabilityErr == nil && health != nil && health.Vector != nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, vectorLaneHealthMinAPISchemaVersion)
