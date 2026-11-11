@@ -303,17 +303,19 @@ func TestOrganizationListQueryRequiresDiscoverySchema(t *testing.T) {
 		{"old plain list", "5.0.0", []string{"--json"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			var requests int
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				if r.URL.Path == "/api/v1/health" {
 					_, err := fmt.Fprintf(w, `{"status":"ok","api_schema_version":%q}`, tc.version)
-					require.NoError(t, err)
+					require.NoError(err)
 					return
 				}
 				requests++
 				_, err := w.Write([]byte(`{"organizations":[],"total":0,"limit":20,"offset":0}`))
-				require.NoError(t, err)
+				require.NoError(err)
 			}))
 			t.Cleanup(server.Close)
 			cmd := cloneOrganizationCommand(organizationListCmd)
@@ -323,11 +325,11 @@ func TestOrganizationListQueryRequiresDiscoverySchema(t *testing.T) {
 			cmd.SetArgs(tc.args)
 			err := cmd.Execute()
 			if tc.wantRequest {
-				require.NoError(t, err)
-				assert.Equal(t, 1, requests)
+				require.NoError(err)
+				assert.Equal(1, requests)
 			} else {
-				require.ErrorContains(t, err, "5.1.0")
-				assert.Zero(t, requests)
+				require.ErrorContains(err, "5.1.0")
+				assert.Zero(requests)
 			}
 		})
 	}
