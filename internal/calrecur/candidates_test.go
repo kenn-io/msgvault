@@ -115,14 +115,14 @@ func TestTimedRecurrenceWithLocalStartAcrossGap(t *testing.T) {
 	requirements := require.New(t)
 	zone, err := time.LoadLocation("America/New_York")
 	requirements.NoError(err)
-	s, err := ParseSet(instant(t, "2027-03-13T07:30:00Z"), false, "", zone, []string{"RRULE:FREQ=DAILY;COUNT=3"})
+	s, err := ParseSet(instant(t, "2027-03-14T07:30:00Z"), false, "", zone, []string{"RRULE:FREQ=DAILY;COUNT=3"})
 	requirements.NoError(err)
-	s.StartLocal = "20270313T023000"
+	s.StartLocal = "20270314T023000"
 	var got []string
 	err = testIter(t.Context(), s, instant(t, "2027-03-18T00:00:00Z"), 100, func(i instance) bool {
 		got = append(got, i.Identity.Key())
 		return true
 	})
 	requirements.NoError(err)
-	assert.Equal(t, []string{"20270313T073000Z", "20270315T063000Z", "20270316T063000Z"}, got)
+	assert.Equal(t, []string{"20270314T073000Z", "20270315T063000Z", "20270316T063000Z"}, got)
 }
