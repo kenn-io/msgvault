@@ -146,8 +146,8 @@ func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, 
 
 // DocumentOccurrencePage identifies the last emitted attachment in a photo page.
 type DocumentOccurrencePage struct {
-	VersionID    string `json:"v"`
-	AttachmentID int64  `json:"a"`
+	VersionID    string
+	AttachmentID int64
 }
 
 // DocumentSearchOccurrences maps hit versions to their current visible attachments.

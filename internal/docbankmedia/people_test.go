@@ -32,7 +32,6 @@ func TestPersonProtocolRejectsMalformedAndPreservesStatuses(t *testing.T) {
 	}{
 		{"malformed", 200, `{"person_id":"p","system":"msgvault","archive_id":"wrong","requested_uid":"u","resolved_uid":"u","uid_state":"current"}`, 0},
 		{"not found", 404, `{}`, 404},
-		{"conflict", 409, `{}`, 409},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)

@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/google/uuid"
 	"go.kenn.io/msgvault/internal/docbankmedia"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -139,11 +138,6 @@ func (s *Server) registerPersonPhotoRoutes(api huma.API) {
 			data, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(in.Cursor, "1."))
 			if err != nil || json.Unmarshal(data, &cursor) != nil || len(cursor.AssertionCursor) > 4096 || (cursor.AssertionID == "") != (cursor.AttachmentID == 0) || cursor.AttachmentID < 0 || (cursor.AssertionCursor == "" && cursor.AssertionID == "") {
 				return nil, huma.Error400BadRequest("invalid photo cursor")
-			}
-			if cursor.AssertionID != "" {
-				if _, err := uuid.Parse(cursor.AssertionID); err != nil {
-					return nil, huma.Error400BadRequest("invalid photo cursor")
-				}
 			}
 		}
 		r, err := s.photoReader()

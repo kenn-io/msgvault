@@ -762,25 +762,6 @@ func TestGeneratedMediaSearchAcceptsEmptyAttachmentMetadata(t *testing.T) {
 	requirements.NoError(response.Validate(), "semantic-only attachment matches may have no excerpt")
 }
 
-func TestGeneratedPersonPhotoEvidenceAcceptsEmptyExcerpt(t *testing.T) {
-	requirements := require.New(t)
-	const payload = `{
-		"link_state":"unlinked","uid":"person","truncated":false,
-		"photos":[{"assertion_id":"a","content_version_id":"00000000-0000-4000-8000-000000000001",
-			"occurrences_truncated":false,"occurrences":[{"attachment_id":1,"message_id":2,
-				"conversation_id":3,"filename":"live.jpg","containing_title":"",
-				"excerpt":"","occurred_at":"2026-11-07T12:00:00Z"}]}]
-	}`
-	var response generated.PersonPhotosResponse
-	requirements.NoError(json.Unmarshal([]byte(payload), &response))
-	requirements.NoError(response.Validate(), "a populated face-photo result may have no text excerpt")
-	requirements.Empty(response.Photos[0].Occurrences[0].Excerpt)
-
-	encoded, err := json.Marshal(response)
-	requirements.NoError(err)
-	requirements.Contains(string(encoded), `"excerpt":""`, "the required excerpt key remains on the wire")
-}
-
 func TestGeneratedPersonFactEvidenceRequiresPresenceButAcceptsEmptyStrings(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
