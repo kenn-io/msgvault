@@ -66,23 +66,20 @@ func DiagnoseAcquisitionContext(ctx context.Context, st *store.Store, sourceID i
 	for _, item := range candidates {
 		retries[item.SourceMessageID] = item
 	}
-	type later struct{ resolved, skipped bool }
-	seen := make(map[string]later)
+	resolvedLater := make(map[string]bool)
 	representatives := make(map[[2]string]bool)
 	items := make([]AcquisitionDiagnosticItem, 0)
-	// Outcomes arrive newest first, so seen holds only later outcomes.
+	// Outcomes arrive newest first, so resolutions are always later.
 	for _, outcome := range outcomes {
-		next := seen[outcome.SourceMessageID]
+		resolved := resolvedLater[outcome.SourceMessageID]
 		op := acquisitionOperationOf(outcome)
 		var state string
 		switch {
-		case outcome.ErrorMessage == store.SyncRunItemFilesPendingMessage && materializationFromKind(outcome.ErrorKind) != 0 && next.resolved:
+		case outcome.ErrorMessage == store.SyncRunItemFilesPendingMessage && materializationFromKind(outcome.ErrorKind) != 0 && resolved:
 		case outcome.Status != store.SyncRunItemStatusError && outcome.Status != store.SyncRunItemStatusSkipped:
-		case outcome.Status == store.SyncRunItemStatusSkipped && op != acquisitionUnknown && (!next.resolved || (op == acquisitionDownload && next.skipped)):
+		case outcome.Status == store.SyncRunItemStatusSkipped && op != acquisitionUnknown && !resolved:
 			state = AcquisitionHistorical
-		case op == acquisitionDownload && next.skipped:
-			state = AcquisitionIndeterminate
-		case op != acquisitionUnknown && next.resolved:
+		case op != acquisitionUnknown && resolved:
 			state = AcquisitionResolved
 		case outcome.Status == store.SyncRunItemStatusSkipped:
 		case op != acquisitionUnknown && covers(retries[outcome.SourceMessageID], outcome, op):
@@ -90,16 +87,9 @@ func DiagnoseAcquisitionContext(ctx context.Context, st *store.Store, sourceID i
 		default:
 			state = AcquisitionIndeterminate
 		}
-		switch outcome.Status {
-		case store.SyncRunItemStatusResolved:
-			next.resolved, next.skipped = true, false
-		case store.SyncRunItemStatusSkipped:
-			// Cleanup changes failures to skipped; a separate skip interrupts download history.
-			if op == acquisitionUnknown {
-				next.skipped = true
-			}
+		if outcome.Status == store.SyncRunItemStatusResolved {
+			resolvedLater[outcome.SourceMessageID] = true
 		}
-		seen[outcome.SourceMessageID] = next
 		key := [2]string{outcome.SourceMessageID, state}
 		if state == "" || representatives[key] {
 			continue

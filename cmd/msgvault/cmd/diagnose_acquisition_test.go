@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,7 +27,7 @@ type acquisitionArchive struct {
 
 // newAcquisitionArchive uses the configured test database unless the case
 // inspects the SQLite file itself.
-func newAcquisitionArchive(t *testing.T, sourceType string, sqliteOnly bool) *acquisitionArchive {
+func newAcquisitionArchive(t *testing.T, sqliteOnly bool) *acquisitionArchive {
 	t.Helper()
 	dir := t.TempDir()
 	cfg := config.NewDefaultConfig()
@@ -38,7 +39,7 @@ func newAcquisitionArchive(t *testing.T, sourceType string, sqliteOnly bool) *ac
 		st = testutil.NewTestStore(t)
 		setMatrixTestDatabaseURL(t, st, cfg)
 	}
-	source, err := st.GetOrCreateSource(sourceType, "source@example.com")
+	source, err := st.GetOrCreateSource("gmail", "source@example.com")
 	require.NoError(t, err)
 	return &acquisitionArchive{t: t, dir: dir, cfg: cfg, st: st, source: source.ID}
 }
@@ -89,7 +90,7 @@ func (a *acquisitionArchive) diagnoseJSON(args ...string) []map[string]string {
 	a.t.Helper()
 	output, err := a.diagnose("", append(args, "--json")...)
 	require.NoError(a.t, err)
-	assert.True(a.t, bytes.HasSuffix([]byte(output), []byte("\n")))
+	assert.True(a.t, strings.HasSuffix(output, "\n"))
 	items := []map[string]string{}
 	require.NoError(a.t, json.Unmarshal([]byte(output), &items))
 	return items
@@ -103,7 +104,7 @@ func TestDiagnoseAcquisition(t *testing.T) {
 	t.Run("still failing", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
-		a := newAcquisitionArchive(t, "gmail", false)
+		a := newAcquisitionArchive(t, false)
 		other, err := a.st.GetOrCreateSource("gmail", "other@example.com")
 		require.NoError(err)
 		a.record(other.ID, false, acquisitionOutcome("other", "fetch", "error", "fetch_error"))
@@ -141,7 +142,7 @@ func TestDiagnoseAcquisition(t *testing.T) {
 	t.Run("fixed", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
-		a := newAcquisitionArchive(t, "gmail", false)
+		a := newAcquisitionArchive(t, false)
 		pending := acquisitionOutcome("saved", "ingest", "error", "attachment_error")
 		pending.ErrorMessage = store.SyncRunItemFilesPendingMessage
 		a.record(a.source, false, pending, acquisitionOutcome("older", "fetch", "error", "fetch_error"))
@@ -155,30 +156,24 @@ func TestDiagnoseAcquisition(t *testing.T) {
 		a.record(a.source, false, acquisitionOutcome("reopened", "fetch", "error", "fetch_error"))
 		a.record(a.source, false, acquisitionOutcome("reopened", "fetch", "resolved", "acquired"))
 		a.record(a.source, false, acquisitionOutcome("reopened", "ingest", "error", "ingest_error"))
-		a.record(a.source, false, acquisitionOutcome("retired-first", "fetch", "error", "fetch_error"))
-		a.record(a.source, false, acquisitionOutcome("retired-first", "fetch", "skipped", "gmail_not_found"))
-		a.record(a.source, false, acquisitionOutcome("retired-first", "fetch", "error", "fetch_error"))
-		a.record(a.source, false, acquisitionOutcome("retired-first", "fetch", "resolved", "acquired"))
 		output, err := a.diagnose("")
 		require.NoError(err)
 		assert.Equal("reopened\tstill failing\tmessage processing failed\n", output)
 		output, err = a.diagnose("", "--all")
 		require.NoError(err)
-		assert.Equal("older\tfixed\tmessage download failed\nmatching-text\tfixed\tmessage download failed\nreopened\tfixed\tmessage download failed\nreopened\tstill failing\tmessage processing failed\nretired-first\tunknown\tmessage download failed\nretired-first\tfixed\tmessage download failed\n", output)
+		assert.Equal("older\tfixed\tmessage download failed\nmatching-text\tfixed\tmessage download failed\nreopened\tfixed\tmessage download failed\nreopened\tstill failing\tmessage processing failed\n", output)
 		assert.Equal([]map[string]string{
 			acquisitionJSON("older", "fetch", "fetch_error", "resolved"),
 			acquisitionJSON("matching-text", "fetch", "fetch_error", "resolved"),
 			acquisitionJSON("reopened", "fetch", "fetch_error", "resolved"),
 			acquisitionJSON("reopened", "ingest", "ingest_error", "active"),
-			acquisitionJSON("retired-first", "fetch", "fetch_error", "indeterminate"),
-			acquisitionJSON("retired-first", "fetch", "fetch_error", "resolved"),
 		}, a.diagnoseJSON("--all"))
 	})
 
 	t.Run("retired", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
-		a := newAcquisitionArchive(t, "gmail", false)
+		a := newAcquisitionArchive(t, false)
 		pending := acquisitionOutcome("saved", "ingest", "error", "attachment_error")
 		pending.ErrorMessage = store.SyncRunItemFilesPendingMessage
 		a.record(a.source, false, pending)
@@ -213,7 +208,7 @@ func TestDiagnoseAcquisition(t *testing.T) {
 	t.Run("cleanup preserves fixed failures", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
-		a := newAcquisitionArchive(t, "gmail", true)
+		a := newAcquisitionArchive(t, true)
 		conversation, err := a.st.EnsureConversation(t.Context(), a.source, "thread", "Thread")
 		require.NoError(err)
 		_, err = a.st.UpsertMessage(&store.Message{ConversationID: conversation, SourceID: a.source, SourceMessageID: "cleaned", MessageType: "email"})
@@ -235,7 +230,7 @@ func TestDiagnoseAcquisition(t *testing.T) {
 	t.Run("unknown", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
-		a := newAcquisitionArchive(t, "gmail", false)
+		a := newAcquisitionArchive(t, false)
 		a.record(a.source, false,
 			acquisitionOutcome("stale", "fetch", "error", "fetch_error"),
 			acquisitionOutcome("(unknown)", "fetch", "error", "batch_fetch_error"),
@@ -262,7 +257,7 @@ func TestDiagnoseAcquisition(t *testing.T) {
 	t.Run("newer archive", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
-		a := newAcquisitionArchive(t, "gmail", true)
+		a := newAcquisitionArchive(t, true)
 		a.record(a.source, false, acquisitionOutcome("newer-failure", "fetch", "error", "fetch_error"))
 		_, err := a.st.DB().ExecContext(t.Context(), "UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'", strconv.Itoa(store.SchemaVersion+1))
 		require.NoError(err)
@@ -274,7 +269,7 @@ func TestDiagnoseAcquisition(t *testing.T) {
 
 	t.Run("deletion", func(t *testing.T) {
 		assert := assert.New(t)
-		a := newAcquisitionArchive(t, "gmail", false)
+		a := newAcquisitionArchive(t, false)
 		a.record(a.source, false,
 			acquisitionOutcome("download", "fetch", "error", "fetch_error"),
 			acquisitionOutcome("download", "delete", "error", "delete_error"),
@@ -286,7 +281,7 @@ func TestDiagnoseAcquisition(t *testing.T) {
 
 	t.Run("local", func(t *testing.T) {
 		require := require.New(t)
-		a := newAcquisitionArchive(t, "gmail", false)
+		a := newAcquisitionArchive(t, false)
 		remote := "[remote]\nurl = 'https://example.com'\n"
 		_, err := a.diagnose(remote)
 		require.ErrorContains(err, "use --local")
@@ -297,7 +292,7 @@ func TestDiagnoseAcquisition(t *testing.T) {
 
 	t.Run("merged source", func(t *testing.T) {
 		require := require.New(t)
-		a := newAcquisitionArchive(t, "gmail", true)
+		a := newAcquisitionArchive(t, true)
 		into, err := a.st.GetOrCreateSource("gmail", "into@example.com")
 		require.NoError(err)
 		_, err = a.st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: a.source, IntoSourceID: into.ID})
