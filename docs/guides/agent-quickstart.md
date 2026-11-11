@@ -230,6 +230,11 @@ backend checks for action permissions, source scope, and sender identity;
 | `approve_carddav_publication` | carddav_write | `--allow-carddav-writes` | owner-only |
 | `sync_carddav` | carddav_write | `--allow-carddav-writes` | owner-only |
 | `patch_person_record` | curated_write | `--allow-curated-writes` | owner-only |
+| `create_employment` | employment_write | `--allow-employment-writes` | owner-only |
+| `delete_employment` | employment_write | `--allow-employment-writes` | owner-only |
+| `end_employment` | employment_write | `--allow-employment-writes` | owner-only |
+| `replace_employment` | employment_write | `--allow-employment-writes` | owner-only |
+| `set_primary_employment` | employment_write | `--allow-employment-writes` | owner-only |
 | `accept_identity_match` | identity_decision | `--allow-identity-decisions` | owner-only |
 | `reject_identity_match` | identity_decision | `--allow-identity-decisions` | owner-only |
 | `score_identity_matches` | identity_scoring | `--allow-identity-scoring` | owner-only |
@@ -259,6 +264,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_carddav_sync_status` | read | — | owner-only |
 | `get_deletion` | read | — | owner-only |
 | `get_embeddings_status` | read | — | owner-only |
+| `get_employment` | read | — | owner-only |
 | `get_identity_match` | read | — | owner-only |
 | `get_identity_scoring_status` | read | — | owner-only |
 | `get_kata_issue_context` | read | — | owner-only |
@@ -289,6 +295,8 @@ backend checks for action permissions, source scope, and sender identity;
 | `list_meeting_action_items` | read | — | owner-only |
 | `list_messages` | read | — | search.read |
 | `list_open_loops` | read | — | owner-only |
+| `list_organization_employments` | read | — | owner-only |
+| `list_person_employments` | read | — | owner-only |
 | `list_saved_views` | read | — | owner-only |
 | `list_source_status` | read | — | owner-only |
 | `list_thread` | read | — | message.read |
