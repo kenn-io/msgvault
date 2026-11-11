@@ -101,9 +101,18 @@ func TestCronPromotesQueuedPoll(t *testing.T) {
 		gate := newSerialWorkTracker()
 		release, ok := gate.BeginWorkContext(t.Context())
 		requirements.True(ok)
-		var cronCalls, pollCalls int
-		s := New(func(context.Context, string) error { cronCalls++; return nil }).WithAccountPoll(func(context.Context, string) error { pollCalls++; return nil }).WithWorkTracker(gate)
+		var calls []string
+		s := New(func(ctx context.Context, account string) error {
+			calls = append(calls, account)
+			if len(calls) == 1 {
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			return nil
+		}).WithAccountPoll(func(context.Context, string) error { calls = append(calls, "poll"); return nil }).WithWorkTracker(gate)
+		defer func() { <-s.Stop().Done() }()
 		requirements.NoError(s.AddAccount("a@example.com", "0 * * * *"))
+		requirements.NoError(s.AddAccount("b@example.com", "0 * * * *"))
 		go s.onAccountTrigger("a@example.com", true)
 		synctest.Wait()
 		checks.False(s.hasQueuedRuns())
@@ -111,10 +120,13 @@ func TestCronPromotesQueuedPoll(t *testing.T) {
 		checks.True(s.hasQueuedRuns())
 		release()
 		synctest.Wait()
-		checks.Equal(1, cronCalls)
-		checks.Zero(pollCalls)
+		checks.Equal([]string{"a@example.com"}, calls)
+		go s.onAccountTick("b@example.com")
+		synctest.Wait()
+		time.Sleep(preemptAfter + 2*yieldPollInterval)
+		synctest.Wait()
+		checks.Equal([]string{"a@example.com", "b@example.com", "a@example.com"}, calls)
 		checks.False(s.hasQueuedRuns())
-		<-s.Stop().Done()
 	})
 }
 
