@@ -63,9 +63,6 @@ func (c *Client) ResolveExternalPerson(ctx context.Context, archiveID, uid strin
 
 func (c *Client) SetExternalPersonIdentity(ctx context.Context, personID string, revision int64, identity ExternalPersonIdentity) (ExternalPersonIdentity, int64, error) {
 	var out ExternalPersonIdentity
-	if personID == "" || revision < 1 || identity.System != "msgvault" || identity.ArchiveID == "" || identity.UID == "" || (identity.UIDState != "current" && identity.UIDState != "unlinked") {
-		return out, 0, ErrInvalidRequest
-	}
 	req, err := c.newJSONRequest(ctx, http.MethodPut, "/api/v1/people/by-id/"+url.PathEscape(personID)+"/external-identities", identity, maxMetadataBytes)
 	if err != nil {
 		return out, 0, err

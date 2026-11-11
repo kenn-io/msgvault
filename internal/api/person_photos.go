@@ -14,6 +14,12 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+type photoOccurrenceCursor struct {
+	Version      int    `json:"version"`
+	VersionID    string `json:"v"`
+	AttachmentID int64  `json:"a"`
+}
+
 type PersonPhotoEvidence struct {
 	AssertionID          string                  `json:"assertion_id"`
 	ContentVersionID     string                  `json:"content_version_id"`
@@ -118,12 +124,14 @@ func (s *Server) registerPersonPhotoRoutes(api huma.API) {
 		position := store.DocumentOccurrencePage{}
 		if in.OccurrenceCursor != "" {
 			data, err := base64.RawURLEncoding.DecodeString(in.OccurrenceCursor)
-			if err != nil || json.Unmarshal(data, &position) != nil || position.AttachmentID <= 0 {
+			var token photoOccurrenceCursor
+			if err != nil || json.Unmarshal(data, &token) != nil || token.Version != 1 || token.AttachmentID <= 0 {
 				return nil, huma.Error400BadRequest("invalid occurrence cursor")
 			}
-			if _, err := uuid.Parse(position.VersionID); err != nil {
+			if _, err := uuid.Parse(token.VersionID); err != nil {
 				return nil, huma.Error400BadRequest("invalid occurrence cursor")
 			}
+			position = store.DocumentOccurrencePage{VersionID: token.VersionID, AttachmentID: token.AttachmentID}
 		}
 		r, err := s.photoReader()
 		if err != nil {
@@ -143,6 +151,9 @@ func (s *Server) registerPersonPhotoRoutes(api huma.API) {
 		}
 		page, err := r.Client.PersonAssertions(ctx, id, in.Cursor)
 		if err != nil {
+			if remote, ok := errors.AsType[*docbankmedia.HTTPError](err); ok && in.Cursor != "" && remote.Status == http.StatusUnprocessableEntity && remote.Reason == "validation" {
+				return nil, huma.Error422UnprocessableEntity("invalid assertion cursor")
+			}
 			return nil, photoFailure(err)
 		}
 		if page.State != "curated" && page.State != "provisional" {
@@ -163,7 +174,7 @@ func (s *Server) registerPersonPhotoRoutes(api huma.API) {
 		if len(occurrences) > 100 {
 			last := occurrences[99]
 			truncated[last.VersionID] = occurrences[100].VersionID == last.VersionID
-			token, err := json.Marshal(store.DocumentOccurrencePage{VersionID: last.VersionID, AttachmentID: last.AttachmentID})
+			token, err := json.Marshal(photoOccurrenceCursor{Version: 1, VersionID: last.VersionID, AttachmentID: last.AttachmentID})
 			if err != nil {
 				return nil, photoFailure(err)
 			}
@@ -196,8 +207,11 @@ func (s *Server) registerPersonPhotoRoutes(api huma.API) {
 			return nil, photoFailure(err)
 		}
 		uid := p.VCardUID
-		if in.Body.State == "unlinked" && in.Body.LinkedUID != "" {
-			uid = in.Body.LinkedUID
+		if in.Body.State == "unlinked" {
+			uid = in.Body.UID
+			if in.Body.LinkedUID != "" {
+				uid = in.Body.LinkedUID
+			}
 		}
 		if !slices.Contains(uids, uid) {
 			return nil, huma.Error400BadRequest("linked UID does not belong to person")

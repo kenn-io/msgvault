@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -196,6 +197,9 @@ func TestPersonPhotoLinkRevisionAndRetiredUID(t *testing.T) {
 	body := `{"uid":"current","person_id":"00000000-0000-4000-8000-000000000001","revision":7,"state":"unlinked","linked_uid":"old"}`
 	result := put(body)
 	require.Equal(http.StatusOK, result.Code, result.Body.String())
+	result = put(`{"uid":"old","person_id":"00000000-0000-4000-8000-000000000001","revision":7,"state":"unlinked"}`)
+	require.Equal(http.StatusOK, result.Code, result.Body.String())
+	require.Contains(result.Body.String(), `"linked_uid":"old"`)
 	require.Contains(result.Body.String(), `"revision":8`)
 	stale = true
 	require.Equal(http.StatusPreconditionFailed, put(body).Code)
@@ -291,10 +295,11 @@ func TestPersonPhotosOccurrencePages(t *testing.T) {
 	}
 	// The first message's other-version attachment disappears before its page.
 	require.Equal(t, expected, seen)
-	for _, suffix := range []string{"&cursor=next", "&occurrence_cursor=invalid"} {
+	future := base64.RawURLEncoding.EncodeToString([]byte(`{"version":2,"v":"00000000-0000-4000-8000-000000000001","a":1}`))
+	for _, suffix := range []string{"&cursor=next", "&occurrence_cursor=invalid", "&occurrence_cursor=" + future} {
 		response := httptest.NewRecorder()
 		server.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/people/by-uid/photos?uid=person"+suffix, nil))
-		if strings.Contains(suffix, "invalid") {
+		if strings.Contains(suffix, "occurrence_cursor") {
 			require.Equal(t, http.StatusBadRequest, response.Code)
 		} else {
 			require.Equal(t, http.StatusOK, response.Code)
@@ -356,4 +361,32 @@ func TestPersonPhotosSelectedPersonMissing(t *testing.T) {
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/people/by-uid/photos?uid=person", nil))
 	require.Equal(t, http.StatusNotFound, response.Code)
+}
+
+func TestPersonPhotosInvalidAssertionCursor(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	_, err := st.DB().ExecContext(t.Context(), `INSERT INTO persons (vcard_uid) VALUES ('person')`)
+	require.NoError(t, err)
+	archive, err := st.ArchiveUIDContext(t.Context())
+	require.NoError(t, err)
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "resolve-external") {
+			_, _ = fmt.Fprintf(w, `{"person_id":"p","system":"msgvault","archive_id":%q,"requested_uid":"person","resolved_uid":"person","uid_state":"current"}`, archive)
+			return
+		}
+		require.Equal(t, "invalid", r.URL.Query().Get("assertion_cursor"))
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"code":"validation"}`))
+	}))
+	defer remote.Close()
+	client, err := docbankmedia.NewClient(remote.URL, nil)
+	require.NoError(t, err)
+	cfg := config.NewDefaultConfig()
+	cfg.Integrations.Docbank.Enabled = true
+	cfg.Integrations.Docbank.AttachmentUploadConsent = true
+	server := NewServerWithOptions(ServerOptions{Config: cfg, Logger: slog.New(slog.DiscardHandler)})
+	server.docbankAttachments = &DocbankAttachmentReader{Client: client, Store: st, Destination: "attachments"}
+	response := httptest.NewRecorder()
+	server.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/people/by-uid/photos?uid=person&cursor=invalid", nil))
+	require.Equal(t, http.StatusUnprocessableEntity, response.Code)
 }
