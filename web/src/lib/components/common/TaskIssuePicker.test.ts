@@ -25,12 +25,13 @@ describe('TaskIssuePicker', () => {
     const filter = screen.getByRole('searchbox', { name: 'Filter tasks' });
     await fireEvent.input(filter, { target: { value: 'old' } });
     expect(screen.queryByRole('radio', { name: item.label })).toBeNull();
-    expect(screen.getByText('More tasks available.').style.visibility).toBe('hidden');
+    expect(screen.queryByText('More tasks available.')).toBeNull();
     await waitFor(() => expect(older).toBeTypeOf('function'));
     expect(screen.getByRole('status').textContent).toBe('Loading…');
-    expect(screen.getByText('More tasks available.').style.visibility).toBe('hidden');
+    expect(screen.queryByText('More tasks available.')).toBeNull();
     await fireEvent.input(filter, { target: { value: 'missing' } });
     await screen.findByText('No tasks match "missing".');
+    expect(screen.queryByText('More tasks available.')).toBeNull();
     expect(load.mock.calls[2][1].aborted).toBe(true);
     older({ items: [item], truncated: true });
     await tick();
@@ -42,6 +43,7 @@ describe('TaskIssuePicker', () => {
     await waitFor(() => expect(fail).toBeTypeOf('function'));
     fail(new Error('Task service unavailable'));
     expect((await screen.findByRole('alert')).textContent).toBe('Task service unavailable');
+    expect(screen.queryByText('More tasks available.')).toBeNull();
   });
 
   it('shows an empty first list', async () => {

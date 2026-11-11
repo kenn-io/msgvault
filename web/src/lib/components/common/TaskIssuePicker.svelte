@@ -50,7 +50,7 @@
     {/if}
   </div>
   {#if hint}<p>{hint}</p>{/if}
-  {#if moreNote}<p class="more-note" style:visibility={!error && truncated && !loading && query.trim() === listedQuery ? 'visible' : 'hidden'}>{moreNote}</p>{/if}
+  {#if moreNote && !error && truncated && !loading && query.trim() === listedQuery}<p>{moreNote}</p>{/if}
 </div>
 
 <style>
