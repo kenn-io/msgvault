@@ -151,7 +151,9 @@ func (s *commitmentPhaseEndingStore) ListPersonCommitmentsContext(context.Contex
 	if s.readerErr != nil {
 		return nil, s.readerErr
 	}
-	close(s.ctx.done)
+	if !s.between {
+		close(s.ctx.done)
+	}
 	return nil, s.ctx.Err()
 }
 
