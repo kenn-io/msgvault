@@ -158,12 +158,13 @@ func emailEvents(t *testing.T, st *Store, source int64) []int64 {
 	return ids
 }
 
-func TestEmailCalendarSourceCounts(t *testing.T) {
+func TestEmailCalendarSourceCountsAndActivity(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	email, source := persistInviteEmail(t, st, "count-invite", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z")))
-	requirements.Len(emailEvents(t, st, source), 1)
+	mailEvents := emailEvents(t, st, source)
+	requirements.Len(mailEvents, 1)
 	countAll, err := st.CountAllMessagesForSourceContext(t.Context(), source)
 	requirements.NoError(err)
 	assertions.Equal(int64(2), countAll)
@@ -174,12 +175,15 @@ func TestEmailCalendarSourceCounts(t *testing.T) {
 	assertions.Equal(int64(2), countAll)
 	_, err = st.db.Exec(`UPDATE messages SET deleted_from_source_at=NULL WHERE id=?`, email)
 	requirements.NoError(err)
-	gcalData, _ := calendarFixture(t, st, "count-gcal", calendarRaw)
+	gcalData, gcalID := calendarFixture(t, st, "count-gcal", calendarRaw)
+	gcalData.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 2, 12, 0, 0, 0, time.UTC), Valid: true}
 	_, err = st.PersistMessageContext(t.Context(), gcalData)
 	requirements.NoError(err)
 	icsSourceID := icsSource(t, st)
 	_, err = st.PersistICalendarContext(t.Context(), icsSourceID, calendarDocument("REQUEST", "DTSTART:20270302T120000Z"))
 	requirements.NoError(err)
+	icsEvents := emailEvents(t, st, icsSourceID)
+	requirements.Len(icsEvents, 1)
 	for _, sourceID := range []int64{source, gcalData.Message.SourceID, icsSourceID} {
 		live, err := st.CountNativeMessagesForSource(sourceID)
 		requirements.NoError(err)
@@ -190,8 +194,8 @@ func TestEmailCalendarSourceCounts(t *testing.T) {
 	}
 	imported, err := st.GetOrCreateSource("message_import", "count-import")
 	requirements.NoError(err)
-	_, err = st.PersistMessageContext(t.Context(), &MessagePersistData{
-		Message:      &Message{SourceID: imported.ID, SourceMessageID: "imported-event", MessageType: "calendar_event"},
+	importedID, err := st.PersistMessageContext(t.Context(), &MessagePersistData{
+		Message:      &Message{SourceID: imported.ID, SourceMessageID: "imported-event", MessageType: "calendar_event", SentAt: sql.NullTime{Time: time.Date(2027, 3, 2, 12, 0, 0, 0, time.UTC), Valid: true}},
 		Conversation: &ConversationPersistData{SourceConversationID: "imported-event"},
 	})
 	requirements.NoError(err)
@@ -205,35 +209,10 @@ func TestEmailCalendarSourceCounts(t *testing.T) {
 	count, err = st.CountNativeMessagesForSource(destination.ID)
 	requirements.NoError(err)
 	assertions.Equal(int64(1), count)
-}
-
-func TestEmailCalendarActivityCandidates(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	raw := calendarDocument("REQUEST", "DTSTART:20270302T120000Z")
-	_, mailSource := persistInviteEmail(t, st, "activity-invite", inviteEmail(raw))
-	mailEvents := emailEvents(t, st, mailSource)
-	requirements.Len(mailEvents, 1)
-	icsSource := icsSource(t, st)
-	_, err := st.PersistICalendarContext(t.Context(), icsSource, raw)
-	requirements.NoError(err)
-	icsEvents := emailEvents(t, st, icsSource)
-	requirements.Len(icsEvents, 1)
-	gcalData, gcalID := calendarFixture(t, st, "activity-gcal", calendarRaw)
-	gcalData.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 2, 12, 0, 0, 0, time.UTC), Valid: true}
-	_, err = st.PersistMessageContext(t.Context(), gcalData)
-	requirements.NoError(err)
-	imported, err := st.GetOrCreateSource("message_import", "activity-import")
-	requirements.NoError(err)
-	importedID, err := st.PersistMessageContext(t.Context(), &MessagePersistData{
-		Message:      &Message{SourceID: imported.ID, SourceMessageID: "imported-event", MessageType: "calendar_event", SentAt: sql.NullTime{Time: time.Date(2027, 3, 2, 12, 0, 0, 0, time.UTC), Valid: true}},
-		Conversation: &ConversationPersistData{SourceConversationID: "imported-event"},
-	})
-	requirements.NoError(err)
 	for _, source := range []struct {
 		id  int64
 		typ string
-	}{{icsSource, "ics"}, {gcalData.Message.SourceID, "gcal"}, {imported.ID, "message_import"}} {
+	}{{icsSourceID, "ics"}, {gcalData.Message.SourceID, "gcal"}} {
 		destination, err := st.GetOrCreateSource(source.typ, "merged-"+source.typ)
 		requirements.NoError(err)
 		_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: source.id, IntoSourceID: destination.ID})

@@ -65,6 +65,45 @@ func TestExpandAllDayCalendarDurationAcrossDST(t *testing.T) {
 	assertions.Equal(instant(t, "2027-03-15T07:00:00Z"), got[0].End.UTC())
 }
 
+func TestExpandTimedCalendarDurationAcrossDST(t *testing.T) {
+	zone, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name, start, end string
+		duration         time.Duration
+		days             int
+	}{
+		{"spring day", "2027-03-13T14:00:00Z", "2027-03-14T13:00:00Z", 0, 1},
+		{"spring elapsed", "2027-03-13T14:00:00Z", "2027-03-14T14:00:00Z", 24 * time.Hour, 0},
+		{"fall day", "2027-11-06T13:00:00Z", "2027-11-07T14:00:00Z", 0, 1},
+		{"fall elapsed", "2027-11-06T13:00:00Z", "2027-11-07T13:00:00Z", 24 * time.Hour, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			start := instant(t, tc.start)
+			s, err := ParseSet(start, false, "", zone, []string{"RRULE:FREQ=DAILY;COUNT=1"})
+			require.NoError(t, err)
+			got, _, err := Expand(t.Context(), s, tc.duration, tc.days, start.Add(-time.Hour), start.Add(48*time.Hour), 100)
+			require.NoError(t, err)
+			require.Len(t, got, 1)
+			assert.Equal(t, instant(t, tc.end), got[0].End.UTC())
+			end, bounded := ConservativeEnd(t.Context(), s, tc.duration, tc.days, 100)
+			require.True(t, bounded)
+			assert.Equal(t, instant(t, tc.end), end.UTC())
+		})
+	}
+}
+
+func TestTimedExceptionInheritsCalendarDayAcrossDST(t *testing.T) {
+	zone, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	start := instant(t, "2027-11-06T13:00:00Z")
+	s, err := ParseSet(start, false, "", zone, nil)
+	require.NoError(t, err)
+	occurrence, err := EffectiveException(s, Exception{Original: Identity{Instant: start}, Start: &start, Cancelled: true}, 0, 1)
+	require.NoError(t, err)
+	assert.Equal(t, instant(t, "2027-11-07T14:00:00Z"), occurrence.End.UTC())
+}
+
 func TestExpandAllDayWindowIncludesFirstMidnightBeforeRollback(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
