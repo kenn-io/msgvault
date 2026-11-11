@@ -37,6 +37,8 @@ func TestMCPOperationFailureCompletion(t *testing.T) {
 			`{"error":"operation_refused","operation_may_have_completed":true}`, http.StatusInternalServerError},
 		{"known pre-commit conflict", http.MethodPatch, `{"error":"settings_conflict"}`,
 			`{"error":"settings_conflict","operation_may_have_completed":false}`, http.StatusPreconditionFailed},
+		{"large pre-commit conflict", http.MethodPatch, `{"error":"settings_conflict","message":"` + strings.Repeat("x", 64<<10) + `"}`,
+			`{"error":"settings_conflict","operation_may_have_completed":false}`, http.StatusPreconditionFailed},
 		{"read failure", http.MethodGet, `{"error":"credential_conflict"}`,
 			`{"error":"operation_refused","operation_may_have_completed":false}`, http.StatusPreconditionFailed},
 		{"oversized successful write receipt", http.MethodPatch, `{"data":"` + strings.Repeat("x", 1<<20) + `"}`,
