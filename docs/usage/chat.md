@@ -909,6 +909,7 @@ when the daemon offers its route.
 | `set_person_tracking` | Change tracking state. | `person_id`, `tracked` |
 
 - Build `target` as `kind:key:revision` from a `list_person_fact_targets` entry.
+- If a history read returns `operation_response_limit_exceeded`, retry with a smaller `limit`.
 - Sensitive targets appear in the catalog only with `include_sensitive: true`. Evidence and claims pages still include rows for sensitive targets.
 - Writes require `--allow-person-fact-writes` and explicit client confirmation for each call; the client is responsible for user approval. The person must be tracked to set a pin. If a write reports `operation_may_have_completed: true`, read the pins or tracking again before retrying.
 

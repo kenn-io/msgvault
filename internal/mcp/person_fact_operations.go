@@ -19,6 +19,8 @@ func personFactOperationalDefinitions() []operationalDefinition {
 	person := func() *jsonschema.Schema {
 		return closedObject(map[string]*jsonschema.Schema{"person_id": safeIDSchema("Durable person ID")}, "person_id")
 	}
+	tracking := newOperationalDefinition("set_person_tracking", "Replace the person's tracking state. This native operation has no revision guard. Requires confirmation.", OperationFamilyPersonFacts, closedObject(map[string]*jsonschema.Schema{"person_id": safeIDSchema("Durable person ID"), "tracked": booleanSchema("Desired tracking state")}, "person_id", "tracked"), outputSchemaFor[generated.PersonTracking](), true)
+	tracking.definition.annotations.OpenWorldHint = new(true)
 	return []operationalDefinition{
 		newOperationalDefinition("list_person_fact_targets", "List automatic fact targets. Set include_sensitive explicitly to include sensitive targets.", OperationFamilyPersonFacts, closedObject(map[string]*jsonschema.Schema{"include_sensitive": booleanSchema("Include sensitive targets")}), outputSchemaFor[generated.Catalog](), false),
 		newOperationalDefinition("list_person_fact_evidence", "Read up to 50 rows of person fact evidence, including excerpts and rows for sensitive targets.", OperationFamilyPersonFacts, page(false, 50), outputSchemaFor[generated.PersonFactEvidenceResponse](), false),
@@ -28,6 +30,6 @@ func personFactOperationalDefinitions() []operationalDefinition {
 		newOperationalDefinition("list_person_fact_pins", "Read effective person fact pins.", OperationFamilyPersonFacts, person(), outputSchemaFor[generated.PersonFactPinsResponse](), false),
 		newOperationalDefinition("get_person_tracking", "Read the person's explicit tracking state.", OperationFamilyPersonFacts, person(), outputSchemaFor[generated.PersonTracking](), false),
 		newOperationalDefinition("set_person_fact_pin", "Set or clear an attribute or employment fact pin against the current native target. Requires the person to be tracked and confirmation.", OperationFamilyPersonFacts, closedObject(map[string]*jsonschema.Schema{"person_id": safeIDSchema("Durable person ID"), "kind": {Type: "string", Enum: []any{"attribute", "employment"}}, "key": stringSchema("Exact active target key"), "pinned": booleanSchema("Desired pin state")}, "person_id", "kind", "key", "pinned"), outputSchemaFor[generated.PersonFactPinWrite](), true),
-		newOperationalDefinition("set_person_tracking", "Replace the person's tracking state. This native operation has no revision guard. Requires confirmation.", OperationFamilyPersonFacts, closedObject(map[string]*jsonschema.Schema{"person_id": safeIDSchema("Durable person ID"), "tracked": booleanSchema("Desired tracking state")}, "person_id", "tracked"), outputSchemaFor[generated.PersonTracking](), true),
+		tracking,
 	}
 }
