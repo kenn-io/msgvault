@@ -29,7 +29,7 @@ func decodeGranola(fields map[string]jsontext.Value) Content {
 	if transcript.State == StateAvailable {
 		content.Transcript.Segments = segments
 	}
-	content.SourceParticipants = granolaParticipants(fields)
+	content.SourceParticipants = granolaParticipants(fields, owner)
 
 	start, startOK := rawTime(calendar["scheduled_start_time"], false)
 	end, endOK := rawTime(calendar["scheduled_end_time"], false)
@@ -128,9 +128,7 @@ func granolaSpeaker(name, diarization, source string) string {
 	return "Them"
 }
 
-func granolaParticipants(fields map[string]jsontext.Value) []Participant {
-	var owner personWire
-	_ = json.Unmarshal(fields["owner"], &owner)
+func granolaParticipants(fields map[string]jsontext.Value, owner personWire) []Participant {
 	var calendar struct {
 		Organiser string `json:"organiser"`
 		Invitees  []struct {

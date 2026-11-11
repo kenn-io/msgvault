@@ -23,6 +23,7 @@ func TestDecodeGranolaEvidence(t *testing.T) {
 	}`)
 
 	content := Decode("granola_json", raw, nil)
+	assertions.Equal("morgan@example.com", content.LinkEvidence.CalendarOwner)
 	assertions.Equal(Section{State: StateAvailable, Text: "## Decision\nShip café support"}, content.Summary)
 	assertions.Equal(StateUnsupported, content.Notes.State)
 	assertions.Equal(StateAvailable, content.Transcript.State)

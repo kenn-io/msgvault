@@ -30,6 +30,7 @@ const (
 // meeting surfaces. Generated request DTOs preserve the public wire contract;
 // stable meetingcontent results preserve nil and empty response semantics.
 type MeetingBackend interface {
+	MeetingRecord(ctx context.Context, ref string) (store.MeetingRecord, error)
 	GetMeetingContext(ctx context.Context, request generated.GetMeetingContextBody) (*meetingcontent.PacketResult, error)
 	ListMeetingActionItems(ctx context.Context, request generated.ListMeetingActionItemsBody) (*meetingcontent.ActionsPage, error)
 	GetMeetingMetrics(ctx context.Context, request generated.GetMeetingMetricsBody) (*meetingcontent.Metrics, error)
@@ -328,13 +329,7 @@ func (h *handlers) getMeetingRecord(ctx context.Context, req toolRequest) (*tool
 	if ref == "" {
 		return toolErrorResult("ref is required"), nil
 	}
-	backend, ok := h.meetings.(interface {
-		MeetingRecord(ctx context.Context, ref string) (store.MeetingRecord, error)
-	})
-	if !ok {
-		return nil, newInternalError("get meeting record", errors.New("meeting record unavailable"))
-	}
-	record, err := backend.MeetingRecord(ctx, ref)
+	record, err := h.meetings.MeetingRecord(ctx, ref)
 	if err != nil {
 		if apiErr, ok := errors.AsType[*daemonclient.APIError](err); ok && apiErr.Status >= 400 && apiErr.Status < 500 {
 			return toolErrorResult(apiErr.Code + ": " + apiErr.Message), nil

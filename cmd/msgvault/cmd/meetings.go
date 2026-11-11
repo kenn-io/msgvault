@@ -18,7 +18,6 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/meetingcontent"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
@@ -26,7 +25,6 @@ const meetingsMinAPISchemaVersion = "2.27.0"
 
 type meetingCommandClient interface {
 	mcpserver.MeetingBackend
-	MeetingRecord(ctx context.Context, ref string) (store.MeetingRecord, error)
 	APISchemaVersion(ctx context.Context) (string, error)
 }
 
