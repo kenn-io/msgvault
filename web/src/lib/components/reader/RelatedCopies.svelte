@@ -103,9 +103,14 @@
   const shown = $derived((family?.members ?? []).filter((member) => member.message_id !== family?.anchor_message_id && loadedIDs.includes(member.message_id)));
 
   // Copies already shown have no row here, but their linkage limits still matter.
-  const shownOutcomes = $derived(
-    [...new Set(shown.map((member) => member.linkage_outcome))].filter((outcome) => outcome !== 'complete' && outcome !== 'pending')
-  );
+  // Several outcomes share a note, so each note appears once.
+  const shownNotes = $derived([
+    ...new Set(
+      shown
+        .filter((member) => member.linkage_outcome !== 'complete' && member.linkage_outcome !== 'pending')
+        .map((member) => linkageNote(member.linkage_outcome, 'conversation'))
+    )
+  ]);
 
   // Group by account and source type; imports of the same type share a group.
   const groups = $derived.by(() => {
@@ -200,8 +205,8 @@
       {:else if anchorIncomplete}
         <p class="incomplete">{linkageNote(anchorOutcome, 'email')}, so related copies may be missing.</p>
       {/if}
-      {#each shownOutcomes as outcome (outcome)}
-        <p class="incomplete">{linkageNote(outcome, 'conversation')}, so related copies may be missing.</p>
+      {#each shownNotes as note (note)}
+        <p class="incomplete">{note}, so related copies may be missing.</p>
       {/each}
       {#if othersPending}
         <p class="incomplete">

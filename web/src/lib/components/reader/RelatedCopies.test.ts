@@ -243,6 +243,17 @@ describe('RelatedCopies', () => {
       ],
       loadedIDs: [1, 2],
       shown: [/Some identifiers in a copy already shown in this conversation couldn't be read/, 'Related emails are already shown in this conversation.']
+    },
+    {
+      // Both outcomes have the same note; getByText fails if it appears twice.
+      name: 'copies already shown whose limits share a note',
+      members: [
+        anchor,
+        member(2, { conversation_id: 100, linkage_outcome: 'invalid_headers' }),
+        member(3, { conversation_id: 100, linkage_outcome: 'size_limit' })
+      ],
+      loadedIDs: [1, 2, 3],
+      shown: [/Some identifiers in a copy already shown in this conversation couldn't be read/]
     }
   ] as Array<{
     name: string;
