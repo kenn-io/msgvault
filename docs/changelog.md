@@ -64,7 +64,7 @@ All notable changes to msgvault, grouped by release.
 - MCP draft creation and edit receipts now include advisory `sensitive_content` findings for likely card numbers, IBANs, US Social Security numbers, API keys, and passwords in the submitted subject or body. Findings in recognized quoted or forwarded history carry `quoted: true`. Drafts are still written unchanged.
 - See a saved person's open loops on their **Details** tab in People. When
   more history remains, **Check more** continues the scan.
-- Let an MCP assistant inspect person fact diagnostics and tracking. With `--allow-person-fact-writes`, it can change pins and tracking with approval for each call. HTTP writes also require `--http-allow-writes` and protocol `2026-07-28` or newer.
+- Let an MCP assistant inspect person fact diagnostics and tracking. For pin and tracking writes, standalone `msgvault mcp` needs `--allow-person-fact-writes`; its HTTP mode also needs `--http-allow-writes`. Native `msgvault serve` needs `--mcp-allow-writes` and `--mcp-allow-person-fact-writes` on `/mcp/writes`. HTTP writes require protocol `2026-07-28` or newer. Each call requires client confirmation; the client must obtain user approval.
 - Let an MCP assistant list open loops. With `--allow-loop-writes`, it can
   also mark loops done, snooze them, or reopen them, with your approval for
   each call. Over HTTP, decisions also need `--http-allow-writes` and protocol
