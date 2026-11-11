@@ -125,6 +125,23 @@ describe('ExploreAPI routing', () => {
     });
   });
 
+  it('defaults Day to UTC and Month to the browser timezone', async () => {
+    vi.stubEnv('TZ', 'America/Chicago');
+    try {
+      const requests: Request[] = [];
+      const api = createExploreAPI(createAPIClient(async (input) => {
+        requests.push(input as Request);
+        return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} });
+      }));
+      await api.groups({ limit: 1 }, 'day');
+      await api.groups({ limit: 1 }, 'month');
+      await api.groups({ limit: 1, timezone: 'Europe/London' }, 'day');
+      expect(await requests[0]!.json()).not.toHaveProperty('timezone');
+      expect(await requests[1]!.json()).toMatchObject({ timezone: 'America/Chicago' });
+      expect(await requests[2]!.json()).toMatchObject({ timezone: 'Europe/London' });
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it('routes grouped Files exclusively through the file population with file constraints', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {

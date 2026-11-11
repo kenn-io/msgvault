@@ -181,7 +181,7 @@ export function createExploreAPI(client: APIClient, scope?: TimelineScope): Expl
         ...(predicate.query ? { query: predicate.query, search_mode: predicate.search_mode } : {}),
         ...(predicate.group_key ? { group_key: predicate.group_key } : {}),
         ...('sent_only' in predicate ? { sent_only: Boolean(predicate.sent_only) } : {}),
-        timezone: predicate.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+        timezone: predicate.timezone ?? (dimension === 'day' ? undefined : Intl.DateTimeFormat().resolvedOptions().timeZone),
         grouping: [dimension],
         ...(['year', 'month'].includes(dimension) ? { sort: [{ field: 'key' as const, direction: 'desc' as const }] } : {}),
         limit: predicate.limit,

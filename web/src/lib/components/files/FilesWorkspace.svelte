@@ -1,10 +1,5 @@
 <script lang="ts" module>
-  function formatDate(value: string): string {
-    const date = new Date(value);
-    return Number.isNaN(date.valueOf())
-      ? value
-      : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date);
-  }
+  import { formatDate } from '../../util/format';
   function people(row: FileSearchRow): string {
     const labels = row.participant_labels ?? [];
     const domains = row.participant_domains ?? [];
