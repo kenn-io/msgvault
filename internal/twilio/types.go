@@ -6,7 +6,6 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"net/http"
-	"time"
 )
 
 const SourceType = "twilio"
@@ -55,41 +54,6 @@ type Recording struct {
 
 // Encrypted reports whether Twilio stores the recording encrypted.
 func (r Recording) Encrypted() bool { return len(r.EncryptionDetails) > 0 }
-
-type Segment struct {
-	Speaker       string   `json:"speaker,omitempty"`
-	Text          string   `json:"text"`
-	Scope         string   `json:"scope,omitempty"`
-	OffsetSeconds *float64 `json:"offset_seconds,omitempty"`
-}
-
-type Transcript struct {
-	Kind     string `json:"kind"`
-	ID       string `json:"id"`
-	SourceID string `json:"source_id"`
-	Status   string `json:"status"`
-	// DateCreated tells a retranscription from the transcript it replaced.
-	DateCreated string         `json:"date_created,omitempty"`
-	Complete    bool           `json:"complete"`
-	Usable      bool           `json:"usable"`
-	Segments    []Segment      `json:"segments,omitempty"`
-	Raw         jsontext.Value `json:"raw,omitempty"`
-}
-
-type Evidence struct {
-	Transcripts []Transcript `json:"transcripts,omitempty"`
-	Diagnostics []string     `json:"diagnostics,omitempty"`
-}
-
-// ParseTime accepts the timestamp formats returned by Voice and Intelligence.
-func ParseTime(value string) time.Time {
-	for _, format := range []string{time.RFC3339Nano, time.RFC1123Z, time.RFC1123, "2006-01-02T15:04:05Z0700"} {
-		if parsed, err := time.Parse(format, value); err == nil {
-			return parsed.UTC()
-		}
-	}
-	return time.Time{}
-}
 
 // UnmarshalJSON keeps the original provider object alongside normalized fields.
 func (c *Call) UnmarshalJSON(data []byte) error {

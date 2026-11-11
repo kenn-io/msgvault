@@ -12,18 +12,19 @@ import (
 
 	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/twilioevidence"
 )
 
 type archivedCall struct {
-	Call            Call            `json:"call"`
-	Recordings      []Recording     `json:"recordings,omitempty"`
-	Evidence        Evidence        `json:"evidence"`
-	StartedAt       string          `json:"started_at,omitempty"`
-	EndedAt         string          `json:"ended_at,omitempty"`
-	DurationSeconds float64         `json:"duration_seconds"`
-	Attendees       []archivePerson `json:"attendees,omitempty"`
-	Transcript      *string         `json:"transcript,omitempty"`
-	Segments        []Segment       `json:"transcript_segments,omitempty"`
+	Call            Call                     `json:"call"`
+	Recordings      []Recording              `json:"recordings,omitempty"`
+	Evidence        twilioevidence.Evidence  `json:"evidence"`
+	StartedAt       string                   `json:"started_at,omitempty"`
+	EndedAt         string                   `json:"ended_at,omitempty"`
+	DurationSeconds float64                  `json:"duration_seconds"`
+	Attendees       []archivePerson          `json:"attendees,omitempty"`
+	Transcript      *string                  `json:"transcript,omitempty"`
+	Segments        []twilioevidence.Segment `json:"transcript_segments,omitempty"`
 }
 type archivePerson struct {
 	Phone string `json:"phone"`
@@ -65,7 +66,7 @@ func mergeRecordings(old, fresh []Recording) []Recording {
 	}
 	return out
 }
-func mergeArchive(old archivedCall, call Call, recordings []Recording, evidence Evidence) archivedCall {
+func mergeArchive(old archivedCall, call Call, recordings []Recording, evidence twilioevidence.Evidence) archivedCall {
 	if call.StartTime == "" {
 		call.StartTime = old.Call.StartTime
 	}
@@ -82,7 +83,7 @@ func mergeArchive(old archivedCall, call Call, recordings []Recording, evidence 
 		call.To = old.Call.To
 	}
 	out := archivedCall{Call: call, Recordings: recordings}
-	byID := map[string]Transcript{}
+	byID := map[string]twilioevidence.Transcript{}
 	for _, tr := range old.Evidence.Transcripts {
 		byID[tr.Kind+":"+tr.ID] = tr
 	}
@@ -112,31 +113,17 @@ func mergeArchive(old archivedCall, call Call, recordings []Recording, evidence 
 // canonicalSegments picks one transcript per recording, preferring Conversation
 // Intelligence over legacy transcription and then the newest, in recording
 // start order.
-func canonicalSegments(transcripts []Transcript, recordings []Recording) ([]Segment, bool) {
-	selected := map[string]Transcript{}
-	complete := false
-	for _, tr := range transcripts {
-		complete = complete || tr.Complete
-		if !tr.Usable {
-			continue
-		}
-		key := tr.SourceID
-		if key == "" {
-			key = tr.ID
-		}
-		if prior, ok := selected[key]; !ok || supersedes(tr, prior) {
-			selected[key] = tr
-		}
-	}
+func canonicalSegments(transcripts []twilioevidence.Transcript, recordings []Recording) ([]twilioevidence.Segment, bool) {
+	selected, complete := twilioevidence.SelectTranscripts(transcripts)
 	keys := make([]string, 0, len(selected))
 	for key := range selected {
 		keys = append(keys, key)
 	}
 	started := map[string]time.Time{}
 	for _, recording := range recordings {
-		at := ParseTime(recording.StartTime)
+		at := twilioevidence.ParseTime(recording.StartTime)
 		if at.IsZero() {
-			at = ParseTime(recording.DateCreated)
+			at = twilioevidence.ParseTime(recording.DateCreated)
 		}
 		started[recording.SID] = at
 	}
@@ -147,24 +134,11 @@ func canonicalSegments(transcripts []Transcript, recordings []Recording) ([]Segm
 		}
 		return keys[i] < keys[j]
 	})
-	out := []Segment{}
+	out := []twilioevidence.Segment{}
 	for _, key := range keys {
 		out = append(out, selected[key].Segments...)
 	}
 	return out, complete
-}
-
-// supersedes reports whether tr replaces prior as a recording's text: a
-// retranscription leaves the old transcript behind as evidence only.
-func supersedes(tr, prior Transcript) bool {
-	if classic, priorClassic := tr.Kind == "classic", prior.Kind == "classic"; classic != priorClassic {
-		return classic
-	}
-	created, priorCreated := ParseTime(tr.DateCreated), ParseTime(prior.DateCreated)
-	if !created.Equal(priorCreated) {
-		return created.After(priorCreated)
-	}
-	return tr.ID > prior.ID
 }
 
 func parseDurationSeconds(value string) (float64, bool) {
@@ -179,7 +153,7 @@ func durationSeconds(value string) float64 {
 	return seconds
 }
 func (a archivedCall) snapshot(sourceID int64, email string) (meetingarchive.Snapshot, error) {
-	start, end := callStart(a), ParseTime(a.Call.EndTime)
+	start, end := callStart(a), twilioevidence.ParseTime(a.Call.EndTime)
 	if !start.IsZero() {
 		a.StartedAt = start.Format(time.RFC3339Nano)
 	}

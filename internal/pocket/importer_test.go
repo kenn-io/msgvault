@@ -627,3 +627,26 @@ func TestPocketImportDoesNotInventOrganizer(t *testing.T) {
 		assert.Empty(t, recipients, "recipient type %s", recipientType)
 	}
 }
+
+func TestPocketSubtitleRejectsUnavailableRefresh(t *testing.T) {
+	for _, tc := range []struct{ name, raw string }{
+		{"missing", `{"id":"rec-a","recording_at":"2026-09-01T10:00:00Z"}`},
+		{"null", `{"id":"rec-a","recording_at":"2026-09-01T10:00:00Z","transcript":null}`},
+		{"pending", `{"id":"rec-a","recording_at":"2026-09-01T10:00:00Z","transcript_error":"processing","transcript":{"segments":[{"speaker":"SPEAKER_00","speakerName":"Speaker One","text":"New speech","start":1.25,"end":9}]}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			must := require.New(t)
+			imp, st, src := testArchive(t, testRecording(t, recordingFixture))
+			first, err := imp.Import(t.Context(), archiveOptions())
+			must.NoError(err)
+			id, _ := archivedContent(t, st, first.SourceID, "rec-a")
+			src.records[0] = testRecording(t, tc.raw)
+			_, err = imp.Import(t.Context(), archiveOptions())
+			must.NoError(err)
+			raw, err := st.GetMessageRaw(id)
+			must.NoError(err)
+			_, err = meetingcontent.RenderSubtitles("pocket_json", raw, meetingcontent.PacketOptions{Format: meetingcontent.FormatSRT, MaxBytes: 4096})
+			must.ErrorIs(err, meetingcontent.ErrInvalidSubtitles)
+		})
+	}
+}

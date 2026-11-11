@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/msgvault/internal/callsync"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/twilioevidence"
 )
 
 type fakePage struct {
@@ -31,7 +32,7 @@ type fakePage struct {
 type importSource struct {
 	pages      map[string]fakePage
 	calls      map[string]Call
-	evidence   Evidence
+	evidence   twilioevidence.Evidence
 	audioErr   error
 	audioErrs  map[string]error
 	audioBytes []byte
@@ -55,7 +56,7 @@ func (f *importSource) ListRecordingsPage(_ context.Context, after time.Time, _ 
 	after = after.UTC().Truncate(24 * time.Hour)
 	var listed []Recording
 	for _, r := range page.recordings {
-		if !ParseTime(r.DateCreated).Before(after) {
+		if !twilioevidence.ParseTime(r.DateCreated).Before(after) {
 			listed = append(listed, fromAPI(r))
 		}
 	}
@@ -89,7 +90,7 @@ func (f *importSource) CallRecordings(_ context.Context, id string) ([]Recording
 	return out, nil
 }
 
-func (f *importSource) Transcripts(context.Context, []Recording) (Evidence, error) {
+func (f *importSource) Transcripts(context.Context, []Recording) (twilioevidence.Evidence, error) {
 	return f.evidence, f.transcriptsErr
 }
 
@@ -241,7 +242,7 @@ func TestImporterRetainedRecordingSurvivesMissingCallMetadata(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st, f, imp, opts := fixtureImporter(t)
 	delete(f.calls, testCA)
-	f.evidence = Evidence{Transcripts: []Transcript{{Kind: "legacy", ID: "TR" + strings.Repeat("a", 32), SourceID: testRE, Complete: true, Usable: true, Segments: []Segment{{Text: "Retained speech", Scope: testRE}}}}}
+	f.evidence = twilioevidence.Evidence{Transcripts: []twilioevidence.Transcript{{Kind: "legacy", ID: "TR" + strings.Repeat("a", 32), SourceID: testRE, Complete: true, Usable: true, Segments: []twilioevidence.Segment{{Text: "Retained speech", Scope: testRE}}}}}
 	sum, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.EqualValues(1, sum.MeetingsAdded)
@@ -539,8 +540,8 @@ func TestImporterRelistWindowWalk(t *testing.T) {
 
 	// Day 3: the audio and transcript arrive.
 	f.pages[""] = fakePage{recordings: []Recording{testRecording(testRE, testCA), stuck}}
-	transcript := Transcript{Kind: "classic", ID: testGT, SourceID: testRE, Status: "completed", Complete: true, Usable: true, Segments: []Segment{{Text: "Synthetic budget discussion", Scope: testRE}}}
-	f.evidence = Evidence{Transcripts: []Transcript{transcript}}
+	transcript := twilioevidence.Transcript{Kind: "classic", ID: testGT, SourceID: testRE, Status: "completed", Complete: true, Usable: true, Segments: []twilioevidence.Segment{{Text: "Synthetic budget discussion", Scope: testRE}}}
+	f.evidence = twilioevidence.Evidence{Transcripts: []twilioevidence.Transcript{transcript}}
 	imp.now = func() time.Time { return time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC) }
 	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
@@ -582,7 +583,7 @@ func TestImporterRelistWindowWalk(t *testing.T) {
 	assert.Equal(1, f.audioCalls, "stored audio isn't downloaded again")
 
 	// Day 11: the call is outside the window, so a new transcript isn't fetched.
-	f.evidence.Transcripts = append(f.evidence.Transcripts, Transcript{Kind: "legacy", ID: "TR" + strings.Repeat("a", 32), SourceID: testRE, Status: "completed", Complete: true, Usable: true, Segments: []Segment{{Text: "too late", Scope: testRE}}})
+	f.evidence.Transcripts = append(f.evidence.Transcripts, twilioevidence.Transcript{Kind: "legacy", ID: "TR" + strings.Repeat("a", 32), SourceID: testRE, Status: "completed", Complete: true, Usable: true, Segments: []twilioevidence.Segment{{Text: "too late", Scope: testRE}}})
 	f.getCalls = nil
 	imp.now = func() time.Time { return time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC) }
 	_, err = imp.Import(t.Context(), opts)
@@ -634,7 +635,7 @@ func TestImporterUnavailableRecordingIsNotDownloaded(t *testing.T) {
 			recording := testRecording(testRE, testCA)
 			tc.change(&recording)
 			f.pages[""] = fakePage{recordings: []Recording{recording}}
-			f.evidence = Evidence{Transcripts: []Transcript{{Kind: "legacy", ID: "TR" + strings.Repeat("a", 32), SourceID: testRE, Status: "completed", Complete: true, Usable: true, Segments: []Segment{{Text: "Synthetic budget discussion", Scope: testRE}}}}}
+			f.evidence = twilioevidence.Evidence{Transcripts: []twilioevidence.Transcript{{Kind: "legacy", ID: "TR" + strings.Repeat("a", 32), SourceID: testRE, Status: "completed", Complete: true, Usable: true, Segments: []twilioevidence.Segment{{Text: "Synthetic budget discussion", Scope: testRE}}}}}
 			_, err := imp.Import(t.Context(), opts)
 			require.NoError(err)
 			assert.Zero(f.audioCalls)
@@ -674,7 +675,7 @@ func TestImporterOldCallRecoversAfterProviderFailure(t *testing.T) {
 			}
 
 			f.callErr, f.recordingsErr, f.transcriptsErr, f.audioErr = nil, nil, nil, nil
-			f.evidence = Evidence{Transcripts: []Transcript{{Kind: "legacy", ID: sid("TR", 'a'), SourceID: testRE, Complete: true, Usable: true, Segments: []Segment{{Text: "Recovered speech", Scope: testRE}}}}}
+			f.evidence = twilioevidence.Evidence{Transcripts: []twilioevidence.Transcript{{Kind: "legacy", ID: sid("TR", 'a'), SourceID: testRE, Complete: true, Usable: true, Segments: []twilioevidence.Segment{{Text: "Recovered speech", Scope: testRE}}}}}
 			// A fresh importer must recover from saved state, without --full.
 			restarted := NewImporter(st, f)
 			restarted.now = imp.now

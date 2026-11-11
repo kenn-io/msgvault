@@ -13,13 +13,14 @@ import (
 	"go.kenn.io/msgvault/internal/callsync"
 	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/twilioevidence"
 )
 
 type Source interface {
 	ListRecordingsPage(ctx context.Context, after time.Time, pageSize int, cursor string) ([]Recording, string, error)
 	GetCall(ctx context.Context, callID string) (Call, error)
 	CallRecordings(ctx context.Context, callID string) ([]Recording, error)
-	Transcripts(ctx context.Context, recordings []Recording) (Evidence, error)
+	Transcripts(ctx context.Context, recordings []Recording) (twilioevidence.Evidence, error)
 	OpenRecording(ctx context.Context, recording Recording, maxBytes int64) (io.ReadCloser, error)
 }
 
@@ -95,10 +96,10 @@ func (r *importRun) Handle(ctx context.Context, id string, listed []Recording) (
 // callStart is the earliest of the call's start and its recordings' start or
 // creation times, so a call whose details Twilio deleted keeps a date.
 func callStart(a archivedCall) time.Time {
-	start := ParseTime(a.Call.StartTime)
+	start := twilioevidence.ParseTime(a.Call.StartTime)
 	for _, recording := range a.Recordings {
 		for _, value := range []string{recording.StartTime, recording.DateCreated} {
-			if at := ParseTime(value); !at.IsZero() && (start.IsZero() || at.Before(start)) {
+			if at := twilioevidence.ParseTime(value); !at.IsZero() && (start.IsZero() || at.Before(start)) {
 				start = at
 			}
 		}
@@ -107,7 +108,7 @@ func callStart(a archivedCall) time.Time {
 }
 
 func (r *importRun) createdInBound(recording Recording) bool {
-	return r.Opts.CreatedAfter.IsZero() || !ParseTime(recording.DateCreated).Before(r.Opts.CreatedAfter)
+	return r.Opts.CreatedAfter.IsZero() || !twilioevidence.ParseTime(recording.DateCreated).Before(r.Opts.CreatedAfter)
 }
 
 // archiveCall returns callErr for provider failures other than a refusal
@@ -146,11 +147,11 @@ func (r *importRun) archiveCall(ctx context.Context, id string, discovered []Rec
 	if !r.Opts.CreatedAfter.IsZero() {
 		// --after bounds new evidence; recordings already archived stay.
 		fresh = slices.DeleteFunc(fresh, func(recording Recording) bool {
-			return ParseTime(recording.DateCreated).Before(r.Opts.CreatedAfter)
+			return twilioevidence.ParseTime(recording.DateCreated).Before(r.Opts.CreatedAfter)
 		})
 	}
 	recordings = mergeRecordings(recordings, fresh)
-	var evidence Evidence
+	var evidence twilioevidence.Evidence
 	var transcriptErr error
 	if callErr == nil {
 		evidence, transcriptErr = r.imp.client.Transcripts(ctx, recordings)

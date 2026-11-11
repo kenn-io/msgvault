@@ -6,11 +6,10 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"math"
 	"net/url"
-	"sort"
-	"strconv"
 	"strings"
+
+	"go.kenn.io/msgvault/internal/twilioevidence"
 )
 
 func completeStatus(status string) bool { return strings.EqualFold(status, "completed") }
@@ -21,7 +20,7 @@ func rawEvidence(value any) (jsontext.Value, error) {
 	}
 	return raw, nil
 }
-func finishTranscript(value *Transcript) {
+func finishTranscript(value *twilioevidence.Transcript) {
 	segments := value.Segments[:0]
 	for _, segment := range value.Segments {
 		if strings.TrimSpace(segment.Text) != "" {
@@ -34,8 +33,8 @@ func finishTranscript(value *Transcript) {
 
 // Transcripts collects each recording's legacy and Conversation Intelligence
 // transcripts. A failed collection never exposes a partial transcript as complete.
-func (c *Client) Transcripts(ctx context.Context, recordings []Recording) (Evidence, error) {
-	var evidence Evidence
+func (c *Client) Transcripts(ctx context.Context, recordings []Recording) (twilioevidence.Evidence, error) {
+	var evidence twilioevidence.Evidence
 	var failures []error
 	// A refused read leaves that recording's transcript unavailable with a
 	// note; any other failure fails the call.
@@ -50,7 +49,7 @@ func (c *Client) Transcripts(ctx context.Context, recordings []Recording) (Evide
 			failures = append(failures, err)
 		}
 	}
-	add := func(product string, transcripts []Transcript) {
+	add := func(product string, transcripts []twilioevidence.Transcript) {
 		for _, tr := range transcripts {
 			if tr.Complete && !tr.Usable {
 				evidence.Diagnostics = append(evidence.Diagnostics, product+" unavailable: completed transcript "+tr.ID+" has no speech")
@@ -81,12 +80,12 @@ type legacyTranscript struct {
 	Text         *string `json:"transcription_text"`
 }
 
-func (c *Client) legacy(ctx context.Context, recordingID string) ([]Transcript, error) {
+func (c *Client) legacy(ctx context.Context, recordingID string) ([]twilioevidence.Transcript, error) {
 	items, err := c.collection(ctx, "voice", c.accountPath()+"/Recordings/"+recordingID+"/Transcriptions.json", "transcriptions", url.Values{pageSizeQuery: {"1000"}})
 	if err != nil {
 		return nil, err
 	}
-	var result []Transcript
+	var result []twilioevidence.Transcript
 	for _, raw := range items {
 		var item legacyTranscript
 		if err := json.Unmarshal(raw, &item); err != nil || !validSID(item.SID, "TR") {
@@ -117,9 +116,9 @@ func (c *Client) legacy(ctx context.Context, recordingID string) ([]Transcript, 
 		if err := c.validateAccount(item.AccountSID); err != nil {
 			return nil, err
 		}
-		tr := Transcript{Kind: "legacy", ID: item.SID, SourceID: recordingID, Status: item.Status, DateCreated: item.DateCreated, Complete: completeStatus(item.Status), Raw: raw}
+		tr := twilioevidence.Transcript{Kind: "legacy", ID: item.SID, SourceID: recordingID, Status: item.Status, DateCreated: item.DateCreated, Complete: completeStatus(item.Status), Raw: raw}
 		if tr.Complete && item.Text != nil && *item.Text != "" {
-			tr.Segments = []Segment{{Text: *item.Text, Scope: recordingID}}
+			tr.Segments = []twilioevidence.Segment{{Text: *item.Text, Scope: recordingID}}
 		}
 		finishTranscript(&tr)
 		result = append(result, tr)
@@ -145,74 +144,8 @@ type classicTranscript struct {
 		} `json:"participants"`
 	} `json:"channel"`
 }
-type sentence struct {
-	SID     string   `json:"sid"`
-	Index   int      `json:"sentence_index"`
-	Channel *int     `json:"media_channel"`
-	Start   *float64 `json:"start_time"`
-	End     *float64 `json:"end_time"`
-	Text    *string  `json:"transcript"`
-}
 
-func (s *sentence) UnmarshalJSON(data []byte) error {
-	var value struct {
-		SID     string         `json:"sid"`
-		Index   int            `json:"sentence_index"`
-		Channel jsontext.Value `json:"media_channel"`
-		Start   jsontext.Value `json:"start_time"`
-		End     jsontext.Value `json:"end_time"`
-		Text    *string        `json:"transcript"`
-	}
-	if err := json.Unmarshal(data, &value); err != nil {
-		return err
-	}
-	parse := func(raw jsontext.Value) (float64, bool, error) {
-		if len(raw) == 0 || string(raw) == "null" {
-			return 0, false, nil
-		}
-		text := string(raw)
-		if raw[0] == '"' {
-			if err := json.Unmarshal(raw, &text); err != nil {
-				return 0, false, err
-			}
-		}
-		v, err := strconv.ParseFloat(text, 64)
-		if err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
-			return 0, false, errors.New("invalid sentence offset")
-		}
-		return v, true, nil
-	}
-	startValue, hasStart, err := parse(value.Start)
-	if err != nil {
-		return err
-	}
-	endValue, hasEnd, err := parse(value.End)
-	if err != nil {
-		return err
-	}
-	channelValue, hasChannel, err := parse(value.Channel)
-	if err != nil {
-		return err
-	}
-	var channel *int
-	if hasChannel {
-		if math.Trunc(channelValue) != channelValue || channelValue > 2 {
-			return errors.New("invalid media channel")
-		}
-		v := int(channelValue)
-		channel = &v
-	}
-	var start, end *float64
-	if hasStart {
-		start = &startValue
-	}
-	if hasEnd {
-		end = &endValue
-	}
-	*s = sentence{SID: value.SID, Index: value.Index, Channel: channel, Start: start, End: end, Text: value.Text}
-	return nil
-}
-func (c *Client) classic(ctx context.Context, sourceID string) ([]Transcript, error) {
+func (c *Client) classic(ctx context.Context, sourceID string) ([]twilioevidence.Transcript, error) {
 	q := url.Values{"SourceSid": {sourceID}, pageSizeQuery: {"1000"}}
 	if c.options.IntelligenceServiceSID != "" {
 		q.Set("ServiceSid", c.options.IntelligenceServiceSID)
@@ -221,7 +154,7 @@ func (c *Client) classic(ctx context.Context, sourceID string) ([]Transcript, er
 	if err != nil {
 		return nil, err
 	}
-	var result []Transcript
+	var result []twilioevidence.Transcript
 	seen := map[string]bool{}
 	for _, raw := range items {
 		var item classicTranscript
@@ -252,35 +185,21 @@ func (c *Client) classic(ctx context.Context, sourceID string) ([]Transcript, er
 			return nil, errors.New("twilio: classic transcript service mismatch")
 		}
 		trMetadata := item
-		tr := Transcript{Kind: "classic", ID: id, SourceID: sourceID, Status: item.Status, DateCreated: item.Created, Complete: completeStatus(item.Status), Raw: metadata}
+		tr := twilioevidence.Transcript{Kind: "classic", ID: id, SourceID: sourceID, Status: item.Status, DateCreated: item.Created, Complete: completeStatus(item.Status), Raw: metadata}
 		if tr.Complete {
 			sentences, err := c.collection(ctx, "intelligence", "/v2/Transcripts/"+id+"/Sentences", "sentences", url.Values{pageSizeQuery: {"1000"}})
 			if err != nil {
 				return nil, err
 			}
-			parsed := make([]sentence, 0, len(sentences))
-			for _, raw := range sentences {
-				var item sentence
-				if err := json.Unmarshal(raw, &item); err != nil {
-					return nil, errors.New("twilio: invalid transcript sentence")
-				}
-				parsed = append(parsed, item)
+			parsed, err := twilioevidence.DecodeSentences(sentences)
+			if err != nil {
+				return nil, errors.New("twilio: invalid transcript sentence")
 			}
-			sort.SliceStable(parsed, func(i, j int) bool { return parsed[i].Index < parsed[j].Index })
-			sentenceIDs := map[string]bool{}
 			for _, item := range parsed {
 				channelID := 0
 				if item.Channel != nil {
 					channelID = *item.Channel
 				}
-				key := fmt.Sprintf("%d:%d", item.Index, channelID)
-				if item.SID != "" {
-					key = item.SID
-				}
-				if sentenceIDs[key] {
-					continue
-				}
-				sentenceIDs[key] = true
 				if item.Text != nil && *item.Text != "" {
 					speaker := ""
 					if item.Channel != nil {
@@ -292,7 +211,7 @@ func (c *Client) classic(ctx context.Context, sourceID string) ([]Transcript, er
 							}
 						}
 					}
-					tr.Segments = append(tr.Segments, Segment{Speaker: speaker, Text: *item.Text, Scope: sourceID, OffsetSeconds: item.Start})
+					tr.Segments = append(tr.Segments, twilioevidence.Segment{Speaker: speaker, Text: *item.Text, Scope: sourceID, OffsetSeconds: item.Start})
 				}
 			}
 			tr.Raw, err = rawEvidence(struct {

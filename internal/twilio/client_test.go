@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/twilioevidence"
 )
 
 const testAC = "ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -58,7 +59,7 @@ func TestVoiceRejectsUnsafePageAndForeignAccount(t *testing.T) {
 // a completed transcript with no speech noted as unavailable.
 func TestClassicAndLegacyTranscripts(t *testing.T) {
 	offset := 1.25
-	segment := func(require *require.Assertions, evidence Evidence) Segment {
+	segment := func(require *require.Assertions, evidence twilioevidence.Evidence) twilioevidence.Segment {
 		for _, tr := range evidence.Transcripts {
 			if tr.Kind == "classic" {
 				require.NotEmpty(tr.Segments)
@@ -66,11 +67,11 @@ func TestClassicAndLegacyTranscripts(t *testing.T) {
 			}
 		}
 		require.Fail("no classic transcript")
-		return Segment{}
+		return twilioevidence.Segment{}
 	}
 	noSpeech := "classic intelligence unavailable: completed transcript " + testGT + " has no speech"
-	emptyCase := func(status string) func(*assert.Assertions, *require.Assertions, Evidence) {
-		return func(assert *assert.Assertions, require *require.Assertions, evidence Evidence) {
+	emptyCase := func(status string) func(*assert.Assertions, *require.Assertions, twilioevidence.Evidence) {
+		return func(assert *assert.Assertions, require *require.Assertions, evidence twilioevidence.Evidence) {
 			require.Len(evidence.Transcripts, 1)
 			assert.Equal(status == "completed", evidence.Transcripts[0].Complete)
 			assert.False(evidence.Transcripts[0].Usable)
@@ -87,17 +88,17 @@ func TestClassicAndLegacyTranscripts(t *testing.T) {
 		status      string
 		participant bool
 		sentences   []any
-		check       func(*assert.Assertions, *require.Assertions, Evidence)
+		check       func(*assert.Assertions, *require.Assertions, twilioevidence.Evidence)
 	}{
 		{"legacy and ordered sentences",
 			[]any{map[string]any{"sid": "TRaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "account_sid": testAC, "recording_sid": testRE, "status": "completed", "date_created": "Sat, 03 Oct 2026 10:05:00 +0000", "transcription_text": "Legacy text"}},
 			"completed", false,
-			[]any{map[string]any{"sentence_index": 2, "media_channel": 2, "start_time": 1.25, "transcript": "Second"}, map[string]any{"sentence_index": 1, "media_channel": 1, "start_time": 0, "transcript": "First"}},
-			func(assert *assert.Assertions, require *require.Assertions, evidence Evidence) {
+			[]any{map[string]any{"sentence_index": 2, "media_channel": 2, "start_time": 1.25, "transcript": "Second"}, map[string]any{"sentence_index": 1, "media_channel": 1, "start_time": 0, "transcript": "First"}, map[string]any{"sentence_index": 1, "media_channel": 1, "start_time": 0, "transcript": "First"}},
+			func(assert *assert.Assertions, require *require.Assertions, evidence twilioevidence.Evidence) {
 				require.Len(evidence.Transcripts, 2)
 				assert.True(evidence.Transcripts[0].Complete)
 				assert.True(evidence.Transcripts[0].Usable)
-				var classic, legacy Transcript
+				var classic, legacy twilioevidence.Transcript
 				for _, tr := range evidence.Transcripts {
 					if tr.Kind == "classic" {
 						classic = tr
@@ -116,7 +117,7 @@ func TestClassicAndLegacyTranscripts(t *testing.T) {
 		{"in progress", nil, "in-progress", false, nil, emptyCase("in-progress")},
 		{"string offsets", nil, "completed", false,
 			[]any{map[string]any{"sentence_index": 0, "media_channel": 1, "start_time": "1.250", "end_time": "2.0", "transcript": "text"}},
-			func(assert *assert.Assertions, require *require.Assertions, evidence Evidence) {
+			func(assert *assert.Assertions, require *require.Assertions, evidence twilioevidence.Evidence) {
 				got := segment(require, evidence)
 				require.NotNil(got.OffsetSeconds)
 				assert.InDelta(offset, *got.OffsetSeconds, 1e-9)
@@ -124,7 +125,7 @@ func TestClassicAndLegacyTranscripts(t *testing.T) {
 			}},
 		{"null offsets and participant role", nil, "completed", true,
 			[]any{map[string]any{"sentence_index": 0, "media_channel": "1", "start_time": nil, "end_time": nil, "transcript": "text"}},
-			func(assert *assert.Assertions, require *require.Assertions, evidence Evidence) {
+			func(assert *assert.Assertions, require *require.Assertions, evidence twilioevidence.Evidence) {
 				got := segment(require, evidence)
 				assert.Equal("Customer", got.Speaker)
 				assert.Nil(got.OffsetSeconds)

@@ -77,8 +77,7 @@ func TestMeetingSubtitleTwentyCLIAndHTTP(t *testing.T) {
 	_, err = meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
 	must.NoError(err)
 	stdout, _, err = executeMeetingsCommand(t, client, "context", "--id", meetingTestInt64(archived.MessageID), "--format", "vtt", "--max-bytes", "4096")
-	must.ErrorContains(err, "max_bytes")
-	checks.Equal(1, strings.Count(err.Error(), "1048576"))
+	must.ErrorContains(err, "budget is too small")
 	checks.Empty(stdout)
 }
 
@@ -126,6 +125,7 @@ func TestMeetingSubtitleWhitespace(t *testing.T) {
 		name, raw, format, want string
 	}{
 		{"omi", `{"started_at":"2026-01-01T00:00:00Z","structured":{},"transcript_segments":[{"text":"Hello\n  ordinary speech","start":1,"end":2}]}`, "srt", "1\n00:00:01,000 --> 00:00:02,000\nHello\nordinary speech\n\n"},
+		{"twilio", `{"recordings":[{"sid":"RE1","start_time":"Sat, 03 Oct 2026 10:00:00 +0000"}],"transcript":"A: Hello","transcript_segments":[{"speaker":"A","text":"Hello","scope":"RE1","offset_seconds":1.25}],"evidence":{"transcripts":[{"kind":"legacy","id":"TR1","source_id":"RE1","date_created":"2026-10-03T12:00:00Z","usable":true,"segments":[{"text":"old","scope":"RE1"}]},{"kind":"classic","id":"GT1","source_id":"RE1","date_created":"2026-10-03T11:00:00Z","usable":true,"segments":[{"speaker":"A","text":"Hello","scope":"RE1","offset_seconds":1.25}],"raw":{"metadata":{"channel":{"participants":[{"channel_participant":1,"role":"A"}]}},"sentences":[{"sid":"S1","sentence_index":1,"media_channel":1,"start_time":"1.25","end_time":"2.5","transcript":"Hello"}]}}]}}`, "srt", "1\n00:00:01,250 --> 00:00:02,500\nA: Hello\n\n"},
 		{"pocket-vtt", `{"schema_version":1,"recorded_at":"2026-01-01T00:00:00Z","content":{"summary":{"state":"empty"},"notes":{"state":"unsupported"},"transcript":{"state":"available","segments":[{"text":"  Hello  ","offset_seconds":0}]},"action_coverage":"unsupported"},"recording":{"transcript":{"segments":[{"text":"  Hello  ","start":0,"end":2}]}}}`, "vtt", "WEBVTT\n\n1\n00:00:00.000 --> 00:00:02.000\n  Hello  \n\n"},
 		{"pocket-srt", `{"schema_version":1,"recorded_at":"2026-01-01T00:00:00Z","content":{"summary":{"state":"empty"},"notes":{"state":"unsupported"},"transcript":{"state":"available","segments":[{"text":"  Hello  ","offset_seconds":0}]},"action_coverage":"unsupported"},"recording":{"transcript":{"segments":[{"text":"  Hello  ","start":0,"end":2}]}}}`, "srt", "1\n00:00:00,000 --> 00:00:02,000\nHello\n\n"},
 	} {
@@ -134,14 +134,17 @@ func TestMeetingSubtitleWhitespace(t *testing.T) {
 			must := require.New(t)
 			st := testutil.NewTestStore(t)
 			sourceName := "pocket"
-			if tc.name == "omi" {
-				sourceName = "omi"
+			if tc.name == "omi" || tc.name == "twilio" {
+				sourceName = tc.name
 			}
 			source, err := st.GetOrCreateSource(sourceName, "owner@example.test")
 			must.NoError(err)
 			format := "pocket_json"
-			if tc.name == "omi" {
+			switch tc.name {
+			case "omi":
 				format = "omi_json"
+			case "twilio":
+				format = "twilio_call_json"
 			}
 			snapshot := meetingarchive.Snapshot{SourceID: source.ID, AccountEmail: "owner@example.test", SourceMessageID: tc.name, SourceConversationID: tc.name, Title: "Meeting", StartedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Raw: []byte(tc.raw), RawFormat: format, Organizer: &meetingarchive.Person{Name: "Owner", Email: "owner@example.test"}}
 			archived, err := meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
@@ -171,6 +174,37 @@ func TestMeetingSubtitleWhitespace(t *testing.T) {
 			result, err := client.GetMeetingContext(t.Context(), generated.GetMeetingContextBody{MessageIds: new([]int64{archived.MessageID}), Format: &requestFormat})
 			must.NoError(err)
 			checks.Equal(tc.want, result.Content)
+		})
+	}
+}
+
+func TestMeetingSubtitleMarkupPreservesFile(t *testing.T) {
+	for _, raw := range []string{
+		`{"started_at":"2026-01-01T00:00:00Z","transcript_segments":[{"text":"Please type <i> literally</i>","start":0,"end":2}]}`,
+		`{"started_at":"2026-01-01T00:00:00Z","transcript_segments":[{"speaker_name":"<i>A</i>","text":"Hello","start":0,"end":2}]}`,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			must := require.New(t)
+			checks := assert.New(t)
+			st := testutil.NewTestStore(t)
+			source, err := st.GetOrCreateSource("omi", "owner@example.test")
+			must.NoError(err)
+			snapshot := meetingarchive.Snapshot{SourceID: source.ID, AccountEmail: "owner@example.test", SourceMessageID: "one", SourceConversationID: "one", Raw: []byte(raw), RawFormat: "omi_json"}
+			archived, err := meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
+			must.NoError(err)
+			server := httptest.NewServer(api.NewServer(&config.Config{}, st, nil, slog.New(slog.DiscardHandler)).Router())
+			t.Cleanup(server.Close)
+			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, HTTPClient: server.Client()})
+			must.NoError(err)
+			t.Cleanup(func() { checks.NoError(client.Close()) })
+			output := filepath.Join(t.TempDir(), "meeting.srt")
+			must.NoError(os.WriteFile(output, []byte("keep"), 0600))
+			stdout, _, err := executeMeetingsCommand(t, client, "context", "--id", meetingTestInt64(archived.MessageID), "--format", "srt", "-o", output)
+			must.ErrorContains(err, "vtt")
+			checks.Empty(stdout)
+			saved, err := os.ReadFile(output)
+			must.NoError(err)
+			checks.Equal("keep", string(saved))
 		})
 	}
 }

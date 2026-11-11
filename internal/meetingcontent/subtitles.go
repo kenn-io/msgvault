@@ -4,9 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strings"
 )
+
+var srtControlText = regexp.MustCompile(`<[^ \t\r\n][^>\r\n]*>|\{\\[^}\r\n]*\}`)
 
 type subtitleSegment struct {
 	Speaker, Text string
@@ -67,6 +70,8 @@ func renderSubtitles(segments []subtitleSegment, format string) (string, error) 
 		}
 		if format == "vtt" {
 			text = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(text)
+		} else if srtControlText.MatchString(text) {
+			return "", fmt.Errorf("subtitle format error at segment %d: SRT cannot preserve control text; use --format vtt", i+1)
 		}
 		cues = append(cues, cue{startMS, endMS, text})
 	}
