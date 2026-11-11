@@ -195,6 +195,10 @@ func (s *Server) handleMeetingContext(w http.ResponseWriter, r *http.Request) {
 		Format: format, IncludeTranscript: request.IncludeTranscript, MaxBytes: maxBytes,
 	})
 	if err != nil {
+		if (format == meetingcontent.FormatSRT || format == meetingcontent.FormatVTT) && errors.Is(err, meetingcontent.ErrBudgetTooSmall) {
+			writeError(w, http.StatusBadRequest, "context_budget_too_small", "Subtitle output exceeds max_bytes; increase max_bytes up to 1048576")
+			return
+		}
 		if selectionPresent && (errors.Is(err, store.ErrMeetingNotFound) || errors.Is(err, store.ErrNotMeeting)) {
 			writeError(w, http.StatusConflict, "meeting_scope_changed",
 				"The selected meeting population changed; resolve the scope again")

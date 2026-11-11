@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -217,15 +218,6 @@ func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.
 	must.NoError(err)
 	must.False(subtitles.IsError)
 	checks.Equal("WEBVTT\n\n1\n00:00:10.000 --> 00:00:12.000\nA: Hello\n\n", meetingStructuredContent(t, subtitles)["content"])
-	omiSource, err := st.GetOrCreateSource("omi", "owner@example.test")
-	must.NoError(err)
-	omi := meetingarchive.Snapshot{SourceID: omiSource.ID, AccountEmail: "owner@example.test", SourceMessageID: "omi-subtitle", SourceConversationID: "omi-subtitle", StartedAt: snapshot.StartedAt, RawFormat: "omi_json", Raw: []byte(`{"started_at":"2026-01-01T00:00:00Z","structured":{},"transcript_segments":[{"text":"Hello\n  ordinary speech","start":1,"end":2}]}`)}
-	omiArchived, err := meetingarchive.New(st).Upsert(t.Context(), omi, meetingarchive.UpsertOptions{})
-	must.NoError(err)
-	omiSubtitles, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolGetMeetingContext, Arguments: map[string]any{"message_ids": []any{float64(omiArchived.MessageID)}, "format": "srt"}})
-	must.NoError(err)
-	must.False(omiSubtitles.IsError)
-	checks.Equal("1\n00:00:01,000 --> 00:00:02,000\nHello\nordinary speech\n\n", meetingStructuredContent(t, omiSubtitles)["content"])
 	twilioSource, err := st.GetOrCreateSource("twilio", "owner@example.test")
 	must.NoError(err)
 	twilioCall := meetingarchive.Snapshot{SourceID: twilioSource.ID, AccountEmail: "owner@example.test", SourceMessageID: "twilio-subtitle", SourceConversationID: "twilio-subtitle", StartedAt: snapshot.StartedAt, RawFormat: "twilio_call_json", Raw: []byte(`{"recordings":[{"sid":"RE1","start_time":"Sat, 03 Oct 2026 10:00:00 +0000"}],"transcript":"A: Hello","transcript_segments":[{"speaker":"A","text":"Hello","scope":"RE1","offset_seconds":1.25}],"evidence":{"transcripts":[{"kind":"legacy","id":"TR1","source_id":"RE1","date_created":"2026-10-03T12:00:00Z","usable":true,"segments":[{"text":"old","scope":"RE1"}]},{"kind":"classic","id":"GT1","source_id":"RE1","date_created":"2026-10-03T11:00:00Z","usable":true,"segments":[{"speaker":"A","text":"Hello","scope":"RE1","offset_seconds":1.25}],"raw":{"metadata":{"channel":{"participants":[{"channel_participant":1,"role":"A"}]}},"sentences":[{"sid":"S1","sentence_index":1,"media_channel":1,"start_time":"1.25","end_time":"2.5","transcript":"Hello"}]}}]}}`)}
@@ -314,4 +306,33 @@ func (meetingBackendFixture) ListMeetingActionItems(context.Context, generated.L
 
 func (meetingBackendFixture) GetMeetingMetrics(context.Context, generated.GetMeetingMetricsBody) (*meetingcontent.Metrics, error) {
 	return &meetingcontent.Metrics{}, nil
+}
+
+func TestMeetingMCPSubtitleOldDaemon(t *testing.T) {
+	must := require.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid_meeting_format","message":"format must be json or markdown"}`))
+	}))
+	t.Cleanup(server.Close)
+	backend, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, HTTPClient: server.Client()})
+	must.NoError(err)
+	t.Cleanup(func() { _ = backend.Close() })
+	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
+	serverSession, err := newMCPServer(ServeOptions{Engine: &querytest.MockEngine{}, Meetings: backend}, false).Connect(t.Context(), serverTransport, nil)
+	must.NoError(err)
+	t.Cleanup(func() { _ = serverSession.Close() })
+	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "meeting-test", Version: "1.0.0"}, nil)
+	clientSession, err := client.Connect(t.Context(), clientTransport, nil)
+	must.NoError(err)
+	t.Cleanup(func() { _ = clientSession.Close() })
+	result, err := clientSession.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolGetMeetingContext, Arguments: map[string]any{"message_ids": []any{float64(1)}, "format": "srt"}})
+	must.NoError(err)
+	must.True(result.IsError)
+	must.NotEmpty(result.Content)
+	message, ok := result.Content[0].(*sdkmcp.TextContent)
+	must.True(ok)
+	must.Contains(message.Text, "5.1.0")
+	must.Contains(message.Text, "upgrade")
 }

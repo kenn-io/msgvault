@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 func subtitleTiming(format string, raw []byte) ([]subtitleSegment, error) {
@@ -102,6 +103,7 @@ func subtitleTiming(format string, raw []byte) ([]subtitleSegment, error) {
 			startStamp, endStamp := entry.words[0].start, entry.words[len(entry.words)-1].end
 			start, hasStart := twentyOffset(startStamp)
 			end, hasEnd := twentyOffset(endStamp)
+			relative := hasStart && hasEnd
 			if !hasStart || !hasEnd {
 				startTime, startOK := rawTime(startStamp["absolute"], false)
 				endTime, endOK := rawTime(endStamp["absolute"], false)
@@ -112,6 +114,11 @@ func subtitleTiming(format string, raw []byte) ([]subtitleSegment, error) {
 			}
 			words := make([]string, 0, len(entry.words))
 			for _, word := range entry.words {
+				wordStart, hasWordStart := subtitleWordOffset(word.start, origin, relative)
+				wordEnd, hasWordEnd := subtitleWordOffset(word.end, origin, relative)
+				if hasWordStart && (wordStart < start || wordStart > end) || hasWordEnd && (wordEnd < start || wordEnd > end) || hasWordStart && hasWordEnd && wordEnd < wordStart {
+					return nil, errors.New("transcript word timing is outside cue bounds")
+				}
 				words = append(words, word.text)
 			}
 			cues = append(cues, subtitleSegment{entry.speaker, strings.Join(words, " "), start, end})
@@ -123,4 +130,15 @@ func subtitleTiming(format string, raw []byte) ([]subtitleSegment, error) {
 		return nil, errors.New("a complete timed transcript is unavailable")
 	}
 	return cues, nil
+}
+
+func subtitleWordOffset(stamp map[string]jsontext.Value, origin time.Time, relative bool) (float64, bool) {
+	if relative {
+		return rawFiniteFloat(stamp["relative"])
+	}
+	at, ok := rawTime(stamp["absolute"], false)
+	if !ok {
+		return 0, false
+	}
+	return at.Sub(origin).Seconds(), true
 }
