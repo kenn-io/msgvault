@@ -801,9 +801,6 @@ func (s *Store) DeleteDedupedBatchesContext(
 	var deleted int64
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		for _, batchID := range batchIDs {
-			if err := s.preserveMeetingDecisionCopies(ctx, tx, `delete_batch_id = ? AND deleted_at IS NOT NULL`, batchID); err != nil {
-				return fmt.Errorf("preserve meeting choices for dedup batch %q: %w", batchID, err)
-			}
 			result, err := tx.ExecContext(ctx, `
 				DELETE FROM messages
 				WHERE delete_batch_id = ? AND deleted_at IS NOT NULL
@@ -911,9 +908,6 @@ func (s *Store) DeleteAllDedupedContext(
 			WHERE deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL
 		`).Scan(&distinctBatches); err != nil {
 			return fmt.Errorf("delete all dedup-hidden: count batches: %w", err)
-		}
-		if err := s.preserveMeetingDecisionCopies(ctx, tx, `deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL`); err != nil {
-			return fmt.Errorf("preserve meeting choices for dedup-hidden messages: %w", err)
 		}
 
 		result, err := tx.ExecContext(ctx, `

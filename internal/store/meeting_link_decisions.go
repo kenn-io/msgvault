@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -215,7 +216,7 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 		if decision == "clear" {
 			state = "automatic"
 		} else {
-			_, err = tx.ExecContext(ctx, `INSERT INTO meeting_link_decisions(left_message_id,left_kind,left_key,left_anchor,right_message_id,right_kind,right_key,right_anchor,decision) VALUES (?,?,?,?,?,?,?,?,?)`, a.ID, a.Kind, a.Key, a.Anchor, b.ID, b.Kind, b.Key, b.Anchor, state)
+			_, err = tx.ExecContext(ctx, `INSERT INTO meeting_link_decisions(left_message_id,left_kind,left_key,left_anchor,right_message_id,right_kind,right_key,right_anchor,decision,choice_key) VALUES (?,?,?,?,?,?,?,?,?,?)`, a.ID, a.Kind, a.Key, a.Anchor, b.ID, b.Kind, b.Key, b.Anchor, state, rand.Text())
 		}
 		if err != nil {
 			return err
@@ -252,9 +253,14 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 
 // materializedMeetingEndpoint follows an event reference to its current occurrence.
 func (s *Store) materializedMeetingEndpoint(ctx context.Context, endpoint meetingDecisionEndpoint, budget *int) (meetingDecisionEndpoint, []int64, error) {
+	resolved, aliases, _, err := s.materializedMeetingEndpointRecord(ctx, endpoint, budget)
+	return resolved, aliases, err
+}
+
+func (s *Store) materializedMeetingEndpointRecord(ctx context.Context, endpoint meetingDecisionEndpoint, budget *int) (meetingDecisionEndpoint, []int64, MeetingRecord, error) {
 	ref, err := endpoint.meetingRef()
 	if err != nil {
-		return endpoint, nil, err
+		return endpoint, nil, MeetingRecord{}, err
 	}
 	record, err := s.meetingAutomaticRecordContext(ctx, ref, budget)
 	if errors.Is(err, ErrMeetingOccurrenceRequired) && endpoint.Anchor != "" {
@@ -266,18 +272,18 @@ func (s *Store) materializedMeetingEndpoint(ctx context.Context, endpoint meetin
 		}
 	}
 	if err != nil {
-		return endpoint, nil, err
+		return endpoint, nil, MeetingRecord{}, err
 	}
 	if endpoint.Kind == "msg" {
-		return endpoint, []int64{endpoint.ID}, nil
+		return endpoint, []int64{endpoint.ID}, record, nil
 	}
 	for _, link := range record.Links {
 		if link.Ref == endpoint.ref() || link.MessageID == endpoint.ID {
 			resolved, err := ParseMeetingLinkRef(link.Ref)
-			return endpointFromRef(resolved), []int64{endpoint.ID, link.MessageID}, err
+			return endpointFromRef(resolved), []int64{endpoint.ID, link.MessageID}, record, err
 		}
 	}
-	return endpoint, nil, sql.ErrNoRows
+	return endpoint, nil, MeetingRecord{}, sql.ErrNoRows
 }
 
 // copyMeetingLinkDecisionsTx keeps hidden originals for undo and preserves survivor choices.
@@ -285,18 +291,19 @@ func copyMeetingLinkDecisionsTx(ctx context.Context, tx *loggedTx, from, into in
 	if from == into {
 		return nil
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT id,left_message_id,left_kind,left_key,left_anchor,right_message_id,right_kind,right_key,right_anchor,decision FROM meeting_link_decisions WHERE left_message_id=? OR right_message_id=?`, from, from)
+	rows, err := tx.QueryContext(ctx, `SELECT id,left_message_id,left_kind,left_key,left_anchor,right_message_id,right_kind,right_key,right_anchor,decision,choice_key FROM meeting_link_decisions WHERE left_message_id=? OR right_message_id=?`, from, from)
 	if err != nil {
 		return err
 	}
 	type copiedDecision struct {
 		meetingDecisionEdge
-		id int64
+		id        int64
+		choiceKey string
 	}
 	var decisions []copiedDecision
 	for rows.Next() {
 		var d copiedDecision
-		if err := rows.Scan(&d.id, &d.a.ID, &d.a.Kind, &d.a.Key, &d.a.Anchor, &d.b.ID, &d.b.Kind, &d.b.Key, &d.b.Anchor, &d.decision); err != nil {
+		if err := rows.Scan(&d.id, &d.a.ID, &d.a.Kind, &d.a.Key, &d.a.Anchor, &d.b.ID, &d.b.Kind, &d.b.Key, &d.b.Anchor, &d.decision, &d.choiceKey); err != nil {
 			_ = rows.Close()
 			return err
 		}
@@ -318,57 +325,33 @@ func copyMeetingLinkDecisionsTx(ctx context.Context, tx *loggedTx, from, into in
 		if compareMeetingEndpoints(d.a, d.b) > 0 {
 			d.a, d.b = d.b, d.a
 		}
-		var via any
-		if dedup {
-			via = from
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO meeting_link_decisions(left_message_id,left_kind,left_key,left_anchor,right_message_id,right_kind,right_key,right_anchor,decision,parent_decision_id,via_message_id,is_explicit) VALUES (?,?,?,?,?,?,?,?,?,?,?,FALSE) ON CONFLICT DO NOTHING`, d.a.ID, d.a.Kind, d.a.Key, d.a.Anchor, d.b.ID, d.b.Kind, d.b.Key, d.b.Anchor, d.decision, d.id, via)
+		var copyID int64
+		err := tx.QueryRowContext(ctx, `INSERT INTO meeting_link_decisions(left_message_id,left_kind,left_key,left_anchor,right_message_id,right_kind,right_key,right_anchor,decision,choice_key,is_explicit) VALUES (?,?,?,?,?,?,?,?,?,?,FALSE) RETURNING id`, d.a.ID, d.a.Kind, d.a.Key, d.a.Anchor, d.b.ID, d.b.Kind, d.b.Key, d.b.Anchor, d.decision, d.choiceKey).Scan(&copyID)
 		if err != nil {
 			return fmt.Errorf("copy meeting link decision: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO meeting_link_decision_dependencies(decision_id,origin_message_id) SELECT ?,origin_message_id FROM meeting_link_decision_dependencies WHERE decision_id=?`, copyID, d.id); err != nil {
+			return err
+		}
+		if dedup {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO meeting_link_decision_dependencies(decision_id,origin_message_id) VALUES (?,?) ON CONFLICT DO NOTHING`, copyID, from); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
-// undoMeetingLinkDecisionsTx removes copies created by the batch and their descendants.
+// undoMeetingLinkDecisionsTx removes contributions that depend on a restored message.
 func undoMeetingLinkDecisionsTx(ctx context.Context, tx *loggedTx, batchID string) error {
-	_, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE via_message_id IN (SELECT id FROM messages WHERE delete_batch_id=?)`, batchID)
-	return err
-}
-
-// preserveMeetingDecisionCopies keeps earlier undo dependencies when pruning history.
-func (s *Store) preserveMeetingDecisionCopies(ctx context.Context, tx contextStatementQuerier, filter string, args ...any) error {
-	for {
-		result, err := tx.ExecContext(ctx, s.Rebind(`WITH removed AS (SELECT id FROM messages WHERE `+filter+`)
-			UPDATE meeting_link_decisions AS d SET
-			parent_decision_id=(SELECT p.parent_decision_id FROM meeting_link_decisions p WHERE p.id=d.parent_decision_id),
-			via_message_id=CASE WHEN d.via_message_id IN (SELECT id FROM removed)
-				THEN (SELECT p.via_message_id FROM meeting_link_decisions p WHERE p.id=d.parent_decision_id) ELSE d.via_message_id END
-			WHERE d.parent_decision_id IN (SELECT id FROM meeting_link_decisions WHERE left_message_id IN (SELECT id FROM removed) OR right_message_id IN (SELECT id FROM removed))`), args...)
-		if err != nil {
-			return err
-		}
-		count, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if count == 0 {
-			break
-		}
-	}
-	_, err := tx.ExecContext(ctx, s.Rebind(`WITH removed AS (SELECT id FROM messages WHERE `+filter+`)
-		UPDATE meeting_link_decisions SET via_message_id=NULL WHERE via_message_id IN (SELECT id FROM removed)`), args...)
+	_, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE id IN (SELECT decision_id FROM meeting_link_decision_dependencies WHERE origin_message_id IN (SELECT id FROM messages WHERE delete_batch_id=?))`, batchID)
 	return err
 }
 
 // deleteMeetingDecisionTx clears source choices or replaces a direct choice.
 func deleteMeetingDecisionTx(ctx context.Context, tx *loggedTx, d meetingDecisionEdge, clear bool) error {
-	if clear {
-		_, err := tx.ExecContext(ctx, `WITH RECURSIVE ancestors(id,parent_decision_id) AS (SELECT id,parent_decision_id FROM meeting_link_decisions WHERE id=? UNION ALL SELECT d.id,d.parent_decision_id FROM meeting_link_decisions d JOIN ancestors a ON d.id=a.parent_decision_id) DELETE FROM meeting_link_decisions WHERE id IN (SELECT id FROM ancestors WHERE parent_decision_id IS NULL)`, d.id)
-		return err
-	}
-	if d.isExplicit {
-		_, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE id=?`, d.id)
+	if clear || d.isExplicit {
+		_, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE choice_key=(SELECT choice_key FROM meeting_link_decisions WHERE id=?)`, d.id)
 		return err
 	}
 	return nil

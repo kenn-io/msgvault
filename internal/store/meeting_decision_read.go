@@ -163,22 +163,27 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 	seenDecisions := map[int64]bool{}
 	var candidates []meetingDecisionEdge
 	resolved := map[string]bool{}
+	materialized := map[string]MeetingRecord{}
 	decisions := meetingDecisionLoader{store: s}
 	for len(queue) > 0 {
 		endpoint := queue[0]
 		queue = queue[1:]
 		if !resolved[endpoint.ref()] {
-			itemRef, err := endpoint.meetingRef()
-			if err != nil {
-				return result, err
-			}
-			record, err := s.meetingAutomaticRecordContext(ctx, itemRef, &budget)
-			if errors.Is(err, ErrMeetingOccurrenceRequired) && endpoint.Anchor != "" {
-				anchored := endpoint
-				anchored.Key = anchored.Anchor
-				itemRef, err = anchored.meetingRef()
-				if err == nil {
-					record, err = s.meetingAutomaticRecordContext(ctx, itemRef, &budget)
+			record, cached := materialized[endpoint.ref()]
+			var err error
+			if !cached {
+				itemRef, refErr := endpoint.meetingRef()
+				if refErr != nil {
+					return result, refErr
+				}
+				record, err = s.meetingAutomaticRecordContext(ctx, itemRef, &budget)
+				if errors.Is(err, ErrMeetingOccurrenceRequired) && endpoint.Anchor != "" {
+					anchored := endpoint
+					anchored.Key = anchored.Anchor
+					itemRef, err = anchored.meetingRef()
+					if err == nil {
+						record, err = s.meetingAutomaticRecordContext(ctx, itemRef, &budget)
+					}
 				}
 			}
 			if errors.Is(err, sql.ErrNoRows) && endpoint != seed {
@@ -235,8 +240,18 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 				continue
 			}
 			seenDecisions[choice.id] = true
-			add(choice.a, nil)
-			add(choice.b, nil)
+			for _, endpoint := range []*meetingDecisionEndpoint{&choice.a, &choice.b} {
+				canonical, _, record, err := s.materializedMeetingEndpointRecord(ctx, *endpoint, &budget)
+				if errors.Is(err, sql.ErrNoRows) {
+					canonical = *endpoint
+				} else if err != nil {
+					return result, err
+				} else {
+					materialized[canonical.ref()] = record
+				}
+				*endpoint = canonical
+				add(canonical, nil)
+			}
 			candidates = append(candidates, choice)
 		}
 	}
@@ -246,20 +261,7 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 	// Materialize aliases before choosing one effective contribution per pair.
 	effective := map[string]meetingDecisionEdge{}
 	for _, choice := range candidates {
-		left, _, err := s.materializedMeetingEndpoint(ctx, choice.a, &budget)
-		if errors.Is(err, sql.ErrNoRows) {
-			left, err = choice.a, nil
-		}
-		if err != nil {
-			return result, err
-		}
-		right, _, err := s.materializedMeetingEndpoint(ctx, choice.b, &budget)
-		if errors.Is(err, sql.ErrNoRows) {
-			right, err = choice.b, nil
-		}
-		if err != nil {
-			return result, err
-		}
+		left, right := choice.a, choice.b
 		if compareMeetingEndpoints(left, right) > 0 {
 			left, right = right, left
 		}
@@ -271,8 +273,6 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 		}
 	}
 	for _, choice := range effective {
-		add(choice.a, nil)
-		add(choice.b, nil)
 		if choice.decision == "split" {
 			splits = append(splits, choice)
 		} else {
